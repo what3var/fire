@@ -47,11 +47,74 @@ namespace fire.Standard
                 }
             }
 
+            /// `await [ f(), g() ]` (docs/ROADMAP_TASKS.md): every call is a lambda (res, fails, i) made by the parser; they run side by side (natively), then
+            /// the first exception in the order of the brackets is thrown, or the results are given back.
+            class __Await {
+                static any[] All(any items[]) {
+                    any res[] = new any[items.Length]
+                    any fails[] = new any[items.Length]
+                    __await_run(items, res, fails)
+                    for (int i = 0; i < items.Length; i++) { if (fails[i] != undefined) { throw fails[i] } }
+                    return res
+                }
+            }
+
             class Exception {
                 string message
 
                 construct(string message = "") {
                     this.message = message
+                }
+            }
+
+            // Cancellation (docs/ROADMAP_TASKS.md section 6): what a wait throws when the token of the task is cancelled - or its time limit (`until 5s`) ran out.
+            class CancelledException : Exception {
+                construct(string message = "The task was cancelled.") {
+                    this.message = message
+                }
+            }
+            class TimeoutException : CancelledException {
+                construct(string message = "The time limit ran out.") {
+                    this.message = message
+                }
+            }
+
+            /// The token of a task, or of a source: `IsCancelled`, `ThrowIfCancelled()`; `CancellationToken.Current()` is the running task's. A token goes to
+            /// a task with `until` (`fire until source.Token { ... }`, `await Load(url) until token, 5s`) - it is never copied.
+            [NoCopy]
+            class CancellationToken {
+                int node = 0
+                construct(int node) { this.node = node }
+                destruct() { __cancel_release(this.node) }
+                bool IsCancelled { get { return __cancel_state(this.node) != 0 } }
+                undefined ThrowIfCancelled() {
+                    int state = __cancel_state(this.node)
+                    if (state == 2) { throw new TimeoutException() }
+                    if (state == 1) { throw new CancelledException() }
+                }
+                static CancellationToken Current() { return new CancellationToken(__cancel_current()) }
+            }
+
+            /// What cancels: `Cancel()` (at once: the waits of the tasks it reaches wake), `CancelAfter(5s)`. Made inside a task it is a child of the task's
+            /// token (cancelling the task cancels it); `CancellationSource.Detached()` follows nobody.
+            [NoCopy]
+            class CancellationSource {
+                int node = 0
+                construct(bool linked = true) { this.node = __cancel_new(linked) }
+                destruct() { __cancel_release(this.node) }
+                static CancellationSource Detached() { return new CancellationSource(false) }
+                CancellationToken Token { get { return new CancellationToken(__cancel_ref(this.node)) } }
+                bool IsCancelled { get { return __cancel_state(this.node) != 0 } }
+                undefined Cancel() { __cancel_cancel(this.node) }
+                undefined CancelAfter(any time) { __cancel_after(this.node, time) }
+            }
+
+            // (`until x`: a token, a source or a time limit as the node a task follows)
+            class __Cancel {
+                static int Limit(any limit) {
+                    if (limit is of CancellationToken) { return __cancel_ref(limit.node) }
+                    if (limit is of CancellationSource) { return __cancel_ref(limit.node) }
+                    return __cancel_time(limit)
                 }
             }
 

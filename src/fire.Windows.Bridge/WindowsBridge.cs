@@ -39,7 +39,7 @@ namespace fire.Windows.Bridge
                     catch (Exception ex) when (ex is not NoDisplayException) { return Value.MakeInt(InvalidHandle); }   // (no display: the program hears it)
                 },
                 ["Destroy"] = args => Value.MakeBool(mgr.DestroyWindow((int)args[0].AsInt())),
-                ["Tick"] = args => Value.MakeBool(mgr.Tick((int)args[0].AsInt())),
+                ["Tick"] = args => { fire.Runtime.TaskHooks.UiSwitchPoint?.Invoke(); fire.Runtime.TaskHooks.IdlePump = mgr.IdlePumpAction; return Value.MakeBool(mgr.Tick((int)args[0].AsInt())); },   // (the handlers that waited; the waits of this thread read its windows)
                 ["EnableEvents"] = args =>
                 {
                     mgr.EnableEventQueue((int)args[0].AsInt());
@@ -82,7 +82,7 @@ namespace fire.Windows.Bridge
                 },
                 ["GetTouchMouse"] = args => Value.MakeBool(mgr.GetTouchMouse((int)args[0].AsInt())),
                 // the two halves of a cycle (fire's WindowManager): events in, frame out
-                ["Pump"] = args => Value.MakeBool(mgr.Pump((int)args[0].AsInt())),
+                ["Pump"] = args => { fire.Runtime.TaskHooks.UiSwitchPoint?.Invoke(); fire.Runtime.TaskHooks.IdlePump = mgr.IdlePumpAction; return Value.MakeBool(mgr.Pump((int)args[0].AsInt())); },   // (the handlers that waited; the waits of this thread read its windows)
                 ["Present"] = args => { mgr.Present((int)args[0].AsInt()); return Value.MakeUndefined(); },
                 // window managers
                 ["MgrCreate"] = args => Value.MakeInt(mgr.CreateManager()),

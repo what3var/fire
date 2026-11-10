@@ -1,6 +1,6 @@
 {
   "title": "Scene3D Models",
-  "description": "Models with parts and animations: a robot from glTF and a figure from the block editor (.fblocks), made into fire's model file when the program is built. 1 / 2 / 3 choose the animation.",
+  "description": "Models with parts and animations: a robot from glTF and a figure from the block editor (.fblocks) and a house from the CAD editor (.fmesh), made into fire's model file when the program is built. 1 / 2 / 3 choose the animation.",
   "open": [ "main.fire" ],
   "order": 64
 }

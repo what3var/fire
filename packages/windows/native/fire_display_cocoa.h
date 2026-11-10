@@ -586,7 +586,16 @@ static void fire_dns_present(FireDnsWindow* w, const uint32_t* rgba, int width, 
     objc_autoreleasePoolPop(pool);
     if (w->vsync) {
         double now = fire_dns_now(), next = w->lastFrame + 1.0 / 60.0;
-        if (w->lastFrame > 0 && now < next) { struct timespec s; double d = next - now; s.tv_sec = (time_t)d; s.tv_nsec = (long)((d - (double)s.tv_sec) * 1e9); nanosleep(&s, NULL); }
+        if (w->lastFrame > 0 && now < next) {
+            struct timespec s;
+            double d = next - now;
+            s.tv_sec = (time_t)d;
+            s.tv_nsec = (long)((d - (double)s.tv_sec) * 1e9);
+#ifdef FIRE_RT_HELPING_WAIT
+            if (!fire_frameWait(d))   /* (the main program of a native build: its thread runs tasks meanwhile) */
+#endif
+            nanosleep(&s, NULL);
+        }
         w->lastFrame = fire_dns_now();
     }
 }

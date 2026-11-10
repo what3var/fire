@@ -42,6 +42,7 @@ if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "linkage") { Linkag
 if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "bios16") { BiosTests.RunAlone(); return; }
 if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "scene3d") { Scene3DTests.Run(); return; }
 if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "blocks") { BlockModelTests.Run(); return; }
+if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "mesh") { MeshModelTests.Run(); return; }
 if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "diagnostics") { DiagnosticTests.Run(); return; }
 if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "syntax") { SyntaxTests.Run(); return; }
 if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "types") { TypeTests.Run(); return; }
@@ -20683,6 +20684,329 @@ else
             print("fertig")
             """),
         // (the threads wait for each other with flags, not with counting loops: the order does not depend on how fast the machine or the generated code is)
+        ("Await: ein Aufruf (geliehen, ohne Kopie), die Blockform mit taking (Kopie), Ergebnis, Ausnahme am await, Methode, await als Name", """
+            #import "time"
+            class Item { int v = 0
+                construct(int v) { this.v = v } }
+            class Calc {
+                static int Count(Item list[]) { Sleep(1ms); return list.Length }
+                static int Sum(Item list[]) { var s = 0; foreach (var i in list) { s = s + i.v }; return s }
+                static int Bump(Item list[]) { list[1].v = list[1].v + 10; return list[1].v }
+                static Item Make(int v) { return new Item(v) }
+                static int Boom(int v) { if (v > 0) { throw new ArgumentException("boom " + v) }; return v }
+                int factor = 3
+                int Times(int x) { return x * this.factor }
+            }
+            var list = [new Item(1), new Item(2), new Item(3)]
+            var n = await Calc.Count(list)
+            print("count " + n)
+            print("lent " + (await Calc.Bump(list)) + " " + list[1].v)
+            print("copied " + (await Calc.Bump(list) taking list) + " " + list[1].v)
+            var s = await taking list { list[0].v = 100; return Calc.Sum(list) }
+            print("sum copy " + s + ", original " + list[0].v)
+            var made = await Calc.Make(7)
+            print("made " + made.v)
+            var c = new Calc()
+            print("times " + (await c.Times(5)))
+            try { await Calc.Boom(2) } catch (ArgumentException e) { print("caught " + e.message) }
+            var t = await { return 6 * 7 }
+            print("block " + t)
+            var await = 5
+            print("name " + await)
+            fire {
+                var k = await Calc.Count([new Item(4)])
+                sync global { n = n + k }
+            }
+            while (n < 4) { sync globals }
+            print("in a thread " + n)
+            """),
+        ("Await: await [ ... ] - Ergebnisse in der Reihenfolge der Klammern (nativ nebeneinander), die erste Ausnahme in dieser Reihenfolge, Blockform mit taking, leer, gemeinsame Objekte nacheinander", """
+            #import "time"
+            class Box { int v = 0; string name = ""
+                construct(int v) { this.v = v; this.name = "b" + v } }
+            class Work {
+                static int Slow(Box b) { Sleep(20ms); b.v = b.v * 2; return b.v }
+                static Box Spin(Box b) { var s = 0; for (var i = 0; i < 20000; i++) { s = s + i % 3 }; return new Box(b.v + s % 2) }
+                static int Fail(Box b) { Sleep(5ms); throw new ArgumentException("bad " + b.name) }
+                static int Both(Box x, Box y) { x.v = x.v + 1; return x.v + y.v }
+                static string Shared() {
+                    var x = new Box(1)
+                    var y = new Box(2)
+                    var z = new Box(3)
+                    var r = await [Work.Both(x, y), Work.Both(x, z)]
+                    return r[0] + " " + r[1] + " x " + x.v
+                }
+            }
+            var a = new Box(1)
+            var b = new Box(2)
+            var c = new Box(3)
+            var d = new Box(4)
+            var r = await [Work.Slow(a), Work.Slow(b), Work.Slow(c), Work.Slow(d)]
+            print(r[0] + " " + r[1] + " " + r[2] + " " + r[3] + " / " + a.v + " " + d.v + " len " + r.Length)
+            var s = await [Work.Spin(a), Work.Spin(b), Work.Spin(c)]
+            print(s[0].v + " " + s[1].name + " " + s[2].v)
+            try { var x = await [Work.Slow(a), Work.Fail(b), Work.Fail(c)] } catch (ArgumentException e) { print("caught " + e.message + " a " + a.v) }
+            print("shared " + Work.Shared())
+            var blocks = await [taking a { a.v = 100; return a.v }, { return 7 }]
+            print("blocks " + blocks[0] + " " + blocks[1] + " a " + a.v)
+            var none = await []
+            print("empty " + none.Length)
+            """),
+        ("Await: await actor.Methode() - Ergebnis, neues Objekt (übergeben), Feld (Kopie), String, Array, Ausnahme zurück zum Aufrufer, am eigenen Home sofort", """
+            class Exception { string message; construct(string message = "") { this.message = message } }
+            class Box {
+                int v
+                construct(int v) { this.v = v }
+            }
+            actor Counter {
+                int n
+                Box box
+                construct() { this.n = 0; this.box = new Box(7) }
+                undefined Add(int k) { this.n += k }
+                int Get() { return this.n }
+                Box Fresh() { return new Box(this.n * 10) }
+                Box Mine() { return this.box }
+                string Text() { return "n=" + this.n }
+                int[] Arr() { return [1, 2, this.n] }
+                int Fail() { throw new Exception("kaputt " + this.n) }
+                int Take(Box b) { return b.v + this.n }
+            }
+            var c = new Counter()
+            fire with c {
+                c.Add(5)
+                print("Get: " + await c.Get())
+                var f = await c.Fresh()
+                print("Fresh: " + f.v)
+                var m = await c.Mine()
+                m.v = 100
+                print("Mine: " + m.v)
+                print("Text: " + await c.Text())
+                var a = await c.Arr()
+                print("Arr: " + a[2] + " " + a.Length)
+                try { await c.Fail() } catch (Exception e) { print("caught: " + e.message) }
+                print("Take: " + await c.Take(new Box(3)))
+                c.Add(1)
+            }
+            for (var i = 0; i < 9; i++) process c
+            print("main: " + c.n + " box " + c.box.v)
+            print("home: " + await c.Get())
+            """),
+        ("Await: await dedicated (nativ auf einem eigenen Systemthread), Ausnahme drinnen und draussen gefangen, verschachtelt, Blockform, in await [ ... ], fire dedicated, dedicated als Name", """
+            #import "time"
+            class Item { int v = 0
+                construct(int v) { this.v = v } }
+            class Work {
+                static int Sum(Item list[]) { Sleep(2ms); var s = 0; foreach (var i in list) { s = s + i.v }; return s }
+                static int Fail(int k) { Sleep(1ms); throw new ArgumentException("fail " + k) }
+                static int Inner(int k) { try { return Work.Fail(k) } catch (ArgumentException e) { return k * 2 } }
+                static int Nested(int k) { return await dedicated Work.Inner(k) + 1 }
+                static undefined Run(string who) {
+                    var list = [new Item(1), new Item(2), new Item(3)]
+                    print(who + " sum " + await dedicated Work.Sum(list))
+                    try { await dedicated Work.Fail(7) } catch (ArgumentException e) { print(who + " caught " + e.message) }
+                    print(who + " inner " + await dedicated Work.Inner(4))
+                    print(who + " nested " + await dedicated Work.Nested(5))
+                    int b = await dedicated taking list { list[0].v = 50; return list[0].v + list.Length }
+                    print(who + " block " + b + " " + list[0].v)
+                    var all = await [dedicated Work.Sum(list), Work.Inner(1), dedicated Work.Inner(2)]
+                    print(who + " all " + all[0] + " " + all[1] + " " + all[2])
+                    print(who + " again " + await Work.Sum(list))
+                }
+            }
+            int done = 0
+            fire { Work.Run("thread"); sync global { done = done + 1 } }
+            while (done < 1) { sync globals }
+            Work.Run("main")
+            int k = 4
+            fire dedicated taking k { print("dedicated thread " + k); sync global { done = done + 1 } }
+            while (done < 2) { sync globals }
+            var dedicated = 3
+            print("name " + dedicated)
+            """),
+        ("fire on / await on: der Block laeuft im Hauptprogramm mit dem Objekt selbst (Kopien sonst), das Ergebnis kommt zurueck (neu: uebergeben, Feld: Kopie), Ausnahme am await, im Hauptprogramm sofort", """
+            class Box {
+                int v
+                construct(int v) { this.v = v }
+            }
+            class Panel {
+                string status = ""
+                int count = 0
+                Box box
+                construct() { this.box = new Box(5) }
+            }
+            var panel = new Panel()
+            int done = 0
+            fire {
+                int k = 3
+                fire on panel taking k { panel.status = "from thread " + k; panel.count = panel.count + k }
+                var text = await on panel { return panel.status + "/" + panel.count }
+                print("thread got: " + text)
+                var b = await on panel { return panel.box }
+                b.v = 99
+                var fresh = await on panel { return new Box(panel.count * 2) }
+                print("thread box " + b.v + " fresh " + fresh.v)
+                try { any x = await on panel { throw new ArgumentException("no panel") } } catch (ArgumentException e) { print("thread caught " + e.message) }
+                sync global { done = 1 }
+            }
+            while (done < 1) { sync globals }
+            print("main: " + panel.status + " " + panel.count + " box " + panel.box.v)
+            print("main await: " + await on panel { return panel.count + 1 })
+            fire on panel { print("later on main") }
+            print("before")
+            sync globals
+            """),
+        ("Cancellation: until mit Zeitlimit (TimeoutException), fertig vor dem Limit, fire until source.Token (Cancel weckt den Sleep sofort), ThrowIfCancelled, catch innerhalb, await [ ... ] until", """
+            #import "time"
+            class W {
+                static int Slow(int ms) { Sleep(ms * 1ms); return ms }
+                static int Check() { CancellationToken.Current().ThrowIfCancelled(); return 1 }
+                static int Inner() {
+                    try { Sleep(1s) } catch (TimeoutException e) { return 7 }
+                    return 0
+                }
+            }
+            try { int r = await W.Slow(500) until 50ms; print("no " + r) } catch (TimeoutException e) { print("timeout: " + e.message) }
+            print("fast " + await W.Slow(10) until 2s)
+            var source = new CancellationSource()
+            int done = 0
+            fire until source.Token {
+                try { Sleep(5s); print("slept") } catch (CancelledException e) { print("thread cancelled") }
+                sync global { done = 1 }
+            }
+            Sleep(50ms)
+            source.Cancel()
+            while (done < 1) { sync globals; Sleep(5ms) }
+            var s2 = new CancellationSource()
+            s2.Cancel()
+            try { int c = await W.Check() until s2.Token; print("no") } catch (CancelledException e) { print("checked " + e.message) }
+            print("inner " + await W.Inner() until 30ms)
+            print(source.IsCancelled + " " + s2.Token.IsCancelled + " " + (new CancellationSource()).IsCancelled)
+            var outer = new CancellationSource()
+            var parts = await [W.Slow(20), W.Slow(30)] until outer.Token, 1s
+            print("all " + parts[0] + " " + parts[1])
+            try { Sleep(1ms); print("no limit outside") } catch (CancelledException e) { print("wrong") }
+            """),
+        ("Cancellation: eine Quelle im Task folgt dessen Token, await [ ... ] mit Zeitlimit, CancelAfter, await actor.M() until, Detached", """
+            #import "time"
+            class W {
+                static int Slow(int ms) { Sleep(ms * 1ms); return ms }
+                static undefined Watch() {
+                    var inner = new CancellationSource()
+                    try { int r = await W.Slow(5000) until inner.Token; print("watch no") } catch (CancelledException e) { print("watch: inner followed outer") }
+                }
+            }
+            actor Clock {
+                int Tick() { return 1 }
+            }
+            var outer = new CancellationSource()
+            int done = 0
+            fire until outer.Token { W.Watch(); sync global { done = done + 1 } }
+            Sleep(30ms)
+            outer.Cancel()
+            while (done < 1) { sync globals; Sleep(5ms) }
+            try { var both = await [W.Slow(1000), W.Slow(10)] until 40ms; print("no") } catch (TimeoutException e) { print("all: " + e.message) }
+            var later = new CancellationSource()
+            later.CancelAfter(30ms)
+            try { int r = await W.Slow(2000) until later.Token; print("no") } catch (CancelledException e) { print("after: " + e.message) }
+            var clock = new Clock()
+            fire with clock {
+                try { int t = await clock.Tick() until 30ms; print("no tick " + t) } catch (TimeoutException e) { print("actor: " + e.message) }
+                sync global { done = done + 1 }
+            }
+            while (done < 2) { sync globals; Sleep(5ms) }
+            var detached = CancellationSource.Detached()
+            print(detached.IsCancelled)
+            """),
+        ("Tasks: 600 fire-Threads schlafen und schreiben in Sektionen (die VM als Tasks eines Pools, docs/ROADMAP_TASKS.md Schritt 7)", """
+            #import "time"
+            int done = 0
+            for (var i = 0; i < 600; i++) {
+                fire taking i {
+                    Sleep(50ms)
+                    sync global { done = done + 1 }
+                }
+            }
+            while (done < 600) { sync globals; Sleep(5ms) }
+            print("done " + done)
+            """),
+        ("Tasks: process in Threads, die Threads starten (die Nachrichten kommen, waehrend der Task wartet)", """
+            #import "time"
+            actor Box {
+                int n
+                construct() { this.n = 0 }
+                undefined Add(int k) { this.n += k }
+            }
+            actor Done {
+                int count
+                construct() { this.count = 0 }
+                undefined One() { this.count++ }
+            }
+            var done = new Done()
+            for (var t = 0; t < 50; t++) {
+                fire with done {
+                    var box = new Box()
+                    fire with box { for (var i = 0; i < 10; i++) { Sleep(1ms); box.Add(i) } }
+                    for (var i = 0; i < 10; i++) process box
+                    if (box.n == 45) done.One()
+                }
+            }
+            for (var m = 0; m < 50; m++) process done
+            print("all " + done.count)
+            """),
+        ("Einfangen: taking x / handover x an der Verwendung im fire-Block und im Lambda, ein Local ohne Wort wird kopiert (TC023), ein Lambda im fire-Koerper sieht dessen Variablen", """
+            class Item {
+                int v
+                construct(int v) { this.v = v }
+            }
+            class Work {
+                static undefined Run() {
+                    var list = [new Item(1), new Item(2)]
+                    var node = new Item(7)
+                    int k = 5
+                    int done = 0
+                    fire {
+                        (taking list)[0].v = 100
+                        print("thread copy " + list[0].v + " k " + (taking k) + " node " + (handover node).v)
+                    }
+                    Sleep(50ms)
+                    print("caller " + list[0].v + " node " + node)
+                    fire { print("implicit " + list.Length + " " + k) }
+                    Sleep(50ms)
+                    // lambdas: taking - a copy made when the lambda is made; plain - the variable's value as before
+                    var item = new Item(3)
+                    var copyIt = () => { (taking item).v = 30; return item.v }
+                    var shareIt = () => { item.v = item.v + 1; return item.v }
+                    print("lambda copy " + copyIt() + " caller " + item.v)
+                    print("lambda shared " + shareIt() + " caller " + item.v)
+                    var moved = new Item(9)
+                    var keep = () => (handover moved).v
+                    print("lambda moved " + keep())
+                    // a lambda in a fire body sees the body's variables
+                    fire {
+                        var mine = 41
+                        var f = () => mine + 1
+                        print("in thread " + f())
+                        var parts = await [Work.Twice(mine), Work.Twice(2)]
+                        print("await in thread " + parts[0] + " " + parts[1])
+                    }
+                    Sleep(50ms)
+                }
+                static int Twice(int x) { return x * 2 }
+            }
+            #import "time"
+            Work.Run()
+            """),
+        ("copy/flat als Argument eines Lambda-Aufrufs: die Kopie, nicht das Original", """
+            class Item { int v = 0
+                construct(int v) { this.v = v } }
+            var list = [new Item(1), new Item(2)]
+            var f = (any l) => { l[0].v = 50; return 1 }
+            var r = f(copy list)
+            print("copy " + list[0].v)
+            var g = (any l) => { l[1] = new Item(9); return 1 }
+            r = g(flat list)
+            print("flat " + list[1].v)
+            """),
         ("Threads: Thread startet Thread", """
             var innerDone = 0
             var outerDone = 0
@@ -27620,6 +27944,8 @@ else
                 && System.Text.RegularExpressions.Regex.IsMatch(icpp, @"= icall_IShape_Area_1\(s\d+, s\d+\);"), body.Length > 0 ? body : icpp);
         }
 
+        // (the thread cases for the run under ThreadSanitizer below - before the filter: that test has a title of its own)
+        var natThreadCases = natCases.Where(c => c.Name.StartsWith("Threads:", StringComparison.Ordinal) || c.Name.StartsWith("[NoCopy] Threads:", StringComparison.Ordinal)).ToArray();
         natCases = natCases.Where(c => TestSelected(c.Name)).ToArray();
         // First the VM runs the cases here, one after the other and alone, as before: the precision of float (Value.SingleFloats) and the handlers of
         // `terminate` are process-wide while a program runs (the compiler must not make its constants while a VM with 32-bit floats runs), and some thread
@@ -27684,6 +28010,41 @@ else
                 CheckNat($"Native == VM: {c.Name}", expected == actual, $"  erwartet (VM):\n{expected}\n  erhalten (C++):\n{actual}");
             }
         natPipeline.Join();
+
+        // Tasks step 1 (docs/ROADMAP_TASKS.md): the thread cases built with ThreadSanitizer instead of ASan (the two do not go together) - the default build,
+        // which runs without the GIL on this platform (step 1g): no data race may show up.
+        const string tsanTitle = "ThreadSanitizer: die Thread-Faelle laufen ohne Data Race (ohne GIL, auf allen Kernen)";
+        if (TestSelected(tsanTitle))
+        {
+            string tsan = "-fsanitize=thread -g";
+            // (FIRE_TEST_GIL=1: the same cases with the GIL, as the targets with a scheduler of fire itself run them)
+            string noGil = Environment.GetEnvironmentVariable("FIRE_TEST_GIL") == "1" ? " -DFIRE_GIL" : "";
+            {
+                string probeFile = Path.Combine(workDir, "tsanprobe.c");
+                File.WriteAllText(probeFile, "#include <pthread.h>\nstatic int n;\nstatic void* run(void* a) { (void)a; n++; return 0; }\nint main(void) { pthread_t t; pthread_create(&t, 0, run, 0); pthread_join(t, 0); return n - 1; }\n");
+                var (_, probeErr, probeExit) = TestProcess.Run(fire.Native.ToolchainDef.CCompilerFor(cxx), $"-pthread {tsan} \"{probeFile}\" -o \"{probeFile}.bin\"", workDir);
+                if (probeExit != 0 || TestProcess.Run(probeFile + ".bin", "", workDir).Exit != 0) tsan = "";
+            }
+            if (tsan.Length == 0) Console.WriteLine("(ThreadSanitizer nicht verfuegbar - die Thread-Faelle laufen nicht darunter)");
+            else
+            {
+                var tsanReports = new System.Collections.Concurrent.ConcurrentBag<(int Index, string Text)>();
+                Parallel.For(0, natThreadCases.Length, new ParallelOptions { MaxDegreeOfParallelism = TestJobs.Count }, i =>
+                {
+                    var c = natThreadCases[i];
+                    fire.Native.NativeSources generated;
+                    try { generated = fire.Native.CppGenerator.GenerateSources(new Linker().CompileAndLink(new[] { c.Source }, null, null, VmExecutionMode.Release)); }
+                    catch (fire.Native.NativeNotSupportedException) { return; }
+                    string exe = Path.Combine(workDir, $"tsan{i}.bin");
+                    string build = NativeTestBuild.Build(NativeTestBuild.In(workDir), cxx, generated, workDir, $"tsan{i}", $"-pthread {NativeTestBuild.Opt} {tsan}{noGil}", exe, out int buildExit);
+                    if (buildExit != 0) { tsanReports.Add((i, $"{c.Name}: C/C++-Compiler: {build}")); return; }
+                    var (_, stderr, _) = TestProcess.Run(exe, "", workDir, environment: new Dictionary<string, string?> { ["TSAN_OPTIONS"] = "halt_on_error=0 report_signal_unsafe=0" }, timeoutMs: 120_000);
+                    int at = stderr.IndexOf("WARNING: ThreadSanitizer", StringComparison.Ordinal);
+                    if (at >= 0) tsanReports.Add((i, $"{c.Name}:\n{stderr.Substring(at, Math.Min(4000, stderr.Length - at))}"));
+                });
+                CheckNat(tsanTitle, tsanReports.IsEmpty, string.Join("\n\n", tsanReports.OrderBy(r => r.Index).Select(r => r.Text)));
+            }
+        }
 
         // (the trim cases and the TLS case under Wine at the same time)
         TestJobs.Concurrently(() =>
@@ -29214,6 +29575,36 @@ else
                 for (var i = 0; i < 3; i++) { con.FillRect(i * 5, 20, 4, 4, new SolidBrush(9)); win.Tick() }
                 print(win.Tick())
                 """, new[] { "True", "False", "True", "True", "undefined", "True", "True", "True", "True" }, ""),
+                    ("Fenster: ein Handler, der wartet, haelt das Fenster nicht an (Task der Gruppe des Hauptprogramms, docs/ROADMAP_TASKS.md Schritt 5)", """
+                #import "windows"
+                #import "time"
+                var fb = new Framebuffer(64, 48)
+                var win = new Window(fb, "group")
+                win.VSync = false
+                var ticks = 0
+                var during = -1
+                var finished = false
+                var order = ""
+                win.RegisterKeyDown(func(int k, int s, int m, bool r) => {
+                    order = order + "down "
+                    var before = ticks
+                    Sleep(40ms)
+                    during = ticks - before
+                    order = order + "after "
+                    finished = true
+                })
+                win.RegisterKeyUp(func(int k, int s, int m, bool r) => { order = order + "up " })
+                var open = true
+                var n = 0
+                while (!finished && n < 2000) {
+                    if (open) { open = win.Tick() }
+                    ticks = ticks + 1
+                    n = n + 1
+                    Sleep(2ms)
+                }
+                print(order)
+                print(during > 0)
+                """, new[] { "down up after ", "True" }, "-DFIRE_DISPLAY_SELFTEST "),
                     ("Fenster: AutoResize bringt den Framebuffer auf die Groesse des Fensters", """
                 #import "windows"
                 var fb = new Framebuffer(64, 48)
@@ -29578,6 +29969,61 @@ else
                 {
                     if (!TestSelected(cc.Title)) continue;
                     windowSteps.Add(() => PrepareWindowCase(cc.Title, cc.Script, cc.Expected, cc.Define, cc.Display, cc.Second));
+                }
+                // ---- the waits of the main program serve its windows (ROADMAP_TASKS 5b): while it sleeps, the window is unmapped and mapped again (xdotool) - the
+                //      Expose that follows is answered at once (the window shows its last frame again - blue: the brush's colour is ABGR), not only at the next
+                //      Tick (before: black until then)
+                {
+                    // (the window, once there: unmapped, mapped again; then the colour of a pixel - the exit code says whether it is the frame's)
+                    string ExposeCheck(string name)
+                    {
+                        string file = Path.Combine(workDir, name + ".sh");
+                        File.WriteAllText(file, $"id=$(xdotool search --sync --name '^idlepump$' | head -1)\nsleep 1\nxdotool windowunmap --sync $id\nxdotool windowmap --sync $id\nsleep 0.5\n" +
+                            $"c=$(import -window $id -depth 8 -crop 1x1+5+5 txt:- | tail -1)\necho \"$c\" > \"{workDir}/{name}.txt\"\ncase \"$c\" in *0000FF*) exit 0;; esac\nexit 1\n");
+                        return file;
+                    }
+                    string idleTitle = "X11 (Xvfb) - waehrend das Hauptprogramm wartet (Sleep), liest es die Ereignisse seiner Fenster: ein Expose zeigt das letzte Bild wieder";
+                    if (TestSelected(idleTitle) && FindProgram("xdotool") != null && FindProgram("import") != null && !OperatingSystem.IsWindows())
+                    {
+                        string check = ExposeCheck("idle_expose");
+                        windowSteps.Add(() => PrepareWindowCase(idleTitle, """
+                            #import "windows"
+                            #import "time"
+                            var fb = new Framebuffer(64, 48)
+                            var r = new Renderer(fb)
+                            var win = new Window(fb, "idlepump")
+                            win.VSync = false
+                            r.FillRect(0, 0, 64, 48, new SolidBrush(0xFFFF0000))
+                            win.Tick()
+                            win.Tick()
+                            Sleep(4000)
+                            print(win.Tick())
+                            """, new[] { "True" }, "", "x11-two", "", $"sh \"{check}\""));
+                    }
+                    else if (TestSelected(idleTitle)) Console.WriteLine("(Expose waehrend Sleep: uebersprungen - xdotool oder import fehlt)");
+                    // (the same in the VM: its windows are those of the C library, its waits give the library a turn - fire_pkg_idle)
+                    string idleVmTitle = idleTitle + " [die VM]";
+                    string idleForge = Path.Combine(AppContext.BaseDirectory, OperatingSystem.IsWindows() ? "forge.exe" : "forge");
+                    if (TestSelected(idleVmTitle) && File.Exists(idleForge) && FindProgram("xdotool") != null && FindProgram("import") != null && !OperatingSystem.IsWindows())
+                    {
+                        string check = ExposeCheck("idle_expose_vm");
+                        string script = Path.Combine(workDir, "idle_expose_vm.fire");
+                        string vmSource = """
+                            #import "windows"
+                            #import "time"
+                            var fb = new Framebuffer(64, 48)
+                            var r = new Renderer(fb)
+                            var win = new Window(fb, "idlepump")
+                            win.VSync = false
+                            r.FillRect(0, 0, 64, 48, new SolidBrush(0xFFFF0000))
+                            win.Tick()
+                            win.Tick()
+                            Sleep(6000)
+                            print(win.Tick())
+                            """;
+                        File.WriteAllText(script, vmSource);
+                        windowSteps.Add(() => PrepareWindowCase(idleVmTitle, vmSource, new[] { "True" }, "", "x11-two", "", $"sh \"{check}\"", $"\"{idleForge}\" run \"{script}\""));
+                    }
                 }
                 windowRuns.Add(() => TestJobs.Ordered(windowSteps.Count, i => windowSteps[i](), (_, run) => run(), what: "Fenster: gebaut"));
 

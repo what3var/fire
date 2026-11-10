@@ -230,6 +230,7 @@ namespace fire.Terminal.Windows
             _blocked.Remove(id);
             _manualClose.Remove(id);
             _closeRequested.Remove(id);
+            lock (_idleGate) _idle.Remove(id);
             bool threadOwned = false;
             lock (_managersGate)
                 if (_managed.TryGetValue(id, out var entry))
@@ -292,10 +293,74 @@ namespace fire.Terminal.Windows
         public bool Tick(int id)
         {
             var window = _windows.Get(id);
-            if (ManagedStarted(id)) { bool open = Pump(id); Present(id); return open; }
+            if (ManagedStarted(id)) { bool stillOpen = Pump(id); Present(id); return stillOpen; }
+            var home = NoteHome(id);
             var result = window.Tick();
-            Deliver(id, result?.Events);
-            return result?.StillOpen == true && !_closeRequested.Contains(id);
+            var events = WithEarly(window, home, result, out bool open);
+            Deliver(id, events);
+            return open && !_closeRequested.Contains(id);
+        }
+
+        // ---- the waits of the program serve its windows (ROADMAP_TASKS 5b, as natively): a window that the program's thread pumps itself (no manager's
+        //      thread) is read meanwhile when that thread waits (Sleep, await, the end of the program - TaskHooks.IdlePump); the events wait in its inbox
+        //      for the next Pump/Tick, but the window answers the system at once (it repaints, it answers pings)
+        private sealed class IdleWindow
+        {
+            public readonly Thread Home = Thread.CurrentThread;
+            public readonly List<IEvent> Early = new();   // (only the home thread touches it)
+            public bool Closed;
+        }
+        private readonly Dictionary<int, IdleWindow> _idle = new();
+        private readonly object _idleGate = new();
+        [ThreadStatic] private static bool _idlePumping;
+        private Action? _idlePumpAction;
+        /// <summary><see cref="IdlePump"/> as one delegate (the windows bridge hands it to the waits of the thread).</summary>
+        public Action IdlePumpAction => _idlePumpAction ??= IdlePump;
+
+        private IdleWindow NoteHome(int id)
+        {
+            lock (_idleGate)
+            {
+                if (!_idle.TryGetValue(id, out var home)) _idle[id] = home = new IdleWindow();
+                return home;
+            }
+        }
+
+        /// <summary>The waits of this thread: what the system has for the windows that this thread pumps goes into their inboxes.</summary>
+        public void IdlePump()
+        {
+            if (_idlePumping) return;
+            _idlePumping = true;
+            try
+            {
+                List<KeyValuePair<int, IdleWindow>> mine;
+                lock (_idleGate) mine = _idle.Where(e => e.Value.Home == Thread.CurrentThread && !e.Value.Closed).ToList();
+                foreach (var (id, home) in mine)
+                {
+                    if (ManagedStarted(id) || !_windows.TryGet(id, out var window) || window == null) continue;
+                    var result = window.PumpRaw();
+                    if (result?.Events != null) foreach (var e in result.Events) if (home.Early.Count < MaxQueuedEvents) home.Early.Add(e);
+                    if (result != null && !result.StillOpen) home.Closed = true;
+                }
+            }
+            catch (InvalidOperationException) { }   // (a window of another thread came or went meanwhile: the next wait looks again)
+            finally { _idlePumping = false; }
+        }
+
+        /// <summary>The events of a cycle here: what the waits read meanwhile (with AutoResize applied now), then those of the cycle.</summary>
+        private static IEnumerable<IEvent>? WithEarly(ConsoleWindow window, IdleWindow home, WindowPumpResult? result, out bool open)
+        {
+            open = result?.StillOpen == true && !home.Closed;
+            home.Closed = false;
+            if (home.Early.Count == 0) return result?.Events;
+            var events = new List<IEvent>(home.Early);
+            home.Early.Clear();
+            if (window.AutoResize)
+                foreach (var e in events)
+                    if (e is ResizeEvent resize && Framebuffer.IsValidSize(resize.Width, resize.Height))
+                        window.Framebuffer.Resize(resize.Width, resize.Height);
+            if (result?.Events != null) events.AddRange(result.Events);
+            return events;
         }
 
         /// <summary>Puts the events of a window into its queue (EnableEventQueue) and runs its callbacks - on the calling thread (the program's).</summary>
@@ -677,9 +742,11 @@ namespace fire.Terminal.Windows
             if (state == null)
             {
                 if (beat != null) Interlocked.Exchange(ref beat.ServicePending, 0);   // the program runs a cycle: the next one may be asked for
+                var home = NoteHome(id);
                 var result = window.Pump();
-                Deliver(id, result?.Events);
-                return result?.StillOpen == true && !_closeRequested.Contains(id);
+                var fetched = WithEarly(window, home, result, out bool open);
+                Deliver(id, fetched);
+                return open && !_closeRequested.Contains(id);
             }
             Manager? owner;
             lock (_managersGate) owner = _managed.TryGetValue(id, out var current) ? current.Manager : null;

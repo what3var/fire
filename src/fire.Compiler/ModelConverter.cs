@@ -17,13 +17,14 @@ namespace fire.Compiler
         public static bool IsModelSource(string path)
         {
             string ext = Path.GetExtension(path).ToLowerInvariant();
-            return ext == ".gltf" || ext == ".glb" || ext == BlockModel.Extension;
+            return ext == ".gltf" || ext == ".glb" || ext == BlockModel.Extension || ext == MeshModel.Extension;
         }
 
         /// <summary>The .f3d of a glTF file; InvalidDataException with the reason when it cannot be read.</summary>
         public static byte[] ConvertFile(string path, int fps = FramesPerSecond)
         {
             if (Path.GetExtension(path).Equals(BlockModel.Extension, StringComparison.OrdinalIgnoreCase)) return ConvertBlocks(File.ReadAllText(path));
+            if (Path.GetExtension(path).Equals(MeshModel.Extension, StringComparison.OrdinalIgnoreCase)) return ConvertMesh(File.ReadAllText(path));
             byte[] data = File.ReadAllBytes(path);
             string dir = Path.GetDirectoryName(Path.GetFullPath(path)) ?? ".";
             return Convert(data, name => File.ReadAllBytes(Path.Combine(dir, Uri.UnescapeDataString(name))), fps);
@@ -43,6 +44,9 @@ namespace fire.Compiler
 
         /// <summary>The .f3d of a block model (`.fblocks`, docs/graphics/models.md - the block editor of spark).</summary>
         public static byte[] ConvertBlocks(string text) => BlockModel.Parse(text).ToF3d();
+
+        /// <summary>The .f3d of a mesh model (`.fmesh`, docs/graphics/models.md - the CAD editor of spark).</summary>
+        public static byte[] ConvertMesh(string text) => MeshModel.Parse(text).ToF3d();
 
         public static byte[] Convert(byte[] file, Func<string, byte[]> readExternal, int fps = FramesPerSecond)
         {

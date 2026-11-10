@@ -1415,11 +1415,18 @@ namespace fire.Compiler
             bool hasWith = fs.WithSource != null;
             if (hasWith) CompileExpr(fs.WithSource!);
 
+            if (fs.Until is { Count: > 0 } fireUntil)
+            {
+                // `fire ... until x`: the node the thread follows (bit 7: for the Fire that follows - a thread does not follow its caller)
+                foreach (var limit in fireUntil) CompileExpr(limit);
+                _chunk.EmitOp(OpCode.CancelPush);
+                _chunk.EmitByte((byte)(fireUntil.Count | 0x80));
+            }
             _chunk.EmitOp(OpCode.Fire);
             _chunk.EmitU16(protoIdx);
             _chunk.EmitU16(_globalSlotCount);
             _chunk.EmitByte((byte)fs.TakingCaptures.Count);
-            _chunk.EmitByte(hasWith ? (byte)1 : (byte)0);
+            _chunk.EmitByte((byte)((hasWith ? 1 : 0) | (fs.Dedicated ? 2 : 0)));   // (bit 1: `fire dedicated`)
             _chunk.EmitByte((byte)fs.TakingCaptures.Count(c => c.Handover));   // (the parser put them last)
         }
 
@@ -1840,7 +1847,8 @@ namespace fire.Compiler
                     foreach (var arg in postGlobal.Args) CompileExpr(arg);
                     CompileLambda(postGlobal.Lambda);
                     _chunk.EmitOp(OpCode.PostGlobal);
-                    _chunk.EmitByte((byte)postGlobal.Args.Count);
+                    // (bit 7: the first argument is the object of `fire on` - not copied; bit 6: `await on` - the result comes back)
+                    _chunk.EmitByte((byte)(postGlobal.Args.Count | (postGlobal.OnTarget ? 0x80 : 0)));
                     break;
 
                 case TerminateStmt terminateStmt:
@@ -2841,6 +2849,30 @@ namespace fire.Compiler
                     break;
                 }
 
+                case UntilExpr until:
+                    // the call between CancelPush and CancelPop: it follows a token of its own (the caller's and the limits); a catch outside it leaves the frame
+                    foreach (var limit in until.Limits) CompileExpr(limit);
+                    _chunk.EmitOp(OpCode.CancelPush);
+                    _chunk.EmitByte((byte)until.Limits.Count);
+                    CompileExpr(until.Inner);
+                    _chunk.EmitOp(OpCode.CancelPop);
+                    break;
+
+                case AwaitOnExpr awaitOn:
+                    foreach (var arg in awaitOn.Args) CompileExpr(arg);
+                    CompileLambda(awaitOn.Lambda);
+                    _chunk.EmitOp(OpCode.PostGlobal);
+                    _chunk.EmitByte((byte)(awaitOn.Args.Count | 0x80 | 0x40));
+                    break;
+
+                case CallExpr { Dedicated: true } dedicatedCall:
+                    // `await dedicated ...`: the call between Dedicate and Undedicate (natively on a system thread of its own; an exception that leaves it
+                    // takes the task back to the pool at its catch - fire_rt.h fire_dedicateCaught)
+                    _chunk.EmitOp(OpCode.Dedicate);
+                    CompileCall(dedicatedCall with { Dedicated = false });
+                    _chunk.EmitOp(OpCode.Undedicate);
+                    break;
+
                 case CallExpr call:
                     CompileCall(call);
                     break;
@@ -2910,7 +2942,8 @@ namespace fire.Compiler
             if (captures != null)
             {
                 if (captures.Count > 255) throw new NotSupportedException("A lambda can capture at most 255 outer variables.");
-                foreach (var captured in captures) CompileExpr(captured);
+                var loads = captureRef is ResolvedRef.LambdaCaptures withLoads ? withLoads.Loads : null;
+                for (int i = 0; i < captures.Count; i++) CompileExpr(loads?[i] ?? captures[i]);   // (`taking x` in the body: a copy, `handover x`: moved)
             }
 
             bool hasOnTarget = lambda.OnTarget != null;
@@ -2931,6 +2964,15 @@ namespace fire.Compiler
                 _chunk.EmitU16(protoIdx);
                 _chunk.EmitByte(hasOnTarget ? (byte)1 : (byte)0);
                 _chunk.EmitByte((byte)captures.Count);
+                // `handover x` in the body: the lambda has the instance now - the caller's variable no longer refers to it
+                var moves = captureRef is ResolvedRef.LambdaCaptures movedLoads ? movedLoads.Loads : null;
+                if (moves != null)
+                    for (int i = 0; i < captures.Count; i++)
+                        if (moves[i] is CallExpr { Callee: IdentifierExpr { Name: fire.Standard.LambdaHandover.NativeName } })
+                        {
+                            CompileExpr(new AssignExpr(lambda.Line, captures[i], new LiteralExpr(lambda.Line, Value.MakeUndefined())));
+                            _chunk.EmitOp(OpCode.Pop);
+                        }
             }
             else
             {
@@ -3290,6 +3332,7 @@ namespace fire.Compiler
                 CompileExpr(me.Target);
                 ulong callCopyMask = CompileArgs(call.Args, scopeCreating: true, _refParams.ForMethod(me.Name, call.Args.Count));
                 EmitCallTypeArgs(call);
+                if (call.Awaited) _chunk.EmitOp(OpCode.AwaitReply);   // (in front of the other prefixes: they are looked for right in front of the call)
                 EmitCopyArgsPrefix(callCopyMask);
                 EmitArgNames(call.ArgNames);
                 _chunk.EmitOp(OpCode.CallMethod);

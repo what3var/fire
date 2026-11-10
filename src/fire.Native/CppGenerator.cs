@@ -1453,6 +1453,16 @@ namespace fire.Native
         /// <summary>The exception classes that natives of the imported packages throw (`exceptions` of the package): the runtime constructs them by name (`fireError`).</summary>
         private readonly List<string> _errorClasses = new();
         private readonly List<(InstalledImport Import, string Key)> _packageImports = new();
+        /// <summary>The locks of the packages whose natives fire threads may call (docs/ROADMAP_TASKS.md 1f): import key -> index into `fire_pkgM`.</summary>
+        private readonly Dictionary<string, int> _pkgLocks = new();
+        /// <summary>The lock of the package of a native in a program with fire threads: its index in `fire_pkgM`, -1 for none (no threads, or `"threadSafe": true`).</summary>
+        private int PkgLock(string native)
+        {
+            if (!_usesThreads || Modular || !_nativeImportOf.TryGetValue(native, out var key)) return -1;
+            if (_packageImports.FirstOrDefault(p => p.Key == key).Import?.Import.Native is { ThreadSafe: true }) return -1;
+            if (!_pkgLocks.TryGetValue(key, out int index)) { index = _pkgLocks.Count; _pkgLocks[key] = index; _version++; }
+            return index;
+        }
 
         /// <summary>The natives in C++ (graphics, windows, the packages) that the program calls: they are in a file of their own (C++), the program (C) calls them
         /// through a function with C linkage each - `fire_nat_N`. The C++ function -> (N, number of arguments, the list of the scope as the last argument).</summary>
@@ -1764,6 +1774,21 @@ namespace fire.Native
                 else if (IsOwnClass(FindClass(key.Class))) sb.AppendLine($"Value {StaticFieldVar(key.Class, key.Field)} = FIRE_UNDEF_INIT; // {key.Class}.{key.Field}");
                 else sb.AppendLine($"extern Value {StaticFieldVar(key.Class, key.Field)}; // {key.Class}.{key.Field}");
             if (_staticFields.Count > 0) sb.AppendLine();
+            if (_usesThreads && !Modular)
+            {
+                // (the locks of the packages - fire_rt.h FIRE_PKG_ENTER, without the GIL)
+                sb.AppendLine("#ifdef FIRE_NO_GIL");
+                sb.AppendLine($"static fire_mutex fire_pkgM[{Math.Max(1, _pkgLocks.Count)}];");
+                sb.AppendLine($"static void fire_pkgLocksInit(void) {{ int i; for (i = 0; i < {Math.Max(1, _pkgLocks.Count)}; i++) fire_mutex_init(&fire_pkgM[i]); }}");
+                sb.AppendLine("#endif");
+                // (the first `fire`: what the globals and static fields hold is shared with the threads from then on - fire_rt.h ensureDomain, without the GIL)
+                sb.AppendLine("#ifdef FIRE_STR_CROSS");
+                sb.AppendLine("static void fire_shareGlobals(void) {");
+                foreach (var gl in _globals.OrderBy(x => x)) sb.AppendLine($"    refShare(G{gl});");
+                foreach (var (_, index) in _staticFields.OrderBy(kv => kv.Value)) sb.AppendLine($"    refShare(SF{index});");
+                sb.AppendLine("}");
+                sb.AppendLine("#endif");
+            }
 
             sb.Append(ModuleTables());
             foreach (var (from, to) in _unitFactorCaches) sb.AppendLine($"static double {Px}kUF_{from}_{to} = 0;   // the factor between unit {from} and unit {to}, looked up once");
@@ -2023,6 +2048,8 @@ namespace fire.Native
                 if (!_errorClasses.Contains("ArgumentException")) _errorClasses.Add("ArgumentException");
                 if (!_errorClasses.Contains("OverflowException")) _errorClasses.Add("OverflowException");   // (adaptUnit)
                 if (!_errorClasses.Contains("MissingMemberException")) _errorClasses.Add("MissingMemberException");   // (missingMethod, missingField)
+                // (a wait of a task that is cancelled: fire_throwCancelled)
+                if (_usesThreads) foreach (var cancelled in new[] { "CancelledException", "TimeoutException" }) if (!_errorClasses.Contains(cancelled)) _errorClasses.Add(cancelled);
                 // (a program that loads plugins: `fireError("X", ...)` of a plugin's code may name any exception class of the libraries)
                 if (_openWorld)
                     foreach (var rc in _program.Program.Classes.Values.Where(c => ModuleOf(c) != null && ClassIs(c, "Exception")).OrderBy(c => c.Name, StringComparer.Ordinal))
@@ -2203,9 +2230,15 @@ namespace fire.Native
             if (_usesActors)
             {
                 sb.AppendLine("    if (self.kind == K_Class && FIRE_LIKELY(leafAlive(self)) && (asObj(self)->h.flags & 8)) {");
-                sb.AppendLine($"        {CArray("Value", "av", Enumerable.Range(0, argc).Select(i => $"a{i}").DefaultIfEmpty("Undef()").ToList())}");
-                sb.AppendLine($"        actorSend(self, {msg}, av, {argc});");
-                sb.AppendLine("        return Undef();");
+                // `await a.M()` (g_awaitReplyTo, OpCode.AwaitReply): a message with a way back - at the actor's home the method runs at once, like a call
+                sb.AppendLine("        bool aw_ = sameRef(g_awaitReplyTo, self);");
+                sb.AppendLine("        if (aw_) g_awaitReplyTo = Undef();");
+                sb.AppendLine("        if (!aw_ || !actorAtHome(self)) {");
+                sb.AppendLine($"            {CArray("Value", "av", Enumerable.Range(0, argc).Select(i => $"a{i}").DefaultIfEmpty("Undef()").ToList())}");
+                sb.AppendLine($"            if (aw_) return actorAwait(self, {msg}, av, {argc});");
+                sb.AppendLine($"            actorSend(self, {msg}, av, {argc});");
+                sb.AppendLine("            return Undef();");
+                sb.AppendLine("        }");
                 sb.AppendLine("    }");
             }
             if (_usesThreads)
@@ -2548,7 +2581,7 @@ namespace fire.Native
             string notObject = $"    if (FIRE_UNLIKELY(v.kind != K_Class)) return missingField(v, {CString(name)});\n";
             return $"static inline Value gf_{m}(Value v) {{\n{lengthCode}{notObject}    if (FIRE_UNLIKELY(!leafAlive(v))) return destroyedError(v);\n    Obj* o = asObj(v);\n{valueIndex}\n    return {(narrow ? "nvGet(&objFields(o)[idx >> 1], (int)(idx & 1u))" : "objFields(o)[idx]")};\n}}\n"
                  + (_usesThreads ? $"static inline void sfb_{m}(Value v, Value x);\nstatic inline void sf_{m}(Value v, Value x) {{ bool ss_ = sectionScopeEnterV(v); sfb_{m}(v, x); sectionScopeExit(ss_); }}\n" : "")   // (a change of an object of the shared domain is one section)
-                 + $"static inline void {(_usesThreads ? "sfb_" : "sf_")}{m}(Value v, Value x) {{\n    if (FIRE_UNLIKELY(v.kind != K_Class)) {{ notObjectAssign(v); return; }}\n    if (FIRE_UNLIKELY(!leafAlive(v))) {{ destroyedError(v); return; }}\n    Obj* o = asObj(v);\n{voidIndex}\n{unitCode}" + (narrow ? "    nvSet(&objFields(o)[idx >> 1], (int)(idx & 1u), x);\n}\n" : "    Value old = objFields(o)[idx];\n    objFields(o)[idx] = x;\n    retain(x);\n    release(old);\n}\n")
+                 + $"static inline void {(_usesThreads ? "sfb_" : "sf_")}{m}(Value v, Value x) {{\n    if (FIRE_UNLIKELY(v.kind != K_Class)) {{ notObjectAssign(v); return; }}\n    if (FIRE_UNLIKELY(!leafAlive(v))) {{ destroyedError(v); return; }}\n    Obj* o = asObj(v);\n{voidIndex}\n{unitCode}" + (narrow ? "    nvSet(&objFields(o)[idx >> 1], (int)(idx & 1u), x);\n}\n" : "    Value old = objFields(o)[idx];\n    objFields(o)[idx] = x;\n    FIRE_DOM_STORE(&o->h, x);\n    retain(x);\n    release(old);\n}\n")
                  + (!_fieldAddressTaken.Contains(name) ? "" : $"static inline Value fp_{m}(Value v) {{\n    if (FIRE_UNLIKELY(!leafAlive(v))) return destroyedError(v);\n    Obj* o = asObj(v);\n{valueIndex}\n    return PtrV(&objFields(o)[idx]);\n}}\n");
         }
 
@@ -2657,7 +2690,7 @@ namespace fire.Native
                     var (armSlot, armHalf) = FieldPlace(cls.Rc, index);
                     if (RawRef(cls.Rc, index, "o") is { } rawArm) { setArms.Add((label, $"{{ {fieldGuardSet}{unit}{rawArm} = {RawFromValue(RawTypeAt(cls.Rc, index), "x")}; return; }}")); ptrArms.Add((label, FieldPtrExpr(cls.Rc, index, "NULL", "o")!)); continue; }
                     setArms.Add((label, armHalf >= 0 ? $"{{ {fieldGuardSet}{unit}nvSet(&objFields(o)[{armSlot}], {armHalf}, x); return; }}"
-                        : $"{{ {fieldGuardSet}{unit}Value old = objFields(o)[{armSlot}]; objFields(o)[{armSlot}] = x; retain(x); release(old); return; }}"));
+                        : $"{{ {fieldGuardSet}{unit}Value old = objFields(o)[{armSlot}]; objFields(o)[{armSlot}] = x; FIRE_DOM_STORE(&o->h, x); retain(x); release(old); return; }}"));
                     // (a field declared `defined`: a K_PtrField, writes through it are checked like an assignment)
                     ptrArms.Add((label, FieldPtrExpr(cls.Rc, index, $"(void*)&objFields(o)[{armSlot}]", "o") ?? $"return PtrV(&objFields(o)[{armSlot}]);"));
                     continue;
@@ -3313,7 +3346,7 @@ namespace fire.Native
                 if (region.Catches.Count > 0)
                     for (int k = region.DepthBase; k < region.Out.MaxDepth; k++) Var("Value", $"c{region.Template}_{k}", null);
             }
-            if (f.Kind == FuncKind.Main && _usesThreads) post.AppendLine("    gilAcquire();\n    g_domainRoot = &OG;");
+            if (f.Kind == FuncKind.Main && _usesThreads) post.AppendLine("    gilAcquire();\n    g_domainRoot = &OG;" + (Modular ? "" : "\n#ifdef FIRE_STR_CROSS\n    g_domShareGlobals = fire_shareGlobals;\n#endif\n#ifdef FIRE_NO_GIL\n    fire_pkgLocksInit();\n#endif"));
             if (f.IsTop && (_usesGlobalOwn || f.Kind == FuncKind.FireBody)) post.AppendLine("    g_globalOwn = &OG;");
             if (f.Kind == FuncKind.FireBody)
             {
@@ -3767,6 +3800,7 @@ namespace fire.Native
         {
             if (ins.Op != OpCode.CallNative || ins.A[0] >= _natives.Count || !_packageNatives.TryGetValue(_natives[ins.A[0]], out var pn) || pn.Argc != ins.A[1]) return false;
             if (!NativeCTypes.IsTyped(pn.Fn, pn.IsC) || !NativeIsHere(_nativeImportOf.GetValueOrDefault(_natives[ins.A[0]]) ?? "")) return false;
+            if (PkgLock(_natives[ins.A[0]]) >= 0) return false;   // (its call is a statement between the package's lock)
             for (int i = 0; i < pn.Argc; i++) if (NativeCTypes.ParamCType(pn.Fn, i) == null) return false;
             return true;
         }
@@ -4318,7 +4352,9 @@ namespace fire.Native
                 bool varRef = VarRef(key);
                 string sec = SectionFor(variable);
                 string secEnd = SectionEnd(variable);
-                if (valueRef) E($"{{ {sec}Value n = {stored}; Value o = {variable}; {variable} = n; retain(n); release(o); {secEnd}}}");
+                // (a string or lambda that goes into a global or static field: shared with the fire threads from now on - FIRE_DOM_SHARE, without the GIL)
+                string share = sec.Length > 0 ? "FIRE_DOM_SHARE(n); " : "";
+                if (valueRef) E($"{{ {sec}Value n = {stored}; Value o = {variable}; {variable} = n; {share}retain(n); release(o); {secEnd}}}");
                 else if (varRef) E($"{{ {sec}Value o = {variable}; {variable} = {stored}; release(o); {secEnd}}}");
                 else E(sec.Length > 0 ? $"{{ {sec}{variable} = {stored}; {secEnd}}}" : $"{variable} = {stored};");
             }
@@ -4430,7 +4466,8 @@ namespace fire.Native
                 case OpCode.LoadGlobal:
                 {
                     string gv = GlobalVar(ins.A[0], locals);
-                    E($"{S(d)} = {gv};"); SetR(d, VarRef(VarKey(f, gv))); SetT(d, LoadType(gv)); _kindsKept = true; d++; return Next();
+                    // (a fire thread reads a global of the main program under the read side of the globals' lock - fire_rt.h DomLock, without the GIL)
+                    E($"{(_usesThreads && f.Kind == FuncKind.FireBody && gv[0] == 'G' ? "FIRE_DOM_READ(); " : "")}{S(d)} = {gv};"); SetR(d, VarRef(VarKey(f, gv))); SetT(d, LoadType(gv)); _kindsKept = true; d++; return Next();
                 }
                 case OpCode.StoreGlobal:
                 case OpCode.StoreGlobalPop:
@@ -4909,6 +4946,35 @@ namespace fire.Native
                         Check();
                         d = first + 1; SetR(first, true); return Next();
                     }
+                    if (native == LambdaHandover.NativeName && argc == 1)
+                    {
+                        // `handover x` in a lambda (fire_rt.h fire_lambdaHandover: the handover of the threads)
+                        UseThreads();
+                        int first = d - 1;
+                        string moved = SR(first);
+                        E($"{T(first)} = fire_lambdaHandover({moved});");
+                        Check();
+                        d = first + 1; SetR(first, false); return Next();
+                    }
+                    if (Array.IndexOf(CancelMethods.Names, native) >= 0)
+                    {
+                        // cancellation (fire_rt.h: fire_cancel_new, ...): the nodes of the runtime behind the prelude's CancellationSource / CancellationToken
+                        UseThreads();
+                        int first = d - argc;
+                        string cancelArgs = string.Join(", ", Enumerable.Range(first, argc).Select(SR));   // (read before the result slot is written: it may be an alias)
+                        E($"{T(first)} = fire_{native.Substring(2)}({cancelArgs});");
+                        Check();
+                        d = first + 1; SetR(first, false); return Next();
+                    }
+                    if (native == AwaitMethods.NativeName && argc == 3)
+                    {
+                        // `await [ ... ]` (fire_rt.h awaitRun: the lambdas of the calls side by side, as tasks - where the target has threads)
+                        if (_target.Native.SupportsThreads) UseThreads();
+                        int first = d - 3;
+                        E($"{S(first)} = awaitRun({S(first)}, {S(first + 1)}, {S(first + 2)}, &{OwnerList()});");
+                        Check();
+                        d = first + 1; SetR(first, false); return Next();
+                    }
                     if (native == CharMethods.NativeName && argc == 2)
                     {
                         int first = d - 2;
@@ -4953,6 +5019,9 @@ namespace fire.Native
                         UseWindows(); _nativeImportsUsed.Add(NativeImports.Windows);
                         string name = native.Substring(6);
                         int first = d - argc;
+                        // a callback of a window runs as a task of the main program's group where there are tasks (fire_groupCall: when it waits, the window goes
+                        // on - docs/ROADMAP_TASKS.md step 5): the program has the scheduler then
+                        if (name == "WinRegisterEvent" && _target.Native.SupportsThreads && _target.Native.Platform is "posix" or "windows") UseThreads();
                         if (name == "WinMgrStart")
                         {
                             // the thread of a window manager runs the program's cycles at its safe points: fire threads (the GIL, host services); a platform
@@ -4994,10 +5063,13 @@ namespace fire.Native
                         if (packageNative.Host) NeedTimeObj();        // a function the VM runs itself waits and takes times: a TimeSpan is read from its `ticks`
                         // (a package in C: its function is part of this file; in C++: through the thunk into fire_natives.cpp)
                         string typedRet = typed ? NativeCTypes.ReturnCType(packageNative.Fn) ?? "" : "";
+                        // (the lock of the package around the call, in a program with fire threads - nothing with the GIL)
+                        int pkgLock = PkgLock(native);
+                        string pkgEnter = pkgLock >= 0 ? $"{{ FIRE_PKG_ENTER(fire_pkgM[{pkgLock}]) " : "", pkgLeave = pkgLock >= 0 ? $" FIRE_PKG_LEAVE(fire_pkgM[{pkgLock}]) }}" : "";
                         // (an int[64] result in a program with 32-bit ints, or no scalars here: the Value of the C number)
-                        if (typedRet != "" && (!SlotScalars() || (typedRet == "int64_t" && _program.IntWidth == 32)))
+                        if (typedRet != "" && (!SlotScalars() || (typedRet == "int64_t" && _program.IntWidth == 32) || pkgLock >= 0))
                         {
-                            E($"{T(first)} = {NativeCTypes.ToValue(typedRet, $"{packageNative.Function}({args})")};");
+                            E($"{pkgEnter}{T(first)} = {NativeCTypes.ToValue(typedRet, $"{packageNative.Function}({args})")};{pkgLeave}");
                             typedRet = "";
                             Check();
                             if (packageNative.Host && _usesThreads && sb != null) E($"if (FIRE_UNLIKELY(pollSignals())) goto {ExitLabel(f, st, locals)};");
@@ -5016,7 +5088,7 @@ namespace fire.Native
                             d = first + 1; SetR(first, false); _kindsKept = true;
                             return Next();
                         }
-                        E($"{T(first)} = {(packageNative.IsC ? cFunction : NativeThunk(packageNative.Function, argc, packageNative.NeedsList))}({args});");
+                        E($"{pkgEnter}{T(first)} = {(packageNative.IsC ? cFunction : NativeThunk(packageNative.Function, argc, packageNative.NeedsList))}({args});{pkgLeave}");
                         Check();
                         // a function of the host (`Sleep`) ends at terminate: leave now, not at the next loop
                         if (packageNative.Host && _usesThreads && sb != null) E($"if (FIRE_UNLIKELY(pollSignals())) goto {ExitLabel(f, st, locals)};");
@@ -5699,7 +5771,7 @@ namespace fire.Native
                     if (FindClass(Str(ins.A[0])).FindFieldAccess(Str(ins.A[1])) is { } getAccess)
                         AccessCheck(getAccess.DeclaringClass, getAccess.Access, $"Static field '{Str(ins.A[1])}' of '{getAccess.DeclaringClass.Name}' is {DescribeAccess(getAccess.Access)} and cannot be accessed from here.");
                     string sfVar = StaticFieldVar(Str(ins.A[0]), Str(ins.A[1]));
-                    E($"{S(d)} = {sfVar};");
+                    E($"{(_usesThreads ? "FIRE_DOM_READ(); " : "")}{S(d)} = {sfVar};");   // (any code may run on a fire thread: see LoadGlobal)
                     SetR(d, VarRef(sfVar));
                     d++; return Next();
                 }
@@ -5780,6 +5852,16 @@ namespace fire.Native
                     Need(argc + 1);
                     int slot = d - argc - 1;
                     string owner = OwnerList();
+                    {
+                        // `f(copy x)` / `f(flat x)` on a lambda: the copy (the prefix CopyArgs in front of the call) - it belongs to the caller's scope
+                        long lamMask = ArgMask();
+                        for (int i = 0; i < Math.Min(argc, 16); i++)
+                            if ((lamMask >> (4 * i) & 15) is 1 or 2)
+                            {
+                                E($"{S(slot + 1 + i)} = copyValue({S(slot + 1 + i)}, {((lamMask >> (4 * i) & 15) == 2 ? "true" : "false")}, &{owner});");
+                                Check();
+                            }
+                    }
                     var argItems = argc == 0 ? new List<string> { "Undef()" } : Enumerable.Range(slot + 1, argc).Select(S).ToList();
                     E($"{{ {CArray("Value", "args", argItems)}{S(slot)} = {(DebugBuild ? "callLamV" : "callLam")}({S(slot)}, {argc}, args, &{owner}); }}");
                     Check();
@@ -5814,6 +5896,39 @@ namespace fire.Native
                 case OpCode.OverloadHint:
                     // (read by the call it stands in front of: OverloadHintBefore)
                     return Next();
+                case OpCode.CancelPush:
+                {
+                    // `until x` (fire_rt.h fire_untilPush): the node the task follows - for `await` its frame, for the `fire` that follows its token
+                    UseThreads();
+                    int n = ins.A[0] & 0x7F;
+                    Need(n);
+                    int first = d - n;
+                    E($"{{ {CArray("Value", "lv", Enumerable.Range(first, n).Select(SR).DefaultIfEmpty("Undef()").ToList())}fire_untilPush(lv, {n}, {((ins.A[0] & 0x80) != 0 ? "true" : "false")}); }}");
+                    d = first;
+                    return Next();
+                }
+                case OpCode.CancelPop:
+                    E("fire_untilPop();");
+                    return Next();
+                case OpCode.Dedicate:
+                    // `await dedicated ...`: the running task goes to a system thread of its own (only a task can: a program without threads has none)
+                    if (_usesThreads) E("fire_dedicateEnter();");
+                    return Next();
+                case OpCode.Undedicate:
+                    if (_usesThreads) E("fire_dedicateLeave();");
+                    return Next();
+                case OpCode.AwaitReply:
+                {
+                    // `await x.M()`: when x is an actor, the message of the call that follows gets a way back (its dispatcher: actorAwait)
+                    if (!_usesActors || !f.IndexOf.TryGetValue(ins.Addr, out int awaitAt)) return Next();
+                    int k = awaitAt + 1;
+                    while (k < f.Decoded.Count && f.Decoded[k].Op is OpCode.CopyArgs or OpCode.ArgNames or OpCode.OverloadHint or OpCode.SetTypeArgs) k++;
+                    if (k >= f.Decoded.Count || f.Decoded[k].Op != OpCode.CallMethod) return Next();
+                    int receiver = d - f.Decoded[k].A[1] - 1;
+                    if (receiver < 0 || ObjSlot(receiver) && !InstancesOf(ObjClass(Ty(receiver))).Any(c => c.Rc.IsActor)) return Next();   // (no actor can be there)
+                    E($"g_awaitReplyTo = {S(receiver)};");
+                    return Next();
+                }
                 case OpCode.ArgNames:
                     // (read by the call it stands in front of: NamesBefore)
                     return Next();
@@ -6416,7 +6531,8 @@ namespace fire.Native
                 {
                     UseThreads();
                     int takingCount = ins.A[2];
-                    bool hasWith = ins.A[3] != 0;
+                    bool hasWith = (ins.A[3] & 1) != 0;
+                    bool dedicatedThread = (ins.A[3] & 2) != 0;   // `fire dedicated`: a system thread of its own, not a task
                     int handoverCount = ins.A[4];   // the last ones of the taking values: `handover` (moved, not copied)
                     int copyCount = takingCount - handoverCount;
                     int argc = takingCount + (hasWith ? 1 : 0);
@@ -6440,7 +6556,7 @@ namespace fire.Native
                     // (all `handover` values together - one may reach another; the sender's other references die, see fire_rt.h handOverAll)
                     if (handoverCount > 0) sbf.Append($"handOverAll(tv + {copyCount}, av + {copyCount}, {handoverCount}, travel); ");
                     if (hasWith) sbf.Append($"av[{takingCount}] = {S(first + takingCount)}; ");
-                    sbf.Append($"ensureDomain(); fireThread({body.Name}, av, {argc}, travel); }}");
+                    sbf.Append($"ensureDomain(); {(dedicatedThread ? "fireThreadDedicated" : "fireThread")}({body.Name}, av, {argc}, travel); }}");
                     if (takingCount > 0) sbf.Append(" }");
                     E(sbf.ToString());
                     if (takingCount > 0) Check();
@@ -6502,10 +6618,23 @@ namespace fire.Native
                 case OpCode.PostGlobal:
                 {
                     UseThreads();
-                    int argc = ins.A[0];
+                    int argc = ins.A[0] & 0x3F;
+                    bool onTarget = (ins.A[0] & 0x80) != 0;   // `fire on x` / `await on x`: the first argument is the object itself
+                    bool awaitJob = (ins.A[0] & 0x40) != 0;   // `await on x`: the result comes back
                     Need(argc + 1);
                     int first = d - argc - 1;
-                    E($"{{ {CArray("Value", "av", Enumerable.Range(first, argc).Select(S).DefaultIfEmpty("Undef()").ToList())}postJob({S(d - 1)}, av, {argc}); }}");
+                    string av = CArray("Value", "av", Enumerable.Range(first, argc).Select(SR).DefaultIfEmpty("Undef()").ToList());
+                    if (awaitJob)
+                    {
+                        string onLam = SR(d - 1);
+                        E($"{{ {av}{T(first)} = adoptV(awaitOnJob({onLam}, av, {argc}), &{OwnerList()}); }}");
+                        Check();
+                        d = first + 1;
+                        SetR(first, false);
+                        SetT(first, TypeUnknown);
+                        return Next();
+                    }
+                    E($"{{ {av}postJobEx({S(d - 1)}, av, {argc}, {(onTarget ? "true" : "false")}, NULL); }}");
                     if (argc > 0) Check();   // (`[NoCopy]`: an argument that reaches one is the ArgumentException, nothing is queued)
                     d = first;
                     return Next();

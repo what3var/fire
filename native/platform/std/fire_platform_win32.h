@@ -59,6 +59,9 @@ FIRE_NORETURN static inline void fire_plat_exit(int code) {
 #endif
 }
 
+#ifdef FIRE_THREADS
+#define FIRE_PLAT_PARALLEL 1   /* the threads run on all cores at once (fire_rt.h: then without the GIL) */
+#endif
 #if defined(FIRE_THREADS) || defined(FIRE_LIBRARY)   /* (a library for the VM: a package with a thread of its own) */
 typedef struct { SRWLOCK l; } fire_mutex;
 typedef struct { CONDITION_VARIABLE c; } fire_cond;
@@ -91,6 +94,13 @@ static inline fire_thread* fire_thread_start(fire_thread_fn fn, void* arg, uint3
     return t;
 }
 static inline void fire_thread_join(fire_thread* t) { WaitForSingleObject(t->h, INFINITE); CloseHandle(t->h); free(t); }
+static inline void fire_thread_detach(fire_thread* t) { CloseHandle(t->h); free(t); }
+/* the cores of the machine (the workers of the scheduler of tasks) */
+static inline int fire_plat_cores(void) { SYSTEM_INFO si; GetSystemInfo(&si); return si.dwNumberOfProcessors > 0 ? (int)si.dwNumberOfProcessors : 1; }
+#ifdef FIRE_THREADS
+#include "fire_coro.h"   /* the coroutines of the tasks (fire_rt.h: FIRE_TASKS) */
+#define FIRE_PLAT_CORO 1
+#endif
 #endif
 
 /* ---- the process (Environment): the arguments, the path of the program and the environment variables - in UTF-8, through the wide functions ---- */

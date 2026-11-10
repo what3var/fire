@@ -18,6 +18,10 @@ print("main goes on")
 - Inside a class, `fire Method(args)` runs a method of `this` in a new thread. Its arguments are copied like `taking` - except a direct `new`
   (`fire Work(new Job())`), which is handed over to the thread without a copy.
 - The program waits at its end for all running threads.
+- A fire thread is a light task on a pool of system threads (one per core) - in a native build and in the VM; thousands of threads that wait cost no
+  system thread each. `fire dedicated { ... }` (also
+  `fire dedicated Work(x)`, with the same clauses) gives it a system thread of its own - for work that waits in natives for a long time. In the VM
+  every fire thread is a system thread anyway. `dedicated` is a word only right after `fire` or `await`.
 - Which thread prints first is decided by the scheduler; the examples use `Sleep` from `#import "time"` to wait.
 
 ## Copies: `taking` and `sync`
@@ -56,6 +60,43 @@ print("main: " + counter.value)             // main: 15
   `fire global` would copy for its job (it is not queued) and for `sync`, when it would copy one back into the original (nothing is written back);
   `sync flat` keeping an object that is on both sides is fine. The table in [Ownership](13-ownership.md#copying-flat-and-copy) lists every form.
 - `sync` returning `undefined` is a good moment for the thread to `leave`.
+
+## Taking where it is used: `taking x`, `handover x` in the block
+
+Instead of listing what a thread takes in front of the block, the block can say it where it uses the variable. The compiler collects these words before
+the thread starts - the thread gets a copy of each `taking` variable (as with `fire taking x`) and takes over each `handover` variable (as with
+`fire handover x`, the caller's variable is `undefined` afterwards):
+
+```fire
+#import "time"
+class Item { int v
+    construct(int v) { this.v = v } }
+class Work {
+    static undefined Run() {
+        var list = [new Item(1), new Item(2)]
+        var node = new Item(7)
+        fire {
+            (taking list)[0].v = 100                     // the thread's copy
+            print(list[0].v + " " + (handover node).v)   // 100 7 - `list` is the copy everywhere in the block
+        }
+        Sleep(20ms)
+        print(list[0].v + " " + node)                    // 1 undefined
+    }
+}
+Work.Run()
+```
+
+- One word per variable is enough: every other use of it in the block means the same copy (or the moved object). `taking` and `handover` for the same
+  variable in one block is an error.
+- A local of the code around the block that the block uses **without** a word is copied too. When the copy costs memory - an object, an array, a string,
+  a value of unknown type - the type checker says so: `TC023`, a warning in lax mode, an error in strict mode (a number is copied silently). The globals
+  of the main program are no locals: the thread reads them directly (see [Global variables](#global-variables)).
+- The same words work in a **lambda**: `() => (taking item).v` captures a copy of `item`, made when the lambda is made; `() => (handover item).v` moves
+  the instance into the lambda like a handover to a thread - `item` is `undefined` afterwards and every other reference from before is dead (a
+  `DestroyedException`). Without a word a lambda captures the variable's value as before: an object is shared, nothing is copied - no warning (a lambda
+  never goes to another thread).
+- A lambda inside a `fire` block captures the block's own variables like locals (`fire { var n = 41; var f = () => n + 1 }`) - so `await [ ... ]`
+  works in a `fire` block too.
 
 ## Handing over: `handover`
 
@@ -137,6 +178,68 @@ print(sync globals)                                  // 0: nothing left
 - Inside a destructor, a running job and `catch threads` the queue waits; the next job never starts inside another one.
 - The project setting `globalJobs` and `--global-jobs` on the command line go before the directive ([Projects and solutions](../tools/projects.md)).
 
+## Waiting for a result: `await`
+
+`fire` starts something and goes on; `await` waits for it and gets its result:
+
+```fire
+#import "time"
+class Item { int v = 0
+    construct(int v) { this.v = v } }
+class Stock {
+    static int Count(Item list[]) { Sleep(10ms); return list.Length }
+}
+var list = [new Item(1), new Item(2)]
+var n = await Stock.Count(list)
+var sum = await taking list { var s = 0; foreach (var i in list) { s = s + i.v }; return s }
+print(n + " " + sum)
+```
+
+- `await Call(args)` waits until the call is done and gives its return value. The caller is stopped meanwhile, so nobody else can reach its objects:
+  the call gets them **lent**, without a copy. A copy only on request: `await Count(list) taking list` (or `handover list`: moved).
+- `await taking x { ... return v }` runs a block that sees only what it takes (copies) and the globals, like the body of `fire`.
+- An exception in the awaited code goes on at the `await`, with its type: `try { await Load(name) } catch (IoException e) { ... }`.
+- While the awaited code waits (`Sleep`, the net, a section), the caller's task gives its worker to other tasks - on all cores, without a thread of its
+  own per call. `await` is a word only in front of what it awaits; elsewhere `await` is an ordinary name.
+- `await [f(a), g(b), taking x { return ... }]` runs several calls at once and waits for all; the result is an array of their results in the order of
+  the brackets. When some fail, all are waited for and the first exception in that order is thrown. Each element is what a single `await` takes, clauses
+  included (`await [Load(a), Merge(x, y) taking y]`). The calls get the caller's objects lent; in a native build they run side by side on all cores when
+  no two of them reach the same object (otherwise one after the other); the VM runs them one after the other.
+- `await actor.Method()` waits for the result of an actor's method (see [Actors](#actors)).
+- `fire on window { ... }` runs a block in the main program - where its windows live - with `window` as the real object (and copies of what it takes with
+  `taking`); the caller goes on. `await on window { return window.Title }` waits for the block's result. From a thread the object must be one of the main
+  program (a global variable) or an actor. In the main program itself `await on` runs the block at once and `fire on` at its next safe point.
+- An event handler of a window is a task of the main program's group (natively and in the VM): when it waits (`Sleep`, `await`), the window goes on, and the
+  handler continues later on the same thread. Only one handler runs at a time, and only where it waits does another one get its turn.
+- While the main program waits (`Sleep`, `await`, the end of the program), its windows keep answering the system: they repaint and stay responsive;
+  their events wait for the next `Pump`/`Tick` (natively and in the VM).
+- `await dedicated Work(x)` (also `await dedicated taking x { ... }`, and as an element of `await [ ... ]`) is `await` for work that blocks in natives
+  for a long time: in a native build the waiting task runs the call on a system thread of its own and goes back to the pool after it - the call still
+  has the caller's objects lent, and an exception goes on at the `await` as usual. Elsewhere it is the same as `await`.
+
+### Cancellation: `until`
+
+```fire
+#import "time"
+class Work { static int Slow() { Sleep(1s); return 1 } }
+try { var r = await Work.Slow() until 50ms } catch (TimeoutException e) { print(e.message) }   // The time limit ran out.
+var source = new CancellationSource()
+fire until source.Token {
+    try { Sleep(10s) } catch (CancelledException e) { print("cancelled") }
+}
+Sleep(20ms)
+source.Cancel()                                  // the thread's Sleep ends at once: cancelled
+```
+
+- `until` limits what it stands after: a token (`source.Token`), a source, or a time value (`5s` - then the exception is a `TimeoutException`, a kind of
+  `CancelledException`). Several at once: `until source.Token, 10s`. It works with `await Call()`, `await [ ... ]` (all calls; one element:
+  `await [Load(a) until 2s, Load(b)]`), `await until x { ... }`, `fire until x { ... }` and `fire Method(args) until x`.
+- An awaited call follows its caller's token as well: cancelling the caller cancels it. A `fire` thread does not - only what its `until` names.
+- A cancelled task notices it at its next wait - `Sleep`, `await actor.M()`, `await on`, the waits of the net package - which throws the exception, or with
+  `CancellationToken.Current().ThrowIfCancelled()`. Code that never waits is not stopped.
+- `new CancellationSource()` made inside a task follows the task's token; `CancellationSource.Detached()` follows nobody. `CancelAfter(5s)` cancels later.
+  Sources and tokens are never copied (`[NoCopy]`): a thread gets one with `until`.
+
 ## Actors
 
 An `actor` is declared like a class. A method call on an actor does not run the method: it puts a **message** into the actor's mailbox. The thread
@@ -164,7 +267,10 @@ print(try process logger)                   // False - the mailbox is empty
 
 - `process a` waits for the next message and runs it; `try process a` runs one if there is one and returns `True`/`False`.
 - References to actors may be passed to threads with `fire with a` - the one controlled exception to "no shared memory".
-- A thread that needs an answer sends a message back to an actor of its caller; threads have no return values.
+- A thread that needs an answer awaits it: `var n = await counter.Get()` posts the message and waits until the actor's home has run it at its
+  `process`; the result comes back (an exception that nothing in the method caught is thrown at the `await`). What the method made (`return new Box()`)
+  is handed over; what the actor keeps - a field, a global - comes back as a copy. On the actor's home thread `await a.M()` runs the method at once,
+  like a call (waiting for its own `process` would never end). Threads themselves have no return values.
 - The arguments of a message: a direct `new` (`logger.log(new Entry())`) is handed over to the actor's home thread; another new value (`copy x`, a call
   result) belongs to the message and then to the method that runs it; a variable or a field is passed as a reference and stays with its owner.
 

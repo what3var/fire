@@ -614,10 +614,16 @@ min-Verhältnis `alloc` 1,00, `exceptions` 1,03, `fib` 1,03, `list` 1,01, `metho
   Wert: bei bekanntem Ziel setzt der Aufrufer `ptrRead`, beim virtuellen Aufruf der Dispatcher (`derefArg`).
 
 * **Threads** ([fire – Multithreading-Design](THREADING_DESIGN.md)): ein Programm mit `fire`, `leave`, `terminate`, `sync`, Actors oder `catch threads/terminate` bekommt `FIRE_THREADS` (Binary mit
-  `-pthread` linken; nur auf Hosts, nicht auf Embedded-Zielen). Jeder Fire-Thread ist ein echter `std::thread`; aller fire-Code läuft unter **einer globalen Sperre (GIL)**,
-  einem fairen Ticket-Lock: ein Thread gibt sie nur beim Warten (`sync`, `process`, Sektionen) und an sicheren Punkten ab (Schleifen-Rücksprung, Funktionsanfang, alle 4096 Stationen
-  ein `gilYield`). Dadurch sehen Besitzstrukturen, Handle-Tabelle und Zähler nie zwei Threads zugleich. Zustand eines Ausführungsstrangs (`g_unwind`, `g_handlers`, `g_pending`,
-  Temporärpool, `g_globalOwn`, `g_reflCaller`) ist `thread_local`.
+  `-pthread` linken; nur auf Hosts, nicht auf Embedded-Zielen). Jeder Fire-Thread ist ein echter `std::thread`. **Auf posix und Windows laufen die Threads auf allen Kernen
+  zugleich** (`FIRE_NO_GIL`, der Standard dort; docs/ROADMAP_TASKS.md Schritt 1): jeder Thread besitzt seine Objekte, die Slot-Tabelle besteht aus Segmenten, die sich nie
+  bewegen (freie Slots je Thread), die Tabellen der Threads haben je einen Mutex, Strings werden an der Thread-Grenze kopiert (`strCross`; was in den geteilten Bereich geht,
+  zählt atomar, `R_SHARED`), die Globals schützt eine Lese-/Schreibsperre (`DomLock`: das Hauptprogramm hält die Schreibseite, solange es läuft; ein Thread nimmt die Leseseite
+  bei der ersten Berührung des geteilten Bereichs und gibt sie am nächsten sicheren Punkt zurück; eine Sektion schreibt allein), und die Natives eines Pakets laufen unter einem
+  Lock je Paket (`"threadSafe": true` im Manifest: ohne). **Mit der GIL** - auf den Zielen mit eigenem Scheduler (dos, win16, wasm), FreeRTOS, in Debug-Builds, mit Modulen
+  und mit `FIRE_GIL` - läuft aller fire-Code unter **einer globalen Sperre**, einem fairen Ticket-Lock: ein Thread gibt sie nur beim Warten (`sync`, `process`, Sektionen) und
+  an sicheren Punkten ab (Schleifen-Rücksprung, Funktionsanfang, alle 4096 Stationen ein `gilYield`). Die Abgabepunkte der GIL sind ohne sie die Stellen, an denen das
+  Hauptprogramm und die Pakete ihre Sperren abgeben. Zustand eines Ausführungsstrangs (`g_unwind`, `g_handlers`, `g_pending`, Temporärpool, `g_globalOwn`, `g_reflCaller`)
+  ist `thread_local`. Der Test "ThreadSanitizer: die Thread-Faelle ..." baut alle Thread-Fälle mit `-fsanitize=thread` (`FIRE_TEST_GIL=1`: mit der GIL).
   Der Rumpf eines `fire`-Blocks ist eine eigene Funktion (`FuncKind.FireBody`, wie das Hauptprogramm: eigener globaler Scope `OG`); die Globals des Hauptprogramms (Slots unterhalb
   `globalSlotCount`) sind die geteilten `G{n}`, die Slots dahinter (Erfassungen und Variablen des Blocks) Variablen des Threads `T{n}`. `taking x` kopiert **im Aufrufer**:
   `takeCopy` = `DeepCopier` im Modus `taking` (nur der eigene Besitzbaum, sonst Abbruch "taking rejected"; Lambda/Zeiger im Graphen ebenso; Arrays und Puffer werden mitkopiert).

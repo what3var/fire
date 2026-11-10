@@ -44,6 +44,33 @@
 #endif
 #include FIRE_PLATFORM_HEADER
 
+/* Without the GIL (docs/ROADMAP_TASKS.md step 1): fire code runs on all cores, the shared parts have locks of their own (the slot table, the tables of the
+ * threads, the lock of the globals, a lock per package; strings are copied where they cross to another thread). The default where the threads of the
+ * platform are real ones (FIRE_PLAT_PARALLEL: posix, windows) and the compiler has atomics; a scheduler of fire itself (dos, win16, wasm), FreeRTOS
+ * (FIRE_TLS_STRUCT), the modules (FIRE_MODULES, FIRE_DLL) and a debug build (the debugger stops the threads at the GIL) keep it. FIRE_GIL keeps it
+ * anywhere. */
+#if defined(FIRE_THREADS) && defined(FIRE_PLAT_PARALLEL) && !defined(FIRE_GIL) && !defined(FIRE_NO_GIL) && !defined(FIRE_DEBUG) && !defined(FIRE_MODULES) \
+    && !defined(FIRE_DLL) && !defined(FIRE_TLS_STRUCT) && (defined(__GNUC__) || defined(__clang__) || defined(_MSC_VER))
+#define FIRE_NO_GIL 1
+#endif
+#if defined(FIRE_GIL) && defined(FIRE_NO_GIL)
+#undef FIRE_NO_GIL
+#endif
+/* The state of a strand (g_unwind, the temporary pool, the handlers, ... - FIRE_THREAD_VARS) per task, not per thread (docs/ROADMAP_TASKS.md step 2): a task
+ * may go on on another worker after a switch, so its state is a structure of its own and the worker holds only the current one (fire_curTask, one pointer of
+ * thread-local storage - a pointer read before a switch is still the task's after it, unlike the address of a thread-local variable). The default without
+ * the GIL; FIRE_TLS_VARS keeps the thread-local variables. FIRE_TLS_STRUCT (no thread-local storage of the compiler: FreeRTOS, TinyCC, the scheduler of
+ * fire itself) and FIRE_DLL have structures of their own already. */
+#if defined(FIRE_NO_GIL) && !defined(FIRE_TLS_STRUCT) && !defined(FIRE_DLL) && !defined(FIRE_TLS_VARS)
+#define FIRE_TASK_STATE 1
+#endif
+/* Tasks (docs/ROADMAP_TASKS.md step 3): a fire thread is a task - a coroutine with a stack of its own - on a pool of workers (as many as the machine has
+ * cores; more while some wait in a native). Where the platform has coroutines (FIRE_PLAT_CORO: posix, windows) and the state is per task; FIRE_NO_TASKS
+ * keeps one system thread per fire thread. */
+#if defined(FIRE_TASK_STATE) && defined(FIRE_PLAT_CORO) && !defined(FIRE_NO_TASKS)
+#define FIRE_TASKS 1
+#endif
+
 FIRE_CC_RUNTIME_BEGIN
 #define FIRE_FN static inline
 
@@ -318,8 +345,21 @@ extern FIRE_RT_DATA volatile int g_dbgArmed;     /* a debugger is attached */
 #else
 #define FIRE_DEBUG_THREAD_VARS(X)
 #endif
+/* Without the GIL: the free slots of the slot table this thread keeps (see FIRE_SLOT_SEGMENTS). */
+#if defined(FIRE_THREADS) && defined(FIRE_NO_GIL)
+#define FIRE_SLOT_CACHE 64u
+typedef struct SlotCache { uint32_t n; uint32_t slot[FIRE_SLOT_CACHE]; } SlotCache;
+#define FIRE_SLOT_THREAD_VARS(X) X(SlotCache, g_slotCache, FIRE_ZERO_INIT) \
+    X(uint8_t, g_domReader, 0)   /* a fire thread that does not hold the read side of the globals' lock (see DomLock): its next touch of the shared domain takes it */ \
+    X(uint8_t, g_domHeld, 0)     /* ... it holds it (until its next safe point) */ \
+    X(fire_mutex*, g_pkgHeld, NULL)   /* the lock of the package whose native runs on this thread (see FIRE_PKG_ENTER) */ \
+    X(struct ThreadRec*, g_self, NULL)  /* this fire thread as an owner of originals that other threads `sync` into (see ThreadRec) */
+#else
+#define FIRE_SLOT_THREAD_VARS(X)
+#endif
 #define FIRE_THREAD_VARS(X) \
     FIRE_DEBUG_THREAD_VARS(X) \
+    FIRE_SLOT_THREAD_VARS(X) \
     X(UnwindState, g_unwind, FIRE_ZERO_INIT) \
     X(Pool, g_pool, FIRE_ZERO_INIT) \
     X(Handler*, g_handlers, NULL) \
@@ -334,6 +374,14 @@ extern FIRE_RT_DATA volatile int g_dbgArmed;     /* a debugger is attached */
     X(uint8_t, g_leaving, 0)            /* unwinding because of leave/terminate (or an unhandled exception): no more signals */ \
     X(uint8_t, g_threadFailed, 0)       /* the thread ends with an unhandled exception: its global scope stays */ \
     X(OwnList*, g_travel, NULL) \
+    X(int32_t, g_dedicated, 0)          /* `await dedicated`: how deep (fire_dedicateEnter) */ \
+    X(uint8_t, g_dedMoved, 0)           /* ... the task went to a system thread of its own for it */ \
+    X(uint8_t, g_homeOff, 0)            /* a task that ran on the main program's thread went to a thread of its own for a wait in a native (gilRelease) */ \
+    X(Handler*, g_dedHandlers, NULL)    /* ... the handlers when it went: a catch among them takes it back to the pool (fire_dedicateCaught) */ \
+    X(struct CancelNode*, g_token, NULL)     /* the token of this task (`fire until x`); NULL: none */ \
+    X(struct TokFrame*, g_tokTop, NULL)      /* the frames of `await ... until x` (innermost first) */ \
+    X(struct CancelNode*, g_fireToken, NULL) /* `fire ... until x`: the node the next thread follows */ \
+    X(Value, g_awaitReplyTo, FIRE_ZERO_INIT)  /* `await a.M()`: the actor whose next message (the call right after) gets a way back (with its generation: never a later object) */ \
     X(SectionReq*, g_curSection, NULL) \
     X(int32_t, g_secDepth, 0) \
     X(OwnList* const*, g_scopeLists, NULL)   /* a call of an ownership method with a `Takes` mode through the dispatcher: the scopes of the call (see ownMethodT) */ \
@@ -348,7 +396,7 @@ extern FIRE_RT_DATA volatile int g_dbgArmed;     /* a debugger is attached */
     X(BridgeError, g_gfxError, FIRE_ZERO_INIT)     /* the graphics bridge: the message of the last failed image function */ \
     X(AccState, g_acc, FIRE_ZERO_INIT)             /* property accessors: what their `this` took over, the hand-over to a setter */
 
-#if defined(FIRE_THREADS) && (defined(FIRE_TLS_STRUCT) || defined(FIRE_DLL))
+#if defined(FIRE_THREADS) && (defined(FIRE_TLS_STRUCT) || defined(FIRE_DLL) || defined(FIRE_TASK_STATE))
 typedef struct ThreadLocals {
 #define FIRE_X(type, name, init) type name;
     FIRE_THREAD_VARS(FIRE_X)
@@ -367,6 +415,42 @@ static FIRE_TLS ThreadLocals fire_tlsBlock = { FIRE_THREAD_VARS(FIRE_XI) };
 #define FIRE_TLV(name) (fire_tl()->name)
 #endif
 FIRE_RT_FN ThreadLocals* fire_tl(void) FIRE_CONST_FN;
+#elif defined(FIRE_TASK_STATE)
+/* The structure of the running task: the worker's pointer to it - read without a test (a test on every access cost 12 % in a benchmark of four threads,
+ * without it the structure is as fast as thread-local variables). So every strand gets its structure before it runs fire code: the main program in
+ * fire_threadsInit, a fire thread in threadEntry; a thread of a package that calls into the runtime (strings, exceptions, fire code) calls
+ * fire_strandAttach() first and fire_strandDetach() at its end. */
+extern FIRE_TLS ThreadLocals* fire_curTask;
+FIRE_COLD FIRE_FN ThreadLocals* fire_tlNew(void) {
+#define FIRE_XI(type, name, init) init,
+    static const ThreadLocals init = { FIRE_THREAD_VARS(FIRE_XI) };
+#undef FIRE_XI
+    ThreadLocals* t = (ThreadLocals*)malloc(sizeof(ThreadLocals));
+    if (!t) { fputs("fire runtime error: Out of memory.\n", stderr); abort(); }
+    *t = init;
+    fire_curTask = t;
+    return t;
+}
+/* (read through a function that is never inlined: a compiler may keep the address of a thread-local variable across a call - after a switch of tasks that
+ * is the slot of the old worker. The function reads the slot of the worker it runs on; marked const, its result - the task, which stays the same across a
+ * switch - is asked for once per function.) */
+#if defined(__GNUC__) || defined(__clang__)
+__attribute__((noinline, const)) static ThreadLocals* fire_tlGet(void) { return fire_curTask; }
+#elif defined(_MSC_VER)
+__declspec(noinline) static ThreadLocals* fire_tlGet(void) { return fire_curTask; }
+#else
+static ThreadLocals* fire_tlGet(void) { return fire_curTask; }
+#endif
+#define fire_tl() (fire_tlGet())
+#if defined(__GNUC__) || defined(__clang__)
+__attribute__((noinline))
+#endif
+static void fire_strandAttach(void) { if (!fire_curTask) fire_tlNew(); }
+#if defined(__GNUC__) || defined(__clang__)
+__attribute__((noinline))
+#endif
+static void fire_strandDetach(void) { free(fire_curTask); fire_curTask = NULL; }   /* (never inlined either: called after the task's switches) */
+#define FIRE_TLV(name) (fire_tl()->name)
 #else
 /* The structure of the calling task (made when the task first asks). */
 FIRE_FN ThreadLocals* fire_tl(void) {
@@ -398,6 +482,14 @@ FIRE_FN ThreadLocals* fire_tl(void) {
 #define g_leaving FIRE_TLV(g_leaving)
 #define g_threadFailed FIRE_TLV(g_threadFailed)
 #define g_travel FIRE_TLV(g_travel)
+#define g_awaitReplyTo FIRE_TLV(g_awaitReplyTo)
+#define g_token FIRE_TLV(g_token)
+#define g_tokTop FIRE_TLV(g_tokTop)
+#define g_fireToken FIRE_TLV(g_fireToken)
+#define g_dedicated FIRE_TLV(g_dedicated)
+#define g_dedMoved FIRE_TLV(g_dedMoved)
+#define g_dedHandlers FIRE_TLV(g_dedHandlers)
+#define g_homeOff FIRE_TLV(g_homeOff)
 #define g_curSection FIRE_TLV(g_curSection)
 #define g_secDepth FIRE_TLV(g_secDepth)
 #define g_argIn FIRE_TLV(g_argIn)
@@ -411,6 +503,13 @@ FIRE_FN ThreadLocals* fire_tl(void) {
 #define g_deviceError FIRE_TLV(g_deviceError)
 #define g_gfxError FIRE_TLV(g_gfxError)
 #define g_acc FIRE_TLV(g_acc)
+#if defined(FIRE_THREADS) && defined(FIRE_NO_GIL)
+#define g_slotCache FIRE_TLV(g_slotCache)
+#define g_domReader FIRE_TLV(g_domReader)
+#define g_domHeld FIRE_TLV(g_domHeld)
+#define g_pkgHeld FIRE_TLV(g_pkgHeld)
+#define g_self FIRE_TLV(g_self)
+#endif
 #ifdef FIRE_DEBUG
 #define g_dbgTop FIRE_TLV(g_dbgTop)
 #define g_dbgNest FIRE_TLV(g_dbgNest)
@@ -420,6 +519,11 @@ FIRE_FN ThreadLocals* fire_tl(void) {
 #define FIRE_X(type, name, init) extern FIRE_RT_DATA FIRE_TLS type FIRE_CC_NEAR_DATA name;   /* (FIRE_CC_NEAR_DATA: the 16-bit real mode keeps them in the data segment of the program - a test of g_unwind is one instruction) */
 FIRE_THREAD_VARS(FIRE_X)
 #undef FIRE_X
+#endif
+
+#if !(defined(FIRE_THREADS) && defined(FIRE_TASK_STATE))
+#define fire_strandAttach() ((void)0)   /* (a thread of a package that calls into the runtime: nothing to do here - see FIRE_TASK_STATE) */
+#define fire_strandDetach() ((void)0)
 #endif
 
 /* A run-time error that the language reports as an exception (see the exceptions section): the exception is thrown, or - when the program has no exceptions
@@ -1233,8 +1337,17 @@ enum { R_Str, R_Lam, R_Bytes };
 
 struct Ref {
     uint32_t rc;     /* number of holders; IMMORTAL for constants */
-    uint8_t type;    /* R_Str / R_Lam / R_Bytes (the temporary copy of bytesArg) */
+    uint8_t type;    /* R_Str / R_Lam / R_Bytes (the temporary copy of bytesArg); R_SHARED on top: counted atomically */
 };
+/* Strings without the GIL (docs/ROADMAP_TASKS.md step 1b): a string belongs to one thread, its counts are plain. Where it would cross to another thread
+ * (`taking`, `sync`, `handover`, the arguments of `fire global` and of actor messages, the value of `terminate`) it is copied (strCross). Only the global
+ * scope is shared: a string a thread reads there gets R_SHARED (while the main program is held by the lock of the globals) and is counted atomically from
+ * then on. With the GIL nothing of this is needed: FIRE_STR_CROSS is off. */
+#if defined(FIRE_THREADS) && defined(FIRE_NO_GIL)
+#define FIRE_STR_CROSS 1
+#endif
+#define R_SHARED 0x80u
+#define R_KIND(r) ((r)->type & 0x7Fu)
 
 /* Immutable UTF-16 string. A heap string stores its characters right behind the header. */
 typedef struct Str {
@@ -1405,13 +1518,106 @@ FIRE_FN FireWord* bufWords(Buf* b) { return (FireWord*)(void*)b->data; }
 #define FIRE_SLOT_HDR 1   /* the table knows the header in each slot */
 #endif
 #ifdef FIRE_SLOTS
+#if defined(FIRE_THREADS) && defined(FIRE_NO_GIL)
+/* Without the GIL (docs/ROADMAP_TASKS.md step 1c) the table is read by every thread while others add slots: it is made of segments that never move (a
+ * directory of FIRE_SLOT_SEGS pointers to FIRE_SLOT_SEG entries each - the same two loads as the one array), the slots an owner frees are kept by its thread
+ * (a cache of up to FIRE_SLOT_CACHE, exchanged half by half with the shared stack under g_slotM), and a generation is read and written atomically (a stale
+ * Value of an object another thread destroys or got handed over reads it while that thread writes it). */
+#define FIRE_SLOT_SEGMENTS 1
+#endif
 /* One slot: its generation and - when the table knows it - the header of the value in it, side by side (one load for `arrOf` and the check). */
 typedef struct SlotEntry {
 #ifdef FIRE_SLOT_HDR
     Owned* hdr;
 #endif
     FireGen gen;
+#ifdef FIRE_SLOT_SEGMENTS
+    FireGen born;   /* (see SlotTable.born) */
+#endif
 } SlotEntry;
+#ifdef FIRE_SLOT_SEGMENTS
+#define FIRE_SLOT_SEG_SHIFT 14
+#define FIRE_SLOT_SEG (1u << FIRE_SLOT_SEG_SHIFT)
+#define FIRE_SLOT_SEGS (1u << 14)
+typedef struct SlotTable {
+    SlotEntry* seg[FIRE_SLOT_SEGS];
+    fire_atomic32 count;   /* slots handed out so far (every one below lives in a segment) */
+    uint32_t* freed;       /* the shared stack of free slots (under g_slotM) */
+    uint32_t nfree, freedCap;
+} SlotTable;
+extern FIRE_RT_DATA SlotTable g_slots;
+extern FIRE_RT_DATA fire_mutex g_slotM;
+#define slotEntry(slot) (g_slots.seg[(uint32_t)(slot) >> FIRE_SLOT_SEG_SHIFT][(uint32_t)(slot) & (FIRE_SLOT_SEG - 1)])
+#if defined(__GNUC__) || defined(__clang__)
+#define slotGenGet(slot) __atomic_load_n(&slotEntry(slot).gen, __ATOMIC_RELAXED)
+#define slotGenSet(slot, g) __atomic_store_n(&slotEntry(slot).gen, (FireGen)(g), __ATOMIC_RELAXED)
+#else
+#define slotGenGet(slot) (*(volatile FireGen*)&slotEntry(slot).gen)
+#define slotGenSet(slot, g) (*(volatile FireGen*)&slotEntry(slot).gen = (FireGen)(g))
+#endif
+#if defined(__GNUC__) || defined(__clang__)
+#define slotBornGet(slot) __atomic_load_n(&slotEntry(slot).born, __ATOMIC_RELAXED)
+#define slotBornSet(slot, g) __atomic_store_n(&slotEntry(slot).born, (FireGen)(g), __ATOMIC_RELAXED)
+#else
+#define slotBornGet(slot) (*(volatile FireGen*)&slotEntry(slot).born)
+#define slotBornSet(slot, g) (*(volatile FireGen*)&slotEntry(slot).born = (FireGen)(g))
+#endif
+#define slotInTable(slot) ((uint32_t)(slot) < fire_atomic_load(&g_slots.count))
+#ifdef FIRE_SLOT_HDR
+#define slotHdr(slot) (slotEntry(slot).hdr)
+#endif
+/* Takes up to `want` slots for this thread's cache (under g_slotM): freed ones first, then new ones - a new segment is made before its slots are handed out. */
+FIRE_COLD FIRE_FN void slotRefill(uint32_t want) {
+    fire_mutex_lock(&g_slotM);
+    while (g_slotCache.n < want && g_slots.nfree) g_slotCache.slot[g_slotCache.n++] = g_slots.freed[--g_slots.nfree];
+    while (g_slotCache.n < want) {
+        uint32_t next = fire_atomic_load(&g_slots.count);
+        uint32_t seg = next >> FIRE_SLOT_SEG_SHIFT;
+        if (FIRE_UNLIKELY(seg >= FIRE_SLOT_SEGS)) { fire_mutex_unlock(&g_slotM); fatal("Too many objects, arrays and buffers at once."); }
+        if (!g_slots.seg[seg]) {
+            SlotEntry* e = (SlotEntry*)calloc(FIRE_SLOT_SEG, sizeof(SlotEntry));
+            if (!e) { fire_mutex_unlock(&g_slotM); outOfMemory(); }
+            g_slots.seg[seg] = e;   /* (a thread reads it only for a slot it got after this, through the mutex or a Value handed over after it) */
+        }
+        g_slotCache.slot[g_slotCache.n++] = next;
+        fire_atomic_store(&g_slots.count, next + 1);
+    }
+    fire_mutex_unlock(&g_slotM);
+}
+/* Gives the cache of this thread down to `keep` slots back to the shared stack (a full cache; a thread that ends: 0). */
+FIRE_COLD FIRE_FN void slotSpill(uint32_t keep) {
+    fire_mutex_lock(&g_slotM);
+    while (g_slotCache.n > keep) {
+        if (g_slots.nfree == g_slots.freedCap) {
+            uint32_t cap = g_slots.freedCap ? g_slots.freedCap * 2 : 256;
+            uint32_t* freed = (uint32_t*)realloc(g_slots.freed, cap * sizeof(uint32_t));
+            if (!freed) { fire_mutex_unlock(&g_slotM); outOfMemory(); }
+            g_slots.freed = freed;
+            g_slots.freedCap = cap;
+        }
+        g_slots.freed[g_slots.nfree++] = g_slotCache.slot[--g_slotCache.n];
+    }
+    fire_mutex_unlock(&g_slotM);
+}
+FIRE_FN void slotAcquire(Owned* o) {
+    uint32_t slot;
+    if (FIRE_UNLIKELY(!g_slotCache.n)) slotRefill(FIRE_SLOT_CACHE / 2);
+    slot = g_slotCache.slot[--g_slotCache.n];
+    o->slot = slot;
+    o->gen = slotGenGet(slot);
+#ifdef FIRE_SLOT_HDR
+    slotHdr(slot) = o;
+#endif
+}
+FIRE_FN void slotRelease(Owned* o) {
+    uint32_t slot = o->slot;
+    FireGen g = (FireGen)((slotGenGet(slot) + 1) & FIRE_GEN_MASK);
+    slotGenSet(slot, g);
+    slotBornSet(slot, g);
+    if (FIRE_UNLIKELY(g_slotCache.n == FIRE_SLOT_CACHE)) slotSpill(FIRE_SLOT_CACHE / 2);
+    g_slotCache.slot[g_slotCache.n++] = slot;
+}
+#else
 typedef struct SlotTable {
     SlotEntry* e;
     /* the generation of each slot when its value was made (or the slot was freed): a stale Value of the value that lives in the slot now - its generation
@@ -1421,7 +1627,11 @@ typedef struct SlotTable {
     uint32_t count, cap, nfree, freedCap;
 } SlotTable;
 extern FIRE_RT_DATA SlotTable g_slots;
-#define slotGen(slot) (g_slots.e[slot].gen)
+#define slotGenGet(slot) (g_slots.e[slot].gen)
+#define slotGenSet(slot, g) (g_slots.e[slot].gen = (FireGen)(g))
+#define slotBornGet(slot) (g_slots.born[slot])
+#define slotBornSet(slot, g) (g_slots.born[slot] = (FireGen)(g))
+#define slotInTable(slot) ((uint32_t)(slot) < g_slots.cap)
 #ifdef FIRE_SLOT_HDR
 #define slotHdr(slot) (g_slots.e[slot].hdr)
 #endif
@@ -1449,15 +1659,15 @@ FIRE_FN void slotAcquire(Owned* o) {
         slot = g_slots.count++;
     }
     o->slot = slot;
-    o->gen = slotGen(slot);
+    o->gen = slotGenGet(slot);
 #ifdef FIRE_SLOT_HDR
     slotHdr(slot) = o;
 #endif
 }
 FIRE_FN void slotRelease(Owned* o) {
     uint32_t slot = o->slot;
-    slotGen(slot) = (FireGen)((slotGen(slot) + 1) & FIRE_GEN_MASK);
-    g_slots.born[slot] = slotGen(slot);
+    slotGenSet(slot, (slotGenGet(slot) + 1) & FIRE_GEN_MASK);
+    slotBornSet(slot, slotGenGet(slot));
     if (g_slots.nfree == g_slots.freedCap) {
         uint32_t cap = g_slots.freedCap ? g_slots.freedCap * 2 : 256;
         uint32_t* freed = (uint32_t*)realloc(g_slots.freed, cap * sizeof(uint32_t));
@@ -1467,10 +1677,11 @@ FIRE_FN void slotRelease(Owned* o) {
     }
     g_slots.freed[g_slots.nfree++] = slot;
 }
+#endif
 /* The next generation of a slot whose value lives on (a part that `fire handover` moves into a thread): every older Value of it is dead. */
 FIRE_FN void slotBump(Owned* o) {
-    slotGen(o->slot) = (FireGen)((slotGen(o->slot) + 1) & FIRE_GEN_MASK);
-    o->gen = slotGen(o->slot);
+    slotGenSet(o->slot, (slotGenGet(o->slot) + 1) & FIRE_GEN_MASK);
+    o->gen = slotGenGet(o->slot);
 }
 #else
 FIRE_FN void slotAcquire(Owned* o) { o->slot = 0; o->gen = 0; }
@@ -1486,7 +1697,19 @@ FIRE_FN void leafSet(Value* r, const Owned* h) {
 /* The slot of an object, array or buffer (or of the array or buffer of a pointer into it: wide only). */
 #define FIRE_VSLOT(v) ((v).unit)
 /* The header behind a Value of an object, array or buffer. */
+#if defined(FIRE_THREADS) && defined(FIRE_NO_GIL)
+/* (docs/ROADMAP_TASKS.md 1e) A fire thread that touches an object, array or buffer of the shared domain (flag 64, the global scope of the main program) takes the
+ * read side of the globals' lock first; it keeps it until its next safe point. The main program and a thread that holds it pay one test of a flag. */
+FIRE_FN void domReadEnter(void);
+#define FIRE_DOM_TOUCH(h) do { if (FIRE_UNLIKELY(((const Owned*)(h))->flags & 64) && g_domReader) domReadEnter(); } while (0)
+/* A read of a global variable or a static field of the main program (the generator puts it before the read in code that may run on a fire thread). */
+#define FIRE_DOM_READ() do { if (FIRE_UNLIKELY(g_domReader)) domReadEnter(); } while (0)
+#else
+#define FIRE_DOM_TOUCH(h) ((void)0)
+#define FIRE_DOM_READ() ((void)0)
+#endif
 FIRE_FN Owned* leafOf(Value v) {
+    FIRE_DOM_TOUCH(v.p);
     return (Owned*)v.p;
 }
 /* Do two Values of objects, arrays or buffers name the same one? (A `fire handover` gives a value the next generation; the address stays: `==` is true, as in the VM.) */
@@ -1510,7 +1733,7 @@ FIRE_FN bool leafAlive(Value v) {
     (void)v;
     return true;
 #else
-    return FIRE_LIKELY(slotGen(FIRE_VSLOT(v)) == FIRE_VGEN(v));
+    return FIRE_LIKELY(slotGenGet(FIRE_VSLOT(v)) == FIRE_VGEN(v));
 #endif
 }
 /* A dead Value of an object, array or buffer that still lives - in a fire thread it was handed over to (`fire handover`, handOverAll): the sender's reference
@@ -1521,9 +1744,9 @@ FIRE_FN bool handedOverRef(Value v) {
     return false;
 #else
     FireGen born;
-    if ((v.kind != K_Class && v.kind != K_Array && v.kind != K_Buffer) || FIRE_VSLOT(v) >= g_slots.cap) return false;
-    born = g_slots.born[FIRE_VSLOT(v)];
-    return ((FIRE_VGEN(v) - born) & FIRE_GEN_MASK) < ((slotGen(FIRE_VSLOT(v)) - born) & FIRE_GEN_MASK);
+    if ((v.kind != K_Class && v.kind != K_Array && v.kind != K_Buffer) || !slotInTable(FIRE_VSLOT(v))) return false;
+    born = slotBornGet(FIRE_VSLOT(v));
+    return ((FIRE_VGEN(v) - born) & FIRE_GEN_MASK) < ((slotGenGet(FIRE_VSLOT(v)) - born) & FIRE_GEN_MASK);
 #endif
 }
 
@@ -1541,18 +1764,61 @@ FIRE_FN Value LamV(Lam* l) { Value r; r.kind = K_Lambda; FIRE_PAD0(r) r.reserved
 
 FIRE_FN void freeRef(Ref* r);
 
+#ifdef FIRE_STR_CROSS
+#if defined(__GNUC__) || defined(__clang__)
+#define FIRE_RC_INC(r) __atomic_fetch_add(&(r)->rc, 1u, __ATOMIC_RELAXED)
+#define FIRE_RC_DEC(r) (__atomic_sub_fetch(&(r)->rc, 1u, __ATOMIC_ACQ_REL))
+#else
+#define FIRE_RC_INC(r) fire_atomic_add((fire_atomic32*)&(r)->rc, 1u)
+#define FIRE_RC_DEC(r) (fire_atomic_addAcqRel((fire_atomic32*)&(r)->rc, (uint32_t)-1) - 1u)
+#endif
+/* (a count of a string of the global scope: atomic) */
+FIRE_COLD FIRE_FN void retainShared(Ref* r) { FIRE_RC_INC(r); }
+FIRE_COLD FIRE_FN void releaseShared(Ref* r) { if (FIRE_RC_DEC(r) == 0) freeRef(r); }
+#define FIRE_REF_SHARED(r) FIRE_UNLIKELY((r)->type & R_SHARED)
+#else
+#define FIRE_REF_SHARED(r) 0
+#define retainShared(r) ((void)(r))
+#define releaseShared(r) ((void)(r))
+#endif
 FIRE_FN void retain(Value v) {
     if (isRef(v)) {
         Ref* r = refOf(v);
-        if (r->rc != IMMORTAL) r->rc++;
+        if (FIRE_REF_SHARED(r)) retainShared(r);   /* (first: a shared count is never immortal, and read only atomically) */
+        else if (r->rc != IMMORTAL) r->rc++;
     }
 }
 FIRE_FN void release(Value v) {
     if (isRef(v)) {
         Ref* r = refOf(v);
-        if (r->rc != IMMORTAL && --r->rc == 0) freeRef(r);
+        if (FIRE_REF_SHARED(r)) releaseShared(r);
+        else if (r->rc != IMMORTAL && --r->rc == 0) freeRef(r);
     }
 }
+#ifdef FIRE_STR_CROSS
+/* A string or lambda that goes into the shared domain (a global, a static field, a field or an element of the global scope's objects and arrays, once there
+ * is a fire thread): fire threads may count it from now on - its counts are atomic (R_SHARED). Set by whoever writes the domain: the main program, or a
+ * thread in a section - nobody else counts it at that moment. A lambda's captures go with it. */
+extern FIRE_RT_DATA bool g_domainOn;
+FIRE_COLD FIRE_FN void refShareSlow(Ref* r) {
+    r->type |= R_SHARED;
+    if (R_KIND(r) == R_Lam) {
+        Lam* l = (Lam*)r;
+        uint32_t c;
+        for (c = 0; c < l->ncaps; c++) {
+            Value x = ((Value*)((char*)l + FIRE_HDR(Lam)))[c];
+            if (isRef(x) && refOf(x)->rc != IMMORTAL && !(refOf(x)->type & R_SHARED)) refShareSlow(refOf(x));
+        }
+    }
+}
+FIRE_FN void refShare(Value v) { if (isRef(v) && !(refOf(v)->type & R_SHARED) && refOf(v)->rc != IMMORTAL) refShareSlow(refOf(v)); }
+#define FIRE_DOM_SHARE(v) do { if (FIRE_UNLIKELY(g_domainOn)) refShare(v); } while (0)
+#define FIRE_DOM_STORE(h, v) do { if (FIRE_UNLIKELY(((const Owned*)(h))->flags & 64)) refShare(v); } while (0)
+#else
+#define refShare(v) ((void)0)
+#define FIRE_DOM_SHARE(v) ((void)0)
+#define FIRE_DOM_STORE(h, v) ((void)0)
+#endif
 
 FIRE_COLD FIRE_FN void poolGrow(void) {
     uint32_t cap = g_pool.cap ? g_pool.cap * 2 : 256;
@@ -1569,7 +1835,8 @@ FIRE_FN uint32_t poolMark(void) { return g_pool.top; }
 FIRE_FN void poolRelease(uint32_t mark) {
     while (g_pool.top > mark) {
         Ref* r = g_pool.items[--g_pool.top];
-        if (--r->rc == 0) freeRef(r);
+        if (FIRE_REF_SHARED(r)) releaseShared(r);
+        else if (--r->rc == 0) freeRef(r);
     }
 }
 
@@ -2707,6 +2974,11 @@ FIRE_FN void ctorEnd(Value o) { if (FIRE_UNLIKELY(g_unwind.active) && o.kind == 
 FIRE_FN void destroy(Obj* o) {
     if (o->h.flags & 1) return;
     o->h.flags |= 1;
+#ifdef FIRE_SLOT_SEGMENTS
+    /* (from now on an older Value - the sender's of a `fire handover` - says "destroyed", not "handed over": another thread may look before the slot is
+     * freed at the end of the batch; the Values of the living ones stay valid for the destructors of the batch) */
+    slotBornSet(o->h.slot, slotGenGet(o->h.slot));
+#endif
     batchBegin();
     if (o->h.flags & 16) {
         /* a copy that `taking` made for a fire thread (its original still lives), or an object whose constructor threw: no destructor */
@@ -2761,6 +3033,9 @@ FIRE_FN void destroyList(OwnList* list) {
 FIRE_FN void destroyLeaf(Owned* o) {
     if (o->flags & 1) return;
     o->flags |= 1;
+#ifdef FIRE_SLOT_SEGMENTS
+    slotBornSet(o->slot, slotGenGet(o->slot));   /* (see destroy) */
+#endif
     if (o->owner) ownUnlink(o);
     if (o->okind == O_Array) {
         Arr* a = (Arr*)o;
@@ -2844,7 +3119,7 @@ FIRE_FN Value adoptV(Value v, OwnList* list) {
  * Memory of the reference-counted values
  * --------------------------------------------------------------------------------------------------------------------- */
 FIRE_FN void freeRef(Ref* r) {
-    if (r->type == R_Lam) {
+    if (R_KIND(r) == R_Lam) {
         Lam* l = (Lam*)r;
         Value* caps = lamCaps(l);
         uint32_t i;
@@ -2873,6 +3148,36 @@ FIRE_FN Str* allocStr(uint32_t length, OwnList* list) {
     return s;
 }
 FIRE_FN fire_char16* strChars(Str* s) { return (fire_char16*)s->data; }
+/* What a string becomes when it goes to another thread (FIRE_STR_CROSS, see struct Ref): a copy that no scope holds yet (count 0 - the place it goes to
+ * takes the first count); a literal (immortal) stays itself. Without FIRE_STR_CROSS: the string itself. Anything else: itself. */
+FIRE_FN Value strCross(Value v) {
+#ifdef FIRE_STR_CROSS
+    if (v.kind == K_String && refOf(v)->rc != IMMORTAL) {
+        const Str* src = strOf(v);
+        Str* c = (Str*)malloc(blockSize(sizeof(Str), src->length + 1, sizeof(fire_char16)));
+        fire_char16* d;
+        if (FIRE_UNLIKELY(!c)) allocFailed();
+        c->h.type = R_Str;
+        c->h.rc = 0;
+        c->length = src->length;
+        d = (fire_char16*)(c + 1);
+        memcpy(d, src->data, src->length * sizeof(fire_char16));
+        d[src->length] = 0;
+        c->data = d;
+        return StrV(c);
+    }
+#endif
+    return v;
+}
+/* A place that goes to another thread with its value (a field or an element of a part that `handover` moves): its string becomes a copy. */
+FIRE_FN void strCrossAt(Value* p) {
+#ifdef FIRE_STR_CROSS
+    Value n = strCross(*p);
+    if (n.p != p->p) { retain(n); release(*p); *p = n; }
+#else
+    (void)p;
+#endif
+}
 
 /* A new array; it belongs to `list` (the innermost scope of the creator, or the object that it is assigned to directly). */
 FIRE_FN Arr* allocArr(uint32_t length, OwnList* list) {
@@ -2970,6 +3275,34 @@ FIRE_FN Value callLam(Value callee, int argc, const Value* args, OwnList* list) 
 #endif
 }
 
+/* ---- `await [ f(), g() ]` (docs/ROADMAP_TASKS.md section 3): the parser made every call a lambda (res, fails, i) that keeps its result in res[i] and its
+ * exception in fails[i]; the prelude's __Await.All calls this with them, then throws the first exception or gives res. */
+#ifdef FIRE_TASKS
+FIRE_FN bool awaitRunTasks(Value* lams, uint32_t n, Value res, Value fails, OwnList* list);
+#endif
+FIRE_FN Value awaitRun(Value items, Value res, Value fails, OwnList* list) {
+    Arr* a;
+    Value* lams;
+    uint32_t i;
+    if (items.kind != K_Array || !ownedOf(items)) return Undef();
+    a = arrOf(items);
+    lams = arrValues(a);
+    if (!lams) return Undef();
+#ifdef FIRE_TASKS
+    if (a->length > 1 && awaitRunTasks(lams, a->length, res, fails, list)) return Undef();
+#endif
+    /* (one after the other: no tasks here, or the calls reach the same objects) */
+    for (i = 0; i < a->length; i++) {
+        Value args[3];
+        if (lams[i].kind != K_Lambda) continue;
+        args[0] = res; args[1] = fails; args[2] = Int((int64_t)i);
+        callLam(lams[i], 3, args, list);
+        if (g_unwind.active) return Undef();   /* (leave, terminate: the lambdas catch the exceptions of their calls) */
+    }
+    return Undef();
+}
+
+
 /* CheckLambdaSignature: a value assigned to a `lambda<...>` annotation must have that many parameters (otherwise an ArgumentException). */
 FIRE_FN void checkLambda(Value v, int nparams) {
     if (FIRE_UNLIKELY(v.kind != K_Lambda || lamOf(v)->nparams != (uint32_t)nparams)) {
@@ -2992,6 +3325,7 @@ FIRE_FN void setFieldAt(Value v, uint32_t index, Value x) {
     Obj* o = objAt(v);
     Value old = objFields(o)[index];
     objFields(o)[index] = x;
+    FIRE_DOM_STORE(&o->h, x);
     retain(x);
     release(old);
 }
@@ -4352,6 +4686,12 @@ FIRE_FN bool wouldBeCaught(Value exception) {
     return false;
 }
 #endif
+#ifdef FIRE_TASKS
+FIRE_FN void fire_dedicateCaught(Handler* h);
+#endif
+#ifdef FIRE_THREADS
+FIRE_FN void fire_untilCaught(Handler* h);
+#endif
 FIRE_FN Value throwValueR(Value exception, bool resumable) {
     Handler* h;
     if (FIRE_UNLIKELY(exception.kind != K_Class)) fatal("throw expects an exception object.");
@@ -4380,6 +4720,12 @@ FIRE_FN Value throwValueR(Value exception, bool resumable) {
             Pending pending;
             Handler fin;
             Handler* saved;
+#ifdef FIRE_TASKS
+            if (FIRE_UNLIKELY(g_dedMoved)) fire_dedicateCaught(h);   /* (caught outside an `await dedicated`: back to the pool) */
+#endif
+#ifdef FIRE_THREADS
+            if (FIRE_UNLIKELY(g_tokTop != NULL)) fire_untilCaught(h);   /* (caught outside an `await ... until x`: its frame is left) */
+#endif
             pending.prev = g_pending; pending.exception = exception; pending.token = ++g_throwToken; pending.resumable = (uint8_t)(resumable ? 1 : 0); pending.cleared = 0;
             g_pending = &pending;
             if (h->info->hasFinally) {   /* while the catch block runs, an exception that leaves it must still run the finally */
@@ -4811,10 +5157,58 @@ FIRE_FN bool timeTicksOf(Value a, int64_t* ticks) {
 /* How long a waiting function waits without a time of its own: `#timeout`, else 30 seconds. */
 extern FIRE_RT_DATA int64_t g_defaultTimeoutTicks;
 
+/* The waits of the main program serve the windows of its thread (ROADMAP_TASKS 5b, the wait of the system): `pump` reads what the system has for those
+ * windows into their queues (no fire code runs - the program takes the events at its next Pump/Tick - but the windows answer the system meanwhile: they
+ * repaint, they answer pings), `wait` waits up to `ms` for the system's next event or for `wake`, which any thread calls when something changed that a
+ * waiting main program looks for. The windows package registers them when the first window opens on the main program's thread; without `wait`/`wake`
+ * the runtime waits its own way. */
+#define FIRE_RT_IDLE_HOOKS 1
+extern FIRE_RT_DATA void (*g_idlePump)(void);
+extern FIRE_RT_DATA void (*g_idleWait)(int64_t ms);
+extern FIRE_RT_DATA void (*g_idleWake)(void);
+extern FIRE_RT_DATA fire_atomic32 g_idleOn;   /* (set once, after the three: who reads it sees them) */
+extern FIRE_RT_DATA fire_atomic32 g_idleWaiting;   /* (the main program is in `wait` - set before it looks at the count of the events) */
+FIRE_FN void fire_setIdleHooks(void (*pump)(void), void (*wait)(int64_t ms), void (*wake)(void)) {
+    if (pump == NULL || fire_atomic_load(&g_idleOn)) return;
+    g_idlePump = pump;
+    g_idleWait = wake != NULL ? wait : NULL;
+    g_idleWake = wait != NULL ? wake : NULL;
+    fire_atomic_store(&g_idleOn, 1);
+}
+/* (from any thread, after the change: a main program in the system's wait looks again) */
+FIRE_FN void fire_idleWake(void) { if (fire_atomic_load(&g_idleOn) && fire_atomic_load(&g_idleWaiting) && g_idleWake != NULL) g_idleWake(); }
+/* (the main program: is this thread the one whose windows the hooks serve) */
 #ifdef FIRE_THREADS
+FIRE_FN bool fire_isMainProgram(void);
 FIRE_FN void sleepTicks(int64_t ticks);
 #else
-FIRE_FN void sleepTicks(int64_t ticks) { if (ticks > 0) fire_plat_sleepMs((ticks + TICKS_PER_MS - 1) / TICKS_PER_MS); }
+FIRE_FN bool fire_isMainProgram(void) { return true; }
+FIRE_FN void sleepTicks(int64_t ticks) {
+    int64_t ms, deadline, now;
+    if (ticks <= 0) return;
+    ms = (ticks + TICKS_PER_MS - 1) / TICKS_PER_MS;
+    if (!fire_atomic_load(&g_idleOn)) { fire_plat_sleepMs(ms); return; }
+    /* (windows on this thread: they are served while it sleeps) */
+    deadline = fire_plat_nowMs() + ms;
+    for (;;) {
+        g_idlePump();
+        now = fire_plat_nowMs();
+        if (now >= deadline) return;
+        if (g_idleWait != NULL) g_idleWait(deadline - now < 50 ? deadline - now : 50);
+        else fire_plat_sleepMs(deadline - now < 5 ? deadline - now : 5);
+    }
+}
+#endif
+/* Step 5b - a wait of a native on the main program (the pacing of a window's frames, the wait for a window manager's cycle): with tasks the thread runs
+ * tasks meanwhile, like any wait of the main program, until `pred(ctx)` holds or `ms` passed. false: not here (no tasks, not the main program, no strand on
+ * this thread) - the native waits its own way. The display backends ask for it with FIRE_RT_HELPING_WAIT (they are built without the runtime too). */
+#define FIRE_RT_HELPING_WAIT 1
+#ifdef FIRE_THREADS
+FIRE_FN bool fire_waitHelping(bool (*pred)(void*), void* ctx, int64_t ms);
+FIRE_FN bool fire_frameWait(double seconds);
+#else
+FIRE_FN bool fire_waitHelping(bool (*pred)(void*), void* ctx, int64_t ms) { (void)pred; (void)ctx; (void)ms; return false; }
+FIRE_FN bool fire_frameWait(double seconds) { (void)seconds; return false; }
 #endif
 
 /* `#timeout value`: the program has to give a time (the VM fails with an InvalidOperationException; here the program ends). */
@@ -5307,6 +5701,7 @@ FIRE_FN Value arraySet(Value a, Value i, Value v) {
         items = arrValues(arr);
         old = items[i.i];
         items[i.i] = v;
+        FIRE_DOM_STORE(&arr->h, v);
         retain(v);
         release(old);
         return v;
@@ -5377,7 +5772,7 @@ FIRE_FN bool ptrValid(Value p, Value* err) {
         int64_t index, length;
         uint32_t slot = ptrSlot(p);
         intptr_t addr = (intptr_t)ptrAddr(p);
-        if (FIRE_UNLIKELY(slotGen(slot) != FIRE_VGEN(p))) {
+        if (FIRE_UNLIKELY(slotGenGet(slot) != FIRE_VGEN(p))) {
             Value leaf = Undef();
             leaf.kind = p.kind == K_PtrByte ? K_Buffer : K_Array;
             *err = destroyedError(leaf);
@@ -5437,7 +5832,7 @@ FIRE_FN void ptrWrite(Value p, Value v) {
         return;
     }
 #ifdef FIRE_ELEMPTRS
-    if (p.kind == K_PtrElem && (FIRE_UNCHECKED_OR(slotGen(ptrSlot(p)) == FIRE_VGEN(p)))) {
+    if (p.kind == K_PtrElem && (FIRE_UNCHECKED_OR(slotGenGet(ptrSlot(p)) == FIRE_VGEN(p)))) {
         /* an element of a typed array (unpacked when the pointer was taken): the value is converted like `a[i] = v`, or it is the exception */
         Arr* arr = (Arr*)slotHdr(ptrSlot(p));
         if (FIRE_UNLIKELY(arr->typed != NULL)) {
@@ -6433,6 +6828,7 @@ FIRE_FN void* fire_growPush(void* items, uint32_t* count, uint32_t* cap, size_t 
 typedef struct DeepCopier {
     OwnList* owner;
     bool taking;          /* a copy for a fire thread (`taking`): everything reachable is copied (whoever owns it), copies are marked; no lambdas/pointers */
+    bool cross;           /* a copy that goes to another thread (`taking`, `sync`, a job): its strings are copies too (strCross) */
     bool noCopy;          /* `copy x` (and the arguments of a job): an instance of a `[NoCopy]` class is an ArgumentException */
     const char* noCopyOp; /* ... its text: NULL for copy, else "taking"/"fire global"/"sync" (noCopyErrorOp) */
     CopyMap objects;      /* object -> copy (the objects found, which are copied) */
@@ -6550,7 +6946,7 @@ FIRE_FN Value copierMap(DeepCopier* c, Value v) {
             copyMapPut(&c->containers, src, r);
             return r;
         }
-        default: return v;
+        default: return c->cross ? strCross(v) : v;
     }
 }
 FIRE_FN Value copierRun(DeepCopier* c, Value root) {
@@ -6583,6 +6979,20 @@ FIRE_FN Value deepCopy(Value v, OwnList* owner) {
 }
 
 FIRE_FN Value copyValue(Value v, bool deep, OwnList* owner) { return deep ? deepCopy(v, owner) : flatCopy(v, owner); }
+/* A deep copy that goes to another thread (the arguments of `fire global`): its strings are copies too. */
+FIRE_FN Value deepCopyCross(Value v, OwnList* owner) {
+    if (v.kind == K_Class && leafAlive(v)) {
+        DeepCopier c;
+        Value r;
+        copierInit(&c, owner);
+        c.noCopy = true;
+        c.cross = true;
+        r = copierRun(&c, v);
+        copierFree(&c);
+        return r;
+    }
+    return deepCopy(v, owner);
+}
 
 /* `[NoCopy]` before a copy for another thread (`taking`, the arguments of `fire global`, case A of `sync`): false - the ArgumentException is thrown - when
  * an instance of a `[NoCopy]` class is reachable from v through fields and array elements. Only looks (the discovery of a deep copy), so it runs before
@@ -7033,6 +7443,170 @@ typedef struct Gil { fire_mutex m; fire_cond cv; uint64_t next, serving; } Gil;
 extern FIRE_RT_DATA Gil g_gil;
 extern FIRE_RT_DATA fire_atomic32 g_gilWaiting;
 
+#ifdef FIRE_NO_GIL
+/* (docs/ROADMAP_TASKS.md step 1: fire code runs on all cores - the hand-over points of the GIL stay the safe points, the GIL itself is gone;
+ * what it protected has locks of its own. Being built step by step: until step 1g this switch is for the tests under ThreadSanitizer only.)
+ *
+ * The lock of the globals (step 1e) takes the place of the GIL for the shared domain - the global variables, static fields and objects of the main
+ * program's global scope, which fire threads read directly. It has a write side and a read side:
+ *   - the main program holds the write side while it runs: from its start (gilAcquire) to every wait (gilRelease ... gilAcquire around blockUntil and the
+ *     blocking natives); at its safe points (gilYield) it lets the threads that wait to read in, and goes on when they have let go;
+ *   - a fire thread takes the read side when it first touches the shared domain (FIRE_DOM_TOUCH, FIRE_DOM_READ) and lets go of it at its next safe point or
+ *     wait - threads read side by side, and a thread that never touches the domain never waits for it;
+ *   - a section (a change of the domain by a thread, granted by the waiting main program) holds the write side alone. */
+typedef struct DomLock { fire_mutex m; fire_cond cv; int32_t readers, writersWaiting; fire_atomic32 readersWaiting; bool mainIn, mainWaiting, writer; } DomLock;
+extern FIRE_RT_DATA DomLock g_dom;
+FIRE_COLD FIRE_FN void domReadEnter(void) {
+    fire_mutex_lock(&g_dom.m);
+    fire_atomic_add(&g_dom.readersWaiting, 1);
+    while (g_dom.mainIn || g_dom.mainWaiting || g_dom.writer) fire_cond_wait(&g_dom.cv, &g_dom.m);
+    fire_atomic_add(&g_dom.readersWaiting, (uint32_t)-1);
+    g_dom.readers++;
+    fire_cond_notifyAll(&g_dom.cv);
+    fire_mutex_unlock(&g_dom.m);
+    g_domReader = 0;
+    g_domHeld = 1;
+}
+FIRE_FN void domReadLeave(void) {
+    if (!g_domHeld) return;
+    fire_mutex_lock(&g_dom.m);
+    if (--g_dom.readers == 0) fire_cond_notifyAll(&g_dom.cv);
+    fire_mutex_unlock(&g_dom.m);
+    g_domHeld = 0;
+    g_domReader = 1;
+}
+FIRE_FN void domMainEnter(void) {
+    fire_mutex_lock(&g_dom.m);
+    g_dom.mainWaiting = true;
+    while (g_dom.readers > 0 || g_dom.writer || g_dom.writersWaiting > 0) fire_cond_wait(&g_dom.cv, &g_dom.m);
+    g_dom.mainWaiting = false;
+    g_dom.mainIn = true;
+    fire_mutex_unlock(&g_dom.m);
+}
+FIRE_FN void domMainLeave(void) {
+    fire_mutex_lock(&g_dom.m);
+    g_dom.mainIn = false;
+    fire_cond_notifyAll(&g_dom.cv);
+    fire_mutex_unlock(&g_dom.m);
+}
+/* (the main program at a safe point: the threads that wait to read get in - all of them - then it waits until they have let go) */
+FIRE_COLD FIRE_FN void domMainYield(void) {
+    fire_mutex_lock(&g_dom.m);
+    g_dom.mainIn = false;
+    fire_cond_notifyAll(&g_dom.cv);
+    while (fire_atomic_load(&g_dom.readersWaiting) > 0 && !g_dom.writer) fire_cond_wait(&g_dom.cv, &g_dom.m);
+    g_dom.mainWaiting = true;
+    while (g_dom.readers > 0 || g_dom.writer) fire_cond_wait(&g_dom.cv, &g_dom.m);
+    g_dom.mainWaiting = false;
+    g_dom.mainIn = true;
+    fire_mutex_unlock(&g_dom.m);
+}
+/* A section: the thread holds the write side alone (the main program waits for the section, the other threads have let go). */
+FIRE_FN void domWriterEnter(void) {
+    domReadLeave();
+    fire_mutex_lock(&g_dom.m);
+    g_dom.writersWaiting++;
+    while (g_dom.mainIn || g_dom.readers > 0 || g_dom.writer) fire_cond_wait(&g_dom.cv, &g_dom.m);
+    g_dom.writersWaiting--;
+    g_dom.writer = true;
+    fire_mutex_unlock(&g_dom.m);
+    g_domReader = 0;
+}
+FIRE_FN void domWriterLeave(void) {
+    fire_mutex_lock(&g_dom.m);
+    g_dom.writer = false;
+    fire_cond_notifyAll(&g_dom.cv);
+    fire_mutex_unlock(&g_dom.m);
+    g_domReader = 1;
+}
+/* The natives of a package (step 1f): one thread at a time per package - its lock, held while one of its natives runs, given back with the GIL's points
+ * (a native that waits, a callback into fire code that reaches a safe point). The order is always: the read side of the globals first, then the package's
+ * lock - so while the main program holds the write side no thread holds a package's lock, and the main program cannot wait for one forever. A package that
+ * says it is thread safe (`"threadSafe": true` in its manifest) has no lock. */
+FIRE_FN fire_mutex* pkgEnter(fire_mutex* m) {
+    fire_mutex* prev = g_pkgHeld;
+    if (prev == m) return prev;
+    if (g_domReader) domReadEnter();
+    fire_mutex_lock(m);
+    g_pkgHeld = m;
+    return prev;
+}
+FIRE_FN void pkgLeave(fire_mutex* m, fire_mutex* prev) {
+    if (prev == m) return;
+    fire_mutex_unlock(m);
+    g_pkgHeld = prev;
+}
+#define FIRE_PKG_ENTER(m) fire_mutex* pkPrev_ = pkgEnter(&(m));
+#define FIRE_PKG_LEAVE(m) pkgLeave(&(m), pkPrev_);
+#ifdef FIRE_TASKS
+FIRE_FN void taskYield(void);
+FIRE_FN bool taskRunning(void);
+FIRE_FN void workerBlockEnter(void);
+FIRE_FN void workerBlockLeave(void);
+extern FIRE_RT_DATA fire_atomic32 g_schedReady;
+FIRE_FN bool schedSleeperDue(void);
+FIRE_FN bool fire_homeWanted(void);
+FIRE_FN bool fire_taskSliced(void);
+#endif
+/* (what a strand lets go of while it waits, and takes again - without the counting of a native that waits, see gilRelease) */
+FIRE_FN void strandAcquire(void) {
+    if (!g_isThread) domMainEnter();
+    else if (g_pkgHeld && g_domReader) domReadEnter();
+    if (g_pkgHeld) fire_mutex_lock(g_pkgHeld);
+}
+FIRE_FN void strandRelease(void) {
+    if (g_pkgHeld) fire_mutex_unlock(g_pkgHeld);
+    if (!g_isThread) domMainLeave(); else domReadLeave();
+}
+/* gilRelease ... gilAcquire around a wait in a native (and the runtime's own waits that do not go through blockUntil): on a task the worker is blocked
+ * meanwhile - the pool may start another one for the waiting tasks. */
+FIRE_FN bool fire_onHome(void);
+FIRE_FN bool fire_inGroup(void);
+FIRE_FN void taskSwitchOut(int action);
+FIRE_FN void gilAcquire(void) {
+#ifdef FIRE_TASKS
+    if (g_isThread && taskRunning()) workerBlockLeave();
+    else if (g_homeOff) { g_homeOff = 0; taskSwitchOut(1 /* TA_REQUEUE */); }   /* (back to the pool from the thread it waited on) */
+#endif
+    strandAcquire();
+}
+FIRE_FN void gilRelease(void) {
+    strandRelease();
+#ifdef FIRE_TASKS
+    if (g_isThread && taskRunning()) {
+        /* a task on the main program's thread does not wait there: it goes to a thread of its own for the wait (the main program goes on) */
+        if (fire_onHome() && !fire_inGroup()) { g_homeOff = 1; taskSwitchOut(4 /* TA_DEDICATE */); }
+        else workerBlockEnter();
+    }
+#endif
+}
+FIRE_FN void gilYield(void) {
+    FIRE_PLAT_YIELD();
+    if (!g_isThread) {
+        if (fire_atomic_load(&g_dom.readersWaiting)) {
+            if (g_pkgHeld) fire_mutex_unlock(g_pkgHeld);
+            domMainYield();
+            if (g_pkgHeld) fire_mutex_lock(g_pkgHeld);
+        }
+    } else if (g_pkgHeld) {
+        /* (inside a native's callback: the others get the package and the main program its turn, then this thread takes both again, in the order) */
+        fire_mutex_unlock(g_pkgHeld);
+        domReadLeave();
+#ifdef FIRE_TASKS
+        if ((fire_atomic_load(&g_schedReady) || schedSleeperDue() || fire_homeWanted()) && fire_taskSliced()) taskYield();
+#endif
+        domReadEnter();
+        fire_mutex_lock(g_pkgHeld);
+    } else {
+        domReadLeave();
+#ifdef FIRE_TASKS
+        /* (the end of a time slice: when other tasks wait for a worker - or the main program, whose thread this task borrows, may go on - this one goes
+         * to the end of the queue) */
+        if ((fire_atomic_load(&g_schedReady) || schedSleeperDue() || fire_homeWanted()) && fire_taskSliced()) taskYield();
+#endif
+    }
+}
+#else
 FIRE_FN void gilAcquire(void) {
     uint64_t ticket;
     fire_mutex_lock(&g_gil.m);
@@ -7050,68 +7624,891 @@ FIRE_FN void gilRelease(void) {
     fire_cond_notifyAll(&g_gil.cv);
     fire_mutex_unlock(&g_gil.m);
 }
+#define FIRE_PKG_ENTER(m)
+#define FIRE_PKG_LEAVE(m)
 /* Lets a thread that waits for the lock run (the ticket lock is fair: this thread queues up again behind it). */
 FIRE_FN void gilYield(void) {
     FIRE_PLAT_YIELD();   /* (a scheduler of fire itself: the others get their turn - a thread that has not started yet waits for nothing) */
     if (fire_atomic_load(&g_gilWaiting)) { gilRelease(); gilAcquire(); }
 }
+#endif
 
 /* An event: something changed that a waiting thread may be looking for (called with the GIL held, after the change). */
 extern FIRE_RT_DATA fire_mutex g_evM;
 extern FIRE_RT_DATA fire_cond g_evCv;
 extern FIRE_RT_DATA uint64_t g_evCount;
+#ifdef FIRE_TASKS
+/* ---- The scheduler of tasks (docs/ROADMAP_TASKS.md step 3) ----------------------------------------------------------------------------------------
+ * A task is a coroutine (fire_coro.h) with the state of a strand (ThreadLocals). Workers - system threads, one per core to begin with - take the ready
+ * tasks from a queue and run each until it gives its turn away: at the end of a time slice (gilYield at the safe points: to the end of the queue), when it
+ * waits (blockUntil: parked until an event or its time - Sleep is a time in the heap of the sleepers) or when it ends. A worker runs a task by switching to
+ * it; the task switches back to the worker, which then does what the task asked for (requeue, park, free) - so a task is never in a queue while its stack is
+ * still in use. A task that is woken while it is parking is put back by the worker that parks it (TS_WOKEN). The sleepers whose time has come go to the
+ * front at every switch. A worker that waits inside a native (gilRelease) is counted as blocked; while tasks wait for a worker, another one is started
+ * (the pool grows), and a worker that has had nothing to do for a while ends (never the last one). */
+enum { TS_RUNNING, TS_PARKING, TS_PARKED, TS_WOKEN, TS_READY };
+enum { TA_NONE, TA_REQUEUE, TA_PARK, TA_DONE, TA_DEDICATE };
+typedef struct FireTask {
+    fire_coro* coro;
+    ThreadLocals* state;        /* its strand (fire_curTask while it runs) */
+    void (*fn)(void*);
+    void* arg;
+    struct FireTask* next;      /* in the ready queue */
+    struct FireTask* evNext;    /* in the list of those that wait for an event (or for one key: evList) */
+    struct FireTask* evPrev;
+    struct FireTask** evList;   /* ... the head of that list */
+    const void* waitKey;        /* what it waits for (null: any event) */
+    int64_t wakeAt;             /* in the heap of the sleepers: when */
+    int32_t heapAt;             /* ... its place (-1: not in it) */
+    fire_atomic32 st;           /* TS_... */
+    bool evWaiting;
+    uint8_t group;              /* a member of the main program's group (step 5c, an event handler): only on its thread, switched only where it waits */
+} FireTask;
+typedef struct FireSched {
+    fire_mutex m;
+    fire_cond cv;               /* idle workers wait here */
+    FireTask* head;
+    FireTask* tail;
+    FireTask** heap;            /* the sleepers, a min-heap by wakeAt */
+    uint32_t heapN, heapCap;
+    int32_t workers, idle, cores;
+    fire_atomic32 blocked;      /* workers inside a native that waits */
+    fire_coro** spare;          /* coroutines of ended tasks with the default stack, for the next ones (a new stack costs a mapping, its end an unmapping) */
+    uint32_t spareN, spareCap;
+    struct FireWorker** ws;     /* the workers (an idle one steals from the others' queues) */
+    uint32_t nws, wsCap;
+    FireTask* groupHead;        /* the members of the main program's group that are ready (only its thread takes them) */
+    FireTask* groupTail;
+    fire_atomic32 idleA, workersA;   /* (idle and workers, readable without the lock) */
+} FireSched;
+#ifndef FIRE_TASK_STACK_BYTES
+#define FIRE_TASK_STACK_BYTES (8u * 1024u * 1024u)   /* reserved per task like the stack of a system thread; only what is used is committed */
+#endif
+#ifndef FIRE_TASK_SPARE
+#define FIRE_TASK_SPARE 64u
+#endif
+extern FIRE_RT_DATA FireSched g_sched;
+extern FIRE_RT_DATA fire_atomic32 g_schedReady;    /* tasks in the ready queue (read without the lock: is anyone waiting?) */
+extern FIRE_RT_DATA FireTask* g_evWaiters;         /* the tasks that wait for any event (under g_evM) */
+/* The tasks that wait for one thing (a section granted or done, a message for an actor: the key is that object; Sleep: &g_terminate), in buckets by the key
+ * (under g_evM): notifyKey wakes only them - with thousands of tasks waiting for their sections, waking all at every grant would be quadratic. */
+#define FIRE_EV_BUCKETS 64u
+extern FIRE_RT_DATA FireTask* g_evKeyed[FIRE_EV_BUCKETS];
+#define FIRE_EV_BUCKET(key) (((uintptr_t)(key) >> 4) & (FIRE_EV_BUCKETS - 1u))
+extern FIRE_RT_DATA fire_atomic32 g_schedOn;
+extern FIRE_RT_DATA int64_t g_schedNextWake;     /* the time of the earliest sleeper (INT64_MAX: none) - read without the lock */
+#if defined(__GNUC__) || defined(__clang__)
+#define schedNextWakeGet() __atomic_load_n(&g_schedNextWake, __ATOMIC_RELAXED)
+#define schedNextWakeSet(v) __atomic_store_n(&g_schedNextWake, (v), __ATOMIC_RELAXED)
+#else
+#define schedNextWakeGet() (*(volatile int64_t*)&g_schedNextWake)
+#define schedNextWakeSet(v) (*(volatile int64_t*)&g_schedNextWake = (v))
+#endif
+/* (at a time slice: a sleeper whose time has come waits for a worker - all are busy) */
+FIRE_FN bool schedSleeperDue(void) { int64_t w = schedNextWakeGet(); return w != INT64_MAX && fire_plat_nowMs() >= w; }
+/* The worker of this system thread (its own context, the task it runs, what the task asked for): read anew after every switch - a task may go on elsewhere. */
+typedef struct FireWorker {
+    fire_coro* self; FireTask* cur; int action; int64_t idleSince;
+    fire_mutex qm;              /* its own queue (step 3d): what this worker readies itself - a yield, a task started or woken by its task - goes there */
+    FireTask* qh;
+    FireTask* qt;
+    uint8_t dedicated;          /* a system thread of one task (`await dedicated`): the task waits like a thread there - it never parks or yields */
+    uint8_t home;               /* the main program's own thread (step 5a): it runs tasks only while the main program waits */
+} FireWorker;
+extern FIRE_RT_DATA FireWorker g_homeWorker;
+extern FIRE_RT_DATA ThreadLocals* g_homeState;   /* the main program's strand */
+extern FIRE_RT_DATA fire_atomic32 g_groupLive;   /* members of its group that have not ended */
+extern FIRE_RT_DATA fire_atomic32 g_evTick;      /* counts the events, read without a lock (notifyEvent, notifyKey) */
+extern FIRE_RT_DATA fire_atomic32 g_homeSeen;    /* ... what the main program had seen when it lent its thread to a task */
+extern FIRE_TLS FireWorker* g_worker;
+#if defined(__GNUC__) || defined(__clang__)
+__attribute__((noinline))
+#endif
+static FireWorker* workerSelf(void) { return g_worker; }   /* (not inlined: the compiler must not keep the address of the thread-local across a switch) */
+FIRE_FN bool taskRunning(void) { FireWorker* w = workerSelf(); return w && w->cur && !w->dedicated; }
+/* (a task on the main program's thread: an event came since the main program lent it - perhaps what it waits for; the task yields at its next safe point) */
+FIRE_FN bool fire_homeWanted(void) { FireWorker* w = workerSelf(); return w && w->home && fire_atomic_load(&g_evTick) != fire_atomic_load(&g_homeSeen); }
+FIRE_FN bool fire_onHome(void) { FireWorker* w = workerSelf(); return w && w->home; }
+/* (a task that ends its time slice at a safe point: not a member of the main program's group - it gives way only where it waits) */
+FIRE_FN bool fire_taskSliced(void) { FireWorker* w = workerSelf(); return w && w->cur && !w->dedicated && !w->cur->group; }
+FIRE_FN bool fire_inGroup(void) { FireWorker* w = workerSelf(); return w && w->cur && w->cur->group; }
+
+#ifndef FIRE_TASK_SLEEP_IDLE_MS
+#define FIRE_TASK_SLEEP_IDLE_MS 10000   /* a worker that had nothing to do for this long ends (not the last one) */
+#endif
+
+/* ---- the heap of the sleepers (under g_sched.m) */
+FIRE_FN void schedHeapSwap(uint32_t a, uint32_t b) {
+    FireTask* t = g_sched.heap[a];
+    g_sched.heap[a] = g_sched.heap[b]; g_sched.heap[a]->heapAt = (int32_t)a;
+    g_sched.heap[b] = t; t->heapAt = (int32_t)b;
+}
+FIRE_FN void schedHeapUp(uint32_t i) {
+    while (i > 0 && g_sched.heap[(i - 1) / 2]->wakeAt > g_sched.heap[i]->wakeAt) { schedHeapSwap(i, (i - 1) / 2); i = (i - 1) / 2; }
+}
+FIRE_FN void schedHeapDown(uint32_t i) {
+    for (;;) {
+        uint32_t l = 2 * i + 1, r = l + 1, m = i;
+        if (l < g_sched.heapN && g_sched.heap[l]->wakeAt < g_sched.heap[m]->wakeAt) m = l;
+        if (r < g_sched.heapN && g_sched.heap[r]->wakeAt < g_sched.heap[m]->wakeAt) m = r;
+        if (m == i) return;
+        schedHeapSwap(i, m);
+        i = m;
+    }
+}
+FIRE_FN void schedHeapAdd(FireTask* t) {
+    g_sched.heap = (FireTask**)fire_growPush(g_sched.heap, &g_sched.heapN, &g_sched.heapCap, sizeof(FireTask*));
+    g_sched.heap[g_sched.heapN++] = t;
+    t->heapAt = (int32_t)(g_sched.heapN - 1);
+    schedHeapUp(g_sched.heapN - 1);
+    schedNextWakeSet(g_sched.heap[0]->wakeAt);
+}
+FIRE_FN void schedHeapRemove(FireTask* t) {
+    uint32_t i = (uint32_t)t->heapAt;
+    if (t->heapAt < 0) return;
+    t->heapAt = -1;
+    if (i == g_sched.heapN - 1) g_sched.heapN--;
+    else {
+        g_sched.heap[i] = g_sched.heap[--g_sched.heapN];
+        g_sched.heap[i]->heapAt = (int32_t)i;
+        schedHeapDown(i);
+        schedHeapUp(i);
+    }
+    schedNextWakeSet(g_sched.heapN ? g_sched.heap[0]->wakeAt : INT64_MAX);
+}
+
+FIRE_FN void workerStart(void);
+/* (under g_sched.m) a task is ready: a worker that waits is woken, or one more is started while all are busy */
+FIRE_FN void schedKickLocked(void) {
+    if (g_sched.idle > 0) fire_cond_notifyAll(&g_sched.cv);
+    else if (g_sched.workers - (int32_t)fire_atomic_load(&g_sched.blocked) < g_sched.cores) workerStart();
+}
+extern FIRE_RT_DATA fire_atomic32 g_evTick;
+extern FIRE_RT_DATA fire_cond g_evCv;
+/* (under g_sched.m) the task at the end of the shared ready queue - a member of the main program's group at the end of the group's: the main program's
+ * thread takes it when it waits next (it is poked: the event count without the lock of the events, which is taken before this one elsewhere) */
+FIRE_FN void schedPushLocked(FireTask* t) {
+    t->next = NULL;
+    if (t->group) {
+        if (g_sched.groupTail) g_sched.groupTail->next = t; else g_sched.groupHead = t;
+        g_sched.groupTail = t;
+        fire_atomic_add(&g_evTick, 1);
+        fire_cond_notifyAll(&g_evCv);
+        fire_idleWake();
+        return;
+    }
+    if (g_sched.tail) g_sched.tail->next = t; else g_sched.head = t;
+    g_sched.tail = t;
+    fire_atomic_add(&g_schedReady, 1);
+    schedKickLocked();
+}
+/* The task at the end of a worker's own queue (no shared lock - only to wake or start another worker when one is idle or too few run). */
+FIRE_FN void schedPushLocal(FireWorker* w, FireTask* t) {
+    t->next = NULL;
+    fire_mutex_lock(&w->qm);
+    if (w->qt) w->qt->next = t; else w->qh = t;
+    w->qt = t;
+    fire_mutex_unlock(&w->qm);
+    fire_atomic_add(&g_schedReady, 1);
+    if (fire_atomic_load(&g_sched.idleA) || (int32_t)fire_atomic_load(&g_sched.workersA) - (int32_t)fire_atomic_load(&g_sched.blocked) < g_sched.cores) {
+        fire_mutex_lock(&g_sched.m);
+        schedKickLocked();
+        fire_mutex_unlock(&g_sched.m);
+    }
+}
+FIRE_FN FireTask* schedPopLocal(FireWorker* w) {
+    FireTask* t;
+    fire_mutex_lock(&w->qm);
+    t = w->qh;
+    if (t) { w->qh = t->next; if (!w->qh) w->qt = NULL; t->next = NULL; }
+    fire_mutex_unlock(&w->qm);
+    if (t) fire_atomic_add(&g_schedReady, (uint32_t)-1);
+    return t;
+}
+/* Wakes a parked task (an event, its time, a section): ready again. A task that is still parking is put back by its worker (TS_WOKEN). */
+FIRE_FN void taskWake(FireTask* t) {
+    for (;;) {
+        uint32_t st = fire_atomic_load(&t->st);
+        if (st == TS_PARKED) {
+            fire_mutex_lock(&g_sched.m);
+            if (fire_atomic_load(&t->st) == TS_PARKED) {
+                fire_atomic_store(&t->st, TS_READY);
+                schedPushLocked(t);
+                fire_mutex_unlock(&g_sched.m);
+                return;
+            }
+            fire_mutex_unlock(&g_sched.m);
+            continue;
+        }
+        if (st == TS_PARKING) {
+            fire_mutex_lock(&g_sched.m);
+            if (fire_atomic_load(&t->st) == TS_PARKING) { fire_atomic_store(&t->st, TS_WOKEN); fire_mutex_unlock(&g_sched.m); return; }
+            fire_mutex_unlock(&g_sched.m);
+            continue;
+        }
+        return;   /* (running, ready, woken already: nothing to do) */
+    }
+}
+/* The running task gives its turn to the worker: `action` tells the worker what to do with it. Back here when the task runs again - perhaps elsewhere. */
+FIRE_FN void taskSwitchOut(int action) {
+    FireWorker* w = workerSelf();
+    FireTask* t = w->cur;
+    w->action = action;
+    fire_coro_switch(t->coro, w->self);
+}
+/* (the end of a time slice) */
+FIRE_FN void taskYield(void) { taskSwitchOut(TA_REQUEUE); }
+/* Parks the running task until an event after `seen` - any (notifyEvent) when `key` is null, else one for the key (notifyKey) - or until `deadlineMs`
+ * (0: none). */
+FIRE_FN void taskWaitEvent(uint64_t seen, int64_t deadlineMs, const void* key) {
+    FireTask* t = workerSelf()->cur;
+    FireTask** list;
+    fire_mutex_lock(&g_evM);
+    if (g_evCount != seen) { fire_mutex_unlock(&g_evM); return; }
+    fire_atomic_store(&t->st, TS_PARKING);
+    list = key ? &g_evKeyed[FIRE_EV_BUCKET(key)] : &g_evWaiters;
+    t->evPrev = NULL;
+    t->evNext = *list;
+    if (*list) (*list)->evPrev = t;
+    *list = t;
+    t->evList = list;
+    t->waitKey = key;
+    t->evWaiting = true;
+    fire_mutex_unlock(&g_evM);
+    if (deadlineMs) {
+        fire_mutex_lock(&g_sched.m);
+        t->wakeAt = deadlineMs;
+        schedHeapAdd(t);
+        if (g_sched.idle > 0) fire_cond_notifyAll(&g_sched.cv);   /* (an idle worker waits until the earliest sleeper) */
+        fire_mutex_unlock(&g_sched.m);
+    }
+    taskSwitchOut(TA_PARK);
+    /* (woken: out of the lists it may still be in) */
+    fire_mutex_lock(&g_evM);
+    if (t->evWaiting) {
+        if (t->evPrev) t->evPrev->evNext = t->evNext; else *t->evList = t->evNext;
+        if (t->evNext) t->evNext->evPrev = t->evPrev;
+        t->evWaiting = false;
+    }
+    fire_mutex_unlock(&g_evM);
+    if (deadlineMs) {
+        fire_mutex_lock(&g_sched.m);
+        schedHeapRemove(t);
+        fire_mutex_unlock(&g_sched.m);
+    }
+}
+
+/* ---- the workers */
+FIRE_FN void workerBlockEnter(void) {
+    fire_atomic_add(&g_sched.blocked, 1);
+    if (fire_atomic_load(&g_schedReady)) {
+        fire_mutex_lock(&g_sched.m);
+        if (fire_atomic_load(&g_schedReady) && g_sched.idle == 0 && g_sched.workers - (int32_t)fire_atomic_load(&g_sched.blocked) < g_sched.cores) workerStart();
+        fire_mutex_unlock(&g_sched.m);
+    }
+}
+FIRE_FN void workerBlockLeave(void) { fire_atomic_add(&g_sched.blocked, (uint32_t)-1); }
+FIRE_FN void dedicatedMain(void* arg);
+/* The next task for a worker (under g_sched.m): the sleepers whose time has come first, then the queue; none: it waits (until the earliest sleeper), or -
+ * idle for long and not the last one - it ends (NULL). */
+/* (under g_sched.m) the sleepers whose time has come are ready */
+FIRE_FN void schedWakeDueLocked(int64_t now) {
+    while (g_sched.heapN && g_sched.heap[0]->wakeAt <= now) {
+        FireTask* s = g_sched.heap[0];
+        schedHeapRemove(s);
+        if (fire_atomic_load(&s->st) == TS_PARKED) { fire_atomic_store(&s->st, TS_READY); schedPushLocked(s); }
+        else if (fire_atomic_load(&s->st) == TS_PARKING) fire_atomic_store(&s->st, TS_WOKEN);
+    }
+}
+FIRE_FN FireTask* schedTake(FireWorker* w) {
+    for (;;) {
+        int64_t now = fire_plat_nowMs(), wait = -1;
+        schedWakeDueLocked(now);
+        if (g_sched.head) {
+            FireTask* t = g_sched.head;
+            g_sched.head = t->next;
+            if (!g_sched.head) g_sched.tail = NULL;
+            fire_atomic_add(&g_schedReady, (uint32_t)-1);
+            w->idleSince = 0;
+            return t;
+        }
+        {
+            /* (nothing shared: steal the oldest task of another worker's queue) */
+            uint32_t i;
+            for (i = 0; i < g_sched.nws; i++) {
+                FireTask* t;
+                if (g_sched.ws[i] == w) continue;
+                t = schedPopLocal(g_sched.ws[i]);
+                if (t) { w->idleSince = 0; return t; }
+            }
+        }
+        if (!w->idleSince) w->idleSince = now;
+        if (now - w->idleSince >= FIRE_TASK_SLEEP_IDLE_MS && g_sched.workers > 1) return NULL;
+        if (g_sched.heapN) wait = g_sched.heap[0]->wakeAt - now;
+        if (wait < 0 || wait > 1000) wait = 1000;
+        g_sched.idle++;
+        fire_atomic_add(&g_sched.idleA, 1);
+        fire_cond_waitFor(&g_sched.cv, &g_sched.m, wait < 1 ? 1 : wait);
+        g_sched.idle--;
+        fire_atomic_add(&g_sched.idleA, (uint32_t)-1);
+    }
+}
+FIRE_FN void workerMain(void* arg) {
+    FireWorker w;
+    (void)arg;
+    memset(&w, 0, sizeof w);
+    w.self = fire_coro_self();
+    fire_mutex_init(&w.qm);
+    g_worker = &w;
+    fire_mutex_lock(&g_sched.m);
+    g_sched.ws = (FireWorker**)fire_growPush(g_sched.ws, &g_sched.nws, &g_sched.wsCap, sizeof(FireWorker*));
+    g_sched.ws[g_sched.nws++] = &w;
+    for (;;) {
+        FireTask* t;
+        fire_mutex_unlock(&g_sched.m);
+        t = schedPopLocal(&w);   /* (its own queue first, without the shared lock) */
+        fire_mutex_lock(&g_sched.m);
+        if (!t) t = schedTake(&w);
+        if (!t) break;
+        fire_mutex_unlock(&g_sched.m);
+        w.cur = t;
+        w.action = TA_NONE;
+        fire_atomic_store(&t->st, TS_RUNNING);
+        fire_curTask = t->state;
+        fire_coro_switch(w.self, t->coro);
+        fire_curTask = NULL;
+        w.cur = NULL;
+        if (w.action == TA_REQUEUE) {
+            fire_atomic_store(&t->st, TS_READY);
+            schedPushLocal(&w, t);   /* (to the end of its own queue: the others there run first) */
+            fire_mutex_lock(&g_sched.m);
+            continue;
+        }
+        fire_mutex_lock(&g_sched.m);
+        if (w.action == TA_PARK) {
+            if (fire_atomic_load(&t->st) == TS_WOKEN) { fire_atomic_store(&t->st, TS_READY); schedPushLocked(t); }
+            else fire_atomic_store(&t->st, TS_PARKED);
+        } else if (w.action == TA_DEDICATE) {
+            fire_mutex_unlock(&g_sched.m);
+            fire_thread_detach(fire_thread_start(dedicatedMain, t, 256 * 1024));   /* (it switches to the task's own stack at once) */
+            fire_mutex_lock(&g_sched.m);
+        } else if (w.action == TA_DONE) {
+            if (t->coro->stackSize + 4096u >= FIRE_TASK_STACK_BYTES && t->coro->stackSize <= FIRE_TASK_STACK_BYTES && g_sched.spareN < FIRE_TASK_SPARE) {
+                g_sched.spare = (fire_coro**)fire_growPush(g_sched.spare, &g_sched.spareN, &g_sched.spareCap, sizeof(fire_coro*));
+                g_sched.spare[g_sched.spareN++] = t->coro;
+                free(t);
+            } else {
+                fire_mutex_unlock(&g_sched.m);
+                fire_coro_free(t->coro);
+                free(t);
+                fire_mutex_lock(&g_sched.m);
+            }
+        }
+    }
+    {
+        /* (out of the list: its queue is empty, it was idle) */
+        uint32_t i;
+        for (i = 0; i < g_sched.nws; i++) if (g_sched.ws[i] == &w) { g_sched.ws[i] = g_sched.ws[--g_sched.nws]; break; }
+    }
+    g_sched.workers--;
+    fire_atomic_add(&g_sched.workersA, (uint32_t)-1);
+    fire_mutex_unlock(&g_sched.m);
+    g_worker = NULL;
+}
+/* (under g_sched.m) one more worker */
+FIRE_FN void workerStart(void) {
+    g_sched.workers++;
+    fire_atomic_add(&g_sched.workersA, 1);
+    fire_thread_detach(fire_thread_start(workerMain, NULL, 256 * 1024));
+}
+/* `await dedicated`: the system thread of one task until it goes back to the pool (TA_REQUEUE) or ends (TA_DONE). There it is no task of the pool
+ * (taskRunning is false): it waits, sleeps and blocks in natives like a thread, without holding a worker. */
+FIRE_FN void dedicatedMain(void* arg) {
+    FireTask* t = (FireTask*)arg;
+    FireWorker w;
+    memset(&w, 0, sizeof w);
+    w.self = fire_coro_self();
+    w.dedicated = 1;
+    w.cur = t;
+    w.action = TA_NONE;
+    g_worker = &w;
+    fire_atomic_store(&t->st, TS_RUNNING);
+    fire_curTask = t->state;
+    fire_coro_switch(w.self, t->coro);
+    fire_curTask = NULL;
+    g_worker = NULL;
+    if (w.action == TA_REQUEUE) {
+        fire_mutex_lock(&g_sched.m);
+        fire_atomic_store(&t->st, TS_READY);
+        schedPushLocked(t);
+        fire_mutex_unlock(&g_sched.m);
+    } else {   /* (TA_DONE: a dedicated task never parks) */
+        fire_coro_free(t->coro);
+        free(t);
+    }
+    fire_coro_selfRelease();
+}
+/* Step 5a - the main program is pinned to its own system thread, but not alone on it: while it waits (blockUntil: Sleep, `process`, `await`, a section)
+ * that thread runs the tasks that wait for a worker - one at a time, then the main program looks at what it waits for again. The main program itself is
+ * no coroutine (its stack is the thread's), so it never moves; a task that runs here yields at its next safe point once an event came (fire_homeWanted).
+ * Returns false when there was nothing to run. */
+FIRE_FN void homeRun(FireTask* t);
+FIRE_FN void homeInit(void) {
+    FireWorker* w = &g_homeWorker;
+    if (w->self) return;
+    {
+        w->self = fire_coro_self();
+        w->home = 1;
+        fire_mutex_init(&w->qm);
+        fire_mutex_lock(&g_sched.m);
+        g_sched.ws = (FireWorker**)fire_growPush(g_sched.ws, &g_sched.nws, &g_sched.wsCap, sizeof(FireWorker*));
+        g_sched.ws[g_sched.nws++] = w;   /* (the tasks its tasks start go to its queue: the others may steal them) */
+        fire_mutex_unlock(&g_sched.m);
+    }
+}
+/* (under g_sched.m) the next ready member of the main program's group */
+FIRE_FN FireTask* groupPopLocked(void) {
+    FireTask* t = g_sched.groupHead;
+    if (t) { g_sched.groupHead = t->next; if (!g_sched.groupHead) g_sched.groupTail = NULL; t->next = NULL; }
+    return t;
+}
+FIRE_FN bool homeHelp(void) {
+    FireWorker* w = &g_homeWorker;
+    FireTask* t;
+    if (!fire_atomic_load(&g_schedOn)) return false;
+    homeInit();
+    fire_mutex_lock(&g_sched.m);
+    t = groupPopLocked();   /* (the group first: its members run nowhere else) */
+    fire_mutex_unlock(&g_sched.m);
+    if (!t) t = schedPopLocal(w);
+    if (!t) {
+        uint32_t i;
+        fire_mutex_lock(&g_sched.m);
+        schedWakeDueLocked(fire_plat_nowMs());
+        t = groupPopLocked();
+        if (!t && g_sched.head) {
+            t = g_sched.head;
+            g_sched.head = t->next;
+            if (!g_sched.head) g_sched.tail = NULL;
+            fire_atomic_add(&g_schedReady, (uint32_t)-1);
+        }
+        for (i = 0; !t && i < g_sched.nws; i++) if (g_sched.ws[i] != w) t = schedPopLocal(g_sched.ws[i]);   /* (under the lock: the list may grow) */
+        fire_mutex_unlock(&g_sched.m);
+    }
+    if (!t) return false;
+    homeRun(t);
+    return true;
+}
+/* Runs a task on the main program's thread until it switches out, then does what it asked for (the main program is not a task: it lends its thread). */
+FIRE_FN void homeRun(FireTask* t) {
+    FireWorker* w = &g_homeWorker;
+    ThreadLocals* mine = fire_curTask;
+    g_worker = w;
+    w->cur = t;
+    w->action = TA_NONE;
+    fire_atomic_store(&t->st, TS_RUNNING);
+    fire_curTask = t->state;
+    fire_coro_switch(w->self, t->coro);
+    fire_curTask = mine;
+    w->cur = NULL;
+    g_worker = NULL;   /* (the main program is no task) */
+    if (w->action == TA_DEDICATE) { fire_thread_detach(fire_thread_start(dedicatedMain, t, 256 * 1024)); return; }
+    fire_mutex_lock(&g_sched.m);
+    if (w->action == TA_REQUEUE) { fire_atomic_store(&t->st, TS_READY); schedPushLocked(t); }   /* (to the shared queue: the main program may keep its thread now) */
+    else if (w->action == TA_PARK) {
+        if (fire_atomic_load(&t->st) == TS_WOKEN) { fire_atomic_store(&t->st, TS_READY); schedPushLocked(t); }
+        else fire_atomic_store(&t->st, TS_PARKED);
+    } else if (w->action == TA_DONE) {
+        if (t->coro->stackSize + 4096u >= FIRE_TASK_STACK_BYTES && t->coro->stackSize <= FIRE_TASK_STACK_BYTES && g_sched.spareN < FIRE_TASK_SPARE) {
+            g_sched.spare = (fire_coro**)fire_growPush(g_sched.spare, &g_sched.spareN, &g_sched.spareCap, sizeof(fire_coro*));
+            g_sched.spare[g_sched.spareN++] = t->coro;
+            free(t);
+        } else {
+            fire_mutex_unlock(&g_sched.m);
+            fire_coro_free(t->coro);
+            free(t);
+            return;
+        }
+    }
+    fire_mutex_unlock(&g_sched.m);
+}
+/* Where a task begins: its strand, its function, then the worker frees it. */
+FIRE_FN void taskEntry(void* p) {
+    FireTask* t = (FireTask*)p;
+    fire_strandAttach();
+    t->state = fire_curTask;
+    t->fn(t->arg);
+    t->state = NULL;   /* (the strand was let go of at the end of the function) */
+    taskSwitchOut(TA_DONE);
+}
+/* Starts a task that runs fn(arg) (stackBytes 0: the default). */
+FIRE_FN void taskSpawn(void (*fn)(void*), void* arg, uint32_t stackBytes) {
+    FireTask* t = (FireTask*)calloc(1, sizeof(FireTask));
+    if (!t) allocFailed();
+    t->fn = fn;
+    t->arg = arg;
+    t->heapAt = -1;
+    fire_mutex_lock(&g_sched.m);
+    if (!stackBytes && g_sched.spareN) { t->coro = g_sched.spare[--g_sched.spareN]; fire_coro_reset(t->coro, taskEntry, t); }
+    fire_mutex_unlock(&g_sched.m);
+    if (!t->coro) t->coro = fire_coro_new(taskEntry, t, stackBytes ? stackBytes : FIRE_TASK_STACK_BYTES);
+    if (!t->coro) allocFailed();
+    if (taskRunning()) {
+        /* (started by a task: into its worker's own queue) */
+        fire_atomic_store(&t->st, TS_READY);
+        schedPushLocal(workerSelf(), t);
+        return;
+    }
+    fire_mutex_lock(&g_sched.m);
+    if (!fire_atomic_exchange(&g_schedOn, 1)) g_sched.cores = fire_plat_cores();
+    fire_atomic_store(&t->st, TS_READY);
+    schedPushLocked(t);
+    fire_mutex_unlock(&g_sched.m);
+}
+#endif
+#ifdef FIRE_TASKS
+/* (under g_evM) wakes the tasks of a list - all, or those that wait for `key` */
+FIRE_FN void evWakeList(FireTask** list, const void* key) {
+    FireTask* t = *list;
+    while (t) {
+        FireTask* n = t->evNext;
+        if (!key || t->waitKey == key) {
+            if (t->evPrev) t->evPrev->evNext = t->evNext; else *list = t->evNext;
+            if (t->evNext) t->evNext->evPrev = t->evPrev;
+            t->evWaiting = false;
+            t->evNext = t->evPrev = NULL;
+            taskWake(t);
+        }
+        t = n;
+    }
+}
+#endif
+/* Something changed that a waiting strand may be looking for: the system threads look again, and the tasks that wait for any event. */
 FIRE_FN void notifyEvent(void) {
     fire_mutex_lock(&g_evM);
     g_evCount++;
+#ifdef FIRE_TASKS
+    fire_atomic_add(&g_evTick, 1);
+#endif
     fire_cond_notifyAll(&g_evCv);
+#ifdef FIRE_TASKS
+    evWakeList(&g_evWaiters, NULL);
+#endif
     fire_mutex_unlock(&g_evM);
+    fire_idleWake();
+}
+/* ... for one thing (`key`: a section request, an actor): the system threads, and only the tasks that wait for it. */
+FIRE_FN void notifyKey(const void* key) {
+    fire_mutex_lock(&g_evM);
+    g_evCount++;
+#ifdef FIRE_TASKS
+    fire_atomic_add(&g_evTick, 1);
+#endif
+    fire_cond_notifyAll(&g_evCv);
+#ifdef FIRE_TASKS
+    evWakeList(&g_evKeyed[FIRE_EV_BUCKET(key)], key);
+#else
+    (void)key;
+#endif
+    fire_mutex_unlock(&g_evM);
+    fire_idleWake();
+}
+/* ... for everyone (terminate). */
+FIRE_FN void notifyEventAll(void) {
+    fire_mutex_lock(&g_evM);
+    g_evCount++;
+#ifdef FIRE_TASKS
+    fire_atomic_add(&g_evTick, 1);
+#endif
+    fire_cond_notifyAll(&g_evCv);
+#ifdef FIRE_TASKS
+    {
+        uint32_t b;
+        evWakeList(&g_evWaiters, NULL);
+        for (b = 0; b < FIRE_EV_BUCKETS; b++) evWakeList(&g_evKeyed[b], NULL);
+    }
+#endif
+    fire_mutex_unlock(&g_evM);
+    fire_idleWake();
 }
 
 /* Signals. Bit 0 is for every thread (terminate), bit 1 for the main program only (thread exceptions), bit 2 for the main program too (sections and jobs that
  * wait for it; looked at only at a loop's jump back, and only in the mode `safepoints` - see g_globalJobs). */
-enum { ATTN_ALL = 1, ATTN_MAIN = 2, ATTN_SECT = 4 };
+enum { ATTN_ALL = 1, ATTN_MAIN = 2, ATTN_SECT = 4, ATTN_PEER = 8 };   /* (ATTN_PEER: a fire thread is asked for a section of its own, see ThreadRec) */
 extern FIRE_RT_DATA fire_atomic32 g_attn;
 
-typedef struct TerminateState { bool requested; Value value; } TerminateState;
+/* `requested` is read by every thread at its safe points (atomic); the claim (the first call wins) and `value` are under g_thrM. */
+typedef struct TerminateState { fire_atomic32 requested; Value value; } TerminateState;
 extern FIRE_RT_DATA TerminateState g_terminate;
+#define terminateRequested() (fire_atomic_load(&g_terminate.requested) != 0)
+/* The small tables of the threads (docs/ROADMAP_TASKS.md step 1d): g_thrM for the thread list, the live count, their exceptions, the graveyard and the
+ * terminate value; g_reqM for the queue of sections and jobs; g_mailboxM for the mailboxes of the actors. Each is held only for the change itself (never
+ * while fire code runs or a thread waits). */
+extern FIRE_RT_DATA fire_mutex g_thrM, g_reqM, g_mailboxM, g_cancelM;
 extern FIRE_RT_DATA OwnList g_terminateOwn;   /* what a terminate value owns lives on until the process ends */
 
 FIRE_FN int64_t steadyMs(void) { return fire_plat_nowMs(); }
 
+/* ---- Step 6 - cancellation (docs/ROADMAP_TASKS.md section 6) ----------------------------------------------------------------------------------------
+ * A node is cancelled itself (Cancel), by its time limit, or by one of its parents: a task that awaits with `until` follows its caller's token and the
+ * given ones. Nodes are counted (the handles of the program, the tasks and nodes that follow them) and live apart from the fire objects; a node knows its
+ * parents only - a check walks up (a tree of a few levels). Cancel wakes every wait (notifyEventAll): each looks at its token again. */
+typedef struct CancelNode {
+    fire_atomic32 refs;
+    fire_atomic32 state;           /* bit 0 cancelled, bit 1 the time limit ran out */
+    int64_t deadline;              /* steadyMs, 0: none (set before the node is shared, or under g_cancelM) */
+    uint32_t nparents;
+    struct CancelNode* parents[4];
+} CancelNode;
+typedef struct TokFrame { CancelNode* node; Handler* handlers; struct TokFrame* prev; } TokFrame;
+extern FIRE_RT_DATA fire_mutex g_cancelM;
+FIRE_FN CancelNode* cancelNew(void) {
+    CancelNode* n = (CancelNode*)calloc(1, sizeof(CancelNode));
+    if (!n) allocFailed();
+    fire_atomic_store(&n->refs, 1);
+    return n;
+}
+FIRE_FN void cancelRetain(CancelNode* n) { if (n) fire_atomic_add(&n->refs, 1); }
+FIRE_FN void cancelRelease(CancelNode* n) {
+    uint32_t i;
+    if (!n || fire_atomic_addAcqRel(&n->refs, (uint32_t)-1) != 1) return;
+    for (i = 0; i < n->nparents; i++) cancelRelease(n->parents[i]);
+    free(n);
+}
+/* (a parent - its count is taken here) */
+FIRE_FN void cancelLink(CancelNode* n, CancelNode* parent) {
+    if (!parent || n->nparents >= 4) return;
+    cancelRetain(parent);
+    n->parents[n->nparents++] = parent;
+}
+FIRE_FN int64_t cancelDeadlineOf(CancelNode* n) { int64_t d; fire_mutex_lock(&g_cancelM); d = n->deadline; fire_mutex_unlock(&g_cancelM); return d; }
+/* 0: not cancelled; 1 cancelled, 2 a time limit ran out - its own or of a parent */
+FIRE_FN int cancelStateAt(CancelNode* n, int depth) {
+    uint32_t s, i;
+    int64_t d;
+    if (!n) return 0;
+    s = fire_atomic_loadAcquire(&n->state);
+    if (s) return (s & 1) ? 1 : 2;   /* (bit 0 cancelled, bit 1 the time limit) */
+    d = cancelDeadlineOf(n);
+    if (d && steadyMs() >= d) { fire_atomic_or(&n->state, 2); return 2; }
+    if (depth > 64) return 0;
+    for (i = 0; i < n->nparents; i++) { int ps = cancelStateAt(n->parents[i], depth + 1); if (ps) return ps; }
+    return 0;
+}
+FIRE_FN int cancelState(CancelNode* n) { return cancelStateAt(n, 0); }
+/* The earliest time limit of the node and its parents (steadyMs), 0: none. */
+FIRE_FN int64_t cancelDeadline(CancelNode* n) {
+    int64_t d, pd;
+    uint32_t i;
+    if (!n) return 0;
+    d = cancelDeadlineOf(n);
+    for (i = 0; i < n->nparents; i++) { pd = cancelDeadline(n->parents[i]); if (pd && (!d || pd < d)) d = pd; }
+    return d;
+}
+FIRE_FN void cancelAfterMs(CancelNode* n, int64_t ms) {
+    int64_t at = steadyMs() + (ms > 0 ? ms : 0);
+    fire_mutex_lock(&g_cancelM);
+    if (!n->deadline || at < n->deadline) n->deadline = at;
+    fire_mutex_unlock(&g_cancelM);
+    notifyEventAll();   /* (a wait looks at its new time limit) */
+}
+FIRE_FN void cancelFire(CancelNode* n) { if (!n) return; fire_atomic_or(&n->state, 1); notifyEventAll(); }
+/* The token of the running task (the innermost `until`, else its own). */
+FIRE_FN CancelNode* fire_curToken(void) { return g_tokTop ? g_tokTop->node : g_token; }
+/* The exception of a wait that ends because the task is cancelled (with the unwinding set). */
+FIRE_FN void fire_throwCancelled(int state) {
+    if (state == 2) fireError("TimeoutException", "The time limit ran out.");
+    else fireError("CancelledException", "The task was cancelled.");
+}
+/* `await ... until x` (OpCode.CancelPush): a node that follows the given ones (handles of __Cancel.Limit, their counts go to it) and - for `await` - the
+ * caller's token; `forFire`: the node of the next `fire` (a thread does not follow its caller). */
+FIRE_FN void fire_untilPush(const Value* limits, uint32_t n, bool forFire) {
+    CancelNode* node = cancelNew();
+    uint32_t i;
+    if (!forFire) cancelLink(node, fire_curToken());
+    for (i = 0; i < n; i++) {
+        CancelNode* p = limits[i].kind == K_Int ? (CancelNode*)(intptr_t)limits[i].i : NULL;
+        cancelLink(node, p);
+        cancelRelease(p);
+    }
+    if (forFire) { cancelRelease(g_fireToken); g_fireToken = node; return; }
+    {
+        TokFrame* f = (TokFrame*)malloc(sizeof(TokFrame));
+        if (!f) allocFailed();
+        f->node = node;
+        f->handlers = g_handlers;
+        f->prev = g_tokTop;
+        g_tokTop = f;
+    }
+}
+FIRE_FN void fire_untilPop(void) {
+    TokFrame* f = g_tokTop;
+    if (!f) return;
+    g_tokTop = f->prev;
+    cancelRelease(f->node);
+    free(f);
+}
+/* (throwValueR: a catch outside the frames - its handler was there before the frame began) */
+FIRE_FN void fire_untilCaught(Handler* h) {
+    while (g_tokTop) {
+        Handler* x;
+        bool outside = false;
+        for (x = g_tokTop->handlers; x; x = x->prev) if (x == h) { outside = true; break; }
+        if (!outside) return;
+        fire_untilPop();
+    }
+}
+/* The natives of the prelude's CancellationSource / CancellationToken: a node is an int handle (0: none). */
+FIRE_FN Value fire_cancel_new(Value linked) {
+    CancelNode* n = cancelNew();
+    if (linked.kind == K_Bool && linked.i) cancelLink(n, fire_curToken());
+    return Int((int64_t)(intptr_t)n);
+}
+FIRE_FN CancelNode* fire_cancelOf(Value h) { return h.kind == K_Int ? (CancelNode*)(intptr_t)h.i : NULL; }
+FIRE_FN Value fire_cancel_release(Value h) { cancelRelease(fire_cancelOf(h)); return Undef(); }
+FIRE_FN Value fire_cancel_state(Value h) { return Int(cancelState(fire_cancelOf(h))); }
+FIRE_FN Value fire_cancel_current(void) { CancelNode* n = fire_curToken(); cancelRetain(n); return Int((int64_t)(intptr_t)n); }
+FIRE_FN Value fire_cancel_ref(Value h) { CancelNode* n = fire_cancelOf(h); cancelRetain(n); return Int((int64_t)(intptr_t)n); }
+FIRE_FN Value fire_cancel_cancel(Value h) { cancelFire(fire_cancelOf(h)); return Undef(); }
+FIRE_FN bool timeTicksOf(Value v, int64_t* ticks);
+FIRE_FN Value fire_cancel_after(Value h, Value t) {
+    int64_t ticks;
+    CancelNode* n = fire_cancelOf(h);
+    if (!timeTicksOf(t, &ticks)) return fireError("ArgumentException", "CancelAfter expects a time value (5s, 200ms) or a TimeSpan.");
+    if (n) cancelAfterMs(n, (ticks + TICKS_PER_MS - 1) / TICKS_PER_MS);
+    return Undef();
+}
+FIRE_FN Value fire_cancel_time(Value t) {
+    int64_t ticks;
+    CancelNode* n;
+    if (!timeTicksOf(t, &ticks)) return fireError("ArgumentException", "until expects a token, a source or a time value (5s, 200ms).");
+    n = cancelNew();
+    n->deadline = steadyMs() + (ticks + TICKS_PER_MS - 1) / TICKS_PER_MS;
+    return Int((int64_t)(intptr_t)n);
+}
+/* (a wait that also ends when the token is cancelled) */
+typedef struct TokWait { bool (*pred)(void*); void* ctx; CancelNode* token; } TokWait;
+FIRE_FN bool fire_tokWaitPred(void* c) { TokWait* w = (TokWait*)c; return (w->pred && w->pred(w->ctx)) || cancelState(w->token) != 0; }
+
 /* Waits - with the GIL released - until `pred(ctx)` (evaluated with the GIL held) is true. Returns false when it was cut short by `terminate`
  * (`stopOnTerminate`) or when the deadline passed (`deadlineMs` on the steady clock, 0 = none). */
+#ifdef FIRE_NO_GIL
+FIRE_FN void threadServe(void);
+FIRE_FN void threadRecBegin(void);
+FIRE_FN void threadRecEnd(void);
+#endif
+FIRE_FN bool fire_sleepWake(void* ctx);
+FIRE_FN bool fire_sectionGranted(void* ctx);
+FIRE_FN bool fire_sectionDone(void* ctx);
+FIRE_FN bool fire_actorReady(void* ctx);
+FIRE_FN bool fire_replyDone(void* ctx);
+FIRE_FN bool fire_tokWaitPred(void* ctx);
+#ifdef FIRE_TASKS
+FIRE_FN bool fire_awaitDone(void* ctx);
+#endif
 FIRE_FN bool blockUntil(bool (*pred)(void*), void* ctx, bool stopOnTerminate, int64_t deadlineMs) {
     for (;;) {
         int64_t now, slice = 5;
         uint64_t seen;
-        if (pred(ctx)) return true;
-        if (stopOnTerminate && g_terminate.requested) return false;
-        now = steadyMs();
-        if (deadlineMs && now >= deadlineMs) return false;
+#ifdef FIRE_NO_GIL
+        threadServe();   /* (a fire thread that waits grants the sections other threads ask of it) */
+#endif
+        /* (the count of the events before the condition is looked at: an event between the two - the condition true by then - makes the wait below end at
+         * once; read after it, the event would be lost and the wait would last until the next one) */
         fire_mutex_lock(&g_evM);
         seen = g_evCount;
         fire_mutex_unlock(&g_evM);
+        if (pred(ctx)) return true;
+        if (stopOnTerminate && terminateRequested()) return false;
+        now = steadyMs();
+        if (deadlineMs && now >= deadlineMs) return false;
+        /* (the main program waits: the windows of its thread read what the system has for them) */
+        if (fire_atomic_load(&g_idleOn) && fire_isMainProgram()) g_idlePump();
+#ifdef FIRE_NO_GIL
+        strandRelease();
+#else
         gilRelease();
+#endif
         if (deadlineMs && deadlineMs - now < slice) slice = deadlineMs - now;
-        fire_mutex_lock(&g_evM);
-        if (g_evCount == seen) fire_cond_waitFor(&g_evCv, &g_evM, slice);
-        fire_mutex_unlock(&g_evM);
+#ifdef FIRE_TASKS
+        if (taskRunning()) {
+            /* (a task - a member of the main program's group too: parked until an event or its time - Sleep wakes only at its time, the other conditions are looked at again every few ms) */
+            bool keyed = pred == fire_sectionGranted || pred == fire_sectionDone || pred == fire_replyDone || pred == fire_awaitDone;
+            const void* key = pred == fire_sleepWake || pred == fire_tokWaitPred ? (const void*)&g_terminate : keyed || pred == fire_actorReady ? ctx : NULL;
+            /* (Sleep wakes at its time, a section when it is granted or done, an awaited reply or group when it is done - notifyKey; anything else is looked
+             * at again every few ms) */
+            taskWaitEvent(seen, pred == fire_sleepWake || pred == fire_tokWaitPred || keyed ? deadlineMs : now + slice, key);
+            strandAcquire();
+            continue;
+        }
+        if (!g_isThread) {
+            /* the main program waits: its thread runs a task that waits for a worker meanwhile (step 5a), then it looks again */
+            fire_atomic_store(&g_homeSeen, fire_atomic_load(&g_evTick));
+            if (homeHelp()) { strandAcquire(); continue; }
+        }
+#endif
+        if (fire_atomic_load(&g_idleOn) && g_idleWait != NULL && fire_isMainProgram()) {
+            /* (in the system's wait for the windows' events, which the scheduler's events end too: fire_idleWake after the count went up) */
+            bool same;
+            fire_atomic_store(&g_idleWaiting, 1);   /* (before the count: an event after it finds the flag and wakes the wait) */
+            fire_mutex_lock(&g_evM);
+            same = g_evCount == seen;
+            fire_mutex_unlock(&g_evM);
+            if (same) g_idleWait(slice);
+            fire_atomic_store(&g_idleWaiting, 0);
+        } else {
+            fire_mutex_lock(&g_evM);
+            if (g_evCount == seen) fire_cond_waitFor(&g_evCv, &g_evM, slice);
+            fire_mutex_unlock(&g_evM);
+        }
+#ifdef FIRE_NO_GIL
+        strandAcquire();
+#else
         gilAcquire();
+#endif
     }
+}
+FIRE_FN bool fire_isMainProgram(void) {
+#ifdef FIRE_TASKS
+    if (taskRunning()) return false;   /* (a task, a member of the main program's group too: the main program serves the windows when it waits itself) */
+#endif
+    return !g_isThread;
 }
 
 #ifndef FIRE_THREAD_STACK_BYTES
 #define FIRE_THREAD_STACK_BYTES 0   /* 0: the platform's own default */
 #endif
-extern FIRE_RT_DATA int g_threadsLive;
+extern FIRE_RT_DATA fire_atomic32 g_threadsLive;   /* fire threads that have not ended */
 extern FIRE_RT_DATA PtrVec g_threadList;     /* fire_thread* */
 /* unhandled exceptions of fire threads that wait for the main program */
 typedef struct ValueQueue { Value* items; uint32_t count, cap; } ValueQueue;
 extern FIRE_RT_DATA ValueQueue g_pendingExc;
 extern FIRE_RT_DATA PtrVec g_graveyard;      /* the global scopes of threads that ended with an unhandled exception (never freed: the exception is handed on) */
 FIRE_FN void pendingExcPush(Value e) {
+    fire_mutex_lock(&g_thrM);
     g_pendingExc.items = (Value*)fire_growPush(g_pendingExc.items, &g_pendingExc.count, &g_pendingExc.cap, sizeof(Value));
     g_pendingExc.items[g_pendingExc.count++] = e;
+    fire_mutex_unlock(&g_thrM);
+}
+/* Takes the oldest exception of a thread (false: none). */
+FIRE_FN bool pendingExcPop(Value* e) {
+    bool any;
+    fire_mutex_lock(&g_thrM);
+    any = g_pendingExc.count > 0;
+    if (any) {
+        *e = g_pendingExc.items[0];
+        memmove(g_pendingExc.items, g_pendingExc.items + 1, (g_pendingExc.count - 1) * sizeof(Value));
+        g_pendingExc.count--;
+    }
+    fire_mutex_unlock(&g_thrM);
+    return any;
+}
+FIRE_FN uint32_t pendingExcCount(void) {
+    uint32_t n;
+    fire_mutex_lock(&g_thrM);
+    n = g_pendingExc.count;
+    fire_mutex_unlock(&g_thrM);
+    return n;
 }
 
 typedef struct ThreadStart {
@@ -7119,6 +8516,7 @@ typedef struct ThreadStart {
     Value* args;
     uint32_t n;
     OwnList* travel;   /* the copies that `taking` made for the thread (it adopts them into its global scope) */
+    struct CancelNode* token;   /* `fire ... until x` */
 } ThreadStart;
 FIRE_FN void sectionAbort(void);   /* the end of a thread that is still inside a section */
 
@@ -7127,11 +8525,26 @@ FIRE_RT_FN void fire_dbgThreadBegin(void);
 FIRE_RT_FN void fire_dbgThreadEnd(void);
 #endif
 FIRE_FN void threadEntry(ThreadStart st) {
-    gilAcquire();
+#ifdef FIRE_TASK_STATE
+    fire_strandAttach();   /* (the state of this strand, before anything of it is touched) */
+#endif
     g_isThread = 1;
+#ifdef FIRE_NO_GIL
+    g_domReader = 1;
+#endif
+#ifdef FIRE_NO_GIL
+    strandAcquire();   /* (not a native that waits: the worker is not blocked) */
+#else
+    gilAcquire();
+#endif
     g_attnMask = ATTN_ALL;
+#ifdef FIRE_NO_GIL
+    g_attnMask |= ATTN_PEER;
+    threadRecBegin();
+#endif
     g_tick = 4096;
     g_travel = st.travel;
+    g_token = st.token;   /* (its count is the thread's now) */
 #ifdef FIRE_DEBUG
     fire_dbgThreadBegin();
 #endif
@@ -7139,16 +8552,31 @@ FIRE_FN void threadEntry(ThreadStart st) {
 #ifdef FIRE_DEBUG
     fire_dbgThreadEnd();
 #endif
+    while (g_tokTop) fire_untilPop();   /* (frames that an exception left behind) */
+    cancelRelease(g_token);             /* (the token of `fire ... until x`) */
+    g_token = NULL;
     sectionAbort();
+#ifdef FIRE_NO_GIL
+    threadRecEnd();
+#endif
     free(st.args);
     free(g_pool.items);
     g_pool.items = NULL; g_pool.top = 0; g_pool.cap = 0;
-    g_threadsLive--;
+#ifdef FIRE_SLOT_SEGMENTS
+    slotSpill(0);   /* (the free slots this thread kept go back to the others) */
+#endif
+    fire_atomic_add(&g_threadsLive, (uint32_t)-1);
     notifyEvent();
+#ifdef FIRE_NO_GIL
+    strandRelease();
+#else
     gilRelease();
+#endif
 #ifdef FIRE_TLS_STRUCT
     free(fire_tl());   /* the state of this task (the GIL is gone, nothing of it is used any more) */
     fire_tls_set(NULL);
+#elif defined(FIRE_TASK_STATE)
+    fire_strandDetach();   /* (the state of this strand: nothing of it is used any more) */
 #endif
 }
 /* What the platform starts for a fire thread. */
@@ -7158,8 +8586,139 @@ FIRE_FN void threadMain(void* boxed) {
     threadEntry(st);
 }
 
-/* `fire`: starts the thread that runs `fn(args)`; `travel` (may be null) holds the copies of the `taking` values. */
-FIRE_FN void fireThread(void (*fn)(const Value*), const Value* args, uint32_t n, OwnList* travel) {
+/* Step 5c - a callback of the UI (an event handler, fire_bridge_windows.h) as a member of the main program's group: a task that has the main program's role
+ * (its globals, the writer of the shared domain) and runs only on its thread, one member at a time, switched only where it waits. It starts at once and
+ * runs until it ends or waits (Sleep, `await`, `process`); then the caller goes on - the window stays responsive - and the member goes on at the next wait
+ * of the main program or at fire_groupRun (the UI loop's switch point, every Tick). Only from the main program itself (not from a member: a member that runs
+ * a loop of its own - a modal window - calls its callbacks itself). false: not here - the caller calls it itself. */
+#ifdef FIRE_TASKS
+#define FIRE_RT_GROUP_CALL 1
+typedef struct GroupCall { Value lam; Value args[8]; int argc; OwnList* globalOwn; uint32_t attn; } GroupCall;
+FIRE_FN void groupCallMain(void* p) {
+    GroupCall* c = (GroupCall*)p;
+    OwnList scratch;
+    int i;
+    g_isThread = 0;
+    g_globalOwn = c->globalOwn;
+    g_attnMask = c->attn;
+    g_tick = 4096;
+    strandAcquire();
+    ownListInit(&scratch, poolMark(), NULL);
+    for (i = 0; i < c->argc; i++) adopt(c->args[i], &scratch);   /* (what came with it: its own now) */
+    g_handlers = NULL;
+    callLam(c->lam, c->argc, c->args, &scratch);
+    if (g_unwind.active) {
+        Value ex = g_unwind.value;
+        clearUnwind();
+        fprintf(stderr, "(unhandled exception in the callback: %s)\n", ex.kind == K_Class ? className(asObj(ex)->cls) : "exception");
+    }
+    leave(&scratch);
+    release(c->lam);
+    free(c);
+    strandRelease();
+    free(g_pool.items);
+    g_pool.items = NULL; g_pool.top = 0; g_pool.cap = 0;
+    fire_strandDetach();
+    fire_atomic_add(&g_groupLive, (uint32_t)-1);
+    notifyEvent();   /* (the end of the program waits for the members) */
+}
+FIRE_FN bool fire_groupCall(Value lam, int argc, const Value* args) {
+    GroupCall* c;
+    FireTask* t;
+    int i;
+    if (!fire_curTask || fire_curTask != g_homeState || taskRunning() || argc > 8) return false;
+    c = (GroupCall*)calloc(1, sizeof(GroupCall));
+    t = (FireTask*)calloc(1, sizeof(FireTask));
+    if (!c || !t) allocFailed();
+    c->lam = lam;
+    retain(lam);
+    c->argc = argc;
+    for (i = 0; i < argc; i++) {
+        Owned* o = ownedOf(args[i]);
+        c->args[i] = args[i];
+        if (o) { if (o->owner) ownUnlink(o); }   /* (an array of the event: it travels to the member) */
+        else retain(args[i]);                     /* (a string: the member's count) */
+    }
+    c->globalOwn = g_globalOwn;
+    c->attn = g_attnMask;
+    t->fn = groupCallMain;
+    t->arg = c;
+    t->heapAt = -1;
+    t->group = 1;
+    fire_mutex_lock(&g_sched.m);
+    if (!fire_atomic_exchange(&g_schedOn, 1)) g_sched.cores = fire_plat_cores();
+    if (g_sched.spareN) { t->coro = g_sched.spare[--g_sched.spareN]; fire_coro_reset(t->coro, taskEntry, t); }
+    fire_mutex_unlock(&g_sched.m);
+    if (!t->coro) t->coro = fire_coro_new(taskEntry, t, FIRE_TASK_STACK_BYTES);
+    if (!t->coro) allocFailed();
+    homeInit();
+    fire_atomic_add(&g_groupLive, 1);
+    strandRelease();   /* (the member has the main program's role while it runs; the package lock goes with it) */
+    homeRun(t);
+    strandAcquire();
+    return true;
+}
+/* The UI loop's switch point (every Tick): the members of the group that are ready run until they end or wait again. */
+FIRE_FN void fire_groupRun(void) {
+    FireTask* t;
+    if (!fire_curTask || fire_curTask != g_homeState || taskRunning() || !fire_atomic_load(&g_groupLive)) return;
+    fire_mutex_lock(&g_sched.m);
+    schedWakeDueLocked(fire_plat_nowMs());
+    t = groupPopLocked();
+    fire_mutex_unlock(&g_sched.m);
+    if (!t) return;
+    strandRelease();
+    while (t) {
+        homeRun(t);
+        fire_mutex_lock(&g_sched.m);
+        t = groupPopLocked();
+        fire_mutex_unlock(&g_sched.m);
+    }
+    strandAcquire();
+}
+#endif
+
+/* `await dedicated Call()`: the running task goes to a system thread of its own for the call - work that blocks in natives for long holds no worker of the
+ * pool - and back to the pool after it (fire_dedicateLeave). It is the same strand, so the call has the caller's objects lent as with `await`. An
+ * exception that leaves the call skips the leave: the catch that takes it outside takes the task back (fire_dedicateCaught). Nested: counted. Not on a
+ * task (the main program, a thread of its own, no scheduler): nothing - that is a system thread already. */
+FIRE_FN void fire_dedicateEnter(void) {
+#ifdef FIRE_TASKS
+    if (g_dedicated++ > 0 || !g_isThread || !taskRunning()) return;   /* (a member of the main program's group is no thread: it stays) */
+    g_dedMoved = 1;
+    g_dedHandlers = g_handlers;
+    strandRelease();
+    taskSwitchOut(TA_DEDICATE);
+    strandAcquire();
+#endif
+}
+#ifdef FIRE_TASKS
+/* (the task back to the pool) */
+FIRE_FN void dedicateBack(void) {
+    g_dedMoved = 0;
+    g_dedicated = 0;
+    strandRelease();
+    taskSwitchOut(TA_REQUEUE);
+    strandAcquire();
+}
+#endif
+FIRE_FN void fire_dedicateLeave(void) {
+#ifdef FIRE_TASKS
+    if (g_dedicated > 0 && --g_dedicated == 0 && g_dedMoved) dedicateBack();
+#endif
+}
+#ifdef FIRE_TASKS
+/* (throwValueR: a catch for an exception while the task is on its own thread - when the handler was there before the `await dedicated`, the call is left) */
+FIRE_FN void fire_dedicateCaught(Handler* h) {
+    Handler* x;
+    for (x = g_dedHandlers; x; x = x->prev)
+        if (x == h) { dedicateBack(); return; }
+}
+#endif
+
+/* `fire`: starts the thread that runs `fn(args)`; `travel` (may be null) holds the copies of the `taking` values. A dedicated one (`fire dedicated`) is a
+ * system thread of its own, not a task of the pool. */
+FIRE_FN void fireThreadStart(void (*fn)(const Value*), const Value* args, uint32_t n, OwnList* travel, bool dedicated) {
     ThreadStart* boxed = (ThreadStart*)malloc(sizeof(ThreadStart));
     uint32_t i;
     if (!boxed) allocFailed();
@@ -7167,11 +8726,25 @@ FIRE_FN void fireThread(void (*fn)(const Value*), const Value* args, uint32_t n,
     boxed->args = (Value*)malloc((n ? n : 1) * sizeof(Value));
     boxed->n = n;
     boxed->travel = travel;
+    boxed->token = g_fireToken;   /* (`fire ... until x`: the thread follows it; a thread never follows its caller) */
+    g_fireToken = NULL;
     if (!boxed->args) allocFailed();
     for (i = 0; i < n; i++) boxed->args[i] = args[i];
-    g_threadsLive++;
-    ptrVecPush(&g_threadList, fire_thread_start(threadMain, boxed, FIRE_THREAD_STACK_BYTES));
+    fire_atomic_add(&g_threadsLive, 1);
+#ifdef FIRE_TASKS
+    if (!dedicated) { taskSpawn(threadMain, boxed, FIRE_THREAD_STACK_BYTES); return; }
+#else
+    (void)dedicated;
+#endif
+    {
+        fire_thread* t = fire_thread_start(threadMain, boxed, FIRE_THREAD_STACK_BYTES);
+        fire_mutex_lock(&g_thrM);
+        ptrVecPush(&g_threadList, t);
+        fire_mutex_unlock(&g_thrM);
+    }
 }
+FIRE_FN void fireThread(void (*fn)(const Value*), const Value* args, uint32_t n, OwnList* travel) { fireThreadStart(fn, args, n, travel, false); }
+FIRE_FN void fireThreadDedicated(void (*fn)(const Value*), const Value* args, uint32_t n, OwnList* travel) { fireThreadStart(fn, args, n, travel, true); }
 
 /* The list that carries the copies for a new thread from the spawner to the thread. */
 FIRE_FN OwnList* newTravel(void) {
@@ -7189,9 +8762,19 @@ FIRE_FN void startLeave(void) {
 
 /* ---- Actors (THREADING_DESIGN 2): every method call on an actor is a message in its mailbox; `process` runs one. An actor has flag 8. ------- */
 typedef Value (*MsgFn)(Value self, const Value* args, OwnList* list);
-typedef struct Msg { MsgFn fn; Value* args; uint32_t n; OwnList* own; } Msg;   /* own: what the message owns (its unclaimed arguments, SPEC 2.4) */
-/* A ring queue of messages. */
-typedef struct Mailbox { Msg* items; uint32_t head, count, cap; } Mailbox;
+/* `await actor.M()` (docs/ROADMAP_TASKS.md section 3): the way back of a message. The home of the actor runs it at its `process` and puts the result - or the
+ * exception that nothing in the method caught - here, out of its own scopes (travel); the caller waits for `done` and takes them over. */
+typedef struct ActorReply {
+    fire_atomic32 done;
+    fire_atomic32 claim;          /* who finishes it: the home (it sets done) or the caller that gave up (terminate, cancel) - the second one frees it */
+    uint8_t failed;               /* result is the exception */
+    Value result;
+    OwnList travel;               /* what the result (or the exception) owns between the two threads */
+} ActorReply;
+typedef struct Msg { MsgFn fn; Value* args; uint32_t n; OwnList* own; ActorReply* reply; } Msg;   /* own: what the message owns (its unclaimed arguments, SPEC 2.4) */
+/* A ring queue of messages; home: the strand that made the actor (there `await a.M()` runs the method at once - waiting for itself would never end). */
+typedef struct Mailbox { Msg* items; uint32_t head, count, cap; const void* home; } Mailbox;
+#define fire_strandKey() ((const void*)&g_unwind)
 extern FIRE_RT_DATA PtrMap g_mailboxes;   /* Obj* -> Mailbox* */
 FIRE_FN void mailboxPush(Mailbox* b, Msg m) {
     if (b->count == b->cap) {
@@ -7211,29 +8794,41 @@ FIRE_FN Msg mailboxPop(Mailbox* b) {
     b->count--;
     return m;
 }
-FIRE_FN Mailbox* mailboxOf(Obj* o) { void** slot = ptrMapFind(&g_mailboxes, o); return slot ? (Mailbox*)*slot : NULL; }
+FIRE_FN Mailbox* mailboxOf(Obj* o) {
+    void** slot;
+    Mailbox* b;
+    fire_mutex_lock(&g_mailboxM);
+    slot = ptrMapFind(&g_mailboxes, o);
+    b = slot ? (Mailbox*)*slot : NULL;
+    fire_mutex_unlock(&g_mailboxM);
+    return b;
+}
 FIRE_FN void markActor(Value v) {
     Obj* o = asObj(v);
     Mailbox* b = (Mailbox*)calloc(1, sizeof(Mailbox));
     if (!b) allocFailed();
     o->h.flags |= 8;
+    b->home = fire_strandKey();
+    fire_mutex_lock(&g_mailboxM);
     ptrMapPut(&g_mailboxes, o, b);
+    fire_mutex_unlock(&g_mailboxM);
 }
 /* A call of an actor's method: it does not run, it is queued (the arguments travel with the message and are released after it ran). */
-FIRE_FN void actorSend(Value self, MsgFn fn, const Value* args, uint32_t n) {
+FIRE_FN bool actorPost(Value self, MsgFn fn, const Value* args, uint32_t n, ActorReply* reply) {
     Mailbox* b = mailboxOf(asObj(self));
     Msg m;
     uint32_t i;
-    if (!b) return;
+    if (!b) return false;
     m.fn = fn;
     m.args = (Value*)malloc((n ? n : 1) * sizeof(Value));
     m.n = n;
     m.own = NULL;
+    m.reply = reply;
     if (!m.args) allocFailed();
     for (i = 0; i < n; i++) {
         Owned* o = ownedOf(args[i]);
-        m.args[i] = args[i];
-        retain(args[i]);
+        m.args[i] = strCross(args[i]);   /* (the actor's home is another thread) */
+        retain(m.args[i]);
         /* an unclaimed argument (a `new`, a call result, a copy - it travels in the argument list of the call) belongs to the message until it runs */
         if (o && o->owner && o->owner->mark == AL_MARK) {
             if (!m.own) { m.own = (OwnList*)malloc(sizeof(OwnList)); if (!m.own) allocFailed(); *m.own = scopeList(0xFFFFFFFFu); }
@@ -7241,24 +8836,191 @@ FIRE_FN void actorSend(Value self, MsgFn fn, const Value* args, uint32_t n) {
             ownLink(m.own, o);
         }
     }
+    fire_mutex_lock(&g_mailboxM);
     mailboxPush(b, m);
-    notifyEvent();
+    fire_mutex_unlock(&g_mailboxM);
+    notifyKey(asObj(self));   /* (who waits in `process` for this actor) */
+    return true;
+}
+FIRE_FN void actorSend(Value self, MsgFn fn, const Value* args, uint32_t n) { actorPost(self, fn, args, n, NULL); }
+/* `await a.M()` on this strand: is it the home of the actor (then the method runs at once, like a call)? */
+FIRE_FN bool actorAtHome(Value self) {
+    Mailbox* b = mailboxOf(asObj(self));
+    return !b || b->home == fire_strandKey();
+}
+FIRE_FN bool fire_replyDone(void* ctx) { return fire_atomic_loadAcquire(&((ActorReply*)ctx)->done) != 0; }
+/* (what a finished reply holds, for nobody: the caller gave up) */
+FIRE_FN void replyDrop(ActorReply* rp) {
+    Owned* o = ownedOf(rp->result);
+    if (o && o->owner == &rp->travel) ownUnlink(o);
+    else if (!o && isRef(rp->result)) release(rp->result);
+    destroyList(&rp->travel);
+    free(rp);
+}
+/* The home is done with a reply: the caller takes it over (done) - or, when it gave up already, it is freed here. */
+FIRE_FN void fire_replyFinish(ActorReply* rp) {
+    if (fire_atomic_exchange(&rp->claim, 1) == 1) { replyDrop(rp); return; }
+    fire_atomic_storeRelease(&rp->done, 1);
+    notifyKey(rp);   /* (only the address: the caller may free it at once) */
+}
+/* The caller gives a reply up (terminate, its token cancelled): the home frees it when it is done - or the home is just finishing it, then the caller does. */
+FIRE_FN void fire_replyAbandon(ActorReply* rp) {
+    if (fire_atomic_exchange(&rp->claim, 1) == 0) return;
+    while (!fire_replyDone(rp)) FIRE_PLAT_YIELD();
+    replyDrop(rp);
+}
+FIRE_FN bool blockUntilServing(bool (*pred)(void*), void* ctx, bool stopOnTerminate, int64_t deadlineMs);
+/* (the wait of the caller for a reply: until it is done, the program terminates (false) or the caller's token is cancelled (true, not done)) */
+FIRE_FN bool fire_waitReply(ActorReply* reply) {
+    CancelNode* token = fire_curToken();
+    if (token) {
+        TokWait w;
+        int64_t limit = cancelDeadline(token);
+        w.pred = fire_replyDone; w.ctx = reply; w.token = token;
+        if (cancelState(token)) return true;
+        return g_isThread ? blockUntil(fire_tokWaitPred, &w, true, limit) || cancelState(token) : blockUntilServing(fire_tokWaitPred, &w, true, limit) || cancelState(token);
+    }
+    return g_isThread ? blockUntil(fire_replyDone, reply, true, 0) : blockUntilServing(fire_replyDone, reply, true, 0);
+}
+FIRE_FN bool blockUntilServing(bool (*pred)(void*), void* ctx, bool stopOnTerminate, int64_t deadlineMs);
+FIRE_FN int32_t sectionYieldBegin(void);
+FIRE_FN void sectionYieldEnd(int32_t held);
+/* `await a.M()` from another strand: the message with a way back; this strand waits (a task parks) until the home ran it. Returns the result like a call
+ * (the caller adopts it), or throws the exception of the method here. */
+FIRE_FN Value actorAwait(Value self, MsgFn fn, const Value* args, uint32_t n) {
+    ActorReply* reply = (ActorReply*)malloc(sizeof(ActorReply));
+    int32_t held;
+    bool ok, failed;
+    Value r;
+    Owned* o;
+    if (!reply) allocFailed();
+    fire_atomic_store(&reply->done, 0);
+    fire_atomic_store(&reply->claim, 0);
+    reply->failed = 0;
+    reply->result = Undef();
+    ownListInit(&reply->travel, 0, NULL);
+    if (!actorPost(self, fn, args, n, reply)) { free(reply); return Undef(); }
+    held = sectionYieldBegin();   /* (a section held here would stop the home - the main program - from running the message) */
+    ok = fire_waitReply(reply);
+    sectionYieldEnd(held);
+    if (!ok) { fire_replyAbandon(reply); startLeave(); return Undef(); }   /* (terminate: the message may still run - the home frees it then) */
+    if (!fire_replyDone(reply)) { fire_replyAbandon(reply); fire_throwCancelled(cancelState(fire_curToken())); return Undef(); }   /* (cancelled: the same) */
+    r = reply->result;
+    failed = reply->failed != 0;
+    o = ownedOf(r);
+    if (o && o->owner == &reply->travel) ownUnlink(o);   /* (travels to the caller like a returned value: its adopt takes it) */
+    destroyList(&reply->travel);
+    free(reply);
+    if (failed) return throwValueR(r, false);
+    return r;
+}
+/* (the method's result for the caller: what the call made goes over, what the actor keeps - a field, a global - as a copy; the strings it owns as copies) */
+FIRE_FN void replyCrossTree(Owned* h) {
+    uint32_t k;
+    Value* items = NULL;
+    uint32_t n = 0;
+    if (h->okind == O_Object) { items = objFields((Obj*)h); n = ((Obj*)h)->nfields; }
+    else if (h->okind == O_Array && arrValues((Arr*)h)) { items = arrItems((Arr*)h); n = ((Arr*)h)->length; }
+    for (k = 0; k < n; k++) {
+        Owned* c;
+        strCrossAt(&items[k]);
+        c = ownedOf(items[k]);
+        if (c && c->owner && c->owner->holder == h) replyCrossTree(c);
+    }
+}
+FIRE_FN Value replyResult(Value r, OwnList* msgOwn, OwnList* travel, OwnList* list) {
+    Owned* o = ownedOf(r);
+    if (o) {
+        if (o->owner && o->owner != msgOwn) { r = copyValue(r, true, list); o = ownedOf(r); }
+        if (!o) return r;
+        if (o->owner) ownUnlink(o);
+        ownLink(travel, o);
+        replyCrossTree(o);
+        return r;
+    }
+    if (r.kind == K_String) { Value c = strCross(r); retain(c); return c; }
+    if (isRef(r)) retain(r);
+    return r;
+}
+#ifdef FIRE_EXCEPTIONS
+/* (the catch of the exceptions that nothing in an awaited method caught: they go back to the caller, not to the handlers around `process`) */
+typedef struct ReplyCatch { Handler h; Value exc; uint8_t caught; } ReplyCatch;
+static const int32_t fire_replyCatchTypes[1] = { -1 };
+static const HandlerInfo fire_replyCatchInfo = { 1, fire_replyCatchTypes, 0, NULL };
+FIRE_FN void fire_replyCatch(void* ctx, uint32_t index, Value exception) {
+    ReplyCatch* c = (ReplyCatch*)ctx;
+    (void)index;
+    c->exc = exception;
+    c->caught = 1;
+    clearPending(exception);
+    exitJump(&c->h, 0);
+}
+#endif
+/* (`process`: a message with a way back) */
+FIRE_FN void processReplyMsg(Value v, Msg* m, OwnList* list) {
+    ActorReply* rp = m->reply;
+    Value r;
+#ifdef FIRE_EXCEPTIONS
+    ReplyCatch c;
+    c.caught = 0;
+    c.exc = Undef();
+    c.h.info = &fire_replyCatchInfo;
+    c.h.fn = fire_replyCatch;
+    c.h.ctx = &c;
+    pushHandler(&c.h);
+#endif
+    r = m->fn(v, m->args, list);
+#ifdef FIRE_EXCEPTIONS
+    if (g_handlers == &c.h) popHandler();
+    if (c.caught) {
+        Owned* e;
+        if (g_unwind.active && g_unwind.kind == UW_JUMP && g_unwind.target == &c.h) clearUnwind();
+        e = ownedOf(c.exc);
+        if (e) {
+            if (e->owner) ownUnlink(e);
+            ownLink(&rp->travel, e);
+            replyCrossTree(e);
+        }
+        rp->result = c.exc;
+        rp->failed = 1;
+    } else
+#endif
+    if (!g_unwind.active) rp->result = replyResult(r, m->own, &rp->travel, list);
+    if (m->own) { transferOut(r, m->own); leave(m->own); free(m->own); }
+    {
+        uint32_t i;
+        for (i = 0; i < m->n; i++) release(m->args[i]);
+    }
+    free(m->args);
+    adopt(r, list);
+    fire_replyFinish(rp);
 }
 FIRE_FN void actorFree(Obj* o) {
     Mailbox* b = mailboxOf(o);
     uint32_t i;
     if (!b) return;
+    fire_mutex_lock(&g_mailboxM);
+    ptrMapRemove(&g_mailboxes, o);
+    fire_mutex_unlock(&g_mailboxM);
     while (b->count) {
         Msg m = mailboxPop(b);
         for (i = 0; i < m.n; i++) release(m.args[i]);
         free(m.args);
         if (m.own) { leave(m.own); free(m.own); }
+        if (m.reply) fire_replyFinish(m.reply);   /* (the waiting caller gets undefined) */
     }
     free(b->items);
     free(b);
-    ptrMapRemove(&g_mailboxes, o);
 }
-FIRE_FN bool fire_actorReady(void* ctx) { Mailbox* b = mailboxOf((Obj*)ctx); return !b || b->count > 0; }
+FIRE_FN bool fire_actorReady(void* ctx) {
+    bool ready;
+    void** slot;
+    fire_mutex_lock(&g_mailboxM);
+    slot = ptrMapFind(&g_mailboxes, ctx);
+    ready = !slot || ((Mailbox*)*slot)->count > 0;
+    fire_mutex_unlock(&g_mailboxM);
+    return ready;
+}
 /* `process x` / `try process x`: runs one message of the actor. 1: a message ran; 0: none there (`try`); -1: terminate cut the wait short. */
 FIRE_FN int processMsg(Value v, bool blocking, OwnList* list) {
     Obj* a;
@@ -7274,7 +9036,10 @@ FIRE_FN int processMsg(Value v, bool blocking, OwnList* list) {
     }
     b = mailboxOf(a);
     if (!b) return 0;
+    fire_mutex_lock(&g_mailboxM);
     m = mailboxPop(b);
+    fire_mutex_unlock(&g_mailboxM);
+    if (m.reply) { processReplyMsg(v, &m, list); return 1; }
     r = m.fn(v, m.args, list);
     /* what the message owned and the method did not keep dies with the call */
     if (m.own) { transferOut(r, m.own); leave(m.own); free(m.own); }
@@ -7297,7 +9062,10 @@ FIRE_FN void markArrayShared(Arr* a) {
     if (a->h.flags & F_SHARED) return;
     a->h.flags |= F_SHARED;
     if (!arrValues(a)) return;   /* (a packed array holds numbers only) */
-    for (i = 0; i < a->length; i++) if (arrItems(a)[i].kind == K_Array && ownedOf(arrItems(a)[i])) markArrayShared(arrOf(arrItems(a)[i]));
+    for (i = 0; i < a->length; i++) {
+        refShare(arrItems(a)[i]);
+        if (arrItems(a)[i].kind == K_Array && ownedOf(arrItems(a)[i])) markArrayShared(arrOf(arrItems(a)[i]));
+    }
 }
 FIRE_FN void markOwnedShared(Owned* c) {
     if (c->okind == O_Object) {
@@ -7307,17 +9075,26 @@ FIRE_FN void markOwnedShared(Owned* c) {
         if (o->h.flags & F_SHARED) return;
         o->h.flags |= F_SHARED;
         for (k = objOwnedHead(o); k; k = k->next) markOwnedShared(k);
-        for (i = 0; i < o->nfields; i++) if (objFields(o)[i].kind == K_Array && ownedOf(objFields(o)[i])) markArrayShared(arrOf(objFields(o)[i]));
+        for (i = 0; i < o->nfields; i++) {
+            refShare(objFields(o)[i]);
+            if (objFields(o)[i].kind == K_Array && ownedOf(objFields(o)[i])) markArrayShared(arrOf(objFields(o)[i]));
+        }
     } else if (c->okind == O_Array) markArrayShared((Arr*)c);
 }
 FIRE_FN void domainLink(OwnList* list, Owned* o) {
     if (list == g_domainRoot || (list->holder && (list->holder->flags & F_SHARED))) markOwnedShared(o);
 }
 /* The first `fire`: from now on what the global scope owns is shared. */
+#ifdef FIRE_STR_CROSS
+extern FIRE_RT_DATA void (*g_domShareGlobals)(void);   /* the program's: refShare on every global and static field */
+#endif
 FIRE_FN void ensureDomain(void) {
     Owned* c;
     if (g_domainOn) return;
     g_domainOn = true;
+#ifdef FIRE_STR_CROSS
+    if (g_domShareGlobals) g_domShareGlobals();
+#endif
     if (g_domainRoot) for (c = g_domainRoot->head; c; c = c->next) markOwnedShared(c);
 }
 FIRE_FN bool sharedValue(Value v) {
@@ -7326,52 +9103,76 @@ FIRE_FN bool sharedValue(Value v) {
     return false;
 }
 
-struct SectionReq { bool granted, done; int refs; };
-typedef struct JobReq { Value lam; Value* args; uint32_t n; OwnList* holder; } JobReq;
+struct SectionReq { fire_atomic32 granted, done, refs; };   /* (granted/done: read by the other side while it waits) */
+typedef struct JobReq { Value lam; Value* args; uint32_t n; OwnList* holder; struct ActorReply* reply; } JobReq;
 typedef struct Req { SectionReq* sec; JobReq* job; } Req;
 /* The requests of the threads (a ring queue). */
 typedef struct ReqQueue { Req* items; uint32_t head, count, cap; } ReqQueue;
 extern FIRE_RT_DATA ReqQueue g_reqs;
 FIRE_FN void reqPush(Req r) {
+    fire_mutex_lock(&g_reqM);
     if (g_reqs.count == g_reqs.cap) {
         uint32_t cap = g_reqs.cap ? g_reqs.cap * 2 : 8, i;
         Req* items = (Req*)malloc(cap * sizeof(Req));
-        if (!items) allocFailed();
+        if (!items) { fire_mutex_unlock(&g_reqM); allocFailed(); }
         for (i = 0; i < g_reqs.count; i++) items[i] = g_reqs.items[(g_reqs.head + i) % g_reqs.cap];
         free(g_reqs.items);
         g_reqs.items = items; g_reqs.head = 0; g_reqs.cap = cap;
     }
     g_reqs.items[(g_reqs.head + g_reqs.count) % g_reqs.cap] = r;
     g_reqs.count++;
+    fire_mutex_unlock(&g_reqM);
 }
-FIRE_FN Req reqPop(void) {
-    Req r = g_reqs.items[g_reqs.head];
-    g_reqs.head = (g_reqs.head + 1) % g_reqs.cap;
-    g_reqs.count--;
-    return r;
+/* Takes the oldest request (false: none). */
+FIRE_FN bool reqPop(Req* r) {
+    bool any;
+    fire_mutex_lock(&g_reqM);
+    any = g_reqs.count > 0;
+    if (any) {
+        *r = g_reqs.items[g_reqs.head];
+        g_reqs.head = (g_reqs.head + 1) % g_reqs.cap;
+        g_reqs.count--;
+    }
+    fire_mutex_unlock(&g_reqM);
+    return any;
+}
+FIRE_FN uint32_t reqCount(void) {
+    uint32_t n;
+    fire_mutex_lock(&g_reqM);
+    n = g_reqs.count;
+    fire_mutex_unlock(&g_reqM);
+    return n;
 }
 
-FIRE_FN bool fire_sectionGranted(void* ctx) { return ((SectionReq*)ctx)->granted; }
-FIRE_FN bool fire_sectionDone(void* ctx) { return ((SectionReq*)ctx)->done; }
+FIRE_FN bool fire_sectionGranted(void* ctx) { return fire_atomic_loadAcquire(&((SectionReq*)ctx)->granted) != 0; }
+FIRE_FN bool fire_sectionDone(void* ctx) { return fire_atomic_loadAcquire(&((SectionReq*)ctx)->done) != 0; }
+/* One side lets go of the request (the last one frees it). */
+FIRE_FN void sectionReqDrop(SectionReq* r) { if (fire_atomic_addAcqRel(&r->refs, (uint32_t)-1) == 1) free(r); }
 FIRE_FN void sectionAcquire(void) {
     SectionReq* r = (SectionReq*)malloc(sizeof(SectionReq));
     Req q;
     if (!r) allocFailed();
-    r->granted = false; r->done = false; r->refs = 2;
+    fire_atomic_store(&r->granted, 0); fire_atomic_store(&r->done, 0); fire_atomic_store(&r->refs, 2);
     q.sec = r; q.job = NULL;
     reqPush(q);
     fire_atomic_or(&g_attn, ATTN_SECT);
     notifyEvent();
     blockUntil(fire_sectionGranted, r, false, 0);
+#ifdef FIRE_NO_GIL
+    domWriterEnter();
+#endif
     g_curSection = r;
 }
 FIRE_FN void sectionRelease(void) {
     SectionReq* r = g_curSection;
     g_curSection = NULL;
     if (!r) return;
-    r->done = true;
-    notifyEvent();
-    if (--r->refs == 0) free(r);
+#ifdef FIRE_NO_GIL
+    domWriterLeave();
+#endif
+    fire_atomic_storeRelease(&r->done, 1);
+    notifyKey(r);
+    sectionReqDrop(r);
 }
 FIRE_FN void sectionAbort(void) { if (g_curSection) { g_secDepth = 0; sectionRelease(); } }
 /* Waiting for something else (Sleep, a device, ...) inside a section: the thread gives its section back for the time of the wait - else the main program,
@@ -7383,6 +9184,254 @@ FIRE_FN int32_t sectionYieldBegin(void) {
     return held;
 }
 FIRE_FN void sectionYieldEnd(int32_t held) { if (held > 0) { sectionAcquire(); g_secDepth = held; } }
+#ifdef FIRE_NO_GIL
+/* A fire thread as the owner of originals (without the GIL): `sync` from another thread into an original this thread owns (`taking` in this thread) is a
+ * section of this thread - asked for here, granted at this thread's next safe point or wait (threadServe), which then waits until the sync is done, as the
+ * main program does for its globals. When the thread ends its originals are destroyed first (`sync` says undefined), then what is still asked is granted. */
+typedef struct ThreadRec {
+    fire_mutex m; SectionReq** reqs; uint32_t n, cap; fire_atomic32 pending, refs; bool dead;
+#ifdef FIRE_TASKS
+    FireTask* task;   /* (a task: woken when something is asked of it - it may wait for something else) */
+#endif
+} ThreadRec;
+extern FIRE_RT_DATA fire_atomic32 g_peerPending;   /* asked sections of all threads (ATTN_PEER is set while there are some) */
+FIRE_FN void threadRecDrop(ThreadRec* r) {
+    if (fire_atomic_addAcqRel(&r->refs, (uint32_t)-1) == 1) { free(r->reqs); free(r); }
+}
+FIRE_FN void threadRecBegin(void) {
+    ThreadRec* r = (ThreadRec*)calloc(1, sizeof(ThreadRec));
+    if (!r) allocFailed();
+    fire_mutex_init(&r->m);
+    fire_atomic_store(&r->refs, 1);
+#ifdef FIRE_TASKS
+    r->task = taskRunning() ? workerSelf()->cur : NULL;
+#endif
+    g_self = r;
+}
+/* Grants what other threads asked of this one, one after the other (each: until its sync is done). */
+FIRE_FN void threadServe(void) {
+    ThreadRec* r = g_self;
+    if (!r || !fire_atomic_load(&r->pending)) return;
+    for (;;) {
+        SectionReq* q = NULL;
+        fire_mutex_lock(&r->m);
+        if (r->n) { q = r->reqs[0]; memmove(r->reqs, r->reqs + 1, (r->n - 1) * sizeof(SectionReq*)); r->n--; }
+        if (!r->n) fire_atomic_store(&r->pending, 0);
+        fire_mutex_unlock(&r->m);
+        if (!q) break;
+        if (fire_atomic_add(&g_peerPending, (uint32_t)-1) == 1) {
+            fire_atomic_and(&g_attn, ~(uint32_t)ATTN_PEER);
+            if (fire_atomic_load(&g_peerPending)) fire_atomic_or(&g_attn, ATTN_PEER);
+        }
+        fire_atomic_storeRelease(&q->granted, 1);
+        notifyKey(q);
+        blockUntil(fire_sectionDone, q, false, 0);
+        sectionReqDrop(q);
+    }
+}
+/* The end of the thread (its scopes are destroyed): nothing more is asked of it; what was asked is granted (the originals are gone). */
+FIRE_FN void threadRecEnd(void) {
+    ThreadRec* r = g_self;
+    if (!r) return;
+    fire_mutex_lock(&r->m);
+    r->dead = true;
+#ifdef FIRE_TASKS
+    r->task = NULL;
+#endif
+    fire_mutex_unlock(&r->m);
+    threadServe();
+    g_self = NULL;
+    threadRecDrop(r);
+}
+/* Asks the owner of an original for its section (false: the owner has ended - nothing to wait for). */
+FIRE_FN SectionReq* threadRecAsk(ThreadRec* owner) {
+    SectionReq* q = (SectionReq*)malloc(sizeof(SectionReq));
+    if (!q) allocFailed();
+    fire_atomic_store(&q->granted, 0); fire_atomic_store(&q->done, 0); fire_atomic_store(&q->refs, 2);
+    fire_mutex_lock(&owner->m);
+    if (owner->dead) { fire_mutex_unlock(&owner->m); free(q); return NULL; }
+    owner->reqs = (SectionReq**)fire_growPush(owner->reqs, &owner->n, &owner->cap, sizeof(SectionReq*));
+    owner->reqs[owner->n++] = q;
+    fire_atomic_store(&owner->pending, 1);
+#ifdef FIRE_TASKS
+    if (owner->task) taskWake(owner->task);
+#endif
+    fire_mutex_unlock(&owner->m);
+    fire_atomic_add(&g_peerPending, 1);
+    fire_atomic_or(&g_attn, ATTN_PEER);
+    notifyEvent();
+    blockUntil(fire_sectionGranted, q, false, 0);
+    return q;
+}
+#ifdef FIRE_TASKS
+FIRE_FN bool blockUntilServing(bool (*pred)(void*), void* ctx, bool stopOnTerminate, int64_t deadlineMs);
+/* ---- `await [ ... ]` side by side: every call but the last is a task of its own; the caller runs the last and then waits for the others. The calls get
+ * the caller's objects lent (the caller waits): that is only safe when no two of them reach the same object - else they run one after the other. The
+ * strings they reach may be counted by several at once: they count atomically from now on (R_SHARED). A task keeps its result and its exception in
+ * arrays of its own (two tasks must not change the parts of one array at once); the caller moves them into res and fails when all are done. */
+typedef struct AwaitItem {
+    Value lam;
+    Value res1, fails1;          /* (the arrays of one element the task writes) */
+    OwnList scratch;             /* what the call leaves for its caller */
+    OwnList global;              /* the global scope of the task: its exceptions */
+    fire_atomic32 done;
+    uint8_t left;                /* a `leave` in it */
+    struct AwaitGroup* group;
+    struct CancelNode* token;    /* the caller's token: an awaited call follows it */
+} AwaitItem;
+typedef struct AwaitGroup { fire_atomic32 pending; } AwaitGroup;
+FIRE_FN bool fire_awaitDone(void* ctx) { return fire_atomic_loadAcquire(&((AwaitGroup*)ctx)->pending) == 0; }
+/* (what a value reaches - objects, arrays, buffers into `seen`; false when one of them is in `others` already; the strings are shared) */
+FIRE_FN bool awaitReach(Value root, CopyMap* seen, CopyMap* others) {
+    Value* stack = NULL;
+    uint32_t n = 0, cap = 0, i;
+    bool ok = true;
+    stack = (Value*)fire_growPush(stack, &n, &cap, sizeof(Value));
+    stack[n++] = root;
+    while (n && ok) {
+        Value v = stack[--n];
+        if (v.kind == K_String) { refShare(v); continue; }
+        if (v.kind == K_Lambda) {
+            Lam* l = lamOf(v);
+            refShare(v);
+            for (i = 0; i < l->ncaps; i++) { stack = (Value*)fire_growPush(stack, &n, &cap, sizeof(Value)); stack[n++] = lamCaps(l)[i]; }
+            stack = (Value*)fire_growPush(stack, &n, &cap, sizeof(Value));
+            stack[n++] = l->on;
+            continue;
+        }
+        if (v.kind != K_Class && v.kind != K_Array && v.kind != K_Buffer) continue;
+        if (!leafAlive(v)) continue;
+        {
+            Owned* h = leafOf(v);
+            if (h->flags & F_SHARED) continue;   /* (the global scope: its lock holds it) */
+            if (copyMapFind(others, h)) { ok = false; break; }
+            if (copyMapFind(seen, h)) continue;
+            copyMapPut(seen, h, Undef());
+            if (v.kind == K_Class) {
+                Obj* o = (Obj*)h;
+                for (i = 0; i < o->nfields; i++) { stack = (Value*)fire_growPush(stack, &n, &cap, sizeof(Value)); stack[n++] = objFields(o)[i]; }
+            } else if (v.kind == K_Array && arrValues((Arr*)h)) {
+                Arr* a = (Arr*)h;
+                for (i = 0; i < a->length; i++) { stack = (Value*)fire_growPush(stack, &n, &cap, sizeof(Value)); stack[n++] = arrItems(a)[i]; }
+            }
+        }
+    }
+    free(stack);
+    return ok;
+}
+/* (the task of one call) */
+FIRE_FN void awaitItemMain(void* p) {
+    AwaitItem* it = (AwaitItem*)p;
+    Value args[3];
+    g_isThread = 1;
+    g_domReader = 1;
+    g_attnMask = ATTN_ALL | ATTN_PEER;
+    g_tick = 4096;
+    threadRecBegin();
+    g_globalOwn = &it->global;
+    g_token = it->token;
+    args[0] = it->res1; args[1] = it->fails1; args[2] = Int((int64_t)0);
+    callLam(it->lam, 3, args, &it->scratch);
+    if (g_unwind.active) { it->left = 1; clearUnwind(); }
+    sectionAbort();
+    threadRecEnd();
+    strandRelease();
+    free(g_pool.items);
+    g_pool.items = NULL; g_pool.top = 0; g_pool.cap = 0;
+    fire_strandDetach();
+    {
+        AwaitGroup* group = it->group;   /* (read before the count: at 0 the caller may free the items at once) */
+        if (fire_atomic_addAcqRel(&group->pending, (uint32_t)-1) == 1) notifyKey(group);
+    }
+}
+/* (moves the one element of `one` - and what it owns of it - to element i of `all`) */
+FIRE_FN void awaitMove(Value one, Value all, uint32_t i, OwnList* fromGlobal) {
+    Arr* a1 = arrOf(one);
+    Arr* a = arrOf(all);
+    Value v = arrItems(a1)[0];
+    Owned* o = ownedOf(v);
+    if (o && (o->owner == a1->parts || (fromGlobal && o->owner == fromGlobal))) {
+        ownUnlink(o);
+        if (o->okind == O_Object && fromGlobal) ownLink(g_globalOwn, o);   /* (an exception: it belongs to the global scope of the caller now) */
+        else {
+            if (!a->parts) a->parts = newPartsList(&a->h);
+            ownLink(a->parts, o);
+        }
+    }
+    retain(v);
+    release(arrItems(a)[i]);
+    arrItems(a)[i] = v;
+}
+/* True when the calls ran (side by side); false: they reach the same objects - the caller runs them one after the other. */
+FIRE_FN bool awaitRunTasks(Value* lams, uint32_t n, Value res, Value fails, OwnList* list) {
+    CopyMap all = {0};
+    AwaitItem* items;
+    AwaitGroup group;
+    uint32_t i;
+    bool left = false;
+    if (res.kind != K_Array || fails.kind != K_Array || !ownedOf(res) || !ownedOf(fails)) return false;
+    /* (the calls may use the main program's globals - not lent, read directly: from now on the global scope is shared, as at the first `fire` - the tasks read
+     * it under the lock of the globals and change it in sections, which the waiting main program grants) */
+    ensureDomain();
+    for (i = 0; i < n; i++) {
+        CopyMap mine = {0};
+        uint32_t k;
+        bool ok = lams[i].kind != K_Lambda || awaitReach(lams[i], &mine, &all);
+        for (k = 0; ok && k < mine.cap; k++) if (mine.from[k]) copyMapPut(&all, mine.from[k], Undef());
+        copyMapFree(&mine);
+        if (!ok) { copyMapFree(&all); return false; }
+    }
+    copyMapFree(&all);
+    items = (AwaitItem*)calloc(n, sizeof(AwaitItem));
+    if (!items) allocFailed();
+    fire_atomic_store(&group.pending, n - 1);
+    for (i = 0; i + 1 < n; i++) {
+        AwaitItem* it = &items[i];
+        it->lam = lams[i];
+        it->group = &group;
+        it->token = fire_curToken();
+        cancelRetain(it->token);
+        it->res1 = ArrV(allocArr(1, list));
+        it->fails1 = ArrV(allocArr(1, list));
+        ownListInit(&it->scratch, 0, NULL);
+        ownListInit(&it->global, 0, NULL);
+        taskSpawn(awaitItemMain, it, 0);
+    }
+    {
+        /* (the last one here, on the caller's strand) */
+        Value args[3];
+        args[0] = res; args[1] = fails; args[2] = Int((int64_t)(n - 1));
+        callLam(lams[n - 1], 3, args, list);
+    }
+    {
+        /* (waiting for the others even when the last one left: they use the caller's objects) */
+        UnwindState saved = g_unwind;
+        if (saved.active) clearUnwind();
+        if (g_isThread) blockUntil(fire_awaitDone, &group, false, 0);
+        else blockUntilServing(fire_awaitDone, &group, false, 0);
+        if (saved.active) g_unwind = saved;
+    }
+    for (i = 0; i + 1 < n; i++) {
+        AwaitItem* it = &items[i];
+        if (it->left) left = true;
+        awaitMove(it->res1, res, i, NULL);
+        awaitMove(it->fails1, fails, i, &it->global);
+        destroyList(&it->scratch);
+        destroyList(&it->global);   /* (what is left of its global scope) */
+        cancelRelease(it->token);
+    }
+    free(items);
+    if (left && !g_unwind.active) startLeave();
+    return true;
+}
+#endif
+FIRE_FN void threadRecDone(SectionReq* q) {
+    if (!q) return;
+    fire_atomic_storeRelease(&q->done, 1);
+    notifyKey(q);
+    sectionReqDrop(q);
+}
+#endif
 /* One change of the shared domain from a thread: the section lasts from sectionScopeEnter to sectionScopeExit (with what Enter returned).
  * `sectionScopeEnterV` for a value: only an object or array of the shared domain needs one. */
 FIRE_FN bool sectionScopeEnter(bool shared) {
@@ -7399,16 +9448,31 @@ FIRE_FN void sectionEnterOp(void) { if (g_isThread && g_secDepth++ == 0) section
 FIRE_FN void sectionExitOp(void) { if (g_isThread && g_secDepth > 0 && --g_secDepth == 0) sectionRelease(); }
 
 /* `fire global { ... } taking x`: the job (a lambda with the copies as parameters) is queued, the caller goes on. An argument that reaches an instance of a
- * `[NoCopy]` class is the ArgumentException before anything is copied or queued (no job runs). */
-FIRE_FN void postJob(Value lam, const Value* args, uint32_t n) {
+ * `[NoCopy]` class is the ArgumentException before anything is copied or queued (no job runs). `fire on x` / `await on x` (onTarget): the first argument is the
+ * object the block runs on, as it is - from a thread only one of the main program (its globals' domain) or an actor; `reply`: `await on` from a thread. */
+FIRE_FN void postJobEx(Value lam, const Value* args, uint32_t n, bool onTarget, ActorReply* reply) {
     JobReq* j;
     Req q;
     uint32_t i;
-    for (i = 0; i < n; i++)
+    if (onTarget && n > 0 && g_isThread && args[0].kind == K_Class && leafAlive(args[0]) && !(leafOf(args[0])->flags & (F_SHARED | 8))) {
+        fireError("ArgumentException", "'on': the object is not one of the main program (a thread may name a global variable of the main program)");
+        return;
+    }
+    for (i = onTarget ? 1 : 0; i < n; i++)
         if (args[i].kind == K_Class && !noCopyFree(args[i], "fire global")) return;
     j = (JobReq*)malloc(sizeof(JobReq));
     if (!j) allocFailed();
     j->lam = lam;
+    j->reply = reply;
+#ifdef FIRE_STR_CROSS
+    /* (the lambda is made here and let go of by the main program, which runs it: it is counted atomically from now on, its captures too) */
+    if (lam.kind == K_Lambda && refOf(lam)->rc != IMMORTAL) {
+        Lam* l = lamOf(lam);
+        uint32_t c;
+        l->h.type |= R_SHARED;
+        for (c = 0; c < l->ncaps; c++) if (isRef(lamCaps(l)[c]) && refOf(lamCaps(l)[c])->rc != IMMORTAL) refOf(lamCaps(l)[c])->type |= R_SHARED;
+    }
+#endif
     retain(lam);
     j->n = n;
     j->args = (Value*)malloc((n ? n : 1) * sizeof(Value));
@@ -7416,13 +9480,58 @@ FIRE_FN void postJob(Value lam, const Value* args, uint32_t n) {
     if (!j->args || !j->holder) allocFailed();
     ownListInit(j->holder, 0, NULL);
     for (i = 0; i < n; i++) {
-        if (args[i].kind == K_Class) j->args[i] = deepCopy(args[i], j->holder);
-        else { j->args[i] = args[i]; retain(args[i]); }
+        if (onTarget && i == 0 && args[i].kind == K_Class) j->args[i] = args[i];   /* (the object itself) */
+        else if (args[i].kind == K_Class) j->args[i] = deepCopyCross(args[i], j->holder);
+        else { j->args[i] = strCross(args[i]); retain(j->args[i]); }
     }
     q.sec = NULL; q.job = j;
     reqPush(q);
     fire_atomic_or(&g_attn, ATTN_SECT);
     notifyEvent();
+}
+FIRE_FN void postJob(Value lam, const Value* args, uint32_t n) { postJobEx(lam, args, n, false, NULL); }
+/* `await on x { ... return v }`: the block runs in the main program's group with x itself and copies of the rest; the caller waits for its result (an
+ * exception that the block does not catch is thrown here). The main program itself (or a member of its group) runs it at once. */
+FIRE_FN Value awaitOnJob(Value lam, const Value* args, uint32_t n) {
+    ActorReply* reply;
+    int32_t held;
+    bool ok, failed;
+    Value r;
+    Owned* o;
+    if (!g_isThread) {
+        OwnList scratch;
+        Value copies[16];
+        uint32_t i;
+        if (n > 16) fatal("'await on' takes at most 15 values.");
+        ownListInit(&scratch, poolMark(), NULL);
+        for (i = 0; i < n; i++) copies[i] = i > 0 && args[i].kind == K_Class ? copyValue(args[i], true, &scratch) : args[i];
+        r = callLam(lam, (int)n, copies, &scratch);
+        transferOut(r, &scratch);   /* (a copy it gives back stays) */
+        leave(&scratch);
+        return r;
+    }
+    reply = (ActorReply*)malloc(sizeof(ActorReply));
+    if (!reply) allocFailed();
+    fire_atomic_store(&reply->done, 0);
+    fire_atomic_store(&reply->claim, 0);
+    reply->failed = 0;
+    reply->result = Undef();
+    ownListInit(&reply->travel, 0, NULL);
+    postJobEx(lam, args, n, true, reply);
+    if (g_unwind.active) { free(reply); return Undef(); }
+    held = sectionYieldBegin();
+    ok = fire_waitReply(reply);
+    sectionYieldEnd(held);
+    if (!ok) { fire_replyAbandon(reply); startLeave(); return Undef(); }   /* (terminate: the job may still run - it frees it then) */
+    if (!fire_replyDone(reply)) { fire_replyAbandon(reply); fire_throwCancelled(cancelState(fire_curToken())); return Undef(); }   /* (cancelled: the same) */
+    r = reply->result;
+    failed = reply->failed != 0;
+    o = ownedOf(r);
+    if (o && o->owner == &reply->travel) ownUnlink(o);
+    destroyList(&reply->travel);
+    free(reply);
+    if (failed) return throwValueR(r, false);
+    return r;
 }
 
 /* A job runs on the main program with the real globals; an exception that it does not catch ends the job and goes to `catch threads`. */
@@ -7439,7 +9548,35 @@ FIRE_FN void runJob(JobReq* j) {
     g_handlers = NULL;   /* what the main program has registered does not see the job's exceptions */
     g_jobDepth++;
     ownListInit(&scratch, poolMark(), NULL);
-    callLam(j->lam, (int)j->n, j->args, &scratch);
+    if (j->reply) {
+        /* `await on`: the result or the exception goes back to the thread that waits */
+        ActorReply* rp = j->reply;
+        Value r;
+#ifdef FIRE_EXCEPTIONS
+        ReplyCatch c;
+        c.caught = 0;
+        c.exc = Undef();
+        c.h.info = &fire_replyCatchInfo;
+        c.h.fn = fire_replyCatch;
+        c.h.ctx = &c;
+        pushHandler(&c.h);
+#endif
+        r = callLam(j->lam, (int)j->n, j->args, &scratch);
+#ifdef FIRE_EXCEPTIONS
+        if (g_handlers == &c.h) popHandler();
+        if (c.caught) {
+            Owned* e;
+            if (g_unwind.active && g_unwind.kind == UW_JUMP && g_unwind.target == &c.h) clearUnwind();
+            e = ownedOf(c.exc);
+            if (e) { if (e->owner) ownUnlink(e); ownLink(&rp->travel, e); replyCrossTree(e); }
+            rp->result = c.exc;
+            rp->failed = 1;
+        } else
+#endif
+        if (!g_unwind.active) rp->result = replyResult(r, j->holder, &rp->travel, &scratch);
+        adopt(r, &scratch);
+        fire_replyFinish(rp);
+    } else callLam(j->lam, (int)j->n, j->args, &scratch);
     if (g_unwind.active) clearUnwind();
     g_jobDepth--;
     g_handlers = savedHandlers;
@@ -7455,15 +9592,15 @@ FIRE_FN void runJob(JobReq* j) {
 /* The main program serves the queue: each section is granted in turn (it waits until it ends), each job runs. Returns how many entries it handled. */
 FIRE_FN int drainQueue(void) {
     int handled = 0;
-    while (g_reqs.count) {
-        Req r = reqPop();
+    Req r;
+    while (reqPop(&r)) {
         handled++;
         if (r.sec) {
             SectionReq* sec = r.sec;
-            sec->granted = true;
-            notifyEvent();
+            fire_atomic_storeRelease(&sec->granted, 1);
+            notifyKey(sec);
             blockUntil(fire_sectionDone, sec, false, 0);
-            if (--sec->refs == 0) free(sec);
+            sectionReqDrop(sec);
         } else runJob(r.job);
     }
     fire_atomic_and(&g_attn, ~(uint32_t)ATTN_SECT);
@@ -7474,12 +9611,20 @@ FIRE_FN int drainQueue(void) {
  * then says `undefined`. */
 extern FIRE_RT_DATA PtrMap g_originOf;   /* copy -> original (null: destroyed) */
 extern FIRE_RT_DATA PtrMap g_copiesOf;   /* original -> PtrVec* of its copies */
+extern FIRE_RT_DATA fire_mutex g_originM;  /* (both maps: a thread makes copies for its own threads, another syncs or destroys at the same time) */
+#ifdef FIRE_NO_GIL
+extern FIRE_RT_DATA PtrMap g_originOwner;   /* copy -> ThreadRec* of the fire thread that owns its original (none: the main program's) */
+#endif
 FIRE_FN void originAdd(Obj* copy, Obj* original) {
     void** slot;
     PtrVec* copies;
     copy->h.flags |= 32;
     original->h.flags |= 4;
+    fire_mutex_lock(&g_originM);
     ptrMapPut(&g_originOf, copy, original);
+#ifdef FIRE_NO_GIL
+    if (g_isThread && g_self) { fire_atomic_add(&g_self->refs, 1); ptrMapPut(&g_originOwner, copy, g_self); }
+#endif
     slot = ptrMapFind(&g_copiesOf, original);
     if (slot) copies = (PtrVec*)*slot;
     else {
@@ -7488,10 +9633,13 @@ FIRE_FN void originAdd(Obj* copy, Obj* original) {
         ptrMapPut(&g_copiesOf, original, copies);
     }
     ptrVecPush(copies, copy);
+    fire_mutex_unlock(&g_originM);
 }
 FIRE_FN void originFree(Obj* o) {
     uint32_t i;
     if (o->h.flags & 8) actorFree(o);
+    if (!(o->h.flags & (32 | 4))) return;
+    fire_mutex_lock(&g_originM);
     if (o->h.flags & 32) {
         void** slot = ptrMapFind(&g_originOf, o);
         if (slot) {
@@ -7506,6 +9654,12 @@ FIRE_FN void originFree(Obj* o) {
             }
             ptrMapRemove(&g_originOf, o);
         }
+#ifdef FIRE_NO_GIL
+        {
+            void** ow = ptrMapFind(&g_originOwner, o);
+            if (ow) { threadRecDrop((ThreadRec*)*ow); ptrMapRemove(&g_originOwner, o); }
+        }
+#endif
     }
     if (o->h.flags & 4) {
         void** cs = ptrMapFind(&g_copiesOf, o);
@@ -7517,6 +9671,7 @@ FIRE_FN void originFree(Obj* o) {
             ptrMapRemove(&g_copiesOf, o);
         }
     }
+    fire_mutex_unlock(&g_originM);
 }
 
 /* `fire ... taking x`: what the thread gets. An object, array or buffer is copied with everything reachable from it, whoever owns the parts (isolated,
@@ -7529,6 +9684,7 @@ FIRE_FN Value takeCopy(Value v, OwnList* travel) {
         case K_Class:
             copierInit(&c, travel);
             c.taking = true;
+            c.cross = true;
             copy = copierRun(&c, v);
             copierFree(&c);
             originAdd(asObj(copy), asObj(v));
@@ -7537,10 +9693,12 @@ FIRE_FN Value takeCopy(Value v, OwnList* travel) {
             if (!ownedOf(v)) return v;
             copierInit(&c, travel);
             c.taking = true;
+            c.cross = true;
             copy = copierRun(&c, v);
             copierFree(&c);
             return copy;
-        case K_String: case K_Lambda: retain(v); return v;
+        case K_String: v = strCross(v); retain(v); return v;
+        case K_Lambda: retain(v); return v;
         default: return v;
     }
 }
@@ -7637,6 +9795,16 @@ FIRE_FN void handoverRehome(Value* v, CopyMap* seen) {
         FIRE_SETGEN(*v, (FIRE_VGEN(*v) + 1) & FIRE_GEN_MASK);
 }
 #endif
+FIRE_FN void handOverAll(const Value* vs, Value* out, uint32_t n, OwnList* travel);
+/* `handover x` in a lambda: x and what it reaches move - like a handover to a thread, every reference from before is dead (the caller's variable is reset by
+ * the generated code). Who owns them until the lambda lets them go is open (docs/ROADMAP_TASKS.md): for now the global scope (they live as long as it). */
+FIRE_FN Value fire_lambdaHandover(Value v) {
+    Value out = v;
+    if (!ownedOf(v)) return v;
+    if (!handoverFree(&v, 1)) return Undef();   /* (refused: the exception is set) */
+    handOverAll(&v, &out, 1, g_globalOwn);
+    return out;
+}
 /* What the thread gets for the `handover` values `vs` of one `fire` (all together: one may reach another): each value itself, moved (see above); a string or
  * lambda is shared as with `taking`. Every moved part gets the next generation of its slot - the references among the parts and the values the thread gets
  * carry it, every other Value (the sender's, from before the handover) is dead from then on: its use is the DestroyedException "... was handed over to a
@@ -7647,7 +9815,8 @@ FIRE_FN void handOverAll(const Value* vs, Value* out, uint32_t n, OwnList* trave
     uint32_t count = 0, cap = 0, i;
     for (i = 0; i < n; i++) {
         out[i] = vs[i];
-        if (vs[i].kind == K_String || vs[i].kind == K_Lambda) retain(vs[i]);
+        if (vs[i].kind == K_String) { out[i] = strCross(vs[i]); retain(out[i]); }
+        else if (vs[i].kind == K_Lambda) retain(vs[i]);
         else handoverDiscover(vs[i], &seen, &parts, &count, &cap);   /* (checked before: handoverFree) */
     }
     for (i = 0; i < count; i++) {
@@ -7659,6 +9828,14 @@ FIRE_FN void handOverAll(const Value* vs, Value* out, uint32_t n, OwnList* trave
         }
     }
     for (i = 0; i < count; i++) parts[i]->flags &= (uint8_t)~F_SHARED;
+#ifdef FIRE_STR_CROSS
+    /* (the strings in the moved parts: the sender may hold them too - the thread gets copies) */
+    for (i = 0; i < count; i++) {
+        uint32_t k;
+        if (parts[i]->okind == O_Object) { Obj* o = (Obj*)parts[i]; for (k = 0; k < o->nfields; k++) strCrossAt(&objFields(o)[k]); }
+        else if (parts[i]->okind == O_Array && arrValues((Arr*)parts[i])) { Arr* a = (Arr*)parts[i]; for (k = 0; k < a->length; k++) strCrossAt(&arrItems(a)[k]); }
+    }
+#endif
 #ifndef FIRE_UNCHECKED
     for (i = 0; i < count; i++) {
         Owned* h = parts[i];
@@ -7667,7 +9844,9 @@ FIRE_FN void handOverAll(const Value* vs, Value* out, uint32_t n, OwnList* trave
             Obj* o = (Obj*)h;
             for (k = 0; k < o->nfields; k++) handoverRehome(&objFields(o)[k], &seen);
             if (h->flags & 4) {   /* an original with `taking` copies: for them it is gone (`sync` says undefined), as in the VM */
-                void** cs = ptrMapFind(&g_copiesOf, o);
+                void** cs;
+                fire_mutex_lock(&g_originM);
+                cs = ptrMapFind(&g_copiesOf, o);
                 if (cs) {
                     PtrVec* copies = (PtrVec*)*cs;
                     for (k = 0; k < copies->count; k++) ptrMapPut(&g_originOf, copies->items[k], NULL);
@@ -7675,6 +9854,7 @@ FIRE_FN void handOverAll(const Value* vs, Value* out, uint32_t n, OwnList* trave
                     free(copies);
                     ptrMapRemove(&g_copiesOf, o);
                 }
+                fire_mutex_unlock(&g_originM);
                 h->flags &= (uint8_t)~4;
             }
         } else if (h->okind == O_Array) {
@@ -7706,6 +9886,7 @@ FIRE_FN Value syncSingle(Value src, Value tgt, Obj* container, bool flat) {
         DeepCopier c;
         Value r;
         copierInit(&c, objOwned(container));
+        c.cross = true;
         r = copierRun(&c, src);
         copierFree(&c);
         return r;
@@ -7755,7 +9936,7 @@ FIRE_FN Value syncSingle(Value src, Value tgt, Obj* container, bool flat) {
         return BufV(nb);
     }
     if (src.kind == K_Lambda || isPtr(src)) takingViolation("'sync' does not support lambda or pointer values.");
-    return src;
+    return strCross(src);   /* (a string goes back to the original's thread as a copy) */
 }
 FIRE_FN void syncFields(Obj* src, Obj* tgt, bool flat) {
     uint32_t i;
@@ -7805,19 +9986,66 @@ FIRE_FN bool syncNoCopyFields(Obj* src, Obj* tgt, bool flat, CopyMap* seen) {
  * not exist any more. */
 FIRE_FN Value syncValue(Value v, bool flat) {
     Obj* copy;
+    Obj* original;
     void** slot;
+    bool known, ss;
     if (v.kind != K_Class) fatal("'sync' expects an object.");
     copy = asObj(v);
+    /* (the original is written while the main program is held: a section - also when it is not in the shared domain, which costs only a short wait.
+     * An original of another fire thread is not held by it: docs/ROADMAP_TASKS.md 1e, open.) */
+#ifdef FIRE_NO_GIL
+    {
+        /* (an original of another fire thread: that thread's section; else - the main program's - a section of the main program) */
+        void** ow;
+        ThreadRec* owner;
+        fire_mutex_lock(&g_originM);
+        ow = ptrMapFind(&g_originOwner, copy);
+        owner = ow ? (ThreadRec*)*ow : NULL;
+        if (owner) fire_atomic_add(&owner->refs, 1);
+        fire_mutex_unlock(&g_originM);
+        if (owner && owner != g_self) {
+            int32_t held = sectionYieldBegin();   /* (no section of the main program is held while waiting for another thread) */
+            SectionReq* q = threadRecAsk(owner);
+            Value r;
+            threadRecDrop(owner);
+            fire_mutex_lock(&g_originM);
+            slot = ptrMapFind(&g_originOf, copy);
+            known = slot != NULL;
+            original = slot ? (Obj*)*slot : NULL;
+            fire_mutex_unlock(&g_originM);
+            if (!known) { threadRecDone(q); sectionYieldEnd(held); fatal("sync: this object is not a 'taking' copy (no SyncOrigin set)."); }
+            r = Undef();
+            if (original) {
+                CopyMap seen = {0};
+                bool ok = syncNoCopyFields(copy, original, flat, &seen);
+                copyMapFree(&seen);
+                if (ok) { syncFields(copy, original, flat); r = Bool(true); }
+            }
+            threadRecDone(q);
+            sectionYieldEnd(held);
+            return r;
+        }
+        if (owner) threadRecDrop(owner);
+    }
+    ss = sectionScopeEnter(g_domainOn);
+#else
+    ss = false;   /* (the GIL holds the others) */
+#endif
+    fire_mutex_lock(&g_originM);
     slot = ptrMapFind(&g_originOf, copy);
-    if (!slot) fatal("sync: this object is not a 'taking' copy (no SyncOrigin set).");
-    if (!*slot) return Undef();
+    known = slot != NULL;
+    original = slot ? (Obj*)*slot : NULL;
+    fire_mutex_unlock(&g_originM);
+    if (!known) { sectionScopeExit(ss); fatal("sync: this object is not a 'taking' copy (no SyncOrigin set)."); }
+    if (!original) { sectionScopeExit(ss); return Undef(); }
     {
         CopyMap seen = {0};
-        bool ok = syncNoCopyFields(copy, (Obj*)*slot, flat, &seen);
+        bool ok = syncNoCopyFields(copy, original, flat, &seen);
         copyMapFree(&seen);
-        if (!ok) return Undef();   /* (the ArgumentException: nothing was written back) */
+        if (!ok) { sectionScopeExit(ss); return Undef(); }   /* (the ArgumentException: nothing was written back) */
     }
-    syncFields(copy, (Obj*)*slot, flat);
+    syncFields(copy, original, flat);
+    sectionScopeExit(ss);
     return Bool(true);
 }
 
@@ -7843,7 +10071,9 @@ FIRE_FN void graveyardAdd(OwnList* list) {
     *heap = *list;
     for (o = heap->head; o; o = o->next) o->owner = heap;
     list->head = list->tail = NULL;
+    fire_mutex_lock(&g_thrM);
     ptrVecPush(&g_graveyard, heap);
+    fire_mutex_unlock(&g_thrM);
 }
 
 /* `leave`: the thread that calls it goes straight into the unwinding. */
@@ -7851,17 +10081,31 @@ FIRE_FN void leaveNow(void) { startLeave(); }
 
 /* `terminate(value)`: the first call wins; every thread notices at its next safe point (or wait) and leaves. */
 FIRE_FN void terminateNow(Value v) {
-    if (!g_terminate.requested) {
+    bool first;
+    fire_mutex_lock(&g_thrM);
+    first = !terminateRequested();
+    if (first) {
         if (v.kind == K_Class || v.kind == K_Array || v.kind == K_Buffer) {   /* the value outlives the scope that created it */
             Owned* o = ownedOf(v);
             if (o) { if (o->owner) ownUnlink(o); ownLink(&g_terminateOwn, o); }
-        } else retain(v);
+        } else { v = strCross(v); retain(v); }   /* (the main program reads it) */
         g_terminate.value = v;
-        g_terminate.requested = true;
+        fire_atomic_store(&g_terminate.requested, 1);
+    }
+    fire_mutex_unlock(&g_thrM);
+    if (first) {
         fire_atomic_or(&g_attn, ATTN_ALL);
-        notifyEvent();
+        notifyEventAll();
     }
     startLeave();
+}
+/* The value of `terminate` (after it was requested). */
+FIRE_FN Value terminateValue(void) {
+    Value v;
+    fire_mutex_lock(&g_thrM);
+    v = g_terminate.value;
+    fire_mutex_unlock(&g_thrM);
+    return v;
 }
 
 /* A fire thread ends with an exception that nothing caught: it unwinds (finally blocks run) and the exception goes to the main program. */
@@ -7926,12 +10170,10 @@ enum { GJ_SYNC = 0, GJ_SAFEPOINTS = 1, GJ_SLEEP = 2 };
 extern FIRE_RT_DATA uint8_t g_globalJobs;
 /* The exceptions of the fire threads (and of the jobs) that reached the main program: `catch threads`, or the program ends. */
 FIRE_FN void deliverThreadExceptions(void) {
-    while (g_pendingExc.count && !g_unwind.active) {
-        Value e = g_pendingExc.items[0];
+    Value e;
+    while (!g_unwind.active && pendingExcPop(&e)) {
         Value (*handler)(Value) = NULL;
         uint32_t i;
-        memmove(g_pendingExc.items, g_pendingExc.items + 1, (g_pendingExc.count - 1) * sizeof(Value));
-        g_pendingExc.count--;
         for (i = 0; i < g_threadsCatchCount; i++)
             if (g_threadsCatches[i].typeId < 0 || excMatches(e, g_threadsCatches[i].typeId)) { handler = g_threadsCatches[i].fn; break; }
         if (!handler) { reportUnhandled(e); exitNow(1); }
@@ -7939,7 +10181,7 @@ FIRE_FN void deliverThreadExceptions(void) {
         handler(e);
         g_noSyncDepth--;
     }
-    if (!g_pendingExc.count) fire_atomic_and(&g_attn, ~(uint32_t)ATTN_MAIN);
+    if (!pendingExcCount()) fire_atomic_and(&g_attn, ~(uint32_t)ATTN_MAIN);
 }
 /* The main program at a safe point: what the fire threads left for it - their exceptions, and (as the mode says: `waiting` = Sleep or a wait function, else a loop's
  * jump back) the sections, jobs and host services. */
@@ -7953,8 +10195,11 @@ FIRE_FN void mainPoll(bool waiting) {
 
 FIRE_COLD FIRE_FN bool pollSlow(bool loop) {
     if (g_leaving) return false;
-    if (g_terminate.requested) { startLeave(); return true; }
+    if (terminateRequested()) { startLeave(); return true; }
     if (g_attnMask & ATTN_MAIN) { if (loop) mainPoll(false); else deliverThreadExceptions(); }
+#ifdef FIRE_NO_GIL
+    if (g_attnMask & ATTN_PEER) threadServe();
+#endif
     return g_unwind.active != 0;
 }
 
@@ -8002,6 +10247,18 @@ FIRE_FN bool blockUntilServing(bool (*pred)(void*), void* ctx, bool stopOnTermin
     w.ctx = ctx;
     return blockUntil(fire_waitServingPred, &w, stopOnTerminate, deadlineMs);
 }
+FIRE_FN bool fire_neverReady(void* ctx) { (void)ctx; return false; }
+FIRE_FN bool fire_waitHelping(bool (*pred)(void*), void* ctx, int64_t ms) {
+#ifdef FIRE_TASKS
+    if (!fire_curTask || g_isThread || !fire_atomic_load(&g_schedOn)) return false;
+    if (ms > 0) blockUntil(pred ? pred : fire_neverReady, ctx, true, steadyMs() + ms);
+    return true;
+#else
+    (void)pred; (void)ctx; (void)ms;
+    return false;
+#endif
+}
+FIRE_FN bool fire_frameWait(double seconds) { return fire_waitHelping(NULL, NULL, (int64_t)(seconds * 1000.0 + 0.5)); }
 FIRE_FN void sleepTicks(int64_t ticks) {
     int32_t held;
     int64_t deadline;
@@ -8010,6 +10267,22 @@ FIRE_FN void sleepTicks(int64_t ticks) {
     /* a thread sleeping inside a method of a shared object gives its section back for the sleep */
     held = sectionYieldBegin();
     deadline = steadyMs() + (ticks + TICKS_PER_MS - 1) / TICKS_PER_MS;
+    {
+        CancelNode* token = fire_curToken();
+        if (token) {
+            /* (a task that follows a token: the wait ends when it is cancelled, at the latest at its time limit) */
+            TokWait w;
+            int64_t limit = cancelDeadline(token);
+            int state;
+            w.pred = NULL; w.ctx = NULL; w.token = token;
+            if (limit && limit < deadline) deadline = limit;
+            if (!cancelState(token)) blockUntil(fire_tokWaitPred, &w, true, deadline);
+            sectionYieldEnd(held);
+            state = cancelState(token);
+            if (state) fire_throwCancelled(state);
+            return;
+        }
+    }
     blockUntil(fire_sleepWake, NULL, true, deadline);
     sectionYieldEnd(held);
 }
@@ -8021,40 +10294,74 @@ FIRE_FN bool fire_mainDone(void* ctx) {
     deliverThreadExceptions();
     drainQueue();
     if (!g_unwind.active) hostServe();
-    return g_threadsLive == 0 && g_pendingExc.count == 0 && g_reqs.count == 0 && ((int32_t)fire_atomic_load(&g_hostHolds) <= 0 || g_terminate.requested);
+    return fire_atomic_load(&g_threadsLive) == 0 && pendingExcCount() == 0 && reqCount() == 0
+#ifdef FIRE_TASKS
+        && fire_atomic_load(&g_groupLive) == 0
+#endif
+         && ((int32_t)fire_atomic_load(&g_hostHolds) <= 0 || terminateRequested());
 }
 FIRE_FN void mainFinish(void) {
     uint32_t i;
     clearUnwind();
     g_leaving = 0;
-    if (g_terminate.requested && g_terminateFn) {
+    if (terminateRequested() && g_terminateFn) {
         g_leaving = 1;   /* no more signals while the handler runs */
         g_noSyncDepth++;
-        g_terminateFn(g_terminate.value);
+        g_terminateFn(terminateValue());
         g_noSyncDepth--;
         clearUnwind();
         g_leaving = 0;
     }
     /* (open windows of a window manager's thread hold the program, unless it is terminating; their cycles run here meanwhile) */
     blockUntil(fire_mainDone, NULL, false, 0);
-    for (i = 0; i < g_threadList.count; i++) fire_thread_join((fire_thread*)g_threadList.items[i]);
-    g_threadList.count = 0;
+    /* (every thread has ended its fire code: nobody adds to the list any more - the lock only orders the reads after the writes; the joins wait outside it) */
+    {
+        PtrVec list;
+        fire_mutex_lock(&g_thrM);
+        list = g_threadList;
+        g_threadList.items = NULL; g_threadList.count = 0; g_threadList.cap = 0;
+        fire_mutex_unlock(&g_thrM);
+        for (i = 0; i < list.count; i++) fire_thread_join((fire_thread*)list.items[i]);
+        free(list.items);
+    }
     g_leaving = 1;   /* the globals are destroyed now: nothing interrupts the destructors */
 }
 
 /* The exit code of the process: a `terminate` with a whole number gives it. */
 FIRE_FN int mainExitCode(void) {
-    if (g_terminate.requested && g_terminate.value.kind == K_Int) return (int)g_terminate.value.i;
+    if (terminateRequested()) { Value v = terminateValue(); if (v.kind == K_Int) return (int)v.i; }
     return 0;
 }
 
 /* Sets up the locks of the threads (the generated main calls it first). */
 FIRE_FN void fire_threadsInit(void) {
+#ifdef FIRE_TASK_STATE
+    fire_strandAttach();   /* (the main program's strand) */
+#endif
+#ifdef FIRE_TASKS
+    g_homeState = fire_curTask;
+#endif
     fire_mutex_init(&g_gil.m);
     fire_cond_init(&g_gil.cv);
     fire_mutex_init(&g_evM);
     fire_cond_init(&g_evCv);
-    g_terminate.requested = false;
+#ifdef FIRE_SLOT_SEGMENTS
+    fire_mutex_init(&g_slotM);
+#endif
+    fire_mutex_init(&g_thrM);
+    fire_mutex_init(&g_reqM);
+    fire_mutex_init(&g_mailboxM);
+    fire_mutex_init(&g_cancelM);
+    fire_mutex_init(&g_originM);
+#ifdef FIRE_NO_GIL
+    fire_mutex_init(&g_dom.m);
+    fire_cond_init(&g_dom.cv);
+#endif
+#ifdef FIRE_TASKS
+    fire_mutex_init(&g_sched.m);
+    fire_cond_init(&g_sched.cv);
+#endif
+    fire_atomic_store(&g_terminate.requested, 0);
     g_terminate.value = Undef();
     ownListInit(&g_terminateOwn, 0, NULL);
 }
@@ -8064,6 +10371,10 @@ FIRE_FN void fire_threadsInit(void) {
  * The global state, defined in the one translation unit that defines FIRE_RT_IMPLEMENTATION (the generated program, or the library of a package for the VM).
  * --------------------------------------------------------------------------------------------------------------------- */
 #ifdef FIRE_RT_IMPLEMENTATION
+void (*g_idlePump)(void) = NULL;
+void (*g_idleWait)(int64_t ms) = NULL;
+void (*g_idleWake)(void) = NULL;
+fire_atomic32 g_idleOn, g_idleWaiting;
 #if defined(FIRE_LIBRARY) && !defined(__cplusplus)
 jmp_buf* g_libraryJump = NULL;
 FireLibraryError g_libraryError;
@@ -8076,6 +10387,8 @@ fire_atomic32 g_hostPending;
 #endif
 #if defined(FIRE_THREADS) && defined(FIRE_DLL)
 ThreadLocals* fire_tl(void) { return &fire_tlsBlock; }   /* (linkage "shared" on Windows: the block of the calling thread) */
+#elif defined(FIRE_THREADS) && defined(FIRE_TASK_STATE)
+FIRE_TLS ThreadLocals* fire_curTask = NULL;
 #elif !(defined(FIRE_THREADS) && defined(FIRE_TLS_STRUCT))
 #define FIRE_X(type, name, init) FIRE_TLS type FIRE_CC_NEAR_DATA name = init;
 FIRE_THREAD_VARS(FIRE_X)
@@ -8090,6 +10403,9 @@ const TextUnit* g_textUnits = NULL;
 uint32_t g_textUnitCount = 0;
 #ifdef FIRE_SLOTS
 SlotTable g_slots;
+#ifdef FIRE_SLOT_SEGMENTS
+fire_mutex g_slotM;
+#endif
 #endif
 FireFieldPtr** g_fieldPtrs;
 uint32_t g_fieldPtrCount, g_fieldPtrCap;
@@ -8113,10 +10429,31 @@ fire_atomic32 g_gilWaiting;
 fire_mutex g_evM;
 fire_cond g_evCv;
 uint64_t g_evCount = 0;
+#ifdef FIRE_TASKS
+FireWorker g_homeWorker;
+fire_atomic32 g_evTick, g_homeSeen, g_groupLive;
+ThreadLocals* g_homeState;
+#endif
 fire_atomic32 g_attn;
 TerminateState g_terminate;
+fire_mutex g_thrM, g_reqM, g_mailboxM, g_cancelM;
+#ifdef FIRE_NO_GIL
+DomLock g_dom;
+#endif
+#ifdef FIRE_TASKS
+FireSched g_sched;
+fire_atomic32 g_schedReady;
+fire_atomic32 g_schedOn;
+FireTask* g_evWaiters = NULL;
+FireTask* g_evKeyed[FIRE_EV_BUCKETS];
+FIRE_TLS FireWorker* g_worker = NULL;
+int64_t g_schedNextWake = INT64_MAX;
+#endif
+#ifdef FIRE_STR_CROSS
+void (*g_domShareGlobals)(void) = NULL;
+#endif
 OwnList g_terminateOwn;
-int g_threadsLive = 0;
+fire_atomic32 g_threadsLive;
 PtrVec g_threadList;
 ValueQueue g_pendingExc;
 PtrVec g_graveyard;
@@ -8125,6 +10462,11 @@ OwnList* g_domainRoot = NULL;
 ReqQueue g_reqs;
 PtrMap g_originOf;
 PtrMap g_copiesOf;
+fire_mutex g_originM;
+#ifdef FIRE_NO_GIL
+PtrMap g_originOwner;
+fire_atomic32 g_peerPending;
+#endif
 ThreadsCatch* g_threadsCatches = NULL;
 uint32_t g_threadsCatchCount = 0, g_threadsCatchCap = 0;
 Value (*g_terminateFn)(Value) = NULL;

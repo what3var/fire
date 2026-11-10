@@ -33,6 +33,7 @@ namespace fire.Runtime
             public CallFn Call = null!;
             public Action? Reset;
             public Action? Service;
+            public Action? Idle;   // (fire_pkg_idle: a turn of a wait on the calling thread - the windows it pumps read their events)
             public VM? MainVm;             // the main program's VM that calls it (its services run there)
             public object? HostKeepAlive;
             public Dictionary<string, (int Index, int Arity)> Functions = new();
@@ -78,6 +79,15 @@ namespace fire.Runtime
             lock (Lock)
                 if (!Locations.TryGetValue(name, out where)) throw new InvalidOperationException($"The native function '{name}' of a package is not registered.");
             return Invoke(name, where.File, args, where.Locate);
+        }
+
+        private static readonly Action IdleAction = IdleLibraries;
+        /// <summary>A turn of a wait of the program on this thread: every loaded library with `fire_pkg_idle` serves what this thread has of it.</summary>
+        internal static void IdleLibraries()
+        {
+            Library[] loaded;
+            lock (Lock) loaded = Libraries.Values.Where(l => l.Idle != null).ToArray();
+            foreach (var lib in loaded) lib.Idle!();
         }
 
         /// <summary>The libraries asked for their services (fire_host.request_service): every loaded library that has `fire_pkg_service` runs them - on the VM's thread, at a safe point.</summary>
@@ -138,6 +148,8 @@ namespace fire.Runtime
                             }, delta => (lib.MainVm ?? PackageHost.MainVm)?.AddHostHold(delta), out lib.HostKeepAlive);
                         Marshal.GetDelegateForFunctionPointer<SetHostFn>(setHost)(block);
                     }
+                    if (NativeLibrary.TryGetExport(handle, "fire_pkg_idle", out var idle))
+                        lib.Idle = Marshal.GetDelegateForFunctionPointer<VoidFn>(idle).Invoke;
                     if (NativeLibrary.TryGetExport(handle, "fire_pkg_reset", out var reset))
                         lib.Reset = Marshal.GetDelegateForFunctionPointer<VoidFn>(reset).Invoke;
                     lib.Handle = handle;
@@ -156,6 +168,7 @@ namespace fire.Runtime
         {
             var lib = Load(file, locate);
             PackageHost.NoteCaller();
+            if (lib.Idle != null) TaskHooks.IdlePump ??= IdleAction;   // (the waits of this thread give the library a turn: its windows of this thread)
             if (VM.CurrentThreadVm is { IsFireThreadVm: false } caller) lib.MainVm = caller;
             if (lib.Failure != null)
                 throw new InvalidOperationException($"The native function '{name}' of a package cannot run in the virtual machine: its library '{file}' could not be loaded ({lib.Failure}). " +

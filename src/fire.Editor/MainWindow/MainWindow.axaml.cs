@@ -84,6 +84,8 @@ namespace fire.Editor
             Circuit,
             /// <summary>A model of blocks (.fblocks, docs/graphics/models.md) in the block editor.</summary>
             Blocks,
+            /// <summary>A model of corners and faces (.fmesh, docs/graphics/models.md) in the CAD editor.</summary>
+            Mesh,
             /// <summary>The statistics of a native build (.stats.json, BuildStatsViewerControl), to look at.</summary>
             BuildStats,
             /// <summary>The profile of a run (ProfileViewerControl), to look at.</summary>
@@ -167,6 +169,7 @@ namespace fire.Editor
             if (ext == ".fxml") return DocumentKind.UiMarkup;
             if (ext == ".biscuit") return DocumentKind.Circuit;
             if (ext == fire.Compiler.BlockModel.Extension) return DocumentKind.Blocks;
+            if (ext == fire.Compiler.MeshModel.Extension) return DocumentKind.Mesh;
             if (ImageExtensions.Contains(ext)) return DocumentKind.Image;
             if (TextExtensions.Contains(ext) || CppHighlighter.IsCppFile(path)) return DocumentKind.Text;
             if (!ScriptExtensions.Contains(ext) && LooksBinary(path)) return DocumentKind.Hex;   // data that is no text: bytes
@@ -770,6 +773,7 @@ namespace fire.Editor
                 DocumentKind.Hex => new HexEditorControl(),
                 DocumentKind.Circuit => new CircuitEditorControl(),
                 DocumentKind.Blocks => new BlockEditorControl(),
+                DocumentKind.Mesh => new MeshEditorControl(),
                 DocumentKind.BuildStats => new BuildStatsViewerControl(),
                 DocumentKind.Profile => new ProfileViewerControl(),
                 _ => new ScriptEditorControl(),

@@ -138,6 +138,8 @@ namespace fire.Compiler
         /// <summary>A value that may be undefined (a parameter, field or variable declared `int`, the literal `undefined`) goes where `defined int` is declared
         /// (SPEC 8.10b): it is checked at run time - `trust x` says it certainly is defined.</summary>
         public const string UndefinedCode = "TC022";
+        /// <summary>A `fire` block uses a local of the code around it without `taking` (a copy) or `handover` (moved): the thread gets a copy.</summary>
+        public const string ImplicitCaptureCode = "TC023";
         /// <summary>The width of the program's `int` (16, 32, 64): set by the linker before the check.</summary>
         [ThreadStatic] public static int ProgramIntWidth;
         /// <summary>What the natives of the imported packages return (their `returns`: name -> type text) - set by the linker before the check.</summary>
@@ -1160,8 +1162,14 @@ namespace fire.Compiler
                 case UnsafeStmt u: Check(u.Body); break;
                 case FireStmt f:
                     {
+                        if (f.Until != null) foreach (var limit in f.Until) Infer(limit);
                         // the block runs in a scope of its own: the `taking` copies and the actor of `with` are its variables
                         var captured = f.TakingCaptures.Select(c => (c.VarName, Type: Infer(c.Source))).ToList();
+                        // a local copied without a word: said only when the copy costs memory - an object, an array, a string, an unknown value (a number is copied
+                        // for nothing); the user sees where the memory grows
+                        for (int ci = 0; ci < f.TakingCaptures.Count; ci++)
+                            if (f.TakingCaptures[ci].Implicit && captured[ci].Type.Kind is not (StaticKind.Bool or StaticKind.Int or StaticKind.Float or StaticKind.Char or StaticKind.Enum or StaticKind.Word))
+                                Report(ImplicitCaptureCode, $"The thread uses the local '{captured[ci].VarName}' of the code around it: it gets a copy of it (memory). Write 'taking {captured[ci].VarName}' where it is used (a copy) or 'handover {captured[ci].VarName}' (moved to the thread).", f.Line);
                         var actor = f.WithSource != null ? Infer(f.WithSource) : StaticType.Dynamic;
                         Push();
                         foreach (var (name, type) in captured) Declare(name, type);
@@ -1174,7 +1182,13 @@ namespace fire.Compiler
                 case SilenceStmt si: Infer(si.Target); break;
                 case DeleteStmt d: Infer(d.Target); break;
                 case TerminateStmt te: if (te.Value != null) Infer(te.Value); break;
-                case PostGlobalStmt pg: Infer(pg.Lambda); foreach (var a in pg.Args) Infer(a); break;
+                case PostGlobalStmt pg:
+                {
+                    // (the parameters of the job are the copies of the arguments - or, `fire on`, the object itself: their types)
+                    var argTypes = pg.Args.Select(a => Infer(a)).ToList();
+                    InferLambda(pg.Lambda, StaticType.LambdaOf(argTypes.Count, null, argTypes));
+                    break;
+                }
                 case CatchThreadsDecl ct:
                     Push();
                     if (ct.VarName != null) Declare(ct.VarName, DeclaredOrDynamic(ct.TypeRef));
@@ -1625,6 +1639,16 @@ namespace fire.Compiler
                 case NewExpr n: return InferNew(n);
                 case IncDecExpr inc: return Infer(inc.Target);
                 case LambdaExpr lam: return InferLambda(lam, null);
+                case UntilExpr until:
+                    foreach (var limit in until.Limits) Infer(limit);
+                    return Infer(until.Inner);
+                case AwaitOnExpr awaitOn:
+                {
+                    var onArgTypes = awaitOn.Args.Select(a => Infer(a)).ToList();
+                    // (the parameters have the types of the arguments; the result is the block's)
+                    return InferLambda(awaitOn.Lambda, StaticType.LambdaOf(onArgTypes.Count, null, onArgTypes)) is { Kind: StaticKind.Lambda, Return: { } blockResult }
+                        ? blockResult : StaticType.Dynamic;
+                }
                 case IsOfExpr io: Infer(io.Operand); return StaticType.Bool;
                 case IsInExpr ii: Infer(ii.Operand); return StaticType.Bool;
                 case RangeExpr range:

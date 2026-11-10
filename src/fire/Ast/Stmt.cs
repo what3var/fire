@@ -119,7 +119,8 @@ namespace fire.Ast
     /// call form). `Handover` (`fire handover x`): no copy - the value itself (with everything reachable from it) goes to the new thread, whose root
     /// scope owns it from then on, and the sender's variable becomes `undefined` (Source is then always an identifier). The parser puts the handover
     /// captures after all `taking` captures (their sources are plain variables, so the order of evaluation does not matter).</summary>
-    public sealed record FireTakingCapture(string VarName, Expr Source, bool Handover = false);
+    /// Implicit: a local the body uses without `taking`/`handover` - copied, and the type checker says so (TC023).
+    public sealed record FireTakingCapture(string VarName, Expr Source, bool Handover = false, bool Implicit = false);
 
     /// <summary>`fire { ... }` / `fire taking X { ... }` / `fire with actorA { ... }`
     /// / `fire MethodA(args) with actorA taking X` (docs/spec/THREADING_DESIGN.md
@@ -147,7 +148,9 @@ namespace fire.Ast
         IReadOnlyList<FireTakingCapture> TakingCaptures,
         string? WithVarName,
         Expr? WithSource,
-        Stmt.BlockStmt Body) : Stmt(Source, Line);
+        Stmt.BlockStmt Body,
+        bool Dedicated = false,                          // `fire dedicated { }`: natively a system thread of its own, not a task of the pool
+        IReadOnlyList<Expr>? Until = null) : Stmt(Source, Line);   // `fire until token { }`: the thread follows the token (each `__Cancel.Limit(x)`)
 
     /// <summary>Start of a `sync global { ... }` section (docs/spec/THREADING_DESIGN.md section 7) - the parser desugars the block into
     /// `SectionEnterStmt; try { Body } finally { SectionExitStmt }`, so that the section also ends on `throw` in the block.</summary>
@@ -163,8 +166,9 @@ namespace fire.Ast
     /// <summary>`fire global { ... } [taking X ...]` (docs/spec/THREADING_DESIGN.md section 7): a job for the main program that runs at
     /// its next `sync globals` with the real globals, without the caller waiting. The parser turns the block into a
     /// lambda whose parameters are the `taking` captures (they are passed as value/copy when enqueued) - like any lambda, the lambda sees
-    /// the globals, but no locals of the caller.</summary>
-    public sealed record PostGlobalStmt(int Source, int Line, LambdaExpr Lambda, IReadOnlyList<Expr> Args) : Stmt(Source, Line);
+    /// the globals, but no locals of the caller.
+    /// OnTarget (`fire on window { ... }`, docs/ROADMAP_TASKS.md section 5): the first argument is the object the block runs on - passed as it is, not copied.</summary>
+    public sealed record PostGlobalStmt(int Source, int Line, LambdaExpr Lambda, IReadOnlyList<Expr> Args, bool OnTarget = false) : Stmt(Source, Line);
 
     /// <summary>`process X` (docs/spec/THREADING_DESIGN.md Abschnitt 2) -
     /// blocking: waits until a message arrives in the mailbox of the

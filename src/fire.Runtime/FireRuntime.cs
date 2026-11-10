@@ -22,7 +22,8 @@ namespace fire.Runtime
     /// vanish in the thread.</summary>
     public sealed class FireThreadHandle
     {
-        private readonly Thread _thread;
+        private readonly Thread? _thread;
+        private readonly ManualResetEventSlim _done = new(false);   // (a task of the pool: VmScheduler)
 
         /// <summary>An exception that broke through unhandled in the thread delegate -
         /// in the later language binding this corresponds exactly
@@ -33,9 +34,11 @@ namespace fire.Runtime
         /// deliberately kept only as test visibility.</summary>
         public Exception? Error { get; private set; }
 
-        internal FireThreadHandle(Thread thread) => _thread = thread;
+        internal FireThreadHandle(Thread? thread) => _thread = thread;
 
-        public void Join() => _thread.Join();
+        public void Join() { if (_thread != null) _thread.Join(); else _done.Wait(); }
+
+        internal void Finish() => _done.Set();
 
         internal void SetError(Exception ex) => Error = ex;
     }
@@ -101,11 +104,12 @@ namespace fire.Runtime
             while (true)
             {
                 broker?.Drain();
+                TaskHooks.IdlePump?.Invoke();   // (the windows of the main program read their events while it waits for the threads)
                 lock (_liveThreadsGate)
                 {
                     bool pending = broker != null && broker.HasPending;
                     if (_liveThreads == 0 && !pending) return;
-                    if (!pending) Monitor.Wait(_liveThreadsGate, 50);
+                    if (!pending) Monitor.Wait(_liveThreadsGate, TaskHooks.IdlePump != null ? 20 : 50);
                 }
             }
         }
@@ -116,7 +120,9 @@ namespace fire.Runtime
         /// <summary>Wakes a main program that is waiting in <see cref="WaitForAllFireThreads"/> (a thread has put something into the queue).</summary>
         internal static void WakeWaitingOwner()
         {
+            _ = VmGroup.Any;   // (the static constructor of the group sets the switch point of the UI loop)
             lock (_liveThreadsGate) Monitor.PulseAll(_liveThreadsGate);
+            VmScheduler.Wake();   // (the tasks of the pool that wait look again)
         }
 
         /// <summary>Waits at most `milliseconds`, but wakes earlier if something is put into the main program's queue
@@ -220,7 +226,8 @@ namespace fire.Runtime
             IReadOnlyList<Value> takingValues,
             Value? withValue = null,
             VmExecutionMode executionMode = VmExecutionMode.Debug,
-            int handoverCount = 0)
+            int handoverCount = 0,
+            CancelNode? token = null)
         {
             // The slots 0..sharedGlobalCount-1 are the real globals of the main program (the VM reads/writes them via the broker,
             // see GlobalsBroker/VM.AttachToGlobals) - here only placeholders, so that taking/with lie at the slots assigned by the compiler.
@@ -237,9 +244,39 @@ namespace fire.Runtime
             foreach (var v in moved) scope.DefineSlot(v);
             if (withValue is Value wv)
                 scope.DefineSlot(wv);
+            if (VmScheduler.Enabled && ThreadBodyInterceptor == null)
+            {
+                // step 7: a task of the pool (VmScheduler) - not a system thread of its own
+                var taskVm = new VM(chunk, scope, natives, classes, isFireThreadVm: true, executionMode: executionMode);
+                taskVm.ThreadToken = token;
+                if (broker != null) taskVm.AttachToGlobals(broker, sharedGlobalCount);
+                var poolHandle = new FireThreadHandle(null);
+                lock (_liveThreadsGate) _liveThreads++;
+                VmScheduler.Start(taskVm, error =>
+                {
+                    try
+                    {
+                        taskVm.ReleaseGlobalsSections();
+                        if (error != null)
+                        {
+                            poolHandle.SetError(error);
+                            Console.Out.Flush();
+                            Console.Error.WriteLine("fire runtime error: " + error.Message);
+                            VM.RequestTerminate(Value.MakeInt(1));
+                        }
+                    }
+                    finally
+                    {
+                        lock (_liveThreadsGate) { _liveThreads--; Monitor.PulseAll(_liveThreadsGate); }
+                        poolHandle.Finish();
+                    }
+                });
+                return poolHandle;
+            }
             return Fire(() =>
             {
                 var vm = new VM(chunk, scope, natives, classes, isFireThreadVm: true, executionMode: executionMode);
+                vm.ThreadToken = token;
                 if (broker != null) vm.AttachToGlobals(broker, sharedGlobalCount);
                 try { RunVm(vm); }
                 finally { vm.ReleaseGlobalsSections(); }
@@ -335,11 +372,18 @@ namespace fire.Runtime
             Func<IReadOnlyList<Value>> snapshotGlobals,
             Action<string>? onUnhandled = null,
             VmExecutionMode executionMode = VmExecutionMode.Debug,
-            VM? owner = null)
+            VM? owner = null,
+            bool asTask = false)
         {
             var vm = VM.CurrentThreadVm;
             if (vm != null && !vm.IsHalted)
             {
+                // an event handler of a window: a member of the main program's group (VmGroup) - when it waits, the window goes on (as natively)
+                if (asTask)
+                {
+                    VmGroup.RunReady();
+                    if (VmGroup.TryStart(vm, callback, args, onUnhandled)) return;
+                }
                 try
                 {
                     var error = vm.CallLambdaInline(callback, args);

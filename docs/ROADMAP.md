@@ -13,6 +13,7 @@ Leitlinien:
 
 | Phase | Punkt | Hängt ab von | Warum an dieser Stelle |
 |---|---|---|---|
+| **als Nächstes** | [Lambdas: Captures nur mit `taking`/`handover`, Globals per `taking`, `on` läuft auf dem Ziel](ROADMAP_TASKS.md#step-8---captures-only-with-a-word-globals-by-taking-on-runs-on-its-target-next-decided-by-the-user) | Tasks 1-7 | Entscheidung des Benutzers: ein Lambda hält nur Eigenes oder läuft beim Besitzer seines Ziels - die Sprache wird rund |
 | 0 | ~~[Native-C-Port (Kern)](#0-native-c-port-kern)~~ (umgesetzt) | - | Debugging, binäre Libraries und alle neuen Natives bauen auf der Runtime auf; sonst doppelt |
 | 1 | [Echte Enums, Flag-Enums als Attribute](#1-echte-enums) | 0 | Compiler, Typprüfer, VM, Generator; `Owns` für die Container braucht sie |
 | 1 | [Benannte Argumente](#2-benannte-argumente) | - | `new Dictionary<K, V>(Owns.All)` liest sich besser mit Namen; allgemein nützlich |
@@ -31,6 +32,18 @@ Leitlinien:
 | 7 | [Mess-Werkzeug für Größe, Speicher und Typisierung](#16-mess-werkzeug-für-größe-speicher-und-typisierung) | 11, 13 | Entscheidungen über kleine Ziele (DOS: 640 KB) auf Zahlen statt Schätzungen stützen |
 | 7 | [Kleine und alte Ziele](#13-kleine-und-alte-ziele) (Zeigerarten, typisierte Arrays, `#intwidth 32` umgesetzt) | 0, 9 | Mikrocontroller, DOS, Win 3.x, Win9x, NT 3.51-XP: Speicher pro Wert, Breiten, neue Plattformen |
 | 8 | [Scene3D für Spiele](#16-scene3d-für-spiele) | 13 (Ziele, Breiten), 11 (Weglassen) | Spiele bis hinunter auf DOS: Größe zuerst, dann Terrain, Modelle, Animation, Effekte, Physik |
+
+**Arbeitsreihenfolge (Entscheidung des Benutzers, nach Tasks Schritt 8):**
+
+1. [Arrays statt Byte-Puffer an Natives](#15-arrays-statt-byte-puffer-an-natives) vervollständigen.
+2. Der Rest der laufenden Arbeitsliste: Ebene 2 (typisierte Locals und Felder als C-Typen, 13.9), Besitz ohne Aufruftiefe (`TakeTo` mit C-ABI),
+   schlankere Konstruktoren, weniger Value-Kopien (Alias-Slots, dann Zeiger-Argumente/Ergebnisse), spark: CPU-Last im Leerlauf und der FPS-Einbruch von scene3d.
+3. Die kleinen Punkte aus [Kleine und alte Ziele](#13-kleine-und-alte-ziele) ("Dazwischen, klein").
+4. Die Reste aus Generator, Linkage und Größe (Abschnitte 9, 11, 12, 17) - nur, was wirklich Vorteile bringt.
+5. UI zuletzt (Abschnitte 10 und 14).
+
+Die neuen Ziele (bios32, efi-x64, win32-legacy, weitere Boards, Grafik alter Hardware) können parallel laufen, sobald die Basis (1-3) weit genug
+ist; der HTTP-Server ([ROADMAP_HTTP.md](ROADMAP_HTTP.md)) läuft parallel bei jemand anderem.
 
 Nach Phase 3 wäre **ember** in fire schreibbar (der erste Härtetest), nach Phase 5 **forge**, nach Phase 6 (plus VM/Debugger in fire, Code-Editor-Control) **spark**.
 
@@ -851,6 +864,23 @@ nach Arbeiten auf `targets`).
       Schicht oder durch alle Schichten; im 3D-Bild als Drahtbox) mit Kopieren/Ausschneiden/Einfügen am Zeiger (die Blöcke kommen in den gewählten Teil),
       Löschen, Box füllen (`Copy/Delete/Paste/FillBox`, getestet); die Vorschau mit scene3d selbst (`BlockPreviewWindow`: das Modell als .f3d in der VM gezeichnet,
       auf einem Boden, mit Schatten, mit der gewählten Animation - jedes 1/30 s ein Bild, im Kreis gezeigt; Renderer und Seite wählbar). Unter Xvfb geprüft.
+      **CAD umgesetzt:** das Format `.fmesh` (JSON: Palette, Teile und Animationen wie `.fblocks` - Drehpunkte und Verschieben in Metern -, `"vertices"` eine
+      Ecke je Zeile, `"faces"` eine Fläche je Zeile `[Farbe, Teil, Ecken...]`, gegen den Uhrzeigersinn von außen) und `MeshModel` (fire.Compiler: Normale nach
+      Newell, Kanten, Grundkörper Box/Zylinder/Kugel/Ebene, Verschieben/Drehen/Skalieren, **Extrudieren** einer Region - jede Fläche geht um die Strecke hinaus,
+      eine Ecke zweier Flächen also diagonal (d·a/|a|², a das Mittel der Normalen), Wände an der Randkante, eine Region mit freiem Rand behält ihre umgedrehte
+      Kopie als Boden -, **Spiegeln** an einer Ebene (als Kopie mit geteilten Ecken auf der Ebene und umgedrehtem Umlauf, oder an Ort und Stelle), Umdrehen,
+      Löschen von Ecken/Kanten/Flächen, Verschweißen, Zusammenführen, Kante teilen, Fläche teilen, Fläche aus Ecken (nach außen gedreht), Farbe/Teil entfernen,
+      Strahl-Auswahl; `ToF3d`: flache Normalen, Fächer-Dreiecke, je Teil ein Teil am Drehpunkt, darunter je Farbe eins, Clips wie bei den Blöcken). Teile,
+      Animationen und Posen teilen sich beide Formate (`BlockModel.ParseParts/ParseAnimations/PoseOf/PoseMatricesOf`). forge nimmt `x.fmesh` als Ressource und
+      in `forge model`. Der Editor in spark (`MeshEditorControl`, *File > New > Mesh Model (CAD)*): vier Ansichten (oben, vorn, Seite als Drahtgitter auf einem
+      Raster; 3D schattiert, Rückseiten grau; eine groß wählbar; Verschieben/Drehen/Zoomen um den Zeiger), Auswahl von Ecken/Kanten/Flächen (Klick, Shift, Box;
+      der Moduswechsel nimmt die Auswahl mit), Ziehen auf dem Raster, Pfeiltasten, Zeichnen einer Fläche in einer 2D-Ansicht, Extrudieren (E), Spiegeln X/Y/Z,
+      Umdrehen, Zusammenführen, Verschweißen, Teilen, Fläche, Löschen, Kopieren/Einfügen/Duplizieren, Verschieben/Drehen/Skalieren per Eingabe, Palette (ein Klick
+      malt die gewählten Flächen), Teile (neu mit der Auswahl, zuweisen, Drehpunkt), Animationen, Vorschau mit scene3d, Export. Die Animationsleiste, die Palette
+      und das Vorschaufenster teilen sich beide Editoren (`ModelAnimationBar`, `ModelPaletteStrip`, `BlockPreviewWindow`); dabei gefunden: ein Klick in die Palette
+      kam nie an (ohne Hintergrund traf ihn nichts). Getestet: `FIRE_TESTS_ONLY=mesh` (39 Prüfungen: Text, Körper geschlossen und nach außen, Extrudieren nach
+      außen/innen/über eine Kante/einer Ebene, Spiegeln, Löschen, Schweißen, Teilen, Strahlen, Datei), Scene3DTests zeichnet und animiert ein Haus aus einer
+      `.fmesh`-Ressource (VM == nativ), der Editor unter Xvfb (Wählen, Extrudieren, Spiegeln, Zeichnen, Ziehen, Undo, Malen, Vorschau).
    2. **Animationen:** ein Modell trägt mehrere benannte Clips (Frames, fps, Schleife), zwischen den Frames interpoliert. Vorschlag: Modelle aus starren
       Teilen mit Hierarchie, ein Frame speichert eine Transformation je Teil (klein, billig); Frames je Vertex optional.
    **Umgesetzt (Format, Import, Animation):** das Format `.f3d` ([Models and animations](graphics/models.md), Byte für Byte in `s3d_model.h`): Teile im Baum
@@ -986,7 +1016,7 @@ scene3d-Preludes daran höchstens 3,5 KB).
   schlanke Renderer und die Terrains) unter DOS bisher nicht ausgeführt, nur gebaut.
 * Der Generator erzeugt für `sync`/`try` ein `switch` über `int64_t` (`EndFinally`), das Watcom auf 16 Bit ablehnt (E1078).
 
-Reihenfolge: 1 -> 2 -> 3 (Format, Import, Animation) -> 3.1 Blöcke -> 4 -> 5 -> 3.1 CAD; A (kompakte Meshes) vor oder mit 3, B/C/D nach Bedarf dazwischen.
+Reihenfolge: 1 -> 2 -> 3 (Format, Import, Animation) -> 3.1 Blöcke -> 4 -> 5 -> 3.1 CAD (alle umgesetzt); A (kompakte Meshes) vor oder mit 3, B/C/D nach Bedarf dazwischen.
 
 ## 17. Mess-Werkzeug für Größe, Speicher und Typisierung
 

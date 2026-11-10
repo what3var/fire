@@ -15,6 +15,9 @@
 #if (defined(FIRE_THREADS) || defined(FIRE_LIBRARY)) && !defined(FIRE_GREEN_THREADS)   /* (a library for the VM: a package with a thread of its own) */
 #include <pthread.h>
 #endif
+#if defined(FIRE_THREADS) && !defined(FIRE_GREEN_THREADS)
+#define FIRE_PLAT_PARALLEL 1   /* the threads run on all cores at once (fire_rt.h: then without the GIL) */
+#endif
 
 #if defined(FIRE_THREADS) && defined(__TINYC__) && !defined(FIRE_TLS_STRUCT) && !defined(FIRE_GREEN_THREADS)
 /* TinyCC has no thread-local storage: the state of a thread hangs on a key of pthreads instead (fire_rt.h: FIRE_TLS_STRUCT, fire_tl()) */
@@ -120,6 +123,14 @@ static inline fire_thread* fire_thread_start(fire_thread_fn fn, void* arg, uint3
     return t;
 }
 static inline void fire_thread_join(fire_thread* t) { pthread_join(t->t, NULL); free(t); }
+static inline void fire_thread_detach(fire_thread* t) { pthread_detach(t->t); free(t); }
+/* the cores of the machine (the workers of the scheduler of tasks) */
+#include <unistd.h>
+static inline int fire_plat_cores(void) { long n = sysconf(_SC_NPROCESSORS_ONLN); return n > 0 ? (int)n : 1; }
+#ifndef FIRE_GREEN_THREADS
+#include "fire_coro.h"   /* the coroutines of the tasks (fire_rt.h: FIRE_TASKS) */
+#define FIRE_PLAT_CORO 1
+#endif
 #endif
 
 #include "fire_env_posix.h"   /* (the process: arguments, path, environment variables) */

@@ -286,6 +286,16 @@ static int fire_display_presentPath(FireDisplayWindow* w) {
     }
 }
 
+/* What a wait for the window's events can poll (X11: the connection to the server); -1 where there is none (the waits of the program then look again now
+ * and then). */
+#define FIRE_DISPLAY_WAIT_FD 1
+static int fire_display_waitFd(FireDisplayWindow* w) {
+    switch (w->kind) {
+        FIRE_DD_IF_X11(case FIRE_DD_KIND_X11: return w->u.x11.d != NULL ? w->u.x11.x->ConnectionNumber(w->u.x11.d) : -1;)
+        default: return -1;
+    }
+}
+
 static void fire_display_restore(FireDisplayWindow* w) {
 #define FIRE_DD_B(m, p) fire_##p##_restore(&w->u.m); break;
     FIRE_DD_SWITCH(w->kind, FIRE_DD_B)

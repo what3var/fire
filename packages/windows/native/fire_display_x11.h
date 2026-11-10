@@ -264,6 +264,9 @@ static void fire_dx11_pace(double* last) {
         double wait = next - now;
         s.tv_sec = (time_t)wait;
         s.tv_nsec = (long)((wait - (double)s.tv_sec) * 1e9);
+#ifdef FIRE_RT_HELPING_WAIT
+        if (!fire_frameWait(wait))   /* (the main program of a native build: its thread runs tasks meanwhile) */
+#endif
         nanosleep(&s, NULL);
         *last = next;
     } else *last = now;

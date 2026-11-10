@@ -26,7 +26,16 @@ static class Scene3DTests
         return path.Replace("\\", "/");
     }
 
-    public static readonly string Script = ScriptText.Replace("{ROBOT}", RobotFile()).Replace("{FIGURE}", FigureFile());
+    /// <summary>The house of MeshModelTests as a mesh model file (.fmesh, the CAD editor's): forge makes an .f3d of it, too.</summary>
+    private static string HouseFile()
+    {
+        string path = Path.Combine(Path.GetTempPath(), "fire-scene3d-house.fmesh");
+        string text = MeshModelTests.House();
+        if (!File.Exists(path) || File.ReadAllText(path) != text) File.WriteAllText(path, text);
+        return path.Replace("\\", "/");
+    }
+
+    public static readonly string Script = ScriptText.Replace("{ROBOT}", RobotFile()).Replace("{FIGURE}", FigureFile()).Replace("{HOUSE}", HouseFile());
 
     private const string ScriptText = """
         #import "graphics"
@@ -329,6 +338,19 @@ static class Scene3DTests
         print("blocks hop " + figure.Playing + " " + figure.AnimationTime + " " + H.Sum(frame))
         scene.Remove(figure)
 
+        // a mesh model (.fmesh, the CAD editor's): a house whose roof is a part that nods
+        var house = new Object(Model.FromResource(new Resource("{HOUSE}")))
+        house.SetPosition(0m, 0m, 1m)
+        scene.Add(house)
+        print("mesh " + P.F(house.Width) + " " + P.F(house.Height) + " " + house.Triangles + " " + Model.FromResource(new Resource("{HOUSE}")).Parts)
+        cam.Render()
+        print("mesh picture " + H.Sum(frame))
+        house.Play("nod")
+        house.Advance(250ms)
+        cam.Render()
+        print("mesh nod " + H.Sum(frame) + " " + house.Playing)
+        scene.Remove(house)
+
         // effects (scene3d.effects): particles (the same in the VM and native: the emitter's own chance), fog, tint, spin, a texture that runs
         var flames = Emitter.Fire(0m, 1m, 1m)
         scene.Add(flames)
@@ -517,7 +539,7 @@ static class Scene3DTests
     public static void Run()
     {
         if (Environment.GetEnvironmentVariable("FIRE_SCENE_FILE") is { Length: > 0 } file) { Console.WriteLine(Vm(File.ReadAllText(file))); return; }
-        // (FIRE_SCENE_DUMP=folder: writes the script and the test models there - scene3d.fire, robot.gltf, robot.f3d, figure.fblocks)
+        // (FIRE_SCENE_DUMP=folder: writes the script and the test models there - scene3d.fire, robot.gltf, robot.f3d, figure.fblocks, house.fmesh)
         if (Environment.GetEnvironmentVariable("FIRE_SCENE_DUMP") is { Length: > 0 } dump)
         {
             Directory.CreateDirectory(dump);
@@ -525,6 +547,7 @@ static class Scene3DTests
             File.WriteAllText(Path.Combine(dump, "robot.gltf"), ModelTestData.RobotGltf());
             File.WriteAllBytes(Path.Combine(dump, "robot.f3d"), ModelTestData.RobotF3d());
             File.WriteAllText(Path.Combine(dump, "figure.fblocks"), BlockModelTests.Figure());
+            File.WriteAllText(Path.Combine(dump, "house.fmesh"), MeshModelTests.House());
             return;
         }
         string vm = Vm(Script);

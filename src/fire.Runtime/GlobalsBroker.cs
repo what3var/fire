@@ -45,6 +45,7 @@ namespace fire.Runtime
             public LambdaValue Lambda = null!;
             public Value[] Args = Array.Empty<Value>();
             public Scope Holder = null!;
+            public ActorReply? Reply;   // `await on`: the result goes back
         }
 
         private readonly object _gate = new();
@@ -79,6 +80,16 @@ namespace fire.Runtime
         /// main program has already ended - then it is granted immediately and there is nothing to complete).</summary>
         public object? EnterSection()
         {
+            var request = (SectionRequest?)RequestSection();
+            if (request == null) return null;
+            request.Granted.Wait();
+            return request;
+        }
+
+        /// <summary>The request of <see cref="EnterSection"/> without the wait (a task of the pool waits by leaving its loop): granted when
+        /// <see cref="IsGranted"/> says so; null - the main program has ended - is granted.</summary>
+        internal object? RequestSection()
+        {
             var request = new SectionRequest();
             lock (_gate)
             {
@@ -87,9 +98,10 @@ namespace fire.Runtime
             }
             VM.RaiseQueued(); // the main program notices it at its next safe point (see VM.AutoSyncAt)
             FireRuntime.WakeWaitingOwner();
-            request.Granted.Wait();
             return request;
         }
+
+        internal static bool IsGranted(object? handle) => handle is not SectionRequest request || request.Granted.IsSet;
 
         /// <summary>Ends the section that <see cref="EnterSection"/> granted.</summary>
         public void ExitSection(object? handle)
@@ -99,12 +111,12 @@ namespace fire.Runtime
 
         /// <summary>`fire global { ... }`: queues the job and returns immediately. `holder` owns the objects copied for the job
         /// and is released as soon as it has run.</summary>
-        public void PostJob(LambdaValue lambda, Value[] args, Scope holder)
+        public void PostJob(LambdaValue lambda, Value[] args, Scope holder, ActorReply? reply = null)
         {
             lock (_gate)
             {
-                if (_closed) { holder.Release(NullDestructRunner.Instance); return; }
-                _queue.Enqueue(new JobRequest { Lambda = lambda, Args = args, Holder = holder });
+                if (_closed) { holder.Release(NullDestructRunner.Instance); reply?.Done.Set(); return; }
+                _queue.Enqueue(new JobRequest { Lambda = lambda, Args = args, Holder = holder, Reply = reply });
             }
             VM.RaiseQueued(); // the main program notices it at its next safe point (see VM.AutoSyncAt)
             FireRuntime.WakeWaitingOwner();
@@ -132,10 +144,11 @@ namespace fire.Runtime
                 {
                     case SectionRequest section:
                         section.Granted.Set();
+                        VmScheduler.Wake();   // (a task of the pool that waits for it)
                         section.Done.Wait(); // the thread works, the main program waits
                         break;
                     case JobRequest job:
-                        Owner.RunGlobalsJob(job.Lambda, job.Args);
+                        Owner.RunGlobalsJob(job.Lambda, job.Args, job.Reply);
                         job.Holder.Release(Owner);
                         break;
                 }
@@ -157,7 +170,7 @@ namespace fire.Runtime
             foreach (var request in pending)
             {
                 if (request is SectionRequest section) section.Granted.Set();
-                else if (request is JobRequest job) job.Holder.Release(NullDestructRunner.Instance);
+                else if (request is JobRequest job) { job.Holder.Release(NullDestructRunner.Instance); job.Reply?.Done.Set(); }
             }
         }
     }

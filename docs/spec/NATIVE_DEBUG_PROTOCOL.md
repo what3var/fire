@@ -106,6 +106,17 @@ Haltepunkten (wie `DebugThreadContext.ForFireThread`).
 **`exited`** - das Programm endet: `{"event": "exited", "code": 0}` (danach schließt es die Verbindung). Auch nach `terminate`, nach einer unbehandelten Ausnahme
 (`code` 1) und nach `leave`/`terminate(n)` des Programms.
 
+**`profile`** - nur nach dem Befehl `profile`: kommt direkt vor `exited` und nennt jede Zeile mit Code als `[source, line, hits, us]`:
+
+```json
+{"event": "profile", "lines": [[3, 1, 1, 4], [3, 2, 101, 35], [3, 3, 100, 120], [3, 9, 0, 0]]}
+```
+
+`hits`: wie oft ein Thread die Zeile betreten hat. Gezählt wird beim Anfang ihres Codes; ein Sprung in ihre Mitte zählt nicht (`FIRE_DBG_J`: das Ende eines
+Blocks, dessen Code noch zur letzten Zeile gehört), die Rückkehr aus einem Aufruf auch nicht. `us`: die Zeit in der Zeile bis zur nächsten, in Mikrosekunden.
+Die Zeit eines angehaltenen Threads zählt nicht. Die Zeilen mit Code kennt das Programm aus seiner Tabelle (`DbgProgram.lines`): eine Zeile, die nie lief,
+kommt mit `0, 0`.
+
 **`sources`** - das Programm hat ein fire-Plugin geladen, das als Debug-Build Quellen mitbringt (`Library.Load`, [Natives Backend (AOT): fire -> C](NATIVE_BACKEND.md) "Plugins"):
 
 ```json
@@ -142,6 +153,7 @@ Programm ohne Threads nur, solange der Hauptthread steht (sonst `ok: false`).
 | `set` | `thread`, `ref`, `value` (Literal als Text) | `value`: V (der neue Wert) - siehe "Werte setzen" |
 | `resume` | `thread` | nur angehalten mit Grund `unhandled`: die Ausnahme wird ignoriert, der `throw` ergibt `undefined` (wie `TryResumeUnhandled`); der Thread bleibt angehalten, direkt hinter dem `throw` - danach `continue`/`step` |
 | `terminate` | `code` (Standard 1) | das Programm endet sofort (`exited`) |
+| `profile` | `on` (bool, Standard true) | `ok`; ab jetzt zählt das Programm seine Zeilen (neu von vorn), `on: false` hört auf - die Zählung kommt mit dem Ende (`profile`) |
 | `detach` | - | alle Threads laufen weiter, die Haken sind aus, die Verbindung wird geschlossen |
 
 `continue`/`step` auf einen Thread, der wegen `unhandled` steht (ohne `resume`): die Ausnahme geht ihren Weg wie ohne Debugger (Programm- bzw. Threadende,

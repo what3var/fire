@@ -22,7 +22,8 @@ namespace fire.Resolving
         /// <summary>Registered for a <see cref="fire.Ast.LambdaExpr"/> that uses outer local variables (lambda captures,
         /// SPEC 4.2): `Variables` are synthetic identifiers, resolved in the ENCLOSING scope - the compiler loads their values when
         /// creating the lambda (copy); in the lambda scope they sit as slots directly after the parameters.</summary>
-        public sealed record LambdaCaptures(IReadOnlyList<fire.Ast.IdentifierExpr> Variables) : ResolvedRef;
+        /// <summary>Loads: per variable what is loaded when the lambda is made (null: the variable itself; `copy x` / `take x` for `taking x` / `handover x` in the body).</summary>
+        public sealed record LambdaCaptures(IReadOnlyList<fire.Ast.IdentifierExpr> Variables, IReadOnlyList<fire.Ast.Expr>? Loads = null) : ResolvedRef;
 
         /// <summary>A registered native function (outside the SPEC, a pure bytecode
         /// extension point, see Bytecode.NativeRegistry) - valid only as a direct

@@ -127,6 +127,9 @@ void fire_pkg_set_host(const fire_host* host);
 void fire_pkg_reset(void);
 /* Optional: what the library asked for with fire_host.request_service (its host services), on the VM's thread at a safe point. */
 void fire_pkg_service(void);
+/* Optional: a turn of a wait of the VM on the calling thread (Sleep, await, the end of the program): the library serves what this thread has of it meanwhile
+ * (the windows it pumps read the system's events). */
+void fire_pkg_idle(void);
 /* Calls function `index`. Returns 0, then `*result` is the result; 1, then `error` holds a message (zero terminated, at most errorSize bytes) and the program stops with it;
  * or 2, then the native throws an exception of the program: `error` holds the name of the exception class, a line feed and the message (the VM constructs the class with the message).
  * Memory behind `*result` (text, array, buffer) belongs to the library and stays valid until the next call from the same thread: the caller copies it. */

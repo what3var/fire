@@ -178,6 +178,15 @@ namespace fire.Editor
                 "defined" => At(i + 1).Type is TokenType.KwInt or TokenType.KwFloat or TokenType.KwBool or TokenType.KwWord or TokenType.KwChar or TokenType.KwByte,
                 "trust" => i + 1 < tokens.Count && !At(i + 1).NewlineBefore
                     && At(i + 1).Type is TokenType.Identifier or TokenType.This or TokenType.IntLiteral or TokenType.FloatLiteral or TokenType.True or TokenType.False or TokenType.CharLiteral,
+                // `await f()`, `await [ ... ]`, `await taking x { }` (docs/ROADMAP_TASKS.md) - like the parser: in front of what it awaits, on the same line
+                "await" => i + 1 < tokens.Count && !At(i + 1).NewlineBefore
+                    && At(i + 1).Type is TokenType.Identifier or TokenType.This or TokenType.LBracket or TokenType.Taking or TokenType.Handover or TokenType.LBrace or TokenType.New or TokenType.On,
+                // `await Load(url) until 5s`, `fire until source.Token { }` - like the parser: a clause after what it limits, on the same line, in front of a value
+                "until" => i > 0 && !t.NewlineBefore && tokens[i - 1].Type is TokenType.RParen or TokenType.RBracket or TokenType.Fire or TokenType.Identifier
+                    && At(i + 1).Type is TokenType.Identifier or TokenType.This or TokenType.IntLiteral or TokenType.FloatLiteral or TokenType.New or TokenType.LParen,
+                // `fire dedicated { }`, `await dedicated Work()` - like the parser: right after `fire` or `await`, in front of what follows
+                "dedicated" => i > 0 && (tokens[i - 1].Type == TokenType.Fire || tokens[i - 1].Lexeme == "await")
+                    && At(i + 1).Type is TokenType.Identifier or TokenType.This or TokenType.Taking or TokenType.Handover or TokenType.LBrace or TokenType.New or TokenType.With,
                 _ => false,
             };
         }

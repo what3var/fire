@@ -9,6 +9,9 @@ namespace fire.Editor
     /// came into it and how many instructions of the VM ran in it; a line with code that never ran is "fallow". Kept as JSON in the Profile tab.</summary>
     public sealed record ProfileReport(string What, double Seconds, long Instructions, IReadOnlyList<ProfileFile> Files)
     {
+        /// <summary>What `Instructions` counts: "instructions" of the VM, or "µs" (a native program measures the time of its lines).</summary>
+        public string Measure { get; init; } = "instructions";
+
         public string ToJson() => JsonSerializer.Serialize(this);
         public static ProfileReport? FromJson(string json)
         {
