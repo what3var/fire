@@ -47,6 +47,18 @@ namespace fire.Standard
                 }
             }
 
+            /// `await [ f(), g() ]` (docs/ROADMAP_TASKS.md): every call is a lambda (res, fails, i) made by the parser; they run side by side (natively), then
+            /// the first exception in the order of the brackets is thrown, or the results are given back.
+            class __Await {
+                static any[] All(any items[]) {
+                    any res[] = new any[items.Length]
+                    any fails[] = new any[items.Length]
+                    __await_run(items, res, fails)
+                    for (int i = 0; i < items.Length; i++) { if (fails[i] != undefined) { throw fails[i] } }
+                    return res
+                }
+            }
+
             class Exception {
                 string message
 

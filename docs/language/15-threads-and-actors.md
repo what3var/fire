@@ -160,8 +160,12 @@ print(n + " " + sum)
 - An exception in the awaited code goes on at the `await`, with its type: `try { await Load(name) } catch (IoException e) { ... }`.
 - While the awaited code waits (`Sleep`, the net, a section), the caller's task gives its worker to other tasks - on all cores, without a thread of its
   own per call. `await` is a word only in front of what it awaits; elsewhere `await` is an ordinary name.
-- Coming next (docs/ROADMAP_TASKS.md): `await [f(), g()]` (several calls at once), `await actor.Method()` (the result of an actor's method),
-  `dedicated` (a thread of its own for work that blocks in natives) and cancellation with `until`.
+- `await [f(a), g(b), taking x { return ... }]` runs several calls at once and waits for all; the result is an array of their results in the order of
+  the brackets. When some fail, all are waited for and the first exception in that order is thrown. Each element is what a single `await` takes, clauses
+  included (`await [Load(a), Merge(x, y) taking y]`). The calls get the caller's objects lent; in a native build they run side by side on all cores when
+  no two of them reach the same object (otherwise one after the other); the VM runs them one after the other.
+- Coming next (docs/ROADMAP_TASKS.md): `await actor.Method()` (the result of an actor's method), `dedicated` (a thread of its own for work that blocks
+  in natives) and cancellation with `until`.
 
 ## Actors
 

@@ -20720,6 +20720,32 @@ else
             while (n < 4) { sync globals }
             print("in a thread " + n)
             """),
+        ("Await: await [ ... ] - Ergebnisse in der Reihenfolge der Klammern (nativ nebeneinander), die erste Ausnahme in dieser Reihenfolge, Blockform mit taking, leer, gemeinsame Objekte nacheinander", """
+            #import "time"
+            class Box { int v = 0; string name = ""
+                construct(int v) { this.v = v; this.name = "b" + v } }
+            class Work {
+                static int Slow(Box b) { Sleep(20ms); b.v = b.v * 2; return b.v }
+                static Box Spin(Box b) { var s = 0; for (var i = 0; i < 20000; i++) { s = s + i % 3 }; return new Box(b.v + s % 2) }
+                static int Fail(Box b) { Sleep(5ms); throw new ArgumentException("bad " + b.name) }
+                static int Both(Box x, Box y) { x.v = x.v + 1; return x.v + y.v }
+            }
+            var a = new Box(1)
+            var b = new Box(2)
+            var c = new Box(3)
+            var d = new Box(4)
+            var r = await [Work.Slow(a), Work.Slow(b), Work.Slow(c), Work.Slow(d)]
+            print(r[0] + " " + r[1] + " " + r[2] + " " + r[3] + " / " + a.v + " " + d.v + " len " + r.Length)
+            var s = await [Work.Spin(a), Work.Spin(b), Work.Spin(c)]
+            print(s[0].v + " " + s[1].name + " " + s[2].v)
+            try { var x = await [Work.Slow(a), Work.Fail(b), Work.Fail(c)] } catch (ArgumentException e) { print("caught " + e.message + " a " + a.v) }
+            var shared = await [Work.Both(a, b), Work.Both(a, c)]
+            print("shared " + shared[0] + " " + shared[1] + " a " + a.v)
+            var blocks = await [taking a { a.v = 100; return a.v }, { return 7 }]
+            print("blocks " + blocks[0] + " " + blocks[1] + " a " + a.v)
+            var none = await []
+            print("empty " + none.Length)
+            """),
         ("copy/flat als Argument eines Lambda-Aufrufs: die Kopie, nicht das Original", """
             class Item { int v = 0
                 construct(int v) { this.v = v } }

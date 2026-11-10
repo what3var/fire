@@ -3259,6 +3259,34 @@ FIRE_FN Value callLam(Value callee, int argc, const Value* args, OwnList* list) 
 #endif
 }
 
+/* ---- `await [ f(), g() ]` (docs/ROADMAP_TASKS.md section 3): the parser made every call a lambda (res, fails, i) that keeps its result in res[i] and its
+ * exception in fails[i]; the prelude's __Await.All calls this with them, then throws the first exception or gives res. */
+#ifdef FIRE_TASKS
+FIRE_FN bool awaitRunTasks(Value* lams, uint32_t n, Value res, Value fails, OwnList* list);
+#endif
+FIRE_FN Value awaitRun(Value items, Value res, Value fails, OwnList* list) {
+    Arr* a;
+    Value* lams;
+    uint32_t i;
+    if (items.kind != K_Array || !ownedOf(items)) return Undef();
+    a = arrOf(items);
+    lams = arrValues(a);
+    if (!lams) return Undef();
+#ifdef FIRE_TASKS
+    if (a->length > 1 && awaitRunTasks(lams, a->length, res, fails, list)) return Undef();
+#endif
+    /* (one after the other: no tasks here, or the calls reach the same objects) */
+    for (i = 0; i < a->length; i++) {
+        Value args[3];
+        if (lams[i].kind != K_Lambda) continue;
+        args[0] = res; args[1] = fails; args[2] = Int((int64_t)i);
+        callLam(lams[i], 3, args, list);
+        if (g_unwind.active) return Undef();   /* (leave, terminate: the lambdas catch the exceptions of their calls) */
+    }
+    return Undef();
+}
+
+
 /* CheckLambdaSignature: a value assigned to a `lambda<...>` annotation must have that many parameters (otherwise an ArgumentException). */
 FIRE_FN void checkLambda(Value v, int nparams) {
     if (FIRE_UNLIKELY(v.kind != K_Lambda || lamOf(v)->nparams != (uint32_t)nparams)) {
@@ -8509,6 +8537,157 @@ FIRE_FN SectionReq* threadRecAsk(ThreadRec* owner) {
     blockUntil(fire_sectionGranted, q, false, 0);
     return q;
 }
+#ifdef FIRE_TASKS
+FIRE_FN bool blockUntilServing(bool (*pred)(void*), void* ctx, bool stopOnTerminate, int64_t deadlineMs);
+/* ---- `await [ ... ]` side by side: every call but the last is a task of its own; the caller runs the last and then waits for the others. The calls get
+ * the caller's objects lent (the caller waits): that is only safe when no two of them reach the same object - else they run one after the other. The
+ * strings they reach may be counted by several at once: they count atomically from now on (R_SHARED). A task keeps its result and its exception in
+ * arrays of its own (two tasks must not change the parts of one array at once); the caller moves them into res and fails when all are done. */
+typedef struct AwaitItem {
+    Value lam;
+    Value res1, fails1;          /* (the arrays of one element the task writes) */
+    OwnList scratch;             /* what the call leaves for its caller */
+    OwnList global;              /* the global scope of the task: its exceptions */
+    fire_atomic32 done;
+    uint8_t left;                /* a `leave` in it */
+    struct AwaitGroup* group;
+} AwaitItem;
+typedef struct AwaitGroup { fire_atomic32 pending; } AwaitGroup;
+FIRE_FN bool fire_awaitDone(void* ctx) { return fire_atomic_loadAcquire(&((AwaitGroup*)ctx)->pending) == 0; }
+/* (what a value reaches - objects, arrays, buffers into `seen`; false when one of them is in `others` already; the strings are shared) */
+FIRE_FN bool awaitReach(Value root, CopyMap* seen, CopyMap* others) {
+    Value* stack = NULL;
+    uint32_t n = 0, cap = 0, i;
+    bool ok = true;
+    stack = (Value*)fire_growPush(stack, &n, &cap, sizeof(Value));
+    stack[n++] = root;
+    while (n && ok) {
+        Value v = stack[--n];
+        if (v.kind == K_String) { refShare(v); continue; }
+        if (v.kind == K_Lambda) {
+            Lam* l = lamOf(v);
+            refShare(v);
+            for (i = 0; i < l->ncaps; i++) { stack = (Value*)fire_growPush(stack, &n, &cap, sizeof(Value)); stack[n++] = lamCaps(l)[i]; }
+            stack = (Value*)fire_growPush(stack, &n, &cap, sizeof(Value));
+            stack[n++] = l->on;
+            continue;
+        }
+        if (v.kind != K_Class && v.kind != K_Array && v.kind != K_Buffer) continue;
+        if (!leafAlive(v)) continue;
+        {
+            Owned* h = leafOf(v);
+            if (h->flags & F_SHARED) continue;   /* (the global scope: its lock holds it) */
+            if (copyMapFind(others, h)) { ok = false; break; }
+            if (copyMapFind(seen, h)) continue;
+            copyMapPut(seen, h, Undef());
+            if (v.kind == K_Class) {
+                Obj* o = (Obj*)h;
+                for (i = 0; i < o->nfields; i++) { stack = (Value*)fire_growPush(stack, &n, &cap, sizeof(Value)); stack[n++] = objFields(o)[i]; }
+            } else if (v.kind == K_Array && arrValues((Arr*)h)) {
+                Arr* a = (Arr*)h;
+                for (i = 0; i < a->length; i++) { stack = (Value*)fire_growPush(stack, &n, &cap, sizeof(Value)); stack[n++] = arrItems(a)[i]; }
+            }
+        }
+    }
+    free(stack);
+    return ok;
+}
+/* (the task of one call) */
+FIRE_FN void awaitItemMain(void* p) {
+    AwaitItem* it = (AwaitItem*)p;
+    Value args[3];
+    g_isThread = 1;
+    g_domReader = 1;
+    g_attnMask = ATTN_ALL | ATTN_PEER;
+    g_tick = 4096;
+    threadRecBegin();
+    g_globalOwn = &it->global;
+    args[0] = it->res1; args[1] = it->fails1; args[2] = Int((int64_t)0);
+    callLam(it->lam, 3, args, &it->scratch);
+    if (g_unwind.active) { it->left = 1; clearUnwind(); }
+    sectionAbort();
+    threadRecEnd();
+    strandRelease();
+    free(g_pool.items);
+    g_pool.items = NULL; g_pool.top = 0; g_pool.cap = 0;
+    fire_strandDetach();
+    if (fire_atomic_addAcqRel(&it->group->pending, (uint32_t)-1) == 1) notifyKey(it->group);
+}
+/* (moves the one element of `one` - and what it owns of it - to element i of `all`) */
+FIRE_FN void awaitMove(Value one, Value all, uint32_t i, OwnList* fromGlobal) {
+    Arr* a1 = arrOf(one);
+    Arr* a = arrOf(all);
+    Value v = arrItems(a1)[0];
+    Owned* o = ownedOf(v);
+    if (o && (o->owner == a1->parts || (fromGlobal && o->owner == fromGlobal))) {
+        ownUnlink(o);
+        if (o->okind == O_Object && fromGlobal) ownLink(g_globalOwn, o);   /* (an exception: it belongs to the global scope of the caller now) */
+        else {
+            if (!a->parts) a->parts = newPartsList(&a->h);
+            ownLink(a->parts, o);
+        }
+    }
+    retain(v);
+    release(arrItems(a)[i]);
+    arrItems(a)[i] = v;
+}
+/* True when the calls ran (side by side); false: they reach the same objects - the caller runs them one after the other. */
+FIRE_FN bool awaitRunTasks(Value* lams, uint32_t n, Value res, Value fails, OwnList* list) {
+    CopyMap all = {0};
+    AwaitItem* items;
+    AwaitGroup group;
+    uint32_t i;
+    bool left = false;
+    if (res.kind != K_Array || fails.kind != K_Array || !ownedOf(res) || !ownedOf(fails)) return false;
+    for (i = 0; i < n; i++) {
+        CopyMap mine = {0};
+        uint32_t k;
+        bool ok = lams[i].kind != K_Lambda || awaitReach(lams[i], &mine, &all);
+        for (k = 0; ok && k < mine.cap; k++) if (mine.from[k]) copyMapPut(&all, mine.from[k], Undef());
+        copyMapFree(&mine);
+        if (!ok) { copyMapFree(&all); return false; }
+    }
+    copyMapFree(&all);
+    items = (AwaitItem*)calloc(n, sizeof(AwaitItem));
+    if (!items) allocFailed();
+    fire_atomic_store(&group.pending, n - 1);
+    for (i = 0; i + 1 < n; i++) {
+        AwaitItem* it = &items[i];
+        it->lam = lams[i];
+        it->group = &group;
+        it->res1 = ArrV(allocArr(1, list));
+        it->fails1 = ArrV(allocArr(1, list));
+        ownListInit(&it->scratch, 0, NULL);
+        ownListInit(&it->global, 0, NULL);
+        taskSpawn(awaitItemMain, it, 0);
+    }
+    {
+        /* (the last one here, on the caller's strand) */
+        Value args[3];
+        args[0] = res; args[1] = fails; args[2] = Int((int64_t)(n - 1));
+        callLam(lams[n - 1], 3, args, list);
+    }
+    {
+        /* (waiting for the others even when the last one left: they use the caller's objects) */
+        UnwindState saved = g_unwind;
+        if (saved.active) clearUnwind();
+        if (g_isThread) blockUntil(fire_awaitDone, &group, false, 0);
+        else blockUntilServing(fire_awaitDone, &group, false, 0);
+        if (saved.active) g_unwind = saved;
+    }
+    for (i = 0; i + 1 < n; i++) {
+        AwaitItem* it = &items[i];
+        if (it->left) left = true;
+        awaitMove(it->res1, res, i, NULL);
+        awaitMove(it->fails1, fails, i, &it->global);
+        destroyList(&it->scratch);
+        destroyList(&it->global);   /* (what is left of its global scope) */
+    }
+    free(items);
+    if (left && !g_unwind.active) startLeave();
+    return true;
+}
+#endif
 FIRE_FN void threadRecDone(SectionReq* q) {
     if (!q) return;
     fire_atomic_storeRelease(&q->done, 1);

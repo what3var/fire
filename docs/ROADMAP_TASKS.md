@@ -172,7 +172,16 @@ var r = await [Load("a.json"), Load("b.json")]   // several at once, waiting for
   runs others (step 3). Clauses after the call copy (`taking x` -> `copy x`) or move (`handover x` -> `take x`) the argument or receiver they name; the
   block form is a function of its own that sees only what it takes and the globals, called at once. Fixed on the way: `f(copy x)` on a lambda did not copy
   in a native build (the prefix CopyArgs was only read by calls of methods).
-* Next: 4b `await [ ... ]` (natively tasks in parallel, the VM one after the other until step 7), 4c `await actor.Method()`, 4d `dedicated`.
+* **4b done:** `await [ ... ]`. The parser makes every element (a call with its clauses, or a block) a lambda that sees the caller's variables (lent)
+  and keeps its result or exception: `(__res, __fails, __i) => { try { __res[__i] = call } catch (Exception __e) { __fails[__i] = __e } }`; the
+  prelude's `__Await.All` runs them with the native `__await_run` and throws the first exception in the order of the brackets, or gives the results
+  (the results belong to the array: the first slot claims them, SPEC 2.1). The VM runs them one after the other. A native build (`awaitRun`) runs them as
+  tasks side by side - the last one on the caller's strand - when no two of them reach the same object (else one after the other: lending to two at once
+  is not safe); the strings they reach count atomically from then on; every task has its own arrays of one element for its result and exception and a
+  global scope of its own, which the caller takes over when all are done. A program with `await [ ... ]` uses the scheduler of tasks. Four calls that
+  sleep 100 ms: about 100 ms natively; ThreadSanitizer and AddressSanitizer clean. The element type of the result is `any` for now (the common type of
+  the results, as for an array literal, is left for later).
+* Next: 4c `await actor.Method()`, 4d `dedicated`.
 
 ## 4. The scheduler in C
 

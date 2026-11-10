@@ -301,6 +301,23 @@ namespace fire.Runtime
             fire.Standard.JsonMethods.Host = () => _currentThreadVm;
             fire.Standard.LibraryMethods.Implementation = args =>
                 (_currentThreadVm ?? throw new InvalidOperationException("Native libraries can only be loaded while the program runs.")).LibraryCall(args);
+            fire.Standard.AwaitMethods.Implementation = args =>
+                (_currentThreadVm ?? throw new InvalidOperationException("'await [ ... ]' needs a running program.")).AwaitRun(args);
+        }
+
+        /// <summary>`__await_run(lambdas, res, fails)` (fire.Standard.AwaitMethods): calls every lambda with (res, fails, i), one after the other, nested like a
+        /// getter. The lambdas catch the exceptions of their calls themselves; a `leave`/`terminate` in one goes on as usual.</summary>
+        private Value AwaitRun(Value[] args)
+        {
+            if (args.Length < 3 || args[0].Kind != ValueKind.Array) return Value.MakeUndefined();
+            var items = args[0].AsArray().Items;
+            for (int i = 0; i < items.Length; i++)
+            {
+                if (items[i].Kind != ValueKind.Lambda) continue;
+                var result = CallLambdaNested((LambdaValue)items[i].AsLambda(), new[] { args[1], args[2], Value.MakeInt(i) });
+                if (result == null) { _nativeRedirected = true; return default; }
+            }
+            return Value.MakeUndefined();
         }
 
         /// <summary>Calls a conversion function of a unit (`coerce to`/`coerce from`) nested on this VM, like a getter or setter: in the middle of the

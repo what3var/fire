@@ -4938,6 +4938,15 @@ namespace fire.Native
                         Check();
                         d = first + 1; SetR(first, true); return Next();
                     }
+                    if (native == AwaitMethods.NativeName && argc == 3)
+                    {
+                        // `await [ ... ]` (fire_rt.h awaitRun: the lambdas of the calls side by side, as tasks - where the target has threads)
+                        if (_target.Native.SupportsThreads) UseThreads();
+                        int first = d - 3;
+                        E($"{S(first)} = awaitRun({S(first)}, {S(first + 1)}, {S(first + 2)}, &{OwnerList()});");
+                        Check();
+                        d = first + 1; SetR(first, false); return Next();
+                    }
                     if (native == CharMethods.NativeName && argc == 2)
                     {
                         int first = d - 2;

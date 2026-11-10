@@ -2185,9 +2185,52 @@ namespace fire.Compiler
         private Expr ParseAwait()
         {
             var awaitTok = Advance();
+            if (Check(TokenType.LBracket)) return ParseAwaitAll(awaitTok);
+            return ParseAwaited(awaitTok);
+        }
+
+        /// <summary>`await [ f(a), g(b) taking b, taking x { ... return v } ]` (docs/ROADMAP_TASKS.md section 3): the calls run side by side; the result is an
+        /// array of their results in the order of the brackets; when some fail, all are waited for and the first exception in that order is thrown. Every
+        /// element is what a single `await` takes (clauses included); it becomes a lambda that sees the caller's variables (lent, like a single `await`)
+        /// and keeps its result or its exception: `(__res, __fails, __i) => { try { __res[__i] = call } catch (Exception __e) { __fails[__i] = __e } }` -
+        /// the prelude's `__Await.All` runs them (fire.Standard.AwaitMethods).</summary>
+        private Expr ParseAwaitAll(Token awaitTok)
+        {
             int line = awaitTok.Line;
-            if (Check(TokenType.LBracket))
-                throw Error("'await [ ... ]' (several calls at once) is not there yet", Peek());
+            Expect(TokenType.LBracket, "Expected '['");
+            var lambdas = new List<Expr>();
+            if (!Check(TokenType.RBracket))
+            {
+                do
+                {
+                    if (Check(TokenType.RBracket)) break;   // (a comma after the last element)
+                    var call = ParseAwaited(Peek());
+                    int at = call.Line;
+                    var res = new IndexExpr(at, new IdentifierExpr(at, "__res"), new IdentifierExpr(at, "__i"));
+                    var fails = new IndexExpr(at, new IdentifierExpr(at, "__fails"), new IdentifierExpr(at, "__i"));
+                    var tryBlock = new Stmt.BlockStmt(_sourceIndex, at, new List<Stmt> { new ExprStmt(_sourceIndex, at, new AssignExpr(at, res, call)) });
+                    var catchBody = new Stmt.BlockStmt(_sourceIndex, at, new List<Stmt> { new ExprStmt(_sourceIndex, at, new AssignExpr(at, fails, new IdentifierExpr(at, "__e"))) });
+                    var body = new Stmt.BlockStmt(_sourceIndex, at, new List<Stmt>
+                    {
+                        new TryStmt(_sourceIndex, at, tryBlock, new List<CatchClause> { new(_sourceIndex, at, new TypeRef("Exception", null, 0), "__e", catchBody) }, null),
+                    });
+                    var parameters = new List<LambdaParam>
+                    {
+                        new("__res", new TypeRef("any", null, 0), new List<Expr?>()),
+                        new("__fails", new TypeRef("any", null, 0), new List<Expr?>()),
+                        new("__i", new TypeRef("int", null, 0), new List<Expr?>()),
+                    };
+                    lambdas.Add(new LambdaExpr(at, parameters, null, body));
+                } while (Match(TokenType.Comma));
+            }
+            Expect(TokenType.RBracket, "Expected ']' after the calls of 'await [ ... ]'");
+            return new CallExpr(line, new MemberExpr(line, new IdentifierExpr(line, "__Await"), "All"), new List<Expr> { new ArrayLiteralExpr(line, lambdas) });
+        }
+
+        /// <summary>What one `await` waits for: a call with its clauses, or a block (see ParseAwait).</summary>
+        private Expr ParseAwaited(Token awaitTok)
+        {
+            int line = awaitTok.Line;
             if (Check(TokenType.Taking) || Check(TokenType.Handover) || Check(TokenType.LBrace))
             {
                 var (captures, withName, _) = ParseFireTakingWithClauses();
