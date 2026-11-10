@@ -97,7 +97,7 @@ static inline void fire_thread_join(fire_thread* t) { WaitForSingleObject(t->h, 
 static inline void fire_thread_detach(fire_thread* t) { CloseHandle(t->h); free(t); }
 /* the cores of the machine (the workers of the scheduler of tasks) */
 static inline int fire_plat_cores(void) { SYSTEM_INFO si; GetSystemInfo(&si); return si.dwNumberOfProcessors > 0 ? (int)si.dwNumberOfProcessors : 1; }
-#ifdef FIRE_THREADS
+#if defined(FIRE_THREADS) && !defined(__TINYC__)   /* (TinyCC has no thread-local storage: no coroutines, no tasks) */
 #include "fire_coro.h"   /* the coroutines of the tasks (fire_rt.h: FIRE_TASKS) */
 #define FIRE_PLAT_CORO 1
 #endif

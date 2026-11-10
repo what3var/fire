@@ -127,7 +127,7 @@ static inline void fire_thread_detach(fire_thread* t) { pthread_detach(t->t); fr
 /* the cores of the machine (the workers of the scheduler of tasks) */
 #include <unistd.h>
 static inline int fire_plat_cores(void) { long n = sysconf(_SC_NPROCESSORS_ONLN); return n > 0 ? (int)n : 1; }
-#ifndef FIRE_GREEN_THREADS
+#if !defined(FIRE_GREEN_THREADS) && !defined(__TINYC__)   /* (TinyCC has no thread-local storage: no coroutines, no tasks - FIRE_TLS_STRUCT above) */
 #include "fire_coro.h"   /* the coroutines of the tasks (fire_rt.h: FIRE_TASKS) */
 #define FIRE_PLAT_CORO 1
 #endif

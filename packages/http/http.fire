@@ -723,7 +723,7 @@ namespace Http {
         construct(string method, string path, lambda<Http.Request> handler) {
             this.method = method
             this.path = path
-            this.handler = handler
+            this.handler = take handler   // (the route owns its handler - a lambda belongs to its owner like an object)
         }
 
         bool Matches(string requestMethod, string requestPath) {
@@ -767,10 +767,10 @@ namespace Http {
         }
 
         // The answer to every request that no route matches (default: 404).
-        undefined Fallback(lambda<Http.Request> handler) { this.fallback = handler }
+        undefined Fallback(lambda<Http.Request> handler) { this.fallback = take handler }
 
         // Called with the exception when a route's lambda throws (the client gets a 500).
-        undefined OnError(lambda<any> handler) { this.onError = handler }
+        undefined OnError(lambda<any> handler) { this.onError = take handler }
 
         // Serves HTTPS: the certificate (with its chain) and the private key as PEM text. Needs the tls package's support in this build (Tls.Support.Available()).
         undefined UseTls(string certPem, string keyPem) { this.tlsServer = new Tls.Server(certPem, keyPem) }
