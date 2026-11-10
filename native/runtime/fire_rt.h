@@ -7866,6 +7866,8 @@ FIRE_FN void notifyKey(const void* key) {
     fire_cond_notifyAll(&g_evCv);
 #ifdef FIRE_TASKS
     evWakeList(&g_evKeyed[FIRE_EV_BUCKET(key)], key);
+#else
+    (void)key;
 #endif
     fire_mutex_unlock(&g_evM);
 }
