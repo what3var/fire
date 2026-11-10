@@ -2123,10 +2123,12 @@ namespace fire.Compiler
         {
             // (a lambda runs in its own scope: a type parameter of the method around it is not passed on from there)
             bool previous = _inLambda, previousBound = _inBoundLambda;
+            var previousThis = _thisType;
+            if (lam.OnTarget != null) _thisType = Infer(lam.OnTarget);   // (in a lambda bound with `on`, `this` is its target)
             _inLambda = true;
             _inBoundLambda |= lam.OnTarget != null;
             try { return InferLambdaCore(lam, expected); }
-            finally { _inLambda = previous; _inBoundLambda = previousBound; }
+            finally { _inLambda = previous; _inBoundLambda = previousBound; _thisType = previousThis; }
         }
 
         private StaticType InferLambdaCore(LambdaExpr lam, StaticType? expected)

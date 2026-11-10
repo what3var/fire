@@ -58,8 +58,8 @@ namespace fire.Standard
                 string hs = string.Join(", ", Enumerable.Range(0, n).Select(i => $"NativeHandle.Arg(a{i})"));
                 // plain: no pointer parameter and no handle to make - the arguments go as they are
                 sb.Append($"                    if (n == {n}) {{\n");
-                sb.Append($"                        if (plain) {{ return ({ps}) => {NativeName}({(int)LibraryMethod.Call}, fn, signature, [{xs}], rel) }}\n");
-                sb.Append($"                        return ({ps}) => NativeHandle.Result({NativeName}({(int)LibraryMethod.Call}, fn, signature, [{hs}], rel), wrap, rel)\n");
+                sb.Append($"                        if (plain) {{ return ({ps}) => {NativeName}({(int)LibraryMethod.Call}, (taking fn), (taking signature), [{xs}], (taking rel)) }}\n");
+                sb.Append($"                        return ({ps}) => NativeHandle.Result({NativeName}({(int)LibraryMethod.Call}, (taking fn), (taking signature), [{hs}], (taking rel)), (taking wrap), (taking rel))\n");
                 sb.Append("                    }\n");
             }
             return sb.ToString();

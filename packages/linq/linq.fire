@@ -188,7 +188,7 @@ class Linq {
 
     static Query<T> From<T>(IEnumerable<T> source) {
         var s = source
-        var query = new Query(() => Linq.Iter(s))
+        var query = new Query(func () on s => Linq.Iter(this))
         try source.TakeTo(query)   // `Linq.From(new Bag())`: a fresh argument belongs to this call - the query keeps it
         return query
     }
@@ -197,13 +197,13 @@ class Linq {
     // it reads it lazily, long after the function that built it has returned.
     static Query<T> FromOwned<T>(IEnumerable<T> source) {
         var s = source
-        var query = new Query(() => Linq.Iter(s))
+        var query = new Query(func () on s => Linq.Iter(this))
         source.TakeTo(query)
         return query
     }
 
     static Query<int> Range(int start, int count) {
-        return new Query(() => new LinqRangeEnumerator(start, count))
+        return new Query(() => new LinqRangeEnumerator((taking start), (taking count)))
     }
 
     static Query<T> Repeat<T>(T value, int count) {
@@ -262,11 +262,11 @@ class Query<T> : IEnumerable<T> {
     // ---- lazy operators
     Query<T> Where(bool lambda<T> pred) {
         var f = this.factory
-        return new Query(() => new LinqWhereEnumerator(f(), pred))
+        return new Query(() => new LinqWhereEnumerator((taking f)(), (taking pred)))
     }
     Query<R> Select<R>(R lambda<T> fn) {
         var f = this.factory
-        return new Query(() => new LinqSelectEnumerator(f(), fn))
+        return new Query(() => new LinqSelectEnumerator((taking f)(), (taking fn)))
     }
     // Projection onto a member, chosen via selector: `list.SelectMember(p => p.name)` (field or property), `SelectField` (a field only),
     // `SelectProperty` (a property only) - the lambda must be a pure member chain (see `lambda member<T>`). Unlike
@@ -274,51 +274,51 @@ class Query<T> : IEnumerable<T> {
     Query SelectField(lambda field<class> sel) {
         var f = this.factory
         any path = flat sel.Path   // (the selector dies with this call; the query keeps its own copy)
-        var query = new Query(() => new LinqSelectEnumerator(f(), x => Linq.GetPath(x, path, "field")))
+        var query = new Query(() => new LinqSelectEnumerator((taking f)(), x => Linq.GetPath(x, (taking path), "field")))
         path.TakeTo(query)
         return query
     }
     Query SelectProperty(lambda property<class> sel) {
         var f = this.factory
         any path = flat sel.Path   // (the selector dies with this call; the query keeps its own copy)
-        var query = new Query(() => new LinqSelectEnumerator(f(), x => Linq.GetPath(x, path, "property")))
+        var query = new Query(() => new LinqSelectEnumerator((taking f)(), x => Linq.GetPath(x, (taking path), "property")))
         path.TakeTo(query)
         return query
     }
     Query SelectMember(lambda member<class> sel) {
         var f = this.factory
         any path = flat sel.Path   // (the selector dies with this call; the query keeps its own copy)
-        var query = new Query(() => new LinqSelectEnumerator(f(), x => Linq.GetPath(x, path, "member")))
+        var query = new Query(() => new LinqSelectEnumerator((taking f)(), x => Linq.GetPath(x, (taking path), "member")))
         path.TakeTo(query)
         return query
     }
     Query SelectMany(lambda<T> fn) {
         var f = this.factory
-        return new Query(() => new LinqSelectManyEnumerator(f(), fn))
+        return new Query(() => new LinqSelectManyEnumerator((taking f)(), (taking fn)))
     }
     Query<T> Take(int n) {
         var f = this.factory
-        return new Query(() => new LinqTakeEnumerator(f(), n))
+        return new Query(() => new LinqTakeEnumerator((taking f)(), (taking n)))
     }
     Query<T> Skip(int n) {
         var f = this.factory
-        return new Query(() => new LinqSkipEnumerator(f(), n))
+        return new Query(() => new LinqSkipEnumerator((taking f)(), (taking n)))
     }
     Query<T> TakeWhile(bool lambda<T> pred) {
         var f = this.factory
-        return new Query(() => new LinqTakeWhileEnumerator(f(), pred))
+        return new Query(() => new LinqTakeWhileEnumerator((taking f)(), (taking pred)))
     }
     Query<T> SkipWhile(bool lambda<T> pred) {
         var f = this.factory
-        return new Query(() => new LinqSkipWhileEnumerator(f(), pred))
+        return new Query(() => new LinqSkipWhileEnumerator((taking f)(), (taking pred)))
     }
     Query<T> Concat(IEnumerable<T> other) {
         var f = this.factory
-        return new Query(() => new LinqConcatEnumerator(f(), Linq.Iter(other)))
+        return new Query(func () on other => new LinqConcatEnumerator((taking f)(), Linq.Iter(this)))
     }
     Query<R> Zip<U, R>(IEnumerable<U> other, R lambda<T, U> fn) {
         var f = this.factory
-        return new Query(() => new LinqZipEnumerator(f(), Linq.Iter(other), fn))
+        return new Query(func () on other => new LinqZipEnumerator((taking f)(), Linq.Iter(this), (taking fn)))
     }
 
     // ---- eager operators (work on a copy, return a Query again)

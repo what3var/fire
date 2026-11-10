@@ -567,7 +567,7 @@ static class TypeTests
                     private static int Counter() { return 7 }
                     private int Hush { get { return this.secret } set { this.secret = value } }
                     int Same(Base other) { return other.secret + other.Hidden() + Base.sv + Base.Counter() + other.Hush }
-                    int InLambda() { var me = this; var f = func () => me.secret + me.Hidden(); return f() }
+                    int InLambda() { var me = this; var f = func () => (taking me).secret + me.Hidden(); return f() }
                 }
                 class Child : Base {
                     int Peek() { return this.shared + this.Guarded() + shared + Guarded() }
@@ -597,7 +597,7 @@ static class TypeTests
                 ("privates Feld der Basisklasse ohne this", "class C2 : Base { int P() { return secret } }"),
                 ("private Methode der Basisklasse ohne this", "class C2 : Base { int P() { return Hidden() } }"),
                 ("private Methode der Basisklasse ueber base", "class C2 : Base { int P() { return base.Hidden() } }"),
-                ("im Lambda einer anderen Klasse", "class C2 { int P(Base b) { var f = func () => b.secret; return f() } }"),
+                ("im Lambda einer anderen Klasse", "class C2 { int P(Base b) { var f = func () => (taking b).secret; return f() } }"),
                 ("Parameter einer anderen Klasse", "class F { static int G(Base b) { return b.secret } }"),
                 ("Rueckgabetyp", "class F { static Base Make() { return new Base() } }\nprint(F.Make().Hidden())"),
             })

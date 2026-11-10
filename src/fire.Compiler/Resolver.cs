@@ -1919,7 +1919,7 @@ namespace fire.Compiler
                     break;
 
                 case ThisExpr te:
-                    if (_inStaticMethod)
+                    if (_inStaticMethod && !_inBoundLambda)   // (in a lambda bound with `on`, `this` is its target - also in a static method)
                         throw new ResolverException(
                             "'this' is not valid in a static method or static field initializer " +
                             "(no instance bound)", te.Line);
@@ -2565,11 +2565,12 @@ namespace fire.Compiler
                     _fireScope.RequiredUnits.TryGetValue(name, out requiredUnit);
                     _refs[outer] = new ResolvedRef.Global(threadSlot, requiredUnit);
                 }
-                else if (!reachesFire && _globalScope.Slots.TryGetValue(name, out int globalSlot) && !name.StartsWith('\u0001') && !name.StartsWith('$'))
+                else if (!reachesFire && _globalScope.Slots.TryGetValue(name, out int globalSlot) && !name.StartsWith('\u0001') && !name.StartsWith('$')
+                    && lambda.CaptureModes != null && lambda.CaptureModes.ContainsKey(name))
                 {
-                    // a global variable (ROADMAP_TASKS step 8): captured the same way as a local - a copy (`taking`, or without a word with TC023);
-                    // it belongs to the program and cannot move into a lambda
-                    if (lambda.CaptureModes != null && lambda.CaptureModes.TryGetValue(name, out bool movesGlobal) && movesGlobal)
+                    // a global variable (ROADMAP_TASKS step 8): without a word the lambda reads and changes the original (no capture - writes and method
+                    // calls from another thread go to the main program); `taking g` captures a copy; it belongs to the program and cannot move into a lambda
+                    if (lambda.CaptureModes.TryGetValue(name, out bool movesGlobal) && movesGlobal)
                         throw new ResolverException($"'handover {name}': '{name}' is a global variable - it belongs to the program and cannot move into a lambda; write 'taking {name}' (a copy)", lambda.Line);
                     _globalScope.RequiredUnits.TryGetValue(name, out requiredUnit);
                     _refs[outer] = new ResolvedRef.Global(globalSlot, requiredUnit);
