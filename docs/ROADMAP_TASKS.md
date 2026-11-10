@@ -437,9 +437,19 @@ The rules that make a lambda the same kind of thing as a `fire` body - everythin
 **Found on the way:** natively a `taking` copy in a lambda dies after the first call (`var t = () => (taking b).v; t(); t()` - the second call throws
 `DestroyedException`; the VM keeps it): the copy is owned by the temporaries of the statement that makes the lambda. Fixed by rule 7.
 
-**Still to settle on the way:** whether a change of a captured copy lasts from one call to the next (the copy is the lambda's variable, as long as the
-lambda lives - assumed) or each call starts from the copy made with the lambda; whether "the lambda's scope" in 5 is the lambda's life (assumed) or
-one call.
+8. **The lambda's store, one copy per call** (the user): when the lambda is made, its captures go into a store that belongs to the lambda - the
+   `taking`/implicit copies copied in once, the `handover` instances moved in. Each call gets a fresh copy of each `taking`/implicit capture (it
+   belongs to the call's scope and dies with the call: a change does not last, every call starts the same) and the same `handover` instance from
+   the store (lent: a change lasts; `take` passes it on, then the store has none). A copy that the body only reads (field reads, comparisons,
+   passing it as a value to print/conversion) is lent from the store instead of copied - the same behaviour without the cost; `TC023` still says
+   every implicit copy (also so the user knows when a big list is copied).
+9. **Lambdas are part of the owner structure** (the user), like objects: a new lambda belongs to the scope that makes it and dies with it (its
+   store with it, `destruct()` included); assigned fresh to a field or handed to a method that keeps it, the holder claims it (like `obj.f = new X()`);
+   `take` passes it on; a `return` takes it with its store; a call of a dead lambda is a `DestroyedException`.
+
+Order of the work: (a) lambdas in the owner structure, VM and native; (b) the store, the copy per call, the lent `handover` and the read-only
+lending; (c) the compiler part (implicit copies, TC023/TC024, globals); (d) the preludes (Linq, `Library.Get`), tests and docs; (e) `on` on the
+owner's thread, lambdas to other threads.
 
 ## Steps
 
@@ -455,4 +465,4 @@ one call.
 
 ## Open
 
-Step 8: the two points under "Still to settle on the way".
+Nothing at the moment - step 8 is decided and under way.
