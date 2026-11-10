@@ -95,11 +95,13 @@ Resolves in this order: explicit routes (lambdas), RPC/FXML, static files, fallb
 The net package waits by polling: it sleeps 1 to 10 ms between attempts (`net.fire`). In a task that is a switch, but a server with many idle
 keep-alive or WebSocket connections would wake every task up to a hundred times a second. Before the server: **a poller in the scheduler** -
 epoll (Linux), kqueue (macOS), IOCP or `WSAPoll` (Windows), `select` (lwIP) - a task registers its socket and sleeps until it is ready, its time limit
-ran out or its token is cancelled. Nobody works on it on `targets` (the user); it is planned here.
+ran out or its token is cancelled. **Built** (poll()/WSAPoll, not yet epoll/kqueue/IOCP): `__fd_wait(fd, events, ms)` of the runtime - natively a poller thread
+(fire_rt.h `fire_fd_wait`, the waiting task parks with `blockUntil` and is woken by its address), in the VM poll()/WSAPoll in short slices (fire.Runtime.FdWait);
+`Net.Clock.WaitFor` in net.fire uses it, -1 (no poller) falls back to the old pause. For many thousands of sockets epoll/kqueue can replace poll() later.
 
 ## Steps
 
-0. Poller in the scheduler (waits of the network without polling). `Completion` - built.
+0. Poller in the scheduler (waits of the network without polling) and `Completion` - built.
 1. Server core: a task per connection, keep-alive, router chain (a copy per connection), `Http.Context`, streamed bodies, limits.
 2. File client and `wwwroot` (safety, caching, MIME).
 3. Sessions (their home, time limit) and `ISessionStore` (files).

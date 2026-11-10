@@ -4966,6 +4966,16 @@ namespace fire.Native
                         Check();
                         d = first + 1; SetR(first, false); return Next();
                     }
+                    if (native == FdWaitMethods.NativeName && argc == 3)
+                    {
+                        // waiting for a socket (fire_rt.h fire_fd_wait: the poller thread; -1 where there is none)
+                        // (it does not make the program one with threads: without them the result is -1 and the net package waits as before)
+                        int first = d - 3;
+                        string waitArgs = string.Join(", ", Enumerable.Range(first, 3).Select(SR));
+                        E($"{T(first)} = fire_fd_wait({waitArgs});");
+                        Check();
+                        d = first + 1; SetR(first, false); return Next();
+                    }
                     if (Array.IndexOf(CompletionMethods.Names, native) >= 0)
                     {
                         // Completion (fire_rt.h: fire_completion_new, ...): a value that another task delivers; Wait copies it into this scope

@@ -27389,6 +27389,49 @@ else
     // Network (bridges/fire_bridge_net.hpp): TCP, UDP and name resolution on the loopback interface - the same in the VM and in the native build
     natCases = natCases.Concat(new (string Name, string Source)[]
     {
+        ("Net: der Poller weckt wartende Threads (40 Verbindungen in fire-Threads, Daten kommen spaeter), Zeitlimit, Abbruch eines Read per until", """
+            #import "net"
+            #import "time"
+            var l = new Net.TcpListener("127.0.0.1", 0)
+            int port = l.Port
+            int done = 0
+            int sum = 0
+            for (var i = 0; i < 40; i++) {
+                fire taking i taking port {
+                    var c = new Net.TcpClient("127.0.0.1", port)
+                    c.ReadTimeout = 5000
+                    var buf = new byte[4]
+                    int n = c.Read(buf, 0, 4)
+                    int v = buf[0]
+                    sync global { done = done + 1; sum = sum + v }
+                    c.Close()
+                }
+            }
+            var peers = new List()
+            for (var i = 0; i < 40; i++) { peers.Add(l.Accept(5000)) }
+            Sleep(50ms)
+            print("waiting " + done)
+            for (var i = 0; i < 40; i++) {
+                var b = new byte[1]
+                b[0] = i + 1
+                Net.TcpClient p = peers[i]
+                p.Write(b, 0, 1)
+            }
+            while (done < 40) { sync globals; Sleep(2ms) }
+            print("all " + done + " sum " + sum)
+            var c = new Net.TcpClient("127.0.0.1", port)
+            Net.TcpClient s = l.Accept(2000)
+            var buf = new byte[4]
+            c.ReadTimeout = 60
+            try { c.Read(buf, 0, 4); print("no") } catch (Net.TimeoutException e) { print("timeout " + e.code) }
+            c.ReadTimeout = 10000
+            var src = new CancellationSource()
+            src.CancelAfter(40ms)
+            try { int r = await Reader.Read(c) until src.Token; print("no " + r) } catch (CancelledException e) { print("cancelled read") }
+            s.WriteString("x")
+            print("still works " + c.Read(buf, 0, 4))
+            class Reader { static int Read(Net.TcpClient c) { var b = new byte[4]; return c.Read(b, 0, 4) } }
+            """),
         ("Net: TCP, UDP, DNS ueber Loopback, Zeitlimits, Fehler", """
             #import "net"
             var l = new Net.TcpListener("127.0.0.1", 0)

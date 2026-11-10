@@ -155,6 +155,7 @@ namespace fire.Bytecode
                 string bound = cancelName;
                 Register(bound, args => fire.Standard.CancelMethods.Call(bound, args));
             }
+            Register(fire.Standard.FdWaitMethods.NativeName, fire.Standard.FdWaitMethods.Call);
             foreach (var completionName in fire.Standard.CompletionMethods.Names)
             {
                 string bound = completionName;

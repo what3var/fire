@@ -94,6 +94,20 @@ namespace Net {
             return Net.Clock.Now() + ms * 10000
         }
 
+        // Waits until the socket of `handle` can be read (events 1) or written (2), at most until the deadline and at most half a second at a time (the caller
+        // asks the native again): the poller of the runtime wakes the task when the socket is ready - nobody polls (docs/ROADMAP_HTTP.md step 0). Where
+        // there is none (no fire threads in the program, TinyCC, a board) it waits a moment as before (Pause).
+        static undefined WaitFor(int handle, int events, int deadline, int tries) {
+            var ms = 500
+            if (deadline >= 0) {
+                var left = (deadline - Net.Clock.Now()) / 10000
+                if (left < ms) { ms = left }
+            }
+            if (ms <= 0) { return }
+            int fd = __NetNativeHandle(handle)
+            if (fd < 0 || __fd_wait(fd, events, ms) < 0) { Net.Clock.Pause(deadline, tries) }
+        }
+
         // Waits a moment before the next attempt: 1 ms at first, up to 10 ms when it takes long (and not past the deadline). The natives are only asked, never made to wait: a program
         // that waits for the network does not hold the library, so the other fire threads, `terminate` and the main queue keep working.
         static undefined Pause(int deadline, int tries) {
@@ -163,7 +177,7 @@ namespace Net {
                 if (state == 1) { break }
                 if (state < 0) { Net.NetErrors.Throw() }
                 if (Net.Clock.Expired(deadline)) { throw new Net.TimeoutException("Connecting to " + host + ":" + port + " timed out.") }
-                Net.Clock.Pause(deadline, tries)
+                Net.Clock.WaitFor(this.handle, 2, deadline, tries)
                 tries = tries + 1
             }
         }
@@ -257,7 +271,7 @@ namespace Net {
                 if (bits < 0) { Net.NetErrors.Throw() }
                 if ((bits & 1) != 0) { return true }
                 if (Net.Clock.Expired(deadline)) { return false }
-                Net.Clock.Pause(deadline, tries)
+                Net.Clock.WaitFor(this.handle, 1, deadline, tries)
                 tries = tries + 1
             }
         }
@@ -290,7 +304,7 @@ namespace Net {
                 if (n >= 0) { return n }
                 if (__NetLastError() != 4) { Net.NetErrors.Throw() }
                 if (Net.Clock.Expired(deadline)) { throw new Net.TimeoutException("Nothing was received in time.") }
-                Net.Clock.Pause(deadline, tries)
+                Net.Clock.WaitFor(this.handle, 1, deadline, tries)
                 tries = tries + 1
             }
         }
@@ -308,7 +322,7 @@ namespace Net {
                     if (n >= 0) { break }
                     if (__NetLastError() != 4) { Net.NetErrors.Throw() }
                     if (Net.Clock.Expired(deadline)) { throw new Net.TimeoutException("Sending timed out.") }
-                    Net.Clock.Pause(deadline, tries)
+                    Net.Clock.WaitFor(this.handle, 2, deadline, tries)
                     tries = tries + 1
                 }
                 done = done + n
@@ -384,7 +398,7 @@ namespace Net {
                 if (bits < 0) { Net.NetErrors.Throw() }
                 if ((bits & 1) != 0) { return true }
                 if (Net.Clock.Expired(deadline)) { return false }
-                Net.Clock.Pause(deadline, tries)
+                Net.Clock.WaitFor(this.handle, 1, deadline, tries)
                 tries = tries + 1
             }
         }
@@ -406,7 +420,7 @@ namespace Net {
                 if (h >= 0) { return new TcpClient(h) }
                 if (__NetLastError() != 4) { Net.NetErrors.Throw() }
                 if (Net.Clock.Expired(deadline)) { return undefined }
-                Net.Clock.Pause(deadline, tries)
+                Net.Clock.WaitFor(this.handle, 1, deadline, tries)
                 tries = tries + 1
             }
         }
@@ -494,7 +508,7 @@ namespace Net {
                 if (bits < 0) { Net.NetErrors.Throw() }
                 if ((bits & 1) != 0) { return true }
                 if (Net.Clock.Expired(deadline)) { return false }
-                Net.Clock.Pause(deadline, tries)
+                Net.Clock.WaitFor(this.handle, 1, deadline, tries)
                 tries = tries + 1
             }
         }
@@ -513,7 +527,7 @@ namespace Net {
                 }
                 if (__NetLastError() != 4) { Net.NetErrors.Throw() }
                 if (Net.Clock.Expired(deadline)) { throw new Net.TimeoutException("No datagram arrived in time.") }
-                Net.Clock.Pause(deadline, tries)
+                Net.Clock.WaitFor(this.handle, 1, deadline, tries)
                 tries = tries + 1
             }
         }

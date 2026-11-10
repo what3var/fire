@@ -307,6 +307,8 @@ namespace fire.Runtime
                 (_currentThreadVm ?? throw new InvalidOperationException("'handover' needs a running program.")).LambdaHandoverNow(args);
             fire.Standard.CancelMethods.Implementation = (name, args) =>
                 (_currentThreadVm ?? throw new InvalidOperationException("Cancellation needs a running program.")).CancelNative(name, args);
+            fire.Standard.FdWaitMethods.Implementation = args =>
+                (_currentThreadVm ?? throw new InvalidOperationException("__fd_wait needs a running program.")).FdWaitNative(args);
             fire.Standard.CompletionMethods.Implementation = (name, args) =>
                 (_currentThreadVm ?? throw new InvalidOperationException("A Completion needs a running program.")).CompletionNative(name, args);
         }

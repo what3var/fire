@@ -65,8 +65,11 @@ platform       fire_net_*            connect/listen/accept/send/recv/poll/resolv
 * **Handles, not objects:** a socket is an integer handle in a table of the bridge, like the streams of `io`. The fire classes own the handle (`Close()`, destructor closes it).
 * **Streams:** a connected TCP socket is an `IO.Stream` (`Read`, `Write`, `ReadByte`, ..., not seekable) so everything that works with streams works with the network
   (`IO.Stdio`, text readers, a future HTTP package). `UdpSocket` is message based: `SendTo(address, buffer)`, `ReceiveFrom(buffer)` returns the sender.
-* **Blocking with a timeout, and polling:** every call that waits takes an optional `TimeSpan` (`Read`, `Accept`, `Connect`, `ReceiveFrom`); `Available()` / `Poll(read, write, timeout)` ask without
-  waiting. Waiting is **not deaf** like `Sleep`: the fire code polls the natives (a timeout of 0) and sleeps 1 to 10 ms between the attempts - it never sits inside the library - so `terminate`, threads and the main queue keep working (THREADING_DESIGN.md section 7). No hidden background threads on small targets.
+* **Blocking with a timeout, and waiting:** every call that waits takes an optional `TimeSpan` (`Read`, `Accept`, `Connect`, `ReceiveFrom`); `Available()` / `Poll(read, write, timeout)` ask without
+  waiting. Waiting is **not deaf** like `Sleep`: the natives are only asked (a timeout of 0), never made to wait. Between two attempts the fire code waits with `__fd_wait` of the runtime: in a
+  program with fire threads a **poller thread** of the runtime (poll()/WSAPoll) wakes the task when the socket is ready - nobody polls, an idle connection costs nothing (docs/ROADMAP_HTTP.md step 0);
+  the wait follows the task's token (`until`, cancelling) and gives the worker to other tasks. Without fire threads, with TinyCC and on the boards it sleeps 1 to 10 ms between the attempts as before.
+  Either way `terminate`, threads and the main queue keep working (THREADING_DESIGN.md section 7). No hidden background threads on small targets.
 * **Errors:** `NetException` with a `code` (`Refused`, `TimedOut`, `Unreachable`, `AddressInUse`, `Closed`, `Unsupported`, ...), never a crash; an error text from the OS goes into `message`.
 * **Addresses:** `NetAddress` (IPv4 and IPv6, `Parse("10.0.0.5:80")`, `Dns.Resolve("example.org")` returns a list), and `"host:port"` strings accepted where an address is expected.
 * **Policy:** like `IoPolicy` for files, the host can restrict the network (allow nothing, allow loopback only, an allow list of hosts/ports); the editor and `forge` pass it. Default for a
