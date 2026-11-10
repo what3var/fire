@@ -412,18 +412,28 @@ The rules that make a lambda the same kind of thing as a `fire` body - everythin
 * Tests: VM == native for each rule (implicit copy with TC023 lax/strict, `taking` of a global, `handover` of a global as an error, an `on` lambda called
   from a thread and from an actor runs on the main program / the actor, the result and an exception come back, the caller's group goes on meanwhile).
 
-**To be decided before the work starts:**
+**Decided (the user):**
 
-1. A number without a word: copied silently as in a `fire` body (TC023 only when the copy costs memory), or the warning for every implicit copy?
-2. A global without a word in a lambda: copied with the warning too ("the same way") - then a handler `() => { clicks++ }` on a global is an error
-   (an assignment to a copy) and has to be written with `on` or as a method - or does a global without a word stay a live access (only `taking`
-   makes a copy)?
-3. Which objects have a home for `on`: the main program's (its globals and what they reach), actors, windows; an object of a fire thread (it would
-   serve calls at its safe points like an actor) or an error at the call?
-4. After this, a lambda holds only its own values (or runs on its target): may it then go to another thread (`fire f()`, a lambda in a field of
-   what a thread takes) - today an `ArgumentException`? If yes, the lambda moves or is copied with its captures; the same lambda called by two
-   threads at once would share its copies.
-5. Still open from `handover` in a lambda (section 3): who owns the moved instance and when it is destroyed.
+1. **Every implicit copy is said** - a number too: `TC023` (lax a warning, strict an error) for each variable that a lambda or a `fire` body uses
+   without a word. The point is no longer the memory: the user must know that he may be working with a copy without knowing it.
+2. **Globals are copied implicitly too** (in a lambda: a global without a word is a copy like a local). **Copies can be changed:** a captured copy
+   (of a local or a global) is a variable of the lambda - assigning to it is allowed (today an error) and changes only the copy. That is why the
+   warning matters.
+3. **Any object can be the target of `on`.** Its home is the thread that owns it (the main program, a fire thread, an actor). A call of the lambda
+   from elsewhere is asynchronous on that thread; the caller waits and yields meanwhile. Inside, calls on the target (`this`) run normally - the body
+   runs where the object lives. (A fire thread then serves such calls at its safe points and waits, like an actor its mailbox.)
+4. **Lambdas may go to other threads** (an argument of `fire`, a field of what a thread takes): the lambda goes with its captures (copied or moved
+   like the rest of what the thread gets); a bound lambda keeps its target, and its calls go to the target's home.
+5. **What `handover` moves into a lambda belongs to the lambda's scope** and its thread (or the thread of its `on` target): it dies when that scope
+   ends, and can be passed on with `take` before.
+
+6. **A `take` into an implicit copy is said too:** when a `take` goes to a variable that was captured implicitly (with `TC023`) - assigned to it
+   (`copy = take node`) or handed to it as the owner (`copy.Add(take node)`) - the type checker warns once more (a code of its own: ownership given
+   to an implicit copy - it dies with the copy, not with the variable of the code around it).
+
+**Still to settle on the way:** whether a change of a captured copy lasts from one call to the next (the copy is the lambda's variable, as long as the
+lambda lives - assumed) or each call starts from the copy made with the lambda; whether "the lambda's scope" in 5 is the lambda's life (assumed) or
+one call.
 
 ## Steps
 
@@ -439,4 +449,4 @@ The rules that make a lambda the same kind of thing as a `fire` body - everythin
 
 ## Open
 
-The questions of step 8 ("To be decided before the work starts") and the ownership of what a lambda holds after `handover`.
+Step 8: the two points under "Still to settle on the way".
