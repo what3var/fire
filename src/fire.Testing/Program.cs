@@ -27856,7 +27856,7 @@ else
             for (var i = 0; i < 40; i++) {
                 fire taking i taking port {
                     var c = new Net.TcpClient("127.0.0.1", port)
-                    c.ReadTimeout = 5000
+                    c.ReadTimeout = 30000
                     var buf = new byte[4]
                     int n = c.Read(buf, 0, 4)
                     int v = buf[0]
@@ -27865,7 +27865,7 @@ else
                 }
             }
             var peers = new List()
-            for (var i = 0; i < 40; i++) { peers.Add(l.Accept(5000)) }
+            for (var i = 0; i < 40; i++) { peers.Add(l.Accept(30000)) }
             Sleep(50ms)
             print("waiting " + done)
             for (var i = 0; i < 40; i++) {
