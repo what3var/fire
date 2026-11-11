@@ -40,6 +40,41 @@
 
 static int fire_net_supported(void) { return 1; }
 
+/* Random bytes of the operating system, for keys and tokens (session ids): getrandom/urandom (Linux and the other Unixes), arc4random_buf (macOS),
+ * RtlGenRandom (Windows), esp_fill_random (ESP32). 1 = filled, 0 = no source. */
+#if defined(_WIN32)
+typedef unsigned char (__stdcall* fire_net_RtlGenRandomFn)(void*, unsigned long);
+static int fire_net_randomBytes(uint8_t* p, size_t n) {
+    static fire_net_RtlGenRandomFn gen = NULL;
+    if (gen == NULL) {
+        HMODULE lib = LoadLibraryA("advapi32.dll");
+        if (lib != NULL) gen = (fire_net_RtlGenRandomFn)(void*)GetProcAddress(lib, "SystemFunction036");
+        if (gen == NULL) return 0;
+    }
+    while (n > 0) {
+        unsigned long part = n > 0x10000 ? 0x10000 : (unsigned long)n;
+        if (!gen(p, part)) return 0;
+        p += part;
+        n -= part;
+    }
+    return 1;
+}
+#elif defined(FIRE_NET_LWIP)
+#include <esp_random.h>
+static int fire_net_randomBytes(uint8_t* p, size_t n) { esp_fill_random(p, n); return 1; }
+#elif defined(__APPLE__)
+static int fire_net_randomBytes(uint8_t* p, size_t n) { arc4random_buf(p, n); return 1; }
+#else
+static int fire_net_randomBytes(uint8_t* p, size_t n) {
+    FILE* f = fopen("/dev/urandom", "rb");
+    size_t got;
+    if (f == NULL) return 0;
+    got = fread(p, 1, n, f);
+    fclose(f);
+    return got == n;
+}
+#endif
+
 #if defined(_WIN32)
 typedef SOCKET fire_net_fd;
 static int fire_net_lastError(void) { return WSAGetLastError(); }

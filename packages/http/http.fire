@@ -2,6 +2,8 @@
 #import "tls"
 #import "io"
 #import "time"
+#import "filesystem"
+#import "hash"
 
 namespace Http {
     // 1 bad URL, 2 bad message (a malformed request or response), 3 too many redirects, 4 too large, 5 not supported
@@ -304,6 +306,14 @@ namespace Http {
         Headers headers
         byte body[]
         string url
+        // A body that is read from a stream while it is sent (Http.AppServer; instead of `body`): `streamLength` bytes, or chunked when it is -1.
+        IO.IStream stream
+        int streamLength
+        // A 101 answer of a WebSocket handshake: after it the task of the connection gives the connection to this handler (Http.WebSockets).
+        Http.IWebSocketHandler upgrade
+        // ... and what the handler gets of the request: its header fields and its target (path and query)
+        Http.Headers upgradeHeaders
+        string upgradeTarget
 
         construct(int status = 200, any body = undefined) {
             this.status = status
@@ -311,6 +321,21 @@ namespace Http {
             this.headers = new Http.Headers()
             this.url = ""
             this.body = Http.Response.Bytes(body)
+            this.stream = undefined
+            this.streamLength = -1
+            this.upgrade = undefined
+            this.upgradeHeaders = undefined
+            this.upgradeTarget = undefined
+        }
+
+        // A response whose body is read from `stream` while it is sent (a file, a pipe); the response owns the stream and the server closes it. Without a
+        // `length` the body goes chunked.
+        static Http.Response FromStream(IO.IStream stream, string contentType = "application/octet-stream", int length = -1, int status = 200) {
+            var r = new Http.Response(status)
+            r.stream = take stream
+            r.streamLength = length
+            r.headers.Set("Content-Type", contentType)
+            return r
         }
 
         // The body as bytes: a text becomes UTF-8, a buffer stays, undefined is empty.
@@ -877,6 +902,1176 @@ namespace Http {
         undefined Close() {
             this.listener.Close()
             if (this.tlsServer != undefined) { this.tlsServer.Close() }
+        }
+    }
+
+    // ---- the application server (docs/ROADMAP_HTTP.md step 1): a task per connection, keep-alive, a chain of routers -------------------------------------
+
+    // A link of the chain: answers the request itself, or hands it on with `next.Invoke(ctx)` - and may work on the answer of the rest of the chain.
+    interface IRouter {
+        Http.Response Handle(Http.Context ctx, Http.Next next)
+    }
+
+    // The rest of the chain behind a router.
+    class Next {
+        List chain
+        int index
+
+        construct(List chain, int index) {
+            this.chain = chain
+            this.index = index
+        }
+
+        // The answer of the rest of the chain (404 when nothing is left).
+        Http.Response Invoke(Http.Context ctx) {
+            if (this.index >= this.chain.Count) { return Http.Response.Error(404) }
+            Http.IRouter router = this.chain[this.index]
+            var rest = new Http.Next(this.chain, this.index + 1)
+            return router.Handle(ctx, rest)
+        }
+    }
+
+    // What a request carries through the chain: the request, and what the routers note for the ones behind them (`Items`, e.g. the user, the session).
+    class Context {
+        Http.Request request
+        Dictionary<string, any> items
+        int number
+
+        construct(Http.Request request, int number) {
+            this.request = take request
+            this.items = new Dictionary<string, any>()
+            this.number = number
+        }
+
+        Http.Request Request { get { return this.request } }
+        // The number of the request on its connection (1 for the first).
+        int Number { get { return this.number } }
+
+        any Item(string name, any fallback = undefined) {
+            if (this.items.ContainsKey(name)) { return this.items[name] }
+            return fallback
+        }
+        undefined SetItem(string name, any value) { this.items[name] = value }
+    }
+
+    // A router from a lambda: func (Http.Context ctx, Http.Next next) => ... returns the Http.Response.
+    class LambdaRouter : IRouter {
+        lambda<Http.Context, Http.Next> handler
+
+        construct(lambda<Http.Context, Http.Next> handler) { this.handler = take handler }
+
+        Http.Response Handle(Http.Context ctx, Http.Next next) {
+            var h = this.handler
+            any result = h(ctx, next)
+            return Http.AppServer.AsResponse(result)
+        }
+    }
+
+    // The explicit routes as a link of the chain: method and path to a lambda that gets the Http.Context (a text becomes a 200 text response, undefined a
+    // 204); a request that no route matches goes on to the next link.
+    class Routes : IRouter {
+        List entries
+
+        construct() { this.entries = new List() }
+
+        Http.Routes Map(string method, string path, lambda<Http.Context> handler) {
+            var entry = new Http.RouteEntry(method, path, handler)
+            entry.TakeTo(this)
+            this.entries.Add(entry)
+            return this
+        }
+
+        Http.Response Handle(Http.Context ctx, Http.Next next) {
+            for (var i = 0; i < this.entries.Count; i++) {
+                Http.RouteEntry route = this.entries[i]
+                if (route.Matches(ctx.request.method, ctx.request.path)) {
+                    var h = route.handler
+                    any result = h(ctx)
+                    return Http.AppServer.AsResponse(result)
+                }
+            }
+            return next.Invoke(ctx)
+        }
+    }
+
+    // The settings of an application server (copied to every connection).
+    class ServerSettings {
+        int readTimeout = 10000          // ms for every read and write inside a request
+        int keepAlive = 5000             // ms an idle connection waits for its next request
+        int maxRequests = 1000           // requests per connection, then it is closed
+        int maxBodyBytes = 1048576       // of a request
+        string serverName = "fire-http/1"
+        bool showErrors = false          // a 500 tells the class and message of what a router threw (for development)
+    }
+
+    // An application server: every connection is a task of its own (natively light tasks on all cores), it serves request after request (keep-alive) and
+    // every request runs through the chain of routers. Every connection gets a copy of the chain when it starts: routers are configuration - what they share
+    // (counters, caches, sessions) lives in an actor they ask with `await`.
+    //
+    //     var server = new Http.AppServer("127.0.0.1", 8080)
+    //     server.PushTo(new Http.LambdaRouter(func (Http.Context ctx, Http.Next next) => next.Invoke(ctx)))
+    //           .PushTo((new Http.Routes()).Map("GET", "/hello", func (Http.Context ctx) => "hello"))
+    //     server.Run()                       // until Stop() or the task's token is cancelled (await server.Run() until source.Token)
+    class AppServer {
+        Net.TcpListener listener
+        List chain
+        Http.ServerSettings settings
+        Tls.Server tlsServer
+        bool stopped
+        int served
+
+        construct(string host, int port, int backlog = 128) {
+            this.chain = new List()
+            this.settings = new Http.ServerSettings()
+            this.tlsServer = undefined
+            this.stopped = false
+            this.served = 0
+            this.listener = new Net.TcpListener(host, port, backlog)
+        }
+
+        int Port { get { return this.listener.Port } }
+        Http.ServerSettings Settings { get { return this.settings } }
+        // The connections accepted so far.
+        int Connections { get { return this.served } }
+
+        // Adds a router at the end of the chain (the server owns it); returns the server, so the calls can be chained.
+        Http.AppServer PushTo(Http.IRouter router) {
+            router.TakeTo(this)
+            this.chain.Add(router)
+            return this
+        }
+
+        // A router from a lambda (see LambdaRouter).
+        Http.AppServer Use(lambda<Http.Context, Http.Next> handler) { return this.PushTo(new Http.LambdaRouter(take handler)) }
+
+        // Serves HTTPS: the certificate (with its chain) and the private key as PEM text. The handshake runs in the accepting task.
+        undefined UseTls(string certPem, string keyPem) { this.tlsServer = new Tls.Server(certPem, keyPem) }
+
+        undefined Stop() { this.stopped = true }
+
+        // Waits up to `timeout` for a connection and starts its task; true if one came.
+        bool AcceptOne(any timeout = undefined) {
+            var tcp = this.listener.TryAccept(timeout)
+            if (tcp == undefined) { return false }
+            this.served = this.served + 1
+            tcp.NoDelay = true
+            Net.IConnection connection = tcp
+            if (this.tlsServer != undefined) {
+                try { connection = this.tlsServer.Accept(tcp, this.settings.readTimeout) }
+                catch (Net.NetException e) { return true }   // (a client that did not complete the handshake)
+            }
+            if (!Http.AppServer.Spawn(connection, this.chain, this.settings)) {
+                // (a chain that cannot be copied for a task - lambdas until they may go to other threads, docs/ROADMAP_TASKS.md step 8 point 4: the
+                // connection is served here, one request without keep-alive)
+                Http.AppServer.Serve(connection, this.chain, this.settings, false)
+            }
+            return true
+        }
+
+        // The task of a connection: it owns the connection and serves it with copies of the chain and the settings. False when the chain cannot be copied
+        // (nothing moved then).
+        static bool Spawn(Net.IConnection connection, List chain, Http.ServerSettings settings) {
+            try {
+                fire handover connection taking chain taking settings {
+                    Http.AppServer.Serve(connection, chain, settings, true)
+                }
+            } catch (ArgumentException e) {
+                return false
+            }
+            return true
+        }
+
+        // Accepts connections until Stop() or until the token of the running task is cancelled.
+        undefined Run() {
+            var token = CancellationToken.Current()
+            while (!this.stopped && !token.IsCancelled) { this.AcceptOne(250) }
+        }
+
+        // Stops listening and closes the routers that hold something (Http.IClosable: the home of the sessions).
+        undefined Close() {
+            this.listener.Close()
+            if (this.tlsServer != undefined) { this.tlsServer.Close() }
+            for (var i = 0; i < this.chain.Count; i++) {
+                any router = this.chain[i]
+                if (router is of Http.IClosable) {
+                    Http.IClosable c = router
+                    c.Close()
+                }
+            }
+        }
+
+        // ---- inside the task of a connection ----
+
+        // Serves the requests of one connection until the client closes it, asks to close it, stays idle longer than `keepAlive` or `maxRequests` are done.
+        static undefined Serve(Net.IConnection connection, List chain, Http.ServerSettings settings, bool keepAlive) {
+            try {
+                connection.WriteTimeout = settings.readTimeout
+                var reader = new Http.Reader(connection)
+                var number = 0
+                var open = true
+                while (open) {
+                    number = number + 1
+                    Http.Response response = undefined
+                    var head = false
+                    var keep = false
+                    try {
+                        connection.ReadTimeout = settings.keepAlive
+                        var request = Http.AppServer.ReadRequest(reader, connection, settings)
+                        if (request == undefined) { break }
+                        head = request.method == "HEAD"
+                        keep = keepAlive && number < settings.maxRequests && Http.AppServer.WantsKeepAlive(request)
+                        var ctx = new Http.Context(take request, number)
+                        response = Http.AppServer.Dispatch(chain, ctx, settings)
+                    } catch (Net.TimeoutException e) {
+                        if (number == 1 || reader.pos < reader.len) { response = Http.Response.Error(408) } else { break }   // (idle: just close)
+                    } catch (Http.HttpException e) {
+                        var status = 400
+                        if (e.code == 4) { status = 413 }
+                        response = Http.Response.Error(status, e.message)
+                    }
+                    if (response.upgrade != undefined) {
+                        // (a WebSocket: the 101 goes out, then the handler has the connection until it ends)
+                        Http.AppServer.Send(connection, response, false, true, settings)
+                        connection.ReadTimeout = undefined
+                        var ws = new Http.WebSocket(connection, reader, false)
+                        ws.headers = response.upgradeHeaders
+                        ws.target = response.upgradeTarget
+                        try { response.upgrade.Serve(ws) } catch (Net.NetException e) { }
+                        ws.CloseQuietly()
+                        break
+                    }
+                    Http.AppServer.Send(connection, response, head, keep, settings)
+                    open = keep
+                }
+            } catch (Net.NetException e) {
+                // the client went away
+            }
+            connection.Close()
+        }
+
+        // The next request of the connection (the first line waits up to keepAlive, the rest up to readTimeout); undefined when the client closed.
+        static Http.Request ReadRequest(Http.Reader reader, Net.IConnection connection, Http.ServerSettings settings) {
+            var line = reader.ReadLine(8192)
+            while (line != undefined && line.Length == 0) { line = reader.ReadLine(8192) }
+            if (line == undefined) { return undefined }
+            connection.ReadTimeout = settings.readTimeout
+            any parts = line.Split(" ")
+            if (parts.length != 3 || !parts[2].StartsWith("HTTP/")) { throw new Http.HttpException("A bad request line: '" + line + "'.", 2) }
+            var request = new Http.Request(parts[0], parts[1])
+            request.version = parts[2]
+            request.remoteHost = connection.RemoteHost
+            Http.Wire.ReadHeaders(reader, request.headers)
+            request.body = Http.Wire.ReadBody(reader, request.headers, false, settings.maxBodyBytes)
+            return request
+        }
+
+        static bool WantsKeepAlive(Http.Request request) {
+            var c = request.headers.Get("Connection")
+            if (c != undefined) {
+                var lower = c.ToLower()
+                if (lower.IndexOf("close") >= 0) { return false }
+                if (lower.IndexOf("keep-alive") >= 0) { return true }
+            }
+            return request.version == "HTTP/1.1"
+        }
+
+        // The answer of the chain; an exception of a router is a 500.
+        static Http.Response Dispatch(List chain, Http.Context ctx, Http.ServerSettings settings) {
+            try {
+                var first = new Http.Next(chain, 0)
+                return first.Invoke(ctx)
+            } catch (e) {
+                if (settings.showErrors) { return Http.Response.Error(500, "" + e.message) }
+                return Http.Response.Error(500)
+            }
+        }
+
+        // What a lambda returned as a response: a text is a 200 text response, undefined a 204.
+        static Http.Response AsResponse(any result) {
+            if (result == undefined) { return new Http.Response(204) }
+            if (result is of string) { return Http.Response.FromText(result) }
+            return result
+        }
+
+        static undefined Send(IO.IStream connection, Http.Response response, bool head, bool keep, Http.ServerSettings settings) {
+            var h = new Http.Headers()
+            for (var i = 0; i < response.headers.Count; i++) { h.Add(response.headers.names[i], response.headers.values[i]) }
+            var noBody = head || Http.Status.NoBody(response.status)
+            var chunked = false
+            if (response.stream != undefined) {
+                if (response.streamLength >= 0) { h.Set("Content-Length", "" + response.streamLength) }
+                else if (!noBody) { h.Set("Transfer-Encoding", "chunked"); chunked = true }
+            } else {
+                h.Set("Content-Length", "" + response.body.length)
+            }
+            if (response.status == 101) { h.Remove("Content-Length") }
+            else if (keep) { h.Set("Connection", "keep-alive") } else { h.Set("Connection", "close") }
+            if (!h.Has("Server")) { h.Set("Server", settings.serverName) }
+            if (response.stream == undefined) {
+                var body = response.body
+                if (noBody) { body = undefined }
+                Http.Wire.Write(connection, "HTTP/1.1 " + response.status + " " + response.reason, h, body)
+                return
+            }
+            Http.Wire.Write(connection, "HTTP/1.1 " + response.status + " " + response.reason, h, undefined)
+            if (!noBody) {
+                var buf = new byte[16384]
+                while (true) {
+                    var n = response.stream.Read(buf, 0, buf.length)
+                    if (n <= 0) { break }
+                    if (chunked) {
+                        var size = IO.Utf8.GetBytes(Http.AppServer.Hex(n) + "\r\n")
+                        connection.Write(size, 0, size.length)
+                    }
+                    connection.Write(buf, 0, n)
+                    if (chunked) {
+                        var crlf = IO.Utf8.GetBytes("\r\n")
+                        connection.Write(crlf, 0, 2)
+                    }
+                }
+                if (chunked) {
+                    var last = IO.Utf8.GetBytes("0\r\n\r\n")
+                    connection.Write(last, 0, last.length)
+                }
+            }
+            response.stream.Close()
+        }
+
+        static string Hex(int n) {
+            var digits = "0123456789abcdef"
+            if (n == 0) { return "0" }
+            var t = ""
+            while (n > 0) {
+                t = digits.CharAt(n % 16) + t
+                n = n / 16
+            }
+            return t
+        }
+    }
+
+    // ---- files (docs/ROADMAP_HTTP.md step 2) ---------------------------------------------------------------------------------------------------------
+
+    // At most `count` bytes of another stream (a range of a file); closing it closes the other one.
+    class LimitedStream : IO.Stream {
+        IO.IStream inner
+        int left
+
+        construct(IO.IStream inner, int count) {
+            this.inner = take inner
+            this.left = count
+        }
+
+        override bool CanRead { get { return true } }
+
+        override int Read(byte buffer[], int offset, int count) {
+            if (this.left <= 0) { return 0 }
+            if (count > this.left) { count = this.left }
+            var n = this.inner.Read(buffer, offset, count)
+            if (n > 0) { this.left = this.left - n }
+            return n
+        }
+
+        override undefined Close() { this.inner.Close() }
+    }
+
+    // The media types of the usual extensions, and the dates of HTTP.
+    class Mime {
+        static string Of(string path) {
+            var ext = IO.Path.GetExtension(path).ToLower()
+            if (ext == ".html" || ext == ".htm") { return "text/html; charset=utf-8" }
+            if (ext == ".css") { return "text/css; charset=utf-8" }
+            if (ext == ".js" || ext == ".mjs") { return "text/javascript; charset=utf-8" }
+            if (ext == ".json" || ext == ".map") { return "application/json" }
+            if (ext == ".txt" || ext == ".md") { return "text/plain; charset=utf-8" }
+            if (ext == ".xml") { return "application/xml" }
+            if (ext == ".svg") { return "image/svg+xml" }
+            if (ext == ".png") { return "image/png" }
+            if (ext == ".jpg" || ext == ".jpeg") { return "image/jpeg" }
+            if (ext == ".gif") { return "image/gif" }
+            if (ext == ".webp") { return "image/webp" }
+            if (ext == ".ico") { return "image/x-icon" }
+            if (ext == ".wasm") { return "application/wasm" }
+            if (ext == ".pdf") { return "application/pdf" }
+            if (ext == ".zip") { return "application/zip" }
+            if (ext == ".woff") { return "font/woff" }
+            if (ext == ".woff2") { return "font/woff2" }
+            if (ext == ".ttf") { return "font/ttf" }
+            if (ext == ".mp4") { return "video/mp4" }
+            if (ext == ".webm") { return "video/webm" }
+            if (ext == ".mp3") { return "audio/mpeg" }
+            if (ext == ".wav") { return "audio/wav" }
+            return "application/octet-stream"
+        }
+
+        // "Tue, 15 Nov 1994 08:12:31 GMT" (RFC 9110) of a point in time in UTC.
+        static string Date(DateTime utc) {
+            var days = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]
+            var months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+            return days[utc.DayOfWeek] + ", " + Http.Mime.Two(utc.Day) + " " + months[utc.Month - 1] + " " + utc.Year + " " + Http.Mime.Two(utc.Hour) + ":" + Http.Mime.Two(utc.Minute) + ":" + Http.Mime.Two(utc.Second) + " GMT"
+        }
+
+        static string Two(int n) {
+            if (n < 10) { return "0" + n }
+            return "" + n
+        }
+    }
+
+    // Static files from a folder (by convention `wwwroot`) as a link of the chain: the path of the request maps 1:1 to a file under the folder; what is
+    // not there goes on to the next link. Only GET and HEAD. Never served: a path with `..` or a part that starts with a dot (.git, .env), the sources of
+    // fire (.fire, .fxml, .fireproj, .firesln), anything outside the folder. ETag and Last-Modified (304 for If-None-Match / If-Modified-Since), one range
+    // (206), the body streamed from the file.
+    class Files : IRouter {
+        string root
+        string prefix
+        List defaults
+        bool omitExtensions
+        int maxAge
+
+        // `root` the folder, `prefix` the part of the path that maps to it ("/" or e.g. "/static"); `omitExtensions`: "/about" also finds about.html.
+        construct(string root, string prefix = "/", bool omitExtensions = false) {
+            this.root = IO.Path.GetFullPath(root)
+            this.prefix = prefix
+            if (!this.prefix.EndsWith("/")) { this.prefix = this.prefix + "/" }
+            this.defaults = new List()
+            this.defaults.Add("index.html")
+            this.defaults.Add("index.htm")
+            this.omitExtensions = omitExtensions
+            this.maxAge = -1
+        }
+
+        // Cache-Control: max-age for every file (seconds; -1: none).
+        Http.Files CacheFor(int seconds) {
+            this.maxAge = seconds
+            return this
+        }
+
+        Http.Response Handle(Http.Context ctx, Http.Next next) {
+            var request = ctx.Request
+            if (request.method != "GET" && request.method != "HEAD") { return next.Invoke(ctx) }
+            var file = this.Resolve(request.path)
+            if (file == undefined) { return next.Invoke(ctx) }
+            return Http.Files.Serve(file, request, this.maxAge)
+        }
+
+        // The file of a request path, undefined when it is not one that may be served (or not there).
+        string Resolve(string path) {
+            var p = path
+            if (p + "/" == this.prefix) { p = this.prefix }
+            if (!p.StartsWith(this.prefix)) { return undefined }
+            var rel = p.Substring(this.prefix.Length)
+            if (rel.IndexOf("\\") >= 0 || rel.IndexOf(":") >= 0 || rel.IndexOf("\0") >= 0) { return undefined }
+            any parts = rel.Split("/")
+            for (var i = 0; i < parts.length; i++) {
+                string part = parts[i]
+                if (part == ".." || part.StartsWith(".")) { return undefined }
+            }
+            var full = IO.Path.GetFullPath(IO.Path.Combine(this.root, rel))
+            var inside = this.root
+            if (!inside.EndsWith(IO.Path.DirectorySeparatorChar)) { inside = inside + IO.Path.DirectorySeparatorChar }
+            if (full != this.root && !full.StartsWith(inside)) { return undefined }
+            if (IO.Directory.Exists(full)) {
+                for (var d = 0; d < this.defaults.Count; d++) {
+                    var candidate = IO.Path.Combine(full, this.defaults[d])
+                    if (IO.File.Exists(candidate)) { return candidate }
+                }
+                return undefined
+            }
+            if (Http.Files.Hidden(full)) { return undefined }
+            if (IO.File.Exists(full)) { return full }
+            if (this.omitExtensions && !IO.Path.HasExtension(full)) {
+                var html = full + ".html"
+                if (IO.File.Exists(html)) { return html }
+                var htm = full + ".htm"
+                if (IO.File.Exists(htm)) { return htm }
+            }
+            return undefined
+        }
+
+        // The sources of fire are never served.
+        static bool Hidden(string file) {
+            var ext = IO.Path.GetExtension(file).ToLower()
+            return ext == ".fire" || ext == ".fxml" || ext == ".fireproj" || ext == ".firesln"
+        }
+
+        // The answer for a file: 200 (or 206 for a range, 304 when the client has it, 416 for a range outside the file).
+        static Http.Response Serve(string file, Http.Request request, int maxAge = -1) {
+            int size = IO.File.Size(file)
+            DateTime modified = IO.File.GetLastWriteTimeUtc(file)
+            var tag = "\"" + size + "-" + modified.Ticks + "\""
+            var lastModified = Http.Mime.Date(modified)
+            var type = Http.Mime.Of(file)
+            var inm = request.headers.Get("If-None-Match")
+            var ims = request.headers.Get("If-Modified-Since")
+            if ((inm != undefined && (inm == tag || inm == "*")) || (inm == undefined && ims != undefined && ims == lastModified)) {
+                var nm = new Http.Response(304)
+                Http.Files.Stamp(nm, tag, lastModified, maxAge)
+                return nm
+            }
+            int first = 0
+            int upto = size - 1
+            bool partial = false
+            var range = request.headers.Get("Range")
+            if (range != undefined && range.StartsWith("bytes=") && range.IndexOf(",") < 0) {
+                var spec = range.Substring(6).Trim()
+                any dash = spec.IndexOf("-")
+                if (dash >= 0) {
+                    var a = spec.Substring(0, dash).Trim()
+                    var b = spec.Substring(dash + 1).Trim()
+                    if (a.Length == 0) {
+                        // the last b bytes
+                        var last = Http.Num.Parse(b)
+                        if (last > 0) { first = size - last; if (first < 0) { first = 0 }; partial = true }
+                    } else {
+                        first = Http.Num.Parse(a)
+                        if (b.Length > 0) { upto = Http.Num.Parse(b) }
+                        if (upto >= size) { upto = size - 1 }
+                        partial = first >= 0
+                    }
+                    if (partial && (first > upto || first >= size || first < 0)) {
+                        var bad = Http.Response.Error(416)
+                        bad.headers.Set("Content-Range", "bytes */" + size)
+                        return bad
+                    }
+                }
+            }
+            var stream = new IO.FileStream(file, IO.FileMode.Open, IO.FileAccess.Read)
+            Http.Response r = undefined
+            if (partial) {
+                stream.Seek(first)
+                var part = new Http.LimitedStream(take stream, upto - first + 1)
+                r = Http.Response.FromStream(take part, type, upto - first + 1, 206)
+                r.headers.Set("Content-Range", "bytes " + first + "-" + upto + "/" + size)
+            } else {
+                r = Http.Response.FromStream(take stream, type, size)
+            }
+            r.headers.Set("Accept-Ranges", "bytes")
+            Http.Files.Stamp(r, tag, lastModified, maxAge)
+            return r
+        }
+
+        static undefined Stamp(Http.Response r, string tag, string lastModified, int maxAge) {
+            r.headers.Set("ETag", tag)
+            r.headers.Set("Last-Modified", lastModified)
+            if (maxAge >= 0) { r.headers.Set("Cache-Control", "max-age=" + maxAge) }
+        }
+    }
+
+    // ---- sessions (docs/ROADMAP_HTTP.md step 3) ------------------------------------------------------------------------------------------------------
+
+    // A router that holds something beyond the requests (a thread, a file): Http.AppServer.Close() closes it - the server's own router, never the copies of
+    // the connections.
+    interface IClosable {
+        undefined Close()
+    }
+
+    // Where sessions are kept beyond the memory of the program: the text of a session (its values, encoded) by its id. The calls come from the home of
+    // the sessions, one after the other.
+    interface ISessionStore {
+        string Load(string id)
+        undefined Save(string id, string data)
+        undefined Delete(string id)
+    }
+
+    // Sessions only in memory: they end with the program.
+    class MemorySessionStore : ISessionStore {
+        string Load(string id) { return undefined }
+        undefined Save(string id, string data) { }
+        undefined Delete(string id) { }
+    }
+
+    // Sessions in files: one file `<id>.session` per session in a folder (a restart of the program finds them again).
+    class FileSessionStore : ISessionStore {
+        string folder
+
+        construct(string folder) {
+            this.folder = folder
+            IO.Directory.CreateDirectory(folder)
+        }
+
+        string Load(string id) {
+            var path = IO.Path.Combine(this.folder, id + ".session")
+            if (!IO.File.Exists(path)) { return undefined }
+            return IO.File.ReadAllText(path)
+        }
+
+        undefined Save(string id, string data) { IO.File.WriteAllText(IO.Path.Combine(this.folder, id + ".session"), data) }
+
+        undefined Delete(string id) { IO.File.Delete(IO.Path.Combine(this.folder, id + ".session")) }
+    }
+
+    // The values of one session at its home.
+    class SessionEntry {
+        string id
+        Dictionary<string, string> values
+        int touched
+
+        construct(string id) {
+            this.id = id
+            this.values = new Dictionary<string, string>()
+            this.touched = DateTime.UtcNow.Ticks
+        }
+
+        // name=value&... (percent encoded) - what a store keeps.
+        string Encode() {
+            var t = ""
+            foreach (var pair in this.values) {
+                if (t.Length > 0) { t = t + "&" }
+                t = t + Http.Uri.Encode(pair.Key) + "=" + Http.Uri.Encode(pair.Value)
+            }
+            return t
+        }
+
+        undefined Decode(string data) {
+            if (data == undefined || data.Length == 0) { return }
+            any pairs = data.Split("&")
+            for (var i = 0; i < pairs.length; i++) {
+                string pair = pairs[i]
+                any eq = pair.IndexOf("=")
+                if (eq > 0) { this.values[Http.Uri.Decode(pair.Substring(0, eq))] = Http.Uri.Decode(pair.Substring(eq + 1)) }
+            }
+        }
+    }
+
+    // The sessions of a server and what is done with them (the home of the sessions owns one: a method of an actor that calls another method of the
+    // same actor would only post a message, so the work is done here).
+    class SessionTable {
+        Dictionary<string, Http.SessionEntry> entries
+        Http.ISessionStore store
+        int timeoutTicks
+        int lastSweep
+
+        construct(Http.ISessionStore store, int timeoutMs) {
+            this.entries = new Dictionary<string, Http.SessionEntry>()
+            this.store = take store
+            this.timeoutTicks = timeoutMs * 10000
+            this.lastSweep = DateTime.UtcNow.Ticks
+        }
+
+        // The id of a living session: `id` when it is one (touched now; from the store when it is not in memory), otherwise a new one.
+        string Open(string id) {
+            this.Sweep()
+            var now = DateTime.UtcNow.Ticks
+            if (id != undefined && Http.SessionTable.ValidId(id)) {
+                if (this.entries.ContainsKey(id)) {
+                    Http.SessionEntry e = this.entries[id]
+                    if (now - e.touched <= this.timeoutTicks) {
+                        e.touched = now
+                        return id
+                    }
+                    this.End(id)
+                } else {
+                    var saved = this.store.Load(id)
+                    if (saved != undefined) {
+                        var back = new Http.SessionEntry(id)
+                        back.Decode(saved)
+                        this.entries.Add(id, take back)
+                        return id
+                    }
+                }
+            }
+            var fresh = Net.SecureRandom.Hex(16)
+            this.entries.Add(fresh, new Http.SessionEntry(fresh))
+            return fresh
+        }
+
+        string Get(string id, string name) {
+            if (!this.entries.ContainsKey(id)) { return undefined }
+            Http.SessionEntry e = this.entries[id]
+            if (!e.values.ContainsKey(name)) { return undefined }
+            return e.values[name]
+        }
+
+        bool Set(string id, string name, string value) {
+            if (!this.entries.ContainsKey(id)) { return false }
+            Http.SessionEntry e = this.entries[id]
+            if (value == undefined) { e.values.Remove(name) } else { e.values[name] = value }
+            this.store.Save(id, e.Encode())
+            return true
+        }
+
+        // A new id for the same values (after a login: an id someone else may have seen is no longer good); the new id.
+        string Renew(string id) {
+            if (!this.entries.ContainsKey(id)) { return this.Open(undefined) }
+            Http.SessionEntry old = this.entries[id]
+            var fresh = Net.SecureRandom.Hex(16)
+            var moved = new Http.SessionEntry(fresh)
+            foreach (var pair in old.values) { moved.values[pair.Key] = pair.Value }
+            this.End(id)
+            this.store.Save(fresh, moved.Encode())
+            this.entries.Add(fresh, take moved)
+            return fresh
+        }
+
+        bool End(string id) {
+            if (!this.entries.ContainsKey(id)) { return false }
+            this.entries.Remove(id)
+            this.store.Delete(id)
+            return true
+        }
+
+        int Count() { return this.entries.Count }
+
+        // (sessions that ran out, at most once a second)
+        undefined Sweep() {
+            var now = DateTime.UtcNow.Ticks
+            if (now - this.lastSweep < 10000000) { return }
+            this.lastSweep = now
+            var gone = new List()
+            foreach (var pair in this.entries) {
+                Http.SessionEntry e = pair.Value
+                if (now - e.touched > this.timeoutTicks) { gone.Add(pair.Key) }
+            }
+            for (var i = 0; i < gone.Count; i++) { this.End(gone[i]) }
+        }
+
+        static bool ValidId(string id) {
+            if (id.Length != 32) { return false }
+            for (var i = 0; i < 32; i++) {
+                int c = id.CharAt(i).ToInt()
+                if (!((c >= 48 && c <= 57) || (c >= 97 && c <= 102))) { return false }
+            }
+            return true
+        }
+    }
+
+    // The home of the sessions of a server: an actor on a thread of its own. Every access to a session is a message to it (`await home.Get(id, name)`), so
+    // they run one after the other and the state of a session is always the same for every connection. A session that nobody touches for `timeout`
+    // ms ends (and is deleted from the store).
+    actor SessionHome {
+        Http.SessionTable table
+        bool stopped
+
+        construct(Http.ISessionStore store, int timeoutMs) {
+            this.table = new Http.SessionTable(take store, timeoutMs)
+            this.stopped = false
+        }
+
+        string Open(string id) { return this.table.Open(id) }
+        string Get(string id, string name) { return this.table.Get(id, name) }
+        bool Set(string id, string name, string value) { return this.table.Set(id, name, value) }
+        string Renew(string id) { return this.table.Renew(id) }
+        bool End(string id) { return this.table.End(id) }
+        int Count() { return this.table.Count() }
+        undefined Stop() { this.stopped = true }
+    }
+
+    // A session as a router sees it (ctx.Item("session")): every call is a message to the home of the sessions.
+    class Session {
+        Http.SessionHome home
+        string id
+        bool renewed
+        bool fresh
+
+        construct(Http.SessionHome home, string id, bool fresh = false) {
+            this.home = home
+            this.id = id
+            this.renewed = false
+            this.fresh = fresh
+        }
+
+        string Id { get { return this.id } }
+        // True when the session began with this request (the client sent no cookie of a living session).
+        bool IsNew { get { return this.fresh } }
+
+        string Get(string name, string fallback = undefined) {
+            var h = this.home
+            string v = await h.Get(this.id, name)
+            if (v == undefined) { return fallback }
+            return v
+        }
+
+        undefined Set(string name, any value) {
+            var h = this.home
+            string text = undefined
+            if (value != undefined) { text = "" + value }
+            bool ok = await h.Set(this.id, name, text)
+        }
+
+        undefined Remove(string name) { this.Set(name, undefined) }
+
+        // A new id for the same values - after a login (the cookie is set again).
+        undefined Renew() {
+            var h = this.home
+            string fresh = await h.Renew(this.id)
+            this.id = fresh
+            this.renewed = true
+        }
+
+        // Ends the session (the cookie is cleared).
+        undefined End() {
+            var h = this.home
+            bool ok = await h.End(this.id)
+            this.id = ""
+            this.renewed = true
+        }
+    }
+
+    // The session resolver as a link of the chain: finds the session of the request by its cookie (or starts one), puts an Http.Session into the context
+    // (`ctx.Item("session")`) and sets the cookie on the answer when the session is new or got a new id. The home of the sessions is an actor on a thread
+    // of its own (Http.AppServer.Close() ends it).
+    class Sessions : IRouter, IClosable {
+        Http.SessionHome home
+        string cookie
+        bool secure
+        int timeoutMs
+
+        // `timeoutMs` without a request until a session ends (default 20 min), `store` where they are kept (default: in memory).
+        construct(int timeoutMs = 1200000, Http.ISessionStore store = undefined, string cookie = "fire-session", bool secure = false) {
+            this.cookie = cookie
+            this.secure = secure
+            this.timeoutMs = timeoutMs
+            if (store == undefined) { store = new Http.MemorySessionStore() }
+            var ready = new Completion()
+            var back = ready.Share()
+            Http.Sessions.StartHome(take store, timeoutMs, take back)
+            this.home = ready.Wait(10s)
+        }
+
+        // (the thread of the home: makes the actor, hands its reference back, then serves its messages until Stop)
+        static undefined StartHome(Http.ISessionStore store, int timeoutMs, Completion back) {
+            fire handover store handover back taking timeoutMs {
+                var home = new Http.SessionHome(take store, timeoutMs)
+                back.Set(home)
+                while (!home.stopped) { process home }
+            }
+        }
+
+        Http.Response Handle(Http.Context ctx, Http.Next next) {
+            var asked = Http.Sessions.CookieOf(ctx.request.headers.Get("Cookie"), this.cookie)
+            var h = this.home
+            string id = await h.Open(asked)
+            var session = new Http.Session(h, id, id != asked)
+            ctx.SetItem("session", session)
+            Http.Response r = next.Invoke(ctx)
+            if (session.id != asked || session.renewed) {
+                var attrs = "; Path=/; HttpOnly; SameSite=Lax"
+                if (this.secure) { attrs = attrs + "; Secure" }
+                if (session.id.Length == 0) { r.headers.Add("Set-Cookie", this.cookie + "=; Path=/; Max-Age=0") }
+                else { r.headers.Add("Set-Cookie", this.cookie + "=" + session.id + attrs) }
+            }
+            return r
+        }
+
+        // The number of living sessions.
+        int Count() {
+            var h = this.home
+            int n = await h.Count()
+            return n
+        }
+
+        undefined Close() {
+            var h = this.home
+            h.Stop()
+        }
+
+        // The value of a cookie in a Cookie header, undefined when it is not there.
+        static string CookieOf(string header, string name) {
+            if (header == undefined) { return undefined }
+            any parts = header.Split(";")
+            for (var i = 0; i < parts.length; i++) {
+                string part = parts[i].Trim()
+                any eq = part.IndexOf("=")
+                if (eq > 0 && part.Substring(0, eq).Trim() == name) { return part.Substring(eq + 1).Trim() }
+            }
+            return undefined
+        }
+    }
+
+    // ---- WebSocket (RFC 6455; docs/ROADMAP_HTTP.md step 5) -------------------------------------------------------------------------------------------
+
+    class Base64 {
+        static string Encode(byte data[]) {
+            var table = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
+            var t = ""
+            var i = 0
+            while (i + 2 < data.length) {
+                int n = data[i] * 65536 + data[i + 1] * 256 + data[i + 2]
+                t = t + table.CharAt(n / 262144) + table.CharAt((n / 4096) % 64) + table.CharAt((n / 64) % 64) + table.CharAt(n % 64)
+                i = i + 3
+            }
+            var rest = data.length - i
+            if (rest == 1) {
+                int a = data[i] * 65536
+                t = t + table.CharAt(a / 262144) + table.CharAt((a / 4096) % 64) + "=="
+            } else if (rest == 2) {
+                int b = data[i] * 65536 + data[i + 1] * 256
+                t = t + table.CharAt(b / 262144) + table.CharAt((b / 4096) % 64) + table.CharAt((b / 64) % 64) + "="
+            }
+            return t
+        }
+    }
+
+    // What a WebSocket server does with one connection: Serve(ws) runs in the task of the connection, as long as it wants (`ws.Receive()` until undefined).
+    interface IWebSocketHandler {
+        undefined Serve(Http.WebSocket ws)
+    }
+
+    // One message of a WebSocket: a text or bytes.
+    class WebSocketMessage {
+        bool binary
+        byte data[]
+
+        construct(bool binary, byte data[]) {
+            this.binary = binary
+            this.data = take data
+        }
+
+        bool IsText { get { return !this.binary } }
+        string Text() { return IO.Utf8.GetString(this.data, 0, this.data.length) }
+    }
+
+    // A WebSocket connection (either side): `Send(text)`, `SendBytes(bytes)`, `Receive(timeout)` (the next message - pings are answered, a close is
+    // answered and ends it: undefined), `ReceiveText(timeout)`, `Close(code, reason)`, `IsOpen`.
+    class WebSocket {
+        Net.IConnection connection
+        Http.Reader reader
+        bool client
+        bool open
+        int closeCode
+        int maxMessageBytes
+        // (the server side: the header fields and the target of the request that opened it)
+        Http.Headers headers
+        string target
+
+        // (the WebSocket uses the connection and the reader; Connect hands them to it, the server's task keeps them)
+        construct(Net.IConnection connection, Http.Reader reader, bool client) {
+            this.connection = connection
+            this.reader = reader
+            this.client = client
+            this.open = true
+            this.closeCode = 0
+            this.maxMessageBytes = 16777216
+        }
+
+        bool IsOpen { get { return this.open } }
+        // A header field of the request that opened the WebSocket (the server side; undefined on the client).
+        string Header(string name) { return this.headers?.Get(name) }
+        // A query parameter of the request that opened it (`/ws?page=7`).
+        any Query(string name, any fallback = undefined) {
+            if (this.target == undefined) { return fallback }
+            var r = new Http.Request("GET", this.target)
+            return r.Query(name, fallback)
+        }
+        // The code of the close frame of the other side (1000 normal, 1001 going away, ...; 1006 when the connection just ended), 0 while it is open.
+        int CloseCode { get { return this.closeCode } }
+
+        // ws://host:port/path (wss:// over TLS): the handshake as a client.
+        static Http.WebSocket Connect(string url, int timeout = 10000, Http.Headers headers = undefined) {
+            var u = Http.Url.Parse(url.Replace("ws://", "http://").Replace("wss://", "https://"))
+            Net.IConnection c = Http.Transport.Open(u, timeout)
+            c.ReadTimeout = timeout
+            c.WriteTimeout = timeout
+            var key = Http.Base64.Encode(Net.SecureRandom.Bytes(16))
+            var h = new Http.Headers()
+            h.Set("Host", u.HostHeader())
+            h.Set("Upgrade", "websocket")
+            h.Set("Connection", "Upgrade")
+            h.Set("Sec-WebSocket-Key", key)
+            h.Set("Sec-WebSocket-Version", "13")
+            if (headers != undefined) { for (var i = 0; i < headers.Count; i++) { h.Set(headers.names[i], headers.values[i]) } }
+            Http.Wire.Write(c, "GET " + u.path + " HTTP/1.1", h, undefined)
+            var reader = new Http.Reader(c)
+            var line = reader.ReadLine(8192)
+            if (line == undefined || line.IndexOf(" 101") < 0) { c.Close(); throw new Http.HttpException("The server did not switch to WebSocket: '" + line + "'.", 2) }
+            var rh = new Http.Headers()
+            Http.Wire.ReadHeaders(reader, rh)
+            if (rh.Get("Sec-WebSocket-Accept") != Http.WebSocket.AcceptOf(key)) { c.Close(); throw new Http.HttpException("A wrong Sec-WebSocket-Accept.", 2) }
+            c.ReadTimeout = undefined
+            var ws = new Http.WebSocket(c, reader, true)
+            c.TakeTo(ws)
+            reader.TakeTo(ws)
+            return ws
+        }
+
+        // The answer to a key (Sec-WebSocket-Accept).
+        static string AcceptOf(string key) { return Http.Base64.Encode(Hash.Sha1.Of(key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11")) }
+
+        undefined Send(string text) { this.Frame(1, IO.Utf8.GetBytes(text)) }
+        undefined SendBytes(byte data[]) { this.Frame(2, data) }
+        undefined Ping(byte data[] = undefined) {
+            if (data == undefined) { data = new byte[0] }
+            this.Frame(9, data)
+        }
+
+        // The next message, undefined when the connection is closed (or `timeout` ms ran out: then IsOpen is still true).
+        Http.WebSocketMessage Receive(int timeout = -1) {
+            if (!this.open) { return undefined }
+            if (timeout < 0) { this.connection.ReadTimeout = undefined } else { this.connection.ReadTimeout = timeout }
+            IO.MemoryStream parts = undefined
+            var opcodeOfMessage = 0
+            while (true) {
+                int b0 = 0
+                try { b0 = this.ReadByte() } catch (Net.TimeoutException e) { return undefined }
+                if (b0 < 0) { this.Ended(1006); return undefined }
+                this.connection.ReadTimeout = 30000
+                int b1 = this.ReadByte()
+                if (b1 < 0) { this.Ended(1006); return undefined }
+                var fin = b0 >= 128
+                int opcode = b0 % 16
+                var masked = b1 >= 128
+                int len = b1 % 128
+                if (len == 126) { len = this.ReadByte() * 256 + this.ReadByte() }
+                else if (len == 127) {
+                    len = 0
+                    for (var k = 0; k < 8; k++) { len = len * 256 + this.ReadByte() }
+                }
+                if (len > this.maxMessageBytes) { this.Close(1009, "too big"); return undefined }
+                byte mask[] = undefined
+                if (masked) { mask = this.reader.ReadExact(4) }
+                var payload = this.reader.ReadExact(len)
+                if (masked) { for (var j = 0; j < len; j++) { payload[j] = payload[j] # mask[j % 4] } }
+                if (opcode == 8) {
+                    var code = 1005
+                    if (len >= 2) { code = payload[0] * 256 + payload[1] }
+                    if (this.open) { this.Frame(8, payload) }
+                    this.Ended(code)
+                    return undefined
+                }
+                if (opcode == 9) { this.Frame(10, payload); continue }
+                if (opcode == 10) { continue }
+                if (opcode == 1 || opcode == 2) { opcodeOfMessage = opcode }
+                if (fin && parts == undefined) { return new Http.WebSocketMessage(opcode == 2 || (opcode == 0 && opcodeOfMessage == 2), take payload) }
+                if (parts == undefined) { parts = new IO.MemoryStream() }
+                parts.Write(payload, 0, payload.length)
+                if (parts.Length > this.maxMessageBytes) { this.Close(1009, "too big"); return undefined }
+                if (fin) {
+                    var all = parts.ToBuffer()
+                    parts.Close()
+                    return new Http.WebSocketMessage(opcodeOfMessage == 2, take all)
+                }
+            }
+        }
+
+        // The next text message (a binary one as UTF-8), undefined when the connection is closed or the time ran out.
+        string ReceiveText(int timeout = -1) {
+            var m = this.Receive(timeout)
+            if (m == undefined) { return undefined }
+            return m.Text()
+        }
+
+        // Ends the connection with a close frame (1000 normal) and waits briefly for the answer.
+        undefined Close(int code = 1000, string reason = "") {
+            if (!this.open) { return }
+            var r = IO.Utf8.GetBytes(reason)
+            var payload = new byte[2 + r.length]
+            payload[0] = code / 256
+            payload[1] = code % 256
+            for (var i = 0; i < r.length; i++) { payload[2 + i] = r[i] }
+            try {
+                this.Frame(8, payload)
+                this.open = false
+                this.connection.ReadTimeout = 2000
+                // (the answer of the other side; what comes before it is dropped)
+                while (true) {
+                    int b0 = this.ReadByte()
+                    if (b0 < 0) { break }
+                    int b1 = this.ReadByte()
+                    int len = b1 % 128
+                    if (len == 126) { len = this.ReadByte() * 256 + this.ReadByte() }
+                    if (b1 >= 128) { this.reader.ReadExact(4) }
+                    this.reader.ReadExact(len)
+                    if (b0 % 16 == 8) { break }
+                }
+            } catch (Net.NetException e) {
+            } catch (Http.HttpException e) {
+            }
+            this.Ended(code)
+        }
+
+        // (the end without a word, when the server's task leaves the handler)
+        undefined CloseQuietly() {
+            if (this.open) { this.Close(1001, "") }
+            this.connection.Close()
+        }
+
+        undefined Ended(int code) {
+            this.open = false
+            if (this.closeCode == 0) { this.closeCode = code }
+        }
+
+        int ReadByte() {
+            if (!this.reader.Fill()) { return -1 }
+            int b = this.reader.chunk[this.reader.pos]
+            this.reader.pos = this.reader.pos + 1
+            return b
+        }
+
+        // One frame: a client masks it (RFC 6455 5.3), a server does not.
+        undefined Frame(int opcode, byte data[]) {
+            var n = data.length
+            var headLen = 2
+            if (n >= 126 && n < 65536) { headLen = 4 } else if (n >= 65536) { headLen = 10 }
+            if (this.client) { headLen = headLen + 4 }
+            var frame = new byte[headLen + n]
+            frame[0] = 128 + opcode
+            var maskBit = 0
+            if (this.client) { maskBit = 128 }
+            var at = 2
+            if (n < 126) { frame[1] = maskBit + n }
+            else if (n < 65536) {
+                frame[1] = maskBit + 126
+                frame[2] = n / 256
+                frame[3] = n % 256
+                at = 4
+            } else {
+                frame[1] = maskBit + 127
+                var v = n
+                for (var k = 9; k >= 2; k--) { frame[k] = v % 256; v = v / 256 }
+                at = 10
+            }
+            if (this.client) {
+                var mask = Net.SecureRandom.Bytes(4)
+                for (var m = 0; m < 4; m++) { frame[at + m] = mask[m] }
+                at = at + 4
+                for (var i = 0; i < n; i++) { frame[at + i] = data[i] # mask[i % 4] }
+            } else {
+                for (var i = 0; i < n; i++) { frame[at + i] = data[i] }
+            }
+            this.connection.Write(frame, 0, frame.length)
+        }
+    }
+
+    // WebSocket endpoints as a link of the chain: a GET with `Upgrade: websocket` on `path` is switched over (101) and the handler serves the connection in
+    // its task; the rest goes on. `origins`: the allowed values of the Origin header (empty: any) - a check against pages of other sites (CSRF).
+    class WebSockets : IRouter {
+        string path
+        Http.IWebSocketHandler handler
+        List origins
+
+        construct(string path, Http.IWebSocketHandler handler) {
+            this.path = path
+            this.handler = take handler
+            this.origins = new List()
+        }
+
+        Http.WebSockets AllowOrigin(string origin) {
+            this.origins.Add(origin)
+            return this
+        }
+
+        Http.Response Handle(Http.Context ctx, Http.Next next) {
+            var request = ctx.Request
+            if (request.path != this.path) { return next.Invoke(ctx) }
+            var up = request.headers.Get("Upgrade")
+            if (up == undefined || up.ToLower() != "websocket") { return Http.Response.Error(426, "This is a WebSocket endpoint.") }
+            var key = request.headers.Get("Sec-WebSocket-Key")
+            if (request.method != "GET" || key == undefined || request.headers.Get("Sec-WebSocket-Version") != "13") { return Http.Response.Error(400, "A bad WebSocket handshake.") }
+            if (this.origins.Count > 0) {
+                var origin = request.headers.Get("Origin")
+                var allowed = false
+                for (var i = 0; i < this.origins.Count; i++) { if (this.origins[i] == origin) { allowed = true } }
+                if (!allowed) { return Http.Response.Error(403, "This origin may not open the WebSocket.") }
+            }
+            var r = new Http.Response(101)
+            r.headers.Set("Upgrade", "websocket")
+            r.headers.Set("Connection", "Upgrade")
+            r.headers.Set("Sec-WebSocket-Accept", Http.WebSocket.AcceptOf(key))
+            r.upgrade = this.handler
+            var copied = new Http.Headers()
+            for (var i = 0; i < request.headers.Count; i++) { copied.Add(request.headers.names[i], request.headers.values[i]) }
+            r.upgradeHeaders = take copied
+            r.upgradeTarget = request.target
+            return r
         }
     }
 }

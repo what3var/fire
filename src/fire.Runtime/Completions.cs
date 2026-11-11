@@ -41,9 +41,13 @@ namespace fire.Runtime
 
     public sealed partial class VM
     {
-        /// <summary>A copy of a value for a scope of another thread (strings and numbers are values; objects, arrays and buffers are copied deep).</summary>
-        private static Value CompletionCopy(Value v, IOwner owner) =>
-            v.Kind is ValueKind.Class or ValueKind.Array or ValueKind.Buffer ? ObjectCloner.Clone(v, owner, deep: true) : v;
+        /// <summary>A copy of a value for a scope of another thread (strings and numbers are values; objects, arrays and buffers are copied deep; an actor stays
+        /// itself - its reference may go to any thread).</summary>
+        private static Value CompletionCopy(Value v, IOwner owner)
+        {
+            if (v.Kind == ValueKind.Class && v.AsObjectRef() is ObjectInstance obj && (obj.Mailbox != null || (obj.RtClass?.IsActor ?? false))) return v;   // (an actor: its reference, like `fire with`)
+            return v.Kind is ValueKind.Class or ValueKind.Array or ValueKind.Buffer ? ObjectCloner.Clone(v, owner, deep: true) : v;
+        }
 
         internal Value CompletionNative(string name, Value[] a)
         {

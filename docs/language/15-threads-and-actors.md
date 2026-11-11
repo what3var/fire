@@ -322,7 +322,9 @@ print(try process logger)                   // False - the mailbox is empty
 ```
 
 - `process a` waits for the next message and runs it; `try process a` runs one if there is one and returns `True`/`False`.
-- References to actors may be passed to threads with `fire with a` - the one controlled exception to "no shared memory".
+- References to actors may be passed to threads with `fire with a` - the one controlled exception to "no shared memory". An actor that a thread reaches
+  through a field or an element of what it takes (`taking`, an argument of `fire Method(...)`) is not copied either: its reference goes along, so a
+  router or a service object that holds an actor can be taken to a thread and still talks to the one actor.
 - A thread that needs an answer awaits it: `var n = await counter.Get()` posts the message and waits until the actor's home has run it at its
   `process`; the result comes back (an exception that nothing in the method caught is thrown at the `await`). What the method made (`return new Box()`)
   is handed over; what the actor keeps - a field, a global - comes back as a copy. On the actor's home thread `await a.M()` runs the method at once,

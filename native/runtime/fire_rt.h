@@ -7036,6 +7036,7 @@ FIRE_FN bool copierDiscover(DeepCopier* c, Value start) {
             if (!leafAlive(v)) continue;
             o = asObj(v);
             if (copyMapFind(&c->objects, o)) continue;
+            if ((o->h.flags & 8) && !(start.kind == K_Class && o == asObj(start))) continue;   /* (an actor reached through a field: its reference goes along, like `fire with`) */
             if (FIRE_UNLIKELY(c->noCopy && classNoCopy(o->cls))) { noCopyErrorOp(o->cls, start.kind != K_Class || o != asObj(start), c->noCopyOp); return false; }
             copyMapPut(&c->objects, o, Undef());   /* marks it as found; the copy is made in phase 2 */
             c->order = (Obj**)fire_growPush(c->order, &c->orderCount, &c->orderCap, sizeof(Obj*));
@@ -8583,6 +8584,8 @@ FIRE_FN bool fire_sectionDone(void* ctx);
 FIRE_FN bool fire_actorReady(void* ctx);
 FIRE_FN bool fire_replyDone(void* ctx);
 FIRE_FN bool fire_tokWaitPred(void* ctx);
+FIRE_FN bool fire_complDone(void* ctx);   /* (a Completion: notifyKey of its node) */
+FIRE_FN bool fire_fdReady(void* ctx);     /* (__fd_wait: notifyKey of the waiter) */
 #ifdef FIRE_TASKS
 FIRE_FN bool fire_awaitDone(void* ctx);
 #endif
@@ -8614,7 +8617,7 @@ FIRE_FN bool blockUntil(bool (*pred)(void*), void* ctx, bool stopOnTerminate, in
 #ifdef FIRE_TASKS
         if (taskRunning()) {
             /* (a task - a member of the main program's group too: parked until an event or its time - Sleep wakes only at its time, the other conditions are looked at again every few ms) */
-            bool keyed = pred == fire_sectionGranted || pred == fire_sectionDone || pred == fire_replyDone || pred == fire_awaitDone;
+            bool keyed = pred == fire_sectionGranted || pred == fire_sectionDone || pred == fire_replyDone || pred == fire_awaitDone || pred == fire_complDone || pred == fire_fdReady;
             const void* key = pred == fire_sleepWake || pred == fire_tokWaitPred ? (const void*)&g_terminate : keyed || pred == fire_actorReady ? ctx : NULL;
             /* (Sleep wakes at its time, a section when it is granted or done, an awaited reply or group when it is done - notifyKey; anything else is looked
              * at again every few ms) */
@@ -9117,6 +9120,7 @@ FIRE_FN void lamSetHome(Lam* l, const Lam* from);
 FIRE_FN Value replyResult(Value r, OwnList* msgOwn, OwnList* travel, OwnList* list) {
     Owned* o = ownedOf(r);
     if (r.kind == K_Lambda && !lamOf(r)->home && lamOf(r)->on.kind == K_Class) lamSetHome(lamOf(r), lamOf(r));   /* (a bound lambda in the result: its calls come back here) */
+    if (r.kind == K_Class && leafAlive(r) && (asObj(r)->h.flags & 8)) return r;   /* (an actor - a field of the actor, a registry of actors: its reference, like `fire with`) */
     if (o) {
         if (o->owner && o->owner != msgOwn) { r = copyValue(r, true, list); o = ownedOf(r); }
         if (!o) return r;
@@ -9141,9 +9145,11 @@ typedef struct ComplNode {
 } ComplNode;
 FIRE_FN ComplNode* complOf(Value h) { return h.kind == K_Int ? (ComplNode*)(intptr_t)h.i : NULL; }
 FIRE_FN bool fire_complDone(void* ctx) { return fire_atomic_loadAcquire(&((ComplNode*)ctx)->done) != 0; }
-/* (a copy for the scope `owner` of another thread: objects, arrays and buffers deep, their strings as copies; a string as a copy with no count yet) */
+/* (a copy for the scope `owner` of another thread: objects, arrays and buffers deep, their strings as copies; a string as a copy with no count yet; an
+ * actor stays itself - its reference may go to any thread) */
 FIRE_FN Value complCopy(Value v, OwnList* owner) {
     if (v.kind == K_String) return strCross(v);
+    if (v.kind == K_Class && leafAlive(v) && (asObj(v)->h.flags & 8)) return v;   /* (an actor: its reference, like `fire with`) */
     if ((v.kind == K_Class && leafAlive(v)) || ((v.kind == K_Array || v.kind == K_Buffer) && ownedOf(v))) {
         DeepCopier c;
         Value r;
@@ -9184,7 +9190,7 @@ FIRE_FN Value fire_completion_set(Value h, Value v, Value failed) {
     if (c.kind == K_String) retain(c);
     n->value = c;
     fire_atomic_storeRelease(&n->done, failed.kind == K_Bool && failed.i ? 2 : 1);
-    notifyEventAll();   /* (every wait looks again) */
+    notifyEventAll();   /* (every wait looks again - those with a token and those parked on the node's address) */
     return Bool(true);
 }
 /* `Completion.Wait(limit)`: parks the task (a thread waits) until the value is there, the token of the task is cancelled or `limit` ran out
@@ -9231,6 +9237,205 @@ FIRE_FN Value fire_completion_wait(Value h, Value limit, OwnList* list) {
     if (r.kind == K_String && refOf(r)->rc != IMMORTAL) { retain(r); poolPush(refOf(r)); }
     if (fire_atomic_loadAcquire(&n->done) == 2 && r.kind == K_Class) return throwValueR(r, false);
     return r;
+}
+
+/* ---- Waiting for a socket (docs/ROADMAP_HTTP.md step 0): `__fd_wait(fd, events, ms)` parks the task until the socket `fd` (of the net package: its
+ * __NetNativeHandle) is ready - bit 1 readable, bit 2 writable -, `ms` ran out (0) or the token of the task is cancelled (the exception). One poller thread
+ * per program waits for all of them with poll()/WSAPoll (and a pipe or a socket of its own to be woken when the set changes) and wakes the tasks; nobody
+ * polls. Only where the threads of the platform are system threads (FIRE_PLAT_PARALLEL: posix, Windows - not the green threads, not FreeRTOS); elsewhere
+ * (the boards, the simulator, FIRE_NO_FD_POLL) the result is -1 and the net package waits as before (it asks and sleeps). */
+typedef struct FdWaiter { fire_atomic32 ready; int64_t fd; short events; bool token; struct FdWaiter* next; } FdWaiter;
+FIRE_FN bool fire_fdReady(void* ctx) { return fire_atomic_loadAcquire(&((FdWaiter*)ctx)->ready) != 0; }
+#if !defined(FIRE_NO_FD_POLL) && defined(FIRE_PLAT_PARALLEL) && (defined(_WIN32) || defined(__unix__) || defined(__APPLE__)) && !defined(FIRE_NET_LWIP)
+#define FIRE_FD_POLL 1
+#if defined(_WIN32)
+#include <winsock2.h>
+typedef WSAPOLLFD fire_pollfd;
+#define FIRE_POLL_IN POLLRDNORM
+#define FIRE_POLL_OUT POLLWRNORM
+#define fire_pollCall(a, n, ms) WSAPoll((a), (ULONG)(n), (ms))
+#else
+#include <poll.h>
+#include <unistd.h>
+#include <fcntl.h>
+typedef struct pollfd fire_pollfd;
+#define FIRE_POLL_IN POLLIN
+#define FIRE_POLL_OUT POLLOUT
+#define fire_pollCall(a, n, ms) poll((a), (nfds_t)(n), (ms))
+#endif
+typedef struct FdPoller {
+    fire_mutex m;
+    FdWaiter* head;
+#if defined(_WIN32)
+    SOCKET wake;                  /* a UDP socket connected to itself: a datagram wakes the poll */
+#else
+    int wake[2];                  /* a pipe */
+#endif
+} FdPoller;
+FIRE_FN void fdPollWake(FdPoller* p) {
+    char b = 1;
+#if defined(_WIN32)
+    send(p->wake, &b, 1, 0);
+#else
+    ssize_t r = write(p->wake[1], &b, 1);
+    (void)r;
+#endif
+}
+FIRE_FN void fdPollDrain(FdPoller* p) {
+    char b[64];
+#if defined(_WIN32)
+    while (recv(p->wake, b, sizeof b, 0) > 0) {}
+#else
+    while (read(p->wake[0], b, sizeof b) > 0) {}
+#endif
+}
+/* (the poller thread: polls the wake channel and every waiting socket; what is ready is taken out of the list and its task woken) */
+FIRE_FN void fdPollLoop(void* arg) {
+    FdPoller* p = (FdPoller*)arg;
+    fire_pollfd* fds = NULL;
+    FdWaiter** who = NULL;
+    uint32_t cap = 0;
+    for (;;) {
+        uint32_t n = 1, i;
+        FdWaiter* w;
+        bool all = false;
+        uint32_t nk = 0;
+        fire_mutex_lock(&p->m);
+        for (w = p->head; w; w = w->next) n++;
+        if (n > cap) {
+            uint32_t c = n * 2;
+            fire_pollfd* nf = (fire_pollfd*)realloc(fds, c * sizeof(fire_pollfd));
+            FdWaiter** nw = (FdWaiter**)realloc(who, c * sizeof(FdWaiter*));
+            if (!nf || !nw) { fire_mutex_unlock(&p->m); fatal("Out of memory."); }
+            fds = nf; who = nw; cap = c;
+        }
+        memset(fds, 0, n * sizeof(fire_pollfd));
+#if defined(_WIN32)
+        fds[0].fd = p->wake;
+#else
+        fds[0].fd = p->wake[0];
+#endif
+        fds[0].events = FIRE_POLL_IN;
+        who[0] = NULL;
+        for (i = 1, w = p->head; w; w = w->next, i++) {
+#if defined(_WIN32)
+            fds[i].fd = (SOCKET)w->fd;
+#else
+            fds[i].fd = (int)w->fd;
+#endif
+            fds[i].events = (short)(((w->events & 1) ? FIRE_POLL_IN : 0) | ((w->events & 2) ? FIRE_POLL_OUT : 0));
+            who[i] = w;
+        }
+        fire_mutex_unlock(&p->m);
+        if (fire_pollCall(fds, n, -1) < 0) { fire_plat_sleepMs(1); continue; }
+        if (fds[0].revents) fdPollDrain(p);
+        fire_mutex_lock(&p->m);
+        for (i = 1; i < n; i++) {
+            FdWaiter** link;
+            short r = fds[i].revents;
+            if (!r) continue;
+            for (link = &p->head; *link && *link != who[i]; link = &(*link)->next) {}
+            if (!*link) continue;   /* (it stopped waiting meanwhile: never touched again) */
+            *link = who[i]->next;
+            if (who[i]->token) all = true;   /* (a wait with a token is woken by every event - read before `ready`: then the waiter may be gone) */
+            else who[nk++] = who[i];          /* (the others by their address) */
+            fire_atomic_storeRelease(&who[i]->ready, ((r & (FIRE_POLL_IN | POLLHUP | POLLERR | POLLNVAL)) ? 1 : 0) | ((r & (FIRE_POLL_OUT | POLLHUP | POLLERR | POLLNVAL)) ? 2 : 0));
+        }
+        fire_mutex_unlock(&p->m);
+        if (all) notifyEventAll();
+        for (i = 0; i < nk; i++) notifyKey(who[i]);
+    }
+}
+/* The poller of the program, started at the first wait (NULL: it could not be made - then the caller waits as before). */
+FIRE_FN FdPoller* fire_fdPoller(void) {
+    static fire_atomic32 state;   /* 0 none, 1 being made, 2 there, 3 failed */
+    static FdPoller poller;
+    uint32_t st = fire_atomic_loadAcquire(&state);
+    if (st == 2) return &poller;
+    if (st == 3) return NULL;
+    if (fire_atomic_exchange(&state, 1) == 0) {
+        bool ok;
+        fire_mutex_init(&poller.m);
+        poller.head = NULL;
+#if defined(_WIN32)
+        {
+            WSADATA wsa;
+            struct sockaddr_in a;
+            int len = sizeof a;
+            u_long nb = 1;
+            ok = WSAStartup(MAKEWORD(2, 2), &wsa) == 0;
+            poller.wake = ok ? socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP) : INVALID_SOCKET;
+            memset(&a, 0, sizeof a);
+            a.sin_family = AF_INET;
+            a.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+            ok = poller.wake != INVALID_SOCKET && bind(poller.wake, (struct sockaddr*)&a, sizeof a) == 0 && getsockname(poller.wake, (struct sockaddr*)&a, &len) == 0
+                 && connect(poller.wake, (struct sockaddr*)&a, sizeof a) == 0 && ioctlsocket(poller.wake, FIONBIO, &nb) == 0;
+        }
+#else
+        ok = pipe(poller.wake) == 0;
+        if (ok) {
+            fcntl(poller.wake[0], F_SETFL, fcntl(poller.wake[0], F_GETFL) | O_NONBLOCK);
+            fcntl(poller.wake[1], F_SETFL, fcntl(poller.wake[1], F_GETFL) | O_NONBLOCK);
+        }
+#endif
+        if (ok) fire_thread_detach(fire_thread_start(fdPollLoop, &poller, 65536));
+        fire_atomic_storeRelease(&state, ok ? 2 : 3);
+        return ok ? &poller : NULL;
+    }
+    while ((st = fire_atomic_loadAcquire(&state)) == 1) FIRE_PLAT_YIELD();
+    return st == 2 ? &poller : NULL;
+}
+#endif
+FIRE_FN Value fire_fd_wait(Value fdv, Value ev, Value msv) {
+#ifdef FIRE_FD_POLL
+    FdPoller* p;
+    FdWaiter w, **link;
+    CancelNode* token;
+    int64_t deadline = 0, until;
+    int64_t ms = msv.kind == K_Int ? msv.i : msv.kind == K_Float ? (int64_t)msv.f : -1;
+    int32_t held;
+    int state;
+    bool listed;
+    if (fdv.kind != K_Int || fdv.i < 0 || ev.kind != K_Int || (ev.i & 3) == 0) return Int(-1);
+    if (ms == 0) return Int(0);
+    if (!(p = fire_fdPoller())) return Int(-1);
+    token = fire_curToken();
+    if (token && (state = cancelState(token)) != 0) { fire_throwCancelled(state); return Undef(); }
+    if (ms > 0) deadline = steadyMs() + ms;
+    until = deadline;
+    if (token) { int64_t t = cancelDeadline(token); if (t && (!until || t < until)) until = t; }
+    w.fd = fdv.i;
+    w.events = (short)(ev.i & 3);
+    w.token = token != NULL;
+    fire_atomic_store(&w.ready, 0);
+    fire_mutex_lock(&p->m);
+    w.next = p->head;
+    p->head = &w;
+    fire_mutex_unlock(&p->m);
+    fdPollWake(p);
+    held = sectionYieldBegin();
+    if (token) {
+        TokWait tw;
+        tw.pred = fire_fdReady; tw.ctx = &w; tw.token = token;
+        if (g_isThread) blockUntil(fire_tokWaitPred, &tw, true, until); else blockUntilServing(fire_tokWaitPred, &tw, true, until);
+    } else if (g_isThread) blockUntil(fire_fdReady, &w, true, until);
+    else blockUntilServing(fire_fdReady, &w, true, until);
+    sectionYieldEnd(held);
+    fire_mutex_lock(&p->m);
+    for (link = &p->head; *link && *link != &w; link = &(*link)->next) {}
+    listed = *link != NULL;
+    if (listed) *link = w.next;
+    fire_mutex_unlock(&p->m);
+    if (listed) fdPollWake(p);   /* (the poller forgets the socket) */
+    if (fire_fdReady(&w)) return Int((int64_t)fire_atomic_loadAcquire(&w.ready));
+    if (token && (state = cancelState(token)) != 0) { fire_throwCancelled(state); return Undef(); }
+    if (deadline && steadyMs() >= deadline) return Int(0);
+    startLeave();   /* (terminate) */
+    return Undef();
+#else
+    (void)fdv; (void)ev; (void)msv;
+    return Int(-1);
+#endif
 }
 
 #ifdef FIRE_EXCEPTIONS
@@ -10838,6 +11043,10 @@ FIRE_FN void fire_threadsInit(void) {
     ownListInit(&g_terminateOwn, 0, NULL);
 }
 #endif  /* FIRE_THREADS */
+#ifndef FIRE_THREADS
+/* (a program without fire threads: no poller - the net package waits as before) */
+FIRE_FN Value fire_fd_wait(Value fdv, Value ev, Value msv) { (void)fdv; (void)ev; (void)msv; return Int(-1); }
+#endif
 
 /* ---------------------------------------------------------------------------------------------------------------------
  * The global state, defined in the one translation unit that defines FIRE_RT_IMPLEMENTATION (the generated program, or the library of a package for the VM).

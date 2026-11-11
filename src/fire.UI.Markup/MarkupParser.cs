@@ -414,6 +414,25 @@ namespace fire.UI.Markup
                 }
             }
 
+            // a FlowPanel: its text and its elements in their order - every piece of text between the elements is a Run (spaces folded to one)
+            if (def.Tag == "FlowPanel")
+            {
+                foreach (var part in node.Nodes())
+                {
+                    if (part is XText text)
+                    {
+                        var folded = Regex.Replace(text.Value, @"\s+", " ");
+                        if (folded.Length == 0 || (folded == " " && (part.PreviousNode == null || part.NextNode == null))) continue;
+                        var run = new MarkupElement { Tag = "Run", Line = Line(node) };
+                        run.Attributes.Add(new MarkupAttribute("Text", new LiteralValue(folded), Line(node)));
+                        element.Children.Add(run);
+                    }
+                    else if (part is XElement child) ReadElement(child, element.Children, errors, def);
+                }
+                into.Add(element);
+                return;
+            }
+
             // the text between the tags is the text of the element: <Button>OK</Button>
             var content = string.Concat(node.Nodes().OfType<XText>().Select(t => t.Value)).Trim();
             if (content.Length > 0)

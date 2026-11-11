@@ -44,4 +44,15 @@ namespace fire.Standard
         public static Value Call(string name, Value[] args) =>
             (Implementation ?? throw new InvalidOperationException("A Completion needs a running program."))(name, args);
     }
+
+    /// <summary>`__fd_wait(fd, events, ms)` (docs/ROADMAP_HTTP.md step 0): waits until the socket `fd` (the net package's __NetNativeHandle) is readable (bit 1)
+    /// or writable (bit 2), `ms` ran out (0) or the task is cancelled; -1: not supported here (the caller waits as before). The VM: fire.Runtime.FdWait;
+    /// native: fire_rt.h fire_fd_wait (a poller thread).</summary>
+    public static class FdWaitMethods
+    {
+        public const string NativeName = "__fd_wait";
+        public static Func<Value[], Value>? Implementation;
+        public static Value Call(Value[] args) =>
+            (Implementation ?? throw new InvalidOperationException("__fd_wait needs a running program."))(args);
+    }
 }

@@ -27561,6 +27561,694 @@ else
     // Network (bridges/fire_bridge_net.hpp): TCP, UDP and name resolution on the loopback interface - the same in the VM and in the native build
     natCases = natCases.Concat(new (string Name, string Source)[]
     {
+        ("Http.AppServer: Router als Klassen - ein Task pro Verbindung (30 langsame Anfragen parallel), Keep-Alive mit drei Anfragen hintereinander, Context.Number, 404 am Ende der Kette", """
+            #import "http"
+            #import "time"
+            class Stamp : Http.IRouter {
+                Http.Response Handle(Http.Context ctx, Http.Next next) {
+                    Http.Response r = next.Invoke(ctx)
+                    r.headers.Set("X-Number", "" + ctx.Number)
+                    return r
+                }
+            }
+            class Hello : Http.IRouter {
+                string greeting = "hello"
+                Http.Response Handle(Http.Context ctx, Http.Next next) {
+                    if (ctx.Request.path == "/hello") { return Http.Response.FromText(this.greeting + " " + ctx.Request.Query("n", "?")) }
+                    if (ctx.Request.path == "/slow") { Sleep(30ms); return Http.Response.FromText("slow") }
+                    return next.Invoke(ctx)
+                }
+            }
+            var server = new Http.AppServer("127.0.0.1", 0)
+            server.PushTo(new Stamp()).PushTo(new Hello())
+            int port = server.Port
+            int done = 0
+            string log = ""
+            fire taking port {
+                var c = new Net.TcpClient("127.0.0.1", port)
+                c.ReadTimeout = 5000
+                c.WriteString("GET /hello?n=1 HTTP/1.1\r\nHost: x\r\n\r\nGET /hello?n=2 HTTP/1.1\r\nHost: x\r\n\r\nGET /nothing HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n")
+                var all = new IO.MemoryStream()
+                var buf = new byte[4096]
+                while (true) {
+                    var n = c.Read(buf, 0, 4096)
+                    if (n <= 0) { break }
+                    all.Write(buf, 0, n)
+                }
+                var bytes = all.ToBuffer()
+                string text = IO.Utf8.GetString(bytes, 0, bytes.length)
+                sync global { log = text; done = done + 1 }
+            }
+            int parallel = 0
+            for (var i = 0; i < 30; i++) {
+                fire taking port {
+                    var client = new Http.Client()
+                    var r = client.Get("http://127.0.0.1:" + port + "/slow")
+                    sync global { if (r.Text() == "slow") { parallel = parallel + 1 }; done = done + 1 }
+                }
+            }
+            var start = DateTime.UtcNow.Ticks
+            while (done < 31) { server.AcceptOne(20ms); sync globals }
+            var ms = (DateTime.UtcNow.Ticks - start) / 10000
+            foreach (var l in log.Split("\n")) {
+                string t = l.Trim()
+                if (t.StartsWith("HTTP/") || t.StartsWith("hello") || t.StartsWith("Connection") || t.StartsWith("X-Number") || t.StartsWith("Not Found")) { print(t) }
+            }
+            print("parallel " + parallel + " connections " + server.Connections + " fast " + (ms < 700))
+            server.Close()
+            """),
+        ("Http.AppServer: Lambda-Router (Use, Routes) - Items, Antwort nachbearbeitet, Text, POST, Ausnahme = 500, gestreamte Antwort (chunked); Kette mit Lambdas: eine Anfrage pro Verbindung", """
+            #import "http"
+            #import "time"
+            class Boom : Exception { construct(string m) { this.message = m } }
+            var server = new Http.AppServer("127.0.0.1", 0)
+            server.Use(func (Http.Context ctx, Http.Next next) => {
+                ctx.SetItem("user", "anna")
+                Http.Response r = next.Invoke(ctx)
+                r.headers.Set("X-Chain", "seen " + ctx.Number)
+                return r
+            })
+            var routes = new Http.Routes()
+            routes.Map("GET", "/hello", func (Http.Context ctx) => "hello " + ctx.Item("user") + " " + ctx.Request.Query("n", "?"))
+            routes.Map("POST", "/echo", func (Http.Context ctx) => ctx.Request.Text())
+            routes.Map("GET", "/boom", func (Http.Context ctx) => { throw new Boom("x") })
+            routes.Map("GET", "/stream", func (Http.Context ctx) => {
+                var m = new IO.MemoryStream()
+                var data = IO.Utf8.GetBytes("streamed body of some length")
+                m.Write(data, 0, data.length)
+                m.Position = 0
+                return Http.Response.FromStream(take m, "text/plain")
+            })
+            server.PushTo(take routes)
+            int port = server.Port
+            int done = 0
+            string log = ""
+            fire taking port {
+                // two requests on one connection (keep-alive), then a third that closes
+                var c = new Net.TcpClient("127.0.0.1", port)
+                c.ReadTimeout = 5000
+                c.WriteString("GET /hello?n=1 HTTP/1.1\r\nHost: x\r\n\r\nGET /hello?n=2 HTTP/1.1\r\nHost: x\r\n\r\nGET /missing HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n")
+                var all = new IO.MemoryStream()
+                var buf = new byte[4096]
+                while (true) { var n = c.Read(buf, 0, 4096); if (n <= 0) { break }; all.Write(buf, 0, n) }
+                var bytes = all.ToBuffer()
+                string text = IO.Utf8.GetString(bytes, 0, bytes.length)
+                var client = new Http.Client()
+                var r = client.Post("http://127.0.0.1:" + port + "/echo", "ping", "text/plain")
+                var b = client.Get("http://127.0.0.1:" + port + "/boom")
+                var s = client.Get("http://127.0.0.1:" + port + "/stream")
+                var t = r.status + " " + r.Text() + " | " + b.status + " | " + s.status + " " + s.Text() + " " + s.Header("Transfer-Encoding") + " " + s.Header("X-Chain")
+                sync global { log = text + "\nCLIENT " + t; done = done + 2 }
+            }
+            while (done < 2) { server.AcceptOne(50ms); sync globals }
+            var lines = log.Split("\n")
+            foreach (var l in lines) {
+                var t = l.Trim()
+                if (t.StartsWith("HTTP/") || t.StartsWith("hello") || t.StartsWith("Connection") || t.StartsWith("X-Chain") || t.StartsWith("CLIENT") || t.StartsWith("Not Found")) { print(t) }
+            }
+            print("connections " + server.Connections)
+            server.Close()
+            """),
+        ("Http.Files: wwwroot 1:1 - index.html, Endung weggelassen, MIME, ETag (304), Range (206, Suffix, 416), HEAD; nie .fire, Punkt-Dateien, .. (auch kodiert), POST geht weiter", """
+            #import "http"
+            #import "filesystem"
+            #import "time"
+            var root = IO.Path.Combine(IO.Path.GetTempPath(), "fire-wwwroot-test-" + DateTime.UtcNow.Ticks)
+            IO.Directory.CreateDirectory(IO.Path.Combine(root, "sub"))
+            IO.File.WriteAllText(IO.Path.Combine(root, "index.html"), "<h1>home</h1>")
+            IO.File.WriteAllText(IO.Path.Combine(root, "about.html"), "about page")
+            IO.File.WriteAllText(IO.Path.Combine(root, "data.json"), "{\"a\": 1}")
+            IO.File.WriteAllText(IO.Path.Combine(root, "sub", "big.txt"), "0123456789abcdefghij")
+            IO.File.WriteAllText(IO.Path.Combine(root, "secret.fire"), "print(1)")
+            IO.File.WriteAllText(IO.Path.Combine(root, ".env"), "KEY=1")
+            class Last : Http.IRouter {
+                Http.Response Handle(Http.Context ctx, Http.Next next) { return Http.Response.FromText("fallback " + ctx.Request.path, 404) }
+            }
+            var server = new Http.AppServer("127.0.0.1", 0)
+            server.PushTo(new Http.Files(root, "/", true)).PushTo(new Last())
+            int port = server.Port
+            int done = 0
+            string log = ""
+            fire taking port {
+                var c = new Http.Client()
+                var site = "http://127.0.0.1:" + port
+                var out = ""
+                var r = c.Get(site + "/")
+                out = out + "root " + r.status + " " + r.Header("Content-Type") + " " + r.Text() + "\n"
+                r = c.Get(site + "/about")
+                out = out + "omit " + r.status + " " + r.Text() + "\n"
+                r = c.Get(site + "/data.json")
+                out = out + "json " + r.status + " " + r.Header("Content-Type") + " " + r.Length + "\n"
+                var tag = r.Header("ETag")
+                var h = new Http.Headers()
+                h.Set("If-None-Match", tag)
+                r = c.Request("GET", site + "/data.json", undefined, h)
+                out = out + "etag " + r.status + " " + r.Length + "\n"
+                var h2 = new Http.Headers()
+                h2.Set("Range", "bytes=5-9")
+                r = c.Request("GET", site + "/sub/big.txt", undefined, h2)
+                out = out + "range " + r.status + " " + r.Text() + " " + r.Header("Content-Range") + "\n"
+                var h3 = new Http.Headers()
+                h3.Set("Range", "bytes=-3")
+                r = c.Request("GET", site + "/sub/big.txt", undefined, h3)
+                out = out + "suffix " + r.status + " " + r.Text() + "\n"
+                var h4 = new Http.Headers()
+                h4.Set("Range", "bytes=50-60")
+                r = c.Request("GET", site + "/sub/big.txt", undefined, h4)
+                out = out + "outside " + r.status + " " + r.Header("Content-Range") + "\n"
+                r = c.Get(site + "/secret.fire")
+                out = out + "source " + r.status + " " + r.Text() + "\n"
+                r = c.Get(site + "/.env")
+                out = out + "dot " + r.status + "\n"
+                r = c.Get(site + "/../outside.txt")
+                out = out + "up " + r.status + "\n"
+                r = c.Get(site + "/sub/%2e%2e/%2e%2e/etc/passwd")
+                out = out + "encoded up " + r.status + "\n"
+                r = c.Head(site + "/sub/big.txt")
+                out = out + "head " + r.status + " " + r.Header("Content-Length") + " " + r.Length + "\n"
+                r = c.Post(site + "/index.html", "x", "text/plain")
+                out = out + "post " + r.status + "\n"
+                sync global { log = out; done = 1 }
+            }
+            while (done < 1) { server.AcceptOne(20ms); sync globals }
+            print(log)
+            server.Close()
+            IO.Directory.Delete(root, true)
+            """),
+        ("Http.Sessions: Cookie (HttpOnly), Werte ueber Verbindungen hinweg am Zuhause der Sitzungen (ein Actor), Renew nach dem Login, ungueltige Id, Ablauf, End, Dateispeicher", """
+            #import "http"
+            #import "filesystem"
+            #import "time"
+            class Counter : Http.IRouter {
+                Http.Response Handle(Http.Context ctx, Http.Next next) {
+                    Http.Session s = ctx.Item("session")
+                    var path = ctx.Request.path
+                    if (path == "/count") {
+                        int n = Http.Num.Parse(s.Get("n", "0")) + 1
+                        s.Set("n", n)
+                        return Http.Response.FromText("n=" + n)
+                    }
+                    if (path == "/login") { s.Set("user", "anna"); s.Renew(); return Http.Response.FromText("welcome " + s.Get("user")) }
+                    if (path == "/logout") { s.End(); return Http.Response.FromText("bye") }
+                    return next.Invoke(ctx)
+                }
+            }
+            var folder = IO.Path.Combine(IO.Path.GetTempPath(), "fire-sessions-" + DateTime.UtcNow.Ticks)
+            var sessions = new Http.Sessions(300, new Http.FileSessionStore(folder))
+            var server = new Http.AppServer("127.0.0.1", 0)
+            server.PushTo(take sessions).PushTo(new Counter())
+            int port = server.Port
+            int done = 0
+            string log = ""
+            fire taking port {
+                var c = new Http.Client()
+                var site = "http://127.0.0.1:" + port
+                var out = ""
+                var r = c.Get(site + "/count")
+                var cookie = r.Header("Set-Cookie")
+                var id = cookie.Substring(13, 32)
+                out = out + r.Text() + " cookie " + cookie.StartsWith("fire-session=") + " " + (cookie.IndexOf("HttpOnly") > 0) + "\n"
+                var h = new Http.Headers()
+                h.Set("Cookie", "theme=dark; fire-session=" + id)
+                r = c.Request("GET", site + "/count", undefined, h)
+                out = out + r.Text() + " again " + (r.Header("Set-Cookie") == undefined) + "\n"
+                r = c.Request("GET", site + "/count", undefined, h)
+                out = out + r.Text() + "\n"
+                r = c.Get(site + "/count")
+                out = out + "other " + r.Text() + "\n"
+                r = c.Request("GET", site + "/login", undefined, h)
+                var renewed = r.Header("Set-Cookie").Substring(13, 32)
+                out = out + r.Text() + " new id " + (renewed != id) + "\n"
+                r = c.Request("GET", site + "/count", undefined, h)
+                out = out + "old id after login " + r.Text() + "\n"
+                var h2 = new Http.Headers()
+                h2.Set("Cookie", "fire-session=" + renewed)
+                r = c.Request("GET", site + "/count", undefined, h2)
+                out = out + "renewed keeps " + r.Text() + "\n"
+                var h3 = new Http.Headers()
+                h3.Set("Cookie", "fire-session=../../etc/passwd")
+                r = c.Request("GET", site + "/count", undefined, h3)
+                out = out + "bad id " + r.Text() + "\n"
+                Sleep(400ms)
+                r = c.Request("GET", site + "/count", undefined, h2)
+                out = out + "after the time " + r.Text() + "\n"
+                r = c.Request("GET", site + "/logout", undefined, h2)
+                out = out + r.Text() + " " + r.Header("Set-Cookie") + "\n"
+                sync global { log = out; done = 1 }
+            }
+            while (done < 1) { server.AcceptOne(20ms); sync globals }
+            print(log)
+            server.Close()
+            IO.Directory.Delete(folder, true)
+            """),
+        ("Threads: ein Actor in einem Feld dessen, was ein Thread mit taking bekommt, bleibt der Actor selbst (keine Kopie) - Completion bringt seine Referenz aus seinem Thread", """
+            #import "time"
+            actor Store {
+                List items
+                bool stopped
+                construct() { this.items = new List(); this.stopped = false }
+                int Add(string s) { this.items.Add(s); return this.items.Count }
+                int Count() { return this.items.Count }
+                undefined Stop() { this.stopped = true }
+            }
+            class Service {
+                Store store
+                string name
+                construct(Store s, string name) { this.store = s; this.name = name }
+            }
+            var ready = new Completion()
+            var back = ready.Share()
+            fire handover back {
+                var home = new Store()
+                back.Set(home)
+                while (!home.stopped) { process home }
+            }
+            Store st = ready.Wait(5s)
+            int first = await st.Add("main")
+            var services = new List()
+            services.Add(new Service(st, "svc"))
+            int done = 0
+            fire taking services {
+                Service svc = services[0]
+                var s = svc.store
+                int before = await s.Count() until 2s
+                int after = await s.Add("thread")
+                print("thread " + before + " " + after + " " + svc.name)
+                sync global { done = 1 }
+            }
+            var t0 = 0
+            while (done < 1 && t0 < 300) { sync globals; Sleep(10ms); t0 = t0 + 1 }
+            int n = await st.Count()
+            print("main " + first + " " + n)
+            st.Stop()
+            """),
+        ("Http.Rpc: [Remote]-Klassen ueber HTTP und JSON - nur mit Sitzung (401), [Nickname] fuer gleichnamige Klassen, Methode, Objekt als Argument, Dienst per DI (Actor), Property, Ausnahme 500, nicht [Remote] 404, falsche Argumente 400, Lebensdauer request, session und single", """
+            #import "http.rpc"
+            #import "time"
+            actor Clock {
+                int Ticks() { return 42 }
+            }
+            class Item { string name
+                int count }
+            [Remote]
+            class Calc {
+                Clock clock
+                int calls = 0
+                construct(Clock clock) { this.clock = clock }
+                [Remote] int Add(int a, int b) { this.calls = this.calls + 1; return a + b }
+                [Remote] string Describe(Item item) { return item.name + " x" + item.count }
+                [Remote] int Time() { var c = this.clock; int t = await c.Ticks(); return t }
+                [Remote] int Calls { get { return this.calls } }
+                [Remote] undefined Fail() { throw new ArgumentException("broken") }
+                int Hidden() { return 1 }
+            }
+            [Remote]
+            [Lifetime "session"]
+            class Cart {
+                List items
+                construct() { this.items = new List() }
+                [Remote] int Put(string name) { this.items.Add(name); return this.items.Count }
+                [Remote] List Items() { return this.items }
+            }
+            [Remote]
+            [Lifetime "single"]
+            [Timeout 600]
+            class Visits {
+                int n = 0
+                [Remote] int Next() { this.n = this.n + 1; return this.n }
+            }
+            class NotRemote { int X() { return 1 } }
+            namespace Shop {
+                [Remote]
+                [Nickname "cart2"]
+                class Basket { [Remote] string Who() { return "shop" } }
+            }
+            namespace Admin {
+                [Remote]
+                [Nickname "basket"]
+                class Basket { [Remote] string Who() { return "admin" } }
+            }
+            var clock = new Clock()
+            var services = new List()
+            services.Add(clock)
+            var server = new Http.AppServer("127.0.0.1", 0)
+            server.PushTo(new Http.Sessions()).PushTo(new Http.Rpc("/rpc", take services))
+            int port = server.Port
+            int done = 0
+            string log = ""
+            fire taking port {
+                var c = new Http.Client()
+                var site = "http://127.0.0.1:" + port + "/rpc/"
+                var out = ""
+                var r = c.Post(site + "Calc/Add", "[2, 3]", "application/json")
+                out = out + "no session " + r.status + " " + r.Text() + "\n"
+                var cookie = r.Header("Set-Cookie").Substring(0, 45)
+                var h = new Http.Headers()
+                h.Set("Cookie", cookie)
+                h.Set("Content-Type", "application/json")
+                var bad = new Http.Headers()
+                bad.Set("Cookie", "fire-session=00000000000000000000000000000000")
+                r = c.Request("POST", site + "Calc/Add", "[2, 3]", bad)
+                out = out + "unknown session " + r.status + "\n"
+                r = c.Request("POST", site + "Calc/Add", "[2, 3]", h)
+                out = out + "add " + r.status + " " + r.Text() + "\n"
+                r = c.Request("POST", site + "Calc/Describe", "[{\"name\": \"pen\", \"count\": 3}]", h)
+                out = out + "object " + r.status + " " + r.Text() + "\n"
+                r = c.Request("POST", site + "Calc/Time", "", h)
+                out = out + "service " + r.status + " " + r.Text() + "\n"
+                r = c.Request("GET", site + "Calc/Calls", undefined, h)
+                out = out + "request lifetime " + r.Text() + "\n"
+                r = c.Request("POST", site + "Calc/Fail", "[]", h)
+                out = out + "throws " + r.status + " " + r.Text() + "\n"
+                r = c.Request("POST", site + "Calc/Hidden", "[]", h)
+                out = out + "hidden " + r.status + "\n"
+                r = c.Request("POST", site + "NotRemote/X", "[]", h)
+                out = out + "not remote " + r.status + "\n"
+                r = c.Request("POST", site + "Calc/Add", "[1]", h)
+                out = out + "wrong count " + r.status + "\n"
+                r = c.Request("POST", site + "Calc/Add", "[1,", h)
+                out = out + "bad json " + r.status + "\n"
+                r = c.Request("POST", site + "Cart/Put", "[\"apple\"]", h)
+                r = c.Request("POST", site + "Cart/Put", "[\"pear\"]", h)
+                out = out + "session " + r.Text() + "\n"
+                r = c.Request("POST", site + "Cart/Items", "[]", h)
+                out = out + "items " + r.Text() + "\n"
+                var first = c.Post(site + "Calc/Add", "[1, 1]", "application/json")
+                var h2 = new Http.Headers()
+                h2.Set("Cookie", first.Header("Set-Cookie").Substring(0, 45))
+                r = c.Request("POST", site + "Cart/Items", "[]", h2)
+                out = out + "other session " + r.Text() + "\n"
+                r = c.Request("POST", site + "cart2/Who", "[]", h)
+                out = out + "nickname " + r.Text() + "\n"
+                r = c.Request("POST", site + "basket/Who", "[]", h)
+                out = out + "other nickname " + r.Text() + "\n"
+                r = c.Request("POST", site + "Shop.Basket/Who", "[]", h)
+                out = out + "class name hidden " + r.status + "\n"
+                r = c.Request("POST", site + "Visits/Next", "[]", h)
+                r = c.Request("POST", site + "Visits/Next", "[]", h)
+                out = out + "single " + r.Text() + "\n"
+                sync global { log = out; done = 1 }
+            }
+            while (done < 1) {
+                server.AcceptOne(20ms)
+                sync globals
+                while (try process clock) { }
+            }
+            print(log)
+            server.Close()
+            """),
+        ("Http.Rpc: zwei [Remote]-Klassen mit demselben oeffentlichen Namen sind eine ArgumentException", """
+            #import "http.rpc"
+            namespace A {
+                [Remote]
+                [Nickname "same"]
+                class One { [Remote] int X() { return 1 } }
+            }
+            namespace B {
+                [Remote]
+                [Nickname "same"]
+                class Two { [Remote] int X() { return 2 } }
+            }
+            try {
+                var rpc = new Http.Rpc()
+                print("no")
+            } catch (ArgumentException e) { print(e.message) }
+            """),
+        ("Actors: list.Add(actor) und die Zuweisung eines Actors in ein Feld (auch in einem Thread) sind keine Nachrichten (tryTakeTo) - der Actor bleibt bei seinem Zuhause", """
+            #import "time"
+            actor Clock {
+                int n = 0
+                int Tick() { this.n = this.n + 1; return this.n }
+            }
+            class Holder {
+                Clock clock
+                construct(Clock c) { this.clock = c }
+            }
+            var clock = new Clock()
+            var list = new List()
+            list.Add(clock)
+            int done = 0
+            fire with clock {
+                var h = new Holder(clock)
+                var c = h.clock
+                int t = await c.Tick()
+                sync global { done = t }
+            }
+            while (done < 1) {
+                sync globals
+                while (try process clock) { }
+                Sleep(1ms)
+            }
+            var stray = 0
+            while (try process clock) { stray = stray + 1 }
+            print("tick " + done + " list " + list.Count + " stray messages " + stray)
+            """),
+        ("Http.WebSockets: Handshake (101, Sec-WebSocket-Accept), Text, 70000 Bytes (64-Bit-Laenge), 300 Zeichen (16-Bit-Laenge), Ping, Zeitlimit beim Empfang, Close 1000, 426 ohne Upgrade, fremder Origin abgewiesen", """
+            #import "http"
+            #import "time"
+            class Echo : Http.IWebSocketHandler {
+                string prefix = "echo: "
+                undefined Serve(Http.WebSocket ws) {
+                    while (true) {
+                        var m = ws.Receive()
+                        if (m == undefined) { break }
+                        if (m.IsText) {
+                            var t = m.Text()
+                            if (t == "bye") { ws.Close(1000, "done"); break }
+                            ws.Send(this.prefix + t)
+                        } else {
+                            ws.Send("bytes " + m.data.length + " last " + m.data[m.data.length - 1])
+                        }
+                    }
+                }
+            }
+            var server = new Http.AppServer("127.0.0.1", 0)
+            server.PushTo((new Http.WebSockets("/chat", new Echo())).AllowOrigin("http://good.example"))
+            int port = server.Port
+            int done = 0
+            string log = ""
+            fire taking port {
+                var out = ""
+                var h = new Http.Headers()
+                h.Set("Origin", "http://good.example")
+                var ws = Http.WebSocket.Connect("ws://127.0.0.1:" + port + "/chat", 5000, h)
+                ws.Send("hello")
+                out = out + ws.ReceiveText(5000) + "\n"
+                var big = new byte[70000]
+                for (var i = 0; i < big.length; i++) { big[i] = i % 251 }
+                ws.SendBytes(big)
+                out = out + ws.ReceiveText(5000) + "\n"
+                var mid = ""
+                for (var i = 0; i < 300; i++) { mid = mid + "x" }
+                ws.Send(mid)
+                out = out + "mid " + ws.ReceiveText(5000).Length + "\n"
+                ws.Ping()
+                ws.Send("after ping")
+                out = out + ws.ReceiveText(5000) + "\n"
+                out = out + "nothing yet " + (ws.Receive(50) == undefined) + " open " + ws.IsOpen + "\n"
+                ws.Send("bye")
+                out = out + "closed " + (ws.Receive(5000) == undefined) + " code " + ws.CloseCode + " open " + ws.IsOpen + "\n"
+                var c = new Http.Client()
+                var r = c.Get("http://127.0.0.1:" + port + "/chat")
+                out = out + "plain get " + r.status + "\n"
+                var bad = new Http.Headers()
+                bad.Set("Origin", "http://evil.example")
+                try { Http.WebSocket.Connect("ws://127.0.0.1:" + port + "/chat", 5000, bad); out = out + "no\n" } catch (Http.HttpException e) { out = out + "evil origin refused\n" }
+                sync global { log = out; done = 1 }
+            }
+            while (done < 1) { server.AcceptOne(20ms); sync globals }
+            print(log)
+            server.Close()
+            """),
+        ("UI.FlowPanel: Text bricht Wort fuer Wort ueber Runs hinweg um, ein Button steht in der Zeile (unten buendig), LineBreak, Text", """
+            #import "ui"
+            var fb = new Framebuffer(400, 300)
+            var win = new Window(fb, "flow")
+            var root = new UI.Root(fb, win)
+            var flow = new UI.FlowPanel(0, 0, 120, -1)
+            flow.AddText("Hello world, please ")
+            var b = new UI.Button("OK", 0, 0, 40, 26)
+            flow.Add(b)
+            flow.AddText(" click it when you are done.")
+            flow.Add(new UI.LineBreak())
+            flow.AddText("Second paragraph")
+            root.content.Add(flow)
+            root.content.Measure(root, 400, 300)
+            root.content.Arrange(root, 0, 0, 400, 300)
+            print("size " + flow.actualWidth + "x" + flow.actualHeight)
+            var line = ""
+            var lastY = -1
+            for (var i = 0; i < flow.pieces.Count; i++) {
+                UI.FlowPiece p = flow.pieces[i]
+                if (p.y != lastY && lastY != -1) { print(line); line = "" }
+                lastY = p.y
+                if (p.text != undefined) { line = line + "[" + p.text + "]" } else { line = line + "<button@" + p.x + "," + p.y + ">" }
+            }
+            print(line)
+            print("button " + b.rx + "," + b.ry + " " + b.actualWidth + "x" + b.actualHeight)
+            print(flow.Text)
+            """),
+        ("Http.Pages: eine FXML-View als Seite - HTML mit CSS-Layout (Flex), Circuit pro Seite, Eingabe, Klick, Checkbox und Button im FlowPanel ueber den WebSocket, nur die Aenderungen zurueck, fremde Sitzung 4401, unbekannte Seite 4404", """
+            #import "http.pages"
+            // Generated from Hello.fxml - do not edit, change the markup. Derive from the class and override the methods named in on...="...":
+            //     class Hello : HelloBase { override undefined Save(any sender) { ... } }
+            #import "ui"
+
+            class HelloBase {
+                UI.Panel view
+                UI.Label title
+                UI.TextBox nameBox
+                UI.CheckBox loud
+                UI.Button ok
+                UI.Button more
+                UI.Run count
+
+                construct() {
+                    this.view = new UI.Panel(0, 0, 400, 300)
+                    var e0 = new UI.StackPanel(0, 0, -1, -1)
+                    e0.Spacing = 6
+                    e0.Padding = 10
+                    var e1 = new UI.Label("", 0, 0)
+                    e1.Text = "Hello"
+                    e0.Add(e1)
+                    this.title = e1
+                    var e2 = new UI.TextBox("", 0, 0)
+                    e2.Text = "world"
+                    e0.Add(e2)
+                    this.nameBox = e2
+                    var e3 = new UI.CheckBox("", 0, 0)
+                    e3.Text = "Loud"
+                    e0.Add(e3)
+                    this.loud = e3
+                    var e4 = new UI.Button("", 0, 0)
+                    e4.Text = "Greet"
+                    e4.OnClick = func () on this => { Greet(this.ok) }
+                    e0.Add(e4)
+                    this.ok = e4
+                    var e5 = new UI.FlowPanel(0, 0, -1, -1)
+                    e5.Width = 200
+                    var e6 = new UI.Run("")
+                    e6.Text = "Press "
+                    e5.Add(e6)
+                    var e7 = new UI.Button("", 0, 0)
+                    e7.Text = "+"
+                    e7.OnClick = func () on this => { More(this.more) }
+                    e5.Add(e7)
+                    this.more = e7
+                    var e8 = new UI.Run("")
+                    e8.Text = " to count: "
+                    e5.Add(e8)
+                    var e9 = new UI.Run("")
+                    e9.Text = "0"
+                    e5.Add(e9)
+                    this.count = e9
+                    e0.Add(e5)
+                    this.view.Add(e0)
+                }
+
+                // the handler of an event in the markup - override it in the derived class
+                undefined Greet(any sender) { }
+                // the handler of an event in the markup - override it in the derived class
+                undefined More(any sender) { }
+
+                // adds the view to a container (UI.Root.content, a Panel or a Stack)
+                undefined Attach(any container) { container.Add(this.view) }
+            }
+            [Page "/hello"]
+            class HelloPage : HelloBase {
+                int n = 0
+                override undefined Greet(any sender) {
+                    var t = "Hello " + this.nameBox.Text
+                    if (this.loud.IsChecked) { t = t.ToUpper() + "!" }
+                    this.title.Text = t
+                }
+                override undefined More(any sender) {
+                    this.n = this.n + 1
+                    this.count.Text = "" + this.n
+                }
+            }
+            var server = new Http.AppServer("127.0.0.1", 0)
+            server.PushTo(new Http.Sessions()).PushTo(new Http.Pages("Hello"))
+            int port = server.Port
+            int done = 0
+            string log = ""
+            fire taking port {
+                var c = new Http.Client()
+                var r = c.Get("http://127.0.0.1:" + port + "/hello")
+                var html = r.Text()
+                var cookie = r.Header("Set-Cookie").Substring(0, 45)
+                var at = html.IndexOf("data-circuit=\"") + 14
+                var circuit = html.Substring(at, 32)
+                var out = "page " + r.status + " " + (html.IndexOf("<button data-k=\"click\" id=\"f5\"") >= 0) + " flex " + (html.IndexOf("display:flex;flex-direction:column;gap:6px") >= 0) + "\n"
+                var h = new Http.Headers()
+                h.Set("Cookie", cookie)
+                var ws = Http.WebSocket.Connect("ws://127.0.0.1:" + port + "/_fire/ws?c=" + circuit, 5000, h)
+                ws.Send("{\"e\": 3, \"k\": \"input\", \"v\": \"fire\"}")
+                out = out + "input " + ws.ReceiveText(5000) + "\n"
+                ws.Send("{\"e\": 5, \"k\": \"click\"}")
+                out = out + "click " + ws.ReceiveText(5000) + "\n"
+                ws.Send("{\"e\": 4, \"k\": \"check\", \"v\": true}")
+                ws.ReceiveText(5000)
+                ws.Send("{\"e\": 5, \"k\": \"click\"}")
+                out = out + "loud " + ws.ReceiveText(5000) + "\n"
+                ws.Send("{\"e\": 8, \"k\": \"click\"}")
+                out = out + "flow " + ws.ReceiveText(5000) + "\n"
+                var other = new Http.Headers()
+                other.Set("Cookie", "fire-session=00000000000000000000000000000000")
+                var ws2 = Http.WebSocket.Connect("ws://127.0.0.1:" + port + "/_fire/ws?c=" + circuit, 5000, other)
+                out = out + "other session " + (ws2.ReceiveText(5000) == undefined) + " " + ws2.CloseCode + "\n"
+                var ws3 = Http.WebSocket.Connect("ws://127.0.0.1:" + port + "/_fire/ws?c=00000000000000000000000000000000", 5000, h)
+                out = out + "no such page " + (ws3.ReceiveText(5000) == undefined) + " " + ws3.CloseCode + "\n"
+                ws.Close()
+                sync global { log = out; done = 1 }
+            }
+            while (done < 1) { server.AcceptOne(20ms); sync globals }
+            print(log)
+            server.Close()
+            """),
+        ("Net: der Poller weckt wartende Threads (40 Verbindungen in fire-Threads, Daten kommen spaeter), Zeitlimit, Abbruch eines Read per until", """
+            #import "net"
+            #import "time"
+            var l = new Net.TcpListener("127.0.0.1", 0)
+            int port = l.Port
+            int done = 0
+            int sum = 0
+            for (var i = 0; i < 40; i++) {
+                fire taking i taking port {
+                    var c = new Net.TcpClient("127.0.0.1", port)
+                    c.ReadTimeout = 30000
+                    var buf = new byte[4]
+                    int n = c.Read(buf, 0, 4)
+                    int v = buf[0]
+                    sync global { done = done + 1; sum = sum + v }
+                    c.Close()
+                }
+            }
+            var peers = new List()
+            for (var i = 0; i < 40; i++) { peers.Add(l.Accept(30000)) }
+            Sleep(50ms)
+            print("waiting " + done)
+            for (var i = 0; i < 40; i++) {
+                var b = new byte[1]
+                b[0] = i + 1
+                Net.TcpClient p = peers[i]
+                p.Write(b, 0, 1)
+            }
+            while (done < 40) { sync globals; Sleep(2ms) }
+            print("all " + done + " sum " + sum)
+            var c = new Net.TcpClient("127.0.0.1", port)
+            Net.TcpClient s = l.Accept(2000)
+            var buf = new byte[4]
+            c.ReadTimeout = 60
+            try { c.Read(buf, 0, 4); print("no") } catch (Net.TimeoutException e) { print("timeout " + e.code) }
+            c.ReadTimeout = 10000
+            var src = new CancellationSource()
+            src.CancelAfter(40ms)
+            try { int r = await Reader.Read(c) until src.Token; print("no " + r) } catch (CancelledException e) { print("cancelled read") }
+            s.WriteString("x")
+            print("still works " + c.Read(buf, 0, 4))
+            class Reader { static int Read(Net.TcpClient c) { var b = new byte[4]; return c.Read(b, 0, 4) } }
+            """),
         ("Net: TCP, UDP, DNS ueber Loopback, Zeitlimits, Fehler", """
             #import "net"
             var l = new Net.TcpListener("127.0.0.1", 0)

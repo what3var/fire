@@ -95,17 +95,33 @@ Resolves in this order: explicit routes (lambdas), RPC/FXML, static files, fallb
 The net package waits by polling: it sleeps 1 to 10 ms between attempts (`net.fire`). In a task that is a switch, but a server with many idle
 keep-alive or WebSocket connections would wake every task up to a hundred times a second. Before the server: **a poller in the scheduler** -
 epoll (Linux), kqueue (macOS), IOCP or `WSAPoll` (Windows), `select` (lwIP) - a task registers its socket and sleeps until it is ready, its time limit
-ran out or its token is cancelled. Nobody works on it on `targets` (the user); it is planned here.
+ran out or its token is cancelled. **Built** (poll()/WSAPoll, not yet epoll/kqueue/IOCP): `__fd_wait(fd, events, ms)` of the runtime - natively a poller thread
+(fire_rt.h `fire_fd_wait`, the waiting task parks with `blockUntil` and is woken by its address), in the VM poll()/WSAPoll in short slices (fire.Runtime.FdWait);
+`Net.Clock.WaitFor` in net.fire uses it, -1 (no poller) falls back to the old pause. For many thousands of sockets epoll/kqueue can replace poll() later.
 
 ## Steps
 
-0. Poller in the scheduler (waits of the network without polling). `Completion` - built.
-1. Server core: a task per connection, keep-alive, router chain (a copy per connection), `Http.Context`, streamed bodies, limits.
-2. File client and `wwwroot` (safety, caching, MIME).
-3. Sessions (their home, time limit) and `ISessionStore` (files).
-4. RPC with DI and lifetimes.
-5. WebSocket.
-6. FXML to HTML/CSS, `fire.js`, live updates.
+0. Poller in the scheduler (waits of the network without polling) and `Completion` - built.
+1. Server core: a task per connection, keep-alive, router chain (a copy per connection), `Http.Context`, streamed bodies, limits - **built**
+   (`Http.AppServer`, docs/networking/http.md). Open: a chain with lambdas waits for step 8 point 4 (lambdas to other threads) and is served in the accepting
+   task meanwhile; the TLS handshake runs in the accepting task.
+2. File client and `wwwroot` (safety, caching, MIME) - **built** (`Http.Files`, docs/networking/http.md). Open: the `Map(pattern, lambda)` form of the
+   file client (with the lambdas of step 8 point 4), symbolic links (the file system API cannot tell them), several ranges in one request.
+3. Sessions (their home, time limit) and `ISessionStore` (files) - **built** (`Http.Sessions`, docs/networking/http.md): one home actor for all sessions of a
+   server on a thread of its own, ids from `Net.SecureRandom`, `Renew`, `End`, memory and file stores. Found on the way: `taking` copied an actor that it
+   reached through a field (VM and native) - now its reference goes along. Open: one home per session (when one home becomes the bottleneck), live objects
+   in a session (step 4).
+4. RPC with DI and lifetimes - **built** (package `http.rpc`, docs/networking/http.md): `[Remote]` classes and members, JSON, lifetimes request/session/
+   single (one home actor for session and single instances), `[Timeout]`, constructor injection from a list of services; `[Remote]` keeps them in a native
+   build. Only a client that already has a session may call (401 otherwise); `[Nickname]` gives a class its public name (decided by the user). Found on the way (VM): `list.Add(actor)` and the assignment of an actor to a field posted a message `tryTakeTo` to the actor - ownership calls on an
+   actor are no messages now. Open: events (with step 5), the random instance ids of the roadmap (instances are addressed by class and session for now).
+5. WebSocket - **built** (`Http.WebSockets`, `Http.WebSocket`, docs/networking/http.md): RFC 6455 server and client, fragments, ping/pong, close, origins. Open:
+   sending to a socket from another task (the reader/writer split of an FXML page: the page's task writes, the reading task gets what comes in) and
+   compression (permessage-deflate).
+6. FXML to HTML/CSS, `fire.js`, live updates - **first part built** (package `http.pages`, docs/networking/http.md): a circuit per page (an actor that owns the
+   UI root without a window), HTML with CSS layout (decided by the user: the browser lays out - flex, grid, nested flex for DockPanel, HTML text for the new
+   `UI.FlowPanel`), events over the WebSocket, the changes found by comparing the properties. Tried in headless Chromium (Playwright). Open: lists with
+   templates, menus, trees, images, pushes that do not come from the browser (timers, other tasks: the reader/writer split of the socket), more events.
 7. Canvas recording, JS calls.
 
 ## Open

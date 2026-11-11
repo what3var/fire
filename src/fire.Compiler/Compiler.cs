@@ -812,11 +812,11 @@ namespace fire.Compiler
             return meta;
         }
 
-        /// <summary>`[Keep]` before the class or its members (a native build keeps them, docs/spec/NATIVE_BACKEND.md) , `[NotSerializable]` before the class (docs/stdlib/json.md) and `[NoCopy]` (SPEC 5.12).</summary>
+        /// <summary>`[Keep]` (and `[Remote]`, docs/networking/http.md) before the class or its members (a native build keeps them, docs/spec/NATIVE_BACKEND.md), `[NotSerializable]` before the class (docs/stdlib/json.md) and `[NoCopy]` (SPEC 5.12).</summary>
         private static void MarkKeepAndSerializable(RuntimeClass rc, ClassDecl cd)
         {
             static bool Has(IReadOnlyList<AttributeDecl>? attributes, string name) => attributes?.Any(a => a.Name == name) == true;
-            rc.Keep = Has(cd.Attributes, "Keep");
+            rc.Keep = Has(cd.Attributes, "Keep") || Has(cd.Attributes, "Remote") || Has(cd.Attributes, "Page");   // ([Remote], [Page]: http.rpc / http.pages make and call it by its name)
             if (Has(cd.Attributes, "NotSerializable")) rc.NotSerializable = true;
             rc.NoCopy = Has(cd.Attributes, "NoCopy");
             foreach (var member in cd.Members)
@@ -828,7 +828,7 @@ namespace fire.Compiler
                     MethodDecl m => (m.Name, m.Attributes),
                     _ => ((string?)null, (IReadOnlyList<AttributeDecl>?)null),
                 };
-                if (name != null && Has(attributes, "Keep")) (rc.KeptMembers ??= new()).Add(name);
+                if (name != null && (Has(attributes, "Keep") || Has(attributes, "Remote"))) (rc.KeptMembers ??= new()).Add(name);
             }
         }
 

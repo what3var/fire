@@ -307,6 +307,8 @@ namespace fire.Runtime
                 (_currentThreadVm ?? throw new InvalidOperationException("'handover' needs a running program.")).LambdaHandoverNow(args);
             fire.Standard.CancelMethods.Implementation = (name, args) =>
                 (_currentThreadVm ?? throw new InvalidOperationException("Cancellation needs a running program.")).CancelNative(name, args);
+            fire.Standard.FdWaitMethods.Implementation = args =>
+                (_currentThreadVm ?? throw new InvalidOperationException("__fd_wait needs a running program.")).FdWaitNative(args);
             fire.Standard.CompletionMethods.Implementation = (name, args) =>
                 (_currentThreadVm ?? throw new InvalidOperationException("A Completion needs a running program.")).CompletionNative(name, args);
         }
@@ -3551,7 +3553,15 @@ namespace fire.Runtime
             // instead of a direct call, regardless of the calling
             // thread - this call itself returns 'undefined' and
             // continues normally (no jump into any chunk).
-            if (obj.Mailbox != null && !(_awaitReplyNow && ReferenceEquals(obj.Mailbox.Home, this)))
+            // (the ownership methods of an actor - the claim of an assignment or of `list.Add(actor)`, `try x.TakeTo(this)` - are never messages: at its home
+            // they run as for any object; from another thread the actor stays with its home and only its reference is stored)
+            bool ownershipCall = methodName is "TakeLocal" or "TakeUpwards" or "TakeGlobal" or "TakeTo" or "tryTakeLocal" or "tryTakeUpwards" or "tryTakeGlobal" or "tryTakeTo";
+            if (obj.Mailbox != null && ownershipCall && !ReferenceEquals(obj.Mailbox.Home, this))
+            {
+                Push(Value.MakeBool(false));
+                return;
+            }
+            if (obj.Mailbox != null && !ownershipCall && !(_awaitReplyNow && ReferenceEquals(obj.Mailbox.Home, this)))
             {
                 var holder = new Scope(null);   // the message owns its unclaimed arguments until it runs (SPEC 2.4)
                 if (copyMask != 0) ApplyCopyMaskToArgs(args, copyMask, holder);
@@ -6522,6 +6532,8 @@ namespace fire.Runtime
         /// goes over (handover), anything else - a field, a global - as a copy; both into <paramref name="holder"/>.</summary>
         private Value ReplyValue(Value result, Scope freshOwner, Scope holder)
         {
+            // (an actor - kept in a field of the actor, a registry of actors: its reference goes back, like `fire with`)
+            if (result.Kind == ValueKind.Class && result.AsObjectRef() is ObjectInstance { } obj && (obj.Mailbox != null || (obj.RtClass?.IsActor ?? false))) return result;
             if (OwnerOfValue(result) is not { } owner) return result;
             object? home = IsFireThreadVm ? EnsureHomeInbox() : null;   // (a bound lambda in the result: its calls come back here - step 8 (e))
             var value = ReferenceEquals(owner, freshOwner)
