@@ -46,6 +46,8 @@ namespace fire.Runtime
             public Value[] Args = Array.Empty<Value>();
             public Scope Holder = null!;
             public ActorReply? Reply;   // `await on`: the result goes back
+            public ObjectInstance? Target;   // a method call of a fire thread on an object of the globals (rule 10): no lambda
+            public string? Method;
         }
 
         private readonly object _gate = new();
@@ -111,6 +113,18 @@ namespace fire.Runtime
 
         /// <summary>`fire global { ... }`: queues the job and returns immediately. `holder` owns the objects copied for the job
         /// and is released as soon as it has run.</summary>
+        /// <summary>A method call of a fire thread on an object of the globals (rule 10 of step 8): the main program runs it, the reply carries the result.</summary>
+        public void PostMethodJob(ObjectInstance target, string method, Value[] args, Scope holder, ActorReply reply)
+        {
+            lock (_gate)
+            {
+                if (_closed) { holder.Release(NullDestructRunner.Instance); reply.Failure = "The main program has ended."; reply.Done.Set(); return; }
+                _queue.Enqueue(new JobRequest { Target = target, Method = method, Args = args, Holder = holder, Reply = reply });
+            }
+            VM.RaiseQueued();
+            FireRuntime.WakeWaitingOwner();
+        }
+
         public void PostJob(LambdaValue lambda, Value[] args, Scope holder, ActorReply? reply = null)
         {
             lock (_gate)
@@ -146,6 +160,10 @@ namespace fire.Runtime
                         section.Granted.Set();
                         VmScheduler.Wake();   // (a task of the pool that waits for it)
                         section.Done.Wait(); // the thread works, the main program waits
+                        break;
+                    case JobRequest { Target: { } target } call:
+                        Owner.RunGlobalsMethodJob(target, call.Method!, call.Args, call.Holder, call.Reply!);
+                        call.Holder.Release(Owner);
                         break;
                     case JobRequest job:
                         Owner.RunGlobalsJob(job.Lambda, job.Args, job.Reply);

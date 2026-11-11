@@ -19782,7 +19782,7 @@ else
                 print("thread: " + c.res.id + " " + c.items[0].v + " " + c.other.v + " " + b.res.id + " " + b.other.v)
                 print("thread same: " + (b.other == c.other) + " " + (c.res is from c) + " " + c.res.Twice())
                 c.other.v = 30
-                sync global { back = c.other; step = 1 }
+                sync global { back = take c.other; step = 1 }   // (rule 10: an object of the thread goes into a global only with a word)
                 while (step < 2) { Sleep(1ms) }
             }
             while (step < 1) { sync globals }
@@ -22120,7 +22120,7 @@ else
             var d = new Lost(new Part("lost"))
             print("end")
         """),
-        ("Threads: Sleep in einer Methode eines globalen Objekts gibt die Sektion frei (Hauptprogramm wird nicht ausgehungert)", """
+        ("Threads: eine Methode eines globalen Objekts laeuft im Hauptprogramm (Regel 10) - ihr Sleep hungert das Hauptprogramm nicht aus", """
             #import "time"
             class W {
                 int n = 0
@@ -22137,6 +22137,79 @@ else
             Sleep(150ms)
             print("main woke")
             print("n>0: " + (w.n > 0))
+        """),
+        ("Threads: Regel 10 - Methoden globaler Objekte laufen im Hauptprogramm; ein Objekt des Threads geht nur frisch, mit copy oder take hin (sonst ArgumentException)", """
+            #import "time"
+            class Box { int v = 0; construct(int v) { this.v = v } }
+            class Store {
+                List<Box> items = new List<Box>()
+                any cb
+                int Count() { return this.items.Count }
+                undefined Put(Box b) { this.items.Add(take b) }
+                int Sum() { int s = 0; foreach (b in this.items) { s = s + b.v }; return s }
+                Box First() { return this.items[0] }
+                undefined Fail() { throw new ArgumentException("from main") }
+                undefined SetCb(any g) { this.cb = take g }
+                int Slow(int x) { Sleep(5ms); return x * 2 }
+            }
+            var store = new Store()
+            var shared = new Box(11)
+            var g0 = () => 5
+            var step = 0
+            fire {
+                var mine = new Box(7)
+                store.Put(new Box(1))
+                store.Put(copy mine)
+                store.Put(take mine)
+                store.Put(shared)
+                try { print(mine.v) } catch (DestroyedException e) { print("moved: " + e.message) }
+                try { var other = new Box(3); store.Put(other) } catch (ArgumentException e) { print("word: " + e.message) }
+                print("in thread " + store.Count() + " " + store.Sum() + " first " + store.First().v + " slow " + store.Slow(21))
+                try { store.Fail() } catch (ArgumentException e) { print("caught " + e.message) }
+                store.SetCb(() => 8)
+                print("cb " + store.cb())
+                store.SetCb(g0)
+                step = 1
+            }
+            while (step < 1) { Sleep(1ms) }
+            print("main " + store.Count() + " " + store.Sum() + " " + store.cb() + " " + shared.v)
+        """),
+        ("Threads: Regel 10 - Schreiben in globale Variablen, Felder und Elemente der Globals: frisch, copy und take bewegen das Objekt ins Hauptprogramm, ohne Wort ArgumentException", """
+            #import "time"
+            class Box { int v = 0; construct(int v) { this.v = v } }
+            class Holder { Box last; List<Box> list = new List<Box>() }
+            var h = new Holder()
+            Box a = undefined
+            Box b = undefined
+            Box c = undefined
+            Box d = undefined
+            var arr = [new Box(0), new Box(0)]
+            var shared = new Box(40)
+            var step = 0
+            fire {
+                var mine = new Box(7)
+                var other = new Box(8)
+                a = new Box(5)
+                b = copy mine
+                c = take other
+                d = shared
+                h.last = new Box(9)
+                arr[0] = new Box(1)
+                arr[1] = take mine
+                try { print(mine.v) } catch (DestroyedException e) { print("moved: " + e.message) }
+                var k = new Box(4)
+                try { a = k } catch (ArgumentException e) { print("global: " + e.message) }
+                try { h.last = k } catch (ArgumentException e) { print("field: " + e.message) }
+                try { arr[0] = k } catch (ArgumentException e) { print("element: " + e.message) }
+                try { h.list.Add(k) } catch (ArgumentException e) { print("add: " + e.message) }
+                h.list.Add(copy k)
+                k.v = 44
+                print("thread " + a.v + " " + b.v + " " + c.v + " " + h.last.v + " " + arr[0].v + " " + arr[1].v + " " + h.list[0].v + " " + k.v)
+                step = 1
+            }
+            while (step < 1) { Sleep(1ms) }
+            Sleep(20ms)
+            print("main " + a.v + " " + b.v + " " + c.v + " " + d.v + " " + h.last.v + " " + arr[0].v + " " + arr[1].v + " " + h.list.Count + " " + h.list[0].v)
         """),
     }).ToArray();
 

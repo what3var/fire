@@ -482,6 +482,18 @@ of a bound lambda in (e):
   thread) - the test "Sleep in a method of a global object gives the section free" turns into "... runs in the main program". The VM and the
   native runtime the same; tests for the write, the method call (result, exception), the word for objects, a write while the main program waits.
 
+**Rule 10, done** (VM and natively the same): the word for an object is `take` (`g = take x`, `store.Put(take x)`) - `handover x` is the capture
+syntax of a fire body. A write (global variable, static field, field or element of an object or array of the globals' domain) moves a fresh, copied
+(`copy x`) or taken object into the main program like `handover` (every reference from before is dead) and into the globals' domain; another object of
+the thread is the ArgumentException and nothing is stored. Values, objects of the main program (also lambdas and buffers it owns), actors and
+destroyed objects go as they are. A write itself still runs in the thread inside a section (only the ownership moves) - a method call is the job of
+the main program: VM `CallGlobalsMethodAtHome` (GlobalsBroker.PostMethodJob, `RunGlobalsMethodJob`), natively the dispatcher calls `globalsCall` (a
+`JobReq` with the method's `msg_` function; what moved travels in the job's list as the argument list of the call, `MYARGS`), the result and an
+exception come back like `await on`. Inside `sync global { ... }` the method runs in the thread (the section holds the main program); the word is
+needed there too. Natively the generated code marks a take or claim for a global (`noteGlobalTake`, `noteGlobalClaim`, `noteHolderClaim`, takeToHolder
+on a shared holder) and the store moves it (`toMainGlobals`, `toMainHolder`); a call in a thread program sets `g_argIn` (the argument list, or NULL)
+so that the dispatcher sees what travels. Tests: "Threads: Regel 10 - ..." (two cases), the handover case now uses `back = take c.other`.
+
 **Status:** (a)-(d) are done in the VM and natively. Natively a lambda stays counted (the memory, also for natives that keep a callback) and carries an
 owner header and a store (`Lam.o`, `Lam.store`, okind `O_Lambda`): destroyed with its owner, freed with its last count; the generated lambda body gets
 `lamCaptureCopy` (a copy in its function scope) or `lamCaptureLent` per capture. (e), first part: lambdas go to threads - `taking` copies one with its store
@@ -492,7 +504,7 @@ the exception comes back). Second part: a target in a fire thread - the call goe
 jump back of a loop and while it waits (a reply, `Sleep`); once the thread has ended the call is an ArgumentException. A target that is an actor: a
 message that its home runs at `process`. Natively, with the GIL (debug builds), a call for a fire thread runs where it is called (one thread runs at a
 time). Found on the way: the values a native fire thread got (`taking` copies, strings) kept a count at its end - released now. `is of lambda` is new (the collections of the prelude take lambdas like
-objects - `List.Add(() => ...)` keeps them). Open: (e), and the writes/calls of globals from other threads as tasks (rule 10).
+objects - `List.Add(() => ...)` keeps them). (e) and rule 10 are done (see above).
 Found on the way: `List<int[]>.Add([1, 2])` - an array handed to a collection died with the statement (the prelude took only objects). Decided (the
 user): `x is from local` (x has an owner, and it is a scope of the running call) and `x is from global` instead of a type test for arrays; `Take...`
 on a value type stays an error, and the conditional access decides instead: `a?.b` (only when a is not undefined) and `a??.b` (also only when a has
@@ -538,9 +550,9 @@ The threads share nothing that can change - and get ways to pass what does not c
 5. Pinned tasks, task groups and the UI loop on the scheduler (event waits of the display backends).
 6. Cancellation tokens and `until`.
 7. The VM on the scheduler.
-8. Captures only with a word, globals by `taking`, `on` runs on its target (see "Step 8" above) - (a)-(e) done, rule 10 next.
+8. Captures only with a word, globals by `taking`, `on` runs on its target (see "Step 8" above) - done, rule 10 included.
 9. Records, `with`, `Channel<T>` (see "Step 9" above).
 
 ## Open
 
-Step 8 (e) and rule 10 (see "Step 8" above).
+Step 9: records, `with`, `Channel<T>` (see "Step 9" above).

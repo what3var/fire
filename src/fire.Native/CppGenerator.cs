@@ -1840,7 +1840,7 @@ namespace fire.Native
                 {
                     sb.AppendLine(DispatcherSignature(name, argc) + ";");
                     if (WrapDispatchers) sb.AppendLine(DispatcherSignature(name, argc, "direct_") + ";");
-                    if (_usesActors) sb.AppendLine($"static Value msg_{Mangle(name)}_{argc}(Value self, const Value* a, OwnList* list);");
+                    if (WrapDispatchers) sb.AppendLine($"static Value msg_{Mangle(name)}_{argc}(Value self, const Value* a, OwnList* list);");
                 }
                 foreach (var (iface, name, argc) in _interfaceDispatchers) sb.AppendLine(InterfaceDispatcherSignature(iface, name, argc) + ";");
                 foreach (var method in _operators) sb.AppendLine($"{HelperStorage}Value {OperatorWrapper(method)}(Value a, Value b, OwnList* list);");
@@ -2263,15 +2263,15 @@ namespace fire.Native
             }
             if (_usesThreads)
             {
-                // a call on an object of the shared domain is one section
-                sb.AppendLine("    bool ss_ = sectionScopeEnterV(self);");
-                sb.AppendLine($"    Value r_ = {direct}(self{argList}{tail});");
-                sb.AppendLine("    sectionScopeExit(ss_);");
-                sb.AppendLine("    return r_;");
+                // a call on an object of the main program's globals from a fire thread: a job of the main program, the thread waits (rule 10 - in a section
+                // of its own, `sync global`, it runs here)
+                sb.AppendLine("    if (FIRE_UNLIKELY(g_isThread) && g_secDepth == 0 && g_domainOn && sharedValue(self)) {");
+                sb.AppendLine($"        {CArray("Value", "gv", Enumerable.Range(0, argc).Select(i => $"a{i}").DefaultIfEmpty("Undef()").ToList())}");
+                sb.AppendLine($"        return globalsCall(self, {msg}, gv, {argc}, {CString(name)});");
+                sb.AppendLine("    }");
             }
-            else sb.AppendLine($"    return {direct}(self{argList}{tail});");
+            sb.AppendLine($"    return {direct}(self{argList}{tail});");
             sb.AppendLine("}");
-            if (!_usesActors) return sb.ToString();
             string msgArgs = string.Concat(Enumerable.Range(0, argc).Select(i => $", a[{i}]")) + (DispatchNeedsList(name, argc) ? ", list" : "") + (DispatchHasCaller(name) ? ", asObj(self)->cls" : "");
             sb.AppendLine($"static Value {msg}(Value self, const Value* a, OwnList* list) {{ (void)a; (void)list; return {direct}(self{msgArgs}); }}");
             return sb.ToString();
@@ -2600,7 +2600,7 @@ namespace fire.Native
             string valueIndex = indexCode.Replace("FIELD_MISSING_RETURN", "return Undef();"), voidIndex = indexCode.Replace("FIELD_MISSING_RETURN", "return;");
             string notObject = $"    if (FIRE_UNLIKELY(v.kind != K_Class)) return missingField(v, {CString(name)});\n";
             return $"static inline Value gf_{m}(Value v) {{\n{lengthCode}{notObject}    if (FIRE_UNLIKELY(!leafAlive(v))) return destroyedError(v);\n    Obj* o = asObj(v);\n{valueIndex}\n    return {(narrow ? "nvGet(&objFields(o)[idx >> 1], (int)(idx & 1u))" : "objFields(o)[idx]")};\n}}\n"
-                 + (_usesThreads ? $"static inline void sfb_{m}(Value v, Value x);\nstatic inline void sf_{m}(Value v, Value x) {{ bool ss_ = sectionScopeEnterV(v); sfb_{m}(v, x); sectionScopeExit(ss_); }}\n" : "")   // (a change of an object of the shared domain is one section)
+                 + (_usesThreads ? $"static inline void sfb_{m}(Value v, Value x);\nstatic inline void sf_{m}(Value v, Value x) {{ bool ss_ = sectionScopeEnterV(v); if (FIRE_LIKELY(!g_isThread || !sharedValue(v) || toMainHolder(v, &x, {CString($"The field '{name}' of an object of the globals")}))) sfb_{m}(v, x); sectionScopeExit(ss_); }}\n" : "")   // (a change of an object of the shared domain is one section)
                  + $"static inline void {(_usesThreads ? "sfb_" : "sf_")}{m}(Value v, Value x) {{\n    if (FIRE_UNLIKELY(v.kind != K_Class)) {{ notObjectAssign(v); return; }}\n    if (FIRE_UNLIKELY(!leafAlive(v))) {{ destroyedError(v); return; }}\n    Obj* o = asObj(v);\n{voidIndex}\n{unitCode}" + (narrow ? "    nvSet(&objFields(o)[idx >> 1], (int)(idx & 1u), x);\n}\n" : "    Value old = objFields(o)[idx];\n    objFields(o)[idx] = x;\n    FIRE_DOM_STORE(&o->h, x);\n    retain(x);\n    release(old);\n}\n")
                  + (!_fieldAddressTaken.Contains(name) ? "" : $"static inline Value fp_{m}(Value v) {{\n    if (FIRE_UNLIKELY(!leafAlive(v))) return destroyedError(v);\n    Obj* o = asObj(v);\n{valueIndex}\n    return PtrV(&objFields(o)[idx]);\n}}\n");
         }
@@ -2756,7 +2756,7 @@ namespace fire.Native
             sb.AppendLine($"{HelperInline}Value gf_{m}(Value v{lp}) {{\n{lengthCode}    {unusedLp}\n    if (FIRE_UNLIKELY(v.kind != K_Class)) return missingField(v, {CString(name)});\n    if (FIRE_UNLIKELY(!leafAlive(v))) return destroyedError(v);\n    Obj* o = asObj(v);\n    switch (o->cls) {{\n{get}        default: {getMissing}\n    }}\n}}");
             string lpArgs = (FieldHasList(name) ? ", list" : "") + (FieldHasCaller(name) ? ", caller" : "");
             if (_usesThreads)   // (a change of an object of the shared domain is one section)
-                sb.AppendLine($"static inline void sfb_{m}(Value v, Value x{lp});\n{HelperInline}void sf_{m}(Value v, Value x{lp}) {{ bool ss_ = sectionScopeEnterV(v); sfb_{m}(v, x{lpArgs}); sectionScopeExit(ss_); }}");
+                sb.AppendLine($"static inline void sfb_{m}(Value v, Value x{lp});\n{HelperInline}void sf_{m}(Value v, Value x{lp}) {{ bool ss_ = sectionScopeEnterV(v); if (FIRE_LIKELY(!g_isThread || !sharedValue(v) || toMainHolder(v, &x, {CString($"The field '{name}' of an object of the globals")}))) sfb_{m}(v, x{lpArgs}); sectionScopeExit(ss_); }}");
             sb.AppendLine($"{(_usesThreads ? "static inline " : HelperInline)}void {(_usesThreads ? "sfb_" : "sf_")}{m}(Value v, Value x{lp}) {{\n    (void)x; {unusedLp}\n    if (FIRE_UNLIKELY(v.kind != K_Class)) {{ notObjectAssign(v); return; }}\n    if (FIRE_UNLIKELY(!leafAlive(v))) {{ destroyedError(v); return; }}\n    Obj* o = asObj(v);\n    switch (o->cls) {{\n{set}        default: {setMissing}\n    }}\n}}");
             // (the address of a field, `ref obj.name`: only for the names whose address the program takes)
             if (_fieldAddressTaken.Contains(name))
@@ -2779,7 +2779,7 @@ namespace fire.Native
             // (the result is the value stored: of a typed array the converted one, see arraySet)
             sb.AppendLine($"{HelperInline}Value {Px}aset_g(Value a, Value i, Value v, OwnList* list) {{");
             string secEnd = _usesThreads ? " sectionScopeExit(ss_);" : "";
-            if (_usesThreads) sb.AppendLine("    bool ss_ = sectionScopeEnterV(a);");
+            if (_usesThreads) sb.AppendLine("    bool ss_ = sectionScopeEnterV(a);\n    if (FIRE_UNLIKELY(g_isThread) && sharedValue(a) && !toMainHolder(a, &v, \"An element of an array of the globals\")) { sectionScopeExit(ss_); return v; }");
             if (_dispatchers.Contains(("SetIndex", 2)))
                 // (a new key is a slot of the container, like the value: `d[new Key()] = v` - the object takes it out of the temporaries, SPEC 2.1)
                 sb.AppendLine($"    if (a.kind == K_Class) {{ claimToHolder(a, i, list); Value r = {CallFn("SetIndex", 2)}(a, i, v{DispatchTail("SetIndex", 2, "list", "0xFFFFFFFFu")}); adopt(r, list);{secEnd} return v; }}");
@@ -4220,7 +4220,8 @@ namespace fire.Native
                 }
                 // `try x.Take...`: the callee takes the argument list on entry (MYARGS) - it is set last, nothing that runs before the call takes it (the
                 // default values keep it: DefaultArgs); finishArgs clears it after the call
-                if (_usesTryDepth && argsTravel > 0) E("g_argIn = &AL;");
+                if ((_usesTryDepth || _usesThreads) && argsTravel > 0) E("g_argIn = &AL;");
+                else if (_usesThreads) E("g_argIn = NULL;");   // (rule 10: the call of a method of the main program's globals sees what travels - globalsCall)
             }
             // The arguments of a call of a C body (CAbi): a C parameter takes the C number of its slot - a slot whose type does not prove it is checked into
             // its shadow first (the check throws like the prologue would) - every other one the Value.
@@ -4389,6 +4390,17 @@ namespace fire.Native
                 string secEnd = SectionEnd(variable);
                 // (a string or lambda that goes into a global or static field: shared with the fire threads from now on - FIRE_DOM_SHARE, without the GIL)
                 string share = sec.Length > 0 ? "FIRE_DOM_SHARE(n); " : "";
+                if (sec.Length > 0 && !IsPlainType(Ty(slot)))
+                {
+                    // (rule 10: what a fire thread stores here goes to the main program - an object of the thread only fresh or taken, moved; else the
+                    // ArgumentException and nothing is stored)
+                    string move = $"Value n = {stored}; if (FIRE_LIKELY(!g_isThread || toMainGlobals(&n, NULL, \"A global variable\"))) ";
+                    if (valueRef) E($"{{ {sec}{move}{{ Value o = {variable}; {variable} = n; {share}retain(n); release(o); }} {secEnd}}}");
+                    else if (varRef) E($"{{ {sec}{move}{{ Value o = {variable}; {variable} = n; release(o); }} {secEnd}}}");
+                    else E($"{{ {sec}{move}{variable} = n; {secEnd}}}");
+                    Check();
+                    return;
+                }
                 if (valueRef) E($"{{ {sec}Value n = {stored}; Value o = {variable}; {variable} = n; {share}retain(n); release(o); {secEnd}}}");
                 else if (varRef) E($"{{ {sec}Value o = {variable}; {variable} = {stored}; release(o); {secEnd}}}");
                 else E(sec.Length > 0 ? $"{{ {sec}{variable} = {stored}; {secEnd}}}" : $"{variable} = {stored};");
@@ -5517,6 +5529,8 @@ namespace fire.Native
                     string lists = setterValue ? "NULL, 0" : "KL_, 1";
                     string mine = setterValue ? "MYAL" : "NULL";
                     string keep = plainStore ? "" : setterValue ? $"claimKeep({obj}, {v}, MYAL);" : $"claimToHolder({obj}, {v}, &{temp});";
+                    // (rule 10: an unclaimed value for an object of the main program's globals - the store moves it there)
+                    if (_usesThreads && !plainStore && !setterValue) E($"noteHolderClaim({obj}, {v}, &{temp});");
                     var setter = direct == null && ObjSlot(d - 2) && !IsNullable(Ty(d - 2)) ? DirectAccessor(ObjClass(Ty(d - 2)), field, true, f) : null;
                     string store = direct ?? (setter != null
                         ? $"if (FIRE_UNLIKELY(!leafAlive({obj}))) destroyedError({obj}); else {{ Value r_ = {GetFunc(setter, FuncKind.Method).Name}({obj}, {v}); adopt(r_, &{OwnerList()}); }}"
@@ -6249,6 +6263,7 @@ namespace fire.Native
                     }
                     if (ins.Op == OpCode.TryTakeToScope) E(TryTakeStmt(S(d - 1), $"takeToList({S(d - 1)}, {list});"));
                     else E($"if (takeAlive({S(d - 1)})) takeToList({S(d - 1)}, {list});");
+                    if (depth == 0xFFFF && _usesThreads) E($"noteGlobalTake({S(d - 1)});");   // (a global of the main program: its store moves it there - rule 10)
                     Check();
                     return Next();
                 }
@@ -6285,6 +6300,7 @@ namespace fire.Native
                         f.NeedsList.Add(st.Scopes[targetIndex].Id);
                         target = "&" + ListName(st.Scopes[targetIndex].Id);
                     }
+                    if ((flags & 1) != 0 && depth == 0xFFFF && _usesThreads) E($"noteGlobalClaim({SR(d - 1)}, &{OwnerList()});");   // (rule 10, see TakeToScope)
                     if ((flags & 1) != 0) E($"claimToList({SR(d - 1)}, &{OwnerList()}, {target});");
                     if ((flags & 2) != 0 && targetIndex >= 0)
                     {
