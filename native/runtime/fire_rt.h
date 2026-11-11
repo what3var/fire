@@ -9866,7 +9866,9 @@ FIRE_FN Value lamCallAtHome(Value lam, int argc, const Value* args, OwnList* lis
         if (!l->homeBox || l->homeBox == g_self) return callLamV(lam, argc, args, list);
         return awaitJobEx(lam, args, (uint32_t)argc, false, l->homeBox);
 #else
-        return callLamV(lam, argc, args, list);   /* (with the GIL one thread runs at a time: the call may run here) */
+        /* (with the GIL one thread runs at a time: the call may run here - unless its target is gone with its thread) */
+        if (l->on.kind == K_Class && !leafAlive(l->on)) return fireError("ArgumentException", FIRE_HOME_ENDED);
+        return callLamV(lam, argc, args, list);
 #endif
     }
     return awaitJobEx(lam, args, (uint32_t)argc, false, NULL);
