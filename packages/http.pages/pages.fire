@@ -365,6 +365,18 @@ namespace Http {
         undefined Stop() { this.stopped = true }
     }
 
+    // (what the thread of a new circuit gets)
+    class PageStart {
+        string typeName
+        string id
+        string session
+        construct(string typeName, string id, string session) {
+            this.typeName = typeName
+            this.id = id
+            this.session = session
+        }
+    }
+
     // The circuits of the pages by their id (an actor: the WebSocket of a page finds its circuit here).
     actor PageDirectory {
         Dictionary<string, Http.PageCircuit> circuits
@@ -487,9 +499,10 @@ namespace Http {
 
         // (a circuit on a thread of its own: it makes the page there and serves its messages until Stop)
         static undefined StartCircuit(string typeName, string id, string session, Completion back) {
-            fire handover back taking typeName taking id taking session {
+            var start = new Http.PageStart(typeName, id, session)
+            fire handover back handover start {
                 try {
-                    var c = new Http.PageCircuit(typeName, id, session)
+                    var c = new Http.PageCircuit(start.typeName, start.id, start.session)
                     back.Set(c)
                     while (!c.stopped) { process c }
                 } catch (e) {
