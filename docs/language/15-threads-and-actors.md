@@ -150,8 +150,12 @@ A lambda goes to a thread like any other value - as a `taking` copy, moved with 
   program as its target, the call is a job of the main program (like `await on obj { ... }`). The arguments are copied for it, the thread waits -
   and yields meanwhile - until the result comes back; an exception the body does not catch is thrown at the call in the thread. So the lambda changes
   the original object, not a copy, and nothing of the main program is touched by two threads at once.
-- In the main program the same lambda is called directly. A lambda bound to an object of a fire thread or of an actor cannot be called from another
-  thread yet (an `ArgumentException`).
+- In the main program the same lambda is called directly. The same holds for the other homes of a target:
+  - **an object of a fire thread**: the call goes to that thread, which runs it at its safe points - the jump back of a loop - and while it waits
+    itself (`Sleep`, `await`, a call of its own that runs elsewhere). Two threads that call each other's lambdas therefore do not block each other.
+    Has the thread ended, its objects are gone: the call is an `ArgumentException` ("... a fire thread that has ended ...");
+  - **an actor**: the call is a message in its mailbox, its home runs it at `process` (like `await actor.M()`); on the actor's home itself it runs
+    at once.
 
 ```fire
 class Counter { int n = 0 }

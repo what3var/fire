@@ -21411,6 +21411,55 @@ else
             }
             Demo.Run()
             """),
+        ("Threads: Lambdas mit einem Ziel in einem Fire-Thread laufen dort (an seinen Sicherheitspunkten, Sleep), mit einem Actor als Ziel bei dessen process", """
+            #import "time"
+            class Counter { int n = 0 }
+            actor Log { int total; construct() { this.total = 0 } }
+            class Demo {
+                static undefined Run() {
+                    var done = await {
+                        var o = new Counter()
+                        var add = func (int k) on o => { n = n + k; return n }
+                        fire taking add {
+                            print("B got " + add(5))
+                            print("B got " + add(2))
+                        }
+                        int guard = 0
+                        while (o.n < 7 && guard < 5000) { Sleep(1ms); guard++ }
+                        return o.n
+                    }
+                    print("A saw " + done)
+                    // an actor as the target: the call is a message, its home runs it at `process`
+                    var acc = new Log()
+                    var bump = func (int k) on acc => { total = total + k; return total }
+                    fire taking bump {
+                        print("actor gave " + bump(3))
+                        bump(4)
+                    }
+                    process acc
+                    process acc
+                    print("actor total " + acc.total)
+                }
+            }
+            Demo.Run()
+            """),
+        ("Threads: Lambdas - ist der Thread ihres Ziels zu Ende, ist der Aufruf eine ArgumentException", """
+            #import "time"
+            class Counter { int n = 0 }
+            class Demo {
+                static undefined Run() {
+                    fire {
+                        var o = new Counter()
+                        var f = func () on o => { n = n + 1; return n }
+                        fire taking f {
+                            Sleep(100ms)
+                            try { print(f()) } catch (ArgumentException e) { print("ended: " + e.message) }
+                        }
+                    }
+                }
+            }
+            Demo.Run()
+            """),
         ("Threads: Globals: fire global mit taking", """
             var total = 0
             var started = 0

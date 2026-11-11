@@ -1414,7 +1414,8 @@ typedef struct Lam {
     uint32_t ncaps;
     uint32_t nreq;     /* parameters without a default value (they come first) */
     uint32_t home;     /* where its calls run (docs/ROADMAP_TASKS.md step 8 (e)): 0 here, 1 its target is an object of the main program (a call in a fire thread
-                        * is a job there), 2 an object of another fire thread or an actor (not served yet) - set when it goes to another thread */
+                        * is a job there), 2 an object of another fire thread (homeBox) or an actor - set when it goes to another thread */
+    void* homeBox;     /* home 2: the fire thread its target lives in (its ThreadRec, counted; NULL: an actor, or a build with the GIL) */
     Value on;
     Value (*fn)(Value lam, const Value* args);
     Value (*dflt)(Value lam, uint32_t index);   /* the default value of parameter `index` (null: the lambda has none) */
@@ -1430,6 +1431,15 @@ typedef struct Lam {
 FIRE_FN Value* lamCaps(Lam* l) { return (Value*)((char*)l + FIRE_HDR(Lam)); }
 /* The lambda of an owner header with okind O_Lambda. */
 FIRE_FN Lam* lamOfOwned(Owned* o) { return (Lam*)(void*)((char*)o - offsetof(Lam, o)); }
+#if defined(FIRE_THREADS) && defined(FIRE_NO_GIL)
+FIRE_FN void lamHomeRetain(void* box);   /* (the ThreadRec of a lambda's home: counted while a lambda names it) */
+FIRE_FN void lamHomeDrop(void* box);
+#define FIRE_LAM_HOME_RETAIN(b) do { if (b) lamHomeRetain(b); } while (0)
+#define FIRE_LAM_HOME_DROP(b) do { if (b) lamHomeDrop(b); } while (0)
+#else
+#define FIRE_LAM_HOME_RETAIN(b) ((void)0)
+#define FIRE_LAM_HOME_DROP(b) ((void)0)
+#endif
 
 /* A scope's list that starts at `mark` (the height of the temporary pool) - as a value: the generated code declares its lists with it (`OwnList O = scopeList(poolMark())`;
  * C89 compilers like Open Watcom take no aggregate initializer that is not constant). */
@@ -3137,6 +3147,7 @@ FIRE_FN void freeRef(Ref* r) {
         {   /* (destroyed: its store went already; the captures stay until the memory goes, like the VM's - the runtime may still call it) */
             uint32_t i;
             for (i = 0; i < l->ncaps; i++) release(lamCaps(l)[i]);
+            FIRE_LAM_HOME_DROP(l->homeBox);
         }
     }
     free(r);
@@ -3241,6 +3252,7 @@ FIRE_FN Lam* allocLamBare(uint32_t nparams, uint32_t ncaps, Value (*fn)(Value, c
     l->ncaps = ncaps;
     l->nreq = nparams;
     l->home = 0;
+    l->homeBox = NULL;
     l->h.rc = 0;
     l->on = Undef();
     l->fn = fn;
@@ -3285,6 +3297,8 @@ FIRE_FN Value lamCopy(Value lam, bool deep, OwnList* owner) {
 #endif
     l->on = a->on;
     l->home = a->home;
+    l->homeBox = a->homeBox;
+    FIRE_LAM_HOME_RETAIN(l->homeBox);
     for (i = 0; i < a->ncaps; i++) {
         Value c = lamCaps(a)[i];
         if (deep && ownedOf(c)) c = copyValue(c, true, &l->store);
@@ -3362,13 +3376,13 @@ FIRE_FN Value callLamV(Value callee, int argc, const Value* args, OwnList* list)
  * What the runtime keeps and calls itself (a probe, a job, a callback: callLam) is called as it is - like the VM, which checks only the calls of the
  * language. */
 #ifdef FIRE_THREADS
-FIRE_FN Value lamCallAtHome(Value lam, int argc, const Value* args);
+FIRE_FN Value lamCallAtHome(Value lam, int argc, const Value* args, OwnList* list);
 #endif
 FIRE_FN Value callLamU(Value callee, int argc, const Value* args, OwnList* list) {
     if (FIRE_UNLIKELY(callee.kind == K_Lambda && (lamOf(callee)->o.flags & 1))) return destroyedError(callee);
 #ifdef FIRE_THREADS
     /* (bound to an object that lives elsewhere: the body runs there - docs/ROADMAP_TASKS.md step 8 (e)) */
-    if (FIRE_UNLIKELY(callee.kind == K_Lambda && lamOf(callee)->home != 0) && (lamOf(callee)->home == 2 || g_isThread)) return lamCallAtHome(callee, argc, args);
+    if (FIRE_UNLIKELY(callee.kind == K_Lambda && lamOf(callee)->home != 0) && (lamOf(callee)->home == 2 || g_isThread)) return lamCallAtHome(callee, argc, args, list);
 #endif
     return callLamV(callee, argc, args, list);
 }
@@ -8559,6 +8573,7 @@ FIRE_FN bool fire_tokWaitPred(void* c) { TokWait* w = (TokWait*)c; return (w->pr
  * (`stopOnTerminate`) or when the deadline passed (`deadlineMs` on the steady clock, 0 = none). */
 #ifdef FIRE_NO_GIL
 FIRE_FN void threadServe(void);
+FIRE_FN void threadServeCalls(void);
 FIRE_FN void threadRecBegin(void);
 FIRE_FN void threadRecEnd(void);
 #endif
@@ -8577,6 +8592,7 @@ FIRE_FN bool blockUntil(bool (*pred)(void*), void* ctx, bool stopOnTerminate, in
         uint64_t seen;
 #ifdef FIRE_NO_GIL
         threadServe();   /* (a fire thread that waits grants the sections other threads ask of it) */
+        threadServeCalls();   /* (... and runs the calls of its lambdas: two threads that call each other's do not block each other) */
 #endif
         /* (the count of the events before the condition is looked at: an event between the two - the condition true by then - makes the wait below end at
          * once; read after it, the event would be lost and the wait would last until the next one) */
@@ -8724,6 +8740,10 @@ FIRE_FN void threadEntry(ThreadStart st) {
 #ifdef FIRE_NO_GIL
     threadRecEnd();
 #endif
+    {   /* (the values the thread got - `taking` copies, what `handover` moved: their counts were the thread's; its body counted them for itself) */
+        uint32_t i;
+        for (i = 0; i < st.n; i++) release(st.args[i]);
+    }
     free(st.args);
     free(g_pool.items);
     g_pool.items = NULL; g_pool.top = 0; g_pool.cap = 0;
@@ -9093,8 +9113,10 @@ FIRE_FN void replyCrossTree(Owned* h) {
         if (c && c->owner && c->owner->holder == h) replyCrossTree(c);
     }
 }
+FIRE_FN void lamSetHome(Lam* l, const Lam* from);
 FIRE_FN Value replyResult(Value r, OwnList* msgOwn, OwnList* travel, OwnList* list) {
     Owned* o = ownedOf(r);
+    if (r.kind == K_Lambda && !lamOf(r)->home && lamOf(r)->on.kind == K_Class) lamSetHome(lamOf(r), lamOf(r));   /* (a bound lambda in the result: its calls come back here) */
     if (o) {
         if (o->owner && o->owner != msgOwn) { r = copyValue(r, true, list); o = ownedOf(r); }
         if (!o) return r;
@@ -9457,15 +9479,58 @@ FIRE_FN void sectionYieldEnd(int32_t held) { if (held > 0) { sectionAcquire(); g
 /* A fire thread as the owner of originals (without the GIL): `sync` from another thread into an original this thread owns (`taking` in this thread) is a
  * section of this thread - asked for here, granted at this thread's next safe point or wait (threadServe), which then waits until the sync is done, as the
  * main program does for its globals. When the thread ends its originals are destroyed first (`sync` says undefined), then what is still asked is granted. */
+struct JobReq;
 typedef struct ThreadRec {
     fire_mutex m; SectionReq** reqs; uint32_t n, cap; fire_atomic32 pending, refs; bool dead;
+    struct JobReq** calls; uint32_t ncalls, capcalls; fire_atomic32 callsPending;   /* calls of lambdas bound to its objects (docs/ROADMAP_TASKS.md step 8 (e)) */
 #ifdef FIRE_TASKS
     FireTask* task;   /* (a task: woken when something is asked of it - it may wait for something else) */
 #endif
 } ThreadRec;
 extern FIRE_RT_DATA fire_atomic32 g_peerPending;   /* asked sections of all threads (ATTN_PEER is set while there are some) */
 FIRE_FN void threadRecDrop(ThreadRec* r) {
-    if (fire_atomic_addAcqRel(&r->refs, (uint32_t)-1) == 1) { free(r->reqs); free(r); }
+    if (fire_atomic_addAcqRel(&r->refs, (uint32_t)-1) == 1) { free(r->reqs); free(r->calls); free(r); }
+}
+FIRE_FN void lamHomeRetain(void* box) { fire_atomic_add(&((ThreadRec*)box)->refs, 1); }
+FIRE_FN void lamHomeDrop(void* box) { threadRecDrop((ThreadRec*)box); }
+FIRE_FN void runJob(struct JobReq* j);
+FIRE_FN void jobFail(struct JobReq* j);
+/* The calls other threads sent for lambdas bound to this thread's objects (step 8 (e)): run at its safe points (the jump back of a loop) and while it waits;
+ * once it has ended, they fail (its objects are gone). */
+FIRE_FN void threadServeCalls(void) {
+    ThreadRec* r = g_self;
+    if (!r || !fire_atomic_load(&r->callsPending)) return;
+    for (;;) {
+        struct JobReq* j = NULL;
+        bool dead;
+        fire_mutex_lock(&r->m);
+        if (r->ncalls) { j = r->calls[0]; memmove(r->calls, r->calls + 1, (r->ncalls - 1) * sizeof(struct JobReq*)); r->ncalls--; }
+        if (!r->ncalls) fire_atomic_store(&r->callsPending, 0);
+        dead = r->dead;
+        fire_mutex_unlock(&r->m);
+        if (!j) break;
+        if (fire_atomic_add(&g_peerPending, (uint32_t)-1) == 1) {
+            fire_atomic_and(&g_attn, ~(uint32_t)ATTN_PEER);
+            if (fire_atomic_load(&g_peerPending)) fire_atomic_or(&g_attn, ATTN_PEER);
+        }
+        if (dead) jobFail(j); else runJob(j);
+    }
+}
+/* Puts a call in for the thread `owner` (false: it has ended - the caller fails it). */
+FIRE_FN bool threadRecPostCall(ThreadRec* owner, struct JobReq* j) {
+    fire_mutex_lock(&owner->m);
+    if (owner->dead) { fire_mutex_unlock(&owner->m); return false; }
+    owner->calls = (struct JobReq**)fire_growPush(owner->calls, &owner->ncalls, &owner->capcalls, sizeof(struct JobReq*));
+    owner->calls[owner->ncalls++] = j;
+    fire_atomic_store(&owner->callsPending, 1);
+#ifdef FIRE_TASKS
+    if (owner->task) taskWake(owner->task);
+#endif
+    fire_mutex_unlock(&owner->m);
+    fire_atomic_add(&g_peerPending, 1);
+    fire_atomic_or(&g_attn, ATTN_PEER);
+    notifyEvent();
+    return true;
 }
 FIRE_FN void threadRecBegin(void) {
     ThreadRec* r = (ThreadRec*)calloc(1, sizeof(ThreadRec));
@@ -9509,6 +9574,7 @@ FIRE_FN void threadRecEnd(void) {
 #endif
     fire_mutex_unlock(&r->m);
     threadServe();
+    threadServeCalls();   /* (what is still there fails: the thread's objects are gone) */
     g_self = NULL;
     threadRecDrop(r);
 }
@@ -9719,27 +9785,29 @@ FIRE_FN void sectionExitOp(void) { if (g_isThread && g_secDepth > 0 && --g_secDe
 /* `fire global { ... } taking x`: the job (a lambda with the copies as parameters) is queued, the caller goes on. An argument that reaches an instance of a
  * `[NoCopy]` class is the ArgumentException before anything is copied or queued (no job runs). `fire on x` / `await on x` (onTarget): the first argument is the
  * object the block runs on, as it is - from a thread only one of the main program (its globals' domain) or an actor; `reply`: `await on` from a thread. */
-FIRE_FN void postJobEx(Value lam, const Value* args, uint32_t n, bool onTarget, ActorReply* reply) {
+FIRE_FN void jobFree(JobReq* j);
+/* (the job itself: its lambda, the copies of its arguments; NULL - the exception is set - when it is refused) */
+FIRE_FN JobReq* jobMake(Value lam, const Value* args, uint32_t n, bool onTarget, ActorReply* reply) {
     JobReq* j;
-    Req q;
     uint32_t i;
     if (onTarget && n > 0 && g_isThread && args[0].kind == K_Class && leafAlive(args[0]) && !(leafOf(args[0])->flags & (F_SHARED | 8))) {
         fireError("ArgumentException", "'on': the object is not one of the main program (a thread may name a global variable of the main program)");
-        return;
+        return NULL;
     }
     for (i = onTarget ? 1 : 0; i < n; i++)
-        if (args[i].kind == K_Class && !noCopyFree(args[i], "fire global")) return;
+        if (args[i].kind == K_Class && !noCopyFree(args[i], "fire global")) return NULL;
     j = (JobReq*)malloc(sizeof(JobReq));
     if (!j) allocFailed();
     j->lam = lam.kind == K_Lambda && lamOf(lam)->home ? lam : lamKeep(lam);   /* (a call at home: the lambda stays the caller's) */
     j->reply = reply;
 #ifdef FIRE_STR_CROSS
     /* (the lambda is made here and let go of by the main program, which runs it: it is counted atomically from now on, its captures too) */
-    if (lam.kind == K_Lambda && refOf(lam)->rc != IMMORTAL) {
+    /* (a lambda is never immortal; the second call of the same lambda finds it shared already - its count may change on the main program meanwhile) */
+    if (lam.kind == K_Lambda && !(lamOf(lam)->h.type & R_SHARED)) {
         Lam* l = lamOf(lam);
         uint32_t c;
         l->h.type |= R_SHARED;
-        for (c = 0; c < l->ncaps; c++) if (isRef(lamCaps(l)[c]) && refOf(lamCaps(l)[c])->rc != IMMORTAL) refOf(lamCaps(l)[c])->type |= R_SHARED;
+        for (c = 0; c < l->ncaps; c++) if (isRef(lamCaps(l)[c]) && !(refOf(lamCaps(l)[c])->type & R_SHARED) && refOf(lamCaps(l)[c])->rc != IMMORTAL) refOf(lamCaps(l)[c])->type |= R_SHARED;
     }
 #endif
     retain(lam);
@@ -9753,6 +9821,12 @@ FIRE_FN void postJobEx(Value lam, const Value* args, uint32_t n, bool onTarget, 
         else if (args[i].kind == K_Class) j->args[i] = deepCopyCross(args[i], j->holder);
         else { j->args[i] = strCross(args[i]); retain(j->args[i]); }
     }
+    return j;
+}
+FIRE_FN void postJobEx(Value lam, const Value* args, uint32_t n, bool onTarget, ActorReply* reply) {
+    Req q;
+    JobReq* j = jobMake(lam, args, n, onTarget, reply);
+    if (!j) return;
     q.sec = NULL; q.job = j;
     reqPush(q);
     fire_atomic_or(&g_attn, ATTN_SECT);
@@ -9761,27 +9835,49 @@ FIRE_FN void postJobEx(Value lam, const Value* args, uint32_t n, bool onTarget, 
 FIRE_FN void postJob(Value lam, const Value* args, uint32_t n) { postJobEx(lam, args, n, false, NULL); }
 /* `await on x { ... return v }`: the block runs in the main program's group with x itself and copies of the rest; the caller waits for its result (an
  * exception that the block does not catch is thrown here). The main program itself (or a member of its group) runs it at once. */
-FIRE_FN Value awaitJobEx(Value lam, const Value* args, uint32_t n, bool onTarget);
-FIRE_FN Value awaitOnJob(Value lam, const Value* args, uint32_t n) { return awaitJobEx(lam, args, n, true); }
+FIRE_FN Value awaitJobEx(Value lam, const Value* args, uint32_t n, bool onTarget, void* home);
+FIRE_FN Value awaitOnJob(Value lam, const Value* args, uint32_t n) { return awaitJobEx(lam, args, n, true, NULL); }
+#define FIRE_HOME_ENDED "The lambda is bound to an object of a fire thread that has ended: its target lives no more."
+/* (a lambda bound to an actor, called elsewhere: the message that runs it - args[0] the lambda, args[1] the number of its arguments) */
+FIRE_FN Value lamMsgRun(Value self, const Value* args, OwnList* list) { (void)self; return callLamV(args[0], (int)args[1].i, args + 2, list); }
 /* The call of a lambda bound to an object of the main program, from a fire thread (docs/ROADMAP_TASKS.md step 8 (e)): a job of the main program - the
  * arguments are copied for it, the thread waits (and yields) until the result or the exception comes back. */
-FIRE_FN Value lamCallAtHome(Value lam, int argc, const Value* args) {
+FIRE_FN Value lamCallAtHome(Value lam, int argc, const Value* args, OwnList* list) {
     Lam* l = lamOf(lam);
-    if (l->home == 2) return fireError("ArgumentException", "The lambda is bound to an object of another fire thread or of an actor: it cannot be called from here (yet) - only from the thread its target lives in.");
     if ((uint32_t)argc < l->nreq || (uint32_t)argc > l->nparams) {
         char text[120];
         snprintf(text, sizeof text, "Wrong number of arguments: expected %u, got %d.", (unsigned)l->nparams, argc);
         return fireError("ArgumentException", text);
     }
-    return awaitJobEx(lam, args, (uint32_t)argc, false);
+    if (l->home == 2 && l->on.kind == K_Class && leafAlive(l->on) && (leafOf(l->on)->flags & 8)) {
+        /* an actor: a message its home runs at `process`; on its home itself the call runs at once */
+        Mailbox* b = mailboxOf(asObj(l->on));
+        Value av[18];
+        int i;
+        if (!b || b->home == fire_strandKey()) return callLamV(lam, argc, args, list);
+        if (argc > 16) return fireError("ArgumentException", "A lambda bound to an actor takes at most 16 arguments when it is called from another thread.");
+        av[0] = lam;
+        av[1] = Int((int64_t)argc);
+        for (i = 0; i < argc; i++) av[i + 2] = args[i].kind == K_Class ? copyValue(args[i], true, list) : args[i];
+        return actorAwait(l->on, lamMsgRun, av, (uint32_t)argc + 2);
+    }
+    if (l->home == 2) {
+#ifdef FIRE_NO_GIL
+        if (!l->homeBox || l->homeBox == g_self) return callLamV(lam, argc, args, list);
+        return awaitJobEx(lam, args, (uint32_t)argc, false, l->homeBox);
+#else
+        return callLamV(lam, argc, args, list);   /* (with the GIL one thread runs at a time: the call may run here) */
+#endif
+    }
+    return awaitJobEx(lam, args, (uint32_t)argc, false, NULL);
 }
-FIRE_FN Value awaitJobEx(Value lam, const Value* args, uint32_t n, bool onTarget) {
+FIRE_FN Value awaitJobEx(Value lam, const Value* args, uint32_t n, bool onTarget, void* home) {
     ActorReply* reply;
     int32_t held;
     bool ok, failed;
     Value r;
     Owned* o;
-    if (!g_isThread) {
+    if (!g_isThread && !home) {
         OwnList scratch;
         Value copies[16];
         uint32_t i;
@@ -9800,6 +9896,14 @@ FIRE_FN Value awaitJobEx(Value lam, const Value* args, uint32_t n, bool onTarget
     reply->failed = 0;
     reply->result = Undef();
     ownListInit(&reply->travel, 0, NULL);
+#ifdef FIRE_NO_GIL
+    if (home) {
+        /* a fire thread: it runs the call at its safe points or while it waits */
+        JobReq* j = jobMake(lam, args, n, false, reply);
+        if (!j) { free(reply); return Undef(); }
+        if (!threadRecPostCall((ThreadRec*)home, j)) { j->reply = NULL; jobFree(j); free(reply); return fireError("ArgumentException", FIRE_HOME_ENDED); }
+    } else
+#endif
     postJobEx(lam, args, n, onTarget, reply);
     if (g_unwind.active) { free(reply); return Undef(); }
     held = sectionYieldBegin();
@@ -9809,6 +9913,7 @@ FIRE_FN Value awaitJobEx(Value lam, const Value* args, uint32_t n, bool onTarget
     if (!fire_replyDone(reply)) { fire_replyAbandon(reply); fire_throwCancelled(cancelState(fire_curToken())); return Undef(); }   /* (cancelled: the same) */
     r = reply->result;
     failed = reply->failed != 0;
+    if (reply->failed == 2) { destroyList(&reply->travel); free(reply); return fireError("ArgumentException", FIRE_HOME_ENDED); }
     o = ownedOf(r);
     if (o && o->owner == &reply->travel) ownUnlink(o);
     destroyList(&reply->travel);
@@ -9823,6 +9928,15 @@ FIRE_FN Value jobUnhandled(Value exception) {
     fire_atomic_or(&g_attn, ATTN_MAIN);
     unwindTo(UW_LEAVE, NULL, Undef(), 0);
     return Undef();
+}
+FIRE_FN void jobFree(JobReq* j) {
+    uint32_t i;
+    for (i = 0; i < j->n; i++) release(j->args[i]);
+    destroyList(j->holder);
+    free(j->holder);
+    free(j->args);
+    release(j->lam);
+    free(j);
 }
 FIRE_FN void runJob(JobReq* j) {
     Handler* savedHandlers = g_handlers;
@@ -9864,12 +9978,13 @@ FIRE_FN void runJob(JobReq* j) {
     g_jobDepth--;
     g_handlers = savedHandlers;
     leave(&scratch);
-    for (i = 0; i < j->n; i++) release(j->args[i]);
-    destroyList(j->holder);
-    free(j->holder);
-    free(j->args);
-    release(j->lam);
-    free(j);
+    (void)i;
+    jobFree(j);
+}
+/* A call that cannot run any more (the thread of its target has ended): the caller fails it (failed 2). */
+FIRE_FN void jobFail(JobReq* j) {
+    if (j->reply) { j->reply->result = Undef(); j->reply->failed = 2; fire_replyFinish(j->reply); }
+    jobFree(j);
 }
 
 /* The main program serves the queue: each section is granted in turn (it waits until it ends), each job runs. Returns how many entries it handled. */
@@ -9964,10 +10079,25 @@ FIRE_FN void originFree(Obj* o) {
  * the thread like the rest of what it gets; its target stays, and its calls run where the target lives (home: the main program when the main program sends
  * it, else another fire thread). `rc`: its first count (1: the place that receives it; 0: a field, which counts it itself). A destroyed one stays as it is. */
 FIRE_FN Value takeCopy(Value v, OwnList* travel);
-FIRE_FN uint32_t lamHomeOf(const Lam* a) {
-    if (a->home || a->on.kind != K_Class) return a->home;
-    if (!leafAlive(a->on)) return 0;
-    return (leafOf(a->on)->flags & 8) || (g_isThread && !(leafOf(a->on)->flags & F_SHARED)) ? 2u : 1u;   /* (an actor; an object of this fire thread) */
+/* Where the calls of `l` run once it leaves this thread (the copy of `from`): where `from`'s ran, or - bound to an object - where the object lives: an actor
+ * (its mailbox), an object of this fire thread (its ThreadRec), an object of the main program. */
+FIRE_FN void lamSetHome(Lam* l, const Lam* from) {
+    void* box = NULL;
+    uint32_t home;
+    if (from->home) { home = from->home; box = from->homeBox; }
+    else if (from->on.kind != K_Class || !leafAlive(from->on)) home = 0;
+    else if (leafOf(from->on)->flags & 8) home = 2;   /* (an actor) */
+    else if (g_isThread && !(leafOf(from->on)->flags & F_SHARED)) {
+        home = 2;
+#ifdef FIRE_NO_GIL
+        box = g_self;
+#endif
+    } else home = 1;
+    FIRE_LAM_HOME_RETAIN(box);
+    if (l->homeBox && l->homeBox != box) { void* old = l->homeBox; l->homeBox = NULL; FIRE_LAM_HOME_DROP(old); }
+    else if (l->homeBox == box) { FIRE_LAM_HOME_DROP(box); }   /* (the same: it was counted already) */
+    l->home = home;
+    l->homeBox = box;
 }
 FIRE_FN Value lamTakeCopy(Value v, OwnList* travel, uint32_t rc) {
     Lam* a = lamOf(v);
@@ -9984,7 +10114,7 @@ FIRE_FN Value lamTakeCopy(Value v, OwnList* travel, uint32_t rc) {
     l->nsel = a->nsel;
 #endif
     l->on = a->on;
-    l->home = lamHomeOf(a);
+    lamSetHome(l, a);
     if (travel) ownLink(travel, &l->o);
     for (i = 0; i < a->ncaps; i++) {
         Value c = takeCopy(lamCaps(a)[i], &l->store);   /* (a string or a lambda comes with its count, an object or an array belongs to the store) */
@@ -10162,7 +10292,7 @@ FIRE_FN void handOverAll(const Value* vs, Value* out, uint32_t n, OwnList* trave
     for (i = 0; i < count; i++)
         if (parts[i]->okind == O_Lambda) {
             Lam* l = lamOfOwned(parts[i]);
-            if (!l->home && l->on.kind == K_Class && leafAlive(l->on) && !copyMapFind(&seen, leafOf(l->on))) l->home = lamHomeOf(l);
+            if (!l->home && l->on.kind == K_Class && leafAlive(l->on) && !copyMapFind(&seen, leafOf(l->on))) lamSetHome(l, l);
         }
 #ifdef FIRE_STR_CROSS
     /* (the strings in the moved parts: the sender may hold them too - the thread gets copies) */
@@ -10538,7 +10668,7 @@ FIRE_COLD FIRE_FN bool pollSlow(bool loop) {
     if (terminateRequested()) { startLeave(); return true; }
     if (g_attnMask & ATTN_MAIN) { if (loop) mainPoll(false); else deliverThreadExceptions(); }
 #ifdef FIRE_NO_GIL
-    if (g_attnMask & ATTN_PEER) threadServe();
+    if (g_attnMask & ATTN_PEER) { threadServe(); if (loop) threadServeCalls(); }
 #endif
     return g_unwind.active != 0;
 }

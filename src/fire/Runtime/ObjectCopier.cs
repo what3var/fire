@@ -42,17 +42,19 @@ namespace fire.Runtime
         /// <summary>What a `taking` value becomes in the thread: an object as <see cref="Take"/>, an array or a buffer as an isolated copy (with
         /// everything reachable from it, owned by `newOwner`), anything else as it is (value-like, strings, a lambda at the top level is shared).</summary>
         // (whether the thread that copies is a fire thread: the home of the lambdas the copy reaches)
-        [System.ThreadStatic] private static bool s_senderIsFireThread;
+        [System.ThreadStatic] private static object? s_senderHome;
 
-        public static Value TakeValue(Value v, IOwner newOwner, bool senderIsFireThread = false)
+        /// <summary><paramref name="senderHome"/>: the fire thread that sends (its inbox; null: the main program) - the home of the bound lambdas the copy
+        /// reaches.</summary>
+        public static Value TakeValue(Value v, IOwner newOwner, object? senderHome = null)
         {
-            s_senderIsFireThread = senderIsFireThread;
+            s_senderHome = senderHome;
             switch (v.Kind)
             {
                 case ValueKind.Lambda:
                 {
                     var lambda = (LambdaValue)v.AsLambda();
-                    return lambda.IsDestroyed ? v : Value.MakeLambda(TakeLambda(lambda, newOwner, senderIsFireThread));
+                    return lambda.IsDestroyed ? v : Value.MakeLambda(TakeLambda(lambda, newOwner, senderHome));
                 }
                 case ValueKind.Class:
                 {
@@ -70,17 +72,25 @@ namespace fire.Runtime
         /// <summary>A lambda for another thread (docs/ROADMAP_TASKS.md step 8 (e)): a copy with a store of its own - what it captured is copied for the
         /// thread like everything else it gets; its target stays (a bound lambda keeps it), and its calls run where the target lives (<see cref="LambdaValue.Home"/>:
         /// the main program when the main program sends it, another fire thread when a fire thread sends it).</summary>
-        public static LambdaValue TakeLambda(LambdaValue lambda, IOwner newOwner, bool senderIsFireThread)
+        public static LambdaValue TakeLambda(LambdaValue lambda, IOwner newOwner, object? senderHome)
         {
-            var home = lambda.Home != LambdaHome.Here ? lambda.Home
-                : lambda.OnTarget is ObjectInstance target ? (target.Mailbox != null || senderIsFireThread && !target.InGlobalsDomain ? LambdaHome.OtherThread : LambdaHome.MainProgram)
-                : LambdaHome.Here;
             var copy = lambda.WithOnTarget(lambda.OnTarget);
-            copy.Home = home;
+            SetHome(copy, lambda, senderHome);
             LeafOwnership.Adopt(copy, newOwner);
             if (copy.Captures != null)
-                for (int i = 0; i < copy.Captures.Length; i++) copy.Captures[i] = TakeValue(copy.Captures[i], copy, senderIsFireThread);
+                for (int i = 0; i < copy.Captures.Length; i++) copy.Captures[i] = TakeValue(copy.Captures[i], copy, senderHome);
             return copy;
+        }
+
+        /// <summary>Where the calls of a lambda that leaves its thread run: where they ran before, or - bound to an object - where the object lives: an
+        /// actor (its mailbox), an object of the sending fire thread (its inbox), an object of the main program.</summary>
+        public static void SetHome(LambdaValue lambda, LambdaValue from, object? senderHome)
+        {
+            if (from.Home != LambdaHome.Here) { lambda.Home = from.Home; lambda.HomeBox = from.HomeBox; return; }
+            if (from.OnTarget is not ObjectInstance target) { lambda.Home = LambdaHome.Here; return; }
+            if (target.Mailbox != null) { lambda.Home = LambdaHome.OtherThread; lambda.HomeBox = null; return; }
+            if (senderHome != null && !target.InGlobalsDomain) { lambda.Home = LambdaHome.OtherThread; lambda.HomeBox = senderHome; return; }
+            lambda.Home = LambdaHome.MainProgram;
         }
 
         /// <summary>Discovery first (everything reachable, without recursion on the C# stack), then all object copies, then their fields.</summary>
@@ -191,7 +201,7 @@ namespace fire.Runtime
                         if (lambda.IsDestroyed) return v;
                         if (_lambdaCopies.TryGetValue(lambda, out var lambdaCopy)) return Value.MakeLambda(lambdaCopy);
                         IOwner lambdaOwner = lambda.LeafOwner is ObjectInstance lo && _copies.TryGetValue(lo, out var ownerCopy) ? ownerCopy : _owner;
-                        _lambdaCopies[lambda] = lambdaCopy = TakeLambda(lambda, lambdaOwner, s_senderIsFireThread);
+                        _lambdaCopies[lambda] = lambdaCopy = TakeLambda(lambda, lambdaOwner, s_senderHome);
                         return Value.MakeLambda(lambdaCopy);
                     }
                     default:

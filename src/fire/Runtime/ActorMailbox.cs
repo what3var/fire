@@ -18,12 +18,16 @@ namespace fire.Runtime
         /// <summary>`await actor.Method()`: where the result (or the exception) goes back to the caller that waits; null: a plain message.</summary>
         public ActorReply? Reply { get; }
 
-        public ActorMessage(string methodName, Value[] args, Scope? holder = null, ActorReply? reply = null)
+        /// <summary>A call of a lambda bound to the actor (docs/ROADMAP_TASKS.md step 8 (e)) instead of a method: it runs at `process` like a message.</summary>
+        public LambdaValue? Lambda { get; }
+
+        public ActorMessage(string methodName, Value[] args, Scope? holder = null, ActorReply? reply = null, LambdaValue? lambda = null)
         {
             MethodName = methodName;
             Args = args;
             Holder = holder;
             Reply = reply;
+            Lambda = lambda;
         }
     }
 
@@ -35,6 +39,8 @@ namespace fire.Runtime
         public readonly ManualResetEventSlim Done = new(false);
         public Value Result;
         public ObjectInstance? Exception;
+        /// <summary>The call could not run at all (its home has ended): the caller throws an ArgumentException with this text.</summary>
+        public string? Failure;
         /// <summary>What the result and the exception belong to between the two threads.</summary>
         public readonly Scope Holder = new(null);
     }

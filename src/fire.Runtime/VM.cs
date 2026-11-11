@@ -919,6 +919,7 @@ namespace fire.Runtime
         {
             PollSignalsAfterOp();
             if (!_stopExecutionRequested && _seenQueued != System.Threading.Volatile.Read(ref s_queued)) AutoSyncAt(true);
+            if (!_stopExecutionRequested) ServeHomeInbox();
         }
 
         private bool PollSignalsSlow()
@@ -988,7 +989,21 @@ namespace fire.Runtime
                 _acceptingCallbacks = false; // host callbacks take the other way afterwards
                 _currentThreadVm = null; // a callback firing later on this thread does not look for a finished VM
                 _ownerBroker?.Close();   // no owner any more: waiting fire threads are released
+                _homeInbox?.Close();     // (the calls of lambdas bound to this thread's objects fail from now on)
             }
+        }
+
+        // ---- docs/ROADMAP_TASKS.md step 8 (e): the calls other threads send for lambdas bound to objects of this fire thread
+        private HomeInbox? _homeInbox;
+        /// <summary>The inbox of this fire thread (made when a lambda bound to one of its objects leaves it).</summary>
+        internal object EnsureHomeInbox() => _homeInbox ??= new HomeInbox();
+        internal void CloseHomeInbox() => _homeInbox?.Close();
+        /// <summary>Runs the calls that came (at a safe point of this thread, or while it waits); true if the VM was ended by one.</summary>
+        private bool ServeHomeInbox()
+        {
+            if (_homeInbox == null || !_homeInbox.HasPending || _noAutoSyncDepth > 0 || _nestedDepth > 0) return false;
+            _homeInbox.Drain(this);
+            return _stopExecutionRequested;
         }
 
         private void RunLoop()
@@ -1263,6 +1278,14 @@ namespace fire.Runtime
 
             if (!mailbox.TryProcessOne(blocking, out var message))
                 return false;
+
+            if (message.Lambda is { } lambdaCall)
+            {
+                // a lambda bound to the actor, called elsewhere (docs/ROADMAP_TASKS.md step 8 (e)): it runs here like a job, its result goes back
+                if (message.Reply != null) RunGlobalsJob(lambdaCall, message.Args, message.Reply);
+                else { var lambdaError = CallLambdaInline(lambdaCall, message.Args); if (lambdaError != null) ThrowException(Value.MakeClassRef(lambdaError)); }
+                return true;
+            }
 
             var rc = ResolveClass(actor.ClassName);
             var proto = FindOverload(rc, message.MethodName, message.Args, actor).Proto
@@ -2031,7 +2054,7 @@ namespace fire.Runtime
                     // A back jump (loop) is a safe point for shutdown signals (see PollSignals); `_ip` here still
                     // points to the operand, PollSignalsSlow calculates with the instruction boundary before it.
                     int target = _code[_ip] | (_code[_ip + 1] << 8);
-                    if (target <= _ip && (PollSignals() || PollQueueAtLoop())) return;
+                    if (target <= _ip && (PollSignals() || PollQueueAtLoop() || (_homeInbox != null && ServeHomeInbox()))) return;
                     _ip = target;
                     return;
                 }
@@ -2572,7 +2595,10 @@ namespace fire.Runtime
         private bool RunsElsewhere(LambdaValue lambda) => lambda.Home switch
         {
             LambdaHome.MainProgram => IsFireThreadVm,
-            LambdaHome.OtherThread => true,
+            // (an actor: elsewhere unless this is the thread that made it; a fire thread: unless this is that thread)
+            LambdaHome.OtherThread => lambda.HomeBox == null
+                ? !(lambda.OnTarget is ObjectInstance { Mailbox: { } mailbox } && ReferenceEquals(mailbox.Home, this))
+                : !ReferenceEquals(lambda.HomeBox, _homeInbox),
             _ => false,
         };
 
@@ -2580,11 +2606,6 @@ namespace fire.Runtime
         /// arguments are copied for it, the thread waits (and yields) until the result or the exception comes back.</summary>
         private void CallAtHome(LambdaValue lambda, Value[] args)
         {
-            if (lambda.Home == LambdaHome.OtherThread)
-            {
-                ThrowArgumentError("The lambda is bound to an object of another fire thread or of an actor: it cannot be called from here (yet) - only from the thread its target lives in.");
-                return;
-            }
             CheckArity(lambda.Proto, args.Length);
             foreach (var a in args)
                 if (a.Kind == ValueKind.Class) ObjectCopier.RequireNoCopyFree(a, "fire global");
@@ -2592,7 +2613,15 @@ namespace fire.Runtime
             for (int i = 0; i < args.Length; i++)
                 if (args[i].Kind is ValueKind.Class or ValueKind.Array or ValueKind.Buffer) args[i] = ObjectCloner.Clone(args[i], holder, deep: true);
             var reply = new ActorReply();
-            _threadBroker!.PostJob(lambda, args, holder, reply);
+            if (lambda.Home == LambdaHome.MainProgram) _threadBroker!.PostJob(lambda, args, holder, reply);
+            else if (lambda.HomeBox is HomeInbox inbox)
+            {
+                // a fire thread: it runs the call at its safe points or while it waits
+                if (!inbox.Post(lambda, args, reply)) { ThrowArgumentError(HomeInbox.EndedText); return; }
+            }
+            else if (lambda.OnTarget is ObjectInstance { Mailbox: { } mailbox })
+                mailbox.Enqueue(new ActorMessage("", args, holder, reply, lambda));   // (an actor: at the `process` of its home)
+            else { ThrowArgumentError("The lambda is bound to an object that lives elsewhere and cannot be reached from here."); return; }
             TakeReply(reply);
         }
 
@@ -6491,19 +6520,23 @@ namespace fire.Runtime
 
         /// <summary>A result for a caller on another thread (`await actor.M()`, `await on`): what the call made (it landed in <paramref name="freshOwner"/>)
         /// goes over (handover), anything else - a field, a global - as a copy; both into <paramref name="holder"/>.</summary>
-        private static Value ReplyValue(Value result, Scope freshOwner, Scope holder)
+        private Value ReplyValue(Value result, Scope freshOwner, Scope holder)
         {
             if (OwnerOfValue(result) is not { } owner) return result;
-            return ReferenceEquals(owner, freshOwner)
-                ? ObjectHandover.MoveAll(new[] { result }, holder)[0]
+            object? home = IsFireThreadVm ? EnsureHomeInbox() : null;   // (a bound lambda in the result: its calls come back here - step 8 (e))
+            var value = ReferenceEquals(owner, freshOwner)
+                ? ObjectHandover.MoveAll(new[] { result }, holder, senderHome: home)[0]
                 : ObjectCloner.Clone(result, holder, deep: true);
+            if (value.Kind == ValueKind.Lambda && value.AsLambda() is LambdaValue { Home: LambdaHome.Here, OnTarget: ObjectInstance } bound) ObjectCopier.SetHome(bound, bound, home);
+            return value;
         }
 
         /// <summary>The waiting caller of `await actor.M()` / `await on`: waits for the reply, then throws its exception or pushes its result (it belongs to
         /// this call now, like a returned value).</summary>
         private void TakeReply(ActorReply reply)
         {
-            if (!reply.Done.IsSet && CancelledClass() == null && TrySuspendReply(reply)) return;   // (a task of the pool: it leaves the loop until the reply is there)
+            // (a task of the pool leaves the loop until the reply is there - not one that serves calls of other threads: it serves them while it waits)
+            if (!reply.Done.IsSet && CancelledClass() == null && _homeInbox == null && TrySuspendReply(reply)) return;
             bool blocked = PoolTask != null && !reply.Done.IsSet;
             if (blocked) VmScheduler.BlockEnter();
             try { WaitReply(reply); }
@@ -6515,11 +6548,13 @@ namespace fire.Runtime
             while (!reply.Done.Wait(PoolTask == null && VmGroup.Any ? 5 : 20))
             {
                 if (PoolTask == null) VmGroup.WaitTurn();   // (the main program waits: a handler that waited may go on, its windows read their events)
+                ServeHomeInbox();   // (the calls of other threads for this thread's lambdas: no thread waits for the other forever)
                 if (CheckShutdownSignals()) { Push(Value.MakeUndefined()); StopExecution(); return; }
                 // (cancelled: the caller stops waiting - what it waited for may still run)
                 if (CancelledClass() is { } cancelled) { NativeFail(cancelled, cancelled == "TimeoutException" ? "The time limit ran out." : "The task was cancelled."); _nativeRedirected = false; return; }
             }
             if (reply.Exception != null) { ThrowException(Value.MakeClassRef(reply.Exception)); return; }
+            if (reply.Failure != null) { ThrowArgumentError(reply.Failure); return; }
             var result = reply.Result;
             if (ReferenceEquals(OwnerOfValue(result), reply.Holder))
             {

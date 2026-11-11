@@ -35,6 +35,9 @@ namespace fire.Runtime
     {
         /// <summary>Where its calls run (set when it goes to another thread: `taking`, `handover`, a field of what a thread gets).</summary>
         public LambdaHome Home { get; set; }
+        /// <summary>With <see cref="LambdaHome.OtherThread"/>: the fire thread its target lives in (the VM's inbox of that thread; null: an actor - its
+        /// mailbox takes the calls).</summary>
+        public object? HomeBox { get; set; }
 
         // ---- the owner structure (ROADMAP_TASKS step 8): a lambda belongs to a scope or an object like an array (LeafOwner), dies with it, and owns
         //      its store - the copies and moved instances it captured - like an array its elements

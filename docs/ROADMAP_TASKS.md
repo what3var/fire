@@ -470,8 +470,10 @@ owner header and a store (`Lam.o`, `Lam.store`, okind `O_Lambda`): destroyed wit
 (its captures copied for the thread), `handover` moves it with its store, a lambda in a field or an element of what a thread gets is copied/moved with
 it; a lambda bound with `on` keeps its target and records its home (`LambdaValue.Home`, natively `Lam.home`): called in a fire thread with an object of
 the main program as its target, the call is a job of the main program like `await on` (arguments copied, the thread waits and yields, the result or
-the exception comes back). Open in (e): a target that lives in another fire thread or an actor (the thread would serve such calls at its safe points,
-like an actor its mailbox) - for now such a call is an ArgumentException. `is of lambda` is new (the collections of the prelude take lambdas like
+the exception comes back). Second part: a target in a fire thread - the call goes to that thread (VM: HomeInbox, natively the calls of its ThreadRec), which runs it at the
+jump back of a loop and while it waits (a reply, `Sleep`); once the thread has ended the call is an ArgumentException. A target that is an actor: a
+message that its home runs at `process`. Natively, with the GIL (debug builds), a call for a fire thread runs where it is called (one thread runs at a
+time). Found on the way: the values a native fire thread got (`taking` copies, strings) kept a count at its end - released now. `is of lambda` is new (the collections of the prelude take lambdas like
 objects - `List.Add(() => ...)` keeps them). Open: (e), and the writes/calls of globals from other threads as tasks (rule 10).
 Found on the way: `List<int[]>.Add([1, 2])` - an array handed to a collection died with the statement (the prelude took only objects). Decided (the
 user): `x is from local` (x has an owner, and it is a scope of the running call) and `x is from global` instead of a type test for arrays; `Take...`

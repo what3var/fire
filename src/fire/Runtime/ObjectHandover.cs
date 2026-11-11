@@ -29,7 +29,7 @@ namespace fire.Runtime
         /// (the references among the moved parts and the returned values point to the new ones), the old one is retired - every other reference
         /// (the sender's) is then a reference to a dead object, whose use is the DestroyedException "... was handed over to another thread"
         /// (VM.ThrowDestroyedObject). The native runtime does the same with the generations of the slots (fire_rt.h handOverAll).</summary>
-        public static Value[] MoveAll(IReadOnlyList<Value> vs, IOwner target, bool retire = true, bool senderIsFireThread = false)
+        public static Value[] MoveAll(IReadOnlyList<Value> vs, IOwner target, bool retire = true, object? senderHome = null)
         {
             var result = new Value[vs.Count];
             for (int i = 0; i < vs.Count; i++) result[i] = vs[i];
@@ -49,7 +49,7 @@ namespace fire.Runtime
                 if (leaf is ScriptArray array) array.IsShared = false;
                 // a bound lambda: its target does not move with it (unless it is one of the parts) - its calls run where the target lives
                 if (leaf is LambdaValue { Home: LambdaHome.Here, OnTarget: ObjectInstance boundTo } movedLambda && !parts.Contains(boundTo))
-                    movedLambda.Home = boundTo.Mailbox != null || senderIsFireThread && !boundTo.InGlobalsDomain ? LambdaHome.OtherThread : LambdaHome.MainProgram;
+                    ObjectCopier.SetHome(movedLambda, movedLambda, senderHome);
             }
             if (!retire) return result;
 
