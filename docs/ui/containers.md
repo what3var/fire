@@ -107,6 +107,21 @@ in code, or `dock.AddDocked(child, UI.Dock.Top)`). The last child fills what is 
 Lines its children up and starts a new row when the width is used up (a new column with `Vertical="true"`). `ItemWidth`/`ItemHeight` give every child
 the same size.
 
+## FlowPanel: text with objects in it
+
+Text that flows over lines like a paragraph, with elements in it (a button, a check box, an image) that stand in the line like a big letter. The children
+are `UI.Run`s (a piece of text with its own `Font`, `FontSize` and `Color` - else those of the panel), `UI.LineBreak`s and any other elements. The text is
+broken at the spaces, word by word across the runs; every piece of a line stands on the bottom of the line; `LineSpacing` adds pixels between the lines.
+The lines are as wide as the panel (without a width: one line, broken only at the LineBreaks).
+
+```xml
+<FlowPanel Width="300">Hello <Run Color="#C00000" Text="world"/>, please <Button Text="OK" OnClick="Ok"/> click.<LineBreak/>A new line.</FlowPanel>
+```
+
+In markup the text between the elements is a `Run` each (spaces folded to one). In code: `flow.AddText("Hello ")` (returns the Run), `flow.Add(button)`,
+`flow.Add(new UI.LineBreak())`; `flow.Text` is the text of all runs. In the browser (`http.pages`, docs/networking/http.md) a FlowPanel is HTML text that the
+browser breaks itself.
+
 ## Grid
 
 Rows and columns, each `auto` (as big as its content), a number (pixels) or a star (`*`, `2*`: a share of what is left):

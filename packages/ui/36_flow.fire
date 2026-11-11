@@ -1,0 +1,208 @@
+namespace UI {
+    // A piece of text in a FlowPanel: its own font (`Font`, `FontSize` - else that of the panel) and colour. Outside a FlowPanel it is a Label.
+    class Run : Label {
+        construct(string text = "") : base(text, 0, 0) { }
+        override string StyleKey() { return "Run" }
+    }
+
+    // The end of a line in a FlowPanel.
+    class LineBreak : Element {
+        construct() : base(0, 0, -1, -1) { }
+        override undefined MeasureCore(Root root, int aw, int ah) {
+            this.cw = 0
+            this.ch = 0
+        }
+        override string StyleKey() { return "LineBreak" }
+    }
+
+    // One piece of the flow: a part of a Run (with the space after it) or an element, where it stands.
+    class FlowPiece {
+        UI.Element element
+        string text
+        int x
+        int y
+        int w
+        int h
+
+        construct(UI.Element element, string text, int x, int w, int h) {
+            this.element = element
+            this.text = text
+            this.x = x
+            this.y = 0
+            this.w = w
+            this.h = h
+        }
+    }
+
+    // Text that flows with objects in it (docs/ui/containers.md): the children are Runs (text, broken into lines at the spaces, part by part across the
+    // runs), LineBreaks and any other elements, which stand in the line like a big letter - all on the bottom of their line. The lines are as wide as the
+    // panel (without a width it is one line, except for the LineBreaks). In FXML the text between the elements is a Run:
+    //     <FlowPanel>Hello <Run Color="#C00000">world</Run>, please <Button Text="click"/> here.</FlowPanel>
+    // In the browser (http.pages) it is HTML text: the browser breaks the lines itself.
+    class FlowPanel : Panel {
+        // Pixels between two lines.
+        int LineSpacing = 0
+        List pieces
+
+        construct(int x = 0, int y = 0, int width = -1, int height = -1) : base(x, y, width, height) {
+            this.Filled = false
+            this.pieces = new List()
+        }
+
+        override string StyleKey() { return "FlowPanel" }
+
+        // Adds a Run with the text (returns it).
+        UI.Run AddText(string text) {
+            var r = new UI.Run(text)
+            var kept = r
+            this.Add(take r)
+            return kept
+        }
+
+        override undefined MeasureCore(Root root, int aw, int ah) {
+            for (var i = 0; i < this.children.Count; i = i + 1) {
+                any child = this.children[i]
+                child.Measure(root, -1, -1)
+            }
+            var limit = aw
+            if (this.Width >= 0) { limit = this.Width }
+            this.Flow(root, limit)
+        }
+
+        override undefined ArrangeCore(Root root, int w, int h) {
+            this.Flow(root, w)
+            for (var i = 0; i < this.children.Count; i = i + 1) {
+                any child = this.children[i]
+                if (child is of UI.Run || child is of UI.LineBreak) { child.Arrange(root, 0, 0, 0, 0) }
+            }
+            for (var i = 0; i < this.pieces.Count; i = i + 1) {
+                UI.FlowPiece p = this.pieces[i]
+                if (p.element != undefined && p.text == undefined) { p.element.Arrange(root, p.x, p.y, p.w, p.h) }
+            }
+        }
+
+        // Breaks the children into lines `limit` pixels wide (-1: no limit); sets the pieces and the size of the content.
+        undefined Flow(Root root, int limit) {
+            this.pieces = new List()
+            var x = 0
+            var lineTop = 0
+            var lineHeight = 0
+            var lineStart = 0
+            var widest = 0
+            var emptyHeight = this.TextHeight(root)
+            for (var i = 0; i < this.children.Count; i = i + 1) {
+                any child = this.children[i]
+                if (!child.Visible) { continue }
+                if (child is of UI.LineBreak) {
+                    if (lineHeight == 0) { lineHeight = emptyHeight }
+                    lineTop = this.EndLine(lineStart, lineTop, lineHeight)
+                    lineStart = this.pieces.Count
+                    widest = UI.M.Max(widest, x)
+                    x = 0
+                    lineHeight = 0
+                    continue
+                }
+                if (child is of UI.Run) {
+                    UI.Run run = child
+                    var text = run.Text
+                    if (text == undefined) { text = "" }
+                    var th = run.TextHeight(root)
+                    var at = 0
+                    while (at < text.Length) {
+                        // the next part with the spaces after it
+                        var end = at
+                        while (end < text.Length && text.CharAt(end) != ' ') { end = end + 1 }
+                        var wordEnd = end
+                        while (end < text.Length && text.CharAt(end) == ' ') { end = end + 1 }
+                        var token = text.Substring(at, end - at)
+                        var part = text.Substring(at, wordEnd - at)
+                        at = end
+                        if (x == 0 && part.Length == 0) { continue }   // (spaces at the start of a line)
+                        var ww = run.TextWidth(root, part)
+                        if (x > 0 && limit >= 0 && x + ww > limit) {
+                            lineTop = this.EndLine(lineStart, lineTop, lineHeight)
+                            lineStart = this.pieces.Count
+                            widest = UI.M.Max(widest, x)
+                            x = 0
+                            lineHeight = 0
+                            if (part.Length == 0) { continue }
+                        }
+                        var tw = run.TextWidth(root, token)
+                        this.pieces.Add(new UI.FlowPiece(run, token, x, tw, th))
+                        x = x + tw
+                        lineHeight = UI.M.Max(lineHeight, th)
+                    }
+                    continue
+                }
+                var w = child.dw
+                var h = child.dh
+                if (x > 0 && limit >= 0 && x + w > limit) {
+                    lineTop = this.EndLine(lineStart, lineTop, lineHeight)
+                    lineStart = this.pieces.Count
+                    widest = UI.M.Max(widest, x)
+                    x = 0
+                    lineHeight = 0
+                }
+                var piece = new UI.FlowPiece(child, undefined, x, w, h)
+                this.pieces.Add(take piece)
+                x = x + w
+                lineHeight = UI.M.Max(lineHeight, h)
+            }
+            if (this.pieces.Count > lineStart) { lineTop = this.EndLine(lineStart, lineTop, lineHeight) }
+            else if (lineTop > 0) { lineTop = lineTop - this.LineSpacing }
+            widest = UI.M.Max(widest, x)
+            this.cw = widest
+            this.ch = lineTop
+        }
+
+        // (the pieces of a line stand on its bottom; returns the top of the next line)
+        int EndLine(int first, int top, int height) {
+            for (var i = first; i < this.pieces.Count; i = i + 1) {
+                UI.FlowPiece p = this.pieces[i]
+                p.y = top + height - p.h
+            }
+            return top + height + this.LineSpacing
+        }
+
+        override undefined Draw(Root root, int ax, int ay) {
+            if (!this.NeedsDraw(root, ax, ay)) { return }
+            if (this.Filled || this.Background != undefined) {
+                var brush = this.Background
+                if (brush == undefined) { brush = root.theme.panel }
+                root.renderer.FillRect(ax, ay, this.actualWidth, this.actualHeight, brush)
+            }
+            if (this.ShowBorder) {
+                var pen = this.Pen
+                if (pen == undefined) { pen = root.theme.border }
+                root.renderer.DrawRect(ax, ay, this.actualWidth, this.actualHeight, pen)
+            }
+            for (var i = 0; i < this.pieces.Count; i = i + 1) {
+                UI.FlowPiece p = this.pieces[i]
+                if (p.text != undefined) {
+                    UI.Run run = p.element
+                    var c = run.Color
+                    if (c == undefined) { c = run.Foreground }
+                    if (c == undefined) { c = this.Foreground }
+                    if (c == undefined) { c = root.theme.text }
+                    if (!this.Enabled || !run.Enabled) { c = root.theme.textDisabled }
+                    run.DrawString(root, ax + p.x, ay + p.y, p.text, c)
+                } else if (p.element.Visible) {
+                    p.element.Draw(root, ax + p.element.rx, ay + p.element.ry)
+                }
+            }
+        }
+
+        // The text of the panel (the Runs one after the other; a LineBreak is a new line).
+        string Text {
+            get {
+                var t = ""
+                for (var i = 0; i < this.children.Count; i = i + 1) {
+                    any child = this.children[i]
+                    if (child is of UI.Run) { t = t + child.Text }
+                    else if (child is of UI.LineBreak) { t = t + "\n" }
+                }
+                return t
+            }
+        }
+    }
+}

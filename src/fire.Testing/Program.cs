@@ -27953,6 +27953,34 @@ else
             print(log)
             server.Close()
             """),
+        ("UI.FlowPanel: Text bricht Wort fuer Wort ueber Runs hinweg um, ein Button steht in der Zeile (unten buendig), LineBreak, Text", """
+            #import "ui"
+            var fb = new Framebuffer(400, 300)
+            var win = new Window(fb, "flow")
+            var root = new UI.Root(fb, win)
+            var flow = new UI.FlowPanel(0, 0, 120, -1)
+            flow.AddText("Hello world, please ")
+            var b = new UI.Button("OK", 0, 0, 40, 26)
+            flow.Add(b)
+            flow.AddText(" click it when you are done.")
+            flow.Add(new UI.LineBreak())
+            flow.AddText("Second paragraph")
+            root.content.Add(flow)
+            root.content.Measure(root, 400, 300)
+            root.content.Arrange(root, 0, 0, 400, 300)
+            print("size " + flow.actualWidth + "x" + flow.actualHeight)
+            var line = ""
+            var lastY = -1
+            for (var i = 0; i < flow.pieces.Count; i++) {
+                UI.FlowPiece p = flow.pieces[i]
+                if (p.y != lastY && lastY != -1) { print(line); line = "" }
+                lastY = p.y
+                if (p.text != undefined) { line = line + "[" + p.text + "]" } else { line = line + "<button@" + p.x + "," + p.y + ">" }
+            }
+            print(line)
+            print("button " + b.rx + "," + b.ry + " " + b.actualWidth + "x" + b.actualHeight)
+            print(flow.Text)
+            """),
         ("Net: der Poller weckt wartende Threads (40 Verbindungen in fire-Threads, Daten kommen spaeter), Zeitlimit, Abbruch eines Read per until", """
             #import "net"
             #import "time"

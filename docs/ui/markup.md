@@ -114,6 +114,9 @@ The old names `x`, `y`, `halign`, ... are reported with the new one.
 | `StackPanel` (like `Stack`, but fits its content instead of 100 x 100) | the same | |
 | `DockPanel` (container) | `LastChildFill`; the children say `DockPanel.Dock` | |
 | `WrapPanel` (container) | `Vertical`, `ItemWidth`, `ItemHeight` | |
+| `FlowPanel` (container: text with elements in it; the text between the elements is a `Run`) | `LineSpacing`, `ShowBorder`, `Filled` | |
+| `Run` (a piece of text in a `FlowPanel`) | `Text`, `Color` (and `Font`, `FontSize`) | |
+| `LineBreak` (a new line in a `FlowPanel`) | | |
 | `Grid` (container) | `Rows`, `Columns` (`"60, *, auto"`); the children say `Grid.Row` and so on | |
 | `Border` (one child) | `Padding`, `Thickness` | |
 | `ScrollViewer` (one child) | `VerticalScrollMode`, `HorizontalScrollMode` (`Disabled Auto Visible`) | |
