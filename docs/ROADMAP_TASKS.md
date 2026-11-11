@@ -482,6 +482,34 @@ the member - checked at run time only where the type checker cannot prove it; a 
 collections take with `try x??.TakeTo(this)` whatever belongs to the call (objects, arrays, buffers, lambdas) and skip a number; `Owns.Values` still
 takes an object or a lambda of someone else as before, an array only when it belongs to the call.
 
+### Step 9 - records, `with`, channels; then shared objects (decided by the user)
+
+The threads share nothing that can change - and get ways to pass what does not change, or what moves, without a lock:
+
+* **Records** (`record Order { string id; int qty }`): written only in the constructor (or by a start value), unchangeable after it - a write is a
+  compile error where the type is known, through `any` the class decides at run time (natively a kind of value of its own, `K_Record`: no flag in
+  the object). Fields hold only what does not change either: numbers, texts, enums, records, lambdas without captures. `==` compares the content
+  (a record can be a key). Methods and properties only read.
+* **Records have an owner** like objects, and a count like strings and lambdas: the owner decides the lifetime (when it ends the record is dead -
+  every reference to it, in any thread, gets the DestroyedException), the count only keeps the memory while somebody can still read it (a read on
+  another thread while the owner ends is safe). Since nobody can write, a transfer does not kill the other references (unlike `handover`): the
+  sender may go on reading as long as the record lives.
+* **`with`**: `copy r with { .x = 1, .y = 2 }` - a copy with the named fields changed; for records also `r with { ... }`. For objects as a
+  convenience too (`copy obj with { ... }`, `flat obj with { ... }`): the copy, then the assignments in their order with the rules of an ordinary
+  assignment (setters, visibility, `take`). The constructor does not run (as in C#). (`copy x` / `flat x` work as expressions already.)
+* **`Channel<T>`**: a bounded queue between threads - `Send`, `Receive`, `TryReceive`, `Close`, `foreach`; sending waits when it is full,
+  receiving when it is empty (waiting serves, no lock). `Channel.Pair<A, B>()` for both directions. Later `Net.Channel<T>`: the same over a
+  socket, the values as JSON.
+  - A record **with ownership** (`Send(take r)`): like a parcel - while it travels it belongs to the channel, after `Receive` to the receiver; when
+    the receiver ends, the record is dead (the sender's references get the DestroyedException). Undelivered (the channel is closed, the other side
+    has ended): destroyed - had the receiver taken it, it would be gone now too. `try channel.Send(take r)`: False when the channel is closed or
+    the other side has ended - then nothing moved.
+  - A record **without ownership** (`Send(r)`): lent - the sender stays the owner, the receiver has a reference; it dies with the sender.
+  - An object: like the other ways into a thread - without a word a copy (with TC023), `handover` moves it.
+* **Then: shared objects** (`fire with obj`): every call and write from another thread runs at the object's home (like the lambdas of step 8 (e)),
+  together with rule 10 of step 8; what stays at the home comes back as a remote reference. No read lock (the clear separation stays: no thread
+  touches another's objects).
+
 ## Steps
 
 1. Remove the GIL from the C runtime: lock for the globals, biased counting, slot table, maps, a lock per package. Thread tests on several cores,
@@ -492,7 +520,8 @@ takes an object or a lambda of someone else as before, an array only when it bel
 5. Pinned tasks, task groups and the UI loop on the scheduler (event waits of the display backends).
 6. Cancellation tokens and `until`.
 7. The VM on the scheduler.
-8. Captures only with a word, globals by `taking`, `on` runs on its target (see "Step 8" above) - next.
+8. Captures only with a word, globals by `taking`, `on` runs on its target (see "Step 8" above) - (a)-(e) done, rule 10 next.
+9. Records, `with`, `Channel<T>`, then shared objects (see "Step 9" above).
 
 ## Open
 
