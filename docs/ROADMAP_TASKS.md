@@ -464,6 +464,24 @@ owner's thread, lambdas to other threads.
     original; a write and a method call from another thread run as a task on the global's own thread (the main program). `(taking g)` gives a copy;
     `handover g` is a compile error.
 
+**Rule 10, the plan** (the last part of step 8): today a fire thread reads the globals of the main program directly (natively under the read
+lock of the globals' domain, in the VM through the broker), and a change waits until the main program lets the thread in - the thread then runs the
+write, or a method of a global object, itself with exclusive access (a section). With rule 10 the body runs where the global lives, like the calls
+of a bound lambda in (e):
+
+* **Reads stay direct**: a global variable, a field of an object of the globals' domain - the original, as today.
+* **A write** to a global variable or to a field of an object of the globals' domain, from a fire thread (outside `sync global`): a job of the main
+  program; the thread waits (and serves its own calls meanwhile) until it ran. An object that is written there needs a word, as for a channel:
+  `g = copy x` or `g = handover x` (a fresh value - `new X()`, a call's result - moves without one).
+* **A method call** on an object of the globals' domain from a fire thread: runs in the main program (like a lambda bound to it); its arguments
+  follow the same rule (values as they are, an object with `copy` or `handover`); the result comes back as a copy for now (a remote reference
+  with the shared objects of step 9). An exception that the method does not catch is thrown at the call in the thread.
+* **`sync global { ... }`** stays the way to make several reads and writes one atomic step (a section, as today).
+* **When** the main program runs these jobs is `#globaljobs`, as for `fire global` (safe points, `Sleep`, `sync globals`); the queue is the same.
+* What changes for programs: a method of a global object that sleeps or waits now does it in the main program (the main program waits, not the
+  thread) - the test "Sleep in a method of a global object gives the section free" turns into "... runs in the main program". The VM and the
+  native runtime the same; tests for the write, the method call (result, exception), the word for objects, a write while the main program waits.
+
 **Status:** (a)-(d) are done in the VM and natively. Natively a lambda stays counted (the memory, also for natives that keep a callback) and carries an
 owner header and a store (`Lam.o`, `Lam.store`, okind `O_Lambda`): destroyed with its owner, freed with its last count; the generated lambda body gets
 `lamCaptureCopy` (a copy in its function scope) or `lamCaptureLent` per capture. (e), first part: lambdas go to threads - `taking` copies one with its store
@@ -505,7 +523,8 @@ The threads share nothing that can change - and get ways to pass what does not c
     has ended): destroyed - had the receiver taken it, it would be gone now too. `try channel.Send(take r)`: False when the channel is closed or
     the other side has ended - then nothing moved.
   - A record **without ownership** (`Send(r)`): lent - the sender stays the owner, the receiver has a reference; it dies with the sender.
-  - An object: like the other ways into a thread - without a word a copy (with TC023), `handover` moves it.
+  - An object needs a word (the user): `Send(copy obj)` or `Send(handover obj)` - without one it is a compile error (lax and strict alike: the
+    definition must be clear). A fresh value (`Send(new Job(...))`) needs none: it moves.
 * **Then: shared objects** (`fire with obj`): every call and write from another thread runs at the object's home (like the lambdas of step 8 (e)),
   together with rule 10 of step 8; what stays at the home comes back as a remote reference. No read lock (the clear separation stays: no thread
   touches another's objects).
