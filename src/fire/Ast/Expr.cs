@@ -91,6 +91,18 @@ namespace fire.Ast
     /// success, `undefined` on failure/timeout - NO
     /// exception.</summary>
     public sealed record TryCallExpr(int Line, Expr Call) : Expr(Line);
+    /// <summary>`target?.member...` / `target??.member...` (conditional access): <see cref="Inner"/> is the rest of the chain, written on
+    /// <see cref="Placeholder"/> (the value of the target). It runs only when the target is not undefined - with <see cref="CheckMember"/> (`??.`) also only
+    /// when the value has the member <see cref="Member"/> (at run time, unless the type checker proves it - AstNames.ProvenMember). Otherwise
+    /// the result is undefined and nothing of the chain is evaluated (its arguments neither).</summary>
+    public sealed record ConditionalAccessExpr(int Line, Expr Target, Expr Inner, ConditionalTargetExpr Placeholder, bool CheckMember, string Member) : Expr(Line);
+    /// <summary>The value of the target of a <see cref="ConditionalAccessExpr"/> inside its chain (it is on the stack: it compiles to nothing).</summary>
+    public sealed record ConditionalTargetExpr(int Line) : Expr(Line)
+    {
+        // (each placeholder is its own: equality by reference, so that a table keyed by it never mixes two of them up)
+        public bool Equals(ConditionalTargetExpr? other) => ReferenceEquals(this, other);
+        public override int GetHashCode() => System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(this);
+    }
 
     /// <summary>TypeArgs: explicit type arguments in `new Name&lt;Arg1, ...&gt;(...)`
     /// for a generic class (see ClassDecl.TypeParams) - empty for

@@ -143,6 +143,9 @@ namespace fire.Compiler
         /// <summary>A `take` goes to a variable that was captured without a word (TC023): the ownership goes to the copy and dies with it (ROADMAP_TASKS
         /// step 8) - a warning in strict mode too.</summary>
         public const string TakeIntoCopyCode = "TC024";
+        /// <summary>`x??.name` where the type of x proves that the member is not there - not in the class, not in a class derived from it (or implementing
+        /// the interface): the access would always be skipped (an error).</summary>
+        public const string NeverMemberCode = "TC025";
         /// <summary>The width of the program's `int` (16, 32, 64): set by the linker before the check.</summary>
         [ThreadStatic] public static int ProgramIntWidth;
         /// <summary>What the natives of the imported packages return (their `returns`: name -> type text) - set by the linker before the check.</summary>
@@ -1725,6 +1728,8 @@ namespace fire.Compiler
                     return StaticType.Dynamic;
                 case TryProcessExpr tp: Infer(tp.Target); return StaticType.Dynamic;
                 case TryCallExpr tc: Infer(tc.Call); return StaticType.Dynamic;
+                case ConditionalAccessExpr access: return InferConditionalAccess(access);
+                case ConditionalTargetExpr placeholder: return _placeholderTypes.TryGetValue(placeholder, out var placeholderType) ? placeholderType : StaticType.Dynamic;
                 default: return StaticType.Dynamic;
             }
         }
@@ -1921,6 +1926,58 @@ namespace fire.Compiler
             if (_enumNames.ContainsKey(name)) return name;
             if (_class?.Name is { } cls && cls.LastIndexOf('.') is var dot and > 0 && _enumNames.ContainsKey(cls.Substring(0, dot) + "." + name)) return cls.Substring(0, dot) + "." + name;
             return null;
+        }
+
+        // the type of the value a conditional chain works on (`a?.chain`: the type of a, not undefined there; `??.` that is not proven: dynamic)
+        private readonly Dictionary<ConditionalTargetExpr, StaticType> _placeholderTypes = new();
+
+        private enum MemberProof { Proven, Unprovable, Absent }
+
+        /// <summary>`a?.chain` / `a??.chain`: the chain is checked on the type of a. With `??.` the member is checked at run time only when the type does not
+        /// prove it: a type that has it is only checked for undefined (AstNames.ProveMember); a type that certainly has not (nor a class derived from it) is
+        /// TC025; an interface or a base class whose derived classes have it is checked at run time.</summary>
+        private StaticType InferConditionalAccess(ConditionalAccessExpr access)
+        {
+            var target = Infer(access.Target);
+            var on = target.IsDynamic ? target : target.WithNull(Nullness.Defined);
+            if (access.CheckMember)
+            {
+                switch (ProveMember(target, access.Member))
+                {
+                    case MemberProof.Proven: AstNames.ProveMember(access); break;
+                    case MemberProof.Absent:
+                        ReportError(NeverMemberCode, $"'{target}' has no member '{access.Member}'{(target.Kind == StaticKind.Class ? " (nor a class derived from it)" : "")} - '??.' would always skip it", access.Line);
+                        on = StaticType.Dynamic;
+                        break;
+                    default: on = StaticType.Dynamic; break;   // (checked at run time: the chain is not checked against the declared type)
+                }
+            }
+            _placeholderTypes[access.Placeholder] = on;
+            return Infer(access.Inner).WithNull(Nullness.MayBeUndefined);
+        }
+
+        private MemberProof ProveMember(StaticType t, string name)
+        {
+            switch (t.Kind)
+            {
+                case StaticKind.Class when t.Class != null:
+                    if (FindMember(t, name) != null || HasMethodNamed(t, name) || IsUniversalMember(name)) return MemberProof.Proven;
+                    if (!FullyKnown(t) && !InterfaceFullyKnown(t)) return MemberProof.Unprovable;
+                    // a class derived from it (implementing the interface) may have it: the object decides at run time
+                    foreach (var k in _classes.Keys)
+                        if (k != t.Class && DerivesFrom(k, t.Class) && (FindMember(k, name) != null || HasMethodNamed(StaticType.ClassOf(k), name))) return MemberProof.Unprovable;
+                    return MemberProof.Absent;
+                case StaticKind.String: return fire.Runtime.BuiltinMembers.Has(ValueKind.String, false, name) ? MemberProof.Proven : MemberProof.Absent;
+                case StaticKind.Char: return fire.Runtime.BuiltinMembers.Has(ValueKind.Char, false, name) ? MemberProof.Proven : MemberProof.Absent;
+                case StaticKind.Int or StaticKind.Float or StaticKind.Bool or StaticKind.Word:
+                    return t.Kind == StaticKind.Int && fire.Runtime.BuiltinMembers.Has(ValueKind.Int, false, name) ? MemberProof.Proven : MemberProof.Absent;
+                case StaticKind.Enum: return fire.Runtime.BuiltinMembers.Has(ValueKind.Int, true, name) ? MemberProof.Proven : MemberProof.Absent;
+                case StaticKind.Array:
+                    return fire.Runtime.BuiltinMembers.Has(ValueKind.Array, false, name) ? MemberProof.Proven
+                        : fire.Runtime.BuiltinMembers.Has(ValueKind.Buffer, false, name) ? MemberProof.Unprovable : MemberProof.Absent;
+                case StaticKind.Lambda: return fire.Runtime.BuiltinMembers.Has(ValueKind.Lambda, false, name) ? MemberProof.Proven : MemberProof.Unprovable;
+                default: return MemberProof.Unprovable;
+            }
         }
 
         private StaticType InferMember(MemberExpr m, MemberUse use = MemberUse.Read)

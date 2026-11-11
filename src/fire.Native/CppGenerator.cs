@@ -167,6 +167,8 @@ namespace fire.Native
         private readonly SortedSet<string> _operators = new();
         /// <summary>Class and interface names tested with `is of`: each gets a function `isof_...`.</summary>
         private readonly SortedSet<string> _isOfTypes = new();
+        /// <summary>The members `x??.name` checks at run time (hasm_ functions: the classes that have the member, else the built-in ones).</summary>
+        private readonly SortedSet<string> _hasMembers = new(StringComparer.Ordinal);
         /// <summary>Type arguments (DeclaredType texts: `int`, `Dog`, `in:cm`) by id: each is a TArg `ta_N` with its test `tah_N`.</summary>
         private readonly Dictionary<string, int> _targIds = new();
         /// <summary>Constant lists of type arguments (`new Box&lt;int&gt;()`), by their SetTypeArgs text: each is an array `tl_N`.</summary>
@@ -1439,6 +1441,13 @@ namespace fire.Native
         };
 
         /// <summary>`try x.Take...(...)` (the compiler turns it into a call of `tryTake...`): only the owner moves it.</summary>
+        /// <summary>Has the class (or a base) a field, a property accessor or a method of this name (VM.ReflectHas)?</summary>
+        private static bool ClassHasMember(RuntimeClass rc, string name)
+        {
+            if (rc.FlattenedFieldNames.Contains(name) || rc.FindMethod("get_" + name, 0) != null || rc.FindMethod("set_" + name, 1) != null) return true;
+            for (var c = rc; c != null; c = c.Base) if (c.Methods.ContainsKey(name)) return true;
+            return false;
+        }
         private static bool OwnMethodIsTry(string name) => name.StartsWith("tryTake", StringComparison.Ordinal);
 
         /// <summary>The ownership method takes the target as its first argument (`TakeTo(obj)`), and optionally a `Takes` mode after it.</summary>
@@ -1809,6 +1818,17 @@ namespace fire.Native
                 var selectorCode = _overloadSelectors.Values.Select(SelectorFunction).ToList();
                 string targTables = TArgTables();
                 foreach (var typeName in _isOfTypes) sb.AppendLine($"FIRE_MAYBE_UNUSED {HelperStorage}bool isof_{Mangle(typeName)}(Value v);");
+                foreach (var memberName in _hasMembers)
+                {
+                    // (like the VM's ReflectHas: a field, a property accessor or a method of the class or a base; the ownership methods every object has)
+                    var ids = _classList.Where(c => ClassHasMember(c.Rc, memberName)).Select(c => c.Id).ToList();
+                    sb.AppendLine($"FIRE_MAYBE_UNUSED static bool hasm_{Mangle(memberName)}(Value v) {{");
+                    sb.AppendLine("    if (v.kind != K_Class) return fire_builtinHas(v, " + CString(memberName) + ");");
+                    sb.AppendLine("    if (FIRE_UNLIKELY(!leafAlive(v))) return false;");
+                    if (fire.Runtime.BuiltinMembers.IsOwnership(memberName)) sb.AppendLine("    return true;");
+                    else sb.AppendLine(ids.Count == 0 ? "    return false;" : "    switch (asObj(v)->cls) { " + string.Concat(ids.Select(id => $"case {id}: ")) + "return true; default: return false; }");
+                    sb.AppendLine("}");
+                }
                 sb.Append(targTables);
                 foreach (var name in _fieldNames)
                 {
@@ -4795,6 +4815,20 @@ namespace fire.Native
                         return Next();
                     }
                     SetR(d - 1, false); return Next();
+                }
+                case OpCode.HasMember:
+                {
+                    // `x??.name`: x is there and has the member (the type checker could not prove it) - the classes that have it, or a built-in member
+                    Need(1);
+                    string memberName = chunk.Constants[ins.A[0]].AsString();
+                    if (Modular) E($"{S(d - 1)} = Bool(fire_hasMemberDyn({S(d - 1)}, {CString(memberName)}));");
+                    else
+                    {
+                        _hasMembers.Add(memberName);
+                        E($"{S(d - 1)} = Bool({Px}hasm_{Mangle(memberName)}({S(d - 1)}));");
+                    }
+                    SetR(d - 1, false);
+                    return Next();
                 }
                 case OpCode.IsFrom:
                     Need(2);

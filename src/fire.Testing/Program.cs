@@ -16667,7 +16667,40 @@ else
             Keep k = new Keep()
             try { k.Fill() } catch (Exception e) { print("gone: " + e.message) }
             """),
-        ("is from local / is from global, try take auf Werttypen (False), Arrays und Lambdas in Listen bleiben (List.Add nimmt, was dem Aufruf gehoert)", """
+        ("Bedingter Zugriff: a?.b (nur undefined), a??.b (auch der Member, zur Laufzeit nur wo der Typ ihn nicht beweist), die Kette und ihre Argumente werden uebersprungen", """
+            interface IAnimal { string Name() }
+            class Dog : IAnimal { string Name() { return "dog" } string Bark() { return "wuff" } }
+            class Cat : IAnimal { string Name() { return "cat" } }
+            class Box { int v = 3; Box next; int Twice(int k) { return this.v * k } }
+            class Demo {
+                static undefined Run() {
+                    Box b = new Box()
+                    Box none = undefined
+                    print(b?.v + " " + none?.v + " " + b?.Twice(2) + " " + none?.Twice(2))
+                    b.next = new Box()
+                    print(b?.next.v + " " + none?.next.v + " " + b?.next?.next?.v)
+                    IAnimal a = new Dog()
+                    IAnimal c = new Cat()
+                    print(a??.Bark() + " " + c??.Bark() + " " + a??.Name())
+                    any x = 5
+                    any y = new Box()
+                    any z = [1, 2]
+                    any f = () => 1
+                    print(x??.v + " " + y??.v + " " + z??.Length + " " + z??.Count + " " + (x??.ToChar() == 5!char))
+                    int calls = 0
+                    none?.Twice(calls++)
+                    a??.Bark()
+                    print(calls)
+                    var h = new Box()
+                    print((try y??.TakeTo(h)) + " " + (try x??.TakeTo(h)) + " " + (try f??.TakeTo(h)))
+                    string s = "abc"
+                    print(s?.Length + " " + s??.Length)
+                    print(true ? 1 : 2)
+                }
+            }
+            Demo.Run()
+            """),
+        ("is from local / is from global, try x??.TakeTo ueberspringt Werttypen, Arrays und Lambdas in Listen bleiben (List.Add nimmt, was dem Aufruf gehoert)", """
             class Box { int v = 1 }
             class Holder { Box b }
             class Demo {
@@ -16676,9 +16709,10 @@ else
                     var b = new Box()
                     var h = new Holder()
                     int n = 5
-                    string s = "t"
+                    any an = n
+                    any s = "t"
                     var arr = [1, 2]
-                    print((try n.TakeTo(h)) + " " + (try s.TakeTo(h)) + " " + (try arr.TakeTo(h)))
+                    print((try an??.TakeTo(h)) + " " + (try s??.TakeTo(h)) + " " + (try arr.TakeTo(h)))
                     print((n is from local) + " " + (b is from local) + " " + (arr is from global) + " " + (n is from h) + " " + (arr is from h))
                     print(Local(new Box()) + " " + Local(b) + " " + Local([3]) + " " + Local(7) + " " + Local(() => 1))
                     h.b = new Box()

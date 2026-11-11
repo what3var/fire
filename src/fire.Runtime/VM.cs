@@ -3466,12 +3466,6 @@ namespace fire.Runtime
                     }
                 }
 
-                // `try x.Take...` on a value type (a number, a text, undefined): it owns nothing and belongs to nothing - always false
-                if (target.Kind is not (ValueKind.Array or ValueKind.Buffer or ValueKind.Lambda) && methodName is "tryTakeTo" or "tryTakeLocal" or "tryTakeUpwards" or "tryTakeGlobal")
-                {
-                    Push(Value.MakeBool(false));
-                    return;
-                }
                 if (LeafOf(target) is { } ownedLeaf && TryCallLeafOwnershipMethod(ownedLeaf, methodName, args, out var leafResult))
                 {
                     Push(leafResult);
@@ -5117,6 +5111,23 @@ namespace fire.Runtime
                     var v = Pop();
                     if (ReadsDeadClass(v, typeName, out var deadObj)) { Push(Value.MakeUndefined()); ThrowDestroyedObject(deadObj); break; }
                     Push(Value.MakeBool(IsOfType(v, typeName)));
+                    break;
+                }
+
+                case OpCode.HasMember:
+                {
+                    // `x??.name`: is x there (not undefined, not destroyed) and has it the member - a field, property or method of its class, or a built-in one?
+                    string memberName = _constants[ReadU16()].AsString();
+                    var v = Pop();
+                    bool has = v.Kind switch
+                    {
+                        ValueKind.Undefined => false,
+                        ValueKind.Class => v.AsObjectRef() is ObjectInstance { IsDestroyed: false } o && !IsDeadObject(o)
+                            && (fire.Runtime.BuiltinMembers.IsOwnership(memberName) || ReflectHas(o, memberName)),
+                        ValueKind.Array or ValueKind.Buffer or ValueKind.Lambda => !IsDestroyedLeaf(v) && fire.Runtime.BuiltinMembers.Has(v.Kind, false, memberName),
+                        _ => fire.Runtime.BuiltinMembers.Has(v.Kind, v.IsEnum, memberName),
+                    };
+                    Push(Value.MakeBool(has));
                     break;
                 }
 

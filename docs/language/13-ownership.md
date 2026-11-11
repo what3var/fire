@@ -162,7 +162,7 @@ using it then throws a `DestroyedException`. Whoever wants to keep an object tak
 | `obj.TakeLocal()` | the current scope |
 | `obj.TakeUpwards()` | the scope around the current owner |
 | `obj.TakeGlobal()` | the global scope |
-| `try obj.TakeTo(other)` | only if the caller owns `obj` now; returns `True`/`False` (a number, a text or `undefined` owns nothing: always `False`) |
+| `try obj.TakeTo(other)` | only if the caller owns `obj` now; returns `True`/`False` (a number or a text has no `TakeTo`: `try x??.TakeTo(other)` skips it, see [Conditional access](03-operators.md#conditional-access--and-)) |
 
 `take x` as an argument or on the right of `=` hands `x` over to the receiver, whoever owned it before:
 
@@ -336,7 +336,7 @@ class Bag {
     List items = new List()
     undefined Put(any x) {
         if (x is from local) { print("mine to keep") }
-        try x.TakeTo(this)          // keeps it only if the call owns it; False for a number
+        try x??.TakeTo(this)        // keeps it only if the call owns it; a number has no TakeTo: skipped
         this.items.Add(x)
     }
 }

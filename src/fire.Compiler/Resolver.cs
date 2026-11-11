@@ -2174,6 +2174,15 @@ namespace fire.Compiler
                     ResolveTryCallExpr(tryCallExpr);
                     break;
 
+                case ConditionalAccessExpr conditional:
+                    // `a?.b...` / `a??.b...`: the target, then the chain on its value (the placeholder stands for it)
+                    ResolveExpr(conditional.Target);
+                    ResolveExpr(conditional.Inner);
+                    break;
+
+                case ConditionalTargetExpr:
+                    break;
+
                 default:
                     throw new ResolverException($"Unknown expression type {expr.GetType().Name}", expr.Line);
             }
@@ -2673,6 +2682,11 @@ namespace fire.Compiler
     internal static class AstNames
     {
         private static readonly Dictionary<Type, System.Reflection.MemberInfo[]> Members = new();
+
+        // `x??.name` whose member the type checker proves (the type of x has it): the compiler checks only for undefined
+        private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<ConditionalAccessExpr, object> s_provenMembers = new();
+        public static void ProveMember(ConditionalAccessExpr e) => s_provenMembers.AddOrUpdate(e, true);
+        public static bool ProvenMember(ConditionalAccessExpr e) => s_provenMembers.TryGetValue(e, out _);
 
         /// <summary>The names a node declares anywhere below it (variables, `foreach` variables, the variable of a catch, the parameters of lambdas, the
         /// captures of a nested `fire`) - what a body uses under such a name is its own, not a variable of the code around it.</summary>

@@ -21,7 +21,7 @@ From the loosest to the tightest binding:
 | `*` `/` `%` | multiplication, division, remainder |
 | `^` | power (right-associative) |
 | `-` `!` `~` `*` `&` (prefix) | sign, not, bit inversion, dereference, address-of |
-| `x++` `x--` `x!` `x:unit` `x::unit` `.` `[]` `()` `f on obj` | postfix, conversions, member, index, call, rebinding a lambda |
+| `x++` `x--` `x!` `x:unit` `x::unit` `.` `?.` `??.` `[]` `()` `f on obj` | postfix, conversions, member, conditional member (see below), index, call, rebinding a lambda |
 
 fire differs from C-style languages in a few places:
 
@@ -167,6 +167,43 @@ class Bag {
     construct() { this.item = new Item() }
 }
 ```
+
+## Conditional access: `?.` and `??.`
+
+`a?.b` uses the member only when `a` is there: is `a` `undefined`, the result is `undefined` and nothing else of the chain runs - no call, no argument
+is evaluated. `a??.b` checks the member too: it runs only when `a` is there **and** has `b` (a field, a property or a method; the built-in members such
+as `Length` or `TakeTo` count too).
+
+```fire
+interface IAnimal { string Name() }
+class Dog : IAnimal { string Name() { return "dog" } string Bark() { return "wuff" } }
+class Cat : IAnimal { string Name() { return "cat" } }
+class Box { int v = 3; Box next }
+
+Box b = new Box()
+Box none = undefined
+print(b?.v)                     // 3
+print(none?.v)                  // undefined
+print(none?.next.v)             // undefined - the whole chain is skipped
+IAnimal a = new Cat()
+print(a??.Bark())               // undefined: a cat cannot bark
+any x = 5
+print(x??.Length)               // undefined: a number has no Length
+```
+
+- The whole rest of the chain belongs to the test: in `a?.b.c(d)` nothing after `a` runs when `a` is undefined. A later `?.` tests again
+  (`a?.b?.c`).
+- `?.` only tests for `undefined`; the member must be there as with `.` (the type checker says so where the type is known). A destroyed object is not
+  `undefined`: `?.` uses it and gets the DestroyedException.
+- `??.` tests the member at run time only when the type does not prove it:
+  - the type of `a` has the member: only `undefined` is tested (as with `?.`);
+  - the type certainly has not - neither the class nor a class derived from it (or implementing the interface): the error `TC025`, the access would
+    always be skipped;
+  - an interface or a base class whose member a derived class has (`a??.Bark()` above), `any`, a type parameter: tested at run time, a value without
+    the member is skipped. A destroyed value has no members.
+- `try` goes with it: `try x??.TakeTo(this)` moves `x` when it belongs to the call - and skips a number, which has no `TakeTo` (the collections of the
+  prelude take their elements this way). The result is `undefined` when it was skipped.
+- `?.` and `??.` read and call; they are not a place to assign to (`a?.b = 1`, `a?.n++` are errors - write an `if`).
 
 ## Conversions: `!`, `:` and `::`
 

@@ -277,6 +277,8 @@ namespace fire.Bytecode
         // `until x` (docs/ROADMAP_TASKS.md section 6): the node the task follows - n handles (from __Cancel.Limit) on the stack; bit 7: for the `fire` that follows
         CancelPush,          // count|flags (u8)
         CancelPop,
+        // `x??.name` (a conditional access that checks the member at run time): pop value; push whether it is not undefined, not destroyed and has the member
+        HasMember,           // u16 nameIdx
     }
 
     /// <summary>Target type for CoerceType/CoerceTypeDynamic - corresponds exactly to the

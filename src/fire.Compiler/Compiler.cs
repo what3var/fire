@@ -2561,6 +2561,38 @@ namespace fire.Compiler
                     _chunk.EmitOp(OpCode.RebindLambda);
                     break;
 
+                case ConditionalAccessExpr access:
+                    {
+                        // `a?.chain` / `a??.chain`: [a] -> [a, a] -> the test; the chain runs on the a below it (the placeholder compiles to nothing),
+                        // otherwise a goes and undefined is the result
+                        CompileExpr(access.Target);
+                        _chunk.EmitOp(OpCode.Dup);
+                        if (access.CheckMember && !AstNames.ProvenMember(access))
+                        {
+                            _chunk.EmitOp(OpCode.HasMember);
+                            _chunk.EmitU16(_chunk.AddConstant(Value.MakeString(access.Member)));
+                        }
+                        else
+                        {
+                            _chunk.EmitOp(OpCode.IsOfType);
+                            _chunk.EmitU16(_chunk.AddConstant(Value.MakeString("undefined")));
+                            _chunk.EmitOp(OpCode.LogicalNot);
+                        }
+                        int skipAt = EmitJumpIfFalse();
+                        CompileExpr(access.Inner);
+                        _chunk.EmitOp(OpCode.Jump);
+                        int doneAt = _chunk.Here;
+                        _chunk.EmitU16(0);
+                        _chunk.PatchU16(skipAt, _chunk.Here);
+                        _chunk.EmitOp(OpCode.Pop);
+                        CompileExpr(new LiteralExpr(access.Line, Value.MakeUndefined()));
+                        _chunk.PatchU16(doneAt, _chunk.Here);
+                        break;
+                    }
+
+                case ConditionalTargetExpr:
+                    break;   // (its value is on the stack already)
+
                 case ConditionalExpr ce:
                     {
                         CompileExpr(ce.Condition);
