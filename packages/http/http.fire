@@ -3,6 +3,7 @@
 #import "io"
 #import "time"
 #import "filesystem"
+#import "hash"
 
 namespace Http {
     // 1 bad URL, 2 bad message (a malformed request or response), 3 too many redirects, 4 too large, 5 not supported
@@ -308,6 +309,8 @@ namespace Http {
         // A body that is read from a stream while it is sent (Http.AppServer; instead of `body`): `streamLength` bytes, or chunked when it is -1.
         IO.IStream stream
         int streamLength
+        // A 101 answer of a WebSocket handshake: after it the task of the connection gives the connection to this handler (Http.WebSockets).
+        Http.IWebSocketHandler upgrade
 
         construct(int status = 200, any body = undefined) {
             this.status = status
@@ -317,6 +320,7 @@ namespace Http {
             this.body = Http.Response.Bytes(body)
             this.stream = undefined
             this.streamLength = -1
+            this.upgrade = undefined
         }
 
         // A response whose body is read from `stream` while it is sent (a file, a pipe); the response owns the stream and the server closes it. Without a
@@ -1120,6 +1124,15 @@ namespace Http {
                         if (e.code == 4) { status = 413 }
                         response = Http.Response.Error(status, e.message)
                     }
+                    if (response.upgrade != undefined) {
+                        // (a WebSocket: the 101 goes out, then the handler has the connection until it ends)
+                        Http.AppServer.Send(connection, response, false, true, settings)
+                        connection.ReadTimeout = undefined
+                        var ws = new Http.WebSocket(connection, reader, false)
+                        try { response.upgrade.Serve(ws) } catch (Net.NetException e) { }
+                        ws.CloseQuietly()
+                        break
+                    }
                     Http.AppServer.Send(connection, response, head, keep, settings)
                     open = keep
                 }
@@ -1184,7 +1197,8 @@ namespace Http {
             } else {
                 h.Set("Content-Length", "" + response.body.length)
             }
-            if (keep) { h.Set("Connection", "keep-alive") } else { h.Set("Connection", "close") }
+            if (response.status == 101) { h.Remove("Content-Length") }
+            else if (keep) { h.Set("Connection", "keep-alive") } else { h.Set("Connection", "close") }
             if (!h.Has("Server")) { h.Set("Server", settings.serverName) }
             if (response.stream == undefined) {
                 var body = response.body
@@ -1733,6 +1747,289 @@ namespace Http {
                 if (eq > 0 && part.Substring(0, eq).Trim() == name) { return part.Substring(eq + 1).Trim() }
             }
             return undefined
+        }
+    }
+
+    // ---- WebSocket (RFC 6455; docs/ROADMAP_HTTP.md step 5) -------------------------------------------------------------------------------------------
+
+    class Base64 {
+        static string Encode(byte data[]) {
+            var table = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
+            var t = ""
+            var i = 0
+            while (i + 2 < data.length) {
+                int n = data[i] * 65536 + data[i + 1] * 256 + data[i + 2]
+                t = t + table.CharAt(n / 262144) + table.CharAt((n / 4096) % 64) + table.CharAt((n / 64) % 64) + table.CharAt(n % 64)
+                i = i + 3
+            }
+            var rest = data.length - i
+            if (rest == 1) {
+                int a = data[i] * 65536
+                t = t + table.CharAt(a / 262144) + table.CharAt((a / 4096) % 64) + "=="
+            } else if (rest == 2) {
+                int b = data[i] * 65536 + data[i + 1] * 256
+                t = t + table.CharAt(b / 262144) + table.CharAt((b / 4096) % 64) + table.CharAt((b / 64) % 64) + "="
+            }
+            return t
+        }
+    }
+
+    // What a WebSocket server does with one connection: Serve(ws) runs in the task of the connection, as long as it wants (`ws.Receive()` until undefined).
+    interface IWebSocketHandler {
+        undefined Serve(Http.WebSocket ws)
+    }
+
+    // One message of a WebSocket: a text or bytes.
+    class WebSocketMessage {
+        bool binary
+        byte data[]
+
+        construct(bool binary, byte data[]) {
+            this.binary = binary
+            this.data = take data
+        }
+
+        bool IsText { get { return !this.binary } }
+        string Text() { return IO.Utf8.GetString(this.data, 0, this.data.length) }
+    }
+
+    // A WebSocket connection (either side): `Send(text)`, `SendBytes(bytes)`, `Receive(timeout)` (the next message - pings are answered, a close is
+    // answered and ends it: undefined), `ReceiveText(timeout)`, `Close(code, reason)`, `IsOpen`.
+    class WebSocket {
+        Net.IConnection connection
+        Http.Reader reader
+        bool client
+        bool open
+        int closeCode
+        int maxMessageBytes
+
+        // (the WebSocket uses the connection and the reader; Connect hands them to it, the server's task keeps them)
+        construct(Net.IConnection connection, Http.Reader reader, bool client) {
+            this.connection = connection
+            this.reader = reader
+            this.client = client
+            this.open = true
+            this.closeCode = 0
+            this.maxMessageBytes = 16777216
+        }
+
+        bool IsOpen { get { return this.open } }
+        // The code of the close frame of the other side (1000 normal, 1001 going away, ...; 1006 when the connection just ended), 0 while it is open.
+        int CloseCode { get { return this.closeCode } }
+
+        // ws://host:port/path (wss:// over TLS): the handshake as a client.
+        static Http.WebSocket Connect(string url, int timeout = 10000, Http.Headers headers = undefined) {
+            var u = Http.Url.Parse(url.Replace("ws://", "http://").Replace("wss://", "https://"))
+            Net.IConnection c = Http.Transport.Open(u, timeout)
+            c.ReadTimeout = timeout
+            c.WriteTimeout = timeout
+            var key = Http.Base64.Encode(Net.SecureRandom.Bytes(16))
+            var h = new Http.Headers()
+            h.Set("Host", u.HostHeader())
+            h.Set("Upgrade", "websocket")
+            h.Set("Connection", "Upgrade")
+            h.Set("Sec-WebSocket-Key", key)
+            h.Set("Sec-WebSocket-Version", "13")
+            if (headers != undefined) { for (var i = 0; i < headers.Count; i++) { h.Set(headers.names[i], headers.values[i]) } }
+            Http.Wire.Write(c, "GET " + u.path + " HTTP/1.1", h, undefined)
+            var reader = new Http.Reader(c)
+            var line = reader.ReadLine(8192)
+            if (line == undefined || line.IndexOf(" 101") < 0) { c.Close(); throw new Http.HttpException("The server did not switch to WebSocket: '" + line + "'.", 2) }
+            var rh = new Http.Headers()
+            Http.Wire.ReadHeaders(reader, rh)
+            if (rh.Get("Sec-WebSocket-Accept") != Http.WebSocket.AcceptOf(key)) { c.Close(); throw new Http.HttpException("A wrong Sec-WebSocket-Accept.", 2) }
+            c.ReadTimeout = undefined
+            var ws = new Http.WebSocket(c, reader, true)
+            c.TakeTo(ws)
+            reader.TakeTo(ws)
+            return ws
+        }
+
+        // The answer to a key (Sec-WebSocket-Accept).
+        static string AcceptOf(string key) { return Http.Base64.Encode(Hash.Sha1.Of(key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11")) }
+
+        undefined Send(string text) { this.Frame(1, IO.Utf8.GetBytes(text)) }
+        undefined SendBytes(byte data[]) { this.Frame(2, data) }
+        undefined Ping(byte data[] = undefined) {
+            if (data == undefined) { data = new byte[0] }
+            this.Frame(9, data)
+        }
+
+        // The next message, undefined when the connection is closed (or `timeout` ms ran out: then IsOpen is still true).
+        Http.WebSocketMessage Receive(int timeout = -1) {
+            if (!this.open) { return undefined }
+            if (timeout < 0) { this.connection.ReadTimeout = undefined } else { this.connection.ReadTimeout = timeout }
+            IO.MemoryStream parts = undefined
+            var opcodeOfMessage = 0
+            while (true) {
+                int b0 = 0
+                try { b0 = this.ReadByte() } catch (Net.TimeoutException e) { return undefined }
+                if (b0 < 0) { this.Ended(1006); return undefined }
+                this.connection.ReadTimeout = 30000
+                int b1 = this.ReadByte()
+                if (b1 < 0) { this.Ended(1006); return undefined }
+                var fin = b0 >= 128
+                int opcode = b0 % 16
+                var masked = b1 >= 128
+                int len = b1 % 128
+                if (len == 126) { len = this.ReadByte() * 256 + this.ReadByte() }
+                else if (len == 127) {
+                    len = 0
+                    for (var k = 0; k < 8; k++) { len = len * 256 + this.ReadByte() }
+                }
+                if (len > this.maxMessageBytes) { this.Close(1009, "too big"); return undefined }
+                byte mask[] = undefined
+                if (masked) { mask = this.reader.ReadExact(4) }
+                var payload = this.reader.ReadExact(len)
+                if (masked) { for (var j = 0; j < len; j++) { payload[j] = payload[j] # mask[j % 4] } }
+                if (opcode == 8) {
+                    var code = 1005
+                    if (len >= 2) { code = payload[0] * 256 + payload[1] }
+                    if (this.open) { this.Frame(8, payload) }
+                    this.Ended(code)
+                    return undefined
+                }
+                if (opcode == 9) { this.Frame(10, payload); continue }
+                if (opcode == 10) { continue }
+                if (opcode == 1 || opcode == 2) { opcodeOfMessage = opcode }
+                if (fin && parts == undefined) { return new Http.WebSocketMessage(opcode == 2 || (opcode == 0 && opcodeOfMessage == 2), take payload) }
+                if (parts == undefined) { parts = new IO.MemoryStream() }
+                parts.Write(payload, 0, payload.length)
+                if (parts.Length > this.maxMessageBytes) { this.Close(1009, "too big"); return undefined }
+                if (fin) {
+                    var all = parts.ToBuffer()
+                    parts.Close()
+                    return new Http.WebSocketMessage(opcodeOfMessage == 2, take all)
+                }
+            }
+        }
+
+        // The next text message (a binary one as UTF-8), undefined when the connection is closed or the time ran out.
+        string ReceiveText(int timeout = -1) {
+            var m = this.Receive(timeout)
+            if (m == undefined) { return undefined }
+            return m.Text()
+        }
+
+        // Ends the connection with a close frame (1000 normal) and waits briefly for the answer.
+        undefined Close(int code = 1000, string reason = "") {
+            if (!this.open) { return }
+            var r = IO.Utf8.GetBytes(reason)
+            var payload = new byte[2 + r.length]
+            payload[0] = code / 256
+            payload[1] = code % 256
+            for (var i = 0; i < r.length; i++) { payload[2 + i] = r[i] }
+            try {
+                this.Frame(8, payload)
+                this.open = false
+                this.connection.ReadTimeout = 2000
+                // (the answer of the other side; what comes before it is dropped)
+                while (true) {
+                    int b0 = this.ReadByte()
+                    if (b0 < 0) { break }
+                    int b1 = this.ReadByte()
+                    int len = b1 % 128
+                    if (len == 126) { len = this.ReadByte() * 256 + this.ReadByte() }
+                    if (b1 >= 128) { this.reader.ReadExact(4) }
+                    this.reader.ReadExact(len)
+                    if (b0 % 16 == 8) { break }
+                }
+            } catch (Net.NetException e) {
+            } catch (Http.HttpException e) {
+            }
+            this.Ended(code)
+        }
+
+        // (the end without a word, when the server's task leaves the handler)
+        undefined CloseQuietly() {
+            if (this.open) { this.Close(1001, "") }
+            this.connection.Close()
+        }
+
+        undefined Ended(int code) {
+            this.open = false
+            if (this.closeCode == 0) { this.closeCode = code }
+        }
+
+        int ReadByte() {
+            if (!this.reader.Fill()) { return -1 }
+            int b = this.reader.chunk[this.reader.pos]
+            this.reader.pos = this.reader.pos + 1
+            return b
+        }
+
+        // One frame: a client masks it (RFC 6455 5.3), a server does not.
+        undefined Frame(int opcode, byte data[]) {
+            var n = data.length
+            var headLen = 2
+            if (n >= 126 && n < 65536) { headLen = 4 } else if (n >= 65536) { headLen = 10 }
+            if (this.client) { headLen = headLen + 4 }
+            var frame = new byte[headLen + n]
+            frame[0] = 128 + opcode
+            var maskBit = 0
+            if (this.client) { maskBit = 128 }
+            var at = 2
+            if (n < 126) { frame[1] = maskBit + n }
+            else if (n < 65536) {
+                frame[1] = maskBit + 126
+                frame[2] = n / 256
+                frame[3] = n % 256
+                at = 4
+            } else {
+                frame[1] = maskBit + 127
+                var v = n
+                for (var k = 9; k >= 2; k--) { frame[k] = v % 256; v = v / 256 }
+                at = 10
+            }
+            if (this.client) {
+                var mask = Net.SecureRandom.Bytes(4)
+                for (var m = 0; m < 4; m++) { frame[at + m] = mask[m] }
+                at = at + 4
+                for (var i = 0; i < n; i++) { frame[at + i] = data[i] # mask[i % 4] }
+            } else {
+                for (var i = 0; i < n; i++) { frame[at + i] = data[i] }
+            }
+            this.connection.Write(frame, 0, frame.length)
+        }
+    }
+
+    // WebSocket endpoints as a link of the chain: a GET with `Upgrade: websocket` on `path` is switched over (101) and the handler serves the connection in
+    // its task; the rest goes on. `origins`: the allowed values of the Origin header (empty: any) - a check against pages of other sites (CSRF).
+    class WebSockets : IRouter {
+        string path
+        Http.IWebSocketHandler handler
+        List origins
+
+        construct(string path, Http.IWebSocketHandler handler) {
+            this.path = path
+            this.handler = take handler
+            this.origins = new List()
+        }
+
+        Http.WebSockets AllowOrigin(string origin) {
+            this.origins.Add(origin)
+            return this
+        }
+
+        Http.Response Handle(Http.Context ctx, Http.Next next) {
+            var request = ctx.Request
+            if (request.path != this.path) { return next.Invoke(ctx) }
+            var up = request.headers.Get("Upgrade")
+            if (up == undefined || up.ToLower() != "websocket") { return Http.Response.Error(426, "This is a WebSocket endpoint.") }
+            var key = request.headers.Get("Sec-WebSocket-Key")
+            if (request.method != "GET" || key == undefined || request.headers.Get("Sec-WebSocket-Version") != "13") { return Http.Response.Error(400, "A bad WebSocket handshake.") }
+            if (this.origins.Count > 0) {
+                var origin = request.headers.Get("Origin")
+                var allowed = false
+                for (var i = 0; i < this.origins.Count; i++) { if (this.origins[i] == origin) { allowed = true } }
+                if (!allowed) { return Http.Response.Error(403, "This origin may not open the WebSocket.") }
+            }
+            var r = new Http.Response(101)
+            r.headers.Set("Upgrade", "websocket")
+            r.headers.Set("Connection", "Upgrade")
+            r.headers.Set("Sec-WebSocket-Accept", Http.WebSocket.AcceptOf(key))
+            r.upgrade = this.handler
+            return r
         }
     }
 }

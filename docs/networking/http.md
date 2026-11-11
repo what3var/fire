@@ -183,3 +183,33 @@ server.PushTo(new Http.Sessions()).PushTo(new Http.Rpc("/rpc", services))
   by type, a subclass or an interface) makes the instance. Actors are shared by every call; other services are copied for every connection and once for the
   home.
 * `Http.ServerSettings.showErrors` (false): a 500 of the server tells the message of what a router threw - for development.
+
+### WebSocket: `Http.WebSockets`, `Http.WebSocket`
+
+```fire
+class Echo : Http.IWebSocketHandler {
+    undefined Serve(Http.WebSocket ws) {                 // runs in the task of the connection, as long as it wants
+        while (true) {
+            var m = ws.Receive()                         // undefined: closed
+            if (m == undefined) { break }
+            ws.Send("echo: " + m.Text())
+        }
+    }
+}
+server.PushTo((new Http.WebSockets("/chat", new Echo())).AllowOrigin("https://example.org"))
+
+var ws = Http.WebSocket.Connect("ws://127.0.0.1:8080/chat")   // the client side (wss:// over TLS)
+ws.Send("hello")
+print(ws.ReceiveText(5000))
+ws.Close()
+```
+
+* `Http.WebSockets(path, handler)` is a link of the chain: a GET on `path` with `Upgrade: websocket` gets the 101 (RFC 6455: `Sec-WebSocket-Accept` from SHA-1 and
+  Base64), then the task of the connection gives the connection to `handler.Serve(ws)` until it returns; a request without the upgrade gets a 426, a bad
+  handshake a 400. `AllowOrigin(origin)` (any number): only pages of these origins may open it (403 otherwise) - the check against other sites; without
+  one every origin may.
+* `Http.WebSocket`: `Send(text)`, `SendBytes(bytes)`, `Ping()`, `Receive(timeout = -1)` (the next `Http.WebSocketMessage` - `IsText`, `Text()`, `data`; pings are
+  answered and fragments joined on the way; undefined when the other side closed it, or when `timeout` ms ran out - then `IsOpen` is still true),
+  `ReceiveText(timeout)`, `Close(code = 1000, reason)`, `IsOpen`, `CloseCode`, `maxMessageBytes` (16 MiB; a longer message closes with 1009).
+  `Http.WebSocket.Connect(url, timeout, headers)` is the client (it masks its frames, the server does not). `Http.Base64.Encode(bytes)`.
+* The handler is a copy for every connection, like every router. What several connections share (a chat room) is an actor that the handlers send to.

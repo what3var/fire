@@ -27789,6 +27789,63 @@ else
             while (try process clock) { stray = stray + 1 }
             print("tick " + done + " list " + list.Count + " stray messages " + stray)
             """),
+        ("Http.WebSockets: Handshake (101, Sec-WebSocket-Accept), Text, 70000 Bytes (64-Bit-Laenge), 300 Zeichen (16-Bit-Laenge), Ping, Zeitlimit beim Empfang, Close 1000, 426 ohne Upgrade, fremder Origin abgewiesen", """
+            #import "http"
+            #import "time"
+            class Echo : Http.IWebSocketHandler {
+                string prefix = "echo: "
+                undefined Serve(Http.WebSocket ws) {
+                    while (true) {
+                        var m = ws.Receive()
+                        if (m == undefined) { break }
+                        if (m.IsText) {
+                            var t = m.Text()
+                            if (t == "bye") { ws.Close(1000, "done"); break }
+                            ws.Send(this.prefix + t)
+                        } else {
+                            ws.Send("bytes " + m.data.length + " last " + m.data[m.data.length - 1])
+                        }
+                    }
+                }
+            }
+            var server = new Http.AppServer("127.0.0.1", 0)
+            server.PushTo((new Http.WebSockets("/chat", new Echo())).AllowOrigin("http://good.example"))
+            int port = server.Port
+            int done = 0
+            string log = ""
+            fire taking port {
+                var out = ""
+                var h = new Http.Headers()
+                h.Set("Origin", "http://good.example")
+                var ws = Http.WebSocket.Connect("ws://127.0.0.1:" + port + "/chat", 5000, h)
+                ws.Send("hello")
+                out = out + ws.ReceiveText(5000) + "\n"
+                var big = new byte[70000]
+                for (var i = 0; i < big.length; i++) { big[i] = i % 251 }
+                ws.SendBytes(big)
+                out = out + ws.ReceiveText(5000) + "\n"
+                var mid = ""
+                for (var i = 0; i < 300; i++) { mid = mid + "x" }
+                ws.Send(mid)
+                out = out + "mid " + ws.ReceiveText(5000).Length + "\n"
+                ws.Ping()
+                ws.Send("after ping")
+                out = out + ws.ReceiveText(5000) + "\n"
+                out = out + "nothing yet " + (ws.Receive(50) == undefined) + " open " + ws.IsOpen + "\n"
+                ws.Send("bye")
+                out = out + "closed " + (ws.Receive(5000) == undefined) + " code " + ws.CloseCode + " open " + ws.IsOpen + "\n"
+                var c = new Http.Client()
+                var r = c.Get("http://127.0.0.1:" + port + "/chat")
+                out = out + "plain get " + r.status + "\n"
+                var bad = new Http.Headers()
+                bad.Set("Origin", "http://evil.example")
+                try { Http.WebSocket.Connect("ws://127.0.0.1:" + port + "/chat", 5000, bad); out = out + "no\n" } catch (Http.HttpException e) { out = out + "evil origin refused\n" }
+                sync global { log = out; done = 1 }
+            }
+            while (done < 1) { server.AcceptOne(20ms); sync globals }
+            print(log)
+            server.Close()
+            """),
         ("Net: der Poller weckt wartende Threads (40 Verbindungen in fire-Threads, Daten kommen spaeter), Zeitlimit, Abbruch eines Read per until", """
             #import "net"
             #import "time"

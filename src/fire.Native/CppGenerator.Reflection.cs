@@ -708,7 +708,7 @@ FIRE_MAYBE_UNUSED static Value rf_selector_path(Value l, OwnList* list) {
                 string items = string.Concat(Enumerable.Range(0, argc).Select(i => $", items[{i}]"));
                 callSb.AppendLine($"    if (argc == {argc} && strIs(name, {CStr(name)})) {{");
                 callSb.AppendLine("        switch (asObj(obj)->cls) {");
-                if (inst.Count > 0) callSb.AppendLine("            " + string.Concat(inst.Select(i => $"case {i}: ")) + $"return call_{Mangle(name)}_{argc}(obj{items}{DispatchTail(name, argc, "list", "caller")});");
+                if (inst.Count > 0) callSb.AppendLine("            " + string.Concat(inst.Select(i => $"case {i}: ")) + $"{{ Value r = call_{Mangle(name)}_{argc}(obj{items}{DispatchTail(name, argc, "list", "caller")}); adopt(r, list); return r; }}");   // (the result goes to the caller, like the dispatchers do - a fresh string otherwise kept its count)
                 if (stat.Count > 0) callSb.AppendLine("            " + string.Concat(stat.Select(i => $"case {i}: ")) + $"{{ char t[300]; strToUtf8(name, t, sizeof t); char u[400]; snprintf(u, sizeof u, \"'%s' is a static method - Reflect.Call only calls instance methods.\", t); return rfFail(u); }}");
                 callSb.AppendLine("            default: break;");
                 callSb.AppendLine("        }");

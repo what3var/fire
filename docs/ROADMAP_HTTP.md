@@ -115,7 +115,9 @@ ran out or its token is cancelled. **Built** (poll()/WSAPoll, not yet epoll/kque
    single (one home actor for session and single instances), `[Timeout]`, constructor injection from a list of services; `[Remote]` keeps them in a native
    build. Found on the way (VM): `list.Add(actor)` and the assignment of an actor to a field posted a message `tryTakeTo` to the actor - ownership calls on an
    actor are no messages now. Open: events (with step 5), the random instance ids of the roadmap (instances are addressed by class and session for now).
-5. WebSocket.
+5. WebSocket - **built** (`Http.WebSockets`, `Http.WebSocket`, docs/networking/http.md): RFC 6455 server and client, fragments, ping/pong, close, origins. Open:
+   sending to a socket from another task (the reader/writer split of an FXML page: the page's task writes, the reading task gets what comes in) and
+   compression (permessage-deflate).
 6. FXML to HTML/CSS, `fire.js`, live updates.
 7. Canvas recording, JS calls.
 
