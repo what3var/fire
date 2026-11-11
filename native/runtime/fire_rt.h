@@ -6314,9 +6314,9 @@ FIRE_FN bool isFrom(Value operand, Value owner, bool transitive) {
     Owned* target;
     Owned* self;
     OwnList* l;
-    if (FIRE_UNLIKELY((operand.kind != K_Class && operand.kind != K_Lambda) || owner.kind != K_Class)) fatal("'is from'/'is under' expects objects.");
+    if (FIRE_UNLIKELY(owner.kind != K_Class)) fatal("'is from'/'is under' expects an object as the owner.");
     if (FIRE_UNLIKELY(!leafAlive(owner))) return false;
-    self = ownedOf(operand);   /* (an object, or a lambda: owned like one) */
+    self = ownedOf(operand);   /* (an object, an array, a buffer, a lambda; a value type belongs to nothing) */
     if (FIRE_UNLIKELY(!self)) return false;   /* (a destroyed object owns nothing and belongs to nothing, like in the VM) */
     target = &asObj(owner)->h;
     for (l = self->owner; l; l = l->holder->owner) {
@@ -6758,9 +6758,66 @@ FIRE_FN bool ownedByCall(Owned* o, OwnList* const* lists, int n, Value thisValue
 /* `try take x` (SPEC 2.2): true when the running call owns x (then the take that follows moves it; otherwise nothing changes). */
 FIRE_FN bool tryTakeOwned(Value v, OwnList* const* lists, int n, Value thisValue, OwnList* myArgs) { return ownedByCall(ownedOf(v), lists, n, thisValue, myArgs); }
 
+/* `x??.name` (a conditional access that checks the member at run time) for a value that is no object: the members it has without a class of the program -
+ * the ownership methods of what is owned, `Length` of texts, arrays and buffers, the built-in methods of the value types (the VM: BuiltinMembers). A destroyed
+ * value has none. */
+FIRE_FN bool fire_builtinHas(Value v, const char* name) {
+    bool own = !strcmp(name, "TakeTo") || !strcmp(name, "TakeLocal") || !strcmp(name, "TakeUpwards") || !strcmp(name, "TakeGlobal");
+    bool length = !strcmp(name, "Length") || !strcmp(name, "length");
+    switch (v.kind) {
+        case K_String: return length || !strcmp(name, "ToBytes") || !strcmp(name, "ToUnicode");
+        case K_Char: return !strcmp(name, "ToByte") || !strcmp(name, "ToUnicode");
+        case K_Int: return !strcmp(name, "ToChar") || (v.reserved != 0 && (!strcmp(name, "ToString") || !strcmp(name, "HasFlag")));   /* (reserved: an enum) */
+        case K_Array: return ownedOf(v) && (own || length || !strcmp(name, "GetEnumerator"));
+        case K_Buffer: return ownedOf(v) && (own || length || !strcmp(name, "littleEndian") || !strcmp(name, "GetEnumerator") || !strcmp(name, "ToString")
+            || !strcmp(name, "ToUnicode") || !strcmp(name, "ToUnicodeChar") || !strcmp(name, "ToLittleEndian") || !strcmp(name, "ToBigEndian"));
+        case K_Lambda: return ownedOf(v) && own;
+        default: return false;
+    }
+}
+#ifdef FIRE_MODULES
+/* ... for any value, with the tables of the members of the classes (a build with modules: the classes of other modules are not known to the generated code) */
+FIRE_FN bool fire_hasMemberDyn(Value v, const char* name) {
+    const FireMembers* const* tables;
+    char accessor[160];
+    size_t n = strlen(name);
+    if (v.kind != K_Class) return fire_builtinHas(v, name);
+    if (!leafAlive(v)) return false;
+    if (!strcmp(name, "TakeTo") || !strcmp(name, "TakeLocal") || !strcmp(name, "TakeUpwards") || !strcmp(name, "TakeGlobal")) return true;
+    tables = g_classDescs[asObj(v)->cls].members;
+    for (; tables && *tables; tables++) {
+        uint32_t i;
+        for (i = 0; i < (*tables)->nfields; i++) if (!strcmp((*tables)->fields[i].name, name)) return true;
+        for (i = 0; i < (*tables)->nmethods; i++) {
+            const char* m = (*tables)->methods[i].name;
+            if (!strcmp(m, name)) return true;
+            if (n + 5 < sizeof accessor && (!strncmp(m, "get_", 4) || !strncmp(m, "set_", 4)) && !strcmp(m + 4, name)) return true;
+        }
+    }
+    return false;
+}
+#endif
+
+/* `x is from local`: x belongs to a scope of the running call (`lists`, its statement temporaries included) or to the argument list it was given (`myArgs`);
+ * `x is from global`: to the global scope. A value type belongs to nothing (false). */
+FIRE_FN bool isFromLocal(Value v, OwnList* const* lists, int n, OwnList* myArgs) {
+    Owned* o = ownedOf(v);
+    int i;
+    if (!o || !o->owner) return false;
+    for (i = 0; i < n; i++) if (o->owner == lists[i] || (lists[i] && o->owner->home == lists[i])) return true;
+    return myArgs && o->owner == myArgs;
+}
+FIRE_FN bool isFromGlobal(Value v) {
+    Owned* o = ownedOf(v);
+    return o && o->owner && (o->owner == g_globalOwn || o->owner->home == g_globalOwn);
+}
 FIRE_FN bool ownMethodTry(int method, Value self, Value arg, Value mode, OwnList* here, OwnList* const* lists, int n, Value thisValue, OwnList* myArgs) {
     Owned* o = ownedOf(self);
-    if (!o) fatal("Take... is only possible for an object, an array or a buffer that is not destroyed.");
+    if (!o) {
+        if (self.kind != K_Class && self.kind != K_Array && self.kind != K_Buffer && self.kind != K_Lambda)
+            fireError("MissingMemberException", "'try x.Take...' is only possible for an object, an array, a buffer or a lambda - a value type has no Take... ('try x??.TakeTo(...)' skips it).");
+        return false;   /* (destroyed: it belongs to nothing - `try` is false, as in the VM) */
+    }
     if (!ownedByCall(o, lists, n, thisValue, myArgs)) return false;
     ownMethodT(method, self, arg, mode, here, lists, n);
     return true;

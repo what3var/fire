@@ -64,6 +64,8 @@ namespace fire.Lexing
 
         Eof,
         KwWord, // 'word' - the machine word of the target, unsigned, without a unit (SPEC 8.10); `word a[]` is a buffer of words (at the end: the numbers of the others stay)
+        QuestionDot,          // '?.'  -> `a?.b`: only when a is not undefined
+        QuestionQuestionDot,  // '??.' -> `a??.b`: only when a is not undefined and has the member b (checked at run time where the type cannot prove it)
     }
 
     public readonly struct Token

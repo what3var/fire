@@ -16667,6 +16667,71 @@ else
             Keep k = new Keep()
             try { k.Fill() } catch (Exception e) { print("gone: " + e.message) }
             """),
+        ("Bedingter Zugriff: a?.b (nur undefined), a??.b (auch der Member, zur Laufzeit nur wo der Typ ihn nicht beweist), die Kette und ihre Argumente werden uebersprungen", """
+            interface IAnimal { string Name() }
+            class Dog : IAnimal { string Name() { return "dog" } string Bark() { return "wuff" } }
+            class Cat : IAnimal { string Name() { return "cat" } }
+            class Box { int v = 3; Box next; int Twice(int k) { return this.v * k } }
+            class Demo {
+                static undefined Run() {
+                    Box b = new Box()
+                    Box none = undefined
+                    print(b?.v + " " + none?.v + " " + b?.Twice(2) + " " + none?.Twice(2))
+                    b.next = new Box()
+                    print(b?.next.v + " " + none?.next.v + " " + b?.next?.next?.v)
+                    IAnimal a = new Dog()
+                    IAnimal c = new Cat()
+                    print(a??.Bark() + " " + c??.Bark() + " " + a??.Name())
+                    any x = 5
+                    any y = new Box()
+                    any z = [1, 2]
+                    any f = () => 1
+                    print(x??.v + " " + y??.v + " " + z??.Length + " " + z??.Count + " " + (x??.ToChar() == 5!char))
+                    int calls = 0
+                    none?.Twice(calls++)
+                    a??.Bark()
+                    print(calls)
+                    var h = new Box()
+                    print((try y??.TakeTo(h)) + " " + (try x??.TakeTo(h)) + " " + (try f??.TakeTo(h)))
+                    string s = "abc"
+                    print(s?.Length + " " + s??.Length)
+                    print(true ? 1 : 2)
+                }
+            }
+            Demo.Run()
+            """),
+        ("is from local / is from global, try x??.TakeTo ueberspringt Werttypen, Arrays und Lambdas in Listen bleiben (List.Add nimmt, was dem Aufruf gehoert)", """
+            class Box { int v = 1 }
+            class Holder { Box b }
+            class Demo {
+                static bool Local(any x) { return x is from local }
+                static undefined Run() {
+                    var b = new Box()
+                    var h = new Holder()
+                    int n = 5
+                    any an = n
+                    any s = "t"
+                    var arr = [1, 2]
+                    print((try an??.TakeTo(h)) + " " + (try s??.TakeTo(h)) + " " + (try arr.TakeTo(h)))
+                    print((n is from local) + " " + (b is from local) + " " + (arr is from global) + " " + (n is from h) + " " + (arr is from h))
+                    print(Local(new Box()) + " " + Local(b) + " " + Local([3]) + " " + Local(7) + " " + Local(() => 1))
+                    h.b = new Box()
+                    print((h.b is from local) + " " + (h.b is from h) + " " + (h.b is from global))
+                    var as = new List<int[]>()
+                    as.Add([1, 2])
+                    print(as[0][1] + " " + (as[0] is from as))
+                    var fs = new List<lambda>()
+                    fs.Add(() => 42)
+                    print(fs[0]() + " " + (fs[0] is from fs))
+                    var ns = new List<int>()
+                    ns.Add(3)
+                    print(ns[0])
+                }
+            }
+            var g = new Box()
+            print((g is from global) + " " + (g is from local))
+            Demo.Run()
+            """),
         ("Auto-Properties mit Initialwert; Probes auf Feldern bleiben (nur ein beobachtetes Objekt nimmt den Setter, die anderen schreiben per Index)", """
             class Counter {
                 int Count { get; set; } = 5

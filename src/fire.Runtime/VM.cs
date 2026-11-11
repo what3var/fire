@@ -5124,30 +5124,51 @@ namespace fire.Runtime
                     break;
                 }
 
+                case OpCode.HasMember:
+                {
+                    // `x??.name`: is x there (not undefined, not destroyed) and has it the member - a field, property or method of its class, or a built-in one?
+                    string memberName = _constants[ReadU16()].AsString();
+                    var v = Pop();
+                    bool has = v.Kind switch
+                    {
+                        ValueKind.Undefined => false,
+                        ValueKind.Class => v.AsObjectRef() is ObjectInstance { IsDestroyed: false } o && !IsDeadObject(o)
+                            && (fire.Runtime.BuiltinMembers.IsOwnership(memberName) || ReflectHas(o, memberName)),
+                        ValueKind.Array or ValueKind.Buffer or ValueKind.Lambda => !IsDestroyedLeaf(v) && fire.Runtime.BuiltinMembers.Has(v.Kind, false, memberName),
+                        _ => fire.Runtime.BuiltinMembers.Has(v.Kind, v.IsEnum, memberName),
+                    };
+                    Push(Value.MakeBool(has));
+                    break;
+                }
+
                 case OpCode.IsFrom:
                 {
-                    bool transitive = ReadByte() != 0;
+                    // 0 `is from owner`, 1 `is under owner`, 2 `is from local` (a scope of the running call), 3 `is from global` (the global scope)
+                    int fromMode = ReadByte();
                     var ownerVal = Pop();
                     var operandVal = Pop();
-                    var ownerObj = RequireObjectInstance(ownerVal, "'is from'/'is under' (owner expression)");
-                    if (operandVal.Kind == ValueKind.Lambda && LeafOf(operandVal) is { } lambdaLeaf)
+                    IOwner? direct = OwnerOfValue(operandVal);   // (null: a value type, a destroyed one - it belongs to nothing)
+                    if (fromMode >= 2)
                     {
-                        // a lambda (an owned leaf): its owner, or one above it
-                        IOwner? up = lambdaLeaf.IsDestroyed ? null : lambdaLeaf.LeafOwner;
-                        bool found = ReferenceEquals(up, ownerObj);
-                        for (int guard = 0; transitive && !found && up != null && guard < 10000; guard++)
-                        {
-                            up = up switch { ObjectInstance oi => oi.Owner, IOwnedLeaf l => l.LeafOwner, _ => null };
-                            found = ReferenceEquals(up, ownerObj);
-                        }
-                        Push(Value.MakeBool(found));
+                        Push(Value.MakeBool(fromMode == 2 ? IsCurrentCallOwner(direct) : direct is Scope { Home.IsGlobal: true }));
                         break;
                     }
-                    var operandObj = RequireObjectInstance(operandVal, "'is from'/'is under'");
-                    bool result = transitive
-                        ? operandObj.IsTransitivelyOwnedBy(ownerObj)
-                        : operandObj.IsOwnedBy(ownerObj);
-                    Push(Value.MakeBool(result));
+                    var ownerObj = RequireObjectInstance(ownerVal, "'is from'/'is under' (owner expression)");
+                    if (operandVal.Kind == ValueKind.Class)
+                    {
+                        var operandObj = RequireObjectInstance(operandVal, "'is from'/'is under'");
+                        Push(Value.MakeBool(fromMode == 1 ? operandObj.IsTransitivelyOwnedBy(ownerObj) : operandObj.IsOwnedBy(ownerObj)));
+                        break;
+                    }
+                    // an array, a buffer, a lambda (owned leaves): its owner, or one above it
+                    IOwner? up = direct;
+                    bool found = up != null && ReferenceEquals(up, ownerObj);
+                    for (int guard = 0; fromMode == 1 && !found && up != null && guard < 10000; guard++)
+                    {
+                        up = up switch { ObjectInstance oi => oi.Owner, IOwnedLeaf l => l.LeafOwner, _ => null };
+                        found = ReferenceEquals(up, ownerObj);
+                    }
+                    Push(Value.MakeBool(found));
                     break;
                 }
 

@@ -3842,7 +3842,13 @@ namespace fire.Compiler
                     }
                     else if (Match(TokenType.From))
                     {
-                        left = new IsFromExpr(line, left, ParseShift(), Transitive: false);
+                        // `x is from local` / `x is from global`: the owner is a scope (a variable of that name: `x is from (local)`)
+                        if (Check(TokenType.Identifier) && Peek().Lexeme is "local" or "global" && PeekAt(1).Type is not (TokenType.Dot or TokenType.LParen or TokenType.LBracket))
+                        {
+                            string place = Advance().Lexeme;
+                            left = new IsFromExpr(line, left, new LiteralExpr(line, Value.MakeUndefined()), Transitive: false, Place: place);
+                        }
+                        else left = new IsFromExpr(line, left, ParseShift(), Transitive: false);
                     }
                     else if (Match(TokenType.Under))
                     {
@@ -4048,11 +4054,22 @@ namespace fire.Compiler
         /// part of the loop above (cannot itself be the target of a further '.'/
         /// '['/... either, `x++.field` would be meaningless, since `x++` is a pure value,
         /// not an object).</summary>
-        private Expr ParsePostfix()
+        private Expr ParsePostfix() => ParsePostfixRest(ParsePrimary());
+
+        private Expr ParsePostfixRest(Expr expr)
         {
-            var expr = ParsePrimary();
             while (LineContinues())
             {
+                if (Check(TokenType.QuestionDot) || Check(TokenType.QuestionQuestionDot))
+                {
+                    // `a?.b.c(x)`, `a??.M()`: the rest of the chain runs only when a is there (and has the member) - otherwise undefined
+                    var qTok = Advance();
+                    string member = Expect(TokenType.Identifier, $"Expected a name after '{qTok.Lexeme}'").Lexeme;
+                    var placeholder = new ConditionalTargetExpr(qTok.Line);
+                    var inner = ParsePostfixRest(new MemberExpr(qTok.Line, placeholder, member));
+                    if (inner is IncDecExpr) throw Error($"'{qTok.Lexeme}' cannot be used with '++'/'--' (write an if)", qTok);
+                    return new ConditionalAccessExpr(qTok.Line, expr, inner, placeholder, qTok.Type == TokenType.QuestionQuestionDot, member);
+                }
                 if (Check(TokenType.Dot))
                 {
                     int line = Advance().Line;
@@ -4212,6 +4229,9 @@ namespace fire.Compiler
                     // 'Name' is actually registered that way).
                     Advance(); // 'try'
                     var innerCall = ParsePostfix();
+                    // `try x??.TakeTo(this)`: the `try` belongs to the call at the end of the conditional chain
+                    if (innerCall is ConditionalAccessExpr { Inner: CallExpr tryInner } tryConditional)
+                        return tryConditional with { Inner = new TryCallExpr(tok.Line, tryInner) };
                     if (innerCall is not CallExpr)
                         throw Error("Expected 'sync', 'process' or a function call after 'try'", tok);
                     return new TryCallExpr(tok.Line, innerCall);

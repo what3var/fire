@@ -162,7 +162,7 @@ using it then throws a `DestroyedException`. Whoever wants to keep an object tak
 | `obj.TakeLocal()` | the current scope |
 | `obj.TakeUpwards()` | the scope around the current owner |
 | `obj.TakeGlobal()` | the global scope |
-| `try obj.TakeTo(other)` | only if the caller owns `obj` now; returns `True`/`False` |
+| `try obj.TakeTo(other)` | only if the caller owns `obj` now; returns `True`/`False` (a number or a text has no `TakeTo`: `try x??.TakeTo(other)` skips it, see [Conditional access](03-operators.md#conditional-access--and-)) |
 
 `take x` as an argument or on the right of `=` hands `x` over to the receiver, whoever owned it before:
 
@@ -320,7 +320,31 @@ still known - `x is of class` is `True`.
 
 ## Testing the owner
 
-`obj is from owner` is `True` when `owner` owns `obj` directly, `obj is under owner` when `owner` is anywhere above it.
+`obj is from owner` is `True` when `owner` owns `obj` directly, `obj is under owner` when `owner` is anywhere above it. Two scopes can be named as the
+owner:
+
+| Test | True when |
+|---|---|
+| `x is from local` | `x` belongs to a scope of the running call - a local of it, something it made in this statement, or an argument it was handed fresh (`f(new Foo())`) - in the top-level code: to its scope |
+| `x is from global` | `x` belongs to the global scope (a global variable, the top-level code) |
+
+The tests work for objects, arrays, buffers and lambdas; a number, a text or `undefined` belongs to nothing - every test is `False`. (A variable
+called `local` or `global` as the owner: `x is from (local)`.)
+
+```fire
+class Bag {
+    List items = new List()
+    undefined Put(any x) {
+        if (x is from local) { print("mine to keep") }
+        try x??.TakeTo(this)        // keeps it only if the call owns it; a number has no TakeTo: skipped
+        this.items.Add(x)
+    }
+}
+var bag = new Bag()
+bag.Put(new Bag())                  // mine to keep
+bag.Put([1, 2])                     // mine to keep
+bag.Put(5)
+```
 
 ## Copying: `flat` and `copy`
 
