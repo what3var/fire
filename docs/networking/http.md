@@ -144,3 +144,42 @@ new id (`HttpOnly; SameSite=Lax`, with `secure` also `Secure`; an ended session 
 * **Stores** (`Http.ISessionStore`: `Load(id)`, `Save(id, data)`, `Delete(id)`; the home calls them one after the other): `Http.MemorySessionStore` (the default:
   the sessions end with the program), `Http.FileSessionStore(folder)` (one file `<id>.session` per session: a restarted program finds them again). Databases
   implement the same interface later. A store keeps the values as text (`name=value&...`); live objects of a session (RPC instances) are for step 4.
+
+### RPC: `#import "http.rpc"`
+
+Methods and properties of classes marked `[Remote]` are called over HTTP with JSON (docs/ROADMAP_HTTP.md step 4). The package brings `reflection` and `json`;
+`http` stays without them.
+
+```fire
+#import "http.rpc"
+[Remote]
+[Lifetime "session"]                         // one instance per session (Http.Sessions before Http.Rpc); "request" (default), "single"
+[Timeout 600]                                // seconds without a call until the instance ends (default 300)
+class Cart {
+    List items
+    construct() { this.items = new List() }
+    [Remote] int Put(string name) { this.items.Add(name); return this.items.Count }
+    [Remote] List Items() { return this.items }
+}
+var server = new Http.AppServer("127.0.0.1", 8080)
+server.PushTo(new Http.Sessions()).PushTo(new Http.Rpc("/rpc", services))
+```
+
+| request | |
+|---|---|
+| `POST /rpc/<Class>/<Method>` | body: the arguments as a JSON array (empty: none); `{"result": ...}` |
+| `GET /rpc/<Class>/<Property>` | `{"result": ...}` |
+| `POST /rpc/<Class>/<Property>` | body `[value]`: writes it |
+
+* **Only what is marked is reachable:** a class with `[Remote]`, and of it only the members with `[Remote]` (not static ones). Everything else is a 404. `[Remote]`
+  also keeps the class and the members in a native build (like `[Keep]`), since they are only reached by their name.
+* **Arguments** are converted to the parameter types: numbers, texts, `bool` and arrays as they are, a JSON object to an instance of the parameter's class
+  (`Json.Deserialize`). A wrong number of arguments or text that is no JSON is a 400. The result is written with `Json.Serialize` (without `$type`).
+* **Errors:** what the member throws is a 500 `{"error": message, "type": class}`; another HTTP method a 405.
+* **Lifetimes:** `request` - a new instance for every call, in the task of the connection; `session` - one per session and class; `single` - one for the
+  server. Session and single instances live at the home of the RPC instances, an actor on a thread of its own (`Http.RpcHome`), so their calls run one after the
+  other; `Http.AppServer.Close()` ends it.
+* **Dependency injection:** `new Http.Rpc(prefix, services)` - the first constructor of the class whose parameters all come from `services` (a list; matched
+  by type, a subclass or an interface) makes the instance. Actors are shared by every call; other services are copied for every connection and once for the
+  home.
+* `Http.ServerSettings.showErrors` (false): a 500 of the server tells the message of what a router threw - for development.

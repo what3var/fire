@@ -111,7 +111,10 @@ ran out or its token is cancelled. **Built** (poll()/WSAPoll, not yet epoll/kque
    server on a thread of its own, ids from `Net.SecureRandom`, `Renew`, `End`, memory and file stores. Found on the way: `taking` copied an actor that it
    reached through a field (VM and native) - now its reference goes along. Open: one home per session (when one home becomes the bottleneck), live objects
    in a session (step 4).
-4. RPC with DI and lifetimes.
+4. RPC with DI and lifetimes - **built** (package `http.rpc`, docs/networking/http.md): `[Remote]` classes and members, JSON, lifetimes request/session/
+   single (one home actor for session and single instances), `[Timeout]`, constructor injection from a list of services; `[Remote]` keeps them in a native
+   build. Found on the way (VM): `list.Add(actor)` and the assignment of an actor to a field posted a message `tryTakeTo` to the actor - ownership calls on an
+   actor are no messages now. Open: events (with step 5), the random instance ids of the roadmap (instances are addressed by class and session for now).
 5. WebSocket.
 6. FXML to HTML/CSS, `fire.js`, live updates.
 7. Canvas recording, JS calls.

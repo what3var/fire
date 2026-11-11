@@ -21,6 +21,7 @@
     "compression/compression.fireproj",
     "tls/tls.fireproj",
     "http/http.fireproj",
+    "http.rpc/http.rpc.fireproj",
     "gpio/gpio.fireproj",
     "i2c/i2c.fireproj",
     "spi/spi.fireproj",

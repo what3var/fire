@@ -27670,6 +27670,125 @@ else
             print("main " + first + " " + n)
             st.Stop()
             """),
+        ("Http.Rpc: [Remote]-Klassen ueber HTTP und JSON - Methode, Objekt als Argument, Dienst per DI (Actor), Property, Ausnahme 500, nicht [Remote] 404, falsche Argumente 400, Lebensdauer request, session und single", """
+            #import "http.rpc"
+            #import "time"
+            actor Clock {
+                int Ticks() { return 42 }
+            }
+            class Item { string name
+                int count }
+            [Remote]
+            class Calc {
+                Clock clock
+                int calls = 0
+                construct(Clock clock) { this.clock = clock }
+                [Remote] int Add(int a, int b) { this.calls = this.calls + 1; return a + b }
+                [Remote] string Describe(Item item) { return item.name + " x" + item.count }
+                [Remote] int Time() { var c = this.clock; int t = await c.Ticks(); return t }
+                [Remote] int Calls { get { return this.calls } }
+                [Remote] undefined Fail() { throw new ArgumentException("broken") }
+                int Hidden() { return 1 }
+            }
+            [Remote]
+            [Lifetime "session"]
+            class Cart {
+                List items
+                construct() { this.items = new List() }
+                [Remote] int Put(string name) { this.items.Add(name); return this.items.Count }
+                [Remote] List Items() { return this.items }
+            }
+            [Remote]
+            [Lifetime "single"]
+            [Timeout 600]
+            class Visits {
+                int n = 0
+                [Remote] int Next() { this.n = this.n + 1; return this.n }
+            }
+            class NotRemote { int X() { return 1 } }
+            var clock = new Clock()
+            var services = new List()
+            services.Add(clock)
+            var server = new Http.AppServer("127.0.0.1", 0)
+            server.PushTo(new Http.Sessions()).PushTo(new Http.Rpc("/rpc", take services))
+            int port = server.Port
+            int done = 0
+            string log = ""
+            fire taking port {
+                var c = new Http.Client()
+                var site = "http://127.0.0.1:" + port + "/rpc/"
+                var out = ""
+                var r = c.Post(site + "Calc/Add", "[2, 3]", "application/json")
+                out = out + "add " + r.status + " " + r.Text() + "\n"
+                r = c.Post(site + "Calc/Describe", "[{\"name\": \"pen\", \"count\": 3}]", "application/json")
+                out = out + "object " + r.status + " " + r.Text() + "\n"
+                r = c.Post(site + "Calc/Time", "", "application/json")
+                out = out + "service " + r.status + " " + r.Text() + "\n"
+                r = c.Get(site + "Calc/Calls")
+                out = out + "request lifetime " + r.Text() + "\n"
+                r = c.Post(site + "Calc/Fail", "[]", "application/json")
+                out = out + "throws " + r.status + " " + r.Text() + "\n"
+                r = c.Post(site + "Calc/Hidden", "[]", "application/json")
+                out = out + "hidden " + r.status + "\n"
+                r = c.Post(site + "NotRemote/X", "[]", "application/json")
+                out = out + "not remote " + r.status + "\n"
+                r = c.Post(site + "Calc/Add", "[1]", "application/json")
+                out = out + "wrong count " + r.status + "\n"
+                r = c.Post(site + "Calc/Add", "[1,", "application/json")
+                out = out + "bad json " + r.status + "\n"
+                r = c.Post(site + "Cart/Put", "[\"apple\"]", "application/json")
+                var cookie = r.Header("Set-Cookie").Substring(0, 45)
+                var h = new Http.Headers()
+                h.Set("Cookie", cookie)
+                h.Set("Content-Type", "application/json")
+                r = c.Request("POST", site + "Cart/Put", "[\"pear\"]", h)
+                out = out + "session " + r.Text() + "\n"
+                r = c.Request("POST", site + "Cart/Items", "[]", h)
+                out = out + "items " + r.Text() + "\n"
+                r = c.Post(site + "Cart/Items", "[]", "application/json")
+                out = out + "other session " + r.Text() + "\n"
+                r = c.Post(site + "Visits/Next", "[]", "application/json")
+                r = c.Post(site + "Visits/Next", "[]", "application/json")
+                out = out + "single " + r.Text() + "\n"
+                sync global { log = out; done = 1 }
+            }
+            while (done < 1) {
+                server.AcceptOne(20ms)
+                sync globals
+                while (try process clock) { }
+            }
+            print(log)
+            server.Close()
+            """),
+        ("Actors: list.Add(actor) und die Zuweisung eines Actors in ein Feld (auch in einem Thread) sind keine Nachrichten (tryTakeTo) - der Actor bleibt bei seinem Zuhause", """
+            #import "time"
+            actor Clock {
+                int n = 0
+                int Tick() { this.n = this.n + 1; return this.n }
+            }
+            class Holder {
+                Clock clock
+                construct(Clock c) { this.clock = c }
+            }
+            var clock = new Clock()
+            var list = new List()
+            list.Add(clock)
+            int done = 0
+            fire with clock {
+                var h = new Holder(clock)
+                var c = h.clock
+                int t = await c.Tick()
+                sync global { done = t }
+            }
+            while (done < 1) {
+                sync globals
+                while (try process clock) { }
+                Sleep(1ms)
+            }
+            var stray = 0
+            while (try process clock) { stray = stray + 1 }
+            print("tick " + done + " list " + list.Count + " stray messages " + stray)
+            """),
         ("Net: der Poller weckt wartende Threads (40 Verbindungen in fire-Threads, Daten kommen spaeter), Zeitlimit, Abbruch eines Read per until", """
             #import "net"
             #import "time"

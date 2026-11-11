@@ -3494,7 +3494,15 @@ namespace fire.Runtime
             // instead of a direct call, regardless of the calling
             // thread - this call itself returns 'undefined' and
             // continues normally (no jump into any chunk).
-            if (obj.Mailbox != null && !(_awaitReplyNow && ReferenceEquals(obj.Mailbox.Home, this)))
+            // (the ownership methods of an actor - the claim of an assignment or of `list.Add(actor)`, `try x.TakeTo(this)` - are never messages: at its home
+            // they run as for any object; from another thread the actor stays with its home and only its reference is stored)
+            bool ownershipCall = methodName is "TakeLocal" or "TakeUpwards" or "TakeGlobal" or "TakeTo" or "tryTakeLocal" or "tryTakeUpwards" or "tryTakeGlobal" or "tryTakeTo";
+            if (obj.Mailbox != null && ownershipCall && !ReferenceEquals(obj.Mailbox.Home, this))
+            {
+                Push(Value.MakeBool(false));
+                return;
+            }
+            if (obj.Mailbox != null && !ownershipCall && !(_awaitReplyNow && ReferenceEquals(obj.Mailbox.Home, this)))
             {
                 var holder = new Scope(null);   // the message owns its unclaimed arguments until it runs (SPEC 2.4)
                 if (copyMask != 0) ApplyCopyMaskToArgs(args, copyMask, holder);

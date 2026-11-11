@@ -992,6 +992,7 @@ namespace Http {
         int maxRequests = 1000           // requests per connection, then it is closed
         int maxBodyBytes = 1048576       // of a request
         string serverName = "fire-http/1"
+        bool showErrors = false          // a 500 tells the class and message of what a router threw (for development)
     }
 
     // An application server: every connection is a task of its own (natively light tasks on all cores), it serves request after request (keep-alive) and
@@ -1111,7 +1112,7 @@ namespace Http {
                         head = request.method == "HEAD"
                         keep = keepAlive && number < settings.maxRequests && Http.AppServer.WantsKeepAlive(request)
                         var ctx = new Http.Context(take request, number)
-                        response = Http.AppServer.Dispatch(chain, ctx)
+                        response = Http.AppServer.Dispatch(chain, ctx, settings)
                     } catch (Net.TimeoutException e) {
                         if (number == 1 || reader.pos < reader.len) { response = Http.Response.Error(408) } else { break }   // (idle: just close)
                     } catch (Http.HttpException e) {
@@ -1155,11 +1156,12 @@ namespace Http {
         }
 
         // The answer of the chain; an exception of a router is a 500.
-        static Http.Response Dispatch(List chain, Http.Context ctx) {
+        static Http.Response Dispatch(List chain, Http.Context ctx, Http.ServerSettings settings) {
             try {
                 var first = new Http.Next(chain, 0)
                 return first.Invoke(ctx)
             } catch (e) {
+                if (settings.showErrors) { return Http.Response.Error(500, "" + e.message) }
                 return Http.Response.Error(500)
             }
         }
