@@ -988,6 +988,8 @@ namespace fire.Values
                     return (a.Kind == ValueKind.Word ? WordToDouble(a.AsWord()) : a.ToDouble()) == (b.Kind == ValueKind.Word ? WordToDouble(b.AsWord()) : b.ToDouble());
                 return (unchecked((ulong)a._bits) & WordMask) == (unchecked((ulong)b._bits) & WordMask);
             }
+            // (two records: by their content - step 9)
+            if (a.Kind == ValueKind.Class && b.Kind == ValueKind.Class && fire.Runtime.RecordValues.Equal(a, b)) return true;
             if (a.Kind is not (ValueKind.Int or ValueKind.Float) || b.Kind is not (ValueKind.Int or ValueKind.Float)) return a.Equals(b);
             if (!ReferenceEquals(a._ref, b._ref))
             {

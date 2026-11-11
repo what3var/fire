@@ -29,7 +29,7 @@ namespace fire.Runtime
             {
                 var rc = program.Program.Classes[name];
                 sb.Append("class ").Append(rc.Name).Append(" : ").Append(rc.Base?.Name).Append(" [").Append(string.Join(",", rc.Interfaces)).Append("] <")
-                    .Append(string.Join(",", rc.BaseTypeArgs ?? Array.Empty<string>())).Append('>').Append(rc.IsActor ? " actor" : "").Append(rc.NotSerializable ? " ns" : "").Append(rc.NoCopy ? " nc" : "").Append('\n');
+                    .Append(string.Join(",", rc.BaseTypeArgs ?? Array.Empty<string>())).Append('>').Append(rc.IsActor ? " actor" : "").Append(rc.IsRecord ? " record" : "").Append(rc.NotSerializable ? " ns" : "").Append(rc.NoCopy ? " nc" : "").Append('\n');
                 sb.Append(" layout ").Append(string.Join(",", rc.FlattenedFieldNames)).Append('\n');
                 foreach (var (field, info) in rc.OwnFieldInfo.OrderBy(f => f.Key, StringComparer.Ordinal))
                     sb.Append(" field ").Append(field).Append(' ').Append(info.IsStatic).Append(' ').Append(info.AccessModifier).Append(' ').Append(info.RequiredKind).Append(' ')

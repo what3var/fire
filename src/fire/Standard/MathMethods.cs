@@ -172,6 +172,7 @@ namespace fire.Standard
                 }
                 case ValueKind.Undefined: return 0;
                 case ValueKind.Char or ValueKind.Bool: return Mix((ulong)x.GetHashCode());
+                case ValueKind.Class when fire.Runtime.RecordValues.IsRecord(x): return fire.Runtime.RecordValues.Hash(x, KeyHash);   // (a record: by its content)
                 default: return Mix((ulong)(uint)x.GetHashCode());
             }
         }

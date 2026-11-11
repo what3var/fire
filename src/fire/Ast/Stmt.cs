@@ -315,7 +315,8 @@ namespace fire.Ast
         IReadOnlyList<Stmt> Members,
         IReadOnlyList<TypeParam>? TypeParams = null,
         bool IsActor = false,
-        IReadOnlyList<AttributeDecl>? Attributes = null) : Stmt(Source, Line);   // (Attributes: `[Name ...]` before the class, read by reflection)
+        IReadOnlyList<AttributeDecl>? Attributes = null,
+        bool IsRecord = false) : Stmt(Source, Line);   // (IsRecord: `record Name { ... }` - written only while it is constructed, step 9)   // (Attributes: `[Name ...]` before the class, read by reflection)
 
     // ---------------------------------------------------------------
     // Interfaces (SPEC 8.5): method and property signatures, no fields/bodies.
