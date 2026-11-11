@@ -167,15 +167,20 @@ server.PushTo(new Http.Sessions()).PushTo(new Http.Rpc("/rpc", services))
 
 | request | |
 |---|---|
-| `POST /rpc/<Class>/<Method>` | body: the arguments as a JSON array (empty: none); `{"result": ...}` |
+| `POST /rpc/<Name>/<Method>` (`<Name>`: the nickname or the full name) | body: the arguments as a JSON array (empty: none); `{"result": ...}` |
 | `GET /rpc/<Class>/<Property>` | `{"result": ...}` |
 | `POST /rpc/<Class>/<Property>` | body `[value]`: writes it |
 
+* **Only with a session:** `Http.Sessions` must come before `Http.Rpc`, and only a client that already has a session may call - a request without the
+  cookie of a living session is a 401 (it gets a session cookie with the answer; `Http.Session.IsNew` tells a session that began with the request).
 * **Only what is marked is reachable:** a class with `[Remote]`, and of it only the members with `[Remote]` (not static ones). Everything else is a 404. `[Remote]`
   also keeps the class and the members in a native build (like `[Keep]`), since they are only reached by their name.
+* **Public names:** a class is reached by its full name (`Shop.Cart`), or - with `[Nickname "cart"]` - only by its nickname: the names of the program stay
+  hidden, and two classes of the same name in different namespaces can both be offered. Two classes with the same public name are an `ArgumentException`
+  when the `Http.Rpc` is made.
 * **Arguments** are converted to the parameter types: numbers, texts, `bool` and arrays as they are, a JSON object to an instance of the parameter's class
   (`Json.Deserialize`). A wrong number of arguments or text that is no JSON is a 400. The result is written with `Json.Serialize` (without `$type`).
-* **Errors:** what the member throws is a 500 `{"error": message, "type": class}`; another HTTP method a 405.
+* **Errors:** what the member throws is a 500 `{"error": message, "type": class}`; another HTTP method a 405; no session a 401.
 * **Lifetimes:** `request` - a new instance for every call, in the task of the connection; `session` - one per session and class; `single` - one for the
   server. Session and single instances live at the home of the RPC instances, an actor on a thread of its own (`Http.RpcHome`), so their calls run one after the
   other; `Http.AppServer.Close()` ends it.

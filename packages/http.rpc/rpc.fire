@@ -8,8 +8,10 @@
 //     GET  /rpc/<Class>/<Property>                                                            -> {"result": ...}
 //     POST /rpc/<Class>/<Property>   body: [value]                                            -> {"result": null}
 //
-// Only a class with [Remote] is reachable, and of it only the members with [Remote]. Errors: 404 (no such class or member, or not [Remote]), 400 (the
-// arguments do not fit), 405 (another HTTP method), 500 ({"error": message, "type": class} - what the member threw).
+// Only a client that already has a session may call (Http.Sessions before Http.Rpc; no cookie of a living session: 401). Only a class with [Remote] is
+// reachable, and of it only the members with [Remote]; `[Nickname "cart"]` gives a class its public name (then its class name is not reachable - and two
+// classes of the same name in different namespaces can both be offered). Errors: 401 (no session), 404 (no such class or member, or not [Remote]), 400
+// (the arguments do not fit), 405 (another HTTP method), 500 ({"error": message, "type": class} - what the member threw).
 //
 // The lifetime of the instance, an attribute of the class: [Lifetime "request"] (the default: a new instance for every call), [Lifetime "session"] (one per
 // session and class - Http.Sessions must come before in the chain), [Lifetime "single"] (one for the whole server). Session and single instances live at the
@@ -23,7 +25,7 @@ namespace Http {
             Type t = Type.Named(typeName)
             if (t == undefined) { return Http.RpcCall.Fail(404, "No class '" + typeName + "'.", "") }
             Member m = t.Find(memberName)
-            if (m == undefined || !m.HasAttribute("Remote") || m.IsStatic) { return Http.RpcCall.Fail(404, "No remote member '" + memberName + "' in '" + typeName + "'.", "") }
+            if (m == undefined || !m.HasAttribute("Remote") || m.IsStatic) { return Http.RpcCall.Fail(404, "No remote member '" + memberName + "'.", "") }
             try {
                 if (m.Kind == "method") {
                     if (httpMethod != "POST") { return Http.RpcCall.Fail(405, "A method is called with POST.", "") }
@@ -200,6 +202,7 @@ namespace Http {
         string prefix
         List services
         Http.RpcHome home
+        Dictionary<string, string> names    // the public name of every [Remote] class (its [Nickname], else its full name) -> its class
 
         // `services`: what the constructors of the [Remote] classes get by their type (actors - shared by every call - or plain objects - copied for every
         // connection and once for the home).
@@ -208,11 +211,30 @@ namespace Http {
             if (this.prefix.EndsWith("/")) { this.prefix = this.prefix.Substring(0, this.prefix.Length - 1) }
             if (services == undefined) { services = new List() }
             this.services = take services
+            this.names = Http.Rpc.PublicNames()
             var homeServices = copy this.services
             var ready = new Completion()
             var back = ready.Share()
             Http.Rpc.StartHome(take homeServices, take back)
             this.home = ready.Wait(10s)
+        }
+
+        // The [Remote] classes by their public name: `[Nickname "cart"]` gives a class the name it has over HTTP (the class name is not reachable then),
+        // otherwise it is its full name (`Shop.Cart`). Two classes with the same public name are an ArgumentException.
+        static Dictionary<string, string> PublicNames() {
+            var map = new Dictionary<string, string>()
+            any all = Type.Names()
+            for (var i = 0; i < all.length; i++) {
+                string full = all[i]
+                Type t = Type.Named(full)
+                if (t == undefined || !t.HasAttribute("Remote")) { continue }
+                var name = full
+                Attribute nick = t.FindAttribute("Nickname")
+                if (nick != undefined && nick.ArgCount() > 0) { name = "" + nick.Args[0] }
+                if (map.ContainsKey(name)) { throw new ArgumentException("Two remote classes have the public name '" + name + "' ('" + map[name] + "' and '" + full + "'): give one of them a [Nickname].") }
+                map.Add(name, full)
+            }
+            return map
         }
 
         static undefined StartHome(List services, Completion back) {
@@ -229,10 +251,16 @@ namespace Http {
             var rest = request.path.Substring(this.prefix.Length + 1)
             any slash = rest.LastIndexOf("/")
             if (slash <= 0) { return Http.RpcCall.Answer(Http.RpcCall.Fail(404, "Expected " + this.prefix + "/<Class>/<Member>.", "")) }
-            var typeName = rest.Substring(0, slash)
+            var publicName = rest.Substring(0, slash)
             var memberName = rest.Substring(slash + 1)
+            // (only a client with a session it already had: no cookie of a living session - or no Http.Sessions before - is a 401)
+            any current = ctx.Item("session")
+            if (current == undefined) { return Http.RpcCall.Answer(Http.RpcCall.Fail(401, "A call needs a session: put Http.Sessions before Http.Rpc.", "")) }
+            Http.Session session = current
+            if (session.IsNew) { return Http.RpcCall.Answer(Http.RpcCall.Fail(401, "A call needs a session that the client already has.", "")) }
+            if (!this.names.ContainsKey(publicName)) { return Http.RpcCall.Answer(Http.RpcCall.Fail(404, "No remote class '" + publicName + "'.", "")) }
+            var typeName = this.names[publicName]
             Type t = Type.Named(typeName)
-            if (t == undefined || !t.HasAttribute("Remote")) { return Http.RpcCall.Answer(Http.RpcCall.Fail(404, "No remote class '" + typeName + "'.", "")) }
             var body = request.Text()
             var lifetime = Http.RpcCall.LifetimeOf(t)
             if (lifetime == "request") {
@@ -241,12 +269,7 @@ namespace Http {
                 return Http.RpcCall.Answer(Http.RpcCall.Run(instance, typeName, memberName, request.method, body))
             }
             var key = typeName
-            if (lifetime == "session") {
-                any session = ctx.Item("session")
-                if (session == undefined) { return Http.RpcCall.Answer(Http.RpcCall.Fail(500, "'" + typeName + "' lives in the session: put Http.Sessions before Http.Rpc.", "")) }
-                Http.Session s = session
-                key = s.Id + "/" + typeName
-            }
+            if (lifetime == "session") { key = session.Id + "/" + typeName }
             var h = this.home
             string out = await h.Call(key, typeName, memberName, request.method, body)
             return Http.RpcCall.Answer(out)

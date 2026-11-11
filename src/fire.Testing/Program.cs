@@ -27670,7 +27670,7 @@ else
             print("main " + first + " " + n)
             st.Stop()
             """),
-        ("Http.Rpc: [Remote]-Klassen ueber HTTP und JSON - Methode, Objekt als Argument, Dienst per DI (Actor), Property, Ausnahme 500, nicht [Remote] 404, falsche Argumente 400, Lebensdauer request, session und single", """
+        ("Http.Rpc: [Remote]-Klassen ueber HTTP und JSON - nur mit Sitzung (401), [Nickname] fuer gleichnamige Klassen, Methode, Objekt als Argument, Dienst per DI (Actor), Property, Ausnahme 500, nicht [Remote] 404, falsche Argumente 400, Lebensdauer request, session und single", """
             #import "http.rpc"
             #import "time"
             actor Clock {
@@ -27706,6 +27706,16 @@ else
                 [Remote] int Next() { this.n = this.n + 1; return this.n }
             }
             class NotRemote { int X() { return 1 } }
+            namespace Shop {
+                [Remote]
+                [Nickname "cart2"]
+                class Basket { [Remote] string Who() { return "shop" } }
+            }
+            namespace Admin {
+                [Remote]
+                [Nickname "basket"]
+                class Basket { [Remote] string Who() { return "admin" } }
+            }
             var clock = new Clock()
             var services = new List()
             services.Add(clock)
@@ -27719,36 +27729,51 @@ else
                 var site = "http://127.0.0.1:" + port + "/rpc/"
                 var out = ""
                 var r = c.Post(site + "Calc/Add", "[2, 3]", "application/json")
-                out = out + "add " + r.status + " " + r.Text() + "\n"
-                r = c.Post(site + "Calc/Describe", "[{\"name\": \"pen\", \"count\": 3}]", "application/json")
-                out = out + "object " + r.status + " " + r.Text() + "\n"
-                r = c.Post(site + "Calc/Time", "", "application/json")
-                out = out + "service " + r.status + " " + r.Text() + "\n"
-                r = c.Get(site + "Calc/Calls")
-                out = out + "request lifetime " + r.Text() + "\n"
-                r = c.Post(site + "Calc/Fail", "[]", "application/json")
-                out = out + "throws " + r.status + " " + r.Text() + "\n"
-                r = c.Post(site + "Calc/Hidden", "[]", "application/json")
-                out = out + "hidden " + r.status + "\n"
-                r = c.Post(site + "NotRemote/X", "[]", "application/json")
-                out = out + "not remote " + r.status + "\n"
-                r = c.Post(site + "Calc/Add", "[1]", "application/json")
-                out = out + "wrong count " + r.status + "\n"
-                r = c.Post(site + "Calc/Add", "[1,", "application/json")
-                out = out + "bad json " + r.status + "\n"
-                r = c.Post(site + "Cart/Put", "[\"apple\"]", "application/json")
+                out = out + "no session " + r.status + " " + r.Text() + "\n"
                 var cookie = r.Header("Set-Cookie").Substring(0, 45)
                 var h = new Http.Headers()
                 h.Set("Cookie", cookie)
                 h.Set("Content-Type", "application/json")
+                var bad = new Http.Headers()
+                bad.Set("Cookie", "fire-session=00000000000000000000000000000000")
+                r = c.Request("POST", site + "Calc/Add", "[2, 3]", bad)
+                out = out + "unknown session " + r.status + "\n"
+                r = c.Request("POST", site + "Calc/Add", "[2, 3]", h)
+                out = out + "add " + r.status + " " + r.Text() + "\n"
+                r = c.Request("POST", site + "Calc/Describe", "[{\"name\": \"pen\", \"count\": 3}]", h)
+                out = out + "object " + r.status + " " + r.Text() + "\n"
+                r = c.Request("POST", site + "Calc/Time", "", h)
+                out = out + "service " + r.status + " " + r.Text() + "\n"
+                r = c.Request("GET", site + "Calc/Calls", undefined, h)
+                out = out + "request lifetime " + r.Text() + "\n"
+                r = c.Request("POST", site + "Calc/Fail", "[]", h)
+                out = out + "throws " + r.status + " " + r.Text() + "\n"
+                r = c.Request("POST", site + "Calc/Hidden", "[]", h)
+                out = out + "hidden " + r.status + "\n"
+                r = c.Request("POST", site + "NotRemote/X", "[]", h)
+                out = out + "not remote " + r.status + "\n"
+                r = c.Request("POST", site + "Calc/Add", "[1]", h)
+                out = out + "wrong count " + r.status + "\n"
+                r = c.Request("POST", site + "Calc/Add", "[1,", h)
+                out = out + "bad json " + r.status + "\n"
+                r = c.Request("POST", site + "Cart/Put", "[\"apple\"]", h)
                 r = c.Request("POST", site + "Cart/Put", "[\"pear\"]", h)
                 out = out + "session " + r.Text() + "\n"
                 r = c.Request("POST", site + "Cart/Items", "[]", h)
                 out = out + "items " + r.Text() + "\n"
-                r = c.Post(site + "Cart/Items", "[]", "application/json")
+                var first = c.Post(site + "Calc/Add", "[1, 1]", "application/json")
+                var h2 = new Http.Headers()
+                h2.Set("Cookie", first.Header("Set-Cookie").Substring(0, 45))
+                r = c.Request("POST", site + "Cart/Items", "[]", h2)
                 out = out + "other session " + r.Text() + "\n"
-                r = c.Post(site + "Visits/Next", "[]", "application/json")
-                r = c.Post(site + "Visits/Next", "[]", "application/json")
+                r = c.Request("POST", site + "cart2/Who", "[]", h)
+                out = out + "nickname " + r.Text() + "\n"
+                r = c.Request("POST", site + "basket/Who", "[]", h)
+                out = out + "other nickname " + r.Text() + "\n"
+                r = c.Request("POST", site + "Shop.Basket/Who", "[]", h)
+                out = out + "class name hidden " + r.status + "\n"
+                r = c.Request("POST", site + "Visits/Next", "[]", h)
+                r = c.Request("POST", site + "Visits/Next", "[]", h)
                 out = out + "single " + r.Text() + "\n"
                 sync global { log = out; done = 1 }
             }
@@ -27759,6 +27784,23 @@ else
             }
             print(log)
             server.Close()
+            """),
+        ("Http.Rpc: zwei [Remote]-Klassen mit demselben oeffentlichen Namen sind eine ArgumentException", """
+            #import "http.rpc"
+            namespace A {
+                [Remote]
+                [Nickname "same"]
+                class One { [Remote] int X() { return 1 } }
+            }
+            namespace B {
+                [Remote]
+                [Nickname "same"]
+                class Two { [Remote] int X() { return 2 } }
+            }
+            try {
+                var rpc = new Http.Rpc()
+                print("no")
+            } catch (ArgumentException e) { print(e.message) }
             """),
         ("Actors: list.Add(actor) und die Zuweisung eines Actors in ein Feld (auch in einem Thread) sind keine Nachrichten (tryTakeTo) - der Actor bleibt bei seinem Zuhause", """
             #import "time"

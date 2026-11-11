@@ -1637,14 +1637,18 @@ namespace Http {
         Http.SessionHome home
         string id
         bool renewed
+        bool fresh
 
-        construct(Http.SessionHome home, string id) {
+        construct(Http.SessionHome home, string id, bool fresh = false) {
             this.home = home
             this.id = id
             this.renewed = false
+            this.fresh = fresh
         }
 
         string Id { get { return this.id } }
+        // True when the session began with this request (the client sent no cookie of a living session).
+        bool IsNew { get { return this.fresh } }
 
         string Get(string name, string fallback = undefined) {
             var h = this.home
@@ -1713,7 +1717,7 @@ namespace Http {
             var asked = Http.Sessions.CookieOf(ctx.request.headers.Get("Cookie"), this.cookie)
             var h = this.home
             string id = await h.Open(asked)
-            var session = new Http.Session(h, id)
+            var session = new Http.Session(h, id, id != asked)
             ctx.SetItem("session", session)
             Http.Response r = next.Invoke(ctx)
             if (session.id != asked || session.renewed) {
