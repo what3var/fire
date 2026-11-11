@@ -146,6 +146,12 @@ namespace fire.Compiler
         /// <summary>`x??.name` where the type of x proves that the member is not there - not in the class, not in a class derived from it (or implementing
         /// the interface): the access would always be skipped (an error).</summary>
         public const string NeverMemberCode = "TC025";
+        /// <summary>A write to a field of a record outside its construction (docs/ROADMAP_TASKS.md step 9): a record is unchangeable after its constructor
+        /// (an error in lax mode too - at run time the same write is the InvalidOperationException).</summary>
+        public const string RecordWriteCode = "TC026";
+        /// <summary>A field of a record whose type can change (an object of a class, an array, a list): a record holds only what does not change either -
+        /// numbers, texts, enums, records, lambdas (an error in lax mode too).</summary>
+        public const string RecordFieldCode = "TC027";
         /// <summary>The width of the program's `int` (16, 32, 64): set by the linker before the check.</summary>
         [ThreadStatic] public static int ProgramIntWidth;
         /// <summary>What the natives of the imported packages return (their `returns`: name -> type text) - set by the linker before the check.</summary>
@@ -1347,6 +1353,7 @@ namespace fire.Compiler
             // a class without a constructor of its own calls the one of its base class without arguments
             if (!decl.Members.OfType<ConstructorDecl>().Any() && BaseClassName() is { } baseClass) CheckConstructorAccess(baseClass, 0, decl.Line);
             CheckOverrides(decl);
+            if (decl.IsRecord) CheckRecordDecl(decl);
             CheckMembers(decl.Members, decl.Name);
             _class = previousClass;
         }
@@ -1506,7 +1513,10 @@ namespace fire.Compiler
                     case ConstructorDecl c:
                         CheckParametersTyped(c.Params, "construct", c.Line);
                         if (BaseClassName() is { } baseOfCtor) CheckConstructorAccess(baseOfCtor, c.BaseArgs?.Count ?? 0, c.Line);
+                        bool wasCtor = _inConstructor;
+                        _inConstructor = true;
                         CheckBody(c.Params, c.Body, null);
+                        _inConstructor = wasCtor;
                         break;
                     case DestructorDecl d:
                         CheckBody(Array.Empty<LambdaParam>(), d.Body, null);
@@ -1649,7 +1659,10 @@ namespace fire.Compiler
                 case IndexExpr ix: return InferIndex(ix);
                 case CallExpr c: return InferCall(c);
                 case NewExpr n: return InferNew(n);
-                case IncDecExpr inc: return Infer(inc.Target);
+                case IncDecExpr inc:
+                    if (inc.Target is MemberExpr incMember) return InferMember(incMember, MemberUse.Write);
+                    if (inc.Target is IdentifierExpr incId) CheckImplicitThisAccess(incId, MemberUse.Write);
+                    return Infer(inc.Target);
                 case LambdaExpr lam: return InferLambda(lam, null);
                 case UntilExpr until:
                     foreach (var limit in until.Limits) Infer(limit);
@@ -1989,6 +2002,7 @@ namespace fire.Compiler
             if (target.IsDynamic && StaticClassRef(m.Target) is { } staticClass) { target = StaticType.ClassOf(staticClass); isStatic = true; }
             CheckAccess(target, m.Name, use, 0, m.Line, isStatic);
             CheckInterfaceAccessor(target, m.Name, use, m.Line);
+            if (use == MemberUse.Write && !isStatic) CheckRecordWrite(target, m.Name, m.Target, m.Line);
             if (MemberLog != null && target.Kind == StaticKind.Class && target.Class != null) MemberLog.Add((_source, m.Line, target.Class, m.Name, false));
             if (target.Kind == StaticKind.Class && FindMember(target, m.Name) == null && !HasMethodNamed(target, m.Name))
             {
@@ -2123,8 +2137,42 @@ namespace fire.Compiler
         private StaticType? CheckImplicitThisAccess(IdentifierExpr id, MemberUse use)
         {
             if (_class != null && !_inBoundLambda && _refs.TryGetValue(id, out var r) && r is ResolvedRef.ImplicitThisMember && !IsLocal(id.Name))
+            {
                 CheckAccess(ThisClass(), id.Name, use, 0, id.Line);
+                if (use == MemberUse.Write) CheckRecordWrite(ThisClass(), id.Name, null, id.Line);
+            }
             return null;
+        }
+
+        private bool _inConstructor;
+
+        /// <summary>`r.x = v` (also `r.x++`, `r.x += 1`) where r is known to be a record: only `this` in a constructor of the record itself writes (TC026).</summary>
+        private void CheckRecordWrite(StaticType target, string name, Expr? receiver, int line)
+        {
+            if (target.Kind != StaticKind.Class || target.Class == null) return;
+            var chain = Chain(target).ToList();
+            if (chain.Count == 0 || !chain[0].Decl.IsRecord) return;
+            if (!chain.Any(c => c.Decl.Members.Any(m => m is FieldDecl f && f.Name == name && !f.IsStatic))) return;   // (a static field, a property: not the record's content)
+            if (_inConstructor && !_inBoundLambda && receiver is null or ThisExpr && _class != null && chain.Any(c => c.Decl.Name == _class.Name)) return;
+            ReportError(RecordWriteCode, $"'{name}' is a field of the record '{chain[0].Decl.Name}': a record is written only while it is constructed (in its constructor) - a changed copy is 'copy r with {{ .{name} = ... }}'", line);
+        }
+
+        /// <summary>A record: its base is a record (or none), and its fields hold only what does not change (TC027).</summary>
+        private void CheckRecordDecl(ClassDecl decl)
+        {
+            foreach (var f in decl.Members.OfType<FieldDecl>())
+            {
+                if (f.IsStatic) continue;
+                var type = DeclaredOrDynamic(f.Type, f.ArrayRanks.Count, null);
+                bool ok = type.Kind switch
+                {
+                    StaticKind.Dynamic or StaticKind.Bool or StaticKind.Int or StaticKind.Float or StaticKind.Char or StaticKind.String or StaticKind.Lambda
+                        or StaticKind.Enum or StaticKind.Word or StaticKind.Undefined => true,
+                    StaticKind.Class => type.Class != null && Chain(type).FirstOrDefault().Decl is { IsRecord: true },
+                    _ => false,
+                };
+                if (!ok) ReportError(RecordFieldCode, $"The field '{f.Name}' of the record '{decl.Name}' is a '{type}': a record holds only what does not change - numbers, texts, enums, records, lambdas", f.Line);
+            }
         }
 
         /// <summary>`new C(...)` and the call of the base constructor: denied when every constructor of the class for that many arguments is (a class without

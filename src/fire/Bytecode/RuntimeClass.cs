@@ -92,6 +92,10 @@ namespace fire.Bytecode
         /// RuntimeClass (see Compiler.CompileClasses).</summary>
         public bool IsActor { get; set; }
 
+        /// <summary>`record Name { ... }` (docs/ROADMAP_TASKS.md step 9): its fields are written only while an instance is constructed (its constructor,
+        /// field initializers, a copy, `with`) - afterwards a write is an error; `==` compares the content. Set by the compiler like IsActor.</summary>
+        public bool IsRecord { get; set; }
+
         /// <summary>Declared types/signatures for reflection (only if the program uses `#import "reflection"`), otherwise null.</summary>
         public ClassMeta? Meta { get; set; }
 

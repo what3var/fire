@@ -743,9 +743,9 @@ namespace Http {
     class RouteEntry {
         string method
         string path
-        lambda<Http.Request> handler
+        lambda<any> handler   // (lambda<Http.Request> for the routes of the server, lambda<Http.Context> for Http.Routes)
 
-        construct(string method, string path, lambda<Http.Request> handler) {
+        construct(string method, string path, lambda<any> handler) {
             this.method = method
             this.path = path
             this.handler = take handler   // (the route owns its handler - a lambda belongs to its owner like an object)
@@ -1168,7 +1168,7 @@ namespace Http {
         static bool WantsKeepAlive(Http.Request request) {
             var c = request.headers.Get("Connection")
             if (c != undefined) {
-                var lower = c.ToLower()
+                string lower = c.ToLower()
                 if (lower.IndexOf("close") >= 0) { return false }
                 if (lower.IndexOf("keep-alive") >= 0) { return true }
             }
@@ -1277,7 +1277,7 @@ namespace Http {
     // The media types of the usual extensions, and the dates of HTTP.
     class Mime {
         static string Of(string path) {
-            var ext = IO.Path.GetExtension(path).ToLower()
+            string ext = IO.Path.GetExtension(path).ToLower()
             if (ext == ".html" || ext == ".htm") { return "text/html; charset=utf-8" }
             if (ext == ".css") { return "text/css; charset=utf-8" }
             if (ext == ".js" || ext == ".mjs") { return "text/javascript; charset=utf-8" }
@@ -1358,7 +1358,7 @@ namespace Http {
             var p = path
             if (p + "/" == this.prefix) { p = this.prefix }
             if (!p.StartsWith(this.prefix)) { return undefined }
-            var rel = p.Substring(this.prefix.Length)
+            string rel = p.Substring(this.prefix.Length)
             if (rel.IndexOf("\\") >= 0 || rel.IndexOf(":") >= 0 || rel.IndexOf("\0") >= 0) { return undefined }
             any parts = rel.Split("/")
             for (var i = 0; i < parts.length; i++) {
@@ -1389,7 +1389,7 @@ namespace Http {
 
         // The sources of fire are never served.
         static bool Hidden(string file) {
-            var ext = IO.Path.GetExtension(file).ToLower()
+            string ext = IO.Path.GetExtension(file).ToLower()
             return ext == ".fire" || ext == ".fxml" || ext == ".fireproj" || ext == ".firesln"
         }
 
@@ -1412,11 +1412,11 @@ namespace Http {
             bool partial = false
             var range = request.headers.Get("Range")
             if (range != undefined && range.StartsWith("bytes=") && range.IndexOf(",") < 0) {
-                var spec = range.Substring(6).Trim()
+                string spec = range.Substring(6).Trim()
                 any dash = spec.IndexOf("-")
                 if (dash >= 0) {
-                    var a = spec.Substring(0, dash).Trim()
-                    var b = spec.Substring(dash + 1).Trim()
+                    string a = spec.Substring(0, dash).Trim()
+                    string b = spec.Substring(dash + 1).Trim()
                     if (a.Length == 0) {
                         // the last b bytes
                         var last = Http.Num.Parse(b)

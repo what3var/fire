@@ -114,8 +114,8 @@ namespace UI {
                         while (end < text.Length && text.CharAt(end) != ' ') { end = end + 1 }
                         var wordEnd = end
                         while (end < text.Length && text.CharAt(end) == ' ') { end = end + 1 }
-                        var token = text.Substring(at, end - at)
-                        var part = text.Substring(at, wordEnd - at)
+                        string token = text.Substring(at, end - at)
+                        string part = text.Substring(at, wordEnd - at)
                         at = end
                         if (x == 0 && part.Length == 0) { continue }   // (spaces at the start of a line)
                         var ww = run.TextWidth(root, part)
@@ -134,8 +134,8 @@ namespace UI {
                     }
                     continue
                 }
-                var w = child.dw
-                var h = child.dh
+                int w = child.dw
+                int h = child.dh
                 if (x > 0 && limit >= 0 && x + w > limit) {
                     lineTop = this.EndLine(lineStart, lineTop, lineHeight)
                     lineStart = this.pieces.Count

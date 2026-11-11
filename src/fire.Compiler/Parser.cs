@@ -868,6 +868,8 @@ namespace fire.Compiler
             if (Check(TokenType.LBracket) && PeekAt(1).Type == TokenType.Identifier && AttributesBeforeClass() is { } classAttributes) return classAttributes;
             if (Check(TokenType.Namespace)) return ParseNamespaceDecl();
             if (Check(TokenType.Actor)) return ParseActorDecl();
+            // `record Name { ... }`: `record` is a word only in front of a class head (no keyword - it stays a name everywhere else)
+            if (IsRecordStart()) return ParseRecordDecl();
             if (Check(TokenType.Interface)) return ParseInterfaceDecl();
             if (Check(TokenType.Identifier) && Peek().Lexeme == "inline" && PeekAt(1).Type == TokenType.Identifier && PeekAt(1).Lexeme == "c" && !PeekAt(1).NewlineBefore && PeekAt(2).Type != TokenType.Assign)
                 return ParseInlineCDecl();
@@ -2518,6 +2520,10 @@ namespace fire.Compiler
         // -----------------------------------------------------------
         private Stmt ParseClassDecl() => ParseClassOrActorDecl(isActor: false);
         private Stmt ParseActorDecl() => ParseClassOrActorDecl(isActor: true);
+        private Stmt ParseRecordDecl() => ParseClassOrActorDecl(isActor: false, isRecord: true);
+        /// <summary>`record Name {`, `record Name : IFoo {`, `record Name<T> {` (step 9: a record - its fields are written only while it is constructed).</summary>
+        private bool IsRecordStart() => Check(TokenType.Identifier) && Peek().Lexeme == "record" && PeekAt(1).Type == TokenType.Identifier
+            && PeekAt(2).Type is TokenType.LBrace or TokenType.Colon or TokenType.Lt;
 
         /// <summary>Common grammar for `class Name { ... }` and
         /// `actor Name { ... }` (see Ast.ClassDecl.IsActor documentation) - both
@@ -2531,13 +2537,14 @@ namespace fire.Compiler
         /// existing, ORIGINAL declaration untouched - which
         /// keyword one writes for the extension itself therefore
         /// plays no role.</summary>
-        private Stmt ParseClassOrActorDecl(bool isActor)
+        private Stmt ParseClassOrActorDecl(bool isActor, bool isRecord = false)
         {
             int line = Peek().Line;
             if (isActor) Expect(TokenType.Actor, "Expected 'actor'");
+            else if (isRecord) Advance();   // (`record`, see IsRecordStart)
             else Expect(TokenType.Class, "Expected 'class'");
 
-            if (Check(TokenType.Extends))
+            if (!isRecord && Check(TokenType.Extends))
                 return ParseClassExtensionDecl(line);
 
             string name = Expect(TokenType.Identifier, "Expected a class name").Lexeme;
@@ -2605,7 +2612,7 @@ namespace fire.Compiler
             }
             Expect(TokenType.RBrace, "Expected '}' at the end of the class");
 
-            return new ClassDecl(_sourceIndex, line, QualifyDeclName(name), baseRefs, members, typeParams, IsActor: isActor);
+            return new ClassDecl(_sourceIndex, line, QualifyDeclName(name), baseRefs, members, typeParams, IsActor: isActor, IsRecord: isRecord);
         }
 
         /// <summary>`&lt;T1, T2, ...&gt;` directly after a class/method name -
@@ -3168,12 +3175,12 @@ namespace fire.Compiler
             List<AttributeDecl> attributes;
             try { attributes = ParseAttributes(); }
             catch (ParseException) { _pos = start; return null; }
-            if (attributes.Count == 0 || !(Check(TokenType.Class) || Check(TokenType.Actor)))
+            if (attributes.Count == 0 || !(Check(TokenType.Class) || Check(TokenType.Actor) || IsRecordStart()))
             {
                 _pos = start;
                 return null;
             }
-            var decl = (ClassDecl)(Check(TokenType.Class) ? ParseClassDecl() : ParseActorDecl());
+            var decl = (ClassDecl)(Check(TokenType.Class) ? ParseClassDecl() : IsRecordStart() ? ParseRecordDecl() : ParseActorDecl());
             return decl with { Attributes = attributes };
         }
 

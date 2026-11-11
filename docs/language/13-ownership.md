@@ -161,8 +161,15 @@ using it then throws a `DestroyedException`. Whoever wants to keep an object tak
 | `obj.TakeTo(other)` | the object `other` |
 | `obj.TakeLocal()` | the current scope |
 | `obj.TakeUpwards()` | the scope around the current owner |
-| `obj.TakeGlobal()` | the global scope |
+| `obj.TakeGlobal()` | the global scope of the main program - also in a fire thread (see below) |
+| `obj.TakeGlobal(true)` | the global scope of the running thread (`currentThread`; in the main program the same as `TakeGlobal()`) |
 | `try obj.TakeTo(other)` | only if the caller owns `obj` now; returns `True`/`False` (a number or a text has no `TakeTo`: `try x??.TakeTo(other)` skips it, see [Conditional access](03-operators.md#conditional-access--and-)) |
+
+`TakeGlobal()` in a fire thread hands the object to the **main program**: it and everything it owns (its children, their children, ...) belong to the
+main program from then on and outlive the thread. The thread keeps its references, but uses the object like any global of the main program - reading
+directly, a write in a section, a method call as a job of the main program (see [Threads and actors](15-threads-and-actors.md#global-variables)).
+What the object points to without owning it must not be an object of the thread (the main program would reach it): that is the ArgumentException and
+nothing moves - `TakeGlobal(Takes.Locals)` (or `Takes.All`) takes such objects along, `TakeGlobal(true)` keeps the object in the thread.
 
 `take x` as an argument or on the right of `=` hands `x` over to the receiver, whoever owned it before:
 

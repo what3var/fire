@@ -911,6 +911,17 @@ namespace fire.Compiler
                     set.Add(walk);
                 }
                 rc.IsActor = isActor;
+                rc.IsRecord = rc.Decl.IsRecord;
+            }
+            // a record derives only from a record, a class not from one (what a record is - unchangeable - holds for its whole chain)
+            foreach (var rc in classes.Values)
+            {
+                if (rc.Base == null) continue;
+                bool baseIsRecord = rc.Base.Decl?.IsRecord ?? rc.Base.IsRecord;
+                if (rc.Decl.IsRecord && !baseIsRecord)
+                    _errors.Add(new CompilerException($"The record '{rc.Name}' cannot derive from the class '{rc.Base.Name}': a record derives only from a record.", rc.Decl.Line).At(rc.Decl.Source));
+                else if (!rc.Decl.IsRecord && baseIsRecord)
+                    _errors.Add(new CompilerException($"The class '{rc.Name}' cannot derive from the record '{rc.Base.Name}': only a record derives from a record.", rc.Decl.Line).At(rc.Decl.Source));
             }
 
             // Only NOW (after collecting ALL class names, but BEFORE

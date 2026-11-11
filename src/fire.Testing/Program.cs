@@ -22174,6 +22174,47 @@ else
             while (step < 1) { Sleep(1ms) }
             print("main " + store.Count() + " " + store.Sum() + " " + store.cb() + " " + shared.v)
         """),
+        ("Threads: TakeGlobal() im Thread gibt das Objekt samt allem, was es besitzt, dem Hauptprogramm; ein Feld auf ein fremdes Thread-Objekt ist die ArgumentException (Takes.Locals nimmt es mit), TakeGlobal(true) bleibt im Thread", """
+            #import "time"
+            class Leaf { int v; construct(int v) { this.v = v } }
+            class Node { Leaf a; Node inner; Leaf other; construct(int v) { this.a = new Leaf(v) } }
+            class Cache {
+                static Node cached
+                static Node Get() {
+                    if (Cache.cached != undefined) { return Cache.cached }
+                    var n = new Node(3)
+                    n.TakeGlobal()
+                    Cache.cached = n
+                    n.a.v = 4
+                    return n
+                }
+            }
+            Node keep = undefined
+            Node keep2 = undefined
+            Node mineOnly = undefined
+            var step = 0
+            fire {
+                print("cache " + Cache.Get().a.v + " " + Cache.Get().a.v)
+                var n = new Node(1)
+                n.inner = new Node(2)
+                n.TakeGlobal()
+                keep = n
+                n.inner.a.v = 20
+                var loose = new Leaf(7)
+                var m = new Node(5)
+                m.other = loose
+                try { m.TakeGlobal() } catch (ArgumentException e) { print("refused: " + e.message) }
+                m.TakeGlobal(Takes.Locals)
+                keep2 = m
+                var own = new Node(6)
+                own.TakeGlobal(true)
+                try { mineOnly = own } catch (ArgumentException e) { print("own: " + e.message) }
+                step = 1
+            }
+            while (step < 1) { Sleep(1ms) }
+            Sleep(20ms)
+            print("main " + Cache.cached.a.v + " " + keep.a.v + " " + keep.inner.a.v + " " + keep2.other.v + " " + (keep2.other is from keep2) + " " + (mineOnly == undefined))
+        """),
         ("Threads: Regel 10 - Schreiben in globale Variablen, Felder und Elemente der Globals: frisch, copy und take bewegen das Objekt ins Hauptprogramm, ohne Wort ArgumentException", """
             #import "time"
             class Box { int v = 0; construct(int v) { this.v = v } }
