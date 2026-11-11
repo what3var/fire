@@ -104,7 +104,8 @@ foreach (g in fs) { print(g()) }        // 0 1 2
 A lambda belongs to an owner like an object (see [Ownership](13-ownership.md)): the scope of the variable it is assigned to first, the object or the list it is
 stored in, or the statement when nobody takes it. What it captured belongs to the lambda and dies with it. When its owner ends, the lambda is destroyed:
 calling it is a `DestroyedException` ("Access to a destroyed lambda."). A lambda that has to outlive its scope is passed on with `take` (`list.Add(take f)`,
-`this.handler = take f`) or returned. `copy f` gives a lambda with copies of what it captured, `a on obj` (below) as well.
+`this.handler = take f`) or returned. `copy f` gives a lambda with copies of what it captured, `a on obj` (below) as well. A lambda can go to a thread
+(`taking`, `handover`); one bound with `on` then still runs where its target lives (see [Threads](15-threads-and-actors.md#lambdas-in-threads)).
 
 ## `on`: a lambda with an object
 

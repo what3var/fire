@@ -1413,6 +1413,8 @@ typedef struct Lam {
     uint32_t nparams;
     uint32_t ncaps;
     uint32_t nreq;     /* parameters without a default value (they come first) */
+    uint32_t home;     /* where its calls run (docs/ROADMAP_TASKS.md step 8 (e)): 0 here, 1 its target is an object of the main program (a call in a fire thread
+                        * is a job there), 2 an object of another fire thread or an actor (not served yet) - set when it goes to another thread */
     Value on;
     Value (*fn)(Value lam, const Value* args);
     Value (*dflt)(Value lam, uint32_t index);   /* the default value of parameter `index` (null: the lambda has none) */
@@ -3222,7 +3224,8 @@ FIRE_FN Arr* allocArr(uint32_t length, OwnList* list) {
     return a;
 }
 
-FIRE_FN Lam* allocLam(uint32_t nparams, uint32_t ncaps, Value (*fn)(Value, const Value*), OwnList* list) {
+/* (a lambda without a count, an owner or a place in the pool: allocLam, and the copies for another thread) */
+FIRE_FN Lam* allocLamBare(uint32_t nparams, uint32_t ncaps, Value (*fn)(Value, const Value*)) {
     Lam* l = (Lam*)malloc(blockSize(FIRE_HDR(Lam), ncaps, sizeof(Value)));
     if (FIRE_UNLIKELY(!l)) allocFailed();
     l->h.type = R_Lam;
@@ -3237,6 +3240,8 @@ FIRE_FN Lam* allocLam(uint32_t nparams, uint32_t ncaps, Value (*fn)(Value, const
     l->nparams = nparams;
     l->ncaps = ncaps;
     l->nreq = nparams;
+    l->home = 0;
+    l->h.rc = 0;
     l->on = Undef();
     l->fn = fn;
     l->dflt = NULL;
@@ -3245,6 +3250,10 @@ FIRE_FN Lam* allocLam(uint32_t nparams, uint32_t ncaps, Value (*fn)(Value, const
     l->sel = NULL;
     l->nsel = 0;
 #endif
+    return l;
+}
+FIRE_FN Lam* allocLam(uint32_t nparams, uint32_t ncaps, Value (*fn)(Value, const Value*), OwnList* list) {
+    Lam* l = allocLamBare(nparams, ncaps, fn);
     registerTemp(&l->h, list);
     if (list) ownLink(list, &l->o);   /* (a new lambda belongs to the statement until a slot claims it, like a new array) */
     return l;
@@ -3275,6 +3284,7 @@ FIRE_FN Value lamCopy(Value lam, bool deep, OwnList* owner) {
     l->nsel = a->nsel;
 #endif
     l->on = a->on;
+    l->home = a->home;
     for (i = 0; i < a->ncaps; i++) {
         Value c = lamCaps(a)[i];
         if (deep && ownedOf(c)) c = copyValue(c, true, &l->store);
@@ -3351,8 +3361,15 @@ FIRE_FN Value callLamV(Value callee, int argc, const Value* args, OwnList* list)
 /* `f(args)` of the generated code: a lambda whose owner ended is the DestroyedException "Access to a destroyed lambda." (docs/ROADMAP_TASKS.md step 8).
  * What the runtime keeps and calls itself (a probe, a job, a callback: callLam) is called as it is - like the VM, which checks only the calls of the
  * language. */
+#ifdef FIRE_THREADS
+FIRE_FN Value lamCallAtHome(Value lam, int argc, const Value* args);
+#endif
 FIRE_FN Value callLamU(Value callee, int argc, const Value* args, OwnList* list) {
     if (FIRE_UNLIKELY(callee.kind == K_Lambda && (lamOf(callee)->o.flags & 1))) return destroyedError(callee);
+#ifdef FIRE_THREADS
+    /* (bound to an object that lives elsewhere: the body runs there - docs/ROADMAP_TASKS.md step 8 (e)) */
+    if (FIRE_UNLIKELY(callee.kind == K_Lambda && lamOf(callee)->home != 0) && (lamOf(callee)->home == 2 || g_isThread)) return lamCallAtHome(callee, argc, args);
+#endif
     return callLamV(callee, argc, args, list);
 }
 /* A lambda that the runtime or a native calls (a probe, a job, a callback): in a debug build the VM runs it nested - no stops inside. */
@@ -6979,7 +6996,7 @@ FIRE_FN void copierFree(DeepCopier* c) {
     free(c->pending);
 }
 FIRE_FN void copierPushPending(DeepCopier* c, Value v) {
-    if (v.kind != K_Class && v.kind != K_Array && !(c->taking && (v.kind == K_Lambda || isPtr(v)))) return;   /* nothing to discover */
+    if (v.kind != K_Class && v.kind != K_Array && !(c->taking && isPtr(v))) return;   /* nothing to discover */
     c->pending = (Value*)fire_growPush(c->pending, &c->pendingCount, &c->pendingCap, sizeof(Value));
     c->pending[c->pendingCount++] = v;
 }
@@ -6995,8 +7012,8 @@ FIRE_FN bool copierDiscover(DeepCopier* c, Value start) {
     copierPushPending(c, start);
     while (c->pendingCount) {
         Value v = c->pending[--c->pendingCount];
-        if (c->taking && (v.kind == K_Lambda || isPtr(v))) {
-            const char* what = v.kind == K_Lambda ? "lambda values cannot be copied for a thread." : "raw pointers cannot be copied for a thread.";
+        if (c->taking && isPtr(v)) {
+            const char* what = "raw pointers cannot be copied for a thread.";
             if (c->noCopy) { takingRefused(what); return false; }   /* the check before `taking` (noCopyFree): the ArgumentException */
             takingViolation(what);
         }
@@ -7037,6 +7054,9 @@ FIRE_FN Value copierMaterialize(DeepCopier* c, Obj* o) {
     return copy;
 }
 /* What a value becomes in the copy. */
+#ifdef FIRE_THREADS
+FIRE_FN Value lamTakeCopy(Value v, OwnList* travel, uint32_t rc);
+#endif
 FIRE_FN Value copierMap(DeepCopier* c, Value v) {
     uint32_t i;
     switch (v.kind) {
@@ -7072,13 +7092,17 @@ FIRE_FN Value copierMap(DeepCopier* c, Value v) {
             copyMapPut(&c->containers, src, r);
             return r;
         }
-        case K_Lambda: {   /* (a lambda with a store of its own: its captures copied - not for a thread, which gets no lambdas) */
+        case K_Lambda: {   /* (a lambda with a store of its own: its captures copied - for a thread, like the rest it gets) */
             Value* m;
             Value r;
-            if (c->taking || !ownedOf(v)) return v;
+            if (!ownedOf(v)) return v;
             m = copyMapFind(&c->containers, v.p);
             if (m) return *m;
+#ifdef FIRE_THREADS
+            r = c->taking ? lamTakeCopy(v, c->owner, 0) : lamCopy(v, true, c->owner);
+#else
             r = lamCopy(v, true, c->owner);
+#endif
             copyMapPut(&c->containers, v.p, r);
             return r;
         }
@@ -9707,7 +9731,7 @@ FIRE_FN void postJobEx(Value lam, const Value* args, uint32_t n, bool onTarget, 
         if (args[i].kind == K_Class && !noCopyFree(args[i], "fire global")) return;
     j = (JobReq*)malloc(sizeof(JobReq));
     if (!j) allocFailed();
-    j->lam = lamKeep(lam);
+    j->lam = lam.kind == K_Lambda && lamOf(lam)->home ? lam : lamKeep(lam);   /* (a call at home: the lambda stays the caller's) */
     j->reply = reply;
 #ifdef FIRE_STR_CROSS
     /* (the lambda is made here and let go of by the main program, which runs it: it is counted atomically from now on, its captures too) */
@@ -9737,7 +9761,21 @@ FIRE_FN void postJobEx(Value lam, const Value* args, uint32_t n, bool onTarget, 
 FIRE_FN void postJob(Value lam, const Value* args, uint32_t n) { postJobEx(lam, args, n, false, NULL); }
 /* `await on x { ... return v }`: the block runs in the main program's group with x itself and copies of the rest; the caller waits for its result (an
  * exception that the block does not catch is thrown here). The main program itself (or a member of its group) runs it at once. */
-FIRE_FN Value awaitOnJob(Value lam, const Value* args, uint32_t n) {
+FIRE_FN Value awaitJobEx(Value lam, const Value* args, uint32_t n, bool onTarget);
+FIRE_FN Value awaitOnJob(Value lam, const Value* args, uint32_t n) { return awaitJobEx(lam, args, n, true); }
+/* The call of a lambda bound to an object of the main program, from a fire thread (docs/ROADMAP_TASKS.md step 8 (e)): a job of the main program - the
+ * arguments are copied for it, the thread waits (and yields) until the result or the exception comes back. */
+FIRE_FN Value lamCallAtHome(Value lam, int argc, const Value* args) {
+    Lam* l = lamOf(lam);
+    if (l->home == 2) return fireError("ArgumentException", "The lambda is bound to an object of another fire thread or of an actor: it cannot be called from here (yet) - only from the thread its target lives in.");
+    if ((uint32_t)argc < l->nreq || (uint32_t)argc > l->nparams) {
+        char text[120];
+        snprintf(text, sizeof text, "Wrong number of arguments: expected %u, got %d.", (unsigned)l->nparams, argc);
+        return fireError("ArgumentException", text);
+    }
+    return awaitJobEx(lam, args, (uint32_t)argc, false);
+}
+FIRE_FN Value awaitJobEx(Value lam, const Value* args, uint32_t n, bool onTarget) {
     ActorReply* reply;
     int32_t held;
     bool ok, failed;
@@ -9762,7 +9800,7 @@ FIRE_FN Value awaitOnJob(Value lam, const Value* args, uint32_t n) {
     reply->failed = 0;
     reply->result = Undef();
     ownListInit(&reply->travel, 0, NULL);
-    postJobEx(lam, args, n, true, reply);
+    postJobEx(lam, args, n, onTarget, reply);
     if (g_unwind.active) { free(reply); return Undef(); }
     held = sectionYieldBegin();
     ok = fire_waitReply(reply);
@@ -9922,6 +9960,39 @@ FIRE_FN void originFree(Obj* o) {
 /* `fire ... taking x`: what the thread gets. An object, array or buffer is copied with everything reachable from it, whoever owns the parts (isolated,
  * THREADING_DESIGN 3); a copied object owned by another copied one belongs to its copy, every other copy to `travel` (the root scope of the thread). A string
  * or lambda is shared (the thread gets a count of it), other values are plain. */
+/* A lambda for another thread (`taking`, a field of what a thread takes; docs/ROADMAP_TASKS.md step 8 (e)): a copy with a store of its own - its captures copied for
+ * the thread like the rest of what it gets; its target stays, and its calls run where the target lives (home: the main program when the main program sends
+ * it, else another fire thread). `rc`: its first count (1: the place that receives it; 0: a field, which counts it itself). A destroyed one stays as it is. */
+FIRE_FN Value takeCopy(Value v, OwnList* travel);
+FIRE_FN uint32_t lamHomeOf(const Lam* a) {
+    if (a->home || a->on.kind != K_Class) return a->home;
+    if (!leafAlive(a->on)) return 0;
+    return (leafOf(a->on)->flags & 8) || (g_isThread && !(leafOf(a->on)->flags & F_SHARED)) ? 2u : 1u;   /* (an actor; an object of this fire thread) */
+}
+FIRE_FN Value lamTakeCopy(Value v, OwnList* travel, uint32_t rc) {
+    Lam* a = lamOf(v);
+    Lam* l;
+    uint32_t i;
+    if (a->o.flags & 1) { if (rc) retain(v); return v; }
+    l = allocLamBare(a->nparams, a->ncaps, a->fn);
+    l->h.rc = rc;
+    l->nreq = a->nreq;
+    l->dflt = a->dflt;
+    l->targs = a->targs;
+#ifdef FIRE_REFLECTION
+    l->sel = a->sel;
+    l->nsel = a->nsel;
+#endif
+    l->on = a->on;
+    l->home = lamHomeOf(a);
+    if (travel) ownLink(travel, &l->o);
+    for (i = 0; i < a->ncaps; i++) {
+        Value c = takeCopy(lamCaps(a)[i], &l->store);   /* (a string or a lambda comes with its count, an object or an array belongs to the store) */
+        if (c.kind != K_String && c.kind != K_Lambda) retain(c);
+        lamCaps(l)[i] = c;
+    }
+    return LamV(l);
+}
 FIRE_FN Value takeCopy(Value v, OwnList* travel) {
     DeepCopier c;
     Value copy;
@@ -9943,7 +10014,7 @@ FIRE_FN Value takeCopy(Value v, OwnList* travel) {
             copierFree(&c);
             return copy;
         case K_String: v = strCross(v); retain(v); return v;
-        case K_Lambda: retain(v); return v;
+        case K_Lambda: return lamTakeCopy(v, travel, 1);
         default: return v;
     }
 }
@@ -9978,8 +10049,8 @@ FIRE_FN bool handoverDiscover(Value v, CopyMap* seen, Owned*** parts, uint32_t* 
         Value x = pending[--pn];
         Owned* h;
         Owned* k;
-        if (x.kind == K_Lambda || isPtr(x)) {
-            handoverRefused(x.kind == K_Lambda ? "lambda values cannot be handed to a thread." : "raw pointers cannot be handed to a thread.");
+        if (isPtr(x)) {
+            handoverRefused("raw pointers cannot be handed to a thread.");
             ok = false;
             break;
         }
@@ -10001,6 +10072,16 @@ FIRE_FN bool handoverDiscover(Value v, CopyMap* seen, Owned*** parts, uint32_t* 
                 pending[pn++] = objFields(o)[i];
             }
             for (k = objOwnedHead(o); k; k = k->next) {
+                pending = (Value*)fire_growPush(pending, &pn, &pcap, sizeof(Value));
+                pending[pn++] = ownedValue(k);
+            }
+        } else if (h->okind == O_Lambda) {   /* (it moves with its store: what it captured goes along) */
+            Lam* l = lamOfOwned(h);
+            for (i = 0; i < l->ncaps; i++) {
+                pending = (Value*)fire_growPush(pending, &pn, &pcap, sizeof(Value));
+                pending[pn++] = lamCaps(l)[i];
+            }
+            for (k = l->store.head; k; k = k->next) {
                 pending = (Value*)fire_growPush(pending, &pn, &pcap, sizeof(Value));
                 pending[pn++] = ownedValue(k);
             }
@@ -10063,8 +10144,10 @@ FIRE_FN void handOverAll(const Value* vs, Value* out, uint32_t n, OwnList* trave
     for (i = 0; i < n; i++) {
         out[i] = vs[i];
         if (vs[i].kind == K_String) { out[i] = strCross(vs[i]); retain(out[i]); }
-        else if (vs[i].kind == K_Lambda) retain(vs[i]);
-        else handoverDiscover(vs[i], &seen, &parts, &count, &cap);   /* (checked before: handoverFree) */
+        else {
+            if (vs[i].kind == K_Lambda) retain(vs[i]);   /* (the thread's count; the lambda itself moves like a part) */
+            handoverDiscover(vs[i], &seen, &parts, &count, &cap);
+        }   /* (checked before: handoverFree) */
     }
     for (i = 0; i < count; i++) {
         Owned* h = parts[i];
@@ -10075,11 +10158,18 @@ FIRE_FN void handOverAll(const Value* vs, Value* out, uint32_t n, OwnList* trave
         }
     }
     for (i = 0; i < count; i++) parts[i]->flags &= (uint8_t)~F_SHARED;
+    /* a bound lambda whose target does not move with it: its calls run where the target lives */
+    for (i = 0; i < count; i++)
+        if (parts[i]->okind == O_Lambda) {
+            Lam* l = lamOfOwned(parts[i]);
+            if (!l->home && l->on.kind == K_Class && leafAlive(l->on) && !copyMapFind(&seen, leafOf(l->on))) l->home = lamHomeOf(l);
+        }
 #ifdef FIRE_STR_CROSS
     /* (the strings in the moved parts: the sender may hold them too - the thread gets copies) */
     for (i = 0; i < count; i++) {
         uint32_t k;
         if (parts[i]->okind == O_Object) { Obj* o = (Obj*)parts[i]; for (k = 0; k < o->nfields; k++) strCrossAt(&objFields(o)[k]); }
+        else if (parts[i]->okind == O_Lambda) { Lam* l = lamOfOwned(parts[i]); for (k = 0; k < l->ncaps; k++) strCrossAt(&lamCaps(l)[k]); }
         else if (parts[i]->okind == O_Array && arrValues((Arr*)parts[i])) { Arr* a = (Arr*)parts[i]; for (k = 0; k < a->length; k++) strCrossAt(&arrItems(a)[k]); }
     }
 #endif
@@ -10107,11 +10197,14 @@ FIRE_FN void handOverAll(const Value* vs, Value* out, uint32_t n, OwnList* trave
         } else if (h->okind == O_Array) {
             Arr* a = (Arr*)h;
             for (k = 0; k < a->length; k++) handoverRehome(&arrItems(a)[k], &seen);
+        } else if (h->okind == O_Lambda) {
+            Lam* l = lamOfOwned(h);
+            for (k = 0; k < l->ncaps; k++) handoverRehome(&lamCaps(l)[k], &seen);
         }
     }
     for (i = 0; i < n; i++) handoverRehome(&out[i], &seen);
     for (i = 0; i < count; i++) {
-        slotBump(parts[i]);
+        if (parts[i]->okind != O_Lambda) slotBump(parts[i]);   /* (a lambda has no slot: its memory is counted) */
     }
 #endif
     copyMapFree(&seen);

@@ -235,11 +235,12 @@ namespace fire.Runtime
             for (int i = 0; i < sharedGlobalCount; i++) scope.DefineSlot(Value.MakeUndefined());
             int copied = takingValues.Count - handoverCount;
             var copies = new Value[copied];
-            for (int i = 0; i < copied; i++) copies[i] = ObjectCopier.TakeValue(takingValues[i], scope);
+            bool senderIsFireThread = VM.CurrentThreadVm?.IsFireThreadVm ?? false;   // (the home of the bound lambdas it gets - docs/ROADMAP_TASKS.md step 8 (e))
+            for (int i = 0; i < copied; i++) copies[i] = ObjectCopier.TakeValue(takingValues[i], scope, senderIsFireThread);
             // (all `handover` values of the `fire` together: one may reach another; in performance mode nothing is checked, the parts keep their identity)
             var handed = new Value[handoverCount];
             for (int i = 0; i < handoverCount; i++) handed[i] = takingValues[copied + i];
-            var moved = ObjectHandover.MoveAll(handed, scope, retire: executionMode != VmExecutionMode.Performance);
+            var moved = ObjectHandover.MoveAll(handed, scope, retire: executionMode != VmExecutionMode.Performance, senderIsFireThread);
             foreach (var v in copies) scope.DefineSlot(v);
             foreach (var v in moved) scope.DefineSlot(v);
             if (withValue is Value wv)

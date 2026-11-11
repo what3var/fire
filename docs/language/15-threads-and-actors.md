@@ -53,8 +53,9 @@ print("main: " + counter.value)             // main: 15
 | `sync flat x` / `try sync flat x` | writes back only the direct fields (array: the elements) |
 
 - `taking` can be repeated: `fire taking a taking b { ... }`. Numbers and strings can be taken too (`taking i`). An array is copied as well (`taking arr`).
-- The copy is made at the `fire`, before the thread starts. A lambda or a pointer in a field or an element cannot be copied: the `fire` throws an
-  `ArgumentException` ("'taking' rejected: lambda values cannot be copied for a thread.") and the thread does not start.
+- The copy is made at the `fire`, before the thread starts. A lambda is copied with what it captured (see [Lambdas in threads](#lambdas-in-threads)).
+  A raw pointer in a field or an element cannot be copied: the `fire` throws an `ArgumentException` ("'taking' rejected: raw pointers cannot be copied
+  for a thread.") and the thread does not start.
 - `taking` always copies - nothing is moved to the thread. An instance of a **`[NoCopy]`** class (a resource like `NativeHandle`) cannot be copied: when `x`
   (or a field or an element of it) is one, the `fire` throws an `ArgumentException` and the thread does not start. The same goes for an object that
   `fire global` would copy for its job (it is not queued) and for `sync`, when it would copy one back into the original (nothing is written back);
@@ -134,9 +135,38 @@ Sleep(100ms)
 - What the thread later shares itself (an object it assigns to a global variable in `sync global { }`) is a new reference and works, like any
   object a thread shares; the main program then must not change it while the thread does.
 - `handover` can be repeated and mixed with `taking`: `fire taking a handover b handover c { ... }`, also `fire Method(args) handover h`.
-- A lambda or a pointer in a field or an element cannot go to another thread, and a thread cannot hand over what belongs to the main program's
-  global variables: the `fire` throws an `ArgumentException` and nothing moves. A global variable of the main program named in a thread is a compile
+- A lambda moves with what it owns (see below). A raw pointer in a field or an element cannot go to another thread, and a thread cannot hand over what
+  belongs to the main program's global variables: the `fire` throws an `ArgumentException` and nothing moves. A global variable of the main program named in a thread is a compile
   error. Actors and destroyed objects stay shared references. `fire global` has no `handover` (a job gets copies).
+
+## Lambdas in threads
+
+A lambda goes to a thread like any other value - as a `taking` copy, moved with `handover`, or in a field or an element of what the thread gets:
+
+- **`taking`** gives the thread a copy of the lambda with copies of what it captured (its store, see [Lambdas](12-lambdas.md#captured-values)).
+  **`handover`** moves the lambda with its store; the sender's variable is `undefined` afterwards.
+- A lambda without `on` then simply runs in the thread, on its own copies.
+- A lambda **bound with `on`** keeps its target. Its body always runs where the target lives: called in a thread with an object of the main
+  program as its target, the call is a job of the main program (like `await on obj { ... }`). The arguments are copied for it, the thread waits -
+  and yields meanwhile - until the result comes back; an exception the body does not catch is thrown at the call in the thread. So the lambda changes
+  the original object, not a copy, and nothing of the main program is touched by two threads at once.
+- In the main program the same lambda is called directly. A lambda bound to an object of a fire thread or of an actor cannot be called from another
+  thread yet (an `ArgumentException`).
+
+```fire
+class Counter { int n = 0 }
+class Demo {
+    static undefined Run() {
+        var c = new Counter()
+        var add = func (int k) on c => { n = n + k; return n }
+        var sum = await taking add {
+            return add(5) + add(2)          // both run in the main program, on c itself
+        }
+        print(sum + " " + c.n)              // 12 7
+    }
+}
+Demo.Run()
+```
 
 ## Global variables
 

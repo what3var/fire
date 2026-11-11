@@ -21353,6 +21353,64 @@ else
             while (done == 0) { sync globals }
             print("total " + total)
             """),
+        ("Threads: Lambdas gehen in Threads - taking kopiert den Store, ein mit on gebundenes laeuft im Hauptprogramm auf dem Original (await, handover, in einer Liste)", """
+            class Counter { int n = 0 }
+            class Box { int v = 2 }
+            class Demo {
+                static undefined Run() {
+                    var c = new Counter()
+                    var inc = func (int k) on c => { n = n + k; return n }
+                    var b = new Box()
+                    var plain = (int k) => k * (taking b).v
+                    var got = await taking inc taking plain {
+                        print("thread plain " + plain(10))
+                        int a = inc(5)
+                        int z = inc(2)
+                        return a * 100 + z
+                    }
+                    print("result " + got + " main n " + c.n)
+                    var h = func (int k) on c => { n = n * k; return n }
+                    var m = await handover h { return h(3) }
+                    print("moved " + m + " main n " + c.n + " h " + (h == undefined))
+                    var lst = new List<lambda>()
+                    lst.Add(take func () on c => { n = n + 1; return n })
+                    var r = await taking lst { return lst[0]() + lst[0]() }
+                    print("list " + r + " main n " + c.n)
+                    var bad = await taking plain { return plain(1) }
+                    print("plain " + bad)
+                }
+            }
+            Demo.Run()
+            """),
+        ("Threads: Lambdas in Threads - eine Ausnahme kommt vom Hauptprogramm zurueck, ein Lambda im Feld, ein ungebundenes rechnet im Thread", """
+            class Counter { int n = 0 }
+            class Holder { lambda f; int k = 1 }
+            class Demo {
+                static undefined Run() {
+                    var c = new Counter()
+                    var boom = func () on c => { n = 99; throw new ArgumentException("from home") }
+                    var r1 = await taking boom {
+                        try { boom() } catch (ArgumentException e) { return "caught " + e.message }
+                        return "none"
+                    }
+                    print(r1 + " n " + c.n)
+                    var h = new Holder()
+                    h.f = take func (int k) on c => { n = n + k; return n }
+                    var r2 = await taking h { return h.f(h.k) + h.f(10) }
+                    print("field " + r2 + " n " + c.n)
+                    var r3 = await taking c {
+                        var mine = func () on c => { return n }
+                        var inner = await taking mine { try { return mine() } catch (ArgumentException e) { return -1 } }
+                        return inner
+                    }
+                    print("other thread " + r3)
+                    var pure = (int a, int b) => a * b
+                    var r4 = await taking pure { return pure(6, 7) }
+                    print("pure " + r4)
+                }
+            }
+            Demo.Run()
+            """),
         ("Threads: Globals: fire global mit taking", """
             var total = 0
             var started = 0

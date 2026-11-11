@@ -19,8 +19,23 @@ namespace fire.Runtime
     /// created, bound and called, their ownership integration follows
     /// with the class/object stage.
     /// </summary>
+    /// <summary>Where a lambda that went to another thread runs (docs/ROADMAP_TASKS.md step 8 (e)): bound with `on`, its body runs where its target
+    /// lives - a call from elsewhere is a job there, the caller waits for the result.</summary>
+    public enum LambdaHome : byte
+    {
+        /// <summary>Where it is: an unbound lambda, or one whose target lives in the same thread.</summary>
+        Here,
+        /// <summary>Its target is an object of the main program: a call in a fire thread is a job of the main program (like `await on obj`).</summary>
+        MainProgram,
+        /// <summary>Its target is an object of another fire thread (not served yet: a call is an error).</summary>
+        OtherThread,
+    }
+
     public sealed class LambdaValue : IOwnedLeaf, IOwner
     {
+        /// <summary>Where its calls run (set when it goes to another thread: `taking`, `handover`, a field of what a thread gets).</summary>
+        public LambdaHome Home { get; set; }
+
         // ---- the owner structure (ROADMAP_TASKS step 8): a lambda belongs to a scope or an object like an array (LeafOwner), dies with it, and owns
         //      its store - the copies and moved instances it captured - like an array its elements
         public IOwner? LeafOwner { get; set; }

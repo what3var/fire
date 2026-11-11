@@ -2554,7 +2554,7 @@ namespace fire.Runtime
             // Fast path: a lambda with exactly this parameter count (no default value needed).
             if (_stack[_sp - 1 - argCount] is { Kind: ValueKind.Lambda } fastCallee
                 && fastCallee.AsLambda() is LambdaValue fastLambda
-                && fastLambda.Proto.ParamCount == argCount && !fastLambda.IsDestroyed)
+                && fastLambda.Proto.ParamCount == argCount && !fastLambda.IsDestroyed && !RunsElsewhere(fastLambda))
             {
                 _pendingCallTypeArgs = fastLambda.TypeArgs;   // (taken by the TakeCallTypeArgs of a lambda made in generic code)
                 _pendingExplicitTypeArgs = false;
@@ -2565,6 +2565,35 @@ namespace fire.Runtime
             OpCallSlow(argCount, copyMask);
             return;
         }
+        }
+
+        /// <summary>Does a call of the lambda run elsewhere (docs/ROADMAP_TASKS.md step 8 (e))? Bound to an object of the main program and called in a fire
+        /// thread: its body runs in the main program; bound to an object of another fire thread: not served yet.</summary>
+        private bool RunsElsewhere(LambdaValue lambda) => lambda.Home switch
+        {
+            LambdaHome.MainProgram => IsFireThreadVm,
+            LambdaHome.OtherThread => true,
+            _ => false,
+        };
+
+        /// <summary>The call of a lambda whose target lives in the main program, from a fire thread: a job of the main program like `await on obj` - the
+        /// arguments are copied for it, the thread waits (and yields) until the result or the exception comes back.</summary>
+        private void CallAtHome(LambdaValue lambda, Value[] args)
+        {
+            if (lambda.Home == LambdaHome.OtherThread)
+            {
+                ThrowArgumentError("The lambda is bound to an object of another fire thread or of an actor: it cannot be called from here (yet) - only from the thread its target lives in.");
+                return;
+            }
+            CheckArity(lambda.Proto, args.Length);
+            foreach (var a in args)
+                if (a.Kind == ValueKind.Class) ObjectCopier.RequireNoCopyFree(a, "fire global");
+            var holder = new Scope(null);
+            for (int i = 0; i < args.Length; i++)
+                if (args[i].Kind is ValueKind.Class or ValueKind.Array or ValueKind.Buffer) args[i] = ObjectCloner.Clone(args[i], holder, deep: true);
+            var reply = new ActorReply();
+            _threadBroker!.PostJob(lambda, args, holder, reply);
+            TakeReply(reply);
         }
 
         private void OpCallSlow(int argCount, long copyMask)
@@ -2580,6 +2609,7 @@ namespace fire.Runtime
 
             var lambda = (LambdaValue)calleeVal.AsLambda();
             if (IsDestroyedLeaf(calleeVal)) { ThrowDestroyed(calleeVal); return; }   // (a lambda that died with its owner - ROADMAP_TASKS step 8)
+            if (RunsElsewhere(lambda)) { CallAtHome(lambda, args); return; }
             CheckArity(lambda.Proto, args.Length);
             args = FillDefaultArgs(lambda.Proto, args, lambda.OnTarget);
 

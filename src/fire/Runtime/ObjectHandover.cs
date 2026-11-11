@@ -29,7 +29,7 @@ namespace fire.Runtime
         /// (the references among the moved parts and the returned values point to the new ones), the old one is retired - every other reference
         /// (the sender's) is then a reference to a dead object, whose use is the DestroyedException "... was handed over to another thread"
         /// (VM.ThrowDestroyedObject). The native runtime does the same with the generations of the slots (fire_rt.h handOverAll).</summary>
-        public static Value[] MoveAll(IReadOnlyList<Value> vs, IOwner target, bool retire = true)
+        public static Value[] MoveAll(IReadOnlyList<Value> vs, IOwner target, bool retire = true, bool senderIsFireThread = false)
         {
             var result = new Value[vs.Count];
             for (int i = 0; i < vs.Count; i++) result[i] = vs[i];
@@ -47,6 +47,9 @@ namespace fire.Runtime
                 if (leaf.LeafOwner != null && !(leaf.LeafOwner is ObjectInstance o && parts.Contains(o)) && !(leaf.LeafOwner is ScriptArray a && parts.Contains(a)))
                     LeafOwnership.Reparent(leaf, target);
                 if (leaf is ScriptArray array) array.IsShared = false;
+                // a bound lambda: its target does not move with it (unless it is one of the parts) - its calls run where the target lives
+                if (leaf is LambdaValue { Home: LambdaHome.Here, OnTarget: ObjectInstance boundTo } movedLambda && !parts.Contains(boundTo))
+                    movedLambda.Home = boundTo.Mailbox != null || senderIsFireThread && !boundTo.InGlobalsDomain ? LambdaHome.OtherThread : LambdaHome.MainProgram;
             }
             if (!retire) return result;
 
@@ -82,6 +85,8 @@ namespace fire.Runtime
                     n.LeafOwner = owner;
                     ReplaceLeafIn(owner, leaf, n);
                 }
+                if (n is LambdaValue movedCaptures && movedCaptures.Captures != null)
+                    for (int i = 0; i < movedCaptures.Captures.Length; i++) movedCaptures.Captures[i] = Map(movedCaptures.Captures[i]);
                 if (n is ScriptArray array)
                 {
                     for (int i = 0; i < array.Items.Length; i++) array.Items[i] = Map(array.Items[i]);
@@ -132,7 +137,7 @@ namespace fire.Runtime
         /// what the objects own.</summary>
         private static void Discover(Value v, bool fromFireThread, Parts parts)
         {
-            if (v.Kind != ValueKind.Class && v.Kind != ValueKind.Array && v.Kind != ValueKind.Buffer) return;
+            if (v.Kind != ValueKind.Class && v.Kind != ValueKind.Array && v.Kind != ValueKind.Buffer && v.Kind != ValueKind.Lambda) return;
             var pending = new Stack<Value>();
             pending.Push(v);
             while (pending.Count > 0)
@@ -167,7 +172,15 @@ namespace fire.Runtime
                         break;
                     }
                     case ValueKind.Lambda:
-                        throw new InvalidOperationException("'handover' rejected: lambda values cannot be handed to a thread.");
+                    {
+                        // (it moves with its store; bound with `on`, its calls stay where its target lives - MoveAll sets its home)
+                        var lambda = (LambdaValue)x.AsLambda();
+                        if (lambda.IsDestroyed || !parts.Seen.Add(lambda)) break;
+                        parts.Leaves.Add(lambda);
+                        if (lambda.Captures != null) foreach (var c in lambda.Captures) pending.Push(c);
+                        foreach (var owned in lambda.OwnedObjects) pending.Push(Value.MakeClassRef(owned));
+                        break;
+                    }
                     case ValueKind.Pointer:
                         throw new InvalidOperationException("'handover' rejected: raw pointers cannot be handed to a thread.");
                 }

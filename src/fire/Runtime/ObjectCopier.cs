@@ -41,10 +41,19 @@ namespace fire.Runtime
 
         /// <summary>What a `taking` value becomes in the thread: an object as <see cref="Take"/>, an array or a buffer as an isolated copy (with
         /// everything reachable from it, owned by `newOwner`), anything else as it is (value-like, strings, a lambda at the top level is shared).</summary>
-        public static Value TakeValue(Value v, IOwner newOwner)
+        // (whether the thread that copies is a fire thread: the home of the lambdas the copy reaches)
+        [System.ThreadStatic] private static bool s_senderIsFireThread;
+
+        public static Value TakeValue(Value v, IOwner newOwner, bool senderIsFireThread = false)
         {
+            s_senderIsFireThread = senderIsFireThread;
             switch (v.Kind)
             {
+                case ValueKind.Lambda:
+                {
+                    var lambda = (LambdaValue)v.AsLambda();
+                    return lambda.IsDestroyed ? v : Value.MakeLambda(TakeLambda(lambda, newOwner, senderIsFireThread));
+                }
                 case ValueKind.Class:
                 {
                     var obj = (ObjectInstance)v.AsObjectRef();
@@ -58,6 +67,22 @@ namespace fire.Runtime
             }
         }
 
+        /// <summary>A lambda for another thread (docs/ROADMAP_TASKS.md step 8 (e)): a copy with a store of its own - what it captured is copied for the
+        /// thread like everything else it gets; its target stays (a bound lambda keeps it), and its calls run where the target lives (<see cref="LambdaValue.Home"/>:
+        /// the main program when the main program sends it, another fire thread when a fire thread sends it).</summary>
+        public static LambdaValue TakeLambda(LambdaValue lambda, IOwner newOwner, bool senderIsFireThread)
+        {
+            var home = lambda.Home != LambdaHome.Here ? lambda.Home
+                : lambda.OnTarget is ObjectInstance target ? (target.Mailbox != null || senderIsFireThread && !target.InGlobalsDomain ? LambdaHome.OtherThread : LambdaHome.MainProgram)
+                : LambdaHome.Here;
+            var copy = lambda.WithOnTarget(lambda.OnTarget);
+            copy.Home = home;
+            LeafOwnership.Adopt(copy, newOwner);
+            if (copy.Captures != null)
+                for (int i = 0; i < copy.Captures.Length; i++) copy.Captures[i] = TakeValue(copy.Captures[i], copy, senderIsFireThread);
+            return copy;
+        }
+
         /// <summary>Discovery first (everything reachable, without recursion on the C# stack), then all object copies, then their fields.</summary>
         private sealed class Copier
         {
@@ -67,6 +92,7 @@ namespace fire.Runtime
             private readonly HashSet<object> _containersSeen = new(ReferenceEqualityComparer.Instance);
             private readonly Dictionary<ObjectInstance, ObjectInstance> _copies = new(ReferenceEqualityComparer.Instance);
             private readonly Dictionary<ScriptArray, ScriptArray> _arrayCopies = new(ReferenceEqualityComparer.Instance);
+            private readonly Dictionary<LambdaValue, LambdaValue> _lambdaCopies = new(ReferenceEqualityComparer.Instance);
             private readonly Dictionary<ByteBuffer, ByteBuffer> _bufferCopies = new(ReferenceEqualityComparer.Instance);
 
             public Copier(IOwner owner) => _owner = owner;
@@ -111,7 +137,7 @@ namespace fire.Runtime
                             break;
                         }
                         case ValueKind.Lambda:
-                            throw new TakingViolationException("'taking' rejected: lambda values cannot be copied for a thread.");
+                            break;   // (copied with its store where it is reached: TakeLambda)
                         case ValueKind.Pointer:
                             throw new TakingViolationException("'taking' rejected: raw pointers cannot be copied for a thread.");
                     }
@@ -158,6 +184,16 @@ namespace fire.Runtime
                         }
                         return Value.MakeBuffer(bufferCopy);
                     }
+                    case ValueKind.Lambda:
+                    {
+                        // (a lambda in a field or an element: a copy with its store - it belongs to the copy of the object that owned it)
+                        var lambda = (LambdaValue)v.AsLambda();
+                        if (lambda.IsDestroyed) return v;
+                        if (_lambdaCopies.TryGetValue(lambda, out var lambdaCopy)) return Value.MakeLambda(lambdaCopy);
+                        IOwner lambdaOwner = lambda.LeafOwner is ObjectInstance lo && _copies.TryGetValue(lo, out var ownerCopy) ? ownerCopy : _owner;
+                        _lambdaCopies[lambda] = lambdaCopy = TakeLambda(lambda, lambdaOwner, s_senderIsFireThread);
+                        return Value.MakeLambda(lambdaCopy);
+                    }
                     default:
                         return v;
                 }
@@ -180,10 +216,8 @@ namespace fire.Runtime
             while (pending.Count > 0)
             {
                 var x = pending.Pop();
-                if (op == "taking" && (x.Kind == ValueKind.Lambda || x.Kind == ValueKind.Pointer))
-                    throw new InvalidOperationException(x.Kind == ValueKind.Lambda
-                        ? "'taking' rejected: lambda values cannot be copied for a thread."
-                        : "'taking' rejected: raw pointers cannot be copied for a thread.");
+                if (op == "taking" && x.Kind == ValueKind.Pointer)
+                    throw new InvalidOperationException("'taking' rejected: raw pointers cannot be copied for a thread.");
                 if (x.Kind == ValueKind.Class)
                 {
                     var obj = (ObjectInstance)x.AsObjectRef();

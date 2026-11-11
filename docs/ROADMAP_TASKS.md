@@ -466,7 +466,12 @@ owner's thread, lambdas to other threads.
 
 **Status:** (a)-(d) are done in the VM and natively. Natively a lambda stays counted (the memory, also for natives that keep a callback) and carries an
 owner header and a store (`Lam.o`, `Lam.store`, okind `O_Lambda`): destroyed with its owner, freed with its last count; the generated lambda body gets
-`lamCaptureCopy` (a copy in its function scope) or `lamCaptureLent` per capture. `is of lambda` is new (the collections of the prelude take lambdas like
+`lamCaptureCopy` (a copy in its function scope) or `lamCaptureLent` per capture. (e), first part: lambdas go to threads - `taking` copies one with its store
+(its captures copied for the thread), `handover` moves it with its store, a lambda in a field or an element of what a thread gets is copied/moved with
+it; a lambda bound with `on` keeps its target and records its home (`LambdaValue.Home`, natively `Lam.home`): called in a fire thread with an object of
+the main program as its target, the call is a job of the main program like `await on` (arguments copied, the thread waits and yields, the result or
+the exception comes back). Open in (e): a target that lives in another fire thread or an actor (the thread would serve such calls at its safe points,
+like an actor its mailbox) - for now such a call is an ArgumentException. `is of lambda` is new (the collections of the prelude take lambdas like
 objects - `List.Add(() => ...)` keeps them). Open: (e), and the writes/calls of globals from other threads as tasks (rule 10).
 Found on the way: `List<int[]>.Add([1, 2])` - an array handed to a collection died with the statement (the prelude took only objects). Decided (the
 user): `x is from local` (x has an owner, and it is a scope of the running call) and `x is from global` instead of a type test for arrays; `Take...`
