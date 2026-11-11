@@ -21422,7 +21422,7 @@ else
                         var add = func (int k) on o => { n = n + k; return n }
                         fire taking add {
                             print("B got " + add(5))
-                            print("B got " + add(2))
+                            add(2)   // (not printed: A prints next - the order would be a race)
                         }
                         int guard = 0
                         while (o.n < 7 && guard < 5000) { Sleep(1ms); guard++ }
