@@ -103,8 +103,8 @@ ran out or its token is cancelled. **Built** (poll()/WSAPoll, not yet epoll/kque
 
 0. Poller in the scheduler (waits of the network without polling) and `Completion` - built.
 1. Server core: a task per connection, keep-alive, router chain (a copy per connection), `Http.Context`, streamed bodies, limits - **built**
-   (`Http.AppServer`, docs/networking/http.md). Open: a chain with lambdas waits for step 8 point 4 (lambdas to other threads) and is served in the accepting
-   task meanwhile; the TLS handshake runs in the accepting task.
+   (`Http.AppServer`, docs/networking/http.md). A chain with lambdas goes to the tasks since step 8 (e) (lambdas to other threads). Open: the TLS handshake runs in the
+   accepting task.
 2. File client and `wwwroot` (safety, caching, MIME) - **built** (`Http.Files`, docs/networking/http.md). Open: the `Map(pattern, lambda)` form of the
    file client (with the lambdas of step 8 point 4), symbolic links (the file system API cannot tell them), several ranges in one request.
 3. Sessions (their home, time limit) and `ISessionStore` (files) - **built** (`Http.Sessions`, docs/networking/http.md): one home actor for all sessions of a

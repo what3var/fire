@@ -27617,7 +27617,7 @@ else
             print("parallel " + parallel + " connections " + server.Connections + " fast " + (ms < 700))
             server.Close()
             """),
-        ("Http.AppServer: Lambda-Router (Use, Routes) - Items, Antwort nachbearbeitet, Text, POST, Ausnahme = 500, gestreamte Antwort (chunked); Kette mit Lambdas: eine Anfrage pro Verbindung", """
+        ("Http.AppServer: Lambda-Router (Use, Routes) - Items, Antwort nachbearbeitet, Text, POST, Ausnahme = 500, gestreamte Antwort (chunked); auch die Kette mit Lambdas bekommt Keep-Alive (Lambdas gehen in den Task)", """
             #import "http"
             #import "time"
             class Boom : Exception { construct(string m) { this.message = m } }

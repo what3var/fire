@@ -93,8 +93,9 @@ server.Run()                                                    // until Stop() 
 
 * **Every connection gets a copy of the chain** when its task starts (`taking`): routers are configuration. What they share - counters, caches, sessions -
   lives in an actor they ask with `await` (docs/ROADMAP_HTTP.md). A router that throws gives the client a 500.
-* **Lambdas in the chain** (`Use`, `Routes`) cannot be copied into a task yet (they may go to other threads with docs/ROADMAP_TASKS.md step 8 point 4):
-  until then such a chain is served in the accepting task, one request per connection without keep-alive. Routers written as classes get all of it.
+* **Lambdas in the chain** (`Use`, `Routes`) go to the task of the connection like everything else (they may go to other threads since
+  docs/ROADMAP_TASKS.md step 8 (e)); what they capture they capture with `taking`/`handover`. A chain that cannot be copied for a task (a `[NoCopy]`
+  object in a router) is served in the accepting task, one request per connection without keep-alive.
 * `Http.Server` (above) stays the small server for one connection after the other.
 
 ### Static files: `Http.Files`
