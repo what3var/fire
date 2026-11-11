@@ -10094,7 +10094,7 @@ FIRE_FN void lamSetHome(Lam* l, const Lam* from) {
 #endif
     } else home = 1;
     FIRE_LAM_HOME_RETAIN(box);
-    if (l->homeBox && l->homeBox != box) { void* old = l->homeBox; l->homeBox = NULL; FIRE_LAM_HOME_DROP(old); }
+    if (l->homeBox && l->homeBox != box) FIRE_LAM_HOME_DROP(l->homeBox);
     else if (l->homeBox == box) { FIRE_LAM_HOME_DROP(box); }   /* (the same: it was counted already) */
     l->home = home;
     l->homeBox = box;
