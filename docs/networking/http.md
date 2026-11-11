@@ -249,5 +249,12 @@ server.Run()
   browser has (text, checked, visible, enabled, colours); a changed tree (elements added or removed) sends the HTML anew.
 * A circuit ends when its WebSocket closes, one whose browser never connected after a minute, all with `Http.AppServer.Close()`. `[Page]` keeps the class
   in a native build.
-* Not yet: lists with templates, menus, trees, images, drawing (`DrawingCanvas`: step 7), changes that do not come from an event of the browser (a timer,
-  another task), the events of more elements (focus, keys, hover).
+* **Drawing:** a `DrawingCanvas` paints on the server (its `OnPaint`, its framebuffer) and goes to the browser as a PNG image (`<img>`); a new picture is sent
+  when it changed (a checksum). Pointer down, move (at most every 30 ms while pressed) and up on it are its `OnMouseDown`, `OnMouseMove`, `OnMouseUp`.
+* **Changes without an event:** while a page is open its circuit is asked every tenth of a second what changed (another task changed the page, a
+  `Continuous` canvas, JS calls) and the changes go out.
+* **JS in the browser:** a page with a field `Http.Browser browser` gets it set. `browser.Call("name", [args], func (any result) => ...)` calls
+  `window[name](...args)` (a Promise is waited for) and the callback gets the result as JSON (undefined when it threw), later, on the page's thread like an
+  event; `browser.Run(code)` runs code. The calls go out with the next answer of the circuit - they do not wait (a handler that waited for the browser would
+  stop the circuit that must receive the answer).
+* Not yet: lists with templates, menus, trees, images, the events of more elements (focus, keys, hover), drawing as commands instead of pictures.

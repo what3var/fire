@@ -122,7 +122,10 @@ ran out or its token is cancelled. **Built** (poll()/WSAPoll, not yet epoll/kque
    UI root without a window), HTML with CSS layout (decided by the user: the browser lays out - flex, grid, nested flex for DockPanel, HTML text for the new
    `UI.FlowPanel`), events over the WebSocket, the changes found by comparing the properties. Tried in headless Chromium (Playwright). Open: lists with
    templates, menus, trees, images, pushes that do not come from the browser (timers, other tasks: the reader/writer split of the socket), more events.
-7. Canvas recording, JS calls.
+7. Canvas recording, JS calls - **first part built**: a `DrawingCanvas` paints on the server and goes as a PNG (exact, simpler than recording the calls;
+   recording them for canvas 2D stays open for big or fast canvases), its pointer events; pushes without an event (the socket asks the circuit every 100 ms);
+   `browser.Call(name, args, callback)` / `browser.Run(code)` - with a callback, not `await` (the circuit cannot take the answer while one of its handlers
+   waits: the await form needs a circuit that serves its messages while it waits).
 
 ## Open
 

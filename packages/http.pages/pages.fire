@@ -2,6 +2,7 @@
 #import "ui"
 #import "reflection"
 #import "json"
+#import "hash"
 
 // http.pages (docs/networking/http.md, docs/ROADMAP_HTTP.md step 6): FXML views as web pages. A class with [Page "/path"] - the code-behind of an FXML View -
 // is a page: a GET of its path makes a circuit (the page lives in a task of its own, with its elements, bindings and handlers) and answers with HTML; the
@@ -57,7 +58,9 @@ namespace Http {
                 var own = Http.PageHtml.Color(lc.Color)
                 if (own != undefined) { fg = own }
             }
-            return Json.Serialize(t) + "|" + c + "|" + e.Visible + "|" + e.Enabled + "|" + fg + "|" + Http.PageHtml.Color(e.Background)
+            var img = ""
+            if (e is of UI.DrawingCanvas) { img = "" + Http.PageHtml.ImageSignature(e) }
+            return Json.Serialize(t) + "|" + c + "|" + img + "|" + e.Visible + "|" + e.Enabled + "|" + fg + "|" + Http.PageHtml.Color(e.Background)
         }
 
         // The patch of an element (all that the browser shows of it).
@@ -69,12 +72,24 @@ namespace Http {
             else if (e is of UI.TextBox) { UI.TextBox tb = e; t = tb.Text }
             var p = "{\"e\": " + id + ", \"t\": " + Json.Serialize(t) + ", \"v\": " + Http.PageHtml.Bool(e.Visible) + ", \"n\": " + Http.PageHtml.Bool(e.Enabled)
             if (e is of UI.CheckBox) { UI.CheckBox ch = e; p = p + ", \"c\": " + Http.PageHtml.Bool(ch.IsChecked) }
+            if (e is of UI.DrawingCanvas) { p = p + ", \"img\": " + Json.Serialize(Http.PageHtml.Image(e)) }
             var fg = Http.PageHtml.Color(e.Foreground)
             if (e is of UI.Label) { UI.Label lc = e; var own = Http.PageHtml.Color(lc.Color); if (own != undefined) { fg = own } }
             if (fg != undefined) { p = p + ", \"fg\": \"" + fg + "\"" }
             var bg = Http.PageHtml.Color(e.Background)
             if (bg != undefined) { p = p + ", \"bg\": \"" + bg + "\"" }
             return p + "}"
+        }
+
+        // The picture of a DrawingCanvas as a data URL (PNG; "" before it painted) and a checksum of it.
+        static string Image(UI.DrawingCanvas dc) {
+            if (dc.framebuffer == undefined) { return "" }
+            return "data:image/png;base64," + Http.Base64.Encode(dc.framebuffer.ToPng())
+        }
+
+        static int ImageSignature(UI.DrawingCanvas dc) {
+            if (dc.framebuffer == undefined) { return 0 }
+            return Hash.Crc32.Of(dc.framebuffer.ToPng())
         }
 
         static string Bool(bool b) {
@@ -131,6 +146,11 @@ namespace Http {
 
         // The HTML of an element and what is inside it.
         static string Render(UI.Element e, List elements) {
+            if (e is of UI.DrawingCanvas) {
+                UI.DrawingCanvas dc = e
+                var size = " width=\"" + dc.actualWidth + "\" height=\"" + dc.actualHeight + "\""
+                return "<img data-k=\"draw\" draggable=\"false\"" + Http.PageHtml.Attrs(e, elements, "f-draw", "") + size + " src=\"" + Http.PageHtml.Image(dc) + "\">"
+            }
             if (e is of UI.Run) {
                 UI.Run r = e
                 return "<span" + Http.PageHtml.Attrs(e, elements, "f-run", "") + ">" + Http.PageHtml.Escape(r.Text) + "</span>"
@@ -252,6 +272,29 @@ namespace Http {
         }
     }
 
+    // The browser of a page, for the code of the page (a field `Http.Browser browser` of the page class is set when the page is made): JS in the browser.
+    // The calls go out with the next answer of the circuit (at the latest after a tenth of a second) - they do not wait: `Call` gets its result later,
+    // in its callback (on the thread of the page, like an event).
+    class Browser {
+        Http.PageState state
+
+        construct(Http.PageState state) { this.state = state }
+
+        // Calls the function `name` of the page's window (`window[name](...args)`; a Promise is waited for) with the arguments (a JSON value each); `callback`
+        // gets the result (JSON: numbers, texts, bool, arrays, JsonObjects; undefined when the function threw).
+        undefined Call(string name, any args = undefined, lambda<any> callback = undefined) {
+            if (args == undefined) { args = new any[0] }
+            var number = this.state.callbacks.Count
+            this.state.callbacks.Add(take callback)   // (the list keeps the lambda: it lives until its answer comes)
+            this.state.outbox.Add("{\"id\": " + number + ", \"fn\": " + Json.Serialize(name) + ", \"args\": " + Json.Serialize(args) + "}")
+        }
+
+        // Runs JS code in the page (no result).
+        undefined Run(string code) {
+            this.state.outbox.Add("{\"id\": -1, \"code\": " + Json.Serialize(code) + "}")
+        }
+    }
+
     // What a page is in its circuit: the UI root, the page, its elements and what the browser has of them (the circuit owns one: a method of an actor
     // that calls another method of the same actor would only post a message, so the work is done here).
     class PageState {
@@ -263,6 +306,10 @@ namespace Http {
         any page
         List elements
         List props
+        // what goes to the browser with the next answer (JS calls) and the callbacks of the calls by their number
+        List outbox
+        List callbacks
+        Http.Browser browser
 
         construct(string typeName, string id, string session) {
             this.id = id
@@ -276,12 +323,25 @@ namespace Http {
             this.root.content.Add(view)
             this.elements = new List()
             this.props = new List()
+            this.outbox = new List()
+            this.callbacks = new List()
+            // (a page with a field `Http.Browser browser` gets the browser: browser.Call(...), browser.Run(...))
+            if (Type.Of(this.page).Has("browser")) {
+                this.browser = new Http.Browser(this)
+                Reflect.Set(this.page, "browser", this.browser)
+            }
+        }
+
+        // (the layout of the UI library - the sizes of the panels with places and of the drawing canvases - and the painting of the canvases)
+        undefined Layout() {
+            this.root.content.Measure(this.root, 1280, 800)
+            this.root.content.Arrange(this.root, 0, 0, 1280, 800)
+            this.root.content.Poll(this.root)
         }
 
         // The HTML of the page (its view; the sizes of the panels with places from the layout of the UI library).
         string Html() {
-            this.root.content.Measure(this.root, 1280, 800)
-            this.root.content.Arrange(this.root, 0, 0, 1280, 800)
+            this.Layout()
             UI.Element view = this.page.view
             this.elements = new List()
             Http.PageHtml.Collect(view, this.elements)
@@ -298,6 +358,16 @@ namespace Http {
             JsonObject o = ev
             int id = o.Get("e")
             string kind = o.Get("k")
+            if (kind == "js") {
+                // (the answer of a browser.Call: its callback gets the result)
+                int call = o.Get("id")
+                if (call >= 0 && call < this.callbacks.Count) {
+                    any callback = this.callbacks[call]
+                    this.callbacks[call] = undefined
+                    if (callback != undefined) { callback(o.Get("v")) }
+                }
+                return this.Changes()
+            }
             if (id >= 0 && id < this.elements.Count) {
                 UI.Element e = this.elements[id]
                 if (e.Enabled && e.Visible) {
@@ -308,6 +378,15 @@ namespace Http {
                         UI.CheckBox cb = e
                         bool v = o.Get("v")
                         if (cb.IsChecked != v) { cb.Toggle() }
+                    } else if (kind == "mouse" && e is of UI.DrawingCanvas) {
+                        UI.DrawingCanvas dc = e
+                        string what = o.Get("t")
+                        int x = o.Get("x")
+                        int y = o.Get("y")
+                        int button = o.Get("b")
+                        if (what == "down" && dc.OnMouseDown != undefined) { var down = dc.OnMouseDown; down(x, y, button) }
+                        if (what == "move" && dc.OnMouseMove != undefined) { var move = dc.OnMouseMove; move(x, y) }
+                        if (what == "up" && dc.OnMouseUp != undefined) { var up = dc.OnMouseUp; up(x, y, button) }
                     } else if (kind == "input" && e is of UI.TextBox) {
                         UI.TextBox tb = e
                         string text = o.Get("v")
@@ -323,12 +402,13 @@ namespace Http {
 
         // What changed since the browser got the last state.
         string Changes() {
+            this.Layout()
             UI.Element view = this.page.view
             var now = new List()
             Http.PageHtml.Collect(view, now)
             var same = now.Count == this.elements.Count
             for (var i = 0; same && i < now.Count; i++) { if (now[i] != this.elements[i]) { same = false } }
-            if (!same) { return "{\"html\": " + Json.Serialize(this.Html()) + "}" }
+            if (!same) { return "{\"html\": " + Json.Serialize(this.Html()) + this.TakeOutbox() + "}" }
             var out = ""
             for (var i = 0; i < now.Count; i++) {
                 var p = Http.PageHtml.Props(now[i])
@@ -338,7 +418,26 @@ namespace Http {
                     out = out + Http.PageHtml.Patch(now[i], i)
                 }
             }
-            return "{\"patches\": [" + out + "]}"
+            return "{\"patches\": [" + out + "]" + this.TakeOutbox() + "}"
+        }
+
+        // (the JS calls that wait for the browser, as the member "js" of an answer)
+        string TakeOutbox() {
+            if (this.outbox.Count == 0) { return "" }
+            var t = ", \"js\": ["
+            for (var i = 0; i < this.outbox.Count; i++) {
+                if (i > 0) { t = t + ", " }
+                t = t + this.outbox[i]
+            }
+            this.outbox = new List()
+            return t + "]"
+        }
+
+        // What changed without an event of the browser (another task, a continuous canvas, JS calls): the answer, or "" when nothing did.
+        string Poll() {
+            var answer = this.Changes()
+            if (answer == "{\"patches\": []}") { return "" }
+            return answer
         }
 
     }
@@ -360,6 +459,7 @@ namespace Http {
 
         string Html() { return this.state.Html() }
         string OnEvent(string json) { return this.state.OnEvent(json) }
+        string Poll() { return this.state.Poll() }
         string SessionId() { return this.state.session }
         undefined Connected() { this.connected = true }
         undefined Stop() { this.stopped = true }
@@ -449,8 +549,14 @@ namespace Http {
             if (Http.Sessions.CookieOf(ws.Header("Cookie"), this.cookie) != session) { ws.Close(4401, "not your page"); return }
             c.Connected()
             while (true) {
-                var text = ws.ReceiveText()
-                if (text == undefined) { break }
+                var text = ws.ReceiveText(100)
+                if (text == undefined) {
+                    if (!ws.IsOpen) { break }
+                    // (a tenth of a second without an event: what changed meanwhile goes out)
+                    string pushed = await c.Poll()
+                    if (pushed.Length > 0) { ws.Send(pushed) }
+                    continue
+                }
                 string answer = await c.OnEvent(text)
                 ws.Send(answer)
             }
@@ -551,8 +657,13 @@ namespace Http {
                 "if(p.c!==undefined){var i=el.querySelector('input');if(i){i.checked=p.c}}" +
                 "if(p.v!==undefined){el.hidden=!p.v}" +
                 "if(p.n!==undefined){var d=(el.tagName=='BUTTON'||el.tagName=='INPUT')?el:el.querySelector('input');if(d){d.disabled=!p.n}}" +
-                "if(p.fg!==undefined){el.style.color=p.fg}if(p.bg!==undefined){el.style.background=p.bg}}" +
-                "ws.onmessage=function(m){var d=JSON.parse(m.data);if(d.html!==undefined){document.getElementById('fire-root').innerHTML=d.html;return}(d.patches||[]).forEach(function(p){var el=document.getElementById('f'+p.e);if(el){apply(el,p)}})};" +
+                "if(p.img!==undefined){el.src=p.img}if(p.fg!==undefined){el.style.color=p.fg}if(p.bg!==undefined){el.style.background=p.bg}}" +
+                "function runJs(list){(list||[]).forEach(function(j){if(j.id<0){try{(0,eval)(j.code)}catch(x){}return}var r;try{r=window[j.fn].apply(window,j.args)}catch(x){send({k:'js',e:-1,id:j.id});return}Promise.resolve(r).then(function(v){send({k:'js',e:-1,id:j.id,v:v})},function(){send({k:'js',e:-1,id:j.id})})})}" +
+                "var down=0,last=0;function pos(ev,t){var r=t.getBoundingClientRect();return{x:Math.round((ev.clientX-r.left)*t.width/r.width),y:Math.round((ev.clientY-r.top)*t.height/r.height)}}" +
+                "document.addEventListener('pointerdown',function(ev){var t=ev.target;if(t.dataset&&t.dataset.k=='draw'){down=1;t.setPointerCapture(ev.pointerId);var p=pos(ev,t);send({e:idOf(t),k:'mouse',t:'down',x:p.x,y:p.y,b:ev.button+1});ev.preventDefault()}});" +
+                "document.addEventListener('pointermove',function(ev){var t=ev.target;if(down&&t.dataset&&t.dataset.k=='draw'){var n=Date.now();if(n-last<30){return}last=n;var p=pos(ev,t);send({e:idOf(t),k:'mouse',t:'move',x:p.x,y:p.y})}});" +
+                "document.addEventListener('pointerup',function(ev){var t=ev.target;if(down&&t.dataset&&t.dataset.k=='draw'){down=0;var p=pos(ev,t);send({e:idOf(t),k:'mouse',t:'up',x:p.x,y:p.y,b:ev.button+1})}});" +
+                "ws.onmessage=function(m){var d=JSON.parse(m.data);if(d.html!==undefined){document.getElementById('fire-root').innerHTML=d.html}else{(d.patches||[]).forEach(function(p){var el=document.getElementById('f'+p.e);if(el){apply(el,p)}})}runJs(d.js)};" +
                 "})();"
         }
 

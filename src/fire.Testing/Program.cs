@@ -28206,6 +28206,79 @@ else
             print(log)
             server.Close()
             """),
+        ("Http.Pages: DrawingCanvas als PNG (neu nach einem Mausklick), browser.Call mit Callback und browser.Run gehen mit der Antwort hinaus, das Ergebnis kommt als Ereignis zurueck", """
+            #import "http.pages"
+            [Page "/draw"]
+            class DrawPage {
+                UI.Panel view
+                UI.Label result
+                UI.DrawingCanvas canvas
+                Http.Browser browser
+                List points
+                construct() {
+                    this.points = new List()
+                    this.view = new UI.Panel(0, 0, 300, 200)
+                    var stack = new UI.StackPanel(0, 0, -1, -1)
+                    var r = new UI.Label("no result")
+                    this.result = r
+                    stack.Add(take r)
+                    var b = new UI.Button("Add")
+                    b.OnClick = func () on this => { this.Ask() }
+                    stack.Add(take b)
+                    var c = new UI.DrawingCanvas(0, 0, 40, 30)
+                    c.OnPaint = func (UI.DrawingCanvas dc) on this => { this.Paint(dc) }
+                    c.OnMouseDown = func (int x, int y, int button) on this => { this.points.Add(x); this.points.Add(y); this.canvas.Invalidate() }
+                    this.canvas = c
+                    stack.Add(take c)
+                    this.view.Add(take stack)
+                }
+                undefined Ask() {
+                    this.browser.Call("add", [2, 3], func (any v) on this => { this.result.Text = "sum " + v })
+                    this.browser.Run("document.title = 'changed'")
+                }
+                undefined Paint(UI.DrawingCanvas dc) {
+                    dc.renderer.ClearTo(UI.Color.Rgb(255, 255, 255))
+                    for (var i = 0; i + 1 < this.points.Count; i = i + 2) {
+                        int x = this.points[i]
+                        int y = this.points[i + 1]
+                        dc.renderer.FillRect(x, y, 4, 4, new SolidBrush(UI.Color.Rgb(200, 0, 0)))
+                    }
+                }
+            }
+            var server = new Http.AppServer("127.0.0.1", 0)
+            server.Settings.showErrors = true
+            server.PushTo(new Http.Sessions()).PushTo(new Http.Pages("Draw"))
+            int port = server.Port
+            int done = 0
+            string log = ""
+            fire taking port {
+                var c = new Http.Client()
+                var r = c.Get("http://127.0.0.1:" + port + "/draw")
+                var html = r.Text()
+                var cookie = r.Header("Set-Cookie").Substring(0, 45)
+                var at = html.IndexOf("data-circuit=\"") + 14
+                var circuit = html.Substring(at, 32)
+                var out = "page " + r.status + " img " + (html.IndexOf("<img data-k=\"draw\"") >= 0) + " png " + (html.IndexOf("src=\"data:image/png;base64,iVBOR") >= 0) + "\n"
+                var h = new Http.Headers()
+                h.Set("Cookie", cookie)
+                var ws = Http.WebSocket.Connect("ws://127.0.0.1:" + port + "/_fire/ws?c=" + circuit, 5000, h)
+                ws.Send("{\"e\": 3, \"k\": \"click\"}")
+                var a = ws.ReceiveText(5000)
+                out = out + "click " + a.Substring(0, a.IndexOf("[") + 1) + " js " + (a.IndexOf("\"js\": [{\"id\": 0, \"fn\": \"add\", \"args\": [2,3]}, {\"id\": -1, \"code\": ") > 0) + "\n"
+                ws.Send("{\"e\": -1, \"k\": \"js\", \"id\": 0, \"v\": 5}")
+                out = out + "result " + ws.ReceiveText(5000) + "\n"
+                ws.Send("{\"e\": 4, \"k\": \"mouse\", \"t\": \"down\", \"x\": 10, \"y\": 10, \"b\": 1}")
+                var m = ws.ReceiveText(5000)
+                out = out + "mouse " + (m.IndexOf("\"img\": \"data:image/png;base64,") > 0) + "\n"
+                ws.Send("{\"e\": 4, \"k\": \"mouse\", \"t\": \"move\", \"x\": 12, \"y\": 10}")
+                out = out + "move " + ws.ReceiveText(5000) + "\n"
+                ws.Close()
+                sync global { log = out; done = 1 }
+            }
+            while (done < 1) { server.AcceptOne(20ms); sync globals }
+            print(log)
+            server.Close()
+            """),
         ("Net: der Poller weckt wartende Threads (40 Verbindungen in fire-Threads, Daten kommen spaeter), Zeitlimit, Abbruch eines Read per until", """
             #import "net"
             #import "time"
