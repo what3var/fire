@@ -6314,9 +6314,9 @@ FIRE_FN bool isFrom(Value operand, Value owner, bool transitive) {
     Owned* target;
     Owned* self;
     OwnList* l;
-    if (FIRE_UNLIKELY((operand.kind != K_Class && operand.kind != K_Lambda) || owner.kind != K_Class)) fatal("'is from'/'is under' expects objects.");
+    if (FIRE_UNLIKELY(owner.kind != K_Class)) fatal("'is from'/'is under' expects an object as the owner.");
     if (FIRE_UNLIKELY(!leafAlive(owner))) return false;
-    self = ownedOf(operand);   /* (an object, or a lambda: owned like one) */
+    self = ownedOf(operand);   /* (an object, an array, a buffer, a lambda; a value type belongs to nothing) */
     if (FIRE_UNLIKELY(!self)) return false;   /* (a destroyed object owns nothing and belongs to nothing, like in the VM) */
     target = &asObj(owner)->h;
     for (l = self->owner; l; l = l->holder->owner) {
@@ -6758,9 +6758,22 @@ FIRE_FN bool ownedByCall(Owned* o, OwnList* const* lists, int n, Value thisValue
 /* `try take x` (SPEC 2.2): true when the running call owns x (then the take that follows moves it; otherwise nothing changes). */
 FIRE_FN bool tryTakeOwned(Value v, OwnList* const* lists, int n, Value thisValue, OwnList* myArgs) { return ownedByCall(ownedOf(v), lists, n, thisValue, myArgs); }
 
+/* `x is from local`: x belongs to a scope of the running call (`lists`, its statement temporaries included) or to the argument list it was given (`myArgs`);
+ * `x is from global`: to the global scope. A value type belongs to nothing (false). */
+FIRE_FN bool isFromLocal(Value v, OwnList* const* lists, int n, OwnList* myArgs) {
+    Owned* o = ownedOf(v);
+    int i;
+    if (!o || !o->owner) return false;
+    for (i = 0; i < n; i++) if (o->owner == lists[i] || (lists[i] && o->owner->home == lists[i])) return true;
+    return myArgs && o->owner == myArgs;
+}
+FIRE_FN bool isFromGlobal(Value v) {
+    Owned* o = ownedOf(v);
+    return o && o->owner && (o->owner == g_globalOwn || o->owner->home == g_globalOwn);
+}
 FIRE_FN bool ownMethodTry(int method, Value self, Value arg, Value mode, OwnList* here, OwnList* const* lists, int n, Value thisValue, OwnList* myArgs) {
     Owned* o = ownedOf(self);
-    if (!o) fatal("Take... is only possible for an object, an array or a buffer that is not destroyed.");
+    if (!o) return false;   /* (a value type owns nothing and belongs to nothing - a destroyed value neither: `try` is false, as in the VM) */
     if (!ownedByCall(o, lists, n, thisValue, myArgs)) return false;
     ownMethodT(method, self, arg, mode, here, lists, n);
     return true;

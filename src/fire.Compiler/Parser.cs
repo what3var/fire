@@ -3842,7 +3842,13 @@ namespace fire.Compiler
                     }
                     else if (Match(TokenType.From))
                     {
-                        left = new IsFromExpr(line, left, ParseShift(), Transitive: false);
+                        // `x is from local` / `x is from global`: the owner is a scope (a variable of that name: `x is from (local)`)
+                        if (Check(TokenType.Identifier) && Peek().Lexeme is "local" or "global" && PeekAt(1).Type is not (TokenType.Dot or TokenType.LParen or TokenType.LBracket))
+                        {
+                            string place = Advance().Lexeme;
+                            left = new IsFromExpr(line, left, new LiteralExpr(line, Value.MakeUndefined()), Transitive: false, Place: place);
+                        }
+                        else left = new IsFromExpr(line, left, ParseShift(), Transitive: false);
                     }
                     else if (Match(TokenType.Under))
                     {

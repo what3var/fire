@@ -468,8 +468,10 @@ owner's thread, lambdas to other threads.
 owner header and a store (`Lam.o`, `Lam.store`, okind `O_Lambda`): destroyed with its owner, freed with its last count; the generated lambda body gets
 `lamCaptureCopy` (a copy in its function scope) or `lamCaptureLent` per capture. `is of lambda` is new (the collections of the prelude take lambdas like
 objects - `List.Add(() => ...)` keeps them). Open: (e), and the writes/calls of globals from other threads as tasks (rule 10).
-Found on the way: `List<int[]>.Add([1, 2])` - an array handed to a collection dies with the statement (VM and native: the prelude takes only objects
-and lambdas; `is of` has no test for "an array").
+Found on the way: `List<int[]>.Add([1, 2])` - an array handed to a collection died with the statement (the prelude took only objects). Decided (the
+user): `x is from local` (x has an owner, and it is a scope of the running call) and `x is from global` instead of a type test for arrays, and `try take`
+on a value type is allowed - always `False`. The collections now take with `try x.TakeTo(this)` whatever belongs to the call (objects, arrays,
+buffers, lambdas); `Owns.Values` still takes an object or a lambda of someone else as before.
 
 ## Steps
 
@@ -485,4 +487,4 @@ and lambdas; `is of` has no test for "an array").
 
 ## Open
 
-Step 8 (e) and rule 10 (see "Step 8" above); arrays handed to the collections of the prelude.
+Step 8 (e) and rule 10 (see "Step 8" above).

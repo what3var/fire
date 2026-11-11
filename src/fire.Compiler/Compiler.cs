@@ -2656,7 +2656,7 @@ namespace fire.Compiler
                     CompileExpr(ifr.Operand);
                     CompileExpr(ifr.OwnerExpr);
                     _chunk.EmitOp(OpCode.IsFrom);
-                    _chunk.EmitByte(ifr.Transitive ? (byte)1 : (byte)0);
+                    _chunk.EmitByte(ifr.Place == "local" ? (byte)2 : ifr.Place == "global" ? (byte)3 : ifr.Transitive ? (byte)1 : (byte)0);   // (2/3: the owner is a scope)
                     break;
 
                 case NewExpr ne:

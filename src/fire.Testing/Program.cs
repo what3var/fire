@@ -16667,6 +16667,37 @@ else
             Keep k = new Keep()
             try { k.Fill() } catch (Exception e) { print("gone: " + e.message) }
             """),
+        ("is from local / is from global, try take auf Werttypen (False), Arrays und Lambdas in Listen bleiben (List.Add nimmt, was dem Aufruf gehoert)", """
+            class Box { int v = 1 }
+            class Holder { Box b }
+            class Demo {
+                static bool Local(any x) { return x is from local }
+                static undefined Run() {
+                    var b = new Box()
+                    var h = new Holder()
+                    int n = 5
+                    string s = "t"
+                    var arr = [1, 2]
+                    print((try n.TakeTo(h)) + " " + (try s.TakeTo(h)) + " " + (try arr.TakeTo(h)))
+                    print((n is from local) + " " + (b is from local) + " " + (arr is from global) + " " + (n is from h) + " " + (arr is from h))
+                    print(Local(new Box()) + " " + Local(b) + " " + Local([3]) + " " + Local(7) + " " + Local(() => 1))
+                    h.b = new Box()
+                    print((h.b is from local) + " " + (h.b is from h) + " " + (h.b is from global))
+                    var as = new List<int[]>()
+                    as.Add([1, 2])
+                    print(as[0][1] + " " + (as[0] is from as))
+                    var fs = new List<lambda>()
+                    fs.Add(() => 42)
+                    print(fs[0]() + " " + (fs[0] is from fs))
+                    var ns = new List<int>()
+                    ns.Add(3)
+                    print(ns[0])
+                }
+            }
+            var g = new Box()
+            print((g is from global) + " " + (g is from local))
+            Demo.Run()
+            """),
         ("Auto-Properties mit Initialwert; Probes auf Feldern bleiben (nur ein beobachtetes Objekt nimmt den Setter, die anderen schreiben per Index)", """
             class Counter {
                 int Count { get; set; } = 5

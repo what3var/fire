@@ -180,7 +180,9 @@ namespace fire.Ast
     /// `from` (`1cm..5cm`). Runs as `__Range.Of(from, to)` of the prelude.</summary>
     public sealed record RangeExpr(int Line, Expr From, Expr To) : Expr(Line);
     public sealed record IsOfExpr(int Line, Expr Operand, TypeRef TypeRef) : Expr(Line);
-    public sealed record IsFromExpr(int Line, Expr Operand, Expr OwnerExpr, bool Transitive) : Expr(Line);
+    /// <summary>`x is from owner` / `x is under owner`; with <see cref="Place"/> "local" or "global" (`x is from local`, `x is from global`) the owner is a
+    /// scope: a scope of the running call, the global scope (OwnerExpr is then a literal undefined).</summary>
+    public sealed record IsFromExpr(int Line, Expr Operand, Expr OwnerExpr, bool Transitive, string? Place = null) : Expr(Line);
 
     // ---------------------------------------------------------------
     // Postfix: Aufruf / Member / Index / Zuweisung

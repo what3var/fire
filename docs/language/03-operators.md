@@ -152,6 +152,7 @@ print(!(1 > 2))
 | `value is in unit` | the value carries a unit of the same dimension as `unit` (`5mm is in m`) |
 | `object is from owner` | the object's owner is exactly `owner` (see [Ownership](13-ownership.md)) |
 | `object is under owner` | `owner` is anywhere in the chain of owners above the object |
+| `x is from local`, `x is from global` | `x` belongs to a scope of the running call / to the global scope (see [Ownership](13-ownership.md#testing-the-owner)) |
 
 ```fire
 print(5mm is in m)          // True

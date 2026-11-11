@@ -4797,7 +4797,23 @@ namespace fire.Native
                     SetR(d - 1, false); return Next();
                 }
                 case OpCode.IsFrom:
-                    Need(2); E($"{S(d - 2)} = Bool(isFrom({S(d - 2)}, {S(d - 1)}, {(ins.A[0] != 0 ? "true" : "false")}));"); d--; SetR(d - 1, false); return Next();
+                    Need(2);
+                    if (ins.A[0] == 2)
+                    {
+                        // `x is from local`: it belongs to a scope of the running call (or to the argument list it was given, like `try take`)
+                        if (!_usesTryDepth) { _usesTryDepth = true; _version++; }
+                        f.UsesTryTake = true;
+                        var fromLists = CallLists(f, st);
+                        string fromDecl = fromLists.Count == 0 ? "" : CArray("OwnList*", "L_", fromLists.ToList());
+                        E($"{{ {fromDecl}{S(d - 2)} = Bool(isFromLocal({S(d - 2)}, {(fromLists.Count == 0 ? "NULL" : "L_")}, {fromLists.Count}, MYARGS)); }}");
+                    }
+                    else if (ins.A[0] == 3)
+                    {
+                        if (!_usesGlobalOwn) { _usesGlobalOwn = true; _version++; }
+                        E($"{S(d - 2)} = Bool(isFromGlobal({S(d - 2)}));");
+                    }
+                    else E($"{S(d - 2)} = Bool(isFrom({S(d - 2)}, {S(d - 1)}, {(ins.A[0] != 0 ? "true" : "false")}));");
+                    d--; SetR(d - 1, false); return Next();
                 case OpCode.Neg:
                     Need(1);
                     // (a scalar: negated in C - an int wraps like the program's int, a float is rounded by the cast)
