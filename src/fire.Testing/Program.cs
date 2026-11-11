@@ -19713,8 +19713,8 @@ else
             var p = new Item(9)
             var l = new L()
             l.f = func() => 1
-            try { fire handover l { print("never") } } catch (ArgumentException e) { print("lambda: " + e.message) }
-            print("l kept: " + (l != undefined))
+            var lr = await handover l { return l.f() }      // (a lambda in a field goes along - docs/ROADMAP_TASKS.md step 8 (e))
+            print("lambda in a field: " + lr)
             try { fire taking r { print("never") } } catch (ArgumentException e) { print("taking: " + e.message) }
             fire taking p handover c handover r {
                 sync global { step = 1 }
