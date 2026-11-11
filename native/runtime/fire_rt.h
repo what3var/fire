@@ -9074,6 +9074,7 @@ FIRE_FN void replyCrossTree(Owned* h) {
 }
 FIRE_FN Value replyResult(Value r, OwnList* msgOwn, OwnList* travel, OwnList* list) {
     Owned* o = ownedOf(r);
+    if (r.kind == K_Class && leafAlive(r) && (asObj(r)->h.flags & 8)) return r;   /* (an actor - a field of the actor, a registry of actors: its reference, like `fire with`) */
     if (o) {
         if (o->owner && o->owner != msgOwn) { r = copyValue(r, true, list); o = ownedOf(r); }
         if (!o) return r;

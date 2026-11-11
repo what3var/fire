@@ -311,6 +311,9 @@ namespace Http {
         int streamLength
         // A 101 answer of a WebSocket handshake: after it the task of the connection gives the connection to this handler (Http.WebSockets).
         Http.IWebSocketHandler upgrade
+        // ... and what the handler gets of the request: its header fields and its target (path and query)
+        Http.Headers upgradeHeaders
+        string upgradeTarget
 
         construct(int status = 200, any body = undefined) {
             this.status = status
@@ -321,6 +324,8 @@ namespace Http {
             this.stream = undefined
             this.streamLength = -1
             this.upgrade = undefined
+            this.upgradeHeaders = undefined
+            this.upgradeTarget = undefined
         }
 
         // A response whose body is read from `stream` while it is sent (a file, a pipe); the response owns the stream and the server closes it. Without a
@@ -1129,6 +1134,8 @@ namespace Http {
                         Http.AppServer.Send(connection, response, false, true, settings)
                         connection.ReadTimeout = undefined
                         var ws = new Http.WebSocket(connection, reader, false)
+                        ws.headers = response.upgradeHeaders
+                        ws.target = response.upgradeTarget
                         try { response.upgrade.Serve(ws) } catch (Net.NetException e) { }
                         ws.CloseQuietly()
                         break
@@ -1525,21 +1532,18 @@ namespace Http {
         }
     }
 
-    // The home of the sessions of a server: an actor on a thread of its own. Every access to a session is a message to it (`await home.Get(id, name)`), so
-    // they run one after the other and the state of a session is always the same for every connection. A session that nobody touches for `timeout`
-    // ms ends (and is deleted from the store).
-    actor SessionHome {
+    // The sessions of a server and what is done with them (the home of the sessions owns one: a method of an actor that calls another method of the
+    // same actor would only post a message, so the work is done here).
+    class SessionTable {
         Dictionary<string, Http.SessionEntry> entries
         Http.ISessionStore store
         int timeoutTicks
-        bool stopped
         int lastSweep
 
         construct(Http.ISessionStore store, int timeoutMs) {
             this.entries = new Dictionary<string, Http.SessionEntry>()
             this.store = take store
             this.timeoutTicks = timeoutMs * 10000
-            this.stopped = false
             this.lastSweep = DateTime.UtcNow.Ticks
         }
 
@@ -1547,7 +1551,7 @@ namespace Http {
         string Open(string id) {
             this.Sweep()
             var now = DateTime.UtcNow.Ticks
-            if (id != undefined && Http.SessionHome.ValidId(id)) {
+            if (id != undefined && Http.SessionTable.ValidId(id)) {
                 if (this.entries.ContainsKey(id)) {
                     Http.SessionEntry e = this.entries[id]
                     if (now - e.touched <= this.timeoutTicks) {
@@ -1607,8 +1611,6 @@ namespace Http {
 
         int Count() { return this.entries.Count }
 
-        undefined Stop() { this.stopped = true }
-
         // (sessions that ran out, at most once a second)
         undefined Sweep() {
             var now = DateTime.UtcNow.Ticks
@@ -1630,6 +1632,27 @@ namespace Http {
             }
             return true
         }
+    }
+
+    // The home of the sessions of a server: an actor on a thread of its own. Every access to a session is a message to it (`await home.Get(id, name)`), so
+    // they run one after the other and the state of a session is always the same for every connection. A session that nobody touches for `timeout`
+    // ms ends (and is deleted from the store).
+    actor SessionHome {
+        Http.SessionTable table
+        bool stopped
+
+        construct(Http.ISessionStore store, int timeoutMs) {
+            this.table = new Http.SessionTable(take store, timeoutMs)
+            this.stopped = false
+        }
+
+        string Open(string id) { return this.table.Open(id) }
+        string Get(string id, string name) { return this.table.Get(id, name) }
+        bool Set(string id, string name, string value) { return this.table.Set(id, name, value) }
+        string Renew(string id) { return this.table.Renew(id) }
+        bool End(string id) { return this.table.End(id) }
+        int Count() { return this.table.Count() }
+        undefined Stop() { this.stopped = true }
     }
 
     // A session as a router sees it (ctx.Item("session")): every call is a message to the home of the sessions.
@@ -1806,6 +1829,9 @@ namespace Http {
         bool open
         int closeCode
         int maxMessageBytes
+        // (the server side: the header fields and the target of the request that opened it)
+        Http.Headers headers
+        string target
 
         // (the WebSocket uses the connection and the reader; Connect hands them to it, the server's task keeps them)
         construct(Net.IConnection connection, Http.Reader reader, bool client) {
@@ -1818,6 +1844,14 @@ namespace Http {
         }
 
         bool IsOpen { get { return this.open } }
+        // A header field of the request that opened the WebSocket (the server side; undefined on the client).
+        string Header(string name) { return this.headers?.Get(name) }
+        // A query parameter of the request that opened it (`/ws?page=7`).
+        any Query(string name, any fallback = undefined) {
+            if (this.target == undefined) { return fallback }
+            var r = new Http.Request("GET", this.target)
+            return r.Query(name, fallback)
+        }
         // The code of the close frame of the other side (1000 normal, 1001 going away, ...; 1006 when the connection just ended), 0 while it is open.
         int CloseCode { get { return this.closeCode } }
 
@@ -2033,6 +2067,10 @@ namespace Http {
             r.headers.Set("Connection", "Upgrade")
             r.headers.Set("Sec-WebSocket-Accept", Http.WebSocket.AcceptOf(key))
             r.upgrade = this.handler
+            var copied = new Http.Headers()
+            for (var i = 0; i < request.headers.Count; i++) { copied.Add(request.headers.names[i], request.headers.values[i]) }
+            r.upgradeHeaders = take copied
+            r.upgradeTarget = request.target
             return r
         }
     }

@@ -22,6 +22,7 @@
     "tls/tls.fireproj",
     "http/http.fireproj",
     "http.rpc/http.rpc.fireproj",
+    "http.pages/http.pages.fireproj",
     "gpio/gpio.fireproj",
     "i2c/i2c.fireproj",
     "spi/spi.fireproj",

@@ -27981,6 +27981,124 @@ else
             print("button " + b.rx + "," + b.ry + " " + b.actualWidth + "x" + b.actualHeight)
             print(flow.Text)
             """),
+        ("Http.Pages: eine FXML-View als Seite - HTML mit CSS-Layout (Flex), Circuit pro Seite, Eingabe, Klick, Checkbox und Button im FlowPanel ueber den WebSocket, nur die Aenderungen zurueck, fremde Sitzung 4401, unbekannte Seite 4404", """
+            #import "http.pages"
+            // Generated from Hello.fxml - do not edit, change the markup. Derive from the class and override the methods named in on...="...":
+            //     class Hello : HelloBase { override undefined Save(any sender) { ... } }
+            #import "ui"
+
+            class HelloBase {
+                UI.Panel view
+                UI.Label title
+                UI.TextBox nameBox
+                UI.CheckBox loud
+                UI.Button ok
+                UI.Button more
+                UI.Run count
+
+                construct() {
+                    this.view = new UI.Panel(0, 0, 400, 300)
+                    var e0 = new UI.StackPanel(0, 0, -1, -1)
+                    e0.Spacing = 6
+                    e0.Padding = 10
+                    var e1 = new UI.Label("", 0, 0)
+                    e1.Text = "Hello"
+                    e0.Add(e1)
+                    this.title = e1
+                    var e2 = new UI.TextBox("", 0, 0)
+                    e2.Text = "world"
+                    e0.Add(e2)
+                    this.nameBox = e2
+                    var e3 = new UI.CheckBox("", 0, 0)
+                    e3.Text = "Loud"
+                    e0.Add(e3)
+                    this.loud = e3
+                    var e4 = new UI.Button("", 0, 0)
+                    e4.Text = "Greet"
+                    e4.OnClick = func () on this => { Greet(this.ok) }
+                    e0.Add(e4)
+                    this.ok = e4
+                    var e5 = new UI.FlowPanel(0, 0, -1, -1)
+                    e5.Width = 200
+                    var e6 = new UI.Run("")
+                    e6.Text = "Press "
+                    e5.Add(e6)
+                    var e7 = new UI.Button("", 0, 0)
+                    e7.Text = "+"
+                    e7.OnClick = func () on this => { More(this.more) }
+                    e5.Add(e7)
+                    this.more = e7
+                    var e8 = new UI.Run("")
+                    e8.Text = " to count: "
+                    e5.Add(e8)
+                    var e9 = new UI.Run("")
+                    e9.Text = "0"
+                    e5.Add(e9)
+                    this.count = e9
+                    e0.Add(e5)
+                    this.view.Add(e0)
+                }
+
+                // the handler of an event in the markup - override it in the derived class
+                undefined Greet(any sender) { }
+                // the handler of an event in the markup - override it in the derived class
+                undefined More(any sender) { }
+
+                // adds the view to a container (UI.Root.content, a Panel or a Stack)
+                undefined Attach(any container) { container.Add(this.view) }
+            }
+            [Page "/hello"]
+            class HelloPage : HelloBase {
+                int n = 0
+                override undefined Greet(any sender) {
+                    var t = "Hello " + this.nameBox.Text
+                    if (this.loud.IsChecked) { t = t.ToUpper() + "!" }
+                    this.title.Text = t
+                }
+                override undefined More(any sender) {
+                    this.n = this.n + 1
+                    this.count.Text = "" + this.n
+                }
+            }
+            var server = new Http.AppServer("127.0.0.1", 0)
+            server.PushTo(new Http.Sessions()).PushTo(new Http.Pages("Hello"))
+            int port = server.Port
+            int done = 0
+            string log = ""
+            fire taking port {
+                var c = new Http.Client()
+                var r = c.Get("http://127.0.0.1:" + port + "/hello")
+                var html = r.Text()
+                var cookie = r.Header("Set-Cookie").Substring(0, 45)
+                var at = html.IndexOf("data-circuit=\"") + 14
+                var circuit = html.Substring(at, 32)
+                var out = "page " + r.status + " " + (html.IndexOf("<button data-k=\"click\" id=\"f5\"") >= 0) + " flex " + (html.IndexOf("display:flex;flex-direction:column;gap:6px") >= 0) + "\n"
+                var h = new Http.Headers()
+                h.Set("Cookie", cookie)
+                var ws = Http.WebSocket.Connect("ws://127.0.0.1:" + port + "/_fire/ws?c=" + circuit, 5000, h)
+                ws.Send("{\"e\": 3, \"k\": \"input\", \"v\": \"fire\"}")
+                out = out + "input " + ws.ReceiveText(5000) + "\n"
+                ws.Send("{\"e\": 5, \"k\": \"click\"}")
+                out = out + "click " + ws.ReceiveText(5000) + "\n"
+                ws.Send("{\"e\": 4, \"k\": \"check\", \"v\": true}")
+                ws.ReceiveText(5000)
+                ws.Send("{\"e\": 5, \"k\": \"click\"}")
+                out = out + "loud " + ws.ReceiveText(5000) + "\n"
+                ws.Send("{\"e\": 8, \"k\": \"click\"}")
+                out = out + "flow " + ws.ReceiveText(5000) + "\n"
+                var other = new Http.Headers()
+                other.Set("Cookie", "fire-session=00000000000000000000000000000000")
+                var ws2 = Http.WebSocket.Connect("ws://127.0.0.1:" + port + "/_fire/ws?c=" + circuit, 5000, other)
+                out = out + "other session " + (ws2.ReceiveText(5000) == undefined) + " " + ws2.CloseCode + "\n"
+                var ws3 = Http.WebSocket.Connect("ws://127.0.0.1:" + port + "/_fire/ws?c=00000000000000000000000000000000", 5000, h)
+                out = out + "no such page " + (ws3.ReceiveText(5000) == undefined) + " " + ws3.CloseCode + "\n"
+                ws.Close()
+                sync global { log = out; done = 1 }
+            }
+            while (done < 1) { server.AcceptOne(20ms); sync globals }
+            print(log)
+            server.Close()
+            """),
         ("Net: der Poller weckt wartende Threads (40 Verbindungen in fire-Threads, Daten kommen spaeter), Zeitlimit, Abbruch eines Read per until", """
             #import "net"
             #import "time"

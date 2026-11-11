@@ -1,0 +1,558 @@
+#import "http"
+#import "ui"
+#import "reflection"
+#import "json"
+
+// http.pages (docs/networking/http.md, docs/ROADMAP_HTTP.md step 6): FXML views as web pages. A class with [Page "/path"] - the code-behind of an FXML View -
+// is a page: a GET of its path makes a circuit (the page lives in a task of its own, with its elements, bindings and handlers) and answers with HTML; the
+// browser lays it out with CSS (the containers become flex boxes and grids, a FlowPanel HTML text). A small script sends the events (clicks, inputs, check
+// boxes) over a WebSocket; the circuit runs the handlers, compares the properties of the elements with what the browser has and sends the changes back.
+namespace Http {
+    // The HTML of an element tree (CSS layout) and the snapshot of the properties that the browser shows.
+    class PageHtml {
+        static string Escape(string t) {
+            if (t == undefined) { return "" }
+            return t.Replace("&", "&amp;").Replace("<", "&lt;").Replace(">", "&gt;").Replace("\"", "&quot;")
+        }
+
+        // "#rrggbb" of a solid brush, undefined for none (the theme's colour).
+        static string Color(any brush) {
+            if (brush == undefined || !(brush is of SolidBrush)) { return undefined }
+            SolidBrush b = brush
+            int c = b.Color
+            var digits = "0123456789abcdef"
+            var t = "#"
+            var shift = 16777216
+            for (var i = 0; i < 6; i++) {
+                shift = shift / 16
+                t = t + digits.CharAt((c / shift) % 16)
+            }
+            return t
+        }
+
+        // (what the browser shows of an element: compared after every event)
+        static string Props(UI.Element e) {
+            var t = ""
+            if (e is of UI.Label) {
+                UI.Label l = e
+                t = l.Text
+            } else if (e is of UI.Button) {
+                UI.Button b = e
+                t = b.Text
+            } else if (e is of UI.CheckBox) {
+                UI.CheckBox cb = e
+                t = cb.Text
+            } else if (e is of UI.TextBox) {
+                UI.TextBox tb = e
+                t = tb.Text
+            }
+            var c = ""
+            if (e is of UI.CheckBox) {
+                UI.CheckBox ch = e
+                c = "" + ch.IsChecked
+            }
+            var fg = Http.PageHtml.Color(e.Foreground)
+            if (e is of UI.Label) {
+                UI.Label lc = e
+                var own = Http.PageHtml.Color(lc.Color)
+                if (own != undefined) { fg = own }
+            }
+            return Json.Serialize(t) + "|" + c + "|" + e.Visible + "|" + e.Enabled + "|" + fg + "|" + Http.PageHtml.Color(e.Background)
+        }
+
+        // The patch of an element (all that the browser shows of it).
+        static string Patch(UI.Element e, int id) {
+            var t = ""
+            if (e is of UI.Label) { UI.Label l = e; t = l.Text }
+            else if (e is of UI.Button) { UI.Button b = e; t = b.Text }
+            else if (e is of UI.CheckBox) { UI.CheckBox cb = e; t = cb.Text }
+            else if (e is of UI.TextBox) { UI.TextBox tb = e; t = tb.Text }
+            var p = "{\"e\": " + id + ", \"t\": " + Json.Serialize(t) + ", \"v\": " + Http.PageHtml.Bool(e.Visible) + ", \"n\": " + Http.PageHtml.Bool(e.Enabled)
+            if (e is of UI.CheckBox) { UI.CheckBox ch = e; p = p + ", \"c\": " + Http.PageHtml.Bool(ch.IsChecked) }
+            var fg = Http.PageHtml.Color(e.Foreground)
+            if (e is of UI.Label) { UI.Label lc = e; var own = Http.PageHtml.Color(lc.Color); if (own != undefined) { fg = own } }
+            if (fg != undefined) { p = p + ", \"fg\": \"" + fg + "\"" }
+            var bg = Http.PageHtml.Color(e.Background)
+            if (bg != undefined) { p = p + ", \"bg\": \"" + bg + "\"" }
+            return p + "}"
+        }
+
+        static string Bool(bool b) {
+            if (b) { return "true" }
+            return "false"
+        }
+
+        // The elements of the tree in the order of the HTML (their index is their id).
+        static undefined Collect(UI.Element e, List into) {
+            into.Add(e)
+            if (e is of UI.Panel) {
+                UI.Panel p = e
+                for (var i = 0; i < p.children.Count; i++) { Http.PageHtml.Collect(p.children[i], into) }
+            } else if (e is of UI.Border) {
+                UI.Border b = e
+                any child = b.child
+                if (child != undefined) { Http.PageHtml.Collect(child, into) }
+            }
+        }
+
+        static int IdOf(List elements, UI.Element e) {
+            for (var i = 0; i < elements.Count; i++) { if (elements[i] == e) { return i } }
+            return -1
+        }
+
+        // The style that every element has: its size, margin, font and colours (`extra` before it).
+        static string Style(UI.Element e, string extra) {
+            var s = extra
+            if (e.Width >= 0) { s = s + "width:" + e.Width + "px;" }
+            if (e.Height >= 0) { s = s + "height:" + e.Height + "px;" }
+            if (e.MinWidth > 0) { s = s + "min-width:" + e.MinWidth + "px;" }
+            if (e.MinHeight > 0) { s = s + "min-height:" + e.MinHeight + "px;" }
+            if (e.MaxWidth >= 0) { s = s + "max-width:" + e.MaxWidth + "px;" }
+            if (e.MaxHeight >= 0) { s = s + "max-height:" + e.MaxHeight + "px;" }
+            var m = e.Margin
+            if (m != undefined && (m.left != 0 || m.top != 0 || m.right != 0 || m.bottom != 0)) { s = s + "margin:" + m.top + "px " + m.right + "px " + m.bottom + "px " + m.left + "px;" }
+            if (e.Font != "") { s = s + "font-family:'" + e.Font.Replace("'", "") + "';" }
+            if (e.FontSize > 0) { s = s + "font-size:" + e.FontSize + "px;" }
+            var fg = Http.PageHtml.Color(e.Foreground)
+            if (e is of UI.Label) { UI.Label l = e; var own = Http.PageHtml.Color(l.Color); if (own != undefined) { fg = own } }
+            if (fg != undefined) { s = s + "color:" + fg + ";" }
+            var bg = Http.PageHtml.Color(e.Background)
+            if (bg != undefined) { s = s + "background:" + bg + ";" }
+            if (s.Length == 0) { return "" }
+            return " style=\"" + s + "\""
+        }
+
+        static string Attrs(UI.Element e, List elements, string cls, string extraStyle) {
+            var a = " id=\"f" + Http.PageHtml.IdOf(elements, e) + "\" class=\"" + cls + "\"" + Http.PageHtml.Style(e, extraStyle)
+            if (!e.Visible) { a = a + " hidden" }
+            if (e.ToolTip != "") { a = a + " title=\"" + Http.PageHtml.Escape(e.ToolTip) + "\"" }
+            return a
+        }
+
+        // The HTML of an element and what is inside it.
+        static string Render(UI.Element e, List elements) {
+            if (e is of UI.Run) {
+                UI.Run r = e
+                return "<span" + Http.PageHtml.Attrs(e, elements, "f-run", "") + ">" + Http.PageHtml.Escape(r.Text) + "</span>"
+            }
+            if (e is of UI.LineBreak) { return "<br" + Http.PageHtml.Attrs(e, elements, "f-br", "") + ">" }
+            if (e is of UI.Label) {
+                UI.Label l = e
+                return "<div" + Http.PageHtml.Attrs(e, elements, "f-label", "") + ">" + Http.PageHtml.Escape(l.Text) + "</div>"
+            }
+            if (e is of UI.Button) {
+                UI.Button b = e
+                var dis = ""
+                if (!e.Enabled) { dis = " disabled" }
+                return "<button data-k=\"click\"" + Http.PageHtml.Attrs(e, elements, "f-button", "") + dis + ">" + Http.PageHtml.Escape(b.Text) + "</button>"
+            }
+            if (e is of UI.CheckBox) {
+                UI.CheckBox cb = e
+                var flags = ""
+                if (cb.IsChecked) { flags = " checked" }
+                if (!e.Enabled) { flags = flags + " disabled" }
+                return "<label data-kind=\"check\"" + Http.PageHtml.Attrs(e, elements, "f-check", "") + "><input type=\"checkbox\" data-k=\"check\"" + flags + "> <span>" + Http.PageHtml.Escape(cb.Text) + "</span></label>"
+            }
+            if (e is of UI.TextBox) {
+                UI.TextBox tb = e
+                var more = ""
+                if (!e.Enabled) { more = " disabled" }
+                if (tb.ReadOnly) { more = more + " readonly" }
+                return "<input type=\"text\" data-k=\"input\"" + Http.PageHtml.Attrs(e, elements, "f-text", "") + " value=\"" + Http.PageHtml.Escape(tb.Text) + "\"" + more + ">"
+            }
+            if (e is of UI.Border) {
+                UI.Border bo = e
+                var inner = ""
+                any child = bo.child
+                if (child != undefined) { inner = Http.PageHtml.Render(child, elements) }
+                return "<div" + Http.PageHtml.Attrs(e, elements, "f-border", "") + ">" + inner + "</div>"
+            }
+            if (e is of UI.FlowPanel) { return "<div" + Http.PageHtml.Attrs(e, elements, "f-flow", "") + ">" + Http.PageHtml.Children(e, elements) + "</div>" }
+            if (e is of UI.StackPanel) {
+                UI.StackPanel sp = e
+                var dir = "column"
+                if (sp.Horizontal) { dir = "row" }
+                var st = "display:flex;flex-direction:" + dir + ";"
+                if (sp.Spacing > 0) { st = st + "gap:" + sp.Spacing + "px;" }
+                if (sp.Padding > 0) { st = st + "padding:" + sp.Padding + "px;" }
+                return "<div" + Http.PageHtml.Attrs(e, elements, "f-stack", st) + ">" + Http.PageHtml.Children(e, elements) + "</div>"
+            }
+            if (e is of UI.WrapPanel) {
+                UI.WrapPanel wp = e
+                var wd = "row"
+                if (wp.Vertical) { wd = "column" }
+                return "<div" + Http.PageHtml.Attrs(e, elements, "f-wrap", "display:flex;flex-wrap:wrap;flex-direction:" + wd + ";") + ">" + Http.PageHtml.Children(e, elements) + "</div>"
+            }
+            if (e is of UI.Grid) {
+                UI.Grid g = e
+                var gs = "display:grid;grid-template-columns:" + Http.PageHtml.Tracks(g.columns) + ";grid-template-rows:" + Http.PageHtml.Tracks(g.rows) + ";"
+                var cells = ""
+                for (var i = 0; i < g.children.Count; i++) {
+                    UI.Element c = g.children[i]
+                    cells = cells + "<div class=\"f-cell\" style=\"grid-row:" + (c.GridRow + 1) + " / span " + c.GridRowSpan + ";grid-column:" + (c.GridColumn + 1) + " / span " + c.GridColumnSpan + ";display:flex;flex-direction:column;min-width:0;min-height:0\">" + Http.PageHtml.Render(c, elements) + "</div>"
+                }
+                return "<div" + Http.PageHtml.Attrs(e, elements, "f-grid", gs) + ">" + cells + "</div>"
+            }
+            if (e is of UI.DockPanel) {
+                UI.DockPanel dp = e
+                return "<div" + Http.PageHtml.Attrs(e, elements, "f-dock", "display:flex;flex-direction:column;") + ">" + Http.PageHtml.Dock(dp, 0, elements) + "</div>"
+            }
+            if (e is of UI.Panel) {
+                // (Panel, Canvas: the children at their places)
+                UI.Panel pn = e
+                var ps = "position:relative;"
+                if (e.Width < 0) { ps = ps + "width:" + e.cw + "px;" }
+                if (e.Height < 0) { ps = ps + "height:" + e.ch + "px;" }
+                var kids = ""
+                for (var i = 0; i < pn.children.Count; i++) {
+                    UI.Element c = pn.children[i]
+                    kids = kids + "<div class=\"f-at\" style=\"position:absolute;left:" + c.Left + "px;top:" + c.Top + "px\">" + Http.PageHtml.Render(c, elements) + "</div>"
+                }
+                return "<div" + Http.PageHtml.Attrs(e, elements, "f-panel", ps) + ">" + kids + "</div>"
+            }
+            // (an element the browser does not know yet: its place, with its type)
+            return "<div data-type=\"" + Type.Of(e).Name + "\"" + Http.PageHtml.Attrs(e, elements, "f-other", "") + "></div>"
+        }
+
+        static string Children(UI.Element e, List elements) {
+            UI.Panel p = e
+            var t = ""
+            for (var i = 0; i < p.children.Count; i++) { t = t + Http.PageHtml.Render(p.children[i], elements) }
+            return t
+        }
+
+        // A DockPanel as nested flex boxes: each child takes its side of what the ones before it left, the last one fills the rest (LastChildFill).
+        static string Dock(UI.DockPanel dp, int index, List elements) {
+            if (index >= dp.children.Count) { return "" }
+            UI.Element c = dp.children[index]
+            var html = Http.PageHtml.Render(c, elements)
+            if (index == dp.children.Count - 1) {
+                if (dp.LastChildFill) { return "<div class=\"f-fill\" style=\"flex:1;display:flex;flex-direction:column;min-width:0;min-height:0\">" + html + "</div>" }
+                return html
+            }
+            var rest = "<div class=\"f-rest\" style=\"flex:1;display:flex;flex-direction:column;min-width:0;min-height:0\">" + Http.PageHtml.Dock(dp, index + 1, elements) + "</div>"
+            if (c.Dock == UI.Dock.Left) { return "<div style=\"flex:1;display:flex;flex-direction:row;min-height:0\">" + html + rest + "</div>" }
+            if (c.Dock == UI.Dock.Right) { return "<div style=\"flex:1;display:flex;flex-direction:row;min-height:0\">" + rest + html + "</div>" }
+            if (c.Dock == UI.Dock.Bottom) { return "<div style=\"flex:1;display:flex;flex-direction:column;min-width:0\">" + rest + html + "</div>" }
+            return "<div style=\"flex:1;display:flex;flex-direction:column;min-width:0\">" + html + rest + "</div>"
+        }
+
+        // grid-template of the tracks: auto, Npx, Nfr ("1fr" without any).
+        static string Tracks(List tracks) {
+            if (tracks == undefined || tracks.Count == 0) { return "1fr" }
+            var t = ""
+            for (var i = 0; i < tracks.Count; i++) {
+                UI.Track tr = tracks[i]
+                if (i > 0) { t = t + " " }
+                if (tr.mode == 0) { t = t + "auto" }
+                else if (tr.mode == 1) { t = t + tr.value + "px" }
+                else { t = t + tr.value + "fr" }
+            }
+            return t
+        }
+    }
+
+    // What a page is in its circuit: the UI root, the page, its elements and what the browser has of them (the circuit owns one: a method of an actor
+    // that calls another method of the same actor would only post a message, so the work is done here).
+    class PageState {
+        string id
+        string session
+        Framebuffer framebuffer
+        Window window
+        UI.Root root
+        any page
+        List elements
+        List props
+
+        construct(string typeName, string id, string session) {
+            this.id = id
+            this.session = session
+            this.framebuffer = new Framebuffer(1280, 800)
+            this.window = new Window(this.framebuffer, "page")
+            this.root = new UI.Root(this.framebuffer, this.window)
+            Type t = Type.Named(typeName)
+            this.page = t.New(new any[0])
+            UI.Element view = this.page.view
+            this.root.content.Add(view)
+            this.elements = new List()
+            this.props = new List()
+        }
+
+        // The HTML of the page (its view; the sizes of the panels with places from the layout of the UI library).
+        string Html() {
+            this.root.content.Measure(this.root, 1280, 800)
+            this.root.content.Arrange(this.root, 0, 0, 1280, 800)
+            UI.Element view = this.page.view
+            this.elements = new List()
+            Http.PageHtml.Collect(view, this.elements)
+            this.props = new List()
+            for (var i = 0; i < this.elements.Count; i++) { this.props.Add(Http.PageHtml.Props(this.elements[i])) }
+            return Http.PageHtml.Render(view, this.elements)
+        }
+
+        // An event of the browser ({"e": id, "k": "click" | "check" | "input", "v": value}); the answer: {"patches": [...]} or {"html": ...} when the tree
+        // changed.
+        string OnEvent(string json) {
+            any ev = Json.Parse(json)
+            if (!(ev is of JsonObject)) { return "{\"patches\": []}" }
+            JsonObject o = ev
+            int id = o.Get("e")
+            string kind = o.Get("k")
+            if (id >= 0 && id < this.elements.Count) {
+                UI.Element e = this.elements[id]
+                if (e.Enabled && e.Visible) {
+                    if (kind == "click" && e is of UI.Button) {
+                        UI.Button b = e
+                        b.Click()
+                    } else if (kind == "check" && e is of UI.CheckBox) {
+                        UI.CheckBox cb = e
+                        bool v = o.Get("v")
+                        if (cb.IsChecked != v) { cb.Toggle() }
+                    } else if (kind == "input" && e is of UI.TextBox) {
+                        UI.TextBox tb = e
+                        string text = o.Get("v")
+                        if (!tb.ReadOnly && tb.Text != text) {
+                            tb.Text = text
+                            tb.Changed()
+                        }
+                    }
+                }
+            }
+            return this.Changes()
+        }
+
+        // What changed since the browser got the last state.
+        string Changes() {
+            UI.Element view = this.page.view
+            var now = new List()
+            Http.PageHtml.Collect(view, now)
+            var same = now.Count == this.elements.Count
+            for (var i = 0; same && i < now.Count; i++) { if (now[i] != this.elements[i]) { same = false } }
+            if (!same) { return "{\"html\": " + Json.Serialize(this.Html()) + "}" }
+            var out = ""
+            for (var i = 0; i < now.Count; i++) {
+                var p = Http.PageHtml.Props(now[i])
+                if (p != this.props[i]) {
+                    this.props[i] = p
+                    if (out.Length > 0) { out = out + ", " }
+                    out = out + Http.PageHtml.Patch(now[i], i)
+                }
+            }
+            return "{\"patches\": [" + out + "]}"
+        }
+
+    }
+
+    // A page in the browser: an actor on a thread of its own that owns the page (its elements, bindings, handlers). Every event of the browser is a
+    // message; its answer is the list of the changes.
+    actor PageCircuit {
+        Http.PageState state
+        bool stopped
+        bool connected
+        int created
+
+        construct(string typeName, string id, string session) {
+            this.state = new Http.PageState(typeName, id, session)
+            this.stopped = false
+            this.connected = false
+            this.created = DateTime.UtcNow.Ticks
+        }
+
+        string Html() { return this.state.Html() }
+        string OnEvent(string json) { return this.state.OnEvent(json) }
+        string SessionId() { return this.state.session }
+        undefined Connected() { this.connected = true }
+        undefined Stop() { this.stopped = true }
+    }
+
+    // The circuits of the pages by their id (an actor: the WebSocket of a page finds its circuit here).
+    actor PageDirectory {
+        Dictionary<string, Http.PageCircuit> circuits
+        bool stopped
+
+        construct() {
+            this.circuits = new Dictionary<string, Http.PageCircuit>()
+            this.stopped = false
+        }
+
+        undefined Add(string id, Http.PageCircuit c) {
+            Http.PageDirectory.Sweep(this.circuits)   // (not this.Sweep(): a call of an actor's own method would only post a message)
+            this.circuits[id] = c
+        }
+
+        Http.PageCircuit Find(string id) {
+            if (!this.circuits.ContainsKey(id)) { return undefined }
+            return this.circuits[id]
+        }
+
+        undefined Remove(string id) {
+            if (!this.circuits.ContainsKey(id)) { return }
+            Http.PageCircuit c = this.circuits[id]
+            this.circuits.Remove(id)
+            c.Stop()
+        }
+
+        int Count() { return this.circuits.Count }
+
+        // (circuits whose browser never connected within a minute end)
+        static undefined Sweep(Dictionary<string, Http.PageCircuit> circuits) {
+            var now = DateTime.UtcNow.Ticks
+            var gone = new List()
+            foreach (var pair in circuits) {
+                Http.PageCircuit c = pair.Value
+                if (!c.connected && now - c.created > 600000000) { gone.Add(pair.Key) }
+            }
+            for (var i = 0; i < gone.Count; i++) {
+                Http.PageCircuit c = circuits[gone[i]]
+                circuits.Remove(gone[i])
+                c.Stop()
+            }
+        }
+
+        undefined Stop() {
+            foreach (var pair in this.circuits) {
+                Http.PageCircuit c = pair.Value
+                c.Stop()
+            }
+            this.stopped = true
+        }
+    }
+
+    // The WebSocket of a page: finds the circuit (and checks that the session is the one of the page), then hands every event to it and the answers back.
+    class PageSocket : IWebSocketHandler {
+        Http.PageDirectory directory
+        string cookie
+
+        construct(Http.PageDirectory directory, string cookie) {
+            this.directory = directory
+            this.cookie = cookie
+        }
+
+        undefined Serve(Http.WebSocket ws) {
+            string id = ws.Query("c", "")
+            var d = this.directory
+            Http.PageCircuit c = await d.Find(id)
+            if (c == undefined) { ws.Close(4404, "no such page"); return }
+            string session = await c.SessionId()
+            if (Http.Sessions.CookieOf(ws.Header("Cookie"), this.cookie) != session) { ws.Close(4401, "not your page"); return }
+            c.Connected()
+            while (true) {
+                var text = ws.ReceiveText()
+                if (text == undefined) { break }
+                string answer = await c.OnEvent(text)
+                ws.Send(answer)
+            }
+            d.Remove(id)
+        }
+    }
+
+    // FXML views as pages, a link of the chain (after Http.Sessions): a GET of the path of a class with [Page "/path"] makes its circuit and answers with
+    // the HTML of the page; `/_fire/ws` is the WebSocket of the pages. Close() (Http.AppServer.Close) ends every circuit.
+    class Pages : IRouter, IClosable {
+        Dictionary<string, string> paths      // path -> page class
+        Http.PageDirectory directory
+        Http.WebSockets socket
+        string title
+        string cookie
+
+        construct(string title = "fire", string cookie = "fire-session") {
+            this.title = title
+            this.cookie = cookie
+            this.paths = new Dictionary<string, string>()
+            any all = Type.Names()
+            for (var i = 0; i < all.length; i++) {
+                string full = all[i]
+                Type t = Type.Named(full)
+                if (t == undefined) { continue }
+                Attribute a = t.FindAttribute("Page")
+                if (a == undefined || a.ArgCount() == 0) { continue }
+                string path = "" + a.Args[0]
+                if (this.paths.ContainsKey(path)) { throw new ArgumentException("Two pages have the path '" + path + "' ('" + this.paths[path] + "' and '" + full + "').") }
+                this.paths.Add(path, full)
+            }
+            var ready = new Completion()
+            var back = ready.Share()
+            Http.Pages.StartDirectory(take back)
+            this.directory = ready.Wait(10s)
+            this.socket = new Http.WebSockets("/_fire/ws", new Http.PageSocket(this.directory, cookie))
+        }
+
+        static undefined StartDirectory(Completion back) {
+            fire handover back {
+                var d = new Http.PageDirectory()
+                back.Set(d)
+                while (!d.stopped) { process d }
+            }
+        }
+
+        // (a circuit on a thread of its own: it makes the page there and serves its messages until Stop)
+        static undefined StartCircuit(string typeName, string id, string session, Completion back) {
+            fire handover back taking typeName taking id taking session {
+                try {
+                    var c = new Http.PageCircuit(typeName, id, session)
+                    back.Set(c)
+                    while (!c.stopped) { process c }
+                } catch (e) {
+                    back.Fail(e)
+                }
+            }
+        }
+
+        Http.Response Handle(Http.Context ctx, Http.Next next) {
+            var request = ctx.Request
+            if (request.path == "/_fire/ws") { return this.socket.Handle(ctx, next) }
+            if (request.method != "GET" || !this.paths.ContainsKey(request.path)) { return next.Invoke(ctx) }
+            any current = ctx.Item("session")
+            if (current == undefined) { return Http.Response.Error(500, "A page needs a session: put Http.Sessions before Http.Pages.") }
+            Http.Session session = current
+            var id = Net.SecureRandom.Hex(16)
+            var ready = new Completion()
+            var back = ready.Share()
+            Http.Pages.StartCircuit(this.paths[request.path], id, session.Id, take back)
+            Http.PageCircuit c = ready.Wait(30s)
+            var d = this.directory
+            d.Add(id, c)
+            string body = await c.Html()
+            return Http.Response.FromHtml(Http.Pages.Document(this.title, body, id))
+        }
+
+        // The whole document: the base style, the page, the script.
+        static string Document(string title, string body, string id) {
+            return "<!doctype html><html><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"><title>" + Http.PageHtml.Escape(title) + "</title><style>" + Http.Pages.Css() + "</style></head><body><div id=\"fire-root\">" + body + "</div><script data-circuit=\"" + id + "\">" + Http.Pages.Script() + "</script></body></html>"
+        }
+
+        static string Css() {
+            return "body{margin:0;font-family:system-ui,sans-serif;font-size:14px}[hidden]{display:none!important}.f-label{white-space:pre}.f-flow{white-space:normal}.f-flow .f-button,.f-flow .f-check,.f-flow .f-text{display:inline-block;vertical-align:bottom}.f-button{font:inherit;padding:3px 12px}.f-text{font:inherit}.f-border{border:1px solid #8888;padding:4px}.f-check{user-select:none}"
+        }
+
+        // The script of the pages: the WebSocket, the events (input debounced), the changes.
+        static string Script() {
+            return "(function(){var me=document.currentScript.dataset.circuit;var ws=new WebSocket((location.protocol=='https:'?'wss://':'ws://')+location.host+'/_fire/ws?c='+me);var q=[];" +
+                "function send(m){var t=JSON.stringify(m);if(ws.readyState==1){ws.send(t)}else{q.push(t)}}" +
+                "ws.onopen=function(){q.forEach(function(t){ws.send(t)});q=[]};" +
+                "function idOf(el){while(el&&!(el.id&&el.id.charAt(0)=='f')){el=el.parentElement}return el?+el.id.substring(1):-1}" +
+                "document.addEventListener('click',function(ev){var t=ev.target.closest('[data-k=click]');if(t){send({e:idOf(t),k:'click'})}});" +
+                "document.addEventListener('change',function(ev){var t=ev.target;if(t.dataset.k=='check'){send({e:idOf(t),k:'check',v:t.checked})}});" +
+                "var timers={};document.addEventListener('input',function(ev){var t=ev.target;if(t.dataset.k=='input'){var e=idOf(t);clearTimeout(timers[e]);timers[e]=setTimeout(function(){send({e:e,k:'input',v:t.value})},150)}});" +
+                "function apply(el,p){if(p.t!==undefined){if(el.tagName=='INPUT'){if(document.activeElement!==el){el.value=p.t}}else if(el.dataset.kind=='check'){el.querySelector('span').textContent=p.t}else{el.textContent=p.t}}" +
+                "if(p.c!==undefined){var i=el.querySelector('input');if(i){i.checked=p.c}}" +
+                "if(p.v!==undefined){el.hidden=!p.v}" +
+                "if(p.n!==undefined){var d=(el.tagName=='BUTTON'||el.tagName=='INPUT')?el:el.querySelector('input');if(d){d.disabled=!p.n}}" +
+                "if(p.fg!==undefined){el.style.color=p.fg}if(p.bg!==undefined){el.style.background=p.bg}}" +
+                "ws.onmessage=function(m){var d=JSON.parse(m.data);if(d.html!==undefined){document.getElementById('fire-root').innerHTML=d.html;return}(d.patches||[]).forEach(function(p){var el=document.getElementById('f'+p.e);if(el){apply(el,p)}})};" +
+                "})();"
+        }
+
+        // The number of open pages.
+        int Open() {
+            var d = this.directory
+            int n = await d.Count()
+            return n
+        }
+
+        undefined Close() {
+            var d = this.directory
+            d.Stop()
+        }
+    }
+}

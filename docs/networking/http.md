@@ -218,3 +218,35 @@ ws.Close()
   `ReceiveText(timeout)`, `Close(code = 1000, reason)`, `IsOpen`, `CloseCode`, `maxMessageBytes` (16 MiB; a longer message closes with 1009).
   `Http.WebSocket.Connect(url, timeout, headers)` is the client (it masks its frames, the server does not). `Http.Base64.Encode(bytes)`.
 * The handler is a copy for every connection, like every router. What several connections share (a chat room) is an actor that the handlers send to.
+
+### Pages: `#import "http.pages"`
+
+FXML views as web pages (docs/ROADMAP_HTTP.md step 6). The code-behind of a View with `[Page "/path"]` is a page:
+
+```fire
+#import "http.pages"
+#include "Hello.fxml"                 // <View Class="Hello"> with a TextBox nameBox, a Button OnClick="Greet", a Label title, ...
+[Page "/hello"]
+class HelloPage : HelloBase {
+    override undefined Greet(any sender) { this.title.Text = "Hello " + this.nameBox.Text }
+}
+var server = new Http.AppServer("", 8080)
+server.PushTo(new Http.Sessions()).PushTo(new Http.Pages("My site"))
+server.Run()
+```
+
+* **A circuit per page view:** a GET of the path makes the page in a task of its own (an actor, `Http.PageCircuit`: the UI root without a window, the
+  page, its elements, bindings and handlers) and answers with the HTML. The page belongs to the session of the request (`Http.Sessions` must come before).
+* **Layout in the browser, with CSS:** `StackPanel`/`Stack` become flex boxes (direction, `gap`, padding), `WrapPanel` `flex-wrap`, `Grid` a CSS grid (`auto`,
+  pixels, `*` as `fr`; row, column and spans), `DockPanel` nested flex boxes (the last child fills), `Border` a frame, `Panel`/`Canvas` the children at
+  their places (the size from the layout of the UI library), a `FlowPanel` HTML text (runs as spans, a `LineBreak` a `<br>`, elements inline) that the
+  browser breaks itself. Common to all: `Width`, `Height`, the min/max sizes, `Margin`, `Font`, `FontSize`, the colours of solid brushes, `Visible`,
+  `ToolTip`. `Label`, `Button`, `CheckBox`, `TextBox` are their HTML counterparts; an element the browser does not know yet is an empty box with its type.
+* **Events:** a small script (in the page) opens the WebSocket `/_fire/ws` of the circuit (with the session cookie of the page - another session is closed
+  with 4401, an unknown circuit with 4404) and sends clicks (`Button.Click()`), check boxes (`Toggle`) and text input (after 150 ms; `Text` and `OnChange` -
+  so TwoWay bindings follow). The circuit runs the handlers and answers with what changed: the properties of every element are compared with what the
+  browser has (text, checked, visible, enabled, colours); a changed tree (elements added or removed) sends the HTML anew.
+* A circuit ends when its WebSocket closes, one whose browser never connected after a minute, all with `Http.AppServer.Close()`. `[Page]` keeps the class
+  in a native build.
+* Not yet: lists with templates, menus, trees, images, drawing (`DrawingCanvas`: step 7), changes that do not come from an event of the browser (a timer,
+  another task), the events of more elements (focus, keys, hover).

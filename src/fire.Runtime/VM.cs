@@ -6473,6 +6473,8 @@ namespace fire.Runtime
         /// goes over (handover), anything else - a field, a global - as a copy; both into <paramref name="holder"/>.</summary>
         private static Value ReplyValue(Value result, Scope freshOwner, Scope holder)
         {
+            // (an actor - kept in a field of the actor, a registry of actors: its reference goes back, like `fire with`)
+            if (result.Kind == ValueKind.Class && result.AsObjectRef() is ObjectInstance { } obj && (obj.Mailbox != null || (obj.RtClass?.IsActor ?? false))) return result;
             if (OwnerOfValue(result) is not { } owner) return result;
             return ReferenceEquals(owner, freshOwner)
                 ? ObjectHandover.MoveAll(new[] { result }, holder)[0]

@@ -118,7 +118,10 @@ ran out or its token is cancelled. **Built** (poll()/WSAPoll, not yet epoll/kque
 5. WebSocket - **built** (`Http.WebSockets`, `Http.WebSocket`, docs/networking/http.md): RFC 6455 server and client, fragments, ping/pong, close, origins. Open:
    sending to a socket from another task (the reader/writer split of an FXML page: the page's task writes, the reading task gets what comes in) and
    compression (permessage-deflate).
-6. FXML to HTML/CSS, `fire.js`, live updates.
+6. FXML to HTML/CSS, `fire.js`, live updates - **first part built** (package `http.pages`, docs/networking/http.md): a circuit per page (an actor that owns the
+   UI root without a window), HTML with CSS layout (decided by the user: the browser lays out - flex, grid, nested flex for DockPanel, HTML text for the new
+   `UI.FlowPanel`), events over the WebSocket, the changes found by comparing the properties. Tried in headless Chromium (Playwright). Open: lists with
+   templates, menus, trees, images, pushes that do not come from the browser (timers, other tasks: the reader/writer split of the socket), more events.
 7. Canvas recording, JS calls.
 
 ## Open

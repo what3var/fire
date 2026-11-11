@@ -133,6 +133,17 @@ namespace Http {
             return l.ToLower()
         }
 
+        // (the instances that were not called for their timeout end)
+        static undefined Sweep(Dictionary<string, Http.RpcSlot> slots) {
+            var now = DateTime.UtcNow.Ticks
+            var gone = new List()
+            foreach (var pair in slots) {
+                Http.RpcSlot s = pair.Value
+                if (now - s.touched > s.timeoutTicks) { gone.Add(pair.Key) }
+            }
+            for (var i = 0; i < gone.Count; i++) { slots.Remove(gone[i]) }
+        }
+
         static int TimeoutTicksOf(Type t) {
             Attribute a = t.FindAttribute("Timeout")
             if (a == undefined || a.ArgCount() == 0) { return 300 * 10000000 }
@@ -168,7 +179,7 @@ namespace Http {
 
         // The call on the instance of `key` (made when it is not there).
         string Call(string key, string typeName, string memberName, string httpMethod, string body) {
-            this.Sweep()
+            Http.RpcCall.Sweep(this.slots)   // (not this.Sweep(): a call of an actor's own method would only post a message)
             Type t = Type.Named(typeName)
             if (t == undefined) { return Http.RpcCall.Fail(404, "No class '" + typeName + "'.", "") }
             if (!this.slots.ContainsKey(key)) {
@@ -185,16 +196,6 @@ namespace Http {
 
         undefined Stop() { this.stopped = true }
 
-        // (instances that were not called for their timeout end)
-        undefined Sweep() {
-            var now = DateTime.UtcNow.Ticks
-            var gone = new List()
-            foreach (var pair in this.slots) {
-                Http.RpcSlot s = pair.Value
-                if (now - s.touched > s.timeoutTicks) { gone.Add(pair.Key) }
-            }
-            for (var i = 0; i < gone.Count; i++) { this.slots.Remove(gone[i]) }
-        }
     }
 
     // The RPC endpoint as a link of the chain: requests under `prefix` (default "/rpc") call [Remote] classes; the rest goes on.
