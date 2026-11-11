@@ -276,7 +276,7 @@ namespace fire.Native
             if (OwnMethodId(name, argc) is { } ownId)
             {
                 int baseArgs = OwnMethodBaseArgs(ownId);
-                string target = baseArgs == 1 ? "a0" : "Undef()";
+                string target = baseArgs == 1 ? "a0" : ownId == "OM_TakeGlobal" && argc == 2 ? "a1" : "Undef()";
                 if (argc == baseArgs) sb.AppendLine($"    ownMethod({ownId}, self, {target}, list);");
                 else sb.AppendLine($"    ownMethodT({ownId}, self, {target}, a{baseArgs}, list, g_scopeLists, g_scopeCount);");
                 sb.AppendLine("    return Undef();");

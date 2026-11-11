@@ -1435,7 +1435,7 @@ namespace fire.Native
         {
             ("TakeLocal", 0 or 1) => "OM_TakeLocal",
             ("TakeUpwards", 0 or 1) => "OM_TakeUpwards",
-            ("TakeGlobal", 0 or 1) => "OM_TakeGlobal",
+            ("TakeGlobal", 0 or 1 or 2) => "OM_TakeGlobal",   // (`TakeGlobal(Takes.X, currentThread)`: the flag is the "target" argument)
             ("TakeTo", 1 or 2) => "OM_TakeTo",
             _ => null,
         };
@@ -2468,7 +2468,7 @@ namespace fire.Native
             {
                 // the built-in ownership method for everything that has no method of this name
                 int baseArgs = OwnMethodBaseArgs(ownId);
-                string target = baseArgs == 1 ? "a0" : "Undef()";
+                string target = baseArgs == 1 ? "a0" : ownId == "OM_TakeGlobal" && argc == 2 ? "a1" : "Undef()";
                 if (argc == baseArgs) sb.AppendLine($"    ownMethod({ownId}, self, {target}, list);");
                 else sb.AppendLine($"    ownMethodT({ownId}, self, {target}, a{baseArgs}, list, g_scopeLists, g_scopeCount);   // (the call site with a `Takes` mode left the scopes of the caller in g_scopeLists)");
                 sb.AppendLine("    return Undef();");
@@ -4394,7 +4394,7 @@ namespace fire.Native
                 {
                     // (rule 10: what a fire thread stores here goes to the main program - an object of the thread only fresh or taken, moved; else the
                     // ArgumentException and nothing is stored)
-                    string move = $"Value n = {stored}; if (FIRE_LIKELY(!g_isThread || toMainGlobals(&n, NULL, \"A global variable\"))) ";
+                    string move = $"Value n = {stored}; if (FIRE_LIKELY(!g_isThread || toMainGlobals(&n, NULL, \"{(variable.StartsWith("SF", StringComparison.Ordinal) ? "A static field" : "A global variable")}\"))) ";
                     if (valueRef) E($"{{ {sec}{move}{{ Value o = {variable}; {variable} = n; {share}retain(n); release(o); }} {secEnd}}}");
                     else if (varRef) E($"{{ {sec}{move}{{ Value o = {variable}; {variable} = n; release(o); }} {secEnd}}}");
                     else E($"{{ {sec}{move}{variable} = n; {secEnd}}}");
@@ -5699,7 +5699,7 @@ namespace fire.Native
                         if (ownMethodId == "OM_TakeUpwards" && !_usesTakeUpwards) { _usesTakeUpwards = true; _usesGlobalOwn = true; _version++; }
                         if (ownMethodId == "OM_TakeGlobal" && !_usesGlobalOwn) { _usesGlobalOwn = true; _version++; }
                         int baseArgs = OwnMethodBaseArgs(ownMethodId);
-                        string targetArg = baseArgs == 1 ? S(slot + 1) : "Undef()";
+                        string targetArg = baseArgs == 1 ? S(slot + 1) : ownMethodId == "OM_TakeGlobal" && argc == 2 ? S(slot + 2) : "Undef()";
                         bool isTry = OwnMethodIsTry(method);
                         if (isTry && !_usesTryDepth) { _usesTryDepth = true; _version++; }
                         if (isTry) f.UsesTryTake = true;
@@ -5715,8 +5715,10 @@ namespace fire.Native
                                 ? $"{S(slot)} = Bool(ownMethodTry({ownMethodId}, {S(slot)}, {targetArg}, {modeArg}, &{owner}, {(scopeLists.Count == 0 ? "NULL" : "L_")}, {scopeLists.Count}, {(f.HasSelf ? "self" : "Undef()")}, MYARGS));"
                                 : $"ownMethodT({ownMethodId}, {S(slot)}, {targetArg}, {modeArg}, &{owner}, {(scopeLists.Count == 0 ? "NULL" : "L_")}, {scopeLists.Count});";
                             E($"{{ {localsDecl}{call} }}");
+                            if (_usesThreads && ownMethodId == "OM_TakeGlobal") Check();   // (to the main program from a thread: the ArgumentException when it is not safe)
                             if (isTry) { SetR(slot, false); d = slot + 1; return Next(); }
                         }
+                        if (_usesThreads && ownMethodId == "OM_TakeGlobal" && argc == baseArgs && !isTry) Check();
                         E($"{S(slot)} = Undef();");
                         SetR(slot, false);
                         d = slot + 1; return Next();

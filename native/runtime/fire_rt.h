@@ -6733,6 +6733,10 @@ FIRE_FN void claimArg(Value v, OwnList* mine, OwnList* here, OwnList* al) {
 }
 
 enum { OM_TakeLocal, OM_TakeUpwards, OM_TakeGlobal, OM_TakeTo };
+#ifdef FIRE_THREADS
+FIRE_FN void takeGlobalMain(Owned* o);
+FIRE_FN bool takeGlobalSafe(Owned* o);
+#endif
 
 /* `x.TakeLocal()`, `x.TakeUpwards()`, `x.TakeGlobal()`, `x.TakeTo(obj)` on an object, an array or a buffer (SPEC 2.2). */
 FIRE_FN void ownMethod(int method, Value self, Value arg, OwnList* here) {
@@ -6754,6 +6758,11 @@ FIRE_FN void ownMethod(int method, Value self, Value arg, OwnList* here) {
             break;
         }
         case OM_TakeGlobal:
+            /* `x.TakeGlobal()`: the global scope of the main program - also in a fire thread (rule 10: it is the main program's then, its reference stays
+             * valid); `x.TakeGlobal(true)` (`arg`: currentThread): the global scope of the running thread */
+#ifdef FIRE_THREADS
+            if (g_isThread && !(arg.kind == K_Bool && arg.i)) { if (takeGlobalSafe(o)) takeGlobalMain(o); break; }
+#endif
             if (o->owner) ownUnlink(o);
             ownLink(g_globalOwn, o);
             break;
@@ -6766,7 +6775,22 @@ FIRE_FN void ownMethod(int method, Value self, Value arg, OwnList* here) {
 /* The same with a `Takes` mode: what hangs on the value goes along (SPEC 2.2); `lists` are the scopes of the running call. */
 FIRE_FN void ownMethodT(int method, Value self, Value arg, Value mode, OwnList* here, OwnList* const* lists, int n) {
     Owned* o;
+    if (method == OM_TakeGlobal && mode.kind == K_Bool) { arg = mode; mode = Int(TK_THIS); }   /* (`x.TakeGlobal(true)`: no mode, the flag) */
     if (mode.kind != K_Int || mode.i < TK_THIS || mode.i > TK_ALL) fatal("The mode of Take... must be one of Takes.This, Takes.Children, Takes.Locals, Takes.All.");
+#ifdef FIRE_THREADS
+    if (method == OM_TakeGlobal && g_isThread && !(arg.kind == K_Bool && arg.i) && mode.i != TK_THIS) {
+        /* (to the main program with a mode: what goes along comes below the value first - here, in the thread - then the check and the move) */
+        o = ownedOf(self);
+        if (o && !(o->flags & 1)) {
+            LocalScopes scopes;
+            scopes.lists = lists;
+            scopes.n = n;
+            moveReachable(o, (int)mode.i, &scopes, here);
+        }
+        ownMethod(method, self, arg, here);
+        return;
+    }
+#endif
     ownMethod(method, self, arg, here);
     if (mode.i == TK_THIS) return;
     o = ownedOf(self);
@@ -10636,6 +10660,70 @@ FIRE_FN bool toMainHolder(Value holder, Value* v, const char* what) {
     }
     return toMainGlobals(v, target, what);
 }
+/* `x.TakeGlobal()` in a fire thread: x goes to the global scope of the main program (in a section - the main program is held) and into the globals' domain;
+ * it keeps its identity - the thread's references stay valid and reach it as an object of the globals (rule 10). */
+/* (a lambda of what moved whose calls were to come to this thread - bound to what is the main program's now: its calls go there) */
+FIRE_FN void takeGlobalRehome(Owned* o, int depth) {
+    Owned* k;
+    if (depth > 10000) return;
+    if (o->okind == O_Lambda) {
+        Lam* l = lamOfOwned(o);
+        if (l->home == 2 && l->on.kind == K_Class && leafAlive(l->on) && (leafOf(l->on)->flags & F_SHARED) && !(leafOf(l->on)->flags & 8)) {
+            if (l->homeBox) FIRE_LAM_HOME_DROP(l->homeBox);
+            l->home = 1;
+            l->homeBox = NULL;
+        }
+        for (k = l->store.head; k; k = k->next) takeGlobalRehome(k, depth + 1);
+    } else if (o->okind == O_Object) {
+        for (k = objOwnedHead((Obj*)o); k; k = k->next) takeGlobalRehome(k, depth + 1);
+    } else if (o->okind == O_Array && ((Arr*)o)->parts) {
+        for (k = ((Arr*)o)->parts->head; k; k = k->next) takeGlobalRehome(k, depth + 1);
+    }
+}
+/* Before `x.TakeGlobal()` in a fire thread: what x and the things it owns point to must be in what moves, the main program's already (its globals, an actor)
+ * or a value - else the main program would reach an object of this thread through a field: the ArgumentException (false), nothing moves. */
+FIRE_FN bool takeGlobalSafeRef(Owned* root, Value v) {
+    Owned* h = ownedOf(v);
+    if (!h || (h->flags & (1 | F_SHARED))) return true;
+    if (h->okind == O_Object && (h->flags & 8)) return true;   /* (an actor) */
+    if (h->okind != O_Lambda && !leafAlive(v)) return true;
+    if (h->owner && (h->owner == g_domainRoot || (h->owner->holder && (h->owner->holder->flags & F_SHARED)))) return true;
+    return ownsTransitively(root, h);
+}
+FIRE_FN bool takeGlobalSafeNode(Owned* root, Owned* node, int depth) {
+    Owned* k;
+    uint32_t i;
+    if (depth > 10000) return true;
+    if (node->okind == O_Object) {
+        Obj* x = (Obj*)node;
+        for (i = 0; i < x->nfields; i++) if (!takeGlobalSafeRef(root, objFields(x)[i])) return false;
+        for (k = objOwnedHead(x); k; k = k->next) if (!takeGlobalSafeNode(root, k, depth + 1)) return false;
+    } else if (node->okind == O_Array) {
+        Arr* a = (Arr*)node;
+        if (arrValues(a)) for (i = 0; i < a->length; i++) if (!takeGlobalSafeRef(root, arrItems(a)[i])) return false;
+        for (k = a->parts ? a->parts->head : NULL; k; k = k->next) if (!takeGlobalSafeNode(root, k, depth + 1)) return false;
+    } else if (node->okind == O_Lambda) {
+        Lam* l = lamOfOwned(node);
+        for (i = 0; i < l->ncaps; i++) if (!takeGlobalSafeRef(root, lamCaps(l)[i])) return false;
+        for (k = l->store.head; k; k = k->next) if (!takeGlobalSafeNode(root, k, depth + 1)) return false;
+    }
+    return true;
+}
+FIRE_FN bool takeGlobalSafe(Owned* o) {
+    if (takeGlobalSafeNode(o, o, 0)) return true;
+    fireError("ArgumentException", "'TakeGlobal': the value points to an object of this thread that it does not own - the main program would reach it. Take it along "
+        "(TakeGlobal(Takes.Locals), Takes.All), let the value own it (TakeTo) or keep it in this thread (TakeGlobal(true)).");
+    return false;
+}
+FIRE_FN void takeGlobalMain(Owned* o) {
+    bool ss = sectionScopeEnter(true);
+    if (o->owner) ownUnlink(o);
+    ownLink(g_domainRoot, o);   /* (domainLink: shared from now on - it and what it owns) */
+    if (o->okind == O_Lambda) refShare(LamV(lamOfOwned(o)));
+    takeGlobalRehome(o, 0);
+    sectionScopeExit(ss);
+}
+
 /* A method of an object of the main program's globals, called from a fire thread: a job of the main program - the thread waits (and yields) for its result
  * or exception. An argument object of the thread goes with it only when it is fresh or taken (it travels in the argument list of the call, `al`). */
 FIRE_FN Value globalsCall(Value self, MsgFn fn, const Value* args, uint32_t n, const char* name) {

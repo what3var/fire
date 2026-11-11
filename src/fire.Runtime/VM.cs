@@ -3741,6 +3741,7 @@ namespace fire.Runtime
             bool conditional = name.StartsWith("tryTake", StringComparison.Ordinal);
             string method = conditional ? name.Substring(3) : name;
             if (method is not ("TakeLocal" or "TakeUpwards" or "TakeGlobal" or "TakeTo")) return false;
+            bool currentThread = TakeGlobalFlag(method, ref args);
             int baseArgs = method == "TakeTo" ? 1 : 0;
             if (args.Length != baseArgs && args.Length != baseArgs + 1) return false;
             int mode = args.Length > baseArgs ? TakesMode(args[baseArgs]) : Takes.This;
@@ -3759,6 +3760,13 @@ namespace fire.Runtime
                     target = obj.Owner as Scope;
                     break;
                 case "TakeGlobal":
+                    if (_threadBroker != null && !currentThread)
+                    {
+                        // (to the main program: what goes along by the mode comes below the object first, in the thread - then the check and the move)
+                        if (mode != Takes.This && !obj.IsDestroyed) OwnershipWalk.MoveReachable(Value.MakeClassRef(obj), mode, OwnsWithinCall, obj, EnumerateItems);
+                        if (TakeGlobalSafe(Value.MakeClassRef(obj))) TakeGlobalMain(Value.MakeClassRef(obj));
+                        return true;
+                    }
                     obj.TakeGlobal(_globalScope);
                     target = _globalScope;
                     break;
@@ -3778,6 +3786,115 @@ namespace fire.Runtime
             }
             if (mode != Takes.This && target != null) OwnershipWalk.MoveReachable(Value.MakeClassRef(obj), mode, OwnsWithinCall, target, EnumerateItems);
             return true;
+        }
+
+        /// <summary>`x.TakeGlobal(currentThread)` (also after a `Takes` mode): the flag is the last argument, a bool - taken off `args`. False (the default):
+        /// the global scope of the main program, also in a fire thread; true: the global scope of the running thread.</summary>
+        private static bool TakeGlobalFlag(string method, ref Value[] args)
+        {
+            if (method != "TakeGlobal" || args.Length == 0 || args[^1].Kind != ValueKind.Bool) return false;
+            bool flag = args[^1].AsBool();
+            args = args[..^1];
+            return flag;
+        }
+
+        /// <summary>`x.TakeGlobal()` in a fire thread: x goes to the global scope of the main program and into the globals' domain (in a section); it keeps its
+        /// identity - the thread's references stay valid and reach it as an object of the globals (rule 10).</summary>
+        private void TakeGlobalMain(Value v)
+        {
+            var broker = _threadBroker!;
+            EnterGlobalsSection();
+            try
+            {
+                if (v.Kind == ValueKind.Class) ((ObjectInstance)v.AsObjectRef()).ReparentTo(broker.Scope);
+                else if (LeafOf(v) is { } leaf) LeafOwnership.Reparent(leaf, broker.Scope);
+                ShareValue(v, broker.Lock, new HashSet<object>(ReferenceEqualityComparer.Instance));
+                RehomeToMain(v);
+            }
+            finally { ExitGlobalsSection(); }
+        }
+
+        /// <summary>Before `x.TakeGlobal()` in a fire thread: what x and what it owns point to must be in what moves, the main program's already (its globals, an
+        /// actor) or a value - else the main program would reach an object of this thread through a field: the ArgumentException (false), nothing moves.</summary>
+        private bool TakeGlobalSafe(Value root)
+        {
+            object? rootNode = IdentityOf(root);
+            var seen = new HashSet<object>(ReferenceEqualityComparer.Instance);
+            var work = new Stack<Value>();
+            work.Push(root);
+            while (work.Count > 0)
+            {
+                var v = work.Pop();
+                IEnumerable<Value> refs = v.Kind switch
+                {
+                    ValueKind.Class => ((ObjectInstance)v.AsObjectRef()).Fields.Select(f => f.Value)
+                        .Concat(((ObjectInstance)v.AsObjectRef()).OwnedObjects.Select(Value.MakeClassRef)),
+                    ValueKind.Array => ArrayItems(v.AsArray()),
+                    ValueKind.Lambda => ((LambdaValue)v.AsLambda()).Captures ?? Array.Empty<Value>(),
+                    _ => Array.Empty<Value>(),
+                };
+                foreach (var r in refs)
+                {
+                    if (r.Kind is not (ValueKind.Class or ValueKind.Array or ValueKind.Buffer or ValueKind.Lambda)) continue;
+                    if (r.Kind == ValueKind.Class ? ((ObjectInstance)r.AsObjectRef()).IsDestroyed : IsDestroyedLeaf(r)) continue;
+                    if (InMainGlobals(r)) continue;
+                    var node = IdentityOf(r)!;
+                    if (!ReferenceEquals(node, rootNode) && !OwnedWithin(rootNode!, node))
+                    {
+                        ThrowArgumentError("'TakeGlobal': the value points to an object of this thread that it does not own - the main program would reach it. Take it along "
+                            + "(TakeGlobal(Takes.Locals), Takes.All), let the value own it (TakeTo) or keep it in this thread (TakeGlobal(true)).");
+                        return false;
+                    }
+                    if (seen.Add(node)) work.Push(r);
+                }
+            }
+            return true;
+        }
+
+        private static IEnumerable<Value> ArrayItems(ScriptArray a)
+        {
+            for (long i = 0; a.TryGet(i, out var item); i++) yield return item;
+        }
+
+        /// <summary>Is `root` in the chain of owners of `node`?</summary>
+        private static bool OwnedWithin(object root, object node)
+        {
+            object? o = node switch { ObjectInstance oi => oi.Owner, IOwnedLeaf l => l.LeafOwner, _ => null };
+            for (int guard = 0; o != null && guard < 100000; guard++)
+            {
+                if (ReferenceEquals(o, root)) return true;
+                o = o switch { ObjectInstance oi => oi.Owner, IOwnedLeaf l => l.LeafOwner, _ => null };
+            }
+            return false;
+        }
+
+        /// <summary>(a lambda in what moved whose calls were to come to this thread - bound to what is the main program's now: its calls go there)</summary>
+        private void RehomeToMain(Value root)
+        {
+            var seen = new HashSet<object>(ReferenceEqualityComparer.Instance);
+            var work = new Stack<Value>();
+            work.Push(root);
+            while (work.Count > 0)
+            {
+                var v = work.Pop();
+                switch (v.Kind)
+                {
+                    case ValueKind.Class when v.AsObjectRef() is ObjectInstance { IsDestroyed: false, InGlobalsDomain: true } obj && seen.Add(obj):
+                        foreach (var field in obj.Fields) work.Push(field.Value);
+                        break;
+                    case ValueKind.Array when !v.AsArray().IsDestroyed && seen.Add(v.AsArray()):
+                        for (long i = 0; v.AsArray().TryGet(i, out var item); i++) work.Push(item);
+                        break;
+                    case ValueKind.Lambda when v.AsLambda() is LambdaValue { IsDestroyed: false } l && seen.Add(l):
+                        if (l.Home == LambdaHome.OtherThread && ReferenceEquals(l.HomeBox, _homeInbox) && l.OnTarget is ObjectInstance { InGlobalsDomain: true, Mailbox: null })
+                        {
+                            l.Home = LambdaHome.MainProgram;
+                            l.HomeBox = null;
+                        }
+                        if (l.Captures != null) foreach (var c in l.Captures) work.Push(c);
+                        break;
+                }
+            }
         }
 
         private static int TakesMode(Value v)
@@ -3819,6 +3936,7 @@ namespace fire.Runtime
             bool conditional = name.StartsWith("tryTake", StringComparison.Ordinal);
             string method = conditional ? name.Substring(3) : name;
             if (method is not ("TakeUpwards" or "TakeGlobal" or "TakeTo" or "TakeLocal")) return false;
+            bool currentThread = TakeGlobalFlag(method, ref args);
             int baseArgs = method == "TakeTo" ? 1 : 0;
             if (args.Length != baseArgs && args.Length != baseArgs + 1) return false;
             int mode = args.Length > baseArgs ? TakesMode(args[baseArgs]) : Takes.This;
@@ -3832,6 +3950,13 @@ namespace fire.Runtime
             switch (method)
             {
                 case "TakeUpwards": LeafOwnership.TakeUpwards(leaf); target = leaf.LeafOwner!; break;
+                case "TakeGlobal" when _threadBroker != null && !currentThread:
+                {
+                    var leafValue = leaf switch { ScriptArray a => Value.MakeArray(a), LambdaValue l => Value.MakeLambda(l), _ => Value.MakeBuffer((ByteBuffer)leaf) };
+                    if (mode != Takes.This && !leaf.IsDestroyed) OwnershipWalk.MoveReachable(leafValue, mode, OwnsWithinCall, _currentScope, EnumerateItems);
+                    if (TakeGlobalSafe(leafValue)) TakeGlobalMain(leafValue);
+                    return true;
+                }
                 case "TakeGlobal": LeafOwnership.Reparent(leaf, _globalScope); target = _globalScope; break;
                 case "TakeTo":
                 {
@@ -4030,6 +4155,8 @@ namespace fire.Runtime
                 if (staticInThread) EnterGlobalsSection();
                 try
                 {
+                    // (rule 10: what a fire thread stores here is the main program's - see ToMainGlobals)
+                    if (staticInThread && !ToMainGlobals(ref setValue, _threadBroker!.Scope, _threadBroker.Lock, "A static field")) return;
                     staticWriteBroker.Lock.Enter();
                     try { setOwner.StaticFieldValues[setFieldName] = setValue; }
                     finally { staticWriteBroker.Lock.Exit(); }
