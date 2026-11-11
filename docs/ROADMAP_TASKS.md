@@ -472,10 +472,10 @@ of a bound lambda in (e):
 * **Reads stay direct**: a global variable, a field of an object of the globals' domain - the original, as today.
 * **A write** to a global variable or to a field of an object of the globals' domain, from a fire thread (outside `sync global`): a job of the main
   program; the thread waits (and serves its own calls meanwhile) until it ran. An object that is written there needs a word, as for a channel:
-  `g = copy x` or `g = handover x` (a fresh value - `new X()`, a call's result - moves without one).
+  `g = copy x` or `g = handover x`; a fresh value (`new X()`, a call's result) means `handover` without one (the user): it moves.
 * **A method call** on an object of the globals' domain from a fire thread: runs in the main program (like a lambda bound to it); its arguments
-  follow the same rule (values as they are, an object with `copy` or `handover`); the result comes back as a copy for now (a remote reference
-  with the shared objects of step 9). An exception that the method does not catch is thrown at the call in the thread.
+  follow the same rule (values as they are, an object with `copy` or `handover`, a fresh one moves); the result comes back as a copy (what the
+  method made: moved). An exception that the method does not catch is thrown at the call in the thread.
 * **`sync global { ... }`** stays the way to make several reads and writes one atomic step (a section, as today).
 * **When** the main program runs these jobs is `#globaljobs`, as for `fire global` (safe points, `Sleep`, `sync globals`); the queue is the same.
 * What changes for programs: a method of a global object that sleeps or waits now does it in the main program (the main program waits, not the
@@ -500,7 +500,7 @@ the member - checked at run time only where the type checker cannot prove it; a 
 collections take with `try x??.TakeTo(this)` whatever belongs to the call (objects, arrays, buffers, lambdas) and skip a number; `Owns.Values` still
 takes an object or a lambda of someone else as before, an array only when it belongs to the call.
 
-### Step 9 - records, `with`, channels; then shared objects (decided by the user)
+### Step 9 - records, `with`, channels (decided by the user)
 
 The threads share nothing that can change - and get ways to pass what does not change, or what moves, without a lock:
 
@@ -525,9 +525,8 @@ The threads share nothing that can change - and get ways to pass what does not c
   - A record **without ownership** (`Send(r)`): lent - the sender stays the owner, the receiver has a reference; it dies with the sender.
   - An object needs a word (the user): `Send(copy obj)` or `Send(handover obj)` - without one it is a compile error (lax and strict alike: the
     definition must be clear). A fresh value (`Send(new Job(...))`) needs none: it moves.
-* **Then: shared objects** (`fire with obj`): every call and write from another thread runs at the object's home (like the lambdas of step 8 (e)),
-  together with rule 10 of step 8; what stays at the home comes back as a remote reference. No read lock (the clear separation stays: no thread
-  touches another's objects).
+* **No shared objects** (the user): with records and channels everything is covered - an object stays where it lives; other threads reach it only
+  through calls of lambdas bound to it, jobs, `await on` and actors.
 
 ## Steps
 
@@ -540,7 +539,7 @@ The threads share nothing that can change - and get ways to pass what does not c
 6. Cancellation tokens and `until`.
 7. The VM on the scheduler.
 8. Captures only with a word, globals by `taking`, `on` runs on its target (see "Step 8" above) - (a)-(e) done, rule 10 next.
-9. Records, `with`, `Channel<T>`, then shared objects (see "Step 9" above).
+9. Records, `with`, `Channel<T>` (see "Step 9" above).
 
 ## Open
 
