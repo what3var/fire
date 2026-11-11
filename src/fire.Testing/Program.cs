@@ -22174,6 +22174,65 @@ else
             while (step < 1) { Sleep(1ms) }
             print("main " + store.Count() + " " + store.Sum() + " " + store.cb() + " " + shared.v)
         """),
+        ("Records: unveraenderlich nach der Konstruktion (ueber any die AccessDeniedException, auch per Reflect.Set), == und Dictionary-Schluessel nach Inhalt, Feldpruefung am Ende des Konstruktors, copy, JSON, Reflect.New, Vererbung, in einem Thread", """
+            #import "json"
+            #import "reflection"
+            #import "time"
+            record Point {
+                int x
+                int y
+                construct(int x, int y) { this.x = x; this.y = y }
+                int Sum() { return this.x + this.y }
+            }
+            record Line {
+                Point a
+                Point b
+                string name = "line"
+                construct(Point a, Point b) { this.a = take a; this.b = take b }
+            }
+            record Base { int id = 1 }
+            record Derived : Base { int extra = 2 }
+            class Box { int v }
+            record Bad {
+                any held
+                construct(any h) { this.held = take h }
+            }
+            var p = new Point(1, 2)
+            var q = new Point(1, 2)
+            var r = new Point(2, 1)
+            print(p.Sum() + " " + (p == q) + " " + (p == r) + " " + (p != q))
+            var l1 = new Line(new Point(1, 2), new Point(2, 1))
+            var l2 = new Line(new Point(1, 2), new Point(2, 1))
+            print((l1 == l2) + " " + l1.name + " " + (l1 == new Line(new Point(1, 2), new Point(9, 9))))
+            any anyP = p
+            try { anyP.x = 5 } catch (AccessDeniedException e) { print("write: " + e.message) }
+            try { Reflect.Set(p, "y", 9) } catch (AccessDeniedException e) { print("reflect: " + e.message) }
+            print(p.x + " " + p.y)
+            var d = new Dictionary<Point, string>()
+            d[p] = "first"
+            print(d[new Point(1, 2)] + " " + d.Count)
+            d[q] = "second"
+            print(d[p] + " " + d.Count + " " + d.ContainsKey(r))
+            try { var b = new Bad(new Box()) } catch (ArgumentException e) { print("bad: " + e.message) }
+            print(new Bad("text").held + " " + new Bad(new Point(5, 5)).held.x)
+            var c = copy p
+            print((c == p) + " " + c.x)
+            var text = Json.Serialize(p)
+            Point back = Json.Deserialize<Point>(text)
+            print(text + " " + (back == p))
+            var made = Reflect.New("Point", [3, 4])
+            print(made.Sum())
+            var dv = new Derived()
+            print(dv.id + dv.extra + " " + (dv is of Base) + " " + (dv == new Derived()))
+            Point got = undefined
+            var step = 0
+            fire taking p {
+                print("thread " + p.x + " " + p.y)
+                sync global { got = take p; step = 1 }
+            }
+            while (step < 1) { Sleep(1ms) }
+            print("main " + got.x + " " + (got == new Point(1, 2)))
+        """),
         ("Threads: TakeGlobal() im Thread gibt das Objekt samt allem, was es besitzt, dem Hauptprogramm; ein Feld auf ein fremdes Thread-Objekt ist die ArgumentException (Takes.Locals nimmt es mit), TakeGlobal(true) bleibt im Thread", """
             #import "time"
             class Leaf { int v; construct(int v) { this.v = v } }

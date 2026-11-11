@@ -14,7 +14,7 @@ New to fire? Start with **Help > First Steps** in the editor, then come back her
 5. [Units](05-units.md) - numbers with units, conversion, units in declarations
 6. [Strings and characters](06-strings.md) - texts, format strings, string and char methods
 7. [Arrays and lists](07-arrays-and-lists.md) - arrays, `List<T>`, queries, byte buffers
-8. [Classes](08-classes.md) - fields, methods, constructors, inheritance, properties, operators
+8. [Classes](08-classes.md) - fields, methods, constructors, inheritance, properties, operators, records
 9. [Interfaces and generics](09-interfaces-and-generics.md) - interfaces, `IEnumerable`, generic classes and methods
 10. [Enums and namespaces](10-enums-and-namespaces.md) - `enum`, `namespace`, `#using`
 11. [Extensions](11-extensions.md) - `class extends` for classes and base types

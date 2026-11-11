@@ -409,7 +409,7 @@ namespace fire.Native
                     string guard = CheckAccess && access != AccessModifier.Public
                         ? $"if (!{AllowedExpr(rc, access)}) return {(LibraryRole ? "rfFail" : "accessDeniedNew")}({CStr($"The constructor of '{rc.Name}' is {DescribeAccess(access)} and cannot be called from here.")}); "
                         : "";
-                    byArgc.Add($"            case {argc}: {{ {guard}Value o = {NewObjectCall(info, "list")}; {pre}{GetFunc(ctor, FuncKind.Ctor).Name}(o{items}{defaults}); ctorEnd(o); return o; }}");
+                    byArgc.Add($"            case {argc}: {{ {guard}Value o = {NewObjectCall(info, "list")}; {pre}{RecInitEnter(info)}{GetFunc(ctor, FuncKind.Ctor).Name}(o{items}{defaults}); {RecInitLeave(info)}ctorEnd(o); return o; }}");
                 }
             }
             return byArgc;

@@ -2898,6 +2898,16 @@ namespace fire.Runtime
             // blocks leaves them all at once.
             if (_frames.Count > 0) MoveReturned(retVal, OwnsWithinCall);
 
+            // (a record at the end of its (outermost) constructor - before the scopes of the call let go of what they hold: it holds only what does not
+            // change, step 9)
+            if (_frames.Count > 0 && _frames.Peek().ConstructedInstance is { RtClass.IsRecord: true } record
+                && !_frames.Skip(1).Any(f => ReferenceEquals(f.ConstructedInstance, record)) && (_recordInit == null || !_recordInit.Contains(record))
+                && RecordValues.FirstChangeableField(record) is { } changeable)
+            {
+                ThrowArgumentError($"The field '{changeable}' of the record '{record.ClassName}' holds {DescribeKindOf(record.Fields[changeable])}: a record holds only what does not change - numbers, texts, enums, records, lambdas without captures.");
+                return;
+            }
+
             ReleaseCallScopes();
 
             var frame = _frames.Pop();
@@ -2912,6 +2922,29 @@ namespace fire.Runtime
             return;
         }
         }
+
+        /// <summary>Is the record being constructed - a constructor of it on the stack of calls, or a copy / `with` that fills it (<see cref="_recordInit"/>)?</summary>
+        private bool InConstruction(ObjectInstance record)
+        {
+            if (_recordInit != null && _recordInit.Contains(record)) return true;
+            foreach (var f in _frames) if (ReferenceEquals(f.ConstructedInstance, record)) return true;
+            return false;
+        }
+
+        /// <summary>The records that a copy or `with` is filling right now (their writes are allowed).</summary>
+        private HashSet<ObjectInstance>? _recordInit;
+
+        private void ThrowRecordWrite(ObjectInstance record, string fieldName) =>
+            ThrowAccessDenied($"The record '{record.ClassName}' is unchangeable: its field '{fieldName}' is written only while it is constructed - a changed copy is 'copy r with {{ .{fieldName} = ... }}'.");
+
+        private static string DescribeKindOf(Value v) => v.Kind switch
+        {
+            ValueKind.Class => $"an object of the class '{((ObjectInstance)v.AsObjectRef()).ClassName}'",
+            ValueKind.Array => "an array",
+            ValueKind.Buffer => "a buffer",
+            ValueKind.Lambda => "a lambda with captures",
+            _ => v.Kind.ToString(),
+        };
 
         private void OpNewObject()
         {
@@ -3360,6 +3393,7 @@ namespace fire.Runtime
             var value = Pop();
             var obj = RequireObjectInstance(Pop(), "Field assignment");
             if (IsDeadObject(obj)) { ThrowDestroyedObject(obj); return false; }
+            if (obj.RtClass is { IsRecord: true } && !InConstruction(obj)) { ThrowRecordWrite(obj, fieldName); return false; }
 
             if (obj.HasFieldLocked(fieldName))
             {
@@ -3392,7 +3426,7 @@ namespace fire.Runtime
                     hasUnitRule = true;   // (a typed array: every assignment types it - do not cache)
                     if (!GuardFieldArray(value, requiredArray, obj.RtClass.FindFieldRequiredUnit(fieldName))) return false;
                 }
-                if (site >= 0 && !hasUnitRule && obj.RtClass != null && obj.AccessGuard == null
+                if (site >= 0 && !hasUnitRule && obj.RtClass != null && obj.AccessGuard == null && !obj.RtClass.IsRecord
                     && obj.RtClass.FieldIndex.TryGetValue(fieldName, out int setIndex))
                     StoreSite(site, new SiteCache(obj.RtClass, null, setIndex, requiredKind: requiredKind, requiredType: requiredType));
                 obj.SetFieldLocked(fieldName, value);
@@ -3477,6 +3511,7 @@ namespace fire.Runtime
             if (_currentThis is not ObjectInstance oi)
                 throw new InvalidOperationException("SetFieldOnThis without a bound ObjectInstance as 'this'.");
             if (IsDeadObject(oi)) { ThrowDestroyedObject(oi); return; }
+            if (oi.RtClass is { IsRecord: true } && !InConstruction(oi)) { ThrowRecordWrite(oi, fieldName); return; }
 
             // SPEC "Unit declarations" - the same check as in
             // SetField (see there for the reason why this happens at
@@ -3505,7 +3540,7 @@ namespace fire.Runtime
                 if (!GuardFieldArray(value, requiredArray, oi.RtClass.FindFieldRequiredUnit(fieldName))) return;
             }
 
-            if (!hasUnitRule && oi.RtClass != null && oi.ThreadLock == null
+            if (!hasUnitRule && oi.RtClass != null && oi.ThreadLock == null && !oi.RtClass.IsRecord
                 && oi.RtClass.FieldIndex.TryGetValue(fieldName, out int thisIndex))
                 StoreSite(site, new SiteCache(oi.RtClass, null, thisIndex, requiredKind: requiredKind, requiredType: requiredType));
             oi.SetFieldLocked(fieldName, value);
