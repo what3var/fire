@@ -28396,7 +28396,7 @@ else
         ("Net: der Poller weckt wartende Threads (40 Verbindungen in fire-Threads, Daten kommen spaeter), Zeitlimit, Abbruch eines Read per until", """
             #import "net"
             #import "time"
-            var l = new Net.TcpListener("127.0.0.1", 0)
+            var l = new Net.TcpListener("127.0.0.1", 0, 64)   // (40 connections at once: a backlog of 16 drops some when the machine is busy)
             int port = l.Port
             int done = 0
             int sum = 0
