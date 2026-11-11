@@ -598,12 +598,40 @@ namespace fire.Runtime
             return value;
         }
 
-        private void StoreSharedGlobal(int slot, Value value)
+        // (rule 10: the value of the last `x = take v` / `obj.f = take v` of this fire thread - its store into the main program's globals moves it there)
+        private object? _pendingGlobalTake;
+
+        /// <summary>Rule 10 (docs/ROADMAP_TASKS.md step 8): what a fire thread writes into the main program's globals (a global variable, a field of one
+        /// of their objects) goes there - a value as it is; an object (array, buffer, lambda) of this thread only when it is fresh (`new`, a call's
+        /// result, `copy x`) or taken (`take x`): it moves to `target` like `handover` and joins the globals' domain. Another one of this thread is the
+        /// ArgumentException (false); one of the main program stays the reference it is.</summary>
+        private bool ToMainGlobals(ref Value value, IOwner target, ThreadShareLock treeLock, string what)
+        {
+            object? taken = _pendingGlobalTake;
+            _pendingGlobalTake = null;
+            if (value.Kind is not (ValueKind.Class or ValueKind.Array or ValueKind.Buffer or ValueKind.Lambda)) return true;
+            if (value.Kind == ValueKind.Class ? ((ObjectInstance)value.AsObjectRef()).IsDestroyed : IsDestroyedLeaf(value)) return true;
+            if (InMainGlobals(value)) return true;
+            object identity = value.Kind switch { ValueKind.Class => value.AsObjectRef(), ValueKind.Array => value.AsArray(), ValueKind.Buffer => value.AsBuffer(), _ => value.AsLambda() };
+            if (!ReferenceEquals(taken, identity) && !IsUnclaimed(value))
+            {
+                ThrowArgumentError($"{what} belongs to the main program: an object of this thread goes there only with a word - 'copy x' (a copy) or 'take x' (moved).");
+                return false;
+            }
+            value = ObjectHandover.MoveAll(new[] { value }, target, senderHome: EnsureHomeInbox())[0];
+            ShareValue(value, treeLock, new HashSet<object>(ReferenceEqualityComparer.Instance));
+            return true;
+        }
+
+        /// <summary>False: the value was refused (the ArgumentException is raised, the stack is the handler's).</summary>
+        private bool StoreSharedGlobal(int slot, Value value)
         {
             var broker = _threadBroker!;
             EnterGlobalsSection();
             try
             {
+                if (!ToMainGlobals(ref value, broker.Scope, broker.Lock, "A global variable")) return false;
+                _stack[_sp - 1] = value;   // (the value the assignment gives: the moved one)
                 broker.Lock.Enter();
                 try
                 {
@@ -614,6 +642,7 @@ namespace fire.Runtime
                 finally { broker.Lock.Exit(); }
             }
             finally { ExitGlobalsSection(); }
+            return true;
         }
 
         /// <summary>Main program, after the first `fire`: writing the globals under the lock (fire threads read at the same time).</summary>
@@ -663,8 +692,51 @@ namespace fire.Runtime
             finally { if (inThread) ExitGlobalsSection(); }
         }
 
-        /// <summary>Method call of a fire thread on an object of the shared area: the method runs as a whole while the thread
-        /// holds the section - so even its read-modify-write is atomic.</summary>
+        /// <summary>Rule 10 (docs/ROADMAP_TASKS.md step 8): the arguments go to the main program - a value as it is; an object (an array, a buffer, a
+        /// lambda) of this thread only with a word: `copy`/`flat` (a copy), `take` (moved, like `handover`), or fresh (`new`, a call's result: moved);
+        /// one of the main program's globals as the reference it is. Then the call is a job of the main program, the result comes back like `await on`.</summary>
+        private void CallGlobalsMethodAtHome(ObjectInstance obj, string methodName, Value[] args, long copyMask)
+        {
+            var holder = new Scope(null);
+            object? home = EnsureHomeInbox();
+            for (int i = 0; i < args.Length; i++)
+            {
+                int bits = i < 16 ? (int)(copyMask >> (4 * i)) & 15 : 0;
+                var a = args[i];
+                if (bits == 3) { a = args[i] = ReadRefArgument(a); bits = 0; }
+                if (a.Kind is not (ValueKind.Class or ValueKind.Array or ValueKind.Buffer or ValueKind.Lambda)) continue;
+                if (a.Kind == ValueKind.Class ? ((ObjectInstance)a.AsObjectRef()).IsDestroyed : IsDestroyedLeaf(a)) continue;
+                if (bits is 1 or 2) args[i] = ObjectCloner.Clone(a, holder, deep: bits == 2);
+                else if (bits is 5 or 7 || IsUnclaimed(a)) args[i] = ObjectHandover.MoveAll(new[] { a }, holder, senderHome: home)[0];
+                else if (!InMainGlobals(a))
+                {
+                    ThrowArgumentError($"'{methodName}' runs in the main program (an object of its globals): an object of this thread goes there only with a word - 'copy x' (a copy) or 'take x' (moved).");
+                    return;
+                }
+            }
+            var reply = new ActorReply();
+            _threadBroker!.PostMethodJob(obj, methodName, args, holder, reply);
+            TakeReply(reply);
+        }
+
+        private static object? IdentityOf(Value v) => v.Kind switch
+        {
+            ValueKind.Class => v.AsObjectRef(),
+            ValueKind.Array => v.AsArray(),
+            ValueKind.Buffer => v.AsBuffer(),
+            ValueKind.Lambda => v.AsLambda(),
+            _ => null,
+        };
+
+        /// <summary>Does the value belong to the main program's globals (an object of their domain, a shared array)?</summary>
+        private bool InMainGlobals(Value v) => v.Kind switch
+        {
+            ValueKind.Class => v.AsObjectRef() is ObjectInstance { InGlobalsDomain: true } || v.AsObjectRef() is ObjectInstance { Mailbox: not null },
+            ValueKind.Array => v.AsArray().IsShared,
+            // (a lambda or buffer carries no mark: it is the main program's when its owner is - the globals' scope or an object of their domain)
+            _ => LeafOf(v) is { LeafOwner: { } owner } && (ReferenceEquals(owner, _threadBroker?.Scope) || owner is ObjectInstance { InGlobalsDomain: true }),
+        };
+
         private Value? CallGlobalsMethodInSection(ObjectInstance obj, string methodName, Value[] args)
         {
             EnterGlobalsSection();
@@ -779,6 +851,26 @@ namespace fire.Runtime
 
         /// <summary>Executes a `fire global` job on this (the owner) VM. An unhandled exception in it is treated like that of a
         /// fire thread: it goes to the main program (`catch threads`), otherwise it aborts.</summary>
+        /// <summary>A method call of a fire thread on an object of the main program's globals (rule 10): it runs here, its result or exception goes back.</summary>
+        internal void RunGlobalsMethodJob(ObjectInstance target, string methodName, Value[] args, Scope argHolder, ActorReply reply)
+        {
+            var freshOwner = _currentScope.Temp;
+            Value result;
+            ObjectInstance? error;
+            _noAutoSyncDepth++;
+            try
+            {
+                if (IsDeadObject(target)) { reply.Failure = "The object of the main program's globals is destroyed."; reply.Done.Set(); VmScheduler.Wake(); return; }
+                error = CallMethodInline(target, methodName, args, out result, argHolder);
+            }
+            catch (ScriptErrorException e) { reply.Failure = e.Message; reply.Done.Set(); VmScheduler.Wake(); return; }
+            finally { _noAutoSyncDepth--; }
+            if (error != null) { error.ReparentTo(reply.Holder); reply.Exception = error; }
+            else reply.Result = ReplyValue(result, freshOwner, reply.Holder);
+            reply.Done.Set();
+            VmScheduler.Wake();
+        }
+
         internal void RunGlobalsJob(LambdaValue lambda, Value[] args, ActorReply? reply = null)
         {
             ObjectInstance? error;
@@ -2113,7 +2205,7 @@ namespace fire.Runtime
                 {
                     int slot = ReadU16();
                     var value = _stack[_sp - 1];
-                    if (slot < _sharedCount) StoreSharedGlobal(slot, value);
+                    if (slot < _sharedCount) { if (!StoreSharedGlobal(slot, value)) return; }
                     else if (_ownerBroker != null) StoreOwnerGlobal(slot, value);
                     else _globalScope.SlotRef(slot) = value;
                     _sp--;
@@ -2215,7 +2307,7 @@ namespace fire.Runtime
             Step(subtract ? OpCode.Sub : OpCode.Add);
             if (_arithFault) { _arithFault = false; if (_unhandledPaused) _sp--; return; }
             var value = _stack[_sp - 1];
-            if (slot < _sharedCount) StoreSharedGlobal(slot, value);
+            if (slot < _sharedCount) { if (!StoreSharedGlobal(slot, value)) return; }
             else if (_ownerBroker != null) StoreOwnerGlobal(slot, value);
             else _globalScope.SlotRef(slot) = value;
             _sp--;
@@ -3118,8 +3210,10 @@ namespace fire.Runtime
                 finally { _takeSetterArg = false; }
                 return;
             }
+            bool toMain = _threadBroker != null && target is { InGlobalsDomain: true };
+            if (toMain) _pendingGlobalTake = IdentityOf(value);   // (the store moves it into the main program - rule 10)
             if (!SetFieldSlow(name, -1)) return;
-            if (target == null || IsDeadObject(target)) return;
+            if (toMain || target == null || IsDeadObject(target)) return;
             if (setterValue) OwnershipWalk.TakeValue(value, target, this);
             else ClaimTree(value, target);
         }
@@ -3249,7 +3343,12 @@ namespace fire.Runtime
                 && ((ObjectInstance)sectionTarget.AsObjectRef()).InGlobalsDomain)
             {
                 EnterGlobalsSection();
-                try { return SetFieldSlowCore(fieldName, site); }
+                try
+                {
+                    var holderObj = (ObjectInstance)sectionTarget.AsObjectRef();
+                    if (!ToMainGlobals(ref _stack[_sp - 1], holderObj, holderObj.ThreadLock ?? _threadBroker.Lock, $"The field '{fieldName}' of an object of the globals")) return false;
+                    return SetFieldSlowCore(fieldName, site);
+                }
                 finally { ExitGlobalsSection(); }
             }
             return SetFieldSlowCore(fieldName, site);
@@ -3581,12 +3680,11 @@ namespace fire.Runtime
             }
             _awaitReplyNow = false;   // (an `await` of the actor's own home runs the method at once, like a call)
 
-            // Fire thread calls a method of an object of the shared area: it runs as a whole in a section (atomic).
+            // A fire thread calls a method of an object of the main program's globals: it runs in the main program (rule 10 of step 8) - a job, the
+            // thread waits (and serves its own calls) until the result or the exception comes back.
             if (NeedsSection(obj))
             {
-                if (copyMask != 0) ApplyCopyMaskToArgs(args, copyMask);
-                var sectionResult = CallGlobalsMethodInSection(obj, methodName, args);
-                if (sectionResult != null) Push(sectionResult.Value); // null: an exception has redirected the flow
+                CallGlobalsMethodAtHome(obj, methodName, args, copyMask);
                 return;
             }
 
@@ -4241,6 +4339,13 @@ namespace fire.Runtime
             {
                 // Array of the shared area: a fire thread changes it only in a section, everywhere under the lock
                 long sharedIdx = indexVal.AsInt();
+                if (_threadBroker != null)
+                {
+                    // (rule 10: an object of this thread goes there only fresh or taken - see ToMainGlobals)
+                    EnterGlobalsSection();
+                    try { if (!ToMainGlobals(ref value, target.AsArray(), _threadBroker.Lock, "An element of an array of the globals")) return; }
+                    finally { ExitGlobalsSection(); }
+                }
                 if (TrySetSharedElement(target.AsArray(), sharedIdx, value)) Push(value);
                 else ThrowIndexOutOfBounds(sharedIdx, target.AsArray().Length);
             }
@@ -4931,6 +5036,7 @@ namespace fire.Runtime
                     int depth = ReadU16();
                     if (ThrowIfDeadForTake(_stack[_sp - 1])) break;
                     OwnershipWalk.TakeValue(_stack[_sp - 1], depth == 0xFFFF ? _globalScope : _currentScope.GetAncestor(depth), this);
+                    if (depth == 0xFFFF && _threadBroker != null) _pendingGlobalTake = IdentityOf(_stack[_sp - 1]);   // (a global of the main program: rule 10)
                     break;
                 }
 
@@ -4967,6 +5073,8 @@ namespace fire.Runtime
                 {
                     int depth = ReadU16();
                     int flags = ReadByte();
+                    // (a fresh value for a global of the main program: its store moves it there - rule 10)
+                    if (depth == 0xFFFF && _threadBroker != null && IsUnclaimed(_stack[_sp - 1])) _pendingGlobalTake = IdentityOf(_stack[_sp - 1]);
                     ClaimToScope(_stack[_sp - 1], depth == 0xFFFF ? _globalScope : _currentScope.GetAncestor(depth), flags);
                     break;
                 }
@@ -4975,7 +5083,12 @@ namespace fire.Runtime
                 {
                     var value = Pop();
                     var holderValue = Pop();
-                    if (holderValue.Kind == ValueKind.Class && holderValue.AsObjectRef() is ObjectInstance holder && !holder.IsDestroyed) ClaimTree(value, holder);
+                    if (holderValue.Kind == ValueKind.Class && holderValue.AsObjectRef() is ObjectInstance holder && !holder.IsDestroyed)
+                    {
+                        // (for an object of the main program's globals: the store moves it there - rule 10)
+                        if (_threadBroker != null && holder.InGlobalsDomain) { if (IsUnclaimed(value)) _pendingGlobalTake = IdentityOf(value); }
+                        else ClaimTree(value, holder);
+                    }
                     Push(value);
                     break;
                 }
@@ -4985,7 +5098,12 @@ namespace fire.Runtime
                 case OpCode.ClaimToArray:
                 {
                     var holder = _stack[_sp - 3];
-                    if (holder.Kind == ValueKind.Array && !holder.AsArray().IsDestroyed) ClaimTree(_stack[_sp - 1], holder.AsArray());
+                    if (holder.Kind == ValueKind.Array && !holder.AsArray().IsDestroyed)
+                    {
+                        // (for an array of the main program's globals: the store moves it there - rule 10)
+                        if (_threadBroker != null && holder.AsArray().IsShared) { if (IsUnclaimed(_stack[_sp - 1])) _pendingGlobalTake = IdentityOf(_stack[_sp - 1]); }
+                        else ClaimTree(_stack[_sp - 1], holder.AsArray());
+                    }
                     break;
                 }
 
@@ -4993,6 +5111,8 @@ namespace fire.Runtime
                 {
                     var holder = RequireObjectInstance(_stack[_sp - 2], "take");
                     if (ThrowIfDeadForTake(_stack[_sp - 1])) break;
+                    // (a fire thread takes it for an object of the main program's globals: it moves there with the store - rule 10)
+                    if (_threadBroker != null && holder.InGlobalsDomain) { _pendingGlobalTake = IdentityOf(_stack[_sp - 1]); break; }
                     OwnershipWalk.TakeValue(_stack[_sp - 1], holder, this);
                     break;
                 }
@@ -5002,6 +5122,8 @@ namespace fire.Runtime
                     var holder = _stack[_sp - 3];
                     if (IsDestroyedLeaf(holder)) { ThrowDestroyed(holder); break; }
                     if (ThrowIfDeadForTake(_stack[_sp - 1])) break;
+                    // (a fire thread takes it for an array of the main program's globals: it moves there with the store - rule 10)
+                    if (holder.Kind == ValueKind.Array && _threadBroker != null && holder.AsArray().IsShared) { _pendingGlobalTake = IdentityOf(_stack[_sp - 1]); break; }
                     if (holder.Kind == ValueKind.Array) OwnershipWalk.TakeValue(_stack[_sp - 1], holder.AsArray(), this);
                     break;
                 }
@@ -6228,11 +6350,27 @@ namespace fire.Runtime
         public ObjectInstance? CallLambdaInline(LambdaValue lambda, Value[] args) => CallInline(lambda, args, out _);
 
         /// <summary>CallLambdaInline with the result of the lambda (undefined when it threw or the program ended).</summary>
-        private ObjectInstance? CallInline(LambdaValue lambda, Value[] args, out Value result)
+        private ObjectInstance? CallInline(LambdaValue lambda, Value[] args, out Value result) => CallInlineProto(lambda.Proto, lambda.OnTarget, args, lambda, out result);
+
+        /// <summary>A method of an object, run like <see cref="CallInline"/> (its exception comes back instead of going to the handlers around): the calls
+        /// of fire threads on the objects of the main program's globals (docs/ROADMAP_TASKS.md step 8, rule 10).</summary>
+        private ObjectInstance? CallMethodInline(ObjectInstance obj, string methodName, Value[] args, out Value result, Scope? argOwner = null)
+        {
+            var rc = ResolveClass(obj.ClassName);
+            var proto = FindOverload(rc, methodName, args, obj).Proto;
+            if (proto == null)
+            {
+                if (TryCallOwnershipMethod(obj, methodName, args, out result)) return null;
+                throw MethodNotFound(rc, methodName, args.Length);
+            }
+            return CallInlineProto(proto, obj, args, null, out result, argOwner);
+        }
+
+        private ObjectInstance? CallInlineProto(FunctionProto proto, object? thisObject, Value[] args, LambdaValue? lambda, out Value result, Scope? argOwner = null)
         {
             result = Value.MakeUndefined();
-            CheckArity(lambda.Proto, args.Length);
-            args = FillDefaultArgs(lambda.Proto, args, lambda.OnTarget);
+            CheckArity(proto, args.Length);
+            args = FillDefaultArgs(proto, args, thisObject);
 
             int frameDepth = _frames.Count;
             var callerScope = _currentScope;
@@ -6245,13 +6383,21 @@ namespace fire.Runtime
 
             var funcScope = new Scope(_globalScope);
             foreach (var a in args) funcScope.DefineSlot(a);
-            DefineCaptureSlots(lambda, funcScope);
-            _pendingCallTypeArgs = lambda.TypeArgs;
+            if (argOwner != null)
+                foreach (var a in args)
+                {
+                    // (what the job owned - a moved argument - belongs to the call, like an argument it was handed; it dies after the call unless kept)
+                    if (!ReferenceEquals(OwnerOfValue(a), argOwner)) continue;
+                    if (a.Kind == ValueKind.Class) ((ObjectInstance)a.AsObjectRef()).ReparentToArgument(funcScope);
+                    else if (LeafOf(a) is { } argLeaf) LeafOwnership.Reparent(argLeaf, funcScope);
+                }
+            if (lambda != null) DefineCaptureSlots(lambda, funcScope);
+            _pendingCallTypeArgs = lambda?.TypeArgs;
             _pendingExplicitTypeArgs = false;
 
-            _currentThis = lambda.OnTarget;
+            _currentThis = thisObject;
             _currentScope = funcScope;
-            _currentChunk = lambda.Proto.Chunk;
+            _currentChunk = proto.Chunk;
             _ip = 0;
 
             try

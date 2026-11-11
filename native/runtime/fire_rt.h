@@ -396,6 +396,7 @@ typedef struct SlotCache { uint32_t n; uint32_t slot[FIRE_SLOT_CACHE]; } SlotCac
     X(OwnList* const*, g_scopeLists, NULL)   /* a call of an ownership method with a `Takes` mode through the dispatcher: the scopes of the call (see ownMethodT) */ \
     X(int32_t, g_scopeCount, 0) \
     X(OwnList*, g_argIn, NULL)          /* `try x.Take...`: the argument list of the call that is starting - set right before the call, taken by the callee on entry (MYARGS) */ \
+    X(const void*, g_pendingTake, NULL) /* rule 10: what the last `x = take v` / `obj.f = take v` / claim of a global took - its store into the main program's globals moves it there */ \
     X(uint32_t, g_reflCaller, 0xFFFFFFFFu)   /* the class of the code that called into the reflection library */ \
     X(const void*, g_callTArgs, NULL)       /* the type arguments for the next call of a generic method (TArgs) */ \
     X(int32_t, g_explicitTArgs, 0)           /* the call names its type arguments (`M<string>(x)`): their number - only generic overloads with that many count */ \
@@ -506,6 +507,7 @@ FIRE_FN ThreadLocals* fire_tl(void) {
 #define g_curSection FIRE_TLV(g_curSection)
 #define g_secDepth FIRE_TLV(g_secDepth)
 #define g_argIn FIRE_TLV(g_argIn)
+#define g_pendingTake FIRE_TLV(g_pendingTake)
 #define g_scopeLists FIRE_TLV(g_scopeLists)
 #define g_scopeCount FIRE_TLV(g_scopeCount)
 #define g_reflCaller FIRE_TLV(g_reflCaller)
@@ -6412,6 +6414,10 @@ FIRE_FN void takeToHolder(Value holder, Value v) {
     Arr* a;
     if (!h || h->okind == O_Buffer || h->okind == O_Lambda) { if (!h && holder.kind != K_Buffer && holder.kind != K_Lambda) fatal("take: the holder of the value has to be an object or an array."); return; }
     if (!o) return;
+#ifdef FIRE_THREADS
+    /* (a fire thread takes it for an object or array of the main program's globals: the store moves it there - rule 10, toMainHolder) */
+    if (FIRE_UNLIKELY(g_isThread) && (h->flags & 64)) { g_pendingTake = o; return; }   /* (64: F_SHARED) */
+#endif
     if (h->okind == O_Object) { takeToObject(o, (Obj*)h); return; }
     a = (Arr*)h;
     if (!a->parts) a->parts = newPartsList(&a->h);
@@ -9600,7 +9606,7 @@ FIRE_FN bool sharedValue(Value v) {
 }
 
 struct SectionReq { fire_atomic32 granted, done, refs; };   /* (granted/done: read by the other side while it waits) */
-typedef struct JobReq { Value lam; Value* args; uint32_t n; OwnList* holder; struct ActorReply* reply; } JobReq;
+typedef struct JobReq { Value lam; Value* args; uint32_t n; OwnList* holder; struct ActorReply* reply; MsgFn fn; } JobReq;   /* (fn: a method call - args[0] is the object) */
 typedef struct Req { SectionReq* sec; JobReq* job; } Req;
 /* The requests of the threads (a ring queue). */
 typedef struct ReqQueue { Req* items; uint32_t head, count, cap; } ReqQueue;
@@ -10005,6 +10011,7 @@ FIRE_FN JobReq* jobMake(Value lam, const Value* args, uint32_t n, bool onTarget,
     if (!j) allocFailed();
     j->lam = lam.kind == K_Lambda && lamOf(lam)->home ? lam : lamKeep(lam);   /* (a call at home: the lambda stays the caller's) */
     j->reply = reply;
+    j->fn = NULL;
 #ifdef FIRE_STR_CROSS
     /* (the lambda is made here and let go of by the main program, which runs it: it is counted atomically from now on, its captures too) */
     /* (a lambda is never immortal; the second call of the same lambda finds it shared already - its count may change on the main program meanwhile) */
@@ -10078,15 +10085,23 @@ FIRE_FN Value lamCallAtHome(Value lam, int argc, const Value* args, OwnList* lis
     }
     return awaitJobEx(lam, args, (uint32_t)argc, false, NULL);
 }
+FIRE_FN Value awaitReplyOf(ActorReply* reply);
+FIRE_FN ActorReply* replyNew(void) {
+    ActorReply* reply = (ActorReply*)malloc(sizeof(ActorReply));
+    if (!reply) allocFailed();
+    fire_atomic_store(&reply->done, 0);
+    fire_atomic_store(&reply->claim, 0);
+    reply->failed = 0;
+    reply->result = Undef();
+    ownListInit(&reply->travel, 0, NULL);
+    return reply;
+}
 FIRE_FN Value awaitJobEx(Value lam, const Value* args, uint32_t n, bool onTarget, void* home) {
     ActorReply* reply;
-    int32_t held;
-    bool ok, failed;
-    Value r;
-    Owned* o;
     if (!g_isThread && !home) {
         OwnList scratch;
         Value copies[16];
+        Value r;
         uint32_t i;
         if (n > 16) fatal("'await on' takes at most 15 values.");
         ownListInit(&scratch, poolMark(), NULL);
@@ -10096,13 +10111,7 @@ FIRE_FN Value awaitJobEx(Value lam, const Value* args, uint32_t n, bool onTarget
         leave(&scratch);
         return r;
     }
-    reply = (ActorReply*)malloc(sizeof(ActorReply));
-    if (!reply) allocFailed();
-    fire_atomic_store(&reply->done, 0);
-    fire_atomic_store(&reply->claim, 0);
-    reply->failed = 0;
-    reply->result = Undef();
-    ownListInit(&reply->travel, 0, NULL);
+    reply = replyNew();
 #ifdef FIRE_NO_GIL
     if (home) {
         /* a fire thread: it runs the call at its safe points or while it waits */
@@ -10113,6 +10122,14 @@ FIRE_FN Value awaitJobEx(Value lam, const Value* args, uint32_t n, bool onTarget
 #endif
     postJobEx(lam, args, n, onTarget, reply);
     if (g_unwind.active) { free(reply); return Undef(); }
+    return awaitReplyOf(reply);
+}
+/* (the caller of a job waits for its reply - yielding the section it holds - and takes over its result or throws its exception) */
+FIRE_FN Value awaitReplyOf(ActorReply* reply) {
+    int32_t held;
+    bool ok, failed;
+    Value r;
+    Owned* o;
     held = sectionYieldBegin();
     ok = fire_waitReply(reply);
     sectionYieldEnd(held);
@@ -10165,7 +10182,14 @@ FIRE_FN void runJob(JobReq* j) {
         c.h.ctx = &c;
         pushHandler(&c.h);
 #endif
-        r = callLam(j->lam, (int)j->n, j->args, &scratch);
+        if (j->fn) {
+            /* (a method of the globals: what came moved travels in the argument list of the call, as from a caller here - the callee keeps what it takes) */
+            j->holder->parent = &scratch;
+            j->holder->mark = AL_MARK;
+            g_argIn = j->holder;
+            r = j->fn(j->args[0], j->args + 1, &scratch);
+            g_argIn = NULL;
+        } else r = callLam(j->lam, (int)j->n, j->args, &scratch);
 #ifdef FIRE_EXCEPTIONS
         if (g_handlers == &c.h) popHandler();
         if (c.caught) {
@@ -10546,6 +10570,110 @@ FIRE_FN void handOverAll(const Value* vs, Value* out, uint32_t n, OwnList* trave
 #endif
     copyMapFree(&seen);
     free(parts);
+}
+
+/* ---- Rule 10 (docs/ROADMAP_TASKS.md step 8): what a fire thread writes into the main program's globals (a global variable or static field, a field or an
+ * element of one of their objects or arrays) and the arguments of a method of one of their objects (which runs as a job of the main program) go there: a
+ * value as it is; an object (array, buffer, lambda) of the thread only when it is fresh (`new`, a call's result, `copy x`) or taken (`take x`) - it moves
+ * like `handover` (every reference from before is dead) and joins the globals' domain. Another one of the thread is the ArgumentException; one of the main
+ * program, an actor and a destroyed one stay the references they are (as in the VM: VM.ToMainGlobals, CallGlobalsMethodAtHome). */
+FIRE_FN void noteGlobalTake(Value v) { if (g_isThread) g_pendingTake = ownedOf(v); }
+FIRE_FN void noteGlobalClaim(Value v, OwnList* temps) {
+    Owned* o;
+    if (g_isThread && (o = ownedOf(v)) != NULL && scopeListOf(o) == temps) g_pendingTake = o;
+}
+FIRE_FN void noteHolderClaim(Value holder, Value v, OwnList* temps) { if (g_isThread && sharedValue(holder)) noteGlobalClaim(v, temps); }
+FIRE_COLD FIRE_FN bool mainNeedsWord(const char* what, const char* method) {
+    char text[320];
+    if (method) snprintf(text, sizeof text, "'%s' runs in the main program (an object of its globals): an object of this thread goes there only with a word - 'copy x' (a copy) or 'take x' (moved).", method);
+    else snprintf(text, sizeof text, "%s belongs to the main program: an object of this thread goes there only with a word - 'copy x' (a copy) or 'take x' (moved).", what);
+    fireError("ArgumentException", text);
+    return false;
+}
+/* (0: it goes as it is, 1: it moves, 2: it needs a word) */
+FIRE_FN int mainGlobalsKind(Value v, bool fresh) {
+    Owned* o;
+    if (v.kind != K_Class && v.kind != K_Array && v.kind != K_Buffer && v.kind != K_Lambda) return 0;
+    if (v.kind != K_Lambda && !leafAlive(v)) return 0;
+    o = ownedOf(v);
+    if (!o || (o->flags & F_SHARED)) return 0;
+    if (o->okind == O_Object && (o->flags & 8)) return 0;   /* (an actor) */
+    if (o->owner && (o->owner == g_domainRoot || (o->owner->holder && (o->owner->holder->flags & F_SHARED)))) return 0;   /* (a lambda or buffer of the globals: they carry no flag) */
+    return fresh || o == (const Owned*)g_pendingTake ? 1 : 2;
+}
+/* (it moves to `target`; false - the exception is set - when it cannot: a raw pointer in it) */
+FIRE_FN bool moveToMain(Value* v, OwnList* target, bool share) {
+    Owned* o = ownedOf(*v);
+    Value out = *v;
+    if (v->kind == K_Lambda) {
+        if (o->owner) ownUnlink(o);
+        ownLink(target, o);
+    } else {
+        if (!handoverFree(v, 1)) return false;
+        handOverAll(v, &out, 1, target);
+        *v = out;
+    }
+    if (share) { refShare(*v); markOwnedShared(o); }
+    return true;
+}
+/* A store into a global variable, a static field (target NULL: the main program's global scope) or a field or an element of `holder`. */
+FIRE_FN bool toMainGlobals(Value* v, OwnList* target, const char* what) {
+    int k = mainGlobalsKind(*v, false);
+    g_pendingTake = NULL;
+    if (k == 0) return true;
+    if (k == 2) return mainNeedsWord(what, NULL);
+    return moveToMain(v, target ? target : g_domainRoot, true);
+}
+FIRE_FN bool toMainHolder(Value holder, Value* v, const char* what) {
+    Owned* h = ownedOf(holder);
+    OwnList* target;
+    if (!h || h->okind == O_Buffer || h->okind == O_Lambda) { g_pendingTake = NULL; return true; }
+    if (h->okind == O_Object) target = objOwned((Obj*)h);
+    else {
+        Arr* a = (Arr*)h;
+        if (!a->parts) a->parts = newPartsList(&a->h);
+        target = a->parts;
+    }
+    return toMainGlobals(v, target, what);
+}
+/* A method of an object of the main program's globals, called from a fire thread: a job of the main program - the thread waits (and yields) for its result
+ * or exception. An argument object of the thread goes with it only when it is fresh or taken (it travels in the argument list of the call, `al`). */
+FIRE_FN Value globalsCall(Value self, MsgFn fn, const Value* args, uint32_t n, const char* name) {
+    OwnList* al = g_argIn;
+    JobReq* j;
+    ActorReply* reply;
+    Req q;
+    uint32_t i;
+    g_argIn = NULL;
+    for (i = 0; i < n; i++) {
+        Owned* o = ownedOf(args[i]);
+        if (mainGlobalsKind(args[i], o && al && o->owner == al) == 2) { g_pendingTake = NULL; mainNeedsWord(NULL, name); return Undef(); }
+    }
+    g_pendingTake = NULL;
+    j = (JobReq*)malloc(sizeof(JobReq));
+    if (!j) allocFailed();
+    j->lam = Undef();
+    j->fn = fn;
+    j->n = n + 1;
+    j->args = (Value*)malloc((n + 1) * sizeof(Value));
+    j->holder = (OwnList*)malloc(sizeof(OwnList));
+    if (!j->args || !j->holder) allocFailed();
+    ownListInit(j->holder, 0, NULL);
+    j->args[0] = self;
+    for (i = 0; i < n; i++) {
+        Value a = args[i];
+        if (mainGlobalsKind(a, true) == 1) moveToMain(&a, j->holder, false);
+        if (a.kind == K_String) a = strCross(a);
+        retain(a);   /* (jobFree lets go of every argument) */
+        j->args[i + 1] = a;
+    }
+    reply = replyNew();
+    j->reply = reply;
+    q.sec = NULL; q.job = j;
+    reqPush(q);
+    fire_atomic_or(&g_attn, ATTN_SECT);
+    notifyEvent();
+    return awaitReplyOf(reply);
 }
 
 /* ---- `sync`: the copy writes back into its original (last writer wins). Cases for a reference (THREADING_DESIGN 4.3):

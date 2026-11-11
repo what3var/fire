@@ -387,7 +387,7 @@ namespace fire.Native
             string body = _usesThreads ? FieldFn("sfb", name) : plain;
             sb.AppendLine($"static inline void {body}(Value v, Value x, OwnList* list, uint32_t caller) {{\n    if (FIRE_UNLIKELY(v.kind != K_Class)) {{ notObjectAssign(v); return; }}\n    if (FIRE_UNLIKELY(!leafAlive(v))) {{ destroyedError(v); return; }}\n{own}{{ {FieldFn("fset", name)}(k_, v, x, list, caller); return; }} }}\n    fireSetField(v, x, {cname}, list, caller);\n}}");
             if (_usesThreads)
-                sb.AppendLine($"static inline void {plain}(Value v, Value x, OwnList* list, uint32_t caller) {{ bool ss_ = sectionScopeEnterV(v); {body}(v, x, list, caller); sectionScopeExit(ss_); }}");
+                sb.AppendLine($"static inline void {plain}(Value v, Value x, OwnList* list, uint32_t caller) {{ bool ss_ = sectionScopeEnterV(v); if (FIRE_LIKELY(!g_isThread || !sharedValue(v) || toMainHolder(v, &x, {CString($"The field '{name}' of an object of the globals")}))) {body}(v, x, list, caller); sectionScopeExit(ss_); }}");
             if (_usesProbes)
             {
                 sb.AppendLine($"static void {FieldFn("sfa", name)}(Value v, Value x, OwnList* list, uint32_t caller) {{ {plain}(v, x, list, caller); }}");
@@ -711,7 +711,7 @@ namespace fire.Native
                 if (!_dispatchers.Contains((name, argc))) continue;
                 sb.AppendLine(DispatcherSignature(name, argc) + ";");
                 if (WrapDispatchers) sb.AppendLine(DispatcherSignature(name, argc, "direct_") + ";");
-                if (_usesActors) sb.AppendLine($"static Value {CallFn(name, argc, "msg_")}(Value self, const Value* a, OwnList* list);");
+                if (WrapDispatchers) sb.AppendLine($"static Value {CallFn(name, argc, "msg_")}(Value self, const Value* a, OwnList* list);");
             }
             foreach (var (iface, name, argc) in _interfaceDispatchers) sb.AppendLine(InterfaceDispatcherSignature(iface, name, argc) + ";");
             foreach (var method in _operators) sb.AppendLine($"static Value {OperatorWrapper(method)}(Value a, Value b, OwnList* list);");

@@ -189,6 +189,41 @@ Sleep(300ms)
 print(total)                                // 3
 ```
 
+What a thread writes into the globals - a global variable or static field, a field or an element of one of their objects or arrays - **belongs to
+the main program** from then on, and a **method** of one of their objects runs **in the main program** (the thread waits for its result or exception,
+like with `await on`; a `Sleep` in it does not hold up the main program). So an object of the thread goes there only with a word that says what
+happens to it:
+
+```fire
+#import "time"
+class Box { int v; construct(int v) { this.v = v } }
+class Store {
+    List<Box> items = new List<Box>()
+    undefined Put(Box b) { this.items.Add(take b) }
+}
+var store = new Store()
+Box last = undefined
+var done = false
+fire {
+    var mine = new Box(7)
+    last = new Box(1)                           // fresh (`new`, the result of a call): it moves
+    store.Put(copy mine)                        // a copy goes, `mine` stays the thread's
+    store.Put(take mine)                        // `mine` moves - every other reference to it is dead, as after `handover`
+    var other = new Box(3)
+    try { store.Put(other) } catch (ArgumentException e) { print(e.message) }   // no word: refused
+    done = true
+}
+while (!done) { Sleep(1ms) }
+print(last.v + " " + store.items.Count)        // 1 2 - they outlive the thread
+```
+
+- Values (numbers, strings, ...) go as they are; so do objects of the main program itself, actors and destroyed objects.
+- Without a word the store is the ArgumentException "... belongs to the main program: an object of this thread goes there only with a word - 'copy x'
+  (a copy) or 'take x' (moved)" and nothing is stored; the call is the ArgumentException "'Put' runs in the main program ..." and does not run.
+  Inside `sync global { ... }` the same - only a method called there runs in the thread (the section holds the main program anyway).
+- What moves leaves the thread like `handover`: it is the main program's, also after the thread has ended.
+- Reading stays direct: a thread sees the globals as they are, without a job.
+
 `fire global { ... }` does not start a thread: it queues a **job** that the main program runs with the real globals. When the main program lets the
 waiting threads in and runs the jobs is a build setting, `#globaljobs` (the same in the VM and in a native build):
 
