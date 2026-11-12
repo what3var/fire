@@ -273,4 +273,11 @@ server.Run()
 * **Menus:** a MenuBar shows its titles; the browser opens and closes the popups itself (a click on a title, moving to another title while one is open,
   submenus on hover), only the choice of a row goes to the server - it runs the row's `Activate` (the check mark of a `Checkable` row, its `OnClick`).
   Separators, check marks, disabled rows and the `Shortcut` text are shown.
-* Not yet: the events of more elements (focus, keys, hover), context menus, drawing as commands instead of pictures.
+* **Focus and keys:** the focus of the browser is that of the page's UI root (`Focused`, the element that gets the keys). A key goes to the root like on
+  the desktop, to the element with the focus: the arrows, Home/End and PageUp/PageDown move in a list or a tree, Enter activates a row or is the
+  `OnEnter` of a TextBox (with the text typed so far), Escape, Delete, Space, F1-F12 and shortcuts (Ctrl, Alt, Cmd with a letter) go too. A text field keeps
+  its own editing: from it only Enter, Escape and the shortcuts are sent, and Ctrl+A/C/V/X/Y/Z stay the browser's (a shortcut that is sent is not the
+  browser's: Ctrl+S does not save the page). `browser.Focus(element)` gives an element the focus from the server, `browser.OnKey(func (int key, int mod)
+  => ...)` gets every key of the page first (true: taken), e.g. for shortcuts:
+  `this.browser.OnKey(func (int key, int mod) on this => { if (UI.Keys.Shortcut(mod) && key == 115) { this.Save(); return true }; return false })`.
+* Not yet: hover and the pointer events of elements other than a DrawingCanvas, context menus, drawing as commands instead of pictures.

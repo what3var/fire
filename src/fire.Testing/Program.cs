@@ -28987,6 +28987,88 @@ else
             print(log)
             server.Close()
             """),
+        ("Http.Pages: Fokus und Tasten (Pfeile in der Liste, Enter im TextBox = OnEnter, browser.Focus vom Server, browser.OnKey fuer die ganze Seite)", """
+            #import "http.pages"
+            [Page "/keys"]
+            class KeysPage {
+                UI.Panel view
+                UI.TextBox name
+                UI.ListBox list
+                UI.Label said
+                Http.Browser browser
+                construct() {
+                    this.view = new UI.Panel(0, 0, 400, 400)
+                    var stack = new UI.StackPanel(0, 0, -1, -1)
+                    var tb = new UI.TextBox("", 0, 0, 120, -1)
+                    tb.OnEnter = func () on this => { this.said.Text = "enter " + this.name.Text }
+                    this.name = tb
+                    stack.Add(take tb)
+                    var lb = new UI.ListBox(0, 0, 120, 80)
+                    lb.Add("one")
+                    lb.Add("two")
+                    lb.Add("three")
+                    lb.OnSelect = func () on this => { this.said.Text = "row " + this.list.SelectedIndex }
+                    this.list = lb
+                    stack.Add(take lb)
+                    var b = new UI.Button("Edit")
+                    b.OnClick = func () on this => { this.Edit() }
+                    stack.Add(take b)
+                    var l = new UI.Label("none")
+                    this.said = l
+                    stack.Add(take l)
+                    this.view.Add(take stack)
+                }
+                undefined Edit() {
+                    this.browser.Focus(this.name)
+                    this.browser.OnKey(func (int key, int mod) on this => {
+                        if (UI.Keys.Shortcut(mod) && key == 115) {
+                            this.said.Text = "saved"
+                            return true
+                        }
+                        return false
+                    })
+                }
+            }
+            var server = new Http.AppServer("127.0.0.1", 0)
+            server.Settings.showErrors = true
+            server.PushTo(new Http.Sessions()).PushTo(new Http.Pages("Keys"))
+            int port = server.Port
+            int done = 0
+            string log = ""
+            fire taking port {
+                var c = new Http.Client()
+                var r = c.Get("http://127.0.0.1:" + port + "/keys")
+                string html = r.Text()
+                string cookie = r.Header("Set-Cookie").Substring(0, 45)
+                int at = html.IndexOf("data-circuit=\"") + 14
+                string circuit = html.Substring(at, 32)
+                var out = "page " + r.status + "\n"
+                var h = new Http.Headers()
+                h.Set("Cookie", cookie)
+                var ws = Http.WebSocket.Connect("ws://127.0.0.1:" + port + "/_fire/ws?c=" + circuit, 5000, h)
+                ws.Send("{\"e\": 3, \"k\": \"focus\"}")
+                out = out + "focus list nothing " + (ws.ReceiveText(400) == undefined) + "\n"
+                ws.Send("{\"e\": 3, \"k\": \"key\", \"key\": 1073741905, \"mod\": 0}")
+                out = out + "down " + ws.ReceiveText(5000) + "\n"
+                ws.Send("{\"e\": 3, \"k\": \"key\", \"key\": 1073741901, \"mod\": 0}")
+                out = out + "end " + ws.ReceiveText(5000) + "\n"
+                ws.Send("{\"e\": 4, \"k\": \"click\"}")
+                out = out + "edit " + ws.ReceiveText(5000) + "\n"
+                ws.Send("{\"e\": 2, \"k\": \"input\", \"v\": \"Ada\"}")
+                out = out + "input " + ws.ReceiveText(5000) + "\n"
+                ws.Send("{\"e\": 2, \"k\": \"key\", \"key\": 13, \"mod\": 0}")
+                out = out + "enter " + ws.ReceiveText(5000) + "\n"
+                ws.Send("{\"e\": -1, \"k\": \"focus\"}")
+                out = out + "blur nothing " + (ws.ReceiveText(400) == undefined) + "\n"
+                ws.Send("{\"e\": -1, \"k\": \"key\", \"key\": 115, \"mod\": 64}")
+                out = out + "ctrl+s " + ws.ReceiveText(5000) + "\n"
+                ws.Close()
+                sync global { log = out; done = 1 }
+            }
+            while (done < 1) { server.AcceptOne(20ms); sync globals }
+            print(log)
+            server.Close()
+            """),
         ("Http.Pages: ListBox (Zeilen aus DisplayMember, Klick waehlt, Doppelklick aktiviert, neue Zeilen als Patch) und Image (PNG)", """
             #import "http.pages"
             class Person { string name

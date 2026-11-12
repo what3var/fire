@@ -527,6 +527,13 @@ namespace Http {
             return done.Wait(limit)
         }
 
+        // Gives the element the focus - in the UI root of the page (its keys go to it) and in the browser.
+        undefined Focus(UI.Element element) { this.state.root.SetFocus(element) }
+
+        // The keys of the whole page, before the element with the focus gets them: `handler(key, mod)` (UI.Keys, UI.Keys.Shift(mod)/Shortcut(mod))
+        // returns true when it took the key.
+        undefined OnKey(lambda<int, int> handler) { this.state.root.onKeyPreview = take handler }
+
         // Runs JS code in the page (no result).
         undefined Run(string code) {
             this.state.outbox.Add("{\"id\": -1, \"code\": " + Json.Serialize(code) + "}")
@@ -549,6 +556,8 @@ namespace Http {
         List callbacks
         Http.Browser browser
         Http.PageDirectory directory
+        // the element with the focus as the browser has it (its number; -1 none)
+        int seenFocus = -1
 
         construct(string typeName, string id, string session) {
             this.id = id
@@ -606,6 +615,24 @@ namespace Http {
                     this.callbacks[call] = undefined
                     if (callback != undefined) { callback(o.Get("v")) }
                 }
+                return this.Changes()
+            }
+            if (kind == "focus") {
+                // (the browser moved the focus: the UI root follows)
+                if (id >= 0 && id < this.elements.Count) { this.root.SetFocus(this.elements[id]) }
+                else { this.root.SetFocus(undefined) }
+                this.seenFocus = id
+                return this.Changes()
+            }
+            if (kind == "key") {
+                // (a key: to the element with the focus - through the keys of the page, browser.OnKey - like on the desktop)
+                if (id >= 0 && id < this.elements.Count && this.root.focusElement != this.elements[id]) {
+                    this.root.SetFocus(this.elements[id])
+                    this.seenFocus = id
+                }
+                int key = o.Get("key")
+                int mod = o.Get("mod")
+                this.root.KeyDown(key, mod)
                 return this.Changes()
             }
             if (id >= 0 && id < this.elements.Count) {
@@ -688,7 +715,11 @@ namespace Http {
             Http.PageHtml.Collect(view, now)
             var same = now.Count == this.elements.Count
             for (var i = 0; same && i < now.Count; i++) { if (now[i] != this.elements[i]) { same = false } }
-            if (!same) { return "{\"html\": " + Json.Serialize(this.Html()) + this.TakeOutbox() + "}" }
+            if (!same) {
+                var html = this.Html()
+                this.seenFocus = -1   // (a new tree: the browser has lost its focus)
+                return "{\"html\": " + Json.Serialize(html) + this.TakeOutbox() + this.FocusChange() + "}"
+            }
             var out = ""
             for (var i = 0; i < now.Count; i++) {
                 var p = Http.PageHtml.Props(now[i])
@@ -698,7 +729,17 @@ namespace Http {
                     out = out + Http.PageHtml.Patch(now[i], i)
                 }
             }
-            return "{\"patches\": [" + out + "]" + this.TakeOutbox() + "}"
+            return "{\"patches\": [" + out + "]" + this.TakeOutbox() + this.FocusChange() + "}"
+        }
+
+        // (the member "focus" of an answer when the code of the page moved the focus - browser.Focus, a key that moved it)
+        string FocusChange() {
+            var focus = this.root.focusElement
+            var id = -1
+            if (focus != undefined) { id = Http.PageHtml.IdOf(this.elements, focus) }
+            if (id == this.seenFocus || id < 0) { return "" }
+            this.seenFocus = id
+            return ", \"focus\": " + id
         }
 
         // (the JS calls that wait for the browser, as the member "js" of an answer)
@@ -1025,14 +1066,23 @@ namespace Http {
                 "if(p.c!==undefined){var i=el.querySelector('input');if(i){i.checked=p.c}}" +
                 "if(p.v!==undefined){el.hidden=!p.v}" +
                 "if(p.n!==undefined){var d=(el.tagName=='BUTTON'||el.tagName=='INPUT')?el:el.querySelector('input');if(d){d.disabled=!p.n}}" +
-                "if(p.rows!==undefined){var h=el.querySelector('.f-head');el.innerHTML='';if(h){if(p.head!==undefined){h.innerHTML=p.head}el.appendChild(h)}p.rows.forEach(function(t,i){var r=document.createElement('div');r.className='f-row'+(i==p.sel?' f-sel':'');r.dataset.i=i;r.innerHTML=t;el.appendChild(r)})}" +
+                "if(p.rows!==undefined){var h=el.querySelector('.f-head');el.innerHTML='';if(h){if(p.head!==undefined){h.innerHTML=p.head}el.appendChild(h)}p.rows.forEach(function(t,i){var r=document.createElement('div');r.className='f-row'+(i==p.sel?' f-sel':'');r.dataset.i=i;r.innerHTML=t;el.appendChild(r)});var s=el.querySelector('.f-sel');if(s&&s.scrollIntoView){s.scrollIntoView({block:'nearest'})}}" +
                 "if(p.menu!==undefined){el.innerHTML=p.menu}if(p.img!==undefined){el.src=p.img}if(p.fg!==undefined){el.style.color=p.fg}if(p.bg!==undefined){el.style.background=p.bg}}" +
                 "function runJs(list){(list||[]).forEach(function(j){if(j.id<0){try{(0,eval)(j.code)}catch(x){}return}var r;try{r=window[j.fn].apply(window,j.args)}catch(x){send({k:'js',e:-1,id:j.id});return}Promise.resolve(r).then(function(v){send({k:'js',e:-1,id:j.id,v:v})},function(){send({k:'js',e:-1,id:j.id})})})}" +
+                "var lastFocus=-1;document.addEventListener('focusin',function(ev){var e=idOf(ev.target);if(e!==lastFocus){lastFocus=e;send({e:e,k:'focus'})}});" +
+                "document.addEventListener('focusout',function(ev){if(!ev.relatedTarget&&lastFocus!==-1){lastFocus=-1;send({e:-1,k:'focus'})}});" +
+                "var keys={Enter:13,Escape:27,Backspace:8,Delete:127,' ':32,ArrowRight:1073741903,ArrowLeft:1073741904,ArrowDown:1073741905,ArrowUp:1073741906,Home:1073741898,End:1073741901,PageUp:1073741899,PageDown:1073741902,Insert:1073741897};" +
+                "document.addEventListener('keydown',function(ev){var t=ev.target,k=ev.key,code=keys[k],mod=(ev.shiftKey?1:0)|(ev.ctrlKey?64:0)|(ev.altKey?256:0)|(ev.metaKey?1024:0);" +
+                "if(/^F([1-9]|1[0-2])$/.test(k)){code=1073741881+(+k.substring(1))}var short=ev.ctrlKey||ev.metaKey||ev.altKey;if(code===undefined&&short&&k.length==1){code=k.toLowerCase().charCodeAt(0)}if(code===undefined){return}" +
+                "var field=t.tagName=='INPUT'&&t.type!='checkbox'||t.tagName=='TEXTAREA',edit=short&&k.length==1&&'acvxyz'.indexOf(k.toLowerCase())>=0;if(field&&!(code==13||code==27||short&&!edit)){return}if(short&&k.length==1&&!edit){ev.preventDefault()}if((t.tagName=='BUTTON'||t.type=='checkbox')&&(code==13||code==32)){return}" +
+                "var e=idOf(t);if(field&&code==13&&t.dataset.k=='input'){clearTimeout(timers[e]);send({e:e,k:'input',v:t.value})}" +
+                "if(t.dataset&&t.dataset.k=='list'&&(code==32||code>1073741896)){ev.preventDefault()}send({e:e,k:'key',key:code,mod:mod})});" +
                 "var down=0,last=0;function pos(ev,t){var r=t.getBoundingClientRect();return{x:Math.round((ev.clientX-r.left)*t.width/r.width),y:Math.round((ev.clientY-r.top)*t.height/r.height)}}" +
                 "document.addEventListener('pointerdown',function(ev){var t=ev.target;if(t.dataset&&t.dataset.k=='draw'){down=1;t.setPointerCapture(ev.pointerId);var p=pos(ev,t);send({e:idOf(t),k:'mouse',t:'down',x:p.x,y:p.y,b:ev.button+1});ev.preventDefault()}});" +
                 "document.addEventListener('pointermove',function(ev){var t=ev.target;if(down&&t.dataset&&t.dataset.k=='draw'){var n=Date.now();if(n-last<30){return}last=n;var p=pos(ev,t);send({e:idOf(t),k:'mouse',t:'move',x:p.x,y:p.y})}});" +
                 "document.addEventListener('pointerup',function(ev){var t=ev.target;if(down&&t.dataset&&t.dataset.k=='draw'){down=0;var p=pos(ev,t);send({e:idOf(t),k:'mouse',t:'up',x:p.x,y:p.y,b:ev.button+1})}});" +
-                "ws.onmessage=function(m){var d=JSON.parse(m.data);if(d.html!==undefined){document.getElementById('fire-root').innerHTML=d.html}else{(d.patches||[]).forEach(function(p){var el=document.getElementById('f'+p.e);if(el){apply(el,p)}})}runJs(d.js)};" +
+                "ws.onmessage=function(m){var d=JSON.parse(m.data);if(d.html!==undefined){document.getElementById('fire-root').innerHTML=d.html}else{(d.patches||[]).forEach(function(p){var el=document.getElementById('f'+p.e);if(el){apply(el,p)}})}" +
+                "if(d.focus!==undefined){var f=document.getElementById('f'+d.focus);if(f){lastFocus=d.focus;var c=f.matches('input,button,textarea,[tabindex]')?f:f.querySelector('input,button,textarea,[tabindex]');(c||f).focus()}}runJs(d.js)};" +
                 "})();"
         }
 
