@@ -554,8 +554,8 @@ The threads share nothing that can change - and get ways to pass what does not c
   with a, ch` for a job of the main program) - an end of its own on the same queue; the channel closes when the one that made it ends. Objects,
   arrays and records go only fresh, copied or taken (the parcel: it belongs to the channel, then to the receiver, and dies with it; undelivered it
   dies with the channel; a record keeps its identity); TC029 / the ArgumentException without a word. Open: a record lent without ownership
-  (`Send(r)` - today it needs the word like an object; it needs the count that keeps a record's memory for another thread), `Channel.Pair<A, B>()`,
-  `Net.Channel<T>` (JSON over a socket).
+  (`Send(r)` - today it needs the word like an object; it needs the count that keeps a record's memory for another thread), `Net.Channel<T>` (JSON over a
+  socket). Done: `Channel.Pair<A, B>()` - a ChannelEnd<A, B> that sends A and receives B, `.Other()` the end that sends B and receives A.
 * **No shared objects** (the user): with records and channels everything is covered - an object stays where it lives; other threads reach it only
   through calls of lambdas bound to it, jobs, `await on` and actors.
 
@@ -574,4 +574,4 @@ The threads share nothing that can change - and get ways to pass what does not c
 
 ## Open
 
-Step 9: records, `with` and `Channel<T>` are done; open: lent records over a channel, `Channel.Pair`, `Net.Channel<T>` (see "Step 9" above).
+Step 9: records, `with`, `Channel<T>` and `Channel.Pair` are done; open: lent records over a channel, `Net.Channel<T>` (see "Step 9" above).
