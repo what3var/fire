@@ -264,5 +264,8 @@ server.Run()
   `browser.Call("name", [args], func (any result) => ...)` does not wait: the call goes out with the next answer and the callback runs later, on the page's
   thread like an event. `browser.Run(code)` runs code (no result).
 * An event that changes nothing gets no answer.
-* Not yet: item templates and the columns of a ListView, menus, trees, the events of more elements (focus, keys, hover), drawing as commands instead of
-  pictures.
+* **Lists:** a ListBox shows its rows (DisplayMember); a click selects, a double click activates. A ListView with columns has a header row and a cell per
+  column (the width of the column, -1 the rest); a click on a title sorts by that column, a second click reverses it (the arrow shows it). With an
+  `ItemTemplate` every row is the HTML of its template element - for display, like in the UI library (no ids: a click is one on the row). All the rows
+  are there (the browser scrolls them).
+* Not yet: menus, trees, the events of more elements (focus, keys, hover), drawing as commands instead of pictures.

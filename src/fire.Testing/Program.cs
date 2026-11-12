@@ -28819,6 +28819,84 @@ else
             print(log)
             server.Close()
             """),
+        ("Http.Pages: ListView mit Spalten (Kopfzeile, Zellen, Klick auf einen Titel sortiert, nochmal umgekehrt) und ListBox mit ItemTemplate (Zeilen als HTML ohne ids)", """
+            #import "http.pages"
+            class Person { string name
+                int age
+                construct(string n, int a) { this.name = n; this.age = a } }
+            [Page "/cols"]
+            class ColsPage {
+                UI.Panel view
+                UI.ListView table
+                UI.ListBox cards
+                UI.Label chosen
+                construct() {
+                    this.view = new UI.Panel(0, 0, 400, 400)
+                    var stack = new UI.StackPanel(0, 0, -1, -1)
+                    var lv = new UI.ListView(0, 0, 240, 100)
+                    lv.AddColumn("Name", "name", 120)
+                    lv.AddColumn("Age", "age", -1)
+                    lv.Add(new Person("Ben", 40))
+                    lv.Add(new Person("Anna", 30))
+                    lv.OnSelect = func () on this => { this.chosen.Text = "row " + this.table.SelectedIndex }
+                    this.table = lv
+                    stack.Add(take lv)
+                    var lb = new UI.ListBox(0, 0, 160, 100)
+                    lb.ItemTemplate = new UI.DataTemplate(func (any item) => {
+                        var sp = new UI.StackPanel(0, 0, -1, -1, true)
+                        sp.Add(new UI.Label(item.name))
+                        sp.Add(new UI.Label(" (" + item.age + ")"))
+                        return sp
+                    })
+                    lb.Add(new Person("Carl", 7))
+                    this.cards = lb
+                    stack.Add(take lb)
+                    var b = new UI.Button("More")
+                    b.OnClick = func () on this => { this.cards.Add(new Person("Dora", 9)) }
+                    stack.Add(take b)
+                    var l = new UI.Label("none")
+                    this.chosen = l
+                    stack.Add(take l)
+                    this.view.Add(take stack)
+                }
+            }
+            var server = new Http.AppServer("127.0.0.1", 0)
+            server.Settings.showErrors = true
+            server.PushTo(new Http.Sessions()).PushTo(new Http.Pages("Cols"))
+            int port = server.Port
+            int done = 0
+            string log = ""
+            fire taking port {
+                var c = new Http.Client()
+                var r = c.Get("http://127.0.0.1:" + port + "/cols")
+                string html = r.Text()
+                string cookie = r.Header("Set-Cookie").Substring(0, 45)
+                int at = html.IndexOf("data-circuit=\"") + 14
+                string circuit = html.Substring(at, 32)
+                int list = html.IndexOf("class=\"f-list f-cols\"")
+                var out = "page " + r.status + " cols " + (list > 0) + "\n"
+                out = out + "head " + (html.IndexOf("<div class=\"f-head\"><span class=\"f-cell\" data-c=\"0\" style=\"width:120px\">Name</span><span class=\"f-cell\" data-c=\"1\" style=\"flex:1\">Age</span></div>") > 0) + "\n"
+                out = out + "cells " + (html.IndexOf("data-i=\"0\"><span class=\"f-cell\" style=\"width:120px\">Ben</span><span class=\"f-cell\" style=\"flex:1\">40</span></div>") > 0) + "\n"
+                int card = html.IndexOf(">Carl<")
+                out = out + "template " + (card > 0) + " " + html.Substring(html.LastIndexOf("data-i=\"0\"", card), card - html.LastIndexOf("data-i=\"0\"", card) + 6) + "\n"
+                var h = new Http.Headers()
+                h.Set("Cookie", cookie)
+                var ws = Http.WebSocket.Connect("ws://127.0.0.1:" + port + "/_fire/ws?c=" + circuit, 5000, h)
+                ws.Send("{\"e\": 2, \"k\": \"sort\", \"v\": 0}")
+                out = out + "sort " + ws.ReceiveText(5000) + "\n"
+                ws.Send("{\"e\": 2, \"k\": \"sort\", \"v\": 0}")
+                out = out + "again " + ws.ReceiveText(5000) + "\n"
+                ws.Send("{\"e\": 2, \"k\": \"select\", \"v\": 1}")
+                out = out + "select " + ws.ReceiveText(5000) + "\n"
+                ws.Send("{\"e\": 4, \"k\": \"click\"}")
+                out = out + "more " + ws.ReceiveText(5000) + "\n"
+                ws.Close()
+                sync global { log = out; done = 1 }
+            }
+            while (done < 1) { server.AcceptOne(20ms); sync globals }
+            print(log)
+            server.Close()
+            """),
         ("Http.Pages: ListBox (Zeilen aus DisplayMember, Klick waehlt, Doppelklick aktiviert, neue Zeilen als Patch) und Image (PNG)", """
             #import "http.pages"
             class Person { string name

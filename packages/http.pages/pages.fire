@@ -62,7 +62,7 @@ namespace Http {
             if (e is of UI.DrawingCanvas) { img = "" + Http.PageHtml.ImageSignature(e) }
             if (e is of UI.ItemsControl) {
                 UI.ItemsControl ic = e
-                img = Http.PageHtml.RowsJson(ic) + "#" + ic.SelectedIndex
+                img = Http.PageHtml.RowsJson(ic) + "#" + ic.SelectedIndex + "#" + Http.PageHtml.Head(ic)
             }
             if (e is of UI.Image) {
                 // (another picture: another framebuffer - the pixels of the same one are not compared)
@@ -82,7 +82,12 @@ namespace Http {
             var p = "{\"e\": " + id + ", \"t\": " + Json.Serialize(t) + ", \"v\": " + Http.PageHtml.Bool(e.Visible) + ", \"n\": " + Http.PageHtml.Bool(e.Enabled)
             if (e is of UI.CheckBox) { UI.CheckBox ch = e; p = p + ", \"c\": " + Http.PageHtml.Bool(ch.IsChecked) }
             if (e is of UI.DrawingCanvas) { p = p + ", \"img\": " + Json.Serialize(Http.PageHtml.Image(e)) }
-            if (e is of UI.ItemsControl) { UI.ItemsControl lc = e; p = p + ", \"rows\": " + Http.PageHtml.RowsJson(lc) + ", \"sel\": " + lc.SelectedIndex }
+            if (e is of UI.ItemsControl) {
+                UI.ItemsControl lc = e
+                p = p + ", \"rows\": " + Http.PageHtml.RowsJson(lc) + ", \"sel\": " + lc.SelectedIndex
+                var head = Http.PageHtml.Head(lc)
+                if (head != "") { p = p + ", \"head\": " + Json.Serialize(head) }
+            }
             if (e is of UI.Image) { UI.Image pic = e; p = p + ", \"img\": " + Json.Serialize(Http.PageHtml.Picture(pic.Source)) }
             var fg = Http.PageHtml.Color(e.Foreground)
             if (e is of UI.Label) { UI.Label lc = e; var own = Http.PageHtml.Color(lc.Color); if (own != undefined) { fg = own } }
@@ -98,15 +103,96 @@ namespace Http {
             return "data:image/png;base64," + Http.Base64.Encode(dc.framebuffer.ToPng())
         }
 
-        // The texts of the rows of a list (DisplayMember) as a JSON array.
+        // The rows of a list as a JSON array of their HTML (inside the row).
         static string RowsJson(UI.ItemsControl ic) {
             var rows = ic.Rows()
             var t = "["
             for (var i = 0; i < rows.Count; i++) {
                 if (i > 0) { t = t + "," }
-                t = t + Json.Serialize(ic.ItemText(rows[i]))
+                t = t + Json.Serialize(Http.PageHtml.Row(ic, i))
             }
             return t + "]"
+        }
+
+        // The HTML inside the row `index`: its template element (display only, like in the UI library: no ids, the events are those of the list), the
+        // cells of the columns of a ListView, or the text (DisplayMember).
+        static string Row(UI.ItemsControl ic, int index) {
+            var rows = ic.Rows()
+            if (ic.ItemTemplate != undefined && index < ic.rowElements.Count) {
+                any built = ic.rowElements[index]
+                if (built != undefined) { return Http.PageHtml.Render(built, new List()) }
+            }
+            if (ic.ItemTemplate == undefined && ic is of UI.ListView) {
+                UI.ListView lv = ic
+                if (lv.columns.Count > 0) {
+                    var cells = ""
+                    for (var c = 0; c < lv.columns.Count; c++) {
+                        UI.GridColumn column = lv.columns[c]
+                        cells = cells + "<span class=\"f-cell\"" + Http.PageHtml.CellStyle(column) + ">" + Http.PageHtml.Escape(UI.M.Text(UI.M.Member(rows[index], column.member))) + "</span>"
+                    }
+                    return cells
+                }
+            }
+            return Http.PageHtml.Escape(ic.ItemText(rows[index]))
+        }
+
+        // The header of a ListView with columns (its titles, an arrow at the column it is sorted by; a click sorts); "" for other lists.
+        static string Head(UI.ItemsControl ic) {
+            if (ic.ItemTemplate != undefined || !(ic is of UI.ListView)) { return "" }
+            UI.ListView lv = ic
+            if (lv.columns.Count == 0) { return "" }
+            var t = ""
+            for (var c = 0; c < lv.columns.Count; c++) {
+                UI.GridColumn column = lv.columns[c]
+                var arrow = ""
+                if (column.member != "" && column.member == lv.sortedBy) {
+                    arrow = " &#9650;"
+                    if (lv.sortDescending) { arrow = " &#9660;" }
+                }
+                t = t + "<span class=\"f-cell\" data-c=\"" + c + "\"" + Http.PageHtml.CellStyle(column) + ">" + Http.PageHtml.Escape(column.header) + arrow + "</span>"
+            }
+            return t
+        }
+
+        // (the width of a column; -1: the rest)
+        static string CellStyle(UI.GridColumn column) {
+            if (column.width < 0) { return " style=\"flex:1\"" }
+            return " style=\"width:" + column.width + "px\""
+        }
+
+        // The rows of the lists with a template are built (all of them: the browser scrolls itself; the UI library builds only the visible ones).
+        static undefined BuildRows(UI.Element e, UI.Root root) {
+            if (e is of UI.ItemsControl) {
+                UI.ItemsControl ic = e
+                if (ic.ItemTemplate == undefined) { return }
+                var rows = ic.Rows()
+                if (ic.builtCount != rows.Count) {
+                    ic.DropRows()
+                    for (var i = 0; i < rows.Count; i++) { ic.rowElements.Add(undefined) }
+                    ic.builtCount = rows.Count
+                }
+                var tpl = ic.ItemTemplate
+                for (var i = 0; i < rows.Count; i++) {
+                    any row = ic.rowElements[i]
+                    if (row == undefined) {
+                        row = tpl.Build(rows[i])
+                        row.TakeTo(ic)
+                        row.parent = ic
+                        ic.rowElements[i] = row
+                        row.Poll(root)
+                        row.Measure(root, -1, -1)
+                    }
+                }
+                return
+            }
+            if (e is of UI.Panel) {
+                UI.Panel p = e
+                for (var i = 0; i < p.children.Count; i++) { Http.PageHtml.BuildRows(p.children[i], root) }
+            } else if (e is of UI.Border) {
+                UI.Border b = e
+                any child = b.child
+                if (child != undefined) { Http.PageHtml.BuildRows(child, root) }
+            }
         }
 
         // A framebuffer as a data URL (PNG; "" for none).
@@ -166,7 +252,9 @@ namespace Http {
         }
 
         static string Attrs(UI.Element e, List elements, string cls, string extraStyle) {
-            var a = " id=\"f" + Http.PageHtml.IdOf(elements, e) + "\" class=\"" + cls + "\"" + Http.PageHtml.Style(e, extraStyle)
+            var id = Http.PageHtml.IdOf(elements, e)
+            var a = " class=\"" + cls + "\"" + Http.PageHtml.Style(e, extraStyle)
+            if (id >= 0) { a = " id=\"f" + id + "\"" + a }   // (the elements of a template row have none)
             if (!e.Visible) { a = a + " hidden" }
             if (e.ToolTip != "") { a = a + " title=\"" + Http.PageHtml.Escape(e.ToolTip) + "\"" }
             return a
@@ -180,16 +268,23 @@ namespace Http {
                 return "<img data-k=\"draw\" draggable=\"false\"" + Http.PageHtml.Attrs(e, elements, "f-draw", "") + size + " src=\"" + Http.PageHtml.Image(dc) + "\">"
             }
             if (e is of UI.ItemsControl) {
-                // (ListBox, ListView: the rows as texts; a click selects, a double click activates)
+                // (ListBox, ListView: the rows - text, cells of the columns or the template; a click selects, a double click activates, a click on a title
+                // of the columns sorts)
                 UI.ItemsControl ic = e
                 var rows = ic.Rows()
                 var html = ""
+                var head = Http.PageHtml.Head(ic)
+                var listClass = "f-list"
+                if (head != "") {
+                    html = "<div class=\"f-head\">" + head + "</div>"
+                    listClass = "f-list f-cols"
+                }
                 for (var i = 0; i < rows.Count; i++) {
                     var cls = "f-row"
                     if (i == ic.SelectedIndex) { cls = "f-row f-sel" }
-                    html = html + "<div class=\"" + cls + "\" data-i=\"" + i + "\">" + Http.PageHtml.Escape(ic.ItemText(rows[i])) + "</div>"
+                    html = html + "<div class=\"" + cls + "\" data-i=\"" + i + "\">" + Http.PageHtml.Row(ic, i) + "</div>"
                 }
-                return "<div data-k=\"list\" tabindex=\"0\"" + Http.PageHtml.Attrs(e, elements, "f-list", "overflow:auto;") + ">" + html + "</div>"
+                return "<div data-k=\"list\" tabindex=\"0\"" + Http.PageHtml.Attrs(e, elements, listClass, "overflow:auto;") + ">" + html + "</div>"
             }
             if (e is of UI.Image) {
                 UI.Image im = e
@@ -397,6 +492,7 @@ namespace Http {
             this.root.content.Measure(this.root, 1280, 800)
             this.root.content.Arrange(this.root, 0, 0, 1280, 800)
             this.root.content.Poll(this.root)
+            Http.PageHtml.BuildRows(this.root.content, this.root)
         }
 
         // The HTML of the page (its view; the sizes of the panels with places from the layout of the UI library).
@@ -446,6 +542,13 @@ namespace Http {
                             ic.activated = true
                             var act = ic.OnActivate
                             act()
+                        }
+                    } else if (kind == "sort" && e is of UI.ListView) {
+                        UI.ListView lv = e
+                        int column = o.Get("v")
+                        if (column >= 0 && column < lv.columns.Count) {
+                            UI.GridColumn gc = lv.columns[column]
+                            lv.SortBy(gc.member)
                         }
                     } else if (kind == "mouse" && e is of UI.DrawingCanvas) {
                         UI.DrawingCanvas dc = e
@@ -788,7 +891,7 @@ namespace Http {
         }
 
         static string Css() {
-            return "body{margin:0;font-family:system-ui,sans-serif;font-size:14px}[hidden]{display:none!important}.f-label{white-space:pre}.f-flow{white-space:normal}.f-flow .f-button,.f-flow .f-check,.f-flow .f-text{display:inline-block;vertical-align:bottom}.f-button{font:inherit;padding:3px 12px}.f-text{font:inherit}.f-border{border:1px solid #8888;padding:4px}.f-check{user-select:none}.f-list{border:1px solid #8888;user-select:none}.f-row{padding:1px 4px;cursor:default}.f-sel{background:#0078d7;color:#fff}"
+            return "body{margin:0;font-family:system-ui,sans-serif;font-size:14px}[hidden]{display:none!important}.f-label{white-space:pre}.f-flow{white-space:normal}.f-flow .f-button,.f-flow .f-check,.f-flow .f-text{display:inline-block;vertical-align:bottom}.f-button{font:inherit;padding:3px 12px}.f-text{font:inherit}.f-border{border:1px solid #8888;padding:4px}.f-check{user-select:none}.f-list{border:1px solid #8888;user-select:none}.f-row{padding:1px 4px;cursor:default}.f-sel{background:#0078d7;color:#fff}.f-cols .f-row,.f-head{display:flex;padding:1px 0}.f-head{position:sticky;top:0;background:#e8e8e8;border-bottom:1px solid #8888}.f-cell{flex:none;box-sizing:border-box;padding:0 4px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.f-head .f-cell{cursor:pointer;border-right:1px solid #8884}"
         }
 
         // The script of the pages: the WebSocket, the events (input debounced), the changes.
@@ -799,14 +902,15 @@ namespace Http {
                 "function idOf(el){while(el&&!(el.id&&el.id.charAt(0)=='f')){el=el.parentElement}return el?+el.id.substring(1):-1}" +
                 "document.addEventListener('click',function(ev){var t=ev.target.closest('[data-k=click]');if(t){send({e:idOf(t),k:'click'})}});" +
                 "document.addEventListener('click',function(ev){var r=ev.target.closest('.f-row');if(r){send({e:idOf(r.parentElement),k:'select',v:+r.dataset.i})}});" +
+                "document.addEventListener('click',function(ev){var c=ev.target.closest('.f-head .f-cell');if(c){send({e:idOf(c.parentElement.parentElement),k:'sort',v:+c.dataset.c})}});" +
                 "document.addEventListener('dblclick',function(ev){var r=ev.target.closest('.f-row');if(r){send({e:idOf(r.parentElement),k:'activate',v:+r.dataset.i})}});" +
                 "document.addEventListener('change',function(ev){var t=ev.target;if(t.dataset.k=='check'){send({e:idOf(t),k:'check',v:t.checked})}});" +
                 "var timers={};document.addEventListener('input',function(ev){var t=ev.target;if(t.dataset.k=='input'){var e=idOf(t);clearTimeout(timers[e]);timers[e]=setTimeout(function(){send({e:e,k:'input',v:t.value})},150)}});" +
-                "function apply(el,p){if(p.t!==undefined){if(el.tagName=='INPUT'){if(document.activeElement!==el){el.value=p.t}}else if(el.dataset.kind=='check'){el.querySelector('span').textContent=p.t}else{el.textContent=p.t}}" +
+                "function apply(el,p){if(p.t!==undefined){if(el.tagName=='INPUT'){if(document.activeElement!==el){el.value=p.t}}else if(el.dataset.kind=='check'){el.querySelector('span').textContent=p.t}else if(el.dataset.k!='list'){el.textContent=p.t}}" +
                 "if(p.c!==undefined){var i=el.querySelector('input');if(i){i.checked=p.c}}" +
                 "if(p.v!==undefined){el.hidden=!p.v}" +
                 "if(p.n!==undefined){var d=(el.tagName=='BUTTON'||el.tagName=='INPUT')?el:el.querySelector('input');if(d){d.disabled=!p.n}}" +
-                "if(p.rows!==undefined){el.innerHTML='';p.rows.forEach(function(t,i){var r=document.createElement('div');r.className='f-row'+(i==p.sel?' f-sel':'');r.dataset.i=i;r.textContent=t;el.appendChild(r)})}" +
+                "if(p.rows!==undefined){var h=el.querySelector('.f-head');el.innerHTML='';if(h){if(p.head!==undefined){h.innerHTML=p.head}el.appendChild(h)}p.rows.forEach(function(t,i){var r=document.createElement('div');r.className='f-row'+(i==p.sel?' f-sel':'');r.dataset.i=i;r.innerHTML=t;el.appendChild(r)})}" +
                 "if(p.img!==undefined){el.src=p.img}if(p.fg!==undefined){el.style.color=p.fg}if(p.bg!==undefined){el.style.background=p.bg}}" +
                 "function runJs(list){(list||[]).forEach(function(j){if(j.id<0){try{(0,eval)(j.code)}catch(x){}return}var r;try{r=window[j.fn].apply(window,j.args)}catch(x){send({k:'js',e:-1,id:j.id});return}Promise.resolve(r).then(function(v){send({k:'js',e:-1,id:j.id,v:v})},function(){send({k:'js',e:-1,id:j.id})})})}" +
                 "var down=0,last=0;function pos(ev,t){var r=t.getBoundingClientRect();return{x:Math.round((ev.clientX-r.left)*t.width/r.width),y:Math.round((ev.clientY-r.top)*t.height/r.height)}}" +
