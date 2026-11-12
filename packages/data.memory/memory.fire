@@ -7,7 +7,7 @@
 //     SELECT [DISTINCT] * | e [AS n], ... [FROM t] [WHERE e] [ORDER BY e [ASC|DESC], ...] [LIMIT n [OFFSET m]]
 //     BEGIN, COMMIT, ROLLBACK, SAVEPOINT s, RELEASE [SAVEPOINT] s, ROLLBACK TO [SAVEPOINT] s
 // Expressions: literals, `?`, columns, + - * / % ||, = == != <> < <= > >=, AND OR NOT, IS [NOT] NULL, [NOT] LIKE, [NOT] IN (...), [NOT] BETWEEN,
-// lower upper length abs coalesce ifnull trim substr, and the aggregates count(*) count sum min max avg (over all rows, without GROUP BY).
+// lower upper length abs coalesce ifnull trim substr instr, and the aggregates count(*) count sum min max avg (over all rows, without GROUP BY).
 // Values are dynamic like SQLite's: int, float, text, bytes, NULL. The errors and their codes are SQLite's (Data.ConstraintException 1555, 2067, 1299).
 #import "data"
 
@@ -1625,6 +1625,10 @@ namespace Data {
                     return x
                 }
                 if (f == "trim") { return ("" + v).Trim() }
+                if (f == "instr") {
+                    if (args.Count < 2 || args[1] == undefined) { return undefined }
+                    return ("" + v).IndexOf("" + args[1]) + 1
+                }
                 if (f == "substr" || f == "substring") {
                     string s = "" + v
                     int start = Data.MemRun.Num(args[1])!int

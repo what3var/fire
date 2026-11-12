@@ -108,6 +108,23 @@ namespace Data {
         string Generated() { return "" }
         // A query (one parameter: the table) whose first column is the name of each column the table has; undefined: the table is not there.
         string ColumnsQuery() { return "select column_name from information_schema.columns where table_name = ?" }
+
+        // ---- the pieces of the queries (Data.Query) ----
+        // LIMIT/OFFSET after the rest of a SELECT (count -1: no limit).
+        string Limit(int count, int offset) {
+            if (count < 0 && offset <= 0) { return "" }
+            var t = " LIMIT " + count
+            if (offset > 0) { t = t + " OFFSET " + offset }
+            return t
+        }
+        // Text functions (case-sensitive, like fire's): a starts with b, a ends with b, a contains b; the length of a.
+        string StartsWith(string a, string b) { return "instr(" + a + ", " + b + ") = 1" }
+        string EndsWith(string a, string b, string b2) { return "substr(" + a + ", length(" + a + ") - length(" + b + ") + 1) = " + b2 }
+        string Contains(string a, string b) { return "instr(" + a + ", " + b + ") > 0" }
+        string Length(string a) { return "length(" + a + ")" }
+        string Lower(string a) { return "lower(" + a + ")" }
+        string Upper(string a) { return "upper(" + a + ")" }
+        string Concat(string a, string b) { return "(" + a + " || " + b + ")" }
     }
 
     /// <summary>A row of a query: its values by the name of the column (`row["name"]`, `row.Int("age")`) or by position (`row.Get(0)`).</summary>
@@ -503,6 +520,9 @@ namespace Data {
         }
 
         undefined Ensure<T>() { this.Ensure(Type.Of<T>().Name) }
+
+        // A query of the objects of a class, with expression trees: `db.From<Person>().Where(p => p.age >= 18).OrderBy(p => p.name).ToList()`.
+        Data.Query<T> From<T>() { return new Data.Query<T>(this, Type.Of<T>().Name) }
         T Find<T>(any key) { return this.Find(Type.Of<T>().Name, key) }
         List<T> All<T>() {
             var all = new List<T>()
@@ -578,6 +598,286 @@ namespace Data {
         }
 
         undefined Check() { if (this.closed) { throw new Data.StateException("The connection to '" + this.url + "' is closed.") } }
+    }
+
+    /// <summary>A part of an expression tree that the database cannot run (a call of an own method, a member of a member, ...): what it is.</summary>
+    class NotTranslatableException : Data.DataException {
+        construct(string message) : base(message, 0) { }
+    }
+
+    /// <summary>A query of the objects of a mapped class (`db.From<Person>()`): conditions, order and paging as expression trees, translated to the SQL of
+    /// the database when it runs (ToList, First, Count, Any, Delete). Every call returns the query itself, so they chain; nothing runs before the end.</summary>
+    class Query<T> {
+        Data.Connection db
+        string typeName
+        List wheres          // LambdaExpression
+        List orders          // LambdaExpression
+        List descending      // bool per order
+        int skipped
+        int limited
+
+        construct(Data.Connection db, string typeName) {
+            this.db = db
+            this.typeName = typeName
+            this.wheres = new List()
+            this.orders = new List()
+            this.descending = new List()
+            this.skipped = 0
+            this.limited = -1
+        }
+
+        // Only the objects for which the condition holds (several Where: all of them).
+        Data.Query<T> Where(lambda expression<T> condition) {
+            this.wheres.Add(take condition)
+            return this
+        }
+        // The order: by the key, then by the next (ThenBy); the default is that of the database.
+        Data.Query<T> OrderBy(lambda expression<T> key) { return this.Order(take key, false, true) }
+        Data.Query<T> OrderByDescending(lambda expression<T> key) { return this.Order(take key, true, true) }
+        Data.Query<T> ThenBy(lambda expression<T> key) { return this.Order(take key, false, false) }
+        Data.Query<T> ThenByDescending(lambda expression<T> key) { return this.Order(take key, true, false) }
+        // (a key of the order: the tree, its direction; `first`: the keys before it go)
+        Data.Query<T> Order(LambdaExpression key, bool desc, bool first) {
+            if (first) {
+                this.orders = new List()
+                this.descending = new List()
+            }
+            this.orders.Add(take key)
+            this.descending.Add(desc)
+            return this
+        }
+        Data.Query<T> Skip(int count) {
+            this.skipped = count
+            return this
+        }
+        Data.Query<T> Take(int count) {
+            this.limited = count
+            return this
+        }
+
+        // ---- the ends ----
+        List<T> ToList() {
+            var all = new List<T>()
+            var q = this.Sql("SELECT *", true)
+            this.db.Fill(all, this.typeName, q.text, q.Parameters())
+            return all
+        }
+        // The first object (Data.DataException when there is none) / undefined when there is none.
+        T First() {
+            T one = this.FirstOrDefault()
+            if (one == undefined) { throw new Data.DataException("The query has no rows (" + this.typeName + ").") }
+            return one
+        }
+        T FirstOrDefault() {
+            int before = this.limited
+            this.limited = 1
+            var q = this.Sql("SELECT *", true)
+            this.limited = before
+            return this.db.QueryOne(this.typeName, q.text, q.Parameters())
+        }
+        int Count() {
+            var q = this.Sql("SELECT count(*)", false)
+            any n = this.db.Scalar(q.text, q.Parameters())
+            return n!int
+        }
+        bool Any() { return this.Count() > 0 }
+        // Deletes the rows of the query; their number.
+        int Delete() {
+            var q = this.Sql("DELETE", false)
+            return this.db.Execute(q.text, q.Parameters())
+        }
+        // The SQL and its parameters (for logs and tests): `SELECT * FROM "people" WHERE ("age" >= ?) [18]`.
+        string ToSql() {
+            var q = this.Sql("SELECT *", true)
+            return q.text + " " + Json.Serialize(q.Parameters())
+        }
+
+        // (the statement: `head` FROM the table, the conditions, and with `full` the order and the paging)
+        Data.SqlWriter Sql(string head, bool full) {
+            var map = this.db.Map(this.typeName)
+            var d = this.db.Dialect
+            var w = new Data.SqlWriter(map, d)
+            var filter = ""
+            for (var i = 0; i < this.wheres.Count; i++) {
+                LambdaExpression e = this.wheres[i]
+                if (i > 0) { filter = filter + " AND " }
+                filter = filter + w.Lambda(e)
+            }
+            var sql = head + " FROM " + d.Quote(map.table)
+            if (filter != "") { sql = sql + " WHERE " + filter }
+            if (full) {
+                if (this.orders.Count > 0) {
+                    sql = sql + " ORDER BY "
+                    for (var i = 0; i < this.orders.Count; i++) {
+                        LambdaExpression e = this.orders[i]
+                        if (i > 0) { sql = sql + ", " }
+                        sql = sql + w.Lambda(e)
+                        if (this.descending[i]) { sql = sql + " DESC" }
+                    }
+                }
+                sql = sql + d.Limit(this.limited, this.skipped)
+            }
+            w.text = sql
+            return w
+        }
+    }
+
+    /// <summary>An expression tree as SQL (Data.Query): the members of the lambda's parameter are the columns of the mapped class, what the tree captured
+    /// are parameters (`?`) - never text in the SQL.</summary>
+    class SqlWriter : ExpressionVisitor {
+        Data.EntityMap map
+        Data.Dialect dialect
+        List values
+        string text
+        string parameter
+
+        construct(Data.EntityMap map, Data.Dialect dialect) {
+            this.map = map
+            this.dialect = dialect
+            this.values = new List()
+            this.text = ""
+        }
+
+        any Parameters() { return Data.Connection.ArrayOf(this.values) }
+
+        // The body of a lambda with one parameter (the object of the row).
+        string Lambda(LambdaExpression e) {
+            if (e.Parameters.length != 1) { throw new Data.NotTranslatableException("A query lambda has one parameter (the object), not " + e.Parameters.length + ": " + e) }
+            this.parameter = e.Parameters[0].Name
+            return this.Sql(e.Body)
+        }
+
+        string Sql(Expression e) { return "" + e.Accept(this) }
+
+        undefined Fail(Expression e, string why) { throw new Data.NotTranslatableException("Data: '" + e + "' cannot run in the database (" + why + ").") }
+
+        // (the column of a member of the parameter, or undefined)
+        Data.ColumnMap ColumnOf(Expression e) {
+            if (!(e is of MemberExpression)) { return undefined }
+            MemberExpression m = e
+            if (!(m.Target is of ParameterExpression)) { return undefined }
+            return this.map.Column(m.Name)
+        }
+
+        // (a value of the program as a parameter, converted for its column like the mapping does)
+        string Value(any v, Data.ColumnMap column) {
+            if (column != undefined) { this.values.Add(Data.EntityMap.ToDb(v, column)) }
+            else if (v is of DateTime) { any t = v; this.values.Add(t.ToString("o")) }
+            else { this.values.Add(v) }
+            return "?"
+        }
+
+        override any VisitParameter(ParameterExpression e) { this.Fail(e, "the object itself is not a value of a column"); return undefined }
+        override any VisitConstant(ConstantExpression e) {
+            if (e.Value == undefined) { return "NULL" }
+            return this.Value(e.Value, undefined)
+        }
+        override any VisitCaptured(CapturedExpression e) {
+            if (e.Value == undefined) { return "NULL" }
+            return this.Value(e.Value, undefined)
+        }
+        override any VisitMember(MemberExpression e) {
+            if (e.Target is of ParameterExpression) {
+                var c = this.map.Column(e.Name)
+                if (c == undefined) { this.Fail(e, "'" + e.Name + "' is not a column of " + this.map.typeName) }
+                return this.dialect.Quote(c.column)
+            }
+            if (e.Name == "Length" && e.Target.Type == "string") { return this.dialect.Length(this.Sql(e.Target)) }
+            this.Fail(e, "only the columns of the object and the Length of a text")
+            return undefined
+        }
+        override any VisitUnary(UnaryExpression e) {
+            if (e.Op == "!") { return "NOT (" + this.Sql(e.Operand) + ")" }
+            if (e.Op == "-") { return "-(" + this.Sql(e.Operand) + ")" }
+            this.Fail(e, "the operator " + e.Op)
+            return undefined
+        }
+        override any VisitConvert(ConvertExpression e) { return this.Sql(e.Operand) }
+        override any VisitBinary(BinaryExpression e) {
+            string op = e.Op
+            if (op == "&&") { return "(" + this.Sql(e.Left) + " AND " + this.Sql(e.Right) + ")" }
+            if (op == "||") { return "(" + this.Sql(e.Left) + " OR " + this.Sql(e.Right) + ")" }
+            // (x == undefined: IS NULL)
+            if ((op == "==" || op == "!=") && Data.SqlWriter.IsNull(e.Right)) {
+                if (op == "==") { return "(" + this.Sql(e.Left) + " IS NULL)" }
+                return "(" + this.Sql(e.Left) + " IS NOT NULL)"
+            }
+            if ((op == "==" || op == "!=") && Data.SqlWriter.IsNull(e.Left)) {
+                if (op == "==") { return "(" + this.Sql(e.Right) + " IS NULL)" }
+                return "(" + this.Sql(e.Right) + " IS NOT NULL)"
+            }
+            // (a value compared with a column is converted for that column: a DateTime, an enum)
+            var lc = this.ColumnOf(e.Left)
+            var rc = this.ColumnOf(e.Right)
+            string left = this.Side(e.Left, rc)
+            string right = this.Side(e.Right, lc)
+            if (op == "+" && (e.Type == "string" || e.Left.Type == "string" || e.Right.Type == "string")) { return this.dialect.Concat(left, right) }
+            if (op == "??") { return "coalesce(" + left + ", " + right + ")" }
+            string sqlOp = op
+            if (op == "==") { sqlOp = "=" }
+            else if (op == "!=") { sqlOp = "<>" }
+            else if (!(op == "<" || op == "<=" || op == ">" || op == ">=" || op == "+" || op == "-" || op == "*" || op == "/" || op == "%")) { this.Fail(e, "the operator " + op) }
+            return "(" + left + " " + sqlOp + " " + right + ")"
+        }
+        // (one side of a comparison: a captured value or a constant converted for the column on the other side)
+        string Side(Expression e, Data.ColumnMap other) {
+            if (other != undefined && e is of CapturedExpression) {
+                CapturedExpression c = e
+                if (c.Value == undefined) { return "NULL" }
+                return this.Value(c.Value, other)
+            }
+            if (other != undefined && e is of ConstantExpression) {
+                ConstantExpression c = e
+                if (c.Value == undefined) { return "NULL" }
+                return this.Value(c.Value, other)
+            }
+            return this.Sql(e)
+        }
+        static bool IsNull(Expression e) {
+            if (e is of ConstantExpression) { ConstantExpression c = e; return c.Value == undefined }
+            if (e is of CapturedExpression) { CapturedExpression c = e; return c.Value == undefined }
+            return false
+        }
+        override any VisitConditional(ConditionalExpression e) {
+            return "(CASE WHEN " + this.Sql(e.Test) + " THEN " + this.Sql(e.IfTrue) + " ELSE " + this.Sql(e.IfFalse) + " END)"
+        }
+        override any VisitCall(CallExpression e) {
+            string m = e.Method
+            if (e.Target != undefined && e.Target.Type == "string") {
+                string target = this.Sql(e.Target)
+                if (m == "ToLower" && e.Arguments.length == 0) { return this.dialect.Lower(target) }
+                if (m == "ToUpper" && e.Arguments.length == 0) { return this.dialect.Upper(target) }
+                if ((m == "StartsWith" || m == "EndsWith" || m == "Contains") && e.Arguments.length == 1) {
+                    string arg = this.Sql(e.Arguments[0])
+                    if (m == "StartsWith") { return "(" + this.dialect.StartsWith(target, arg) + ")" }
+                    if (m == "Contains") { return "(" + this.dialect.Contains(target, arg) + ")" }
+                    string arg2 = this.Sql(e.Arguments[0])
+                    return "(" + this.dialect.EndsWith(target, arg, arg2) + ")"
+                }
+            }
+            // (a list or an array of the program that contains a column: IN (...))
+            if (m == "Contains" && e.Arguments.length == 1 && e.Target is of CapturedExpression) {
+                CapturedExpression list = e.Target
+                var column = this.ColumnOf(e.Arguments[0])
+                string item = this.Sql(e.Arguments[0])
+                any items = list.Value
+                int n = 0
+                if (items is of List) { List l = items; n = l.Count } else { n = items.length }
+                if (n == 0) { return "(1 = 0)" }
+                var t = "(" + item + " IN ("
+                for (var i = 0; i < n; i++) {
+                    if (i > 0) { t = t + ", " }
+                    t = t + this.Value(items[i], column)
+                }
+                return t + "))"
+            }
+            this.Fail(e, "the method " + m + " (the database knows StartsWith, EndsWith, Contains, ToLower, ToUpper of a text and Contains of a list)")
+            return undefined
+        }
+        override any VisitNew(NewExpression e) { this.Fail(e, "a new object"); return undefined }
+        override any VisitIsType(IsTypeExpression e) { this.Fail(e, "is of"); return undefined }
+        override any VisitIndex(IndexExpression e) { this.Fail(e, "an index"); return undefined }
+        override any VisitLambda(LambdaExpression e) { this.Fail(e, "a nested lambda"); return undefined }
     }
 
     /// <summary>A field of a mapped class and its column (Data.EntityMap).</summary>

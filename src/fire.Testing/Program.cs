@@ -28892,9 +28892,29 @@ else
             print("button " + b.rx + "," + b.ry + " " + b.actualWidth + "x" + b.actualHeight)
             print(flow.Text)
             """),
-        ("Data/memory: die In-Memory-Datenbank mit derselben Pruefung wie SQLite (SQL-Teilmenge: Tabellen, Index, INSERT/UPDATE/DELETE, SELECT mit WHERE/ORDER BY/LIMIT/DISTINCT/Aggregaten/Funktionen, Transaktionen, Constraints) und die generischen Formen QueryList<T>/Find<T>/All<T>/Ensure<T>", """
+        ("Data/memory: die In-Memory-Datenbank mit derselben Pruefung wie SQLite (SQL-Teilmenge: Tabellen, Index, INSERT/UPDATE/DELETE, SELECT mit WHERE/ORDER BY/LIMIT/DISTINCT/Aggregaten/Funktionen, Transaktionen, Constraints), die generischen Formen QueryList<T>/Find<T>/All<T>/Ensure<T> und Abfragen mit Ausdrucksbaeumen (From<T>, Where, OrderBy, Skip/Take, Count, Any, First, Delete, ToSql)", """
             #import "data.memory"
             #import "time"
+            enum Rank { Low, Mid, High }
+            [Table "residents"]
+            class Resident {
+                [Key] int id
+                [Column "full_name"] string name
+                int age
+                Rank level
+                DateTime born
+                string city
+                construct(string name, int age, Rank level, int year, string city) {
+                    this.name = name
+                    this.age = age
+                    this.level = level
+                    this.born = new DateTime(year, 1, 1)
+                    this.city = city
+                }
+            }
+            class Lookup {
+                static int Adults(Data.Connection qdb, int lowest) { return qdb.From<Resident>().Where(p => p.age >= lowest).Count() }
+            }
             enum Level { Low, Mid, High }
             record Address {
                 string city
@@ -29056,11 +29076,62 @@ else
             print(pp.name)
             List<Pupil> some2 = gdb.QueryList<Pupil>("select * from Pupil where name like ?", ["A%"])
             print(some2.Count + " " + some2[0].name + " " + gdb.QueryOne<Pupil>("select * from Pupil order by id desc").name)
+            var qdb = new Data.Connection("memory:")
+            qdb.Ensure<Resident>()
+            qdb.Insert(new Resident("Ada", 36, Rank.High, 1815, "London"))
+            qdb.Insert(new Resident("Grace", 85, Rank.Mid, 1906, "New York"))
+            qdb.Insert(new Resident("Linus", 28, Rank.Low, 1969, undefined))
+            qdb.Insert(new Resident("Alan", 41, Rank.High, 1912, "London"))
+            var lowest = 30
+            List<Resident> grown = qdb.From<Resident>().Where(p => p.age >= lowest).OrderBy(p => p.name).ToList()
+            foreach (p in grown) { print("adult " + p.name + " " + p.age) }
+            print("sql " + qdb.From<Resident>().Where(p => p.age >= lowest && p.city != undefined).OrderByDescending(p => p.age).Skip(1).Take(2).ToSql())
+            print("paged " + qdb.From<Resident>().OrderBy(p => p.id).Skip(1).Take(2).ToList().Count)
+            print("first " + qdb.From<Resident>().Where(p => p.name.StartsWith("A")).OrderByDescending(p => p.age).First().name)
+            print("none " + qdb.From<Resident>().Where(p => p.name == "Nobody").FirstOrDefault())
+            print("count " + qdb.From<Resident>().Count() + " " + qdb.From<Resident>().Where(p => p.city == undefined).Count() + " any " + qdb.From<Resident>().Where(p => p.age > 100).Any())
+            print("enum " + qdb.From<Resident>().Where(p => p.level == Rank.High).Count())
+            var rk = Rank.Mid
+            print("enum captured " + qdb.From<Resident>().Where(p => p.level == rk).First().name)
+            var since = new DateTime(1900, 1, 1)
+            print("since " + qdb.From<Resident>().Where(p => p.born > since).OrderBy(p => p.born).First().name)
+            print("text " + qdb.From<Resident>().Where(p => p.name.EndsWith("ce") || p.name.Contains("inu")).Count() + " " + qdb.From<Resident>().Where(p => p.name.ToLower() == "ada").Count() + " " + qdb.From<Resident>().Where(p => p.name.Length == 4).Count())
+            print("case " + qdb.From<Resident>().Where(p => p.name.StartsWith("a")).Count())
+            var wanted = ["Ada", "Linus"]
+            print("in " + qdb.From<Resident>().Where(p => wanted.Contains(p.name)).Count())
+            print("not " + qdb.From<Resident>().Where(p => !(p.age < 40)).Where(p => p.city == "London").Count())
+            print("math " + qdb.From<Resident>().Where(p => p.age * 2 + 1 > 100 - 20).Count())
+            print("then " + qdb.From<Resident>().OrderBy(p => p.city).ThenByDescending(p => p.age).First().name)
+            print("method " + Lookup.Adults(qdb, 40))
+            try { qdb.From<Resident>().Where(p => p.name.Trim() == "x").Count() } catch (Data.NotTranslatableException e) { print("not translatable: " + e.message) }
+            print("deleted " + qdb.From<Resident>().Where(p => p.age < 30).Delete() + " left " + qdb.From<Resident>().Count())
+            List<Resident> fetched = await qdb.From<Resident>().Where(p => p.city == "London").ToList()
+            print("fetched " + fetched.Count)
             """),
-        ("Data/SQLite: Execute, Query (Zeilen nacheinander), Rows, Scalar, QueryList/QueryOne auf Records und Klassen, Unicode, NULL, BLOB, Fehlerarten, Transaktionen mit Savepoints, :memory:, await, Threads mit eigenen Verbindungen, handover; Mapping mit Attributen, Ensure, Insert/Update/Delete/Save/Find/All, Enum nach Namen, DateTime, [Json]", """
+        ("Data/SQLite: Execute, Query (Zeilen nacheinander), Rows, Scalar, QueryList/QueryOne auf Records und Klassen, Unicode, NULL, BLOB, Fehlerarten, Transaktionen mit Savepoints, :memory:, await, Threads mit eigenen Verbindungen, handover; Mapping mit Attributen, Ensure, Insert/Update/Delete/Save/Find/All, Enum nach Namen, DateTime, [Json]; Abfragen mit Ausdrucksbaeumen als SQL", """
             #import "time"
             #import "filesystem"
             #import "data.sqlite"
+            enum Rank { Low, Mid, High }
+            [Table "residents"]
+            class Resident {
+                [Key] int id
+                [Column "full_name"] string name
+                int age
+                Rank level
+                DateTime born
+                string city
+                construct(string name, int age, Rank level, int year, string city) {
+                    this.name = name
+                    this.age = age
+                    this.level = level
+                    this.born = new DateTime(year, 1, 1)
+                    this.city = city
+                }
+            }
+            class Lookup {
+                static int Adults(Data.Connection qdb, int lowest) { return qdb.From<Resident>().Where(p => p.age >= lowest).Count() }
+            }
             enum Level { Low, Mid, High }
             record Address {
                 string city
@@ -29239,6 +29310,37 @@ else
             cdb.Ensure("Customer")
             print("column found " + cdb.Rows("select name from pragma_table_info('people') where name = 'height'").Count)
             cdb.Close()
+            var qdb = new Data.Connection("sqlite::memory:")
+            qdb.Ensure<Resident>()
+            qdb.Insert(new Resident("Ada", 36, Rank.High, 1815, "London"))
+            qdb.Insert(new Resident("Grace", 85, Rank.Mid, 1906, "New York"))
+            qdb.Insert(new Resident("Linus", 28, Rank.Low, 1969, undefined))
+            qdb.Insert(new Resident("Alan", 41, Rank.High, 1912, "London"))
+            var lowest = 30
+            List<Resident> grown = qdb.From<Resident>().Where(p => p.age >= lowest).OrderBy(p => p.name).ToList()
+            foreach (p in grown) { print("adult " + p.name + " " + p.age) }
+            print("sql " + qdb.From<Resident>().Where(p => p.age >= lowest && p.city != undefined).OrderByDescending(p => p.age).Skip(1).Take(2).ToSql())
+            print("paged " + qdb.From<Resident>().OrderBy(p => p.id).Skip(1).Take(2).ToList().Count)
+            print("first " + qdb.From<Resident>().Where(p => p.name.StartsWith("A")).OrderByDescending(p => p.age).First().name)
+            print("none " + qdb.From<Resident>().Where(p => p.name == "Nobody").FirstOrDefault())
+            print("count " + qdb.From<Resident>().Count() + " " + qdb.From<Resident>().Where(p => p.city == undefined).Count() + " any " + qdb.From<Resident>().Where(p => p.age > 100).Any())
+            print("enum " + qdb.From<Resident>().Where(p => p.level == Rank.High).Count())
+            var rk = Rank.Mid
+            print("enum captured " + qdb.From<Resident>().Where(p => p.level == rk).First().name)
+            var since = new DateTime(1900, 1, 1)
+            print("since " + qdb.From<Resident>().Where(p => p.born > since).OrderBy(p => p.born).First().name)
+            print("text " + qdb.From<Resident>().Where(p => p.name.EndsWith("ce") || p.name.Contains("inu")).Count() + " " + qdb.From<Resident>().Where(p => p.name.ToLower() == "ada").Count() + " " + qdb.From<Resident>().Where(p => p.name.Length == 4).Count())
+            print("case " + qdb.From<Resident>().Where(p => p.name.StartsWith("a")).Count())
+            var wanted = ["Ada", "Linus"]
+            print("in " + qdb.From<Resident>().Where(p => wanted.Contains(p.name)).Count())
+            print("not " + qdb.From<Resident>().Where(p => !(p.age < 40)).Where(p => p.city == "London").Count())
+            print("math " + qdb.From<Resident>().Where(p => p.age * 2 + 1 > 100 - 20).Count())
+            print("then " + qdb.From<Resident>().OrderBy(p => p.city).ThenByDescending(p => p.age).First().name)
+            print("method " + Lookup.Adults(qdb, 40))
+            try { qdb.From<Resident>().Where(p => p.name.Trim() == "x").Count() } catch (Data.NotTranslatableException e) { print("not translatable: " + e.message) }
+            print("deleted " + qdb.From<Resident>().Where(p => p.age < 30).Delete() + " left " + qdb.From<Resident>().Count())
+            List<Resident> fetched = await qdb.From<Resident>().Where(p => p.city == "London").ToList()
+            print("fetched " + fetched.Count)
             """),
         ("Http.Pages: eine FXML-View als Seite - HTML mit CSS-Layout (Flex), Circuit pro Seite, Eingabe, Klick, Checkbox und Button im FlowPanel ueber den WebSocket, nur die Aenderungen zurueck, fremde Sitzung 4401, unbekannte Seite 4404", """
             #import "http.pages"
