@@ -84,7 +84,8 @@ static class TypeTests
             && Run("#strict\nrecord R { int x }\nvar e = new R() with { .y = 2 }") == "|ERROR TC008", recWith);
         Check("Channel: ein Objekt ohne Wort (copy/take) und nicht frisch ist TC029 (auch lax); copy, take, new und Werte sind erlaubt",
             Run("class J { int n }\nvar ch = new Channel<J>()\nvar j = new J()\nch.Send(j)\nprint(1)") is var chW && chW == "|ERROR TC029"
-            && Run("class J { int n }\nvar ch = new Channel<J>()\nvar j = new J()\nch.Send(copy j)\nch.Send(take j)\nch.Send(new J())\nvar ci = new Channel<int>()\nci.Send(3)\nprint(ch.Count + ci.Count)") == "|4", chW);
+            && Run("class J { int n }\nvar ch = new Channel<J>()\nvar j = new J()\nch.Send(copy j)\nch.Send(take j)\nch.Send(new J())\nvar ci = new Channel<int>()\nci.Send(3)\nprint(ch.Count + ci.Count)") == "|4"
+            && Run("record RL { int n }\nvar ch = new Channel<RL>()\nvar r = new RL()\nch.Send(r)\nprint(ch.Count)") == "|1", chW);
         Check("Records: ueber any ist das Schreiben die AccessDeniedException, == vergleicht den Inhalt",
             Run("record P { int x\n construct(int x) { this.x = x } }\nany p = new P(1)\ntry { p.x = 2 } catch (AccessDeniedException e) { print(\"denied\") }\nprint((p == new P(1)) + \" \" + p.x)") is var recA && recA == "|denied\nTrue 1", recA);
         Check("#lax in der Datei schlaegt den Schalter strict", Run("#lax\nint x = 1\ntry { x = \"a\" } catch (ArgumentException e) { print(\"guard\") }\nprint(x)", TypeCheckMode.Strict) == "TC001|guard\n1");

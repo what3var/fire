@@ -19428,7 +19428,7 @@ else
             print("check: " + h.Check)
             print("end")
             """),
-        ("Threads: taking kopiert alles Erreichbare (Array-Literal im Feld, fremde Objekte, Arrays, Puffer) - Besitzer der Kopien ist der Thread; Lambda im Feld: ArgumentException", """
+        ("Threads: taking kopiert alles Erreichbare (Array-Literal im Feld, fremde Objekte, Arrays, Puffer) - Besitzer der Kopien ist der Thread; ein Lambda ohne Captures im Feld geht mit", """
             #nosync
             class Item { int v
                 construct(int v) { this.v = v } }
@@ -19445,8 +19445,11 @@ else
             var nested = [[5, 6], [7]]
             var l = new L()
             l.f = func() => 1
-            try { fire taking l { print("never") } } catch (ArgumentException e) { print("lambda: " + e.message) }
-            try { fire taking p taking l { print("never") } } catch (ArgumentException e) { print("lambda 2: " + e.message) }
+            try { fire taking l { sync global { done = done + 1 } } } catch (ArgumentException e) { print("lambda: " + e.message) }
+            try { fire taking p taking l { sync global { done = done + 1 } } } catch (ArgumentException e) { print("lambda 2: " + e.message) }
+            while (done < 2) { sync globals }
+            print("lambdas without captures go along: " + done)
+            done = 0
             fire taking p taking arr taking objs taking nested {
                 print("sum " + (p.items[0].v + p.items[1].v + p.other.v + p.own.v))
                 print("own " + (p.own is from p) + " " + (p.items[0] is from p))
@@ -22394,6 +22397,93 @@ else
             }
             jobs.Send(new Job(21))
             print("job " + jobs.Receive().n)
+        """),
+        ("Channel<T>: ein Record ohne Wort wird geliehen - der Besitzer behaelt ihn, der Empfaenger liest (Methoden, ==, copy), take ist ihm verwehrt (AccessDeniedException); stirbt er beim Besitzer, ist der naechste Zugriff die DestroyedException, gibt der Besitzer ihn weiter (take), enden die Leihen", """
+            record Tag {
+                string name
+                construct(string n) { this.name = n }
+            }
+            record Note {
+                string text
+                Tag tag
+                construct(string t, string n) { this.text = t; this.tag = new Tag(n) }
+                string Describe() { return this.text + "/" + this.tag.name }
+            }
+            var notes = new Channel<Note>()
+            var back = new Channel<string>()
+            var go = new Channel<int>()
+            fire with notes, back, go {
+                var n = notes.Receive()
+                var c = copy n
+                back.Send("got " + n.Describe() + " " + (n == c))
+                try { var mine = take n } catch (AccessDeniedException e) { back.Send("take: " + e.message) }
+                go.Receive()
+                try { back.Send("after " + n.text) } catch (DestroyedException e) { back.Send("dead after its owner") }
+                back.Send("copy " + c.Describe())
+                var m = notes.Receive()
+                back.Send("second " + m.text)
+                go.Receive()
+                try { back.Send("moved " + m.text) } catch (DestroyedException e) { back.Send("handed on: dead") }
+                back.Close()
+            }
+            if (true) {
+                var keep = new Note("hello", "a")
+                notes.Send(keep)
+                print(back.Receive())
+                print(back.Receive())
+                print("owner " + keep.text)
+            }
+            go.Send(1)
+            print(back.Receive())
+            print(back.Receive())
+            var other = new Channel<Note>()
+            var second = new Note("again", "b")
+            notes.Send(second)
+            print(back.Receive())
+            other.Send(take second)
+            go.Send(2)
+            foreach (s in back) { print(s) }
+            print("other " + other.Receive().text)
+        """),
+        ("Channel<T>: geliehene Records unter Last - der Leser liest in Schleifen, waehrend der Besitzer sie zerstoert: der laufende Zugriff endet, der naechste ist die DestroyedException (nativ: der Speicher geht erst, wenn kein Leser mehr hinsehen kann)", """
+            record Tag {
+                string label
+                construct(string l) { this.label = l }
+            }
+            record Item {
+                string name
+                int n
+                Tag tag
+                construct(string s, int n) { this.name = s; this.n = n; this.tag = new Tag("t" + n) }
+                int Sum() {
+                    int r = 0
+                    for (int k = 0; k < 20; k++) { r = r + this.name.Length + this.tag.label.Length }
+                    return r
+                }
+            }
+            var ch = new Channel<Item>(64)
+            var done = new Channel<int>()
+            fire with ch, done {
+                int seen = 0
+                int reads = 0
+                foreach (it in ch) {
+                    seen = seen + 1
+                    try {
+                        for (int k = 0; k < 50; k++) { reads = reads + it.name.Length + it.n + it.Sum() }
+                        string both = it.name + it.tag.label
+                        reads = reads + both.Length
+                    } catch (DestroyedException e) { reads = reads - 1 }
+                }
+                done.Send(seen)
+            }
+            for (int i = 0; i < 1500; i++) {
+                if (true) {
+                    var it = new Item("item" + i, i)
+                    ch.Send(it)
+                }
+            }
+            ch.Close()
+            print("seen " + done.Receive())
         """),
         ("Threads: TakeGlobal() im Thread gibt das Objekt samt allem, was es besitzt, dem Hauptprogramm; ein Feld auf ein fremdes Thread-Objekt ist die ArgumentException (Takes.Locals nimmt es mit), TakeGlobal(true) bleibt im Thread", """
             #import "time"

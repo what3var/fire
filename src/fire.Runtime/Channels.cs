@@ -47,6 +47,7 @@ namespace fire.Runtime
 
     public sealed partial class VM
     {
+        internal const string LentTakeText = "A lent record belongs to the thread that sent it: 'take' is for its owner - 'copy r' makes one of your own.";
         internal const string ChannelWordText = "Channel.Send: an object goes into a channel only with a word - 'copy x' (a copy) or 'take x' (moved) - or fresh ('new', the result of a call).";
 
         internal Value ChannelNative(string name, Value[] a)
@@ -96,20 +97,34 @@ namespace fire.Runtime
                 && !(v.Kind == ValueKind.Class ? ((ObjectInstance)v.AsObjectRef()).IsDestroyed : IsDestroyedLeaf(v))
                 && !(v.Kind == ValueKind.Class && v.AsObjectRef() is ObjectInstance { } actor && (actor.Mailbox != null || (actor.RtClass?.IsActor ?? false))))
             {
-                if (!owned) return NativeFail("ArgumentException", ChannelWordText);
-                ObjectHandover.RequireMovable(v, fromFireThread: IsFireThreadVm);
-                moves = true;
+                if (!owned && v.Kind == ValueKind.Class && RecordValues.IsRecord(v)) Lend((ObjectInstance)v.AsObjectRef());   // (a record without a word: lent)
+                else
+                {
+                    if (!owned) return NativeFail("ArgumentException", ChannelWordText);
+                    ObjectHandover.RequireMovable(v, fromFireThread: IsFireThreadVm);
+                    moves = true;
+                }
             }
             if (!WaitChannel(node, () => node.Closed || node.Items.Count < node.Capacity, out var failure)) return failure;
             lock (node.Gate)
             {
                 if (node.Closed) return Value.MakeBool(false);
-                if (moves) v = ObjectHandover.MoveAll(new[] { v }, node.Holder, retire: !RecordValues.IsRecord(v))[0];
+                // (a record keeps its identity - unless it was lent: then the readers' references end, like the native code)
+                if (moves) v = ObjectHandover.MoveAll(new[] { v }, node.Holder, retire: !RecordValues.IsRecord(v) || v.AsObjectRef() is ObjectInstance { LentBy: not null })[0];
                 node.Items.Enqueue(v);
             }
             FireRuntime.WakeWaitingOwner();
             VmScheduler.Wake();
             return Value.MakeBool(true);
+        }
+
+        /// <summary>A record lent through a channel, with the records it holds: this thread owns it (unless a thread lent it before).</summary>
+        private void Lend(ObjectInstance record)
+        {
+            if (record.LentBy != null) return;
+            record.LentBy = this;
+            foreach (var (_, field) in record.Fields)
+                if (field.Kind == ValueKind.Class && field.AsObjectRef() is ObjectInstance { IsDestroyed: false } inner && RecordValues.IsRecord(field)) Lend(inner);
         }
 
         /// <summary>`ch.Receive(limit)` / `ch.TryReceive()` (wait false): the next value - it belongs to the receiving call (the scope of this call) - or

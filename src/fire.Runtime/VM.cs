@@ -2608,6 +2608,11 @@ namespace fire.Runtime
         private bool ThrowIfDeadForTake(Value v)
         {
             if (v.Kind == ValueKind.Class && v.AsObjectRef() is ObjectInstance obj && IsDeadObject(obj)) { ThrowDestroyedObject(obj); return true; }
+            if (v.Kind == ValueKind.Class && v.AsObjectRef() is ObjectInstance { LentBy: { } lender } && !ReferenceEquals(lender, this))
+            {
+                ThrowAccessDenied(LentTakeText);
+                return true;
+            }
             if (IsDestroyedLeaf(v)) { ThrowDestroyed(v); return true; }
             return false;
         }

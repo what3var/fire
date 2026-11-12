@@ -553,9 +553,16 @@ The threads share nothing that can change - and get ways to pass what does not c
   `TryReceive`, `Close`, `IsClosed`, `Count`, `foreach`. A thread gets it with `fire with ch` (also several: `fire with a, ch`, and `fire on x taking y
   with a, ch` for a job of the main program) - an end of its own on the same queue; the channel closes when the one that made it ends. Objects,
   arrays and records go only fresh, copied or taken (the parcel: it belongs to the channel, then to the receiver, and dies with it; undelivered it
-  dies with the channel; a record keeps its identity); TC029 / the ArgumentException without a word. Open: a record lent without ownership
-  (`Send(r)` - today it needs the word like an object; it needs the count that keeps a record's memory for another thread), `Net.Channel<T>` (JSON over a
-  socket). Done: `Channel.Pair<A, B>()` - a ChannelEnd<A, B> that sends A and receives B, `.Other()` the end that sends B and receives A.
+  dies with the channel; a record keeps its identity); TC029 / the ArgumentException without a word. Done: `Channel.Pair<A, B>()` - a ChannelEnd<A, B>
+  that sends A and receives B, `.Other()` the end that sends B and receives A. Done: a record without a word is lent (`Send(r)`, tests "Channel<T>: ein
+  Record ohne Wort wird geliehen ..." and "... unter Last"): the sender stays the owner, receivers read it; only the owner moves it (`take` elsewhere:
+  AccessDeniedException); when the owner destroys it, the next use anywhere is the DestroyedException - strictly: a read under way ends, the next one
+  fails. Natively (the user: "möglichst streng") the lent records are in a table (g_lentOwner: record -> the owner's strand) and a destroyed one
+  becomes a grave: dead at once (its generation), its memory goes when every strand that reads lent records (it joined on its first receive) has
+  passed a safe point or waits - epochs announced at gilYield and around the waits (lentAnnounce/lentQuiet); its strings are counted atomically from
+  the lending on. With the GIL nothing waits. ownedOf hides a lent record from every strand but its owner (nothing moves it, even while it has no owner
+  for a moment); a move by the owner retires the readers' references. Open: `Net.Channel<T>` (JSON over a socket; the user: "mit Leihgabe" - a value
+  goes to the target alone and comes back when the target gives it back).
 * **No shared objects** (the user): with records and channels everything is covered - an object stays where it lives; other threads reach it only
   through calls of lambdas bound to it, jobs, `await on` and actors.
 
@@ -574,4 +581,4 @@ The threads share nothing that can change - and get ways to pass what does not c
 
 ## Open
 
-Step 9: records, `with`, `Channel<T>` and `Channel.Pair` are done; open: lent records over a channel, `Net.Channel<T>` (see "Step 9" above).
+Step 9: records, `with`, `Channel<T>`, `Channel.Pair` and lent records over a channel are done; open: `Net.Channel<T>` (see "Step 9" above).

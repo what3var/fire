@@ -355,9 +355,35 @@ foreach (r in results) { sum = sum + r }
 print(sum)                          // 14
 ```
 
-- A value (a number, a text, a bool) goes as it is. An object, an array or a record goes only fresh (`new`, the result of a call) or with a word:
+- A value (a number, a text, a bool) goes as it is. An object or an array goes only fresh (`new`, the result of a call) or with a word:
   `Send(copy x)` (a copy) or `Send(take x)` (moved - like `handover`, every other reference to it is dead; a record keeps its identity, because
   nobody can change it). Without one it is TC029 (an error, also in lax mode) where the type is known, else the ArgumentException.
+- A record without a word is **lent**: `Send(r)` - the sender stays its owner, the receiver gets a reference and reads it in its own thread (fields,
+  methods, `==`, `copy r` for one of its own; sending it on lends it again). Only the owner moves it: `take r` in the receiver is the
+  AccessDeniedException. The lending lasts as long as the record does: when the owner destroys it (its scope ends), the next use in any thread is
+  the DestroyedException - a read that is under way at that moment still ends normally (natively the memory goes only once no reader can be looking at
+  it any more). When the owner moves it on (`take r`, `handover`), the receivers' references end the same way:
+
+```fire
+record Note { string text; construct(string t) { this.text = t } }
+var notes = new Channel<Note>()
+var read = new Channel<int>()
+var gone = new Channel<int>()
+fire with notes, read, gone {
+    var n = notes.Receive()
+    print(n.text)                   // hello - lent, not copied
+    read.Send(1)
+    gone.Receive()
+    try { print(n.text) } catch (DestroyedException e) { print("gone with its owner") }
+}
+if (true) {
+    var note = new Note("hello")
+    notes.Send(note)                // lent: `note` is still this scope's
+    read.Receive()
+}                                   // the scope ends: the note dies - in the thread too
+gone.Send(1)
+```
+
 - What travels belongs to the channel; after `Receive` it belongs to the receiver - when the receiving thread ends, it ends with it. What nobody
   received is destroyed with the channel.
 - `Receive(limit)` waits at most `limit` (the TimeoutException); `TryReceive()` does not wait - undefined when nothing is there. A closed and empty

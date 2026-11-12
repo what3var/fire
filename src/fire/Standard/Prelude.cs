@@ -188,7 +188,7 @@ namespace fire.Standard
                 bool MoveNext() {
                     T v = this.ch.Receive()
                     if (v == undefined) { return false }
-                    this.current = take v
+                    this.current = try take v   // (a lent record stays its owner's)
                     return true
                 }
                 T GetCurrent() { return this.current }
