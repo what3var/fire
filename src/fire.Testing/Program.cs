@@ -28730,6 +28730,25 @@ else
             any g = M.Both2((any x) => x > 1, (any x) => x < 5)
             print(g(3) + " " + g(7) + " " + g(0))
             """),
+        ("Expression trees: Ueberladungen lambda<T> / lambda expression<T> - ein Ausdrucks-Lambda bekommt den Baum, Block, Variable und any die Lambda, ein fertiger Baum den Baum", """
+            class P { int age; construct(int a) { this.age = a } }
+            class Q<T> {
+                string Where(bool lambda<T> f) { return "lambda" }
+                string Where(lambda expression<T> e) { return "tree " + e.ToString() }
+                string Only(lambda expression<T> e) { return "only " + e.ToString() }
+            }
+            var q = new Q<P>()
+            print(q.Where(p => p.age > 3))
+            bool lambda<P> f = (P p) => p.age > 3
+            print(q.Where(f))
+            print(q.Where(p => { return p.age > 3 }))
+            print(q.Only(p => p.age > 3))
+            any a = q
+            print(a.Where((P p) => p.age > 3))
+            class Keep<T> { LambdaExpression K(lambda expression<T> e) { return e } }
+            var t = new Keep<P>().K(p => p.age > 9)
+            print(q.Where(t))
+            """),
         ("Programmende: warten alle uebrigen Threads in Kanaelen, schliessen die Kanaele des Hauptprogramms (foreach endet)", """
             var ch = new Channel<int>()
             var out = new Channel<string>()

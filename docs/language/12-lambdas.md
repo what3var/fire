@@ -226,7 +226,10 @@ print(adult.Equals(trees.Keep(x => x.age >= 18)) + " " + adult.Equals(trees.Keep
 ```
 - Only a lambda written at the call with an expression body goes there (`x => ...`), or a tree that is already made: a parameter
   `lambda expression<T>` of the calling method or a `LambdaExpression` is passed on as it is (`string Show(lambda expression<T> e) { return inner.Show(e) }`).
-  A lambda in a variable, one with a block, and an assignment, `++` or `take` in it are the error `TC030`. The call has to be one the compiler knows: through `any` the method gets only the code - the
+  A lambda in a variable, one with a block, and an assignment, `++` or `take` in it are the error `TC030`.
+- A method can be overloaded for both: `Where(bool lambda<T> f)` next to `Where(lambda expression<T> e)`. A lambda written with an expression body
+  goes to the tree (`q.Where(p => p.age > 3)`), a lambda with a block, a lambda in a variable and a call through `any` go to the lambda, a tree that
+  is already made (a `LambdaExpression`) to the tree. LINQ on lists keeps its lambdas: a tree would only cost there. The call has to be one the compiler knows: through `any` the method gets only the code - the
   ArgumentException.
 - A tree can be given where a lambda is expected: `bool lambda<Person> f = tree` (also as an argument or a return value) takes its compiled lambda
   (`tree.Invoke`). The other way round is not possible - a lambda in a variable has no tree any more.
