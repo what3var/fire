@@ -804,6 +804,8 @@ namespace fire.Standard
                 for (int i = a.Items.Count; i < items.Length; i++) items.Items[i] = Value.MakeUndefined();
                 list.Fields["items"] = Value.MakeArray(items);
                 list.Fields["count"] = Value.MakeInt(a.Items.Count);
+                // (what the field initialiser of List would give - the reader runs no initialisers: Add/Insert ask `owns`)
+                if (rc.FieldIndex.ContainsKey("owns") && EnumType.Named("Owns") is { } owns) list.Fields["owns"] = Value.MakeEnum(0, owns);
                 return value;
             }
 

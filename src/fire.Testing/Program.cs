@@ -28805,6 +28805,43 @@ else
             var ada = new Person(2)
             print(t.Invoke(ada))
             """),
+        ("Reflection: Reflect.Set uebernimmt, was dem Aufruf gehoert (new, copy, take, ein Array-Literal) wie eine Feldzuweisung; ein fremdes Objekt bleibt dessen", """
+            #import "reflection"
+            class Item { int n; construct(int n) { this.n = n } }
+            class Box { List<Item> items; Item one; int nums[] }
+            var b = new Box()
+            Reflect.Set(b, "items", new List<Item>())
+            b.items.Add(new Item(1))
+            print(b.items.Count)
+            Reflect.Set(b, "one", new Item(7))
+            print(b.one.n)
+            var src = new List<Item>()
+            src.Add(new Item(3))
+            Reflect.Set(b, "items", copy src)
+            print(b.items.Count + " " + b.items[0].n)
+            var mine = new Item(9)
+            Reflect.Set(b, "one", take mine)
+            print(b.one.n + " " + (mine == undefined))
+            var shared = new Item(5)
+            Reflect.Set(b, "one", shared)
+            print(b.one.n + " " + shared.n)
+            Reflect.Set(b, "nums", [1, 2, 3])
+            print(b.nums.length)
+            """),
+        ("JSON: eine gelesene List ist eine normale Liste (owns wie nach dem Feld-Initialisierer: Add geht), auch als Wurzel", """
+            #import "json"
+            class Item { int n }
+            class Box { List<Item> items = new List<Item>() }
+            var b = Json.Deserialize<Box>("{\"items\":[{\"n\":1},{\"n\":2}]}")
+            print(b.items.Count)
+            var it = new Item()
+            it.n = 3
+            b.items.Add(it)
+            print(b.items.Count + " " + b.items[2].n)
+            var l = Json.Deserialize<List<Item>>("[{\"n\":4}]")
+            l.Add(new Item())
+            print(l.Count)
+            """),
         ("Programmende: warten alle uebrigen Threads in Kanaelen, schliessen die Kanaele des Hauptprogramms (foreach endet)", """
             var ch = new Channel<int>()
             var out = new Channel<string>()

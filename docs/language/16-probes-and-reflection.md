@@ -89,6 +89,9 @@ try {
 }
 ```
 
+`Reflect.Set(obj, name, value)` owns like `obj.name = value`: what belongs to the call - a fresh value (`new List<Item>()`, an array literal),
+`copy x`, `take x` - belongs to `obj` from then on; an object of someone else stays theirs (the field refers to it). The same in the VM and natively.
+
 | Class | Members |
 |---|---|
 | `Type` | `Type.Of(obj or name)`, `Type.Of<T>()` (the type argument of a generic class or method that runs; also `Type.Of<Person>()`), `Type.Named(name)` (or `undefined`), `Type.Names()`; `Name`, `Base`, `Interfaces`, `DeclaredInterfaces`, `IsActor`, `All`, `Fields()`, `Properties()`, `Methods()`, `Constructors()`, `Find(name)`, `Has(name)`, `IsSubclassOf(type)`, `New(args)`, `Attributes`, `FindAttribute(name)`, `HasAttribute(name)`, `HasFlag(flag)`, `Flags(enum)` |
