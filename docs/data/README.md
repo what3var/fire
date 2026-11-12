@@ -170,24 +170,25 @@ while SQLite works). Two calls on the same connection at the same time are not p
 ```fire
 var min = 18
 List<Person> adults = db.From<Person>()
-    .Where(p => p.age >= min && p.city != undefined)
+    .Where(p => p.age >= taking min && p.city != undefined)
     .OrderBy(p => p.name).ThenByDescending(p => p.age)
     .Skip(20).Take(10)
     .ToList()
 Person oldest = db.From<Person>().OrderByDescending(p => p.age).First()
 int n = db.From<Person>().Where(p => p.name.StartsWith("A")).Count()
 int gone = db.From<Person>().Where(p => p.age < 18).Delete()
-print(db.From<Person>().Where(p => p.age >= min).ToSql())     // SELECT * FROM "people" WHERE ("age" >= ?) [18]
+print(db.From<Person>().Where(p => p.age >= taking min).ToSql())     // SELECT * FROM "people" WHERE ("age" >= ?) [18]
 List<Person> london = await db.From<Person>().Where(p => p.city == "London").ToList()
 ```
 
 - `Where` (several: all must hold), `OrderBy`/`OrderByDescending`, `ThenBy`/`ThenByDescending`, `Skip`, `Take`; nothing runs before an end: `ToList`,
   `First` (a `Data.DataException` when there is no row), `FirstOrDefault` (undefined), `Count`, `Any`, `Delete`, `ToSql` (the SQL and its parameters).
-- What the lambda takes from the code around it (`min`, a field, the result of a call) is a **parameter** (`?`) - its value when the query was written,
-  never text in the SQL. A value compared with a column is converted like the mapping does (a `DateTime` to its ISO text, an enum to its name).
+- What the lambda takes from the code around it is written with `taking` (`taking min`, like in every lambda: a copy, made with the lambda) - a value
+  that does not depend on the object (a variable, a field, the result of a call) is a **parameter** (`?`), its value when the query was written, never text
+  in the SQL. A value compared with a column is converted like the mapping does (a `DateTime` to its ISO text, an enum to its name).
 - The database runs: the columns (`p.age` - the field's column, also a renamed one), `== != < <= > >=`, `&& || !`, `+ - * / %` (`+` of texts joins them),
   `?? `, `x ? a : b`, `== undefined` (`IS NULL`), of a text `StartsWith`, `EndsWith`, `Contains` (case-sensitive, like fire), `ToLower`, `ToUpper`, `Length`,
-  and an array of the program that `Contains` a column (`IN (...)`: `var wanted = ["Ada", "Linus"]; db.From<Person>().Where(p => wanted.Contains(p.name))`).
+  and an array of the program that `Contains` a column (`IN (...)`: `var wanted = ["Ada", "Linus"]; db.From<Person>().Where(p => (taking wanted).Contains(p.name))`).
 - Anything else - a method of your own, a member of a member, `is of` - is a `Data.NotTranslatableException` that names the part of the lambda.
 - The same query runs on every driver; the in-memory database gets the same SQL.
 
