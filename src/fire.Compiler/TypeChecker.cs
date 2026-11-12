@@ -2286,7 +2286,9 @@ namespace fire.Compiler
             var shape = DeclaredLambda(signature with { IsExpression = false }, map);
             if (arg is not LambdaExpr { ExpressionBody: true, OnTarget: null } lambda)
             {
-                ReportError(ExpressionTreeCode, $"'{param.Name}' is an expression tree: it takes a lambda written here with an expression body ('x => ...'), not {(arg is LambdaExpr ? "a lambda with a block" : "a value")}", line);
+                // a tree passed on (a parameter `lambda expression<T>` of the calling method, a LambdaExpression): it goes as it is
+                if (arg is not LambdaExpr && Infer(arg) is { Kind: StaticKind.Class, Class: "LambdaExpression" } passedOn) return passedOn;
+                ReportError(ExpressionTreeCode, $"'{param.Name}' is an expression tree: it takes a lambda written here with an expression body ('x => ...') or a tree (LambdaExpression), not {(arg is LambdaExpr ? "a lambda with a block" : "a value")}", line);
                 return Infer(arg, shape);
             }
             _trees.Lambdas.Add(lambda);

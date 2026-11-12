@@ -196,8 +196,9 @@ print(probe.Run(p => p.age >= min, new Person(20, "Anna")))         // True
   `CapturedExpression` with its `Name` (the text) and its `Value` **when the tree is made** (an object as a copy). `tree.Captures()` gives them in order.
 - `ToString()` is the body in fire syntax - the same in the VM and in a native program. A visitor walks the tree: derive from `ExpressionVisitor` and
   override `VisitBinary`, `VisitMember`, ... (by default each visits the children); `tree.Accept(visitor)`.
-- Only a lambda written at the call with an expression body goes there (`x => ...`): a lambda in a variable, one with a block, and an assignment, `++`
-  or `take` in it are the error `TC030`. The call has to be one the compiler knows: through `any` the method gets only the code - the
+- Only a lambda written at the call with an expression body goes there (`x => ...`), or a tree that is already made: a parameter
+  `lambda expression<T>` of the calling method or a `LambdaExpression` is passed on as it is (`string Show(lambda expression<T> e) { return inner.Show(e) }`).
+  A lambda in a variable, one with a block, and an assignment, `++` or `take` in it are the error `TC030`. The call has to be one the compiler knows: through `any` the method gets only the code - the
   ArgumentException.
 - A tree can be given where a lambda is expected: `bool lambda<Person> f = tree` (also as an argument or a return value) takes its compiled lambda
   (`tree.Invoke`). The other way round is not possible - a lambda in a variable has no tree any more.

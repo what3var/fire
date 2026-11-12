@@ -766,6 +766,9 @@ namespace fire.Standard
                     return -1
                 }
 
+                // is `value` in the list (`==`, an object: the same one)?
+                bool Contains(T value) { return this.IndexOf(value) >= 0 }
+
                 // removes `value` (the first one); false if it is not in the list
                 bool Remove(T value) {
                     var at = this.IndexOf(value)
