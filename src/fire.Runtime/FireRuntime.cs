@@ -245,7 +245,12 @@ namespace fire.Runtime
             foreach (var v in copies) scope.DefineSlot(v);
             foreach (var v in moved) scope.DefineSlot(v);
             if (withValues != null)
-                foreach (var wv in withValues) scope.DefineSlot(wv);
+                foreach (var wv in withValues)
+                {
+                    // (the end of a channel that the spawning VM made for this thread: it belongs to the thread)
+                    if (wv.Kind == ValueKind.Class && wv.AsObjectRef() is ObjectInstance { IsDestroyed: false, RtClass.Name: "Channel" } end) end.ReparentTo(scope);
+                    scope.DefineSlot(wv);
+                }
             if (VmScheduler.Enabled && ThreadBodyInterceptor == null)
             {
                 // step 7: a task of the pool (VmScheduler) - not a system thread of its own

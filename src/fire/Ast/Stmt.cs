@@ -170,7 +170,7 @@ namespace fire.Ast
     /// lambda whose parameters are the `taking` captures (they are passed as value/copy when enqueued) - like any lambda, the lambda sees
     /// the globals, but no locals of the caller.
     /// OnTarget (`fire on window { ... }`, docs/ROADMAP_TASKS.md section 5): the first argument is the object the block runs on - passed as it is, not copied.</summary>
-    public sealed record PostGlobalStmt(int Source, int Line, LambdaExpr Lambda, IReadOnlyList<Expr> Args, bool OnTarget = false) : Stmt(Source, Line);
+    public sealed record PostGlobalStmt(int Source, int Line, LambdaExpr Lambda, IReadOnlyList<Expr> Args, bool OnTarget = false, int WithCount = 0) : Stmt(Source, Line);   // (WithCount: the last arguments are `with` references - as they are, a channel as an end of its own)
 
     /// <summary>`process X` (docs/spec/THREADING_DESIGN.md Abschnitt 2) -
     /// blocking: waits until a message arrives in the mailbox of the

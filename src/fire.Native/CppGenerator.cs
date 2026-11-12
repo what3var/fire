@@ -2104,6 +2104,7 @@ namespace fire.Native
                 _dispatchers.Add(("GetCurrent", 0));
             }
             if (AnyClassHasMethod("GetIndex", 1)) _dispatchers.Add(("GetIndex", 1));
+            if (_classes.ContainsKey("Channel") && AnyClassHasMethod("__End", 0)) _dispatchers.Add(("__End", 0));   // (`fire with ch`: the thread's end of a channel)
             if (AnyClassHasMethod("SetIndex", 2)) _dispatchers.Add(("SetIndex", 2));
             if (_dispatchers.Contains(("GetEnumerator", 0)) && _program.Program.Classes.ContainsKey("ListEnumerator"))
             {
@@ -2885,9 +2886,9 @@ namespace fire.Native
                         var c = new StringBuilder();
                         for (var b = unmadeRc; b != null; b = b.Base) c.Append(CString(b.Name)).Append(", ");
                         columns.AppendLine($"static const char* const kIsa{id}[] = {{{c}NULL}};");
-                        rows.Add($"{{{CString(unmade)}, {unmadeRc.FlattenedFieldNames.Count}, -1, -1, NULL, NULL, NULL, kIsa{id}, NULL, NULL, NULL, {DescFlags(unmadeRc)}}}");
+                        rows.Add($"{{{CString(unmade)}, {unmadeRc.FlattenedFieldNames.Count}, -1, -1, NULL, NULL, NULL, kIsa{id}, NULL, NULL, NULL, {DescFlags(unmadeRc)}, NULL, NULL, NULL}}");
                     }
-                    else rows.Add(Modular ? "{\"?\", 0, -1, -1, NULL, NULL, NULL, NULL, NULL, NULL, NULL, 0}" : "{\"?\", 0, -1, -1, NULL, NULL, NULL, 0}");
+                    else rows.Add(Modular ? "{\"?\", 0, -1, -1, NULL, NULL, NULL, NULL, NULL, NULL, NULL, 0, NULL, NULL, NULL}" : "{\"?\", 0, -1, -1, NULL, NULL, NULL, 0, NULL, NULL, NULL}");
                     continue;
                 }
                 rows.Add(DescRow(cls, id, sb, columns, excTypes: true));
@@ -2930,7 +2931,7 @@ namespace fire.Native
                 }
             }
             string modular = Modular ? ModularDescColumns(cls.Rc, columns, id) : "";
-            string record = cls.Rc.IsRecord ? RecordFunctions(cls, id, sb) : "";
+            string record = cls.Rc.IsRecord ? RecordFunctions(cls, id, sb) : ", NULL, NULL, NULL";   // (every column written: -Wmissing-field-initializers)
             return $"{{{CString(cls.Rc.Name)}, {cls.Fields.Count}, {message}, {ticks}, {destroy}, {toString}, {types}{modular}, {DescFlags(cls.Rc)}{record}}}";
         }
 
@@ -5107,6 +5108,18 @@ namespace fire.Native
                         Check();
                         d = first + 1; SetR(first, false); return Next();
                     }
+                    if (Array.IndexOf(ChannelMethods.Names, native) >= 0)
+                    {
+                        // Channel (fire_rt.h: fire_chan_new, ...): a queue between threads; Send and Receive move what goes through it (`list`: the call's)
+                        UseThreads();
+                        int first = d - argc;
+                        var channelArgs = Enumerable.Range(first, argc).Select(SR).ToList();   // (read before the result slot is written: it may be an alias)
+                        bool moves = native is "__chan_send" or "__chan_receive";
+                        if (moves) channelArgs.Add("&" + OwnerList());
+                        E($"{T(first)} = fire_{native.Substring(2)}({string.Join(", ", channelArgs)});");
+                        Check();
+                        d = first + 1; SetR(first, native == "__chan_receive"); return Next();
+                    }
                     if (Array.IndexOf(CompletionMethods.Names, native) >= 0)
                     {
                         // Completion (fire_rt.h: fire_completion_new, ...): a value that another task delivers; Wait copies it into this scope
@@ -6724,7 +6737,14 @@ namespace fire.Native
                     for (int i = 0; i < copyCount; i++) sbf.Append($"av[{i}] = takeCopy({S(first + i)}, travel); ");
                     // (all `handover` values together - one may reach another; the sender's other references die, see fire_rt.h handOverAll)
                     if (handoverCount > 0) sbf.Append($"handOverAll(tv + {copyCount}, av + {copyCount}, {handoverCount}, travel); ");
-                    for (int w = 0; w < withCount; w++) sbf.Append($"av[{takingCount + w}] = {S(first + takingCount + w)}; ");
+                    for (int w = 0; w < withCount; w++)
+                    {
+                        int k = takingCount + w;
+                        sbf.Append($"av[{k}] = {S(first + takingCount + w)}; ");
+                        // (a channel: the thread gets an end of its own on the same queue - step 9)
+                        if (_classes.TryGetValue("Channel", out var chanCls) && _dispatchers.Contains(("__End", 0)))
+                            sbf.Append($"if (av[{k}].kind == K_Class && leafAlive(av[{k}]) && asObj(av[{k}])->cls == {ClassIdExpr(chanCls)}) {{ Value e_ = {CallFn("__End", 0)}(av[{k}]{DispatchTail("__End", 0, "travel", "0xFFFFFFFFu")}); Owned* eo_ = ownedOf(e_); if (eo_) {{ if (eo_->owner) ownUnlink(eo_); ownLink(travel, eo_); }} av[{k}] = e_; }} ");
+                    }
                     sbf.Append($"ensureDomain(); {(dedicatedThread ? "fireThreadDedicated" : "fireThread")}({body.Name}, av, {argc}, travel); }}");
                     if (takingCount > 0) sbf.Append(" }");
                     E(sbf.ToString());
@@ -6803,7 +6823,17 @@ namespace fire.Native
                         SetT(first, TypeUnknown);
                         return Next();
                     }
-                    E($"{{ {av}postJobEx({S(d - 1)}, av, {argc}, {(onTarget ? "true" : "false")}, NULL); }}");
+                    int jobWith = ins.A.Length > 1 ? ins.A[1] : 0;   // (the last arguments: `with` references - as they are)
+                    if (jobWith > 0)
+                    {
+                        // (a channel: the job gets an end of its own on the same queue, which goes to the job - step 9)
+                        var ends = new StringBuilder();
+                        if (_classes.TryGetValue("Channel", out var jobChan) && _dispatchers.Contains(("__End", 0)))
+                            for (int k = argc - jobWith; k < argc; k++)
+                                ends.Append($"if (av[{k}].kind == K_Class && leafAlive(av[{k}]) && asObj(av[{k}])->cls == {ClassIdExpr(jobChan)}) av[{k}] = adoptV({CallFn("__End", 0)}(av[{k}]{DispatchTail("__End", 0, "&" + OwnerList(), "0xFFFFFFFFu")}), &{OwnerList()}); ");
+                        E($"{{ {av}{ends}postJobWith({S(d - 1)}, av, {argc}, {(onTarget ? "true" : "false")}, {jobWith}, &{OwnerList()}); }}");
+                    }
+                    else E($"{{ {av}postJobEx({S(d - 1)}, av, {argc}, {(onTarget ? "true" : "false")}, NULL); }}");
                     if (argc > 0) Check();   // (`[NoCopy]`: an argument that reaches one is the ArgumentException, nothing is queued)
                     d = first;
                     return Next();

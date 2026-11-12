@@ -64,7 +64,7 @@ namespace fire.Bytecode
             [OpCode.Halt] = Array.Empty<int>(),
             [OpCode.CopyValue] = new[] { 1 }, [OpCode.CopyValueOwned] = new[] { 1 }, [OpCode.CopyArgs] = new[] { 2, 2, 2, 2 },
             [OpCode.SyncGlobals] = Array.Empty<int>(), [OpCode.SectionEnter] = Array.Empty<int>(), [OpCode.SectionExit] = Array.Empty<int>(),
-            [OpCode.SetAutoSync] = new[] { 1 }, [OpCode.PostGlobal] = new[] { 1 },
+            [OpCode.SetAutoSync] = new[] { 1 }, [OpCode.PostGlobal] = new[] { 1, 1 },
             [OpCode.EnterFinallyNormal] = Array.Empty<int>(), [OpCode.PushJump] = new[] { 2 }, [OpCode.EndFinally] = Array.Empty<int>(),
             [OpCode.Probe] = new[] { 2, 1 }, [OpCode.SilenceMember] = new[] { 2, 1 }, [OpCode.SilenceValue] = Array.Empty<int>(),
             [OpCode.MakeLambdaCapturing] = new[] { 2, 1, 1 },

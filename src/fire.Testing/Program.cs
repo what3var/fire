@@ -22302,6 +22302,76 @@ else
             while (!done) { process c; process l; Sleep(1ms) }
             print("main " + c.n + " " + l.text)
         """),
+        ("Channel<T>: Send/Receive zwischen Threads (fire with), foreach bis zum Schliessen, Objekte nur frisch/copy/take (Laufzeit und TC029 fuer bekannte Typen), Records behalten ihre Identitaet und sterben mit dem Empfaenger, Unzugestelltes stirbt mit dem Kanal, TryReceive, Zeitlimit, [NoCopy]", """
+            #import "time"
+            record Note {
+                string text
+                construct(string t) { this.text = t }
+            }
+            class Job { int n; construct(int n) { this.n = n } }
+            class Part { int n; construct(int n) { this.n = n } destruct() { print("part " + this.n + " gone") } }
+            var jobs = new Channel<Job>(2)
+            var results = new Channel<int>()
+            var notes = new Channel<Note>()
+            fire with jobs, results, notes {
+                foreach (j in jobs) { results.Send(j.n * 10) }
+                var got = notes.Receive()
+                results.Send(got.text.Length)
+                results.Close()
+            }
+            for (int i = 1; i <= 5; i++) { jobs.Send(new Job(i)) }
+            var mine = new Job(9)
+            any anyMine = mine
+            try { jobs.Send(anyMine) } catch (ArgumentException e) { print("word: " + e.message) }
+            jobs.Send(copy mine)
+            mine.n = 100
+            jobs.Close()
+            print("closed " + jobs.IsClosed + " send " + jobs.Send(new Job(1)))
+            var n1 = new Note("hello")
+            var seen = n1
+            notes.Send(take n1)
+            print("seen " + seen.text)
+            int sum = 0
+            foreach (r in results) { sum = sum + r }
+            print("sum " + sum)
+            Sleep(30ms)
+            try { print(seen.text) } catch (DestroyedException e) { print("the note died with its receiver") }
+            var parts = new Channel<Part>()
+            var part = new Part(1)
+            var alias = part
+            parts.Send(take part)
+            try { print(alias.n) } catch (DestroyedException e) { print("moved: " + e.message) }
+            print("try " + parts.TryReceive().n + " " + (parts.TryReceive() == undefined) + " count " + parts.Count)
+            try { parts.Receive(5ms) } catch (TimeoutException e) { print("timeout") }
+            parts.Send(new Part(2))
+            try { fire taking parts { parts.Close() } } catch (ArgumentException e) { print("taking: " + e.message) }
+            print("end " + parts.Count)
+        """),
+        ("Threads: fire on x taking k with kanal, actor - der Job im Hauptprogramm bekommt die Referenzen wie mit fire with (ein eigenes Ende des Kanals) und antwortet ueber den Kanal", """
+            #import "time"
+            class Store { int v = 40 }
+            actor Log {
+                string text = ""
+                undefined Put(string s) { this.text = this.text + s }
+            }
+            var store = new Store()
+            var log = new Log()
+            var done = false
+            fire with log {
+                var answers = new Channel<int>()
+                int k = 2
+                fire on store taking k with answers, log {
+                    log.Put("job ")
+                    answers.Send(store.v + k)
+                }
+                print("thread got " + answers.Receive())
+                done = true
+            }
+            while (!done) { try process log; Sleep(1ms) }
+            Sleep(10ms)
+            try process log
+            print("main " + log.text)
+        """),
         ("Threads: TakeGlobal() im Thread gibt das Objekt samt allem, was es besitzt, dem Hauptprogramm; ein Feld auf ein fremdes Thread-Objekt ist die ArgumentException (Takes.Locals nimmt es mit), TakeGlobal(true) bleibt im Thread", """
             #import "time"
             class Leaf { int v; construct(int v) { this.v = v } }

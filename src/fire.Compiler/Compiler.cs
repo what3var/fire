@@ -1860,6 +1860,7 @@ namespace fire.Compiler
                     _chunk.EmitOp(OpCode.PostGlobal);
                     // (bit 7: the first argument is the object of `fire on` - not copied; bit 6: `await on` - the result comes back)
                     _chunk.EmitByte((byte)(postGlobal.Args.Count | (postGlobal.OnTarget ? 0x80 : 0)));
+                    _chunk.EmitByte((byte)postGlobal.WithCount);   // (the last arguments: `with` references - as they are)
                     break;
 
                 case TerminateStmt terminateStmt:
@@ -2910,6 +2911,7 @@ namespace fire.Compiler
                     CompileLambda(awaitOn.Lambda);
                     _chunk.EmitOp(OpCode.PostGlobal);
                     _chunk.EmitByte((byte)(awaitOn.Args.Count | 0x80 | 0x40));
+                    _chunk.EmitByte(0);   // (no `with`)
                     break;
 
                 case CallExpr { Dedicated: true } dedicatedCall:

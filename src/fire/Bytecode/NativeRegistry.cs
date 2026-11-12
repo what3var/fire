@@ -161,6 +161,11 @@ namespace fire.Bytecode
                 string bound = completionName;
                 Register(bound, args => fire.Standard.CompletionMethods.Call(bound, args));
             }
+            foreach (var channelName in fire.Standard.ChannelMethods.Names)
+            {
+                string bound = channelName;
+                Register(bound, args => fire.Standard.ChannelMethods.Call(bound, args));
+            }
         }
     }
 }

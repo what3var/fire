@@ -311,6 +311,8 @@ namespace fire.Runtime
                 (_currentThreadVm ?? throw new InvalidOperationException("__fd_wait needs a running program.")).FdWaitNative(args);
             fire.Standard.CompletionMethods.Implementation = (name, args) =>
                 (_currentThreadVm ?? throw new InvalidOperationException("A Completion needs a running program.")).CompletionNative(name, args);
+            fire.Standard.ChannelMethods.Implementation = (name, args) =>
+                (_currentThreadVm ?? throw new InvalidOperationException("A Channel needs a running program.")).ChannelNative(name, args);
         }
 
         /// <summary>`__await_run(lambdas, res, fails)` (fire.Standard.AwaitMethods): calls every lambda with (res, fails, i), one after the other, nested like a
@@ -5659,6 +5661,13 @@ namespace fire.Runtime
                     // Compiler.CompileFireStmt).
                     var withValues = new Value[withCount];
                     for (int i = withCount - 1; i >= 0; i--) withValues[i] = Pop();
+                    // (a channel: the thread gets an end of its own on the same queue - step 9)
+                    for (int i = 0; i < withCount; i++)
+                        if (withValues[i].Kind == ValueKind.Class && withValues[i].AsObjectRef() is ObjectInstance { IsDestroyed: false, RtClass.Name: "Channel" } channel)
+                        {
+                            if (CallMethodNested(channel, "__End", Array.Empty<Value>()) is not { } end) return;
+                            withValues[i] = end;
+                        }
                     var takingValues = new Value[takingCount];
                     for (int i = takingCount - 1; i >= 0; i--) takingValues[i] = Pop();
                     // `[NoCopy]` (SPEC 5.12): every `taking` is a copy - an instance of such a class (also in a field or an element), and a lambda or a pointer
@@ -5727,6 +5736,7 @@ namespace fire.Runtime
                 case OpCode.PostGlobal:
                 {
                     int jobFlags = ReadByte();
+                    int jobWith = ReadByte();   // (the last arguments: `with` references - as they are, a channel as an end of its own)
                     int jobArgCount = jobFlags & 0x3F;
                     bool onTarget = (jobFlags & 0x80) != 0;   // `fire on x` / `await on x`: the first argument is the object itself
                     bool awaitJob = (jobFlags & 0x40) != 0;   // `await on x`: the result comes back
@@ -5755,11 +5765,20 @@ namespace fire.Runtime
                     // The arguments belong to the job, not to this thread: objects are deeply copied, their owner is a holder scope that
                     // the main program releases after the run.
                     // `[NoCopy]` (SPEC 5.12): checked for all of them first - nothing is copied or queued when one is refused (the ArgumentException).
-                    foreach (var ja in jobArgs)
-                        if (ja.Kind == ValueKind.Class) ObjectCopier.RequireNoCopyFree(ja, "fire global");
+                    int copiedArgs = jobArgs.Length - jobWith;
+                    for (int i = 0; i < copiedArgs; i++)
+                        if (jobArgs[i].Kind == ValueKind.Class) ObjectCopier.RequireNoCopyFree(jobArgs[i], "fire global");
                     var holder = new Scope(null);
-                    for (int i = onTarget ? 1 : 0; i < jobArgs.Length; i++)
+                    for (int i = onTarget ? 1 : 0; i < copiedArgs; i++)
                         if (jobArgs[i].Kind == ValueKind.Class) jobArgs[i] = ObjectCloner.Clone(jobArgs[i], holder, deep: true);
+                    for (int i = copiedArgs; i < jobArgs.Length; i++)
+                        if (jobArgs[i].Kind == ValueKind.Class && jobArgs[i].AsObjectRef() is ObjectInstance { IsDestroyed: false, RtClass.Name: "Channel" } jobChannel)
+                        {
+                            // (a channel: the job gets an end of its own on the same queue - step 9)
+                            if (CallMethodNested(jobChannel, "__End", Array.Empty<Value>()) is not { } end) { holder.Release(this); return; }
+                            ((ObjectInstance)end.AsObjectRef()).ReparentTo(holder);
+                            jobArgs[i] = end;
+                        }
 
                     var postBroker = IsFireThreadVm ? _threadBroker! : EnsureOwnerBroker();
                     if (awaitJob)

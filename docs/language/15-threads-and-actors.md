@@ -278,6 +278,8 @@ print(n + " " + sum)
 - `fire on window { ... }` runs a block in the main program - where its windows live - with `window` as the real object (and copies of what it takes with
   `taking`); the caller goes on. `await on window { return window.Title }` waits for the block's result. From a thread the object must be one of the main
   program (a global variable) or an actor. In the main program itself `await on` runs the block at once and `fire on` at its next safe point.
+  `fire on window taking x with actorA, channelB { ... }` gives the block references as they are, like `fire with` (an actor; a channel as an end of
+  its own - the block can answer through it).
 - An event handler of a window is a task of the main program's group (natively and in the VM): when it waits (`Sleep`, `await`), the window goes on, and the
   handler continues later on the same thread. Only one handler runs at a time, and only where it waits does another one get its turn.
 - While the main program waits (`Sleep`, `await`, the end of the program), its windows keep answering the system: they repaint and stay responsive;
@@ -330,6 +332,38 @@ print(c.Wait(2s))                                // ready - waits until the valu
   limit it waits as long as it takes.
 - A Completion is never copied (`[NoCopy]`): `Share()` gives another one on the same value, which goes to a thread with `handover`, as the argument of an
   actor's method (`reader.Expect(id, c.Share())`) or lent to an awaited call. The value lives as long as one of them does.
+
+## Channels
+
+A `Channel<T>` is a queue between threads: `Send(v)` puts a value in (it waits while the channel is full), `Receive()` takes the next one out (it
+waits while it is empty). Waiting does not hold anything up: the scheduler runs other tasks meanwhile. A thread gets a channel with `fire with` - an
+end of its own on the same queue:
+
+```fire
+#import "time"
+class Job { int n; construct(int n) { this.n = n } }
+var jobs = new Channel<Job>(4)      // at most 4 waiting values (the default: 16)
+var results = new Channel<int>()
+fire with jobs, results {
+    foreach (job in jobs) { results.Send(job.n * job.n) }   // until the channel is closed and empty
+    results.Close()
+}
+for (int i = 1; i <= 3; i++) { jobs.Send(new Job(i)) }
+jobs.Close()
+int sum = 0
+foreach (r in results) { sum = sum + r }
+print(sum)                          // 14
+```
+
+- A value (a number, a text, a bool) goes as it is. An object, an array or a record goes only fresh (`new`, the result of a call) or with a word:
+  `Send(copy x)` (a copy) or `Send(take x)` (moved - like `handover`, every other reference to it is dead; a record keeps its identity, because
+  nobody can change it). Without one it is TC029 (an error, also in lax mode) where the type is known, else the ArgumentException.
+- What travels belongs to the channel; after `Receive` it belongs to the receiver - when the receiving thread ends, it ends with it. What nobody
+  received is destroyed with the channel.
+- `Receive(limit)` waits at most `limit` (the TimeoutException); `TryReceive()` does not wait - undefined when nothing is there. A closed and empty
+  channel gives undefined (`foreach` ends there).
+- `Send` gives False when the channel is closed (nothing moved). `Close()`, `IsClosed`, `Count`.
+- The channel closes when the one that made it ends. It is never copied (`fire taking ch` is the ArgumentException) - it goes with `with`.
 
 ## Actors
 

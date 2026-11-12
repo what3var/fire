@@ -10088,14 +10088,18 @@ FIRE_FN void sectionExitOp(void) { if (g_isThread && g_secDepth > 0 && --g_secDe
  * object the block runs on, as it is - from a thread only one of the main program (its globals' domain) or an actor; `reply`: `await on` from a thread. */
 FIRE_FN void jobFree(JobReq* j);
 /* (the job itself: its lambda, the copies of its arguments; NULL - the exception is set - when it is refused) */
-FIRE_FN JobReq* jobMake(Value lam, const Value* args, uint32_t n, bool onTarget, ActorReply* reply) {
+FIRE_FN JobReq* jobMakeEx(Value lam, const Value* args, uint32_t n, bool onTarget, ActorReply* reply, uint32_t asIs, OwnList* from);
+FIRE_FN JobReq* jobMake(Value lam, const Value* args, uint32_t n, bool onTarget, ActorReply* reply) { return jobMakeEx(lam, args, n, onTarget, reply, 0, NULL); }
+/* (`asIs`: the last arguments are `with` references - they go as they are, not copied; one that `from` owns - the end of a channel made for the job - goes to
+ * the job's holder) */
+FIRE_FN JobReq* jobMakeEx(Value lam, const Value* args, uint32_t n, bool onTarget, ActorReply* reply, uint32_t asIs, OwnList* from) {
     JobReq* j;
     uint32_t i;
     if (onTarget && n > 0 && g_isThread && args[0].kind == K_Class && leafAlive(args[0]) && !(leafOf(args[0])->flags & (F_SHARED | 8))) {
         fireError("ArgumentException", "'on': the object is not one of the main program (a thread may name a global variable of the main program)");
         return NULL;
     }
-    for (i = onTarget ? 1 : 0; i < n; i++)
+    for (i = onTarget ? 1 : 0; i + asIs < n; i++)
         if (args[i].kind == K_Class && !noCopyFree(args[i], "fire global")) return NULL;
     j = (JobReq*)malloc(sizeof(JobReq));
     if (!j) allocFailed();
@@ -10119,6 +10123,13 @@ FIRE_FN JobReq* jobMake(Value lam, const Value* args, uint32_t n, bool onTarget,
     if (!j->args || !j->holder) allocFailed();
     ownListInit(j->holder, 0, NULL);
     for (i = 0; i < n; i++) {
+        if (i + asIs >= n) {
+            Owned* o = ownedOf(args[i]);
+            j->args[i] = args[i];
+            if (o && from && o->owner == from) { ownUnlink(o); ownLink(j->holder, o); }
+            retain(args[i]);   /* (jobFree lets go of every argument) */
+            continue;
+        }
         if (onTarget && i == 0 && args[i].kind == K_Class) j->args[i] = args[i];   /* (the object itself) */
         else if (args[i].kind == K_Class) j->args[i] = deepCopyCross(args[i], j->holder);
         else { j->args[i] = strCross(args[i]); retain(j->args[i]); }
@@ -10135,6 +10146,16 @@ FIRE_FN void postJobEx(Value lam, const Value* args, uint32_t n, bool onTarget, 
     notifyEvent();
 }
 FIRE_FN void postJob(Value lam, const Value* args, uint32_t n) { postJobEx(lam, args, n, false, NULL); }
+/* `fire on x taking y with a, ch { ... }`: the last `asIs` arguments are `with` references (see jobMakeEx). */
+FIRE_FN void postJobWith(Value lam, const Value* args, uint32_t n, bool onTarget, uint32_t asIs, OwnList* from) {
+    Req q;
+    JobReq* j = jobMakeEx(lam, args, n, onTarget, NULL, asIs, from);
+    if (!j) return;
+    q.sec = NULL; q.job = j;
+    reqPush(q);
+    fire_atomic_or(&g_attn, ATTN_SECT);
+    notifyEvent();
+}
 /* `await on x { ... return v }`: the block runs in the main program's group with x itself and copies of the rest; the caller waits for its result (an
  * exception that the block does not catch is thrown here). The main program itself (or a member of its group) runs it at once. */
 FIRE_FN Value awaitJobEx(Value lam, const Value* args, uint32_t n, bool onTarget, void* home);
@@ -10588,7 +10609,10 @@ FIRE_FN Value fire_lambdaHandover(Value v, OwnList* temps) {
  * lambda is shared as with `taking`. Every moved part gets the next generation of its slot - the references among the parts and the values the thread gets
  * carry it, every other Value (the sender's, from before the handover) is dead from then on: its use is the DestroyedException "... was handed over to a
  * thread" (destroyedError, handedOverRef), as in the VM (Runtime.ObjectHandover.MoveAll). An original with `taking` copies counts as gone for their `sync`. */
-FIRE_FN void handOverAll(const Value* vs, Value* out, uint32_t n, OwnList* travel) {
+FIRE_FN void handOverAllEx(const Value* vs, Value* out, uint32_t n, OwnList* travel, bool retire);
+FIRE_FN void handOverAll(const Value* vs, Value* out, uint32_t n, OwnList* travel) { handOverAllEx(vs, out, n, travel, true); }
+/* (retire false: the parts keep their identity - a record that moves: nobody can change it, so the other references stay valid; step 9) */
+FIRE_FN void handOverAllEx(const Value* vs, Value* out, uint32_t n, OwnList* travel, bool retire) {
     CopyMap seen = {0};
     Owned** parts = NULL;
     uint32_t count = 0, cap = 0, i;
@@ -10625,7 +10649,7 @@ FIRE_FN void handOverAll(const Value* vs, Value* out, uint32_t n, OwnList* trave
     }
 #endif
 #ifndef FIRE_UNCHECKED
-    for (i = 0; i < count; i++) {
+    if (retire) for (i = 0; i < count; i++) {
         Owned* h = parts[i];
         uint32_t k;
         if (h->okind == O_Object) {
@@ -10653,8 +10677,8 @@ FIRE_FN void handOverAll(const Value* vs, Value* out, uint32_t n, OwnList* trave
             for (k = 0; k < l->ncaps; k++) handoverRehome(&lamCaps(l)[k], &seen);
         }
     }
-    for (i = 0; i < n; i++) handoverRehome(&out[i], &seen);
-    for (i = 0; i < count; i++) {
+    if (retire) for (i = 0; i < n; i++) handoverRehome(&out[i], &seen);
+    if (retire) for (i = 0; i < count; i++) {
         if (parts[i]->okind != O_Lambda) slotBump(parts[i]);   /* (a lambda has no slot: its memory is counted) */
     }
 #endif
@@ -10828,6 +10852,142 @@ FIRE_FN Value globalsCall(Value self, MsgFn fn, const Value* args, uint32_t n, c
     fire_atomic_or(&g_attn, ATTN_SECT);
     notifyEvent();
     return awaitReplyOf(reply);
+}
+
+/* ---- Channel (docs/ROADMAP_TASKS.md step 9, the VM: fire.Runtime.Channels): a bounded queue between threads. A node is an int handle, counted (every end -
+ * every Channel object - holds one count); what travels belongs to `hold` until it is received, the last end destroys what is left. Send waits while it is
+ * full, Receive while it is empty (the task parks, the scheduler serves). */
+typedef struct ChanNode {
+    fire_atomic32 refs;
+    fire_atomic32 count;    /* (a mirror of n for the waits, written under m) */
+    fire_atomic32 closed;
+    fire_mutex m;
+    Value* buf;
+    uint32_t cap, head, n;
+    OwnList hold;
+} ChanNode;
+FIRE_FN ChanNode* chanOf(Value h) { return h.kind == K_Int && h.i ? (ChanNode*)(intptr_t)h.i : NULL; }
+FIRE_FN bool fire_chanCanSend(void* c) { ChanNode* n = (ChanNode*)c; return fire_atomic_loadAcquire(&n->closed) != 0 || (uint32_t)fire_atomic_loadAcquire(&n->count) < n->cap; }
+FIRE_FN bool fire_chanCanReceive(void* c) { ChanNode* n = (ChanNode*)c; return fire_atomic_loadAcquire(&n->closed) != 0 || fire_atomic_loadAcquire(&n->count) != 0; }
+FIRE_FN Value fire_chan_new(Value cap) {
+    ChanNode* n;
+    int64_t c = cap.kind == K_Int ? cap.i : 16;
+    if (c < 1) return fireError("ArgumentException", "The capacity of a channel must be at least 1.");
+    if (c > 1 << 24) c = 1 << 24;
+    n = (ChanNode*)calloc(1, sizeof(ChanNode));
+    if (!n) allocFailed();
+    n->buf = (Value*)malloc((size_t)c * sizeof(Value));
+    if (!n->buf) allocFailed();
+    n->cap = (uint32_t)c;
+    fire_atomic_store(&n->refs, 1);
+    fire_mutex_init(&n->m);
+    ownListInit(&n->hold, 0, NULL);
+    return Int((int64_t)(intptr_t)n);
+}
+FIRE_FN Value fire_chan_ref(Value h) { ChanNode* n = chanOf(h); if (n) fire_atomic_add(&n->refs, 1); return n ? h : Int(0); }
+FIRE_FN Value fire_chan_release(Value h) {
+    ChanNode* n = chanOf(h);
+    uint32_t i;
+    if (!n || fire_atomic_addAcqRel(&n->refs, (uint32_t)-1) != 1) return Undef();
+    /* (the last end: what was not received is destroyed - had a receiver taken it, it would be gone with it too) */
+    for (i = 0; i < n->n; i++) { Value v = n->buf[(n->head + i) % n->cap]; if (v.kind == K_String) release(v); }
+    destroyList(&n->hold);
+    free(n->buf);
+    free(n);
+    return Undef();
+}
+FIRE_FN Value fire_chan_close(Value h) { ChanNode* n = chanOf(h); if (n) { fire_atomic_storeRelease(&n->closed, 1); notifyEventAll(); } return Undef(); }
+FIRE_FN Value fire_chan_closed(Value h) { ChanNode* n = chanOf(h); return Bool(!n || fire_atomic_loadAcquire(&n->closed) != 0); }
+FIRE_FN Value fire_chan_count(Value h) { ChanNode* n = chanOf(h); return Int(n ? (int64_t)fire_atomic_loadAcquire(&n->count) : 0); }
+/* (the wait of Send/Receive: parks until `pred`, the token of the task or the deadline (0: none); false - the exception is set, or terminate - when it ended
+ * without `pred`) */
+FIRE_FN bool chanWait(ChanNode* n, bool (*pred)(void*), int64_t deadline) {
+    CancelNode* token = fire_curToken();
+    int64_t until = deadline;
+    int32_t held;
+    int state;
+    if (pred(n)) return true;
+    if (token) {
+        int64_t t = cancelDeadline(token);
+        if ((state = cancelState(token)) != 0) { fire_throwCancelled(state); return false; }
+        if (t && (!until || t < until)) until = t;
+    }
+    held = sectionYieldBegin();
+    if (token) {
+        TokWait w;
+        w.pred = pred; w.ctx = n; w.token = token;
+        if (g_isThread) blockUntil(fire_tokWaitPred, &w, true, until); else blockUntilServing(fire_tokWaitPred, &w, true, until);
+    } else if (g_isThread) blockUntil(pred, n, true, until);
+    else blockUntilServing(pred, n, true, until);
+    sectionYieldEnd(held);
+    if (pred(n)) return true;
+    if (token && (state = cancelState(token)) != 0) { fire_throwCancelled(state); return false; }
+    if (deadline && steadyMs() >= deadline) { fire_throwCancelled(2); return false; }
+    startLeave();   /* (terminate) */
+    return false;
+}
+/* `ch.Send(v)`: waits while it is full; false when it is closed (nothing moved). An object, array, buffer or lambda goes only when the call owns it (`owned`:
+ * fresh, copied, taken) - it moves to the channel like `handover` (a record keeps its identity); a string goes as a copy for another thread. */
+FIRE_FN Value fire_chan_send(Value h, Value v, Value owned, OwnList* list) {
+    ChanNode* n = chanOf(h);
+    Owned* o;
+    bool moves = false;
+    (void)list;
+    if (!n || fire_atomic_loadAcquire(&n->closed)) return Bool(false);
+    o = ownedOf(v);
+    if (o && (v.kind == K_Lambda || leafAlive(v)) && !(o->okind == O_Object && (o->flags & 8))) {
+        if (!(owned.kind == K_Bool && owned.i))
+            return fireError("ArgumentException", "Channel.Send: an object goes into a channel only with a word - 'copy x' (a copy) or 'take x' (moved) - or fresh ('new', the result of a call).");
+        if (!handoverFree(&v, 1)) return Undef();
+        moves = true;
+    }
+    if (!chanWait(n, fire_chanCanSend, 0)) return Undef();
+    fire_mutex_lock(&n->m);
+    if (fire_atomic_loadAcquire(&n->closed) || n->n >= n->cap) { fire_mutex_unlock(&n->m); return Bool(false); }
+    if (moves) {
+        Value out = v;
+        bool record = v.kind == K_Class && recordDesc(v) != NULL;
+        if (v.kind == K_Lambda) { if (o->owner) ownUnlink(o); ownLink(&n->hold, o); retain(v); }
+        else handOverAllEx(&v, &out, 1, &n->hold, !record);
+        v = out;
+    } else if (v.kind == K_String) { v = strCross(v); retain(v); }
+    else if (isRef(v)) retain(v);
+    n->buf[(n->head + n->n) % n->cap] = v;
+    n->n++;
+    fire_atomic_storeRelease(&n->count, n->n);
+    fire_mutex_unlock(&n->m);
+    notifyEventAll();
+    return Bool(true);
+}
+/* `ch.Receive(limit)` / `ch.TryReceive()` (wait false): the next value, for `list` (the receiving call) - or undefined when the channel is closed and empty
+ * (TryReceive: also when nothing is there now); TimeoutException when `limit` ran out. */
+FIRE_FN Value fire_chan_receive(Value h, Value limit, Value wait, OwnList* list) {
+    ChanNode* n = chanOf(h);
+    int64_t deadline = 0;
+    Value v;
+    Owned* o;
+    if (!n) return Undef();
+    if (!(wait.kind == K_Bool && !wait.i)) {
+        if (limit.kind != K_Undefined) {
+            int64_t ticks;
+            if (!timeTicksOf(limit, &ticks)) return fireError("ArgumentException", "Receive expects a time value (5s, 200ms) or undefined.");
+            deadline = steadyMs() + (ticks + TICKS_PER_MS - 1) / TICKS_PER_MS;
+            if (deadline == 0) deadline = 1;
+        }
+        if (!chanWait(n, fire_chanCanReceive, deadline)) return Undef();
+    }
+    fire_mutex_lock(&n->m);
+    if (n->n == 0) { fire_mutex_unlock(&n->m); return Undef(); }
+    v = n->buf[n->head];
+    n->head = (n->head + 1) % n->cap;
+    n->n--;
+    fire_atomic_storeRelease(&n->count, n->n);
+    o = ownedOf(v);
+    if (o && o->owner == &n->hold) { ownUnlink(o); ownLink(list, o); }
+    fire_mutex_unlock(&n->m);
+    notifyEventAll();
+    if (isRef(v) && refOf(v)->rc != IMMORTAL) poolPush(refOf(v));   /* (its count goes to the statement) */
+    return v;
 }
 
 /* ---- `sync`: the copy writes back into its original (last writer wins). Cases for a reference (THREADING_DESIGN 4.3):
