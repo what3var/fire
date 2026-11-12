@@ -1,10 +1,11 @@
 # Networking
 
-fire talks to the network with three packages, each imported on its own:
+fire talks to the network with these packages, each imported on its own:
 
 | Import | Package | What |
 | --- | --- | --- |
 | `#import "net"` | `fire-net` | TCP clients and servers, UDP, DNS - this page |
+| `#import "net.channel"` | `fire-net.channel` | `Net.Channel<T>`: a channel between programs over TCP, values as JSON, lent records - [Net.Channel](net-channel.md) |
 | `#import "http"` | `fire-http` | an HTTP/1.1 client and server, written in fire on top of `net` - [HTTP](http.md) |
 | `#import "tls"` | `fire-tls` | TLS 1.2/1.3 over a TCP connection; `http` uses it for `https://` - [TLS](tls.md) |
 | `#import "wifi"` | `fire-wifi` | the radio of a board: scan, join, access point - [WiFi](wifi.md) |

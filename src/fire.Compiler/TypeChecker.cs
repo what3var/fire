@@ -2481,9 +2481,11 @@ namespace fire.Compiler
                 var arg = Infer(c.Args[i], expected);
                 args.Add(arg);
                 if (open != null && argParams![i] is { } bound) Bind(bound.Type, bound.ArrayRanks.Count, arg, map!, open);
-                // `ch.Send(obj)` (step 9): an object, an array, a record goes into a channel only with a word (copy, take) or fresh - an error in lax mode too
+                // `ch.Send(obj)` (step 9): an object or an array goes into a channel only with a word (copy, take) or fresh - an error in lax mode too (a record
+                // without one is lent: its owner keeps it)
                 if (i == 0 && c.Callee is MemberExpr { Name: "Send" } && calleeTarget is { Kind: StaticKind.Class, Class: "Channel" } && c.Args.Count == 1
-                    && arg.Kind is StaticKind.Class or StaticKind.Object or StaticKind.Array && !IsFreshOrWorded(c.Args[0]))
+                    && arg.Kind is StaticKind.Class or StaticKind.Object or StaticKind.Array && !IsFreshOrWorded(c.Args[0])
+                    && !(arg.Kind == StaticKind.Class && arg.Class != null && Chain(arg).FirstOrDefault().Decl is { IsRecord: true }))   // (a record without a word: lent)
                     ReportError(ChannelWordCode, $"An object goes into a channel only with a word: 'Send(copy x)' (a copy) or 'Send(take x)' (moved) - or fresh ('new', the result of a call)", c.Line);
             }
             if (open != null)

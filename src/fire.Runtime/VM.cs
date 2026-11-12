@@ -2608,6 +2608,11 @@ namespace fire.Runtime
         private bool ThrowIfDeadForTake(Value v)
         {
             if (v.Kind == ValueKind.Class && v.AsObjectRef() is ObjectInstance obj && IsDeadObject(obj)) { ThrowDestroyedObject(obj); return true; }
+            if (v.Kind == ValueKind.Class && v.AsObjectRef() is ObjectInstance { LentBy: { } lender } && !ReferenceEquals(lender, this))
+            {
+                ThrowAccessDenied(LentTakeText);
+                return true;
+            }
             if (IsDestroyedLeaf(v)) { ThrowDestroyed(v); return true; }
             return false;
         }
@@ -2933,6 +2938,9 @@ namespace fire.Runtime
             foreach (var f in _frames) if (ReferenceEquals(f.ConstructedInstance, record)) return true;
             return false;
         }
+
+        /// <summary>A channel or an end of a two-way one (Channel.Pair): `fire with` gives a thread an end of its own (its `__End`).</summary>
+        internal static bool IsChannelLike(ObjectInstance obj) => obj.RtClass is { Name: "Channel" or "ChannelEnd" };
 
         /// <summary>The records that a copy or `with` is filling right now (their writes are allowed).</summary>
         private HashSet<ObjectInstance>? _recordInit;
@@ -5663,7 +5671,7 @@ namespace fire.Runtime
                     for (int i = withCount - 1; i >= 0; i--) withValues[i] = Pop();
                     // (a channel: the thread gets an end of its own on the same queue - step 9)
                     for (int i = 0; i < withCount; i++)
-                        if (withValues[i].Kind == ValueKind.Class && withValues[i].AsObjectRef() is ObjectInstance { IsDestroyed: false, RtClass.Name: "Channel" } channel)
+                        if (withValues[i].Kind == ValueKind.Class && withValues[i].AsObjectRef() is ObjectInstance { IsDestroyed: false } channel && IsChannelLike(channel))
                         {
                             if (CallMethodNested(channel, "__End", Array.Empty<Value>()) is not { } end) return;
                             withValues[i] = end;
@@ -5772,7 +5780,7 @@ namespace fire.Runtime
                     for (int i = onTarget ? 1 : 0; i < copiedArgs; i++)
                         if (jobArgs[i].Kind == ValueKind.Class) jobArgs[i] = ObjectCloner.Clone(jobArgs[i], holder, deep: true);
                     for (int i = copiedArgs; i < jobArgs.Length; i++)
-                        if (jobArgs[i].Kind == ValueKind.Class && jobArgs[i].AsObjectRef() is ObjectInstance { IsDestroyed: false, RtClass.Name: "Channel" } jobChannel)
+                        if (jobArgs[i].Kind == ValueKind.Class && jobArgs[i].AsObjectRef() is ObjectInstance { IsDestroyed: false } jobChannel && IsChannelLike(jobChannel))
                         {
                             // (a channel: the job gets an end of its own on the same queue - step 9)
                             if (CallMethodNested(jobChannel, "__End", Array.Empty<Value>()) is not { } end) { holder.Release(this); return; }

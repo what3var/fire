@@ -1,0 +1,13 @@
+{
+  "format": 1,
+  "name": "fire-net.channel",
+  "type": "library",
+  "import": "net.channel",
+  "standard": true,
+  "settings": {
+    "version": "1.0.0",
+    "author": "fire",
+    "license": "fire",
+    "description": "The standard library 'net.channel' of fire: Net.Channel<T> - a channel over a TCP connection, values as JSON, records lent across the network."
+  }
+}

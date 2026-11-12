@@ -159,6 +159,26 @@ namespace fire.Standard
                 bool IsClosed { get { return __chan_closed(this.node) } }
                 int Count { get { return __chan_count(this.node) } }
                 IEnumerator<T> GetEnumerator() { return new ChannelIter<T>(this) }
+                // Two directions: the end that sends A and receives B (`.Other()` gives the end that sends B and receives A).
+                static ChannelEnd<A, B> Pair<A, B>(int capacity = 16) { return new ChannelEnd<A, B>(new Channel<A>(capacity), new Channel<B>(capacity)) }
+            }
+
+            // One end of a two-way channel (Channel.Pair): Send goes to the other end, Receive takes what the other end sent. Like a channel it goes to a
+            // thread with `fire with` (an end of its own) and is never copied; Close ends this end's direction.
+            [NoCopy]
+            class ChannelEnd<A, B> : IEnumerable<B> {
+                Channel<A> outgoing
+                Channel<B> incoming
+                construct(Channel<A> o, Channel<B> i) { this.outgoing = take o; this.incoming = take i }
+                bool Send(A value) { return this.outgoing.Send(try take value) }
+                B Receive(any limit = undefined) { return this.incoming.Receive(limit) }
+                B TryReceive() { return this.incoming.TryReceive() }
+                undefined Close() { this.outgoing.Close() }
+                bool IsClosed { get { return this.incoming.IsClosed } }
+                int Count { get { return this.incoming.Count } }
+                ChannelEnd<B, A> Other() { return new ChannelEnd<B, A>(this.incoming.__End(), this.outgoing.__End()) }
+                ChannelEnd<A, B> __End() { return new ChannelEnd<A, B>(this.outgoing.__End(), this.incoming.__End()) }
+                IEnumerator<B> GetEnumerator() { return this.incoming.GetEnumerator() }
             }
 
             class ChannelIter<T> : IEnumerator<T> {
@@ -168,7 +188,7 @@ namespace fire.Standard
                 bool MoveNext() {
                     T v = this.ch.Receive()
                     if (v == undefined) { return false }
-                    this.current = take v
+                    this.current = try take v   // (a lent record stays its owner's)
                     return true
                 }
                 T GetCurrent() { return this.current }

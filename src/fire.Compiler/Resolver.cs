@@ -1215,6 +1215,13 @@ namespace fire.Compiler
             if (_currentClass != null && FindMemberInClassChain(_currentClass, name) is { } member)
             {
                 if (member.IsStatic) return new ResolvedRef.StaticMember(member.ClassName);
+                // (a fire body runs without `this`: its own variables and the captures - `taking`, `with` - win over a field of the same name)
+                if (_fireScope != null && !_inBoundLambda)
+                {
+                    if (global != null) return new ResolvedRef.Global(globalSlot, global.RequiredUnits.GetValueOrDefault(name), global.Widths.GetValueOrDefault(name));
+                    throw new ResolverException(
+                        $"'{name}' is an instance member - a 'fire' block runs without 'this': give the thread what it needs with 'taking' or 'with'", line);
+                }
                 if (!_inStaticMethod) return new ResolvedRef.ImplicitThisMember();
                 if (global == null)
                     throw new ResolverException(
