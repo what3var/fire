@@ -1459,6 +1459,9 @@ namespace fire.Compiler
         private LambdaSignature ParseLambdaSignature(string? returnTypeName)
         {
             var paramTypes = new List<string>();
+            // `[R] lambda expression<T, ...>`: an expression tree (docs/ROADMAP_EXPRESSIONS.md)
+            bool expression = Check(TokenType.Identifier) && Peek().Lexeme == "expression" && PeekAt(1).Type == TokenType.Lt;
+            if (expression) Advance();
             if (Match(TokenType.Lt))
             {
                 if (!Check(TokenType.Gt))
@@ -1471,7 +1474,7 @@ namespace fire.Compiler
                 }
                 Expect(TokenType.Gt, "Expected '>' after the lambda parameter types");
             }
-            return new LambdaSignature(returnTypeName, paramTypes);
+            return new LambdaSignature(returnTypeName, paramTypes, IsExpression: expression);
         }
 
         /// <summary>Array declarator AFTER the identifier: one or more
@@ -4615,6 +4618,7 @@ namespace fire.Compiler
             Stmt.BlockStmt body;
             _captureUses.Add(new Dictionary<string, bool>());
             Dictionary<string, bool> uses;
+            bool expressionBody = !Check(TokenType.LBrace);
             try
             {
                 if (Check(TokenType.LBrace))
@@ -4631,7 +4635,7 @@ namespace fire.Compiler
             }
             finally { uses = PopCaptureUses(); }
 
-            return new LambdaExpr(line, parms, onTarget, body, CaptureModes: uses.Count > 0 ? uses : null);
+            return new LambdaExpr(line, parms, onTarget, body, CaptureModes: uses.Count > 0 ? uses : null, ExpressionBody: expressionBody);
         }
 
         // -----------------------------------------------------------

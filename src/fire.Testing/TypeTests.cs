@@ -76,6 +76,12 @@ static class TypeTests
         Check("fire: ein Capture verdeckt ein gleichnamiges Feld, ein Feld ohne Capture ist im fire-Block ein Fehler (er laeuft ohne this)",
             Run("class P { int n = 5\n undefined Go() { int n = 7\n fire taking n { int k = n + 1 } } }\nnew P().Go()\nprint(\"ok\")") is var fireCap && fireCap == "|ok"
             && Run("class P { int n = 5\n undefined Go() { fire { int k = n } } }\nnew P().Go()") is var fireField && fireField.StartsWith("|ERROR E4"), _lastRun);
+        // Expression trees (docs/ROADMAP_EXPRESSIONS.md): only a lambda written at the call with an expression body, nothing that changes something (TC030)
+        Check("Expression trees: ein Block, ein Lambda in einer Variablen, eine Zuweisung, ++ sind TC030 (auch lax); ein Ausdruck geht",
+            Run("class P { int age\n construct(int a) { this.age = a } }\nclass Probe { string Show(lambda expression<P> e) { return e.ToString() } }\nvar pr = new Probe()\nprint(pr.Show(p => { return p.age > 1 }))") is var treeBlock && treeBlock == "|ERROR TC030"
+            && Run("class P { int age\n construct(int a) { this.age = a } }\nclass Probe { string Show(lambda expression<P> e) { return e.ToString() } }\nvar pr = new Probe()\nvar f = (P p) => p.age > 1\nprint(pr.Show(f))") == "|ERROR TC030"
+            && Run("class P { int age\n construct(int a) { this.age = a } }\nclass Probe { string Show(lambda expression<P> e) { return e.ToString() } }\nvar pr = new Probe()\nint k = 0\nprint(pr.Show(p => k == p.age))") == "|p => (k == p.age)"
+            && Run("class P { int age\n construct(int a) { this.age = a } }\nclass Probe { string Show(lambda expression<P> e) { return e.ToString() } }\nvar pr = new Probe()\nprint(pr.Show(p => p.age++))") == "|ERROR TC030", _lastRun);
         // Records (step 9): a write outside the construction (TC026) and a field that can change (TC027) are errors in lax mode too; a record derives only from a record
         Check("Records: Schreiben ausserhalb der Konstruktion ist TC026 (auch lax), im Konstruktor erlaubt",
             Run("record P { int x\n construct(int x) { this.x = x }\n undefined M() { this.x = 2 } }\nvar p = new P(1)\np.x = 3\np.x++") is var recW && recW == "|ERROR TC026 TC026 TC026", recW);

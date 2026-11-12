@@ -197,6 +197,247 @@ namespace fire.Standard
                 IEnumerator<B> GetEnumerator() { return this.incoming.GetEnumerator() }
             }
 
+            // ---- Expression trees (docs/ROADMAP_EXPRESSIONS.md): a lambda written at a call of a parameter `lambda expression<T>` arrives as a tree of
+            // these nodes - what the body reads, compares and calls - next to its compiled code (Invoke). The nodes do not change; ToString is the
+            // body in fire syntax; a visitor walks them.
+
+            /// A node of an expression tree: its kind ("Binary", "Member", ...) and the type the type checker found ("int", "Person", "any").
+            class Expression {
+                string Kind
+                string Type
+                construct(string kind, string type) { this.Kind = kind; this.Type = type }
+                /// The node for the visitor (ExpressionVisitor.VisitBinary, ...).
+                any Accept(ExpressionVisitor visitor) { return undefined }
+                any Visit(ExpressionVisitor visitor) { return this.Accept(visitor) }
+                string ToString() { return this.Kind }
+                /// The Captured nodes of the tree in their order (the values that do not depend on a parameter - the parameters of an SQL text).
+                List<CapturedExpression> Captures() {
+                    var found = new List<CapturedExpression>()
+                    var walker = new ExpressionCapturesWalker(found)
+                    this.Accept(walker)
+                    return found
+                }
+                // (a parameter `lambda expression<T>`: the call built the tree - a bare lambda came through a call the compiler did not know)
+                static bool __Require(any v, string name) {
+                    if (v == undefined || v is of LambdaExpression) { return true }
+                    throw new ArgumentException("'" + name + "' is an expression tree: it needs the lambda written at a call the compiler knows (a call through 'any' passes only the code)")
+                }
+                // (a value as fire writes it: texts in quotes)
+                static string __Text(any v) {
+                    if (v == undefined) { return "undefined" }
+                    if (v is of string) { return "\"" + v.Replace("\\", "\\\\").Replace("\"", "\\\"").Replace("\n", "\\n") + "\"" }
+                    if (v is of bool) { if (v) { return "true" } return "false" }
+                    return "" + v
+                }
+                static string __List(any items) {
+                    string text = ""
+                    for (int i = 0; i < items.length; i++) {
+                        if (i > 0) { text = text + ", " }
+                        text = text + items[i].ToString()
+                    }
+                    return text
+                }
+            }
+
+            /// The lambda: its parameters and its body; Invoke runs the compiled lambda (a nested lambda of a tree has none: Compiled is undefined).
+            class LambdaExpression : Expression {
+                ParameterExpression Parameters[]
+                Expression Body
+                string ResultType
+                any Compiled
+                construct(any parameters, Expression body, string resultType) : base("Lambda", resultType) {
+                    this.Parameters = take parameters
+                    this.Body = take body
+                    this.ResultType = resultType
+                }
+                // (the compiled lambda of the call - the compiler hands it on right after the tree)
+                LambdaExpression __Attach(any compiled) { this.Compiled = try take compiled; return this }
+                override any Accept(ExpressionVisitor visitor) { return visitor.VisitLambda(this) }
+                override string ToString() {
+                    string body = this.Body.ToString()
+                    if (this.Parameters.length == 1) { return this.Parameters[0].Name + " => " + body }
+                    return "(" + Expression.__List(this.Parameters) + ") => " + body
+                }
+                /// The compiled lambda with these arguments.
+                any Invoke(any a = undefined, any b = undefined, any c = undefined) {
+                    var f = this.Compiled
+                    if (f == undefined) { throw new ArgumentException("This lambda of an expression tree has no code of its own (a nested lambda): invoke the tree around it.") }
+                    int n = this.Parameters.length
+                    if (n == 0) { return f() }
+                    if (n == 1) { return f(a) }
+                    if (n == 2) { return f(a, b) }
+                    return f(a, b, c)
+                }
+                /// The compiled lambda itself.
+                any Compile() { return this.Compiled }
+            }
+
+            class ParameterExpression : Expression {
+                string Name
+                int Index
+                construct(string name, int index, string type) : base("Parameter", type) { this.Name = name; this.Index = index }
+                override any Accept(ExpressionVisitor visitor) { return visitor.VisitParameter(this) }
+                override string ToString() { return this.Name }
+            }
+
+            /// `p.age`: a field or a property of what Target gives.
+            class MemberExpression : Expression {
+                Expression Target
+                string Name
+                bool IsField
+                bool IsProperty
+                construct(Expression target, string name, string type, bool isField, bool isProperty) : base("Member", type) {
+                    this.Target = take target
+                    this.Name = name
+                    this.IsField = isField
+                    this.IsProperty = isProperty
+                }
+                override any Accept(ExpressionVisitor visitor) { return visitor.VisitMember(this) }
+                override string ToString() { return this.Target.ToString() + "." + this.Name }
+            }
+
+            /// A literal: `18`, `"A"`, `true`, `undefined`, `5m`.
+            class ConstantExpression : Expression {
+                any Value
+                construct(any value, string type) : base("Constant", type) { this.Value = try take value }
+                override any Accept(ExpressionVisitor visitor) { return visitor.VisitConstant(this) }
+                override string ToString() { return Expression.__Text(this.Value) }
+            }
+
+            /// What does not depend on a parameter - a variable, a field, a member of one, a call: its value when the tree was made.
+            class CapturedExpression : Expression {
+                string Name
+                any Value
+                construct(string name, any value, string type) : base("Captured", type) { this.Name = name; this.Value = try take value }
+                override any Accept(ExpressionVisitor visitor) { return visitor.VisitCaptured(this) }
+                override string ToString() { return this.Name }
+            }
+
+            /// `!x`, `-x`.
+            class UnaryExpression : Expression {
+                string Op
+                Expression Operand
+                construct(string op, Expression operand, string type) : base("Unary", type) { this.Op = op; this.Operand = take operand }
+                override any Accept(ExpressionVisitor visitor) { return visitor.VisitUnary(this) }
+                override string ToString() { return this.Op + this.Operand.ToString() }
+            }
+
+            /// `a op b` (`==` `!=` `<` `<=` `>` `>=` `&&` `||` `+` `-` `*` `/` `%` `??`, ...).
+            class BinaryExpression : Expression {
+                string Op
+                Expression Left
+                Expression Right
+                construct(string op, Expression left, Expression right, string type) : base("Binary", type) {
+                    this.Op = op
+                    this.Left = take left
+                    this.Right = take right
+                }
+                override any Accept(ExpressionVisitor visitor) { return visitor.VisitBinary(this) }
+                override string ToString() { return "(" + this.Left.ToString() + " " + this.Op + " " + this.Right.ToString() + ")" }
+            }
+
+            /// `test ? a : b`.
+            class ConditionalExpression : Expression {
+                Expression Test
+                Expression IfTrue
+                Expression IfFalse
+                construct(Expression test, Expression ifTrue, Expression ifFalse, string type) : base("Conditional", type) {
+                    this.Test = take test
+                    this.IfTrue = take ifTrue
+                    this.IfFalse = take ifFalse
+                }
+                override any Accept(ExpressionVisitor visitor) { return visitor.VisitConditional(this) }
+                override string ToString() { return "(" + this.Test.ToString() + " ? " + this.IfTrue.ToString() + " : " + this.IfFalse.ToString() + ")" }
+            }
+
+            /// `s.StartsWith(x)`, `M.Abs(x)` (Target undefined: a static method of DeclaringType).
+            class CallExpression : Expression {
+                Expression Target
+                string Method
+                string DeclaringType
+                Expression Arguments[]
+                construct(Expression target, string method, string declaringType, any arguments, string type) : base("Call", type) {
+                    this.Target = take target
+                    this.Method = method
+                    this.DeclaringType = declaringType
+                    this.Arguments = take arguments
+                }
+                override any Accept(ExpressionVisitor visitor) { return visitor.VisitCall(this) }
+                override string ToString() {
+                    string target = this.DeclaringType
+                    if (this.Target != undefined) { target = this.Target.ToString() }
+                    return target + "." + this.Method + "(" + Expression.__List(this.Arguments) + ")"
+                }
+            }
+
+            /// `new T(arguments)`.
+            class NewExpression : Expression {
+                Expression Arguments[]
+                construct(any arguments, string type) : base("New", type) { this.Arguments = take arguments }
+                override any Accept(ExpressionVisitor visitor) { return visitor.VisitNew(this) }
+                override string ToString() { return "new " + this.Type + "(" + Expression.__List(this.Arguments) + ")" }
+            }
+
+            /// `x is of T`.
+            class IsTypeExpression : Expression {
+                Expression Operand
+                string TypeName
+                construct(Expression operand, string typeName) : base("IsType", "bool") { this.Operand = take operand; this.TypeName = typeName }
+                override any Accept(ExpressionVisitor visitor) { return visitor.VisitIsType(this) }
+                override string ToString() { return "(" + this.Operand.ToString() + " is of " + this.TypeName + ")" }
+            }
+
+            /// `row["name"]`, `arr[0]`.
+            class IndexExpression : Expression {
+                Expression Target
+                Expression Index
+                construct(Expression target, Expression index, string type) : base("Index", type) { this.Target = take target; this.Index = take index }
+                override any Accept(ExpressionVisitor visitor) { return visitor.VisitIndex(this) }
+                override string ToString() { return this.Target.ToString() + "[" + this.Index.ToString() + "]" }
+            }
+
+            /// `x!int`.
+            class ConvertExpression : Expression {
+                Expression Operand
+                construct(Expression operand, string type) : base("Convert", type) { this.Operand = take operand }
+                override any Accept(ExpressionVisitor visitor) { return visitor.VisitConvert(this) }
+                override string ToString() { return this.Operand.ToString() + "!" + this.Type }
+            }
+
+            /// Walks a tree: one method per kind; by default it visits the children and returns undefined (a translator overrides what it knows).
+            class ExpressionVisitor {
+                any VisitLambda(LambdaExpression e) {
+                    for (int i = 0; i < e.Parameters.length; i++) { e.Parameters[i].Accept(this) }
+                    e.Body.Accept(this)
+                    return undefined
+                }
+                any VisitParameter(ParameterExpression e) { return undefined }
+                any VisitMember(MemberExpression e) { e.Target.Accept(this); return undefined }
+                any VisitConstant(ConstantExpression e) { return undefined }
+                any VisitCaptured(CapturedExpression e) { return undefined }
+                any VisitUnary(UnaryExpression e) { e.Operand.Accept(this); return undefined }
+                any VisitBinary(BinaryExpression e) { e.Left.Accept(this); e.Right.Accept(this); return undefined }
+                any VisitConditional(ConditionalExpression e) { e.Test.Accept(this); e.IfTrue.Accept(this); e.IfFalse.Accept(this); return undefined }
+                any VisitCall(CallExpression e) {
+                    if (e.Target != undefined) { e.Target.Accept(this) }
+                    for (int i = 0; i < e.Arguments.length; i++) { e.Arguments[i].Accept(this) }
+                    return undefined
+                }
+                any VisitNew(NewExpression e) {
+                    for (int i = 0; i < e.Arguments.length; i++) { e.Arguments[i].Accept(this) }
+                    return undefined
+                }
+                any VisitIsType(IsTypeExpression e) { e.Operand.Accept(this); return undefined }
+                any VisitIndex(IndexExpression e) { e.Target.Accept(this); e.Index.Accept(this); return undefined }
+                any VisitConvert(ConvertExpression e) { e.Operand.Accept(this); return undefined }
+            }
+
+            class ExpressionCapturesWalker : ExpressionVisitor {
+                any found
+                construct(any found) { this.found = found }
+                override any VisitCaptured(CapturedExpression e) { this.found.Add(e); return undefined }
+            }
+
             class ChannelIter<T> : IEnumerator<T> {
                 any ch
                 T current

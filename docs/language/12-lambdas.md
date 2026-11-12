@@ -165,6 +165,41 @@ b.onClick()
 Lambdas work well with lists and queries (see [Arrays and lists](07-arrays-and-lists.md#queries-import-linq)) and are the bodies of threads
 (see [Threads and actors](15-threads-and-actors.md)).
 
+## Expression trees: `lambda expression<T>`
+
+A parameter of the type `lambda expression<T>` does not get the lambda alone: it gets a **tree** of what the body does - what it reads, compares and
+calls - next to the compiled code. A library can translate the tree (a query of a database), show it or run it:
+
+```fire
+class Person {
+    int age
+    string name
+    construct(int a, string n) { this.age = a; this.name = n }
+}
+class Probe<T> {
+    string Show(lambda expression<T> condition) { return condition.ToString() }
+    any Run(lambda expression<T> condition, T x) { return condition.Invoke(x) }
+}
+var probe = new Probe<Person>()
+var min = 18
+print(probe.Show(p => p.age >= min && !(p.name == undefined)))   // p => ((p.age >= min) && !(p.name == undefined))
+print(probe.Run(p => p.age >= min, new Person(20, "Anna")))         // True
+```
+
+- In the method the parameter is a `LambdaExpression`: `Parameters`, `Body`, `ResultType`, `Invoke(...)` (the compiled lambda), `Compile()`.
+  `lambda expression<A, B>` takes two parameters; `bool lambda expression<T>` fixes the result type.
+- The nodes (classes of the prelude, all with `Kind` and `Type`, the type the type checker found): `LambdaExpression`, `ParameterExpression`,
+  `MemberExpression` (`IsField`, `IsProperty`), `ConstantExpression` (a literal), `CapturedExpression`, `UnaryExpression`, `BinaryExpression` (`Op` as
+  written: `==`, `&&`, ...), `ConditionalExpression`, `CallExpression` (`Target` undefined for a static method of `DeclaringType`), `NewExpression`,
+  `IsTypeExpression`, `IndexExpression`, `ConvertExpression` (`x!int`). A nested lambda (`p => p.orders.Any(o => o.total > 10)`) is a tree too.
+- Everything that does not depend on a parameter is a value: a variable, a member of it (`filter.minAge`), a call (`Util.Limit()`) becomes a
+  `CapturedExpression` with its `Name` (the text) and its `Value` **when the tree is made** (an object as a copy). `tree.Captures()` gives them in order.
+- `ToString()` is the body in fire syntax - the same in the VM and in a native program. A visitor walks the tree: derive from `ExpressionVisitor` and
+  override `VisitBinary`, `VisitMember`, ... (by default each visits the children); `tree.Accept(visitor)`.
+- Only a lambda written at the call with an expression body goes there (`x => ...`): a lambda in a variable, one with a block, and an assignment, `++`
+  or `take` in it are the error `TC030`. The call has to be one the compiler knows: through `any` the method gets only the code - the
+  ArgumentException.
+
 ## Exercises
 
 1. Write a method `static int[] Map(int values[], int lambda<int> f)` that applies `f` to every element.

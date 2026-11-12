@@ -156,6 +156,11 @@ namespace fire.Compiler
         public const string WithWordCode = "TC028";
         /// <summary>`ch.Send(x)` with an object, an array or a record without a word (`copy x`, `take x`) and not fresh (an error in lax mode too).</summary>
         public const string ChannelWordCode = "TC029";
+        /// <summary>An expression tree (`lambda expression<T>`) takes only a lambda written at the call with an expression body, and in it nothing that changes
+        /// something (an assignment, `++`, `take`, a block) - an error in lax mode too.</summary>
+        public const string ExpressionTreeCode = "TC030";
+        private ExpressionTrees _trees = new();
+        private Dictionary<Expr, string>? _treeTypes;
 
         /// <summary>A value that belongs to the call it is given to: a copy, a taken one, a new one, the result of a call (or of an operator).</summary>
         private static bool IsFreshOrWorded(Expr e) => e switch
@@ -226,6 +231,7 @@ namespace fire.Compiler
                 if (stmt is TypeCheckDirective d) checker._strictBySource[d.Source] = d.Strict;
             checker.CollectInterfaces(program);
             checker._refs = resolved.References;
+            checker._trees = resolved.Trees;
             checker._scopes.Add(new Dictionary<string, StaticType>());
             foreach (var stmt in program)
             {
@@ -552,6 +558,8 @@ namespace fire.Compiler
         {
             if (signature == null) return StaticType.LambdaOf(0, null);
             // a selector `lambda member<T>`: one parameter of the type T (so `x => x.nmae` is reported); without a type (`selector<>`) any number
+            // an expression tree: in the method the parameter is the tree (the lambda's shape is what a call passes: TreeShape)
+            if (signature.IsExpression) return FromName("LambdaExpression", null);
             if (signature.IsSelector)
                 return signature.ParamTypeNames.Count == 1 ? StaticType.LambdaOf(1, null, new List<StaticType> { FromName(signature.ParamTypeNames[0], map) }) : StaticType.LambdaOf(-1, null);
             return StaticType.LambdaOf(signature.ParamTypeNames.Count, signature.ReturnTypeName != null ? FromName(signature.ReturnTypeName, map) : null,
@@ -1092,6 +1100,7 @@ namespace fire.Compiler
             for (int i = 0; i < args.Count && i < parameters.Count; i++)
             {
                 if (parameters[i] is not { ByRef: false } parameter) continue;
+                if (parameter.Type?.LambdaSignature is { IsExpression: true }) continue;   // (an expression tree: the lambda was checked against its shape)
                 var declared = Declared(parameter.Type, parameter.ArrayRanks.Count, map);
                 if (declared is { } target) CheckAssignable(args[i], target, argExprs[i].Line, $"parameter '{parameter.Name}' of '{callee}'", ArgumentCode, argExprs[i]);
             }
@@ -1621,6 +1630,7 @@ namespace fire.Compiler
         private StaticType Infer(Expr expr)
         {
             var type = InferCore(expr);
+            if (_treeTypes != null) _treeTypes[expr] = type.ToString();   // (an expression tree: the type of each node)
             // what certainly is not undefined (SPEC 8.10b): a literal, what an operator computes (an undefined operand throws), `trust x`
             return expr switch
             {
@@ -2259,6 +2269,56 @@ namespace fire.Compiler
         /// <summary>A lambda: its body is checked on its own (its returns are not those of the method around it). The types of its parameters and of its result come from
         /// the target it goes to (a typed parameter, field or variable: <paramref name="expected"/>), otherwise from its own declaration (`var f = (int x) => ...`);
         /// a parameter that has neither is `any` and said so (TC004). Its type has its parameters and, when all its returns agree, the type it returns.</summary>
+        /// <summary>An argument of a parameter `lambda expression<T>` (docs/ROADMAP_EXPRESSIONS.md): the lambda written there becomes a tree - checked like a
+        /// lambda of that shape, the types of its parts kept for the compiler (ResolveResult.Trees); null for any other parameter.</summary>
+        private StaticType? InferTreeArg(Expr arg, LambdaParam param, IReadOnlyDictionary<string, StaticType>? map, int line)
+        {
+            if (param.ByRef || param.Type?.LambdaSignature is not { IsExpression: true } signature) return null;
+            var shape = DeclaredLambda(signature with { IsExpression = false }, map);
+            if (arg is not LambdaExpr { ExpressionBody: true, OnTarget: null } lambda)
+            {
+                ReportError(ExpressionTreeCode, $"'{param.Name}' is an expression tree: it takes a lambda written here with an expression body ('x => ...'), not {(arg is LambdaExpr ? "a lambda with a block" : "a value")}", line);
+                return Infer(arg, shape);
+            }
+            _trees.Lambdas.Add(lambda);
+            CheckTreeRules(((ReturnStmt)lambda.Body.Statements[0]).Value!, line);
+            var saved = _treeTypes;
+            _treeTypes = _trees.Types;
+            try { return Infer(arg, shape); }
+            finally { _treeTypes = saved; }
+        }
+
+        /// <summary>What an expression tree can hold: reads, comparisons, arithmetic, calls, `new`, `is of`, `x!T`, nested lambdas with an expression body -
+        /// nothing that changes something (TC030).</summary>
+        private void CheckTreeRules(Expr e, int line)
+        {
+            void No(string what) => ReportError(ExpressionTreeCode, $"An expression tree cannot hold {what}", line);
+            switch (e)
+            {
+                case LiteralExpr or IdentifierExpr or ThisExpr or SelfClassExpr: return;
+                case MemberExpr m: CheckTreeRules(m.Target, line); return;
+                case IndexExpr ix: CheckTreeRules(ix.Target, line); CheckTreeRules(ix.Index, line); return;
+                case CallExpr call:
+                    if (call.Awaited) { No("an 'await'"); return; }
+                    CheckTreeRules(call.Callee, line);
+                    foreach (var a in call.Args) CheckTreeRules(a, line);
+                    return;
+                case BinaryExpr b: CheckTreeRules(b.Left, line); CheckTreeRules(b.Right, line); return;
+                case UnaryExpr { Op: UnaryOp.Negate or UnaryOp.LogicalNot or UnaryOp.BitNot } u: CheckTreeRules(u.Operand, line); return;
+                case UnaryExpr { Op: UnaryOp.Take or UnaryOp.TryTake }: No("a 'take'"); return;
+                case ConditionalExpr ce: CheckTreeRules(ce.Condition, line); CheckTreeRules(ce.Then, line); CheckTreeRules(ce.Else, line); return;
+                case NewExpr n: foreach (var a in n.Args) CheckTreeRules(a, line); return;
+                case IsOfExpr io: CheckTreeRules(io.Operand, line); return;
+                case TypeCoerceExpr tc: CheckTreeRules(tc.Operand, line); return;
+                case ArrayLiteralExpr al: foreach (var a in al.Elements) CheckTreeRules(a, line); return;
+                case LambdaExpr { ExpressionBody: true, OnTarget: null } inner: CheckTreeRules(((ReturnStmt)inner.Body.Statements[0]).Value!, line); return;
+                case LambdaExpr: No("a lambda with a block or 'on' (a nested lambda is a tree too: 'x => expression')"); return;
+                case AssignExpr: No("an assignment"); return;
+                case IncDecExpr: No("'++' or '--'"); return;
+                default: No($"this expression ({e.GetType().Name.Replace("Expr", "")})"); return;
+            }
+        }
+
         private StaticType InferLambda(LambdaExpr lam, StaticType? expected)
         {
             // (a lambda runs in its own scope: a type parameter of the method around it is not passed on from there)
@@ -2478,7 +2538,9 @@ namespace fire.Compiler
                         expected = expected with { Return = null };
                 }
                 else if (lambda?.Params != null && i < lambda.Params.Count && c.ArgNames == null) expected = lambda.Params[i];
-                var arg = Infer(c.Args[i], expected);
+                // `lambda expression<T>` (docs/ROADMAP_EXPRESSIONS.md): the lambda written here becomes a tree
+                var arg = argParams?[i] is { } treeParam && InferTreeArg(c.Args[i], treeParam, open == null ? map : WithOpen(map!, open), c.Line) is { } treeArg
+                    ? treeArg : Infer(c.Args[i], expected);
                 args.Add(arg);
                 if (open != null && argParams![i] is { } bound) Bind(bound.Type, bound.ArrayRanks.Count, arg, map!, open);
                 // `ch.Send(obj)` (step 9): an object or an array goes into a channel only with a word (copy, take) or fresh - an error in lax mode too (a record
@@ -2668,7 +2730,8 @@ namespace fire.Compiler
                 if (ctors.Count == 0) ReportError(NamedArgumentCode, $"No constructor of '{PlainName(plain)}' has parameters named {string.Join(", ", n.ArgNames.Where(x => x != null).Select(x => "'" + x + "'"))}", n.Line);
                 if (ctors.Count != 1) { foreach (var a in n.Args) Infer(a); return StaticType.ClassOf(plain, typeArgs); }
                 var named = ArgParams(ctors[0].Params, n.ArgNames, n.Args.Count, "new " + PlainName(plain), n.Line);
-                var namedArgs = n.Args.Select((a, i) => Infer(a, named[i] is { ByRef: false } p ? Declared(p.Type, p.ArrayRanks.Count, map) : null)).ToList();
+                var namedArgs = n.Args.Select((a, i) => named[i] is { } tp && InferTreeArg(a, tp, map, n.Line) is { } treeArg ? treeArg
+                    : Infer(a, named[i] is { ByRef: false } p ? Declared(p.Type, p.ArrayRanks.Count, map) : null)).ToList();
                 CheckArguments(named, namedArgs, n.Args, "new " + PlainName(plain), map);
                 return StaticType.ClassOf(plain, typeArgs);
             }
@@ -2687,7 +2750,8 @@ namespace fire.Compiler
                 }
                 return StaticType.ClassOf(plain, typeArgs);
             }
-            var args = n.Args.Select((a, i) => Infer(a, ctor != null && i < ctor.Params.Count && !ctor.Params[i].ByRef ? Declared(ctor.Params[i].Type, ctor.Params[i].ArrayRanks.Count, map) : null)).ToList();
+            var args = n.Args.Select((a, i) => ctor != null && i < ctor.Params.Count && InferTreeArg(a, ctor.Params[i], map, n.Line) is { } treeArg ? treeArg
+                : Infer(a, ctor != null && i < ctor.Params.Count && !ctor.Params[i].ByRef ? Declared(ctor.Params[i].Type, ctor.Params[i].ArrayRanks.Count, map) : null)).ToList();
             if (ctor != null) CheckArguments(ctor.Params, args, n.Args, "new " + PlainName(plain), map);
             return StaticType.ClassOf(plain, typeArgs);
         }

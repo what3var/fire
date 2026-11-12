@@ -28424,6 +28424,134 @@ else
             fire with back { back.Send(back.Receive() * 2) }
             print("echo " + Use.Both(echo))
             """),
+        ("Expression trees: lambda expression<T> - ToString in fire-Syntax, Captured-Werte, verschachtelte Lambdas, Invoke", """
+            class Order { int total; construct(int t) { this.total = t } }
+            class Person {
+                int age
+                string name
+                List<Order> orders = new List<Order>()
+                construct(int a, string n) { this.age = a; this.name = n }
+                bool IsAdult { get { return this.age >= 18 } }
+            }
+            class Probe<T> {
+                string Show(lambda expression<T> e) { return e.ToString() }
+                any Run(lambda expression<T> e, T x) { return e.Invoke(x) }
+            }
+            var pr = new Probe<Person>()
+            var min = 18
+            var prefix = "A"
+            print(pr.Show(p => p.age >= min && !(p.name == undefined)))
+            print(pr.Show(p => p.orders.Any(o => o.total > 10)))
+            print(pr.Show(p => p.name.StartsWith(prefix) || p.age * 2 > 40 - min))
+            print(pr.Run(p => p.age >= min && p.name.StartsWith(prefix), new Person(20, "Anna")))
+            print(pr.Run(p => p.age >= min, new Person(10, "Bo")))
+            """),
+        ("Expression trees: jede Knotenart (Member, Call statisch und am Ziel, Index, Conditional, New, IsType, Convert, Unary), Captures() mit den Werten beim Bauen, ExpressionVisitor", """
+            class Filter { int minAge; construct(int m) { this.minAge = m } }
+            class Tag { string name; construct(string n) { this.name = n } }
+            class Person {
+                int age
+                string name
+                Tag tag
+                int scores[]
+                construct(int a, string n) { this.age = a; this.name = n; this.tag = new Tag("t" + a); this.scores = [a, a * 2] }
+                bool IsAdult { get { return this.age >= 18 } }
+                int Twice(int x) { return x * 2 }
+            }
+            class Animal { }
+            class Dog : Animal { }
+            class Util { static int Limit() { return 30 } }
+            class Probe<T> {
+                string Show(lambda expression<T> e) { return e.ToString() }
+                any Run(lambda expression<T> e, T x) { return e.Invoke(x) }
+                LambdaExpression Keep(lambda expression<T> e) { return e }
+            }
+            class Counter : ExpressionVisitor {
+                int members = 0
+                int captured = 0
+                override any VisitMember(MemberExpression e) { this.members = this.members + 1; e.Target.Accept(this); return undefined }
+                override any VisitCaptured(CapturedExpression e) { this.captured = this.captured + 1; return undefined }
+            }
+            var pr = new Probe<Person>()
+            var filter = new Filter(18)
+            int n = 3
+            print(pr.Show(p => p.age >= filter.minAge && p.IsAdult))
+            print(pr.Show(p => p.Twice(n) + Util.Limit() > p.scores[1]))
+            print(pr.Show(p => p.age > 20 ? p.name : p.tag.name))
+            print(pr.Show(p => new Tag(p.name)))
+            print(pr.Show(p => p.age!float / 2))
+            print(pr.Show(p => p.tag is of Tag && -p.age < 0 && "x" + p.name != "y"))
+            var anna = new Person(20, "Anna")
+            print(pr.Run(p => p.Twice(n) + Util.Limit() > p.scores[1], anna) + " " + pr.Run(p => p.age > 20 ? p.name : p.tag.name, anna))
+            var tree = pr.Keep(p => p.age >= filter.minAge && p.Twice(n) > Util.Limit())
+            filter.minAge = 99
+            n = 100
+            var caps = tree.Captures()
+            string text = ""
+            foreach (c in caps) { text = text + c.Name + "=" + c.Value + " " }
+            print(text + "| " + tree.Invoke(anna))
+            var count = new Counter()
+            tree.Accept(count)
+            print("members " + count.members + " captured " + count.captured + " kind " + tree.Body.Kind + " " + tree.Body.Type + " " + tree.Parameters[0].Type)
+            var b = tree.Body
+            print(b.Left.Left.Kind + " " + b.Left.Left.Name + " " + b.Left.Left.IsField + " " + b.Left.Left.Target.Kind)
+            """),
+        ("Expression trees: Konstruktor, statische Methode, zwei Parameter, geerbte Methode", """
+            class P { int age; int id; construct(int a) { this.age = a; this.id = a } }
+            class O { int personId; construct(int p) { this.personId = p } }
+            class Q {
+                string text
+                construct(lambda expression<P> e) { this.text = e.ToString() }
+                static string S(lambda expression<P> e) { return e.ToString() }
+                static string J(lambda expression<P, O> e) { return e.ToString() + " " + e.Invoke(new P(3), new O(3)) }
+            }
+            class Base { string B(lambda expression<P> e) { return "base " + e.ToString() } }
+            class Derived : Base { }
+            int lim = 5
+            print(new Q(p => p.age > lim).text)
+            print(Q.S(p => p.age < 3))
+            print(Q.J((p, o) => p.id == o.personId))
+            print(new Derived().B(p => p.age == lim))
+            """),
+        ("Expression trees: Captures in einem verschachtelten Lambda (lokal, global, Member eines Objekts) - ueber die Ladebefehle des inneren Lambdas", """
+            #import "linq"
+            class Filter { int minTotal; construct(int m) { this.minTotal = m } }
+            class Order { int total; construct(int t) { this.total = t } }
+            class Person {
+                List<Order> orders = new List<Order>()
+                int bonus
+                construct(int b) { this.bonus = b }
+            }
+            class Probe<T> {
+                LambdaExpression Keep(lambda expression<T> e) { return e }
+            }
+            var pr = new Probe<Person>()
+            int min = 10
+            var filter = new Filter(50)
+            var t = pr.Keep(p => p.orders.Any((Order o) => o.total > min && o.total < filter.minTotal + p.bonus))
+            print(t.ToString())
+            string caps = ""
+            foreach (c in t.Captures()) { caps = caps + c.Name + "=" + c.Value + " " }
+            print(caps)
+            var x = new Person(5)
+            x.orders.Add(new Order(52))
+            print(t.Invoke(x))
+            """),
+        ("Expression trees: Captures aus einer Methode (Parameter), Index, Contains(undefined)", """
+            class Order { int total; construct(int t) { this.total = t } }
+            class Person { List<Order> orders = new List<Order>() }
+            class Probe<T> { LambdaExpression Keep(lambda expression<T> e) { return e } }
+            class Run {
+                static undefined Go(int min) {
+                    var pr = new Probe<Person>()
+                    var t = pr.Keep(p => p.orders.Contains(undefined) || p.orders.Count > min && p.orders.Count < (min + 5))
+                    print(t.ToString())
+                    var u = pr.Keep(p => p.orders.Count > 0 && p.orders[0].total > min)
+                    print(u.ToString() + " " + u.Captures()[0].Value)
+                }
+            }
+            Run.Go(3)
+            """),
         ("Programmende: warten alle uebrigen Threads in Kanaelen, schliessen die Kanaele des Hauptprogramms (foreach endet)", """
             var ch = new Channel<int>()
             var out = new Channel<string>()

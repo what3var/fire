@@ -7,6 +7,13 @@ using fire.Values;
 
 namespace fire.Compiler
 {
+    /// <summary>What the type checker leaves the compiler for the expression trees: the lambdas that become one, the type of every expression in them.</summary>
+    public sealed class ExpressionTrees
+    {
+        public HashSet<LambdaExpr> Lambdas { get; } = new(ReferenceEqualityComparer.Instance);
+        public Dictionary<Expr, string> Types { get; } = new(ReferenceEqualityComparer.Instance);
+    }
+
     /// <summary>A resolver error. The resolver does
     /// NOT stop at the first error, but collects all further ones (from the
     /// first error on the result is discarded anyway, but the user should not
@@ -62,6 +69,9 @@ namespace fire.Compiler
         /// <summary>The type arguments the type checker found for a call of a generic method (`Box.Of(5)`: `int`), as DeclaredType texts ("" for one that
         /// is not known): the compiler gives them to the call (SetTypeArgs), the native generator can specialise the method for them. Filled by TypeChecker.</summary>
         public Dictionary<Expr, string[]> MethodTypeArgs { get; } = new(ReferenceEqualityComparer.Instance);
+        /// <summary>The lambdas the type checker found at a parameter `lambda expression<T>` (docs/ROADMAP_EXPRESSIONS.md) and the types of what is in them: the
+        /// compiler builds their trees.</summary>
+        public ExpressionTrees Trees { get; } = new();
 
         /// <summary>Values going into a local variable (declaration or assignment) whose type the type checker could not prove for its declaration
         /// (`int x = someAny`, `Dog d = animal`, `T item = v`): the compiler checks them at runtime (GuardTop/GuardTopType). Filled by TypeChecker.</summary>
