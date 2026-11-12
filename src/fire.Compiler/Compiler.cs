@@ -693,6 +693,8 @@ namespace fire.Compiler
                     return b + arrays;
                 case "any": return arrays.Length > 0 ? "any" + arrays : "";
             }
+            // (an enum: its full name - JSON reads its number or its name back into a value of the enum)
+            if (type.TypeArgs == null && EnumTypeNamed(type.ResolveBaseName(n => EnumTypeNamed(n) != null)) is { } enumType) return enumType.Name + arrays;
             if (_knownClassNames == null) return "";
             string name = ResolveTypeRef(type);
             bool isClass = _knownClassNames.Contains(name), isInterface = !isClass && _refParams.InterfaceNames.Contains(type.ResolveBaseName(n => _refParams.InterfaceNames.Contains(n)));
@@ -2537,6 +2539,13 @@ namespace fire.Compiler
 
         private void CompileExpr(Expr expr)
         {
+            // (a tree where a lambda is expected: its compiled lambda - ResolveResult.Trees.ToCompiled)
+            if (s_trees != null && s_trees.ToCompiled.Count > 0 && s_trees.ToCompiled.Contains(expr) && s_rawTreeValues.Add(expr))
+            {
+                try { CompileExpr(new MemberExpr(expr.Line, expr, "Compiled")); }
+                finally { s_rawTreeValues.Remove(expr); }
+                return;
+            }
             int outerWide = _wideLiteral;
             switch (expr)
             {
@@ -2715,6 +2724,14 @@ namespace fire.Compiler
                     CompileExpr(iin.Operand);
                     _chunk.EmitOp(OpCode.IsInUnit);
                     _chunk.EmitU16(_chunk.AddUnit(fire.Values.Unit.Parse(iin.UnitName)));
+                    break;
+
+                case IsOfExpr { Operand: IdentifierExpr { Name: var typeParam } } paramOf when !_refs.ContainsKey(paramOf.Operand)
+                    && TypeArgText(new TypeRef(typeParam, null, 0), _enclosingClass, null, 0) is ['$', ..] tpIsOfText:
+                    // `T is of X` (T a type parameter): the type argument that runs
+                    _chunk.EmitOp(OpCode.TypeParamIsOf);
+                    _chunk.EmitU16(_chunk.AddConstant(Value.MakeString(tpIsOfText)));
+                    _chunk.EmitU16(_chunk.AddConstant(Value.MakeString(ResolveTypeRef(paramOf.TypeRef))));
                     break;
 
                 case IsOfExpr iof:

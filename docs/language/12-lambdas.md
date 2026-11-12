@@ -199,6 +199,8 @@ print(probe.Run(p => p.age >= min, new Person(20, "Anna")))         // True
 - Only a lambda written at the call with an expression body goes there (`x => ...`): a lambda in a variable, one with a block, and an assignment, `++`
   or `take` in it are the error `TC030`. The call has to be one the compiler knows: through `any` the method gets only the code - the
   ArgumentException.
+- A tree can be given where a lambda is expected: `bool lambda<Person> f = tree` (also as an argument or a return value) takes its compiled lambda
+  (`tree.Invoke`). The other way round is not possible - a lambda in a variable has no tree any more.
 
 ## Exercises
 

@@ -35,7 +35,7 @@ namespace fire.Compiler
         /// <summary>The width of `int` the command line sets for every program of this process (`-i 32`); wins against `#intwidth`, the project and the target.</summary>
         public static int? ProcessIntWidth { get; set; }
 
-        /// <summary>Also check the preludes and libraries (not only the code of the user): used by the tests that keep the declared types of the standard library honest (`FIRE_TYPECHECK_ALL=1` does it for a build).</summary>
+        /// <summary>Also report the conflicts in the preludes and libraries (they are always checked - what the check finds for the code holds there too -, but by default only the code of the user is reported): used by the tests that keep the declared types of the standard library honest (`FIRE_TYPECHECK_ALL=1` does it for a build).</summary>
         public bool TypeCheckLibraries { get; set; } = Environment.GetEnvironmentVariable("FIRE_TYPECHECK_ALL") == "1";
 
         private TypeCheckMode EffectiveTypeChecking => TypeChecking ?? ProcessDefaultTypeChecking
@@ -608,7 +608,7 @@ namespace fire.Compiler
             // (the width of the program's int as below - the project's setting before the tag of the source: TC021 needs it)
             TypeChecker.ProgramIntWidth = intWidthOverride ?? ProcessIntWidth ?? Plan?.Settings?.IntWidth ?? directiveIntWidth ?? target?.IntWidth ?? 64;
             TypeChecker.NativeReturns = PackageImports.NativeReturnTypes(nativeImports);
-            TypeChecker.Run(program, resolveResult, EffectiveTypeChecking, TypeCheckLibraries ? 0 : firstUserSource);
+            TypeChecker.Run(program, resolveResult, EffectiveTypeChecking, firstUserSource, TypeCheckLibraries ? 0 : firstUserSource);
             fire.Native.BuildMonitor.Step(fire.Native.BuildPhase.CompileFire, "Compiling fire: generating bytecode", 3, 4);
             var compiled = Compiler.Compile(program, resolveResult, natives, ClassMeta, ForcedGlobalJobs, GlobalJobsDefault);
             // the classes of a package with `"serializable": false` (docs/stdlib/json.md)

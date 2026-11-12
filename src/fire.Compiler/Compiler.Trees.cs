@@ -18,6 +18,8 @@ namespace fire.Compiler
         [ThreadStatic] private static IReadOnlyDictionary<string, ClassDecl>? s_classDecls;
         [ThreadStatic] private static HashSet<LambdaExpr>? s_rawTreeLambdasField;
         private static HashSet<LambdaExpr> s_rawTreeLambdas => s_rawTreeLambdasField ??= new HashSet<LambdaExpr>(ReferenceEqualityComparer.Instance);
+        [ThreadStatic] private static HashSet<Expr>? s_rawTreeValuesField;
+        private static HashSet<Expr> s_rawTreeValues => s_rawTreeValuesField ??= new HashSet<Expr>(ReferenceEqualityComparer.Instance);
 
         /// <summary>What a part of a tree sees: the parameters of the lambdas around it (name -> index; the innermost wins) and, inside a nested lambda,
         /// how its captures are loaded in the lambda around it.</summary>

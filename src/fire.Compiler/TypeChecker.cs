@@ -185,6 +185,8 @@ namespace fire.Compiler
         private readonly Dictionary<int, bool> _strictBySource = new();
         private readonly TypeCheckMode _defaultMode;
         private readonly int _firstUserSource;
+        /// <summary>Conflicts in sources before this one (the prelude, libraries, packages) are not reported.</summary>
+        private int _reportFrom;
         private readonly List<Diagnostic> _diagnostics = new();
         private readonly List<Dictionary<string, StaticType>> _scopes = new();
         private ClassDecl? _class;
@@ -224,9 +226,12 @@ namespace fire.Compiler
 
         /// <summary>Checks the code of the user (the statements from source <paramref name="firstUserSource"/> on) and returns the conflicts: warnings in lax mode, errors in strict mode.
         /// <paramref name="defaultMode"/> is the project's or the command line's setting; a `#lax` / `#strict` in a file takes its place for that file.</summary>
-        public static IReadOnlyList<Diagnostic> Check(IReadOnlyList<Stmt> program, ResolveResult resolved, TypeCheckMode defaultMode, int firstUserSource)
+        /// <paramref name="reportFrom"/>: the code before it (the prelude, the libraries, the packages) is checked too - what the check finds for the code
+        /// (overload hints, method type arguments, unit checks, guards, trees) holds there as well - but its conflicts are not reported (-1: from the user's code on).</summary>
+        public static IReadOnlyList<Diagnostic> Check(IReadOnlyList<Stmt> program, ResolveResult resolved, TypeCheckMode defaultMode, int firstUserSource, int reportFrom = -1)
         {
             var checker = new TypeChecker(resolved.Classes, defaultMode, firstUserSource, resolved.UnitChecks, resolved.MethodTypeArgs, resolved.LocalGuards, resolved.OverloadHints);
+            checker._reportFrom = reportFrom < 0 ? firstUserSource : reportFrom;
             foreach (var stmt in program)
                 if (stmt is TypeCheckDirective d) checker._strictBySource[d.Source] = d.Strict;
             checker.CollectInterfaces(program);
@@ -235,7 +240,6 @@ namespace fire.Compiler
             checker._scopes.Add(new Dictionary<string, StaticType>());
             foreach (var stmt in program)
             {
-                if (stmt.Source < firstUserSource) continue;
                 checker._source = stmt.Source;
                 checker.Check(stmt);
             }
@@ -244,9 +248,9 @@ namespace fire.Compiler
         }
 
         /// <summary>The conflicts found, reported the way the build wants them: the warnings go to the collector of the thread, the errors of a strict file stop the build.</summary>
-        public static void Run(IReadOnlyList<Stmt> program, ResolveResult resolved, TypeCheckMode defaultMode, int firstUserSource)
+        public static void Run(IReadOnlyList<Stmt> program, ResolveResult resolved, TypeCheckMode defaultMode, int firstUserSource, int reportFrom = -1)
         {
-            var found = Check(program, resolved, defaultMode, firstUserSource);
+            var found = Check(program, resolved, defaultMode, firstUserSource, reportFrom);
             foreach (var d in found.Where(d => d.IsWarning)) DiagnosticCollector.Current?.Add(d);
             var errors = found.Where(d => d.IsError).ToList();
             if (errors.Count > 0) throw new TypeCheckException(errors);
@@ -267,8 +271,11 @@ namespace fire.Compiler
         // -------------------------------------------------------------------------------------------------------------
         private bool Strict => _strictBySource.TryGetValue(_source, out bool strict) ? strict : _defaultMode == TypeCheckMode.Strict;
 
-        private void Report(string code, string message, int line) =>
+        private void Report(string code, string message, int line)
+        {
+            if (_source < _reportFrom) return;
             _diagnostics.Add(new Diagnostic(line, message, Strict && code is not (UnitLossCode or AssignInConditionCode or SwitchMissingCode or SetterClaimCode or LateVarTypeCode or TakeIntoCopyCode) ? DiagnosticSeverity.Error : DiagnosticSeverity.Warning, code));
+        }
 
         /// <summary>The condition of `if`, `while` and `for` must be a bool: a number is no condition (`if (n)`), the VM throws an ArgumentException for it.</summary>
         private void CheckCondition(Expr condition)
@@ -296,6 +303,8 @@ namespace fire.Compiler
                     ? $"undefined goes into {what}, which is 'defined {target}': that is an ArgumentException at run time"
                     : $"{(valueExpr is IdentifierExpr id ? $"'{id.Name}'" : "The value")} may be undefined, but {what} is 'defined {target}': it is checked at run time - give it a value that is defined, or write 'trust {(valueExpr is IdentifierExpr id2 ? id2.Name : "x")}' if it certainly is", line);
             if (value.Kind == StaticKind.Undefined && target.Null == Nullness.Defined) return;
+            // an expression tree where a lambda is expected: its compiled lambda (the other way round there is no tree - TC030)
+            if (value is { Kind: StaticKind.Class, Class: "LambdaExpression" } && target.Kind == StaticKind.Lambda && valueExpr != null) { _trees.ToCompiled.Add(valueExpr); return; }
             if (!Assignable(value, target)) { Report(code, $"Cannot assign a value of type '{value}' to {what} of type '{target}'", line); return; }
             if (CutsWide(value, target))
                 Report(WideIntCode, $"An int[{value.Wide}] goes into {what}, a plain int of {ProgramIntWidth} bits in this program: it is cut - declare int[{value.Wide}], or cut it on purpose (!int)", line);
@@ -1127,7 +1136,7 @@ namespace fire.Compiler
             return result;
         }
 
-        private void ReportError(string code, string message, int line) => _diagnostics.Add(new Diagnostic(line, message, DiagnosticSeverity.Error, code));
+        private void ReportError(string code, string message, int line) { if (_source >= _reportFrom) _diagnostics.Add(new Diagnostic(line, message, DiagnosticSeverity.Error, code)); }
 
         // -------------------------------------------------------------------------------------------------------------
         // Statements

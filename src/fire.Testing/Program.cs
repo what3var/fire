@@ -28552,6 +28552,64 @@ else
             }
             Run.Go(3)
             """),
+        ("Expression trees: ein Baum laesst sich einer lambda zuweisen (uebersetzt), umgekehrt nicht noetig", """
+            class P { int age; construct(int a) { this.age = a } }
+            class Probe<T> { LambdaExpression Keep(lambda expression<T> e) { return e } }
+            class U {
+                static bool Call(bool lambda<P> f, P p) { return f(p) }
+                static bool lambda<P> Back(LambdaExpression t) { return t }
+            }
+            var t = new Probe<P>().Keep(p => p.age > 3)
+            bool lambda<P> f = t
+            print(f(new P(5)) + " " + f(new P(1)) + " " + t.ToString())
+            print(U.Call(t, new P(5)) + " " + U.Back(t)(new P(1)))
+            """),
+        ("Generics: T is of X - Basisklasse, Interface, Werttyp, generische Methode", """
+            interface IShape { float Area() }
+            class Animal { }
+            class Dog : Animal { }
+            class Square : IShape { float Area() { return 4.0 } }
+            class Box<T> {
+                string What() {
+                    if (T is of Animal) { return "animal" }
+                    if (T is of IShape) { return "shape" }
+                    if (T is of int) { return "int" }
+                    return "other"
+                }
+            }
+            class Q { static string Kind<T>() { return (T is of Animal) + " " + (T is of Dog) + " " + (T is of IShape) } }
+            print(new Box<Dog>().What() + " " + new Box<Animal>().What() + " " + new Box<Square>().What() + " " + new Box<int>().What() + " " + new Box<string>().What())
+            print(Q.Kind<Dog>() + " | " + Q.Kind<Animal>() + " | " + Q.Kind<Square>() + " | " + Q.Kind<List<int>>())
+            """),
+        ("Reflection: Type.Of<T>() in generischer Klasse und Methode", """
+            #import "reflection"
+            class Person { int age; string name }
+            class Repo<T> { string Kind() { return Type.Of<T>().Name } }
+            class Q { static string Of<T>(int n) { return Type.Of<T>().Name + " " + n } }
+            print(Type.Of<Person>().Name)
+            print(Q.Of<Person>(3))
+            print(new Repo<Person>().Kind())
+            print(Type.Of(new Person()).Name)
+            """),
+        ("JSON: Enums als Name, Zahl, Flags, in Arrays, als Wurzel; unbekannter Name ist JsonException", """
+            #import "json"
+            enum Color { Red, Green, Blue }
+            class Box { Color color; construct() { } }
+            var b = Json.Deserialize<Box>("{\"color\":\"Green\"}")
+            print(b.color + " " + (b.color is of Color) + " " + (b.color == Color.Green))
+            var c = Json.Deserialize<Box>("{\"color\":2}")
+            print(c.color + " " + (c.color is of Color) + " " + (c.color == Color.Blue))
+            Color d = 2
+            print(d + " " + (d is of Color))
+            flag enum Perm { Read = 1, Write = 2, Exec = 4 }
+            class Acl { Perm perm; Color colors[]; construct() { } }
+            var a = Json.Deserialize<Acl>("{\"perm\":\"Read, Exec\",\"colors\":[0,\"Blue\"]}")
+            print(a.perm + " " + (a.perm is of Perm) + " " + a.colors[0] + " " + a.colors[1] + " " + (a.colors[1] is of Color))
+            var back = Json.Deserialize<Box>(Json.Serialize(new Box()))
+            print(back.color)
+            print(Json.Deserialize<Color>("1") + " " + Json.Deserialize<Color>("\"Blue\""))
+            try { Json.Deserialize<Box>("{\"color\":\"Pink\"}") } catch (JsonException e) { print(e.message) }
+            """),
         ("Programmende: warten alle uebrigen Threads in Kanaelen, schliessen die Kanaele des Hauptprogramms (foreach endet)", """
             var ch = new Channel<int>()
             var out = new Channel<string>()

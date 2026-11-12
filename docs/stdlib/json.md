@@ -76,7 +76,9 @@ print(back.friend.friend == back)   // True: the cycle is back
   `{"$value": 5, "$unit": "m"}`.
 - **`char`** is a one-character string in a field declared `char`, `{"$char": "c"}` in an untyped slot; a **buffer** (`byte data[]`) is base64 text in a field
   declared `byte[]`, `{"$buffer": "..."}` otherwise. Reading also takes a byte array written as numbers (`[1, 2, 3]`).
-- An enum is its number. An actor cannot be written (a `JsonException`).
+- An **enum** is its number. Reading takes the number or the member's name (`"Green"`; a flag enum also `"Read, Exec"`) wherever the field, the
+  array or the root (`Json.Deserialize<Color>(...)`) is declared with the enum, and gives the enum value (`is of Color`); an unknown name is a
+  `JsonException` (`'Pink' is no member of 'Color'`). In an `any` slot the number stays a number. An actor cannot be written (a `JsonException`).
 - **Classes that are not serializable**: `[NotSerializable]` before a class excludes it and every class derived from it; a package excludes all its classes with
   `"serializable": false` in its project file (the standard package `ui` does: its elements hold windows, renderers and handlers, not data). Writing an object of such a
   class, or reading one (from `"$type"` or the declared type), is an `ArgumentException` - in the VM and natively the same:

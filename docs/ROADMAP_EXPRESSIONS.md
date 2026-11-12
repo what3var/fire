@@ -124,7 +124,8 @@ print(Probe<Person>.Show(p => p.orders.Any(o => o.total > 10)))         // p => 
   prelude classes (Expression and its kinds, ExpressionVisitor, Captures, Invoke, Compile); because they are built by ordinary code, the native backend
   builds the same trees (VM == native in the test "Expression trees: ..."). A call through `any` gets only the lambda: `Expression.__Require` in the
   method throws the ArgumentException. Docs: docs/language/12-lambdas.md "Expression trees".
-- **Decided while building:** the values are taken when the call evaluates its arguments (the builder runs right there); the static part is not yet a
+- **Decided while building:** a tree assigned to a `lambda` (variable, argument, return) is its compiled lambda (`LambdaExpression` -> `.Compiled`,
+  TypeChecker `CheckAssignable`); a lambda is not a tree. The values are taken when the call evaluates its arguments (the builder runs right there); the static part is not yet a
   constant per call site (the nodes are made at each call).
 - **Open:** step 4 (stripping keeps the nodes already: they are made with `new`; the members a tree names are not kept on purpose yet), step 5
   (structural Equals/hash, And/Or/Replace), step 6 (LINQ), step 7 (spark), overloads `lambda<T>` / `lambda expression<T>`, trees in library code that

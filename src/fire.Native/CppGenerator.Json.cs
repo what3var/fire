@@ -81,6 +81,8 @@ namespace fire.Native
                 {
                     UnitId(field.Unit);
                     foreach (var arg in JsonTypeArgTexts(field.Type)) TArgRef(arg);
+                    // (a field of an enum: JSON makes values of it - the enum is in the table even when no code names it)
+                    if (fire.Values.EnumType.Named(field.Type.TrimStart('#').Replace("[]", "")) is { } enumType) EnumIndex(enumType);
                 }
         }
 

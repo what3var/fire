@@ -125,6 +125,13 @@ class Type {
         return new Type(name)
     }
 
+    // The class of a type argument: `Type.Of<T>()` in generic code (`Type.Of<Person>()` anywhere) - undefined for a type that is no class (int, string)
+    static Type Of<T>() {
+        any name = __type_arg(0)
+        if (name == undefined) { throw new ReflectionException("Type.Of<T>(): the type argument is not known here") }
+        return Type.Named(name)
+    }
+
     // The class with this name or undefined
     static Type Named(string name) {
         if (__refl_class_info(name) == undefined) { return undefined }

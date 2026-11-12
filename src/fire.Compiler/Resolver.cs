@@ -12,6 +12,8 @@ namespace fire.Compiler
     {
         public HashSet<LambdaExpr> Lambdas { get; } = new(ReferenceEqualityComparer.Instance);
         public Dictionary<Expr, string> Types { get; } = new(ReferenceEqualityComparer.Instance);
+        /// <summary>A tree (a LambdaExpression) where a lambda is expected: its compiled lambda goes there (`lambda<T> f = tree`).</summary>
+        public HashSet<Expr> ToCompiled { get; } = new(ReferenceEqualityComparer.Instance);
     }
 
     /// <summary>A resolver error. The resolver does
@@ -1998,7 +2000,9 @@ namespace fire.Compiler
                     break;
 
                 case IsOfExpr iof:
-                    ResolveExpr(iof.Operand);
+                    // `T is of X` with T a type parameter (and no variable of that name): the type argument is tested (OpCode.TypeParamIsOf)
+                    if (!(iof.Operand is IdentifierExpr { Name: var tpName } && _currentTypeParamNames.GetValueOrDefault(tpName) > 0 && FindScopeOf(tpName) == null))
+                        ResolveExpr(iof.Operand);
                     // `value is of IFoo`: an interface is also allowed as a type (the class names it in `class X : IFoo`)
                     if (!_interfaces.ContainsKey(iof.TypeRef.BaseName)) ValidateTypeName(iof.TypeRef, iof.Line);
                     break;

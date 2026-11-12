@@ -91,7 +91,7 @@ try {
 
 | Class | Members |
 |---|---|
-| `Type` | `Type.Of(obj or name)`, `Type.Named(name)` (or `undefined`), `Type.Names()`; `Name`, `Base`, `Interfaces`, `DeclaredInterfaces`, `IsActor`, `All`, `Fields()`, `Properties()`, `Methods()`, `Constructors()`, `Find(name)`, `Has(name)`, `IsSubclassOf(type)`, `New(args)`, `Attributes`, `FindAttribute(name)`, `HasAttribute(name)`, `HasFlag(flag)`, `Flags(enum)` |
+| `Type` | `Type.Of(obj or name)`, `Type.Of<T>()` (the type argument of a generic class or method that runs; also `Type.Of<Person>()`), `Type.Named(name)` (or `undefined`), `Type.Names()`; `Name`, `Base`, `Interfaces`, `DeclaredInterfaces`, `IsActor`, `All`, `Fields()`, `Properties()`, `Methods()`, `Constructors()`, `Find(name)`, `Has(name)`, `IsSubclassOf(type)`, `New(args)`, `Attributes`, `FindAttribute(name)`, `HasAttribute(name)`, `HasFlag(flag)`, `Flags(enum)` |
 | `Member` | `Name`, `Kind` (`field`, `property`, `method`, `constructor`), `TypeName`, `Access`, `IsStatic`, `IsReadonly`, `CanRead`, `CanWrite`, `Unit`, `DeclaredIn`, `ParamNames`, `ParamTypes`, `ParamCount()`, `Attributes`, `FindAttribute(name)`, `HasAttribute(name)`, `HasFlag(flag)`, `Flags(enum)`, `Get(obj)`, `Set(obj, v)`, `Call(obj, args)`, `Probe(obj, kind, handler)` |
 | `Attribute` | `Name`, `Args`, `ArgTexts`, `ArgCount()` - an attribute of a class, method, field or property (see [Classes](08-classes.md#attributes)) |
 | `Reflect` | `Get`, `Set`, `Call`, `New`, `Has`, `Probe`, `ProbeAll`, `Silence`, `SilenceAll`, `SilenceHandle` |
