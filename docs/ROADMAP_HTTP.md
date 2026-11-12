@@ -129,5 +129,8 @@ ran out or its token is cancelled. **Built** (poll()/WSAPoll, not yet epoll/kque
 
 ## Open
 
+* The pushes of a page (changes without an event of the browser) go out because the socket asks its circuit every 100 ms. With `Net.Channel` (being
+  built on `targets`) the circuit can send them to the socket itself - to be changed when it is there (the user will say).
+
 * Which FXML elements the browser covers first.
 * Whether the copy of the router chain per connection is cheap enough (measure; else one per worker).
