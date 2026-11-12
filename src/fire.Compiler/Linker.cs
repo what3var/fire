@@ -301,7 +301,7 @@ namespace fire.Compiler
 
         /// <summary>A statement at the top level that only declares (runs nothing): a class, interface, enum, function, namespace, extension or a directive.</summary>
         private static bool IsDeclaration(Ast.Stmt stmt) =>
-            stmt is Ast.ClassDecl or Ast.InterfaceDecl or Ast.EnumDecl or Ast.ExternDecl or Ast.ClassExtensionDecl or Ast.NamespaceDecl or Ast.MethodDecl or Ast.NoOpStmt or Ast.NoShadowDirective or Ast.GlobalJobsDirective or Ast.TypeCheckDirective or Ast.TimeoutDirective;
+            stmt is Ast.ClassDecl or Ast.InterfaceDecl or Ast.EnumDecl or Ast.ExternDecl or Ast.ClassExtensionDecl or Ast.NamespaceDecl or Ast.MethodDecl or Ast.NoOpStmt or Ast.NoShadowDirective or Ast.GlobalJobsDirective or Ast.TypeCheckDirective or Ast.TimeoutDirective or Ast.EndWaitDirective;
 
         /// <summary>`forge test` (docs/tools/testing.md): makes the source of the test driver from the parsed program and the index of its first own source. While it is set (on this thread), the
         /// statements at the top level of the program's files are left out and the driver is the last source.</summary>

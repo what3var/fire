@@ -55,7 +55,7 @@ namespace fire.Compiler
         ("E3010", ErrorArea.Parser, "Expected 'var' or a type declaration after 'readonly'"),
         ("E3011", ErrorArea.Parser, "'byte' already has a fixed width of 8 bits - no additional '[...]' may follow"),
         ("E3012", ErrorArea.Parser, "For variables, fields and parameters an array is written with the brackets after the name ('int values[]'); 'int[]' as a type only exists as the return type of a method or property"),
-        ("E3013", ErrorArea.Parser, "Unknown preprocessor directive '#{*}' (known: '#extern \"libName\"', '#noshadow', '#nosync', '#globaljobs safepoints|sleep|sync', '#timeout value', '#lax', '#strict')"),
+        ("E3013", ErrorArea.Parser, "Unknown preprocessor directive '#{*}' (known: '#extern \"libName\"', '#noshadow', '#nosync', '#globaljobs safepoints|sleep|sync', '#timeout value', '#endwait value', '#lax', '#strict')"),
         ("E3014", ErrorArea.Parser, "Multiple 'case default' in one switch are not allowed"),
         ("E3015", ErrorArea.Parser, "'with' does not exist for 'fire global'"),
         ("E3016", ErrorArea.Parser, "'with' was already used in this 'fire'"),

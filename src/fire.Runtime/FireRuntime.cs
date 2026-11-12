@@ -99,20 +99,49 @@ namespace fire.Runtime
         /// <summary>Blocks until all fire threads have ended (immediately if none is running). With `broker` (the main program, which owns the
         /// globals) it serves the threads' queue meanwhile - they are, after all, waiting for a `sync globals` -, otherwise the program end would
         /// hang on a thread that has just registered a section.</summary>
-        public static void WaitForAllFireThreads(GlobalsBroker? broker = null)
+        ///
+        /// The end of the program (the user: "Stillstand + Zeitlimit"): when every thread that is left waits in a channel or for a socket - nobody can go
+        /// on - the channels the main program made are closed (a `foreach` over one ends, a Net.Channel sends its end); `endWaitMs` after the end of the
+        /// main program (`#endwait`, 60 s; -1: no limit) the threads that are still there are ended like with `terminate`.</summary>
+        public static void WaitForAllFireThreads(GlobalsBroker? broker = null, long endWaitMs = DefaultEndWaitMs)
         {
+            long start = System.Diagnostics.Stopwatch.GetTimestamp();
+            bool closed = false, ended = false;
             while (true)
             {
                 broker?.Drain();
                 TaskHooks.IdlePump?.Invoke();   // (the windows of the main program read their events while it waits for the threads)
+                int live;
                 lock (_liveThreadsGate)
                 {
                     bool pending = broker != null && broker.HasPending;
                     if (_liveThreads == 0 && !pending) return;
+                    live = _liveThreads;
                     if (!pending) Monitor.Wait(_liveThreadsGate, TaskHooks.IdlePump != null ? 20 : 50);
+                }
+                if (!closed && live > 0 && Volatile.Read(ref _idleWaiting) >= live)
+                {
+                    closed = true;
+                    ChannelHandles.CloseMainMade();
+                }
+                if (!ended && endWaitMs >= 0 && (System.Diagnostics.Stopwatch.GetTimestamp() - start) * 1000 / System.Diagnostics.Stopwatch.Frequency >= endWaitMs)
+                {
+                    ended = true;
+                    Console.Out.Flush();
+                    Console.Error.WriteLine(EndWaitText(live, endWaitMs));
+                    VM.RequestTerminate(Value.MakeUndefined());
                 }
             }
         }
+
+        public const long DefaultEndWaitMs = 60_000;
+        internal static string EndWaitText(int live, long ms) =>
+            $"fire: {live} thread(s) still ran {ms / 1000.0:0.###} s after the end of the main program - ended like with terminate (#endwait sets the limit).";
+
+        /// <summary>The fire threads that wait in a channel or for a socket (Channels.WaitChannel, FdWaitNative): when it is all of them, nobody goes on.</summary>
+        private static int _idleWaiting;
+        internal static void IdleEnter(VM vm) { if (vm.CountsAsThread) { Interlocked.Increment(ref _idleWaiting); WakeWaitingOwner(); } }
+        internal static void IdleLeave(VM vm) { if (vm.CountsAsThread) Interlocked.Decrement(ref _idleWaiting); }
 
         // Host holds (the open windows that a window manager's thread shows) belong to the program they keep alive: VM.AddHostHold of its main VM -
         // a program in the editor's live view does not hold up another one, and nothing outlives the program it was taken for.
@@ -197,7 +226,7 @@ namespace fire.Runtime
             return Fire(() =>
             {
                 var scope = new Scope(null, isGlobal: true);
-                var vm = new VM(chunk, scope, natives, classes, isFireThreadVm: true, executionMode: executionMode);
+                var vm = new VM(chunk, scope, natives, classes, isFireThreadVm: true, executionMode: executionMode) { CountsAsThread = true };
                 RunVm(vm);
             });
         }
@@ -254,7 +283,7 @@ namespace fire.Runtime
             if (VmScheduler.Enabled && ThreadBodyInterceptor == null)
             {
                 // step 7: a task of the pool (VmScheduler) - not a system thread of its own
-                var taskVm = new VM(chunk, scope, natives, classes, isFireThreadVm: true, executionMode: executionMode);
+                var taskVm = new VM(chunk, scope, natives, classes, isFireThreadVm: true, executionMode: executionMode) { CountsAsThread = true };
                 taskVm.ThreadToken = token;
                 if (broker != null) taskVm.AttachToGlobals(broker, sharedGlobalCount);
                 var poolHandle = new FireThreadHandle(null);
@@ -283,7 +312,7 @@ namespace fire.Runtime
             }
             return Fire(() =>
             {
-                var vm = new VM(chunk, scope, natives, classes, isFireThreadVm: true, executionMode: executionMode);
+                var vm = new VM(chunk, scope, natives, classes, isFireThreadVm: true, executionMode: executionMode) { CountsAsThread = true };
                 vm.ThreadToken = token;
                 if (broker != null) vm.AttachToGlobals(broker, sharedGlobalCount);
                 try { RunVm(vm); }

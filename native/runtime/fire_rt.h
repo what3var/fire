@@ -379,6 +379,7 @@ typedef struct SlotCache { uint32_t n; uint32_t slot[FIRE_SLOT_CACHE]; } SlotCac
     X(Pending*, g_pending, NULL) \
     X(uint64_t, g_throwToken, 0) \
     X(uint8_t, g_isThread, 0)           /* 1 on a fire thread */ \
+    X(uint8_t, g_isFire, 0)             /* 1 on a thread of `fire` (one the main program waits for at its end: g_threadsLive) */ \
     X(int32_t, g_jobDepth, 0)           /* a `fire global` job is running on this thread */ \
     X(int32_t, g_noSyncDepth, 0)        /* something runs for itself (a destructor, a host service, `catch threads`/`catch terminate`): no automatic queue in it */ \
     X(uint32_t, g_attnMask, 7u)         /* the signals this thread looks at (ATTN_ALL|ATTN_MAIN|ATTN_SECT); fire threads clear all but ATTN_ALL */ \
@@ -499,6 +500,7 @@ FIRE_FN ThreadLocals* fire_tl(void) {
 #define g_tick FIRE_TLV(g_tick)
 #define g_leaving FIRE_TLV(g_leaving)
 #define g_threadFailed FIRE_TLV(g_threadFailed)
+#define g_isFire FIRE_TLV(g_isFire)
 #define g_travel FIRE_TLV(g_travel)
 #define g_awaitReplyTo FIRE_TLV(g_awaitReplyTo)
 #define g_token FIRE_TLV(g_token)
@@ -3525,9 +3527,9 @@ FIRE_FN Value awaitRun(Value items, Value res, Value fails, OwnList* list) {
 }
 
 
-/* CheckLambdaSignature: a value assigned to a `lambda<...>` annotation must have that many parameters (otherwise an ArgumentException). */
+/* CheckLambdaSignature: a value assigned to a `lambda<...>` annotation must have that many parameters (otherwise an ArgumentException) - or be undefined. */
 FIRE_FN void checkLambda(Value v, int nparams) {
-    if (FIRE_UNLIKELY(v.kind != K_Lambda || lamOf(v)->nparams != (uint32_t)nparams)) {
+    if (FIRE_UNLIKELY(v.kind != K_Lambda || lamOf(v)->nparams != (uint32_t)nparams) && v.kind != K_Undefined) {   /* (undefined: no lambda yet) */
         char text[120];
         if (v.kind != K_Lambda) snprintf(text, sizeof text, "Expected a lambda with %d parameter(s), got a value that is no lambda.", nparams);
         else snprintf(text, sizeof text, "The lambda has %u parameter(s), its declaration says %d.", (unsigned)lamOf(v)->nparams, nparams);
@@ -9092,6 +9094,7 @@ FIRE_FN void threadEntry(ThreadStart st) {
     fire_strandAttach();   /* (the state of this strand, before anything of it is touched) */
 #endif
     g_isThread = 1;
+    g_isFire = 1;
 #ifdef FIRE_NO_GIL
     g_domReader = 1;
 #endif
@@ -9765,6 +9768,10 @@ FIRE_FN FdPoller* fire_fdPoller(void) {
     return st == 2 ? &poller : NULL;
 }
 #endif
+/* (a fire thread that waits in a channel or for a socket: when it is all of them, nobody goes on - see mainFinish) */
+extern FIRE_RT_DATA fire_atomic32 g_idleThreads;
+FIRE_FN void stillEnter(void) { if (g_isFire) { fire_atomic_add(&g_idleThreads, 1); notifyEvent(); } }
+FIRE_FN void stillLeave(void) { if (g_isFire) fire_atomic_add(&g_idleThreads, (uint32_t)-1); }
 FIRE_FN Value fire_fd_wait(Value fdv, Value ev, Value msv) {
 #ifdef FIRE_FD_POLL
     FdPoller* p;
@@ -9793,12 +9800,14 @@ FIRE_FN Value fire_fd_wait(Value fdv, Value ev, Value msv) {
     fire_mutex_unlock(&p->m);
     fdPollWake(p);
     held = sectionYieldBegin();
+    stillEnter();
     if (token) {
         TokWait tw;
         tw.pred = fire_fdReady; tw.ctx = &w; tw.token = token;
         if (g_isThread) blockUntil(fire_tokWaitPred, &tw, true, until); else blockUntilServing(fire_tokWaitPred, &tw, true, until);
     } else if (g_isThread) blockUntil(fire_fdReady, &w, true, until);
     else blockUntilServing(fire_fdReady, &w, true, until);
+    stillLeave();
     sectionYieldEnd(held);
     fire_mutex_lock(&p->m);
     for (link = &p->head; *link && *link != &w; link = &(*link)->next) {}
@@ -11152,7 +11161,27 @@ typedef struct ChanNode {
     uint32_t cap, head, n;
     uint32_t room;   /* the size of `buf` (cap, or more once a watch pushed beyond it: chanPushAny) */
     OwnList hold;
+    struct ChanNode* nextMain;   /* made by the main program: in g_mainChans (closed at its end when the threads that are left stand still) */
+    struct ChanNode** prevMain;
 } ChanNode;
+/* The end of the program (the user: "Stillstand + Zeitlimit"): the channels the main program made (under g_mainChansM), the fire threads that wait in a
+ * channel or for a socket (g_idleThreads: when it is all of them, nobody goes on), the limit of the wait (`#endwait`, ms; -1: none). */
+extern FIRE_RT_DATA ChanNode* g_mainChans;
+extern FIRE_RT_DATA fire_mutex g_mainChansM;
+extern FIRE_RT_DATA int64_t g_endWaitMs;
+FIRE_FN void chanCloseMainMade(void) {
+    ChanNode* n;
+    fire_mutex_lock(&g_mainChansM);
+    for (n = g_mainChans; n; n = n->nextMain) fire_atomic_storeRelease(&n->closed, 1);
+    fire_mutex_unlock(&g_mainChansM);
+    notifyEventAll();
+}
+/* `#endwait value` (undefined: no limit). */
+FIRE_FN void fire_setEndWait(Value v) {
+    int64_t ticks;
+    if (v.kind == K_Undefined) g_endWaitMs = -1;
+    else if (timeTicksOf(v, &ticks)) g_endWaitMs = ticks < 0 ? 0 : ticks / TICKS_PER_MS;
+}
 FIRE_FN ChanNode* chanOf(Value h) { return h.kind == K_Int && h.i ? (ChanNode*)(intptr_t)h.i : NULL; }
 FIRE_FN bool fire_chanCanSend(void* c) { ChanNode* n = (ChanNode*)c; return fire_atomic_loadAcquire(&n->closed) != 0 || (uint32_t)fire_atomic_loadAcquire(&n->count) < n->cap; }
 FIRE_FN bool fire_chanCanReceive(void* c) { ChanNode* n = (ChanNode*)c; return fire_atomic_loadAcquire(&n->closed) != 0 || fire_atomic_loadAcquire(&n->count) != 0; }
@@ -11170,6 +11199,14 @@ FIRE_FN Value fire_chan_new(Value cap) {
     fire_atomic_store(&n->refs, 1);
     fire_mutex_init(&n->m);
     ownListInit(&n->hold, 0, NULL);
+    if (!g_isThread) {
+        fire_mutex_lock(&g_mainChansM);
+        n->nextMain = g_mainChans;
+        if (g_mainChans) g_mainChans->prevMain = &n->nextMain;
+        n->prevMain = &g_mainChans;
+        g_mainChans = n;
+        fire_mutex_unlock(&g_mainChansM);
+    }
     return Int((int64_t)(intptr_t)n);
 }
 FIRE_FN Value fire_chan_ref(Value h) { ChanNode* n = chanOf(h); if (n) fire_atomic_add(&n->refs, 1); return n ? h : Int(0); }
@@ -11180,6 +11217,12 @@ FIRE_FN Value fire_chan_release(Value h) {
     /* (the last end: what was not received is destroyed - had a receiver taken it, it would be gone with it too) */
     for (i = 0; i < n->n; i++) { Value v = n->buf[(n->head + i) % n->room]; if (v.kind == K_String) release(v); }
     destroyList(&n->hold);
+    if (n->prevMain) {
+        fire_mutex_lock(&g_mainChansM);
+        *n->prevMain = n->nextMain;
+        if (n->nextMain) n->nextMain->prevMain = n->prevMain;
+        fire_mutex_unlock(&g_mainChansM);
+    }
     free(n->buf);
     free(n);
     return Undef();
@@ -11251,12 +11294,14 @@ FIRE_FN bool chanWait(ChanNode* n, bool (*pred)(void*), int64_t deadline) {
         if (t && (!until || t < until)) until = t;
     }
     held = sectionYieldBegin();
+    stillEnter();
     if (token) {
         TokWait w;
         w.pred = pred; w.ctx = n; w.token = token;
         if (g_isThread) blockUntil(fire_tokWaitPred, &w, true, until); else blockUntilServing(fire_tokWaitPred, &w, true, until);
     } else if (g_isThread) blockUntil(pred, n, true, until);
     else blockUntilServing(pred, n, true, until);
+    stillLeave();
     sectionYieldEnd(held);
     if (pred(n)) return true;
     if (token && (state = cancelState(token)) != 0) { fire_throwCancelled(state); return false; }
@@ -11542,7 +11587,10 @@ FIRE_FN void graveyardAdd(OwnList* list) {
 FIRE_FN void leaveNow(void) { startLeave(); }
 
 /* `terminate(value)`: the first call wins; every thread notices at its next safe point (or wait) and leaves. */
-FIRE_FN void terminateNow(Value v) {
+FIRE_FN void terminateRequest(Value v);
+FIRE_FN void terminateNow(Value v) { terminateRequest(v); startLeave(); }
+/* (the request alone: the end of the program asks the threads that are left to leave - the main program itself goes on) */
+FIRE_FN void terminateRequest(Value v) {
     bool first;
     fire_mutex_lock(&g_thrM);
     first = !terminateRequested();
@@ -11559,7 +11607,6 @@ FIRE_FN void terminateNow(Value v) {
         fire_atomic_or(&g_attn, ATTN_ALL);
         notifyEventAll();
     }
-    startLeave();
 }
 /* The value of `terminate` (after it was requested). */
 FIRE_FN Value terminateValue(void) {
@@ -11774,8 +11821,30 @@ FIRE_FN void mainFinish(void) {
         clearUnwind();
         g_leaving = 0;
     }
-    /* (open windows of a window manager's thread hold the program, unless it is terminating; their cycles run here meanwhile) */
-    blockUntil(fire_mainDone, NULL, false, 0);
+    /* (open windows of a window manager's thread hold the program, unless it is terminating; their cycles run here meanwhile) - when every fire thread
+     * that is left waits in a channel or for a socket, the channels of the main program close; `#endwait` after the end (60 s; the time counts while no
+     * window holds the program) the threads that are still there are ended like with `terminate` */
+    {
+        int64_t from = steadyMs();
+        bool closed = false, ended = false;
+        while (!blockUntil(fire_mainDone, NULL, false, steadyMs() + 50)) {
+            uint32_t live = fire_atomic_load(&g_threadsLive);
+            int64_t now = steadyMs();
+            if ((int32_t)fire_atomic_load(&g_hostHolds) > 0
+#ifdef FIRE_TASKS
+                || fire_atomic_load(&g_groupLive) != 0
+#endif
+                ) { from = now; continue; }   /* (windows or handlers of the main program may still feed its channels) */
+            if (!closed && live > 0 && fire_atomic_load(&g_idleThreads) >= live) { closed = true; chanCloseMainMade(); }
+            if (!ended && live > 0 && g_endWaitMs >= 0 && now - from >= g_endWaitMs) {
+                ended = true;
+                fflush(stdout);
+                fprintf(stderr, "fire: %u thread(s) still ran %g s after the end of the main program - ended like with terminate (#endwait sets the limit).\n",
+                    (unsigned)live, (double)g_endWaitMs / 1000.0);
+                terminateRequest(Undef());
+            }
+        }
+    }
     /* (every thread has ended its fire code: nobody adds to the list any more - the lock only orders the reads after the writes; the joins wait outside it) */
     {
         PtrVec list;
@@ -11817,6 +11886,7 @@ FIRE_FN void fire_threadsInit(void) {
     fire_mutex_init(&g_cancelM);
     fire_mutex_init(&g_originM);
     fire_mutex_init(&g_lentM);
+    fire_mutex_init(&g_mainChansM);
 #ifdef FIRE_NO_GIL
     fire_mutex_init(&g_targsM);
 #endif
@@ -11919,6 +11989,10 @@ LentGrave* g_lentGraves = NULL;
 fire_mutex g_lentM;
 PtrMap g_lentOwner;
 PtrMap g_lentWatch;
+ChanNode* g_mainChans = NULL;
+fire_mutex g_mainChansM;
+fire_atomic32 g_idleThreads;
+int64_t g_endWaitMs = 60000;
 #ifdef FIRE_NO_GIL
 fire_mutex g_targsM;
 #endif

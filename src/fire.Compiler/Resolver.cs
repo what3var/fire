@@ -1372,6 +1372,10 @@ namespace fire.Compiler
                 case GlobalJobsDirective:
                     break; // takes effect only at runtime (see Compiler.Compile: SetAutoSync)
 
+                case EndWaitDirective ew:
+                    ResolveExpr(ew.Value);
+                    break; // takes effect only at runtime (see Compiler.Compile: SetEndWait)
+
                 case TimeoutDirective td:
                     ResolveExpr(td.Value);
                     break; // takes effect only at runtime (see Compiler.Compile: SetTimeout)

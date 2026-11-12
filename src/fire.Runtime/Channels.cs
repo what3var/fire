@@ -17,6 +17,8 @@ namespace fire.Runtime
         public int Capacity;
         public volatile bool Closed;
         public readonly Scope Holder = new(null);
+        /// <summary>Made by the main program: closed at its end when every thread that is left stands still (FireRuntime.WaitForAllFireThreads).</summary>
+        public bool MainMade;
     }
 
     /// <summary>The handles of the nodes (the int the prelude keeps): one table for all threads of the program.</summary>
@@ -26,6 +28,13 @@ namespace fire.Runtime
         private static long _next;
 
         public static long Add(ChannelNode node) { long id = Interlocked.Increment(ref _next); Nodes[id] = node; return id; }
+        /// <summary>The end of the program, nobody can go on: the channels the main program made close.</summary>
+        public static void CloseMainMade()
+        {
+            foreach (var n in Nodes.Values) if (n.MainMade && !n.Closed) n.Closed = true;
+            FireRuntime.WakeWaitingOwner();
+            VmScheduler.Wake();
+        }
         public static ChannelNode? Get(long id) => id != 0 && Nodes.TryGetValue(id, out var n) ? n : null;
         public static long Ref(long id)
         {
@@ -59,7 +68,7 @@ namespace fire.Runtime
                 {
                     long cap = a.Length > 0 && a[0].Kind == ValueKind.Int ? a[0].AsInt() : 16;
                     if (cap < 1) return NativeFail("ArgumentException", "The capacity of a channel must be at least 1.");
-                    return Value.MakeInt(ChannelHandles.Add(new ChannelNode { Capacity = (int)Math.Min(cap, int.MaxValue) }));
+                    return Value.MakeInt(ChannelHandles.Add(new ChannelNode { Capacity = (int)Math.Min(cap, int.MaxValue), MainMade = !IsFireThreadVm }));
                 }
                 case "__chan_ref": return Value.MakeInt(ChannelHandles.Ref(H(0)));
                 case "__chan_release":
@@ -189,6 +198,7 @@ namespace fire.Runtime
             bool blocked = PoolTask != null;
             if (blocked) VmScheduler.BlockEnter();
             string? cause = null;
+            FireRuntime.IdleEnter(this);
             try
             {
                 while (!Ready())
@@ -204,7 +214,7 @@ namespace fire.Runtime
                     FireRuntime.WaitForWake(ms);
                 }
             }
-            finally { if (blocked) VmScheduler.BlockLeave(); RegainGlobalsSection(held); }
+            finally { FireRuntime.IdleLeave(this); if (blocked) VmScheduler.BlockLeave(); RegainGlobalsSection(held); }
             if (cause != null) { failure = NativeFail(cause, cause == "TimeoutException" ? "The time limit ran out." : "The task was cancelled."); return false; }
             return true;
         }

@@ -1800,6 +1800,14 @@ namespace fire.Compiler
                 return new GlobalJobsDirective(_sourceIndex, line, mode);
             }
 
+            if (Check(TokenType.Identifier) && Peek().Lexeme == "endwait")
+            {
+                Advance();
+                var limit = ParseExpression();
+                ExpectStatementTerminator();
+                return new EndWaitDirective(_sourceIndex, line, limit);
+            }
+
             if (Check(TokenType.Identifier) && Peek().Lexeme == "timeout")
             {
                 Advance();
@@ -1812,7 +1820,7 @@ namespace fire.Compiler
             // Preprocessing.Preprocessor.ProcessInner/ProcessedSource) - a
             // '#using' line is already recognised there and removed from the text,
             // the parser never sees it any more. No case for it needed here any more.
-            throw Error($"Unknown preprocessor directive '#{Peek().Lexeme}' (known: '#extern \"libName\"', '#noshadow', '#nosync', '#globaljobs safepoints|sleep|sync', '#timeout value', '#lax', '#strict')", Peek());
+            throw Error($"Unknown preprocessor directive '#{Peek().Lexeme}' (known: '#extern \"libName\"', '#noshadow', '#nosync', '#globaljobs safepoints|sleep|sync', '#timeout value', '#endwait value', '#lax', '#strict')", Peek());
         }
 
         private Stmt ParseUnsafeStmt()

@@ -64,6 +64,7 @@ namespace fire.Runtime
             if (blocked) VmScheduler.BlockEnter();
             string? failure = null;
             int result = 0;
+            FireRuntime.IdleEnter(this);
             try
             {
                 while (true)
@@ -82,7 +83,7 @@ namespace fire.Runtime
                     if (result != 0) break;
                 }
             }
-            finally { if (blocked) VmScheduler.BlockLeave(); RegainGlobalsSection(held); }
+            finally { FireRuntime.IdleLeave(this); if (blocked) VmScheduler.BlockLeave(); RegainGlobalsSection(held); }
             if (failure != null) return NativeFail(failure, failure == "TimeoutException" ? "The time limit ran out." : "The task was cancelled.");
             return Value.MakeInt(result);
         }
