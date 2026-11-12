@@ -10088,14 +10088,18 @@ FIRE_FN void sectionExitOp(void) { if (g_isThread && g_secDepth > 0 && --g_secDe
  * object the block runs on, as it is - from a thread only one of the main program (its globals' domain) or an actor; `reply`: `await on` from a thread. */
 FIRE_FN void jobFree(JobReq* j);
 /* (the job itself: its lambda, the copies of its arguments; NULL - the exception is set - when it is refused) */
-FIRE_FN JobReq* jobMake(Value lam, const Value* args, uint32_t n, bool onTarget, ActorReply* reply) {
+FIRE_FN JobReq* jobMakeEx(Value lam, const Value* args, uint32_t n, bool onTarget, ActorReply* reply, uint32_t asIs, OwnList* from);
+FIRE_FN JobReq* jobMake(Value lam, const Value* args, uint32_t n, bool onTarget, ActorReply* reply) { return jobMakeEx(lam, args, n, onTarget, reply, 0, NULL); }
+/* (`asIs`: the last arguments are `with` references - they go as they are, not copied; one that `from` owns - the end of a channel made for the job - goes to
+ * the job's holder) */
+FIRE_FN JobReq* jobMakeEx(Value lam, const Value* args, uint32_t n, bool onTarget, ActorReply* reply, uint32_t asIs, OwnList* from) {
     JobReq* j;
     uint32_t i;
     if (onTarget && n > 0 && g_isThread && args[0].kind == K_Class && leafAlive(args[0]) && !(leafOf(args[0])->flags & (F_SHARED | 8))) {
         fireError("ArgumentException", "'on': the object is not one of the main program (a thread may name a global variable of the main program)");
         return NULL;
     }
-    for (i = onTarget ? 1 : 0; i < n; i++)
+    for (i = onTarget ? 1 : 0; i + asIs < n; i++)
         if (args[i].kind == K_Class && !noCopyFree(args[i], "fire global")) return NULL;
     j = (JobReq*)malloc(sizeof(JobReq));
     if (!j) allocFailed();
@@ -10119,6 +10123,13 @@ FIRE_FN JobReq* jobMake(Value lam, const Value* args, uint32_t n, bool onTarget,
     if (!j->args || !j->holder) allocFailed();
     ownListInit(j->holder, 0, NULL);
     for (i = 0; i < n; i++) {
+        if (i + asIs >= n) {
+            Owned* o = ownedOf(args[i]);
+            j->args[i] = args[i];
+            if (o && from && o->owner == from) { ownUnlink(o); ownLink(j->holder, o); }
+            retain(args[i]);   /* (jobFree lets go of every argument) */
+            continue;
+        }
         if (onTarget && i == 0 && args[i].kind == K_Class) j->args[i] = args[i];   /* (the object itself) */
         else if (args[i].kind == K_Class) j->args[i] = deepCopyCross(args[i], j->holder);
         else { j->args[i] = strCross(args[i]); retain(j->args[i]); }
@@ -10135,6 +10146,16 @@ FIRE_FN void postJobEx(Value lam, const Value* args, uint32_t n, bool onTarget, 
     notifyEvent();
 }
 FIRE_FN void postJob(Value lam, const Value* args, uint32_t n) { postJobEx(lam, args, n, false, NULL); }
+/* `fire on x taking y with a, ch { ... }`: the last `asIs` arguments are `with` references (see jobMakeEx). */
+FIRE_FN void postJobWith(Value lam, const Value* args, uint32_t n, bool onTarget, uint32_t asIs, OwnList* from) {
+    Req q;
+    JobReq* j = jobMakeEx(lam, args, n, onTarget, NULL, asIs, from);
+    if (!j) return;
+    q.sec = NULL; q.job = j;
+    reqPush(q);
+    fire_atomic_or(&g_attn, ATTN_SECT);
+    notifyEvent();
+}
 /* `await on x { ... return v }`: the block runs in the main program's group with x itself and copies of the rest; the caller waits for its result (an
  * exception that the block does not catch is thrown here). The main program itself (or a member of its group) runs it at once. */
 FIRE_FN Value awaitJobEx(Value lam, const Value* args, uint32_t n, bool onTarget, void* home);

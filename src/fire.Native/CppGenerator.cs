@@ -6823,7 +6823,17 @@ namespace fire.Native
                         SetT(first, TypeUnknown);
                         return Next();
                     }
-                    E($"{{ {av}postJobEx({S(d - 1)}, av, {argc}, {(onTarget ? "true" : "false")}, NULL); }}");
+                    int jobWith = ins.A.Length > 1 ? ins.A[1] : 0;   // (the last arguments: `with` references - as they are)
+                    if (jobWith > 0)
+                    {
+                        // (a channel: the job gets an end of its own on the same queue, which goes to the job - step 9)
+                        var ends = new StringBuilder();
+                        if (_classes.TryGetValue("Channel", out var jobChan) && _dispatchers.Contains(("__End", 0)))
+                            for (int k = argc - jobWith; k < argc; k++)
+                                ends.Append($"if (av[{k}].kind == K_Class && leafAlive(av[{k}]) && asObj(av[{k}])->cls == {ClassIdExpr(jobChan)}) av[{k}] = adoptV({CallFn("__End", 0)}(av[{k}]{DispatchTail("__End", 0, "&" + OwnerList(), "0xFFFFFFFFu")}), &{OwnerList()}); ");
+                        E($"{{ {av}{ends}postJobWith({S(d - 1)}, av, {argc}, {(onTarget ? "true" : "false")}, {jobWith}, &{OwnerList()}); }}");
+                    }
+                    else E($"{{ {av}postJobEx({S(d - 1)}, av, {argc}, {(onTarget ? "true" : "false")}, NULL); }}");
                     if (argc > 0) Check();   // (`[NoCopy]`: an argument that reaches one is the ArgumentException, nothing is queued)
                     d = first;
                     return Next();

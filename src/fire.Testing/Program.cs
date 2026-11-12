@@ -22347,6 +22347,31 @@ else
             try { fire taking parts { parts.Close() } } catch (ArgumentException e) { print("taking: " + e.message) }
             print("end " + parts.Count)
         """),
+        ("Threads: fire on x taking k with kanal, actor - der Job im Hauptprogramm bekommt die Referenzen wie mit fire with (ein eigenes Ende des Kanals) und antwortet ueber den Kanal", """
+            #import "time"
+            class Store { int v = 40 }
+            actor Log {
+                string text = ""
+                undefined Put(string s) { this.text = this.text + s }
+            }
+            var store = new Store()
+            var log = new Log()
+            var done = false
+            fire with log {
+                var answers = new Channel<int>()
+                int k = 2
+                fire on store taking k with answers, log {
+                    log.Put("job ")
+                    answers.Send(store.v + k)
+                }
+                print("thread got " + answers.Receive())
+                done = true
+            }
+            while (!done) { try process log; Sleep(1ms) }
+            Sleep(10ms)
+            try process log
+            print("main " + log.text)
+        """),
         ("Threads: TakeGlobal() im Thread gibt das Objekt samt allem, was es besitzt, dem Hauptprogramm; ein Feld auf ein fremdes Thread-Objekt ist die ArgumentException (Takes.Locals nimmt es mit), TakeGlobal(true) bleibt im Thread", """
             #import "time"
             class Leaf { int v; construct(int v) { this.v = v } }

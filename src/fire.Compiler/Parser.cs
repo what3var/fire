@@ -2153,7 +2153,10 @@ namespace fire.Compiler
 
         /// <summary>`on x [taking ...] { ... }`: the lambda of the block - its first parameter is the object under its own name (inside the block the name is
         /// the real object), then the copies - and the arguments.</summary>
-        private (LambdaExpr Lambda, List<Expr> Args) ParseOnBlock(string what)
+        private (LambdaExpr Lambda, List<Expr> Args) ParseOnBlock(string what) { var (lambda, args, _) = ParseOnBlockWith(what); return (lambda, args); }
+
+        /// <summary>`fire on window taking x with actorA, channelB { ... }`: also the `with` references (the last arguments; only for `fire on`).</summary>
+        private (LambdaExpr Lambda, List<Expr> Args, int WithCount) ParseOnBlockWith(string what)
         {
             var onTok = Advance();   // 'on'
             var target = ParseUnary();
@@ -2165,7 +2168,7 @@ namespace fire.Compiler
                 _ => throw Error($"'{what} on' expects the object a block runs on ('{what} on window {{ ... }}')", onTok),
             };
             var (captures, onWith) = ParseFireTakingWithClauses();
-            if (onWith.Count > 0) throw Error($"'with' does not exist for '{what} on'", Peek());
+            if (onWith.Count > 0 && what != "fire") throw Error($"'with' does not exist for '{what} on'", Peek());
             if (_clauseUntil != null) throw Error($"'until' does not exist for '{what} on' (the block runs in the main program)", Peek());
             if (captures.Any(c => c.Handover)) throw Error($"'handover' does not exist for '{what} on' (the block gets copies: use 'taking')", Peek());
             var body = ParseBlock();
@@ -2174,14 +2177,20 @@ namespace fire.Compiler
             parameters.AddRange(captures.Where(c => c.VarName != name).Select(c => new LambdaParam(c.VarName, null, new List<Expr?>())));
             var args = new List<Expr> { target };
             args.AddRange(captures.Where(c => c.VarName != name).Select(c => c.Source));
-            return (new LambdaExpr(onTok.Line, parameters, null, body, AutoCapture: false), args);
+            foreach (var with in onWith)
+            {
+                if (with.VarName == name || captures.Exists(c => c.VarName == with.VarName)) throw Error($"'{with.VarName}' is named twice in this '{what} on'", Peek());
+                parameters.Add(new LambdaParam(with.VarName, null, new List<Expr?>()));
+                args.Add(with.Source);
+            }
+            return (new LambdaExpr(onTok.Line, parameters, null, body, AutoCapture: false), args, onWith.Count);
         }
 
         /// <summary>`fire on window [taking x] { ... }`: a job of the main program (its group) - see Ast.PostGlobalStmt.OnTarget.</summary>
         private Stmt ParseFireOn(int line)
         {
-            var (lambda, args) = ParseOnBlock("fire");
-            return new PostGlobalStmt(_sourceIndex, line, lambda, args, OnTarget: true);
+            var (lambda, args, withCount) = ParseOnBlockWith("fire");
+            return new PostGlobalStmt(_sourceIndex, line, lambda, args, OnTarget: true, WithCount: withCount);
         }
 
         /// <summary>`fire global { ... } [taking X ...]` - siehe Ast.PostGlobalStmt.</summary>
