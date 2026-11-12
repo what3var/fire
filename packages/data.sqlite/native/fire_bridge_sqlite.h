@@ -11,6 +11,11 @@
 
 #include "fire_sqlite_config.h"
 #undef Bool                                 /* (the runtime's Bool again: fire_sqlite_config.h renamed SQLite's for the amalgamation) */
+#if defined(__GNUC__) || defined(__clang__)
+#pragma GCC diagnostic pop
+#elif defined(_MSC_VER)
+#pragma warning(pop)
+#endif
 
 enum { FIRE_SQLB_HANDLE = 100001, FIRE_SQLB_ARGUMENT = 100002, FIRE_SQLB_MEMORY = 100003, FIRE_SQLB_DENIED = 100004 };
 

@@ -16,6 +16,31 @@
 #define SQLITE_USE_URI 1
 #define HAVE_MREMAP 0                       /* (the system headers come before the amalgamation, without its _GNU_SOURCE: no mremap) */
 
+/* The warnings of the program's build (-Wall -Wextra, also an error in the tests) are not SQLite's business: off for the amalgamation only
+ * (fire_bridge_sqlite.h turns them back on). */
+#if defined(__GNUC__) || defined(__clang__)
+#pragma GCC diagnostic push
+#if defined(__clang__)
+#pragma GCC diagnostic ignored "-Wunknown-warning-option"
+#else
+#pragma GCC diagnostic ignored "-Wpragmas"
+#endif
+#pragma GCC diagnostic ignored "-Wimplicit-fallthrough"
+#pragma GCC diagnostic ignored "-Wunused-parameter"
+#pragma GCC diagnostic ignored "-Wunused-function"
+#pragma GCC diagnostic ignored "-Wunused-variable"
+#pragma GCC diagnostic ignored "-Wunused-but-set-variable"
+#pragma GCC diagnostic ignored "-Wsign-compare"
+#pragma GCC diagnostic ignored "-Wmisleading-indentation"
+#pragma GCC diagnostic ignored "-Wcast-function-type"
+#pragma GCC diagnostic ignored "-Wmissing-field-initializers"
+#pragma GCC diagnostic ignored "-Wtype-limits"
+#pragma GCC diagnostic ignored "-Wunused-value"
+#pragma GCC diagnostic ignored "-Wpedantic"
+#elif defined(_MSC_VER)
+#pragma warning(push, 0)
+#endif
+
 /* SQLite's own names that the runtime has as well: renamed for the amalgamation only (fire_bridge_sqlite.h takes them back) */
 #define Bool fire_sqlite_Bool
 

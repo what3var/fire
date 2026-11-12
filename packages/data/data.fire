@@ -3,6 +3,7 @@
 // A connection belongs to the thread that opened it, like any object; every call can be awaited (`await db.QueryList(...)`).
 #import "reflection"
 #import "json"
+#import "time"
 
 namespace Data {
     /// <summary>An error of the database: its message, and its code (the driver's: SQLite's extended result code, MySQL's error number, ...).</summary>
@@ -84,6 +85,29 @@ namespace Data {
         string Savepoint(string name) { return "SAVEPOINT " + name }
         string Release(string name) { return "RELEASE SAVEPOINT " + name }
         string RollbackTo(string name) { return "ROLLBACK TO SAVEPOINT " + name }
+
+        // ---- the schema (Ensure) ----
+        // The SQL type of a column.
+        string ColumnType(Data.ColumnMap c) {
+            if (c.kind == "int" || c.kind == "bool") { return "INTEGER" }
+            if (c.kind == "float") { return "REAL" }
+            if (c.kind == "bytes") { return "BLOB" }
+            if (c.kind == "string" && c.length > 0) { return "VARCHAR(" + c.length + ")" }
+            return "TEXT"
+        }
+        // The definition of a column in CREATE TABLE / ADD COLUMN.
+        string ColumnDefinition(Data.ColumnMap c) {
+            var t = this.Quote(c.column) + " " + this.ColumnType(c)
+            if (c.key) {
+                t = t + " PRIMARY KEY"
+                if (c.generated) { t = t + this.Generated() }
+            } else if (c.required) { t = t + " NOT NULL" }
+            return t
+        }
+        // (after PRIMARY KEY of a generated key)
+        string Generated() { return "" }
+        // A query (one parameter: the table) whose first column is the name of each column the table has; undefined: the table is not there.
+        string ColumnsQuery() { return "select column_name from information_schema.columns where table_name = ?" }
     }
 
     /// <summary>A row of a query: its values by the name of the column (`row["name"]`, `row.Int("age")`) or by position (`row.Get(0)`).</summary>
@@ -228,6 +252,7 @@ namespace Data {
         string url
         int depth
         bool closed
+        Dictionary<string, Data.EntityMap> maps
 
         construct(string url, Data.Credentials credentials = undefined) {
             this.url = url
@@ -239,6 +264,16 @@ namespace Data {
             Data.IDriver d = Data.Connection.Driver(scheme)
             if (d == undefined) { throw new Data.ConnectionException("Data.Connection: no driver for '" + scheme + ":' - import its package (#import \"data." + scheme + "\").") }
             this.driver = d.Open(url.Substring(colon + 1), credentials)
+        }
+
+        // (the values of a list as an array - the parameters of a statement; bytes are copied: the field keeps its own)
+        static any ArrayOf(List values) {
+            any a = new any[values.Count]
+            for (var i = 0; i < values.Count; i++) {
+                any v = values[i]
+                if (v == undefined || v is of int || v is of float || v is of string || v is of bool) { a[i] = v } else { a[i] = copy v }
+            }
+            return a
         }
 
         // (the driver of a scheme: the class with [Driver "scheme"])
@@ -342,6 +377,135 @@ namespace Data {
         // The key the last INSERT of this connection generated.
         int LastInsertId { get { return this.driver.LastId() } }
 
+        // ---- objects of mapped classes (docs/data/README.md "Mapping"): [Table], [Key], [Column], [Ignore], ... or the convention ----
+
+        // How the class maps to its table (read once per connection).
+        Data.EntityMap Map(string typeName) {
+            if (this.maps == undefined) { this.maps = new Dictionary<string, Data.EntityMap>() }
+            if (!this.maps.ContainsKey(typeName)) { this.maps.Add(typeName, new Data.EntityMap(typeName)) }
+            return this.maps[typeName]
+        }
+        Data.EntityMap MapOf(any obj) {
+            if (obj == undefined) { throw new ArgumentException("Data: undefined is no object to write.") }
+            return this.Map(Type.Of(obj).Name)
+        }
+
+        // Makes the table of the class when it is not there, and the columns and indexes it lacks (never drops anything).
+        undefined Ensure(string typeName) {
+            this.Check()
+            var map = this.Map(typeName)
+            var d = this.driver.Dialect()
+            List have = new List()
+            foreach (row in this.Rows(d.ColumnsQuery(), [map.table])) { have.Add(("" + row.Get(0)).ToLower()) }
+            if (have.Count == 0) {
+                var cols = ""
+                for (var i = 0; i < map.columns.Count; i++) {
+                    Data.ColumnMap c = map.columns[i]
+                    if (i > 0) { cols = cols + ", " }
+                    cols = cols + d.ColumnDefinition(c)
+                }
+                this.driver.Exec("CREATE TABLE " + d.Quote(map.table) + " (" + cols + ")")
+            } else {
+                for (var i = 0; i < map.columns.Count; i++) {
+                    Data.ColumnMap c = map.columns[i]
+                    if (have.IndexOf(c.column.ToLower()) < 0) { this.driver.Exec("ALTER TABLE " + d.Quote(map.table) + " ADD COLUMN " + d.ColumnDefinition(c)) }
+                }
+            }
+            for (var i = 0; i < map.columns.Count; i++) {
+                Data.ColumnMap c = map.columns[i]
+                if (!c.unique && !c.index) { continue }
+                var kind = "INDEX"
+                if (c.unique) { kind = "UNIQUE INDEX" }
+                string name = "ix_" + map.table + "_" + c.column
+                this.driver.Exec("CREATE " + kind + " IF NOT EXISTS " + d.Quote(name) + " ON " + d.Quote(map.table) + " (" + d.Quote(c.column) + ")")
+            }
+        }
+
+        // Writes a new row of the object; the generated key goes into the object's key field (a class; a record keeps its fields) and is returned.
+        any Insert(any obj) {
+            this.Check()
+            var map = this.MapOf(obj)
+            var d = this.driver.Dialect()
+            var names = ""
+            var marks = ""
+            var args = new List()
+            for (var i = 0; i < map.columns.Count; i++) {
+                Data.ColumnMap c = map.columns[i]
+                any v = Reflect.Get(obj, c.field)
+                if (c.key && c.generated && (v == undefined || v == 0)) { continue }
+                if (args.Count > 0) { names = names + ", "; marks = marks + ", " }
+                names = names + d.Quote(c.column)
+                marks = marks + "?"
+                args.Add(Data.EntityMap.ToDb(v, c))
+            }
+            var sql = "INSERT INTO " + d.Quote(map.table) + " (" + names + ") VALUES (" + marks + ")"
+            if (args.Count == 0) { sql = "INSERT INTO " + d.Quote(map.table) + " DEFAULT VALUES" }
+            this.Execute(sql, Data.Connection.ArrayOf(args))
+            if (map.key == undefined) { return undefined }
+            any key = Reflect.Get(obj, map.key.field)
+            if (map.key.generated && (key == undefined || key == 0)) {
+                key = this.driver.LastId()
+                try { Reflect.Set(obj, map.key.field, key) } catch (e) { }   // (a record keeps its fields: the key is the result)
+            }
+            return key
+        }
+
+        // Writes all columns of the object to its row (by the key); the number of rows changed (0: there is none).
+        int Update(any obj) {
+            this.Check()
+            var map = this.MapOf(obj)
+            map.NeedKey()
+            var d = this.driver.Dialect()
+            var sets = ""
+            var args = new List()
+            for (var i = 0; i < map.columns.Count; i++) {
+                Data.ColumnMap c = map.columns[i]
+                if (c.key) { continue }
+                if (args.Count > 0) { sets = sets + ", " }
+                sets = sets + d.Quote(c.column) + " = ?"
+                args.Add(Data.EntityMap.ToDb(Reflect.Get(obj, c.field), c))
+            }
+            if (args.Count == 0) { return 0 }
+            args.Add(Data.EntityMap.ToDb(Reflect.Get(obj, map.key.field), map.key))
+            return this.Execute("UPDATE " + d.Quote(map.table) + " SET " + sets + " WHERE " + d.Quote(map.key.column) + " = ?", Data.Connection.ArrayOf(args))
+        }
+
+        // Deletes the object's row (by the key); the number of rows deleted.
+        int Delete(any obj) {
+            this.Check()
+            var map = this.MapOf(obj)
+            map.NeedKey()
+            var d = this.driver.Dialect()
+            return this.Execute("DELETE FROM " + d.Quote(map.table) + " WHERE " + d.Quote(map.key.column) + " = ?", [Data.EntityMap.ToDb(Reflect.Get(obj, map.key.field), map.key)])
+        }
+
+        // Insert or update: a new object (its generated key is not set) is inserted, else its row is updated (inserted when there is none). The key.
+        any Save(any obj) {
+            var map = this.MapOf(obj)
+            map.NeedKey()
+            any key = Reflect.Get(obj, map.key.field)
+            if (key == undefined || (map.key.generated && key == 0)) { return this.Insert(obj) }
+            if (this.Update(obj) == 0) { return this.Insert(obj) }
+            return key
+        }
+
+        // The object of the class `typeName` with the key (undefined: none).
+        any Find(string typeName, any key) {
+            var map = this.Map(typeName)
+            map.NeedKey()
+            var d = this.driver.Dialect()
+            return this.QueryOne(typeName, "SELECT * FROM " + d.Quote(map.table) + " WHERE " + d.Quote(map.key.column) + " = ?", [Data.EntityMap.ToDb(key, map.key)])
+        }
+
+        // All objects of the class (in the order of the key).
+        List All(string typeName) {
+            var map = this.Map(typeName)
+            var d = this.driver.Dialect()
+            var order = ""
+            if (map.key != undefined) { order = " ORDER BY " + d.Quote(map.key.column) }
+            return this.QueryList(typeName, "SELECT * FROM " + d.Quote(map.table) + order)
+        }
+
         // A transaction: Begin, then Commit or Rollback. Inside another one it is a savepoint (Rollback goes back to it).
         undefined Begin() {
             this.Check()
@@ -392,26 +556,127 @@ namespace Data {
         undefined Check() { if (this.closed) { throw new Data.StateException("The connection to '" + this.url + "' is closed.") } }
     }
 
-    /// <summary>How the columns of a result go to the fields of a class (QueryList, QueryOne).</summary>
-    class RowMap {
+    /// <summary>A field of a mapped class and its column (Data.EntityMap).</summary>
+    class ColumnMap {
+        string field
+        string column
         string typeName
-        List fields         // per column: the field's name (undefined: no field)
-        List kinds          // per column: the field's type name
-        any fieldNames
-        any fieldTypes
+        // int, float, string, bool, bytes, time (DateTime), enum, json ([Json]: a record or class as JSON text)
+        string kind
+        bool key
+        bool generated
+        bool unique
+        bool index
+        bool required
+        int length
+        construct(string field, string column, string typeName, string kind) {
+            this.field = field
+            this.column = column
+            this.typeName = typeName
+            this.kind = kind
+            this.length = 0
+            this.key = false
+            this.generated = false
+            this.unique = false
+            this.index = false
+            this.required = false
+        }
+    }
+
+    /// <summary>How a class maps to a table: the name of the class (`[Table "people"]` changes it), the key (the field with `[Key]`, else `id`; an `int` key
+    /// is generated unless `[Key "manual"]`), a column per field of a type the database stores (`[Column "full_name"]`, `[Ignore]`, `[Unique]`, `[Index]`,
+    /// `[Required]`, `[Length 100]`, `[Json]` for a record or class as JSON text).</summary>
+    class EntityMap {
+        string typeName
+        string table
+        List columns
+        Data.ColumnMap key
 
         construct(string typeName) {
             this.typeName = typeName
             Type t = Type.Named(typeName)
-            if (t == undefined) { throw new ArgumentException("Data: there is no class '" + typeName + "' (to make the rows of).") }
+            if (t == undefined) { throw new ArgumentException("Data: there is no class '" + typeName + "'.") }
+            string short = t.Name
+            int dot = short.LastIndexOf(".")
+            if (dot >= 0) { short = short.Substring(dot + 1) }
+            this.table = short
+            Attribute ta = t.FindAttribute("Table")
+            if (ta != undefined && ta.ArgCount() > 0) { this.table = "" + ta.Args[0] }
+            this.columns = new List()
             List members = t.Fields()
-            this.fieldNames = new any[members.Count]
-            this.fieldTypes = new any[members.Count]
+            Data.ColumnMap byName = undefined
             for (var i = 0; i < members.Count; i++) {
                 Member m = members[i]
-                this.fieldNames[i] = m.Name
-                this.fieldTypes[i] = m.TypeName
+                if (m.IsStatic || m.HasAttribute("Ignore")) { continue }
+                string kind = Data.EntityMap.KindOf(m.TypeName, m.HasAttribute("Json"))
+                if (kind == undefined) { continue }
+                string column = m.Name
+                Attribute ca = m.FindAttribute("Column")
+                if (ca != undefined && ca.ArgCount() > 0) { column = "" + ca.Args[0] }
+                var c = new Data.ColumnMap(m.Name, column, m.TypeName, kind)
+                Attribute ka = m.FindAttribute("Key")
+                if (ka != undefined) {
+                    c.key = true
+                    c.generated = kind == "int" && !(ka.ArgCount() > 0 && ("" + ka.Args[0]) == "manual")
+                }
+                c.unique = m.HasAttribute("Unique")
+                c.index = m.HasAttribute("Index")
+                c.required = m.HasAttribute("Required")
+                Attribute la = m.FindAttribute("Length")
+                if (la != undefined && la.ArgCount() > 0) { c.length = la.Args[0] }
+                if (c.key) { this.key = c }
+                if (m.Name.ToLower() == "id") { byName = c }
+                this.columns.Add(take c)
             }
+            if (this.key == undefined && byName != undefined) {
+                this.key = byName
+                byName.key = true
+                byName.generated = byName.kind == "int"
+            }
+        }
+
+        // (what the database stores of a field of type `typeName`; undefined: not a column - a class, a list: later the relations)
+        static string KindOf(string typeName, bool json) {
+            if (json) { return "json" }
+            if (typeName == "int" || typeName == "float" || typeName == "string" || typeName == "bool") { return typeName }
+            if (typeName == "byte[]" || typeName == "int[8][]") { return "bytes" }   // (a byte field: `byte data[]`)
+            if (typeName == "DateTime") { return "time" }
+            if (typeName == "char") { return "string" }
+            if (typeName == "any" || typeName.StartsWith("List") || typeName.StartsWith("Dictionary") || typeName.EndsWith("[]")) { return undefined }
+            if (Type.Named(typeName) == undefined) { return "enum" }   // (an enum: no class of that name - stored by the name of its member)
+            return undefined
+        }
+
+        undefined NeedKey() { if (this.key == undefined) { throw new ArgumentException("Data: the class '" + this.typeName + "' has no key ([Key] or a field 'id').") } }
+
+        Data.ColumnMap Column(string field) {
+            for (var i = 0; i < this.columns.Count; i++) {
+                Data.ColumnMap c = this.columns[i]
+                if (c.field == field) { return c }
+            }
+            return undefined
+        }
+
+        // A value of a field as a parameter.
+        static any ToDb(any v, Data.ColumnMap c) {
+            if (v == undefined) { return undefined }
+            if (c.kind == "time") { any t = v; return t.ToString("o") }
+            if (c.kind == "enum") { return "" + v }   // (by its name: readable, and new members do not move the old ones)
+            if (c.kind == "json") { return Json.Serialize(v) }
+            return v
+        }
+    }
+
+    /// <summary>How the columns of a result go to the fields of a class (QueryList, QueryOne).</summary>
+    class RowMap {
+        string typeName
+        List fields         // per column: the field's name (undefined: no field)
+        List kinds          // per column: what the field is (Data.ColumnMap.kind)
+        Data.EntityMap map
+
+        construct(string typeName) {
+            this.typeName = typeName
+            this.map = new Data.EntityMap(typeName)
             this.fields = new List()
             this.kinds = new List()
         }
@@ -421,14 +686,15 @@ namespace Data {
         undefined Columns(any names) {
             this.fields = new List()
             this.kinds = new List()
-            for (var c = 0; c < names.length; c++) {
-                string key = Data.RowMap.Key(names[c])
+            for (var n = 0; n < names.length; n++) {
+                string key = Data.RowMap.Key(names[n])
                 any found = undefined
                 any kind = undefined
-                for (var f = 0; f < this.fieldNames.length; f++) {
-                    if (Data.RowMap.Key(this.fieldNames[f]) == key) {
-                        found = this.fieldNames[f]
-                        kind = this.fieldTypes[f]
+                for (var f = 0; f < this.map.columns.Count; f++) {
+                    Data.ColumnMap c = this.map.columns[f]
+                    if (c.column.ToLower() == ("" + names[n]).ToLower() || Data.RowMap.Key(c.field) == key) {
+                        found = c.field
+                        kind = c.kind
                         break
                     }
                 }
@@ -453,7 +719,7 @@ namespace Data {
             return Json.Deserialize(json, this.typeName)
         }
 
-        // (a value of the database as the JSON of a field of type `kind`)
+        // (a value of the database as the JSON of a field of the kind `kind`)
         static string Value(any v, any kind) {
             if (kind == "bool") {
                 if (v is of string) { string t = v; return Json.Serialize(t == "1" || t.ToLower() == "true") }
@@ -463,6 +729,8 @@ namespace Data {
             if (kind == "int" && v is of float) { float f = v; return Json.Serialize(f!int) }
             if (kind == "int" && v is of string) { string t = v; return Json.Serialize(t.ToInt()) }
             if (kind == "float" && v is of string) { string t = v; return Json.Serialize(t.ToFloat()) }
+            if (kind == "time") { return Json.Serialize(DateTime.Parse("" + v)) }
+            if (kind == "json") { return "" + v }
             return Json.Serialize(v)
         }
     }

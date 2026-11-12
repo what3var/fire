@@ -252,7 +252,7 @@ Own methods for the generated classes come in an extension (`extension Person { 
 | Step | What | Depends on |
 |---|---|---|
 | 1 | `data` and `data.sqlite`: connection, parameters, `Query`/`Execute`, rows to records and classes, transactions, errors; awaitable - **built** ([docs/data](data/README.md)) | - |
-| 2 | Mapping (attributes, convention, `Data.Model`), `Ensure`, `Insert/Update/Delete/Save` per object | 1 |
+| 2 | Mapping (attributes, convention, `Data.Model`), `Ensure`, `Insert/Update/Delete/Save` per object - **built** (`Data.EntityMap`; `p.Save(db)` as a method and the model in code still open) | 1 |
 | 3 | `data.memory` with the raw API (rows, keys, transactions) | 2 |
 | 4 | Query builder on expression trees: SQL for SQLite, evaluation in `data.memory`; `ToSql` | 2, expressions step 1-3 |
 | 5 | Session: identity map, snapshots, Save in one transaction, generated keys, `[Version]` | 2, 4 |

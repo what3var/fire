@@ -28657,10 +28657,46 @@ else
             print("button " + b.rx + "," + b.ry + " " + b.actualWidth + "x" + b.actualHeight)
             print(flow.Text)
             """),
-        ("Data/SQLite: Execute, Query (Zeilen nacheinander), Rows, Scalar, QueryList/QueryOne auf Records und Klassen, Unicode, NULL, BLOB, Fehlerarten, Transaktionen mit Savepoints, :memory:, await, Threads mit eigenen Verbindungen, handover", """
+        ("Data/SQLite: Execute, Query (Zeilen nacheinander), Rows, Scalar, QueryList/QueryOne auf Records und Klassen, Unicode, NULL, BLOB, Fehlerarten, Transaktionen mit Savepoints, :memory:, await, Threads mit eigenen Verbindungen, handover; Mapping mit Attributen, Ensure, Insert/Update/Delete/Save/Find/All, Enum nach Namen, DateTime, [Json]", """
             #import "time"
             #import "filesystem"
             #import "data.sqlite"
+            enum Level { Low, Mid, High }
+            record Address {
+                string city
+                string zip
+                construct(string city, string zip) { this.city = city; this.zip = zip }
+            }
+            [Table "people"]
+            class Customer {
+                [Key] int id
+                [Column "full_name"] [Required] [Length 100] string name
+                int age
+                [Unique] string email
+                bool active
+                float height
+                DateTime born
+                Level level
+                [Json] Address address
+                [Ignore] string shown
+                List tags
+                construct(string name, int age, string email) {
+                    this.name = name
+                    this.age = age
+                    this.email = email
+                    this.active = true
+                    this.level = Level.Mid
+                }
+            }
+            record Tag {
+                construct(string code, string label) { this.code = code; this.label = label }
+                [Key] string code
+                string label
+            }
+            class Revision {
+                int number
+                string note
+            }
             record Person {
                 int id
                 string name
@@ -28765,6 +28801,44 @@ else
             db2.Close()
             IO.File.Delete(file)
             print("file gone")
+            var cdb = new Data.Connection("sqlite::memory:")
+            cdb.Ensure("Customer")
+            cdb.Ensure("Customer")
+            foreach (row in cdb.Rows("select name, type, pk, \"notnull\" from pragma_table_info('people') order by cid")) { print("col " + row.Text("name") + " " + row.Text("type") + " pk " + row.Int("pk") + " nn " + row.Int("notnull")) }
+            var cada = new Customer("Ada", 36, "cada@x.org")
+            cada.height = 1.65
+            cada.born = new DateTime(1815, 12, 10, 8, 30, 0)
+            cada.level = Level.High
+            cada.address = new Address("London", "W1")
+            print("insert key " + cdb.Insert(cada) + " field " + cada.id)
+            var cgrace = new Customer("Grace", 85, "cgrace@x.org")
+            cdb.Save(cgrace)
+            print("saved " + cgrace.id)
+            cgrace.age = 86
+            print("save again " + cdb.Save(cgrace) + " rows " + cdb.Scalar("select count(*) from people"))
+            Customer found = cdb.Find("Customer", 1)
+            print("found " + found.name + " " + found.age + " " + found.active + " " + found.height + " " + found.born + " " + found.level + " " + found.address.city + " shown " + found.shown)
+            print("raw " + cdb.Rows("select full_name, born, level, address from people where id = 1")[0])
+            try { cdb.Insert(new Customer("Dup", 1, "cada@x.org")) } catch (Data.ConstraintException e) { print("unique " + e.message) }
+            try { cdb.Insert(new Customer(undefined, 1, "n@x.org")) } catch (Data.ConstraintException e) { print("required " + e.message) }
+            found.age = 37
+            print("update " + cdb.Update(found) + " -> " + cdb.Scalar("select age from people where id = 1"))
+            print("all " + cdb.All("Customer").Count)
+            print("delete " + cdb.Delete(cgrace) + " left " + cdb.Scalar("select count(*) from people") + " find " + cdb.Find("Customer", 2))
+            cdb.Execute("create table Tag(code text primary key, label text)")
+            print("tag key " + cdb.Insert(new Tag("fx", "fire")))
+            Tag tg = cdb.Find("Tag", "fx")
+            print("tag " + tg.label)
+            cdb.Ensure("Revision")
+            var rv = new Revision()
+            rv.number = 3
+            rv.note = "x"
+            print("no key insert " + cdb.Insert(rv) + " rows " + cdb.Scalar("select count(*) from Revision"))
+            try { cdb.Update(rv) } catch (ArgumentException e) { print("no key: " + e.message) }
+            cdb.Execute("alter table people drop column height")
+            cdb.Ensure("Customer")
+            print("column found " + cdb.Rows("select name from pragma_table_info('people') where name = 'height'").Count)
+            cdb.Close()
             """),
         ("Http.Pages: eine FXML-View als Seite - HTML mit CSS-Layout (Flex), Circuit pro Seite, Eingabe, Klick, Checkbox und Button im FlowPanel ueber den WebSocket, nur die Aenderungen zurueck, fremde Sitzung 4401, unbekannte Seite 4404", """
             #import "http.pages"
