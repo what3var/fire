@@ -558,6 +558,12 @@ namespace fire.Compiler
                 compiler.CompileExpr(timeout.Value);
                 compiler._chunk.EmitOp(OpCode.SetTimeout);
             }
+            // `#endwait value`: the limit of the wait for the threads at the end (the last one counts)
+            if (program.OfType<EndWaitDirective>().LastOrDefault() is { } endWait)
+            {
+                compiler.CompileExpr(endWait.Value);
+                compiler._chunk.EmitOp(OpCode.SetEndWait);
+            }
 
             // SPEC "Static members": static field initialisers
             // run EXACTLY ONCE, before the actual program (unlike
@@ -1685,6 +1691,7 @@ namespace fire.Compiler
                     break; // see Compile: `SetAutoSync mode` already stands at the program start
 
                 case TimeoutDirective:
+                case EndWaitDirective:
                     break; // see Compile: `SetTimeout` already stands at the program start
 
                 case NoShadowDirective:

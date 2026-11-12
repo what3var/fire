@@ -28320,6 +28320,97 @@ else
             listener.Close()
             print("done")
             """),
+        ("Eigentum: obj[k] = take p mit einem Parameter p gibt den Wert dem Objekt mit dem Indexer (Dictionary), wie Add(k, take p); ein Parameter lambda<any> mit der Vorgabe undefined darf fehlen", """
+            class P { int n; construct(int n) { this.n = n } }
+            class Reg {
+                Dictionary<string, P> d = new Dictionary<string, P>()
+                undefined Put(string k, P p) { this.d[k] = take p }
+                undefined Add(string k, P p) { this.d.Add(k, take p) }
+            }
+            var r = new Reg()
+            r.Put("a", new P(1))
+            r.Add("b", new P(2))
+            try { print(r.d["a"].n) } catch (DestroyedException e) { print("a destroyed") }
+            print(r.d["b"].n)
+            var p3 = new P(3)
+            r.d["c"] = take p3
+            print(r.d["c"].n)
+            class Cb {
+                static undefined Run(int x, lambda<any> callback = undefined) {
+                    if (callback == undefined) { print("no callback " + x) } else { callback(x) }
+                }
+                undefined Go(lambda<any> cb = undefined) { print("go " + (cb == undefined)) }
+            }
+            Cb.Run(1)
+            Cb.Run(2, (v) => print("cb " + v))
+            new Cb().Go()
+            """),
+        ("IChannel<T>: Channel<T> und Net.Channel<T> haben dasselbe Interface - eine Methode mit IChannel<int> arbeitet mit beiden", """
+            #import "net.channel"
+            class Use {
+                static int Sum(IChannel<int> ch) {
+                    int s = 0
+                    foreach (x in ch) { s = s + x }
+                    return s
+                }
+                static undefined Fill(IChannel<int> ch, int n) {
+                    for (int i = 1; i <= n; i++) { ch.Send(i) }
+                    ch.Close()
+                }
+            }
+            var local = new Channel<int>()
+            fire with local { Use.Fill(local, 4) }
+            print("local " + Use.Sum(local))
+            var listener = new Net.ChannelListener<int>("127.0.0.1", 0)
+            int port = listener.Port
+            fire taking port {
+                var ch = new Net.Channel<int>("127.0.0.1", port)
+                Use.Fill(ch, 5)
+            }
+            if (true) {
+                var net = listener.Accept()
+                IChannel<int> any1 = net
+                print("net " + Use.Sum(net) + " " + (net is of IChannel) + " " + any1.IsClosed)
+                net.Close()
+            }
+            listener.Close()
+            """),
+        ("Programmende: warten alle uebrigen Threads in Kanaelen, schliessen die Kanaele des Hauptprogramms (foreach endet)", """
+            var ch = new Channel<int>()
+            var out = new Channel<string>()
+            fire with ch, out {
+                int sum = 0
+                foreach (x in ch) { sum = sum + x }
+                print("consumer done " + sum)
+            }
+            ch.Send(1)
+            ch.Send(2)
+            print("main end")
+            """),
+        ("Programmende: #endwait 300ms - ein Thread, der dann noch laeuft, wird beendet wie mit terminate (Meldung auf stderr)", """
+            #import "time"
+            #endwait 300ms
+            fire {
+                int n = 0
+                while (true) { Sleep(10ms); n = n + 1 }
+            }
+            print("main end")
+            """),
+        ("Programmende: ein Net.Channel des Hauptprogramms ohne Close - seine Kanaele schliessen, die Verbindung endet, der Thread drueben auch", """
+            #import "net.channel"
+            var listener = new Net.ChannelListener<any>("127.0.0.1", 0)
+            int port = listener.Port
+            fire taking port {
+                var ch = new Net.Channel<any>("127.0.0.1", port)
+                any v = ch.Receive()
+                ch.Send(v + 1)
+                foreach (x in ch) { print("thread got " + x) }
+                print("thread done")
+            }
+            var ch = listener.Accept()
+            ch.Send(41)
+            print(ch.Receive())
+            """),
         ("Http.Rpc: [Remote]-Klassen ueber HTTP und JSON - nur mit Sitzung (401), [Nickname] fuer gleichnamige Klassen, Methode, Objekt als Argument, Dienst per DI (Actor), Property, Ausnahme 500, nicht [Remote] 404, falsche Argumente 400, Lebensdauer request, session und single", """
             #import "http.rpc"
             #import "time"
@@ -29836,6 +29927,9 @@ else
                     expected += "stderr: " + vmUnhandled.GetValueOrDefault(c.Source, "(the VM did not stop with an exception)");
                     actual = exit == 1 ? stdout + "stderr: " + stderr.TrimEnd('\n', '\r') : $"Exitcode {exit}: {stdout}{stderr}";
                 }
+                // (the end of the program ended a thread: the line on stderr is checked on its own - the VM writes it to the console, not to the output)
+                else if (c.Name.Contains("(Meldung auf stderr)"))
+                    actual = exit == 0 && stderr.Contains("ended like with terminate") ? stdout : $"Exitcode {exit}: {stdout}stderr: {stderr}";
                 // `terminate(n)` with a whole number is the exit code of the process (like the command line runner)
                 else actual = exit == 0 || (c.Name.StartsWith("Threads:") && c.Source.Contains("terminate(")) ? stdout + stderr : $"Exitcode {exit}: {stdout}{stderr}";
                 CheckNat($"Native == VM: {c.Name}", expected == actual, $"  erwartet (VM):\n{expected}\n  erhalten (C++):\n{actual}");

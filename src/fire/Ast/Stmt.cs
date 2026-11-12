@@ -47,6 +47,9 @@ namespace fire.Ast
     /// directive is evaluated at the very start of the program) or a number in milliseconds - as with `Sleep`. The compiler emits for this at the very start
     /// `SetTimeout`; must be a top-level statement.</summary>
     public sealed record TimeoutDirective(int Source, int Line, Expr Value) : Stmt(Source, Line);
+    /// <summary>`#endwait value` (`10s`, `undefined`: no limit): how long the main program waits at its end for the threads that are still running (default
+    /// 60 s) - then they are ended like with `terminate` (docs/language/15-threads-and-actors.md "The end of the program").</summary>
+    public sealed record EndWaitDirective(int Source, int Line, Expr Value) : Stmt(Source, Line);
 
     /// <summary>A single enum member. If ValueExpr is missing -> the value is that
     /// of the predecessor + 1 (0 for the first member) - classic C-like

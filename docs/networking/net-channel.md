@@ -21,7 +21,6 @@ var note = new Note("hello")
 ch.Send(note)                       // lent: `note` stays this program's
 print(ch.Receive())                 // 5
 print(ch.Receive() == undefined)    // True - the other side closed
-ch.Close()                          // (a channel of the globals: the program ends once its threads do)
 ```
 
 - A value (a number, a text, a bool) goes as it is, as JSON (`Json.Serialize`, read back with its `$type`).
@@ -33,8 +32,8 @@ ch.Close()                          // (a channel of the globals: the program en
   DestroyedException. The end travels on the connection like any message - what the sender sends after it arrives after it.
 - `Receive(limit)` waits at most `limit` (the TimeoutException), `TryReceive()` does not wait, `foreach` receives until the other side closed.
 - `Close()` ends this side's direction: the other side receives what was sent, then undefined. When a `Net.Channel` is destroyed it closes, the
-  rest is sent, and the connection ends - with it the records the other side had lent to this one. A channel in a global variable is closed by hand:
-  its threads run until it is (the program waits for its threads before it destroys its globals).
+  rest is sent, and the connection ends - with it the records the other side had lent to this one. A channel of the main program's globals closes at
+  its end once the threads that are left stand still (see [The end of the program](../language/15-threads-and-actors.md#the-end-of-the-program)).
 - When the connection breaks, the receiving side's queue closes and the records lent to it end.
 - `Net.ChannelListener<T>(host, port)` waits for channels: `Accept(timeout)` gives the next one, `Port` the port, `Close()` stops listening.
 

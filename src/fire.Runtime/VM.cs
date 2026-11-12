@@ -367,6 +367,10 @@ namespace fire.Runtime
         /// into the global fire-thread queue. Only a VM instance that REALLY arose via `fire`
         /// is to get this special behaviour.</summary>
         public bool IsFireThreadVm { get; }
+        /// <summary>A fire thread the main program waits for at its end (FireRuntime counts it); its waits in channels and for sockets count as standing still.</summary>
+        internal bool CountsAsThread { get; init; }
+        /// <summary>`#endwait`: how long the main program waits for its threads at its end (ms; -1: no limit).</summary>
+        private long _endWaitMs = FireRuntime.DefaultEndWaitMs;
 
         /// <summary>A script `throw` for which no matching `catch` was found in THIS VM instance -
         /// set instead of thrown (see ThrowException, last branch): deliberately NO C# exception any more
@@ -1173,7 +1177,7 @@ namespace fire.Runtime
             if (!DestroyGlobalsAtEnd) return;
             // (the members of the main program's group - handlers that wait - end before its globals do)
             if (!IsFireThreadVm) while (VmGroup.Any && !_stopExecutionRequested) { VmGroup.RunReady(); if (VmGroup.Any) FireRuntime.WaitForWake(5); }
-            if (!IsFireThreadVm) FireRuntime.WaitForAllFireThreads(_ownerBroker); // the main program (every VM that is not a fire thread); meanwhile it serves the threads' queue
+            if (!IsFireThreadVm) FireRuntime.WaitForAllFireThreads(_ownerBroker, _endWaitMs); // the main program (every VM that is not a fire thread); meanwhile it serves the threads' queue
             // An exception a thread did not catch, delivered after the main program's last safe point, is not dropped: `catch threads`, or the
             // program ends with it (like at a safe point - the global scope then stays, as after any unhandled exception; native: the same at its end).
             if (IsMainThreadVm && !afterShutdown)
@@ -5238,6 +5242,9 @@ namespace fire.Runtime
                     var holder = _stack[_sp - 3];
                     if (IsDestroyedLeaf(holder)) { ThrowDestroyed(holder); break; }
                     if (holder.Kind == ValueKind.Array && OwnedByRunningCall(_stack[_sp - 1])) OwnershipWalk.TakeValue(_stack[_sp - 1], holder.AsArray(), this);
+                    // (`obj[k] = try take v` of an object with an indexer: the object owns the value, like natively)
+                    else if (holder.Kind == ValueKind.Class && holder.AsObjectRef() is ObjectInstance { IsDestroyed: false } indexed && OwnedByRunningCall(_stack[_sp - 1]))
+                        OwnershipWalk.TakeValue(_stack[_sp - 1], indexed, this);
                     break;
                 }
 
@@ -5301,6 +5308,12 @@ namespace fire.Runtime
                     // (a fire thread takes it for an array of the main program's globals: it moves there with the store - rule 10)
                     if (holder.Kind == ValueKind.Array && _threadBroker != null && holder.AsArray().IsShared) { _pendingGlobalTake = IdentityOf(_stack[_sp - 1]); break; }
                     if (holder.Kind == ValueKind.Array) OwnershipWalk.TakeValue(_stack[_sp - 1], holder.AsArray(), this);
+                    // (`obj[k] = take v` of an object with an indexer - a Dictionary: the object owns the value, like natively - its setter keeps it)
+                    else if (holder.Kind == ValueKind.Class && holder.AsObjectRef() is ObjectInstance { IsDestroyed: false } indexed)
+                    {
+                        if (_threadBroker != null && indexed.InGlobalsDomain) { _pendingGlobalTake = IdentityOf(_stack[_sp - 1]); break; }
+                        OwnershipWalk.TakeValue(_stack[_sp - 1], indexed, this);
+                    }
                     break;
                 }
 
@@ -5623,7 +5636,9 @@ namespace fire.Runtime
                     // TypeRef.LambdaSignature, Compiler.EmitCheckLambdaSignature).
                     int expectedParamCount = ReadByte();
                     var v = Peek();
-                    // a mismatch is a catchable ArgumentException (the value stays on the stack, as the handler unwinds it)
+                    // a mismatch is a catchable ArgumentException (the value stays on the stack, as the handler unwinds it); undefined is no lambda yet
+                    // (`lambda<any> callback = undefined`)
+                    if (v.Kind == ValueKind.Undefined) break;
                     if (v.Kind != ValueKind.Lambda)
                         ThrowArgumentError($"Expected a lambda with {expectedParamCount} parameter(s), got a value that is no lambda.");
                     else if (((LambdaValue)v.AsLambda()).Proto.ParamCount is var actualCount && actualCount != expectedParamCount)
@@ -5712,6 +5727,15 @@ namespace fire.Runtime
                 case OpCode.SetAutoSync:
                     _globalJobs = (GlobalJobsMode)ReadByte();
                     break;
+
+                case OpCode.SetEndWait:
+                {
+                    var limit = Pop();
+                    if (limit.Kind == ValueKind.Undefined) _endWaitMs = -1;
+                    else if (!TimeNatives.TryTimeTicks(limit, out long endTicks, out var endError)) throw new InvalidOperationException("#endwait " + endError);
+                    else _endWaitMs = Math.Max(0, endTicks / 10_000);
+                    break;
+                }
 
                 case OpCode.SetTimeout:
                 {

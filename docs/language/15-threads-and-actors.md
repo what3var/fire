@@ -19,7 +19,7 @@ print("main goes on")
   (`fire Work(new Job())`), which is handed over to the thread without a copy.
 - A `fire { ... }` block inside a method runs without `this`: the fields of the object are not reachable in it (a compile error) - it gets what it
   needs with `taking`, `handover` or `with`, and those names win over a field of the same name.
-- The program waits at its end for all running threads.
+- The program waits at its end for all running threads - see [The end of the program](#the-end-of-the-program).
 - A fire thread is a light task on a pool of system threads (one per core) - in a native build and in the VM; thousands of threads that wait cost no
   system thread each. `fire dedicated { ... }` (also
   `fire dedicated Work(x)`, with the same clauses) gives it a system thread of its own - for work that waits in natives for a long time. In the VM
@@ -391,7 +391,7 @@ gone.Send(1)
 - `Receive(limit)` waits at most `limit` (the TimeoutException); `TryReceive()` does not wait - undefined when nothing is there. A closed and empty
   channel gives undefined (`foreach` ends there).
 - `Send` gives False when the channel is closed (nothing moved). `Close()`, `IsClosed`, `Count`.
-- The channel closes when the one that made it ends. It is never copied (`fire taking ch` is the ArgumentException) - it goes with `with`.
+- The channel closes when the one that made it ends (the main program: see [The end of the program](#the-end-of-the-program)). It is never copied (`fire taking ch` is the ArgumentException) - it goes with `with`.
 - Both directions: `Channel.Pair<A, B>()` gives an end that sends `A` and receives `B`; `.Other()` is the end that sends `B` and receives `A` (it goes to
   the thread with `fire with`). `Close()` ends the direction of the end it is called on:
 
@@ -407,6 +407,8 @@ print(left.Receive())               // 5
 left.Close()
 ```
 
+- `IChannel<T>` is what every channel offers (`Send`, `Receive`, `TryReceive`, `Close`, `IsClosed`, `Count`, `foreach`): `Channel<T>` and
+  `Net.Channel<T>` implement it - a method that takes an `IChannel<int>` works with both.
 - Between programs: `Net.Channel<T>` (`#import "net.channel"`) is the same over a TCP connection - see [Net.Channel](../networking/net-channel.md).
 
 ## Actors
@@ -464,6 +466,29 @@ catch terminate(v) {
 }
 terminate(3)
 print("never printed")
+```
+
+## The end of the program
+
+When the main program's code ends, it waits for the threads that are still running before it destroys its globals. Two rules keep that from hanging:
+
+- **Standstill**: when every thread that is left waits in a channel (`Receive`, `Send`, `foreach`) or for a socket, nobody can go on - the channels
+  the main program made are closed. A `foreach` over one ends, a `Receive` gives undefined, a `Net.Channel` sends its end. Threads that wait for
+  something else (a channel of their own, `Sleep`) are left alone.
+- **Limit**: 60 seconds after the end of the main program the threads that are still there are ended like with `terminate` (at their next safe point
+  or wait), with a line on stderr. `#endwait 5s` sets another limit, `#endwait undefined` none. While a window keeps the program open, the time does not
+  count.
+
+```fire
+var numbers = new Channel<int>()
+fire with numbers {
+    int sum = 0
+    foreach (n in numbers) { sum = sum + n }
+    print(sum)                      // 6 - the channel closed at the end of the main program
+}
+numbers.Send(1)
+numbers.Send(2)
+numbers.Send(3)
 ```
 
 ## Errors in threads

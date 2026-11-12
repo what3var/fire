@@ -135,8 +135,19 @@ namespace fire.Standard
             // A value goes as it is; an object, an array or a record only fresh (`new`, the result of a call), copied (`copy x`) or taken (`take x`): it
             // belongs to the channel while it travels, to the receiver after Receive. The channel closes when the one that made it ends. A channel is never
             // copied (`fire taking ch` is the ArgumentException): it goes to a thread with `fire with`.
+            /// What every channel offers - Channel<T> between threads, Net.Channel<T> (`#import "net.channel"`) between programs: code that takes an
+            /// IChannel<T> works with both.
+            interface IChannel<T> : IEnumerable<T> {
+                bool Send(T value)
+                T Receive(any limit = undefined)
+                T TryReceive()
+                undefined Close()
+                bool IsClosed { get; }
+                int Count { get; }
+            }
+
             [NoCopy]
-            class Channel<T> : IEnumerable<T> {
+            class Channel<T> : IChannel<T> {
                 int node = 0
                 bool original = true
                 construct(int capacity = 16) { this.node = __chan_new(capacity) }

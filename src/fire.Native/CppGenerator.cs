@@ -5461,6 +5461,12 @@ namespace fire.Native
                     HaltCode(f, E);
                     E("return;");
                     return new StepResult(false, null);
+                case OpCode.SetEndWait:
+                    // `#endwait`: how long the end of the main program waits for its threads (fire_rt.h mainFinish)
+                    Need(1);
+                    if (_usesThreads) E($"fire_setEndWait({S(d - 1)});");
+                    d--;
+                    return Next();
                 case OpCode.SetTimeout:
                 case OpCode.SetAutoSync:
                     // `#timeout` sets the wait time of the waiting functions of the devices; `#globaljobs`/`#nosync` only matter for programs with threads

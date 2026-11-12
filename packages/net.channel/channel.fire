@@ -53,13 +53,14 @@ class NetChannelLines {
 }
 
 class NetChannelWire {
-    // Up to buffer.length bytes; 0 when the other side closed or the connection broke.
-    static int Read(int handle, byte buffer[]) {
+    // Up to buffer.length bytes; 0 when the other side closed, the connection broke or the queue `inbox` was closed (the end of the program closed
+    // the channels of the main program: nobody will receive any more).
+    static int Read(int handle, byte buffer[], any inbox) {
         var tries = 0
         while (true) {
             var n = __NetRecv(handle, buffer, 0, buffer.length, 0)
             if (n >= 0) { return n }
-            if (__NetLastError() != 4) { return 0 }
+            if (__NetLastError() != 4 || inbox.IsClosed) { return 0 }
             Net.Clock.WaitFor(handle, 1, Net.Clock.Deadline(-1), tries)
             tries = tries + 1
         }
@@ -113,7 +114,7 @@ namespace Net {
     }
 
     /// <summary>A Channel&lt;T&gt; over a TCP connection: `new Net.Channel<T>(host, port)` connects to a Net.ChannelListener&lt;T&gt;.</summary>
-    [NoCopy] class Channel<T> : IEnumerable<T> {
+    [NoCopy] class Channel<T> : IChannel<T> {
         any inbox
         any outbox
         any writerDone
@@ -168,7 +169,7 @@ namespace Net {
                     while (open) {
                         string line = lines.Next()
                         if (line == undefined) {
-                            int n = NetChannelWire.Read(handle, buffer)
+                            int n = NetChannelWire.Read(handle, buffer, inbox)
                             if (n <= 0) { open = false } else { lines.Feed(buffer, n) }
                         } else if (line.StartsWith("v ")) {
                             inbox.Send(Json.Deserialize(line.Substring(2), "any"))
