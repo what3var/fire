@@ -25,16 +25,17 @@ namespace fire.Editor
 
     /// <summary>What <see cref="NavigationEngine.TryResolveSymbol"/> found at a position: where it is declared
     /// (<see cref="Target"/>) and, if it is a class or a member, the symbol itself - for its documentation comment.</summary>
-    public sealed record ResolvedSymbol(NavigationTarget Target, ClassInfo? Class = null, MemberInfo? Member = null)
+    public sealed record ResolvedSymbol(NavigationTarget Target, ClassInfo? Class = null, MemberInfo? Member = null, string? Text = null, DocComment? Doc = null)
     {
         /// <summary>The `///` documentation of the member or class, null if there is none.</summary>
-        public DocComment? Documentation => Member?.Documentation ?? Class?.Documentation;
+        public DocComment? Documentation => Doc ?? Member?.Documentation ?? Class?.Documentation;
 
         /// <summary>A one-line description of the symbol, e.g. `(method) Calc.Add(int a, int b) → int`.</summary>
         public string Header
         {
             get
             {
+                if (Text != null) return Text;
                 if (Member is { } m)
                 {
                     string type = m.TypeName != null ? m.TypeName + (m.TypeIsArray ? "[]" : "") : string.Empty;
@@ -143,6 +144,10 @@ namespace fire.Editor
                 return null;
             }
 
+            // a parameter of a lambda with an expression body: its type and what the lambda becomes (an expression tree for `lambda expression<T>`)
+            if (index.LambdaParameterAt(identifier, idStart) is { } lambdaParam)
+                return LambdaParamSymbol(lambdaParam, line);
+
             string? classKey = index.TryFindClass(identifier, offset);
             if (classKey != null && index.Classes.TryGetValue(classKey, out var cls) && cls.DeclLine > 0)
                 return new ResolvedSymbol(ClassTarget(cls), cls);
@@ -164,6 +169,17 @@ namespace fire.Editor
         // -----------------------------------------------------------
         // Calls: the documentation shown while the arguments of a call are being typed
         // -----------------------------------------------------------
+
+        private static ResolvedSymbol LambdaParamSymbol(ScriptSymbolIndex.LambdaParamInfo p, int line)
+        {
+            string type = p.TypeName ?? "any";
+            string header = $"(lambda parameter) {p.Name} : {type}" + (p.IsTree ? " - expression tree" : "");
+            string summary = p.IsTree
+                ? $"The lambda goes to {p.Method} as an expression tree ({p.Target}): the method gets what the body reads, compares and calls - next to its compiled code. Only an expression body; no assignment, ++ or take."
+                : p.Method != null ? $"The lambda goes to {p.Method} ({p.Target})." : "A parameter of the lambda.";
+            return new ResolvedSymbol(new NavigationTarget(null, line), Text: header,
+                Doc: new DocComment(summary, Array.Empty<(string, string)>(), null, null));
+        }
 
         /// <summary>An open call at the caret: the innermost `(` that is not closed yet, and how many arguments have been started.</summary>
         /// <param name="ParenOffset">Offset of the `(`.</param>

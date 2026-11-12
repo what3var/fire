@@ -15980,6 +15980,35 @@ static int CountOccurrences(string haystack, string needle)
     var classItems = fire.Editor.CompletionEngine.GetSuggestions(docSource + "\nvar d = new Ca", docSource.Length + 15, fire.Editor.ScriptSymbolIndex.Build(docSource + "\nvar d = new Ca"));
     CheckDoc("Vervollstaendigung: Klassen tragen ihre Dokumentation", classItems.FirstOrDefault(i => i.Text == "Calc")?.Documentation?.Summary == "A calculator. Works on ints.");
 
+    // Lambdas with an expression body (docs/ROADMAP_EXPRESSIONS.md step 7): the parameter's type from the called method's `bool lambda<T>` /
+    // `lambda expression<T>` (T from the receiver: `new Q<Person>()`), completion as in a lambda with a block; the hover says "expression tree"
+    string treeSource = "class Order { int total }\nclass Person { int age\n string name\n List<Order> orders }\nclass Q<T> {\n string Plain(bool lambda<T> f) { return \"\" }\n string Tree(lambda expression<T> e) { return \"\" }\n string Two(lambda expression<T, Order> e) { return \"\" }\n}\nvar q = new Q<Person>()\nvar qo = new Q<Order>()\n";
+    List<string> TreeCompletion(string call)
+    {
+        string full = treeSource + call;
+        return fire.Editor.CompletionEngine.GetSuggestions(full, full.Length, fire.Editor.ScriptSymbolIndex.Build(full)).Select(i => i.Text).ToList();
+    }
+    fire.Editor.ResolvedSymbol? TreeHover(string call, string at)
+    {
+        string full = treeSource + call;
+        return fire.Editor.NavigationEngine.TryResolveSymbol(full, full.LastIndexOf(at, StringComparison.Ordinal), fire.Editor.ScriptSymbolIndex.Build(full));
+    }
+    var person = new[] { "age", "name", "orders" };
+    CheckDoc("Lambda mit Ausdrucksrumpf: der Parameter hat den Typ aus lambda<T> und aus lambda expression<T> (T vom Empfaenger), auch weiter hinten im Rumpf und mit geschriebenem Typ",
+        new[] { "q.Plain(p => p.", "q.Tree(p => p.", "q.Tree(p => p.age > 3 && p.", "q.Tree((Person x) => x.", "new Q<Person>().Tree(p => p." }
+            .All(c => TreeCompletion(c) is var names && person.All(names.Contains) && !names.Contains("total")),
+        string.Join(" | ", TreeCompletion("q.Tree(p => p.")));
+    CheckDoc("Lambda mit Ausdrucksrumpf: zwei Parameter (lambda expression<T, Order>), ein anderes Typargument (Q<Order>); ein Geschwister-Argument sieht den Parameter nicht",
+        TreeCompletion("q.Two((p, o) => o.").SequenceEqual(new[] { "total" }) && TreeCompletion("qo.Tree(o => o.").SequenceEqual(new[] { "total" })
+            && TreeCompletion("q.Tree(p => p.age > 1, p.").Count > 5,
+        string.Join(",", TreeCompletion("q.Two((p, o) => o.")) + " / " + string.Join(",", TreeCompletion("qo.Tree(o => o.")));
+    var treeHover = TreeHover("q.Tree(p => p.age > 3)", "p.age");
+    var plainHover = TreeHover("q.Plain(p => p.age > 3)", "p.age");
+    CheckDoc("Hover ueber einem Lambda-Parameter: Typ und \"expression tree\" bei lambda expression<T>, die Methode mit ihrer Signatur",
+        treeHover?.Header == "(lambda parameter) p : Person - expression tree" && treeHover.Documentation?.Summary.Contains("Q.Tree as an expression tree (lambda expression<T>)") == true
+            && plainHover?.Header == "(lambda parameter) p : Person" && TreeHover("q.Two((p, o) => o.total > p.age)", "Two")?.Header == "(method) Q.Two(lambda expression<T, Order> e) → string",
+        treeHover?.Header + " / " + plainHover?.Header);
+
     // Call context: tooltip stays during the arguments, new Foo( jumps to the constructor
     string callSource = """
         /// A point.

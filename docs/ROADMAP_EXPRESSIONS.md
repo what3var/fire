@@ -1,6 +1,6 @@
 # Roadmap: expression trees (`lambda expression<T>`)
 
-Status: steps 1-3 built (see "Status" at the end); prepared in parallel to [ROADMAP_DATA.md](ROADMAP_DATA.md) (the query builder of `Data` is its first user; LINQ, the UI
+Status: steps 1-7 built (see "Status" at the end); prepared in parallel to [ROADMAP_DATA.md](ROADMAP_DATA.md) (the query builder of `Data` is its first user; LINQ, the UI
 bindings and RPC filters can use it as well).
 
 ## The idea
@@ -127,6 +127,13 @@ print(Probe<Person>.Show(p => p.orders.Any(o => o.total > 10)))         // p => 
 - **Decided while building:** a tree assigned to a `lambda` (variable, argument, return) is its compiled lambda (`LambdaExpression` -> `.Compiled`,
   TypeChecker `CheckAssignable`); a lambda is not a tree. The values are taken when the call evaluates its arguments (the builder runs right there); the static part is not yet a
   constant per call site (the nodes are made at each call).
-- **Open:** step 4 (stripping keeps the nodes already: they are made with `new`; the members a tree names are not kept on purpose yet), step 5
-  (structural Equals/hash, And/Or/Replace), step 6 (LINQ), step 7 (spark), overloads `lambda<T>` / `lambda expression<T>`. (Trees in library code: done - the type checker checks the libraries
-  always now; a tree parameter can be passed on to another `lambda expression<T>`.)
+- **Built (steps 4-7):** step 4 - a function that makes tree nodes keeps the classes and members it names like literals of reflection
+  (CppGenerator `TreeNodeClasses` -> `NoteReflectionLiterals`): `Type.Named(...).Find(...)` finds them at stripping 3, also for a class the program never
+  makes. Step 5 - `Expression` is an `IEquatable`: `Equals`/`GetHashCode` by the shape (a Captured node by its name, a parameter by its place);
+  `Expression.And/Or/Not` (b's parameters renamed to a's; `Invoke` runs the compiled lambdas), `Expression.Replace` and `ExpressionRewriter` (the
+  rewritten tree has no compiled code). Step 6 - overloads: a lambda with an expression body goes to `lambda expression<T>`, a block, a variable and
+  `any` to `lambda<T>`, a LambdaExpression to the tree (descriptor `c:LambdaExpression`, TypeChecker `TreeOverloads`); LINQ keeps its lambdas (decided:
+  a tree only costs on lists). Step 7 - spark: the parameter of a lambda with an expression body gets its type from the called method (`bool
+  lambda<T>` / `lambda expression<T>`, T from the receiver), completion and hover ("expression tree") - ScriptSymbolIndex `LambdaParameterAt`.
+  Trees in library code: the type checker checks the libraries always; a tree parameter is passed on as it is.
+- **Open:** the static part of a tree is not yet a constant per call site (the nodes are made at each call; a translator caches by `Equals`).

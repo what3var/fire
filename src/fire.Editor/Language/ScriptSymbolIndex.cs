@@ -65,6 +65,9 @@ namespace fire.Editor
         /// <summary>The names of the parameters of a method or constructor (named arguments, `f(size: 2)`).</summary>
         public IReadOnlyList<string> ParamNames { get; init; } = Array.Empty<string>();
 
+        /// <summary>The written types of the parameters (null: none; a lambda type as its text, `bool lambda<T>`, `lambda expression<T>`).</summary>
+        public IReadOnlyList<string?> ParamTypes { get; init; } = Array.Empty<string?>();
+
         /// <summary>Name of the class that declares this member.</summary>
         public string Owner { get; internal set; } = string.Empty;
 
@@ -773,6 +776,7 @@ namespace fire.Editor
                         {
                             Access = access,
                             Signature = FormatSignature(ctorParams),
+                            ParamTypes = ctorParams.Select(p => p.TypeName).ToList(),
                             ParamNames = ctorParams.Select(p => p.Name).ToList(),
                         });
                     }
@@ -919,6 +923,7 @@ namespace fire.Editor
                     IsStatic = isStatic,
                     Access = access,
                     Signature = FormatSignature(parms),
+                    ParamTypes = parms.Select(p => p.TypeName).ToList(),
                     ParamNames = parms.Select(p => p.Name).ToList(),
                     BodyStart = bodyClose >= 0 ? bodyOpen : -1,
                     BodyEnd = bodyClose,
@@ -1031,6 +1036,7 @@ namespace fire.Editor
             AddMember(info, new MemberInfo("operator" + symbol, MemberKind.Method, paramCount, line)
             {
                 Signature = FormatSignature(parms),
+                    ParamTypes = parms.Select(p => p.TypeName).ToList(),
                 BodyStart = bodyClose >= 0 ? bodyOpen : -1,
                 BodyEnd = bodyClose,
             });
@@ -1327,6 +1333,8 @@ namespace fire.Editor
         {
             var result = new List<(string, string?)>();
             int depth = 0;
+            int angles = 0;   // (`lambda expression<A, B> e`: the comma of the type arguments does not end the parameter; a default value has no type arguments)
+            bool inDefault = false;
             int j = parenIdx;
             var currentTokens = new List<Token>();
             for (; j < _tokens.Count; j++)
@@ -1337,12 +1345,19 @@ namespace fire.Editor
                     depth--;
                     if (depth == 0) { FlushParam(currentTokens, result); j++; break; }
                 }
+                if (depth == 1 && !inDefault)
+                {
+                    if (_tokens[j].Type == TokenType.Lt) angles++;
+                    else if (_tokens[j].Type == TokenType.Gt && angles > 0) angles--;
+                    else if (_tokens[j].Type == TokenType.Assign) inDefault = true;
+                }
                 if (depth >= 1)
                 {
-                    if (_tokens[j].Type == TokenType.Comma && depth == 1)
+                    if (_tokens[j].Type == TokenType.Comma && depth == 1 && angles == 0)
                     {
                         FlushParam(currentTokens, result);
                         currentTokens.Clear();
+                        inDefault = false;
                     }
                     else if (!(depth == 1 && _tokens[j].Type == TokenType.LParen))
                     {
@@ -1365,6 +1380,21 @@ namespace fire.Editor
                 int nameIdx = toks.FindLastIndex(t => t.Type == TokenType.Identifier);
                 if (nameIdx < 0) return;
                 string name = toks[nameIdx].Lexeme;
+
+                // a lambda type (`bool lambda<T> f`, `lambda expression<T> e`): its whole text - the completion of a lambda written for it reads its parameter types
+                if (toks.FindIndex(t => t.Type == TokenType.Identifier && t.Lexeme == "lambda") is var lambdaAt && lambdaAt >= 0 && lambdaAt < nameIdx)
+                {
+                    var text = new System.Text.StringBuilder();
+                    for (int k = 0; k < nameIdx; k++)
+                    {
+                        var tk = toks[k];
+                        if (tk.Type is TokenType.Lt or TokenType.Gt) text.Append(tk.Lexeme);
+                        else if (tk.Type == TokenType.Comma) text.Append(", ");
+                        else { if (text.Length > 0 && text[^1] is not ('<' or ' ')) text.Append(' '); text.Append(tk.Lexeme); }
+                    }
+                    outList.Add((name, text.ToString()));
+                    return;
+                }
 
                 // Type before it: skip bit width/stars ('int[16]', 'int*'), then
                 // type keyword or (possibly qualified) class name.
