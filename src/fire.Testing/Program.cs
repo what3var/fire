@@ -22174,6 +22174,134 @@ else
             while (step < 1) { Sleep(1ms) }
             print("main " + store.Count() + " " + store.Sum() + " " + store.cb() + " " + shared.v)
         """),
+        ("Records: unveraenderlich nach der Konstruktion (ueber any die AccessDeniedException, auch per Reflect.Set), == und Dictionary-Schluessel nach Inhalt, Feldpruefung am Ende des Konstruktors, copy, JSON, Reflect.New, Vererbung, in einem Thread", """
+            #import "json"
+            #import "reflection"
+            #import "time"
+            record Point {
+                int x
+                int y
+                construct(int x, int y) { this.x = x; this.y = y }
+                int Sum() { return this.x + this.y }
+            }
+            record Line {
+                Point a
+                Point b
+                string name = "line"
+                construct(Point a, Point b) { this.a = take a; this.b = take b }
+            }
+            record Base { int id = 1 }
+            record Derived : Base { int extra = 2 }
+            class Box { int v }
+            record Bad {
+                any held
+                construct(any h) { this.held = take h }
+            }
+            var p = new Point(1, 2)
+            var q = new Point(1, 2)
+            var r = new Point(2, 1)
+            print(p.Sum() + " " + (p == q) + " " + (p == r) + " " + (p != q))
+            var l1 = new Line(new Point(1, 2), new Point(2, 1))
+            var l2 = new Line(new Point(1, 2), new Point(2, 1))
+            print((l1 == l2) + " " + l1.name + " " + (l1 == new Line(new Point(1, 2), new Point(9, 9))))
+            any anyP = p
+            try { anyP.x = 5 } catch (AccessDeniedException e) { print("write: " + e.message) }
+            try { Reflect.Set(p, "y", 9) } catch (AccessDeniedException e) { print("reflect: " + e.message) }
+            print(p.x + " " + p.y)
+            var d = new Dictionary<Point, string>()
+            d[p] = "first"
+            print(d[new Point(1, 2)] + " " + d.Count)
+            d[q] = "second"
+            print(d[p] + " " + d.Count + " " + d.ContainsKey(r))
+            try { var b = new Bad(new Box()) } catch (ArgumentException e) { print("bad: " + e.message) }
+            print(new Bad("text").held + " " + new Bad(new Point(5, 5)).held.x)
+            var c = copy p
+            print((c == p) + " " + c.x)
+            var text = Json.Serialize(p)
+            Point back = Json.Deserialize<Point>(text)
+            print(text + " " + (back == p))
+            var made = Reflect.New("Point", [3, 4])
+            print(made.Sum())
+            var dv = new Derived()
+            print(dv.id + dv.extra + " " + (dv is of Base) + " " + (dv == new Derived()))
+            Point got = undefined
+            var step = 0
+            fire taking p {
+                print("thread " + p.x + " " + p.y)
+                sync global { got = take p; step = 1 }
+            }
+            while (step < 1) { Sleep(1ms) }
+            print("main " + got.x + " " + (got == new Point(1, 2)))
+        """),
+        ("Records: with - eine geaenderte Kopie (r with { ... }, copy/flat obj with { ... }), Setter und take in den Zuweisungen, verschachtelt, Pruefung am Ende, ohne Wort nur fuer Records", """
+            record Point {
+                int x
+                int y
+                construct(int x, int y) { this.x = x; this.y = y }
+            }
+            record Line { Point a; Point b; string name = "l" }
+            record Holder { any v = 1 }
+            class Part { int n; construct(int n) { this.n = n } }
+            class Box {
+                int v
+                string label = "box"
+                List<int> items = new List<int>()
+                Part part
+                int Twice { get { return this.v * 2 } set { this.v = value / 2 } }
+            }
+            var p = new Point(1, 2)
+            var q = p with { .x = 5 }
+            var r = copy p with { .y = 7, .x = 3 }
+            print(p.x + " " + p.y + " | " + q.x + " " + q.y + " | " + r.x + " " + r.y + " " + (q == new Point(5, 2)))
+            var l = new Line()
+            var l2 = l with { .a = new Point(1, 1), .name = "m" }
+            print(l2.a.x + " " + l2.name + " " + l.name)
+            var b = new Box()
+            b.v = 3
+            b.items.Add(1)
+            var part = new Part(8)
+            var c = copy b with { .label = "copy", .Twice = 20, .part = take part }
+            var f = flat b with { .v = 9 }
+            c.items.Add(2)
+            print(b.v + " " + b.label + " " + b.items.Count + " | " + c.v + " " + c.label + " " + c.items.Count + " " + c.part.n + " " + (c.part is from c) + " | " + f.v + " " + f.label + " " + (f.items == b.items))
+            any ab = b
+            try { any z = ab with { .v = 1 } } catch (ArgumentException e) { print("word: " + e.message) }
+            var h = new Holder()
+            try { var z = copy h with { .v = new Box() } } catch (ArgumentException e) { print("kind: " + e.message) }
+            print((h with { .v = "text" }).v)
+            any ah = h
+            try { any z = ah with { .v = [1, 2] } } catch (ArgumentException e) { print("held: " + e.message) }
+            var nested = copy l2 with { .b = l2.a with { .y = 9 } }
+            print(nested.b.y + " " + nested.a.y + " " + (nested.a == l2.a))
+            try { ah.v = 2 } catch (AccessDeniedException e) { print("the original stays: " + h.v) }
+        """),
+        ("Threads: fire with a, b - mehrere Actors fuer einen Thread, zusammen mit taking", """
+            #import "time"
+            actor Counter {
+                int n = 0
+                undefined Add(int k) { this.n = this.n + k }
+                int Get() { return this.n }
+            }
+            actor Log {
+                string text = ""
+                undefined Put(string s) { this.text = this.text + s }
+                string Text() { return this.text }
+            }
+            var c = new Counter()
+            var l = new Log()
+            var step = 2
+            var done = false
+            fire taking step with c, l {
+                c.Add(3)
+                l.Put("a")
+                c.Add(step)
+                l.Put("b")
+                print("thread " + (await c.Get()) + " " + (await l.Text()))
+                done = true
+            }
+            while (!done) { process c; process l; Sleep(1ms) }
+            print("main " + c.n + " " + l.text)
+        """),
         ("Threads: TakeGlobal() im Thread gibt das Objekt samt allem, was es besitzt, dem Hauptprogramm; ein Feld auf ein fremdes Thread-Objekt ist die ArgumentException (Takes.Locals nimmt es mit), TakeGlobal(true) bleibt im Thread", """
             #import "time"
             class Leaf { int v; construct(int v) { this.v = v } }

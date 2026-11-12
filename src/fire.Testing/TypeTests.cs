@@ -72,6 +72,18 @@ static class TypeTests
             """) == "TC001 TC002|");
         Check("strict (Schalter): derselbe Konflikt ist ein Fehler", Run("int x = 3\nx = \"hello\"", TypeCheckMode.Strict) == "|ERROR TC001");
         Check("#strict in der Datei", Run("#strict\nint x = \"a\"") == "|ERROR TC001");
+        // Records (step 9): a write outside the construction (TC026) and a field that can change (TC027) are errors in lax mode too; a record derives only from a record
+        Check("Records: Schreiben ausserhalb der Konstruktion ist TC026 (auch lax), im Konstruktor erlaubt",
+            Run("record P { int x\n construct(int x) { this.x = x }\n undefined M() { this.x = 2 } }\nvar p = new P(1)\np.x = 3\np.x++") is var recW && recW == "|ERROR TC026 TC026 TC026", recW);
+        Check("Records: ein Feld, das sich aendern kann (Klasse, Array), ist TC027; Werte, Records, Lambdas, any sind erlaubt",
+            Run("class B { int v }\nrecord Q { B b; int a[] }\nrecord R { int i; string s; Q q; lambda f; any x }\nprint(1)") is var recF && recF == "|ERROR TC027 TC027", recF);
+        Check("Records: ein Record erbt nur von einem Record, eine Klasse nicht von einem",
+            Run("record P { int x }\nclass C : P { }\nprint(1)") is var recI && recI == "|ERROR E5000", recI);
+        Check("with: ohne copy/flat nur fuer Records - auf einer Klasse TC028 (auch lax), ein unbekanntes Feld TC008",
+            Run("class C { int v }\nrecord R { int x }\nvar d = new C() with { .v = 1 }\nprint(1)") is var recWith && recWith == "|ERROR TC028"
+            && Run("#strict\nrecord R { int x }\nvar e = new R() with { .y = 2 }") == "|ERROR TC008", recWith);
+        Check("Records: ueber any ist das Schreiben die AccessDeniedException, == vergleicht den Inhalt",
+            Run("record P { int x\n construct(int x) { this.x = x } }\nany p = new P(1)\ntry { p.x = 2 } catch (AccessDeniedException e) { print(\"denied\") }\nprint((p == new P(1)) + \" \" + p.x)") is var recA && recA == "|denied\nTrue 1", recA);
         Check("#lax in der Datei schlaegt den Schalter strict", Run("#lax\nint x = 1\ntry { x = \"a\" } catch (ArgumentException e) { print(\"guard\") }\nprint(x)", TypeCheckMode.Strict) == "TC001|guard\n1");
         Check("int geht implizit an float, alles geht an string, undefined an alles", Run("float f = 2\nstring s = 12\nint u = undefined\nprint(f)\nprint(s)") == "|2\n12");
         Check("ein Objekt geht an seine Basisklasse, ein Downcast bleibt erlaubt, Unverwandtes nicht", Run("""

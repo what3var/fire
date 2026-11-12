@@ -1396,8 +1396,8 @@ namespace fire.Compiler
             int slot = _globalSlotCount;
             foreach (var capture in fs.TakingCaptures)
                 inner._chunk.MarkLocalName(0, slot++, capture.VarName);
-            if (fs.WithVarName != null)
-                inner._chunk.MarkLocalName(0, slot++, fs.WithVarName);
+            foreach (var with in fs.With)
+                inner._chunk.MarkLocalName(0, slot++, with.VarName);
             foreach (var stmt in fs.Body.Statements) inner.CompileStmt(stmt);
             // BUGFIX: NOT 'LoadConst Undefined; Return' as with a
             // real method (CompileMethodProto) - a fire block runs as the
@@ -1423,8 +1423,8 @@ namespace fire.Compiler
 
             foreach (var capture in fs.TakingCaptures)
                 CompileExpr(capture.Source);
-            bool hasWith = fs.WithSource != null;
-            if (hasWith) CompileExpr(fs.WithSource!);
+            foreach (var with in fs.With) CompileExpr(with.Source);
+            if (fs.With.Count > 63) _errors.Add(new CompilerException("'with' names at most 63 values.", fs.Line).At(CurrentSourceIndex));
 
             if (fs.Until is { Count: > 0 } fireUntil)
             {
@@ -1437,7 +1437,7 @@ namespace fire.Compiler
             _chunk.EmitU16(protoIdx);
             _chunk.EmitU16(_globalSlotCount);
             _chunk.EmitByte((byte)fs.TakingCaptures.Count);
-            _chunk.EmitByte((byte)((hasWith ? 1 : 0) | (fs.Dedicated ? 2 : 0)));   // (bit 1: `fire dedicated`)
+            _chunk.EmitByte((byte)((fs.With.Count > 0 ? 1 : 0) | (fs.Dedicated ? 2 : 0) | (Math.Min(fs.With.Count, 63) << 2)));   // (bit 1: `fire dedicated`; bits 2-7: how many `with`)
             _chunk.EmitByte((byte)fs.TakingCaptures.Count(c => c.Handover));   // (the parser put them last)
         }
 
@@ -2572,6 +2572,10 @@ namespace fire.Compiler
                     _chunk.EmitOp(OpCode.RebindLambda);
                     break;
 
+                case WithExpr with:
+                    CompileWith(with);
+                    break;
+
                 case ConditionalAccessExpr access:
                     {
                         // `a?.chain` / `a??.chain`: [a] -> [a, a] -> the test; the chain runs on the a below it (the placeholder compiles to nothing),
@@ -3497,6 +3501,40 @@ namespace fire.Compiler
                     _chunk.EmitU16(_chunk.AddConstant(Value.MakeString(id.Name)));
                     break;
             }
+        }
+
+        /// <summary>`copy x with { .a = v, .b = take y }` (step 9): the copy (deep without a word - a record), then each assignment like `copy.a = v` on the
+        /// copy (InitNext: also a field of a record), then the check of what a record holds (RecordCheck 0).</summary>
+        private void CompileWith(WithExpr with)
+        {
+            CompileExpr(new UnaryExpr(with.Line, with.Copy ?? UnaryOp.DeepCopy, with.Source));
+            if (with.Copy == null) { _chunk.EmitOp(OpCode.RecordCheck); _chunk.EmitByte(1); }
+            foreach (var set in with.Sets)
+            {
+                _chunk.EmitOp(OpCode.Dup);                       // [copy, copy]
+                bool claim = false;
+                if (set.Value is UnaryExpr { Op: UnaryOp.Take or UnaryOp.TryTake } takeValue)
+                {
+                    CompileExpr(takeValue.Operand);              // [copy, copy, value]
+                    _chunk.EmitOp(takeValue.Op == UnaryOp.TryTake ? OpCode.TryTakeToObject : OpCode.TakeToObject);
+                }
+                else
+                {
+                    CompileExpr(set.Value);
+                    claim = MayBeUnclaimed(set.Value);
+                }
+                EmitWidthIfNeeded(this, _refParams.FieldWidth(set.Name), _refParams.FieldUnit(set.Name));
+                _chunk.EmitOp(OpCode.InitNext);
+                if (claim) EmitSetFieldClaim(set.Name, false);
+                else
+                {
+                    _chunk.EmitOp(OpCode.SetField);
+                    _chunk.EmitU16(_chunk.AddConstant(Value.MakeString(set.Name)));
+                }
+                _chunk.EmitOp(OpCode.Pop);                       // [copy]
+            }
+            _chunk.EmitOp(OpCode.RecordCheck);
+            _chunk.EmitByte(0);
         }
 
         private void CompileAssign(AssignExpr a)

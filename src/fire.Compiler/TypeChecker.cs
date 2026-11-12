@@ -152,6 +152,8 @@ namespace fire.Compiler
         /// <summary>A field of a record whose type can change (an object of a class, an array, a list): a record holds only what does not change either -
         /// numbers, texts, enums, records, lambdas (an error in lax mode too).</summary>
         public const string RecordFieldCode = "TC027";
+        /// <summary>`x with { ... }` without `copy`/`flat` on an object of a class (not a record): which copy is meant must be said (an error).</summary>
+        public const string WithWordCode = "TC028";
         /// <summary>The width of the program's `int` (16, 32, 64): set by the linker before the check.</summary>
         [ThreadStatic] public static int ProgramIntWidth;
         /// <summary>What the natives of the imported packages return (their `returns`: name -> type text) - set by the linker before the check.</summary>
@@ -1185,10 +1187,10 @@ namespace fire.Compiler
                                 implicitCopies.Add(captured[ci].VarName);
                                 Report(ImplicitCaptureCode, $"The thread uses the local '{captured[ci].VarName}' of the code around it: it gets a copy of it - a change does not reach the variable outside. Write 'taking {captured[ci].VarName}' where it is used (a copy) or 'handover {captured[ci].VarName}' (moved to the thread).", f.Line);
                             }
-                        var actor = f.WithSource != null ? Infer(f.WithSource) : StaticType.Dynamic;
+                        var withTypes = f.With.Select(w => Infer(w.Source)).ToList();
                         Push();
                         foreach (var (name, type) in captured) Declare(name, type);
-                        if (f.WithVarName != null) Declare(f.WithVarName, actor);
+                        for (int wi = 0; wi < f.With.Count; wi++) Declare(f.With[wi].VarName, withTypes[wi]);
                         var outerCopies = _implicitCopies;
                         _implicitCopies = implicitCopies.Count > 0 ? new HashSet<string>(implicitCopies) : null;
                         foreach (var s in f.Body.Statements) Check(s);
@@ -1742,6 +1744,7 @@ namespace fire.Compiler
                 case TryProcessExpr tp: Infer(tp.Target); return StaticType.Dynamic;
                 case TryCallExpr tc: Infer(tc.Call); return StaticType.Dynamic;
                 case ConditionalAccessExpr access: return InferConditionalAccess(access);
+                case WithExpr with: return InferWith(with);
                 case ConditionalTargetExpr placeholder: return _placeholderTypes.TryGetValue(placeholder, out var placeholderType) ? placeholderType : StaticType.Dynamic;
                 default: return StaticType.Dynamic;
             }
@@ -2145,6 +2148,28 @@ namespace fire.Compiler
         }
 
         private bool _inConstructor;
+
+        /// <summary>`copy x with { .a = v }` (step 9): the type of x; each assignment like `copy.a = v` (the member, its access, what it takes) - a field of a
+        /// record is written like in its construction. `x with { ... }` without `copy`/`flat` is for records only (TC028 for a known class).</summary>
+        private StaticType InferWith(WithExpr with)
+        {
+            var source = Infer(with.Source);
+            if (with.Copy == null && source.Kind == StaticKind.Class && source.Class != null && Chain(source).FirstOrDefault().Decl is { IsRecord: false } plainClass)
+                ReportError(WithWordCode, $"'with' without 'copy' or 'flat' is for records - '{plainClass.Name}' is a class: write 'copy x with {{ ... }}' (a deep copy) or 'flat x with {{ ... }}'", with.Line);
+            foreach (var set in with.Sets)
+            {
+                StaticType target = StaticType.Dynamic;
+                if (source.Kind == StaticKind.Class)
+                {
+                    CheckAccess(source, set.Name, MemberUse.Write, 0, set.Line);
+                    if (FindMember(source, set.Name) is { } member) target = member;
+                    else if (FullyKnown(source)) Report(UnknownMemberCode, $"'{source}' has no field or property '{set.Name}'", set.Line);
+                }
+                var value = Infer(set.Value, target);
+                CheckAssignable(value, target, set.Line, $"'{set.Name}'", valueExpr: set.Value);
+            }
+            return source.WithNull(Nullness.Defined);
+        }
 
         /// <summary>`r.x = v` (also `r.x++`, `r.x += 1`) where r is known to be a record: only `this` in a constructor of the record itself writes (TC026).</summary>
         private void CheckRecordWrite(StaticType target, string name, Expr? receiver, int line)

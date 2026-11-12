@@ -337,6 +337,8 @@ typedef struct Zombies { Owned* head; int32_t depth; } Zombies;
  * all), and the argument list in which a property assignment of an accessor hands a value to the setter it calls (the setter takes it on entry). */
 typedef struct AccEntry { Owned* o; uint32_t slot; FireGen gen; } AccEntry;
 typedef struct AccState { AccEntry* items; uint32_t top, cap; OwnList* handOff; } AccState;
+/* A record that is being constructed (its writes are allowed): the chain of `new` on the running task (step 9). */
+typedef struct RecInit { struct Obj* o; struct RecInit* next; } RecInit;
 #ifdef __cplusplus
 #define FIRE_ZERO_INIT {}
 #else
@@ -404,7 +406,8 @@ typedef struct SlotCache { uint32_t n; uint32_t slot[FIRE_SLOT_CACHE]; } SlotCac
     X(BridgeError, g_ioError, FIRE_ZERO_INIT)      /* the IO bridge: the last error of this thread */ \
     X(BridgeError, g_deviceError, FIRE_ZERO_INIT)  /* the device bridge */ \
     X(BridgeError, g_gfxError, FIRE_ZERO_INIT)     /* the graphics bridge: the message of the last failed image function */ \
-    X(AccState, g_acc, FIRE_ZERO_INIT)             /* property accessors: what their `this` took over, the hand-over to a setter */
+    X(AccState, g_acc, FIRE_ZERO_INIT)             /* property accessors: what their `this` took over, the hand-over to a setter */ \
+    X(RecInit*, g_recInit, NULL)                   /* the records that are being constructed (step 9) */
 
 #if defined(FIRE_THREADS) && (defined(FIRE_TLS_STRUCT) || defined(FIRE_DLL) || defined(FIRE_TASK_STATE))
 typedef struct ThreadLocals {
@@ -518,6 +521,7 @@ FIRE_FN ThreadLocals* fire_tl(void) {
 #define g_deviceError FIRE_TLV(g_deviceError)
 #define g_gfxError FIRE_TLV(g_gfxError)
 #define g_acc FIRE_TLV(g_acc)
+#define g_recInit FIRE_TLV(g_recInit)
 #if defined(FIRE_THREADS) && defined(FIRE_NO_GIL)
 #define g_slotCache FIRE_TLV(g_slotCache)
 #define g_domReader FIRE_TLV(g_domReader)
@@ -2562,8 +2566,11 @@ FIRE_FN bool eq(Value a, Value b) {
         default: return a.p == b.p;
     }
 }
-/* Value.OperatorEquals - the `==` of the language: numbers compare by value (`1 == 1.0`), compatible units are converted (`1m == 100cm`). */
+FIRE_FN bool recordEq(Value a, Value b);
+/* Value.OperatorEquals - the `==` of the language: numbers compare by value (`1 == 1.0`), compatible units are converted (`1m == 100cm`); two records by their
+ * content (step 9). */
 FIRE_FN bool opEq(Value a, Value b) {
+    if (a.kind == K_Class && b.kind == K_Class && recordEq(a, b)) return true;
     if (FIRE_UNLIKELY(a.kind == K_Word || b.kind == K_Word) && (isNumeric(a) || a.kind == K_Word) && (isNumeric(b) || b.kind == K_Word)) {
         /* a word and a number by value: an int taken as a word (`w == -1` for the largest word), a float by its value */
         if (a.kind == K_Float || b.kind == K_Float) return FIRE_CC_FEQ((a.kind == K_Word ? wordReal(a) : toR(a)), (b.kind == K_Word ? wordReal(b) : toR(b)));
@@ -2752,6 +2759,10 @@ typedef struct FireClassDesc {
     const TArg* (*targOf)(Obj* o, const char* cls, int k);   /* the k-th type argument of its generic base `cls` (NULL: no generic class in its chain) */
 #endif
     uint32_t flags;   /* 1: `[NoCopy]` on the class or a base class - flat/copy refuse to duplicate it */
+    /* a record (step 9, NULL: no record): `==` by content, the hash of a key by content, the check at the end of its construction (what it holds) */
+    bool (*recEq)(Value a, Value b);
+    int64_t (*recHash)(Value a);
+    bool (*recCheck)(Value a);
 } FireClassDesc;
 extern FIRE_RT_DATA const FireClassDesc* g_classDescs;
 extern FIRE_RT_DATA uint32_t g_classDescCount;
@@ -2859,6 +2870,59 @@ FIRE_FN Value ObjV(Obj* o) { Value r; r.kind = K_Class; FIRE_PAD0(r) leafSet(&r,
 FIRE_FN Obj* asObj(Value v) {
     if (FIRE_UNLIKELY(v.kind != K_Class)) fatal("A member was accessed on something that is not an object.");
     return (Obj*)leafOf(v);
+}
+/* ---- Records (docs/ROADMAP_TASKS.md step 9): unchangeable after their construction; `==` and the hash of a key by content (the VM: RecordValues) ---- */
+FIRE_FN const FireClassDesc* recordDesc(Value v) {
+    if (v.kind != K_Class || !leafAlive(v)) return NULL;
+    return g_classDescs[asObj(v)->cls].recEq ? &g_classDescs[asObj(v)->cls] : NULL;
+}
+FIRE_FN bool recordEq(Value a, Value b) {
+    const FireClassDesc* d = recordDesc(a);
+    if (!d || !recordDesc(b)) return false;
+    if (sameLeaf(a, b)) return true;
+    if (asObj(a)->cls != asObj(b)->cls) return false;
+    return d->recEq(a, b);
+}
+/* (a field of two records: records by their content, the rest as `==`) */
+FIRE_FN bool recFieldEq(Value a, Value b) { return (recordDesc(a) && recordDesc(b)) ? recordEq(a, b) : opEq(a, b); }
+FIRE_FN bool recInit(const Obj* o) {
+    RecInit* r;
+    for (r = g_recInit; r; r = r->next) if (r->o == o) return true;
+    return false;
+}
+FIRE_FN Value accessDenied(const char* text);
+FIRE_COLD FIRE_FN void recordWriteError(const Obj* o, const char* field) {
+    char text[400];
+    snprintf(text, sizeof text, "The record '%s' is unchangeable: its field '%s' is written only while it is constructed - a changed copy is 'copy r with { .%s = ... }'.",
+        g_classDescs[o->cls].name, field, field);
+    accessDenied(text);
+}
+/* What a record may hold (checked at the end of its construction): numbers, texts, chars, bools, enums, undefined, records, lambdas without captures. */
+FIRE_FN bool recFieldOk(Value v);
+FIRE_COLD FIRE_FN bool recordFieldError(Value rec, const char* field, Value v) {
+    char text[400], what[160];
+    if (v.kind == K_Class) snprintf(what, sizeof what, "an object of the class '%s'", g_classDescs[asObj(v)->cls].name);
+    else snprintf(what, sizeof what, "%s", v.kind == K_Array ? "an array" : v.kind == K_Buffer ? "a buffer" : "a lambda with captures");
+    snprintf(text, sizeof text, "The field '%s' of the record '%s' holds %s: a record holds only what does not change - numbers, texts, enums, records, lambdas without captures.",
+        field, g_classDescs[asObj(rec)->cls].name, what);
+    fireError("ArgumentException", text);
+    return false;
+}
+/* The end of `copy x with { ... }` (step 9): what a record holds; `r with { ... }` without a word: r must be a record (an object of a class needs `copy`/`flat`). */
+FIRE_FN bool recordCheckV(Value v) {
+    const FireClassDesc* d = recordDesc(v);
+    return !d || d->recCheck(v);
+}
+FIRE_FN void recordRequire(Value v) {
+    if (v.kind == K_Class && leafAlive(v) && !recordDesc(v))
+        fireError("ArgumentException", "'with' without 'copy' or 'flat' is for records: write 'copy x with { ... }' (a deep copy) or 'flat x with { ... }'.");
+}
+/* The end of a constructor of class `cls`: the check of the record, when it is the class of the object (not a base constructor that runs first). */
+FIRE_FN bool recordCtorEnd(Value self, uint32_t cls) {
+    const FireClassDesc* d;
+    if (g_unwind.active || self.kind != K_Class || !leafAlive(self) || asObj(self)->cls != cls) return true;
+    d = &g_classDescs[cls];
+    return !d->recCheck || d->recCheck(self);
 }
 /* The object of a value the generator proved to be one (an object of a known class). */
 FIRE_FN Obj* objAt(Value v) { return (Obj*)leafOf(v); }
@@ -4569,7 +4633,9 @@ FIRE_FN int64_t keyHash(Value x) {
         case K_Undefined: return 0;
         case K_Word: return (int64_t)fire_mixHash((uint64_t)x.w);   /* (like an int with the same bits: `==` takes them as equal) */
         case K_Char: case K_Bool: return (int64_t)fire_mixHash((uint64_t)x.i ^ ((uint64_t)x.kind << 56));
-        case K_Class: case K_Array: case K_Buffer: return (int64_t)fire_mixHash((uint64_t)leafKey(x));
+        case K_Class: if (recordDesc(x)) return recordDesc(x)->recHash(x);   /* (a record: by its content) */
+            /* fall through */
+        case K_Array: case K_Buffer: return (int64_t)fire_mixHash((uint64_t)leafKey(x));
         case K_PtrByte: case K_PtrElem: case K_PtrField: return (int64_t)fire_mixHash((uint64_t)(uintptr_t)ptrAddr(x));
         default: return (int64_t)fire_mixHash((uint64_t)(uintptr_t)x.p);
     }
@@ -11958,6 +12024,16 @@ FIRE_FN bool truthyP(const Value* v) { return truthy(*v); }
 FIRE_FN Obj* objAtP(const Value* v) { return objAt(*v); }
 FIRE_FN void adoptP(const Value* v, OwnList* list) { adopt(*v, list); }
 FIRE_FN void ctorEndP(const Value* o) { ctorEnd(*o); }
+FIRE_FN bool recFieldOk(Value v) {
+    switch (v.kind) {
+        case K_Class: return !leafAlive(v) || recordDesc(v) != NULL;
+        case K_Array: case K_Buffer: return false;
+        case K_Lambda: return lamOf(v)->ncaps == 0;
+        default: return true;
+    }
+}
+/* (the hash of a field of a record: a record by its content) */
+FIRE_FN int64_t recFieldHash(Value v) { return keyHash(v); }
 FIRE_FN void hoistFromP(const Value* v, OwnList* from, OwnList* to) { hoistFrom(*v, from, to); }
 FIRE_FN void transferTreeP(const Value* v, OwnList* const* lists, int n) { transferTree(*v, lists, n); }
 FIRE_FN void finishArgsP(const Value* result, OwnList* al) { finishArgs(*result, al); }

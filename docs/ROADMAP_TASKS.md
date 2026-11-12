@@ -537,6 +537,14 @@ The threads share nothing that can change - and get ways to pass what does not c
   - A record **without ownership** (`Send(r)`): lent - the sender stays the owner, the receiver has a reference; it dies with the sender.
   - An object needs a word (the user): `Send(copy obj)` or `Send(handover obj)` - without one it is a compile error (lax and strict alike: the
     definition must be clear). A fresh value (`Send(new Job(...))`) needs none: it moves.
+* **Status records** (VM and natively the same, tests "Records: ..." and the type tests): `record Name { ... }` (`record` is a word only in front of a
+  class head); written only while it is constructed - its constructor (with what it calls), field initializers, a copy, `Json.Deserialize`,
+  `Reflect.New`; TC026 for a write outside where the type is known (lax too), else the AccessDeniedException at run time (also `Reflect.Set`); TC027 for
+  a field that can change, a field `any` checked at the end of the outermost constructor (the ArgumentException); a record derives only from a record;
+  `==` and the hash of a key by content. Natively no own kind of value: the class descriptor carries the record (`recEq`, `recHash`, `recCheck`,
+  generated per record class), the writes go through the field helpers (no direct store), which ask the chain of the records being constructed
+  (`g_recInit`, set around the constructor call of `new`) - an object needs no flag. Open with the channels: the count that keeps the memory of a
+  record that another thread reads, and the transfer that does not kill the other references.
 * **No shared objects** (the user): with records and channels everything is covered - an object stays where it lives; other threads reach it only
   through calls of lambdas bound to it, jobs, `await on` and actors.
 

@@ -395,6 +395,66 @@ class Report {
 }
 ```
 
+## Records
+
+A `record` is a class whose objects do not change after they are made: its fields are written only while it is constructed (its constructor, its
+field initializers, a copy). Two records are equal (`==`) when they are of the same record and their fields are equal - so a record can be the key of
+a `Dictionary` or an element of a `HashSet` by its content:
+
+```fire
+record Point {
+    int x
+    int y
+    construct(int x, int y) { this.x = x; this.y = y }
+    int Sum() { return this.x + this.y }        // methods and properties only read
+}
+var a = new Point(1, 2)
+var b = new Point(1, 2)
+print(a == b)                                   // True - the same content
+var names = new Dictionary<Point, string>()
+names[a] = "start"
+print(names[new Point(1, 2)])                   // start
+any some = a
+try { some.x = 5 } catch (AccessDeniedException e) { print("unchangeable") }
+```
+
+- A write to a field of a record outside its construction is an error where the type is known (TC026, also in lax mode); through `any` it is the
+  AccessDeniedException at run time.
+- A record holds only what does not change either: numbers, texts, chars, bools, enums, records and lambdas without captures. A field declared as an
+  object of a class, an array or a list is TC027; what a field declared `any` holds is checked at the end of the construction (the ArgumentException).
+- A record derives only from a record, a class not from one; interfaces are fine.
+- A record belongs to an owner like an object (SPEC 2): what a constructor stores keeps it only with `take` (`this.from = take from`), as for objects.
+- `copy r` makes an equal record (a copy is constructed too).
+
+### A changed copy: `with`
+
+`r with { .x = 1, .y = 2 }` is a copy of the record `r` with the named fields changed - the fields of the copy are written like in its construction,
+`r` stays as it is. For an object of a class the same works with the word of the copy: `copy obj with { ... }` (a deep copy) or `flat obj with { ... }`
+(a flat one, SPEC 2.4):
+
+```fire
+record Point {
+    int x
+    int y
+    construct(int x, int y) { this.x = x; this.y = y }
+}
+class Settings {
+    string name = "default"
+    int size = 10
+}
+var p = new Point(1, 2)
+var moved = p with { .x = 5 }
+print(moved.x + " " + moved.y + " " + p.x)        // 5 2 1
+var s = new Settings()
+var big = copy s with { .name = "big", .size = 40 }
+print(big.name + " " + big.size + " " + s.size)   // big 40 10
+```
+
+- The assignments run in their order with the rules of an ordinary assignment (a property's setter, the visibility, `take`); the constructor does not run.
+- At the end a record is checked like after its constructor: what its fields hold must not change.
+- `x with { ... }` without `copy`/`flat` is for records only: on an object of a class it is TC028 (an error) where the type is known, else the
+  ArgumentException.
+
 ## Static members and the top level
 
 Top-level code (outside of classes) runs from the top when the program starts; it can declare variables and use all classes, wherever they stand in the

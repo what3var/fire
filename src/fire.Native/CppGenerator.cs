@@ -790,6 +790,7 @@ namespace fire.Native
 
         private string? DirectSetField(RuntimeClass rc, string name, string obj, string value, int valueType, Func from, bool nullable = false, bool objAlive = false)
         {
+            if (InstancesOf(rc).Any(c => c.Rc.IsRecord)) return null;   // (a record: written only while it is constructed - the helpers check it, step 9)
             if (DirectFieldIndex(rc, name, from) is not int index) return null;
             string? unit = rc.FindFieldRequiredUnit(name);
             byte kind = rc.FindFieldRequiredKind(name);
@@ -2593,6 +2594,8 @@ namespace fire.Native
                     + (cls.Rc.FindFieldRequiredKind(name) is var kind and not 0 ? FieldKindCheck(name, kind) + " " : "")
                     + (cls.Rc.FindFieldRequiredType(name) is { } requiredType ? ClassGuard("x", requiredType, $"Field '{name}'", "o") + " " : "")
                     + (FieldArrayCheck(cls.Rc, name) is { Length: > 0 } arrayCheck ? arrayCheck + " " : "");
+                // (a record: written only while it is constructed - step 9)
+                if (cls.Rc.IsRecord) check = $"if (FIRE_UNLIKELY(!recInit(o))) {{ recordWriteError(o, {CString(name)}); return; }} " + check;
                 if (check.Length > 0) unitArms.Add((cls.Id, check + "break;"));
             }
             string unitCode = unitArms.Count == 0 ? "" : "    switch (o->cls) {\n" + MergedCases(unitArms) + "        default: break;\n    }\n" + (_usesExceptions ? "    if (FIRE_UNLIKELY(g_unwind.active)) return;\n" : "");
@@ -2707,6 +2710,8 @@ namespace fire.Native
                         unit += ClassGuard("x", requiredType, $"Field '{name}'", "o") + (_usesExceptions ? " if (FIRE_UNLIKELY(g_unwind.active)) return; " : " ");
                     if (FieldArrayCheck(cls.Rc, name) is { Length: > 0 } arrayCheck)
                         unit += arrayCheck + (_usesExceptions ? " if (FIRE_UNLIKELY(g_unwind.active)) return; " : " ");
+                    // (a record: written only while it is constructed - step 9)
+                    if (cls.Rc.IsRecord) fieldGuardSet += $"if (FIRE_UNLIKELY(!recInit(o))) {{ recordWriteError(o, {CString(name)}); return; }} ";
                     var (armSlot, armHalf) = FieldPlace(cls.Rc, index);
                     if (RawRef(cls.Rc, index, "o") is { } rawArm) { setArms.Add((label, $"{{ {fieldGuardSet}{unit}{rawArm} = {RawFromValue(RawTypeAt(cls.Rc, index), "x")}; return; }}")); ptrArms.Add((label, FieldPtrExpr(cls.Rc, index, "NULL", "o")!)); continue; }
                     setArms.Add((label, armHalf >= 0 ? $"{{ {fieldGuardSet}{unit}nvSet(&objFields(o)[{armSlot}], {armHalf}, x); return; }}"
@@ -2925,8 +2930,45 @@ namespace fire.Native
                 }
             }
             string modular = Modular ? ModularDescColumns(cls.Rc, columns, id) : "";
-            return $"{{{CString(cls.Rc.Name)}, {cls.Fields.Count}, {message}, {ticks}, {destroy}, {toString}, {types}{modular}, {DescFlags(cls.Rc)}}}";
+            string record = cls.Rc.IsRecord ? RecordFunctions(cls, id, sb) : "";
+            return $"{{{CString(cls.Rc.Name)}, {cls.Fields.Count}, {message}, {ticks}, {destroy}, {toString}, {types}{modular}, {DescFlags(cls.Rc)}{record}}}";
         }
+
+        /// <summary>A record (step 9): `==` and the hash of a key by its fields, the check of what it holds at the end of its construction (fire_rt.h recordEq,
+        /// keyHash, recordCtorEnd). The columns of its descriptor.</summary>
+        private string RecordFunctions(ClassInfo cls, int id, StringBuilder sb)
+        {
+            var names = cls.Rc.FlattenedFieldNames;
+            var eq = new StringBuilder();
+            var hash = new StringBuilder();
+            var check = new StringBuilder();
+            for (int i = 0; i < names.Count; i++)
+            {
+                eq.Append($"    if (!recFieldEq({FieldRead(cls.Rc, i, "o")}, {FieldRead(cls.Rc, i, "p")})) return false;\n");
+                hash.Append($"    h = (h ^ (uint64_t)recFieldHash({FieldRead(cls.Rc, i, "o")})) * 1099511628211ULL;\n");
+                check.Append($"    f_ = {FieldRead(cls.Rc, i, "o")}; if (!recFieldOk(f_)) return recordFieldError(a, {CString(names[i])}, f_);\n");
+            }
+            ulong seed = 1469598103934665603UL;
+            foreach (char c in cls.Rc.Name) seed = (seed ^ c) * 1099511628211UL;
+            sb.AppendLine($"static bool {Px}fire_req_{id}(Value a, Value b) {{\n    Obj* o = asObj(a); Obj* p = asObj(b); (void)o; (void)p;\n{eq}    return true;\n}}");
+            sb.AppendLine($"static int64_t {Px}fire_rh_{id}(Value a) {{\n    Obj* o = asObj(a); uint64_t h = {seed}ULL; (void)o;\n{hash}    return (int64_t)h;\n}}");
+            sb.AppendLine($"static bool {Px}fire_rck_{id}(Value a) {{\n    Obj* o = asObj(a); Value f_; (void)o; (void)f_;\n{check}    return true;\n}}");
+            return $", {Px}fire_req_{id}, {Px}fire_rh_{id}, {Px}fire_rck_{id}";
+        }
+
+        /// <summary>After OpCode.InitNext (`with`): the store that follows is in a block in which `obj` counts as being constructed (fire_rt.h recInit) - its
+        /// start ("" without InitNext); the block ends with `g_recInit = wi_.next; }`.</summary>
+        private bool _initNext;
+        private string InitOpen(string obj)
+        {
+            if (!_initNext) return "";
+            _initNext = false;
+            return $"{{ RecInit wi_; wi_.o = {obj}.kind == K_Class && leafAlive({obj}) ? asObj({obj}) : NULL; wi_.next = g_recInit; g_recInit = &wi_; ";
+        }
+
+        /// <summary>`new R(...)` of a record: it is being constructed while its constructor runs (its writes are allowed - fire_rt.h recInit).</summary>
+        private static string RecInitEnter(ClassInfo cls) => cls.Rc.IsRecord ? "RecInit ri_; ri_.o = asObj(o); ri_.next = g_recInit; g_recInit = &ri_; " : "";
+        private static string RecInitLeave(ClassInfo cls) => cls.Rc.IsRecord ? "g_recInit = ri_.next; " : "";
 
         /// <summary>The flags of a class descriptor (FireClassDesc.flags): 1 = `[NoCopy]` on it or a base class (flat/copy refuse it).</summary>
         private static string DescFlags(RuntimeClass rc) => rc.IsNoCopy() ? "1u" : "0u";
@@ -4079,7 +4121,7 @@ namespace fire.Native
                     string ownerExpr = owned ? $"objOwned(asObj({S(slot)}))" : "&" + OwnerList();
                     string typeArgsSet = _pendingNewTArgs != null ? $"objSetTArgs(asObj(o), {_pendingNewTArgs}); " : "";
                     _pendingNewTArgs = null;
-                    E($"{{ Value o = {NewObjectCall(newClass, ownerExpr)}; {typeArgsSet}{(newClass.Rc.IsActor ? "markActor(o); " : "")}{selector.Name}(o{args}, &{OwnerList()}); ctorEnd(o); {S(slot)} = o; }}");
+                    E($"{{ Value o = {NewObjectCall(newClass, ownerExpr)}; {typeArgsSet}{(newClass.Rc.IsActor ? "markActor(o); " : "")}{RecInitEnter(newClass)}{selector.Name}(o{args}, &{OwnerList()}); {RecInitLeave(newClass)}ctorEnd(o); {S(slot)} = o; }}");
                     ArgsAfter(argc, mask, S(slot));
                     Check();
                     SetR(slot, false);
@@ -4828,6 +4870,18 @@ namespace fire.Native
                     }
                     SetR(d - 1, false); return Next();
                 }
+                case OpCode.InitNext:
+                    // (`with`: the store that follows writes the copy - also a field of a record, like in its construction)
+                    _initNext = true;
+                    _kindsKept = true;
+                    return Next();
+                case OpCode.RecordCheck:
+                    // the end of a `with` (0): what a record holds; at its start (1), without `copy`/`flat`: a record
+                    Need(1);
+                    E(ins.A[0] == 1 ? $"recordRequire({SR(d - 1)});" : $"(void)recordCheckV({SR(d - 1)});");
+                    Check();
+                    _kindsKept = true;
+                    return Next();
                 case OpCode.HasMember:
                 {
                     // `x??.name`: x is there and has the member (the type checker could not prove it) - the classes that have it, or a built-in member
@@ -5354,6 +5408,12 @@ namespace fire.Native
                     if (f.IsTop) throw new NativeNotSupportedException("return in top-level code");
                     bool isCtor = f.Kind == FuncKind.Ctor;
                     if (!isCtor) JoinVarType(ReturnKey(f), Ty(d - 1));
+                    // (the end of a constructor of a record - before its scopes let go of what they hold: what it holds must not change, step 9)
+                    if (isCtor && f.Chunk.OwnerClass is { IsRecord: true } ctorOwner && _classes.GetValueOrDefault(ctorOwner.Name) is { } recordClass)
+                    {
+                        E($"recordCtorEnd(self, {ClassIdExpr(recordClass)});");
+                        Check();
+                    }
                     bool anything = st.Scopes.Any(sc => f.NeedsList.Contains(sc.Id) || ScopeVariables(f, sc.Id, locals).Any(v => VarRef(VarKey(f, v))));
                     bool tryActive = st.Region != null || st.Handlers.Count > 0;
                     if (f.CAbi is { RetType: not 0 } retAbi)
@@ -5462,10 +5522,11 @@ namespace fire.Native
                     string field = Str(ins.A[0]);
                     _fieldNames.Add(field);
                     string sfObj = SR(d - 2), sfValue = SR(d - 1);
-                    if (ObjSlot(d - 2) && DirectSetField(ObjClass(Ty(d - 2)), field, sfObj, sfValue, Ty(d - 1), f, IsNullable(Ty(d - 2))) is { } direct) E(direct);
+                    string initOpen = InitOpen(sfObj), initClose = initOpen.Length > 0 ? " g_recInit = wi_.next; }" : "";
+                    if (ObjSlot(d - 2) && DirectSetField(ObjClass(Ty(d - 2)), field, sfObj, sfValue, Ty(d - 1), f, IsNullable(Ty(d - 2))) is { } direct) E(initOpen + direct + initClose);
                     else if (ObjSlot(d - 2) && !IsNullable(Ty(d - 2)) && DirectAccessor(ObjClass(Ty(d - 2)), field, true, f) is { } setter)
-                        E($"if (FIRE_UNLIKELY(!leafAlive({sfObj}))) destroyedError({sfObj}); else {{ Value r_ = {GetFunc(setter, FuncKind.Method).Name}({sfObj}, {sfValue}); adopt(r_, &{OwnerList()}); }}");
-                    else E($"{FieldFn("sf", field)}({sfObj}, {sfValue}{FieldTail(field, f, () => "&" + OwnerList())});");
+                        E($"{initOpen}if (FIRE_UNLIKELY(!leafAlive({sfObj}))) destroyedError({sfObj}); else {{ Value r_ = {GetFunc(setter, FuncKind.Method).Name}({sfObj}, {sfValue}); adopt(r_, &{OwnerList()}); }}{initClose}");
+                    else E($"{initOpen}{FieldFn("sf", field)}({sfObj}, {sfValue}{FieldTail(field, f, () => "&" + OwnerList())});{initClose}");
                     Check();
                     AssignValue(d - 2, d - 1);
                     SetR(d - 2, R(d - 1));
@@ -5535,6 +5596,8 @@ namespace fire.Native
                     string store = direct ?? (setter != null
                         ? $"if (FIRE_UNLIKELY(!leafAlive({obj}))) destroyedError({obj}); else {{ Value r_ = {GetFunc(setter, FuncKind.Method).Name}({obj}, {v}); adopt(r_, &{OwnerList()}); }}"
                         : $"{FieldFn("sf", field)}({obj}, {v}{FieldTail(field, f, () => "&" + OwnerList())});");
+                    string claimInit = InitOpen(obj);
+                    if (claimInit.Length > 0) store = claimInit + store + " g_recInit = wi_.next; }";
                     if (direct != null || setter == null && !HasProperty(field))
                     {
                         E(store);
@@ -5604,7 +5667,7 @@ namespace fire.Native
                     string ctorArgs = newNames != null ? "" : CallArgs(d - argc, argc, mask, ctor.RefMask);
                     string typeArgsSet = _pendingNewTArgs != null ? $"objSetTArgs(asObj(o), {_pendingNewTArgs}); " : "";
                     _pendingNewTArgs = null;
-                    E($"{{ Value o = {NewObjectCall(cls, ownerExpr)}; {typeArgsSet}{(cls.Rc.IsActor ? "markActor(o); " : "")}{dpre}{target.Name}(o{ctorArgs}{dargs}); ctorEnd(o); {T(slot)} = o; }}");
+                    E($"{{ Value o = {NewObjectCall(cls, ownerExpr)}; {typeArgsSet}{(cls.Rc.IsActor ? "markActor(o); " : "")}{dpre}{RecInitEnter(cls)}{target.Name}(o{ctorArgs}{dargs}); {RecInitLeave(cls)}ctorEnd(o); {T(slot)} = o; }}");
                     ArgsAfter(argc, mask, S(slot));
                     Check();
                     SetR(slot, false);
@@ -6637,11 +6700,11 @@ namespace fire.Native
                 {
                     UseThreads();
                     int takingCount = ins.A[2];
-                    bool hasWith = (ins.A[3] & 1) != 0;
+                    int withCount = (ins.A[3] & 1) == 0 ? 0 : Math.Max(1, ins.A[3] >> 2);   // (bits 2-7: how many `with`)
                     bool dedicatedThread = (ins.A[3] & 2) != 0;   // `fire dedicated`: a system thread of its own, not a task
                     int handoverCount = ins.A[4];   // the last ones of the taking values: `handover` (moved, not copied)
                     int copyCount = takingCount - handoverCount;
-                    int argc = takingCount + (hasWith ? 1 : 0);
+                    int argc = takingCount + withCount;
                     Need(argc);
                     var body = GetFunc(chunk.Functions[ins.A[0]], FuncKind.FireBody);
                     body.GlobalSlotCount = ins.A[1];
@@ -6661,7 +6724,7 @@ namespace fire.Native
                     for (int i = 0; i < copyCount; i++) sbf.Append($"av[{i}] = takeCopy({S(first + i)}, travel); ");
                     // (all `handover` values together - one may reach another; the sender's other references die, see fire_rt.h handOverAll)
                     if (handoverCount > 0) sbf.Append($"handOverAll(tv + {copyCount}, av + {copyCount}, {handoverCount}, travel); ");
-                    if (hasWith) sbf.Append($"av[{takingCount}] = {S(first + takingCount)}; ");
+                    for (int w = 0; w < withCount; w++) sbf.Append($"av[{takingCount + w}] = {S(first + takingCount + w)}; ");
                     sbf.Append($"ensureDomain(); {(dedicatedThread ? "fireThreadDedicated" : "fireThread")}({body.Name}, av, {argc}, travel); }}");
                     if (takingCount > 0) sbf.Append(" }");
                     E(sbf.ToString());

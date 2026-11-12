@@ -2046,7 +2046,7 @@ namespace fire.Compiler
             if (Check(TokenType.Identifier) && Peek().Lexeme == "global" && (PeekAt(1).Type == TokenType.LBrace || PeekAt(1).Type == TokenType.Taking || PeekAt(1).Type == TokenType.Handover))
                 return ParseFireGlobal(line);
 
-            var (takingCaptures, withVarName, withSource) = ParseFireTakingWithClauses();
+            var (takingCaptures, withVars) = ParseFireTakingWithClauses();
             var until = _clauseUntil;
             _captureUses.Add(new Dictionary<string, bool>());
             Stmt.BlockStmt body;
@@ -2063,7 +2063,7 @@ namespace fire.Compiler
                         throw Error($"'{name}' is captured with '{(takingCaptures[named].Handover ? "handover" : "taking")}' and written with '{(handover ? "handover" : "taking")}' in the block", Peek());
                     continue;
                 }
-                if (name == withVarName) continue;
+                if (withVars.Exists(w => w.VarName == name)) continue;
                 var capture = new FireTakingCapture(name, new IdentifierExpr(line, name), Handover: handover);
                 if (handover) takingCaptures.Add(capture);
                 else
@@ -2072,7 +2072,7 @@ namespace fire.Compiler
                     if (firstMoved < 0) takingCaptures.Add(capture); else takingCaptures.Insert(firstMoved, capture);
                 }
             }
-            return WithHandoverReset(new FireStmt(_sourceIndex, line, takingCaptures, withVarName, withSource, body, dedicated, until));
+            return WithHandoverReset(new FireStmt(_sourceIndex, line, takingCaptures, withVars, body, dedicated, until));
         }
 
         /// <summary>`fire handover x`: after the `fire` the sender's variable is `undefined` (it no longer owns the value) - desugared into
@@ -2164,8 +2164,8 @@ namespace fire.Compiler
                 ThisExpr => throw Error($"'{what} on this' - name the object ('{what} on window')", onTok),
                 _ => throw Error($"'{what} on' expects the object a block runs on ('{what} on window {{ ... }}')", onTok),
             };
-            var (captures, withVarName, _) = ParseFireTakingWithClauses();
-            if (withVarName != null) throw Error($"'with' does not exist for '{what} on'", Peek());
+            var (captures, onWith) = ParseFireTakingWithClauses();
+            if (onWith.Count > 0) throw Error($"'with' does not exist for '{what} on'", Peek());
             if (_clauseUntil != null) throw Error($"'until' does not exist for '{what} on' (the block runs in the main program)", Peek());
             if (captures.Any(c => c.Handover)) throw Error($"'handover' does not exist for '{what} on' (the block gets copies: use 'taking')", Peek());
             var body = ParseBlock();
@@ -2188,8 +2188,8 @@ namespace fire.Compiler
         private Stmt ParseFireGlobal(int line)
         {
             Advance(); // 'global'
-            var (captures, withVarName, _) = ParseFireTakingWithClauses();
-            if (withVarName != null)
+            var (captures, globalWith) = ParseFireTakingWithClauses();
+            if (globalWith.Count > 0)
                 throw Error("'with' does not exist for 'fire global'", Peek());
             if (_clauseUntil != null)
                 throw Error("'until' does not exist for 'fire global' (a job of the main program)", Peek());
@@ -2204,11 +2204,10 @@ namespace fire.Compiler
         /// <summary>`taking X`/`with actorA`, in any order, `with`
         /// at most once, `taking` repeatable any number of times (see
         /// Ast.FireStmt.TakingCaptures documentation for the slot order).</summary>
-        private (List<FireTakingCapture> Taking, string? WithVarName, Expr? WithSource) ParseFireTakingWithClauses()
+        private (List<FireTakingCapture> Taking, List<FireWith> With) ParseFireTakingWithClauses()
         {
             var takingCaptures = new List<FireTakingCapture>();
-            string? withVarName = null;
-            Expr? withSource = null;
+            var withVars = new List<FireWith>();
 
             _clauseUntil = null;
             while (Check(TokenType.Taking) || Check(TokenType.Handover) || Check(TokenType.With) || IsUntilClause())
@@ -2237,18 +2236,20 @@ namespace fire.Compiler
                 }
                 else
                 {
-                    if (withVarName != null)
-                        throw Error("'with' was already used in this 'fire'", Peek());
+                    // `with actorA, channelB` (also `with a with b`): references the thread gets as they are
                     Advance();
-                    var nameTok = Expect(TokenType.Identifier, "Expected an identifier after 'with'");
-                    withVarName = nameTok.Lexeme;
-                    withSource = new IdentifierExpr(nameTok.Line, withVarName);
+                    do
+                    {
+                        var nameTok = Expect(TokenType.Identifier, "Expected an identifier after 'with'");
+                        if (withVars.Exists(w => w.VarName == nameTok.Lexeme)) throw Error($"'{nameTok.Lexeme}' is named twice after 'with'", nameTok);
+                        withVars.Add(new FireWith(nameTok.Lexeme, new IdentifierExpr(nameTok.Line, nameTok.Lexeme)));
+                    } while (Match(TokenType.Comma));
                 }
             }
 
             // the handovers after all copies (see Ast.FireTakingCapture.Handover: the slot order is the compiler's, the sources are plain variables)
             takingCaptures = takingCaptures.Where(c => !c.Handover).Concat(takingCaptures.Where(c => c.Handover)).ToList();
-            return (takingCaptures, withVarName, withSource);
+            return (takingCaptures, withVars);
         }
 
         /// <summary>`fire MethodA(args) [taking/with clauses]` (see
@@ -2274,7 +2275,7 @@ namespace fire.Compiler
             }
             Expect(TokenType.RParen, "Expected ')' after 'fire " + methodName + "(...)'");
 
-            var (explicitTaking, withVarName, withSource) = ParseFireTakingWithClauses();
+            var (explicitTaking, withVars) = ParseFireTakingWithClauses();
             var callUntil = _clauseUntil;
             ExpectStatementTerminator();
 
@@ -2298,7 +2299,7 @@ namespace fire.Compiler
             var callExpr = new CallExpr(line, new MemberExpr(line, new IdentifierExpr(line, thisCaptureName), methodName), argRefs);
             var body = new Stmt.BlockStmt(_sourceIndex, line, new List<Stmt> { new ExprStmt(_sourceIndex, line, callExpr) });
 
-            return WithHandoverReset(new FireStmt(_sourceIndex, line, allCaptures, withVarName, withSource, body, dedicated, callUntil));
+            return WithHandoverReset(new FireStmt(_sourceIndex, line, allCaptures, withVars, body, dedicated, callUntil));
         }
 
         /// <summary>`await Call(args) [taking x | handover x ...]` / `await [taking x | handover x ...] { ... return v }` (docs/ROADMAP_TASKS.md section 3).
@@ -2389,8 +2390,8 @@ namespace fire.Compiler
             }
             if (Check(TokenType.Taking) || Check(TokenType.Handover) || Check(TokenType.LBrace))
             {
-                var (captures, withName, _) = ParseFireTakingWithClauses();
-                if (withName != null) throw Error("'with' does not exist for 'await' (an actor's method is awaited by calling it: 'await actor.Method()')", Peek());
+                var (captures, awaitWith) = ParseFireTakingWithClauses();
+                if (awaitWith.Count > 0) throw Error("'with' does not exist for 'await' (an actor's method is awaited by calling it: 'await actor.Method()')", Peek());
                 var blockUntil = _clauseUntil;
                 var body = ParseBlock();
                 var parameters = captures.Select(c => new LambdaParam(c.VarName, new TypeRef("any", null, 0), new List<Expr?>())).ToList();
@@ -4008,7 +4009,11 @@ namespace fire.Compiler
             if (Check(TokenType.Flat) || Check(TokenType.Copy))
             {
                 var copyTok = Advance();
-                return new UnaryExpr(copyTok.Line, copyTok.Type == TokenType.Flat ? UnaryOp.FlatCopy : UnaryOp.DeepCopy, ParseUnary());
+                var copyOp = copyTok.Type == TokenType.Flat ? UnaryOp.FlatCopy : UnaryOp.DeepCopy;
+                var copied = ParseUnary();
+                // `copy x with { ... }`: the copy of x, then the assignments (the postfix `x with { ... }` was read with the operand)
+                if (copied is WithExpr { Copy: null } plainWith) return plainWith with { Line = copyTok.Line, Copy = copyOp };
+                return new UnaryExpr(copyTok.Line, copyOp, copied);
             }
 
             // `trust x` (SPEC 8.10b): the developer vouches that x is not undefined - no warning where a `defined` value is expected, and a native
@@ -4061,7 +4066,28 @@ namespace fire.Compiler
         /// part of the loop above (cannot itself be the target of a further '.'/
         /// '['/... either, `x++.field` would be meaningless, since `x++` is a pure value,
         /// not an object).</summary>
-        private Expr ParsePostfix() => ParsePostfixRest(ParsePrimary());
+        private Expr ParsePostfix()
+        {
+            var expr = ParsePostfixRest(ParsePrimary());
+            // `x with { .a = 1, .b = 2 }` (step 9): a changed copy - after `copy`/`flat` (see ParseUnary), or of a record without a word
+            while (Check(TokenType.With) && PeekAt(1).Type == TokenType.LBrace)
+            {
+                int line = Advance().Line;
+                Advance();   // {
+                var sets = new List<WithSet>();
+                while (!Check(TokenType.RBrace) && !Check(TokenType.Eof))
+                {
+                    var dot = Expect(TokenType.Dot, "Expected '.name = value' in 'with { ... }'");
+                    string name = Expect(TokenType.Identifier, "Expected the name of a field after '.' in 'with { ... }'").Lexeme;
+                    Expect(TokenType.Assign, "Expected '=' after the name of the field in 'with { ... }'");
+                    sets.Add(new WithSet(dot.Line, name, ParseExpression()));
+                    if (!Match(TokenType.Comma) && !Check(TokenType.RBrace) && !Peek().NewlineBefore) throw Error("Expected ',' or '}' in 'with { ... }'", Peek());
+                }
+                Expect(TokenType.RBrace, "Expected '}' at the end of 'with { ... }'");
+                expr = new WithExpr(line, expr, null, sets);
+            }
+            return expr;
+        }
 
         private Expr ParsePostfixRest(Expr expr)
         {

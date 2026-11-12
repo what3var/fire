@@ -2183,6 +2183,12 @@ namespace fire.Compiler
                 case ConditionalTargetExpr:
                     break;
 
+                case WithExpr with:
+                    // `copy x with { .a = v }`: the copy, then the values of the assignments
+                    ResolveExpr(with.Source);
+                    foreach (var set in with.Sets) ResolveExprAllowTake(set.Value);   // (`.a = take y` like an assignment)
+                    break;
+
                 default:
                     throw new ResolverException($"Unknown expression type {expr.GetType().Name}", expr.Line);
             }
@@ -2366,7 +2372,7 @@ namespace fire.Compiler
                 var declared = AstNames.Declared(fs.Body);
                 foreach (var name in used)
                 {
-                    if (declared.Contains(name) || captureList.Exists(c => c.VarName == name) || name == fs.WithVarName) continue;
+                    if (declared.Contains(name) || captureList.Exists(c => c.VarName == name) || fs.With.Any(w => w.VarName == name)) continue;
                     var scope = FindScopeOf(name);
                     if (scope == null || scope.IsGlobal) continue;   // (the globals of the main program: the thread reads them directly)
                     int firstMoved = captureList.FindIndex(c => c.Handover);
@@ -2382,8 +2388,7 @@ namespace fire.Compiler
                 if (capture.Handover && _fireScope != null && FindScopeOf(capture.VarName) == _fireScope && _fireScope.Slots[capture.VarName] < _fireSharedSlots)
                     throw new ResolverException($"'handover' needs a variable of this thread: '{capture.VarName}' is a global variable of the main program", fs.Line);
             }
-            if (fs.WithSource != null)
-                ResolveExpr(fs.WithSource);
+            foreach (var with in fs.With) ResolveExpr(with.Source);
 
             var saved = _current;
             _current = new ResolverScope(null, isGlobal: true);
@@ -2434,13 +2439,13 @@ namespace fire.Compiler
                 _current.Slots[capture.VarName] = nextCaptureSlot++;
                 _current.ReadonlySlots.Remove(capture.VarName);
             }
-            if (fs.WithVarName != null)
+            foreach (var with in fs.With)
             {
-                if (!capturesSeen.Add(fs.WithVarName))
-                    throw new ResolverException($"'{fs.WithVarName}' was already captured in this 'fire'", fs.Line);
-                if (_current.Slots.TryGetValue(fs.WithVarName, out int shadowedWith)) _current.Slots["\u0001shadow:" + fs.WithVarName] = shadowedWith;
-                _current.Slots[fs.WithVarName] = nextCaptureSlot++;
-                _current.ReadonlySlots.Remove(fs.WithVarName);
+                if (!capturesSeen.Add(with.VarName))
+                    throw new ResolverException($"'{with.VarName}' was already captured in this 'fire'", fs.Line);
+                if (_current.Slots.TryGetValue(with.VarName, out int shadowedWith)) _current.Slots["\u0001shadow:" + with.VarName] = shadowedWith;
+                _current.Slots[with.VarName] = nextCaptureSlot++;
+                _current.ReadonlySlots.Remove(with.VarName);
             }
 
             int savedLoopDepth = _loopDepth;
@@ -2703,7 +2708,7 @@ namespace fire.Compiler
                     case CatchClause c: declared.Add(c.VarName); break;
                     case LambdaParam p: declared.Add(p.Name); break;
                     case FireTakingCapture t: declared.Add(t.VarName); break;
-                    case FireStmt { WithVarName: { } with }: declared.Add(with); break;
+                    case FireStmt fireWith: foreach (var w in fireWith.With) declared.Add(w.VarName); break;
                 }
             return declared;
         }
