@@ -28956,9 +28956,40 @@ else
             print("button " + b.rx + "," + b.ry + " " + b.actualWidth + "x" + b.actualHeight)
             print(flow.Text)
             """),
-        ("Data/memory: die In-Memory-Datenbank mit derselben Pruefung wie SQLite (SQL-Teilmenge: Tabellen, Index, INSERT/UPDATE/DELETE, SELECT mit WHERE/ORDER BY/LIMIT/DISTINCT/Aggregaten/Funktionen, Transaktionen, Constraints), die generischen Formen QueryList<T>/Find<T>/All<T>/Ensure<T> und Abfragen mit Ausdrucksbaeumen (From<T>, Where, OrderBy, Skip/Take, Count, Any, First, Delete, ToSql); Sessions (Identity Map, Save in einer Transaktion, nur geaenderte Spalten, [Version], Remove, Detach/Attach, Rollback bei Fehlern)", """
+        ("Data/memory: die In-Memory-Datenbank mit derselben Pruefung wie SQLite (SQL-Teilmenge: Tabellen, Index, INSERT/UPDATE/DELETE, SELECT mit WHERE/ORDER BY/LIMIT/DISTINCT/Aggregaten/Funktionen, Transaktionen, Constraints), die generischen Formen QueryList<T>/Find<T>/All<T>/Ensure<T> und Abfragen mit Ausdrucksbaeumen (From<T>, Where, OrderBy, Skip/Take, Count, Any, First, Delete, ToSql); Sessions (Identity Map, Save in einer Transaktion, nur geaenderte Spalten, [Version], Remove, Detach/Attach, Rollback bei Fehlern); Beziehungen (HasMany, BelongsTo, ManyToMany: Include, Any/All als EXISTS, Schreiben ueber Listen, Join-Zeilen aus der Differenz)", """
             #import "data.memory"
             #import "time"
+            class Client {
+                [Key] int id
+                string name
+                [HasMany "clientId"] List<Purchase> orders
+                construct(string name) { this.name = name }
+            }
+            class Purchase {
+                [Key] int id
+                int clientId
+                float total
+                string note
+                [BelongsTo "clientId"] Client client
+                construct(float total, string note) {
+                    this.total = total
+                    this.note = note
+                }
+            }
+            class Label {
+                [Key] int id
+                string label
+                construct(string label) { this.label = label }
+            }
+            class Post {
+                [Key] int id
+                string title
+                [ManyToMany "post_label", "postId", "labelId"] List<Label> labels2
+                construct(string title) {
+                    this.title = title
+                    this.labels2 = new List<Label>()
+                }
+            }
             [Table "ledgers"]
             class Ledger {
                 [Key] int id
@@ -29244,11 +29275,115 @@ else
             sback.text = "attached"
             print("attached " + sw.Save() + " " + sdb.Scalar("select text from Memo where id = ?", [sback.id]))
             try { ss.Remove(new Memo("x")) } catch (ArgumentException e) { print("not mine: " + e.message) }
+            var rdb = new Data.Connection("memory:")
+            rdb.Ensure<Client>()
+            rdb.Ensure<Purchase>()
+            // writing a tree in a session: the children get their parent'rs key
+            var rs = rdb.Session()
+            Client rada = rs.Add(new Client("Ada"))
+            rada.orders = new List<Purchase>()
+            rada.orders.Add(new Purchase(120.0, "big"))
+            rada.orders.Add(new Purchase(15.5, "small"))
+            Client rbob = rs.Add(new Client("Bob"))
+            rbob.orders = new List<Purchase>()
+            rbob.orders.Add(new Purchase(30.0, "mid"))
+            var rcyd = new Client("Cyd")
+            var rlone = new Purchase(500.0, "for rcyd")
+            rlone.client = rcyd
+            rs.Add(take rlone)
+            print("saved " + rs.Save())
+            foreach (row in rdb.Rows("select o.id, o.clientId, o.note from \"Purchase\" as o order by o.id")) { print("row " + row) }
+            // Any / All as subqueries
+            var rlimit = 100.0
+            print("sql " + rdb.From<Client>().Where(c => c.orders.Any(o => o.total > taking rlimit)).ToSql())
+            print("big buyers " + rdb.From<Client>().Where(c => c.orders.Any(o => o.total > taking rlimit)).Count())
+            print("with orders " + rdb.From<Client>().Where(c => c.orders.Any()).Count() + " all small " + rdb.From<Client>().Where(c => c.orders.All(o => o.total < 50.0)).Count())
+            print("named " + rdb.From<Client>().Where(c => c.name != "Ada" && c.orders.Any(o => o.note.StartsWith("m"))).First().name)
+            // in a session: Include gives the session'rs objects, a move between lists is an update
+            var rt = rdb.Session()
+            List<Client> rmine = rt.From<Client>().Include(c => c.orders).OrderBy(c => c.id).ToList()
+            Client rfirst = rmine[0]
+            Client rsecond = rmine[1]
+            Purchase rmoved = rfirst.orders[1]
+            print("identity " + (rt.Find<Purchase>(rmoved.id) == rmoved))
+            rfirst.orders.Remove(rmoved)
+            rsecond.orders.Add(rmoved)
+            rsecond.orders.Add(new Purchase(7.0, "new for rbob"))
+            print("saved " + rt.Save() + " rbob has " + rdb.Scalar("select count(*) from \"Purchase\" where clientId = ?", [rsecond.id]))
+            var ru = rdb.Session()
+            List<Purchase> rtheirs = ru.From<Purchase>().Where(o => o.clientId == 2).Include(o => o.client).ToList()
+            print("one owner " + (rtheirs[0].client == rtheirs[1].client) + " " + rtheirs[0].client.name)
+            ru.Load(rtheirs[0].client, "orders")
+            print("loaded " + rtheirs[0].client.orders.Count)
+            try { rdb.From<Client>().Include(c => c.orders).ToList() } catch (Data.DataException e) { print("no session: " + e.message) }
+            var jdb = new Data.Connection("memory:")
+            jdb.Ensure<Label>()
+            jdb.Ensure<Post>()
+            var js = jdb.Session()
+            Label jFire = js.Add(new Label("fire"))
+            Label jData = js.Add(new Label("data"))
+            Post ja = js.Add(new Post("Databases in fire"))
+            ja.labels2.Add(jFire)
+            ja.labels2.Add(jData)
+            Post jb = js.Add(new Post("Threads"))
+            jb.labels2.Add(jFire)
+            jb.labels2.Add(new Label("tasks"))
+            print("saved " + js.Save() + " pairs " + jdb.Scalar("select count(*) from post_label") + " labels2 " + jdb.Scalar("select count(*) from Label"))
+            var jt = jdb.Session()
+            List<Post> jall = jt.From<Post>().Include(x => x.labels2).OrderBy(x => x.id).ToList()
+            foreach (jart in jall) {
+                var jlabels = ""
+                foreach (jtg in jart.labels2) { jlabels = jlabels + " " + jtg.label }
+                print("article " + jart.title + ":" + jlabels)
+            }
+            print("shared tag object " + (jall[0].labels2[0] == jall[1].labels2[0]))
+            jall[0].labels2.RemoveAt(1)
+            jall[1].labels2.Add(jt.Find<Label>(2))
+            print("saved " + jt.Save() + " pairs " + jdb.Scalar("select count(*) from post_label") + " nothing more " + jt.Save())
+            print("about fire " + jdb.From<Post>().Where(x => x.labels2.Any(g => g.label == "fire")).Count() + " about data " + jdb.From<Post>().Where(x => x.labels2.Any(g => g.label == "data")).First().title + " untagged " + jdb.From<Post>().Where(x => !x.labels2.Any()).Count())
+            var ju = jdb.Session()
+            Post jfirst = ju.Find<Post>(1)
+            jfirst.labels2 = new List<Label>()
+            jfirst.labels2.Add(ju.Find<Label>(3))
+            print("not loaded, set " + ju.Save() + " pairs of 1: " + jdb.Scalar("select count(*) from post_label where postId = 1") + " tag " + jdb.Scalar("select labelId from post_label where postId = 1"))
+            ju.Remove(jfirst)
+            print("removed " + ju.Save() + " pairs " + jdb.Scalar("select count(*) from post_label"))
             """),
-        ("Data/SQLite: Execute, Query (Zeilen nacheinander), Rows, Scalar, QueryList/QueryOne auf Records und Klassen, Unicode, NULL, BLOB, Fehlerarten, Transaktionen mit Savepoints, :memory:, await, Threads mit eigenen Verbindungen, handover; Mapping mit Attributen, Ensure, Insert/Update/Delete/Save/Find/All, Enum nach Namen, DateTime, [Json]; Abfragen mit Ausdrucksbaeumen als SQL; Sessions", """
+        ("Data/SQLite: Execute, Query (Zeilen nacheinander), Rows, Scalar, QueryList/QueryOne auf Records und Klassen, Unicode, NULL, BLOB, Fehlerarten, Transaktionen mit Savepoints, :memory:, await, Threads mit eigenen Verbindungen, handover; Mapping mit Attributen, Ensure, Insert/Update/Delete/Save/Find/All, Enum nach Namen, DateTime, [Json]; Abfragen mit Ausdrucksbaeumen als SQL; Sessions; Beziehungen", """
             #import "time"
             #import "filesystem"
             #import "data.sqlite"
+            class Client {
+                [Key] int id
+                string name
+                [HasMany "clientId"] List<Purchase> orders
+                construct(string name) { this.name = name }
+            }
+            class Purchase {
+                [Key] int id
+                int clientId
+                float total
+                string note
+                [BelongsTo "clientId"] Client client
+                construct(float total, string note) {
+                    this.total = total
+                    this.note = note
+                }
+            }
+            class Label {
+                [Key] int id
+                string label
+                construct(string label) { this.label = label }
+            }
+            class Post {
+                [Key] int id
+                string title
+                [ManyToMany "post_label", "postId", "labelId"] List<Label> labels2
+                construct(string title) {
+                    this.title = title
+                    this.labels2 = new List<Label>()
+                }
+            }
             [Table "ledgers"]
             class Ledger {
                 [Key] int id
@@ -29551,6 +29686,79 @@ else
             sback.text = "attached"
             print("attached " + sw.Save() + " " + sdb.Scalar("select text from Memo where id = ?", [sback.id]))
             try { ss.Remove(new Memo("x")) } catch (ArgumentException e) { print("not mine: " + e.message) }
+            var rdb = new Data.Connection("sqlite::memory:")
+            rdb.Ensure<Client>()
+            rdb.Ensure<Purchase>()
+            // writing a tree in a session: the children get their parent'rs key
+            var rs = rdb.Session()
+            Client rada = rs.Add(new Client("Ada"))
+            rada.orders = new List<Purchase>()
+            rada.orders.Add(new Purchase(120.0, "big"))
+            rada.orders.Add(new Purchase(15.5, "small"))
+            Client rbob = rs.Add(new Client("Bob"))
+            rbob.orders = new List<Purchase>()
+            rbob.orders.Add(new Purchase(30.0, "mid"))
+            var rcyd = new Client("Cyd")
+            var rlone = new Purchase(500.0, "for rcyd")
+            rlone.client = rcyd
+            rs.Add(take rlone)
+            print("saved " + rs.Save())
+            foreach (row in rdb.Rows("select o.id, o.clientId, o.note from \"Purchase\" as o order by o.id")) { print("row " + row) }
+            // Any / All as subqueries
+            var rlimit = 100.0
+            print("sql " + rdb.From<Client>().Where(c => c.orders.Any(o => o.total > taking rlimit)).ToSql())
+            print("big buyers " + rdb.From<Client>().Where(c => c.orders.Any(o => o.total > taking rlimit)).Count())
+            print("with orders " + rdb.From<Client>().Where(c => c.orders.Any()).Count() + " all small " + rdb.From<Client>().Where(c => c.orders.All(o => o.total < 50.0)).Count())
+            print("named " + rdb.From<Client>().Where(c => c.name != "Ada" && c.orders.Any(o => o.note.StartsWith("m"))).First().name)
+            // in a session: Include gives the session'rs objects, a move between lists is an update
+            var rt = rdb.Session()
+            List<Client> rmine = rt.From<Client>().Include(c => c.orders).OrderBy(c => c.id).ToList()
+            Client rfirst = rmine[0]
+            Client rsecond = rmine[1]
+            Purchase rmoved = rfirst.orders[1]
+            print("identity " + (rt.Find<Purchase>(rmoved.id) == rmoved))
+            rfirst.orders.Remove(rmoved)
+            rsecond.orders.Add(rmoved)
+            rsecond.orders.Add(new Purchase(7.0, "new for rbob"))
+            print("saved " + rt.Save() + " rbob has " + rdb.Scalar("select count(*) from \"Purchase\" where clientId = ?", [rsecond.id]))
+            var ru = rdb.Session()
+            List<Purchase> rtheirs = ru.From<Purchase>().Where(o => o.clientId == 2).Include(o => o.client).ToList()
+            print("one owner " + (rtheirs[0].client == rtheirs[1].client) + " " + rtheirs[0].client.name)
+            ru.Load(rtheirs[0].client, "orders")
+            print("loaded " + rtheirs[0].client.orders.Count)
+            try { rdb.From<Client>().Include(c => c.orders).ToList() } catch (Data.DataException e) { print("no session: " + e.message) }
+            var jdb = new Data.Connection("sqlite::memory:")
+            jdb.Ensure<Label>()
+            jdb.Ensure<Post>()
+            var js = jdb.Session()
+            Label jFire = js.Add(new Label("fire"))
+            Label jData = js.Add(new Label("data"))
+            Post ja = js.Add(new Post("Databases in fire"))
+            ja.labels2.Add(jFire)
+            ja.labels2.Add(jData)
+            Post jb = js.Add(new Post("Threads"))
+            jb.labels2.Add(jFire)
+            jb.labels2.Add(new Label("tasks"))
+            print("saved " + js.Save() + " pairs " + jdb.Scalar("select count(*) from post_label") + " labels2 " + jdb.Scalar("select count(*) from Label"))
+            var jt = jdb.Session()
+            List<Post> jall = jt.From<Post>().Include(x => x.labels2).OrderBy(x => x.id).ToList()
+            foreach (jart in jall) {
+                var jlabels = ""
+                foreach (jtg in jart.labels2) { jlabels = jlabels + " " + jtg.label }
+                print("article " + jart.title + ":" + jlabels)
+            }
+            print("shared tag object " + (jall[0].labels2[0] == jall[1].labels2[0]))
+            jall[0].labels2.RemoveAt(1)
+            jall[1].labels2.Add(jt.Find<Label>(2))
+            print("saved " + jt.Save() + " pairs " + jdb.Scalar("select count(*) from post_label") + " nothing more " + jt.Save())
+            print("about fire " + jdb.From<Post>().Where(x => x.labels2.Any(g => g.label == "fire")).Count() + " about data " + jdb.From<Post>().Where(x => x.labels2.Any(g => g.label == "data")).First().title + " untagged " + jdb.From<Post>().Where(x => !x.labels2.Any()).Count())
+            var ju = jdb.Session()
+            Post jfirst = ju.Find<Post>(1)
+            jfirst.labels2 = new List<Label>()
+            jfirst.labels2.Add(ju.Find<Label>(3))
+            print("not loaded, set " + ju.Save() + " pairs of 1: " + jdb.Scalar("select count(*) from post_label where postId = 1") + " tag " + jdb.Scalar("select labelId from post_label where postId = 1"))
+            ju.Remove(jfirst)
+            print("removed " + ju.Save() + " pairs " + jdb.Scalar("select count(*) from post_label"))
             """),
         ("Http.Pages: eine FXML-View als Seite - HTML mit CSS-Layout (Flex), Circuit pro Seite, Eingabe, Klick, Checkbox und Button im FlowPanel ueber den WebSocket, nur die Aenderungen zurueck, fremde Sitzung 4401, unbekannte Seite 4404", """
             #import "http.pages"

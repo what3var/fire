@@ -220,6 +220,40 @@ await s.Save()                           // the same, awaited
 - A key does not change (Save says so); delete the object and add a new one.
 - Without a session the per-object calls stay (`db.Insert`, `db.Update`, `db.Save`, `db.Delete`): for a record, a single write, a tool.
 
+## Relations
+
+Navigation fields connect the classes; the foreign key stays an ordinary field (a column):
+
+```fire
+class Customer {
+    [Key] int id
+    string name
+    [HasMany "customerId"] List<Order> orders                         // the orders whose customerId is this key
+}
+class Order {
+    [Key] int id
+    int customerId
+    float total
+    [BelongsTo "customerId"] Customer customer                        // the customer whose key is customerId
+}
+class Article {
+    [Key] int id
+    [ManyToMany "article_tag", "articleId", "tagId"] List<Tag> tags   // the pairs in the join table article_tag
+}
+```
+
+- **Loading:** `Include(c => c.orders)` (also `o => o.customer`, `a => a.tags`) loads a navigation field with the objects of a query - one query more
+  per Include, not one per object; `s.Load(obj, "orders")` loads it later for objects of a session. Include needs a session for now (`db.Session().From<T>()`):
+  its objects - also those of the lists - are the session's (one object per row: two orders of one customer point to the same `Customer`).
+- **Conditions:** `Where(c => c.orders.Any(o => o.total > taking limit))`, `c.orders.Any()`, `c.orders.All(o => ...)`, `a.tags.Any(t => t.label == "x")` - a
+  subquery (`EXISTS`) in the database, nothing is loaded for it.
+- **Writing (sessions):** an object added to a list of an object of the session (`ada.orders.Add(new Order(...))`) is inserted by Save with the parent's key
+  in its foreign key (the parent first when it is new); an object set in a [BelongsTo] field is inserted first when it is new, and its key goes into the
+  foreign key. Moving a child from one list to another is an update of its foreign key; taking it out of a list does not delete it (`Remove` does).
+  The pairs of a [ManyToMany] list are written from the difference to what was loaded or saved last (a list that was never loaded is compared with the
+  rows that are there); removing an object removes its pairs.
+- `Ensure` makes the join table of a [ManyToMany] field (its two columns and an index).
+
 ## The in-memory database
 
 `#import "data.memory"`, `new Data.Connection("memory:")`: a database in the memory of the program, its own for the connection - written in fire, no

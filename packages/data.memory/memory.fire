@@ -575,13 +575,18 @@ namespace Data {
                     string alias = undefined
                     if (this.Accept("AS")) { alias = this.Name() }
                     else if (this.Peek().kind == "id") { alias = this.Name() }
+                    if (alias == undefined && e.kind == "col") { alias = e.name }   // (a column, also t.column: its name - like SQLite)
                     if (alias == undefined) { alias = this.TextOf(start, this.at) }
                     n.items.Add(take e)
                     n.names.Add(alias)
                 }
                 if (!this.AcceptSym(",")) { break }
             }
-            if (this.Accept("FROM")) { n.name = this.Name() }
+            if (this.Accept("FROM")) {
+                n.name = this.Name()
+                if (this.Accept("AS")) { n.value = this.Name() }
+                else if (this.Peek().kind == "id") { n.value = this.Name() }
+            }
             if (this.Accept("WHERE")) { n.a = this.Expr() }
             if (this.Accept("ORDER")) {
                 this.Expect("BY")
@@ -888,6 +893,13 @@ namespace Data {
                 this.parameters = this.parameters + 1
                 return n
             }
+            if (this.Accept("EXISTS")) {
+                this.ExpectSym("(")
+                var ex = new Data.MemNode("exists")
+                ex.a = this.Select()
+                this.ExpectSym(")")
+                return ex
+            }
             if (this.Accept("NULL")) { return Data.MemNode.Lit(undefined) }
             if (this.Accept("TRUE")) { return Data.MemNode.Lit(1) }
             if (this.Accept("FALSE")) { return Data.MemNode.Lit(0) }
@@ -914,7 +926,10 @@ namespace Data {
                 }
                 var col = new Data.MemNode("col")
                 col.name = name
-                if (this.AcceptSym(".")) { col.name = this.Name() }   // (table.column: one table, the column)
+                if (this.AcceptSym(".")) {
+                    col.value = name                // (table.column / alias.column: the qualifier)
+                    col.name = this.Name()
+                }
                 return col
             }
             this.Error()
@@ -928,10 +943,18 @@ namespace Data {
         Data.MemoryConnection connection
         any args
         any names
+        string alias             // the name of the table of the SELECT that runs (its alias, else its name)
+        List outerTables         // the SELECTs around a subquery (EXISTS): their tables, current rows and aliases
+        List outerRows
+        List outerAliases
         construct(Data.MemoryConnection connection, any args) {
             this.connection = connection
             this.args = args
             this.names = new any[0]
+            this.alias = ""
+            this.outerTables = new List()
+            this.outerRows = new List()
+            this.outerAliases = new List()
         }
 
         // The rows of a SELECT (an empty list for the others).
@@ -1211,6 +1234,7 @@ namespace Data {
         List Select(Data.MemNode n) {
             Data.MemTable t = undefined
             Data.MemTable made = undefined
+            if (n.value != undefined) { this.alias = "" + n.value } else if (n.name != undefined) { this.alias = n.name } else { this.alias = "" }
             if (n.name != undefined) {
                 if (n.name.ToLower() == "_columns") {
                     made = this.Columns()
@@ -1509,10 +1533,54 @@ namespace Data {
             if (kind == "lit") { return n.value }
             if (kind == "param") { return this.args[n.number] }
             if (kind == "col") {
-                if (t == undefined || row == undefined) { Data.MemoryDriver.Fail("no such column: " + n.name) }
-                int at = t.IndexOf(n.name)
-                if (at < 0) { Data.MemoryDriver.Fail("no such column: " + n.name) }
-                return row[at]
+                if (n.value != undefined) {
+                    // (qualified: this SELECT's table, or one of the SELECTs around this subquery)
+                    string q = ("" + n.value).ToLower()
+                    if (t != undefined && row != undefined && (q == this.alias.ToLower() || q == t.name.ToLower())) {
+                        int here = t.IndexOf(n.name)
+                        if (here < 0) { Data.MemoryDriver.Fail("no such column: " + n.value + "." + n.name) }
+                        return row[here]
+                    }
+                    for (var i = this.outerTables.Count - 1; i >= 0; i--) {
+                        Data.MemTable ot = this.outerTables[i]
+                        string oa = this.outerAliases[i]
+                        if (q == oa.ToLower() || q == ot.name.ToLower()) {
+                            int at = ot.IndexOf(n.name)
+                            if (at < 0) { Data.MemoryDriver.Fail("no such column: " + n.value + "." + n.name) }
+                            any orow = this.outerRows[i]
+                            return orow[at]
+                        }
+                    }
+                    Data.MemoryDriver.Fail("no such column: " + n.value + "." + n.name)
+                }
+                if (t != undefined && row != undefined) {
+                    int at = t.IndexOf(n.name)
+                    if (at >= 0) { return row[at] }
+                }
+                for (var i = this.outerTables.Count - 1; i >= 0; i--) {
+                    Data.MemTable ot = this.outerTables[i]
+                    int at = ot.IndexOf(n.name)
+                    if (at >= 0) {
+                        any orow = this.outerRows[i]
+                        return orow[at]
+                    }
+                }
+                Data.MemoryDriver.Fail("no such column: " + n.name)
+            }
+            if (kind == "exists") {
+                // (the subquery with this row as the outer one)
+                this.outerTables.Add(t)
+                this.outerRows.Add(row)
+                this.outerAliases.Add(this.alias)
+                any savedNames = this.names
+                string savedAlias = this.alias
+                List found = this.Select(n.a)
+                this.names = savedNames
+                this.alias = savedAlias
+                this.outerTables.RemoveAt(this.outerTables.Count - 1)
+                this.outerRows.RemoveAt(this.outerRows.Count - 1)
+                this.outerAliases.RemoveAt(this.outerAliases.Count - 1)
+                return Data.MemRun.Bool(found.Count > 0)
             }
             if (kind == "un") {
                 any v = this.Eval(n.a, t, row)
