@@ -53,6 +53,13 @@ namespace fire.Native
             }
         }
 
+        /// <summary>The nodes of expression trees (the prelude) that name classes and members: a function that makes them (the builder at a call) keeps its names.</summary>
+        private static readonly HashSet<string> TreeNodeClasses = new(StringComparer.Ordinal)
+        {
+            "Expression", "LambdaExpression", "MemberExpression", "CallExpression", "NewExpression", "IsTypeExpression", "ConvertExpression", "ParameterExpression",
+            "ExpressionRewriter", "__ExpressionReplacer", "__ExpressionParameterRenamer",
+        };
+
         private static bool IsMemberName(string text) =>
             (char.IsLetter(text[0]) || text[0] == '_') && text.All(ch => char.IsLetterOrDigit(ch) || ch == '_');
 

@@ -28749,6 +28749,33 @@ else
             var t = new Keep<P>().K(p => p.age > 9)
             print(q.Where(t))
             """),
+        ("Expression trees: Stripping 3 behaelt Klassen und Member, die ein Baum nennt (ein Uebersetzer findet sie mit Type.Find, auch ohne ein Objekt der Klasse)", """
+            #import "reflection"
+            class Address { string city; int zip; string Tag() { return this.city } }
+            class Person { int age; Address address; construct(int a) { this.age = a } }
+            class Probe<T> { LambdaExpression Keep(lambda expression<T> e) { return e } }
+            class Names : ExpressionVisitor {
+                any found = new List<string>()
+                override any VisitMember(MemberExpression e) {
+                    e.Target.Accept(this)
+                    Type t = Type.Named(e.Target.Type)
+                    this.found.Add(e.Target.Type + "." + e.Name + "=" + (t != undefined && t.Find(e.Name) != undefined))
+                    return undefined
+                }
+                override any VisitCall(CallExpression e) {
+                    e.Target.Accept(this)
+                    Type t = Type.Named(e.Target.Type)
+                    this.found.Add(e.Target.Type + "." + e.Method + "()=" + (t != undefined && t.Find(e.Method) != undefined))
+                    return undefined
+                }
+            }
+            var t = new Probe<Person>().Keep(p => p.age > 3 && p.address.city == "Bonn" && p.address.Tag() != "")
+            var v = new Names()
+            t.Accept(v)
+            foreach (s in v.found) { print(s) }
+            var ada = new Person(2)
+            print(t.Invoke(ada))
+            """),
         ("Programmende: warten alle uebrigen Threads in Kanaelen, schliessen die Kanaele des Hauptprogramms (foreach endet)", """
             var ch = new Channel<int>()
             var out = new Channel<string>()

@@ -5700,6 +5700,9 @@ namespace fire.Native
                     bool owned = ins.Op == OpCode.NewObjectOwned;
                     Need(argc + (owned ? 1 : 0));
                     var cls = RegisterClass(Str(ins.A[0]));
+                    // (the builder of an expression tree - docs/ROADMAP_EXPRESSIONS.md step 4: the classes and members the tree names stay, as for a literal to
+                    // reflection - a translator finds them with Type.Find also at stripping 3)
+                    if (TreeNodeClasses.Contains(cls.Rc.Name) && !TreeNodeClasses.Contains(f.Chunk.OwnerClass?.Name ?? "")) NoteReflectionLiterals(f);
                     var newNames = NamesBefore();
                     if (newNames != null && cls.Rc.IsConstructorTypeOverloaded(argc)) throw new NativeNotSupportedException($"named arguments for the constructors of {cls.Rc.Name}, which are overloaded by type");
                     if (cls.Rc.IsConstructorTypeOverloaded(argc)) return OverloadedCall(cls.Rc, "new", argc, FuncKind.Ctor, d - argc - (owned ? 1 : 0), "", "", owned, cls);
