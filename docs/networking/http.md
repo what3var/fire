@@ -256,9 +256,13 @@ server.Run()
   when it changed (a checksum). Pointer down, move (at most every 30 ms while pressed) and up on it are its `OnMouseDown`, `OnMouseMove`, `OnMouseUp`.
 * **Changes without an event:** while a page is open its circuit is asked every tenth of a second what changed (another task changed the page, a
   `Continuous` canvas, JS calls) and the changes go out.
-* **JS in the browser:** a page with a field `Http.Browser browser` gets it set. `browser.Call("name", [args], func (any result) => ...)` calls
-  `window[name](...args)` (a Promise is waited for) and the callback gets the result as JSON (undefined when it threw), later, on the page's thread like an
-  event; `browser.Run(code)` runs code. The calls go out with the next answer of the circuit - they do not wait (a handler that waited for the browser would
-  stop the circuit that must receive the answer).
+* **JS in the browser:** a page with a field `Http.Browser browser` gets it set. `any v = browser.Call("name", [args])` calls `window[name](...args)` (a
+  Promise is waited for) and waits for the result (JSON: numbers, texts, bool, arrays, JsonObjects; undefined when the function threw; a TimeoutException
+  after `limit`, 10 s by default: `browser.Call("name", [args], undefined, 2s)`). The call goes out at once; the page's socket keeps running meanwhile (it
+  never waits for the circuit: events are messages to the circuit, what goes to the browser waits in the page directory), the answer sets the wait.
+  While it waits the circuit serves its messages: other events of the page can run in between (like the handlers of a window that waits). With a callback,
+  `browser.Call("name", [args], func (any result) => ...)` does not wait: the call goes out with the next answer and the callback runs later, on the page's
+  thread like an event. `browser.Run(code)` runs code (no result).
+* An event that changes nothing gets no answer.
 * Not yet: item templates and the columns of a ListView, menus, trees, the events of more elements (focus, keys, hover), drawing as commands instead of
   pictures.

@@ -28583,7 +28583,69 @@ else
                 var m = ws.ReceiveText(5000)
                 out = out + "mouse " + (m.IndexOf("\"img\": \"data:image/png;base64,") > 0) + "\n"
                 ws.Send("{\"e\": 4, \"k\": \"mouse\", \"t\": \"move\", \"x\": 12, \"y\": 10}")
-                out = out + "move " + ws.ReceiveText(5000) + "\n"
+                out = out + "move nothing " + (ws.ReceiveText(400) == undefined) + "\n"   // (nothing changed: no answer)
+                ws.Close()
+                sync global { log = out; done = 1 }
+            }
+            while (done < 1) { server.AcceptOne(20ms); sync globals }
+            print(log)
+            server.Close()
+            """),
+        ("Http.Pages: browser.Call wartet auf das Ergebnis (zwei Aufrufe nacheinander im Handler, der Socket bleibt frei), daneben die Form mit Callback", """
+            #import "http.pages"
+            [Page "/ask"]
+            class AskPage {
+                UI.Panel view
+                UI.Label result
+                Http.Browser browser
+                construct() {
+                    this.view = new UI.Panel(0, 0, 300, 200)
+                    var stack = new UI.StackPanel(0, 0, -1, -1)
+                    var r = new UI.Label("no result")
+                    this.result = r
+                    stack.Add(take r)
+                    var b = new UI.Button("Ask")
+                    b.OnClick = func () on this => { this.Ask() }
+                    stack.Add(take b)
+                    var later = new UI.Button("Later")
+                    later.OnClick = func () on this => { this.browser.Call("add", [1, 1], func (any v) on this => { this.result.Text = "callback " + v }) }
+                    stack.Add(take later)
+                    this.view.Add(take stack)
+                }
+                undefined Ask() {
+                    this.result.Text = "asking"
+                    any v = this.browser.Call("add", [4, 5])
+                    any w = this.browser.Call("add", [v, 1])
+                    this.result.Text = "await " + v + " " + w
+                }
+            }
+            var server = new Http.AppServer("127.0.0.1", 0)
+            server.Settings.showErrors = true
+            server.PushTo(new Http.Sessions()).PushTo(new Http.Pages("Ask"))
+            int port = server.Port
+            int done = 0
+            string log = ""
+            fire taking port {
+                var c = new Http.Client()
+                var r = c.Get("http://127.0.0.1:" + port + "/ask")
+                var html = r.Text()
+                var cookie = r.Header("Set-Cookie").Substring(0, 45)
+                var at = html.IndexOf("data-circuit=\"") + 14
+                var circuit = html.Substring(at, 32)
+                var out = "page " + r.status + "\n"
+                var h = new Http.Headers()
+                h.Set("Cookie", cookie)
+                var ws = Http.WebSocket.Connect("ws://127.0.0.1:" + port + "/_fire/ws?c=" + circuit, 5000, h)
+                ws.Send("{\"e\": 3, \"k\": \"click\"}")
+                out = out + "call 1 " + ws.ReceiveText(5000) + "\n"
+                ws.Send("{\"e\": -1, \"k\": \"js\", \"id\": 0, \"v\": 9}")
+                out = out + "call 2 " + ws.ReceiveText(5000) + "\n"
+                ws.Send("{\"e\": -1, \"k\": \"js\", \"id\": 1, \"v\": 10}")
+                out = out + "done " + ws.ReceiveText(5000) + "\n"
+                ws.Send("{\"e\": 4, \"k\": \"click\"}")
+                out = out + "later " + ws.ReceiveText(5000) + "\n"
+                ws.Send("{\"e\": -1, \"k\": \"js\", \"id\": 2, \"v\": 2}")
+                out = out + "callback " + ws.ReceiveText(5000) + "\n"
                 ws.Close()
                 sync global { log = out; done = 1 }
             }

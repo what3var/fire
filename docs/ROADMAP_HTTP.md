@@ -124,8 +124,9 @@ ran out or its token is cancelled. **Built** (poll()/WSAPoll, not yet epoll/kque
    templates, menus, trees, images, pushes that do not come from the browser (timers, other tasks: the reader/writer split of the socket), more events.
 7. Canvas recording, JS calls - **first part built**: a `DrawingCanvas` paints on the server and goes as a PNG (exact, simpler than recording the calls;
    recording them for canvas 2D stays open for big or fast canvases), its pointer events; pushes without an event (the socket asks the circuit every 100 ms);
-   `browser.Call(name, args, callback)` / `browser.Run(code)` - with a callback, not `await` (the circuit cannot take the answer while one of its handlers
-   waits: the await form needs a circuit that serves its messages while it waits).
+   `browser.Call(name, args, callback)` / `browser.Run(code)`; **the waiting form** `any v = browser.Call(name, args)` is built: the socket never waits for
+   the circuit (events are messages, what goes out waits in the PageDirectory), the waiting call registers a `Completion` there that the browser's answer
+   sets.
 
 ## Open
 

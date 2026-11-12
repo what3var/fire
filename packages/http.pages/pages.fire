@@ -330,11 +330,22 @@ namespace Http {
 
         // Calls the function `name` of the page's window (`window[name](...args)`; a Promise is waited for) with the arguments (a JSON value each); `callback`
         // gets the result (JSON: numbers, texts, bool, arrays, JsonObjects; undefined when the function threw).
-        undefined Call(string name, any args = undefined, lambda<any> callback = undefined) {
+        any Call(string name, any args = undefined, any callback = undefined, any limit = 10s) {
             if (args == undefined) { args = new any[0] }
             var number = this.state.callbacks.Count
-            this.state.callbacks.Add(take callback)   // (the list keeps the lambda: it lives until its answer comes)
-            this.state.outbox.Add("{\"id\": " + number + ", \"fn\": " + Json.Serialize(name) + ", \"args\": " + Json.Serialize(args) + "}")
+            var call = "{\"id\": " + number + ", \"fn\": " + Json.Serialize(name) + ", \"args\": " + Json.Serialize(args) + "}"
+            if (callback != undefined) {
+                this.state.callbacks.Add(take callback)   // (the list keeps the lambda: it lives until its answer comes)
+                this.state.outbox.Add(call)
+                return undefined
+            }
+            // (waiting: the call goes out through the directory at once, the answer comes back there - the circuit itself is busy meanwhile)
+            this.state.callbacks.Add(undefined)
+            var done = new Completion()
+            var d = this.state.directory
+            d.Expect(this.state.id + "/" + number, done.Share())
+            d.Push(this.state.id, "{\"patches\": [], \"js\": [" + call + "]}")
+            return done.Wait(limit)
         }
 
         // Runs JS code in the page (no result).
@@ -358,6 +369,7 @@ namespace Http {
         List outbox
         List callbacks
         Http.Browser browser
+        Http.PageDirectory directory
 
         construct(string typeName, string id, string session) {
             this.id = id
@@ -507,8 +519,9 @@ namespace Http {
         bool connected
         int created
 
-        construct(string typeName, string id, string session) {
+        construct(string typeName, string id, string session, Http.PageDirectory directory) {
             this.state = new Http.PageState(typeName, id, session)
+            this.state.directory = directory
             this.stopped = false
             this.connected = false
             this.created = DateTime.UtcNow.Ticks
@@ -517,6 +530,21 @@ namespace Http {
         string Html() { return this.state.Html() }
         string OnEvent(string json) { return this.state.OnEvent(json) }
         string Poll() { return this.state.Poll() }
+        // An event of the browser without a waiting caller: the answer goes to the directory, where the socket takes it.
+        undefined Post(string json) {
+            var answer = this.state.OnEvent(json)
+            if (answer == "{\"patches\": []}") { return }   // (nothing changed: nothing goes out)
+            var d = this.state.directory
+            d.Push(this.state.id, answer)
+        }
+        // A tenth of a second without an event: what changed meanwhile goes to the directory.
+        undefined Tick() {
+            var pushed = this.state.Poll()
+            if (pushed.Length > 0) {
+                var d = this.state.directory
+                d.Push(this.state.id, pushed)
+            }
+        }
         string SessionId() { return this.state.session }
         undefined Connected() { this.connected = true }
         undefined Stop() { this.stopped = true }
@@ -537,11 +565,58 @@ namespace Http {
     // The circuits of the pages by their id (an actor: the WebSocket of a page finds its circuit here).
     actor PageDirectory {
         Dictionary<string, Http.PageCircuit> circuits
+        // what goes to the browser of a circuit (its answers, JS calls, pushes) until its socket takes it - the directory never waits, so a circuit whose
+        // handler waits for the browser does not stop its socket
+        Dictionary<string, List> outboxes
+        // the waits of browser.Call by "<circuit>/<call number>"
+        Dictionary<string, Completion> waiting
         bool stopped
 
         construct() {
             this.circuits = new Dictionary<string, Http.PageCircuit>()
+            this.outboxes = new Dictionary<string, List>()
+            this.waiting = new Dictionary<string, Completion>()
             this.stopped = false
+        }
+
+        // A message for the browser of the circuit `id`.
+        undefined Push(string id, string text) {
+            if (!this.outboxes.ContainsKey(id)) { this.outboxes[id] = new List() }
+            List box = this.outboxes[id]
+            box.Add(text)
+        }
+
+        // The messages for the browser of `id`, one per line ("" when there are none).
+        string Take(string id) {
+            if (!this.outboxes.ContainsKey(id)) { return "" }
+            List box = this.outboxes[id]
+            var t = ""
+            for (var i = 0; i < box.Count; i++) {
+                if (i > 0) { t = t + "\n" }
+                t = t + box[i]
+            }
+            this.outboxes[id] = new List()
+            return t
+        }
+
+        // browser.Call waits for the answer of `key` on `done`.
+        undefined Expect(string key, Completion done) {
+            if (this.waiting.ContainsKey(key)) { this.waiting.Remove(key) }
+            this.waiting.Add(key, take done)   // (Add: `waiting[key] = take done` loses a parameter in the VM)
+        }
+
+        // The answer of the browser to a call (the JSON of its event): sets the Completion of who waits for it.
+        undefined Answer(string key, string json) {
+            if (!this.waiting.ContainsKey(key)) { return }
+            Completion done = this.waiting[key]
+            any ev = Json.Parse(json)
+            any value = undefined
+            if (ev is of JsonObject) {
+                JsonObject o = ev
+                value = o.Get("v")
+            }
+            done.Set(value)
+            this.waiting.Remove(key)
         }
 
         undefined Add(string id, Http.PageCircuit c) {
@@ -555,6 +630,7 @@ namespace Http {
         }
 
         undefined Remove(string id) {
+            if (this.outboxes.ContainsKey(id)) { this.outboxes.Remove(id) }
             if (!this.circuits.ContainsKey(id)) { return }
             Http.PageCircuit c = this.circuits[id]
             this.circuits.Remove(id)
@@ -605,17 +681,30 @@ namespace Http {
             string session = await c.SessionId()
             if (Http.Sessions.CookieOf(ws.Header("Cookie"), this.cookie) != session) { ws.Close(4401, "not your page"); return }
             c.Connected()
+            var idle = 0
             while (true) {
-                var text = ws.ReceiveText(100)
+                // (the socket never waits for the circuit: events are messages to it, what goes out is taken from the directory)
+                var text = ws.ReceiveText(50)
                 if (text == undefined) {
                     if (!ws.IsOpen) { break }
-                    // (a tenth of a second without an event: what changed meanwhile goes out)
-                    string pushed = await c.Poll()
-                    if (pushed.Length > 0) { ws.Send(pushed) }
-                    continue
+                    idle = idle + 1
+                    if (idle % 2 == 0) { c.Tick() }
+                } else {
+                    if (text.IndexOf("\"k\":\"js\"") >= 0 || text.IndexOf("\"k\": \"js\"") >= 0) {
+                        // (an answer to browser.Call: for a waiting call the directory, for a callback the circuit)
+                        any ev = Json.Parse(text)
+                        if (ev is of JsonObject) {
+                            JsonObject o = ev
+                            d.Answer(id + "/" + o.Get("id"), text)
+                        }
+                    }
+                    c.Post(text)
                 }
-                string answer = await c.OnEvent(text)
-                ws.Send(answer)
+                string out = await d.Take(id)
+                if (out.Length > 0) {
+                    any parts = out.Split("\n")
+                    for (var i = 0; i < parts.length; i++) { ws.Send(parts[i]) }
+                }
             }
             d.Remove(id)
         }
@@ -661,11 +750,12 @@ namespace Http {
         }
 
         // (a circuit on a thread of its own: it makes the page there and serves its messages until Stop)
-        static undefined StartCircuit(string typeName, string id, string session, Completion back) {
+        static undefined StartCircuit(string typeName, string id, string session, Http.PageDirectory directory, Completion back) {
             var start = new Http.PageStart(typeName, id, session)
-            fire handover back handover start {
+            // (the directory - an actor - goes with `with`: its reference, not the actor)
+            fire handover back handover start with directory {
                 try {
-                    var c = new Http.PageCircuit(start.typeName, start.id, start.session)
+                    var c = new Http.PageCircuit(start.typeName, start.id, start.session, directory)
                     back.Set(c)
                     while (!c.stopped) { process c }
                 } catch (e) {
@@ -684,7 +774,7 @@ namespace Http {
             var id = Net.SecureRandom.Hex(16)
             var ready = new Completion()
             var back = ready.Share()
-            Http.Pages.StartCircuit(this.paths[request.path], id, session.Id, take back)
+            Http.Pages.StartCircuit(this.paths[request.path], id, session.Id, this.directory, take back)
             Http.PageCircuit c = ready.Wait(30s)
             var d = this.directory
             d.Add(id, c)
