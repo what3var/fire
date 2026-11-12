@@ -523,6 +523,9 @@ namespace Data {
 
         // A query of the objects of a class, with expression trees: `db.From<Person>().Where(p => p.age >= 18).OrderBy(p => p.name).ToList()`.
         Data.Query<T> From<T>() { return new Data.Query<T>(this, Type.Of<T>().Name) }
+
+        // A unit of work on this connection (docs/data/README.md "Sessions"): what it loads or gets it keeps (one object per row), Save writes the changes.
+        Data.Session Session() { return new Data.Session(this) }
         T Find<T>(any key) { return this.Find(Type.Of<T>().Name, key) }
         List<T> All<T>() {
             var all = new List<T>()
@@ -600,6 +603,302 @@ namespace Data {
         undefined Check() { if (this.closed) { throw new Data.StateException("The connection to '" + this.url + "' is closed.") } }
     }
 
+    /// <summary>Somebody else changed or deleted the row since it was read (a field with [Version] did not match): nothing of the Save was written.</summary>
+    class ConcurrencyException : Data.DataException {
+        construct(string message) : base(message, 0) { }
+    }
+
+    /// <summary>What a session knows of an object: the object (the session owns it), its class, the text of its key, the values of its columns when it was
+    /// read or saved, and its state - 0 read (changes are written), 1 added (inserted), 2 removed (deleted).</summary>
+    class SessionEntry {
+        any obj
+        string typeName
+        string keyText
+        any snapshot
+        int state
+        construct(any obj, string typeName, int state) {
+            this.obj = take obj
+            this.typeName = typeName
+            this.state = state
+            this.keyText = ""
+        }
+    }
+
+    /// <summary>A unit of work (`db.Session()`): the objects it reads (Find, From) and gets (Add, Attach) are its own - one object per row, however often it
+    /// is read - and Save writes what changed since, in one transaction: the added ones (INSERT, the generated keys go into the objects), the changed
+    /// ones (UPDATE of the columns that changed; a [Version] field is checked and counted), the removed ones (DELETE).</summary>
+    class Session {
+        Data.Connection db
+        List entries
+
+        construct(Data.Connection db) {
+            this.db = db
+            this.entries = new List()
+        }
+
+        Data.Connection Connection { get { return this.db } }
+        // The number of objects the session has.
+        int Count { get { return this.entries.Count } }
+
+        // (the entry of an object, of a row)
+        Data.SessionEntry EntryOf(any obj) {
+            for (var i = 0; i < this.entries.Count; i++) {
+                Data.SessionEntry e = this.entries[i]
+                if (e.obj == obj) { return e }
+            }
+            return undefined
+        }
+        Data.SessionEntry EntryByKey(string typeName, string keyText) {
+            for (var i = 0; i < this.entries.Count; i++) {
+                Data.SessionEntry e = this.entries[i]
+                if (e.typeName == typeName && e.keyText == keyText && e.state != 1) { return e }
+            }
+            return undefined
+        }
+        static string KeyText(any obj, Data.EntityMap map) {
+            if (map.key == undefined) { return "" }
+            return Json.Serialize(Reflect.Get(obj, map.key.field))
+        }
+        // (the values of the columns as the database gets them, as text: what Save compares)
+        static any Snapshot(any obj, Data.EntityMap map) {
+            any values = new any[map.columns.Count]
+            for (var i = 0; i < map.columns.Count; i++) {
+                Data.ColumnMap c = map.columns[i]
+                values[i] = Json.Serialize(Data.EntityMap.ToDb(Reflect.Get(obj, c.field), c))
+            }
+            return values
+        }
+
+        // The object of the class with the key: the session's own when it has it, else read (and kept); undefined when there is none or it was removed.
+        any Find(string typeName, any key) {
+            var map = this.db.Map(typeName)
+            map.NeedKey()
+            var e = this.EntryByKey(typeName, Json.Serialize(Data.EntityMap.ToDb(key, map.key)))
+            if (e == undefined) { e = this.EntryByKey(typeName, Json.Serialize(key)) }
+            if (e != undefined) {
+                if (e.state == 2) { return undefined }
+                return e.obj
+            }
+            any obj = this.db.Find(typeName, key)
+            if (obj == undefined) { return undefined }
+            return this.Track(take obj, typeName)
+        }
+        T Find<T>(any key) { return this.Find(Type.Of<T>().Name, key) }
+
+        // A query whose objects are the session's.
+        Data.Query<T> From<T>() {
+            var q = new Data.Query<T>(this.db, Type.Of<T>().Name)
+            q.session = this
+            return q
+        }
+        List<T> All<T>() { return this.From<T>().ToList() }
+
+        // (an object read from the database: the session's own for its row when it has one - then this one is dropped -, else this one, kept from now on)
+        any Track(any obj, string typeName) {
+            var map = this.db.Map(typeName)
+            string keyText = Data.Session.KeyText(obj, map)
+            if (map.key != undefined) {
+                var known = this.EntryByKey(typeName, keyText)
+                if (known != undefined) { return known.obj }
+            }
+            var e = new Data.SessionEntry(take obj, typeName, 0)
+            e.keyText = keyText
+            e.snapshot = Data.Session.Snapshot(e.obj, map)
+            any back = e.obj
+            this.entries.Add(take e)
+            return back
+        }
+
+        // A new object for the database (`s.Add(new Person(...))`, `s.Add(take p)`): the session owns it, Save inserts it. The object (for its fields).
+        any Add(any obj) {
+            if (obj == undefined) { throw new ArgumentException("Data.Session.Add: undefined is no object.") }
+            var known = this.EntryOf(obj)
+            if (known != undefined) { return known.obj }
+            var e = new Data.SessionEntry(take obj, Type.Of(obj).Name, 1)
+            any back = e.obj
+            this.entries.Add(take e)
+            return back
+        }
+
+        // An object that the session does not know yet but whose row is there (it came over RPC, from another thread): kept as read now - its changes
+        // from here on are written. An object without a key is added instead.
+        any Attach(any obj) {
+            if (obj == undefined) { throw new ArgumentException("Data.Session.Attach: undefined is no object.") }
+            var known = this.EntryOf(obj)
+            if (known != undefined) { return known.obj }
+            string typeName = Type.Of(obj).Name
+            var map = this.db.Map(typeName)
+            any key = undefined
+            if (map.key != undefined) { key = Reflect.Get(obj, map.key.field) }
+            if (key == undefined || (map.key.generated && key == 0)) { return this.Add(take obj) }
+            if (this.EntryByKey(typeName, Data.Session.KeyText(obj, map)) != undefined) {
+                throw new ArgumentException("Data.Session.Attach: the session has another object of " + typeName + " with the key " + key + ".")
+            }
+            return this.Track(take obj, typeName)
+        }
+
+        // The object is deleted by Save (an added one is just forgotten).
+        undefined Remove(any obj) {
+            var e = this.EntryOf(obj)
+            if (e == undefined) { throw new ArgumentException("Data.Session.Remove: the object is not one of the session's.") }
+            if (e.state == 1) {
+                this.entries.Remove(e)
+                return
+            }
+            e.state = 2
+        }
+
+        // The object leaves the session (its changes are not written any more) and belongs to the caller: `Person p = s.Detach(p)`.
+        any Detach(any obj) {
+            for (var i = 0; i < this.entries.Count; i++) {
+                Data.SessionEntry e = this.entries[i]
+                if (e.obj == obj) {
+                    any out = take e.obj
+                    this.entries.RemoveAt(i)
+                    return out
+                }
+            }
+            throw new ArgumentException("Data.Session.Detach: the object is not one of the session's.")
+        }
+
+        // Has an object changed since it was read or saved (or is it added, removed)?
+        bool IsChanged(any obj) {
+            var e = this.EntryOf(obj)
+            if (e == undefined) { return false }
+            if (e.state != 0) { return true }
+            return this.ChangedColumns(e).Count > 0
+        }
+        bool HasChanges {
+            get {
+                for (var i = 0; i < this.entries.Count; i++) {
+                    Data.SessionEntry e = this.entries[i]
+                    if (e.state != 0 || this.ChangedColumns(e).Count > 0) { return true }
+                }
+                return false
+            }
+        }
+
+        // (the positions of the columns whose values differ from the snapshot)
+        List ChangedColumns(Data.SessionEntry e) {
+            var map = this.db.Map(e.typeName)
+            var now = Data.Session.Snapshot(e.obj, map)
+            var changed = new List()
+            for (var i = 0; i < map.columns.Count; i++) { if (now[i] != e.snapshot[i]) { changed.Add(i) } }
+            return changed
+        }
+
+        // Writes what changed in one transaction - first the added objects, then the changed ones, then the removed ones; when anything fails nothing is
+        // written (the exception goes on). The number of rows written.
+        int Save() {
+            var d = this.db.Dialect
+            int written = 0
+            List inserted = new List()        // (entries whose key this Save generated: undefined again after a rollback)
+            List versions = new List()        // (entry, the new version) to set after the commit
+            this.db.Begin()
+            try {
+                for (var i = 0; i < this.entries.Count; i++) {
+                    Data.SessionEntry e = this.entries[i]
+                    if (e.state != 1) { continue }
+                    var map = this.db.Map(e.typeName)
+                    if (map.version != undefined) {
+                        any v = Reflect.Get(e.obj, map.version.field)
+                        if (v == undefined || v == 0) { try { Reflect.Set(e.obj, map.version.field, 1) } catch (x) { } }
+                    }
+                    any before = undefined
+                    if (map.key != undefined) { before = Reflect.Get(e.obj, map.key.field) }
+                    this.db.Insert(e.obj)
+                    if (map.key != undefined && map.key.generated && (before == undefined || before == 0)) { inserted.Add(e) }
+                    written++
+                }
+                for (var i = 0; i < this.entries.Count; i++) {
+                    Data.SessionEntry e = this.entries[i]
+                    if (e.state != 0) { continue }
+                    var changed = this.ChangedColumns(e)
+                    if (changed.Count == 0) { continue }
+                    var map = this.db.Map(e.typeName)
+                    map.NeedKey()
+                    var sets = ""
+                    var args = new List()
+                    for (var k = 0; k < changed.Count; k++) {
+                        int at = changed[k]
+                        Data.ColumnMap c = map.columns[at]
+                        if (c.key) { throw new Data.DataException("Data.Session.Save: the key of a " + e.typeName + " changed - a key is not changed, delete and add instead.") }
+                        if (map.version != undefined && c.field == map.version.field) { continue }
+                        if (args.Count > 0) { sets = sets + ", " }
+                        sets = sets + d.Quote(c.column) + " = ?"
+                        args.Add(Data.EntityMap.ToDb(Reflect.Get(e.obj, c.field), c))
+                    }
+                    any version = undefined
+                    if (map.version != undefined) {
+                        version = Reflect.Get(e.obj, map.version.field)
+                        if (version == undefined) { version = 0 }
+                        if (args.Count > 0) { sets = sets + ", " }
+                        sets = sets + d.Quote(map.version.column) + " = ?"
+                        args.Add(version + 1)
+                    }
+                    if (args.Count == 0) { continue }
+                    var sql = "UPDATE " + d.Quote(map.table) + " SET " + sets + " WHERE " + d.Quote(map.key.column) + " = ?"
+                    args.Add(Data.EntityMap.ToDb(Reflect.Get(e.obj, map.key.field), map.key))
+                    if (map.version != undefined) {
+                        sql = sql + " AND " + d.Quote(map.version.column) + " = ?"
+                        args.Add(version)
+                    }
+                    int n = this.db.Execute(sql, Data.Connection.ArrayOf(args))
+                    if (n == 0 && map.version != undefined) { throw new Data.ConcurrencyException("Data.Session.Save: the " + e.typeName + " with the key " + e.keyText + " was changed or deleted by somebody else (version " + version + ").") }
+                    if (map.version != undefined) { versions.Add(e) }
+                    written = written + n
+                }
+                for (var i = 0; i < this.entries.Count; i++) {
+                    Data.SessionEntry e = this.entries[i]
+                    if (e.state != 2) { continue }
+                    var map = this.db.Map(e.typeName)
+                    map.NeedKey()
+                    var sql = "DELETE FROM " + d.Quote(map.table) + " WHERE " + d.Quote(map.key.column) + " = ?"
+                    var args = new List()
+                    args.Add(Data.EntityMap.ToDb(Reflect.Get(e.obj, map.key.field), map.key))
+                    if (map.version != undefined) {
+                        any version = Reflect.Get(e.obj, map.version.field)
+                        if (version == undefined) { version = 0 }
+                        sql = sql + " AND " + d.Quote(map.version.column) + " = ?"
+                        args.Add(version)
+                    }
+                    int n = this.db.Execute(sql, Data.Connection.ArrayOf(args))
+                    if (n == 0 && map.version != undefined) { throw new Data.ConcurrencyException("Data.Session.Save: the " + e.typeName + " with the key " + e.keyText + " was changed or deleted by somebody else.") }
+                    written = written + n
+                }
+            } catch (failure) {
+                this.db.Rollback()
+                for (var i = 0; i < inserted.Count; i++) {
+                    Data.SessionEntry e = inserted[i]
+                    var map = this.db.Map(e.typeName)
+                    try { Reflect.Set(e.obj, map.key.field, undefined) } catch (x) { }
+                }
+                throw failure
+            }
+            this.db.Commit()
+            // (the state after the commit: versions counted, snapshots new, the removed ones gone)
+            for (var i = 0; i < versions.Count; i++) {
+                Data.SessionEntry e = versions[i]
+                var map = this.db.Map(e.typeName)
+                any v = Reflect.Get(e.obj, map.version.field)
+                if (v == undefined) { v = 0 }
+                Reflect.Set(e.obj, map.version.field, v + 1)
+            }
+            for (var i = this.entries.Count - 1; i >= 0; i--) {
+                Data.SessionEntry e = this.entries[i]
+                if (e.state == 2) {
+                    this.entries.RemoveAt(i)
+                    continue
+                }
+                var map = this.db.Map(e.typeName)
+                e.state = 0
+                e.keyText = Data.Session.KeyText(e.obj, map)
+                e.snapshot = Data.Session.Snapshot(e.obj, map)
+            }
+            return written
+        }
+    }
+
     /// <summary>A part of an expression tree that the database cannot run (a call of an own method, a member of a member, ...): what it is.</summary>
     class NotTranslatableException : Data.DataException {
         construct(string message) : base(message, 0) { }
@@ -610,6 +909,7 @@ namespace Data {
     class Query<T> {
         Data.Connection db
         string typeName
+        Data.Session session // (a query of a session: its objects are the session's)
         List wheres          // LambdaExpression
         List orders          // LambdaExpression
         List descending      // bool per order
@@ -659,7 +959,16 @@ namespace Data {
         List<T> ToList() {
             var all = new List<T>()
             var q = this.Sql("SELECT *", true)
-            this.db.Fill(all, this.typeName, q.text, q.Parameters())
+            if (this.session == undefined) {
+                this.db.Fill(all, this.typeName, q.text, q.Parameters())
+                return all
+            }
+            var loaded = new List()
+            this.db.Fill(loaded, this.typeName, q.text, q.Parameters())
+            for (var i = 0; i < loaded.Count; i++) {
+                any o = loaded[i]
+                all.Add(this.session.Track(take o, this.typeName))
+            }
             return all
         }
         // The first object (Data.DataException when there is none) / undefined when there is none.
@@ -673,7 +982,9 @@ namespace Data {
             this.limited = 1
             var q = this.Sql("SELECT *", true)
             this.limited = before
-            return this.db.QueryOne(this.typeName, q.text, q.Parameters())
+            any one = this.db.QueryOne(this.typeName, q.text, q.Parameters())
+            if (this.session == undefined || one == undefined) { return one }
+            return this.session.Track(take one, this.typeName)
         }
         int Count() {
             var q = this.Sql("SELECT count(*)", false)
@@ -915,6 +1226,7 @@ namespace Data {
         string table
         List columns
         Data.ColumnMap key
+        Data.ColumnMap version   // (the field with [Version]: optimistic concurrency in sessions)
 
         construct(string typeName) {
             this.typeName = typeName
@@ -949,6 +1261,10 @@ namespace Data {
                 Attribute la = m.FindAttribute("Length")
                 if (la != undefined && la.ArgCount() > 0) { c.length = la.Args[0] }
                 if (c.key) { this.key = c }
+                if (m.HasAttribute("Version")) {
+                    if (kind != "int") { throw new ArgumentException("Data: [Version] needs an int field ('" + m.Name + "' of " + typeName + ").") }
+                    this.version = c
+                }
                 if (m.Name.ToLower() == "id") { byName = c }
                 this.columns.Add(take c)
             }

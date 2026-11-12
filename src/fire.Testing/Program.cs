@@ -28956,9 +28956,25 @@ else
             print("button " + b.rx + "," + b.ry + " " + b.actualWidth + "x" + b.actualHeight)
             print(flow.Text)
             """),
-        ("Data/memory: die In-Memory-Datenbank mit derselben Pruefung wie SQLite (SQL-Teilmenge: Tabellen, Index, INSERT/UPDATE/DELETE, SELECT mit WHERE/ORDER BY/LIMIT/DISTINCT/Aggregaten/Funktionen, Transaktionen, Constraints), die generischen Formen QueryList<T>/Find<T>/All<T>/Ensure<T> und Abfragen mit Ausdrucksbaeumen (From<T>, Where, OrderBy, Skip/Take, Count, Any, First, Delete, ToSql)", """
+        ("Data/memory: die In-Memory-Datenbank mit derselben Pruefung wie SQLite (SQL-Teilmenge: Tabellen, Index, INSERT/UPDATE/DELETE, SELECT mit WHERE/ORDER BY/LIMIT/DISTINCT/Aggregaten/Funktionen, Transaktionen, Constraints), die generischen Formen QueryList<T>/Find<T>/All<T>/Ensure<T> und Abfragen mit Ausdrucksbaeumen (From<T>, Where, OrderBy, Skip/Take, Count, Any, First, Delete, ToSql); Sessions (Identity Map, Save in einer Transaktion, nur geaenderte Spalten, [Version], Remove, Detach/Attach, Rollback bei Fehlern)", """
             #import "data.memory"
             #import "time"
+            [Table "ledgers"]
+            class Ledger {
+                [Key] int id
+                string owner
+                int balance
+                [Version] int version
+                construct(string owner, int balance) {
+                    this.owner = owner
+                    this.balance = balance
+                }
+            }
+            class Memo {
+                int id
+                string text
+                construct(string st) { this.text = st }
+            }
             enum Rank { Low, Mid, High }
             [Table "residents"]
             class Resident {
@@ -29174,11 +29190,81 @@ else
             print("deleted " + qdb.From<Resident>().Where(p => p.age < 30).Delete() + " left " + qdb.From<Resident>().Count())
             List<Resident> fetched = await qdb.From<Resident>().Where(p => p.city == "London").ToList()
             print("fetched " + fetched.Count)
+            var sdb = new Data.Connection("memory:")
+            sdb.Ensure<Ledger>()
+            sdb.Ensure<Memo>()
+            var ss = sdb.Session()
+            Ledger sada = ss.Add(new Ledger("Ada", 100))
+            ss.Add(new Ledger("Grace", 50))
+            print("pending " + ss.HasChanges + " count " + ss.Count)
+            print("saved " + ss.Save() + " key " + sada.id + " version " + sada.version + " changes " + ss.HasChanges)
+            Ledger sagain = ss.Find<Ledger>(1)
+            print("identity " + (sagain == sada))
+            sada.balance = 90
+            print("changed " + ss.IsChanged(sada) + " " + ss.HasChanges)
+            Ledger sgrace = ss.Find<Ledger>(2)
+            sgrace.balance = 60
+            print("saved " + ss.Save() + " versions " + sada.version + " " + sgrace.version + " sdb " + sdb.Scalar("select balance from ledgers where id = 1") + " " + sdb.Scalar("select version from ledgers where id = 1"))
+            print("nothing " + ss.Save())
+            List<Ledger> srich = ss.From<Ledger>().Where(a => a.balance > 70).ToList()
+            print("query identity " + srich.Count + " " + (srich[0] == sada))
+            List<Ledger> sall = ss.All<Ledger>()
+            print("sall " + sall.Count + " " + (sall[1] == sgrace))
+            // somebody else changes Grace
+            var sother = sdb.Session()
+            Ledger sg2 = sother.Find<Ledger>(2)
+            sg2.balance = 1
+            sother.Save()
+            sgrace.balance = 70
+            sada.balance = 80
+            try { ss.Save() } catch (Data.ConcurrencyException e) { print("conflict: " + e.message) }
+            print("rolled sback " + sdb.Scalar("select balance from ledgers where id = 1") + " " + sdb.Scalar("select balance from ledgers where id = 2") + " sada version " + sada.version)
+            // fresh session: remove and add in one save
+            var st = sdb.Session()
+            Ledger sa1 = st.Find<Ledger>(1)
+            st.Remove(sa1)
+            st.Add(new Memo("hello"))
+            print("remove " + st.Save() + " left " + sdb.Scalar("select count(*) from ledgers") + " notes " + sdb.Scalar("select count(*) from Memo") + " find " + st.Find<Ledger>(1))
+            // failure inside a save: nothing written, the generated key is reset
+            var su = sdb.Session()
+            Memo sn1 = su.Add(new Memo("one"))
+            su.Add(new Memo(undefined))
+            sdb.Execute("create unique index ix_memo_text on Memo (text)")
+            Memo sdup = su.Add(new Memo("hello"))
+            try { su.Save() } catch (Data.ConstraintException e) { print("failed: " + e.message + " key reset " + sn1.id + " notes " + sdb.Scalar("select count(*) from Memo")) }
+            su.Remove(sdup)
+            print("retry " + su.Save() + " key " + (sn1.id > 0) + " notes " + sdb.Scalar("select count(*) from Memo"))
+            // detach and attach
+            Memo skept = su.Detach(sn1)
+            skept.text = "changed outside"
+            print("detached " + su.Save() + " " + sdb.Scalar("select text from Memo where id = ?", [skept.id]))
+            var sw = sdb.Session()
+            sw.Attach(take skept)
+            Memo sback = sw.Find<Memo>(sn1.id)
+            sback.text = "attached"
+            print("attached " + sw.Save() + " " + sdb.Scalar("select text from Memo where id = ?", [sback.id]))
+            try { ss.Remove(new Memo("x")) } catch (ArgumentException e) { print("not mine: " + e.message) }
             """),
-        ("Data/SQLite: Execute, Query (Zeilen nacheinander), Rows, Scalar, QueryList/QueryOne auf Records und Klassen, Unicode, NULL, BLOB, Fehlerarten, Transaktionen mit Savepoints, :memory:, await, Threads mit eigenen Verbindungen, handover; Mapping mit Attributen, Ensure, Insert/Update/Delete/Save/Find/All, Enum nach Namen, DateTime, [Json]; Abfragen mit Ausdrucksbaeumen als SQL", """
+        ("Data/SQLite: Execute, Query (Zeilen nacheinander), Rows, Scalar, QueryList/QueryOne auf Records und Klassen, Unicode, NULL, BLOB, Fehlerarten, Transaktionen mit Savepoints, :memory:, await, Threads mit eigenen Verbindungen, handover; Mapping mit Attributen, Ensure, Insert/Update/Delete/Save/Find/All, Enum nach Namen, DateTime, [Json]; Abfragen mit Ausdrucksbaeumen als SQL; Sessions", """
             #import "time"
             #import "filesystem"
             #import "data.sqlite"
+            [Table "ledgers"]
+            class Ledger {
+                [Key] int id
+                string owner
+                int balance
+                [Version] int version
+                construct(string owner, int balance) {
+                    this.owner = owner
+                    this.balance = balance
+                }
+            }
+            class Memo {
+                int id
+                string text
+                construct(string st) { this.text = st }
+            }
             enum Rank { Low, Mid, High }
             [Table "residents"]
             class Resident {
@@ -29411,6 +29497,60 @@ else
             print("deleted " + qdb.From<Resident>().Where(p => p.age < 30).Delete() + " left " + qdb.From<Resident>().Count())
             List<Resident> fetched = await qdb.From<Resident>().Where(p => p.city == "London").ToList()
             print("fetched " + fetched.Count)
+            var sdb = new Data.Connection("sqlite::memory:")
+            sdb.Ensure<Ledger>()
+            sdb.Ensure<Memo>()
+            var ss = sdb.Session()
+            Ledger sada = ss.Add(new Ledger("Ada", 100))
+            ss.Add(new Ledger("Grace", 50))
+            print("pending " + ss.HasChanges + " count " + ss.Count)
+            print("saved " + ss.Save() + " key " + sada.id + " version " + sada.version + " changes " + ss.HasChanges)
+            Ledger sagain = ss.Find<Ledger>(1)
+            print("identity " + (sagain == sada))
+            sada.balance = 90
+            print("changed " + ss.IsChanged(sada) + " " + ss.HasChanges)
+            Ledger sgrace = ss.Find<Ledger>(2)
+            sgrace.balance = 60
+            print("saved " + ss.Save() + " versions " + sada.version + " " + sgrace.version + " sdb " + sdb.Scalar("select balance from ledgers where id = 1") + " " + sdb.Scalar("select version from ledgers where id = 1"))
+            print("nothing " + ss.Save())
+            List<Ledger> srich = ss.From<Ledger>().Where(a => a.balance > 70).ToList()
+            print("query identity " + srich.Count + " " + (srich[0] == sada))
+            List<Ledger> sall = ss.All<Ledger>()
+            print("sall " + sall.Count + " " + (sall[1] == sgrace))
+            // somebody else changes Grace
+            var sother = sdb.Session()
+            Ledger sg2 = sother.Find<Ledger>(2)
+            sg2.balance = 1
+            sother.Save()
+            sgrace.balance = 70
+            sada.balance = 80
+            try { ss.Save() } catch (Data.ConcurrencyException e) { print("conflict: " + e.message) }
+            print("rolled sback " + sdb.Scalar("select balance from ledgers where id = 1") + " " + sdb.Scalar("select balance from ledgers where id = 2") + " sada version " + sada.version)
+            // fresh session: remove and add in one save
+            var st = sdb.Session()
+            Ledger sa1 = st.Find<Ledger>(1)
+            st.Remove(sa1)
+            st.Add(new Memo("hello"))
+            print("remove " + st.Save() + " left " + sdb.Scalar("select count(*) from ledgers") + " notes " + sdb.Scalar("select count(*) from Memo") + " find " + st.Find<Ledger>(1))
+            // failure inside a save: nothing written, the generated key is reset
+            var su = sdb.Session()
+            Memo sn1 = su.Add(new Memo("one"))
+            su.Add(new Memo(undefined))
+            sdb.Execute("create unique index ix_memo_text on Memo (text)")
+            Memo sdup = su.Add(new Memo("hello"))
+            try { su.Save() } catch (Data.ConstraintException e) { print("failed: " + e.message + " key reset " + sn1.id + " notes " + sdb.Scalar("select count(*) from Memo")) }
+            su.Remove(sdup)
+            print("retry " + su.Save() + " key " + (sn1.id > 0) + " notes " + sdb.Scalar("select count(*) from Memo"))
+            // detach and attach
+            Memo skept = su.Detach(sn1)
+            skept.text = "changed outside"
+            print("detached " + su.Save() + " " + sdb.Scalar("select text from Memo where id = ?", [skept.id]))
+            var sw = sdb.Session()
+            sw.Attach(take skept)
+            Memo sback = sw.Find<Memo>(sn1.id)
+            sback.text = "attached"
+            print("attached " + sw.Save() + " " + sdb.Scalar("select text from Memo where id = ?", [sback.id]))
+            try { ss.Remove(new Memo("x")) } catch (ArgumentException e) { print("not mine: " + e.message) }
             """),
         ("Http.Pages: eine FXML-View als Seite - HTML mit CSS-Layout (Flex), Circuit pro Seite, Eingabe, Klick, Checkbox und Button im FlowPanel ueber den WebSocket, nur die Aenderungen zurueck, fremde Sitzung 4401, unbekannte Seite 4404", """
             #import "http.pages"

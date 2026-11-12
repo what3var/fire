@@ -192,6 +192,34 @@ List<Person> london = await db.From<Person>().Where(p => p.city == "London").ToL
 - Anything else - a method of your own, a member of a member, `is of` - is a `Data.NotTranslatableException` that names the part of the lambda.
 - The same query runs on every driver; the in-memory database gets the same SQL.
 
+## Sessions: a unit of work
+
+`db.Session()` keeps the objects it reads and gets, and `Save()` writes what changed since - in one transaction:
+
+```fire
+var s = db.Session()
+Person p = s.Find<Person>(7)             // read and kept (a second Find gives the same object - one object per row)
+p.age = 37                               // a change: Save finds it by comparing with what was read
+s.Add(new Person("Grace", "grace@x.org"))  // a new object: the session owns it, Save inserts it
+s.Remove(s.Find<Person>(3))              // Save deletes it
+List<Person> london = s.From<Person>().Where(p => p.city == "London").ToList()   // queries of the session: its objects
+s.Save()                                 // INSERT, UPDATE (only the changed columns), DELETE - all or nothing
+await s.Save()                           // the same, awaited
+```
+
+- **One object per row:** `Find`, `From<T>()...ToList()`, `First` and `All<T>()` of a session give the object the session has for a row, however often it is
+  read; the session owns them (they live as long as it does). `Count`, `HasChanges`, `IsChanged(obj)` tell what it holds.
+- **Save** writes the added objects (their generated keys go into them), then the changed ones (an UPDATE of the columns whose values differ from what was
+  read or saved last), then the removed ones; the number of rows written. When anything fails - a constraint, a conflict - nothing is written (Rollback),
+  the exception goes on, and the generated keys of that Save are undefined again; the session keeps its objects, so the program can fix them and save again.
+- **Optimistic concurrency:** an `int` field with `[Version]` is counted by every Save that writes the row (1 for a new one) and checked: when somebody
+  else changed or deleted the row since it was read, the UPDATE/DELETE finds no row and Save throws a `Data.ConcurrencyException` (nothing written).
+- `Attach(obj)` takes an object the session does not know but whose row is there (it came over RPC, from another thread - `s.Attach(take p)`): its changes
+  from then on are written; an object without a key is added instead. `Detach(obj)` gives an object out of the session (`Person p = s.Detach(p)`): it
+  belongs to the caller, its changes are not written any more.
+- A key does not change (Save says so); delete the object and add a new one.
+- Without a session the per-object calls stay (`db.Insert`, `db.Update`, `db.Save`, `db.Delete`): for a record, a single write, a tool.
+
 ## The in-memory database
 
 `#import "data.memory"`, `new Data.Connection("memory:")`: a database in the memory of the program, its own for the connection - written in fire, no
