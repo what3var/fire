@@ -28521,6 +28521,65 @@ else
             print(log)
             server.Close()
             """),
+        ("Http.Pages: ListBox (Zeilen aus DisplayMember, Klick waehlt, Doppelklick aktiviert, neue Zeilen als Patch) und Image (PNG)", """
+            #import "http.pages"
+            class Person { string name
+                construct(string n) { this.name = n } }
+            [Page "/list"]
+            class ListPage {
+                UI.Panel view
+                UI.ListBox people
+                UI.Label chosen
+                UI.Image picture
+                construct() {
+                    this.view = new UI.Panel(0, 0, 300, 300)
+                    var stack = new UI.StackPanel(0, 0, -1, -1)
+                    var lb = new UI.ListBox(0, 0, 160, 80)
+                    lb.DisplayMember = "name"
+                    lb.Add(new Person("Anna"))
+                    lb.Add(new Person("Ben"))
+                    lb.OnSelect = func () on this => { this.chosen.Text = "picked " + this.people.SelectedIndex }
+                    lb.OnActivate = func () on this => { this.people.Add(new Person("Carl")) }
+                    this.people = lb
+                    stack.Add(take lb)
+                    var l = new UI.Label("none")
+                    this.chosen = l
+                    stack.Add(take l)
+                    var img = new UI.Image(undefined, 0, 0, 16, 16)
+                    img.Source = new Framebuffer(8, 8)
+                    this.picture = img
+                    stack.Add(take img)
+                    this.view.Add(take stack)
+                }
+            }
+            var server = new Http.AppServer("127.0.0.1", 0)
+            server.Settings.showErrors = true
+            server.PushTo(new Http.Sessions()).PushTo(new Http.Pages("List"))
+            int port = server.Port
+            int done = 0
+            string log = ""
+            fire taking port {
+                var c = new Http.Client()
+                var r = c.Get("http://127.0.0.1:" + port + "/list")
+                var html = r.Text()
+                var cookie = r.Header("Set-Cookie").Substring(0, 45)
+                var at = html.IndexOf("data-circuit=\"") + 14
+                var circuit = html.Substring(at, 32)
+                var out = "page " + r.status + " rows " + (html.IndexOf("<div class=\"f-row\" data-i=\"1\">Ben</div>") > 0) + " image " + (html.IndexOf("class=\"f-image\" style=\"object-fit:contain;width:16px;height:16px;\" alt=\"\" src=\"data:image/png;base64,") > 0) + "\n"
+                var h = new Http.Headers()
+                h.Set("Cookie", cookie)
+                var ws = Http.WebSocket.Connect("ws://127.0.0.1:" + port + "/_fire/ws?c=" + circuit, 5000, h)
+                ws.Send("{\"e\": 2, \"k\": \"select\", \"v\": 1}")
+                out = out + "select " + ws.ReceiveText(5000) + "\n"
+                ws.Send("{\"e\": 2, \"k\": \"activate\", \"v\": 0}")
+                out = out + "activate " + ws.ReceiveText(5000) + "\n"
+                ws.Close()
+                sync global { log = out; done = 1 }
+            }
+            while (done < 1) { server.AcceptOne(20ms); sync globals }
+            print(log)
+            server.Close()
+            """),
         ("Net: der Poller weckt wartende Threads (40 Verbindungen in fire-Threads, Daten kommen spaeter), Zeitlimit, Abbruch eines Read per until", """
             #import "net"
             #import "time"

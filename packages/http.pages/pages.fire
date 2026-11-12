@@ -60,6 +60,15 @@ namespace Http {
             }
             var img = ""
             if (e is of UI.DrawingCanvas) { img = "" + Http.PageHtml.ImageSignature(e) }
+            if (e is of UI.ItemsControl) {
+                UI.ItemsControl ic = e
+                img = Http.PageHtml.RowsJson(ic) + "#" + ic.SelectedIndex
+            }
+            if (e is of UI.Image) {
+                // (another picture: another framebuffer - the pixels of the same one are not compared)
+                UI.Image im = e
+                if (im.Source != undefined) { img = "fb" + im.Source.id }
+            }
             return Json.Serialize(t) + "|" + c + "|" + img + "|" + e.Visible + "|" + e.Enabled + "|" + fg + "|" + Http.PageHtml.Color(e.Background)
         }
 
@@ -73,6 +82,8 @@ namespace Http {
             var p = "{\"e\": " + id + ", \"t\": " + Json.Serialize(t) + ", \"v\": " + Http.PageHtml.Bool(e.Visible) + ", \"n\": " + Http.PageHtml.Bool(e.Enabled)
             if (e is of UI.CheckBox) { UI.CheckBox ch = e; p = p + ", \"c\": " + Http.PageHtml.Bool(ch.IsChecked) }
             if (e is of UI.DrawingCanvas) { p = p + ", \"img\": " + Json.Serialize(Http.PageHtml.Image(e)) }
+            if (e is of UI.ItemsControl) { UI.ItemsControl lc = e; p = p + ", \"rows\": " + Http.PageHtml.RowsJson(lc) + ", \"sel\": " + lc.SelectedIndex }
+            if (e is of UI.Image) { UI.Image pic = e; p = p + ", \"img\": " + Json.Serialize(Http.PageHtml.Picture(pic.Source)) }
             var fg = Http.PageHtml.Color(e.Foreground)
             if (e is of UI.Label) { UI.Label lc = e; var own = Http.PageHtml.Color(lc.Color); if (own != undefined) { fg = own } }
             if (fg != undefined) { p = p + ", \"fg\": \"" + fg + "\"" }
@@ -85,6 +96,23 @@ namespace Http {
         static string Image(UI.DrawingCanvas dc) {
             if (dc.framebuffer == undefined) { return "" }
             return "data:image/png;base64," + Http.Base64.Encode(dc.framebuffer.ToPng())
+        }
+
+        // The texts of the rows of a list (DisplayMember) as a JSON array.
+        static string RowsJson(UI.ItemsControl ic) {
+            var rows = ic.Rows()
+            var t = "["
+            for (var i = 0; i < rows.Count; i++) {
+                if (i > 0) { t = t + "," }
+                t = t + Json.Serialize(ic.ItemText(rows[i]))
+            }
+            return t + "]"
+        }
+
+        // A framebuffer as a data URL (PNG; "" for none).
+        static string Picture(Framebuffer fb) {
+            if (fb == undefined) { return "" }
+            return "data:image/png;base64," + Http.Base64.Encode(fb.ToPng())
         }
 
         static int ImageSignature(UI.DrawingCanvas dc) {
@@ -150,6 +178,26 @@ namespace Http {
                 UI.DrawingCanvas dc = e
                 var size = " width=\"" + dc.actualWidth + "\" height=\"" + dc.actualHeight + "\""
                 return "<img data-k=\"draw\" draggable=\"false\"" + Http.PageHtml.Attrs(e, elements, "f-draw", "") + size + " src=\"" + Http.PageHtml.Image(dc) + "\">"
+            }
+            if (e is of UI.ItemsControl) {
+                // (ListBox, ListView: the rows as texts; a click selects, a double click activates)
+                UI.ItemsControl ic = e
+                var rows = ic.Rows()
+                var html = ""
+                for (var i = 0; i < rows.Count; i++) {
+                    var cls = "f-row"
+                    if (i == ic.SelectedIndex) { cls = "f-row f-sel" }
+                    html = html + "<div class=\"" + cls + "\" data-i=\"" + i + "\">" + Http.PageHtml.Escape(ic.ItemText(rows[i])) + "</div>"
+                }
+                return "<div data-k=\"list\" tabindex=\"0\"" + Http.PageHtml.Attrs(e, elements, "f-list", "overflow:auto;") + ">" + html + "</div>"
+            }
+            if (e is of UI.Image) {
+                UI.Image im = e
+                var fit = "contain"
+                if (im.Stretch == UI.Stretch.None) { fit = "none" }
+                else if (im.Stretch == UI.Stretch.Fill) { fit = "fill" }
+                else if (im.Stretch == UI.Stretch.UniformToFill) { fit = "cover" }
+                return "<img" + Http.PageHtml.Attrs(e, elements, "f-image", "object-fit:" + fit + ";") + " alt=\"\" src=\"" + Http.PageHtml.Picture(im.Source) + "\">"
             }
             if (e is of UI.Run) {
                 UI.Run r = e
@@ -378,6 +426,15 @@ namespace Http {
                         UI.CheckBox cb = e
                         bool v = o.Get("v")
                         if (cb.IsChecked != v) { cb.Toggle() }
+                    } else if ((kind == "select" || kind == "activate") && e is of UI.ItemsControl) {
+                        UI.ItemsControl ic = e
+                        int row = o.Get("v")
+                        ic.Select(row)
+                        if (kind == "activate" && ic.OnActivate != undefined) {
+                            ic.activated = true
+                            var act = ic.OnActivate
+                            act()
+                        }
                     } else if (kind == "mouse" && e is of UI.DrawingCanvas) {
                         UI.DrawingCanvas dc = e
                         string what = o.Get("t")
@@ -641,7 +698,7 @@ namespace Http {
         }
 
         static string Css() {
-            return "body{margin:0;font-family:system-ui,sans-serif;font-size:14px}[hidden]{display:none!important}.f-label{white-space:pre}.f-flow{white-space:normal}.f-flow .f-button,.f-flow .f-check,.f-flow .f-text{display:inline-block;vertical-align:bottom}.f-button{font:inherit;padding:3px 12px}.f-text{font:inherit}.f-border{border:1px solid #8888;padding:4px}.f-check{user-select:none}"
+            return "body{margin:0;font-family:system-ui,sans-serif;font-size:14px}[hidden]{display:none!important}.f-label{white-space:pre}.f-flow{white-space:normal}.f-flow .f-button,.f-flow .f-check,.f-flow .f-text{display:inline-block;vertical-align:bottom}.f-button{font:inherit;padding:3px 12px}.f-text{font:inherit}.f-border{border:1px solid #8888;padding:4px}.f-check{user-select:none}.f-list{border:1px solid #8888;user-select:none}.f-row{padding:1px 4px;cursor:default}.f-sel{background:#0078d7;color:#fff}"
         }
 
         // The script of the pages: the WebSocket, the events (input debounced), the changes.
@@ -651,12 +708,15 @@ namespace Http {
                 "ws.onopen=function(){q.forEach(function(t){ws.send(t)});q=[]};" +
                 "function idOf(el){while(el&&!(el.id&&el.id.charAt(0)=='f')){el=el.parentElement}return el?+el.id.substring(1):-1}" +
                 "document.addEventListener('click',function(ev){var t=ev.target.closest('[data-k=click]');if(t){send({e:idOf(t),k:'click'})}});" +
+                "document.addEventListener('click',function(ev){var r=ev.target.closest('.f-row');if(r){send({e:idOf(r.parentElement),k:'select',v:+r.dataset.i})}});" +
+                "document.addEventListener('dblclick',function(ev){var r=ev.target.closest('.f-row');if(r){send({e:idOf(r.parentElement),k:'activate',v:+r.dataset.i})}});" +
                 "document.addEventListener('change',function(ev){var t=ev.target;if(t.dataset.k=='check'){send({e:idOf(t),k:'check',v:t.checked})}});" +
                 "var timers={};document.addEventListener('input',function(ev){var t=ev.target;if(t.dataset.k=='input'){var e=idOf(t);clearTimeout(timers[e]);timers[e]=setTimeout(function(){send({e:e,k:'input',v:t.value})},150)}});" +
                 "function apply(el,p){if(p.t!==undefined){if(el.tagName=='INPUT'){if(document.activeElement!==el){el.value=p.t}}else if(el.dataset.kind=='check'){el.querySelector('span').textContent=p.t}else{el.textContent=p.t}}" +
                 "if(p.c!==undefined){var i=el.querySelector('input');if(i){i.checked=p.c}}" +
                 "if(p.v!==undefined){el.hidden=!p.v}" +
                 "if(p.n!==undefined){var d=(el.tagName=='BUTTON'||el.tagName=='INPUT')?el:el.querySelector('input');if(d){d.disabled=!p.n}}" +
+                "if(p.rows!==undefined){el.innerHTML='';p.rows.forEach(function(t,i){var r=document.createElement('div');r.className='f-row'+(i==p.sel?' f-sel':'');r.dataset.i=i;r.textContent=t;el.appendChild(r)})}" +
                 "if(p.img!==undefined){el.src=p.img}if(p.fg!==undefined){el.style.color=p.fg}if(p.bg!==undefined){el.style.background=p.bg}}" +
                 "function runJs(list){(list||[]).forEach(function(j){if(j.id<0){try{(0,eval)(j.code)}catch(x){}return}var r;try{r=window[j.fn].apply(window,j.args)}catch(x){send({k:'js',e:-1,id:j.id});return}Promise.resolve(r).then(function(v){send({k:'js',e:-1,id:j.id,v:v})},function(){send({k:'js',e:-1,id:j.id})})})}" +
                 "var down=0,last=0;function pos(ev,t){var r=t.getBoundingClientRect();return{x:Math.round((ev.clientX-r.left)*t.width/r.width),y:Math.round((ev.clientY-r.top)*t.height/r.height)}}" +
