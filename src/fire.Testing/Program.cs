@@ -28892,6 +28892,171 @@ else
             print("button " + b.rx + "," + b.ry + " " + b.actualWidth + "x" + b.actualHeight)
             print(flow.Text)
             """),
+        ("Data/memory: die In-Memory-Datenbank mit derselben Pruefung wie SQLite (SQL-Teilmenge: Tabellen, Index, INSERT/UPDATE/DELETE, SELECT mit WHERE/ORDER BY/LIMIT/DISTINCT/Aggregaten/Funktionen, Transaktionen, Constraints) und die generischen Formen QueryList<T>/Find<T>/All<T>/Ensure<T>", """
+            #import "data.memory"
+            #import "time"
+            enum Level { Low, Mid, High }
+            record Address {
+                string city
+                string zip
+                construct(string city, string zip) { this.city = city; this.zip = zip }
+            }
+            [Table "people"]
+            class Customer {
+                [Key] int id
+                [Column "full_name"] [Required] [Length 100] string name
+                int age
+                [Unique] string email
+                bool active
+                float height
+                DateTime born
+                Level level
+                [Json] Address address
+                [Ignore] string shown
+                List tags
+                construct(string name, int age, string email) {
+                    this.name = name
+                    this.age = age
+                    this.email = email
+                    this.active = true
+                    this.level = Level.Mid
+                }
+            }
+            record Tag {
+                construct(string code, string label) { this.code = code; this.label = label }
+                [Key] string code
+                string label
+            }
+            class Revision {
+                int number
+                string note
+            }
+            record Pupil {
+                int id
+                string name
+                construct(string name) { this.name = name }
+            }
+            record Person {
+                int id
+                string name
+                int age
+                bool active
+            }
+            class Item {
+                int id
+                string title
+                float price
+                byte blob[]
+            }
+            print("memory")
+            var db = new Data.Connection("memory:")
+            db.Execute("create table person(id integer primary key, name text not null, age integer, active integer); create table item(id integer primary key, title text, price real, blob blob)")
+            print("insert " + db.Execute("insert into person(name, age, active) values (?, ?, ?)", ["Ada", 36, true]))
+            db.Execute("insert into person(name, age, active) values (?, ?, ?)", ["Grace", 85, false])
+            db.Execute("insert into person(name, age, active) values (?, ?, ?)", ["Linus Ünïcødé 🐧", undefined, true])
+            print("last id " + db.LastInsertId)
+            foreach (row in db.Query("select id, name, age from person where age > ? or age is null order by id", [40])) { print("row " + row) }
+            var rows = db.Rows("select name, age from person order by name")
+            print("rows " + rows.Count + " first " + rows[0]["name"] + " " + rows[0].Int("age"))
+            print("count " + db.Scalar("select count(*) from person"))
+            var people = db.QueryList("Person", "select * from person order by id")
+            foreach (p in people) { print("person " + p.id + " " + p.name + " " + p.age + " " + p.active) }
+            Person one = db.QueryOne("Person", "select * from person where name = ?", ["Grace"])
+            print("one " + one.name + " active " + one.active + " equal " + (one == db.QueryOne("Person", "select * from person where id = 2")))
+            db.Execute("insert into item(title, price, blob) values (?, ?, ?)", ["Box", 9.5, [1, 2, 255]])
+            Item it = db.QueryOne("Item", "select * from item")
+            print("item " + it.title + " " + it.price + " blob " + it.blob.length + " " + it.blob[2])
+            try { db.Execute("insert into person(id, name) values (?, ?)", [1, "Dup"]) } catch (Data.ConstraintException e) { print("constraint " + e.Code + " " + e.message) }
+            try { db.Execute("select * from nothing", []) } catch (Data.DataException e) { print("error " + e.Code + " " + e.message) }
+            try { db.Execute("insert into person(name) values (?)", []) } catch (ArgumentException e) { print("args " + e.message) }
+            db.Transaction(t => { t.Execute("update person set age = age + 1 where id = ?", [1]) })
+            print("after commit " + db.Scalar("select age from person where id = 1"))
+            try {
+                db.Transaction(t => {
+                    t.Execute("update person set age = 0 where id = ?", [1])
+                    throw new Exception("stop")
+                })
+            } catch (e) { print("rolled back: " + e.message) }
+            print("after rollback " + db.Scalar("select age from person where id = 1"))
+            db.Begin()
+            db.Execute("delete from person where id = ?", [3])
+            db.Begin()
+            db.Execute("delete from person where id = ?", [2])
+            db.Rollback()
+            db.Commit()
+            print("nested " + db.Scalar("select count(*) from person"))
+            var mem = new Data.Connection("memory:")
+            mem.Execute("create table t(x)")
+            print("memory " + mem.Execute("insert into t values (?), (?)", [1, 2]))
+            mem.Close()
+            try { new Data.Connection("nosuch:x") } catch (Data.ConnectionException e) { print("driver " + e.message) }
+            try { new Data.Connection("memory:x") } catch (ArgumentException e) { print("url " + e.message) }
+            db.Close()
+            print("end")
+            var q = new Data.Connection("memory:")
+            q.Execute("create table n(v integer, s text, f real)")
+            q.Execute("insert into n values (1, 'a', 1.5), (2, 'b', null), (3, 'c', 2.5), (4, null, 4.0), (2, 'bb', 0.5)")
+            print("agg " + q.Rows("select count(*), count(s), sum(v), min(v), max(s), avg(f), count(distinct v) from n")[0])
+            print("ops " + q.Rows("select v * 2 + 1 as x, s || '!' as y, v / 2, v % 3, -v from n where v between 2 and 3 order by v desc, s")[0])
+            foreach (row in q.Query("select v, s from n where s like 'b%' or s is null order by s desc limit 2 offset 0")) { print("like " + row) }
+            print("in " + q.Scalar("select count(*) from n where v in (1, 3) and not s = 'c'") + " " + q.Scalar("select count(*) from n where v not in (1, 2)"))
+            print("distinct " + q.Rows("select distinct v from n order by v").Count + " fns " + q.Rows("select upper(s), length(s), coalesce(s, 'none'), abs(-v), substr('hello', 2, 3) from n where v = 4")[0])
+            print("update " + q.Execute("update n set f = f * 2 where v = ?", [2]) + " delete " + q.Execute("delete from n where f is null"))
+            print("no column")
+            try { q.Execute("select nope from n", []) } catch (Data.DataException e) { print("  " + e.message) }
+            try { q.Execute("selec 1", []) } catch (Data.DataException e) { print("  " + e.message) }
+            print("select 1 " + q.Scalar("select 1 + 2"))
+            q.Execute("create unique index ix on n (s)")
+            try { q.Execute("insert into n(v, s) values (?, ?)", [9, "a"]) } catch (Data.ConstraintException e) { print("index " + e.Code + " " + e.message) }
+            var cdb = new Data.Connection("memory:")
+            cdb.Ensure("Customer")
+            cdb.Ensure("Customer")
+            foreach (row in cdb.Rows("select name, type, pk, notnull from _columns where table_name = 'people'")) { print("col " + row.Text("name") + " " + row.Text("type") + " pk " + row.Int("pk") + " nn " + row.Int("notnull")) }
+            var cada = new Customer("Ada", 36, "cada@x.org")
+            cada.height = 1.65
+            cada.born = new DateTime(1815, 12, 10, 8, 30, 0)
+            cada.level = Level.High
+            cada.address = new Address("London", "W1")
+            print("insert key " + cdb.Insert(cada) + " field " + cada.id)
+            var cgrace = new Customer("Grace", 85, "cgrace@x.org")
+            cdb.Save(cgrace)
+            print("saved " + cgrace.id)
+            cgrace.age = 86
+            print("save again " + cdb.Save(cgrace) + " rows " + cdb.Scalar("select count(*) from people"))
+            Customer found = cdb.Find("Customer", 1)
+            print("found " + found.name + " " + found.age + " " + found.active + " " + found.height + " " + found.born + " " + found.level + " " + found.address.city + " shown " + found.shown)
+            print("raw " + cdb.Rows("select full_name, born, level, address from people where id = 1")[0])
+            try { cdb.Insert(new Customer("Dup", 1, "cada@x.org")) } catch (Data.ConstraintException e) { print("unique " + e.message) }
+            try { cdb.Insert(new Customer(undefined, 1, "n@x.org")) } catch (Data.ConstraintException e) { print("required " + e.message) }
+            found.age = 37
+            print("update " + cdb.Update(found) + " -> " + cdb.Scalar("select age from people where id = 1"))
+            print("all " + cdb.All("Customer").Count)
+            print("delete " + cdb.Delete(cgrace) + " left " + cdb.Scalar("select count(*) from people") + " find " + cdb.Find("Customer", 2))
+            cdb.Execute("create table Tag(code text primary key, label text)")
+            print("tag key " + cdb.Insert(new Tag("fx", "fire")))
+            Tag tg = cdb.Find("Tag", "fx")
+            print("tag " + tg.label)
+            cdb.Ensure("Revision")
+            var rv = new Revision()
+            rv.number = 3
+            rv.note = "x"
+            print("no key insert " + cdb.Insert(rv) + " rows " + cdb.Scalar("select count(*) from Revision"))
+            try { cdb.Update(rv) } catch (ArgumentException e) { print("no key: " + e.message) }
+            cdb.Execute("drop table people")
+            cdb.Ensure("Customer")
+            print("recreated " + cdb.Rows("select name from _columns where table_name = ?", ["people"]).Count)
+            cdb.Close()
+            var gdb = new Data.Connection("memory:")
+            gdb.Ensure<Pupil>()
+            gdb.Insert(new Pupil("Ada"))
+            gdb.Insert(new Pupil("Grace"))
+            List<Pupil> pupils = gdb.All<Pupil>()
+            print(pupils.Count + " " + pupils[1].name)
+            Pupil pp = gdb.Find<Pupil>(2)
+            print(pp.name)
+            List<Pupil> some2 = gdb.QueryList<Pupil>("select * from Pupil where name like ?", ["A%"])
+            print(some2.Count + " " + some2[0].name + " " + gdb.QueryOne<Pupil>("select * from Pupil order by id desc").name)
+            """),
         ("Data/SQLite: Execute, Query (Zeilen nacheinander), Rows, Scalar, QueryList/QueryOne auf Records und Klassen, Unicode, NULL, BLOB, Fehlerarten, Transaktionen mit Savepoints, :memory:, await, Threads mit eigenen Verbindungen, handover; Mapping mit Attributen, Ensure, Insert/Update/Delete/Save/Find/All, Enum nach Namen, DateTime, [Json]", """
             #import "time"
             #import "filesystem"

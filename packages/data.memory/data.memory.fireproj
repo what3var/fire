@@ -1,0 +1,13 @@
+{
+  "format": 1,
+  "name": "fire-data.memory",
+  "type": "library",
+  "import": "data.memory",
+  "standard": true,
+  "settings": {
+    "version": "1.0.0",
+    "author": "fire",
+    "license": "fire",
+    "description": "The standard library 'data.memory' of fire: the in-memory database of Data - tables, keys, constraints, transactions and a subset of SQL, written in fire."
+  }
+}

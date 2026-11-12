@@ -253,7 +253,7 @@ Own methods for the generated classes come in an extension (`extension Person { 
 |---|---|---|
 | 1 | `data` and `data.sqlite`: connection, parameters, `Query`/`Execute`, rows to records and classes, transactions, errors; awaitable - **built** ([docs/data](data/README.md)) | - |
 | 2 | Mapping (attributes, convention, `Data.Model`), `Ensure`, `Insert/Update/Delete/Save` per object - **built** (`Data.EntityMap`; `p.Save(db)` as a method and the model in code still open) | 1 |
-| 3 | `data.memory` with the raw API (rows, keys, transactions) | 2 |
+| 3 | `data.memory` with the raw API (rows, keys, transactions) - **built**, with a subset of SQL (decided by the user: the same code as with a real database) | 2 |
 | 4 | Query builder on expression trees: SQL for SQLite, evaluation in `data.memory`; `ToSql` | 2, expressions step 1-3 |
 | 5 | Session: identity map, snapshots, Save in one transaction, generated keys, `[Version]` | 2, 4 |
 | 6 | Relations: navigation fields, `Include`, `Any`/subqueries, join tables | 4, 5 |
@@ -270,8 +270,8 @@ normal tests (VM == native), MySQL and SQL Server against a server when one is c
 
 ## Open
 
-- **The type argument of a generic method at run time** (`db.QueryList<Person>(...)`, `s.Find<Person>(7)`, `From<Person>()`): fire code cannot reach the `T`
-  of a generic method today (`Type.Of<T>()` or similar is needed from the compiler). Until then the type goes by its name (`QueryList("Person", ...)`).
+- ~~The type argument of a generic method at run time~~ - `Type.Of<T>()` is there: `QueryList<T>`, `QueryOne<T>`, `Find<T>`, `All<T>`, `Ensure<T>` are built.
+- `data.memory`: one database per connection; a database shared by several connections (and threads) by name needs a home actor - later.
 - The connection is a class (`new Data.Connection(url)`), not a function `Data.Open(url)`: a namespace has no functions of its own.
 
 - TLS inside TDS (SQL Server): can `tls` run over a stream that is not a socket?

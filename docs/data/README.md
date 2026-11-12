@@ -1,8 +1,8 @@
 # Data: databases
 
 `#import "data"` gives the namespace `Data`: connections to databases, SQL with bound parameters, rows as objects, transactions. The drivers are
-packages of their own; today there is **SQLite** (`#import "data.sqlite"`, which imports `data`). What comes next - the in-memory database, MySQL,
-SQL Server, the ORM with expression trees, sessions, migrations and the designer - is planned in [ROADMAP_DATA.md](../ROADMAP_DATA.md).
+packages of their own; today there are **SQLite** (`#import "data.sqlite"`) and the **in-memory database** (`#import "data.memory"`); both import `data`.
+What comes next - MySQL, SQL Server, the ORM with expression trees, sessions, migrations and the designer - is planned in [ROADMAP_DATA.md](../ROADMAP_DATA.md).
 
 ```fire
 #import "data.sqlite"
@@ -70,7 +70,7 @@ converts: `Int`, `Float`, `Text`, `Bool`, `Bytes`, `IsNull`; `Count`, `Name(i)`,
 field is left out, a field without a column (or a NULL) stays undefined. The objects are made without their constructors (like `Json.Deserialize`), so
 records work as well; they belong to the caller.
 
-(The type is given by its name for now; `db.QueryList<Person>(...)` comes when the compiler gives a generic method its type argument at run time.)
+The type can be the type argument as well: `List<Person> people = db.QueryList<Person>(sql, args)`, `Person p = db.QueryOne<Person>(sql, args)`.
 
 ## Mapping: objects and tables
 
@@ -93,14 +93,14 @@ class Person {
     construct(string name, string email) { this.name = name; this.email = email }
 }
 var db = new Data.Connection("sqlite:shop.db")
-db.Ensure("Person")                                 // CREATE TABLE, missing columns, indexes - never drops
+db.Ensure<Person>()                                 // CREATE TABLE, missing columns, indexes - never drops
 var p = new Person("Ada", "ada@x.org")
 db.Insert(p)                                        // p.id is set (the result is the key as well)
 p.age = 37
 db.Update(p)                                        // every column by the key
 db.Save(p)                                          // insert when new (no key yet), else update
-Person same = db.Find("Person", p.id)
-List all = db.All("Person")
+Person same = db.Find<Person>(p.id)                 // or db.Find("Person", p.id)
+List<Person> all = db.All<Person>()
 db.Delete(p)
 ```
 
@@ -161,6 +161,26 @@ while SQLite works). Two calls on the same connection at the same time are not p
 | `ArgumentException` | a wrong number of parameters, a value that cannot be a parameter, several statements with parameters |
 
 `Code` is the driver's code of the error (for SQLite the extended result code: 1555 is a broken primary key, 2067 a broken UNIQUE), `message` its text.
+
+## The in-memory database
+
+`#import "data.memory"`, `new Data.Connection("memory:")`: a database in the memory of the program, its own for the connection - written in fire, no
+file, nothing to install. It is for tests (the same code as with a database on disk, fast, empty at every start) and for small programs. It understands
+a subset of SQL, the part that programs and the mapping use, with SQLite's rules for values, NULL and errors:
+
+| | |
+|---|---|
+| schema | `CREATE TABLE [IF NOT EXISTS] t (c TYPE [PRIMARY KEY] [NOT NULL] [UNIQUE] [DEFAULT v], ..., [PRIMARY KEY (c)], [UNIQUE (c)])`, `DROP TABLE [IF EXISTS]`, `ALTER TABLE t ADD [COLUMN] ...`, `CREATE [UNIQUE] INDEX [IF NOT EXISTS] i ON t (c)`, `DROP INDEX` |
+| rows | `INSERT INTO t [(c, ...)] VALUES (...)[, (...)]`, `INSERT ... DEFAULT VALUES`, `UPDATE t SET c = e, ... [WHERE e]`, `DELETE FROM t [WHERE e]` |
+| queries | `SELECT [DISTINCT] * \| e [AS name], ... [FROM t] [WHERE e] [ORDER BY e [ASC\|DESC], ...] [LIMIT n [OFFSET m]]` - one table |
+| expressions | literals, `?`, columns, `+ - * / %`, `\|\|`, `= != <> < <= > >=`, `AND OR NOT`, `IS [NOT] NULL`, `[NOT] LIKE`, `[NOT] IN (...)`, `[NOT] BETWEEN`, `lower upper length abs trim substr coalesce ifnull` |
+| aggregates | `count(*)`, `count(e)`, `count(DISTINCT e)`, `sum`, `total`, `min`, `max`, `avg` - over all matching rows (no GROUP BY yet) |
+| transactions | `BEGIN`, `COMMIT`, `ROLLBACK`, `SAVEPOINT s`, `RELEASE s`, `ROLLBACK TO s` - so `Transaction(...)` and nested ones work |
+
+An `INTEGER PRIMARY KEY` is generated like SQLite's rowid; PRIMARY KEY, UNIQUE (also a unique index) and NOT NULL are checked
+(`Data.ConstraintException` with SQLite's codes). What is not in the subset - joins, GROUP BY, subqueries - is a `Data.DataException` ("syntax error").
+The table `_columns` (`table_name`, `name`, `type`, `pk`, `notnull`) describes the tables (what `Ensure` asks). Queries of the ORM with expression trees
+(next steps) run on the rows directly, without SQL.
 
 ## Writing a driver
 

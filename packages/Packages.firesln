@@ -26,6 +26,7 @@
     "http.pages/http.pages.fireproj",
     "data/data.fireproj",
     "data.sqlite/data.sqlite.fireproj",
+    "data.memory/data.memory.fireproj",
     "gpio/gpio.fireproj",
     "i2c/i2c.fireproj",
     "spi/spi.fireproj",

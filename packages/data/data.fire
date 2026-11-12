@@ -350,16 +350,29 @@ namespace Data {
         // (the case of the letters and `_` do not count: `full_name` is `fullName`), converted to its type; a column without a field is left out, a field
         // without a column stays undefined. The objects are made without their constructors (like Json.Deserialize).
         List QueryList(string typeName, string sql, any args = undefined) {
+            var all = new List()
+            this.Fill(all, typeName, sql, args)
+            return all
+        }
+
+        // (the objects of the rows into `into`)
+        undefined Fill(any into, string typeName, string sql, any args) {
             this.Check()
             var map = new Data.RowMap(typeName)
-            var all = new List()
             var st = this.driver.Prepare(sql)
             st.Bind(args)
             map.Columns(st.Names())
-            while (st.Next()) { all.Add(map.Make(st.Values())) }
+            while (st.Next()) { into.Add(map.Make(st.Values())) }
             st.Close()
+        }
+
+        // The same with the class as the type argument: `List<Person> people = db.QueryList<Person>("select * from person")`.
+        List<T> QueryList<T>(string sql, any args = undefined) {
+            var all = new List<T>()
+            this.Fill(all, Type.Of<T>().Name, sql, args)
             return all
         }
+        T QueryOne<T>(string sql, any args = undefined) { return this.QueryOne(Type.Of<T>().Name, sql, args) }
 
         // The first row as an object of `typeName` (undefined: no row).
         any QueryOne(string typeName, string sql, any args = undefined) {
@@ -489,6 +502,15 @@ namespace Data {
             return key
         }
 
+        undefined Ensure<T>() { this.Ensure(Type.Of<T>().Name) }
+        T Find<T>(any key) { return this.Find(Type.Of<T>().Name, key) }
+        List<T> All<T>() {
+            var all = new List<T>()
+            string typeName = Type.Of<T>().Name
+            this.Fill(all, typeName, this.AllSql(typeName), undefined)
+            return all
+        }
+
         // The object of the class `typeName` with the key (undefined: none).
         any Find(string typeName, any key) {
             var map = this.Map(typeName)
@@ -498,12 +520,14 @@ namespace Data {
         }
 
         // All objects of the class (in the order of the key).
-        List All(string typeName) {
+        List All(string typeName) { return this.QueryList(typeName, this.AllSql(typeName)) }
+
+        string AllSql(string typeName) {
             var map = this.Map(typeName)
             var d = this.driver.Dialect()
             var order = ""
             if (map.key != undefined) { order = " ORDER BY " + d.Quote(map.key.column) }
-            return this.QueryList(typeName, "SELECT * FROM " + d.Quote(map.table) + order)
+            return "SELECT * FROM " + d.Quote(map.table) + order
         }
 
         // A transaction: Begin, then Commit or Rollback. Inside another one it is a savepoint (Rollback goes back to it).
