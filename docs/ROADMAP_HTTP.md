@@ -103,8 +103,8 @@ ran out or its token is cancelled. **Built** (poll()/WSAPoll, not yet epoll/kque
 
 0. Poller in the scheduler (waits of the network without polling) and `Completion` - built.
 1. Server core: a task per connection, keep-alive, router chain (a copy per connection), `Http.Context`, streamed bodies, limits - **built**
-   (`Http.AppServer`, docs/networking/http.md). Open: a chain with lambdas waits for step 8 point 4 (lambdas to other threads) and is served in the accepting
-   task meanwhile; the TLS handshake runs in the accepting task.
+   (`Http.AppServer`, docs/networking/http.md). A chain with lambdas goes to the tasks since step 8 (e) (lambdas to other threads). Open: the TLS handshake runs in the
+   accepting task.
 2. File client and `wwwroot` (safety, caching, MIME) - **built** (`Http.Files`, docs/networking/http.md). Open: the `Map(pattern, lambda)` form of the
    file client (with the lambdas of step 8 point 4), symbolic links (the file system API cannot tell them), several ranges in one request.
 3. Sessions (their home, time limit) and `ISessionStore` (files) - **built** (`Http.Sessions`, docs/networking/http.md): one home actor for all sessions of a
@@ -120,11 +120,22 @@ ran out or its token is cancelled. **Built** (poll()/WSAPoll, not yet epoll/kque
    compression (permessage-deflate).
 6. FXML to HTML/CSS, `fire.js`, live updates - **first part built** (package `http.pages`, docs/networking/http.md): a circuit per page (an actor that owns the
    UI root without a window), HTML with CSS layout (decided by the user: the browser lays out - flex, grid, nested flex for DockPanel, HTML text for the new
-   `UI.FlowPanel`), events over the WebSocket, the changes found by comparing the properties. Tried in headless Chromium (Playwright). Open: lists with
-   templates, menus, trees, images, pushes that do not come from the browser (timers, other tasks: the reader/writer split of the socket), more events.
-7. Canvas recording, JS calls.
+   `UI.FlowPanel`), events over the WebSocket, the changes found by comparing the properties. Tried in headless Chromium (Playwright).
+   Built since: images, pushes without an event, lists with templates and the columns of a ListView (header, sorting), menus (MenuBar), trees.
+   Focus and keys (to the focused element through the UI root, `browser.Focus`, `browser.OnKey`). Open: hover, context menus.
+7. Canvas recording, JS calls - **first part built**: a `DrawingCanvas` paints on the server and goes as a PNG (exact, simpler than recording the calls;
+   recording them for canvas 2D stays open for big or fast canvases), its pointer events; pushes without an event (the circuit looks after a tenth of a second without one);
+   `browser.Call(name, args, callback)` / `browser.Run(code)`; **the waiting form** `any v = browser.Call(name, args)` is built: the socket never waits for
+   the circuit, the waiting call registers a `Completion` in the PageDirectory that the browser's answer sets (an answer that comes before the
+   registration waits there for it).
+   **Socket and circuit are joined by a `Channel.Pair`** (made by the socket, its other end handed to the circuit as an actor message): events in,
+   answers and pushes out, no actor round trip per event; the end of the socket ends the circuit. The socket still looks at the WebSocket and the channel
+   in turn (20 ms): waiting on both at once needs a wait for "a socket or a channel" (or a writer of its own for the WebSocket, as Net.Channel has one
+   per direction - over TLS that is not possible on the raw socket).
 
 ## Open
+
+* A wait for "a socket or a channel" (see step 7): then the page's socket needs no 20 ms turns.
 
 * Which FXML elements the browser covers first.
 * Whether the copy of the router chain per connection is cheap enough (measure; else one per worker).

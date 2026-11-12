@@ -1061,8 +1061,8 @@ namespace Http {
                 catch (Net.NetException e) { return true }   // (a client that did not complete the handshake)
             }
             if (!Http.AppServer.Spawn(connection, this.chain, this.settings)) {
-                // (a chain that cannot be copied for a task - lambdas until they may go to other threads, docs/ROADMAP_TASKS.md step 8 point 4: the
-                // connection is served here, one request without keep-alive)
+                // (a chain that cannot be copied for a task - a [NoCopy] object in a router: the connection is served here, one request without
+                // keep-alive)
                 Http.AppServer.Serve(connection, this.chain, this.settings, false)
             }
             return true

@@ -28051,7 +28051,7 @@ else
             print("parallel " + parallel + " connections " + server.Connections + " fast " + (ms < 700))
             server.Close()
             """),
-        ("Http.AppServer: Lambda-Router (Use, Routes) - Items, Antwort nachbearbeitet, Text, POST, Ausnahme = 500, gestreamte Antwort (chunked); Kette mit Lambdas: eine Anfrage pro Verbindung", """
+        ("Http.AppServer: Lambda-Router (Use, Routes) - Items, Antwort nachbearbeitet, Text, POST, Ausnahme = 500, gestreamte Antwort (chunked); auch die Kette mit Lambdas bekommt Keep-Alive (Lambdas gehen in den Task)", """
             #import "http"
             #import "time"
             class Boom : Exception { construct(string m) { this.message = m } }
@@ -28824,10 +28824,454 @@ else
             print(log)
             server.Close()
             """),
+        ("Http.Pages: DrawingCanvas als PNG (neu nach einem Mausklick), browser.Call mit Callback und browser.Run gehen mit der Antwort hinaus, das Ergebnis kommt als Ereignis zurueck", """
+            #import "http.pages"
+            [Page "/draw"]
+            class DrawPage {
+                UI.Panel view
+                UI.Label result
+                UI.DrawingCanvas canvas
+                Http.Browser browser
+                List points
+                construct() {
+                    this.points = new List()
+                    this.view = new UI.Panel(0, 0, 300, 200)
+                    var stack = new UI.StackPanel(0, 0, -1, -1)
+                    var r = new UI.Label("no result")
+                    this.result = r
+                    stack.Add(take r)
+                    var b = new UI.Button("Add")
+                    b.OnClick = func () on this => { this.Ask() }
+                    stack.Add(take b)
+                    var c = new UI.DrawingCanvas(0, 0, 40, 30)
+                    c.OnPaint = func (UI.DrawingCanvas dc) on this => { this.Paint(dc) }
+                    c.OnMouseDown = func (int x, int y, int button) on this => { this.points.Add(x); this.points.Add(y); this.canvas.Invalidate() }
+                    this.canvas = c
+                    stack.Add(take c)
+                    this.view.Add(take stack)
+                }
+                undefined Ask() {
+                    this.browser.Call("add", [2, 3], func (any v) on this => { this.result.Text = "sum " + v })
+                    this.browser.Run("document.title = 'changed'")
+                }
+                undefined Paint(UI.DrawingCanvas dc) {
+                    dc.renderer.ClearTo(UI.Color.Rgb(255, 255, 255))
+                    for (var i = 0; i + 1 < this.points.Count; i = i + 2) {
+                        int x = this.points[i]
+                        int y = this.points[i + 1]
+                        dc.renderer.FillRect(x, y, 4, 4, new SolidBrush(UI.Color.Rgb(200, 0, 0)))
+                    }
+                }
+            }
+            var server = new Http.AppServer("127.0.0.1", 0)
+            server.Settings.showErrors = true
+            server.PushTo(new Http.Sessions()).PushTo(new Http.Pages("Draw"))
+            int port = server.Port
+            int done = 0
+            string log = ""
+            fire taking port {
+                var c = new Http.Client()
+                var r = c.Get("http://127.0.0.1:" + port + "/draw")
+                var html = r.Text()
+                var cookie = r.Header("Set-Cookie").Substring(0, 45)
+                var at = html.IndexOf("data-circuit=\"") + 14
+                var circuit = html.Substring(at, 32)
+                var out = "page " + r.status + " img " + (html.IndexOf("<img data-k=\"draw\"") >= 0) + " png " + (html.IndexOf("src=\"data:image/png;base64,iVBOR") >= 0) + "\n"
+                var h = new Http.Headers()
+                h.Set("Cookie", cookie)
+                var ws = Http.WebSocket.Connect("ws://127.0.0.1:" + port + "/_fire/ws?c=" + circuit, 5000, h)
+                ws.Send("{\"e\": 3, \"k\": \"click\"}")
+                var a = ws.ReceiveText(5000)
+                out = out + "click " + a.Substring(0, a.IndexOf("[") + 1) + " js " + (a.IndexOf("\"js\": [{\"id\": 0, \"fn\": \"add\", \"args\": [2,3]}, {\"id\": -1, \"code\": ") > 0) + "\n"
+                ws.Send("{\"e\": -1, \"k\": \"js\", \"id\": 0, \"v\": 5}")
+                out = out + "result " + ws.ReceiveText(5000) + "\n"
+                ws.Send("{\"e\": 4, \"k\": \"mouse\", \"t\": \"down\", \"x\": 10, \"y\": 10, \"b\": 1}")
+                var m = ws.ReceiveText(5000)
+                out = out + "mouse " + (m.IndexOf("\"img\": \"data:image/png;base64,") > 0) + "\n"
+                ws.Send("{\"e\": 4, \"k\": \"mouse\", \"t\": \"move\", \"x\": 12, \"y\": 10}")
+                out = out + "move nothing " + (ws.ReceiveText(400) == undefined) + "\n"   // (nothing changed: no answer)
+                ws.Close()
+                sync global { log = out; done = 1 }
+            }
+            while (done < 1) { server.AcceptOne(20ms); sync globals }
+            print(log)
+            server.Close()
+            """),
+        ("Http.Pages: browser.Call wartet auf das Ergebnis (zwei Aufrufe nacheinander im Handler, der Socket bleibt frei), daneben die Form mit Callback", """
+            #import "http.pages"
+            [Page "/ask"]
+            class AskPage {
+                UI.Panel view
+                UI.Label result
+                Http.Browser browser
+                construct() {
+                    this.view = new UI.Panel(0, 0, 300, 200)
+                    var stack = new UI.StackPanel(0, 0, -1, -1)
+                    var r = new UI.Label("no result")
+                    this.result = r
+                    stack.Add(take r)
+                    var b = new UI.Button("Ask")
+                    b.OnClick = func () on this => { this.Ask() }
+                    stack.Add(take b)
+                    var later = new UI.Button("Later")
+                    later.OnClick = func () on this => { this.browser.Call("add", [1, 1], func (any v) on this => { this.result.Text = "callback " + v }) }
+                    stack.Add(take later)
+                    this.view.Add(take stack)
+                }
+                undefined Ask() {
+                    this.result.Text = "asking"
+                    any v = this.browser.Call("add", [4, 5])
+                    any w = this.browser.Call("add", [v, 1])
+                    this.result.Text = "await " + v + " " + w
+                }
+            }
+            var server = new Http.AppServer("127.0.0.1", 0)
+            server.Settings.showErrors = true
+            server.PushTo(new Http.Sessions()).PushTo(new Http.Pages("Ask"))
+            int port = server.Port
+            int done = 0
+            string log = ""
+            fire taking port {
+                var c = new Http.Client()
+                var r = c.Get("http://127.0.0.1:" + port + "/ask")
+                var html = r.Text()
+                var cookie = r.Header("Set-Cookie").Substring(0, 45)
+                var at = html.IndexOf("data-circuit=\"") + 14
+                var circuit = html.Substring(at, 32)
+                var out = "page " + r.status + "\n"
+                var h = new Http.Headers()
+                h.Set("Cookie", cookie)
+                var ws = Http.WebSocket.Connect("ws://127.0.0.1:" + port + "/_fire/ws?c=" + circuit, 5000, h)
+                ws.Send("{\"e\": 3, \"k\": \"click\"}")
+                out = out + "call 1 " + ws.ReceiveText(5000) + "\n"
+                ws.Send("{\"e\": -1, \"k\": \"js\", \"id\": 0, \"v\": 9}")
+                out = out + "call 2 " + ws.ReceiveText(5000) + "\n"
+                ws.Send("{\"e\": -1, \"k\": \"js\", \"id\": 1, \"v\": 10}")
+                out = out + "done " + ws.ReceiveText(5000) + "\n"
+                ws.Send("{\"e\": 4, \"k\": \"click\"}")
+                out = out + "later " + ws.ReceiveText(5000) + "\n"
+                ws.Send("{\"e\": -1, \"k\": \"js\", \"id\": 2, \"v\": 2}")
+                out = out + "callback " + ws.ReceiveText(5000) + "\n"
+                ws.Close()
+                sync global { log = out; done = 1 }
+            }
+            while (done < 1) { server.AcceptOne(20ms); sync globals }
+            print(log)
+            server.Close()
+            """),
+        ("Http.Pages: ListView mit Spalten (Kopfzeile, Zellen, Klick auf einen Titel sortiert, nochmal umgekehrt) und ListBox mit ItemTemplate (Zeilen als HTML ohne ids)", """
+            #import "http.pages"
+            class Person { string name
+                int age
+                construct(string n, int a) { this.name = n; this.age = a } }
+            [Page "/cols"]
+            class ColsPage {
+                UI.Panel view
+                UI.ListView table
+                UI.ListBox cards
+                UI.Label chosen
+                construct() {
+                    this.view = new UI.Panel(0, 0, 400, 400)
+                    var stack = new UI.StackPanel(0, 0, -1, -1)
+                    var lv = new UI.ListView(0, 0, 240, 100)
+                    lv.AddColumn("Name", "name", 120)
+                    lv.AddColumn("Age", "age", -1)
+                    lv.Add(new Person("Ben", 40))
+                    lv.Add(new Person("Anna", 30))
+                    lv.OnSelect = func () on this => { this.chosen.Text = "row " + this.table.SelectedIndex }
+                    this.table = lv
+                    stack.Add(take lv)
+                    var lb = new UI.ListBox(0, 0, 160, 100)
+                    lb.ItemTemplate = new UI.DataTemplate(func (any item) => {
+                        var sp = new UI.StackPanel(0, 0, -1, -1, true)
+                        sp.Add(new UI.Label(item.name))
+                        sp.Add(new UI.Label(" (" + item.age + ")"))
+                        return sp
+                    })
+                    lb.Add(new Person("Carl", 7))
+                    this.cards = lb
+                    stack.Add(take lb)
+                    var b = new UI.Button("More")
+                    b.OnClick = func () on this => { this.cards.Add(new Person("Dora", 9)) }
+                    stack.Add(take b)
+                    var l = new UI.Label("none")
+                    this.chosen = l
+                    stack.Add(take l)
+                    this.view.Add(take stack)
+                }
+            }
+            var server = new Http.AppServer("127.0.0.1", 0)
+            server.Settings.showErrors = true
+            server.PushTo(new Http.Sessions()).PushTo(new Http.Pages("Cols"))
+            int port = server.Port
+            int done = 0
+            string log = ""
+            fire taking port {
+                var c = new Http.Client()
+                var r = c.Get("http://127.0.0.1:" + port + "/cols")
+                string html = r.Text()
+                string cookie = r.Header("Set-Cookie").Substring(0, 45)
+                int at = html.IndexOf("data-circuit=\"") + 14
+                string circuit = html.Substring(at, 32)
+                int list = html.IndexOf("class=\"f-list f-cols\"")
+                var out = "page " + r.status + " cols " + (list > 0) + "\n"
+                out = out + "head " + (html.IndexOf("<div class=\"f-head\"><span class=\"f-cell\" data-c=\"0\" style=\"width:120px\">Name</span><span class=\"f-cell\" data-c=\"1\" style=\"flex:1\">Age</span></div>") > 0) + "\n"
+                out = out + "cells " + (html.IndexOf("data-i=\"0\"><span class=\"f-cell\" style=\"width:120px\">Ben</span><span class=\"f-cell\" style=\"flex:1\">40</span></div>") > 0) + "\n"
+                int card = html.IndexOf(">Carl<")
+                out = out + "template " + (card > 0) + " " + html.Substring(html.LastIndexOf("data-i=\"0\"", card), card - html.LastIndexOf("data-i=\"0\"", card) + 6) + "\n"
+                var h = new Http.Headers()
+                h.Set("Cookie", cookie)
+                var ws = Http.WebSocket.Connect("ws://127.0.0.1:" + port + "/_fire/ws?c=" + circuit, 5000, h)
+                ws.Send("{\"e\": 2, \"k\": \"sort\", \"v\": 0}")
+                out = out + "sort " + ws.ReceiveText(5000) + "\n"
+                ws.Send("{\"e\": 2, \"k\": \"sort\", \"v\": 0}")
+                out = out + "again " + ws.ReceiveText(5000) + "\n"
+                ws.Send("{\"e\": 2, \"k\": \"select\", \"v\": 1}")
+                out = out + "select " + ws.ReceiveText(5000) + "\n"
+                ws.Send("{\"e\": 4, \"k\": \"click\"}")
+                out = out + "more " + ws.ReceiveText(5000) + "\n"
+                ws.Close()
+                sync global { log = out; done = 1 }
+            }
+            while (done < 1) { server.AcceptOne(20ms); sync globals }
+            print(log)
+            server.Close()
+            """),
+        ("Http.Pages: MenuBar (Untermenue, Trenner, Haken, gesperrt, Tastenkuerzel; ein Pfad waehlt die Zeile) und TreeView (Knoten auf/zu, waehlen, Doppelklick aktiviert)", """
+            #import "http.pages"
+            [Page "/tree"]
+            class TreePage {
+                UI.Panel view
+                UI.TreeView tree
+                UI.Label said
+                UI.MenuItem bold
+                construct() {
+                    this.view = new UI.Panel(0, 0, 400, 400)
+                    var stack = new UI.StackPanel(0, 0, -1, -1)
+                    var bar = new UI.MenuBar()
+                    var file = new UI.MenuItem("File")
+                    file.Add(new UI.MenuItem("Open", func () on this => { this.said.Text = "open" }))
+                    file.Add(UI.MenuItem.Separator())
+                    var recent = new UI.MenuItem("Recent")
+                    recent.Add(new UI.MenuItem("a.txt", func () on this => { this.said.Text = "recent a" }))
+                    file.Add(take recent)
+                    var quit = new UI.MenuItem("Quit")
+                    quit.Enabled = false
+                    quit.Shortcut = "Ctrl+Q"
+                    file.Add(take quit)
+                    bar.Add(take file)
+                    var view = new UI.MenuItem("View")
+                    var b = new UI.MenuItem("Bold", func () on this => { this.said.Text = "bold " + this.bold.IsChecked })
+                    b.Checkable = true
+                    this.bold = b
+                    view.Add(take b)
+                    bar.Add(take view)
+                    stack.Add(take bar)
+                    var tv = new UI.TreeView(0, 0, 200, 120)
+                    var root = new UI.TreeNode("src")
+                    var ui = new UI.TreeNode("ui")
+                    ui.Add(new UI.TreeNode("list.fire"))
+                    root.Add(take ui)
+                    root.Add(new UI.TreeNode("main.fire"))
+                    tv.AddNode(take root)
+                    tv.AddNode(new UI.TreeNode("README"))
+                    tv.OnSelect = func () on this => { this.said.Text = "node " + this.tree.selected.Text }
+                    tv.OnActivate = func () on this => { this.said.Text = "activated " + this.tree.selected.Text }
+                    this.tree = tv
+                    stack.Add(take tv)
+                    var l = new UI.Label("none")
+                    this.said = l
+                    stack.Add(take l)
+                    this.view.Add(take stack)
+                }
+            }
+            var server = new Http.AppServer("127.0.0.1", 0)
+            server.Settings.showErrors = true
+            server.PushTo(new Http.Sessions()).PushTo(new Http.Pages("Tree"))
+            int port = server.Port
+            int done = 0
+            string log = ""
+            fire taking port {
+                var c = new Http.Client()
+                var r = c.Get("http://127.0.0.1:" + port + "/tree")
+                string html = r.Text()
+                string cookie = r.Header("Set-Cookie").Substring(0, 45)
+                int at = html.IndexOf("data-circuit=\"") + 14
+                string circuit = html.Substring(at, 32)
+                var out = "page " + r.status + "\n"
+                int m = html.IndexOf("<div data-k=\"menu\"")
+                out = out + "menu " + html.Substring(m, html.IndexOf("<div data-k=\"list\"") - m) + "\n"
+                int t = html.IndexOf("<div data-k=\"list\"")
+                out = out + "tree " + html.Substring(t, html.IndexOf("<div id=\"f4\"", t) - t) + "\n"
+                var h = new Http.Headers()
+                h.Set("Cookie", cookie)
+                var ws = Http.WebSocket.Connect("ws://127.0.0.1:" + port + "/_fire/ws?c=" + circuit, 5000, h)
+                ws.Send("{\"e\": 3, \"k\": \"toggle\", \"v\": 0}")
+                out = out + "open " + ws.ReceiveText(5000) + "\n"
+                ws.Send("{\"e\": 3, \"k\": \"select\", \"v\": 2}")
+                out = out + "select " + ws.ReceiveText(5000) + "\n"
+                ws.Send("{\"e\": 3, \"k\": \"activate\", \"v\": 1}")
+                out = out + "activate " + ws.ReceiveText(5000) + "\n"
+                ws.Send("{\"e\": 2, \"k\": \"menu\", \"v\": \"0/2/0\"}")
+                out = out + "recent " + ws.ReceiveText(5000) + "\n"
+                ws.Send("{\"e\": 2, \"k\": \"menu\", \"v\": \"1/0\"}")
+                out = out + "bold " + ws.ReceiveText(5000) + "\n"
+                ws.Send("{\"e\": 2, \"k\": \"menu\", \"v\": \"0/3\"}")
+                out = out + "disabled nothing " + (ws.ReceiveText(400) == undefined) + "\n"
+                ws.Send("{\"e\": 2, \"k\": \"menu\", \"v\": \"7/x\"}")
+                out = out + "bad path nothing " + (ws.ReceiveText(400) == undefined) + "\n"
+                ws.Close()
+                sync global { log = out; done = 1 }
+            }
+            while (done < 1) { server.AcceptOne(20ms); sync globals }
+            print(log)
+            server.Close()
+            """),
+        ("Http.Pages: Fokus und Tasten (Pfeile in der Liste, Enter im TextBox = OnEnter, browser.Focus vom Server, browser.OnKey fuer die ganze Seite)", """
+            #import "http.pages"
+            [Page "/keys"]
+            class KeysPage {
+                UI.Panel view
+                UI.TextBox name
+                UI.ListBox list
+                UI.Label said
+                Http.Browser browser
+                construct() {
+                    this.view = new UI.Panel(0, 0, 400, 400)
+                    var stack = new UI.StackPanel(0, 0, -1, -1)
+                    var tb = new UI.TextBox("", 0, 0, 120, -1)
+                    tb.OnEnter = func () on this => { this.said.Text = "enter " + this.name.Text }
+                    this.name = tb
+                    stack.Add(take tb)
+                    var lb = new UI.ListBox(0, 0, 120, 80)
+                    lb.Add("one")
+                    lb.Add("two")
+                    lb.Add("three")
+                    lb.OnSelect = func () on this => { this.said.Text = "row " + this.list.SelectedIndex }
+                    this.list = lb
+                    stack.Add(take lb)
+                    var b = new UI.Button("Edit")
+                    b.OnClick = func () on this => { this.Edit() }
+                    stack.Add(take b)
+                    var l = new UI.Label("none")
+                    this.said = l
+                    stack.Add(take l)
+                    this.view.Add(take stack)
+                }
+                undefined Edit() {
+                    this.browser.Focus(this.name)
+                    this.browser.OnKey(func (int key, int mod) on this => {
+                        if (UI.Keys.Shortcut(mod) && key == 115) {
+                            this.said.Text = "saved"
+                            return true
+                        }
+                        return false
+                    })
+                }
+            }
+            var server = new Http.AppServer("127.0.0.1", 0)
+            server.Settings.showErrors = true
+            server.PushTo(new Http.Sessions()).PushTo(new Http.Pages("Keys"))
+            int port = server.Port
+            int done = 0
+            string log = ""
+            fire taking port {
+                var c = new Http.Client()
+                var r = c.Get("http://127.0.0.1:" + port + "/keys")
+                string html = r.Text()
+                string cookie = r.Header("Set-Cookie").Substring(0, 45)
+                int at = html.IndexOf("data-circuit=\"") + 14
+                string circuit = html.Substring(at, 32)
+                var out = "page " + r.status + "\n"
+                var h = new Http.Headers()
+                h.Set("Cookie", cookie)
+                var ws = Http.WebSocket.Connect("ws://127.0.0.1:" + port + "/_fire/ws?c=" + circuit, 5000, h)
+                ws.Send("{\"e\": 3, \"k\": \"focus\"}")
+                out = out + "focus list nothing " + (ws.ReceiveText(400) == undefined) + "\n"
+                ws.Send("{\"e\": 3, \"k\": \"key\", \"key\": 1073741905, \"mod\": 0}")
+                out = out + "down " + ws.ReceiveText(5000) + "\n"
+                ws.Send("{\"e\": 3, \"k\": \"key\", \"key\": 1073741901, \"mod\": 0}")
+                out = out + "end " + ws.ReceiveText(5000) + "\n"
+                ws.Send("{\"e\": 4, \"k\": \"click\"}")
+                out = out + "edit " + ws.ReceiveText(5000) + "\n"
+                ws.Send("{\"e\": 2, \"k\": \"input\", \"v\": \"Ada\"}")
+                out = out + "input " + ws.ReceiveText(5000) + "\n"
+                ws.Send("{\"e\": 2, \"k\": \"key\", \"key\": 13, \"mod\": 0}")
+                out = out + "enter " + ws.ReceiveText(5000) + "\n"
+                ws.Send("{\"e\": -1, \"k\": \"focus\"}")
+                out = out + "blur nothing " + (ws.ReceiveText(400) == undefined) + "\n"
+                ws.Send("{\"e\": -1, \"k\": \"key\", \"key\": 115, \"mod\": 64}")
+                out = out + "ctrl+s " + ws.ReceiveText(5000) + "\n"
+                ws.Close()
+                sync global { log = out; done = 1 }
+            }
+            while (done < 1) { server.AcceptOne(20ms); sync globals }
+            print(log)
+            server.Close()
+            """),
+        ("Http.Pages: ListBox (Zeilen aus DisplayMember, Klick waehlt, Doppelklick aktiviert, neue Zeilen als Patch) und Image (PNG)", """
+            #import "http.pages"
+            class Person { string name
+                construct(string n) { this.name = n } }
+            [Page "/list"]
+            class ListPage {
+                UI.Panel view
+                UI.ListBox people
+                UI.Label chosen
+                UI.Image picture
+                construct() {
+                    this.view = new UI.Panel(0, 0, 300, 300)
+                    var stack = new UI.StackPanel(0, 0, -1, -1)
+                    var lb = new UI.ListBox(0, 0, 160, 80)
+                    lb.DisplayMember = "name"
+                    lb.Add(new Person("Anna"))
+                    lb.Add(new Person("Ben"))
+                    lb.OnSelect = func () on this => { this.chosen.Text = "picked " + this.people.SelectedIndex }
+                    lb.OnActivate = func () on this => { this.people.Add(new Person("Carl")) }
+                    this.people = lb
+                    stack.Add(take lb)
+                    var l = new UI.Label("none")
+                    this.chosen = l
+                    stack.Add(take l)
+                    var img = new UI.Image(undefined, 0, 0, 16, 16)
+                    img.Source = new Framebuffer(8, 8)
+                    this.picture = img
+                    stack.Add(take img)
+                    this.view.Add(take stack)
+                }
+            }
+            var server = new Http.AppServer("127.0.0.1", 0)
+            server.Settings.showErrors = true
+            server.PushTo(new Http.Sessions()).PushTo(new Http.Pages("List"))
+            int port = server.Port
+            int done = 0
+            string log = ""
+            fire taking port {
+                var c = new Http.Client()
+                var r = c.Get("http://127.0.0.1:" + port + "/list")
+                var html = r.Text()
+                var cookie = r.Header("Set-Cookie").Substring(0, 45)
+                var at = html.IndexOf("data-circuit=\"") + 14
+                var circuit = html.Substring(at, 32)
+                var out = "page " + r.status + " rows " + (html.IndexOf("<div class=\"f-row\" data-i=\"1\">Ben</div>") > 0) + " image " + (html.IndexOf("class=\"f-image\" style=\"object-fit:contain;width:16px;height:16px;\" alt=\"\" src=\"data:image/png;base64,") > 0) + "\n"
+                var h = new Http.Headers()
+                h.Set("Cookie", cookie)
+                var ws = Http.WebSocket.Connect("ws://127.0.0.1:" + port + "/_fire/ws?c=" + circuit, 5000, h)
+                ws.Send("{\"e\": 2, \"k\": \"select\", \"v\": 1}")
+                out = out + "select " + ws.ReceiveText(5000) + "\n"
+                ws.Send("{\"e\": 2, \"k\": \"activate\", \"v\": 0}")
+                out = out + "activate " + ws.ReceiveText(5000) + "\n"
+                ws.Close()
+                sync global { log = out; done = 1 }
+            }
+            while (done < 1) { server.AcceptOne(20ms); sync globals }
+            print(log)
+            server.Close()
+            """),
         ("Net: der Poller weckt wartende Threads (40 Verbindungen in fire-Threads, Daten kommen spaeter), Zeitlimit, Abbruch eines Read per until", """
             #import "net"
             #import "time"
-            var l = new Net.TcpListener("127.0.0.1", 0)
+            var l = new Net.TcpListener("127.0.0.1", 0, 64)   // (40 connections at once: a backlog of 16 drops some when the machine is busy)
             int port = l.Port
             int done = 0
             int sum = 0

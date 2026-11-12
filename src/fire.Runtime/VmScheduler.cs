@@ -54,7 +54,12 @@ namespace fire.Runtime
         public static void Wake()
         {
             Interlocked.Increment(ref _wakes);
-            lock (Gate) Monitor.PulseAll(Gate);
+            lock (Gate)
+            {
+                // (no worker is idle - all of them wait inside a task: one more looks at the suspended tasks, else nobody would)
+                if (_idle == 0 && Waiting.Count > 0) Kick();
+                else Monitor.PulseAll(Gate);
+            }
         }
 
         /// <summary>A worker waits inside a task (it could not be suspended): another one may start for the tasks that are ready.</summary>
@@ -63,7 +68,7 @@ namespace fire.Runtime
             lock (Gate)
             {
                 _blocked++;
-                if (Ready.Count > 0) Kick();
+                if (Ready.Count > 0 || Waiting.Count > 0) Kick();   // (the suspended tasks need a worker that watches their waits and times)
             }
         }
 

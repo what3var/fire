@@ -93,8 +93,9 @@ server.Run()                                                    // until Stop() 
 
 * **Every connection gets a copy of the chain** when its task starts (`taking`): routers are configuration. What they share - counters, caches, sessions -
   lives in an actor they ask with `await` (docs/ROADMAP_HTTP.md). A router that throws gives the client a 500.
-* **Lambdas in the chain** (`Use`, `Routes`) cannot be copied into a task yet (they may go to other threads with docs/ROADMAP_TASKS.md step 8 point 4):
-  until then such a chain is served in the accepting task, one request per connection without keep-alive. Routers written as classes get all of it.
+* **Lambdas in the chain** (`Use`, `Routes`) go to the task of the connection like everything else (they may go to other threads since
+  docs/ROADMAP_TASKS.md step 8 (e)); what they capture they capture with `taking`/`handover`. A chain that cannot be copied for a task (a `[NoCopy]`
+  object in a router) is served in the accepting task, one request per connection without keep-alive.
 * `Http.Server` (above) stays the small server for one connection after the other.
 
 ### Static files: `Http.Files`
@@ -248,5 +249,38 @@ server.Run()
   browser has (text, checked, visible, enabled, colours); a changed tree (elements added or removed) sends the HTML anew.
 * A circuit ends when its WebSocket closes, one whose browser never connected after a minute, all with `Http.AppServer.Close()`. `[Page]` keeps the class
   in a native build.
-* Not yet: lists with templates, menus, trees, images, drawing (`DrawingCanvas`: step 7), changes that do not come from an event of the browser (a timer,
-  another task), the events of more elements (focus, keys, hover).
+* **Lists and pictures:** a `ListBox`/`ListView` shows the texts of its rows (`DisplayMember`) - a click selects a row (`Select`, `OnSelect`), a double click
+  activates it (`OnActivate`); changed rows or a changed selection go out as a patch. (Item templates and the columns of a ListView are not shown yet.) An
+  `Image` is its `Source` as a PNG (`Stretch` as `object-fit`); a new picture is sent when another framebuffer is set.
+* **Drawing:** a `DrawingCanvas` paints on the server (its `OnPaint`, its framebuffer) and goes to the browser as a PNG image (`<img>`); a new picture is sent
+  when it changed (a checksum). Pointer down, move (at most every 30 ms while pressed) and up on it are its `OnMouseDown`, `OnMouseMove`, `OnMouseUp`.
+* **The way between socket and circuit:** when the browser connects, its WebSocket makes a `Channel.Pair` and hands the circuit the other end
+  (an in-process channel - `Net.Channel` is the same between programs). The events go in on it, the circuit's answers and pushes come out on it; the
+  socket ends it when it closes, and the circuit ends with it.
+* **Changes without an event:** a tenth of a second without an event, the circuit looks itself what changed (another task changed the page, a
+  `Continuous` canvas, JS calls) and sends the changes on the channel.
+* **JS in the browser:** a page with a field `Http.Browser browser` gets it set. `any v = browser.Call("name", [args])` calls `window[name](...args)` (a
+  Promise is waited for) and waits for the result (JSON: numbers, texts, bool, arrays, JsonObjects; undefined when the function threw; a TimeoutException
+  after `limit`, 10 s by default: `browser.Call("name", [args], undefined, 2s)`). The call goes out on the channel at once; the socket keeps running meanwhile (it
+  never waits for the circuit) and gives the answer to the page directory, which sets the wait.
+  While it waits the circuit serves its messages: other events of the page can run in between (like the handlers of a window that waits). With a callback,
+  `browser.Call("name", [args], func (any result) => ...)` does not wait: the call goes out with the next answer and the callback runs later, on the page's
+  thread like an event. `browser.Run(code)` runs code (no result).
+* An event that changes nothing gets no answer.
+* **Lists:** a ListBox shows its rows (DisplayMember); a click selects, a double click activates. A ListView with columns has a header row and a cell per
+  column (the width of the column, -1 the rest); a click on a title sorts by that column, a second click reverses it (the arrow shows it). With an
+  `ItemTemplate` every row is the HTML of its template element - for display, like in the UI library (no ids: a click is one on the row). All the rows
+  are there (the browser scrolls them).
+* **Trees:** a TreeView shows its visible nodes as rows, indented by their depth; the box before a node with children opens and closes it, a click on
+  the row selects (OnSelect), a double click opens or closes it and activates it (OnActivate).
+* **Menus:** a MenuBar shows its titles; the browser opens and closes the popups itself (a click on a title, moving to another title while one is open,
+  submenus on hover), only the choice of a row goes to the server - it runs the row's `Activate` (the check mark of a `Checkable` row, its `OnClick`).
+  Separators, check marks, disabled rows and the `Shortcut` text are shown.
+* **Focus and keys:** the focus of the browser is that of the page's UI root (`Focused`, the element that gets the keys). A key goes to the root like on
+  the desktop, to the element with the focus: the arrows, Home/End and PageUp/PageDown move in a list or a tree, Enter activates a row or is the
+  `OnEnter` of a TextBox (with the text typed so far), Escape, Delete, Space, F1-F12 and shortcuts (Ctrl, Alt, Cmd with a letter) go too. A text field keeps
+  its own editing: from it only Enter, Escape and the shortcuts are sent, and Ctrl+A/C/V/X/Y/Z stay the browser's (a shortcut that is sent is not the
+  browser's: Ctrl+S does not save the page). `browser.Focus(element)` gives an element the focus from the server, `browser.OnKey(func (int key, int mod)
+  => ...)` gets every key of the page first (true: taken), e.g. for shortcuts:
+  `this.browser.OnKey(func (int key, int mod) on this => { if (UI.Keys.Shortcut(mod) && key == 115) { this.Save(); return true }; return false })`.
+* Not yet: hover and the pointer events of elements other than a DrawingCanvas, context menus, drawing as commands instead of pictures.

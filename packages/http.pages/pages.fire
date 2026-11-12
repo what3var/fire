@@ -2,6 +2,7 @@
 #import "ui"
 #import "reflection"
 #import "json"
+#import "hash"
 
 // http.pages (docs/networking/http.md, docs/ROADMAP_HTTP.md step 6): FXML views as web pages. A class with [Page "/path"] - the code-behind of an FXML View -
 // is a page: a GET of its path makes a circuit (the page lives in a task of its own, with its elements, bindings and handlers) and answers with HTML; the
@@ -57,7 +58,23 @@ namespace Http {
                 var own = Http.PageHtml.Color(lc.Color)
                 if (own != undefined) { fg = own }
             }
-            return Json.Serialize(t) + "|" + c + "|" + e.Visible + "|" + e.Enabled + "|" + fg + "|" + Http.PageHtml.Color(e.Background)
+            var img = ""
+            if (e is of UI.DrawingCanvas) { img = "" + Http.PageHtml.ImageSignature(e) }
+            if (e is of UI.ItemsControl) {
+                UI.ItemsControl ic = e
+                img = Http.PageHtml.RowsJson(ic) + "#" + ic.SelectedIndex + "#" + Http.PageHtml.Head(ic)
+            }
+            if (e is of UI.TreeView) {
+                UI.TreeView tv = e
+                img = Http.PageHtml.TreeRowsJson(tv) + "#" + Http.PageHtml.TreeSelected(tv)
+            }
+            if (e is of UI.MenuBar) { img = Http.PageHtml.Menus(e) }
+            if (e is of UI.Image) {
+                // (another picture: another framebuffer - the pixels of the same one are not compared)
+                UI.Image im = e
+                if (im.Source != undefined) { img = "fb" + im.Source.id }
+            }
+            return Json.Serialize(t) + "|" + c + "|" + img + "|" + e.Visible + "|" + e.Enabled + "|" + fg + "|" + Http.PageHtml.Color(e.Background)
         }
 
         // The patch of an element (all that the browser shows of it).
@@ -69,12 +86,192 @@ namespace Http {
             else if (e is of UI.TextBox) { UI.TextBox tb = e; t = tb.Text }
             var p = "{\"e\": " + id + ", \"t\": " + Json.Serialize(t) + ", \"v\": " + Http.PageHtml.Bool(e.Visible) + ", \"n\": " + Http.PageHtml.Bool(e.Enabled)
             if (e is of UI.CheckBox) { UI.CheckBox ch = e; p = p + ", \"c\": " + Http.PageHtml.Bool(ch.IsChecked) }
+            if (e is of UI.DrawingCanvas) { p = p + ", \"img\": " + Json.Serialize(Http.PageHtml.Image(e)) }
+            if (e is of UI.ItemsControl) {
+                UI.ItemsControl lc = e
+                p = p + ", \"rows\": " + Http.PageHtml.RowsJson(lc) + ", \"sel\": " + lc.SelectedIndex
+                var head = Http.PageHtml.Head(lc)
+                if (head != "") { p = p + ", \"head\": " + Json.Serialize(head) }
+            }
+            if (e is of UI.TreeView) { UI.TreeView tp = e; p = p + ", \"rows\": " + Http.PageHtml.TreeRowsJson(tp) + ", \"sel\": " + Http.PageHtml.TreeSelected(tp) }
+            if (e is of UI.MenuBar) { p = p + ", \"menu\": " + Json.Serialize(Http.PageHtml.Menus(e)) }
+            if (e is of UI.Image) { UI.Image pic = e; p = p + ", \"img\": " + Json.Serialize(Http.PageHtml.Picture(pic.Source)) }
             var fg = Http.PageHtml.Color(e.Foreground)
             if (e is of UI.Label) { UI.Label lc = e; var own = Http.PageHtml.Color(lc.Color); if (own != undefined) { fg = own } }
             if (fg != undefined) { p = p + ", \"fg\": \"" + fg + "\"" }
             var bg = Http.PageHtml.Color(e.Background)
             if (bg != undefined) { p = p + ", \"bg\": \"" + bg + "\"" }
             return p + "}"
+        }
+
+        // The picture of a DrawingCanvas as a data URL (PNG; "" before it painted) and a checksum of it.
+        static string Image(UI.DrawingCanvas dc) {
+            if (dc.framebuffer == undefined) { return "" }
+            return "data:image/png;base64," + Http.Base64.Encode(dc.framebuffer.ToPng())
+        }
+
+        // The rows of a list as a JSON array of their HTML (inside the row).
+        static string RowsJson(UI.ItemsControl ic) {
+            var rows = ic.Rows()
+            var t = "["
+            for (var i = 0; i < rows.Count; i++) {
+                if (i > 0) { t = t + "," }
+                t = t + Json.Serialize(Http.PageHtml.Row(ic, i))
+            }
+            return t + "]"
+        }
+
+        // The HTML inside the row `index`: its template element (display only, like in the UI library: no ids, the events are those of the list), the
+        // cells of the columns of a ListView, or the text (DisplayMember).
+        static string Row(UI.ItemsControl ic, int index) {
+            var rows = ic.Rows()
+            if (ic.ItemTemplate != undefined && index < ic.rowElements.Count) {
+                any built = ic.rowElements[index]
+                if (built != undefined) { return Http.PageHtml.Render(built, new List()) }
+            }
+            if (ic.ItemTemplate == undefined && ic is of UI.ListView) {
+                UI.ListView lv = ic
+                if (lv.columns.Count > 0) {
+                    var cells = ""
+                    for (var c = 0; c < lv.columns.Count; c++) {
+                        UI.GridColumn column = lv.columns[c]
+                        cells = cells + "<span class=\"f-cell\"" + Http.PageHtml.CellStyle(column) + ">" + Http.PageHtml.Escape(UI.M.Text(UI.M.Member(rows[index], column.member))) + "</span>"
+                    }
+                    return cells
+                }
+            }
+            return Http.PageHtml.Escape(ic.ItemText(rows[index]))
+        }
+
+        // The header of a ListView with columns (its titles, an arrow at the column it is sorted by; a click sorts); "" for other lists.
+        static string Head(UI.ItemsControl ic) {
+            if (ic.ItemTemplate != undefined || !(ic is of UI.ListView)) { return "" }
+            UI.ListView lv = ic
+            if (lv.columns.Count == 0) { return "" }
+            var t = ""
+            for (var c = 0; c < lv.columns.Count; c++) {
+                UI.GridColumn column = lv.columns[c]
+                var arrow = ""
+                if (column.member != "" && column.member == lv.sortedBy) {
+                    arrow = " &#9650;"
+                    if (lv.sortDescending) { arrow = " &#9660;" }
+                }
+                t = t + "<span class=\"f-cell\" data-c=\"" + c + "\"" + Http.PageHtml.CellStyle(column) + ">" + Http.PageHtml.Escape(column.header) + arrow + "</span>"
+            }
+            return t
+        }
+
+        // (the width of a column; -1: the rest)
+        static string CellStyle(UI.GridColumn column) {
+            if (column.width < 0) { return " style=\"flex:1\"" }
+            return " style=\"width:" + column.width + "px\""
+        }
+
+        // The visible nodes of a tree as rows (JSON array of their HTML): indented by the depth, a box that opens and closes the ones with children.
+        static string TreeRowsJson(UI.TreeView tv) {
+            tv.Flatten()
+            var t = "["
+            for (var i = 0; i < tv.visibleNodes.Count; i++) {
+                if (i > 0) { t = t + "," }
+                t = t + Json.Serialize(Http.PageHtml.TreeRow(tv, i))
+            }
+            return t + "]"
+        }
+
+        static string TreeRow(UI.TreeView tv, int index) {
+            UI.TreeNode node = tv.visibleNodes[index]
+            var box = "&nbsp;"
+            if (node.HasChildren()) {
+                box = "&#9656;"
+                if (node.Expanded) { box = "&#9662;" }
+            }
+            return "<span class=\"f-tog\" style=\"margin-left:" + (node.Depth() * tv.Indent) + "px\">" + box + "</span>" + Http.PageHtml.Escape(node.Text)
+        }
+
+        // (the row of the selected node; -1: none or not visible)
+        static int TreeSelected(UI.TreeView tv) {
+            if (tv.selected == undefined) { return -1 }
+            return tv.visibleNodes.IndexOf(tv.selected)
+        }
+
+        // The menus of a MenuBar: a title each, its rows in a popup (opened and closed by the browser itself); a row is found by its path ("0/2/1").
+        static string Menus(UI.MenuBar mb) {
+            var t = ""
+            for (var i = 0; i < mb.menus.Count; i++) {
+                UI.MenuItem menu = mb.menus[i]
+                t = t + "<div class=\"f-menu\"><span class=\"f-mtitle\">" + Http.PageHtml.Escape(menu.Header) + "</span><div class=\"f-pop\">" + Http.PageHtml.MenuRows(menu.items, "" + i) + "</div></div>"
+            }
+            return t
+        }
+
+        static string MenuRows(List items, string path) {
+            var t = ""
+            for (var i = 0; i < items.Count; i++) {
+                UI.MenuItem item = items[i]
+                if (item.separator) {
+                    t = t + "<div class=\"f-sep\"></div>"
+                    continue
+                }
+                var cls = "f-mi"
+                if (!item.Enabled) { cls = "f-mi f-dis" }
+                var check = ""
+                if (item.Checkable && item.IsChecked) { check = "<span class=\"f-chk\">&#10003;</span>" }
+                var key = ""
+                if (item.Shortcut != "") { key = "<span class=\"f-key\">" + Http.PageHtml.Escape(item.Shortcut) + "</span>" }
+                var sub = ""
+                if (item.HasSubmenu()) {
+                    cls = cls + " f-sub"
+                    sub = "<span class=\"f-key\">&#9656;</span><div class=\"f-pop\">" + Http.PageHtml.MenuRows(item.items, path + "/" + i) + "</div>"
+                }
+                t = t + "<div class=\"" + cls + "\" data-p=\"" + path + "/" + i + "\">" + check + "<span>" + Http.PageHtml.Escape(item.Header) + "</span>" + key + sub + "</div>"
+            }
+            return t
+        }
+
+        // The rows of the lists with a template are built (all of them: the browser scrolls itself; the UI library builds only the visible ones).
+        static undefined BuildRows(UI.Element e, UI.Root root) {
+            if (e is of UI.ItemsControl) {
+                UI.ItemsControl ic = e
+                if (ic.ItemTemplate == undefined) { return }
+                var rows = ic.Rows()
+                if (ic.builtCount != rows.Count) {
+                    ic.DropRows()
+                    for (var i = 0; i < rows.Count; i++) { ic.rowElements.Add(undefined) }
+                    ic.builtCount = rows.Count
+                }
+                var tpl = ic.ItemTemplate
+                for (var i = 0; i < rows.Count; i++) {
+                    any row = ic.rowElements[i]
+                    if (row == undefined) {
+                        row = tpl.Build(rows[i])
+                        row.TakeTo(ic)
+                        row.parent = ic
+                        ic.rowElements[i] = row
+                        row.Poll(root)
+                        row.Measure(root, -1, -1)
+                    }
+                }
+                return
+            }
+            if (e is of UI.Panel) {
+                UI.Panel p = e
+                for (var i = 0; i < p.children.Count; i++) { Http.PageHtml.BuildRows(p.children[i], root) }
+            } else if (e is of UI.Border) {
+                UI.Border b = e
+                any child = b.child
+                if (child != undefined) { Http.PageHtml.BuildRows(child, root) }
+            }
+        }
+
+        // A framebuffer as a data URL (PNG; "" for none).
+        static string Picture(Framebuffer fb) {
+            if (fb == undefined) { return "" }
+            return "data:image/png;base64," + Http.Base64.Encode(fb.ToPng())
+        }
+
+        static int ImageSignature(UI.DrawingCanvas dc) {
+            if (dc.framebuffer == undefined) { return 0 }
+            return Hash.Crc32.Of(dc.framebuffer.ToPng())
         }
 
         static string Bool(bool b) {
@@ -123,7 +320,9 @@ namespace Http {
         }
 
         static string Attrs(UI.Element e, List elements, string cls, string extraStyle) {
-            var a = " id=\"f" + Http.PageHtml.IdOf(elements, e) + "\" class=\"" + cls + "\"" + Http.PageHtml.Style(e, extraStyle)
+            var id = Http.PageHtml.IdOf(elements, e)
+            var a = " class=\"" + cls + "\"" + Http.PageHtml.Style(e, extraStyle)
+            if (id >= 0) { a = " id=\"f" + id + "\"" + a }   // (the elements of a template row have none)
             if (!e.Visible) { a = a + " hidden" }
             if (e.ToolTip != "") { a = a + " title=\"" + Http.PageHtml.Escape(e.ToolTip) + "\"" }
             return a
@@ -131,6 +330,54 @@ namespace Http {
 
         // The HTML of an element and what is inside it.
         static string Render(UI.Element e, List elements) {
+            if (e is of UI.DrawingCanvas) {
+                UI.DrawingCanvas dc = e
+                var size = " width=\"" + dc.actualWidth + "\" height=\"" + dc.actualHeight + "\""
+                return "<img data-k=\"draw\" draggable=\"false\"" + Http.PageHtml.Attrs(e, elements, "f-draw", "") + size + " src=\"" + Http.PageHtml.Image(dc) + "\">"
+            }
+            if (e is of UI.TreeView) {
+                // (the visible nodes as rows, like a list: a click selects, a click on the box opens or closes, a double click does both and activates)
+                UI.TreeView tv = e
+                tv.Flatten()
+                var sel = Http.PageHtml.TreeSelected(tv)
+                var html = ""
+                for (var i = 0; i < tv.visibleNodes.Count; i++) {
+                    var cls = "f-row"
+                    if (i == sel) { cls = "f-row f-sel" }
+                    html = html + "<div class=\"" + cls + "\" data-i=\"" + i + "\">" + Http.PageHtml.TreeRow(tv, i) + "</div>"
+                }
+                return "<div data-k=\"list\" tabindex=\"0\"" + Http.PageHtml.Attrs(e, elements, "f-list f-tree", "overflow:auto;") + ">" + html + "</div>"
+            }
+            if (e is of UI.MenuBar) {
+                return "<div data-k=\"menu\"" + Http.PageHtml.Attrs(e, elements, "f-menubar", "") + ">" + Http.PageHtml.Menus(e) + "</div>"
+            }
+            if (e is of UI.ItemsControl) {
+                // (ListBox, ListView: the rows - text, cells of the columns or the template; a click selects, a double click activates, a click on a title
+                // of the columns sorts)
+                UI.ItemsControl ic = e
+                var rows = ic.Rows()
+                var html = ""
+                var head = Http.PageHtml.Head(ic)
+                var listClass = "f-list"
+                if (head != "") {
+                    html = "<div class=\"f-head\">" + head + "</div>"
+                    listClass = "f-list f-cols"
+                }
+                for (var i = 0; i < rows.Count; i++) {
+                    var cls = "f-row"
+                    if (i == ic.SelectedIndex) { cls = "f-row f-sel" }
+                    html = html + "<div class=\"" + cls + "\" data-i=\"" + i + "\">" + Http.PageHtml.Row(ic, i) + "</div>"
+                }
+                return "<div data-k=\"list\" tabindex=\"0\"" + Http.PageHtml.Attrs(e, elements, listClass, "overflow:auto;") + ">" + html + "</div>"
+            }
+            if (e is of UI.Image) {
+                UI.Image im = e
+                var fit = "contain"
+                if (im.Stretch == UI.Stretch.None) { fit = "none" }
+                else if (im.Stretch == UI.Stretch.Fill) { fit = "fill" }
+                else if (im.Stretch == UI.Stretch.UniformToFill) { fit = "cover" }
+                return "<img" + Http.PageHtml.Attrs(e, elements, "f-image", "object-fit:" + fit + ";") + " alt=\"\" src=\"" + Http.PageHtml.Picture(im.Source) + "\">"
+            }
             if (e is of UI.Run) {
                 UI.Run r = e
                 return "<span" + Http.PageHtml.Attrs(e, elements, "f-run", "") + ">" + Http.PageHtml.Escape(r.Text) + "</span>"
@@ -252,6 +499,49 @@ namespace Http {
         }
     }
 
+    // The browser of a page, for the code of the page (a field `Http.Browser browser` of the page class is set when the page is made): JS in the browser.
+    // The calls go out with the next answer of the circuit (at the latest after a tenth of a second) - they do not wait: `Call` gets its result later,
+    // in its callback (on the thread of the page, like an event).
+    class Browser {
+        Http.PageState state
+
+        construct(Http.PageState state) { this.state = state }
+
+        // Calls the function `name` of the page's window (`window[name](...args)`; a Promise is waited for) with the arguments (a JSON value each); `callback`
+        // gets the result (JSON: numbers, texts, bool, arrays, JsonObjects; undefined when the function threw).
+        any Call(string name, any args = undefined, any callback = undefined, any limit = 10s) {
+            if (args == undefined) { args = new any[0] }
+            var number = this.state.callbacks.Count
+            var call = "{\"id\": " + number + ", \"fn\": " + Json.Serialize(name) + ", \"args\": " + Json.Serialize(args) + "}"
+            if (callback != undefined) {
+                this.state.callbacks.Add(take callback)   // (the list keeps the lambda: it lives until its answer comes)
+                this.state.outbox.Add(call)
+                return undefined
+            }
+            // (waiting: the call goes out on the page's channel at once, the answer comes back through the directory - the circuit itself is busy
+            // meanwhile)
+            this.state.callbacks.Add(undefined)
+            var done = new Completion()
+            var d = this.state.directory
+            d.Expect(this.state.id + "/" + number, done.Share())   // (the answer may reach the directory first: it waits there for this)
+            if (this.state.link == undefined) { this.state.outbox.Add(call) }   // (not connected yet: with the first answer)
+            else { this.state.link.Send("{\"patches\": [], \"js\": [" + call + "]}") }
+            return done.Wait(limit)
+        }
+
+        // Gives the element the focus - in the UI root of the page (its keys go to it) and in the browser.
+        undefined Focus(UI.Element element) { this.state.root.SetFocus(element) }
+
+        // The keys of the whole page, before the element with the focus gets them: `handler(key, mod)` (UI.Keys, UI.Keys.Shift(mod)/Shortcut(mod))
+        // returns true when it took the key.
+        undefined OnKey(lambda<int, int> handler) { this.state.root.onKeyPreview = take handler }
+
+        // Runs JS code in the page (no result).
+        undefined Run(string code) {
+            this.state.outbox.Add("{\"id\": -1, \"code\": " + Json.Serialize(code) + "}")
+        }
+    }
+
     // What a page is in its circuit: the UI root, the page, its elements and what the browser has of them (the circuit owns one: a method of an actor
     // that calls another method of the same actor would only post a message, so the work is done here).
     class PageState {
@@ -263,6 +553,15 @@ namespace Http {
         any page
         List elements
         List props
+        // what goes to the browser with the next answer (JS calls) and the callbacks of the calls by their number
+        List outbox
+        List callbacks
+        Http.Browser browser
+        Http.PageDirectory directory
+        // the channel to the page's WebSocket (from the socket when the browser connects): the events come in, the answers and pushes go out
+        ChannelEnd<string, string> link
+        // the element with the focus as the browser has it (its number; -1 none)
+        int seenFocus = -1
 
         construct(string typeName, string id, string session) {
             this.id = id
@@ -276,12 +575,26 @@ namespace Http {
             this.root.content.Add(view)
             this.elements = new List()
             this.props = new List()
+            this.outbox = new List()
+            this.callbacks = new List()
+            // (a page with a field `Http.Browser browser` gets the browser: browser.Call(...), browser.Run(...))
+            if (Type.Of(this.page).Has("browser")) {
+                this.browser = new Http.Browser(this)
+                Reflect.Set(this.page, "browser", this.browser)
+            }
+        }
+
+        // (the layout of the UI library - the sizes of the panels with places and of the drawing canvases - and the painting of the canvases)
+        undefined Layout() {
+            this.root.content.Measure(this.root, 1280, 800)
+            this.root.content.Arrange(this.root, 0, 0, 1280, 800)
+            this.root.content.Poll(this.root)
+            Http.PageHtml.BuildRows(this.root.content, this.root)
         }
 
         // The HTML of the page (its view; the sizes of the panels with places from the layout of the UI library).
         string Html() {
-            this.root.content.Measure(this.root, 1280, 800)
-            this.root.content.Arrange(this.root, 0, 0, 1280, 800)
+            this.Layout()
             UI.Element view = this.page.view
             this.elements = new List()
             Http.PageHtml.Collect(view, this.elements)
@@ -298,6 +611,34 @@ namespace Http {
             JsonObject o = ev
             int id = o.Get("e")
             string kind = o.Get("k")
+            if (kind == "js") {
+                // (the answer of a browser.Call: its callback gets the result)
+                int call = o.Get("id")
+                if (call >= 0 && call < this.callbacks.Count) {
+                    any callback = this.callbacks[call]
+                    this.callbacks[call] = undefined
+                    if (callback != undefined) { callback(o.Get("v")) }
+                }
+                return this.Changes()
+            }
+            if (kind == "focus") {
+                // (the browser moved the focus: the UI root follows)
+                if (id >= 0 && id < this.elements.Count) { this.root.SetFocus(this.elements[id]) }
+                else { this.root.SetFocus(undefined) }
+                this.seenFocus = id
+                return this.Changes()
+            }
+            if (kind == "key") {
+                // (a key: to the element with the focus - through the keys of the page, browser.OnKey - like on the desktop)
+                if (id >= 0 && id < this.elements.Count && this.root.focusElement != this.elements[id]) {
+                    this.root.SetFocus(this.elements[id])
+                    this.seenFocus = id
+                }
+                int key = o.Get("key")
+                int mod = o.Get("mod")
+                this.root.KeyDown(key, mod)
+                return this.Changes()
+            }
             if (id >= 0 && id < this.elements.Count) {
                 UI.Element e = this.elements[id]
                 if (e.Enabled && e.Visible) {
@@ -308,6 +649,55 @@ namespace Http {
                         UI.CheckBox cb = e
                         bool v = o.Get("v")
                         if (cb.IsChecked != v) { cb.Toggle() }
+                    } else if ((kind == "select" || kind == "activate") && e is of UI.ItemsControl) {
+                        UI.ItemsControl ic = e
+                        int row = o.Get("v")
+                        ic.Select(row)
+                        if (kind == "activate" && ic.OnActivate != undefined) {
+                            ic.activated = true
+                            var act = ic.OnActivate
+                            act()
+                        }
+                    } else if ((kind == "select" || kind == "toggle" || kind == "activate") && e is of UI.TreeView) {
+                        UI.TreeView tv = e
+                        tv.Flatten()
+                        int row = o.Get("v")
+                        if (row >= 0 && row < tv.visibleNodes.Count) {
+                            UI.TreeNode node = tv.visibleNodes[row]
+                            if (kind != "select" && node.HasChildren()) { node.Expanded = !node.Expanded }
+                            if (kind != "toggle") { tv.SelectNode(node) }
+                            if (kind == "activate") { tv.Activate() }
+                        }
+                    } else if (kind == "menu" && e is of UI.MenuBar) {
+                        UI.MenuBar mb = e
+                        string path = o.Get("v")
+                        any steps = path.Split("/")
+                        List level = mb.menus
+                        UI.MenuItem item = undefined
+                        for (var i = 0; i < steps.length; i++) {
+                            string step = steps[i]
+                            any at = step.TryToInt()
+                            if (at == undefined || level == undefined || at < 0 || at >= level.Count) { item = undefined; break }
+                            item = level[at]
+                            level = item.items
+                        }
+                        if (item != undefined && item.Enabled && !item.separator && !item.HasSubmenu()) { item.Activate() }
+                    } else if (kind == "sort" && e is of UI.ListView) {
+                        UI.ListView lv = e
+                        int column = o.Get("v")
+                        if (column >= 0 && column < lv.columns.Count) {
+                            UI.GridColumn gc = lv.columns[column]
+                            lv.SortBy(gc.member)
+                        }
+                    } else if (kind == "mouse" && e is of UI.DrawingCanvas) {
+                        UI.DrawingCanvas dc = e
+                        string what = o.Get("t")
+                        int x = o.Get("x")
+                        int y = o.Get("y")
+                        int button = o.Get("b")
+                        if (what == "down" && dc.OnMouseDown != undefined) { var down = dc.OnMouseDown; down(x, y, button) }
+                        if (what == "move" && dc.OnMouseMove != undefined) { var move = dc.OnMouseMove; move(x, y) }
+                        if (what == "up" && dc.OnMouseUp != undefined) { var up = dc.OnMouseUp; up(x, y, button) }
                     } else if (kind == "input" && e is of UI.TextBox) {
                         UI.TextBox tb = e
                         string text = o.Get("v")
@@ -323,12 +713,17 @@ namespace Http {
 
         // What changed since the browser got the last state.
         string Changes() {
+            this.Layout()
             UI.Element view = this.page.view
             var now = new List()
             Http.PageHtml.Collect(view, now)
             var same = now.Count == this.elements.Count
             for (var i = 0; same && i < now.Count; i++) { if (now[i] != this.elements[i]) { same = false } }
-            if (!same) { return "{\"html\": " + Json.Serialize(this.Html()) + "}" }
+            if (!same) {
+                var html = this.Html()
+                this.seenFocus = -1   // (a new tree: the browser has lost its focus)
+                return "{\"html\": " + Json.Serialize(html) + this.TakeOutbox() + this.FocusChange() + "}"
+            }
             var out = ""
             for (var i = 0; i < now.Count; i++) {
                 var p = Http.PageHtml.Props(now[i])
@@ -338,7 +733,36 @@ namespace Http {
                     out = out + Http.PageHtml.Patch(now[i], i)
                 }
             }
-            return "{\"patches\": [" + out + "]}"
+            return "{\"patches\": [" + out + "]" + this.TakeOutbox() + this.FocusChange() + "}"
+        }
+
+        // (the member "focus" of an answer when the code of the page moved the focus - browser.Focus, a key that moved it)
+        string FocusChange() {
+            var focus = this.root.focusElement
+            var id = -1
+            if (focus != undefined) { id = Http.PageHtml.IdOf(this.elements, focus) }
+            if (id == this.seenFocus || id < 0) { return "" }
+            this.seenFocus = id
+            return ", \"focus\": " + id
+        }
+
+        // (the JS calls that wait for the browser, as the member "js" of an answer)
+        string TakeOutbox() {
+            if (this.outbox.Count == 0) { return "" }
+            var t = ", \"js\": ["
+            for (var i = 0; i < this.outbox.Count; i++) {
+                if (i > 0) { t = t + ", " }
+                t = t + this.outbox[i]
+            }
+            this.outbox = new List()
+            return t + "]"
+        }
+
+        // What changed without an event of the browser (another task, a continuous canvas, JS calls): the answer, or "" when nothing did.
+        string Poll() {
+            var answer = this.Changes()
+            if (answer == "{\"patches\": []}") { return "" }
+            return answer
         }
 
     }
@@ -351,8 +775,9 @@ namespace Http {
         bool connected
         int created
 
-        construct(string typeName, string id, string session) {
+        construct(string typeName, string id, string session, Http.PageDirectory directory) {
             this.state = new Http.PageState(typeName, id, session)
+            this.state.directory = directory
             this.stopped = false
             this.connected = false
             this.created = DateTime.UtcNow.Ticks
@@ -360,9 +785,40 @@ namespace Http {
 
         string Html() { return this.state.Html() }
         string OnEvent(string json) { return this.state.OnEvent(json) }
+        string Poll() { return this.state.Poll() }
         string SessionId() { return this.state.session }
-        undefined Connected() { this.connected = true }
+        // The browser connected: its socket's end of the channel (the socket made it - it closes when the socket ends).
+        undefined Attach(ChannelEnd<string, string> end) {
+            this.state.link = take end
+            this.connected = true
+        }
         undefined Stop() { this.stopped = true }
+        // An event of the browser (or "" after a tenth of a second without one: what changed meanwhile); the answer goes back on the channel.
+        undefined Handle(string ev) {
+            string answer = ""
+            if (ev == "") { answer = this.state.Poll() }
+            else {
+                answer = this.state.OnEvent(ev)
+                if (answer == "{\"patches\": []}") { answer = "" }   // (nothing changed: nothing goes out)
+            }
+            if (answer.Length > 0) { this.state.link.Send(answer) }
+        }
+
+        // The thread of the circuit (its home): the messages until the browser connects, then the events of the channel - each answer goes back on it -
+        // and every tenth of a second without one what changed meanwhile (timers, a continuous canvas, the messages of other tasks). It ends with Stop
+        // (the directory, when the socket ended or the browser never came).
+        static undefined Serve(Http.PageCircuit c) {
+            while (!c.stopped && c.state.link == undefined) { process c }
+            while (!c.stopped) {
+                any ev = ""
+                try { ev = c.state.link.Receive(100ms) } catch (TimeoutException t) { ev = "" }
+                if (ev == undefined) { break }   // (the socket ended)
+                c.Handle(ev)   // (a message to itself: the handlers run as messages of the circuit - a browser.Call that waits there serves the others)
+                while (try process c) { }
+            }
+            // (the socket ended: the directory ends the circuit - Remove, Stop -; until then it is still there for its messages)
+            while (!c.stopped) { process c }
+        }
     }
 
     // (what the thread of a new circuit gets)
@@ -380,11 +836,50 @@ namespace Http {
     // The circuits of the pages by their id (an actor: the WebSocket of a page finds its circuit here).
     actor PageDirectory {
         Dictionary<string, Http.PageCircuit> circuits
+        // the waits of browser.Call by "<circuit>/<call number>"
+        Dictionary<string, Completion> waiting
+        // answers that came before their Expect (the call goes out on the page's channel, the Expect through this mailbox)
+        Dictionary<string, string> early
         bool stopped
 
         construct() {
             this.circuits = new Dictionary<string, Http.PageCircuit>()
+            this.waiting = new Dictionary<string, Completion>()
+            this.early = new Dictionary<string, string>()
             this.stopped = false
+        }
+
+        // browser.Call waits for the answer of `key` on `done`.
+        undefined Expect(string key, Completion done) {
+            if (this.early.ContainsKey(key)) {
+                string json = this.early[key]
+                this.early.Remove(key)
+                done.Set(Http.PageDirectory.ValueOf(json))
+                return
+            }
+            if (this.waiting.ContainsKey(key)) { this.waiting.Remove(key) }
+            this.waiting.Add(key, take done)   // (Add: `waiting[key] = take done` loses a parameter in the VM)
+        }
+
+        // The answer of the browser to a call (the JSON of its event): sets the Completion of who waits for it.
+        undefined Answer(string key, string json) {
+            if (!this.waiting.ContainsKey(key)) {
+                this.early[key] = json
+                return
+            }
+            Completion done = this.waiting[key]
+            done.Set(Http.PageDirectory.ValueOf(json))
+            this.waiting.Remove(key)
+        }
+
+        // (the result in the JSON of a browser's answer)
+        static any ValueOf(string json) {
+            any ev = Json.Parse(json)
+            if (ev is of JsonObject) {
+                JsonObject o = ev
+                return o.Get("v")
+            }
+            return undefined
         }
 
         undefined Add(string id, Http.PageCircuit c) {
@@ -447,13 +942,32 @@ namespace Http {
             if (c == undefined) { ws.Close(4404, "no such page"); return }
             string session = await c.SessionId()
             if (Http.Sessions.CookieOf(ws.Header("Cookie"), this.cookie) != session) { ws.Close(4401, "not your page"); return }
-            c.Connected()
+            // (a channel between this socket and the circuit: the events go in, the answers and pushes of the circuit come out; it closes when the socket
+            // ends - the circuit ends with it)
+            var link = Channel.Pair<string, string>()
+            c.Attach(link.Other())
             while (true) {
-                var text = ws.ReceiveText()
-                if (text == undefined) { break }
-                string answer = await c.OnEvent(text)
-                ws.Send(answer)
+                var text = ws.ReceiveText(20)
+                if (text == undefined) {
+                    if (!ws.IsOpen) { break }
+                } else {
+                    if (text.IndexOf("\"k\":\"js\"") >= 0 || text.IndexOf("\"k\": \"js\"") >= 0) {
+                        // (an answer to browser.Call: a waiting call gets it from the directory - its circuit is busy -, a callback from the circuit)
+                        any ev = Json.Parse(text)
+                        if (ev is of JsonObject) {
+                            JsonObject o = ev
+                            d.Answer(id + "/" + o.Get("id"), text)
+                        }
+                    }
+                    link.Send(text)
+                }
+                any out = link.TryReceive()
+                while (out != undefined) {
+                    ws.Send(out)
+                    out = link.TryReceive()
+                }
             }
+            link.Close()
             d.Remove(id)
         }
     }
@@ -498,13 +1012,14 @@ namespace Http {
         }
 
         // (a circuit on a thread of its own: it makes the page there and serves its messages until Stop)
-        static undefined StartCircuit(string typeName, string id, string session, Completion back) {
+        static undefined StartCircuit(string typeName, string id, string session, Http.PageDirectory directory, Completion back) {
             var start = new Http.PageStart(typeName, id, session)
-            fire handover back handover start {
+            // (the directory - an actor - goes with `with`: its reference, not the actor)
+            fire handover back handover start with directory {
                 try {
-                    var c = new Http.PageCircuit(start.typeName, start.id, start.session)
+                    var c = new Http.PageCircuit(start.typeName, start.id, start.session, directory)
                     back.Set(c)
-                    while (!c.stopped) { process c }
+                    Http.PageCircuit.Serve(c)
                 } catch (e) {
                     back.Fail(e)
                 }
@@ -521,7 +1036,7 @@ namespace Http {
             var id = Net.SecureRandom.Hex(16)
             var ready = new Completion()
             var back = ready.Share()
-            Http.Pages.StartCircuit(this.paths[request.path], id, session.Id, take back)
+            Http.Pages.StartCircuit(this.paths[request.path], id, session.Id, this.directory, take back)
             Http.PageCircuit c = ready.Wait(30s)
             var d = this.directory
             d.Add(id, c)
@@ -535,7 +1050,11 @@ namespace Http {
         }
 
         static string Css() {
-            return "body{margin:0;font-family:system-ui,sans-serif;font-size:14px}[hidden]{display:none!important}.f-label{white-space:pre}.f-flow{white-space:normal}.f-flow .f-button,.f-flow .f-check,.f-flow .f-text{display:inline-block;vertical-align:bottom}.f-button{font:inherit;padding:3px 12px}.f-text{font:inherit}.f-border{border:1px solid #8888;padding:4px}.f-check{user-select:none}"
+            return "body{margin:0;font-family:system-ui,sans-serif;font-size:14px}[hidden]{display:none!important}.f-label{white-space:pre}.f-flow{white-space:normal}.f-flow .f-button,.f-flow .f-check,.f-flow .f-text{display:inline-block;vertical-align:bottom}.f-button{font:inherit;padding:3px 12px}.f-text{font:inherit}.f-border{border:1px solid #8888;padding:4px}.f-check{user-select:none}.f-list{border:1px solid #8888;user-select:none}.f-row{padding:1px 4px;cursor:default}.f-sel{background:#0078d7;color:#fff}.f-cols .f-row,.f-head{display:flex;padding:1px 0}.f-head{position:sticky;top:0;background:#e8e8e8;border-bottom:1px solid #8888}.f-cell{flex:none;box-sizing:border-box;padding:0 4px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.f-head .f-cell{cursor:pointer;border-right:1px solid #8884}.f-tree .f-row{white-space:nowrap}.f-tog{display:inline-block;width:16px;text-align:center;cursor:pointer}" +
+                ".f-menubar{display:flex;background:#f0f0f0;border-bottom:1px solid #8884;user-select:none}.f-menu{position:relative}.f-mtitle{display:block;padding:3px 10px;cursor:default}.f-menu.open>.f-mtitle,.f-mtitle:hover{background:#0078d722}" +
+                ".f-pop{display:none;position:absolute;left:0;top:100%;min-width:160px;background:#fff;color:#000;border:1px solid #8888;box-shadow:2px 2px 6px #0003;z-index:10;padding:2px 0}.f-menu.open>.f-pop{display:block}" +
+                ".f-mi{position:relative;display:flex;padding:3px 8px 3px 22px;white-space:nowrap;cursor:default}.f-mi:hover{background:#0078d7;color:#fff}.f-mi>.f-pop{left:100%;top:-3px}.f-mi:hover>.f-pop{display:block}" +
+                ".f-dis,.f-dis:hover{background:none;color:#888}.f-chk{position:absolute;left:6px}.f-key{margin-left:auto;padding-left:24px;opacity:.7}.f-sep{border-top:1px solid #8884;margin:3px 0}"
         }
 
         // The script of the pages: the WebSocket, the events (input debounced), the changes.
@@ -545,14 +1064,35 @@ namespace Http {
                 "ws.onopen=function(){q.forEach(function(t){ws.send(t)});q=[]};" +
                 "function idOf(el){while(el&&!(el.id&&el.id.charAt(0)=='f')){el=el.parentElement}return el?+el.id.substring(1):-1}" +
                 "document.addEventListener('click',function(ev){var t=ev.target.closest('[data-k=click]');if(t){send({e:idOf(t),k:'click'})}});" +
+                "document.addEventListener('click',function(ev){var r=ev.target.closest('.f-row');if(r){var g=ev.target.closest('.f-tree .f-tog');send({e:idOf(r.parentElement),k:g?'toggle':'select',v:+r.dataset.i})}});" +
+                "function closeMenus(){document.querySelectorAll('.f-menu.open').forEach(function(m){m.classList.remove('open')})}" +
+                "document.addEventListener('click',function(ev){var t=ev.target.closest('.f-mtitle');if(t){var m=t.parentElement,was=m.classList.contains('open');closeMenus();if(!was){m.classList.add('open')}return}var i=ev.target.closest('.f-mi');if(i){if(!i.classList.contains('f-sub')&&!i.classList.contains('f-dis')){send({e:idOf(i.closest('.f-menubar')),k:'menu',v:i.dataset.p});closeMenus()}return}closeMenus()});" +
+                "document.addEventListener('mouseover',function(ev){var t=ev.target.closest('.f-mtitle');if(t&&document.querySelector('.f-menu.open')&&!t.parentElement.classList.contains('open')){closeMenus();t.parentElement.classList.add('open')}});" +
+                "document.addEventListener('click',function(ev){var c=ev.target.closest('.f-head .f-cell');if(c){send({e:idOf(c.parentElement.parentElement),k:'sort',v:+c.dataset.c})}});" +
+                "document.addEventListener('dblclick',function(ev){var r=ev.target.closest('.f-row');if(r){send({e:idOf(r.parentElement),k:'activate',v:+r.dataset.i})}});" +
                 "document.addEventListener('change',function(ev){var t=ev.target;if(t.dataset.k=='check'){send({e:idOf(t),k:'check',v:t.checked})}});" +
                 "var timers={};document.addEventListener('input',function(ev){var t=ev.target;if(t.dataset.k=='input'){var e=idOf(t);clearTimeout(timers[e]);timers[e]=setTimeout(function(){send({e:e,k:'input',v:t.value})},150)}});" +
-                "function apply(el,p){if(p.t!==undefined){if(el.tagName=='INPUT'){if(document.activeElement!==el){el.value=p.t}}else if(el.dataset.kind=='check'){el.querySelector('span').textContent=p.t}else{el.textContent=p.t}}" +
+                "function apply(el,p){if(p.t!==undefined){if(el.tagName=='INPUT'){if(document.activeElement!==el){el.value=p.t}}else if(el.dataset.kind=='check'){el.querySelector('span').textContent=p.t}else if(el.dataset.k!='list'){el.textContent=p.t}}" +
                 "if(p.c!==undefined){var i=el.querySelector('input');if(i){i.checked=p.c}}" +
                 "if(p.v!==undefined){el.hidden=!p.v}" +
                 "if(p.n!==undefined){var d=(el.tagName=='BUTTON'||el.tagName=='INPUT')?el:el.querySelector('input');if(d){d.disabled=!p.n}}" +
-                "if(p.fg!==undefined){el.style.color=p.fg}if(p.bg!==undefined){el.style.background=p.bg}}" +
-                "ws.onmessage=function(m){var d=JSON.parse(m.data);if(d.html!==undefined){document.getElementById('fire-root').innerHTML=d.html;return}(d.patches||[]).forEach(function(p){var el=document.getElementById('f'+p.e);if(el){apply(el,p)}})};" +
+                "if(p.rows!==undefined){var h=el.querySelector('.f-head');el.innerHTML='';if(h){if(p.head!==undefined){h.innerHTML=p.head}el.appendChild(h)}p.rows.forEach(function(t,i){var r=document.createElement('div');r.className='f-row'+(i==p.sel?' f-sel':'');r.dataset.i=i;r.innerHTML=t;el.appendChild(r)});var s=el.querySelector('.f-sel');if(s&&s.scrollIntoView){s.scrollIntoView({block:'nearest'})}}" +
+                "if(p.menu!==undefined){el.innerHTML=p.menu}if(p.img!==undefined){el.src=p.img}if(p.fg!==undefined){el.style.color=p.fg}if(p.bg!==undefined){el.style.background=p.bg}}" +
+                "function runJs(list){(list||[]).forEach(function(j){if(j.id<0){try{(0,eval)(j.code)}catch(x){}return}var r;try{r=window[j.fn].apply(window,j.args)}catch(x){send({k:'js',e:-1,id:j.id});return}Promise.resolve(r).then(function(v){send({k:'js',e:-1,id:j.id,v:v})},function(){send({k:'js',e:-1,id:j.id})})})}" +
+                "var lastFocus=-1;document.addEventListener('focusin',function(ev){var e=idOf(ev.target);if(e!==lastFocus){lastFocus=e;send({e:e,k:'focus'})}});" +
+                "document.addEventListener('focusout',function(ev){if(!ev.relatedTarget&&lastFocus!==-1){lastFocus=-1;send({e:-1,k:'focus'})}});" +
+                "var keys={Enter:13,Escape:27,Backspace:8,Delete:127,' ':32,ArrowRight:1073741903,ArrowLeft:1073741904,ArrowDown:1073741905,ArrowUp:1073741906,Home:1073741898,End:1073741901,PageUp:1073741899,PageDown:1073741902,Insert:1073741897};" +
+                "document.addEventListener('keydown',function(ev){var t=ev.target,k=ev.key,code=keys[k],mod=(ev.shiftKey?1:0)|(ev.ctrlKey?64:0)|(ev.altKey?256:0)|(ev.metaKey?1024:0);" +
+                "if(/^F([1-9]|1[0-2])$/.test(k)){code=1073741881+(+k.substring(1))}var short=ev.ctrlKey||ev.metaKey||ev.altKey;if(code===undefined&&short&&k.length==1){code=k.toLowerCase().charCodeAt(0)}if(code===undefined){return}" +
+                "var field=t.tagName=='INPUT'&&t.type!='checkbox'||t.tagName=='TEXTAREA',edit=short&&k.length==1&&'acvxyz'.indexOf(k.toLowerCase())>=0;if(field&&!(code==13||code==27||short&&!edit)){return}if(short&&k.length==1&&!edit){ev.preventDefault()}if((t.tagName=='BUTTON'||t.type=='checkbox')&&(code==13||code==32)){return}" +
+                "var e=idOf(t);if(field&&code==13&&t.dataset.k=='input'){clearTimeout(timers[e]);send({e:e,k:'input',v:t.value})}" +
+                "if(t.dataset&&t.dataset.k=='list'&&(code==32||code>1073741896)){ev.preventDefault()}send({e:e,k:'key',key:code,mod:mod})});" +
+                "var down=0,last=0;function pos(ev,t){var r=t.getBoundingClientRect();return{x:Math.round((ev.clientX-r.left)*t.width/r.width),y:Math.round((ev.clientY-r.top)*t.height/r.height)}}" +
+                "document.addEventListener('pointerdown',function(ev){var t=ev.target;if(t.dataset&&t.dataset.k=='draw'){down=1;t.setPointerCapture(ev.pointerId);var p=pos(ev,t);send({e:idOf(t),k:'mouse',t:'down',x:p.x,y:p.y,b:ev.button+1});ev.preventDefault()}});" +
+                "document.addEventListener('pointermove',function(ev){var t=ev.target;if(down&&t.dataset&&t.dataset.k=='draw'){var n=Date.now();if(n-last<30){return}last=n;var p=pos(ev,t);send({e:idOf(t),k:'mouse',t:'move',x:p.x,y:p.y})}});" +
+                "document.addEventListener('pointerup',function(ev){var t=ev.target;if(down&&t.dataset&&t.dataset.k=='draw'){down=0;var p=pos(ev,t);send({e:idOf(t),k:'mouse',t:'up',x:p.x,y:p.y,b:ev.button+1})}});" +
+                "ws.onmessage=function(m){var d=JSON.parse(m.data);if(d.html!==undefined){document.getElementById('fire-root').innerHTML=d.html}else{(d.patches||[]).forEach(function(p){var el=document.getElementById('f'+p.e);if(el){apply(el,p)}})}" +
+                "if(d.focus!==undefined){var f=document.getElementById('f'+d.focus);if(f){lastFocus=d.focus;var c=f.matches('input,button,textarea,[tabindex]')?f:f.querySelector('input,button,textarea,[tabindex]');(c||f).focus()}}runJs(d.js)};" +
                 "})();"
         }
 
