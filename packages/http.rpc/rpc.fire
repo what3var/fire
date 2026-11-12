@@ -29,7 +29,7 @@ namespace Http {
             try {
                 if (m.Kind == "method") {
                     if (httpMethod != "POST") { return Http.RpcCall.Fail(405, "A method is called with POST.", "") }
-                    var args = Http.RpcCall.Args(body, m)
+                    any args = Http.RpcCall.Args(body, m)
                     if (args == undefined) { return Http.RpcCall.Fail(400, "'" + memberName + "' takes " + m.ParamCount() + " argument(s) as a JSON array.", "") }
                     any result = m.Call(instance, args)
                     return Http.RpcCall.Ok(result)
@@ -115,10 +115,11 @@ namespace Http {
         // The service of the type (or a subclass, or a class that implements the interface) `typeName`.
         static any Service(List services, string typeName) {
             if (services == undefined) { return undefined }
+            any wanted = Type.Named(typeName)
             for (var i = 0; i < services.Count; i++) {
                 any s = services[i]
                 Type st = Type.Of(s)
-                if (st.Name == typeName || st.IsSubclassOf(typeName)) { return s }
+                if (st.Name == typeName || wanted != undefined && st.IsSubclassOf(wanted)) { return s }
                 any ifaces = st.Interfaces
                 for (var k = 0; k < ifaces.length; k++) { if (ifaces[k] == typeName) { return s } }
             }
@@ -249,11 +250,11 @@ namespace Http {
         Http.Response Handle(Http.Context ctx, Http.Next next) {
             var request = ctx.Request
             if (!request.path.StartsWith(this.prefix + "/")) { return next.Invoke(ctx) }
-            var rest = request.path.Substring(this.prefix.Length + 1)
+            string rest = request.path.Substring(this.prefix.Length + 1)
             any slash = rest.LastIndexOf("/")
             if (slash <= 0) { return Http.RpcCall.Answer(Http.RpcCall.Fail(404, "Expected " + this.prefix + "/<Class>/<Member>.", "")) }
-            var publicName = rest.Substring(0, slash)
-            var memberName = rest.Substring(slash + 1)
+            string publicName = rest.Substring(0, slash)
+            string memberName = rest.Substring(slash + 1)
             // (only a client with a session it already had: no cookie of a living session - or no Http.Sessions before - is a 401)
             any current = ctx.Item("session")
             if (current == undefined) { return Http.RpcCall.Answer(Http.RpcCall.Fail(401, "A call needs a session: put Http.Sessions before Http.Rpc.", "")) }
