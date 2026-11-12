@@ -65,6 +65,16 @@ namespace fire.Standard
     /// <summary>`__fd_wait(fd, events, ms)` (docs/ROADMAP_HTTP.md step 0): waits until the socket `fd` (the net package's __NetNativeHandle) is readable (bit 1)
     /// or writable (bit 2), `ms` ran out (0) or the task is cancelled; -1: not supported here (the caller waits as before). The VM: fire.Runtime.FdWait;
     /// native: fire_rt.h fire_fd_wait (a poller thread).</summary>
+    /// <summary>`__type_arg(i)`: the i-th type argument of the running generic method (its text: "Person", "List<int>"), undefined when it has none -
+    /// what `Type.Of<T>()` of the reflection library reads.</summary>
+    public static class TypeArgMethods
+    {
+        public const string NativeName = "__type_arg";
+        public static Func<Value[], Value>? Implementation;
+        public static Value Call(Value[] args) =>
+            (Implementation ?? throw new InvalidOperationException("__type_arg needs a running program."))(args);
+    }
+
     public static class FdWaitMethods
     {
         public const string NativeName = "__fd_wait";

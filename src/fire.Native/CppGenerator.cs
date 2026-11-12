@@ -1035,6 +1035,23 @@ namespace fire.Native
 
         /// <summary>The C++ expression (TArgs) of the type arguments of a SetTypeArgs text: a constant list, or one put together at run time when it
         /// names a type parameter of the running code (`$k@Class` of the object, `$k@` of the call).</summary>
+        /// <summary>`T is of X` (OpCode.TypeParamIsOf): the names of the types that are X - X, the classes that derive from it or implement it.</summary>
+        private readonly Dictionary<string, int> _typeIsOfIds = new(StringComparer.Ordinal);
+        private string TypeIsOfTable(string target)
+        {
+            if (!_typeIsOfIds.TryGetValue(target, out int id)) _typeIsOfIds[target] = id = _typeIsOfIds.Count;
+            return $"{Px}tio_{id}";
+        }
+        private IEnumerable<string> TypeIsOfNames(string target)
+        {
+            string wanted = GenericClassNames.PlainName(target.Split('<')[0]);
+            var names = new SortedSet<string>(StringComparer.Ordinal) { wanted };
+            foreach (var rc in _program.Program.Classes.Values)
+                for (var r = rc; r != null; r = r.Base)
+                    if (GenericClassNames.PlainName(r.Name) == wanted || r.Interfaces.Any(i => GenericClassNames.PlainName(i) == wanted)) { names.Add(GenericClassNames.PlainName(rc.Name)); break; }
+            return names;
+        }
+
         private string TArgsExpr(Func f, string text)
         {
             var parts = text.Split('|');
@@ -1131,6 +1148,8 @@ namespace fire.Native
             }
             foreach (var (text, id) in _targListIds.OrderBy(kv => kv.Value))
                 sb.AppendLine($"static const TArg* const {Px}tl_{id}[] = {{{string.Join(", ", text.Split('|').Select(TArgRef))}}};");
+            foreach (var (target, id) in _typeIsOfIds.OrderBy(kv => kv.Value))
+                sb.AppendLine($"static const char* const {Px}tio_{id}[] = {{{string.Join(", ", TypeIsOfNames(target).Select(CString))}, NULL}};");
             sb.Append(targOfCode);
             return sb.ToString();
         }
@@ -5106,6 +5125,16 @@ namespace fire.Native
                         Check();
                         d = first + 1; SetR(first, false); return Next();
                     }
+                    if (native == TypeArgMethods.NativeName && argc == 1)
+                    {
+                        // the type argument of the running generic method (its display text; undefined without one)
+                        int first = d - 1;
+                        string index = SR(first);
+                        E(f.HasCallTArgs
+                            ? $"{{ Value ix_ = {index}; {T(first)} = ctargs && ix_.kind == K_Int && ix_.i >= 0 && ctargs[ix_.i] && ctargs[ix_.i]->display ? strFromUtf8(ctargs[ix_.i]->display, &{OwnerList()}) : Undef(); }}"
+                            : $"{T(first)} = Undef();");
+                        d = first + 1; SetR(first, false); return Next();
+                    }
                     if (native == FdWaitMethods.NativeName && argc == 3)
                     {
                         // waiting for a socket (fire_rt.h fire_fd_wait: the poller thread; -1 where there is none)
@@ -6279,6 +6308,14 @@ namespace fire.Native
                     Check();
                     // what TypeArray lets through: an array of this element, or undefined
                     if (known) { SetT(d - 1, TypeOf(KindArr, ins.A[0]) | NullableBit); _kindsKept = true; }
+                    return Next();
+                }
+                case OpCode.TypeParamIsOf:
+                {
+                    // `T is of X`: the name of the type argument that runs among the names that are X (X, what derives from it, what implements it)
+                    E($"{{ TArgs ta_ = {TArgsExpr(f, Str(ins.A[0]))}; {T(d)} = Bool(ta_ && ta_[0] && ta_[0]->display && typeNameIn(ta_[0]->display, {TypeIsOfTable(Str(ins.A[1]))})); }}");
+                    SetR(d, false);
+                    d++;
                     return Next();
                 }
                 case OpCode.TypeArrayOfParam:

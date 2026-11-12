@@ -3527,6 +3527,15 @@ FIRE_FN Value awaitRun(Value items, Value res, Value fails, OwnList* list) {
 }
 
 
+/* `T is of X` (OpCode.TypeParamIsOf): is the type `name` (a type argument's display text, `List<int>` too) among `names` (NULL-terminated)? */
+FIRE_FN bool typeNameIn(const char* name, const char* const* names) {
+    size_t n = 0;
+    while (*name == ' ') name++;
+    while (name[n] && name[n] != '<' && name[n] != ' ') n++;
+    for (; *names; names++) if (strncmp(*names, name, n) == 0 && (*names)[n] == 0) return true;
+    return false;
+}
+
 /* CheckLambdaSignature: a value assigned to a `lambda<...>` annotation must have that many parameters (otherwise an ArgumentException) - or be undefined. */
 FIRE_FN void checkLambda(Value v, int nparams) {
     if (FIRE_UNLIKELY(v.kind != K_Lambda || lamOf(v)->nparams != (uint32_t)nparams) && v.kind != K_Undefined) {   /* (undefined: no lambda yet) */

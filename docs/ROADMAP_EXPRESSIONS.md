@@ -1,6 +1,6 @@
 # Roadmap: expression trees (`lambda expression<T>`)
 
-Status: concept, to be prepared in parallel to [ROADMAP_DATA.md](ROADMAP_DATA.md) (the query builder of `Data` is its first user; LINQ, the UI
+Status: steps 1-3 built (see "Status" at the end); prepared in parallel to [ROADMAP_DATA.md](ROADMAP_DATA.md) (the query builder of `Data` is its first user; LINQ, the UI
 bindings and RPC filters can use it as well).
 
 ## The idea
@@ -113,3 +113,20 @@ print(Probe<Person>.Show(p => p.orders.Any(o => o.total > 10)))         // p => 
 - every node kind once; nested lambdas; captured locals, fields, member chains of captured objects, calls without a parameter (evaluated once);
 - the errors (block body, assignment, a lambda in a variable);
 - `Invoke` gives the same as the compiled lambda; VM == native for `ToString` and `Invoke`; stripping 3 keeps the named members.
+
+## Status
+
+- **Built (steps 1-3):** `lambda expression<T>` / `<A, B>` (Parser: `LambdaSignature.IsExpression`; a lambda with an expression body:
+  `LambdaExpr.ExpressionBody`). The type checker (`InferTreeArg`) checks the lambda against the shape, applies the tree rules (TC030) and keeps the type of
+  every part (`ResolveResult.Trees`) - for method calls, static calls, constructors. The compiler (Compiler.Trees.cs) turns the lambda into
+  `__builder(...).__Attach(lambda)`: the builder is a lambda with the same parameters and captures whose body is `new BinaryExpression(...)` and so on -
+  what does not depend on a parameter is evaluated there (inside a nested lambda through its loads) and copied into a `CapturedExpression`. The nodes are
+  prelude classes (Expression and its kinds, ExpressionVisitor, Captures, Invoke, Compile); because they are built by ordinary code, the native backend
+  builds the same trees (VM == native in the test "Expression trees: ..."). A call through `any` gets only the lambda: `Expression.__Require` in the
+  method throws the ArgumentException. Docs: docs/language/12-lambdas.md "Expression trees".
+- **Decided while building:** a tree assigned to a `lambda` (variable, argument, return) is its compiled lambda (`LambdaExpression` -> `.Compiled`,
+  TypeChecker `CheckAssignable`); a lambda is not a tree. The values are taken when the call evaluates its arguments (the builder runs right there); the static part is not yet a
+  constant per call site (the nodes are made at each call).
+- **Open:** step 4 (stripping keeps the nodes already: they are made with `new`; the members a tree names are not kept on purpose yet), step 5
+  (structural Equals/hash, And/Or/Replace), step 6 (LINQ), step 7 (spark), overloads `lambda<T>` / `lambda expression<T>`, trees in library code that
+  is not type-checked (TypeCheckLibraries).

@@ -703,6 +703,9 @@ namespace fire.Standard
                         if (isInt && long.TryParse(text, NumberStyles.AllowLeadingSign, CultureInfo.InvariantCulture, out long l)) return Value.MakeInt(l, unit);
                         return Value.MakeFloat(double.Parse(text, NumberStyles.Float, CultureInfo.InvariantCulture), unit);
                 }
+                // (a slot of an enum: its number - what Serialize writes)
+                if (EnumType.Named(type) is { } enumType && isInt && long.TryParse(text, NumberStyles.AllowLeadingSign, CultureInfo.InvariantCulture, out long e))
+                    return Value.MakeEnum(e, enumType);
                 throw Mismatch(path, type, text);
             }
 
@@ -728,6 +731,9 @@ namespace fire.Standard
                         }
                         catch (FormatException) { throw new JsonError($"{path}: expected base64 bytes."); }
                 }
+                // (a slot of an enum: the name of a member - `a, b` for a flag enum)
+                if (EnumType.Named(type) is { } enumType)
+                    return enumType.Parse(s) is long e ? Value.MakeEnum(e, enumType) : throw new JsonError($"{path}: '{s}' is no member of '{type}'.");
                 throw Mismatch(path, type, "a string");
             }
 

@@ -71,7 +71,7 @@ namespace fire.Compiler
     /// destructor EXECUTION (declaration/compilation already, see
     /// RuntimeClass comment) - those are the next development stages.
     /// </summary>
-    public sealed class Compiler
+    public sealed partial class Compiler
     {
         /// <summary>The run-time types of the enums of the program (Values.EnumType), by full name.</summary>
         private Dictionary<string, EnumType> _enumTypes = new(StringComparer.Ordinal);   // (shared with the compilers of the methods, lambdas and default values)
@@ -537,6 +537,8 @@ namespace fire.Compiler
         {
             s_unitChecks = resolveResult.UnitChecks;
             s_methodTypeArgs = resolveResult.MethodTypeArgs;
+            s_trees = resolveResult.Trees;
+            s_classDecls = resolveResult.Classes;
             s_localGuards = resolveResult.LocalGuards;
             s_overloadHints = resolveResult.OverloadHints;
             var compiler = new Compiler(resolveResult, natives) { _classMeta = classMeta };
@@ -691,6 +693,8 @@ namespace fire.Compiler
                     return b + arrays;
                 case "any": return arrays.Length > 0 ? "any" + arrays : "";
             }
+            // (an enum: its full name - JSON reads its number or its name back into a value of the enum)
+            if (type.TypeArgs == null && EnumTypeNamed(type.ResolveBaseName(n => EnumTypeNamed(n) != null)) is { } enumType) return enumType.Name + arrays;
             if (_knownClassNames == null) return "";
             string name = ResolveTypeRef(type);
             bool isClass = _knownClassNames.Contains(name), isInterface = !isClass && _refParams.InterfaceNames.Contains(type.ResolveBaseName(n => _refParams.InterfaceNames.Contains(n)));
@@ -1251,6 +1255,20 @@ namespace fire.Compiler
             {
                 var sig = parms[i].Type?.LambdaSignature;
                 if (sig == null) continue;
+                if (sig.IsExpression)
+                {
+                    // `lambda expression<T> name`: a tree (the call built it) - a bare lambda (a call the compiler did not know) is the ArgumentException
+                    inner._chunk.EmitOp(OpCode.LoadLocal);
+                    inner._chunk.EmitU16(0);
+                    inner._chunk.EmitU16((ushort)i);
+                    inner.EmitLoadConst(Value.MakeString(parms[i].Name));
+                    inner._chunk.EmitOp(OpCode.CallStaticMethod);
+                    inner._chunk.EmitU16(inner._chunk.AddConstant(Value.MakeString("Expression")));
+                    inner._chunk.EmitU16(inner._chunk.AddConstant(Value.MakeString("__Require")));
+                    inner._chunk.EmitByte(2);
+                    inner._chunk.EmitOp(OpCode.Pop);
+                    continue;
+                }
                 if (sig.IsSelector)
                 {
                     // `lambda member<T> name` (and field/property/selector): the parameter is replaced by the reflection of the chosen member
@@ -2521,6 +2539,13 @@ namespace fire.Compiler
 
         private void CompileExpr(Expr expr)
         {
+            // (a tree where a lambda is expected: its compiled lambda - ResolveResult.Trees.ToCompiled)
+            if (s_trees != null && s_trees.ToCompiled.Count > 0 && s_trees.ToCompiled.Contains(expr) && s_rawTreeValues.Add(expr))
+            {
+                try { CompileExpr(new MemberExpr(expr.Line, expr, "Compiled")); }
+                finally { s_rawTreeValues.Remove(expr); }
+                return;
+            }
             int outerWide = _wideLiteral;
             switch (expr)
             {
@@ -2701,6 +2726,14 @@ namespace fire.Compiler
                     _chunk.EmitU16(_chunk.AddUnit(fire.Values.Unit.Parse(iin.UnitName)));
                     break;
 
+                case IsOfExpr { Operand: IdentifierExpr { Name: var typeParam } } paramOf when !_refs.ContainsKey(paramOf.Operand)
+                    && TypeArgText(new TypeRef(typeParam, null, 0), _enclosingClass, null, 0) is ['$', ..] tpIsOfText:
+                    // `T is of X` (T a type parameter): the type argument that runs
+                    _chunk.EmitOp(OpCode.TypeParamIsOf);
+                    _chunk.EmitU16(_chunk.AddConstant(Value.MakeString(tpIsOfText)));
+                    _chunk.EmitU16(_chunk.AddConstant(Value.MakeString(ResolveTypeRef(paramOf.TypeRef))));
+                    break;
+
                 case IsOfExpr iof:
                     CompileExpr(iof.Operand);
                     _chunk.EmitOp(OpCode.IsOfType);
@@ -2841,6 +2874,12 @@ namespace fire.Compiler
                 case ThrowExpr te:
                     CompileExpr(te.Value);
                     _chunk.EmitOp(OpCode.Throw);
+                    break;
+
+                case LambdaExpr treeLam when s_trees != null && s_trees.Lambdas.Contains(treeLam) && s_rawTreeLambdas.Add(treeLam):
+                    // `lambda expression<T>` (docs/ROADMAP_EXPRESSIONS.md): the tree, with the compiled lambda attached
+                    try { CompileExpr(TreeCall(treeLam)); }
+                    finally { s_rawTreeLambdas.Remove(treeLam); }
                     break;
 
                 case LambdaExpr lam:

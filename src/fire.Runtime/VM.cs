@@ -307,6 +307,13 @@ namespace fire.Runtime
                 (_currentThreadVm ?? throw new InvalidOperationException("'handover' needs a running program.")).LambdaHandoverNow(args);
             fire.Standard.CancelMethods.Implementation = (name, args) =>
                 (_currentThreadVm ?? throw new InvalidOperationException("Cancellation needs a running program.")).CancelNative(name, args);
+            fire.Standard.TypeArgMethods.Implementation = args =>
+            {
+                var vm = _currentThreadVm ?? throw new InvalidOperationException("__type_arg needs a running program.");
+                var texts = ((fire.Standard.IJsonHost)vm).CallTypeArgs;
+                int i = args.Length > 0 && args[0].Kind == ValueKind.Int ? (int)args[0].AsInt() : 0;
+                return texts != null && i >= 0 && i < texts.Length && texts[i].Length > 0 ? Value.MakeString(texts[i]) : Value.MakeUndefined();
+            };
             fire.Standard.FdWaitMethods.Implementation = args =>
                 (_currentThreadVm ?? throw new InvalidOperationException("__fd_wait needs a running program.")).FdWaitNative(args);
             fire.Standard.CompletionMethods.Implementation = (name, args) =>
@@ -4830,6 +4837,13 @@ namespace fire.Runtime
                 }
                 case OpCode.Trust:
                     break;   // (`trust x`: only the native backend acts on it)
+                case OpCode.TypeParamIsOf:
+                {
+                    string ofParam = TypeArgOfParam(_constants[ReadU16()].AsString());
+                    string ofTarget = _constants[ReadU16()].AsString();
+                    Push(Value.MakeBool(ofParam.Length > 0 && TypeNameIsOf(ofParam, ofTarget)));
+                    break;
+                }
                 case OpCode.TypeArrayOfParam:
                 {
                     string paramText = _constants[ReadU16()].AsString();
@@ -7676,6 +7690,24 @@ namespace fire.Runtime
 
         /// <summary>The type argument a type parameter of the running code stands for (`$k@Class`: of `this`, `$k@`: of the call of the generic method); "" when
         /// it is not known.</summary>
+        /// <summary>OpCode.TypeParamIsOf: is the type `name` (a type argument's text) `target` or one that derives from it / implements it?</summary>
+        private bool TypeNameIsOf(string name, string target)
+        {
+            int angle = name.IndexOf('<');
+            string plain = angle >= 0 ? name.Substring(0, angle).Trim() : name.Trim();
+            int t = target.IndexOf('<');
+            string wanted = t >= 0 ? target.Substring(0, t) : target;
+            if (plain == wanted || GenericClassNames.PlainName(plain) == GenericClassNames.PlainName(wanted)) return true;
+            if (!_classes.TryGetValue(plain, out var rc) && !(angle >= 0 && _classes.TryGetValue(GenericClassNames.Mangle(plain, name.Count(c => c == ',') + 1), out rc)))
+                return false;
+            for (var r = rc; r != null; r = r.Base)
+            {
+                if (GenericClassNames.PlainName(r.Name) == GenericClassNames.PlainName(wanted)) return true;
+                if (r.Interfaces.Any(i => i == wanted || GenericClassNames.PlainName(i) == GenericClassNames.PlainName(wanted))) return true;
+            }
+            return false;
+        }
+
         private string TypeArgOfParam(string text)
         {
             int at = text.IndexOf('@');

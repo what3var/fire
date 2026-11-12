@@ -14314,24 +14314,27 @@ DebuggerTests.Run();
         print(f())
         """, new[] { "7" });
 
-    CheckLq("Capture: Zuweisung an den Capture ist ein Fehler", """
+    // (step 8 of docs/ROADMAP_TASKS.md: a lambda gets a copy of what it uses without a word - TC023 -, an object is shared only when it is bound with `on`)
+    CheckLq("Capture: ohne Wort bekommt das Lambda eine Kopie - eine Zuweisung aendert nur sie, nicht die Variable draussen", """
         class T {
-            static Run() {
+            static undefined Run() {
                 var n = 1
                 var f = () => { n = 2; return n }
-                print(f())
+                print(f() + " " + n)
             }
         }
         T.Run()
-        """, new[] { "AUSNAHME: 'n' is a COPY of the outer variable inside the lambda (capture) and cannot be assigned there (declare a new local variable with a different name) (4)" });
+        """, new[] { "2 1" });
 
-    CheckLq("Capture: ein Objekt wird als Referenz geteilt", """
+    CheckLq("Capture: ein Objekt ohne Wort wird kopiert, mit on gebunden geteilt", """
         class Box { int n; construct() { this.n = 0 } }
         class T {
-            static Run() {
+            static undefined Run() {
                 var b = new Box()
-                var bump = () => { b.n = b.n + 1 }
-                bump(); bump()
+                var copied = () => { b.n = b.n + 1 }
+                copied(); copied()
+                var bound = func () on b => { n = n + 1 }
+                bound(); bound()
                 print(b.n)
             }
         }
@@ -22316,11 +22319,13 @@ else
             var jobs = new Channel<Job>(2)
             var results = new Channel<int>()
             var notes = new Channel<Note>()
-            fire with jobs, results, notes {
+            var ack = new Channel<int>()
+            fire with jobs, results, notes, ack {
                 foreach (j in jobs) { results.Send(j.n * 10) }
                 var got = notes.Receive()
                 results.Send(got.text.Length)
                 results.Close()
+                ack.Receive()   // (the note lives until the main program has looked at it)
             }
             for (int i = 1; i <= 5; i++) { jobs.Send(new Job(i)) }
             var mine = new Job(9)
@@ -22337,8 +22342,12 @@ else
             int sum = 0
             foreach (r in results) { sum = sum + r }
             print("sum " + sum)
-            Sleep(30ms)
-            try { print(seen.text) } catch (DestroyedException e) { print("the note died with its receiver") }
+            ack.Send(1)
+            bool died = false
+            for (int k = 0; k < 2000 && !died; k++) {
+                try { if (seen.text.Length > 0) { Sleep(1ms) } } catch (DestroyedException e) { died = true }
+            }
+            if (died) { print("the note died with its receiver") } else { print(seen.text) }
             var parts = new Channel<Part>()
             var part = new Part(1)
             var alias = part
@@ -28374,6 +28383,232 @@ else
                 net.Close()
             }
             listener.Close()
+            """),
+        ("IChannelEnd<A, B>: die Enden von Channel.Pair haben ein Interface, IChannel<T> ist ein IChannelEnd<T, T> - eine Methode mit IChannelEnd<int, int> nimmt Channel<int> und ein Ende von Pair<int, int>", """
+            #import "net.channel"
+            class Use {
+                static int Sum(IChannelEnd<string, int> ch) {
+                    ch.Send("a")
+                    ch.Send("bcd")
+                    ch.Close()
+                    int s = 0
+                    foreach (x in ch) { s = s + x }
+                    return s
+                }
+                static int Total(IChannel<int> ch) {
+                    int s = 0
+                    foreach (x in ch) { s = s + x }
+                    return s
+                }
+                static int Both(IChannelEnd<int, int> ch) {
+                    ch.Send(7)
+                    return ch.Receive()
+                }
+            }
+            var left = Channel.Pair<string, int>()
+            var right = left.Other()
+            fire with right {
+                foreach (s in right) { right.Send(s.Length) }
+                right.Close()
+            }
+            print("pair " + Use.Sum(left) + " " + (left is of IChannelEnd))
+            var plain = new Channel<int>()
+            plain.Send(1)
+            plain.Send(2)
+            plain.Close()
+            print("plain " + Use.Total(plain))
+            var loop = new Channel<int>()
+            print("same " + Use.Both(loop) + " " + (loop is of IChannelEnd) + " " + (loop is of IChannel))
+            var echo = Channel.Pair<int, int>()
+            var back = echo.Other()
+            fire with back { back.Send(back.Receive() * 2) }
+            print("echo " + Use.Both(echo))
+            """),
+        ("Expression trees: lambda expression<T> - ToString in fire-Syntax, Captured-Werte, verschachtelte Lambdas, Invoke", """
+            class Order { int total; construct(int t) { this.total = t } }
+            class Person {
+                int age
+                string name
+                List<Order> orders = new List<Order>()
+                construct(int a, string n) { this.age = a; this.name = n }
+                bool IsAdult { get { return this.age >= 18 } }
+            }
+            class Probe<T> {
+                string Show(lambda expression<T> e) { return e.ToString() }
+                any Run(lambda expression<T> e, T x) { return e.Invoke(x) }
+            }
+            var pr = new Probe<Person>()
+            var min = 18
+            var prefix = "A"
+            print(pr.Show(p => p.age >= min && !(p.name == undefined)))
+            print(pr.Show(p => p.orders.Any(o => o.total > 10)))
+            print(pr.Show(p => p.name.StartsWith(prefix) || p.age * 2 > 40 - min))
+            print(pr.Run(p => p.age >= min && p.name.StartsWith(prefix), new Person(20, "Anna")))
+            print(pr.Run(p => p.age >= min, new Person(10, "Bo")))
+            """),
+        ("Expression trees: jede Knotenart (Member, Call statisch und am Ziel, Index, Conditional, New, IsType, Convert, Unary), Captures() mit den Werten beim Bauen, ExpressionVisitor", """
+            class Filter { int minAge; construct(int m) { this.minAge = m } }
+            class Tag { string name; construct(string n) { this.name = n } }
+            class Person {
+                int age
+                string name
+                Tag tag
+                int scores[]
+                construct(int a, string n) { this.age = a; this.name = n; this.tag = new Tag("t" + a); this.scores = [a, a * 2] }
+                bool IsAdult { get { return this.age >= 18 } }
+                int Twice(int x) { return x * 2 }
+            }
+            class Animal { }
+            class Dog : Animal { }
+            class Util { static int Limit() { return 30 } }
+            class Probe<T> {
+                string Show(lambda expression<T> e) { return e.ToString() }
+                any Run(lambda expression<T> e, T x) { return e.Invoke(x) }
+                LambdaExpression Keep(lambda expression<T> e) { return e }
+            }
+            class Counter : ExpressionVisitor {
+                int members = 0
+                int captured = 0
+                override any VisitMember(MemberExpression e) { this.members = this.members + 1; e.Target.Accept(this); return undefined }
+                override any VisitCaptured(CapturedExpression e) { this.captured = this.captured + 1; return undefined }
+            }
+            var pr = new Probe<Person>()
+            var filter = new Filter(18)
+            int n = 3
+            print(pr.Show(p => p.age >= filter.minAge && p.IsAdult))
+            print(pr.Show(p => p.Twice(n) + Util.Limit() > p.scores[1]))
+            print(pr.Show(p => p.age > 20 ? p.name : p.tag.name))
+            print(pr.Show(p => new Tag(p.name)))
+            print(pr.Show(p => p.age!float / 2))
+            print(pr.Show(p => p.tag is of Tag && -p.age < 0 && "x" + p.name != "y"))
+            var anna = new Person(20, "Anna")
+            print(pr.Run(p => p.Twice(n) + Util.Limit() > p.scores[1], anna) + " " + pr.Run(p => p.age > 20 ? p.name : p.tag.name, anna))
+            var tree = pr.Keep(p => p.age >= filter.minAge && p.Twice(n) > Util.Limit())
+            filter.minAge = 99
+            n = 100
+            var caps = tree.Captures()
+            string text = ""
+            foreach (c in caps) { text = text + c.Name + "=" + c.Value + " " }
+            print(text + "| " + tree.Invoke(anna))
+            var count = new Counter()
+            tree.Accept(count)
+            print("members " + count.members + " captured " + count.captured + " kind " + tree.Body.Kind + " " + tree.Body.Type + " " + tree.Parameters[0].Type)
+            var b = tree.Body
+            print(b.Left.Left.Kind + " " + b.Left.Left.Name + " " + b.Left.Left.IsField + " " + b.Left.Left.Target.Kind)
+            """),
+        ("Expression trees: Konstruktor, statische Methode, zwei Parameter, geerbte Methode", """
+            class P { int age; int id; construct(int a) { this.age = a; this.id = a } }
+            class O { int personId; construct(int p) { this.personId = p } }
+            class Q {
+                string text
+                construct(lambda expression<P> e) { this.text = e.ToString() }
+                static string S(lambda expression<P> e) { return e.ToString() }
+                static string J(lambda expression<P, O> e) { return e.ToString() + " " + e.Invoke(new P(3), new O(3)) }
+            }
+            class Base { string B(lambda expression<P> e) { return "base " + e.ToString() } }
+            class Derived : Base { }
+            int lim = 5
+            print(new Q(p => p.age > lim).text)
+            print(Q.S(p => p.age < 3))
+            print(Q.J((p, o) => p.id == o.personId))
+            print(new Derived().B(p => p.age == lim))
+            """),
+        ("Expression trees: Captures in einem verschachtelten Lambda (lokal, global, Member eines Objekts) - ueber die Ladebefehle des inneren Lambdas", """
+            #import "linq"
+            class Filter { int minTotal; construct(int m) { this.minTotal = m } }
+            class Order { int total; construct(int t) { this.total = t } }
+            class Person {
+                List<Order> orders = new List<Order>()
+                int bonus
+                construct(int b) { this.bonus = b }
+            }
+            class Probe<T> {
+                LambdaExpression Keep(lambda expression<T> e) { return e }
+            }
+            var pr = new Probe<Person>()
+            int min = 10
+            var filter = new Filter(50)
+            var t = pr.Keep(p => p.orders.Any((Order o) => o.total > min && o.total < filter.minTotal + p.bonus))
+            print(t.ToString())
+            string caps = ""
+            foreach (c in t.Captures()) { caps = caps + c.Name + "=" + c.Value + " " }
+            print(caps)
+            var x = new Person(5)
+            x.orders.Add(new Order(52))
+            print(t.Invoke(x))
+            """),
+        ("Expression trees: Captures aus einer Methode (Parameter), Index, Contains(undefined)", """
+            class Order { int total; construct(int t) { this.total = t } }
+            class Person { List<Order> orders = new List<Order>() }
+            class Probe<T> { LambdaExpression Keep(lambda expression<T> e) { return e } }
+            class Run {
+                static undefined Go(int min) {
+                    var pr = new Probe<Person>()
+                    var t = pr.Keep(p => p.orders.Contains(undefined) || p.orders.Count > min && p.orders.Count < (min + 5))
+                    print(t.ToString())
+                    var u = pr.Keep(p => p.orders.Count > 0 && p.orders[0].total > min)
+                    print(u.ToString() + " " + u.Captures()[0].Value)
+                }
+            }
+            Run.Go(3)
+            """),
+        ("Expression trees: ein Baum laesst sich einer lambda zuweisen (uebersetzt), umgekehrt nicht noetig", """
+            class P { int age; construct(int a) { this.age = a } }
+            class Probe<T> { LambdaExpression Keep(lambda expression<T> e) { return e } }
+            class U {
+                static bool Call(bool lambda<P> f, P p) { return f(p) }
+                static bool lambda<P> Back(LambdaExpression t) { return t }
+            }
+            var t = new Probe<P>().Keep(p => p.age > 3)
+            bool lambda<P> f = t
+            print(f(new P(5)) + " " + f(new P(1)) + " " + t.ToString())
+            print(U.Call(t, new P(5)) + " " + U.Back(t)(new P(1)))
+            """),
+        ("Generics: T is of X - Basisklasse, Interface, Werttyp, generische Methode", """
+            interface IShape { float Area() }
+            class Animal { }
+            class Dog : Animal { }
+            class Square : IShape { float Area() { return 4.0 } }
+            class Box<T> {
+                string What() {
+                    if (T is of Animal) { return "animal" }
+                    if (T is of IShape) { return "shape" }
+                    if (T is of int) { return "int" }
+                    return "other"
+                }
+            }
+            class Q { static string Kind<T>() { return (T is of Animal) + " " + (T is of Dog) + " " + (T is of IShape) } }
+            print(new Box<Dog>().What() + " " + new Box<Animal>().What() + " " + new Box<Square>().What() + " " + new Box<int>().What() + " " + new Box<string>().What())
+            print(Q.Kind<Dog>() + " | " + Q.Kind<Animal>() + " | " + Q.Kind<Square>() + " | " + Q.Kind<List<int>>())
+            """),
+        ("Reflection: Type.Of<T>() in generischer Klasse und Methode", """
+            #import "reflection"
+            class Person { int age; string name }
+            class Repo<T> { string Kind() { return Type.Of<T>().Name } }
+            class Q { static string Of<T>(int n) { return Type.Of<T>().Name + " " + n } }
+            print(Type.Of<Person>().Name)
+            print(Q.Of<Person>(3))
+            print(new Repo<Person>().Kind())
+            print(Type.Of(new Person()).Name)
+            """),
+        ("JSON: Enums als Name, Zahl, Flags, in Arrays, als Wurzel; unbekannter Name ist JsonException", """
+            #import "json"
+            enum Color { Red, Green, Blue }
+            class Box { Color color; construct() { } }
+            var b = Json.Deserialize<Box>("{\"color\":\"Green\"}")
+            print(b.color + " " + (b.color is of Color) + " " + (b.color == Color.Green))
+            var c = Json.Deserialize<Box>("{\"color\":2}")
+            print(c.color + " " + (c.color is of Color) + " " + (c.color == Color.Blue))
+            Color d = 2
+            print(d + " " + (d is of Color))
+            flag enum Perm { Read = 1, Write = 2, Exec = 4 }
+            class Acl { Perm perm; Color colors[]; construct() { } }
+            var a = Json.Deserialize<Acl>("{\"perm\":\"Read, Exec\",\"colors\":[0,\"Blue\"]}")
+            print(a.perm + " " + (a.perm is of Perm) + " " + a.colors[0] + " " + a.colors[1] + " " + (a.colors[1] is of Color))
+            var back = Json.Deserialize<Box>(Json.Serialize(new Box()))
+            print(back.color)
+            print(Json.Deserialize<Color>("1") + " " + Json.Deserialize<Color>("\"Blue\""))
+            try { Json.Deserialize<Box>("{\"color\":\"Pink\"}") } catch (JsonException e) { print(e.message) }
             """),
         ("Programmende: warten alle uebrigen Threads in Kanaelen, schliessen die Kanaele des Hauptprogramms (foreach endet)", """
             var ch = new Channel<int>()

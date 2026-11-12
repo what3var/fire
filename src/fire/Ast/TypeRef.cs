@@ -21,7 +21,9 @@ namespace fire.Ast
     /// since a dynamically typed lambda cannot reliably disclose its parameter TYPES
     /// up front.</summary>
     [MemoryPackable]
-    public sealed partial record LambdaSignature(string? ReturnTypeName, IReadOnlyList<string> ParamTypeNames, bool IsSelector = false, string SelectorKind = "member");
+    /// `IsExpression`: `lambda expression&lt;T&gt;` (docs/ROADMAP_EXPRESSIONS.md) - the lambda written at the call becomes an expression tree: in the method
+    /// the parameter is a LambdaExpression (Parameters, Body, Invoke).
+    public sealed partial record LambdaSignature(string? ReturnTypeName, IReadOnlyList<string> ParamTypeNames, bool IsSelector = false, string SelectorKind = "member", bool IsExpression = false);
 
     /// <summary>
     /// A type reference: base name (base-type keyword or class name), optional

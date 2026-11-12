@@ -911,6 +911,38 @@ static bool jsParseLong(const char* text, int64_t* out) {
 
 static Value jsBuild(JsReader* r, JsNode* node, const char* type, OwnList* owner, const char* path, uint32_t unit, JsSlot slot);
 
+/* (a slot of an enum: its number in the table of the program, 1-based; 0 when `type` names none) */
+static uint16_t jsEnumIndex(const char* type) {
+    uint32_t i;
+    for (i = g_enumCount; i > 0; i--) if (strcmp(g_enums[i - 1].name, type) == 0) return (uint16_t)i;
+    return 0;
+}
+/* (the value of a member's name - `a, b` for a flag enum; false when it is none) */
+static bool jsEnumParse(const FireEnum* e, const fire_char16* s, size_t n, int64_t* out) {
+    size_t at = 0;
+    int64_t result = 0;
+    while (at <= n) {
+        size_t end = at, from, to;
+        uint32_t m;
+        bool found = false;
+        while (end < n && !(e->flags && s[end] == ',')) end++;
+        from = at; to = end;
+        while (from < to && s[from] == ' ') from++;
+        while (to > from && s[to - 1] == ' ') to--;
+        for (m = 0; m < e->count && !found; m++) {
+            const char* name = e->members[m].name;
+            size_t k = 0;
+            while (from + k < to && name[k] && (fire_char16)(unsigned char)name[k] == s[from + k]) k++;
+            if (from + k == to && !name[k]) { result |= e->members[m].value; found = true; }
+        }
+        if (!found) return false;
+        at = end + 1;
+        if (end >= n) break;
+    }
+    *out = result;
+    return true;
+}
+
 static Value jsReadNumber(JsReader* r, const char* text, bool isInt, const char* type, uint32_t unit, const char* path) {
     static const char* const ints[] = {"int", "byte", "long", "short", "int8", "int16", "int32", "int64", "uint8", "uint16", "uint32", "uint64"};
     static const char* const floats[] = {"float", "double", "float32", "float64"};
@@ -937,6 +969,10 @@ static Value jsReadNumber(JsReader* r, const char* text, bool isInt, const char*
         if (isInt && jsParseLong(text, &i)) return fire_IntU(i, unit);
         return fire_FloatU((Real)strtod(text, NULL), unit);
     }
+    {   /* (a slot of an enum: its number - what Serialize writes) */
+        uint16_t e = jsEnumIndex(type);
+        if (e && isInt && jsParseLong(text, &i)) return EnumV(i, e);
+    }
     return jsMismatch(r, path, type, text);
 }
 
@@ -961,6 +997,14 @@ static Value jsFromString(JsReader* r, const fire_char16* s, size_t n, const cha
         b->little = 1;
         if (bytes.n) memcpy(bufBytes(b), bytes.p, bytes.n);
         return BufV(b);
+    }
+    {   /* (a slot of an enum: the name of a member) */
+        uint16_t e = jsEnumIndex(type);
+        int64_t v;
+        if (e) {
+            if (jsEnumParse(&g_enums[e - 1], s, n, &v)) return EnumV(v, e);
+            return jsReadFail(r, jsCat5(r->J, path, ": '", jsUtf8(r->J, s, n), "' is no member of '", jsCat(r->J, type, "'.")));
+        }
     }
     return jsMismatch(r, path, type, "a string");
 }
