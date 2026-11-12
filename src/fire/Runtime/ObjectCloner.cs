@@ -245,6 +245,18 @@ namespace fire.Runtime
                 }
             }
 
+            /// <summary>The owner of the copy of a leaf: the copy of its owner if that object is copied along, else the owner of the whole copy.</summary>
+            private IOwner OwnerOfCopy(IOwnedLeaf original) =>
+                original.LeafOwner is ObjectInstance owner && _copies.TryGetValue(owner, out var ownerCopy) ? ownerCopy : _rootOwner;
+
+            /// <summary>Is the array a part of another array that is copied (it has no owner of its own then)?</summary>
+            private bool IsPart(ScriptArray array)
+            {
+                foreach (var outer in _containersSeen)
+                    if (outer is ScriptArray o && o.Parts != null && o.Parts.Contains(array)) return true;
+                return false;
+            }
+
             private Value MapValue(Value v)
             {
                 switch (v.Kind)
@@ -261,10 +273,18 @@ namespace fire.Runtime
                         if (_arrayCopies.TryGetValue(array, out var existing)) return Value.MakeArray(existing);
                         var copy = new ScriptArray(array.Length);
                         copy.CopyTypeOf(array);   // (a copy of a typed array is typed)
-                        LeafOwnership.Adopt(copy, _rootOwner);   // every copied array belongs to the owner of the copy (elements never change their owner)
+                        // the copy belongs to the copy of the original's owner (an array in a field: the copied object) - only what belongs to nothing copied goes
+                        // to the owner of the copy; an inner array that is a part of the original is a part of the copy (it was destroyed with the
+                        // copied object's scope otherwise, while the object lives on: `new Holder(copy bag)`)
+                        if (array.LeafOwner != null || !IsPart(array)) LeafOwnership.Adopt(copy, OwnerOfCopy(array));
                         _arrayCopies[array] = copy; // register before filling: an array may contain itself
                         for (int i = 0; i < array.Length; i++)
+                        {
                             copy.Items[i] = MapValue(array.Items[i]);
+                            if (array.Parts != null && array.Items[i].Kind == ValueKind.Array && array.Parts.Contains(array.Items[i].AsArray())
+                                && copy.Items[i].AsArray() is { LeafOwner: null } partCopy && !ReferenceEquals(partCopy, copy))
+                                LeafOwnership.AttachPart(copy, partCopy);
+                        }
                         return Value.MakeArray(copy);
                     }
 
@@ -274,7 +294,7 @@ namespace fire.Runtime
                         if (!_bufferCopies.TryGetValue(buffer, out var copy))
                         {
                             _bufferCopies[buffer] = copy = buffer.Clone();
-                            LeafOwnership.Adopt(copy, _rootOwner);
+                            LeafOwnership.Adopt(copy, OwnerOfCopy(buffer));
                         }
                         return Value.MakeBuffer(copy);
                     }

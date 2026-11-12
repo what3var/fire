@@ -510,7 +510,7 @@ class extends List {
     float Average() { return Linq.From(this).Average() }
     float Average(lambda<T> fn) { return Linq.From(this).Average(fn) }
     A Aggregate<A>(A seed, A lambda<A, T> fn) { return Linq.From(this).Aggregate(seed, fn) }
-    bool Contains(T value) { return Linq.From(this).Contains(value) }
+    // (Contains: List has it itself)
     undefined ForEach(lambda<T> fn) { return Linq.From(this).ForEach(fn) }
     string Join(string separator) { return Linq.From(this).Join(separator) }
     List<T> ToList() { return new List(this.ToArray()) }

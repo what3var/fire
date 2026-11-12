@@ -141,6 +141,7 @@ print(c[0])         // 1
 | `TakeAt(index)` | removes the element at `index` and gives it to the caller (with its ownership, if the list owned it) |
 | `Remove(value)` | removes the first equal element; `False` if there is none |
 | `IndexOf(value)` | position of the first equal element, `-1` if there is none |
+| `Contains(value)` | `true` if an equal element is in the list (`IndexOf(value) >= 0`) |
 | `Clear()` | removes everything |
 
 ```fire

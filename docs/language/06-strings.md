@@ -97,7 +97,7 @@ foreach (c in "abc") { print(c) }
 | `PadLeft(width)`, `PadLeft(width, fill)`, `PadRight(...)` | fill up to a minimum width |
 | `ToBytes()` | a byte buffer, one byte per character |
 | `ToUnicode(n)` | a byte buffer, `n` bytes per character |
-| `ToInt()`, `ToFloat()` | the number in the text, with its unit if one follows (`"5mm"`); an `ArgumentException` if it is none |
+| `ToInt()`, `ToFloat()` | the number in the text, with its unit if one follows (`"5mm"`); an `ArgumentException` if it is none. The result type is `int : any` / `float : any`: `float x : mm = "5cm".ToFloat()` converts, a parameter declared without a unit checks for a unitless value |
 | `TryToInt()`, `TryToFloat()` | the number (with its unit), or `undefined` if the text is none |
 | `CompareTo(other)` | `-1`, `0` or `1`: the order of the two texts (ordinal) |
 | `Join(items)` | the elements of a list or an array as text, with this text between them |

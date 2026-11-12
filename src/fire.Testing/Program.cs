@@ -28610,6 +28610,70 @@ else
             print(Json.Deserialize<Color>("1") + " " + Json.Deserialize<Color>("\"Blue\""))
             try { Json.Deserialize<Box>("{\"color\":\"Pink\"}") } catch (JsonException e) { print(e.message) }
             """),
+        ("Besitz: copy x als Argument (Konstruktor, Methode, in einer Funktion) - Arrays, 2D-Arrays, Puffer, Listen und innere Objekte der Kopie gehoeren der Kopie", """
+            class Bag {
+                string items[] = ["x", "y"]
+                int grid[][] = [[1, 2], [3, 4]]
+                byte data[] = new byte[3]
+                List<string> names = new List<string>()
+                Bag inner
+            }
+            class Holder { any v; construct() { } construct(any x) { this.v = take x } undefined Set(any x) { this.v = take x } }
+            class Run {
+                static Holder Make(Bag b) { return new Holder(copy b) }
+                static undefined Go() {
+                    var b = new Bag()
+                    b.names.Add("Ada")
+                    b.data[1] = 7
+                    b.inner = new Bag()
+                    b.inner.names.Add("Linus")
+                    var h = Run.Make(b)
+                    var g = new Holder()
+                    g.Set(copy b)
+                    print(h.v.items[1] + " " + h.v.grid[1][0] + " " + h.v.data[1] + " " + h.v.names[0] + " " + h.v.inner.names[0] + " " + h.v.inner.grid[0][1])
+                    print(g.v.items[0] + " " + g.v.grid[0][1] + " " + g.v.names.Count)
+                    b.names.Add("x")
+                    print(h.v.names.Count + " " + b.names.Count)
+                }
+            }
+            class Holder2 { }
+            Run.Go()
+            var wanted = new List<string>()
+            wanted.Add("Ada")
+            class P { string name; construct(string n) { this.name = n } }
+            class Probe<T> { LambdaExpression Keep(lambda expression<T> e) { return e } }
+            var t = new Probe<P>().Keep(p => wanted.IndexOf(p.name) >= 0)
+            any c = t.Captures()[0].Value
+            print(c.Count + " " + c[0] + " " + t.Invoke(new P("Ada")))
+            """),
+        ("Expression trees: ein Baum-Parameter wird an einen anderen weitergereicht (auch als LambdaExpression); List.Contains; eine gefangene List im Baum", """
+            class P { int age; construct(int a) { this.age = a } }
+            class Inner<T> { string Show(lambda expression<T> e) { return e.ToString() + " " + e.Invoke(new P(5)) } }
+            class Outer<T> {
+                string Show(lambda expression<T> e) { return new Inner<T>().Show(e) }
+                string Keep(lambda expression<T> e) { LambdaExpression t = e; return new Inner<T>().Show(t) }
+            }
+            print(new Outer<P>().Show(p => p.age > 3))
+            print(new Outer<P>().Keep(p => p.age > 9))
+            var l = new List<string>()
+            l.Add("a")
+            print(l.Contains("a") + " " + l.Contains("b"))
+            class Q { string name; construct(string n) { this.name = n } }
+            class Probe<T> { LambdaExpression Keep(lambda expression<T> e) { return e } }
+            var wanted = new List<string>()
+            wanted.Add("Ada"); wanted.Add("Linus")
+            var t = new Probe<Q>().Keep(p => wanted.IndexOf(p.name) >= 0)
+            print(t.ToString())
+            any c = t.Captures()[0].Value
+            print(c.Count)
+            print(c[0])
+            print(t.Invoke(new Q("Ada")))
+            var arr = ["Ada", "Linus"]
+            var u = new Probe<Q>().Keep(p => arr.IndexOf(p.name) >= 0)
+            any d = u.Captures()[0].Value
+            print(d.length + " " + d[0])
+            print(new Probe<Q>().Keep(q => wanted.Contains(q.name)).Invoke(new Q("Linus")))
+            """),
         ("Programmende: warten alle uebrigen Threads in Kanaelen, schliessen die Kanaele des Hauptprogramms (foreach endet)", """
             var ch = new Channel<int>()
             var out = new Channel<string>()

@@ -332,15 +332,12 @@ namespace fire.Compiler
             // a float holds a float: a whole number (or a value not known here) is converted at runtime (`float f = 3` holds 3.0)
             if (valueExpr != null && target.Kind == StaticKind.Float && (value.IsDynamic || value.Kind is StaticKind.Int or StaticKind.Word))
                 _unitChecks[valueExpr] = "#any";
-            // a number declared without a unit takes unitless numbers only: a value whose unit is not known here (or is another one) is checked at runtime.
-            // Not in the preludes and libraries: there a `float` without a unit has always taken any unit (`ToFloat`, `Math.Sum`); the two unit checks hold
-            // for the user's code (the libraries are checked for what the checks find, not for these demands)
-            if (_source < _firstUserSource) { }
-            else if (valueExpr != null && target.IsNumber && target.Unit is { IsUnitless: true } && !target.UnitIsDimension
+            // a number declared without a unit takes unitless numbers only: a value whose unit is not known here (or is another one) is checked at runtime
+            if (valueExpr != null && target.IsNumber && target.Unit is { IsUnitless: true } && !target.UnitIsDimension
                 && (value.IsDynamic || value.IsNumber && value.Unit is not { IsUnitless: true }))
                 _unitChecks[valueExpr] = target.Kind == StaticKind.Float ? "#unitless" : "unitless";
             // a unit taken from an initializer (`int a = 5mm`): a later value is converted into it at runtime (a declared unit does that itself)
-            if (_source >= _firstUserSource && valueExpr != null && target.IsNumber && target.Unit is { IsUnitless: false } targetUnit && !target.UnitIsDimension
+            if (valueExpr != null && target.IsNumber && target.Unit is { IsUnitless: false } targetUnit && !target.UnitIsDimension
                 && (value.IsDynamic || value.IsNumber && !targetUnit.Equals(value.Unit)) && DemandText(targetUnit) is { } demand)
                 _unitChecks[valueExpr] = (target.Kind == StaticKind.Float ? "#" : "") + demand;
             if (!value.IsNumber || !target.IsNumber || value.Unit is not { } from || target.Unit is not { } to) return;
@@ -2289,7 +2286,9 @@ namespace fire.Compiler
             var shape = DeclaredLambda(signature with { IsExpression = false }, map);
             if (arg is not LambdaExpr { ExpressionBody: true, OnTarget: null } lambda)
             {
-                ReportError(ExpressionTreeCode, $"'{param.Name}' is an expression tree: it takes a lambda written here with an expression body ('x => ...'), not {(arg is LambdaExpr ? "a lambda with a block" : "a value")}", line);
+                // a tree passed on (a parameter `lambda expression<T>` of the calling method, a LambdaExpression): it goes as it is
+                if (arg is not LambdaExpr && Infer(arg) is { Kind: StaticKind.Class, Class: "LambdaExpression" } passedOn) return passedOn;
+                ReportError(ExpressionTreeCode, $"'{param.Name}' is an expression tree: it takes a lambda written here with an expression body ('x => ...') or a tree (LambdaExpression), not {(arg is LambdaExpr ? "a lambda with a block" : "a value")}", line);
                 return Infer(arg, shape);
             }
             _trees.Lambdas.Add(lambda);

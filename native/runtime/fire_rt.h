@@ -7240,6 +7240,19 @@ FIRE_FN Value copierMaterialize(DeepCopier* c, Obj* o) {
     *copyMapFind(&c->objects, o) = copy;   /* replaces the "found" marker */
     return copy;
 }
+/* The list the copy of an array or buffer belongs to: the copy of its owner when that is copied too (an array in a field: the copied object; an inner array:
+ * the copied outer array), else the owner of the whole copy - a field's array that went to the scope of the copy died with that scope while the copied object
+ * lived on (`new Holder(copy bag)`). */
+FIRE_FN OwnList* copierLeafOwner(DeepCopier* c, const Owned* h) {
+    Owned* holder = h->owner ? h->owner->holder : NULL;
+    Value* m;
+    if (!holder) return c->owner;
+    m = copyMapFind(&c->objects, holder);
+    if (m && m->kind == K_Class) return objOwned(asObj(*m));
+    m = copyMapFind(&c->containers, holder);
+    if (m && m->kind == K_Array) { Arr* a = arrOf(*m); if (!a->parts) a->parts = newPartsList(&a->h); return a->parts; }
+    return c->owner;
+}
 /* What a value becomes in the copy. */
 #ifdef FIRE_THREADS
 FIRE_FN Value lamTakeCopy(Value v, OwnList* travel, uint32_t rc);
@@ -7257,8 +7270,8 @@ FIRE_FN Value copierMap(DeepCopier* c, Value v) {
             src = arrOf(v);
             m = copyMapFind(&c->containers, src);
             if (m) return *m;
-            if ((dst = packedCopy(src, c->owner)) != NULL) { r = ArrV(dst); copyMapPut(&c->containers, src, r); return r; }   /* (numbers only: nothing inside to copy) */
-            dst = allocArr(src->length, c->owner);
+            if ((dst = packedCopy(src, copierLeafOwner(c, &src->h))) != NULL) { r = ArrV(dst); copyMapPut(&c->containers, src, r); return r; }   /* (numbers only: nothing inside to copy) */
+            dst = allocArr(src->length, copierLeafOwner(c, &src->h));
             r = ArrV(dst);
             copyMapPut(&c->containers, src, r);   /* before filling: an array may contain itself */
             if (!arrCopyTyped(dst, src))   /* (a copy of a typed array is typed; a packed one copies its numbers) */
@@ -7274,7 +7287,7 @@ FIRE_FN Value copierMap(DeepCopier* c, Value v) {
             src = bufOf(v);
             m = copyMapFind(&c->containers, src);
             if (m) return *m;
-            dst = bufCopy(src, c->owner);
+            dst = bufCopy(src, copierLeafOwner(c, &src->h));
             r = BufV(dst);
             copyMapPut(&c->containers, src, r);
             return r;
