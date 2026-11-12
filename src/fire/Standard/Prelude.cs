@@ -135,15 +135,20 @@ namespace fire.Standard
             // A value goes as it is; an object, an array or a record only fresh (`new`, the result of a call), copied (`copy x`) or taken (`take x`): it
             // belongs to the channel while it travels, to the receiver after Receive. The channel closes when the one that made it ends. A channel is never
             // copied (`fire taking ch` is the ArgumentException): it goes to a thread with `fire with`.
-            /// What every channel offers - Channel<T> between threads, Net.Channel<T> (`#import "net.channel"`) between programs: code that takes an
-            /// IChannel<T> works with both.
-            interface IChannel<T> : IEnumerable<T> {
-                bool Send(T value)
-                T Receive(any limit = undefined)
-                T TryReceive()
+            /// One end of a channel that sends A and receives B - what every channel offers: a two-way end of Channel.Pair<A, B> (ChannelEnd<A, B>), and
+            /// (as IChannel<T>, both directions the same type) Channel<T> between threads, Net.Channel<T> (`#import "net.channel"`) between programs.
+            interface IChannelEnd<A, B> : IEnumerable<B> {
+                bool Send(A value)
+                B Receive(any limit = undefined)
+                B TryReceive()
                 undefined Close()
                 bool IsClosed { get; }
                 int Count { get; }
+            }
+
+            /// A channel that sends and receives T: Channel<T>, Net.Channel<T> - code that takes an IChannel<T> works with both (and with an end of
+            /// Channel.Pair<T, T>, which is an IChannelEnd<T, T>).
+            interface IChannel<T> : IChannelEnd<T, T> {
             }
 
             [NoCopy]
@@ -177,7 +182,7 @@ namespace fire.Standard
             // One end of a two-way channel (Channel.Pair): Send goes to the other end, Receive takes what the other end sent. Like a channel it goes to a
             // thread with `fire with` (an end of its own) and is never copied; Close ends this end's direction.
             [NoCopy]
-            class ChannelEnd<A, B> : IEnumerable<B> {
+            class ChannelEnd<A, B> : IChannelEnd<A, B> {
                 Channel<A> outgoing
                 Channel<B> incoming
                 construct(Channel<A> o, Channel<B> i) { this.outgoing = take o; this.incoming = take i }

@@ -28375,6 +28375,46 @@ else
             }
             listener.Close()
             """),
+        ("IChannelEnd<A, B>: die Enden von Channel.Pair haben ein Interface, IChannel<T> ist ein IChannelEnd<T, T> - eine Methode mit IChannelEnd<int, int> nimmt Channel<int> und ein Ende von Pair<int, int>", """
+            #import "net.channel"
+            class Use {
+                static int Sum(IChannelEnd<string, int> ch) {
+                    ch.Send("a")
+                    ch.Send("bcd")
+                    ch.Close()
+                    int s = 0
+                    foreach (x in ch) { s = s + x }
+                    return s
+                }
+                static int Total(IChannel<int> ch) {
+                    int s = 0
+                    foreach (x in ch) { s = s + x }
+                    return s
+                }
+                static int Both(IChannelEnd<int, int> ch) {
+                    ch.Send(7)
+                    return ch.Receive()
+                }
+            }
+            var left = Channel.Pair<string, int>()
+            var right = left.Other()
+            fire with right {
+                foreach (s in right) { right.Send(s.Length) }
+                right.Close()
+            }
+            print("pair " + Use.Sum(left) + " " + (left is of IChannelEnd))
+            var plain = new Channel<int>()
+            plain.Send(1)
+            plain.Send(2)
+            plain.Close()
+            print("plain " + Use.Total(plain))
+            var loop = new Channel<int>()
+            print("same " + Use.Both(loop) + " " + (loop is of IChannelEnd) + " " + (loop is of IChannel))
+            var echo = Channel.Pair<int, int>()
+            var back = echo.Other()
+            fire with back { back.Send(back.Receive() * 2) }
+            print("echo " + Use.Both(echo))
+            """),
         ("Programmende: warten alle uebrigen Threads in Kanaelen, schliessen die Kanaele des Hauptprogramms (foreach endet)", """
             var ch = new Channel<int>()
             var out = new Channel<string>()

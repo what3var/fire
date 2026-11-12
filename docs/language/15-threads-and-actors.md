@@ -407,8 +407,9 @@ print(left.Receive())               // 5
 left.Close()
 ```
 
-- `IChannel<T>` is what every channel offers (`Send`, `Receive`, `TryReceive`, `Close`, `IsClosed`, `Count`, `foreach`): `Channel<T>` and
-  `Net.Channel<T>` implement it - a method that takes an `IChannel<int>` works with both.
+- `IChannelEnd<A, B>` is what every channel offers - `Send` of A, `Receive`/`TryReceive`/`foreach` of B, `Close`, `IsClosed`, `Count`: an end of
+  `Channel.Pair<A, B>` is one. `IChannel<T>` is an `IChannelEnd<T, T>`: `Channel<T>` and `Net.Channel<T>` implement it - a method that takes an
+  `IChannel<int>` works with both, one that takes an `IChannelEnd<int, int>` also with an end of `Channel.Pair<int, int>`.
 - Between programs: `Net.Channel<T>` (`#import "net.channel"`) is the same over a TCP connection - see [Net.Channel](../networking/net-channel.md).
 
 ## Actors
