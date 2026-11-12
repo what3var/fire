@@ -260,7 +260,7 @@ namespace fire.Standard
                 }
                 /// The compiled lambda with these arguments.
                 any Invoke(any a = undefined, any b = undefined, any c = undefined) {
-                    var f = this.Compiled
+                    any f = this.Compiled
                     if (f == undefined) { throw new ArgumentException("This lambda of an expression tree has no code of its own (a nested lambda): invoke the tree around it.") }
                     int n = this.Parameters.length
                     if (n == 0) { return f() }
