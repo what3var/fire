@@ -29163,6 +29163,9 @@ else
             print("case " + qdb.From<Resident>().Where(p => p.name.StartsWith("a")).Count())
             var wanted = ["Ada", "Linus"]
             print("in " + qdb.From<Resident>().Where(p => (taking wanted).Contains(p.name)).Count())
+            var wantedList = new List<string>()
+            wantedList.Add("Grace")
+            print("in list " + qdb.From<Resident>().Where(p => (taking wantedList).Contains(p.name)).Count())
             print("not " + qdb.From<Resident>().Where(p => !(p.age < 40)).Where(p => p.city == "London").Count())
             print("math " + qdb.From<Resident>().Where(p => p.age * 2 + 1 > 100 - 20).Count())
             print("then " + qdb.From<Resident>().OrderBy(p => p.city).ThenByDescending(p => p.age).First().name)
@@ -29397,6 +29400,9 @@ else
             print("case " + qdb.From<Resident>().Where(p => p.name.StartsWith("a")).Count())
             var wanted = ["Ada", "Linus"]
             print("in " + qdb.From<Resident>().Where(p => (taking wanted).Contains(p.name)).Count())
+            var wantedList = new List<string>()
+            wantedList.Add("Grace")
+            print("in list " + qdb.From<Resident>().Where(p => (taking wantedList).Contains(p.name)).Count())
             print("not " + qdb.From<Resident>().Where(p => !(p.age < 40)).Where(p => p.city == "London").Count())
             print("math " + qdb.From<Resident>().Where(p => p.age * 2 + 1 > 100 - 20).Count())
             print("then " + qdb.From<Resident>().OrderBy(p => p.city).ThenByDescending(p => p.age).First().name)

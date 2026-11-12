@@ -188,7 +188,7 @@ List<Person> london = await db.From<Person>().Where(p => p.city == "London").ToL
   in the SQL. A value compared with a column is converted like the mapping does (a `DateTime` to its ISO text, an enum to its name).
 - The database runs: the columns (`p.age` - the field's column, also a renamed one), `== != < <= > >=`, `&& || !`, `+ - * / %` (`+` of texts joins them),
   `?? `, `x ? a : b`, `== undefined` (`IS NULL`), of a text `StartsWith`, `EndsWith`, `Contains` (case-sensitive, like fire), `ToLower`, `ToUpper`, `Length`,
-  and an array of the program that `Contains` a column (`IN (...)`: `var wanted = ["Ada", "Linus"]; db.From<Person>().Where(p => (taking wanted).Contains(p.name))`).
+  and an array or a `List` of the program that `Contains` a column (`IN (...)`: `var wanted = ["Ada", "Linus"]; db.From<Person>().Where(p => (taking wanted).Contains(p.name))`).
 - Anything else - a method of your own, a member of a member, `is of` - is a `Data.NotTranslatableException` that names the part of the lambda.
 - The same query runs on every driver; the in-memory database gets the same SQL.
 
