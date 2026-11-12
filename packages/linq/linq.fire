@@ -314,11 +314,15 @@ class Query<T> : IEnumerable<T> {
     }
     Query<T> Concat(IEnumerable<T> other) {
         var f = this.factory
-        return new Query(func () on other => new LinqConcatEnumerator((taking f)(), Linq.Iter(this)))
+        var query = new Query(func () on other => new LinqConcatEnumerator((taking f)(), Linq.Iter(this)))
+        try other??.TakeTo(query)   // (a fresh one - `.Concat([7, 8])` - belongs to this call: the query keeps it)
+        return query
     }
     Query<R> Zip<U, R>(IEnumerable<U> other, R lambda<T, U> fn) {
         var f = this.factory
-        return new Query(func () on other => new LinqZipEnumerator((taking f)(), Linq.Iter(this), (taking fn)))
+        var query = new Query(func () on other => new LinqZipEnumerator((taking f)(), Linq.Iter(this), (taking fn)))
+        try other??.TakeTo(query)   // (a fresh one belongs to this call: the query keeps it)
+        return query
     }
 
     // ---- eager operators (work on a copy, return a Query again)

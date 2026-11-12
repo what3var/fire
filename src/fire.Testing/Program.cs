@@ -14314,24 +14314,27 @@ DebuggerTests.Run();
         print(f())
         """, new[] { "7" });
 
-    CheckLq("Capture: Zuweisung an den Capture ist ein Fehler", """
+    // (step 8 of docs/ROADMAP_TASKS.md: a lambda gets a copy of what it uses without a word - TC023 -, an object is shared only when it is bound with `on`)
+    CheckLq("Capture: ohne Wort bekommt das Lambda eine Kopie - eine Zuweisung aendert nur sie, nicht die Variable draussen", """
         class T {
-            static Run() {
+            static undefined Run() {
                 var n = 1
                 var f = () => { n = 2; return n }
-                print(f())
+                print(f() + " " + n)
             }
         }
         T.Run()
-        """, new[] { "AUSNAHME: 'n' is a COPY of the outer variable inside the lambda (capture) and cannot be assigned there (declare a new local variable with a different name) (4)" });
+        """, new[] { "2 1" });
 
-    CheckLq("Capture: ein Objekt wird als Referenz geteilt", """
+    CheckLq("Capture: ein Objekt ohne Wort wird kopiert, mit on gebunden geteilt", """
         class Box { int n; construct() { this.n = 0 } }
         class T {
-            static Run() {
+            static undefined Run() {
                 var b = new Box()
-                var bump = () => { b.n = b.n + 1 }
-                bump(); bump()
+                var copied = () => { b.n = b.n + 1 }
+                copied(); copied()
+                var bound = func () on b => { n = n + 1 }
+                bound(); bound()
                 print(b.n)
             }
         }
@@ -22316,11 +22319,13 @@ else
             var jobs = new Channel<Job>(2)
             var results = new Channel<int>()
             var notes = new Channel<Note>()
-            fire with jobs, results, notes {
+            var ack = new Channel<int>()
+            fire with jobs, results, notes, ack {
                 foreach (j in jobs) { results.Send(j.n * 10) }
                 var got = notes.Receive()
                 results.Send(got.text.Length)
                 results.Close()
+                ack.Receive()   // (the note lives until the main program has looked at it)
             }
             for (int i = 1; i <= 5; i++) { jobs.Send(new Job(i)) }
             var mine = new Job(9)
@@ -22337,8 +22342,12 @@ else
             int sum = 0
             foreach (r in results) { sum = sum + r }
             print("sum " + sum)
-            Sleep(30ms)
-            try { print(seen.text) } catch (DestroyedException e) { print("the note died with its receiver") }
+            ack.Send(1)
+            bool died = false
+            for (int k = 0; k < 2000 && !died; k++) {
+                try { if (seen.text.Length > 0) { Sleep(1ms) } } catch (DestroyedException e) { died = true }
+            }
+            if (died) { print("the note died with its receiver") } else { print(seen.text) }
             var parts = new Channel<Part>()
             var part = new Part(1)
             var alias = part

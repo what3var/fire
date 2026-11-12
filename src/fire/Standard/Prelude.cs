@@ -319,7 +319,7 @@ namespace fire.Standard
                 construct() { }
 
                 construct(lambda command) {
-                    this.Command = command
+                    this.Command = try take command   // (a fresh lambda belongs to the call: the command keeps it)
                 }
 
                 /// <summary>Calls the lambda `Command`; without a lambda nothing happens.</summary>
@@ -340,7 +340,7 @@ namespace fire.Standard
                 construct() { }
 
                 construct(lambda<T> command) {
-                    this.Command = command
+                    this.Command = try take command   // (a fresh lambda belongs to the call: the command keeps it)
                 }
 
                 /// <summary>Calls the lambda `Command` with the context; without a lambda nothing happens.</summary>

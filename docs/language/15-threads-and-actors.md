@@ -247,7 +247,7 @@ print(sync globals)                                  // 0: nothing left
 - A call and a native function (`print`) are never such a point; with `safepoints` the job above would run after `loop 0`.
 - `sync globals` runs everything that is queued and returns how many entries that were.
 - Inside a destructor, a running job and `catch threads` the queue waits; the next job never starts inside another one.
-- The project setting `globalJobs` and `--global-jobs` on the command line go before the directive ([Projects and solutions](../tools/projects.md)).
+- The project setting `globalJobs` and `--global-jobs` on the command line go before the directive (Projects and solutions (`docs/tools/projects.md`)).
 
 ## Waiting for a result: `await`
 
@@ -410,7 +410,7 @@ left.Close()
 - `IChannelEnd<A, B>` is what every channel offers - `Send` of A, `Receive`/`TryReceive`/`foreach` of B, `Close`, `IsClosed`, `Count`: an end of
   `Channel.Pair<A, B>` is one. `IChannel<T>` is an `IChannelEnd<T, T>`: `Channel<T>` and `Net.Channel<T>` implement it - a method that takes an
   `IChannel<int>` works with both, one that takes an `IChannelEnd<int, int>` also with an end of `Channel.Pair<int, int>`.
-- Between programs: `Net.Channel<T>` (`#import "net.channel"`) is the same over a TCP connection - see [Net.Channel](../networking/net-channel.md).
+- Between programs: `Net.Channel<T>` (`#import "net.channel"`) is the same over a TCP connection - see Net.Channel (`docs/networking/net-channel.md`).
 
 ## Actors
 

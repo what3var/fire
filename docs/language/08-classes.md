@@ -321,7 +321,7 @@ Without `operator==`, `==` compares objects by reference (the same instance).
 
 An attribute is a name in square brackets on the line before a class, a method, a field or a property, with arguments after the name and no parentheses (as in C#, `[Name 1, "text", {1, 2},
 new List<int>()]`; `{...}` is an array here, like `[...]`). A declaration may have several. Attributes do nothing by themselves; tools read them (reflection: `Type.Attributes`, `Member.Attributes`, see [Probes and reflection](16-probes-and-reflection.md)) - `forge test`
-runs the methods with `[Test]` ([Testing: forge test](../tools/testing.md)):
+runs the methods with `[Test]` (Testing: forge test (`docs/tools/testing.md`)):
 
 ```fire
 class CalcTests {
@@ -348,7 +348,7 @@ class Mixer {
 }
 ```
 
-Fields and properties can have attributes too. `#import "json"` reads two of them ([JSON](../stdlib/json.md)):
+Fields and properties can have attributes too. `#import "json"` reads two of them (JSON (`docs/stdlib/json.md`)):
 
 ```fire
 class Account {
