@@ -202,10 +202,86 @@ namespace fire.Standard
             // body in fire syntax; a visitor walks them.
 
             /// A node of an expression tree: its kind ("Binary", "Member", ...) and the type the type checker found ("int", "Person", "any").
-            class Expression {
+            /// Equals is structural - the same shape: kinds, types, operators, names, constants; a Captured node by its name and type, not its value (a
+            /// translator caches the SQL of a shape: the same tree with other captured values has the same text). GetHashCode fits it (a Dictionary key).
+            class Expression : IEquatable {
                 string Kind
                 string Type
                 construct(string kind, string type) { this.Kind = kind; this.Type = type }
+                /// The same shape (see the class).
+                bool Equals(any other) {
+                    if (!(other is of Expression)) { return false }
+                    if (other.Kind != this.Kind || other.Type != this.Type || other.__Shape() != this.__Shape()) { return false }
+                    any mine = this.__Parts()
+                    any theirs = other.__Parts()
+                    if (mine.length != theirs.length) { return false }
+                    for (int i = 0; i < mine.length; i++) {
+                        if (mine[i] == undefined) { if (theirs[i] != undefined) { return false } }
+                        else if (!mine[i].Equals(theirs[i])) { return false }
+                    }
+                    return true
+                }
+                int GetHashCode() {
+                    int h = __MathCall(15, this.Kind + "|" + this.Type + "|" + this.__Shape()) & 1073741823
+                    any parts = this.__Parts()
+                    for (int i = 0; i < parts.length; i++) {
+                        int part = 7
+                        if (parts[i] != undefined) { part = parts[i].GetHashCode() }
+                        h = (h * 31 + part) & 1073741823
+                    }
+                    return h
+                }
+                // (what a node is besides its kind, type and children - Equals and GetHashCode compare it; its children in order)
+                string __Shape() { return "" }
+                any __Parts() { return [] }
+                // (a new node of the same shape whose children went through the rewriter)
+                Expression __Rebuild(ExpressionRewriter r) { return copy this }
+
+                /// A new tree in which every part equal to `part` (Equals) is a copy of `replacement`. The result has no compiled code (Invoke: an
+                /// ArgumentException); a translator reads it.
+                static Expression Replace(Expression tree, Expression part, Expression replacement) {
+                    return new __ExpressionReplacer(part, replacement).Rewrite(tree)
+                }
+                /// `a && b` of two conditions with the same parameters (b's parameters become a's); its Invoke runs both compiled lambdas.
+                static LambdaExpression And(LambdaExpression a, LambdaExpression b) { return Expression.__Join("&&", a, b) }
+                /// `a || b` (as And).
+                static LambdaExpression Or(LambdaExpression a, LambdaExpression b) { return Expression.__Join("||", a, b) }
+                /// `!a`.
+                static LambdaExpression Not(LambdaExpression a) {
+                    var tree = new LambdaExpression(Expression.__CopyParameters(a), new UnaryExpression("!", new ExpressionRewriter().Rewrite(a.Body), "bool"), "bool")
+                    any fa = copy a.Compiled
+                    if (fa != undefined) {
+                        if (a.Parameters.length == 1) { tree.Compiled = (any x) => !(handover fa)(x) }
+                        else if (a.Parameters.length == 2) { tree.Compiled = (any x, any y) => !(handover fa)(x, y) }
+                    }
+                    return tree
+                }
+                static LambdaExpression __Join(string op, LambdaExpression a, LambdaExpression b) {
+                    if (a.Parameters.length != b.Parameters.length) {
+                        throw new ArgumentException("Expression." + (op == "&&" ? "And" : "Or") + ": the conditions take " + a.Parameters.length + " and " + b.Parameters.length + " parameter(s)")
+                    }
+                    var right = new __ExpressionParameterRenamer(b, a).Rewrite(b.Body)
+                    var tree = new LambdaExpression(Expression.__CopyParameters(a), new BinaryExpression(op, new ExpressionRewriter().Rewrite(a.Body), right, "bool"), "bool")
+                    any fa = copy a.Compiled
+                    any fb = copy b.Compiled
+                    if (fa != undefined && fb != undefined) {
+                        bool both = op == "&&"
+                        if (a.Parameters.length == 1) { tree.Compiled = (any x) => Expression.__Two((handover fa), (handover fb), both, x, undefined, 1) }
+                        else if (a.Parameters.length == 2) { tree.Compiled = (any x, any y) => Expression.__Two((handover fa), (handover fb), both, x, y, 2) }
+                    }
+                    return tree
+                }
+                static bool __Two(any fa, any fb, bool both, any x, any y, int n) {
+                    bool first = n == 1 ? fa(x) : fa(x, y)
+                    if (both && !first) { return false }
+                    if (!both && first) { return true }
+                    return n == 1 ? fb(x) : fb(x, y)
+                }
+                static any __CopyParameters(LambdaExpression a) {
+                    any ps = new any[a.Parameters.length]
+                    for (int i = 0; i < ps.length; i++) { ps[i] = copy a.Parameters[i] }
+                    return ps
+                }
                 /// The node for the visitor (ExpressionVisitor.VisitBinary, ...).
                 any Accept(ExpressionVisitor visitor) { return undefined }
                 any Visit(ExpressionVisitor visitor) { return this.Accept(visitor) }
@@ -228,6 +304,11 @@ namespace fire.Standard
                     if (v is of string) { return "\"" + v.Replace("\\", "\\\\").Replace("\"", "\\\"").Replace("\n", "\\n") + "\"" }
                     if (v is of bool) { if (v) { return "true" } return "false" }
                     return "" + v
+                }
+                static any __Copy(any items) {
+                    any parts = new any[items.length]
+                    for (int i = 0; i < items.length; i++) { parts[i] = items[i] }
+                    return parts
                 }
                 static string __List(any items) {
                     string text = ""
@@ -252,6 +333,18 @@ namespace fire.Standard
                 }
                 // (the compiled lambda of the call - the compiler hands it on right after the tree)
                 LambdaExpression __Attach(any compiled) { this.Compiled = try take compiled; return this }
+                override string __Shape() { return this.Parameters.length + ":" + this.ResultType }
+                override any __Parts() {
+                    any parts = new any[this.Parameters.length + 1]
+                    for (int i = 0; i < this.Parameters.length; i++) { parts[i] = this.Parameters[i] }
+                    parts[this.Parameters.length] = this.Body
+                    return parts
+                }
+                override Expression __Rebuild(ExpressionRewriter r) {
+                    any ps = new any[this.Parameters.length]
+                    for (int i = 0; i < ps.length; i++) { ps[i] = r.Rewrite(this.Parameters[i]) }
+                    return new LambdaExpression(take ps, r.Rewrite(this.Body), this.ResultType)
+                }
                 override any Accept(ExpressionVisitor visitor) { return visitor.VisitLambda(this) }
                 override string ToString() {
                     string body = this.Body.ToString()
@@ -261,7 +354,7 @@ namespace fire.Standard
                 /// The compiled lambda with these arguments.
                 any Invoke(any a = undefined, any b = undefined, any c = undefined) {
                     any f = this.Compiled
-                    if (f == undefined) { throw new ArgumentException("This lambda of an expression tree has no code of its own (a nested lambda): invoke the tree around it.") }
+                    if (f == undefined) { throw new ArgumentException("This lambda of an expression tree has no compiled code: a nested lambda (invoke the tree around it), or a tree made by Expression.Replace or an ExpressionRewriter.") }
                     int n = this.Parameters.length
                     if (n == 0) { return f() }
                     if (n == 1) { return f(a) }
@@ -277,6 +370,8 @@ namespace fire.Standard
                 int Index
                 construct(string name, int index, string type) : base("Parameter", type) { this.Name = name; this.Index = index }
                 override any Accept(ExpressionVisitor visitor) { return visitor.VisitParameter(this) }
+                // (a parameter by its place, not its name: `p => p.age` and `x => x.age` have the same shape)
+                override string __Shape() { return "" + this.Index }
                 override string ToString() { return this.Name }
             }
 
@@ -294,6 +389,9 @@ namespace fire.Standard
                 }
                 override any Accept(ExpressionVisitor visitor) { return visitor.VisitMember(this) }
                 override string ToString() { return this.Target.ToString() + "." + this.Name }
+                override string __Shape() { return this.Name + ":" + this.IsField + ":" + this.IsProperty }
+                override any __Parts() { return [this.Target] }
+                override Expression __Rebuild(ExpressionRewriter r) { return new MemberExpression(r.Rewrite(this.Target), this.Name, this.Type, this.IsField, this.IsProperty) }
             }
 
             /// A literal: `18`, `"A"`, `true`, `undefined`, `5m`.
@@ -302,6 +400,7 @@ namespace fire.Standard
                 construct(any value, string type) : base("Constant", type) { this.Value = try take value }
                 override any Accept(ExpressionVisitor visitor) { return visitor.VisitConstant(this) }
                 override string ToString() { return Expression.__Text(this.Value) }
+                override string __Shape() { return Expression.__Text(this.Value) }
             }
 
             /// What does not depend on a parameter - a variable, a field, a member of one, a call: its value when the tree was made.
@@ -311,6 +410,8 @@ namespace fire.Standard
                 construct(string name, any value, string type) : base("Captured", type) { this.Name = name; this.Value = try take value }
                 override any Accept(ExpressionVisitor visitor) { return visitor.VisitCaptured(this) }
                 override string ToString() { return this.Name }
+                // (by its name: the value is what changes from call to call)
+                override string __Shape() { return this.Name }
             }
 
             /// `!x`, `-x`.
@@ -320,6 +421,9 @@ namespace fire.Standard
                 construct(string op, Expression operand, string type) : base("Unary", type) { this.Op = op; this.Operand = take operand }
                 override any Accept(ExpressionVisitor visitor) { return visitor.VisitUnary(this) }
                 override string ToString() { return this.Op + this.Operand.ToString() }
+                override string __Shape() { return this.Op }
+                override any __Parts() { return [this.Operand] }
+                override Expression __Rebuild(ExpressionRewriter r) { return new UnaryExpression(this.Op, r.Rewrite(this.Operand), this.Type) }
             }
 
             /// `a op b` (`==` `!=` `<` `<=` `>` `>=` `&&` `||` `+` `-` `*` `/` `%` `??`, ...).
@@ -334,6 +438,9 @@ namespace fire.Standard
                 }
                 override any Accept(ExpressionVisitor visitor) { return visitor.VisitBinary(this) }
                 override string ToString() { return "(" + this.Left.ToString() + " " + this.Op + " " + this.Right.ToString() + ")" }
+                override string __Shape() { return this.Op }
+                override any __Parts() { return [this.Left, this.Right] }
+                override Expression __Rebuild(ExpressionRewriter r) { return new BinaryExpression(this.Op, r.Rewrite(this.Left), r.Rewrite(this.Right), this.Type) }
             }
 
             /// `test ? a : b`.
@@ -347,6 +454,8 @@ namespace fire.Standard
                     this.IfFalse = take ifFalse
                 }
                 override any Accept(ExpressionVisitor visitor) { return visitor.VisitConditional(this) }
+                override any __Parts() { return [this.Test, this.IfTrue, this.IfFalse] }
+                override Expression __Rebuild(ExpressionRewriter r) { return new ConditionalExpression(r.Rewrite(this.Test), r.Rewrite(this.IfTrue), r.Rewrite(this.IfFalse), this.Type) }
                 override string ToString() { return "(" + this.Test.ToString() + " ? " + this.IfTrue.ToString() + " : " + this.IfFalse.ToString() + ")" }
             }
 
@@ -363,6 +472,20 @@ namespace fire.Standard
                     this.Arguments = take arguments
                 }
                 override any Accept(ExpressionVisitor visitor) { return visitor.VisitCall(this) }
+                override string __Shape() { return this.Method + ":" + this.DeclaringType }
+                override any __Parts() {
+                    any parts = new any[this.Arguments.length + 1]
+                    parts[0] = this.Target
+                    for (int i = 0; i < this.Arguments.length; i++) { parts[i + 1] = this.Arguments[i] }
+                    return parts
+                }
+                override Expression __Rebuild(ExpressionRewriter r) {
+                    any args = new any[this.Arguments.length]
+                    for (int i = 0; i < args.length; i++) { args[i] = r.Rewrite(this.Arguments[i]) }
+                    any target = undefined
+                    if (this.Target != undefined) { target = r.Rewrite(this.Target) }
+                    return new CallExpression(take target, this.Method, this.DeclaringType, take args, this.Type)
+                }
                 override string ToString() {
                     string target = this.DeclaringType
                     if (this.Target != undefined) { target = this.Target.ToString() }
@@ -375,6 +498,12 @@ namespace fire.Standard
                 Expression Arguments[]
                 construct(any arguments, string type) : base("New", type) { this.Arguments = take arguments }
                 override any Accept(ExpressionVisitor visitor) { return visitor.VisitNew(this) }
+                override any __Parts() { return Expression.__Copy(this.Arguments) }
+                override Expression __Rebuild(ExpressionRewriter r) {
+                    any args = new any[this.Arguments.length]
+                    for (int i = 0; i < args.length; i++) { args[i] = r.Rewrite(this.Arguments[i]) }
+                    return new NewExpression(take args, this.Type)
+                }
                 override string ToString() { return "new " + this.Type + "(" + Expression.__List(this.Arguments) + ")" }
             }
 
@@ -384,6 +513,9 @@ namespace fire.Standard
                 string TypeName
                 construct(Expression operand, string typeName) : base("IsType", "bool") { this.Operand = take operand; this.TypeName = typeName }
                 override any Accept(ExpressionVisitor visitor) { return visitor.VisitIsType(this) }
+                override string __Shape() { return this.TypeName }
+                override any __Parts() { return [this.Operand] }
+                override Expression __Rebuild(ExpressionRewriter r) { return new IsTypeExpression(r.Rewrite(this.Operand), this.TypeName) }
                 override string ToString() { return "(" + this.Operand.ToString() + " is of " + this.TypeName + ")" }
             }
 
@@ -393,6 +525,8 @@ namespace fire.Standard
                 Expression Index
                 construct(Expression target, Expression index, string type) : base("Index", type) { this.Target = take target; this.Index = take index }
                 override any Accept(ExpressionVisitor visitor) { return visitor.VisitIndex(this) }
+                override any __Parts() { return [this.Target, this.Index] }
+                override Expression __Rebuild(ExpressionRewriter r) { return new IndexExpression(r.Rewrite(this.Target), r.Rewrite(this.Index), this.Type) }
                 override string ToString() { return this.Target.ToString() + "[" + this.Index.ToString() + "]" }
             }
 
@@ -401,6 +535,8 @@ namespace fire.Standard
                 Expression Operand
                 construct(Expression operand, string type) : base("Convert", type) { this.Operand = take operand }
                 override any Accept(ExpressionVisitor visitor) { return visitor.VisitConvert(this) }
+                override any __Parts() { return [this.Operand] }
+                override Expression __Rebuild(ExpressionRewriter r) { return new ConvertExpression(r.Rewrite(this.Operand), this.Type) }
                 override string ToString() { return this.Operand.ToString() + "!" + this.Type }
             }
 
@@ -436,6 +572,52 @@ namespace fire.Standard
                 any found
                 construct(any found) { this.found = found }
                 override any VisitCaptured(CapturedExpression e) { this.found.Add(e); return undefined }
+            }
+
+            /// Makes a new tree from a tree: Rewrite(e) gives a copy of `e` whose children went through Rewrite. Derive and override Rewrite to change
+            /// parts (`base.Rewrite(e)` for the rest). The new tree has no compiled code.
+            class ExpressionRewriter {
+                Expression Rewrite(Expression e) { return e.__Rebuild(this) }
+            }
+
+            class __ExpressionReplacer : ExpressionRewriter {
+                Expression part
+                Expression replacement
+                construct(Expression part, Expression replacement) { this.part = copy part; this.replacement = copy replacement }
+                override Expression Rewrite(Expression e) {
+                    if (e.Equals(this.part)) { return copy this.replacement }
+                    return base.Rewrite(e)
+                }
+            }
+
+            // (the parameters of `source` become those of `target` - by name; a nested lambda that names its own parameter so hides it)
+            class __ExpressionParameterRenamer : ExpressionRewriter {
+                any names
+                any to
+                construct(LambdaExpression source, LambdaExpression target) {
+                    this.names = new List<string>()
+                    this.to = new List<string>()
+                    for (int i = 0; i < source.Parameters.length; i++) { this.names.Add(source.Parameters[i].Name); this.to.Add(target.Parameters[i].Name) }
+                }
+                override Expression Rewrite(Expression e) {
+                    if (e is of ParameterExpression) {
+                        int at = this.names.IndexOf(e.Name)
+                        if (at >= 0) { return new ParameterExpression(this.to[at], e.Index, e.Type) }
+                        return base.Rewrite(e)
+                    }
+                    if (e is of LambdaExpression) {
+                        any hidden = new List<int>()
+                        any hiddenNames = new List<string>()
+                        for (int i = 0; i < e.Parameters.length; i++) {
+                            int at = this.names.IndexOf(e.Parameters[i].Name)
+                            if (at >= 0) { hidden.Add(at); hiddenNames.Add(this.names[at]); this.names[at] = "" }
+                        }
+                        any result = base.Rewrite(e)
+                        for (int i = 0; i < hidden.Count; i++) { this.names[hidden[i]] = hiddenNames[i] }
+                        return result
+                    }
+                    return base.Rewrite(e)
+                }
             }
 
             class ChannelIter<T> : IEnumerator<T> {

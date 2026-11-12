@@ -28674,6 +28674,62 @@ else
             print(d.length + " " + d[0])
             print(new Probe<Q>().Keep(q => wanted.Contains(q.name)).Invoke(new Q("Linus")))
             """),
+        ("Expression trees: Equals/GetHashCode nach der Form (Captures nach Name, Dictionary-Schluessel), And/Or/Not mit Invoke, Replace, zwei Parameter", """
+            #import "linq"
+            class Order { int total; construct(int t) { this.total = t } }
+            class P { int age; string name; List<Order> orders = new List<Order>(); construct(int a, string n) { this.age = a; this.name = n } }
+            class Probe<T> { LambdaExpression Keep(lambda expression<T> e) { return e } }
+            class Probe2<A, B> { LambdaExpression Keep(lambda expression<A, B> e) { return e } }
+            var pr = new Probe<P>()
+            var min = 18
+            var a = pr.Keep(p => p.age > min && p.name != undefined)
+            min = 30
+            var b = pr.Keep(x => x.age > min && x.name != undefined)
+            var c = pr.Keep(p => p.age >= min)
+            print(a.Equals(b) + " " + (a.GetHashCode() == b.GetHashCode()) + " " + a.Equals(c) + " " + a.Equals(a) + " " + a.Equals(5))
+            var cache = new Dictionary<LambdaExpression, string>()
+            cache.Add(a, "SQL A")
+            print(cache.ContainsKey(b) + " " + cache[b] + " " + cache.ContainsKey(c))
+            var both = Expression.And(a, pr.Keep(q => q.orders.Any(q => q.total > 5)))
+            print(both.ToString())
+            var ada = new P(40, "Ada")
+            ada.orders.Add(new Order(10))
+            print(both.Invoke(ada) + " " + both.Invoke(new P(40, "Linus")) + " " + both.Invoke(new P(5, "Kid")))
+            var either = Expression.Or(pr.Keep(p => p.age < 10), pr.Keep(p => p.name == "Ada"))
+            print(either.ToString() + " " + either.Invoke(new P(5, "x")) + " " + either.Invoke(new P(50, "Ada")) + " " + either.Invoke(new P(50, "Bob")))
+            var no = Expression.Not(c)
+            print(no.ToString() + " " + no.Invoke(new P(5, "x")) + " " + no.Invoke(new P(50, "x")))
+            var age = pr.Keep(p => p.age).Body
+            any r = Expression.Replace(a, age, pr.Keep(p => p.orders.Count).Body)
+            print(r.ToString() + " " + r.Equals(a) + " " + a.ToString())
+            try { r.Invoke(ada) } catch (ArgumentException e) { print(e.message) }
+            var j = new Probe2<P, Order>().Keep((p, o) => p.age > o.total)
+            var k = new Probe2<P, Order>().Keep((x, y) => y.total < 100)
+            var jk = Expression.And(j, k)
+            print(jk.ToString() + " " + jk.Invoke(ada, new Order(5)) + " " + jk.Invoke(ada, new Order(500)))
+            try { Expression.And(a, j) } catch (ArgumentException e) { print(e.message) }
+            print(a.Captures()[0].Value + " " + b.Captures()[0].Value)
+            """),
+        ("Lambdas: handover einer Lambda in eine Lambda (VM wie nativ: sie zieht um und bleibt aufrufbar)", """
+            class M {
+                static any Both(any fa, any fb) {
+                    any ca = copy fa
+                    any cb = copy fb
+                    return (any x) => (handover ca)(x) && (handover cb)(x)
+                }
+                static any Both2(any fa, any fb) {
+                    any ca = copy fa
+                    any cb = copy fb
+                    any r = (any x) => Run.Two((handover ca), (handover cb), x)
+                    return r
+                }
+            }
+            class Run { static bool Two(any a, any b, any x) { return a(x) && b(x) } }
+            any f = M.Both((any x) => x > 1, (any x) => x < 5)
+            print(f(3) + " " + f(7) + " " + f(0))
+            any g = M.Both2((any x) => x > 1, (any x) => x < 5)
+            print(g(3) + " " + g(7) + " " + g(0))
+            """),
         ("Programmende: warten alle uebrigen Threads in Kanaelen, schliessen die Kanaele des Hauptprogramms (foreach endet)", """
             var ch = new Channel<int>()
             var out = new Channel<string>()
