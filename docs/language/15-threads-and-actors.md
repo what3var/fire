@@ -17,6 +17,8 @@ print("main goes on")
 - `fire { ... }` runs the block in a new thread. It has no result and ends at the end of its block (or earlier with `leave`).
 - Inside a class, `fire Method(args)` runs a method of `this` in a new thread. Its arguments are copied like `taking` - except a direct `new`
   (`fire Work(new Job())`), which is handed over to the thread without a copy.
+- A `fire { ... }` block inside a method runs without `this`: the fields of the object are not reachable in it (a compile error) - it gets what it
+  needs with `taking`, `handover` or `with`, and those names win over a field of the same name.
 - The program waits at its end for all running threads.
 - A fire thread is a light task on a pool of system threads (one per core) - in a native build and in the VM; thousands of threads that wait cost no
   system thread each. `fire dedicated { ... }` (also
@@ -404,6 +406,8 @@ left.Send("hello")
 print(left.Receive())               // 5
 left.Close()
 ```
+
+- Between programs: `Net.Channel<T>` (`#import "net.channel"`) is the same over a TCP connection - see [Net.Channel](../networking/net-channel.md).
 
 ## Actors
 

@@ -561,8 +561,11 @@ The threads share nothing that can change - and get ways to pass what does not c
   becomes a grave: dead at once (its generation), its memory goes when every strand that reads lent records (it joined on its first receive) has
   passed a safe point or waits - epochs announced at gilYield and around the waits (lentAnnounce/lentQuiet); its strings are counted atomically from
   the lending on. With the GIL nothing waits. ownedOf hides a lent record from every strand but its owner (nothing moves it, even while it has no owner
-  for a moment); a move by the owner retires the readers' references. Open: `Net.Channel<T>` (JSON over a socket; the user: "mit Leihgabe" - a value
-  goes to the target alone and comes back when the target gives it back).
+  for a moment); a move by the owner retires the readers' references. Done: `Net.Channel<T>` (package net.channel, docs/networking/net-channel.md; the
+  user: "identisch zum normalen Channel") - the same over TCP, one JSON line per message (`v` moved, `l <id>` lent, `g <id>` the lending ended, `c`
+  closed): objects only fresh/copied/taken (they belong to the other side alone), a record without a word is lent - the reader thread of the other
+  side owns its copy and lends it into the queue; `__chan_watch` (VM: ObjectInstance.LentEnd, natively g_lentWatch) puts the `g` line into the queue
+  of what is to be sent when the record dies or its owner moves it, so its end arrives in the order of the connection.
 * **No shared objects** (the user): with records and channels everything is covered - an object stays where it lives; other threads reach it only
   through calls of lambdas bound to it, jobs, `await on` and actors.
 
@@ -581,4 +584,4 @@ The threads share nothing that can change - and get ways to pass what does not c
 
 ## Open
 
-Step 9: records, `with`, `Channel<T>`, `Channel.Pair` and lent records over a channel are done; open: `Net.Channel<T>` (see "Step 9" above).
+Step 9: records, `with`, `Channel<T>`, `Channel.Pair`, lent records over a channel and `Net.Channel<T>` are done (see "Step 9" above).

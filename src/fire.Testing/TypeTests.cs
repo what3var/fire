@@ -72,6 +72,10 @@ static class TypeTests
             """) == "TC001 TC002|");
         Check("strict (Schalter): derselbe Konflikt ist ein Fehler", Run("int x = 3\nx = \"hello\"", TypeCheckMode.Strict) == "|ERROR TC001");
         Check("#strict in der Datei", Run("#strict\nint x = \"a\"") == "|ERROR TC001");
+        // A fire body runs without `this`: a capture (taking, with) wins over a field of the same name; a field without one is an error at compile time
+        Check("fire: ein Capture verdeckt ein gleichnamiges Feld, ein Feld ohne Capture ist im fire-Block ein Fehler (er laeuft ohne this)",
+            Run("class P { int n = 5\n undefined Go() { int n = 7\n fire taking n { int k = n + 1 } } }\nnew P().Go()\nprint(\"ok\")") is var fireCap && fireCap == "|ok"
+            && Run("class P { int n = 5\n undefined Go() { fire { int k = n } } }\nnew P().Go()") is var fireField && fireField.StartsWith("|ERROR E4"), _lastRun);
         // Records (step 9): a write outside the construction (TC026) and a field that can change (TC027) are errors in lax mode too; a record derives only from a record
         Check("Records: Schreiben ausserhalb der Konstruktion ist TC026 (auch lax), im Konstruktor erlaubt",
             Run("record P { int x\n construct(int x) { this.x = x }\n undefined M() { this.x = 2 } }\nvar p = new P(1)\np.x = 3\np.x++") is var recW && recW == "|ERROR TC026 TC026 TC026", recW);

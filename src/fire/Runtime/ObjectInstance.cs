@@ -169,6 +169,9 @@ namespace fire.Runtime
         /// <summary>A record lent through a channel (`ch.Send(r)` without a word, docs/ROADMAP_TASKS.md step 9): the VM of the thread that owns it - only it
         /// moves the record (`take`); the receivers read it until the owner destroys it. A handover gives the record a new instance without it.</summary>
         public object? LentBy;
+        /// <summary>What has to happen when the lending ends - the record dies or its owner moves it (a Net.Channel tells the other side; `__chan_watch`).</summary>
+        public Action? LentEnd;
+        private void EndLending() { var end = LentEnd; LentEnd = null; end?.Invoke(); }
 
         /// <summary>The type arguments of `new Box&lt;int&gt;()` (DeclaredType texts, "" for one that is not known at run time); null for an object of a class
         /// that is not generic, or created without them (`new List()`). A declaration `T value` in the class is checked against them.</summary>
@@ -227,6 +230,7 @@ namespace fire.Runtime
         internal void RetireAfterHandover(ObjectInstance fresh)
         {
             HandedOverTo = fresh;
+            EndLending();
             _owned = default;
             _leaves = null;
             _referrers = null;
@@ -465,6 +469,7 @@ namespace fire.Runtime
         {
             if (_destroyed) return;
             _destroyed = true;
+            EndLending();
             DestroyBatch.Enter();
             try { DestroyCore(runner); }
             finally { DestroyBatch.Exit(this); }

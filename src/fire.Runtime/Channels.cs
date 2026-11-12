@@ -81,6 +81,7 @@ namespace fire.Runtime
                     lock (n.Gate) return Value.MakeInt(n.Items.Count);
                 }
                 case "__chan_send": return ChannelSend(ChannelHandles.Get(H(0)), a.Length > 1 ? a[1] : Value.MakeUndefined(), a.Length > 2 && a[2].Kind == ValueKind.Bool && a[2].AsBool());
+                case "__chan_watch": return ChannelWatch(a.Length > 0 ? a[0] : Value.MakeUndefined(), H(1), a.Length > 2 ? a[2] : Value.MakeUndefined());
                 case "__chan_receive":
                     return ChannelReceive(ChannelHandles.Get(H(0)), a.Length > 1 ? a[1] : Value.MakeUndefined(), a.Length <= 2 || a[2].Kind != ValueKind.Bool || a[2].AsBool());
             }
@@ -116,6 +117,30 @@ namespace fire.Runtime
             FireRuntime.WakeWaitingOwner();
             VmScheduler.Wake();
             return Value.MakeBool(true);
+        }
+
+        /// <summary>`__chan_watch(v, node, text)` (Net.Channel): 0 - v is a value (no object); 1 - a living record, lent from now on: when the lending ends (it
+        /// dies, its owner moves it) `text` goes into the channel `node` (without waiting, whatever its capacity); 2 - another object, an array, a buffer, a
+        /// lambda or something destroyed.</summary>
+        private Value ChannelWatch(Value v, long handle, Value text)
+        {
+            if (v.Kind is not (ValueKind.Class or ValueKind.Array or ValueKind.Buffer or ValueKind.Lambda)) return Value.MakeInt(0);
+            if (v.Kind != ValueKind.Class || v.AsObjectRef() is not ObjectInstance { IsDestroyed: false } record || !RecordValues.IsRecord(v)) return Value.MakeInt(2);
+            Lend(record);
+            long id = ChannelHandles.Ref(handle);
+            var previous = record.LentEnd;
+            record.LentEnd = () =>
+            {
+                previous?.Invoke();
+                if (ChannelHandles.Get(id) is { } node)
+                {
+                    lock (node.Gate) { if (!node.Closed) node.Items.Enqueue(text); }
+                    FireRuntime.WakeWaitingOwner();
+                    VmScheduler.Wake();
+                }
+                if (ChannelHandles.Release(id, out var last) && last != null) { lock (last.Gate) { last.Items.Clear(); last.Closed = true; } }
+            };
+            return Value.MakeInt(1);
         }
 
         /// <summary>A record lent through a channel, with the records it holds: this thread owns it (unless a thread lent it before).</summary>

@@ -28267,6 +28267,59 @@ else
             print("main " + first + " " + n)
             st.Stop()
             """),
+        ("Net.Channel<T>: ein Kanal ueber TCP wie Channel<T> - Werte als JSON, Objekte nur frisch/copy/take (ArgumentException), ein Record ohne Wort wird geliehen (take verwehrt, stirbt er beim Besitzer, ist er auch drueben tot - in der Reihenfolge der Verbindung), Close: undefined nach dem Rest", """
+            #import "net.channel"
+            record Note {
+                string text
+                construct(string t) { this.text = t }
+            }
+            class Job {
+                int n
+                construct(int n) { this.n = n }
+            }
+            var listener = new Net.ChannelListener<any>("127.0.0.1", 0)
+            int port = listener.Port
+            var finished = new Channel<string>()
+            fire with finished taking port {
+                if (true) {
+                    var ch = new Net.Channel<any>("127.0.0.1", port)
+                    any n = ch.Receive()
+                    any job = ch.Receive()
+                    any note = ch.Receive()
+                    string line = "thread " + n + " " + job.n + " " + note.text
+                    try { any mine = take note } catch (AccessDeniedException e) { line = line + " take denied" }
+                    finished.Send(line)
+                    ch.Send(job.n * 2)
+                    any go = ch.Receive()
+                    try { finished.Send("thread " + go + " " + note.text) } catch (DestroyedException e) { finished.Send("thread " + go + ": the note ended with its owner") }
+                    ch.Send("bye")
+                    ch.Close()
+                    any rest = ch.Receive()
+                    finished.Send("thread rest " + (rest == undefined))
+                }
+                finished.Close()
+            }
+            if (true) {
+                var ch = listener.Accept()
+                ch.Send(5)
+                ch.Send(new Job(21))
+                var j = new Job(3)
+                try { ch.Send(j) } catch (ArgumentException e) { print("word: " + e.message) }
+                if (true) {
+                    var note = new Note("hello")
+                    ch.Send(note)
+                    print(finished.Receive())
+                    print("main answer " + ch.Receive())
+                }
+                ch.Send("go")
+                print(finished.Receive())
+                print("main " + ch.Receive())
+                print("main end " + (ch.Receive() == undefined))
+            }
+            foreach (s in finished) { print(s) }
+            listener.Close()
+            print("done")
+            """),
         ("Http.Rpc: [Remote]-Klassen ueber HTTP und JSON - nur mit Sitzung (401), [Nickname] fuer gleichnamige Klassen, Methode, Objekt als Argument, Dienst per DI (Actor), Property, Ausnahme 500, nicht [Remote] 404, falsche Argumente 400, Lebensdauer request, session und single", """
             #import "http.rpc"
             #import "time"

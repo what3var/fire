@@ -4780,21 +4780,45 @@ FIRE_FN bool fitsTArg(Value* v, const TArg* ta) {
  * generator calls internTArgsV(2, &TA_1, &TA_2) (C89: no compound literals - Open Watcom). */
 typedef struct fire_TArgsEntry { struct fire_TArgsEntry* next; uint32_t n; const TArg* a[1]; } fire_TArgsEntry;
 extern FIRE_RT_DATA fire_TArgsEntry* g_targsHead;
-FIRE_FN TArgs internTArgsN(const TArg* const* items, uint32_t n) {
-    fire_TArgsEntry* e;
+/* (without the GIL threads intern too: the list only grows - read without a lock, a new entry is added under g_targsM after a second look) */
+#if defined(FIRE_NO_GIL) && (defined(__GNUC__) || defined(__clang__))
+#define FIRE_TARGS_HEAD() __atomic_load_n(&g_targsHead, __ATOMIC_ACQUIRE)
+#define FIRE_TARGS_PUBLISH(e) __atomic_store_n(&g_targsHead, (e), __ATOMIC_RELEASE)
+#else
+#define FIRE_TARGS_HEAD() (g_targsHead)
+#define FIRE_TARGS_PUBLISH(e) (g_targsHead = (e))
+#endif
+#ifdef FIRE_NO_GIL
+extern FIRE_RT_DATA fire_mutex g_targsM;
+#endif
+FIRE_FN TArgs findTArgs(fire_TArgsEntry* e, const TArg* const* items, uint32_t n) {
     uint32_t i;
-    for (e = g_targsHead; e; e = e->next) {
+    for (; e; e = e->next) {
         if (e->n != n) continue;
         i = 0;
         while (i < n && e->a[i] == items[i]) i++;
         if (i == n) return e->a;
     }
+    return NULL;
+}
+FIRE_FN TArgs internTArgsN(const TArg* const* items, uint32_t n) {
+    fire_TArgsEntry* e;
+    TArgs found = findTArgs(FIRE_TARGS_HEAD(), items, n);
+    uint32_t i;
+    if (found) return found;
+#ifdef FIRE_NO_GIL
+    fire_mutex_lock(&g_targsM);
+    if ((found = findTArgs(FIRE_TARGS_HEAD(), items, n)) != NULL) { fire_mutex_unlock(&g_targsM); return found; }
+#endif
     e = (fire_TArgsEntry*)malloc(sizeof(fire_TArgsEntry) + (n > 0 ? n - 1 : 0) * sizeof(const TArg*));
     if (FIRE_UNLIKELY(!e)) allocFailed();
     e->n = n;
     for (i = 0; i < n; i++) e->a[i] = items[i];
     e->next = g_targsHead;
-    g_targsHead = e;
+    FIRE_TARGS_PUBLISH(e);
+#ifdef FIRE_NO_GIL
+    fire_mutex_unlock(&g_targsM);
+#endif
     return e->a;
 }
 #define FIRE_TARGS_MAX 16
@@ -7759,6 +7783,11 @@ FIRE_FN void ptrVecPush(PtrVec* v, void* p) {
  * the generation and the access right after it - no safe point between them - and a reader announces the epoch at its safe points. */
 extern FIRE_RT_DATA fire_mutex g_lentM;
 extern FIRE_RT_DATA PtrMap g_lentOwner;
+/* What has to happen when the lending of a record ends - it dies or its owner moves it: a text goes into a channel (a Net.Channel tells the other side;
+ * `__chan_watch`). g_lentWatch: record -> its LentWatch list (under g_lentM). */
+typedef struct LentWatch { void* node; Value text; struct LentWatch* next; } LentWatch;
+extern FIRE_RT_DATA PtrMap g_lentWatch;
+FIRE_FN void lentWatchFire(LentWatch* w);
 #ifdef FIRE_NO_GIL
 /* (sequentially consistent operations - a store of a reader before its load of the epoch, the epoch's step before the scan of the readers - not
  * fences: ThreadSanitizer understands them) */
@@ -7911,17 +7940,32 @@ FIRE_FN bool lentTakeOk(Value v) {
 /* (`fire handover`, a Send with `take`: the parts get the next generation - the lent ones are no reader's any more; they stay in the map for their memory) */
 FIRE_FN void lentHandedOn(Owned* const* parts, uint32_t count) {
     uint32_t i;
+    LentWatch* fired = NULL;
     if (!fire_atomic_load(&g_lentCount)) return;
     fire_mutex_lock(&g_lentM);
-    for (i = 0; i < count; i++) if (parts[i]->okind == O_Object) { void** owner = ptrMapFind(&g_lentOwner, parts[i]); if (owner) *owner = NULL; }
+    for (i = 0; i < count; i++) if (parts[i]->okind == O_Object) {
+        void** owner = ptrMapFind(&g_lentOwner, parts[i]);
+        void** watch = ptrMapFind(&g_lentWatch, parts[i]);
+        if (owner) *owner = NULL;
+        if (watch) {
+            LentWatch* w = (LentWatch*)*watch;
+            ptrMapRemove(&g_lentWatch, parts[i]);
+            while (w) { LentWatch* next = w->next; w->next = fired; fired = w; w = next; }
+        }
+    }
     fire_mutex_unlock(&g_lentM);
+    while (fired) { LentWatch* next = fired->next; lentWatchFire(fired); fired = next; }
 }
 /* The end of a lent record's batch (batchEnd): false when it is not lent (it is freed as usual). Without the GIL: dead now, freed when no reader can be
  * looking at it any more; with the GIL nobody reads it while this runs - freed right away. */
 FIRE_FN bool lentRetire(Obj* o) {
+    void** watch;
+    LentWatch* fired = NULL;
     fire_mutex_lock(&g_lentM);
     if (!ptrMapFind(&g_lentOwner, o)) { fire_mutex_unlock(&g_lentM); return false; }
     ptrMapRemove(&g_lentOwner, o);
+    if ((watch = ptrMapFind(&g_lentWatch, o)) != NULL) { fired = (LentWatch*)*watch; ptrMapRemove(&g_lentWatch, o); }
+    while (fired) { LentWatch* next = fired->next; fire_mutex_unlock(&g_lentM); lentWatchFire(fired); fire_mutex_lock(&g_lentM); fired = next; }
 #ifdef FIRE_NO_GIL
     {
         LentGrave* g = (LentGrave*)malloc(sizeof(LentGrave));
@@ -11106,6 +11150,7 @@ typedef struct ChanNode {
     fire_mutex m;
     Value* buf;
     uint32_t cap, head, n;
+    uint32_t room;   /* the size of `buf` (cap, or more once a watch pushed beyond it: chanPushAny) */
     OwnList hold;
 } ChanNode;
 FIRE_FN ChanNode* chanOf(Value h) { return h.kind == K_Int && h.i ? (ChanNode*)(intptr_t)h.i : NULL; }
@@ -11121,6 +11166,7 @@ FIRE_FN Value fire_chan_new(Value cap) {
     n->buf = (Value*)malloc((size_t)c * sizeof(Value));
     if (!n->buf) allocFailed();
     n->cap = (uint32_t)c;
+    n->room = n->cap;
     fire_atomic_store(&n->refs, 1);
     fire_mutex_init(&n->m);
     ownListInit(&n->hold, 0, NULL);
@@ -11132,7 +11178,7 @@ FIRE_FN Value fire_chan_release(Value h) {
     uint32_t i;
     if (!n || fire_atomic_addAcqRel(&n->refs, (uint32_t)-1) != 1) return Undef();
     /* (the last end: what was not received is destroyed - had a receiver taken it, it would be gone with it too) */
-    for (i = 0; i < n->n; i++) { Value v = n->buf[(n->head + i) % n->cap]; if (v.kind == K_String) release(v); }
+    for (i = 0; i < n->n; i++) { Value v = n->buf[(n->head + i) % n->room]; if (v.kind == K_String) release(v); }
     destroyList(&n->hold);
     free(n->buf);
     free(n);
@@ -11140,6 +11186,56 @@ FIRE_FN Value fire_chan_release(Value h) {
 }
 FIRE_FN Value fire_chan_close(Value h) { ChanNode* n = chanOf(h); if (n) { fire_atomic_storeRelease(&n->closed, 1); notifyEventAll(); } return Undef(); }
 FIRE_FN Value fire_chan_closed(Value h) { ChanNode* n = chanOf(h); return Bool(!n || fire_atomic_loadAcquire(&n->closed) != 0); }
+/* (a value that goes in without waiting, whatever the capacity - the text of a watch: lentWatchFire) */
+FIRE_FN void chanPushAny(ChanNode* n, Value v) {
+    fire_mutex_lock(&n->m);
+    if (fire_atomic_loadAcquire(&n->closed)) { fire_mutex_unlock(&n->m); return; }
+    if (n->n == n->room) {
+        uint32_t room = n->room * 2, i;
+        Value* buf = (Value*)malloc((size_t)room * sizeof(Value));
+        if (!buf) { fire_mutex_unlock(&n->m); allocFailed(); }
+        for (i = 0; i < n->n; i++) buf[i] = n->buf[(n->head + i) % n->room];
+        free(n->buf);
+        n->buf = buf;
+        n->head = 0;
+        n->room = room;
+    }
+    if (v.kind == K_String) { v = strCross(v); retain(v); }
+    n->buf[(n->head + n->n) % n->room] = v;
+    n->n++;
+    fire_atomic_storeRelease(&n->count, n->n);
+    fire_mutex_unlock(&n->m);
+    notifyEventAll();
+}
+FIRE_FN void lentWatchFire(LentWatch* w) {
+    Value h = Int((int64_t)(intptr_t)w->node);
+    chanPushAny((ChanNode*)w->node, w->text);
+    release(w->text);
+    fire_chan_release(h);
+    free(w);
+}
+/* `__chan_watch(v, node, text)` (Net.Channel; the VM: ChannelWatch): 0 - v is a value; 1 - a living record, lent from now on: when the lending ends (it
+ * dies, its owner moves it) `text` goes into the channel; 2 - another object, an array, a buffer, a lambda or something destroyed. */
+FIRE_FN Value fire_chan_watch(Value v, Value h, Value text) {
+    ChanNode* n = chanOf(h);
+    LentWatch* w;
+    void** have;
+    if (v.kind != K_Class && v.kind != K_Array && v.kind != K_Buffer && v.kind != K_Lambda) return Int(0);
+    if (v.kind != K_Class || !leafAlive(v) || !recordDesc(v) || !n) return Int(2);
+    lentMark(v);
+    w = (LentWatch*)malloc(sizeof(LentWatch));
+    if (!w) allocFailed();
+    fire_atomic_add(&n->refs, 1);
+    w->node = n;
+    w->text = text.kind == K_String ? strCross(text) : text;
+    retain(w->text);
+    fire_mutex_lock(&g_lentM);
+    have = ptrMapFind(&g_lentWatch, asObj(v));
+    w->next = have ? (LentWatch*)*have : NULL;
+    ptrMapPut(&g_lentWatch, asObj(v), w);
+    fire_mutex_unlock(&g_lentM);
+    return Int(1);
+}
 FIRE_FN Value fire_chan_count(Value h) { ChanNode* n = chanOf(h); return Int(n ? (int64_t)fire_atomic_loadAcquire(&n->count) : 0); }
 /* (the wait of Send/Receive: parks until `pred`, the token of the task or the deadline (0: none); false - the exception is set, or terminate - when it ended
  * without `pred`) */
@@ -11198,7 +11294,7 @@ FIRE_FN Value fire_chan_send(Value h, Value v, Value owned, OwnList* list) {
         v = out;
     } else if (v.kind == K_String) { v = strCross(v); retain(v); }
     else if (isRef(v)) retain(v);
-    n->buf[(n->head + n->n) % n->cap] = v;
+    n->buf[(n->head + n->n) % n->room] = v;
     n->n++;
     fire_atomic_storeRelease(&n->count, n->n);
     fire_mutex_unlock(&n->m);
@@ -11225,7 +11321,7 @@ FIRE_FN Value fire_chan_receive(Value h, Value limit, Value wait, OwnList* list)
     fire_mutex_lock(&n->m);
     if (n->n == 0) { fire_mutex_unlock(&n->m); return Undef(); }
     v = n->buf[n->head];
-    n->head = (n->head + 1) % n->cap;
+    n->head = (n->head + 1) % n->room;
     n->n--;
     fire_atomic_storeRelease(&n->count, n->n);
     if (v.kind == K_Class && fire_atomic_loadAcquire(&g_lentCount)) lentJoin();   /* (it may be lent: this strand reads it from now on - before it looks at it) */
@@ -11722,6 +11818,9 @@ FIRE_FN void fire_threadsInit(void) {
     fire_mutex_init(&g_originM);
     fire_mutex_init(&g_lentM);
 #ifdef FIRE_NO_GIL
+    fire_mutex_init(&g_targsM);
+#endif
+#ifdef FIRE_NO_GIL
     fire_mutex_init(&g_dom.m);
     fire_cond_init(&g_dom.cv);
 #endif
@@ -11819,6 +11918,10 @@ LentGrave* g_lentGraves = NULL;
 #endif
 fire_mutex g_lentM;
 PtrMap g_lentOwner;
+PtrMap g_lentWatch;
+#ifdef FIRE_NO_GIL
+fire_mutex g_targsM;
+#endif
 fire_atomic32 g_lentCount;
 #ifdef FIRE_TASKS
 FireSched g_sched;

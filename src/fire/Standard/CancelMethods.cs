@@ -52,6 +52,7 @@ namespace fire.Standard
         public static readonly string[] Names =
         {
             "__chan_new", "__chan_ref", "__chan_release", "__chan_close", "__chan_closed", "__chan_count", "__chan_send", "__chan_receive",
+            "__chan_watch",
         };
 
         /// <summary>Set by the VM: (name, arguments) on the VM of the calling thread.</summary>
