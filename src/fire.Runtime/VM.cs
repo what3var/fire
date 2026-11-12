@@ -5648,7 +5648,8 @@ namespace fire.Runtime
                     int protoIdx = ReadU16();
                     int globalSlotCount = ReadU16();
                     int takingCount = ReadByte();
-                    bool hasWith = (ReadByte() & 1) != 0;   // (bit 1: `fire dedicated` - a VM thread is a system thread anyway)
+                    int fireFlags = ReadByte();   // (bit 1: `fire dedicated` - a VM thread is a system thread anyway)
+                    int withCount = (fireFlags & 1) == 0 ? 0 : Math.Max(1, fireFlags >> 2);   // (bits 2-7: how many `with` - step 9)
                     int handoverCount = ReadByte();   // the last ones of the taking values are `handover` (moved, not copied)
                     // Order reversed to compiling (stack!): with
                     // was pushed LAST, so lies on top, is popped FIRST;
@@ -5656,7 +5657,8 @@ namespace fire.Runtime
                     // list order (last first) - both together
                     // brought into the right order again (see
                     // Compiler.CompileFireStmt).
-                    Value? withValue = hasWith ? Pop() : null;
+                    var withValues = new Value[withCount];
+                    for (int i = withCount - 1; i >= 0; i--) withValues[i] = Pop();
                     var takingValues = new Value[takingCount];
                     for (int i = takingCount - 1; i >= 0; i--) takingValues[i] = Pop();
                     // `[NoCopy]` (SPEC 5.12): every `taking` is a copy - an instance of such a class (also in a field or an element), and a lambda or a pointer
@@ -5681,7 +5683,7 @@ namespace fire.Runtime
                     var fireToken = _pendingFireToken;   // (`fire ... until x`)
                     _pendingFireToken = null;
                     FireRuntime.FireVmTaking(
-                        fireProto.Chunk, _natives, _classes, broker, globalSlotCount, takingValues, withValue,
+                        fireProto.Chunk, _natives, _classes, broker, globalSlotCount, takingValues, withValues,
                         executionMode: ExecutionMode, handoverCount: handoverCount, token: fireToken);
                     break;
                 }

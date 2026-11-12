@@ -1396,8 +1396,8 @@ namespace fire.Compiler
             int slot = _globalSlotCount;
             foreach (var capture in fs.TakingCaptures)
                 inner._chunk.MarkLocalName(0, slot++, capture.VarName);
-            if (fs.WithVarName != null)
-                inner._chunk.MarkLocalName(0, slot++, fs.WithVarName);
+            foreach (var with in fs.With)
+                inner._chunk.MarkLocalName(0, slot++, with.VarName);
             foreach (var stmt in fs.Body.Statements) inner.CompileStmt(stmt);
             // BUGFIX: NOT 'LoadConst Undefined; Return' as with a
             // real method (CompileMethodProto) - a fire block runs as the
@@ -1423,8 +1423,8 @@ namespace fire.Compiler
 
             foreach (var capture in fs.TakingCaptures)
                 CompileExpr(capture.Source);
-            bool hasWith = fs.WithSource != null;
-            if (hasWith) CompileExpr(fs.WithSource!);
+            foreach (var with in fs.With) CompileExpr(with.Source);
+            if (fs.With.Count > 63) _errors.Add(new CompilerException("'with' names at most 63 values.", fs.Line).At(CurrentSourceIndex));
 
             if (fs.Until is { Count: > 0 } fireUntil)
             {
@@ -1437,7 +1437,7 @@ namespace fire.Compiler
             _chunk.EmitU16(protoIdx);
             _chunk.EmitU16(_globalSlotCount);
             _chunk.EmitByte((byte)fs.TakingCaptures.Count);
-            _chunk.EmitByte((byte)((hasWith ? 1 : 0) | (fs.Dedicated ? 2 : 0)));   // (bit 1: `fire dedicated`)
+            _chunk.EmitByte((byte)((fs.With.Count > 0 ? 1 : 0) | (fs.Dedicated ? 2 : 0) | (Math.Min(fs.With.Count, 63) << 2)));   // (bit 1: `fire dedicated`; bits 2-7: how many `with`)
             _chunk.EmitByte((byte)fs.TakingCaptures.Count(c => c.Handover));   // (the parser put them last)
         }
 

@@ -22275,6 +22275,33 @@ else
             print(nested.b.y + " " + nested.a.y + " " + (nested.a == l2.a))
             try { ah.v = 2 } catch (AccessDeniedException e) { print("the original stays: " + h.v) }
         """),
+        ("Threads: fire with a, b - mehrere Actors fuer einen Thread, zusammen mit taking", """
+            #import "time"
+            actor Counter {
+                int n = 0
+                undefined Add(int k) { this.n = this.n + k }
+                int Get() { return this.n }
+            }
+            actor Log {
+                string text = ""
+                undefined Put(string s) { this.text = this.text + s }
+                string Text() { return this.text }
+            }
+            var c = new Counter()
+            var l = new Log()
+            var step = 2
+            var done = false
+            fire taking step with c, l {
+                c.Add(3)
+                l.Put("a")
+                c.Add(step)
+                l.Put("b")
+                print("thread " + (await c.Get()) + " " + (await l.Text()))
+                done = true
+            }
+            while (!done) { process c; process l; Sleep(1ms) }
+            print("main " + c.n + " " + l.text)
+        """),
         ("Threads: TakeGlobal() im Thread gibt das Objekt samt allem, was es besitzt, dem Hauptprogramm; ein Feld auf ein fremdes Thread-Objekt ist die ArgumentException (Takes.Locals nimmt es mit), TakeGlobal(true) bleibt im Thread", """
             #import "time"
             class Leaf { int v; construct(int v) { this.v = v } }

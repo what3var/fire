@@ -1187,10 +1187,10 @@ namespace fire.Compiler
                                 implicitCopies.Add(captured[ci].VarName);
                                 Report(ImplicitCaptureCode, $"The thread uses the local '{captured[ci].VarName}' of the code around it: it gets a copy of it - a change does not reach the variable outside. Write 'taking {captured[ci].VarName}' where it is used (a copy) or 'handover {captured[ci].VarName}' (moved to the thread).", f.Line);
                             }
-                        var actor = f.WithSource != null ? Infer(f.WithSource) : StaticType.Dynamic;
+                        var withTypes = f.With.Select(w => Infer(w.Source)).ToList();
                         Push();
                         foreach (var (name, type) in captured) Declare(name, type);
-                        if (f.WithVarName != null) Declare(f.WithVarName, actor);
+                        for (int wi = 0; wi < f.With.Count; wi++) Declare(f.With[wi].VarName, withTypes[wi]);
                         var outerCopies = _implicitCopies;
                         _implicitCopies = implicitCopies.Count > 0 ? new HashSet<string>(implicitCopies) : null;
                         foreach (var s in f.Body.Statements) Check(s);

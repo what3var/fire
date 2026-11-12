@@ -6700,11 +6700,11 @@ namespace fire.Native
                 {
                     UseThreads();
                     int takingCount = ins.A[2];
-                    bool hasWith = (ins.A[3] & 1) != 0;
+                    int withCount = (ins.A[3] & 1) == 0 ? 0 : Math.Max(1, ins.A[3] >> 2);   // (bits 2-7: how many `with`)
                     bool dedicatedThread = (ins.A[3] & 2) != 0;   // `fire dedicated`: a system thread of its own, not a task
                     int handoverCount = ins.A[4];   // the last ones of the taking values: `handover` (moved, not copied)
                     int copyCount = takingCount - handoverCount;
-                    int argc = takingCount + (hasWith ? 1 : 0);
+                    int argc = takingCount + withCount;
                     Need(argc);
                     var body = GetFunc(chunk.Functions[ins.A[0]], FuncKind.FireBody);
                     body.GlobalSlotCount = ins.A[1];
@@ -6724,7 +6724,7 @@ namespace fire.Native
                     for (int i = 0; i < copyCount; i++) sbf.Append($"av[{i}] = takeCopy({S(first + i)}, travel); ");
                     // (all `handover` values together - one may reach another; the sender's other references die, see fire_rt.h handOverAll)
                     if (handoverCount > 0) sbf.Append($"handOverAll(tv + {copyCount}, av + {copyCount}, {handoverCount}, travel); ");
-                    if (hasWith) sbf.Append($"av[{takingCount}] = {S(first + takingCount)}; ");
+                    for (int w = 0; w < withCount; w++) sbf.Append($"av[{takingCount + w}] = {S(first + takingCount + w)}; ");
                     sbf.Append($"ensureDomain(); {(dedicatedThread ? "fireThreadDedicated" : "fireThread")}({body.Name}, av, {argc}, travel); }}");
                     if (takingCount > 0) sbf.Append(" }");
                     E(sbf.ToString());

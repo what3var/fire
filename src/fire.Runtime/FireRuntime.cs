@@ -224,7 +224,7 @@ namespace fire.Runtime
             GlobalsBroker? broker,
             int sharedGlobalCount,
             IReadOnlyList<Value> takingValues,
-            Value? withValue = null,
+            IReadOnlyList<Value>? withValues = null,
             VmExecutionMode executionMode = VmExecutionMode.Debug,
             int handoverCount = 0,
             CancelNode? token = null)
@@ -244,8 +244,8 @@ namespace fire.Runtime
             var moved = ObjectHandover.MoveAll(handed, scope, retire: executionMode != VmExecutionMode.Performance, senderHome);
             foreach (var v in copies) scope.DefineSlot(v);
             foreach (var v in moved) scope.DefineSlot(v);
-            if (withValue is Value wv)
-                scope.DefineSlot(wv);
+            if (withValues != null)
+                foreach (var wv in withValues) scope.DefineSlot(wv);
             if (VmScheduler.Enabled && ThreadBodyInterceptor == null)
             {
                 // step 7: a task of the pool (VmScheduler) - not a system thread of its own
