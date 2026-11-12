@@ -233,7 +233,11 @@ class Selector {
 
 class Reflect {
     static any Get(class obj, string name) { return __refl_get(obj, name) }
-    static undefined Set(class obj, string name, any value) { __refl_set(obj, name, value) }
+    static undefined Set(class obj, string name, any value) {
+        __refl_set(obj, name, value)
+        // (like `obj.name = value`: what belongs to this call - a fresh value, `copy x`, `take x` - belongs to obj now; a value of someone else stays theirs)
+        try value??.TakeTo(obj)
+    }
     static any Call(class obj, string name, any args) { return __refl_call(obj, name, args) }
     static any New(string className, any args) { return __refl_new(className, args) }
     static bool Has(class obj, string name) { return __refl_has(obj, name) }

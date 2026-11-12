@@ -15980,6 +15980,35 @@ static int CountOccurrences(string haystack, string needle)
     var classItems = fire.Editor.CompletionEngine.GetSuggestions(docSource + "\nvar d = new Ca", docSource.Length + 15, fire.Editor.ScriptSymbolIndex.Build(docSource + "\nvar d = new Ca"));
     CheckDoc("Vervollstaendigung: Klassen tragen ihre Dokumentation", classItems.FirstOrDefault(i => i.Text == "Calc")?.Documentation?.Summary == "A calculator. Works on ints.");
 
+    // Lambdas with an expression body (docs/ROADMAP_EXPRESSIONS.md step 7): the parameter's type from the called method's `bool lambda<T>` /
+    // `lambda expression<T>` (T from the receiver: `new Q<Person>()`), completion as in a lambda with a block; the hover says "expression tree"
+    string treeSource = "class Order { int total }\nclass Person { int age\n string name\n List<Order> orders }\nclass Q<T> {\n string Plain(bool lambda<T> f) { return \"\" }\n string Tree(lambda expression<T> e) { return \"\" }\n string Two(lambda expression<T, Order> e) { return \"\" }\n}\nvar q = new Q<Person>()\nvar qo = new Q<Order>()\n";
+    List<string> TreeCompletion(string call)
+    {
+        string full = treeSource + call;
+        return fire.Editor.CompletionEngine.GetSuggestions(full, full.Length, fire.Editor.ScriptSymbolIndex.Build(full)).Select(i => i.Text).ToList();
+    }
+    fire.Editor.ResolvedSymbol? TreeHover(string call, string at)
+    {
+        string full = treeSource + call;
+        return fire.Editor.NavigationEngine.TryResolveSymbol(full, full.LastIndexOf(at, StringComparison.Ordinal), fire.Editor.ScriptSymbolIndex.Build(full));
+    }
+    var person = new[] { "age", "name", "orders" };
+    CheckDoc("Lambda mit Ausdrucksrumpf: der Parameter hat den Typ aus lambda<T> und aus lambda expression<T> (T vom Empfaenger), auch weiter hinten im Rumpf und mit geschriebenem Typ",
+        new[] { "q.Plain(p => p.", "q.Tree(p => p.", "q.Tree(p => p.age > 3 && p.", "q.Tree((Person x) => x.", "new Q<Person>().Tree(p => p." }
+            .All(c => TreeCompletion(c) is var names && person.All(names.Contains) && !names.Contains("total")),
+        string.Join(" | ", TreeCompletion("q.Tree(p => p.")));
+    CheckDoc("Lambda mit Ausdrucksrumpf: zwei Parameter (lambda expression<T, Order>), ein anderes Typargument (Q<Order>); ein Geschwister-Argument sieht den Parameter nicht",
+        TreeCompletion("q.Two((p, o) => o.").SequenceEqual(new[] { "total" }) && TreeCompletion("qo.Tree(o => o.").SequenceEqual(new[] { "total" })
+            && TreeCompletion("q.Tree(p => p.age > 1, p.").Count > 5,
+        string.Join(",", TreeCompletion("q.Two((p, o) => o.")) + " / " + string.Join(",", TreeCompletion("qo.Tree(o => o.")));
+    var treeHover = TreeHover("q.Tree(p => p.age > 3)", "p.age");
+    var plainHover = TreeHover("q.Plain(p => p.age > 3)", "p.age");
+    CheckDoc("Hover ueber einem Lambda-Parameter: Typ und \"expression tree\" bei lambda expression<T>, die Methode mit ihrer Signatur",
+        treeHover?.Header == "(lambda parameter) p : Person - expression tree" && treeHover.Documentation?.Summary.Contains("Q.Tree as an expression tree (lambda expression<T>)") == true
+            && plainHover?.Header == "(lambda parameter) p : Person" && TreeHover("q.Two((p, o) => o.total > p.age)", "Two")?.Header == "(method) Q.Two(lambda expression<T, Order> e) → string",
+        treeHover?.Header + " / " + plainHover?.Header);
+
     // Call context: tooltip stays during the arguments, new Foo( jumps to the constructor
     string callSource = """
         /// A point.
@@ -28673,6 +28702,145 @@ else
             any d = u.Captures()[0].Value
             print(d.length + " " + d[0])
             print(new Probe<Q>().Keep(q => wanted.Contains(q.name)).Invoke(new Q("Linus")))
+            """),
+        ("Expression trees: Equals/GetHashCode nach der Form (Captures nach Name, Dictionary-Schluessel), And/Or/Not mit Invoke, Replace, zwei Parameter", """
+            #import "linq"
+            class Order { int total; construct(int t) { this.total = t } }
+            class P { int age; string name; List<Order> orders = new List<Order>(); construct(int a, string n) { this.age = a; this.name = n } }
+            class Probe<T> { LambdaExpression Keep(lambda expression<T> e) { return e } }
+            class Probe2<A, B> { LambdaExpression Keep(lambda expression<A, B> e) { return e } }
+            var pr = new Probe<P>()
+            var min = 18
+            var a = pr.Keep(p => p.age > min && p.name != undefined)
+            min = 30
+            var b = pr.Keep(x => x.age > min && x.name != undefined)
+            var c = pr.Keep(p => p.age >= min)
+            print(a.Equals(b) + " " + (a.GetHashCode() == b.GetHashCode()) + " " + a.Equals(c) + " " + a.Equals(a) + " " + a.Equals(5))
+            var cache = new Dictionary<LambdaExpression, string>()
+            cache.Add(a, "SQL A")
+            print(cache.ContainsKey(b) + " " + cache[b] + " " + cache.ContainsKey(c))
+            var both = Expression.And(a, pr.Keep(q => q.orders.Any(q => q.total > 5)))
+            print(both.ToString())
+            var ada = new P(40, "Ada")
+            ada.orders.Add(new Order(10))
+            print(both.Invoke(ada) + " " + both.Invoke(new P(40, "Linus")) + " " + both.Invoke(new P(5, "Kid")))
+            var either = Expression.Or(pr.Keep(p => p.age < 10), pr.Keep(p => p.name == "Ada"))
+            print(either.ToString() + " " + either.Invoke(new P(5, "x")) + " " + either.Invoke(new P(50, "Ada")) + " " + either.Invoke(new P(50, "Bob")))
+            var no = Expression.Not(c)
+            print(no.ToString() + " " + no.Invoke(new P(5, "x")) + " " + no.Invoke(new P(50, "x")))
+            var age = pr.Keep(p => p.age).Body
+            any r = Expression.Replace(a, age, pr.Keep(p => p.orders.Count).Body)
+            print(r.ToString() + " " + r.Equals(a) + " " + a.ToString())
+            try { r.Invoke(ada) } catch (ArgumentException e) { print(e.message) }
+            var j = new Probe2<P, Order>().Keep((p, o) => p.age > o.total)
+            var k = new Probe2<P, Order>().Keep((x, y) => y.total < 100)
+            var jk = Expression.And(j, k)
+            print(jk.ToString() + " " + jk.Invoke(ada, new Order(5)) + " " + jk.Invoke(ada, new Order(500)))
+            try { Expression.And(a, j) } catch (ArgumentException e) { print(e.message) }
+            print(a.Captures()[0].Value + " " + b.Captures()[0].Value)
+            """),
+        ("Lambdas: handover einer Lambda in eine Lambda (VM wie nativ: sie zieht um und bleibt aufrufbar)", """
+            class M {
+                static any Both(any fa, any fb) {
+                    any ca = copy fa
+                    any cb = copy fb
+                    return (any x) => (handover ca)(x) && (handover cb)(x)
+                }
+                static any Both2(any fa, any fb) {
+                    any ca = copy fa
+                    any cb = copy fb
+                    any r = (any x) => Run.Two((handover ca), (handover cb), x)
+                    return r
+                }
+            }
+            class Run { static bool Two(any a, any b, any x) { return a(x) && b(x) } }
+            any f = M.Both((any x) => x > 1, (any x) => x < 5)
+            print(f(3) + " " + f(7) + " " + f(0))
+            any g = M.Both2((any x) => x > 1, (any x) => x < 5)
+            print(g(3) + " " + g(7) + " " + g(0))
+            """),
+        ("Expression trees: Ueberladungen lambda<T> / lambda expression<T> - ein Ausdrucks-Lambda bekommt den Baum, Block, Variable und any die Lambda, ein fertiger Baum den Baum", """
+            class P { int age; construct(int a) { this.age = a } }
+            class Q<T> {
+                string Where(bool lambda<T> f) { return "lambda" }
+                string Where(lambda expression<T> e) { return "tree " + e.ToString() }
+                string Only(lambda expression<T> e) { return "only " + e.ToString() }
+            }
+            var q = new Q<P>()
+            print(q.Where(p => p.age > 3))
+            bool lambda<P> f = (P p) => p.age > 3
+            print(q.Where(f))
+            print(q.Where(p => { return p.age > 3 }))
+            print(q.Only(p => p.age > 3))
+            any a = q
+            print(a.Where((P p) => p.age > 3))
+            class Keep<T> { LambdaExpression K(lambda expression<T> e) { return e } }
+            var t = new Keep<P>().K(p => p.age > 9)
+            print(q.Where(t))
+            """),
+        ("Expression trees: Stripping 3 behaelt Klassen und Member, die ein Baum nennt (ein Uebersetzer findet sie mit Type.Find, auch ohne ein Objekt der Klasse)", """
+            #import "reflection"
+            class Address { string city; int zip; string Tag() { return this.city } }
+            class Person { int age; Address address; construct(int a) { this.age = a } }
+            class Probe<T> { LambdaExpression Keep(lambda expression<T> e) { return e } }
+            class Names : ExpressionVisitor {
+                any found = new List<string>()
+                override any VisitMember(MemberExpression e) {
+                    e.Target.Accept(this)
+                    Type t = Type.Named(e.Target.Type)
+                    this.found.Add(e.Target.Type + "." + e.Name + "=" + (t != undefined && t.Find(e.Name) != undefined))
+                    return undefined
+                }
+                override any VisitCall(CallExpression e) {
+                    e.Target.Accept(this)
+                    Type t = Type.Named(e.Target.Type)
+                    this.found.Add(e.Target.Type + "." + e.Method + "()=" + (t != undefined && t.Find(e.Method) != undefined))
+                    return undefined
+                }
+            }
+            var t = new Probe<Person>().Keep(p => p.age > 3 && p.address.city == "Bonn" && p.address.Tag() != "")
+            var v = new Names()
+            t.Accept(v)
+            foreach (s in v.found) { print(s) }
+            var ada = new Person(2)
+            print(t.Invoke(ada))
+            """),
+        ("Reflection: Reflect.Set uebernimmt, was dem Aufruf gehoert (new, copy, take, ein Array-Literal) wie eine Feldzuweisung; ein fremdes Objekt bleibt dessen", """
+            #import "reflection"
+            class Item { int n; construct(int n) { this.n = n } }
+            class Box { List<Item> items; Item one; int nums[] }
+            var b = new Box()
+            Reflect.Set(b, "items", new List<Item>())
+            b.items.Add(new Item(1))
+            print(b.items.Count)
+            Reflect.Set(b, "one", new Item(7))
+            print(b.one.n)
+            var src = new List<Item>()
+            src.Add(new Item(3))
+            Reflect.Set(b, "items", copy src)
+            print(b.items.Count + " " + b.items[0].n)
+            var mine = new Item(9)
+            Reflect.Set(b, "one", take mine)
+            print(b.one.n + " " + (mine == undefined))
+            var shared = new Item(5)
+            Reflect.Set(b, "one", shared)
+            print(b.one.n + " " + shared.n)
+            Reflect.Set(b, "nums", [1, 2, 3])
+            print(b.nums.length)
+            """),
+        ("JSON: eine gelesene List ist eine normale Liste (owns wie nach dem Feld-Initialisierer: Add geht), auch als Wurzel", """
+            #import "json"
+            class Item { int n }
+            class Box { List<Item> items = new List<Item>() }
+            var b = Json.Deserialize<Box>("{\"items\":[{\"n\":1},{\"n\":2}]}")
+            print(b.items.Count)
+            var it = new Item()
+            it.n = 3
+            b.items.Add(it)
+            print(b.items.Count + " " + b.items[2].n)
+            var l = Json.Deserialize<List<Item>>("[{\"n\":4}]")
+            l.Add(new Item())
+            print(l.Count)
             """),
         ("Programmende: warten alle uebrigen Threads in Kanaelen, schliessen die Kanaele des Hauptprogramms (foreach endet)", """
             var ch = new Channel<int>()

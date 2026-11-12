@@ -813,6 +813,7 @@ namespace fire.Compiler
                 var t = p.Type;
                 if (p.ByRef || t == null || t.IsInferred || t.BaseName == "any" || typeParamNames.Contains(t.BaseName) && t.TypeArgs == null && t.ArrayRank == 0 && p.ArrayRanks.Count == 0) return "";
                 if (p.ArrayRanks.Count > 0 || t.ArrayRank > 0) return "array";
+                if (t.LambdaSignature is { IsExpression: true }) return "LambdaExpression";   // (a tree: an overload next to `lambda<T>`)
                 if (t.LambdaSignature != null || t.BaseName == "lambda") return "lambda";
                 return t.BaseName == "byte" ? "int" : (t.Namespaces is { Count: > 0 } ns ? string.Join(".", ns) + "." : "") + t.BaseName;
             }).ToArray();

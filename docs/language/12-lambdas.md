@@ -196,9 +196,40 @@ print(probe.Run(p => p.age >= min, new Person(20, "Anna")))         // True
   `CapturedExpression` with its `Name` (the text) and its `Value` **when the tree is made** (an object as a copy). `tree.Captures()` gives them in order.
 - `ToString()` is the body in fire syntax - the same in the VM and in a native program. A visitor walks the tree: derive from `ExpressionVisitor` and
   override `VisitBinary`, `VisitMember`, ... (by default each visits the children); `tree.Accept(visitor)`.
+- `Equals` compares the **shape** (kinds, types, operators, names, constants, parameters by their place): a captured value counts by its name, not
+  its value - `p => p.age > min` equals `x => x.age > min` with another `min`. `GetHashCode` fits it, so a translator can keep what it made of a
+  shape in a `Dictionary<LambdaExpression, string>` (an `Expression` is an `IEquatable`).
+- Combining: `Expression.And(a, b)` / `Expression.Or(a, b)` (`b`'s parameters become `a`'s; the same number of parameters, else an
+  `ArgumentException`), `Expression.Not(a)` - their `Invoke` runs the compiled lambdas (`&&`/`||` short-circuit). `Expression.Replace(tree, part,
+  replacement)` gives a new tree in which every part equal to `part` is a copy of `replacement`; derive from `ExpressionRewriter` and override
+  `Rewrite(e)` for more (`base.Rewrite(e)` copies a node with its children rewritten). A rewritten tree has no compiled code: its `Invoke` is an
+  `ArgumentException`.
+
+```fire
+#import "linq"
+class Order { int total; construct(int t) { this.total = t } }
+class Customer {
+    int age
+    List<Order> orders = new List<Order>()
+    construct(int a) { this.age = a }
+}
+class Trees<T> { LambdaExpression Keep(lambda expression<T> condition) { return condition } }
+var trees = new Trees<Customer>()
+var adult = trees.Keep(c => c.age >= 18)
+var hasOrders = trees.Keep(c => c.orders.Any(o => o.total > 0))
+var both = Expression.And(adult, hasOrders)
+print(both.ToString())    // c => ((c.age >= 18) && c.orders.Any(o => (o.total > 0)))
+var anna = new Customer(30)
+anna.orders.Add(new Order(5))
+print(both.Invoke(anna))  // True
+print(adult.Equals(trees.Keep(x => x.age >= 18)) + " " + adult.Equals(trees.Keep(c => c.age > 18)))   // True False
+```
 - Only a lambda written at the call with an expression body goes there (`x => ...`), or a tree that is already made: a parameter
   `lambda expression<T>` of the calling method or a `LambdaExpression` is passed on as it is (`string Show(lambda expression<T> e) { return inner.Show(e) }`).
-  A lambda in a variable, one with a block, and an assignment, `++` or `take` in it are the error `TC030`. The call has to be one the compiler knows: through `any` the method gets only the code - the
+  A lambda in a variable, one with a block, and an assignment, `++` or `take` in it are the error `TC030`.
+- A method can be overloaded for both: `Where(bool lambda<T> f)` next to `Where(lambda expression<T> e)`. A lambda written with an expression body
+  goes to the tree (`q.Where(p => p.age > 3)`), a lambda with a block, a lambda in a variable and a call through `any` go to the lambda, a tree that
+  is already made (a `LambdaExpression`) to the tree. LINQ on lists keeps its lambdas: a tree would only cost there. The call has to be one the compiler knows: through `any` the method gets only the code - the
   ArgumentException.
 - A tree can be given where a lambda is expected: `bool lambda<Person> f = tree` (also as an argument or a return value) takes its compiled lambda
   (`tree.Invoke`). The other way round is not possible - a lambda in a variable has no tree any more.

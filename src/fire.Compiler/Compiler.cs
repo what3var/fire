@@ -1553,6 +1553,7 @@ namespace fire.Compiler
             if (p.ByRef) return "";
             if (p.ArrayRanks.Count > 0 || t is { ArrayRank: > 0 }) return "k:array";
             if (t == null || t.IsInferred || t.PointerDepth > 0) return "";
+            if (t.LambdaSignature is { IsExpression: true }) return "c:LambdaExpression";   // (a tree arrives as a LambdaExpression: an overload next to `lambda<T>`)
             if (t.LambdaSignature != null || t.BaseName == "lambda") return "k:lambda";
             bool methodParam = _methodTypeParams?.Any(tp => tp.Name == t.BaseName) == true;
             bool classParam = owner?.Decl?.TypeParams?.Any(tp => tp.Name == t.BaseName) == true;

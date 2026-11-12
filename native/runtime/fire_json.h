@@ -17,7 +17,7 @@ typedef struct JsonFieldInfo { const char* name; uint32_t slot; const char* type
 /* (fields: the njson fields that go to JSON, then the `defined` fields that do not, then a row with a NULL name) */
 typedef struct JsonClassInfo { const char* name; const char* plain; uint32_t nfields; const JsonFieldInfo* fields; uint32_t njson; uint8_t flags; uint8_t ntparams; uint16_t nraw; } JsonClassInfo;   /* (nraw: the bytes of its packed fields) */
 /* The slots of the classes JSON fills itself (-1: not in the program). */
-typedef struct JsonSpecial { int32_t listCls, listItems, listCount; int32_t objCls, objKeys, objValues, objCount; } JsonSpecial;
+typedef struct JsonSpecial { int32_t listCls, listItems, listCount; int32_t objCls, objKeys, objValues, objCount; int32_t listOwns, ownsEnum; } JsonSpecial;
 
 /* Generated (the program): the class with this id (null: none), the id of a class name (-1: none), the text of a type argument (null: not known), the type
  * argument of a text (null: none), the special slots. */
@@ -1053,6 +1053,8 @@ static Value jsBuildList(JsReader* r, JsNode* a, const char* type, OwnList* owne
     }
     jsStore(list, (uint32_t)sp->listItems, itemsV);
     jsStore(list, (uint32_t)sp->listCount, fire_IntU((int64_t)n, 0));
+    /* (what the field initialiser of List gives - the reader runs no initialisers: Add/Insert ask `owns`) */
+    if (sp->listOwns >= 0) jsStore(list, (uint32_t)sp->listOwns, EnumV(0, (uint16_t)sp->ownsEnum));
     return list;
 }
 

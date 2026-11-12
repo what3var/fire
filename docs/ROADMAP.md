@@ -28,7 +28,7 @@ Leitlinien:
 | 6 | [Ungenutzten Code weglassen](#11-ungenutzten-code-weglassen) (A-C und die Stufen 0-3 umgesetzt) | 0; mit 5 abstimmen | Bauzeit und Größe nativer Programme (ein minimales `ui`-Programm: 7,85 MB C vorher, 2,29 MB nach Phase A-C, 2,76 MB heute in Stufe 3) |
 | 6 | [Bau-Reihenfolge der Quellen von Paket-Natives](#12-bau-reihenfolge-der-quellen-von-paket-natives) | 9 | ein Paket mit Headern, die einander brauchen, hängt heute an der Reihenfolge seiner Liste |
 | 6 | [UI-Markup: fehlende Eigenschaften](#14-ui-markup-fehlende-eigenschaften) | - | klein; `.fxml` ist der Hauptweg für Oberflächen, dort fehlen ToolTip, Cursor und Drag & Drop |
-| 0 | [Arrays statt Byte-Puffer an Natives](#15-arrays-statt-byte-puffer-an-natives) | - | **Absturz** (Segfault) der VM bei einem häufigen Fehler; vor allem anderen |
+| 0 | ~~[Arrays statt Byte-Puffer an Natives](#15-arrays-statt-byte-puffer-an-natives)~~ (umgesetzt) | - | **Absturz** (Segfault) der VM bei einem häufigen Fehler; vor allem anderen |
 | 7 | [Mess-Werkzeug für Größe, Speicher und Typisierung](#16-mess-werkzeug-für-größe-speicher-und-typisierung) | 11, 13 | Entscheidungen über kleine Ziele (DOS: 640 KB) auf Zahlen statt Schätzungen stützen |
 | 7 | [Kleine und alte Ziele](#13-kleine-und-alte-ziele) (Zeigerarten, typisierte Arrays, `#intwidth 32` umgesetzt) | 0, 9 | Mikrocontroller, DOS, Win 3.x, Win9x, NT 3.51-XP: Speicher pro Wert, Breiten, neue Plattformen |
 | 8 | [Scene3D für Spiele](#16-scene3d-für-spiele) | 13 (Ziele, Breiten), 11 (Weglassen) | Spiele bis hinunter auf DOS: Größe zuerst, dann Terrain, Modelle, Animation, Effekte, Physik |
@@ -759,6 +759,9 @@ Canvas-Anordnung - ein Kind bekommt nur seine Wunschgröße, `HorizontalAlign`/`
 `Left`/`Top`) wie ein Grid mit einer Zelle an - gestreckt auf die Fenstergröße, mit `Margin` und Ausrichtung; Kinder mit Position bleiben wie heute.
 
 ## 15. Arrays statt Byte-Puffer an Natives
+
+**Umgesetzt** (Merge von `native-c`, "safe byte arguments"): Byte-Argumente der Natives werden geprüft (`bytesArg`/`bufferArg`), ein Array aus Zahlen an einem
+`byte[]`-Parameter geht als Kopie in einen Puffer, `byte a[] = [...]` legt einen Puffer an; `IO.File.WriteAllBytes("x.bin", [1, 2, 3])` schreibt 3 Bytes.
 
 Gefunden beim Durchgehen der Doku (Branch `doc-2611-1`): ein Array an einem `byte[]`-Parameter eines Packages bringt die VM zum **Absturz**
 (Segmentation fault) statt zu einer Exception:

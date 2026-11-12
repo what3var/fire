@@ -153,6 +153,177 @@ namespace fire.Editor
             return best;
         }
 
+        /// <summary>A parameter of a lambda written with `=>` (`p => p.age`, `(a, b) => ...`, `(Person p) => ...`): its type, and what the lambda is given
+        /// to - `IsTree`: a parameter `lambda expression<T>` of the called method (the lambda becomes an expression tree), `Target`: the parameter's
+        /// type as written (`bool lambda<T>`), `Method`: `Class.Method`.</summary>
+        public sealed record LambdaParamInfo(string Name, ExprType Type, string? TypeName, bool IsTree, string? Target, string? Method);
+
+        /// <summary>The lambda parameter `name` whose lambda (with an expression body) `offset` is in - null if there is none. A lambda in a sibling argument
+        /// (`f(a => a.x, b.`) does not count; a statement boundary ends the search (lambdas with a block are functions, see AllFunctions).</summary>
+        public LambdaParamInfo? LambdaParameterAt(string name, int offset, int depth = 0)
+        {
+            if (depth > MaxDepth) return null;
+            int j = LastTokenBefore(offset);
+            int level = 0;
+            bool sibling = false;
+            for (; j >= 0; j--)
+            {
+                var t = _tokens[j];
+                switch (t.Type)
+                {
+                    case TokenType.RParen or TokenType.RBracket: level++; continue;
+                    case TokenType.LParen or TokenType.LBracket:
+                        if (level > 0) level--; else sibling = false;   // (leaving a group around offset: its earlier arguments are siblings no longer)
+                        continue;
+                    case TokenType.Semicolon or TokenType.LBrace or TokenType.RBrace:
+                        if (level == 0) return null;
+                        continue;
+                    case TokenType.Comma:
+                        if (level == 0) sibling = true;
+                        continue;
+                    case TokenType.Arrow when level == 0 && !sibling:
+                        if (LambdaParamsBefore(j, out int lambdaStart) is { } ps)
+                        {
+                            int at = ps.FindIndex(p => p.Name == name);
+                            if (at >= 0) return DescribeLambdaParam(name, at, ps[at].TypeName, lambdaStart, offset, depth);
+                        }
+                        continue;
+                }
+            }
+            return null;
+        }
+
+        /// <summary>The parameters before the `=>` at `arrowIdx`: `p` or `(a, b)` / `(Person p, int n)`; `start`: the first token of the lambda.</summary>
+        private List<(string Name, string? TypeName)>? LambdaParamsBefore(int arrowIdx, out int start)
+        {
+            start = arrowIdx;
+            if (arrowIdx < 1) return null;
+            if (_tokens[arrowIdx - 1].Type == TokenType.Identifier)
+            {
+                start = arrowIdx - 1;
+                return new List<(string, string?)> { (_tokens[arrowIdx - 1].Lexeme, null) };
+            }
+            if (_tokens[arrowIdx - 1].Type != TokenType.RParen) return null;
+            int open = MatchBackward(arrowIdx - 1, TokenType.LParen, TokenType.RParen);
+            if (open < 0) return null;
+            start = open;
+            return ReadParamList(open, out _);
+        }
+
+        private LambdaParamInfo DescribeLambdaParam(string name, int index, string? writtenType, int lambdaStart, int offset, int depth)
+        {
+            var context = ContextAt(offset);
+            // the call the lambda is an argument of: `recv.Method(..., lambda` - the argument's place, the method, the receiver
+            int argIndex = 0, level = 0, open = -1;
+            for (int k = lambdaStart - 1; k >= 0; k--)
+            {
+                var t = _tokens[k].Type;
+                if (t is TokenType.RParen or TokenType.RBracket) level++;
+                else if (t is TokenType.LParen or TokenType.LBracket) { if (level == 0) { open = t == TokenType.LParen ? k : -1; break; } level--; }
+                else if (t == TokenType.Comma && level == 0) argIndex++;
+                else if (t is TokenType.Semicolon or TokenType.LBrace or TokenType.RBrace && level == 0) break;
+            }
+            MemberInfo? method = null;
+            ExprType receiver = ExprType.Unknown;
+            int receiverEnd = -1;
+            if (open > 0 && _tokens[open - 1].Type == TokenType.Identifier)
+            {
+                string methodName = _tokens[open - 1].Lexeme;
+                if (open >= 2 && _tokens[open - 2].Type == TokenType.Dot)
+                {
+                    receiverEnd = open - 3;
+                    receiver = receiverEnd >= 0 ? EvalExprRange(FirstTokenOfChainEndingAt(receiverEnd), receiverEnd, depth + 1) : ExprType.Unknown;
+                }
+                else if (EnclosingClassAt(offset) is { } own) receiver = new ExprType(TypeKind.Instance, own);
+                if (receiver.Kind is TypeKind.Instance or TypeKind.Static && receiver.Name != null)
+                    method = MembersOf(receiver.Name).FirstOrDefault(m => m.Kind == MemberKind.Method && m.Name == methodName && m.ParamTypes.Count > argIndex
+                        && m.ParamTypes[argIndex] is { } pt && pt.Contains("lambda"));
+            }
+            string? target = method?.ParamTypes[argIndex];
+            bool isTree = target != null && System.Text.RegularExpressions.Regex.IsMatch(target, @"\blambda\s+expression\b");
+            string? typeName = writtenType;
+            if (typeName == null && target != null)
+            {
+                // `bool lambda<T>` / `lambda expression<A, B>`: the type of this parameter, with the receiver's type arguments for the class's type parameters
+                int lt = target.IndexOf('<');
+                if (lt >= 0 && target.EndsWith('>'))
+                {
+                    var args = target.Substring(lt + 1, target.Length - lt - 2).Split(',').Select(a => a.Trim()).ToList();
+                    if (index < args.Count) typeName = args[index];
+                    if (typeName != null && receiver.Name != null && ResolveClassKey(typeName, context) == null
+                        && ClassTypeParams(receiver.Name) is { } typeParams && typeParams.IndexOf(typeName) is var tp && tp >= 0
+                        && receiverEnd >= 0 && ReceiverTypeArgs(FirstTokenOfChainEndingAt(receiverEnd), receiverEnd, offset) is { } given && tp < given.Count)
+                        typeName = given[tp];
+                }
+            }
+            var type = FromTypeName(typeName, isArray: false, context);
+            return new LambdaParamInfo(name, type, typeName, isTree, target, method == null ? null : method.Owner + "." + method.Name);
+        }
+
+        /// <summary>The type parameters of a generic class (`class Q<T>` -> [T]), from its declaration; null if it has none.</summary>
+        private List<string>? ClassTypeParams(string classKey)
+        {
+            string simple = Classes.TryGetValue(classKey, out var info) ? info.SimpleName : classKey;
+            for (int k = 0; k + 2 < _tokens.Count; k++)
+            {
+                if (_tokens[k].Type != TokenType.Class || _tokens[k + 1].Lexeme != simple || _tokens[k + 2].Type != TokenType.Lt) continue;
+                return AngleArgs(k + 2);
+            }
+            return null;
+        }
+
+        /// <summary>The type arguments the receiver chain was made with: `new Q<Person>()` itself, or a variable declared `Q<Person> q` / `q = new Q<Person>()`.</summary>
+        private List<string>? ReceiverTypeArgs(int start, int end, int offset)
+        {
+            if (_tokens[start].Type == TokenType.New && start + 2 <= end && _tokens[start + 2].Type == TokenType.Lt) return AngleArgs(start + 2);
+            if (start != end || _tokens[start].Type != TokenType.Identifier) return null;
+            string variable = _tokens[start].Lexeme;
+            List<string>? found = null;
+            for (int k = 0; k + 3 < _tokens.Count && TokenOffset(k) < offset; k++)
+            {
+                // `q = new Q<Person>(` (also `var q = ...`)
+                if (_tokens[k].Lexeme == variable && _tokens[k].Type == TokenType.Identifier && _tokens[k + 1].Type == TokenType.Assign
+                    && _tokens[k + 2].Type == TokenType.New && k + 4 < _tokens.Count && _tokens[k + 4].Type == TokenType.Lt)
+                    found = AngleArgs(k + 4);
+                // `Q<Person> q`
+                else if (_tokens[k].Type == TokenType.Identifier && _tokens[k + 1].Type == TokenType.Lt)
+                {
+                    int close = SkipAngleBrackets(k + 1);
+                    if (close < _tokens.Count && _tokens[close].Type == TokenType.Identifier && _tokens[close].Lexeme == variable) found = AngleArgs(k + 1);
+                }
+            }
+            return found;
+        }
+
+        /// <summary>The names in `<A, B>` from the `<` at `ltIdx` (each argument's first name).</summary>
+        private List<string> AngleArgs(int ltIdx)
+        {
+            var result = new List<string>();
+            int level = 0;
+            bool expectName = true;
+            for (int k = ltIdx; k < _tokens.Count; k++)
+            {
+                var t = _tokens[k];
+                if (t.Type == TokenType.Lt) { level++; continue; }
+                if (t.Type == TokenType.Gt) { if (--level == 0) break; continue; }
+                if (level == 1 && t.Type == TokenType.Comma) { expectName = true; continue; }
+                if (level == 1 && expectName && (t.Type == TokenType.Identifier || IsTypeKeyword(t.Type))) { result.Add(t.Lexeme); expectName = false; }
+            }
+            return result;
+        }
+
+        /// <summary>The last token that starts before `offset` (-1: none).</summary>
+        private int LastTokenBefore(int offset)
+        {
+            int lo = 0, hi = _tokens.Count - 1, best = -1;
+            while (lo <= hi)
+            {
+                int mid = (lo + hi) / 2;
+                if (TokenOffset(mid) < offset) { best = mid; lo = mid + 1; } else hi = mid - 1;
+            }
+            return best;
+        }
+
         /// <summary>Parameters (name, possibly type name) of the immediately
         /// enclosing method/constructor/lambda at `offset` - the
         /// INNERMOST function signature whose body contains `offset`.</summary>
@@ -689,6 +860,9 @@ namespace fire.Editor
             found = false;
             var result = ExprType.Unknown;
             bool explicitType = false;
+
+            // a parameter of a lambda with an expression body around `offset` (`q.Where(p => p.`): it hides what is outside
+            if (LambdaParameterAt(name, offset, depth) is { } lambdaParam) { found = true; return lambdaParam.Type; }
 
             var context = ContextAt(offset);
             var fn = EnclosingFunction(offset);

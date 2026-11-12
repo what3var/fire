@@ -95,7 +95,8 @@ try { Json.Serialize(new AdminSession()) } catch (ArgumentException e) { print(e
 
 ## Reading
 
-`Json.Deserialize<T>` makes the objects without running their constructors: every field the text does not mention stays `undefined`. A class with a method
+`Json.Deserialize<T>` makes the objects without running their constructors: every field the text does not mention stays `undefined`. A `List` it makes
+is an ordinary list (its inner state as after `new List()`: `Add` and `Insert` work). A class with a method
 `OnDeserialized()` gets it called once the whole text is read (inner objects first), so it can fill in what it computes. The objects belong to the caller
 (the root to its scope, the rest to the object or array that contains them), as if the code had made them with `new`.
 

@@ -1425,6 +1425,7 @@ namespace fire.Compiler
             if (p.ByRef) return "";
             if (p.ArrayRanks.Count > 0 || t is { ArrayRank: > 0 }) return "k:array";
             if (t == null || t.IsInferred || t.PointerDepth > 0) return "";
+            if (t.LambdaSignature is { IsExpression: true }) return "c:LambdaExpression";
             if (t.LambdaSignature != null || t.BaseName == "lambda") return "k:lambda";
             if (methodTypeParams?.Any(tp => tp.Name == t.BaseName) == true || owner.TypeParams?.Any(tp => tp.Name == t.BaseName) == true) return "g";
             switch (t.BaseName)
@@ -2515,6 +2516,7 @@ namespace fire.Compiler
                 if (named.Count > 1) { foreach (var a in c.Args) Infer(a); return StaticType.Dynamic; }
                 if (named.Count == 1) candidates = named;
             }
+            if (candidates is { Count: > 1 } && c.ArgNames == null) candidates = TreeOverloads(c, candidates);
             if (candidates is { Count: > 1 }) return InferOverloadedCall(c, candidates, receiverClass, virtualCall);
             if (candidates is { Count: 1 }) (method, map) = candidates[0];
             var argParams = method == null ? null : ArgParams(method.Params, c.ArgNames, c.Args.Count, method.Name, c.Line);
@@ -2580,6 +2582,22 @@ namespace fire.Compiler
             }
             CheckArguments(argParams!, args, c.Args, method.Name, map);
             return DeclaredOrDynamic(method.ReturnType, 0, map);
+        }
+
+        /// <summary>Overloads `lambda<T>` / `lambda expression<T>` (docs/ROADMAP_EXPRESSIONS.md): a lambda written at the call with an expression body goes to
+        /// the overload that takes a tree, a lambda with a block (or one bound with `on`) to the one that takes a lambda; other arguments leave the choice to
+        /// the types.</summary>
+        private static List<(MethodDecl Method, Dictionary<string, StaticType>? Map)> TreeOverloads(CallExpr c, List<(MethodDecl Method, Dictionary<string, StaticType>? Map)> candidates)
+        {
+            static bool IsTree(MethodDecl m, int i) => i < m.Params.Count && m.Params[i].Type?.LambdaSignature is { IsExpression: true };
+            for (int i = 0; i < c.Args.Count; i++)
+            {
+                if (c.Args[i] is not LambdaExpr lambda) continue;
+                bool tree = lambda is { ExpressionBody: true, OnTarget: null };
+                var kept = candidates.Where(x => IsTree(x.Method, i) == tree).ToList();
+                if (kept.Count > 0) candidates = kept;
+            }
+            return candidates;
         }
 
         /// <summary>A call that several overloads by type could take: the arguments are inferred first (without the parameter types to go by), then the
