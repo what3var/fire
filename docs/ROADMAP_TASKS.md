@@ -545,6 +545,17 @@ The threads share nothing that can change - and get ways to pass what does not c
   generated per record class), the writes go through the field helpers (no direct store), which ask the chain of the records being constructed
   (`g_recInit`, set around the constructor call of `new`) - an object needs no flag. Open with the channels: the count that keeps the memory of a
   record that another thread reads, and the transfer that does not kill the other references.
+* **Status `with`** (VM and natively): `r with { .x = 1 }` for records, `copy/flat obj with { ... }` for objects - the copy, then the assignments with
+  the rules of an ordinary one (setters, `take`, claims), OpCode.InitNext lets each store write the copy (also a record's field), OpCode.RecordCheck
+  checks a record at the end; without a word on a class TC028 / the ArgumentException.
+* **Status channels** (VM and natively, tests "Channel<T>: ..." and "Threads: fire on x ... with"): `Channel<T>` in the prelude ([NoCopy], a counted
+  node: fire.Runtime.Channels / fire_rt.h fire_chan_*), `Send` (waits while full, False when closed - instead of `try Send`), `Receive(limit)`,
+  `TryReceive`, `Close`, `IsClosed`, `Count`, `foreach`. A thread gets it with `fire with ch` (also several: `fire with a, ch`, and `fire on x taking y
+  with a, ch` for a job of the main program) - an end of its own on the same queue; the channel closes when the one that made it ends. Objects,
+  arrays and records go only fresh, copied or taken (the parcel: it belongs to the channel, then to the receiver, and dies with it; undelivered it
+  dies with the channel; a record keeps its identity); TC029 / the ArgumentException without a word. Open: a record lent without ownership
+  (`Send(r)` - today it needs the word like an object; it needs the count that keeps a record's memory for another thread), `Channel.Pair<A, B>()`,
+  `Net.Channel<T>` (JSON over a socket).
 * **No shared objects** (the user): with records and channels everything is covered - an object stays where it lives; other threads reach it only
   through calls of lambdas bound to it, jobs, `await on` and actors.
 
@@ -563,4 +574,4 @@ The threads share nothing that can change - and get ways to pass what does not c
 
 ## Open
 
-Step 9: records, `with`, `Channel<T>` (see "Step 9" above).
+Step 9: records, `with` and `Channel<T>` are done; open: lent records over a channel, `Channel.Pair`, `Net.Channel<T>` (see "Step 9" above).
