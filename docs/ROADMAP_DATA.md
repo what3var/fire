@@ -251,7 +251,7 @@ Own methods for the generated classes come in an extension (`extension Person { 
 
 | Step | What | Depends on |
 |---|---|---|
-| 1 | `data` and `data.sqlite`: connection, parameters, `Query`/`Execute`, rows to records and classes, transactions, errors; awaitable | - |
+| 1 | `data` and `data.sqlite`: connection, parameters, `Query`/`Execute`, rows to records and classes, transactions, errors; awaitable - **built** ([docs/data](data/README.md)) | - |
 | 2 | Mapping (attributes, convention, `Data.Model`), `Ensure`, `Insert/Update/Delete/Save` per object | 1 |
 | 3 | `data.memory` with the raw API (rows, keys, transactions) | 2 |
 | 4 | Query builder on expression trees: SQL for SQLite, evaluation in `data.memory`; `ToSql` | 2, expressions step 1-3 |
@@ -269,6 +269,10 @@ Tests: every driver runs the same suite (`Data.Tests.Run(url)`: types, NULL, par
 normal tests (VM == native), MySQL and SQL Server against a server when one is configured (`FIRE_TEST_MYSQL`, `FIRE_TEST_SQLSERVER`).
 
 ## Open
+
+- **The type argument of a generic method at run time** (`db.QueryList<Person>(...)`, `s.Find<Person>(7)`, `From<Person>()`): fire code cannot reach the `T`
+  of a generic method today (`Type.Of<T>()` or similar is needed from the compiler). Until then the type goes by its name (`QueryList("Person", ...)`).
+- The connection is a class (`new Data.Connection(url)`), not a function `Data.Open(url)`: a namespace has no functions of its own.
 
 - TLS inside TDS (SQL Server): can `tls` run over a stream that is not a socket?
 - `with` for records (`copy r with { age = 37 }`) - a language question, helpful for writing records.

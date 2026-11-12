@@ -1,0 +1,112 @@
+// data.sqlite (docs/data/README.md): the SQLite driver of Data - `new Data.Connection("sqlite:app.db")`. SQLite is built into the package (no library of
+// the system); the file is asked of the host like a file of the io package.
+//     sqlite:app.db                  a file (made when it is not there)
+//     sqlite:app.db?mode=ro          read-only (mode=rw: do not create); &timeout=2000: wait 2 s for a lock of another connection (default 5 s)
+//     sqlite::memory:                a database in memory, its own for this connection
+#import "data"
+
+namespace Data {
+    [Keep]
+    [Driver "sqlite"]
+    class SqliteDriver : Data.IDriver {
+        construct() { }
+        Data.IDriverConnection Open(string target, Data.Credentials credentials) { return new Data.SqliteConnection(target) }
+
+        // The version of the built-in SQLite ("3.54.1").
+        static string Version() { return __SqlVersion() }
+        // (the connections the program has open - for tests)
+        static int OpenCount() { return __SqlOpenCount() }
+
+        // The last error of a native as the exception of its kind.
+        static undefined Fail() {
+            int code = __SqlLastError()
+            string message = __SqlLastErrorMessage()
+            int primary = code % 256
+            if (code == 100002) { throw new ArgumentException(message) }
+            if (code == 100004) { throw new Data.ConnectionException(message, code) }
+            if (code > 100000) { throw new Data.DataException(message, code) }
+            if (primary == 19) { throw new Data.ConstraintException(message, code) }
+            if (primary == 5 || primary == 6) { throw new Data.BusyException(message, code) }
+            if (primary == 14 || primary == 26 || primary == 23) { throw new Data.ConnectionException(message, code) }
+            throw new Data.DataException(message, code)
+        }
+    }
+
+    class SqliteDialect : Data.Dialect {
+        construct() : base("sqlite") { }
+    }
+
+    class SqliteConnection : Data.IDriverConnection {
+        int handle
+        Data.SqliteDialect dialect
+
+        construct(string target) {
+            string path = target
+            int flags = 0
+            int timeout = 5000
+            int q = target.IndexOf("?")
+            if (q >= 0) {
+                path = target.Substring(0, q)
+                any options = target.Substring(q + 1).Split("&")
+                for (var i = 0; i < options.length; i++) {
+                    string option = options[i]
+                    int eq = option.IndexOf("=")
+                    if (eq < 0) { continue }
+                    string key = option.Substring(0, eq).ToLower()
+                    string value = option.Substring(eq + 1)
+                    if (key == "mode" && value == "ro") { flags = 1 }
+                    else if (key == "mode" && value == "rw") { flags = 2 }
+                    else if (key == "mode" && value == "rwc") { flags = 0 }
+                    else if (key == "timeout") { timeout = value.ToInt() }
+                    else { throw new ArgumentException("data.sqlite: unknown option '" + option + "' (mode=ro|rw|rwc, timeout=ms).") }
+                }
+            }
+            this.handle = __SqlOpen(path, flags, timeout)
+            if (this.handle < 0) { Data.SqliteDriver.Fail() }
+            this.dialect = new Data.SqliteDialect()
+        }
+        destruct() { this.Close() }
+
+        Data.IStatement Prepare(string sql) {
+            int h = __SqlPrepare(this.handle, sql)
+            if (h < 0) { Data.SqliteDriver.Fail() }
+            return new Data.SqliteStatement(h)
+        }
+        undefined Exec(string sql) { if (!__SqlExec(this.handle, sql)) { Data.SqliteDriver.Fail() } }
+        int Changes() { return __SqlChanges(this.handle) }
+        int LastId() { return __SqlLastId(this.handle) }
+        Data.Dialect Dialect() { return this.dialect }
+        undefined Close() {
+            if (this.handle <= 0) { return }
+            __SqlClose(this.handle)
+            this.handle = 0
+        }
+    }
+
+    class SqliteStatement : Data.IStatement {
+        int handle
+        construct(int handle) { this.handle = handle }
+        destruct() { this.Close() }
+
+        undefined Bind(any args) { if (!__SqlBind(this.handle, args)) { Data.SqliteDriver.Fail() } }
+        bool Next() {
+            int r = __SqlStep(this.handle)
+            if (r < 0) { Data.SqliteDriver.Fail() }
+            return r == 1
+        }
+        any Values() {
+            any values = __SqlRow(this.handle)
+            for (var i = 0; i < values.length; i++) {
+                if (values[i] is of bool) { values[i] = __SqlBlob(this.handle, i) }   // (a BLOB: its bytes)
+            }
+            return values
+        }
+        any Names() { return __SqlNames(this.handle) }
+        undefined Reset() { __SqlReset(this.handle) }
+        undefined Close() {
+            if (this.handle <= 0) { return }
+            __SqlFinalize(this.handle)
+            this.handle = 0
+        }
+    }
+}

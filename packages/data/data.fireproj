@@ -1,0 +1,13 @@
+{
+  "format": 1,
+  "name": "fire-data",
+  "type": "library",
+  "import": "data",
+  "standard": true,
+  "settings": {
+    "version": "1.0.0",
+    "author": "fire",
+    "license": "fire",
+    "description": "The standard library 'data' of fire: databases - connections, raw SQL with bound parameters, rows to objects, transactions (the drivers are packages of their own: data.sqlite, ...)."
+  }
+}

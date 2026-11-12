@@ -24,6 +24,8 @@
     "http.rpc/http.rpc.fireproj",
     "net.channel/net.channel.fireproj",
     "http.pages/http.pages.fireproj",
+    "data/data.fireproj",
+    "data.sqlite/data.sqlite.fireproj",
     "gpio/gpio.fireproj",
     "i2c/i2c.fireproj",
     "spi/spi.fireproj",

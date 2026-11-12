@@ -1,0 +1,469 @@
+// Data (docs/data/README.md, docs/ROADMAP_DATA.md): databases. `new Data.Connection(url)` finds the driver of the URL's scheme (a package of its own: data.sqlite, ...),
+// a Data.Connection runs SQL with bound parameters - Execute, Query (rows one by one), Rows, Scalar, QueryList/QueryOne (rows as objects) - and transactions.
+// A connection belongs to the thread that opened it, like any object; every call can be awaited (`await db.QueryList(...)`).
+#import "reflection"
+#import "json"
+
+namespace Data {
+    /// <summary>An error of the database: its message, and its code (the driver's: SQLite's extended result code, MySQL's error number, ...).</summary>
+    class DataException : Exception {
+        int Code
+        construct(string message, int code = 0) {
+            this.message = message
+            this.Code = code
+        }
+    }
+    /// <summary>A constraint was broken: unique, primary key, foreign key, not null, check.</summary>
+    class ConstraintException : Data.DataException {
+        construct(string message, int code = 0) : base(message, code) { }
+    }
+    /// <summary>The database is busy or locked by another connection longer than the connection waits (its timeout).</summary>
+    class BusyException : Data.DataException {
+        construct(string message, int code = 0) : base(message, code) { }
+    }
+    /// <summary>The database cannot be opened or reached (no such file, not a database, refused, the host does not allow it).</summary>
+    class ConnectionException : Data.DataException {
+        construct(string message, int code = 0) : base(message, code) { }
+    }
+
+    /// <summary>A call that does not fit the state of the connection: it is closed, Commit without Begin.</summary>
+    class StateException : Data.DataException {
+        construct(string message) : base(message, 0) { }
+    }
+
+    /// <summary>Who connects (for the drivers with a server; SQLite needs none). Not part of the URL, so it is not in logs.</summary>
+    class Credentials {
+        string User
+        string Password
+        construct(string user, string password) {
+            this.User = user
+            this.Password = password
+        }
+    }
+
+    // ---- what a driver implements (a class with [Driver "scheme"] and [Keep], made by Data.Open) ----
+
+    interface IDriver {
+        // The connection to `target` (the URL without "scheme:").
+        Data.IDriverConnection Open(string target, Data.Credentials credentials)
+    }
+
+    interface IDriverConnection {
+        // The first statement of `sql`, prepared (parameters `?`).
+        Data.IStatement Prepare(string sql)
+        // SQL without parameters and rows (several statements).
+        undefined Exec(string sql)
+        // The rows the last INSERT, UPDATE or DELETE changed; the key the last INSERT generated.
+        int Changes()
+        int LastId()
+        Data.Dialect Dialect()
+        undefined Close()
+    }
+
+    interface IStatement {
+        // Resets the statement and binds the values (an array; undefined: none).
+        undefined Bind(any args)
+        // The next row: true when there is one.
+        bool Next()
+        // The values of the current row (an array: int, float, string, byte[], undefined).
+        any Values()
+        // The names of the columns.
+        any Names()
+        undefined Reset()
+        undefined Close()
+    }
+
+    /// <summary>What differs between the databases (quoting, transactions, ...): the driver gives its own.</summary>
+    class Dialect {
+        string Name
+        construct(string name = "sql") { this.Name = name }
+        string Quote(string name) { return "\"" + name.Replace("\"", "\"\"") + "\"" }
+        string Begin() { return "BEGIN" }
+        string Commit() { return "COMMIT" }
+        string Rollback() { return "ROLLBACK" }
+        string Savepoint(string name) { return "SAVEPOINT " + name }
+        string Release(string name) { return "RELEASE SAVEPOINT " + name }
+        string RollbackTo(string name) { return "ROLLBACK TO SAVEPOINT " + name }
+    }
+
+    /// <summary>A row of a query: its values by the name of the column (`row["name"]`, `row.Int("age")`) or by position (`row.Get(0)`).</summary>
+    class Row {
+        any names
+        any values
+
+        construct(any names, any values) {
+            this.names = take names
+            this.values = take values
+        }
+
+        int Count { get { return this.values.length } }
+        string Name(int index) { return this.names[index] }
+        any Names() { return copy this.names }
+
+        // The position of the column `name` (-1: none; the case of the letters does not count).
+        int IndexOf(string name) {
+            for (var i = 0; i < this.names.length; i++) { if (this.names[i] == name) { return i } }
+            string lower = name.ToLower()
+            for (var i = 0; i < this.names.length; i++) {
+                string n = this.names[i]
+                if (n.ToLower() == lower) { return i }
+            }
+            return -1
+        }
+        bool Has(string name) { return this.IndexOf(name) >= 0 }
+
+        // The value of a column by its name or position (undefined for NULL).
+        any Get(any column) {
+            int at = this.At(column)
+            return this.values[at]
+        }
+        any operator[](string name) { return this.Get(name) }
+
+        bool IsNull(any column) { return this.Get(column) == undefined }
+        int Int(any column) {
+            any v = this.Get(column)
+            if (v == undefined) { return 0 }
+            if (v is of string) { string t = v; return t.ToInt() }
+            return v!int
+        }
+        float Float(any column) {
+            any v = this.Get(column)
+            if (v == undefined) { return 0.0 }
+            if (v is of string) { string t = v; return t.ToFloat() }
+            return v!float
+        }
+        string Text(any column) {
+            any v = this.Get(column)
+            if (v == undefined) { return undefined }
+            return "" + v
+        }
+        bool Bool(any column) {
+            any v = this.Get(column)
+            if (v == undefined) { return false }
+            if (v is of bool) { return v }
+            if (v is of string) { string t = v; return t == "1" || t.ToLower() == "true" }
+            return v != 0
+        }
+        byte[] Bytes(any column) { return this.Get(column) }
+
+        int At(any column) {
+            if (column is of int) {
+                int i = column
+                if (i < 0 || i >= this.values.length) { throw new IndexOutOfBoundsException("The row has " + this.values.length + " column(s), not " + (i + 1) + ".") }
+                return i
+            }
+            string name = "" + column
+            int at = this.IndexOf(name)
+            if (at < 0) { throw new ArgumentException("The row has no column '" + name + "' (it has: " + Data.Row.List(this.names) + ").") }
+            return at
+        }
+
+        static string List(any names) {
+            var t = ""
+            for (var i = 0; i < names.length; i++) {
+                if (i > 0) { t = t + ", " }
+                t = t + names[i]
+            }
+            return t
+        }
+
+        string ToString() {
+            var t = "{"
+            for (var i = 0; i < this.values.length; i++) {
+                if (i > 0) { t = t + ", " }
+                t = t + this.names[i] + ": " + Json.Serialize(this.values[i])
+            }
+            return t + "}"
+        }
+    }
+
+    /// <summary>The rows of a query, one by one (`foreach (row in db.Query(...))`): the statement is read while the loop goes; it ends with the loop or with
+    /// Close().</summary>
+    class Reader : IEnumerable<Data.Row> {
+        Data.IStatement statement
+        any names
+        bool done
+
+        construct(Data.IStatement statement) {
+            this.statement = take statement
+            this.names = this.statement.Names()
+            this.done = false
+        }
+        destruct() { this.Close() }
+
+        IEnumerator<Data.Row> GetEnumerator() { return new Data.ReaderEnumerator(this) }
+
+        // The next row, or undefined at the end (the statement is closed there).
+        Data.Row Next() {
+            if (this.done) { return undefined }
+            if (!this.statement.Next()) {
+                this.Close()
+                return undefined
+            }
+            return new Data.Row(copy this.names, this.statement.Values())
+        }
+
+        undefined Close() {
+            if (this.done) { return }
+            this.done = true
+            this.statement.Close()
+        }
+    }
+
+    class ReaderEnumerator : IEnumerator<Data.Row> {
+        Data.Reader reader
+        Data.Row current
+        construct(Data.Reader reader) { this.reader = reader }
+        bool MoveNext() {
+            this.current = this.reader.Next()
+            return this.current != undefined
+        }
+        Data.Row GetCurrent() { return this.current }
+    }
+
+    /// <summary>A connection to a database: `new Data.Connection("sqlite:app.db")`, `new Data.Connection("mysql://host/shop", new Data.Credentials("app",
+    /// secret))` - the scheme of the URL picks the driver (its package must be imported), the rest is the driver's (a file, a host and a database).</summary>
+    class Connection {
+        Data.IDriverConnection driver
+        string url
+        int depth
+        bool closed
+
+        construct(string url, Data.Credentials credentials = undefined) {
+            this.url = url
+            this.depth = 0
+            this.closed = false
+            int colon = url.IndexOf(":")
+            if (colon <= 0) { throw new ArgumentException("Data.Connection: the URL needs a scheme ('sqlite:app.db', 'mysql://host/db'), not '" + url + "'.") }
+            string scheme = url.Substring(0, colon).ToLower()
+            Data.IDriver d = Data.Connection.Driver(scheme)
+            if (d == undefined) { throw new Data.ConnectionException("Data.Connection: no driver for '" + scheme + ":' - import its package (#import \"data." + scheme + "\").") }
+            this.driver = d.Open(url.Substring(colon + 1), credentials)
+        }
+
+        // (the driver of a scheme: the class with [Driver "scheme"])
+        static Data.IDriver Driver(string scheme) {
+            any all = Type.Names()
+            for (var i = 0; i < all.length; i++) {
+                string full = all[i]
+                Type t = Type.Named(full)
+                if (t == undefined) { continue }
+                Attribute a = t.FindAttribute("Driver")
+                if (a == undefined || a.ArgCount() == 0) { continue }
+                if ("" + a.Args[0] == scheme) { return t.New(new any[0]) }
+            }
+            return undefined
+        }
+        destruct() { this.Close() }
+
+        Data.Dialect Dialect { get { return this.driver.Dialect() } }
+        string Url { get { return this.url } }
+        bool IsOpen { get { return !this.closed } }
+        // Is a transaction open (Begin or Transaction)?
+        bool InTransaction { get { return this.depth > 0 } }
+
+        // Runs a statement - INSERT, UPDATE, DELETE, CREATE ... - with the values of `args` for its `?` (an array); the number of rows it changed.
+        // Without `args` the text may hold several statements (`;` between them).
+        int Execute(string sql, any args = undefined) {
+            this.Check()
+            if (args == undefined) {
+                this.driver.Exec(sql)
+                return this.driver.Changes()
+            }
+            var st = this.driver.Prepare(sql)
+            st.Bind(args)
+            while (st.Next()) { }
+            st.Close()
+            return this.driver.Changes()
+        }
+
+        // The rows of a query, one by one (`foreach (row in db.Query("select ...", [args]))`).
+        Data.Reader Query(string sql, any args = undefined) {
+            this.Check()
+            var st = this.driver.Prepare(sql)
+            st.Bind(args)
+            return new Data.Reader(take st)
+        }
+
+        // All rows of a query at once.
+        List<Data.Row> Rows(string sql, any args = undefined) {
+            this.Check()
+            var all = new List<Data.Row>()
+            var st = this.driver.Prepare(sql)
+            st.Bind(args)
+            any names = st.Names()
+            while (st.Next()) { all.Add(new Data.Row(copy names, st.Values())) }
+            st.Close()
+            return all
+        }
+
+        // The first value of the first row (undefined: no row, or NULL).
+        any Scalar(string sql, any args = undefined) {
+            this.Check()
+            var st = this.driver.Prepare(sql)
+            st.Bind(args)
+            any value = undefined
+            if (st.Next()) {
+                any values = st.Values()
+                if (values.length > 0) { value = values[0] }
+            }
+            st.Close()
+            return value
+        }
+
+        // The rows as objects of the class or record `typeName` (`db.QueryList("Person", "select * from person")`): a column goes to the field of the same name
+        // (the case of the letters and `_` do not count: `full_name` is `fullName`), converted to its type; a column without a field is left out, a field
+        // without a column stays undefined. The objects are made without their constructors (like Json.Deserialize).
+        List QueryList(string typeName, string sql, any args = undefined) {
+            this.Check()
+            var map = new Data.RowMap(typeName)
+            var all = new List()
+            var st = this.driver.Prepare(sql)
+            st.Bind(args)
+            map.Columns(st.Names())
+            while (st.Next()) { all.Add(map.Make(st.Values())) }
+            st.Close()
+            return all
+        }
+
+        // The first row as an object of `typeName` (undefined: no row).
+        any QueryOne(string typeName, string sql, any args = undefined) {
+            this.Check()
+            var map = new Data.RowMap(typeName)
+            var st = this.driver.Prepare(sql)
+            st.Bind(args)
+            map.Columns(st.Names())
+            any one = undefined
+            if (st.Next()) { one = map.Make(st.Values()) }
+            st.Close()
+            return one
+        }
+
+        // The key the last INSERT of this connection generated.
+        int LastInsertId { get { return this.driver.LastId() } }
+
+        // A transaction: Begin, then Commit or Rollback. Inside another one it is a savepoint (Rollback goes back to it).
+        undefined Begin() {
+            this.Check()
+            var d = this.driver.Dialect()
+            if (this.depth == 0) { this.driver.Exec(d.Begin()) }
+            else { this.driver.Exec(d.Savepoint("fire_" + this.depth)) }
+            this.depth = this.depth + 1
+        }
+        undefined Commit() {
+            this.Check()
+            if (this.depth == 0) { throw new Data.StateException("Commit without Begin.") }
+            this.depth = this.depth - 1
+            var d = this.driver.Dialect()
+            if (this.depth == 0) { this.driver.Exec(d.Commit()) }
+            else { this.driver.Exec(d.Release("fire_" + this.depth)) }
+        }
+        undefined Rollback() {
+            this.Check()
+            if (this.depth == 0) { throw new Data.StateException("Rollback without Begin.") }
+            this.depth = this.depth - 1
+            var d = this.driver.Dialect()
+            if (this.depth == 0) { this.driver.Exec(d.Rollback()) }
+            else {
+                this.driver.Exec(d.RollbackTo("fire_" + this.depth))
+                this.driver.Exec(d.Release("fire_" + this.depth))
+            }
+        }
+
+        // Runs `work` in a transaction: Commit at its end, Rollback when it throws (the exception goes on). `work` gets the connection:
+        // `db.Transaction(t => { t.Execute(...) })`.
+        undefined Transaction(lambda<Data.Connection> work) {
+            this.Begin()
+            try {
+                work(this)
+            } catch (e) {
+                this.Rollback()
+                throw e
+            }
+            this.Commit()
+        }
+
+        undefined Close() {
+            if (this.closed) { return }
+            this.closed = true
+            this.driver.Close()
+        }
+
+        undefined Check() { if (this.closed) { throw new Data.StateException("The connection to '" + this.url + "' is closed.") } }
+    }
+
+    /// <summary>How the columns of a result go to the fields of a class (QueryList, QueryOne).</summary>
+    class RowMap {
+        string typeName
+        List fields         // per column: the field's name (undefined: no field)
+        List kinds          // per column: the field's type name
+        any fieldNames
+        any fieldTypes
+
+        construct(string typeName) {
+            this.typeName = typeName
+            Type t = Type.Named(typeName)
+            if (t == undefined) { throw new ArgumentException("Data: there is no class '" + typeName + "' (to make the rows of).") }
+            List members = t.Fields()
+            this.fieldNames = new any[members.Count]
+            this.fieldTypes = new any[members.Count]
+            for (var i = 0; i < members.Count; i++) {
+                Member m = members[i]
+                this.fieldNames[i] = m.Name
+                this.fieldTypes[i] = m.TypeName
+            }
+            this.fields = new List()
+            this.kinds = new List()
+        }
+
+        static string Key(string name) { return name.Replace("_", "").ToLower() }
+
+        undefined Columns(any names) {
+            this.fields = new List()
+            this.kinds = new List()
+            for (var c = 0; c < names.length; c++) {
+                string key = Data.RowMap.Key(names[c])
+                any found = undefined
+                any kind = undefined
+                for (var f = 0; f < this.fieldNames.length; f++) {
+                    if (Data.RowMap.Key(this.fieldNames[f]) == key) {
+                        found = this.fieldNames[f]
+                        kind = this.fieldTypes[f]
+                        break
+                    }
+                }
+                this.fields.Add(found)
+                this.kinds.Add(kind)
+            }
+        }
+
+        // An object of the row (made from JSON: without the constructor, also a record).
+        any Make(any values) {
+            var json = "{"
+            var first = true
+            for (var c = 0; c < values.length; c++) {
+                any field = this.fields[c]
+                any v = values[c]
+                if (field == undefined || v == undefined) { continue }
+                if (!first) { json = json + ", " }
+                first = false
+                json = json + Json.Serialize(field) + ": " + Data.RowMap.Value(v, this.kinds[c])
+            }
+            json = json + "}"
+            return Json.Deserialize(json, this.typeName)
+        }
+
+        // (a value of the database as the JSON of a field of type `kind`)
+        static string Value(any v, any kind) {
+            if (kind == "bool") {
+                if (v is of string) { string t = v; return Json.Serialize(t == "1" || t.ToLower() == "true") }
+                return Json.Serialize(v != 0)
+            }
+            if (kind == "string" && !(v is of string)) { return Json.Serialize("" + v) }
+            if (kind == "int" && v is of float) { float f = v; return Json.Serialize(f!int) }
+            if (kind == "int" && v is of string) { string t = v; return Json.Serialize(t.ToInt()) }
+            if (kind == "float" && v is of string) { string t = v; return Json.Serialize(t.ToFloat()) }
+            return Json.Serialize(v)
+        }
+    }
+}

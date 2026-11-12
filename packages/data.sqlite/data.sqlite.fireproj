@@ -1,0 +1,156 @@
+{
+  "format": 1,
+  "name": "fire-data.sqlite",
+  "type": "library",
+  "import": "data.sqlite",
+  "standard": true,
+  "settings": {
+    "version": "1.0.0",
+    "author": "fire",
+    "license": "fire",
+    "description": "The standard library 'data.sqlite' of fire: the SQLite driver of Data (SQLite 3.54.1 built in, no library of the system)."
+  },
+  "native": {
+    "sources": [
+      {
+        "file": "native/fire_sqlite_config.h",
+        "order": -20
+      },
+      {
+        "file": "native/sqlite3.c",
+        "order": -10
+      },
+      "native/fire_bridge_sqlite.h"
+    ],
+    "discover": false,
+    "functions": [
+      {
+        "name": "__SqlLastError",
+        "returns": "int",
+        "arguments": 0,
+        "c": "fire_sqlite_LastError"
+      },
+      {
+        "name": "__SqlLastErrorMessage",
+        "returns": "string",
+        "arguments": 0,
+        "c": "fire_sqlite_LastErrorMessage",
+        "needsList": true,
+        "returnsReference": true
+      },
+      {
+        "name": "__SqlVersion",
+        "returns": "string",
+        "arguments": 0,
+        "c": "fire_sqlite_Version",
+        "needsList": true,
+        "returnsReference": true
+      },
+      {
+        "name": "__SqlOpenCount",
+        "returns": "int",
+        "arguments": 0,
+        "c": "fire_sqlite_OpenCount"
+      },
+      {
+        "name": "__SqlOpen",
+        "returns": "int",
+        "arguments": 3,
+        "c": "fire_sqlite_Open"
+      },
+      {
+        "name": "__SqlClose",
+        "returns": "bool",
+        "arguments": 1,
+        "c": "fire_sqlite_Close"
+      },
+      {
+        "name": "__SqlExec",
+        "returns": "bool",
+        "arguments": 2,
+        "c": "fire_sqlite_Exec"
+      },
+      {
+        "name": "__SqlPrepare",
+        "returns": "int",
+        "arguments": 2,
+        "c": "fire_sqlite_Prepare"
+      },
+      {
+        "name": "__SqlBind",
+        "returns": "bool",
+        "arguments": 2,
+        "c": "fire_sqlite_Bind"
+      },
+      {
+        "name": "__SqlStep",
+        "returns": "int",
+        "arguments": 1,
+        "c": "fire_sqlite_Step"
+      },
+      {
+        "name": "__SqlRow",
+        "returns": "any[]",
+        "arguments": 1,
+        "c": "fire_sqlite_Row",
+        "needsList": true,
+        "returnsReference": true
+      },
+      {
+        "name": "__SqlBlob",
+        "returns": "byte[]",
+        "arguments": 2,
+        "c": "fire_sqlite_Blob",
+        "needsList": true,
+        "returnsReference": true
+      },
+      {
+        "name": "__SqlNames",
+        "returns": "any[]",
+        "arguments": 1,
+        "c": "fire_sqlite_Names",
+        "needsList": true,
+        "returnsReference": true
+      },
+      {
+        "name": "__SqlReset",
+        "returns": "bool",
+        "arguments": 1,
+        "c": "fire_sqlite_Reset"
+      },
+      {
+        "name": "__SqlFinalize",
+        "returns": "bool",
+        "arguments": 1,
+        "c": "fire_sqlite_Finalize"
+      },
+      {
+        "name": "__SqlChanges",
+        "returns": "int",
+        "arguments": 1,
+        "c": "fire_sqlite_Changes"
+      },
+      {
+        "name": "__SqlLastId",
+        "returns": "int",
+        "arguments": 1,
+        "c": "fire_sqlite_LastId"
+      },
+      {
+        "name": "__SqlAutoCommit",
+        "returns": "bool",
+        "arguments": 1,
+        "c": "fire_sqlite_AutoCommit"
+      }
+    ],
+    "reset": "fire_sqlite_reset",
+    "language": "c",
+    "uses": [
+      "io"
+    ],
+    "platforms": [
+      "posix",
+      "windows"
+    ]
+  }
+}

@@ -28657,6 +28657,115 @@ else
             print("button " + b.rx + "," + b.ry + " " + b.actualWidth + "x" + b.actualHeight)
             print(flow.Text)
             """),
+        ("Data/SQLite: Execute, Query (Zeilen nacheinander), Rows, Scalar, QueryList/QueryOne auf Records und Klassen, Unicode, NULL, BLOB, Fehlerarten, Transaktionen mit Savepoints, :memory:, await, Threads mit eigenen Verbindungen, handover", """
+            #import "time"
+            #import "filesystem"
+            #import "data.sqlite"
+            record Person {
+                int id
+                string name
+                int age
+                bool active
+            }
+            class Item {
+                int id
+                string title
+                float price
+                byte blob[]
+            }
+            class Work {
+                static int Count(string url) {
+                    var db = new Data.Connection(url)
+                    int n = db.Scalar("select count(*) from person")
+                    db.Close()
+                    return n
+                }
+                static undefined Fill(string url, int start, int count) {
+                    var db = new Data.Connection(url)
+                    db.Transaction(t => {
+                        for (var i = 0; i < 50; i++) { t.Execute("insert into person(name) values (?)", ["p" + i]) }
+                    })
+                    db.Close()
+                }
+            }
+            print("sqlite " + (Data.SqliteDriver.Version().Length > 0))
+            var db = new Data.Connection("sqlite::memory:")
+            db.Execute("create table person(id integer primary key, name text not null, age integer, active integer); create table item(id integer primary key, title text, price real, blob blob)")
+            print("insert " + db.Execute("insert into person(name, age, active) values (?, ?, ?)", ["Ada", 36, true]))
+            db.Execute("insert into person(name, age, active) values (?, ?, ?)", ["Grace", 85, false])
+            db.Execute("insert into person(name, age, active) values (?, ?, ?)", ["Linus Ünïcødé 🐧", undefined, true])
+            print("last id " + db.LastInsertId)
+            foreach (row in db.Query("select id, name, age from person where age > ? or age is null order by id", [40])) { print("row " + row) }
+            var rows = db.Rows("select name, age from person order by name")
+            print("rows " + rows.Count + " first " + rows[0]["name"] + " " + rows[0].Int("age"))
+            print("count " + db.Scalar("select count(*) from person"))
+            var people = db.QueryList("Person", "select * from person order by id")
+            foreach (p in people) { print("person " + p.id + " " + p.name + " " + p.age + " " + p.active) }
+            Person one = db.QueryOne("Person", "select * from person where name = ?", ["Grace"])
+            print("one " + one.name + " active " + one.active + " equal " + (one == db.QueryOne("Person", "select * from person where id = 2")))
+            db.Execute("insert into item(title, price, blob) values (?, ?, ?)", ["Box", 9.5, [1, 2, 255]])
+            Item it = db.QueryOne("Item", "select * from item")
+            print("item " + it.title + " " + it.price + " blob " + it.blob.length + " " + it.blob[2])
+            try { db.Execute("insert into person(id, name) values (?, ?)", [1, "Dup"]) } catch (Data.ConstraintException e) { print("constraint " + e.Code + " " + e.message) }
+            try { db.Execute("select * from nothing", []) } catch (Data.DataException e) { print("error " + e.Code + " " + e.message) }
+            try { db.Execute("insert into person(name) values (?)", []) } catch (ArgumentException e) { print("args " + e.message) }
+            db.Transaction(t => { t.Execute("update person set age = age + 1 where id = ?", [1]) })
+            print("after commit " + db.Scalar("select age from person where id = 1"))
+            try {
+                db.Transaction(t => {
+                    t.Execute("update person set age = 0 where id = ?", [1])
+                    throw new Exception("stop")
+                })
+            } catch (e) { print("rolled back: " + e.message) }
+            print("after rollback " + db.Scalar("select age from person where id = 1"))
+            db.Begin()
+            db.Execute("delete from person where id = ?", [3])
+            db.Begin()
+            db.Execute("delete from person where id = ?", [2])
+            db.Rollback()
+            db.Commit()
+            print("nested " + db.Scalar("select count(*) from person"))
+            var mem = new Data.Connection("sqlite::memory:")
+            mem.Execute("create table t(x)")
+            print("memory " + mem.Execute("insert into t values (?), (?)", [1, 2]) + " open " + Data.SqliteDriver.OpenCount())
+            mem.Close()
+            try { new Data.Connection("nosuch:x") } catch (Data.ConnectionException e) { print("driver " + e.message) }
+            try { new Data.Connection("sqlite:/nonexistent/dir/x.db") } catch (Data.ConnectionException e) { print("open " + e.Code) }
+            db.Close()
+            print("open after " + Data.SqliteDriver.OpenCount())
+            string file = IO.Path.GetTempFileName()
+            var db2 = new Data.Connection("sqlite:" + file)
+            db2.Execute("drop table if exists person; create table person(id integer primary key, name text)")
+            db2.Execute("insert into person(name) values (?), (?)", ["Ada", "Grace"])
+            List awaited = await db2.QueryList("Person", "select * from person order by id")
+            print("awaited " + awaited.Count + " " + awaited[1].name)
+            var other = new Data.Connection("sqlite:" + file)
+            any both = await [db2.Scalar("select count(*) from person"), other.Scalar("select max(id) from person")]
+            print("both " + both[0] + " " + both[1])
+            other.Close()
+            string url = "sqlite:" + file + "?timeout=10000"
+            int done = 0
+            for (var k = 0; k < 4; k++) {
+                fire taking url taking k {
+                    Work.Fill(url, k * 50, 50)
+                    sync global { done = done + 1 }
+                }
+            }
+            while (done < 4) { Sleep(10ms); sync globals }
+            print("after threads " + await Work.Count(url))
+            var moved = new Data.Connection("sqlite:" + file)
+            int got = 0
+            fire handover moved {
+                int n = moved.Scalar("select count(*) from person where name = ?", ["Ada"])
+                moved.Close()
+                sync global { got = n }
+            }
+            while (got == 0) { Sleep(10ms); sync globals }
+            print("handover " + got + " open " + Data.SqliteDriver.OpenCount())
+            db2.Close()
+            IO.File.Delete(file)
+            print("file gone")
+            """),
         ("Http.Pages: eine FXML-View als Seite - HTML mit CSS-Layout (Flex), Circuit pro Seite, Eingabe, Klick, Checkbox und Button im FlowPanel ueber den WebSocket, nur die Aenderungen zurueck, fremde Sitzung 4401, unbekannte Seite 4404", """
             #import "http.pages"
             // Generated from Hello.fxml - do not edit, change the markup. Derive from the class and override the methods named in on...="...":
