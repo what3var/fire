@@ -2104,7 +2104,7 @@ namespace fire.Native
                 _dispatchers.Add(("GetCurrent", 0));
             }
             if (AnyClassHasMethod("GetIndex", 1)) _dispatchers.Add(("GetIndex", 1));
-            if (_classes.ContainsKey("Channel") && AnyClassHasMethod("__End", 0)) _dispatchers.Add(("__End", 0));   // (`fire with ch`: the thread's end of a channel)
+            if ((_classes.ContainsKey("Channel") || _classes.ContainsKey("ChannelEnd")) && AnyClassHasMethod("__End", 0)) _dispatchers.Add(("__End", 0));   // (`fire with ch`: the thread's end of a channel)
             if (AnyClassHasMethod("SetIndex", 2)) _dispatchers.Add(("SetIndex", 2));
             if (_dispatchers.Contains(("GetEnumerator", 0)) && _program.Program.Classes.ContainsKey("ListEnumerator"))
             {
@@ -2965,6 +2965,14 @@ namespace fire.Native
             if (!_initNext) return "";
             _initNext = false;
             return $"{{ RecInit wi_; wi_.o = {obj}.kind == K_Class && leafAlive({obj}) ? asObj({obj}) : NULL; wi_.next = g_recInit; g_recInit = &wi_; ";
+        }
+
+        /// <summary>The C test "`v` is a channel or an end of a two-way one" (`fire with`: an end of its own, its `__End`); null when the program has none.</summary>
+        private string? ChannelLikeTest(string v)
+        {
+            if (!_dispatchers.Contains(("__End", 0))) return null;
+            var ids = new[] { "Channel", "ChannelEnd" }.Where(_classes.ContainsKey).Select(n => $"asObj({v})->cls == {ClassIdExpr(_classes[n])}").ToList();
+            return ids.Count == 0 ? null : $"{v}.kind == K_Class && leafAlive({v}) && ({string.Join(" || ", ids)})";
         }
 
         /// <summary>`new R(...)` of a record: it is being constructed while its constructor runs (its writes are allowed - fire_rt.h recInit).</summary>
@@ -6742,8 +6750,8 @@ namespace fire.Native
                         int k = takingCount + w;
                         sbf.Append($"av[{k}] = {S(first + takingCount + w)}; ");
                         // (a channel: the thread gets an end of its own on the same queue - step 9)
-                        if (_classes.TryGetValue("Channel", out var chanCls) && _dispatchers.Contains(("__End", 0)))
-                            sbf.Append($"if (av[{k}].kind == K_Class && leafAlive(av[{k}]) && asObj(av[{k}])->cls == {ClassIdExpr(chanCls)}) {{ Value e_ = {CallFn("__End", 0)}(av[{k}]{DispatchTail("__End", 0, "travel", "0xFFFFFFFFu")}); Owned* eo_ = ownedOf(e_); if (eo_) {{ if (eo_->owner) ownUnlink(eo_); ownLink(travel, eo_); }} av[{k}] = e_; }} ");
+                        if (ChannelLikeTest($"av[{k}]") is { } isChannel)
+                            sbf.Append($"if ({isChannel}) {{ Value e_ = {CallFn("__End", 0)}(av[{k}]{DispatchTail("__End", 0, "travel", "0xFFFFFFFFu")}); Owned* eo_ = ownedOf(e_); if (eo_) {{ if (eo_->owner) ownUnlink(eo_); ownLink(travel, eo_); }} av[{k}] = e_; }} ");
                     }
                     sbf.Append($"ensureDomain(); {(dedicatedThread ? "fireThreadDedicated" : "fireThread")}({body.Name}, av, {argc}, travel); }}");
                     if (takingCount > 0) sbf.Append(" }");
@@ -6828,9 +6836,9 @@ namespace fire.Native
                     {
                         // (a channel: the job gets an end of its own on the same queue, which goes to the job - step 9)
                         var ends = new StringBuilder();
-                        if (_classes.TryGetValue("Channel", out var jobChan) && _dispatchers.Contains(("__End", 0)))
+                        if (ChannelLikeTest("av[0]") != null)
                             for (int k = argc - jobWith; k < argc; k++)
-                                ends.Append($"if (av[{k}].kind == K_Class && leafAlive(av[{k}]) && asObj(av[{k}])->cls == {ClassIdExpr(jobChan)}) av[{k}] = adoptV({CallFn("__End", 0)}(av[{k}]{DispatchTail("__End", 0, "&" + OwnerList(), "0xFFFFFFFFu")}), &{OwnerList()}); ");
+                                ends.Append($"if ({ChannelLikeTest($"av[{k}]")}) av[{k}] = adoptV({CallFn("__End", 0)}(av[{k}]{DispatchTail("__End", 0, "&" + OwnerList(), "0xFFFFFFFFu")}), &{OwnerList()}); ");
                         E($"{{ {av}{ends}postJobWith({S(d - 1)}, av, {argc}, {(onTarget ? "true" : "false")}, {jobWith}, &{OwnerList()}); }}");
                     }
                     else E($"{{ {av}postJobEx({S(d - 1)}, av, {argc}, {(onTarget ? "true" : "false")}, NULL); }}");

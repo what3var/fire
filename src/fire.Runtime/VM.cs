@@ -2934,6 +2934,9 @@ namespace fire.Runtime
             return false;
         }
 
+        /// <summary>A channel or an end of a two-way one (Channel.Pair): `fire with` gives a thread an end of its own (its `__End`).</summary>
+        internal static bool IsChannelLike(ObjectInstance obj) => obj.RtClass is { Name: "Channel" or "ChannelEnd" };
+
         /// <summary>The records that a copy or `with` is filling right now (their writes are allowed).</summary>
         private HashSet<ObjectInstance>? _recordInit;
         /// <summary>`with`: the copy whose fields its assignments write (OpCode.InitNext, until RecordCheck 0).</summary>
@@ -5663,7 +5666,7 @@ namespace fire.Runtime
                     for (int i = withCount - 1; i >= 0; i--) withValues[i] = Pop();
                     // (a channel: the thread gets an end of its own on the same queue - step 9)
                     for (int i = 0; i < withCount; i++)
-                        if (withValues[i].Kind == ValueKind.Class && withValues[i].AsObjectRef() is ObjectInstance { IsDestroyed: false, RtClass.Name: "Channel" } channel)
+                        if (withValues[i].Kind == ValueKind.Class && withValues[i].AsObjectRef() is ObjectInstance { IsDestroyed: false } channel && IsChannelLike(channel))
                         {
                             if (CallMethodNested(channel, "__End", Array.Empty<Value>()) is not { } end) return;
                             withValues[i] = end;
@@ -5772,7 +5775,7 @@ namespace fire.Runtime
                     for (int i = onTarget ? 1 : 0; i < copiedArgs; i++)
                         if (jobArgs[i].Kind == ValueKind.Class) jobArgs[i] = ObjectCloner.Clone(jobArgs[i], holder, deep: true);
                     for (int i = copiedArgs; i < jobArgs.Length; i++)
-                        if (jobArgs[i].Kind == ValueKind.Class && jobArgs[i].AsObjectRef() is ObjectInstance { IsDestroyed: false, RtClass.Name: "Channel" } jobChannel)
+                        if (jobArgs[i].Kind == ValueKind.Class && jobArgs[i].AsObjectRef() is ObjectInstance { IsDestroyed: false } jobChannel && IsChannelLike(jobChannel))
                         {
                             // (a channel: the job gets an end of its own on the same queue - step 9)
                             if (CallMethodNested(jobChannel, "__End", Array.Empty<Value>()) is not { } end) { holder.Release(this); return; }

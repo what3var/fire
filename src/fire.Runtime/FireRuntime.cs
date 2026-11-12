@@ -248,7 +248,7 @@ namespace fire.Runtime
                 foreach (var wv in withValues)
                 {
                     // (the end of a channel that the spawning VM made for this thread: it belongs to the thread)
-                    if (wv.Kind == ValueKind.Class && wv.AsObjectRef() is ObjectInstance { IsDestroyed: false, RtClass.Name: "Channel" } end) end.ReparentTo(scope);
+                    if (wv.Kind == ValueKind.Class && wv.AsObjectRef() is ObjectInstance { IsDestroyed: false } end && VM.IsChannelLike(end)) end.ReparentTo(scope);
                     scope.DefineSlot(wv);
                 }
             if (VmScheduler.Enabled && ThreadBodyInterceptor == null)

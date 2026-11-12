@@ -364,6 +364,20 @@ print(sum)                          // 14
   channel gives undefined (`foreach` ends there).
 - `Send` gives False when the channel is closed (nothing moved). `Close()`, `IsClosed`, `Count`.
 - The channel closes when the one that made it ends. It is never copied (`fire taking ch` is the ArgumentException) - it goes with `with`.
+- Both directions: `Channel.Pair<A, B>()` gives an end that sends `A` and receives `B`; `.Other()` is the end that sends `B` and receives `A` (it goes to
+  the thread with `fire with`). `Close()` ends the direction of the end it is called on:
+
+```fire
+#import "time"
+var left = Channel.Pair<string, int>()
+var right = left.Other()
+fire with right {
+    foreach (s in right) { right.Send(s.Length) }
+}
+left.Send("hello")
+print(left.Receive())               // 5
+left.Close()
+```
 
 ## Actors
 

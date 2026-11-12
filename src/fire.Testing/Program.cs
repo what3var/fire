@@ -22372,6 +22372,29 @@ else
             try process log
             print("main " + log.text)
         """),
+        ("Channel.Pair<A, B>: zwei Richtungen - ein Ende sendet A und empfaengt B, Other() das Gegenstueck, fire with gibt ein eigenes Ende, Objekte frisch", """
+            #import "time"
+            class Job { int n; construct(int n) { this.n = n } }
+            var left = Channel.Pair<string, int>()
+            var right = left.Other()
+            fire with right {
+                foreach (s in right) { right.Send(s.Length) }
+                right.Close()
+            }
+            left.Send("abc")
+            left.Send("hello")
+            print(left.Receive() + " " + left.Receive())
+            left.Close()
+            print("rest " + (left.Receive() == undefined))
+            var jobs = Channel.Pair<Job, Job>()
+            var other = jobs.Other()
+            fire with other {
+                var j = other.Receive()
+                other.Send(new Job(j.n * 2))
+            }
+            jobs.Send(new Job(21))
+            print("job " + jobs.Receive().n)
+        """),
         ("Threads: TakeGlobal() im Thread gibt das Objekt samt allem, was es besitzt, dem Hauptprogramm; ein Feld auf ein fremdes Thread-Objekt ist die ArgumentException (Takes.Locals nimmt es mit), TakeGlobal(true) bleibt im Thread", """
             #import "time"
             class Leaf { int v; construct(int v) { this.v = v } }
