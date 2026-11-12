@@ -426,6 +426,35 @@ try { some.x = 5 } catch (AccessDeniedException e) { print("unchangeable") }
 - A record belongs to an owner like an object (SPEC 2): what a constructor stores keeps it only with `take` (`this.from = take from`), as for objects.
 - `copy r` makes an equal record (a copy is constructed too).
 
+### A changed copy: `with`
+
+`r with { .x = 1, .y = 2 }` is a copy of the record `r` with the named fields changed - the fields of the copy are written like in its construction,
+`r` stays as it is. For an object of a class the same works with the word of the copy: `copy obj with { ... }` (a deep copy) or `flat obj with { ... }`
+(a flat one, SPEC 2.4):
+
+```fire
+record Point {
+    int x
+    int y
+    construct(int x, int y) { this.x = x; this.y = y }
+}
+class Settings {
+    string name = "default"
+    int size = 10
+}
+var p = new Point(1, 2)
+var moved = p with { .x = 5 }
+print(moved.x + " " + moved.y + " " + p.x)        // 5 2 1
+var s = new Settings()
+var big = copy s with { .name = "big", .size = 40 }
+print(big.name + " " + big.size + " " + s.size)   // big 40 10
+```
+
+- The assignments run in their order with the rules of an ordinary assignment (a property's setter, the visibility, `take`); the constructor does not run.
+- At the end a record is checked like after its constructor: what its fields hold must not change.
+- `x with { ... }` without `copy`/`flat` is for records only: on an object of a class it is TC028 (an error) where the type is known, else the
+  ArgumentException.
+
 ## Static members and the top level
 
 Top-level code (outside of classes) runs from the top when the program starts; it can declare variables and use all classes, wherever they stand in the

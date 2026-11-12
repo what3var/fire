@@ -279,6 +279,10 @@ namespace fire.Bytecode
         CancelPop,
         // `x??.name` (a conditional access that checks the member at run time): pop value; push whether it is not undefined, not destroyed and has the member
         HasMember,           // u16 nameIdx
+        // `copy x with { .a = v }` (step 9): the field store that follows writes the copy - also a record's field (like in its construction)
+        InitNext,            //                     : prefix of SetField / SetFieldClaim
+        // the end of a `with` (0): a record holds only what does not change (the ArgumentException); 1 at its start, `r with` without a word: r must be a record
+        RecordCheck,         // u8 mode            : peek
     }
 
     /// <summary>Target type for CoerceType/CoerceTypeDynamic - corresponds exactly to the

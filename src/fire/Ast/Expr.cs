@@ -216,6 +216,12 @@ namespace fire.Ast
     public sealed record IndexExpr(int Line, Expr Target, Expr Index) : Expr(Line);
     public sealed record AssignExpr(int Line, Expr Target, Expr Value) : Expr(Line);
 
+    /// <summary>`copy x with { .a = 1, .b = take y }` / `flat x with { ... }` / `r with { ... }` (docs/ROADMAP_TASKS.md step 9): the copy of `Source` (Copy:
+    /// DeepCopy, FlatCopy; null - no word, only for a record: a deep copy), then the assignments in their order with the rules of an ordinary assignment;
+    /// the constructor does not run. The fields of a record copy are written like in its construction.</summary>
+    public sealed record WithExpr(int Line, Expr Source, UnaryOp? Copy, IReadOnlyList<WithSet> Sets) : Expr(Line);
+    public sealed record WithSet(int Line, string Name, Expr Value);
+
     /// <summary>`++x`/`--x` (IsPrefix=true, the result is the NEW value) or
     /// `x++`/`x--` (IsPrefix=false, the result is the OLD value before the
     /// change) - SPEC "Increment/Decrement". `Target`, as with

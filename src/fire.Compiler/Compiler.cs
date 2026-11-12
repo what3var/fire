@@ -2572,6 +2572,10 @@ namespace fire.Compiler
                     _chunk.EmitOp(OpCode.RebindLambda);
                     break;
 
+                case WithExpr with:
+                    CompileWith(with);
+                    break;
+
                 case ConditionalAccessExpr access:
                     {
                         // `a?.chain` / `a??.chain`: [a] -> [a, a] -> the test; the chain runs on the a below it (the placeholder compiles to nothing),
@@ -3497,6 +3501,40 @@ namespace fire.Compiler
                     _chunk.EmitU16(_chunk.AddConstant(Value.MakeString(id.Name)));
                     break;
             }
+        }
+
+        /// <summary>`copy x with { .a = v, .b = take y }` (step 9): the copy (deep without a word - a record), then each assignment like `copy.a = v` on the
+        /// copy (InitNext: also a field of a record), then the check of what a record holds (RecordCheck 0).</summary>
+        private void CompileWith(WithExpr with)
+        {
+            CompileExpr(new UnaryExpr(with.Line, with.Copy ?? UnaryOp.DeepCopy, with.Source));
+            if (with.Copy == null) { _chunk.EmitOp(OpCode.RecordCheck); _chunk.EmitByte(1); }
+            foreach (var set in with.Sets)
+            {
+                _chunk.EmitOp(OpCode.Dup);                       // [copy, copy]
+                bool claim = false;
+                if (set.Value is UnaryExpr { Op: UnaryOp.Take or UnaryOp.TryTake } takeValue)
+                {
+                    CompileExpr(takeValue.Operand);              // [copy, copy, value]
+                    _chunk.EmitOp(takeValue.Op == UnaryOp.TryTake ? OpCode.TryTakeToObject : OpCode.TakeToObject);
+                }
+                else
+                {
+                    CompileExpr(set.Value);
+                    claim = MayBeUnclaimed(set.Value);
+                }
+                EmitWidthIfNeeded(this, _refParams.FieldWidth(set.Name), _refParams.FieldUnit(set.Name));
+                _chunk.EmitOp(OpCode.InitNext);
+                if (claim) EmitSetFieldClaim(set.Name, false);
+                else
+                {
+                    _chunk.EmitOp(OpCode.SetField);
+                    _chunk.EmitU16(_chunk.AddConstant(Value.MakeString(set.Name)));
+                }
+                _chunk.EmitOp(OpCode.Pop);                       // [copy]
+            }
+            _chunk.EmitOp(OpCode.RecordCheck);
+            _chunk.EmitByte(0);
         }
 
         private void CompileAssign(AssignExpr a)

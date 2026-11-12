@@ -2956,6 +2956,16 @@ namespace fire.Native
             return $", {Px}fire_req_{id}, {Px}fire_rh_{id}, {Px}fire_rck_{id}";
         }
 
+        /// <summary>After OpCode.InitNext (`with`): the store that follows is in a block in which `obj` counts as being constructed (fire_rt.h recInit) - its
+        /// start ("" without InitNext); the block ends with `g_recInit = wi_.next; }`.</summary>
+        private bool _initNext;
+        private string InitOpen(string obj)
+        {
+            if (!_initNext) return "";
+            _initNext = false;
+            return $"{{ RecInit wi_; wi_.o = {obj}.kind == K_Class && leafAlive({obj}) ? asObj({obj}) : NULL; wi_.next = g_recInit; g_recInit = &wi_; ";
+        }
+
         /// <summary>`new R(...)` of a record: it is being constructed while its constructor runs (its writes are allowed - fire_rt.h recInit).</summary>
         private static string RecInitEnter(ClassInfo cls) => cls.Rc.IsRecord ? "RecInit ri_; ri_.o = asObj(o); ri_.next = g_recInit; g_recInit = &ri_; " : "";
         private static string RecInitLeave(ClassInfo cls) => cls.Rc.IsRecord ? "g_recInit = ri_.next; " : "";
@@ -4860,6 +4870,18 @@ namespace fire.Native
                     }
                     SetR(d - 1, false); return Next();
                 }
+                case OpCode.InitNext:
+                    // (`with`: the store that follows writes the copy - also a field of a record, like in its construction)
+                    _initNext = true;
+                    _kindsKept = true;
+                    return Next();
+                case OpCode.RecordCheck:
+                    // the end of a `with` (0): what a record holds; at its start (1), without `copy`/`flat`: a record
+                    Need(1);
+                    E(ins.A[0] == 1 ? $"recordRequire({SR(d - 1)});" : $"(void)recordCheckV({SR(d - 1)});");
+                    Check();
+                    _kindsKept = true;
+                    return Next();
                 case OpCode.HasMember:
                 {
                     // `x??.name`: x is there and has the member (the type checker could not prove it) - the classes that have it, or a built-in member
@@ -5500,10 +5522,11 @@ namespace fire.Native
                     string field = Str(ins.A[0]);
                     _fieldNames.Add(field);
                     string sfObj = SR(d - 2), sfValue = SR(d - 1);
-                    if (ObjSlot(d - 2) && DirectSetField(ObjClass(Ty(d - 2)), field, sfObj, sfValue, Ty(d - 1), f, IsNullable(Ty(d - 2))) is { } direct) E(direct);
+                    string initOpen = InitOpen(sfObj), initClose = initOpen.Length > 0 ? " g_recInit = wi_.next; }" : "";
+                    if (ObjSlot(d - 2) && DirectSetField(ObjClass(Ty(d - 2)), field, sfObj, sfValue, Ty(d - 1), f, IsNullable(Ty(d - 2))) is { } direct) E(initOpen + direct + initClose);
                     else if (ObjSlot(d - 2) && !IsNullable(Ty(d - 2)) && DirectAccessor(ObjClass(Ty(d - 2)), field, true, f) is { } setter)
-                        E($"if (FIRE_UNLIKELY(!leafAlive({sfObj}))) destroyedError({sfObj}); else {{ Value r_ = {GetFunc(setter, FuncKind.Method).Name}({sfObj}, {sfValue}); adopt(r_, &{OwnerList()}); }}");
-                    else E($"{FieldFn("sf", field)}({sfObj}, {sfValue}{FieldTail(field, f, () => "&" + OwnerList())});");
+                        E($"{initOpen}if (FIRE_UNLIKELY(!leafAlive({sfObj}))) destroyedError({sfObj}); else {{ Value r_ = {GetFunc(setter, FuncKind.Method).Name}({sfObj}, {sfValue}); adopt(r_, &{OwnerList()}); }}{initClose}");
+                    else E($"{initOpen}{FieldFn("sf", field)}({sfObj}, {sfValue}{FieldTail(field, f, () => "&" + OwnerList())});{initClose}");
                     Check();
                     AssignValue(d - 2, d - 1);
                     SetR(d - 2, R(d - 1));
@@ -5573,6 +5596,8 @@ namespace fire.Native
                     string store = direct ?? (setter != null
                         ? $"if (FIRE_UNLIKELY(!leafAlive({obj}))) destroyedError({obj}); else {{ Value r_ = {GetFunc(setter, FuncKind.Method).Name}({obj}, {v}); adopt(r_, &{OwnerList()}); }}"
                         : $"{FieldFn("sf", field)}({obj}, {v}{FieldTail(field, f, () => "&" + OwnerList())});");
+                    string claimInit = InitOpen(obj);
+                    if (claimInit.Length > 0) store = claimInit + store + " g_recInit = wi_.next; }";
                     if (direct != null || setter == null && !HasProperty(field))
                     {
                         E(store);

@@ -22233,6 +22233,48 @@ else
             while (step < 1) { Sleep(1ms) }
             print("main " + got.x + " " + (got == new Point(1, 2)))
         """),
+        ("Records: with - eine geaenderte Kopie (r with { ... }, copy/flat obj with { ... }), Setter und take in den Zuweisungen, verschachtelt, Pruefung am Ende, ohne Wort nur fuer Records", """
+            record Point {
+                int x
+                int y
+                construct(int x, int y) { this.x = x; this.y = y }
+            }
+            record Line { Point a; Point b; string name = "l" }
+            record Holder { any v = 1 }
+            class Part { int n; construct(int n) { this.n = n } }
+            class Box {
+                int v
+                string label = "box"
+                List<int> items = new List<int>()
+                Part part
+                int Twice { get { return this.v * 2 } set { this.v = value / 2 } }
+            }
+            var p = new Point(1, 2)
+            var q = p with { .x = 5 }
+            var r = copy p with { .y = 7, .x = 3 }
+            print(p.x + " " + p.y + " | " + q.x + " " + q.y + " | " + r.x + " " + r.y + " " + (q == new Point(5, 2)))
+            var l = new Line()
+            var l2 = l with { .a = new Point(1, 1), .name = "m" }
+            print(l2.a.x + " " + l2.name + " " + l.name)
+            var b = new Box()
+            b.v = 3
+            b.items.Add(1)
+            var part = new Part(8)
+            var c = copy b with { .label = "copy", .Twice = 20, .part = take part }
+            var f = flat b with { .v = 9 }
+            c.items.Add(2)
+            print(b.v + " " + b.label + " " + b.items.Count + " | " + c.v + " " + c.label + " " + c.items.Count + " " + c.part.n + " " + (c.part is from c) + " | " + f.v + " " + f.label + " " + (f.items == b.items))
+            any ab = b
+            try { any z = ab with { .v = 1 } } catch (ArgumentException e) { print("word: " + e.message) }
+            var h = new Holder()
+            try { var z = copy h with { .v = new Box() } } catch (ArgumentException e) { print("kind: " + e.message) }
+            print((h with { .v = "text" }).v)
+            any ah = h
+            try { any z = ah with { .v = [1, 2] } } catch (ArgumentException e) { print("held: " + e.message) }
+            var nested = copy l2 with { .b = l2.a with { .y = 9 } }
+            print(nested.b.y + " " + nested.a.y + " " + (nested.a == l2.a))
+            try { ah.v = 2 } catch (AccessDeniedException e) { print("the original stays: " + h.v) }
+        """),
         ("Threads: TakeGlobal() im Thread gibt das Objekt samt allem, was es besitzt, dem Hauptprogramm; ein Feld auf ein fremdes Thread-Objekt ist die ArgumentException (Takes.Locals nimmt es mit), TakeGlobal(true) bleibt im Thread", """
             #import "time"
             class Leaf { int v; construct(int v) { this.v = v } }

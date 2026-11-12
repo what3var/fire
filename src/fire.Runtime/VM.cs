@@ -2927,12 +2927,16 @@ namespace fire.Runtime
         private bool InConstruction(ObjectInstance record)
         {
             if (_recordInit != null && _recordInit.Contains(record)) return true;
+            if (ReferenceEquals(record, _initTarget)) return true;
             foreach (var f in _frames) if (ReferenceEquals(f.ConstructedInstance, record)) return true;
             return false;
         }
 
         /// <summary>The records that a copy or `with` is filling right now (their writes are allowed).</summary>
         private HashSet<ObjectInstance>? _recordInit;
+        /// <summary>`with`: the copy whose fields its assignments write (OpCode.InitNext, until RecordCheck 0).</summary>
+        private ObjectInstance? _initTarget;
+        internal const string WithNeedsWordText = "'with' without 'copy' or 'flat' is for records: write 'copy x with { ... }' (a deep copy) or 'flat x with { ... }'.";
 
         private void ThrowRecordWrite(ObjectInstance record, string fieldName) =>
             ThrowAccessDenied($"The record '{record.ClassName}' is unchangeable: its field '{fieldName}' is written only while it is constructed - a changed copy is 'copy r with {{ .{fieldName} = ... }}'.");
@@ -5464,6 +5468,30 @@ namespace fire.Runtime
                     var v = Pop();
                     if (ReadsDeadClass(v, typeName, out var deadObj)) { Push(Value.MakeUndefined()); ThrowDestroyedObject(deadObj); break; }
                     Push(Value.MakeBool(IsOfType(v, typeName)));
+                    break;
+                }
+
+                case OpCode.InitNext:
+                    // (`with`: the store that follows writes the copy - [copy, copy, value])
+                    _initTarget = _stack[_sp - 2].Kind == ValueKind.Class ? _stack[_sp - 2].AsObjectRef() as ObjectInstance : null;
+                    break;
+
+                case OpCode.RecordCheck:
+                {
+                    int mode = ReadByte();
+                    var top = _stack[_sp - 1];
+                    if (mode == 1)
+                    {
+                        if (top.Kind == ValueKind.Class && !RecordValues.IsRecord(top) && !((ObjectInstance)top.AsObjectRef()).IsDestroyed)
+                            ThrowArgumentError(WithNeedsWordText);
+                        break;
+                    }
+                    _initTarget = null;
+                    if (RecordValues.IsRecord(top) && RecordValues.FirstChangeableField((ObjectInstance)top.AsObjectRef()) is { } changeable)
+                    {
+                        var record = (ObjectInstance)top.AsObjectRef();
+                        ThrowArgumentError($"The field '{changeable}' of the record '{record.ClassName}' holds {DescribeKindOf(record.Fields[changeable])}: a record holds only what does not change - numbers, texts, enums, records, lambdas without captures.");
+                    }
                     break;
                 }
 

@@ -2908,6 +2908,15 @@ FIRE_COLD FIRE_FN bool recordFieldError(Value rec, const char* field, Value v) {
     fireError("ArgumentException", text);
     return false;
 }
+/* The end of `copy x with { ... }` (step 9): what a record holds; `r with { ... }` without a word: r must be a record (an object of a class needs `copy`/`flat`). */
+FIRE_FN bool recordCheckV(Value v) {
+    const FireClassDesc* d = recordDesc(v);
+    return !d || d->recCheck(v);
+}
+FIRE_FN void recordRequire(Value v) {
+    if (v.kind == K_Class && leafAlive(v) && !recordDesc(v))
+        fireError("ArgumentException", "'with' without 'copy' or 'flat' is for records: write 'copy x with { ... }' (a deep copy) or 'flat x with { ... }'.");
+}
 /* The end of a constructor of class `cls`: the check of the record, when it is the class of the object (not a base constructor that runs first). */
 FIRE_FN bool recordCtorEnd(Value self, uint32_t cls) {
     const FireClassDesc* d;

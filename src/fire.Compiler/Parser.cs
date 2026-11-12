@@ -4008,7 +4008,11 @@ namespace fire.Compiler
             if (Check(TokenType.Flat) || Check(TokenType.Copy))
             {
                 var copyTok = Advance();
-                return new UnaryExpr(copyTok.Line, copyTok.Type == TokenType.Flat ? UnaryOp.FlatCopy : UnaryOp.DeepCopy, ParseUnary());
+                var copyOp = copyTok.Type == TokenType.Flat ? UnaryOp.FlatCopy : UnaryOp.DeepCopy;
+                var copied = ParseUnary();
+                // `copy x with { ... }`: the copy of x, then the assignments (the postfix `x with { ... }` was read with the operand)
+                if (copied is WithExpr { Copy: null } plainWith) return plainWith with { Line = copyTok.Line, Copy = copyOp };
+                return new UnaryExpr(copyTok.Line, copyOp, copied);
             }
 
             // `trust x` (SPEC 8.10b): the developer vouches that x is not undefined - no warning where a `defined` value is expected, and a native
@@ -4061,7 +4065,28 @@ namespace fire.Compiler
         /// part of the loop above (cannot itself be the target of a further '.'/
         /// '['/... either, `x++.field` would be meaningless, since `x++` is a pure value,
         /// not an object).</summary>
-        private Expr ParsePostfix() => ParsePostfixRest(ParsePrimary());
+        private Expr ParsePostfix()
+        {
+            var expr = ParsePostfixRest(ParsePrimary());
+            // `x with { .a = 1, .b = 2 }` (step 9): a changed copy - after `copy`/`flat` (see ParseUnary), or of a record without a word
+            while (Check(TokenType.With) && PeekAt(1).Type == TokenType.LBrace)
+            {
+                int line = Advance().Line;
+                Advance();   // {
+                var sets = new List<WithSet>();
+                while (!Check(TokenType.RBrace) && !Check(TokenType.Eof))
+                {
+                    var dot = Expect(TokenType.Dot, "Expected '.name = value' in 'with { ... }'");
+                    string name = Expect(TokenType.Identifier, "Expected the name of a field after '.' in 'with { ... }'").Lexeme;
+                    Expect(TokenType.Assign, "Expected '=' after the name of the field in 'with { ... }'");
+                    sets.Add(new WithSet(dot.Line, name, ParseExpression()));
+                    if (!Match(TokenType.Comma) && !Check(TokenType.RBrace) && !Peek().NewlineBefore) throw Error("Expected ',' or '}' in 'with { ... }'", Peek());
+                }
+                Expect(TokenType.RBrace, "Expected '}' at the end of 'with { ... }'");
+                expr = new WithExpr(line, expr, null, sets);
+            }
+            return expr;
+        }
 
         private Expr ParsePostfixRest(Expr expr)
         {

@@ -2183,6 +2183,12 @@ namespace fire.Compiler
                 case ConditionalTargetExpr:
                     break;
 
+                case WithExpr with:
+                    // `copy x with { .a = v }`: the copy, then the values of the assignments
+                    ResolveExpr(with.Source);
+                    foreach (var set in with.Sets) ResolveExprAllowTake(set.Value);   // (`.a = take y` like an assignment)
+                    break;
+
                 default:
                     throw new ResolverException($"Unknown expression type {expr.GetType().Name}", expr.Line);
             }
