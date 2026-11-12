@@ -124,15 +124,18 @@ ran out or its token is cancelled. **Built** (poll()/WSAPoll, not yet epoll/kque
    Built since: images, pushes without an event, lists with templates and the columns of a ListView (header, sorting), menus (MenuBar), trees.
    Focus and keys (to the focused element through the UI root, `browser.Focus`, `browser.OnKey`). Open: hover, context menus.
 7. Canvas recording, JS calls - **first part built**: a `DrawingCanvas` paints on the server and goes as a PNG (exact, simpler than recording the calls;
-   recording them for canvas 2D stays open for big or fast canvases), its pointer events; pushes without an event (the socket asks the circuit every 100 ms);
+   recording them for canvas 2D stays open for big or fast canvases), its pointer events; pushes without an event (the circuit looks after a tenth of a second without one);
    `browser.Call(name, args, callback)` / `browser.Run(code)`; **the waiting form** `any v = browser.Call(name, args)` is built: the socket never waits for
-   the circuit (events are messages, what goes out waits in the PageDirectory), the waiting call registers a `Completion` there that the browser's answer
-   sets.
+   the circuit, the waiting call registers a `Completion` in the PageDirectory that the browser's answer sets (an answer that comes before the
+   registration waits there for it).
+   **Socket and circuit are joined by a `Channel.Pair`** (made by the socket, its other end handed to the circuit as an actor message): events in,
+   answers and pushes out, no actor round trip per event; the end of the socket ends the circuit. The socket still looks at the WebSocket and the channel
+   in turn (20 ms): waiting on both at once needs a wait for "a socket or a channel" (or a writer of its own for the WebSocket, as Net.Channel has one
+   per direction - over TLS that is not possible on the raw socket).
 
 ## Open
 
-* The pushes of a page (changes without an event of the browser) go out because the socket asks its circuit every 100 ms. With `Net.Channel` (being
-  built on `targets`) the circuit can send them to the socket itself - to be changed when it is there (the user will say).
+* A wait for "a socket or a channel" (see step 7): then the page's socket needs no 20 ms turns.
 
 * Which FXML elements the browser covers first.
 * Whether the copy of the router chain per connection is cheap enough (measure; else one per worker).

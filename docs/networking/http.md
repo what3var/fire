@@ -254,12 +254,15 @@ server.Run()
   `Image` is its `Source` as a PNG (`Stretch` as `object-fit`); a new picture is sent when another framebuffer is set.
 * **Drawing:** a `DrawingCanvas` paints on the server (its `OnPaint`, its framebuffer) and goes to the browser as a PNG image (`<img>`); a new picture is sent
   when it changed (a checksum). Pointer down, move (at most every 30 ms while pressed) and up on it are its `OnMouseDown`, `OnMouseMove`, `OnMouseUp`.
-* **Changes without an event:** while a page is open its circuit is asked every tenth of a second what changed (another task changed the page, a
-  `Continuous` canvas, JS calls) and the changes go out.
+* **The way between socket and circuit:** when the browser connects, its WebSocket makes a `Channel.Pair` and hands the circuit the other end
+  (an in-process channel - `Net.Channel` is the same between programs). The events go in on it, the circuit's answers and pushes come out on it; the
+  socket ends it when it closes, and the circuit ends with it.
+* **Changes without an event:** a tenth of a second without an event, the circuit looks itself what changed (another task changed the page, a
+  `Continuous` canvas, JS calls) and sends the changes on the channel.
 * **JS in the browser:** a page with a field `Http.Browser browser` gets it set. `any v = browser.Call("name", [args])` calls `window[name](...args)` (a
   Promise is waited for) and waits for the result (JSON: numbers, texts, bool, arrays, JsonObjects; undefined when the function threw; a TimeoutException
-  after `limit`, 10 s by default: `browser.Call("name", [args], undefined, 2s)`). The call goes out at once; the page's socket keeps running meanwhile (it
-  never waits for the circuit: events are messages to the circuit, what goes to the browser waits in the page directory), the answer sets the wait.
+  after `limit`, 10 s by default: `browser.Call("name", [args], undefined, 2s)`). The call goes out on the channel at once; the socket keeps running meanwhile (it
+  never waits for the circuit) and gives the answer to the page directory, which sets the wait.
   While it waits the circuit serves its messages: other events of the page can run in between (like the handlers of a window that waits). With a callback,
   `browser.Call("name", [args], func (any result) => ...)` does not wait: the call goes out with the next answer and the callback runs later, on the page's
   thread like an event. `browser.Run(code)` runs code (no result).
