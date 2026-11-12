@@ -128,5 +128,5 @@ print(Probe<Person>.Show(p => p.orders.Any(o => o.total > 10)))         // p => 
   TypeChecker `CheckAssignable`); a lambda is not a tree. The values are taken when the call evaluates its arguments (the builder runs right there); the static part is not yet a
   constant per call site (the nodes are made at each call).
 - **Open:** step 4 (stripping keeps the nodes already: they are made with `new`; the members a tree names are not kept on purpose yet), step 5
-  (structural Equals/hash, And/Or/Replace), step 6 (LINQ), step 7 (spark), overloads `lambda<T>` / `lambda expression<T>`, trees in library code that
-  is not type-checked (TypeCheckLibraries).
+  (structural Equals/hash, And/Or/Replace), step 6 (LINQ), step 7 (spark), overloads `lambda<T>` / `lambda expression<T>`. (Trees in library code: done - the type checker checks the libraries
+  always now; a tree parameter can be passed on to another `lambda expression<T>`.)
