@@ -32603,7 +32603,7 @@ else
                 var windowRuns = new List<Action>();
                 // Builds a case with fire's own display (packages/windows/native/fire_display_desktop.h) and runs it: `display` "dummy" (headless: the events of FIRE_DISPLAY_SELFTEST...), "x11" (a real X server: Xvfb), "x11-two"
                 // (`script` is the reader, `second` the writer that starts 0.3 s after it on the same X server; the output is the reader's) or "x11-late" (the writer
-                // first, the reader 1 s later: what was copied before the reader started). `secondCommand` runs instead of the writer built from `second`,
+                // first, the reader 3 s later - under the load of the parallel builds the writer needs a while for the clipboard: what was copied before the reader started). `secondCommand` runs instead of the writer built from `second`,
                 // `firstCommand` instead of the reader built from `script` (the VM: forge run).
                 // PrepareWindowCase generates, builds and runs a case (in parallel with other cases: TestJobs.Ordered - each run has an X server of its own,
                 // TestJobs.XvfbServer) and returns the step that reports what happened, in the order of the cases.
@@ -32662,7 +32662,7 @@ else
                                 string both = Path.Combine(workDir, name + ".sh");
                                 string reader = firstCommand ?? $"\"{exe}\"", writer = secondCommand ?? $"\"{exe2}\"";
                                 File.WriteAllText(both, display == "x11-late"
-                                    ? $"{writer} > /dev/null 2>&1 &\nw=$!\nsleep 1\n{reader} > \"{readerOut}\" 2>&1\nr=$?\nwait $w\nexit $(( $? + r ))\n"
+                                    ? $"{writer} > /dev/null 2>&1 &\nw=$!\nsleep 3\n{reader} > \"{readerOut}\" 2>&1\nr=$?\nwait $w\nexit $(( $? + r ))\n"
                                     : $"{reader} > \"{readerOut}\" 2>&1 &\nr=$!\nsleep 0.3\n{writer} > /dev/null 2>&1\nw=$?\nwait $r\nexit $(( $? + w ))\n");
                                 string writerLog = RunProc(xvfbRun!, $"{TestJobs.XvfbServer()} sh \"{both}\"", workDir, out runExit, null, x11);
                                 actual = (File.Exists(readerOut) ? File.ReadAllText(readerOut) : "") + writerLog;
@@ -32756,7 +32756,7 @@ else
                 #import "windows"
                 #import "time"
                 var t = 0
-                while (!Clipboard.HasText && t < 1500) { Sleep(20ms); t++ }   // (up to 30 s: the writer may be the VM, whose first start installs the standard packages)
+                while (!Clipboard.HasText && t < 4500) { Sleep(20ms); t++ }   // (up to 90 s: the writer may be the VM, whose first start installs the standard packages and builds their native parts - next to the other builds of the run)
                 print("text [" + Clipboard.GetText() + "]")
                 t = 0
                 while (!Clipboard.HasImage && t < 120) { Sleep(20ms); t++ }
