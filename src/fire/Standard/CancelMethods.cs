@@ -45,6 +45,22 @@ namespace fire.Standard
             (Implementation ?? throw new InvalidOperationException("A Completion needs a running program."))(name, args);
     }
 
+    /// <summary>Channel (docs/ROADMAP_TASKS.md step 9): the natives behind the prelude's Channel - a queue between threads. A node is an int handle (0: none),
+    /// counted (every end holds one count). The VM implements them (fire.Runtime.Channels), a native build in fire_rt.h (fire_chan_...).</summary>
+    public static class ChannelMethods
+    {
+        public static readonly string[] Names =
+        {
+            "__chan_new", "__chan_ref", "__chan_release", "__chan_close", "__chan_closed", "__chan_count", "__chan_send", "__chan_receive",
+        };
+
+        /// <summary>Set by the VM: (name, arguments) on the VM of the calling thread.</summary>
+        public static Func<string, Value[], Value>? Implementation;
+
+        public static Value Call(string name, Value[] args) =>
+            (Implementation ?? throw new InvalidOperationException("A Channel needs a running program."))(name, args);
+    }
+
     /// <summary>`__fd_wait(fd, events, ms)` (docs/ROADMAP_HTTP.md step 0): waits until the socket `fd` (the net package's __NetNativeHandle) is readable (bit 1)
     /// or writable (bit 2), `ms` ran out (0) or the task is cancelled; -1: not supported here (the caller waits as before). The VM: fire.Runtime.FdWait;
     /// native: fire_rt.h fire_fd_wait (a poller thread).</summary>

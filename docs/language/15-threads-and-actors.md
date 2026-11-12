@@ -331,6 +331,38 @@ print(c.Wait(2s))                                // ready - waits until the valu
 - A Completion is never copied (`[NoCopy]`): `Share()` gives another one on the same value, which goes to a thread with `handover`, as the argument of an
   actor's method (`reader.Expect(id, c.Share())`) or lent to an awaited call. The value lives as long as one of them does.
 
+## Channels
+
+A `Channel<T>` is a queue between threads: `Send(v)` puts a value in (it waits while the channel is full), `Receive()` takes the next one out (it
+waits while it is empty). Waiting does not hold anything up: the scheduler runs other tasks meanwhile. A thread gets a channel with `fire with` - an
+end of its own on the same queue:
+
+```fire
+#import "time"
+class Job { int n; construct(int n) { this.n = n } }
+var jobs = new Channel<Job>(4)      // at most 4 waiting values (the default: 16)
+var results = new Channel<int>()
+fire with jobs, results {
+    foreach (job in jobs) { results.Send(job.n * job.n) }   // until the channel is closed and empty
+    results.Close()
+}
+for (int i = 1; i <= 3; i++) { jobs.Send(new Job(i)) }
+jobs.Close()
+int sum = 0
+foreach (r in results) { sum = sum + r }
+print(sum)                          // 14
+```
+
+- A value (a number, a text, a bool) goes as it is. An object, an array or a record goes only fresh (`new`, the result of a call) or with a word:
+  `Send(copy x)` (a copy) or `Send(take x)` (moved - like `handover`, every other reference to it is dead; a record keeps its identity, because
+  nobody can change it). Without one it is TC029 (an error, also in lax mode) where the type is known, else the ArgumentException.
+- What travels belongs to the channel; after `Receive` it belongs to the receiver - when the receiving thread ends, it ends with it. What nobody
+  received is destroyed with the channel.
+- `Receive(limit)` waits at most `limit` (the TimeoutException); `TryReceive()` does not wait - undefined when nothing is there. A closed and empty
+  channel gives undefined (`foreach` ends there).
+- `Send` gives False when the channel is closed (nothing moved). `Close()`, `IsClosed`, `Count`.
+- The channel closes when the one that made it ends. It is never copied (`fire taking ch` is the ArgumentException) - it goes with `with`.
+
 ## Actors
 
 An `actor` is declared like a class. A method call on an actor does not run the method: it puts a **message** into the actor's mailbox. The thread

@@ -311,6 +311,8 @@ namespace fire.Runtime
                 (_currentThreadVm ?? throw new InvalidOperationException("__fd_wait needs a running program.")).FdWaitNative(args);
             fire.Standard.CompletionMethods.Implementation = (name, args) =>
                 (_currentThreadVm ?? throw new InvalidOperationException("A Completion needs a running program.")).CompletionNative(name, args);
+            fire.Standard.ChannelMethods.Implementation = (name, args) =>
+                (_currentThreadVm ?? throw new InvalidOperationException("A Channel needs a running program.")).ChannelNative(name, args);
         }
 
         /// <summary>`__await_run(lambdas, res, fails)` (fire.Standard.AwaitMethods): calls every lambda with (res, fails, i), one after the other, nested like a
@@ -5659,6 +5661,13 @@ namespace fire.Runtime
                     // Compiler.CompileFireStmt).
                     var withValues = new Value[withCount];
                     for (int i = withCount - 1; i >= 0; i--) withValues[i] = Pop();
+                    // (a channel: the thread gets an end of its own on the same queue - step 9)
+                    for (int i = 0; i < withCount; i++)
+                        if (withValues[i].Kind == ValueKind.Class && withValues[i].AsObjectRef() is ObjectInstance { IsDestroyed: false, RtClass.Name: "Channel" } channel)
+                        {
+                            if (CallMethodNested(channel, "__End", Array.Empty<Value>()) is not { } end) return;
+                            withValues[i] = end;
+                        }
                     var takingValues = new Value[takingCount];
                     for (int i = takingCount - 1; i >= 0; i--) takingValues[i] = Pop();
                     // `[NoCopy]` (SPEC 5.12): every `taking` is a copy - an instance of such a class (also in a field or an element), and a lambda or a pointer

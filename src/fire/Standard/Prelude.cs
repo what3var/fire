@@ -130,6 +130,50 @@ namespace fire.Standard
                 any Wait(any limit = undefined) { return __completion_wait(this.node, limit) }
             }
 
+            // A queue between threads (docs/ROADMAP_TASKS.md step 9): `Send` waits while it is full, `Receive` while it is empty (both serve meanwhile);
+            // a closed and empty channel gives undefined (`foreach` ends). A thread gets it with `fire with ch` - an end of its own on the same queue.
+            // A value goes as it is; an object, an array or a record only fresh (`new`, the result of a call), copied (`copy x`) or taken (`take x`): it
+            // belongs to the channel while it travels, to the receiver after Receive. The channel closes when the one that made it ends. A channel is never
+            // copied (`fire taking ch` is the ArgumentException): it goes to a thread with `fire with`.
+            [NoCopy]
+            class Channel<T> : IEnumerable<T> {
+                int node = 0
+                bool original = true
+                construct(int capacity = 16) { this.node = __chan_new(capacity) }
+                destruct() {
+                    if (this.original) { __chan_close(this.node) }
+                    __chan_release(this.node)
+                }
+                // (an end of its own on the same queue: what `fire with` gives a thread)
+                Channel<T> __End() {
+                    var c = new Channel<T>(1)
+                    __chan_release(c.node)
+                    c.node = __chan_ref(this.node)
+                    c.original = false
+                    return c
+                }
+                bool Send(T value) { return __chan_send(this.node, value, value is from local) }
+                T Receive(any limit = undefined) { return __chan_receive(this.node, limit, true) }
+                T TryReceive() { return __chan_receive(this.node, undefined, false) }
+                undefined Close() { __chan_close(this.node) }
+                bool IsClosed { get { return __chan_closed(this.node) } }
+                int Count { get { return __chan_count(this.node) } }
+                IEnumerator<T> GetEnumerator() { return new ChannelIter<T>(this) }
+            }
+
+            class ChannelIter<T> : IEnumerator<T> {
+                any ch
+                T current
+                construct(any ch) { this.ch = ch }
+                bool MoveNext() {
+                    T v = this.ch.Receive()
+                    if (v == undefined) { return false }
+                    this.current = take v
+                    return true
+                }
+                T GetCurrent() { return this.current }
+            }
+
             // (`until x`: a token, a source or a time limit as the node a task follows)
             class __Cancel {
                 static int Limit(any limit) {

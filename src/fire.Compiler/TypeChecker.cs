@@ -154,6 +154,16 @@ namespace fire.Compiler
         public const string RecordFieldCode = "TC027";
         /// <summary>`x with { ... }` without `copy`/`flat` on an object of a class (not a record): which copy is meant must be said (an error).</summary>
         public const string WithWordCode = "TC028";
+        /// <summary>`ch.Send(x)` with an object, an array or a record without a word (`copy x`, `take x`) and not fresh (an error in lax mode too).</summary>
+        public const string ChannelWordCode = "TC029";
+
+        /// <summary>A value that belongs to the call it is given to: a copy, a taken one, a new one, the result of a call (or of an operator).</summary>
+        private static bool IsFreshOrWorded(Expr e) => e switch
+        {
+            UnaryExpr { Op: UnaryOp.DeepCopy or UnaryOp.FlatCopy or UnaryOp.Take or UnaryOp.TryTake } => true,
+            NewExpr or CallExpr or WithExpr or ArrayLiteralExpr or BinaryExpr or LambdaExpr => true,
+            _ => false,
+        };
         /// <summary>The width of the program's `int` (16, 32, 64): set by the linker before the check.</summary>
         [ThreadStatic] public static int ProgramIntWidth;
         /// <summary>What the natives of the imported packages return (their `returns`: name -> type text) - set by the linker before the check.</summary>
@@ -2471,6 +2481,10 @@ namespace fire.Compiler
                 var arg = Infer(c.Args[i], expected);
                 args.Add(arg);
                 if (open != null && argParams![i] is { } bound) Bind(bound.Type, bound.ArrayRanks.Count, arg, map!, open);
+                // `ch.Send(obj)` (step 9): an object, an array, a record goes into a channel only with a word (copy, take) or fresh - an error in lax mode too
+                if (i == 0 && c.Callee is MemberExpr { Name: "Send" } && calleeTarget is { Kind: StaticKind.Class, Class: "Channel" } && c.Args.Count == 1
+                    && arg.Kind is StaticKind.Class or StaticKind.Object or StaticKind.Array && !IsFreshOrWorded(c.Args[0]))
+                    ReportError(ChannelWordCode, $"An object goes into a channel only with a word: 'Send(copy x)' (a copy) or 'Send(take x)' (moved) - or fresh ('new', the result of a call)", c.Line);
             }
             if (open != null)
             {
