@@ -121,7 +121,8 @@ ran out or its token is cancelled. **Built** (poll()/WSAPoll, not yet epoll/kque
 6. FXML to HTML/CSS, `fire.js`, live updates - **first part built** (package `http.pages`, docs/networking/http.md): a circuit per page (an actor that owns the
    UI root without a window), HTML with CSS layout (decided by the user: the browser lays out - flex, grid, nested flex for DockPanel, HTML text for the new
    `UI.FlowPanel`), events over the WebSocket, the changes found by comparing the properties. Tried in headless Chromium (Playwright).
-   Built since: images, pushes without an event, lists with templates and the columns of a ListView (header, sorting). Open: menus, trees, more events.
+   Built since: images, pushes without an event, lists with templates and the columns of a ListView (header, sorting), menus (MenuBar), trees.
+   Open: more events (focus, keys), context menus.
 7. Canvas recording, JS calls - **first part built**: a `DrawingCanvas` paints on the server and goes as a PNG (exact, simpler than recording the calls;
    recording them for canvas 2D stays open for big or fast canvases), its pointer events; pushes without an event (the socket asks the circuit every 100 ms);
    `browser.Call(name, args, callback)` / `browser.Run(code)`; **the waiting form** `any v = browser.Call(name, args)` is built: the socket never waits for

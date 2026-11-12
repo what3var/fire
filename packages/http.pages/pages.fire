@@ -64,6 +64,11 @@ namespace Http {
                 UI.ItemsControl ic = e
                 img = Http.PageHtml.RowsJson(ic) + "#" + ic.SelectedIndex + "#" + Http.PageHtml.Head(ic)
             }
+            if (e is of UI.TreeView) {
+                UI.TreeView tv = e
+                img = Http.PageHtml.TreeRowsJson(tv) + "#" + Http.PageHtml.TreeSelected(tv)
+            }
+            if (e is of UI.MenuBar) { img = Http.PageHtml.Menus(e) }
             if (e is of UI.Image) {
                 // (another picture: another framebuffer - the pixels of the same one are not compared)
                 UI.Image im = e
@@ -88,6 +93,8 @@ namespace Http {
                 var head = Http.PageHtml.Head(lc)
                 if (head != "") { p = p + ", \"head\": " + Json.Serialize(head) }
             }
+            if (e is of UI.TreeView) { UI.TreeView tp = e; p = p + ", \"rows\": " + Http.PageHtml.TreeRowsJson(tp) + ", \"sel\": " + Http.PageHtml.TreeSelected(tp) }
+            if (e is of UI.MenuBar) { p = p + ", \"menu\": " + Json.Serialize(Http.PageHtml.Menus(e)) }
             if (e is of UI.Image) { UI.Image pic = e; p = p + ", \"img\": " + Json.Serialize(Http.PageHtml.Picture(pic.Source)) }
             var fg = Http.PageHtml.Color(e.Foreground)
             if (e is of UI.Label) { UI.Label lc = e; var own = Http.PageHtml.Color(lc.Color); if (own != undefined) { fg = own } }
@@ -158,6 +165,67 @@ namespace Http {
         static string CellStyle(UI.GridColumn column) {
             if (column.width < 0) { return " style=\"flex:1\"" }
             return " style=\"width:" + column.width + "px\""
+        }
+
+        // The visible nodes of a tree as rows (JSON array of their HTML): indented by the depth, a box that opens and closes the ones with children.
+        static string TreeRowsJson(UI.TreeView tv) {
+            tv.Flatten()
+            var t = "["
+            for (var i = 0; i < tv.visibleNodes.Count; i++) {
+                if (i > 0) { t = t + "," }
+                t = t + Json.Serialize(Http.PageHtml.TreeRow(tv, i))
+            }
+            return t + "]"
+        }
+
+        static string TreeRow(UI.TreeView tv, int index) {
+            UI.TreeNode node = tv.visibleNodes[index]
+            var box = "&nbsp;"
+            if (node.HasChildren()) {
+                box = "&#9656;"
+                if (node.Expanded) { box = "&#9662;" }
+            }
+            return "<span class=\"f-tog\" style=\"margin-left:" + (node.Depth() * tv.Indent) + "px\">" + box + "</span>" + Http.PageHtml.Escape(node.Text)
+        }
+
+        // (the row of the selected node; -1: none or not visible)
+        static int TreeSelected(UI.TreeView tv) {
+            if (tv.selected == undefined) { return -1 }
+            return tv.visibleNodes.IndexOf(tv.selected)
+        }
+
+        // The menus of a MenuBar: a title each, its rows in a popup (opened and closed by the browser itself); a row is found by its path ("0/2/1").
+        static string Menus(UI.MenuBar mb) {
+            var t = ""
+            for (var i = 0; i < mb.menus.Count; i++) {
+                UI.MenuItem menu = mb.menus[i]
+                t = t + "<div class=\"f-menu\"><span class=\"f-mtitle\">" + Http.PageHtml.Escape(menu.Header) + "</span><div class=\"f-pop\">" + Http.PageHtml.MenuRows(menu.items, "" + i) + "</div></div>"
+            }
+            return t
+        }
+
+        static string MenuRows(List items, string path) {
+            var t = ""
+            for (var i = 0; i < items.Count; i++) {
+                UI.MenuItem item = items[i]
+                if (item.separator) {
+                    t = t + "<div class=\"f-sep\"></div>"
+                    continue
+                }
+                var cls = "f-mi"
+                if (!item.Enabled) { cls = "f-mi f-dis" }
+                var check = ""
+                if (item.Checkable && item.IsChecked) { check = "<span class=\"f-chk\">&#10003;</span>" }
+                var key = ""
+                if (item.Shortcut != "") { key = "<span class=\"f-key\">" + Http.PageHtml.Escape(item.Shortcut) + "</span>" }
+                var sub = ""
+                if (item.HasSubmenu()) {
+                    cls = cls + " f-sub"
+                    sub = "<span class=\"f-key\">&#9656;</span><div class=\"f-pop\">" + Http.PageHtml.MenuRows(item.items, path + "/" + i) + "</div>"
+                }
+                t = t + "<div class=\"" + cls + "\" data-p=\"" + path + "/" + i + "\">" + check + "<span>" + Http.PageHtml.Escape(item.Header) + "</span>" + key + sub + "</div>"
+            }
+            return t
         }
 
         // The rows of the lists with a template are built (all of them: the browser scrolls itself; the UI library builds only the visible ones).
@@ -266,6 +334,22 @@ namespace Http {
                 UI.DrawingCanvas dc = e
                 var size = " width=\"" + dc.actualWidth + "\" height=\"" + dc.actualHeight + "\""
                 return "<img data-k=\"draw\" draggable=\"false\"" + Http.PageHtml.Attrs(e, elements, "f-draw", "") + size + " src=\"" + Http.PageHtml.Image(dc) + "\">"
+            }
+            if (e is of UI.TreeView) {
+                // (the visible nodes as rows, like a list: a click selects, a click on the box opens or closes, a double click does both and activates)
+                UI.TreeView tv = e
+                tv.Flatten()
+                var sel = Http.PageHtml.TreeSelected(tv)
+                var html = ""
+                for (var i = 0; i < tv.visibleNodes.Count; i++) {
+                    var cls = "f-row"
+                    if (i == sel) { cls = "f-row f-sel" }
+                    html = html + "<div class=\"" + cls + "\" data-i=\"" + i + "\">" + Http.PageHtml.TreeRow(tv, i) + "</div>"
+                }
+                return "<div data-k=\"list\" tabindex=\"0\"" + Http.PageHtml.Attrs(e, elements, "f-list f-tree", "overflow:auto;") + ">" + html + "</div>"
+            }
+            if (e is of UI.MenuBar) {
+                return "<div data-k=\"menu\"" + Http.PageHtml.Attrs(e, elements, "f-menubar", "") + ">" + Http.PageHtml.Menus(e) + "</div>"
             }
             if (e is of UI.ItemsControl) {
                 // (ListBox, ListView: the rows - text, cells of the columns or the template; a click selects, a double click activates, a click on a title
@@ -543,6 +627,30 @@ namespace Http {
                             var act = ic.OnActivate
                             act()
                         }
+                    } else if ((kind == "select" || kind == "toggle" || kind == "activate") && e is of UI.TreeView) {
+                        UI.TreeView tv = e
+                        tv.Flatten()
+                        int row = o.Get("v")
+                        if (row >= 0 && row < tv.visibleNodes.Count) {
+                            UI.TreeNode node = tv.visibleNodes[row]
+                            if (kind != "select" && node.HasChildren()) { node.Expanded = !node.Expanded }
+                            if (kind != "toggle") { tv.SelectNode(node) }
+                            if (kind == "activate") { tv.Activate() }
+                        }
+                    } else if (kind == "menu" && e is of UI.MenuBar) {
+                        UI.MenuBar mb = e
+                        string path = o.Get("v")
+                        any steps = path.Split("/")
+                        List level = mb.menus
+                        UI.MenuItem item = undefined
+                        for (var i = 0; i < steps.length; i++) {
+                            string step = steps[i]
+                            any at = step.TryToInt()
+                            if (at == undefined || level == undefined || at < 0 || at >= level.Count) { item = undefined; break }
+                            item = level[at]
+                            level = item.items
+                        }
+                        if (item != undefined && item.Enabled && !item.separator && !item.HasSubmenu()) { item.Activate() }
                     } else if (kind == "sort" && e is of UI.ListView) {
                         UI.ListView lv = e
                         int column = o.Get("v")
@@ -891,7 +999,11 @@ namespace Http {
         }
 
         static string Css() {
-            return "body{margin:0;font-family:system-ui,sans-serif;font-size:14px}[hidden]{display:none!important}.f-label{white-space:pre}.f-flow{white-space:normal}.f-flow .f-button,.f-flow .f-check,.f-flow .f-text{display:inline-block;vertical-align:bottom}.f-button{font:inherit;padding:3px 12px}.f-text{font:inherit}.f-border{border:1px solid #8888;padding:4px}.f-check{user-select:none}.f-list{border:1px solid #8888;user-select:none}.f-row{padding:1px 4px;cursor:default}.f-sel{background:#0078d7;color:#fff}.f-cols .f-row,.f-head{display:flex;padding:1px 0}.f-head{position:sticky;top:0;background:#e8e8e8;border-bottom:1px solid #8888}.f-cell{flex:none;box-sizing:border-box;padding:0 4px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.f-head .f-cell{cursor:pointer;border-right:1px solid #8884}"
+            return "body{margin:0;font-family:system-ui,sans-serif;font-size:14px}[hidden]{display:none!important}.f-label{white-space:pre}.f-flow{white-space:normal}.f-flow .f-button,.f-flow .f-check,.f-flow .f-text{display:inline-block;vertical-align:bottom}.f-button{font:inherit;padding:3px 12px}.f-text{font:inherit}.f-border{border:1px solid #8888;padding:4px}.f-check{user-select:none}.f-list{border:1px solid #8888;user-select:none}.f-row{padding:1px 4px;cursor:default}.f-sel{background:#0078d7;color:#fff}.f-cols .f-row,.f-head{display:flex;padding:1px 0}.f-head{position:sticky;top:0;background:#e8e8e8;border-bottom:1px solid #8888}.f-cell{flex:none;box-sizing:border-box;padding:0 4px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.f-head .f-cell{cursor:pointer;border-right:1px solid #8884}.f-tree .f-row{white-space:nowrap}.f-tog{display:inline-block;width:16px;text-align:center;cursor:pointer}" +
+                ".f-menubar{display:flex;background:#f0f0f0;border-bottom:1px solid #8884;user-select:none}.f-menu{position:relative}.f-mtitle{display:block;padding:3px 10px;cursor:default}.f-menu.open>.f-mtitle,.f-mtitle:hover{background:#0078d722}" +
+                ".f-pop{display:none;position:absolute;left:0;top:100%;min-width:160px;background:#fff;color:#000;border:1px solid #8888;box-shadow:2px 2px 6px #0003;z-index:10;padding:2px 0}.f-menu.open>.f-pop{display:block}" +
+                ".f-mi{position:relative;display:flex;padding:3px 8px 3px 22px;white-space:nowrap;cursor:default}.f-mi:hover{background:#0078d7;color:#fff}.f-mi>.f-pop{left:100%;top:-3px}.f-mi:hover>.f-pop{display:block}" +
+                ".f-dis,.f-dis:hover{background:none;color:#888}.f-chk{position:absolute;left:6px}.f-key{margin-left:auto;padding-left:24px;opacity:.7}.f-sep{border-top:1px solid #8884;margin:3px 0}"
         }
 
         // The script of the pages: the WebSocket, the events (input debounced), the changes.
@@ -901,7 +1013,10 @@ namespace Http {
                 "ws.onopen=function(){q.forEach(function(t){ws.send(t)});q=[]};" +
                 "function idOf(el){while(el&&!(el.id&&el.id.charAt(0)=='f')){el=el.parentElement}return el?+el.id.substring(1):-1}" +
                 "document.addEventListener('click',function(ev){var t=ev.target.closest('[data-k=click]');if(t){send({e:idOf(t),k:'click'})}});" +
-                "document.addEventListener('click',function(ev){var r=ev.target.closest('.f-row');if(r){send({e:idOf(r.parentElement),k:'select',v:+r.dataset.i})}});" +
+                "document.addEventListener('click',function(ev){var r=ev.target.closest('.f-row');if(r){var g=ev.target.closest('.f-tree .f-tog');send({e:idOf(r.parentElement),k:g?'toggle':'select',v:+r.dataset.i})}});" +
+                "function closeMenus(){document.querySelectorAll('.f-menu.open').forEach(function(m){m.classList.remove('open')})}" +
+                "document.addEventListener('click',function(ev){var t=ev.target.closest('.f-mtitle');if(t){var m=t.parentElement,was=m.classList.contains('open');closeMenus();if(!was){m.classList.add('open')}return}var i=ev.target.closest('.f-mi');if(i){if(!i.classList.contains('f-sub')&&!i.classList.contains('f-dis')){send({e:idOf(i.closest('.f-menubar')),k:'menu',v:i.dataset.p});closeMenus()}return}closeMenus()});" +
+                "document.addEventListener('mouseover',function(ev){var t=ev.target.closest('.f-mtitle');if(t&&document.querySelector('.f-menu.open')&&!t.parentElement.classList.contains('open')){closeMenus();t.parentElement.classList.add('open')}});" +
                 "document.addEventListener('click',function(ev){var c=ev.target.closest('.f-head .f-cell');if(c){send({e:idOf(c.parentElement.parentElement),k:'sort',v:+c.dataset.c})}});" +
                 "document.addEventListener('dblclick',function(ev){var r=ev.target.closest('.f-row');if(r){send({e:idOf(r.parentElement),k:'activate',v:+r.dataset.i})}});" +
                 "document.addEventListener('change',function(ev){var t=ev.target;if(t.dataset.k=='check'){send({e:idOf(t),k:'check',v:t.checked})}});" +
@@ -911,7 +1026,7 @@ namespace Http {
                 "if(p.v!==undefined){el.hidden=!p.v}" +
                 "if(p.n!==undefined){var d=(el.tagName=='BUTTON'||el.tagName=='INPUT')?el:el.querySelector('input');if(d){d.disabled=!p.n}}" +
                 "if(p.rows!==undefined){var h=el.querySelector('.f-head');el.innerHTML='';if(h){if(p.head!==undefined){h.innerHTML=p.head}el.appendChild(h)}p.rows.forEach(function(t,i){var r=document.createElement('div');r.className='f-row'+(i==p.sel?' f-sel':'');r.dataset.i=i;r.innerHTML=t;el.appendChild(r)})}" +
-                "if(p.img!==undefined){el.src=p.img}if(p.fg!==undefined){el.style.color=p.fg}if(p.bg!==undefined){el.style.background=p.bg}}" +
+                "if(p.menu!==undefined){el.innerHTML=p.menu}if(p.img!==undefined){el.src=p.img}if(p.fg!==undefined){el.style.color=p.fg}if(p.bg!==undefined){el.style.background=p.bg}}" +
                 "function runJs(list){(list||[]).forEach(function(j){if(j.id<0){try{(0,eval)(j.code)}catch(x){}return}var r;try{r=window[j.fn].apply(window,j.args)}catch(x){send({k:'js',e:-1,id:j.id});return}Promise.resolve(r).then(function(v){send({k:'js',e:-1,id:j.id,v:v})},function(){send({k:'js',e:-1,id:j.id})})})}" +
                 "var down=0,last=0;function pos(ev,t){var r=t.getBoundingClientRect();return{x:Math.round((ev.clientX-r.left)*t.width/r.width),y:Math.round((ev.clientY-r.top)*t.height/r.height)}}" +
                 "document.addEventListener('pointerdown',function(ev){var t=ev.target;if(t.dataset&&t.dataset.k=='draw'){down=1;t.setPointerCapture(ev.pointerId);var p=pos(ev,t);send({e:idOf(t),k:'mouse',t:'down',x:p.x,y:p.y,b:ev.button+1});ev.preventDefault()}});" +

@@ -268,4 +268,9 @@ server.Run()
   column (the width of the column, -1 the rest); a click on a title sorts by that column, a second click reverses it (the arrow shows it). With an
   `ItemTemplate` every row is the HTML of its template element - for display, like in the UI library (no ids: a click is one on the row). All the rows
   are there (the browser scrolls them).
-* Not yet: menus, trees, the events of more elements (focus, keys, hover), drawing as commands instead of pictures.
+* **Trees:** a TreeView shows its visible nodes as rows, indented by their depth; the box before a node with children opens and closes it, a click on
+  the row selects (OnSelect), a double click opens or closes it and activates it (OnActivate).
+* **Menus:** a MenuBar shows its titles; the browser opens and closes the popups itself (a click on a title, moving to another title while one is open,
+  submenus on hover), only the choice of a row goes to the server - it runs the row's `Activate` (the check mark of a `Checkable` row, its `OnClick`).
+  Separators, check marks, disabled rows and the `Shortcut` text are shown.
+* Not yet: the events of more elements (focus, keys, hover), context menus, drawing as commands instead of pictures.

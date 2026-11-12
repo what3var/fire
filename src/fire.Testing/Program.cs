@@ -28897,6 +28897,96 @@ else
             print(log)
             server.Close()
             """),
+        ("Http.Pages: MenuBar (Untermenue, Trenner, Haken, gesperrt, Tastenkuerzel; ein Pfad waehlt die Zeile) und TreeView (Knoten auf/zu, waehlen, Doppelklick aktiviert)", """
+            #import "http.pages"
+            [Page "/tree"]
+            class TreePage {
+                UI.Panel view
+                UI.TreeView tree
+                UI.Label said
+                UI.MenuItem bold
+                construct() {
+                    this.view = new UI.Panel(0, 0, 400, 400)
+                    var stack = new UI.StackPanel(0, 0, -1, -1)
+                    var bar = new UI.MenuBar()
+                    var file = new UI.MenuItem("File")
+                    file.Add(new UI.MenuItem("Open", func () on this => { this.said.Text = "open" }))
+                    file.Add(UI.MenuItem.Separator())
+                    var recent = new UI.MenuItem("Recent")
+                    recent.Add(new UI.MenuItem("a.txt", func () on this => { this.said.Text = "recent a" }))
+                    file.Add(take recent)
+                    var quit = new UI.MenuItem("Quit")
+                    quit.Enabled = false
+                    quit.Shortcut = "Ctrl+Q"
+                    file.Add(take quit)
+                    bar.Add(take file)
+                    var view = new UI.MenuItem("View")
+                    var b = new UI.MenuItem("Bold", func () on this => { this.said.Text = "bold " + this.bold.IsChecked })
+                    b.Checkable = true
+                    this.bold = b
+                    view.Add(take b)
+                    bar.Add(take view)
+                    stack.Add(take bar)
+                    var tv = new UI.TreeView(0, 0, 200, 120)
+                    var root = new UI.TreeNode("src")
+                    var ui = new UI.TreeNode("ui")
+                    ui.Add(new UI.TreeNode("list.fire"))
+                    root.Add(take ui)
+                    root.Add(new UI.TreeNode("main.fire"))
+                    tv.AddNode(take root)
+                    tv.AddNode(new UI.TreeNode("README"))
+                    tv.OnSelect = func () on this => { this.said.Text = "node " + this.tree.selected.Text }
+                    tv.OnActivate = func () on this => { this.said.Text = "activated " + this.tree.selected.Text }
+                    this.tree = tv
+                    stack.Add(take tv)
+                    var l = new UI.Label("none")
+                    this.said = l
+                    stack.Add(take l)
+                    this.view.Add(take stack)
+                }
+            }
+            var server = new Http.AppServer("127.0.0.1", 0)
+            server.Settings.showErrors = true
+            server.PushTo(new Http.Sessions()).PushTo(new Http.Pages("Tree"))
+            int port = server.Port
+            int done = 0
+            string log = ""
+            fire taking port {
+                var c = new Http.Client()
+                var r = c.Get("http://127.0.0.1:" + port + "/tree")
+                string html = r.Text()
+                string cookie = r.Header("Set-Cookie").Substring(0, 45)
+                int at = html.IndexOf("data-circuit=\"") + 14
+                string circuit = html.Substring(at, 32)
+                var out = "page " + r.status + "\n"
+                int m = html.IndexOf("<div data-k=\"menu\"")
+                out = out + "menu " + html.Substring(m, html.IndexOf("<div data-k=\"list\"") - m) + "\n"
+                int t = html.IndexOf("<div data-k=\"list\"")
+                out = out + "tree " + html.Substring(t, html.IndexOf("<div id=\"f4\"", t) - t) + "\n"
+                var h = new Http.Headers()
+                h.Set("Cookie", cookie)
+                var ws = Http.WebSocket.Connect("ws://127.0.0.1:" + port + "/_fire/ws?c=" + circuit, 5000, h)
+                ws.Send("{\"e\": 3, \"k\": \"toggle\", \"v\": 0}")
+                out = out + "open " + ws.ReceiveText(5000) + "\n"
+                ws.Send("{\"e\": 3, \"k\": \"select\", \"v\": 2}")
+                out = out + "select " + ws.ReceiveText(5000) + "\n"
+                ws.Send("{\"e\": 3, \"k\": \"activate\", \"v\": 1}")
+                out = out + "activate " + ws.ReceiveText(5000) + "\n"
+                ws.Send("{\"e\": 2, \"k\": \"menu\", \"v\": \"0/2/0\"}")
+                out = out + "recent " + ws.ReceiveText(5000) + "\n"
+                ws.Send("{\"e\": 2, \"k\": \"menu\", \"v\": \"1/0\"}")
+                out = out + "bold " + ws.ReceiveText(5000) + "\n"
+                ws.Send("{\"e\": 2, \"k\": \"menu\", \"v\": \"0/3\"}")
+                out = out + "disabled nothing " + (ws.ReceiveText(400) == undefined) + "\n"
+                ws.Send("{\"e\": 2, \"k\": \"menu\", \"v\": \"7/x\"}")
+                out = out + "bad path nothing " + (ws.ReceiveText(400) == undefined) + "\n"
+                ws.Close()
+                sync global { log = out; done = 1 }
+            }
+            while (done < 1) { server.AcceptOne(20ms); sync globals }
+            print(log)
+            server.Close()
+            """),
         ("Http.Pages: ListBox (Zeilen aus DisplayMember, Klick waehlt, Doppelklick aktiviert, neue Zeilen als Patch) und Image (PNG)", """
             #import "http.pages"
             class Person { string name
