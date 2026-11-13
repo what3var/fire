@@ -187,6 +187,8 @@ typedef uint64_t FireUInt;
  * whole width or more is undefined */
 #define FIRE_SCALAR_SHL(a, s) ((int)((s) & 63) >= FIRE_FIREINT_BITS ? (FireInt)0 : (FireInt)((FireUInt)(a) << ((s) & 63)))
 #define FIRE_SCALAR_SHR(a, s) ((int)((s) & 63) >= FIRE_FIREINT_BITS ? (FireInt)((a) < 0 ? -1 : 0) : (FireInt)((a) >> ((s) & 63)))
+/* `>>>` of them: the logical shift right in the width of the program's int (Value.ShiftRightLogical) */
+#define FIRE_SCALAR_USHR(a, s) ((int)((s) & 63) >= FIRE_FIREINT_BITS ? (FireInt)0 : (FireInt)((FireUInt)(a) >> ((s) & 63)))
 
 /* `word` (SPEC 8.10): the machine word of the target, unsigned, without a unit - K_Word, its bits in `w` (zero above the width). The generator defines
  * FIRE_WORD_BITS from the target (`wordWidth`); without it (a package library for the VM) the width of a pointer. An operation on words wraps at the
@@ -2396,6 +2398,34 @@ FIRE_FN double roundFloatToWidth(double value, int bits) {
     return copysign(rounded, value);
 }
 
+/* IEEE binary16 (half precision) - the bits of a double rounded to it and the double of its bits, in the same steps as fire.Standard.BitsMethods.HalfBits/
+ * HalfValue, so that the VM and a native build agree bit for bit (NaN: 0x7E00). */
+FIRE_FN uint16_t halfBits(double d) {
+    uint16_t sign;
+    double r;
+    int e;
+    uint64_t raw;
+    if (isnan(d)) return 0x7E00;
+    memcpy(&raw, &d, sizeof raw);
+    sign = (raw >> 63) ? 0x8000 : 0;
+    r = roundFloatToWidth(fabs(d), 16);
+    if (isinf(r)) return (uint16_t)(sign | 0x7C00);
+    if (r == 0) return sign;
+    e = ilogb(r);
+    if (e < -14) return (uint16_t)(sign | (uint16_t)ldexp(r, 24));
+    return (uint16_t)(sign | (uint16_t)((e + 15) << 10) | (uint16_t)((ldexp(r, -e) - 1.0) * 1024.0));
+}
+FIRE_FN double halfValue(uint16_t h) {
+    int exp = h >> 10 & 31, mant = h & 1023;
+    double v = exp == 0 ? ldexp((double)mant, -24) : exp == 31 ? (mant == 0 ? (double)INFINITY : (double)NAN) : ldexp(1.0 + mant / 1024.0, exp - 15);
+    return (h & 0x8000) ? -v : v;
+}
+/* The 64 / 32 bits of a double (NaN: the standard quiet NaN, as the VM). */
+FIRE_FN uint64_t fire_doubleBits(double d) { uint64_t r; if (isnan(d)) return 0x7FF8000000000000ull; memcpy(&r, &d, sizeof r); return r; }
+FIRE_FN uint32_t fire_floatBits(double d) { float f; uint32_t r; if (isnan(d)) return 0x7FC00000u; f = (float)d; memcpy(&r, &f, sizeof r); return r; }
+FIRE_FN double fire_bitsDouble(uint64_t b) { double d; memcpy(&d, &b, sizeof d); return d; }
+FIRE_FN double fire_bitsFloat(uint32_t b) { float f; memcpy(&f, &b, sizeof f); return (double)f; }
+
 /* `x!int[8]`, `x!byte`, `x!float[32]`, `x!float[16]` (Value.ConvertWidth): the number cut to the width - an int in two's complement, `isUnsigned` keeps
  * 0..2^bits-1, a float rounded to float32, half precision or FP8 E4M3 (roundFloatToWidth). */
 /* The int `n` cut to `bits` (two's complement; `isUnsigned`: 0..2^bits-1). */
@@ -2480,6 +2510,32 @@ FIRE_FN Value shr(Value a, Value b) {
     if (FIRE_UNLIKELY(a.kind == K_Word || b.kind == K_Word)) return wordOp(W_SHR, a, b);
     if (FIRE_UNLIKELY(a.kind != K_Int || b.kind != K_Int)) return intOpFailed(">>", a, b);
     return IntOp1(a.i >> (b.i & 63), a.unit, a);
+}
+/* `>>>` (Value.ShiftRightLogical): the int as the unsigned number of its width (the program's int, or the wider width the value keeps), zeros in at the
+ * top; a count of the width or more gives 0. A word shifts like `>>`. */
+FIRE_FN int fire_intBitsOf(Value a) {
+#ifdef FIRE_INT32
+    if (a.wide >= 64) return 64;
+    if (a.wide == 32) return 32;
+#ifdef FIRE_INT16
+    return 16;
+#else
+    return 32;
+#endif
+#else
+    (void)a;
+    return 64;
+#endif
+}
+FIRE_FN Value ushr(Value a, Value b) {
+    int w, c;
+    uint64_t bits;
+    if (FIRE_UNLIKELY(a.kind == K_Word || b.kind == K_Word)) return wordOp(W_SHR, a, b);
+    if (FIRE_UNLIKELY(a.kind != K_Int || b.kind != K_Int)) return intOpFailed(">>>", a, b);
+    w = fire_intBitsOf(a);
+    c = (int)(b.i & 63);
+    bits = w >= 64 ? (uint64_t)a.i : (uint64_t)a.i & ((1ull << w) - 1);
+    return IntOp1(c >= w ? 0 : (int64_t)(bits >> c), a.unit, a);
 }
 FIRE_FN Value bitNot(Value v) {
     if (FIRE_UNLIKELY(v.kind == K_Word)) return WordV(~(uint64_t)v.w);
@@ -4738,6 +4794,100 @@ FIRE_FN Value mathCall(int64_t method, Value x, Value y) {
     }
     fatal("Unknown Math function.");
 }
+
+/* `__BitsCall(id, x[, y[, z]])` (fire.Standard.BitsMethods): the bits of an int or a word - counted, rotated, reversed - and the IEEE bits of a float. An
+ * int in the width of the program's int (or the low `width` bits), a word in FIRE_WORD_BITS; a result in that width is an int of the program, one of a smaller
+ * width the unsigned number of its bits; a number that does not fit the program's int keeps its 64 bits (IntNative), as in the VM. */
+static const char* const g_bitsNames[] = {"", "PopCount", "LeadingZeros", "TrailingZeros", "RotateLeft", "RotateRight", "ReverseBytes", "ReverseBits",
+    "FromFloat64", "ToFloat64", "FromFloat32", "ToFloat32", "FromFloat16", "ToFloat16"};
+FIRE_FN Value fire_bitsNumber(Value x, const char* name, double* out) {
+    char text[200];
+    if (x.kind != K_Int && x.kind != K_Float) {
+        snprintf(text, sizeof text, "Bits.%s expects a number, not a value of type '%s'.", name, kindName(x));
+        return fireError("ArgumentException", text);
+    }
+    if (x.unit != 0) {
+        snprintf(text, sizeof text, "Bits.%s expects a number without a unit, not one in '%s'.", name, g_ud[x.unit].name);
+        return fireError("ArgumentException", text);
+    }
+    *out = x.kind == K_Int ? (double)x.i : (double)x.f;
+    return Int(0);
+}
+FIRE_FN bool fire_bitsRaw(Value x, const char* name, uint64_t* out, Value* error) {
+    char text[200];
+    if (x.kind == K_Int) { *out = (uint64_t)x.i; return true; }
+    if (x.kind == K_Word) { *out = (uint64_t)x.w; return true; }
+    snprintf(text, sizeof text, "Bits.%s expects an int or a word, not a value of type '%s'.", name, kindName(x));
+    *error = fireError("ArgumentException", text);
+    return false;
+}
+FIRE_FN Value bitsCall(int64_t method, Value x, Value y, Value z) {
+    const char* name = method >= 1 && method <= 13 ? g_bitsNames[method] : "?";
+    char text[200];
+    double d;
+    uint64_t raw, bits, mask, r;
+    int w, dflt, i, s;
+    bool word, rotate;
+    Value width, err;
+    switch ((int)method) {
+        case 8:  err = fire_bitsNumber(x, name, &d); if (err.kind == K_Undefined) return err; return IntNative((int64_t)fire_doubleBits(d));
+        case 9:  if (!fire_bitsRaw(x, name, &raw, &err)) return err; return Float((Real)fire_bitsDouble(raw));
+        case 10: err = fire_bitsNumber(x, name, &d); if (err.kind == K_Undefined) return err; return IntNative((int64_t)fire_floatBits(d));
+        case 11: if (!fire_bitsRaw(x, name, &raw, &err)) return err; return Float((Real)fire_bitsFloat((uint32_t)raw));
+        case 12: err = fire_bitsNumber(x, name, &d); if (err.kind == K_Undefined) return err; return IntNative((int64_t)halfBits(d));
+        case 13: if (!fire_bitsRaw(x, name, &raw, &err)) return err; return Float((Real)halfValue((uint16_t)raw));
+        default: break;
+    }
+    if (method < 1 || method > 7) return fireError("ArgumentException", "__BitsCall: unknown function.");
+    rotate = method == 4 || method == 5;
+    width = rotate ? z : y;
+    word = x.kind == K_Word;
+    if (!word && x.kind != K_Int) {
+        snprintf(text, sizeof text, "Bits.%s expects an int or a word, not a value of type '%s'.", name, kindName(x));
+        return fireError("ArgumentException", text);
+    }
+    dflt = word ? FIRE_WORD_BITS : fire_intBitsOf(x);
+    if (width.kind != K_Int && width.kind != K_Undefined) {
+        snprintf(text, sizeof text, "Bits.%s expects an int width, not a value of type '%s'.", name, kindName(width));
+        return fireError("ArgumentException", text);
+    }
+    w = width.kind == K_Undefined || width.i == 0 ? dflt : width.i < 1 || width.i > 64 ? -1 : (int)width.i;
+    if (w < 0) {
+        snprintf(text, sizeof text, "Bits.%s: the width must be 1 to 64, not %lld.", name, (long long)width.i);
+        return fireError("ArgumentException", text);
+    }
+    mask = w >= 64 ? ~(uint64_t)0 : ((uint64_t)1 << w) - 1;
+    bits = (word ? (uint64_t)x.w : (uint64_t)x.i) & mask;
+    switch ((int)method) {
+        case 1: { int n = 0; for (r = bits; r; r &= r - 1) n++; return Int(n); }
+        case 2: { int n = 0; if (bits == 0) return Int(w); for (i = w - 1; i >= 0 && !((bits >> i) & 1); i--) n++; return Int(n); }
+        case 3: { int n = 0; if (bits == 0) return Int(w); while (!((bits >> n) & 1)) n++; return Int(n); }
+        case 4: case 5:
+            if (y.kind != K_Int) {
+                snprintf(text, sizeof text, "Bits.%s expects an int count, not a value of type '%s'.", name, kindName(y));
+                return fireError("ArgumentException", text);
+            }
+            s = (int)(((y.i % w) + w) % w);
+            if (method == 5) s = (w - s) % w;
+            r = s == 0 ? bits : ((bits << s) | (bits >> (w - s))) & mask;
+            break;
+        case 6:
+            if (w % 8 != 0) {
+                snprintf(text, sizeof text, "Bits.ReverseBytes: the width must be a multiple of 8, not %d.", w);
+                return fireError("ArgumentException", text);
+            }
+            r = 0;
+            for (i = 0; i < w / 8; i++) r = (r << 8) | ((bits >> (8 * i)) & 0xFF);
+            break;
+        default:
+            r = 0;
+            for (i = 0; i < w; i++) r = (r << 1) | ((bits >> i) & 1);
+            break;
+    }
+    if (word) return WordV(r);
+    if (w == dflt && w < 64 && ((r >> (w - 1)) & 1)) return IntNative((int64_t)(r | ~mask));
+    return IntNative((int64_t)r);
+}
 /* `x!Dog` that does not hold (OpCode.CastTo): the ArgumentException of the VM's text. */
 FIRE_FN void castFailed(Value v, const char* typeName) {
     char text[200];
@@ -6399,6 +6549,197 @@ FIRE_FN Value bufToEndian(Value v, bool little, OwnList* list) {
     return BufV(c);
 }
 
+/* The typed reads and writes and the fast operations of a byte buffer (fire.Standard.BufferMethods, the same rules): `buffer.ReadInt16(at[, little])`,
+ * `WriteFloat32(at, x[, little])` in the byte order of the buffer or the one given, `Fill`, `CopyTo`, `Slice`, `IndexOf`, `Compare`. Not for a buffer of words.
+ * The kinds: 0 int8, 1 uint8, 2 int16, 3 uint16, 4 int32, 5 uint32, 6 int64, 7 float16, 8 float32, 9 float64. */
+static const uint8_t g_bufKindSize[10] = {1, 1, 2, 2, 4, 4, 8, 2, 4, 8};
+static const char* const g_bufReadNames[10] = {"ReadInt8", "ReadUInt8", "ReadInt16", "ReadUInt16", "ReadInt32", "ReadUInt32", "ReadInt64", "ReadFloat16", "ReadFloat32", "ReadFloat64"};
+static const char* const g_bufWriteNames[10] = {"WriteInt8", "WriteUInt8", "WriteInt16", "WriteUInt16", "WriteInt32", "WriteUInt32", "WriteInt64", "WriteFloat16", "WriteFloat32", "WriteFloat64"};
+FIRE_FN Value fire_bufArgError(const char* name, const char* what, Value v) {
+    char text[200];
+    snprintf(text, sizeof text, "buffer.%s expects %s, not a value of type '%s'.", name, what, kindName(v));
+    return fireError("ArgumentException", text);
+}
+/* (a byte buffer that lives; else the error, in *err) */
+FIRE_FN Buf* fire_plainBuf(Value v, const char* name, Value* err) {
+    Buf* b;
+    char text[160];
+    if (!ownedOf(v)) { *err = destroyedError(v); return NULL; }
+    b = bufOf(v);
+    if (b->elem != 1) { snprintf(text, sizeof text, "buffer.%s works on bytes, not a word buffer.", name); *err = fireError("ArgumentException", text); return NULL; }
+    return b;
+}
+/* (the byte order of an access: true little endian - the one given, else the buffer's) */
+FIRE_FN bool fire_bufOrder(Buf* b, Value order, const char* name, Value* err) {
+    if (order.kind == K_Undefined) return b->little != 0;
+    if (order.kind != K_Bool) { *err = fire_bufArgError(name, "a bool for the byte order (true: little endian)", order); return false; }
+    return order.i != 0;
+}
+FIRE_FN Value bufRead(Value v, int kind, Value at, Value order) {
+    const char* name = g_bufReadNames[kind];
+    Value err = Undef();
+    Buf* b = fire_plainBuf(v, name, &err);
+    int size = g_bufKindSize[kind], i;
+    bool little;
+    uint64_t raw = 0;
+    uint32_t n;
+    if (!b) return err;
+    if (at.kind != K_Int) return fire_bufArgError(name, "an int position", at);
+    little = fire_bufOrder(b, order, name, &err);
+    if (order.kind != K_Undefined && order.kind != K_Bool) return err;
+    n = (uint32_t)bufSize(b);
+    if (at.i < 0 || at.i > (int64_t)n - size) return indexError("Buffer index", at.i, (int64_t)n);
+    for (i = 0; i < size; i++) raw |= (uint64_t)b->data[(uint32_t)at.i + (uint32_t)(little ? i : size - 1 - i)] << (8 * i);
+    switch (kind) {
+        case 0: return IntNative((int64_t)(int8_t)(uint8_t)raw);
+        case 2: return IntNative((int64_t)(int16_t)(uint16_t)raw);
+        case 4: return IntNative((int64_t)(int32_t)(uint32_t)raw);
+        case 7: return Float((Real)halfValue((uint16_t)raw));
+        case 8: return Float((Real)fire_bitsFloat((uint32_t)raw));
+        case 9: return Float((Real)fire_bitsDouble(raw));
+        default: return IntNative((int64_t)raw);
+    }
+}
+FIRE_FN Value bufWrite(Value v, int kind, Value at, Value x, Value order) {
+    const char* name = g_bufWriteNames[kind];
+    Value err = Undef();
+    Buf* b = fire_plainBuf(v, name, &err);
+    int size = g_bufKindSize[kind], i;
+    bool little;
+    uint64_t raw;
+    uint32_t n;
+    char text[200];
+    if (!b) return err;
+    if (at.kind != K_Int) return fire_bufArgError(name, "an int position", at);
+    little = fire_bufOrder(b, order, name, &err);
+    if (order.kind != K_Undefined && order.kind != K_Bool) return err;
+    if (kind >= 7) {
+        double d;
+        if (x.kind != K_Int && x.kind != K_Float) return fire_bufArgError(name, "a number", x);
+        if (x.unit != 0) { snprintf(text, sizeof text, "buffer.%s expects a number without a unit, not one in '%s'.", name, g_ud[x.unit].name); return fireError("ArgumentException", text); }
+        d = x.kind == K_Int ? (double)x.i : (double)x.f;
+        raw = kind == 7 ? (uint64_t)halfBits(d) : kind == 8 ? (uint64_t)fire_floatBits(d) : fire_doubleBits(d);
+    } else {
+        if (x.kind != K_Int && x.kind != K_Word) return fire_bufArgError(name, "an int", x);
+        if (x.kind == K_Int && x.unit != 0) { snprintf(text, sizeof text, "buffer.%s expects a number without a unit, not one in '%s'.", name, g_ud[x.unit].name); return fireError("ArgumentException", text); }
+        raw = x.kind == K_Word ? (uint64_t)x.w : (uint64_t)x.i;
+    }
+    n = (uint32_t)bufSize(b);
+    if (at.i < 0 || at.i > (int64_t)n - size) return indexError("Buffer index", at.i, (int64_t)n);
+    for (i = 0; i < size; i++) b->data[(uint32_t)at.i + (uint32_t)(little ? i : size - 1 - i)] = (uint8_t)(raw >> (8 * i));
+    return Undef();
+}
+/* (start .. start+count inside the buffer of n bytes; else the IndexOutOfBoundsException) */
+FIRE_FN bool fire_bufSpan(Value start, Value count, uint32_t n, const char* name, Value* err) {
+    if (start.kind != K_Int) { *err = fire_bufArgError(name, "an int start", start); return false; }
+    if (count.kind != K_Int) { *err = fire_bufArgError(name, "an int count", count); return false; }
+    if (start.i < 0 || start.i > (int64_t)n) { *err = indexError("Buffer index", start.i, (int64_t)n); return false; }
+    if (count.i < 0 || count.i > (int64_t)n - start.i) { *err = indexError("Buffer index", start.i + count.i, (int64_t)n); return false; }
+    return true;
+}
+FIRE_FN Value bufFill(Value v, Value x, Value start, Value count) {
+    Value err = Undef();
+    Buf* b = fire_plainBuf(v, "Fill", &err);
+    uint32_t n, i, from;
+    if (!b) return err;
+    if (x.kind != K_Int) return fire_bufArgError("Fill", "an int value", x);
+    n = (uint32_t)bufSize(b);
+    if (start.kind == K_Undefined) { start = Int(0); count = Int((int64_t)n); }
+    if (!fire_bufSpan(start, count, n, "Fill", &err)) return err;
+    from = (uint32_t)start.i;
+#ifdef FIRE_CC_COPY
+    for (i = 0; i < (uint32_t)count.i; i++) b->data[from + i] = (uint8_t)x.i;
+#else
+    (void)i;
+    memset(b->data + from, (int)(uint8_t)x.i, (size_t)count.i);
+#endif
+    return Undef();
+}
+FIRE_FN Value bufCopyTo(Value v, Value target, Value targetAt, Value start, Value count) {
+    Value err = Undef();
+    Buf* b = fire_plainBuf(v, "CopyTo", &err);
+    Buf* t;
+    uint32_t n, i, from, to, len;
+    if (!b) return err;
+    if (target.kind != K_Buffer) return fire_bufArgError("CopyTo", "a byte buffer to copy into", target);
+    t = fire_plainBuf(target, "CopyTo", &err);
+    if (!t) return err;
+    n = (uint32_t)bufSize(b);
+    if (start.kind == K_Undefined) { start = Int(0); count = Int((int64_t)n); }
+    if (!fire_bufSpan(start, count, n, "CopyTo", &err)) return err;
+    if (!fire_bufSpan(targetAt, count, (uint32_t)bufSize(t), "CopyTo", &err)) return err;
+    from = (uint32_t)start.i; to = (uint32_t)targetAt.i; len = (uint32_t)count.i;
+#ifdef FIRE_CC_COPY
+    /* (overlapping parts of the same buffer: copied as if through a copy) */
+    if (t->data + to > b->data + from) { for (i = len; i > 0; i--) t->data[to + i - 1] = b->data[from + i - 1]; }
+    else for (i = 0; i < len; i++) t->data[to + i] = b->data[from + i];
+#else
+    (void)i;
+    memmove(t->data + to, b->data + from, (size_t)len);
+#endif
+    return Undef();
+}
+FIRE_FN Value bufSlice(Value v, Value start, Value count, OwnList* list) {
+    Value err = Undef();
+    Buf* b = fire_plainBuf(v, "Slice", &err);
+    Buf* c;
+    uint32_t n;
+    if (!b) return err;
+    n = (uint32_t)bufSize(b);
+    if (start.kind != K_Int) return fire_bufArgError("Slice", "an int start", start);
+    if (count.kind == K_Undefined) count = Int((int64_t)n - start.i);
+    if (!fire_bufSpan(start, count, n, "Slice", &err)) return err;
+    c = allocBuf((uint32_t)count.i, list);
+    if (count.i) dataCopy(c->data, b->data + (uint32_t)start.i, (uint32_t)count.i);
+    c->little = b->little;
+    return BufV(c);
+}
+FIRE_FN Value bufIndexOf(Value v, Value x, Value start) {
+    Value err = Undef();
+    Buf* b = fire_plainBuf(v, "IndexOf", &err);
+    Buf* needle;
+    uint32_t n, i, j, m;
+    if (!b) return err;
+    n = (uint32_t)bufSize(b);
+    if (start.kind == K_Undefined) start = Int(0);
+    if (start.kind != K_Int) return fire_bufArgError("IndexOf", "an int start", start);
+    if (start.i < 0 || start.i > (int64_t)n) return indexError("Buffer index", start.i, (int64_t)n);
+    if (x.kind == K_Buffer) {
+        needle = fire_plainBuf(x, "IndexOf", &err);
+        if (!needle) return err;
+        m = (uint32_t)bufSize(needle);
+        if (m == 0) return Int(start.i);
+        for (i = (uint32_t)start.i; m <= n && i <= n - m; i++) {
+            for (j = 0; j < m && b->data[i + j] == needle->data[j]; j++) { }
+            if (j == m) return Int((int64_t)i);
+        }
+        return Int(-1);
+    }
+    if (x.kind != K_Int) return fire_bufArgError("IndexOf", "a byte (an int) or a byte buffer", x);
+    if (x.i < 0 || x.i > 255) return Int(-1);
+    for (i = (uint32_t)start.i; i < n; i++) if (b->data[i] == (uint8_t)x.i) return Int((int64_t)i);
+    return Int(-1);
+}
+FIRE_FN Value bufCompare(Value v, Value other) {
+    Value err = Undef();
+    Buf* b = fire_plainBuf(v, "Compare", &err);
+    Buf* o;
+    uint32_t n, m, i;
+    if (!b) return err;
+    if (other.kind != K_Buffer) return fire_bufArgError("Compare", "a byte buffer", other);
+    o = fire_plainBuf(other, "Compare", &err);
+    if (!o) return err;
+    n = (uint32_t)bufSize(b); m = (uint32_t)bufSize(o);
+    for (i = 0; i < n && i < m; i++) if (b->data[i] != o->data[i]) return Int(b->data[i] < o->data[i] ? -1 : 1);
+    return Int(n < m ? -1 : n > m ? 1 : 0);
+}
+/* (the names of these methods: fire_builtinHas) */
+FIRE_FN bool fire_bufMethodName(const char* name) {
+    int k;
+    for (k = 0; k < 10; k++) if (!strcmp(name, g_bufReadNames[k]) || !strcmp(name, g_bufWriteNames[k])) return true;
+    return !strcmp(name, "Fill") || !strcmp(name, "CopyTo") || !strcmp(name, "Slice") || !strcmp(name, "IndexOf") || !strcmp(name, "Compare");
+}
+
 FIRE_FN Value newBuffer(Value size, OwnList* list) {
     if (size.kind != K_Int || size.i < 0 || size.i > 0x7FFFFFFF) fatal("A buffer size must be a non-negative int.");
     return BufV(allocBuf((uint32_t)size.i, list));
@@ -6973,7 +7314,8 @@ FIRE_FN bool fire_builtinHas(Value v, const char* name) {
         case K_Int: return !strcmp(name, "ToChar") || (v.reserved != 0 && (!strcmp(name, "ToString") || !strcmp(name, "HasFlag")));   /* (reserved: an enum) */
         case K_Array: return ownedOf(v) && (own || length || !strcmp(name, "GetEnumerator"));
         case K_Buffer: return ownedOf(v) && (own || length || !strcmp(name, "littleEndian") || !strcmp(name, "GetEnumerator") || !strcmp(name, "ToString")
-            || !strcmp(name, "ToUnicode") || !strcmp(name, "ToUnicodeChar") || !strcmp(name, "ToLittleEndian") || !strcmp(name, "ToBigEndian"));
+            || !strcmp(name, "ToUnicode") || !strcmp(name, "ToUnicodeChar") || !strcmp(name, "ToLittleEndian") || !strcmp(name, "ToBigEndian")
+            || fire_bufMethodName(name));
         case K_Lambda: return ownedOf(v) && own;
         default: return false;
     }

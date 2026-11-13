@@ -191,7 +191,7 @@ namespace fire.Native
         private static readonly Dictionary<string, string> OperatorFallback = new()
         {
             ["operator+"] = "addR(a, b, list)", ["operator-"] = "sub(a, b)", ["operator*"] = "mul(a, b)", ["operator/"] = "divide(a, b)", ["operator%"] = "modulo(a, b)",
-            ["operator^"] = "power(a, b)", ["operator&"] = "bitAnd(a, b)", ["operator|"] = "bitOr(a, b)", ["operator#"] = "bitXor(a, b)", ["operator<<"] = "shl(a, b)", ["operator>>"] = "shr(a, b)",
+            ["operator^"] = "power(a, b)", ["operator&"] = "bitAnd(a, b)", ["operator|"] = "bitOr(a, b)", ["operator#"] = "bitXor(a, b)", ["operator<<"] = "shl(a, b)", ["operator>>"] = "shr(a, b)", ["operator>>>"] = "ushr(a, b)",
             ["operator=="] = "Bool(opEq(a, b))", ["operator!="] = "Bool(!opEq(a, b))", ["operator<"] = "Bool(lt(a, b))", ["operator<="] = "Bool(le(a, b))",
             ["operator>"] = "Bool(gt(a, b))", ["operator>="] = "Bool(ge(a, b))",
         };
@@ -2229,7 +2229,31 @@ namespace fire.Native
                 case ("ToUnicodeChar", 1): yield return ("K_Buffer", "bufToUnicodeChar(self, a0)"); break;
                 case ("ToLittleEndian", 0): yield return ("K_Buffer", "bufToEndian(self, true, list)"); break;
                 case ("ToBigEndian", 0): yield return ("K_Buffer", "bufToEndian(self, false, list)"); break;
+                // the typed reads and writes and the fast operations of a byte buffer (fire.Standard.BufferMethods, fire_rt.h bufRead/bufWrite/...)
+                case ("Fill", 1): yield return ("K_Buffer", "bufFill(self, a0, Undef(), Undef())"); break;
+                case ("Fill", 3): yield return ("K_Buffer", "bufFill(self, a0, a1, a2)"); break;
+                case ("CopyTo", 2): yield return ("K_Buffer", "bufCopyTo(self, a0, a1, Undef(), Undef())"); break;
+                case ("CopyTo", 4): yield return ("K_Buffer", "bufCopyTo(self, a0, a1, a2, a3)"); break;
+                case ("Slice", 1): yield return ("K_Buffer", "bufSlice(self, a0, Undef(), list)"); break;
+                case ("Slice", 2): yield return ("K_Buffer", "bufSlice(self, a0, a1, list)"); break;
+                case ("IndexOf", 1): yield return ("K_Buffer", "bufIndexOf(self, a0, Undef())"); break;
+                case ("IndexOf", 2): yield return ("K_Buffer", "bufIndexOf(self, a0, a1)"); break;
+                case ("Compare", 1): yield return ("K_Buffer", "bufCompare(self, a0)"); break;
+                default:
+                    if (BufferKind(name, "Read") is int rk && argc is 1 or 2)
+                        yield return ("K_Buffer", $"bufRead(self, {rk}, a0, {(argc == 2 ? "a1" : "Undef()")})");
+                    else if (BufferKind(name, "Write") is int wk && argc is 2 or 3)
+                        yield return ("K_Buffer", $"bufWrite(self, {wk}, a0, a1, {(argc == 3 ? "a2" : "Undef()")})");
+                    break;
             }
+        }
+
+        /// <summary>The kind of a typed access of a buffer (`ReadInt16` -> 2, fire_rt.h g_bufKindSize), null for another name.</summary>
+        private static int? BufferKind(string name, string prefix)
+        {
+            if (!name.StartsWith(prefix, StringComparison.Ordinal)) return null;
+            int k = Array.IndexOf(new[] { "Int8", "UInt8", "Int16", "UInt16", "Int32", "UInt32", "Int64", "Float16", "Float32", "Float64" }, name.Substring(prefix.Length));
+            return k < 0 ? null : k;
         }
 
         private bool DispatchNeedsList(string name, int argc) => Modular ||
@@ -4001,7 +4025,7 @@ namespace fire.Native
             or OpCode.Add or OpCode.Sub or OpCode.Mul or OpCode.Mod or OpCode.Lt or OpCode.LtEq or OpCode.Gt or OpCode.GtEq or OpCode.Eq or OpCode.NotEq
             or OpCode.JumpIfFalse or OpCode.JumpIfNotLt or OpCode.JumpIfNotLtEq or OpCode.JumpIfNotGt or OpCode.JumpIfNotGtEq or OpCode.JumpIfNotEq or OpCode.JumpIfNotNotEq
             or OpCode.Pop or OpCode.ReleaseTemps or OpCode.EnterScope or OpCode.ExitScope or OpCode.ClaimToScope or OpCode.ArithLocalConstPop
-            or OpCode.BitAnd or OpCode.BitOr or OpCode.BitXor or OpCode.ShiftLeft or OpCode.ShiftRight or OpCode.ConvertWidth or OpCode.ArrayGet
+            or OpCode.BitAnd or OpCode.BitOr or OpCode.BitXor or OpCode.ShiftLeft or OpCode.ShiftRight or OpCode.ShiftRightLogical or OpCode.ConvertWidth or OpCode.ArrayGet
             or OpCode.Div or OpCode.Neg or OpCode.LogicalNot or OpCode.CheckUnit or OpCode.Dup or OpCode.StepAdd or OpCode.StepSub or OpCode.Trust;
 
         private StepResult StepCore(Func f, Chunk chunk, Instr ins, Flow st, StringBuilder? sb, ISet<string> locals)
@@ -4733,6 +4757,8 @@ namespace fire.Native
                 case OpCode.BitXor: Need(2); return TypedWord("^") || TypedIntBits("^") ? Next() : Binary("bitXor", "operator#");
                 case OpCode.ShiftLeft: Need(2); return TypedWord("<<") || TypedIntBits("<<") ? Next() : Binary("shl", "operator<<");
                 case OpCode.ShiftRight: Need(2); return TypedWord(">>") || TypedIntBits(">>") ? Next() : Binary("shr", "operator>>");
+                // (`>>>`: a word shifts like `>>` - it is unsigned)
+                case OpCode.ShiftRightLogical: Need(2); return TypedWord(">>") || TypedIntBits(">>>") ? Next() : Binary("ushr", "operator>>>");
                 case OpCode.RotateUnderTop:
                 {
                     Need(3);
@@ -5086,6 +5112,14 @@ namespace fire.Native
                         E($"{S(first)} = envCall({S(first)}.i, {(argc > 1 ? S(first + 1) : "Undef()")}, {(argc > 2 ? S(first + 2) : "Undef()")}, &{OwnerList()});");
                         Check();
                         d = first + 1; SetR(first, true); return Next();
+                    }
+                    if (native == BitsMethods.NativeName && argc is >= 2 and <= 4)
+                    {
+                        // the class Bits (fire_rt.h: bitsCall)
+                        int first = d - argc;
+                        E($"{S(first)} = bitsCall({S(first)}.i, {S(first + 1)}, {(argc > 2 ? S(first + 2) : "Undef()")}, {(argc > 3 ? S(first + 3) : "Undef()")});");
+                        Check();
+                        d = first + 1; SetR(first, false); return Next();
                     }
                     if (native == MathMethods.NativeName && argc is 2 or 3)
                     {
@@ -7023,7 +7057,7 @@ namespace fire.Native
             bool TypedIntBits(string op)
             {
                 if (K(d - 2) != KindInt || K(d - 1) != KindInt) return false;
-                if (SlotScalars() && NarrowInt(d - 2) && NarrowInt(d - 1) && (op is "<<" or ">>" || U(d - 2) == U(d - 1)))
+                if (SlotScalars() && NarrowInt(d - 2) && NarrowInt(d - 1) && (op is "<<" or ">>" or ">>>" || U(d - 2) == U(d - 1)))
                 {
                     // two narrow ints (no enum values): C on FireInt; the shifts as shl/shr compute them (FIRE_SCALAR_SHL/SHR); the unit is the left one's
                     string bx = SN(d - 2), by = SN(d - 1);
@@ -7031,6 +7065,7 @@ namespace fire.Native
                     {
                         "<<" => $"FIRE_SCALAR_SHL({bx}, {by})",
                         ">>" => $"FIRE_SCALAR_SHR({bx}, {by})",
+                        ">>>" => $"FIRE_SCALAR_USHR({bx}, {by})",
                         _ => $"(FireInt)({bx} {op} {by})",
                     };
                     SetScalar(d - 2, TypeOf(KindInt, U(d - 2)) | NarrowBit, expr);
@@ -7044,6 +7079,7 @@ namespace fire.Native
                 {
                     case "<<": E($"{a} = IntOp1((int64_t)((uint64_t){a}.i << ({b}.i & 63)), {unitC}, {a});"); break;
                     case ">>": E($"{a} = IntOp1({a}.i >> ({b}.i & 63), {unitC}, {a});"); break;
+                    case ">>>": E($"{a} = ushr({a}, {b});"); break;
                     default:
                         if (U(d - 1) != unit) return false;
                         E($"{a} = FIRE_LIKELY(({a}.reserved | {b}.reserved) == 0) ? IntOp({a}.i {op} {b}.i, {unitC}, {a}, {b}) : {(op == "&" ? "bitAnd" : op == "|" ? "bitOr" : "bitXor")}({a}, {b});");

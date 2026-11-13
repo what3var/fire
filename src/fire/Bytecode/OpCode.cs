@@ -285,6 +285,7 @@ namespace fire.Bytecode
         RecordCheck,         // u8 mode            : peek
         SetEndWait,          //                     : pop v; `#endwait value` - how long the main program waits for its threads at its end (undefined: no limit)
         TypeParamIsOf,       // u16 param, u16 type : push bool; `T is of X` in generic code - the type argument that runs (DeclaredType `$k@...`) is X or derives from it
+        ShiftRightLogical,   //                     : '>>>' - the logical shift right of an int (zeros at the top, in the width of the program's int) or a word
     }
 
     /// <summary>Target type for CoerceType/CoerceTypeDynamic - corresponds exactly to the

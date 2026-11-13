@@ -212,7 +212,7 @@ namespace fire.Compiler
             BinaryOp.Add => "+", BinaryOp.Sub => "-", BinaryOp.Mul => "*", BinaryOp.Div => "/", BinaryOp.Mod => "%",
             BinaryOp.Eq => "==", BinaryOp.NotEq => "!=", BinaryOp.Lt => "<", BinaryOp.LtEq => "<=", BinaryOp.Gt => ">", BinaryOp.GtEq => ">=",
             BinaryOp.And => "&&", BinaryOp.Or => "||", BinaryOp.BitAnd => "&", BinaryOp.BitOr => "|", BinaryOp.BitXor => "^^",
-            BinaryOp.ShiftLeft => "<<", BinaryOp.ShiftRight => ">>", BinaryOp.Power => "^", _ => op.ToString(),
+            BinaryOp.ShiftLeft => "<<", BinaryOp.ShiftRight => ">>", BinaryOp.ShiftRightLogical => ">>>", BinaryOp.Power => "^", _ => op.ToString(),
         };
 
         /// <summary>The expression in fire syntax (the name of a Captured node: `min`, `filter.minAge`, `Make(x)`).</summary>

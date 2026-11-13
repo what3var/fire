@@ -20883,6 +20883,90 @@ else
             process h
             print("got " + h.got)
             """),
+        ("Bit-Hilfen: >>> und >>>=, Bits (PopCount, LeadingZeros, TrailingZeros, Rotate, ReverseBytes/Bits, Extract/Insert, Float-Bits 64/32/16), Puffer: ReadInt16 ... WriteFloat64 in beiden Byte-Reihenfolgen, Fill, CopyTo (ueberlappend), Slice, IndexOf, Compare, Fehler", """
+            // logical shift
+            print(-1 >>> 60)
+            print(-16 >>> 2 > 0)
+            print(8 >>> 1)
+            print(-1 >> 60)
+            var u = -256
+            u >>>= 4
+            print(u)
+            print(1 >>> 64)
+            // bits
+            print(Bits.PopCount(255) + " " + Bits.PopCount(-1) + " " + Bits.PopCount(-1, 32))
+            print(Bits.LeadingZeros(1) + " " + Bits.LeadingZeros(1, 32) + " " + Bits.LeadingZeros(0, 16) + " " + Bits.TrailingZeros(8) + " " + Bits.TrailingZeros(0))
+            print(Bits.RotateLeft(1, 1) + " " + Bits.RotateRight(1, 1) + " " + Bits.RotateLeft(0x81, 1, 8) + " " + Bits.RotateRight(1, 1, 32) + " " + Bits.RotateLeft(-1, 5))
+            print(Bits.ReverseBytes(0x11223344, 32) + " " + Bits.ReverseBytes(0x0102, 16) + " " + Bits.ReverseBits(1, 8) + " " + Bits.ReverseBits(6, 4))
+            print(Bits.Extract(0xABCD, 4, 8) + " " + Bits.Insert(0xFF00, 0xA, 4, 4) + " " + Bits.Extract(-1, 0, 64))
+            // float bits
+            print(Bits.FromFloat64(1.0) + " " + Bits.FromFloat64(-2.5) + " " + Bits.ToFloat64(4607182418800017408))
+            print(Bits.FromFloat32(1.0) + " " + Bits.FromFloat32(-1.0) + " " + Bits.ToFloat32(0x40490FDB) + " " + Bits.FromFloat32(0.0 / 0.0))
+            print(Bits.FromFloat16(1.0) + " " + Bits.FromFloat16(-2.0) + " " + Bits.FromFloat16(65504.0) + " " + Bits.FromFloat16(70000.0) + " " + Bits.FromFloat16(0.0000001) + " " + Bits.FromFloat16(0.1))
+            print(Bits.ToFloat16(0x3C00) + " " + Bits.ToFloat16(0xC000) + " " + Bits.ToFloat16(0x7BFF) + " " + (Bits.ToFloat16(1) * 16777216.0) + " " + Bits.ToFloat16(0x7C00) + " " + Bits.ToFloat16(0x2E66))
+            word w = 0x80
+            print(Bits.RotateLeft(w, 1) + " " + Bits.PopCount(w) + " " + (w >>> 3))
+            // buffers
+            var b = new byte[16]
+            b.WriteInt16(0, -2)
+            b.WriteUInt16(2, 0xBEEF, false)
+            b.WriteInt32(4, 0x12345678)
+            b.WriteFloat32(8, 1.5)
+            b.WriteFloat16(12, -0.5)
+            b.WriteUInt8(14, 300)
+            print(b.ReadInt16(0) + " " + b.ReadUInt16(0) + " " + b.ReadUInt16(2, false) + " " + b.ReadUInt16(2) + " " + b.ReadInt32(4) + " " + b.ReadUInt8(4) + " " + b.ReadInt8(15))
+            print(b.ReadFloat32(8) + " " + b.ReadFloat16(12) + " " + b.ReadUInt8(14) + " " + b[2] + " " + b[3])
+            var d = new byte[8]
+            d.WriteFloat64(0, 3.25)
+            d.WriteInt64(0, d.ReadInt64(0) + 0)
+            print(d.ReadFloat64(0) + " " + d.ReadInt64(0) + " " + d.ReadUInt32(4) + " " + d.ReadInt32(4, false))
+            var c = new byte[6]
+            c.Fill(7)
+            c.Fill(1, 2, 2)
+            print(c[0] + " " + c[2] + " " + c[3] + " " + c[4])
+            var e = new byte[6]
+            c.CopyTo(e, 1, 2, 3)
+            print(e[0] + " " + e[1] + " " + e[2] + " " + e[3] + " " + e[4])
+            c.CopyTo(c, 1, 0, 4)
+            print(c[0] + " " + c[1] + " " + c[2] + " " + c[3] + " " + c[4] + " " + c[5])
+            var s = c.Slice(1, 3)
+            print(s.length + " " + s[0] + " " + s[2] + " " + c.Slice(4).length)
+            var hay = "hello world".ToBytes()
+            print(hay.IndexOf(111) + " " + hay.IndexOf(111, 5) + " " + hay.IndexOf("wor".ToBytes()) + " " + hay.IndexOf(999) + " " + hay.IndexOf("xyz".ToBytes()))
+            print(hay.Compare("hello world".ToBytes()) + " " + hay.Compare("hello".ToBytes()) + " " + "abc".ToBytes().Compare("abd".ToBytes()))
+            try { b.ReadInt32(14) } catch (IndexOutOfBoundsException ex) { print(ex.message) }
+            try { b.WriteFloat32(2, "x") } catch (ArgumentException ex) { print(ex.message) }
+            try { Bits.PopCount(1.5) } catch (ArgumentException ex) { print(ex.message) }
+            try { c.Fill(0, 4, 5) } catch (IndexOutOfBoundsException ex) { print(ex.message) }
+            """),
+        ("Bit-Hilfen: operator>>> einer Klasse, >>>= und Generics, die mit >>> enden (Box<Box<Box<int>>>)", """
+            class Reg {
+                int v
+                construct(int v) { this.v = v }
+                Reg operator>>>(int n) { return new Reg(this.v * 100 + n) }
+            }
+            class Box<T> { T item }
+            Reg r = new Reg(3) >>> 2
+            print(r.v)
+            var bb = new Box<Box<Box<int>>>()
+            print(bb is of Box)
+            var deep = new List<List<List<int>>>()
+            print(deep.Count)
+            var x = 0x80
+            x >>>= 4
+            print(x)
+            """),
+        ("Bit-Hilfen mit #intwidth 32: >>> in 32 Bit, die Breite der Bit-Funktionen, Float-Bits als int[64], ReadUInt32 behaelt seine 64 Bit", """
+            #intwidth 32
+            print(-1 >>> 28)
+            print(-1 >>> 0)
+            print(-8 >>> 1)
+            print(Bits.PopCount(-1) + " " + Bits.LeadingZeros(1) + " " + Bits.RotateLeft(-2, 1) + " " + Bits.RotateRight(1, 1))
+            print(Bits.FromFloat32(-1.0) + " " + Bits.FromFloat64(1.0))
+            var b = new byte[8]
+            b.WriteUInt32(0, 4000000000)
+            print(b.ReadUInt32(0) + " " + b.ReadInt32(0))
+            """),
         ("Namespace: Nachbarklassen und Enums mit dem kurzen Namen - statische Methoden und Felder, Enum-Werte, Kind.Name, verschachtelt von innen nach aussen, global.Name, eine Variable verdeckt", """
             class Helper { static string Tag() { return "global" } }
             enum Kind { A, B }

@@ -3710,7 +3710,11 @@ namespace fire.Runtime
                 }
                 if (copyMask != 0) ApplyCopyMaskToArgs(args, copyMask);
                 RejectArgNames("the built-in method '" + methodName + "'");
-                if (TryCallBuiltinMethod(target, methodName, args, out Value builtinResult))
+                bool builtinHit;
+                Value builtinResult;
+                try { builtinHit = TryCallBuiltinMethod(target, methodName, args, out builtinResult); }
+                catch (fire.Standard.BufferRangeException range) { ThrowIndexOutOfBounds(range.Index, range.Length, "Buffer index"); return; }
+                if (builtinHit)
                 {
                     AdoptFresh(builtinResult);
                     Push(builtinResult);
@@ -4738,6 +4742,7 @@ namespace fire.Runtime
                 case OpCode.BitXor: BinaryNumericOrOperator(Value.BitXor, "operator#"); break;
                 case OpCode.ShiftLeft: BinaryNumericOrOperator(Value.ShiftLeft, "operator<<"); break;
                 case OpCode.ShiftRight: BinaryNumericOrOperator(Value.ShiftRight, "operator>>"); break;
+                case OpCode.ShiftRightLogical: BinaryNumericOrOperator(Value.ShiftRightLogical, "operator>>>"); break;
 
                 case OpCode.FormatValue:
                 {
@@ -7396,7 +7401,8 @@ namespace fire.Runtime
                         result = Value.MakeBuffer(buf.IsWords ? buf.WordBytes(ByteOrder.Big) : buf.Order == ByteOrder.Big ? buf.Clone() : buf.Reversed(ByteOrder.Big));
                         return true;
                     }
-                    return false;
+                    // the typed reads and writes and the fast operations (fire.Standard.BufferMethods: ReadInt16, WriteFloat32, Fill, CopyTo, ...)
+                    return fire.Standard.BufferMethods.TryCall(buf, methodName, args, out result);
                 }
 
                 default:

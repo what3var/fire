@@ -3503,6 +3503,7 @@ namespace fire.Compiler
                 return "[]";
             }
             if (Check(TokenType.Lt) && PeekAt(1).Type == TokenType.Lt) { Advance(); Advance(); return "<<"; }
+            if (Check(TokenType.Gt) && PeekAt(1).Type == TokenType.Gt && PeekAt(2).Type == TokenType.Gt) { Advance(); Advance(); Advance(); return ">>>"; }
             if (Check(TokenType.Gt) && PeekAt(1).Type == TokenType.Gt) { Advance(); Advance(); return ">>"; }
             if (Match(TokenType.Plus)) return "+";
             if (Match(TokenType.Minus)) return "-";
@@ -3737,6 +3738,7 @@ namespace fire.Compiler
             TokenType.HashAssign => BinaryOp.BitXor,
             TokenType.ShlAssign => BinaryOp.ShiftLeft,
             TokenType.ShrAssign => BinaryOp.ShiftRight,
+            TokenType.UShrAssign => BinaryOp.ShiftRightLogical,
             _ => null,
         };
 
@@ -3920,6 +3922,13 @@ namespace fire.Compiler
                     int line = Peek().Line;
                     Advance(); Advance();
                     left = new BinaryExpr(line, BinaryOp.ShiftLeft, left, ParseAdditive());
+                }
+                else if (Check(TokenType.Gt) && PeekAt(1).Type == TokenType.Gt && PeekAt(2).Type == TokenType.Gt)
+                {
+                    // `>>>`: the logical shift (zeros come in at the top)
+                    int line = Peek().Line;
+                    Advance(); Advance(); Advance();
+                    left = new BinaryExpr(line, BinaryOp.ShiftRightLogical, left, ParseAdditive());
                 }
                 else if (Check(TokenType.Gt) && PeekAt(1).Type == TokenType.Gt)
                 {

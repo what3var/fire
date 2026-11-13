@@ -768,6 +768,15 @@ Tests ohne Fenster über den seriellen Port bzw. die Konsole: DOSBox-X / dosemu2
 
 **Dazwischen, klein:**
 
+* **Umgesetzt (Wunsch des Benutzers): Bit-Hilfen.** `>>>`/`>>>=` (logischer Shift in der Breite des `int` des Programms, `operator>>>` überladbar),
+  die Klasse `Bits` (PopCount, Leading/TrailingZeros, Rotate, ReverseBytes/Bits, Extract/Insert, die IEEE-Bits von float 64/32/16 - half precision),
+  typisierte Lese- und Schreibzugriffe im Byte-Puffer (`ReadInt8` ... `ReadFloat64`, `Write...`, in der Byte-Reihenfolge des Puffers oder der
+  angegebenen) und schnelle Puffer-Operationen (`Fill`, `CopyTo`, `Slice`, `IndexOf`, `Compare`); VM und nativ bitgleich (auch dos16 in DOSBox-X),
+  der Typprüfer kennt die Ergebnistypen. Doku: language/03-operators.md "Bit functions", 07-arrays-and-lists.md "Reading and writing numbers".
+* **`print` eines float nativ mit einer Stelle zu viel** (gefunden bei den Bit-Hilfen): `print(1.0 / 16777216.0)` gibt in der VM `5.960464477539063E-08`,
+  nativ `5.9604644775390625E-08` - die kürzeste Darstellung, die den Wert wieder ergibt, hat 16 Stellen; nativ werden 17 genommen. Klein, aber VM
+  und nativ sollen gleich drucken.
+
 * **Breiten pro Programm statt pro Prozess.** `Value.Ints32` und `Value.SingleFloats` sind statisch: Übersetzt der Editor ein Programm, während ein anderes mit
   `#intwidth 32` läuft, schneidet er dessen Konstanten ab. Die Breiten gehören zum Programm und werden über ein Objekt weitergereicht (das Zahlenmodell des Programms:
   der Linker und der Compiler bekommen es ausdrücklich, die VM setzt es für die Threads, auf denen das Programm läuft).

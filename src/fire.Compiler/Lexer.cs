@@ -741,6 +741,8 @@ namespace fire.Compiler
                     return Tok(TokenType.Lt, "<", line, col, newlineBefore);
 
                 case '>':
+                    // `>>>=` (the logical shift of an assignment; `>>>` itself is three `>`, which the parser joins - like `>>`, so that `A<B<C<int>>>` closes)
+                    if (Peek() == '>' && PeekNext() == '>' && PeekAt(2) == '=') { Advance(); Advance(); Advance(); return Tok(TokenType.UShrAssign, ">>>=", line, col, newlineBefore); }
                     if (Peek() == '>' && PeekNext() == '=') { Advance(); Advance(); return Tok(TokenType.ShrAssign, ">>=", line, col, newlineBefore); }
                     if (Match('='))
                         return Tok(TokenType.GtEq, ">=", line, col, newlineBefore);

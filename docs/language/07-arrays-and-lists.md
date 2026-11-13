@@ -304,6 +304,71 @@ print(text.ToString())      // Hi
 | `ToUnicodeChar()`, `ToUnicodeChar(n)` | the first character |
 | `littleEndian` | the byte order of the buffer |
 | `ToLittleEndian()`, `ToBigEndian()` | a copy in that byte order (the whole buffer is reversed if needed) |
+| `ReadInt16(at)`, `WriteFloat32(at, x)`, ... | a number of 1, 2, 4 or 8 bytes at a position (see below) |
+| `Fill`, `CopyTo`, `Slice`, `IndexOf`, `Compare` | fast operations on the bytes (see below) |
+
+### Reading and writing numbers
+
+A buffer reads and writes whole numbers and floats at a byte position - in the byte order of the buffer (`littleEndian`: a new buffer is little
+endian), or in the one given as the last argument (`true`: little endian, `false`: big endian):
+
+```fire
+var header = new byte[16]
+header.WriteUInt32(0, 0x46495245, false)    // "FIRE", big endian
+header.WriteInt16(4, -2)
+header.WriteFloat32(8, 1.5)
+header.WriteFloat16(12, -0.5)               // half precision
+print(header.ReadUInt32(0, false))          // 1179210309
+print(header.ReadInt16(4))                  // -2
+print(header.ReadUInt16(4))                 // 65534
+print(header.ReadFloat32(8))                // 1.5
+print(header.ReadFloat16(12))               // -0.5
+```
+
+| Read | Write | Bytes | Value |
+|---|---|---|---|
+| `ReadInt8(at)`, `ReadUInt8(at)` | `WriteInt8(at, v)`, `WriteUInt8(at, v)` | 1 | -128 .. 127 / 0 .. 255 |
+| `ReadInt16(at[, little])`, `ReadUInt16` | `WriteInt16(at, v[, little])`, `WriteUInt16` | 2 | -32768 .. 32767 / 0 .. 65535 |
+| `ReadInt32(at[, little])`, `ReadUInt32` | `WriteInt32(at, v[, little])`, `WriteUInt32` | 4 | 32 bits signed / unsigned |
+| `ReadInt64(at[, little])` | `WriteInt64(at, v[, little])` | 8 | 64 bits |
+| `ReadFloat16(at[, little])` | `WriteFloat16(at, x[, little])` | 2 | IEEE binary16 (half precision) |
+| `ReadFloat32(at[, little])` | `WriteFloat32(at, x[, little])` | 4 | IEEE binary32 |
+| `ReadFloat64(at[, little])` | `WriteFloat64(at, x[, little])` | 8 | IEEE binary64 |
+
+- A write takes the low bits of the number (`WriteUInt8(0, 300)` writes 44, `WriteInt16` and `WriteUInt16` write the same bytes); a float is rounded
+  to the format (`WriteFloat16`: to nearest even, above 65504 infinity). A `word` can be written as an int; a number with a unit is an
+  `ArgumentException`.
+- A read that does not fit the program's `int` (`ReadUInt32` or `ReadInt64` with `#intwidth 32`) keeps its 64 bits, like the result of a native.
+- A position outside the buffer (`at < 0` or `at + size > length`) is an `IndexOutOfBoundsException`; a buffer of words (`word a[]`) is an
+  `ArgumentException` - its bytes depend on the target.
+
+### Fast operations
+
+```fire
+var b = new byte[8]
+b.Fill(0xFF)                      // every byte
+b.Fill(0, 2, 4)                   // 4 bytes from position 2
+var c = new byte[8]
+b.CopyTo(c, 0)                    // all of b into c from position 0
+b.CopyTo(c, 1, 2, 3)              // 3 bytes of b from 2 into c from 1 (overlapping parts of one buffer are fine)
+var part = b.Slice(2, 4)          // a new buffer with the 4 bytes from 2 (in the same byte order)
+var text = "hello world".ToBytes()
+print(text.IndexOf(111))          // 4 - the first 'o'
+print(text.IndexOf(111, 5))       // 7 - from position 5
+print(text.IndexOf("wor".ToBytes()))  // 6 - a sequence of bytes
+print(text.Compare("hello".ToBytes()))  // 1 - like comparing texts: -1, 0 or 1
+```
+
+| Method | What |
+|---|---|
+| `Fill(value[, start, count])` | sets the bytes to `value` (its low 8 bits) |
+| `CopyTo(target, targetAt[, start, count])` | copies bytes into another buffer (or into itself: overlapping parts are copied as if through a copy) |
+| `Slice(start[, count])` | a new buffer with those bytes |
+| `IndexOf(value[, start])` | the position of the first byte `value` (0 .. 255) or of the first occurrence of a byte buffer; -1 if there is none |
+| `Compare(other)` | -1, 0 or 1: byte by byte, a shorter buffer that is the start of the other is smaller |
+
+A range outside a buffer is an `IndexOutOfBoundsException`. Natively these are a loop or `memset`/`memmove` over the bytes; for bits of single
+numbers see [Bit functions](03-operators.md#bit-functions).
 
 ### `byte` declarations are buffers
 
