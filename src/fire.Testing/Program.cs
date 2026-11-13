@@ -20883,6 +20883,67 @@ else
             process h
             print("got " + h.got)
             """),
+        ("Namespace: Nachbarklassen und Enums mit dem kurzen Namen - statische Methoden und Felder, Enum-Werte, Kind.Name, verschachtelt von innen nach aussen, global.Name, eine Variable verdeckt", """
+            class Helper { static string Tag() { return "global" } }
+            enum Kind { A, B }
+            namespace Geo {
+                enum Kind { Square, Circle }
+                class Helper {
+                    static int count = 0
+                    static string Tag() { return "geo" }
+                }
+                class Shape {
+                    static string Run() {
+                        Helper.count = Helper.count + 2
+                        Helper.count++
+                        return Helper.Tag() + " " + Kind.Circle + " " + Kind.Name(Kind.Square) + " " + Helper.count + " " + global.Helper.Tag()
+                    }
+                    static string Local() {
+                        var Shape = "local"
+                        var Helper = "helper"
+                        var Kind = [1, 2, 3]
+                        return Shape.Length + " " + Helper.Length + " " + Kind.Length
+                    }
+                }
+                namespace Deep {
+                    class Helper { static string Tag() { return "deep" } }
+                    class Inner {
+                        static string Run() { return Helper.Tag() + " " + Kind.Square + " " + Geo.Helper.Tag() + " " + Deep.Helper.Tag() }
+                    }
+                }
+            }
+            class Outside { static string Run() { return Helper.Tag() + " " + Kind.B + " " + Geo.Helper.Tag() + " " + Geo.Kind.Circle } }
+            print(Geo.Shape.Run())
+            print(Geo.Shape.Local())
+            print(Geo.Deep.Inner.Run())
+            print(Outside.Run())
+            """),
+        ("Getter mit C-Rumpf: obj.X einer bekannten Klasse liest die C-Zahl (defined float, int, Einheit), ein Getter ohne defined und eine Unterklasse wie vorher", """
+            class Box {
+                defined float w
+                defined float h
+                construct(defined float w, defined float h) { this.w = w; this.h = h }
+                defined float Area { get { return this.w * this.h } }
+                defined int Big { get { return this.w * 2.0 > 3.0 ? 7 : 1 } }
+                defined float Side : m { get { return this.w * 1m } }
+                float Maybe { get { return this.w > 100.0 ? undefined : this.w } }
+            }
+            class Sub : Box {
+                construct(defined float w) : base(w, 2.0) { }
+            }
+            var b = new Box(3.0, 4.0)
+            print(b.Area + 1.0)
+            print(b.Big * 2)
+            print(b.Side + 50cm)
+            print(b.Maybe)
+            b.w = 200.0
+            print(b.Maybe)
+            Box s = new Sub(5.0)
+            print(s.Area)
+            var sum = 0.0
+            for (var i = 0; i < 1000; i++) { b.w = i * 0.5; sum = sum + b.Area + b.Big }
+            print(sum)
+            """),
         ("defined herleiten: Parameter und Rueckgaben, denen jeder Aufruf eine Zahl gibt; ein Aufruf ueber any, ein Lambda mit undefined und ein Override halten es auf", """
             class Grid {
                 int w

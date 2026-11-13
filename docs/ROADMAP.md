@@ -717,6 +717,11 @@ Daten-Stack bei XC8), AVR nur mit einem eigenen kleinen Profil.
    Versucht und wieder verworfen: C-Rümpfe für Konstruktoren (`new X(1.0, 2.0)` mit C-Zahlen) - weder schneller (3 Mio. `new Vec(x, y, z)` und
    1 Mio. Objekte mit Unterobjekt: gleich schnell im Rauschen) noch kleiner (linux "Scene3D Physics" +0,3 KB, dos16 +1 KB: die Funktion mit Values
    vor dem C-Rumpf kostet, was die C-Zahlen sparen).
+   *Ebene 2, Getter:* ein Getter mit `defined`-Rückgabe hat einen C-Rumpf, `obj.X` auf einer bekannten Klasse ruft ihn (NATIVE_BACKEND.md); eine
+   Schleife mit Properties nativ 105 -> 33 ms und 1,1 KB kleiner. Die Properties von scene3d, effects und physics, deren Getter ein getyptes Native
+   liest, sind dafür `defined` (83; die Parameter des Material-Konstruktors und `Body.Dynamic(mass)` mit, damit der Paketcode ohne Befund bleibt;
+   im Beispiel "Scene3D Benchmark" `defined bool direct`). "Scene3D Physics": linux -4 KB, dos16 -0,4 KB; mit den Properties von scene3d nativ
+   62 -> 22 ms; die Vorlage "Desktop" bleibt gleich. Setter mit C-Rumpf versucht und verworfen (eine Schleife mit einem Setter 14 -> 16 ms, -16 Byte).
    *Weniger Value-Kopien:* die Alias-Slots und die Zeigerkonvention (Größenziele) gab es schon (NATIVE_BACKEND.md "Kopien von Values",
    "Zeigerkonvention"); dazu jetzt die C-Rümpfe: ihre Values per Adresse, ihre C-Zahlen per Wert (`fN_c_p(const Value* self_p, Real P0)`), ihre Hülle
    mit Values ganz per Adresse. dos16 "Scene3D Physics" geladen 565 588 -> 564 692 Byte. Ergebnisse gehen schon heute über den Rückgabepuffer des
@@ -1015,7 +1020,9 @@ ohne Values). Dabei fiel ein Generatorfehler auf (Value-Hülle unter `fN` statt 
 1c2af40 grundsätzlich gelöst: ein Programm, das die Aufruftiefe zählt, hat keine C-Rümpfe. scene3d-Programme zählten sie damals immer (`Scene.Add` nimmt mit
 `try TakeTo`; seit dem Besitz-Stack auf `targets` nicht mehr: `try TakeTo` geht mit C-Rümpfen) - `defined` war hier darum damals neutral (dos16 431 752 -> 431 766 Byte; nativ und VM ohne messbaren Unterschied). **Nicht** übernommen:
 die Handles als `defined int h` (+2,6 KB auf dos16: sie gehen fast nur an Natives, die Values nehmen, und werden dafür neu eingepackt) und die übrigen
-Eigenschaften (keine Änderung: Accessoren bekommen keinen C-Rumpf). Lohnen würde es sich, wenn die Natives C-Zahlen nehmen (`__S3DGetF(int, int)`) und
+Eigenschaften (keine Änderung: Accessoren bekamen keinen C-Rumpf - seit die Getter einen haben, sind die 83 Properties von scene3d, effects und
+physics, deren Getter ein getyptes Native liest, `defined`: "Scene3D Physics" linux 797 360 -> 793 264 Byte, dos16 geladen 564 692 -> 564 244, eine
+Schleife mit Properties nativ 62 -> 22 ms). Lohnen würde es sich, wenn die Natives C-Zahlen nehmen (`__S3DGetF(int, int)`) und
 C-Rümpfe auch neben dem Zählen der Aufruftiefe gingen - Punkte für `targets`. `FIRE_TESTS_ONLY=scene3d` prüft das dos16-C weiter mit.
 
 **Größe nach M5 (gemessen mit `forge build --stats`, dos16, ein Programm mit Szene, Boden, Ball-Körper, Kamera im schlanken Renderer, 60 Bilder):**

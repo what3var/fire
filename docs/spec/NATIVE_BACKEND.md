@@ -203,8 +203,10 @@ Skript -> Lexer -> Parser -> Resolver -> Compiler -> Bytecode (LinkedProgram)
   deren Methode keine abgeleitete Klasse überschreibt) ruft `fN_c`: ein Argument, dessen Typ die Zahl beweist (eine schmale Zahl ohne Einheit, ein float,
   ein word), geht als C-Zahl hinein, jedes andere wird an der Aufrufstelle in seinen Schatten geprüft (dieselbe Ausnahme wie im Prolog, vor dem Aufruf);
   das Ergebnis landet im Schatten des Platzes. Die Skalare der Aufrufstelle bleiben dabei Skalare (die Operation materialisiert nur, was sie als Value
-  braucht). Ein `GuardTop` einer `defined`-Rückgabe, deren Platz die Zahl schon beweist, erzeugt nichts. Nicht für generische Methoden (Trampolin),
-  Accessoren, Methoden mit `try` (der Rahmen hält Values), Module, Debug-Builds und `#intwidth 16`. Ob eine Methode eine C-Rückgabe hat, hängt am
+  braucht). Ein `GuardTop` einer `defined`-Rückgabe, deren Platz die Zahl schon beweist, erzeugt nichts. Ein **Getter** mit `defined`-Rückgabe hat auch
+  einen: `obj.X` auf einem Objekt einer bekannten Klasse, deren Getter keine abgeleitete Klasse überschreibt (`DirectAccessor`), ruft `fN_c` und legt die
+  Zahl in den Schatten des Platzes (`CAbiGetterCallee`; gemessen: eine Schleife mit Properties nativ 105 -> 33 ms, mit den Properties von scene3d
+  62 -> 22 ms). Nicht für generische Methoden (Trampolin), Setter, Konstruktoren (versucht: weder schneller noch kleiner), Methoden mit `try` (der Rahmen hält Values), Module, Debug-Builds und `#intwidth 16`. Ob eine Methode eine C-Rückgabe hat, hängt am
   zusammengeführten Rückgabetyp: ändert er sich, läuft eine weitere Runde (`NoteCReturn`). **`trust x`** ist der Opcode `Trust` (in der VM nichts):
   im Release-Build wird ein Platz bekannter Art (ein `int`-Parameter, ein Feld, `CutBit`/nullbar) zur definierten Zahl (`NarrowBit`, ohne `NullableBit`) -
   ein `defined`-Parameter nimmt ihn ohne Prüfung (`(FireInt)s.i`: ein vertrautes `undefined` ist 0); einer unbekannter Art wird weiter geprüft.

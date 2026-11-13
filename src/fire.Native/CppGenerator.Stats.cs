@@ -59,8 +59,8 @@ namespace fire.Native
             };
             if (f.SpecParams != null || f.SpecTArgs != null || f.SpecClassOwner != null) return "copy of a generic method";
             if (f.Chunk.Handlers.Count > 0) return "try/catch";
-            if (f.Proto is { } proto && MethodKey(proto) is { } key && (key.Name.StartsWith("get_", StringComparison.Ordinal) || key.Name.StartsWith("set_", StringComparison.Ordinal)))
-                return "property accessor";
+            if (f.Proto is { } proto && MethodKey(proto) is { } key && key.Name.StartsWith("set_", StringComparison.Ordinal))
+                return "property setter";
             var code = f.Decoded;
             if (code.Any(c => c.Op == OpCode.TakeCallTypeArgs)) return "generic method";
             bool unitAny = code.Any(c => c.Op == OpCode.GuardLocal && c.A[0] < f.ParamCount && c.A[3] != 0xFFFF

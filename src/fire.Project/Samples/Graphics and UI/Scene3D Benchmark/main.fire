@@ -41,7 +41,7 @@ print("GPU: '" + S3D.HardwareName() + "' " + S3D.HardwareError())
 
 class Bench {
     // Runs one mode for `seconds`: the frames per second.
-    static float Run(string name, Window win, Scene scene, Camera cam, Renderer hud, Brush bar, int seconds, RenderMode renderer, bool direct) {
+    static float Run(string name, Window win, Scene scene, Camera cam, Renderer hud, Brush bar, int seconds, RenderMode renderer, defined bool direct) {
         scene.Renderer = renderer
         cam.DirectDrawing = direct
         var frames = 0
