@@ -2624,7 +2624,10 @@ namespace fire.Compiler
                 // (`taking x` / `handover x` in the body: the lambda gets a copy / takes it over when it is made; without a word a copy too - marked
                 // implicit, the type checker says so: TC023)
                 Expr load = new UnaryExpr(lambda.Line, UnaryOp.DeepCopy, outer);
-                if (lambda.CaptureModes == null || !lambda.CaptureModes.ContainsKey(name)) (implicitNames ??= new List<string>()).Add(name);
+                // (an element of `await [ ... ]`: the caller waits until it is done - its variables are lent, not copied, like the arguments of a single
+                // `await`; natively awaitRun runs the elements side by side only when no two of them reach the same object)
+                if (lambda.LendCaptures) load = outer;
+                else if (lambda.CaptureModes == null || !lambda.CaptureModes.ContainsKey(name)) (implicitNames ??= new List<string>()).Add(name);
                 if (lambda.CaptureModes != null && lambda.CaptureModes.TryGetValue(name, out bool moved))
                 {
                     if (moved)

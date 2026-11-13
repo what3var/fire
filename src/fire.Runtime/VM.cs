@@ -1377,6 +1377,23 @@ namespace fire.Runtime
         /// in the non-blocking case when the mailbox is currently empty -
         /// when blocking this method always returns `true` (it waits until
         /// something is there).</summary>
+        /// <summary>A thread waits in `process` for a message: it counts as standing still, like a wait in a channel (FireRuntime.WaitForAllFireThreads).
+        /// false: no message will come - the program ends in a standstill (the thread leaves), or the thread is stopped.</summary>
+        private bool WaitInProcess(fire.Runtime.ActorMailbox box)
+        {
+            FireRuntime.IdleEnter(this);
+            try
+            {
+                while (!box.HasMessages)
+                {
+                    if (_stopExecutionRequested || FireRuntime.Standstill) return box.HasMessages;
+                    box.WaitForMessage(20);
+                }
+                return true;
+            }
+            finally { FireRuntime.IdleLeave(this); }
+        }
+
         private bool ProcessOneMessage(ObjectInstance actor, bool blocking)
         {
             var mailbox = actor.Mailbox
@@ -5903,7 +5920,15 @@ namespace fire.Runtime
                     if (actorTarget.Mailbox is { HasMessages: false } && CanSuspend) { SuspendForProcess(actorTarget); break; }
                     bool waits = PoolTask != null && actorTarget.Mailbox is { HasMessages: false };
                     if (waits) VmScheduler.BlockEnter();
-                    try { ProcessOneMessage(actorTarget, blocking: true); }
+                    try
+                    {
+                        if (CountsAsThread && actorTarget.Mailbox is { HasMessages: false } box && !WaitInProcess(box))
+                        {
+                            if (!_stopExecutionRequested) { RequestLeave(); ShutdownSelfNow(); }
+                            break;
+                        }
+                        ProcessOneMessage(actorTarget, blocking: true);
+                    }
                     finally { if (waits) VmScheduler.BlockLeave(); }
                     break;
                 }

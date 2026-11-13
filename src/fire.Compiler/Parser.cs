@@ -2372,7 +2372,7 @@ namespace fire.Compiler
                         new("__fails", new TypeRef("any", null, 0), new List<Expr?>()),
                         new("__i", new TypeRef("int", null, 0), new List<Expr?>()),
                     };
-                    lambdas.Add(new LambdaExpr(at, parameters, null, body));
+                    lambdas.Add(new LambdaExpr(at, parameters, null, body, LendCaptures: true));
                 } while (Match(TokenType.Comma));
             }
             Expect(TokenType.RBracket, "Expected ']' after the calls of 'await [ ... ]'");

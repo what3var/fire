@@ -100,13 +100,20 @@ namespace fire.Runtime
         /// globals) it serves the threads' queue meanwhile - they are, after all, waiting for a `sync globals` -, otherwise the program end would
         /// hang on a thread that has just registered a section.</summary>
         ///
-        /// The end of the program (the user: "Stillstand + Zeitlimit"): when every thread that is left waits in a channel or for a socket - nobody can go
-        /// on - the channels the main program made are closed (a `foreach` over one ends, a Net.Channel sends its end); `endWaitMs` after the end of the
+        /// The end of the program (the user: "Stillstand + Zeitlimit"): when every thread that is left waits in a channel, for a socket or in `process` -
+        /// nobody can go on - the channels the main program made are closed and the waits in `process` leave (a `foreach` over one ends, a Net.Channel sends its end); `endWaitMs` after the end of the
         /// main program (`#endwait`, 60 s; -1: no limit) the threads that are still there are ended like with `terminate`.</summary>
         public static void WaitForAllFireThreads(GlobalsBroker? broker = null, long endWaitMs = DefaultEndWaitMs)
         {
             long start = System.Diagnostics.Stopwatch.GetTimestamp();
             bool closed = false, ended = false;
+            Volatile.Write(ref _standstill, false);
+            try { WaitForAllFireThreadsCore(broker, endWaitMs, start, ref closed, ref ended); }
+            finally { Volatile.Write(ref _standstill, false); }
+        }
+
+        private static void WaitForAllFireThreadsCore(GlobalsBroker? broker, long endWaitMs, long start, ref bool closed, ref bool ended)
+        {
             while (true)
             {
                 broker?.Drain();
@@ -119,9 +126,10 @@ namespace fire.Runtime
                     live = _liveThreads;
                     if (!pending) Monitor.Wait(_liveThreadsGate, TaskHooks.IdlePump != null ? 20 : 50);
                 }
-                if (!closed && live > 0 && Volatile.Read(ref _idleWaiting) >= live)
+                if (!closed && StandsStill(broker))
                 {
                     closed = true;
+                    Volatile.Write(ref _standstill, true);   // (the threads that wait in `process` leave - CloseMainMade wakes them)
                     ChannelHandles.CloseMainMade();
                 }
                 if (!ended && endWaitMs >= 0 && (System.Diagnostics.Stopwatch.GetTimestamp() - start) * 1000 / System.Diagnostics.Stopwatch.Frequency >= endWaitMs)
@@ -139,7 +147,18 @@ namespace fire.Runtime
             $"fire: {live} thread(s) still ran {ms / 1000.0:0.###} s after the end of the main program - ended like with terminate (#endwait sets the limit).";
 
         /// <summary>The fire threads that wait in a channel or for a socket (Channels.WaitChannel, FdWaitNative): when it is all of them, nobody goes on.</summary>
+        /// <summary>Every thread that is left waits in a channel, for a socket or in `process` - and nothing is pending for the main program (a thread that
+        /// starts a thread asks it to: until then the new one does not count).</summary>
+        private static bool StandsStill(GlobalsBroker? broker)
+        {
+            lock (_liveThreadsGate)
+                return _liveThreads > 0 && !(broker != null && broker.HasPending) && Volatile.Read(ref _idleWaiting) >= _liveThreads;
+        }
+
         private static int _idleWaiting;
+        private static bool _standstill;
+        /// <summary>The threads that are left stand still at the end of the program: a thread that waits in `process` for an empty mailbox leaves.</summary>
+        internal static bool Standstill => Volatile.Read(ref _standstill);
         internal static void IdleEnter(VM vm) { if (vm.CountsAsThread) { Interlocked.Increment(ref _idleWaiting); WakeWaitingOwner(); } }
         internal static void IdleLeave(VM vm) { if (vm.CountsAsThread) Interlocked.Decrement(ref _idleWaiting); }
 
