@@ -18,8 +18,27 @@ namespace fire.Native
         /// whose functions are called across files).</summary>
         private bool PointerCallsOn => _target.Native.PointerCalls && !DebugBuild && !Wrapped && !Modular && !_openWorld;
 
-        /// <summary>The functions with the convention: name -> the names of their parameters.</summary>
-        private readonly Dictionary<string, string[]> _pointerFuncs = new(StringComparer.Ordinal);
+        /// <summary>The functions with the convention: name -> the names of their parameters and which of them go by address (the Values; the C numbers of a
+        /// C body stay by value).</summary>
+        private readonly Dictionary<string, (string[] Names, bool[] ByAddress)> _pointerFuncs = new(StringComparer.Ordinal);
+
+        /// <summary>The parameters of a C parameter list (`Value self, Real P0`): each declaration, its name and whether it is a Value.</summary>
+        private static List<(string Decl, string Name, bool IsValue)> ParamDecls(string list)
+        {
+            var result = new List<(string, string, bool)>();
+            if (list.Trim() is "" or "void") return result;
+            foreach (var raw in list.Split(','))
+            {
+                string d = raw.Trim();
+                int sp = d.LastIndexOfAny(new[] { ' ', '*' });
+                result.Add((d, d.Substring(sp + 1), d.StartsWith("Value ", StringComparison.Ordinal)));
+            }
+            return result;
+        }
+
+        /// <summary>A parameter list with the Values by address (`Value P0` -> `const Value* P0_p`).</summary>
+        private static string PointerParams(List<(string Decl, string Name, bool IsValue)> ps) =>
+            string.Join(", ", ps.Select(p => p.IsValue ? $"const Value* {p.Name}_p" : p.Decl));
 
         /// <summary>The runtime functions that take a Value by a `const Value*` (they only read it): `&P0` in one of them does not write the parameter.</summary>
         private static readonly Regex ReadOnlyAddressCall = new(@"\b(?:leafAliveP|destroyedErrorP|retainP|releaseP|truthyP|objAtP|adoptP|ctorEndP|hoistFromP|transferTreeP|finishArgsP|claimToListP)\(\s*&\s*$", RegexOptions.Compiled);
@@ -39,19 +58,24 @@ namespace fire.Native
             return false;
         }
 
-        /// <summary>The function `f` (its whole C text, its signature `signature`) with the convention, or the text unchanged when it cannot have it.</summary>
-        private string PointerFunction(Func f, string code, string signature)
+        /// <summary>The function `name` in `code` (its signature `signature`) with the convention, or the text unchanged when it cannot have it: its Value
+        /// parameters by address. The function ends at the first closing brace in the first column; what follows it stays as it is (the wrapper of a C body).</summary>
+        private string PointerFunction(string name, string code, string signature)
         {
-            _pointerFuncs.Remove(f.Name);
-            var ps = f.ParamNames.ToArray();
-            if (ps.Length == 0) return code;
+            _pointerFuncs.Remove(name);
+            int open = signature.IndexOf(name + "(", StringComparison.Ordinal);
             int sigAt = code.IndexOf(signature + "\n", StringComparison.Ordinal);
-            if (sigAt < 0 || !signature.Contains(f.Name + "(", StringComparison.Ordinal)) return code;
+            if (open < 0 || sigAt < 0 || !signature.EndsWith(")", StringComparison.Ordinal)) return code;
+            var decls = ParamDecls(signature.Substring(open + name.Length + 1, signature.Length - open - name.Length - 2));
+            var ps = decls.Where(p => p.IsValue).Select(p => p.Name).ToArray();
+            if (ps.Length == 0) return code;
             int bodyAt = sigAt + signature.Length + 1;
-            string body = code.Substring(bodyAt);
+            int endAt = code.IndexOf("\n}\n", bodyAt - 1, StringComparison.Ordinal);
+            if (endAt < 0) return code;
+            string body = code.Substring(bodyAt, endAt + 3 - bodyAt), rest = code.Substring(endAt + 3);
             var written = ps.Where(p => WritesParam(body, p)).ToHashSet(StringComparer.Ordinal);
-            string head = signature.Substring(0, signature.IndexOf(f.Name + "(", StringComparison.Ordinal));
-            string newSignature = $"{head}{f.Name}_p({string.Join(", ", ps.Select(p => $"const Value* {p}_p"))})";
+            string head = signature.Substring(0, open);
+            string newSignature = $"{head}{name}_p({PointerParams(decls)})";
             // the copies of the written parameters right after the brace that opens the body
             int brace = body.IndexOf("{\n", StringComparison.Ordinal);
             if (brace < 0) return code;
@@ -62,9 +86,9 @@ namespace fire.Native
             sb.Append(code, 0, sigAt);
             foreach (var p in readOnly) sb.Append($"#define {p} (*{p}_p)\n");
             sb.Append(newSignature).Append('\n').Append(body);
-            if (!body.EndsWith("\n", StringComparison.Ordinal)) sb.Append('\n');
             foreach (var p in readOnly) sb.Append($"#undef {p}\n");
-            _pointerFuncs[f.Name] = ps;
+            sb.Append(rest);
+            _pointerFuncs[name] = (decls.Select(p => p.Name).ToArray(), decls.Select(p => p.IsValue).ToArray());
             return sb.ToString();
         }
 
@@ -89,7 +113,7 @@ namespace fire.Native
                 ours[i] = !inPackage;
             }
             var needsValues = new HashSet<string>(StringComparer.Ordinal);
-            var protoLine = new Regex(@"^((?:FIRE_MAYBE_UNUSED )?static Value )([A-Za-z_]\w*)\((.*)\);$");
+            var protoLine = new Regex(@"^((?:FIRE_MAYBE_UNUSED )?static [A-Za-z_]\w* )([A-Za-z_]\w*)\((.*)\);$");
             var name = new Regex(@"(?<![\w.>])([A-Za-z_]\w*)(?!\w)");
             for (int i = 0; i < lines.Length; i++)
             {
@@ -99,11 +123,12 @@ namespace fire.Native
             }
             for (int i = 0; i < lines.Length; i++)
             {
-                if (!ours[i] || protoLine.Match(lines[i]) is not { Success: true } pm || !_pointerFuncs.TryGetValue(pm.Groups[2].Value, out var ps)) continue;
+                if (!ours[i] || protoLine.Match(lines[i]) is not { Success: true } pm || !_pointerFuncs.ContainsKey(pm.Groups[2].Value)) continue;
                 string fn = pm.Groups[2].Value, prefix = pm.Groups[1].Value;
-                string proto = $"{prefix}{fn}_p({string.Join(", ", ps.Select(p => $"const Value* {p}_p"))});";
+                var decls = ParamDecls(pm.Groups[3].Value);
+                string proto = $"{prefix}{fn}_p({PointerParams(decls)});";
                 if (needsValues.Contains(fn))
-                    proto += $"\nFIRE_MAYBE_UNUSED static Value {fn}({string.Join(", ", ps.Select(p => $"Value {p}"))}) {{ return {fn}_p({string.Join(", ", ps.Select(p => "&" + p))}); }}";
+                    proto += $"\nFIRE_MAYBE_UNUSED {prefix.Replace("FIRE_MAYBE_UNUSED ", "")}{fn}({pm.Groups[3].Value}) {{ return {fn}_p({string.Join(", ", decls.Select(p => p.IsValue ? "&" + p.Name : p.Name))}); }}";
                 lines[i] = proto;
             }
             return string.Join("\n", lines);
@@ -127,14 +152,14 @@ namespace fire.Native
                 if (!m.Success || m.Index != pos) { pos++; continue; }
                 string fn = m.Groups[1].Value;
                 int end = m.Index + m.Length;
-                if (!_pointerFuncs.TryGetValue(fn, out var ps)) { pos = end; continue; }
+                if (!_pointerFuncs.TryGetValue(fn, out var pf)) { pos = end; continue; }
                 int open = end;
                 while (open < line.Length && line[open] == ' ') open++;
                 if (open >= line.Length || line[open] != '(') { needsValues.Add(fn); pos = end; continue; }   // (used as a pointer)
                 int close = MatchingParen(line, open);
                 if (close < 0) { needsValues.Add(fn); pos = end; continue; }
                 var args = SplitArgs(line.Substring(open + 1, close - open - 1));
-                if (args.Count != ps.Length || !args.All(a => AddressableArg.IsMatch(a)))
+                if (args.Count != pf.Names.Length || args.Where((a, k) => pf.ByAddress[k] && !AddressableArg.IsMatch(a)).Any())
                 {
                     needsValues.Add(fn);
                     pos = open + 1;   // (its arguments may hold calls of their own)
@@ -142,7 +167,8 @@ namespace fire.Native
                 }
                 sb ??= new StringBuilder(line.Length + 16);
                 sb.Append(line, copied, m.Index - copied);
-                sb.Append(fn).Append("_p(").Append(string.Join(", ", args.Select(a => "&" + a))).Append(')');
+                // (a C number of a C body stays by value - it may hold calls of its own)
+                sb.Append(fn).Append("_p(").Append(string.Join(", ", args.Select((a, k) => pf.ByAddress[k] ? "&" + a : RewriteCalls(a, name, needsValues)))).Append(')');
                 copied = pos = close + 1;
             }
             if (sb == null) return line;

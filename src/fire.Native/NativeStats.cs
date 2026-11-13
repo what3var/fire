@@ -81,8 +81,8 @@ namespace fire.Native
         private static string BaseName(string section)
         {
             string fn = section;
-            foreach (var suffix in new[] { "_b", "_c", "_p" })
-                if (fn.EndsWith(suffix, StringComparison.Ordinal) && Regex.IsMatch(fn, @"f\d+_[bcp]$")) { fn = fn[..^2]; break; }
+            // (a C body by address: `fN_c_p`)
+            if (Regex.Match(fn, @"^(.*f\d+)(?:_[bcp]|_c_p)$") is { Success: true } m) fn = m.Groups[1].Value;
             return fn;
         }
 

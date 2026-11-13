@@ -3221,7 +3221,8 @@ namespace fire.Native
 
             var entry = new Flow?[code.Count];
             f.Entry = entry;
-            var start = new Flow();
+            // (a constructor runs on an object made right before it - `new`, `: base(...)`, Reflect.New -: `self` is alive at its entry)
+            var start = new Flow { SelfAlive = f.Kind == FuncKind.Ctor && f.HasSelf };
             start.Scopes.Add(f.IsTop ? (GlobalScope, f.Kind == FuncKind.FireBody ? f.Proto!.ParamCount : 0) : (FunctionScope, f.ParamLike));
             entry[0] = start;
             // Parameters can be anything: assume they may be references (a call-site analysis could narrow this). A parameter declared int/float/bool
@@ -3553,10 +3554,15 @@ namespace fire.Native
                 else sb.AppendLine(f.Kind == FuncKind.FireBody ? $"{{ {call}; }}" : $"{{ return {call}; }}");
             }
             f.Code = PointerArgs(sb.ToString());
-            // (the pointer convention: CppGenerator.PointerCalls.cs - not for a function with a frame, a C body, a wrapper or an export)
-            if (PointerCallsOn && !framed && dbg == null && f.CAbi == null && defName == f.Name && f.Export == null && !f.External && f.Kind is not (FuncKind.Main or FuncKind.FireBody))
-                f.Code = PointerFunction(f, f.Code, defSignature);
-            else _pointerFuncs.Remove(f.Name);
+            // (the pointer convention: CppGenerator.PointerCalls.cs - not for a function with a frame, a wrapper or an export; a C body takes its Values by
+            // address and its C numbers by value, its wrapper with Values takes them all by address)
+            _pointerFuncs.Remove(f.Name);
+            if (f.CAbi != null) _pointerFuncs.Remove(CName(f));
+            if (PointerCallsOn && !framed && dbg == null && defName == f.Name && f.Export == null && !f.External && f.Kind is not (FuncKind.Main or FuncKind.FireBody))
+            {
+                f.Code = PointerFunction(f.CAbi != null ? CName(f) : f.Name, f.Code, defSignature);
+                if (f.CAbi != null) f.Code = PointerFunction(f.Name, f.Code, f.Signature);
+            }
             NoteCReturn(f);
         }
 
@@ -3952,7 +3958,8 @@ namespace fire.Native
         /// <summary>Set by an instruction that leaves `self` known to be alive (or not), see Flow.SelfAlive; null: SelfNeutral decides.</summary>
         private bool? _selfAliveAfter;
         private static bool SelfNeutral(OpCode op) => op is OpCode.LoadConst or OpCode.LoadLocal or OpCode.LoadThis or OpCode.LoadGlobal or OpCode.Pop or OpCode.Dup
-            or OpCode.StoreLocal or OpCode.StoreLocalPop or OpCode.DeclareLocal or OpCode.ClaimToScope or OpCode.CopyArgs or OpCode.GuardTop;
+            or OpCode.StoreLocal or OpCode.StoreLocalPop or OpCode.DeclareLocal or OpCode.ClaimToScope or OpCode.CopyArgs or OpCode.GuardTop
+            or OpCode.GuardLocal or OpCode.GuardLocalType;   // (the checks of the parameters run no code of the program: they convert or throw)
         private static bool AnyAlias(Flow st) { foreach (var a in st.Alias) if (a != null) return true; return false; }
         /// <summary>A load of a variable may leave the slot an alias of it (Flow.Alias): not in a debug build, not in a function with `try` (its catch blocks see
         /// the slots), not in one that takes the address of a local (a write through the pointer would not be seen).</summary>
@@ -4021,6 +4028,7 @@ namespace fire.Native
             string VR(int k) => k >= 0 && k < 64 && st.Alias[k] is { } aliasedV ? aliasedV : SlotName(st.Region, k);
             if (AnyAlias(st) && !AliasAware(ins.Op)) MaterializeAliases(st, E);
             if (st.Scalar != 0 && !ScalarAware(ins.Op) && !TypedNativeCall(ins) && !(ins.Op == OpCode.CallStaticMethod && CAbiStaticCallee(f, ins) != null) && !(ins.Op == OpCode.CallMethod && CAbiMethodCallee(f, st, ins) != null)
+                && !(ins.Op is OpCode.NewObject or OpCode.NewObjectOwned && CAbiNewCallee(f, st, ins) != null)
                 && !GuardTopProven(st, ins)
                 && !(ins.Op == OpCode.Return && f.CAbi is { RetType: not 0 }) && CFieldAccess(f, st, ins) == null) MaterializeAll(f, st, E);
             // (a field that is a C number: CppGenerator.CFields.cs)
@@ -5579,7 +5587,13 @@ namespace fire.Native
                     _fieldNames.Add(field);
                     string sfObj = SR(d - 2), sfValue = SR(d - 1);
                     string initOpen = InitOpen(sfObj), initClose = initOpen.Length > 0 ? " g_recInit = wi_.next; }" : "";
-                    if (ObjSlot(d - 2) && DirectSetField(ObjClass(Ty(d - 2)), field, sfObj, sfValue, Ty(d - 1), f, IsNullable(Ty(d - 2))) is { } direct) E(initOpen + direct + initClose);
+                    // (`this.x = v`: after one check `self` is known to be alive until something may destroy it - Flow.SelfAlive - and needs no further check)
+                    bool onSelf = sfObj == "self" && f.HasSelf;
+                    if (ObjSlot(d - 2) && DirectSetField(ObjClass(Ty(d - 2)), field, sfObj, sfValue, Ty(d - 1), f, IsNullable(Ty(d - 2)), objAlive: onSelf && st.SelfAlive) is { } direct)
+                    {
+                        E(initOpen + direct + initClose);
+                        if (onSelf && !_usesProbes) _selfAliveAfter = true;   // (checked: `self` lives - unless a probe's setter ran)
+                    }
                     else if (ObjSlot(d - 2) && !IsNullable(Ty(d - 2)) && DirectAccessor(ObjClass(Ty(d - 2)), field, true, f) is { } setter)
                         E($"{initOpen}if (FIRE_UNLIKELY(!leafAlive({sfObj}))) destroyedError({sfObj}); else {{ Value r_ = {GetFunc(setter, FuncKind.Method).Name}({sfObj}, {sfValue}); adopt(r_, &{OwnerList()}); }}{initClose}");
                     else E($"{initOpen}{FieldFn("sf", field)}({sfObj}, {sfValue}{FieldTail(field, f, () => "&" + OwnerList())});{initClose}");
@@ -5721,6 +5735,17 @@ namespace fire.Native
                     int slot = d - argc - (owned ? 1 : 0);
                     string ownerExpr = owned ? $"objOwned(asObj({S(slot)}))" : "&" + OwnerList();
                     long mask = ArgMask();
+                    if (SlotScalars() && newNames == null && mask == 0 && _pendingNewTArgs == null && ReferenceEquals(CAbiNewCallee(f, st, ins), target) && CAbiOf(target) is { } ctorAbi)
+                    {
+                        // the C body of the constructor (Ebene 2): the arguments as C numbers - checked here when their type does not prove them
+                        var cargs = CAbiArgs(ctorAbi, d - argc, argc);
+                        cargs.Insert(0, "o");
+                        E($"{{ Value o = {NewObjectCall(cls, ownerExpr)}; {(cls.Rc.IsActor ? "markActor(o); " : "")}{RecInitEnter(cls)}{CName(target)}({string.Join(", ", cargs)}); {RecInitLeave(cls)}ctorEnd(o); {T(slot)} = o; }}");
+                        Check();
+                        SetR(slot, false);
+                        SetT(slot, ObjType(cls.Rc)); _kindsKept = true;
+                        d = slot + 1; return Next();
+                    }
                     ArgsBefore(d - argc, argc, mask);
                     var (dpre, dargs) = newNames != null ? NamedCallArgsOrFail(ctor, d - argc, argc, newNames, mask, "o", "new " + cls.Rc.Name) : DefaultArgs(ctor, argc, "o", "&" + OwnerList());
                     string ctorArgs = newNames != null ? "" : CallArgs(d - argc, argc, mask, ctor.RefMask);
