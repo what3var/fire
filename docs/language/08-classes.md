@@ -35,6 +35,22 @@ print(Animal.created)       // 1
 - Inside a method `this` is the object. A field can also be written without `this.` (`name` instead of `this.name`) when no local variable has the
   same name.
 - `static` fields and methods belong to the class: `Animal.created`, `Calc.Twice(2)`. A static method has no `this`.
+- **Order of the static initial values**: they are set once at program start, before the first statement of the program runs - class by class in
+  the order of the program (the standard library and the imported libraries first, then the files of the project in their order, each from the
+  top down), in a class from the top down. An initial value may read a static field whose initial value came before; one that only comes later is
+  an error when the program is compiled (it would still be `undefined`). A method called from an initial value is not checked - it sees what is
+  set so far. A lambda in an initial value runs later and may read every static field.
+
+  ```fire
+  class Sizes {
+      static int tile = 16
+      static int chunk = Sizes.tile * 8      // fine: tile comes first
+      // static int row = Grid.width          // error: Grid.width is only set later
+  }
+  class Grid {
+      static int width = Sizes.chunk * 4      // fine: Sizes comes first
+  }
+  ```
 
 ## Parameters
 

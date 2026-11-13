@@ -279,6 +279,8 @@ namespace fire.Compiler
         ("E4070", ErrorArea.Resolver, "The parameter '{*}' of the inline C function '{*}' needs a type (int, float, bool, char, string, byte[], any or a pointer)"),
         ("E4071", ErrorArea.Resolver, "The parameter '{*}' of the inline C function '{*}' has a type C cannot take (int, float, bool, char, string, byte[], any or a pointer)"),
         ("E4072", ErrorArea.Resolver, "The inline C function '{*}' has a result type C cannot give (int, float, bool, char, string, any, a pointer or undefined)"),
+        ("E4073", ErrorArea.Resolver, "The initialiser of the static field '{*}' reads the field itself - it is still undefined there"),
+        ("E4074", ErrorArea.Resolver, "The initialiser of the static field '{*}' reads '{*}', whose initialiser only runs later (static fields are initialised once at program start: class by class in the order of the program, in a class from the top down) - declare '{*}' first"),
         ("E5001", ErrorArea.Compiler, "Only the first 16 parameters of a method can be 'ref'."),
         ("E5002", ErrorArea.Compiler, "Internal error: 'class extends {*}' was not merged (the program must be produced by Parser.Parse()/ParseMultiple())."),
         ("E5003", ErrorArea.Compiler, "Statement {*} is not supported."),

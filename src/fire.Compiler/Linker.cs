@@ -403,7 +403,7 @@ namespace fire.Compiler
                     string importName = args[0].AsString();
                     if (ownImport != null && string.Equals(importName, ownImport, StringComparison.OrdinalIgnoreCase)) return null;
                     if (ProjectLibraries.TryImport(Plan, importName, projectImports, nativeImports)) return null;   // a library of the project: its files come with it
-                    foreach (var key in ImportedPreludes.WithDependencies(ImportedPreludes.ParseImportName(importName))) nativeImports.Add(key);
+                    foreach (var key in ProjectLibraries.ImportKeys(importName, name => ProjectLibraries.UnknownHint(Plan, name))) nativeImports.Add(key);
                     return null;
                 }
                 throw new Exception($"Wrong arguments for the 'import' directive.");

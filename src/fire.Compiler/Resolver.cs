@@ -986,10 +986,28 @@ namespace fire.Compiler
             int dot = dotted.IndexOf('.');
             string root = dot < 0 ? dotted : dotted.Substring(0, dot);
             // (the order of the lookup: a local variable and a member of the object first - they win over every class and enum, the own as well as a global one)
-            if (IsVariableName(root)) return null;
+            if (IsChainRoot(root)) return null;
             for (string? ns = NamespaceOf(_currentClass?.Name); !string.IsNullOrEmpty(ns); ns = NamespaceOf(ns))
                 if (known(ns + "." + dotted)) return ns + "." + dotted;
             return known(dotted) ? dotted : null;
+        }
+
+        /// <summary>Can `name` start the chain `name.X` as a value here: a variable of a scope, or a field or property of the class that is reachable - an
+        /// instance one not in a static method or static initialiser (there is no `this`), and no method (`Environment.Platform` in a static method of a class
+        /// with a test method `Environment()` is the class Environment)?</summary>
+        private bool IsChainRoot(string name)
+        {
+            for (var s = _current; s != null; s = s.Parent)
+                if (!s.IsGlobal && s.Slots.ContainsKey(name)) return true;
+            var visited = new HashSet<ClassDecl>();
+            for (var cd = _currentClass; cd != null && visited.Add(cd); cd = GetBaseClassDecl(cd))
+                foreach (var member in cd.Members)
+                    switch (member)
+                    {
+                        case FieldDecl fd when fd.Name == name: return fd.IsStatic || !_inStaticMethod;
+                        case PropertyDecl pd when pd.Name == name: return pd.IsStatic || !_inStaticMethod;
+                    }
+            return false;
         }
 
         /// <summary>Is `name` a variable here: of a scope (not the global one) or a member of the object?</summary>
@@ -1253,7 +1271,7 @@ namespace fire.Compiler
 
             if (_currentClass != null && FindMemberInClassChain(_currentClass, name) is { } member)
             {
-                if (member.IsStatic) return new ResolvedRef.StaticMember(member.ClassName);
+                if (member.IsStatic) { CheckStaticInitOrder(member.ClassName, name, line); return new ResolvedRef.StaticMember(member.ClassName); }
                 // (a fire body runs without `this`: its own variables and the captures - `taking`, `with` - win over a field of the same name)
                 if (_fireScope != null && !_inBoundLambda)
                 {
@@ -1829,9 +1847,32 @@ namespace fire.Compiler
             _current = new ResolverScope(_globalScope);
             bool savedInStaticMethod = _inStaticMethod;
             _inStaticMethod = fd.IsStatic; // SPEC "Static members" - no 'this' in a static field initialiser
+            var savedStaticInit = _staticInit;
+            _staticInit = fd.IsStatic && _currentClass != null ? (_currentClass.Name, fd.Name) : null;
             ResolveExpr(fd.Initializer);
+            if (_staticInit is { } done) _staticInitDone.Add(done);
+            _staticInit = savedStaticInit;
             _inStaticMethod = savedInStaticMethod;
             _current = saved;
+        }
+
+        /// <summary>The static field whose initialiser is being resolved (null: none), and the static fields whose initialisers are done - in the order in which
+        /// they run (SPEC "Static members": once at program start, class by class in the order of the program, in a class from the top down).</summary>
+        private (string Class, string Field)? _staticInit;
+        private readonly HashSet<(string Class, string Field)> _staticInitDone = new();
+
+        /// <summary>A static initialiser reads the static field `name` of the class `className` (the class written, or one of its bases): an error when that
+        /// field has an initialiser that only runs later - it would still be `undefined` (a read of another class's field that has none is fine).</summary>
+        private void CheckStaticInitOrder(string className, string name, int line)
+        {
+            if (_staticInit == null || !_classes.TryGetValue(className, out var cd) || FindMemberInClassChain(cd, name) is not { IsStatic: true } member) return;
+            if (!_classes.TryGetValue(member.ClassName, out var owner)) return;
+            if (owner.Members.OfType<FieldDecl>().FirstOrDefault(f => f.Name == name && f.IsStatic) is not { Initializer: not null }) return;
+            if (_staticInitDone.Contains((member.ClassName, name))) return;
+            var (initClass, initField) = _staticInit.Value;
+            AddError(new ResolverException((member.ClassName, name) == _staticInit.Value
+                ? $"The initialiser of the static field '{initClass}.{initField}' reads the field itself - it is still undefined there"
+                : $"The initialiser of the static field '{initClass}.{initField}' reads '{member.ClassName}.{name}', whose initialiser only runs later (static fields are initialised once at program start: class by class in the order of the program, in a class from the top down) - declare '{member.ClassName}.{name}' first", line));
         }
 
         /// <summary>Optional parameters (with a default value) must be CONTIGUOUS at the end of the
@@ -2083,6 +2124,7 @@ namespace fire.Compiler
                         CheckStaticMemberExists(staticClassName, me);
                         WarnForClassUse(staticClassName, me.Line);
                         WarnForMember(ClassChainNames(staticClassName), me.Name, _calleeArity.TryGetValue(me, out int staticArgs) ? staticArgs : null, me.Line);
+                        CheckStaticInitOrder(staticClassName, me.Name, me.Line);
                         _refs[me] = new ResolvedRef.StaticMember(staticClassName);
                         break;
                     }
@@ -2668,8 +2710,10 @@ namespace fire.Compiler
         {
             bool savedBound = _inBoundLambda;
             _inBoundLambda = lambda.OnTarget != null;
+            var savedStaticInit = _staticInit;
+            _staticInit = null;   // (a lambda in a static initialiser runs later: it may read any static field)
             try { ResolveLambdaCore(lambda); }
-            finally { _inBoundLambda = savedBound; }
+            finally { _inBoundLambda = savedBound; _staticInit = savedStaticInit; }
         }
 
         private void ResolveLambdaCore(LambdaExpr lambda)

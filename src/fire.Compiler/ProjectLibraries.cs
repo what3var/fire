@@ -30,6 +30,24 @@ namespace fire.Compiler
             return result;
         }
 
+        /// <summary>What a message about the unknown import `name` adds when the project references libraries: the names they are imported by (a library whose
+        /// project is called `name` but that has its own `import` is named as such); null when the project references none.</summary>
+        public static string? UnknownHint(BuildPlan? plan, string name)
+        {
+            if (plan == null || plan.Libraries.Count == 0) return null;
+            var libraries = plan.Libraries.Values.DistinctBy(l => l.ImportName, StringComparer.OrdinalIgnoreCase).ToList();
+            if (libraries.FirstOrDefault(l => string.Equals(l.Name, name, StringComparison.OrdinalIgnoreCase)) is { } same)
+                return $"The library '{same.Name}' is imported as `#import \"{same.ImportName}\"` (its 'import').";
+            return "The libraries the project references are imported as: " + string.Join(", ", libraries.Select(l => $"\"{l.ImportName}\"").OrderBy(s => s, StringComparer.OrdinalIgnoreCase)) + ".";
+        }
+
+        /// <summary>The keys of `#import "name"` (an extension, a package); an unknown one throws, its message with UnknownHint.</summary>
+        public static IEnumerable<string> ImportKeys(string name, Func<string, string?>? hint)
+        {
+            try { return ImportedPreludes.WithDependencies(ImportedPreludes.ParseImportName(name)).ToList(); }
+            catch (PreprocessorException e) when (hint?.Invoke(name) is { } more) { throw new PreprocessorException(e.Message + " " + more, e); }
+        }
+
         /// <summary>Is `name` the import name of a library of the plan? Adds the (canonical) name to `imports` when it is - and, for a library with C++ natives, their key to `nativeImports`.</summary>
         public static bool TryImport(BuildPlan? plan, string name, List<string> imports, HashSet<string>? nativeImports = null)
         {

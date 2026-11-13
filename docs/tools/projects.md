@@ -95,7 +95,7 @@ line (`util.fire:12: a library has no entry point ...`). A library is what other
 "references": [ { "project": "../Core/Core.fireproj" } ]
 ```
 
-The reference makes the library **available**; `#import "Core"` (the import name is `import`, default: the project name) **turns it on** - exactly as with an installed package, so
+The reference makes the library **available**; `#import "Core"` (the import name is `import`, default: the project name - a character a name cannot have becomes `_`, the dots stay: `Raser.Core` is imported as `#import "Raser.Core"`; an unknown name in an `#import` names the import names of the referenced libraries) **turns it on** - exactly as with an installed package, so
 the same source compiles whether `Core` is a project of the solution or a package from `ember`. Libraries can reference libraries (transitively, no cycles, the ones that others
 need come first); only a library can be referenced.
 

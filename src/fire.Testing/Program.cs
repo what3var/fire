@@ -20883,6 +20883,67 @@ else
             process h
             print("got " + h.got)
             """),
+        ("List.Sort: ints, Texte, floats, leer, mit Vergleich (stabil, Objekte), 1000 Elemente absteigend", """
+            var a = new List<int>([5, 3, 9, 1, 3, 7, 2, 8, 6, 4, 0])
+            a.Sort()
+            var t = ""
+            foreach (x in a) { t = t + x + " " }
+            print(t)
+            var w = new List<string>(["pear", "apple", "fig", "banana"])
+            w.Sort()
+            print(w[0] + " " + w[1] + " " + w[2] + " " + w[3])
+            w.Sort((x, y) => x.Length - y.Length)
+            print(w[0] + " " + w[1] + " " + w[2] + " " + w[3])
+            class P { string name
+                int age
+                construct(string n, int a) { this.name = n; this.age = a } }
+            var ps = new List<P>()
+            ps.Add(new P("a", 30)); ps.Add(new P("b", 20)); ps.Add(new P("c", 30)); ps.Add(new P("d", 10))
+            ps.Sort((x, y) => x.age - y.age)
+            var s = ""
+            foreach (p in ps) { s = s + p.name + p.age + " " }
+            print(s)
+            var f = new List<float>([2.5, -1.0, 0.5])
+            f.Sort()
+            print(f[0] + " " + f[1] + " " + f[2])
+            var e = new List<int>()
+            e.Sort()
+            print(e.Count)
+            var big = new List<int>()
+            for (int i = 0; i < 1000; i++) { big.Add((i * 7919) % 1000) }
+            big.Sort((x, y) => y - x)
+            print(big[0] + " " + big[999] + " " + big.Count)
+            """),
+        ("List.Sort einer Liste, die ihre Elemente besitzt (Owns.Values): sortiert wird nichts zerstoert, Clear zerstoert alle", """
+            class Node {
+                int v
+                construct(int v) { this.v = v }
+                destruct() { print("destroyed " + this.v) }
+            }
+            var l = new List<Node>(Owns.Values)
+            l.Add(new Node(3)); l.Add(new Node(1)); l.Add(new Node(2))
+            l.Sort((a, b) => a.v - b.v)
+            print("sorted " + l[0].v + l[1].v + l[2].v)
+            l.Clear()
+            print("cleared " + l.Count)
+            """),
+        ("C-Rumpf mit einem Value unbekannten Typs als Ergebnis: der Platz vergisst den Typ des ersten Arguments (z0 + Shape.Meters(shape, 0) las den float als int - Ruhrpott-Raser)", """
+            class Shape {
+                static defined float Meters(defined int shape, defined int corner) { any v = shape > 100000 ? "x" : ((shape >> (corner * 2)) & 3) * 0.05; return v }
+                defined float Scaled(defined int shape) { any v = shape > 100000 ? "x" : shape * 0.25; return v }
+            }
+            int shapes[] = [255, 254, 253]
+            float sum = 0.0
+            var s = new Shape()
+            for (int i = 0; i < 3; i++) {
+                int shape = shapes[i]
+                float z0 = 1.0
+                float h0 = z0 + Shape.Meters(shape, 0)
+                float h1 = z0 + s.Scaled(shape)
+                sum = sum + h0 + h1
+            }
+            print(sum)
+            """),
         ("Bit-Hilfen: >>> und >>>=, Bits (PopCount, LeadingZeros, TrailingZeros, Rotate, ReverseBytes/Bits, Extract/Insert, Float-Bits 64/32/16), Puffer: ReadInt16 ... WriteFloat64 in beiden Byte-Reihenfolgen, Fill, CopyTo (ueberlappend), Slice, IndexOf, Compare, Fehler", """
             // logical shift
             print(-1 >>> 60)

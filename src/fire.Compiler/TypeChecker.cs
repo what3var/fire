@@ -159,6 +159,9 @@ namespace fire.Compiler
         /// <summary>An expression tree (`lambda expression<T>`) takes only a lambda written at the call with an expression body, and in it nothing that changes
         /// something (an assignment, `++`, `take`, a block) - an error in lax mode too.</summary>
         public const string ExpressionTreeCode = "TC030";
+        /// <summary>A temporary of the statement (`new X()`, the result of a call that gives a new object) goes to a constructor that keeps it in a field
+        /// without taking it: it dies at the end of the statement, the field holds a destroyed object (a warning in strict mode too).</summary>
+        public const string StoredTemporaryCode = "TC031";
         private ExpressionTrees _trees = new();
         private Dictionary<Expr, string>? _treeTypes;
 
@@ -484,7 +487,7 @@ namespace fire.Compiler
         private void Report(string code, string message, int line)
         {
             if (_source < _reportFrom) return;
-            _diagnostics.Add(new Diagnostic(line, message, Strict && code is not (UnitLossCode or AssignInConditionCode or SwitchMissingCode or SetterClaimCode or LateVarTypeCode or TakeIntoCopyCode) ? DiagnosticSeverity.Error : DiagnosticSeverity.Warning, code));
+            _diagnostics.Add(new Diagnostic(line, message, Strict && code is not (UnitLossCode or AssignInConditionCode or SwitchMissingCode or SetterClaimCode or LateVarTypeCode or TakeIntoCopyCode or StoredTemporaryCode) ? DiagnosticSeverity.Error : DiagnosticSeverity.Warning, code));
         }
 
         /// <summary>The condition of `if`, `while` and `for` must be a bool: a number is no condition (`if (n)`), the VM throws an ArgumentException for it.</summary>
@@ -3050,6 +3053,7 @@ namespace fire.Compiler
                     : Infer(a, named[i] is { ByRef: false } p ? Declared(p.Type, p.ArrayRanks.Count, map) : null)).ToList();
                 CheckArguments(named, namedArgs, n.Args, "new " + PlainName(plain), map);
                 NoteCall(n, CtorKey(plain, ctors[0].Params.Count), ctors[0].Params, named, namedArgs, n.Args);
+                CheckStoredTemporaries(ctors[0], named, n.Args, plain);
                 return StaticType.ClassOf(plain, typeArgs);
             }
             var ctor = ctors.Count == 1 ? ctors[0] : null;
@@ -3064,6 +3068,7 @@ namespace fire.Compiler
                     var chosen = asMethods.First(x => ReferenceEquals(x.Method, picked)).Ctor;
                     CheckArguments(chosen.Params, ctorArgs, n.Args, "new " + PlainName(plain), map);
                     NoteCall(n, CtorKey(plain, chosen.Params.Count), chosen.Params, chosen.Params.Take(ctorArgs.Count).Cast<LambdaParam?>().ToList(), ctorArgs, n.Args);
+                    CheckStoredTemporaries(chosen, chosen.Params.Take(ctorArgs.Count).Cast<LambdaParam?>().ToList(), n.Args, plain);
                     if (ConstructorHint(decl, plain, chosen, asMethods.Select(x => x.Method).ToList(), picked, ctorArgs, map) is { } hint) _overloadHints[n] = hint;
                 }
                 return StaticType.ClassOf(plain, typeArgs);
@@ -3074,8 +3079,106 @@ namespace fire.Compiler
             {
                 CheckArguments(ctor.Params, args, n.Args, "new " + PlainName(plain), map);
                 NoteCall(n, CtorKey(plain, ctor.Params.Count), ctor.Params, ctor.Params.Take(args.Count).Cast<LambdaParam?>().ToList(), args, n.Args);
+                CheckStoredTemporaries(ctor, ctor.Params.Take(args.Count).Cast<LambdaParam?>().ToList(), n.Args, plain);
             }
             return StaticType.ClassOf(plain, typeArgs);
+        }
+
+        // -------------------------------------------------------------------------------------------------------------
+        // TC031: a temporary that a constructor keeps without taking it
+        // -------------------------------------------------------------------------------------------------------------
+
+        /// <summary>`new Voxelizer(Sample.Make())` where the constructor does `this.sample = sample`: the new object belongs to the statement (its temporaries),
+        /// the field only refers to it - at the end of the statement it is destroyed. Said for an argument that is surely such a temporary (`new X(...)`, the
+        /// call of a method whose every `return` gives a new object or a local), when the constructor assigns the parameter to a field plainly and does
+        /// nothing with its ownership (`take`, `try take`, `TakeTo`, ...).</summary>
+        private void CheckStoredTemporaries(ConstructorDecl ctor, IReadOnlyList<LambdaParam?> argParams, IReadOnlyList<Expr> args, string className)
+        {
+            for (int i = 0; i < args.Count && i < argParams.Count; i++)
+            {
+                // (only what has an owner: an object of a class or an array - a string or a number is copied)
+                if (argParams[i] is not { ByRef: false } p || !HoldsOwned(p.Type, p.ArrayRanks.Count) || !IsStatementTemporary(args[i])) continue;
+                if (PlainlyStoredField(ctor, p.Name) is not { } field) continue;
+                Report(StoredTemporaryCode,
+                    $"'{ShortText(args[i])}' is a temporary of this statement: the constructor of '{PlainName(className)}' keeps it in the field '{field}' without taking it, so it is destroyed at the end of the statement and the field refers to a destroyed object. Keep it in a variable that lives long enough, or let the constructor take it ('this.{field} = try take {p.Name}')",
+                    args[i].Line);
+            }
+        }
+
+        private static string ShortText(Expr e) => e switch
+        {
+            NewExpr n => $"new {n.ClassRef.BaseName}(...)",
+            CallExpr { Callee: MemberExpr m } => $"{(m.Target is IdentifierExpr t ? t.Name + "." : "")}{m.Name}(...)",
+            CallExpr { Callee: IdentifierExpr f } => $"{f.Name}(...)",
+            _ => "the argument",
+        };
+
+        /// <summary>Surely a temporary of the statement: a new object, or the result of a call of a known method that always gives a new object or a local of its own.</summary>
+        private bool IsStatementTemporary(Expr e) => e switch
+        {
+            NewExpr n => _classes.ContainsKey(PlainName(n.ClassRef.BaseName)) || n.ClassRef.TypeArgs is { Count: > 0 },
+            CallExpr c => _callTargets.TryGetValue(c, out var target) && ReturnsFresh(target),
+            _ => false,
+        };
+
+        /// <summary>Is a value of the declared type an object or an array (something with an owner)?</summary>
+        private bool HoldsOwned(TypeRef? type, int arrayRanks) =>
+            type != null && (arrayRanks > 0 || type.ArrayRank > 0 || type.TypeArgs is not { Count: > 0 } && _classes.ContainsKey(PlainName(type.BaseName))
+                || type.TypeArgs is { Count: > 0 } && _classes.ContainsKey(GenericName(PlainName(type.BaseName), type.TypeArgs.Count)));
+
+        private readonly Dictionary<MethodDecl, bool> _returnsFresh = new(ReferenceEqualityComparer.Instance);
+
+        private bool ReturnsFresh(MethodDecl m)
+        {
+            if (_returnsFresh.TryGetValue(m, out bool known)) return known;
+            // (a local only when it surely holds a new value of its own: declared with `new ...` and never given anything else - `var c = this` is not new)
+            var nodes = AstNodes(m.Body).ToList();
+            var reassigned = new HashSet<string>(nodes.OfType<AssignExpr>().Select(a => a.Target).OfType<IdentifierExpr>().Select(t => t.Name));
+            var locals = new HashSet<string>(nodes.OfType<VarDeclStmt>().Where(v => v.Initializer is NewExpr or NewArrayExpr or ArrayLiteralExpr && !reassigned.Contains(v.Name)).Select(v => v.Name));
+            var returns = nodes.OfType<ReturnStmt>().ToList();
+            bool fresh = returns.Count > 0 && returns.All(r => r.Value is NewExpr || r.Value is IdentifierExpr id && locals.Contains(id.Name) && m.Params.All(p => p.Name != id.Name));
+            return _returnsFresh[m] = fresh;
+        }
+
+        /// <summary>The field the constructor assigns the parameter `name` to plainly (`this.f = name`, `f = name`), when it does nothing else with its ownership; null otherwise.</summary>
+        private static string? PlainlyStoredField(ConstructorDecl ctor, string name)
+        {
+            string? field = null;
+            foreach (var node in AstNodes(ctor.Body))
+            {
+                switch (node)
+                {
+                    case UnaryExpr { Op: UnaryOp.Take or UnaryOp.TryTake, Operand: IdentifierExpr id } when id.Name == name: return null;
+                    case CallExpr { Callee: MemberExpr { Target: IdentifierExpr id } m } when id.Name == name && m.Name.Contains("Take", StringComparison.Ordinal): return null;
+                    case CallExpr { Callee: MemberExpr m } call when m.Name.Contains("Take", StringComparison.Ordinal) && call.Args.Any(a => a is IdentifierExpr id && id.Name == name): return null;
+                    case VarDeclStmt v when v.Name == name: return null;   // (shadowed)
+                    case AssignExpr { Target: IdentifierExpr id } when id.Name == name: return null;   // (the parameter is given something else)
+                    case AssignExpr { Value: IdentifierExpr v, Target: MemberExpr { Target: ThisExpr } t } when v.Name == name: field ??= t.Name; break;
+                }
+            }
+            return field;
+        }
+
+        /// <summary>Every node (expression and statement) below `root`, in source order - by the properties of the records, so that no kind of node is missed.</summary>
+        private static IEnumerable<object> AstNodes(object root)
+        {
+            var stack = new Stack<object>();
+            stack.Push(root);
+            while (stack.Count > 0)
+            {
+                var node = stack.Pop();
+                yield return node;
+                var children = new List<object>();
+                foreach (var prop in node.GetType().GetProperties())
+                {
+                    if (prop.GetIndexParameters().Length > 0 || prop.Name == "EqualityContract") continue;
+                    var value = prop.GetValue(node);
+                    if (value is Expr or Stmt) children.Add(value);
+                    else if (value is System.Collections.IEnumerable list and not string)
+                        foreach (var item in list) if (item is Expr or Stmt) children.Add(item);
+                }
+                for (int k = children.Count - 1; k >= 0; k--) stack.Push(children[k]);
+            }
         }
     }
 }
