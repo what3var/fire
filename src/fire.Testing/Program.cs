@@ -31124,14 +31124,14 @@ else
         string Lit2(string? t) => t == null ? "undefined" : "\"" + t.Replace("\\", "\\\\").Replace("\"", "\\\"") + "\"";
         string sopen = $"MsDb.Open({Lit2(sqlUrl)}, {Lit2(Environment.GetEnvironmentVariable("FIRE_TEST_SQLSERVER_USER"))}, {Lit2(Environment.GetEnvironmentVariable("FIRE_TEST_SQLSERVER_PASSWORD"))})";
         string smem = natCases.First(c => c.Name.StartsWith("Data/memory:", StringComparison.Ordinal)).Source;
-        string sheader = smem.Substring(0, smem.IndexOf("print(\"memory\")", StringComparison.Ordinal)).Replace("#import \"data.memory\"", "#import \"data.sqlserver\"");
+        string sheader = smem.Substring(0, smem.IndexOf("print(\"memory\")", StringComparison.Ordinal)).Replace("#import \"data.memory\"", "#import \"data.sqlserver\"\n#import \"net\"\n#import \"io\"");
         string sorm = smem.Substring(smem.IndexOf("var cdb = new Data.Connection(\"memory:\")", StringComparison.Ordinal))
             .Replace("new Data.Connection(\"memory:\")", "MsDb.Open(MsDb.url, MsDb.user, MsDb.password)")
             .Replace("cdb.Rows(\"select name, type, pk, notnull from _columns where table_name = 'people'\")", "cdb.Rows(\"select c.COLUMN_NAME as name, c.DATA_TYPE as type, case when k.COLUMN_NAME is null then 0 else 1 end as pk, case when c.IS_NULLABLE = 'NO' then 1 else 0 end as notnull from INFORMATION_SCHEMA.COLUMNS c left join INFORMATION_SCHEMA.KEY_COLUMN_USAGE k on k.TABLE_NAME = c.TABLE_NAME and k.COLUMN_NAME = c.COLUMN_NAME and OBJECTPROPERTY(OBJECT_ID(k.CONSTRAINT_SCHEMA + '.' + k.CONSTRAINT_NAME), 'IsPrimaryKey') = 1 where c.TABLE_NAME = 'people' order by c.ORDINAL_POSITION\")")
             .Replace("\"select name from _columns where table_name = ?\"", "\"select COLUMN_NAME from INFORMATION_SCHEMA.COLUMNS where TABLE_NAME = ?\"")
             .Replace("create table Tag(code text primary key, label text)", "create table Tag(code nvarchar(20) primary key, label nvarchar(100))")
             .Replace("create unique index ix_memo_text on Memo (text)", "alter table Memo alter column [text] nvarchar(450); create unique index ix_memo_text on Memo ([text])");
-        natCases = natCases.Append(("Data/SqlServer " + sqlUrl + ": der TDS-Treiber in fire gegen einen laufenden Server (FIRE_TEST_SQLSERVER): PRELOGIN, LOGIN7, TLS in TDS (mandatory, optional nur der Login, off, Zertifikat geprueft), SQL-Batches und sp_executesql mit typisierten Parametern (Zahlen, Text, Unicode, NULL, VARBINARY, FLOAT, DECIMAL, MONEY, Datum und Zeit, GUID, sql_variant), Texte und Bytes ueber mehrere Pakete und als PLP, Fehlerarten, Transaktionen mit Savepoints (Deskriptor), IDENTITY ueber SCOPE_IDENTITY, Streaming mit geparkten Zeilen, Prozeduren mit mehreren Ergebnissen; dann Mapping, Abfragen, Sessions und Beziehungen wie bei der In-Memory-Datenbank", sheader + $$"""
+        natCases = natCases.Append(("Data/SqlServer " + sqlUrl + ": der TDS-Treiber (mit mars=true ueber SMP-Sitzungen, ohne mit geparkten Zeilen), benannte Instanzen ueber den SQL Server Browser in fire gegen einen laufenden Server (FIRE_TEST_SQLSERVER): PRELOGIN, LOGIN7, TLS in TDS (mandatory, optional nur der Login, off, Zertifikat geprueft), SQL-Batches und sp_executesql mit typisierten Parametern (Zahlen, Text, Unicode, NULL, VARBINARY, FLOAT, DECIMAL, MONEY, Datum und Zeit, GUID, sql_variant), Texte und Bytes ueber mehrere Pakete und als PLP, Fehlerarten, Transaktionen mit Savepoints (Deskriptor), IDENTITY ueber SCOPE_IDENTITY, Streaming mit geparkten Zeilen, Prozeduren mit mehreren Ergebnissen; dann Mapping, Abfragen, Sessions und Beziehungen wie bei der In-Memory-Datenbank", sheader + $$"""
             class MsDb {
                 static string url
                 static string user
@@ -31146,11 +31146,67 @@ else
                     foreach (n in names) { c.Execute("DROP TABLE [" + n[0] + "]") }
                     return c
                 }
+                // (the URL with a named instance in place of the port: sqlserver://host\fire/db?options&browser=...)
+                static string Named(string instance, defined int browser) {
+                    string u = MsDb.url.Substring(12)
+                    string options = ""
+                    int q = u.IndexOf("?")
+                    if (q >= 0) {
+                        options = u.Substring(q + 1)
+                        u = u.Substring(0, q)
+                    }
+                    int slash = u.IndexOf("/")
+                    string hostPort = u.Substring(0, slash)
+                    string db = u.Substring(slash + 1)
+                    string host = hostPort
+                    int colon = hostPort.LastIndexOf(":")
+                    if (colon >= 0) { host = hostPort.Substring(0, colon) }
+                    return "sqlserver://" + host + "\\" + instance + "/" + db + "?" + options + "&browser=" + browser
+                }
+                static defined int PortOf() {
+                    string u = MsDb.url.Substring(12)
+                    int slash = u.IndexOf("/")
+                    string hostPort = u.Substring(0, slash)
+                    int colon = hostPort.LastIndexOf(":")
+                    if (colon < 0) { return 1433 }
+                    any p = hostPort.Substring(colon + 1).TryToInt()
+                    return trust p
+                }
                 static string WithOptions(string options) {
                     string u = MsDb.url
                     int q = u.IndexOf("?")
                     if (q >= 0) { u = u.Substring(0, q) }
                     return u + options
+                }
+            }
+            class BrowserJob {
+                Net.UdpSocket udp
+                defined int port
+                construct(Net.UdpSocket udp, defined int port) {
+                    this.udp = take udp
+                    this.port = port
+                }
+            }
+            class Browser {
+                // (a SQL Server Browser for the test: two answers, the instance asked for on the port of the job - "nosuch" is not there)
+                static undefined Serve(BrowserJob job) {
+                    var udp = job.udp
+                    int port = job.port
+                    byte q[] = new byte[256]
+                    for (var i = 0; i < 2; i++) {
+                        int n = udp.ReceiveFrom(q, 0, 256, 10000)
+                        string name = IO.Utf8.GetString(q, 1, n - 2)
+                        var text = "ServerName;db;InstanceName;OTHER;IsClustered;No;Version;16.0;tcp;9;;ServerName;db;InstanceName;" + name.ToUpper() + ";IsClustered;No;Version;16.0;tcp;" + port + ";;"
+                        if (name == "nosuch") { text = "ServerName;db;InstanceName;OTHER;IsClustered;No;Version;16.0;tcp;9;;" }
+                        byte t[] = IO.Utf8.GetBytes(text)
+                        byte a[] = new byte[t.length + 3]
+                        a[0] = 5
+                        a[1] = t.length & 255
+                        a[2] = t.length >> 8
+                        for (var j = 0; j < t.length; j++) { a[3 + j] = t[j] }
+                        udp.SendTo(a, udp.FromHost, udp.FromPort)
+                    }
+                    udp.Close()
                 }
             }
             print("sqlserver")
@@ -31231,6 +31287,14 @@ else
                 if (early == 5) { break }
             }
             print("early " + early + " then " + db.Scalar("select count(*) from many") + " " + db.Rows("select v from many where id = 1")[0][0])
+            var both = ""
+            foreach (row in db.Query("select id from many where id < 3 order by id")) {
+                both = both + " " + row[0]
+                foreach (r2 in db.Query("select id from many where id >= ? and id < ? order by id", [297, 299])) { both = both + "/" + r2[0] }
+                db.Execute("update many set v = 'n' where id = ?", [row.Int("id") + 10])
+            }
+            Data.TdsConnection tc = db.driver
+            print("nested readers" + both + " updated " + db.Scalar("select count(*) from many where v = 'n'") + " mars " + tc.mars + " sessions " + (tc.Sessions > 1))
             db.Execute("create or alter procedure two @lim int as begin select id from many where id < @lim order by id; select count(*) from many; end")
             print("call " + db.Rows("exec two @lim = ?", [3]).Count + " then " + db.Scalar("select 8"))
             db.Close()
@@ -31252,6 +31316,19 @@ else
             try { new Data.Connection(MsDb.WithOptions(""), new Data.Credentials(MsDb.user, MsDb.password)) } catch (Data.ConnectionException e) { print("untrusted " + e.Code) }
             try { new Data.Connection(MsDb.url, new Data.Credentials(MsDb.user, "wrong")) } catch (Data.ConnectionException e) { print("login " + e.Code) }
             try { new Data.Connection(MsDb.WithOptions("?encrypt=maybe")) } catch (ArgumentException e) { print("option " + e.message) }
+            // (a named instance: the port from the SQL Server Browser)
+            var udp = new Net.UdpSocket("127.0.0.1", 0)
+            int browserPort = udp.Port
+            var job = new BrowserJob(take udp, MsDb.PortOf())
+            fire handover job { Browser.Serve(job) }
+            var spare = new Net.UdpSocket("127.0.0.1", 0)
+            int silentPort = spare.Port
+            spare.Close()
+            var named = new Data.Connection(MsDb.Named("fire", browserPort), new Data.Credentials(MsDb.user, MsDb.password))
+            print("named instance " + named.Scalar("select 5"))
+            named.Close()
+            try { new Data.Connection(MsDb.Named("nosuch", browserPort), new Data.Credentials(MsDb.user, MsDb.password)) } catch (Data.ConnectionException e) { print("unknown instance " + e.Code) }
+            try { new Data.Connection(MsDb.Named("x", silentPort) + "&timeout=600", new Data.Credentials(MsDb.user, MsDb.password)) } catch (Data.ConnectionException e) { print("no browser " + e.Code) }
             print("end")
             {{sorm}}
             """)).ToArray();

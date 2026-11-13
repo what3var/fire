@@ -346,6 +346,8 @@ typed parameters for the rest - the `?` of the SQL become `@p0`, `@p1`, ... (not
 | `?encrypt=optional` | only the login encrypted when the server asks for no more (what old clients did: the data goes in the clear) |
 | `?encrypt=strict` | TDS 8.0: TLS first, then TDS inside it - SQL Server 2022 with a certificate configured for it, Azure SQL |
 | `?encrypt=off` | no TLS at all, only where the server allows it and nobody can listen (the password is only obfuscated) |
+| `&mars=true` | Multiple Active Result Sets: several results open at once (SMP sessions on the one connection) - a reader in a reader or an `Execute` in a `foreach` runs in a session of its own instead of keeping the rest of the rows in memory |
+| `sqlserver://host\SQLEXPRESS/shop`, `?instance=SQLEXPRESS` | a named instance: its port comes from the SQL Server Browser (UDP 1434, `&browser=port` for another one); with `host:port` the port is used as it is |
 | `&timeout=10000` | connecting and waiting for an answer, in ms |
 
 Values: the integer types are `int`, `bit` is `bool`, `float`/`real` are `float`, `decimal`/`numeric` a `float` (an `int` without a fraction),
@@ -354,7 +356,9 @@ Values: the integer types are `int`, `bit` is `bool`, `float`/`real` are `float`
 NULL `undefined`. Parameters: `int` as `bigint`, `bool` as `bit`, `float` as `float`, texts as `nvarchar(4000)` (longer: `nvarchar(max)`), bytes as
 `varbinary`. Big values go over several packets and as PLP. Rows are read from the socket one at a time as with MySQL (a command in between keeps
 the rest for its reader). A generated key comes from `SCOPE_IDENTITY()` in the same request as the `INSERT`; the transaction descriptor of the server
-goes with every request, so `Transaction`, savepoints (`SAVE TRANSACTION`) and the session work as elsewhere.
+goes with every request, and the transactions go as requests of the transaction manager of TDS (begin, commit, rollback, savepoints - with
+MARS a transaction begun in a batch may not outlive it), so `Transaction`, savepoints and the session work as elsewhere. With MARS each session has
+its own stream of packets and its own window (the SMP flow control); a session that is free again serves the next request.
 
 Errors: duplicate keys (2627, 2601), foreign keys and checks (547), NOT NULL (515) are `Data.ConstraintException`, deadlocks and lock time-outs
 `Data.BusyException`, a wrong login or database (18456, 4060) `Data.ConnectionException` - the server's error number in `Code`. The dialect makes
@@ -365,7 +369,7 @@ collations ignore case, fire does not).
 
 The tests run against a server when `FIRE_TEST_SQLSERVER` names an empty database (`sqlserver://127.0.0.1:1433/test?trust=true`, with
 `FIRE_TEST_SQLSERVER_USER` and `FIRE_TEST_SQLSERVER_PASSWORD`; its tables are dropped). Tried against SQL Server 2022 (16.0) on Linux. Not built yet:
-Windows logins (Kerberos/NTLM), MARS, the named instances of the browser service (port 1434), table-valued parameters; `encrypt=strict` is written to
+Windows logins (Kerberos/NTLM), table-valued parameters; `encrypt=strict` is written to
 the protocol but could not be tried (the server on Linux did not accept a certificate for it).
 
 ## The in-memory database

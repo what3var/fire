@@ -4,6 +4,8 @@
 //     ?encrypt=optional      only the login encrypted when the server does not ask for more (as old clients did; the data goes in the clear)
 //     ?encrypt=strict        TDS 8.0: TLS first, then TDS inside it (SQL Server 2022 with a certificate for it, Azure SQL)
 //     ?encrypt=off           no TLS at all - only where the server allows it and nobody can listen (the password is only obfuscated)
+//     &mars=true             Multiple Active Result Sets: several results open at once on the connection (SMP sessions), no rows kept in memory
+//     host\instance or ?instance=NAME   a named instance: its port from the SQL Server Browser (UDP 1434; &browser=port for another)
 //     &trust=true            accept any certificate (test servers with their own); &ca=file.pem: the authorities to trust
 //     &timeout=10000         connecting and waiting for an answer, in ms
 // TDS 7.4: PRELOGIN, LOGIN7 (a SQL login), SQL batches for SQL without parameters, sp_executesql with typed parameters (the "?" of the SQL become @p0,
@@ -330,6 +332,53 @@ namespace Data {
         }
     }
 
+    /// <summary>A stream of TDS packets: the connection itself, or with MARS one SMP session of it. It keeps what came for it (`inbox`), the
+    /// numbers of the SMP flow control, and - while it is not the one being read - the state of its response.</summary>
+    class TdsChannel {
+        defined int sid
+        byte inbox[]
+        defined int inPos
+        defined int sendSeq
+        defined int peerWindow
+        defined int recvSeq
+        defined int myWindow
+        bool closed
+        // (the state of its response while another channel is read)
+        byte packet[]
+        defined int at
+        bool last
+        bool reading
+        List columns
+        // the token of the statement whose rows are streaming on it (0: free)
+        defined int owner
+        construct(defined int sid) {
+            this.sid = sid
+            this.inbox = new byte[0]
+            this.inPos = 0
+            this.sendSeq = 0
+            this.peerWindow = 4
+            this.recvSeq = 0
+            this.myWindow = 4
+            this.closed = false
+            this.packet = new byte[0]
+            this.at = 0
+            this.last = true
+            this.reading = false
+            this.columns = new List()
+            this.owner = 0
+        }
+        // (bytes that came for it)
+        undefined Append(byte data[]) {
+            int keep = this.inbox.length - this.inPos
+            byte all[] = new byte[keep + data.length]
+            for (var i = 0; i < keep; i++) { all[i] = this.inbox[this.inPos + i] }
+            for (var i = 0; i < data.length; i++) { all[keep + i] = data[i] }
+            this.inbox = take all
+            this.inPos = 0
+        }
+        defined int Available { get { return this.inbox.length - this.inPos } }
+    }
+
     /// <summary>The rest of the rows of a result that a command interrupted.</summary>
     class TdsParked {
         defined int token
@@ -366,10 +415,18 @@ namespace Data {
         defined int lastId
         string error
         defined int errorNumber
-        // the result whose rows are being read (0: none), the parked rest of results interrupted by a command
-        defined int streamToken
+        // the result whose rows are being read (0: none) - on the current channel -, the parked rest of results interrupted by a command (without MARS)
         defined int tokens
         List parked
+        // the channels: one without MARS, the SMP sessions with it; the one being read; MARS asked for, SMP running
+        List channels
+        Data.TdsChannel ch
+        bool mars
+        bool smp
+        defined int streamToken {
+            get { return this.ch.owner }
+            set { this.ch.owner = value }
+        }
 
         construct(string target, Data.Credentials credentials) {
             this.dialect = new Data.SqlServerDialect()
@@ -384,7 +441,11 @@ namespace Data {
             this.collation[4] = 0x34
             this.columns = new List()
             this.parked = new List()
-            this.streamToken = 0
+            this.channels = new List()
+            this.channels.Add(new Data.TdsChannel(0))
+            this.ch = this.channels[0]
+            this.mars = false
+            this.smp = false
             this.tokens = 0
             this.reading = false
             this.wrapped = false
@@ -411,13 +472,23 @@ namespace Data {
             }
             string host = rest
             defined int port = 1433
+            bool portGiven = false
+            string instance = undefined
+            int back = rest.IndexOf("\\")
+            if (back >= 0) {
+                instance = rest.Substring(back + 1)
+                host = rest.Substring(0, back)
+                rest = host
+            }
             int colon = rest.LastIndexOf(":")
             if (colon >= 0) {
+                portGiven = true
                 host = rest.Substring(0, colon)
                 any parsed = rest.Substring(colon + 1).TryToInt()
                 if (parsed == undefined) { throw new ArgumentException("data.sqlserver: the port '" + rest.Substring(colon + 1) + "' is not a number.") }
                 port = trust parsed
             }
+            defined int browser = 1434
             string encrypt = "mandatory"
             bool trustAll = false
             string ca = undefined
@@ -433,15 +504,24 @@ namespace Data {
                     if (key == "encrypt") { encrypt = value.ToLower() }
                     else if (key == "trust" || key == "trustservercertificate") { trustAll = value.ToLower() == "true" || value == "1" }
                     else if (key == "ca") { ca = value }
+                    else if (key == "mars" || key == "multipleactiveresultsets") { this.mars = value.ToLower() == "true" || value == "1" }
+                    else if (key == "instance") { instance = value }
+                    else if (key == "browser") {
+                        any b = value.TryToInt()
+                        if (b == undefined) { throw new ArgumentException("data.sqlserver: browser is the UDP port of the SQL Server Browser, not '" + value + "'.") }
+                        browser = trust b
+                    }
                     else if (key == "timeout") {
                         any t = value.TryToInt()
                         if (t == undefined) { throw new ArgumentException("data.sqlserver: timeout is a number of ms, not '" + value + "'.") }
                         this.timeout = trust t
                     }
-                    else { throw new ArgumentException("data.sqlserver: unknown option '" + option + "' (encrypt=mandatory|optional|strict|off, trust=true, ca=file, timeout=ms).") }
+                    else { throw new ArgumentException("data.sqlserver: unknown option '" + option + "' (encrypt=mandatory|optional|strict|off, trust=true, ca=file, mars=true, instance=name, browser=port, timeout=ms).") }
                 }
             }
             if (!(encrypt == "mandatory" || encrypt == "optional" || encrypt == "strict" || encrypt == "off")) { throw new ArgumentException("data.sqlserver: encrypt is mandatory, optional, strict or off, not '" + encrypt + "'.") }
+            // (a named instance: its port from the SQL Server Browser, unless one was given)
+            if (instance != undefined && instance != "" && !portGiven) { port = Data.TdsConnection.InstancePort(host, instance, browser, this.timeout) }
             var o = new Tls.Options()
             o.verify = !trustAll
             if (ca != undefined) { o.caFile = ca }
@@ -476,8 +556,49 @@ namespace Data {
                 this.wrapped = true
             }
             this.Login(host, user, password, database, loginOnly)
+            // (MARS: after the login every TDS packet goes in an SMP session - first session 0)
+            if (this.mars) {
+                this.smp = true
+                this.SmpWrite(0x01, 0, 0, 4, new byte[0])
+            }
         }
         destruct() { this.Close() }
+
+        // The TCP port of a named instance: CLNT_UCAST_INST (0x04 and the name) to the SQL Server Browser; its answer (0x05, a length, then
+        // "ServerName;S;InstanceName;I;IsClustered;No;Version;V;tcp;PORT;;" for each instance) gives it.
+        static defined int InstancePort(string host, string instance, defined int browser, defined int timeout) {
+            var udp = new Net.UdpSocket()
+            var ask = new Data.TdsOut()
+            ask.Byte(0x04)
+            ask.Bytes(IO.Utf8.GetBytes(instance))
+            ask.Byte(0)
+            byte question[] = ask.ToBuffer()
+            byte answer[] = new byte[65535]
+            int n = 0
+            // (UDP may lose the question: three tries)
+            for (var attempt = 0; attempt < 3; attempt++) {
+                udp.SendTo(question, host, browser)
+                try {
+                    n = udp.ReceiveFrom(answer, 0, answer.length, timeout / 3)
+                    break
+                } catch (Net.TimeoutException e) { n = 0 }
+            }
+            udp.Close()
+            if (n < 3) { throw new Data.ConnectionException("data.sqlserver: the SQL Server Browser on " + host + ":" + browser + " (UDP) did not answer for the instance '" + instance + "' - is it running, or give the port (host:port).", 26) }
+            string text = IO.Utf8.GetString(answer, 3, n - 3)
+            any parts = text.Split(";")
+            bool mine = false
+            for (var i = 0; i + 1 < parts.length; i++) {
+                string key = parts[i]
+                string value = parts[i + 1]
+                if (key == "InstanceName") { mine = value.ToLower() == instance.ToLower() }
+                if (mine && key == "tcp") {
+                    any p = value.TryToInt()
+                    if (p != undefined) { return trust p }
+                }
+            }
+            throw new Data.ConnectionException("data.sqlserver: the SQL Server Browser on " + host + " knows no instance '" + instance + "' with TCP.", 26)
+        }
 
         // ---- packets ----
         any Io() {
@@ -531,7 +652,8 @@ namespace Data {
         // A message of `type`: split into packets of the negotiated size.
         undefined Send(defined int type, byte payload[]) {
             this.Check()
-            if (this.streamToken != 0) { this.Park() }
+            if (this.smp) { this.Free() }
+            else if (this.streamToken != 0) { this.Park() }
             if (this.reading) { this.DrainResponse() }
             int at = 0
             int id = 1
@@ -555,7 +677,7 @@ namespace Data {
                 byte whole[] = new byte[n + 8]
                 for (var k = 0; k < 8; k++) { whole[k] = head[k] }
                 for (var k = 0; k < n; k++) { whole[8 + k] = payload[at + k] }
-                this.IoWrite(whole, 0, n + 8)
+                if (this.smp) { this.SmpData(whole) } else { this.IoWrite(whole, 0, n + 8) }
                 at = at + n
                 id++
                 if (end) { break }
@@ -569,18 +691,131 @@ namespace Data {
         // (the next packet of the response)
         undefined NextPacket() {
             if (this.last) { throw new Data.DataException("data.sqlserver: the answer of the server ended too soon.") }
-            byte head[] = new byte[8]
-            this.ReadFully(head, 8)
+            byte head[] = this.Take(8)
             int status = head[1]
             int h2 = head[2]
             int h3 = head[3]
             int length = (h2 << 8) | h3
-            byte body[] = new byte[length - 8]
-            if (length > 8) { this.ReadFully(body, length - 8) }
+            byte body[] = this.Take(length - 8)
             this.packet = take body
             this.at = 0
             this.last = (status & 1) != 0
         }
+        // (n bytes of the current channel: from the socket, or with MARS from what came for its session)
+        byte[] Take(defined int n) {
+            if (!this.smp) {
+                byte out[] = new byte[n]
+                if (n > 0) { this.ReadFully(out, n) }
+                return out
+            }
+            var c = this.ch
+            while (c.Available < n) { this.Pump() }
+            byte out[] = new byte[n]
+            for (var i = 0; i < n; i++) { out[i] = c.inbox[c.inPos + i] }
+            c.inPos = c.inPos + n
+            return out
+        }
+
+        // ---- MARS: the sessions of SMP ----
+        // (an SMP packet: SMID 0x53, flags (SYN 1, ACK 2, FIN 4, DATA 8), session, length, sequence number, window)
+        undefined SmpWrite(defined int flags, defined int sid, defined int seq, defined int window, byte payload[]) {
+            var m = new Data.TdsOut()
+            m.Byte(0x53)
+            m.Byte(flags)
+            m.Int(sid, 2)
+            m.Int(16 + payload.length, 4)
+            m.Int(seq, 4)
+            m.Int(window, 4)
+            m.Bytes(payload)
+            byte all[] = m.ToBuffer()
+            this.IoWrite(all, 0, all.length)
+            this.IoFlush()
+        }
+        // (a TDS packet in the current session - when the server's window allows it)
+        undefined SmpData(byte whole[]) {
+            var c = this.ch
+            while (c.sendSeq + 1 > c.peerWindow) { this.Pump() }
+            c.sendSeq = c.sendSeq + 1
+            this.SmpWrite(0x08, c.sid, c.sendSeq, c.myWindow, whole)
+        }
+        // (one SMP packet from the socket, to its session)
+        undefined Pump() {
+            byte head[] = new byte[16]
+            this.ReadFully(head, 16)
+            int smid = head[0]
+            if (smid != 0x53) {
+                this.closed = true
+                throw new Data.DataException("data.sqlserver: the server did not answer in SMP (MARS).")
+            }
+            int flags = head[1]
+            int sid = head[2] | (head[3] << 8)
+            int length = head[4] | (head[5] << 8) | (head[6] << 16) | (head[7] << 24)
+            int seq = head[8] | (head[9] << 8) | (head[10] << 16) | (head[11] << 24)
+            int window = head[12] | (head[13] << 8) | (head[14] << 16) | (head[15] << 24)
+            byte payload[] = new byte[length - 16]
+            if (length > 16) { this.ReadFully(payload, length - 16) }
+            Data.TdsChannel c = undefined
+            for (var i = 0; i < this.channels.Count; i++) {
+                Data.TdsChannel k = this.channels[i]
+                if (k.sid == sid) { c = k }
+            }
+            if (c == undefined) { return }
+            c.peerWindow = window
+            if ((flags & 0x08) != 0) {
+                c.Append(payload)
+                c.recvSeq = seq
+                if (c.myWindow - seq < 2) {
+                    // (more may come: the window moves on)
+                    c.myWindow = seq + 4
+                    this.SmpWrite(0x02, c.sid, c.sendSeq, c.myWindow, new byte[0])
+                }
+            }
+            if ((flags & 0x04) != 0) { c.closed = true }
+        }
+        // (the current channel must be free for a request: else a free one, or a new session)
+        undefined Free() {
+            if (this.ch.owner == 0) { return }
+            for (var i = 0; i < this.channels.Count; i++) {
+                Data.TdsChannel k = this.channels[i]
+                if (k.owner == 0 && !k.closed) {
+                    this.Use(k)
+                    return
+                }
+            }
+            int sid = this.channels.Count
+            this.channels.Add(new Data.TdsChannel(sid))
+            Data.TdsChannel fresh = this.channels[this.channels.Count - 1]
+            this.SmpWrite(0x01, sid, 0, 4, new byte[0])
+            this.Use(fresh)
+        }
+        // (reading goes on in another channel: the state of the response goes with each)
+        undefined Use(Data.TdsChannel target) {
+            if (target == this.ch) { return }
+            var c = this.ch
+            c.packet = take this.packet
+            c.at = this.at
+            c.last = this.last
+            c.reading = this.reading
+            c.columns = take this.columns
+            this.packet = take target.packet
+            this.at = target.at
+            this.last = target.last
+            this.reading = target.reading
+            this.columns = take target.columns
+            this.ch = target
+        }
+        undefined UseSid(defined int sid) {
+            for (var i = 0; i < this.channels.Count; i++) {
+                Data.TdsChannel k = this.channels[i]
+                if (k.sid == sid) {
+                    this.Use(k)
+                    return
+                }
+            }
+        }
+        // How many SMP sessions the connection has (1 without MARS).
+        defined int Sessions { get { return this.channels.Count } }
+
         defined int Byte() {
             while (this.at >= this.packet.length) { this.NextPacket() }
             int b = this.packet[this.at]
@@ -641,7 +876,7 @@ namespace Data {
             data.Byte(enc)
             data.Byte(0)                          // (INSTOPT: the default instance)
             data.Int(0, 4)                        // (THREADID)
-            data.Byte(0)                          // (MARS off)
+            if (this.mars) { data.Byte(1) } else { data.Byte(0) }   // (MARS)
             var p = new Data.TdsOut()
             int offset = 5 * 5 + 1
             any lengths = [6, 1, 1, 4, 1]
@@ -674,6 +909,7 @@ namespace Data {
                 int o2 = answer[i2 + 2]
                 int off = (o1 << 8) | o2
                 if (token == 1 && off < answer.length) { int v = answer[off]; serverEnc = trust v }
+                if (token == 4 && off < answer.length && answer[off] == 0) { this.mars = false }
                 i2 = i2 + 5
             }
             if (encrypt == "off" && (serverEnc == 1 || serverEnc == 3)) {
@@ -1188,8 +1424,10 @@ namespace Data {
             m.Int(1, 4)
         }
 
-        // SQL without parameters: a batch; every result is read.
+        // SQL without parameters: a batch; every result is read. The transactions of the dialect go as requests of the transaction manager (as with
+        // MARS they must: a transaction begun in a batch may not outlive it there).
         undefined Exec(string sql) {
+            if (this.Transact(sql)) { return }
             var m = new Data.TdsOut()
             this.Headers(m)
             m.Bytes(Data.Tds.Utf16(sql))
@@ -1198,6 +1436,42 @@ namespace Data {
             this.Send(0x01, m.ToBuffer())
             this.DrainResponse()
             this.Raise()
+        }
+
+        // (BEGIN / COMMIT / ROLLBACK [TRANSACTION name] / SAVE TRANSACTION name as a TM request: begin 5, commit 7, rollback 8, save 9)
+        bool Transact(string sql) {
+            int type = 0
+            string name = ""
+            if (sql == "BEGIN TRANSACTION") { type = 5 }
+            else if (sql == "COMMIT TRANSACTION") { type = 7 }
+            else if (sql == "ROLLBACK TRANSACTION") { type = 8 }
+            else if (sql.StartsWith("SAVE TRANSACTION ")) {
+                type = 9
+                name = sql.Substring(17)
+            } else if (sql.StartsWith("ROLLBACK TRANSACTION ")) {
+                type = 8
+                name = sql.Substring(21)
+            }
+            if (type == 0) { return false }
+            var m = new Data.TdsOut()
+            this.Headers(m)
+            m.Int(type, 2)
+            // (the name with its length in bytes here, not in characters)
+            byte u[] = Data.Tds.Utf16(name)
+            if (type == 5) {
+                m.Byte(0)                         // (the isolation level as it is)
+                m.Byte(0)
+            } else {
+                m.Byte(u.length)
+                m.Bytes(u)
+                if (type == 7 || type == 8) { m.Byte(0) }   // (no new transaction after it)
+            }
+            this.changes = 0
+            this.error = undefined
+            this.Send(0x0E, m.ToBuffer())
+            this.DrainResponse()
+            this.Raise()
+            return true
         }
 
         Data.IStatement Prepare(string sql) {
@@ -1245,11 +1519,15 @@ namespace Data {
         }
         undefined Discard(int token) {
             if (token == 0) { return }
-            if (this.streamToken == token) {
-                this.streamToken = 0
-                this.DrainResponse()
-                this.error = undefined
-                return
+            for (var i = 0; i < this.channels.Count; i++) {
+                Data.TdsChannel k = this.channels[i]
+                if (k.owner == token) {
+                    this.Use(k)
+                    this.streamToken = 0
+                    this.DrainResponse()
+                    this.error = undefined
+                    return
+                }
             }
             for (var i = 0; i < this.parked.Count; i++) {
                 Data.TdsParked e = this.parked[i]
@@ -1292,6 +1570,7 @@ namespace Data {
         any current
         List names
         defined int token
+        defined int sid
         bool done
         bool ran
 
@@ -1512,6 +1791,7 @@ namespace Data {
                     }
                     this.token = cn.NewToken()
                     cn.streamToken = this.token
+                    this.sid = cn.ch.sid
                     this.done = false
                     return
                 }
@@ -1529,6 +1809,7 @@ namespace Data {
             }
             if (this.done) { return false }
             var cn = this.connection
+            if (cn.smp) { cn.UseSid(this.sid) }
             if (cn.streamToken == this.token) {
                 while (!cn.AtEnd) {
                     int t = cn.Byte()
