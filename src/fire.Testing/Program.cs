@@ -29460,16 +29460,25 @@ else
             rlone.client = rcyd
             rs.Add(take rlone)
             print("saved " + rs.Save())
-            foreach (row in rdb.Rows("select o.id, o.clientId, o.note from \"Purchase\" as o order by o.id")) { print("row " + row) }
+            foreach (row in rdb.Rows("select ro.id, ro.clientId, ro.note from \"Purchase\" as ro order by ro.id")) { print("row " + row) }
+            // Include without a session
+            List<Client> rclients = rdb.From<Client>().Include(rc => rc.orders).OrderBy(rc => rc.name).ToList()
+            foreach (rc in rclients) {
+                var rnotes = ""
+                foreach (ro in rc.orders) { rnotes = rnotes + " " + ro.note }
+                print("client " + rc.name + ":" + rnotes)
+            }
+            List<Purchase> orders = rdb.From<Purchase>().Include(ro => ro.client).OrderBy(ro => ro.id).ToList()
+            foreach (ro in orders) { print("order " + ro.note + " of " + ro.client.name) }
             // Any / All as subqueries
             var rlimit = 100.0
-            print("sql " + rdb.From<Client>().Where(c => c.orders.Any(o => o.total > taking rlimit)).ToSql())
-            print("big buyers " + rdb.From<Client>().Where(c => c.orders.Any(o => o.total > taking rlimit)).Count())
-            print("with orders " + rdb.From<Client>().Where(c => c.orders.Any()).Count() + " all small " + rdb.From<Client>().Where(c => c.orders.All(o => o.total < 50.0)).Count())
-            print("named " + rdb.From<Client>().Where(c => c.name != "Ada" && c.orders.Any(o => o.note.StartsWith("m"))).First().name)
+            print("sql " + rdb.From<Client>().Where(rc => rc.orders.Any(ro => ro.total > taking rlimit)).ToSql())
+            print("big buyers " + rdb.From<Client>().Where(rc => rc.orders.Any(ro => ro.total > taking rlimit)).Count())
+            print("with orders " + rdb.From<Client>().Where(rc => rc.orders.Any()).Count() + " all small " + rdb.From<Client>().Where(rc => rc.orders.All(ro => ro.total < 50.0)).Count())
+            print("named " + rdb.From<Client>().Where(rc => rc.name != "Ada" && rc.orders.Any(ro => ro.note.StartsWith("m"))).First().name)
             // in a session: Include gives the session'rs objects, a move between lists is an update
             var rt = rdb.Session()
-            List<Client> rmine = rt.From<Client>().Include(c => c.orders).OrderBy(c => c.id).ToList()
+            List<Client> rmine = rt.From<Client>().Include(rc => rc.orders).OrderBy(rc => rc.id).ToList()
             Client rfirst = rmine[0]
             Client rsecond = rmine[1]
             Purchase rmoved = rfirst.orders[1]
@@ -29479,11 +29488,14 @@ else
             rsecond.orders.Add(new Purchase(7.0, "new for rbob"))
             print("saved " + rt.Save() + " rbob has " + rdb.Scalar("select count(*) from \"Purchase\" where clientId = ?", [rsecond.id]))
             var ru = rdb.Session()
-            List<Purchase> rtheirs = ru.From<Purchase>().Where(o => o.clientId == 2).Include(o => o.client).ToList()
-            print("one owner " + (rtheirs[0].client == rtheirs[1].client) + " " + rtheirs[0].client.name)
+            List<Purchase> rtheirs = ru.From<Purchase>().Where(ro => ro.clientId == 2).Include(ro => ro.client).ToList()
+            print("rone owner " + (rtheirs[0].client == rtheirs[1].client) + " " + rtheirs[0].client.name)
             ru.Load(rtheirs[0].client, "orders")
             print("loaded " + rtheirs[0].client.orders.Count)
-            try { rdb.From<Client>().Include(c => c.orders).ToList() } catch (Data.DataException e) { print("no session: " + e.message) }
+            List<Purchase> rcopies = rdb.From<Purchase>().Where(ro => ro.clientId == 2).Include(ro => ro.client).ToList()
+            print("no session: rcopies " + rcopies.Count + " " + rcopies[0].client.name + " own " + (rcopies[0].client == rcopies[1].client))
+            Client rone = rdb.From<Client>().Where(rc => rc.name == "Ada").Include(rc => rc.orders).First()
+            print("rfirst with include " + rone.orders.Count)
             var jdb = new Data.Connection("memory:")
             jdb.Ensure<Label>()
             jdb.Ensure<Post>()
@@ -29498,7 +29510,7 @@ else
             jb.labels2.Add(new Label("tasks"))
             print("saved " + js.Save() + " pairs " + jdb.Scalar("select count(*) from post_label") + " labels2 " + jdb.Scalar("select count(*) from Label"))
             var jt = jdb.Session()
-            List<Post> jall = jt.From<Post>().Include(x => x.labels2).OrderBy(x => x.id).ToList()
+            List<Post> jall = jt.From<Post>().Include(jx => jx.labels2).OrderBy(jx => jx.id).ToList()
             foreach (jart in jall) {
                 var jlabels = ""
                 foreach (jtg in jart.labels2) { jlabels = jlabels + " " + jtg.label }
@@ -29508,7 +29520,7 @@ else
             jall[0].labels2.RemoveAt(1)
             jall[1].labels2.Add(jt.Find<Label>(2))
             print("saved " + jt.Save() + " pairs " + jdb.Scalar("select count(*) from post_label") + " nothing more " + jt.Save())
-            print("about fire " + jdb.From<Post>().Where(x => x.labels2.Any(g => g.label == "fire")).Count() + " about data " + jdb.From<Post>().Where(x => x.labels2.Any(g => g.label == "data")).First().title + " untagged " + jdb.From<Post>().Where(x => !x.labels2.Any()).Count())
+            print("about fire " + jdb.From<Post>().Where(jx => jx.labels2.Any(jg => jg.label == "fire")).Count() + " about data " + jdb.From<Post>().Where(jx => jx.labels2.Any(jg => jg.label == "data")).First().title + " untagged " + jdb.From<Post>().Where(jx => !jx.labels2.Any()).Count())
             var ju = jdb.Session()
             Post jfirst = ju.Find<Post>(1)
             jfirst.labels2 = new List<Label>()
@@ -29516,6 +29528,8 @@ else
             print("not loaded, set " + ju.Save() + " pairs of 1: " + jdb.Scalar("select count(*) from post_label where postId = 1") + " tag " + jdb.Scalar("select labelId from post_label where postId = 1"))
             ju.Remove(jfirst)
             print("removed " + ju.Save() + " pairs " + jdb.Scalar("select count(*) from post_label"))
+            List<Post> jplain = jdb.From<Post>().Include(jx => jx.labels2).OrderBy(jx => jx.id).ToList()
+            print("no session labels2 " + jplain[0].labels2.Count + " " + jplain[0].labels2[0].label)
             """),
         ("Data/SQLite: Execute, Query (Zeilen nacheinander), Rows, Scalar, QueryList/QueryOne auf Records und Klassen, Unicode, NULL, BLOB, Fehlerarten, Transaktionen mit Savepoints, :memory:, await, Threads mit eigenen Verbindungen, handover; Mapping mit Attributen, Ensure, Insert/Update/Delete/Save/Find/All, Enum nach Namen, DateTime, [Json]; Abfragen mit Ausdrucksbaeumen als SQL; Sessions; Beziehungen", """
             #import "time"
@@ -29871,16 +29885,25 @@ else
             rlone.client = rcyd
             rs.Add(take rlone)
             print("saved " + rs.Save())
-            foreach (row in rdb.Rows("select o.id, o.clientId, o.note from \"Purchase\" as o order by o.id")) { print("row " + row) }
+            foreach (row in rdb.Rows("select ro.id, ro.clientId, ro.note from \"Purchase\" as ro order by ro.id")) { print("row " + row) }
+            // Include without a session
+            List<Client> rclients = rdb.From<Client>().Include(rc => rc.orders).OrderBy(rc => rc.name).ToList()
+            foreach (rc in rclients) {
+                var rnotes = ""
+                foreach (ro in rc.orders) { rnotes = rnotes + " " + ro.note }
+                print("client " + rc.name + ":" + rnotes)
+            }
+            List<Purchase> orders = rdb.From<Purchase>().Include(ro => ro.client).OrderBy(ro => ro.id).ToList()
+            foreach (ro in orders) { print("order " + ro.note + " of " + ro.client.name) }
             // Any / All as subqueries
             var rlimit = 100.0
-            print("sql " + rdb.From<Client>().Where(c => c.orders.Any(o => o.total > taking rlimit)).ToSql())
-            print("big buyers " + rdb.From<Client>().Where(c => c.orders.Any(o => o.total > taking rlimit)).Count())
-            print("with orders " + rdb.From<Client>().Where(c => c.orders.Any()).Count() + " all small " + rdb.From<Client>().Where(c => c.orders.All(o => o.total < 50.0)).Count())
-            print("named " + rdb.From<Client>().Where(c => c.name != "Ada" && c.orders.Any(o => o.note.StartsWith("m"))).First().name)
+            print("sql " + rdb.From<Client>().Where(rc => rc.orders.Any(ro => ro.total > taking rlimit)).ToSql())
+            print("big buyers " + rdb.From<Client>().Where(rc => rc.orders.Any(ro => ro.total > taking rlimit)).Count())
+            print("with orders " + rdb.From<Client>().Where(rc => rc.orders.Any()).Count() + " all small " + rdb.From<Client>().Where(rc => rc.orders.All(ro => ro.total < 50.0)).Count())
+            print("named " + rdb.From<Client>().Where(rc => rc.name != "Ada" && rc.orders.Any(ro => ro.note.StartsWith("m"))).First().name)
             // in a session: Include gives the session'rs objects, a move between lists is an update
             var rt = rdb.Session()
-            List<Client> rmine = rt.From<Client>().Include(c => c.orders).OrderBy(c => c.id).ToList()
+            List<Client> rmine = rt.From<Client>().Include(rc => rc.orders).OrderBy(rc => rc.id).ToList()
             Client rfirst = rmine[0]
             Client rsecond = rmine[1]
             Purchase rmoved = rfirst.orders[1]
@@ -29890,11 +29913,14 @@ else
             rsecond.orders.Add(new Purchase(7.0, "new for rbob"))
             print("saved " + rt.Save() + " rbob has " + rdb.Scalar("select count(*) from \"Purchase\" where clientId = ?", [rsecond.id]))
             var ru = rdb.Session()
-            List<Purchase> rtheirs = ru.From<Purchase>().Where(o => o.clientId == 2).Include(o => o.client).ToList()
-            print("one owner " + (rtheirs[0].client == rtheirs[1].client) + " " + rtheirs[0].client.name)
+            List<Purchase> rtheirs = ru.From<Purchase>().Where(ro => ro.clientId == 2).Include(ro => ro.client).ToList()
+            print("rone owner " + (rtheirs[0].client == rtheirs[1].client) + " " + rtheirs[0].client.name)
             ru.Load(rtheirs[0].client, "orders")
             print("loaded " + rtheirs[0].client.orders.Count)
-            try { rdb.From<Client>().Include(c => c.orders).ToList() } catch (Data.DataException e) { print("no session: " + e.message) }
+            List<Purchase> rcopies = rdb.From<Purchase>().Where(ro => ro.clientId == 2).Include(ro => ro.client).ToList()
+            print("no session: rcopies " + rcopies.Count + " " + rcopies[0].client.name + " own " + (rcopies[0].client == rcopies[1].client))
+            Client rone = rdb.From<Client>().Where(rc => rc.name == "Ada").Include(rc => rc.orders).First()
+            print("rfirst with include " + rone.orders.Count)
             var jdb = new Data.Connection("sqlite::memory:")
             jdb.Ensure<Label>()
             jdb.Ensure<Post>()
@@ -29909,7 +29935,7 @@ else
             jb.labels2.Add(new Label("tasks"))
             print("saved " + js.Save() + " pairs " + jdb.Scalar("select count(*) from post_label") + " labels2 " + jdb.Scalar("select count(*) from Label"))
             var jt = jdb.Session()
-            List<Post> jall = jt.From<Post>().Include(x => x.labels2).OrderBy(x => x.id).ToList()
+            List<Post> jall = jt.From<Post>().Include(jx => jx.labels2).OrderBy(jx => jx.id).ToList()
             foreach (jart in jall) {
                 var jlabels = ""
                 foreach (jtg in jart.labels2) { jlabels = jlabels + " " + jtg.label }
@@ -29919,7 +29945,7 @@ else
             jall[0].labels2.RemoveAt(1)
             jall[1].labels2.Add(jt.Find<Label>(2))
             print("saved " + jt.Save() + " pairs " + jdb.Scalar("select count(*) from post_label") + " nothing more " + jt.Save())
-            print("about fire " + jdb.From<Post>().Where(x => x.labels2.Any(g => g.label == "fire")).Count() + " about data " + jdb.From<Post>().Where(x => x.labels2.Any(g => g.label == "data")).First().title + " untagged " + jdb.From<Post>().Where(x => !x.labels2.Any()).Count())
+            print("about fire " + jdb.From<Post>().Where(jx => jx.labels2.Any(jg => jg.label == "fire")).Count() + " about data " + jdb.From<Post>().Where(jx => jx.labels2.Any(jg => jg.label == "data")).First().title + " untagged " + jdb.From<Post>().Where(jx => !jx.labels2.Any()).Count())
             var ju = jdb.Session()
             Post jfirst = ju.Find<Post>(1)
             jfirst.labels2 = new List<Label>()
@@ -29927,6 +29953,8 @@ else
             print("not loaded, set " + ju.Save() + " pairs of 1: " + jdb.Scalar("select count(*) from post_label where postId = 1") + " tag " + jdb.Scalar("select labelId from post_label where postId = 1"))
             ju.Remove(jfirst)
             print("removed " + ju.Save() + " pairs " + jdb.Scalar("select count(*) from post_label"))
+            List<Post> jplain = jdb.From<Post>().Include(jx => jx.labels2).OrderBy(jx => jx.id).ToList()
+            print("no session labels2 " + jplain[0].labels2.Count + " " + jplain[0].labels2[0].label)
             """),
         ("Http.Pages: eine FXML-View als Seite - HTML mit CSS-Layout (Flex), Circuit pro Seite, Eingabe, Klick, Checkbox und Button im FlowPanel ueber den WebSocket, nur die Aenderungen zurueck, fremde Sitzung 4401, unbekannte Seite 4404", """
             #import "http.pages"

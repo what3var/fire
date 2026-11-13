@@ -243,8 +243,9 @@ class Article {
 ```
 
 - **Loading:** `Include(c => c.orders)` (also `o => o.customer`, `a => a.tags`) loads a navigation field with the objects of a query - one query more
-  per Include, not one per object; `s.Load(obj, "orders")` loads it later for objects of a session. Include needs a session for now (`db.Session().From<T>()`):
-  its objects - also those of the lists - are the session's (one object per row: two orders of one customer point to the same `Customer`).
+  per Include, not one per object; `s.Load(obj, "orders")` loads it later for objects of a session. Without a session the loaded objects belong to the
+  object they hang on: the children to its list, a [BelongsTo] object is a copy of its own for each one. In a session they are the session's - one object
+  per row: two orders of one customer point to the same `Customer`, and a change of it is written once.
 - **Conditions:** `Where(c => c.orders.Any(o => o.total > taking limit))`, `c.orders.Any()`, `c.orders.All(o => ...)`, `a.tags.Any(t => t.label == "x")` - a
   subquery (`EXISTS`) in the database, nothing is loaded for it.
 - **Writing (sessions):** an object added to a list of an object of the session (`ada.orders.Add(new Order(...))`) is inserted by Save with the parent's key

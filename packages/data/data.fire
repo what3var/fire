@@ -665,12 +665,10 @@ namespace Data {
     class Session {
         Data.Connection db
         List entries
-        List lists           // (the lists of navigation fields the session made for its objects: they are the session's, the fields hold them)
 
         construct(Data.Connection db) {
             this.db = db
             this.entries = new List()
-            this.lists = new List()
         }
 
         // (the keys now in the [ManyToMany] list of the object: its snapshot)
@@ -743,14 +741,6 @@ namespace Data {
                 }
             }
             return written
-        }
-
-        // (a list for a navigation field of one of the session's objects)
-        List NewList() {
-            var l = new List()
-            List back = l
-            this.lists.Add(take l)
-            return back
         }
 
         Data.Connection Connection { get { return this.db } }
@@ -1159,14 +1149,13 @@ namespace Data {
         // ([ManyToMany]: the pairs of the join table, then the objects they name - the session's own; its snapshot of the pairs for Save)
         static undefined Join(Data.Connection db, any objects, Data.EntityMap map, Data.RelationMap r, Data.Session session) {
             map.NeedKey()
-            if (session == undefined) { throw new Data.DataException("Data: Include of '" + r.field + "' needs a session for now (db.Session().From<" + map.typeName + ">()...).") }
             var target = db.Map(r.target)
             target.NeedKey()
             var d = db.Dialect
             var keys = new List()
             for (var i = 0; i < objects.Count; i++) {
                 any o = objects[i]
-                if (Reflect.Get(o, r.field) == undefined) { Reflect.Set(o, r.field, session.NewList()) }
+                if (Reflect.Get(o, r.field) == undefined) { Reflect.Set(o, r.field, new List()) }
                 any k = Reflect.Get(o, map.key.field)
                 if (k != undefined && keys.IndexOf(k) < 0) { keys.Add(k) }
             }
@@ -1202,7 +1191,7 @@ namespace Data {
                 for (var i = 0; i < loaded.Count; i++) {
                     any t = loaded[i]
                     foundTexts.Add(Json.Serialize(Reflect.Get(t, target.key.field)))
-                    found.Add(session.Track(take t, r.target))
+                    if (session != undefined) { found.Add(session.Track(take t, r.target)) } else { found.Add(take t) }
                 }
             }
             for (var i = 0; i < objects.Count; i++) {
@@ -1214,9 +1203,10 @@ namespace Data {
                     int at = foundTexts.IndexOf(Json.Serialize(pairOther[p]))
                     if (at < 0) { continue }
                     any t = found[at]
-                    if (list.IndexOf(t) < 0) { list.Add(t) }
+                    if (session != undefined) { if (list.IndexOf(t) < 0) { list.Add(t) } }
+                    else { list.Add(copy t) }   // (without a session: a copy of its own in each list)
                 }
-                session.KeepLinks(o, r)
+                if (session != undefined) { session.KeepLinks(o, r) }
             }
         }
 
@@ -1230,10 +1220,7 @@ namespace Data {
             var keyTexts = new List()
             for (var i = 0; i < objects.Count; i++) {
                 any o = objects[i]
-                if (Reflect.Get(o, r.field) == undefined) {
-                    if (session == undefined) { throw new Data.DataException("Data: Include of '" + r.field + "' needs a session for now (db.Session().From<" + map.typeName + ">()...) - or a list in the field already: a list set by reflection does not belong to the object yet.") }
-                    Reflect.Set(o, r.field, session.NewList())
-                }
+                if (Reflect.Get(o, r.field) == undefined) { Reflect.Set(o, r.field, new List()) }   // (the object owns its list)
                 any k = Reflect.Get(o, map.key.field)
                 if (k == undefined) { continue }
                 string text = Json.Serialize(k)
@@ -1314,8 +1301,8 @@ namespace Data {
                 int at = foundTexts.IndexOf(Json.Serialize(k))
                 if (at < 0) { continue }
                 any t = found[at]
-                if (session == undefined) { throw new Data.DataException("Data: Include of '" + r.field + "' needs a session for now (db.Session().From<" + map.typeName + ">()...): an object set by reflection does not belong to the object yet.") }
-                Reflect.Set(o, r.field, t)
+                if (session != undefined) { Reflect.Set(o, r.field, t) }   // (the session's object: a reference)
+                else { Reflect.Set(o, r.field, copy t) }                   // (without a session: a copy of its own for each object)
             }
         }
     }
