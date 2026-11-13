@@ -278,8 +278,8 @@ namespace UI {
             this.Remember()
             var c = [0, 0]
             this.SelectionCenter(c)
-            defined int cx = c[0]
-            defined int cy = c[1]
+            int cx = c[0]
+            int cy = c[1]
             var s = this.Schematic
             foreach (e in this.selection) {
                 if (Circuits.Symbols.IsChip(e.type)) { continue }
@@ -314,8 +314,8 @@ namespace UI {
                 c[0] = this.Snap((only.x1 + only.x2) / 2)
                 c[1] = this.Snap((only.y1 + only.y2) / 2)
             }
-            defined int cx = c[0]
-            defined int cy = c[1]
+            int cx = c[0]
+            int cy = c[1]
             var s = this.Schematic
             foreach (e in this.selection) {
                 if (Circuits.Symbols.IsChip(e.type)) {
@@ -538,7 +538,7 @@ namespace UI {
                 // simulated seconds per second: a number ("0.01") or a fraction ("1/100")
                 any parsed = UI.CircuitView.ParseSpeed(v)
                 if (parsed == undefined) { return false }
-                defined float sp = parsed!float
+                float sp = parsed!float
                 if (sp < 0.0001 || sp > 1000.0) { return false }
                 if (Math.Abs(this.circuit.Speed - sp) <= sp * 0.000001) { return true }
                 this.Remember()
@@ -575,8 +575,8 @@ namespace UI {
                 any a = t.Substring(0, slash).Trim().TryToFloat()
                 any b = t.Substring(slash + 1).Trim().TryToFloat()
                 if (a == undefined || b == undefined) { return undefined }
-                defined float fa = a!float
-                defined float fb = b!float
+                float fa = a!float
+                float fb = b!float
                 if (fb == 0.0) { return undefined }
                 return fa / fb
             }
@@ -820,8 +820,8 @@ namespace UI {
 
         // the frame from (x1, y1) to (x2, y2) on the grid
         undefined FrameAt(defined int x1, defined int y1, defined int x2, defined int y2) {
-            defined float dx = x2 - x1
-            defined float dy = y2 - y1
+            float dx = x2 - x1
+            float dy = y2 - y1
             any len = Math.Sqrt(dx * dx + dy * dy)
             this.flen = len
             this.fx = (this.ax + this.offsetX + x1 * this.scale) * this.dev
@@ -1375,10 +1375,10 @@ namespace UI {
             var k = -1
             if (this.areaElements != undefined) { k = this.areaElements.IndexOf(e) }
             if (k >= 0) {
-                defined int ax0 = this.areaValues[k * 4]
-                defined int ay0 = this.areaValues[k * 4 + 1]
-                defined int ax1 = this.areaValues[k * 4 + 2]
-                defined int ay1 = this.areaValues[k * 4 + 3]
+                int ax0 = this.areaValues[k * 4]
+                int ay0 = this.areaValues[k * 4 + 1]
+                int ax1 = this.areaValues[k * 4 + 2]
+                int ay1 = this.areaValues[k * 4 + 3]
                 x0 = UI.M.Min(x0, ax0 - this.Dp(3))
                 y0 = UI.M.Min(y0, ay0 - this.Dp(3))
                 x1 = UI.M.Max(x1, ax1 + this.Dp(3))
@@ -1869,8 +1869,8 @@ namespace UI {
         // a point of the grid in the current frame: (s, t)
         float[] Local(defined int gx, defined int gy) {
             var r = new float[2]
-            defined float x = (this.ax + this.offsetX + gx * this.scale) * this.dev - this.fx
-            defined float y = (this.ay + this.offsetY + gy * this.scale) * this.dev - this.fy
+            float x = (this.ax + this.offsetX + gx * this.scale) * this.dev - this.fx
+            float y = (this.ay + this.offsetY + gy * this.scale) * this.dev - this.fy
             var k = this.scale * this.scale * this.dev * this.dev
             r[0] = (x * this.fdx + y * this.fdy) / k
             r[1] = (x * this.fnx + y * this.fny) / k
@@ -2150,7 +2150,7 @@ namespace UI {
             any size = parts[0].Split(",")
             var sx = Circuits.Symbols.Int(size[0])
             var sy = Circuits.Symbols.Int(size[1])
-            defined float cs = Circuits.Symbols.FalstadCell(e)
+            float cs = Circuits.Symbols.FalstadCell(e)
             var white = UI.Color.Rgb(220, 220, 220)
             var left = e.x1 + cs / 2.0
             var top = e.y1 - cs / 2.0
@@ -2162,8 +2162,8 @@ namespace UI {
             foreach (p in parts[1].Split(";")) {
                 string pin = p
                 any f = pin.Split(":")
-                defined float px = e.PinX(i)
-                defined float py = e.PinY(i)
+                float px = e.PinX(i)
+                float py = e.PinY(i)
                 this.pen.Color = this.VoltageColor(e.PinVoltage(i))
                 var ex = px
                 var ey = py
@@ -2340,8 +2340,8 @@ namespace UI {
             }
             var at = m - 1.5 + 3.0 * pos
             // the side of the wiper in the frame
-            defined float fdx = ex - e.x1
-            defined float fdy = ey - e.y1
+            float fdx = ex - e.x1
+            float fdy = ey - e.y1
             any flen = Math.Sqrt(fdx * fdx + fdy * fdy)
             any side = ((wx - e.x1) * fdy - (wy - e.y1) * fdx) / flen
             var sgn = 1.0
@@ -2359,7 +2359,7 @@ namespace UI {
             var L = this.flen
             any w = e.Get("width").TryToInt()
             if (w == undefined || w == 0) { w = 4 }
-            defined float g = -Circuits.Symbols.Dsign(e) * w
+            float g = -Circuits.Symbols.Dsign(e) * w
             if (e.Flag("flip")) { g = -g }
             // pins: P1 (0,0), S1, P2 (0,g), S2; S1 is at (L,0) unless reversed
             var vp1 = e.PinVoltage(0)
@@ -2454,7 +2454,7 @@ namespace UI {
             this.Dot(root, pivot, 0.0, 0.25, white)
             var tipT = 0.0
             for (int i = 0; i < n; i++) {
-                defined float hs = -2 * (i - Math.Floor((n - 1) / 2.0)!int)
+                float hs = -2 * (i - Math.Floor((n - 1) / 2.0)!int)
                 if (n == 2 && i == 0) { hs = 2.0 }
                 this.Seg(root, L - 1.0, hs, L, hs, this.VoltageColor(e.PinVoltage(i + 1)))
                 this.Dot(root, L - 1.0, hs, 0.2, white)
@@ -2513,7 +2513,7 @@ namespace UI {
             if (end[1] == e.y1) {
                 if (end[0] < e.x1) { ds = -1 }
             } else if (end[1] > e.y1) { ds = -1 }
-            defined float g = -w * ds
+            float g = -w * ds
             var white = UI.Color.Rgb(220, 220, 220)
             var va1 = e.PinVoltage(0)
             var va2 = e.PinVoltage(1)
@@ -2973,7 +2973,7 @@ namespace UI {
             var idx = 0
             foreach (e in els) {
                 if (e.type == "Wire" && e.pins.Count == 4) {
-                    defined int start = this.wcPinStart[idx]
+                    int start = this.wcPinStart[idx]
                     this.wcWa.Add(this.wcPinPoint[start])
                     this.wcWb.Add(this.wcPinPoint[start + 1])
                     this.wcWi.Add(idx)
@@ -3002,12 +3002,12 @@ namespace UI {
                     idx = idx + 1
                     continue
                 }
-                defined int start = this.wcPinStart[idx]
+                int start = this.wcPinStart[idx]
                 var c = this.CurrentOf(e)
                 var unknown = (c == 0.0 && t != "Resistor" && t != "Capacitor" && t != "Inductor" && t != "Switch" && t != "Diode" && t != "Led" && t != "Zener"
                     && t != "Source" && t != "Rail" && t != "CurrentSource" && t != "AudioInput" && t != "LogicInput" && t != "Formula")
                 for (int i = 0; i < e.pins.Count / 2; i++) {
-                    defined int k = this.wcPinPoint[start + i]
+                    int k = this.wcPinPoint[start + i]
                     if (unknown) { known[k] = false }
                     // the current enters the part at its first pin and leaves it at the second
                     else if (i == 0) { need[k] = need[k] + c } else { need[k] = need[k] - c }
@@ -3034,7 +3034,7 @@ namespace UI {
                         }
                     }
                     if (count != 1) { continue }
-                    defined int other = wa[open]
+                    int other = wa[open]
                     var sign = -1.0
                     if (other == p) {
                         other = wb[open]
@@ -3088,7 +3088,7 @@ namespace UI {
                 var y1 = UI.M.Max(e.y1, e.y2) + 0.0
                 if (Circuits.Symbols.IsFalstadChip(e)) {
                     any size = Circuits.Symbols.FalstadLayout(e).Split("|")[0].Split(",")
-                    defined float cs = Circuits.Symbols.FalstadCell(e)
+                    float cs = Circuits.Symbols.FalstadCell(e)
                     x0 = e.x1 + cs / 2.0
                     y0 = e.y1 - cs / 2.0
                     x1 = x0 + Circuits.Symbols.Int(size[0]) * cs

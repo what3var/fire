@@ -83,6 +83,13 @@ namespace fire.Compiler
         /// arguments: the overload and what it assumed of each argument (Bytecode.OverloadHint text). The compiler puts it in front of the call
         /// (OpCode.OverloadHint); at run time the arguments are checked against the assumptions and the overload is taken without scoring. Filled by TypeChecker.</summary>
         public Dictionary<Expr, string> OverloadHints { get; } = new(ReferenceEqualityComparer.Instance);
+
+        /// <summary>Parameters of the program declared `int`/`float` without `defined` that every call gives a number (ROADMAP 13.9, the derivation): the
+        /// compiler checks them like `defined` ones - natively they are C numbers. Filled by TypeChecker (TypeChecker.DeriveDefined).</summary>
+        public HashSet<LambdaParam> DerivedDefined { get; } = new(ReferenceEqualityComparer.Instance);
+        /// <summary>The bodies of the methods of the program declared `int`/`float` whose returns are certainly numbers (the derivation): checked like a
+        /// `defined` return type.</summary>
+        public HashSet<Stmt.BlockStmt> DerivedReturns { get; } = new(ReferenceEqualityComparer.Instance);
         public required IReadOnlyDictionary<string, ClassDecl> Classes { get; init; }
         public required int GlobalSlotCount { get; init; }
         public required IReadOnlyDictionary<string, ExternDecl> Externs { get; init; }
@@ -2784,6 +2791,23 @@ namespace fire.Compiler
         /// <summary>The names of <paramref name="names"/> that the body of a lambda only reads (ROADMAP_TASKS step 8): every use is a call of it, a
         /// read of one of its fields or elements that is consumed at once (an operand, a condition, `print`, a text), or the operand of an operator - never
         /// an assignment, a method call on it, an argument, a `return`, a `take` or an alias. A name the body declares again is not read-only.</summary>
+        /// <summary>The variables a body assigns to (`x = ...`, `x += ...`, `x++`) - for the derivation of the type checker: a parameter it never assigns
+        /// still holds what the call gave it.</summary>
+        public static HashSet<string> Assigned(Stmt.BlockStmt body)
+        {
+            var all = new List<object>();
+            Walk(body, all);
+            var names = new HashSet<string>();
+            foreach (var n in all)
+                switch (n)
+                {
+                    case AssignExpr { Target: IdentifierExpr id }: names.Add(id.Name); break;
+                    case IncDecExpr { Target: IdentifierExpr id }: names.Add(id.Name); break;
+                    case VarDeclStmt v: names.Add(v.Name); break;   // (a variable of the same name hides the parameter somewhere)
+                }
+            return names;
+        }
+
         public static HashSet<string> ReadOnly(LambdaExpr lambda, IEnumerable<string> names)
         {
             var all = new List<object>();

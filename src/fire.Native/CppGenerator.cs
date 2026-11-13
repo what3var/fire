@@ -2286,7 +2286,7 @@ namespace fire.Native
             {
                 // a call on an object of the main program's globals from a fire thread: a job of the main program, the thread waits (rule 10 - in a section
                 // of its own, `sync global`, it runs here)
-                sb.AppendLine("    if (FIRE_UNLIKELY(g_isThread) && g_secDepth == 0 && g_domainOn && sharedValue(self)) {");
+                sb.AppendLine("    if (FIRE_UNLIKELY(g_isThread) && g_secDepth == 0 && g_domainOn && (self.kind != K_Class || leafAlive(self)) && sharedValue(self)) {");   // (a destroyed object is not read: the call below says so)
                 sb.AppendLine($"        {CArray("Value", "gv", Enumerable.Range(0, argc).Select(i => $"a{i}").DefaultIfEmpty("Undef()").ToList())}");
                 sb.AppendLine($"        return globalsCall(self, {msg}, gv, {argc}, {CString(name)});");
                 sb.AppendLine("    }");

@@ -124,6 +124,14 @@ try { Stats.Mix(missing, 1) } catch (ArgumentException e) { print(e.message) }  
 Natively `defined` pays off: such parameters and return values are passed as plain C numbers, without packing them into values - on a 16-bit
 target the code of a small arithmetic method shrinks to a fraction.
 
+You do not have to write `defined` everywhere: the compiler **derives** it for the parameters and the return values of your own methods and
+constructors. A parameter declared `int` or `float` that every call gives a number (a literal, the result of an operator, a `defined` value, a
+parameter or a return that is derived itself, a default that is a number) is checked and passed like a `defined` one; so is a return value when
+every `return` gives a number and the method cannot run off its end. Nothing is derived for a method that something may call unseen: a call
+through a value of an unknown type (`any`), the method used as a value or named in a string, an override of a method of a package or the prelude,
+the constructors of a base class - and not at all in a program that imports `reflection`, in a plugin or module, or in a debug build.
+`FIRE_DERIVE_LOG=1` shows what was decided, `FIRE_NO_DERIVE=1` switches it off.
+
 ## The type checker: lax and strict
 
 The checker runs after every compile and in the editor while you type. Its findings have codes:

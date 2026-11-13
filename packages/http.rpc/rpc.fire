@@ -171,7 +171,7 @@ namespace Http {
         static defined int TimeoutTicksOf(Type t) {
             Attribute a = t.FindAttribute("Timeout")
             if (a == undefined || a.ArgCount() == 0) { return 300 * 10000000 }
-            defined int seconds = a.Args[0]
+            int seconds = a.Args[0]
             return seconds * 10000000
         }
     }
@@ -303,7 +303,7 @@ namespace Http {
         // The number of living instances of lifetime session and single.
         defined int Instances() {
             var h = this.home
-            defined int n = await h.Count()
+            int n = await h.Count()
             return n
         }
 

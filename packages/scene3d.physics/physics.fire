@@ -38,7 +38,7 @@ class Body {
     Object Object { get { return this.owner } }
     BodyKind Kind {
         get {
-            defined int k = __S3DBodyGet(this.h, 21)!int
+            int k = __S3DBodyGet(this.h, 21)!int
             if (k == 3) { k = 1 }
             return k!BodyKind
         }
@@ -46,7 +46,7 @@ class Body {
     // (a Character is Dynamic with the shape Capsule)
     BodyShape Shape {
         get {
-            defined int k = __S3DBodyGet(this.h, 22)!int
+            int k = __S3DBodyGet(this.h, 22)!int
             return k!BodyShape
         }
     }

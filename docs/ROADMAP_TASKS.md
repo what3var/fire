@@ -588,8 +588,11 @@ Step 9: records, `with`, `Channel<T>`, `Channel.Pair`, lent records over a chann
 The end of the program (the user: "Stillstand + Zeitlimit", 60 s without a directive): when every fire thread that is left waits in a channel or for a
 socket, the channels the main program made close (VM: ChannelHandles.CloseMainMade from FireRuntime.WaitForAllFireThreads, natively chanCloseMainMade
 from mainFinish); `#endwait value` (default 60 s, `undefined`: none) ends the threads that are still there like `terminate`. A thread that waits in
-`process` for a message counts as standing still too (the user: "ein Warten in process zählt wie ein Warten in einem Kanal"): at the standstill its wait
-ends the thread like `leave` (VM: FireRuntime.Standstill, WaitInProcess / SuspendForProcess; native: g_standstill, fire_actorReadyOrStill in processMsg).
+`process` for a message counts as standing still too (the user: "ein Warten in process zählt wie ein Warten in einem Kanal"): when, after the channels
+closed, everything stands still again (at least 100 ms later - the woken threads may still send messages) and no thread waits for a socket (g_fdWaiters
+/ FireRuntime._socketWaiting: the network can still bring work), its wait ends the thread like `leave` (found
+with the pages of http.pages: a circuit ended before the directory sent it its Stop - natively a read of the freed actor, now also guarded in the
+dispatcher) (VM: FireRuntime.Standstill, WaitInProcess / SuspendForProcess; native: g_standstill, fire_actorReadyOrStill in processMsg).
 In the VM a standstill also needs no pending request of the main program (a thread that starts a thread asks it to - until then the new one is not
 counted). Found with it: the elements of `await [ ... ]` copied the caller's locals in a thread (a lambda's capture without a word) instead of lending
 them - an actor as an argument was an ArgumentException in the VM, a Completion a copy that nobody set (natively the awaited calls then waited forever);

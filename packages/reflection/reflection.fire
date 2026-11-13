@@ -22,7 +22,7 @@ class Attribute {
     static any FlagsIn(List attributes, any ofEnum) {
         bool byName = ofEnum is of string
         string name = byName ? ofEnum : __refl_enum_name(ofEnum)
-        defined int value = 0
+        int value = 0
         if (name == undefined) { return value }
         foreach (a in attributes) {
             if ((a.Name == name || a.Name.EndsWith("." + name)) && a.Args.length == 1 && a.Args[0] is of int) { value = value | a.Args[0] }

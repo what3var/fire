@@ -20,7 +20,7 @@ namespace Http {
         static string Color(any brush) {
             if (brush == undefined || !(brush is of SolidBrush)) { return undefined }
             SolidBrush b = brush
-            defined int c = b.Color
+            int c = b.Color
             var digits = "0123456789abcdef"
             var t = "#"
             var shift = 16777216
@@ -609,11 +609,11 @@ namespace Http {
             any ev = Json.Parse(json)
             if (!(ev is of JsonObject)) { return "{\"patches\": []}" }
             JsonObject o = ev
-            defined int id = o.Get("e")
+            int id = o.Get("e")
             string kind = o.Get("k")
             if (kind == "js") {
                 // (the answer of a browser.Call: its callback gets the result)
-                defined int call = o.Get("id")
+                int call = o.Get("id")
                 if (call >= 0 && call < this.callbacks.Count) {
                     any callback = this.callbacks[call]
                     this.callbacks[call] = undefined
@@ -634,8 +634,8 @@ namespace Http {
                     this.root.SetFocus(this.elements[id])
                     this.seenFocus = id
                 }
-                defined int key = o.Get("key")
-                defined int mod = o.Get("mod")
+                int key = o.Get("key")
+                int mod = o.Get("mod")
                 this.root.KeyDown(key, mod)
                 return this.Changes()
             }
@@ -651,7 +651,7 @@ namespace Http {
                         if (cb.IsChecked != v) { cb.Toggle() }
                     } else if ((kind == "select" || kind == "activate") && e is of UI.ItemsControl) {
                         UI.ItemsControl ic = e
-                        defined int row = o.Get("v")
+                        int row = o.Get("v")
                         ic.Select(row)
                         if (kind == "activate" && ic.OnActivate != undefined) {
                             ic.activated = true
@@ -661,7 +661,7 @@ namespace Http {
                     } else if ((kind == "select" || kind == "toggle" || kind == "activate") && e is of UI.TreeView) {
                         UI.TreeView tv = e
                         tv.Flatten()
-                        defined int row = o.Get("v")
+                        int row = o.Get("v")
                         if (row >= 0 && row < tv.visibleNodes.Count) {
                             UI.TreeNode node = tv.visibleNodes[row]
                             if (kind != "select" && node.HasChildren()) { node.Expanded = !node.Expanded }
@@ -684,7 +684,7 @@ namespace Http {
                         if (item != undefined && item.Enabled && !item.separator && !item.HasSubmenu()) { item.Activate() }
                     } else if (kind == "sort" && e is of UI.ListView) {
                         UI.ListView lv = e
-                        defined int column = o.Get("v")
+                        int column = o.Get("v")
                         if (column >= 0 && column < lv.columns.Count) {
                             UI.GridColumn gc = lv.columns[column]
                             lv.SortBy(gc.member)
@@ -692,11 +692,9 @@ namespace Http {
                     } else if (kind == "mouse" && e is of UI.DrawingCanvas) {
                         UI.DrawingCanvas dc = e
                         string what = o.Get("t")
-                        defined int x = o.Get("x")
-                        defined int y = o.Get("y")
-                        any b = o.Get("b")
-                        defined int button = 0                 // (a move has no button)
-                        if (b != undefined) { button = trust b }
+                        int x = o.Get("x")
+                        int y = o.Get("y")
+                        int button = o.Get("b")
                         if (what == "down" && dc.OnMouseDown != undefined) { var down = dc.OnMouseDown; down(x, y, button) }
                         if (what == "move" && dc.OnMouseMove != undefined) { var move = dc.OnMouseMove; move(x, y) }
                         if (what == "up" && dc.OnMouseUp != undefined) { var up = dc.OnMouseUp; up(x, y, button) }
@@ -1102,7 +1100,7 @@ namespace Http {
         // The number of open pages.
         defined int Open() {
             var d = this.directory
-            defined int n = await d.Count()
+            int n = await d.Count()
             return n
         }
 

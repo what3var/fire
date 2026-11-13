@@ -475,8 +475,10 @@ print("never printed")
 When the main program's code ends, it waits for the threads that are still running before it destroys its globals. Two rules keep that from hanging:
 
 - **Standstill**: when every thread that is left waits in a channel (`Receive`, `Send`, `foreach`), for a socket or in `process` (for a message to an
-  actor of its own), nobody can go on - the channels the main program made are closed, and a `process` that waits for a message ends its thread like
-  `leave` (its `finally` blocks and destructors run; a message that is already there is still run). A `foreach` over a closed channel ends, a `Receive`
+  actor of its own), nobody can go on - the channels the main program made are closed. When after that everything that is left stands still again
+  (the threads the closing woke have sent what they still had to send) and no thread waits for a socket (it can still bring work from outside),
+  a `process` that waits for a message ends its thread like `leave` (its
+  `finally` blocks and destructors run; a message that is already there is still run). A `foreach` over a closed channel ends, a `Receive`
   gives undefined, a `Net.Channel` sends its end. So a home thread that loops over `process` (a pool, a directory of pages, the home of RPC calls) does
   not keep the program for the 60 seconds of the limit. Threads that wait for something else (a channel of their own, `Sleep`) are left alone.
 - **Limit**: 60 seconds after the end of the main program the threads that are still there are ended like with `terminate` (at their next safe point

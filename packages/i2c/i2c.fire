@@ -371,7 +371,7 @@ class I2cDriver : Driver {
         }
         if (start >= text.Length) { return undefined }
         for (int i = start; i < text.Length; i++) {
-            defined int digit = "0123456789abcdef".IndexOf(text.Substring(i, 1).ToLower())
+            int digit = "0123456789abcdef".IndexOf(text.Substring(i, 1).ToLower())
             if (digit < 0 || digit >= radix) { return undefined }
             address = address * radix + digit
         }

@@ -134,8 +134,8 @@ namespace UI {
                     }
                     continue
                 }
-                defined int w = child.dw
-                defined int h = child.dh
+                int w = child.dw
+                int h = child.dh
                 if (x > 0 && limit >= 0 && x + w > limit) {
                     lineTop = this.EndLine(lineStart, lineTop, lineHeight)
                     lineStart = this.pieces.Count

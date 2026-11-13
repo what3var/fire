@@ -245,7 +245,7 @@ namespace UI {
             if (this.dark || this.accent != 0x0078D7) { this.theme.SetColors(this.dark, this.accent) }
             this.theme.transparency = UI.Effects.Transparency && system.transparency && !this.embedded
             this.theme.glass = UI.Effects.Glass && this.theme.transparency
-            defined float systemScale = system.scale
+            defined float systemScale = system.scale   // (the scale of the system: always a number)
             if (this.embedded) { systemScale = Math.Max(1.0, Math.Round(systemScale)) }
             this.content = new Panel(0, 0, this.width, this.height)
             this.content.Filled = false
@@ -789,7 +789,7 @@ namespace UI {
         // of them per cycle, and each one asks the elements below it (hover, cursor) - that would take the time of the program.
         undefined DispatchEvents() {
             bool moved = false
-            defined int mx = 0
+            defined int mx = 0   // (the position of a mouse move of the window system: always numbers)
             defined int my = 0
             while (true) {
                 any e = this.window.NextEvent()   // (declared in the loop: the event array belongs to this iteration)
@@ -1129,8 +1129,8 @@ namespace UI {
 
         // A wheel event of the window: the distances may be fractions (touchpads, high resolution wheels); whole notches go to MouseWheel.
         undefined WheelEvent(any rawX, any rawY, defined int px, defined int py) {
-            defined float x = rawX
-            defined float y = rawY
+            float x = rawX
+            float y = rawY
             this.wheelRestX = this.wheelRestX + x
             this.wheelRestY = this.wheelRestY + y
             var dx = UI.Root.Whole(this.wheelRestX)
