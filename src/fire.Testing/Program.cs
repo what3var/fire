@@ -15885,7 +15885,7 @@ static int CountOccurrences(string haystack, string needle)
         CheckMd("Sprachdoku: alle Links zeigen auf vorhandene Seiten und Ueberschriften im selben Ordner", string.Join(", ", broken), "");
         var (topics, more) = fire.Editor.LanguageHelp.Contents(File.ReadAllText(Path.Combine(languageDir, "README.md")));
         CheckMd("Sprachdoku: das Inhaltsverzeichnis liefert die Themenseiten fuers Hilfemenue",
-            $"{topics.Count} {topics[0].Title}={topics[0].File} {topics[^1].File}", "19 1. Basics=01-basics.md 19-standard-library.md");
+            $"{topics.Count} {topics[0].Title}={topics[0].File} {topics[^1].File}", "20 1. Basics=01-basics.md 20-time.md");
         CheckMd("Sprachdoku: weitere Seiten (Roadmap) nach den Themen", string.Join(",", more.Select(p => p.Title + "=" + p.File)), "Roadmap=roadmap.md");
         var unlisted = Directory.GetFiles(languageDir, "*.md").Select(Path.GetFileName)
             .Where(f => f != "README.md" && !topics.Concat(more).Any(t => t.File == f)).ToList();
@@ -30948,6 +30948,7 @@ else
                     c.Execute("SET FOREIGN_KEY_CHECKS = 0")
                     foreach (n in names) { c.Execute("DROP TABLE `" + n[0] + "`") }
                     c.Execute("SET FOREIGN_KEY_CHECKS = 1")
+                    c.Execute("ALTER DATABASE CHARACTER SET utf8mb4")
                     return c
                 }
                 static string Hex(byte data[]) {

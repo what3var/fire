@@ -111,6 +111,8 @@ namespace Data {
         string InsertDefault(string table) { return "INSERT INTO " + table + " DEFAULT VALUES" }
         // undefined: the database knows CREATE INDEX IF NOT EXISTS; else a query (the table, the index name) whose first value is not 0 when it is there.
         string IndexQuery() { return undefined }
+        // What follows ")" in the CREATE TABLE of Ensure (MySQL: the character set).
+        string TableOptions() { return "" }
         // A query (one parameter: the table) whose first column is the name of each column the table has; undefined: the table is not there.
         string ColumnsQuery() { return "select column_name from information_schema.columns where table_name = ?" }
 
@@ -362,7 +364,7 @@ namespace Data {
             any value = undefined
             if (st.Next()) {
                 any values = st.Values()
-                if (values.length > 0) { value = values[0] }
+                if (values.length > 0) { value = copy values[0] }
             }
             st.Close()
             return value
@@ -439,7 +441,7 @@ namespace Data {
                     if (i > 0) { cols = cols + ", " }
                     cols = cols + d.ColumnDefinition(c)
                 }
-                this.driver.Exec("CREATE TABLE " + d.Quote(map.table) + " (" + cols + ")")
+                this.driver.Exec("CREATE TABLE " + d.Quote(map.table) + " (" + cols + ")" + d.TableOptions())
             } else {
                 for (var i = 0; i < map.columns.Count; i++) {
                     Data.ColumnMap c = map.columns[i]
@@ -456,7 +458,7 @@ namespace Data {
                 a.required = true
                 var b = new Data.ColumnMap(r.otherColumn, r.otherColumn, target.key.typeName, target.key.kind)
                 b.required = true
-                this.driver.Exec("CREATE TABLE IF NOT EXISTS " + d.Quote(r.joinTable) + " (" + d.ColumnDefinition(a) + ", " + d.ColumnDefinition(b) + ")")
+                this.driver.Exec("CREATE TABLE IF NOT EXISTS " + d.Quote(r.joinTable) + " (" + d.ColumnDefinition(a) + ", " + d.ColumnDefinition(b) + ")" + d.TableOptions())
                 this.CreateIndex("ix_" + r.joinTable + "_" + r.thisColumn, r.joinTable, r.thisColumn, false)
             }
             for (var i = 0; i < map.columns.Count; i++) {
