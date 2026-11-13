@@ -95,5 +95,28 @@ print(ctx.Script())
 
 The classes of a model have `[Table]`, so `forge data diff` sees them: after a change of the model, `forge data diff App.fireproj --url ... -o
 Migrations/M3.fire` writes the migration that the database lacks into the project (it is compiled with it), `forge data migrate` runs it
-([migrations](README.md#migrations)). `forge data import --url ...` gives classes for an existing database; a model file from a database comes
-with the designer (step 12 of [ROADMAP_DATA.md](../ROADMAP_DATA.md)).
+([migrations](README.md#migrations)). `forge data import --url ...` gives classes for an existing database, `forge data import --url ... --format fdata -o Shop.fdata` a model
+file: the tables as entities, the relations guessed from the columns (`customerId` or `customer_id` with a table `customer(s)`: one-to-many; a
+table of two such columns only: many-to-many with its join table).
+
+## The designer in spark
+
+spark opens a `.fdata` in the designer (File > New > Data Model makes one). The file stays the text above - the designer writes it, a diff reads it.
+
+- **The diagram** in the middle: the entities (with their fields and the navigation fields of their relations), enums and types as boxes, the
+  relations as lines with `1`/`*` at their ends. Drag a box to move it (its place is saved in `diagrams`), click a box or a line to select it, Del
+  deletes it (an entity with its relations).
+- **The toolbox** above: `+ Entity` (with a key `id`), `+ Enum`, `+ Type`; `1 : n` and `n : m` - click the button, then the two entities (the
+  first is `from`: the "one" of one-to-many). The relation gets the names the generator would choose (`purchases` and `customer`); renaming an
+  entity renames them along, names of one's own stay.
+- **The properties** on the right: of the model (namespace, naming), of an entity (name, table, the query of the Context, comment, record) with its
+  fields as a grid (name, type - the enums and types of the model among them -, key, required, length, unique, index; up, down, delete; below the
+  rest of the selected field: column, comment, generated key, version, JSON), of an enum (its values, one per line), of a type, of a relation
+  (kind, the two entities, navigation, inverse, foreign key or join table and its columns).
+- **Problems** below: what a build would report, with the names that are words of SQL (legal - they are quoted - but hand-written SQL must quote them).
+- **Preview** below: the fire code forge makes, or the DDL for SQLite, MySQL/MariaDB, SQL Server or the in-memory database (without a connection).
+- **With a database** (the URL, user and password are asked): *Import from database…* replaces the model by the tables of the database (Undo brings
+  the model back); *Generate database…* makes what is missing of the model in it (`Ensure` of every entity, nothing is dropped); *Generate
+  migration…* compares the project the model belongs to (the nearest `.fireproj`) with the database and writes the migration it lacks as
+  `Migrations/MigrationN.fire` into the project - like `forge data diff`; the model must be saved first.
+- Undo/Redo cover every change (also a moved box).

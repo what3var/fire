@@ -262,7 +262,7 @@ Own methods for the generated classes come in an extension (`extension Person { 
 | 9 | `data.sqlserver` (TDS, TLS in TDS, `sp_executesql`) - **built** (in fire; `Tls.Engine` for TLS inside TDS (OpenSSL), mandatory/optional/off, strict untried; streamed rows, SCOPE_IDENTITY; MARS over SMP, named instances over the SQL Server Browser, transactions as TM requests; tested against SQL Server 2022 on Linux; Windows login later) | 1, 7 |
 | 10 | Migrations, `forge data diff/apply/import` - **built** (`[Migration]` + `Data.Migrator`, `db.Migrate/MigrateTo/Applied/Schema`, `forge data status/migrate/diff/import`; on all five databases) | 2, a driver with schema reading |
 | 11 | Designer: the `.fdata` format and forge's generator (classes, Model, Context, DDL) - **built** ([docs/data/designer.md](data/designer.md); `#include`, projects, `forge fdata`; one-to-one, views, check constraints and own type mappings per dialect still open) | 2, 10 |
-| 12 | Designer in spark: diagram, properties, import from a database, generate database/migration, preview | 11 |
+| 12 | Designer in spark: diagram, properties, import from a database, generate database/migration, preview - **built** (`DataModelEditorControl` on `DataModelDocument`; `Data.ModelImporter` reads a database as `.fdata` with relations guessed from `…Id`/`_id` columns and join tables, `forge data import --format fdata`; DDL per dialect via `Data.Script.Of`; copy/paste of boxes and several diagrams still open) | 11 |
 | 13 | PostgreSQL | 1, 7 |
 
 Tests: every driver runs the same suite (`Data.Tests.Run(url)`: types, NULL, parameters, transactions, errors, queries, session) - SQLite and memory in the
