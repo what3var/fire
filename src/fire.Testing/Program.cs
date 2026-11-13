@@ -30916,6 +30916,108 @@ else
             """),
     }).ToArray();
 
+    // The MySQL/MariaDB driver against a running server - only when there is one: FIRE_TEST_MYSQL=mysql://127.0.0.1:3306/test (an empty database: its tables
+    // are dropped), FIRE_TEST_MYSQL_USER, FIRE_TEST_MYSQL_PASSWORD. The mapping, the queries, the sessions and the relations are those of the case of the
+    // in-memory database (the same program on another driver), the SQL before them is MySQL's.
+    string? mysqlUrl = Environment.GetEnvironmentVariable("FIRE_TEST_MYSQL");
+    if (!string.IsNullOrEmpty(mysqlUrl))
+    {
+        string Lit(string? t) => t == null ? "undefined" : "\"" + t.Replace("\\", "\\\\").Replace("\"", "\\\"") + "\"";
+        string open = $"MyDb.Open({Lit(mysqlUrl)}, {Lit(Environment.GetEnvironmentVariable("FIRE_TEST_MYSQL_USER"))}, {Lit(Environment.GetEnvironmentVariable("FIRE_TEST_MYSQL_PASSWORD"))})";
+        string mem = natCases.First(c => c.Name.StartsWith("Data/memory:", StringComparison.Ordinal)).Source;
+        string header = mem.Substring(0, mem.IndexOf("print(\"memory\")", StringComparison.Ordinal)).Replace("#import \"data.memory\"", "#import \"data.mysql\"\n#import \"hash\"");
+        string orm = mem.Substring(mem.IndexOf("var cdb = new Data.Connection(\"memory:\")", StringComparison.Ordinal))
+            .Replace("new Data.Connection(\"memory:\")", "MyDb.Open(MyDb.url, MyDb.user, MyDb.password)")
+            .Replace("cdb.Rows(\"select name, type, pk, notnull from _columns where table_name = 'people'\")", "cdb.Rows(\"select column_name as name, column_type as type, column_key = 'PRI' as pk, is_nullable = 'NO' as notnull from information_schema.columns where table_schema = database() and table_name = 'people' order by ordinal_position\")")
+            .Replace("\"select name from _columns where table_name = ?\"", "\"select column_name from information_schema.columns where table_schema = database() and table_name = ?\"")
+            .Replace("create table Tag(code text primary key, label text)", "create table Tag(code varchar(20) primary key, label text)")
+            .Replace("\\\"Purchase\\\"", "Purchase")
+            .Replace("create unique index ix_memo_text on Memo (text)", "create unique index ix_memo_text on Memo (text(100))");
+        natCases = natCases.Append(("Data/MySQL: der Treiber in fire gegen einen laufenden Server (FIRE_TEST_MYSQL): Handshake, Prepared Statements im Binaerprotokoll (Zahlen, Text, Unicode, NULL, BLOB, DOUBLE/FLOAT, DECIMAL, DATETIME, UNSIGNED), mehrere Anweisungen, Fehlerarten, Transaktionen mit Savepoints, TLS (prefer/require), caching_sha2_password-Pruefwert; dann Mapping, Abfragen, Sessions und Beziehungen wie bei der In-Memory-Datenbank", header + $$"""
+            class MyDb {
+                static string url
+                static string user
+                static string password
+                // (a connection to the test database without its tables)
+                static Data.Connection Open(string url, string user, string password) {
+                    MyDb.url = url
+                    MyDb.user = user
+                    MyDb.password = password
+                    var c = new Data.Connection(url, new Data.Credentials(user, password))
+                    var names = c.Rows("select table_name from information_schema.tables where table_schema = database()")
+                    c.Execute("SET FOREIGN_KEY_CHECKS = 0")
+                    foreach (n in names) { c.Execute("DROP TABLE `" + n[0] + "`") }
+                    c.Execute("SET FOREIGN_KEY_CHECKS = 1")
+                    return c
+                }
+                static string Hex(byte data[]) {
+                    var t = ""
+                    var digits = "0123456789abcdef"
+                    for (var i = 0; i < data.length; i++) {
+                        int b = data[i]
+                        t = t + digits.Substring(b >> 4, 1) + digits.Substring(b & 15, 1)
+                    }
+                    return t
+                }
+            }
+            print("mysql")
+            var db = {{open}}
+            db.Execute("create table person(id bigint primary key auto_increment, name varchar(100) not null, age int, active tinyint); create table item(id bigint primary key auto_increment, title text, price double, blob1 longblob, f float, d datetime(3), n bigint unsigned, s smallint, m decimal(10,2))")
+            print("insert " + db.Execute("insert into person(name, age, active) values (?, ?, ?)", ["Ada", 36, true]))
+            db.Execute("insert into person(name, age, active) values (?, ?, ?)", ["Grace", 85, false])
+            db.Execute("insert into person(name, age, active) values (?, ?, ?)", ["Linus Ünïcødé 🐧", undefined, true])
+            print("last id " + db.LastInsertId)
+            foreach (row in db.Query("select id, name, age from person where age > ? or age is null order by id", [40])) { print("row " + row) }
+            print("count " + db.Scalar("select count(*) from person") + " text " + db.Scalar("select name from person where id = 3"))
+            db.Execute("insert into item(title, price, blob1, f, d, n, s, m) values (?, ?, ?, ?, ?, ?, ?, ?)", ["Box", 9.5, [1, 2, 255], 1.25, "2026-11-13 10:20:30.250", 18000000000, -5, "12.50"])
+            db.Execute("insert into item(title, price) values (?, ?)", ["Tiny", -0.000123])
+            foreach (row in db.Rows("select title, price, f, d, n, s, m, length(blob1) from item order by id")) { print("item " + row) }
+            byte blob[] = db.Scalar("select blob1 from item where id = 1")
+            print("blob " + blob.length + " " + blob[2])
+            print("update " + db.Execute("update person set age = age + 1 where age is not null") + " delete " + db.Execute("delete from item where id = ?", [2]))
+            print("multi")
+            db.Execute("insert into item(title) values ('a'); insert into item(title) values ('b'); select 1; update item set price = 1 where price is null")
+            print("items " + db.Scalar("select count(*) from item") + " priced " + db.Scalar("select count(*) from item where price = 1"))
+            try { db.Execute("insert into person(id, name) values (?, ?)", [1, "Dup"]) } catch (Data.ConstraintException e) { print("constraint " + e.Code) }
+            try { db.Execute("insert into person(age) values (?)", [1]) } catch (Data.ConstraintException e) { print("not null " + e.Code) }
+            try { db.Execute("select * from nothing") } catch (Data.DataException e) { print("error " + e.Code) }
+            try { db.Execute("selec 1") } catch (Data.DataException e) { print("syntax " + e.Code) }
+            try { db.Execute("insert into person(name) values (?)", []) } catch (ArgumentException e) { print("args " + e.message) }
+            db.Transaction(t => { t.Execute("update person set age = age + 1 where id = ?", [1]) })
+            print("after commit " + db.Scalar("select age from person where id = 1"))
+            try {
+                db.Transaction(t => {
+                    t.Execute("update person set age = 0 where id = ?", [1])
+                    throw new Exception("stop")
+                })
+            } catch (e) { print("rolled back: " + e.message) }
+            print("after rollback " + db.Scalar("select age from person where id = 1"))
+            db.Begin()
+            db.Execute("delete from person where id = ?", [3])
+            db.Begin()
+            db.Execute("delete from person where id = ?", [2])
+            db.Rollback()
+            db.Commit()
+            print("nested " + db.Scalar("select count(*) from person"))
+            print("case " + db.From<Pupil>().Where(p => p.name.StartsWith("a")).ToSql())
+            db.Close()
+            var tls = new Data.Connection(MyDb.url + "?tls=require", new Data.Credentials(MyDb.user, MyDb.password))
+            print("tls " + (tls.Scalar("show status like 'Ssl_version'") != undefined) + " " + (("" + tls.Rows("show status like 'Ssl_cipher'")[0][1]).Length > 0))
+            tls.Close()
+            var plain = new Data.Connection(MyDb.url + "?tls=off", new Data.Credentials(MyDb.user, MyDb.password))
+            print("plain " + plain.Rows("show status like 'Ssl_cipher'")[0][1])
+            plain.Close()
+            try { new Data.Connection(MyDb.url, new Data.Credentials(MyDb.user, "wrong")) } catch (Data.ConnectionException e) { print("login " + e.Code) }
+            try { new Data.Connection(MyDb.url + "?tls=maybe") } catch (ArgumentException e) { print("option " + e.message) }
+            byte salt[] = new byte[20]
+            for (var i = 0; i < 20; i++) { salt[i] = i + 1 }
+            print("native " + MyDb.Hex(Data.MysqlConnection.Scramble("mysql_native_password", "secret", salt)))
+            print("sha2 " + MyDb.Hex(Data.MysqlConnection.Scramble("caching_sha2_password", "secret", salt)))
+            print("end")
+            {{orm}}
+            """)).ToArray();
+    }
+
     // Time and Sleep (bridges/fire_bridge_time.hpp)
     natCases = natCases.Concat(new (string Name, string Source)[]
     {

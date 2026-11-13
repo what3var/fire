@@ -107,6 +107,10 @@ namespace Data {
         }
         // (after PRIMARY KEY of a generated key)
         string Generated() { return "" }
+        // An INSERT of a row with only the default values.
+        string InsertDefault(string table) { return "INSERT INTO " + table + " DEFAULT VALUES" }
+        // undefined: the database knows CREATE INDEX IF NOT EXISTS; else a query (the table, the index name) whose first value is not 0 when it is there.
+        string IndexQuery() { return undefined }
         // A query (one parameter: the table) whose first column is the name of each column the table has; undefined: the table is not there.
         string ColumnsQuery() { return "select column_name from information_schema.columns where table_name = ?" }
 
@@ -453,7 +457,7 @@ namespace Data {
                 var b = new Data.ColumnMap(r.otherColumn, r.otherColumn, target.key.typeName, target.key.kind)
                 b.required = true
                 this.driver.Exec("CREATE TABLE IF NOT EXISTS " + d.Quote(r.joinTable) + " (" + d.ColumnDefinition(a) + ", " + d.ColumnDefinition(b) + ")")
-                this.driver.Exec("CREATE INDEX IF NOT EXISTS " + d.Quote("ix_" + r.joinTable + "_" + r.thisColumn) + " ON " + d.Quote(r.joinTable) + " (" + d.Quote(r.thisColumn) + ")")
+                this.CreateIndex("ix_" + r.joinTable + "_" + r.thisColumn, r.joinTable, r.thisColumn, false)
             }
             for (var i = 0; i < map.columns.Count; i++) {
                 Data.ColumnMap c = map.columns[i]
@@ -461,8 +465,23 @@ namespace Data {
                 var kind = "INDEX"
                 if (c.unique) { kind = "UNIQUE INDEX" }
                 string name = "ix_" + map.table + "_" + c.column
-                this.driver.Exec("CREATE " + kind + " IF NOT EXISTS " + d.Quote(name) + " ON " + d.Quote(map.table) + " (" + d.Quote(c.column) + ")")
+                this.CreateIndex(name, map.table, c.column, c.unique)
             }
+        }
+
+        // (an index when it is not there - with IF NOT EXISTS where the database knows it, else after asking its catalog)
+        undefined CreateIndex(string name, string table, string column, bool unique) {
+            var d = this.driver.Dialect()
+            var kind = "INDEX"
+            if (unique) { kind = "UNIQUE INDEX" }
+            string ask = d.IndexQuery()
+            if (ask == undefined) {
+                this.driver.Exec("CREATE " + kind + " IF NOT EXISTS " + d.Quote(name) + " ON " + d.Quote(table) + " (" + d.Quote(column) + ")")
+                return
+            }
+            any n = this.Scalar(ask, [table, name])
+            if (n != undefined && n != 0) { return }
+            this.driver.Exec("CREATE " + kind + " " + d.Quote(name) + " ON " + d.Quote(table) + " (" + d.Quote(column) + ")")
         }
 
         // Writes a new row of the object; the generated key goes into the object's key field (a class; a record keeps its fields) and is returned.
@@ -483,7 +502,7 @@ namespace Data {
                 args.Add(Data.EntityMap.ToDb(v, c))
             }
             var sql = "INSERT INTO " + d.Quote(map.table) + " (" + names + ") VALUES (" + marks + ")"
-            if (args.Count == 0) { sql = "INSERT INTO " + d.Quote(map.table) + " DEFAULT VALUES" }
+            if (args.Count == 0) { sql = d.InsertDefault(d.Quote(map.table)) }
             this.Execute(sql, Data.Connection.ArrayOf(args))
             if (map.key == undefined) { return undefined }
             any key = Reflect.Get(obj, map.key.field)

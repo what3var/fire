@@ -1,8 +1,8 @@
 # Data: databases
 
 `#import "data"` gives the namespace `Data`: connections to databases, SQL with bound parameters, rows as objects, transactions. The drivers are
-packages of their own; today there are **SQLite** (`#import "data.sqlite"`) and the **in-memory database** (`#import "data.memory"`); both import `data`.
-What comes next - MySQL, SQL Server, the ORM with expression trees, sessions, migrations and the designer - is planned in [ROADMAP_DATA.md](../ROADMAP_DATA.md).
+packages of their own; today there are **SQLite** (`#import "data.sqlite"`), **MySQL/MariaDB** (`#import "data.mysql"`) and the **in-memory database**
+(`#import "data.memory"`); all import `data`. What comes next - SQL Server, migrations and the designer - is planned in [ROADMAP_DATA.md](../ROADMAP_DATA.md).
 
 ```fire
 #import "data.sqlite"
@@ -292,6 +292,33 @@ class Article {
   The pairs of a [ManyToMany] list are written from the difference to what was loaded or saved last (a list that was never loaded is compared with the
   rows that are there); removing an object removes its pairs.
 - `Ensure` makes the join table of a [ManyToMany] field (its two columns and an index).
+
+## MySQL and MariaDB
+
+`#import "data.mysql"`, `new Data.Connection("mysql://db.local:3306/shop", new Data.Credentials("app", password))`. The driver is written in fire on
+`net` and `tls` - no client library: the wire protocol 4.1, prepared statements in the binary protocol (the parameters never become text in the SQL),
+`Execute` without parameters as one text (several statements separated by `;` work there).
+
+| URL (MySQL) | |
+|---|---|
+| `mysql://host/shop` | port 3306, the database `shop`; `mysql://user@host:3307/shop`: the user in the URL when no credentials are given |
+| `?tls=prefer` | the default: TLS when the server offers it, without checking the certificate |
+| `?tls=require` | TLS or no connection (`Data.ConnectionException`); `tls=verify`: the certificate is checked (with the system's authorities or `&ca=file.pem`); `tls=off`: never |
+| `&timeout=10000` | connecting and waiting for an answer, in ms |
+
+The logins `mysql_native_password` and `caching_sha2_password` (MySQL 8's default) are understood, and the switch of the server to another plugin. The
+first login of a user with `caching_sha2_password` (before the server has cached it) sends the password, so it needs TLS; without TLS it is a
+`Data.ConnectionException` (the exchange with the server's RSA key is not built yet).
+
+Values: integers (also UNSIGNED) are `int`, DOUBLE/FLOAT `float`, DECIMAL a `float` (an `int` without a fraction), texts `string` (utf8mb4), binary
+columns `byte[]`, DATETIME/DATE/TIMESTAMP/TIME ISO text (the mapping makes a `DateTime` of it), NULL `undefined`. Errors: duplicate keys, foreign keys,
+NOT NULL are `Data.ConstraintException`, lock waits and deadlocks `Data.BusyException`, a wrong login or database `Data.ConnectionException` - with
+the server's error number in `Code`. The dialect makes `BIGINT AUTO_INCREMENT` keys, `VARCHAR(255)` for strings with a key or an index (`[Length n]`:
+`VARCHAR(n)`), `LONGTEXT`/`LONGBLOB` otherwise, and compares texts in `StartsWith`/`Contains`/`EndsWith` byte by byte (MySQL's collations ignore case,
+fire's methods do not).
+
+The tests run against a server when `FIRE_TEST_MYSQL` names an empty database (`mysql://127.0.0.1:3306/test`, with `FIRE_TEST_MYSQL_USER` and
+`FIRE_TEST_MYSQL_PASSWORD`; its tables are dropped): the SQL of MySQL, then the mapping, queries, sessions and relations of the in-memory case.
 
 ## The in-memory database
 
