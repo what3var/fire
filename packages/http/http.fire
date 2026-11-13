@@ -1396,7 +1396,7 @@ namespace Http {
 
         // The answer for a file: 200 (or 206 for a range, 304 when the client has it, 416 for a range outside the file).
         static Http.Response Serve(string file, Http.Request request, defined int maxAge = -1) {
-            defined int size = IO.File.Size(file)
+            int size = IO.File.Size(file)
             DateTime modified = IO.File.GetLastWriteTimeUtc(file)
             var tag = "\"" + size + "-" + modified.Ticks + "\""
             var lastModified = Http.Mime.Date(modified)
@@ -1408,8 +1408,8 @@ namespace Http {
                 Http.Files.Stamp(nm, tag, lastModified, maxAge)
                 return nm
             }
-            defined int first = 0
-            defined int upto = size - 1
+            int first = 0
+            int upto = size - 1
             bool partial = false
             var range = request.headers.Get("Range")
             if (range != undefined && range.StartsWith("bytes=") && range.IndexOf(",") < 0) {
@@ -1628,7 +1628,7 @@ namespace Http {
         static bool ValidId(string id) {
             if (id.Length != 32) { return false }
             for (var i = 0; i < 32; i++) {
-                defined int c = id.CharAt(i).ToInt()
+                int c = id.CharAt(i).ToInt()
                 if (!((c >= 48 && c <= 57) || (c >= 97 && c <= 102))) { return false }
             }
             return true
@@ -1756,7 +1756,7 @@ namespace Http {
         // The number of living sessions.
         defined int Count() {
             var h = this.home
-            defined int n = await h.Count()
+            int n = await h.Count()
             return n
         }
 
@@ -1786,16 +1786,16 @@ namespace Http {
             var t = ""
             var i = 0
             while (i + 2 < data.length) {
-                defined int n = data[i] * 65536 + data[i + 1] * 256 + data[i + 2]
+                int n = data[i] * 65536 + data[i + 1] * 256 + data[i + 2]
                 t = t + table.CharAt(n / 262144) + table.CharAt((n / 4096) % 64) + table.CharAt((n / 64) % 64) + table.CharAt(n % 64)
                 i = i + 3
             }
             var rest = data.length - i
             if (rest == 1) {
-                defined int a = data[i] * 65536
+                int a = data[i] * 65536
                 t = t + table.CharAt(a / 262144) + table.CharAt((a / 4096) % 64) + "=="
             } else if (rest == 2) {
-                defined int b = data[i] * 65536 + data[i + 1] * 256
+                int b = data[i] * 65536 + data[i + 1] * 256
                 t = t + table.CharAt(b / 262144) + table.CharAt((b / 4096) % 64) + table.CharAt((b / 64) % 64) + "="
             }
             return t
@@ -1901,16 +1901,16 @@ namespace Http {
             IO.MemoryStream parts = undefined
             var opcodeOfMessage = 0
             while (true) {
-                defined int b0 = 0
+                int b0 = 0
                 try { b0 = this.ReadByte() } catch (Net.TimeoutException e) { return undefined }
                 if (b0 < 0) { this.Ended(1006); return undefined }
                 this.connection.ReadTimeout = 30000
-                defined int b1 = this.ReadByte()
+                int b1 = this.ReadByte()
                 if (b1 < 0) { this.Ended(1006); return undefined }
                 var fin = b0 >= 128
-                defined int opcode = b0 % 16
+                int opcode = b0 % 16
                 var masked = b1 >= 128
-                defined int len = b1 % 128
+                int len = b1 % 128
                 if (len == 126) { len = this.ReadByte() * 256 + this.ReadByte() }
                 else if (len == 127) {
                     len = 0
@@ -1964,10 +1964,10 @@ namespace Http {
                 this.connection.ReadTimeout = 2000
                 // (the answer of the other side; what comes before it is dropped)
                 while (true) {
-                    defined int b0 = this.ReadByte()
+                    int b0 = this.ReadByte()
                     if (b0 < 0) { break }
-                    defined int b1 = this.ReadByte()
-                    defined int len = b1 % 128
+                    int b1 = this.ReadByte()
+                    int len = b1 % 128
                     if (len == 126) { len = this.ReadByte() * 256 + this.ReadByte() }
                     if (b1 >= 128) { this.reader.ReadExact(4) }
                     this.reader.ReadExact(len)
@@ -1992,7 +1992,7 @@ namespace Http {
 
         defined int ReadByte() {
             if (!this.reader.Fill()) { return -1 }
-            defined int b = this.reader.chunk[this.reader.pos]
+            int b = this.reader.chunk[this.reader.pos]
             this.reader.pos = this.reader.pos + 1
             return b
         }

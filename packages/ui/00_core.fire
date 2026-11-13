@@ -213,7 +213,7 @@ namespace UI {
         static defined int ToInt(string text) {
             var value = 0
             for (var i = 0; i < text.Length; i = i + 1) {
-                defined int d = text.CharAt(i).ToInt() - 48
+                int d = text.CharAt(i).ToInt() - 48
                 if (d < 0 || d > 9) { break }
                 value = value * 10 + d
             }

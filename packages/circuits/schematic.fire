@@ -404,8 +404,8 @@ namespace Circuits {
         }
 
         static undefined Interp(Circuits.Element e, defined float f, defined float g, List into) {
-            defined float dx = e.x2 - e.x1
-            defined float dy = e.y2 - e.y1
+            float dx = e.x2 - e.x1
+            float dy = e.y2 - e.y1
             any len = Math.Sqrt(dx * dx + dy * dy)
             var px = 0.0
             var py = 0.0
@@ -482,8 +482,8 @@ namespace Circuits {
                 // as a triode, and the screen grid 4 units beyond the second point, 1 unit to the side of the plate
                 var fl = Circuits.Symbols.Dsign(e)
                 if (e.Flag("flip")) { fl = -fl }
-                defined float dx = e.x2 - e.x1
-                defined float dy = e.y2 - e.y1
+                float dx = e.x2 - e.x1
+                float dy = e.y2 - e.y1
                 any len = Math.Sqrt(dx * dx + dy * dy)
                 if (len < 4.0) { len = 4.0 }
                 Circuits.Symbols.Interp(e, 1.0, 4.0 * fl, e.pins)
@@ -497,8 +497,8 @@ namespace Circuits {
                 // the grid at the first point, the plate 4 units to the side of the second, the cathode 4 units to the other side and 2 back (Falstad's)
                 var fl = Circuits.Symbols.Dsign(e)
                 if (e.Flag("flip")) { fl = -fl }
-                defined float dx = e.x2 - e.x1
-                defined float dy = e.y2 - e.y1
+                float dx = e.x2 - e.x1
+                float dy = e.y2 - e.y1
                 any len = Math.Sqrt(dx * dx + dy * dy)
                 if (len < 4.0) { len = 4.0 }
                 Circuits.Symbols.Interp(e, 1.0, 4.0 * fl, e.pins)
@@ -693,8 +693,8 @@ namespace Circuits {
             // Old thyristors ("legacy") measure the drag along its slant.
             var grid = 16.0
             if (e.Flag("smallGrid")) { grid = 8.0 }
-            defined float axis = n * 8.0
-            defined float dn = axis
+            float axis = n * 8.0
+            float dn = axis
             if (e.Flag("legacy")) { dn = Math.Sqrt(dx * dx + dy * dy + 0.0) * 8.0 }
             var leadlen = (dn - 16.0) / 2.0
             any gatelen = grid + (leadlen - grid * Math.Floor(leadlen / grid))
@@ -708,8 +708,8 @@ namespace Circuits {
             any along = (lead2 + (axis - lead2) * gatelen / leadlen) / 8.0
             var side = grid * 2.0 * dir / 8.0
             // the direction of the axis and the side to the right of it (Interp's)
-            defined float ux = Circuits.Symbols.Sign(end[0] - e.x1)
-            defined float uy = Circuits.Symbols.Sign(end[1] - e.y1)
+            float ux = Circuits.Symbols.Sign(end[0] - e.x1)
+            float uy = Circuits.Symbols.Sign(end[1] - e.y1)
             any gx = e.x1 + ux * along + uy * side
             any gy = e.y1 + uy * along - ux * side
             if (e.type == "Thyristor") {
@@ -725,8 +725,8 @@ namespace Circuits {
         // back from the output, the output at the second point (at least 11.75 units from the first)
         static undefined OtaPins(Circuits.Element e) {
             var ds = Circuits.Symbols.Dsign(e)
-            defined float dx = e.x2 - e.x1
-            defined float dy = e.y2 - e.y1
+            float dx = e.x2 - e.x1
+            float dy = e.y2 - e.y1
             any len = Math.Sqrt(dx * dx + dy * dy)
             if (len < 1.0) { len = 1.0 }
             any end = len
@@ -999,7 +999,7 @@ namespace Circuits {
             if (end == 0) { return undefined }
             any number = s.Substring(0, end).TryToFloat()
             if (number == undefined) { return undefined }
-            defined float v = number
+            float v = number
             any rest = s.Substring(end).Trim()
             if (rest == "") { return v }
             any lower = rest.ToLower()

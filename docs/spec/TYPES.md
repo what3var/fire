@@ -196,7 +196,17 @@ instructions (more fused ones, or registers instead of the stack) - a step of it
   only given defined values so far (in the order of the source: a loop may give it something else later, so a `defined` variable still checks what it
   takes from it); *unknown* - everything else (the natives, the prelude, the packages seen from the code of the user). Inside a package (or a library of
   the project) the declarations of the packages count like those of the code of the user: a package is checked by the same rules (the strict check of the
-  standard library, `FIRE_TYPECHECK_ALL=1`, keeps them free of findings). `trust x` is defined whatever the checker knows of x. A value that may be undefined going into a `defined` parameter,
+  standard library, `FIRE_TYPECHECK_ALL=1`, keeps them free of findings); the code of the user takes the declarations of the packages at their word
+  as well. `trust x` is defined whatever the checker knows of x.
+* **Deriving `defined` (ROADMAP 13.9).** After the check, TypeChecker.Derive marks the parameters (ResolveResult.DerivedDefined) and returns
+  (ResolveResult.DerivedReturns) of the methods and constructors of the code of the user that are certainly numbers; the compiler emits their checks
+  like those of `defined` declarations (GuardLocal with the non-null bit, the return kind), so the VM checks them and the native backend passes C
+  numbers. Each resolved call notes per parameter whether its argument is defined - or what it depends on: the returns of the method it is the result
+  of (`ret:name/arity`) or a parameter of the calling method that its body never assigns; each method notes the same for its returns, and whether its
+  last statement returns or throws. A greatest fixpoint over these dependencies decides. Excluded: a name a call could not be resolved for, used as a
+  value or written as a string; a method that overrides or implements one of a package or the prelude; the methods the language calls itself
+  (`GetIndex`, `CompareTo`, ...); the constructors of base classes and of classes a `new` was not resolved for. The Linker switches the derivation
+  off for a program that imports `reflection`, writes class metadata (a plugin) or is a debug build. A value that may be undefined going into a `defined` parameter,
   field, property, variable or return value is `TC022` (a warning in lax mode, an error in strict mode); it is checked at run time either way.
 * **Assignability.** `int` -> `float` is implicit (coerced). Everything converts implicitly to `string` (a `ToString` like in C#). Anything else between known types is a conflict.
 * **Units** (step 4): if both types are known and only the unit is not, the site is a *unit adaptation* `b = AdaptUnit(a, targetUnit)` with three outcomes: same unit -> `a` unchanged;

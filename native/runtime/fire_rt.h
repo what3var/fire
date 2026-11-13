@@ -9796,6 +9796,8 @@ FIRE_FN void stillEnter(void) { if (g_isFire) { fire_atomic_add(&g_idleThreads, 
 FIRE_FN void stillLeave(void) { if (g_isFire) fire_atomic_add(&g_idleThreads, (uint32_t)-1); }
 /* (set by mainFinish when the threads that are left stand still: a fire thread that waits in `process` for an empty mailbox then ends like with `leave`) */
 extern FIRE_RT_DATA fire_atomic32 g_standstill;
+fire_atomic32 g_fdWaiters;
+extern FIRE_RT_DATA fire_atomic32 g_fdWaiters;   /* (the threads that wait for a socket - counted in g_idleThreads too) */
 FIRE_FN Value fire_fd_wait(Value fdv, Value ev, Value msv) {
 #ifdef FIRE_FD_POLL
     FdPoller* p;
@@ -9825,12 +9827,14 @@ FIRE_FN Value fire_fd_wait(Value fdv, Value ev, Value msv) {
     fdPollWake(p);
     held = sectionYieldBegin();
     stillEnter();
+    fire_atomic_add(&g_fdWaiters, 1);   /* (a socket can still bring work from outside: no standstill ends the waits in `process` meanwhile) */
     if (token) {
         TokWait tw;
         tw.pred = fire_fdReady; tw.ctx = &w; tw.token = token;
         if (g_isThread) blockUntil(fire_tokWaitPred, &tw, true, until); else blockUntilServing(fire_tokWaitPred, &tw, true, until);
     } else if (g_isThread) blockUntil(fire_fdReady, &w, true, until);
     else blockUntilServing(fire_fdReady, &w, true, until);
+    fire_atomic_add(&g_fdWaiters, (uint32_t)-1);
     stillLeave();
     sectionYieldEnd(held);
     fire_mutex_lock(&p->m);
@@ -11859,7 +11863,7 @@ FIRE_FN void mainFinish(void) {
      * that is left waits in a channel, for a socket or in `process`, the channels of the main program close and the waits in `process` leave; `#endwait` after the end (60 s; the time counts while no
      * window holds the program) the threads that are still there are ended like with `terminate` */
     {
-        int64_t from = steadyMs();
+        int64_t from = steadyMs(), closedAt = 0;
         bool closed = false, ended = false;
         while (!blockUntil(fire_mainDone, NULL, false, steadyMs() + 50)) {
             uint32_t live = fire_atomic_load(&g_threadsLive);
@@ -11869,10 +11873,13 @@ FIRE_FN void mainFinish(void) {
                 || fire_atomic_load(&g_groupLive) != 0
 #endif
                 ) { from = now; continue; }   /* (windows or handlers of the main program may still feed its channels) */
-            if (!closed && live > 0 && fire_atomic_load(&g_idleThreads) >= live) {
-                closed = true;
-                fire_atomic_storeRelease(&g_standstill, 1);   /* (the threads in `process` leave: notifyEventAll in chanCloseMainMade wakes them) */
-                chanCloseMainMade();
+            /* (first the channels close; the threads they wake send what they still have to send - a message to an actor too. Only when everything
+             * left stands still again do the waits in `process` end: an actor is not gone while a message to it may still come) */
+            if (!closed && live > 0 && fire_atomic_load(&g_idleThreads) >= live) { closed = true; closedAt = now; chanCloseMainMade(); }
+            else if (closed && !fire_atomic_load(&g_standstill) && now - closedAt >= 100 && live > 0 && fire_atomic_load(&g_idleThreads) >= live
+                     && fire_atomic_load(&g_fdWaiters) == 0) {   /* (a thread that waits for a socket may still get work from outside) */
+                fire_atomic_storeRelease(&g_standstill, 1);
+                notifyEventAll();
             }
             if (!ended && live > 0 && g_endWaitMs >= 0 && now - from >= g_endWaitMs) {
                 ended = true;

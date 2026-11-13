@@ -541,6 +541,8 @@ namespace fire.Compiler
             s_classDecls = resolveResult.Classes;
             s_localGuards = resolveResult.LocalGuards;
             s_overloadHints = resolveResult.OverloadHints;
+            s_derivedDefined = resolveResult.DerivedDefined;
+            s_derivedReturns = resolveResult.DerivedReturns;
             var compiler = new Compiler(resolveResult, natives) { _classMeta = classMeta };
             var classes = compiler.CompileClasses(program);
 
@@ -1320,7 +1322,9 @@ namespace fire.Compiler
             // A parameter declared int/float/bool holds that kind or `undefined` (DeclaredKind) - checked last, after its width and unit.
             for (int i = 0; i < parms.Count; i++)
             {
-                if (parms[i].ByRef || parms[i].ArrayRanks.Count > 0 || DeclaredKind.Of(parms[i].Type, parms[i].DefaultValue) is not (var kind and not 0)) continue;
+                // (a parameter the type checker found every call gives a number - ResolveResult.DerivedDefined - is checked like a `defined` one)
+                var declared = s_derivedDefined != null && s_derivedDefined.Contains(parms[i]) ? parms[i].Type! with { NonNull = true } : parms[i].Type;
+                if (parms[i].ByRef || parms[i].ArrayRanks.Count > 0 || DeclaredKind.Of(declared, parms[i].DefaultValue) is not (var kind and not 0)) continue;
                 // the unit the parameter certainly has afterwards: the checked one, none (the guard converts into no unit), or open (`: any`)
                 string? unit = parms[i].Type?.UnitDemand ?? (DeclaredKind.IsUnitless(kind) ? "unitless" : null);
                 inner._chunk.EmitOp(OpCode.GuardLocal);
@@ -1523,6 +1527,8 @@ namespace fire.Compiler
             inner._chunk.OwnerClass = rc;
             inner._returnUnit = returnUnit;
             // `defined int Count()` (SPEC 8.10b): every value it returns is checked - undefined (also the end of the body) is an ArgumentException
+            // (a return the type checker found is always a number - ResolveResult.DerivedReturns - is checked like a `defined` one)
+            if (returnType is { NonNull: false } && s_derivedReturns != null && s_derivedReturns.Contains(body)) returnType = returnType with { NonNull = true };
             if (returnType is { NonNull: true } && DeclaredKind.Of(returnType) is var returnKind and not 0) { inner._returnKind = returnKind; inner._returnWhat = $"The return value of '{name}'"; }
             // SPEC "Static members": a static method has no
             // bound 'this' - the inner compiler remembers that in order to
@@ -2441,6 +2447,8 @@ namespace fire.Compiler
         [ThreadStatic] private static Dictionary<Expr, string[]>? s_methodTypeArgs;
         [ThreadStatic] private static Dictionary<Expr, (TypeRef Type, string What)>? s_localGuards;
         [ThreadStatic] private static Dictionary<Expr, string>? s_overloadHints;
+        [ThreadStatic] private static HashSet<LambdaParam>? s_derivedDefined;
+        [ThreadStatic] private static HashSet<Stmt.BlockStmt>? s_derivedReturns;
         /// <summary>`FIRE_NO_OVERLOAD_HINTS=1`: no OverloadHint is emitted (every call scores its candidates) - to compare and to find a wrong hint.</summary>
         private static readonly bool NoOverloadHints = Environment.GetEnvironmentVariable("FIRE_NO_OVERLOAD_HINTS") == "1";
 

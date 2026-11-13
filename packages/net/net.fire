@@ -104,7 +104,7 @@ namespace Net {
                 if (left < ms) { ms = left }
             }
             if (ms <= 0) { return }
-            defined int fd = __NetNativeHandle(handle)
+            int fd = __NetNativeHandle(handle)
             if (fd < 0 || __fd_wait(fd, events, ms) < 0) { Net.Clock.Pause(deadline, tries) }
         }
 
@@ -147,7 +147,7 @@ namespace Net {
             var digits = "0123456789abcdef"
             var t = ""
             for (var i = 0; i < b.length; i++) {
-                defined int v = b[i]
+                int v = b[i]
                 t = t + digits.CharAt(v / 16) + digits.CharAt(v % 16)
             }
             return t

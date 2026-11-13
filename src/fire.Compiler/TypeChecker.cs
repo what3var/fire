@@ -244,7 +244,217 @@ namespace fire.Compiler
                 checker.Check(stmt);
             }
             checker.ReportPendingVars(checker._scopes[0]);
+            if (DeriveDefined) checker.Derive(resolved);
             return checker._diagnostics;
+        }
+
+        // ---- deriving `defined` for the parameters of the program (ROADMAP 13.9; the user: "herleiten, die Sprache bleibt") ----------------------------
+        // A parameter of a method or constructor of the code of the user, declared `int`/`float` without `defined`, is checked like a `defined` one when
+        // every call the checker sees gives it a number (a value that is certainly defined, or a default that is a number literal) - and no call can reach
+        // it unseen: not when a call of that name could not be resolved (a receiver of an unknown type, `any`), when the name is used as a value (a method
+        // as a lambda) or appears as a string (reflection, callbacks by name), when a package or the prelude has a method of that name and arity (the run
+        // time or a package may call it), for the methods the language calls itself (indexers, CompareTo, ...), nor for the constructors of a class that
+        // is a base class. The Linker switches it off for a program that uses reflection, for a module or plugin, and in a debug build.
+
+        /// <summary>Whether the check derives `defined` for the parameters of the program (FIRE_NO_DERIVE=1 switches it off).</summary>
+        [ThreadStatic] public static bool? DeriveDefinedOverride;
+        public static bool DeriveDefined => DeriveDefinedOverride ?? Environment.GetEnvironmentVariable("FIRE_NO_DERIVE") != "1";
+        private readonly Dictionary<string, (bool[] Defined, int Calls, List<string>?[] Needs)> _calls = new();
+        // what a call resolved to (an argument that is the result of a call is defined when that method's returns are), and the returns of each method
+        private readonly Dictionary<Expr, MethodDecl> _callTargets = new(ReferenceEqualityComparer.Instance);
+        private readonly Dictionary<MethodDecl, (List<(bool Ok, string? Needs)> Returns, bool Ends)> _returns = new(ReferenceEqualityComparer.Instance);
+        private List<(bool Ok, string? Needs)>? _retNotes;
+        // the parameters of the method being checked that its body never assigns (an argument or a return that is one of them is what its call gave)
+        private Dictionary<string, LambdaParam>? _plainParams;
+        private readonly Dictionary<LambdaParam, string> _paramIds = new(ReferenceEqualityComparer.Instance);
+        private string ParamId(LambdaParam p) => _paramIds.TryGetValue(p, out var id) ? id : _paramIds[p] = "par:" + _paramIds.Count;
+
+        /// <summary>What a value that is not certainly a number depends on: the returns of the method it is the result of, or the parameter it is.</summary>
+        private string? NeedsOf(Expr e) => e switch
+        {
+            // (a method of the program - or an override of it in the program: the key is its name and arity; one of a package or the prelude is not derived)
+            CallExpr c when _callTargets.TryGetValue(c, out var md) && md.Source >= _firstUserSource => "ret:" + MethodKey(md.Name, md.Params.Count),
+            IdentifierExpr id when _plainParams != null && _plainParams.TryGetValue(id.Name, out var p) && !IsLocalShadow(id) => ParamId(p),
+            _ => null,
+        };
+        private bool IsLocalShadow(IdentifierExpr id) => false;   // (PlainParams leaves out a parameter whose name the body declares again)
+        private static Dictionary<string, LambdaParam>? PlainParams(IReadOnlyList<LambdaParam> parameters, Stmt.BlockStmt body)
+        {
+            if (!DeriveDefined || parameters.Count == 0) return null;
+            var assigned = AstNames.Assigned(body);
+            var plain = new Dictionary<string, LambdaParam>();
+            foreach (var p in parameters) if (!p.ByRef && !assigned.Contains(p.Name)) plain[p.Name] = p;
+            return plain;
+        }
+        private readonly HashSet<string> _unseenNames = new();
+        private readonly HashSet<string> _unseenCtors = new();
+        private readonly HashSet<Expr> _notedCalls = new(ReferenceEqualityComparer.Instance);
+        private readonly HashSet<string> _stringLiterals = new();
+        private static readonly HashSet<string> CalledByTheLanguage = new() { "GetIndex", "SetIndex", "CompareTo", "Equals", "GetHashCode", "ToString", "GetEnumerator",
+            "MoveNext", "GetCurrent", "Dispose", "Close", "TakeTo", "Main" };
+
+        private static string MethodKey(string name, int count) => name + "/" + count;
+        private static string CtorKey(string cls, int count) => "new:" + cls + "/" + count;
+
+        /// <summary>A call the checker resolved to one method or constructor: which of its parameters got a value that is certainly a number.</summary>
+        private void NoteCall(Expr call, string key, IReadOnlyList<LambdaParam> parameters, IReadOnlyList<LambdaParam?> argParams, IReadOnlyList<StaticType> args,
+            IReadOnlyList<Expr> argExprs, MethodDecl? target = null)
+        {
+            _notedCalls.Add(call);
+            if (target != null) _callTargets[call] = target;
+            if (!_calls.TryGetValue(key, out var entry) || entry.Defined.Length != parameters.Count)
+                entry = (Enumerable.Repeat(true, parameters.Count).ToArray(), entry.Calls, new List<string>?[parameters.Count]);
+            for (int j = 0; j < parameters.Count; j++)
+            {
+                bool given = false, ok = false;
+                string? needs = null;
+                for (int i = 0; i < argParams.Count && i < args.Count; i++)
+                    if (ReferenceEquals(argParams[i], parameters[j]))
+                    {
+                        given = true;
+                        ok = args[i].Null == Nullness.Defined;
+                        // (the result of a call: defined when the returns of that method are - Derive decides)
+                        if (!ok && i < argExprs.Count) needs = NeedsOf(argExprs[i]);
+                    }
+                if (!given) ok = parameters[j].DefaultValue is LiteralExpr { Value.Kind: ValueKind.Int or ValueKind.Float }
+                    or UnaryExpr { Op: UnaryOp.Negate, Operand: LiteralExpr { Value.Kind: ValueKind.Int or ValueKind.Float } };
+                if (needs != null) (entry.Needs[j] ??= new List<string>()).Add(needs);
+                else if (!ok) entry.Defined[j] = false;
+            }
+            _calls[key] = (entry.Defined, entry.Calls + 1, entry.Needs);
+        }
+
+        /// <summary>A return of the method being checked: certainly a number, or the result of a call (defined when that method's returns are).</summary>
+        private void NoteReturn(Expr? value, StaticType? type)
+        {
+            if (_retNotes == null) return;
+            if (value == null || type == null) { _retNotes.Add((false, null)); return; }
+            if (type.Null == Nullness.Defined) { _retNotes.Add((true, null)); return; }
+            _retNotes.Add((false, NeedsOf(value)));
+        }
+
+        /// <summary>The returns of the methods of the program that are certainly numbers (a greatest fixpoint over the names: a method's returns are numbers when
+        /// each of them is one, or the result of a method whose returns are; the last statement of the body returns or throws - it cannot fall off its end).</summary>
+        private HashSet<string> DeriveReturns(Func<ClassDecl, HashSet<string>> foreignOf)
+        {
+            var decls = new Dictionary<string, List<MethodDecl>>();
+            var blocked = new HashSet<string>();
+            foreach (var (name, decl) in _classes)
+            {
+                var foreign = decl.Source >= _firstUserSource ? foreignOf(decl) : null;
+                if (decl.Source < _firstUserSource) continue;   // (a call of a method of a package or the prelude depends on nothing here - NeedsOf)
+                foreach (var m in decl.Members.OfType<MethodDecl>())
+                {
+                    string key = MethodKey(m.Name, m.Params.Count);
+                    (decls.TryGetValue(key, out var list) ? list : decls[key] = new List<MethodDecl>()).Add(m);
+                    bool number = m.ReturnType is { PointerDepth: 0, ArrayRank: 0, LambdaSignature: null, TypeArgs: null, BaseName: "int" or "float" };
+                    if (decl.Source < _firstUserSource || !number || foreign!.Contains(key) || foreign.Contains("*") || _unseenNames.Contains(m.Name) || _stringLiterals.Contains(m.Name)
+                        || CalledByTheLanguage.Contains(m.Name) || !_returns.TryGetValue(m, out var r) || !r.Ends && m.ReturnType is not { NonNull: true })
+                        blocked.Add(key);
+                }
+            }
+            var ok = decls.Keys.Where(k => !blocked.Contains(k)).Select(k => "ret:" + k).ToHashSet();
+            // the parameters that may be derived (every call gave a number, or something that depends on other returns or parameters)
+            var paramNeeds = new Dictionary<string, List<string>>();
+            foreach (var (name, decl) in _classes)
+            {
+                if (decl.Source < _firstUserSource) continue;
+                foreach (var (key, parameters) in DerivationCandidates(name, decl, foreignOf(decl)))
+                {
+                    if (!_calls.TryGetValue(key, out var seen) || seen.Calls == 0 || seen.Defined.Length != parameters.Count) continue;
+                    for (int j = 0; j < parameters.Count; j++)
+                        if (seen.Defined[j] && Derivable(parameters[j])) { ok.Add(ParamId(parameters[j])); paramNeeds[ParamId(parameters[j])] = seen.Needs[j] ?? new List<string>(); }
+                }
+            }
+            // a greatest fixpoint: what depends on something that is not certain is not either
+            for (bool changed = true; changed;)
+            {
+                changed = false;
+                foreach (var item in ok.ToList())
+                {
+                    bool fails = item.StartsWith("ret:", StringComparison.Ordinal)
+                        ? decls[item.Substring(4)].Any(m => m.ReturnType is not { NonNull: true } && _returns[m].Returns.Any(n => !n.Ok && (n.Needs == null || !ok.Contains(n.Needs))))
+                        : paramNeeds[item].Any(n => !ok.Contains(n));
+                    if (fails) { ok.Remove(item); changed = true; }
+                }
+            }
+            return ok;
+        }
+
+        /// <summary>The methods and constructors of a class of the program whose parameters may be derived, with their keys.</summary>
+        private IEnumerable<(string Key, IReadOnlyList<LambdaParam> Params)> DerivationCandidates(string name, ClassDecl decl, HashSet<string> foreign)
+        {
+            foreach (var member in decl.Members)
+            {
+                if (member is MethodDecl m)
+                {
+                    if (_unseenNames.Contains(m.Name) || _stringLiterals.Contains(m.Name) || CalledByTheLanguage.Contains(m.Name) || m.Name.StartsWith("operator", StringComparison.Ordinal)) { DeriveLog?.Invoke($"{name}.{m.Name}: reached unseen (name used as a value, a string, by the language or by a call not resolved)"); continue; }
+                    string key = MethodKey(m.Name, m.Params.Count);
+                    if (foreign.Contains(key) || foreign.Contains("*")) { DeriveLog?.Invoke($"{name}.{m.Name}: overrides or implements one of a package or the prelude"); continue; }
+                    yield return (key, m.Params);
+                }
+                else if (member is ConstructorDecl c)
+                {
+                    if (_baseClasses.Contains(name) || _baseClasses.Contains(PlainName(name)) || _unseenCtors.Contains(name)) { DeriveLog?.Invoke($"{name} constructor: a base class, or a `new` not resolved"); continue; }
+                    yield return (CtorKey(name, c.Params.Count), c.Params);
+                }
+            }
+        }
+        private readonly HashSet<string> _baseClasses = new();
+
+        /// <summary>FIRE_DERIVE_LOG=1: what the derivation decided for each method of the program (stderr).</summary>
+        private static readonly Action<string>? DeriveLog = Environment.GetEnvironmentVariable("FIRE_DERIVE_LOG") == "1" ? text => Console.Error.WriteLine("derive: " + text) : null;
+
+        private static bool Derivable(LambdaParam p) => p is { ByRef: false, Type: { NonNull: false, PointerDepth: 0, ArrayRank: 0, LambdaSignature: null, TypeArgs: null, BaseName: "int" or "float" } }
+            && p.ArrayRanks.Count == 0;
+
+        private void Derive(ResolveResult resolved)
+        {
+            foreach (var (name, decl) in _classes)
+                foreach (var b in decl.BaseRefs ?? Array.Empty<TypeRef>()) { _baseClasses.Add(PlainName(b.BaseName)); if (NameOf(b) is { } full) _baseClasses.Add(full); }
+            // the methods a class of the program may override or implement for a package or the prelude (their code, or the run time, calls them)
+            HashSet<string> Foreign(ClassDecl decl)
+            {
+                var keys = new HashSet<string>();
+                var seenTypes = new HashSet<string>();
+                var todo = new Stack<TypeRef>(decl.BaseRefs ?? Array.Empty<TypeRef>());
+                while (todo.Count > 0)
+                {
+                    var b = todo.Pop();
+                    string bn = NameOf(b) ?? PlainName(b.BaseName);
+                    if (!seenTypes.Add(bn)) continue;
+                    if (_classes.TryGetValue(bn, out var bc) || _classes.TryGetValue(PlainName(b.BaseName), out bc))
+                    {
+                        if (bc.Source < _firstUserSource) foreach (var m in bc.Members.OfType<MethodDecl>()) keys.Add(MethodKey(m.Name, m.Params.Count));
+                        foreach (var r in bc.BaseRefs ?? Array.Empty<TypeRef>()) todo.Push(r);
+                    }
+                    else if (_interfaces.TryGetValue(bn, out var ic) || _interfaces.TryGetValue(PlainName(b.BaseName), out ic))
+                    {
+                        if (ic.Source < _firstUserSource) foreach (var sig in ic.Methods) keys.Add(MethodKey(sig.Name, sig.Params.Count));
+                        foreach (var r in ic.BaseRefs ?? Array.Empty<TypeRef>()) todo.Push(r);
+                    }
+                    else keys.Add("*");   // (a base that is not known: anything)
+                }
+                return keys;
+            }
+            var ok = DeriveReturns(Foreign);
+            foreach (var (name, decl) in _classes)
+            {
+                if (decl.Source < _firstUserSource) continue;
+                foreach (var m in decl.Members.OfType<MethodDecl>())
+                    if (m.ReturnType is { NonNull: false } && ok.Contains("ret:" + MethodKey(m.Name, m.Params.Count)))
+                    {
+                        resolved.DerivedReturns.Add(m.Body);
+                        DeriveLog?.Invoke($"{name}.{m.Name}: returns a number");
+                    }
+                foreach (var (key, parameters) in DerivationCandidates(name, decl, Foreign(decl)))
+                    foreach (var p in parameters)
+                    {
+                        bool derived = _paramIds.ContainsKey(p) && ok.Contains(ParamId(p));
+                        if (derived) resolved.DerivedDefined.Add(p);
+                        DeriveLog?.Invoke($"{name} {key} {p.Name}: {(derived ? "defined" : !Derivable(p) ? "not a number parameter" : "a call may give undefined")}");
+                    }
+            }
         }
 
         /// <summary>The conflicts found, reported the way the build wants them: the warnings go to the collector of the thread, the errors of a strict file stop the build.</summary>
@@ -1180,6 +1390,7 @@ namespace fire.Compiler
                     if (r.Value != null)
                     {
                         var type = Infer(r.Value, _returnType);
+                        NoteReturn(r.Value, type);
                         _collectedReturns?.Add(type);
                         if (_returnType is { } expected)
                         {
@@ -1187,7 +1398,7 @@ namespace fire.Compiler
                             if (_returnTypeRef != null) GuardValue(r.Value, type, expected, _returnTypeRef, _returnWhat);
                         }
                     }
-                    else _collectedReturns?.Add(StaticType.Undefined);
+                    else { NoteReturn(null, null); _collectedReturns?.Add(StaticType.Undefined); }
                     break;
                 case ThrowStmt t: Infer(t.Value); break;
                 case TryStmt t:
@@ -1535,7 +1746,14 @@ namespace fire.Compiler
                             _collectedReturns = untyped && SuggestReturnTypes ? new List<StaticType>() : null;
                             var previousTypeParams = _bodyTypeParams;
                             _bodyTypeParams = m.TypeParams;
+                            var outerNotes = _retNotes;
+                            var outerParams = _plainParams;
+                            _retNotes = new List<(bool Ok, string? Needs)>();
+                            _plainParams = PlainParams(m.Params, m.Body);
                             CheckBody(m.Params, m.Body, untyped ? null : Declared(m.ReturnType), untyped ? null : m.ReturnType, $"Return value of '{m.Name}'");
+                            _returns[m] = (_retNotes, m.Body.Statements.Count > 0 && m.Body.Statements[^1] is ReturnStmt { Value: not null } or ThrowStmt);
+                            _retNotes = outerNotes;
+                            _plainParams = outerParams;
                             _bodyTypeParams = previousTypeParams;
                             if (_collectedReturns != null) Console.Error.WriteLine($"SUGGEST\t{ownerName}\t{m.Name}\t{m.Params.Count}\t{SuggestedType(_collectedReturns)}");
                             _collectedReturns = previousCollected;
@@ -1546,7 +1764,10 @@ namespace fire.Compiler
                         if (BaseClassName() is { } baseOfCtor) CheckConstructorAccess(baseOfCtor, c.BaseArgs?.Count ?? 0, c.Line);
                         bool wasCtor = _inConstructor;
                         _inConstructor = true;
+                        var ctorOuterParams = _plainParams;
+                        _plainParams = PlainParams(c.Params, c.Body);
                         CheckBody(c.Params, c.Body, null);
+                        _plainParams = ctorOuterParams;
                         _inConstructor = wasCtor;
                         break;
                     case DestructorDecl d:
@@ -1664,11 +1885,12 @@ namespace fire.Compiler
                         ValueKind.Int => StaticType.Int.WithUnit(l.Value.Unit ?? Unit.Unitless),
                         ValueKind.Float => StaticType.Float.WithUnit(l.Value.Unit ?? Unit.Unitless),
                         ValueKind.Char => StaticType.Char,
-                        ValueKind.String => StaticType.String,
+                        ValueKind.String => NoteString(l.Value.AsString()),
                         ValueKind.Undefined => StaticType.Undefined,
                         _ => StaticType.Dynamic,
                     };
                 case IdentifierExpr id:
+                    _unseenNames.Add(id.Name);   // (a method used as a value - a lambda that anyone may call)
                     CheckImplicitThisAccess(id, MemberUse.Read);
                     return Lookup(id.Name, id.Line);
                 case ThisExpr: return _thisType ?? (_class != null ? ThisClass() : StaticType.Dynamic);
@@ -2374,6 +2596,10 @@ namespace fire.Compiler
             var previousReturnRef = _returnTypeRef;
             _returnTypeRef = null;   // (a lambda: its values are not checked against a declaration)
             var previousCollected = _collectedReturns;
+            var previousNotes = _retNotes;
+            var previousPlain = _plainParams;
+            _retNotes = null;   // (the returns of a lambda are its own)
+            _plainParams = null;   // (and its parameters too)
             _returnType = expectedReturn;
             var returns = new List<StaticType>();
             _collectedReturns = returns;
@@ -2395,6 +2621,8 @@ namespace fire.Compiler
             _returnType = previousReturn;
             _returnTypeRef = previousReturnRef;
             _collectedReturns = previousCollected;
+            _retNotes = previousNotes;
+            _plainParams = previousPlain;
             var values = returns.Where(r => r.Kind != StaticKind.Undefined).ToList();
             StaticType? returned = expectedReturn ?? (values.Count == 0 ? StaticType.Undefined : Join(values) is { IsDynamic: false } joined ? joined : null);
             // (a parameter with a default value makes the number of arguments a range: not claimed)
@@ -2449,7 +2677,21 @@ namespace fire.Compiler
             return null;
         }
 
+        private StaticType NoteString(string text)
+        {
+            if (text.Length > 0 && text.Length < 128) _stringLiterals.Add(text);
+            return StaticType.String;
+        }
+
         private StaticType InferCall(CallExpr c)
+        {
+            var type = InferCallCore(c);
+            // a call that was not resolved to one method: what it reaches is not known (a method of that name may get anything)
+            if (!_notedCalls.Contains(c) && ((c.Callee as MemberExpr)?.Name ?? (c.Callee as IdentifierExpr)?.Name) is { } name) _unseenNames.Add(name);
+            return type;
+        }
+
+        private StaticType InferCallCore(CallExpr c)
         {
             if (c.Callee is MemberExpr { Target: IdentifierExpr owner } && c.Args.Any(arg => arg is UnaryExpr { Op: UnaryOp.Take or UnaryOp.TryTake })) CheckTakeIntoCopy(owner.Name, c.Line);
             // the callee first: the declared types of its parameters are what the arguments go to (a lambda argument takes its types from there)
@@ -2583,6 +2825,7 @@ namespace fire.Compiler
                 return StaticType.Dynamic;
             }
             CheckArguments(argParams!, args, c.Args, method.Name, map);
+            NoteCall(c, MethodKey(method.Name, method.Params.Count), method.Params, argParams!, args, c.Args, method);
             return ResultOf(method, map);
         }
 
@@ -2595,9 +2838,9 @@ namespace fire.Compiler
         }
 
         /// <summary>Is a declaration of source `declared` taken at its word about `undefined` (a field, property or return value without `defined` may hold
-        /// it)? Those of the code of the user; inside a package (or a library of the project) its own and those of the other packages as well - a package is
-        /// checked like the code of the user. The prelude of the language, and the packages seen from the code of the user, count as unknown.</summary>
-        private bool Checked(int declared) => declared >= _firstUserSource || declared > 0 && _source > 0 && _source < _firstUserSource;
+        /// it)? Those of the code of the user and of the packages (the libraries of the project) - wherever they are used; only the prelude of the language
+        /// counts as unknown.</summary>
+        private bool Checked(int declared) => declared > 0;
 
         /// <summary>Overloads `lambda<T>` / `lambda expression<T>` (docs/ROADMAP_EXPRESSIONS.md): a lambda written at the call with an expression body goes to
         /// the overload that takes a tree, a lambda with a block (or one bound with `on`) to the one that takes a lambda; other arguments leave the choice to
@@ -2637,6 +2880,7 @@ namespace fire.Compiler
                 }
             }
             CheckArguments(method.Params, args, c.Args, method.Name, map);
+            NoteCall(c, MethodKey(method.Name, method.Params.Count), method.Params, method.Params.Take(args.Count).Cast<LambdaParam?>().ToList(), args, c.Args, method);
             return ResultOf(method, map);
         }
 
@@ -2758,6 +3002,13 @@ namespace fire.Compiler
 
         private StaticType InferNew(NewExpr n)
         {
+            var type = InferNewCore(n);
+            if (!_notedCalls.Contains(n) && type.Kind == StaticKind.Class && type.Class != null) _unseenCtors.Add(type.Class);
+            return type;
+        }
+
+        private StaticType InferNewCore(NewExpr n)
+        {
             // `new List<int>()`: the generic class (named `Box`1` next to a non-generic `Box`) with its type arguments; `new List()` is its raw form
             var typeArgs = n.ClassRef.TypeArgs is { Count: > 0 } refs ? refs.Select(a => DeclaredOrDynamic(a)).ToList() : null;
             string plain = typeArgs != null ? GenericName(PlainName(n.ClassRef.BaseName), typeArgs.Count) : PlainName(n.ClassRef.BaseName);
@@ -2777,6 +3028,7 @@ namespace fire.Compiler
                 var namedArgs = n.Args.Select((a, i) => named[i] is { } tp && InferTreeArg(a, tp, map, n.Line) is { } treeArg ? treeArg
                     : Infer(a, named[i] is { ByRef: false } p ? Declared(p.Type, p.ArrayRanks.Count, map) : null)).ToList();
                 CheckArguments(named, namedArgs, n.Args, "new " + PlainName(plain), map);
+                NoteCall(n, CtorKey(plain, ctors[0].Params.Count), ctors[0].Params, named, namedArgs, n.Args);
                 return StaticType.ClassOf(plain, typeArgs);
             }
             var ctor = ctors.Count == 1 ? ctors[0] : null;
@@ -2790,13 +3042,18 @@ namespace fire.Compiler
                 {
                     var chosen = asMethods.First(x => ReferenceEquals(x.Method, picked)).Ctor;
                     CheckArguments(chosen.Params, ctorArgs, n.Args, "new " + PlainName(plain), map);
+                    NoteCall(n, CtorKey(plain, chosen.Params.Count), chosen.Params, chosen.Params.Take(ctorArgs.Count).Cast<LambdaParam?>().ToList(), ctorArgs, n.Args);
                     if (ConstructorHint(decl, plain, chosen, asMethods.Select(x => x.Method).ToList(), picked, ctorArgs, map) is { } hint) _overloadHints[n] = hint;
                 }
                 return StaticType.ClassOf(plain, typeArgs);
             }
             var args = n.Args.Select((a, i) => ctor != null && i < ctor.Params.Count && InferTreeArg(a, ctor.Params[i], map, n.Line) is { } treeArg ? treeArg
                 : Infer(a, ctor != null && i < ctor.Params.Count && !ctor.Params[i].ByRef ? Declared(ctor.Params[i].Type, ctor.Params[i].ArrayRanks.Count, map) : null)).ToList();
-            if (ctor != null) CheckArguments(ctor.Params, args, n.Args, "new " + PlainName(plain), map);
+            if (ctor != null)
+            {
+                CheckArguments(ctor.Params, args, n.Args, "new " + PlainName(plain), map);
+                NoteCall(n, CtorKey(plain, ctor.Params.Count), ctor.Params, ctor.Params.Take(args.Count).Cast<LambdaParam?>().ToList(), args, n.Args);
+            }
             return StaticType.ClassOf(plain, typeArgs);
         }
     }

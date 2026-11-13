@@ -65,6 +65,7 @@ namespace fire.Runtime
             string? failure = null;
             int result = 0;
             FireRuntime.IdleEnter(this);
+            FireRuntime.SocketWaitEnter();
             try
             {
                 while (true)
@@ -83,7 +84,7 @@ namespace fire.Runtime
                     if (result != 0) break;
                 }
             }
-            finally { FireRuntime.IdleLeave(this); if (blocked) VmScheduler.BlockLeave(); RegainGlobalsSection(held); }
+            finally { FireRuntime.SocketWaitLeave(); FireRuntime.IdleLeave(this); if (blocked) VmScheduler.BlockLeave(); RegainGlobalsSection(held); }
             if (failure != null) return NativeFail(failure, failure == "TimeoutException" ? "The time limit ran out." : "The task was cancelled.");
             return Value.MakeInt(result);
         }

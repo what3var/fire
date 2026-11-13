@@ -700,10 +700,17 @@ Daten-Stack bei XC8), AVR nur mit einem eigenen kleinen Profil.
    einheitlich, auch die der Interfaces), Felder ohne Startwert, die nie auf `undefined` getestet werden, Parameter, die in solche Felder gehen; wo ein Wert
    wirklich fehlen kann, ein Test (`TextArea.At`, `Element.PinCoord`: Abbruch mit IndexOutOfBoundsException; `Model.Param`: die Vorgabe) und `trust`; die
    untypisierten Listen der ui (`children`, Tracks) mit typisierten Locals (`Element child = this.children[i]`). Ein Feld ohne Startwert, das jetzt
-   `defined` ist, beginnt bei 0 statt bei `undefined`. Gemessen (die Vorlage "Desktop" mit ui, nativ, Release, linux): fire-Code von ui 397 -> 357 KB
+   `defined` ist, beginnt bei 0 statt bei `undefined`. Gefunden im vollen Testlauf: der Scanner hatte auch 102 lokale Variablen in Methoden zu `defined`
+   gemacht (sein Muster für Felder traf jede eingerückte Deklaration) - in http.pages wurde ein fehlender Wert eines JSON-Ereignisses so zur
+   ArgumentException (VM: ein Laufzeitfehler, nativ die DestroyedException danach); zurückgenommen, bewusst `defined` bleiben nur Locals, deren Wert
+   immer eine Zahl ist (die Skalierung des Systems, die Mauskoordinaten eines Ereignisses). Gemessen (die Vorlage "Desktop" mit ui, nativ, Release, linux): fire-Code von ui 397 -> 357 KB
    (-10 %), graphics 24 -> 22 KB, windows 51 -> 49 KB, die erzeugten Helfer +27 KB, das Programm 2407 -> 2387 KB.
-   **Offen:** die Regel auch für Aufrufe von Paketen aus dem Code des Programms (erst, wenn die Pakete umgestellt sind - jetzt möglich, gibt aber neue
-   Warnungen im Code der Benutzer); das Herleiten für den Code des Programms (ein Parameter, dem jede Aufrufstelle eine definierte Zahl gibt).
+   **Danach:** die Regel gilt auch für Aufrufe der Pakete aus dem Code des Programms (keine neuen Meldungen in den Vorlagen). **Das Herleiten für den
+   Code des Programms** (TypeChecker.Derive, docs/spec/TYPES.md): Parameter und Rückgaben der eigenen Methoden und Konstruktoren, denen jeder Aufruf
+   eine Zahl gibt, werden wie `defined` geprüft und nativ als C-Zahlen übergeben - ein größter Fixpunkt über Argumente, die Rückgaben anderer Methoden
+   oder unveränderte Parameter sind; ausgenommen, was ungesehen aufgerufen werden kann (Aufrufe über `any`, Methoden als Werte oder in Zeichenketten,
+   Überschreibungen von Paketmethoden, Konstruktoren von Basisklassen), Programme mit Reflection, Plugins und Debug-Builds. `FIRE_DERIVE_LOG=1`
+   zeigt die Entscheidungen, `FIRE_NO_DERIVE=1` schaltet es ab.
 
 Für alle neuen Ziele: Zielprofile, Toolchain OpenWatcom (`bios16`/`bios32` auch gcc `-m32 -ffreestanding`, `efi-x64` clang/mingw), eine Plattformschicht pro Familie;
 Tests ohne Fenster über den seriellen Port bzw. die Konsole: DOSBox-X / dosemu2 (`dos16`, `dos32`, Win 3.11), QEMU (`bios16`/`bios32`; `efi-x64` mit der Firmware OVMF),

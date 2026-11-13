@@ -608,7 +608,13 @@ namespace fire.Compiler
             // (the width of the program's int as below - the project's setting before the tag of the source: TC021 needs it)
             TypeChecker.ProgramIntWidth = intWidthOverride ?? ProcessIntWidth ?? Plan?.Settings?.IntWidth ?? directiveIntWidth ?? target?.IntWidth ?? 64;
             TypeChecker.NativeReturns = PackageImports.NativeReturnTypes(nativeImports);
-            TypeChecker.Run(program, resolveResult, EffectiveTypeChecking, firstUserSource, TypeCheckLibraries ? 0 : firstUserSource);
+            // deriving `defined` for the parameters of the program (TypeChecker.Derive): not when reflection or the program that loads a plugin can call a
+            // method with anything, nor in a debug build (the debugger calls methods with what it is given)
+            var deriveBefore = TypeChecker.DeriveDefinedOverride;
+            if (nativeImports.Contains(NativeImports.Reflection) || ClassMeta || OwnImports is { Count: > 0 }
+                || (executionModeOverride ?? assemblyInfo.ExecutionMode) == VmExecutionMode.Debug) TypeChecker.DeriveDefinedOverride = false;
+            try { TypeChecker.Run(program, resolveResult, EffectiveTypeChecking, firstUserSource, TypeCheckLibraries ? 0 : firstUserSource); }
+            finally { TypeChecker.DeriveDefinedOverride = deriveBefore; }
             fire.Native.BuildMonitor.Step(fire.Native.BuildPhase.CompileFire, "Compiling fire: generating bytecode", 3, 4);
             var compiled = Compiler.Compile(program, resolveResult, natives, ClassMeta, ForcedGlobalJobs, GlobalJobsDefault);
             // the classes of a package with `"serializable": false` (docs/stdlib/json.md)

@@ -114,6 +114,7 @@ namespace fire.Runtime
 
         private static void WaitForAllFireThreadsCore(GlobalsBroker? broker, long endWaitMs, long start, ref bool closed, ref bool ended)
         {
+            long closedAt = 0;
             while (true)
             {
                 broker?.Drain();
@@ -126,11 +127,20 @@ namespace fire.Runtime
                     live = _liveThreads;
                     if (!pending) Monitor.Wait(_liveThreadsGate, TaskHooks.IdlePump != null ? 20 : 50);
                 }
+                // (first the channels close; the threads they wake send what they still have to send - a message to an actor too. Only when everything
+                // left stands still again do the waits in `process` end: an actor is not gone while a message to it may still come)
                 if (!closed && StandsStill(broker))
                 {
                     closed = true;
-                    Volatile.Write(ref _standstill, true);   // (the threads that wait in `process` leave - CloseMainMade wakes them)
+                    closedAt = System.Diagnostics.Stopwatch.GetTimestamp();
                     ChannelHandles.CloseMainMade();
+                }
+                else if (closed && !Standstill && (System.Diagnostics.Stopwatch.GetTimestamp() - closedAt) * 1000 / System.Diagnostics.Stopwatch.Frequency >= 100 && StandsStill(broker)
+                         && Volatile.Read(ref _socketWaiting) == 0)
+                {
+                    Volatile.Write(ref _standstill, true);   // (the threads that wait in `process` leave)
+                    WakeWaitingOwner();
+                    VmScheduler.Wake();
                 }
                 if (!ended && endWaitMs >= 0 && (System.Diagnostics.Stopwatch.GetTimestamp() - start) * 1000 / System.Diagnostics.Stopwatch.Frequency >= endWaitMs)
                 {
@@ -156,6 +166,10 @@ namespace fire.Runtime
         }
 
         private static int _idleWaiting;
+        // (the threads that wait for a socket: it can still bring work from outside - no standstill ends the waits in `process` meanwhile)
+        private static int _socketWaiting;
+        internal static void SocketWaitEnter() => Interlocked.Increment(ref _socketWaiting);
+        internal static void SocketWaitLeave() => Interlocked.Decrement(ref _socketWaiting);
         private static bool _standstill;
         /// <summary>The threads that are left stand still at the end of the program: a thread that waits in `process` for an empty mailbox leaves.</summary>
         internal static bool Standstill => Volatile.Read(ref _standstill);

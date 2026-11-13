@@ -76,7 +76,7 @@ namespace Circuits {
         /// <summary>The current that flows out of a driven pin into the circuit (amperes; 0 for an input).</summary>
         defined float CurrentAt(defined int pin) {
             if (!this.driven[pin]) { return 0.0 }
-            defined float level = this.levels[pin]
+            float level = this.levels[pin]
             return (level - this.VoltsAt(pin)) / this.rout
         }
 
@@ -100,7 +100,7 @@ namespace Circuits {
             this.Update(solver.time + solver.dt)
             for (int i = 0; i < this.ports.Count; i++) {
                 if (this.driven[i]) {
-                    defined float level = this.levels[i]
+                    float level = this.levels[i]
                     solver.CurrentInto(this.ports[i], level / this.rout)
                 }
             }

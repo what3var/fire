@@ -331,7 +331,7 @@ namespace Gpio {
 
         /// <summary>Sets all lines (bit n = line n) as outputs. Throws NotSupportedException if the port cannot be written as a whole.</summary>
         override bool Write(any data) {
-            defined int value = data
+            int value = data
             try {
                 for (int line = 0; line < this.width; line++) {
                     var pin = this.PinAt(line)
@@ -371,7 +371,7 @@ class GpioDriver : Driver {
         var letter = 0
         foreach (chip in chips) {
             string name = "gpiosim"
-            defined int lines = Gpio.Sim.Lines()
+            int lines = Gpio.Sim.Lines()
             if (chip != "sim") {
                 name = "gpio" + "abcdefghijklmnopqrstuvwxyz".Substring(letter, 1)
                 letter = letter + 1

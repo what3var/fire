@@ -15885,7 +15885,7 @@ static int CountOccurrences(string haystack, string needle)
         CheckMd("Sprachdoku: alle Links zeigen auf vorhandene Seiten und Ueberschriften im selben Ordner", string.Join(", ", broken), "");
         var (topics, more) = fire.Editor.LanguageHelp.Contents(File.ReadAllText(Path.Combine(languageDir, "README.md")));
         CheckMd("Sprachdoku: das Inhaltsverzeichnis liefert die Themenseiten fuers Hilfemenue",
-            $"{topics.Count} {topics[0].Title}={topics[0].File} {topics[^1].File}", "19 1. Basics=01-basics.md 19-standard-library.md");
+            $"{topics.Count} {topics[0].Title}={topics[0].File} {topics[^1].File}", "20 1. Basics=01-basics.md 20-time.md");
         CheckMd("Sprachdoku: weitere Seiten (Roadmap) nach den Themen", string.Join(",", more.Select(p => p.Title + "=" + p.File)), "Roadmap=roadmap.md");
         var unlisted = Directory.GetFiles(languageDir, "*.md").Select(Path.GetFileName)
             .Where(f => f != "README.md" && !topics.Concat(more).Any(t => t.File == f)).ToList();
@@ -20882,6 +20882,32 @@ else
             process h
             process h
             print("got " + h.got)
+            """),
+        ("defined herleiten: Parameter und Rueckgaben, denen jeder Aufruf eine Zahl gibt; ein Aufruf ueber any, ein Lambda mit undefined und ein Override halten es auf", """
+            class Grid {
+                int w
+                construct(int w) { this.w = w }
+                int Index(int col, int row) { return row * this.w + col }
+                int Clamp(int v, int lo, int hi) { if (v < lo) { return lo } if (v > hi) { return hi } return v }
+                int Loose(int v) { if (v == undefined) { return -1 } return v }
+                int ByAny(int v) { if (v == undefined) { return -2 } return v }
+                int Named(int v = 7) { return v * 2 }
+            }
+            class Base { int F(int x) { if (x == undefined) { return 0 } return x } }
+            class Derived : Base { override int F(int x) { if (x == undefined) { return 100 } return x + 1 } }
+            var g = new Grid(10)
+            print(g.Index(g.Clamp(12, 0, 9), 3))
+            print(g.Loose(4))
+            var through = func (int x) => g.Loose(x)
+            print(through(undefined))
+            any a = g
+            print(a.ByAny(undefined))
+            print(g.ByAny(5))
+            print(g.Named() + " " + g.Named(v: 3))
+            Base b = new Derived()
+            print(b.F(1))
+            any bb = b
+            print(bb.F(undefined))
             """),
         ("Await: await actor.Methode() - Ergebnis, neues Objekt (übergeben), Feld (Kopie), String, Array, Ausnahme zurück zum Aufrufer, am eigenen Home sofort", """
             class Exception { string message; construct(string message = "") { this.message = message } }
