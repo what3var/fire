@@ -96,6 +96,11 @@ namespace Data {
             if (offset > 0) { t = t + " OFFSET " + offset }
             return t
         }
+        // (PostgreSQL sorts NULL as the greatest value: as the others sort it)
+        override string Order(string term, bool descending) {
+            if (descending) { return term + " DESC NULLS LAST" }
+            return term + " NULLS FIRST"
+        }
         override string StartsWith(string a, string b) { return "strpos(" + a + ", " + b + ") = 1" }
         override string EndsWith(string a, string b, string b2) { return "right(" + a + ", char_length(" + b + ")) = " + b2 }
         override string Contains(string a, string b) { return "strpos(" + a + ", " + b + ") > 0" }
@@ -392,7 +397,6 @@ namespace Data {
                 if (user == undefined) { user = rest.Substring(0, atSign) }
                 rest = rest.Substring(atSign + 1)
             }
-            if (user == undefined || user == "") { throw new ArgumentException("data.postgres: a user is needed (Data.Credentials or postgres://user@host/db).") }
             string database = user
             int slash = rest.IndexOf("/")
             if (slash >= 0) {
@@ -435,6 +439,7 @@ namespace Data {
             if (tlsMode == "disable") { tlsMode = "off" }
             if (tlsMode == "verify-full" || tlsMode == "verify-ca") { tlsMode = "verify" }
             if (!(tlsMode == "off" || tlsMode == "prefer" || tlsMode == "require" || tlsMode == "verify")) { throw new ArgumentException("data.postgres: sslmode is disable, prefer, require or verify-full, not '" + tlsMode + "'.") }
+            if (user == undefined || user == "") { throw new ArgumentException("data.postgres: a user is needed (Data.Credentials or postgres://user@host/db).") }
             try {
                 var tcp = new Net.TcpClient(host, port, this.timeout)
                 tcp.NoDelay = true

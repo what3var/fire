@@ -263,7 +263,7 @@ Own methods for the generated classes come in an extension (`extension Person { 
 | 10 | Migrations, `forge data diff/apply/import` - **built** (`[Migration]` + `Data.Migrator`, `db.Migrate/MigrateTo/Applied/Schema`, `forge data status/migrate/diff/import`; on all five databases) | 2, a driver with schema reading |
 | 11 | Designer: the `.fdata` format and forge's generator (classes, Model, Context, DDL) - **built** ([docs/data/designer.md](data/designer.md); `#include`, projects, `forge fdata`; one-to-one, views, check constraints and own type mappings per dialect still open) | 2, 10 |
 | 12 | Designer in spark: diagram, properties, import from a database, generate database/migration, preview - **built** (`DataModelEditorControl` on `DataModelDocument`; `Data.ModelImporter` reads a database as `.fdata` with relations guessed from `…Id`/`_id` columns and join tables, `forge data import --format fdata`; DDL per dialect via `Data.Script.Of`; copy/paste of boxes and several diagrams still open) | 11 |
-| 13 | PostgreSQL | 1, 7 |
+| 13 | PostgreSQL - **built** (`data.postgres` in fire on `net`/`tls`: the protocol 3.0, SCRAM-SHA-256/MD5/password, the extended query protocol, streamed rows, SQLSTATE in `State`; tested against PostgreSQL 16; COPY, LISTEN/NOTIFY and cancel still open) | 1, 7 |
 
 Tests: every driver runs the same suite (`Data.Tests.Run(url)`: types, NULL, parameters, transactions, errors, queries, session) - SQLite and memory in the
 normal tests (VM == native), MySQL and SQL Server against a server when one is configured (`FIRE_TEST_MYSQL`, `FIRE_TEST_SQLSERVER`).

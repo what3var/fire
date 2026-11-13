@@ -123,6 +123,11 @@ namespace Data {
         string IndexSuffix(string column, bool unique) { return "" }
         // A boolean value (a column, a parameter) as a condition (SQL Server: "x = 1"; the others take the value itself).
         string Truth(string value) { return value }
+        // A term of ORDER BY: NULL comes first when ascending, last when descending (as SQLite, MySQL and SQL Server sort - PostgreSQL says it).
+        string Order(string term, bool descending) {
+            if (descending) { return term + " DESC" }
+            return term
+        }
         // ---- migrations (Data.Migrator): the names are plain, the dialect quotes them ----
         string DropTable(string table) { return "DROP TABLE " + this.Quote(table) }
         string DropColumn(string table, string column) { return "ALTER TABLE " + this.Quote(table) + " DROP COLUMN " + this.Quote(column) }
@@ -1779,8 +1784,7 @@ namespace Data {
                     for (var i = 0; i < this.orders.Count; i++) {
                         LambdaExpression e = this.orders[i]
                         if (i > 0) { sql = sql + ", " }
-                        sql = sql + w.Lambda(e)
-                        if (this.descending[i]) { sql = sql + " DESC" }
+                        sql = sql + d.Order(w.Lambda(e), this.descending[i])
                     }
                 }
                 sql = sql + d.Paging(this.limited, this.skipped, this.orders.Count > 0)
