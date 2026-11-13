@@ -96,7 +96,8 @@ namespace fire.Editor
                 // it is long accepted when actually executing.
                 // The callback remembers the switched-on extensions,
                 // whose preludes are inserted below.
-                var registry = RuntimeSession.CreateProjectDirectiveRegistry(name => nativeImports.Add(name), tryLibrary: name => IsOwn(name) || ProjectLibraries.TryImport(plan, name, projectImports, nativeImports));
+                var registry = RuntimeSession.CreateProjectDirectiveRegistry(name => nativeImports.Add(name), tryLibrary: name => IsOwn(name) || ProjectLibraries.TryImport(plan, name, projectImports, nativeImports),
+                    unknownHint: name => ProjectLibraries.UnknownHint(plan, name));
                 var processed = new List<ProcessedSource>();
                 processed.Add(Preprocessor.Process(fire.Standard.Prelude.Source, cwd, alreadyIncluded, registry));
                 // the other files of the project come before the document (each from its own folder; one that cannot be preprocessed right now is left out)

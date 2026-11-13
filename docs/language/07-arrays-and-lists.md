@@ -143,6 +143,8 @@ print(c[0])         // 1
 | `IndexOf(value)` | position of the first equal element, `-1` if there is none |
 | `Contains(value)` | `true` if an equal element is in the list (`IndexOf(value) >= 0`) |
 | `Clear()` | removes everything |
+| `Sort()` | sorts the elements by `<` (numbers, texts, a class with `operator<`); stable - equal elements keep their order |
+| `Sort((a, b) => ...)` | sorts by a comparison: below 0 - `a` first, 0 - equal (they keep their order), above 0 - `b` first |
 
 ```fire
 var list = new List<int>()
@@ -154,6 +156,9 @@ print(list[0])              // 1
 list.RemoveAt(0)
 print(list.IndexOf(7))      // 1
 foreach (x in list) { print(x) }
+var ages = new List<int>([30, 20, 40])
+ages.Sort()                              // 20 30 40
+ages.Sort((a, b) => b - a)               // 40 30 20
 
 var names = new List<string>(["Ada", "Linus"])
 names.Add("Grace")

@@ -133,7 +133,7 @@ namespace fire.Compiler
         /// directive", without triggering its actual effect. An UNKNOWN extension (`#import
         /// "nonsense"`) still throws - that is a REAL error, not
         /// merely "the live diagnostics just do not know it (yet)".</summary>
-        public static DirectiveRegistry CreateProjectDirectiveRegistry(Action<string>? onImport = null, IEnumerable<string>? defines = null, Func<string, bool>? tryLibrary = null)
+        public static DirectiveRegistry CreateProjectDirectiveRegistry(Action<string>? onImport = null, IEnumerable<string>? defines = null, Func<string, bool>? tryLibrary = null, Func<string, string?>? unknownHint = null)
         {
             var registry = new DirectiveRegistry(); // completely empty, NOT CreateDefault()
             foreach (var symbol in ConditionalSymbols.For(null, ConditionalSymbols.DefaultEngine, null, defines)) registry.Symbols.Add(symbol); // `#if windows`: the machine the VM runs on
@@ -142,7 +142,7 @@ namespace fire.Compiler
                 if (args[0].Kind == ValueKind.String)
                 {
                     if (tryLibrary?.Invoke(args[0].AsString()) == true) return null;   // a library of the project (handled by the caller)
-                    foreach (var key in ImportedPreludes.WithDependencies(ImportedPreludes.ParseImportName(args[0].AsString()))) onImport?.Invoke(key);
+                    foreach (var key in ProjectLibraries.ImportKeys(args[0].AsString(), unknownHint)) onImport?.Invoke(key);   // (unknown: names the libraries of the project)
                     return null;
                 }
                 throw new Exception($"Wrong arguments for the 'import' directive.");

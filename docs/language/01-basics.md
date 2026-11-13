@@ -31,7 +31,10 @@ var b = 2; var c = 3
 print(a + b + c)
 ```
 
-A statement continues on the next line when the line ends with an operator, or while a `(` or `[` is open:
+A statement continues on the next line when the line ends with an operator or a `.`, when the next line starts with a `.`, `?.`, a binary operator
+(`+ - / % ^ | == != < <= > >= && || and or`) or the `?` of a condition, or while a `(` or `[` is open. Not at the start of a line: `++`/`--` (a statement
+of their own), `*` (`*p = 1` writes through a pointer), `&`, `!`, `~`, `(`, `[`, `#` and assignments - they start a new statement. So a line that starts
+with `-` or `+` belongs to the statement before (`int y = 10` and `-1` on the next line is `y = 9`).
 
 ```fire
 var total = 1 +
@@ -39,6 +42,12 @@ var total = 1 +
     3
 print(Math2.Max(total,
                  10))
+bool ok = total > 3
+    && total < 10
+    || total == 100
+var names = new List<string>(["b", "a"])
+var first = names
+    .Count                  // fluent: a `.` at the start of the line goes on
 
 class Math2 {
     static int Max(int a, int b) { if (a > b) { return a } return b }

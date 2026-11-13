@@ -26,6 +26,9 @@ namespace fire.Compiler
 
     public sealed class Lexer
     {
+        /// <summary>Is `word` a keyword of the language (it cannot be a name)?</summary>
+        public static bool IsKeyword(string word) => Keywords.ContainsKey(word);
+
         private static readonly Dictionary<string, TokenType> Keywords = new()
         {
             ["var"] = TokenType.Var,

@@ -11,7 +11,7 @@ architecture AND language syntax).
 
 Two statements must be separated by a `;` **or** a line break – if both are missing, that is a parse error (instead of silent misbehavior in which the parser ambiguously keeps reading across a line). The end of a block (`}`) and the end of the file also count as a valid termination, which allows one-line blocks such as `{ return x }`.
 
-Consequence for the parser: every "optional keep reading" decision (binary operators, assignment `=`, the postfix chain including the coercion suffixes `:`/`!`) stops at a line break instead of greedily reaching into the next line. This does not apply inside an open `(` or `[` – multi-line function calls, argument lists and conditions work as usual, because the bracket makes it clear anyway that the expression continues. An expression can still span several lines if the operator is at the **end** of the first line (`var x = a +\n    b`), since parsing the right operand after an already consumed operator is no longer an "optional keep reading" but is mandatory.
+Consequence for the parser: every "optional keep reading" decision (binary operators, assignment `=`, the postfix chain including the coercion suffixes `:`/`!`) stops at a line break instead of greedily reaching into the next line. This does not apply inside an open `(` or `[` – multi-line function calls, argument lists and conditions work as usual, because the bracket makes it clear anyway that the expression continues. An expression can still span several lines if the operator is at the **end** of the first line (`var x = a +\n    b`), since parsing the right operand after an already consumed operator is no longer an "optional keep reading" but is mandatory. The same for a token that cannot start a statement at the **start** of the next line: `.`, `?.`, `??.`, the binary operators `+ - / % ^ | == != < <= > >= && || and or` and the `?` of a condition continue the expression of the line before (`Parser.ContinuesAtLineStart`) - fluent chains (`list\n    .Where(...)\n    .Count`). Not so `++`/`--`, `*` (a write through a pointer `*p = 1`), `&`, `!`, `~`, `(`, `[`, `#` and the assignments: they start a statement. A line that starts with a unary `-`/`+` therefore belongs to the statement before.
 
 **Explicit continuation with `_`:** If a lone `_` is the last "word" of a line (optionally followed by a line comment), the following line break is not counted as a statement separator – the next line continues the current statement as if there were no line break. The `_` itself produces no token (it is swallowed by the lexer) and in every other position remains a perfectly normal, valid identifier (e.g. as a variable name).
 
@@ -1665,6 +1665,11 @@ Every **error** of the compiler has a code, too: `E` and four digits (`E4022: Un
 until the next build replaces them; the Error List has a filter for the warnings.
 
 A reference `ClassName.Member` to a static member that the class (or a base class) does not have is an error when the program is compiled (`E4056`), not a failure at run time.
+
+The initialisers of static fields run once at program start, before the first top-level statement: class by class in the order of the program
+(prelude, imported libraries, then the files in their order), in a class from the top down. A static initialiser that reads (by name or as
+`Class.field`, also through a base class) a static field whose initialiser runs later - or the field itself - is a resolver error; reads in a lambda
+of the initialiser and in methods it calls are not checked.
 
 ### 8.2 Bit widths for `int`/`float`
 

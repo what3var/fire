@@ -4691,7 +4691,14 @@ namespace fire.Compiler
         /// that binary operators, assignment and the postfix chain do not
         /// accidentally read on across a new statement in the next line
         /// (it must not).</summary>
-        private bool LineContinues() => _bracketDepth > 0 || !Peek().NewlineBefore;
+        private bool LineContinues() => _bracketDepth > 0 || !Peek().NewlineBefore || ContinuesAtLineStart(Peek().Type);
+
+        /// <summary>A token that cannot start a statement and so, at the start of a line, goes on with the expression of the line before (a fluent chain
+        /// `.Where(...)` / `?.Name`, a binary operator, the `?` of a condition) - not `++`/`--` (a statement of their own), not `*` (`*p = 1` writes through a
+        /// pointer), not `&` (an address), `!`, `~`, `(`, `[` (they start an expression), `#` (a directive) or an assignment.</summary>
+        private static bool ContinuesAtLineStart(TokenType type) => type is TokenType.Dot or TokenType.QuestionDot or TokenType.QuestionQuestionDot
+            or TokenType.And or TokenType.Or or TokenType.Plus or TokenType.Minus or TokenType.Slash or TokenType.Percent or TokenType.Caret or TokenType.Pipe
+            or TokenType.Eq or TokenType.NotEq or TokenType.Lt or TokenType.LtEq or TokenType.Gt or TokenType.GtEq or TokenType.Question;
 
         /// <summary>Enforces the statement separation rule: between two statements
         /// there must be a ';' or a line break. End of block ('}') and end of file
@@ -4709,6 +4716,13 @@ namespace fire.Compiler
         }
 
         private static ParseException Error(string message, Token at) =>
-            new(message, at.Line, at.Column);
+            new(message + KeywordHint(message, at), at.Line, at.Column);
+
+        /// <summary>Where a name is expected and a keyword stands (`int where = 3`, `F(int from)`, `var base = 1`): says so - otherwise "Expected a
+        /// variable name" leaves one wondering what is wrong with `where`.</summary>
+        private static string KeywordHint(string message, Token at) =>
+            at.Type != TokenType.Identifier && Lexer.IsKeyword(at.Lexeme) && message.StartsWith("Expected", StringComparison.Ordinal)
+            && (message.Contains("name", StringComparison.Ordinal) || message.Contains("identifier", StringComparison.Ordinal))
+                ? $" ('{at.Lexeme}'{ErrorCatalog.KeywordHintTail}" : "";
     }
 }

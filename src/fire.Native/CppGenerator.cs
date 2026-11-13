@@ -4472,7 +4472,10 @@ namespace fire.Native
             {
                 if (IsPlainType(type)) { SetR(slot, false); SetT(slot, type); _kindsKept = true; return; }
                 E($"adopt({S(slot)}, &{OwnerList()});"); SetR(slot, true);
-                if (type != TypeUnknown) { SetT(slot, type); _kindsKept = true; }   // (an object of a known class)
+                // (the slot held something else before - the receiver, the first argument: its type goes, also when the result's is not known; a C body that
+                // gives a Value of unknown type left the type of the argument `shape` (an int) on the slot, and `z0 + Shape.CornerMeters(shape, 0)` read the
+                // float of the result as an int)
+                SetT(slot, type); _kindsKept = true;
             }
             // The list for the default values of a call that leaves out arguments (only then the scope needs one).
             string DefaultsList(FunctionProto proto, int argc) => argc < proto.ParamCount ? "&" + OwnerList() : "";

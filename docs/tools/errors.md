@@ -319,6 +319,8 @@ configuration of the native build, a toolchain that is missing).
 | `E4070` | The parameter '…' of the inline C function '…' needs a type (int, float, bool, char, string, byte[], any or a pointer) |
 | `E4071` | The parameter '…' of the inline C function '…' has a type C cannot take (int, float, bool, char, string, byte[], any or a pointer) |
 | `E4072` | The inline C function '…' has a result type C cannot give (int, float, bool, char, string, any, a pointer or undefined) |
+| `E4073` | The initialiser of the static field '…' reads the field itself - it is still undefined there |
+| `E4074` | The initialiser of the static field '…' reads '…', whose initialiser only runs later (static fields are initialised once at program start: class by class in the order of the program, in a class from the top down) - declare '…' first |
 
 ### E5xxx - Bytecode compiler
 

@@ -270,6 +270,7 @@ static class ProjectTests
         Check("Projektdatei: eine leere Ausschlussliste bleibt leer", FireProject.Load(projPath).Exclude.Count == 0, File.ReadAllText(projPath));
         Check("Projektdatei: was leer ist, steht nicht in der Datei", !json.Contains("\"files\"") && !json.Contains("floatWidth") && json.Contains("\"type\": \"library\""), json);
         Check("Projektdatei: Importname aus dem Namen", new FireProject { Name = "my-lib 2" }.ImportName == "my_lib_2" && new FireProject { Name = "3d" }.ImportName == "L3d" && new FireProject { Name = "x", Import = "Y" }.ImportName == "Y");
+        Check("Projektdatei: der hergeleitete Importname behaelt die Punkte", new FireProject { Name = "Raser.Core" }.ImportName == "Raser.Core" && new FireProject { Name = "a..b-c" }.ImportName == "a.b_c" && new FireProject { Name = "x.3d" }.ImportName == "x.L3d");
         Check("Projektdatei: ein reservierter Importname wird gemeldet", new FireProject { Name = "net", Type = OutputType.Library }.Validate().Any(p => p.Contains("belongs to the compiler")));
         Check("Projektdatei: ungueltiges JSON ist ein ProjectException", Throws(() => FireProject.Parse("{ not json")));
 
@@ -386,6 +387,16 @@ static class ProjectTests
         Write(s, "NoRef/n.script", "#import \"Core\"\nprint(Core.Greeter.Hello(\"x\"))\n");
         var noref = Workspace.Open(Path.Combine(s, "NoRef", "NoRef.fireproj"));
         Check("Import: ohne Verweis ist eine Bibliothek des Projekts unbekannt", Catch(() => ProjectBuilder.Check(BuildPlan.Create(noref, noref.Projects[0]))).Contains("not a known extension"));
+        Write(s, "Dotted/Raser.Core/Raser.Core.fireproj", """{ "name": "Raser.Core", "type": "library" }""");
+        Write(s, "Dotted/Raser.Core/core.script", "namespace Raser.Core {\n    class Info {\n        static string Name() { return \"core\" }\n    }\n}\n");
+        Write(s, "Dotted/Tool/Tool.fireproj", """{ "name": "Tool", "references": [ { "project": "../Raser.Core/Raser.Core.fireproj" } ] }""");
+        Write(s, "Dotted/Tool/t.script", "#import \"Raser.Core\"\nprint(Raser.Core.Info.Name())\n");
+        var dotted = Workspace.Open(Path.Combine(s, "Dotted", "Tool", "Tool.fireproj"));
+        string dottedRan = RunPlan(BuildPlan.Create(dotted, dotted.Projects[0]));
+        Check("Import: eine Bibliothek mit Punkt im Namen wird unter diesem Namen importiert", dottedRan == "core\n", dottedRan);
+        Write(s, "Dotted/Tool/t.script", "#import \"Raser_Core\"\nprint(1)\n");
+        string wrongName = Catch(() => ProjectBuilder.Check(BuildPlan.Create(Workspace.Open(Path.Combine(s, "Dotted", "Tool", "Tool.fireproj")), Workspace.Open(Path.Combine(s, "Dotted", "Tool", "Tool.fireproj")).Projects[0])));
+        Check("Import: ein unbekannter Name nennt die Importnamen der referenzierten Bibliotheken", wrongName.Contains("not a known extension") && wrongName.Contains("\"Raser.Core\""), wrongName);
 
         // ---- changes through the workspace --------------------------------------------------------------------------------------------------
         string c = Path.Combine(root, "changes");
