@@ -266,8 +266,8 @@ namespace fire.Standard
                     any fb = copy b.Compiled
                     if (fa != undefined && fb != undefined) {
                         bool both = op == "&&"
-                        if (a.Parameters.length == 1) { tree.Compiled = (any x) => Expression.__Two((handover fa), (handover fb), both, x, undefined, 1) }
-                        else if (a.Parameters.length == 2) { tree.Compiled = (any x, any y) => Expression.__Two((handover fa), (handover fb), both, x, y, 2) }
+                        if (a.Parameters.length == 1) { tree.Compiled = (any x) => Expression.__Two((handover fa), (handover fb), (taking both), x, undefined, 1) }
+                        else if (a.Parameters.length == 2) { tree.Compiled = (any x, any y) => Expression.__Two((handover fa), (handover fb), (taking both), x, y, 2) }
                     }
                     return tree
                 }
@@ -601,15 +601,17 @@ namespace fire.Standard
                 }
                 override Expression Rewrite(Expression e) {
                     if (e is of ParameterExpression) {
-                        int at = this.names.IndexOf(e.Name)
-                        if (at >= 0) { return new ParameterExpression(this.to[at], e.Index, e.Type) }
+                        ParameterExpression p = e!ParameterExpression
+                        int at = this.names.IndexOf(p.Name)
+                        if (at >= 0) { return new ParameterExpression(this.to[at], p.Index, p.Type) }
                         return base.Rewrite(e)
                     }
                     if (e is of LambdaExpression) {
+                        LambdaExpression l = e!LambdaExpression
                         any hidden = new List<int>()
                         any hiddenNames = new List<string>()
-                        for (int i = 0; i < e.Parameters.length; i++) {
-                            int at = this.names.IndexOf(e.Parameters[i].Name)
+                        for (int i = 0; i < l.Parameters.length; i++) {
+                            int at = this.names.IndexOf(l.Parameters[i].Name)
                             if (at >= 0) { hidden.Add(at); hiddenNames.Add(this.names[at]); this.names[at] = "" }
                         }
                         any result = base.Rewrite(e)
