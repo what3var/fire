@@ -191,7 +191,8 @@ instructions (more fused ones, or registers instead of the stack) - a step of it
   (`int a[] = []` says it).
 * **`defined` (SPEC 8.10b).** A static type of a value type carries what the checker knows about `undefined` (`StaticType.Null`): *defined* - a
   literal, the result of an operator, a `defined` declaration, a call of a method whose return value is `defined`, `trust x`; *may be undefined* - a
-  parameter, field or property declared without `defined`, a variable without an initializer, the literal `undefined`; *inferred* - a variable that was
+  parameter, field or property declared without `defined`, a call of a method of the program whose value type is returned without `defined` (`int F()`),
+  a variable without an initializer, the literal `undefined`; *inferred* - a variable that was
   only given defined values so far (in the order of the source: a loop may give it something else later, so a `defined` variable still checks what it
   takes from it); *unknown* - everything else (the natives, the standard library). A value that may be undefined going into a `defined` parameter,
   field, property, variable or return value is `TC022` (a warning in lax mode, an error in strict mode); it is checked at run time either way.

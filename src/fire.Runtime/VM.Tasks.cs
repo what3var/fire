@@ -131,9 +131,17 @@ namespace fire.Runtime
         /// <summary>`process a` of a task of the pool while a's mailbox is empty: it waits for a message by leaving its loop, then runs it.</summary>
         private void SuspendForProcess(ObjectInstance actor)
         {
-            Suspend(() => actor.Mailbox?.HasMessages ?? true, 0, () =>
+            // (a thread that waits for a message counts as standing still, like a wait in a channel: at a standstill of the end of the program it leaves)
+            bool counts = CountsAsThread;
+            if (counts) FireRuntime.IdleEnter(this);
+            Suspend(() => (actor.Mailbox?.HasMessages ?? true) || (counts && FireRuntime.Standstill), 0, () =>
             {
-                if (actor.Mailbox is { HasMessages: false }) SuspendForProcess(actor);
+                if (counts) FireRuntime.IdleLeave(this);
+                if (actor.Mailbox is { HasMessages: false })
+                {
+                    if (counts && FireRuntime.Standstill) { RequestLeave(); ShutdownSelfNow(); }
+                    else SuspendForProcess(actor);
+                }
                 else ProcessOneMessage(actor, blocking: true);
             });
         }

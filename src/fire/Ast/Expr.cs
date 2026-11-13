@@ -53,7 +53,10 @@ namespace fire.Ast
         Stmt.BlockStmt Body,
         bool AutoCapture = true,
         IReadOnlyDictionary<string, bool>? CaptureModes = null,
-        bool ExpressionBody = false) : Expr(Line);   // (ExpressionBody: `x => expression`, not `x => { ... }` - what an expression tree takes)   // `taking x` (false) / `handover x` (true) in the body: how x is captured
+        bool ExpressionBody = false,
+        bool LendCaptures = false) : Expr(Line);
+    // (ExpressionBody: `x => expression`, not `x => { ... }` - what an expression tree takes)   // `taking x` (false) / `handover x` (true) in the body: how x is captured
+    // (LendCaptures: an element of `await [ ... ]` - the caller waits until it is done, so it sees the caller's variables lent, like a single `await`)
 
     /// <summary>`sync X` / `try sync X` / `sync flat X` / `try sync flat X`
     /// (docs/spec/THREADING_DESIGN.md section 4) - an EXPRESSION (not a

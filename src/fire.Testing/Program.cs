@@ -20852,6 +20852,35 @@ else
             var none = await []
             print("empty " + none.Length)
             """),
+        ("Await: await [ ... ] in einem Thread - die Elemente leihen die Locals (keine Kopie), ein Actor als Argument, Completion: eine Aufgabe wartet, die andere schlaeft und gibt", """
+            #import "time"
+            class Box { int v = 3 }
+            actor Hub {
+                Completion c
+                int got = 0
+                undefined Register(Completion w) { this.c = take w }
+                undefined Give(int v) { this.got = v; this.c.Set(v) }
+            }
+            class Work {
+                static int N(Box b) { b.v = b.v + 1; return b.v }
+                static int A(Hub h) { Sleep(30ms); h.Give(7); return 1 }
+                static int B(Completion w) { any v = w.Wait(5s); return v }
+            }
+            var h = new Hub()
+            var c = new Completion()
+            h.Register(c.Share())
+            process h
+            var w = c.Share()
+            fire with h handover w {
+                var b = new Box()
+                var n = await [Work.N(b), Work.N(b)]
+                print("box " + b.v)
+                var r = await [Work.A(h), Work.B(w)]
+                print("done " + r[0] + " " + r[1])
+            }
+            process h
+            print("got " + h.got)
+            """),
         ("Await: await actor.Methode() - Ergebnis, neues Objekt (übergeben), Feld (Kopie), String, Array, Ausnahme zurück zum Aufrufer, am eigenen Home sofort", """
             class Exception { string message; construct(string message = "") { this.message = message } }
             class Box {
@@ -28852,6 +28881,30 @@ else
             }
             ch.Send(1)
             ch.Send(2)
+            print("main end")
+            """),
+        ("Programmende: ein Thread, der in process wartet, zaehlt als Stillstand - er endet wie mit leave (finally laeuft), ohne das Zeitlimit", """
+            #import "time"
+            #endwait 20s
+            actor Home {
+                int n = 0
+                undefined Add(int v) { this.n = this.n + v }
+            }
+            var ch = new Channel<int>()
+            fire with ch {
+                var h = new Home()
+                fire with h {
+                    Sleep(50ms)
+                    h.Add(5)
+                    h.Add(6)
+                }
+                try { while (true) { process h } } finally { print("home ends " + h.n) }
+            }
+            fire with ch {
+                int sum = 0
+                foreach (v in ch) { sum = sum + v }
+            }
+            ch.Send(1)
             print("main end")
             """),
         ("Programmende: #endwait 300ms - ein Thread, der dann noch laeuft, wird beendet wie mit terminate (Meldung auf stderr)", """

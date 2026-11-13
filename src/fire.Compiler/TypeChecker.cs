@@ -2581,7 +2581,15 @@ namespace fire.Compiler
                 return StaticType.Dynamic;
             }
             CheckArguments(argParams!, args, c.Args, method.Name, map);
-            return DeclaredOrDynamic(method.ReturnType, 0, map);
+            return ResultOf(method, map);
+        }
+
+        /// <summary>What a call of a method of the code being checked gives: a value type returned without `defined` may be undefined (like a field or a
+        /// parameter declared without it) - only `defined int F()` promises a number (the VM checks the return).</summary>
+        private StaticType ResultOf(MethodDecl method, Dictionary<string, StaticType>? map)
+        {
+            var type = DeclaredOrDynamic(method.ReturnType, 0, map);
+            return method.Source >= _firstUserSource && method.Source > 0 ? MayBeUndefined(type) : type;
         }
 
         /// <summary>Overloads `lambda<T>` / `lambda expression<T>` (docs/ROADMAP_EXPRESSIONS.md): a lambda written at the call with an expression body goes to
@@ -2622,7 +2630,7 @@ namespace fire.Compiler
                 }
             }
             CheckArguments(method.Params, args, c.Args, method.Name, map);
-            return DeclaredOrDynamic(method.ReturnType, 0, map);
+            return ResultOf(method, map);
         }
 
         /// <summary>A type as a run-time type argument (DeclaredType text): a basic type, a class or an interface; "" for anything else.</summary>

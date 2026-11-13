@@ -274,7 +274,8 @@ print(n + " " + sum)
   own per call. `await` is a word only in front of what it awaits; elsewhere `await` is an ordinary name.
 - `await [f(a), g(b), taking x { return ... }]` runs several calls at once and waits for all; the result is an array of their results in the order of
   the brackets. When some fail, all are waited for and the first exception in that order is thrown. Each element is what a single `await` takes, clauses
-  included (`await [Load(a), Merge(x, y) taking y]`). The calls get the caller's objects lent; in a native build they run side by side on all cores when
+  included (`await [Load(a), Merge(x, y) taking y]`). The calls get the caller's objects lent - its locals too, also in a thread (an actor or a
+  Completion as an argument is the same one, a change of an object is seen after the `await`); in a native build they run side by side on all cores when
   no two of them reach the same object (otherwise one after the other); the VM runs them one after the other.
 - `await actor.Method()` waits for the result of an actor's method (see [Actors](#actors)).
 - `fire on window { ... }` runs a block in the main program - where its windows live - with `window` as the real object (and copies of what it takes with
@@ -473,9 +474,11 @@ print("never printed")
 
 When the main program's code ends, it waits for the threads that are still running before it destroys its globals. Two rules keep that from hanging:
 
-- **Standstill**: when every thread that is left waits in a channel (`Receive`, `Send`, `foreach`) or for a socket, nobody can go on - the channels
-  the main program made are closed. A `foreach` over one ends, a `Receive` gives undefined, a `Net.Channel` sends its end. Threads that wait for
-  something else (a channel of their own, `Sleep`) are left alone.
+- **Standstill**: when every thread that is left waits in a channel (`Receive`, `Send`, `foreach`), for a socket or in `process` (for a message to an
+  actor of its own), nobody can go on - the channels the main program made are closed, and a `process` that waits for a message ends its thread like
+  `leave` (its `finally` blocks and destructors run; a message that is already there is still run). A `foreach` over a closed channel ends, a `Receive`
+  gives undefined, a `Net.Channel` sends its end. So a home thread that loops over `process` (a pool, a directory of pages, the home of RPC calls) does
+  not keep the program for the 60 seconds of the limit. Threads that wait for something else (a channel of their own, `Sleep`) are left alone.
 - **Limit**: 60 seconds after the end of the main program the threads that are still there are ended like with `terminate` (at their next safe point
   or wait), with a line on stderr. `#endwait 5s` sets another limit, `#endwait undefined` none. While a window keeps the program open, the time does not
   count.

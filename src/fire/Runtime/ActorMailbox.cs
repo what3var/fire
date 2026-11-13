@@ -87,6 +87,14 @@ namespace fire.Runtime
         /// <summary>Called after every message that is put in (the scheduler of the VM: a task that waits in `process` looks again).</summary>
         public static Action? Enqueued;
 
+        /// <summary>Waits at most `ms` for a message; true: one is there (it stays in the mailbox).</summary>
+        public bool WaitForMessage(int ms)
+        {
+            if (!_signal.Wait(ms)) return false;
+            _signal.Release();
+            return true;
+        }
+
         public bool TryProcessOne(bool blocking, out ActorMessage message)
         {
             if (blocking)

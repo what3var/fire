@@ -9794,6 +9794,8 @@ FIRE_FN FdPoller* fire_fdPoller(void) {
 extern FIRE_RT_DATA fire_atomic32 g_idleThreads;
 FIRE_FN void stillEnter(void) { if (g_isFire) { fire_atomic_add(&g_idleThreads, 1); notifyEvent(); } }
 FIRE_FN void stillLeave(void) { if (g_isFire) fire_atomic_add(&g_idleThreads, (uint32_t)-1); }
+/* (set by mainFinish when the threads that are left stand still: a fire thread that waits in `process` for an empty mailbox then ends like with `leave`) */
+extern FIRE_RT_DATA fire_atomic32 g_standstill;
 FIRE_FN Value fire_fd_wait(Value fdv, Value ev, Value msv) {
 #ifdef FIRE_FD_POLL
     FdPoller* p;
@@ -9927,7 +9929,10 @@ FIRE_FN bool fire_actorReady(void* ctx) {
     fire_mutex_unlock(&g_mailboxM);
     return ready;
 }
-/* `process x` / `try process x`: runs one message of the actor. 1: a message ran; 0: none there (`try`); -1: terminate cut the wait short. */
+/* (`process` in a fire thread: a message is there, or the program ends in a standstill - nobody can send one any more) */
+FIRE_FN bool fire_actorReadyOrStill(void* ctx) { return fire_atomic_loadAcquire(&g_standstill) != 0 || fire_actorReady(ctx); }
+/* `process x` / `try process x`: runs one message of the actor. 1: a message ran; 0: none there (`try`); -1: terminate cut the wait short, or the program
+ * ends in a standstill (the thread leaves). A fire thread that waits for a message counts as standing still, like a wait in a channel (mainFinish). */
 FIRE_FN int processMsg(Value v, bool blocking, OwnList* list) {
     Obj* a;
     Mailbox* b;
@@ -9938,7 +9943,14 @@ FIRE_FN int processMsg(Value v, bool blocking, OwnList* list) {
     a = asObj(v);
     if (!fire_actorReady(a)) {
         if (!blocking) return 0;
-        if (!blockUntil(fire_actorReady, a, true, 0)) { startLeave(); return -1; }
+        if (!g_isFire) { if (!blockUntil(fire_actorReady, a, true, 0)) { startLeave(); return -1; } }
+        else {
+            bool woken;
+            stillEnter();
+            woken = blockUntil(fire_actorReadyOrStill, a, true, 0);
+            stillLeave();
+            if (!woken || !fire_actorReady(a)) { startLeave(); return -1; }
+        }
     }
     b = mailboxOf(a);
     if (!b) return 0;
@@ -11844,7 +11856,7 @@ FIRE_FN void mainFinish(void) {
         g_leaving = 0;
     }
     /* (open windows of a window manager's thread hold the program, unless it is terminating; their cycles run here meanwhile) - when every fire thread
-     * that is left waits in a channel or for a socket, the channels of the main program close; `#endwait` after the end (60 s; the time counts while no
+     * that is left waits in a channel, for a socket or in `process`, the channels of the main program close and the waits in `process` leave; `#endwait` after the end (60 s; the time counts while no
      * window holds the program) the threads that are still there are ended like with `terminate` */
     {
         int64_t from = steadyMs();
@@ -11857,7 +11869,11 @@ FIRE_FN void mainFinish(void) {
                 || fire_atomic_load(&g_groupLive) != 0
 #endif
                 ) { from = now; continue; }   /* (windows or handlers of the main program may still feed its channels) */
-            if (!closed && live > 0 && fire_atomic_load(&g_idleThreads) >= live) { closed = true; chanCloseMainMade(); }
+            if (!closed && live > 0 && fire_atomic_load(&g_idleThreads) >= live) {
+                closed = true;
+                fire_atomic_storeRelease(&g_standstill, 1);   /* (the threads in `process` leave: notifyEventAll in chanCloseMainMade wakes them) */
+                chanCloseMainMade();
+            }
             if (!ended && live > 0 && g_endWaitMs >= 0 && now - from >= g_endWaitMs) {
                 ended = true;
                 fflush(stdout);
@@ -12014,6 +12030,7 @@ PtrMap g_lentWatch;
 ChanNode* g_mainChans = NULL;
 fire_mutex g_mainChansM;
 fire_atomic32 g_idleThreads;
+fire_atomic32 g_standstill;
 int64_t g_endWaitMs = 60000;
 #ifdef FIRE_NO_GIL
 fire_mutex g_targsM;
