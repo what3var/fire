@@ -495,62 +495,9 @@ namespace Data {
 
         // The SQL that makes the table of a class in an empty database, in the dialect of the connection (the table, the join tables of its
         // [ManyToMany] fields, the indexes) - what Ensure would run there, without running it; each statement ends with ";" and a line break.
-        string CreateScript(string typeName) {
-            var map = this.Map(typeName)
-            var d = this.driver.Dialect()
-            var cols = ""
-            for (var i = 0; i < map.columns.Count; i++) {
-                Data.ColumnMap c = map.columns[i]
-                if (i > 0) { cols = cols + ", " }
-                cols = cols + d.ColumnDefinition(c)
-            }
-            var t = "CREATE TABLE " + d.Quote(map.table) + " (" + cols + ")" + d.TableOptions() + ";\n"
-            for (var i = 0; i < map.relations.Count; i++) {
-                Data.RelationMap r = map.relations[i]
-                if (!r.join) { continue }
-                map.NeedKey()
-                var target = this.Map(r.target)
-                target.NeedKey()
-                var a = new Data.ColumnMap(r.thisColumn, r.thisColumn, map.key.typeName, map.key.kind)
-                a.required = true
-                var b = new Data.ColumnMap(r.otherColumn, r.otherColumn, target.key.typeName, target.key.kind)
-                b.required = true
-                t = t + d.CreateTableIfMissing(d.Quote(r.joinTable), "(" + d.ColumnDefinition(a) + ", " + d.ColumnDefinition(b) + ")" + d.TableOptions()) + ";\n"
-                t = t + "CREATE INDEX " + d.Quote("ix_" + r.joinTable + "_" + r.thisColumn) + " ON " + d.Quote(r.joinTable) + " (" + d.Quote(r.thisColumn) + ");\n"
-            }
-            for (var i = 0; i < map.columns.Count; i++) {
-                Data.ColumnMap c = map.columns[i]
-                if (!c.unique && !c.index) { continue }
-                var kind = "INDEX"
-                if (c.unique) { kind = "UNIQUE INDEX" }
-                t = t + "CREATE " + kind + " " + d.Quote("ix_" + map.table + "_" + c.column) + " ON " + d.Quote(map.table) + " (" + d.Quote(c.column) + ")" + d.IndexSuffix(d.Quote(c.column), c.unique) + ";\n"
-            }
-            return t
-        }
-
+        string CreateScript(string typeName) { return Data.Script.Of(this.driver.Dialect(), [typeName]) }
         // The script of several classes (Data.Model.Types() of a data model): each table once - a join table is made by the first class that has it.
-        string CreateScriptOf(any typeNames) {
-            var t = ""
-            var seen = new List()
-            for (var i = 0; i < typeNames.length; i++) {
-                string part = this.CreateScript("" + typeNames[i])
-                any lines = part.Split("\n")
-                for (var k = 0; k < lines.length; k++) {
-                    string line = lines[k]
-                    if (line == "") { continue }
-                    if (seen.IndexOf(line) >= 0) { continue }
-                    // (the second side of a join table: the same table with its columns the other way round)
-                    if (line.StartsWith("CREATE TABLE IF NOT EXISTS ")) {
-                        string name = line.Substring(27, line.IndexOf(" (") - 27)
-                        if (seen.IndexOf("table " + name) >= 0) { continue }
-                        seen.Add("table " + name)
-                    }
-                    seen.Add(line)
-                    t = t + line + "\n"
-                }
-            }
-            return t
-        }
+        string CreateScriptOf(any typeNames) { return Data.Script.Of(this.driver.Dialect(), typeNames) }
 
         // (an index when it is not there - with IF NOT EXISTS where the database knows it, else after asking its catalog)
         undefined CreateIndex(string name, string table, string column, bool unique) {
@@ -2996,6 +2943,141 @@ namespace Data {
         }
     }
 
+    /// <summary>A database as a data model (`.fdata`, docs/data/designer.md): what forge data import --format fdata and the designer of spark make of it.</summary>
+    class ModelImporter {
+        // (a table name as the name of an entity: singular, a fire name - customers -> Customer, order_lines -> OrderLine)
+        static string EntityName(string table) {
+            string t = Data.ModelImporter.Singular(table)
+            var name = ""
+            bool upper = true
+            for (var i = 0; i < t.Length; i++) {
+                string c = t.Substring(i, 1)
+                int k = t.CharAt(i).ToInt()
+                bool letter = (k >= 97 && k <= 122) || (k >= 65 && k <= 90)
+                bool digit = k >= 48 && k <= 57
+                if (!letter && !(digit && name != "")) {
+                    upper = true
+                    continue
+                }
+                if (upper) { name = name + c.ToUpper() } else { name = name + c }
+                upper = false
+            }
+            if (name == "") { name = "Table" }
+            return name
+        }
+        static string Singular(string name) {
+            string low = name.ToLower()
+            if (low.EndsWith("ies") && name.Length > 3) { return name.Substring(0, name.Length - 3) + "y" }
+            if (low.EndsWith("sses") || low.EndsWith("xes") || low.EndsWith("ches") || low.EndsWith("shes")) { return name.Substring(0, name.Length - 2) }
+            if (low.EndsWith("s") && !low.EndsWith("ss") && name.Length > 1) { return name.Substring(0, name.Length - 1) }
+            return name
+        }
+        // (the entity a column like customerId / customer_id points to: the table whose singular name is its start; undefined: none)
+        static Data.SchemaTable Target(List tables, string column) {
+            string low = column.ToLower()
+            string start = undefined
+            if (low.EndsWith("_id") && low.Length > 3) { start = low.Substring(0, low.Length - 3) }
+            else if (low.EndsWith("id") && low.Length > 2 && column.Substring(column.Length - 2, 1) == "I") { start = low.Substring(0, low.Length - 2) }
+            if (start == undefined) { return undefined }
+            string plain = start.Replace("_", "")
+            for (var i = 0; i < tables.Count; i++) {
+                Data.SchemaTable t = tables[i]
+                string single = Data.ModelImporter.Singular(t.name).ToLower().Replace("_", "")
+                if (single == plain || t.name.ToLower().Replace("_", "") == plain) { return t }
+            }
+            return undefined
+        }
+        static Data.SchemaColumn KeyOf(Data.SchemaTable t) {
+            for (var i = 0; i < t.columns.Count; i++) {
+                Data.SchemaColumn c = t.columns[i]
+                if (c.key) { return c }
+            }
+            return undefined
+        }
+        static bool IsJoin(List tables, Data.SchemaTable t) {
+            if (t.columns.Count != 2 || Data.ModelImporter.KeyOf(t) != undefined) { return false }
+            Data.SchemaColumn a = t.columns[0]
+            Data.SchemaColumn b = t.columns[1]
+            return Data.ModelImporter.Target(tables, a.name) != undefined && Data.ModelImporter.Target(tables, b.name) != undefined
+        }
+        static string Json(string s) { return Data.Differ.Text(s) }
+        static string Lower(string s) {
+            if (s == "") { return s }
+            return s.Substring(0, 1).ToLower() + s.Substring(1)
+        }
+        static string Plural(string s) {
+            if (s.EndsWith("y") && s.Length > 1) { return s.Substring(0, s.Length - 1) + "ies" }
+            if (s.EndsWith("s") || s.EndsWith("x") || s.EndsWith("ch") || s.EndsWith("sh")) { return s + "es" }
+            return s + "s"
+        }
+
+        static string Model(Data.Connection db, string ns) {
+            List tables = Data.SchemaReader.Read(db)
+            if (ns == undefined || ns == "") { ns = "Model" }
+            var entities = ""
+            var relations = ""
+            var shapes = ""
+            int placed = 0
+            for (var i = 0; i < tables.Count; i++) {
+                Data.SchemaTable t = tables[i]
+                if (Data.ModelImporter.IsJoin(tables, t)) {
+                    // (a join table: a many-to-many relation of the two tables)
+                    Data.SchemaColumn a = t.columns[0]
+                    Data.SchemaColumn b = t.columns[1]
+                    string fromEntity = Data.ModelImporter.EntityName(Data.ModelImporter.Target(tables, a.name).name)
+                    string toEntity = Data.ModelImporter.EntityName(Data.ModelImporter.Target(tables, b.name).name)
+                    if (relations != "") { relations = relations + ",\n" }
+                    relations = relations + "    { \"kind\": \"many-to-many\", \"from\": " + Data.ModelImporter.Json(fromEntity) + ", \"to\": " + Data.ModelImporter.Json(toEntity) +
+                        ", \"navigation\": " + Data.ModelImporter.Json(Data.ModelImporter.Lower(Data.ModelImporter.Plural(toEntity))) + ", \"inverse\": " + Data.ModelImporter.Json(Data.ModelImporter.Lower(Data.ModelImporter.Plural(fromEntity))) +
+                        ", \"joinTable\": " + Data.ModelImporter.Json(t.name) + ", \"fromColumn\": " + Data.ModelImporter.Json(a.name) + ", \"toColumn\": " + Data.ModelImporter.Json(b.name) + " }"
+                    continue
+                }
+                string entity = Data.ModelImporter.EntityName(t.name)
+                var fields = ""
+                for (var c = 0; c < t.columns.Count; c++) {
+                    Data.SchemaColumn col = t.columns[c]
+                    string ft = Data.Importer.FireType(col.type)
+                    if (ft == "byte[]") { ft = "bytes" }
+                    string field = Data.Importer.Ident(col.name)
+                    var f = "{ \"name\": " + Data.ModelImporter.Json(field) + ", \"type\": " + Data.ModelImporter.Json(ft)
+                    if (field != col.name) { f = f + ", \"column\": " + Data.ModelImporter.Json(col.name) }
+                    if (col.key) {
+                        f = f + ", \"key\": true"
+                        if (ft != "int") { f = f + ", \"generated\": false" }
+                    }
+                    else if (!col.nullable) { f = f + ", \"required\": true" }
+                    int length = Data.Importer.LengthOf(col.type)
+                    if (ft == "string" && length > 0) { f = f + ", \"length\": " + length }
+                    for (var x = 0; x < t.indexes.Count; x++) {
+                        Data.SchemaIndex ix = t.indexes[x]
+                        if (ix.column.ToLower() == col.name.ToLower()) {
+                            if (ix.unique) { f = f + ", \"unique\": true" } else { f = f + ", \"index\": true" }
+                            break
+                        }
+                    }
+                    if (fields != "") { fields = fields + ",\n" }
+                    fields = fields + "        " + f + " }"
+                    // (a column that points to another table: a one-to-many relation)
+                    Data.SchemaTable target = Data.ModelImporter.Target(tables, col.name)
+                    if (!col.key && target != undefined && target.name != t.name && Data.ModelImporter.KeyOf(target) != undefined && !Data.ModelImporter.IsJoin(tables, target)) {
+                        string one = Data.ModelImporter.EntityName(target.name)
+                        if (relations != "") { relations = relations + ",\n" }
+                        relations = relations + "    { \"kind\": \"one-to-many\", \"from\": " + Data.ModelImporter.Json(one) + ", \"to\": " + Data.ModelImporter.Json(entity) +
+                            ", \"foreignKey\": " + Data.ModelImporter.Json(field) + ", \"navigation\": " + Data.ModelImporter.Json(Data.ModelImporter.Lower(Data.ModelImporter.Plural(entity))) +
+                            ", \"inverse\": " + Data.ModelImporter.Json(Data.ModelImporter.Lower(one)) + " }"
+                    }
+                }
+                if (entities != "") { entities = entities + ",\n" }
+                entities = entities + "    { \"name\": " + Data.ModelImporter.Json(entity) + ", \"table\": " + Data.ModelImporter.Json(t.name) + ",\n      \"fields\": [\n" + fields + "\n      ] }"
+                if (shapes != "") { shapes = shapes + ", " }
+                shapes = shapes + Data.ModelImporter.Json(entity) + ": { \"x\": " + (40 + (placed % 4) * 280) + ", \"y\": " + (40 + (placed / 4) * 260) + " }"
+                placed++
+            }
+            var t2 = "{\n  \"format\": 1,\n  \"namespace\": " + Data.ModelImporter.Json(ns) + ",\n  \"entities\": [\n" + entities + "\n  ],\n  \"relations\": [\n" + relations + "\n  ],\n"
+            return t2 + "  \"diagrams\": [ { \"name\": \"Main\", \"shapes\": { " + shapes + " } } ]\n}\n"
+        }
+    }
+
     /// <summary>What `forge data` runs in the program (the VM, with the classes and migrations of the project).</summary>
     class Tools {
         static string Run(string command, string url, string user, string password, string arg, string arg2) {
@@ -3045,10 +3127,60 @@ namespace Data {
                 t = Data.Differ.Diff(db, next, title)
                 if (t == "") { t = "// The database has everything the mapping of the [Table] classes needs.\n" }
             } else if (command == "import") {
-                t = Data.Importer.Import(db, arg)
+                if (arg2 == "fdata") { t = Data.ModelImporter.Model(db, arg) } else { t = Data.Importer.Import(db, arg) }
             } else { throw new ArgumentException("forge data: the commands are migrate, status, diff and import, not '" + command + "'.") }
             db.Close()
             return t
+        }
+    }
+
+    /// <summary>The SQL that makes the tables of classes in an empty database, in a dialect - no connection needed (`Data.Script.Of(new
+    /// Data.MysqlDialect(), Shop.Model.Types())`: what the designer shows for each database).</summary>
+    class Script {
+        static string Of(Data.Dialect d, any typeNames) {
+            var t = ""
+            var made = new List()
+            var maps = new Dictionary<string, Data.EntityMap>()
+            for (var n = 0; n < typeNames.length; n++) {
+                string typeName = "" + typeNames[n]
+                var map = Data.Script.MapOf(maps, typeName)
+                var cols = ""
+                for (var i = 0; i < map.columns.Count; i++) {
+                    Data.ColumnMap c = map.columns[i]
+                    if (i > 0) { cols = cols + ", " }
+                    cols = cols + d.ColumnDefinition(c)
+                }
+                t = t + "CREATE TABLE " + d.Quote(map.table) + " (" + cols + ")" + d.TableOptions() + ";\n"
+                for (var i = 0; i < map.relations.Count; i++) {
+                    Data.RelationMap r = map.relations[i]
+                    if (!r.join) { continue }
+                    map.NeedKey()
+                    var target = Data.Script.MapOf(maps, r.target)
+                    target.NeedKey()
+                    // (the join table once - by the first class that has it -, the index of each side)
+                    if (made.IndexOf(r.joinTable.ToLower()) < 0) {
+                        made.Add(r.joinTable.ToLower())
+                        var a = new Data.ColumnMap(r.thisColumn, r.thisColumn, map.key.typeName, map.key.kind)
+                        a.required = true
+                        var b = new Data.ColumnMap(r.otherColumn, r.otherColumn, target.key.typeName, target.key.kind)
+                        b.required = true
+                        t = t + d.CreateTableIfMissing(d.Quote(r.joinTable), "(" + d.ColumnDefinition(a) + ", " + d.ColumnDefinition(b) + ")" + d.TableOptions()) + ";\n"
+                    }
+                    t = t + "CREATE INDEX " + d.Quote("ix_" + r.joinTable + "_" + r.thisColumn) + " ON " + d.Quote(r.joinTable) + " (" + d.Quote(r.thisColumn) + ");\n"
+                }
+                for (var i = 0; i < map.columns.Count; i++) {
+                    Data.ColumnMap c = map.columns[i]
+                    if (!c.unique && !c.index) { continue }
+                    var kind = "INDEX"
+                    if (c.unique) { kind = "UNIQUE INDEX" }
+                    t = t + "CREATE " + kind + " " + d.Quote("ix_" + map.table + "_" + c.column) + " ON " + d.Quote(map.table) + " (" + d.Quote(c.column) + ")" + d.IndexSuffix(d.Quote(c.column), c.unique) + ";\n"
+                }
+            }
+            return t
+        }
+        static Data.EntityMap MapOf(Dictionary<string, Data.EntityMap> maps, string typeName) {
+            if (!maps.ContainsKey(typeName)) { maps.Add(typeName, new Data.EntityMap(typeName)) }
+            return maps[typeName]
         }
     }
 }

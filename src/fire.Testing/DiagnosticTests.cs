@@ -220,6 +220,48 @@ static class DiagnosticTests
             finally { try { Directory.Delete(dir, true); } catch (IOException) { } }
         }
 
+        // ---- the data designer (spark): the model edited, its DDL, a database made from it and read back as a model, the migration it lacks ----
+        {
+            var m = new fire.UI.Markup.DataModelDocument { Namespace = "Shop", TableNaming = "snake_plural" };
+            var customer = m.AddEntity("Customer", 40, 40);
+            var name = m.AddField(customer.Fields); name.Name = "fullName"; name.Length = 100; name.Required = true;
+            var order = m.AddEntity("Order", 320, 40);
+            var total = m.AddField(order.Fields, "float"); total.Name = "total";
+            var level = m.AddEnum("Level"); m.AddField(customer.Fields, "Level").Name = "level";
+            m.AddRelation("one-to-many", "Customer", "Order");
+            bool renamed = m.Rename("Order", "Purchase") && !m.Rename("Customer", "Level");
+            var back = fire.UI.Markup.DataModelDocument.Parse(m.ToJson());
+            Check("Designer: Bearbeiten (Entitaet, Feld, Enum, Beziehung, Umbenennen mit Beziehung und Platz) und die Datei wieder lesen",
+                renamed && back.ToJson() == m.ToJson() && back.Relations[0].To == "Purchase" && back.Relations[0].Navigation == "purchases" && back.Relations[0].Inverse == "customer"
+                && back.Places.ContainsKey("Purchase") && back.Problems().Count == 0 && back.GeneratedCode()?.Contains("class Purchase") == true, m.ToJson());
+            var (ddl, ddlError) = DataModelTools.Ddl(m.ToJson(), "Shop.fdata", 0);
+            var (msDdl, msError) = DataModelTools.Ddl(m.ToJson(), "Shop.fdata", 2);
+            Check("Designer: die DDL des Modells fuer SQLite und SQL Server (ohne Datenbank)",
+                ddlError == null && ddl.Contains("CREATE TABLE") && ddl.Contains("\"purchases\"") && ddl.Contains("\"customerId\" INTEGER") && msError == null && msDdl.Contains("[customers]"), ddl + ddlError + msDdl + msError);
+            string dir = Path.Combine(Path.GetTempPath(), "fire-designer-" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(dir);
+            try
+            {
+                string url = "sqlite:" + Path.Combine(dir, "app.db");
+                var (made, madeError) = DataModelTools.CreateDatabase(m.ToJson(), "Shop.fdata", url, "", "");
+                var (imported, importError) = DataModelTools.Import(url, "", "", "Back");
+                var model = importError == null ? fire.UI.Markup.DataModelDocument.Parse(imported) : new fire.UI.Markup.DataModelDocument();
+                Check("Designer: die Datenbank aus dem Modell machen und wieder als Modell lesen (Entitaeten, one-to-many aus customer_id)",
+                    madeError == null && made.Contains("tables: 2") && importError == null && model.Namespace == "Back" && model.Entities.Count == 2
+                    && model.Relations.Any(r => r.Kind == "one-to-many" && r.To.Contains("urchase")) && model.Problems().Count == 0, made + madeError + imported + importError);
+                File.WriteAllText(Path.Combine(dir, "App.fireproj"), "{ \"format\": 1, \"name\": \"App\", \"type\": \"exe\" }");
+                var later = fire.UI.Markup.DataModelDocument.Parse(m.ToJson());
+                var email = later.AddField(later.Entity("Customer")!.Fields); email.Name = "email"; email.Length = 200;
+                File.WriteAllText(Path.Combine(dir, "Shop.fdata"), later.ToJson());
+                File.WriteAllText(Path.Combine(dir, "main.fire"), "#import \"data.sqlite\"\nprint(\"app\")\n");
+                string? project = DataModelTools.ProjectOf(Path.Combine(dir, "Shop.fdata"));
+                var (text, error, written) = DataModelTools.WriteMigration(project, Path.Combine(dir, "Shop.fdata"), url, "", "", "email");
+                Check("Designer: die Migration, die der Datenbank fehlt, ins Projekt schreiben (Migrations/MigrationN.fire)",
+                    project != null && error == null && written != null && File.Exists(written) && Path.GetFileName(Path.GetDirectoryName(written)) == "Migrations" && text.Contains("email") && text.Contains("AddColumn"), text + error + written);
+            }
+            finally { try { Directory.Delete(dir, true); } catch (IOException) { } }
+        }
+
         // ---- forge data: the migrations of a program on a database (SQLite in a file) - the program's classes run, its top level does not ----
         {
             string dir = Path.Combine(Path.GetTempPath(), "fire-data-" + Guid.NewGuid().ToString("N"));

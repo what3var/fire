@@ -26,13 +26,15 @@ namespace fire.Compiler
             status   lists the migrations of the program and whether they ran.
             diff     writes the migration that makes the database what the mapping of the [Table] classes says (new tables, columns, indexes, join
                      tables; what only the database has is named in comments). The migrations of the program must have run first.
-            import   writes classes ([Table], [Key], [Required], [Length], [Unique]) for the tables of the database - no program needed.
+            import   writes classes ([Table], [Key], [Required], [Length], [Unique]) for the tables of the database - no program needed; --format fdata
+                     a data model instead (docs/data/designer.md: entities, the relations guessed from columns like customerId and from join tables).
 
             --url      the database (sqlite:app.db, mysql://host/db, sqlserver://host/db?trust=true, memory:)
             --user     the user; --password (or the environment variable FIRE_DATA_PASSWORD)
             --to N     with migrate: the migration to go to
             --title T  with diff: the title of the new migration
             --namespace NS  with import: the namespace of the classes
+            --format F with import: fire (classes, the default) or fdata (a data model)
             -o file    with diff and import: the file to write (else the output)
             -p name    the project of a solution
             """;
@@ -42,7 +44,7 @@ namespace fire.Compiler
             if (args.Count == 0 || args[0] is "-h" or "--help" or "help") { stdout.WriteLine(Usage); return CommandLineRunner.ExitOk; }
             string command = args[0].ToLowerInvariant();
             if (command is not ("migrate" or "status" or "diff" or "import")) return Fail(stderr, $"Unknown data command '{args[0]}' (expected: migrate, status, diff or import).");
-            string? url = null, user = null, password = Environment.GetEnvironmentVariable("FIRE_DATA_PASSWORD"), to = null, title = null, ns = null, output = null, project = null;
+            string? url = null, user = null, password = Environment.GetEnvironmentVariable("FIRE_DATA_PASSWORD"), to = null, title = null, ns = null, output = null, project = null, format = null;
             var files = new List<string>();
             for (int i = 1; i < args.Count; i++)
             {
@@ -56,6 +58,7 @@ namespace fire.Compiler
                     case "--to": to = Value(); break;
                     case "--title": title = Value(); break;
                     case "--namespace": ns = Value(); break;
+                    case "--format": format = Value(); break;
                     case "-o": case "--output": output = Value(); break;
                     case "-p": case "--project": project = Value(); break;
                     default:
@@ -66,6 +69,7 @@ namespace fire.Compiler
             }
             if (string.IsNullOrWhiteSpace(url)) return Fail(stderr, "forge data needs the database: --url <url>.");
             if (to != null && command != "migrate") return Fail(stderr, "--to is only available with migrate.");
+            if (format != null && (command != "import" || format is not ("fire" or "fdata"))) return Fail(stderr, "--format is only available with import: fire (classes, the default) or fdata (a data model).");
             string? package = DriverPackage(url);
             if (package == null) return Fail(stderr, $"forge data: no driver for the URL '{url}' (sqlite:, mysql://, sqlserver://, memory:).");
 
@@ -95,32 +99,16 @@ namespace fire.Compiler
             }
             else
                 foreach (var f in files) { sources.Add(File.ReadAllText(f)); paths.Add(Path.GetFullPath(f)); }
-            // (the packages the tools need: data and the driver of the URL)
-            sources.Add($"#import \"data\"\n#import \"{package}\"\n");
-            paths.Add(null);
 
             string arg = command switch { "migrate" => to ?? "", "diff" => title ?? "", "import" => ns ?? "", _ => "" };
-            string driver = $"print(Data.Tools.Run({Lit(command)}, {Lit(url)}, {Lit(user ?? "")}, {Lit(password ?? "")}, {Lit(arg)}, \"\"))\n";
-            var printed = new StringBuilder();
-            RuntimeSession session;
-            Linker.TestDriver = (program, first) => driver;
-            try
+            var result = Execute(command, sources, paths, url, user ?? "", password ?? "", arg, format ?? "");
+            if (result.Error != null)
             {
-                session = RuntimeSession.Build(sources, VmExecutionMode.Release, values =>
-                {
-                    if (values.Length > 0) printed.Append(values[0].ToString()).Append('\n');
-                    return Value.MakeUndefined();
-                }, sourcePaths: paths);
+                stderr.Write(result.Output);
+                stderr.WriteLine(result.Error);
+                return result.Compile ? CommandLineRunner.ExitUsage : CommandLineRunner.ExitScriptError;
             }
-            catch (Exception ex) when (CommandLineRunner.IsCompileError(ex)) { return Fail(stderr, CommandLineRunner.DescribeErrors(ex)); }
-            finally { Linker.TestDriver = null; }
-            session.Run();
-            if (session.VirtualMachine!.UnhandledException is { } error)
-            {
-                stderr.Write(printed.ToString());
-                stderr.WriteLine(new UncaughtScriptException(error).Message);
-                return CommandLineRunner.ExitScriptError;
-            }
+            var printed = new StringBuilder(result.Output);
             string text = printed.ToString();
             if (output != null && command is "diff" or "import")
             {
@@ -129,6 +117,41 @@ namespace fire.Compiler
             }
             else stdout.Write(text);
             return CommandLineRunner.ExitOk;
+        }
+
+        /// <summary>Runs Data.Tools.Run of the package data with the classes of <paramref name="sources"/> (their top level does not run) and the packages of the URL:
+        /// what it printed, or the error (Compile: the sources do not compile). The designer of spark calls it too (import, diff, the database).</summary>
+        public static (string Output, string? Error, bool Compile) Execute(string command, IReadOnlyList<string> sources, IReadOnlyList<string?> paths, string url, string user, string password, string arg, string arg2)
+        {
+            string? package = DriverPackage(url);
+            if (package == null) return ("", $"forge data: no driver for the URL '{url}' (sqlite:, mysql://, sqlserver://, memory:).", true);
+            var all = sources.ToList();
+            var allPaths = paths.ToList();
+            all.Add($"#import \"data\"\n#import \"{package}\"\n");
+            allPaths.Add(null);
+            string driver = $"print(Data.Tools.Run({Lit(command)}, {Lit(url)}, {Lit(user)}, {Lit(password)}, {Lit(arg)}, {Lit(arg2)}))\n";
+            return RunDriver(all, allPaths, driver);
+        }
+
+        /// <summary>Runs <paramref name="driver"/> (fire, at the top level) with the classes of the sources in the VM: what it printed, or the error.</summary>
+        public static (string Output, string? Error, bool Compile) RunDriver(IReadOnlyList<string> sources, IReadOnlyList<string?> paths, string driver)
+        {
+            var printed = new StringBuilder();
+            RuntimeSession session;
+            Linker.TestDriver = (program, first) => driver;
+            try
+            {
+                session = RuntimeSession.Build(sources, VmExecutionMode.Release, values =>
+                {
+                    if (values.Length > 0) lock (printed) printed.Append(values[0].ToString()).Append('\n');
+                    return Value.MakeUndefined();
+                }, sourcePaths: paths);
+            }
+            catch (Exception ex) when (CommandLineRunner.IsCompileError(ex)) { return ("", CommandLineRunner.DescribeErrors(ex), true); }
+            finally { Linker.TestDriver = null; }
+            session.Run();
+            if (session.VirtualMachine!.UnhandledException is { } error) return (printed.ToString(), new UncaughtScriptException(error).Message, false);
+            return (printed.ToString(), null, false);
         }
 
         /// <summary>The package of the driver for the scheme of the URL.</summary>
