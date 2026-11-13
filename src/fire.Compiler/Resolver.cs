@@ -960,16 +960,8 @@ namespace fire.Compiler
         /// identifier chain or the chain yields no known class name
         /// (then `me` is an ordinary, dynamic expression).
         ///
-        /// DELIBERATE RESTRICTION: checks ONLY the exactly written (possibly
-        /// already fully qualified) name, NO resolution via #using/the
-        /// current namespace - unlike a TypeRef, an
-        /// IdentifierExpr/MemberExpr carries no namespace context of its own (that
-        /// is only set when PARSING a TypeRef, see
-        /// Parser.CurrentNamespaces) - 'Circle.Foo()' would with
-        /// '#using Geometry' therefore NOT be recognised as 'Geometry.Circle', only
-        /// 'Geometry.Circle.Foo()' written out in full works. A
-        /// later extension for that would need namespace info on EVERY
-        /// identifier, not only on TypeRef - a larger change of its own.</summary>
+        /// The name is looked up like a type name in the namespace of the class the code is written in and its outer ones, then as written
+        /// (InNamespaces) - not through `#using` (an IdentifierExpr carries no namespace context of its own, only a TypeRef does: Parser.CurrentNamespaces).</summary>
         private string? TryResolveStaticMemberAccess(MemberExpr me)
         {
             // The class we are currently in (see Ast.SelfClassExpr) -
@@ -978,7 +970,34 @@ namespace fire.Compiler
             if (me.Target is SelfClassExpr) return _currentClass?.Name;
 
             string? className = DottedName(me.Target);
-            return className != null && IsKnownClassName(className) ? className : null;
+            return className != null ? InNamespaces(className, IsKnownClassName) : null;
+        }
+
+        /// <summary>A chain of names in an expression (`Kind`, `Shapes.Circle`) as a name that `known` knows, looked up like a type name (SPEC
+        /// "Namespaces"): in the namespace of the class the code is written in and its outer ones, from the inside out, then as written - `Kind.Circle`
+        /// and `Helper.Tag()` inside `namespace Geo` are `Geo.Kind.Circle` and `Geo.Helper.Tag()`. A local variable or a member of the object with the
+        /// name of the first link wins over every class and enum (as in the type checker, StaticClassRef); `#using` does not apply here (only to type names).
+        /// `global.Name` is the global one.</summary>
+        private string? InNamespaces(string dotted, Func<string, bool> known)
+        {
+            // `global.Helper.Tag()`: the global name that a class of the own namespace hides
+            if (dotted.StartsWith("global.", StringComparison.Ordinal) && !IsVariableName("global"))
+                return known(dotted.Substring(7)) ? dotted.Substring(7) : null;
+            int dot = dotted.IndexOf('.');
+            string root = dot < 0 ? dotted : dotted.Substring(0, dot);
+            // (the order of the lookup: a local variable and a member of the object first - they win over every class and enum, the own as well as a global one)
+            if (IsVariableName(root)) return null;
+            for (string? ns = NamespaceOf(_currentClass?.Name); !string.IsNullOrEmpty(ns); ns = NamespaceOf(ns))
+                if (known(ns + "." + dotted)) return ns + "." + dotted;
+            return known(dotted) ? dotted : null;
+        }
+
+        /// <summary>Is `name` a variable here: of a scope (not the global one) or a member of the object?</summary>
+        private bool IsVariableName(string name)
+        {
+            for (var s = _current; s != null; s = s.Parent)
+                if (!s.IsGlobal && s.Slots.ContainsKey(name)) return true;
+            return _currentClass != null && FindMemberInClassChain(_currentClass, name) != null;
         }
 
         /// <summary>The dotted name that `target` writes as a pure identifier chain
@@ -2029,19 +2048,11 @@ namespace fire.Compiler
                     break;
 
                 case MemberExpr me:
-                    // 'EnumName.Member' - recognised purely by the
-                    // target name (as a bare identifier) being a known enum name.
-                    // Deliberate design decision: an enum name always "wins"
-                    // there against a variable of the same name in the scope
-                    // (just as a class name cannot be
-                    // shadowed by a variable either) - the same name collision would be
-                    // confusing anyway and easy to avoid in practice.
-                    // An enum in a namespace is reachable this way too, but then
-                    // fully qualified ('Geometry.Kind.Round') - as with
-                    // static class access (see TryResolveStaticMemberAccess)
-                    // only the exactly written name counts, no `#using`/
-                    // namespace resolution.
-                    string? enumName = DottedName(me.Target);
+                    // 'EnumName.Member' - the target is a chain of names that is a known enum (InNamespaces: a local variable or a member of
+                    // the object with the name of its first link wins).
+                    // An enum of the own namespace (or an outer one) by its short name, any other one by its full name ('Geometry.Kind.Round') - as
+                    // with static class access (InNamespaces), `#using` does not apply.
+                    string? enumName = DottedName(me.Target) is { } enumWritten ? InNamespaces(enumWritten, n => _enums.ContainsKey(n)) : null;
                     if (enumName != null && _enums.TryGetValue(enumName, out var enumMembers))
                     {
                         if (!enumMembers.ContainsKey(me.Name) && me.Name is "Name" or "Parse" or "IsDefined" or "Values" && IsKnownClassName(Parser.EnumHelperClassName(enumName)))
@@ -2056,8 +2067,8 @@ namespace fire.Compiler
                         break;
                     }
                     // 'ClassName.Member' (SPEC "Static members") - as
-                    // in the enum case: a known class name always "wins"
-                    // against a variable of the same name. The actual
+                    // in the enum case: a local variable or a member of the same name wins
+                    // over the class (InNamespaces). The actual
                     // access (does the member exist, is it REALLY
                     // static, access modifier) is deliberately NOT checked here,
                     // but only in the VM (GetStaticField/

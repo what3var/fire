@@ -2414,7 +2414,7 @@ packing them into Values.
 from it, like `graphics`/`devices`: native functions `__IO...` plus a fire prelude). `#import "filesystem"` (the package `fire-filesystem`, fire only, on the natives of `io`)
 adds the file system to the same namespace: `IO.FileStream`, `IO.File`, `IO.Directory`, `IO.Path`, `IO.FileMode`, `IO.FileAccess`, `IO.SearchOption` - named like
 System.IO in .NET ([Files, directories and paths](../stdlib/filesystem.md)). Everything lives in `namespace IO`, so that it does not collide with your own classes such as `File` or `Stream`; an enum in a
-namespace is only reachable **fully qualified** (`IO.FileMode.Create`).
+namespace is reachable **fully qualified** (`IO.FileMode.Create`) - by its short name only from inside the namespace itself.
 
 Structure: streams (`IO.MemoryStream`, your own streams; with `filesystem` also `IO.FileStream`), text (`IO.TextReader`, `IO.TextWriter`, `IO.Utf8`), standard
 input/output (`IO.Stdio`); with `filesystem` the file/directory API (`IO.File`, `IO.Directory`, `IO.Path`) - all described below.
@@ -2451,8 +2451,8 @@ var rest = r.ReadAll()              // everything up to the end as a buffer
 new), `OpenOrCreate`, `Append`. `IO.FileAccess`: `Read`, `Write`, `ReadWrite`.
 
 **File and directory API (`#import "filesystem"`).** Static methods, always written with the namespace
-(`IO.File.Exists(...)`, a static access is only resolved via the exactly written
-name). The names are those of .NET ([Files, directories and paths](../stdlib/filesystem.md) has the full list).
+(`IO.File.Exists(...)`; a static access is resolved via the written name - by a short name only inside the class's own namespace and its outer ones,
+not through `#using`). The names are those of .NET ([Files, directories and paths](../stdlib/filesystem.md) has the full list).
 
 ```
 #import "filesystem"

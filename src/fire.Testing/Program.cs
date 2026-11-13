@@ -20883,6 +20883,41 @@ else
             process h
             print("got " + h.got)
             """),
+        ("Namespace: Nachbarklassen und Enums mit dem kurzen Namen - statische Methoden und Felder, Enum-Werte, Kind.Name, verschachtelt von innen nach aussen, global.Name, eine Variable verdeckt", """
+            class Helper { static string Tag() { return "global" } }
+            enum Kind { A, B }
+            namespace Geo {
+                enum Kind { Square, Circle }
+                class Helper {
+                    static int count = 0
+                    static string Tag() { return "geo" }
+                }
+                class Shape {
+                    static string Run() {
+                        Helper.count = Helper.count + 2
+                        Helper.count++
+                        return Helper.Tag() + " " + Kind.Circle + " " + Kind.Name(Kind.Square) + " " + Helper.count + " " + global.Helper.Tag()
+                    }
+                    static string Local() {
+                        var Shape = "local"
+                        var Helper = "helper"
+                        var Kind = [1, 2, 3]
+                        return Shape.Length + " " + Helper.Length + " " + Kind.Length
+                    }
+                }
+                namespace Deep {
+                    class Helper { static string Tag() { return "deep" } }
+                    class Inner {
+                        static string Run() { return Helper.Tag() + " " + Kind.Square + " " + Geo.Helper.Tag() + " " + Deep.Helper.Tag() }
+                    }
+                }
+            }
+            class Outside { static string Run() { return Helper.Tag() + " " + Kind.B + " " + Geo.Helper.Tag() + " " + Geo.Kind.Circle } }
+            print(Geo.Shape.Run())
+            print(Geo.Shape.Local())
+            print(Geo.Deep.Inner.Run())
+            print(Outside.Run())
+            """),
         ("Getter mit C-Rumpf: obj.X einer bekannten Klasse liest die C-Zahl (defined float, int, Einheit), ein Getter ohne defined und eine Unterklasse wie vorher", """
             class Box {
                 defined float w

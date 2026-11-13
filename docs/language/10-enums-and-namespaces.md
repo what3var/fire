@@ -141,11 +141,14 @@ print(Geo.Shape.Describe())
 print(new Geo.Deep.Inner() is of Geo.Deep.Inner)
 ```
 
-- From outside, a member is written with its full name: `Geo.Shape`, `Geo.Deep.Inner`. Inside the namespace the short name is enough.
+- From outside, a member is written with its full name: `Geo.Shape`, `Geo.Deep.Inner`. Inside the namespace the short name is enough - for types
+  (`new Shape(...)`, `Shape s`) as well as for static members and enum values (`Shape.Describe()`, `Kind.Circle` in a class of `Geo`; in
+  `Geo.Deep` also the names of `Geo`). A local variable or a member of the object always wins: `Kind.Circle` with a variable `Kind` in scope is a
+  member of the variable, also when `Kind` is a global enum or class.
 - Namespaces can be nested, also written with a dot: `namespace Geo.Sub { ... }`.
 - A name is looked up from the inside out (as in C#): local variables, the members of the object (a field `count` hides a global `count` inside the class), the namespace the code is written in, the
   global names, then the `#using` namespaces. A class of the own namespace hides a global class of the same name - `new TimeoutException(...)`
-  inside `namespace Net` is `Net.TimeoutException`. `global.Name` is the hidden global class (`class Port : global.Device`); a base class with the
+  inside `namespace Net` is `Net.TimeoutException`. `global.Name` is the hidden global class (`class Port : global.Device`, `global.Helper.Tag()`); a base class with the
   class's own name (`class Port : Port`) is always the other one.
 - The same namespace can be opened several times, also in different files; the contents are merged.
 - Several libraries of the standard library live in namespaces: `IO`, `Net`, `Http`, `Tls`, `Gpio`, `I2c`, `Spi`, `WiFi`, `Audio`, `Tracker` (see [Standard library](19-standard-library.md)).
@@ -165,7 +168,7 @@ print(Geo.Shape.Describe())         // static members and enum values keep the f
 ```
 
 - `#using` applies to type names: declarations, `new`, `is of`, `catch`, base classes.
-- Static members and enum values are still written with the full name (`Geo.Shape.Describe()`, `Geo.Kind.Circle`).
+- Static members and enum values are still written with the full name (`Geo.Shape.Describe()`, `Geo.Kind.Circle`) - except inside the namespace itself.
 - If two `#using` namespaces contain the same name, the short name is ambiguous (`E4062`); write the full name.
 - `#using` applies to the file in which it stands.
 
