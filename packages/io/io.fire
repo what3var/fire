@@ -21,7 +21,7 @@ namespace IO {
 
     // Either the operating system (5) OR the host's policy (6) denies access.
     class PermissionException : IOException {
-        construct(string message, int code = 5) : base(message, code) { }
+        construct(string message, defined int code = 5) : base(message, code) { }
     }
 
     class FileExistsException : IOException {
@@ -46,7 +46,7 @@ namespace IO {
         }
 
         // Returns a valid handle, throws the error on -1.
-        static int Handle(int handle) {
+        static int Handle(defined int handle) {
             if (handle < 0) { Throw() }
             return handle
         }
@@ -76,15 +76,15 @@ namespace IO {
             set { throw new IOException("The length of this stream cannot be changed.", 8) }
         }
 
-        int Read(byte buffer[], int offset, int count) {
+        int Read(byte buffer[], defined int offset, defined int count) {
             throw new IOException("This stream is not readable.", 8)
         }
 
-        int Write(byte buffer[], int offset, int count) {
+        int Write(byte buffer[], defined int offset, defined int count) {
             throw new IOException("This stream is not writable.", 8)
         }
 
-        int Seek(int offset, IO.SeekOrigin origin = IO.SeekOrigin.Begin) {
+        int Seek(defined int offset, IO.SeekOrigin origin = IO.SeekOrigin.Begin) {
             throw new IOException("This stream does not support seeking.", 8)
         }
 
@@ -109,7 +109,7 @@ namespace IO {
         }
 
         // Up to `count` bytes as a new buffer (shorter if the stream ends earlier).
-        byte[] ReadBytes(int count) {
+        byte[] ReadBytes(defined int count) {
             var data = new byte[count]
             var total = 0
             while (total < count) {
@@ -133,7 +133,7 @@ namespace IO {
         }
 
         // Copies everything up to the end of this stream into `target`.
-        undefined CopyTo(IO.Stream target, int bufferSize = 4096) {
+        undefined CopyTo(IO.Stream target, defined int bufferSize = 4096) {
             var chunk = new byte[bufferSize]
             while (true) {
                 var n = this.Read(chunk, 0, bufferSize)
@@ -207,21 +207,21 @@ namespace IO {
         }
 
         // New position (from the start), `origin`: IO.SeekOrigin.
-        override int Seek(int offset, IO.SeekOrigin origin = IO.SeekOrigin.Begin) {
+        override int Seek(defined int offset, IO.SeekOrigin origin = IO.SeekOrigin.Begin) {
             this.Check()
             var p = __IOSeek(this.handle, offset, origin)
             if (p < 0) { IO.IOErrors.Throw() }
             return p
         }
 
-        override int Read(byte buffer[], int offset, int count) {
+        override int Read(byte buffer[], defined int offset, defined int count) {
             this.Check()
             var n = __IORead(this.handle, buffer, offset, count)
             if (n < 0) { IO.IOErrors.Throw() }
             return n
         }
 
-        override int Write(byte buffer[], int offset, int count) {
+        override int Write(byte buffer[], defined int offset, defined int count) {
             this.Check()
             var n = __IOWrite(this.handle, buffer, offset, count)
             if (n < 0) { IO.IOErrors.Throw() }
@@ -236,7 +236,7 @@ namespace IO {
             return b
         }
 
-        override undefined WriteByte(int value) {
+        override undefined WriteByte(defined int value) {
             this.Check()
             if (__IOWriteByte(this.handle, value) < 0) { IO.IOErrors.Throw() }
         }
@@ -281,7 +281,7 @@ namespace IO {
 
         // A byte-order mark at the start is removed, invalid sequences
         // become U+FFFD. Without count: up to the end of the buffer.
-        static string GetString(byte buffer[], int offset = 0, int count = -1) {
+        static string GetString(byte buffer[], defined int offset = 0, defined int count = -1) {
             if (count == -1) { count = buffer.length - offset }
             var text = __IOUtf8Decode(buffer, offset, count)
             if (text == undefined) { IO.IOErrors.Throw() }
@@ -503,7 +503,7 @@ namespace IO {
     // editor the output window). Close() changes nothing - the streams belong
     // to the host and stay open.
     class StdStream : NativeStream {
-        construct(int kind) : base(-1) {
+        construct(defined int kind) : base(-1) {
             this.handle = IO.IOErrors.Handle(__IOStdHandle(kind))
         }
 

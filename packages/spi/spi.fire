@@ -48,7 +48,7 @@ namespace Spi {
             throw new SpiException(message, code)
         }
 
-        static int Handle(int handle) {
+        static int Handle(defined int handle) {
             if (handle < 0) { Throw() }
             return handle
         }
@@ -139,20 +139,20 @@ namespace Spi {
         }
 
         // The general form: `count` bytes from `out` (from `outOffset`) are sent, the bytes that come in go to `into` (from `inOffset`).
-        undefined TransferInto(byte out[], int outOffset, byte into[], int inOffset, int count) {
+        undefined TransferInto(byte out[], defined int outOffset, byte into[], defined int inOffset, defined int count) {
             this.Check()
             if (__SpiTransfer(this.handle, out, outOffset, into, inOffset, count) < 0) { Spi.Errors.Throw() }
         }
 
         // Sends `count` bytes of the buffer (all from `offset` on without a count); what comes in is dropped.
-        undefined Write(byte data[], int offset = 0, int count = -1) {
+        undefined Write(byte data[], defined int offset = 0, defined int count = -1) {
             this.Check()
             if (count < 0) { count = data.length - offset }
             if (__SpiWrite(this.handle, data, offset, count) < 0) { Spi.Errors.Throw() }
         }
 
         // Receives `count` bytes (zeros are sent meanwhile); returns them.
-        byte[] Read(int count) {
+        byte[] Read(defined int count) {
             this.Check()
             var data = new byte[count]
             if (__SpiRead(this.handle, data, 0, count) < 0) { Spi.Errors.Throw() }
@@ -160,7 +160,7 @@ namespace Spi {
         }
 
         // Sends the bytes, then receives `inCount` bytes in the same transfer (the chip select stays low); returns the received ones.
-        byte[] WriteRead(byte data[], int inCount) {
+        byte[] WriteRead(byte data[], defined int inCount) {
             this.Check()
             var total = data.length + inCount
             var out = new byte[total]
@@ -286,7 +286,7 @@ class SpiDevice : Device {
 
     override any Read() { return this.Read(this.ReadSize) }
 
-    byte[] Read(int count) {
+    byte[] Read(defined int count) {
         var data = this.Port.Read(count)
         DeviceManager.Host.Trace(this, false, data)
         return data
@@ -307,7 +307,7 @@ class SpiDevice : Device {
     }
 
     /// <summary>Sends the bytes, then receives `inCount` bytes in the same transfer.</summary>
-    byte[] WriteRead(byte data[], int inCount) {
+    byte[] WriteRead(byte data[], defined int inCount) {
         DeviceManager.Host.Trace(this, true, data)
         var result = this.Port.WriteRead(data, inCount)
         DeviceManager.Host.Trace(this, false, result)

@@ -71,7 +71,7 @@ class ProcessStream : IO.Stream {
     override bool CanRead { get { return !this.closed && this.which != 0 } }
     override bool CanWrite { get { return !this.closed && this.which == 0 } }
 
-    override int Read(byte buffer[], int offset, int count) {
+    override int Read(byte buffer[], defined int offset, defined int count) {
         if (this.closed) { throw new IO.StreamClosedException("The stream is closed.", 9) }
         if (this.which == 0) { throw new IO.IOException("The input of a process cannot be read.", 8) }
         var tries = 0
@@ -85,7 +85,7 @@ class ProcessStream : IO.Stream {
     }
 
     // Reads what is there now without waiting: the bytes read, 0 at the end, -1 when nothing is there yet.
-    int ReadAvailable(byte buffer[], int offset, int count) {
+    int ReadAvailable(byte buffer[], defined int offset, defined int count) {
         if (this.closed) { throw new IO.StreamClosedException("The stream is closed.", 9) }
         var n = __ProcRead(this.owner.handle, this.which, buffer, offset, count)
         if (n == -1) { ProcessCodes.Throw() }
@@ -93,7 +93,7 @@ class ProcessStream : IO.Stream {
         return n
     }
 
-    override int Write(byte buffer[], int offset, int count) {
+    override int Write(byte buffer[], defined int offset, defined int count) {
         if (this.closed) { throw new IO.StreamClosedException("The stream is closed.", 9) }
         if (this.which != 0) { throw new IO.IOException("The output of a process cannot be written.", 8) }
         var done = 0
@@ -351,7 +351,7 @@ class Process {
     }
 
     // a line without its line break ("\n", "\r\n")
-    static string LineOf(byte bytes[], int offset, int count) {
+    static string LineOf(byte bytes[], defined int offset, defined int count) {
         if (count > 0 && bytes[offset + count - 1] == 13) { count = count - 1 }
         if (count == 0) { return "" }
         return IO.Utf8.GetString(bytes, offset, count)
@@ -384,7 +384,7 @@ class Process {
         return DateTime.UtcNow.Ticks + ms * 10000
     }
 
-    static any LeftOf(int deadline) {
+    static any LeftOf(defined int deadline) {
         if (deadline < 0) { return undefined }
         var left = (deadline - DateTime.UtcNow.Ticks) / 10000
         if (left < 0) { return 0 }
@@ -392,7 +392,7 @@ class Process {
     }
 
     // a moment between two attempts: 1 ms at first, up to 10 ms when it takes long
-    static undefined Pause(int tries) {
+    static undefined Pause(defined int tries) {
         var ms = 1
         if (tries >= 3) { ms = 2 }
         if (tries >= 8) { ms = 5 }

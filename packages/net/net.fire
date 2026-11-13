@@ -43,12 +43,12 @@ namespace Net {
 
     // The socket is closed (by this side, or the connection was reset or ended), or not connected.
     class ClosedException : NetException {
-        construct(string message, int code = 7) : base(message, code) { }
+        construct(string message, defined int code = 7) : base(message, code) { }
     }
 
     // The host's policy (8) or the operating system (13) does not allow it.
     class PermissionException : NetException {
-        construct(string message, int code = 8) : base(message, code) { }
+        construct(string message, defined int code = 8) : base(message, code) { }
     }
 
     // A name could not be resolved.
@@ -70,7 +70,7 @@ namespace Net {
         }
 
         // A valid handle, or the error as an exception (the natives return -1).
-        static int Handle(int handle) {
+        static int Handle(defined int handle) {
             if (handle < 0) { Throw() }
             return handle
         }
@@ -89,7 +89,7 @@ namespace Net {
         static int Now() { return DateTime.UtcNow.Ticks }
 
         // The moment (ticks) a limit of `ms` ends, -1: never.
-        static int Deadline(int ms) {
+        static int Deadline(defined int ms) {
             if (ms < 0) { return -1 }
             return Net.Clock.Now() + ms * 10000
         }
@@ -97,7 +97,7 @@ namespace Net {
         // Waits until the socket of `handle` can be read (events 1) or written (2), at most until the deadline and at most half a second at a time (the caller
         // asks the native again): the poller of the runtime wakes the task when the socket is ready - nobody polls (docs/ROADMAP_HTTP.md step 0). Where
         // there is none (no fire threads in the program, TinyCC, a board) it waits a moment as before (Pause).
-        static undefined WaitFor(int handle, int events, int deadline, int tries) {
+        static undefined WaitFor(defined int handle, defined int events, defined int deadline, defined int tries) {
             var ms = 500
             if (deadline >= 0) {
                 var left = (deadline - Net.Clock.Now()) / 10000
@@ -110,7 +110,7 @@ namespace Net {
 
         // Waits a moment before the next attempt: 1 ms at first, up to 10 ms when it takes long (and not past the deadline). The natives are only asked, never made to wait: a program
         // that waits for the network does not hold the library, so the other fire threads, `terminate` and the main queue keep working.
-        static undefined Pause(int deadline, int tries) {
+        static undefined Pause(defined int deadline, defined int tries) {
             var ms = 1
             if (tries >= 3) { ms = 2 }
             if (tries >= 8) { ms = 5 }
@@ -122,7 +122,7 @@ namespace Net {
             if (ms > 0) { Sleep(ms) }
         }
 
-        static bool Expired(int deadline) {
+        static bool Expired(defined int deadline) {
             if (deadline < 0) { return false }
             return Net.Clock.Now() >= deadline
         }
@@ -130,19 +130,19 @@ namespace Net {
 
     // Random bytes of the operating system - for keys and tokens (session ids), unlike the random package. Net.NetException (code 9) where there is no source.
     class SecureRandom {
-        static undefined Fill(byte buffer[], int offset = 0, int count = -1) {
+        static undefined Fill(byte buffer[], defined int offset = 0, defined int count = -1) {
             if (count < 0) { count = buffer.length - offset }
             if (__NetRandom(buffer, offset, count) != 1) { Net.NetErrors.Throw() }
         }
 
-        static byte[] Bytes(int count) {
+        static byte[] Bytes(defined int count) {
             var b = new byte[count]
             Net.SecureRandom.Fill(b)
             return b
         }
 
         // `count` random bytes as lowercase hex (2 * count characters).
-        static string Hex(int count) {
+        static string Hex(defined int count) {
             var b = Net.SecureRandom.Bytes(count)
             var digits = "0123456789abcdef"
             var t = ""
@@ -190,7 +190,7 @@ namespace Net {
         int writeLimit
 
         // new TcpClient("host", 80) / ("host", 80, 5s): connects; the limit of connecting is 10 seconds unless given (undefined: no limit).
-        construct(string host, int port, any timeout = 10000) {
+        construct(string host, defined int port, any timeout = 10000) {
             this.handle = -1
             this.closed = false
             this.readLimit = -1
@@ -321,7 +321,7 @@ namespace Net {
         }
 
         // Up to `count` bytes (at least one unless the other side has closed: then 0). Waits up to ReadTimeout, then Net.TimeoutException.
-        override int Read(byte buffer[], int offset, int count) {
+        override int Read(byte buffer[], defined int offset, defined int count) {
             this.Check()
             var deadline = Net.Clock.Deadline(this.readLimit)
             var tries = 0
@@ -336,7 +336,7 @@ namespace Net {
         }
 
         // All `count` bytes (waits as long as the system needs; WriteTimeout limits each wait).
-        override int Write(byte buffer[], int offset, int count) {
+        override int Write(byte buffer[], defined int offset, defined int count) {
             this.Check()
             var done = 0
             while (done < count) {
@@ -365,7 +365,7 @@ namespace Net {
         override undefined Flush() { }
 
         // Ends one direction: 0 receiving, 1 sending (the other side then reads 0), 2 both.
-        undefined Shutdown(int how) {
+        undefined Shutdown(defined int how) {
             this.Check()
             if (!__NetShutdown(this.handle, how)) { Net.NetErrors.Throw() }
         }
@@ -383,7 +383,7 @@ namespace Net {
         bool closed
 
         // new TcpListener("127.0.0.1", 8080): host "" listens on every interface, port 0 takes a free port (see Port).
-        construct(string host, int port, int backlog = 16) {
+        construct(string host, defined int port, defined int backlog = 16) {
             this.handle = -1
             this.closed = false
             this.handle = Net.NetErrors.Handle(__NetTcpListen(host, port, backlog))
@@ -466,7 +466,7 @@ namespace Net {
         int fromPort
 
         // new UdpSocket() takes a free port on every interface; ("127.0.0.1", 9000) binds to an address.
-        construct(string host = "", int port = 0) {
+        construct(string host = "", defined int port = 0) {
             this.handle = -1
             this.closed = false
             this.fromHost = ""
@@ -511,15 +511,15 @@ namespace Net {
         }
 
         // Sends `count` bytes of the buffer as one datagram; returns the number of bytes sent.
-        int SendTo(byte buffer[], int offset, int count, string host, int port) {
+        int SendTo(byte buffer[], defined int offset, defined int count, string host, defined int port) {
             this.Check()
             return Net.NetErrors.Handle(__NetSendTo(this.handle, buffer, offset, count, host, port))
         }
 
-        int SendTo(byte buffer[], string host, int port) { return this.SendTo(buffer, 0, buffer.length, host, port) }
+        int SendTo(byte buffer[], string host, defined int port) { return this.SendTo(buffer, 0, buffer.length, host, port) }
 
         // The text as UTF-8 in one datagram.
-        int SendString(string text, string host, int port) {
+        int SendString(string text, string host, defined int port) {
             var bytes = IO.Utf8.GetBytes(text)
             return this.SendTo(bytes, 0, bytes.length, host, port)
         }
@@ -540,7 +540,7 @@ namespace Net {
         }
 
         // Receives one datagram into the buffer (a longer one is cut) and returns its size; the sender is FromHost/FromPort. Waits without a limit unless one is given, then Net.TimeoutException.
-        int ReceiveFrom(byte buffer[], int offset, int count, any timeout = undefined) {
+        int ReceiveFrom(byte buffer[], defined int offset, defined int count, any timeout = undefined) {
             this.Check()
             var deadline = Net.Clock.Deadline(Net.Clock.Millis(timeout))
             var tries = 0

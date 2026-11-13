@@ -43,7 +43,7 @@ namespace Audio {
             throw new AudioException(message, code)
         }
 
-        static int Handle(int handle) {
+        static int Handle(defined int handle) {
             if (handle < 0) { Throw() }
             return handle
         }
@@ -84,7 +84,7 @@ namespace Audio {
         int offset
         int length
 
-        construct(int rate, int channels, byte data[], int offset = 0, int length = -1) {
+        construct(int rate, int channels, byte data[], int offset = 0, defined int length = -1) {
             if (rate < 1000 || rate > 192000) { throw new AudioException("The rate must be between 1000 and 192000 Hz.", 1) }
             if (channels < 1 || channels > 2) { throw new AudioException("A sound has one (mono) or two (stereo) channels.", 1) }
             if (length < 0) { length = data.length - offset }
@@ -131,7 +131,7 @@ namespace Audio {
             return wav
         }
 
-        static undefined PutInt(byte bytes[], int at, int value, int count) {
+        static undefined PutInt(byte bytes[], defined int at, defined int value, defined int count) {
             for (var i = 0; i < count; i++) { bytes[at + i] = (value >> (8 * i)) & 255 }
         }
 
@@ -141,7 +141,7 @@ namespace Audio {
         }
 
         // A generated tone: the frequency in Hz (a float is fine), the length in milliseconds, the wave and the volume in percent.
-        static Audio.Sound Tone(float frequency, int milliseconds, Audio.Wave wave = Audio.Wave.Sine, int volume = 100, int rate = 22050) {
+        static Audio.Sound Tone(defined float frequency, defined int milliseconds, Audio.Wave wave = Audio.Wave.Sine, defined int volume = 100, defined int rate = 22050) {
             var frames = rate * milliseconds / 1000
             var data = new byte[frames * 2]
             if (__AudioWave(data, 0, frames, wave, frequency, volume, rate, 1, 0) < 0) { Audio.Errors.Throw() }
@@ -261,7 +261,7 @@ namespace Audio {
         }
 
         // Takes as much of the bytes as fits into the buffer of the device (whole frames) and returns how many it took (0: full) - without waiting.
-        int Offer(byte buffer[], int offset = 0, int count = -1) {
+        int Offer(byte buffer[], defined int offset = 0, defined int count = -1) {
             this.Check()
             if (count < 0) { count = buffer.length - offset }
             var n = __AudioWrite(this.handle, buffer, offset, count)
@@ -270,7 +270,7 @@ namespace Audio {
         }
 
         // Plays `count` bytes of the buffer (all of it from `offset` on without a count): returns when the device has taken them all (that is, when the last part is queued, not played).
-        undefined Write(byte buffer[], int offset = 0, int count = -1) {
+        undefined Write(byte buffer[], defined int offset = 0, defined int count = -1) {
             this.Check()
             if (count < 0) { count = buffer.length - offset }
             while (count > 0) {
@@ -291,7 +291,7 @@ namespace Audio {
         }
 
         // Queues a tone and returns: the frequency in Hz (a float is fine), the length in milliseconds, the wave (Audio.Wave.Sine, Square, Triangle, Saw, Noise) and the volume in percent.
-        undefined Tone(float frequency, int milliseconds, Audio.Wave wave = Audio.Wave.Sine, int volume = 100) {
+        undefined Tone(defined float frequency, defined int milliseconds, Audio.Wave wave = Audio.Wave.Sine, defined int volume = 100) {
             this.Check()
             var left = this.rate * milliseconds / 1000
             var chunk = 2048
@@ -311,13 +311,13 @@ namespace Audio {
         }
 
         // A tone that is played to its end before Beep returns (440 Hz, 200 ms without arguments).
-        undefined Beep(float frequency = 440, int milliseconds = 200, int volume = 100) {
+        undefined Beep(defined float frequency = 440, defined int milliseconds = 200, defined int volume = 100) {
             this.Tone(frequency, milliseconds, Audio.Wave.Sine, volume)
             this.Drain()
         }
 
         // Waits until everything that was taken has been played; `timeoutMs` (-1: no limit) gives up earlier. Returns true if the queue is empty.
-        bool Drain(int timeoutMs = -1) {
+        bool Drain(defined int timeoutMs = -1) {
             this.Check()
             var waited = 0
             while (true) {
@@ -388,7 +388,7 @@ namespace Audio {
         }
 
         // Takes what was recorded into the buffer (whole frames, up to `count` bytes from `offset` on) and returns the number of bytes - without waiting (0: nothing yet).
-        int Read(byte buffer[], int offset = 0, int count = -1) {
+        int Read(byte buffer[], defined int offset = 0, defined int count = -1) {
             this.Check()
             if (count < 0) { count = buffer.length - offset }
             var n = __AudioInRead(this.handle, buffer, offset, count)
@@ -397,7 +397,7 @@ namespace Audio {
         }
 
         // Records for `milliseconds` and returns the sound (waits until it is there; `timeoutMs` gives up earlier, -1: twice the length and a second).
-        Audio.Sound Record(int milliseconds, int timeoutMs = -1) {
+        Audio.Sound Record(defined int milliseconds, defined int timeoutMs = -1) {
             this.Check()
             var frameBytes = this.channels * 2
             var total = this.rate * milliseconds / 1000 * frameBytes
@@ -445,7 +445,7 @@ namespace Audio {
         static any Data() { return __AudioSimData() }
 
         // Gives the simulated input sound to record (16 bit samples in the channels of the input that reads them): `count` bytes from `offset` (all without a count).
-        static undefined Feed(byte data[], int offset = 0, int count = -1) {
+        static undefined Feed(byte data[], defined int offset = 0, defined int count = -1) {
             if (count < 0) { count = data.length - offset }
             if (__AudioSimFeed(data, offset, count) < 0) { Audio.Errors.Throw() }
         }

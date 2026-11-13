@@ -15,7 +15,7 @@ class ConsoleKeyInfo {
     char ch
     int mods
 
-    construct(int code) {
+    construct(defined int code) {
         this.key = (code & 31)!ConsoleKey
         this.mods = (code >> 5) & 7
         this.ch = (code >> 8).ToChar()
@@ -46,7 +46,7 @@ class Console {
     static undefined Write(any value) { __ConWrite("" + value) }
     static undefined WriteLine(any value = "") { __ConWrite("" + value + "\n") }
     // Text at a place: column `column`, row `row` (0-based); the cursor stays after it.
-    static undefined WriteAt(int column, int row, any value) {
+    static undefined WriteAt(defined int column, defined int row, any value) {
         __ConSetCursor(column, row)
         __ConWrite("" + value)
     }
@@ -59,7 +59,7 @@ class Console {
     // The cursor (0-based; 0 without a console).
     static int Column() { return __ConColumn() }
     static int Row() { return __ConRow() }
-    static undefined SetCursor(int column, int row) { __ConSetCursor(column, row) }
+    static undefined SetCursor(defined int column, defined int row) { __ConSetCursor(column, row) }
     static undefined ShowCursor(bool show = true) { __ConShowCursor(show) }
 
     // The colours of what is written from now on; `background` left out: the one the console had at the start.

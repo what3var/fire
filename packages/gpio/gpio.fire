@@ -47,7 +47,7 @@ namespace Gpio {
             throw new GpioException(message, code)
         }
 
-        static int Handle(int handle) {
+        static int Handle(defined int handle) {
             if (handle < 0) { Throw() }
             return handle
         }
@@ -98,11 +98,11 @@ namespace Gpio {
         lambda<any, any> onEdge
 
         // The line `line` of the default chip (Board.DefaultChip()).
-        construct(int line) {
+        construct(defined int line) {
             this.Open(Gpio.Board.DefaultChip(), line)
         }
 
-        construct(string chip, int line) {
+        construct(string chip, defined int line) {
             this.Open(chip, line)
         }
 
@@ -239,35 +239,35 @@ namespace Gpio {
         static int Lines() { return 32 }
 
         // Connects two lines: what one drives, the other sees.
-        static undefined Wire(int a, int b) {
+        static undefined Wire(defined int a, defined int b) {
             if (!__GpioSimWire(a, b)) { Gpio.Errors.Throw() }
         }
 
-        static undefined Unwire(int a, int b) {
+        static undefined Unwire(defined int a, defined int b) {
             if (!__GpioSimUnwire(a, b)) { Gpio.Errors.Throw() }
         }
 
         // Drives a line from outside (a button, a sensor): true high, false low. A pin that is an output fights with it (low wins).
-        static undefined Drive(int line, bool level) {
+        static undefined Drive(defined int line, bool level) {
             var v = 0
             if (level) { v = 1 }
             if (!__GpioSimDrive(line, v)) { Gpio.Errors.Throw() }
         }
 
         // Lets go of a line that was driven from outside.
-        static undefined Release(int line) {
+        static undefined Release(defined int line) {
             if (!__GpioSimDrive(line, -1)) { Gpio.Errors.Throw() }
         }
 
         // The level on a line, whoever drives it.
-        static bool Level(int line) {
+        static bool Level(defined int line) {
             var v = __GpioSimLevel(line)
             if (v < 0) { Gpio.Errors.Throw() }
             return v == 1
         }
 
         // What the program drives on the line: 1 or 0 while the line is an output of the program, -1 while it is not.
-        static int Output(int line) {
+        static int Output(defined int line) {
             var v = __GpioSimOutput(line)
             if (v < -1) { Gpio.Errors.Throw() }
             return v
@@ -301,7 +301,7 @@ namespace Gpio {
         int Lines { get { return this.width } }
 
         /// <summary>The line `line` as a pin of this port (claimed on first use; the port gives it back on Disconnect).</summary>
-        Gpio.Pin PinAt(int line) {
+        Gpio.Pin PinAt(defined int line) {
             if (line < 0 || line >= this.width) { throw new GpioException("The port '" + this.name + "' has no line " + line + ".", 3) }
             any pin = this.pins[line]
             if (pin == undefined) {

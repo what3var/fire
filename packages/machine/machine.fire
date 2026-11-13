@@ -13,66 +13,66 @@ namespace Machine {
             var why = __MachUnavailable()
             if (why != undefined) { throw new Machine.MachineException(why) }
         }
-        static undefined Bits(int bits) {
+        static undefined Bits(defined int bits) {
             if (bits != 8 && bits != 16 && bits != 32) { throw new ArgumentException("8, 16 or 32 bits, not " + bits + ".") }
             if (bits == 32 && __MachCpuLevel() < 3) { throw new Machine.MachineException("32-bit access needs a 386 or later.") }
         }
-        static undefined Port(int port) {
+        static undefined Port(defined int port) {
             if (port < 0 || port > 65535) { throw new ArgumentException("A port is 0 to 65535, not " + port + ".") }
         }
     }
 
     // I/O ports: In8/In16/In32 read, Out8/Out16/Out32 write (32 bits from the 386 on).
     class Port {
-        static int In(int port, int bits) {
+        static int In(defined int port, defined int bits) {
             Machine.Check.Hardware()
             Machine.Check.Port(port)
             Machine.Check.Bits(bits)
             return __MachIn(port, bits)
         }
-        static undefined Out(int port, int bits, int value) {
+        static undefined Out(defined int port, defined int bits, defined int value) {
             Machine.Check.Hardware()
             Machine.Check.Port(port)
             Machine.Check.Bits(bits)
             __MachOut(port, bits, value)
         }
-        static int In8(int port) { return Machine.Port.In(port, 8) }
-        static int In16(int port) { return Machine.Port.In(port, 16) }
-        static int In32(int port) { return Machine.Port.In(port, 32) }
-        static undefined Out8(int port, int value) { Machine.Port.Out(port, 8, value) }
-        static undefined Out16(int port, int value) { Machine.Port.Out(port, 16, value) }
-        static undefined Out32(int port, int value) { Machine.Port.Out(port, 32, value) }
+        static int In8(defined int port) { return Machine.Port.In(port, 8) }
+        static int In16(defined int port) { return Machine.Port.In(port, 16) }
+        static int In32(defined int port) { return Machine.Port.In(port, 32) }
+        static undefined Out8(defined int port, defined int value) { Machine.Port.Out(port, 8, value) }
+        static undefined Out16(defined int port, defined int value) { Machine.Port.Out(port, 16, value) }
+        static undefined Out32(defined int port, defined int value) { Machine.Port.Out(port, 32, value) }
     }
 
     // Physical memory (real mode: the first megabyte and the 64 KB after it). Peek/Poke with 8, 16 or 32 bits, little endian.
     class Memory {
-        static int Peek(int address, int bits) {
+        static int Peek(defined int address, defined int bits) {
             Machine.Check.Hardware()
             if (bits != 8 && bits != 16 && bits != 32) { throw new ArgumentException("8, 16 or 32 bits, not " + bits + ".") }
             var v = __MachPeek(address, bits)
             if (v == undefined) { throw new Machine.MachineException("The address " + address + " cannot be reached from here.") }
             return v
         }
-        static undefined Poke(int address, int bits, int value) {
+        static undefined Poke(defined int address, defined int bits, defined int value) {
             Machine.Check.Hardware()
             if (bits != 8 && bits != 16 && bits != 32) { throw new ArgumentException("8, 16 or 32 bits, not " + bits + ".") }
             if (!__MachPoke(address, bits, value)) { throw new Machine.MachineException("The address " + address + " cannot be reached from here.") }
         }
-        static int Peek8(int address) { return Machine.Memory.Peek(address, 8) }
-        static int Peek16(int address) { return Machine.Memory.Peek(address, 16) }
-        static int Peek32(int address) { return Machine.Memory.Peek(address, 32) }
-        static undefined Poke8(int address, int value) { Machine.Memory.Poke(address, 8, value) }
-        static undefined Poke16(int address, int value) { Machine.Memory.Poke(address, 16, value) }
-        static undefined Poke32(int address, int value) { Machine.Memory.Poke(address, 32, value) }
+        static int Peek8(defined int address) { return Machine.Memory.Peek(address, 8) }
+        static int Peek16(defined int address) { return Machine.Memory.Peek(address, 16) }
+        static int Peek32(defined int address) { return Machine.Memory.Peek(address, 32) }
+        static undefined Poke8(defined int address, defined int value) { Machine.Memory.Poke(address, 8, value) }
+        static undefined Poke16(defined int address, defined int value) { Machine.Memory.Poke(address, 16, value) }
+        static undefined Poke32(defined int address, defined int value) { Machine.Memory.Poke(address, 32, value) }
         // `count` bytes from `address` as a new buffer.
-        static byte[] Read(int address, int count) {
+        static byte[] Read(defined int address, defined int count) {
             Machine.Check.Hardware()
             if (count < 0) { throw new ArgumentException("A count is not negative.") }
             var data = __MachRead(address, count)
             if (data == undefined) { throw new Machine.MachineException("The address " + address + " cannot be reached from here.") }
             return data
         }
-        static undefined Write(int address, byte data[]) {
+        static undefined Write(defined int address, byte data[]) {
             Machine.Check.Hardware()
             if (!__MachWrite(address, data)) { throw new Machine.MachineException("The address " + address + " cannot be reached from here.") }
         }
@@ -93,7 +93,7 @@ namespace Machine {
             return __MachCpuLevel() == 5
         }
         // CPUID: [EAX, EBX, ECX, EDX] of the leaf (and subleaf).
-        static int[] Id(int leaf, int subleaf = 0) {
+        static int[] Id(defined int leaf, defined int subleaf = 0) {
             if (!Machine.Cpu.HasCpuid()) { throw new Machine.MachineException("This processor has no CPUID.") }
             return __MachCpuid(leaf, subleaf)
         }
@@ -103,7 +103,7 @@ namespace Machine {
             var r = __MachCpuid(0, 0)
             return Machine.Cpu.Text(r[1]) + Machine.Cpu.Text(r[3]) + Machine.Cpu.Text(r[2])
         }
-        static string Text(int v) {
+        static string Text(defined int v) {
             var s = ""
             for (var i = 0; i < 4; i++) { s = s + ((v >> (8 * i)) & 255).ToChar() }
             return s
@@ -140,7 +140,7 @@ namespace Machine {
         // The interrupts since the last Count or Wait.
         int Count() { return __MachIrqTake(this.line) }
         // Waits for an interrupt (at most `timeoutMs`; -1: as long as it takes): how many came since the last Count or Wait, 0 when none came in the time.
-        int Wait(int timeoutMs = -1) { return __MachIrqWait(this.line, timeoutMs) }
+        int Wait(defined int timeoutMs = -1) { return __MachIrqWait(this.line, timeoutMs) }
         undefined Close() {
             if (this.open) {
                 __MachIrqClose(this.line)
@@ -151,11 +151,11 @@ namespace Machine {
 
     // The CMOS memory of the clock (ports 70h/71h; register 0..127).
     class Cmos {
-        static int Read(int register) {
+        static int Read(defined int register) {
             Machine.Port.Out8(112, register & 127)
             return Machine.Port.In8(113)
         }
-        static undefined Write(int register, int value) {
+        static undefined Write(defined int register, defined int value) {
             Machine.Port.Out8(112, register & 127)
             Machine.Port.Out8(113, value & 255)
         }
@@ -178,7 +178,7 @@ namespace Machine {
 
     // The PC speaker: a tone from channel 2 of the timer chip (PIT).
     class Speaker {
-        static undefined Tone(int hz) {
+        static undefined Tone(defined int hz) {
             if (hz < 19 || hz > 1193181) { throw new ArgumentException("A tone is 19 to 1193181 Hz, not " + hz + ".") }
             var divisor = 1193182 / hz
             Machine.Port.Out8(67, 182)              // channel 2, low and high byte, square wave
@@ -191,22 +191,22 @@ namespace Machine {
 
     // The configuration space of PCI devices (mechanism 1: ports CF8h/CFCh, 32 bits - a 386 or later).
     class Pci {
-        static int Address(int bus, int device, int function, int offset) {
+        static int Address(defined int bus, defined int device, defined int function, defined int offset) {
             if (bus < 0 || bus > 255 || device < 0 || device > 31 || function < 0 || function > 7 || offset < 0 || offset > 255) {
                 throw new ArgumentException("PCI: bus 0..255, device 0..31, function 0..7, offset 0..255.")
             }
             return (1 << 31) | (bus << 16) | (device << 11) | (function << 8) | (offset & 252)
         }
-        static int Read32(int bus, int device, int function, int offset) {
+        static int Read32(defined int bus, defined int device, defined int function, defined int offset) {
             Machine.Port.Out32(3320, Machine.Pci.Address(bus, device, function, offset))
             return Machine.Port.In32(3324)
         }
-        static undefined Write32(int bus, int device, int function, int offset, int value) {
+        static undefined Write32(defined int bus, defined int device, defined int function, defined int offset, defined int value) {
             Machine.Port.Out32(3320, Machine.Pci.Address(bus, device, function, offset))
             Machine.Port.Out32(3324, value)
         }
         // Is there a device (vendor not FFFFh)? Its vendor and device id: Read32(..., 0).
-        static bool Present(int bus, int device, int function) {
+        static bool Present(defined int bus, defined int device, defined int function) {
             return (Machine.Pci.Read32(bus, device, function, 0) & 65535) != 65535
         }
     }

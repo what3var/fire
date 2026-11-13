@@ -23,7 +23,7 @@ namespace Hash {
         int Size { get { return Hash.Hasher.SizeOf(this.algorithm) } }
 
         // The bytes of a buffer: all of them, or `count` from `offset` (-1: up to the end).
-        Hash.Hasher Update(byte data[], int offset = 0, int count = -1) {
+        Hash.Hasher Update(byte data[], defined int offset = 0, defined int count = -1) {
             if (count == -1) { count = data.length - offset }
             __HashUpdate(this.state, data, offset, count)
             return this
@@ -177,7 +177,7 @@ namespace Hash {
             this.inner.Update(ipad)
         }
 
-        Hash.Hmac Update(byte data[], int offset = 0, int count = -1) {
+        Hash.Hmac Update(byte data[], defined int offset = 0, defined int count = -1) {
             this.inner.Update(data, offset, count)
             return this
         }

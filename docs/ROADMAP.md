@@ -685,6 +685,16 @@ Daten-Stack bei XC8), AVR nur mit einem eigenen kleinen Profil.
    selbst (Kopien, Aufrufe mit Values, Feldzugriffe) - das nimmt erst diese Ebene 2. Schon umgesetzt: kein `retain`/`release` für Parameter, die nach ihrer
    Prüfung `int`/`float`/`bool` sind (DOS 109 -> 103 KB, gcc 108 -> 79 KB), der Zustand des Threads im Datensegment unter Watcom/Huge (`FIRE_CC_NEAR_DATA`).
    Methoden mit erklärtem skalaren Rückgabetyp ohne `adopt`: mit `defined` (die VM erzwingt ihn, der Generator gibt die C-Zahl zurück).
+   **Messung (Punkt 2 der Arbeitsreihenfolge):** ein Programm mit Klassen, Feldern und Rechnen: mit `defined` an Feldern und Parametern ~30 % weniger Laufzeit
+   und ~23 % weniger fire-Code; direkte Aufrufe statt der Verteiler allein (Typ-Hinweise des Typprüfers an den Generator) brachten nichts - verworfen.
+   **Entscheidung des Benutzers: herleiten, die Sprache bleibt** - und die Pakete erklären, was kein `undefined` annimmt, selbst mit `defined`
+   (am Aufruf geprüft, der C-Rumpf rechnet mit C-Zahlen). Wo ein Wert wirklich `undefined` sein kann, testet der Paketcode ihn ausdrücklich (Vorgabe
+   oder Abbruch) und übergibt ihn mit `trust`. **Umgestellt:** scene3d (mit physics, effects, terrain), time, random, audio, hash, compression, io,
+   net, net.channel, tls, http, gpio, i2c, spi, usb, wifi, tracker, machine, x86, dos, xms, process, console, linq - die Zahlen-Parameter, deren Rumpf
+   `undefined` weder prüft noch speichert, dazu die Felder und Properties, in die sie gehen. Gefunden dabei: `Http.Url.Parse("http://h:abc/")` gab
+   eine URL mit Port `undefined` (jetzt die HttpException). **Offen:** graphics zusammen mit ui (ui reicht Koordinaten aus Feldern weiter, die
+   `undefined` sein dürfen: gemessen graphics -9 % fire-Code, sobald ui mitzieht), ui.docking, circuits, circuits.ui, dialogs (dort heißt `undefined`
+   oft "nicht gesetzt" - Durchsicht von Hand); das Herleiten für den Code des Programms (ein Parameter, dem jede Aufrufstelle eine definierte Zahl gibt).
 
 Für alle neuen Ziele: Zielprofile, Toolchain OpenWatcom (`bios16`/`bios32` auch gcc `-m32 -ffreestanding`, `efi-x64` clang/mingw), eine Plattformschicht pro Familie;
 Tests ohne Fenster über den seriellen Port bzw. die Konsole: DOSBox-X / dosemu2 (`dos16`, `dos32`, Win 3.11), QEMU (`bios16`/`bios32`; `efi-x64` mit der Firmware OVMF),
