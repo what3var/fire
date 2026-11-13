@@ -617,6 +617,205 @@ namespace Data {
         undefined Check() { if (this.closed) { throw new Data.StateException("The connection to '" + this.url + "' is closed.") } }
     }
 
+    /// <summary>The home of a pool (an actor on a thread of its own): it owns the idle connections; Take hands one over (moved, never copied), or allows
+    /// one more to be opened, or registers the caller to be woken when one comes back.</summary>
+    actor PoolHome {
+        List idle            // Data.Connection
+        List waiters         // Completion
+        List waiterIds       // the number of each waiter (its Take finds its own)
+        int open             // connections out there and idle
+        int max
+        bool stopped
+
+        construct(int max) {
+            this.idle = new List()
+            this.waiters = new List()
+            this.waiterIds = new List()
+            this.lastWaiter = 0
+            this.open = 0
+            this.max = max
+            this.stopped = false
+        }
+
+        int lastWaiter
+        // (a number for a wait of a Take)
+        int NewWaiter() {
+            this.lastWaiter = this.lastWaiter + 1
+            return this.lastWaiter
+        }
+
+        // A caller that may have to wait: `wake` is set when a connection comes back (a plain message before its Take - a Completion does not go with
+        // an awaited call).
+        undefined Register(int id, Completion wake) {
+            this.waiters.Add(take wake)
+            this.waiterIds.Add(id)
+        }
+
+        // An idle connection (moved to the caller), true (open a new one: counted already), or false (all are in use: the waiter `id` stays registered).
+        any Take(int id) {
+            if (this.stopped) { throw new Data.StateException("The pool is closed.") }
+            if (this.idle.Count > 0) {
+                Data.PoolHome.Unregister(this.waiters, this.waiterIds, id)
+                any c = take this.idle[this.idle.Count - 1]
+                this.idle.RemoveAt(this.idle.Count - 1)
+                return c
+            }
+            if (this.open < this.max) {
+                Data.PoolHome.Unregister(this.waiters, this.waiterIds, id)
+                this.open = this.open + 1
+                return true
+            }
+            return false
+        }
+
+        static undefined Unregister(List waiters, List ids, int id) {
+            int at = ids.IndexOf(id)
+            if (at < 0) { return }
+            waiters.RemoveAt(at)
+            ids.RemoveAt(at)
+        }
+
+        // A connection back: closed or broken ones are forgotten, an open transaction is rolled back.
+        undefined Give(Data.Connection c) {
+            if (c == undefined) { return }
+            if (this.stopped || !c.IsOpen) {
+                this.open = this.open - 1
+                c.Close()
+            } else {
+                try { while (c.InTransaction) { c.Rollback() } } catch (e) { }
+                this.idle.Add(take c)
+            }
+            Data.PoolHome.Wake(this.waiters)
+            this.waiterIds.Clear()
+        }
+
+        // A connection that could not be opened (or was lost): one more may be opened.
+        undefined Forget() {
+            this.open = this.open - 1
+            Data.PoolHome.Wake(this.waiters)
+            this.waiterIds.Clear()
+        }
+
+        // (every waiter looks again - one that gave up meanwhile is not woken in vain for the others)
+        static undefined Wake(List waiters) {
+            for (var i = 0; i < waiters.Count; i++) {
+                Completion w = waiters[i]
+                w.Set(true)
+            }
+            waiters.Clear()
+        }
+
+        int Idle() { return this.idle.Count }
+        int Open() { return this.open }
+
+        undefined Stop() {
+            for (var i = 0; i < this.idle.Count; i++) {
+                Data.Connection c = this.idle[i]
+                c.Close()
+            }
+            this.idle = new List()
+            this.open = 0
+            this.stopped = true
+            Data.PoolHome.Wake(this.waiters)
+            this.waiterIds.Clear()
+        }
+    }
+
+    /// <summary>A pool of connections to one database, for servers and many tasks: `Take` gives a connection that belongs to the caller until `Give` returns
+    /// it (at most `max` are open at once; a Take waits until one comes back, at most `limit`); `Use(c => ...)` takes and gives back. A pool can go to any
+    /// thread (its home is an actor); a connection goes only with Take and Give.</summary>
+    class Pool {
+        Data.PoolHome home
+        string url
+        Data.Credentials credentials
+
+        construct(string url, Data.Credentials credentials = undefined, int max = 10) {
+            this.url = url
+            if (credentials != undefined) { this.credentials = take credentials }
+            if (max < 1) { throw new ArgumentException("Data.Pool: max is at least 1.") }
+            var ready = new Completion()
+            var back = ready.Share()
+            Data.Pool.StartHome(max, take back)
+            this.home = ready.Wait(10s)
+        }
+
+        static undefined StartHome(int max, Completion back) {
+            fire handover back taking max {
+                var h = new Data.PoolHome(max)
+                back.Set(h)
+                while (!h.stopped) { process h }
+            }
+        }
+
+        // A connection of the pool (opened when there is none idle and fewer than max are open); a TimeoutException after `limit`.
+        Data.Connection Take(float:any limit = 10s) {
+            var h = this.home
+            var deadline = DateTime.UtcNow + TimeSpan.FromMilliseconds(Data.Pool.Millis(limit))
+            while (true) {
+                var wake = new Completion()
+                int id = await h.NewWaiter()
+                h.Register(id, wake.Share())
+                any got = await h.Take(id)
+                if (got is of Data.Connection) { return got }
+                if (got == true) {
+                    try { return new Data.Connection(this.url, this.credentials) }
+                    catch (e) {
+                        await h.Forget()
+                        throw e
+                    }
+                }
+                var left = deadline - DateTime.UtcNow
+                if (left.TotalMilliseconds <= 0) { throw new TimeoutException("Data.Pool: no connection came back within the limit (all " + await h.Open() + " are in use).") }
+                // (woken when one comes back; at the latest after 50 ms it asks again - the order of the Register and the Take of two tasks is not
+                // fixed everywhere, a wake that came before the Register is not lost that way)
+                float ms = left.TotalMilliseconds
+                if (ms > 50.0) { ms = 50.0 }
+                try { wake.Wait(ms * 1ms) } catch (TimeoutException t) { }
+            }
+            return undefined
+        }
+
+        // Gives a connection back (`pool.Give(take c)`): it is the pool's again.
+        undefined Give(Data.Connection c) {
+            var h = this.home
+            await h.Give(take c)   // (awaited: a message of a task that runs beside others would wait for its end - the others wait for this one)
+        }
+
+        // Takes a connection, runs `work` with it and gives it back - also when work throws (the exception goes on). What work returns.
+        any Use(lambda<Data.Connection> work, float:any limit = 10s) {
+            var c = this.Take(limit)
+            any result = undefined
+            try { result = work(c) }
+            catch (e) {
+                this.Give(take c)
+                throw e
+            }
+            this.Give(take c)
+            return result
+        }
+
+        int Idle { get { var h = this.home; int n = await h.Idle(); return n } }
+        int Open { get { var h = this.home; int n = await h.Open(); return n } }
+
+        // Closes the idle connections; the ones in use are closed when they come back.
+        undefined Close() {
+            var h = this.home
+            h.Stop()
+        }
+
+        // (a limit in milliseconds: a time value - 10s, 200ms -, or a plain number of milliseconds)
+        static float Millis(float:any limit) {
+            try {
+                float ms = limit / 1ms
+                return ms
+            } catch (UnitMismatchException e) {
+                float plain = limit
+                return plain
+            }
+            return 10000.0
+        }
+    }
+
     /// <summary>Somebody else changed or deleted the row since it was read (a field with [Version] did not match): nothing of the Save was written.</summary>
     class ConcurrencyException : Data.DataException {
         construct(string message) : base(message, 0) { }
