@@ -31090,6 +31090,147 @@ else
             """)).ToArray();
     }
 
+    // The SQL Server driver against a running server - only when there is one: FIRE_TEST_SQLSERVER=sqlserver://127.0.0.1:1433/test?trust=true (an
+    // empty database: its tables are dropped; several separated by spaces), FIRE_TEST_SQLSERVER_USER, FIRE_TEST_SQLSERVER_PASSWORD. As for MySQL: the
+    // SQL of SQL Server first, then the mapping, queries, sessions and relations of the case of the in-memory database.
+    foreach (string sqlUrl in (Environment.GetEnvironmentVariable("FIRE_TEST_SQLSERVER") ?? "").Split(' ', StringSplitOptions.RemoveEmptyEntries))
+    {
+        string Lit2(string? t) => t == null ? "undefined" : "\"" + t.Replace("\\", "\\\\").Replace("\"", "\\\"") + "\"";
+        string sopen = $"MsDb.Open({Lit2(sqlUrl)}, {Lit2(Environment.GetEnvironmentVariable("FIRE_TEST_SQLSERVER_USER"))}, {Lit2(Environment.GetEnvironmentVariable("FIRE_TEST_SQLSERVER_PASSWORD"))})";
+        string smem = natCases.First(c => c.Name.StartsWith("Data/memory:", StringComparison.Ordinal)).Source;
+        string sheader = smem.Substring(0, smem.IndexOf("print(\"memory\")", StringComparison.Ordinal)).Replace("#import \"data.memory\"", "#import \"data.sqlserver\"");
+        string sorm = smem.Substring(smem.IndexOf("var cdb = new Data.Connection(\"memory:\")", StringComparison.Ordinal))
+            .Replace("new Data.Connection(\"memory:\")", "MsDb.Open(MsDb.url, MsDb.user, MsDb.password)")
+            .Replace("cdb.Rows(\"select name, type, pk, notnull from _columns where table_name = 'people'\")", "cdb.Rows(\"select c.COLUMN_NAME as name, c.DATA_TYPE as type, case when k.COLUMN_NAME is null then 0 else 1 end as pk, case when c.IS_NULLABLE = 'NO' then 1 else 0 end as notnull from INFORMATION_SCHEMA.COLUMNS c left join INFORMATION_SCHEMA.KEY_COLUMN_USAGE k on k.TABLE_NAME = c.TABLE_NAME and k.COLUMN_NAME = c.COLUMN_NAME and OBJECTPROPERTY(OBJECT_ID(k.CONSTRAINT_SCHEMA + '.' + k.CONSTRAINT_NAME), 'IsPrimaryKey') = 1 where c.TABLE_NAME = 'people' order by c.ORDINAL_POSITION\")")
+            .Replace("\"select name from _columns where table_name = ?\"", "\"select COLUMN_NAME from INFORMATION_SCHEMA.COLUMNS where TABLE_NAME = ?\"")
+            .Replace("create table Tag(code text primary key, label text)", "create table Tag(code nvarchar(20) primary key, label nvarchar(100))")
+            .Replace("create unique index ix_memo_text on Memo (text)", "alter table Memo alter column [text] nvarchar(450); create unique index ix_memo_text on Memo ([text])");
+        natCases = natCases.Append(("Data/SqlServer " + sqlUrl + ": der TDS-Treiber in fire gegen einen laufenden Server (FIRE_TEST_SQLSERVER): PRELOGIN, LOGIN7, TLS in TDS (mandatory, optional nur der Login, off, Zertifikat geprueft), SQL-Batches und sp_executesql mit typisierten Parametern (Zahlen, Text, Unicode, NULL, VARBINARY, FLOAT, DECIMAL, MONEY, Datum und Zeit, GUID, sql_variant), Texte und Bytes ueber mehrere Pakete und als PLP, Fehlerarten, Transaktionen mit Savepoints (Deskriptor), IDENTITY ueber SCOPE_IDENTITY, Streaming mit geparkten Zeilen, Prozeduren mit mehreren Ergebnissen; dann Mapping, Abfragen, Sessions und Beziehungen wie bei der In-Memory-Datenbank", sheader + $$"""
+            class MsDb {
+                static string url
+                static string user
+                static string password
+                // (a connection to the test database without its tables)
+                static Data.Connection Open(string url, string user, string password) {
+                    MsDb.url = url
+                    MsDb.user = user
+                    MsDb.password = password
+                    var c = new Data.Connection(url, new Data.Credentials(user, password))
+                    var names = c.Rows("select name from sys.tables")
+                    foreach (n in names) { c.Execute("DROP TABLE [" + n[0] + "]") }
+                    return c
+                }
+                static string WithOptions(string options) {
+                    string u = MsDb.url
+                    int q = u.IndexOf("?")
+                    if (q >= 0) { u = u.Substring(0, q) }
+                    return u + options
+                }
+            }
+            print("sqlserver")
+            var db = {{sopen}}
+            db.Execute("create table person(id bigint identity(1,1) primary key, name nvarchar(100) not null, age int, active bit)")
+            db.Execute("create table item(id bigint identity(1,1) primary key, title nvarchar(max), price float, blob1 varbinary(max), f real, d datetime2, n decimal(20,0), s smallint, m money, sm smallmoney, dm decimal(10,2), dt datetime, sdt smalldatetime, dd date, tt time(3), dto datetimeoffset(0), g uniqueidentifier, vc varchar(20), ch nchar(3), tiny tinyint)")
+            print("insert " + db.Execute("insert into person(name, age, active) values (?, ?, ?)", ["Ada", 36, true]))
+            print("key " + db.LastInsertId)
+            db.Execute("insert into person(name, age, active) values (?, ?, ?)", ["Grace", 85, false])
+            db.Execute("insert into person(name, age, active) values (?, ?, ?)", ["Linus Ünïcødé 🐧", undefined, true])
+            print("key " + db.LastInsertId)
+            foreach (row in db.Query("select id, name, age, active from person where age > ? or age is null order by id", [40])) { print("row " + row) }
+            print("count " + db.Scalar("select count(*) from person") + " text " + db.Scalar("select name from person where id = 3") + " len " + db.Scalar("select len(name) from person where id = 3"))
+            db.Execute("insert into item(title, price, blob1, f, d, n, s, m, sm, dm, dt, sdt, dd, tt, dto, g, vc, ch, tiny) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", ["Box", 9.5, [1, 2, 255], 1.25, "2026-11-13 10:20:30.1234567", 18000000000, -5, "12.3456", "-7.5", "12.50", "1815-12-10 08:30:00.997", "2024-02-29 23:59:00", "0001-01-01", "13:14:15.678", "2026-11-13 10:00:00 +02:00", "6F9619FF-8B86-D011-B42D-00C04FC964FF", "Käse", "abc", 200])
+            db.Execute("insert into item(title, price) values (?, ?)", ["Tiny", -0.000123])
+            foreach (row in db.Rows("select title, price, f, d, n, s, m, sm, dm, dt, sdt, dd, tt, dto, g, vc, ch, tiny, datalength(blob1) as bl from item order by id")) { print("item " + row) }
+            byte blob[] = db.Scalar("select blob1 from item where id = 1")
+            print("blob " + blob.length + " " + blob[2])
+            print("floats " + db.Scalar("select price from item where price = ?", [9.5]) + " " + db.Scalar("select ? * 2", [0.1]) + " " + db.Scalar("select ?", [-1.5e300]) + " " + db.Scalar("select ?", [5e-324]) + " " + db.Scalar("select cast(1e-310 as float)"))
+            print("numbers " + db.Scalar("select ?", [-9223372036854775807]) + " " + db.Scalar("select cast(12345678901234567890123 as decimal(38,0))") + " " + db.Scalar("select cast(-0.001 as decimal(10,3))") + " " + db.Scalar("select ?", [true]) + " " + db.Scalar("select cast(? as int) + 1", ["41"]))
+            print("variant " + db.Rows("select cast(1 as sql_variant) a, cast(N'ü' as sql_variant) b, cast(2.5 as sql_variant) c, cast(null as sql_variant) d")[0])
+            // (texts and bytes bigger than a packet, and than 8000 bytes: PLP)
+            var big = ""
+            for (var i = 0; i < 3000; i++) { big = big + "abc🐧" }
+            db.Execute("insert into item(title) values (?)", [big])
+            string back = db.Scalar("select title from item where id = ?", [db.LastInsertId])
+            print("big text " + back.Length + " " + (back == big) + " " + db.Scalar("select len(title) from item where id = ?", [db.LastInsertId]))
+            byte bigBytes[] = new byte[20000]
+            for (var i = 0; i < 20000; i++) { bigBytes[i] = i % 251 }
+            db.Execute("update item set blob1 = ? where id = 2", [bigBytes])
+            byte bb[] = db.Scalar("select blob1 from item where id = 2")
+            print("big bytes " + bb.length + " " + bb[19999] + " " + db.Scalar("select datalength(blob1) from item where id = 2"))
+            print("update " + db.Execute("update person set age = age + 1 where age is not null") + " delete " + db.Execute("delete from item where id = ?", [2]))
+            db.Execute("insert into item(title) values ('a'); insert into item(title) values ('b'); select 1; update item set price = 1 where price is null")
+            print("items " + db.Scalar("select count(*) from item") + " priced " + db.Scalar("select count(*) from item where price = 1"))
+            try { db.Execute("set identity_insert person on; insert into person(id, name) values (1, 'Dup')") } catch (Data.ConstraintException e) { print("constraint " + e.Code) }
+            db.Execute("set identity_insert person off")
+            try { db.Execute("insert into person(age) values (?)", [1]) } catch (Data.ConstraintException e) { print("not null " + e.Code) }
+            try { db.Execute("select * from nothing") } catch (Data.DataException e) { print("error " + e.Code) }
+            try { db.Execute("select from") } catch (Data.DataException e) { print("syntax " + e.Code) }
+            try { db.Execute("insert into person(name) values (?)", []) } catch (ArgumentException e) { print("args " + e.message) }
+            print("after errors " + db.Scalar("select 7"))
+            db.Transaction(t => { t.Execute("update person set age = age + 1 where id = ?", [1]) })
+            print("after commit " + db.Scalar("select age from person where id = 1") + " open " + db.Scalar("select @@trancount"))
+            try {
+                db.Transaction(t => {
+                    t.Execute("update person set age = 0 where id = ?", [1])
+                    throw new Exception("stop")
+                })
+            } catch (e) { print("rolled back: " + e.message) }
+            print("after rollback " + db.Scalar("select age from person where id = 1"))
+            db.Begin()
+            db.Execute("delete from person where id = ?", [3])
+            db.Begin()
+            db.Execute("delete from person where id = ?", [2])
+            db.Rollback()
+            print("inside " + db.Scalar("select @@trancount") + " " + db.Scalar("select count(*) from person"))
+            db.Commit()
+            print("nested " + db.Scalar("select count(*) from person") + " open " + db.Scalar("select @@trancount"))
+            print("case " + db.From<Pupil>().Where(p => p.name.StartsWith("a")).ToSql())
+            // (streaming: rows from the socket one by one; a command in between parks the rest; a reader left early)
+            db.Execute("create table many(id int primary key, v nvarchar(20))")
+            db.Begin()
+            for (var i = 0; i < 300; i++) { db.Execute("insert into many values (?, ?)", [i, "v" + i]) }
+            db.Commit()
+            int seen = 0
+            int sum = 0
+            foreach (row in db.Query("select id, v from many order by id")) {
+                seen++
+                int id = row.Int("id")
+                sum = sum + id
+                if (id % 100 == 0) { db.Execute("update many set v = ? where id = ?", ["changed", id + 1]) }
+            }
+            print("streamed " + seen + " sum " + sum + " changed " + db.Scalar("select count(*) from many where v = 'changed'"))
+            int early = 0
+            foreach (row in db.Query("select id from many order by id")) {
+                early++
+                if (early == 5) { break }
+            }
+            print("early " + early + " then " + db.Scalar("select count(*) from many") + " " + db.Rows("select v from many where id = 1")[0][0])
+            db.Execute("create or alter procedure two @lim int as begin select id from many where id < @lim order by id; select count(*) from many; end")
+            print("call " + db.Rows("exec two @lim = ?", [3]).Count + " then " + db.Scalar("select 8"))
+            db.Close()
+            // (the encryption: everything, only the login, nothing; a certificate that is not trusted; a wrong login)
+            any modes = ["?encrypt=optional&trust=true", "?encrypt=off"]
+            for (var i = 0; i < modes.length; i++) {
+                string m = modes[i]
+                try {
+                    var e1 = new Data.Connection(MsDb.WithOptions(m), new Data.Credentials(MsDb.user, MsDb.password))
+                    Data.TdsConnection t1 = e1.driver
+                    print(m + ": " + e1.Scalar("select 1") + " [" + t1.Security + "]")
+                    e1.Close()
+                } catch (Data.ConnectionException e) { print(m + ": " + e.message) }
+            }
+            var e2 = new Data.Connection(MsDb.WithOptions("?trust=true"), new Data.Credentials(MsDb.user, MsDb.password))
+            Data.TdsConnection t2 = e2.driver
+            print("mandatory: " + (t2.Security.Length > 0))
+            e2.Close()
+            try { new Data.Connection(MsDb.WithOptions(""), new Data.Credentials(MsDb.user, MsDb.password)) } catch (Data.ConnectionException e) { print("untrusted " + e.Code) }
+            try { new Data.Connection(MsDb.url, new Data.Credentials(MsDb.user, "wrong")) } catch (Data.ConnectionException e) { print("login " + e.Code) }
+            try { new Data.Connection(MsDb.WithOptions("?encrypt=maybe")) } catch (ArgumentException e) { print("option " + e.message) }
+            print("end")
+            {{sorm}}
+            """)).ToArray();
+    }
+
     // Time and Sleep (bridges/fire_bridge_time.hpp)
     natCases = natCases.Concat(new (string Name, string Source)[]
     {

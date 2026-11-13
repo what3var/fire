@@ -17,6 +17,8 @@ typedef struct FireTlsSession {
     SSL_CTX* ownCtx;   /* a client session has a context of its own */
     FireNetSock fd;
     int client;
+    BIO* rbio;   /* TLS over buffers: what came in, what is to go out (owned by the SSL) - NULL over a socket */
+    BIO* wbio;
 } FireTlsSession;
 
 static int fire_tls_supported(void) { return 1; }
@@ -304,6 +306,56 @@ static void fire_tls_closeSession(FireTlsSession* s) {
         SSL_shutdown(s->ssl);   /* close_notify, best effort (the socket is non-blocking: no waiting for the answer) */
     }
     fire_tls_freeSession(s);
+}
+
+/* ---- TLS over buffers: two memory BIOs instead of the socket ---- */
+static FireTlsSession* fire_tls_clientOpenMem(const FireTlsOptions* opt, FireNetStatus* st) {
+    FireTlsSession* s = fire_tls_clientOpen((FireNetSock)-1, opt, st);
+    if (s == NULL) return NULL;
+    s->rbio = BIO_new(BIO_s_mem());
+    s->wbio = BIO_new(BIO_s_mem());
+    if (s->rbio == NULL || s->wbio == NULL) {
+        if (s->rbio) BIO_free(s->rbio);
+        if (s->wbio) BIO_free(s->wbio);
+        fire_tls_freeSession(s);
+        fire_net_fail(st, FIRE_NET_E_OTHER, "Out of memory.");
+        return NULL;
+    }
+    SSL_set_bio(s->ssl, s->rbio, s->wbio);   /* (the socket BIO of SSL_set_fd(-1) is freed) */
+    return s;
+}
+static int fire_tls_memFeed(FireTlsSession* s, const uint8_t* data, int count, FireNetStatus* st) {
+    if (s->rbio == NULL) return fire_net_fail(st, FIRE_NET_E_INVALID_ARGUMENT, "The TLS session is not one over a buffer.");
+    if (count > 0 && BIO_write(s->rbio, data, count) != count) return fire_net_fail(st, FIRE_NET_E_OTHER, "Out of memory.");
+    return 1;
+}
+static int fire_tls_memDrain(FireTlsSession* s, uint8_t* out, int max) {
+    int n;
+    if (s->wbio == NULL || max <= 0) return 0;
+    n = BIO_read(s->wbio, out, max);
+    return n > 0 ? n : 0;
+}
+static int fire_tls_memWaiting(FireTlsSession* s) { return s->wbio == NULL ? 0 : (int)BIO_ctrl_pending(s->wbio); }
+static int fire_tls_memRead(FireTlsSession* s, uint8_t* data, int count, int* got, FireNetStatus* st) {
+    int ret, err;
+    *got = 0;
+    if (count <= 0) return 1;
+    ERR_clear_error();
+    ret = SSL_read(s->ssl, data, count);
+    if (ret > 0) { *got = ret; return 1; }
+    err = SSL_get_error(s->ssl, ret);
+    if (err == SSL_ERROR_ZERO_RETURN) return 1;
+    if (err == SSL_ERROR_WANT_READ || err == SSL_ERROR_WANT_WRITE) { *got = -1; return 1; }
+    return fire_tls_sslFailure(s->ssl, ret, "TLS read", st);
+}
+static int fire_tls_memWrite(FireTlsSession* s, const uint8_t* data, int count, int* sent, FireNetStatus* st) {
+    int ret;
+    *sent = 0;
+    if (count <= 0) return 1;
+    ERR_clear_error();
+    ret = SSL_write(s->ssl, data, count);
+    if (ret > 0) { *sent = ret; return 1; }
+    return fire_tls_sslFailure(s->ssl, ret, "TLS write", st);
 }
 
 #endif

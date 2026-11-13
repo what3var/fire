@@ -1075,4 +1075,6 @@ static void fire_tls_closeSession(FireTlsSession* s) {
     fire_tls_freeSession(s);
 }
 
+#include "fire_tls_mem_unsupported.h"
+
 #endif

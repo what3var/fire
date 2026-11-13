@@ -26,4 +26,6 @@ static int fire_tls_pending(FireTlsSession* s) { (void)s; return 0; }
 static void fire_tls_info(FireTlsSession* s, char* protocol, size_t psize, char* cipher, size_t csize) { (void)s; (void)psize; (void)csize; protocol[0] = 0; cipher[0] = 0; }
 static void fire_tls_closeSession(FireTlsSession* s) { (void)s; }
 
+#include "fire_tls_mem_unsupported.h"
+
 #endif

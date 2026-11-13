@@ -113,6 +113,16 @@ namespace Data {
         string IndexQuery() { return undefined }
         // What follows ")" in the CREATE TABLE of Ensure (MySQL: the character set).
         string TableOptions() { return "" }
+        // A table made only when it is not there (`body`: "(columns...)").
+        string CreateTableIfMissing(string table, string body) { return "CREATE TABLE IF NOT EXISTS " + table + " " + body }
+        // A new column of a table.
+        string AddColumn(string table, string definition) { return "ALTER TABLE " + table + " ADD COLUMN " + definition }
+        // What follows "CREATE [UNIQUE] INDEX i ON t (c)" (SQL Server: a unique index ignores NULL, as in the other databases).
+        string IndexSuffix(string column, bool unique) { return "" }
+        // A boolean value (a column, a parameter) as a condition (SQL Server: "x = 1"; the others take the value itself).
+        string Truth(string value) { return value }
+        // The paging of a query; `ordered`: it has an ORDER BY (SQL Server pages only ordered rows).
+        string Paging(int count, int offset, bool ordered) { return this.Limit(count, offset) }
         // A query (one parameter: the table) whose first column is the name of each column the table has; undefined: the table is not there.
         string ColumnsQuery() { return "select column_name from information_schema.columns where table_name = ?" }
 
@@ -445,7 +455,7 @@ namespace Data {
             } else {
                 for (var i = 0; i < map.columns.Count; i++) {
                     Data.ColumnMap c = map.columns[i]
-                    if (have.IndexOf(c.column.ToLower()) < 0) { this.driver.Exec("ALTER TABLE " + d.Quote(map.table) + " ADD COLUMN " + d.ColumnDefinition(c)) }
+                    if (have.IndexOf(c.column.ToLower()) < 0) { this.driver.Exec(d.AddColumn(d.Quote(map.table), d.ColumnDefinition(c))) }
                 }
             }
             for (var i = 0; i < map.relations.Count; i++) {
@@ -458,7 +468,7 @@ namespace Data {
                 a.required = true
                 var b = new Data.ColumnMap(r.otherColumn, r.otherColumn, target.key.typeName, target.key.kind)
                 b.required = true
-                this.driver.Exec("CREATE TABLE IF NOT EXISTS " + d.Quote(r.joinTable) + " (" + d.ColumnDefinition(a) + ", " + d.ColumnDefinition(b) + ")" + d.TableOptions())
+                this.driver.Exec(d.CreateTableIfMissing(d.Quote(r.joinTable), "(" + d.ColumnDefinition(a) + ", " + d.ColumnDefinition(b) + ")" + d.TableOptions()))
                 this.CreateIndex("ix_" + r.joinTable + "_" + r.thisColumn, r.joinTable, r.thisColumn, false)
             }
             for (var i = 0; i < map.columns.Count; i++) {
@@ -483,7 +493,7 @@ namespace Data {
             }
             any n = this.Scalar(ask, [table, name])
             if (n != undefined && n != 0) { return }
-            this.driver.Exec("CREATE " + kind + " " + d.Quote(name) + " ON " + d.Quote(table) + " (" + d.Quote(column) + ")")
+            this.driver.Exec("CREATE " + kind + " " + d.Quote(name) + " ON " + d.Quote(table) + " (" + d.Quote(column) + ")" + d.IndexSuffix(d.Quote(column), unique))
         }
 
         // Writes a new row of the object; the generated key goes into the object's key field (a class; a record keeps its fields) and is returned.
@@ -588,6 +598,9 @@ namespace Data {
             return "SELECT * FROM " + d.Quote(map.table) + order
         }
 
+        // (SQL of the dialect that may be empty: nothing to do then)
+        undefined Run(string sql) { if (sql != "") { this.driver.Exec(sql) } }
+
         // A transaction: Begin, then Commit or Rollback. Inside another one it is a savepoint (Rollback goes back to it).
         undefined Begin() {
             this.Check()
@@ -602,7 +615,7 @@ namespace Data {
             this.depth = this.depth - 1
             var d = this.driver.Dialect()
             if (this.depth == 0) { this.driver.Exec(d.Commit()) }
-            else { this.driver.Exec(d.Release("fire_" + this.depth)) }
+            else { this.Run(d.Release("fire_" + this.depth)) }
         }
         undefined Rollback() {
             this.Check()
@@ -612,7 +625,7 @@ namespace Data {
             if (this.depth == 0) { this.driver.Exec(d.Rollback()) }
             else {
                 this.driver.Exec(d.RollbackTo("fire_" + this.depth))
-                this.driver.Exec(d.Release("fire_" + this.depth))
+                this.Run(d.Release("fire_" + this.depth))
             }
         }
 
@@ -1413,7 +1426,7 @@ namespace Data {
                     marks = marks + "?"
                     args.Add(keys[i])
                 }
-                foreach (row in db.Rows("SELECT " + d.Quote(r.thisColumn) + ", " + d.Quote(r.otherColumn) + " FROM " + d.Quote(r.joinTable) + " WHERE " + d.Quote(r.thisColumn) + " IN (" + marks + ")", Data.Connection.ArrayOf(args))) {
+                foreach (row in db.Rows("SELECT " + d.Quote(r.thisColumn) + ", " + d.Quote(r.otherColumn) + " FROM " + d.Quote(r.joinTable) + " WHERE " + d.Quote(r.thisColumn) + " IN (" + marks + ") ORDER BY " + d.Quote(r.otherColumn), Data.Connection.ArrayOf(args))) {
                     pairThis.Add(Json.Serialize(row.Get(0)))
                     pairOther.Add(row.Get(1))
                 }
@@ -1696,7 +1709,7 @@ namespace Data {
             for (var i = 0; i < this.wheres.Count; i++) {
                 LambdaExpression e = this.wheres[i]
                 if (i > 0) { filter = filter + " AND " }
-                filter = filter + w.Lambda(e)
+                filter = filter + w.Predicate(e)
             }
             var sql = head + " FROM " + d.Quote(map.table)
             if (filter != "") { sql = sql + " WHERE " + filter }
@@ -1710,7 +1723,7 @@ namespace Data {
                         if (this.descending[i]) { sql = sql + " DESC" }
                     }
                 }
-                sql = sql + d.Limit(this.limited, this.skipped)
+                sql = sql + d.Paging(this.limited, this.skipped, this.orders.Count > 0)
             }
             w.text = sql
             return w
@@ -1752,6 +1765,11 @@ namespace Data {
 
         // The body of a lambda with one parameter (the object of the row).
         string Lambda(LambdaExpression e) {
+            this.Enter(e)
+            return this.Sql(e.Body)
+        }
+        // (the scope of a query lambda: its parameter is the mapped class)
+        undefined Enter(LambdaExpression e) {
             if (e.Parameters.length != 1) { throw new Data.NotTranslatableException("A query lambda has one parameter (the object), not " + e.Parameters.length + ": " + e) }
             this.scopeNames = new List()
             this.scopeMaps = new List()
@@ -1759,10 +1777,23 @@ namespace Data {
             this.scopeNames.Add(e.Parameters[0].Name)
             this.scopeMaps.Add(this.map)
             this.scopeQualifiers.Add("")
-            return this.Sql(e.Body)
         }
 
         string Sql(Expression e) { return "" + e.Accept(this) }
+
+        // A lambda whose body is a condition (Where).
+        string Predicate(LambdaExpression e) {
+            this.Enter(e)
+            return this.Condition(e.Body)
+        }
+        // (a part that must be a condition: a boolean column or value alone becomes the dialect's truth test)
+        string Condition(Expression e) {
+            string sql = this.Sql(e)
+            var c = this.ColumnOf(e)
+            if (c != undefined && c.kind == "bool") { return this.dialect.Truth(sql) }
+            if (e is of CapturedExpression || e is of ConstantExpression) { return this.dialect.Truth(sql) }
+            return sql
+        }
 
         undefined Fail(Expression e, string why) { throw new Data.NotTranslatableException("Data: '" + e + "' cannot run in the database (" + why + ").") }
 
@@ -1825,7 +1856,7 @@ namespace Data {
             return undefined
         }
         override any VisitUnary(UnaryExpression e) {
-            if (e.Op == "!") { return "NOT (" + this.Sql(e.Operand) + ")" }
+            if (e.Op == "!") { return "NOT (" + this.Condition(e.Operand) + ")" }
             if (e.Op == "-") { return "-(" + this.Sql(e.Operand) + ")" }
             this.Fail(e, "the operator " + e.Op)
             return undefined
@@ -1833,8 +1864,8 @@ namespace Data {
         override any VisitConvert(ConvertExpression e) { return this.Sql(e.Operand) }
         override any VisitBinary(BinaryExpression e) {
             string op = e.Op
-            if (op == "&&") { return "(" + this.Sql(e.Left) + " AND " + this.Sql(e.Right) + ")" }
-            if (op == "||") { return "(" + this.Sql(e.Left) + " OR " + this.Sql(e.Right) + ")" }
+            if (op == "&&") { return "(" + this.Condition(e.Left) + " AND " + this.Condition(e.Right) + ")" }
+            if (op == "||") { return "(" + this.Condition(e.Left) + " OR " + this.Condition(e.Right) + ")" }
             // (x == undefined: IS NULL)
             if ((op == "==" || op == "!=") && Data.SqlWriter.IsNull(e.Right)) {
                 if (op == "==") { return "(" + this.Sql(e.Left) + " IS NULL)" }
@@ -1946,7 +1977,7 @@ namespace Data {
                 this.scopeNames.Add(inner.Parameters[0].Name)
                 this.scopeMaps.Add(child)
                 this.scopeQualifiers.Add(alias)
-                string condition = this.Sql(inner.Body)
+                string condition = this.Condition(inner.Body)
                 this.scopeNames.RemoveAt(this.scopeNames.Count - 1)
                 this.scopeMaps.RemoveAt(this.scopeMaps.Count - 1)
                 this.scopeQualifiers.RemoveAt(this.scopeQualifiers.Count - 1)
@@ -1979,7 +2010,7 @@ namespace Data {
                 this.scopeNames.Add(inner.Parameters[0].Name)
                 this.scopeMaps.Add(target)
                 this.scopeQualifiers.Add(t)
-                string condition = this.Sql(inner.Body)
+                string condition = this.Condition(inner.Body)
                 this.scopeNames.RemoveAt(this.scopeNames.Count - 1)
                 this.scopeMaps.RemoveAt(this.scopeMaps.Count - 1)
                 this.scopeQualifiers.RemoveAt(this.scopeQualifiers.Count - 1)

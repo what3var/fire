@@ -1,0 +1,13 @@
+{
+  "format": 1,
+  "name": "fire-data.sqlserver",
+  "type": "library",
+  "import": "data.sqlserver",
+  "standard": true,
+  "settings": {
+    "version": "1.0.0",
+    "author": "fire",
+    "license": "fire",
+    "description": "The standard library 'data.sqlserver' of fire: the SQL Server driver of Data - TDS written in fire (TDS 8 with TLS, sp_executesql with typed parameters, streamed rows)."
+  }
+}
