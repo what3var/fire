@@ -15,15 +15,15 @@ class PseudoRandom {
     construct() { this.Seed(DateTime.UtcNow.Ticks) }
 
     // From a number: the same number gives the same sequence.
-    construct(int seed) { this.Seed(seed) }
+    construct(defined int seed) { this.Seed(seed) }
 
     // 32-bit multiplication modulo 2^32 without leaving the 64-bit `int` (a and b are below 2^32).
-    static int Mul32(int a, int b) {
+    static int Mul32(defined int a, defined int b) {
         return (((a & 65535) * b) + ((((a >> 16) * b) & 65535) << 16)) & 4294967295
     }
 
     // The finalizer of MurmurHash3: spreads every bit of x over the whole word.
-    static int Mix(int x) {
+    static int Mix(defined int x) {
         x = (x # (x >> 16)) & 4294967295
         x = PseudoRandom.Mul32(x, 2246822507)
         x = (x # (x >> 13)) & 4294967295
@@ -32,7 +32,7 @@ class PseudoRandom {
     }
 
     // Starts the sequence again from `seed`.
-    undefined Seed(int seed) {
+    undefined Seed(defined int seed) {
         var lo = seed & 4294967295
         var hi = (seed >> 32) & 4294967295
         this.s0 = PseudoRandom.Mix((lo + 2654435769) & 4294967295)
@@ -65,20 +65,20 @@ class PseudoRandom {
     }
 
     // 0 .. max - 1 (max must be above 0; a bigger max than 2^31 uses 62 random bits).
-    int Next(int max) {
+    int Next(defined int max) {
         if (max <= 0) { throw new RandomException("max must be above 0") }
         if (max <= 4294967296) { return this.Bounded(max, 4294967296, false) }
         return this.Bounded(max, 4611686018427387904, true)
     }
 
     // min .. max - 1.
-    int Next(int min, int max) {
+    int Next(defined int min, defined int max) {
         if (max <= min) { throw new RandomException("max must be above min") }
         return min + this.Next(max - min)
     }
 
     // An unbiased value below `max`: the few values at the top of the range that would make some results likelier are drawn again.
-    int Bounded(int max, int range, bool wide) {
+    int Bounded(defined int max, defined int range, bool wide) {
         var limit = range - (range % max)
         while (true) {
             var v = this.NextUInt32()

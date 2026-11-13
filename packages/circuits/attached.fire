@@ -160,7 +160,7 @@ namespace Circuits {
         int bits
         List codes
 
-        construct(int address = 0x48, int channels = 4, float reference : any = 5, int bits = 8) : base("ADC", 5, 10) {
+        construct(defined int address = 0x48, int channels = 4, float reference : any = 5, int bits = 8) : base("ADC", 5, 10) {
             if (channels < 1 || channels > 64) { throw new ArgumentException("An ADC has 1 to 64 channels.") }
             if (bits < 1 || bits > 16) { throw new ArgumentException("An ADC has 1 to 16 bits.") }
             this.address = address
@@ -215,7 +215,7 @@ namespace Circuits {
         int address
         float reference
 
-        construct(int address = 0x60, int channels = 1, float reference : any = 5, float outputResistance : any = 10) : base("DAC", 5, outputResistance) {
+        construct(defined int address = 0x60, int channels = 1, float reference : any = 5, float outputResistance : any = 10) : base("DAC", 5, outputResistance) {
             if (channels < 1 || channels > 64) { throw new ArgumentException("A DAC has 1 to 64 channels.") }
             this.address = address
             this.reference = Circuits.Units.Volts(reference)

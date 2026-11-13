@@ -58,7 +58,7 @@ namespace WiFi {
             throw new WiFiException(message, code)
         }
 
-        static int Handle(int handle) {
+        static int Handle(defined int handle) {
             if (handle < 0) { Throw() }
             return handle
         }
@@ -76,18 +76,18 @@ namespace WiFi {
         static int Now() { return DateTime.UtcNow.Ticks }
 
         // The moment (ticks) a limit of `ms` ends, -1: never.
-        static int Deadline(int ms) {
+        static int Deadline(defined int ms) {
             if (ms < 0) { return -1 }
             return WiFi.Clock.Now() + ms * 10000
         }
 
-        static bool Expired(int deadline) {
+        static bool Expired(defined int deadline) {
             if (deadline < 0) { return false }
             return WiFi.Clock.Now() >= deadline
         }
 
         // A moment before the next question: 1 ms at first, up to 20 ms when it takes long (and not past the deadline).
-        static undefined Pause(int deadline, int tries) {
+        static undefined Pause(defined int deadline, defined int tries) {
             var ms = 1
             if (tries >= 3) { ms = 5 }
             if (tries >= 20) { ms = 20 }
@@ -271,7 +271,7 @@ namespace WiFi {
             }
         }
 
-        string Text(int which) {
+        string Text(defined int which) {
             this.Check()
             var t = __WiFiStationText(this.handle, which)
             if (t == undefined) { WiFi.Errors.Throw() }
@@ -309,7 +309,7 @@ namespace WiFi {
         }
 
         // Starts the network `ssid` (without a password: open; else 8 to 63 characters, WPA2) on a channel (1 .. 13) for up to `maxClients` stations (1 .. 10).
-        undefined Start(string ssid, string password = "", int channel = 1, int maxClients = 4) {
+        undefined Start(string ssid, string password = "", defined int channel = 1, defined int maxClients = 4) {
             this.Check()
             if (!__WiFiApStart(this.handle, ssid, password, channel, maxClients)) { WiFi.Errors.Throw() }
         }
@@ -342,7 +342,7 @@ namespace WiFi {
             }
         }
 
-        string Text(int which) {
+        string Text(defined int which) {
             this.Check()
             var t = __WiFiApText(this.handle, which)
             if (t == undefined) { WiFi.Errors.Throw() }
@@ -359,7 +359,7 @@ namespace WiFi {
     // The simulated radio "sim" from the outside: the networks in the air (for tests, and to try a program without the board).
     class Sim {
         // Puts a network in the air: an empty password makes it open; a network of the same name is replaced.
-        static undefined AddNetwork(string ssid, string password = "", int rssi = -60, int channel = 1) {
+        static undefined AddNetwork(string ssid, string password = "", defined int rssi = -60, defined int channel = 1) {
             if (!__WiFiSimAddNetwork(ssid, password, rssi, channel)) { WiFi.Errors.Throw() }
         }
 
@@ -370,7 +370,7 @@ namespace WiFi {
         static undefined Drop() { __WiFiSimDrop() }
 
         // How many questions a join and a scan take to answer (default 2 and 1).
-        static undefined Delays(int joinQuestions, int scanQuestions) {
+        static undefined Delays(defined int joinQuestions, defined int scanQuestions) {
             if (!__WiFiSimDelays(joinQuestions, scanQuestions)) { WiFi.Errors.Throw() }
         }
 

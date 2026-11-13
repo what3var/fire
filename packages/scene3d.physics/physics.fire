@@ -14,7 +14,7 @@ class Body {
     int h
     Object owner
 
-    construct(Object obj, int kind, BodyShape shape) {
+    construct(Object obj, defined int kind, BodyShape shape) {
         if (!__S3DBody(obj.h, kind, shape!int)) { throw new Scene3DException("The object cannot get a body (no triangles, or no memory).") }
         this.h = obj.h
         this.owner = obj
@@ -31,7 +31,7 @@ class Body {
         return b
     }
     // A ball: a dynamic sphere.
-    static Body Ball(Object obj, float mass : any kg = 1kg) { return Body.Dynamic(obj, mass, BodyShape.Sphere) }
+    static Body Ball(Object obj, defined float mass : any kg = 1kg) { return Body.Dynamic(obj, mass, BodyShape.Sphere) }
     // Moved by the program (or by its Velocity): lifts, doors, platforms - what stands on it goes along.
     static Body Kinematic(Object obj, BodyShape shape = BodyShape.Box) { return new Body(obj, 2, shape) }
 
@@ -76,10 +76,10 @@ class Body {
     Body Sticky() { this.Friction = 1.0; this.Bounce = 0.0; return this }
 
     // ---- moving ----
-    float VelocityX : m/s { get { return __S3DBodyGet(this.h, 5) * 1m / 1s } set { __S3DBodySet(this.h, 5, S3D.Speed(value)) } }
-    float VelocityY : m/s { get { return __S3DBodyGet(this.h, 6) * 1m / 1s } set { __S3DBodySet(this.h, 6, S3D.Speed(value)) } }
-    float VelocityZ : m/s { get { return __S3DBodyGet(this.h, 7) * 1m / 1s } set { __S3DBodySet(this.h, 7, S3D.Speed(value)) } }
-    undefined SetVelocity(float x : any m/s, float y : any m/s, float z : any m/s) { this.VelocityX = x; this.VelocityY = y; this.VelocityZ = z }
+    defined float VelocityX : m/s { get { return __S3DBodyGet(this.h, 5) * 1m / 1s } set { __S3DBodySet(this.h, 5, S3D.Speed(value)) } }
+    defined float VelocityY : m/s { get { return __S3DBodyGet(this.h, 6) * 1m / 1s } set { __S3DBodySet(this.h, 6, S3D.Speed(value)) } }
+    defined float VelocityZ : m/s { get { return __S3DBodyGet(this.h, 7) * 1m / 1s } set { __S3DBodySet(this.h, 7, S3D.Speed(value)) } }
+    undefined SetVelocity(defined float x : any m/s, defined float y : any m/s, defined float z : any m/s) { this.VelocityX = x; this.VelocityY = y; this.VelocityZ = z }
     // ---- turning (dynamic boxes and spheres turn: boxes tumble, balls roll; Rotates = false keeps one upright) ----
     bool Rotates {
         get { return __S3DBodyGet(this.h, 24) != 0.0 }
@@ -93,7 +93,7 @@ class Body {
     float AngularVelocityX : any { get { return S3D.Degrees(__S3DBodyGet(this.h, 25)) } set { __S3DBodySet(this.h, 25, S3D.Angle(value)) } }
     float AngularVelocityY : any { get { return S3D.Degrees(__S3DBodyGet(this.h, 26)) } set { __S3DBodySet(this.h, 26, S3D.Angle(value)) } }
     float AngularVelocityZ : any { get { return S3D.Degrees(__S3DBodyGet(this.h, 27)) } set { __S3DBodySet(this.h, 27, S3D.Angle(value)) } }
-    undefined SetAngularVelocity(float x : any, float y : any, float z : any) {
+    undefined SetAngularVelocity(defined float x : any, defined float y : any, defined float z : any) {
         __S3DBodySet(this.h, 25, S3D.Angle(x)); __S3DBodySet(this.h, 26, S3D.Angle(y)); __S3DBodySet(this.h, 27, S3D.Angle(z))
     }
     // How much the air slows its turning (default 0.3).
@@ -105,7 +105,7 @@ class Body {
     undefined Sleep() { __S3DBodySet(this.h, 29, 1.0) }
 
     // A push: its velocity changes by this much (a kick, a jump pad).
-    undefined Push(float x : any m/s, float y : any m/s, float z : any m/s) { this.VelocityX = this.VelocityX + x; this.VelocityY = this.VelocityY + y; this.VelocityZ = this.VelocityZ + z }
+    undefined Push(defined float x : any m/s, defined float y : any m/s, defined float z : any m/s) { this.VelocityX = this.VelocityX + x; this.VelocityY = this.VelocityY + y; this.VelocityZ = this.VelocityZ + z }
 
     // ---- what happened in the last step ----
     // Standing on something (a contact from below).
@@ -124,12 +124,12 @@ class Body {
     }
 
     // ---- the shape (fitted when it is made; set it yourself if it should be another size) ----
-    undefined SetBox(float width : any m, float height : any m, float depth : any m) {
+    undefined SetBox(defined float width : any m, defined float height : any m, defined float depth : any m) {
         __S3DBodySet(this.h, 8, S3D.Length(width) * 0.5); __S3DBodySet(this.h, 9, S3D.Length(height) * 0.5); __S3DBodySet(this.h, 10, S3D.Length(depth) * 0.5)
     }
     float Radius : m { get { return __S3DBodyGet(this.h, 8) * 1m } set { __S3DBodySet(this.h, 8, S3D.Length(value)) } }
     // Where the middle of the shape is, from the object's position.
-    undefined SetCenter(float x : any m, float y : any m, float z : any m) {
+    undefined SetCenter(defined float x : any m, defined float y : any m, defined float z : any m) {
         __S3DBodySet(this.h, 11, S3D.Length(x)); __S3DBodySet(this.h, 12, S3D.Length(y)); __S3DBodySet(this.h, 13, S3D.Length(z))
     }
 
@@ -139,7 +139,7 @@ class Body {
 
 // A figure that walks: an upright capsule (radius, height) that goes where Walk says, jumps, climbs steps and stands on slopes. Gravity pulls on it, walls stop it.
 class Character : Body {
-    construct(Object obj, float radius : any m = 30cm, float height : any m = 1.8m) : base(obj, 3, BodyShape.Capsule) {
+    construct(Object obj, defined float radius : any m = 30cm, defined float height : any m = 1.8m) : base(obj, 3, BodyShape.Capsule) {
         var r = S3D.Length(radius)
         __S3DBodySet(this.h, 8, r)
         var half = S3D.Length(height) * 0.5 - r
@@ -148,9 +148,9 @@ class Character : Body {
     }
 
     // The velocity it walks with (x and z; 0, 0: it stands). Call it whenever the input changes.
-    undefined Walk(float x : any m/s, float z : any m/s) { __S3DBodySet(this.h, 16, S3D.Speed(x)); __S3DBodySet(this.h, 17, S3D.Speed(z)) }
+    undefined Walk(defined float x : any m/s, defined float z : any m/s) { __S3DBodySet(this.h, 16, S3D.Speed(x)); __S3DBodySet(this.h, 17, S3D.Speed(z)) }
     // Jumps when it stands on the ground (true) - else nothing happens (false).
-    bool Jump(float speed : any m/s = 5m / 1s) {
+    bool Jump(defined float speed : any m/s = 5m / 1s) {
         if (!this.OnGround) { return false }
         __S3DBodySet(this.h, 18, S3D.Speed(speed))
         return true
@@ -167,7 +167,7 @@ class Joint {
     int scene
     int id
 
-    construct(Scene scene, int kind, Object a, Object b, float x, float y, float z, float length, float stiffness, float damping) {
+    construct(Scene scene, defined int kind, Object a, Object b, defined float x, defined float y, defined float z, defined float length, defined float stiffness, defined float damping) {
         var bh = 0
         if (b != undefined) { bh = b.h }
         this.id = __S3DJoint(scene.h, kind, a.h, bh, x, y, z, length, stiffness, damping)
@@ -175,19 +175,19 @@ class Joint {
         this.scene = scene.h
     }
 
-    static Joint Rope(Scene scene, Object a, Object b, float length : any m = 0m) { return new Joint(scene, 0, a, b, 0.0, 0.0, 0.0, S3D.Length(length), 0.0, 0.0) }
+    static Joint Rope(Scene scene, Object a, Object b, defined float length : any m = 0m) { return new Joint(scene, 0, a, b, 0.0, 0.0, 0.0, S3D.Length(length), 0.0, 0.0) }
     // (to a point of the world: a lamp on its cord, a swing)
-    static Joint Rope(Scene scene, Object a, float x : any m, float y : any m, float z : any m, float length : any m = 0m) {
+    static Joint Rope(Scene scene, Object a, defined float x : any m, defined float y : any m, defined float z : any m, defined float length : any m = 0m) {
         return new Joint(scene, 0, a, undefined, S3D.Length(x), S3D.Length(y), S3D.Length(z), S3D.Length(length), 0.0, 0.0)
     }
-    static Joint Rod(Scene scene, Object a, Object b, float length : any m = 0m) { return new Joint(scene, 1, a, b, 0.0, 0.0, 0.0, S3D.Length(length), 0.0, 0.0) }
-    static Joint Rod(Scene scene, Object a, float x : any m, float y : any m, float z : any m, float length : any m = 0m) {
+    static Joint Rod(Scene scene, Object a, Object b, defined float length : any m = 0m) { return new Joint(scene, 1, a, b, 0.0, 0.0, 0.0, S3D.Length(length), 0.0, 0.0) }
+    static Joint Rod(Scene scene, Object a, defined float x : any m, defined float y : any m, defined float z : any m, defined float length : any m = 0m) {
         return new Joint(scene, 1, a, undefined, S3D.Length(x), S3D.Length(y), S3D.Length(z), S3D.Length(length), 0.0, 0.0)
     }
-    static Joint Spring(Scene scene, Object a, Object b, float stiffness = 50.0, float damping = 2.0, float length : any m = 0m) {
+    static Joint Spring(Scene scene, Object a, Object b, defined float stiffness = 50.0, defined float damping = 2.0, defined float length : any m = 0m) {
         return new Joint(scene, 2, a, b, 0.0, 0.0, 0.0, S3D.Length(length), stiffness, damping)
     }
-    static Joint Spring(Scene scene, Object a, float x : any m, float y : any m, float z : any m, float stiffness = 50.0, float damping = 2.0, float length : any m = 0m) {
+    static Joint Spring(Scene scene, Object a, defined float x : any m, defined float y : any m, defined float z : any m, defined float stiffness = 50.0, defined float damping = 2.0, defined float length : any m = 0m) {
         return new Joint(scene, 2, a, undefined, S3D.Length(x), S3D.Length(y), S3D.Length(z), S3D.Length(length), stiffness, damping)
     }
 
@@ -216,7 +216,7 @@ class extends Scene {
     float Gravity : m/s^2 { get { return __S3DGetF(this.h, 4) * 1m / 1s / 1s } set { __S3DSetF(this.h, 4, value / (1m / 1s / 1s)) } }
 
     // The first body a ray meets from (x, y, z) in the direction (dx, dy, dz), up to maxDistance - undefined when it meets none (triggers are not met).
-    any Raycast(float x : any m, float y : any m, float z : any m, float dx, float dy, float dz, float maxDistance : any m = 1000m) {
+    any Raycast(defined float x : any m, defined float y : any m, defined float z : any m, defined float dx, defined float dy, defined float dz, defined float maxDistance : any m = 1000m) {
         var h = __S3DRaycast(this.h, S3D.Length(x), S3D.Length(y), S3D.Length(z), dx, dy, dz, S3D.Length(maxDistance))
         if (h == 0) { return undefined }
         var hit = new RayHit()

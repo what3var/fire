@@ -33,7 +33,7 @@ namespace Http {
         }
 
         // The value of a hexadecimal digit (character code), -1 if it is none.
-        static int HexDigit(int c) {
+        static int HexDigit(defined int c) {
             if (c >= 48 && c <= 57) { return c - 48 }
             if (c >= 97 && c <= 102) { return c - 87 }
             if (c >= 65 && c <= 70) { return c - 55 }
@@ -58,7 +58,7 @@ namespace Http {
 
     // Percent encoding of URLs (UTF-8).
     class Uri {
-        static string Digit(int d) {
+        static string Digit(defined int d) {
             if (d < 10) { return "" + d }
             if (d == 10) { return "A" }
             if (d == 11) { return "B" }
@@ -115,10 +115,10 @@ namespace Http {
     class Url {
         string scheme
         string host
-        int port
+        defined int port
         string path
 
-        construct(string scheme, string host, int port, string path) {
+        construct(string scheme, string host, defined int port, string path) {
             this.scheme = scheme
             this.host = host
             this.port = port
@@ -162,8 +162,9 @@ namespace Http {
                     port = Http.Num.Parse(authority.Substring(colon + 1))
                 }
             }
-            if (host.Length == 0 || port < 1 || port > 65535) { throw new Http.HttpException("Bad host or port in '" + text + "'.", 1) }
-            return new Http.Url(scheme, host, port, path)
+            // (a port that is no number - `host:abc` - is undefined: the same error)
+            if (host.Length == 0 || port == undefined || port < 1 || port > 65535) { throw new Http.HttpException("Bad host or port in '" + text + "'.", 1) }
+            return new Http.Url(scheme, host, trust port, path)
         }
 
         // The value of the Host header.
@@ -250,7 +251,7 @@ namespace Http {
         }
 
         // Name and value of field i (0 .. Count - 1) as "Name: value".
-        string Line(int i) { return this.names[i] + ": " + this.values[i] }
+        string Line(defined int i) { return this.names[i] + ": " + this.values[i] }
 
         // All fields as "Name: value\r\n" lines.
         string ToString() {
@@ -262,7 +263,7 @@ namespace Http {
 
     class Status {
         // The standard reason phrase of a status code.
-        static string Reason(int code) {
+        static string Reason(defined int code) {
             if (code == 100) { return "Continue" }
             if (code == 200) { return "OK" }
             if (code == 201) { return "Created" }
@@ -296,7 +297,7 @@ namespace Http {
         }
 
         // true for the codes whose message has no body (1xx, 204, 304).
-        static bool NoBody(int code) { return code < 200 || code == 204 || code == 304 }
+        static bool NoBody(defined int code) { return code < 200 || code == 204 || code == 304 }
     }
 
     // A response: what the client got, and what a route returns.
@@ -315,7 +316,7 @@ namespace Http {
         Http.Headers upgradeHeaders
         string upgradeTarget
 
-        construct(int status = 200, any body = undefined) {
+        construct(defined int status = 200, any body = undefined) {
             this.status = status
             this.reason = Http.Status.Reason(status)
             this.headers = new Http.Headers()
@@ -330,7 +331,7 @@ namespace Http {
 
         // A response whose body is read from `stream` while it is sent (a file, a pipe); the response owns the stream and the server closes it. Without a
         // `length` the body goes chunked.
-        static Http.Response FromStream(IO.IStream stream, string contentType = "application/octet-stream", int length = -1, int status = 200) {
+        static Http.Response FromStream(IO.IStream stream, string contentType = "application/octet-stream", int length = -1, defined int status = 200) {
             var r = new Http.Response(status)
             r.stream = take stream
             r.streamLength = length
@@ -346,24 +347,24 @@ namespace Http {
         }
 
         // A text response (default `text/plain; charset=utf-8`).
-        static Http.Response FromText(string text, int status = 200, string contentType = "text/plain; charset=utf-8") {
+        static Http.Response FromText(string text, defined int status = 200, string contentType = "text/plain; charset=utf-8") {
             var r = new Http.Response(status, text)
             r.headers.Set("Content-Type", contentType)
             return r
         }
 
-        static Http.Response FromHtml(string html, int status = 200) { return Http.Response.FromText(html, status, "text/html; charset=utf-8") }
+        static Http.Response FromHtml(string html, defined int status = 200) { return Http.Response.FromText(html, status, "text/html; charset=utf-8") }
 
-        static Http.Response FromJson(string json, int status = 200) { return Http.Response.FromText(json, status, "application/json") }
+        static Http.Response FromJson(string json, defined int status = 200) { return Http.Response.FromText(json, status, "application/json") }
 
         // A response with only a status line and an explanation as text.
-        static Http.Response Error(int status, string message = undefined) {
+        static Http.Response Error(defined int status, string message = undefined) {
             if (message == undefined) { message = Http.Status.Reason(status) }
             return Http.Response.FromText(message, status)
         }
 
         // 303/302 to another address.
-        static Http.Response Redirect(string location, int status = 302) {
+        static Http.Response Redirect(string location, defined int status = 302) {
             var r = new Http.Response(status)
             r.headers.Set("Location", location)
             return r
@@ -465,7 +466,7 @@ namespace Http {
         }
 
         // The next line without its line break, undefined at the end of the stream (a line longer than `limit` bytes is an error, code 4).
-        string ReadLine(int limit = 8192) {
+        string ReadLine(defined int limit = 8192) {
             IO.MemoryStream pending = undefined
             var total = 0
             while (this.Fill()) {
@@ -503,7 +504,7 @@ namespace Http {
         }
 
         // Exactly `count` bytes; Http.HttpException (code 2) if the stream ends first.
-        byte[] ReadExact(int count) {
+        byte[] ReadExact(defined int count) {
             var result = new byte[count]
             var done = 0
             while (done < count && this.pos < this.len) {
@@ -520,7 +521,7 @@ namespace Http {
         }
 
         // Everything up to the end of the stream (an error of code 4 beyond `limit` bytes).
-        byte[] ReadToEnd(int limit) {
+        byte[] ReadToEnd(defined int limit) {
             var sink = new IO.MemoryStream()
             if (this.pos < this.len) {
                 sink.Write(this.chunk, this.pos, this.len - this.pos)
@@ -559,7 +560,7 @@ namespace Http {
         }
 
         // The body of a message: chunked, with a Content-Length, or (a response only: `untilClose`) up to the end of the connection.
-        static byte[] ReadBody(Reader reader, Headers headers, bool untilClose, int limit) {
+        static byte[] ReadBody(Reader reader, Headers headers, bool untilClose, defined int limit) {
             var te = headers.Get("Transfer-Encoding")
             if (te != undefined && te.ToLower().IndexOf("chunked") >= 0) {
                 var sink = new IO.MemoryStream()
@@ -604,7 +605,7 @@ namespace Http {
 
     // Opens the connection to a URL (the scheme decides: http is a TCP connection, https a TLS connection over it).
     class Transport {
-        static Net.IConnection Open(Url url, int timeout, Tls.Options tls = undefined) {
+        static Net.IConnection Open(Url url, defined int timeout, Tls.Options tls = undefined) {
             if (url.scheme == "http") {
                 var tcp = new Net.TcpClient(url.host, url.port, timeout)
                 tcp.NoDelay = true
@@ -772,7 +773,7 @@ namespace Http {
         bool stopped
 
         // new Http.Server("127.0.0.1", 8080) - host "" listens on every interface, port 0 takes a free port (see Port).
-        construct(string host, int port, int backlog = 16) {
+        construct(string host, defined int port, defined int backlog = 16) {
             this.routes = new List()
             this.fallback = undefined
             this.onError = undefined
@@ -1020,7 +1021,7 @@ namespace Http {
         bool stopped
         int served
 
-        construct(string host, int port, int backlog = 128) {
+        construct(string host, defined int port, defined int backlog = 128) {
             this.chain = new List()
             this.settings = new Http.ServerSettings()
             this.tlsServer = undefined
@@ -1237,7 +1238,7 @@ namespace Http {
             response.stream.Close()
         }
 
-        static string Hex(int n) {
+        static string Hex(defined int n) {
             var digits = "0123456789abcdef"
             if (n == 0) { return "0" }
             var t = ""
@@ -1263,7 +1264,7 @@ namespace Http {
 
         override bool CanRead { get { return true } }
 
-        override int Read(byte buffer[], int offset, int count) {
+        override int Read(byte buffer[], defined int offset, defined int count) {
             if (this.left <= 0) { return 0 }
             if (count > this.left) { count = this.left }
             var n = this.inner.Read(buffer, offset, count)
@@ -1310,7 +1311,7 @@ namespace Http {
             return days[utc.DayOfWeek] + ", " + Http.Mime.Two(utc.Day) + " " + months[utc.Month - 1] + " " + utc.Year + " " + Http.Mime.Two(utc.Hour) + ":" + Http.Mime.Two(utc.Minute) + ":" + Http.Mime.Two(utc.Second) + " GMT"
         }
 
-        static string Two(int n) {
+        static string Two(defined int n) {
             if (n < 10) { return "0" + n }
             return "" + n
         }
@@ -1394,7 +1395,7 @@ namespace Http {
         }
 
         // The answer for a file: 200 (or 206 for a range, 304 when the client has it, 416 for a range outside the file).
-        static Http.Response Serve(string file, Http.Request request, int maxAge = -1) {
+        static Http.Response Serve(string file, Http.Request request, defined int maxAge = -1) {
             int size = IO.File.Size(file)
             DateTime modified = IO.File.GetLastWriteTimeUtc(file)
             var tag = "\"" + size + "-" + modified.Ticks + "\""
@@ -1437,7 +1438,7 @@ namespace Http {
             var stream = new IO.FileStream(file, IO.FileMode.Open, IO.FileAccess.Read)
             Http.Response r = undefined
             if (partial) {
-                stream.Seek(first)
+                stream.Seek(trust first)   // (partial: first >= 0, a number)
                 var part = new Http.LimitedStream(take stream, upto - first + 1)
                 r = Http.Response.FromStream(take part, type, upto - first + 1, 206)
                 r.headers.Set("Content-Range", "bytes " + first + "-" + upto + "/" + size)
@@ -1449,7 +1450,7 @@ namespace Http {
             return r
         }
 
-        static undefined Stamp(Http.Response r, string tag, string lastModified, int maxAge) {
+        static undefined Stamp(Http.Response r, string tag, string lastModified, defined int maxAge) {
             r.headers.Set("ETag", tag)
             r.headers.Set("Last-Modified", lastModified)
             if (maxAge >= 0) { r.headers.Set("Cache-Control", "max-age=" + maxAge) }
@@ -1540,7 +1541,7 @@ namespace Http {
         int timeoutTicks
         int lastSweep
 
-        construct(Http.ISessionStore store, int timeoutMs) {
+        construct(Http.ISessionStore store, defined int timeoutMs) {
             this.entries = new Dictionary<string, Http.SessionEntry>()
             this.store = take store
             this.timeoutTicks = timeoutMs * 10000
@@ -1641,7 +1642,7 @@ namespace Http {
         Http.SessionTable table
         bool stopped
 
-        construct(Http.ISessionStore store, int timeoutMs) {
+        construct(Http.ISessionStore store, defined int timeoutMs) {
             this.table = new Http.SessionTable(take store, timeoutMs)
             this.stopped = false
         }
@@ -1716,7 +1717,7 @@ namespace Http {
         int timeoutMs
 
         // `timeoutMs` without a request until a session ends (default 20 min), `store` where they are kept (default: in memory).
-        construct(int timeoutMs = 1200000, Http.ISessionStore store = undefined, string cookie = "fire-session", bool secure = false) {
+        construct(defined int timeoutMs = 1200000, Http.ISessionStore store = undefined, string cookie = "fire-session", bool secure = false) {
             this.cookie = cookie
             this.secure = secure
             this.timeoutMs = timeoutMs
@@ -1728,7 +1729,7 @@ namespace Http {
         }
 
         // (the thread of the home: makes the actor, hands its reference back, then serves its messages until Stop)
-        static undefined StartHome(Http.ISessionStore store, int timeoutMs, Completion back) {
+        static undefined StartHome(Http.ISessionStore store, defined int timeoutMs, Completion back) {
             fire handover store handover back taking timeoutMs {
                 var home = new Http.SessionHome(take store, timeoutMs)
                 back.Set(home)
@@ -1856,7 +1857,7 @@ namespace Http {
         int CloseCode { get { return this.closeCode } }
 
         // ws://host:port/path (wss:// over TLS): the handshake as a client.
-        static Http.WebSocket Connect(string url, int timeout = 10000, Http.Headers headers = undefined) {
+        static Http.WebSocket Connect(string url, defined int timeout = 10000, Http.Headers headers = undefined) {
             var u = Http.Url.Parse(url.Replace("ws://", "http://").Replace("wss://", "https://"))
             Net.IConnection c = Http.Transport.Open(u, timeout)
             c.ReadTimeout = timeout
@@ -1943,14 +1944,14 @@ namespace Http {
         }
 
         // The next text message (a binary one as UTF-8), undefined when the connection is closed or the time ran out.
-        string ReceiveText(int timeout = -1) {
+        string ReceiveText(defined int timeout = -1) {
             var m = this.Receive(timeout)
             if (m == undefined) { return undefined }
             return m.Text()
         }
 
         // Ends the connection with a close frame (1000 normal) and waits briefly for the answer.
-        undefined Close(int code = 1000, string reason = "") {
+        undefined Close(defined int code = 1000, string reason = "") {
             if (!this.open) { return }
             var r = IO.Utf8.GetBytes(reason)
             var payload = new byte[2 + r.length]
@@ -1997,7 +1998,7 @@ namespace Http {
         }
 
         // One frame: a client masks it (RFC 6455 5.3), a server does not.
-        undefined Frame(int opcode, byte data[]) {
+        undefined Frame(defined int opcode, byte data[]) {
             var n = data.length
             var headLen = 2
             if (n >= 126 && n < 65536) { headLen = 4 } else if (n >= 65536) { headLen = 10 }

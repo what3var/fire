@@ -202,7 +202,7 @@ class Linq {
         return query
     }
 
-    static Query<int> Range(int start, int count) {
+    static Query<int> Range(defined int start, defined int count) {
         return new Query(() => new LinqRangeEnumerator((taking start), (taking count)))
     }
 
@@ -296,11 +296,11 @@ class Query<T> : IEnumerable<T> {
         var f = this.factory
         return new Query(() => new LinqSelectManyEnumerator((taking f)(), (taking fn)))
     }
-    Query<T> Take(int n) {
+    Query<T> Take(defined int n) {
         var f = this.factory
         return new Query(() => new LinqTakeEnumerator((taking f)(), (taking n)))
     }
-    Query<T> Skip(int n) {
+    Query<T> Skip(defined int n) {
         var f = this.factory
         return new Query(() => new LinqSkipEnumerator((taking f)(), (taking n)))
     }
@@ -386,7 +386,7 @@ class Query<T> : IEnumerable<T> {
         if (!found) { throw new LinqEmptyException("The sequence contains no element") }
         return last
     }
-    T ElementAt(int index) {
+    T ElementAt(defined int index) {
         var i = 0
         foreach (x in this) {
             if (i == index) { return x }
@@ -479,8 +479,8 @@ class extends List {
     Query SelectProperty(lambda property<class> sel) { return Linq.From(this).SelectProperty(sel) }
     Query SelectMember(lambda member<class> sel) { return Linq.From(this).SelectMember(sel) }
     Query SelectMany(lambda<T> fn) { return Linq.From(this).SelectMany(fn) }
-    Query<T> Take(int n) { return Linq.From(this).Take(n) }
-    Query<T> Skip(int n) { return Linq.From(this).Skip(n) }
+    Query<T> Take(defined int n) { return Linq.From(this).Take(n) }
+    Query<T> Skip(defined int n) { return Linq.From(this).Skip(n) }
     Query<T> TakeWhile(bool lambda<T> pred) { return Linq.From(this).TakeWhile(pred) }
     Query<T> SkipWhile(bool lambda<T> pred) { return Linq.From(this).SkipWhile(pred) }
     Query<T> Concat(IEnumerable<T> other) { return Linq.From(this).Concat(other) }
@@ -495,7 +495,7 @@ class extends List {
     T FirstOrDefault(T fallback) { return Linq.From(this).FirstOrDefault(fallback) }
     T FirstOrDefault(bool lambda<T> pred, T fallback) { return Linq.From(this).FirstOrDefault(pred, fallback) }
     T Last() { return Linq.From(this).Last() }
-    T ElementAt(int index) { return Linq.From(this).ElementAt(index) }
+    T ElementAt(defined int index) { return Linq.From(this).ElementAt(index) }
     bool Any() { return Linq.From(this).Any() }
     bool Any(bool lambda<T> pred) { return Linq.From(this).Any(pred) }
     bool All(bool lambda<T> pred) { return Linq.From(this).All(pred) }
@@ -523,8 +523,8 @@ class extends array {
     Query SelectProperty(lambda property<class> sel) { return Linq.From(this).SelectProperty(sel) }
     Query SelectMember(lambda member<class> sel) { return Linq.From(this).SelectMember(sel) }
     Query SelectMany(lambda<any> fn) { return Linq.From(this).SelectMany(fn) }
-    Query<any> Take(int n) { return Linq.From(this).Take(n) }
-    Query<any> Skip(int n) { return Linq.From(this).Skip(n) }
+    Query<any> Take(defined int n) { return Linq.From(this).Take(n) }
+    Query<any> Skip(defined int n) { return Linq.From(this).Skip(n) }
     Query<any> TakeWhile(bool lambda<any> pred) { return Linq.From(this).TakeWhile(pred) }
     Query<any> SkipWhile(bool lambda<any> pred) { return Linq.From(this).SkipWhile(pred) }
     Query<any> Concat(IEnumerable<any> other) { return Linq.From(this).Concat(other) }
@@ -539,7 +539,7 @@ class extends array {
     any FirstOrDefault(any fallback) { return Linq.From(this).FirstOrDefault(fallback) }
     any FirstOrDefault(bool lambda<any> pred, any fallback) { return Linq.From(this).FirstOrDefault(pred, fallback) }
     any Last() { return Linq.From(this).Last() }
-    any ElementAt(int index) { return Linq.From(this).ElementAt(index) }
+    any ElementAt(defined int index) { return Linq.From(this).ElementAt(index) }
     bool Any() { return Linq.From(this).Any() }
     bool Any(bool lambda<any> pred) { return Linq.From(this).Any(pred) }
     bool All(bool lambda<any> pred) { return Linq.From(this).All(pred) }

@@ -16,16 +16,16 @@ class Terrain : Object {
     int rows
     TerrainMode mode
 
-    construct(any heights, int columns, int rows, float cell : any m = 1m, float step : any m = 10cm, TerrainMode mode = TerrainMode.Smooth) : base() {
+    construct(any heights, defined int columns, defined int rows, defined float cell : any m = 1m, defined float step : any m = 10cm, TerrainMode mode = TerrainMode.Smooth) : base() {
         this.Build(heights, columns, rows, S3D.Length(cell), S3D.Length(step), mode)
     }
 
     // A terrain from a picture (a framebuffer in the colour mode Rgba): one height per pixel, its brightness (0..255).
-    static Terrain FromImage(Framebuffer image, float cell : any m = 1m, float step : any m = 10cm, TerrainMode mode = TerrainMode.Smooth) {
+    static Terrain FromImage(Framebuffer image, defined float cell : any m = 1m, defined float step : any m = 10cm, TerrainMode mode = TerrainMode.Smooth) {
         return new Terrain(image.ReadBytes(), image.Width(), image.Height(), cell, step, mode)
     }
 
-    undefined Build(any heights, int columns, int rows, float cell, float step, TerrainMode mode) {
+    undefined Build(any heights, int columns, int rows, defined float cell, defined float step, TerrainMode mode) {
         if (!__S3DTerrain(this.h, heights, columns, rows, cell, step, mode!int)) {
             throw new Scene3DException("The heights do not make a terrain (columns * rows heights - at least 2 x 2 for a smooth one - as bytes, bytes R, G, B, A, or an array of numbers; a cell larger than 0).")
         }
@@ -35,7 +35,7 @@ class Terrain : Object {
     }
 
     // The heights again (the same number of them, or another grid): the mesh is made anew.
-    undefined SetHeights(any heights, int columns, int rows, float cell : any m = 1m, float step : any m = 10cm) {
+    undefined SetHeights(any heights, defined int columns, defined int rows, defined float cell : any m = 1m, defined float step : any m = 10cm) {
         this.Build(heights, columns, rows, S3D.Length(cell), S3D.Length(step), this.mode)
     }
 
@@ -45,7 +45,7 @@ class Terrain : Object {
 
     // The height of the ground (its y in the world) below the point (x, z) of the world, or undefined outside the terrain. The terrain may be moved, scaled and turned around
     // the vertical axis. For a figure that walks on it: figure.Y = terrain.HeightAt(figure.X, figure.Z).
-    any HeightAt(float x : any m, float z : any m) {
+    any HeightAt(defined float x : any m, defined float z : any m) {
         any y = __S3DTerrainHeight(this.h, S3D.Length(x), S3D.Length(z))
         if (y == undefined) { return undefined }
         return y * 1m

@@ -15,7 +15,7 @@
 class NetChannelPart {
     static any Queue() { return new Channel<string>(64) }
     static any Signal() { return new Channel<int>(1) }
-    static any Inbox(int capacity) { return new Channel<any>(capacity) }
+    static any Inbox(defined int capacity) { return new Channel<any>(capacity) }
 }
 
 // The lines of a connection: the bytes that came, cut at "\n" (a byte that is never part of another UTF-8 character).
@@ -26,7 +26,7 @@ class NetChannelLines {
         this.data = new byte[4096]
         this.count = 0
     }
-    undefined Feed(byte buffer[], int n) {
+    undefined Feed(byte buffer[], defined int n) {
         if (this.count + n > this.data.length) {
             int size = this.data.length * 2
             while (size < this.count + n) { size = size * 2 }
@@ -55,7 +55,7 @@ class NetChannelLines {
 class NetChannelWire {
     // Up to buffer.length bytes; 0 when the other side closed, the connection broke or the queue `inbox` was closed (the end of the program closed
     // the channels of the main program: nobody will receive any more).
-    static int Read(int handle, byte buffer[], any inbox) {
+    static int Read(defined int handle, byte buffer[], any inbox) {
         var tries = 0
         while (true) {
             var n = __NetRecv(handle, buffer, 0, buffer.length, 0)
@@ -66,7 +66,7 @@ class NetChannelWire {
         }
     }
     // The line and "\n"; false when the connection broke.
-    static bool Write(int handle, string line) {
+    static bool Write(defined int handle, string line) {
         var bytes = IO.Utf8.GetBytes(line + "\n")
         var done = 0
         while (done < bytes.length) {
@@ -97,7 +97,7 @@ namespace Net {
         Net.TcpListener listener
 
         /// <summary>Waits for channels on `port` ("" listens on every interface; port 0 takes a free one - see Port).</summary>
-        construct(string host, int port) { this.listener = new Net.TcpListener(host, port) }
+        construct(string host, defined int port) { this.listener = new Net.TcpListener(host, port) }
 
         int Port { get { return this.listener.Port } }
 
@@ -118,12 +118,12 @@ namespace Net {
         any inbox
         any outbox
         any writerDone
-        int handle
+        defined int handle
         int nextId
         bool sendClosed
 
         /// <summary>Connects (the limit: 10 seconds unless given; undefined: none).</summary>
-        construct(string host, int port, any timeout = 10000) {
+        construct(string host, defined int port, any timeout = 10000) {
             var client = new Net.TcpClient(host, port, timeout)
             int h = client.handle
             client.handle = -1
@@ -132,7 +132,7 @@ namespace Net {
         }
 
         /// <summary>A connection a listener accepted (do not call this yourself).</summary>
-        construct(int handle) { this.Start(handle, 16) }
+        construct(defined int handle) { this.Start(handle, 16) }
 
         destruct() {
             if (this.handle < 0) { return }
@@ -142,7 +142,7 @@ namespace Net {
             this.handle = -1
         }
 
-        undefined Start(int handle, int capacity) {
+        undefined Start(defined int handle, defined int capacity) {
             this.handle = handle
             this.nextId = 0
             this.sendClosed = false

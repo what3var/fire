@@ -5,7 +5,7 @@
 namespace Tls {
     // The handshake or the protocol failed (code 14).
     class TlsException : Net.NetException {
-        construct(string message, int code = 14) : base(message, code) { }
+        construct(string message, defined int code = 14) : base(message, code) { }
     }
 
     // The certificate of the other side was not accepted (code 15): expired, not signed by a trusted authority, not for this host name.
@@ -27,7 +27,7 @@ namespace Tls {
             throw new Net.NetException(message, code)
         }
 
-        static int Handle(int handle) {
+        static int Handle(defined int handle) {
             if (handle < 0) { Throw() }
             return handle
         }
@@ -67,7 +67,7 @@ namespace Tls {
         int writeLimit
 
         // A TLS connection to host:port in one call (the TCP connection is made and the handshake done).
-        static Tls.Stream Connect(string host, int port, Tls.Options options = undefined, any timeout = 10000) {
+        static Tls.Stream Connect(string host, defined int port, Tls.Options options = undefined, any timeout = 10000) {
             var tcp = new Net.TcpClient(host, port, timeout)
             tcp.NoDelay = true
             return new Tls.Stream(tcp, host, options, timeout)
@@ -152,7 +152,7 @@ namespace Tls {
         }
 
         // Up to `count` bytes (at least one unless the other side has ended the connection: then 0). Waits up to ReadTimeout, then Net.TimeoutException.
-        override int Read(byte buffer[], int offset, int count) {
+        override int Read(byte buffer[], defined int offset, defined int count) {
             this.Check()
             var deadline = Net.Clock.Deadline(this.readLimit)
             var tries = 0
@@ -167,7 +167,7 @@ namespace Tls {
         }
 
         // All `count` bytes.
-        override int Write(byte buffer[], int offset, int count) {
+        override int Write(byte buffer[], defined int offset, defined int count) {
             this.Check()
             var done = 0
             while (done < count) {
