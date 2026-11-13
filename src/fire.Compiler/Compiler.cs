@@ -634,7 +634,7 @@ namespace fire.Compiler
                 };
             }
 
-            return new CompiledProgram { TopLevel = compiler._chunk, Classes = classes, ExternSignatures = externSignatures };
+            return new CompiledProgram { TopLevel = compiler._chunk, Classes = classes, ExternSignatures = externSignatures, Enums = new Dictionary<string, EnumType>(compiler._enumTypes, StringComparer.Ordinal) };
         }
 
         // -----------------------------------------------------------
