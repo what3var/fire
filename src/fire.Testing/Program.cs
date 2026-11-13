@@ -31335,6 +31335,97 @@ else
             """)).ToArray();
     }
 
+    // Navigation in queries (x.customer.name, two hops, OrderBy, == undefined, inside Any) and the objects a session reaches through relations with a key of
+    // their own (new when the table has no row with it, else a row that is there - a child moved into another list)
+    natCases = natCases.Append(("Data/Navigation: Bedingungen ueber [BelongsTo]-Felder (ein und zwei Spruenge, Enum, StartsWith, OrderBy, == undefined, in Any) als Unterabfragen; Objekte mit eigenem Schluessel ueber Beziehungen (neu nur ohne Zeile, sonst vorhanden; ein vorhandenes Kind wechselt die Liste) - SQLite und In-Memory", """
+            #import "data.sqlite"
+            #import "data.memory"
+            enum Level { Low, High }
+            [Table "countries"]
+            class Country {
+                [Key] string code
+                string name
+                construct() { }
+            }
+            [Table "customers"]
+            class Customer {
+                [Key] int id
+                string name
+                Level level
+                string countryCode
+                [BelongsTo "countryCode"] Country country
+                [HasMany "customerId"] List<Purchase> purchases
+                construct() { }
+            }
+            [Table "purchases"]
+            class Purchase {
+                [Key] int id
+                float total
+                int customerId
+                [BelongsTo "customerId"] Customer customer
+                construct() { }
+            }
+            class App {
+                static undefined Run(string url) {
+                    print("== " + url)
+                    var db = new Data.Connection(url)
+                    db.Ensure<Country>()
+                    db.Ensure<Customer>()
+                    db.Ensure<Purchase>()
+                    // (a session: objects with a key of their own reached through relations)
+                    var s = db.Session()
+                    var de = new Country()
+                    de.code = "de"
+                    de.name = "Germany"
+                    var ada = new Customer()
+                    ada.name = "Ada"
+                    ada.level = Level.High
+                    ada.country = de
+                    var p1 = new Purchase()
+                    p1.total = 10.0
+                    p1.customer = ada
+                    s.Add(p1)
+                    print("saved " + s.Save() + " countries " + db.Scalar("select count(*) from countries") + " customers " + db.Scalar("select count(*) from customers"))
+                    // (the same country again in a new session: its row is there - not inserted again)
+                    var s2 = db.Session()
+                    var de2 = new Country()
+                    de2.code = "de"
+                    de2.name = "Germany"
+                    var bob = new Customer()
+                    bob.name = "Bob"
+                    bob.level = Level.Low
+                    bob.country = de2
+                    var p2 = new Purchase()
+                    p2.total = 99.0
+                    p2.customer = bob
+                    s2.Add(p2)
+                    print("saved " + s2.Save() + " countries " + db.Scalar("select count(*) from countries") + " customers " + db.Scalar("select count(*) from customers"))
+                    // (a child whose row is there, put into the list of another parent: its foreign key moves)
+                    var s3 = db.Session()
+                    Customer a = s3.Find<Customer>(ada.id)
+                    var moved = new Purchase()
+                    moved.id = p2.id
+                    moved.total = 99.0
+                    moved.customerId = p2.customerId
+                    a.purchases = new List<Purchase>()
+                    a.purchases.Add(moved)
+                    print("moved " + s3.Save() + " purchases of ada " + db.Scalar("select count(*) from purchases where customerId = ?", [ada.id]) + " rows " + db.Scalar("select count(*) from purchases"))
+                    // (navigation in queries)
+                    var q = db.From<Purchase>().Where(x => x.customer.name == "Ada")
+                    print(q.ToSql())
+                    print("by name " + q.Count() + " high " + db.From<Purchase>().Where(x => x.customer.level == Level.High).Count() + " starts " + db.From<Purchase>().Where(x => x.customer.name.StartsWith("B")).Count())
+                    print("two hops " + db.From<Purchase>().Where(x => x.customer.country.name == "Germany").Count() + " " + db.From<Purchase>().Where(x => x.customer.country.name == "Germany").ToSql())
+                    List<Purchase> ordered = db.From<Purchase>().OrderBy(x => x.customer.name).ToList()
+                    print("ordered " + ordered[0].total + " " + ordered[1].total + " none " + db.From<Purchase>().Where(x => x.customer == undefined).Count())
+                    print("in any " + db.From<Customer>().Where(c => c.purchases.Any(p => p.customer.country.code == "de")).Count())
+                    try { db.From<Customer>().Where(c => c.purchases.Any(p => p.customer.purchases == undefined)).Count() } catch (Data.NotTranslatableException e) { print("list: " + e.message) }
+                    db.Close()
+                }
+            }
+            App.Run("sqlite::memory:")
+            App.Run("memory:")
+            """)).ToArray();
+
     // A data model (.fdata, docs/data/designer.md): the code forge generates from it - entities with the attributes of the mapping, an enum, a record as JSON,
     // relations on both sides, Model and Context - used on SQLite and the in-memory database
     {
@@ -31393,13 +31484,12 @@ else
                     p.categories.Add(c)
                     s.Add(ada)
                     s.Add(p)
-                    s.Add(c)
                     print("saved " + s.Save())
                     Shop.Customer back = ctx.Customers.Where(x => x.fullName == "Ada").Include(x => x.purchases).First()
                     print(back.fullName + " " + back.level + " " + back.address.city + " " + back.address.zipCode + " purchases " + back.purchases.Count + " version " + back.version)
                     print("raw " + db.Scalar("select full_name from customers") + " " + db.Scalar("select customer_id from purchases"))
                     int who = back.id
-                    print("books " + ctx.Purchases.Where(x => x.categories.Any(k => k.code == "books")).Count() + " by " + ctx.Purchases.Where(x => x.customerId == taking who).Count())
+                    print("books " + ctx.Purchases.Where(x => x.categories.Any(k => k.code == "books")).Count() + " by " + ctx.Purchases.Where(x => x.customerId == taking who).Count() + " via " + ctx.Purchases.Where(x => x.customer.fullName == "Ada").Count())
                     print("model " + Shop.Model.Types().length + " " + Shop.Model.Tables()[0] + " " + Shop.Model.Types()[2])
                     db.Close()
                 }

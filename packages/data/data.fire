@@ -1000,6 +1000,15 @@ namespace Data {
             e.lent = true
             return e
         }
+        // (an object of somebody else whose row is there: read now - what changes from here on is written)
+        static Data.SessionEntry LentRead(any obj, string typeName, string keyText, any snapshot) {
+            var e = new Data.SessionEntry(undefined, typeName, 0)
+            e.obj = obj
+            e.lent = true
+            e.keyText = keyText
+            e.snapshot = take snapshot
+            return e
+        }
     }
 
     /// <summary>A unit of work (`db.Session()`): the objects it reads (Find, From) and gets (Add, Attach) are its own - one object per row, however often it
@@ -1256,13 +1265,10 @@ namespace Data {
                 for (var k = 0; k < map.relations.Count; k++) {
                     Data.RelationMap r = map.relations[k]
                     if (!r.many && !r.join) {
-                        // (an object it points to that the session does not know: new when it has no key yet)
+                        // (an object it points to that the session does not know: inserted when it is new - else its row is there)
                         any target = Reflect.Get(e.obj, r.field)
                         if (target == undefined || this.EntryOf(target) != undefined) { continue }
-                        var tmap = this.db.Map(r.target)
-                        any key = undefined
-                        if (tmap.key != undefined) { key = Reflect.Get(target, tmap.key.field) }
-                        if (key == undefined || (tmap.key.generated && key == 0)) { this.entries.Add(Data.SessionEntry.Lent(target, r.target)) }
+                        if (this.IsNew(target, r.target)) { this.entries.Add(Data.SessionEntry.Lent(target, r.target)) }
                         continue
                     }
                     any list = Reflect.Get(e.obj, r.field)
@@ -1270,16 +1276,30 @@ namespace Data {
                     for (var c = 0; c < list.Count; c++) {
                         any child = list[c]
                         if (child == undefined || this.EntryOf(child) != undefined) { continue }
-                        if (r.join) {
-                            // (an object of a join list is new only without a key - else it is a row that is there)
-                            var cmap = this.db.Map(r.target)
-                            any ck = Reflect.Get(child, cmap.key.field)
-                            if (ck != undefined && !(cmap.key.generated && ck == 0)) { continue }
+                        string childType = Type.Of(child).Name
+                        if (this.IsNew(child, childType)) { this.entries.Add(Data.SessionEntry.Lent(child, childType)) }
+                        else if (!r.join) {
+                            // (a child whose row is there, in the list of a [HasMany] field: read now - its foreign key is written when it changes)
+                            var cmap = this.db.Map(childType)
+                            this.entries.Add(Data.SessionEntry.LentRead(child, childType, Data.Session.KeyText(child, cmap), Data.Session.Snapshot(child, cmap)))
                         }
-                        this.entries.Add(Data.SessionEntry.Lent(child, Type.Of(child).Name))
+                        // (an object of a join list whose row is there: only the pair is written)
                     }
                 }
             }
+        }
+
+        // Is the object new for the database? Without a key (or 0 for a generated one): yes; with a generated key: no - the database gave it; with a key
+        // of the program (a text, [Key "manual"]): when the table has no row with it.
+        bool IsNew(any obj, string typeName) {
+            var map = this.db.Map(typeName)
+            if (map.key == undefined) { return true }
+            any key = Reflect.Get(obj, map.key.field)
+            if (key == undefined) { return true }
+            if (map.key.generated) { return key == 0 }
+            var d = this.db.Dialect
+            any n = this.db.Scalar("SELECT count(*) FROM " + d.Quote(map.table) + " WHERE " + d.Quote(map.key.column) + " = ?", [Data.EntityMap.ToDb(key, map.key)])
+            return n == 0
         }
 
         // (inserts an added entry: first what it points to and the parent whose list it is in - they give its foreign keys)
@@ -1883,10 +1903,15 @@ namespace Data {
 
         undefined Fail(Expression e, string why) { throw new Data.NotTranslatableException("Data: '" + e + "' cannot run in the database (" + why + ").") }
 
-        // (the column of a member of the parameter, or undefined)
+        // (the column of a member of the parameter - also at the end of a navigation x.customer.name -, or undefined)
         Data.ColumnMap ColumnOf(Expression e) {
             if (!(e is of MemberExpression)) { return undefined }
             MemberExpression m = e
+            if (m.Target is of MemberExpression && this.db != undefined) {
+                Data.EntityMap last = this.NavigationEnd(m.Target)
+                if (last == undefined) { return undefined }
+                return last.Column(m.Name)
+            }
             if (!(m.Target is of ParameterExpression)) { return undefined }
             ParameterExpression p = m.Target
             int at = this.ScopeOf(p.Name)
@@ -1930,16 +1955,104 @@ namespace Data {
                 Data.EntityMap scope = this.scopeMaps[at]
                 var c = scope.Column(e.Name)
                 if (c == undefined) {
-                    if (scope.Relation(e.Name) != undefined) { this.Fail(e, "a navigation field is no value - use Any(...) or its foreign key") }
-                    this.Fail(e, "'" + e.Name + "' is not a column of " + scope.typeName)
+                    Data.RelationMap nav = scope.Relation(e.Name)
+                    if (nav != undefined && !nav.many && !nav.join) {
+                        // (the object of a [BelongsTo] field as a value: its foreign key - x.customer == undefined is "customerId IS NULL")
+                        c = scope.Column(nav.foreign)
+                    }
+                    else if (nav != undefined) { this.Fail(e, "a list is no value - use Any(...)") }
+                    else { this.Fail(e, "'" + e.Name + "' is not a column of " + scope.typeName) }
                 }
                 string q = this.scopeQualifiers[at]
                 if (q == "") { return this.dialect.Quote(c.column) }
                 return q + "." + this.dialect.Quote(c.column)
             }
             if (e.Name == "Length" && this.IsText(e.Target)) { return this.dialect.Length(this.Sql(e.Target)) }
-            this.Fail(e, "only the columns of the object and the Length of a text")
+            if (e.Target is of MemberExpression) {
+                string nav = this.Navigation(e)
+                if (nav != undefined) { return nav }
+            }
+            this.Fail(e, "only the columns of the object, the columns of what its [BelongsTo] fields point to, and the Length of a text")
             return undefined
+        }
+
+        // (the entity at the end of a navigation of [BelongsTo] fields: x.customer -> Customer, x.customer.country -> Country)
+        Data.EntityMap NavigationEnd(Expression e) {
+            Expression at = e
+            var names = new List()
+            while (at is of MemberExpression) {
+                MemberExpression m = at
+                names.Add(m.Name)
+                at = m.Target
+            }
+            if (!(at is of ParameterExpression)) { return undefined }
+            ParameterExpression p = at
+            int scope = this.ScopeOf(p.Name)
+            if (scope < 0) { return undefined }
+            Data.EntityMap map = this.scopeMaps[scope]
+            for (var i = names.Count - 1; i >= 0; i--) {
+                string name = names[i]
+                Data.RelationMap r = map.Relation(name)
+                if (r == undefined || r.many || r.join) { return undefined }
+                map = this.db.Map(r.target)
+            }
+            return map
+        }
+        // A column at the end of a navigation of [BelongsTo] fields as a correlated subquery - each hop one, nested (no JOIN: every database and the
+        // in-memory one run it): x.customer.name -> (SELECT t1."name" FROM "customers" AS t1 WHERE t1."id" = "purchases"."customerId"),
+        // x.customer.country.name -> (SELECT t2."name" FROM "countries" AS t2 WHERE t2."code" = (SELECT t1."countryCode" FROM "customers" AS t1 WHERE ...)).
+        string Navigation(MemberExpression e) {
+            if (this.db == undefined) { this.Fail(e, "a navigation needs the connection") }
+            Expression at = e.Target
+            var names = new List()
+            while (at is of MemberExpression) {
+                MemberExpression m = at
+                names.Add(m.Name)
+                at = m.Target
+            }
+            if (!(at is of ParameterExpression)) { return undefined }
+            ParameterExpression p = at
+            int scope = this.ScopeOf(p.Name)
+            if (scope < 0) { this.Fail(e, "an unknown parameter") }
+            Data.EntityMap map = this.scopeMaps[scope]
+            string ownerQ = this.scopeQualifiers[scope]
+            if (ownerQ == "") { ownerQ = this.dialect.Quote(map.table) }
+            var d = this.dialect
+            // (the hops from the parameter on: the relation of each, checked)
+            var hops = new List()
+            var maps = new List()
+            for (var i = names.Count - 1; i >= 0; i--) {
+                string name = names[i]
+                Data.RelationMap r = map.Relation(name)
+                if (r == undefined) { this.Fail(e, "'" + name + "' is no [BelongsTo] field of " + map.typeName) }
+                if (r.many || r.join) { this.Fail(e, "'" + name + "' is a list - use Any(...)") }
+                if (map.Column(r.foreign) == undefined) { this.Fail(e, map.typeName + " has no column '" + r.foreign + "'") }
+                hops.Add(r)
+                maps.Add(map)
+                map = this.db.Map(r.target)
+                map.NeedKey()
+            }
+            var c = map.Column(e.Name)
+            if (c == undefined) {
+                if (map.Relation(e.Name) != undefined) { this.Fail(e, "'" + e.Name + "' is a navigation: name a column of it") }
+                this.Fail(e, "'" + e.Name + "' is not a column of " + map.typeName)
+            }
+            Data.RelationMap first = hops[0]
+            Data.EntityMap firstOwner = maps[0]
+            string value = ownerQ + "." + d.Quote(firstOwner.Column(first.foreign).column)
+            for (var i = 0; i < hops.Count; i++) {
+                Data.RelationMap r = hops[i]
+                var target = this.db.Map(r.target)
+                string column = c.column
+                if (i + 1 < hops.Count) {
+                    Data.RelationMap next = hops[i + 1]
+                    column = target.Column(next.foreign).column
+                }
+                this.aliases = this.aliases + 1
+                string alias = "t" + this.aliases
+                value = "(SELECT " + alias + "." + d.Quote(column) + " FROM " + d.Quote(target.table) + " AS " + alias + " WHERE " + alias + "." + d.Quote(target.key.column) + " = " + value + ")"
+            }
+            return value
         }
         override any VisitUnary(UnaryExpression e) {
             if (e.Op == "!") { return "NOT (" + this.Condition(e.Operand) + ")" }

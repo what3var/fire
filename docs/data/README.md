@@ -227,7 +227,10 @@ List<Person> london = await db.From<Person>().Where(p => p.city == "London").ToL
 - The database runs: the columns (`p.age` - the field's column, also a renamed one), `== != < <= > >=`, `&& || !`, `+ - * / %` (`+` of texts joins them),
   `?? `, `x ? a : b`, `== undefined` (`IS NULL`), of a text `StartsWith`, `EndsWith`, `Contains` (case-sensitive, like fire), `ToLower`, `ToUpper`, `Length`,
   and an array or a `List` of the program that `Contains` a column (`IN (...)`: `var wanted = ["Ada", "Linus"]; db.From<Person>().Where(p => (taking wanted).Contains(p.name))`).
-- Anything else - a method of your own, a member of a member, `is of` - is a `Data.NotTranslatableException` that names the part of the lambda.
+- The columns of what a [BelongsTo] field points to (`o.customer.name`, `o.customer.country.name` - as many hops as needed), in conditions and in
+  `OrderBy`: a subquery per hop, nested, in the database (nothing is loaded). `o.customer == undefined` is its foreign key `IS NULL`. A list (a [HasMany]
+  or [ManyToMany] field) is reached with `Any`/`All` (below), not by a member.
+- Anything else - a method of your own, a member of a list, `is of` - is a `Data.NotTranslatableException` that names the part of the lambda.
 - The same query runs on every driver; the in-memory database gets the same SQL.
 
 ## Sessions: a unit of work
@@ -289,6 +292,10 @@ class Article {
 - **Writing (sessions):** an object added to a list of an object of the session (`ada.orders.Add(new Order(...))`) is inserted by Save with the parent's key
   in its foreign key (the parent first when it is new); an object set in a [BelongsTo] field is inserted first when it is new, and its key goes into the
   foreign key. Moving a child from one list to another is an update of its foreign key; taking it out of a list does not delete it (`Remove` does).
+- **New or there?** An object the session reaches through a navigation field without knowing it is new without a key (or with 0 for a generated
+  one) and there with a generated key. With a key of the program - a text, `[Key "manual"]` - the database is asked (one `SELECT count(*)` by the key
+  at Save): new when the table has no row with it. One that is there is not inserted; in a [HasMany] list it is read from then on, so its foreign key is
+  written when it moved into the list; in a [ManyToMany] list only the pair is written.
   The pairs of a [ManyToMany] list are written from the difference to what was loaded or saved last (a list that was never loaded is compared with the
   rows that are there); removing an object removes its pairs.
 - `Ensure` makes the join table of a [ManyToMany] field (its two columns and an index).

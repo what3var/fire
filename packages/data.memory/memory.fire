@@ -926,6 +926,13 @@ namespace Data {
             if (this.Accept("TRUE")) { return Data.MemNode.Lit(1) }
             if (this.Accept("FALSE")) { return Data.MemNode.Lit(0) }
             if (this.AcceptSym("(")) {
+                // ((SELECT ...): a scalar subquery - its first value, or NULL without a row)
+                if (this.IsWordToken("SELECT")) {
+                    var sq = new Data.MemNode("scalar")
+                    sq.a = this.Select()
+                    this.ExpectSym(")")
+                    return sq
+                }
                 Data.MemNode inner = this.Expr()
                 this.ExpectSym(")")
                 return inner
@@ -1643,6 +1650,23 @@ namespace Data {
                     }
                 }
                 Data.MemoryDriver.Fail("no such column: " + n.name)
+            }
+            if (kind == "scalar") {
+                this.outerTables.Add(t)
+                this.outerRows.Add(row)
+                this.outerAliases.Add(this.alias)
+                any savedNames = this.names
+                string savedAlias = this.alias
+                List found = this.Select(n.a)
+                this.names = savedNames
+                this.alias = savedAlias
+                this.outerTables.RemoveAt(this.outerTables.Count - 1)
+                this.outerRows.RemoveAt(this.outerRows.Count - 1)
+                this.outerAliases.RemoveAt(this.outerAliases.Count - 1)
+                if (found.Count == 0) { return undefined }
+                any first = found[0]
+                if (first == undefined || first.length == 0) { return undefined }
+                return first[0]
             }
             if (kind == "exists") {
                 // (the subquery with this row as the outer one)
