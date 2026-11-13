@@ -667,13 +667,13 @@ namespace Data {
             this.reading = false
             byte answer[] = all.ToBuffer()
             int i2 = 0
-            int serverEnc = 2
+            defined int serverEnc = 2
             while (i2 + 4 < answer.length && answer[i2] != 0xFF) {
                 int token = answer[i2]
                 int o1 = answer[i2 + 1]
                 int o2 = answer[i2 + 2]
                 int off = (o1 << 8) | o2
-                if (token == 1 && off < answer.length) { serverEnc = answer[off] }
+                if (token == 1 && off < answer.length) { int v = answer[off]; serverEnc = trust v }
                 i2 = i2 + 5
             }
             if (encrypt == "off" && (serverEnc == 1 || serverEnc == 3)) {
@@ -1205,7 +1205,7 @@ namespace Data {
             return new Data.TdsStatement(this, sql)
         }
 
-        int NewToken() {
+        defined int NewToken() {
             this.tokens = this.tokens + 1
             return this.tokens
         }

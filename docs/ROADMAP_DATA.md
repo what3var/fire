@@ -259,7 +259,7 @@ Own methods for the generated classes come in an extension (`extension Person { 
 | 6 | Relations: navigation fields, `Include`, `Any`/subqueries, join tables - **built** ([HasMany], [BelongsTo], [ManyToMany], Include/Load in sessions, Any/All as EXISTS, writing through lists, also without a session) | 4, 5 |
 | 7 | Pool, `Data.PerRequest`, Rpc DI - **built** (`Data.Pool` with an actor home; `Http.Database` in the package `http.data`; Http.Rpc takes constructor parameters from the items of the request) | 1 |
 | 8 | `data.mysql` (wire protocol, TLS, prepared statements) - **built** (in fire on `net`/`tls`; native, caching_sha2 and sha256 logins, RSA-OAEP without TLS, the binary protocol, streamed results, procedures; tested against MariaDB 10.11 and MySQL 8.0) | 1, 7 |
-| 9 | `data.sqlserver` (TDS, TLS in TDS, `sp_executesql`) | 1, 7 |
+| 9 | `data.sqlserver` (TDS, TLS in TDS, `sp_executesql`) - **built** (in fire; `Tls.Engine` for TLS inside TDS (OpenSSL), mandatory/optional/off, strict untried; streamed rows, SCOPE_IDENTITY; tested against SQL Server 2022 on Linux; Windows login, MARS later) | 1, 7 |
 | 10 | Migrations, `forge data diff/apply/import` | 2, a driver with schema reading |
 | 11 | Designer: the `.fdata` format and forge's generator (classes, Model, Context, DDL) | 2, 10 |
 | 12 | Designer in spark: diagram, properties, import from a database, generate database/migration, preview | 11 |
@@ -274,6 +274,6 @@ normal tests (VM == native), MySQL and SQL Server against a server when one is c
 - `data.memory`: one database per connection; a database shared by several connections (and threads) by name needs a home actor - later.
 - The connection is a class (`new Data.Connection(url)`), not a function `Data.Open(url)`: a namespace has no functions of its own.
 
-- TLS inside TDS (SQL Server): can `tls` run over a stream that is not a socket?
+- ~~TLS inside TDS (SQL Server): can `tls` run over a stream that is not a socket?~~ - `Tls.Engine` (TLS over buffers) on OpenSSL; mbedTLS and SChannel still to do.
 - `with` for records (`copy r with { age = 37 }`) - a language question, helpful for writing records.
 - Change notifications (SQLite update hook, SQL Server query notifications) for live UI lists - later, with the bindings of the UI library.

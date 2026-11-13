@@ -1,8 +1,8 @@
 # Data: databases
 
 `#import "data"` gives the namespace `Data`: connections to databases, SQL with bound parameters, rows as objects, transactions. The drivers are
-packages of their own; today there are **SQLite** (`#import "data.sqlite"`), **MySQL/MariaDB** (`#import "data.mysql"`) and the **in-memory database**
-(`#import "data.memory"`); all import `data`. What comes next - SQL Server, migrations and the designer - is planned in [ROADMAP_DATA.md](../ROADMAP_DATA.md).
+packages of their own; today there are **SQLite** (`#import "data.sqlite"`), **MySQL/MariaDB** (`#import "data.mysql"`), **SQL Server**
+(`#import "data.sqlserver"`) and the **in-memory database** (`#import "data.memory"`); all import `data`. What comes next - migrations and the designer - is planned in [ROADMAP_DATA.md](../ROADMAP_DATA.md).
 
 ```fire
 #import "data.sqlite"
@@ -331,6 +331,42 @@ The tests run against a server when `FIRE_TEST_MYSQL` names an empty database (`
 a MariaDB and a MySQL 8; with `FIRE_TEST_MYSQL_USER` and `FIRE_TEST_MYSQL_PASSWORD`; its tables are dropped): the SQL of MySQL, streaming, procedures,
 TLS, the RSA encryption against a known ciphertext, on MySQL 8 the logins without TLS (when the user may make users: CREATE USER, RELOAD), then the
 mapping, queries, sessions and relations of the in-memory case.
+
+## SQL Server
+
+`#import "data.sqlserver"`, `new Data.Connection("sqlserver://db.local:1433/shop", new Data.Credentials("app", password))`. The driver is written in fire on
+`net` and `tls` (TDS 7.4, no client library): a SQL login, SQL batches for `Execute` without parameters (several statements at once), `sp_executesql` with
+typed parameters for the rest - the `?` of the SQL become `@p0`, `@p1`, ... (not inside texts, `[names]` or comments).
+
+| URL (SQL Server) | |
+|---|---|
+| `sqlserver://host/shop` | port 1433, the database `shop` |
+| `?encrypt=mandatory` | the default: everything encrypted - TLS inside TDS (its handshake in the PRELOGIN packets), the certificate checked |
+| `&trust=true` | accept the certificate of the server unchecked (a server with a certificate of its own, as SQL Server makes one); `&ca=file.pem`: the authorities to trust |
+| `?encrypt=optional` | only the login encrypted when the server asks for no more (what old clients did: the data goes in the clear) |
+| `?encrypt=strict` | TDS 8.0: TLS first, then TDS inside it - SQL Server 2022 with a certificate configured for it, Azure SQL |
+| `?encrypt=off` | no TLS at all, only where the server allows it and nobody can listen (the password is only obfuscated) |
+| `&timeout=10000` | connecting and waiting for an answer, in ms |
+
+Values: the integer types are `int`, `bit` is `bool`, `float`/`real` are `float`, `decimal`/`numeric` a `float` (an `int` without a fraction),
+`money` a `float`, texts (`nvarchar`, `varchar` with its code page, `nchar`, `xml`) `string`, binary types `byte[]`, `uniqueidentifier` its text,
+`date`/`time`/`datetime`/`datetime2` ISO text, `datetimeoffset` the local time with its offset (`2026-11-13 10:00:00 +02:00`), `sql_variant` its value,
+NULL `undefined`. Parameters: `int` as `bigint`, `bool` as `bit`, `float` as `float`, texts as `nvarchar(4000)` (longer: `nvarchar(max)`), bytes as
+`varbinary`. Big values go over several packets and as PLP. Rows are read from the socket one at a time as with MySQL (a command in between keeps
+the rest for its reader). A generated key comes from `SCOPE_IDENTITY()` in the same request as the `INSERT`; the transaction descriptor of the server
+goes with every request, so `Transaction`, savepoints (`SAVE TRANSACTION`) and the session work as elsewhere.
+
+Errors: duplicate keys (2627, 2601), foreign keys and checks (547), NOT NULL (515) are `Data.ConstraintException`, deadlocks and lock time-outs
+`Data.BusyException`, a wrong login or database (18456, 4060) `Data.ConnectionException` - the server's error number in `Code`. The dialect makes
+`BIGINT IDENTITY` keys, `NVARCHAR(450)` for strings with a key or an index, `NVARCHAR(MAX)`/`VARBINARY(MAX)` otherwise, `BIT` for `bool`; a unique
+index leaves NULL out (`WHERE c IS NOT NULL`, as the other databases do); paging is `OFFSET ... FETCH` (with `ORDER BY (SELECT NULL)` when the query
+has no order); a boolean column alone as a condition becomes `c = 1`; `StartsWith`/`Contains`/`EndsWith` compare with a binary collation (the default
+collations ignore case, fire does not).
+
+The tests run against a server when `FIRE_TEST_SQLSERVER` names an empty database (`sqlserver://127.0.0.1:1433/test?trust=true`, with
+`FIRE_TEST_SQLSERVER_USER` and `FIRE_TEST_SQLSERVER_PASSWORD`; its tables are dropped). Tried against SQL Server 2022 (16.0) on Linux. Not built yet:
+Windows logins (Kerberos/NTLM), MARS, the named instances of the browser service (port 1434), table-valued parameters; `encrypt=strict` is written to
+the protocol but could not be tried (the server on Linux did not accept a certificate for it).
 
 ## The in-memory database
 
