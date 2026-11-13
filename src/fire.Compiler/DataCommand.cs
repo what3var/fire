@@ -71,7 +71,7 @@ namespace fire.Compiler
             if (to != null && command != "migrate") return Fail(stderr, "--to is only available with migrate.");
             if (format != null && (command != "import" || format is not ("fire" or "fdata"))) return Fail(stderr, "--format is only available with import: fire (classes, the default) or fdata (a data model).");
             string? package = DriverPackage(url);
-            if (package == null) return Fail(stderr, $"forge data: no driver for the URL '{url}' (sqlite:, mysql://, sqlserver://, memory:).");
+            if (package == null) return Fail(stderr, $"forge data: no driver for the URL '{url}' (sqlite:, mysql://, sqlserver://, postgres://, memory:).");
 
             // the program: its sources (for import none is needed)
             var sources = new List<string>();
@@ -124,7 +124,7 @@ namespace fire.Compiler
         public static (string Output, string? Error, bool Compile) Execute(string command, IReadOnlyList<string> sources, IReadOnlyList<string?> paths, string url, string user, string password, string arg, string arg2)
         {
             string? package = DriverPackage(url);
-            if (package == null) return ("", $"forge data: no driver for the URL '{url}' (sqlite:, mysql://, sqlserver://, memory:).", true);
+            if (package == null) return ("", $"forge data: no driver for the URL '{url}' (sqlite:, mysql://, sqlserver://, postgres://, memory:).", true);
             var all = sources.ToList();
             var allPaths = paths.ToList();
             all.Add($"#import \"data\"\n#import \"{package}\"\n");
@@ -164,6 +164,7 @@ namespace fire.Compiler
                 "sqlite" => "data.sqlite",
                 "mysql" => "data.mysql",
                 "sqlserver" => "data.sqlserver",
+                "postgres" or "postgresql" => "data.postgres",
                 "memory" => "data.memory",
                 _ => null,
             };

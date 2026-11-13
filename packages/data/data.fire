@@ -10,6 +10,8 @@ namespace Data {
     /// <summary>An error of the database: its message, and its code (the driver's: SQLite's extended result code, MySQL's error number, ...).</summary>
     class DataException : Exception {
         int Code
+        // The SQLSTATE of the error when the driver knows it ("23505"; PostgreSQL), else undefined.
+        string State
         construct(string message, int code = 0) {
             this.message = message
             this.Code = code
@@ -331,7 +333,12 @@ namespace Data {
                 if (t == undefined) { continue }
                 Attribute a = t.FindAttribute("Driver")
                 if (a == undefined || a.ArgCount() == 0) { continue }
-                if ("" + a.Args[0] == scheme) { return t.New(new any[0]) }
+                // ([Driver "postgres,postgresql"]: several schemes)
+                any schemes = ("" + a.Args[0]).Split(",")
+                for (var j = 0; j < schemes.length; j++) {
+                    string one = schemes[j]
+                    if (one.Trim() == scheme) { return t.New(new any[0]) }
+                }
             }
             return undefined
         }

@@ -12,7 +12,7 @@ namespace fire.Package.Manager
         public const string Prefix = "fire-";
 
         /// <summary>The standard libraries: the names of their imports.</summary>
-        public static readonly IReadOnlyList<string> Bridges = new[] { "graphics", "windows", "devices", "io", "filesystem", "dialogs", "ui", "linq", "reflection", "time", "random", "testing", "net", "process", "hash", "compression", "tls", "http", "http.rpc", "http.pages", "data", "data.sqlite", "data.memory", "data.mysql", "data.sqlserver", "http.data", "gpio", "i2c", "spi", "wifi", "audio", "usb", "tracker", "scene3d", "scene3d.terrain", "scene3d.effects", "scene3d.physics", "ui.docking", "json", "net.channel", "circuits", "circuits.ui", "console", "machine", "dos", "xms", "x86" };
+        public static readonly IReadOnlyList<string> Bridges = new[] { "graphics", "windows", "devices", "io", "filesystem", "dialogs", "ui", "linq", "reflection", "time", "random", "testing", "net", "process", "hash", "compression", "tls", "http", "http.rpc", "http.pages", "data", "data.sqlite", "data.memory", "data.mysql", "data.sqlserver", "data.postgres", "http.data", "gpio", "i2c", "spi", "wifi", "audio", "usb", "tracker", "scene3d", "scene3d.terrain", "scene3d.effects", "scene3d.physics", "ui.docking", "json", "net.channel", "circuits", "circuits.ui", "console", "machine", "dos", "xms", "x86" };
 
         public static string PackageNameOf(string bridge) => Prefix + bridge;
 

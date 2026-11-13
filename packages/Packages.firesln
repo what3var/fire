@@ -29,6 +29,7 @@
     "data.memory/data.memory.fireproj",
     "data.mysql/data.mysql.fireproj",
     "data.sqlserver/data.sqlserver.fireproj",
+    "data.postgres/data.postgres.fireproj",
     "http.data/http.data.fireproj",
     "gpio/gpio.fireproj",
     "i2c/i2c.fireproj",

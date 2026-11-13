@@ -15,6 +15,7 @@ namespace fire.Compiler
             ("SQLite", "data.sqlite", "Data.SqliteDialect"),
             ("MySQL / MariaDB", "data.mysql", "Data.MysqlDialect"),
             ("SQL Server", "data.sqlserver", "Data.SqlServerDialect"),
+            ("PostgreSQL", "data.postgres", "Data.PostgresDialect"),
             ("In-memory", "data.memory", "Data.MemoryDialect"),
         };
 
@@ -45,7 +46,7 @@ namespace fire.Compiler
             try { code = DataModelGenerator.Generate(modelText, path); }
             catch (MarkupException ex) { return ("", string.Join("\n", ex.Diagnostics.Select(d => d.ToString()))); }
             string? package = DataCommand.DriverPackage(url);
-            if (package == null) return ("", $"No driver for the URL '{url}' (sqlite:, mysql://, sqlserver://, memory:).");
+            if (package == null) return ("", $"No driver for the URL '{url}' (sqlite:, mysql://, sqlserver://, postgres://, memory:).");
             string ns = DataModelDocument.Parse(modelText).Namespace;
             string cred = user == "" ? "undefined" : $"new Data.Credentials({Lit(user)}, {Lit(password)})";
             string driver = $"var db = new Data.Connection({Lit(url)}, {cred})\nvar ctx = new {ns}.Context(db)\nctx.Ensure()\nprint(\"tables: \" + db.Schema().Count)\ndb.Close()\n";
