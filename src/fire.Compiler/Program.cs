@@ -53,9 +53,9 @@ if (args.Length >= 2 && args[0] == "model")
     }
 }
 
-// `ui <file.fxml> [-o <file>]` / `biscuit <file.biscuit> [-o <file>]`: writes the script generated from the markup of a user interface (docs/ui/markup.md) or from the
+// `ui <file.fxml> [-o <file>]` / `biscuit <file.biscuit> [-o <file>]` / `fdata <file.fdata> [-o <file>]`: writes the script generated from the markup of a user interface (docs/ui/markup.md), a data model (docs/data/designer.md) or from the
 // schematic of a circuit (docs/circuits/README.md); without -o to the output.
-if (args.Length >= 2 && (args[0] == "ui" || args[0] == "biscuit"))
+if (args.Length >= 2 && (args[0] == "ui" || args[0] == "biscuit" || args[0] == "fdata"))
 {
     try
     {

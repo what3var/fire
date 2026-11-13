@@ -31335,6 +31335,80 @@ else
             """)).ToArray();
     }
 
+    // A data model (.fdata, docs/data/designer.md): the code forge generates from it - entities with the attributes of the mapping, an enum, a record as JSON,
+    // relations on both sides, Model and Context - used on SQLite and the in-memory database
+    {
+        string shopModel = """
+            {
+              "format": 1,
+              "namespace": "Shop",
+              "naming": { "tables": "snake_plural", "columns": "snake" },
+              "enums": [ { "name": "Level", "values": ["Low", "Mid", "High"], "comment": "How important a customer is" } ],
+              "types": [ { "name": "Address", "fields": [ { "name": "city", "type": "string" }, { "name": "zipCode", "type": "string" } ] } ],
+              "entities": [
+                { "name": "Customer", "set": "Customers", "comment": "Someone who buys",
+                  "fields": [
+                    { "name": "id", "type": "int", "key": true },
+                    { "name": "fullName", "type": "string", "length": 100, "required": true },
+                    { "name": "email", "type": "string", "length": 200, "unique": true },
+                    { "name": "level", "type": "Level" },
+                    { "name": "born", "type": "DateTime" },
+                    { "name": "address", "type": "Address", "json": true },
+                    { "name": "version", "type": "int", "version": true }
+                  ] },
+                { "name": "Purchase", "fields": [ { "name": "id", "type": "int", "key": true }, { "name": "total", "type": "float", "required": true }, { "name": "note", "type": "string", "comment": "free text" } ] },
+                { "name": "Category", "table": "categories", "fields": [ { "name": "code", "type": "string", "key": true, "length": 20 }, { "name": "label", "type": "string" }, { "name": "picture", "type": "bytes" } ] }
+              ],
+              "relations": [
+                { "kind": "one-to-many", "from": "Customer", "to": "Purchase", "navigation": "purchases", "inverse": "customer" },
+                { "kind": "many-to-many", "from": "Purchase", "to": "Category", "navigation": "categories", "inverse": "purchases", "joinTable": "purchase_category" }
+              ],
+              "diagrams": [ { "name": "Main", "shapes": { "Customer": { "x": 40, "y": 40 }, "Purchase": { "x": 320, "y": 40 } } } ]
+            }
+            """;
+        natCases = natCases.Append(("Data/Model: ein Datenmodell (.fdata) als Code - Entitaeten mit Attributen, Enum, Record als JSON, one-to-many und many-to-many auf beiden Seiten, Benennung snake_plural/snake, Model und Context (Ensure, Script, Abfragen, Session) - SQLite und In-Memory",
+            fire.UI.Markup.MarkupFiles.GenerateScript("Shop.fdata", shopModel) + """
+            #import "data.sqlite"
+            #import "data.memory"
+            class App {
+                static undefined Run(string url) {
+                    print("== " + url)
+                    var db = new Data.Connection(url)
+                    var ctx = new Shop.Context(db)
+                    print(ctx.Script())
+                    ctx.Ensure()
+                    var s = ctx.Session()
+                    var ada = new Shop.Customer()
+                    ada.fullName = "Ada"
+                    ada.email = "ada@x.org"
+                    ada.level = Shop.Level.High
+                    ada.address = new Shop.Address("London", "W1")
+                    var p = new Shop.Purchase()
+                    p.total = 12.5
+                    p.customer = ada
+                    var c = new Shop.Category()
+                    c.code = "books"
+                    c.label = "Books"
+                    p.categories = new List<Shop.Category>()
+                    p.categories.Add(c)
+                    s.Add(ada)
+                    s.Add(p)
+                    s.Add(c)
+                    print("saved " + s.Save())
+                    Shop.Customer back = ctx.Customers.Where(x => x.fullName == "Ada").Include(x => x.purchases).First()
+                    print(back.fullName + " " + back.level + " " + back.address.city + " " + back.address.zipCode + " purchases " + back.purchases.Count + " version " + back.version)
+                    print("raw " + db.Scalar("select full_name from customers") + " " + db.Scalar("select customer_id from purchases"))
+                    int who = back.id
+                    print("books " + ctx.Purchases.Where(x => x.categories.Any(k => k.code == "books")).Count() + " by " + ctx.Purchases.Where(x => x.customerId == taking who).Count())
+                    print("model " + Shop.Model.Types().length + " " + Shop.Model.Tables()[0] + " " + Shop.Model.Types()[2])
+                    db.Close()
+                }
+            }
+            App.Run("sqlite::memory:")
+            App.Run("memory:")
+            """)).ToArray();
+    }
+
     // Migrations ([Migration] classes, Data.Migrator, MigrateTo up and down, a failure rolled back), the schema as the database has it, the difference to the
     // mapping as a migration (Data.Differ) and the tables as classes (Data.Importer) - on the in-memory database and SQLite
     natCases = natCases.Append(("Data/Migrations: [Migration]-Klassen mit Up/Down, Migrate/MigrateTo hin und zurueck, eine fehlschlagende Migration wird zurueckgerollt, Schema() mit Spalten und Indizes, der Unterschied zum Mapping als Migration, Import als Klassen - In-Memory und SQLite", """

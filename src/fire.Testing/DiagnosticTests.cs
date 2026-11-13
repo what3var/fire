@@ -196,6 +196,30 @@ static class DiagnosticTests
             finally { try { Directory.Delete(dir, true); } catch (IOException) { } }
         }
 
+        // ---- a data model (.fdata): its mistakes with their lines; in a project it is compiled without #include ----
+        {
+            const string bad = "{\n  \"entities\": [\n    { \"name\": \"Person\",\n      \"fields\": [\n        { \"name\": \"name\", \"type\": \"text\" },\n        { \"name\": \"class\", \"type\": \"int\" }\n      ] },\n    { \"name\": \"Person\", \"fields\": [ { \"name\": \"id\", \"type\": \"int\", \"key\": true } ] },\n    { \"name\": \"Order\", \"fields\": [ { \"name\": \"id\", \"type\": \"float\", \"key\": true } ] }\n  ],\n  \"relations\": [\n    { \"kind\": \"one-to-one\", \"from\": \"Person\", \"to\": \"Order\" },\n    { \"kind\": \"one-to-many\", \"from\": \"Person\", \"to\": \"Nobody\", \"navigation\": \"x\" }\n  ]\n}\n";
+            string found = "";
+            try { fire.UI.Markup.MarkupFiles.GenerateScript("Bad.fdata", bad); }
+            catch (fire.UI.Markup.MarkupException ex) { found = string.Join("\n", ex.Diagnostics.Select(d => d.ToString())); }
+            Check("Datenmodell: die Fehler mit ihren Zeilen (doppelt, unbekannter Typ, Schluesselwort, kein Schluessel, falscher Schluesseltyp, unbekannte Art und Entitaet einer Beziehung)",
+                found.Contains("line 8: 'Person' is declared twice.") && found.Contains("line 5: The field 'Person.name' has the type 'text'") && found.Contains("line 6: The field 'class' of 'Person' needs a name")
+                && found.Contains("line 3: The entity 'Person' has no key") && found.Contains("line 9: The key 'Order.id' is an int or a string") && found.Contains("line 12: The kind of a relation is one-to-many or many-to-many")
+                && found.Contains("line 13: The relation of 'Person' and 'Nobody' needs two entities"), found);
+            string dir = Path.Combine(Path.GetTempPath(), "fire-fdata-" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(dir);
+            try
+            {
+                File.WriteAllText(Path.Combine(dir, "App.fireproj"), "{ \"format\": 1, \"name\": \"App\", \"type\": \"exe\" }");
+                File.WriteAllText(Path.Combine(dir, "Shop.fdata"), "{ \"namespace\": \"Shop\", \"naming\": { \"tables\": \"snake_plural\" }, \"entities\": [ { \"name\": \"OrderLine\", \"fields\": [ { \"name\": \"id\", \"type\": \"int\", \"key\": true }, { \"name\": \"text\", \"type\": \"string\" } ] } ] }");
+                File.WriteAllText(Path.Combine(dir, "main.fire"), "#import \"data.memory\"\nvar db = new Data.Connection(\"memory:\")\nvar ctx = new Shop.Context(db)\nctx.Ensure()\nvar l = new Shop.OrderLine()\nl.text = \"x\"\ndb.Insert(l)\nif (Shop.Model.Tables()[0] == \"order_lines\" && ctx.OrderLines.Count() == 1) { terminate(7) }\nterminate(1)\n");
+                var outW = new StringWriter(); var errW = new StringWriter();
+                int code = CommandLineRunner.Run(new[] { "run", Path.Combine(dir, "App.fireproj") }, outW, errW);
+                Check("Datenmodell: ein .fdata im Projekt gehoert ohne #include dazu (Model, Context, Tabellenname snake_plural)", code == 7, $"{code} {errW}");
+            }
+            finally { try { Directory.Delete(dir, true); } catch (IOException) { } }
+        }
+
         // ---- forge data: the migrations of a program on a database (SQLite in a file) - the program's classes run, its top level does not ----
         {
             string dir = Path.Combine(Path.GetTempPath(), "fire-data-" + Guid.NewGuid().ToString("N"));

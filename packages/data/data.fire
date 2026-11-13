@@ -493,6 +493,65 @@ namespace Data {
             }
         }
 
+        // The SQL that makes the table of a class in an empty database, in the dialect of the connection (the table, the join tables of its
+        // [ManyToMany] fields, the indexes) - what Ensure would run there, without running it; each statement ends with ";" and a line break.
+        string CreateScript(string typeName) {
+            var map = this.Map(typeName)
+            var d = this.driver.Dialect()
+            var cols = ""
+            for (var i = 0; i < map.columns.Count; i++) {
+                Data.ColumnMap c = map.columns[i]
+                if (i > 0) { cols = cols + ", " }
+                cols = cols + d.ColumnDefinition(c)
+            }
+            var t = "CREATE TABLE " + d.Quote(map.table) + " (" + cols + ")" + d.TableOptions() + ";\n"
+            for (var i = 0; i < map.relations.Count; i++) {
+                Data.RelationMap r = map.relations[i]
+                if (!r.join) { continue }
+                map.NeedKey()
+                var target = this.Map(r.target)
+                target.NeedKey()
+                var a = new Data.ColumnMap(r.thisColumn, r.thisColumn, map.key.typeName, map.key.kind)
+                a.required = true
+                var b = new Data.ColumnMap(r.otherColumn, r.otherColumn, target.key.typeName, target.key.kind)
+                b.required = true
+                t = t + d.CreateTableIfMissing(d.Quote(r.joinTable), "(" + d.ColumnDefinition(a) + ", " + d.ColumnDefinition(b) + ")" + d.TableOptions()) + ";\n"
+                t = t + "CREATE INDEX " + d.Quote("ix_" + r.joinTable + "_" + r.thisColumn) + " ON " + d.Quote(r.joinTable) + " (" + d.Quote(r.thisColumn) + ");\n"
+            }
+            for (var i = 0; i < map.columns.Count; i++) {
+                Data.ColumnMap c = map.columns[i]
+                if (!c.unique && !c.index) { continue }
+                var kind = "INDEX"
+                if (c.unique) { kind = "UNIQUE INDEX" }
+                t = t + "CREATE " + kind + " " + d.Quote("ix_" + map.table + "_" + c.column) + " ON " + d.Quote(map.table) + " (" + d.Quote(c.column) + ")" + d.IndexSuffix(d.Quote(c.column), c.unique) + ";\n"
+            }
+            return t
+        }
+
+        // The script of several classes (Data.Model.Types() of a data model): each table once - a join table is made by the first class that has it.
+        string CreateScriptOf(any typeNames) {
+            var t = ""
+            var seen = new List()
+            for (var i = 0; i < typeNames.length; i++) {
+                string part = this.CreateScript("" + typeNames[i])
+                any lines = part.Split("\n")
+                for (var k = 0; k < lines.length; k++) {
+                    string line = lines[k]
+                    if (line == "") { continue }
+                    if (seen.IndexOf(line) >= 0) { continue }
+                    // (the second side of a join table: the same table with its columns the other way round)
+                    if (line.StartsWith("CREATE TABLE IF NOT EXISTS ")) {
+                        string name = line.Substring(27, line.IndexOf(" (") - 27)
+                        if (seen.IndexOf("table " + name) >= 0) { continue }
+                        seen.Add("table " + name)
+                    }
+                    seen.Add(line)
+                    t = t + line + "\n"
+                }
+            }
+            return t
+        }
+
         // (an index when it is not there - with IF NOT EXISTS where the database knows it, else after asking its catalog)
         undefined CreateIndex(string name, string table, string column, bool unique) {
             var d = this.driver.Dialect()
@@ -2147,6 +2206,7 @@ namespace Data {
                     jr.thisColumn = "" + pairs.Args[1]
                     jr.otherColumn = "" + pairs.Args[2]
                     if (jr.target == undefined) { throw new ArgumentException("Data: [ManyToMany] needs a List<T> field ('" + m.Name + "' of " + typeName + ").") }
+                    jr.target = Data.EntityMap.Qualify(jr.target, typeName)
                     this.relations.Add(take jr)
                     continue
                 }
@@ -2161,6 +2221,7 @@ namespace Data {
                         if (one.ArgCount() > 0) { r.foreign = "" + one.Args[0] }
                     }
                     if (r.foreign == undefined || r.target == undefined) { throw new ArgumentException("Data: the relation '" + m.Name + "' of " + typeName + " needs its foreign key field ([HasMany \"personId\"] List<Order> ..., [BelongsTo \"personId\"] Person ...).") }
+                    r.target = Data.EntityMap.Qualify(r.target, typeName)
                     this.relations.Add(take r)
                     continue
                 }
@@ -2193,6 +2254,16 @@ namespace Data {
                 byName.key = true
                 byName.generated = byName.kind == "int"
             }
+        }
+
+        // (the class of a relation: as it is written, or - in a namespace - the class of the owner's namespace)
+        static string Qualify(string name, string owner) {
+            if (Type.Named(name) != undefined) { return name }
+            int dot = owner.LastIndexOf(".")
+            if (dot < 0) { return name }
+            string full = owner.Substring(0, dot + 1) + name
+            if (Type.Named(full) != undefined) { return full }
+            return name
         }
 
         // (what the database stores of a field of type `typeName`; undefined: not a column - a class, a list: later the relations)
@@ -2337,8 +2408,8 @@ namespace Data {
             c.required = required
             return c
         }
-        Data.ColumnMap Key(string name = "id", string kind = "int", bool generated = true) {
-            var c = this.Column(name, kind, 0, true)
+        Data.ColumnMap Key(string name = "id", string kind = "int", bool generated = true, int length = 0) {
+            var c = this.Column(name, kind, length, true)
             c.key = true
             c.generated = generated && kind == "int"
             return c
@@ -2633,7 +2704,9 @@ namespace Data {
             string kind = c.kind
             if (c.key) {
                 if (kind == "int" && c.generated) { return "m.Key(" + Data.Differ.Text(c.column) + ")" }
-                return "m.Key(" + Data.Differ.Text(c.column) + ", " + Data.Differ.Text(kind) + ", false)"
+                var k = "m.Key(" + Data.Differ.Text(c.column) + ", " + Data.Differ.Text(kind) + ", false"
+                if (c.length > 0) { k = k + ", " + c.length }
+                return k + ")"
             }
             var t = "m.Column(" + Data.Differ.Text(c.column) + ", " + Data.Differ.Text(kind)
             if (c.length > 0 || c.required) { t = t + ", " + c.length }
@@ -2697,8 +2770,20 @@ namespace Data {
                 for (var i = 0; i < map.relations.Count; i++) {
                     Data.RelationMap r = map.relations[i]
                     if (!r.join) { continue }
-                    if (Data.SchemaReader.Find(tables, r.joinTable) != undefined || made.IndexOf(r.joinTable.ToLower()) >= 0) { continue }
+                    string joinIndex = "ix_" + r.joinTable + "_" + r.thisColumn
+                    Data.SchemaTable haveJoin = Data.SchemaReader.Find(tables, r.joinTable)
+                    if (haveJoin != undefined || made.IndexOf(r.joinTable.ToLower()) >= 0) {
+                        // (the join table is there or made by the other side: the index of this side when it lacks)
+                        bool hasIndex = haveJoin != undefined && haveJoin.Index(joinIndex) != undefined
+                        if (!hasIndex && made.IndexOf(joinIndex.ToLower()) < 0) {
+                            made.Add(joinIndex.ToLower())
+                            up.Add("m.CreateIndex(" + Data.Differ.Text(joinIndex) + ", " + Data.Differ.Text(r.joinTable) + ", " + Data.Differ.Text(r.thisColumn) + ")")
+                            if (haveJoin != undefined) { down.Add("m.DropIndex(" + Data.Differ.Text(joinIndex) + ", " + Data.Differ.Text(r.joinTable) + ")") }
+                        }
+                        continue
+                    }
                     made.Add(r.joinTable.ToLower())
+                    made.Add(joinIndex.ToLower())
                     map.NeedKey()
                     var target = db.Map(r.target)
                     target.NeedKey()

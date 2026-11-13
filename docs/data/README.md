@@ -372,6 +372,13 @@ The tests run against a server when `FIRE_TEST_SQLSERVER` names an empty databas
 Windows logins (Kerberos/NTLM), table-valued parameters; `encrypt=strict` is written to
 the protocol but could not be tried (the server on Linux did not accept a certificate for it).
 
+## Data models
+
+A data model (`Shop.fdata`, JSON - entities, fields, enums, records, relations, the diagram of the designer) is compiled into the classes with these
+attributes, `Shop.Model` and `Shop.Context` (`ctx.Customers` is `db.From<Customer>()`, `ctx.Session()`, `ctx.Ensure()`, `ctx.Script()`): see
+[data models](designer.md). `db.CreateScript("Person")` gives the SQL that makes the table of a class (and its join tables and indexes) in an empty
+database without running it, `db.CreateScriptOf(types)` that of several (each table once).
+
 ## Migrations
 
 A migration is a class of the program with `[Migration n, "title"]` and `Up(Data.Migrator m)` (and `Down` to undo it). `db.Migrate()` runs the ones that

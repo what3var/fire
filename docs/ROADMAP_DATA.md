@@ -261,7 +261,7 @@ Own methods for the generated classes come in an extension (`extension Person { 
 | 8 | `data.mysql` (wire protocol, TLS, prepared statements) - **built** (in fire on `net`/`tls`; native, caching_sha2 and sha256 logins, RSA-OAEP without TLS, the binary protocol, streamed results, procedures; tested against MariaDB 10.11 and MySQL 8.0) | 1, 7 |
 | 9 | `data.sqlserver` (TDS, TLS in TDS, `sp_executesql`) - **built** (in fire; `Tls.Engine` for TLS inside TDS (OpenSSL), mandatory/optional/off, strict untried; streamed rows, SCOPE_IDENTITY; MARS over SMP, named instances over the SQL Server Browser, transactions as TM requests; tested against SQL Server 2022 on Linux; Windows login later) | 1, 7 |
 | 10 | Migrations, `forge data diff/apply/import` - **built** (`[Migration]` + `Data.Migrator`, `db.Migrate/MigrateTo/Applied/Schema`, `forge data status/migrate/diff/import`; on all five databases) | 2, a driver with schema reading |
-| 11 | Designer: the `.fdata` format and forge's generator (classes, Model, Context, DDL) | 2, 10 |
+| 11 | Designer: the `.fdata` format and forge's generator (classes, Model, Context, DDL) - **built** ([docs/data/designer.md](data/designer.md); `#include`, projects, `forge fdata`; one-to-one, views, check constraints and own type mappings per dialect still open) | 2, 10 |
 | 12 | Designer in spark: diagram, properties, import from a database, generate database/migration, preview | 11 |
 | 13 | PostgreSQL | 1, 7 |
 
