@@ -31117,7 +31117,8 @@ else
     }
 
     // The SQL Server driver against a running server - only when there is one: FIRE_TEST_SQLSERVER=sqlserver://127.0.0.1:1433/test?trust=true (an
-    // empty database: its tables are dropped; several separated by spaces), FIRE_TEST_SQLSERVER_USER, FIRE_TEST_SQLSERVER_PASSWORD. As for MySQL: the
+    // empty database: its tables are dropped; several separated by spaces - each with a database of its own: the native programs run at the same time),
+    // FIRE_TEST_SQLSERVER_USER, FIRE_TEST_SQLSERVER_PASSWORD. As for MySQL: the
     // SQL of SQL Server first, then the mapping, queries, sessions and relations of the case of the in-memory database.
     foreach (string sqlUrl in (Environment.GetEnvironmentVariable("FIRE_TEST_SQLSERVER") ?? "").Split(' ', StringSplitOptions.RemoveEmptyEntries))
     {
@@ -31333,6 +31334,124 @@ else
             {{sorm}}
             """)).ToArray();
     }
+
+    // Migrations ([Migration] classes, Data.Migrator, MigrateTo up and down, a failure rolled back), the schema as the database has it, the difference to the
+    // mapping as a migration (Data.Differ) and the tables as classes (Data.Importer) - on the in-memory database and SQLite
+    natCases = natCases.Append(("Data/Migrations: [Migration]-Klassen mit Up/Down, Migrate/MigrateTo hin und zurueck, eine fehlschlagende Migration wird zurueckgerollt, Schema() mit Spalten und Indizes, der Unterschied zum Mapping als Migration, Import als Klassen - In-Memory und SQLite", """
+            #import "data.sqlite"
+            #import "data.memory"
+
+            [Migration 1, "people"]
+            class M1 {
+                undefined Up(Data.Migrator m) {
+                    m.CreateTable("people", [m.Key("id"), m.Column("name", "string", 100, true), m.Column("age", "int")])
+                    m.CreateIndex("ix_people_name", "people", "name")
+                }
+                undefined Down(Data.Migrator m) { m.DropTable("people") }
+            }
+            [Migration 2, "email and a rename"]
+            class M2 {
+                undefined Up(Data.Migrator m) {
+                    m.AddColumn("people", m.Column("email", "string", 200))
+                    m.CreateIndex("ix_people_email", "people", "email", true)
+                    m.RenameColumn("people", "age", "years")
+                    m.Sql("insert into people(name, years, email) values (?, ?, ?)", ["Ada", 36, "ada@x.org"])
+                }
+                undefined Down(Data.Migrator m) {
+                    m.Sql("delete from people where name = ?", ["Ada"])
+                    m.RenameColumn("people", "years", "age")
+                    m.DropIndex("ix_people_email", "people")
+                    m.DropColumn("people", "email")
+                }
+            }
+            [Migration 3, "broken"]
+            class M3 {
+                undefined Up(Data.Migrator m) {
+                    m.AddColumn("people", m.Column("tmp", "int"))
+                    m.Sql("insert into nowhere values (1)")
+                }
+                undefined Down(Data.Migrator m) { }
+            }
+
+            [Table "people"]
+            class Person {
+                [Key] int id
+                [Required] [Length 100] string name
+                int years
+                [Unique] [Length 200] string email
+                [Index] string city
+                bool active
+                construct() { }
+            }
+            [Table "pets"]
+            class Pet {
+                [Key] int id
+                string name
+                int personId
+                construct() { }
+            }
+
+            class App {
+                static string List(List l) {
+                    var t = "["
+                    for (var i = 0; i < l.Count; i++) {
+                        if (i > 0) { t = t + ", " }
+                        t = t + l[i]
+                    }
+                    return t + "]"
+                }
+                static undefined Show(Data.Connection db) {
+                    List tables = db.Schema()
+                    for (var i = 0; i < tables.Count; i++) {
+                        Data.SchemaTable t = tables[i]
+                        var cols = ""
+                        for (var c = 0; c < t.columns.Count; c++) {
+                            Data.SchemaColumn col = t.columns[c]
+                            cols = cols + " " + col.name
+                            if (col.key) { cols = cols + "*" }
+                            if (!col.nullable) { cols = cols + "!" }
+                        }
+                        var ix = ""
+                        for (var c = 0; c < t.indexes.Count; c++) {
+                            Data.SchemaIndex x = t.indexes[c]
+                            ix = ix + " " + x.name + "(" + x.column + ")"
+                            if (x.unique) { ix = ix + "u" }
+                        }
+                        print("  " + t.name + ":" + cols + " |" + ix)
+                    }
+                }
+                static string First() {
+                    List f = Data.Migrations.Found()
+                    Data.MigrationInfo i = f[0]
+                    return i.version + " " + i.title + " " + i.typeName
+                }
+                static undefined Run(string url) {
+                    print("== " + url)
+                    var db = new Data.Connection(url)
+                    print("to 2: " + db.MigrateTo(2) + " applied " + App.List(db.Applied()))
+                    App.Show(db)
+                    print("rows " + db.Scalar("select count(*) from people") + " " + db.Scalar("select years from people"))
+                    try { db.Migrate() } catch (Data.DataException e) { print("failed: " + e.message) }
+                    print("after the failure " + App.List(db.Applied()) + " columns " + (db.Rows("select * from people")[0].names.length))
+                    print("down to 1: " + db.MigrateTo(1) + " applied " + App.List(db.Applied()))
+                    App.Show(db)
+                    print("down to 0: " + db.MigrateTo(0) + " tables " + db.Schema().Count)
+                    db.MigrateTo(2)
+                    print(Data.Differ.Diff(db, 4, "the rest"))
+                    print(Data.Importer.Import(db, "Shop"))
+                    // (the steps of the Migrator one by one, and its mistakes)
+                    var m = new Data.Migrator(db)
+                    m.CreateTable("notes", [m.Key("code", "string", false), m.Column("text", "string"), m.Column("at", "time"), m.Column("kind", "enum"), m.Column("data", "json"), m.Column("blob", "bytes"), m.Column("price", "float")])
+                    m.Sql("insert into notes(code, text, price) values (?, ?, ?)", ["a", "x", 1.5])
+                    print("notes " + db.Scalar("select price from notes where code = ?", ["a"]) + " steps " + m.log.Count)
+                    try { m.Column("x", "money") } catch (ArgumentException e) { print("kind: " + e.message) }
+                    print("found " + Data.Migrations.Found().Count + " first " + App.First())
+                    db.Close()
+                }
+            }
+            App.Run("memory:")
+            App.Run("sqlite::memory:")
+            """)).ToArray();
 
     // Time and Sleep (bridges/fire_bridge_time.hpp)
     natCases = natCases.Concat(new (string Name, string Source)[]

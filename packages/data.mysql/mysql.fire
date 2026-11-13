@@ -50,6 +50,10 @@ namespace Data {
         }
         override string Generated() { return " AUTO_INCREMENT" }
         override string ColumnsQuery() { return "SELECT column_name FROM information_schema.columns WHERE table_schema = database() AND table_name = ?" }
+        override string TablesQuery() { return "SELECT table_name FROM information_schema.tables WHERE table_schema = database() AND table_type = 'BASE TABLE' ORDER BY table_name" }
+        override string ColumnInfoQuery() { return "SELECT column_name, column_type, is_nullable = 'YES', column_key = 'PRI' FROM information_schema.columns WHERE table_schema = database() AND table_name = ? ORDER BY ordinal_position" }
+        override string IndexesQuery() { return "SELECT index_name, column_name, non_unique = 0 FROM information_schema.statistics WHERE table_schema = database() AND table_name = ? AND index_name <> 'PRIMARY' ORDER BY index_name, seq_in_index" }
+        override string DropIndex(string name, string table) { return "DROP INDEX " + this.Quote(name) + " ON " + this.Quote(table) }
         override string IndexQuery() { return "SELECT count(*) FROM information_schema.statistics WHERE table_schema = database() AND table_name = ? AND index_name = ?" }
         override string TableOptions() { return " DEFAULT CHARSET=utf8mb4" }
         override string InsertDefault(string table) { return "INSERT INTO " + table + " () VALUES ()" }

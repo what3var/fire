@@ -196,6 +196,48 @@ static class DiagnosticTests
             finally { try { Directory.Delete(dir, true); } catch (IOException) { } }
         }
 
+        // ---- forge data: the migrations of a program on a database (SQLite in a file) - the program's classes run, its top level does not ----
+        {
+            string dir = Path.Combine(Path.GetTempPath(), "fire-data-" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(dir);
+            try
+            {
+                string prog = Path.Combine(dir, "shop.fire");
+                File.WriteAllText(prog, "#import \"data.sqlite\"\n[Migration 1, \"people\"]\nclass M1 {\n    undefined Up(Data.Migrator m) { m.CreateTable(\"people\", [m.Key(\"id\"), m.Column(\"name\", \"string\", 100, true)]) }\n    undefined Down(Data.Migrator m) { m.DropTable(\"people\") }\n}\n[Table \"people\"]\nclass Person {\n    [Key] int id\n    [Required] [Length 100] string name\n    [Unique] [Length 200] string email\n    construct() { }\n}\nprint(\"the top level\")\n");
+                string url = "sqlite:" + Path.Combine(dir, "app.db");
+                (int Code, string Out, string Err) Data(params string[] a)
+                {
+                    var o = new StringWriter(); var e = new StringWriter();
+                    int code = CommandLineRunner.Run(new[] { "data" }.Concat(a).ToArray(), o, e);
+                    return (code, o.ToString(), e.ToString());
+                }
+                var status = Data("status", prog, "--url", url);
+                var early = Data("diff", prog, "--url", url);
+                var migrate = Data("migrate", prog, "--url", url);
+                Check("forge data: status, diff vor den Migrationen abgelehnt, migrate (das Programm selbst laeuft nicht)", status.Code == 0 && status.Out.Contains("1  pending  people  (M1)")
+                    && early.Code == 1 && early.Err.Contains("have not run on this database") && migrate.Code == 0 && migrate.Out.Contains("migrations run: 1, the database is at 1") && !migrate.Out.Contains("top level"),
+                    status.Out + status.Err + early.Err + migrate.Out + migrate.Err);
+                string m2 = Path.Combine(dir, "m2.fire");
+                var diff = Data("diff", prog, "--url", url, "--title", "email", "-o", m2);
+                string written = File.Exists(m2) ? File.ReadAllText(m2) : "";
+                Check("forge data diff: die fehlende Migration als fire-Code (neue Spalte, eindeutiger Index, Down rueckwaerts)", diff.Code == 0 && written.Contains("[Migration 2, \"email\"]")
+                    && written.Contains("m.AddColumn(\"people\", m.Column(\"email\", \"string\", 200))") && written.Contains("m.CreateIndex(\"ix_people_email\", \"people\", \"email\", true)")
+                    && written.IndexOf("m.DropIndex", StringComparison.Ordinal) < written.IndexOf("m.DropColumn", StringComparison.Ordinal), written + diff.Err);
+                File.AppendAllText(prog, written);
+                var again = Data("migrate", prog, "--url", url);
+                var nothing = Data("diff", prog, "--url", url);
+                var import = Data("import", "--url", url, "--namespace", "Shop");
+                var down = Data("migrate", prog, "--url", url, "--to", "0");
+                var after = Data("status", prog, "--url", url);
+                var bogus = Data("bogus", "--url", url);
+                Check("forge data: die neue Migration laeuft, danach kein Unterschied; import gibt Klassen; --to 0 nimmt alles zurueck; ein falscher Befehl ist Exitcode 2",
+                    again.Out.Contains("the database is at 2") && nothing.Out.Contains("has everything") && import.Out.Contains("namespace Shop {") && import.Out.Contains("[Table \"people\"]")
+                    && import.Out.Contains("[Length 200] [Unique] string email") && down.Out.Contains("migrations run: 2, the database is at 0") && after.Out.Contains("2  pending  email")
+                    && bogus.Code == CommandLineRunner.ExitUsage, again.Out + again.Err + nothing.Out + import.Out + import.Err + down.Out + down.Err + after.Out);
+            }
+            finally { try { Directory.Delete(dir, true); } catch (IOException) { } }
+        }
+
         // ---- the command line prints them ----
         {
             string dir = Path.Combine(Path.GetTempPath(), "fire-diag-" + Guid.NewGuid().ToString("N"));

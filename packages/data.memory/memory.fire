@@ -30,6 +30,9 @@ namespace Data {
     class MemoryDialect : Data.Dialect {
         construct() : base("memory") { }
         override string ColumnsQuery() { return "SELECT name FROM _columns WHERE table_name = ?" }
+        override string TablesQuery() { return "SELECT DISTINCT table_name FROM _columns ORDER BY table_name" }
+        override string ColumnInfoQuery() { return "SELECT name, type, notnull = 0, pk FROM _columns WHERE table_name = ?" }
+        override string IndexesQuery() { return "SELECT name, column_name, is_unique FROM _indexes WHERE table_name = ? ORDER BY name" }
     }
 
     // ---- the store ----
@@ -369,7 +372,7 @@ namespace Data {
             var words = ["SELECT", "FROM", "WHERE", "ORDER", "BY", "ASC", "DESC", "LIMIT", "OFFSET", "INSERT", "INTO", "VALUES", "DEFAULT", "UPDATE", "SET",
                 "DELETE", "CREATE", "TABLE", "DROP", "ALTER", "ADD", "COLUMN", "INDEX", "UNIQUE", "ON", "IF", "NOT", "EXISTS", "PRIMARY", "KEY", "NULL",
                 "AND", "OR", "IS", "IN", "LIKE", "BETWEEN", "AS", "DISTINCT", "TRUE", "FALSE", "BEGIN", "COMMIT", "ROLLBACK", "SAVEPOINT", "RELEASE",
-                "TO", "TRANSACTION", "AUTOINCREMENT", "END"]
+                "TO", "TRANSACTION", "AUTOINCREMENT", "END", "RENAME"]
             for (var i = 0; i < words.length; i++) { if (words[i] == upper) { return true } }
             return false
         }
@@ -760,6 +763,25 @@ namespace Data {
             this.Expect("TABLE")
             var n = new Data.MemNode("alter")
             n.name = this.Name()
+            n.value = "add"
+            if (this.Accept("DROP")) {
+                // (ALTER TABLE t DROP [COLUMN] c)
+                this.Accept("COLUMN")
+                n.value = "drop"
+                n.names = new List()
+                n.names.Add(this.Name())
+                return n
+            }
+            if (this.Accept("RENAME")) {
+                // (ALTER TABLE t RENAME [COLUMN] a TO b)
+                this.Accept("COLUMN")
+                n.value = "rename"
+                n.names = new List()
+                n.names.Add(this.Name())
+                this.Expect("TO")
+                n.names.Add(this.Name())
+                return n
+            }
             this.Expect("ADD")
             this.Accept("COLUMN")
             n.a = this.ColumnDef()
@@ -976,6 +998,44 @@ namespace Data {
                         Data.MemIndex x = store.indexes[i]
                         if (x.table.ToLower() == n.name.ToLower()) { store.indexes.RemoveAt(i) }
                     }
+                }
+            }
+            else if (kind == "alter" && n.value == "drop") {
+                var t = store.Table(n.name)
+                string column = n.names[0]
+                int k = t.IndexOf(column)
+                if (k < 0) { Data.MemoryDriver.Fail("no such column: " + column) }
+                Data.MemColumn gone = t.columns[k]
+                if (gone.key) { Data.MemoryDriver.Fail("cannot drop PRIMARY KEY column: \"" + column + "\"") }
+                t.columns.RemoveAt(k)
+                for (var i = 0; i < t.rows.Count; i++) {
+                    any old = t.rows[i]
+                    any less = new any[old.length - 1]
+                    int w = 0
+                    for (var j = 0; j < old.length; j++) {
+                        if (j == k) { continue }
+                        less[w] = old[j]
+                        w++
+                    }
+                    t.rows[i] = take less
+                }
+                for (var i = store.indexes.Count - 1; i >= 0; i--) {
+                    Data.MemIndex x = store.indexes[i]
+                    if (x.table.ToLower() == n.name.ToLower() && x.column.ToLower() == column.ToLower()) { store.indexes.RemoveAt(i) }
+                }
+            }
+            else if (kind == "alter" && n.value == "rename") {
+                var t = store.Table(n.name)
+                string column = n.names[0]
+                string to = n.names[1]
+                int k = t.IndexOf(column)
+                if (k < 0) { Data.MemoryDriver.Fail("no such column: \"" + column + "\"") }
+                if (t.IndexOf(to) >= 0) { Data.MemoryDriver.Fail("duplicate column name: " + to) }
+                Data.MemColumn c = t.columns[k]
+                c.name = to
+                for (var i = 0; i < store.indexes.Count; i++) {
+                    Data.MemIndex x = store.indexes[i]
+                    if (x.table.ToLower() == n.name.ToLower() && x.column.ToLower() == column.ToLower()) { x.column = to }
                 }
             }
             else if (kind == "alter") {
@@ -1231,13 +1291,30 @@ namespace Data {
             return t
         }
 
+        // (the table "_indexes": name, table_name, column_name, is_unique)
+        Data.MemTable Indexes() {
+            var t = new Data.MemTable("_indexes")
+            foreach (name in ["name", "table_name", "column_name", "is_unique"]) { t.columns.Add(new Data.MemColumn(name)) }
+            var store = this.connection.store
+            for (var i = 0; i < store.indexes.Count; i++) {
+                Data.MemIndex x = store.indexes[i]
+                any row = new any[4]
+                row[0] = x.name
+                row[1] = x.table
+                row[2] = x.column
+                if (x.unique) { row[3] = 1 } else { row[3] = 0 }
+                t.rows.Add(take row)
+            }
+            return t
+        }
+
         List Select(Data.MemNode n) {
             Data.MemTable t = undefined
             Data.MemTable made = undefined
             if (n.value != undefined) { this.alias = "" + n.value } else if (n.name != undefined) { this.alias = n.name } else { this.alias = "" }
             if (n.name != undefined) {
-                if (n.name.ToLower() == "_columns") {
-                    made = this.Columns()
+                if (n.name.ToLower() == "_columns" || n.name.ToLower() == "_indexes") {
+                    if (n.name.ToLower() == "_columns") { made = this.Columns() } else { made = this.Indexes() }
                     t = made
                 } else {
                     t = this.connection.store.Table(n.name)

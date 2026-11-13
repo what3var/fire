@@ -35,6 +35,9 @@ namespace Data {
     class SqliteDialect : Data.Dialect {
         construct() : base("sqlite") { }
         override string ColumnsQuery() { return "select name from pragma_table_info(?)" }
+        override string TablesQuery() { return "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name" }
+        override string ColumnInfoQuery() { return "SELECT name, type, \"notnull\" = 0, pk > 0 FROM pragma_table_info(?) ORDER BY cid" }
+        override string IndexesQuery() { return "SELECT il.name, ii.name, il.\"unique\" FROM pragma_index_list(?) AS il, pragma_index_info(il.name) AS ii WHERE il.origin = 'c' ORDER BY il.name, ii.seqno" }
         // (an INTEGER PRIMARY KEY is the rowid: generated without AUTOINCREMENT - a key of a deleted row can come again only after the largest one went)
         override string ColumnType(Data.ColumnMap c) {
             if (c.key && c.generated) { return "INTEGER" }

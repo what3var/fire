@@ -828,7 +828,7 @@ namespace fire.Compiler
         private static void MarkKeepAndSerializable(RuntimeClass rc, ClassDecl cd)
         {
             static bool Has(IReadOnlyList<AttributeDecl>? attributes, string name) => attributes?.Any(a => a.Name == name) == true;
-            rc.Keep = Has(cd.Attributes, "Keep") || Has(cd.Attributes, "Remote") || Has(cd.Attributes, "Page") || Has(cd.Attributes, "Table") || Has(cd.Attributes, "Driver");   // ([Remote], [Page]: http.rpc / http.pages make and call it by its name; [Table], [Driver]: data reads and makes it by reflection)
+            rc.Keep = Has(cd.Attributes, "Keep") || Has(cd.Attributes, "Remote") || Has(cd.Attributes, "Page") || Has(cd.Attributes, "Table") || Has(cd.Attributes, "Driver") || Has(cd.Attributes, "Migration");   // ([Remote], [Page]: http.rpc / http.pages make and call it by its name; [Table], [Driver], [Migration]: data reads and makes it by reflection)
             if (Has(cd.Attributes, "NotSerializable")) rc.NotSerializable = true;
             rc.NoCopy = Has(cd.Attributes, "NoCopy");
             foreach (var member in cd.Members)

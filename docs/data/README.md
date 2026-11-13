@@ -372,6 +372,57 @@ The tests run against a server when `FIRE_TEST_SQLSERVER` names an empty databas
 Windows logins (Kerberos/NTLM), table-valued parameters; `encrypt=strict` is written to
 the protocol but could not be tried (the server on Linux did not accept a certificate for it).
 
+## Migrations
+
+A migration is a class of the program with `[Migration n, "title"]` and `Up(Data.Migrator m)` (and `Down` to undo it). `db.Migrate()` runs the ones that
+have not run on the database, in the order of their numbers, each in a transaction; the table `_fire_migrations` keeps which ran.
+`db.MigrateTo(n)` goes up to `n` or down (with the `Down` methods, the newest first); `db.Applied()` gives the numbers that ran.
+
+```fire
+[Migration 2, "email"]
+class AddEmail {
+    undefined Up(Data.Migrator m) {
+        m.AddColumn("people", m.Column("email", "string", 200))
+        m.CreateIndex("ix_people_email", "people", "email", true)
+        m.Sql("update people set email = ? where email is null", [""])
+    }
+    undefined Down(Data.Migrator m) {
+        m.DropIndex("ix_people_email", "people")
+        m.DropColumn("people", "email")
+    }
+}
+db.Migrate()
+```
+
+The steps of `Data.Migrator` are in the words of no database - the dialect of the connection makes the SQL, so one migration runs on SQLite, MySQL,
+SQL Server and the in-memory database alike: `CreateTable(table, [m.Key("id"), m.Column("name", "string", 100, true), ...])` (a column: name, kind -
+`int`, `float`, `bool`, `string`, `bytes`, `time`, `enum`, `json` -, length, required; `m.Key(name, kind = "int", generated = true)`), `DropTable`,
+`AddColumn`, `DropColumn`, `RenameColumn`, `CreateIndex(name, table, column, unique)`, `DropIndex`, `Sql(text, args)` for the rest, and
+`CreateTableFor("Person")` (what `Ensure` makes from the mapping as it is now - for the first migration of a new program; later ones should name their
+columns, so that they still do the same when the class has changed). A migration that throws is rolled back and nothing of it is recorded; on MySQL and
+MariaDB a change of a table (CREATE, ALTER, DROP) cannot be rolled back - it commits on its own -, so there the steps before the failure stay.
+
+`db.Schema()` reads the tables as the database has them: `Data.SchemaTable` (`name`, `columns` of `Data.SchemaColumn` - `name`, `type` as the
+database names it, `nullable`, `key` -, `indexes` of `Data.SchemaIndex` - `name`, `column`, `unique`).
+
+### forge data
+
+```
+forge data status  [program] --url <url>               which migrations of the program ran on the database
+forge data migrate [program] --url <url> [--to N]      runs the missing ones, or goes up/down to N
+forge data diff    [program] --url <url> [--title T] [-o file]   the migration that the database lacks
+forge data import  --url <url> [--namespace NS] [-o file]        classes for the tables of a database
+```
+
+The program is files, a project or a solution (`-p` for one of its projects), or the project in the current folder; its classes and migrations run in the
+VM, its top level does not (as with `forge test`). `--user` and `--password` (or the environment variable `FIRE_DATA_PASSWORD`) for a server; the driver
+comes from the scheme of the URL. `diff` compares the mapping of the classes with `[Table]` with the database - after the migrations of the program, so
+they must have run (else it says so) - and writes the next migration as fire code: new tables, new columns, the indexes of `[Unique]` and `[Index]`
+columns, the join tables of `[ManyToMany]` fields, and a `Down` that undoes it in the reverse order. It never drops anything: what only the database
+has is named in a comment; a new `[Required]` column is added as one that may be NULL, with a note (the rows that are there have no value). `import`
+writes a class per table with `[Table]`, `[Key]`, `[Required]`, `[Length]`, `[Unique]`/`[Index]` and `[Column]` where a name is no fire name - the start
+of a mapping to edit.
+
 ## The in-memory database
 
 `#import "data.memory"`, `new Data.Connection("memory:")`: a database in the memory of the program, its own for the connection - written in fire, no
@@ -380,7 +431,7 @@ a subset of SQL, the part that programs and the mapping use, with SQLite's rules
 
 | | |
 |---|---|
-| schema | `CREATE TABLE [IF NOT EXISTS] t (c TYPE [PRIMARY KEY] [NOT NULL] [UNIQUE] [DEFAULT v], ..., [PRIMARY KEY (c)], [UNIQUE (c)])`, `DROP TABLE [IF EXISTS]`, `ALTER TABLE t ADD [COLUMN] ...`, `CREATE [UNIQUE] INDEX [IF NOT EXISTS] i ON t (c)`, `DROP INDEX` |
+| schema | `CREATE TABLE [IF NOT EXISTS] t (c TYPE [PRIMARY KEY] [NOT NULL] [UNIQUE] [DEFAULT v], ..., [PRIMARY KEY (c)], [UNIQUE (c)])`, `DROP TABLE [IF EXISTS]`, `ALTER TABLE t ADD [COLUMN] ...`, `ALTER TABLE t DROP [COLUMN] c`, `ALTER TABLE t RENAME [COLUMN] a TO b`, `CREATE [UNIQUE] INDEX [IF NOT EXISTS] i ON t (c)`, `DROP INDEX` |
 | rows | `INSERT INTO t [(c, ...)] VALUES (...)[, (...)]`, `INSERT ... DEFAULT VALUES`, `UPDATE t SET c = e, ... [WHERE e]`, `DELETE FROM t [WHERE e]` |
 | queries | `SELECT [DISTINCT] * \| e [AS name], ... [FROM t] [WHERE e] [ORDER BY e [ASC\|DESC], ...] [LIMIT n [OFFSET m]]` - one table |
 | expressions | literals, `?`, columns, `+ - * / %`, `\|\|`, `= != <> < <= > >=`, `AND OR NOT`, `IS [NOT] NULL`, `[NOT] LIKE`, `[NOT] IN (...)`, `[NOT] BETWEEN`, `lower upper length abs trim substr coalesce ifnull` |
@@ -389,7 +440,8 @@ a subset of SQL, the part that programs and the mapping use, with SQLite's rules
 
 An `INTEGER PRIMARY KEY` is generated like SQLite's rowid; PRIMARY KEY, UNIQUE (also a unique index) and NOT NULL are checked
 (`Data.ConstraintException` with SQLite's codes). What is not in the subset - joins, GROUP BY, subqueries - is a `Data.DataException` ("syntax error").
-The table `_columns` (`table_name`, `name`, `type`, `pk`, `notnull`) describes the tables (what `Ensure` asks). Queries of the ORM with expression trees
+The table `_columns` (`table_name`, `name`, `type`, `pk`, `notnull`) describes the tables (what `Ensure` asks), `_indexes` (`name`, `table_name`,
+`column_name`, `is_unique`) their indexes. Queries of the ORM with expression trees
 (next steps) run on the rows directly, without SQL.
 
 ## Writing a driver
