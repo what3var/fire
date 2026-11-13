@@ -37,7 +37,7 @@ Leitlinien:
 
 1. [Arrays statt Byte-Puffer an Natives](#15-arrays-statt-byte-puffer-an-natives) vervollständigen.
 2. Der Rest der laufenden Arbeitsliste: Ebene 2 (typisierte Locals und Felder als C-Typen, 13.9), ~~Besitz ohne Aufruftiefe (`TakeTo` mit C-ABI)~~,
-   ~~schlankere Konstruktoren~~ (beide umgesetzt, 13.9), ~~weniger Value-Kopien (Alias-Slots, dann Zeiger-Argumente/Ergebnisse)~~ (umgesetzt, 13.9), spark: CPU-Last im Leerlauf und der FPS-Einbruch von scene3d.
+   ~~schlankere Konstruktoren~~ (beide erledigt, 13.9), ~~weniger Value-Kopien (Alias-Slots, dann Zeiger-Argumente/Ergebnisse)~~ (umgesetzt, 13.9), spark: CPU-Last im Leerlauf und der FPS-Einbruch von scene3d.
 3. Die kleinen Punkte aus [Kleine und alte Ziele](#13-kleine-und-alte-ziele) ("Dazwischen, klein").
 4. Die Reste aus Generator, Linkage und Größe (Abschnitte 9, 11, 12, 17) - nur, was wirklich Vorteile bringt.
 5. UI zuletzt (Abschnitte 10 und 14).
@@ -712,25 +712,23 @@ Daten-Stack bei XC8), AVR nur mit einem eigenen kleinen Profil.
    Überschreibungen von Paketmethoden, Konstruktoren von Basisklassen), Programme mit Reflection, Plugins und Debug-Builds. `FIRE_DERIVE_LOG=1`
    zeigt die Entscheidungen, `FIRE_NO_DERIVE=1` schaltet es ab.
    **Aus der Arbeitsliste (Punkt 2 der Reihenfolge):** *Besitz ohne Aufruftiefe* war schon umgesetzt (der Besitz-Stack `g_argIn`/`MYARGS`: eine
-   Methode mit `try TakeTo` hat eine C-Schnittstelle, VM und nativ gleich). *Schlankere Konstruktoren:* ein Konstruktor bekommt einen C-Rumpf wie
-   eine Methode; `new X(1.0, 2.0)` ruft ihn mit C-Zahlen ohne Value-Hülle, wenn die Klasse den Konstruktor eindeutig hat (keine benannten oder
-   kopierten Argumente, keine Typargumente). Im Konstruktor gilt `self` von Anfang an als lebendig (eine Prüfung statt einer je Feld), ebenso nach
-   dem ersten Setzen eines Felds von `self`. Auf Zielen, die nach Größe übersetzen (dos16, win16), bleibt der Konstruktor beim Zeiger-Aufruf
-   (`fN_p(&o, &a, ...)`): der C-Rumpf hätte ihn ersetzt und jede Aufrufstelle größer gemacht (gemessen +1 KB). Gemessen (Release): dos16
-   "Scene3D Physics" Code 466 -> 465 KB (scene3d 41 054 -> 40 657, physics 19 017 -> 18 883 Byte); linux "Scene3D Physics" 599 KB gleich
-   (scene3d +64, physics +277 Byte: der C-Rumpf neben der Value-Hülle für `Reflect`/dynamisches `new`), die Vorlage "Desktop" ui 361 096 -> 361 528 Byte.
+   Methode mit `try TakeTo` hat eine C-Schnittstelle, VM und nativ gleich). *Schlankere Konstruktoren:* im Konstruktor gilt `self` von Anfang an als
+   lebendig (eine Prüfung statt einer je Feld), ebenso nach dem ersten Setzen eines Felds von `self` (dos16 "Scene3D Physics": Code 466 -> 465 KB).
+   Versucht und wieder verworfen: C-Rümpfe für Konstruktoren (`new X(1.0, 2.0)` mit C-Zahlen) - weder schneller (3 Mio. `new Vec(x, y, z)` und
+   1 Mio. Objekte mit Unterobjekt: gleich schnell im Rauschen) noch kleiner (linux "Scene3D Physics" +0,3 KB, dos16 +1 KB: die Funktion mit Values
+   vor dem C-Rumpf kostet, was die C-Zahlen sparen).
    *Weniger Value-Kopien:* die Alias-Slots und die Zeigerkonvention (Größenziele) gab es schon (NATIVE_BACKEND.md "Kopien von Values",
    "Zeigerkonvention"); dazu jetzt die C-Rümpfe: ihre Values per Adresse, ihre C-Zahlen per Wert (`fN_c_p(const Value* self_p, Real P0)`), ihre Hülle
    mit Values ganz per Adresse. dos16 "Scene3D Physics" geladen 565 588 -> 564 692 Byte. Ergebnisse gehen schon heute über den Rückgabepuffer des
    Aufrufers (Watcom), dort bleibt nichts zu holen.
    *spark und scene3d:* die CPU-Last von spark im Leerlauf ist nach dem Benutzer wieder weg (gemessen unter Xvfb: ~5 % eines Kerns im Startfenster).
-   Der FPS-Einbruch von scene3d (Windows, von über 60 auf 10-20) ist hier nicht nachzustellen: dasselbe Programm (die Szene des Beispiels "Scene3D
-   Benchmark", Software-Renderer, ohne Fenster, 160x90 / 640x480 / 1280x720) misst mit dem Stand vom 2.11. (2cccf9bb) und heute gleich, in der VM
-   (Release und Debug) wie nativ; mit Fenster unter Linux (X11) und unter Wine (GDI, mingw) ebenso. Offen bleibt der Teil, den es nur unter Windows gibt.
-   Gefunden dabei: der Vulkan-Weg von scene3d (`s3d_gpu_makeSurface`) kennt die Fenster von DirectComposition nicht (`FIRE_NATIVE_DCOMP`, seit
-   Windows 8 jedes Fenster der eigenen Anzeige) - DirectDrawing fällt dort auf das Zurücklesen zurück; graphics hat den Weg schon
-   (`fire_gfx_gpuPresentDcompLocked`: das Bild in die importierte Textur von D3D11). Zu klären: AutoResize auf einem skalierten Bildschirm (die
-   eigene Anzeige ist DPI-bewusst: ein maximiertes Fenster gibt dem Framebuffer die physischen Pixel, SDL gab die logischen).
+   Der FPS-Einbruch von scene3d war vorübergehend: dasselbe Programm misst mit dem Stand vom 2.11. (2cccf9bb) und heute gleich (VM Release und Debug,
+   nativ, X11, Wine), und der Benutzer misst unter Windows (Intel UHD 620, "Scene3D Benchmark", 1280x720) Software 21, Hardware 31, DirectDrawing
+   59 Bilder/s - Software bei 640x480 damit wie früher um 60. Gefunden dabei: DirectDrawing ging unter Windows seit der eigenen Anzeige nicht mehr
+   direkt ins Fenster ("0 straight into the window"): ab Windows 8 ist jedes Fenster eines von DirectComposition (`FIRE_NATIVE_DCOMP`), das der
+   Vulkan-Weg von scene3d nicht kannte. **Jetzt** wie in graphics: das Gerät importiert Texturen von D3D11 (VK_KHR_external_memory_win32, dieselbe
+   LUID), der Presenter zeichnet Szene und Overlay in ein eigenes Bild in der Größe des Framebuffers, kopiert es in die Textur des Fensters und lässt
+   die Brücke des Fensters präsentieren (DirectComposition streckt es auf das Fenster) - übersetzt (mingw, -Wall), unter Windows noch nicht gelaufen.
 
 Für alle neuen Ziele: Zielprofile, Toolchain OpenWatcom (`bios16`/`bios32` auch gcc `-m32 -ffreestanding`, `efi-x64` clang/mingw), eine Plattformschicht pro Familie;
 Tests ohne Fenster über den seriellen Port bzw. die Konsole: DOSBox-X / dosemu2 (`dos16`, `dos32`, Win 3.11), QEMU (`bios16`/`bios32`; `efi-x64` mit der Firmware OVMF),

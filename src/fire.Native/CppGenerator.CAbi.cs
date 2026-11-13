@@ -47,11 +47,9 @@ namespace fire.Native
 
         private CAbi? CAbiParams(Func f)
         {
-            // (a constructor too: `new X(...)` calls its C body with C numbers - NewObject -, the Value function in front serves the rest: reflection, `: base(...)`)
-            if (!ScalarsOn || Wrapped || Modular || LibraryRole || f.External || f.Export != null || f.Kind is not (FuncKind.Method or FuncKind.Static or FuncKind.Ctor)) return null;
-            // (optimised for size - dos16, win16: `new` passes the Values by address to the constructor's function with Values - measured: the C bodies of the
-            // constructors cost 1 KB more on "Scene3D Physics", even with their Values by address)
-            if (f.Kind == FuncKind.Ctor && _program.Optimize == fire.Runtime.OptimizeFor.Size) return null;
+            // (not a constructor: tried - measured neither faster nor smaller: 3 million `new Vec(x, y, z)` the same time, "Scene3D Physics" +0.3 KB on linux,
+            // +1 KB on dos16; the function with Values in front of the C body costs what the C numbers save)
+            if (!ScalarsOn || Wrapped || Modular || LibraryRole || f.External || f.Export != null || f.Kind is not (FuncKind.Method or FuncKind.Static)) return null;
             if (f.SpecParams != null || f.SpecTArgs != null || f.SpecClassOwner != null || f.Proto is not { } proto || f.Chunk.Handlers.Count > 0) return null;
             if (MethodKey(proto) is { } key && (key.Name.StartsWith("get_", StringComparison.Ordinal) || key.Name.StartsWith("set_", StringComparison.Ordinal))) return null;
             var code = OpInfo.Decode(f.Chunk.Code);
@@ -160,21 +158,6 @@ namespace fire.Native
             try { rc = FindClass(cls); } catch (NativeNotSupportedException) { return null; }
             if (rc.IsTypeOverloaded(method, argc) || rc.FindMethodWithAccess(method, argc).Proto is not { IsStatic: true } proto || proto.ParamCount != argc) return null;
             var target = GetFunc(proto, FuncKind.Static);
-            return CAbiOf(target) != null ? target : null;
-        }
-
-        /// <summary>The constructor a NewObject calls when it has a C body and the call can use it (no named arguments, every argument given, no overloading
-        /// by type, no type arguments); null otherwise.</summary>
-        private Func? CAbiNewCallee(Func f, Flow st, Instr ins)
-        {
-            if (!ScalarsOn || ins.Op is not (OpCode.NewObject or OpCode.NewObjectOwned)) return null;
-            int argc = ins.A[1];
-            int at = f.IndexOf.TryGetValue(ins.Addr, out int index) ? index : -1;
-            if (at > 0 && f.Decoded[at - 1].Op is OpCode.ArgNames or OpCode.CopyArgs or OpCode.SetTypeArgs or OpCode.OverloadHint) return null;
-            RuntimeClass rc;
-            try { rc = FindClass(f.Chunk.Constants[ins.A[0]].AsString()); } catch (NativeNotSupportedException) { return null; }
-            if (rc.IsConstructorTypeOverloaded(argc) || rc.FindConstructor(argc) is not { } ctor || ctor.ParamCount != argc) return null;
-            var target = GetFunc(ctor, FuncKind.Ctor);
             return CAbiOf(target) != null ? target : null;
         }
 
