@@ -1556,7 +1556,7 @@ namespace Data {
                 this.done = true
                 return false
             }
-            this.current = row
+            this.current = take row
             return true
         }
         any Values() {
