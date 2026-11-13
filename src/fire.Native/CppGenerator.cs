@@ -4028,7 +4028,6 @@ namespace fire.Native
             string VR(int k) => k >= 0 && k < 64 && st.Alias[k] is { } aliasedV ? aliasedV : SlotName(st.Region, k);
             if (AnyAlias(st) && !AliasAware(ins.Op)) MaterializeAliases(st, E);
             if (st.Scalar != 0 && !ScalarAware(ins.Op) && !TypedNativeCall(ins) && !(ins.Op == OpCode.CallStaticMethod && CAbiStaticCallee(f, ins) != null) && !(ins.Op == OpCode.CallMethod && CAbiMethodCallee(f, st, ins) != null)
-                && !(ins.Op is OpCode.NewObject or OpCode.NewObjectOwned && CAbiNewCallee(f, st, ins) != null)
                 && !GuardTopProven(st, ins)
                 && !(ins.Op == OpCode.Return && f.CAbi is { RetType: not 0 }) && CFieldAccess(f, st, ins) == null) MaterializeAll(f, st, E);
             // (a field that is a C number: CppGenerator.CFields.cs)
@@ -5735,17 +5734,6 @@ namespace fire.Native
                     int slot = d - argc - (owned ? 1 : 0);
                     string ownerExpr = owned ? $"objOwned(asObj({S(slot)}))" : "&" + OwnerList();
                     long mask = ArgMask();
-                    if (SlotScalars() && newNames == null && mask == 0 && _pendingNewTArgs == null && ReferenceEquals(CAbiNewCallee(f, st, ins), target) && CAbiOf(target) is { } ctorAbi)
-                    {
-                        // the C body of the constructor (Ebene 2): the arguments as C numbers - checked here when their type does not prove them
-                        var cargs = CAbiArgs(ctorAbi, d - argc, argc);
-                        cargs.Insert(0, "o");
-                        E($"{{ Value o = {NewObjectCall(cls, ownerExpr)}; {(cls.Rc.IsActor ? "markActor(o); " : "")}{RecInitEnter(cls)}{CName(target)}({string.Join(", ", cargs)}); {RecInitLeave(cls)}ctorEnd(o); {T(slot)} = o; }}");
-                        Check();
-                        SetR(slot, false);
-                        SetT(slot, ObjType(cls.Rc)); _kindsKept = true;
-                        d = slot + 1; return Next();
-                    }
                     ArgsBefore(d - argc, argc, mask);
                     var (dpre, dargs) = newNames != null ? NamedCallArgsOrFail(ctor, d - argc, argc, newNames, mask, "o", "new " + cls.Rc.Name) : DefaultArgs(ctor, argc, "o", "&" + OwnerList());
                     string ctorArgs = newNames != null ? "" : CallArgs(d - argc, argc, mask, ctor.RefMask);

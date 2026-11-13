@@ -76,6 +76,11 @@ typedef struct fire_dcomp_bridge {
     int32_t (*present)(struct fire_dcomp_bridge* bridge);
 } fire_dcomp_bridge;
 #endif
+/* Windows, DirectComposition (FIRE_NATIVE_DCOMP): the window's picture is a texture of D3D11, imported (VK_KHR_external_memory_win32; vulkan_win32.h's structures,
+ * written out - as in graphics' fire_gfx_gpu.h) */
+typedef struct S3dVkImportWin32 { VkStructureType sType; const void* pNext; VkExternalMemoryHandleTypeFlagBits handleType; void* handle; const void* name; } S3dVkImportWin32;
+typedef struct S3dVkWin32Props { VkStructureType sType; void* pNext; uint32_t memoryTypeBits; } S3dVkWin32Props;
+typedef VkResult (VKAPI_PTR *PFN_s3dWin32HandleProps)(VkDevice device, VkExternalMemoryHandleTypeFlagBits type, void* handle, S3dVkWin32Props* props);
 
 /* The surfaces of the window systems (their declarations are in the platform headers of Vulkan, vulkan_win32.h & co., which need the headers of the window systems: the
  * structures are written out here; tools/check_s3d_vk.sh compares them with the real ones where the headers are there). One function type makes all of them. */
@@ -113,7 +118,7 @@ static void s3d_gpu_unlock(void) { pthread_mutex_unlock(&g_s3dGpuLock); }
     X(vkCreatePipelineLayout) X(vkDestroyPipelineLayout) X(vkCreateDescriptorPool) X(vkDestroyDescriptorPool) X(vkAllocateDescriptorSets) X(vkFreeDescriptorSets) \
     X(vkUpdateDescriptorSets) X(vkCreateRenderPass) X(vkDestroyRenderPass) X(vkCreateFramebuffer) X(vkDestroyFramebuffer) X(vkCreateGraphicsPipelines) X(vkDestroyPipeline) \
     X(vkCmdBeginRenderPass) X(vkCmdEndRenderPass) X(vkCmdBindPipeline) X(vkCmdBindDescriptorSets) X(vkCmdBindVertexBuffers) X(vkCmdBindIndexBuffer) X(vkCmdDrawIndexed) \
-    X(vkCmdSetViewport) X(vkCmdSetScissor) X(vkCmdPushConstants) X(vkCmdPipelineBarrier) X(vkCmdCopyBufferToImage) X(vkCmdCopyImageToBuffer) X(vkCmdCopyBuffer) X(vkCmdDraw)
+    X(vkCmdSetViewport) X(vkCmdSetScissor) X(vkCmdPushConstants) X(vkCmdPipelineBarrier) X(vkCmdCopyBufferToImage) X(vkCmdCopyImageToBuffer) X(vkCmdCopyImage) X(vkCmdCopyBuffer) X(vkCmdDraw)
 /* For DirectDrawing, where the driver has them (VK_KHR_surface, VK_KHR_swapchain): loaded when they are there. */
 #define S3D_VK_WSI_INSTANCE_FUNCTIONS(X) \
     X(vkDestroySurfaceKHR) X(vkGetPhysicalDeviceSurfaceSupportKHR) X(vkGetPhysicalDeviceSurfaceCapabilitiesKHR) X(vkGetPhysicalDeviceSurfaceFormatsKHR) \
@@ -175,8 +180,14 @@ typedef struct S3dGpuTarget {
     VkFence fence;
     int fencePending;
     VkRenderPass pass;
+    VkImageLayout passLayout;    /* the layout the pass leaves its picture in (PRESENT_SRC for a swap chain, TRANSFER_SRC for DirectComposition) */
     VkPipeline pipe;
     VkDescriptorSet set; VkDescriptorPool pool;
+    /* DirectComposition: the picture drawn here (dcPic), copied into the window's texture of D3D11 (imported: dcImage) */
+    int dcomp, dcReady, dcW, dcH, picW, picH;
+    void* dcHandle;
+    VkImage dcImage; VkDeviceMemory dcMemory;
+    S3dVkImage dcPic; VkFramebuffer dcFb;
     S3dVkImage overlay; int overlayW, overlayH;
     S3dVkBuffer staging;
     struct S3dGpuTarget* next;
@@ -202,6 +213,10 @@ static struct {
 #undef S3D_VK_DECLARE
     PFN_s3dCreateSurface createWin32Surface, createXlibSurface, createWaylandSurface, createMetalSurface;
     int wsi;                   /* the instance has VK_KHR_surface and the device VK_KHR_swapchain: DirectDrawing is possible */
+    int interop;               /* Windows: the device imports textures of D3D11 - DirectDrawing into windows of DirectComposition */
+    uint8_t luid[8];           /* (the adapter of the device: D3D11 of the window must be on the same one) */
+    PFN_vkGetPhysicalDeviceProperties2 vkGetPhysicalDeviceProperties2;
+    PFN_s3dWin32HandleProps getWin32HandleProps;
     int ended;                 /* the program ends (s3d_gpu_atExit): Vulkan is not touched any more */
     int pending;               /* a flush was submitted and not waited for (DirectDrawing) */
     VkInstance instance;
@@ -313,6 +328,9 @@ static int s3d_gpu_createInstance(void) {
                 enabled[n++] = "VK_KHR_portability_enumeration";
                 ci.flags = 0x00000001;   /* VK_INSTANCE_CREATE_ENUMERATE_PORTABILITY_BIT_KHR */
             }
+            /* the import of the pictures of DirectComposition (Windows) asks the device for its LUID */
+            if (s3d_gpu_hasExtension(exts, count, "VK_KHR_get_physical_device_properties2")) enabled[n++] = "VK_KHR_get_physical_device_properties2";
+            if (s3d_gpu_hasExtension(exts, count, "VK_KHR_external_memory_capabilities")) enabled[n++] = "VK_KHR_external_memory_capabilities";
             /* the surfaces of the window systems (DirectDrawing), where they are there */
             if (s3d_gpu_hasExtension(exts, count, "VK_KHR_surface")) {
                 enabled[n++] = "VK_KHR_surface";
@@ -345,6 +363,9 @@ static int s3d_gpu_createInstance(void) {
         g_s3dVk.createWaylandSurface = (PFN_s3dCreateSurface)g_s3dVk.vkGetInstanceProcAddr(g_s3dVk.instance, "vkCreateWaylandSurfaceKHR");
         g_s3dVk.createMetalSurface = (PFN_s3dCreateSurface)g_s3dVk.vkGetInstanceProcAddr(g_s3dVk.instance, "vkCreateMetalSurfaceEXT");
     }
+    g_s3dVk.vkGetPhysicalDeviceProperties2 = (PFN_vkGetPhysicalDeviceProperties2)g_s3dVk.vkGetInstanceProcAddr(g_s3dVk.instance, "vkGetPhysicalDeviceProperties2KHR");
+    if (g_s3dVk.vkGetPhysicalDeviceProperties2 == NULL)
+        g_s3dVk.vkGetPhysicalDeviceProperties2 = (PFN_vkGetPhysicalDeviceProperties2)g_s3dVk.vkGetInstanceProcAddr(g_s3dVk.instance, "vkGetPhysicalDeviceProperties2");
     return 1;
 }
 
@@ -409,9 +430,9 @@ static int s3d_gpu_createDevice(void) {
     VkDeviceCreateInfo di;
     uint32_t count = 0;
     VkExtensionProperties* exts = NULL;
-    const char* enabled[2];
+    const char* enabled[8];
     uint32_t n = 0;
-    int swapchain = 0;
+    int swapchain = 0, interop = 0;
     memset(&qi, 0, sizeof qi);
     qi.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;
     qi.queueFamilyIndex = g_s3dVk.family;
@@ -428,6 +449,16 @@ static int s3d_gpu_createDevice(void) {
             if (s3d_gpu_hasExtension(exts, count, "VK_KHR_portability_subset")) enabled[n++] = "VK_KHR_portability_subset";
             /* the swap chains of DirectDrawing */
             if (g_s3dVk.wsi && s3d_gpu_hasExtension(exts, count, "VK_KHR_swapchain")) { enabled[n++] = "VK_KHR_swapchain"; swapchain = 1; }
+#ifdef _WIN32
+            /* DirectComposition: textures of D3D11 imported (the window's picture) */
+            if (g_s3dVk.vkGetPhysicalDeviceProperties2 != NULL && s3d_gpu_hasExtension(exts, count, "VK_KHR_external_memory")
+                && s3d_gpu_hasExtension(exts, count, "VK_KHR_external_memory_win32") && s3d_gpu_hasExtension(exts, count, "VK_KHR_dedicated_allocation")
+                && s3d_gpu_hasExtension(exts, count, "VK_KHR_get_memory_requirements2")) {
+                enabled[n++] = "VK_KHR_external_memory"; enabled[n++] = "VK_KHR_external_memory_win32";
+                enabled[n++] = "VK_KHR_dedicated_allocation"; enabled[n++] = "VK_KHR_get_memory_requirements2";
+                interop = 1;
+            }
+#endif
         }
         free(exts);
     }
@@ -435,6 +466,19 @@ static int s3d_gpu_createDevice(void) {
     di.enabledExtensionCount = n;
     di.ppEnabledExtensionNames = n > 0 ? enabled : NULL;
     if (!s3d_gpu_check(g_s3dVk.vkCreateDevice(g_s3dVk.phys, &di, NULL, &g_s3dVk.device), "vkCreateDevice")) { g_s3dVk.device = NULL; return 0; }
+    if (interop) {
+        /* the device's LUID (DirectComposition's D3D11 must be on the same adapter) and the import's memory types */
+        VkPhysicalDeviceProperties2 p2;
+        VkPhysicalDeviceIDProperties id;
+        memset(&p2, 0, sizeof p2); memset(&id, 0, sizeof id);
+        p2.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2;
+        id.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ID_PROPERTIES;
+        p2.pNext = &id;
+        g_s3dVk.vkGetPhysicalDeviceProperties2(g_s3dVk.phys, &p2);
+        memcpy(g_s3dVk.luid, id.deviceLUID, sizeof g_s3dVk.luid);
+        g_s3dVk.getWin32HandleProps = (PFN_s3dWin32HandleProps)g_s3dVk.vkGetDeviceProcAddr(g_s3dVk.device, "vkGetMemoryWin32HandlePropertiesKHR");
+        g_s3dVk.interop = id.deviceLUIDValid && g_s3dVk.getWin32HandleProps != NULL;
+    }
 #define S3D_VK_LOAD_D(name) \
     g_s3dVk.name = (PFN_##name)g_s3dVk.vkGetDeviceProcAddr(g_s3dVk.device, #name); \
     if (g_s3dVk.name == NULL) { s3d_gpu_fail("The Vulkan driver lacks " #name "."); return 0; }
@@ -1366,7 +1410,7 @@ static void s3d_gpu_objectUniforms(const S3dBatch* b, S3dGpuObjectU* o) {
 static int s3d_gpu_flushLocked(uint8_t* rgba, S3dFrame* f, const S3dCamera* cam, const S3dLight* lights, s3d_size lightCount, const S3dFlushSettings* st) {
     S3dGpuFrame* target;
     S3dGpuTarget* direct = (S3dGpuTarget*)f->direct;
-    int readBack = !(direct != NULL && direct->attached && direct->works == 1 && g_s3dVk.wsi);
+    int readBack = !(direct != NULL && direct->attached && direct->works == 1 && (g_s3dVk.wsi || g_s3dVk.interop));
     size_t i, nb = f->batchN, k;
     S3dVec3 lo = s3d_v3(1e30f, 1e30f, 1e30f), hi = s3d_v3(-1e30f, -1e30f, -1e30f);
     int anyCaster = 0, maps = 0, atlas = 64, layers = 1, m, nblended = 0, layer;
@@ -1556,7 +1600,7 @@ static int s3d_gpu_presentShared(void) {
 }
 
 /* The render pass into the images of a swap chain (format `format`) and the pipeline of the present pass with it. */
-static int s3d_gpu_presentPass(S3dGpuTarget* t, VkFormat format) {
+static int s3d_gpu_presentPass(S3dGpuTarget* t, VkFormat format, VkImageLayout finalLayout) {
     VkAttachmentDescription att;
     VkAttachmentReference ref;
     VkSubpassDescription sub;
@@ -1573,7 +1617,8 @@ static int s3d_gpu_presentPass(S3dGpuTarget* t, VkFormat format) {
     VkDynamicState dyn[2];
     VkPipelineDynamicStateCreateInfo dy;
     VkGraphicsPipelineCreateInfo ci;
-    if (t->pass && t->format == format) return 1;
+    if (t->pass && t->format == format && t->passLayout == finalLayout) return 1;
+    if (t->dcFb) { g_s3dVk.vkDestroyFramebuffer(g_s3dVk.device, t->dcFb, NULL); t->dcFb = 0; }   /* (made for the pass of before) */
     if (t->pipe) { g_s3dVk.vkDestroyPipeline(g_s3dVk.device, t->pipe, NULL); t->pipe = 0; }
     if (t->pass) { g_s3dVk.vkDestroyRenderPass(g_s3dVk.device, t->pass, NULL); t->pass = 0; }
     memset(&att, 0, sizeof att);
@@ -1581,7 +1626,7 @@ static int s3d_gpu_presentPass(S3dGpuTarget* t, VkFormat format) {
     att.samples = VK_SAMPLE_COUNT_1_BIT;
     att.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR; att.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
     att.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE; att.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
-    att.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED; att.finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+    att.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED; att.finalLayout = finalLayout;
     ref.attachment = 0; ref.layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
     memset(&sub, 0, sizeof sub);
     sub.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
@@ -1597,7 +1642,7 @@ static int s3d_gpu_presentPass(S3dGpuTarget* t, VkFormat format) {
     rc.subpassCount = 1; rc.pSubpasses = &sub;
     rc.dependencyCount = 1; rc.pDependencies = &dep;
     if (!s3d_gpu_check(g_s3dVk.vkCreateRenderPass(g_s3dVk.device, &rc, NULL, &t->pass), "vkCreateRenderPass")) { t->pass = 0; return 0; }
-    t->format = format;
+    t->format = format; t->passLayout = finalLayout;
     memset(stages, 0, sizeof stages);
     stages[0].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO; stages[0].stage = VK_SHADER_STAGE_VERTEX_BIT; stages[0].module = g_s3dVk.presentVert; stages[0].pName = "main";
     stages[1].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO; stages[1].stage = VK_SHADER_STAGE_FRAGMENT_BIT; stages[1].module = g_s3dVk.presentFrag; stages[1].pName = "main";
@@ -1636,10 +1681,20 @@ static void s3d_gpu_freeSwapchainImages(S3dGpuTarget* t) {
 }
 
 /* Lets go of the window: the swap chain and the surface (before the window closes, or shows its framebuffer again). */
+static void s3d_gpu_freeImport(S3dGpuTarget* t) {
+    if (t->dcFb) g_s3dVk.vkDestroyFramebuffer(g_s3dVk.device, t->dcFb, NULL);
+    s3d_gpu_freeImage(&t->dcPic);
+    if (t->dcImage) g_s3dVk.vkDestroyImage(g_s3dVk.device, t->dcImage, NULL);
+    if (t->dcMemory) g_s3dVk.vkFreeMemory(g_s3dVk.device, t->dcMemory, NULL);
+    t->dcFb = 0; t->dcImage = 0; t->dcMemory = 0; t->dcHandle = NULL; t->dcW = t->dcH = t->picW = t->picH = 0; t->dcReady = 0;
+}
+
 static void s3d_gpu_freeSurface(S3dGpuTarget* t) {
-    if (!t->surface && !t->swapchain) return;
+    if (!t->surface && !t->swapchain && !t->dcomp) return;
     s3d_gpu_idle();
     t->fencePending = 0;
+    s3d_gpu_freeImport(t);
+    t->dcomp = 0;
     s3d_gpu_freeSwapchainImages(t);
     if (t->swapchain) { g_s3dVk.vkDestroySwapchainKHR(g_s3dVk.device, t->swapchain, NULL); t->swapchain = 0; }
     if (t->surface) { g_s3dVk.vkDestroySurfaceKHR(g_s3dVk.instance, t->surface, NULL); t->surface = 0; }
@@ -1726,7 +1781,7 @@ static int s3d_gpu_makeSwapchain(S3dGpuTarget* t, const fire_native_window* w) {
         for (i = 0; i < nm; i++) if (modes[i] == VK_PRESENT_MODE_MAILBOX_KHR) mode = VK_PRESENT_MODE_MAILBOX_KHR;
         if (mode != VK_PRESENT_MODE_MAILBOX_KHR) for (i = 0; i < nm; i++) if (modes[i] == VK_PRESENT_MODE_IMMEDIATE_KHR) mode = VK_PRESENT_MODE_IMMEDIATE_KHR;
     }
-    if (!s3d_gpu_presentPass(t, format)) return 0;
+    if (!s3d_gpu_presentPass(t, format, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR)) return 0;
     s3d_gpu_idle();
     t->fencePending = 0;
     s3d_gpu_freeSwapchainImages(t);
@@ -1802,17 +1857,59 @@ static int s3d_gpu_overlay(S3dGpuTarget* t, const uint32_t* pixels, int width, i
     return 1;
 }
 
-/* Shows the camera's picture with the overlay in the window (the lock is held). 1: shown (or nothing to show: a minimized window), 0: it cannot. */
-static int s3d_gpu_presentLocked(S3dGpuTarget* t, const fire_native_window* w, const uint32_t* pixels, int width, int height) {
-    S3dGpuFrame* g = t->frame ? (S3dGpuFrame*)t->frame->gpu : NULL;
-    int hasScene = g != NULL && g->hasPicture, hasOverlay, made, attempt;
-    uint32_t index = 0, flags[4];
-    VkResult r = VK_SUCCESS;
-    VkCommandBufferBeginInfo bi;
+/* The commands that draw the picture of a window (the lock is held, t->cmd is begun): the overlay uploaded (when there is one), the camera's picture made readable,
+ * both drawn by the present pipeline into `fb` (extent x). */
+static void s3d_gpu_recordPicture(S3dGpuTarget* t, VkFramebuffer fb, VkExtent2D extent, S3dGpuFrame* g, int hasScene, int hasOverlay, int width, int height) {
     VkRenderPassBeginInfo rp;
     VkClearValue clear;
     VkViewport vp;
     VkRect2D sc;
+    uint32_t flags[4];
+    if (hasOverlay) {
+        VkBufferImageCopy region;
+        /* (after the previous picture read it) */
+        s3d_gpu_barrierOn(t->cmd, t->overlay.img, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 0, VK_ACCESS_TRANSFER_WRITE_BIT,
+                          VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT);
+        memset(&region, 0, sizeof region);
+        region.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT; region.imageSubresource.layerCount = 1;
+        region.imageExtent.width = (uint32_t)width; region.imageExtent.height = (uint32_t)height; region.imageExtent.depth = 1;
+        g_s3dVk.vkCmdCopyBufferToImage(t->cmd, t->staging.buf, t->overlay.img, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
+        s3d_gpu_barrierOn(t->cmd, t->overlay.img, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT,
+                          VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT);
+    }
+    if (hasScene && g->colorLayout != VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL) {
+        /* the camera's picture (drawn by a flush before, on the same queue) for the shader */
+        s3d_gpu_barrierOn(t->cmd, g->color.img, g->colorLayout, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_TRANSFER_READ_BIT,
+                          VK_ACCESS_SHADER_READ_BIT, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT);
+        g->colorLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    }
+    memset(&rp, 0, sizeof rp);
+    memset(&clear, 0, sizeof clear);
+    clear.color.float32[3] = 1.0f;
+    rp.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
+    rp.renderPass = t->pass; rp.framebuffer = fb;
+    rp.renderArea.extent = extent;
+    rp.clearValueCount = 1; rp.pClearValues = &clear;
+    g_s3dVk.vkCmdBeginRenderPass(t->cmd, &rp, VK_SUBPASS_CONTENTS_INLINE);
+    vp.x = 0; vp.y = 0; vp.width = (float)extent.width; vp.height = (float)extent.height; vp.minDepth = 0; vp.maxDepth = 1;
+    sc.offset.x = 0; sc.offset.y = 0; sc.extent = extent;
+    g_s3dVk.vkCmdSetViewport(t->cmd, 0, 1, &vp);
+    g_s3dVk.vkCmdSetScissor(t->cmd, 0, 1, &sc);
+    g_s3dVk.vkCmdBindPipeline(t->cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, t->pipe);
+    g_s3dVk.vkCmdBindDescriptorSets(t->cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, g_s3dVk.layoutPresent, 0, 1, &t->set, 0, NULL);
+    flags[0] = (uint32_t)hasScene; flags[1] = (uint32_t)hasOverlay; flags[2] = 0; flags[3] = 0;
+    g_s3dVk.vkCmdPushConstants(t->cmd, g_s3dVk.layoutPresent, VK_SHADER_STAGE_FRAGMENT_BIT, 0, 16, flags);
+    g_s3dVk.vkCmdDraw(t->cmd, 3, 1, 0, 0);
+    g_s3dVk.vkCmdEndRenderPass(t->cmd);
+}
+
+/* Shows the camera's picture with the overlay in the window (the lock is held). 1: shown (or nothing to show: a minimized window), 0: it cannot. */
+static int s3d_gpu_presentLocked(S3dGpuTarget* t, const fire_native_window* w, const uint32_t* pixels, int width, int height) {
+    S3dGpuFrame* g = t->frame ? (S3dGpuFrame*)t->frame->gpu : NULL;
+    int hasScene = g != NULL && g->hasPicture, hasOverlay, made, attempt;
+    uint32_t index = 0;
+    VkResult r = VK_SUCCESS;
+    VkCommandBufferBeginInfo bi;
     VkSubmitInfo si;
     VkPresentInfoKHR pi;
     VkPipelineStageFlags waitStage = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
@@ -1845,42 +1942,7 @@ static int s3d_gpu_presentLocked(S3dGpuTarget* t, const fire_native_window* w, c
     bi.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
     bi.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
     if (!s3d_gpu_check(g_s3dVk.vkBeginCommandBuffer(t->cmd, &bi), "vkBeginCommandBuffer")) return 0;
-    if (hasOverlay) {
-        VkBufferImageCopy region;
-        /* (after the previous picture read it) */
-        s3d_gpu_barrierOn(t->cmd, t->overlay.img, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 0, VK_ACCESS_TRANSFER_WRITE_BIT,
-                          VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT);
-        memset(&region, 0, sizeof region);
-        region.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT; region.imageSubresource.layerCount = 1;
-        region.imageExtent.width = (uint32_t)width; region.imageExtent.height = (uint32_t)height; region.imageExtent.depth = 1;
-        g_s3dVk.vkCmdCopyBufferToImage(t->cmd, t->staging.buf, t->overlay.img, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
-        s3d_gpu_barrierOn(t->cmd, t->overlay.img, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT,
-                          VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT);
-    }
-    if (hasScene && g->colorLayout != VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL) {
-        /* the camera's picture (drawn by a flush before, on the same queue) for the shader */
-        s3d_gpu_barrierOn(t->cmd, g->color.img, g->colorLayout, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_TRANSFER_READ_BIT,
-                          VK_ACCESS_SHADER_READ_BIT, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT);
-        g->colorLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-    }
-    memset(&rp, 0, sizeof rp);
-    memset(&clear, 0, sizeof clear);
-    clear.color.float32[3] = 1.0f;
-    rp.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
-    rp.renderPass = t->pass; rp.framebuffer = t->fbs[index];
-    rp.renderArea.extent = t->extent;
-    rp.clearValueCount = 1; rp.pClearValues = &clear;
-    g_s3dVk.vkCmdBeginRenderPass(t->cmd, &rp, VK_SUBPASS_CONTENTS_INLINE);
-    vp.x = 0; vp.y = 0; vp.width = (float)t->extent.width; vp.height = (float)t->extent.height; vp.minDepth = 0; vp.maxDepth = 1;
-    sc.offset.x = 0; sc.offset.y = 0; sc.extent = t->extent;
-    g_s3dVk.vkCmdSetViewport(t->cmd, 0, 1, &vp);
-    g_s3dVk.vkCmdSetScissor(t->cmd, 0, 1, &sc);
-    g_s3dVk.vkCmdBindPipeline(t->cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, t->pipe);
-    g_s3dVk.vkCmdBindDescriptorSets(t->cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, g_s3dVk.layoutPresent, 0, 1, &t->set, 0, NULL);
-    flags[0] = (uint32_t)hasScene; flags[1] = (uint32_t)hasOverlay; flags[2] = 0; flags[3] = 0;
-    g_s3dVk.vkCmdPushConstants(t->cmd, g_s3dVk.layoutPresent, VK_SHADER_STAGE_FRAGMENT_BIT, 0, 16, flags);
-    g_s3dVk.vkCmdDraw(t->cmd, 3, 1, 0, 0);
-    g_s3dVk.vkCmdEndRenderPass(t->cmd);
+    s3d_gpu_recordPicture(t, t->fbs[index], t->extent, g, hasScene, hasOverlay, width, height);
     if (!s3d_gpu_check(g_s3dVk.vkEndCommandBuffer(t->cmd), "vkEndCommandBuffer")) return 0;
     memset(&si, 0, sizeof si);
     si.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
@@ -1900,6 +1962,151 @@ static int s3d_gpu_presentLocked(S3dGpuTarget* t, const fire_native_window* w, c
     return 1;
 }
 
+/* A barrier on the picture that DirectComposition shares: the queue family `from` gives it to `to` (VK_QUEUE_FAMILY_EXTERNAL: D3D11). */
+static void s3d_gpu_shareBarrier(VkCommandBuffer cmd, VkImage image, VkImageLayout from, uint32_t fromFamily, uint32_t toFamily, VkAccessFlags srcAccess, VkAccessFlags dstAccess) {
+    VkImageMemoryBarrier b;
+    memset(&b, 0, sizeof b);
+    b.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+    b.srcAccessMask = srcAccess; b.dstAccessMask = dstAccess;
+    b.oldLayout = from; b.newLayout = VK_IMAGE_LAYOUT_GENERAL;
+    b.srcQueueFamilyIndex = fromFamily; b.dstQueueFamilyIndex = toFamily;
+    b.image = image;
+    b.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    b.subresourceRange.levelCount = 1; b.subresourceRange.layerCount = 1;
+    g_s3dVk.vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT | VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT | VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,
+                                 0, 0, NULL, 0, NULL, 1, &b);
+}
+
+/* The D3D11 texture `handle` (a handle of the kind D3D11_TEXTURE_KMT, width x height, R8G8B8A8) as an image of Vulkan (t->dcImage). */
+static int s3d_gpu_import(S3dGpuTarget* t, void* handle, int width, int height) {
+    VkImageCreateInfo ii;
+    VkExternalMemoryImageCreateInfo ext;
+    VkMemoryRequirements req;
+    VkMemoryAllocateInfo ai;
+    VkMemoryDedicatedAllocateInfo ded;
+    S3dVkImportWin32 imp;
+    S3dVkWin32Props props;
+    int type = -1;
+    uint32_t k;
+    if (t->dcImage) g_s3dVk.vkDestroyImage(g_s3dVk.device, t->dcImage, NULL);
+    if (t->dcMemory) g_s3dVk.vkFreeMemory(g_s3dVk.device, t->dcMemory, NULL);
+    t->dcImage = 0; t->dcMemory = 0; t->dcHandle = NULL; t->dcReady = 0;
+    memset(&ext, 0, sizeof ext);
+    ext.sType = VK_STRUCTURE_TYPE_EXTERNAL_MEMORY_IMAGE_CREATE_INFO;
+    ext.handleTypes = VK_EXTERNAL_MEMORY_HANDLE_TYPE_D3D11_TEXTURE_KMT_BIT;
+    memset(&ii, 0, sizeof ii);
+    ii.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+    ii.pNext = &ext;
+    ii.imageType = VK_IMAGE_TYPE_2D;
+    ii.format = VK_FORMAT_R8G8B8A8_UNORM;
+    ii.extent.width = (uint32_t)width; ii.extent.height = (uint32_t)height; ii.extent.depth = 1;
+    ii.mipLevels = 1; ii.arrayLayers = 1;
+    ii.samples = VK_SAMPLE_COUNT_1_BIT;
+    ii.tiling = VK_IMAGE_TILING_OPTIMAL;
+    ii.usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
+    ii.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+    ii.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    if (g_s3dVk.vkCreateImage(g_s3dVk.device, &ii, NULL, &t->dcImage) != VK_SUCCESS) { t->dcImage = 0; return 0; }
+    g_s3dVk.vkGetImageMemoryRequirements(g_s3dVk.device, t->dcImage, &req);
+    memset(&props, 0, sizeof props);
+    props.sType = (VkStructureType)1000073002;   /* VK_STRUCTURE_TYPE_MEMORY_WIN32_HANDLE_PROPERTIES_KHR */
+    if (g_s3dVk.getWin32HandleProps(g_s3dVk.device, VK_EXTERNAL_MEMORY_HANDLE_TYPE_D3D11_TEXTURE_KMT_BIT, handle, &props) != VK_SUCCESS) props.memoryTypeBits = req.memoryTypeBits;
+    for (k = 0; k < g_s3dVk.memProps.memoryTypeCount && type < 0; k++)
+        if ((req.memoryTypeBits & props.memoryTypeBits & (1u << k)) && (g_s3dVk.memProps.memoryTypes[k].propertyFlags & VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT)) type = (int)k;
+    for (k = 0; k < g_s3dVk.memProps.memoryTypeCount && type < 0; k++)
+        if (req.memoryTypeBits & props.memoryTypeBits & (1u << k)) type = (int)k;
+    if (type < 0) { g_s3dVk.vkDestroyImage(g_s3dVk.device, t->dcImage, NULL); t->dcImage = 0; return 0; }
+    memset(&ded, 0, sizeof ded);
+    ded.sType = VK_STRUCTURE_TYPE_MEMORY_DEDICATED_ALLOCATE_INFO;
+    ded.image = t->dcImage;
+    memset(&imp, 0, sizeof imp);
+    imp.sType = (VkStructureType)1000073000;   /* VK_STRUCTURE_TYPE_IMPORT_MEMORY_WIN32_HANDLE_INFO_KHR */
+    imp.pNext = &ded;
+    imp.handleType = VK_EXTERNAL_MEMORY_HANDLE_TYPE_D3D11_TEXTURE_KMT_BIT;
+    imp.handle = handle;
+    memset(&ai, 0, sizeof ai);
+    ai.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+    ai.pNext = &imp;
+    ai.allocationSize = req.size;
+    ai.memoryTypeIndex = (uint32_t)type;
+    if (g_s3dVk.vkAllocateMemory(g_s3dVk.device, &ai, NULL, &t->dcMemory) != VK_SUCCESS) { t->dcMemory = 0; g_s3dVk.vkDestroyImage(g_s3dVk.device, t->dcImage, NULL); t->dcImage = 0; return 0; }
+    if (g_s3dVk.vkBindImageMemory(g_s3dVk.device, t->dcImage, t->dcMemory, 0) != VK_SUCCESS) return 0;
+    t->dcHandle = handle; t->dcW = width; t->dcH = height;
+    return 1;
+}
+
+/* Shows the camera's picture with the overlay in a window of DirectComposition (the lock is held): drawn into a picture of its own (the present pipeline, at the
+ * framebuffer's size - DirectComposition stretches it to the window), copied into the window's texture of D3D11 (imported), presented by the bridge of the window.
+ * 1: shown, 0: it cannot. */
+static int s3d_gpu_presentDcompLocked(S3dGpuTarget* t, const fire_native_window* w, const uint32_t* pixels, int width, int height) {
+    fire_dcomp_bridge* b = (fire_dcomp_bridge*)w->a;
+    S3dGpuFrame* g = t->frame ? (S3dGpuFrame*)t->frame->gpu : NULL;
+    int hasScene = g != NULL && g->hasPicture, hasOverlay;
+    uint8_t luid[8];
+    void* handle;
+    VkExtent2D extent;
+    VkCommandBufferBeginInfo bi;
+    VkSubmitInfo si;
+    VkImageCopy region;
+    if (!g_s3dVk.interop || b == NULL || b->size < (int32_t)sizeof *b || b->texture == NULL || b->present == NULL) return 0;
+    memcpy(luid, &b->luidLow, 4); memcpy(luid + 4, &b->luidHigh, 4);
+    if (memcmp(luid, g_s3dVk.luid, 8) != 0) return 0;   /* (D3D11 is on another adapter) */
+    if ((t->surface || t->dcomp) && !s3d_gpu_sameWindow(&t->win, w)) return 0;   /* (one window per camera) */
+    if (width <= 0 || height <= 0) return 1;
+    if (!s3d_gpu_presentShared()) return 0;
+    if (t->fencePending) {
+        if (!s3d_gpu_check(g_s3dVk.vkWaitForFences(g_s3dVk.device, 1, &t->fence, VK_TRUE, UINT64_MAX), "vkWaitForFences")) return 0;
+        t->fencePending = 0;
+    }
+    handle = b->texture(b, width, height);
+    if (handle == NULL) return 0;
+    if (!s3d_gpu_presentPass(t, VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL)) return 0;
+    /* the picture the pipeline draws into (made again when the size or the pass changed) */
+    if (!t->dcPic.img || t->picW != width || t->picH != height || !t->dcFb) {
+        VkFramebufferCreateInfo fi;
+        if (t->dcFb) { g_s3dVk.vkDestroyFramebuffer(g_s3dVk.device, t->dcFb, NULL); t->dcFb = 0; }
+        s3d_gpu_freeImage(&t->dcPic);
+        if (!s3d_gpu_image(&t->dcPic, (uint32_t)width, (uint32_t)height, 1, VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT, VK_IMAGE_ASPECT_COLOR_BIT)) return 0;
+        memset(&fi, 0, sizeof fi);
+        fi.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
+        fi.renderPass = t->pass; fi.attachmentCount = 1; fi.pAttachments = &t->dcPic.view;
+        fi.width = (uint32_t)width; fi.height = (uint32_t)height; fi.layers = 1;
+        if (!s3d_gpu_check(g_s3dVk.vkCreateFramebuffer(g_s3dVk.device, &fi, NULL, &t->dcFb), "vkCreateFramebuffer")) { t->dcFb = 0; return 0; }
+        t->picW = width; t->picH = height;
+    }
+    if ((handle != t->dcHandle || t->dcW != width || t->dcH != height) && !s3d_gpu_import(t, handle, width, height)) return 0;
+    t->dcomp = 1; t->win = *w;
+    hasOverlay = s3d_gpu_overlay(t, pixels, width, height);
+    if (hasOverlay < 0) return 0;
+    s3d_gpu_setImages(t->set, hasScene ? g->color.view : g_s3dVk.dummy.color.view, hasOverlay ? t->overlay.view : g_s3dVk.dummy.color.view);
+    if (!s3d_gpu_check(g_s3dVk.vkResetCommandBuffer(t->cmd, 0), "vkResetCommandBuffer")) return 0;
+    memset(&bi, 0, sizeof bi);
+    bi.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+    bi.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+    if (!s3d_gpu_check(g_s3dVk.vkBeginCommandBuffer(t->cmd, &bi), "vkBeginCommandBuffer")) return 0;
+    extent.width = (uint32_t)width; extent.height = (uint32_t)height;
+    s3d_gpu_recordPicture(t, t->dcFb, extent, g, hasScene, hasOverlay, width, height);
+    /* the window's texture from D3D11 (the first time: it is new), the picture copied into it, back to D3D11 */
+    if (t->dcReady) s3d_gpu_shareBarrier(t->cmd, t->dcImage, VK_IMAGE_LAYOUT_GENERAL, VK_QUEUE_FAMILY_EXTERNAL, g_s3dVk.family, 0, VK_ACCESS_TRANSFER_WRITE_BIT);
+    else s3d_gpu_shareBarrier(t->cmd, t->dcImage, VK_IMAGE_LAYOUT_UNDEFINED, VK_QUEUE_FAMILY_IGNORED, VK_QUEUE_FAMILY_IGNORED, 0, VK_ACCESS_TRANSFER_WRITE_BIT);
+    memset(&region, 0, sizeof region);
+    region.srcSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT; region.srcSubresource.layerCount = 1;
+    region.dstSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT; region.dstSubresource.layerCount = 1;
+    region.extent.width = (uint32_t)width; region.extent.height = (uint32_t)height; region.extent.depth = 1;
+    g_s3dVk.vkCmdCopyImage(t->cmd, t->dcPic.img, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, t->dcImage, VK_IMAGE_LAYOUT_GENERAL, 1, &region);
+    s3d_gpu_shareBarrier(t->cmd, t->dcImage, VK_IMAGE_LAYOUT_GENERAL, g_s3dVk.family, VK_QUEUE_FAMILY_EXTERNAL, VK_ACCESS_TRANSFER_WRITE_BIT, 0);
+    if (!s3d_gpu_check(g_s3dVk.vkEndCommandBuffer(t->cmd), "vkEndCommandBuffer")) return 0;
+    memset(&si, 0, sizeof si);
+    si.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+    si.commandBufferCount = 1; si.pCommandBuffers = &t->cmd;
+    if (!s3d_gpu_check(g_s3dVk.vkResetFences(g_s3dVk.device, 1, &t->fence), "vkResetFences")) return 0;
+    if (!s3d_gpu_check(g_s3dVk.vkQueueSubmit(g_s3dVk.queue, 1, &si, t->fence), "vkQueueSubmit")) return 0;
+    /* (D3D11 copies it next: done here first) */
+    if (!s3d_gpu_check(g_s3dVk.vkWaitForFences(g_s3dVk.device, 1, &t->fence, VK_TRUE, UINT64_MAX), "vkWaitForFences")) { t->fencePending = 1; return 0; }
+    t->dcReady = 1;
+    return b->present(b) != 0;
+}
+
 /* The presenter (fire_present_fn): called by a window that shows the camera's framebuffer, on the window's thread. */
 static int32_t s3d_gpu_present(void* ctx, int32_t op, const fire_native_window* w, const uint32_t* pixels, int32_t width, int32_t height) {
     S3dGpuTarget* t = (S3dGpuTarget*)ctx;
@@ -1914,10 +2121,10 @@ static int32_t s3d_gpu_present(void* ctx, int32_t op, const fire_native_window* 
         s3d_gpu_unlock();
         return 1;
     }
-    if (t->attached && g_s3dVk.state == 1 && g_s3dVk.wsi && w != NULL) {
-        ok = s3d_gpu_presentLocked(t, w, pixels, width, height);
+    if (t->attached && g_s3dVk.state == 1 && w != NULL && (w->kind == FIRE_NATIVE_DCOMP ? g_s3dVk.interop : g_s3dVk.wsi)) {
+        ok = w->kind == FIRE_NATIVE_DCOMP ? s3d_gpu_presentDcompLocked(t, w, pixels, width, height) : s3d_gpu_presentLocked(t, w, pixels, width, height);
         if (ok) t->works = 1;
-        else if (!t->surface || s3d_gpu_sameWindow(&t->win, w)) { s3d_gpu_freeSurface(t); t->works = -1; }
+        else if (!(t->surface || t->dcomp) || s3d_gpu_sameWindow(&t->win, w)) { s3d_gpu_freeSurface(t); t->works = -1; }
     }
     s3d_gpu_unlock();
     return ok;
@@ -1974,7 +2181,7 @@ static int s3d_gpu_attach(S3dFrame* f, int64_t framebuffer) {
     if (f->direct && ((S3dGpuTarget*)f->direct)->framebuffer == framebuffer) return 1;
     if (f->direct) s3d_gpu_detach(f);
     s3d_gpu_lock();
-    if (!s3d_gpu_ready() || !g_s3dVk.wsi || !s3d_gpu_presentShared()) { s3d_gpu_unlock(); return 0; }
+    if (!s3d_gpu_ready() || !(g_s3dVk.wsi || g_s3dVk.interop) || !s3d_gpu_presentShared()) { s3d_gpu_unlock(); return 0; }
     /* the presenter this framebuffer had before (switched off and on again): its window may still hold it, and it is the same window */
     for (t = g_s3dVk.targets; t != NULL; t = t->next)
         if (!t->attached && t->framebuffer == framebuffer) {
