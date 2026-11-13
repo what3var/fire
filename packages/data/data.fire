@@ -774,7 +774,7 @@ namespace Data {
         Data.Connection Take(float:any limit = 10s) {
             if (this.closed) { throw new Data.StateException("The pool is closed.") }
             var h = this.home
-            var deadline = DateTime.UtcNow + TimeSpan.FromMilliseconds(Data.Pool.Millis(limit))
+            DateTime deadline = DateTime.UtcNow + TimeSpan.FromMilliseconds(Data.Pool.Millis(limit))
             while (true) {
                 var wake = new Completion()
                 int id = await h.NewWaiter()
@@ -788,7 +788,7 @@ namespace Data {
                         throw e
                     }
                 }
-                var left = deadline - DateTime.UtcNow
+                TimeSpan left = deadline - DateTime.UtcNow
                 if (left.TotalMilliseconds <= 0) { throw new TimeoutException("Data.Pool: no connection came back within the limit (all " + await h.Open() + " are in use).") }
                 // (woken when one comes back; at the latest after 50 ms it asks again - the order of the Register and the Take of two tasks is not
                 // fixed everywhere, a wake that came before the Register is not lost that way)
@@ -848,13 +848,14 @@ namespace Data {
         }
 
         // (a limit in milliseconds: a time value - 10s, 200ms -, or a plain number of milliseconds)
-        static float Millis(float:any limit) {
+        static defined float Millis(float:any limit) {
             try {
                 float ms = limit / 1ms
                 return ms
             } catch (UnitMismatchException e) {
+                if (limit == undefined) { return 10000.0 }
                 float plain = limit
-                return plain
+                return trust plain
             }
             return 10000.0
         }
@@ -1254,7 +1255,7 @@ namespace Data {
         // (the positions of the columns whose values differ from the snapshot)
         List ChangedColumns(Data.SessionEntry e) {
             var map = this.db.Map(e.typeName)
-            var now = Data.Session.Snapshot(e.obj, map)
+            any now = Data.Session.Snapshot(e.obj, map)
             var changed = new List()
             for (var i = 0; i < map.columns.Count; i++) { if (now[i] != e.snapshot[i]) { changed.Add(i) } }
             return changed

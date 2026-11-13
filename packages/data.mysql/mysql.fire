@@ -75,24 +75,24 @@ namespace Data {
     class MysqlOut {
         IO.MemoryStream m
         construct() { this.m = new IO.MemoryStream() }
-        undefined Byte(int v) {
+        undefined Byte(defined int v) {
             byte b[] = new byte[1]
             b[0] = v & 255
             this.m.Write(b, 0, 1)
         }
-        undefined Int(int v, int size) {
+        undefined Int(defined int v, defined int size) {
             byte b[] = new byte[size]
             for (var i = 0; i < size; i++) { b[i] = (v >> (8 * i)) & 255 }
             this.m.Write(b, 0, size)
         }
-        undefined LenEnc(int v) {
+        undefined LenEnc(defined int v) {
             if (v < 251) { this.Byte(v) }
             else if (v < 65536) { this.Byte(0xFC); this.Int(v, 2) }
             else if (v < 16777216) { this.Byte(0xFD); this.Int(v, 3) }
             else { this.Byte(0xFE); this.Int(v, 8) }
         }
         undefined Bytes(byte data[]) { if (data.length > 0) { this.m.Write(data, 0, data.length) } }
-        undefined Zeros(int n) { for (var i = 0; i < n; i++) { this.Byte(0) } }
+        undefined Zeros(defined int n) { for (var i = 0; i < n; i++) { this.Byte(0) } }
         undefined Nul(string text) {
             this.Bytes(IO.Utf8.GetBytes(text))
             this.Byte(0)
@@ -108,20 +108,20 @@ namespace Data {
     /// <summary>A packet being read.</summary>
     class MysqlIn {
         byte data[]
-        int at
+        defined int at
         construct(byte data[]) {
             this.data = take data
             this.at = 0
         }
-        int Left { get { return this.data.length - this.at } }
-        int Peek() { int b = this.data[this.at]; return b }
-        int Byte() {
+        defined int Left { get { return this.data.length - this.at } }
+        defined int Peek() { int b = this.data[this.at]; return b }
+        defined int Byte() {
             if (this.at >= this.data.length) { throw new Data.DataException("data.mysql: a packet ended too soon.") }
             int b = this.data[this.at]
             this.at = this.at + 1
             return b
         }
-        int Int(int size) {
+        defined int Int(defined int size) {
             int v = 0
             for (var i = 0; i < size; i++) {
                 int b = this.Byte()
@@ -130,7 +130,7 @@ namespace Data {
             return v
         }
         // (a length-encoded number; -1 for the NULL of a text row)
-        int LenEnc() {
+        defined int LenEnc() {
             int first = this.Byte()
             if (first < 251) { return first }
             if (first == 0xFB) { return -1 }
@@ -138,14 +138,14 @@ namespace Data {
             if (first == 0xFD) { return this.Int(3) }
             return this.Int(8)
         }
-        byte[] Bytes(int n) {
+        byte[] Bytes(defined int n) {
             if (n > this.Left) { throw new Data.DataException("data.mysql: a packet ended too soon.") }
             byte b[] = new byte[n]
             for (var i = 0; i < n; i++) { b[i] = this.data[this.at + i] }
             this.at = this.at + n
             return b
         }
-        string Text(int n) {
+        string Text(defined int n) {
             string t = IO.Utf8.GetString(this.data, this.at, n)
             this.at = this.at + n
             return t
@@ -243,7 +243,9 @@ namespace Data {
             int colon = rest.LastIndexOf(":")
             if (colon >= 0) {
                 host = rest.Substring(0, colon)
-                port = rest.Substring(colon + 1).ToInt()
+                any parsed = rest.Substring(colon + 1).ToInt()
+                if (parsed == undefined) { throw new ArgumentException("data.mysql: the port '" + rest.Substring(colon + 1) + "' is not a number.") }
+                port = trust parsed
             }
             string tlsMode = "prefer"
             string ca = undefined
@@ -749,8 +751,8 @@ namespace Data {
 
     class MysqlStatement : Data.IStatement {
         Data.MysqlConnection connection
-        int id
-        int params
+        defined int id
+        defined int params
         List columns
         any args
         any current
@@ -759,7 +761,7 @@ namespace Data {
         bool ran
         bool open
 
-        construct(Data.MysqlConnection connection, int id, int params, List columns) {
+        construct(Data.MysqlConnection connection, defined int id, defined int params, List columns) {
             this.connection = connection
             this.id = id
             this.params = params
@@ -1138,7 +1140,7 @@ namespace Data {
             return out.ToBuffer()
         }
         // (a DER element with this tag: its length)
-        static int Tag(Data.MysqlIn p, int tag) {
+        static defined int Tag(Data.MysqlIn p, defined int tag) {
             if (p.Byte() != tag) { throw new Data.ConnectionException("data.mysql: the RSA key is not a public key (DER).", 2061) }
             int first = p.Byte()
             if (first < 128) { return first }
