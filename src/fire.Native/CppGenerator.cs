@@ -3526,7 +3526,7 @@ namespace fire.Native
                 foreach (var m in members.Where(m => m.Init != null)) sb.AppendLine($"    {m.Name} = {m.Init};");
                 // the variables of the function that no catch block uses (parameters stay the parameters)
                 foreach (var m in plain.Where(m => !f.ParamNames.Contains(m.Name)))
-                    sb.AppendLine((m.Init == null ? $"    {m.Decl};" : $"    {m.Decl} = {m.Init};") + (m.Decl.StartsWith("Value ", StringComparison.Ordinal) ? $" (void){m.Name};" : ""));
+                    sb.AppendLine((m.Init == null ? $"    {m.Decl};" : $"    {m.Decl} = {m.Init};") + $" (void){m.Name};");   // (a C getter or the like may leave one unused - the list of the function, AL)
             }
             sb.Append(pre);
             sb.Append(decl);
@@ -4028,6 +4028,7 @@ namespace fire.Native
             string VR(int k) => k >= 0 && k < 64 && st.Alias[k] is { } aliasedV ? aliasedV : SlotName(st.Region, k);
             if (AnyAlias(st) && !AliasAware(ins.Op)) MaterializeAliases(st, E);
             if (st.Scalar != 0 && !ScalarAware(ins.Op) && !TypedNativeCall(ins) && !(ins.Op == OpCode.CallStaticMethod && CAbiStaticCallee(f, ins) != null) && !(ins.Op == OpCode.CallMethod && CAbiMethodCallee(f, st, ins) != null)
+                && !(ins.Op == OpCode.GetField && CAbiGetterCallee(f, st, ins) != null)
                 && !GuardTopProven(st, ins)
                 && !(ins.Op == OpCode.Return && f.CAbi is { RetType: not 0 }) && CFieldAccess(f, st, ins) == null) MaterializeAll(f, st, E);
             // (a field that is a C number: CppGenerator.CFields.cs)
@@ -5563,6 +5564,15 @@ namespace fire.Native
                         // (only a destroyed object throws: the check of the unwinding is on that path)
                         else if (gfObj == "self" && st.SelfAlive) { E($"{T(d - 1)} = {read};"); _selfAliveAfter = true; }
                         else { string thrower = Thrower($"destroyedError({gfObj});"); E($"if (FIRE_UNLIKELY(!leafAlive({gfObj}))) {thrower} {T(d - 1)} = {read};"); if (gfObj == "self") _selfAliveAfter = true; }
+                    }
+                    else if (SlotScalars() && CAbiGetterCallee(f, st, ins) is { } cgetter && CAbiOf(cgetter) is { } gabi)
+                    {
+                        // the getter's C body (Ebene 2): the C result straight into the slot's shadow
+                        string gobj = S(d - 1);
+                        if (!(gobj == "self" && st.SelfAlive)) { E($"if (FIRE_UNLIKELY(!leafAlive({gobj}))) {gobj} = destroyedError({gobj});"); Check(); }
+                        SetScalar(d - 1, gabi.RetType, $"{CName(cgetter)}({gobj})");
+                        Check();
+                        return Next();
                     }
                     else if (ObjSlot(d - 1) && !IsNullable(Ty(d - 1)) && DirectAccessor(ObjClass(Ty(d - 1)), field, false, f) is { } getter)
                     {

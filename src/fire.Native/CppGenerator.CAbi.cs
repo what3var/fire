@@ -51,7 +51,8 @@ namespace fire.Native
             // +1 KB on dos16; the function with Values in front of the C body costs what the C numbers save)
             if (!ScalarsOn || Wrapped || Modular || LibraryRole || f.External || f.Export != null || f.Kind is not (FuncKind.Method or FuncKind.Static)) return null;
             if (f.SpecParams != null || f.SpecTArgs != null || f.SpecClassOwner != null || f.Proto is not { } proto || f.Chunk.Handlers.Count > 0) return null;
-            if (MethodKey(proto) is { } key && (key.Name.StartsWith("get_", StringComparison.Ordinal) || key.Name.StartsWith("set_", StringComparison.Ordinal))) return null;
+            // (a getter has one: `obj.X` on an object of a known class calls its C body - GetField, CAbiGetterCallee; a setter not)
+            if (MethodKey(proto) is { } key && key.Name.StartsWith("set_", StringComparison.Ordinal)) return null;
             var code = OpInfo.Decode(f.Chunk.Code);
             if (code.Any(c => c.Op == OpCode.TakeCallTypeArgs)) return null;
             if (f.HasSelf && code.Any(c => c.Op == OpCode.GuardLocalType && !string.IsNullOrEmpty(DeclaredType.Parse(f.Chunk.Constants[c.A[1]].AsString()).TypeParamClass))) return null;
@@ -176,6 +177,22 @@ namespace fire.Native
             if (DirectMethod(ObjClass(type), method, argc, f) is not { ParamCount: var count } proto || count != argc) return null;
             var target = GetFunc(proto, FuncKind.Method);
             return CAbiOf(target) != null ? target : null;
+        }
+
+        /// <summary>The getter a GetField calls when it reads a property of an object of a known class (DirectAccessor) whose getter has a C body with a C
+        /// result; null otherwise.</summary>
+        private Func? CAbiGetterCallee(Func f, Flow st, Instr ins)
+        {
+            if (!ScalarsOn || ins.Op != OpCode.GetField) return null;
+            int slot = st.Depth - 1;
+            if (slot < 0 || slot >= 64) return null;
+            int type = st.Types[slot];
+            if (BaseKindOfType(type) != KindObj || (type & TypeNone) != 0 || InterfaceOfType(type) != null || IsNullable(type)) return null;
+            string field = f.Chunk.Constants[ins.A[0]].AsString();
+            var rc = ObjClass(type);
+            if (DirectFieldIndex(rc, field, f) != null || DirectAccessor(rc, field, false, f) is not { } getter) return null;
+            var target = GetFunc(getter, FuncKind.Method);
+            return CAbiOf(target) is { RetType: not 0 } ? target : null;
         }
 
         /// <summary>The function with Values (`fN`) in front of the C body: the parameters are checked like the prologue would (a failed check returns,
