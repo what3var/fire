@@ -896,7 +896,7 @@ namespace Http {
 
         undefined Remove(string id) {
             if (!this.circuits.ContainsKey(id)) { return }
-            // (stopped first: the dictionary owns the circuit, taking it out ends it)
+            // (stopped first, then forgotten)
             Http.PageCircuit c = this.circuits[id]
             c.Stop()
             this.circuits.Remove(id)
