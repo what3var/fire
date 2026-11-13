@@ -29584,6 +29584,124 @@ else
             List<Post> jplain = jdb.From<Post>().Include(jx => jx.labels2).OrderBy(jx => jx.id).ToList()
             print("no session labels2 " + jplain[0].labels2.Count + " " + jplain[0].labels2[0].label)
             """),
+        ("Data/Pool: Verbindungen eines Pools fuer Threads (Take/Give verschieben, hoechstens max offen, Timeout, Rollback beim Zurueckgeben, kaputte vergessen, Use, Close) und fuer Requests (Http.Database: eine Verbindung pro Request, bei Bedarf, zurueck auch bei Ausnahmen; Http.Rpc-Konstruktor mit Data.Connection)", """
+            #import "time"
+            #import "filesystem"
+            #import "data.sqlite"
+            #import "http.rpc"
+            #import "http.data"
+            [Remote]
+            class Items {
+                Data.Connection db
+                construct(Data.Connection db) { this.db = db }
+                [Remote] int Count() { return this.db.Scalar("select count(*) from items") }
+                [Remote] int Add(string name) {
+                    this.db.Execute("insert into items(name) values (?)", [name])
+                    return this.db.LastInsertId
+                }
+            }
+            class Job {
+                static undefined Insert(Data.Pool pool, int n) {
+                    var c = pool.Take()
+                    c.Execute("insert into hits(worker) values (?)", [n])
+                    Sleep(20ms)
+                    pool.Give(take c)
+                }
+            }
+            class Checks {
+                static undefined Run(Data.Pool pool) {
+                    var a = pool.Take()
+                    var b = pool.Take()
+                    try { pool.Take(100ms) } catch (TimeoutException e) { print("full: " + e.message) }
+                    a.Begin()
+                    a.Execute("insert into hits(worker) values (?)", [99])
+                    pool.Give(take a)
+                    print("rolled back on give " + pool.Use(c => c.Scalar("select count(*) from hits where worker = 99")))
+                    b.Close()
+                    pool.Give(take b)
+                    print("broken one forgotten: open " + pool.Open + " idle " + pool.Idle)
+                    try { pool.Use(c => c.Execute("insert into nope values (1)")) } catch (Data.DataException e) { print("use threw: " + e.message + " idle " + pool.Idle) }
+                    pool.Close()
+                    try { pool.Take() } catch (Data.StateException e) { print("closed: " + e.message) }
+                }
+            }
+            string file = IO.Path.GetTempFileName()
+            string url = "sqlite:" + file + "?timeout=10000"
+            var setup = new Data.Connection(url)
+            setup.Execute("create table hits(id integer primary key, worker integer)")
+            setup.Close()
+            var pool = new Data.Pool(url, undefined, 2)
+            int done = 0
+            for (var k = 1; k <= 6; k++) {
+                fire taking pool taking k {
+                    Job.Insert(pool, k)
+                    sync global { done = done + 1 }
+                }
+            }
+            while (done < 6) { Sleep(10ms); sync globals }
+            print("jobs " + done + " open " + pool.Open + " idle " + pool.Idle)
+            int rows = pool.Use(c => c.Scalar("select count(*) from hits"))
+            print("rows " + rows)
+            Checks.Run(pool)
+            IO.File.Delete(file)
+            string hfile = IO.Path.GetTempFileName()
+            string hurl = "sqlite:" + hfile + "?timeout=10000"
+            var hsetup = new Data.Connection(hurl)
+            hsetup.Execute("create table items(id integer primary key, name text)")
+            hsetup.Close()
+            var hpool = new Data.Pool(hurl, undefined, 2)
+            var routes = new Http.Routes()
+            routes.Map("GET", "/count", func (Http.Context ctx) => "count " + Http.Database.Of(ctx).Scalar("select count(*) from items"))
+            routes.Map("POST", "/add", func (Http.Context ctx) => {
+                var db = Http.Database.Of(ctx)
+                db.Execute("insert into items(name) values (?)", [ctx.Request.Text()])
+                return "added " + db.LastInsertId
+            })
+            routes.Map("GET", "/same", func (Http.Context ctx) => "same " + (Http.Database.Of(ctx) == Http.Database.Of(ctx)))
+            routes.Map("GET", "/tx", func (Http.Context ctx) => {
+                var db = Http.Database.Of(ctx)
+                db.Begin()
+                db.Execute("insert into items(name) values (?)", ["never"])
+                return "left open"
+            })
+            routes.Map("GET", "/boom", func (Http.Context ctx) => {
+                Http.Database.Of(ctx).Execute("insert into items(name) values (?)", ["boom"])
+                throw new ArgumentException("boom")
+            })
+            routes.Map("GET", "/none", func (Http.Context ctx) => "no database used")
+            var server = new Http.AppServer("127.0.0.1", 0)
+            server.Settings.showErrors = true
+            server.PushTo(new Http.Sessions()).PushTo(new Http.Database(hpool)).PushTo(new Http.Rpc("/rpc")).PushTo(take routes)
+            int port = server.Port
+            int hdone = 0
+            string hlog = ""
+            fire taking port {
+                var c = new Http.Client()
+                var site = "http://127.0.0.1:" + port
+                var out = ""
+                out = out + c.Get(site + "/count").Text() + "\n"
+                out = out + c.Post(site + "/add", "Ada", "text/plain").Text() + "\n"
+                out = out + c.Post(site + "/add", "Grace", "text/plain").Text() + "\n"
+                out = out + c.Get(site + "/same").Text() + "\n"
+                out = out + "tx " + c.Get(site + "/tx").Text() + " -> " + c.Get(site + "/count").Text() + "\n"
+                out = out + "boom " + c.Get(site + "/boom").status + " -> " + c.Get(site + "/count").Text() + "\n"
+                out = out + c.Get(site + "/none").Text() + "\n"
+                var r = c.Get(site + "/count")
+                var cookie = r.Header("Set-Cookie").Substring(0, 45)
+                var h = new Http.Headers()
+                h.Set("Cookie", cookie)
+                h.Set("Content-Type", "application/json")
+                out = out + "rpc add " + c.Request("POST", site + "/rpc/Items/Add", "[\"Linus\"]", h).Text() + "\n"
+                out = out + "rpc count " + c.Request("POST", site + "/rpc/Items/Count", "[]", h).Text() + "\n"
+                sync global { hlog = out; hdone = 1 }
+            }
+            while (hdone < 1) { server.AcceptOne(20ms); sync globals }
+            print(hlog)
+            print("hpool open " + hpool.Open + " idle " + hpool.Idle)
+            server.Close()
+            hpool.Close()
+            IO.File.Delete(hfile)
+            """),
         ("Data/SQLite: Execute, Query (Zeilen nacheinander), Rows, Scalar, QueryList/QueryOne auf Records und Klassen, Unicode, NULL, BLOB, Fehlerarten, Transaktionen mit Savepoints, :memory:, await, Threads mit eigenen Verbindungen, handover; Mapping mit Attributen, Ensure, Insert/Update/Delete/Save/Find/All, Enum nach Namen, DateTime, [Json]; Abfragen mit Ausdrucksbaeumen als SQL; Sessions; Beziehungen", """
             #import "time"
             #import "filesystem"

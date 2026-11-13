@@ -953,6 +953,12 @@ namespace Http {
             return fallback
         }
         undefined SetItem(string name, any value) { this.items[name] = value }
+        // The values of the items (for the services of Http.Rpc: what the routers before it put there).
+        List ItemValues() {
+            var all = new List()
+            foreach (var pair in this.items) { all.Add(pair.Value) }
+            return all
+        }
     }
 
     // A router from a lambda: func (Http.Context ctx, Http.Next next) => ... returns the Http.Response.

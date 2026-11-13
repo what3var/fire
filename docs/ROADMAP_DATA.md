@@ -257,7 +257,7 @@ Own methods for the generated classes come in an extension (`extension Person { 
 | 4 | Query builder on expression trees: SQL for SQLite, evaluation in `data.memory`; `ToSql` - **built** (`Data.Query<T>`, `Data.SqlWriter`; data.memory runs the same SQL; `Select`, `Include`, `GroupBy`, `Join` still open) | 2, expressions step 1-3 |
 | 5 | Session: identity map, snapshots, Save in one transaction, generated keys, `[Version]` - **built** (`Data.Session`, `Data.ConcurrencyException`) | 2, 4 |
 | 6 | Relations: navigation fields, `Include`, `Any`/subqueries, join tables - **built** ([HasMany], [BelongsTo], [ManyToMany], Include/Load in sessions, Any/All as EXISTS, writing through lists, also without a session) | 4, 5 |
-| 7 | Pool, `Data.PerRequest`, Rpc DI | 1 |
+| 7 | Pool, `Data.PerRequest`, Rpc DI - **built** (`Data.Pool` with an actor home; `Http.Database` in the package `http.data`; Http.Rpc takes constructor parameters from the items of the request) | 1 |
 | 8 | `data.mysql` (wire protocol, TLS, prepared statements) | 1, 7 |
 | 9 | `data.sqlserver` (TDS, TLS in TDS, `sp_executesql`) | 1, 7 |
 | 10 | Migrations, `forge data diff/apply/import` | 2, a driver with schema reading |

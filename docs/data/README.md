@@ -149,6 +149,44 @@ any both = await [db.Scalar("select count(*) from person"), other.Scalar("select
 A call that waits for the disk or for a lock of another connection gives its worker to other tasks meanwhile (natively the package lets go of its lock
 while SQLite works). Two calls on the same connection at the same time are not possible - one connection, one statement at a time.
 
+## Pools and servers
+
+A connection belongs to one task at a time. Many tasks - a server's requests, workers - share the connections of a **pool**:
+
+```fire
+var pool = new Data.Pool("sqlite:shop.db", undefined, 10)      // at most 10 open at once (url, credentials, max)
+var c = pool.Take()                     // a connection, moved to this task (opened when none is idle; waits when all are in use)
+c.Execute(...)
+pool.Give(take c)                       // back: the pool's again
+int n = pool.Use(c => c.Scalar("select count(*) from person"))   // take, run, give back - also when it throws
+pool.Close()                            // at the end: closes the idle ones (those in use when they come back)
+```
+
+- `Take(limit)` waits at most `limit` (default 10 s; a time value) for a connection that comes back - then a `TimeoutException`. `Idle` and `Open`
+  count the connections.
+- A connection that comes back with an open transaction is rolled back; a closed one is forgotten (a new one may be opened instead).
+- The pool can go to any task and thread (its connections live in an actor of its own); a connection goes only with `Take` and `Give` (moved, never copied).
+
+**For an Http.AppServer** (`#import "http.data"`): the link `Http.Database` gives every request a connection of the pool - taken when the request first
+asks for it, given back when the request ends (also when it throws; an open transaction is rolled back then):
+
+```fire
+var server = new Http.AppServer("0.0.0.0", 8080)
+server.PushTo(new Http.Sessions()).PushTo(new Http.Database(pool)).PushTo(new Http.Rpc("/rpc")).PushTo(take routes)
+routes.Map("GET", "/count", func (Http.Context ctx) => "" + Http.Database.Of(ctx).Scalar("select count(*) from person"))
+
+[Remote]
+class People {                           // an Http.Rpc class of lifetime "request" gets the connection of the request
+    Data.Connection db
+    construct(Data.Connection db) { this.db = db }
+    [Remote] List<Person> Adults() { return this.db.From<Person>().Where(p => p.age >= 18).ToList() }
+}
+```
+
+`Http.Database.Of(ctx)` is the same connection for the whole request. Http.Rpc gives a constructor parameter of a class of lifetime "request" what the
+items of the request offer - an item of that type, or what an item with a method `Provide(typeName)` gives (the scope of `Http.Database` gives the
+connection); the services of `new Http.Rpc(prefix, services)` come first.
+
 ## Errors
 
 | Exception | When |

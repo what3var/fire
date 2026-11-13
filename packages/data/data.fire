@@ -728,9 +728,11 @@ namespace Data {
         Data.PoolHome home
         string url
         Data.Credentials credentials
+        bool closed
 
         construct(string url, Data.Credentials credentials = undefined, int max = 10) {
             this.url = url
+            this.closed = false
             if (credentials != undefined) { this.credentials = take credentials }
             if (max < 1) { throw new ArgumentException("Data.Pool: max is at least 1.") }
             var ready = new Completion()
@@ -749,6 +751,7 @@ namespace Data {
 
         // A connection of the pool (opened when there is none idle and fewer than max are open); a TimeoutException after `limit`.
         Data.Connection Take(float:any limit = 10s) {
+            if (this.closed) { throw new Data.StateException("The pool is closed.") }
             var h = this.home
             var deadline = DateTime.UtcNow + TimeSpan.FromMilliseconds(Data.Pool.Millis(limit))
             while (true) {
@@ -777,6 +780,10 @@ namespace Data {
 
         // Gives a connection back (`pool.Give(take c)`): it is the pool's again.
         undefined Give(Data.Connection c) {
+            if (this.closed) {
+                c.Close()
+                return
+            }
             var h = this.home
             await h.Give(take c)   // (awaited: a message of a task that runs beside others would wait for its end - the others wait for this one)
         }
@@ -794,13 +801,29 @@ namespace Data {
             return result
         }
 
-        int Idle { get { var h = this.home; int n = await h.Idle(); return n } }
-        int Open { get { var h = this.home; int n = await h.Open(); return n } }
+        int Idle {
+            get {
+                if (this.closed) { return 0 }
+                var h = this.home
+                int n = await h.Idle()
+                return n
+            }
+        }
+        int Open {
+            get {
+                if (this.closed) { return 0 }
+                var h = this.home
+                int n = await h.Open()
+                return n
+            }
+        }
 
         // Closes the idle connections; the ones in use are closed when they come back.
         undefined Close() {
+            if (this.closed) { return }
+            this.closed = true
             var h = this.home
-            h.Stop()
+            await h.Stop()
         }
 
         // (a limit in milliseconds: a time value - 10s, 200ms -, or a plain number of milliseconds)

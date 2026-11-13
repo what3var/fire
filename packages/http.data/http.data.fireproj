@@ -1,0 +1,13 @@
+{
+  "format": 1,
+  "name": "fire-http.data",
+  "type": "library",
+  "import": "http.data",
+  "standard": true,
+  "settings": {
+    "version": "1.0.0",
+    "author": "fire",
+    "license": "fire",
+    "description": "The standard library 'http.data' of fire: a connection of a Data.Pool for each request of an Http.AppServer (also for the constructors of Http.Rpc classes)."
+  }
+}
