@@ -42,7 +42,7 @@ interface Data.IDriver {
   transactions (a copy of the touched tables, thrown away by a rollback). It runs the ORM's expression trees itself: no SQL text in between.
   Raw SQL there is a `NotSupportedException` at first; a small SQL subset can come later. Use: tests (fast, the same code as with a real database),
   caches, small programs. `Snapshot(path)`/`Load(path)` write and read it as JSON.
-- **MySQL/MariaDB:** handshake v10, `caching_sha2_password` and `mysql_native_password` (with TLS; RSA key exchange without TLS later), the binary
+- **MySQL/MariaDB:** handshake v10, `caching_sha2_password` and `mysql_native_password` (over TLS or with RSA-OAEP without TLS - built), the binary
   protocol for prepared statements, streaming result sets.
 - **SQL Server:** TDS 7.4: PRELOGIN, TLS **inside** TDS (the TLS handshake runs in TDS packets - `tls` needs a stream that is not a socket: to be
   checked first, it is the biggest risk), LOGIN7 (SQL login; Windows/Kerberos later), RPC `sp_executesql` with typed parameters, token stream
