@@ -2452,7 +2452,7 @@ namespace fire.Native
             sb.AppendLine(DispatcherSignature(name, argc, WrapDispatchers ? "direct_" : "call_"));
             sb.AppendLine("{");
             if (DispatchNeedsList(name, argc)) sb.AppendLine("    (void)list;   // (a method that only works on numbers or text allocates nothing)");
-            if (Modular) sb.AppendLine("    (void)caller;");
+            if (DispatchHasCaller(name)) sb.AppendLine("    (void)caller;");
             sb.AppendLine("    switch (self.kind) {");
             foreach (var (cpp, proto, extensionRc) in extensions)
             {
