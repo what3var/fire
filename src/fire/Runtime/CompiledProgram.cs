@@ -25,7 +25,7 @@ namespace fire.Runtime
 
         /// <summary>The enums the program declares, by their full name (null: not known - a program read back from a cache). The C++ generator takes the
         /// enum of a field from here: <see cref="fire.Values.EnumType.Named"/> is the last of that name in the process, which may be another program's.</summary>
-        [System.Text.Json.Serialization.JsonIgnore]
+        [MemoryPack.MemoryPackIgnore]
         public IReadOnlyDictionary<string, fire.Values.EnumType>? Enums { get; set; }
 
         /// <summary>The units the program declares (`unit Inch: in { ... }`); the VM makes them known before it runs the program (Unit.UseCustomUnits).</summary>
