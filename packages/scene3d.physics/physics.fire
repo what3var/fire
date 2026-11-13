@@ -11,7 +11,7 @@ enum BodyShape { Mesh = 0, Box = 1, Sphere = 2, Capsule = 3 }
 
 // The body of an object: made with Body.Static, Body.Dynamic, ... - the object keeps it (this is only a view of it: losing it changes nothing).
 class Body {
-    int h
+    defined int h
     Object owner
 
     construct(Object obj, defined int kind, BodyShape shape) {
@@ -38,7 +38,7 @@ class Body {
     Object Object { get { return this.owner } }
     BodyKind Kind {
         get {
-            int k = __S3DBodyGet(this.h, 21)!int
+            defined int k = __S3DBodyGet(this.h, 21)!int
             if (k == 3) { k = 1 }
             return k!BodyKind
         }
@@ -46,7 +46,7 @@ class Body {
     // (a Character is Dynamic with the shape Capsule)
     BodyShape Shape {
         get {
-            int k = __S3DBodyGet(this.h, 22)!int
+            defined int k = __S3DBodyGet(this.h, 22)!int
             return k!BodyShape
         }
     }
@@ -165,7 +165,7 @@ class Character : Body {
 // The scene keeps the joint (this is a view of it); Remove() takes it away.
 class Joint {
     int scene
-    int id
+    defined int id
 
     construct(Scene scene, defined int kind, Object a, Object b, defined float x, defined float y, defined float z, defined float length, defined float stiffness, defined float damping) {
         var bh = 0
@@ -202,13 +202,13 @@ class Joint {
 // Where a ray met a body: the object, how far, the point and the direction of the surface there.
 class RayHit {
     Object Object
-    float Distance : m
-    float X : m
-    float Y : m
-    float Z : m
-    float NormalX
-    float NormalY
-    float NormalZ
+    defined float Distance : m
+    defined float X : m
+    defined float Y : m
+    defined float Z : m
+    defined float NormalX
+    defined float NormalY
+    defined float NormalZ
 }
 
 class extends Scene {

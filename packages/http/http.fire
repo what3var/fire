@@ -9,9 +9,9 @@ namespace Http {
     // 1 bad URL, 2 bad message (a malformed request or response), 3 too many redirects, 4 too large, 5 not supported
     class HttpException : Exception {
         string message
-        int code
+        defined int code
 
-        construct(string message, int code = 2) {
+        construct(string message, defined int code = 2) {
             this.message = message
             this.code = code
         }
@@ -20,12 +20,12 @@ namespace Http {
     // Numbers in text.
     class Num {
         // A whole number in decimal digits, -1 if there are none or something else is in the text.
-        static int Parse(string text) {
+        static defined int Parse(string text) {
             any t = text.Trim()
             if (t.Length == 0 || t.Length > 15) { return -1 }
             var n = 0
             for (var i = 0; i < t.Length; i++) {
-                any d = t.CharAt(i).ToInt() - 48
+                int d = t.CharAt(i).ToInt() - 48
                 if (d < 0 || d > 9) { return -1 }
                 n = n * 10 + d
             }
@@ -33,7 +33,7 @@ namespace Http {
         }
 
         // The value of a hexadecimal digit (character code), -1 if it is none.
-        static int HexDigit(defined int c) {
+        static defined int HexDigit(defined int c) {
             if (c >= 48 && c <= 57) { return c - 48 }
             if (c >= 97 && c <= 102) { return c - 87 }
             if (c >= 65 && c <= 70) { return c - 55 }
@@ -41,7 +41,7 @@ namespace Http {
         }
 
         // A number in hexadecimal digits (the size of a chunk; a ";extension" after it is ignored), -1 if it is not one.
-        static int ParseHex(string text) {
+        static defined int ParseHex(string text) {
             any t = text.Trim()
             any semi = t.IndexOf(";")
             if (semi >= 0) { t = t.Substring(0, semi).Trim() }
@@ -206,7 +206,7 @@ namespace Http {
 
         int Count { get { return this.names.Count } }
 
-        int IndexOf(string name) {
+        defined int IndexOf(string name) {
             any lower = name.ToLower()
             for (var i = 0; i < this.names.Count; i++) {
                 if (this.names[i].ToLower() == lower) { return i }
@@ -302,14 +302,14 @@ namespace Http {
 
     // A response: what the client got, and what a route returns.
     class Response {
-        int status
+        defined int status
         string reason
         Headers headers
         byte body[]
         string url
         // A body that is read from a stream while it is sent (Http.AppServer; instead of `body`): `streamLength` bytes, or chunked when it is -1.
         IO.IStream stream
-        int streamLength
+        defined int streamLength
         // A 101 answer of a WebSocket handshake: after it the task of the connection gives the connection to this handler (Http.WebSockets).
         Http.IWebSocketHandler upgrade
         // ... and what the handler gets of the request: its header fields and its target (path and query)
@@ -331,7 +331,7 @@ namespace Http {
 
         // A response whose body is read from `stream` while it is sent (a file, a pipe); the response owns the stream and the server closes it. Without a
         // `length` the body goes chunked.
-        static Http.Response FromStream(IO.IStream stream, string contentType = "application/octet-stream", int length = -1, defined int status = 200) {
+        static Http.Response FromStream(IO.IStream stream, string contentType = "application/octet-stream", defined int length = -1, defined int status = 200) {
             var r = new Http.Response(status)
             r.stream = take stream
             r.streamLength = length
@@ -372,7 +372,7 @@ namespace Http {
 
         bool Ok { get { return this.status >= 200 && this.status < 300 } }
 
-        int Length { get { return this.body.length } }
+        defined int Length { get { return this.body.length } }
 
         // The body as text (UTF-8).
         string Text() { return IO.Utf8.GetString(this.body, 0, this.body.length) }
@@ -437,8 +437,8 @@ namespace Http {
     class Reader {
         IO.IStream source
         byte chunk[]
-        int pos
-        int len
+        defined int pos
+        defined int len
         bool eof
 
         construct(IO.IStream source) {
@@ -617,10 +617,10 @@ namespace Http {
     }
 
     class Client {
-        int timeout
-        int maxRedirects
+        defined int timeout
+        defined int maxRedirects
         bool followRedirects
-        int maxBodyBytes
+        defined int maxBodyBytes
         string userAgent
         Headers headers
         // The Tls.Options for https:// URLs (undefined: verify against the system's certificates).
@@ -768,8 +768,8 @@ namespace Http {
         lambda<Http.Request> fallback
         lambda<any> onError
         Tls.Server tlsServer
-        int readTimeout
-        int maxBodyBytes
+        defined int readTimeout
+        defined int maxBodyBytes
         bool stopped
 
         // new Http.Server("127.0.0.1", 8080) - host "" listens on every interface, port 0 takes a free port (see Port).
@@ -916,9 +916,9 @@ namespace Http {
     // The rest of the chain behind a router.
     class Next {
         List chain
-        int index
+        defined int index
 
-        construct(List chain, int index) {
+        construct(List chain, defined int index) {
             this.chain = chain
             this.index = index
         }
@@ -936,9 +936,9 @@ namespace Http {
     class Context {
         Http.Request request
         Dictionary<string, any> items
-        int number
+        defined int number
 
-        construct(Http.Request request, int number) {
+        construct(Http.Request request, defined int number) {
             this.request = take request
             this.items = new Dictionary<string, any>()
             this.number = number
@@ -946,7 +946,7 @@ namespace Http {
 
         Http.Request Request { get { return this.request } }
         // The number of the request on its connection (1 for the first).
-        int Number { get { return this.number } }
+        defined int Number { get { return this.number } }
 
         any Item(string name, any fallback = undefined) {
             if (this.items.ContainsKey(name)) { return this.items[name] }
@@ -997,10 +997,10 @@ namespace Http {
 
     // The settings of an application server (copied to every connection).
     class ServerSettings {
-        int readTimeout = 10000          // ms for every read and write inside a request
-        int keepAlive = 5000             // ms an idle connection waits for its next request
-        int maxRequests = 1000           // requests per connection, then it is closed
-        int maxBodyBytes = 1048576       // of a request
+        defined int readTimeout = 10000          // ms for every read and write inside a request
+        defined int keepAlive = 5000             // ms an idle connection waits for its next request
+        defined int maxRequests = 1000           // requests per connection, then it is closed
+        defined int maxBodyBytes = 1048576       // of a request
         string serverName = "fire-http/1"
         bool showErrors = false          // a 500 tells the class and message of what a router threw (for development)
     }
@@ -1019,7 +1019,7 @@ namespace Http {
         Http.ServerSettings settings
         Tls.Server tlsServer
         bool stopped
-        int served
+        defined int served
 
         construct(string host, defined int port, defined int backlog = 128) {
             this.chain = new List()
@@ -1033,7 +1033,7 @@ namespace Http {
         int Port { get { return this.listener.Port } }
         Http.ServerSettings Settings { get { return this.settings } }
         // The connections accepted so far.
-        int Connections { get { return this.served } }
+        defined int Connections { get { return this.served } }
 
         // Adds a router at the end of the chain (the server owns it); returns the server, so the calls can be chained.
         Http.AppServer PushTo(Http.IRouter router) {
@@ -1255,16 +1255,16 @@ namespace Http {
     // At most `count` bytes of another stream (a range of a file); closing it closes the other one.
     class LimitedStream : IO.Stream {
         IO.IStream inner
-        int left
+        defined int left
 
-        construct(IO.IStream inner, int count) {
+        construct(IO.IStream inner, defined int count) {
             this.inner = take inner
             this.left = count
         }
 
         override bool CanRead { get { return true } }
 
-        override int Read(byte buffer[], defined int offset, defined int count) {
+        override defined int Read(byte buffer[], defined int offset, defined int count) {
             if (this.left <= 0) { return 0 }
             if (count > this.left) { count = this.left }
             var n = this.inner.Read(buffer, offset, count)
@@ -1326,7 +1326,7 @@ namespace Http {
         string prefix
         List defaults
         bool omitExtensions
-        int maxAge
+        defined int maxAge
 
         // `root` the folder, `prefix` the part of the path that maps to it ("/" or e.g. "/static"); `omitExtensions`: "/about" also finds about.html.
         construct(string root, string prefix = "/", bool omitExtensions = false) {
@@ -1341,7 +1341,7 @@ namespace Http {
         }
 
         // Cache-Control: max-age for every file (seconds; -1: none).
-        Http.Files CacheFor(int seconds) {
+        Http.Files CacheFor(defined int seconds) {
             this.maxAge = seconds
             return this
         }
@@ -1396,7 +1396,7 @@ namespace Http {
 
         // The answer for a file: 200 (or 206 for a range, 304 when the client has it, 416 for a range outside the file).
         static Http.Response Serve(string file, Http.Request request, defined int maxAge = -1) {
-            int size = IO.File.Size(file)
+            defined int size = IO.File.Size(file)
             DateTime modified = IO.File.GetLastWriteTimeUtc(file)
             var tag = "\"" + size + "-" + modified.Ticks + "\""
             var lastModified = Http.Mime.Date(modified)
@@ -1408,8 +1408,8 @@ namespace Http {
                 Http.Files.Stamp(nm, tag, lastModified, maxAge)
                 return nm
             }
-            int first = 0
-            int upto = size - 1
+            defined int first = 0
+            defined int upto = size - 1
             bool partial = false
             var range = request.headers.Get("Range")
             if (range != undefined && range.StartsWith("bytes=") && range.IndexOf(",") < 0) {
@@ -1504,7 +1504,7 @@ namespace Http {
     class SessionEntry {
         string id
         Dictionary<string, string> values
-        int touched
+        defined int touched
 
         construct(string id) {
             this.id = id
@@ -1538,8 +1538,8 @@ namespace Http {
     class SessionTable {
         Dictionary<string, Http.SessionEntry> entries
         Http.ISessionStore store
-        int timeoutTicks
-        int lastSweep
+        defined int timeoutTicks
+        defined int lastSweep
 
         construct(Http.ISessionStore store, defined int timeoutMs) {
             this.entries = new Dictionary<string, Http.SessionEntry>()
@@ -1610,7 +1610,7 @@ namespace Http {
             return true
         }
 
-        int Count() { return this.entries.Count }
+        defined int Count() { return this.entries.Count }
 
         // (sessions that ran out, at most once a second)
         undefined Sweep() {
@@ -1628,7 +1628,7 @@ namespace Http {
         static bool ValidId(string id) {
             if (id.Length != 32) { return false }
             for (var i = 0; i < 32; i++) {
-                int c = id.CharAt(i).ToInt()
+                defined int c = id.CharAt(i).ToInt()
                 if (!((c >= 48 && c <= 57) || (c >= 97 && c <= 102))) { return false }
             }
             return true
@@ -1652,7 +1652,7 @@ namespace Http {
         bool Set(string id, string name, string value) { return this.table.Set(id, name, value) }
         string Renew(string id) { return this.table.Renew(id) }
         bool End(string id) { return this.table.End(id) }
-        int Count() { return this.table.Count() }
+        defined int Count() { return this.table.Count() }
         undefined Stop() { this.stopped = true }
     }
 
@@ -1714,7 +1714,7 @@ namespace Http {
         Http.SessionHome home
         string cookie
         bool secure
-        int timeoutMs
+        defined int timeoutMs
 
         // `timeoutMs` without a request until a session ends (default 20 min), `store` where they are kept (default: in memory).
         construct(defined int timeoutMs = 1200000, Http.ISessionStore store = undefined, string cookie = "fire-session", bool secure = false) {
@@ -1754,9 +1754,9 @@ namespace Http {
         }
 
         // The number of living sessions.
-        int Count() {
+        defined int Count() {
             var h = this.home
-            int n = await h.Count()
+            defined int n = await h.Count()
             return n
         }
 
@@ -1786,16 +1786,16 @@ namespace Http {
             var t = ""
             var i = 0
             while (i + 2 < data.length) {
-                int n = data[i] * 65536 + data[i + 1] * 256 + data[i + 2]
+                defined int n = data[i] * 65536 + data[i + 1] * 256 + data[i + 2]
                 t = t + table.CharAt(n / 262144) + table.CharAt((n / 4096) % 64) + table.CharAt((n / 64) % 64) + table.CharAt(n % 64)
                 i = i + 3
             }
             var rest = data.length - i
             if (rest == 1) {
-                int a = data[i] * 65536
+                defined int a = data[i] * 65536
                 t = t + table.CharAt(a / 262144) + table.CharAt((a / 4096) % 64) + "=="
             } else if (rest == 2) {
-                int b = data[i] * 65536 + data[i + 1] * 256
+                defined int b = data[i] * 65536 + data[i + 1] * 256
                 t = t + table.CharAt(b / 262144) + table.CharAt((b / 4096) % 64) + table.CharAt((b / 64) % 64) + "="
             }
             return t
@@ -1828,8 +1828,8 @@ namespace Http {
         Http.Reader reader
         bool client
         bool open
-        int closeCode
-        int maxMessageBytes
+        defined int closeCode
+        defined int maxMessageBytes
         // (the server side: the header fields and the target of the request that opened it)
         Http.Headers headers
         string target
@@ -1854,7 +1854,7 @@ namespace Http {
             return r.Query(name, fallback)
         }
         // The code of the close frame of the other side (1000 normal, 1001 going away, ...; 1006 when the connection just ended), 0 while it is open.
-        int CloseCode { get { return this.closeCode } }
+        defined int CloseCode { get { return this.closeCode } }
 
         // ws://host:port/path (wss:// over TLS): the handshake as a client.
         static Http.WebSocket Connect(string url, defined int timeout = 10000, Http.Headers headers = undefined) {
@@ -1901,16 +1901,16 @@ namespace Http {
             IO.MemoryStream parts = undefined
             var opcodeOfMessage = 0
             while (true) {
-                int b0 = 0
+                defined int b0 = 0
                 try { b0 = this.ReadByte() } catch (Net.TimeoutException e) { return undefined }
                 if (b0 < 0) { this.Ended(1006); return undefined }
                 this.connection.ReadTimeout = 30000
-                int b1 = this.ReadByte()
+                defined int b1 = this.ReadByte()
                 if (b1 < 0) { this.Ended(1006); return undefined }
                 var fin = b0 >= 128
-                int opcode = b0 % 16
+                defined int opcode = b0 % 16
                 var masked = b1 >= 128
-                int len = b1 % 128
+                defined int len = b1 % 128
                 if (len == 126) { len = this.ReadByte() * 256 + this.ReadByte() }
                 else if (len == 127) {
                     len = 0
@@ -1964,10 +1964,10 @@ namespace Http {
                 this.connection.ReadTimeout = 2000
                 // (the answer of the other side; what comes before it is dropped)
                 while (true) {
-                    int b0 = this.ReadByte()
+                    defined int b0 = this.ReadByte()
                     if (b0 < 0) { break }
-                    int b1 = this.ReadByte()
-                    int len = b1 % 128
+                    defined int b1 = this.ReadByte()
+                    defined int len = b1 % 128
                     if (len == 126) { len = this.ReadByte() * 256 + this.ReadByte() }
                     if (b1 >= 128) { this.reader.ReadExact(4) }
                     this.reader.ReadExact(len)
@@ -1985,14 +1985,14 @@ namespace Http {
             this.connection.Close()
         }
 
-        undefined Ended(int code) {
+        undefined Ended(defined int code) {
             this.open = false
             if (this.closeCode == 0) { this.closeCode = code }
         }
 
-        int ReadByte() {
+        defined int ReadByte() {
             if (!this.reader.Fill()) { return -1 }
-            int b = this.reader.chunk[this.reader.pos]
+            defined int b = this.reader.chunk[this.reader.pos]
             this.reader.pos = this.reader.pos + 1
             return b
         }

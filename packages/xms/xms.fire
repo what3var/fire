@@ -3,8 +3,8 @@
 
 class XmsException : Exception {
     string message
-    int code
-    construct(string message, int code = 0) {
+    defined int code
+    construct(string message, defined int code = 0) {
         this.message = message
         this.code = code
     }
@@ -48,10 +48,10 @@ class Xms {
 
 // A block of extended memory. Write/Read move bytes between it and a buffer; Close (or the end of the object, or of the program) gives it back.
 class XmsBlock {
-    int handle = 0
-    int kb = 0
+    defined int handle = 0
+    defined int kb = 0
 
-    construct(int kb) {
+    construct(defined int kb) {
         Xms.Check()
         if (kb <= 0 || kb > 65535) { throw new ArgumentException("A block has 1 to 65535 KB, not " + kb + ".") }
         var h = __XmsAlloc(kb)
@@ -62,8 +62,8 @@ class XmsBlock {
     destruct() { this.Close() }
 
     // The size in KB and in bytes.
-    int Kb { get { return this.kb } }
-    int Size { get { return this.kb * 1024 } }
+    defined int Kb { get { return this.kb } }
+    defined int Size { get { return this.kb * 1024 } }
 
     // `count` bytes of `data` (from `at`; -1: the rest) into the block at `offset`.
     undefined Write(defined int offset, byte data[], defined int at = 0, defined int count = -1) {

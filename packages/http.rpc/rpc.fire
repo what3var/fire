@@ -83,7 +83,7 @@ namespace Http {
             return "200\n{\"result\": " + Json.Serialize(result, options) + "}"
         }
 
-        static string Fail(int status, string message, string type) {
+        static string Fail(defined int status, string message, string type) {
             return "" + status + "\n{\"error\": " + Json.Serialize(message) + ", \"type\": " + Json.Serialize(type) + "}"
         }
 
@@ -145,10 +145,10 @@ namespace Http {
             for (var i = 0; i < gone.Count; i++) { slots.Remove(gone[i]) }
         }
 
-        static int TimeoutTicksOf(Type t) {
+        static defined int TimeoutTicksOf(Type t) {
             Attribute a = t.FindAttribute("Timeout")
             if (a == undefined || a.ArgCount() == 0) { return 300 * 10000000 }
-            int seconds = a.Args[0]
+            defined int seconds = a.Args[0]
             return seconds * 10000000
         }
     }
@@ -156,10 +156,10 @@ namespace Http {
     // An instance of lifetime session or single at its home.
     class RpcSlot {
         any instance
-        int touched
-        int timeoutTicks
+        defined int touched
+        defined int timeoutTicks
 
-        construct(any instance, int timeoutTicks) {
+        construct(any instance, defined int timeoutTicks) {
             this.instance = take instance
             this.touched = DateTime.UtcNow.Ticks
             this.timeoutTicks = timeoutTicks
@@ -193,7 +193,7 @@ namespace Http {
             return Http.RpcCall.Run(slot.instance, typeName, memberName, httpMethod, body)
         }
 
-        int Count() { return this.slots.Count }
+        defined int Count() { return this.slots.Count }
 
         undefined Stop() { this.stopped = true }
 
@@ -278,9 +278,9 @@ namespace Http {
         }
 
         // The number of living instances of lifetime session and single.
-        int Instances() {
+        defined int Instances() {
             var h = this.home
-            int n = await h.Count()
+            defined int n = await h.Count()
             return n
         }
 

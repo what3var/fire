@@ -24,7 +24,7 @@ namespace Machine {
 
     // I/O ports: In8/In16/In32 read, Out8/Out16/Out32 write (32 bits from the 386 on).
     class Port {
-        static int In(defined int port, defined int bits) {
+        static defined int In(defined int port, defined int bits) {
             Machine.Check.Hardware()
             Machine.Check.Port(port)
             Machine.Check.Bits(bits)
@@ -36,9 +36,9 @@ namespace Machine {
             Machine.Check.Bits(bits)
             __MachOut(port, bits, value)
         }
-        static int In8(defined int port) { return Machine.Port.In(port, 8) }
-        static int In16(defined int port) { return Machine.Port.In(port, 16) }
-        static int In32(defined int port) { return Machine.Port.In(port, 32) }
+        static defined int In8(defined int port) { return Machine.Port.In(port, 8) }
+        static defined int In16(defined int port) { return Machine.Port.In(port, 16) }
+        static defined int In32(defined int port) { return Machine.Port.In(port, 32) }
         static undefined Out8(defined int port, defined int value) { Machine.Port.Out(port, 8, value) }
         static undefined Out16(defined int port, defined int value) { Machine.Port.Out(port, 16, value) }
         static undefined Out32(defined int port, defined int value) { Machine.Port.Out(port, 32, value) }
@@ -46,7 +46,7 @@ namespace Machine {
 
     // Physical memory (real mode: the first megabyte and the 64 KB after it). Peek/Poke with 8, 16 or 32 bits, little endian.
     class Memory {
-        static int Peek(defined int address, defined int bits) {
+        static defined int Peek(defined int address, defined int bits) {
             Machine.Check.Hardware()
             if (bits != 8 && bits != 16 && bits != 32) { throw new ArgumentException("8, 16 or 32 bits, not " + bits + ".") }
             var v = __MachPeek(address, bits)
@@ -58,9 +58,9 @@ namespace Machine {
             if (bits != 8 && bits != 16 && bits != 32) { throw new ArgumentException("8, 16 or 32 bits, not " + bits + ".") }
             if (!__MachPoke(address, bits, value)) { throw new Machine.MachineException("The address " + address + " cannot be reached from here.") }
         }
-        static int Peek8(defined int address) { return Machine.Memory.Peek(address, 8) }
-        static int Peek16(defined int address) { return Machine.Memory.Peek(address, 16) }
-        static int Peek32(defined int address) { return Machine.Memory.Peek(address, 32) }
+        static defined int Peek8(defined int address) { return Machine.Memory.Peek(address, 8) }
+        static defined int Peek16(defined int address) { return Machine.Memory.Peek(address, 16) }
+        static defined int Peek32(defined int address) { return Machine.Memory.Peek(address, 32) }
         static undefined Poke8(defined int address, defined int value) { Machine.Memory.Poke(address, 8, value) }
         static undefined Poke16(defined int address, defined int value) { Machine.Memory.Poke(address, 16, value) }
         static undefined Poke32(defined int address, defined int value) { Machine.Memory.Poke(address, 32, value) }
@@ -81,7 +81,7 @@ namespace Machine {
     // The processor.
     class Cpu {
         // 86 (8086/8088), 286, 386, 486, or 586 for one with CPUID (a Pentium or later: Id/Vendor say more).
-        static int Level() {
+        static defined int Level() {
             Machine.Check.Hardware()
             var l = __MachCpuLevel()
             if (l == 0) { return 86 }
@@ -124,10 +124,10 @@ namespace Machine {
     // The device behind the line is served by the program (reading its ports after Wait). Close (or the end of the object, or of the program) puts back what
     // was there before.
     class Irq {
-        int line = -1
+        defined int line = -1
         bool open = false   // (also when the constructor threw: the destructor runs then too)
 
-        construct(int line, bool chain = false) {
+        construct(defined int line, bool chain = false) {
             Machine.Check.Hardware()
             if (line < 0 || line > 15) { throw new ArgumentException("An IRQ is 0 to 15, not " + line + ".") }
             if (!__MachIrqOpen(line, chain)) { throw new Machine.MachineException("IRQ " + line + " is open already.") }
@@ -136,11 +136,11 @@ namespace Machine {
         }
         destruct() { this.Close() }
 
-        int Line { get { return this.line } }
+        defined int Line { get { return this.line } }
         // The interrupts since the last Count or Wait.
-        int Count() { return __MachIrqTake(this.line) }
+        defined int Count() { return __MachIrqTake(this.line) }
         // Waits for an interrupt (at most `timeoutMs`; -1: as long as it takes): how many came since the last Count or Wait, 0 when none came in the time.
-        int Wait(defined int timeoutMs = -1) { return __MachIrqWait(this.line, timeoutMs) }
+        defined int Wait(defined int timeoutMs = -1) { return __MachIrqWait(this.line, timeoutMs) }
         undefined Close() {
             if (this.open) {
                 __MachIrqClose(this.line)
@@ -151,7 +151,7 @@ namespace Machine {
 
     // The CMOS memory of the clock (ports 70h/71h; register 0..127).
     class Cmos {
-        static int Read(defined int register) {
+        static defined int Read(defined int register) {
             Machine.Port.Out8(112, register & 127)
             return Machine.Port.In8(113)
         }
@@ -191,13 +191,13 @@ namespace Machine {
 
     // The configuration space of PCI devices (mechanism 1: ports CF8h/CFCh, 32 bits - a 386 or later).
     class Pci {
-        static int Address(defined int bus, defined int device, defined int function, defined int offset) {
+        static defined int Address(defined int bus, defined int device, defined int function, defined int offset) {
             if (bus < 0 || bus > 255 || device < 0 || device > 31 || function < 0 || function > 7 || offset < 0 || offset > 255) {
                 throw new ArgumentException("PCI: bus 0..255, device 0..31, function 0..7, offset 0..255.")
             }
             return (1 << 31) | (bus << 16) | (device << 11) | (function << 8) | (offset & 252)
         }
-        static int Read32(defined int bus, defined int device, defined int function, defined int offset) {
+        static defined int Read32(defined int bus, defined int device, defined int function, defined int offset) {
             Machine.Port.Out32(3320, Machine.Pci.Address(bus, device, function, offset))
             return Machine.Port.In32(3324)
         }

@@ -4,28 +4,28 @@
 namespace Net {
     // The codes of NetException.code (the same numbers as in the bridge).
     class NetCodes {
-        static int InvalidArgument() { return 1 }
-        static int InvalidHandle() { return 2 }
-        static int Refused() { return 3 }
-        static int TimedOut() { return 4 }
-        static int Unreachable() { return 5 }
-        static int AddressInUse() { return 6 }
-        static int Closed() { return 7 }
-        static int Denied() { return 8 }
-        static int Unsupported() { return 9 }
-        static int ResolveFailed() { return 10 }
-        static int Other() { return 11 }
-        static int NotConnected() { return 12 }
-        static int Permission() { return 13 }
-        static int Tls() { return 14 }
-        static int Certificate() { return 15 }
+        static defined int InvalidArgument() { return 1 }
+        static defined int InvalidHandle() { return 2 }
+        static defined int Refused() { return 3 }
+        static defined int TimedOut() { return 4 }
+        static defined int Unreachable() { return 5 }
+        static defined int AddressInUse() { return 6 }
+        static defined int Closed() { return 7 }
+        static defined int Denied() { return 8 }
+        static defined int Unsupported() { return 9 }
+        static defined int ResolveFailed() { return 10 }
+        static defined int Other() { return 11 }
+        static defined int NotConnected() { return 12 }
+        static defined int Permission() { return 13 }
+        static defined int Tls() { return 14 }
+        static defined int Certificate() { return 15 }
     }
 
     class NetException : Exception {
         string message
-        int code
+        defined int code
 
-        construct(string message, int code = 11) {
+        construct(string message, defined int code = 11) {
             this.message = message
             this.code = code
         }
@@ -70,7 +70,7 @@ namespace Net {
         }
 
         // A valid handle, or the error as an exception (the natives return -1).
-        static int Handle(defined int handle) {
+        static defined int Handle(defined int handle) {
             if (handle < 0) { Throw() }
             return handle
         }
@@ -78,7 +78,7 @@ namespace Net {
 
     // Time limits: milliseconds from a number, a time value or a TimeSpan (undefined: no limit, -1).
     class Clock {
-        static int Millis(any limit) {
+        static defined int Millis(any limit) {
             if (limit == undefined) { return -1 }
             var span = TimeSpan.Of(limit)
             var ms = span.Ticks / 10000
@@ -86,10 +86,10 @@ namespace Net {
             return ms
         }
 
-        static int Now() { return DateTime.UtcNow.Ticks }
+        static defined int Now() { return DateTime.UtcNow.Ticks }
 
         // The moment (ticks) a limit of `ms` ends, -1: never.
-        static int Deadline(defined int ms) {
+        static defined int Deadline(defined int ms) {
             if (ms < 0) { return -1 }
             return Net.Clock.Now() + ms * 10000
         }
@@ -104,7 +104,7 @@ namespace Net {
                 if (left < ms) { ms = left }
             }
             if (ms <= 0) { return }
-            int fd = __NetNativeHandle(handle)
+            defined int fd = __NetNativeHandle(handle)
             if (fd < 0 || __fd_wait(fd, events, ms) < 0) { Net.Clock.Pause(deadline, tries) }
         }
 
@@ -147,7 +147,7 @@ namespace Net {
             var digits = "0123456789abcdef"
             var t = ""
             for (var i = 0; i < b.length; i++) {
-                int v = b[i]
+                defined int v = b[i]
                 t = t + digits.CharAt(v / 16) + digits.CharAt(v % 16)
             }
             return t
@@ -184,10 +184,10 @@ namespace Net {
 
     // A connection (TCP): an IO.Stream. Read returns 0 when the other side has closed its end.
     class TcpClient : IO.Stream, Net.IConnection {
-        int handle
+        defined int handle
         bool closed
-        int readLimit
-        int writeLimit
+        defined int readLimit
+        defined int writeLimit
 
         // new TcpClient("host", 80) / ("host", 80, 5s): connects; the limit of connecting is 10 seconds unless given (undefined: no limit).
         construct(string host, defined int port, any timeout = 10000) {
@@ -209,7 +209,7 @@ namespace Net {
         }
 
         // A connection that a listener accepted (do not call this yourself).
-        construct(int handle) {
+        construct(defined int handle) {
             this.handle = handle
             this.closed = false
             this.readLimit = -1
@@ -321,7 +321,7 @@ namespace Net {
         }
 
         // Up to `count` bytes (at least one unless the other side has closed: then 0). Waits up to ReadTimeout, then Net.TimeoutException.
-        override int Read(byte buffer[], defined int offset, defined int count) {
+        override defined int Read(byte buffer[], defined int offset, defined int count) {
             this.Check()
             var deadline = Net.Clock.Deadline(this.readLimit)
             var tries = 0
@@ -336,7 +336,7 @@ namespace Net {
         }
 
         // All `count` bytes (waits as long as the system needs; WriteTimeout limits each wait).
-        override int Write(byte buffer[], defined int offset, defined int count) {
+        override defined int Write(byte buffer[], defined int offset, defined int count) {
             this.Check()
             var done = 0
             while (done < count) {
@@ -379,7 +379,7 @@ namespace Net {
 
     // Waits for connections (TCP).
     class TcpListener {
-        int handle
+        defined int handle
         bool closed
 
         // new TcpListener("127.0.0.1", 8080): host "" listens on every interface, port 0 takes a free port (see Port).
@@ -460,10 +460,10 @@ namespace Net {
 
     // A datagram socket (UDP): messages, not a stream.
     class UdpSocket {
-        int handle
+        defined int handle
         bool closed
         string fromHost
-        int fromPort
+        defined int fromPort
 
         // new UdpSocket() takes a free port on every interface; ("127.0.0.1", 9000) binds to an address.
         construct(string host = "", defined int port = 0) {
@@ -491,7 +491,7 @@ namespace Net {
 
         // The sender of the datagram that ReceiveFrom received last.
         string FromHost { get { return this.fromHost } }
-        int FromPort { get { return this.fromPort } }
+        defined int FromPort { get { return this.fromPort } }
 
         // The size of the next datagram, 0: none waiting.
         int Available {
@@ -511,15 +511,15 @@ namespace Net {
         }
 
         // Sends `count` bytes of the buffer as one datagram; returns the number of bytes sent.
-        int SendTo(byte buffer[], defined int offset, defined int count, string host, defined int port) {
+        defined int SendTo(byte buffer[], defined int offset, defined int count, string host, defined int port) {
             this.Check()
             return Net.NetErrors.Handle(__NetSendTo(this.handle, buffer, offset, count, host, port))
         }
 
-        int SendTo(byte buffer[], string host, defined int port) { return this.SendTo(buffer, 0, buffer.length, host, port) }
+        defined int SendTo(byte buffer[], string host, defined int port) { return this.SendTo(buffer, 0, buffer.length, host, port) }
 
         // The text as UTF-8 in one datagram.
-        int SendString(string text, string host, defined int port) {
+        defined int SendString(string text, string host, defined int port) {
             var bytes = IO.Utf8.GetBytes(text)
             return this.SendTo(bytes, 0, bytes.length, host, port)
         }
@@ -540,7 +540,7 @@ namespace Net {
         }
 
         // Receives one datagram into the buffer (a longer one is cut) and returns its size; the sender is FromHost/FromPort. Waits without a limit unless one is given, then Net.TimeoutException.
-        int ReceiveFrom(byte buffer[], defined int offset, defined int count, any timeout = undefined) {
+        defined int ReceiveFrom(byte buffer[], defined int offset, defined int count, any timeout = undefined) {
             this.Check()
             var deadline = Net.Clock.Deadline(Net.Clock.Millis(timeout))
             var tries = 0

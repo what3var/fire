@@ -841,7 +841,7 @@ namespace fire.Standard
                 private Owns owns = Owns.Explicit
 
                 /// The number of elements.
-                int Count { get { return this.count } }
+                defined int Count { get { return this.count } }
 
                 construct() {
                     this.items = new T[8]
@@ -1010,7 +1010,7 @@ namespace fire.Standard
                 protected Owns owns
 
                 /// The number of entries.
-                int Count { get { return this.count } }
+                defined int Count { get { return this.count } }
 
                 construct(Owns owns) {
                     this.owns = owns

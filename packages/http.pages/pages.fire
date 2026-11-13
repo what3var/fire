@@ -20,7 +20,7 @@ namespace Http {
         static string Color(any brush) {
             if (brush == undefined || !(brush is of SolidBrush)) { return undefined }
             SolidBrush b = brush
-            int c = b.Color
+            defined int c = b.Color
             var digits = "0123456789abcdef"
             var t = "#"
             var shift = 16777216
@@ -78,7 +78,7 @@ namespace Http {
         }
 
         // The patch of an element (all that the browser shows of it).
-        static string Patch(UI.Element e, int id) {
+        static string Patch(UI.Element e, defined int id) {
             var t = ""
             if (e is of UI.Label) { UI.Label l = e; t = l.Text }
             else if (e is of UI.Button) { UI.Button b = e; t = b.Text }
@@ -178,7 +178,7 @@ namespace Http {
             return t + "]"
         }
 
-        static string TreeRow(UI.TreeView tv, int index) {
+        static string TreeRow(UI.TreeView tv, defined int index) {
             UI.TreeNode node = tv.visibleNodes[index]
             var box = "&nbsp;"
             if (node.HasChildren()) {
@@ -189,7 +189,7 @@ namespace Http {
         }
 
         // (the row of the selected node; -1: none or not visible)
-        static int TreeSelected(UI.TreeView tv) {
+        static defined int TreeSelected(UI.TreeView tv) {
             if (tv.selected == undefined) { return -1 }
             return tv.visibleNodes.IndexOf(tv.selected)
         }
@@ -269,7 +269,7 @@ namespace Http {
             return "data:image/png;base64," + Http.Base64.Encode(fb.ToPng())
         }
 
-        static int ImageSignature(UI.DrawingCanvas dc) {
+        static defined int ImageSignature(UI.DrawingCanvas dc) {
             if (dc.framebuffer == undefined) { return 0 }
             return Hash.Crc32.Of(dc.framebuffer.ToPng())
         }
@@ -292,7 +292,7 @@ namespace Http {
             }
         }
 
-        static int IdOf(List elements, UI.Element e) {
+        static defined int IdOf(List elements, UI.Element e) {
             for (var i = 0; i < elements.Count; i++) { if (elements[i] == e) { return i } }
             return -1
         }
@@ -469,7 +469,7 @@ namespace Http {
         }
 
         // A DockPanel as nested flex boxes: each child takes its side of what the ones before it left, the last one fills the rest (LastChildFill).
-        static string Dock(UI.DockPanel dp, int index, List elements) {
+        static string Dock(UI.DockPanel dp, defined int index, List elements) {
             if (index >= dp.children.Count) { return "" }
             UI.Element c = dp.children[index]
             var html = Http.PageHtml.Render(c, elements)
@@ -561,7 +561,7 @@ namespace Http {
         // the channel to the page's WebSocket (from the socket when the browser connects): the events come in, the answers and pushes go out
         ChannelEnd<string, string> link
         // the element with the focus as the browser has it (its number; -1 none)
-        int seenFocus = -1
+        defined int seenFocus = -1
 
         construct(string typeName, string id, string session) {
             this.id = id
@@ -609,11 +609,11 @@ namespace Http {
             any ev = Json.Parse(json)
             if (!(ev is of JsonObject)) { return "{\"patches\": []}" }
             JsonObject o = ev
-            int id = o.Get("e")
+            defined int id = o.Get("e")
             string kind = o.Get("k")
             if (kind == "js") {
                 // (the answer of a browser.Call: its callback gets the result)
-                int call = o.Get("id")
+                defined int call = o.Get("id")
                 if (call >= 0 && call < this.callbacks.Count) {
                     any callback = this.callbacks[call]
                     this.callbacks[call] = undefined
@@ -634,8 +634,8 @@ namespace Http {
                     this.root.SetFocus(this.elements[id])
                     this.seenFocus = id
                 }
-                int key = o.Get("key")
-                int mod = o.Get("mod")
+                defined int key = o.Get("key")
+                defined int mod = o.Get("mod")
                 this.root.KeyDown(key, mod)
                 return this.Changes()
             }
@@ -651,7 +651,7 @@ namespace Http {
                         if (cb.IsChecked != v) { cb.Toggle() }
                     } else if ((kind == "select" || kind == "activate") && e is of UI.ItemsControl) {
                         UI.ItemsControl ic = e
-                        int row = o.Get("v")
+                        defined int row = o.Get("v")
                         ic.Select(row)
                         if (kind == "activate" && ic.OnActivate != undefined) {
                             ic.activated = true
@@ -661,7 +661,7 @@ namespace Http {
                     } else if ((kind == "select" || kind == "toggle" || kind == "activate") && e is of UI.TreeView) {
                         UI.TreeView tv = e
                         tv.Flatten()
-                        int row = o.Get("v")
+                        defined int row = o.Get("v")
                         if (row >= 0 && row < tv.visibleNodes.Count) {
                             UI.TreeNode node = tv.visibleNodes[row]
                             if (kind != "select" && node.HasChildren()) { node.Expanded = !node.Expanded }
@@ -684,7 +684,7 @@ namespace Http {
                         if (item != undefined && item.Enabled && !item.separator && !item.HasSubmenu()) { item.Activate() }
                     } else if (kind == "sort" && e is of UI.ListView) {
                         UI.ListView lv = e
-                        int column = o.Get("v")
+                        defined int column = o.Get("v")
                         if (column >= 0 && column < lv.columns.Count) {
                             UI.GridColumn gc = lv.columns[column]
                             lv.SortBy(gc.member)
@@ -692,9 +692,9 @@ namespace Http {
                     } else if (kind == "mouse" && e is of UI.DrawingCanvas) {
                         UI.DrawingCanvas dc = e
                         string what = o.Get("t")
-                        int x = o.Get("x")
-                        int y = o.Get("y")
-                        int button = o.Get("b")
+                        defined int x = o.Get("x")
+                        defined int y = o.Get("y")
+                        defined int button = o.Get("b")
                         if (what == "down" && dc.OnMouseDown != undefined) { var down = dc.OnMouseDown; down(x, y, button) }
                         if (what == "move" && dc.OnMouseMove != undefined) { var move = dc.OnMouseMove; move(x, y) }
                         if (what == "up" && dc.OnMouseUp != undefined) { var up = dc.OnMouseUp; up(x, y, button) }
@@ -773,7 +773,7 @@ namespace Http {
         Http.PageState state
         bool stopped
         bool connected
-        int created
+        defined int created
 
         construct(string typeName, string id, string session, Http.PageDirectory directory) {
             this.state = new Http.PageState(typeName, id, session)
@@ -899,7 +899,7 @@ namespace Http {
             c.Stop()
         }
 
-        int Count() { return this.circuits.Count }
+        defined int Count() { return this.circuits.Count }
 
         // (circuits whose browser never connected within a minute end)
         static undefined Sweep(Dictionary<string, Http.PageCircuit> circuits) {
@@ -1097,9 +1097,9 @@ namespace Http {
         }
 
         // The number of open pages.
-        int Open() {
+        defined int Open() {
             var d = this.directory
-            int n = await d.Count()
+            defined int n = await d.Count()
             return n
         }
 

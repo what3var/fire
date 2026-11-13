@@ -23,7 +23,7 @@ namespace UI {
 
         bool HasChildren() { return this.children.Count > 0 }
 
-        int Depth() {
+        defined int Depth() {
             var d = 0
             var p = this.parent
             while (p != undefined) {
@@ -43,8 +43,8 @@ namespace UI {
     class TreeView : Element {
         List nodes
         TreeNode selected
-        int Indent = 16
-        int rowHeight = -1
+        defined int Indent = 16
+        defined int rowHeight = -1
         Scroller scroller
         lambda OnSelect
         lambda OnActivate
@@ -54,12 +54,12 @@ namespace UI {
         TreeNode lastClickNode
         // the visible nodes of the last arrangement, from top to bottom
         List visibleNodes
-        int hotIndex = -1
-        int seenSignature = -1
-        int viewW = 0
-        int viewH = 0
+        defined int hotIndex = -1
+        defined int seenSignature = -1
+        defined int viewW = 0
+        defined int viewH = 0
 
-        construct(int x = 0, int y = 0, int width = 200, int height = 160) : base(x, y, width, height) {
+        construct(defined int x = 0, defined int y = 0, defined int width = 200, defined int height = 160) : base(x, y, width, height) {
             this.nodes = new List()
             this.visibleNodes = new List()
             this.scroller = new Scroller(false)
@@ -86,7 +86,7 @@ namespace UI {
         }
 
         // A feature of the visible nodes (count, texts, expanded state): if it changes - for example by `node.expanded = true` - it is repainted.
-        int Signature() {
+        defined int Signature() {
             var list = new List()
             for (var i = 0; i < this.nodes.Count; i = i + 1) { this.Collect_(list, this.nodes[i]) }
             var sig = list.Count
@@ -107,7 +107,7 @@ namespace UI {
             }
         }
 
-        int RowHeight(Root root) {
+        defined int RowHeight(Root root) {
             if (this.rowHeight >= 0) { return this.rowHeight }
             return this.TextHeight(root) + 6
         }
@@ -125,7 +125,7 @@ namespace UI {
             for (var i = 0; i < this.nodes.Count; i = i + 1) { this.Collect_(this.visibleNodes, this.nodes[i]) }
         }
 
-        override undefined MeasureCore(Root root, int aw, int ah) {
+        override undefined MeasureCore(Root root, defined int aw, defined int ah) {
             this.Flatten()
             var widest = 0
             for (var i = 0; i < this.visibleNodes.Count; i = i + 1) {
@@ -136,7 +136,7 @@ namespace UI {
             this.ch = this.visibleNodes.Count * this.RowHeight(root) + 2
         }
 
-        override undefined ArrangeCore(Root root, int w, int h) {
+        override undefined ArrangeCore(Root root, defined int w, defined int h) {
             this.viewH = UI.M.Max(0, h - 2)
             this.scroller.extent = this.visibleNodes.Count * this.RowHeight(root)
             this.scroller.viewport = this.viewH
@@ -145,12 +145,12 @@ namespace UI {
             if (this.scroller.Needed()) { this.viewW = this.viewW - this.scroller.size }
         }
 
-        int IndexOfSelected() {
+        defined int IndexOfSelected() {
             if (this.selected == undefined) { return -1 }
             return this.visibleNodes.IndexOf(this.selected)
         }
 
-        override undefined Draw(Root root, int ax, int ay) {
+        override undefined Draw(Root root, defined int ax, defined int ay) {
             if (!this.NeedsDraw(root, ax, ay)) { return }
             var theme = root.theme
             var r = root.renderer
@@ -188,14 +188,14 @@ namespace UI {
         }
 
         // The box with plus (collapsed) or minus (expanded).
-        undefined DrawBox(Root root, int x, int y, bool open, any color) {   // (a brush of the theme: its Color makes the pen)
+        undefined DrawBox(Root root, defined int x, defined int y, bool open, any color) {   // (a brush of the theme: its Color makes the pen)
             var pen = new Pen(color.Color)
             root.renderer.DrawRect(x, y, 9, 9, pen)
             root.renderer.DrawLine(x + 2, y + 4, x + 6, y + 4, pen)
             if (!open) { root.renderer.DrawLine(x + 4, y + 2, x + 4, y + 6, pen) }
         }
 
-        int RowAt(Root root, int px, int py) {
+        defined int RowAt(Root root, defined int px, defined int py) {
             var top = this.ay + 1
             if (py < top || py >= top + this.viewH || px < this.ax + 1 || px >= this.ax + 1 + this.viewW) { return -1 }
             var index = (py - top + this.scroller.offset) / this.RowHeight(root)
@@ -203,7 +203,7 @@ namespace UI {
             return index
         }
 
-        bool OverBar(int px, int py) {
+        bool OverBar(defined int px, defined int py) {
             return this.scroller.Needed() && px >= this.ax + this.actualWidth - 1 - this.scroller.size
         }
 
@@ -247,7 +247,7 @@ namespace UI {
             else if ((index + 1) * h > this.scroller.offset + this.viewH) { this.scroller.Set((index + 1) * h - this.viewH) }
         }
 
-        override undefined MouseDown(Root root, int button, int px, int py) {
+        override undefined MouseDown(Root root, defined int button, defined int px, defined int py) {
             if (button != 1) { return }
             if (this.OverBar(px, py)) {
                 this.scroller.Press(py - (this.ay + 1), this.viewH)
@@ -273,18 +273,18 @@ namespace UI {
             this.lastClickNode = node
         }
 
-        override undefined MouseMove(Root root, int px, int py) {
+        override undefined MouseMove(Root root, defined int px, defined int py) {
             if (this.scroller.dragging) { this.scroller.Drag(py - (this.ay + 1), this.viewH) }
         }
 
-        override undefined MouseUp(Root root, int button, int px, int py) { this.scroller.Release() }
+        override undefined MouseUp(Root root, defined int button, defined int px, defined int py) { this.scroller.Release() }
 
-        override undefined Hover(Root root, int px, int py) {
+        override undefined Hover(Root root, defined int px, defined int py) {
             this.hotIndex = this.RowAt(root, px, py)
             this.scroller.SetHover(this.OverBar(px, py))
         }
 
-        override bool MouseWheel(Root root, int dx, int dy) {
+        override bool MouseWheel(Root root, defined int dx, defined int dy) {
             if (!this.scroller.Needed()) { return false }
             this.scroller.By(-dy * this.RowHeight(root) * 3)
             return true
@@ -294,14 +294,14 @@ namespace UI {
 
         override bool Dragging() { return this.scroller.dragging }
 
-        override bool PanBy(Root root, int dx, int dy) {
+        override bool PanBy(Root root, defined int dx, defined int dy) {
             if (!this.scroller.Needed()) { return false }
             this.scroller.By(-dy)
             return true
         }
 
         // Up and Down select another node (at the edge the tree releases the key), Left and Right collapse/expand
-        override bool WantsKey(int key) {
+        override bool WantsKey(defined int key) {
             var last = this.visibleNodes.Count - 1
             var index = this.IndexOfSelected()
             if (key == UI.Keys.Down()) { return index < last }
@@ -309,7 +309,7 @@ namespace UI {
             return key == UI.Keys.Left() || key == UI.Keys.Right() || key == UI.Keys.Home() || key == UI.Keys.End()
         }
 
-        override undefined KeyDown(Root root, int key, int mod) {
+        override undefined KeyDown(Root root, defined int key, defined int mod) {
             var index = this.IndexOfSelected()
             var count = this.visibleNodes.Count
             if (count == 0) { return }

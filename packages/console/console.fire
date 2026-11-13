@@ -13,7 +13,7 @@ enum ConsoleKey { None, Character, Enter, Escape, Backspace, Tab, Up, Down, Left
 class ConsoleKeyInfo {
     ConsoleKey key
     char ch
-    int mods
+    defined int mods
 
     construct(defined int code) {
         this.key = (code & 31)!ConsoleKey
@@ -53,12 +53,12 @@ class Console {
     static undefined Flush() { __ConFlush() }
 
     // The size of the visible console (80 x 25 without one).
-    static int Width() { return __ConWidth() }
-    static int Height() { return __ConHeight() }
+    static defined int Width() { return __ConWidth() }
+    static defined int Height() { return __ConHeight() }
 
     // The cursor (0-based; 0 without a console).
-    static int Column() { return __ConColumn() }
-    static int Row() { return __ConRow() }
+    static defined int Column() { return __ConColumn() }
+    static defined int Row() { return __ConRow() }
     static undefined SetCursor(defined int column, defined int row) { __ConSetCursor(column, row) }
     static undefined ShowCursor(bool show = true) { __ConShowCursor(show) }
 

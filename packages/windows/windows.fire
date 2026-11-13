@@ -6,7 +6,7 @@
 // `Tick()` is one cycle of this window alone.
 class Window {
     // (-1 until the window exists: a constructor that throws - no display - leaves nothing for the destructor to close)
-    int id = -1
+    defined int id = -1
     // The manager that cycles this window (undefined until it is attached; Show and Run attach it to WindowManager.Default)
     WindowManager Manager
     // Called once per cycle of the manager, after the events and before the frame is shown (a UI.Root draws here)
@@ -14,7 +14,7 @@ class Window {
     // true once the window has been closed (by the user or Close)
     bool IsClosed = false
     // the modal window that blocks this one (see Show(true)): its depth in the manager's modal windows, 0 = none
-    int blockedBy = 0
+    defined int blockedBy = 0
 
     construct(Framebuffer framebuffer, string title, WindowManager manager = undefined) {
         this.id = __GRPHWinCreate(framebuffer.id, title)
@@ -87,11 +87,11 @@ class Window {
         return open
     }
 
-    int cursor = 0
+    defined int cursor = 0
 
     /// <summary>The mouse pointer over the window: a pointer of the system in the numbering of UI.Cursor (0 arrow, 1 text, 2 wait, 3 crosshair, 4 progress,
     /// 5 NW-SE, 6 NE-SW, 7 W-E, 8 N-S, 9 move, 10 not allowed, 11 hand - UI.Cursor names them).</summary>
-    int Cursor {
+    defined int Cursor {
         get { return this.cursor }
         set {
             this.cursor = value
@@ -101,7 +101,7 @@ class Window {
 
     // Where the text cursor of the program is (pixels of the framebuffer): an input method (IME - Japanese, Chinese, Korean, dead keys) opens its window
     // of candidates there. A text field that has the keyboard says it whenever its cursor moves; the composition comes as EventType.TextEditing.
-    undefined SetTextInputArea(int x, int y, int width, int height) { __GRPHWinSetTextInputRect(this.id, x, y, width, height) }
+    undefined SetTextInputArea(defined int x, defined int y, defined int width, defined int height) { __GRPHWinSetTextInputRect(this.id, x, y, width, height) }
 
     // What the desktop shows behind the window (Backdrop.None: the window is opaque; Transparent: its pixels are mixed with what lies behind it by their alpha;
     // Blur, Acrylic, Mica: the desktop also blurs it). A desktop that cannot do what is asked gives the next thing it can (Mica -> Acrylic -> Blur ->
@@ -118,7 +118,7 @@ class Window {
 
     // Only the area (x, y, width, height; pixels of the framebuffer) changed for the next frame: the display may hand over only that to the window system (X11,
     // Windows) - a program that knows what it drew saves the rest. Several before a frame add up; without it the whole frame goes. UI.Root says it by itself.
-    undefined PresentArea(int x, int y, int width, int height) { __GRPHWinPresentArea(this.id, x, y, width, height) }
+    undefined PresentArea(defined int x, defined int y, defined int width, defined int height) { __GRPHWinPresentArea(this.id, x, y, width, height) }
 
     // Pixels of the screen per logical pixel where the window is (2 on a "Retina" or 200 % screen); EventType.ScaleChanged reports a change.
     float Scale { get { return __GRPHWinGetScale(this.id) } }
@@ -146,7 +146,7 @@ class Window {
 
     // Brings the window to a new size in pixels of the screen (before it is shown: the size it opens with). The framebuffer keeps its size; with AutoResize it
     // follows when the window has its new size. False for a size that is not above 0.
-    bool SetSize(int width, int height) { return __GRPHWinSetSize(this.id, width, height) }
+    bool SetSize(defined int width, defined int height) { return __GRPHWinSetSize(this.id, width, height) }
 
     // true (default): a finger on the touchscreen ALSO triggers mouse events (as the desktops do by themselves), so a program that only listens to the mouse can be operated with a finger.
     // false: only the touch events (EventType.TouchDown/TouchMove/TouchUp). A UI.Root switches it off and evaluates the fingers itself.
@@ -247,7 +247,7 @@ class Window {
     // mouse button is held (call it when the pointer leaves the window during a drag of your own; UI.Root does that by itself). It returns when the user lets
     // go: 0 nothing happened (no program took it, the user pressed Escape, no button was held), 1 the other program copied it, 2 it moved it (a file manager
     // moved the files: the program may forget them). Windows (OLE) and X11 (XDND); elsewhere (Wayland, macOS, a board) there is no such drag: 0.
-    int StartDrag(string text, any files = undefined) {
+    defined int StartDrag(string text, any files = undefined) {
         var list = new List<string>()
         if (files != undefined) { foreach (f in files) { list.Add(f) } }
         var array = new string[list.Count]
@@ -284,13 +284,13 @@ class Window {
 // A board without a desktop is `embedded`: the UI then uses its fast built-in font, whole-number scaling and dark violet.
 class SystemTheme {
     bool embedded = false
-    float scale = 1.0
+    defined float scale = 1.0
     bool dark = false
-    int accent = 0x0078D7
+    defined int accent = 0x0078D7
     // the font of the interface: the first of the candidates that Fonts.Has finds ("" = none, the UI then keeps its own)
     string font = ""
     // the height of its letters in logical pixels (0 = not known)
-    int fontSize = 0
+    defined int fontSize = 0
     // false: the user switched transparency effects off (Windows "Transparency effects", macOS "Reduce transparency", the browser's prefers-reduced-transparency) - the
     // UI then draws no glass and no translucent surfaces; a board without a desktop has none either
     bool transparency = true
@@ -330,14 +330,14 @@ class SystemTheme {
 // windows may only live on the main thread, that thread only gives the beat and the program shows the windows itself at its safe points. There is a
 // default manager (`WindowManager.Default`) that Window.Show and Window.Run use; a program may make more (`new WindowManager()`), each with its windows.
 class WindowManager {
-    int id
+    defined int id
     List windows
     bool started = false
     bool ticking = false
     // the loops of Run on the calling thread (this manager's)
-    int runs = 0
+    defined int runs = 0
     // the modal windows that are open (Window.Show(true)), innermost last
-    int modals = 0
+    defined int modals = 0
     static WindowManager defaultManager
     // the loops of Run of all managers on the program's thread
     static int loops = 0

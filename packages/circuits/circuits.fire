@@ -18,38 +18,38 @@ unit Decibel: dB {
 namespace Circuits {
     /// <summary>Values with a unit (or plain SI numbers) as plain numbers for the solver.</summary>
     class Units {
-        static float Volts(float v : any) {
+        static defined float Volts(defined float v : any) {
             if (v is in V) { return v / 1V }
             if (v is in unitless) { return v }
             throw new ArgumentException("Expected a voltage (V), not " + v + ".")
         }
-        static float Amps(float v : any) {
+        static defined float Amps(defined float v : any) {
             if (v is in A) { return v / 1A }
             if (v is in unitless) { return v }
             throw new ArgumentException("Expected a current (A), not " + v + ".")
         }
-        static float Ohms(float v : any) {
+        static defined float Ohms(defined float v : any) {
             if (v is in Ohm) { return v / 1Ohm }
             if (v is in unitless) { return v }
             throw new ArgumentException("Expected a resistance (Ohm), not " + v + ".")
         }
-        static float Farads(float v : any) {
+        static defined float Farads(defined float v : any) {
             if (v is in F) { return v / 1F }
             if (v is in unitless) { return v }
             throw new ArgumentException("Expected a capacitance (F), not " + v + ".")
         }
-        static float Henries(float v : any) {
+        static defined float Henries(defined float v : any) {
             if (v is in H) { return v / 1H }
             if (v is in unitless) { return v }
             throw new ArgumentException("Expected an inductance (H), not " + v + ".")
         }
-        static float Hertz(float v : any) {
+        static defined float Hertz(defined float v : any) {
             if (v is in Hz) { return v / 1Hz }
             if (v is in unitless) { return v }
             throw new ArgumentException("Expected a frequency (Hz), not " + v + ".")
         }
         /// <summary>The number of a value in the SI unit of its dimension (4.7kOhm is 4700, 10us is 0.00001); a plain number stays as it is.</summary>
-        static float Raw(float v : any) {
+        static defined float Raw(defined float v : any) {
             if (v is in V) { return v / 1V }
             if (v is in A) { return v / 1A }
             if (v is in Ohm) { return v / 1Ohm }
@@ -59,7 +59,7 @@ namespace Circuits {
             if (v is in s) { return v / 1s }
             return v!float
         }
-        static float Seconds(float v : any) {
+        static defined float Seconds(defined float v : any) {
             if (v is in s) { return v / 1s }
             if (v is in unitless) { return v }
             throw new ArgumentException("Expected a time (s), not " + v + ".")
@@ -72,8 +72,8 @@ namespace Circuits {
         Part part
         Port link
         // the node of the plan (-1: ground, -2: none yet) and the voltage the node had when the circuit last changed (in volts)
-        int node = -2
-        float v = 0.0
+        defined int node = -2
+        defined float v = 0.0
 
         construct(string name, Part part) {
             this.name = name
@@ -127,7 +127,7 @@ namespace Circuits {
         /// <summary>The voltage of its node against ground after the last step.</summary>
         float:V Voltage { get { return this.Raw() * 1V } }
 
-        float Raw() {
+        defined float Raw() {
             var root = this.Root()
             var c = this.Circuit()
             if (c != undefined && root.node >= -1) {
@@ -190,7 +190,7 @@ namespace Circuits {
 
         // ---- the solver interface (plain SI numbers) ----
         /// <summary>How many extra unknowns (branch currents) the part needs: 1 for a voltage source.</summary>
-        int Branches() { return 0 }
+        defined int Branches() { return 0 }
         /// <summary>Puts the part into the plan. The parts of the package give their tables to the kernel and return true; the default calls Stamp and returns
         /// false: the part steps in fire (StampStep, Commit).</summary>
         bool Compile(Circuits.Solver solver) {
@@ -205,11 +205,11 @@ namespace Circuits {
         /// <summary>Keeps its state from the plan before the circuit is compiled again (a capacitor its voltage and current).</summary>
         undefined Save(Circuits.Solver solver) { }
         /// <summary>A probe of a scope for its current in the kernel; false: the scope asks CurrentRaw every step.</summary>
-        bool Probe(Circuits.Solver solver, int recorder, int channel) { return false }
+        bool Probe(Circuits.Solver solver, defined int recorder, defined int channel) { return false }
         /// <summary>Back to the state at time 0.</summary>
         undefined Reset() { }
         /// <summary>The current through the part (from its first port to its second), in amperes.</summary>
-        float CurrentRaw() { return 0.0 }
+        defined float CurrentRaw() { return 0.0 }
 
         float:A Current { get { return this.CurrentRaw() * 1A } }
 
@@ -236,9 +236,9 @@ namespace Circuits {
 
     /// <summary>A part with two ports, A and B (the positive side is A).</summary>
     class TwoTerminal : Part {
-        int branch = -1
+        defined int branch = -1
         // its index in the tables of the kernel
-        int index = -1
+        defined int index = -1
 
         construct(string name) : base(name) {
             this.AddPort("a")
@@ -250,18 +250,18 @@ namespace Circuits {
 
         /// <summary>The voltage from A to B.</summary>
         float:V Voltage { get { return this.VoltageRaw() * 1V } }
-        float VoltageRaw() { return this.A.Raw() - this.B.Raw() }
+        defined float VoltageRaw() { return this.A.Raw() - this.B.Raw() }
 
         /// <summary>The power the part takes (positive) or gives (negative), in watts.</summary>
-        float PowerRaw() { return this.VoltageRaw() * this.CurrentRaw() }
+        defined float PowerRaw() { return this.VoltageRaw() * this.CurrentRaw() }
     }
 
     class Resistor : TwoTerminal {
-        float r
+        defined float r
 
-        construct(float resistance : any) : base("R") { this.r = Circuits.Units.Ohms(resistance) }
+        construct(defined float resistance : any) : base("R") { this.r = Circuits.Units.Ohms(resistance) }
 
-        float:any Resistance {
+        defined float:any Resistance {
             get { return this.r * 1Ohm }
             set {
                 this.r = Circuits.Units.Ohms(value)
@@ -273,24 +273,24 @@ namespace Circuits {
             solver.Conductance(this.A, this.B, 1.0 / this.r)
             return true
         }
-        override bool Probe(Circuits.Solver solver, int recorder, int channel) { return solver.AddProbe(recorder, channel, 4, solver.Node(this.A), solver.Node(this.B), 1.0 / this.r) }
-        override float CurrentRaw() { return this.VoltageRaw() / this.r }
+        override bool Probe(Circuits.Solver solver, defined int recorder, defined int channel) { return solver.AddProbe(recorder, channel, 4, solver.Node(this.A), solver.Node(this.B), 1.0 / this.r) }
+        override defined float CurrentRaw() { return this.VoltageRaw() / this.r }
     }
 
     /// <summary>A capacitor (trapezoidal rule). `initial`: its voltage at time 0.</summary>
     class Capacitor : TwoTerminal {
-        float c
-        float initial
-        float vPrev = 0.0
-        float iPrev = 0.0
+        defined float c
+        defined float initial
+        defined float vPrev = 0.0
+        defined float iPrev = 0.0
 
-        construct(float capacitance : any, float initial : any = 0) : base("C") {
+        construct(defined float capacitance : any, defined float initial : any = 0) : base("C") {
             this.c = Circuits.Units.Farads(capacitance)
             this.initial = Circuits.Units.Volts(initial)
             this.vPrev = this.initial
         }
 
-        float:any Capacitance {
+        defined float:any Capacitance {
             get { return this.c * 1F }
             set {
                 this.c = Circuits.Units.Farads(value)
@@ -311,8 +311,8 @@ namespace Circuits {
             this.vPrev = solver.State(0, this.index, 0)
             this.iPrev = solver.State(0, this.index, 1)
         }
-        override bool Probe(Circuits.Solver solver, int recorder, int channel) { return solver.AddProbe(recorder, channel, 1, this.index, 0, 0.0) }
-        override float CurrentRaw() {
+        override bool Probe(Circuits.Solver solver, defined int recorder, defined int channel) { return solver.AddProbe(recorder, channel, 1, this.index, 0, 0.0) }
+        override defined float CurrentRaw() {
             var plan = this.Plan()
             if (plan == undefined) { return this.iPrev }
             return plan.State(0, this.index, 1)
@@ -321,18 +321,18 @@ namespace Circuits {
 
     /// <summary>An inductor (trapezoidal rule). `initial`: its current at time 0.</summary>
     class Inductor : TwoTerminal {
-        float l
-        float initial
-        float vPrev = 0.0
-        float iPrev = 0.0
+        defined float l
+        defined float initial
+        defined float vPrev = 0.0
+        defined float iPrev = 0.0
 
-        construct(float inductance : any, float initial : any = 0) : base("L") {
+        construct(defined float inductance : any, defined float initial : any = 0) : base("L") {
             this.l = Circuits.Units.Henries(inductance)
             this.initial = Circuits.Units.Amps(initial)
             this.iPrev = this.initial
         }
 
-        float:any Inductance {
+        defined float:any Inductance {
             get { return this.l * 1H }
             set {
                 this.l = Circuits.Units.Henries(value)
@@ -353,8 +353,8 @@ namespace Circuits {
             this.vPrev = solver.State(1, this.index, 0)
             this.iPrev = solver.State(1, this.index, 1)
         }
-        override bool Probe(Circuits.Solver solver, int recorder, int channel) { return solver.AddProbe(recorder, channel, 2, this.index, 0, 0.0) }
-        override float CurrentRaw() {
+        override bool Probe(Circuits.Solver solver, defined int recorder, defined int channel) { return solver.AddProbe(recorder, channel, 2, this.index, 0, 0.0) }
+        override defined float CurrentRaw() {
             var plan = this.Plan()
             if (plan == undefined) { return this.iPrev }
             return plan.State(1, this.index, 1)
@@ -364,22 +364,22 @@ namespace Circuits {
     /// <summary>A voltage source: A is the positive pole; its current is the current it drives out of A. VoltageSource is DC; SineSource and SquareSource
     /// change with time; FunctionSource takes any function of the time.</summary>
     class VoltageSource : TwoTerminal {
-        float volts
-        float current = 0.0
+        defined float volts
+        defined float current = 0.0
         // the curve for the kernel: 0 DC, 1 sine, 2 square, and its numbers
-        int wave = 0
-        float p0 = 0.0
-        float p1 = 0.0
-        float p2 = 0.0
-        float p3 = 0.0
+        defined int wave = 0
+        defined float p0 = 0.0
+        defined float p1 = 0.0
+        defined float p2 = 0.0
+        defined float p3 = 0.0
 
-        construct(float voltage : any = 0) : base("V") {
+        construct(defined float voltage : any = 0) : base("V") {
             this.volts = Circuits.Units.Volts(voltage)
             this.p0 = this.volts
         }
 
         /// <summary>The (DC) voltage.</summary>
-        float:any Level {
+        defined float:any Level {
             get { return this.volts * 1V }
             set {
                 this.volts = Circuits.Units.Volts(value)
@@ -395,16 +395,16 @@ namespace Circuits {
         }
 
         /// <summary>The voltage at time t (seconds).</summary>
-        float Value(float t) { return this.volts }
+        defined float Value(float t) { return this.volts }
 
-        override int Branches() { return 1 }
+        override defined int Branches() { return 1 }
         override bool Compile(Circuits.Solver solver) {
             solver.VoltageBranch(this.branch, this.A, this.B)
             this.index = solver.AddSource(this.A, this.B, this.branch, this.wave, this.p0, this.p1, this.p2, this.p3)
             return true
         }
-        override bool Probe(Circuits.Solver solver, int recorder, int channel) { return solver.AddProbe(recorder, channel, 3, this.branch, 0, 0.0) }
-        override float CurrentRaw() {
+        override bool Probe(Circuits.Solver solver, defined int recorder, defined int channel) { return solver.AddProbe(recorder, channel, 3, this.branch, 0, 0.0) }
+        override defined float CurrentRaw() {
             var plan = this.Plan()
             if (plan == undefined) { return this.current }
             return -plan.BranchCurrent(this.branch)
@@ -414,12 +414,12 @@ namespace Circuits {
 
     /// <summary>A sine voltage: offset + amplitude * sin(2 pi f t + phase).</summary>
     class SineSource : VoltageSource {
-        float amplitude
-        float frequency
-        float offset
-        float phase
+        defined float amplitude
+        defined float frequency
+        defined float offset
+        defined float phase
 
-        construct(float amplitude : any, float frequency : any, float offset : any = 0, float phase = 0.0) : base(0) {
+        construct(defined float amplitude : any, defined float frequency : any, defined float offset : any = 0, defined float phase = 0.0) : base(0) {
             this.amplitude = Circuits.Units.Volts(amplitude)
             this.frequency = Circuits.Units.Hertz(frequency)
             this.offset = Circuits.Units.Volts(offset)
@@ -435,7 +435,7 @@ namespace Circuits {
             this.p3 = this.phase
         }
 
-        float:any Amplitude {
+        defined float:any Amplitude {
             get { return this.amplitude * 1V }
             set {
                 this.amplitude = Circuits.Units.Volts(value)
@@ -443,7 +443,7 @@ namespace Circuits {
                 this.Update()
             }
         }
-        float:any Frequency {
+        defined float:any Frequency {
             get { return this.frequency * 1Hz }
             set {
                 this.frequency = Circuits.Units.Hertz(value)
@@ -452,17 +452,17 @@ namespace Circuits {
             }
         }
 
-        override float Value(float t) { return this.offset + this.amplitude * Math.Sin(2.0 * Math.PI * this.frequency * t + this.phase) }
+        override defined float Value(float t) { return this.offset + this.amplitude * Math.Sin(2.0 * Math.PI * this.frequency * t + this.phase) }
     }
 
     /// <summary>A square voltage between `low` and `high`: high for `duty` of every period.</summary>
     class SquareSource : VoltageSource {
-        float high
-        float low
-        float frequency
-        float duty
+        defined float high
+        defined float low
+        defined float frequency
+        defined float duty
 
-        construct(float high : any, float frequency : any, float low : any = 0, float duty = 0.5) : base(0) {
+        construct(defined float high : any, defined float frequency : any, defined float low : any = 0, defined float duty = 0.5) : base(0) {
             this.high = Circuits.Units.Volts(high)
             this.low = Circuits.Units.Volts(low)
             this.frequency = Circuits.Units.Hertz(frequency)
@@ -478,7 +478,7 @@ namespace Circuits {
             this.p3 = this.duty
         }
 
-        float:any Frequency {
+        defined float:any Frequency {
             get { return this.frequency * 1Hz }
             set {
                 this.frequency = Circuits.Units.Hertz(value)
@@ -487,7 +487,7 @@ namespace Circuits {
             }
         }
 
-        override float Value(float t) {
+        override defined float Value(float t) {
             var cycles = t * this.frequency
             any part = cycles - Math.Floor(cycles)
             if (part < this.duty) { return this.high }
@@ -498,20 +498,20 @@ namespace Circuits {
     /// <summary>The input of sound into a circuit: a voltage source that Circuit.ProcessAudio drives with the samples (a full-scale sample is `amplitude`) - or,
     /// with a `Device` ("default", "sim", a name of Audio.Board.Inputs()), what that sound device records (the kernel fills it itself, docs/circuits/README.md).</summary>
     class AudioInput : VoltageSource {
-        float amplitude
+        defined float amplitude
         string device = ""
-        float rate = 44100
+        defined float rate = 44100
         Circuits.SignalStream stream
         string deviceError = ""
 
-        construct(float amplitude : any = 1, string device = "", float rate : any = 44100) : base(0) {
+        construct(defined float amplitude : any = 1, string device = "", defined float rate : any = 44100) : base(0) {
             this.amplitude = Circuits.Units.Volts(amplitude)
             this.device = device
             this.rate = Circuits.Units.Hertz(rate)
             this.stream = undefined
         }
 
-        float:any Amplitude {
+        defined float:any Amplitude {
             get { return this.amplitude * 1V }
             set { this.amplitude = Circuits.Units.Volts(value) }
         }
@@ -535,12 +535,12 @@ namespace Circuits {
     /// volts is full scale. To the circuit it is a resistance of 1 MOhm (a high impedance input). The kernel hands the sound over itself (docs/circuits/README.md).</summary>
     class AudioOutput : Resistor {
         string device
-        float fullScale
-        float rate
+        defined float fullScale
+        defined float rate
         Circuits.SignalStream stream
         string deviceError = ""
 
-        construct(string device = "default", float fullScale : any = 1, float rate : any = 44100) : base(1000000) {
+        construct(string device = "default", defined float fullScale : any = 1, defined float rate : any = 44100) : base(1000000) {
             this.device = device
             this.fullScale = Circuits.Units.Volts(fullScale)
             this.rate = Circuits.Units.Hertz(rate)
@@ -556,7 +556,7 @@ namespace Circuits {
                 Circuits.Devices.Close(this)
             }
         }
-        float:any FullScale {
+        defined float:any FullScale {
             get { return this.fullScale * 1V }
             set {
                 this.fullScale = Circuits.Units.Volts(value)
@@ -627,7 +627,7 @@ namespace Circuits {
             this.everyStep = true
         }
 
-        override float Value(float t) {
+        override defined float Value(float t) {
             any f = this.function
             return Circuits.Units.Volts(f(t))
         }
@@ -642,11 +642,11 @@ namespace Circuits {
 
     /// <summary>A current source: drives `current` from A through the source to B (out of B into the circuit).</summary>
     class CurrentSource : TwoTerminal {
-        float amps
+        defined float amps
 
-        construct(float current : any) : base("I") { this.amps = Circuits.Units.Amps(current) }
+        construct(defined float current : any) : base("I") { this.amps = Circuits.Units.Amps(current) }
 
-        float:any Level {
+        defined float:any Level {
             get { return this.amps * 1A }
             set {
                 this.amps = Circuits.Units.Amps(value)
@@ -655,14 +655,14 @@ namespace Circuits {
             }
         }
 
-        float Value(float t) { return this.amps }
+        defined float Value(float t) { return this.amps }
 
         override bool Compile(Circuits.Solver solver) {
             this.index = solver.AddSource(this.A, this.B, -1, 0, this.amps, 0.0, 0.0, 0.0)
             return true
         }
-        override bool Probe(Circuits.Solver solver, int recorder, int channel) { return solver.AddProbe(recorder, channel, 5, this.index, 0, 0.0) }
-        override float CurrentRaw() { return this.amps }
+        override bool Probe(Circuits.Solver solver, defined int recorder, defined int channel) { return solver.AddProbe(recorder, channel, 5, this.index, 0, 0.0) }
+        override defined float CurrentRaw() { return this.amps }
     }
 
     /// <summary>A switch: closed it is a wire (a tiny resistance), open it is not there.</summary>
@@ -686,12 +686,12 @@ namespace Circuits {
             if (this.closed) { solver.Conductance(this.A, this.B, 1000000.0) }
             return true
         }
-        override bool Probe(Circuits.Solver solver, int recorder, int channel) {
+        override bool Probe(Circuits.Solver solver, defined int recorder, defined int channel) {
             var g = 0.0
             if (this.closed) { g = 1000000.0 }
             return solver.AddProbe(recorder, channel, 4, solver.Node(this.A), solver.Node(this.B), g)
         }
-        override float CurrentRaw() {
+        override defined float CurrentRaw() {
             if (this.closed) { return this.VoltageRaw() * 1000000.0 }
             return 0.0
         }
@@ -711,10 +711,10 @@ namespace Circuits {
     class Model {
         string name
         string kind
-        float p0 = 0.0
-        float p1 = 0.0
-        float p2 = 0.0
-        float p3 = 0.0
+        defined float p0 = 0.0
+        defined float p1 = 0.0
+        defined float p2 = 0.0
+        defined float p3 = 0.0
         // a model of kind "FORMULA" or "FORMULA3": the formulas of the currents and their parameters ("name=value ...")
         string current1 = ""
         string current2 = ""
@@ -723,7 +723,7 @@ namespace Circuits {
         List extraNames
         List extraValues
 
-        construct(string name, string kind, float p0, float p1, float p2 = 0.0, float p3 = 0.0) {
+        construct(string name, string kind, defined float p0, defined float p1, defined float p2 = 0.0, defined float p3 = 0.0) {
             this.name = name
             this.kind = kind.ToUpper()
             this.p0 = p0
@@ -735,7 +735,7 @@ namespace Circuits {
         }
 
         /// <summary>Sets a number by name (`Model.Get("1N4148").With("mine", 0, 3e-9).Set("CJO", 2e-12)`); returns the model.</summary>
-        Circuits.Model Set(string name, float value : any) {
+        Circuits.Model Set(string name, defined float value : any) {
             var raw = Circuits.Units.Raw(value)
             any key = name.ToUpper()
             var i = this.extraNames.IndexOf(key)
@@ -747,10 +747,12 @@ namespace Circuits {
         }
 
         /// <summary>A number by name (or `fallback` when the model does not have it).</summary>
-        float Param(string name, float fallback = 0.0) {
+        defined float Param(string name, defined float fallback = 0.0) {
             var i = this.extraNames.IndexOf(name.ToUpper())
             if (i < 0) { return fallback }
-            return this.extraValues[i]
+            any v = this.extraValues[i]
+            if (v == undefined) { return fallback }
+            return trust v
         }
 
         string Name { get { return this.name } }
@@ -792,10 +794,10 @@ namespace Circuits {
         }
 
         /// <summary>The value of the formula of the model at a voltage (V, or V1 and V2): to look at the curve of a model.</summary>
-        float Evaluate(float v1, float v2 = 0.0) { return __CirEvalFormula(this.current1, this.parameters, v1, v2) }
+        defined float Evaluate(defined float v1, defined float v2 = 0.0) { return __CirEvalFormula(this.current1, this.parameters, v1, v2) }
 
         /// <summary>A copy with another name and changed numbers (`Model.Get("1N4148").With("mine", 0, 3e-9)` - the index of the number and its value).</summary>
-        Circuits.Model With(string name, int index, float value) {
+        Circuits.Model With(string name, defined int index, defined float value) {
             var m = new Circuits.Model(name, this.kind, this.p0, this.p1, this.p2, this.p3)
             for (int i = 0; i < this.extraNames.Count; i++) { m.Set(this.extraNames[i], this.extraValues[i]) }
             m.current1 = this.current1
@@ -950,8 +952,8 @@ namespace Circuits {
             solver.SetCaps(this.index, m.Param("CJO"), 0.0, m.Param("VJ", 0.7), m.Param("M", 0.5), m.Param("TT"))
             return true
         }
-        override bool Probe(Circuits.Solver solver, int recorder, int channel) { return solver.AddProbe(recorder, channel, 6, this.index, 0, 0.0) }
-        override float CurrentRaw() {
+        override bool Probe(Circuits.Solver solver, defined int recorder, defined int channel) { return solver.AddProbe(recorder, channel, 6, this.index, 0, 0.0) }
+        override defined float CurrentRaw() {
             var plan = this.Plan()
             if (plan == undefined) { return 0.0 }
             return plan.NlState(this.index, 0)
@@ -965,12 +967,12 @@ namespace Circuits {
 
     /// <summary>A light emitting diode: `color` is "red", "yellow", "green", "blue", "white" (or a model). Brightness is its current against `ratedCurrent`.</summary>
     class Led : Diode {
-        float rated
+        defined float rated
 
-        construct(any color = "red", float ratedCurrent : any = 0.02) : base(color) { this.rated = Circuits.Units.Amps(ratedCurrent) }
+        construct(any color = "red", defined float ratedCurrent : any = 0.02) : base(color) { this.rated = Circuits.Units.Amps(ratedCurrent) }
 
         /// <summary>0 (off) to 1 (at the rated current or more).</summary>
-        float Brightness {
+        defined float Brightness {
             get {
                 var b = this.CurrentRaw() / this.rated
                 if (b < 0.0) { return 0.0 }
@@ -985,7 +987,7 @@ namespace Circuits {
     /// <summary>A bipolar transistor (Ebers-Moll): ports C, B, E. `model`: "npn", "pnp", "2N3904", "2N3906", "BC547", ... or a Model.</summary>
     class Transistor : Part {
         Circuits.Model model
-        int index = -1
+        defined int index = -1
 
         construct(any model = "npn") : base("Q") {
             this.model = Circuits.Models.Of(model, "NPN,PNP")
@@ -1009,9 +1011,9 @@ namespace Circuits {
             solver.SetCaps(this.index, m.Param("CJE"), m.Param("CJC"), m.Param("VJ", 0.75), m.Param("M", 0.33), m.Param("TF"), m.Param("TR"))
             return true
         }
-        override bool Probe(Circuits.Solver solver, int recorder, int channel) { return solver.AddProbe(recorder, channel, 6, this.index, 0, 0.0) }
+        override bool Probe(Circuits.Solver solver, defined int recorder, defined int channel) { return solver.AddProbe(recorder, channel, 6, this.index, 0, 0.0) }
 
-        float Terminal(int t) {
+        defined float Terminal(defined int t) {
             var plan = this.Plan()
             if (plan == undefined) { return 0.0 }
             return plan.NlState(this.index, t)
@@ -1020,13 +1022,13 @@ namespace Circuits {
         float:A CollectorCurrent { get { return this.Terminal(0) * 1A } }
         float:A BaseCurrent { get { return this.Terminal(1) * 1A } }
         float:A EmitterCurrent { get { return this.Terminal(2) * 1A } }
-        override float CurrentRaw() { return this.Terminal(0) }
+        override defined float CurrentRaw() { return this.Terminal(0) }
     }
 
     /// <summary>A MOSFET (level 1): ports D, G, S. `model`: "nmos", "pmos", "2N7000", "BS250", "IRF540", ... or a Model.</summary>
     class Mosfet : Part {
         Circuits.Model model
-        int index = -1
+        defined int index = -1
 
         construct(any model = "nmos") : base("M") {
             this.model = Circuits.Models.Of(model, "NMOS,PMOS")
@@ -1050,11 +1052,11 @@ namespace Circuits {
             solver.SetCaps(this.index, m.Param("CGS"), m.Param("CGD"), 0.7, 0.0, 0.0)
             return true
         }
-        override bool Probe(Circuits.Solver solver, int recorder, int channel) { return solver.AddProbe(recorder, channel, 6, this.index, 0, 0.0) }
+        override bool Probe(Circuits.Solver solver, defined int recorder, defined int channel) { return solver.AddProbe(recorder, channel, 6, this.index, 0, 0.0) }
 
         /// <summary>The current flowing into the drain.</summary>
         float:A DrainCurrent { get { return this.CurrentRaw() * 1A } }
-        override float CurrentRaw() {
+        override defined float CurrentRaw() {
             var plan = this.Plan()
             if (plan == undefined) { return 0.0 }
             return plan.NlState(this.index, 0)
@@ -1065,7 +1067,7 @@ namespace Circuits {
     /// through its output resistance (the supply is not modelled: the range is given against ground). `model`: "opamp" (+-15 V), "LM358", "TL072", "LM741".</summary>
     class OpAmp : Part {
         Circuits.Model model
-        int index = -1
+        defined int index = -1
 
         construct(any model = "opamp") : base("U") {
             this.model = Circuits.Models.Of(model, "OPAMP")
@@ -1085,10 +1087,10 @@ namespace Circuits {
             if (this.index < 0) { throw new ArgumentException(solver.Error()) }
             return true
         }
-        override bool Probe(Circuits.Solver solver, int recorder, int channel) { return solver.AddProbe(recorder, channel, 6, this.index, 2, 0.0) }
+        override bool Probe(Circuits.Solver solver, defined int recorder, defined int channel) { return solver.AddProbe(recorder, channel, 6, this.index, 2, 0.0) }
 
         /// <summary>The current flowing into the output (negative: the op amp drives current out).</summary>
-        override float CurrentRaw() {
+        override defined float CurrentRaw() {
             var plan = this.Plan()
             if (plan == undefined) { return 0.0 }
             return plan.NlState(this.index, 2)
@@ -1128,8 +1130,8 @@ namespace Circuits {
             this.index = solver.AddFormula(this.A, this.B, undefined, this.current, "", this.parameters)
             return true
         }
-        override bool Probe(Circuits.Solver solver, int recorder, int channel) { return solver.AddProbe(recorder, channel, 6, this.index, 0, 0.0) }
-        override float CurrentRaw() {
+        override bool Probe(Circuits.Solver solver, defined int recorder, defined int channel) { return solver.AddProbe(recorder, channel, 6, this.index, 0, 0.0) }
+        override defined float CurrentRaw() {
             var plan = this.Plan()
             if (plan == undefined) { return 0.0 }
             return plan.NlState(this.index, 0)
@@ -1142,7 +1144,7 @@ namespace Circuits {
         string current1
         string current2
         string parameters
-        int index = -1
+        defined int index = -1
 
         construct(string formula1, string formula2 = "", string parameters = "") : base("F3") {
             if (Circuits.Models.Has(formula1)) {
@@ -1175,9 +1177,9 @@ namespace Circuits {
             this.index = solver.AddFormula(this.X, this.Y, this.Ref, this.current1, this.current2, this.parameters)
             return true
         }
-        override bool Probe(Circuits.Solver solver, int recorder, int channel) { return solver.AddProbe(recorder, channel, 6, this.index, 0, 0.0) }
+        override bool Probe(Circuits.Solver solver, defined int recorder, defined int channel) { return solver.AddProbe(recorder, channel, 6, this.index, 0, 0.0) }
 
-        float Terminal(int t) {
+        defined float Terminal(defined int t) {
             var plan = this.Plan()
             if (plan == undefined) { return 0.0 }
             return plan.NlState(this.index, t)
@@ -1185,19 +1187,19 @@ namespace Circuits {
         /// <summary>The currents into X and Y.</summary>
         float:A CurrentX { get { return this.Terminal(0) * 1A } }
         float:A CurrentY { get { return this.Terminal(1) * 1A } }
-        override float CurrentRaw() { return this.Terminal(0) }
+        override defined float CurrentRaw() { return this.Terminal(0) }
     }
 
     /// <summary>A logic gate (or a D flip-flop): reads its inputs after every step (high above half the supply) and drives its output through a small resistance
     /// in the next one (high: `supply`, low: 0 V). Kinds: "AND", "OR", "XOR", "NAND", "NOR", "XNOR", "NOT", "BUFFER".</summary>
     class Gate : Part {
-        int kind
-        int inputCount
-        float supply
-        float rout
-        int index = -1
+        defined int kind
+        defined int inputCount
+        defined float supply
+        defined float rout
+        defined int index = -1
 
-        construct(string kind, int inputs = 2, float supply : any = 5, float outputResistance : any = 10) : base(kind.ToUpper()) {
+        construct(string kind, defined int inputs = 2, defined float supply : any = 5, defined float outputResistance : any = 10) : base(kind.ToUpper()) {
             var names = ["AND", "OR", "XOR", "NAND", "NOR", "XNOR", "NOT", "BUFFER"]
             this.kind = -1
             for (int i = 0; i < names.length; i++) {
@@ -1214,7 +1216,7 @@ namespace Circuits {
         }
 
         /// <summary>The input i (0, 1, ...).</summary>
-        Port In(int i) { return this.ports[i] }
+        Port In(defined int i) { return this.ports[i] }
         Port Out { get { return this.ports[this.inputCount] } }
 
         override bool Compile(Circuits.Solver solver) {
@@ -1236,11 +1238,11 @@ namespace Circuits {
 
     /// <summary>A D flip-flop: takes D on the rising edge of Clock; outputs Q and NotQ.</summary>
     class FlipFlop : Part {
-        float supply
-        float rout
-        int index = -1
+        defined float supply
+        defined float rout
+        defined int index = -1
 
-        construct(float supply : any = 5, float outputResistance : any = 10) : base("DFF") {
+        construct(defined float supply : any = 5, defined float outputResistance : any = 10) : base("DFF") {
             this.supply = Circuits.Units.Volts(supply)
             this.rout = Circuits.Units.Ohms(outputResistance)
             this.AddPort("d")
@@ -1273,11 +1275,11 @@ namespace Circuits {
 
     /// <summary>A comparator: Out is high (`supply`) while Plus is above Minus, else 0 V - read after every step, driven in the next one.</summary>
     class Comparator : Part {
-        float supply
-        float rout
-        int index = -1
+        defined float supply
+        defined float rout
+        defined int index = -1
 
-        construct(float supply : any = 5, float outputResistance : any = 10) : base("CMP") {
+        construct(defined float supply : any = 5, defined float outputResistance : any = 10) : base("CMP") {
             this.supply = Circuits.Units.Volts(supply)
             this.rout = Circuits.Units.Ohms(outputResistance)
             this.AddPort("plus")
@@ -1309,12 +1311,12 @@ namespace Circuits {
     /// <summary>An SR latch: S high sets Q, R high clears it (R wins), Reset low clears it too (leave it high or open... it has no pull-up: tie it to the
     /// supply when it is not used, or pass `withReset = false`).</summary>
     class SRLatch : Part {
-        float supply
-        float rout
+        defined float supply
+        defined float rout
         bool withReset
-        int index = -1
+        defined int index = -1
 
-        construct(float supply : any = 5, bool withReset = false, float outputResistance : any = 10) : base("SR") {
+        construct(defined float supply : any = 5, bool withReset = false, defined float outputResistance : any = 10) : base("SR") {
             this.supply = Circuits.Units.Volts(supply)
             this.rout = Circuits.Units.Ohms(outputResistance)
             this.withReset = withReset
@@ -1354,10 +1356,10 @@ namespace Circuits {
     /// <summary>A potentiometer: a resistance between A and B with a wiper on it. `position` 0 puts the wiper at A, 1 at B (the resistance from A to the
     /// wiper is position * resistance).</summary>
     class Potentiometer : Part {
-        float r
-        float position
+        defined float r
+        defined float position
 
-        construct(float resistance : any = 1000, float position = 0.5) : base("POT") {
+        construct(defined float resistance : any = 1000, defined float position = 0.5) : base("POT") {
             this.r = Circuits.Units.Ohms(resistance)
             this.position = Circuits.Potentiometer.Clamp(position)
             this.AddPort("a")
@@ -1369,13 +1371,13 @@ namespace Circuits {
         Port B { get { return this.ports[1] } }
         Port Wiper { get { return this.ports[2] } }
 
-        static float Clamp(float p) {
+        static defined float Clamp(defined float p) {
             if (p < 0.0) { return 0.0 }
             if (p > 1.0) { return 1.0 }
             return p
         }
 
-        float:any Resistance {
+        defined float:any Resistance {
             get { return this.r * 1Ohm }
             set {
                 this.r = Circuits.Units.Ohms(value)
@@ -1384,7 +1386,7 @@ namespace Circuits {
         }
 
         /// <summary>Where the wiper is: 0 at A, 1 at B.</summary>
-        float Position {
+        defined float Position {
             get { return this.position }
             set {
                 var p = Circuits.Potentiometer.Clamp(value)
@@ -1395,17 +1397,17 @@ namespace Circuits {
         }
 
         // the two halves (never quite zero: a wire would short the node)
-        float Upper() { return Math.Max(this.r * this.position, 0.001) }
-        float Lower() { return Math.Max(this.r * (1.0 - this.position), 0.001) }
+        defined float Upper() { return Math.Max(this.r * this.position, 0.001) }
+        defined float Lower() { return Math.Max(this.r * (1.0 - this.position), 0.001) }
 
         override bool Compile(Circuits.Solver solver) {
             solver.Conductance(this.A, this.Wiper, 1.0 / this.Upper())
             solver.Conductance(this.Wiper, this.B, 1.0 / this.Lower())
             return true
         }
-        override bool Probe(Circuits.Solver solver, int recorder, int channel) { return solver.AddProbe(recorder, channel, 4, solver.Node(this.A), solver.Node(this.Wiper), 1.0 / this.Upper()) }
+        override bool Probe(Circuits.Solver solver, defined int recorder, defined int channel) { return solver.AddProbe(recorder, channel, 4, solver.Node(this.A), solver.Node(this.Wiper), 1.0 / this.Upper()) }
         /// <summary>The current from A into the wiper.</summary>
-        override float CurrentRaw() { return (this.A.Raw() - this.Wiper.Raw()) / this.Upper() }
+        override defined float CurrentRaw() { return (this.A.Raw() - this.Wiper.Raw()) / this.Upper() }
         /// <summary>The current from the wiper to B.</summary>
         float:A LowerCurrent { get { return (this.Wiper.Raw() - this.B.Raw()) / this.Lower() * 1A } }
     }
@@ -1413,16 +1415,16 @@ namespace Circuits {
     /// <summary>A transformer: two coupled windings, the primary from P1 to P2 (inductance `inductance`) and the secondary from S1 to S2 (`inductance` *
     /// `ratio`^2, so the voltage is about `ratio` times the primary's). `coupling` below 1 (0.999 is a good transformer); the dots are at P1 and S1.</summary>
     class Transformer : Part {
-        float l1
-        float ratio
-        float k
-        int index = -1
-        float i1 = 0.0
-        float i2 = 0.0
-        float v1 = 0.0
-        float v2 = 0.0
+        defined float l1
+        defined float ratio
+        defined float k
+        defined int index = -1
+        defined float i1 = 0.0
+        defined float i2 = 0.0
+        defined float v1 = 0.0
+        defined float v2 = 0.0
 
-        construct(float inductance : any = 4, float ratio = 1.0, float coupling = 0.999) : base("T") {
+        construct(defined float inductance : any = 4, defined float ratio = 1.0, defined float coupling = 0.999) : base("T") {
             this.l1 = Circuits.Units.Henries(inductance)
             if (ratio <= 0.0) { throw new ArgumentException("The ratio of a transformer must be more than 0.") }
             this.ratio = ratio
@@ -1438,7 +1440,7 @@ namespace Circuits {
         Port S1 { get { return this.ports[2] } }
         Port S2 { get { return this.ports[3] } }
 
-        float:any Inductance {
+        defined float:any Inductance {
             get { return this.l1 * 1H }
             set {
                 this.l1 = Circuits.Units.Henries(value)
@@ -1446,14 +1448,14 @@ namespace Circuits {
             }
         }
         /// <summary>Secondary to primary turns (voltage) ratio.</summary>
-        float Ratio {
+        defined float Ratio {
             get { return this.ratio }
             set {
                 this.ratio = value
                 this.Invalidate()
             }
         }
-        float Coupling {
+        defined float Coupling {
             get { return this.k }
             set {
                 this.k = value
@@ -1478,15 +1480,15 @@ namespace Circuits {
             this.v2 = solver.State(2, this.index, 2)
             this.i2 = solver.State(2, this.index, 3)
         }
-        override bool Probe(Circuits.Solver solver, int recorder, int channel) { return solver.AddProbe(recorder, channel, 7, this.index, 0, 0.0) }
+        override bool Probe(Circuits.Solver solver, defined int recorder, defined int channel) { return solver.AddProbe(recorder, channel, 7, this.index, 0, 0.0) }
 
-        float Winding(int what, float saved) {
+        defined float Winding(defined int what, defined float saved) {
             var plan = this.Plan()
             if (plan == undefined) { return saved }
             return plan.State(2, this.index, what)
         }
         /// <summary>The current of the primary (from P1 through the winding to P2).</summary>
-        override float CurrentRaw() { return this.Winding(1, this.i1) }
+        override defined float CurrentRaw() { return this.Winding(1, this.i1) }
         /// <summary>The current of the secondary (from S1 through the winding to S2).</summary>
         float:A SecondaryCurrent { get { return this.Winding(3, this.i2) * 1A } }
     }
@@ -1494,13 +1496,13 @@ namespace Circuits {
     /// <summary>A JK flip-flop: on the rising edge of Clock (the falling one with `fallingEdge`) J and K high toggle it, J sets it, K clears it. With
     /// `withReset` a high Reset clears it at any time.</summary>
     class JKFlipFlop : Part {
-        float supply
-        float rout
+        defined float supply
+        defined float rout
         bool falling
         bool withReset
-        int index = -1
+        defined int index = -1
 
-        construct(float supply : any = 5, bool fallingEdge = false, bool withReset = false, float outputResistance : any = 10) : base("JK") {
+        construct(defined float supply : any = 5, bool fallingEdge = false, bool withReset = false, defined float outputResistance : any = 10) : base("JK") {
             this.supply = Circuits.Units.Volts(supply)
             this.rout = Circuits.Units.Ohms(outputResistance)
             this.falling = fallingEdge
@@ -1545,14 +1547,14 @@ namespace Circuits {
     /// <summary>A Schmitt trigger: Out goes high (`supply`) when In rises above `upper` and low when it falls below `lower`; in between it keeps its state.
     /// `inverting` swaps high and low.</summary>
     class SchmittTrigger : Part {
-        float lower
-        float upper
-        float supply
-        float rout
+        defined float lower
+        defined float upper
+        defined float supply
+        defined float rout
         bool inverting
-        int index = -1
+        defined int index = -1
 
-        construct(float lower : any = 1.66, float upper : any = 3.33, float supply : any = 5, bool inverting = false, float outputResistance : any = 10) : base("ST") {
+        construct(defined float lower : any = 1.66, defined float upper : any = 3.33, defined float supply : any = 5, bool inverting = false, defined float outputResistance : any = 10) : base("ST") {
             this.lower = Circuits.Units.Volts(lower)
             this.upper = Circuits.Units.Volts(upper)
             if (this.lower > this.upper) { throw new ArgumentException("The lower threshold of a Schmitt trigger must not be above the upper one.") }
@@ -1590,12 +1592,12 @@ namespace Circuits {
     /// again when it switches.</summary>
     class RelayContact : Part {
         Circuits.Inductor coil
-        float onCurrent
-        float offCurrent
-        float ron
+        defined float onCurrent
+        defined float offCurrent
+        defined float ron
         bool pulled = false
 
-        construct(Circuits.Inductor coil, float onCurrent, float offCurrent, float onResistance) : base("K") {
+        construct(Circuits.Inductor coil, defined float onCurrent, defined float offCurrent, defined float onResistance) : base("K") {
             this.coil = coil
             this.onCurrent = onCurrent
             this.offCurrent = offCurrent
@@ -1633,7 +1635,7 @@ namespace Circuits {
 
     /// <summary>A voltage that is a triangle (`sawtooth` false) or a sawtooth between offset - amplitude and offset + amplitude, as in Falstad's simulator.</summary>
     class TriangleSource : VoltageSource {
-        construct(float amplitude : any, float frequency : any, float offset : any = 0, float phase = 0.0, bool sawtooth = false) : base(0) {
+        construct(defined float amplitude : any, defined float frequency : any, defined float offset : any = 0, defined float phase = 0.0, bool sawtooth = false) : base(0) {
             this.wave = 3
             if (sawtooth) { this.wave = 4 }
             this.p0 = Circuits.Units.Volts(amplitude)
@@ -1642,7 +1644,7 @@ namespace Circuits {
             this.p3 = phase
         }
 
-        float:any Frequency {
+        defined float:any Frequency {
             get { return this.p1 * 1Hz }
             set {
                 this.p1 = Circuits.Units.Hertz(value)
@@ -1653,7 +1655,7 @@ namespace Circuits {
 
     /// <summary>White noise: a new random voltage between offset - amplitude and offset + amplitude every step.</summary>
     class NoiseSource : VoltageSource {
-        construct(float amplitude : any = 5, float offset : any = 0) : base(0) {
+        construct(defined float amplitude : any = 5, defined float offset : any = 0) : base(0) {
             this.wave = 5
             this.p0 = Circuits.Units.Volts(amplitude)
             this.p2 = Circuits.Units.Volts(offset)
@@ -1663,7 +1665,7 @@ namespace Circuits {
     /// <summary>A sine whose frequency sweeps from `minFrequency` to `maxFrequency` in `sweepTime` (logarithmic or linear), then back down
     /// (`bidirectional`) or from the start again - Falstad's sweep.</summary>
     class SweepSource : VoltageSource {
-        construct(float amplitude : any = 5, float minFrequency : any = 20, float maxFrequency : any = 4000, float sweepTime : any = 0.1,
+        construct(defined float amplitude : any = 5, defined float minFrequency : any = 20, defined float maxFrequency : any = 4000, defined float sweepTime : any = 0.1,
                   bool logarithmic = false, bool bidirectional = true) : base(0) {
             this.wave = 6
             if (logarithmic) { this.wave = this.wave + 1 }
@@ -1679,11 +1681,11 @@ namespace Circuits {
     /// <summary>A switch with one common contact and two (or three) throws: Common is connected to throw `Position` (0, 1, 2); with `centerOff` a
     /// two-way switch has a middle position (2) that connects nothing.</summary>
     class Switch2 : Part {
-        int throws
-        int position
+        defined int throws
+        defined int position
         bool centerOff
 
-        construct(int position = 0, int throws = 2, bool centerOff = false) : base("S") {
+        construct(defined int position = 0, defined int throws = 2, bool centerOff = false) : base("S") {
             if (throws < 2 || throws > 8) { throw new ArgumentException("A switch has 2 to 8 throws.") }
             this.throws = throws
             this.centerOff = centerOff && throws == 2
@@ -1695,17 +1697,17 @@ namespace Circuits {
 
         Port Common { get { return this.ports[0] } }
         /// <summary>The throw i (0, 1, ...).</summary>
-        Port Throw(int i) { return this.ports[i + 1] }
+        Port Throw(defined int i) { return this.ports[i + 1] }
 
         /// <summary>How many positions it has (the throws, and the middle one of a center-off switch).</summary>
-        int Positions {
+        defined int Positions {
             get {
                 if (this.centerOff) { return 3 }
                 return this.throws
             }
         }
 
-        int Position {
+        defined int Position {
             get { return this.position }
             set {
                 var p = value
@@ -1733,17 +1735,17 @@ namespace Circuits {
     /// <summary>A resistance that follows a state the kernel moves on after every step, from the current and voltage of the step before (the base of
     /// Lamp, Fuse, Memristor and SparkGap).</summary>
     class StateResistor : TwoTerminal {
-        int kind
-        float p0
-        float p1
-        float p2
-        float p3
+        defined int kind
+        defined float p0
+        defined float p1
+        defined float p2
+        defined float p3
         // the state kept while the circuit is compiled again
-        float s0 = 0.0
-        float s1 = 0.0
+        defined float s0 = 0.0
+        defined float s1 = 0.0
         bool saved = false
 
-        construct(string name, int kind, float p0, float p1, float p2, float p3) : base(name) {
+        construct(string name, defined int kind, defined float p0, defined float p1, defined float p2, defined float p3) : base(name) {
             this.kind = kind
             this.p0 = p0
             this.p1 = p1
@@ -1765,10 +1767,10 @@ namespace Circuits {
             this.saved = true
         }
         override undefined Reset() { this.saved = false }
-        override bool Probe(Circuits.Solver solver, int recorder, int channel) { return solver.AddProbe(recorder, channel, 6, this.index, 0, 0.0) }
+        override bool Probe(Circuits.Solver solver, defined int recorder, defined int channel) { return solver.AddProbe(recorder, channel, 6, this.index, 0, 0.0) }
 
         // the state (0 or 1) now; undefined before the first step
-        any StateOf(int what) {
+        any StateOf(defined int what) {
             var plan = this.Plan()
             if (plan != undefined && this.index >= 0) { return plan.NlState(this.index, 4 + what) }
             if (!this.saved) { return undefined }
@@ -1776,7 +1778,7 @@ namespace Circuits {
             return this.s1
         }
 
-        override float CurrentRaw() {
+        override defined float CurrentRaw() {
             var plan = this.Plan()
             if (plan == undefined) { return 0.0 }
             return plan.NlState(this.index, 0)
@@ -1792,7 +1794,7 @@ namespace Circuits {
         }
 
         /// <summary>The temperature of the filament in kelvin (300 cold).</summary>
-        float Temperature {
+        defined float Temperature {
             get {
                 any t = this.StateOf(0)
                 if (t == undefined) { return 300.0 }
@@ -1801,7 +1803,7 @@ namespace Circuits {
         }
 
         /// <summary>0 (dark, below 800 K) to 1 (white hot, 2400 K and more).</summary>
-        float Brightness {
+        defined float Brightness {
             get {
                 var b = (this.Temperature - 800.0) / 1600.0
                 if (b < 0.0) { return 0.0 }
@@ -1826,7 +1828,7 @@ namespace Circuits {
         }
 
         /// <summary>How far it is to blowing: 0 cold, 1 blown.</summary>
-        float Heat {
+        defined float Heat {
             get {
                 any h = this.StateOf(0)
                 if (h == undefined) { return 0.0 }
@@ -1849,7 +1851,7 @@ namespace Circuits {
                   Circuits.Units.Ohms(onResistance), Circuits.Units.Ohms(offResistance), width, mobility) { }
 
         /// <summary>The resistance now.</summary>
-        float:any Resistance {
+        defined float:any Resistance {
             get {
                 any r = this.StateOf(1)
                 if (r == undefined) { return this.p1 * 1Ohm }
@@ -1875,13 +1877,13 @@ namespace Circuits {
     /// <summary>An analog switch: A and B are connected (`onResistance`) while Control is at or above `threshold` (below it when `inverting`), else
     /// `offResistance` lies between them. Control takes no current.</summary>
     class AnalogSwitch : Part {
-        float ron
-        float roff
-        float threshold
+        defined float ron
+        defined float roff
+        defined float threshold
         bool inverting
-        int index = -1
+        defined int index = -1
 
-        construct(float threshold : any = 2.5, bool inverting = false, float onResistance : any = 20, float offResistance : any = 10000000000) : base("SW") {
+        construct(defined float threshold : any = 2.5, bool inverting = false, defined float onResistance : any = 20, defined float offResistance : any = 10000000000) : base("SW") {
             this.threshold = Circuits.Units.Volts(threshold)
             this.inverting = inverting
             this.ron = Circuits.Units.Ohms(onResistance)
@@ -1901,7 +1903,7 @@ namespace Circuits {
             this.index = solver.AddNonlinear(11, this.A, this.B, this.Control, this.ron, this.roff, this.threshold, inv)
             return true
         }
-        override bool Probe(Circuits.Solver solver, int recorder, int channel) { return solver.AddProbe(recorder, channel, 6, this.index, 0, 0.0) }
+        override bool Probe(Circuits.Solver solver, defined int recorder, defined int channel) { return solver.AddProbe(recorder, channel, 6, this.index, 0, 0.0) }
 
         bool IsOn {
             get {
@@ -1910,7 +1912,7 @@ namespace Circuits {
                 return plan.NlState(this.index, 4) != 0.0
             }
         }
-        override float CurrentRaw() {
+        override defined float CurrentRaw() {
             var plan = this.Plan()
             if (plan == undefined) { return 0.0 }
             return plan.NlState(this.index, 0)
@@ -1921,7 +1923,7 @@ namespace Circuits {
     class AnalogSwitch2 : Circuit {
         Circuits.AnalogSwitch closer
 
-        construct(float threshold : any = 2.5, float onResistance : any = 20, float offResistance : any = 10000000000, bool swap = false) : base("switch2") {
+        construct(defined float threshold : any = 2.5, defined float onResistance : any = 20, defined float offResistance : any = 10000000000, bool swap = false) : base("switch2") {
             var com = this.AddPort("com")
             var no = this.AddPort("no")
             var nc = this.AddPort("nc")
@@ -1949,15 +1951,15 @@ namespace Circuits {
     /// <summary>The switch of a thyristor (`kind` 12) or a triac (13) in the kernel: between A and B, decided before every step from the gate current
     /// (Gate against B, or against Aux for a thyristor) and its own current. Part of Thyristor and Triac.</summary>
     class GateSwitch : Part {
-        int kind
-        float trigger
-        float holding
-        float gateResistance
-        int index = -1
-        float s0 = 0.0
+        defined int kind
+        defined float trigger
+        defined float holding
+        defined float gateResistance
+        defined int index = -1
+        defined float s0 = 0.0
         bool saved = false
 
-        construct(int kind, float trigger, float holding, float gateResistance) : base("gs") {
+        construct(defined int kind, defined float trigger, defined float holding, defined float gateResistance) : base("gs") {
             this.kind = kind
             this.trigger = trigger
             this.holding = holding
@@ -1987,7 +1989,7 @@ namespace Circuits {
                 return this.saved && this.s0 != 0.0
             }
         }
-        override float CurrentRaw() {
+        override defined float CurrentRaw() {
             var plan = this.Plan()
             if (plan == undefined) { return 0.0 }
             return plan.NlState(this.index, 0)
@@ -1999,7 +2001,7 @@ namespace Circuits {
     class Thyristor : Circuit {
         Circuits.GateSwitch sw
 
-        construct(float triggerCurrent : any = 0.01, float holdingCurrent : any = 0.0082, float gateResistance : any = 50) : base("scr") {
+        construct(defined float triggerCurrent : any = 0.01, defined float holdingCurrent : any = 0.0082, defined float gateResistance : any = 50) : base("scr") {
             var anode = this.AddPort("anode")
             var gate = this.AddPort("gate")
             var cathode = this.AddPort("cathode")
@@ -2020,7 +2022,7 @@ namespace Circuits {
         Port Gate { get { return this.ports[1] } }
         Port Cathode { get { return this.ports[2] } }
         bool IsOn { get { return this.sw.IsOn } }
-        override float CurrentRaw() { return this.sw.CurrentRaw() }
+        override defined float CurrentRaw() { return this.sw.CurrentRaw() }
     }
 
     /// <summary>A triac, as Falstad's: fires in both directions when the gate current (gate to MT1) exceeds `triggerCurrent`, goes out when the current
@@ -2028,7 +2030,7 @@ namespace Circuits {
     class Triac : Circuit {
         Circuits.GateSwitch sw
 
-        construct(float triggerCurrent : any = 0.01, float holdingCurrent : any = 0.0082, float gateResistance : any = 100) : base("triac") {
+        construct(defined float triggerCurrent : any = 0.01, defined float holdingCurrent : any = 0.0082, defined float gateResistance : any = 100) : base("triac") {
             var mt1 = this.AddPort("mt1")
             var mt2 = this.AddPort("mt2")
             var gate = this.AddPort("gate")
@@ -2052,7 +2054,7 @@ namespace Circuits {
         Port MT2 { get { return this.ports[1] } }
         Port Gate { get { return this.ports[2] } }
         bool IsOn { get { return this.sw.IsOn } }
-        override float CurrentRaw() { return this.sw.CurrentRaw() }
+        override defined float CurrentRaw() { return this.sw.CurrentRaw() }
     }
 
     /// <summary>A diac: conducts in both directions once the voltage across it exceeds `breakdown`, until the current falls below `holdCurrent` (a spark gap
@@ -2060,7 +2062,7 @@ namespace Circuits {
     class Diac : Circuit {
         Circuits.SparkGap gap
 
-        construct(float breakdown : any = 30, float holdCurrent : any = 0.01, float onResistance : any = 500, float offResistance : any = 100000000) : base("diac") {
+        construct(defined float breakdown : any = 30, defined float holdCurrent : any = 0.01, defined float onResistance : any = 500, defined float offResistance : any = 100000000) : base("diac") {
             var a = this.AddPort("a")
             var b = this.AddPort("b")
             any g = this.Add(new Circuits.SparkGap(breakdown, holdCurrent, onResistance, offResistance))
@@ -2077,14 +2079,14 @@ namespace Circuits {
         Port A { get { return this.ports[0] } }
         Port B { get { return this.ports[1] } }
         bool IsOn { get { return this.gap.IsOn } }
-        override float CurrentRaw() { return this.gap.CurrentRaw() }
+        override defined float CurrentRaw() { return this.gap.CurrentRaw() }
     }
 
     /// <summary>A junction FET (Falstad's): a depletion MOSFET (`threshold` -4 V, `beta` 1.25 mA/V^2) with the gate junction to the source; ports D, G, S.</summary>
     class Jfet : Circuit {
         Circuits.Mosfet fet
 
-        construct(bool pChannel = false, float threshold : any = -4, float beta = 0.00125) : base("jfet") {
+        construct(bool pChannel = false, defined float threshold : any = -4, defined float beta = 0.00125) : base("jfet") {
             var d = this.AddPort("d")
             var g = this.AddPort("g")
             var s = this.AddPort("s")
@@ -2113,7 +2115,7 @@ namespace Circuits {
         Port G { get { return this.ports[1] } }
         Port S { get { return this.ports[2] } }
         float:A DrainCurrent { get { return this.fet.DrainCurrent } }
-        override float CurrentRaw() { return this.fet.CurrentRaw() }
+        override defined float CurrentRaw() { return this.fet.CurrentRaw() }
     }
 
     /// <summary>A Darlington pair: two transistors of `model`, the emitter of the first on the base of the second; ports C, B, E.</summary>
@@ -2139,7 +2141,7 @@ namespace Circuits {
         Port C { get { return this.ports[0] } }
         Port B { get { return this.ports[1] } }
         Port E { get { return this.ports[2] } }
-        override float CurrentRaw() { return this.q1.CurrentRaw() + this.q2.CurrentRaw() }
+        override defined float CurrentRaw() { return this.q1.CurrentRaw() + this.q2.CurrentRaw() }
     }
 
     /// <summary>A varactor: a diode whose junction capacitance is `capacitance` at 0 V and falls with the reverse voltage.</summary>
@@ -2147,7 +2149,7 @@ namespace Circuits {
         construct(float capacitance : any = 0.000000000004) : base(Circuits.Varactor.ModelFor(Circuits.Units.Farads(capacitance))) { }
 
         // the name of a model in the library with this capacitance
-        static string ModelFor(float farads) {
+        static string ModelFor(defined float farads) {
             var name = "varactor " + farads
             if (!Circuits.Models.Has(name)) { Circuits.Models.Put(new Circuits.Model(name, "D", 0.00000000000001, 1.0).Set("CJO", farads).Set("VJ", 0.6).Set("M", 0.5)) }
             return name
@@ -2166,7 +2168,7 @@ namespace Circuits {
     class Ota : Circuit {
         List nodes
 
-        construct(float positive : any = 9, float negative : any = -9) : base("ota") {
+        construct(defined float positive : any = 9, defined float negative : any = -9) : base("ota") {
             var inPlus = this.AddPort("inplus")
             var inMinus = this.AddPort("inminus")
             var bias = this.AddPort("bias")
@@ -2192,7 +2194,7 @@ namespace Circuits {
             for (int i = 0; i < pnp.length; i = i + 3) { this.Transistor("pnp", pnp[i], pnp[i + 1], pnp[i + 2]) }
         }
 
-        undefined Transistor(string model, int b, int c, int e) {
+        undefined Transistor(string model, defined int b, defined int c, defined int e) {
             any q = this.Add(new Circuits.Transistor(model))
             this.Join(b, q.B)
             this.Join(c, q.C)
@@ -2200,7 +2202,7 @@ namespace Circuits {
         }
 
         // a port on node n of the netlist: the first one names the node, the others join it
-        undefined Join(int n, Port p) {
+        undefined Join(defined int n, Port p) {
             if (this.nodes[n] == undefined) { this.nodes[n] = p } else {
                 Port first = this.nodes[n]
                 first.Connect(p)
@@ -2217,7 +2219,7 @@ namespace Circuits {
     /// <summary>An optocoupler as Falstad's: an LED from Anode to Cathode, its current drives the base of an NPN transistor (Collector, Emitter); the
     /// collector current is about `ctr` times the LED current.</summary>
     class Optocoupler : Circuit {
-        construct(float ctr = 1.0) : base("opto") {
+        construct(defined float ctr = 1.0) : base("opto") {
             var anode = this.AddPort("anode")
             var cathode = this.AddPort("cathode")
             var collector = this.AddPort("collector")
@@ -2278,9 +2280,9 @@ namespace Circuits {
     class Tube : Part {
         Circuits.Model model
         string parameters
-        int index = -1
+        defined int index = -1
 
-        construct(string prefix, string kind, any model, string parameters, int pins) : base(prefix) {
+        construct(string prefix, string kind, any model, string parameters, defined int pins) : base(prefix) {
             this.model = Circuits.Models.Of(model, kind)
             try this.model.TakeTo(this)   // (a model made for this part - `new Zener()` passes one - belongs to it; one of the library stays there, SPEC 2.2)
             Circuits.Tube.Check(parameters)
@@ -2317,9 +2319,9 @@ namespace Circuits {
             this.Invalidate()
         }
 
-        override bool Probe(Circuits.Solver solver, int recorder, int channel) { return solver.AddProbe(recorder, channel, 6, this.index, 0, 0.0) }
+        override bool Probe(Circuits.Solver solver, defined int recorder, defined int channel) { return solver.AddProbe(recorder, channel, 6, this.index, 0, 0.0) }
 
-        float Terminal(int t) {
+        defined float Terminal(defined int t) {
             var plan = this.Plan()
             if (plan == undefined || this.index < 0) { return 0.0 }
             if (t == 3) { return plan.NlState(this.index, 7) }
@@ -2328,7 +2330,7 @@ namespace Circuits {
 
         /// <summary>The current into the plate.</summary>
         float:A PlateCurrent { get { return this.Terminal(0) * 1A } }
-        override float CurrentRaw() { return this.Terminal(0) }
+        override defined float CurrentRaw() { return this.Terminal(0) }
     }
 
     /// <summary>A vacuum diode (a rectifier like the 5Y3 or EZ81, a signal diode like the 6AL5): Ip = k * Vpk^1.5 (Child and Langmuir). Ports Plate, Cathode.
@@ -2389,9 +2391,9 @@ namespace Circuits {
 
     /// <summary>A voltage-controlled voltage source: V(A) - V(B) = `gain` * (V(InPlus) - V(InMinus)).</summary>
     class VCVS : TwoTerminal {
-        float gain
+        defined float gain
 
-        construct(float gain = 1.0) : base("E") {
+        construct(defined float gain = 1.0) : base("E") {
             this.gain = gain
             this.AddPort("inplus")
             this.AddPort("inminus")
@@ -2399,14 +2401,14 @@ namespace Circuits {
 
         Port InPlus { get { return this.ports[2] } }
         Port InMinus { get { return this.ports[3] } }
-        override int Branches() { return 1 }
+        override defined int Branches() { return 1 }
         override bool Compile(Circuits.Solver solver) {
             solver.VoltageBranch(this.branch, this.A, this.B)
             solver.Entry(this.branch, solver.Node(this.InPlus), -this.gain)
             solver.Entry(this.branch, solver.Node(this.InMinus), this.gain)
             return true
         }
-        override float CurrentRaw() {
+        override defined float CurrentRaw() {
             var plan = this.Plan()
             if (plan == undefined) { return 0.0 }
             return -plan.BranchCurrent(this.branch)
@@ -2416,9 +2418,9 @@ namespace Circuits {
     /// <summary>A voltage-controlled current source: drives `gain` * (V(InPlus) - V(InMinus)) amperes from A through itself to B (out of B into the
     /// circuit), like a CurrentSource.</summary>
     class VCCS : TwoTerminal {
-        float gain
+        defined float gain
 
-        construct(float gain : any = 0.001) : base("G") {
+        construct(defined float gain : any = 0.001) : base("G") {
             this.gain = Circuits.Units.Raw(gain)
             this.AddPort("inplus")
             this.AddPort("inminus")
@@ -2437,15 +2439,15 @@ namespace Circuits {
             solver.Entry(b, n, this.gain)
             return true
         }
-        override float CurrentRaw() { return this.gain * (this.InPlus.Raw() - this.InMinus.Raw()) }
+        override defined float CurrentRaw() { return this.gain * (this.InPlus.Raw() - this.InMinus.Raw()) }
     }
 
     /// <summary>A current-controlled current source: the current that flows from InPlus to InMinus (through a short) times `gain` is driven from A
     /// through itself to B.</summary>
     class CCCS : TwoTerminal {
-        float gain
+        defined float gain
 
-        construct(float gain = 1.0) : base("F") {
+        construct(defined float gain = 1.0) : base("F") {
             this.gain = gain
             this.AddPort("inplus")
             this.AddPort("inminus")
@@ -2453,7 +2455,7 @@ namespace Circuits {
 
         Port InPlus { get { return this.ports[2] } }
         Port InMinus { get { return this.ports[3] } }
-        override int Branches() { return 1 }
+        override defined int Branches() { return 1 }
         override bool Compile(Circuits.Solver solver) {
             // the sense: a voltage source of 0 V from InPlus to InMinus; its branch current is the current into InPlus
             solver.VoltageBranch(this.branch, this.InPlus, this.InMinus)
@@ -2461,7 +2463,7 @@ namespace Circuits {
             solver.Entry(solver.Node(this.B), this.branch, -this.gain)
             return true
         }
-        override float CurrentRaw() {
+        override defined float CurrentRaw() {
             var plan = this.Plan()
             if (plan == undefined) { return 0.0 }
             return this.gain * plan.BranchCurrent(this.branch)
@@ -2470,9 +2472,9 @@ namespace Circuits {
 
     /// <summary>A current-controlled voltage source: V(A) - V(B) = `gain` (ohms) * the current that flows from InPlus to InMinus (through a short).</summary>
     class CCVS : TwoTerminal {
-        float gain
+        defined float gain
 
-        construct(float gain : any = 1000) : base("H") {
+        construct(defined float gain : any = 1000) : base("H") {
             this.gain = Circuits.Units.Raw(gain)
             this.AddPort("inplus")
             this.AddPort("inminus")
@@ -2480,7 +2482,7 @@ namespace Circuits {
 
         Port InPlus { get { return this.ports[2] } }
         Port InMinus { get { return this.ports[3] } }
-        override int Branches() { return 2 }
+        override defined int Branches() { return 2 }
         override bool Compile(Circuits.Solver solver) {
             var sense = this.branch + 1
             solver.VoltageBranch(sense, this.InPlus, this.InMinus)
@@ -2488,7 +2490,7 @@ namespace Circuits {
             solver.Entry(this.branch, sense, -this.gain)
             return true
         }
-        override float CurrentRaw() {
+        override defined float CurrentRaw() {
             var plan = this.Plan()
             if (plan == undefined) { return 0.0 }
             return -plan.BranchCurrent(this.branch)
@@ -2498,9 +2500,9 @@ namespace Circuits {
     /// <summary>A current conveyor (CCII, Falstad's CC2): X follows the voltage of Y (Y takes no current), the current into Z is `gain` times the current
     /// into X (+1: CCII+, -1: CCII-).</summary>
     class CurrentConveyor : TwoTerminal {
-        float gain
+        defined float gain
 
-        construct(float gain = 1.0) : base("CC2") {
+        construct(defined float gain = 1.0) : base("CC2") {
             this.gain = gain
             this.AddPort("z")
         }
@@ -2509,7 +2511,7 @@ namespace Circuits {
         Port X { get { return this.ports[0] } }
         Port Y { get { return this.ports[1] } }
         Port Z { get { return this.ports[2] } }
-        override int Branches() { return 1 }
+        override defined int Branches() { return 1 }
         override bool Compile(Circuits.Solver solver) {
             // V(X) - V(Y) = 0 as a branch from X to ground; its current flows out of X into the circuit
             var k = this.branch
@@ -2521,7 +2523,7 @@ namespace Circuits {
             solver.Entry(solver.Node(this.Z), k, this.gain)
             return true
         }
-        override float CurrentRaw() {
+        override defined float CurrentRaw() {
             var plan = this.Plan()
             if (plan == undefined) { return 0.0 }
             return plan.BranchCurrent(this.branch)
@@ -2530,12 +2532,12 @@ namespace Circuits {
 
     /// <summary>A light dependent resistor: `resistance10` at 10 lux, falling with the light as lux^-gamma (`gamma` about 0.7), at most `dark`.</summary>
     class LightResistor : TwoTerminal {
-        float lux
-        float r10
-        float gamma
-        float dark
+        defined float lux
+        defined float r10
+        defined float gamma
+        defined float dark
 
-        construct(float lux = 100.0, float resistance10 : any = 10000, float gamma = 0.7, float dark : any = 1000000) : base("LDR") {
+        construct(defined float lux = 100.0, defined float resistance10 : any = 10000, defined float gamma = 0.7, defined float dark : any = 1000000) : base("LDR") {
             this.lux = lux
             this.r10 = Circuits.Units.Ohms(resistance10)
             this.gamma = gamma
@@ -2543,7 +2545,7 @@ namespace Circuits {
         }
 
         /// <summary>The light on it (lux).</summary>
-        float Lux {
+        defined float Lux {
             get { return this.lux }
             set {
                 if (value == this.lux) { return }
@@ -2552,36 +2554,36 @@ namespace Circuits {
             }
         }
 
-        float ResistanceRaw() {
+        defined float ResistanceRaw() {
             if (this.lux <= 0.0) { return this.dark }
             var r = this.r10 * Math.Exp(-this.gamma * Math.Log(this.lux / 10.0))
             if (r > this.dark) { return this.dark }
             return r
         }
-        float:any Resistance { get { return this.ResistanceRaw() * 1Ohm } }
+        defined float:any Resistance { get { return this.ResistanceRaw() * 1Ohm } }
 
         override bool Compile(Circuits.Solver solver) {
             solver.Conductance(this.A, this.B, 1.0 / this.ResistanceRaw())
             return true
         }
-        override bool Probe(Circuits.Solver solver, int recorder, int channel) { return solver.AddProbe(recorder, channel, 4, solver.Node(this.A), solver.Node(this.B), 1.0 / this.ResistanceRaw()) }
-        override float CurrentRaw() { return this.VoltageRaw() / this.ResistanceRaw() }
+        override bool Probe(Circuits.Solver solver, defined int recorder, defined int channel) { return solver.AddProbe(recorder, channel, 4, solver.Node(this.A), solver.Node(this.B), 1.0 / this.ResistanceRaw()) }
+        override defined float CurrentRaw() { return this.VoltageRaw() / this.ResistanceRaw() }
     }
 
     /// <summary>An NTC thermistor: `resistance25` at 25 °C, R = R25 exp(B (1/T - 1/298.15 K)) at `Temperature` (°C).</summary>
     class Thermistor : TwoTerminal {
-        float temperature
-        float r25
-        float beta
+        defined float temperature
+        defined float r25
+        defined float beta
 
-        construct(float temperature = 25.0, float resistance25 : any = 10000, float beta = 3950.0) : base("TH") {
+        construct(defined float temperature = 25.0, defined float resistance25 : any = 10000, defined float beta = 3950.0) : base("TH") {
             this.temperature = temperature
             this.r25 = Circuits.Units.Ohms(resistance25)
             this.beta = beta
         }
 
         /// <summary>Its temperature in °C.</summary>
-        float Temperature {
+        defined float Temperature {
             get { return this.temperature }
             set {
                 if (value == this.temperature) { return }
@@ -2590,25 +2592,25 @@ namespace Circuits {
             }
         }
 
-        float ResistanceRaw() { return this.r25 * Math.Exp(this.beta * (1.0 / (this.temperature + 273.15) - 1.0 / 298.15)) }
-        float:any Resistance { get { return this.ResistanceRaw() * 1Ohm } }
+        defined float ResistanceRaw() { return this.r25 * Math.Exp(this.beta * (1.0 / (this.temperature + 273.15) - 1.0 / 298.15)) }
+        defined float:any Resistance { get { return this.ResistanceRaw() * 1Ohm } }
 
         override bool Compile(Circuits.Solver solver) {
             solver.Conductance(this.A, this.B, 1.0 / this.ResistanceRaw())
             return true
         }
-        override bool Probe(Circuits.Solver solver, int recorder, int channel) { return solver.AddProbe(recorder, channel, 4, solver.Node(this.A), solver.Node(this.B), 1.0 / this.ResistanceRaw()) }
-        override float CurrentRaw() { return this.VoltageRaw() / this.ResistanceRaw() }
+        override bool Probe(Circuits.Solver solver, defined int recorder, defined int channel) { return solver.AddProbe(recorder, channel, 4, solver.Node(this.A), solver.Node(this.B), 1.0 / this.ResistanceRaw()) }
+        override defined float CurrentRaw() { return this.VoltageRaw() / this.ResistanceRaw() }
     }
 
     /// <summary>A lossless transmission line of `impedance` that delays a wave by `delay`: one end between A1 (the conductor) and B1 (its return), the
     /// other between A2 and B2. A wave that comes to an end not matched by `impedance` is reflected.</summary>
     class TransmissionLine : Part {
-        float z
-        float delay
-        int index = -1
+        defined float z
+        defined float delay
+        defined int index = -1
 
-        construct(float impedance : any = 75, float delay : any = 0.000001) : base("TL") {
+        construct(defined float impedance : any = 75, defined float delay : any = 0.000001) : base("TL") {
             this.z = Circuits.Units.Ohms(impedance)
             this.delay = Circuits.Units.Seconds(delay)
             this.AddPort("a1")
@@ -2622,15 +2624,15 @@ namespace Circuits {
         Port A2 { get { return this.ports[2] } }
         Port B2 { get { return this.ports[3] } }
 
-        float:any Impedance { get { return this.z * 1Ohm } }
-        float:any Delay { get { return this.delay * 1s } }
+        defined float:any Impedance { get { return this.z * 1Ohm } }
+        defined float:any Delay { get { return this.delay * 1s } }
 
         override bool Compile(Circuits.Solver solver) {
             this.index = solver.AddLine(this.A1, this.B1, this.A2, this.B2, this.z, this.delay)
             return true
         }
         /// <summary>The current into the line at A1.</summary>
-        override float CurrentRaw() {
+        override defined float CurrentRaw() {
             var plan = this.Plan()
             if (plan == undefined) { return 0.0 }
             return plan.State(3, this.index, 0)
@@ -2647,9 +2649,9 @@ namespace Circuits {
 
     /// <summary>A logic input: a voltage source that is 0 V or `supply` (High, Toggle()).</summary>
     class LogicInput : VoltageSource {
-        float supply
+        defined float supply
 
-        construct(bool high = false, float supply : any = 5) : base(0) {
+        construct(bool high = false, defined float supply : any = 5) : base(0) {
             this.supply = Circuits.Units.Volts(supply)
             this.High = high
         }
@@ -2670,8 +2672,8 @@ namespace Circuits {
         List parts
         List instruments
         Port ground
-        float dt = 0.00001
-        float time = 0.0
+        defined float dt = 0.00001
+        defined float time = 0.0
         Circuits.Solver solver
         bool dirty = true
         // the parts that step in fire, and whether a step needs fire at all (parts, instruments or channels of scopes in fire); of them the parts with a
@@ -2685,17 +2687,17 @@ namespace Circuits {
         // in a step in fire, and whether the circuit is compiled again after it (Part.InvalidateSoon)
         bool stepping = false
         bool rebuild = false
-        int clipped = 0
+        defined int clipped = 0
         // real time (RealTime): the clock that sets the pace and the time step, the time step the circuit was given, the coarsest one allowed (0: 64 times it)
         Circuits.RealTimeClock clock = undefined
-        float baseDt = 0.00001
-        float maxDt = 0.0
+        defined float baseDt = 0.00001
+        defined float maxDt = 0.0
         // simulated seconds per second of the clock in real time (Speed)
-        float speed = 1.0
+        defined float speed = 1.0
         // real time in a thread of the kernel (Threaded): whether it runs and at which speed it was started
         bool threaded = true
         bool runnerOn = false
-        float runnerSpeed = 0.0
+        defined float runnerSpeed = 0.0
         // the streams of the circuit (Output, Input)
         List streams
         // the parameters of the circuit (names and values in SI units) and the bindings that set the parts from them
@@ -2781,7 +2783,7 @@ namespace Circuits {
         // ---- parameters ----
         /// <summary>Sets a parameter of the circuit (a value with a unit or a plain number): the bindings of this circuit and of the circuits in it run again.
         /// A circuit in it sees the parameters of the circuits around it unless it has its own of the same name.</summary>
-        undefined Parameter(string name, float value : any) {
+        undefined Parameter(string name, defined float value : any) {
             var raw = Circuits.Units.Raw(value)
             var i = this.paramNames.IndexOf(name)
             if (i < 0) {
@@ -2812,7 +2814,7 @@ namespace Circuits {
         }
 
         /// <summary>An expression of the parameters ("2*R + 1k", with the functions of Formula): its value.</summary>
-        float Value(string expression) {
+        defined float Value(string expression) {
             var text = ""
             var seen = new List()
             Circuits.Circuit c = this
@@ -2853,7 +2855,7 @@ namespace Circuits {
         }
 
         /// <summary>The time step of the simulation (default 10 us).</summary>
-        float:any TimeStep {
+        defined float:any TimeStep {
             get {
                 // in real time the time step the circuit was given (CurrentTimeStep: the one it simulates with now)
                 if (this.clock != undefined) { return this.baseDt * 1s }
@@ -2892,7 +2894,7 @@ namespace Circuits {
 
         /// <summary>The pace of real time: simulated seconds per second of the clock - 1 (the default) is real time, 0.01 a hundred times slower (slow motion,
         /// to watch a circuit of 1 kHz), 10 ten times faster (as far as the computer keeps up). Between 0.0001 and 1000.</summary>
-        float Speed {
+        defined float Speed {
             get { return this.Top().speed }
             set {
                 if (!(value >= 0.0001 && value <= 1000.0)) { throw new ArgumentException("The speed is between 0.0001 and 1000 (1: real time).") }
@@ -2901,7 +2903,7 @@ namespace Circuits {
         }
 
         /// <summary>The coarsest time step of real time (0, the default: 64 times TimeStep).</summary>
-        float:any MaxTimeStep {
+        defined float:any MaxTimeStep {
             get { return this.Top().maxDt * 1s }
             set {
                 var top = this.Top()
@@ -2911,18 +2913,18 @@ namespace Circuits {
         }
 
         // the time step the circuit was given, in seconds (in real time the one it uses now may be coarser)
-        float StepRaw() {
+        defined float StepRaw() {
             if (this.clock != undefined) { return this.baseDt }
             return this.dt
         }
 
-        float MaxStepRaw() {
+        defined float MaxStepRaw() {
             if (this.maxDt > 0.0) { return Math.Max(this.maxDt, this.baseDt) }
             return this.baseDt * 64
         }
 
         /// <summary>The time step the simulation uses now (in real time it may be coarser than TimeStep).</summary>
-        float:s CurrentTimeStep { get { return this.Top().dt * 1s } }
+        defined float:s CurrentTimeStep { get { return this.Top().dt * 1s } }
 
         /// <summary>How much of real time the simulation manages: 1 = all of it (never more), 0.5 = half as fast as the clock; 0 when not in real time.</summary>
         float RealTimeShare {
@@ -2937,7 +2939,7 @@ namespace Circuits {
 
         /// <summary>One cycle of real time: simulates up to now, in at most `budget` of computing time (the rest of the time is the program's - to draw,
         /// for example). The first call only starts the clock. Turns RealTime on.</summary>
-        undefined AdvanceRealTime(float budget : any = 0.02) {
+        undefined AdvanceRealTime(defined float budget : any = 0.02) {
             var top = this.Top()
             if (top.clock == undefined) { top.RealTime = true }
             if (top.threaded && top.EnsureRunner()) {
@@ -2975,7 +2977,7 @@ namespace Circuits {
         /// <summary>A stream with the voltage of `plus` against `minus` (ground when left out) at `rate` samples per second (docs/circuits/README.md, "Streams"): the
         /// circuit writes a sample at every point of the grid of the stream, whether the program steps it or the thread of the kernel runs it; the program reads
         /// them (Read, ReadPcm). `capacity`: samples it holds (0: one second); older ones are given up when nobody reads.</summary>
-        Circuits.SignalStream Output(Port plus, Port minus = undefined, float rate : any = 44100, int capacity = 0) {
+        Circuits.SignalStream Output(Port plus, Port minus = undefined, defined float rate : any = 44100, defined int capacity = 0) {
             var top = this.Top()
             var b = new Circuits.StreamBinding(new Circuits.SignalStream(rate, capacity))
             b.plus = plus
@@ -2988,7 +2990,7 @@ namespace Circuits {
 
         /// <summary>A stream that drives the voltage of `source` (an AudioInput or any voltage source of the package) at `rate` samples per second: the program
         /// writes volts (Write) or sound (WritePcm), the source follows them, interpolated between the samples; when a sample is missing the last one holds.</summary>
-        Circuits.SignalStream Input(Circuits.VoltageSource source, float rate : any = 44100, int capacity = 0) {
+        Circuits.SignalStream Input(Circuits.VoltageSource source, defined float rate : any = 44100, defined int capacity = 0) {
             var top = this.Top()
             var b = new Circuits.StreamBinding(new Circuits.SignalStream(rate, capacity))
             b.source = source
@@ -3000,7 +3002,7 @@ namespace Circuits {
 
         /// <summary>Plays the voltage of `plus` against `minus` (ground when left out) on a sound device - the fast way: an Output stream that the kernel hands
         /// to the device itself (SignalStream.PlayTo). `fullScale`: the volts of full scale. The stream is returned (to stop it: CloseStream).</summary>
-        Circuits.SignalStream PlayTo(Port plus, Port minus = undefined, string device = "default", float fullScale : any = 1, float rate : any = 44100) {
+        Circuits.SignalStream PlayTo(Port plus, Port minus = undefined, string device = "default", defined float fullScale : any = 1, defined float rate : any = 44100) {
             var st = this.Output(plus, minus, rate, 0)
             st.PlayTo(device, fullScale)
             return st
@@ -3008,7 +3010,7 @@ namespace Circuits {
 
         /// <summary>Drives `source` (an AudioInput or any voltage source) with what a sound device records - the fast way: an Input stream that the kernel
         /// fills itself (SignalStream.RecordFrom). A full-scale sample is `fullScale` volts.</summary>
-        Circuits.SignalStream RecordFrom(Circuits.VoltageSource source, string device = "default", float fullScale : any = 1, float rate : any = 44100) {
+        Circuits.SignalStream RecordFrom(Circuits.VoltageSource source, string device = "default", defined float fullScale : any = 1, defined float rate : any = 44100) {
             var st = this.Input(source, rate, 0)
             st.RecordFrom(device, fullScale)
             return st
@@ -3106,7 +3108,7 @@ namespace Circuits {
 
         /// <summary>Runs in real time for `duration` (of the clock) and returns: what the circuit simulates in the meantime is as long as it manages (all of it
         /// at a RealTimeShare of 1). Turns RealTime on.</summary>
-        undefined RunRealTime(float duration : any) {
+        undefined RunRealTime(defined float duration : any) {
             var top = this.Top()
             top.RealTime = true
             var end = Circuits.RealTimeClock.Now() + Circuits.Units.Seconds(duration)
@@ -3121,8 +3123,8 @@ namespace Circuits {
         }
 
         /// <summary>The time of the simulation.</summary>
-        float:s Time { get { return this.time * 1s } }
-        float TimeRaw() { return this.time }
+        defined float:s Time { get { return this.time * 1s } }
+        defined float TimeRaw() { return this.time }
 
         /// <summary>Is the circuit compiled (since its last change)?</summary>
         bool IsCompiled { get { return !this.Top().dirty } }
@@ -3167,7 +3169,7 @@ namespace Circuits {
         /// <summary>Lets the circuit run alongside the program in real time (`speed` times as fast): whenever the program uses a simulated device (the GPIO chip,
         /// the I2C bus or the SPI device "sim"), the circuit is first simulated up to now. A circuit that cannot keep up skips what it is behind by more than
         /// `maxLag`. Only one circuit runs alongside at a time.</summary>
-        undefined RunAlongside(float speed = 1.0, float maxLag : any = 0.1) {
+        undefined RunAlongside(defined float speed = 1.0, defined float maxLag : any = 0.1) {
             if (speed <= 0.0) { throw new ArgumentException("The speed must be more than 0.") }
             var a = new Circuits.Alongside(this.Top(), speed, Circuits.Units.Seconds(maxLag))
             a.TakeGlobal()
@@ -3270,7 +3272,7 @@ namespace Circuits {
                 if (p.Branches() > 0) {
                     TwoTerminal t = p!TwoTerminal
                     t.branch = nodes + branches
-                    branches = branches + p.Branches()
+                    branches = branches + t.Branches()
                 }
             }
             var s = new Circuits.Solver(nodes, branches, this.dt)
@@ -3301,7 +3303,10 @@ namespace Circuits {
                     if (b.source.index >= 0) { s.AddFeed(b.stream.handle, b.source.index) }
                 } else {
                     var minus = -1
-                    if (b.minus != undefined) { minus = b.minus.Root().node }
+                    if (b.minus != undefined) {
+                        any node = b.minus.Root().node
+                        if (node != undefined) { minus = trust node }
+                    }
                     s.AddTap(b.stream.handle, b.plus.Root().node, minus)
                 }
             }
@@ -3354,7 +3359,7 @@ namespace Circuits {
         }
 
         /// <summary>Simulates for `duration` (a time like 10ms, or seconds). Without parts or instruments in fire, the kernel runs all steps in one go.</summary>
-        undefined Run(float duration : any) {
+        undefined Run(defined float duration : any) {
             var top = this.Top()
             if (top != this) {
                 top.Run(duration)
@@ -3381,8 +3386,8 @@ namespace Circuits {
         /// mixed) drive `input`, the voltage at `output` (against ground or `reference`) is the sound that comes out - mono, 16 bit, as many frames, a
         /// full-scale sample at `outputScale` (default: the amplitude of the input). The time step becomes 1 / (rate * oversample). The circuit keeps its
         /// state: a long sound can go through in pieces. Without parts in fire the kernel does it in one call.</summary>
-        byte[] ProcessSamples(Circuits.AudioInput input, Circuits.Port output, byte data[], int offset, int frames, int channels, int rate,
-                              Circuits.Port reference = undefined, float outputScale : any = 0, int oversample = 4) {
+        byte[] ProcessSamples(Circuits.AudioInput input, Circuits.Port output, byte data[], defined int offset, defined int frames, defined int channels, defined int rate,
+                              Circuits.Port reference = undefined, defined float outputScale : any = 0, defined int oversample = 4) {
             if (rate < 1000 || oversample < 1) { throw new ArgumentException("A rate of 1000 Hz or more and an oversample of 1 or more.") }
             var top = this.Top()
             top.StopRunner()
@@ -3430,7 +3435,7 @@ namespace Circuits {
             return result
         }
 
-        static float SampleAt(byte data[], int offset, int frame, int channels) {
+        static defined float SampleAt(byte data[], defined int offset, defined int frame, defined int channels) {
             var sum = 0.0
             for (int c = 0; c < channels; c++) {
                 var at = offset + (frame * channels + c) * 2
@@ -3443,18 +3448,18 @@ namespace Circuits {
 
         /// <summary>Sends a sound (an Audio.Sound of `#import "audio"`, or anything with Data, Offset, Frames, Channels and Rate) through the circuit; the
         /// samples that come out (mono, 16 bit) - `new Audio.Sound(sound.Rate, 1, result)` plays them or saves them (ToWav).</summary>
-        byte[] ProcessAudio(any sound, Circuits.AudioInput input, Circuits.Port output, Circuits.Port reference = undefined, float outputScale : any = 0,
-                            int oversample = 4) {
+        byte[] ProcessAudio(any sound, Circuits.AudioInput input, Circuits.Port output, Circuits.Port reference = undefined, defined float outputScale : any = 0,
+                            defined int oversample = 4) {
             return this.ProcessSamples(input, output, sound.Data, sound.Offset, sound.Frames, sound.Channels, sound.Rate, reference, outputScale, oversample)
         }
 
         /// <summary>How many samples of the last ProcessSamples/ProcessAudio were clipped (louder than full scale).</summary>
-        int Clipped { get { return this.clipped } }
+        defined int Clipped { get { return this.clipped } }
 
         /// <summary>Numbers of the compiled plan (for tests and tools): 0 unknowns, 1 entries of the factorized matrix, 2 update operations of a factorization,
         /// 3 capacitors and inductors, 4 sources, 5 parts that step in fire, 6 parts that are not linear (and logic parts), 7 iterations of Newton's method
         /// so far, 8 steps in which it did not converge (also in the smallest steps), 9 steps done again in steps of half the time step.</summary>
-        int PlanInfo(int what) {
+        defined int PlanInfo(defined int what) {
             var top = this.Top()
             if (top.dirty || top.solver == undefined) { top.Build() }
             if (what == 5) { return top.external.Count }
@@ -3467,34 +3472,34 @@ namespace Circuits {
     /// does it need less than a third of its budget for a while, the step halves again (down to the time step of the circuit).</summary>
     class RealTimeClock {
         Circuits.Circuit circuit
-        float minDt
-        float maxDt
-        int lastTicks = 0
+        defined float minDt
+        defined float maxDt
+        defined int lastTicks = 0
         // the simulated time still owed to the clock (less than a step)
-        float owed = 0.0
+        defined float owed = 0.0
         // seconds of computing time per step (measured; 0: not yet) and whether the next measurement includes compiling the circuit again
-        float stepCost = 0.0
+        defined float stepCost = 0.0
         bool rebuilt = false
         // how long (clock time) the simulation has been behind, or had time to spare
-        float slowFor = 0.0
-        float fastFor = 0.0
-        float share = 1.0
+        defined float slowFor = 0.0
+        defined float fastFor = 0.0
+        defined float share = 1.0
 
-        construct(Circuits.Circuit circuit, float minDt, float maxDt) {
+        construct(Circuits.Circuit circuit, defined float minDt, defined float maxDt) {
             this.circuit = circuit
             this.minDt = minDt
             this.maxDt = Math.Max(maxDt, minDt)
         }
 
         /// <summary>The clock in seconds.</summary>
-        static float Now() { return DateTime.UtcNow.Ticks / 10000000.0 }
+        static defined float Now() { return DateTime.UtcNow.Ticks / 10000000.0 }
 
         undefined Restart() {
             this.lastTicks = 0
             this.owed = 0.0
         }
 
-        undefined Rescale(float minDt, float maxDt) {
+        undefined Rescale(defined float minDt, defined float maxDt) {
             this.minDt = minDt
             this.maxDt = Math.Max(maxDt, minDt)
             var c = this.circuit
@@ -3504,7 +3509,7 @@ namespace Circuits {
             this.fastFor = 0.0
         }
 
-        undefined SetStep(float dt) {
+        undefined SetStep(defined float dt) {
             var c = this.circuit
             if (this.stepCost > 0.0) { this.stepCost = this.stepCost * dt / c.dt }
             c.dt = dt
@@ -3512,7 +3517,7 @@ namespace Circuits {
             this.rebuilt = true
         }
 
-        undefined Advance(float budget) {
+        undefined Advance(defined float budget) {
             var now = DateTime.UtcNow.Ticks
             if (this.lastTicks == 0) {
                 this.lastTicks = now
@@ -3568,13 +3573,13 @@ namespace Circuits {
     /// <summary>The plan of a circuit in the kernel of the package (modified nodal analysis: A x = b with the node voltages and the branch currents as x).
     /// Parts written in fire use it in Stamp, StampStep and Commit.</summary>
     class Solver {
-        int handle
-        int n
-        int size
-        float dt
-        float time = 0.0
+        defined int handle
+        defined int n
+        defined int size
+        defined float dt
+        defined float time = 0.0
 
-        construct(int nodes, int branches, float dt) {
+        construct(defined int nodes, defined int branches, defined float dt) {
             this.n = nodes
             this.size = nodes + branches
             this.dt = dt
@@ -3584,83 +3589,83 @@ namespace Circuits {
         destruct() { __CirFree(this.handle) }
 
         /// <summary>The node of a port in the plan (-1: ground).</summary>
-        int Node(Port p) { return p.Root().node }
+        defined int Node(Port p) { return p.Root().node }
 
         /// <summary>A conductance g between two ports (Stamp).</summary>
-        undefined Conductance(Port p, Port q, float g) { __CirConductance(this.handle, p.Root().node, q.Root().node, g) }
+        undefined Conductance(Port p, Port q, defined float g) { __CirConductance(this.handle, p.Root().node, q.Root().node, g) }
 
         /// <summary>A voltage source between plus and minus with the branch k (Stamp).</summary>
-        undefined VoltageBranch(int k, Port plus, Port minus) { __CirVoltageBranch(this.handle, k, plus.Root().node, minus.Root().node) }
+        undefined VoltageBranch(defined int k, Port plus, Port minus) { __CirVoltageBranch(this.handle, k, plus.Root().node, minus.Root().node) }
 
         /// <summary>A current flowing into the node of the port (StampStep).</summary>
-        undefined CurrentInto(Port p, float amps) {
+        undefined CurrentInto(Port p, defined float amps) {
             var i = p.Root().node
             if (i >= 0) { __CirRhsAdd(this.handle, i, amps) }
         }
 
         /// <summary>The voltage of the branch k (StampStep of a voltage source).</summary>
-        undefined BranchValue(int k, float volts) { __CirRhsSet(this.handle, k, volts) }
-        float BranchCurrent(int k) { return __CirUnknown(this.handle, k) }
+        undefined BranchValue(defined int k, defined float volts) { __CirRhsSet(this.handle, k, volts) }
+        defined float BranchCurrent(defined int k) { return __CirUnknown(this.handle, k) }
 
-        float NodeVoltage(int node) {
+        defined float NodeVoltage(defined int node) {
             if (node < 0) { return 0.0 }
             return __CirNode(this.handle, node)
         }
 
         // the tables of the kernel
-        int AddReactive(int kind, Port a, Port b, float value, float vPrev, float iPrev) { return __CirAddReactive(this.handle, kind, a.Root().node, b.Root().node, value, vPrev, iPrev) }
-        int AddSource(Port a, Port b, int branch, int wave, float p0, float p1, float p2, float p3) {
+        defined int AddReactive(defined int kind, Port a, Port b, defined float value, defined float vPrev, defined float iPrev) { return __CirAddReactive(this.handle, kind, a.Root().node, b.Root().node, value, vPrev, iPrev) }
+        defined int AddSource(Port a, Port b, defined int branch, defined int wave, defined float p0, defined float p1, defined float p2, defined float p3) {
             return __CirAddSource(this.handle, a.Root().node, b.Root().node, branch, wave, p0, p1, p2, p3)
         }
-        undefined SetSource(int index, float p0, float p1, float p2, float p3) { __CirSetSource(this.handle, index, p0, p1, p2, p3) }
-        float State(int kind, int index, int what) { return __CirState(this.handle, kind, index, what) }
-        bool AddProbe(int recorder, int channel, int kind, int a, int b, float g) { return __CirAddProbe(this.handle, recorder, channel, kind, a, b, g) }
+        undefined SetSource(defined int index, defined float p0, defined float p1, defined float p2, defined float p3) { __CirSetSource(this.handle, index, p0, p1, p2, p3) }
+        defined float State(defined int kind, defined int index, defined int what) { return __CirState(this.handle, kind, index, what) }
+        bool AddProbe(defined int recorder, defined int channel, defined int kind, defined int a, defined int b, defined float g) { return __CirAddProbe(this.handle, recorder, channel, kind, a, b, g) }
         /// <summary>The voltage between the nodes a and b goes into a stream at the points of its grid.</summary>
-        bool AddTap(int stream, int a, int b) { return __CirAddTap(this.handle, stream, a, b) }
+        bool AddTap(defined int stream, defined int a, defined int b) { return __CirAddTap(this.handle, stream, a, b) }
         /// <summary>A stream drives the source with the index `source`.</summary>
-        bool AddFeed(int stream, int source) { return __CirAddFeed(this.handle, stream, source) }
-        undefined SetNode(int node, float volts) { __CirSetNode(this.handle, node, volts) }
+        bool AddFeed(defined int stream, defined int source) { return __CirAddFeed(this.handle, stream, source) }
+        undefined SetNode(defined int node, defined float volts) { __CirSetNode(this.handle, node, volts) }
 
-        int AddNonlinear(int kind, Port n0, Port n1, Port n2, float p0, float p1, float p2, float p3) {
+        defined int AddNonlinear(defined int kind, Port n0, Port n1, Port n2, defined float p0, defined float p1, defined float p2, defined float p3) {
             return __CirAddNonlinear(this.handle, kind, n0.Root().node, n1.Root().node, n2.Root().node, p0, p1, p2, p3)
         }
-        float NlState(int index, int what) { return __CirNlState(this.handle, index, what) }
-        undefined NlSet(int index, int what, float value) { __CirNlSet(this.handle, index, what, value) }
+        defined float NlState(defined int index, defined int what) { return __CirNlState(this.handle, index, what) }
+        undefined NlSet(defined int index, defined int what, defined float value) { __CirNlSet(this.handle, index, what, value) }
         /// <summary>Adds a number to an entry of the matrix (row and column: nodes or branches; -1, ground, is left out) - for controlled sources (Stamp).</summary>
-        undefined Entry(int row, int col, float value) {
+        undefined Entry(defined int row, defined int col, defined float value) {
             if (row >= 0 && col >= 0) { __CirEntry(this.handle, row, col, value) }
         }
-        int AddLine(Port a1, Port b1, Port a2, Port b2, float z, float delay) {
+        defined int AddLine(Port a1, Port b1, Port a2, Port b2, defined float z, defined float delay) {
             var index = __CirAddLine(this.handle, a1.Root().node, b1.Root().node, a2.Root().node, b2.Root().node, z, delay)
             if (index < 0) { throw new ArgumentException(this.Error()) }
             return index
         }
-        undefined SetCaps(int index, float cjA, float cjB, float vj, float m, float tt, float tr = 0.0) { __CirSetCaps(this.handle, index, cjA, cjB, vj, m, tt, tr) }
-        int AddTube(int kind, List ports, string parameters) {
+        undefined SetCaps(defined int index, defined float cjA, defined float cjB, defined float vj, defined float m, defined float tt, defined float tr = 0.0) { __CirSetCaps(this.handle, index, cjA, cjB, vj, m, tt, tr) }
+        defined int AddTube(defined int kind, List ports, string parameters) {
             var n = [-2, -2, -2, -2]
             for (int i = 0; i < ports.Count; i++) { n[i] = ports[i].Root().node }
             var index = __CirAddTube(this.handle, kind, n[0], n[1], n[2], n[3], parameters)
             if (index < 0) { throw new ArgumentException(this.Error()) }
             return index
         }
-        int AddFormula(Port a, Port b, Port c, string current1, string current2, string parameters) {
+        defined int AddFormula(Port a, Port b, Port c, string current1, string current2, string parameters) {
             var n2 = -2
             if (c != undefined) { n2 = c.Root().node }
             var index = __CirAddFormula(this.handle, a.Root().node, b.Root().node, n2, current1, current2, parameters)
             if (index < 0) { throw new ArgumentException(this.Error()) }
             return index
         }
-        int AddGate(int kind, int inputs[], int out, int outNot, float high, float threshold, float rout) {
+        defined int AddGate(defined int kind, int inputs[], defined int out, defined int outNot, defined float high, defined float threshold, defined float rout) {
             return __CirAddGate(this.handle, kind, inputs, out, outNot, high, threshold, rout)
         }
-        bool GateState(int index) { return __CirGateState(this.handle, index) }
-        int AddChip(int kind, int nodes[], int modes[], float high, float threshold, float rout, int bits, int flags, float p0, float p1) {
+        bool GateState(defined int index) { return __CirGateState(this.handle, index) }
+        defined int AddChip(defined int kind, int nodes[], int modes[], defined float high, defined float threshold, defined float rout, defined int bits, defined int flags, defined float p0, defined float p1) {
             return __CirAddChip(this.handle, kind, nodes, modes, high, threshold, rout, bits, flags, p0, p1)
         }
-        float ChipGet(int index, int what, int k) { return __CirChipGet(this.handle, index, what, k) }
-        undefined ChipSet(int index, int what, int k, float value) { __CirChipSet(this.handle, index, what, k, value) }
-        undefined GateExtra(int index, float low, bool falling) { __CirGateExtra(this.handle, index, low, falling) }
-        int AddCoupled(Port a1, Port b1, Port a2, Port b2, float l1, float l2, float k, float i1, float i2, float v1, float v2) {
+        defined float ChipGet(defined int index, defined int what, defined int k) { return __CirChipGet(this.handle, index, what, k) }
+        undefined ChipSet(defined int index, defined int what, defined int k, defined float value) { __CirChipSet(this.handle, index, what, k, value) }
+        undefined GateExtra(defined int index, defined float low, bool falling) { __CirGateExtra(this.handle, index, low, falling) }
+        defined int AddCoupled(Port a1, Port b1, Port a2, Port b2, defined float l1, defined float l2, defined float k, defined float i1, defined float i2, defined float v1, defined float v2) {
             var index = __CirAddCoupled(this.handle, a1.Root().node, b1.Root().node, a2.Root().node, b2.Root().node, l1, l2, k, i1, i2, v1, v2)
             if (index < 0) { throw new ArgumentException(this.Error()) }
             return index
@@ -3672,19 +3677,19 @@ namespace Circuits {
         undefined Run(int steps) { __CirRun(this.handle, steps) }
         /// <summary>Starts the thread of the kernel that simulates the plan in real time at `speed` (or gives it the speed and starts its clock anew).
         /// False where there are no threads.</summary>
-        bool StartRunner(float speed) { return __CirStartRunner(this.handle, speed) }
+        bool StartRunner(defined float speed) { return __CirStartRunner(this.handle, speed) }
         undefined StopRunner() { __CirStopRunner(this.handle) }
         bool RunnerRuns() { return __CirRunnerInfo(this.handle, 0) == 1 }
         /// <summary>The share of the wanted simulated time the thread manages (1: all of it).</summary>
-        float RunnerShare() { return __CirRunnerInfo(this.handle, 1) }
-        int RunnerSteps() { return __CirRunnerInfo(this.handle, 2) }
+        defined float RunnerShare() { return __CirRunnerInfo(this.handle, 1) }
+        defined int RunnerSteps() { return __CirRunnerInfo(this.handle, 2) }
         /// <summary>The share of the clock the thread computes (0..1).</summary>
-        float RunnerLoad() { return __CirRunnerInfo(this.handle, 3) }
+        defined float RunnerLoad() { return __CirRunnerInfo(this.handle, 3) }
         /// <summary>From HoldBegin to HoldEnd: what the parts in fire add (CurrentInto, BranchValue) is what the thread adds in every step from then on.</summary>
         undefined HoldBegin() { __CirHoldBegin(this.handle) }
         undefined HoldEnd() { __CirHoldEnd(this.handle) }
-        float Time() { return __CirTime(this.handle) }
-        int Info(int what) { return __CirInfo(this.handle, what) }
+        defined float Time() { return __CirTime(this.handle) }
+        defined int Info(defined int what) { return __CirInfo(this.handle, what) }
     }
 
     /// <summary>The timer 555 as a circuit: the divider of three 5 kOhm resistors (Control is its 2/3 tap), two comparators, an SR latch with Reset (active
@@ -3693,7 +3698,7 @@ namespace Circuits {
     class Timer555 : Circuit {
         /// <summary>`vccPin`: powered from the port Vcc (as Falstad's 555; the output swings between ground and Vcc) instead of inside at `supply`
         /// (which then is only the level of the logic inside).</summary>
-        construct(float supply : any = 5, bool vccPin = false) : base("555") {
+        construct(defined float supply : any = 5, bool vccPin = false) : base("555") {
             var s = Circuits.Units.Volts(supply)
             this.Parameter("supply", s)
             var trigger = this.AddPort("trigger")
@@ -3763,10 +3768,10 @@ namespace Circuits {
 
     /// <summary>A binary counter of `bits` D flip-flops (ripple): it counts the rising edges of Clock; Q(i) are the bits, Count the number.</summary>
     class Counter : Circuit {
-        int bits
+        defined int bits
         List flops
 
-        construct(int bits = 4, float supply : any = 5) : base("counter") {
+        construct(defined int bits = 4, defined float supply : any = 5) : base("counter") {
             if (bits < 1) { throw new ArgumentException("A counter needs a bit.") }
             this.bits = bits
             this.flops = new List()
@@ -3785,7 +3790,7 @@ namespace Circuits {
 
         Port Clock { get { return this.ports[0] } }
         /// <summary>The bit i (0: the lowest).</summary>
-        Port Q(int i) { return this.ports[i + 1] }
+        Port Q(defined int i) { return this.ports[i + 1] }
 
         /// <summary>The number the counter holds now.</summary>
         int Count {
@@ -3805,17 +3810,17 @@ namespace Circuits {
     /// from), its logic is the one of Falstad's chip. Outputs drive `supply` or 0 V through `outputResistance` (like the gates), inputs are high above
     /// half the supply; the chip reads them after a step and drives the next one. The state goes on when the circuit is compiled again.</summary>
     class Chip : Part {
-        int kind
-        int bits
-        int flags
-        float supply
-        float rout
-        float p0 = 0.0
-        float p1 = 0.0
+        defined int kind
+        defined int bits
+        defined int flags
+        defined float supply
+        defined float rout
+        defined float p0 = 0.0
+        defined float p1 = 0.0
         string layout
         List modes
         List initialHigh
-        int index = -1
+        defined int index = -1
         // the state before the circuit was compiled again
         List savedVal
         List savedSt
@@ -3823,7 +3828,7 @@ namespace Circuits {
         bool savedLoad = false
         bool hasSaved = false
 
-        construct(string type, string layout, int bits = 0, int flags = 0, float supply : any = 5, float outputResistance : any = 10) : base(type.ToUpper()) {
+        construct(string type, string layout, defined int bits = 0, defined int flags = 0, defined float supply : any = 5, defined float outputResistance : any = 10) : base(type.ToUpper()) {
             this.kind = Circuits.Chip.KindOf(type)
             if (this.kind < 0) { throw new ArgumentException("There is no chip '" + type + "'.") }
             this.layout = layout
@@ -3849,7 +3854,7 @@ namespace Circuits {
             }
         }
 
-        static int KindOf(string type) {
+        static defined int KindOf(string type) {
             var names = ["TFlipFlop", "Latch", "RingCounter", "Multiplexer", "Demultiplexer", "HalfAdder", "FullAdder", "SipoShift", "PisoShift", "Adc", "Dac",
                          "SevenSegmentDecoder", "Monostable", "PhaseComparator", "Vco", "SevenSegment"]
             for (int i = 0; i < names.length; i++) {
@@ -3870,7 +3875,7 @@ namespace Circuits {
         }
 
         /// <summary>The pin i in the order of Falstad's chip.</summary>
-        Port At(int i) { return this.ports[i] }
+        Port At(defined int i) { return this.ports[i] }
 
         override bool Compile(Circuits.Solver solver) {
             var n = this.ports.Count
@@ -3910,7 +3915,7 @@ namespace Circuits {
         }
 
         /// <summary>Is pin i high (an output: what the chip drives; an input: what it read)?</summary>
-        bool High(int i) {
+        bool High(defined int i) {
             var plan = this.Plan()
             if (plan == undefined || this.index < 0) {
                 if (this.hasSaved && i < this.savedVal.Count) { return this.savedVal[i] != 0.0 }
@@ -3920,7 +3925,7 @@ namespace Circuits {
         }
 
         /// <summary>The number the pins from `first` on make (count bits, the first the lowest).</summary>
-        int Number(int first, int count) {
+        defined int Number(defined int first, defined int count) {
             var n = 0
             for (int i = count - 1; i >= 0; i--) {
                 n = n * 2
@@ -3932,10 +3937,10 @@ namespace Circuits {
         // ---- the layouts ----
 
         // "W:pos:name:port:mode" (mode 0 input, 1 output, 2 output of a current)
-        static string P(string side, int pos, string name, int port, int mode) { return side + ":" + pos + ":" + name + ":" + port + ":" + mode }
+        static string P(string side, defined int pos, string name, defined int port, defined int mode) { return side + ":" + pos + ":" + name + ":" + port + ":" + mode }
 
         // bits as Falstad's makeBitPins makes them, the highest bit at `pos` (the lowest at the bottom or right)
-        static string Bits(string side, int pos, int count, string name, int firstPort, int mode, bool reversed = false) {
+        static string Bits(string side, defined int pos, defined int count, string name, defined int firstPort, defined int mode, bool reversed = false) {
             var text = ""
             for (int i = 0; i < count; i++) {
                 var port = firstPort + i
@@ -3948,7 +3953,7 @@ namespace Circuits {
 
         /// <summary>The layout of a chip as Falstad draws it: "sizeX,sizeY|side:pos:name:port:mode;..." with the pins in the order of its ports (see
         /// Symbols.FalstadLayout). bits 0: the default.</summary>
-        static string Layout(string type, int bits, int flags) {
+        static string Layout(string type, defined int bits, defined int flags) {
             if (type == "TFlipFlop") {
                 var set = (flags & 2) != 0
                 var reset = (flags & 1) != 0 || set
@@ -4100,7 +4105,7 @@ namespace Circuits {
                                                                                          Circuits.TFlipFlop.Flags(withReset, withSet), supply) {
             this.initialHigh.Add(2)
         }
-        static int Flags(bool reset, bool set) {
+        static defined int Flags(bool reset, bool set) {
             var f = 0
             if (reset) { f = f + 1 }
             if (set) { f = f + 2 }
@@ -4121,7 +4126,7 @@ namespace Circuits {
                    Circuits.Latch.Flags(levelTriggered, withReset, withSet, resetActiveLow), supply) {
             if (bits < 1) { throw new ArgumentException("A latch needs a bit.") }
         }
-        static int Flags(bool level, bool reset, bool set, bool low) {
+        static defined int Flags(bool level, bool reset, bool set, bool low) {
             var f = 0
             if (level) { f = f + 1 }
             if (reset) { f = f + 2 }
@@ -4129,8 +4134,8 @@ namespace Circuits {
             if (low) { f = f + 8 }
             return f
         }
-        Port D(int i) { return this.ports[i] }
-        Port Q(int i) { return this.ports[this.bits + i] }
+        Port D(defined int i) { return this.ports[i] }
+        Port Q(defined int i) { return this.ports[this.bits + i] }
         Port Load { get { return this.ports[2 * this.bits] } }
         /// <summary>The number it holds.</summary>
         int Value { get { return this.Number(this.bits, this.bits) } }
@@ -4145,7 +4150,7 @@ namespace Circuits {
             if (bits < 2) { throw new ArgumentException("A ring counter needs 2 bits or more.") }
             this.initialHigh.Add(2)
         }
-        static int Flags(bool inhibit, bool high, int bits) {
+        static defined int Flags(bool inhibit, bool high, defined int bits) {
             var f = 0
             if (inhibit && bits >= 3) { f = f + 1 }
             if (high) { f = f + 2 }
@@ -4153,9 +4158,9 @@ namespace Circuits {
         }
         Port Clock { get { return this.ports[0] } }
         Port Reset { get { return this.ports[1] } }
-        Port Q(int i) { return this.ports[i + 2] }
+        Port Q(defined int i) { return this.ports[i + 2] }
         /// <summary>The output that is high.</summary>
-        int Position {
+        defined int Position {
             get {
                 for (int i = 0; i < this.bits; i++) {
                     if (this.High(i + 2)) { return i }
@@ -4172,13 +4177,13 @@ namespace Circuits {
                    Circuits.Multiplexer.Flags(invertedOutput, strobe), supply) {
             if (selectBits < 1 || selectBits > 6) { throw new ArgumentException("A multiplexer has 1 to 6 select bits.") }
         }
-        static int Flags(bool inverted, bool strobe) {
+        static defined int Flags(bool inverted, bool strobe) {
             var f = 0
             if (inverted) { f = f + 1 }
             if (strobe) { f = f + 2 }
             return f
         }
-        Port In(int i) { return this.ports[i] }
+        Port In(defined int i) { return this.ports[i] }
         Port Select(int i) { return this.ports[(1 << this.bits) + i] }
         Port Out { get { return this.ports[(1 << this.bits) + this.bits] } }
     }
@@ -4189,11 +4194,11 @@ namespace Circuits {
             : base("Demultiplexer", Circuits.Chip.Layout("Demultiplexer", selectBits, 0), selectBits, Circuits.Demultiplexer.Flags(invertedOutputs), supply) {
             if (selectBits < 1 || selectBits > 6) { throw new ArgumentException("A demultiplexer has 1 to 6 select bits.") }
         }
-        static int Flags(bool inverted) {
+        static defined int Flags(bool inverted) {
             if (inverted) { return 1 }
             return 0
         }
-        Port Out(int i) { return this.ports[i] }
+        Port Out(defined int i) { return this.ports[i] }
         Port Select(int i) { return this.ports[(1 << this.bits) + i] }
         Port In { get { return this.ports[(1 << this.bits) + this.bits] } }
     }
@@ -4212,13 +4217,13 @@ namespace Circuits {
         construct(int bits = 1, float supply : any = 5) : base("FullAdder", Circuits.Chip.Layout("FullAdder", bits, 0), bits, 0, supply) {
             if (bits < 1) { throw new ArgumentException("An adder needs a bit.") }
         }
-        Port A(int i) { return this.ports[i] }
-        Port B(int i) { return this.ports[this.bits + i] }
-        Port S(int i) { return this.ports[2 * this.bits + i] }
+        Port A(defined int i) { return this.ports[i] }
+        Port B(defined int i) { return this.ports[this.bits + i] }
+        Port S(defined int i) { return this.ports[2 * this.bits + i] }
         Port CarryIn { get { return this.ports[3 * this.bits] } }
         Port CarryOut { get { return this.ports[3 * this.bits + 1] } }
         /// <summary>The sum with the carry (as a number).</summary>
-        int Sum {
+        defined int Sum {
             get {
                 var n = this.Number(2 * this.bits, this.bits)
                 if (this.High(3 * this.bits + 1)) { n = n + (1 << this.bits) }
@@ -4234,7 +4239,7 @@ namespace Circuits {
         }
         Port D { get { return this.ports[0] } }
         Port Clock { get { return this.ports[1] } }
-        Port Q(int i) { return this.ports[i + 2] }
+        Port Q(defined int i) { return this.ports[i + 2] }
         int Value { get { return this.Number(2, this.bits) } }
     }
 
@@ -4245,7 +4250,7 @@ namespace Circuits {
                                                                                       Circuits.PisoShift.Flags(serialIn), supply) {
             if (bits < 1) { throw new ArgumentException("A shift register needs a bit.") }
         }
-        static int Flags(bool serial) {
+        static defined int Flags(bool serial) {
             if (serial) { return 1 }
             return 0
         }
@@ -4259,7 +4264,7 @@ namespace Circuits {
         construct(int bits = 8, float supply : any = 5) : base("Adc", Circuits.Chip.Layout("Adc", bits, 0), bits, 0, supply) {
             if (bits < 1 || bits > 30) { throw new ArgumentException("An ADC has 1 to 30 bits.") }
         }
-        Port D(int i) { return this.ports[i] }
+        Port D(defined int i) { return this.ports[i] }
         Port In { get { return this.ports[this.bits] } }
         Port Reference { get { return this.ports[this.bits + 1] } }
         int Value { get { return this.Number(0, this.bits) } }
@@ -4270,7 +4275,7 @@ namespace Circuits {
         construct(int bits = 8, float supply : any = 5) : base("Dac", Circuits.Chip.Layout("Dac", bits, 0), bits, 0, supply) {
             if (bits < 1 || bits > 30) { throw new ArgumentException("A DAC has 1 to 30 bits.") }
         }
-        Port D(int i) { return this.ports[i] }
+        Port D(defined int i) { return this.ports[i] }
         Port Out { get { return this.ports[this.bits] } }
         Port Reference { get { return this.ports[this.bits + 1] } }
     }
@@ -4281,27 +4286,27 @@ namespace Circuits {
         construct(float supply : any = 5, bool blankInput = false, bool blankOnF = false)
             : base("SevenSegmentDecoder", Circuits.Chip.Layout("SevenSegmentDecoder", 0, Circuits.SevenSegmentDecoder.Flags(blankInput, blankOnF)), 4,
                    Circuits.SevenSegmentDecoder.Flags(blankInput, blankOnF), supply) { }
-        static int Flags(bool blank, bool f) {
+        static defined int Flags(bool blank, bool f) {
             var r = 0
             if (blank) { r = r + 1 }
             if (f) { r = r + 2 }
             return r
         }
         /// <summary>The segment i (0 a .. 6 g).</summary>
-        Port Segment(int i) { return this.ports[i] }
+        Port Segment(defined int i) { return this.ports[i] }
         /// <summary>The input bit i (0: the lowest, 1).</summary>
-        Port In(int i) { return this.ports[10 - i] }
+        Port In(defined int i) { return this.ports[10 - i] }
     }
 
     /// <summary>A monostable: a rising edge at its input (falling with `invertTrigger`) makes Q high for `time`; `retriggerable` starts the time again on
     /// every edge.</summary>
     class Monostable : Chip {
-        construct(float time : any = 0.01, bool retriggerable = false, bool invertTrigger = false, float supply : any = 5)
+        construct(defined float time : any = 0.01, bool retriggerable = false, bool invertTrigger = false, defined float supply : any = 5)
             : base("Monostable", Circuits.Chip.Layout("Monostable", 0, 0), 0, Circuits.Monostable.Flags(invertTrigger, retriggerable), supply) {
             this.p0 = Circuits.Units.Seconds(time)
             this.initialHigh.Add(2)
         }
-        static int Flags(bool invert, bool re) {
+        static defined int Flags(bool invert, bool re) {
             var f = 0
             if (invert) { f = f + 1 }
             if (re) { f = f + 2 }
@@ -4316,7 +4321,7 @@ namespace Circuits {
     /// open (it holds a loop filter where it is).</summary>
     class PhaseComparator : Circuit {
         Circuits.Chip core
-        construct(float supply : any = 5) : base("phasecomp") {
+        construct(defined float supply : any = 5) : base("phasecomp") {
             var i1 = this.AddPort("i1")
             var i2 = this.AddPort("i2")
             var o = this.AddPort("o")
@@ -4339,7 +4344,7 @@ namespace Circuits {
     /// there charge the capacitor between the two C pins, the output Vo flips when it reaches 90 % or 10 % of the supply - the frequency grows with Vi.</summary>
     class Vco : Circuit {
         Circuits.Chip core
-        construct(float supply : any = 5) : base("vco") {
+        construct(defined float supply : any = 5) : base("vco") {
             var vi = this.AddPort("vi")
             var vo = this.AddPort("vo")
             var c1 = this.AddPort("c1")
@@ -4369,7 +4374,7 @@ namespace Circuits {
     /// <summary>A tri-state buffer: while Control is high, Out follows In (high: `supply`) through `onResistance`; while it is low, Out is open
     /// (`offResistance`, and `offGroundResistance` to ground if above 0).</summary>
     class TriState : Circuit {
-        construct(float supply : any = 5, float onResistance : any = 0.1, float offResistance : any = 10000000000, float offGroundResistance : any = 0) : base("tristate") {
+        construct(defined float supply : any = 5, defined float onResistance : any = 0.1, defined float offResistance : any = 10000000000, defined float offGroundResistance : any = 0) : base("tristate") {
             var a = this.AddPort("in")
             var b = this.AddPort("out")
             var ctl = this.AddPort("control")
@@ -4411,9 +4416,9 @@ namespace Circuits {
             return w
         }
         /// <summary>Is segment i lit (0 a .. 6 g, 7 the point)?</summary>
-        bool Lit(int i) { return this.High(i) }
+        bool Lit(defined int i) { return this.High(i) }
         /// <summary>The digit the lit segments make (0-9, A-F), -1 for none.</summary>
-        int Digit {
+        defined int Digit {
             get {
                 var codes = [0x7E, 0x30, 0x6D, 0x79, 0x33, 0x5B, 0x5F, 0x70, 0x7F, 0x7B, 0x77, 0x1F, 0x4E, 0x3D, 0x4F, 0x47]
                 var code = 0
@@ -4434,8 +4439,8 @@ namespace Circuits {
         Circuits.Inductor coil
         Circuits.RelayContact contact
 
-        construct(float inductance : any = 0.2, float coilResistance : any = 20, float onCurrent : any = 0.02, float offCurrent : any = 0.015,
-                  float onResistance : any = 0.05) : base("relay") {
+        construct(defined float inductance : any = 0.2, defined float coilResistance : any = 20, defined float onCurrent : any = 0.02, defined float offCurrent : any = 0.015,
+                  defined float onResistance : any = 0.05) : base("relay") {
             var c1 = this.AddPort("coil1")
             var c2 = this.AddPort("coil2")
             var com = this.AddPort("com")
@@ -4464,14 +4469,14 @@ namespace Circuits {
         bool Energized { get { return this.contact.pulled } }
         /// <summary>The current through the coil.</summary>
         float:A CoilCurrent { get { return this.coil.CurrentRaw() * 1A } }
-        override float CurrentRaw() { return this.coil.CurrentRaw() }
+        override defined float CurrentRaw() { return this.coil.CurrentRaw() }
     }
 
     /// <summary>A quartz crystal: its motional arm (resistance, inductance and series capacitance) from A to B with the capacitance of its holder in
     /// parallel - Falstad's crystal (about 10 MHz with the defaults).</summary>
     class Crystal : Circuit {
-        construct(float seriesCapacitance : any = 0.0000000000001, float parallelCapacitance : any = 0.0000000000287, float inductance : any = 0.0025,
-                  float resistance : any = 6.4) : base("crystal") {
+        construct(defined float seriesCapacitance : any = 0.0000000000001, defined float parallelCapacitance : any = 0.0000000000287, defined float inductance : any = 0.0025,
+                  defined float resistance : any = 6.4) : base("crystal") {
             var a = this.AddPort("a")
             var b = this.AddPort("b")
             any cp = this.Add(new Circuits.Capacitor(parallelCapacitance))
@@ -4495,9 +4500,9 @@ namespace Circuits {
     /// coil toggles, a set coil switches on, a reset coil off.</summary>
     class RelayCoilState : Part {
         Circuits.RelayCoil coil
-        float avg = 0.0
-        int state = 0
-        float since = 0.0
+        defined float avg = 0.0
+        defined int state = 0
+        defined float since = 0.0
 
         construct(Circuits.RelayCoil coil) : base("coilstate") { this.coil = coil }
 
@@ -4553,17 +4558,17 @@ namespace Circuits {
     /// together (Join).</summary>
     class RelayCoil : Circuit {
         Circuits.Inductor inductor
-        float onCurrent
-        float offCurrent
-        int mode
-        float delay
+        defined float onCurrent
+        defined float offCurrent
+        defined int mode
+        defined float delay
         // 1: pulled in (the contacts of the label switch over); the coils of a label share the position of the first one
-        int position = 0
+        defined int position = 0
         Circuits.RelayCoil leader
         List contacts
 
-        construct(float inductance : any = 0.2, float coilResistance : any = 20, float onCurrent : any = 0.02, float offCurrent : any = 0.015, int mode = 0,
-                  float delay : any = 0) : base("coil") {
+        construct(defined float inductance : any = 0.2, defined float coilResistance : any = 20, defined float onCurrent : any = 0.02, defined float offCurrent : any = 0.015, defined int mode = 0,
+                  defined float delay : any = 0) : base("coil") {
             var c1 = this.AddPort("coil1")
             var c2 = this.AddPort("coil2")
             any l = this.Add(new Circuits.Inductor(inductance))
@@ -4597,9 +4602,9 @@ namespace Circuits {
         /// <summary>Is it pulled in (the contacts of its label switched over)?</summary>
         bool Energized { get { return this.Leader().position == 1 } }
         float:A CoilCurrent { get { return this.inductor.CurrentRaw() * 1A } }
-        override float CurrentRaw() { return this.inductor.CurrentRaw() }
+        override defined float CurrentRaw() { return this.inductor.CurrentRaw() }
 
-        undefined Switch(int position) {
+        undefined Switch(defined int position) {
             var lead = this.Leader()
             if (lead.position == position) { return }
             lead.position = position
@@ -4612,10 +4617,10 @@ namespace Circuits {
     class CoilContact : TwoTerminal {
         Circuits.RelayCoil coil
         bool normallyClosed
-        float ron
-        float roff
+        defined float ron
+        defined float roff
 
-        construct(bool normallyClosed = false, float onResistance : any = 0.05, float offResistance : any = 1000000) : base("contact") {
+        construct(bool normallyClosed = false, defined float onResistance : any = 0.05, defined float offResistance : any = 1000000) : base("contact") {
             this.normallyClosed = normallyClosed
             this.ron = Circuits.Units.Ohms(onResistance)
             this.roff = Circuits.Units.Ohms(offResistance)
@@ -4634,7 +4639,7 @@ namespace Circuits {
             }
         }
 
-        float ResistanceRaw() {
+        defined float ResistanceRaw() {
             if (this.Closed) { return this.ron }
             return this.roff
         }
@@ -4643,8 +4648,8 @@ namespace Circuits {
             solver.Conductance(this.A, this.B, 1.0 / this.ResistanceRaw())
             return true
         }
-        override bool Probe(Circuits.Solver solver, int recorder, int channel) { return solver.AddProbe(recorder, channel, 4, solver.Node(this.A), solver.Node(this.B), 1.0 / this.ResistanceRaw()) }
-        override float CurrentRaw() { return this.VoltageRaw() / this.ResistanceRaw() }
+        override bool Probe(Circuits.Solver solver, defined int recorder, defined int channel) { return solver.AddProbe(recorder, channel, 4, solver.Node(this.A), solver.Node(this.B), 1.0 / this.ResistanceRaw()) }
+        override defined float CurrentRaw() { return this.VoltageRaw() / this.ResistanceRaw() }
     }
 
     /// <summary>A stream of samples at a fixed rate between a circuit and the program: a ring of volts (docs/circuits/README.md, "Streams"). Circuit.Output fills it
@@ -4652,11 +4657,11 @@ namespace Circuits {
     /// program takes them out (Read, ReadPcm); Circuit.Input lets it drive a source, and the program puts samples in (Write, WritePcm). The raw numbers
     /// are volts; as 16 bit sound a full-scale sample is `fullScale` volts.</summary>
     class SignalStream {
-        int handle
-        float rate
+        defined int handle
+        defined float rate
 
         /// <summary>A stream of `rate` samples per second that holds `capacity` samples (0: one second).</summary>
-        construct(float rate : any = 44100, int capacity = 0) {
+        construct(defined float rate : any = 44100, defined int capacity = 0) {
             this.rate = Circuits.Units.Hertz(rate)
             if (this.rate <= 0.0) { throw new ArgumentException("The rate of a stream must be more than 0.") }
             var cap = capacity
@@ -4678,7 +4683,7 @@ namespace Circuits {
         int Missing { get { return __CirStreamInfo(this.handle, 3) } }
 
         /// <summary>Puts volts into the stream (as many as fit); how many it took.</summary>
-        int Write(float values[]) { return __CirStreamWrite(this.handle, values) }
+        defined int Write(float values[]) { return __CirStreamWrite(this.handle, values) }
         /// <summary>Takes up to `max` samples (volts) out of the stream; all there are with -1.</summary>
         float[] Read(int max = -1) {
             var n = max
@@ -4687,14 +4692,14 @@ namespace Circuits {
         }
         /// <summary>Puts 16 bit samples (little endian, `channels` interleaved and mixed to one) from `offset` of `data` into the stream; a full-scale sample is
         /// `fullScale` volts. How many frames it took.</summary>
-        int WritePcm(byte data[], int offset, int frames, int channels = 1, float fullScale : any = 1) {
+        defined int WritePcm(byte data[], defined int offset, defined int frames, defined int channels = 1, defined float fullScale : any = 1) {
             var n = __CirStreamWritePcm(this.handle, data, offset, frames, channels, Circuits.Units.Volts(fullScale))
             if (n < 0) { throw new ArgumentException(__CirLastError()) }
             return n
         }
         /// <summary>Takes up to `maxFrames` samples as 16 bit mono samples into `data` from `offset` (full scale at `fullScale` volts, clipped there); how many
         /// frames it wrote.</summary>
-        int ReadPcm(byte data[], int offset, int maxFrames, float fullScale : any = 1) {
+        defined int ReadPcm(byte data[], defined int offset, defined int maxFrames, defined float fullScale : any = 1) {
             return __CirStreamReadPcm(this.handle, data, offset, maxFrames, Circuits.Units.Volts(fullScale))
         }
         /// <summary>Empties the stream.</summary>
@@ -4705,12 +4710,12 @@ namespace Circuits {
         /// simulated device that keeps what it played, SimPlayed). The kernel hands the samples over itself, also while the circuit runs in its thread; at
         /// speed 1 the clock of the sound card leads the way. A sample of `fullScale` volts is full scale (louder ones are clipped); `latency`: the sound
         /// kept between the circuit and the device (more: fewer dropouts, later sound). The stream is not read by the program any more.</summary>
-        undefined PlayTo(string device = "default", float fullScale : any = 1, float latency : any = 0.05) {
+        undefined PlayTo(string device = "default", defined float fullScale : any = 1, defined float latency : any = 0.05) {
             if (__CirStreamPlay(this.handle, device, Circuits.Units.Volts(fullScale), Circuits.Units.Seconds(latency)) == 0) { throw new Exception(__CirLastError()) }
         }
         /// <summary>Records from a sound device (a microphone, a line in; "default", a name of the platform or "sim") into the stream (an Input of a circuit):
         /// a full-scale sample is `fullScale` volts. Stereo is mixed to one.</summary>
-        undefined RecordFrom(string device = "default", float fullScale : any = 1, float latency : any = 0.05) {
+        undefined RecordFrom(string device = "default", defined float fullScale : any = 1, defined float latency : any = 0.05) {
             if (__CirStreamRecord(this.handle, device, Circuits.Units.Volts(fullScale), Circuits.Units.Seconds(latency)) == 0) { throw new Exception(__CirLastError()) }
         }
         /// <summary>Closes the sound devices of the stream (PlayTo, RecordFrom).</summary>
@@ -4726,7 +4731,7 @@ namespace Circuits {
         /// <summary>What the simulated device "sim" played (volts) since the last call.</summary>
         float[] SimPlayed() { return __CirStreamSimPlayed(this.handle) }
         /// <summary>Sound for the simulated input "sim" to record: 16 bit mono samples, `count` bytes from `offset` (all without a count).</summary>
-        undefined SimInput(byte data[], int offset = 0, int count = -1) {
+        undefined SimInput(byte data[], defined int offset = 0, defined int count = -1) {
             if (count < 0) { count = data.length - offset }
             if (__CirStreamSimInput(this.handle, data, offset, count) < 0) { throw new ArgumentException(__CirLastError()) }
         }
@@ -4756,13 +4761,13 @@ namespace Circuits {
     class Scope {
         List names
         List sources
-        int recorder
+        defined int recorder
         // channels the kernel cannot record (the current of a part written in fire): the scope records them in fire
-        int fireChannels = 0
+        defined int fireChannels = 0
         List inFire
         bool kernelChannels = false
 
-        construct(Circuit circuit, int capacity = 100000, bool rolling = false) {
+        construct(Circuit circuit, defined int capacity = 100000, bool rolling = false) {
             this.names = new List()
             this.sources = new List()
             this.inFire = new List()
@@ -4836,7 +4841,7 @@ namespace Circuits {
 
         int Count { get { return __CirRecCount(this.recorder) } }
 
-        int ChannelOf(string name) {
+        defined int ChannelOf(string name) {
             for (int i = 0; i < this.names.Count; i++) {
                 if (this.names[i] == name) { return i }
             }
@@ -4852,25 +4857,25 @@ namespace Circuits {
         /// <summary>The trace of a channel over `columns` columns (with `times` another channel, multiplied in: v * i is the power). `span` 0: the last
         /// `columns` samples; else that many seconds - with `trigger` 1 (rising) or 2 (falling) through `level` from the latest crossing that leaves room for
         /// the window, otherwise up to now. Result: [first column with data, value of column 0, ..., of column columns-1].</summary>
-        float[] Trace(string name, int columns, float span : any = 0, int trigger = 0, float level = 0.0, string times = "") {
+        float[] Trace(string name, defined int columns, defined float span : any = 0, defined int trigger = 0, defined float level = 0.0, string times = "") {
             var x = -1
             if (times != "") { x = this.ChannelOf(times) }
             return __CirRecTrace(this.recorder, this.ChannelOf(name), x, Circuits.Units.Seconds(span), columns, trigger, level)
         }
 
         /// <summary>The scale of a trace (see Trace): [lo, hi] - ±range with `range` > 0, otherwise ± the largest value (at least ±1 for a flat trace).</summary>
-        static float[] TraceRange(float trace[], float range = 0.0) { return __CirTraceRange(trace, range) }
+        static float[] TraceRange(float trace[], defined float range = 0.0) { return __CirTraceRange(trace, range) }
 
         /// <summary>A trace (see Trace) as the points of a path [x, y, ...] in a box at (x0, y0) of height h scaled to lo .. hi: column c at x0 + 1 + c,
         /// 0 in the middle; from the first column with data.</summary>
-        static float[] TracePoints(float trace[], float x0, float y0, float h, float lo, float hi) { return __CirTracePoints(trace, x0, y0, h, lo, hi) }
+        static float[] TracePoints(float trace[], defined float x0, defined float y0, defined float h, defined float lo, defined float hi) { return __CirTracePoints(trace, x0, y0, h, lo, hi) }
 
         /// <summary>The last `count` pairs of two channels for an XY display: [x0, y0, x1, y1, ...].</summary>
-        float[] Pairs(string x, string y, int count = 2000) { return __CirRecPairs(this.recorder, this.ChannelOf(x), this.ChannelOf(y), count) }
+        float[] Pairs(string x, string y, defined int count = 2000) { return __CirRecPairs(this.recorder, this.ChannelOf(x), this.ChannelOf(y), count) }
 
         /// <summary>The spectrum of a channel for an FFT analyzer: `size` samples (a power of two, 16 .. 8192) at the rate 2 * fmax (fmax 0: the rate of the
         /// simulation), Hann window. Result: [bin width in Hz, amplitude of bin 1, ..., of bin size/2]; empty while there are too few samples.</summary>
-        float[] Spectrum(string name, int size = 512, float fmax : any = 20000.0) { return __CirRecSpectrum(this.recorder, this.ChannelOf(name), size, Circuits.Units.Hertz(fmax)) }
+        float[] Spectrum(string name, defined int size = 512, defined float fmax : any = 20000.0) { return __CirRecSpectrum(this.recorder, this.ChannelOf(name), size, Circuits.Units.Hertz(fmax)) }
 
         /// <summary>Measurements of a channel over what the scope holds (with `times` another channel, multiplied in: the power): [count, min, max, average,
         /// rms, frequency in Hz (0: no period found), duration in seconds]. Average and rms over whole periods when there are two.</summary>
@@ -4881,7 +4886,7 @@ namespace Circuits {
         }
 
         /// <summary>The last sample of a channel.</summary>
-        float Last(string name) { return __CirRecLast(this.recorder, this.ChannelOf(name)) }
+        defined float Last(string name) { return __CirRecLast(this.recorder, this.ChannelOf(name)) }
 
         undefined Clear() { __CirRecClear(this.recorder) }
     }
@@ -4889,17 +4894,17 @@ namespace Circuits {
     /// <summary>A virtual multimeter.</summary>
     class Multimeter {
         /// <summary>The voltage between two ports (b: ground when left out).</summary>
-        static float:V Volts(Port a, Port b = undefined) {
+        static defined float:V Volts(Port a, Port b = undefined) {
             var v = a.Raw()
             if (b != undefined) { v = v - b.Raw() }
             return v * 1V
         }
 
         /// <summary>The current through a part.</summary>
-        static float:A Amps(Part part) { return part.CurrentRaw() * 1A }
+        static defined float:A Amps(Part part) { return part.CurrentRaw() * 1A }
 
         /// <summary>The root mean square of samples (an AC voltage or current from a Scope).</summary>
-        static float Rms(float samples[]) {
+        static defined float Rms(float samples[]) {
             if (samples.length == 0) { return 0.0 }
             var sum = 0.0
             for (int i = 0; i < samples.length; i++) { sum = sum + samples[i] * samples[i] }
@@ -4973,7 +4978,7 @@ namespace Circuits {
         }
 
         /// <summary>The frequency of the strongest component other than DC (Hz).</summary>
-        static float:Hz Dominant(float samples[], float sampleRate : any) {
+        static defined float:Hz Dominant(float samples[], defined float sampleRate : any) {
             var rate = Circuits.Units.Hertz(sampleRate)
             var mags = Circuits.Fft.Magnitudes(samples)
             var n = (mags.length - 1) * 2

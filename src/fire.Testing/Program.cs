@@ -20860,6 +20860,7 @@ else
                 int got = 0
                 undefined Register(Completion w) { this.c = take w }
                 undefined Give(int v) { this.got = v; this.c.Set(v) }
+                undefined Report(string text) { print(text) }
             }
             class Work {
                 static int N(Box b) { b.v = b.v + 1; return b.v }
@@ -20876,8 +20877,9 @@ else
                 var n = await [Work.N(b), Work.N(b)]
                 print("box " + b.v)
                 var r = await [Work.A(h), Work.B(w)]
-                print("done " + r[0] + " " + r[1])
+                h.Report("done " + r[0] + " " + r[1])
             }
+            process h
             process h
             print("got " + h.got)
             """),

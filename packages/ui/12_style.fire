@@ -289,7 +289,7 @@ namespace UI {
             this.styles = new List()
         }
 
-        int IndexOf(string key) {
+        defined int IndexOf(string key) {
             for (var i = 0; i < this.keys.Count; i = i + 1) {
                 if (this.keys[i] == key) { return i }
             }

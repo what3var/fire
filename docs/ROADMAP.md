@@ -692,9 +692,18 @@ Daten-Stack bei XC8), AVR nur mit einem eigenen kleinen Profil.
    oder Abbruch) und übergibt ihn mit `trust`. **Umgestellt:** scene3d (mit physics, effects, terrain), time, random, audio, hash, compression, io,
    net, net.channel, tls, http, gpio, i2c, spi, usb, wifi, tracker, machine, x86, dos, xms, process, console, linq - die Zahlen-Parameter, deren Rumpf
    `undefined` weder prüft noch speichert, dazu die Felder und Properties, in die sie gehen. Gefunden dabei: `Http.Url.Parse("http://h:abc/")` gab
-   eine URL mit Port `undefined` (jetzt die HttpException). **Offen:** graphics zusammen mit ui (ui reicht Koordinaten aus Feldern weiter, die
-   `undefined` sein dürfen: gemessen graphics -9 % fire-Code, sobald ui mitzieht), ui.docking, circuits, circuits.ui, dialogs (dort heißt `undefined`
-   oft "nicht gesetzt" - Durchsicht von Hand); das Herleiten für den Code des Programms (ein Parameter, dem jede Aufrufstelle eine definierte Zahl gibt).
+   eine URL mit Port `undefined` (jetzt die HttpException). **Danach umgestellt:** graphics, windows, ui, ui.docking, dialogs, circuits, circuits.ui und
+   der Rest der Pakete. **Die Prüfung nachgepflegt (der Benutzer: "das sollten wir auch bei Feldern"):** im Paketcode gelten Felder, Properties und
+   Rückgaben ohne `defined` wie im Code des Programms als "vielleicht undefined" (TypeChecker.Checked), ebenso das Ergebnis einer Methode des Programms,
+   die `int` statt `defined int` zurückgibt; `trust x` gilt auch für einen Wert unbekannten Typs; `List`/`Dictionary`/`HashSet.Count` des Prelude sind
+   `defined int`. Alle Bibliotheken bleiben strikt ohne Befund - die Stellen sind umgestellt: Rückgaben (`defined int Read(...)` über alle Überschreibungen
+   einheitlich, auch die der Interfaces), Felder ohne Startwert, die nie auf `undefined` getestet werden, Parameter, die in solche Felder gehen; wo ein Wert
+   wirklich fehlen kann, ein Test (`TextArea.At`, `Element.PinCoord`: Abbruch mit IndexOutOfBoundsException; `Model.Param`: die Vorgabe) und `trust`; die
+   untypisierten Listen der ui (`children`, Tracks) mit typisierten Locals (`Element child = this.children[i]`). Ein Feld ohne Startwert, das jetzt
+   `defined` ist, beginnt bei 0 statt bei `undefined`. Gemessen (die Vorlage "Desktop" mit ui, nativ, Release, linux): fire-Code von ui 397 -> 357 KB
+   (-10 %), graphics 24 -> 22 KB, windows 51 -> 49 KB, die erzeugten Helfer +27 KB, das Programm 2407 -> 2387 KB.
+   **Offen:** die Regel auch für Aufrufe von Paketen aus dem Code des Programms (erst, wenn die Pakete umgestellt sind - jetzt möglich, gibt aber neue
+   Warnungen im Code der Benutzer); das Herleiten für den Code des Programms (ein Parameter, dem jede Aufrufstelle eine definierte Zahl gibt).
 
 Für alle neuen Ziele: Zielprofile, Toolchain OpenWatcom (`bios16`/`bios32` auch gcc `-m32 -ffreestanding`, `efi-x64` clang/mingw), eine Plattformschicht pro Familie;
 Tests ohne Fenster über den seriellen Port bzw. die Konsole: DOSBox-X / dosemu2 (`dos16`, `dos32`, Win 3.11), QEMU (`bios16`/`bios32`; `efi-x64` mit der Firmware OVMF),

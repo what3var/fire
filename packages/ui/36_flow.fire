@@ -8,7 +8,7 @@ namespace UI {
     // The end of a line in a FlowPanel.
     class LineBreak : Element {
         construct() : base(0, 0, -1, -1) { }
-        override undefined MeasureCore(Root root, int aw, int ah) {
+        override undefined MeasureCore(Root root, defined int aw, defined int ah) {
             this.cw = 0
             this.ch = 0
         }
@@ -19,12 +19,12 @@ namespace UI {
     class FlowPiece {
         UI.Element element
         string text
-        int x
-        int y
-        int w
-        int h
+        defined int x
+        defined int y
+        defined int w
+        defined int h
 
-        construct(UI.Element element, string text, int x, int w, int h) {
+        construct(UI.Element element, string text, defined int x, defined int w, defined int h) {
             this.element = element
             this.text = text
             this.x = x
@@ -41,10 +41,10 @@ namespace UI {
     // In the browser (http.pages) it is HTML text: the browser breaks the lines itself.
     class FlowPanel : Panel {
         // Pixels between two lines.
-        int LineSpacing = 0
+        defined int LineSpacing = 0
         List pieces
 
-        construct(int x = 0, int y = 0, int width = -1, int height = -1) : base(x, y, width, height) {
+        construct(defined int x = 0, defined int y = 0, defined int width = -1, defined int height = -1) : base(x, y, width, height) {
             this.Filled = false
             this.pieces = new List()
         }
@@ -59,9 +59,9 @@ namespace UI {
             return kept
         }
 
-        override undefined MeasureCore(Root root, int aw, int ah) {
+        override undefined MeasureCore(Root root, defined int aw, defined int ah) {
             for (var i = 0; i < this.children.Count; i = i + 1) {
-                any child = this.children[i]
+                Element child = this.children[i]
                 child.Measure(root, -1, -1)
             }
             var limit = aw
@@ -69,10 +69,10 @@ namespace UI {
             this.Flow(root, limit)
         }
 
-        override undefined ArrangeCore(Root root, int w, int h) {
+        override undefined ArrangeCore(Root root, defined int w, defined int h) {
             this.Flow(root, w)
             for (var i = 0; i < this.children.Count; i = i + 1) {
-                any child = this.children[i]
+                Element child = this.children[i]
                 if (child is of UI.Run || child is of UI.LineBreak) { child.Arrange(root, 0, 0, 0, 0) }
             }
             for (var i = 0; i < this.pieces.Count; i = i + 1) {
@@ -82,7 +82,7 @@ namespace UI {
         }
 
         // Breaks the children into lines `limit` pixels wide (-1: no limit); sets the pieces and the size of the content.
-        undefined Flow(Root root, int limit) {
+        undefined Flow(Root root, defined int limit) {
             this.pieces = new List()
             var x = 0
             var lineTop = 0
@@ -91,7 +91,7 @@ namespace UI {
             var widest = 0
             var emptyHeight = this.TextHeight(root)
             for (var i = 0; i < this.children.Count; i = i + 1) {
-                any child = this.children[i]
+                Element child = this.children[i]
                 if (!child.Visible) { continue }
                 if (child is of UI.LineBreak) {
                     if (lineHeight == 0) { lineHeight = emptyHeight }
@@ -134,8 +134,8 @@ namespace UI {
                     }
                     continue
                 }
-                int w = child.dw
-                int h = child.dh
+                defined int w = child.dw
+                defined int h = child.dh
                 if (x > 0 && limit >= 0 && x + w > limit) {
                     lineTop = this.EndLine(lineStart, lineTop, lineHeight)
                     lineStart = this.pieces.Count
@@ -156,7 +156,7 @@ namespace UI {
         }
 
         // (the pieces of a line stand on its bottom; returns the top of the next line)
-        int EndLine(int first, int top, int height) {
+        defined int EndLine(defined int first, defined int top, defined int height) {
             for (var i = first; i < this.pieces.Count; i = i + 1) {
                 UI.FlowPiece p = this.pieces[i]
                 p.y = top + height - p.h
@@ -164,7 +164,7 @@ namespace UI {
             return top + height + this.LineSpacing
         }
 
-        override undefined Draw(Root root, int ax, int ay) {
+        override undefined Draw(Root root, defined int ax, defined int ay) {
             if (!this.NeedsDraw(root, ax, ay)) { return }
             if (this.Filled || this.Background != undefined) {
                 var brush = this.Background

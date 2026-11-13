@@ -9,15 +9,15 @@ class X86Exception : Exception {
 
 // The registers of a routine: what it gets, and what it leaves.
 class X86Registers {
-    int eax = 0
-    int ebx = 0
-    int ecx = 0
-    int edx = 0
-    int esi = 0
-    int edi = 0
+    defined int eax = 0
+    defined int ebx = 0
+    defined int ecx = 0
+    defined int edx = 0
+    defined int esi = 0
+    defined int edi = 0
 
     construct() { }
-    construct(int eax) { this.eax = eax }
+    construct(defined int eax) { this.eax = eax }
 }
 
 class X86 {
@@ -77,7 +77,7 @@ class X86 {
 
     // The linear (physical) address of the bytes of a buffer from `offset` on - to give a routine a buffer of the program (valid while the buffer
     // lives and keeps its size).
-    static int LinearOf(byte buffer[], defined int offset = 0) {
+    static defined int LinearOf(byte buffer[], defined int offset = 0) {
         X86.Check()
         var at = __X86LinearOf(buffer, offset)
         if (at == undefined) { throw new ArgumentException("No such place in the buffer: " + offset + ".") }
@@ -96,7 +96,7 @@ class X86 {
         if (data.length > 0) { X86.Move(X86.LinearOf(data), address, data.length) }
     }
     // `count` bytes from one linear address to another (REP MOVSB in the protected mode).
-    static undefined Move(int source, int target, int count) {
+    static undefined Move(defined int source, defined int target, defined int count) {
         byte code[] = new byte[3]
         code[0] = 243
         code[1] = 164

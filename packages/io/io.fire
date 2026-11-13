@@ -3,9 +3,9 @@ namespace IO {
 
     class IOException : Exception {
         string message
-        int code
+        defined int code
 
-        construct(string message, int code = 9) {
+        construct(string message, defined int code = 9) {
             this.message = message
             this.code = code
         }
@@ -46,7 +46,7 @@ namespace IO {
         }
 
         // Returns a valid handle, throws the error on -1.
-        static int Handle(defined int handle) {
+        static defined int Handle(defined int handle) {
             if (handle < 0) { Throw() }
             return handle
         }
@@ -66,33 +66,33 @@ namespace IO {
         bool CanWrite { get { return false } }
         bool CanSeek { get { return false } }
 
-        int Position {
+        defined int Position {
             get { throw new IOException("This stream has no position.", 8) }
             set { throw new IOException("This stream does not support seeking.", 8) }
         }
 
-        int Length {
+        defined int Length {
             get { throw new IOException("This stream does not know its length.", 8) }
             set { throw new IOException("The length of this stream cannot be changed.", 8) }
         }
 
-        int Read(byte buffer[], defined int offset, defined int count) {
+        defined int Read(byte buffer[], defined int offset, defined int count) {
             throw new IOException("This stream is not readable.", 8)
         }
 
-        int Write(byte buffer[], defined int offset, defined int count) {
+        defined int Write(byte buffer[], defined int offset, defined int count) {
             throw new IOException("This stream is not writable.", 8)
         }
 
-        int Seek(defined int offset, IO.SeekOrigin origin = IO.SeekOrigin.Begin) {
+        defined int Seek(defined int offset, IO.SeekOrigin origin = IO.SeekOrigin.Begin) {
             throw new IOException("This stream does not support seeking.", 8)
         }
 
         undefined Flush() { }
         undefined Close() { }
 
-        int Read(byte buffer[]) { return this.Read(buffer, 0, buffer.length) }
-        int Write(byte buffer[]) { return this.Write(buffer, 0, buffer.length) }
+        defined int Read(byte buffer[]) { return this.Read(buffer, 0, buffer.length) }
+        defined int Write(byte buffer[]) { return this.Write(buffer, 0, buffer.length) }
 
         // A byte (0..255), or -1 at the end of the stream.
         int ReadByte() {
@@ -102,7 +102,7 @@ namespace IO {
             return one[0]
         }
 
-        undefined WriteByte(int value) {
+        undefined WriteByte(defined int value) {
             var one = new byte[1]
             one[0] = value
             this.Write(one, 0, 1)
@@ -146,10 +146,10 @@ namespace IO {
     // Common base of FileStream and MemoryStream: behind them lies
     // a native handle. destruct() closes it when the owner ends.
     class NativeStream : Stream {
-        int handle
+        defined int handle
         bool closed
 
-        construct(int handle) {
+        construct(defined int handle) {
             this.handle = handle
             this.closed = false
         }
@@ -180,7 +180,7 @@ namespace IO {
             if (this.handle >= 0) { __IOClose(this.handle) }
         }
 
-        override int Position {
+        override defined int Position {
             get {
                 this.Check()
                 var p = __IOPosition(this.handle)
@@ -193,7 +193,7 @@ namespace IO {
             }
         }
 
-        override int Length {
+        override defined int Length {
             get {
                 this.Check()
                 var n = __IOLength(this.handle)
@@ -207,28 +207,28 @@ namespace IO {
         }
 
         // New position (from the start), `origin`: IO.SeekOrigin.
-        override int Seek(defined int offset, IO.SeekOrigin origin = IO.SeekOrigin.Begin) {
+        override defined int Seek(defined int offset, IO.SeekOrigin origin = IO.SeekOrigin.Begin) {
             this.Check()
             var p = __IOSeek(this.handle, offset, origin)
             if (p < 0) { IO.IOErrors.Throw() }
             return p
         }
 
-        override int Read(byte buffer[], defined int offset, defined int count) {
+        override defined int Read(byte buffer[], defined int offset, defined int count) {
             this.Check()
             var n = __IORead(this.handle, buffer, offset, count)
             if (n < 0) { IO.IOErrors.Throw() }
             return n
         }
 
-        override int Write(byte buffer[], defined int offset, defined int count) {
+        override defined int Write(byte buffer[], defined int offset, defined int count) {
             this.Check()
             var n = __IOWrite(this.handle, buffer, offset, count)
             if (n < 0) { IO.IOErrors.Throw() }
             return n
         }
 
-        override int ReadByte() {
+        override defined int ReadByte() {
             this.Check()
             var b = __IOReadByte(this.handle)
             if (b == -1) { IO.IOErrors.Throw() }
@@ -301,8 +301,8 @@ namespace IO {
         IO.Stream source
         bool ownsSource
         byte chunk[]
-        int pos
-        int len
+        defined int pos
+        defined int len
         bool eof
         bool closed
         IO.MemoryStream pending

@@ -21,14 +21,14 @@ class NetChannelPart {
 // The lines of a connection: the bytes that came, cut at "\n" (a byte that is never part of another UTF-8 character).
 class NetChannelLines {
     byte data[]
-    int count
+    defined int count
     construct() {
         this.data = new byte[4096]
         this.count = 0
     }
     undefined Feed(byte buffer[], defined int n) {
         if (this.count + n > this.data.length) {
-            int size = this.data.length * 2
+            defined int size = this.data.length * 2
             while (size < this.count + n) { size = size * 2 }
             byte grown[] = new byte[size]
             for (int i = 0; i < this.count; i++) { grown[i] = this.data[i] }
@@ -42,7 +42,7 @@ class NetChannelLines {
         for (int i = 0; i < this.count; i++) {
             if (this.data[i] == 10) {
                 string line = IO.Utf8.GetString(this.data, 0, i)
-                int rest = this.count - i - 1
+                defined int rest = this.count - i - 1
                 for (int j = 0; j < rest; j++) { this.data[j] = this.data[i + 1 + j] }
                 this.count = rest
                 return line
@@ -55,7 +55,7 @@ class NetChannelLines {
 class NetChannelWire {
     // Up to buffer.length bytes; 0 when the other side closed, the connection broke or the queue `inbox` was closed (the end of the program closed
     // the channels of the main program: nobody will receive any more).
-    static int Read(defined int handle, byte buffer[], any inbox) {
+    static defined int Read(defined int handle, byte buffer[], any inbox) {
         var tries = 0
         while (true) {
             var n = __NetRecv(handle, buffer, 0, buffer.length, 0)
@@ -84,8 +84,8 @@ class NetChannelWire {
         return true
     }
     // The number at the start of `text` (up to a space or the end).
-    static int Id(string text) {
-        int space = text.IndexOf(" ")
+    static defined int Id(string text) {
+        defined int space = text.IndexOf(" ")
         if (space < 0) { return text.ToInt() }
         return text.Substring(0, space).ToInt()
     }
@@ -104,7 +104,7 @@ namespace Net {
         /// <summary>The next channel that connects (waits without a limit unless one is given: then Net.TimeoutException).</summary>
         Net.Channel<T> Accept(any timeout = undefined) {
             var client = this.listener.Accept(timeout)
-            int handle = client.handle
+            defined int handle = client.handle
             client.handle = -1
             client.closed = true
             return new Net.Channel<T>(handle)
@@ -119,13 +119,13 @@ namespace Net {
         any outbox
         any writerDone
         defined int handle
-        int nextId
+        defined int nextId
         bool sendClosed
 
         /// <summary>Connects (the limit: 10 seconds unless given; undefined: none).</summary>
         construct(string host, defined int port, any timeout = 10000) {
             var client = new Net.TcpClient(host, port, timeout)
-            int h = client.handle
+            defined int h = client.handle
             client.handle = -1
             client.closed = true
             this.Start(h, 16)
@@ -169,13 +169,13 @@ namespace Net {
                     while (open) {
                         string line = lines.Next()
                         if (line == undefined) {
-                            int n = NetChannelWire.Read(handle, buffer, inbox)
+                            defined int n = NetChannelWire.Read(handle, buffer, inbox)
                             if (n <= 0) { open = false } else { lines.Feed(buffer, n) }
                         } else if (line.StartsWith("v ")) {
                             inbox.Send(Json.Deserialize(line.Substring(2), "any"))
                         } else if (line.StartsWith("l ")) {
                             string rest = line.Substring(2)
-                            int id = NetChannelWire.Id(rest)
+                            defined int id = NetChannelWire.Id(rest)
                             any record = Json.Deserialize(rest.Substring(rest.IndexOf(" ") + 1), "any")
                             lent[id] = record
                             any lentRecord = lent[id]
@@ -199,8 +199,8 @@ namespace Net {
         bool Send(T value) {
             if (this.sendClosed) { return false }
             if (!(value is from local)) {
-                int id = this.nextId + 1
-                int kind = __chan_watch(value, this.outbox.node, "g " + id)
+                defined int id = this.nextId + 1
+                defined int kind = __chan_watch(value, this.outbox.node, "g " + id)
                 if (kind == 1) {
                     this.nextId = id
                     return this.outbox.Send("l " + id + " " + Json.Serialize(value))
