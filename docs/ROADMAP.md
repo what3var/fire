@@ -721,7 +721,7 @@ Daten-Stack bei XC8), AVR nur mit einem eigenen kleinen Profil.
    Schleife mit Properties nativ 105 -> 33 ms und 1,1 KB kleiner. Die Properties von scene3d, effects und physics, deren Getter ein getyptes Native
    liest, sind dafür `defined` (83; die Parameter des Material-Konstruktors und `Body.Dynamic(mass)` mit, damit der Paketcode ohne Befund bleibt;
    im Beispiel "Scene3D Benchmark" `defined bool direct`). "Scene3D Physics": linux -4 KB, dos16 -0,4 KB; mit den Properties von scene3d nativ
-   62 -> 22 ms; die Vorlage "Desktop" bleibt gleich. Setter bleiben ohne C-Rumpf.
+   62 -> 22 ms; die Vorlage "Desktop" bleibt gleich. Setter mit C-Rumpf versucht und verworfen (eine Schleife mit einem Setter 14 -> 16 ms, -16 Byte).
    *Weniger Value-Kopien:* die Alias-Slots und die Zeigerkonvention (Größenziele) gab es schon (NATIVE_BACKEND.md "Kopien von Values",
    "Zeigerkonvention"); dazu jetzt die C-Rümpfe: ihre Values per Adresse, ihre C-Zahlen per Wert (`fN_c_p(const Value* self_p, Real P0)`), ihre Hülle
    mit Values ganz per Adresse. dos16 "Scene3D Physics" geladen 565 588 -> 564 692 Byte. Ergebnisse gehen schon heute über den Rückgabepuffer des
