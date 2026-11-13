@@ -2053,7 +2053,7 @@ namespace fire.Compiler
                     return left.Kind == StaticKind.Int && right.Kind == StaticKind.Int ? (l.Scale <= r.Scale ? l : r) : l;
                 case BinaryOp.Mul: return Unit.Multiply(l, r);
                 case BinaryOp.Div: return Unit.Divide(l, r);
-                case BinaryOp.ShiftLeft or BinaryOp.ShiftRight: return l;
+                case BinaryOp.ShiftLeft or BinaryOp.ShiftRight or BinaryOp.ShiftRightLogical: return l;
                 default: return null;
             }
         }
@@ -2077,7 +2077,7 @@ namespace fire.Compiler
             {
                 var other = left.Kind == StaticKind.Word ? right : left;
                 if (other.Kind is StaticKind.Int or StaticKind.Word) return StaticType.Word;
-                if (other.Kind == StaticKind.Float && b.Op is not (BinaryOp.BitAnd or BinaryOp.BitOr or BinaryOp.BitXor or BinaryOp.ShiftLeft or BinaryOp.ShiftRight)) return StaticType.Float;
+                if (other.Kind == StaticKind.Float && b.Op is not (BinaryOp.BitAnd or BinaryOp.BitOr or BinaryOp.BitXor or BinaryOp.ShiftLeft or BinaryOp.ShiftRight or BinaryOp.ShiftRightLogical)) return StaticType.Float;
                 return StaticType.Dynamic;
             }
             switch (b.Op)
@@ -2086,7 +2086,7 @@ namespace fire.Compiler
                 case BinaryOp.Eq or BinaryOp.NotEq or BinaryOp.Lt or BinaryOp.LtEq or BinaryOp.Gt or BinaryOp.GtEq:
                     // an object can overload the comparison: then the result is whatever the operator says
                     return left.Kind == StaticKind.Class || right.Kind == StaticKind.Class ? StaticType.Dynamic : StaticType.Bool;
-                case BinaryOp.BitAnd or BinaryOp.BitOr or BinaryOp.BitXor or BinaryOp.ShiftLeft or BinaryOp.ShiftRight:
+                case BinaryOp.BitAnd or BinaryOp.BitOr or BinaryOp.BitXor or BinaryOp.ShiftLeft or BinaryOp.ShiftRight or BinaryOp.ShiftRightLogical:
                     return left.Kind == StaticKind.Int && right.Kind == StaticKind.Int ? StaticType.Int : StaticType.Dynamic;
                 case BinaryOp.Add when left.Kind == StaticKind.String || right.Kind == StaticKind.String:
                     // a string on the left joins whatever comes (its ToString); on the right only a value that cannot overload `+` is sure to
@@ -2683,6 +2683,25 @@ namespace fire.Compiler
             return StaticType.String;
         }
 
+        /// <summary>The type of a call of a built-in method that the checker knows: the typed reads of a byte buffer give an int or a float (never undefined),
+        /// `Slice` a byte buffer, `IndexOf`/`Compare` an int; `"..".ToBytes()` a byte buffer. Null for any other call.</summary>
+        private static StaticType? BuiltinCallType(StaticType target, string name, int argc)
+        {
+            var bytes = StaticType.ArrayOf(StaticType.Int with { Unit = Unit.Unitless, Raw = true });
+            if (target.Kind == StaticKind.String) return name == "ToBytes" && argc == 0 ? bytes : null;
+            if (target.Kind != StaticKind.Array || target.Element is not { Kind: StaticKind.Int, Raw: true }) return null;
+            var number = (name.StartsWith("ReadFloat", StringComparison.Ordinal) ? StaticType.Float : StaticType.Int).WithUnit(Unit.Unitless).WithNull(Nullness.Defined);
+            return name switch
+            {
+                "ReadInt8" or "ReadUInt8" when argc == 1 => number,
+                "ReadInt16" or "ReadUInt16" or "ReadInt32" or "ReadUInt32" or "ReadInt64" or "ReadFloat16" or "ReadFloat32" or "ReadFloat64" when argc is 1 or 2 => number,
+                "Slice" when argc is 1 or 2 => bytes,
+                "IndexOf" when argc is 1 or 2 => StaticType.Int.WithUnit(Unit.Unitless).WithNull(Nullness.Defined),
+                "Compare" when argc == 1 => StaticType.Int.WithUnit(Unit.Unitless).WithNull(Nullness.Defined),
+                _ => null,
+            };
+        }
+
         private StaticType InferCall(CallExpr c)
         {
             var type = InferCallCore(c);
@@ -2715,6 +2734,8 @@ namespace fire.Compiler
                 else CheckAccess(target, m.Name, MemberUse.Call, c.Args.Count, m.Line);
                 receiverClass = target.Class;
                 calleeTarget = target;
+                // the built-in methods of a byte buffer and `ToBytes` of a text: what they give (fire.Standard.BufferMethods)
+                if (BuiltinCallType(target, m.Name, c.Args.Count) is { } builtin) { foreach (var a in c.Args) Infer(a); return builtin; }
                 if (target.Kind == StaticKind.Class)
                 {
                     candidates = FindMethods(target, m.Name, c.Args.Count);

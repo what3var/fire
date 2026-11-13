@@ -8,6 +8,7 @@ Every program has, without an import:
 |---|---|
 | `print(value)` | writes a value and a line break |
 | `Math` | `Sqrt`, `Abs`, `Min`, `Max`, `Clamp`, `Sign`, `Round`, `Floor`, `Ceiling`, `Sin`, `Cos`, `Tan`, `Asin`, `Acos`, `Atan`, `Atan2`, `Log`, `Log10`, `Exp`, `PI`, `E` - see below |
+| `Bits` | `PopCount`, `LeadingZeros`, `TrailingZeros`, `RotateLeft`, `RotateRight`, `ReverseBytes`, `ReverseBits`, `Extract`, `Insert`, the IEEE bits of a float: `FromFloat64`/`ToFloat64`, `FromFloat32`/`ToFloat32`, `FromFloat16`/`ToFloat16` (half precision) - see [Bit functions](03-operators.md#bit-functions) |
 | `StringBuilder` | collects text: `Append`, `AppendLine`, `Length`, `Clear`, `ToString` - see [Strings](06-strings.md#joining) |
 | `List<T>`, `Dictionary<K, V>`, `HashSet<T>`, `Owns` | lists, dictionaries and sets - see [Arrays and lists](07-arrays-and-lists.md#lists-listt) |
 | `Environment` | the arguments of the program, environment variables, `Exit` - see below |

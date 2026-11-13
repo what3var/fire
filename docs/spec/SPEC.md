@@ -74,7 +74,7 @@ From loose (far up) to tightly binding (far down):
 == != ##                  equality (`##` is a synonym for `!=`)
 < <= > >=                 comparison
 ..                        range (int only): `1..5` is [1, 2, 3, 4, 5], `5..1` counts down
-<< >>                     bit shift operators (int only)
+<< >> >>>                 bit shift operators (int and word only; >>> the logical shift right)
 + -                       addition/subtraction
 * / %                     multiplication/division/modulo
 ^                         exponentiation       (right-associative, NOT bitwise XOR)
@@ -115,11 +115,17 @@ break that. Since type argument lists run through their own, completely separate
 methods (never through the normal expression precedence chain), there is
 no conflict anyway.
 
-**Compound assignment**: `a += b`, `-=`, `*=`, `/=`, `%=`, `^=` (power), `&=`, `|=`, `#=` (xor), `<<=` and `>>=` mean `a = a op b` (the right side is
+**`>>>`** is the logical shift right (three `>`, joined by the parser like `>>`): an `int` is shifted as the unsigned number of the width of the
+program's int (64; 32/16 with `#intwidth`; a value that keeps a wider width - `int[64]` - its width), zeros come in at the top; the count is taken `& 63`,
+a count of the width or more gives 0. On a `word` it is `>>`. A class can overload it (`operator>>>`). VM: Value.ShiftRightLogical, natively `ushr` /
+`FIRE_SCALAR_USHR`. The bit functions of the prelude class `Bits` and the typed reads and writes of byte buffers: docs/language/03-operators.md "Bit
+functions", 07-arrays-and-lists.md "Reading and writing numbers".
+
+**Compound assignment**: `a += b`, `-=`, `*=`, `/=`, `%=`, `^=` (power), `&=`, `|=`, `#=` (xor), `<<=`, `>>=` and `>>>=` mean `a = a op b` (the right side is
 the whole expression to the right: `a *= b + c` is `a = a * (b + c)`; the operators are right-associative like `=`; `+=` also appends to a string; units work as
 in `a = a + b`). The target is evaluated twice, so it must not have effects of its own: a name, a member (`c.n += 1`) or an element whose operands are names,
 members, literals and operators (`arr[i + 1] *= 5`) is fine, a call, `++`/`--` or an assignment in the target is the error `E3159` (write the assignment out).
-`<<=` and `>>=` are the only shift tokens the lexer knows (`<<` and `>>` stay two single characters, see above, since `>>=` can never close a type argument list).
+`<<=`, `>>=` and `>>>=` are the only shift tokens the lexer knows (`<<` and `>>` stay two single characters, see above, since `>>=` can never close a type argument list).
 
 **Loops**: the initialiser of a `for` is a declaration with `var` or with a type (`for (int i = 0; i < n; i++)`, `for (float x = 0.5; ...)`) or an expression; `foreach (x in list)` can also be written
 `foreach (var x in list)`.

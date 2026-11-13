@@ -4078,6 +4078,7 @@ namespace fire.Compiler
                 BinaryOp.BitXor => OpCode.BitXor,
                 BinaryOp.ShiftLeft => OpCode.ShiftLeft,
                 BinaryOp.ShiftRight => OpCode.ShiftRight,
+                BinaryOp.ShiftRightLogical => OpCode.ShiftRightLogical,
                 BinaryOp.Eq => OpCode.Eq,
                 BinaryOp.NotEq => OpCode.NotEq,
                 BinaryOp.Lt => OpCode.Lt,
