@@ -23,7 +23,7 @@ namespace Dialogs {
         // what Escape and closing the window give
         Dialogs.DialogResult cancelResult = Dialogs.DialogResult.Cancel
 
-        construct(string title, int width, int height) {
+        construct(string title, defined int width, defined int height) {
             this.framebuffer = new Framebuffer(width, height)
             this.window = new Window(this.framebuffer, title)
             this.root = new UI.Root(this.framebuffer, this.window)
@@ -173,7 +173,7 @@ namespace Dialogs {
         // The file types: pairs of a text and patterns, "Text files|*.txt|Pictures|*.png;*.bmp|All files|*.*" ("" = all files).
         string Filter = ""
         // The type chosen at the start and at the end (counted from 1, like in .NET).
-        int FilterIndex = 1
+        defined int FilterIndex = 1
         // The chosen file (full path) - also a name or path to start with.
         string FileName = ""
         // The folder to start in ("" = the folder of FileName, else the current directory).
@@ -194,7 +194,7 @@ namespace Dialogs {
         List placePaths
         List filterNames
         List filterPatterns
-        int filterAt = 0
+        defined int filterAt = 0
         bool foldersOnly = false
         string acceptText = "Open"
         string defaultTitle = "Open"
@@ -482,7 +482,7 @@ namespace Dialogs {
             this.dialog.root.ShowMenu(items, b.ax, b.ay + b.actualHeight, b)
         }
 
-        undefined SetType(int index) {
+        undefined SetType(defined int index) {
             this.filterAt = index
             this.typeButton.Text = this.filterNames[index]
             this.Navigate(this.current)
@@ -492,9 +492,9 @@ namespace Dialogs {
     // A row of the type menu.
     class TypeItem : UI.MenuItem {
         Dialogs.FileDialog owner
-        int index
+        defined int index
 
-        construct(Dialogs.FileDialog owner, int index) : base(owner.filterNames[index]) {
+        construct(Dialogs.FileDialog owner, defined int index) : base(owner.filterNames[index]) {
             this.owner = owner
             this.index = index
             this.OnClick = func () on this => { this.owner.SetType(this.index) }

@@ -6,9 +6,9 @@ namespace WiFi {
 
     class WiFiException : Exception {
         string message
-        int code
+        defined int code
 
-        construct(string message, int code = 7) {
+        construct(string message, defined int code = 7) {
             this.message = message
             this.code = code
         }
@@ -58,14 +58,14 @@ namespace WiFi {
             throw new WiFiException(message, code)
         }
 
-        static int Handle(defined int handle) {
+        static defined int Handle(defined int handle) {
             if (handle < 0) { Throw() }
             return handle
         }
     }
 
     class Clock {
-        static int Millis(any limit) {
+        static defined int Millis(any limit) {
             if (limit == undefined) { return -1 }
             var span = TimeSpan.Of(limit)
             var ms = span.Ticks / 10000
@@ -73,10 +73,10 @@ namespace WiFi {
             return ms
         }
 
-        static int Now() { return DateTime.UtcNow.Ticks }
+        static defined int Now() { return DateTime.UtcNow.Ticks }
 
         // The moment (ticks) a limit of `ms` ends, -1: never.
-        static int Deadline(defined int ms) {
+        static defined int Deadline(defined int ms) {
             if (ms < 0) { return -1 }
             return WiFi.Clock.Now() + ms * 10000
         }
@@ -126,11 +126,11 @@ namespace WiFi {
     class Network {
         string ssid
         string bssid
-        int rssi
-        int channel
-        int auth
+        defined int rssi
+        defined int channel
+        defined int auth
 
-        construct(string ssid, string bssid, int rssi, int channel, int auth) {
+        construct(string ssid, string bssid, defined int rssi, defined int channel, defined int auth) {
             this.ssid = ssid
             this.bssid = bssid
             this.rssi = rssi
@@ -144,10 +144,10 @@ namespace WiFi {
 
     // The station: joins a network.
     class Station {
-        int handle
+        defined int handle
         bool closed
         string name
-        int lastState
+        defined int lastState
         lambda<any> onState
 
         construct(string name = undefined) {
@@ -225,7 +225,7 @@ namespace WiFi {
         }
 
         // WiFi.State.Idle / Connecting / Connected; a failed join throws the exception of the failure (NotFoundException, AuthException, ...).
-        int State {
+        defined int State {
             get {
                 this.Check()
                 var s = __WiFiConnectState(this.handle)
@@ -262,7 +262,7 @@ namespace WiFi {
         string Mac { get { return this.Text(2) } }
 
         // The signal strength of the joined network in dBm (0: not connected).
-        int Rssi {
+        defined int Rssi {
             get {
                 this.Check()
                 var r = __WiFiStationRssi(this.handle)
@@ -287,7 +287,7 @@ namespace WiFi {
 
     // The access point: the board is a network that others join.
     class AccessPoint {
-        int handle
+        defined int handle
         bool closed
         string name
 
@@ -333,7 +333,7 @@ namespace WiFi {
         string Mac { get { return this.Text(1) } }
 
         // How many stations are joined.
-        int Clients {
+        defined int Clients {
             get {
                 this.Check()
                 var n = __WiFiApClients(this.handle)
@@ -375,13 +375,13 @@ namespace WiFi {
         }
 
         // A station joins the simulated access point; returns how many are joined now.
-        static int ClientJoins() {
+        static defined int ClientJoins() {
             var n = __WiFiSimApClients(1)
             if (n < 0) { WiFi.Errors.Throw() }
             return n
         }
 
-        static int ClientLeaves() {
+        static defined int ClientLeaves() {
             var n = __WiFiSimApClients(-1)
             if (n < 0) { WiFi.Errors.Throw() }
             return n

@@ -2,9 +2,9 @@
 namespace Spi {
     class SpiException : Exception {
         string message
-        int code
+        defined int code
 
-        construct(string message, int code = 7) {
+        construct(string message, defined int code = 7) {
             this.message = message
             this.code = code
         }
@@ -48,7 +48,7 @@ namespace Spi {
             throw new SpiException(message, code)
         }
 
-        static int Handle(defined int handle) {
+        static defined int Handle(defined int handle) {
             if (handle < 0) { Throw() }
             return handle
         }
@@ -71,16 +71,16 @@ namespace Spi {
 
     // One device: a bus with a chip select.
     class Device {
-        int handle
+        defined int handle
         bool closed
         string name
-        int mode
-        int speed
+        defined int mode
+        defined int speed
         bool lsbFirst
 
         // `device`: a name ("spidev0.0", "spi-2", "spi-2.5" - the number after the dot is the chip select pin on an ESP32, "sim") or the end of a Linux name ("0.0" is "spidev0.0"); `mode` 0..3 is the clock
         // polarity and phase, `speed` the clock in Hz, `lsbFirst` the bit order.
-        construct(string device, int mode = 0, int speed = 1000000, bool lsbFirst = false) {
+        construct(string device, defined int mode = 0, defined int speed = 1000000, bool lsbFirst = false) {
             this.handle = -1
             this.closed = false
             this.mode = mode
@@ -105,7 +105,7 @@ namespace Spi {
         }
 
         // Changes the setup of the open device.
-        undefined Configure(int mode, int speed, bool lsbFirst = false) {
+        undefined Configure(defined int mode, defined int speed, bool lsbFirst = false) {
             this.Check()
             var lsb = 0
             if (lsbFirst) { lsb = 1 }
@@ -115,12 +115,12 @@ namespace Spi {
             this.lsbFirst = lsbFirst
         }
 
-        int Mode {
+        defined int Mode {
             get { return this.mode }
             set { this.Configure(value, this.speed, this.lsbFirst) }
         }
 
-        int Speed {
+        defined int Speed {
             get { return this.speed }
             set { this.Configure(this.mode, value, this.lsbFirst) }
         }
@@ -195,7 +195,7 @@ namespace Spi {
         static undefined Loopback() { __SpiSimLoopback() }
 
         // How many bytes the program sent to the device (the first 65536 are kept).
-        static int SentCount() { return __SpiSimSentCount() }
+        static defined int SentCount() { return __SpiSimSentCount() }
 
         // The bytes the program sent to the device since the start or the last Clear.
         static byte[] Sent() {
@@ -206,13 +206,13 @@ namespace Spi {
         }
 
         // The mode, speed and bit order that were set last, and the number of transfers: what a chip would have seen.
-        static int Mode() { return __SpiSimInfo(0) }
-        static int Speed() { return __SpiSimInfo(1) }
+        static defined int Mode() { return __SpiSimInfo(0) }
+        static defined int Speed() { return __SpiSimInfo(1) }
         static bool LsbFirst() { return __SpiSimInfo(2) == 1 }
-        static int Transfers() { return __SpiSimInfo(3) }
+        static defined int Transfers() { return __SpiSimInfo(3) }
         // The last byte the program sent (-1: none yet), and how many it sent since the start (Clear does not change these).
-        static int LastSent() { return __SpiSimInfo(4) }
-        static int TotalSent() { return __SpiSimInfo(5) }
+        static defined int LastSent() { return __SpiSimInfo(4) }
+        static defined int TotalSent() { return __SpiSimInfo(5) }
 
         // Forgets what was sent and the queued answers.
         static undefined Clear() { __SpiSimClear() }
@@ -223,11 +223,11 @@ namespace Spi {
 /// Write sends a byte buffer, Transfer does both at once. Mode, speed and bit order can be set before it is opened (on first use).</summary>
 class SpiDevice : Device {
     Spi.Device device
-    int mode = 0
-    int speed = 1000000
+    defined int mode = 0
+    defined int speed = 1000000
     bool lsbFirst = false
     // how many bytes Read() reads
-    int ReadSize = 1
+    defined int ReadSize = 1
 
     construct(Driver driver, string name) : base(driver, name) {
         this.device = undefined
@@ -245,7 +245,7 @@ class SpiDevice : Device {
         }
     }
 
-    int Mode {
+    defined int Mode {
         get { return this.mode }
         set {
             this.mode = value
@@ -253,7 +253,7 @@ class SpiDevice : Device {
         }
     }
 
-    int Speed {
+    defined int Speed {
         get { return this.speed }
         set {
             this.speed = value

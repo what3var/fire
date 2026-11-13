@@ -13,13 +13,13 @@ class Scene3DException : Exception {
 
 // Units: lengths in meters, angles in radians (the units of the language convert, a number without a unit is refused).
 class S3D {
-    static float Length(any v) {
+    static defined float Length(any v) {
         if (!(v is in m)) { throw new Scene3DException("A length needs a unit of length (m, cm, mm, ...), got: " + v) }
         any f = v * 1.0
         return (f:m) / 1m
     }
 
-    static float Angle(any v) {
+    static defined float Angle(any v) {
         if (v is in deg) {
             any d = v * 1.0
             return ((d:deg) / 1deg) * 0.017453292519943295
@@ -32,14 +32,14 @@ class S3D {
     }
 
     // A time in seconds (s, ms, min, ...: a number without a unit is refused).
-    static float Seconds(any v) {
+    static defined float Seconds(any v) {
         if (!(v is in s)) { throw new Scene3DException("A time needs a unit of time (s, ms, ...), got: " + v) }
         any f = v * 1.0
         return (f:s) / 1s
     }
 
     // A speed in meters a second (m/s, km/h, ...).
-    static float Speed(defined float v : m/s) { return v / (1m / 1s) }
+    static defined float Speed(defined float v : m/s) { return v / (1m / 1s) }
 
     static defined float:m Meters(defined float m) { return m * 1m }
     static defined float:deg Degrees(defined float radians) { return (radians * 57.29577951308232) * 1deg }
@@ -68,11 +68,11 @@ class S3D {
 // docs/graphics/models.md): parts in a tree with their colours, and animations (Object.Play). forge makes .f3d from glTF 2.0 (a resource "x.gltf"/"x.glb" is
 // converted when the program is built, `forge model x.gltf`).
 class Model {
-    int handle
-    int model
+    defined int handle
+    defined int model
 
     // (the handle of a mesh: use FromObj, FromArrays or FromTemplate)
-    construct(int handle) {
+    construct(defined int handle) {
         this.handle = handle
         this.model = 0
     }
@@ -111,7 +111,7 @@ class Model {
             return list
         }
     }
-    float:s AnimationLength(string name) {
+    defined float:s AnimationLength(string name) {
         if (this.model > 0) {
             var n = __S3DModelInfo(this.model, 1)
             for (var i = 0; i < n; i++) {
@@ -155,7 +155,7 @@ class Model {
 // (The scene lives in the renderer: objects, lights, cameras, materials and scenes are items there, and their properties read and write the slots of the item -
 // fire_bridge_scene3d.h lists them. Nothing is put together in fire for every picture.)
 class Material {
-    int h
+    defined int h
 
     construct(float specular = 0.0, float shininess = 32.0, bool smooth = true, bool twoSided = false, int emissive = 0) {
         this.h = __S3DNew(5)
@@ -182,9 +182,9 @@ class Material {
 
 // A picture to put on objects (RGBA). It belongs to a scene (scene.Add(texture, "key")) or is assigned to an object directly.
 class Texture {
-    int handle
-    int width
-    int height
+    defined int handle
+    defined int width
+    defined int height
 
     // From a framebuffer in the colour mode Rgba (the pixels are copied).
     construct(Framebuffer source) {
@@ -194,7 +194,7 @@ class Texture {
         if (this.handle == 0) { throw new Scene3DException("The framebuffer cannot be a texture (it has to be in the colour mode Rgba).") }
     }
 
-    construct(int width, int height, byte bytes[]) {
+    construct(defined int width, defined int height, byte bytes[]) {
         this.handle = __S3DTexNew(width, height, bytes)
         this.width = width
         this.height = height
@@ -202,7 +202,7 @@ class Texture {
     }
 
     // (the handle of a picture of the renderer: use Checker)
-    construct(int handle, int width, int height, bool made) {
+    construct(defined int handle, defined int width, defined int height, bool made) {
         this.handle = handle
         this.width = width
         this.height = height
@@ -220,7 +220,7 @@ class Texture {
     }
 
     int Width { get { return this.width } }
-    int Height { get { return this.height } }
+    defined int Height { get { return this.height } }
     // Whether the texture has a bump map.
     bool hasBump { get { return __S3DTexHasBump(this.handle) } }
     // How strongly the bump map tilts the light (1 = a full step of the heights over one texel is a slope of 45 degrees).
@@ -250,7 +250,7 @@ class Texture {
 
 // A light: ambient (everywhere), directional (parallel rays, like the sun) or point (from a place, weaker with the distance).
 class Light {
-    int h
+    defined int h
 
     construct(LightKind kind = LightKind.Point, defined int color = 4294967295, defined float intensity = 1.0) {
         this.h = __S3DNew(2)
@@ -297,7 +297,7 @@ class Light {
 
 // Something in the scene with triangles, a position, a size and a look.
 class Object {
-    int h
+    defined int h
     Texture texture
     Material material
     string Key
@@ -331,7 +331,7 @@ class Object {
     // its spin, the scroll of its texture, its particles (scene3d.effects).
     undefined Advance(defined float time : any s) { __S3DObjAdvance(this.h, S3D.Seconds(time)) }
     // The time in the animation (set it to show a moment of it).
-    float AnimationTime : s {
+    defined float AnimationTime : s {
         get { return __S3DObjAnimate(this.h, 2, 0.0) * 1s }
         set { __S3DObjAnimate(this.h, 1, S3D.Seconds(value)) }
     }
@@ -376,24 +376,24 @@ class Object {
 
     // ---- size: the outer dimensions (what is set becomes the scale of the axis) ----
     // (the size of the mesh itself, before it is scaled)
-    float MeshWidth() { return __S3DObjExtent(this.h, 0, false) }
-    float MeshHeight() { return __S3DObjExtent(this.h, 1, false) }
-    float MeshDepth() { return __S3DObjExtent(this.h, 2, false) }
+    defined float MeshWidth() { return __S3DObjExtent(this.h, 0, false) }
+    defined float MeshHeight() { return __S3DObjExtent(this.h, 1, false) }
+    defined float MeshDepth() { return __S3DObjExtent(this.h, 2, false) }
 
-    float Width : m {
+    defined float Width : m {
         get { return __S3DObjExtent(this.h, 0, true) * 1m }
         set { if (!__S3DObjSize(this.h, 0, S3D.Length(value))) { throw new Scene3DException("This object has no width to scale.") } }
     }
-    float Height : m {
+    defined float Height : m {
         get { return __S3DObjExtent(this.h, 1, true) * 1m }
         set { if (!__S3DObjSize(this.h, 1, S3D.Length(value))) { throw new Scene3DException("This object has no height to scale.") } }
     }
-    float Depth : m {
+    defined float Depth : m {
         get { return __S3DObjExtent(this.h, 2, true) * 1m }
         set { if (!__S3DObjSize(this.h, 2, S3D.Length(value))) { throw new Scene3DException("This object has no depth to scale.") } }
     }
 
-    undefined SetSize(float width : any m, float height : any m, float depth : any m) {
+    undefined SetSize(defined float width : any m, defined float height : any m, defined float depth : any m) {
         this.Width = width
         this.Height = height
         this.Depth = depth
@@ -475,7 +475,7 @@ class Object {
 
 // The view of a camera on its scene, drawn into a framebuffer (in the colour mode Rgba).
 class Camera {
-    int h
+    defined int h
     Framebuffer framebuffer
     byte pixels[]
     byte clearBytes[]
@@ -500,7 +500,7 @@ class Camera {
     float RotationY : any { get { return S3D.Degrees(__S3DGetF(this.h, 4)) } set { __S3DSetF(this.h, 4, S3D.Angle(value)) } }
     float RotationZ : any { get { return S3D.Degrees(__S3DGetF(this.h, 5)) } set { __S3DSetF(this.h, 5, S3D.Angle(value)) } }
     // The vertical angle of view (default 60deg).
-    float FieldOfView : any {
+    defined float FieldOfView : any {
         get { return S3D.Degrees(__S3DGetF(this.h, 6)) }
         set {
             var a = S3D.Angle(value)
@@ -581,7 +581,7 @@ class Camera {
 
 // The space: objects, cameras, lights and textures, each also reachable by a key.
 class Scene {
-    int h
+    defined int h
     List Objects
     List Cameras
     List Lights

@@ -59,8 +59,8 @@ class LinqSelectManyEnumerator : IEnumerator {
 
 class LinqTakeEnumerator : IEnumerator {
     IEnumerator inner
-    int left
-    construct(IEnumerator inner, int n) { this.inner = inner; this.left = n; inner.TakeTo(this) }
+    defined int left
+    construct(IEnumerator inner, defined int n) { this.inner = inner; this.left = n; inner.TakeTo(this) }
     bool MoveNext() {
         if (this.left <= 0) { return false }
         this.left = this.left - 1
@@ -71,8 +71,8 @@ class LinqTakeEnumerator : IEnumerator {
 
 class LinqSkipEnumerator : IEnumerator {
     IEnumerator inner
-    int skip
-    construct(IEnumerator inner, int n) { this.inner = inner; this.skip = n; inner.TakeTo(this) }
+    defined int skip
+    construct(IEnumerator inner, defined int n) { this.inner = inner; this.skip = n; inner.TakeTo(this) }
     bool MoveNext() {
         while (this.skip > 0) {
             this.skip = this.skip - 1
@@ -154,10 +154,10 @@ class LinqZipEnumerator : IEnumerator {
 }
 
 class LinqRangeEnumerator : IEnumerator {
-    int next
-    int left
-    int current
-    construct(int start, int count) { this.next = start; this.left = count }
+    defined int next
+    defined int left
+    defined int current
+    construct(defined int start, defined int count) { this.next = start; this.left = count }
     bool MoveNext() {
         if (this.left <= 0) { return false }
         this.current = this.next
@@ -165,7 +165,7 @@ class LinqRangeEnumerator : IEnumerator {
         this.left = this.left - 1
         return true
     }
-    int GetCurrent() { return this.current }
+    defined int GetCurrent() { return this.current }
 }
 
 class Linq {
@@ -406,12 +406,12 @@ class Query<T> : IEnumerable<T> {
         foreach (x in this) { if (!pred(x)) { return false } }
         return true
     }
-    int Count() {
+    defined int Count() {
         var n = 0
         foreach (x in this) { n = n + 1 }
         return n
     }
-    int Count(bool lambda<T> pred) {
+    defined int Count(bool lambda<T> pred) {
         var n = 0
         foreach (x in this) { if (pred(x)) { n = n + 1 } }
         return n
@@ -441,8 +441,8 @@ class Query<T> : IEnumerable<T> {
         if (!found) { throw new LinqEmptyException("The sequence contains no element") }
         return best
     }
-    float Average() { return this.Average(x => x) }
-    float Average(lambda<T> fn) {
+    defined float Average() { return this.Average(x => x) }
+    defined float Average(lambda<T> fn) {
         var s = 0.0
         var n = 0
         foreach (x in this) { s = s + fn(x); n = n + 1 }
@@ -499,16 +499,16 @@ class extends List {
     bool Any() { return Linq.From(this).Any() }
     bool Any(bool lambda<T> pred) { return Linq.From(this).Any(pred) }
     bool All(bool lambda<T> pred) { return Linq.From(this).All(pred) }
-    int Count() { return Linq.From(this).Count() }
-    int Count(bool lambda<T> pred) { return Linq.From(this).Count(pred) }
+    defined int Count() { return Linq.From(this).Count() }
+    defined int Count(bool lambda<T> pred) { return Linq.From(this).Count(pred) }
     T Sum() { return Linq.From(this).Sum() }
     R Sum<R>(R lambda<T> fn) { return Linq.From(this).Sum(fn) }
     T Min() { return Linq.From(this).Min() }
     R Min<R>(R lambda<T> fn) { return Linq.From(this).Min(fn) }
     T Max() { return Linq.From(this).Max() }
     R Max<R>(R lambda<T> fn) { return Linq.From(this).Max(fn) }
-    float Average() { return Linq.From(this).Average() }
-    float Average(lambda<T> fn) { return Linq.From(this).Average(fn) }
+    defined float Average() { return Linq.From(this).Average() }
+    defined float Average(lambda<T> fn) { return Linq.From(this).Average(fn) }
     A Aggregate<A>(A seed, A lambda<A, T> fn) { return Linq.From(this).Aggregate(seed, fn) }
     // (Contains: List has it itself)
     undefined ForEach(lambda<T> fn) { return Linq.From(this).ForEach(fn) }
@@ -543,16 +543,16 @@ class extends array {
     bool Any() { return Linq.From(this).Any() }
     bool Any(bool lambda<any> pred) { return Linq.From(this).Any(pred) }
     bool All(bool lambda<any> pred) { return Linq.From(this).All(pred) }
-    int Count() { return Linq.From(this).Count() }
-    int Count(bool lambda<any> pred) { return Linq.From(this).Count(pred) }
+    defined int Count() { return Linq.From(this).Count() }
+    defined int Count(bool lambda<any> pred) { return Linq.From(this).Count(pred) }
     any Sum() { return Linq.From(this).Sum() }
     R Sum<R>(R lambda<any> fn) { return Linq.From(this).Sum(fn) }
     any Min() { return Linq.From(this).Min() }
     R Min<R>(R lambda<any> fn) { return Linq.From(this).Min(fn) }
     any Max() { return Linq.From(this).Max() }
     R Max<R>(R lambda<any> fn) { return Linq.From(this).Max(fn) }
-    float Average() { return Linq.From(this).Average() }
-    float Average(lambda<any> fn) { return Linq.From(this).Average(fn) }
+    defined float Average() { return Linq.From(this).Average() }
+    defined float Average(lambda<any> fn) { return Linq.From(this).Average(fn) }
     A Aggregate<A>(A seed, A lambda<A, any> fn) { return Linq.From(this).Aggregate(seed, fn) }
     bool Contains(any value) { return Linq.From(this).Contains(value) }
     undefined ForEach(lambda<any> fn) { return Linq.From(this).ForEach(fn) }

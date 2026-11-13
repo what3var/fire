@@ -851,8 +851,8 @@ namespace fire.Compiler
             foreach (var (decl, map) in Chain(receiver))
                 foreach (var member in decl.Members)
                 {
-                    if (member is FieldDecl f && f.Name == name) return f.Source >= _firstUserSource ? MayBeUndefined(FieldType(f, map)) : FieldType(f, map);
-                    if (member is PropertyDecl p && p.Name == name) return p.Source >= _firstUserSource ? MayBeUndefined(DeclaredOrDynamic(p.Type, 0, map)) : DeclaredOrDynamic(p.Type, 0, map);
+                    if (member is FieldDecl f && f.Name == name) return Checked(f.Source) ? MayBeUndefined(FieldType(f, map)) : FieldType(f, map);
+                    if (member is PropertyDecl p && p.Name == name) return Checked(p.Source) ? MayBeUndefined(DeclaredOrDynamic(p.Type, 0, map)) : DeclaredOrDynamic(p.Type, 0, map);
                 }
             return null;
         }
@@ -1645,6 +1645,8 @@ namespace fire.Compiler
             return expr switch
             {
                 LiteralExpr { Value.Kind: ValueKind.Undefined } => type.WithNull(Nullness.MayBeUndefined),
+                // (`trust x` says so whatever the checker knows of x - also of a value of a type it does not know, `trust Math.Max(a, b)`)
+                UnaryExpr { Op: UnaryOp.Trust } when type.Kind != StaticKind.Undefined => type.WithNull(Nullness.Defined),
                 LiteralExpr or BinaryExpr or IncDecExpr or IsOfExpr or IsInExpr or IsFromExpr
                     or UnaryExpr { Op: UnaryOp.Negate or UnaryOp.LogicalNot or UnaryOp.BitNot or UnaryOp.Trust } when type.IsValueKind => type.WithNull(Nullness.Defined),
                 _ => type,
@@ -2589,8 +2591,13 @@ namespace fire.Compiler
         private StaticType ResultOf(MethodDecl method, Dictionary<string, StaticType>? map)
         {
             var type = DeclaredOrDynamic(method.ReturnType, 0, map);
-            return method.Source >= _firstUserSource && method.Source > 0 ? MayBeUndefined(type) : type;
+            return Checked(method.Source) ? MayBeUndefined(type) : type;
         }
+
+        /// <summary>Is a declaration of source `declared` taken at its word about `undefined` (a field, property or return value without `defined` may hold
+        /// it)? Those of the code of the user; inside a package (or a library of the project) its own and those of the other packages as well - a package is
+        /// checked like the code of the user. The prelude of the language, and the packages seen from the code of the user, count as unknown.</summary>
+        private bool Checked(int declared) => declared >= _firstUserSource || declared > 0 && _source > 0 && _source < _firstUserSource;
 
         /// <summary>Overloads `lambda<T>` / `lambda expression<T>` (docs/ROADMAP_EXPRESSIONS.md): a lambda written at the call with an expression body goes to
         /// the overload that takes a tree, a lambda with a block (or one bound with `on`) to the one that takes a lambda; other arguments leave the choice to

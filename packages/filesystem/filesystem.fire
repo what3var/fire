@@ -161,7 +161,7 @@ namespace IO {
         }
 
         // The size in bytes.
-        static int Size(string path) {
+        static defined int Size(string path) {
             var n = __IOFileSize(path)
             if (n < 0) { IO.IOErrors.Throw() }
             return n
@@ -300,7 +300,7 @@ namespace IO {
             return all
         }
 
-        static List Entries(string path, string pattern, any searchOption, int kind) {
+        static List Entries(string path, string pattern, any searchOption, defined int kind) {
             any recursive = searchOption is of bool ? searchOption : searchOption == IO.SearchOption.AllDirectories
             var list = __IODirList(path, pattern, recursive, kind)
             if (list == undefined) { IO.IOErrors.Throw() }

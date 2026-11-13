@@ -194,7 +194,9 @@ instructions (more fused ones, or registers instead of the stack) - a step of it
   parameter, field or property declared without `defined`, a call of a method of the program whose value type is returned without `defined` (`int F()`),
   a variable without an initializer, the literal `undefined`; *inferred* - a variable that was
   only given defined values so far (in the order of the source: a loop may give it something else later, so a `defined` variable still checks what it
-  takes from it); *unknown* - everything else (the natives, the standard library). A value that may be undefined going into a `defined` parameter,
+  takes from it); *unknown* - everything else (the natives, the prelude, the packages seen from the code of the user). Inside a package (or a library of
+  the project) the declarations of the packages count like those of the code of the user: a package is checked by the same rules (the strict check of the
+  standard library, `FIRE_TYPECHECK_ALL=1`, keeps them free of findings). `trust x` is defined whatever the checker knows of x. A value that may be undefined going into a `defined` parameter,
   field, property, variable or return value is `TC022` (a warning in lax mode, an error in strict mode); it is checked at run time either way.
 * **Assignability.** `int` -> `float` is implicit (coerced). Everything converts implicitly to `string` (a `ToString` like in C#). Anything else between known types is a conflict.
 * **Units** (step 4): if both types are known and only the unit is not, the site is a *unit adaptation* `b = AdaptUnit(a, targetUnit)` with three outcomes: same unit -> `a` unchanged;

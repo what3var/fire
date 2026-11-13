@@ -23,8 +23,8 @@ class JsonOptions {
         this.typeNames = true
     }
 
-    int Flags() {
-        int flags = 0
+    defined int Flags() {
+        defined int flags = 0
         if (this.indented) { flags = flags + 1 }
         if (!this.typeNames) { flags = flags + 2 }
         return flags
@@ -46,7 +46,7 @@ class JsonObject {
     /// <summary>The number of members.</summary>
     int Count { get { return this.count } }
 
-    int IndexOf(string key) {
+    defined int IndexOf(string key) {
         for (int i = 0; i < this.count; i++) {
             if (this.keys[i] == key) { return i }
         }
@@ -57,14 +57,14 @@ class JsonObject {
 
     /// <summary>The value of a member (`undefined` when there is none): a number, a string, a bool, an array, a JsonObject.</summary>
     any Get(string key) {
-        int i = this.IndexOf(key)
+        defined int i = this.IndexOf(key)
         if (i < 0) { return undefined }
         return this.values[i]
     }
 
     /// <summary>Sets a member (a new one goes to the end).</summary>
     undefined Set(string key, any value) {
-        int i = this.IndexOf(key)
+        defined int i = this.IndexOf(key)
         if (i >= 0) {
             this.values[i] = value
             return
@@ -85,7 +85,7 @@ class JsonObject {
     }
 
     bool Remove(string key) {
-        int i = this.IndexOf(key)
+        defined int i = this.IndexOf(key)
         if (i < 0) { return false }
         for (int j = i; j < this.count - 1; j++) {
             this.keys[j] = this.keys[j + 1]

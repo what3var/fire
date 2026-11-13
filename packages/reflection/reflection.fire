@@ -15,14 +15,14 @@ class Attribute {
         this.ArgTexts = flat d[2]
     }
 
-    int ArgCount() { return this.ArgTexts.length }
+    defined int ArgCount() { return this.ArgTexts.length }
 
     // The flags that the attributes of a flag enum in `attributes` set (`[Test a]`, `[Test b]`: together a | b); `ofEnum` is a value of the enum (`Test.a`) - the
     // result is a value of that enum - or its name ("Test" - the result is a number)
     static any FlagsIn(List attributes, any ofEnum) {
         bool byName = ofEnum is of string
         string name = byName ? ofEnum : __refl_enum_name(ofEnum)
-        int value = 0
+        defined int value = 0
         if (name == undefined) { return value }
         foreach (a in attributes) {
             if ((a.Name == name || a.Name.EndsWith("." + name)) && a.Args.length == 1 && a.Args[0] is of int) { value = value | a.Args[0] }
@@ -77,7 +77,7 @@ class Member {
     bool HasFlag(any flag) { return this.Flags(flag).HasFlag(flag) }
     any Flags(any ofEnum) { return Attribute.FlagsIn(this.Attributes, ofEnum) }
 
-    int ParamCount() { return this.ParamNames.length }
+    defined int ParamCount() { return this.ParamNames.length }
     bool IsField() { return this.Kind == "field" }
     bool IsProperty() { return this.Kind == "property" }
     bool IsMethod() { return this.Kind == "method" }

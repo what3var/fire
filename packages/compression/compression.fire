@@ -23,7 +23,7 @@ namespace Compression {
             if (code == 3) { throw new ArgumentException(message) }
             throw new IO.IOException(message, 9)
         }
-        static int Check(defined int result) {
+        static defined int Check(defined int result) {
             if (result < 0) { Compression.Errors.Throw() }
             return result
         }
@@ -37,7 +37,7 @@ namespace Compression {
     // compressed data; `inner` is closed with it unless `leaveOpen`.
     class DeflateStream : IO.Stream {
         IO.Stream inner
-        int handle = -1
+        defined int handle = -1
         Compression.Mode mode
         bool leaveOpen
         bool closed = false
@@ -64,7 +64,7 @@ namespace Compression {
             if (this.closed) { throw new IO.StreamClosedException("The compression stream is closed.") }
         }
 
-        override int Read(byte buffer[], defined int offset, defined int count) {
+        override defined int Read(byte buffer[], defined int offset, defined int count) {
             this.Check()
             if (this.mode != Compression.Mode.Decompress) { throw new IO.IOException("This stream compresses: it cannot be read.", 8) }
             if (count == 0) { return 0 }
@@ -81,7 +81,7 @@ namespace Compression {
             }
         }
 
-        override int Write(byte buffer[], defined int offset, defined int count) {
+        override defined int Write(byte buffer[], defined int offset, defined int count) {
             this.Check()
             if (this.mode != Compression.Mode.Compress) { throw new IO.IOException("This stream decompresses: it cannot be written.", 8) }
             if (!__CmpDeflateWrite(this.handle, buffer, offset, count)) { Compression.Errors.Throw() }
@@ -208,11 +208,11 @@ namespace Zip {
             if (month < 1 || month > 12 || day < 1 || day > 31 || hour > 23 || minute > 59 || second > 59) { return new DateTime(1980, 1, 1) }
             try { return new DateTime(year, month, day, hour, minute, second) } catch (Exception e) { return new DateTime(1980, 1, 1) }
         }
-        static int DosDate(DateTime t) {
+        static defined int DosDate(DateTime t) {
             if (t.Year < 1980) { return (1 << 5) | 1 }
             return ((t.Year - 1980) << 9) | (t.Month << 5) | t.Day
         }
-        static int DosTime(DateTime t) {
+        static defined int DosTime(DateTime t) {
             if (t.Year < 1980) { return 0 }
             return (t.Hour << 11) | (t.Minute << 5) | (t.Second / 2)
         }
@@ -222,16 +222,16 @@ namespace Zip {
     class Entry {
         Zip.Archive archive
         string fullName
-        int length
-        int compressedLength
-        int crc
-        int method
-        int flags
-        int headerOffset
-        int dosDate
-        int dosTime
+        defined int length
+        defined int compressedLength
+        defined int crc
+        defined int method
+        defined int flags
+        defined int headerOffset
+        defined int dosDate
+        defined int dosTime
         string comment = ""
-        int externalAttributes
+        defined int externalAttributes
         bool zip64Header = false   // writing: the local header carries the Zip64 field (then the data descriptor has 8-byte sizes)
 
         // The path in the archive ("docs/readme.txt"; folders end with "/").
@@ -245,9 +245,9 @@ namespace Zip {
             }
         }
         // The size of the content, uncompressed and compressed.
-        int Length { get { return this.length } }
-        int CompressedLength { get { return this.compressedLength } }
-        int Crc32 { get { return this.crc } }
+        defined int Length { get { return this.length } }
+        defined int CompressedLength { get { return this.compressedLength } }
+        defined int Crc32 { get { return this.crc } }
         Zip.Method CompressionMethod { get { return this.method!Zip.Method } }
         bool IsDirectory { get { return this.fullName.EndsWith("/") } }
         bool IsEncrypted { get { return (this.flags & 1) != 0 } }
@@ -297,17 +297,17 @@ namespace Zip {
     // A part of a seekable stream (the compressed bytes of an entry); the position of the stream underneath is set before every read.
     class Part : IO.Stream {
         IO.Stream source
-        int start
-        int length
-        int at = 0
+        defined int start
+        defined int length
+        defined int at = 0
 
-        construct(IO.Stream source, int start, int length) {
+        construct(IO.Stream source, defined int start, defined int length) {
             this.source = source
             this.start = start
             this.length = length
         }
         override bool CanRead { get { return true } }
-        override int Read(byte buffer[], defined int offset, defined int count) {
+        override defined int Read(byte buffer[], defined int offset, defined int count) {
             var left = this.length - this.at
             if (left <= 0 || count <= 0) { return 0 }
             if (count > left) { count = left }
@@ -323,8 +323,8 @@ namespace Zip {
     class Checked : IO.Stream {
         IO.Stream inner
         Zip.Entry entry
-        int crc = 0
-        int total = 0
+        defined int crc = 0
+        defined int total = 0
         bool checkedEnd = false
 
         construct(IO.Stream inner, Zip.Entry entry) {
@@ -333,7 +333,7 @@ namespace Zip {
             this.entry = entry
         }
         override bool CanRead { get { return true } }
-        override int Read(byte buffer[], defined int offset, defined int count) {
+        override defined int Read(byte buffer[], defined int offset, defined int count) {
             var n = this.inner.Read(buffer, offset, count)
             if (n > 0) {
                 this.crc = __CmpCrc32(this.crc, buffer, offset, n)
@@ -353,8 +353,8 @@ namespace Zip {
     class EntryStream : IO.Stream {
         Zip.Archive archive
         Zip.Entry entry
-        int handle
-        int crc = 0
+        defined int handle
+        defined int crc = 0
         bool closed = false
         byte chunk[]
 
@@ -365,7 +365,7 @@ namespace Zip {
             this.handle = Compression.Errors.Check(__CmpDeflateNew(Compression.Format.Raw, level))
         }
         override bool CanWrite { get { return !this.closed } }
-        override int Write(byte buffer[], defined int offset, defined int count) {
+        override defined int Write(byte buffer[], defined int offset, defined int count) {
             if (this.closed) { throw new IO.StreamClosedException("The entry is already closed.") }
             if (count <= 0) { return 0 }
             this.crc = __CmpCrc32(this.crc, buffer, offset, count)
@@ -413,7 +413,7 @@ namespace Zip {
         bool closed = false
         List<Zip.Entry> entries
         string comment = ""
-        int written = 0
+        defined int written = 0
         Zip.EntryStream open
 
         // From these on a size or offset (a count of entries) is written as Zip64; only tests lower them (TestZip64Limits).
@@ -450,7 +450,7 @@ namespace Zip {
         // An archive in memory (the bytes of a .zip file).
         static Zip.Archive FromBytes(byte data[]) { return Zip.Archive.Read(new IO.MemoryStream(data)) }
 
-        byte[] ReadAt(int position, defined int count) {
+        byte[] ReadAt(defined int position, defined int count) {
             this.source.Position = position
             return this.source.ReadBytes(count)
         }
@@ -629,7 +629,7 @@ namespace Zip {
             }
         }
 
-        static int NameFlags(byte name[]) {
+        static defined int NameFlags(byte name[]) {
             for (var i = 0; i < name.length; i++) { if (name[i] >= 128) { return 0x800 } }
             return 0
         }

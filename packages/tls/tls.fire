@@ -27,7 +27,7 @@ namespace Tls {
             throw new Net.NetException(message, code)
         }
 
-        static int Handle(defined int handle) {
+        static defined int Handle(defined int handle) {
             if (handle < 0) { Throw() }
             return handle
         }
@@ -60,11 +60,11 @@ namespace Tls {
 
     // An encrypted connection over a Net.TcpClient. Read returns 0 when the other side has ended the connection.
     class Stream : IO.Stream, Net.IConnection {
-        int handle
+        defined int handle
         bool closed
         Net.TcpClient tcp
-        int readLimit
-        int writeLimit
+        defined int readLimit
+        defined int writeLimit
 
         // A TLS connection to host:port in one call (the TCP connection is made and the handshake done).
         static Tls.Stream Connect(string host, defined int port, Tls.Options options = undefined, any timeout = 10000) {
@@ -152,7 +152,7 @@ namespace Tls {
         }
 
         // Up to `count` bytes (at least one unless the other side has ended the connection: then 0). Waits up to ReadTimeout, then Net.TimeoutException.
-        override int Read(byte buffer[], defined int offset, defined int count) {
+        override defined int Read(byte buffer[], defined int offset, defined int count) {
             this.Check()
             var deadline = Net.Clock.Deadline(this.readLimit)
             var tries = 0
@@ -167,7 +167,7 @@ namespace Tls {
         }
 
         // All `count` bytes.
-        override int Write(byte buffer[], defined int offset, defined int count) {
+        override defined int Write(byte buffer[], defined int offset, defined int count) {
             this.Check()
             var done = 0
             while (done < count) {
@@ -206,7 +206,7 @@ namespace Tls {
 
     // The server side: a certificate (with its chain, PEM text) and the private key.
     class Server {
-        int context
+        defined int context
         bool closed
 
         construct(string certPem, string keyPem) {

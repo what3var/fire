@@ -4,9 +4,9 @@ namespace Audio {
     enum Wave { Sine, Square, Triangle, Saw, Noise }
 
     class AudioException : Exception {
-        int code
+        defined int code
 
-        construct(string message, int code = 7) : base(message) {
+        construct(string message, defined int code = 7) : base(message) {
             this.code = code
         }
     }
@@ -43,7 +43,7 @@ namespace Audio {
             throw new AudioException(message, code)
         }
 
-        static int Handle(defined int handle) {
+        static defined int Handle(defined int handle) {
             if (handle < 0) { Throw() }
             return handle
         }
@@ -78,13 +78,13 @@ namespace Audio {
 
     // A sound in memory: 16 bit samples (little endian, interleaved) in a buffer, from `Offset` on, `Length` bytes.
     class Sound {
-        int rate
-        int channels
+        defined int rate
+        defined int channels
         byte data[]
-        int offset
-        int length
+        defined int offset
+        defined int length
 
-        construct(int rate, int channels, byte data[], int offset = 0, defined int length = -1) {
+        construct(defined int rate, defined int channels, byte data[], defined int offset = 0, defined int length = -1) {
             if (rate < 1000 || rate > 192000) { throw new AudioException("The rate must be between 1000 and 192000 Hz.", 1) }
             if (channels < 1 || channels > 2) { throw new AudioException("A sound has one (mono) or two (stereo) channels.", 1) }
             if (length < 0) { length = data.length - offset }
@@ -96,15 +96,15 @@ namespace Audio {
             this.length = length - (length % (channels * 2))
         }
 
-        int Rate { get { return this.rate } }
-        int Channels { get { return this.channels } }
+        defined int Rate { get { return this.rate } }
+        defined int Channels { get { return this.channels } }
         // The samples (a buffer of bytes), starting at Offset.
         byte[] Data { get { return this.data } }
-        int Offset { get { return this.offset } }
+        defined int Offset { get { return this.offset } }
         // The number of bytes of the sound.
-        int Length { get { return this.length } }
+        defined int Length { get { return this.length } }
         // The number of frames (a frame is one sample per channel).
-        int Frames { get { return this.length / (this.channels * 2) } }
+        defined int Frames { get { return this.length / (this.channels * 2) } }
         // How long it plays, in milliseconds.
         int Milliseconds { get { return this.Frames * 1000 / this.rate } }
 
@@ -199,15 +199,15 @@ namespace Audio {
 
     // One output: a device that plays 16 bit samples.
     class Output {
-        int handle
+        defined int handle
         bool closed
         string name
-        int rate
-        int channels
-        int volume
+        defined int rate
+        defined int channels
+        defined int volume
 
         // `device`: a name ("default", "pulse", "alsa", "sim", ...) or a number - the GPIO pin of a PWM speaker on an ESP32; `rate` in Hz; `channels` 1 (mono) or 2 (stereo).
-        construct(string device = "default", int rate = 44100, int channels = 1) {
+        construct(string device = "default", defined int rate = 44100, defined int channels = 1) {
             this.handle = -1
             this.closed = false
             this.rate = rate
@@ -229,12 +229,12 @@ namespace Audio {
         destruct() { try { this.Close() } catch (AudioException e) { } }
 
         string Name { get { return this.name } }
-        int Rate { get { return this.rate } }
-        int Channels { get { return this.channels } }
+        defined int Rate { get { return this.rate } }
+        defined int Channels { get { return this.channels } }
         bool IsClosed { get { return this.closed } }
 
         // The volume in percent (0 .. 100) of what is written from now on.
-        int Volume {
+        defined int Volume {
             get { return this.volume }
             set {
                 this.Check()
@@ -244,7 +244,7 @@ namespace Audio {
         }
 
         // The bytes that were taken and have not been played yet.
-        int Queued {
+        defined int Queued {
             get {
                 this.Check()
                 var q = __AudioQueued(this.handle)
@@ -261,7 +261,7 @@ namespace Audio {
         }
 
         // Takes as much of the bytes as fits into the buffer of the device (whole frames) and returns how many it took (0: full) - without waiting.
-        int Offer(byte buffer[], defined int offset = 0, defined int count = -1) {
+        defined int Offer(byte buffer[], defined int offset = 0, defined int count = -1) {
             this.Check()
             if (count < 0) { count = buffer.length - offset }
             var n = __AudioWrite(this.handle, buffer, offset, count)
@@ -350,14 +350,14 @@ namespace Audio {
     // One input: a device that records 16 bit samples (a microphone, a line in). It records from the moment it is opened; what is not read in time is lost
     // (the newest or the oldest sound, depending on the system - read often, a few times per second at least).
     class Input {
-        int handle
+        defined int handle
         bool closed
         string name
-        int rate
-        int channels
+        defined int rate
+        defined int channels
 
         // `device`: "default", "pulse", "alsa", "sim", ... (Audio.Board.Inputs()); `rate` in Hz; `channels` 1 (mono) or 2 (stereo).
-        construct(string device = "default", int rate = 44100, int channels = 1) {
+        construct(string device = "default", defined int rate = 44100, defined int channels = 1) {
             this.handle = -1
             this.closed = false
             this.name = device
@@ -369,8 +369,8 @@ namespace Audio {
         destruct() { try { this.Close() } catch (AudioException e) { } }
 
         string Name { get { return this.name } }
-        int Rate { get { return this.rate } }
-        int Channels { get { return this.channels } }
+        defined int Rate { get { return this.rate } }
+        defined int Channels { get { return this.channels } }
         bool IsClosed { get { return this.closed } }
 
         // The bytes recorded and not read yet.
@@ -388,7 +388,7 @@ namespace Audio {
         }
 
         // Takes what was recorded into the buffer (whole frames, up to `count` bytes from `offset` on) and returns the number of bytes - without waiting (0: nothing yet).
-        int Read(byte buffer[], defined int offset = 0, defined int count = -1) {
+        defined int Read(byte buffer[], defined int offset = 0, defined int count = -1) {
             this.Check()
             if (count < 0) { count = buffer.length - offset }
             var n = __AudioInRead(this.handle, buffer, offset, count)
@@ -435,12 +435,12 @@ namespace Audio {
         static undefined Hold(bool hold = true) { __AudioSimHold(hold) }
 
         // The number of bytes that were played.
-        static int Played() { return __AudioSimInfo(0) }
+        static defined int Played() { return __AudioSimInfo(0) }
         // The rate and the channels of the output that was opened last.
-        static int Rate() { return __AudioSimInfo(1) }
-        static int Channels() { return __AudioSimInfo(2) }
+        static defined int Rate() { return __AudioSimInfo(1) }
+        static defined int Channels() { return __AudioSimInfo(2) }
         // The bytes that wait while the device is held.
-        static int Waiting() { return __AudioSimInfo(3) }
+        static defined int Waiting() { return __AudioSimInfo(3) }
         // The bytes that were played, as a buffer.
         static any Data() { return __AudioSimData() }
 
@@ -454,7 +454,7 @@ namespace Audio {
         static undefined FeedSound(Audio.Sound sound) { Audio.Sim.Feed(sound.Data, sound.Offset, sound.Length) }
 
         // The bytes the simulated input still has, and those it handed over.
-        static int InputWaiting() { return __AudioSimInfo(4) }
-        static int Recorded() { return __AudioSimInfo(5) }
+        static defined int InputWaiting() { return __AudioSimInfo(4) }
+        static defined int Recorded() { return __AudioSimInfo(5) }
     }
 }
