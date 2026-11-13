@@ -258,7 +258,7 @@ Own methods for the generated classes come in an extension (`extension Person { 
 | 5 | Session: identity map, snapshots, Save in one transaction, generated keys, `[Version]` - **built** (`Data.Session`, `Data.ConcurrencyException`) | 2, 4 |
 | 6 | Relations: navigation fields, `Include`, `Any`/subqueries, join tables - **built** ([HasMany], [BelongsTo], [ManyToMany], Include/Load in sessions, Any/All as EXISTS, writing through lists, also without a session) | 4, 5 |
 | 7 | Pool, `Data.PerRequest`, Rpc DI - **built** (`Data.Pool` with an actor home; `Http.Database` in the package `http.data`; Http.Rpc takes constructor parameters from the items of the request) | 1 |
-| 8 | `data.mysql` (wire protocol, TLS, prepared statements) - **built** (in fire on `net`/`tls`; native and caching_sha2 logins, the binary protocol; RSA without TLS and streaming of big results still open) | 1, 7 |
+| 8 | `data.mysql` (wire protocol, TLS, prepared statements) - **built** (in fire on `net`/`tls`; native, caching_sha2 and sha256 logins, RSA-OAEP without TLS, the binary protocol, streamed results, procedures; tested against MariaDB 10.11 and MySQL 8.0) | 1, 7 |
 | 9 | `data.sqlserver` (TDS, TLS in TDS, `sp_executesql`) | 1, 7 |
 | 10 | Migrations, `forge data diff/apply/import` | 2, a driver with schema reading |
 | 11 | Designer: the `.fdata` format and forge's generator (classes, Model, Context, DDL) | 2, 10 |

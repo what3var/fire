@@ -30919,8 +30919,7 @@ else
     // The MySQL/MariaDB driver against a running server - only when there is one: FIRE_TEST_MYSQL=mysql://127.0.0.1:3306/test (an empty database: its tables
     // are dropped), FIRE_TEST_MYSQL_USER, FIRE_TEST_MYSQL_PASSWORD. The mapping, the queries, the sessions and the relations are those of the case of the
     // in-memory database (the same program on another driver), the SQL before them is MySQL's.
-    string? mysqlUrl = Environment.GetEnvironmentVariable("FIRE_TEST_MYSQL");
-    if (!string.IsNullOrEmpty(mysqlUrl))
+    foreach (string mysqlUrl in (Environment.GetEnvironmentVariable("FIRE_TEST_MYSQL") ?? "").Split(' ', StringSplitOptions.RemoveEmptyEntries))
     {
         string Lit(string? t) => t == null ? "undefined" : "\"" + t.Replace("\\", "\\\\").Replace("\"", "\\\"") + "\"";
         string open = $"MyDb.Open({Lit(mysqlUrl)}, {Lit(Environment.GetEnvironmentVariable("FIRE_TEST_MYSQL_USER"))}, {Lit(Environment.GetEnvironmentVariable("FIRE_TEST_MYSQL_PASSWORD"))})";
@@ -30933,7 +30932,7 @@ else
             .Replace("create table Tag(code text primary key, label text)", "create table Tag(code varchar(20) primary key, label text)")
             .Replace("\\\"Purchase\\\"", "Purchase")
             .Replace("create unique index ix_memo_text on Memo (text)", "create unique index ix_memo_text on Memo (text(100))");
-        natCases = natCases.Append(("Data/MySQL: der Treiber in fire gegen einen laufenden Server (FIRE_TEST_MYSQL): Handshake, Prepared Statements im Binaerprotokoll (Zahlen, Text, Unicode, NULL, BLOB, DOUBLE/FLOAT, DECIMAL, DATETIME, UNSIGNED), mehrere Anweisungen, Fehlerarten, Transaktionen mit Savepoints, TLS (prefer/require), caching_sha2_password-Pruefwert; dann Mapping, Abfragen, Sessions und Beziehungen wie bei der In-Memory-Datenbank", header + $$"""
+        natCases = natCases.Append(("Data/MySQL " + mysqlUrl + ": der Treiber in fire gegen einen laufenden Server (FIRE_TEST_MYSQL): Handshake, Prepared Statements im Binaerprotokoll (Zahlen, Text, Unicode, NULL, BLOB, DOUBLE/FLOAT, DECIMAL, DATETIME, UNSIGNED), mehrere Anweisungen, Fehlerarten, Transaktionen mit Savepoints, TLS (prefer/require), Streaming (Zeilen vom Socket, geparkt bei Befehlen dazwischen), Prozeduren mit mehreren Ergebnissen, Login-Pruefwerte und RSA-OAEP gegen einen bekannten Schluesseltext, auf MySQL 8 die Logins ohne TLS (Schluessel vom Server, Cache, sha256_password); dann Mapping, Abfragen, Sessions und Beziehungen wie bei der In-Memory-Datenbank", header + $$"""
             class MyDb {
                 static string url
                 static string user
@@ -31014,6 +31013,76 @@ else
             for (var i = 0; i < 20; i++) { salt[i] = i + 1 }
             print("native " + MyDb.Hex(Data.MysqlConnection.Scramble("mysql_native_password", "secret", salt)))
             print("sha2 " + MyDb.Hex(Data.MysqlConnection.Scramble("caching_sha2_password", "secret", salt)))
+            // (RSA-OAEP with a fixed seed: the ciphertext computed elsewhere (Python, decrypted again with openssl) - SPKI and PKCS#1 keys)
+            byte seed[] = new byte[20]
+            for (var i = 0; i < 20; i++) { seed[i] = 100 + i }
+            var spki = "-----BEGIN PUBLIC KEY-----\nMIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAtsB8+42pIYlHpvk8nMCQ\n9TdESiuUKoH+siuDhELaokE11/63+18vPgPMxfVvlcRlrHbGCP3m9KfORehTnG4D\nYO6piO5UEBBY6sCtDCC6WenihFQkHIhSjzH1bQPqaVknQvESsKT3PQUwNyEhdGNy\nkLgkBq2VUlvg1N7ppXDa3Onnr1pwix5nc4KAmpbfn+azM9JHin2ddvM0XzpFuiFC\nYleYcgHO37rUe5JdBjR2xQ8Rf5yB5LlSx2BzhP5hG71Gr92KOUWDTEtGLUZX1nKO\nZkOb2LpVF2dYvsQJ/5WIxyerVBo1vi87A1WwY3oVtPaGgUMj81xUFaPYyoD6P/7K\n1wIDAQAB\n-----END PUBLIC KEY-----"
+            var pkcs1 = "-----BEGIN RSA PUBLIC KEY-----\nMIIBCgKCAQEAtsB8+42pIYlHpvk8nMCQ9TdESiuUKoH+siuDhELaokE11/63+18v\nPgPMxfVvlcRlrHbGCP3m9KfORehTnG4DYO6piO5UEBBY6sCtDCC6WenihFQkHIhS\njzH1bQPqaVknQvESsKT3PQUwNyEhdGNykLgkBq2VUlvg1N7ppXDa3Onnr1pwix5n\nc4KAmpbfn+azM9JHin2ddvM0XzpFuiFCYleYcgHO37rUe5JdBjR2xQ8Rf5yB5LlS\nx2BzhP5hG71Gr92KOUWDTEtGLUZX1nKOZkOb2LpVF2dYvsQJ/5WIxyerVBo1vi87\nA1WwY3oVtPaGgUMj81xUFaPYyoD6P/7K1wIDAQAB\n-----END RSA PUBLIC KEY-----"
+            var expected = "21cde573f17c4b53bee75cabb37561afb9545d456bb0761f986bd0820c876a45849cf7abb7fa60562954afed7490cb33c742d7ec3f9911eb040c441b526456a73fff3dc9dccf44f1e1a73ffd8598e797646f39428b32d64e9c80dbefbac1b27d85fa484809c1a70625f4da8567e6da118f1684eae139fa3472d2098e00eaf556ac746b890b346960cfc0c311bb5697768f99448212c48aa8acbe35cf84a57c232522926e45f929db61f4357e95fd53679282164bb9531253606c6a4e3728ecbc6f041f00751270efed9e6c27eb51e9542b147465d9576723b377307b97279f7777c41e45507287591c3ae839a77dc0ca419b47967e31935f84277a95cf41d142"
+            print("rsa " + (MyDb.Hex(Data.MysqlRsa.Password(spki, "secret", salt, seed)) == expected) + " " + (MyDb.Hex(Data.MysqlRsa.Password(pkcs1, "secret", salt, seed)) == expected))
+            try { Data.MysqlRsa.Password("-----BEGIN PUBLIC KEY-----\nAAAA\n-----END PUBLIC KEY-----", "x", salt, seed) } catch (Data.ConnectionException e) { print("bad key " + e.message) }
+            // (streaming: rows come from the socket one by one; a command in between parks the rest; a reader left early)
+            var sdb0 = new Data.Connection(MyDb.url, new Data.Credentials(MyDb.user, MyDb.password))
+            sdb0.Execute("create table many(id int primary key, v varchar(20))")
+            sdb0.Begin()
+            for (var i = 0; i < 300; i++) { sdb0.Execute("insert into many values (?, ?)", [i, "v" + i]) }
+            sdb0.Commit()
+            int seen = 0
+            int sum = 0
+            foreach (row in sdb0.Query("select id, v from many order by id")) {
+                seen++
+                int id = row.Int("id")
+                sum = sum + id
+                if (id % 100 == 0) { sdb0.Execute("update many set v = ? where id = ?", ["changed", id + 1]) }
+            }
+            print("streamed " + seen + " sum " + sum + " changed " + sdb0.Scalar("select count(*) from many where v = 'changed'"))
+            int early = 0
+            foreach (row in sdb0.Query("select id from many order by id")) {
+                early++
+                if (early == 5) { break }
+            }
+            print("early " + early + " then " + sdb0.Scalar("select count(*) from many") + " " + sdb0.Rows("select v from many where id = 1")[0][0])
+            var outer = sdb0.Query("select id from many where id < 3 order by id")
+            var inner = sdb0.Query("select id from many where id >= 297 order by id")
+            var both = ""
+            foreach (row in outer) {
+                both = both + " " + row[0]
+                foreach (r2 in inner) { both = both + "/" + r2[0] }
+            }
+            print("nested readers" + both)
+            sdb0.Execute("drop procedure if exists two")
+            sdb0.Execute("create procedure two(in lim int) begin select id from many where id < lim order by id; select count(*) from many; end")
+            print("call " + sdb0.Rows("call two(?)", [3]).Count + " then " + sdb0.Scalar("select 7"))
+            sdb0.Execute("call two(2)")
+            print("call exec then " + sdb0.Scalar("select 8"))
+            // (the logins without TLS: RSA - on a server with caching_sha2_password (MySQL 8) when the test user may make users (CREATE USER, RELOAD))
+            string version = sdb0.Scalar("select version()")
+            if (version.IndexOf("MariaDB") >= 0) { print("logins: MariaDB") }
+            else {
+                string server = MyDb.url.Substring(0, MyDb.url.LastIndexOf("/") + 1)
+                try {
+                    sdb0.Execute("drop user if exists fire_rsa, fire_sha")
+                    sdb0.Execute("create user fire_rsa identified with caching_sha2_password by 'pw!rsa'")
+                    sdb0.Execute("create user fire_sha identified with sha256_password by 'pw!sha'")
+                    sdb0.Execute("flush privileges")
+                    try { new Data.Connection(server + "?tls=off", new Data.Credentials("fire_rsa", "pw!rsa")) } catch (Data.ConnectionException e) { print("no key " + e.Code) }
+                    var r1 = new Data.Connection(server + "?tls=off&fetchkey=true", new Data.Credentials("fire_rsa", "pw!rsa"))
+                    print("fetched key " + r1.Scalar("select current_user()"))
+                    r1.Close()
+                    var r2 = new Data.Connection(server + "?tls=off", new Data.Credentials("fire_rsa", "pw!rsa"))
+                    print("cached " + r2.Scalar("select current_user()"))
+                    r2.Close()
+                    try { new Data.Connection(server + "?tls=off&fetchkey=true", new Data.Credentials("fire_rsa", "wrong")) } catch (Data.ConnectionException e) { print("wrong " + e.Code) }
+                    var r3 = new Data.Connection(server + "?tls=off&fetchkey=true", new Data.Credentials("fire_sha", "pw!sha"))
+                    print("sha256 " + r3.Scalar("select current_user()"))
+                    r3.Close()
+                    var r4 = new Data.Connection(server + "?tls=require", new Data.Credentials("fire_sha", "pw!sha"))
+                    print("sha256 tls " + r4.Scalar("select current_user()"))
+                    r4.Close()
+                    sdb0.Execute("drop user fire_rsa, fire_sha")
+                } catch (Data.DataException e) { print("logins: not allowed " + e.Code) }
+            }
+            sdb0.Close()
             print("end")
             {{orm}}
             """)).ToArray();

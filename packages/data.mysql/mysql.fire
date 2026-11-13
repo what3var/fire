@@ -3,14 +3,18 @@
 //     mysql://host/shop?tls=prefer      TLS when the server offers it (default; the certificate is not checked) - tls=require: TLS or nothing,
 //                                       tls=verify: TLS with the certificate checked, tls=off: never
 //     &ca=/etc/ssl/db.pem               the certificate(s) of the authority for tls=verify (PEM; without: the system's)
+//     &key=server.pem / &fetchkey=true  the server's RSA key for a login without TLS (caching_sha2_password, sha256_password): from a file / from the server
 //     &timeout=10000                    connecting and waiting for an answer, in ms
-// The wire protocol 4.1: the handshake (mysql_native_password, caching_sha2_password - its full login needs TLS -, an auth switch), STARTTLS, prepared
-// statements in the binary protocol (the parameters are never text in the SQL), COM_QUERY for SQL without parameters (several statements at once).
+// The wire protocol 4.1: the handshake (mysql_native_password, caching_sha2_password, sha256_password - the password over TLS or RSA-OAEP -, an auth
+// switch), STARTTLS, prepared statements in the binary protocol (the parameters are never text in the SQL), rows streamed from the socket, COM_QUERY for
+// SQL without parameters (several statements at once).
 #import "data"
 #import "net"
 #import "tls"
 #import "hash"
 #import "io"
+#import "filesystem"
+#import "time"
 
 namespace Data {
     [Keep]
@@ -192,10 +196,21 @@ namespace Data {
         bool closed
         Data.MysqlDialect dialect
         int timeout
+        string keyFile
+        bool fetchKey
+        bool secure
+        // the result whose rows are being read from the socket (0: none), the numbers of the results, the rest of results interrupted by a command
+        int streamToken
+        int tokens
+        List parked
 
         construct(string target, Data.Credentials credentials) {
             this.dialect = new Data.MysqlDialect()
             this.closed = true
+            this.streamToken = 0
+            this.tokens = 0
+            this.parked = new List()
+            this.status = 0
             // //[user@]host[:port]/database?options
             string rest = target
             if (rest.StartsWith("//")) { rest = rest.Substring(2) }
@@ -232,6 +247,8 @@ namespace Data {
             }
             string tlsMode = "prefer"
             string ca = undefined
+            this.keyFile = undefined
+            this.fetchKey = false
             this.timeout = 10000
             if (options != "") {
                 any parts = options.Split("&")
@@ -244,7 +261,9 @@ namespace Data {
                     if (key == "tls" || key == "ssl" || key == "sslmode") { tlsMode = value.ToLower() }
                     else if (key == "timeout") { this.timeout = value.ToInt() }
                     else if (key == "ca") { ca = value }
-                    else { throw new ArgumentException("data.mysql: unknown option '" + option + "' (tls=off|prefer|require|verify, ca=file, timeout=ms).") }
+                    else if (key == "key") { this.keyFile = value }
+                    else if (key == "fetchkey") { this.fetchKey = value.ToLower() == "true" || value == "1" }
+                    else { throw new ArgumentException("data.mysql: unknown option '" + option + "' (tls=off|prefer|require|verify, ca=file, key=file, fetchkey=true, timeout=ms).") }
                 }
             }
             if (!(tlsMode == "off" || tlsMode == "prefer" || tlsMode == "require" || tlsMode == "verify")) { throw new ArgumentException("data.mysql: tls is off, prefer, require or verify, not '" + tlsMode + "'.") }
@@ -317,6 +336,7 @@ namespace Data {
         // (a command: a new sequence)
         undefined Command(byte payload[]) {
             this.Check()
+            if (this.streamToken != 0) { this.Park() }
             this.seq = 0
             this.Write(payload)
         }
@@ -411,7 +431,8 @@ namespace Data {
             answer.Byte(45)
             answer.Zeros(23)
             answer.Nul(user)
-            byte scramble[] = Data.MysqlConnection.Scramble(plugin, password, salt)
+            this.secure = secure
+            byte scramble[] = this.Answer(plugin, password, salt)
             if ((use & 0x200000) != 0) { answer.LenBytes(scramble) }
             else {
                 answer.Byte(scramble.length)
@@ -441,27 +462,66 @@ namespace Data {
                     var s = new IO.MemoryStream()
                     if (keep > 0) { s.Write(fresh, 0, keep) }
                     salt = s.ToBuffer()
-                    this.Write(Data.MysqlConnection.Scramble(plugin, password, salt))
+                    this.Write(this.Answer(plugin, password, salt))
                     continue
                 }
                 if (first == 0x01) {
                     p.Byte()
+                    if (p.Left > 1) {
+                        // (the public key of the server, asked for with 0x02 (caching_sha2_password) or 0x01 (sha256_password))
+                        string pem = p.Text(p.Left)
+                        this.Write(Data.MysqlRsa.Password(pem, password, salt, Data.MysqlRsa.Seed(salt)))
+                        continue
+                    }
                     int what = p.Byte()
                     if (what == 3) { continue }           // (fast authentication: the OK follows)
                     if (what == 4) {
-                        if (!secure) {
+                        // (the full authentication: the password itself - in clear text over TLS, else encrypted with the server's RSA key)
+                        if (secure) {
+                            var clear = new Data.MysqlOut()
+                            clear.Nul(password)
+                            this.Write(clear.ToBuffer())
+                        } else if (this.keyFile != undefined) {
+                            this.Write(Data.MysqlRsa.Password(IO.File.ReadAllText(this.keyFile), password, salt, Data.MysqlRsa.Seed(salt)))
+                        } else if (this.fetchKey) {
+                            byte ask[] = new byte[1]
+                            ask[0] = 2
+                            this.Write(ask)
+                        } else {
                             this.closed = true
-                            throw new Data.ConnectionException("data.mysql: the first login of '" + user + "' with caching_sha2_password needs TLS (tls=prefer or require on a server with TLS), or a login once with TLS before.", 2061)
+                            throw new Data.ConnectionException(Data.MysqlConnection.NeedsKey(user, plugin), 2061)
                         }
-                        var clear = new Data.MysqlOut()
-                        clear.Nul(password)
-                        this.Write(clear.ToBuffer())
                         continue
                     }
                 }
                 this.closed = true
                 throw new Data.ConnectionException("data.mysql: an unexpected answer in the login (" + first + ").", 2027)
             }
+        }
+
+        // What the client answers to the nonce of a plugin (sha256_password: the password - over TLS as text, else encrypted or a request for the key).
+        byte[] Answer(string plugin, string password, byte salt[]) {
+            if (plugin != "sha256_password") { return Data.MysqlConnection.Scramble(plugin, password, salt) }
+            if (password == "") {
+                byte none[] = new byte[1]
+                return none
+            }
+            if (this.secure) {
+                var clear = new Data.MysqlOut()
+                clear.Nul(password)
+                return clear.ToBuffer()
+            }
+            if (this.keyFile != undefined) { return Data.MysqlRsa.Password(IO.File.ReadAllText(this.keyFile), password, salt, Data.MysqlRsa.Seed(salt)) }
+            if (this.fetchKey) {
+                byte ask[] = new byte[1]
+                ask[0] = 1
+                return ask
+            }
+            this.closed = true
+            throw new Data.ConnectionException(Data.MysqlConnection.NeedsKey("", plugin), 2061)
+        }
+        static string NeedsKey(string user, string plugin) {
+            return "data.mysql: the login with " + plugin + " sends the password: it needs TLS (tls=prefer or require on a server with TLS), the server's public key (key=file.pem) or the permission to ask the server for it (fetchkey=true - only where nobody can pose as the server)."
         }
 
         // The answer to the nonce of a plugin.
@@ -508,28 +568,115 @@ namespace Data {
             c.Byte(0x03)
             c.Bytes(IO.Utf8.GetBytes(sql))
             this.Command(c.ToBuffer())
+            var p = this.Read()
+            if (Data.MysqlConnection.IsErr(p)) { this.Err(p) }
+            if (p.Peek() == 0x00) { this.Ok(p) } else { this.SkipResult(p) }
+            this.DrainMore()
+        }
+
+        // ---- results ----
+        // (a result set after its first packet (the number of columns): columns and rows are read and thrown away)
+        undefined SkipResult(Data.MysqlIn first) {
+            int columns = first.LenEnc()
+            for (var i = 0; i < columns; i++) { this.Read() }
+            var eof = this.Read()
+            if (!Data.MysqlConnection.IsEof(eof)) { throw new Data.DataException("data.mysql: expected the end of the columns.") }
+            while (true) {
+                var row = this.Read()
+                if (Data.MysqlConnection.IsErr(row)) { this.Err(row) }
+                if (Data.MysqlConnection.IsEof(row)) {
+                    this.EofStatus(row)
+                    return
+                }
+            }
+        }
+        // (the status flags of an EOF packet - the packet is left as it is)
+        undefined EofStatus(Data.MysqlIn eof) {
+            int at = eof.at
+            eof.Byte()
+            if (eof.Left >= 4) {
+                eof.Int(2)
+                this.status = eof.Int(2)
+            } else { this.status = 0 }
+            eof.at = at
+        }
+        // (the results after the first one - a CALL of a procedure, several statements: SERVER_MORE_RESULTS_EXISTS)
+        undefined DrainMore() {
+            while ((this.status & 0x0008) != 0) {
+                var p = this.Read()
+                if (Data.MysqlConnection.IsErr(p)) {
+                    this.status = 0
+                    this.Err(p)
+                }
+                if (p.Peek() == 0x00) { this.Ok(p) } else { this.SkipResult(p) }
+            }
+        }
+        // (the end of the rows of the streaming result)
+        undefined EndResult(Data.MysqlIn eof) {
+            this.streamToken = 0
+            this.EofStatus(eof)
+            this.DrainMore()
+        }
+        int NewToken() {
+            this.tokens = this.tokens + 1
+            return this.tokens
+        }
+        // A command while the rows of a result are still on the socket: they are read and kept for their statement (`foreach (row in db.Query(...))`
+        // with an Execute in the loop works as with SQLite; only then are the rows in memory).
+        undefined Park() {
+            int token = this.streamToken
+            this.streamToken = 0
+            var rows = new List()
             while (true) {
                 var p = this.Read()
-                if (Data.MysqlConnection.IsErr(p)) { this.Err(p) }
-                if (p.Peek() == 0x00) { this.Ok(p) }
-                else {
-                    // (a result set: its columns and rows are skipped)
-                    int columns = p.LenEnc()
-                    for (var i = 0; i < columns; i++) { this.Read() }
-                    var eof = this.Read()
-                    if (!Data.MysqlConnection.IsEof(eof)) { throw new Data.DataException("data.mysql: expected the end of the columns.") }
-                    while (true) {
-                        var row = this.Read()
-                        if (Data.MysqlConnection.IsErr(row)) { this.Err(row) }
-                        if (Data.MysqlConnection.IsEof(row)) {
-                            row.Byte()
-                            row.Int(2)
-                            this.status = row.Int(2)
-                            break
-                        }
+                bool err = Data.MysqlConnection.IsErr(p)
+                bool eof = Data.MysqlConnection.IsEof(p)
+                if (eof) { this.EofStatus(p) }
+                rows.Add(take p)
+                if (err || eof) { break }
+            }
+            this.parked.Add(new Data.MysqlParked(token, take rows))
+            this.DrainMore()
+        }
+        // (the next parked packet of a result; undefined: none parked)
+        Data.MysqlIn Unpark(int token) {
+            for (var i = 0; i < this.parked.Count; i++) {
+                Data.MysqlParked e = this.parked[i]
+                if (e.token == token) {
+                    if (e.rows.Count == 0) {
+                        this.parked.RemoveAt(i)
+                        return undefined
+                    }
+                    Data.MysqlIn p = take e.rows[0]
+                    e.rows.RemoveAt(0)
+                    if (e.rows.Count == 0) { this.parked.RemoveAt(i) }
+                    return p
+                }
+            }
+            return undefined
+        }
+        // (the rest of a result is not wanted: from the socket or the parked ones)
+        undefined Discard(int token) {
+            if (token == 0) { return }
+            if (this.streamToken == token) {
+                while (true) {
+                    var p = this.Read()
+                    if (Data.MysqlConnection.IsErr(p)) {
+                        this.streamToken = 0
+                        return
+                    }
+                    if (Data.MysqlConnection.IsEof(p)) {
+                        this.EndResult(p)
+                        return
                     }
                 }
-                if ((this.status & 0x0008) == 0) { break }   // (SERVER_MORE_RESULTS_EXISTS)
+            }
+            for (var i = 0; i < this.parked.Count; i++) {
+                Data.MysqlParked e = this.parked[i]
+                if (e.token == token) {
+                    this.parked.RemoveAt(i)
+                    return
+                }
             }
         }
 
@@ -590,14 +737,25 @@ namespace Data {
         }
     }
 
+    /// <summary>The rest of the packets of a result that a command interrupted.</summary>
+    class MysqlParked {
+        int token
+        List rows
+        construct(int token, List rows) {
+            this.token = token
+            this.rows = take rows
+        }
+    }
+
     class MysqlStatement : Data.IStatement {
         Data.MysqlConnection connection
         int id
         int params
         List columns
         any args
-        List rows
-        int at
+        any current
+        int token
+        bool done
         bool ran
         bool open
 
@@ -606,8 +764,8 @@ namespace Data {
             this.id = id
             this.params = params
             this.columns = take columns
-            this.rows = new List()
-            this.at = -1
+            this.token = 0
+            this.done = true
             this.ran = false
             this.open = true
         }
@@ -666,6 +824,8 @@ namespace Data {
             if (Data.MysqlConnection.IsErr(p)) { cn.Err(p) }
             if (p.Peek() == 0x00) {
                 cn.Ok(p)
+                cn.DrainMore()
+                this.done = true
                 return
             }
             int count = p.LenEnc()
@@ -673,12 +833,10 @@ namespace Data {
             for (var i = 0; i < count; i++) { cols.Add(Data.MysqlConnection.ColumnOf(cn.Read())) }
             cn.Read()                                         // (EOF)
             this.columns = take cols
-            while (true) {
-                var r = cn.Read()
-                if (Data.MysqlConnection.IsErr(r)) { cn.Err(r) }
-                if (Data.MysqlConnection.IsEof(r)) { break }
-                this.rows.Add(this.RowOf(r))
-            }
+            // (the rows stay on the socket: Next reads them one by one)
+            this.token = cn.NewToken()
+            cn.streamToken = this.token
+            this.done = false
             cn.changes = 0
         }
 
@@ -811,11 +969,29 @@ namespace Data {
                 this.ran = true
                 this.Run()
             }
-            this.at = this.at + 1
-            return this.at < this.rows.Count
+            if (this.done) { return false }
+            var cn = this.connection
+            Data.MysqlIn r = undefined
+            if (cn.streamToken == this.token) { r = cn.Read() } else { r = cn.Unpark(this.token) }
+            if (r == undefined) {
+                this.done = true
+                return false
+            }
+            if (Data.MysqlConnection.IsErr(r)) {
+                this.done = true
+                if (cn.streamToken == this.token) { cn.streamToken = 0 }
+                cn.Err(r)
+            }
+            if (Data.MysqlConnection.IsEof(r)) {
+                this.done = true
+                if (cn.streamToken == this.token) { cn.EndResult(r) }
+                return false
+            }
+            this.current = this.RowOf(r)
+            return true
         }
         any Values() {
-            any row = this.rows[this.at]
+            any row = this.current
             return copy row
         }
         any Names() {
@@ -827,12 +1003,22 @@ namespace Data {
             return names
         }
         undefined Reset() {
+            this.Finish()
             this.ran = false
-            this.at = -1
-            this.rows = new List()
+            this.done = true
+            this.current = undefined
+        }
+        // (the rows not read yet are thrown away)
+        undefined Finish() {
+            var cn = this.connection
+            if (this.token != 0 && cn != undefined && !cn.closed) {
+                try { cn.Discard(this.token) } catch (e) { }
+            }
+            this.token = 0
         }
         undefined Close() {
             if (!this.open) { return }
+            this.Finish()
             this.open = false
             var cn = this.connection
             if (cn == undefined || cn.closed) { return }
@@ -842,6 +1028,275 @@ namespace Data {
                 c.Int(this.id, 4)
                 cn.Command(c.ToBuffer())
             } catch (e) { }
+        }
+    }
+
+    // ---- RSA for the password without TLS ----
+
+    /// <summary>The public RSA key of a server (PEM: "PUBLIC KEY" or "RSA PUBLIC KEY") and encryption with OAEP (SHA-1, MGF1 with SHA-1 - what MySQL's
+    /// servers decrypt). The numbers are arrays of 24-bit limbs (the lowest first); the power is taken with Montgomery multiplication.</summary>
+    class MysqlRsa {
+        int n[]
+        int e
+        int k
+        int size
+        int ninv
+        int r2[]
+        static int counter = 0
+
+        // (new int[n] with every element 0)
+        static int[] Zeros(int n) {
+            int a[] = new int[n]
+            for (var i = 0; i < n; i++) { a[i] = 0 }
+            return a
+        }
+
+        construct(string pem) {
+            byte der[] = Data.MysqlRsa.Pem(pem)
+            var p = new Data.MysqlIn(der)
+            Data.MysqlRsa.Tag(p, 0x30)
+            if (p.Peek() == 0x30) {
+                // SubjectPublicKeyInfo: the algorithm, then the key in a BIT STRING
+                int skip = Data.MysqlRsa.Tag(p, 0x30)
+                p.Bytes(skip)
+                Data.MysqlRsa.Tag(p, 0x03)
+                p.Byte()
+                Data.MysqlRsa.Tag(p, 0x30)
+            }
+            byte modulus[] = Data.MysqlRsa.Integer(p)
+            byte exponent[] = Data.MysqlRsa.Integer(p)
+            int start = 0
+            while (start < modulus.length - 1 && modulus[start] == 0) { start++ }
+            this.size = modulus.length - start
+            if (this.size < 64) { throw new Data.ConnectionException("data.mysql: the RSA key of the server is too short.", 2061) }
+            this.k = (this.size * 8 + 23) / 24
+            this.n = Data.MysqlRsa.FromBytes(modulus, start, this.size, this.k)
+            int ev = 0
+            for (var i = 0; i < exponent.length; i++) {
+                int b = exponent[i]
+                ev = (ev << 8) | b
+            }
+            this.e = ev
+            // -n^-1 mod 2^24 (Newton: every step doubles the correct bits)
+            int n0 = this.n[0]
+            int inv = 1
+            for (var i = 0; i < 5; i++) {
+                int t = (n0 * inv) & 16777215
+                inv = (inv * ((2 - t) & 16777215)) & 16777215
+            }
+            this.ninv = (16777216 - inv) & 16777215
+            // R^2 mod n, R = 2^(24k): 1 doubled 2 * 24k times
+            int r[] = Data.MysqlRsa.Zeros(this.k + 1)
+            r[0] = 1
+            for (var i = 0; i < 48 * this.k; i++) {
+                int carry = 0
+                for (var j = 0; j <= this.k; j++) {
+                    int v = r[j] * 2 + carry
+                    r[j] = v & 16777215
+                    carry = v >> 24
+                }
+                if (this.AtLeast(r)) { this.Subtract(r) }
+            }
+            this.r2 = Data.MysqlRsa.Zeros(this.k)
+            for (var i = 0; i < this.k; i++) { this.r2[i] = r[i] }
+        }
+
+        // (a PEM text as its bytes)
+        static byte[] Pem(string pem) {
+            var text = ""
+            any lines = pem.Replace("\r", "").Split("\n")
+            bool inside = false
+            for (var i = 0; i < lines.length; i++) {
+                string line = lines[i]
+                line = line.Trim()
+                if (line.StartsWith("-----BEGIN")) { inside = true; continue }
+                if (line.StartsWith("-----END")) { break }
+                if (inside) { text = text + line }
+            }
+            if (text == "") { throw new Data.ConnectionException("data.mysql: the RSA key is not PEM.", 2061) }
+            return Data.MysqlRsa.Base64(text)
+        }
+        static byte[] Base64(string text) {
+            var alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
+            var out = new IO.MemoryStream()
+            byte one[] = new byte[1]
+            int bits = 0
+            int count = 0
+            for (var i = 0; i < text.Length; i++) {
+                string c = text.Substring(i, 1)
+                if (c == "=") { break }
+                int v = alphabet.IndexOf(c)
+                if (v < 0) { throw new Data.ConnectionException("data.mysql: the RSA key is not PEM (base64).", 2061) }
+                bits = ((bits << 6) | v) & 16777215
+                count = count + 6
+                if (count >= 8) {
+                    count = count - 8
+                    one[0] = (bits >> count) & 255
+                    out.Write(one, 0, 1)
+                }
+            }
+            return out.ToBuffer()
+        }
+        // (a DER element with this tag: its length)
+        static int Tag(Data.MysqlIn p, int tag) {
+            if (p.Byte() != tag) { throw new Data.ConnectionException("data.mysql: the RSA key is not a public key (DER).", 2061) }
+            int first = p.Byte()
+            if (first < 128) { return first }
+            int length = 0
+            for (var i = 0; i < (first & 127); i++) { length = (length << 8) | p.Byte() }
+            return length
+        }
+        static byte[] Integer(Data.MysqlIn p) { return p.Bytes(Data.MysqlRsa.Tag(p, 0x02)) }
+
+        static int[] FromBytes(byte data[], int offset, int length, int limbs) {
+            int a[] = Data.MysqlRsa.Zeros(limbs)
+            for (var i = 0; i < length; i++) {
+                int b = data[offset + i]
+                int bit = 8 * (length - 1 - i)
+                a[bit / 24] = a[bit / 24] | (b << (bit % 24))
+            }
+            return a
+        }
+        byte[] ToBytes(int a[]) {
+            byte out[] = new byte[this.size]
+            for (var i = 0; i < this.size; i++) {
+                int bit = 8 * (this.size - 1 - i)
+                out[i] = (a[bit / 24] >> (bit % 24)) & 255
+            }
+            return out
+        }
+        // (t >= n; t has k + 1 or more limbs)
+        bool AtLeast(int t[]) {
+            for (var i = t.length - 1; i >= this.k; i--) { if (t[i] != 0) { return true } }
+            for (var i = this.k - 1; i >= 0; i--) {
+                if (t[i] != this.n[i]) { return t[i] > this.n[i] }
+            }
+            return true
+        }
+        undefined Subtract(int t[]) {
+            int borrow = 0
+            for (var i = 0; i < t.length; i++) {
+                int m = 0
+                if (i < this.k) { m = this.n[i] }
+                int v = t[i] - m - borrow
+                if (v < 0) {
+                    v = v + 16777216
+                    borrow = 1
+                } else { borrow = 0 }
+                t[i] = v
+            }
+        }
+        // a * b / R mod n
+        int[] Mont(int a[], int b[]) {
+            int k = this.k
+            int t[] = Data.MysqlRsa.Zeros(k + 2)
+            for (var i = 0; i < k; i++) {
+                int bi = b[i]
+                int c = 0
+                for (var j = 0; j < k; j++) {
+                    int s = t[j] + a[j] * bi + c
+                    t[j] = s & 16777215
+                    c = s >> 24
+                }
+                int s1 = t[k] + c
+                t[k] = s1 & 16777215
+                t[k + 1] = s1 >> 24
+                int m = (t[0] * this.ninv) & 16777215
+                int s2 = t[0] + m * this.n[0]
+                c = s2 >> 24
+                for (var j = 1; j < k; j++) {
+                    int s = t[j] + m * this.n[j] + c
+                    t[j - 1] = s & 16777215
+                    c = s >> 24
+                }
+                int s3 = t[k] + c
+                t[k - 1] = s3 & 16777215
+                t[k] = t[k + 1] + (s3 >> 24)
+                t[k + 1] = 0
+            }
+            if (this.AtLeast(t)) { this.Subtract(t) }
+            int out[] = Data.MysqlRsa.Zeros(k)
+            for (var i = 0; i < k; i++) { out[i] = t[i] }
+            return out
+        }
+        // m^e mod n
+        int[] Power(int m[]) {
+            int mm[] = this.Mont(m, this.r2)
+            int acc[] = this.Mont(m, this.r2)
+            int top = 62
+            while (top > 0 && ((this.e >> top) & 1) == 0) { top-- }
+            for (var bit = top - 1; bit >= 0; bit--) {
+                acc = this.Mont(acc, acc)
+                if (((this.e >> bit) & 1) == 1) { acc = this.Mont(acc, mm) }
+            }
+            int one[] = Data.MysqlRsa.Zeros(this.k)
+            one[0] = 1
+            return this.Mont(acc, one)
+        }
+
+        static byte[] Mgf1(byte z[], int length) {
+            var out = new IO.MemoryStream()
+            int counter = 0
+            while (out.Length < length) {
+                var m = new IO.MemoryStream()
+                m.Write(z, 0, z.length)
+                byte c[] = new byte[4]
+                c[0] = (counter >> 24) & 255
+                c[1] = (counter >> 16) & 255
+                c[2] = (counter >> 8) & 255
+                c[3] = counter & 255
+                m.Write(c, 0, 4)
+                byte h[] = Hash.Sha1.Of(m.ToBuffer())
+                int n = h.length
+                if (out.Length + n > length) { n = length - out.Length }
+                out.Write(h, 0, n)
+                counter++
+            }
+            return out.ToBuffer()
+        }
+
+        // RSAES-OAEP with SHA-1 (RFC 8017): `seed` is 20 random bytes.
+        byte[] Encrypt(byte message[], byte seed[]) {
+            int kb = this.size
+            if (message.length > kb - 42) { throw new Data.ConnectionException("data.mysql: the password is too long for the RSA key of the server.", 2061) }
+            byte lhash[] = Hash.Sha1.Of(new byte[0])
+            byte db[] = new byte[kb - 21]
+            for (var i = 0; i < 20; i++) { db[i] = lhash[i] }
+            db[kb - 22 - message.length] = 1
+            for (var i = 0; i < message.length; i++) { db[kb - 21 - message.length + i] = message[i] }
+            byte dbMask[] = Data.MysqlRsa.Mgf1(seed, kb - 21)
+            for (var i = 0; i < db.length; i++) { db[i] = db[i] # dbMask[i] }
+            byte seedMask[] = Data.MysqlRsa.Mgf1(db, 20)
+            byte em[] = new byte[kb]
+            for (var i = 0; i < 20; i++) { em[1 + i] = seed[i] # seedMask[i] }
+            for (var i = 0; i < db.length; i++) { em[21 + i] = db[i] }
+            int m[] = Data.MysqlRsa.FromBytes(em, 0, kb, this.k)
+            return this.ToBytes(this.Power(m))
+        }
+
+        // (20 bytes for the seed: SHA-256 of the server's nonce, the clock and a counter - the seed needs to be unpredictable, not secret)
+        static byte[] Seed(byte salt[]) {
+            Data.MysqlRsa.counter = Data.MysqlRsa.counter + 1
+            var m = new IO.MemoryStream()
+            m.Write(salt, 0, salt.length)
+            byte clock[] = IO.Utf8.GetBytes("" + DateTime.UtcNow.Ticks + "/" + Data.MysqlRsa.counter)
+            m.Write(clock, 0, clock.length)
+            byte h[] = Hash.Sha256.Of(m.ToBuffer())
+            byte out[] = new byte[20]
+            for (var i = 0; i < 20; i++) { out[i] = h[i] }
+            return out
+        }
+
+        // The password for caching_sha2_password and sha256_password: (password + NUL) XOR the nonce, encrypted.
+        static byte[] Password(string pem, string password, byte salt[], byte seed[]) {
+            var c = new Data.MysqlOut()
+            c.Nul(password)
+            byte x[] = c.ToBuffer()
+            if (salt.length > 0) {
+                for (var i = 0; i < x.length; i++) { x[i] = x[i] # salt[i % salt.length] }
+            }
+            var key = new Data.MysqlRsa(pem)
+            return key.Encrypt(x, seed)
         }
     }
 }

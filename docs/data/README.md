@@ -304,11 +304,21 @@ class Article {
 | `mysql://host/shop` | port 3306, the database `shop`; `mysql://user@host:3307/shop`: the user in the URL when no credentials are given |
 | `?tls=prefer` | the default: TLS when the server offers it, without checking the certificate |
 | `?tls=require` | TLS or no connection (`Data.ConnectionException`); `tls=verify`: the certificate is checked (with the system's authorities or `&ca=file.pem`); `tls=off`: never |
+| `&key=server.pem` | the public RSA key of the server, for logins without TLS (below) |
+| `&fetchkey=true` | without TLS and without `key`: the server may send its RSA key |
 | `&timeout=10000` | connecting and waiting for an answer, in ms |
 
-The logins `mysql_native_password` and `caching_sha2_password` (MySQL 8's default) are understood, and the switch of the server to another plugin. The
-first login of a user with `caching_sha2_password` (before the server has cached it) sends the password, so it needs TLS; without TLS it is a
-`Data.ConnectionException` (the exchange with the server's RSA key is not built yet).
+The logins `mysql_native_password`, `caching_sha2_password` (MySQL 8's default) and `sha256_password` are understood, and the switch of the server
+to another plugin. `caching_sha2_password` sends only a hash once the server has the user in its cache; the first login after a start or
+`FLUSH PRIVILEGES` (and every login with `sha256_password`) sends the password itself: over TLS as text, without TLS encrypted with the server's RSA
+key (OAEP; the RSA is written in fire). That key comes from `key=file.pem` (MySQL keeps it as `public_key.pem` in its data directory) or, with
+`fetchkey=true`, from the server - only where nobody can pose as the server, because a false server could send its own key. Without TLS, key and
+permission the login is a `Data.ConnectionException` (2061) that says so.
+
+Rows are read from the socket one at a time while `Next`/`foreach` asks for them - a big result is never in memory as a whole. When another command
+runs on the connection while a reader still has rows (an `Execute` in the `foreach`, a second reader), the rest of the first result is read and kept
+for its reader, so both go on as with SQLite. A reader that is left early (`break`, `Close`) throws its remaining rows away. A `CALL` of a procedure
+gives the rows of its first result; the other results are read and dropped.
 
 Values: integers (also UNSIGNED) are `int`, DOUBLE/FLOAT `float`, DECIMAL a `float` (an `int` without a fraction), texts `string` (utf8mb4), binary
 columns `byte[]`, DATETIME/DATE/TIMESTAMP/TIME ISO text (the mapping makes a `DateTime` of it), NULL `undefined`. Errors: duplicate keys, foreign keys,
@@ -317,8 +327,10 @@ the server's error number in `Code`. The dialect makes `BIGINT AUTO_INCREMENT` k
 `VARCHAR(n)`), `LONGTEXT`/`LONGBLOB` otherwise, and compares texts in `StartsWith`/`Contains`/`EndsWith` byte by byte (MySQL's collations ignore case,
 fire's methods do not).
 
-The tests run against a server when `FIRE_TEST_MYSQL` names an empty database (`mysql://127.0.0.1:3306/test`, with `FIRE_TEST_MYSQL_USER` and
-`FIRE_TEST_MYSQL_PASSWORD`; its tables are dropped): the SQL of MySQL, then the mapping, queries, sessions and relations of the in-memory case.
+The tests run against a server when `FIRE_TEST_MYSQL` names an empty database (`mysql://127.0.0.1:3306/test`, several separated by spaces - e.g.
+a MariaDB and a MySQL 8; with `FIRE_TEST_MYSQL_USER` and `FIRE_TEST_MYSQL_PASSWORD`; its tables are dropped): the SQL of MySQL, streaming, procedures,
+TLS, the RSA encryption against a known ciphertext, on MySQL 8 the logins without TLS (when the user may make users: CREATE USER, RELOAD), then the
+mapping, queries, sessions and relations of the in-memory case.
 
 ## The in-memory database
 
