@@ -48,10 +48,9 @@ namespace fire.Native
             if (!ScalarsOn) return "no scalars";
             if (Modular || LibraryRole) return "module";
             if (f.External || f.Export != null) return "exported";
-            if (f.Kind is not (FuncKind.Method or FuncKind.Static)) return f.Kind switch
+            if (f.Kind is not (FuncKind.Method or FuncKind.Static or FuncKind.Ctor)) return f.Kind switch
             {
                 FuncKind.Main => "the top level",
-                FuncKind.Ctor => "constructor",
                 FuncKind.Init => "field initializers",
                 FuncKind.Dtor => "destructor",
                 FuncKind.Lambda => "lambda",

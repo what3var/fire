@@ -348,7 +348,9 @@ vermeidet sie, wo es ohne Änderung der Aufrufkonvention geht (gemessen am Beisp
   Argument eine Variable des Aufrufers ist - ein Slot, ein Parameter, ein Block-Local, `self`, ein Element der Argumente eines Thunks; ein Ausdruck, eine globale
   Variable (`G…`) oder ein statisches Feld (`SF…`), das der Aufgerufene ändern könnte, während er seinen Parameter liest, gehen an eine Hülle `fN` mit Values, die es
   nur gibt, wenn sie gebraucht wird (auch für einen Funktionszeiger, etwa `ToString` in der Klassentabelle). Nicht dabei: Debug-Builds, Funktionen mit Frame (`try`),
-  C-Rümpfe (Ebene 2), Exporte und Module (Linkage static/shared, Plugins). Watcom gibt bei `s0 = fN_p(&s0, ...)` `&s0` auch als Rückgabepuffer; das ist richtig,
+  Exporte und Module (Linkage static/shared, Plugins). Ein C-Rumpf (Ebene 2) nimmt seine Values per Adresse und seine C-Zahlen per Wert
+  (`fN_c_p(const Value* self_p, Real P0)`), seine Hülle mit Values alle per Adresse (`fN_p`); ein Konstruktor hat dort keinen C-Rumpf (gemessen: 1 KB mehr
+  am Physik-Beispiel, auch mit den Values per Adresse). Physik-Beispiel auf dos16 mit beidem: geladen 565 588 → 564 692 Byte. Watcom gibt bei `s0 = fN_p(&s0, ...)` `&s0` auch als Rückgabepuffer; das ist richtig,
   weil die Rümpfe ihr Ergebnis in Slots bauen und erst beim `return` kopieren. Physik-Beispiel auf dos16: 650.288 → 644.512 Byte (−5,8 KB), geladen −5,9 KB.
 
 Der Generator fügt die Prüfungen nur ein, wenn das Programm überhaupt `throw` oder `try` enthält (`FIRE_EXCEPTIONS`); sonst ändert sich der
