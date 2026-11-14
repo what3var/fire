@@ -117,6 +117,8 @@ typedef struct FireTlsSession {
     HCERTSTORE roots;            /* the CA certificates that were given (client) */
     HCERTCHAINENGINE engine;
     FireTlsSchKeys clientKeys;
+    int mem;                     /* TLS over buffers (fire_tls_clientOpenMem): no socket - `enc` is fed, `out` is drained */
+    int fed;                     /* bytes were fed since the handshake last needed more */
 } FireTlsSession;
 
 static int fire_tls_supported(void) { return 1; }
@@ -656,6 +658,7 @@ static FireTlsSession* fire_tls_serverAccept(FireTlsContext* c, FireNetSock fd, 
 
 /* Sends what is waiting in `out`; *empty when it is all gone. With a timeout of 0 nothing waits (the rest stays for the next time). */
 static int fire_tls_flushOut(FireTlsSession* s, int64_t timeoutMs, int* empty, FireNetStatus* st) {
+    if (s->mem) { *empty = 1; return 1; }   /* (over buffers the records wait in `out` for memDrain) */
     *empty = s->out.size == 0;
     while (s->out.size > 0) {
         int sent = 0;
@@ -790,7 +793,11 @@ static int fire_tls_handshakeStep(FireTlsSession* s, int* done, FireNetStatus* s
             *done = 1;
             return 1;
         }
-        if (s->needMore || (!s->first && s->enc.size == 0)) {
+        if (s->mem && (s->needMore || (!s->first && s->enc.size == 0))) {
+            if (!s->fed) return 1;   /* the other side's bytes come with memFeed */
+            s->fed = 0;
+            s->needMore = 0;
+        } else if (s->needMore || (!s->first && s->enc.size == 0)) {
             int got = 0;
             FireNetStatus rs;
             if (!fire_tls_bytesReserve(&s->enc, s->enc.size + 16384)) return fire_tls_oom(st);
@@ -1073,6 +1080,125 @@ static void fire_tls_closeSession(FireTlsSession* s) {
         }
     }
     fire_tls_freeSession(s);
+}
+
+/* ---- TLS over buffers: `enc` takes what is fed, `out` holds the records until memDrain ---- */
+static FireTlsSession* fire_tls_clientOpenMem(const FireTlsOptions* opt, FireNetStatus* st) {
+    FireTlsSession* s = fire_tls_clientOpen((FireNetSock)-1, opt, st);
+    if (s == NULL) return NULL;
+    s->mem = 1;
+    return s;
+}
+static int fire_tls_memFeed(FireTlsSession* s, const uint8_t* data, int count, FireNetStatus* st) {
+    if (!s->mem) return fire_net_fail(st, FIRE_NET_E_INVALID_ARGUMENT, "The TLS session is not one over a buffer.");
+    if (count <= 0) return 1;
+    if (!fire_tls_bytesAppend(&s->enc, data, (size_t)count)) return fire_tls_oom(st);
+    s->fed = 1;
+    s->needMoreEnc = 0;
+    return 1;
+}
+static int fire_tls_memDrain(FireTlsSession* s, uint8_t* out, int max) {
+    size_t n;
+    if (!s->mem || max <= 0 || s->out.size == 0) return 0;
+    n = s->out.size < (size_t)max ? s->out.size : (size_t)max;
+    memcpy(out, s->out.data, n);
+    fire_tls_bytesDrop(&s->out, n);
+    return (int)n;
+}
+static int fire_tls_memWaiting(FireTlsSession* s) { return s->mem ? (int)s->out.size : 0; }
+static int fire_tls_memRead(FireTlsSession* s, uint8_t* data, int count, int* got, FireNetStatus* st) {
+    *got = 0;
+    if (count <= 0) return 1;
+    for (;;) {
+        if (s->plainPos < s->plain.size) {
+            size_t take = s->plain.size - s->plainPos;
+            if (take > (size_t)count) take = (size_t)count;
+            memcpy(data, s->plain.data + s->plainPos, take);
+            s->plainPos += take;
+            if (s->plainPos == s->plain.size) { s->plain.size = 0; s->plainPos = 0; }
+            *got = (int)take;
+            return 1;
+        }
+        if (s->eof) return 1;
+        if (s->renegotiating || !s->handshakeDone) {
+            int done = 0;
+            if (!fire_tls_handshakeStep(s, &done, st)) return 0;
+            if (!done) { *got = -1; return 1; }
+            continue;
+        }
+        if (s->enc.size > 0 && !s->needMoreEnc) {
+            SecBuffer b[4];
+            SecBufferDesc desc;
+            SECURITY_STATUS ss;
+            int i;
+            b[0].pvBuffer = s->enc.data;
+            b[0].cbBuffer = (ULONG)s->enc.size;
+            b[0].BufferType = SECBUFFER_DATA;
+            for (i = 1; i < 4; i++) { b[i].pvBuffer = NULL; b[i].cbBuffer = 0; b[i].BufferType = SECBUFFER_EMPTY; }
+            desc.ulVersion = SECBUFFER_VERSION;
+            desc.cBuffers = 4;
+            desc.pBuffers = b;
+            ss = DecryptMessage(&s->ctx, &desc, 0, NULL);
+            if (ss == SEC_E_OK) {
+                for (i = 1; i < 4; i++) {
+                    if (b[i].BufferType == SECBUFFER_DATA && b[i].cbBuffer > 0) {
+                        s->plain.size = 0;
+                        if (!fire_tls_bytesAppend(&s->plain, b[i].pvBuffer, b[i].cbBuffer)) return fire_tls_oom(st);
+                    }
+                }
+                s->plainPos = 0;
+                fire_tls_schKeepExtra(&s->enc, b, 4);
+                continue;
+            }
+            if (ss == SEC_E_INCOMPLETE_MESSAGE) { s->needMoreEnc = 1; *got = -1; return 1; }
+            if (ss == SEC_I_CONTEXT_EXPIRED) { s->eof = 1; s->enc.size = 0; return 1; }
+            if (ss == SEC_I_RENEGOTIATE) {
+                fire_tls_schKeepExtra(&s->enc, b, 4);
+                s->renegotiating = 1;
+                s->handshakeDone = 0;
+                s->needMore = s->enc.size == 0;
+                s->fed = s->enc.size > 0;
+                continue;
+            }
+            return fire_tls_schSecFail(ss, "TLS read", st);
+        }
+        *got = -1;   /* more of the other side is needed */
+        return 1;
+    }
+}
+static int fire_tls_memWrite(FireTlsSession* s, const uint8_t* data, int count, int* sent, FireNetStatus* st) {
+    size_t chunk, at;
+    SecBuffer b[4];
+    SecBufferDesc desc;
+    SECURITY_STATUS ss;
+    *sent = 0;
+    if (count <= 0) return 1;
+    if (!s->handshakeDone || s->renegotiating) return fire_net_fail(st, FIRE_TLS_E_TLS, "TLS write: the handshake is not complete.");
+    chunk = (size_t)count < (size_t)s->sizes.cbMaximumMessage ? (size_t)count : (size_t)s->sizes.cbMaximumMessage;
+    /* (the record is made behind what waits in `out`) */
+    at = s->out.size;
+    if (!fire_tls_bytesReserve(&s->out, at + (size_t)s->sizes.cbHeader + chunk + (size_t)s->sizes.cbTrailer)) return fire_tls_oom(st);
+    memcpy(s->out.data + at + s->sizes.cbHeader, data, chunk);
+    b[0].pvBuffer = s->out.data + at;
+    b[0].cbBuffer = s->sizes.cbHeader;
+    b[0].BufferType = SECBUFFER_STREAM_HEADER;
+    b[1].pvBuffer = s->out.data + at + s->sizes.cbHeader;
+    b[1].cbBuffer = (ULONG)chunk;
+    b[1].BufferType = SECBUFFER_DATA;
+    b[2].pvBuffer = s->out.data + at + s->sizes.cbHeader + chunk;
+    b[2].cbBuffer = s->sizes.cbTrailer;
+    b[2].BufferType = SECBUFFER_STREAM_TRAILER;
+    b[3].pvBuffer = NULL;
+    b[3].cbBuffer = 0;
+    b[3].BufferType = SECBUFFER_EMPTY;
+    desc.ulVersion = SECBUFFER_VERSION;
+    desc.cBuffers = 4;
+    desc.pBuffers = b;
+    ss = EncryptMessage(&s->ctx, 0, &desc, 0);
+    if (ss != SEC_E_OK) return fire_tls_schSecFail(ss, "TLS write", st);
+    s->out.size = at + (size_t)b[0].cbBuffer + b[1].cbBuffer + b[2].cbBuffer;
+    *sent = (int)chunk;
+    return 1;
 }
 
 #endif

@@ -235,13 +235,13 @@ static Value fire_s3d_TexSetStrength(Value h, Value v) {
  * material. A mesh and a texture are counted the same way (an object that shows them is a user). */
 enum { FIRE_S3D_OBJECT = 1, FIRE_S3D_LIGHT = 2, FIRE_S3D_CAMERA = 3, FIRE_S3D_SCENE = 4, FIRE_S3D_MATERIAL = 5 };
 #define FIRE_S3D_FLOATS 24
-#define FIRE_S3D_INTS 8
+#define FIRE_S3D_INTS 9
 
 /* object: f = x, y, z, rotation x, y, z, scale x, y, z, anchor x, y, z, texture x, y, width, height, rotation, opacity, alpha cutoff, spin x, y, z (rad/s),
  *             texture scroll x, y (m/s: Advance moves them on);
- *         n = colour, visible, two sided, lit, casts shadows, receives shadows, layers, billboard */
+ *         n = colour, visible, two sided, lit, casts shadows, receives shadows, layers, billboard, keep the mesh coordinates (the pivot is the origin of the mesh) */
 enum { OF_PX = 0, OF_RX = 3, OF_SX = 6, OF_AX = 9, OF_TX = 12, OF_TY, OF_TW, OF_TH, OF_TROT, OF_OPACITY, OF_CUTOFF, OF_SPIN, OF_SCROLL = OF_SPIN + 3 };
-enum { ON_COLOR = 0, ON_VISIBLE, ON_TWOSIDED, ON_LIT, ON_CAST, ON_RECEIVE, ON_LAYERS, ON_BILLBOARD };
+enum { ON_COLOR = 0, ON_VISIBLE, ON_TWOSIDED, ON_LIT, ON_CAST, ON_RECEIVE, ON_LAYERS, ON_BILLBOARD, ON_KEEPCOORDS };
 /* light: f = intensity, x, y, z, direction x, y, z, range; n = kind, colour, enabled, casts shadows, layers */
 enum { LF_INTENSITY = 0, LF_X, LF_Y, LF_Z, LF_DX, LF_DY, LF_DZ, LF_RANGE };
 enum { LN_KIND = 0, LN_COLOR, LN_ENABLED, LN_CAST, LN_LAYERS };
@@ -975,7 +975,8 @@ static int fire_s3d_objectOf(FireS3dItem* o, S3dMesh** mesh, S3dTexture** textur
     op.pos = s3d_v3((float)F[OF_PX], (float)F[OF_PX + 1], (float)F[OF_PX + 2]);
     op.rx = (float)F[OF_RX]; op.ry = (float)F[OF_RX + 1]; op.rz = (float)F[OF_RX + 2];
     op.scale = s3d_v3((float)F[OF_SX], (float)F[OF_SX + 1], (float)F[OF_SX + 2]);
-    op.pivot = s3d_v3((float)(minX + F[OF_AX] * w), (float)(minY + F[OF_AX + 1] * hgt), (float)(minZ + F[OF_AX + 2] * d));
+    /* (KeepMeshCoordinates: the origin of the mesh sits at the position - the coordinates of the mesh are those of the world at position 0, 0, 0) */
+    op.pivot = N[ON_KEEPCOORDS] ? s3d_v3(0, 0, 0) : s3d_v3((float)(minX + F[OF_AX] * w), (float)(minY + F[OF_AX + 1] * hgt), (float)(minZ + F[OF_AX + 2] * d));
     s = s3d_surfaceDefault();
     s.color = s3d_v3((float)fire_s3d_channel(N[ON_COLOR], 0), (float)fire_s3d_channel(N[ON_COLOR], 8), (float)fire_s3d_channel(N[ON_COLOR], 16));
     s.specular = (float)spec; s.shininess = (float)shin;

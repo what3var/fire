@@ -157,11 +157,6 @@ namespace fire.Compiler
             }
             if (string.Equals(config.Linkage, "plugin", StringComparison.OrdinalIgnoreCase))
                 return BuildPlugin(sources, config, target, toolchain, output, mode, floatWidth, keepSources, basePath, defines, plan, sourcePaths);
-            if (config.Stats && string.Equals(config.Linkage, "static", StringComparison.OrdinalIgnoreCase) && toolchain.EffectiveKind is not ("files" or "custom"))
-            {
-                var r = BuildStatic(sources, config, target, toolchain, output, mode, floatWidth, keepSources, basePath, defines, plan, sourcePaths);
-                return r with { Log = r.Log + "--stats: only with linkage \"source\" (--linkage source) - the libraries of linkage \"static\" come from the cache.\n" };
-            }
             if (string.Equals(config.Linkage, "static", StringComparison.OrdinalIgnoreCase) && toolchain.EffectiveKind is not ("files" or "custom"))
                 return BuildStatic(sources, config, target, toolchain, output, mode, floatWidth, keepSources, basePath, defines, plan, sourcePaths);
             if (string.Equals(config.Linkage, "static", StringComparison.OrdinalIgnoreCase) && toolchain.EffectiveKind == "files")
@@ -264,11 +259,11 @@ namespace fire.Compiler
             StaticBuildPlan staticPlan;
             var watch = Stopwatch.StartNew();
             BuildMonitor.Step(BuildPhase.GenerateC, "Generating the C of the program and its library modules");
-            try { staticPlan = CppGenerator.GenerateStatic(linked, target, ToolchainStamp(toolchain), StrippingOf(config, plan), shared: shared); }
+            try { staticPlan = CppGenerator.GenerateStatic(linked, target, ToolchainStamp(toolchain), StrippingOf(config, plan), shared: shared, stats: config.Stats && !shared); }
             catch (NativeNotSupportedException ex) { return AsSource($"Linkage \"static\" is not possible for this program ({ex.Message}): built with linkage \"source\"."); }
             log.Append(staticPlan.Log);
             log.AppendLine($"generated in {watch.ElapsedMilliseconds} ms");
-            var program = new NativeProgram(staticPlan.ProgramC, staticPlan.Natives, linked.GuiSubsystem, linked.VersionInfo, linked.IconPath);
+            var program = new NativeProgram(staticPlan.ProgramC, staticPlan.Natives, linked.GuiSubsystem, linked.VersionInfo, linked.IconPath) { Funcs = staticPlan.Funcs };
             string? configDirectory = config.Path == null ? null : Path.GetDirectoryName(config.Path);
             string workDir = keepSources ? Path.GetFullPath(output) + ".src" : Path.Combine(Path.GetTempPath(), "fire-native-" + Guid.NewGuid().ToString("N"));
             try
@@ -363,6 +358,7 @@ namespace fire.Compiler
                     return new NativeBuildResult(false, exe, log.ToString(), new[] { new Diagnostic(0, dllFailure, DiagnosticSeverity.Error, ErrorCatalog.NativeToolchain) });
                 // (a library before the ones it needs: the linker resolves in that order)
                 var libraries = staticPlan.Libraries.AsEnumerable().Reverse().Select(l => l.LibraryFile(ext)).ToList();
+                string? statsMap = config.Stats && !shared && NativeStats.MapOptions(toolchain.EffectiveKind, "x") != null ? NativeStats.MapFileOf(exe) : null;
                 bool linkedOk = true;
                 watch.Restart();
                 var commands = BuildCommands(toolchain, target, cFile, nativesFile, workDir, exe, program.Gui, libraries);
@@ -372,6 +368,8 @@ namespace fire.Compiler
                     BuildMonitor.Step(BuildPhase.Link, c == commands.Count - 1 ? "Compiling the program (C) and linking it with its libraries" : "Compiling the program (C)", c, commands.Count);
                     // (shared: the program exports what the libraries need of it, and finds them next to itself)
                     if (shared && !dll && c == commands.Count - 1) arguments += OperatingSystem.IsMacOS() ? " -Wl,-export_dynamic -Wl,-rpath,@executable_path" : " -rdynamic -Wl,-rpath,$ORIGIN";
+                    // (`--stats`: the map of the program - the code of the library modules is counted by the library it comes from)
+                    if (statsMap != null) arguments += c == commands.Count - 1 ? " " + NativeStats.MapOptions(toolchain.EffectiveKind, statsMap) : " -ffunction-sections";
                     log.AppendLine($"{exeName} {arguments}");
                     var (stepOk, text) = Run(exeName, arguments, workDir);
                     log.Append(text);
@@ -380,6 +378,11 @@ namespace fire.Compiler
                 log.AppendLine($"program built in {watch.ElapsedMilliseconds} ms");
                 bool built = linkedOk && File.Exists(exe);
                 if (built) ApplyPeMetadata(exe, program, target, log);
+                if (built && config.Stats)
+                {
+                    if (shared) log.AppendLine("--stats: not with linkage \"shared\" (the libraries are not in the program) - use static or source.");
+                    else WriteStats(target, exe, workDir, cFile, statsMap, program, log);
+                }
                 if (built && ToolchainDrivers.AfterLink(toolchain, target, exe) is { } after) log.AppendLine(after);
                 // (shared: the libraries next to the program - it finds them there, wherever the cache is)
                 if (built && shared)

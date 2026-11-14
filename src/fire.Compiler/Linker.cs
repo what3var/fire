@@ -402,8 +402,14 @@ namespace fire.Compiler
                 {
                     string importName = args[0].AsString();
                     if (ownImport != null && string.Equals(importName, ownImport, StringComparison.OrdinalIgnoreCase)) return null;
-                    if (ProjectLibraries.TryImport(Plan, importName, projectImports, nativeImports)) return null;   // a library of the project: its files come with it
-                    foreach (var key in ImportedPreludes.WithDependencies(ImportedPreludes.ParseImportName(importName))) nativeImports.Add(key);
+                    if (ProjectLibraries.TryImport(Plan, importName, projectImports, nativeImports))
+                    {
+                        // a library of the project: its files come with it, its names are found by the short name in this file too
+                        if (ProjectLibraries.NamespaceOf(Plan, importName) is { } libraryNamespace) ctx.AddImportNamespace(libraryNamespace);
+                        return null;
+                    }
+                    foreach (var key in ProjectLibraries.ImportKeys(importName, name => ProjectLibraries.UnknownHint(Plan, name))) nativeImports.Add(key);
+                    if (ProjectLibraries.PackageNamespaceOf(importName) is { } packageNamespace) ctx.AddImportNamespace(packageNamespace);
                     return null;
                 }
                 throw new Exception($"Wrong arguments for the 'import' directive.");
@@ -607,6 +613,8 @@ namespace fire.Compiler
             fire.Native.BuildMonitor.Step(fire.Native.BuildPhase.CompileFire, "Compiling fire: checking types", 2, 4);
             // (the width of the program's int as below - the project's setting before the tag of the source: TC021 needs it)
             TypeChecker.ProgramIntWidth = intWidthOverride ?? ProcessIntWidth ?? Plan?.Settings?.IntWidth ?? directiveIntWidth ?? target?.IntWidth ?? 64;
+            TypeChecker.ProgramFloatWidth = floatWidthOverride ?? Plan?.Settings?.FloatWidth ?? directiveFloatWidth ?? target?.FloatWidth ?? 64;
+            TypeChecker.ProgramWordWidth = target?.WordWidth ?? 64;
             TypeChecker.NativeReturns = PackageImports.NativeReturnTypes(nativeImports);
             // deriving `defined` for the parameters of the program (TypeChecker.Derive): not when reflection or the program that loads a plugin can call a
             // method with anything, nor in a debug build (the debugger calls methods with what it is given)

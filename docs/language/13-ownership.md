@@ -82,6 +82,18 @@ foreach (d in all) { if (d.Matches()) { found.Add(d) } }
 return found                          // the devices in found go along with the return
 ```
 
+The same for a constructor that keeps an argument in a field: `new Voxelizer(Sample.Make())` with `this.sample = sample` in the constructor leaves the
+field with a destroyed object after the statement - the field only refers to the temporary. The type checker says so (warning `TC031`) when the argument
+is surely a temporary (`new ...`, or a call of a method whose every `return` gives a new object or a local of its own) and the constructor stores the
+parameter plainly. Let the constructor take it - it then keeps what it is given, and leaves a variable of the caller alone:
+
+```fire
+class Voxelizer {
+    Sample sample
+    construct(Sample sample) { this.sample = try take sample }
+}
+```
+
 ## Returning objects
 
 A returned object goes on to where the call's result lands - a variable, a field, an element, the next call - together with everything it points to

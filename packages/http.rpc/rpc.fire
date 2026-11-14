@@ -95,7 +95,7 @@ namespace Http {
         }
 
         // A new instance of `t`: the first constructor whose parameters all come from the services (by their type); undefined when none fits.
-        static any Make(Type t, List services) {
+        static any Make(Type t, List services, Http.Context ctx = undefined) {
             List ctors = t.Constructors()
             if (ctors.Count == 0) { return t.New(new any[0]) }
             for (var c = 0; c < ctors.Count; c++) {
@@ -105,6 +105,7 @@ namespace Http {
                 var ok = true
                 for (var i = 0; i < types.length && ok; i++) {
                     any service = Http.RpcCall.Service(services, types[i])
+                    if (service == undefined && ctx != undefined) { service = Http.RpcCall.FromItems(ctx, types[i]) }
                     if (service == undefined) { ok = false } else { args[i] = service }
                 }
                 if (ok) { return t.New(args) }
@@ -122,6 +123,28 @@ namespace Http {
                 if (st.Name == typeName || wanted != undefined && st.IsSubclassOf(wanted)) { return s }
                 any ifaces = st.Interfaces
                 for (var k = 0; k < ifaces.length; k++) { if (ifaces[k] == typeName) { return s } }
+            }
+            return undefined
+        }
+
+        // A value of the type `typeName` from the items of the request (a class of lifetime "request" only): an item of that type, or what an item with a
+        // method `Provide(typeName)` gives for it (Http.Database: the connection of the request).
+        static any FromItems(Http.Context ctx, string typeName) {
+            List values = ctx.ItemValues()
+            any wanted = Type.Named(typeName)
+            for (var i = 0; i < values.Count; i++) {
+                any v = values[i]
+                if (v == undefined || !(v is of class)) { continue }
+                Type vt = Type.Of(v)
+                if (vt.Name == typeName || wanted != undefined && vt.IsSubclassOf(wanted)) { return v }
+            }
+            for (var i = 0; i < values.Count; i++) {
+                any v = values[i]
+                if (v == undefined || !(v is of class)) { continue }
+                if (Reflect.Has(v, "Provide")) {
+                    any given = Reflect.Call(v, "Provide", [typeName])
+                    if (given != undefined) { return given }
+                }
             }
             return undefined
         }
@@ -266,7 +289,7 @@ namespace Http {
             var body = request.Text()
             var lifetime = Http.RpcCall.LifetimeOf(t)
             if (lifetime == "request") {
-                any instance = Http.RpcCall.Make(t, this.services)
+                any instance = Http.RpcCall.Make(t, this.services, ctx)
                 if (instance == undefined) { return Http.RpcCall.Answer(Http.RpcCall.Fail(500, "No constructor of '" + typeName + "' fits the services.", "")) }
                 return Http.RpcCall.Answer(Http.RpcCall.Run(instance, typeName, memberName, request.method, body))
             }

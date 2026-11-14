@@ -109,6 +109,38 @@
         "returns": "bool",
         "arguments": 1,
         "c": "fire_tls_Close"
+      },
+      {
+        "name": "__TlsOpenMem",
+        "returns": "int",
+        "arguments": 6,
+        "c": "fire_tls_OpenMem"
+      },
+      {
+        "name": "__TlsFeed",
+        "returns": "bool",
+        "arguments": 4,
+        "c": "fire_tls_Feed"
+      },
+      {
+        "name": "__TlsDrain",
+        "returns": "byte[]",
+        "arguments": 1,
+        "needsList": true,
+        "returnsReference": true,
+        "c": "fire_tls_Drain"
+      },
+      {
+        "name": "__TlsMemRead",
+        "returns": "int",
+        "arguments": 4,
+        "c": "fire_tls_MemRead"
+      },
+      {
+        "name": "__TlsMemWrite",
+        "returns": "int",
+        "arguments": 4,
+        "c": "fire_tls_MemWrite"
       }
     ],
     "reset": "fire_tls_reset",

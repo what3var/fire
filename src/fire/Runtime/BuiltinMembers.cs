@@ -18,7 +18,7 @@ namespace fire.Runtime
             ValueKind.Int => name is "ToChar" || (isEnum && name is "ToString" or "HasFlag"),
             ValueKind.Array => IsOwnership(name) || name is "Length" or "length" or "GetEnumerator",
             ValueKind.Buffer => IsOwnership(name) || name is "Length" or "length" or "littleEndian" or "GetEnumerator" or "ToString" or "ToUnicode" or "ToUnicodeChar"
-                or "ToLittleEndian" or "ToBigEndian",
+                or "ToLittleEndian" or "ToBigEndian" || fire.Standard.BufferMethods.Has(name),
             ValueKind.Lambda => IsOwnership(name),
             _ => false,
         };

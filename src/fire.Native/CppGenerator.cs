@@ -191,7 +191,7 @@ namespace fire.Native
         private static readonly Dictionary<string, string> OperatorFallback = new()
         {
             ["operator+"] = "addR(a, b, list)", ["operator-"] = "sub(a, b)", ["operator*"] = "mul(a, b)", ["operator/"] = "divide(a, b)", ["operator%"] = "modulo(a, b)",
-            ["operator^"] = "power(a, b)", ["operator&"] = "bitAnd(a, b)", ["operator|"] = "bitOr(a, b)", ["operator#"] = "bitXor(a, b)", ["operator<<"] = "shl(a, b)", ["operator>>"] = "shr(a, b)",
+            ["operator^"] = "power(a, b)", ["operator&"] = "bitAnd(a, b)", ["operator|"] = "bitOr(a, b)", ["operator#"] = "bitXor(a, b)", ["operator<<"] = "shl(a, b)", ["operator>>"] = "shr(a, b)", ["operator>>>"] = "ushr(a, b)",
             ["operator=="] = "Bool(opEq(a, b))", ["operator!="] = "Bool(!opEq(a, b))", ["operator<"] = "Bool(lt(a, b))", ["operator<="] = "Bool(le(a, b))",
             ["operator>"] = "Bool(gt(a, b))", ["operator>="] = "Bool(ge(a, b))",
         };
@@ -551,6 +551,7 @@ namespace fire.Native
 
         private Func GetFunc(FunctionProto proto, FuncKind kind, int captureCount = 0)
         {
+            if (_demandOwner != null && !_keeping) NoteMadeBy(DemandOwnerOf(proto.Chunk));   // (a library: the class whose code this calls is reached with the caller's)
             if (_funcByProto.TryGetValue(proto, out var existing))
             {
                 if (existing.Kind != kind) throw new NativeNotSupportedException($"a function is used both as {existing.Kind} and as {kind}: {Describe(proto)}");
@@ -570,12 +571,26 @@ namespace fire.Native
             return func;
         }
 
+        /// <summary>The value of a `readonly` static field whose initializer is a constant (a number, a bool, a char, a string - `static readonly int Bits = 64`):
+        /// only its initializer sets it, so every read is that constant. Null for any other field.</summary>
+        private Value? ConstantStatic(string className, string field)
+        {
+            if (!_program.Program.Classes.TryGetValue(className, out var rc) || rc.FindStaticFieldOwner(field) is not { } owner
+                || owner.ReadonlyStatics?.Contains(field) != true) return null;
+            var init = owner.StaticFields.FirstOrDefault(s => s.Name == field).Init;
+            if (init == null) return null;
+            var code = OpInfo.Decode(init.Chunk.Code);
+            if (code.Count < 2 || code[0].Op != OpCode.LoadConst || code[1].Op != OpCode.Return) return null;
+            var c = init.Chunk.Constants[code[0].A[0]];
+            return c.Kind is ValueKind.Int or ValueKind.Float or ValueKind.Bool or ValueKind.Char or ValueKind.Word or ValueKind.String ? c : null;
+        }
+
         private RuntimeClass FindClass(string name) =>
             _program.Program.Classes.TryGetValue(name, out var rc) ? rc : throw new NativeNotSupportedException($"unknown class '{name}'");
 
         private ClassInfo RegisterClass(string name)
         {
-            if (LibraryRole && !_keeping && _self != null && _classList.Count >= _self.Classes.Count) _demandedClasses.Add(name);
+            if (LibraryRole && !_keeping && _self != null && _classList.Count >= _self.Classes.Count) { _demandedClasses.Add(name); NoteMadeBy(name); }
             if (_classes.TryGetValue(name, out var info)) return info;
             var rc = FindClass(name);
             if (ForeignClass(name, rc) is { } foreign) return foreign;
@@ -941,6 +956,16 @@ namespace fire.Native
             {
                 if (!cls.Rc.FieldIndex.ContainsKey(name)) continue;
                 byte declared = cls.Rc.FindFieldRequiredKind(name);
+                if (declared == 0 && cls.Rc.FindFieldRequiredArray(name) == 0 && BufferFieldOf(cls.Rc, name) is { } bufferUnit)
+                {
+                    // a field declared `byte data[]` / `word w[]` (in every class that has the name - the compiler converts each store of the name then, and a
+                    // store of anything but a buffer, an array or undefined is the exception): a buffer or undefined. Reflection and JSON write past that.
+                    if (_usesReflection || _usesJson) return TypeUnknown;
+                    int bufType = TypeOf(KindBuf, bufferUnit) | NullableBit;
+                    if (result is { } knownBuf && knownBuf != bufType) return TypeUnknown;
+                    result = bufType;
+                    continue;
+                }
                 if (declared == 0 && cls.Rc.FindFieldRequiredArray(name) is var requiredArray and not 0)
                 {
                     // a field declared as a typed array without a unit: an array of that element or undefined (every assignment types it, FieldInfo.RequiredArray)
@@ -965,6 +990,15 @@ namespace fire.Native
                 result = type;
             }
             return result ?? TypeUnknown;
+        }
+
+        /// <summary>The kind of buffer a field is declared as (`byte data[]`, `uint8 data[16]`: BufBytes, `word w[]`: BufWords - one rank), null: none.</summary>
+        private static int? BufferFieldOf(RuntimeClass rc, string name)
+        {
+            for (var c = rc; c != null; c = c.Base)
+                if (c.OwnFieldInfo.TryGetValue(name, out var field))
+                    return field.IsStatic ? null : field.TypeText switch { "byte[]" or "uint8[]" => BufBytes, "word[]" => BufWords, _ => null };
+            return null;
         }
 
         /// <summary>The check of a declaration with a class, an interface or a constrained type parameter (a parameter, a field; DeclaredType, `spec` its
@@ -1599,6 +1633,7 @@ namespace fire.Native
                     catch (NativeNotSupportedException ex) when (_funcs[i].Kind is not FuncKind.Main) { _funcs[i].Code = UnsupportedStub(_funcs[i], ex.Message); }
                 }
                 RegisterTargets();
+                if (_role == ModuleRole.Program) ReachLibraryClasses();   // (the classes of the libraries the code reached so far can make)
                 // (made once more when the file is put together: the strings, units and type arguments they use are registered by now)
                 if (Modular) ModularHelpers();   // (modules: all of its helpers - their checks register strings, units, `is of` tests, type arguments and functions)
                 else
@@ -2010,6 +2045,8 @@ namespace fire.Native
             sb.AppendLine($"#define FIRE_TARGET_{_target.MacroName} 1");
             sb.AppendLine($"#define FIRE_HAL_{_target.HalPackage.ToUpperInvariant()} 1");
             sb.AppendLine($"#define FIRE_DEFAULT_STACK_BYTES {_target.DefaultStackBytes}");
+            // (`--stats`, one file: the heap report at the end - FIRE_STATS=1 when the program starts; not with modules: the slot table would differ between them)
+            if (_collectStats && !Modular) sb.AppendLine("#define FIRE_HEAP_STATS 1");
             // The target section: what the target configuration says - definitions, the headers that come before the platform package, and which package it is.
             foreach (var define in _target.Native.Defines)
             {
@@ -2229,7 +2266,31 @@ namespace fire.Native
                 case ("ToUnicodeChar", 1): yield return ("K_Buffer", "bufToUnicodeChar(self, a0)"); break;
                 case ("ToLittleEndian", 0): yield return ("K_Buffer", "bufToEndian(self, true, list)"); break;
                 case ("ToBigEndian", 0): yield return ("K_Buffer", "bufToEndian(self, false, list)"); break;
+                // the typed reads and writes and the fast operations of a byte buffer (fire.Standard.BufferMethods, fire_rt.h bufRead/bufWrite/...)
+                case ("Fill", 1): yield return ("K_Buffer", "bufFill(self, a0, Undef(), Undef())"); break;
+                case ("Fill", 3): yield return ("K_Buffer", "bufFill(self, a0, a1, a2)"); break;
+                case ("CopyTo", 2): yield return ("K_Buffer", "bufCopyTo(self, a0, a1, Undef(), Undef())"); break;
+                case ("CopyTo", 4): yield return ("K_Buffer", "bufCopyTo(self, a0, a1, a2, a3)"); break;
+                case ("Slice", 1): yield return ("K_Buffer", "bufSlice(self, a0, Undef(), list)"); break;
+                case ("Slice", 2): yield return ("K_Buffer", "bufSlice(self, a0, a1, list)"); break;
+                case ("IndexOf", 1): yield return ("K_Buffer", "bufIndexOf(self, a0, Undef())"); break;
+                case ("IndexOf", 2): yield return ("K_Buffer", "bufIndexOf(self, a0, a1)"); break;
+                case ("Compare", 1): yield return ("K_Buffer", "bufCompare(self, a0)"); break;
+                default:
+                    if (BufferKind(name, "Read") is int rk && argc is 1 or 2)
+                        yield return ("K_Buffer", $"bufRead(self, {rk}, a0, {(argc == 2 ? "a1" : "Undef()")})");
+                    else if (BufferKind(name, "Write") is int wk && argc is 2 or 3)
+                        yield return ("K_Buffer", $"bufWrite(self, {wk}, a0, a1, {(argc == 3 ? "a2" : "Undef()")})");
+                    break;
             }
+        }
+
+        /// <summary>The kind of a typed access of a buffer (`ReadInt16` -> 2, fire_rt.h g_bufKindSize), null for another name.</summary>
+        private static int? BufferKind(string name, string prefix)
+        {
+            if (!name.StartsWith(prefix, StringComparison.Ordinal)) return null;
+            int k = Array.IndexOf(new[] { "Int8", "UInt8", "Int16", "UInt16", "Int32", "UInt32", "Int64", "Float16", "Float32", "Float64" }, name.Substring(prefix.Length));
+            return k < 0 ? null : k;
         }
 
         private bool DispatchNeedsList(string name, int argc) => Modular ||
@@ -2285,8 +2346,22 @@ namespace fire.Native
             if (_usesThreads)
             {
                 // a call on an object of the main program's globals from a fire thread: a job of the main program, the thread waits (rule 10 - in a section
-                // of its own, `sync global`, it runs here)
-                sb.AppendLine("    if (FIRE_UNLIKELY(g_isThread) && g_secDepth == 0 && g_domainOn && (self.kind != K_Class || leafAlive(self)) && sharedValue(self)) {");   // (a destroyed object is not read: the call below says so)
+                // of its own, `sync global`, it runs here); a method that only reads (FunctionProto.ReadsOnly) runs here too, like reads of the fields
+                var reading = new List<int>();
+                bool anyWriting = false;
+                foreach (var cls in _classList)
+                    if (cls.Rc.IsTypeOverloaded(name, argc)) anyWriting |= cls.Rc.Candidates(name, argc).Protos.Any(p => !p.IsStatic);
+                    else if (cls.Rc.FindMethodWithAccess(name, argc).Proto is { IsStatic: false } m) { if (m.ReadsOnly) reading.Add(cls.Id); else anyWriting = true; }
+                string notReading = reading.Count == 0 ? "" : " && (self.kind != K_Class || " + (anyWriting ? "!(" + string.Join(" || ", reading.Select(id => $"asObj(self)->cls == {id}")) + ")" : "false") + ")";
+                if (reading.Count > 0 && !anyWriting) notReading = " && self.kind != K_Class";
+                sb.AppendLine($"    if (FIRE_UNLIKELY(g_isThread) && g_secDepth == 0 && g_domainOn && (self.kind != K_Class || leafAlive(self)) && sharedValue(self){notReading}) {{");   // (a destroyed object is not read: the call below says so)
+                // (the main program is away in a native: the call runs here in a section of its own - like in `sync global` - instead of waiting for it)
+                sb.AppendLine("        if (fire_mainAway()) {");
+                sb.AppendLine("            bool ss_ = sectionScopeEnter(true);");
+                sb.AppendLine($"            Value r_ = {direct}(self{argList}{tail});");
+                sb.AppendLine("            sectionScopeExit(ss_);");
+                sb.AppendLine("            return r_;");
+                sb.AppendLine("        }");
                 sb.AppendLine($"        {CArray("Value", "gv", Enumerable.Range(0, argc).Select(i => $"a{i}").DefaultIfEmpty("Undef()").ToList())}");
                 sb.AppendLine($"        return globalsCall(self, {msg}, gv, {argc}, {CString(name)});");
                 sb.AppendLine("    }");
@@ -2428,7 +2503,7 @@ namespace fire.Native
             sb.AppendLine(DispatcherSignature(name, argc, WrapDispatchers ? "direct_" : "call_"));
             sb.AppendLine("{");
             if (DispatchNeedsList(name, argc)) sb.AppendLine("    (void)list;   // (a method that only works on numbers or text allocates nothing)");
-            if (Modular) sb.AppendLine("    (void)caller;");
+            if (DispatchHasCaller(name)) sb.AppendLine("    (void)caller;");
             sb.AppendLine("    switch (self.kind) {");
             foreach (var (cpp, proto, extensionRc) in extensions)
             {
@@ -3194,6 +3269,15 @@ namespace fire.Native
         private void GenerateChunk(Func f)
         {
             if (f.External) return;   // (a member of another module: that module generates it)
+            // (a library: what this function makes and calls counts for its class - the program follows only the classes it reaches, CollectNeeds MadeBy)
+            string? owner = _demandOwner;
+            _demandOwner = LibraryRole ? DemandOwnerOf(f.Chunk) : null;
+            try { GenerateChunkCore(f); }
+            finally { _demandOwner = owner; }
+        }
+
+        private void GenerateChunkCore(Func f)
+        {
             var chunk = f.Chunk;
             _cur = f;
             f.CAbi = CAbiOf(f);
@@ -3228,6 +3312,13 @@ namespace fire.Native
             // Parameters can be anything: assume they may be references (a call-site analysis could narrow this). A parameter declared int/float/bool
             // has its type from the GuardLocal of the prologue.
             f.GuardAddr = code.Where(c => c.Op is OpCode.GuardLocal or OpCode.GuardLocalType).ToDictionary(c => c.A[0], c => c.Addr);
+            // (a parameter declared as a typed array or a buffer - `int a[]`, `byte b[]` - is typed by the prologue: LoadLocal, TypeArray, StoreLocal; what it
+            // holds from that store on is what the store says, before it what the caller passed)
+            for (int k = 0; k + 2 < code.Count; k++)
+                if (code[k].Op == OpCode.LoadLocal && code[k].A[0] == 0 && code[k].A[1] < f.ParamLike && code[k + 1].Op == OpCode.TypeArray
+                    && code[k + 2].Op == OpCode.StoreLocal && code[k + 2].A[0] == 0 && code[k + 2].A[1] == code[k].A[1] && !f.GuardAddr.ContainsKey(code[k].A[1])
+                    && code.Take(k).All(c => c.Op is OpCode.LoadLocal or OpCode.TypeArray or OpCode.StoreLocal or OpCode.Pop or OpCode.ConvertWidth or OpCode.CopyArgs or OpCode.TakeCallTypeArgs))
+                    f.GuardAddr[code[k].A[1]] = code[k + 2].Addr;
             // (a parameter declared int/float/bool - GuardLocal - holds no reference after its check: it is only counted when the function stores one in it;
             // then its retain at the entry comes back too, so a guard that fails before it still leaves the counts right)
             var scalarParams = code.Where(c => c.Op == OpCode.GuardLocal && c.A[0] < f.ParamLike).Select(c => c.A[0]).ToHashSet();
@@ -3526,7 +3617,7 @@ namespace fire.Native
                 foreach (var m in members.Where(m => m.Init != null)) sb.AppendLine($"    {m.Name} = {m.Init};");
                 // the variables of the function that no catch block uses (parameters stay the parameters)
                 foreach (var m in plain.Where(m => !f.ParamNames.Contains(m.Name)))
-                    sb.AppendLine((m.Init == null ? $"    {m.Decl};" : $"    {m.Decl} = {m.Init};") + (m.Decl.StartsWith("Value ", StringComparison.Ordinal) ? $" (void){m.Name};" : ""));
+                    sb.AppendLine((m.Init == null ? $"    {m.Decl};" : $"    {m.Decl} = {m.Init};") + $" (void){m.Name};");   // (a C getter or the like may leave one unused - the list of the function, AL)
             }
             sb.Append(pre);
             sb.Append(decl);
@@ -3687,6 +3778,7 @@ namespace fire.Native
                 return;
             }
             if (_usesThreads) emit("mainFinish();");
+            if (_collectStats && !Modular) emit("fire_heapReport();");   // (`--stats`: what lives, before the globals go)
             EmitLeave(f, GlobalScope, emit);
             foreach (var g in _globals.OrderBy(x => x))
                 if (VarRef($"G{g}")) emit($"release(G{g});");
@@ -4001,8 +4093,11 @@ namespace fire.Native
             or OpCode.Add or OpCode.Sub or OpCode.Mul or OpCode.Mod or OpCode.Lt or OpCode.LtEq or OpCode.Gt or OpCode.GtEq or OpCode.Eq or OpCode.NotEq
             or OpCode.JumpIfFalse or OpCode.JumpIfNotLt or OpCode.JumpIfNotLtEq or OpCode.JumpIfNotGt or OpCode.JumpIfNotGtEq or OpCode.JumpIfNotEq or OpCode.JumpIfNotNotEq
             or OpCode.Pop or OpCode.ReleaseTemps or OpCode.EnterScope or OpCode.ExitScope or OpCode.ClaimToScope or OpCode.ArithLocalConstPop
-            or OpCode.BitAnd or OpCode.BitOr or OpCode.BitXor or OpCode.ShiftLeft or OpCode.ShiftRight or OpCode.ConvertWidth or OpCode.ArrayGet
-            or OpCode.Div or OpCode.Neg or OpCode.LogicalNot or OpCode.CheckUnit or OpCode.Dup or OpCode.StepAdd or OpCode.StepSub or OpCode.Trust;
+            or OpCode.BitAnd or OpCode.BitOr or OpCode.BitXor or OpCode.ShiftLeft or OpCode.ShiftRight or OpCode.ShiftRightLogical or OpCode.ConvertWidth or OpCode.ArrayGet
+            or OpCode.Div or OpCode.Neg or OpCode.LogicalNot or OpCode.CheckUnit or OpCode.Dup or OpCode.StepAdd or OpCode.StepSub or OpCode.Trust
+            or OpCode.Power or OpCode.PowerFloat or OpCode.CoerceType or OpCode.BitNot
+            or OpCode.CopyArgs    // (a prefix of the call: nothing to do here - the call decides what becomes a Value)
+            or OpCode.LoadThis;   // (`x * x + y * y` of fields: the numbers below stay C numbers)
 
         private StepResult StepCore(Func f, Chunk chunk, Instr ins, Flow st, StringBuilder? sb, ISet<string> locals)
         {
@@ -4027,8 +4122,10 @@ namespace fire.Native
             // (the Value of a slot that is no scalar, read)
             string VR(int k) => k >= 0 && k < 64 && st.Alias[k] is { } aliasedV ? aliasedV : SlotName(st.Region, k);
             if (AnyAlias(st) && !AliasAware(ins.Op)) MaterializeAliases(st, E);
-            if (st.Scalar != 0 && !ScalarAware(ins.Op) && !TypedNativeCall(ins) && !(ins.Op == OpCode.CallStaticMethod && CAbiStaticCallee(f, ins) != null) && !(ins.Op == OpCode.CallMethod && CAbiMethodCallee(f, st, ins) != null)
-                && !(ins.Op is OpCode.NewObject or OpCode.NewObjectOwned && CAbiNewCallee(f, st, ins) != null)
+            // (`Math.Abs(x)` ...: MathIntrinsic takes C numbers - the call of the prelude's function makes them Values first, below)
+            if (st.Scalar != 0 && !ScalarAware(ins.Op) && !TypedNativeCall(ins) && !(ins.Op == OpCode.CallStaticMethod && (CAbiStaticCallee(f, ins) != null || Str(ins.A[0]) == "Math"))
+                && !(ins.Op == OpCode.GetStaticField && ConstantStatic(Str(ins.A[0]), Str(ins.A[1])) != null)   // (`Math.PI`: a constant) && !(ins.Op == OpCode.CallMethod && CAbiMethodCallee(f, st, ins) != null)
+                && !(ins.Op == OpCode.GetField && CAbiGetterCallee(f, st, ins) != null)
                 && !GuardTopProven(st, ins)
                 && !(ins.Op == OpCode.Return && f.CAbi is { RetType: not 0 }) && CFieldAccess(f, st, ins) == null) MaterializeAll(f, st, E);
             // (a field that is a C number: CppGenerator.CFields.cs)
@@ -4120,6 +4217,15 @@ namespace fire.Native
             {
                 if (st.Scopes.Count - 1 < 64) st.TempsDirty |= 1UL << (st.Scopes.Count - 1);
                 int home = st.Scopes[^1].Id;
+                f.NeedsList.Add(home);
+                f.NeedsList.Add(TempOf(home));
+                return ListName(TempOf(home));
+            }
+            // The temporaries of the function's own scope: for the rare way of an access whose result owns nothing (an element of a buffer or of a typed
+            // array - a number, or the exception), so that a loop around it needs no list of its own (no poolMark/leave per round)
+            string OuterOwnerList()
+            {
+                int home = st.Scopes[0].Id;
                 f.NeedsList.Add(home);
                 f.NeedsList.Add(TempOf(home));
                 return ListName(TempOf(home));
@@ -4421,6 +4527,22 @@ namespace fire.Native
                 E($"{shadow} = {expr};");
                 st.Scalar |= 1UL << k;
             }
+            // a constant into the slot d: a number as a C number in its shadow (where the slots have them), anything else as a Value (LoadConst, a readonly static)
+            void PushConstant(Value c)
+            {
+                if (SlotScalars() && c.Kind == ValueKind.Float) { SetScalar(d, TypeOfConstant(c), $"(Real){DoubleLiteral(c.AsFloat(), _program.FloatWidth == 32)}"); return; }
+                if (SlotScalars() && c.Kind == ValueKind.Word) { SetScalar(d, TypeOf(KindWord, 0), $"(FireWord){c.AsWord()}ULL"); return; }
+                if (SlotScalars() && IsNarrowIntType(TypeOfConstant(c)))
+                {
+                    // a narrow int: a C number in the slot's shadow
+                    long v = c.AsInt();
+                    SetScalar(d, TypeOfConstant(c), v == long.MinValue ? "(FireInt)(-9223372036854775807LL - 1)" : $"(FireInt){v}LL");
+                    return;
+                }
+                E($"{S(d)} = {Constant(c)};");
+                SetR(d, c.Kind == ValueKind.String);
+                SetT(d, TypeOfConstant(c)); _kindsKept = true;
+            }
             // a variable that is a C number (Ebene 2): a local (no parameter, no global, no variable of a thread) whose every store is a narrow int without a
             // unit, that nothing points to and that holds no reference (VarRef)
             bool ScalarVar(string v) => ScalarVarOf(f, v);
@@ -4448,7 +4570,10 @@ namespace fire.Native
             {
                 if (IsPlainType(type)) { SetR(slot, false); SetT(slot, type); _kindsKept = true; return; }
                 E($"adopt({S(slot)}, &{OwnerList()});"); SetR(slot, true);
-                if (type != TypeUnknown) { SetT(slot, type); _kindsKept = true; }   // (an object of a known class)
+                // (the slot held something else before - the receiver, the first argument: its type goes, also when the result's is not known; a C body that
+                // gives a Value of unknown type left the type of the argument `shape` (an int) on the slot, and `z0 + Shape.CornerMeters(shape, 0)` read the
+                // float of the result as an int)
+                SetT(slot, type); _kindsKept = true;
             }
             // The list for the default values of a call that leaves out arguments (only then the scope needs one).
             string DefaultsList(FunctionProto proto, int argc) => argc < proto.ParamCount ? "&" + OwnerList() : "";
@@ -4500,27 +4625,7 @@ namespace fire.Native
             {
                 case OpCode.LoadConst:
                 {
-                    var c = chunk.Constants[ins.A[0]];
-                    if (SlotScalars() && c.Kind == ValueKind.Float)
-                    {
-                        SetScalar(d, TypeOfConstant(c), $"(Real){DoubleLiteral(c.AsFloat(), _program.FloatWidth == 32)}");
-                        d++; return Next();
-                    }
-                    if (SlotScalars() && c.Kind == ValueKind.Word)
-                    {
-                        SetScalar(d, TypeOf(KindWord, 0), $"(FireWord){c.AsWord()}ULL");
-                        d++; return Next();
-                    }
-                    if (SlotScalars() && IsNarrowIntType(TypeOfConstant(c)))
-                    {
-                        // a narrow int: a C number in the slot's shadow
-                        long v = c.AsInt();
-                        SetScalar(d, TypeOfConstant(c), v == long.MinValue ? "(FireInt)(-9223372036854775807LL - 1)" : $"(FireInt){v}LL");
-                        d++; return Next();
-                    }
-                    E($"{S(d)} = {Constant(c)};");
-                    SetR(d, c.Kind == ValueKind.String);
-                    SetT(d, TypeOfConstant(c)); _kindsKept = true;
+                    PushConstant(chunk.Constants[ins.A[0]]);
                     d++; return Next();
                 }
                 case OpCode.Pop:
@@ -4714,8 +4819,8 @@ namespace fire.Native
                     else { E($"{S(d - 2)} = add({S(d - 2)}, {S(d - 1)});"); CheckIf($"{S(d - 2)}.kind == K_Undefined"); d--; SetR(d - 1, false); }
                     return Next();
                 }
-                case OpCode.Power: return Binary("power", "operator^");
-                case OpCode.PowerFloat: return Binary("powerF", "operator^");
+                case OpCode.Power: Need(2); return ScalarPower(false) ? Next() : Binary("power", "operator^");
+                case OpCode.PowerFloat: Need(2); return ScalarPower(true) ? Next() : Binary("powerF", "operator^");
                 case OpCode.StepSub:
                 case OpCode.Sub:
                     Need(2);
@@ -4733,6 +4838,8 @@ namespace fire.Native
                 case OpCode.BitXor: Need(2); return TypedWord("^") || TypedIntBits("^") ? Next() : Binary("bitXor", "operator#");
                 case OpCode.ShiftLeft: Need(2); return TypedWord("<<") || TypedIntBits("<<") ? Next() : Binary("shl", "operator<<");
                 case OpCode.ShiftRight: Need(2); return TypedWord(">>") || TypedIntBits(">>") ? Next() : Binary("shr", "operator>>");
+                // (`>>>`: a word shifts like `>>` - it is unsigned)
+                case OpCode.ShiftRightLogical: Need(2); return TypedWord(">>") || TypedIntBits(">>>") ? Next() : Binary("ushr", "operator>>>");
                 case OpCode.RotateUnderTop:
                 {
                     Need(3);
@@ -4776,6 +4883,16 @@ namespace fire.Native
                     Need(2); E($"{S(d - 1)} = coerceUnit({S(d - 1)}, unitOf({S(d - 2)}));"); return Next();
                 case OpCode.CoerceType:
                     Need(1);
+                    if (SlotScalars() && (TypeTag)ins.A[0] is TypeTag.Int or TypeTag.Float && (K(d - 1) == KindFloat || NarrowInt(d - 1)))
+                    {
+                        // `x!int`, `x!float` of a C number: a C conversion like coerceType (a float to the nearest int, ties to even, saturated; the unit stays)
+                        bool toInt = (TypeTag)ins.A[0] == TypeTag.Int;
+                        int cu = U(d - 1);
+                        if (toInt && NarrowInt(d - 1) || !toInt && K(d - 1) == KindFloat) return Next();
+                        if (toInt) SetScalar(d - 1, TypeOf(KindInt, cu) | NarrowBit, $"(FireInt)fire_realToInt((double){SF(d - 1)})");
+                        else SetScalar(d - 1, TypeOf(KindFloat, cu), $"(Real){SN(d - 1)}");
+                        return Next();
+                    }
                     // (`x!int`: the program's int - an int that keeps a wider width is cut: intProgram)
                     E($"{S(d - 1)} = {((TypeTag)ins.A[0] == TypeTag.Int && _program.IntWidth < 64 ? "intProgram(" : "(")}coerceType({S(d - 1)}, {(TypeTag)ins.A[0] switch { TypeTag.Bool => "K_Bool", TypeTag.Int => "K_Int", TypeTag.Float => "K_Float", TypeTag.Char => "K_Char", _ => "K_String" }}));");
                     Check();
@@ -4963,7 +5080,12 @@ namespace fire.Native
                     if (SlotScalars() && IsScalar(d - 1) && K(d - 1) == KindBool) { string bx = SB(d - 1); SetScalar(d - 1, TypeOf(KindBool, 0), $"!{bx}"); return Next(); }
                     if (K(d - 1) == KindBool) { E($"{S(d - 1)} = Bool({S(d - 1)}.i == 0);"); _kindsKept = true; return Next(); }
                     return Unary("lnot");
-                case OpCode.BitNot: return Unary("bitNot");
+                case OpCode.BitNot:
+                    Need(1);
+                    // (a scalar: complemented in C - a narrow int keeps its unit like bitNot, a word stays at its width)
+                    if (SlotScalars() && IsScalar(d - 1) && NarrowInt(d - 1)) { string nx = SN(d - 1); SetScalar(d - 1, Ty(d - 1), $"(FireInt)~{nx}"); return Next(); }
+                    if (SlotScalars() && IsScalar(d - 1) && K(d - 1) == KindWord) { string wx = SW(d - 1); SetScalar(d - 1, Ty(d - 1), $"(FireWord)~{wx}"); return Next(); }
+                    return Unary("bitNot");
 
                 case OpCode.Eq: Need(2); return TypedCompare("==") ? Next() : Compare("opEq", false, "operator==");
                 case OpCode.NotEq: Need(2); return TypedCompare("!=") ? Next() : Compare("opEq", true, "operator!=");
@@ -5087,6 +5209,14 @@ namespace fire.Native
                         Check();
                         d = first + 1; SetR(first, true); return Next();
                     }
+                    if (native == BitsMethods.NativeName && argc is >= 2 and <= 4)
+                    {
+                        // the class Bits (fire_rt.h: bitsCall)
+                        int first = d - argc;
+                        E($"{S(first)} = bitsCall({S(first)}.i, {S(first + 1)}, {(argc > 2 ? S(first + 2) : "Undef()")}, {(argc > 3 ? S(first + 3) : "Undef()")});");
+                        Check();
+                        d = first + 1; SetR(first, false); return Next();
+                    }
                     if (native == MathMethods.NativeName && argc is 2 or 3)
                     {
                         int first = d - argc;
@@ -5143,13 +5273,14 @@ namespace fire.Native
                             : $"{T(first)} = Undef();");
                         d = first + 1; SetR(first, false); return Next();
                     }
-                    if (native == FdWaitMethods.NativeName && argc == 3)
+                    if (native == FdWaitMethods.NativeName && argc is 3 or 4)
                     {
-                        // waiting for a socket (fire_rt.h fire_fd_wait: the poller thread; -1 where there is none)
+                        // waiting for a socket (fire_rt.h fire_fd_wait: the poller thread; -1 where there is none) - with a fourth argument also for a
+                        // channel (fire_fd_wait_or: bit 4 when it has something or is closed)
                         // (it does not make the program one with threads: without them the result is -1 and the net package waits as before)
-                        int first = d - 3;
-                        string waitArgs = string.Join(", ", Enumerable.Range(first, 3).Select(SR));
-                        E($"{T(first)} = fire_fd_wait({waitArgs});");
+                        int first = d - argc;
+                        string waitArgs = string.Join(", ", Enumerable.Range(first, argc).Select(SR));
+                        E($"{T(first)} = {(argc == 4 ? "fire_fd_wait_or" : "fire_fd_wait")}({waitArgs});");
                         Check();
                         d = first + 1; SetR(first, false); return Next();
                     }
@@ -5275,9 +5406,20 @@ namespace fire.Native
                         string typedRet = typed ? NativeCTypes.ReturnCType(packageNative.Fn) ?? "" : "";
                         // (the lock of the package around the call, in a program with fire threads - nothing with the GIL)
                         int pkgLock = PkgLock(native);
+                        bool awayWrapped = false;
                         string pkgEnter = pkgLock >= 0 ? $"{{ FIRE_PKG_ENTER(fire_pkgM[{pkgLock}]) " : "", pkgLeave = pkgLock >= 0 ? $" FIRE_PKG_LEAVE(fire_pkgM[{pkgLock}]) }}" : "";
+                        // (the main program goes away for the native when no argument is of the shared domain: the threads need not wait for it meanwhile -
+                        // fire_rt.h fire_awayBegin; a C number of a typed parameter is no object)
+                        if (_usesThreads && !packageNative.Host)
+                        {
+                            var awayArgs = Enumerable.Range(first, argc).Where(k => !(typed && NativeCTypes.ParamCType(packageNative.Fn, k - first) is not null)).Select(k => $"fire_awayArg({SR(k)})").ToList();
+                            string awayIf = awayArgs.Count == 0 ? "!g_isThread" : string.Join(" && ", awayArgs);
+                            pkgEnter = $"{{ bool aw_ = {awayIf}; if (aw_) fire_awayBegin(); " + (pkgEnter.Length > 0 ? pkgEnter : "{ ");
+                            pkgLeave = (pkgLeave.Length > 0 ? pkgLeave : " }") + " if (aw_) fire_awayEnd(); }";
+                            awayWrapped = true;
+                        }
                         // (an int[64] result in a program with 32-bit ints, or no scalars here: the Value of the C number)
-                        if (typedRet != "" && (!SlotScalars() || (typedRet == "int64_t" && _program.IntWidth == 32) || pkgLock >= 0))
+                        if (typedRet != "" && (!SlotScalars() || (typedRet == "int64_t" && _program.IntWidth == 32) || pkgLock >= 0 || awayWrapped))
                         {
                             E($"{pkgEnter}{T(first)} = {NativeCTypes.ToValue(typedRet, $"{packageNative.Function}({args})")};{pkgLeave}");
                             typedRet = "";
@@ -5298,7 +5440,7 @@ namespace fire.Native
                             d = first + 1; SetR(first, false); _kindsKept = true;
                             return Next();
                         }
-                        E($"{pkgEnter}{T(first)} = {(packageNative.IsC ? cFunction : NativeThunk(packageNative.Function, argc, packageNative.NeedsList))}({args});{pkgLeave}");
+                        E($"{pkgEnter}{T(first)} = {(packageNative.IsC ? cFunction : NativeThunk(packageNative.Function, argc, packageNative.NeedsList))}({args});{pkgLeave}");   // (pkgEnter/pkgLeave: also the main program's going away)
                         Check();
                         // a function of the host (`Sleep`) ends at terminate: leave now, not at the next loop
                         if (packageNative.Host && _usesThreads && sb != null) E($"if (FIRE_UNLIKELY(pollSignals())) goto {ExitLabel(f, st, locals)};");
@@ -5423,6 +5565,8 @@ namespace fire.Native
                         if (ReflectionPrelude.HelperClasses.Contains(cls)) E(ReflectionCallerAssign(f).TrimEnd());
                         return OverloadedCall(rc, method, argc, FuncKind.Static, d - argc, "Undef()", "Static method");
                     }
+                    if (cls == "Math" && staticNames == null && MathIntrinsic(method, argc)) return Next();
+                    if (cls == "Math" && st.Scalar != 0 && CAbiStaticCallee(f, ins) == null) MaterializeAll(f, st, E);
                     var proto = rc.FindMethodWithAccess(method, argc).Proto
                         ?? throw new NativeNotSupportedException($"{cls}.{method} with {argc} argument(s) not found");
                     if (!proto.IsStatic) throw new NativeNotSupportedException($"{cls}.{method} is not static");
@@ -5432,7 +5576,7 @@ namespace fire.Native
                     var (callee, specCondition) = staticNames != null ? (target, null) : Specialize(f, ins, target, d - argc, argc, S, Ty);
                     if (ReflectionPrelude.HelperClasses.Contains(cls)) E(ReflectionCallerAssign(f).TrimEnd());
                     long mask = ArgMask();
-                    if (SlotScalars() && specCondition == null && mask == 0 && ReferenceEquals(CAbiStaticCallee(f, ins), callee) && CAbiOf(callee) is { } cabi)
+                    if (SlotScalars() && specCondition == null && (mask == 0 || CAbiStaticCallee(f, ins) != null) && ReferenceEquals(CAbiStaticCallee(f, ins), callee) && CAbiOf(callee) is { } cabi)
                     {
                         // the C body (Ebene 2): the arguments as C numbers - checked here when their type does not prove them - and the result as one
                         var cargs = CAbiArgs(cabi, d - argc, argc);
@@ -5564,6 +5708,15 @@ namespace fire.Native
                         // (only a destroyed object throws: the check of the unwinding is on that path)
                         else if (gfObj == "self" && st.SelfAlive) { E($"{T(d - 1)} = {read};"); _selfAliveAfter = true; }
                         else { string thrower = Thrower($"destroyedError({gfObj});"); E($"if (FIRE_UNLIKELY(!leafAlive({gfObj}))) {thrower} {T(d - 1)} = {read};"); if (gfObj == "self") _selfAliveAfter = true; }
+                    }
+                    else if (SlotScalars() && CAbiGetterCallee(f, st, ins) is { } cgetter && CAbiOf(cgetter) is { } gabi)
+                    {
+                        // the getter's C body (Ebene 2): the C result straight into the slot's shadow
+                        string gobj = S(d - 1);
+                        if (!(gobj == "self" && st.SelfAlive)) { E($"if (FIRE_UNLIKELY(!leafAlive({gobj}))) {gobj} = destroyedError({gobj});"); Check(); }
+                        SetScalar(d - 1, gabi.RetType, $"{CName(cgetter)}({gobj})");
+                        Check();
+                        return Next();
                     }
                     else if (ObjSlot(d - 1) && !IsNullable(Ty(d - 1)) && DirectAccessor(ObjClass(Ty(d - 1)), field, false, f) is { } getter)
                     {
@@ -5735,17 +5888,6 @@ namespace fire.Native
                     int slot = d - argc - (owned ? 1 : 0);
                     string ownerExpr = owned ? $"objOwned(asObj({S(slot)}))" : "&" + OwnerList();
                     long mask = ArgMask();
-                    if (SlotScalars() && newNames == null && mask == 0 && _pendingNewTArgs == null && ReferenceEquals(CAbiNewCallee(f, st, ins), target) && CAbiOf(target) is { } ctorAbi)
-                    {
-                        // the C body of the constructor (Ebene 2): the arguments as C numbers - checked here when their type does not prove them
-                        var cargs = CAbiArgs(ctorAbi, d - argc, argc);
-                        cargs.Insert(0, "o");
-                        E($"{{ Value o = {NewObjectCall(cls, ownerExpr)}; {(cls.Rc.IsActor ? "markActor(o); " : "")}{RecInitEnter(cls)}{CName(target)}({string.Join(", ", cargs)}); {RecInitLeave(cls)}ctorEnd(o); {T(slot)} = o; }}");
-                        Check();
-                        SetR(slot, false);
-                        SetT(slot, ObjType(cls.Rc)); _kindsKept = true;
-                        d = slot + 1; return Next();
-                    }
                     ArgsBefore(d - argc, argc, mask);
                     var (dpre, dargs) = newNames != null ? NamedCallArgsOrFail(ctor, d - argc, argc, newNames, mask, "o", "new " + cls.Rc.Name) : DefaultArgs(ctor, argc, "o", "&" + OwnerList());
                     string ctorArgs = newNames != null ? "" : CallArgs(d - argc, argc, mask, ctor.RefMask);
@@ -6019,6 +6161,8 @@ namespace fire.Native
                     }
                     if (FindClass(Str(ins.A[0])).FindFieldAccess(Str(ins.A[1])) is { } getAccess)
                         AccessCheck(getAccess.DeclaringClass, getAccess.Access, $"Static field '{Str(ins.A[1])}' of '{getAccess.DeclaringClass.Name}' is {DescribeAccess(getAccess.Access)} and cannot be accessed from here.");
+                    // (a `readonly` static field whose initializer is a constant - `Word.Bits`: that constant, a C number like a literal)
+                    if (ConstantStatic(Str(ins.A[0]), Str(ins.A[1])) is { } constant) { PushConstant(constant); d++; return Next(); }
                     string sfVar = StaticFieldVar(Str(ins.A[0]), Str(ins.A[1]));
                     E($"{(_usesThreads ? "FIRE_DOM_READ(); " : "")}{S(d)} = {sfVar};");   // (any code may run on a fire thread: see LoadGlobal)
                     SetR(d, VarRef(sfVar));
@@ -6321,11 +6465,16 @@ namespace fire.Native
                     // (a buffer of that element made right before: nothing to convert)
                     Need(1); _kindsKept = true; return Next();
                 case OpCode.TypeArray when ins.A[0] == ArrayElem.U8:
-                    // a `byte` declaration holds a byte buffer (SPEC 8.4.2): an array stored there becomes one (fire_rt.h bufFromArray)
-                    Need(1); E($"{S(d - 1)} = typeBuffer({S(d - 1)}, {ins.A[1]}, &{OwnerList()});"); Check(); return Next();
+                    // a `byte` declaration holds a byte buffer (SPEC 8.4.2): an array stored there becomes one (fire_rt.h bufFromArray), anything else but
+                    // undefined is the exception - afterwards it is a buffer of bytes or undefined (a rank above 1: an array of them)
+                    Need(1); E($"{S(d - 1)} = typeBuffer({S(d - 1)}, {ins.A[1]}, &{OwnerList()});"); Check();
+                    if (ins.A[1] == 1) { SetT(d - 1, TypeOf(KindBuf, BufBytes) | NullableBit); _kindsKept = true; }
+                    return Next();
                 case OpCode.TypeArray when ins.A[0] == ArrayElem.Word:
                     // a `word` declaration holds a buffer of machine words (SPEC 8.10)
-                    Need(1); E($"{S(d - 1)} = typeWordBuffer({S(d - 1)}, {ins.A[1]}, &{OwnerList()});"); Check(); return Next();
+                    Need(1); E($"{S(d - 1)} = typeWordBuffer({S(d - 1)}, {ins.A[1]}, &{OwnerList()});"); Check();
+                    if (ins.A[1] == 1) { SetT(d - 1, TypeOf(KindBuf, BufWords) | NullableBit); _kindsKept = true; }
+                    return Next();
                 case OpCode.TypeArray:
                 {
                     Need(1);
@@ -6510,8 +6659,10 @@ namespace fire.Native
                     Need(1);
                     E($"deleteValue({S(d - 1)});");
                     d--; return Next();
-                case OpCode.ArrayGet when K(d - 2) == KindBuf && K(d - 1) == KindInt:
+                case OpCode.ArrayGet when BK(d - 2) == KindBuf && (Ty(d - 2) & TypeNone) == 0 && U(d - 2) is BufBytes or BufWords && K(d - 1) == KindInt:
                 {
+                    // (a buffer that may be undefined - a `byte b[]` parameter: its kind is checked too, undefined takes the generic access that throws)
+                    string isBuf = IsNullable(Ty(d - 2)) ? $"{S(d - 2)}.kind == K_Buffer && " : "";
                     // an element of a buffer the generator knows (a byte, or a machine word): read in place - the generic access for a destroyed buffer or
                     // an index out of range (it throws there)
                     Need(2);
@@ -6525,18 +6676,19 @@ namespace fire.Native
                         string idxValue = NarrowInt(d - 1) ? $"Int({ib})" : S(d - 1);
                         SetT(d - 2, elemType); SetR(d - 2, false); _kindsKept = true;
                         string shadow = ScalarName(f, st, d - 2);
-                        E($"if (FIRE_LIKELY(leafAlive({ab}) && (uint64_t)(int64_t){ib} < bufOf({ab})->length)) {shadow} = {elem}; else {{ Value e_ = {Px}aget_g({ab}, {idxValue}, &{OwnerList()}); {shadow} = {(wordsGet ? "(FireWord)e_.w" : "(FireInt)e_.i")}; }}");
+                        E($"if (FIRE_LIKELY({isBuf}leafAlive({ab}) && (uint64_t)(int64_t){ib} < bufOf({ab})->length)) {shadow} = {elem}; else {{ Value e_ = {Px}aget_g({ab}, {idxValue}, &{OuterOwnerList()}); {shadow} = {(wordsGet ? "(FireWord)e_.w" : "(FireInt)e_.i")}; }}");
                         st.Scalar |= 1UL << (d - 2);
                         Check();
                         d--; return Next();
                     }
                     string a = S(d - 2), i = S(d - 1);
-                    E($"if (FIRE_LIKELY(leafAlive({a}) && (uint64_t){i}.i < bufOf({a})->length)) {a} = {(wordsGet ? $"WordV((uint64_t)bufWords(bufOf({a}))[{i}.i])" : $"Int(bufOf({a})->data[{i}.i])")}; else {a} = {Px}aget_g({a}, {i}, &{OwnerList()});");
+                    E($"if (FIRE_LIKELY({isBuf}leafAlive({a}) && (uint64_t){i}.i < bufOf({a})->length)) {a} = {(wordsGet ? $"WordV((uint64_t)bufWords(bufOf({a}))[{i}.i])" : $"Int(bufOf({a})->data[{i}.i])")}; else {a} = {Px}aget_g({a}, {i}, &{OuterOwnerList()});");
                     Check();
                     d--; SetR(d - 1, false); SetT(d - 1, TypeOf(wordsGet ? KindWord : KindInt, 0) | (wordsGet ? 0 : NarrowBit)); _kindsKept = true; return Next();
                 }
-                case OpCode.ArraySet when K(d - 3) == KindBuf && K(d - 2) == KindInt && (K(d - 1) == KindWord && U(d - 3) == BufWords || K(d - 1) == KindInt && (U(d - 3) == BufBytes || U(d - 1) == 0)):
+                case OpCode.ArraySet when BK(d - 3) == KindBuf && (Ty(d - 3) & TypeNone) == 0 && U(d - 3) is BufBytes or BufWords && K(d - 2) == KindInt && (K(d - 1) == KindWord && U(d - 3) == BufWords || K(d - 1) == KindInt && (U(d - 3) == BufBytes || U(d - 1) == 0)):
                 {
+                    string isSetBuf = IsNullable(Ty(d - 3)) ? $"{S(d - 3)}.kind == K_Buffer && " : "";
                     // a store into an element of a known buffer: in place (the generic access for a destroyed buffer or an index out of range); a word buffer
                     // stores the word (an int cut to the width) and gives it back, a byte buffer the byte of the number and gives the number back
                     Need(3);
@@ -6544,9 +6696,9 @@ namespace fire.Native
                     string a = S(d - 3), i = S(d - 2), v = S(d - 1);
                     string bits = K(d - 1) == KindWord ? $"{v}.w" : $"(uint64_t)(int64_t){v}.i";
                     if (wordsSet)
-                        E($"if (FIRE_LIKELY(leafAlive({a}) && (uint64_t){i}.i < bufOf({a})->length)) {{ {v} = WordV({bits}); bufWords(bufOf({a}))[{i}.i] = (FireWord){v}.w; }} else {v} = {Px}aset_g({a}, {i}, {v}, &{OwnerList()});");
+                        E($"if (FIRE_LIKELY({isSetBuf}leafAlive({a}) && (uint64_t){i}.i < bufOf({a})->length)) {{ {v} = WordV({bits}); bufWords(bufOf({a}))[{i}.i] = (FireWord){v}.w; }} else {v} = {Px}aset_g({a}, {i}, {v}, &{OuterOwnerList()});");
                     else
-                        E($"if (FIRE_LIKELY(leafAlive({a}) && (uint64_t){i}.i < bufOf({a})->length)) bufOf({a})->data[{i}.i] = (uint8_t)({bits}); else {v} = {Px}aset_g({a}, {i}, {v}, &{OwnerList()});");
+                        E($"if (FIRE_LIKELY({isSetBuf}leafAlive({a}) && (uint64_t){i}.i < bufOf({a})->length)) bufOf({a})->data[{i}.i] = (uint8_t)({bits}); else {v} = {Px}aset_g({a}, {i}, {v}, &{OuterOwnerList()});");
                     Check();
                     int storedType = wordsSet ? TypeOf(KindWord, 0) : Ty(d - 1);
                     E($"{a} = {v};");
@@ -6560,7 +6712,7 @@ namespace fire.Native
                     string a = S(d - 2), i = S(d - 1);
                     // (the generic route types the array first: what the element is, is then certain even when a way of writing the field or variable
                     // missed it - it converts, or it is the exception)
-                    E($"{{ Arr* ra_; if (FIRE_LIKELY({a}.kind == K_Array && {i}.kind == K_Int && leafAlive({a}) && (uint64_t){i}.i < (ra_ = arrOf({a}))->length && ra_->typed && ra_->typed->packed && ra_->typed->elem == {getElem})) {a} = arrPackedAt(ra_, (uint32_t){i}.i, {getElem}); else if (typeArray({a}, {getElem}, 1, {TypeArrayUnitArgsOf(null)}, 1)) {a} = {Px}aget_g({a}, {i}, &{OwnerList()}); }}");
+                    E($"{{ Arr* ra_; if (FIRE_LIKELY({a}.kind == K_Array && {i}.kind == K_Int && leafAlive({a}) && (uint64_t){i}.i < (ra_ = arrOf({a}))->length && ra_->typed && ra_->typed->packed && ra_->typed->elem == {getElem})) {a} = arrPackedAt(ra_, (uint32_t){i}.i, {getElem}); else if (typeArray({a}, {getElem}, 1, {TypeArrayUnitArgsOf(null)}, 1)) {a} = {Px}aget_g({a}, {i}, &{OuterOwnerList()}); }}");
                     Check();
                     d--; SetR(d - 1, false); SetT(d - 1, TypeOf(ArrElemKind(getElem), 0) | NullableBit | (ArrElemKind(getElem) == KindInt ? NarrowBit : 0)); _kindsKept = true; return Next();
                 }
@@ -6571,7 +6723,7 @@ namespace fire.Native
                     Need(3);
                     string a = S(d - 3), i = S(d - 2), v = S(d - 1);
                     string convert = ArrElemKind(setElem) == KindInt ? $"{v}.reserved = 0; {v} = intToWidth({v}, {ArrElemBits(setElem)}, false); " : "";
-                    E($"{{ Arr* ra_; if (FIRE_LIKELY({a}.kind == K_Array && {i}.kind == K_Int && leafAlive({a}) && (uint64_t){i}.i < (ra_ = arrOf({a}))->length && ra_->typed && ra_->typed->packed && ra_->typed->elem == {setElem})) {{ {convert}arrPackedSet(ra_, (uint32_t){i}.i, {v}); }} else {v} = {Px}aset_g({a}, {i}, {v}, &{OwnerList()}); }}");
+                    E($"{{ Arr* ra_; if (FIRE_LIKELY({a}.kind == K_Array && {i}.kind == K_Int && leafAlive({a}) && (uint64_t){i}.i < (ra_ = arrOf({a}))->length && ra_->typed && ra_->typed->packed && ra_->typed->elem == {setElem})) {{ {convert}arrPackedSet(ra_, (uint32_t){i}.i, {v}); }} else {v} = {Px}aset_g({a}, {i}, {v}, &{OuterOwnerList()}); }}");
                     Check();
                     int storedType = Ty(d - 1);
                     E($"{a} = {v};");
@@ -7025,7 +7177,7 @@ namespace fire.Native
             bool TypedIntBits(string op)
             {
                 if (K(d - 2) != KindInt || K(d - 1) != KindInt) return false;
-                if (SlotScalars() && NarrowInt(d - 2) && NarrowInt(d - 1) && (op is "<<" or ">>" || U(d - 2) == U(d - 1)))
+                if (SlotScalars() && NarrowInt(d - 2) && NarrowInt(d - 1) && (op is "<<" or ">>" or ">>>" || U(d - 2) == U(d - 1)))
                 {
                     // two narrow ints (no enum values): C on FireInt; the shifts as shl/shr compute them (FIRE_SCALAR_SHL/SHR); the unit is the left one's
                     string bx = SN(d - 2), by = SN(d - 1);
@@ -7033,6 +7185,7 @@ namespace fire.Native
                     {
                         "<<" => $"FIRE_SCALAR_SHL({bx}, {by})",
                         ">>" => $"FIRE_SCALAR_SHR({bx}, {by})",
+                        ">>>" => $"FIRE_SCALAR_USHR({bx}, {by})",
                         _ => $"(FireInt)({bx} {op} {by})",
                     };
                     SetScalar(d - 2, TypeOf(KindInt, U(d - 2)) | NarrowBit, expr);
@@ -7046,6 +7199,7 @@ namespace fire.Native
                 {
                     case "<<": E($"{a} = IntOp1((int64_t)((uint64_t){a}.i << ({b}.i & 63)), {unitC}, {a});"); break;
                     case ">>": E($"{a} = IntOp1({a}.i >> ({b}.i & 63), {unitC}, {a});"); break;
+                    case ">>>": E($"{a} = ushr({a}, {b});"); break;
                     default:
                         if (U(d - 1) != unit) return false;
                         E($"{a} = FIRE_LIKELY(({a}.reserved | {b}.reserved) == 0) ? IntOp({a}.i {op} {b}.i, {unitC}, {a}, {b}) : {(op == "&" ? "bitAnd" : op == "|" ? "bitOr" : "bitXor")}({a}, {b});");
@@ -7057,14 +7211,23 @@ namespace fire.Native
             }
             bool TypedArith(string op)
             {
-                if (SlotScalars() && op is "+" or "-" or "*" or "%" && NarrowInt(d - 2) && NarrowInt(d - 1) && ArithUnit(op, U(d - 2), U(d - 1)) is int intUnit)
+                if (SlotScalars() && op is "+" or "-" or "*" or "%" or "/" && NarrowInt(d - 2) && NarrowInt(d - 1) && ArithUnit(op, U(d - 2), U(d - 1)) is int intUnit)
                 {
                     // two narrow ints: C arithmetic on FireInt (it wraps like the program's int), the result in the left slot's shadow - its unit by the rules
                     // of the typed arithmetic (+ - %: the same, *: of the one that has one)
                     string x = SN(d - 2), y = SN(d - 1);
                     int ux = U(d - 2), uy = U(d - 1);
                     int narrow = TypeOf(KindInt, intUnit) | NarrowBit;
-                    if (op == "%")
+                    if (op == "/")
+                    {
+                        // like Value.Divide: truncated, x / -1 wraps (no trap in C); a division by 0 is the generic one's DivideByZeroException
+                        SetT(d - 2, narrow); SetR(d - 2, false); _kindsKept = true;
+                        string r = ScalarName(f, st, d - 2);
+                        E($"if (FIRE_LIKELY({y} != 0)) {r} = {y} == -1 ? (FireInt)(0 - (FireUInt){x}) : {x} / {y}; else {{ Value m_ = divide({ScalarValueOf(KindInt, ux, x)}, {ScalarValueOf(KindInt, uy, y)}); {r} = (FireInt)m_.i; }}");
+                        st.Scalar |= 1UL << (d - 2);
+                        CheckIf($"{y} == 0");
+                    }
+                    else if (op == "%")
                     {
                         SetT(d - 2, narrow); SetR(d - 2, false); _kindsKept = true;
                         string r = ScalarName(f, st, d - 2);
@@ -7136,6 +7299,79 @@ namespace fire.Native
                 else Emit($"Float({Num(d - 2)} {op} {Num(d - 1)}{unitArg})");
                 d--;
                 SetR(d - 1, false); SetT(d - 1, TypeOf(ints ? KindInt : KindFloat, unit) | (ints && (Ty(d - 1) & Ty(d) & NarrowBit) != 0 ? NarrowBit : 0)); _kindsKept = true;
+                return true;
+            }
+            // `a ^ b` of two C numbers of the same unit (Value.Power / PowerFloat): two narrow ints the int power (wrapping; a negative exponent goes to
+            // the generic one: 0, 1, -1 or a DivideByZeroException), anything with a float - or `toFloat` (PowerFloat) - pow() in the left one's unit
+            bool ScalarPower(bool toFloat)
+            {
+                if (!SlotScalars() || !RealOperand(d - 2) || !RealOperand(d - 1) || U(d - 2) != U(d - 1)) return false;
+                int pu = U(d - 2);
+                if (!toFloat && NarrowInt(d - 2) && NarrowInt(d - 1))
+                {
+                    string x = SN(d - 2), e = SN(d - 1), r = ScalarName(f, st, d - 2);
+                    SetT(d - 2, TypeOf(KindInt, pu) | NarrowBit); SetR(d - 2, false); _kindsKept = true;
+                    if (d - 2 < 64) st.Alias[d - 2] = null;
+                    E($"if (FIRE_LIKELY({e} >= 0)) {r} = (FireInt)intPower({x}, {e}); else {{ Value m_ = power({ScalarValueOf(KindInt, pu, x)}, {ScalarValueOf(KindInt, pu, e)}); {r} = (FireInt)m_.i; }}");
+                    st.Scalar |= 1UL << (d - 2);
+                    CheckIf($"{e} < 0");
+                    d--;
+                    return true;
+                }
+                if (K(d - 2) is not (KindFloat or KindInt) || K(d - 2) == KindInt && !NarrowInt(d - 2) || K(d - 1) == KindInt && !NarrowInt(d - 1)) return false;
+                SetScalar(d - 2, TypeOf(KindFloat, pu), $"(Real)pow((double){SF(d - 2)}, (double){SF(d - 1)})");
+                d--;
+                return true;
+            }
+            // `Math.Abs(x)`, `Math.Sqrt(x)`, `Math.Max(a, b)`, ... of C numbers (an int of the program, a float): C instead of the call of the prelude's
+            // function - the same results (its fire bodies compare like fire_cmpReal, mathCall). Only where the units leave nothing to convert or check.
+            bool MathIntrinsic(string method, int argc)
+            {
+                if (!SlotScalars()) return false;
+                int a0 = d - argc;
+                bool CNum(int k) => K(k) == KindFloat || NarrowInt(k);
+                bool Same(int i, int j) => CNum(i) && CNum(j) && K(i) == K(j) && U(i) == U(j);
+                bool Unitless(int k) => CNum(k) && U(k) == 0;
+                string D(int k) => K(k) == KindFloat ? $"(double){SF(k)}" : $"(double){SN(k)}";
+                string V(int k) => K(k) == KindFloat ? SF(k) : SN(k);
+                // `a < b` of two numbers of one kind as fire compares them (a float: NaN below everything)
+                string Lt(string a, string b, bool real) => real ? $"fire_cmpReal({a}, {b}) < 0" : $"{a} < {b}";
+                string Gt(string a, string b, bool real) => real ? $"fire_cmpReal({a}, {b}) > 0" : $"{a} > {b}";
+                string? expr = null;
+                int type = 0;
+                string? cfn = method switch { "Sin" => "sin", "Cos" => "cos", "Tan" => "tan", "Asin" => "asin", "Acos" => "acos", "Atan" => "atan", "Log" => "log", "Log10" => "log10", "Exp" => "exp", "Sqrt" => "sqrt", _ => null };
+                if (argc == 1 && cfn != null && Unitless(a0)) { expr = $"(Real){cfn}({D(a0)})"; type = TypeOf(KindFloat, 0); }
+                else if (argc == 2 && method == "Atan2" && Unitless(a0) && Unitless(a0 + 1)) { expr = $"(Real)atan2({D(a0)}, {D(a0 + 1)})"; type = TypeOf(KindFloat, 0); }
+                else if (argc == 1 && method is "Round" or "Floor" or "Ceiling" && CNum(a0))
+                {
+                    type = Ty(a0);
+                    expr = K(a0) == KindInt ? SN(a0) : $"(Real){(method == "Round" ? "round" : method == "Floor" ? "floor" : "ceil")}({D(a0)})";
+                }
+                else if (argc == 1 && method is "Abs" or "Sign" && CNum(a0))
+                {
+                    // (the fire bodies: `x < x - x` - for a float also NaN and -infinity as there)
+                    bool real = K(a0) == KindFloat;
+                    string x = V(a0), zero = real ? $"({x} - {x})" : "0";
+                    if (method == "Abs") { expr = real ? $"({Lt(x, zero, true)} ? -{x} : {x})" : $"({x} < 0 ? (FireInt)(0 - (FireUInt){x}) : {x})"; type = Ty(a0); }
+                    else { expr = $"({Lt(x, zero, real)} ? (FireInt)-1 : {Gt(x, zero, real)} ? (FireInt)1 : (FireInt)0)"; type = TypeOf(KindInt, 0) | NarrowBit; }
+                }
+                else if (argc == 2 && method is "Min" or "Max" && Same(a0, a0 + 1))
+                {
+                    bool real = K(a0) == KindFloat;
+                    string a = V(a0), b = V(a0 + 1);
+                    expr = $"({(method == "Min" ? Lt(b, a, real) : Gt(b, a, real))} ? {b} : {a})";
+                    type = JoinTypes(Ty(a0), Ty(a0 + 1));
+                }
+                else if (argc == 3 && method == "Clamp" && Same(a0, a0 + 1) && Same(a0, a0 + 2))
+                {
+                    bool real = K(a0) == KindFloat;
+                    string x = V(a0), lo = V(a0 + 1), hi = V(a0 + 2);
+                    expr = $"({Lt(x, lo, real)} ? {lo} : {Gt(x, hi, real)} ? {hi} : {x})";
+                    type = JoinTypes(JoinTypes(Ty(a0), Ty(a0 + 1)), Ty(a0 + 2));
+                }
+                if (expr == null || KindOfType(type) is not (KindInt or KindFloat)) return false;
+                SetScalar(a0, type, expr);
+                d = a0 + 1;
                 return true;
             }
             // A comparison of two ints of the program without a unit (one of them may be undefined - then the generic comparison decides) in C on FireInt;

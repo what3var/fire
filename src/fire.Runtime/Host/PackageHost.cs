@@ -147,12 +147,14 @@ namespace fire.Runtime
             void Report(string message) => Console.WriteLine($"(unbehandelte Exception im Callback: {message})");
             if (vm != null && !vm.IsHalted)
             {
+                int away = vm.NativeAwayPause();   // (the main program away in the native: back for the callback)
                 try
                 {
                     var error = vm.CallLambdaInline(entry.Lambda, values);
                     if (error != null) { Report(new UncaughtScriptException(error).Message); return 1; }
                 }
                 catch (Exception ex) { Report(ex.Message); return 1; }
+                finally { vm.NativeAwayResume(away); }
                 return 0;
             }
             var owner = entry.Owner ?? _mainVm;

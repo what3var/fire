@@ -4,17 +4,20 @@ using System.Text.Json;
 
 namespace fire.UI.Markup
 {
-    /// <summary>The files that are compiled as the script generated from them: the markup of a user interface (`.fxml`, docs/ui/markup.md) and the schematic of a circuit
-    /// (`.biscuit`, docs/circuits/README.md).</summary>
+    /// <summary>The files that are compiled as the script generated from them: the markup of a user interface (`.fxml`, docs/ui/markup.md), the schematic of a circuit
+    /// (`.biscuit`, docs/circuits/README.md) and a data model (`.fdata`, docs/data/designer.md).</summary>
     public static class MarkupFiles
     {
         public static bool IsUiMarkup(string path) => string.Equals(Path.GetExtension(path), ".fxml", StringComparison.OrdinalIgnoreCase);
         public static bool IsBiscuit(string path) => string.Equals(Path.GetExtension(path), ".biscuit", StringComparison.OrdinalIgnoreCase);
-        public static bool IsGenerated(string path) => IsUiMarkup(path) || IsBiscuit(path);
+        public static bool IsDataModel(string path) => string.Equals(Path.GetExtension(path), ".fdata", StringComparison.OrdinalIgnoreCase);
+        public static bool IsGenerated(string path) => IsUiMarkup(path) || IsBiscuit(path) || IsDataModel(path);
 
         /// <summary>The script generated from the file; throws <see cref="MarkupException"/> when it has mistakes.</summary>
         public static string GenerateScript(string path, string text) =>
-            IsBiscuit(path) ? BiscuitGenerator.Generate(text, path) : FireUiGenerator.Generate(MarkupParser.Parse(text), path);
+            IsBiscuit(path) ? BiscuitGenerator.Generate(text, path)
+            : IsDataModel(path) ? DataModelGenerator.Generate(text, path)
+            : FireUiGenerator.Generate(MarkupParser.Parse(text), path);
     }
 
     /// <summary>One element of a `.biscuit` file as the generator sees it.</summary>

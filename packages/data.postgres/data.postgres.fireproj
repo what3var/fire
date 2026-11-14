@@ -1,0 +1,13 @@
+{
+  "format": 1,
+  "name": "fire-data.postgres",
+  "type": "library",
+  "import": "data.postgres",
+  "standard": true,
+  "settings": {
+    "version": "1.0.0",
+    "author": "fire",
+    "license": "fire",
+    "description": "The standard library 'data.postgres' of fire: the PostgreSQL driver of Data - the protocol 3.0 written in fire (TLS, SCRAM-SHA-256, MD5, the extended query protocol)."
+  }
+}

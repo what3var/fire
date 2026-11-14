@@ -227,6 +227,8 @@ namespace Net {
 
         /// <summary>Values that arrived and were not received yet.</summary>
         int Count { get { return this.inbox.Count } }
+        // (the queue Receive takes from: a wait for a socket or this channel, Net.IConnection.WaitReadableOr)
+        int __Node() { return this.inbox.__Node() }
 
         IEnumerator<T> GetEnumerator() { return this.inbox.GetEnumerator() }
     }

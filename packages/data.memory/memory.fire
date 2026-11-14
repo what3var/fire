@@ -1,0 +1,1999 @@
+// data.memory (docs/data/README.md): the in-memory database of Data - `new Data.Connection("memory:")`. Written in fire: tables as lists of rows, keys, unique
+// indexes, NOT NULL, transactions (a copy of the tables, thrown away by a rollback), and a subset of SQL - so a program and its tests use the same code as with
+// a database on disk:
+//     CREATE TABLE [IF NOT EXISTS] t (c TYPE [PRIMARY KEY] [NOT NULL] [UNIQUE] [DEFAULT v], ...)   DROP TABLE [IF EXISTS] t   ALTER TABLE t ADD [COLUMN] c ...
+//     CREATE [UNIQUE] INDEX [IF NOT EXISTS] i ON t (c)   DROP INDEX [IF EXISTS] i
+//     INSERT INTO t [(c, ...)] VALUES (v, ...)[, (...)] | DEFAULT VALUES     UPDATE t SET c = v, ... [WHERE e]     DELETE FROM t [WHERE e]
+//     SELECT [DISTINCT] * | e [AS n], ... [FROM t] [WHERE e] [ORDER BY e [ASC|DESC], ...] [LIMIT n [OFFSET m]]
+//     BEGIN, COMMIT, ROLLBACK, SAVEPOINT s, RELEASE [SAVEPOINT] s, ROLLBACK TO [SAVEPOINT] s
+// Expressions: literals, `?`, columns, + - * / % ||, = == != <> < <= > >=, AND OR NOT, IS [NOT] NULL, [NOT] LIKE, [NOT] IN (...), [NOT] BETWEEN,
+// lower upper length abs coalesce ifnull trim substr instr, and the aggregates count(*) count sum min max avg (over all rows, without GROUP BY).
+// Values are dynamic like SQLite's: int, float, text, bytes, NULL. The errors and their codes are SQLite's (Data.ConstraintException 1555, 2067, 1299).
+#import "data"
+
+namespace Data {
+    [Keep]
+    [Driver "memory"]
+    class MemoryDriver : Data.IDriver {
+        construct() { }
+        // (the databases with a name: shared by the connections that name them - `memory:shop`)
+        static Dictionary<string, Data.MemStore> named = new Dictionary<string, Data.MemStore>()
+        static int connections = 0
+        Data.IDriverConnection Open(string target, Data.Credentials credentials) {
+            var c = new Data.MemoryConnection()
+            Data.MemoryDriver.connections = Data.MemoryDriver.connections + 1
+            c.id = Data.MemoryDriver.connections
+            if (target == "") { return c }
+            string name = target.ToLower()
+            for (var i = 0; i < name.Length; i++) {
+                char ch = name[i]
+                if (!((ch >= 'a' && ch <= 'z') || (ch >= '0' && ch <= '9') || ch == '_' || ch == '-' || ch == '.')) { throw new ArgumentException("data.memory: the name of a shared database is letters, digits, _ - . ('memory:shop'), not '" + target + "'.") }
+            }
+            if (!Data.MemoryDriver.named.ContainsKey(name)) { Data.MemoryDriver.named.Add(name, new Data.MemStore()) }
+            c.store = Data.MemoryDriver.named[name]
+            c.shared = name
+            return c
+        }
+        // Forgets a shared database (its tables are gone for the connections that open it next; those open keep what they have).
+        static undefined Forget(string name) {
+            string key = name.ToLower()
+            if (Data.MemoryDriver.named.ContainsKey(key)) { Data.MemoryDriver.named.Remove(key) }
+        }
+        static undefined Fail(string message, int code = 1) {
+            int primary = code % 256
+            if (primary == 19) { throw new Data.ConstraintException(message, code) }
+            if (primary == 5) { throw new Data.BusyException(message, code) }
+            throw new Data.DataException(message, code)
+        }
+    }
+
+    class MemoryDialect : Data.Dialect {
+        construct() : base("memory") { }
+        // (GROUP BY and JOIN are not in the SQL of the in-memory database: groups and joins run in the program)
+        override bool Groups() { return false }
+        override bool Joins() { return false }
+        override string ColumnsQuery() { return "SELECT name FROM _columns WHERE table_name = ?" }
+        override string TablesQuery() { return "SELECT DISTINCT table_name FROM _columns ORDER BY table_name" }
+        override string ColumnInfoQuery() { return "SELECT name, type, notnull = 0, pk FROM _columns WHERE table_name = ?" }
+        override string IndexesQuery() { return "SELECT name, column_name, is_unique FROM _indexes WHERE table_name = ? ORDER BY name" }
+    }
+
+    // ---- the store ----
+
+    class MemColumn {
+        string name
+        string type
+        bool key
+        bool notNull
+        bool unique
+        any defaultValue
+        construct(string name) {
+            this.name = name
+            this.type = ""
+            this.key = false
+            this.notNull = false
+            this.unique = false
+        }
+        Data.MemColumn Copy() {
+            var c = new Data.MemColumn(this.name)
+            c.type = this.type
+            c.key = this.key
+            c.notNull = this.notNull
+            c.unique = this.unique
+            c.defaultValue = this.defaultValue
+            return c
+        }
+    }
+
+    class MemTable {
+        string name
+        List columns         // Data.MemColumn
+        List rows            // any[] per row
+        List checks          // Data.MemNode: the CHECK conditions of the columns and the table
+        List checkTexts      // their text (for the message)
+        int nextId
+        construct(string name) {
+            this.name = name
+            this.columns = new List()
+            this.rows = new List()
+            this.checks = new List()
+            this.checkTexts = new List()
+            this.nextId = 1
+        }
+        int IndexOf(string column) {
+            string lower = column.ToLower()
+            for (var i = 0; i < this.columns.Count; i++) {
+                Data.MemColumn c = this.columns[i]
+                if (c.name.ToLower() == lower) { return i }
+            }
+            return -1
+        }
+        int KeyIndex() {
+            for (var i = 0; i < this.columns.Count; i++) {
+                Data.MemColumn c = this.columns[i]
+                if (c.key) { return i }
+            }
+            return -1
+        }
+        // (an INTEGER PRIMARY KEY: the rowid - generated when it is NULL)
+        bool RowidKey() {
+            int k = this.KeyIndex()
+            if (k < 0) { return false }
+            Data.MemColumn c = this.columns[k]
+            return c.type.ToUpper().StartsWith("INT")
+        }
+        Data.MemTable Copy() {
+            var t = new Data.MemTable(this.name)
+            for (var i = 0; i < this.columns.Count; i++) {
+                Data.MemColumn c = this.columns[i]
+                t.columns.Add(c.Copy())
+            }
+            for (var i = 0; i < this.rows.Count; i++) {
+                any row = this.rows[i]
+                t.rows.Add(copy row)
+            }
+            for (var i = 0; i < this.checks.Count; i++) {
+                Data.MemNode c = this.checks[i]
+                t.checks.Add(copy c)
+                t.checkTexts.Add(this.checkTexts[i])
+            }
+            t.nextId = this.nextId
+            return t
+        }
+    }
+
+    /// <summary>A view: its name and its SELECT (run each time the view is read).</summary>
+    class MemView {
+        string name
+        string sql
+        construct(string name, string sql) {
+            this.name = name
+            this.sql = sql
+        }
+    }
+
+    class MemIndex {
+        string name
+        string table
+        string column
+        bool unique
+        construct(string name, string table, string column, bool unique) {
+            this.name = name
+            this.table = table
+            this.column = column
+            this.unique = unique
+        }
+    }
+
+    class MemStore {
+        List tables          // Data.MemTable
+        List indexes         // Data.MemIndex
+        List views           // Data.MemView
+        int lockedBy         // the connection whose transaction is open (0: none) - the others wait for nobody: they are busy
+        construct() {
+            this.tables = new List()
+            this.indexes = new List()
+            this.views = new List()
+            this.lockedBy = 0
+        }
+        // (the state of another store, copied in - the store stays the one its connections share)
+        undefined Restore(Data.MemStore state) {
+            var c = state.Copy()
+            this.tables = take c.tables
+            this.indexes = take c.indexes
+            this.views = take c.views
+        }
+        Data.MemView FindView(string name) {
+            string lower = name.ToLower()
+            for (var i = 0; i < this.views.Count; i++) {
+                Data.MemView v = this.views[i]
+                if (v.name.ToLower() == lower) { return v }
+            }
+            return undefined
+        }
+        Data.MemTable Find(string name) {
+            string lower = name.ToLower()
+            for (var i = 0; i < this.tables.Count; i++) {
+                Data.MemTable t = this.tables[i]
+                if (t.name.ToLower() == lower) { return t }
+            }
+            return undefined
+        }
+        Data.MemTable Table(string name) {
+            var t = this.Find(name)
+            if (t == undefined) { Data.MemoryDriver.Fail("no such table: " + name) }
+            return t
+        }
+        Data.MemStore Copy() {
+            var s = new Data.MemStore()
+            for (var i = 0; i < this.tables.Count; i++) {
+                Data.MemTable t = this.tables[i]
+                s.tables.Add(t.Copy())
+            }
+            for (var i = 0; i < this.indexes.Count; i++) {
+                Data.MemIndex x = this.indexes[i]
+                s.indexes.Add(new Data.MemIndex(x.name, x.table, x.column, x.unique))
+            }
+            for (var i = 0; i < this.views.Count; i++) {
+                Data.MemView v = this.views[i]
+                s.views.Add(new Data.MemView(v.name, v.sql))
+            }
+            return s
+        }
+    }
+
+    // ---- the connection and its statements ----
+
+    class MemoryConnection : Data.IDriverConnection {
+        Data.MemStore store
+        int id
+        string shared        // the name of a shared database (undefined: its own)
+        List saved           // Data.MemStore per open transaction or savepoint (the state before it)
+        List savedNames      // its name ("" for BEGIN)
+        int changes
+        int lastId
+        Data.MemoryDialect dialect
+
+        construct() {
+            this.store = new Data.MemStore()
+            this.saved = new List()
+            this.savedNames = new List()
+            this.changes = 0
+            this.lastId = 0
+            this.dialect = new Data.MemoryDialect()
+        }
+
+        Data.IStatement Prepare(string sql) {
+            var p = new Data.MemParser(sql)
+            Data.MemNode tree = p.Statement()
+            p.End()
+            return new Data.MemoryStatement(this, take tree)
+        }
+
+        undefined Exec(string sql) {
+            var p = new Data.MemParser(sql)
+            while (!p.AtEnd()) {
+                Data.MemNode tree = p.Statement()
+                p.Semicolons()
+                var st = new Data.MemoryStatement(this, take tree)
+                st.Bind(undefined)
+                while (st.Next()) { }
+            }
+        }
+
+        int Changes() { return this.changes }
+        int LastId() { return this.lastId }
+        Data.Dialect Dialect() { return this.dialect }
+        // (a transaction left open is rolled back: the others may write again)
+        undefined Close() {
+            if (this.saved.Count > 0) { this.Rollback() }
+        }
+        // (a write while another connection of the shared database is in a transaction: busy)
+        undefined CheckWrite() {
+            if (this.store.lockedBy != 0 && this.store.lockedBy != this.id) { Data.MemoryDriver.Fail("database is locked (another connection of memory:" + this.shared + " is in a transaction)", 5) }
+        }
+
+        // ---- transactions ----
+        undefined Save(string name) {
+            this.saved.Add(this.store.Copy())
+            this.savedNames.Add(name)
+        }
+        int SavedAt(string name) {
+            for (var i = this.savedNames.Count - 1; i >= 0; i--) { if (this.savedNames[i] == name) { return i } }
+            Data.MemoryDriver.Fail("no such savepoint: " + name)
+            return -1
+        }
+        undefined Begin() {
+            if (this.saved.Count > 0) { Data.MemoryDriver.Fail("cannot start a transaction within a transaction") }
+            this.CheckWrite()
+            this.Save("")
+            this.store.lockedBy = this.id
+        }
+        undefined Commit() {
+            if (this.saved.Count == 0) { Data.MemoryDriver.Fail("cannot commit - no transaction is active") }
+            this.saved = new List()
+            this.savedNames = new List()
+            this.store.lockedBy = 0
+        }
+        undefined Rollback() {
+            if (this.saved.Count == 0) { Data.MemoryDriver.Fail("cannot rollback - no transaction is active") }
+            Data.MemStore first = this.saved[0]
+            this.store.Restore(first)
+            this.saved = new List()
+            this.savedNames = new List()
+            this.store.lockedBy = 0
+        }
+        undefined Savepoint(string name) { this.Save(name.ToLower()) }
+        undefined Release(string name) {
+            int at = this.SavedAt(name.ToLower())
+            while (this.saved.Count > at) {
+                this.saved.RemoveAt(this.saved.Count - 1)
+                this.savedNames.RemoveAt(this.savedNames.Count - 1)
+            }
+        }
+        undefined RollbackTo(string name) {
+            int at = this.SavedAt(name.ToLower())
+            Data.MemStore before = this.saved[at]
+            this.store.Restore(before)
+            while (this.saved.Count > at + 1) {
+                this.saved.RemoveAt(this.saved.Count - 1)
+                this.savedNames.RemoveAt(this.savedNames.Count - 1)
+            }
+        }
+    }
+
+    class MemoryStatement : Data.IStatement {
+        Data.MemoryConnection connection
+        Data.MemNode tree
+        any args
+        List result          // any[] per row of the result
+        any names
+        int at
+        bool ran
+
+        construct(Data.MemoryConnection connection, Data.MemNode tree) {
+            this.connection = connection
+            this.tree = take tree
+            this.result = new List()
+            this.names = new any[0]
+            this.at = -1
+            this.ran = false
+            if (this.tree.kind == "select") { this.names = Data.MemRun.Names(this.tree, this.connection.store) }
+        }
+
+        undefined Bind(any args) {
+            int want = Data.MemNode.CountParams(this.tree)
+            int have = 0
+            if (args != undefined) { have = args.length }
+            if (want != have) { throw new ArgumentException("The statement has " + want + " parameter(s), " + have + " value(s) were given.") }
+            if (args == undefined) { this.args = new any[0] }
+            else {
+                // (as SQLite stores them: a bool is 1/0, a char a text, bytes a copy)
+                this.args = new any[args.length]
+                for (var i = 0; i < args.length; i++) {
+                    any v = args[i]
+                    if (v is of bool) { if (v) { this.args[i] = 1 } else { this.args[i] = 0 } }
+                    else if (v is of char) { this.args[i] = "" + v }
+                    else if (v == undefined || v is of int || v is of float || v is of string) { this.args[i] = v }
+                    else { this.args[i] = copy v }
+                }
+            }
+            this.Reset()
+        }
+        bool Next() {
+            if (!this.ran) {
+                this.ran = true
+                var run = new Data.MemRun(this.connection, this.args)
+                this.result = run.Execute(this.tree)
+                this.names = run.names
+            }
+            this.at = this.at + 1
+            return this.at < this.result.Count
+        }
+        any Values() {
+            any row = this.result[this.at]
+            return copy row
+        }
+        any Names() { return copy this.names }
+        undefined Reset() {
+            this.ran = false
+            this.at = -1
+            this.result = new List()
+        }
+        undefined Close() { }
+    }
+
+    // ---- SQL: tokens, the tree, the parser ----
+
+    class MemToken {
+        string kind          // id (a name), word (a keyword, upper case), num, str, sym, param, end
+        string text
+        any value
+        int start            // where it is in the SQL, and where it ends
+        int stop
+        construct(string kind, string text, any value) {
+            this.kind = kind
+            this.text = text
+            this.value = value
+            this.start = 0
+            this.stop = 0
+        }
+    }
+
+    class MemNode {
+        string kind          // the statement or expression: select, insert, ..., lit, param, col, star, un, bin, isnull, like, in, between, call
+        string name          // a table, column, function, operator, savepoint
+        any value
+        int number           // a parameter's position
+        bool flag            // NOT (like, in, between, is null), DISTINCT, IF [NOT] EXISTS, UNIQUE, DESC
+        Data.MemNode a
+        Data.MemNode b
+        Data.MemNode c
+        List items           // the children: columns, values, rows, SET pairs, ORDER BY, arguments
+        List names           // names: columns of INSERT, aliases of SELECT
+        construct(string kind) {
+            this.kind = kind
+            this.number = 0
+            this.flag = false
+            this.items = new List()
+            this.names = new List()
+        }
+        static Data.MemNode Lit(any value) {
+            var n = new Data.MemNode("lit")
+            n.value = value
+            return n
+        }
+        static int CountParams(Data.MemNode n) {
+            if (n == undefined) { return 0 }
+            int count = 0
+            if (n.kind == "param") { count = 1 }
+            count = count + Data.MemNode.CountParams(n.a) + Data.MemNode.CountParams(n.b) + Data.MemNode.CountParams(n.c)
+            for (var i = 0; i < n.items.Count; i++) { count = count + Data.MemNode.CountParams(n.items[i]) }
+            return count
+        }
+    }
+
+    class MemParser {
+        List tokens
+        int at
+        int parameters
+        string sql
+
+        construct(string sql) {
+            this.sql = sql
+            this.tokens = Data.MemParser.Tokens(sql)
+            this.at = 0
+            this.parameters = 0
+        }
+
+        static bool IsWord(string upper) {
+            var words = ["SELECT", "FROM", "WHERE", "ORDER", "BY", "ASC", "DESC", "LIMIT", "OFFSET", "INSERT", "INTO", "VALUES", "DEFAULT", "UPDATE", "SET",
+                "DELETE", "CREATE", "TABLE", "DROP", "ALTER", "ADD", "COLUMN", "INDEX", "UNIQUE", "ON", "IF", "NOT", "EXISTS", "PRIMARY", "KEY", "NULL",
+                "AND", "OR", "IS", "IN", "LIKE", "BETWEEN", "AS", "DISTINCT", "TRUE", "FALSE", "BEGIN", "COMMIT", "ROLLBACK", "SAVEPOINT", "RELEASE",
+                "TO", "TRANSACTION", "AUTOINCREMENT", "END", "RENAME", "CHECK", "VIEW"]
+            for (var i = 0; i < words.length; i++) { if (words[i] == upper) { return true } }
+            return false
+        }
+
+        static List Tokens(string sql) {
+            var list = new List()
+            int i = 0
+            int n = sql.Length
+            int begin = 0
+            int count = 0
+            while (i < n) {
+                Data.MemParser.Place(list, count, begin, i)
+                count = list.Count
+                char ch = sql.CharAt(i)
+                if (ch == ' ' || ch == '\t' || ch == '\r' || ch == '\n') { i++; continue }
+                begin = i
+                if (ch == '-' && i + 1 < n && sql.CharAt(i + 1) == '-') {
+                    while (i < n && sql.CharAt(i) != '\n') { i++ }
+                    continue
+                }
+                if (ch.IsLetter() || ch == '_') {
+                    int s = i
+                    while (i < n && (sql.CharAt(i).IsLetterOrDigit() || sql.CharAt(i) == '_')) { i++ }
+                    string ident = sql.Substring(s, i - s)
+                    string upper = ident.ToUpper()
+                    if (Data.MemParser.IsWord(upper)) { list.Add(new Data.MemToken("word", upper, undefined)) }
+                    else { list.Add(new Data.MemToken("id", ident, undefined)) }
+                    continue
+                }
+                if (ch.IsDigit() || (ch == '.' && i + 1 < n && sql.CharAt(i + 1).IsDigit())) {
+                    int s = i
+                    bool real = false
+                    while (i < n && (sql.CharAt(i).IsDigit() || sql.CharAt(i) == '.' || sql.CharAt(i) == 'e' || sql.CharAt(i) == 'E')) {
+                        if (sql.CharAt(i) == '.' || sql.CharAt(i) == 'e' || sql.CharAt(i) == 'E') { real = true }
+                        i++
+                    }
+                    string digits = sql.Substring(s, i - s)
+                    if (real) { list.Add(new Data.MemToken("num", digits, digits.ToFloat())) }
+                    else { list.Add(new Data.MemToken("num", digits, digits.ToInt())) }
+                    continue
+                }
+                if (ch == '\'') {
+                    var text = ""
+                    i++
+                    while (true) {
+                        if (i >= n) { Data.MemoryDriver.Fail("unrecognized token: unterminated string") }
+                        char c = sql.CharAt(i)
+                        if (c == '\'') {
+                            if (i + 1 < n && sql.CharAt(i + 1) == '\'') { text = text + "'"; i = i + 2; continue }
+                            i++
+                            break
+                        }
+                        text = text + c
+                        i++
+                    }
+                    list.Add(new Data.MemToken("str", text, text))
+                    continue
+                }
+                if (ch == '"' || ch == '`' || ch == '[') {
+                    char close = ch
+                    if (ch == '[') { close = ']' }
+                    int s = i + 1
+                    i++
+                    while (i < n && sql.CharAt(i) != close) { i++ }
+                    if (i >= n) { Data.MemoryDriver.Fail("unrecognized token: unterminated name") }
+                    list.Add(new Data.MemToken("id", sql.Substring(s, i - s), undefined))
+                    i++
+                    continue
+                }
+                if (ch == '?') {
+                    list.Add(new Data.MemToken("param", "?", undefined))
+                    i++
+                    continue
+                }
+                if (i + 1 < n) {
+                    string two = sql.Substring(i, 2)
+                    if (two == "<=" || two == ">=" || two == "<>" || two == "!=" || two == "==" || two == "||") {
+                        list.Add(new Data.MemToken("sym", two, undefined))
+                        i = i + 2
+                        continue
+                    }
+                }
+                if ("(),;*=<>+-/%.".IndexOf("" + ch) >= 0) {
+                    list.Add(new Data.MemToken("sym", "" + ch, undefined))
+                    i++
+                    continue
+                }
+                Data.MemoryDriver.Fail("unrecognized token: \"" + ch + "\"")
+            }
+            Data.MemParser.Place(list, count, begin, i)
+            var end = new Data.MemToken("end", "", undefined)
+            end.start = n
+            end.stop = n
+            list.Add(take end)
+            return list
+        }
+
+        // (the tokens from `count` on were read from `begin` up to `at`)
+        static undefined Place(List list, int count, int begin, int at) {
+            for (var k = count; k < list.Count; k++) {
+                Data.MemToken t = list[k]
+                t.start = begin
+                t.stop = at
+            }
+        }
+
+        Data.MemToken Peek() { return this.tokens[this.at] }
+        Data.MemToken PeekAt(int k) {
+            int i = this.at + k
+            if (i >= this.tokens.Count) { i = this.tokens.Count - 1 }
+            return this.tokens[i]
+        }
+        Data.MemToken Take() {
+            Data.MemToken t = this.tokens[this.at]
+            if (this.at < this.tokens.Count - 1) { this.at = this.at + 1 }
+            return t
+        }
+        bool IsWordToken(string w) {
+            Data.MemToken t = this.Peek()
+            return t.kind == "word" && t.text == w
+        }
+        bool IsSym(string s) {
+            Data.MemToken t = this.Peek()
+            return t.kind == "sym" && t.text == s
+        }
+        bool Accept(string w) {
+            if (this.IsWordToken(w)) { this.Take(); return true }
+            return false
+        }
+        bool AcceptSym(string s) {
+            if (this.IsSym(s)) { this.Take(); return true }
+            return false
+        }
+        undefined Expect(string w) { if (!this.Accept(w)) { this.Error() } }
+        undefined ExpectSym(string s) { if (!this.AcceptSym(s)) { this.Error() } }
+        undefined Error() {
+            Data.MemToken t = this.Peek()
+            if (t.kind == "end") { Data.MemoryDriver.Fail("incomplete input") }
+            Data.MemoryDriver.Fail("near \"" + t.text + "\": syntax error")
+        }
+        // A name (a table, column, index): an identifier, or a keyword used as one.
+        string Name() {
+            Data.MemToken t = this.Peek()
+            if (t.kind == "id") { this.Take(); return t.text }
+            if (t.kind == "word" && !(t.text == "SELECT" || t.text == "FROM" || t.text == "WHERE" || t.text == "VALUES" || t.text == "SET")) { this.Take(); return t.text.ToLower() }
+            this.Error()
+            return ""
+        }
+        bool AtEnd() { return this.Peek().kind == "end" }
+        undefined Semicolons() { while (this.AcceptSym(";")) { } }
+        undefined End() {
+            this.Semicolons()
+            if (!this.AtEnd()) { Data.MemoryDriver.Fail("Only one statement at a time can have parameters or rows: use Execute without parameters for several.") }
+        }
+
+        Data.MemNode Statement() {
+            this.Semicolons()
+            if (this.IsWordToken("SELECT")) { return this.Select() }
+            if (this.Accept("INSERT")) { return this.Insert() }
+            if (this.Accept("UPDATE")) { return this.Update() }
+            if (this.Accept("DELETE")) { return this.Delete() }
+            if (this.Accept("CREATE")) { return this.Create() }
+            if (this.Accept("DROP")) { return this.Drop() }
+            if (this.Accept("ALTER")) { return this.Alter() }
+            if (this.Accept("BEGIN")) { this.Accept("TRANSACTION"); return new Data.MemNode("begin") }
+            if (this.Accept("COMMIT") || this.Accept("END")) { this.Accept("TRANSACTION"); return new Data.MemNode("commit") }
+            if (this.Accept("ROLLBACK")) {
+                this.Accept("TRANSACTION")
+                if (this.Accept("TO")) {
+                    this.Accept("SAVEPOINT")
+                    var n = new Data.MemNode("rollbackto")
+                    n.name = this.Name()
+                    return n
+                }
+                return new Data.MemNode("rollback")
+            }
+            if (this.Accept("SAVEPOINT")) {
+                var n = new Data.MemNode("savepoint")
+                n.name = this.Name()
+                return n
+            }
+            if (this.Accept("RELEASE")) {
+                this.Accept("SAVEPOINT")
+                var n = new Data.MemNode("release")
+                n.name = this.Name()
+                return n
+            }
+            this.Error()
+            return undefined
+        }
+
+        Data.MemNode Select() {
+            this.Expect("SELECT")
+            var n = new Data.MemNode("select")
+            n.flag = this.Accept("DISTINCT")
+            while (true) {
+                if (this.AcceptSym("*")) {
+                    n.items.Add(new Data.MemNode("star"))
+                    n.names.Add("*")
+                } else {
+                    int start = this.at
+                    Data.MemNode e = this.Expr()
+                    string alias = undefined
+                    if (this.Accept("AS")) { alias = this.Name() }
+                    else if (this.Peek().kind == "id") { alias = this.Name() }
+                    if (alias == undefined && e.kind == "col") { alias = e.name }   // (a column, also t.column: its name - like SQLite)
+                    if (alias == undefined) { alias = this.TextOf(start, this.at) }
+                    n.items.Add(take e)
+                    n.names.Add(alias)
+                }
+                if (!this.AcceptSym(",")) { break }
+            }
+            if (this.Accept("FROM")) {
+                n.name = this.Name()
+                if (this.Accept("AS")) { n.value = this.Name() }
+                else if (this.Peek().kind == "id") { n.value = this.Name() }
+            }
+            if (this.Accept("WHERE")) { n.a = this.Expr() }
+            if (this.Accept("ORDER")) {
+                this.Expect("BY")
+                var order = new Data.MemNode("order")
+                while (true) {
+                    var o = new Data.MemNode("key")
+                    o.a = this.Expr()
+                    if (this.Accept("DESC")) { o.flag = true } else { this.Accept("ASC") }
+                    order.items.Add(take o)
+                    if (!this.AcceptSym(",")) { break }
+                }
+                n.b = take order
+            }
+            if (this.Accept("LIMIT")) {
+                var limit = new Data.MemNode("limit")
+                limit.a = this.Expr()
+                if (this.Accept("OFFSET")) { limit.b = this.Expr() }
+                else if (this.AcceptSym(",")) {
+                    limit.b = limit.a
+                    limit.a = this.Expr()
+                }
+                n.c = take limit
+            }
+            return n
+        }
+
+        // (the text of the tokens first..last, as it is in the SQL: the name of a column without AS)
+        string TextOf(int first, int last) {
+            if (last <= first) { return "" }
+            Data.MemToken a = this.tokens[first]
+            Data.MemToken b = this.tokens[last - 1]
+            return this.sql.Substring(a.start, b.stop - a.start)
+        }
+
+        Data.MemNode Insert() {
+            this.Expect("INTO")
+            var n = new Data.MemNode("insert")
+            n.name = this.Name()
+            if (this.Accept("DEFAULT")) {
+                this.Expect("VALUES")
+                n.items.Add(new Data.MemNode("row"))
+                return n
+            }
+            if (this.AcceptSym("(")) {
+                while (true) {
+                    n.names.Add(this.Name())
+                    if (!this.AcceptSym(",")) { break }
+                }
+                this.ExpectSym(")")
+            }
+            this.Expect("VALUES")
+            while (true) {
+                this.ExpectSym("(")
+                var row = new Data.MemNode("row")
+                while (true) {
+                    row.items.Add(this.Expr())
+                    if (!this.AcceptSym(",")) { break }
+                }
+                this.ExpectSym(")")
+                n.items.Add(take row)
+                if (!this.AcceptSym(",")) { break }
+            }
+            return n
+        }
+
+        Data.MemNode Update() {
+            var n = new Data.MemNode("update")
+            n.name = this.Name()
+            this.Expect("SET")
+            while (true) {
+                n.names.Add(this.Name())
+                if (!this.AcceptSym("=")) { this.ExpectSym("==") }
+                n.items.Add(this.Expr())
+                if (!this.AcceptSym(",")) { break }
+            }
+            if (this.Accept("WHERE")) { n.a = this.Expr() }
+            return n
+        }
+
+        Data.MemNode Delete() {
+            this.Expect("FROM")
+            var n = new Data.MemNode("delete")
+            n.name = this.Name()
+            if (this.Accept("WHERE")) { n.a = this.Expr() }
+            return n
+        }
+
+        Data.MemNode Create() {
+            if (this.Accept("VIEW")) {
+                var v = new Data.MemNode("createview")
+                if (this.Accept("IF")) { this.Expect("NOT"); this.Expect("EXISTS"); v.flag = true }
+                v.name = this.Name()
+                this.Expect("AS")
+                int start = this.at
+                this.Select()
+                v.value = this.TextOf(start, this.at)
+                return v
+            }
+            bool unique = this.Accept("UNIQUE")
+            if (this.Accept("INDEX")) {
+                var n = new Data.MemNode("createindex")
+                n.flag = unique
+                if (this.Accept("IF")) { this.Expect("NOT"); this.Expect("EXISTS"); n.value = true }
+                n.names.Add(this.Name())
+                this.Expect("ON")
+                n.name = this.Name()
+                this.ExpectSym("(")
+                n.names.Add(this.Name())
+                this.Accept("ASC")
+                this.Accept("DESC")
+                this.ExpectSym(")")
+                return n
+            }
+            this.Expect("TABLE")
+            var n = new Data.MemNode("create")
+            if (this.Accept("IF")) { this.Expect("NOT"); this.Expect("EXISTS"); n.flag = true }
+            n.name = this.Name()
+            this.ExpectSym("(")
+            while (true) {
+                if (this.Accept("CHECK")) {
+                    var chk = new Data.MemNode("check")
+                    this.ExpectSym("(")
+                    int first = this.at
+                    chk.a = this.Expr()
+                    chk.value = this.TextOf(first, this.at)
+                    this.ExpectSym(")")
+                    n.items.Add(take chk)
+                } else if (this.IsWordToken("PRIMARY") || this.IsWordToken("UNIQUE")) {
+                    // a table constraint: PRIMARY KEY (c) / UNIQUE (c)
+                    var con = new Data.MemNode("constraint")
+                    con.flag = this.Accept("PRIMARY")
+                    if (con.flag) { this.Expect("KEY") } else { this.Expect("UNIQUE") }
+                    this.ExpectSym("(")
+                    con.name = this.Name()
+                    this.ExpectSym(")")
+                    n.items.Add(take con)
+                } else {
+                    n.items.Add(this.ColumnDef())
+                }
+                if (!this.AcceptSym(",")) { break }
+            }
+            this.ExpectSym(")")
+            return n
+        }
+
+        Data.MemNode ColumnDef() {
+            var c = new Data.MemNode("column")
+            c.name = this.Name()
+            var type = ""
+            while (this.Peek().kind == "id") {
+                if (type != "") { type = type + " " }
+                type = type + this.Take().text
+            }
+            if (this.AcceptSym("(")) {
+                type = type + "("
+                while (!this.AcceptSym(")")) {
+                    if (this.AtEnd()) { this.Error() }
+                    type = type + this.Take().text
+                }
+                type = type + ")"
+            }
+            c.value = type
+            while (true) {
+                if (this.Accept("PRIMARY")) { this.Expect("KEY"); c.names.Add("key"); this.Accept("ASC"); this.Accept("DESC"); this.Accept("AUTOINCREMENT"); continue }
+                if (this.Accept("NOT")) { this.Expect("NULL"); c.names.Add("notnull"); continue }
+                if (this.Accept("NULL")) { continue }
+                if (this.Accept("UNIQUE")) { c.names.Add("unique"); continue }
+                if (this.Accept("DEFAULT")) { c.a = this.Primary(); continue }
+                if (this.Accept("CHECK")) {
+                    this.ExpectSym("(")
+                    int first = this.at
+                    c.b = this.Expr()
+                    c.c = new Data.MemNode("text")
+                    c.c.value = this.TextOf(first, this.at)
+                    this.ExpectSym(")")
+                    continue
+                }
+                break
+            }
+            return c
+        }
+
+        Data.MemNode Drop() {
+            if (this.Accept("VIEW")) {
+                var v = new Data.MemNode("dropview")
+                if (this.Accept("IF")) { this.Expect("EXISTS"); v.flag = true }
+                v.name = this.Name()
+                return v
+            }
+            if (this.Accept("INDEX")) {
+                var n = new Data.MemNode("dropindex")
+                if (this.Accept("IF")) { this.Expect("EXISTS"); n.flag = true }
+                n.name = this.Name()
+                return n
+            }
+            this.Expect("TABLE")
+            var n = new Data.MemNode("drop")
+            if (this.Accept("IF")) { this.Expect("EXISTS"); n.flag = true }
+            n.name = this.Name()
+            return n
+        }
+
+        Data.MemNode Alter() {
+            this.Expect("TABLE")
+            var n = new Data.MemNode("alter")
+            n.name = this.Name()
+            n.value = "add"
+            if (this.Accept("DROP")) {
+                // (ALTER TABLE t DROP [COLUMN] c)
+                this.Accept("COLUMN")
+                n.value = "drop"
+                n.names = new List()
+                n.names.Add(this.Name())
+                return n
+            }
+            if (this.Accept("RENAME")) {
+                // (ALTER TABLE t RENAME [COLUMN] a TO b)
+                this.Accept("COLUMN")
+                n.value = "rename"
+                n.names = new List()
+                n.names.Add(this.Name())
+                this.Expect("TO")
+                n.names.Add(this.Name())
+                return n
+            }
+            this.Expect("ADD")
+            this.Accept("COLUMN")
+            n.a = this.ColumnDef()
+            return n
+        }
+
+        // ---- expressions (by precedence: OR, AND, NOT, comparison, + - ||, * / %, unary, primary) ----
+        Data.MemNode Expr() { return this.Or() }
+        Data.MemNode Or() {
+            Data.MemNode left = this.And()
+            while (this.Accept("OR")) { left = Data.MemParser.Bin("OR", take left, this.And()) }
+            return left
+        }
+        Data.MemNode And() {
+            Data.MemNode left = this.Not()
+            while (this.Accept("AND")) { left = Data.MemParser.Bin("AND", take left, this.Not()) }
+            return left
+        }
+        Data.MemNode Not() {
+            if (this.Accept("NOT")) {
+                var n = new Data.MemNode("un")
+                n.name = "NOT"
+                n.a = this.Not()
+                return n
+            }
+            return this.Compare()
+        }
+        static Data.MemNode Bin(string op, Data.MemNode left, Data.MemNode right) {
+            var n = new Data.MemNode("bin")
+            n.name = op
+            n.a = take left
+            n.b = take right
+            return n
+        }
+        Data.MemNode Compare() {
+            Data.MemNode left = this.Sum()
+            while (true) {
+                Data.MemToken t = this.Peek()
+                if (t.kind == "sym" && (t.text == "=" || t.text == "==" || t.text == "!=" || t.text == "<>" || t.text == "<" || t.text == "<=" || t.text == ">" || t.text == ">=")) {
+                    this.Take()
+                    string op = t.text
+                    if (op == "==") { op = "=" }
+                    if (op == "<>") { op = "!=" }
+                    left = Data.MemParser.Bin(op, take left, this.Sum())
+                    continue
+                }
+                if (this.IsWordToken("IS")) {
+                    this.Take()
+                    var n = new Data.MemNode("isnull")
+                    n.flag = this.Accept("NOT")
+                    this.Expect("NULL")
+                    n.a = take left
+                    left = take n
+                    continue
+                }
+                bool negated = false
+                if (this.IsWordToken("NOT") && (this.PeekAt(1).text == "LIKE" || this.PeekAt(1).text == "IN" || this.PeekAt(1).text == "BETWEEN")) {
+                    this.Take()
+                    negated = true
+                }
+                if (this.Accept("LIKE")) {
+                    var n = new Data.MemNode("like")
+                    n.flag = negated
+                    n.a = take left
+                    n.b = this.Sum()
+                    left = take n
+                    continue
+                }
+                if (this.Accept("IN")) {
+                    var n = new Data.MemNode("in")
+                    n.flag = negated
+                    n.a = take left
+                    this.ExpectSym("(")
+                    if (!this.IsSym(")")) {
+                        while (true) {
+                            n.items.Add(this.Expr())
+                            if (!this.AcceptSym(",")) { break }
+                        }
+                    }
+                    this.ExpectSym(")")
+                    left = take n
+                    continue
+                }
+                if (this.Accept("BETWEEN")) {
+                    var n = new Data.MemNode("between")
+                    n.flag = negated
+                    n.a = take left
+                    n.b = this.Sum()
+                    this.Expect("AND")
+                    n.c = this.Sum()
+                    left = take n
+                    continue
+                }
+                break
+            }
+            return left
+        }
+        Data.MemNode Sum() {
+            Data.MemNode left = this.Product()
+            while (this.IsSym("+") || this.IsSym("-") || this.IsSym("||")) {
+                string op = this.Take().text
+                left = Data.MemParser.Bin(op, take left, this.Product())
+            }
+            return left
+        }
+        Data.MemNode Product() {
+            Data.MemNode left = this.Unary()
+            while (this.IsSym("*") || this.IsSym("/") || this.IsSym("%")) {
+                string op = this.Take().text
+                left = Data.MemParser.Bin(op, take left, this.Unary())
+            }
+            return left
+        }
+        Data.MemNode Unary() {
+            if (this.AcceptSym("-")) {
+                var n = new Data.MemNode("un")
+                n.name = "-"
+                n.a = this.Unary()
+                return n
+            }
+            if (this.AcceptSym("+")) { return this.Unary() }
+            return this.Primary()
+        }
+        Data.MemNode Primary() {
+            Data.MemToken t = this.Peek()
+            if (t.kind == "num" || t.kind == "str") { this.Take(); return Data.MemNode.Lit(t.value) }
+            if (t.kind == "param") {
+                this.Take()
+                var n = new Data.MemNode("param")
+                n.number = this.parameters
+                this.parameters = this.parameters + 1
+                return n
+            }
+            if (this.Accept("EXISTS")) {
+                this.ExpectSym("(")
+                var ex = new Data.MemNode("exists")
+                ex.a = this.Select()
+                this.ExpectSym(")")
+                return ex
+            }
+            if (this.Accept("NULL")) { return Data.MemNode.Lit(undefined) }
+            if (this.Accept("TRUE")) { return Data.MemNode.Lit(1) }
+            if (this.Accept("FALSE")) { return Data.MemNode.Lit(0) }
+            if (this.AcceptSym("(")) {
+                // ((SELECT ...): a scalar subquery - its first value, or NULL without a row)
+                if (this.IsWordToken("SELECT")) {
+                    var sq = new Data.MemNode("scalar")
+                    sq.a = this.Select()
+                    this.ExpectSym(")")
+                    return sq
+                }
+                Data.MemNode inner = this.Expr()
+                this.ExpectSym(")")
+                return inner
+            }
+            if (t.kind == "id" || (t.kind == "word" && t.text != "FROM" && t.text != "WHERE")) {
+                string name = this.Name()
+                if (this.AcceptSym("(")) {
+                    var call = new Data.MemNode("call")
+                    call.name = name.ToLower()
+                    if (this.AcceptSym("*")) { call.flag = true }
+                    else if (!this.IsSym(")")) {
+                        if (this.Accept("DISTINCT")) { call.value = "distinct" }
+                        while (true) {
+                            call.items.Add(this.Expr())
+                            if (!this.AcceptSym(",")) { break }
+                        }
+                    }
+                    this.ExpectSym(")")
+                    return call
+                }
+                var col = new Data.MemNode("col")
+                col.name = name
+                if (this.AcceptSym(".")) {
+                    col.value = name                // (table.column / alias.column: the qualifier)
+                    col.name = this.Name()
+                }
+                return col
+            }
+            this.Error()
+            return undefined
+        }
+    }
+
+    // ---- running a statement ----
+
+    class MemRun {
+        Data.MemoryConnection connection
+        any args
+        any names
+        string alias             // the name of the table of the SELECT that runs (its alias, else its name)
+        List outerTables         // the SELECTs around a subquery (EXISTS): their tables, current rows and aliases
+        List outerRows
+        List outerAliases
+        construct(Data.MemoryConnection connection, any args) {
+            this.connection = connection
+            this.args = args
+            this.names = new any[0]
+            this.alias = ""
+            this.outerTables = new List()
+            this.outerRows = new List()
+            this.outerAliases = new List()
+        }
+
+        // The rows of a SELECT (an empty list for the others).
+        List Execute(Data.MemNode n) {
+            var store = this.connection.store
+            string kind = n.kind
+            if (kind == "select") { return this.Select(n) }
+            if (!(kind == "begin" || kind == "commit" || kind == "rollback" || kind == "savepoint" || kind == "release" || kind == "rollbackto")) { this.connection.CheckWrite() }
+            this.connection.changes = 0
+            if (kind == "insert") { this.Insert(n) }
+            else if (kind == "update") { this.Update(n) }
+            else if (kind == "delete") { this.Delete(n) }
+            else if (kind == "create") { this.Create(n) }
+            else if (kind == "createview") {
+                if (store.Find(n.name) != undefined || store.FindView(n.name) != undefined) {
+                    if (!n.flag) { Data.MemoryDriver.Fail("table " + n.name + " already exists") }
+                } else { store.views.Add(new Data.MemView(n.name, "" + n.value)) }
+            }
+            else if (kind == "dropview") {
+                var v = store.FindView(n.name)
+                if (v == undefined) { if (!n.flag) { Data.MemoryDriver.Fail("no such view: " + n.name) } }
+                else { store.views.Remove(v) }
+            }
+            else if (kind == "drop") {
+                var t = store.Find(n.name)
+                if (t == undefined) { if (!n.flag) { Data.MemoryDriver.Fail("no such table: " + n.name) } }
+                else {
+                    store.tables.Remove(t)
+                    for (var i = store.indexes.Count - 1; i >= 0; i--) {
+                        Data.MemIndex x = store.indexes[i]
+                        if (x.table.ToLower() == n.name.ToLower()) { store.indexes.RemoveAt(i) }
+                    }
+                }
+            }
+            else if (kind == "alter" && n.value == "drop") {
+                var t = store.Table(n.name)
+                string column = n.names[0]
+                int k = t.IndexOf(column)
+                if (k < 0) { Data.MemoryDriver.Fail("no such column: " + column) }
+                Data.MemColumn gone = t.columns[k]
+                if (gone.key) { Data.MemoryDriver.Fail("cannot drop PRIMARY KEY column: \"" + column + "\"") }
+                t.columns.RemoveAt(k)
+                for (var i = 0; i < t.rows.Count; i++) {
+                    any old = t.rows[i]
+                    any less = new any[old.length - 1]
+                    int w = 0
+                    for (var j = 0; j < old.length; j++) {
+                        if (j == k) { continue }
+                        less[w] = old[j]
+                        w++
+                    }
+                    t.rows[i] = take less
+                }
+                for (var i = store.indexes.Count - 1; i >= 0; i--) {
+                    Data.MemIndex x = store.indexes[i]
+                    if (x.table.ToLower() == n.name.ToLower() && x.column.ToLower() == column.ToLower()) { store.indexes.RemoveAt(i) }
+                }
+            }
+            else if (kind == "alter" && n.value == "rename") {
+                var t = store.Table(n.name)
+                string column = n.names[0]
+                string to = n.names[1]
+                int k = t.IndexOf(column)
+                if (k < 0) { Data.MemoryDriver.Fail("no such column: \"" + column + "\"") }
+                if (t.IndexOf(to) >= 0) { Data.MemoryDriver.Fail("duplicate column name: " + to) }
+                Data.MemColumn c = t.columns[k]
+                c.name = to
+                for (var i = 0; i < store.indexes.Count; i++) {
+                    Data.MemIndex x = store.indexes[i]
+                    if (x.table.ToLower() == n.name.ToLower() && x.column.ToLower() == column.ToLower()) { x.column = to }
+                }
+            }
+            else if (kind == "alter") {
+                var t = store.Table(n.name)
+                Data.MemNode def = n.a
+                if (t.IndexOf(def.name) >= 0) { Data.MemoryDriver.Fail("duplicate column name: " + def.name) }
+                var c = Data.MemRun.ColumnOf(def)
+                if (c.key || c.unique) { Data.MemoryDriver.Fail("Cannot add a PRIMARY KEY or UNIQUE column") }
+                any fill = undefined
+                if (def.a != undefined) { fill = this.Eval(def.a, t, undefined) }
+                c.defaultValue = fill
+                t.columns.Add(take c)
+                for (var i = 0; i < t.rows.Count; i++) {
+                    any old = t.rows[i]
+                    any grown = new any[old.length + 1]
+                    for (var k = 0; k < old.length; k++) { grown[k] = old[k] }
+                    grown[old.length] = fill
+                    t.rows[i] = take grown
+                }
+            }
+            else if (kind == "createindex") {
+                string name = n.names[0]
+                for (var i = 0; i < store.indexes.Count; i++) {
+                    Data.MemIndex x = store.indexes[i]
+                    if (x.name.ToLower() == name.ToLower()) {
+                        if (n.value == true) { return new List() }
+                        Data.MemoryDriver.Fail("index " + name + " already exists")
+                    }
+                }
+                var t = store.Table(n.name)
+                string column = n.names[1]
+                if (t.IndexOf(column) < 0) { Data.MemoryDriver.Fail("no such column: " + column) }
+                var index = new Data.MemIndex(name, t.name, column, n.flag)
+                if (n.flag) { this.CheckUnique(t, t.IndexOf(column), undefined, -1, true) }
+                store.indexes.Add(take index)
+            }
+            else if (kind == "dropindex") {
+                bool found = false
+                for (var i = store.indexes.Count - 1; i >= 0; i--) {
+                    Data.MemIndex x = store.indexes[i]
+                    if (x.name.ToLower() == n.name.ToLower()) { store.indexes.RemoveAt(i); found = true }
+                }
+                if (!found && !n.flag) { Data.MemoryDriver.Fail("no such index: " + n.name) }
+            }
+            else if (kind == "begin") { this.connection.Begin() }
+            else if (kind == "commit") { this.connection.Commit() }
+            else if (kind == "rollback") { this.connection.Rollback() }
+            else if (kind == "savepoint") { this.connection.Savepoint(n.name) }
+            else if (kind == "release") { this.connection.Release(n.name) }
+            else if (kind == "rollbackto") { this.connection.RollbackTo(n.name) }
+            return new List()
+        }
+
+        static Data.MemColumn ColumnOf(Data.MemNode def) {
+            var c = new Data.MemColumn(def.name)
+            c.type = "" + def.value
+            for (var i = 0; i < def.names.Count; i++) {
+                string f = def.names[i]
+                if (f == "key") { c.key = true }
+                if (f == "notnull") { c.notNull = true }
+                if (f == "unique") { c.unique = true }
+            }
+            return c
+        }
+
+        undefined Create(Data.MemNode n) {
+            var store = this.connection.store
+            if (store.Find(n.name) != undefined || store.FindView(n.name) != undefined) {
+                if (n.flag) { return }
+                Data.MemoryDriver.Fail("table " + n.name + " already exists")
+            }
+            var t = new Data.MemTable(n.name)
+            for (var i = 0; i < n.items.Count; i++) {
+                Data.MemNode item = n.items[i]
+                if (item.kind == "column") {
+                    var c = Data.MemRun.ColumnOf(item)
+                    if (item.a != undefined) { c.defaultValue = this.Eval(item.a, t, undefined) }
+                    t.columns.Add(take c)
+                    if (item.b != undefined) {
+                        Data.MemNode condition = item.b
+                        t.checks.Add(copy condition)
+                        Data.MemNode text = item.c
+                        t.checkTexts.Add("" + text.value)
+                    }
+                }
+                if (item.kind == "check") {
+                    Data.MemNode tableCondition = item.a
+                    t.checks.Add(copy tableCondition)
+                    t.checkTexts.Add("" + item.value)
+                }
+            }
+            for (var i = 0; i < n.items.Count; i++) {
+                Data.MemNode item = n.items[i]
+                if (item.kind == "constraint") {
+                    int at = t.IndexOf(item.name)
+                    if (at < 0) { Data.MemoryDriver.Fail("no such column: " + item.name) }
+                    Data.MemColumn c = t.columns[at]
+                    if (item.flag) { c.key = true } else { c.unique = true }
+                }
+            }
+            store.tables.Add(take t)
+        }
+
+        // (is the value of column `col` of `row` unique among the rows - except the row at `self`? all: check every row against the others)
+        undefined CheckUnique(Data.MemTable t, int col, any row, int self, bool all) {
+            if (all) {
+                for (var i = 0; i < t.rows.Count; i++) {
+                    any r = t.rows[i]
+                    this.CheckUnique(t, col, r, i, false)
+                }
+                return
+            }
+            any v = row[col]
+            if (v == undefined) { return }
+            for (var i = 0; i < t.rows.Count; i++) {
+                if (i == self) { continue }
+                any other = t.rows[i]
+                if (Data.MemRun.Same(other[col], v)) {
+                    Data.MemColumn c = t.columns[col]
+                    int code = 2067
+                    if (c.key) { code = 1555 }
+                    Data.MemoryDriver.Fail("UNIQUE constraint failed: " + t.name + "." + c.name, code)
+                }
+            }
+        }
+
+        // (the constraints of a row before it is stored: NOT NULL, the key, unique columns and indexes)
+        undefined Check(Data.MemTable t, any row, int self) {
+            var store = this.connection.store
+            for (var c = 0; c < t.columns.Count; c++) {
+                Data.MemColumn col = t.columns[c]
+                if (col.notNull && row[c] == undefined) { Data.MemoryDriver.Fail("NOT NULL constraint failed: " + t.name + "." + col.name, 1299) }
+                bool unique = col.key || col.unique
+                if (!unique) {
+                    for (var i = 0; i < store.indexes.Count; i++) {
+                        Data.MemIndex x = store.indexes[i]
+                        if (x.unique && x.table.ToLower() == t.name.ToLower() && x.column.ToLower() == col.name.ToLower()) { unique = true }
+                    }
+                }
+                if (unique) { this.CheckUnique(t, c, row, self, false) }
+            }
+            // (CHECK: a condition that is false fails - NULL passes, as in SQL)
+            for (var i = 0; i < t.checks.Count; i++) {
+                Data.MemNode condition = t.checks[i]
+                any v = this.Eval(condition, t, row)
+                if (v != undefined && !Data.MemRun.True(v)) { Data.MemoryDriver.Fail("CHECK constraint failed: " + t.checkTexts[i], 275) }
+            }
+        }
+
+        undefined Insert(Data.MemNode n) {
+            var t = this.connection.store.Table(n.name)
+            for (var r = 0; r < n.items.Count; r++) {
+                Data.MemNode values = n.items[r]
+                any row = new any[t.columns.Count]
+                bool given[] = new bool[t.columns.Count]
+                for (var c = 0; c < t.columns.Count; c++) {
+                    Data.MemColumn col = t.columns[c]
+                    row[c] = Data.MemRun.Out(col.defaultValue)
+                    given[c] = false
+                }
+                if (n.names.Count == 0 && values.items.Count > 0 && values.items.Count != t.columns.Count) {
+                    Data.MemoryDriver.Fail("table " + t.name + " has " + t.columns.Count + " columns but " + values.items.Count + " values were supplied")
+                }
+                if (n.names.Count > 0 && values.items.Count != n.names.Count) {
+                    Data.MemoryDriver.Fail(values.items.Count + " values for " + n.names.Count + " columns")
+                }
+                for (var v = 0; v < values.items.Count; v++) {
+                    int at = v
+                    if (n.names.Count > 0) {
+                        at = t.IndexOf(n.names[v])
+                        if (at < 0) { Data.MemoryDriver.Fail("table " + t.name + " has no column named " + n.names[v]) }
+                    }
+                    row[at] = Data.MemRun.Out(this.Eval(values.items[v], t, undefined))   // (bytes: a copy of its own for the table)
+                    given[at] = true
+                }
+                int key = t.KeyIndex()
+                if (key >= 0 && t.RowidKey()) {
+                    if (row[key] == undefined) {
+                        row[key] = t.nextId
+                    } else if (row[key] is of int) {
+                        int k = row[key]
+                        if (k >= t.nextId) { t.nextId = k }
+                    }
+                }
+                this.Check(t, row, -1)
+                if (key >= 0 && t.RowidKey()) {
+                    int k = row[key]
+                    if (k >= t.nextId) { t.nextId = k + 1 }
+                    this.connection.lastId = k
+                }
+                t.rows.Add(take row)
+                this.connection.changes = this.connection.changes + 1
+            }
+        }
+
+        undefined Update(Data.MemNode n) {
+            var t = this.connection.store.Table(n.name)
+            List cols = new List()
+            for (var i = 0; i < n.names.Count; i++) {
+                int at = t.IndexOf(n.names[i])
+                if (at < 0) { Data.MemoryDriver.Fail("no such column: " + n.names[i]) }
+                cols.Add(at)
+            }
+            for (var r = 0; r < t.rows.Count; r++) {
+                any row = t.rows[r]
+                if (n.a != undefined && !Data.MemRun.True(this.Eval(n.a, t, row))) { continue }
+                any changed = copy row
+                for (var i = 0; i < cols.Count; i++) {
+                    int at = cols[i]
+                    changed[at] = Data.MemRun.Out(this.Eval(n.items[i], t, row))
+                }
+                this.Check(t, changed, r)
+                t.rows[r] = take changed
+                this.connection.changes = this.connection.changes + 1
+            }
+        }
+
+        undefined Delete(Data.MemNode n) {
+            var t = this.connection.store.Table(n.name)
+            for (var r = t.rows.Count - 1; r >= 0; r--) {
+                any row = t.rows[r]
+                if (n.a != undefined && !Data.MemRun.True(this.Eval(n.a, t, row))) { continue }
+                t.rows.RemoveAt(r)
+                this.connection.changes = this.connection.changes + 1
+            }
+        }
+
+        // The names of the columns of a SELECT (also before it ran).
+        // (the names of the columns of a view)
+        static any ViewNames(Data.MemView v, Data.MemStore store) {
+            var p = new Data.MemParser(v.sql)
+            Data.MemNode tree = p.Select()
+            return Data.MemRun.Names(tree, store)
+        }
+        static any Names(Data.MemNode n, Data.MemStore store) {
+            var list = new List()
+            for (var i = 0; i < n.items.Count; i++) {
+                Data.MemNode item = n.items[i]
+                if (item.kind == "star") {
+                    if (n.name != undefined) {
+                        var t = store.Find(n.name)
+                        if (t != undefined) {
+                            for (var c = 0; c < t.columns.Count; c++) {
+                                Data.MemColumn col = t.columns[c]
+                                list.Add(col.name)
+                            }
+                        } else if (store.FindView(n.name) != undefined) {
+                            any vn = Data.MemRun.ViewNames(store.FindView(n.name), store)
+                            for (var c = 0; c < vn.length; c++) { list.Add(vn[c]) }
+                        }
+                    }
+                } else {
+                    list.Add(n.names[i])
+                }
+            }
+            any a = new any[list.Count]
+            for (var i = 0; i < list.Count; i++) { a[i] = list[i] }
+            return a
+        }
+
+        // (the rows of a view as a table: its SELECT run now)
+        Data.MemTable ViewTable(Data.MemView v) {
+            var p = new Data.MemParser(v.sql)
+            Data.MemNode tree = p.Select()
+            var run = new Data.MemRun(this.connection, new any[0])
+            List rows = run.Select(tree)
+            var t = new Data.MemTable(v.name)
+            for (var i = 0; i < run.names.length; i++) { t.columns.Add(new Data.MemColumn("" + run.names[i])) }
+            for (var i = 0; i < rows.Count; i++) {
+                any row = rows[i]
+                t.rows.Add(copy row)
+            }
+            return t
+        }
+
+        // (the table "_columns": table_name, name, type, pk, notnull - what Ensure asks)
+        Data.MemTable Columns() {
+            var t = new Data.MemTable("_columns")
+            foreach (name in ["table_name", "name", "type", "pk", "notnull"]) { t.columns.Add(new Data.MemColumn(name)) }
+            var store = this.connection.store
+            for (var i = 0; i < store.tables.Count; i++) {
+                Data.MemTable table = store.tables[i]
+                for (var c = 0; c < table.columns.Count; c++) {
+                    Data.MemColumn col = table.columns[c]
+                    any row = new any[5]
+                    row[0] = table.name
+                    row[1] = col.name
+                    row[2] = col.type
+                    if (col.key) { row[3] = 1 } else { row[3] = 0 }
+                    if (col.notNull) { row[4] = 1 } else { row[4] = 0 }
+                    t.rows.Add(take row)
+                }
+            }
+            // (the columns of the views)
+            for (var i = 0; i < store.views.Count; i++) {
+                Data.MemView v = store.views[i]
+                any names = Data.MemRun.ViewNames(v, store)
+                for (var c = 0; c < names.length; c++) {
+                    any row = new any[5]
+                    row[0] = v.name
+                    row[1] = names[c]
+                    row[2] = ""
+                    row[3] = 0
+                    row[4] = 0
+                    t.rows.Add(take row)
+                }
+            }
+            return t
+        }
+
+        // (the table "_indexes": name, table_name, column_name, is_unique)
+        Data.MemTable Indexes() {
+            var t = new Data.MemTable("_indexes")
+            foreach (name in ["name", "table_name", "column_name", "is_unique"]) { t.columns.Add(new Data.MemColumn(name)) }
+            var store = this.connection.store
+            for (var i = 0; i < store.indexes.Count; i++) {
+                Data.MemIndex x = store.indexes[i]
+                any row = new any[4]
+                row[0] = x.name
+                row[1] = x.table
+                row[2] = x.column
+                if (x.unique) { row[3] = 1 } else { row[3] = 0 }
+                t.rows.Add(take row)
+            }
+            return t
+        }
+
+        List Select(Data.MemNode n) {
+            Data.MemTable t = undefined
+            Data.MemTable made = undefined
+            if (n.value != undefined) { this.alias = "" + n.value } else if (n.name != undefined) { this.alias = n.name } else { this.alias = "" }
+            if (n.name != undefined) {
+                if (n.name.ToLower() == "_columns" || n.name.ToLower() == "_indexes") {
+                    if (n.name.ToLower() == "_columns") { made = this.Columns() } else { made = this.Indexes() }
+                    t = made
+                } else if (this.connection.store.FindView(n.name) != undefined) {
+                    made = this.ViewTable(this.connection.store.FindView(n.name))
+                    t = made
+                } else {
+                    t = this.connection.store.Table(n.name)
+                }
+            }
+            this.names = Data.MemRun.Names(n, this.connection.store)
+            if (made != undefined) {
+                var list = new List()
+                for (var i = 0; i < n.items.Count; i++) {
+                    Data.MemNode item = n.items[i]
+                    if (item.kind == "star") { for (var c = 0; c < made.columns.Count; c++) { Data.MemColumn col = made.columns[c]; list.Add(col.name) } }
+                    else { list.Add(n.names[i]) }
+                }
+                this.names = new any[list.Count]
+                for (var i = 0; i < list.Count; i++) { this.names[i] = list[i] }
+            }
+            // the rows that match
+            List matching = new List()
+            if (t == undefined) { matching.Add(undefined) }
+            else {
+                for (var r = 0; r < t.rows.Count; r++) {
+                    any row = t.rows[r]
+                    if (n.a == undefined || Data.MemRun.True(this.Eval(n.a, t, row))) { matching.Add(r) }
+                }
+            }
+            bool aggregate = false
+            for (var i = 0; i < n.items.Count; i++) { if (Data.MemRun.HasAggregate(n.items[i])) { aggregate = true } }
+            List out = new List()
+            if (aggregate) {
+                any one = new any[n.items.Count]
+                for (var i = 0; i < n.items.Count; i++) { one[i] = this.Aggregate(n.items[i], t, matching) }
+                out.Add(take one)
+                return out
+            }
+            // order
+            if (n.b != undefined && t != undefined) { matching = this.Sorted(matching, n.b, t) }
+            // the values
+            List keys = new List()
+            for (var m = 0; m < matching.Count; m++) {
+                any row = undefined
+                if (t != undefined) {
+                    int r = matching[m]
+                    row = t.rows[r]
+                }
+                int width = 0
+                for (var i = 0; i < n.items.Count; i++) {
+                    Data.MemNode item = n.items[i]
+                    if (item.kind == "star") {
+                        if (t == undefined) { Data.MemoryDriver.Fail("no tables specified") }
+                        width = width + t.columns.Count
+                    } else { width = width + 1 }
+                }
+                any line = new any[width]
+                int put = 0
+                for (var i = 0; i < n.items.Count; i++) {
+                    Data.MemNode item = n.items[i]
+                    if (item.kind == "star") {
+                        for (var c = 0; c < t.columns.Count; c++) {
+                            line[put] = Data.MemRun.Out(row[c])   // (bytes: a copy - the table keeps its own)
+                            put++
+                        }
+                    } else {
+                        line[put] = Data.MemRun.Out(this.Eval(item, t, row))
+                        put++
+                    }
+                }
+                if (n.flag) {
+                    string key = Data.MemRun.KeyOf(line)
+                    if (keys.IndexOf(key) >= 0) { continue }
+                    keys.Add(key)
+                }
+                out.Add(take line)
+            }
+            // limit and offset
+            if (n.c != undefined) {
+                Data.MemNode limit = n.c
+                int count = Data.MemRun.Num(this.Eval(limit.a, t, undefined))!int
+                int skip = 0
+                if (limit.b != undefined) { skip = Data.MemRun.Num(this.Eval(limit.b, t, undefined))!int }
+                List cut = new List()
+                for (var i = skip; i < out.Count && (count < 0 || cut.Count < count); i++) {
+                    any line = out[i]
+                    cut.Add(copy line)
+                }
+                return cut
+            }
+            return out
+        }
+
+        // (a value that goes out: bytes are copied - the table keeps its own)
+        static any Out(any v) {
+            if (v == undefined || v is of int || v is of float || v is of string || v is of bool) { return v }
+            return copy v
+        }
+
+        static string KeyOf(any line) {
+            var t = ""
+            for (var i = 0; i < line.length; i++) { t = t + "|" + Data.MemRun.TypeRank(line[i]) + ":" + line[i] }
+            return t
+        }
+
+        List Sorted(List matching, Data.MemNode order, Data.MemTable t) {
+            // (a stable insertion sort: the keys of every row once)
+            List keyed = new List()
+            for (var m = 0; m < matching.Count; m++) {
+                int r = matching[m]
+                any row = t.rows[r]
+                any keys = new any[order.items.Count]
+                for (var k = 0; k < order.items.Count; k++) {
+                    Data.MemNode o = order.items[k]
+                    keys[k] = this.Eval(o.a, t, row)
+                }
+                keyed.Add(take keys)
+            }
+            List idx = new List()
+            for (var m = 0; m < matching.Count; m++) {
+                int pos = idx.Count
+                while (pos > 0) {
+                    int prev = idx[pos - 1]
+                    if (Data.MemRun.OrderCompare(keyed[prev], keyed[m], order) <= 0) { break }
+                    pos--
+                }
+                idx.Insert(pos, m)
+            }
+            List sorted = new List()
+            for (var i = 0; i < idx.Count; i++) {
+                int m = idx[i]
+                sorted.Add(matching[m])
+            }
+            return sorted
+        }
+
+        static int OrderCompare(any a, any b, Data.MemNode order) {
+            for (var k = 0; k < order.items.Count; k++) {
+                Data.MemNode o = order.items[k]
+                int c = Data.MemRun.Compare(a[k], b[k])
+                if (o.flag) { c = -c }
+                if (c != 0) { return c }
+            }
+            return 0
+        }
+
+        static bool HasAggregate(Data.MemNode n) {
+            if (n == undefined) { return false }
+            if (n.kind == "call" && Data.MemRun.IsAggregate(n.name)) { return true }
+            if (Data.MemRun.HasAggregate(n.a) || Data.MemRun.HasAggregate(n.b) || Data.MemRun.HasAggregate(n.c)) { return true }
+            for (var i = 0; i < n.items.Count; i++) { if (Data.MemRun.HasAggregate(n.items[i])) { return true } }
+            return false
+        }
+        static bool IsAggregate(string name) { return name == "count" || name == "sum" || name == "min" || name == "max" || name == "avg" || name == "total" }
+
+        // (an expression with aggregates over the matching rows)
+        any Aggregate(Data.MemNode n, Data.MemTable t, List matching) {
+            if (n.kind == "call" && Data.MemRun.IsAggregate(n.name)) {
+                if (n.name == "count" && n.flag) {
+                    if (t == undefined) { return 1 }
+                    return matching.Count
+                }
+                if (n.items.Count != 1) { Data.MemoryDriver.Fail("wrong number of arguments to function " + n.name + "()") }
+                List seen = new List()
+                any result = undefined
+                int count = 0
+                float total = 0.0
+                bool real = false
+                for (var m = 0; m < matching.Count; m++) {
+                    any row = undefined
+                    if (t != undefined) { int r = matching[m]; row = t.rows[r] }
+                    any v = this.Eval(n.items[0], t, row)
+                    if (v == undefined) { continue }
+                    if (n.value == "distinct") {
+                        string key = Data.MemRun.TypeRank(v) + ":" + v
+                        if (seen.IndexOf(key) >= 0) { continue }
+                        seen.Add(key)
+                    }
+                    count++
+                    if (n.name == "min") { if (result == undefined || Data.MemRun.Compare(v, result) < 0) { result = v } }
+                    else if (n.name == "max") { if (result == undefined || Data.MemRun.Compare(v, result) > 0) { result = v } }
+                    else if (n.name == "sum" || n.name == "avg" || n.name == "total") {
+                        any x = Data.MemRun.Num(v)
+                        if (x is of float) { real = true }
+                        total = total + x!float
+                    }
+                }
+                if (n.name == "count") { return count }
+                if (n.name == "min" || n.name == "max") { return result }
+                if (n.name == "total") { return total }
+                if (count == 0) { return undefined }
+                if (n.name == "avg") { return total / count }
+                if (real) { return total }
+                return total!int
+            }
+            // (an expression around aggregates: its parts first)
+            if (n.kind == "bin") {
+                var tmp = new Data.MemNode("bin")
+                tmp.name = n.name
+                tmp.a = Data.MemNode.Lit(this.Aggregate(n.a, t, matching))
+                tmp.b = Data.MemNode.Lit(this.Aggregate(n.b, t, matching))
+                return this.Eval(tmp, t, undefined)
+            }
+            if (n.kind == "call") {
+                var tmp = new Data.MemNode("call")
+                tmp.name = n.name
+                for (var i = 0; i < n.items.Count; i++) { tmp.items.Add(Data.MemNode.Lit(this.Aggregate(n.items[i], t, matching))) }
+                return this.Eval(tmp, t, undefined)
+            }
+            any first = undefined
+            if (t != undefined && matching.Count > 0) { int r = matching[0]; first = t.rows[r] }
+            return this.Eval(n, t, first)
+        }
+
+        // ---- values ----
+        static bool True(any v) {
+            if (v == undefined) { return false }
+            if (v is of bool) { return v }
+            if (v is of string) {
+                string s = v
+                return s.ToFloat() != 0.0
+            }
+            if (v is of int || v is of float) { return v != 0 }
+            return true
+        }
+        static any Bool(bool b) {
+            if (b) { return 1 }
+            return 0
+        }
+        static any Num(any v) {
+            if (v == undefined) { return undefined }
+            if (v is of int || v is of float) { return v }
+            if (v is of bool) { if (v) { return 1 } else { return 0 } }
+            if (v is of string) {
+                string s = v
+                if (s.IndexOf(".") >= 0 || s.IndexOf("e") >= 0 || s.IndexOf("E") >= 0) { return s.ToFloat() }
+                return s.ToInt()
+            }
+            return 0
+        }
+        // (SQLite's order of the kinds: NULL, numbers, texts, blobs)
+        static int TypeRank(any v) {
+            if (v == undefined) { return 0 }
+            if (v is of int || v is of float || v is of bool) { return 1 }
+            if (v is of string) { return 2 }
+            return 3
+        }
+        static int Compare(any a, any b) {
+            int ra = Data.MemRun.TypeRank(a)
+            int rb = Data.MemRun.TypeRank(b)
+            if (ra != rb) { return ra - rb }
+            if (ra == 0) { return 0 }
+            if (ra == 1) {
+                any x = Data.MemRun.Num(a)
+                any y = Data.MemRun.Num(b)
+                if (x < y) { return -1 }
+                if (x > y) { return 1 }
+                return 0
+            }
+            if (ra == 2) {
+                string x = a
+                string y = b
+                return x.CompareTo(y)
+            }
+            string bx = "" + a
+            string by = "" + b
+            return bx.CompareTo(by)
+        }
+        static bool Same(any a, any b) {
+            if (a == undefined || b == undefined) { return false }
+            return Data.MemRun.Compare(a, b) == 0
+        }
+
+        static bool Like(string text, string pattern) {
+            return Data.MemRun.LikeAt(text.ToLower(), 0, pattern.ToLower(), 0)
+        }
+        static bool LikeAt(string text, int ti, string pattern, int pi) {
+            while (pi < pattern.Length) {
+                char p = pattern.CharAt(pi)
+                if (p == '%') {
+                    while (pi < pattern.Length && pattern.CharAt(pi) == '%') { pi++ }
+                    if (pi == pattern.Length) { return true }
+                    for (var k = ti; k <= text.Length; k++) { if (Data.MemRun.LikeAt(text, k, pattern, pi)) { return true } }
+                    return false
+                }
+                if (ti >= text.Length) { return false }
+                if (p != '_' && p != text.CharAt(ti)) { return false }
+                ti++
+                pi++
+            }
+            return ti == text.Length
+        }
+
+        // The value of an expression for a row of `t` (row undefined: no row).
+        any Eval(Data.MemNode n, Data.MemTable t, any row) {
+            string kind = n.kind
+            if (kind == "lit") { return n.value }
+            if (kind == "param") { return this.args[n.number] }
+            if (kind == "col") {
+                if (n.value != undefined) {
+                    // (qualified: this SELECT's table, or one of the SELECTs around this subquery)
+                    string q = ("" + n.value).ToLower()
+                    if (t != undefined && row != undefined && (q == this.alias.ToLower() || q == t.name.ToLower())) {
+                        int here = t.IndexOf(n.name)
+                        if (here < 0) { Data.MemoryDriver.Fail("no such column: " + n.value + "." + n.name) }
+                        return row[here]
+                    }
+                    for (var i = this.outerTables.Count - 1; i >= 0; i--) {
+                        Data.MemTable ot = this.outerTables[i]
+                        string oa = this.outerAliases[i]
+                        if (q == oa.ToLower() || q == ot.name.ToLower()) {
+                            int at = ot.IndexOf(n.name)
+                            if (at < 0) { Data.MemoryDriver.Fail("no such column: " + n.value + "." + n.name) }
+                            any orow = this.outerRows[i]
+                            return orow[at]
+                        }
+                    }
+                    Data.MemoryDriver.Fail("no such column: " + n.value + "." + n.name)
+                }
+                if (t != undefined && row != undefined) {
+                    int at = t.IndexOf(n.name)
+                    if (at >= 0) { return row[at] }
+                }
+                for (var i = this.outerTables.Count - 1; i >= 0; i--) {
+                    Data.MemTable ot = this.outerTables[i]
+                    int at = ot.IndexOf(n.name)
+                    if (at >= 0) {
+                        any orow = this.outerRows[i]
+                        return orow[at]
+                    }
+                }
+                Data.MemoryDriver.Fail("no such column: " + n.name)
+            }
+            if (kind == "scalar") {
+                this.outerTables.Add(t)
+                this.outerRows.Add(row)
+                this.outerAliases.Add(this.alias)
+                any savedNames = this.names
+                string savedAlias = this.alias
+                List found = this.Select(n.a)
+                this.names = savedNames
+                this.alias = savedAlias
+                this.outerTables.RemoveAt(this.outerTables.Count - 1)
+                this.outerRows.RemoveAt(this.outerRows.Count - 1)
+                this.outerAliases.RemoveAt(this.outerAliases.Count - 1)
+                if (found.Count == 0) { return undefined }
+                any first = found[0]
+                if (first == undefined || first.length == 0) { return undefined }
+                return first[0]
+            }
+            if (kind == "exists") {
+                // (the subquery with this row as the outer one)
+                this.outerTables.Add(t)
+                this.outerRows.Add(row)
+                this.outerAliases.Add(this.alias)
+                any savedNames = this.names
+                string savedAlias = this.alias
+                List found = this.Select(n.a)
+                this.names = savedNames
+                this.alias = savedAlias
+                this.outerTables.RemoveAt(this.outerTables.Count - 1)
+                this.outerRows.RemoveAt(this.outerRows.Count - 1)
+                this.outerAliases.RemoveAt(this.outerAliases.Count - 1)
+                return Data.MemRun.Bool(found.Count > 0)
+            }
+            if (kind == "un") {
+                any v = this.Eval(n.a, t, row)
+                if (n.name == "NOT") {
+                    if (v == undefined) { return undefined }
+                    return Data.MemRun.Bool(!Data.MemRun.True(v))
+                }
+                if (v == undefined) { return undefined }
+                any x = Data.MemRun.Num(v)
+                return 0 - x
+            }
+            if (kind == "isnull") {
+                any v = this.Eval(n.a, t, row)
+                return Data.MemRun.Bool((v == undefined) != n.flag)
+            }
+            if (kind == "like") {
+                any v = this.Eval(n.a, t, row)
+                any p = this.Eval(n.b, t, row)
+                if (v == undefined || p == undefined) { return undefined }
+                return Data.MemRun.Bool(Data.MemRun.Like("" + v, "" + p) != n.flag)
+            }
+            if (kind == "in") {
+                any v = this.Eval(n.a, t, row)
+                if (v == undefined) { return undefined }
+                bool found = false
+                for (var i = 0; i < n.items.Count; i++) { if (Data.MemRun.Same(v, this.Eval(n.items[i], t, row))) { found = true; break } }
+                return Data.MemRun.Bool(found != n.flag)
+            }
+            if (kind == "between") {
+                any v = this.Eval(n.a, t, row)
+                any lo = this.Eval(n.b, t, row)
+                any hi = this.Eval(n.c, t, row)
+                if (v == undefined || lo == undefined || hi == undefined) { return undefined }
+                bool inside = Data.MemRun.Compare(v, lo) >= 0 && Data.MemRun.Compare(v, hi) <= 0
+                return Data.MemRun.Bool(inside != n.flag)
+            }
+            if (kind == "bin") {
+                string op = n.name
+                if (op == "AND") {
+                    any a = this.Eval(n.a, t, row)
+                    if (a != undefined && !Data.MemRun.True(a)) { return 0 }
+                    any b = this.Eval(n.b, t, row)
+                    if (b != undefined && !Data.MemRun.True(b)) { return 0 }
+                    if (a == undefined || b == undefined) { return undefined }
+                    return 1
+                }
+                if (op == "OR") {
+                    any a = this.Eval(n.a, t, row)
+                    if (a != undefined && Data.MemRun.True(a)) { return 1 }
+                    any b = this.Eval(n.b, t, row)
+                    if (b != undefined && Data.MemRun.True(b)) { return 1 }
+                    if (a == undefined || b == undefined) { return undefined }
+                    return 0
+                }
+                any a = this.Eval(n.a, t, row)
+                any b = this.Eval(n.b, t, row)
+                if (a == undefined || b == undefined) { return undefined }
+                if (op == "||") { return "" + a + b }
+                if (op == "=") { return Data.MemRun.Bool(Data.MemRun.Compare(a, b) == 0) }
+                if (op == "!=") { return Data.MemRun.Bool(Data.MemRun.Compare(a, b) != 0) }
+                if (op == "<") { return Data.MemRun.Bool(Data.MemRun.Compare(a, b) < 0) }
+                if (op == "<=") { return Data.MemRun.Bool(Data.MemRun.Compare(a, b) <= 0) }
+                if (op == ">") { return Data.MemRun.Bool(Data.MemRun.Compare(a, b) > 0) }
+                if (op == ">=") { return Data.MemRun.Bool(Data.MemRun.Compare(a, b) >= 0) }
+                any x = Data.MemRun.Num(a)
+                any y = Data.MemRun.Num(b)
+                if (op == "+") { return x + y }
+                if (op == "-") { return x - y }
+                if (op == "*") { return x * y }
+                if (op == "/") {
+                    if (y == 0) { return undefined }
+                    if (x is of int && y is of int) {
+                        int xi = x
+                        int yi = y
+                        int q = xi / yi
+                        return q
+                    }
+                    return x!float / y!float
+                }
+                if (op == "%") {
+                    if (y == 0) { return undefined }
+                    int xi = x!int
+                    int yi = y!int
+                    return xi % yi
+                }
+                Data.MemoryDriver.Fail("unknown operator " + op)
+            }
+            if (kind == "call") {
+                string f = n.name
+                if (Data.MemRun.IsAggregate(f)) { Data.MemoryDriver.Fail("misuse of aggregate function " + f + "()") }
+                List args = new List()
+                for (var i = 0; i < n.items.Count; i++) { args.Add(this.Eval(n.items[i], t, row)) }
+                if (f == "coalesce" || f == "ifnull") {
+                    for (var i = 0; i < args.Count; i++) { if (args[i] != undefined) { return args[i] } }
+                    return undefined
+                }
+                if (args.Count == 0) { Data.MemoryDriver.Fail("wrong number of arguments to function " + f + "()") }
+                any v = args[0]
+                if (v == undefined) { return undefined }
+                if (f == "lower") { return ("" + v).ToLower() }
+                if (f == "upper") { return ("" + v).ToUpper() }
+                if (f == "length") {
+                    if (v is of string) { string s = v; return s.Length }
+                    if (v is of int || v is of float) { return ("" + v).Length }
+                    return v.length
+                }
+                if (f == "abs") {
+                    any x = Data.MemRun.Num(v)
+                    if (x < 0) { return 0 - x }
+                    return x
+                }
+                if (f == "trim") { return ("" + v).Trim() }
+                if (f == "instr") {
+                    if (args.Count < 2 || args[1] == undefined) { return undefined }
+                    return ("" + v).IndexOf("" + args[1]) + 1
+                }
+                if (f == "substr" || f == "substring") {
+                    string s = "" + v
+                    int start = Data.MemRun.Num(args[1])!int
+                    int len = s.Length
+                    if (args.Count > 2) { len = Data.MemRun.Num(args[2])!int }
+                    int first = start - 1
+                    if (first < 0) { first = 0 }
+                    if (first > s.Length) { return "" }
+                    if (first + len > s.Length) { len = s.Length - first }
+                    if (len < 0) { return "" }
+                    return s.Substring(first, len)
+                }
+                Data.MemoryDriver.Fail("no such function: " + f)
+            }
+            Data.MemoryDriver.Fail("cannot evaluate " + kind)
+            return undefined
+        }
+    }
+}

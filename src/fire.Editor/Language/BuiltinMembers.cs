@@ -38,6 +38,22 @@ namespace fire.Editor
             M("ToUnicodeChar", "[width]", "char"),
             M("ToLittleEndian", "", "buffer"),
             M("ToBigEndian", "", "buffer"),
+            // the typed reads and writes (in the buffer's byte order, or `littleEndian`) and the fast operations (fire.Standard.BufferMethods)
+            M("ReadInt8", "at", "int"), M("ReadUInt8", "at", "int"),
+            M("ReadInt16", "at, [littleEndian]", "int"), M("ReadUInt16", "at, [littleEndian]", "int"),
+            M("ReadInt32", "at, [littleEndian]", "int"), M("ReadUInt32", "at, [littleEndian]", "int"),
+            M("ReadInt64", "at, [littleEndian]", "int"),
+            M("ReadFloat16", "at, [littleEndian]", "float"), M("ReadFloat32", "at, [littleEndian]", "float"), M("ReadFloat64", "at, [littleEndian]", "float"),
+            M("WriteInt8", "at, value", null), M("WriteUInt8", "at, value", null),
+            M("WriteInt16", "at, value, [littleEndian]", null), M("WriteUInt16", "at, value, [littleEndian]", null),
+            M("WriteInt32", "at, value, [littleEndian]", null), M("WriteUInt32", "at, value, [littleEndian]", null),
+            M("WriteInt64", "at, value, [littleEndian]", null),
+            M("WriteFloat16", "at, value, [littleEndian]", null), M("WriteFloat32", "at, value, [littleEndian]", null), M("WriteFloat64", "at, value, [littleEndian]", null),
+            M("Fill", "value, [start, count]", null),
+            M("CopyTo", "target, targetAt, [start, count]", null),
+            M("Slice", "start, [count]", "buffer"),
+            M("IndexOf", "value, [start]", "int"),
+            M("Compare", "other", "int"),
         };
 
         private static readonly BuiltinMember[] CharMembers =

@@ -10,6 +10,10 @@ namespace fire.Ast
     // Primary expressions
     // ---------------------------------------------------------------
     public sealed record LiteralExpr(int Line, Value Value) : Expr(Line);
+
+    /// <summary>`int.Bits`, `int[8].Bits`, `float.Bits`, `byte.Bits`, `char.Bits`, `bool.Bits`, `word.Bits`: the width of a value type in bits (Width: the
+    /// width written in brackets, null: the type's own - the program's int and float width, word the target's) - a constant.</summary>
+    public sealed record TypeBitsExpr(int Line, string BaseName, int? Width) : Expr(Line);
     public sealed record IdentifierExpr(int Line, string Name) : Expr(Line);
     public sealed record ThisExpr(int Line) : Expr(Line);
     public sealed record BaseExpr(int Line) : Expr(Line);
@@ -166,7 +170,7 @@ namespace fire.Ast
     public enum UnaryOp { Negate, LogicalNot, BitNot, Dereference, AddressOf, FlatCopy, DeepCopy, Take, Trust, TryTake }
     public sealed record UnaryExpr(int Line, UnaryOp Op, Expr Operand) : Expr(Line);
 
-    public enum BinaryOp { Add, Sub, Mul, Div, Mod, Eq, NotEq, Lt, LtEq, Gt, GtEq, And, Or, BitAnd, BitOr, BitXor, ShiftLeft, ShiftRight, Power }
+    public enum BinaryOp { Add, Sub, Mul, Div, Mod, Eq, NotEq, Lt, LtEq, Gt, GtEq, And, Or, BitAnd, BitOr, BitXor, ShiftLeft, ShiftRight, Power, ShiftRightLogical }
     public sealed record BinaryExpr(int Line, BinaryOp Op, Expr Left, Expr Right) : Expr(Line)
     {
         /// <summary>`a ^ b` whose target is a float (set by the type checker, SPEC 1.1): the float power (OpCode.PowerFloat) even of two ints, which otherwise give

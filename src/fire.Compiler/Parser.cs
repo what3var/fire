@@ -129,7 +129,30 @@ namespace fire.Compiler
         /// "where" in the program parsing is currently taking place, without needing a separate
         /// tree pass afterwards).</summary>
         private string? _currentNamespace;
+        /// <summary>The namespace of a library's declarations outside of every `namespace` (ProcessedSource.Qualify); a `namespace` block of the library
+        /// is not put into it (`namespace Raser { ... }` in the library Raser.Core stays Raser).</summary>
+        private string? _implicitNamespace;
+        private int _namespaceDepth;
         private string? _currentClassName;
+
+        /// <summary>The namespaces of the imported libraries of each source (ProcessedSource.ImportNamespaces, by its index): the resolver finds their
+        /// names by the short name in expressions too.</summary>
+        [ThreadStatic] public static Dictionary<int, IReadOnlyList<string>>? SourceImportNamespaces;
+
+        /// <summary>The parser of a source: its `#using`s, its implicit namespace (a library), and the namespaces it imports noted for the resolver.</summary>
+        private static Parser ForSource(List<Token> tokens, ProcessedSource src, int sourceIndex)
+        {
+            var parser = new Parser(tokens) { _usingNamespaces = src.Usings, _sourceIndex = sourceIndex, _fileName = src.Name };
+            if (src.Qualify != null)
+            {
+                parser._currentNamespace = parser._implicitNamespace = src.Qualify;
+                var known = _declaredNamespaces ??= new HashSet<string>(StringComparer.Ordinal);
+                for (string? ns = src.Qualify; !string.IsNullOrEmpty(ns); ns = ns.Contains('.') ? ns.Substring(0, ns.LastIndexOf('.')) : null) known.Add(ns);
+            }
+            if (src.ImportNamespaces.Count > 0) (SourceImportNamespaces ??= new())[sourceIndex] = src.ImportNamespaces;
+            else SourceImportNamespaces?.Remove(sourceIndex);
+            return parser;
+        }
 
         /// <summary>`true` while the body of a GENERIC class
         /// is being parsed (see ParsePropertyBody: static auto-property).</summary>
@@ -233,11 +256,7 @@ namespace fire.Compiler
             var tokens = new Lexer(src.Source).Tokenize();
             _declaredNamespaces ??= new HashSet<string>(StringComparer.Ordinal);
             FindNamespaces(tokens, _declaredNamespaces);
-            var parser = new Parser(tokens);
-            parser._usingNamespaces = src.Usings;
-            parser._sourceIndex = sourceIndex;
-            parser._fileName = src.Name;
-            return parser.ParseProgram();
+            return ForSource(tokens, src, sourceIndex).ParseProgram();
         }
 
         public static List<Stmt> ParseMultiple(IReadOnlyList<ProcessedSource> sources)
@@ -248,6 +267,7 @@ namespace fire.Compiler
             var unitDecls = new List<(UnitDeclStmt Decl, string? File)>();
             var namespaces = new HashSet<string>(StringComparer.Ordinal);
             _declaredNamespaces = namespaces;
+            SourceImportNamespaces = null;
             for (int i = 0; i < sources.Count; i++)
             {
                 var src = sources[i];
@@ -270,12 +290,7 @@ namespace fire.Compiler
                 List<Stmt> stmts;
                 try
                 {
-                    var tokens = tokenLists[i];
-                    var parser = new Parser(tokens);
-                    parser._usingNamespaces = src.Usings;
-                    parser._sourceIndex = i;
-                    parser._fileName = src.Name;
-                    stmts = parser.ParseProgram();
+                    stmts = ForSource(tokenLists[i], src, i).ParseProgram();
                 }
                 catch (ParseException ex) when (src.Name != null && ex.FileName == null)
                 {
@@ -2857,7 +2872,9 @@ namespace fire.Compiler
             Expect(TokenType.LBrace, "Expected '{' after the namespace name");
 
             string? savedNamespace = _currentNamespace;
-            _currentNamespace = _currentNamespace == null ? name : _currentNamespace + "." + name;
+            // (a block at the top level of a library's file: its own name, not inside the library's implicit namespace)
+            _currentNamespace = _currentNamespace == null || _namespaceDepth == 0 && _implicitNamespace != null ? name : _currentNamespace + "." + name;
+            _namespaceDepth++;
 
             var members = new List<Stmt>();
             while (!Check(TokenType.RBrace) && !Check(TokenType.Eof))
@@ -2867,6 +2884,7 @@ namespace fire.Compiler
             }
             Expect(TokenType.RBrace, "Expected '}' at the end of the namespace");
 
+            _namespaceDepth--;
             _currentNamespace = savedNamespace;
 
             return new NamespaceDecl(_sourceIndex, line, name, members);
@@ -3503,6 +3521,7 @@ namespace fire.Compiler
                 return "[]";
             }
             if (Check(TokenType.Lt) && PeekAt(1).Type == TokenType.Lt) { Advance(); Advance(); return "<<"; }
+            if (Check(TokenType.Gt) && PeekAt(1).Type == TokenType.Gt && PeekAt(2).Type == TokenType.Gt) { Advance(); Advance(); Advance(); return ">>>"; }
             if (Check(TokenType.Gt) && PeekAt(1).Type == TokenType.Gt) { Advance(); Advance(); return ">>"; }
             if (Match(TokenType.Plus)) return "+";
             if (Match(TokenType.Minus)) return "-";
@@ -3737,6 +3756,7 @@ namespace fire.Compiler
             TokenType.HashAssign => BinaryOp.BitXor,
             TokenType.ShlAssign => BinaryOp.ShiftLeft,
             TokenType.ShrAssign => BinaryOp.ShiftRight,
+            TokenType.UShrAssign => BinaryOp.ShiftRightLogical,
             _ => null,
         };
 
@@ -3920,6 +3940,13 @@ namespace fire.Compiler
                     int line = Peek().Line;
                     Advance(); Advance();
                     left = new BinaryExpr(line, BinaryOp.ShiftLeft, left, ParseAdditive());
+                }
+                else if (Check(TokenType.Gt) && PeekAt(1).Type == TokenType.Gt && PeekAt(2).Type == TokenType.Gt)
+                {
+                    // `>>>`: the logical shift (zeros come in at the top)
+                    int line = Peek().Line;
+                    Advance(); Advance(); Advance();
+                    left = new BinaryExpr(line, BinaryOp.ShiftRightLogical, left, ParseAdditive());
                 }
                 else if (Check(TokenType.Gt) && PeekAt(1).Type == TokenType.Gt)
                 {
@@ -4255,6 +4282,30 @@ namespace fire.Compiler
             bool noShortLambda = _suppressShortLambda;
             _suppressShortLambda = false;
             var tok = Peek();
+
+            // `int.Bits`, `int[8].Bits`, `float[32].Bits`, `byte.Bits`, ... - the width of a value type in bits
+            if (tok.Type is TokenType.KwInt or TokenType.KwFloat or TokenType.KwBool or TokenType.KwChar or TokenType.KwByte or TokenType.KwWord)
+            {
+                int dot = PeekAt(1).Type == TokenType.Dot ? 1
+                    : PeekAt(1).Type == TokenType.LBracket && PeekAt(2).Type == TokenType.IntLiteral && PeekAt(3).Type == TokenType.RBracket && PeekAt(4).Type == TokenType.Dot ? 4 : 0;
+                if (dot > 0 && PeekAt(dot + 1).Type == TokenType.Identifier && PeekAt(dot + 1).Lexeme == "Bits")
+                {
+                    Advance();
+                    int? width = null;
+                    if (dot == 4)
+                    {
+                        Advance();
+                        var widthToken = Advance();
+                        width = int.Parse(widthToken.Lexeme, System.Globalization.CultureInfo.InvariantCulture);
+                        if (tok.Type is not (TokenType.KwInt or TokenType.KwFloat) || !(width is 8 or 16 or 32 or 64) || tok.Type == TokenType.KwFloat && width == 8)
+                            throw Error($"'{tok.Lexeme}[{width}]' is no type: a width in brackets is 8, 16, 32 or 64 for int and 16, 32 or 64 for float", widthToken);
+                        Advance();
+                    }
+                    Advance();   // '.'
+                    Advance();   // 'Bits'
+                    return new TypeBitsExpr(tok.Line, tok.Lexeme, width);
+                }
+            }
 
             switch (tok.Type)
             {
@@ -4682,7 +4733,15 @@ namespace fire.Compiler
         /// that binary operators, assignment and the postfix chain do not
         /// accidentally read on across a new statement in the next line
         /// (it must not).</summary>
-        private bool LineContinues() => _bracketDepth > 0 || !Peek().NewlineBefore;
+        private bool LineContinues() => _bracketDepth > 0 || !Peek().NewlineBefore || ContinuesAtLineStart(Peek().Type);
+
+        /// <summary>A token that cannot start a statement and so, at the start of a line, goes on with the expression of the line before (a fluent chain
+        /// `.Where(...)` / `?.Name`, a binary operator, the `?` of a condition) - not `++`/`--` (a statement of their own), not `*` (`*p = 1` writes through a
+        /// pointer), not `&` (an address), `!`, `~`, `(`, `[` (they start an expression), `#` (a directive) or an assignment. In the body of a `with` block a
+        /// `.` at the start of a line is its member (`.x = 10`), a new statement.</summary>
+        private bool ContinuesAtLineStart(TokenType type) => type == TokenType.Dot && _withVarStack.Count == 0 || type is TokenType.QuestionDot or TokenType.QuestionQuestionDot
+            or TokenType.And or TokenType.Or or TokenType.Plus or TokenType.Minus or TokenType.Slash or TokenType.Percent or TokenType.Caret or TokenType.Pipe
+            or TokenType.Eq or TokenType.NotEq or TokenType.Lt or TokenType.LtEq or TokenType.Gt or TokenType.GtEq or TokenType.Question;
 
         /// <summary>Enforces the statement separation rule: between two statements
         /// there must be a ';' or a line break. End of block ('}') and end of file
@@ -4700,6 +4759,13 @@ namespace fire.Compiler
         }
 
         private static ParseException Error(string message, Token at) =>
-            new(message, at.Line, at.Column);
+            new(message + KeywordHint(message, at), at.Line, at.Column);
+
+        /// <summary>Where a name is expected and a keyword stands (`int where = 3`, `F(int from)`, `var base = 1`): says so - otherwise "Expected a
+        /// variable name" leaves one wondering what is wrong with `where`.</summary>
+        private static string KeywordHint(string message, Token at) =>
+            at.Type != TokenType.Identifier && Lexer.IsKeyword(at.Lexeme) && message.StartsWith("Expected", StringComparison.Ordinal)
+            && (message.Contains("name", StringComparison.Ordinal) || message.Contains("identifier", StringComparison.Ordinal))
+                ? $" ('{at.Lexeme}'{ErrorCatalog.KeywordHintTail}" : "";
     }
 }

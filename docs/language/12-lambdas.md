@@ -91,6 +91,9 @@ Demo.Run()
 - **Global variables** (including the variables of the top-level code) are not captured: the lambda always sees their current value. `(taking g)` gives
   it a copy; `handover` of a global is an error - it belongs to the program.
 - `take` into a variable that was captured without a word is the warning `TC024`: what it gets dies with the copy.
+- A captured object is copied **deep**, with everything it owns: what the lambda gives back of it (`(x) => self.Get("a")`) belongs to the copy and
+  dies with it - also when the copy is lent to the calls. A copy of an object that keeps a resource by its number (a mesh, a texture) frees that
+  resource when it dies. To use the object itself, give it to the lambda as a parameter, use a global, or bind it with `on`.
 - `this` is not captured; bind it with `on` (below).
 
 ```fire

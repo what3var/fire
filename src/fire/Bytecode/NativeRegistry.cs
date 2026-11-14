@@ -148,6 +148,7 @@ namespace fire.Bytecode
             var env = environment ?? new fire.Standard.ProgramEnvironment();
             Register(fire.Standard.EnvironmentMethods.NativeName, args => fire.Standard.EnvironmentMethods.Call(args, env));
             Register(fire.Standard.LibraryMethods.NativeName, fire.Standard.LibraryMethods.Call);
+            Register(fire.Standard.BitsMethods.NativeName, fire.Standard.BitsMethods.Call);
             Register(fire.Standard.AwaitMethods.NativeName, fire.Standard.AwaitMethods.Call);
             Register(fire.Standard.LambdaHandover.NativeName, fire.Standard.LambdaHandover.Call);
             foreach (var cancelName in fire.Standard.CancelMethods.Names)

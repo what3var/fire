@@ -50,14 +50,6 @@ namespace fire.Values
             }
         }
 
-        /// <summary>The (last declared) type of this full name, or null.</summary>
-        public static EnumType? Named(string name)
-        {
-            lock (Lock)
-                for (int i = All.Count - 1; i > 0; i--) if (All[i].Name == name) return All[i];
-            return null;
-        }
-
         /// <summary>The value of a text: a member's name, for a flag enum names joined with `,` (`a, b`); null when it is none.</summary>
         public long? Parse(string text)
         {

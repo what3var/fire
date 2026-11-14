@@ -17,12 +17,14 @@
       "native/s3d_model.h",
       "native/s3d_effects.h",
       "native/s3d_physics.h",
-      "native/s3d_vk.h",
       "native/s3d_shaders.h",
       "native/s3d_gpu_vk.h",
       "native/fire_bridge_scene3d.h"
     ],
     "discover": false,
+    "uses": [
+      "graphics"
+    ],
     "linkLibraries": {
       "posix": [
         "dl",

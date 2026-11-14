@@ -493,6 +493,9 @@ exception come back like `await on`. Inside `sync global { ... }` the method run
 needed there too. Natively the generated code marks a take or claim for a global (`noteGlobalTake`, `noteGlobalClaim`, `noteHolderClaim`, takeToHolder
 on a shared holder) and the store moves it (`toMainGlobals`, `toMainHolder`); a call in a thread program sets `g_argIn` (the argument list, or NULL)
 so that the dispatcher sees what travels. Tests: "Threads: Regel 10 - ..." (two cases), the handover case now uses `back = take c.other`.
+Since: a method that only reads (`FunctionProto.ReadsOnly`) runs in the thread, not as a job; and while the main program is in a native of a package
+that gets nothing of the shared domain, threads take their sections themselves and a method call runs in the thread in a section (docs/spec/
+THREADING_DESIGN.md section 7) - found with a scene3d program whose loader thread stood still while `cam.Render()` ran. Test: "Threads und Natives: ...".
 
 **Status:** (a)-(d) are done in the VM and natively. Natively a lambda stays counted (the memory, also for natives that keep a callback) and carries an
 owner header and a store (`Lam.o`, `Lam.store`, okind `O_Lambda`): destroyed with its owner, freed with its last count; the generated lambda body gets

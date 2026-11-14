@@ -14,6 +14,13 @@
  *   int  fire_tls_pending(FireTlsSession*)                            decrypted bytes that read without touching the socket
  *   void fire_tls_info(FireTlsSession*, char* protocol, size_t, char* cipher, size_t)
  *   void fire_tls_closeSession(FireTlsSession*)                       close_notify (best effort), then everything is freed (the socket stays open)
+ * TLS over buffers instead of a socket (a protocol that carries the TLS records itself - the PRELOGIN packets of SQL Server's TDS):
+ *   FireTlsSession* fire_tls_clientOpenMem(const FireTlsOptions*, st)  a client session without a socket (NULL with a status where it is not supported)
+ *   int  fire_tls_memFeed(FireTlsSession*, const uint8_t*, int count, st)   the bytes that came from the other side
+ *   int  fire_tls_memDrain(FireTlsSession*, uint8_t*, int max)         the bytes to send to it (at most max; 0: none waiting)
+ *   int  fire_tls_memWaiting(FireTlsSession*)                          how many bytes wait to be sent
+ *   int  fire_tls_memRead(FireTlsSession*, uint8_t*, int count, int* got, st)    decrypted bytes; *got -1: more bytes of the other side are needed, 0: it closed
+ *   int  fire_tls_memWrite(FireTlsSession*, const uint8_t*, int count, int* sent, st)   encrypts (the records wait for memDrain)
  * The functions that return int give 1 when done and 0 on an error (the status says why); those that return a pointer give NULL on an error.
  *
  * The socket is non-blocking and belongs to the net bridge; the session only reads and writes it. Waiting is done with fire_net_waitFor, never longer than the

@@ -256,4 +256,82 @@ static Value fire_tls_Close(Value h) {
     return Bool(true);
 }
 
+/* ---- TLS over buffers (Tls.Engine) ---- */
+
+/* A client session without a socket: the records go through Feed and Drain. Returns the session, -1 on an error. */
+static Value fire_tls_OpenMem(Value serverName, Value verify, Value caFile, Value caPem, Value certPem, Value keyPem) {
+    FireTlsTexts t;
+    FireTlsOptions opt;
+    FireNetStatus st;
+    FireTlsSession* session;
+    if (!fire_tlsb_texts(&t, serverName, caFile, caPem, certPem, keyPem)) return Int(-1);
+    opt.verify = verify.i != 0;
+    opt.serverName = t.items[0];
+    opt.caFile = t.items[1];
+    opt.caPem = t.items[2];
+    opt.certPem = t.items[3];
+    opt.keyPem = t.items[4];
+    session = fire_tls_clientOpenMem(&opt, &st);
+    fire_tlsb_freeTexts(&t);
+    if (session == NULL) return Int(fire_tlsb_failStatus(&st));
+    return Int(fire_tlsb_addSession(session));
+}
+
+/* The bytes of the other side (count from offset); false on an error. */
+static Value fire_tls_Feed(Value h, Value buffer, Value offset, Value count) {
+    FireTlsSession* s;
+    FireNetStatus st;
+    FireBytes b;
+    if (!bytesArg(buffer, "Tls.Engine.Feed", &b)) return Undef();
+    if (!fire_tlsb_checkRange(b.length, offset.i, count.i)) return Bool(false);
+    s = fire_tlsb_session(h);
+    if (s == NULL) return Bool(false);
+    if (!fire_tls_memFeed(s, b.data + offset.i, (int)count.i, &st)) { fire_tlsb_failStatus(&st); return Bool(false); }
+    fire_tlsb_ok();
+    return Bool(true);
+}
+
+/* All the bytes that wait to be sent to the other side (empty: none). */
+static Value fire_tls_Drain(Value h, OwnList* list) {
+    FireTlsSession* s = fire_tlsb_session(h);
+    int n;
+    Buf* b;
+    if (s == NULL) return Undef();
+    n = fire_tls_memWaiting(s);
+    b = allocBuf((uint32_t)(n > 0 ? n : 0), list);
+    if (n > 0) fire_tls_memDrain(s, b->data, n);
+    fire_tlsb_ok();
+    return BufV(b);
+}
+
+/* Decrypted bytes: the number, -2 more bytes of the other side are needed (Feed), 0 it closed, -1 an error. */
+static Value fire_tls_MemRead(Value h, Value buffer, Value offset, Value count) {
+    FireTlsSession* s;
+    FireNetStatus st;
+    int got = 0;
+    Buf* b = bufferArg(buffer, "Tls.Engine.Read");
+    if (b == NULL) return Undef();
+    if (!fire_tlsb_checkRange(b->length, offset.i, count.i)) return Int(-1);
+    s = fire_tlsb_session(h);
+    if (s == NULL) return Int(-1);
+    if (!fire_tls_memRead(s, b->data + offset.i, (int)count.i, &got, &st)) return Int(fire_tlsb_failStatus(&st));
+    fire_tlsb_ok();
+    return Int(got < 0 ? -2 : got);
+}
+
+/* Encrypts up to `count` bytes (the records wait for Drain); the number, -1 on an error. */
+static Value fire_tls_MemWrite(Value h, Value buffer, Value offset, Value count) {
+    FireTlsSession* s;
+    FireNetStatus st;
+    int sent = 0;
+    FireBytes b;
+    if (!bytesArg(buffer, "Tls.Engine.Write", &b)) return Undef();
+    if (!fire_tlsb_checkRange(b.length, offset.i, count.i)) return Int(-1);
+    s = fire_tlsb_session(h);
+    if (s == NULL) return Int(-1);
+    if (!fire_tls_memWrite(s, b.data + offset.i, (int)count.i, &sent, &st)) return Int(fire_tlsb_failStatus(&st));
+    fire_tlsb_ok();
+    return Int(sent);
+}
+
 #endif

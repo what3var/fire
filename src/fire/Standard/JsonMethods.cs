@@ -17,6 +17,9 @@ namespace fire.Standard
         /// <summary>The owner of the root of a read graph: the scope of the calling code.</summary>
         IOwner CurrentOwner { get; }
         RuntimeClass? FindClass(string name);
+        /// <summary>The enum of the running program of this name (its full name as a field's type text gives it), null when the program has none: never one
+        /// of another program in the process (fire.Runtime.ProgramEnums).</summary>
+        EnumType? FindEnum(string name);
         /// <summary>The type arguments of the running generic method (DeclaredType texts), null when there are none.</summary>
         string[]? CallTypeArgs { get; }
         Exception Error(string className, string message);
@@ -704,7 +707,7 @@ namespace fire.Standard
                         return Value.MakeFloat(double.Parse(text, NumberStyles.Float, CultureInfo.InvariantCulture), unit);
                 }
                 // (a slot of an enum: its number - what Serialize writes)
-                if (EnumType.Named(type) is { } enumType && isInt && long.TryParse(text, NumberStyles.AllowLeadingSign, CultureInfo.InvariantCulture, out long e))
+                if (_host.FindEnum(type) is { } enumType && isInt && long.TryParse(text, NumberStyles.AllowLeadingSign, CultureInfo.InvariantCulture, out long e))
                     return Value.MakeEnum(e, enumType);
                 throw Mismatch(path, type, text);
             }
@@ -732,7 +735,7 @@ namespace fire.Standard
                         catch (FormatException) { throw new JsonError($"{path}: expected base64 bytes."); }
                 }
                 // (a slot of an enum: the name of a member - `a, b` for a flag enum)
-                if (EnumType.Named(type) is { } enumType)
+                if (_host.FindEnum(type) is { } enumType)
                     return enumType.Parse(s) is long e ? Value.MakeEnum(e, enumType) : throw new JsonError($"{path}: '{s}' is no member of '{type}'.");
                 throw Mismatch(path, type, "a string");
             }
@@ -805,7 +808,7 @@ namespace fire.Standard
                 list.Fields["items"] = Value.MakeArray(items);
                 list.Fields["count"] = Value.MakeInt(a.Items.Count);
                 // (what the field initialiser of List would give - the reader runs no initialisers: Add/Insert ask `owns`)
-                if (rc.FieldIndex.ContainsKey("owns") && EnumType.Named("Owns") is { } owns) list.Fields["owns"] = Value.MakeEnum(0, owns);
+                if (rc.FieldIndex.ContainsKey("owns") && _host.FindEnum("Owns") is { } owns) list.Fields["owns"] = Value.MakeEnum(0, owns);
                 return value;
             }
 

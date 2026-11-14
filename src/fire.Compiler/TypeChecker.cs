@@ -30,7 +30,7 @@ namespace fire.Compiler
     /// <summary>A static type: `Element` is the element type of an array, `ParamCount`/`Return` the signature of a lambda (-1 / null: not known).</summary>
     internal sealed record StaticType(StaticKind Kind, string? Class = null, StaticType? Element = null, int ParamCount = -1, StaticType? Return = null, IReadOnlyList<StaticType>? Params = null,
         IReadOnlyList<StaticType>? Args = null, Unit? Unit = null, bool UnitIsDimension = false, string? TypeParam = null, bool Raw = false, bool DeclaredAny = false, byte Wide = 0,
-        Nullness Null = Nullness.Unknown)
+        Nullness Null = Nullness.Unknown, byte Bits = 0)
     {
         // (Null: whether a value of a value type certainly is not undefined - a literal, what an operator computes, `defined int` - or may be undefined
         // as far as the code declares it: a parameter, field or uninitialized variable declared `int`, the literal `undefined` (SPEC 8.10b); not part of the type)
@@ -159,6 +159,12 @@ namespace fire.Compiler
         /// <summary>An expression tree (`lambda expression<T>`) takes only a lambda written at the call with an expression body, and in it nothing that changes
         /// something (an assignment, `++`, `take`, a block) - an error in lax mode too.</summary>
         public const string ExpressionTreeCode = "TC030";
+        /// <summary>A temporary of the statement (`new X()`, the result of a call that gives a new object) goes to a constructor that keeps it in a field
+        /// without taking it: it dies at the end of the statement, the field holds a destroyed object (a warning in strict mode too).</summary>
+        public const string StoredTemporaryCode = "TC031";
+        /// <summary>An array (not a fresh one) given to a `byte`/`word` parameter: it is converted into a new buffer - what the method writes does not reach
+        /// the array (a warning in strict mode too).</summary>
+        public const string ArrayToBufferCode = "TC032";
         private ExpressionTrees _trees = new();
         private Dictionary<Expr, string>? _treeTypes;
 
@@ -484,7 +490,7 @@ namespace fire.Compiler
         private void Report(string code, string message, int line)
         {
             if (_source < _reportFrom) return;
-            _diagnostics.Add(new Diagnostic(line, message, Strict && code is not (UnitLossCode or AssignInConditionCode or SwitchMissingCode or SetterClaimCode or LateVarTypeCode or TakeIntoCopyCode) ? DiagnosticSeverity.Error : DiagnosticSeverity.Warning, code));
+            _diagnostics.Add(new Diagnostic(line, message, Strict && code is not (UnitLossCode or AssignInConditionCode or SwitchMissingCode or SetterClaimCode or LateVarTypeCode or TakeIntoCopyCode or StoredTemporaryCode or ArrayToBufferCode) ? DiagnosticSeverity.Error : DiagnosticSeverity.Warning, code));
         }
 
         /// <summary>The condition of `if`, `while` and `for` must be a bool: a number is no condition (`if (n)`), the VM throws an ArgumentException for it.</summary>
@@ -750,6 +756,8 @@ namespace fire.Compiler
             if (IsRawType(type)) result = result with { Unit = Unit.Unitless, UnitIsDimension = false, Raw = true };
             // `int[64]`, `int[32]`: keeps that width beyond the program's int (Value.Wide)
             if (result.Kind == StaticKind.Int && type is { BaseName: "int", BitWidth: 32 or 64, Unsigned: false }) result = result with { Wide = (byte)type.BitWidth! };
+            // (`int[8]`, `float[32]`: the width written - what `x.Bits` says)
+            if (result.Kind is StaticKind.Int or StaticKind.Float && type.BitWidth is int declaredBits && arrayRanks + type.ArrayRank == 0) result = result with { Bits = (byte)declaredBits };
             // `defined int` (SPEC 8.10b): never undefined
             if (type.NonNull && arrayRanks + type.ArrayRank == 0) result = result.WithNull(Nullness.Defined);
             for (int i = 0; i < arrayRanks + type.ArrayRank; i++) result = StaticType.ArrayOf(result);
@@ -914,8 +922,21 @@ namespace fire.Compiler
         private StaticType FieldType(FieldDecl f, IReadOnlyDictionary<string, StaticType>? map = null)
         {
             var declared = DeclaredOrDynamic(f.Type, f.ArrayRanks.Count, map);
-            return f.Initializer == null ? declared : WithInitializerUnit(declared, f.Type, f.ArrayRanks.Count, LiteralType(f.Initializer));
+            if (f.Initializer == null) return declared;
+            var typed = WithInitializerUnit(declared, f.Type, f.ArrayRanks.Count, LiteralType(f.Initializer));
+            // a `static readonly` field with a constant (`static readonly int Bits = 64`): only its initializer sets it - defined, without `defined`
+            if (f.IsStatic && f.IsReadonly && f.ArrayRanks.Count == 0 && typed.IsValueKind && IsConstantValue(f.Initializer)) typed = typed.WithNull(Nullness.Defined);
+            return typed;
         }
+
+        /// <summary>A literal that is a value (not `undefined`), negated or converted with ':'/'::'.</summary>
+        private static bool IsConstantValue(Expr e) => e switch
+        {
+            LiteralExpr l => l.Value.Kind != ValueKind.Undefined,
+            UnaryExpr { Op: UnaryOp.Negate } u => IsConstantValue(u.Operand),
+            UnitCoerceExpr c => IsConstantValue(c.Operand),
+            _ => false,
+        };
 
         /// <summary>The type of a constant initializer (a number literal, negated or converted with ':'/'::'), Dynamic for anything else.</summary>
         private static StaticType LiteralType(Expr e) => e switch
@@ -1322,6 +1343,10 @@ namespace fire.Compiler
                 if (parameter.Type?.LambdaSignature is { IsExpression: true }) continue;   // (an expression tree: the lambda was checked against its shape)
                 var declared = Declared(parameter.Type, parameter.ArrayRanks.Count, map);
                 if (declared is { } target) CheckAssignable(args[i], target, argExprs[i].Line, $"parameter '{parameter.Name}' of '{callee}'", ArgumentCode, argExprs[i]);
+                // (an array of a variable or a field for a `byte`/`word` parameter: it is converted into a new buffer, what the method writes does not reach it)
+                if (declared is { Kind: StaticKind.Array, Element: { Raw: true, Kind: StaticKind.Int or StaticKind.Word } want } && args[i] is { Kind: StaticKind.Array, Element: { } got }
+                    && !(got.Raw && got.Kind == want.Kind) && !IsFreshOrWorded(argExprs[i]))
+                    Report(ArrayToBufferCode, $"The parameter '{parameter.Name}' of '{callee}' is a {(want.Kind == StaticKind.Word ? "word" : "byte")} buffer, the argument an array: the method gets a new buffer with its elements, and what it writes does not reach the array. Pass a buffer (`{(want.Kind == StaticKind.Word ? "word" : "byte")} data[] = ...`, `new {(want.Kind == StaticKind.Word ? "word" : "byte")}[n]`)", argExprs[i].Line);
             }
         }
 
@@ -1878,6 +1903,9 @@ namespace fire.Compiler
         {
             switch (expr)
             {
+                case TypeBitsExpr tb:
+                    BitsOf.AddOrUpdate(tb, new System.Runtime.CompilerServices.StrongBox<int>(BitsOfType(tb.BaseName, tb.Width)));
+                    return StaticType.Int.WithUnit(Unit.Unitless).WithNull(Nullness.Defined);
                 case LiteralExpr l:
                     return l.Value.Kind switch
                     {
@@ -2053,7 +2081,7 @@ namespace fire.Compiler
                     return left.Kind == StaticKind.Int && right.Kind == StaticKind.Int ? (l.Scale <= r.Scale ? l : r) : l;
                 case BinaryOp.Mul: return Unit.Multiply(l, r);
                 case BinaryOp.Div: return Unit.Divide(l, r);
-                case BinaryOp.ShiftLeft or BinaryOp.ShiftRight: return l;
+                case BinaryOp.ShiftLeft or BinaryOp.ShiftRight or BinaryOp.ShiftRightLogical: return l;
                 default: return null;
             }
         }
@@ -2077,7 +2105,7 @@ namespace fire.Compiler
             {
                 var other = left.Kind == StaticKind.Word ? right : left;
                 if (other.Kind is StaticKind.Int or StaticKind.Word) return StaticType.Word;
-                if (other.Kind == StaticKind.Float && b.Op is not (BinaryOp.BitAnd or BinaryOp.BitOr or BinaryOp.BitXor or BinaryOp.ShiftLeft or BinaryOp.ShiftRight)) return StaticType.Float;
+                if (other.Kind == StaticKind.Float && b.Op is not (BinaryOp.BitAnd or BinaryOp.BitOr or BinaryOp.BitXor or BinaryOp.ShiftLeft or BinaryOp.ShiftRight or BinaryOp.ShiftRightLogical)) return StaticType.Float;
                 return StaticType.Dynamic;
             }
             switch (b.Op)
@@ -2086,7 +2114,7 @@ namespace fire.Compiler
                 case BinaryOp.Eq or BinaryOp.NotEq or BinaryOp.Lt or BinaryOp.LtEq or BinaryOp.Gt or BinaryOp.GtEq:
                     // an object can overload the comparison: then the result is whatever the operator says
                     return left.Kind == StaticKind.Class || right.Kind == StaticKind.Class ? StaticType.Dynamic : StaticType.Bool;
-                case BinaryOp.BitAnd or BinaryOp.BitOr or BinaryOp.BitXor or BinaryOp.ShiftLeft or BinaryOp.ShiftRight:
+                case BinaryOp.BitAnd or BinaryOp.BitOr or BinaryOp.BitXor or BinaryOp.ShiftLeft or BinaryOp.ShiftRight or BinaryOp.ShiftRightLogical:
                     return left.Kind == StaticKind.Int && right.Kind == StaticKind.Int ? StaticType.Int : StaticType.Dynamic;
                 case BinaryOp.Add when left.Kind == StaticKind.String || right.Kind == StaticKind.String:
                     // a string on the left joins whatever comes (its ToString); on the right only a value that cannot overload `+` is sure to
@@ -2250,11 +2278,35 @@ namespace fire.Compiler
             }
         }
 
+        /// <summary>`int.Bits` / `x.Bits` (SPEC 8.2): the width of the value type in bits - the expression -> its value; the compiler puts in the constant.</summary>
+        public static readonly System.Runtime.CompilerServices.ConditionalWeakTable<Expr, System.Runtime.CompilerServices.StrongBox<int>> BitsOf = new();
+        /// <summary>The width of a float of the program (`#floatwidth`, 64 unless set) and of a word on the target (16, 32 or 64), for `float.Bits` / `word.Bits`.</summary>
+        public static int ProgramFloatWidth = 64;
+        public static int ProgramWordWidth = 64;
+
+        private static int BitsOfType(string baseName, int? width) => baseName switch
+        {
+            "int" => width ?? ProgramIntWidth,
+            "float" => width ?? ProgramFloatWidth,
+            "byte" => 8,
+            "char" => 16,
+            "bool" => 1,
+            _ => ProgramWordWidth,
+        };
+
         private StaticType InferMember(MemberExpr m, MemberUse use = MemberUse.Read)
         {
             // `Color.Red`: a value of the enum
             if (_refs.TryGetValue(m, out var resolvedRef) && resolvedRef is ResolvedRef.EnumMember { Type: { } enumType }) return StaticType.EnumOf(enumType.Name);
             var target = Infer(m.Target);
+            // `x.Bits` of a value: the width of its type (`int[8] x`: 8) - a constant the compiler puts in
+            if (m.Name == "Bits" && use == MemberUse.Read && target.IsValueKind && target.Kind != StaticKind.Array)
+            {
+                string baseName = target.Kind switch { StaticKind.Int => target.Raw ? "byte" : "int", StaticKind.Float => "float", StaticKind.Bool => "bool", StaticKind.Char => "char", _ => "word" };
+                int? declared = target.Bits != 0 ? target.Bits : target.Wide != 0 ? target.Wide : null;
+                BitsOf.AddOrUpdate(m, new System.Runtime.CompilerServices.StrongBox<int>(BitsOfType(baseName, declared)));
+                return StaticType.Int.WithUnit(Unit.Unitless).WithNull(Nullness.Defined);
+            }
             bool isStatic = false;
             if (target.IsDynamic && StaticClassRef(m.Target) is { } staticClass) { target = StaticType.ClassOf(staticClass); isStatic = true; }
             CheckAccess(target, m.Name, use, 0, m.Line, isStatic);
@@ -2613,7 +2665,13 @@ namespace fire.Compiler
                 _implicitCopies = new HashSet<string>(implicitNames);
                 if (_reportedLambdas.Add(lam))
                     foreach (var name in implicitNames)
-                        Report(ImplicitCaptureCode, $"The lambda uses '{name}' of the code around it: it gets a copy of it, made with the lambda - a change does not reach '{name}' outside, and a later change outside is not seen. Write 'taking {name}' where it is used (a copy), 'handover {name}' (moved into the lambda), or bind an object with 'on'.", lam.Line);
+                    {
+                        // (an object or an array: the copy is deep - what the lambda gives back of it belongs to the copy and dies with it, and a copy of an
+                        // object that keeps a resource by its number frees that resource when it dies)
+                        string deep = Lookup(name).Kind is StaticKind.Class or StaticKind.Object or StaticKind.Array or StaticKind.Dynamic
+                            ? " If it holds an object or an array, the copy is deep, with everything it owns: what the lambda gives back of it belongs to the copy and dies with it - pass the object as a parameter of the lambda to use it itself." : "";
+                        Report(ImplicitCaptureCode, $"The lambda uses '{name}' of the code around it: it gets a copy of it, made with the lambda - a change does not reach '{name}' outside, and a later change outside is not seen.{deep} Write 'taking {name}' where it is used (a copy), 'handover {name}' (moved into the lambda), or bind an object with 'on'.", lam.Line);
+                    }
             }
             foreach (var s in lam.Body.Statements) Check(s);
             _implicitCopies = outerCopies;
@@ -2683,6 +2741,25 @@ namespace fire.Compiler
             return StaticType.String;
         }
 
+        /// <summary>The type of a call of a built-in method that the checker knows: the typed reads of a byte buffer give an int or a float (never undefined),
+        /// `Slice` a byte buffer, `IndexOf`/`Compare` an int; `"..".ToBytes()` a byte buffer. Null for any other call.</summary>
+        private static StaticType? BuiltinCallType(StaticType target, string name, int argc)
+        {
+            var bytes = StaticType.ArrayOf(StaticType.Int with { Unit = Unit.Unitless, Raw = true });
+            if (target.Kind == StaticKind.String) return name == "ToBytes" && argc == 0 ? bytes : null;
+            if (target.Kind != StaticKind.Array || target.Element is not { Kind: StaticKind.Int, Raw: true }) return null;
+            var number = (name.StartsWith("ReadFloat", StringComparison.Ordinal) ? StaticType.Float : StaticType.Int).WithUnit(Unit.Unitless).WithNull(Nullness.Defined);
+            return name switch
+            {
+                "ReadInt8" or "ReadUInt8" when argc == 1 => number,
+                "ReadInt16" or "ReadUInt16" or "ReadInt32" or "ReadUInt32" or "ReadInt64" or "ReadFloat16" or "ReadFloat32" or "ReadFloat64" when argc is 1 or 2 => number,
+                "Slice" when argc is 1 or 2 => bytes,
+                "IndexOf" when argc is 1 or 2 => StaticType.Int.WithUnit(Unit.Unitless).WithNull(Nullness.Defined),
+                "Compare" when argc == 1 => StaticType.Int.WithUnit(Unit.Unitless).WithNull(Nullness.Defined),
+                _ => null,
+            };
+        }
+
         private StaticType InferCall(CallExpr c)
         {
             var type = InferCallCore(c);
@@ -2715,6 +2792,8 @@ namespace fire.Compiler
                 else CheckAccess(target, m.Name, MemberUse.Call, c.Args.Count, m.Line);
                 receiverClass = target.Class;
                 calleeTarget = target;
+                // the built-in methods of a byte buffer and `ToBytes` of a text: what they give (fire.Standard.BufferMethods)
+                if (BuiltinCallType(target, m.Name, c.Args.Count) is { } builtin) { foreach (var a in c.Args) Infer(a); return builtin; }
                 if (target.Kind == StaticKind.Class)
                 {
                     candidates = FindMethods(target, m.Name, c.Args.Count);
@@ -3029,6 +3108,7 @@ namespace fire.Compiler
                     : Infer(a, named[i] is { ByRef: false } p ? Declared(p.Type, p.ArrayRanks.Count, map) : null)).ToList();
                 CheckArguments(named, namedArgs, n.Args, "new " + PlainName(plain), map);
                 NoteCall(n, CtorKey(plain, ctors[0].Params.Count), ctors[0].Params, named, namedArgs, n.Args);
+                CheckStoredTemporaries(ctors[0], named, n.Args, plain);
                 return StaticType.ClassOf(plain, typeArgs);
             }
             var ctor = ctors.Count == 1 ? ctors[0] : null;
@@ -3043,6 +3123,7 @@ namespace fire.Compiler
                     var chosen = asMethods.First(x => ReferenceEquals(x.Method, picked)).Ctor;
                     CheckArguments(chosen.Params, ctorArgs, n.Args, "new " + PlainName(plain), map);
                     NoteCall(n, CtorKey(plain, chosen.Params.Count), chosen.Params, chosen.Params.Take(ctorArgs.Count).Cast<LambdaParam?>().ToList(), ctorArgs, n.Args);
+                    CheckStoredTemporaries(chosen, chosen.Params.Take(ctorArgs.Count).Cast<LambdaParam?>().ToList(), n.Args, plain);
                     if (ConstructorHint(decl, plain, chosen, asMethods.Select(x => x.Method).ToList(), picked, ctorArgs, map) is { } hint) _overloadHints[n] = hint;
                 }
                 return StaticType.ClassOf(plain, typeArgs);
@@ -3053,8 +3134,106 @@ namespace fire.Compiler
             {
                 CheckArguments(ctor.Params, args, n.Args, "new " + PlainName(plain), map);
                 NoteCall(n, CtorKey(plain, ctor.Params.Count), ctor.Params, ctor.Params.Take(args.Count).Cast<LambdaParam?>().ToList(), args, n.Args);
+                CheckStoredTemporaries(ctor, ctor.Params.Take(args.Count).Cast<LambdaParam?>().ToList(), n.Args, plain);
             }
             return StaticType.ClassOf(plain, typeArgs);
+        }
+
+        // -------------------------------------------------------------------------------------------------------------
+        // TC031: a temporary that a constructor keeps without taking it
+        // -------------------------------------------------------------------------------------------------------------
+
+        /// <summary>`new Voxelizer(Sample.Make())` where the constructor does `this.sample = sample`: the new object belongs to the statement (its temporaries),
+        /// the field only refers to it - at the end of the statement it is destroyed. Said for an argument that is surely such a temporary (`new X(...)`, the
+        /// call of a method whose every `return` gives a new object or a local), when the constructor assigns the parameter to a field plainly and does
+        /// nothing with its ownership (`take`, `try take`, `TakeTo`, ...).</summary>
+        private void CheckStoredTemporaries(ConstructorDecl ctor, IReadOnlyList<LambdaParam?> argParams, IReadOnlyList<Expr> args, string className)
+        {
+            for (int i = 0; i < args.Count && i < argParams.Count; i++)
+            {
+                // (only what has an owner: an object of a class or an array - a string or a number is copied)
+                if (argParams[i] is not { ByRef: false } p || !HoldsOwned(p.Type, p.ArrayRanks.Count) || !IsStatementTemporary(args[i])) continue;
+                if (PlainlyStoredField(ctor, p.Name) is not { } field) continue;
+                Report(StoredTemporaryCode,
+                    $"'{ShortText(args[i])}' is a temporary of this statement: the constructor of '{PlainName(className)}' keeps it in the field '{field}' without taking it, so it is destroyed at the end of the statement and the field refers to a destroyed object. Keep it in a variable that lives long enough, or let the constructor take it ('this.{field} = try take {p.Name}')",
+                    args[i].Line);
+            }
+        }
+
+        private static string ShortText(Expr e) => e switch
+        {
+            NewExpr n => $"new {n.ClassRef.BaseName}(...)",
+            CallExpr { Callee: MemberExpr m } => $"{(m.Target is IdentifierExpr t ? t.Name + "." : "")}{m.Name}(...)",
+            CallExpr { Callee: IdentifierExpr f } => $"{f.Name}(...)",
+            _ => "the argument",
+        };
+
+        /// <summary>Surely a temporary of the statement: a new object, or the result of a call of a known method that always gives a new object or a local of its own.</summary>
+        private bool IsStatementTemporary(Expr e) => e switch
+        {
+            NewExpr n => _classes.ContainsKey(PlainName(n.ClassRef.BaseName)) || n.ClassRef.TypeArgs is { Count: > 0 },
+            CallExpr c => _callTargets.TryGetValue(c, out var target) && ReturnsFresh(target),
+            _ => false,
+        };
+
+        /// <summary>Is a value of the declared type an object or an array (something with an owner)?</summary>
+        private bool HoldsOwned(TypeRef? type, int arrayRanks) =>
+            type != null && (arrayRanks > 0 || type.ArrayRank > 0 || type.TypeArgs is not { Count: > 0 } && _classes.ContainsKey(PlainName(type.BaseName))
+                || type.TypeArgs is { Count: > 0 } && _classes.ContainsKey(GenericName(PlainName(type.BaseName), type.TypeArgs.Count)));
+
+        private readonly Dictionary<MethodDecl, bool> _returnsFresh = new(ReferenceEqualityComparer.Instance);
+
+        private bool ReturnsFresh(MethodDecl m)
+        {
+            if (_returnsFresh.TryGetValue(m, out bool known)) return known;
+            // (a local only when it surely holds a new value of its own: declared with `new ...` and never given anything else - `var c = this` is not new)
+            var nodes = AstNodes(m.Body).ToList();
+            var reassigned = new HashSet<string>(nodes.OfType<AssignExpr>().Select(a => a.Target).OfType<IdentifierExpr>().Select(t => t.Name));
+            var locals = new HashSet<string>(nodes.OfType<VarDeclStmt>().Where(v => v.Initializer is NewExpr or NewArrayExpr or ArrayLiteralExpr && !reassigned.Contains(v.Name)).Select(v => v.Name));
+            var returns = nodes.OfType<ReturnStmt>().ToList();
+            bool fresh = returns.Count > 0 && returns.All(r => r.Value is NewExpr || r.Value is IdentifierExpr id && locals.Contains(id.Name) && m.Params.All(p => p.Name != id.Name));
+            return _returnsFresh[m] = fresh;
+        }
+
+        /// <summary>The field the constructor assigns the parameter `name` to plainly (`this.f = name`, `f = name`), when it does nothing else with its ownership; null otherwise.</summary>
+        private static string? PlainlyStoredField(ConstructorDecl ctor, string name)
+        {
+            string? field = null;
+            foreach (var node in AstNodes(ctor.Body))
+            {
+                switch (node)
+                {
+                    case UnaryExpr { Op: UnaryOp.Take or UnaryOp.TryTake, Operand: IdentifierExpr id } when id.Name == name: return null;
+                    case CallExpr { Callee: MemberExpr { Target: IdentifierExpr id } m } when id.Name == name && m.Name.Contains("Take", StringComparison.Ordinal): return null;
+                    case CallExpr { Callee: MemberExpr m } call when m.Name.Contains("Take", StringComparison.Ordinal) && call.Args.Any(a => a is IdentifierExpr id && id.Name == name): return null;
+                    case VarDeclStmt v when v.Name == name: return null;   // (shadowed)
+                    case AssignExpr { Target: IdentifierExpr id } when id.Name == name: return null;   // (the parameter is given something else)
+                    case AssignExpr { Value: IdentifierExpr v, Target: MemberExpr { Target: ThisExpr } t } when v.Name == name: field ??= t.Name; break;
+                }
+            }
+            return field;
+        }
+
+        /// <summary>Every node (expression and statement) below `root`, in source order - by the properties of the records, so that no kind of node is missed.</summary>
+        private static IEnumerable<object> AstNodes(object root)
+        {
+            var stack = new Stack<object>();
+            stack.Push(root);
+            while (stack.Count > 0)
+            {
+                var node = stack.Pop();
+                yield return node;
+                var children = new List<object>();
+                foreach (var prop in node.GetType().GetProperties())
+                {
+                    if (prop.GetIndexParameters().Length > 0 || prop.Name == "EqualityContract") continue;
+                    var value = prop.GetValue(node);
+                    if (value is Expr or Stmt) children.Add(value);
+                    else if (value is System.Collections.IEnumerable list and not string)
+                        foreach (var item in list) if (item is Expr or Stmt) children.Add(item);
+                }
+                for (int k = children.Count - 1; k >= 0; k--) stack.Push(children[k]);
+            }
         }
     }
 }

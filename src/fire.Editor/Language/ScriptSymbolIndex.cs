@@ -1014,6 +1014,11 @@ namespace fire.Editor
                 symbol = "[]";
                 i += 2;
             }
+            else if (_tokens[i].Type == TokenType.Gt && i + 2 < bodyEnd && _tokens[i + 1].Type == TokenType.Gt && _tokens[i + 2].Type == TokenType.Gt)
+            {
+                symbol = ">>>";
+                i += 3;
+            }
             else if ((_tokens[i].Type == TokenType.Lt && i + 1 < bodyEnd && _tokens[i + 1].Type == TokenType.Lt)
                      || (_tokens[i].Type == TokenType.Gt && i + 1 < bodyEnd && _tokens[i + 1].Type == TokenType.Gt))
             {

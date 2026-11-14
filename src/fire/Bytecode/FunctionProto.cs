@@ -61,6 +61,10 @@ namespace fire.Bytecode
         /// <summary>The number of type parameters of a generic method (`T Pick&lt;T&gt;(...)`), 0 otherwise.</summary>
         public int TypeParamCount { get; set; }
 
+        /// <summary>An instance method whose own body only reads (fire.Compiler.ReadingMethods): a fire thread that calls it on an object of the main
+        /// program's globals runs it itself instead of as a job of the main program (docs/spec/THREADING_DESIGN.md section 7).</summary>
+        public bool ReadsOnly { get; set; }
+
         private NativeForwarder? _forwarder;
         private bool _forwarderChecked;
 

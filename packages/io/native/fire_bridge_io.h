@@ -474,23 +474,31 @@ static Value fire_io_ReadRest(Value h, OwnList* list) {
     if (s == NULL) return Undef();
     if (!s->canRead) { fire_io_fail(FIRE_IO_NOT_SUPPORTED, "The stream is not readable."); return Undef(); }
     if (s->kind == FIRE_IO_FILE && s->canSeek) {
-        /* a file: the rest at once, into a buffer of its size (a block of the rest only once in memory - on DOS it may be most of what there is) */
+        /* a file: the rest at once, into a buffer of its size (a block of the rest only once in memory - on DOS it may be most of what there is). A file that
+         * says it is empty - those of /proc - is read in chunks to its end below; one that has more than it says (/sys) is read on after its size. */
         int64_t here, end, n;
         fire_io_prepare(s, 1);
         here = fire_fs_tell(s->file);
         if (here >= 0 && fire_fs_seek(s->file, 0, SEEK_END) && (end = fire_fs_tell(s->file)) >= here && fire_fs_seek(s->file, here, SEEK_SET)
-            && end - here <= 0x7FFFFFF0) {
+            && end > here && end - here <= 0x7FFFFFF0) {
+            int64_t more = 0;
             b = allocBuf((uint32_t)(end - here), list);
             n = fire_io_readBytes(s, b->data, end - here);
             if (n < 0) return Undef();
-            if (n == end - here) { fire_io_ok(); return BufV(b); }
-            /* (shorter than it said: the bytes read, then the loop for the rest) */
+            if (n == end - here) {
+                /* (the end where it said: one more read finds it) */
+                more = fire_io_readBytes(s, chunk, sizeof chunk);
+                if (more < 0) return Undef();
+                if (more == 0) { fire_io_ok(); return BufV(b); }
+            }
+            /* (shorter than it said, or longer: the bytes read, then the loop for the rest) */
             size = (uint32_t)n;
-            if (size > 0) {
-                all = (uint8_t*)dataAlloc(0, size, 1);
+            if (size + (uint64_t)more > 0) {
+                cap = (uint32_t)(size + (uint64_t)more);
+                all = (uint8_t*)dataAlloc(0, cap, 1);
                 if (all == NULL) { fire_io_fail(FIRE_IO_OTHER, "Out of memory."); return Undef(); }
-                dataCopy(all, b->data, size);
-                cap = size;
+                if (size > 0) dataCopy(all, b->data, size);
+                if (more > 0) { dataCopy(all + size, chunk, (uint32_t)more); size += (uint32_t)more; }
             }
         }
     }

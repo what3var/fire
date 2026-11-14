@@ -1,0 +1,70 @@
+// http.data (docs/data/README.md "Servers"): a connection of a Data.Pool for each request - `server.PushTo(new Http.Database(pool))`. The connection is
+// taken when the request first asks for it (`Http.Database.Of(ctx)`, a constructor parameter `Data.Connection` of an Http.Rpc class of lifetime
+// "request") and given back when the request ends - also when it throws; an open transaction is rolled back then.
+#import "http"
+#import "data"
+
+namespace Http {
+    /// <summary>What a request has of the pool: its connection once it asked for one (the scope owns it until the request ends).</summary>
+    class DatabaseScope {
+        Data.Pool pool
+        Data.Connection connection
+        construct(Data.Pool pool) { this.pool = pool }
+
+        Data.Connection Connection() {
+            if (this.connection == undefined) {
+                var c = this.pool.Take()
+                this.connection = take c
+            }
+            return this.connection
+        }
+
+        // (for the services of Http.Rpc: the connection for a parameter `Data.Connection`)
+        any Provide(string typeName) {
+            if (typeName == "Data.Connection") { return this.Connection() }
+            return undefined
+        }
+
+        // (the end of the request: the connection back to the pool)
+        undefined Release() {
+            if (this.connection == undefined) { return }
+            var c = take this.connection
+            this.pool.Give(take c)
+        }
+    }
+
+    /// <summary>A link of the chain: every request gets a Http.DatabaseScope in its items ("data"); its connection goes back to the pool at the end.</summary>
+    class Database : IRouter {
+        Data.Pool pool
+        string item
+
+        construct(Data.Pool pool, string item = "data") {
+            this.pool = pool
+            this.item = item
+        }
+
+        Http.Response Handle(Http.Context ctx, Http.Next next) {
+            var scope = new Http.DatabaseScope(this.pool)
+            ctx.SetItem(this.item, scope)
+            Http.Response answer = undefined
+            try {
+                answer = next.Invoke(ctx)
+            } catch (e) {
+                ctx.SetItem(this.item, undefined)
+                scope.Release()
+                throw e
+            }
+            ctx.SetItem(this.item, undefined)
+            scope.Release()
+            return answer
+        }
+
+        // The connection of the request (taken from the pool at the first call; the same for the rest of the request).
+        static Data.Connection Of(Http.Context ctx, string item = "data") {
+            any scope = ctx.Item(item)
+            if (scope == undefined) { throw new Data.StateException("No Http.Database in the chain before this router (or not under the item '" + item + "').") }
+            Http.DatabaseScope s = scope
+            return s.Connection()
+        }
+    }
+}

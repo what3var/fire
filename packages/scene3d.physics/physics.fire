@@ -25,7 +25,7 @@ class Body {
     // The ground, a wall, a house: it never moves, and its shape is its own triangles (a terrain: its heights).
     static Body Static(Object obj, BodyShape shape = BodyShape.Mesh) { return new Body(obj, 0, shape) }
     // Falls, bounces, is pushed (a box fitted to the object, or another shape).
-    static Body Dynamic(Object obj, float mass : any kg = 1kg, BodyShape shape = BodyShape.Box) {
+    static Body Dynamic(Object obj, defined float mass : any kg = 1kg, BodyShape shape = BodyShape.Box) {
         var b = new Body(obj, 1, shape)
         b.Mass = mass
         return b
@@ -52,15 +52,15 @@ class Body {
     }
 
     // ---- what it is made of ----
-    float Mass : kg { get { return __S3DBodyGet(this.h, 0) * 1kg } set { __S3DBodySet(this.h, 0, value / 1kg) } }
+    defined float Mass : kg { get { return __S3DBodyGet(this.h, 0) * 1kg } set { __S3DBodySet(this.h, 0, value / 1kg) } }
     // 0: it stops, 1: it bounces back as fast as it came.
-    float Bounce { get { return __S3DBodyGet(this.h, 1) } set { __S3DBodySet(this.h, 1, value) } }
+    defined float Bounce { get { return __S3DBodyGet(this.h, 1) } set { __S3DBodySet(this.h, 1, value) } }
     // 0: ice, 1: rubber (two bodies: the mean of both).
-    float Friction { get { return __S3DBodyGet(this.h, 2) } set { __S3DBodySet(this.h, 2, value) } }
+    defined float Friction { get { return __S3DBodyGet(this.h, 2) } set { __S3DBodySet(this.h, 2, value) } }
     // How much the air slows it (0 not at all).
-    float Damping { get { return __S3DBodyGet(this.h, 3) } set { __S3DBodySet(this.h, 3, value) } }
+    defined float Damping { get { return __S3DBodyGet(this.h, 3) } set { __S3DBodySet(this.h, 3, value) } }
     // How much gravity pulls on it (1: as on everything, 0: it floats).
-    float GravityScale { get { return __S3DBodyGet(this.h, 4) } set { __S3DBodySet(this.h, 4, value) } }
+    defined float GravityScale { get { return __S3DBodyGet(this.h, 4) } set { __S3DBodySet(this.h, 4, value) } }
     // A trigger is touched but pushes nothing: Touches tells who is in it (a goal, a door sensor, a coin).
     bool Trigger {
         get { return __S3DBodyGet(this.h, 19) != 0.0 }
@@ -97,10 +97,10 @@ class Body {
         __S3DBodySet(this.h, 25, S3D.Angle(x)); __S3DBodySet(this.h, 26, S3D.Angle(y)); __S3DBodySet(this.h, 27, S3D.Angle(z))
     }
     // How much the air slows its turning (default 0.3).
-    float AngularDamping { get { return __S3DBodyGet(this.h, 28) } set { __S3DBodySet(this.h, 28, value) } }
+    defined float AngularDamping { get { return __S3DBodyGet(this.h, 28) } set { __S3DBodySet(this.h, 28, value) } }
 
     // ---- sleeping: a body that rests for half a second sleeps (it costs nothing) until something touches it, the program moves it or sets something ----
-    bool Sleeping { get { return __S3DBodyGet(this.h, 29) != 0.0 } }
+    defined bool Sleeping { get { return __S3DBodyGet(this.h, 29) != 0.0 } }
     undefined Wake() { __S3DBodySet(this.h, 0, __S3DBodyGet(this.h, 0)) }
     undefined Sleep() { __S3DBodySet(this.h, 29, 1.0) }
 
@@ -109,11 +109,11 @@ class Body {
 
     // ---- what happened in the last step ----
     // Standing on something (a contact from below).
-    bool OnGround { get { return __S3DBodyGet(this.h, 20) != 0.0 } }
+    defined bool OnGround { get { return __S3DBodyGet(this.h, 20) != 0.0 } }
     // Whether it touched the object (a trigger: whether the object is in it).
     bool Touches(Object other) { return __S3DBodyTouches(this.h, other.h) }
     // How many objects it touched; the objects themselves are in the scene: TouchingIn(scene).
-    int TouchCount { get { return __S3DBodyGet(this.h, 23)!int } }
+    defined int TouchCount { get { return __S3DBodyGet(this.h, 23)!int } }
     List TouchingIn(Scene scene) {
         var list = new List()
         for (var i = 0; i < this.TouchCount; i++) {
@@ -127,7 +127,7 @@ class Body {
     undefined SetBox(defined float width : any m, defined float height : any m, defined float depth : any m) {
         __S3DBodySet(this.h, 8, S3D.Length(width) * 0.5); __S3DBodySet(this.h, 9, S3D.Length(height) * 0.5); __S3DBodySet(this.h, 10, S3D.Length(depth) * 0.5)
     }
-    float Radius : m { get { return __S3DBodyGet(this.h, 8) * 1m } set { __S3DBodySet(this.h, 8, S3D.Length(value)) } }
+    defined float Radius : m { get { return __S3DBodyGet(this.h, 8) * 1m } set { __S3DBodySet(this.h, 8, S3D.Length(value)) } }
     // Where the middle of the shape is, from the object's position.
     undefined SetCenter(defined float x : any m, defined float y : any m, defined float z : any m) {
         __S3DBodySet(this.h, 11, S3D.Length(x)); __S3DBodySet(this.h, 12, S3D.Length(y)); __S3DBodySet(this.h, 13, S3D.Length(z))
@@ -156,7 +156,7 @@ class Character : Body {
         return true
     }
     // How high a step it climbs by walking against it (default 30 cm), and the steepest slope it stands on (default 45deg; steeper: it slides).
-    float StepHeight : m { get { return __S3DBodyGet(this.h, 14) * 1m } set { __S3DBodySet(this.h, 14, S3D.Length(value)) } }
+    defined float StepHeight : m { get { return __S3DBodyGet(this.h, 14) * 1m } set { __S3DBodySet(this.h, 14, S3D.Length(value)) } }
     float MaxSlope : any { get { return S3D.Degrees(__S3DBodyGet(this.h, 15)) } set { __S3DBodySet(this.h, 15, S3D.Angle(value)) } }
 }
 
@@ -191,11 +191,11 @@ class Joint {
         return new Joint(scene, 2, a, undefined, S3D.Length(x), S3D.Length(y), S3D.Length(z), S3D.Length(length), stiffness, damping)
     }
 
-    float Length : m { get { return __S3DJointGet(this.scene, this.id, 0) * 1m } set { __S3DJointSet(this.scene, this.id, 0, S3D.Length(value)) } }
-    float Stiffness { get { return __S3DJointGet(this.scene, this.id, 1) } set { __S3DJointSet(this.scene, this.id, 1, value) } }
-    float Damping { get { return __S3DJointGet(this.scene, this.id, 2) } set { __S3DJointSet(this.scene, this.id, 2, value) } }
+    defined float Length : m { get { return __S3DJointGet(this.scene, this.id, 0) * 1m } set { __S3DJointSet(this.scene, this.id, 0, S3D.Length(value)) } }
+    defined float Stiffness { get { return __S3DJointGet(this.scene, this.id, 1) } set { __S3DJointSet(this.scene, this.id, 1, value) } }
+    defined float Damping { get { return __S3DJointGet(this.scene, this.id, 2) } set { __S3DJointSet(this.scene, this.id, 2, value) } }
     // How far apart the two ends are now.
-    float Distance : m { get { return __S3DJointGet(this.scene, this.id, 3) * 1m } }
+    defined float Distance : m { get { return __S3DJointGet(this.scene, this.id, 3) * 1m } }
     undefined Remove() { __S3DJointSet(this.scene, this.id, 3, 1.0) }
 }
 
@@ -213,7 +213,7 @@ class RayHit {
 
 class extends Scene {
     // How strongly everything falls (default 9.81m/s^2, down; 0: a world without weight).
-    float Gravity : m/s^2 { get { return __S3DGetF(this.h, 4) * 1m / 1s / 1s } set { __S3DSetF(this.h, 4, value / (1m / 1s / 1s)) } }
+    defined float Gravity : m/s^2 { get { return __S3DGetF(this.h, 4) * 1m / 1s / 1s } set { __S3DSetF(this.h, 4, value / (1m / 1s / 1s)) } }
 
     // The first body a ray meets from (x, y, z) in the direction (dx, dy, dz), up to maxDistance - undefined when it meets none (triggers are not met).
     any Raycast(defined float x : any m, defined float y : any m, defined float z : any m, defined float dx, defined float dy, defined float dz, defined float maxDistance : any m = 1000m) {

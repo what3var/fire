@@ -12,14 +12,14 @@ class Emitter : Object {
     }
 
     // How many particles a second it makes (while it runs), and how many can live at once (the pool; the oldest stay, no new ones while it is full).
-    float Rate { get { return __S3DEmitterGet(this.h, 0) } set { __S3DEmitterSet(this.h, 0, value) } }
-    int MaxParticles { get { return __S3DEmitterGet(this.h, 18)!int } set { __S3DEmitterSet(this.h, 18, value * 1.0) } }
+    defined float Rate { get { return __S3DEmitterGet(this.h, 0) } set { __S3DEmitterSet(this.h, 0, value) } }
+    defined int MaxParticles { get { return __S3DEmitterGet(this.h, 18)!int } set { __S3DEmitterSet(this.h, 18, value * 1.0) } }
     // How long a particle lives, and how much that varies (0.3: 30% more or less).
-    float Lifetime : s { get { return __S3DEmitterGet(this.h, 1) * 1s } set { __S3DEmitterSet(this.h, 1, S3D.Seconds(value)) } }
-    float LifetimeVariation { get { return __S3DEmitterGet(this.h, 2) } set { __S3DEmitterSet(this.h, 2, value) } }
+    defined float Lifetime : s { get { return __S3DEmitterGet(this.h, 1) * 1s } set { __S3DEmitterSet(this.h, 1, S3D.Seconds(value)) } }
+    defined float LifetimeVariation { get { return __S3DEmitterGet(this.h, 2) } set { __S3DEmitterSet(this.h, 2, value) } }
     // How fast a particle starts, and how much that varies.
     defined float Speed : m/s { get { return __S3DEmitterGet(this.h, 3) * 1m / 1s } set { __S3DEmitterSet(this.h, 3, S3D.Speed(value)) } }
-    float SpeedVariation { get { return __S3DEmitterGet(this.h, 4) } set { __S3DEmitterSet(this.h, 4, value) } }
+    defined float SpeedVariation { get { return __S3DEmitterGet(this.h, 4) } set { __S3DEmitterSet(this.h, 4, value) } }
     // The direction the particles fly in (default: up), and how far they spread from it (0deg: a ray, 180deg: all around).
     undefined SetDirection(defined float x, defined float y, defined float z) { __S3DEmitterSet(this.h, 6, x); __S3DEmitterSet(this.h, 7, y); __S3DEmitterSet(this.h, 8, z) }
     float Spread : any { get { return S3D.Degrees(__S3DEmitterGet(this.h, 5)) } set { __S3DEmitterSet(this.h, 5, S3D.Angle(value)) } }
@@ -27,17 +27,17 @@ class Emitter : Object {
     undefined SetGravity(defined float x : m/s^2, defined float y : m/s^2, defined float z : m/s^2) {
         __S3DEmitterSet(this.h, 9, x / (1m / 1s / 1s)); __S3DEmitterSet(this.h, 10, y / (1m / 1s / 1s)); __S3DEmitterSet(this.h, 11, z / (1m / 1s / 1s))
     }
-    float Drag { get { return __S3DEmitterGet(this.h, 12) } set { __S3DEmitterSet(this.h, 12, value) } }
+    defined float Drag { get { return __S3DEmitterGet(this.h, 12) } set { __S3DEmitterSet(this.h, 12, value) } }
     // The box around the emitter where particles start (half its width, height and depth; 0: all from the point).
     undefined SetArea(defined float x : any m, defined float y : any m, defined float z : any m) {
         __S3DEmitterSet(this.h, 15, S3D.Length(x)); __S3DEmitterSet(this.h, 16, S3D.Length(y)); __S3DEmitterSet(this.h, 17, S3D.Length(z))
     }
     // The size of a particle at the start and at the end of its life.
-    float StartSize : m { get { return __S3DEmitterGet(this.h, 13) * 1m } set { __S3DEmitterSet(this.h, 13, S3D.Length(value)) } }
-    float EndSize : m { get { return __S3DEmitterGet(this.h, 14) * 1m } set { __S3DEmitterSet(this.h, 14, S3D.Length(value)) } }
+    defined float StartSize : m { get { return __S3DEmitterGet(this.h, 13) * 1m } set { __S3DEmitterSet(this.h, 13, S3D.Length(value)) } }
+    defined float EndSize : m { get { return __S3DEmitterGet(this.h, 14) * 1m } set { __S3DEmitterSet(this.h, 14, S3D.Length(value)) } }
     // The colour at the start and at the end of a life (0xAABBGGRR, S3D.Rgba: the alpha makes them see-through - an end colour with alpha 0 fades them out).
-    int StartColor { get { return __S3DEmitterInt(this.h, 0, 0, false) } set { __S3DEmitterInt(this.h, 0, value, true) } }
-    int EndColor { get { return __S3DEmitterInt(this.h, 1, 0, false) } set { __S3DEmitterInt(this.h, 1, value, true) } }
+    defined int StartColor { get { return __S3DEmitterInt(this.h, 0, 0, false) } set { __S3DEmitterInt(this.h, 0, value, true) } }
+    defined int EndColor { get { return __S3DEmitterInt(this.h, 1, 0, false) } set { __S3DEmitterInt(this.h, 1, value, true) } }
     // true: the colours are added to the picture (fire, sparks, magic: they light up); false: laid over it (smoke, rain, snow).
     bool Additive {
         get { return __S3DEmitterGet(this.h, 19) != 0.0 }
@@ -48,7 +48,7 @@ class Emitter : Object {
         }
     }
     // The start of the emitter's chance: the same seed and the same steps give the same particles.
-    int Seed { get { return __S3DEmitterInt(this.h, 2, 0, false) } set { __S3DEmitterInt(this.h, 2, value, true) } }
+    defined int Seed { get { return __S3DEmitterInt(this.h, 2, 0, false) } set { __S3DEmitterInt(this.h, 2, value, true) } }
 
     // Whether it makes new particles (false: the ones that live fly on and go; Stop() is the animation's, as for every Object).
     bool Running {
@@ -64,7 +64,7 @@ class Emitter : Object {
     // All particles go at once.
     undefined Clear() { __S3DEmitterBurst(this.h, -1) }
     // How many particles live now.
-    int Count { get { return __S3DEmitterInt(this.h, 3, 0, false) } }
+    defined int Count { get { return __S3DEmitterInt(this.h, 3, 0, false) } }
 
     // ---- ready ones (each can be changed afterwards; their settings are in the renderer: s3d_effects.h) ----
     static Emitter Ready(defined int kind, any x, any y, any z, defined float size) {

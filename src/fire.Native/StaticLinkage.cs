@@ -23,6 +23,9 @@ namespace fire.Native
     {
         /// <summary>Linkage "shared": what the plugins built for the program need to know (`.firehost`; the names of the libraries without their extension).</summary>
         public PluginHostInfo? Host { get; init; }
+        /// <summary>`--stats`: what the generator made of each fire function of the program (the library modules come from the cache: their code is counted by
+        /// module from the map).</summary>
+        public IReadOnlyList<FuncStat>? Funcs { get; init; }
     }
 
     public sealed partial class CppGenerator
@@ -270,6 +273,8 @@ namespace fire.Native
             public List<string> ExcTypes { get; set; } = new();
             public List<string> ReflectionNatives { get; set; } = new();
             public List<string> Made { get; set; } = new();
+            /// <summary>The classes by the class whose code makes or calls them ("": the module itself); null in an interface of before.</summary>
+            public Dictionary<string, string[]>? MadeBy { get; set; }
             public List<string[]> SharedNatives { get; set; } = new();
             public string NativeThunks { get; set; } = "";
             public bool JsonEngine { get; set; }
@@ -305,7 +310,7 @@ namespace fire.Native
                 StaticFields = n.StaticFields.Select(f => new[] { f.Class, f.Field }).ToList(),
                 Units = n.Units.Select(u => Convert.ToBase64String(MemoryPackSerializer.Serialize(u))).ToList(),
                 Enums = n.Enums.Select(e => new EnumEntry { Name = e.Name, Flags = e.IsFlags, Members = e.Members.Select(m => m.Name).ToList(), Values = e.Members.Select(m => m.Value).ToList() }).ToList(),
-                ExcTypes = n.ExcTypes.ToList(), ReflectionNatives = n.ReflectionNatives.ToList(), Made = n.Classes.ToList(), NativeThunks = output.NativeThunks, JsonEngine = output.JsonEngine,
+                ExcTypes = n.ExcTypes.ToList(), ReflectionNatives = n.ReflectionNatives.ToList(), Made = n.Classes.ToList(), MadeBy = n.MadeBy, NativeThunks = output.NativeThunks, JsonEngine = output.JsonEngine,
                 SharedNatives = n.SharedNatives.Select(x => new[] { x.Key, x.Value.Argc.ToString(CultureInfo.InvariantCulture), x.Value.NeedsList ? "1" : "0", x.Value.Import }).ToList(),
                 HostImports = output.HostImports.Select(h => new[] { h.Key, h.Value }).ToList(),
             };
@@ -329,6 +334,7 @@ namespace fire.Native
             n.ExcTypes.AddRange(f.ExcTypes);
             n.ReflectionNatives.UnionWith(f.ReflectionNatives);
             n.Classes.UnionWith(f.Made);
+            n.MadeBy = f.MadeBy;
             foreach (var x in f.SharedNatives) n.SharedNatives[x[0]] = (int.Parse(x[1], CultureInfo.InvariantCulture), x[2] == "1", x.Length > 3 ? x[3] : "");
             var hostImports = new SortedDictionary<string, string>(StringComparer.Ordinal);
             foreach (var h in f.HostImports) hostImports[h[0]] = h[1];
@@ -361,7 +367,7 @@ namespace fire.Native
         /// <param name="shared">Linkage "shared" (ROADMAP 9, phase C): the libraries are shared libraries (position-independent code, a variant of their own in the cache); each
         /// says the interface it was built with, the program checks it when it starts.</param>
         public static StaticBuildPlan GenerateStatic(LinkedProgram program, TargetProfile target, string toolchainStamp, StrippingLevel? stripping = null, string? cacheRoot = null,
-            bool shared = false)
+            bool shared = false, bool stats = false)
         {
             // (linkage "shared" for Windows: DLLs - the runtime a DLL of its own, what a DLL uses of the program through pointers)
             bool dll = shared && target.Native.Platform == "windows";
@@ -402,7 +408,7 @@ namespace fire.Native
                 }
                 var main = new CppGenerator(program, target)
                 {
-                    _strip = EffectiveStripping(program, stripping), _role = ModuleRole.Program, _forced = flags, _libraries = outputs, _separate = true,
+                    _strip = EffectiveStripping(program, stripping), _role = ModuleRole.Program, _forced = flags, _libraries = outputs, _separate = true, _collectStats = stats,
                     _sharedAbis = shared ? specs.ToDictionary(s => s, s => $"{InterfaceFormat}:{abi[s]}") : null, _dll = dll, _dllModules = dll ? outputs : null, _toolchainStamp = toolchainStamp,
                     _openWorld = shared,
                 };
@@ -450,7 +456,7 @@ namespace fire.Native
                         libraries.Add(new StaticLibrary(spec.Name, keys[spec], dir, cFile, name, ifaceFile, cached));
                     }
                     var files = specs.ToDictionary(s => s, s => libraries.First(l => l.Module == s.Name).LibraryName);
-                    return new StaticBuildPlan(c, main._nativesCode, libraries, log.ToString()) { Host = main.HostInfo(files, rtKey != null ? libraries[0].LibraryName : null) };
+                    return new StaticBuildPlan(c, main._nativesCode, libraries, log.ToString()) { Host = main.HostInfo(files, rtKey != null ? libraries[0].LibraryName : null), Funcs = stats ? main.FuncStats() : null };
                 }
                 if (round > 4) throw new NativeNotSupportedException("the modules do not agree on the switches of the program");
                 flags = union;

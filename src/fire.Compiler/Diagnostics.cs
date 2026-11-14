@@ -138,8 +138,14 @@ namespace fire.Compiler
         });
 
         /// <summary>The code of a message of the area (the text without position and file); the general code of the area when the catalogue does not know the message.</summary>
+        /// <summary>The end of the hint that the parser adds to a message where a keyword stands instead of a name (" ('where' is a keyword ...)"); the
+        /// code is the one of the message without it.</summary>
+        public const string KeywordHintTail = " is a keyword and cannot be a name)";
+
         public static string CodeOf(ErrorArea area, string rawMessage)
         {
+            if (rawMessage.EndsWith(KeywordHintTail, StringComparison.Ordinal) && rawMessage.LastIndexOf(" ('", StringComparison.Ordinal) is int hint and > 0)
+                rawMessage = rawMessage.Substring(0, hint);
             foreach (var entry in Compiled_.Value)
                 if (entry.Area == area && entry.Regex.IsMatch(rawMessage)) return entry.Code;
             return GeneralCode(area);

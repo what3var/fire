@@ -177,7 +177,7 @@ namespace fire.Compiler
             int typeArgs = tr.TypeArgs?.Count ?? tr.TypeArgCount;
             var matches = tr.AmbiguousCandidates(n => known(n) || typeArgs > 0 && known(GenericClassNames.Mangle(n, typeArgs)), ownNamespace);
             if (matches.Count > 1)
-                throw new ResolverException($"'{tr.BaseName}' is ambiguous: {string.Join(", ", matches)} (more than one '#using' brings it); write the full name", line);
+                throw new ResolverException($"'{tr.BaseName}' is ambiguous: {string.Join(", ", matches)} (more than one '#using' or imported library brings it); write the full name", line);
         }
 
         /// <summary>The namespace a class is declared in (`Geo.Shapes.Circle` -> `Geo.Shapes`), null for a class outside every namespace.</summary>
@@ -960,16 +960,8 @@ namespace fire.Compiler
         /// identifier chain or the chain yields no known class name
         /// (then `me` is an ordinary, dynamic expression).
         ///
-        /// DELIBERATE RESTRICTION: checks ONLY the exactly written (possibly
-        /// already fully qualified) name, NO resolution via #using/the
-        /// current namespace - unlike a TypeRef, an
-        /// IdentifierExpr/MemberExpr carries no namespace context of its own (that
-        /// is only set when PARSING a TypeRef, see
-        /// Parser.CurrentNamespaces) - 'Circle.Foo()' would with
-        /// '#using Geometry' therefore NOT be recognised as 'Geometry.Circle', only
-        /// 'Geometry.Circle.Foo()' written out in full works. A
-        /// later extension for that would need namespace info on EVERY
-        /// identifier, not only on TypeRef - a larger change of its own.</summary>
+        /// The name is looked up like a type name in the namespace of the class the code is written in and its outer ones, then as written
+        /// (InNamespaces) - not through `#using` (an IdentifierExpr carries no namespace context of its own, only a TypeRef does: Parser.CurrentNamespaces).</summary>
         private string? TryResolveStaticMemberAccess(MemberExpr me)
         {
             // The class we are currently in (see Ast.SelfClassExpr) -
@@ -978,7 +970,64 @@ namespace fire.Compiler
             if (me.Target is SelfClassExpr) return _currentClass?.Name;
 
             string? className = DottedName(me.Target);
-            return className != null && IsKnownClassName(className) ? className : null;
+            return className != null ? InNamespaces(className, IsKnownClassName, me.Line) : null;
+        }
+
+        /// <summary>A chain of names in an expression (`Kind`, `Shapes.Circle`) as a name that `known` knows, looked up like a type name (SPEC
+        /// "Namespaces"): in the namespace of the class the code is written in and its outer ones, from the inside out, then as written - `Kind.Circle`
+        /// and `Helper.Tag()` inside `namespace Geo` are `Geo.Kind.Circle` and `Geo.Helper.Tag()`. A local variable or a member of the object with the
+        /// name of the first link wins over every class and enum (as in the type checker, StaticClassRef); `#using` does not apply here (only to type names).
+        /// `global.Name` is the global one.</summary>
+        private string? InNamespaces(string dotted, Func<string, bool> known, int line = 0)
+        {
+            // `global.Helper.Tag()`: the global name that a class of the own namespace hides
+            if (dotted.StartsWith("global.", StringComparison.Ordinal) && !IsVariableName("global"))
+                return known(dotted.Substring(7)) ? dotted.Substring(7) : null;
+            int dot = dotted.IndexOf('.');
+            string root = dot < 0 ? dotted : dotted.Substring(0, dot);
+            // (the order of the lookup: a local variable and a member of the object first - they win over every class and enum, the own as well as a global one)
+            if (IsChainRoot(root)) return null;
+            for (string? ns = NamespaceOf(_currentClass?.Name); !string.IsNullOrEmpty(ns); ns = NamespaceOf(ns))
+                if (known(ns + "." + dotted)) return ns + "." + dotted;
+            if (known(dotted)) return dotted;
+            // the namespaces of the libraries the source imports (`#import "LibA"`: `Parser` is LibA.Parser); in two of them the short name is ambiguous
+            if (Parser.SourceImportNamespaces is { } imports && imports.TryGetValue(_currentSource, out var importNamespaces))
+            {
+                var found = importNamespaces.Where(ns => known(ns + "." + dotted)).Select(ns => ns + "." + dotted).ToList();
+                if (found.Count > 1)
+                {
+                    string message = $"'{dotted.Split('.')[0]}' is in several imported libraries ({string.Join(", ", found.Select(f => "'" + f + "'"))}) - write the full name";
+                    if (!_errors.Any(e => e.RawMessage == message)) AddError(new ResolverException(message, line));
+                }
+                if (found.Count > 0) return found[0];
+            }
+            return null;
+        }
+
+        /// <summary>Can `name` start the chain `name.X` as a value here: a variable of a scope, or a field or property of the class that is reachable - an
+        /// instance one not in a static method or static initialiser (there is no `this`), and no method (`Environment.Platform` in a static method of a class
+        /// with a test method `Environment()` is the class Environment)?</summary>
+        private bool IsChainRoot(string name)
+        {
+            for (var s = _current; s != null; s = s.Parent)
+                if (!s.IsGlobal && s.Slots.ContainsKey(name)) return true;
+            var visited = new HashSet<ClassDecl>();
+            for (var cd = _currentClass; cd != null && visited.Add(cd); cd = GetBaseClassDecl(cd))
+                foreach (var member in cd.Members)
+                    switch (member)
+                    {
+                        case FieldDecl fd when fd.Name == name: return fd.IsStatic || !_inStaticMethod;
+                        case PropertyDecl pd when pd.Name == name: return pd.IsStatic || !_inStaticMethod;
+                    }
+            return false;
+        }
+
+        /// <summary>Is `name` a variable here: of a scope (not the global one) or a member of the object?</summary>
+        private bool IsVariableName(string name)
+        {
+            for (var s = _current; s != null; s = s.Parent)
+                if (!s.IsGlobal && s.Slots.ContainsKey(name)) return true;
+            return _currentClass != null && FindMemberInClassChain(_currentClass, name) != null;
         }
 
         /// <summary>The dotted name that `target` writes as a pure identifier chain
@@ -1234,7 +1283,7 @@ namespace fire.Compiler
 
             if (_currentClass != null && FindMemberInClassChain(_currentClass, name) is { } member)
             {
-                if (member.IsStatic) return new ResolvedRef.StaticMember(member.ClassName);
+                if (member.IsStatic) { CheckStaticInitOrder(member.ClassName, name, line); return new ResolvedRef.StaticMember(member.ClassName); }
                 // (a fire body runs without `this`: its own variables and the captures - `taking`, `with` - win over a field of the same name)
                 if (_fireScope != null && !_inBoundLambda)
                 {
@@ -1810,9 +1859,32 @@ namespace fire.Compiler
             _current = new ResolverScope(_globalScope);
             bool savedInStaticMethod = _inStaticMethod;
             _inStaticMethod = fd.IsStatic; // SPEC "Static members" - no 'this' in a static field initialiser
+            var savedStaticInit = _staticInit;
+            _staticInit = fd.IsStatic && _currentClass != null ? (_currentClass.Name, fd.Name) : null;
             ResolveExpr(fd.Initializer);
+            if (_staticInit is { } done) _staticInitDone.Add(done);
+            _staticInit = savedStaticInit;
             _inStaticMethod = savedInStaticMethod;
             _current = saved;
+        }
+
+        /// <summary>The static field whose initialiser is being resolved (null: none), and the static fields whose initialisers are done - in the order in which
+        /// they run (SPEC "Static members": once at program start, class by class in the order of the program, in a class from the top down).</summary>
+        private (string Class, string Field)? _staticInit;
+        private readonly HashSet<(string Class, string Field)> _staticInitDone = new();
+
+        /// <summary>A static initialiser reads the static field `name` of the class `className` (the class written, or one of its bases): an error when that
+        /// field has an initialiser that only runs later - it would still be `undefined` (a read of another class's field that has none is fine).</summary>
+        private void CheckStaticInitOrder(string className, string name, int line)
+        {
+            if (_staticInit == null || !_classes.TryGetValue(className, out var cd) || FindMemberInClassChain(cd, name) is not { IsStatic: true } member) return;
+            if (!_classes.TryGetValue(member.ClassName, out var owner)) return;
+            if (owner.Members.OfType<FieldDecl>().FirstOrDefault(f => f.Name == name && f.IsStatic) is not { Initializer: not null }) return;
+            if (_staticInitDone.Contains((member.ClassName, name))) return;
+            var (initClass, initField) = _staticInit.Value;
+            AddError(new ResolverException((member.ClassName, name) == _staticInit.Value
+                ? $"The initialiser of the static field '{initClass}.{initField}' reads the field itself - it is still undefined there"
+                : $"The initialiser of the static field '{initClass}.{initField}' reads '{member.ClassName}.{name}', whose initialiser only runs later (static fields are initialised once at program start: class by class in the order of the program, in a class from the top down) - declare '{member.ClassName}.{name}' first", line));
         }
 
         /// <summary>Optional parameters (with a default value) must be CONTIGUOUS at the end of the
@@ -1940,6 +2012,7 @@ namespace fire.Compiler
             switch (expr)
             {
                 case LiteralExpr:
+                case TypeBitsExpr:
                     break;
 
                 case IdentifierExpr id:
@@ -2029,19 +2102,11 @@ namespace fire.Compiler
                     break;
 
                 case MemberExpr me:
-                    // 'EnumName.Member' - recognised purely by the
-                    // target name (as a bare identifier) being a known enum name.
-                    // Deliberate design decision: an enum name always "wins"
-                    // there against a variable of the same name in the scope
-                    // (just as a class name cannot be
-                    // shadowed by a variable either) - the same name collision would be
-                    // confusing anyway and easy to avoid in practice.
-                    // An enum in a namespace is reachable this way too, but then
-                    // fully qualified ('Geometry.Kind.Round') - as with
-                    // static class access (see TryResolveStaticMemberAccess)
-                    // only the exactly written name counts, no `#using`/
-                    // namespace resolution.
-                    string? enumName = DottedName(me.Target);
+                    // 'EnumName.Member' - the target is a chain of names that is a known enum (InNamespaces: a local variable or a member of
+                    // the object with the name of its first link wins).
+                    // An enum of the own namespace (or an outer one) by its short name, any other one by its full name ('Geometry.Kind.Round') - as
+                    // with static class access (InNamespaces), `#using` does not apply.
+                    string? enumName = DottedName(me.Target) is { } enumWritten ? InNamespaces(enumWritten, n => _enums.ContainsKey(n), me.Line) : null;
                     if (enumName != null && _enums.TryGetValue(enumName, out var enumMembers))
                     {
                         if (!enumMembers.ContainsKey(me.Name) && me.Name is "Name" or "Parse" or "IsDefined" or "Values" && IsKnownClassName(Parser.EnumHelperClassName(enumName)))
@@ -2056,8 +2121,8 @@ namespace fire.Compiler
                         break;
                     }
                     // 'ClassName.Member' (SPEC "Static members") - as
-                    // in the enum case: a known class name always "wins"
-                    // against a variable of the same name. The actual
+                    // in the enum case: a local variable or a member of the same name wins
+                    // over the class (InNamespaces). The actual
                     // access (does the member exist, is it REALLY
                     // static, access modifier) is deliberately NOT checked here,
                     // but only in the VM (GetStaticField/
@@ -2072,6 +2137,7 @@ namespace fire.Compiler
                         CheckStaticMemberExists(staticClassName, me);
                         WarnForClassUse(staticClassName, me.Line);
                         WarnForMember(ClassChainNames(staticClassName), me.Name, _calleeArity.TryGetValue(me, out int staticArgs) ? staticArgs : null, me.Line);
+                        CheckStaticInitOrder(staticClassName, me.Name, me.Line);
                         _refs[me] = new ResolvedRef.StaticMember(staticClassName);
                         break;
                     }
@@ -2657,8 +2723,10 @@ namespace fire.Compiler
         {
             bool savedBound = _inBoundLambda;
             _inBoundLambda = lambda.OnTarget != null;
+            var savedStaticInit = _staticInit;
+            _staticInit = null;   // (a lambda in a static initialiser runs later: it may read any static field)
             try { ResolveLambdaCore(lambda); }
-            finally { _inBoundLambda = savedBound; }
+            finally { _inBoundLambda = savedBound; _staticInit = savedStaticInit; }
         }
 
         private void ResolveLambdaCore(LambdaExpr lambda)
@@ -2750,7 +2818,7 @@ namespace fire.Compiler
         }
 
         // (every node below `node`, in no particular order)
-        private static void Walk(object? node, List<object> into)
+        internal static void Walk(object? node, List<object> into)
         {
             switch (node)
             {

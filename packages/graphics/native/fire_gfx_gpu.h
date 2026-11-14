@@ -67,7 +67,7 @@ static uint32_t fire_gfx_gpuReadbacks(void) { return 0; }
 #  include <pthread.h>
 #endif
 #ifndef FIRE_VK_DECLS_H
-#include "fire_gfx_vk.h"   /* (the same file as scene3d/native/s3d_vk.h: a native build with both has them once) */
+#include "fire_gfx_vk.h"   /* (a header of the package - "headers": scene3d includes it too, through "uses") */
 #endif
 #include "fire_gfx_shaders.h"
 

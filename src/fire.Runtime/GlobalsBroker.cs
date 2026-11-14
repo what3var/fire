@@ -38,6 +38,64 @@ namespace fire.Runtime
         {
             public readonly ManualResetEventSlim Granted = new(false);
             public readonly ManualResetEventSlim Done = new(false);
+            public GlobalsBroker? Broker;
+            /// <summary>Taken by the thread itself while the main program was away (<see cref="AwayBegin"/>).</summary>
+            public bool Away;
+        }
+
+        // ---- The main program away in a native of a package (docs/spec/THREADING_DESIGN.md section 7): it does not touch the globals meanwhile, so a thread
+        // takes its section itself - one at a time - instead of waiting for the main program's next safe point. The request stays in the queue: Drain finds
+        // it done. 0 present, 1 away, 2 away and a thread's section runs, 3 back and waiting for that section (no thread takes one any more).
+        private readonly object _awayGate = new();
+        private readonly ManualResetEventSlim _awayOpen = new(false);
+        private int _away;
+
+        /// <summary>Is the main program away in a native now (a method of the globals then runs in a section of the thread).</summary>
+        public bool IsAway => Volatile.Read(ref _away) != 0;
+
+        /// <summary>The main program goes into a native that gets no object of the shared area.</summary>
+        public void AwayBegin()
+        {
+            lock (_awayGate) _away = 1;
+            _awayOpen.Set();
+            VmScheduler.Wake();   // (a task of the pool that waits for a section looks again)
+        }
+
+        /// <summary>The main program is back: it waits for the section a thread took meanwhile.</summary>
+        public void AwayEnd()
+        {
+            lock (_awayGate)
+            {
+                _awayOpen.Reset();
+                if (_away == 2)
+                {
+                    _away = 3;
+                    while (_away == 3) Monitor.Wait(_awayGate);
+                }
+                _away = 0;
+            }
+        }
+
+        /// <summary>The section at once while the main program is away and no other thread's section runs - without the queue (null: ask as usual).</summary>
+        internal object? TryEnterAway()
+        {
+            if (Volatile.Read(ref _away) != 1) return null;
+            var request = new SectionRequest { Broker = this };
+            return TakeAway(request) ? request : null;
+        }
+
+        private static bool TakeAway(SectionRequest request)
+        {
+            var broker = request.Broker;
+            if (broker == null || Volatile.Read(ref broker._away) != 1) return false;
+            lock (broker._awayGate)
+            {
+                if (broker._away != 1) return false;
+                broker._away = 2;
+            }
+            request.Away = true;
+            request.Granted.Set();
+            return true;
         }
 
         private sealed class JobRequest : Request
@@ -84,7 +142,13 @@ namespace fire.Runtime
         {
             var request = (SectionRequest?)RequestSection();
             if (request == null) return null;
-            request.Granted.Wait();
+            while (!request.Granted.IsSet)
+            {
+                WaitHandle.WaitAny(new[] { request.Granted.WaitHandle, _awayOpen.WaitHandle });
+                if (request.Granted.IsSet || TakeAway(request)) break;
+                // (away, but another thread's section runs: wait until it ends or the main program is back)
+                lock (_awayGate) if (_away is 2 or 3) Monitor.Wait(_awayGate, 50);
+            }
             return request;
         }
 
@@ -92,7 +156,7 @@ namespace fire.Runtime
         /// <see cref="IsGranted"/> says so; null - the main program has ended - is granted.</summary>
         internal object? RequestSection()
         {
-            var request = new SectionRequest();
+            var request = new SectionRequest { Broker = this };
             lock (_gate)
             {
                 if (_closed) return null;
@@ -103,12 +167,22 @@ namespace fire.Runtime
             return request;
         }
 
-        internal static bool IsGranted(object? handle) => handle is not SectionRequest request || request.Granted.IsSet;
+        internal static bool IsGranted(object? handle) => handle is not SectionRequest request || request.Granted.IsSet || TakeAway(request);
 
         /// <summary>Ends the section that <see cref="EnterSection"/> granted.</summary>
         public void ExitSection(object? handle)
         {
-            if (handle is SectionRequest request) request.Done.Set();
+            if (handle is not SectionRequest request) return;
+            if (request.Away)
+            {
+                lock (_awayGate)
+                {
+                    _away = _away == 3 ? 0 : 1;
+                    Monitor.PulseAll(_awayGate);
+                }
+                VmScheduler.Wake();
+            }
+            request.Done.Set();
         }
 
         /// <summary>`fire global { ... }`: queues the job and returns immediately. `holder` owns the objects copied for the job

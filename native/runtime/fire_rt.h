@@ -187,6 +187,8 @@ typedef uint64_t FireUInt;
  * whole width or more is undefined */
 #define FIRE_SCALAR_SHL(a, s) ((int)((s) & 63) >= FIRE_FIREINT_BITS ? (FireInt)0 : (FireInt)((FireUInt)(a) << ((s) & 63)))
 #define FIRE_SCALAR_SHR(a, s) ((int)((s) & 63) >= FIRE_FIREINT_BITS ? (FireInt)((a) < 0 ? -1 : 0) : (FireInt)((a) >> ((s) & 63)))
+/* `>>>` of them: the logical shift right in the width of the program's int (Value.ShiftRightLogical) */
+#define FIRE_SCALAR_USHR(a, s) ((int)((s) & 63) >= FIRE_FIREINT_BITS ? (FireInt)0 : (FireInt)((FireUInt)(a) >> ((s) & 63)))
 
 /* `word` (SPEC 8.10): the machine word of the target, unsigned, without a unit - K_Word, its bits in `w` (zero above the width). The generator defines
  * FIRE_WORD_BITS from the target (`wordWidth`); without it (a package library for the VM) the width of a pointer. An operation on words wraps at the
@@ -1557,8 +1559,8 @@ FIRE_FN FireWord* bufWords(Buf* b) { return (FireWord*)(void*)b->data; }
 #if !defined(FIRE_UNCHECKED) || defined(FIRE_ELEMPTRS)
 #define FIRE_SLOTS 1
 #endif
-#if defined(FIRE_ELEMPTRS)
-#define FIRE_SLOT_HDR 1   /* the table knows the header in each slot */
+#if defined(FIRE_ELEMPTRS) || (defined(FIRE_HEAP_STATS) && defined(FIRE_SLOTS))
+#define FIRE_SLOT_HDR 1   /* the table knows the header in each slot (FIRE_HEAP_STATS: the report walks it) */
 #endif
 #ifdef FIRE_SLOTS
 #if defined(FIRE_THREADS) && defined(FIRE_NO_GIL)
@@ -1655,6 +1657,9 @@ FIRE_FN void slotAcquire(Owned* o) {
 FIRE_FN void slotRelease(Owned* o) {
     uint32_t slot = o->slot;
     FireGen g = (FireGen)((slotGenGet(slot) + 1) & FIRE_GEN_MASK);
+#ifdef FIRE_HEAP_STATS
+    slotHdr(slot) = NULL;   /* (the report counts the slots that hold a value) */
+#endif
     slotGenSet(slot, g);
     slotBornSet(slot, g);
     if (FIRE_UNLIKELY(g_slotCache.n == FIRE_SLOT_CACHE)) slotSpill(FIRE_SLOT_CACHE / 2);
@@ -1709,6 +1714,9 @@ FIRE_FN void slotAcquire(Owned* o) {
 }
 FIRE_FN void slotRelease(Owned* o) {
     uint32_t slot = o->slot;
+#ifdef FIRE_HEAP_STATS
+    slotHdr(slot) = NULL;
+#endif
     slotGenSet(slot, (slotGenGet(slot) + 1) & FIRE_GEN_MASK);
     slotBornSet(slot, slotGenGet(slot));
     if (g_slots.nfree == g_slots.freedCap) {
@@ -2355,6 +2363,15 @@ FIRE_COLD FIRE_FN Value coerceWrong(uint8_t kind, uint8_t target) {
     snprintf(text, sizeof text, "Cannot coerce type %s to %s.", coerceKindName(kind), coerceKindName(target));
     return fireError("ArgumentException", text);
 }
+/* `x!int` of a float: the nearest int (ties to even), saturated like the VM's (long)Math.Round - NaN is 0, beyond the range the largest or smallest int
+ * (a C cast of such a double is undefined). */
+FIRE_FN int64_t fire_realToInt(double r) {
+    r = nearbyint(r);
+    if (r != r) return 0;
+    if (r >= 9223372036854775807.0) return (int64_t)0x7FFFFFFFFFFFFFFFLL;
+    if (r <= -9223372036854775808.0) return (int64_t)(-0x7FFFFFFFFFFFFFFFLL - 1);
+    return (int64_t)r;
+}
 FIRE_FN Value coerceType(Value v, uint8_t target) {
     if (v.kind == target) { if (target == K_Int) v.reserved = 0; return v; }   /* (`c!int`: the number of an enum value) */
     /* a word as an int: the same bits as a signed number (like a cast in C); as a float its unsigned value. Into a word: wordOf */
@@ -2362,7 +2379,7 @@ FIRE_FN Value coerceType(Value v, uint8_t target) {
     if (v.kind == K_Word && target == K_Float) return Float(wordReal(v));
     if (v.kind == K_Word && target == K_Char) return Char((uint16_t)v.w);
     if (v.kind == K_Int && target == K_Float) return Float((Real)v.i, v.unit);
-    if (v.kind == K_Float && target == K_Int) return Int((int64_t)nearbyint((double)v.f), v.unit);
+    if (v.kind == K_Float && target == K_Int) return Int(fire_realToInt((double)v.f), v.unit);
     if (v.kind == K_Undefined && target == K_Int) return Int(0, v.unit);
     if (v.kind == K_Undefined && target == K_Float) return Float(0, v.unit);
     /* characters: the number of the 16-bit code unit; a number outside 0..65535 wraps like a 16-bit cast */
@@ -2395,6 +2412,34 @@ FIRE_FN double roundFloatToWidth(double value, int bits) {
     if (rounded > max) rounded = bits == 16 ? (double)INFINITY : max;
     return copysign(rounded, value);
 }
+
+/* IEEE binary16 (half precision) - the bits of a double rounded to it and the double of its bits, in the same steps as fire.Standard.BitsMethods.HalfBits/
+ * HalfValue, so that the VM and a native build agree bit for bit (NaN: 0x7E00). */
+FIRE_FN uint16_t halfBits(double d) {
+    uint16_t sign;
+    double r;
+    int e;
+    uint64_t raw;
+    if (isnan(d)) return 0x7E00;
+    memcpy(&raw, &d, sizeof raw);
+    sign = (raw >> 63) ? 0x8000 : 0;
+    r = roundFloatToWidth(fabs(d), 16);
+    if (isinf(r)) return (uint16_t)(sign | 0x7C00);
+    if (r == 0) return sign;
+    e = ilogb(r);
+    if (e < -14) return (uint16_t)(sign | (uint16_t)ldexp(r, 24));
+    return (uint16_t)(sign | (uint16_t)((e + 15) << 10) | (uint16_t)((ldexp(r, -e) - 1.0) * 1024.0));
+}
+FIRE_FN double halfValue(uint16_t h) {
+    int exp = h >> 10 & 31, mant = h & 1023;
+    double v = exp == 0 ? ldexp((double)mant, -24) : exp == 31 ? (mant == 0 ? (double)INFINITY : (double)NAN) : ldexp(1.0 + mant / 1024.0, exp - 15);
+    return (h & 0x8000) ? -v : v;
+}
+/* The 64 / 32 bits of a double (NaN: the standard quiet NaN, as the VM). */
+FIRE_FN uint64_t fire_doubleBits(double d) { uint64_t r; if (isnan(d)) return 0x7FF8000000000000ull; memcpy(&r, &d, sizeof r); return r; }
+FIRE_FN uint32_t fire_floatBits(double d) { float f; uint32_t r; if (isnan(d)) return 0x7FC00000u; f = (float)d; memcpy(&r, &f, sizeof r); return r; }
+FIRE_FN double fire_bitsDouble(uint64_t b) { double d; memcpy(&d, &b, sizeof d); return d; }
+FIRE_FN double fire_bitsFloat(uint32_t b) { float f; memcpy(&f, &b, sizeof f); return (double)f; }
 
 /* `x!int[8]`, `x!byte`, `x!float[32]`, `x!float[16]` (Value.ConvertWidth): the number cut to the width - an int in two's complement, `isUnsigned` keeps
  * 0..2^bits-1, a float rounded to float32, half precision or FP8 E4M3 (roundFloatToWidth). */
@@ -2480,6 +2525,32 @@ FIRE_FN Value shr(Value a, Value b) {
     if (FIRE_UNLIKELY(a.kind == K_Word || b.kind == K_Word)) return wordOp(W_SHR, a, b);
     if (FIRE_UNLIKELY(a.kind != K_Int || b.kind != K_Int)) return intOpFailed(">>", a, b);
     return IntOp1(a.i >> (b.i & 63), a.unit, a);
+}
+/* `>>>` (Value.ShiftRightLogical): the int as the unsigned number of its width (the program's int, or the wider width the value keeps), zeros in at the
+ * top; a count of the width or more gives 0. A word shifts like `>>`. */
+FIRE_FN int fire_intBitsOf(Value a) {
+#ifdef FIRE_INT32
+    if (a.wide >= 64) return 64;
+    if (a.wide == 32) return 32;
+#ifdef FIRE_INT16
+    return 16;
+#else
+    return 32;
+#endif
+#else
+    (void)a;
+    return 64;
+#endif
+}
+FIRE_FN Value ushr(Value a, Value b) {
+    int w, c;
+    uint64_t bits;
+    if (FIRE_UNLIKELY(a.kind == K_Word || b.kind == K_Word)) return wordOp(W_SHR, a, b);
+    if (FIRE_UNLIKELY(a.kind != K_Int || b.kind != K_Int)) return intOpFailed(">>>", a, b);
+    w = fire_intBitsOf(a);
+    c = (int)(b.i & 63);
+    bits = w >= 64 ? (uint64_t)a.i : (uint64_t)a.i & ((1ull << w) - 1);
+    return IntOp1(c >= w ? 0 : (int64_t)(bits >> c), a.unit, a);
 }
 FIRE_FN Value bitNot(Value v) {
     if (FIRE_UNLIKELY(v.kind == K_Word)) return WordV(~(uint64_t)v.w);
@@ -2628,6 +2699,72 @@ typedef struct Obj {
 FIRE_FN Value* objFields(Obj* o) { return (Value*)((char*)o + FIRE_HDR(Obj)); }
 /* The packed fields of an object (`defined int n`: a C number, laid out by the generator - CppGenerator.Packed.cs): right behind its Value slots. */
 FIRE_FN char* objRaw(Obj* o) { return (char*)objFields(o) + (size_t)o->nfields * sizeof(Value); }
+#if defined(FIRE_HEAP_STATS) && defined(FIRE_SLOT_HDR)
+/* `--stats` (ROADMAP 17), `FIRE_STATS=1` when the program starts: what lives on the heap when the main program ends (before its globals go) - the objects with
+ * their Value slots by content and their packed bytes, the arrays (Value elements, packed bytes), the buffers, the lambdas, the strings - and what the C
+ * library has handed out in all (glibc). On the error output. */
+#if defined(__GLIBC__) && defined(__GLIBC_PREREQ)
+#if __GLIBC_PREREQ(2, 33)
+#include <malloc.h>
+#define FIRE_HEAP_MALLINFO 1
+#endif
+#endif
+extern FIRE_RT_DATA fire_atomic32 g_heapStrs, g_heapStrUnits;
+FIRE_FN void fire_heapReport(void) {
+    const char* want = getenv("FIRE_STATS");
+    uint32_t i, n;
+    unsigned long objs = 0, objSlots = 0, numbers = 0, undefs = 0, refs = 0, rawBytes = 0, withExt = 0;
+    unsigned long arrs = 0, arrValues = 0, arrPacked = 0, arrPackedBytes = 0, bufs = 0, bufBytes = 0, lams = 0;
+    if (!want || !*want || (want[0] == '0' && !want[1])) return;
+#ifdef FIRE_SLOT_SEGMENTS
+    n = fire_atomic_load(&g_slots.count);
+#else
+    n = g_slots.count;
+#endif
+    for (i = 0; i < n; i++) {
+        Owned* h = slotHdr(i);
+        if (!h) continue;
+        switch (h->okind) {
+            case O_Object: {
+                Obj* o = (Obj*)h;
+                uint32_t k;
+                objs++; objSlots += o->nfields; rawBytes += o->nraw;
+                if (o->ext) withExt++;
+                for (k = 0; k < o->nfields; k++) {
+                    int kind = objFields(o)[k].kind;
+                    if (kind == K_Undefined) undefs++;
+                    else if (kind == K_String || kind == K_Class || kind == K_Lambda || kind == K_Array || kind == K_Buffer) refs++;
+                    else numbers++;
+                }
+                break;
+            }
+            case O_Array: {
+                Arr* a = (Arr*)h;
+                arrs++;
+                if (a->typed && a->typed->packed)
+                {
+                    static const uint8_t bytesOf[] = { 0, 1, 2, 4, 8, 1, 2, 4, 8, 1, 4, 1 };   /* (E_*: the C width of a packed element) */
+                    arrPacked++;
+                    arrPackedBytes += (unsigned long)a->length * (a->typed->elem < sizeof bytesOf ? bytesOf[a->typed->elem] : 8u);
+                }
+                else arrValues += a->length;
+                break;
+            }
+            case O_Buffer: bufs++; bufBytes += (unsigned long)((Buf*)h)->length * ((Buf*)h)->elem; break;
+            default: lams++; break;
+        }
+    }
+    fprintf(stderr, "Heap at the end (FIRE_STATS): %lu objects (%lu Value slots: %lu numbers, %lu undefined, %lu references; %lu packed bytes; %lu own something or have type arguments),\n",
+        objs, objSlots, numbers, undefs, refs, rawBytes, withExt);
+    fprintf(stderr, "  %lu arrays (%lu Value elements, %lu packed with about %lu bytes), %lu buffers (%lu bytes), %lu lambdas, %u strings (%u characters); a Value is %u bytes\n",
+        arrs, arrValues, arrPacked, arrPackedBytes, bufs, bufBytes, lams, fire_atomic_load(&g_heapStrs), fire_atomic_load(&g_heapStrUnits), (unsigned)sizeof(Value));
+#ifdef FIRE_HEAP_MALLINFO
+    { struct mallinfo2 mi = mallinfo2(); fprintf(stderr, "  the C library's heap: %lu bytes in use, %lu bytes mapped\n", (unsigned long)mi.uordblks, (unsigned long)(mi.arena + mi.hblkhd)); }
+#endif
+}
+#else
+#define fire_heapReport() ((void)0)
+#endif
 /* ---- Narrow fields (docs/spec/NATIVE_BACKEND.md "Schmale Felder"): a field declared `int` (with `#intwidth 32`/`16`), `float` (with `#floatwidth 32`) or
  * `bool` holds nothing but a number or a bool of that kind, or `undefined` - 8 bytes are enough (kind, a unit of 16 bits, 32 bits of payload), and two such
  * fields share the slot of one Value (the generator lays them out per class: CppGenerator.LayoutOf). Half 0 lies over the head of the slot's Value, so the
@@ -3234,7 +3371,14 @@ FIRE_FN Value adoptV(Value v, OwnList* list) {
 /* ---------------------------------------------------------------------------------------------------------------------
  * Memory of the reference-counted values
  * --------------------------------------------------------------------------------------------------------------------- */
+#ifdef FIRE_HEAP_STATS
+/* (`--stats`: the strings that live - they have no slot - and the most values that lived at once) */
+extern FIRE_RT_DATA fire_atomic32 g_heapStrs, g_heapStrUnits;
+#endif
 FIRE_FN void freeRef(Ref* r) {
+#ifdef FIRE_HEAP_STATS
+    if (R_KIND(r) == R_Str) { fire_atomic_add(&g_heapStrs, (uint32_t)-1); fire_atomic_add(&g_heapStrUnits, (uint32_t)0 - ((Str*)r)->length); }
+#endif
     if (R_KIND(r) == R_Lam) {
         Lam* l = (Lam*)r;
         if (!(l->o.flags & 1)) {
@@ -3281,6 +3425,9 @@ FIRE_FN Str* allocStr(uint32_t length, OwnList* list) {
     d[length] = 0;
     s->data = d;
     registerTemp(&s->h, list);
+#ifdef FIRE_HEAP_STATS
+    fire_atomic_add(&g_heapStrs, 1); fire_atomic_add(&g_heapStrUnits, length);
+#endif
     return s;
 }
 FIRE_FN fire_char16* strChars(Str* s) { return (fire_char16*)s->data; }
@@ -3300,6 +3447,9 @@ FIRE_FN Value strCross(Value v) {
         memcpy(d, src->data, src->length * sizeof(fire_char16));
         d[src->length] = 0;
         c->data = d;
+#ifdef FIRE_HEAP_STATS
+        fire_atomic_add(&g_heapStrs, 1); fire_atomic_add(&g_heapStrUnits, c->length);
+#endif
         return StrV(c);
     }
 #endif
@@ -3487,6 +3637,11 @@ FIRE_FN Value callLamU(Value callee, int argc, const Value* args, OwnList* list)
     return callLamV(callee, argc, args, list);
 }
 /* A lambda that the runtime or a native calls (a probe, a job, a callback): in a debug build the VM runs it nested - no stops inside. */
+#ifdef FIRE_NO_GIL
+extern FIRE_RT_DATA int32_t g_awayDepth;
+FIRE_FN int32_t fire_awayPause(void);
+FIRE_FN void fire_awayResume(int32_t depth);
+#endif
 FIRE_FN Value callLam(Value callee, int argc, const Value* args, OwnList* list) {
 #ifdef FIRE_DEBUG
     Value r;
@@ -3494,6 +3649,15 @@ FIRE_FN Value callLam(Value callee, int argc, const Value* args, OwnList* list) 
     r = callLamV(callee, argc, args, list);
     g_dbgNest--;
     return r;
+#elif defined(FIRE_NO_GIL)
+    /* (a callback of a native the main program is away in: it is back for the callback) */
+    if (FIRE_UNLIKELY(g_awayDepth != 0) && !g_isThread) {
+        int32_t away = fire_awayPause();
+        Value r = callLamV(callee, argc, args, list);
+        fire_awayResume(away);
+        return r;
+    }
+    return callLamV(callee, argc, args, list);
 #else
     return callLamV(callee, argc, args, list);
 #endif
@@ -4445,6 +4609,10 @@ FIRE_FN Value envCall(int64_t id, Value a, Value b, OwnList* list) {
         case 6: return newStrFromUtf8((const uint8_t*)"\n", 1, list);
 #endif
         case 7: return newStrFromUtf8((const uint8_t*)fire_plat_name(), strlen(fire_plat_name()), list);
+        case 8: {   /* Memory: 1 total, 2 free, 3 this program's (bytes; undefined where the system does not tell) */
+            int64_t m = a.kind == K_Int ? fire_plat_memory((int)a.i) : -1;
+            return m < 0 ? Undef() : Int(m);
+        }
     }
     fatal("Unknown Environment function.");
     return Undef();
@@ -4737,6 +4905,100 @@ FIRE_FN Value mathCall(int64_t method, Value x, Value y) {
         case 14: return Float((Real)exp(v));
     }
     fatal("Unknown Math function.");
+}
+
+/* `__BitsCall(id, x[, y[, z]])` (fire.Standard.BitsMethods): the bits of an int or a word - counted, rotated, reversed - and the IEEE bits of a float. An
+ * int in the width of the program's int (or the low `width` bits), a word in FIRE_WORD_BITS; a result in that width is an int of the program, one of a smaller
+ * width the unsigned number of its bits; a number that does not fit the program's int keeps its 64 bits (IntNative), as in the VM. */
+static const char* const g_bitsNames[] = {"", "PopCount", "LeadingZeros", "TrailingZeros", "RotateLeft", "RotateRight", "ReverseBytes", "ReverseBits",
+    "FromFloat64", "ToFloat64", "FromFloat32", "ToFloat32", "FromFloat16", "ToFloat16"};
+FIRE_FN Value fire_bitsNumber(Value x, const char* name, double* out) {
+    char text[200];
+    if (x.kind != K_Int && x.kind != K_Float) {
+        snprintf(text, sizeof text, "Bits.%s expects a number, not a value of type '%s'.", name, kindName(x));
+        return fireError("ArgumentException", text);
+    }
+    if (x.unit != 0) {
+        snprintf(text, sizeof text, "Bits.%s expects a number without a unit, not one in '%s'.", name, g_ud[x.unit].name);
+        return fireError("ArgumentException", text);
+    }
+    *out = x.kind == K_Int ? (double)x.i : (double)x.f;
+    return Int(0);
+}
+FIRE_FN bool fire_bitsRaw(Value x, const char* name, uint64_t* out, Value* error) {
+    char text[200];
+    if (x.kind == K_Int) { *out = (uint64_t)x.i; return true; }
+    if (x.kind == K_Word) { *out = (uint64_t)x.w; return true; }
+    snprintf(text, sizeof text, "Bits.%s expects an int or a word, not a value of type '%s'.", name, kindName(x));
+    *error = fireError("ArgumentException", text);
+    return false;
+}
+FIRE_FN Value bitsCall(int64_t method, Value x, Value y, Value z) {
+    const char* name = method >= 1 && method <= 13 ? g_bitsNames[method] : "?";
+    char text[200];
+    double d;
+    uint64_t raw, bits, mask, r;
+    int w, dflt, i, s;
+    bool word, rotate;
+    Value width, err;
+    switch ((int)method) {
+        case 8:  err = fire_bitsNumber(x, name, &d); if (err.kind == K_Undefined) return err; return IntNative((int64_t)fire_doubleBits(d));
+        case 9:  if (!fire_bitsRaw(x, name, &raw, &err)) return err; return Float((Real)fire_bitsDouble(raw));
+        case 10: err = fire_bitsNumber(x, name, &d); if (err.kind == K_Undefined) return err; return IntNative((int64_t)fire_floatBits(d));
+        case 11: if (!fire_bitsRaw(x, name, &raw, &err)) return err; return Float((Real)fire_bitsFloat((uint32_t)raw));
+        case 12: err = fire_bitsNumber(x, name, &d); if (err.kind == K_Undefined) return err; return IntNative((int64_t)halfBits(d));
+        case 13: if (!fire_bitsRaw(x, name, &raw, &err)) return err; return Float((Real)halfValue((uint16_t)raw));
+        default: break;
+    }
+    if (method < 1 || method > 7) return fireError("ArgumentException", "__BitsCall: unknown function.");
+    rotate = method == 4 || method == 5;
+    width = rotate ? z : y;
+    word = x.kind == K_Word;
+    if (!word && x.kind != K_Int) {
+        snprintf(text, sizeof text, "Bits.%s expects an int or a word, not a value of type '%s'.", name, kindName(x));
+        return fireError("ArgumentException", text);
+    }
+    dflt = word ? FIRE_WORD_BITS : fire_intBitsOf(x);
+    if (width.kind != K_Int && width.kind != K_Undefined) {
+        snprintf(text, sizeof text, "Bits.%s expects an int width, not a value of type '%s'.", name, kindName(width));
+        return fireError("ArgumentException", text);
+    }
+    w = width.kind == K_Undefined || width.i == 0 ? dflt : width.i < 1 || width.i > 64 ? -1 : (int)width.i;
+    if (w < 0) {
+        snprintf(text, sizeof text, "Bits.%s: the width must be 1 to 64, not %lld.", name, (long long)width.i);
+        return fireError("ArgumentException", text);
+    }
+    mask = w >= 64 ? ~(uint64_t)0 : ((uint64_t)1 << w) - 1;
+    bits = (word ? (uint64_t)x.w : (uint64_t)x.i) & mask;
+    switch ((int)method) {
+        case 1: { int n = 0; for (r = bits; r; r &= r - 1) n++; return Int(n); }
+        case 2: { int n = 0; if (bits == 0) return Int(w); for (i = w - 1; i >= 0 && !((bits >> i) & 1); i--) n++; return Int(n); }
+        case 3: { int n = 0; if (bits == 0) return Int(w); while (!((bits >> n) & 1)) n++; return Int(n); }
+        case 4: case 5:
+            if (y.kind != K_Int) {
+                snprintf(text, sizeof text, "Bits.%s expects an int count, not a value of type '%s'.", name, kindName(y));
+                return fireError("ArgumentException", text);
+            }
+            s = (int)(((y.i % w) + w) % w);
+            if (method == 5) s = (w - s) % w;
+            r = s == 0 ? bits : ((bits << s) | (bits >> (w - s))) & mask;
+            break;
+        case 6:
+            if (w % 8 != 0) {
+                snprintf(text, sizeof text, "Bits.ReverseBytes: the width must be a multiple of 8, not %d.", w);
+                return fireError("ArgumentException", text);
+            }
+            r = 0;
+            for (i = 0; i < w / 8; i++) r = (r << 8) | ((bits >> (8 * i)) & 0xFF);
+            break;
+        default:
+            r = 0;
+            for (i = 0; i < w; i++) r = (r << 1) | ((bits >> i) & 1);
+            break;
+    }
+    if (word) return WordV(r);
+    if (w == dflt && w < 64 && ((r >> (w - 1)) & 1)) return IntNative((int64_t)(r | ~mask));
+    return IntNative((int64_t)r);
 }
 /* `x!Dog` that does not hold (OpCode.CastTo): the ArgumentException of the VM's text. */
 FIRE_FN void castFailed(Value v, const char* typeName) {
@@ -5777,6 +6039,12 @@ FIRE_FN bool bufFromArray(Value v, int rank, int depth, OwnList* list, Value* ou
     uint32_t i;
     char text[120];
     *out = v;
+    /* (a `byte`/`word` declaration holds a buffer, an array that becomes one, or nothing - like `int a[]` holds an array; the VM: BufferFromArrayValue) */
+    if (v.kind != K_Array && v.kind != K_Buffer && v.kind != K_Undefined) {
+        snprintf(text, sizeof text, "A %s buffer is declared here, not %s.", words ? "word" : "byte", coerceKindName(v.kind));
+        fireError("ArgumentException", text);
+        return false;
+    }
     if (v.kind != K_Array || !leafAlive(v) || depth > 64) return true;
     a = arrOf(v);
     if (depth < rank) {
@@ -6399,6 +6667,197 @@ FIRE_FN Value bufToEndian(Value v, bool little, OwnList* list) {
     return BufV(c);
 }
 
+/* The typed reads and writes and the fast operations of a byte buffer (fire.Standard.BufferMethods, the same rules): `buffer.ReadInt16(at[, little])`,
+ * `WriteFloat32(at, x[, little])` in the byte order of the buffer or the one given, `Fill`, `CopyTo`, `Slice`, `IndexOf`, `Compare`. Not for a buffer of words.
+ * The kinds: 0 int8, 1 uint8, 2 int16, 3 uint16, 4 int32, 5 uint32, 6 int64, 7 float16, 8 float32, 9 float64. */
+static const uint8_t g_bufKindSize[10] = {1, 1, 2, 2, 4, 4, 8, 2, 4, 8};
+static const char* const g_bufReadNames[10] = {"ReadInt8", "ReadUInt8", "ReadInt16", "ReadUInt16", "ReadInt32", "ReadUInt32", "ReadInt64", "ReadFloat16", "ReadFloat32", "ReadFloat64"};
+static const char* const g_bufWriteNames[10] = {"WriteInt8", "WriteUInt8", "WriteInt16", "WriteUInt16", "WriteInt32", "WriteUInt32", "WriteInt64", "WriteFloat16", "WriteFloat32", "WriteFloat64"};
+FIRE_FN Value fire_bufArgError(const char* name, const char* what, Value v) {
+    char text[200];
+    snprintf(text, sizeof text, "buffer.%s expects %s, not a value of type '%s'.", name, what, kindName(v));
+    return fireError("ArgumentException", text);
+}
+/* (a byte buffer that lives; else the error, in *err) */
+FIRE_FN Buf* fire_plainBuf(Value v, const char* name, Value* err) {
+    Buf* b;
+    char text[160];
+    if (!ownedOf(v)) { *err = destroyedError(v); return NULL; }
+    b = bufOf(v);
+    if (b->elem != 1) { snprintf(text, sizeof text, "buffer.%s works on bytes, not a word buffer.", name); *err = fireError("ArgumentException", text); return NULL; }
+    return b;
+}
+/* (the byte order of an access: true little endian - the one given, else the buffer's) */
+FIRE_FN bool fire_bufOrder(Buf* b, Value order, const char* name, Value* err) {
+    if (order.kind == K_Undefined) return b->little != 0;
+    if (order.kind != K_Bool) { *err = fire_bufArgError(name, "a bool for the byte order (true: little endian)", order); return false; }
+    return order.i != 0;
+}
+FIRE_FN Value bufRead(Value v, int kind, Value at, Value order) {
+    const char* name = g_bufReadNames[kind];
+    Value err = Undef();
+    Buf* b = fire_plainBuf(v, name, &err);
+    int size = g_bufKindSize[kind], i;
+    bool little;
+    uint64_t raw = 0;
+    uint32_t n;
+    if (!b) return err;
+    if (at.kind != K_Int) return fire_bufArgError(name, "an int position", at);
+    little = fire_bufOrder(b, order, name, &err);
+    if (order.kind != K_Undefined && order.kind != K_Bool) return err;
+    n = (uint32_t)bufSize(b);
+    if (at.i < 0 || at.i > (int64_t)n - size) return indexError("Buffer index", at.i, (int64_t)n);
+    for (i = 0; i < size; i++) raw |= (uint64_t)b->data[(uint32_t)at.i + (uint32_t)(little ? i : size - 1 - i)] << (8 * i);
+    switch (kind) {
+        case 0: return IntNative((int64_t)(int8_t)(uint8_t)raw);
+        case 2: return IntNative((int64_t)(int16_t)(uint16_t)raw);
+        case 4: return IntNative((int64_t)(int32_t)(uint32_t)raw);
+        case 7: return Float((Real)halfValue((uint16_t)raw));
+        case 8: return Float((Real)fire_bitsFloat((uint32_t)raw));
+        case 9: return Float((Real)fire_bitsDouble(raw));
+        default: return IntNative((int64_t)raw);
+    }
+}
+FIRE_FN Value bufWrite(Value v, int kind, Value at, Value x, Value order) {
+    const char* name = g_bufWriteNames[kind];
+    Value err = Undef();
+    Buf* b = fire_plainBuf(v, name, &err);
+    int size = g_bufKindSize[kind], i;
+    bool little;
+    uint64_t raw;
+    uint32_t n;
+    char text[200];
+    if (!b) return err;
+    if (at.kind != K_Int) return fire_bufArgError(name, "an int position", at);
+    little = fire_bufOrder(b, order, name, &err);
+    if (order.kind != K_Undefined && order.kind != K_Bool) return err;
+    if (kind >= 7) {
+        double d;
+        if (x.kind != K_Int && x.kind != K_Float) return fire_bufArgError(name, "a number", x);
+        if (x.unit != 0) { snprintf(text, sizeof text, "buffer.%s expects a number without a unit, not one in '%s'.", name, g_ud[x.unit].name); return fireError("ArgumentException", text); }
+        d = x.kind == K_Int ? (double)x.i : (double)x.f;
+        raw = kind == 7 ? (uint64_t)halfBits(d) : kind == 8 ? (uint64_t)fire_floatBits(d) : fire_doubleBits(d);
+    } else {
+        if (x.kind != K_Int && x.kind != K_Word) return fire_bufArgError(name, "an int", x);
+        if (x.kind == K_Int && x.unit != 0) { snprintf(text, sizeof text, "buffer.%s expects a number without a unit, not one in '%s'.", name, g_ud[x.unit].name); return fireError("ArgumentException", text); }
+        raw = x.kind == K_Word ? (uint64_t)x.w : (uint64_t)x.i;
+    }
+    n = (uint32_t)bufSize(b);
+    if (at.i < 0 || at.i > (int64_t)n - size) return indexError("Buffer index", at.i, (int64_t)n);
+    for (i = 0; i < size; i++) b->data[(uint32_t)at.i + (uint32_t)(little ? i : size - 1 - i)] = (uint8_t)(raw >> (8 * i));
+    return Undef();
+}
+/* (start .. start+count inside the buffer of n bytes; else the IndexOutOfBoundsException) */
+FIRE_FN bool fire_bufSpan(Value start, Value count, uint32_t n, const char* name, Value* err) {
+    if (start.kind != K_Int) { *err = fire_bufArgError(name, "an int start", start); return false; }
+    if (count.kind != K_Int) { *err = fire_bufArgError(name, "an int count", count); return false; }
+    if (start.i < 0 || start.i > (int64_t)n) { *err = indexError("Buffer index", start.i, (int64_t)n); return false; }
+    if (count.i < 0 || count.i > (int64_t)n - start.i) { *err = indexError("Buffer index", start.i + count.i, (int64_t)n); return false; }
+    return true;
+}
+FIRE_FN Value bufFill(Value v, Value x, Value start, Value count) {
+    Value err = Undef();
+    Buf* b = fire_plainBuf(v, "Fill", &err);
+    uint32_t n, i, from;
+    if (!b) return err;
+    if (x.kind != K_Int) return fire_bufArgError("Fill", "an int value", x);
+    n = (uint32_t)bufSize(b);
+    if (start.kind == K_Undefined) { start = Int(0); count = Int((int64_t)n); }
+    if (!fire_bufSpan(start, count, n, "Fill", &err)) return err;
+    from = (uint32_t)start.i;
+#ifdef FIRE_CC_COPY
+    for (i = 0; i < (uint32_t)count.i; i++) b->data[from + i] = (uint8_t)x.i;
+#else
+    (void)i;
+    memset(b->data + from, (int)(uint8_t)x.i, (size_t)count.i);
+#endif
+    return Undef();
+}
+FIRE_FN Value bufCopyTo(Value v, Value target, Value targetAt, Value start, Value count) {
+    Value err = Undef();
+    Buf* b = fire_plainBuf(v, "CopyTo", &err);
+    Buf* t;
+    uint32_t n, i, from, to, len;
+    if (!b) return err;
+    if (target.kind != K_Buffer) return fire_bufArgError("CopyTo", "a byte buffer to copy into", target);
+    t = fire_plainBuf(target, "CopyTo", &err);
+    if (!t) return err;
+    n = (uint32_t)bufSize(b);
+    if (start.kind == K_Undefined) { start = Int(0); count = Int((int64_t)n); }
+    if (!fire_bufSpan(start, count, n, "CopyTo", &err)) return err;
+    if (!fire_bufSpan(targetAt, count, (uint32_t)bufSize(t), "CopyTo", &err)) return err;
+    from = (uint32_t)start.i; to = (uint32_t)targetAt.i; len = (uint32_t)count.i;
+#ifdef FIRE_CC_COPY
+    /* (overlapping parts of the same buffer: copied as if through a copy) */
+    if (t->data + to > b->data + from) { for (i = len; i > 0; i--) t->data[to + i - 1] = b->data[from + i - 1]; }
+    else for (i = 0; i < len; i++) t->data[to + i] = b->data[from + i];
+#else
+    (void)i;
+    memmove(t->data + to, b->data + from, (size_t)len);
+#endif
+    return Undef();
+}
+FIRE_FN Value bufSlice(Value v, Value start, Value count, OwnList* list) {
+    Value err = Undef();
+    Buf* b = fire_plainBuf(v, "Slice", &err);
+    Buf* c;
+    uint32_t n;
+    if (!b) return err;
+    n = (uint32_t)bufSize(b);
+    if (start.kind != K_Int) return fire_bufArgError("Slice", "an int start", start);
+    if (count.kind == K_Undefined) count = Int((int64_t)n - start.i);
+    if (!fire_bufSpan(start, count, n, "Slice", &err)) return err;
+    c = allocBuf((uint32_t)count.i, list);
+    if (count.i) dataCopy(c->data, b->data + (uint32_t)start.i, (uint32_t)count.i);
+    c->little = b->little;
+    return BufV(c);
+}
+FIRE_FN Value bufIndexOf(Value v, Value x, Value start) {
+    Value err = Undef();
+    Buf* b = fire_plainBuf(v, "IndexOf", &err);
+    Buf* needle;
+    uint32_t n, i, j, m;
+    if (!b) return err;
+    n = (uint32_t)bufSize(b);
+    if (start.kind == K_Undefined) start = Int(0);
+    if (start.kind != K_Int) return fire_bufArgError("IndexOf", "an int start", start);
+    if (start.i < 0 || start.i > (int64_t)n) return indexError("Buffer index", start.i, (int64_t)n);
+    if (x.kind == K_Buffer) {
+        needle = fire_plainBuf(x, "IndexOf", &err);
+        if (!needle) return err;
+        m = (uint32_t)bufSize(needle);
+        if (m == 0) return Int(start.i);
+        for (i = (uint32_t)start.i; m <= n && i <= n - m; i++) {
+            for (j = 0; j < m && b->data[i + j] == needle->data[j]; j++) { }
+            if (j == m) return Int((int64_t)i);
+        }
+        return Int(-1);
+    }
+    if (x.kind != K_Int) return fire_bufArgError("IndexOf", "a byte (an int) or a byte buffer", x);
+    if (x.i < 0 || x.i > 255) return Int(-1);
+    for (i = (uint32_t)start.i; i < n; i++) if (b->data[i] == (uint8_t)x.i) return Int((int64_t)i);
+    return Int(-1);
+}
+FIRE_FN Value bufCompare(Value v, Value other) {
+    Value err = Undef();
+    Buf* b = fire_plainBuf(v, "Compare", &err);
+    Buf* o;
+    uint32_t n, m, i;
+    if (!b) return err;
+    if (other.kind != K_Buffer) return fire_bufArgError("Compare", "a byte buffer", other);
+    o = fire_plainBuf(other, "Compare", &err);
+    if (!o) return err;
+    n = (uint32_t)bufSize(b); m = (uint32_t)bufSize(o);
+    for (i = 0; i < n && i < m; i++) if (b->data[i] != o->data[i]) return Int(b->data[i] < o->data[i] ? -1 : 1);
+    return Int(n < m ? -1 : n > m ? 1 : 0);
+}
+/* (the names of these methods: fire_builtinHas) */
+FIRE_FN bool fire_bufMethodName(const char* name) {
+    int k;
+    for (k = 0; k < 10; k++) if (!strcmp(name, g_bufReadNames[k]) || !strcmp(name, g_bufWriteNames[k])) return true;
+    return !strcmp(name, "Fill") || !strcmp(name, "CopyTo") || !strcmp(name, "Slice") || !strcmp(name, "IndexOf") || !strcmp(name, "Compare");
+}
+
 FIRE_FN Value newBuffer(Value size, OwnList* list) {
     if (size.kind != K_Int || size.i < 0 || size.i > 0x7FFFFFFF) fatal("A buffer size must be a non-negative int.");
     return BufV(allocBuf((uint32_t)size.i, list));
@@ -6973,7 +7432,8 @@ FIRE_FN bool fire_builtinHas(Value v, const char* name) {
         case K_Int: return !strcmp(name, "ToChar") || (v.reserved != 0 && (!strcmp(name, "ToString") || !strcmp(name, "HasFlag")));   /* (reserved: an enum) */
         case K_Array: return ownedOf(v) && (own || length || !strcmp(name, "GetEnumerator"));
         case K_Buffer: return ownedOf(v) && (own || length || !strcmp(name, "littleEndian") || !strcmp(name, "GetEnumerator") || !strcmp(name, "ToString")
-            || !strcmp(name, "ToUnicode") || !strcmp(name, "ToUnicodeChar") || !strcmp(name, "ToLittleEndian") || !strcmp(name, "ToBigEndian"));
+            || !strcmp(name, "ToUnicode") || !strcmp(name, "ToUnicodeChar") || !strcmp(name, "ToLittleEndian") || !strcmp(name, "ToBigEndian")
+            || fire_bufMethodName(name));
         case K_Lambda: return ownedOf(v) && own;
         default: return false;
     }
@@ -8030,12 +8490,29 @@ extern FIRE_RT_DATA fire_atomic32 g_gilWaiting;
  *   - a fire thread takes the read side when it first touches the shared domain (FIRE_DOM_TOUCH, FIRE_DOM_READ) and lets go of it at its next safe point or
  *     wait - threads read side by side, and a thread that never touches the domain never waits for it;
  *   - a section (a change of the domain by a thread, granted by the waiting main program) holds the write side alone. */
-typedef struct DomLock { fire_mutex m; fire_cond cv; int32_t readers, writersWaiting; fire_atomic32 readersWaiting; bool mainIn, mainWaiting, writer; } DomLock;
+typedef struct DomLock { fire_mutex m; fire_cond cv; int32_t readers, writersWaiting; fire_atomic32 readersWaiting, away; bool mainIn, mainWaiting, writer; } DomLock;
 extern FIRE_RT_DATA DomLock g_dom;
+/* (a compare-and-swap of a word - only here, without the GIL, where the compiler has atomics) */
+static inline bool fire_domCas(fire_atomic32* a, uint32_t expected, uint32_t desired) {
+#if defined(__GNUC__) || defined(__clang__)
+    return __atomic_compare_exchange_n(&a->v, &expected, desired, false, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE);
+#elif defined(_MSC_VER)
+    return (uint32_t)_InterlockedCompareExchange((volatile long*)&a->v, (long)desired, (long)expected) == expected;
+#else
+    return fire_atomic_cas32(a, expected, desired) == expected;
+#endif
+}
+/* The main program is away in a native of a package (fire_awayBegin, g_dom.away 1): a thread that waits for the lock of the globals takes the main program's
+ * place (2) - the native does not touch the shared domain; the main program, back, waits for it as after a wait (fire_awayEnd). Under g_dom.m. */
+static inline bool domLendMain(void) {
+    if (!g_dom.mainIn || g_dom.mainWaiting || !fire_domCas(&g_dom.away, 1, 2)) return false;
+    g_dom.mainIn = false;
+    return true;
+}
 FIRE_COLD FIRE_FN void domReadEnter(void) {
     fire_mutex_lock(&g_dom.m);
     fire_atomic_add(&g_dom.readersWaiting, 1);
-    while (g_dom.mainIn || g_dom.mainWaiting || g_dom.writer) fire_cond_wait(&g_dom.cv, &g_dom.m);
+    while (g_dom.mainIn || g_dom.mainWaiting || g_dom.writer) { if (!domLendMain()) fire_cond_wait(&g_dom.cv, &g_dom.m); }
     fire_atomic_add(&g_dom.readersWaiting, (uint32_t)-1);
     g_dom.readers++;
     fire_cond_notifyAll(&g_dom.cv);
@@ -8082,7 +8559,7 @@ FIRE_FN void domWriterEnter(void) {
     domReadLeave();
     fire_mutex_lock(&g_dom.m);
     g_dom.writersWaiting++;
-    while (g_dom.mainIn || g_dom.readers > 0 || g_dom.writer) fire_cond_wait(&g_dom.cv, &g_dom.m);
+    while (g_dom.mainIn || g_dom.readers > 0 || g_dom.writer) { if (!domLendMain()) fire_cond_wait(&g_dom.cv, &g_dom.m); }
     g_dom.writersWaiting--;
     g_dom.writer = true;
     fire_mutex_unlock(&g_dom.m);
@@ -8819,6 +9296,61 @@ FIRE_FN void notifyEventAll(void) {
  * wait for it; looked at only at a loop's jump back, and only in the mode `safepoints` - see g_globalJobs). */
 enum { ATTN_ALL = 1, ATTN_MAIN = 2, ATTN_SECT = 4, ATTN_PEER = 8 };   /* (ATTN_PEER: a fire thread is asked for a section of its own, see ThreadRec) */
 extern FIRE_RT_DATA fire_atomic32 g_attn;
+#ifdef FIRE_NO_GIL
+/* The main program in a native of a package whose arguments are not of the shared domain (docs/spec/THREADING_DESIGN.md section 7): it does not touch the
+ * globals meanwhile, so the threads need not wait for it - one that waits to read takes its place (domLendMain), one that asks for a section gets it
+ * (fire_sectionGrantedAway) and a call on an object of the globals runs in such a section. Going away costs a store; only when a thread took the place
+ * does the main program wait at its return, as after a wait. A callback of the native into fire code (callLam) comes back first (fire_awayPause). */
+extern FIRE_RT_DATA int32_t g_awayDepth;   /* (the main program's: how deep it is in natives that let it go away) */
+FIRE_FN void fire_awayBegin(void) {
+    if (g_isThread || g_awayDepth++ != 0) return;
+    fire_atomic_storeRelease(&g_dom.away, 1);
+    /* (who waits already: the readers at the lock, the sections in the queue) */
+    if (fire_atomic_load(&g_dom.readersWaiting) || (fire_atomic_load(&g_attn) & ATTN_SECT)) {
+        fire_mutex_lock(&g_dom.m);
+        fire_cond_notifyAll(&g_dom.cv);
+        fire_mutex_unlock(&g_dom.m);
+        notifyEventAll();
+    }
+}
+FIRE_FN void fire_awayEnd(void) {
+    if (g_isThread || --g_awayDepth != 0) return;
+    if (fire_atomic_exchange(&g_dom.away, 0) == 2) {
+        /* (a thread took the place: wait for it like after a wait - the package's lock goes back meanwhile, the order is the globals first) */
+        if (g_pkgHeld) fire_mutex_unlock(g_pkgHeld);
+        domMainEnter();
+        if (g_pkgHeld) fire_mutex_lock(g_pkgHeld);
+    }
+}
+/* (a callback of the native: the main program is back for it, and away again after it) */
+FIRE_FN int32_t fire_awayPause(void) {
+    int32_t depth = g_awayDepth;
+    if (depth == 0 || g_isThread) return 0;
+    g_awayDepth = 1;
+    fire_awayEnd();
+    return depth;
+}
+FIRE_FN void fire_awayResume(int32_t depth) {
+    if (depth == 0) return;
+    fire_awayBegin();
+    g_awayDepth = depth;
+}
+/* (may the main program go away for a native with this argument: not one of the shared domain - the native would read it while a thread changes it) */
+FIRE_FN bool fire_awayArg(Value v) {
+    if (v.kind == K_Class) return !(FIRE_FLAGS_READ(&asObj(v)->h) & 64);   /* (64: F_SHARED, the shared domain) */
+    if (v.kind == K_Array || v.kind == K_Buffer) { Owned* o = ownedOf(v); return o != NULL && !(FIRE_FLAGS_READ(o) & 64); }
+    return true;
+}
+/* (is the main program away now: a call of a thread on an object of the globals runs in a section of its own instead of as a job) */
+FIRE_FN bool fire_mainAway(void) { return fire_atomic_load(&g_dom.away) != 0; }
+#else
+#define fire_mainAway() false
+#define fire_awayBegin() ((void)0)
+#define fire_awayEnd() ((void)0)
+#define fire_awayPause() 0
+#define fire_awayResume(d) ((void)(d))
+#define fire_awayArg(v) false
+#endif
 
 /* `requested` is read by every thread at its safe points (atomic); the claim (the first call wins) and `value` are under g_thrM. */
 typedef struct TerminateState { fire_atomic32 requested; Value value; } TerminateState;
@@ -8989,6 +9521,8 @@ FIRE_FN bool fire_replyDone(void* ctx);
 FIRE_FN bool fire_tokWaitPred(void* ctx);
 FIRE_FN bool fire_complDone(void* ctx);   /* (a Completion: notifyKey of its node) */
 FIRE_FN bool fire_fdReady(void* ctx);     /* (__fd_wait: notifyKey of the waiter) */
+FIRE_FN bool fire_fdOrChanReady(void* ctx);   /* (__fd_wait with a channel: the same key - the waiter is its first member) */
+FIRE_FN bool fire_sectionGrantedAway(void* ctx);   /* (a section: notifyKey of its request, or notifyEventAll when the main program goes away) */
 #ifdef FIRE_TASKS
 FIRE_FN bool fire_awaitDone(void* ctx);
 #endif
@@ -9020,7 +9554,7 @@ FIRE_FN bool blockUntil(bool (*pred)(void*), void* ctx, bool stopOnTerminate, in
 #ifdef FIRE_TASKS
         if (taskRunning()) {
             /* (a task - a member of the main program's group too: parked until an event or its time - Sleep wakes only at its time, the other conditions are looked at again every few ms) */
-            bool keyed = pred == fire_sectionGranted || pred == fire_sectionDone || pred == fire_replyDone || pred == fire_awaitDone || pred == fire_complDone || pred == fire_fdReady;
+            bool keyed = pred == fire_sectionGranted || pred == fire_sectionGrantedAway || pred == fire_sectionDone || pred == fire_replyDone || pred == fire_awaitDone || pred == fire_complDone || pred == fire_fdReady || pred == fire_fdOrChanReady;
             const void* key = pred == fire_sleepWake || pred == fire_tokWaitPred ? (const void*)&g_terminate : keyed || pred == fire_actorReady ? ctx : NULL;
             /* (Sleep wakes at its time, a section when it is granted or done, an awaited reply or group when it is done - notifyKey; anything else is looked
              * at again every few ms) */
@@ -9796,12 +10330,25 @@ FIRE_FN void stillEnter(void) { if (g_isFire) { fire_atomic_add(&g_idleThreads, 
 FIRE_FN void stillLeave(void) { if (g_isFire) fire_atomic_add(&g_idleThreads, (uint32_t)-1); }
 /* (set by mainFinish when the threads that are left stand still: a fire thread that waits in `process` for an empty mailbox then ends like with `leave`) */
 extern FIRE_RT_DATA fire_atomic32 g_standstill;
-fire_atomic32 g_fdWaiters;
 extern FIRE_RT_DATA fire_atomic32 g_fdWaiters;   /* (the threads that wait for a socket - counted in g_idleThreads too) */
-FIRE_FN Value fire_fd_wait(Value fdv, Value ev, Value msv) {
+/* (__fd_wait(fd, events, ms, channel): the socket or a channel - what a channel's Send wakes (notifyEventAll wakes the keyed waits too), the socket the poller
+ * by the waiter's address, the first member) */
+typedef struct FdChanWait { FdWaiter w; void* chan; } FdChanWait;
+FIRE_FN bool fire_chanCanReceive(void* c);
+FIRE_FN bool fire_fdOrChanReady(void* ctx) { FdChanWait* c = (FdChanWait*)ctx; return fire_fdReady(&c->w) || (c->chan && fire_chanCanReceive(c->chan)); }
+FIRE_FN Value fire_fd_wait_core(Value fdv, Value ev, Value msv, void* chan);
+FIRE_FN Value fire_fd_wait(Value fdv, Value ev, Value msv) { return fire_fd_wait_core(fdv, ev, msv, NULL); }
+/* `__fd_wait(fd, events, ms, channel)`: also ends when the channel (its node handle) has something or is closed - bit 4 of the result (Http.WebSocket:
+ * the task that owns the socket sends what other tasks put into its outbox while it waits for the next message). */
+FIRE_FN Value fire_fd_wait_or(Value fdv, Value ev, Value msv, Value chv) {
+    void* chan = chv.kind == K_Int && chv.i ? (void*)(intptr_t)chv.i : NULL;
+    return fire_fd_wait_core(fdv, ev, msv, chan);
+}
+FIRE_FN Value fire_fd_wait_core(Value fdv, Value ev, Value msv, void* chan) {
 #ifdef FIRE_FD_POLL
     FdPoller* p;
-    FdWaiter w, **link;
+    FdChanWait cw;
+    FdWaiter** link;
     CancelNode* token;
     int64_t deadline = 0, until;
     int64_t ms = msv.kind == K_Int ? msv.i : msv.kind == K_Float ? (int64_t)msv.f : -1;
@@ -9809,8 +10356,11 @@ FIRE_FN Value fire_fd_wait(Value fdv, Value ev, Value msv) {
     int state;
     bool listed;
     if (fdv.kind != K_Int || fdv.i < 0 || ev.kind != K_Int || (ev.i & 3) == 0) return Int(-1);
+    if (chan && fire_chanCanReceive(chan)) return Int(4);
     if (ms == 0) return Int(0);
     if (!(p = fire_fdPoller())) return Int(-1);
+    cw.chan = chan;
+#define w cw.w
     token = fire_curToken();
     if (token && (state = cancelState(token)) != 0) { fire_throwCancelled(state); return Undef(); }
     if (ms > 0) deadline = steadyMs() + ms;
@@ -9830,10 +10380,10 @@ FIRE_FN Value fire_fd_wait(Value fdv, Value ev, Value msv) {
     fire_atomic_add(&g_fdWaiters, 1);   /* (a socket can still bring work from outside: no standstill ends the waits in `process` meanwhile) */
     if (token) {
         TokWait tw;
-        tw.pred = fire_fdReady; tw.ctx = &w; tw.token = token;
+        tw.pred = fire_fdOrChanReady; tw.ctx = &cw; tw.token = token;
         if (g_isThread) blockUntil(fire_tokWaitPred, &tw, true, until); else blockUntilServing(fire_tokWaitPred, &tw, true, until);
-    } else if (g_isThread) blockUntil(fire_fdReady, &w, true, until);
-    else blockUntilServing(fire_fdReady, &w, true, until);
+    } else if (g_isThread) blockUntil(fire_fdOrChanReady, &cw, true, until);
+    else blockUntilServing(fire_fdOrChanReady, &cw, true, until);
     fire_atomic_add(&g_fdWaiters, (uint32_t)-1);
     stillLeave();
     sectionYieldEnd(held);
@@ -9843,13 +10393,16 @@ FIRE_FN Value fire_fd_wait(Value fdv, Value ev, Value msv) {
     if (listed) *link = w.next;
     fire_mutex_unlock(&p->m);
     if (listed) fdPollWake(p);   /* (the poller forgets the socket) */
-    if (fire_fdReady(&w)) return Int((int64_t)fire_atomic_loadAcquire(&w.ready));
+    if (fire_fdReady(&w) || (chan && fire_chanCanReceive(chan)))
+        return Int((int64_t)fire_atomic_loadAcquire(&w.ready) | (chan && fire_chanCanReceive(chan) ? 4 : 0));
     if (token && (state = cancelState(token)) != 0) { fire_throwCancelled(state); return Undef(); }
     if (deadline && steadyMs() >= deadline) return Int(0);
     startLeave();   /* (terminate) */
     return Undef();
+#undef w
 #else
     (void)fdv; (void)ev; (void)msv;
+    if (chan && fire_chanCanReceive(chan)) return Int(4);
     return Int(-1);
 #endif
 }
@@ -10067,6 +10620,13 @@ FIRE_FN uint32_t reqCount(void) {
 }
 
 FIRE_FN bool fire_sectionGranted(void* ctx) { return fire_atomic_loadAcquire(&((SectionReq*)ctx)->granted) != 0; }
+/* (... or the main program is away in a native: the thread takes the section itself - the request stays in the queue, the main program finds it done) */
+FIRE_FN bool fire_sectionGrantedAway(void* ctx) {
+    if (fire_sectionGranted(ctx)) return true;
+    if (!fire_mainAway()) return false;
+    fire_atomic_storeRelease(&((SectionReq*)ctx)->granted, 1);
+    return true;
+}
 FIRE_FN bool fire_sectionDone(void* ctx) { return fire_atomic_loadAcquire(&((SectionReq*)ctx)->done) != 0; }
 /* One side lets go of the request (the last one frees it). */
 FIRE_FN void sectionReqDrop(SectionReq* r) { if (fire_atomic_addAcqRel(&r->refs, (uint32_t)-1) == 1) free(r); }
@@ -10079,7 +10639,7 @@ FIRE_FN void sectionAcquire(void) {
     reqPush(q);
     fire_atomic_or(&g_attn, ATTN_SECT);
     notifyEvent();
-    blockUntil(fire_sectionGranted, r, false, 0);
+    blockUntil(fire_sectionGrantedAway, r, false, 0);
 #ifdef FIRE_NO_GIL
     domWriterEnter();
 #endif
@@ -11951,12 +12511,16 @@ FIRE_FN void fire_threadsInit(void) {
 #ifndef FIRE_THREADS
 /* (a program without fire threads: no poller - the net package waits as before) */
 FIRE_FN Value fire_fd_wait(Value fdv, Value ev, Value msv) { (void)fdv; (void)ev; (void)msv; return Int(-1); }
+FIRE_FN Value fire_fd_wait_or(Value fdv, Value ev, Value msv, Value chv) { (void)fdv; (void)ev; (void)msv; (void)chv; return Int(-1); }
 #endif
 
 /* ---------------------------------------------------------------------------------------------------------------------
  * The global state, defined in the one translation unit that defines FIRE_RT_IMPLEMENTATION (the generated program, or the library of a package for the VM).
  * --------------------------------------------------------------------------------------------------------------------- */
 #ifdef FIRE_RT_IMPLEMENTATION
+#ifdef FIRE_HEAP_STATS
+fire_atomic32 g_heapStrs, g_heapStrUnits;
+#endif
 void (*g_idlePump)(void) = NULL;
 void (*g_idleWait)(int64_t ms) = NULL;
 void (*g_idleWake)(void) = NULL;
@@ -12027,6 +12591,7 @@ TerminateState g_terminate;
 fire_mutex g_thrM, g_reqM, g_mailboxM, g_cancelM;
 #ifdef FIRE_NO_GIL
 DomLock g_dom;
+int32_t g_awayDepth;
 fire_atomic32 g_lentEpoch = {1}, g_lentGraveN;
 LentReader* g_lentReaders = NULL;
 LentGrave* g_lentGraves = NULL;
@@ -12038,6 +12603,7 @@ ChanNode* g_mainChans = NULL;
 fire_mutex g_mainChansM;
 fire_atomic32 g_idleThreads;
 fire_atomic32 g_standstill;
+fire_atomic32 g_fdWaiters;
 int64_t g_endWaitMs = 60000;
 #ifdef FIRE_NO_GIL
 fire_mutex g_targsM;

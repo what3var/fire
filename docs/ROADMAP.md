@@ -32,12 +32,13 @@ Leitlinien:
 | 7 | [Mess-Werkzeug für Größe, Speicher und Typisierung](#16-mess-werkzeug-für-größe-speicher-und-typisierung) | 11, 13 | Entscheidungen über kleine Ziele (DOS: 640 KB) auf Zahlen statt Schätzungen stützen |
 | 7 | [Kleine und alte Ziele](#13-kleine-und-alte-ziele) (Zeigerarten, typisierte Arrays, `#intwidth 32` umgesetzt) | 0, 9 | Mikrocontroller, DOS, Win 3.x, Win9x, NT 3.51-XP: Speicher pro Wert, Breiten, neue Plattformen |
 | 8 | [Scene3D für Spiele](#16-scene3d-für-spiele) | 13 (Ziele, Breiten), 11 (Weglassen) | Spiele bis hinunter auf DOS: Größe zuerst, dann Terrain, Modelle, Animation, Effekte, Physik |
+| 3 | ~~[Volle Qualifikation mit dem Importnamen](#18-volle-qualifikation-mit-dem-importnamen)~~ (umgesetzt) | - | zwei Bibliotheken mit derselben Klasse auf oberster Ebene (spätestens bei JSON) sind heute nicht auseinanderzuhalten |
 
 **Arbeitsreihenfolge (Entscheidung des Benutzers, nach Tasks Schritt 8):**
 
 1. [Arrays statt Byte-Puffer an Natives](#15-arrays-statt-byte-puffer-an-natives) vervollständigen.
 2. Der Rest der laufenden Arbeitsliste: Ebene 2 (typisierte Locals und Felder als C-Typen, 13.9), ~~Besitz ohne Aufruftiefe (`TakeTo` mit C-ABI)~~,
-   ~~schlankere Konstruktoren~~ (beide umgesetzt, 13.9), ~~weniger Value-Kopien (Alias-Slots, dann Zeiger-Argumente/Ergebnisse)~~ (umgesetzt, 13.9), spark: CPU-Last im Leerlauf und der FPS-Einbruch von scene3d.
+   ~~schlankere Konstruktoren~~ (beide erledigt, 13.9), ~~weniger Value-Kopien (Alias-Slots, dann Zeiger-Argumente/Ergebnisse)~~ (umgesetzt, 13.9), spark: CPU-Last im Leerlauf und der FPS-Einbruch von scene3d.
 3. Die kleinen Punkte aus [Kleine und alte Ziele](#13-kleine-und-alte-ziele) ("Dazwischen, klein").
 4. Die Reste aus Generator, Linkage und Größe (Abschnitte 9, 11, 12, 17) - nur, was wirklich Vorteile bringt.
 5. UI zuletzt (Abschnitte 10 und 14).
@@ -263,7 +264,11 @@ Tests: `FIRE_TESTS_ONLY=linkage`. Offen: `"shared"` mit msvc (Exporte der Modul-
 Felder in `class extends` fremder Klassen (der Platz in den Objekten des Programms), benannte Argumente im nativen Programm auf ihren Objekten (die Namen und Vorgaben der Parameter in den Tabellen der Member),
 **die Größe** (vorerst bewusst zurückgestellt: schneller bauen geht vor): mit `static` ist ein Programm noch
 deutlich größer als mit `source` - CLI 2,7 MB statt 226 KB, `ui`-Beispiel 6,5 MB statt 2,3 MB, `print("hi")` 395 KB statt 26 KB (eine Library behält ihre
-Schnittstelle, das Programm legt die Deskriptoren aller Klassen an, die irgendein Code einer Library anlegt - eine Erreichbarkeit über die Modulgrenzen fehlt). Wege:
+Schnittstelle, das Programm legt die Deskriptoren aller Klassen an, die irgendein Code einer Library anlegt - eine Erreichbarkeit über die Modulgrenzen fehlt).
+**Umgesetzt:** die Erreichbarkeit der Klassen über die Modulgrenzen (`MadeBy` in der Schnittstelle, `ReachLibraryClasses`; `Reflect.New` mit Klassennamen als Text
+erkannt): `print("hi")` 514 -> 441 KB, das minimale `ui`-Programm unverändert 9,9 MB (mit `source` 2,46 MB). **Offen:** die Erreichbarkeit der Methoden - die
+Verteiler und Member-Tabellen einer Library zeigen auf alle Methoden ihrer Klassen; dafür müsste das Programm sie anlegen (Tabellen der Implementierungen je
+Name, ein indirekter Aufruf im Verteiler der Library) und die Schnittstelle je Funktion sagen, was sie ruft. Wege:
 die Erreichbarkeit beim Linken über die Modulgrenzen (die Schnittstellendateien sagen, was eine Library von einer anderen braucht; Tabellen und Deskriptoren nur
 für Erreichtes), LTO als Option, ungenutzte Libraries-Teile mit `--gc-sections` (schon an) vollständig wegfallen lassen; Schalter wie Reflection und Probes gelten noch für alle Module (eine Variante je Menge); LTO; ein fertiges `.a`
 aus dem Cache für ESP-IDF; ein Programm, das eine Klasse einer Library neu deklariert, wird mit `source` gebaut.
@@ -375,6 +380,9 @@ vier Stufen gegen die VM ("Weglassen (stripping)" in der nativen Gruppe, mit `st
   kommt, braucht `[Keep]` oder eine kleinere Stufe.
 * Was bleibt, ist beim `ui`-Programm echter Code (`UI.Root`: Ereignisse, Fokus, Popups, Ziehen und Ablegen); kleiner würde es nur durch weniger Code im Package oder ein `ui`, dessen
   Teile (Drag & Drop, Popups) erst beim Benutzen erreicht werden.
+* **Zu prüfen:** das minimale `ui`-Programm (Fenster, Root, ein Label) ist mit der Arbeit von `http-server` (Stand des Merges in `master`) auf 4,06 MB C in
+  Stufe 3 gewachsen (vorher unter 4 MB); der Test erlaubt vorerst bis 5 MB. Herausfinden, was gewachsen ist (z. B. `forge stats` vorher/nachher:
+  Recording des Renderers, Hover/Kontextmenüs, Grafik), und ob es das minimale Programm wirklich braucht - dann die Grenze wieder senken.
 
 ## 12. Bau-Reihenfolge der Quellen von Paket-Natives
 
@@ -712,25 +720,28 @@ Daten-Stack bei XC8), AVR nur mit einem eigenen kleinen Profil.
    Überschreibungen von Paketmethoden, Konstruktoren von Basisklassen), Programme mit Reflection, Plugins und Debug-Builds. `FIRE_DERIVE_LOG=1`
    zeigt die Entscheidungen, `FIRE_NO_DERIVE=1` schaltet es ab.
    **Aus der Arbeitsliste (Punkt 2 der Reihenfolge):** *Besitz ohne Aufruftiefe* war schon umgesetzt (der Besitz-Stack `g_argIn`/`MYARGS`: eine
-   Methode mit `try TakeTo` hat eine C-Schnittstelle, VM und nativ gleich). *Schlankere Konstruktoren:* ein Konstruktor bekommt einen C-Rumpf wie
-   eine Methode; `new X(1.0, 2.0)` ruft ihn mit C-Zahlen ohne Value-Hülle, wenn die Klasse den Konstruktor eindeutig hat (keine benannten oder
-   kopierten Argumente, keine Typargumente). Im Konstruktor gilt `self` von Anfang an als lebendig (eine Prüfung statt einer je Feld), ebenso nach
-   dem ersten Setzen eines Felds von `self`. Auf Zielen, die nach Größe übersetzen (dos16, win16), bleibt der Konstruktor beim Zeiger-Aufruf
-   (`fN_p(&o, &a, ...)`): der C-Rumpf hätte ihn ersetzt und jede Aufrufstelle größer gemacht (gemessen +1 KB). Gemessen (Release): dos16
-   "Scene3D Physics" Code 466 -> 465 KB (scene3d 41 054 -> 40 657, physics 19 017 -> 18 883 Byte); linux "Scene3D Physics" 599 KB gleich
-   (scene3d +64, physics +277 Byte: der C-Rumpf neben der Value-Hülle für `Reflect`/dynamisches `new`), die Vorlage "Desktop" ui 361 096 -> 361 528 Byte.
+   Methode mit `try TakeTo` hat eine C-Schnittstelle, VM und nativ gleich). *Schlankere Konstruktoren:* im Konstruktor gilt `self` von Anfang an als
+   lebendig (eine Prüfung statt einer je Feld), ebenso nach dem ersten Setzen eines Felds von `self` (dos16 "Scene3D Physics": Code 466 -> 465 KB).
+   Versucht und wieder verworfen: C-Rümpfe für Konstruktoren (`new X(1.0, 2.0)` mit C-Zahlen) - weder schneller (3 Mio. `new Vec(x, y, z)` und
+   1 Mio. Objekte mit Unterobjekt: gleich schnell im Rauschen) noch kleiner (linux "Scene3D Physics" +0,3 KB, dos16 +1 KB: die Funktion mit Values
+   vor dem C-Rumpf kostet, was die C-Zahlen sparen).
+   *Ebene 2, Getter:* ein Getter mit `defined`-Rückgabe hat einen C-Rumpf, `obj.X` auf einer bekannten Klasse ruft ihn (NATIVE_BACKEND.md); eine
+   Schleife mit Properties nativ 105 -> 33 ms und 1,1 KB kleiner. Die Properties von scene3d, effects und physics, deren Getter ein getyptes Native
+   liest, sind dafür `defined` (83; die Parameter des Material-Konstruktors und `Body.Dynamic(mass)` mit, damit der Paketcode ohne Befund bleibt;
+   im Beispiel "Scene3D Benchmark" `defined bool direct`). "Scene3D Physics": linux -4 KB, dos16 -0,4 KB; mit den Properties von scene3d nativ
+   62 -> 22 ms; die Vorlage "Desktop" bleibt gleich. Setter mit C-Rumpf versucht und verworfen (eine Schleife mit einem Setter 14 -> 16 ms, -16 Byte).
    *Weniger Value-Kopien:* die Alias-Slots und die Zeigerkonvention (Größenziele) gab es schon (NATIVE_BACKEND.md "Kopien von Values",
    "Zeigerkonvention"); dazu jetzt die C-Rümpfe: ihre Values per Adresse, ihre C-Zahlen per Wert (`fN_c_p(const Value* self_p, Real P0)`), ihre Hülle
    mit Values ganz per Adresse. dos16 "Scene3D Physics" geladen 565 588 -> 564 692 Byte. Ergebnisse gehen schon heute über den Rückgabepuffer des
    Aufrufers (Watcom), dort bleibt nichts zu holen.
    *spark und scene3d:* die CPU-Last von spark im Leerlauf ist nach dem Benutzer wieder weg (gemessen unter Xvfb: ~5 % eines Kerns im Startfenster).
-   Der FPS-Einbruch von scene3d (Windows, von über 60 auf 10-20) ist hier nicht nachzustellen: dasselbe Programm (die Szene des Beispiels "Scene3D
-   Benchmark", Software-Renderer, ohne Fenster, 160x90 / 640x480 / 1280x720) misst mit dem Stand vom 2.11. (2cccf9bb) und heute gleich, in der VM
-   (Release und Debug) wie nativ; mit Fenster unter Linux (X11) und unter Wine (GDI, mingw) ebenso. Offen bleibt der Teil, den es nur unter Windows gibt.
-   Gefunden dabei: der Vulkan-Weg von scene3d (`s3d_gpu_makeSurface`) kennt die Fenster von DirectComposition nicht (`FIRE_NATIVE_DCOMP`, seit
-   Windows 8 jedes Fenster der eigenen Anzeige) - DirectDrawing fällt dort auf das Zurücklesen zurück; graphics hat den Weg schon
-   (`fire_gfx_gpuPresentDcompLocked`: das Bild in die importierte Textur von D3D11). Zu klären: AutoResize auf einem skalierten Bildschirm (die
-   eigene Anzeige ist DPI-bewusst: ein maximiertes Fenster gibt dem Framebuffer die physischen Pixel, SDL gab die logischen).
+   Der FPS-Einbruch von scene3d war vorübergehend: dasselbe Programm misst mit dem Stand vom 2.11. (2cccf9bb) und heute gleich (VM Release und Debug,
+   nativ, X11, Wine), und der Benutzer misst unter Windows (Intel UHD 620, "Scene3D Benchmark", 1280x720) Software 21, Hardware 31, DirectDrawing
+   59 Bilder/s - Software bei 640x480 damit wie früher um 60. Gefunden dabei: DirectDrawing ging unter Windows seit der eigenen Anzeige nicht mehr
+   direkt ins Fenster ("0 straight into the window"): ab Windows 8 ist jedes Fenster eines von DirectComposition (`FIRE_NATIVE_DCOMP`), das der
+   Vulkan-Weg von scene3d nicht kannte. **Jetzt** wie in graphics: das Gerät importiert Texturen von D3D11 (VK_KHR_external_memory_win32, dieselbe
+   LUID), der Presenter zeichnet Szene und Overlay in ein eigenes Bild in der Größe des Framebuffers, kopiert es in die Textur des Fensters und lässt
+   die Brücke des Fensters präsentieren (DirectComposition streckt es auf das Fenster) - übersetzt (mingw, -Wall), unter Windows noch nicht gelaufen.
 
 Für alle neuen Ziele: Zielprofile, Toolchain OpenWatcom (`bios16`/`bios32` auch gcc `-m32 -ffreestanding`, `efi-x64` clang/mingw), eine Plattformschicht pro Familie;
 Tests ohne Fenster über den seriellen Port bzw. die Konsole: DOSBox-X / dosemu2 (`dos16`, `dos32`, Win 3.11), QEMU (`bios16`/`bios32`; `efi-x64` mit der Firmware OVMF),
@@ -764,6 +775,15 @@ Tests ohne Fenster über den seriellen Port bzw. die Konsole: DOSBox-X / dosemu2
   Rücksprung in den Real Mode), **`efi`** (Protokolle der Firmware: GOP, Konsole, Variablen, Zeit), **`xms`** (siehe 3).
 
 **Dazwischen, klein:**
+
+* **Umgesetzt (Wunsch des Benutzers): Bit-Hilfen.** `>>>`/`>>>=` (logischer Shift in der Breite des `int` des Programms, `operator>>>` überladbar),
+  die Klasse `Bits` (PopCount, Leading/TrailingZeros, Rotate, ReverseBytes/Bits, Extract/Insert, die IEEE-Bits von float 64/32/16 - half precision),
+  typisierte Lese- und Schreibzugriffe im Byte-Puffer (`ReadInt8` ... `ReadFloat64`, `Write...`, in der Byte-Reihenfolge des Puffers oder der
+  angegebenen) und schnelle Puffer-Operationen (`Fill`, `CopyTo`, `Slice`, `IndexOf`, `Compare`); VM und nativ bitgleich (auch dos16 in DOSBox-X),
+  der Typprüfer kennt die Ergebnistypen. Doku: language/03-operators.md "Bit functions", 07-arrays-and-lists.md "Reading and writing numbers".
+* **`print` eines float nativ mit einer Stelle zu viel** (gefunden bei den Bit-Hilfen): `print(1.0 / 16777216.0)` gibt in der VM `5.960464477539063E-08`,
+  nativ `5.9604644775390625E-08` - die kürzeste Darstellung, die den Wert wieder ergibt, hat 16 Stellen; nativ werden 17 genommen. Klein, aber VM
+  und nativ sollen gleich drucken.
 
 * **Breiten pro Programm statt pro Prozess.** `Value.Ints32` und `Value.SingleFloats` sind statisch: Übersetzt der Editor ein Programm, während ein anderes mit
   `#intwidth 32` läuft, schneidet er dessen Konstanten ab. Die Breiten gehören zum Programm und werden über ein Objekt weitergereicht (das Zahlenmodell des Programms:
@@ -1017,7 +1037,9 @@ ohne Values). Dabei fiel ein Generatorfehler auf (Value-Hülle unter `fN` statt 
 1c2af40 grundsätzlich gelöst: ein Programm, das die Aufruftiefe zählt, hat keine C-Rümpfe. scene3d-Programme zählten sie damals immer (`Scene.Add` nimmt mit
 `try TakeTo`; seit dem Besitz-Stack auf `targets` nicht mehr: `try TakeTo` geht mit C-Rümpfen) - `defined` war hier darum damals neutral (dos16 431 752 -> 431 766 Byte; nativ und VM ohne messbaren Unterschied). **Nicht** übernommen:
 die Handles als `defined int h` (+2,6 KB auf dos16: sie gehen fast nur an Natives, die Values nehmen, und werden dafür neu eingepackt) und die übrigen
-Eigenschaften (keine Änderung: Accessoren bekommen keinen C-Rumpf). Lohnen würde es sich, wenn die Natives C-Zahlen nehmen (`__S3DGetF(int, int)`) und
+Eigenschaften (keine Änderung: Accessoren bekamen keinen C-Rumpf - seit die Getter einen haben, sind die 83 Properties von scene3d, effects und
+physics, deren Getter ein getyptes Native liest, `defined`: "Scene3D Physics" linux 797 360 -> 793 264 Byte, dos16 geladen 564 692 -> 564 244, eine
+Schleife mit Properties nativ 62 -> 22 ms). Lohnen würde es sich, wenn die Natives C-Zahlen nehmen (`__S3DGetF(int, int)`) und
 C-Rümpfe auch neben dem Zählen der Aufruftiefe gingen - Punkte für `targets`. `FIRE_TESTS_ONLY=scene3d` prüft das dos16-C weiter mit.
 
 **Größe nach M5 (gemessen mit `forge build --stats`, dos16, ein Programm mit Szene, Boden, Ball-Körper, Kamera im schlanken Renderer, 60 Bilder):**
@@ -1084,10 +1106,37 @@ Die Messungen, die bisher von Hand liefen (Linker-Map auswerten, erzeugtes C dur
 **Umgesetzt (erste Stufe):** `forge build ... --engine native --stats` (Linkage `source`, Open Watcom, gcc, clang): Code nach Herkunft aus der Map (erzeugt je Modul,
 Hilfsfunktionen des Generators, Laufzeit, Plattform, C je Paket, C-Bibliothek), Daten, Typisierung je Modul (C-Schnittstelle, Parameter, Variablen, Stack-Slots
 mit C-Schatten), die Gründe ohne C-Schnittstelle, die größten Funktionen mit ihrem fire-Namen, bei DOS der Speicher zum Laden. Bericht im Log und in
-`<programm>.stats.txt`/`.json` (die Map daneben: `.map`). Offen: der Heap zur Laufzeit, der Vergleich zweier Builds, die Linkage `static`.
+`<programm>.stats.txt`/`.json` (die Map daneben: `.map`). **Umgesetzt seitdem:** der Vergleich zweier Builds (`forge stats vorher.stats.json nachher.stats.json`:
+Größe, Code nach Herkunft, Daten, Module, die Funktionen, die sich am meisten geändert haben) und die Linkage `static` (der Code jedes Library-Moduls aus der Map nach
+der Bibliothek: Member, Hilfsfunktionen, Kopie der Runtime); die verworfenen Sections der GNU-Map zählen nicht mehr mit (vorher war der Code zu groß).
+Der Heap zur Laufzeit: ein Build mit `--stats` (Linkage `source`) berichtet ihn mit `FIRE_STATS=1` am Ende des Hauptprogramms, bevor die Globals gehen
+(`fire_heapReport`: die Slot-Tabelle führt dafür die Köpfe - Objekte mit ihren Value-Slots nach Inhalt und gepackten Bytes, Arrays mit Value-Elementen und
+gepackten, Puffer, Lambdas, Strings, der Heap der C-Bibliothek mit glibc). Offen: der Bericht auf Abruf (aus dem Programm), mit `static`.
 
 Ausgangswerte (von Hand gemessen, Beispiel "Scene3D Physics", dos16, Watcom `-Os`, `eliminate`): EXE 760 KB, Lademodul 696 KB + 33 KB Mindestspeicher -
 **passt nicht in 640 KB**. Code: erzeugt 239 KB (davon `fire_main` 44 KB für 139 Zeilen, `Camera.Render` 17 KB für 30), Paket-C ~190 KB, Laufzeit 84 KB,
 C-Bibliothek 65 KB, FAR_DATA 48 KB. Ein Value von 8 statt 16 Byte (nur übersetzt, nicht lauffähig) spart 24 KB (3 %); ohne gezählte Aufruftiefe 27 KB, der
 C-ABI greift dann bei 3 von 227 Funktionen. Heap nach 200 Bildern: 32 fire-Objekte mit 103 Value-Slots (1,6 KB), 0 gepackte Bytes - bei 2,4 MB Heap
 insgesamt (davon 1 MB Framebuffer, der Rest Engine und Laufzeit).
+
+## 18. Volle Qualifikation mit dem Importnamen
+
+**Umgesetzt** (docs/tools/projects.md "Names of libraries"): Bibliotheken eines Projekts und Pakete, die keine Standardpakete sind. Offen: eine Bibliothek, die für
+sich selbst gebaut wird (ihre eigenen Tests), sieht ihre Namen nur kurz (`Parser`, nicht `LibA.Parser`); Vervollständigung und Hover im Editor zeigen die vollen
+Namen noch nicht eigens an.
+
+Zwei Bibliotheken (Pakete, Projekte), die beide eine Klasse oder ein Enum gleichen Namens auf oberster Ebene haben (spätestens bei JSON: `Json`,
+`Parser`, `Value`), lassen sich heute nicht zusammen benutzen. Gewünscht: der Importname gehört zur vollen Qualifikation - `Raser.Core.Info`,
+`Json.Parser` - so dass die Deklarationen auf oberster Ebene auseinandergehalten werden können.
+
+Entwurf:
+
+* Eine Deklaration einer Bibliothek außerhalb jedes `namespace` liegt in einem impliziten Namensraum mit dem Importnamen der Bibliothek; eine,
+  die schon in einem Namensraum liegt, der mit dem Importnamen beginnt, bleibt, wie sie ist (`namespace Raser.Core { ... }` wird nicht doppelt).
+* `#import "X"` macht die Namen von X außerdem kurz erreichbar (wie ein `#using X`). Haben zwei importierte Bibliotheken denselben kurzen Namen,
+  ist er mehrdeutig: ein Fehler, der beide vollen Namen nennt (der eigene Code und die Bibliothek selbst finden ihre eigenen Namen zuerst, wie bei
+  Namensräumen heute).
+* Folgen, die mitgehen müssen: die Namen in Meldungen, Reflection (`Type.Of`, `Reflect.New("...")`), JSON-Typnamen, die C-Namen im nativen
+  Backend und in den Modulen (Linkage static), der Editor (Vervollständigung, Hover). Die Standardpakete behalten ihre Namen (sie sind
+  `standard`: ihre Deklarationen bleiben global), damit `Framebuffer`, `DateTime` usw. sich nicht ändern.
+

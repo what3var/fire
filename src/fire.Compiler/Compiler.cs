@@ -634,7 +634,7 @@ namespace fire.Compiler
                 };
             }
 
-            return new CompiledProgram { TopLevel = compiler._chunk, Classes = classes, ExternSignatures = externSignatures };
+            return new CompiledProgram { TopLevel = compiler._chunk, Classes = classes, ExternSignatures = externSignatures, Enums = new Dictionary<string, EnumType>(compiler._enumTypes, StringComparer.Ordinal) };
         }
 
         // -----------------------------------------------------------
@@ -828,7 +828,7 @@ namespace fire.Compiler
         private static void MarkKeepAndSerializable(RuntimeClass rc, ClassDecl cd)
         {
             static bool Has(IReadOnlyList<AttributeDecl>? attributes, string name) => attributes?.Any(a => a.Name == name) == true;
-            rc.Keep = Has(cd.Attributes, "Keep") || Has(cd.Attributes, "Remote") || Has(cd.Attributes, "Page");   // ([Remote], [Page]: http.rpc / http.pages make and call it by its name)
+            rc.Keep = Has(cd.Attributes, "Keep") || Has(cd.Attributes, "Remote") || Has(cd.Attributes, "Page") || Has(cd.Attributes, "Table") || Has(cd.Attributes, "Driver") || Has(cd.Attributes, "Migration");   // ([Remote], [Page]: http.rpc / http.pages make and call it by its name; [Table], [Driver], [Migration]: data reads and makes it by reflection)
             if (Has(cd.Attributes, "NotSerializable")) rc.NotSerializable = true;
             rc.NoCopy = Has(cd.Attributes, "NoCopy");
             foreach (var member in cd.Members)
@@ -1038,7 +1038,10 @@ namespace fire.Compiler
                             // (see RunStaticInitializers, called
                             // directly after CompileClasses in Compile()).
                             if (fd.IsStatic)
+                            {
                                 rc.StaticFields.Add((fd.Name, fieldInit));
+                                if (fd.IsReadonly) (rc.ReadonlyStatics ??= new HashSet<string>(StringComparer.Ordinal)).Add(fd.Name);
+                            }
                             else
                                 rc.Fields.Add((fd.Name, fieldInit));
                             // SPEC "Unit declarations": this is checked
@@ -1239,6 +1242,22 @@ namespace fire.Compiler
                     inner._chunk.EmitU16(0);
                     inner._chunk.EmitU16((ushort)i);
                     EmitWidthIfNeeded(inner, code);
+                    inner._chunk.EmitOp(OpCode.StoreLocal);
+                    inner._chunk.EmitU16(0);
+                    inner._chunk.EmitU16((ushort)i);
+                    inner._chunk.EmitOp(OpCode.Pop);
+                }
+
+            // a parameter declared as a typed array or a buffer (`int a[]`, `byte b[]`, `word w[]`): like a variable - an array becomes typed or a buffer,
+            // anything else but undefined is the exception (SPEC 8.4.2); the native generator then knows what it holds
+            for (int i = 0; i < parms.Count; i++)
+                // (one with a unit, `float v[] : m`: its unit check below converts the elements, as before)
+                if (!parms[i].ByRef && parms[i].ArrayRanks.Count > 0 && parms[i].Type?.UnitDemand == null && parms[i].Type?.ArrayWidthCode(parms[i].ArrayRanks.Count) is { } arrayCode and not 0)
+                {
+                    inner._chunk.EmitOp(OpCode.LoadLocal);
+                    inner._chunk.EmitU16(0);
+                    inner._chunk.EmitU16((ushort)i);
+                    EmitWidthIfNeeded(inner, arrayCode);
                     inner._chunk.EmitOp(OpCode.StoreLocal);
                     inner._chunk.EmitU16(0);
                     inner._chunk.EmitU16((ushort)i);
@@ -1547,6 +1566,7 @@ namespace fire.Compiler
             return new FunctionProto(inner._chunk, parms.Count, access, CompileParamDefaults(rc, parms), isStatic)
             {
                 RefMask = RefMaskOf(parms), ParamTypes = inner.OverloadTypesOf(parms, rc), TypeParamCount = typeParams?.Count ?? 0, ParamNames = parms.Select(p => p.Name).ToArray(),
+                ReadsOnly = rc != null && !isStatic && accessor != 2 && ReadingMethods.Of(parms, body),
             };
         }
 
@@ -2594,6 +2614,16 @@ namespace fire.Compiler
             {
                 case LiteralExpr lit:
                     EmitLoadConst(_wideLiteral != 0 && lit.Value.Kind == ValueKind.Int && !lit.Value.IsEnum ? lit.Value.WithWide((byte)_wideLiteral) : lit.Value);
+                    break;
+
+                // `int.Bits`, `x.Bits` of a value (SPEC 8.2): the width the type checker found - a constant (the value itself is only evaluated)
+                case TypeBitsExpr tb:
+                    EmitLoadConst(Value.MakeInt(TypeChecker.BitsOf.TryGetValue(tb, out var typeBits) ? typeBits.Value : tb.Width ?? 64));
+                    break;
+                case MemberExpr bitsOf when bitsOf.Name == "Bits" && TypeChecker.BitsOf.TryGetValue(bitsOf, out var valueBits):
+                    CompileExpr(bitsOf.Target);
+                    _chunk.EmitOp(OpCode.Pop);
+                    EmitLoadConst(Value.MakeInt(valueBits.Value));
                     break;
 
                 case IdentifierExpr id:
@@ -4078,6 +4108,7 @@ namespace fire.Compiler
                 BinaryOp.BitXor => OpCode.BitXor,
                 BinaryOp.ShiftLeft => OpCode.ShiftLeft,
                 BinaryOp.ShiftRight => OpCode.ShiftRight,
+                BinaryOp.ShiftRightLogical => OpCode.ShiftRightLogical,
                 BinaryOp.Eq => OpCode.Eq,
                 BinaryOp.NotEq => OpCode.NotEq,
                 BinaryOp.Lt => OpCode.Lt,

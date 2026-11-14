@@ -196,6 +196,147 @@ static class DiagnosticTests
             finally { try { Directory.Delete(dir, true); } catch (IOException) { } }
         }
 
+        // ---- a data model (.fdata): its mistakes with their lines; in a project it is compiled without #include ----
+        {
+            const string bad = "{\n  \"entities\": [\n    { \"name\": \"Person\",\n      \"fields\": [\n        { \"name\": \"name\", \"type\": \"text\" },\n        { \"name\": \"class\", \"type\": \"int\" }\n      ] },\n    { \"name\": \"Person\", \"fields\": [ { \"name\": \"id\", \"type\": \"int\", \"key\": true } ] },\n    { \"name\": \"Order\", \"fields\": [ { \"name\": \"id\", \"type\": \"float\", \"key\": true } ] }\n  ],\n  \"relations\": [\n    { \"kind\": \"one-to-two\", \"from\": \"Person\", \"to\": \"Order\" },\n    { \"kind\": \"one-to-many\", \"from\": \"Person\", \"to\": \"Nobody\", \"navigation\": \"x\" }\n  ]\n}\n";
+            string found = "";
+            try { fire.UI.Markup.MarkupFiles.GenerateScript("Bad.fdata", bad); }
+            catch (fire.UI.Markup.MarkupException ex) { found = string.Join("\n", ex.Diagnostics.Select(d => d.ToString())); }
+            Check("Datenmodell: die Fehler mit ihren Zeilen (doppelt, unbekannter Typ, Schluesselwort, kein Schluessel, falscher Schluesseltyp, unbekannte Art und Entitaet einer Beziehung)",
+                found.Contains("line 8: 'Person' is declared twice.") && found.Contains("line 5: The field 'Person.name' has the type 'text'") && found.Contains("line 6: The field 'class' of 'Person' needs a name")
+                && found.Contains("line 3: The entity 'Person' has no key") && found.Contains("line 9: The key 'Order.id' is an int or a string") && found.Contains("line 12: The kind of a relation is one-to-one, one-to-many or many-to-many")
+                && found.Contains("line 13: The relation of 'Person' and 'Nobody' needs two entities"), found);
+            string dir = Path.Combine(Path.GetTempPath(), "fire-fdata-" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(dir);
+            try
+            {
+                File.WriteAllText(Path.Combine(dir, "App.fireproj"), "{ \"format\": 1, \"name\": \"App\", \"type\": \"exe\" }");
+                File.WriteAllText(Path.Combine(dir, "Shop.fdata"), "{ \"namespace\": \"Shop\", \"naming\": { \"tables\": \"snake_plural\" }, \"entities\": [ { \"name\": \"OrderLine\", \"fields\": [ { \"name\": \"id\", \"type\": \"int\", \"key\": true }, { \"name\": \"text\", \"type\": \"string\" } ] } ] }");
+                File.WriteAllText(Path.Combine(dir, "main.fire"), "#import \"data.memory\"\nvar db = new Data.Connection(\"memory:\")\nvar ctx = new Shop.Context(db)\nctx.Ensure()\nvar l = new Shop.OrderLine()\nl.text = \"x\"\ndb.Insert(l)\nif (Shop.Model.Tables()[0] == \"order_lines\" && ctx.OrderLines.Count() == 1) { terminate(7) }\nterminate(1)\n");
+                var outW = new StringWriter(); var errW = new StringWriter();
+                int code = CommandLineRunner.Run(new[] { "run", Path.Combine(dir, "App.fireproj") }, outW, errW);
+                Check("Datenmodell: ein .fdata im Projekt gehoert ohne #include dazu (Model, Context, Tabellenname snake_plural)", code == 7, $"{code} {errW}");
+            }
+            finally { try { Directory.Delete(dir, true); } catch (IOException) { } }
+        }
+
+        // ---- the data designer (spark): the model edited, its DDL, a database made from it and read back as a model, the migration it lacks ----
+        {
+            var m = new fire.UI.Markup.DataModelDocument { Namespace = "Shop", TableNaming = "snake_plural" };
+            var customer = m.AddEntity("Customer", 40, 40);
+            var name = m.AddField(customer.Fields); name.Name = "fullName"; name.Length = 100; name.Required = true;
+            var order = m.AddEntity("Order", 320, 40);
+            var total = m.AddField(order.Fields, "float"); total.Name = "total";
+            var level = m.AddEnum("Level"); m.AddField(customer.Fields, "Level").Name = "level";
+            m.AddRelation("one-to-many", "Customer", "Order");
+            bool renamed = m.Rename("Order", "Purchase") && !m.Rename("Customer", "Level");
+            var back = fire.UI.Markup.DataModelDocument.Parse(m.ToJson());
+            Check("Designer: Bearbeiten (Entitaet, Feld, Enum, Beziehung, Umbenennen mit Beziehung und Platz) und die Datei wieder lesen",
+                renamed && back.ToJson() == m.ToJson() && back.Relations[0].To == "Purchase" && back.Relations[0].Navigation == "purchases" && back.Relations[0].Inverse == "customer"
+                && back.Places.ContainsKey("Purchase") && back.Problems().Count == 0 && back.GeneratedCode()?.Contains("class Purchase") == true, m.ToJson());
+            var (ddl, ddlError) = DataModelTools.Ddl(m.ToJson(), "Shop.fdata", 0);
+            var (msDdl, msError) = DataModelTools.Ddl(m.ToJson(), "Shop.fdata", 2);
+            Check("Designer: die DDL des Modells fuer SQLite und SQL Server (ohne Datenbank)",
+                ddlError == null && ddl.Contains("CREATE TABLE") && ddl.Contains("\"purchases\"") && ddl.Contains("\"customerId\" INTEGER") && msError == null && msDdl.Contains("[customers]"), ddl + ddlError + msDdl + msError);
+            string dir = Path.Combine(Path.GetTempPath(), "fire-designer-" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(dir);
+            try
+            {
+                string url = "sqlite:" + Path.Combine(dir, "app.db");
+                var (made, madeError) = DataModelTools.CreateDatabase(m.ToJson(), "Shop.fdata", url, "", "");
+                var (imported, importError) = DataModelTools.Import(url, "", "", "Back");
+                var model = importError == null ? fire.UI.Markup.DataModelDocument.Parse(imported) : new fire.UI.Markup.DataModelDocument();
+                Check("Designer: die Datenbank aus dem Modell machen und wieder als Modell lesen (Entitaeten, one-to-many aus customer_id)",
+                    madeError == null && made.Contains("tables: 2") && importError == null && model.Namespace == "Back" && model.Entities.Count == 2
+                    && model.Relations.Any(r => r.Kind == "one-to-many" && r.To.Contains("urchase")) && model.Problems().Count == 0, made + madeError + imported + importError);
+                File.WriteAllText(Path.Combine(dir, "App.fireproj"), "{ \"format\": 1, \"name\": \"App\", \"type\": \"exe\" }");
+                var later = fire.UI.Markup.DataModelDocument.Parse(m.ToJson());
+                var email = later.AddField(later.Entity("Customer")!.Fields); email.Name = "email"; email.Length = 200;
+                File.WriteAllText(Path.Combine(dir, "Shop.fdata"), later.ToJson());
+                File.WriteAllText(Path.Combine(dir, "main.fire"), "#import \"data.sqlite\"\nprint(\"app\")\n");
+                string? project = DataModelTools.ProjectOf(Path.Combine(dir, "Shop.fdata"));
+                var (text, error, written) = DataModelTools.WriteMigration(project, Path.Combine(dir, "Shop.fdata"), url, "", "", "email");
+                Check("Designer: die Migration, die der Datenbank fehlt, ins Projekt schreiben (Migrations/MigrationN.fire)",
+                    project != null && error == null && written != null && File.Exists(written) && Path.GetFileName(Path.GetDirectoryName(written)) == "Migrations" && text.Contains("email") && text.Contains("AddColumn"), text + error + written);
+            }
+            finally { try { Directory.Delete(dir, true); } catch (IOException) { } }
+        }
+
+        // ---- the data model with one-to-one, a view, checks and types per database; the designer's diagrams and its clipboard ----
+        {
+            const string model = "{ \"namespace\": \"Office\", \"entities\": [\n" +
+                "  { \"name\": \"Person\", \"checks\": [\"length(name) > 0\", \"age < 200\"], \"fields\": [ { \"name\": \"id\", \"type\": \"int\", \"key\": true }, { \"name\": \"name\", \"type\": \"string\" }, { \"name\": \"age\", \"type\": \"int\", \"check\": \"age >= 0\" }, { \"name\": \"data\", \"type\": \"string\", \"dbType\": { \"postgres\": \"jsonb\", \"*\": \"TEXT\" } } ] },\n" +
+                "  { \"name\": \"Elders\", \"view\": \"SELECT id, name FROM Person WHERE age >= 65\", \"fields\": [ { \"name\": \"id\", \"type\": \"int\" }, { \"name\": \"name\", \"type\": \"string\" } ] },\n" +
+                "  { \"name\": \"Passport\", \"fields\": [ { \"name\": \"id\", \"type\": \"int\", \"key\": true }, { \"name\": \"number\", \"type\": \"string\" } ] } ],\n" +
+                "  \"relations\": [ { \"kind\": \"one-to-one\", \"from\": \"Person\", \"to\": \"Passport\", \"navigation\": \"passport\", \"inverse\": \"holder\" } ],\n" +
+                "  \"diagrams\": [ { \"name\": \"Main\", \"shapes\": { \"Person\": { \"x\": 40, \"y\": 40 } } }, { \"name\": \"Travel\", \"shapes\": { \"Passport\": { \"x\": 300, \"y\": 60 } } } ] }\n";
+            string code = "";
+            try { code = fire.UI.Markup.DataModelGenerator.Generate(model, "Office.fdata"); }
+            catch (fire.UI.Markup.MarkupException ex) { code = string.Join("\n", ex.Diagnostics.Select(d => d.ToString())); }
+            Check("Datenmodell: one-to-one ([HasOne] und [BelongsTo] auf einem eindeutigen Fremdschluessel), View, Checks von Spalte und Tabelle, dbType je Datenbank; Views zuletzt in Model.Types",
+                code.Contains("[HasOne \"personId\"] Passport passport") && code.Contains("[Unique] int personId") && code.Contains("[BelongsTo \"personId\"] Person holder")
+                && code.Contains("[View \"SELECT id, name FROM Person WHERE age >= 65\"]") && code.Contains("[Check \"(length(name) > 0) AND (age < 200)\"]")
+                && code.Contains("[Check \"age >= 0\"]") && code.Contains("[DbType \"postgres: jsonb; *: TEXT\"]") && code.Contains("[\"Office.Person\", \"Office.Passport\", \"Office.Elders\"]"), code);
+            var (pgDdl, pgError) = DataModelTools.Ddl(model, "Office.fdata", DataModelTools.Dialects.ToList().FindIndex(d => d.Name == "PostgreSQL"));
+            Check("Datenmodell: die DDL fuer PostgreSQL mit jsonb, CHECK, der View nach den Tabellen",
+                pgError == null && pgDdl.Contains("\"data\" jsonb") && pgDdl.Contains("CHECK (age >= 0)") && pgDdl.Contains("CHECK ((length(name) > 0) AND (age < 200))")
+                && pgDdl.IndexOf("CREATE VIEW \"Elders\"") > pgDdl.IndexOf("CREATE TABLE \"Passport\""), pgDdl + pgError);
+            var doc = fire.UI.Markup.DataModelDocument.Parse(model);
+            var again = fire.UI.Markup.DataModelDocument.Parse(doc.ToJson());
+            bool kept = again.ToJson() == doc.ToJson() && again.Diagrams.Count == 2 && again.Diagrams[1].Name == "Travel" && again.Shows(1, "Passport") && !again.Shows(1, "Person") && again.Shows(0, "Elders")
+                && again.Entity("Person")!.Checks.Count == 2 && again.Entity("Person")!.Fields[3].DbType == "postgres: jsonb; *: TEXT" && again.Entity("Elders")!.View != null && again.Relations[0].Kind == "one-to-one";
+            string copied = doc.CopyText("Person")!;
+            var pasted = doc.Paste(copied, 500, 40, 1);
+            bool clip = pasted.Count == 1 && pasted[0] == "Person2" && doc.Entity("Person2")!.Fields.Count == 4 && doc.Shows(1, "Person2") && doc.Places.ContainsKey("Person2") && doc.Relations.Count == 1;
+            doc.Rename("Passport", "Pass");
+            doc.Remove("Person2");
+            bool renamed = doc.Diagrams[1].Shapes.ContainsKey("Pass") && !doc.Diagrams[1].Shapes.ContainsKey("Person2") && doc.Relations[0].To == "Pass" && doc.Relations[0].Navigation == "pass" && doc.Problems().Count == 0;
+            Check("Designer: mehrere Diagramme (Main zeigt alles, die anderen ihre Kaesten), Kopieren und Einfuegen mit freiem Namen, Umbenennen und Loeschen in allen Diagrammen",
+                kept && clip && renamed, $"{kept} {clip} {renamed}\n{doc.ToJson()}");
+        }
+
+        // ---- forge data: the migrations of a program on a database (SQLite in a file) - the program's classes run, its top level does not ----
+        {
+            string dir = Path.Combine(Path.GetTempPath(), "fire-data-" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(dir);
+            try
+            {
+                string prog = Path.Combine(dir, "shop.fire");
+                File.WriteAllText(prog, "#import \"data.sqlite\"\n[Migration 1, \"people\"]\nclass M1 {\n    undefined Up(Data.Migrator m) { m.CreateTable(\"people\", [m.Key(\"id\"), m.Column(\"name\", \"string\", 100, true)]) }\n    undefined Down(Data.Migrator m) { m.DropTable(\"people\") }\n}\n[Table \"people\"]\nclass Person {\n    [Key] int id\n    [Required] [Length 100] string name\n    [Unique] [Length 200] string email\n    construct() { }\n}\nprint(\"the top level\")\n");
+                string url = "sqlite:" + Path.Combine(dir, "app.db");
+                (int Code, string Out, string Err) Data(params string[] a)
+                {
+                    var o = new StringWriter(); var e = new StringWriter();
+                    int code = CommandLineRunner.Run(new[] { "data" }.Concat(a).ToArray(), o, e);
+                    return (code, o.ToString(), e.ToString());
+                }
+                var status = Data("status", prog, "--url", url);
+                var early = Data("diff", prog, "--url", url);
+                var migrate = Data("migrate", prog, "--url", url);
+                Check("forge data: status, diff vor den Migrationen abgelehnt, migrate (das Programm selbst laeuft nicht)", status.Code == 0 && status.Out.Contains("1  pending  people  (M1)")
+                    && early.Code == 1 && early.Err.Contains("have not run on this database") && migrate.Code == 0 && migrate.Out.Contains("migrations run: 1, the database is at 1") && !migrate.Out.Contains("top level"),
+                    status.Out + status.Err + early.Err + migrate.Out + migrate.Err);
+                string m2 = Path.Combine(dir, "m2.fire");
+                var diff = Data("diff", prog, "--url", url, "--title", "email", "-o", m2);
+                string written = File.Exists(m2) ? File.ReadAllText(m2) : "";
+                Check("forge data diff: die fehlende Migration als fire-Code (neue Spalte, eindeutiger Index, Down rueckwaerts)", diff.Code == 0 && written.Contains("[Migration 2, \"email\"]")
+                    && written.Contains("m.AddColumn(\"people\", m.Column(\"email\", \"string\", 200))") && written.Contains("m.CreateIndex(\"ix_people_email\", \"people\", \"email\", true)")
+                    && written.IndexOf("m.DropIndex", StringComparison.Ordinal) < written.IndexOf("m.DropColumn", StringComparison.Ordinal), written + diff.Err);
+                File.AppendAllText(prog, written);
+                var again = Data("migrate", prog, "--url", url);
+                var nothing = Data("diff", prog, "--url", url);
+                var import = Data("import", "--url", url, "--namespace", "Shop");
+                var down = Data("migrate", prog, "--url", url, "--to", "0");
+                var after = Data("status", prog, "--url", url);
+                var bogus = Data("bogus", "--url", url);
+                Check("forge data: die neue Migration laeuft, danach kein Unterschied; import gibt Klassen; --to 0 nimmt alles zurueck; ein falscher Befehl ist Exitcode 2",
+                    again.Out.Contains("the database is at 2") && nothing.Out.Contains("has everything") && import.Out.Contains("namespace Shop {") && import.Out.Contains("[Table \"people\"]")
+                    && import.Out.Contains("[Length 200] [Unique] string email") && down.Out.Contains("migrations run: 2, the database is at 0") && after.Out.Contains("2  pending  email")
+                    && bogus.Code == CommandLineRunner.ExitUsage, again.Out + again.Err + nothing.Out + import.Out + import.Err + down.Out + down.Err + after.Out);
+            }
+            finally { try { Directory.Delete(dir, true); } catch (IOException) { } }
+        }
+
         // ---- the command line prints them ----
         {
             string dir = Path.Combine(Path.GetTempPath(), "fire-diag-" + Guid.NewGuid().ToString("N"));
@@ -219,6 +360,45 @@ static class DiagnosticTests
                 Check("Befehlszeile: auch ein Fehler im Text des Programms (Lexer) ist eine Meldung mit Code, kein Absturz", codeL == CommandLineRunner.ExitScriptError && errL.ToString().Contains("error E1"), errL.ToString());
             }
             finally { try { Directory.Delete(dir, true); } catch (IOException) { } }
+        }
+
+        // ---- Ruhrpott-Raser: a keyword where a name is expected, static initialisers in order, a temporary kept by a constructor, lines going on ----
+        {
+            foreach (var (src, word, code) in new[] { ("int where = 3\nprint(where)", "where", "E3057"), ("class A {\n    static int F(int from) { return from }\n}", "from", "E3145"),
+                                                       ("var base = 1", "base", "E3055"), ("class A {\n    int under\n}", "under", "E3137") })
+            {
+                var (kw, _) = Compile(src);
+                Check($"Schluesselwort als Name: die Meldung nennt '{word}' und behaelt ihren Code", kw.Count == 1 && kw[0].Code == code && kw[0].Message.Contains($"'{word}' is a keyword and cannot be a name"), string.Join("\n", kw.Select(d => d.ToLogLine())));
+            }
+            var (later, _) = Compile("class A {\n    static int x = B.y + 1\n}\nclass B {\n    static int y = 5\n}\nprint(A.x)");
+            Check("Statische Initialisierer: ein Feld, dessen Initialisierer spaeter laeuft, ist ein Fehler (E4074)", later.Count == 1 && later[0].Code == "E4074" && later[0].Line == 2 && later[0].Message.Contains("'B.y'"), string.Join("\n", later.Select(d => d.ToLogLine())));
+            var (self, _) = Compile("class A {\n    static int x = x + 1\n}\nprint(A.x)");
+            Check("Statische Initialisierer: das Feld selbst ist ein Fehler (E4073)", self.Count == 1 && self[0].Code == "E4073", string.Join("\n", self.Select(d => d.ToLogLine())));
+            var (inOrder, inOrderOut) = Compile("class A {\n    static int a = 2\n    static int b = A.a * 3\n    static any f = () => B.late\n    static int c = A.Twice()\n    static int Twice() { return A.a * 2 }\n}\nclass B {\n    static int late = A.b + 1\n}\nany g = A.f\nprint(A.b + \" \" + A.c + \" \" + B.late + \" \" + g())");
+            Check("Statische Initialisierer: frueher gesetzte Felder, Methoden und Lambdas bleiben erlaubt", inOrder.Count == 0 && inOrderOut == "6 4 7 7", string.Join("\n", inOrder.Select(d => d.ToLogLine())) + inOrderOut);
+            const string classes = "class Sample {\n    int v = 7\n    static Sample Make() { return new Sample() }\n}\nclass Holder {\n    Sample s\n    construct(Sample s) { this.s = s }\n}\nclass Keeper {\n    Sample s\n    construct(Sample s) { this.s = try take s }\n}\n";
+            var (temp, _) = Compile(classes + "var h = new Holder(Sample.Make())\nvar h2 = new Holder(new Sample())\nprint(1)");
+            Check("TC031: ein Temporaerwert, den der Konstruktor ohne take in einem Feld behaelt (new und Aufruf, der ein neues Objekt gibt)",
+                temp.Count == 2 && temp.All(d => d.Code == "TC031" && !d.IsError) && temp[0].Line == 13 && temp[0].Message.Contains("'Sample.Make(...)'") && temp[1].Message.Contains("'new Sample(...)'") && temp[0].Message.Contains("this.s = try take s"),
+                string.Join("\n", temp.Select(d => d.ToLogLine())));
+            var (kept, keptOut) = Compile(classes + "var k = new Keeper(new Sample())\nvar mine = new Sample()\nvar h = new Holder(mine)\nprint(k.s.v + h.s.v)");
+            Check("TC031: kein Hinweis, wenn der Konstruktor nimmt oder das Argument eine Variable ist", kept.Count == 0 && keptOut == "14", string.Join("\n", kept.Select(d => d.ToLogLine())) + keptOut);
+            var (lines, linesOut) = Compile("var list = new List<int>([5, 3, 8, 1])\nlist.\n    Sort()\nvar n = list\n    .Count\nvar m = list?.Count\n    + 1\n    - 2\nbool big = n\n    > 3\n    && n < 10\n    || false\nint x = 1\nx++\nprint(n + \" \" + m + \" \" + big + \" \" + x + \" \" + list[0])");
+            // JSON reads an enum of the running program, not the last one of that name in the process (two programs, each with its own `enum Mode`)
+            const string first = "#import \"json\"\nenum Mode { Slow, Fast }\nclass Car { Mode mode = Mode.Slow }\nCar c = Json.Deserialize<Car>(\"{\\\"mode\\\": \\\"Fast\\\"}\")\nprint(c.mode)";
+            const string second = "#import \"json\"\nenum Mode { Off, On, Auto }\nclass Lamp { Mode mode = Mode.Off }\nLamp l = Json.Deserialize<Lamp>(\"{\\\"mode\\\": \\\"Auto\\\"}\")\nprint(l.mode)";
+            var (firstDiag, firstOut) = Compile(first);
+            var (secondDiag, secondOut) = Compile(second);
+            var (againDiag, againOut) = Compile(first);
+            Check("JSON: ein Enum-Name gilt im laufenden Programm, nicht prozessweit (zwei Programme mit eigenem 'Mode')", firstOut == "Fast" && secondOut == "Auto" && againOut == "Fast",
+                string.Join("\n", firstDiag.Concat(secondDiag).Concat(againDiag).Select(d => d.ToLogLine())) + $" | {firstOut} | {secondOut} | {againOut}");
+            var (toBuffer, toBufferOut) = Compile("class B {\n    static undefined Fill(byte b[]) { b[0] = 7 }\n}\nint ints[2] = [1, 2]\nB.Fill(ints)\nB.Fill([3, 4])\nbyte buf[2]\nB.Fill(buf)\nprint(ints[0] + \" \" + buf[0])");
+            Check("TC032: ein Array einer Variablen an einen byte-Parameter wird ein neuer Puffer (Warnung), ein Literal und ein Puffer nicht", toBuffer.Count == 1 && toBuffer[0].Code == "TC032" && !toBuffer[0].IsError && toBuffer[0].Line == 5 && toBufferOut == "1 7", string.Join("\n", toBuffer.Select(d => d.ToLogLine())) + toBufferOut);
+            var (withLines, withOut) = Compile("class Point {\n    int x\n    int y\n}\nvar p = new Point()\nwith p {\n    .x = 10\n    .y = 20\n}\nwith p {\n    print(.x + .y)\n}");
+            Check("Zeilen: im with-Block beginnt ein '.' am Zeilenanfang eine neue Anweisung (.x = 10 / .y = 20)", withLines.Count == 0 && withOut == "30", string.Join("\n", withLines.Select(d => d.ToLogLine())) + withOut);
+            var (shadow, shadowOut) = Compile("class Info { static string Name = \"info\" }\nclass T {\n    undefined Info() { }\n    static string Of() { return Info.Name }\n}\nprint(T.Of())");
+            Check("Namen: in einer statischen Methode verdeckt eine Instanzmethode gleichen Namens die Klasse nicht (Environment.Platform in ProcessTests)", shadow.Count == 0 && shadowOut == "info", string.Join("\n", shadow.Select(d => d.ToLogLine())) + shadowOut);
+            Check("Zeilen: '.' am Zeilenende und '.', '?.', Operatoren, && und || am Zeilenanfang setzen fort; ++ beginnt eine neue Anweisung", lines.Count == 0 && linesOut == "4 3 True 2 1", string.Join("\n", lines.Select(d => d.ToLogLine())) + linesOut);
         }
 
         // ---- a native build reports them in its result ----

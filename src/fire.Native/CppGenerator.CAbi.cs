@@ -47,13 +47,12 @@ namespace fire.Native
 
         private CAbi? CAbiParams(Func f)
         {
-            // (a constructor too: `new X(...)` calls its C body with C numbers - NewObject -, the Value function in front serves the rest: reflection, `: base(...)`)
-            if (!ScalarsOn || Wrapped || Modular || LibraryRole || f.External || f.Export != null || f.Kind is not (FuncKind.Method or FuncKind.Static or FuncKind.Ctor)) return null;
-            // (optimised for size - dos16, win16: `new` passes the Values by address to the constructor's function with Values - measured: the C bodies of the
-            // constructors cost 1 KB more on "Scene3D Physics", even with their Values by address)
-            if (f.Kind == FuncKind.Ctor && _program.Optimize == fire.Runtime.OptimizeFor.Size) return null;
+            // (not a constructor: tried - measured neither faster nor smaller: 3 million `new Vec(x, y, z)` the same time, "Scene3D Physics" +0.3 KB on linux,
+            // +1 KB on dos16; the function with Values in front of the C body costs what the C numbers save)
+            if (!ScalarsOn || Wrapped || Modular || LibraryRole || f.External || f.Export != null || f.Kind is not (FuncKind.Method or FuncKind.Static)) return null;
             if (f.SpecParams != null || f.SpecTArgs != null || f.SpecClassOwner != null || f.Proto is not { } proto || f.Chunk.Handlers.Count > 0) return null;
-            if (MethodKey(proto) is { } key && (key.Name.StartsWith("get_", StringComparison.Ordinal) || key.Name.StartsWith("set_", StringComparison.Ordinal))) return null;
+            // (a getter has one: `obj.X` on an object of a known class calls its C body - GetField, CAbiGetterCallee; a setter not)
+            if (MethodKey(proto) is { } key && key.Name.StartsWith("set_", StringComparison.Ordinal)) return null;
             var code = OpInfo.Decode(f.Chunk.Code);
             if (code.Any(c => c.Op == OpCode.TakeCallTypeArgs)) return null;
             if (f.HasSelf && code.Any(c => c.Op == OpCode.GuardLocalType && !string.IsNullOrEmpty(DeclaredType.Parse(f.Chunk.Constants[c.A[1]].AsString()).TypeParamClass))) return null;
@@ -155,7 +154,7 @@ namespace fire.Native
             int argc = ins.A[2];
             if (ReflectionPrelude.HelperClasses.Contains(cls)) return null;
             int at = f.IndexOf.TryGetValue(ins.Addr, out int index) ? index : -1;
-            if (at > 0 && f.Decoded[at - 1].Op is OpCode.ArgNames or OpCode.CopyArgs or OpCode.SetTypeArgs or OpCode.OverloadHint) return null;
+            if (at > 0 && (f.Decoded[at - 1].Op is OpCode.ArgNames or OpCode.SetTypeArgs or OpCode.OverloadHint || f.Decoded[at - 1].Op == OpCode.CopyArgs && !NumberCopyArgs(f.Decoded[at - 1]))) return null;
             RuntimeClass rc;
             try { rc = FindClass(cls); } catch (NativeNotSupportedException) { return null; }
             if (rc.IsTypeOverloaded(method, argc) || rc.FindMethodWithAccess(method, argc).Proto is not { IsStatic: true } proto || proto.ParamCount != argc) return null;
@@ -163,20 +162,15 @@ namespace fire.Native
             return CAbiOf(target) != null ? target : null;
         }
 
-        /// <summary>The constructor a NewObject calls when it has a C body and the call can use it (no named arguments, every argument given, no overloading
-        /// by type, no type arguments); null otherwise.</summary>
-        private Func? CAbiNewCallee(Func f, Flow st, Instr ins)
+        /// <summary>A CopyArgs whose marks mean nothing for numbers - copy flat, copy deep, a fresh value (no `ref`, no `take`): the arguments of a C body
+        /// are numbers, they go as they are.</summary>
+        private static bool NumberCopyArgs(Instr copy)
         {
-            if (!ScalarsOn || ins.Op is not (OpCode.NewObject or OpCode.NewObjectOwned)) return null;
-            int argc = ins.A[1];
-            int at = f.IndexOf.TryGetValue(ins.Addr, out int index) ? index : -1;
-            if (at > 0 && f.Decoded[at - 1].Op is OpCode.ArgNames or OpCode.CopyArgs or OpCode.SetTypeArgs or OpCode.OverloadHint) return null;
-            RuntimeClass rc;
-            try { rc = FindClass(f.Chunk.Constants[ins.A[0]].AsString()); } catch (NativeNotSupportedException) { return null; }
-            if (rc.IsConstructorTypeOverloaded(argc) || rc.FindConstructor(argc) is not { } ctor || ctor.ParamCount != argc) return null;
-            var target = GetFunc(ctor, FuncKind.Ctor);
-            return CAbiOf(target) != null ? target : null;
+            long mask = CopyMask(copy);
+            for (int k = 0; k < 16; k++) if (((mask >> (4 * k)) & 0xF) is not (0 or 1 or 2 or 4)) return false;
+            return true;
         }
+        private static long CopyMask(Instr copy) => (long)copy.A[0] | ((long)copy.A[1] << 16) | ((long)copy.A[2] << 32) | ((long)copy.A[3] << 48);
 
         /// <summary>Like CAbiStaticCallee for a CallMethod on an object of a known class whose method no derived class overrides (DirectMethod).</summary>
         private Func? CAbiMethodCallee(Func f, Flow st, Instr ins)
@@ -193,6 +187,22 @@ namespace fire.Native
             if (DirectMethod(ObjClass(type), method, argc, f) is not { ParamCount: var count } proto || count != argc) return null;
             var target = GetFunc(proto, FuncKind.Method);
             return CAbiOf(target) != null ? target : null;
+        }
+
+        /// <summary>The getter a GetField calls when it reads a property of an object of a known class (DirectAccessor) whose getter has a C body with a C
+        /// result; null otherwise.</summary>
+        private Func? CAbiGetterCallee(Func f, Flow st, Instr ins)
+        {
+            if (!ScalarsOn || ins.Op != OpCode.GetField) return null;
+            int slot = st.Depth - 1;
+            if (slot < 0 || slot >= 64) return null;
+            int type = st.Types[slot];
+            if (BaseKindOfType(type) != KindObj || (type & TypeNone) != 0 || InterfaceOfType(type) != null || IsNullable(type)) return null;
+            string field = f.Chunk.Constants[ins.A[0]].AsString();
+            var rc = ObjClass(type);
+            if (DirectFieldIndex(rc, field, f) != null || DirectAccessor(rc, field, false, f) is not { } getter) return null;
+            var target = GetFunc(getter, FuncKind.Method);
+            return CAbiOf(target) is { RetType: not 0 } ? target : null;
         }
 
         /// <summary>The function with Values (`fN`) in front of the C body: the parameters are checked like the prologue would (a failed check returns,

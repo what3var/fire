@@ -6,7 +6,7 @@ From the loosest to the tightest binding:
 
 | Operators | Meaning |
 |---|---|
-| `=` `+=` `-=` `*=` `/=` `%=` `^=` `&=` `\|=` `#=` `<<=` `>>=` | assignment (right-associative) |
+| `=` `+=` `-=` `*=` `/=` `%=` `^=` `&=` `\|=` `#=` `<<=` `>>=` `>>>=` | assignment (right-associative) |
 | `cond ? a : b` | conditional (right-associative) |
 | `\|\|` `or` | logical or |
 | `&&` `and` | logical and |
@@ -16,7 +16,7 @@ From the loosest to the tightest binding:
 | `==` `!=` `##` | equality (`##` is the same as `!=`) |
 | `<` `<=` `>` `>=` `is of` `is in` `is from` `is under` | comparison and tests (see below), left to right |
 | `a..b` | range: the whole numbers from `a` to `b` (see below) |
-| `<<` `>>` | bit shift (int only) |
+| `<<` `>>` `>>>` | bit shift (int and word only; `>>>` is the logical shift right) |
 | `+` `-` | addition, subtraction, joining texts |
 | `*` `/` `%` | multiplication, division, remainder |
 | `^` | power (right-associative) |
@@ -42,6 +42,8 @@ print(5 & 3)         // 1
 print(5 | 3)         // 7
 print(~0)            // -1
 print(1 << 4)        // 16
+print(-16 >> 2)      // -4 (the sign stays)
+print(-1 >>> 60)     // 15 (zeros come in at the top)
 print(3 ## 4)        // True
 print(true and !false)
 var n = 7
@@ -56,7 +58,10 @@ print(n < 0 ? "neg" : n == 0 ? "zero" : "pos")   // pos
 - Division of an `int` by zero throws a `DivideByZeroException`.
 - `+` joins texts as soon as one side is a `string`: `"n = " + 3` is `"n = 3"`.
 - Numbers with [units](05-units.md) are converted and checked: `500mm + 2m` is `2500mm`, `5mm + 2kg` throws a `UnitMismatchException`.
-- `& | # << >> ~` take `int`s only. The right side of `<<`/`>>` is a count without a unit.
+- `& | # << >> >>> ~` take `int`s (and `word`s) only. The right side of a shift is a count without a unit; it is taken `& 63`.
+- `>>` keeps the sign of an `int` (`-16 >> 2` is `-4`); **`>>>` is the logical shift**: the `int` is shifted as the unsigned number of its width -
+  64 bits, or 32/16 with [`#intwidth`](17-preprocessor.md) - and zeros come in at the top (`-1 >>> 60` is `15`; with `#intwidth 32` `-1 >>> 28` is
+  `15`). A count of the width or more gives `0`. A `word` is unsigned anyway: `>>` and `>>>` are the same there.
 
 ```fire
 print(7 / 2)         // 3
@@ -217,3 +222,44 @@ print(x??.Length)               // undefined: a number has no Length
 2. Write `if (a ## b)` with `!=` and with `!(a == b)` - which do you find clearer?
 3. Use `+=` to build the text `"1,2,3,4,5"` in a loop.
 4. Swap two `int`s without a third variable using `#`.
+
+## Bit functions
+
+The class `Bits` (always there, like `Math`) counts, rotates and reverses the bits of an `int` or a `word`, and turns a `float` into its IEEE bits
+and back:
+
+```fire
+print(Bits.PopCount(0xF0F0))             // 8
+print(Bits.LeadingZeros(1))              // 63 (in 64 bits)
+print(Bits.TrailingZeros(8))             // 3
+print(Bits.RotateLeft(0x81, 1, 8))       // 3 - in 8 bits
+print(Bits.ReverseBytes(0x11223344, 32)) // 1144201745 (0x44332211)
+print(Bits.Extract(0xABCD, 4, 8))        // 188 (0xBC)
+print(Bits.Insert(0xFF00, 0xA, 4, 4))    // 65440 (0xFFA0)
+print(Bits.FromFloat32(1.0))             // 1065353216 (0x3F800000)
+print(Bits.ToFloat64(Bits.FromFloat64(2.5)))  // 2.5
+print(Bits.FromFloat16(0.1))             // 11878 (0x2E66, half precision)
+print(Bits.ToFloat16(0x3C00))            // 1
+```
+
+| Function | Result |
+|---|---|
+| `PopCount(x[, width])` | the number of bits that are 1 |
+| `LeadingZeros(x[, width])`, `TrailingZeros(x[, width])` | the 0 bits above the highest / below the lowest 1 (the width for 0) |
+| `RotateLeft(x, n[, width])`, `RotateRight(x, n[, width])` | the bits rotated by `n` (what leaves on one side comes in on the other) |
+| `ReverseBytes(x[, width])` | the bytes in the opposite order (the width a multiple of 8) |
+| `ReverseBits(x[, width])` | the bits in the opposite order |
+| `Extract(x, start, count)` | `count` bits from bit `start` on (0 is the lowest) as an unsigned number |
+| `Insert(x, value, start, count)` | `x` with those bits replaced by the low bits of `value` |
+| `FromFloat64(f)`, `ToFloat64(bits)` | the 64 bits of IEEE binary64 (an `int[64]`, also with `#intwidth 32`) and back |
+| `FromFloat32(f)`, `ToFloat32(bits)` | the 32 bits of IEEE binary32 (`f` rounded to it; 0 to 2^32 - 1) and back |
+| `FromFloat16(f)`, `ToFloat16(bits)` | the 16 bits of IEEE binary16, half precision (rounded to nearest even; largest value 65504, a larger one is infinity) and back |
+
+- **The width**: an `int` is taken in the width of the program's `int` (64; 32 or 16 with `#intwidth`), a `word` in its width (`Word.Bits`);
+  `width` (1 to 64) takes the low bits of another width. A result in the program's width is an `int` of the program (`Bits.RotateLeft(-1, 5)` is
+  `-1`); one of a smaller width is the unsigned number of its bits (`Bits.RotateRight(1, 1, 32)` is `2147483648`). A number that does not fit the
+  program's `int` keeps its 64 bits (like the result of a native). For a `word` the result is a `word` again.
+- NaN gives the bits of the standard quiet NaN (`0x7FF8000000000000`, `0x7FC00000`, `0x7E00`); a number with a unit is an `ArgumentException`.
+- Together with the [typed reads and writes of a byte buffer](07-arrays-and-lists.md#reading-and-writing-numbers) this is what binary formats need:
+  headers, float data of a GPU, half-precision weights, checksums.
+

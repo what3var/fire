@@ -26,7 +26,7 @@ namespace fire.Standard
         /// `string` and `char` (`class extends string { ... }`, SPEC 5.5.1/8.12), which are generated from the
         /// method tables in <see cref="StringMethods"/>/<see cref="CharMethods"/>,
         /// so that the method IDs in the fire text do not have to be maintained by hand.</summary>
-        public static readonly string Source = CoreSource + StringMethods.PreludeSource + CharMethods.PreludeSource + ResourceMethods.PreludeSource + MathMethods.PreludeSource + EnvironmentMethods.PreludeSource + LibraryMethods.PreludeSource;
+        public static readonly string Source = CoreSource + StringMethods.PreludeSource + CharMethods.PreludeSource + ResourceMethods.PreludeSource + MathMethods.PreludeSource + EnvironmentMethods.PreludeSource + LibraryMethods.PreludeSource + BitsMethods.PreludeSource;
 
         private const string CoreSource = """
             /// The base class of all exceptions (SPEC 7.1): it carries a `message`. Own exception classes derive from it (`class NotFound : Exception { }`);
@@ -174,6 +174,8 @@ namespace fire.Standard
                 undefined Close() { __chan_close(this.node) }
                 bool IsClosed { get { return __chan_closed(this.node) } }
                 int Count { get { return __chan_count(this.node) } }
+                // (the queue Receive takes from: a wait for a socket or this channel, Net.IConnection.WaitReadableOr)
+                int __Node() { return this.node }
                 IEnumerator<T> GetEnumerator() { return new ChannelIter<T>(this) }
                 // Two directions: the end that sends A and receives B (`.Other()` gives the end that sends B and receives A).
                 static ChannelEnd<A, B> Pair<A, B>(int capacity = 16) { return new ChannelEnd<A, B>(new Channel<A>(capacity), new Channel<B>(capacity)) }
@@ -192,6 +194,7 @@ namespace fire.Standard
                 undefined Close() { this.outgoing.Close() }
                 bool IsClosed { get { return this.incoming.IsClosed } }
                 int Count { get { return this.incoming.Count } }
+                int __Node() { return this.incoming.__Node() }
                 ChannelEnd<B, A> Other() { return new ChannelEnd<B, A>(this.incoming.__End(), this.outgoing.__End()) }
                 ChannelEnd<A, B> __End() { return new ChannelEnd<A, B>(this.outgoing.__End(), this.incoming.__End()) }
                 IEnumerator<B> GetEnumerator() { return this.incoming.GetEnumerator() }
@@ -991,6 +994,51 @@ namespace fire.Standard
 
                 ListIter<T> GetEnumerator() {
                     return new ListIter<T>(this, this.count)
+                }
+
+                // sorts the elements by `<` (numbers, texts, a class with operator<); stable: equal elements keep their order
+                undefined Sort() { this.SortBy(undefined) }
+
+                // sorts the elements by `compare(a, b)`: below 0 - a comes first, 0 - equal (they keep their order), above 0 - b comes first
+                undefined Sort(int lambda<T, T> compare) { this.SortBy(compare) }
+
+                // (a merge sort from below: runs of 1, 2, 4, ... merged between the items and a second array, which goes away at the end; the elements
+                // stay the list's - only their places change)
+                private undefined SortBy(any compare) {
+                    int n = this.count
+                    if (n < 2) { return }
+                    any src = this.items
+                    any dst = new T[n]
+                    any spare = dst
+                    int width = 1
+                    while (width < n) {
+                        int lo = 0
+                        while (lo < n) {
+                            int mid = lo + width < n ? lo + width : n
+                            int hi = lo + 2 * width < n ? lo + 2 * width : n
+                            int a = lo
+                            int b = mid
+                            int k = lo
+                            while (k < hi) {
+                                bool right = a >= mid
+                                if (!right && b < hi) {
+                                    if (compare == undefined) { right = src[b] < src[a] } else { right = compare(src[a], src[b]) > 0 }
+                                }
+                                if (right) { dst[k] = src[b]; b = b + 1 } else { dst[k] = src[a]; a = a + 1 }
+                                k = k + 1
+                            }
+                            lo = hi
+                        }
+                        any swap = src
+                        src = dst
+                        dst = swap
+                        width = width * 2
+                    }
+                    // (the sorted run ended in the second array: back into the items)
+                    if (src != this.items) {
+                        for (int i = 0; i < n; i = i + 1) { this.items[i] = src[i] }
+                    }
+                    delete spare
                 }
             }
 
