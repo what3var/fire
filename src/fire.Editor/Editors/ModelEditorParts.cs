@@ -119,8 +119,8 @@ namespace fire.Editor
         private readonly ComboBox _anims = new() { MinWidth = 150 };
         private readonly TimelineView _timeline = new() { Width = 300 };
         private readonly TextBlock _timeText = new() { VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(6, 0), MinWidth = 70 };
-        private readonly ToggleButton _loop = new() { Content = "Loop" };
-        private readonly Button _play = new() { Content = "▶" };
+        private readonly ToggleButton _loop = new() { Content = ToolIcons.Create("Loop") };
+        private readonly Button _play = new() { Content = ToolIcons.Create("Play") };
         private readonly NumericUpDown[] _rot = new NumericUpDown[3], _move = new NumericUpDown[3];
         private readonly NumericUpDown _scale = new() { Minimum = 0.05m, Maximum = 20, Increment = 0.1m, FormatString = "0.##", Width = 58, ShowButtonSpinner = false };
         private readonly Avalonia.Threading.DispatcherTimer _player = new() { Interval = TimeSpan.FromMilliseconds(33) };
@@ -142,7 +142,7 @@ namespace fire.Editor
             Orientation = Orientation.Horizontal;
             Margin = new Thickness(4, 0, 4, 2);
             _loop.Classes.Add("tool"); _play.Classes.Add("tool");
-            ToolTip.SetTip(_loop, "The animation starts again at its end (from its last key to its first)");
+            ToolTip.SetTip(_loop, "Loop: the animation starts again at its end (from its last key to its first)");
             ToolTip.SetTip(_play, "Plays the animation");
             for (int k = 0; k < 3; k++)
             {
@@ -156,16 +156,16 @@ namespace fire.Editor
             _scale.ValueChanged += (_, _) => FieldChanged();
             Children.Add(new TextBlock { Text = "Animation", VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(4, 0) });
             Children.Add(_anims);
-            Children.Add(ModelEditorUi.Button("+", "A new animation", async () => await AddAnimation()));
-            Children.Add(ModelEditorUi.Button("Edit...", "The name and the length (seconds) of the animation", async () => await EditAnimation()));
-            Children.Add(ModelEditorUi.Button("−", "Take the animation out", RemoveAnimation));
+            Children.Add(ToolIcons.Button("Add", "A new animation", async () => await AddAnimation()));
+            Children.Add(ToolIcons.Button("Edit", "The name and the length (seconds) of the animation", async () => await EditAnimation()));
+            Children.Add(ToolIcons.Button("Remove", "Take the animation out", RemoveAnimation));
             Children.Add(_loop);
             Children.Add(_play);
             Children.Add(Group(_timeline, _timeText));
             // (each group of numbers stays together when the bar wraps)
             Children.Add(Group(new Control[] { ModelEditorUi.Label("Turn") }.Concat(_rot).ToArray()));
             Children.Add(Group(new Control[] { ModelEditorUi.Label("Move") }.Concat(_move).ToArray()));
-            Children.Add(Group(ModelEditorUi.Label("Scale"), _scale, ModelEditorUi.Button("Delete key", "Takes the key of the part at this time away", DeleteKey)));
+            Children.Add(Group(ModelEditorUi.Label("Scale"), _scale, ToolIcons.Button("KeyRemove", "Delete key: takes the key of the part at this time away", DeleteKey)));
             _anims.SelectionChanged += (_, _) => { if (!_updatingAnims) Choose(_anims.SelectedIndex - 1); };
             _loop.Click += (_, _) => { if (Current is { } anim) { bool loop = _loop.IsChecked == true; Change(() => anim.Loop = loop); } };
             _play.Click += (_, _) => TogglePlay();
@@ -196,9 +196,9 @@ namespace fire.Editor
         /// <summary>Back to the rest pose without telling (a new model).</summary>
         public void Reset() { Stop(); _anim = -1; _time = 0; }
 
-        public void Stop() { _player.Stop(); _play.Content = "▶"; }
+        public void Stop() { _player.Stop(); _play.Content = ToolIcons.Create("Play"); }
 
-        private void TogglePlay() { if (_player.IsEnabled) Stop(); else if (Current != null) { _player.Start(); _play.Content = "■"; } }
+        private void TogglePlay() { if (_player.IsEnabled) Stop(); else if (Current != null) { _player.Start(); _play.Content = ToolIcons.Create("Stop"); } }
 
         private void PlayStep()
         {

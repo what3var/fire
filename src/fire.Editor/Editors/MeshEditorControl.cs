@@ -379,24 +379,24 @@ namespace fire.Editor
             _views = new[] { new MeshView(this, ViewKind.Top), new MeshView(this, ViewKind.Perspective), new MeshView(this, ViewKind.Front), new MeshView(this, ViewKind.Side) };
             _active = _views[1];
             var bar = new WrapPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(4, 2) };
-            string[] modeNames = { "Vertex", "Edge", "Face" };
-            string[] modeTips = { "Choose corners (1)", "Choose edges (2)", "Choose faces (3)" };
+            string[] modeIcons = { "Vertex", "Edge", "Face" };
+            string[] modeTips = { "Vertex: choose corners (1)", "Edge: choose edges (2)", "Face: choose faces (3)" };
             for (int i = 0; i < 3; i++)
             {
                 var mode = (SelectMode)i;
-                _modeButtons[i] = ModelEditorUi.Toggle(modeNames[i], modeTips[i], mode == _mode);
+                _modeButtons[i] = ToolIcons.Toggle(modeIcons[i], modeTips[i], mode == _mode);
                 _modeButtons[i].Click += (_, _) => SetMode(mode);
                 bar.Children.Add(_modeButtons[i]);
             }
-            _drawButton = ModelEditorUi.Toggle("Draw", "Draw a face in a 2D view: click its corners (on the grid), Enter or a click on the first corner closes it, Esc lets go (D)");
+            _drawButton = ToolIcons.Toggle("Draw", "Draw a face in a 2D view: click its corners (on the grid), Enter or a click on the first corner closes it, Esc lets go (D)");
             _drawButton.Click += (_, _) => { if (_drawButton.IsChecked != true) CancelDrawing(); };
             bar.Children.Add(_drawButton);
             bar.Children.Add(ModelEditorUi.Separator());
             bar.Children.Add(ModelEditorUi.Label("Add"));
-            bar.Children.Add(ModelEditorUi.Button("Box", "A box of a meter standing on the origin", () => AddBody("box")));
-            bar.Children.Add(ModelEditorUi.Button("Cylinder", "A cylinder (12 sides) standing on the origin", () => AddBody("cylinder")));
-            bar.Children.Add(ModelEditorUi.Button("Sphere", "A sphere (12 x 8) on the origin", () => AddBody("sphere")));
-            bar.Children.Add(ModelEditorUi.Button("Plane", "A square of a meter on the floor (to extrude)", () => AddBody("plane")));
+            bar.Children.Add(ToolIcons.Button("Box", "Box: a box of a meter standing on the origin", () => AddBody("box")));
+            bar.Children.Add(ToolIcons.Button("Cylinder", "Cylinder: a cylinder (12 sides) standing on the origin", () => AddBody("cylinder")));
+            bar.Children.Add(ToolIcons.Button("Sphere", "Sphere: a sphere (12 x 8) on the origin", () => AddBody("sphere")));
+            bar.Children.Add(ToolIcons.Button("Plane", "Plane: a square of a meter on the floor (to extrude)", () => AddBody("plane")));
             bar.Children.Add(ModelEditorUi.Separator());
             bar.Children.Add(ModelEditorUi.Button("Extrude...", "Pulls the faces chosen out (a negative distance pushes them in); E: by the last distance", async () => await AskExtrude()));
             bar.Children.Add(ModelEditorUi.Button("Mirror X", "Mirrors what is chosen to the other side of x = 0 (a copy, or itself when Copy is off)", () => MirrorSelection(0)));
@@ -408,7 +408,7 @@ namespace fire.Editor
             bar.Children.Add(ModelEditorUi.Button("Weld", "Joins corners closer than a millimeter (the corners chosen, or all)", WeldSelection));
             bar.Children.Add(ModelEditorUi.Button("Split", "A corner in the middle of each edge chosen", SplitSelection));
             bar.Children.Add(ModelEditorUi.Button("Face", "A face through the corners chosen; two corners of a face: cuts it along them (F)", MakeFace));
-            bar.Children.Add(ModelEditorUi.Button("Move...", "Moves, turns or scales what is chosen by numbers", async () => await AskTransform()));
+            bar.Children.Add(ToolIcons.Button("Move", "Move: moves, turns or scales what is chosen by numbers", async () => await AskTransform()));
             bar.Children.Add(ModelEditorUi.Separator());
             bar.Children.Add(ModelEditorUi.Label("Grid"));
             ToolTip.SetTip(_snap, "The step of the grid in meters: drawing and moving in a 2D view snap to it, the arrow keys move by it");
@@ -419,16 +419,16 @@ namespace fire.Editor
             bar.Children.Add(ModelEditorUi.Separator());
             bar.Children.Add(ModelEditorUi.Label("Part"));
             bar.Children.Add(_parts);
-            bar.Children.Add(ModelEditorUi.Button("+", "A new part under the part chosen (its pivot: the middle of what is chosen)", async () => await AddPart()));
+            bar.Children.Add(ToolIcons.Button("Add", "A new part under the part chosen (its pivot: the middle of what is chosen)", async () => await AddPart()));
             bar.Children.Add(ModelEditorUi.Button("Assign", "The faces chosen belong to the part chosen", AssignPart));
             bar.Children.Add(ModelEditorUi.Button("Pivot...", "Where the part turns (meters: x, y, z)", async () => await EditPivot()));
             bar.Children.Add(ModelEditorUi.Separator());
-            bar.Children.Add(ModelEditorUi.Button("Preview", "scene3d draws the model as a program shows it (with the animation chosen)", () =>
+            bar.Children.Add(ToolIcons.Button("Preview", "Preview: scene3d draws the model as a program shows it (with the animation chosen)", () =>
             {
                 var window = new BlockPreviewWindow(MeshModel.Parse(_model.ToJson()), _animBar.Index);
                 if (TopLevel.GetTopLevel(this) is Window owner) window.Show(owner); else window.Show();
             }));
-            bar.Children.Add(ModelEditorUi.Button("Export .f3d...", "Writes the model file that scene3d reads (a program can also take the .fmesh as a resource: forge converts it)", async () => await Export()));
+            bar.Children.Add(ToolIcons.Button("Export", "Export .f3d: writes the model file that scene3d reads (a program can also take the .fmesh as a resource: forge converts it)", async () => await Export()));
 
             _animBar.Animations = () => _model.Animations;
             _animBar.CurrentPart = () => _part;
@@ -437,9 +437,9 @@ namespace fire.Editor
 
             var paletteBar = new DockPanel { Margin = new Thickness(6, 4) };
             var paletteButtons = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 2, VerticalAlignment = VerticalAlignment.Top };
-            paletteButtons.Children.Add(ModelEditorUi.Button("+ Colour", "A new colour in the palette", async () => await AddColor()));
-            paletteButtons.Children.Add(ModelEditorUi.Button("Edit...", "Change the chosen colour (double-click a colour does the same)", async () => await EditColor(_color)));
-            paletteButtons.Children.Add(ModelEditorUi.Button("− Colour", "Take the chosen colour out (its faces take the first colour)", RemoveColor));
+            paletteButtons.Children.Add(ToolIcons.Button("Add", "A new colour in the palette", async () => await AddColor()));
+            paletteButtons.Children.Add(ToolIcons.Button("Edit", "Change the chosen colour (double-click a colour does the same)", async () => await EditColor(_color)));
+            paletteButtons.Children.Add(ToolIcons.Button("Remove", "Take the chosen colour out (its faces take the first colour)", RemoveColor));
             DockPanel.SetDock(paletteButtons, Avalonia.Controls.Dock.Right);
             paletteBar.Children.Add(paletteButtons);
             paletteBar.Children.Add(_palette);

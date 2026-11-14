@@ -452,11 +452,9 @@ namespace fire.Editor
 
         private void BuildCanvasTools()
         {
-            void Tool(OverviewTool tool, string label, string tip)
+            void Tool(OverviewTool tool, string icon, string tip)
             {
-                var button = new Avalonia.Controls.Primitives.ToggleButton { Content = new TextBlock { Text = label }, IsChecked = tool == OverviewTool.Select };
-                button.Classes.Add("tool");
-                ToolTip.SetTip(button, tip);
+                var button = ToolIcons.Toggle(icon, tip, tool == OverviewTool.Select);
                 button.Click += async (_, _) => await ChooseTool(tool);
                 _toolButtons[tool] = button;
                 CanvasTools.Children.Add(button);
@@ -469,20 +467,20 @@ namespace fire.Editor
                 button.Click += (_, _) => action();
                 CanvasTools.Children.Add(button);
             }
-            Tool(OverviewTool.Select, "Select", "Select, move and size containers; a double click edits the text");
-            Tool(OverviewTool.Container, "Container", "Draw a container (a click: 300 wide)");
-            Tool(OverviewTool.Rect, "Rect", "Draw a rectangle");
-            Tool(OverviewTool.Ellipse, "Ellipse", "Draw an ellipse");
-            Tool(OverviewTool.Arrow, "Arrow", "Draw an arrow");
-            Tool(OverviewTool.Pen, "Pen", "Draw freely");
-            Tool(OverviewTool.Text, "Text", "Write a text on the surface");
-            Tool(OverviewTool.Connect, "Connect", "Draw a line from one container to another");
+            Tool(OverviewTool.Select, "Pointer", "Select: select, move and size containers; a double click edits the text");
+            Tool(OverviewTool.Container, "Container", "Container: draw a container (a click: 300 wide)");
+            Tool(OverviewTool.Rect, "Rectangle", "Rect: draw a rectangle");
+            Tool(OverviewTool.Ellipse, "Ellipse", "Ellipse: draw an ellipse");
+            Tool(OverviewTool.Arrow, "Arrow", "Arrow: draw an arrow");
+            Tool(OverviewTool.Pen, "Pen", "Pen: draw freely");
+            Tool(OverviewTool.Text, "Text", "Text: write a text on the surface");
+            Tool(OverviewTool.Connect, "Connect", "Connect: draw a line from one container to another");
             Command("Embed...", "A container that shows a file: a todo list, another canvas, Markdown, a picture", () => _ = Embed());
             CanvasTools.Children.Add(ColorButton("Color", "The colour of what is drawn next - and of the selected shape or line", _colorSwatch,
                 value => { _color = value; if (Preview.Content is OverviewView v) v.ApplyColor(value); }));
             CanvasTools.Children.Add(ColorButton("Fill", "The filling of the next rect or ellipse - and of the selected shape", _fillSwatch,
                 value => { _fill = value; if (Preview.Content is OverviewView v) v.ApplyFill(value); }));
-            Command("Fit", "Fit the whole canvas into the window", FitToView);
+            CanvasTools.Children.Add(ToolIcons.Button("Fit", "Fit the whole canvas into the window", FitToView));
             CanvasTools.Children.Add(new Border { Width = 1, Background = EditorTheme.Border, Margin = new Thickness(4, 2) });
         }
 

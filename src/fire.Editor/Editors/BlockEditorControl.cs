@@ -328,7 +328,7 @@ namespace fire.Editor
         private readonly ModelPaletteStrip _palette = new();
         private readonly TextBlock _layerText = new() { VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(4, 0), MinWidth = 64 };
         private readonly TextBlock _info = new() { Foreground = EditorTheme.TextDim, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(8, 0) };
-        private readonly ToggleButton _mirror = new() { Content = "Mirror X" };
+        private readonly ToggleButton _mirror = ToolIcons.Toggle("Mirror", "Mirror X: every block is put (and taken away) on the other side of the middle as well");
         private readonly ComboBox _parts = new() { MinWidth = 110 };
         private readonly List<string> _undo = new(), _redo = new();
         private string _savedText = "";
@@ -340,7 +340,7 @@ namespace fire.Editor
         private enum LayerTool { Draw, Fill, Select }
         private LayerTool _tool = LayerTool.Draw;
         private readonly ToggleButton[] _toolButtons = new ToggleButton[3];
-        private readonly ToggleButton _allLayers = new() { Content = "All layers" };
+        private readonly ToggleButton _allLayers = ToolIcons.Toggle("AllLayers", "All layers: the selection reaches through every layer (else: the layer it was made in)");
         private BlockModel.Box? _selection;
         private (int X, int Z) _selectStart;
         private static BlockModel.Clip? s_clipboard;   // (shared by the block models of spark)
@@ -358,54 +358,48 @@ namespace fire.Editor
 
         public BlockEditorControl()
         {
-            _mirror.Classes.Add("tool");
-            ToolTip.SetTip(_mirror, "Every block is put (and taken away) on the other side of the middle as well");
             var bar = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 2, Margin = new Thickness(4, 2) };
-            bar.Children.Add(Button_("▼", "The layer below (Page Down)", () => SetLayer(_layer - 1)));
+            bar.Children.Add(ToolIcons.Button("LayerDown", "The layer below (Page Down)", () => SetLayer(_layer - 1)));
             bar.Children.Add(_layerText);
-            bar.Children.Add(Button_("▲", "The layer above (Page Up)", () => SetLayer(_layer + 1)));
+            bar.Children.Add(ToolIcons.Button("LayerUp", "The layer above (Page Up)", () => SetLayer(_layer + 1)));
             bar.Children.Add(Separator());
             bar.Children.Add(_mirror);
-            string[] toolNames = { "Draw", "Fill", "Select" };
-            string[] toolTips = { "The layer view draws (left) and erases (right)", "A click in the layer view fills the area of the same blocks (or of empty cells) with the colour",
-                                  "A drag in the layer view selects a box (All layers: through every layer); Ctrl+C / Ctrl+X / Ctrl+V (at the pointer) / Delete, Esc lets go" };
+            string[] toolIcons = { "Pencil", "Fill", "Select" };
+            string[] toolTips = { "Draw: the layer view draws (left) and erases (right)", "Fill: a click in the layer view fills the area of the same blocks (or of empty cells) with the colour",
+                                  "Select: a drag in the layer view selects a box (All layers: through every layer); Ctrl+C / Ctrl+X / Ctrl+V (at the pointer) / Delete, Esc lets go" };
             for (int t = 0; t < 3; t++)
             {
                 var tool = (LayerTool)t;
-                var b = new ToggleButton { Content = toolNames[t], IsChecked = t == 0 };
-                b.Classes.Add("tool");
-                ToolTip.SetTip(b, toolTips[t]);
+                var b = ToolIcons.Toggle(toolIcons[t], toolTips[t], t == 0);
                 b.Click += (_, _) => SetTool(tool);
                 _toolButtons[t] = b;
                 bar.Children.Add(b);
             }
-            _allLayers.Classes.Add("tool");
-            ToolTip.SetTip(_allLayers, "The selection reaches through every layer (else: the layer it was made in)");
             _allLayers.Click += (_, _) => { if (_selection is { } sel) SetSelection(BlockModel.Box.Of(sel.X0, _allLayers.IsChecked == true ? 0 : _layer, sel.Z0, sel.X1, _allLayers.IsChecked == true ? _model.SizeY - 1 : _layer, sel.Z1)); };
             bar.Children.Add(_allLayers);
             bar.Children.Add(Button_("Fill box", "Fills the selection with the colour", FillSelection));
-            bar.Children.Add(Button_("⟲", "Turn the view", () => Turn(-45)));
-            bar.Children.Add(Button_("⟳", "Turn the view", () => Turn(45)));
+            bar.Children.Add(ToolIcons.Button("RotateLeft", "Turn the view", () => Turn(-45)));
+            bar.Children.Add(ToolIcons.Button("RotateRight", "Turn the view", () => Turn(45)));
             bar.Children.Add(Separator());
             bar.Children.Add(new TextBlock { Text = "Part", VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(4, 0) });
             bar.Children.Add(_parts);
-            bar.Children.Add(Button_("+", "A new part (under the part chosen; its pivot: the middle of the layer)", async () => await AddPart()));
+            bar.Children.Add(ToolIcons.Button("Add", "A new part (under the part chosen; its pivot: the middle of the layer)", async () => await AddPart()));
             bar.Children.Add(Button_("Pivot...", "Where the part turns (in cells, x, y, z)", async () => await EditPivot()));
             bar.Children.Add(Separator());
-            bar.Children.Add(Button_("Size...", "The size of the grid and of a block", async () => await AskSize()));
-            bar.Children.Add(Button_("Preview", "scene3d draws the model as a program shows it (with the animation chosen)", () =>
+            bar.Children.Add(ToolIcons.Button("Size", "The size of the grid and of a block", async () => await AskSize()));
+            bar.Children.Add(ToolIcons.Button("Preview", "Preview: scene3d draws the model as a program shows it (with the animation chosen)", () =>
             {
                 var window = new BlockPreviewWindow(BlockModel.Parse(_model.ToJson()), _animBar.Index);
                 if (TopLevel.GetTopLevel(this) is Window owner) window.Show(owner); else window.Show();
             }));
-            bar.Children.Add(Button_("Export .f3d...", "Writes the model file that scene3d reads (a program can also take the .fblocks as a resource: forge converts it)", async () => await Export()));
+            bar.Children.Add(ToolIcons.Button("Export", "Export .f3d: writes the model file that scene3d reads (a program can also take the .fblocks as a resource: forge converts it)", async () => await Export()));
             bar.Children.Add(_info);
 
             var paletteBar = new DockPanel { Margin = new Thickness(6, 4) };
             var paletteButtons = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 2, VerticalAlignment = VerticalAlignment.Top };
-            paletteButtons.Children.Add(Button_("+ Colour", "A new colour in the palette", async () => await AddColor()));
-            paletteButtons.Children.Add(Button_("Edit...", "Change the chosen colour (double-click a colour does the same)", async () => await EditColor(_color)));
-            paletteButtons.Children.Add(Button_("− Colour", "Take the chosen colour out (its blocks take the first colour)", RemoveColor));
+            paletteButtons.Children.Add(ToolIcons.Button("Add", "A new colour in the palette", async () => await AddColor()));
+            paletteButtons.Children.Add(ToolIcons.Button("Edit", "Change the chosen colour (double-click a colour does the same)", async () => await EditColor(_color)));
+            paletteButtons.Children.Add(ToolIcons.Button("Remove", "Take the chosen colour out (its blocks take the first colour)", RemoveColor));
             DockPanel.SetDock(paletteButtons, Avalonia.Controls.Dock.Right);
             paletteBar.Children.Add(paletteButtons);
             paletteBar.Children.Add(_palette);

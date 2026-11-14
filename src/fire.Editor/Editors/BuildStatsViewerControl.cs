@@ -33,9 +33,9 @@ namespace fire.Editor
 
         public BuildStatsViewerControl()
         {
-            var reload = new Button { Content = "Reload" }; reload.Classes.Add("tool");
+            var reload = ToolIcons.Set(new Button(), "Reload", "Reload"); reload.Classes.Add("tool");
             reload.Click += (_, _) => { if (FilePath != null) ResetTo("", FilePath); };
-            var copy = new Button { Content = "Copy as text" }; copy.Classes.Add("tool");
+            var copy = ToolIcons.Set(new Button(), "Copy", "Copy as text"); copy.Classes.Add("tool");
             copy.Click += async (_, _) =>
             {
                 if (_report != null && TopLevel.GetTopLevel(this)?.Clipboard is { } clipboard) await clipboard.SetTextAsync(NativeStats.Text(_report));
