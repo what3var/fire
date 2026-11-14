@@ -171,6 +171,8 @@ print(Geo.Shape.Describe())         // static members and enum values keep the f
 - Static members and enum values are still written with the full name (`Geo.Shape.Describe()`, `Geo.Kind.Circle`) - except inside the namespace itself.
 - If two `#using` namespaces contain the same name, the short name is ambiguous (`E4062`); write the full name.
 - `#using` applies to the file in which it stands.
+- `#import` of a library of a project or of a package makes its names available like a `#using` - in expressions too (`Parser.Name()`); what a library declares
+  outside of every namespace is in a namespace with its import name (`LibA.Parser`, see [Projects](../tools/projects.md#references-libraries-without-an-entry-point)).
 
 ## Exercises
 

@@ -20,7 +20,7 @@ namespace fire.Compiler
                     more = true;
                     var files = new List<(ProcessedSource, string)>();
                     foreach (var file in library.Sources)
-                        files.Add((preprocess(file) with { Name = library.Name + "/" + file.FileName, Module = library.ImportName }, file.Path));
+                        files.Add((preprocess(file) with { Name = library.Name + "/" + file.FileName, Module = library.ImportName, Qualify = NamespaceOf(library) }, file.Path));
                     processed[library.ImportName] = files;
                 }
             }
@@ -47,6 +47,17 @@ namespace fire.Compiler
             try { return ImportedPreludes.WithDependencies(ImportedPreludes.ParseImportName(name)).ToList(); }
             catch (PreprocessorException e) when (hint?.Invoke(name) is { } more) { throw new PreprocessorException(e.Message + " " + more, e); }
         }
+
+        /// <summary>The namespace of the declarations of a library outside of every `namespace`: its import name (`LibA.Parser`), none for a standard library
+        /// (its names stay global: `Framebuffer`, `DateTime`).</summary>
+        public static string? NamespaceOf(LibraryPlan library) => library.Project.Project.Standard ? null : library.ImportName;
+
+        /// <summary>The namespace of the library of the plan that `#import "name"` names (NamespaceOf), null: none or not a library of the plan.</summary>
+        public static string? NamespaceOf(BuildPlan? plan, string name) => plan != null && plan.Libraries.TryGetValue(name, out var library) ? NamespaceOf(library) : null;
+
+        /// <summary>The namespace of an installed package's import that `#import "name"` names: its name, when it is no standard import and has a prelude.</summary>
+        public static string? PackageNamespaceOf(string name) =>
+            fire.Package.Manager.PackageStore.Default.FindImport(name) is { } import && !import.Import.Standard && !string.IsNullOrWhiteSpace(import.Import.Prelude) ? import.Name : null;
 
         /// <summary>Is `name` the import name of a library of the plan? Adds the (canonical) name to `imports` when it is - and, for a library with C++ natives, their key to `nativeImports`.</summary>
         public static bool TryImport(BuildPlan? plan, string name, List<string> imports, HashSet<string>? nativeImports = null)

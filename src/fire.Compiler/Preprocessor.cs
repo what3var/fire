@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.IO;
 using System.Text;
 using System.Text.RegularExpressions;
@@ -33,6 +34,14 @@ namespace fire.Compiler
         /// <summary>The module (ROADMAP 9: a library that can be built on its own) the source belongs to: the import key of the prelude of an import, the import name of a
         /// library of the project; null for the program itself (the prelude of the compiler is the module `core`, see LinkedProgram.SourceModules).</summary>
         public string? Module { get; init; }
+
+        /// <summary>The namespace the declarations of the source outside of every `namespace` belong to: the import name of a library that is not a standard
+        /// one (`LibA.Parser`, docs/tools/projects.md "Names of libraries"); null: global.</summary>
+        public string? Qualify { get; init; }
+
+        /// <summary>The namespaces of the libraries the source imports (`#import "LibA"` of a library whose names are qualified): their names are found by
+        /// the short name too - types like `#using`, and in expressions (`Parser.Name()`). A name two of them have is ambiguous.</summary>
+        public IReadOnlyList<string> ImportNamespaces { get; init; } = Array.Empty<string>();
     }
 
     /// <summary>The files embedded in a program while it is preprocessed: the same file is stored once (the id of a resource is its index).</summary>
@@ -104,6 +113,10 @@ namespace fire.Compiler
         /// B includes A again) and aborts with a clear
         /// error instead of recursing endlessly.</summary>
         public string ProcessFile(string fullPath) => _owner.ProcessFileRecursive(fullPath, AlreadyIncluded);
+
+        /// <summary>The source imports a library whose names are qualified by `ns` (an `#import` handler): its names are found by the short name too
+        /// (ProcessedSource.ImportNamespaces).</summary>
+        public void AddImportNamespace(string ns) => _owner.AddImportNamespace(ns);
     }
 
     /// <summary>A preprocessor directive implementation: gets the
@@ -280,6 +293,12 @@ namespace fire.Compiler
         /// documentation for the reasoning), hence an instance field instead of a
         /// return value of ProcessInner (which runs recursively for `#include`).</summary>
         private readonly List<string> _usings = new();
+        private readonly List<string> _importNamespaces = new();
+
+        internal void AddImportNamespace(string ns)
+        {
+            if (!_importNamespaces.Contains(ns, StringComparer.Ordinal)) _importNamespaces.Add(ns);
+        }
 
         private Preprocessor(DirectiveRegistry registry)
         {
@@ -304,7 +323,9 @@ namespace fire.Compiler
         {
             var pre = new Preprocessor(registry ?? DirectiveRegistry.CreateDefault());
             string result = pre.ProcessInner(source, basePath, alreadyIncluded);
-            return new ProcessedSource(result, pre._usings);
+            // (the namespaces of imported libraries: type names find their names like with `#using`)
+            var usings = pre._importNamespaces.Count == 0 ? pre._usings : pre._usings.Concat(pre._importNamespaces.Where(ns => !pre._usings.Contains(ns))).ToList();
+            return new ProcessedSource(result, usings) { ImportNamespaces = pre._importNamespaces.ToList() };
         }
 
         internal string ProcessFileRecursive(string fullPath, HashSet<string> alreadyIncluded)

@@ -402,8 +402,14 @@ namespace fire.Compiler
                 {
                     string importName = args[0].AsString();
                     if (ownImport != null && string.Equals(importName, ownImport, StringComparison.OrdinalIgnoreCase)) return null;
-                    if (ProjectLibraries.TryImport(Plan, importName, projectImports, nativeImports)) return null;   // a library of the project: its files come with it
+                    if (ProjectLibraries.TryImport(Plan, importName, projectImports, nativeImports))
+                    {
+                        // a library of the project: its files come with it, its names are found by the short name in this file too
+                        if (ProjectLibraries.NamespaceOf(Plan, importName) is { } libraryNamespace) ctx.AddImportNamespace(libraryNamespace);
+                        return null;
+                    }
                     foreach (var key in ProjectLibraries.ImportKeys(importName, name => ProjectLibraries.UnknownHint(Plan, name))) nativeImports.Add(key);
+                    if (ProjectLibraries.PackageNamespaceOf(importName) is { } packageNamespace) ctx.AddImportNamespace(packageNamespace);
                     return null;
                 }
                 throw new Exception($"Wrong arguments for the 'import' directive.");
