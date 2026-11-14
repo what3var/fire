@@ -571,6 +571,8 @@ namespace fire.Runtime
         {
             if (_sectionDepth++ == 0)
             {
+                // (the main program away in a native: the section at once, without the queue)
+                if (_threadBroker!.TryEnterAway() is { } away) { _sectionHandle = away; return; }
                 // (a task of the pool waits for the main program on its worker: the pool may start another one meanwhile)
                 if (PoolTask != null) VmScheduler.BlockEnter();
                 try { _sectionHandle = _threadBroker!.EnterSection(); }
@@ -599,6 +601,59 @@ namespace fire.Runtime
         }
 
         private bool NeedsSection(ObjectInstance obj) => _threadBroker != null && _sectionDepth == 0 && obj.InGlobalsDomain;
+
+        /// <summary>The main program goes away for a native of a package (docs/spec/THREADING_DESIGN.md section 7) when it has fire threads and no
+        /// argument is of the shared area: the threads take their sections themselves meanwhile. False: it stays (then no <see cref="NativeAwayEnd"/>).</summary>
+        internal bool NativeAwayBegin(Value[] args)
+        {
+            if (_ownerBroker is not { } broker || IsFireThreadVm) return false;
+            if (_awayDepth > 0) { _awayDepth++; return true; }   // (a native inside a native's callback - the outer one is away already)
+            foreach (var a in args) if (a.Kind is ValueKind.Class or ValueKind.Array or ValueKind.Buffer or ValueKind.Lambda && InSharedArea(a)) return false;
+            _awayDepth = 1;
+            broker.AwayBegin();
+            return true;
+        }
+
+        internal void NativeAwayEnd()
+        {
+            if (_awayDepth == 0 || --_awayDepth > 0) return;
+            _ownerBroker?.AwayEnd();
+        }
+
+        /// <summary>A callback of the native the main program is away in: it is back for it (the depth, for <see cref="NativeAwayResume"/>).</summary>
+        internal int NativeAwayPause()
+        {
+            int depth = _awayDepth;
+            if (depth == 0) return 0;
+            _awayDepth = 0;
+            _ownerBroker?.AwayEnd();
+            return depth;
+        }
+
+        internal void NativeAwayResume(int depth)
+        {
+            if (depth == 0) return;
+            _ownerBroker?.AwayBegin();
+            _awayDepth = depth;
+        }
+
+        private int _awayDepth;
+
+        /// <summary>An object, array, buffer or lambda the threads may reach: of the globals' domain (or shared like them).</summary>
+        private bool InSharedArea(Value v) => v.Kind switch
+        {
+            ValueKind.Class => v.AsObjectRef() is ObjectInstance { InGlobalsDomain: true },
+            ValueKind.Array => v.AsArray().IsShared,
+            // (a buffer or lambda carries no mark - threads write a buffer of the globals without a section, in the native build too)
+            _ => false,
+        };
+
+        /// <summary>The method this call runs only reads (FunctionProto.ReadsOnly): a fire thread runs it itself on an object of the globals.</summary>
+        private bool ReadsOnlyMethod(ObjectInstance obj, string methodName, Value[] args)
+        {
+            try { return FindOverload(obj.RtClass ?? ResolveClass(obj.ClassName), methodName, args, obj).Item1 is { ReadsOnly: true }; }
+            catch (Exception e) when (e is not ScriptErrorException) { return false; }
+        }
 
         private Value LoadSharedGlobal(int slot)
         {
@@ -3608,7 +3663,7 @@ namespace fire.Runtime
                 && cachedTarget.AsObjectRef() is ObjectInstance cachedObj
                 && ReferenceEquals(cachedObj.RtClass, siteEntry.Class)
                 && cachedObj.Mailbox == null
-                && (_threadBroker == null || _sectionDepth > 0 || !cachedObj.InGlobalsDomain)
+                && (_threadBroker == null || _sectionDepth > 0 || !cachedObj.InGlobalsDomain || cachedMethod.ReadsOnly)
                 && (siteEntry.Guard == null || siteEntry.Guard.Holds(_stack.AsSpan(_sp - argCount, argCount))))
             {
                 if (siteEntry.Guard != null) TakeGuardedHit(cachedMethod);
@@ -3762,9 +3817,17 @@ namespace fire.Runtime
             _awaitReplyNow = false;   // (an `await` of the actor's own home runs the method at once, like a call)
 
             // A fire thread calls a method of an object of the main program's globals: it runs in the main program (rule 10 of step 8) - a job, the
-            // thread waits (and serves its own calls) until the result or the exception comes back.
-            if (NeedsSection(obj))
+            // thread waits (and serves its own calls) until the result or the exception comes back. A method that only reads (FunctionProto.ReadsOnly)
+            // runs here, like reads of the fields: what it changes on the way is a section or a job of its own again.
+            if (NeedsSection(obj) && !ReadsOnlyMethod(obj, methodName, args))
             {
+                // (the main program is away in a native: the call runs here in a section of its own - like in `sync global` - instead of waiting for it)
+                if (_threadBroker!.IsAway)
+                {
+                    if (copyMask != 0) ApplyCopyMaskToArgs(args, copyMask);
+                    if (CallGlobalsMethodInSection(obj, methodName, args) is { } inSection) Push(inSection);
+                    return;
+                }
                 CallGlobalsMethodAtHome(obj, methodName, args, copyMask);
                 return;
             }

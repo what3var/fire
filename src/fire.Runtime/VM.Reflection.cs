@@ -128,7 +128,7 @@ namespace fire.Runtime
                 return ReflectFail($"'{obj.ClassName}' has no method '{name}' with {args.Length} parameter(s).");
             if (proto.IsStatic)
                 return ReflectFail($"'{name}' is a static method - Reflect.Call only calls instance methods.");
-            var result = _threadBroker != null && _sectionDepth == 0 && obj.InGlobalsDomain
+            var result = _threadBroker != null && _sectionDepth == 0 && obj.InGlobalsDomain && !proto.ReadsOnly
                 ? CallGlobalsMethodInSection(obj, name, args)
                 : CallMethodNested(obj, name, args);
             if (result == null) { _nativeRedirected = true; return default; }

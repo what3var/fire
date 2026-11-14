@@ -383,6 +383,16 @@ keinen Snapshot und keine Kopie mehr:
   `WaitForString`, die Netz-Wartefunktionen, die über `Sleep` pollen), gibt er seine Sektion für die Dauer des Wartens frei und nimmt sie danach
   wieder (sonst würde ein Thread, der in einer Methode pollt - z.B. `TryAccept` -, das Hauptprogramm aushungern, das Sektionen nur beim Warten
   vergibt). Atomar ist die Methode also nur bis zum nächsten Warten.
+  **Ausnahme Lesen:** eine Instanzmethode, deren eigener Rumpf nur liest (keine Zuweisung außer an eigene Locals, kein `take`/`&`, kein `delete`,
+  keine Thread-Anweisungen - `FunctionProto.ReadsOnly`, der Compiler bestimmt es, `fire.Compiler.ReadingMethods`), läuft im Thread wie die
+  Lesezugriffe, die sie macht (`list[i]`, `table.Get(i)`): was sie unterwegs ändert, ist wieder ein Auftrag oder eine Sektion für sich.
+- **Das Hauptprogramm in einem Native:** ruft es eine native Funktion eines Pakets auf und gibt ihr kein Objekt, Array oder keinen Puffer des
+  geteilten Bereichs, ist es für die Dauer des Aufrufs „unterwegs“ (nativ `fire_awayBegin`/`fire_awayEnd` um den Aufruf, VM
+  `NativeAwayBegin`/`GlobalsBroker.AwayBegin`): ein Thread, der lesen will, nimmt seinen Platz an der Sperre der Globals, eine Sektion nimmt sich der
+  Thread selbst (eine zur Zeit), und ein Methodenaufruf auf ein Objekt der Globals läuft dann im Thread in einer Sektion (wie in `sync global`)
+  statt als Auftrag. Zurück wartet das Hauptprogramm auf eine laufende Sektion wie nach einem Warten. Ein Callback des Natives in fire-Code
+  (`callLam`, `call_lambda` der Bibliotheken) holt es vorher zurück. Das Losgehen kostet ein Speichern; nur wenn ein Thread seinen Platz nahm, wartet
+  es bei der Rückkehr.
 - **`sync globals`** ist ein Ausdruck (liefert die Anzahl der bearbeiteten Einträge - auch der `fire global`-Aufträge, die es selbst ausführt) und gilt
   im Hauptprogramm; in einem Fire-Thread liefert es 0. Ein Auftrag läuft immer für sich: an den sicheren Punkten eines laufenden Auftrags wird die
   Warteschlange nicht abgearbeitet (sonst liefe der nächste Auftrag vor dem Ende des vorigen).

@@ -224,7 +224,13 @@ print(last.v + " " + store.items.Count)        // 1 2 - they outlive the thread
   (a copy) or 'take x' (moved)" and nothing is stored; the call is the ArgumentException "'Put' runs in the main program ..." and does not run.
   Inside `sync global { ... }` the same - only a method called there runs in the thread (the section holds the main program anyway).
 - What moves leaves the thread like `handover`: it is the main program's, also after the thread has ended.
-- Reading stays direct: a thread sees the globals as they are, without a job.
+- Reading stays direct: a thread sees the globals as they are, without a job. So does a method that only reads - its own body assigns nothing but its
+  own locals and takes nothing (`table.Get(i)`, `list[i]`, `list.Count`, `dict.ContainsKey(k)`): it runs in the thread like the reads of the fields it
+  makes. What it changes on the way (a method that writes, called from it) is a job or a section again.
+- While the main program is in a native function of a package (a long `cam.Render()`, a compression) and gives it no object or array of the globals,
+  it does not wait for the threads: a write of a thread gets its section at once, and a method call runs in the thread inside a section (as in
+  `sync global`), one at a time. Back from the native, the main program waits for a section that runs - as after `Sleep`. A callback of the native
+  into fire code brings it back first.
 
 `fire global { ... }` does not start a thread: it queues a **job** that the main program runs with the real globals. When the main program lets the
 waiting threads in and runs the jobs is a build setting, `#globaljobs` (the same in the VM and in a native build):

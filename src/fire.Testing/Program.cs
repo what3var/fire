@@ -28592,6 +28592,51 @@ else
             print("plain " + plain.Compressed + " " + plain.ReceiveText(5000).Length)
             plain.Close()
             """),
+        ("Threads und Natives: waehrend das Hauptprogramm in einem Native eines Pakets steckt, laufen lesende Methoden (List, eigene Klasse) im Thread, schreibende und statische Felder in Sektionen ohne das Hauptprogramm", """
+            #import "compression"
+            class Table {
+                int v[] = new int[64]
+                construct() { for (var i = 0; i < 64; i++) { this.v[i] = i } }
+                int Get(int i) { return this.v[i] }
+                int Bump(int i) { this.v[i] = this.v[i] + 1; return this.v[i] }
+            }
+            class Shared {
+                static Table tab = new Table()
+                static List<int> list = new List<int>()
+                static int last = 0
+            }
+            class Frames {
+                static int Run(any done, any go) {
+                    var data = new byte[200000]
+                    for (var i = 0; i < data.length; i++) { data[i] = (i * 7 + i / 13) % 251 }
+                    go.Send(1)
+                    var frames = 0
+                    while (done.Count == 0 && frames < 4000) {
+                        var packed = Compression.Deflate.Compress(data)
+                        frames++
+                    }
+                    return frames
+                }
+            }
+            for (var i = 0; i < 64; i++) { Shared.list.Add(i * 2) }
+            var done = new Channel<int>()
+            var go = new Channel<int>()
+            fire with done, go {
+                go.Receive()
+                var s = 0
+                for (var i = 0; i < 5000; i++) {
+                    s = s + Shared.tab.Get(i % 64) + Shared.list[i % 64]
+                    Shared.tab.Bump(i % 64)
+                    Shared.last = i
+                }
+                done.Send(s)
+            }
+            var frames = Frames.Run(done, go)
+            var sum = 0
+            for (var i = 0; i < 64; i++) { sum += Shared.tab.v[i] }
+            print("thread done while the main program was in its natives: " + (frames < 4000))
+            print("reads " + done.Receive() + ", sum " + sum + ", last " + Shared.last)
+            """),
         ("WebSocket.Outbox: ein anderer Task sendet auf den Socket, waehrend sein Task in Receive wartet (ein Warten auf Socket und Kanal), sendFrom mit Channel.Pair", """
             #import "http"
             #import "time"
