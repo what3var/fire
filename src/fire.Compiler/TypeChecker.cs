@@ -291,7 +291,8 @@ namespace fire.Compiler
         // it unseen: not when a call of that name could not be resolved (a receiver of an unknown type, `any`), when the name is used as a value (a method
         // as a lambda) or appears as a string (reflection, callbacks by name), when a package or the prelude has a method of that name and arity (the run
         // time or a package may call it), for the methods the language calls itself (indexers, CompareTo, ...), nor for the constructors of a class that
-        // is a base class. The Linker switches it off for a program that uses reflection, for a module or plugin, and in a debug build.
+        // is a base class, nor - without [InferDefined] on the class (InferDefinedClass) - when the program uses reflection. The Linker switches it off for a
+        // module or plugin and in a debug build.
 
         /// <summary>Whether the check derives `defined` for the parameters of the program (FIRE_NO_DERIVE=1 switches it off).</summary>
         [ThreadStatic] public static bool? DeriveDefinedOverride;
@@ -431,15 +432,18 @@ namespace fire.Compiler
             {
                 if (member is MethodDecl m)
                 {
-                    // (a name in a string - `Reflect.Call(o, "Scale", [..])` - does not count: such a call goes through the check the derived parameter is
-                    // compiled with, and undefined there is the ArgumentException that names the derivation, RuntimeClass.DerivedParameterWhat)
                     if (_unseenNames.Contains(m.Name) || CalledByTheLanguage.Contains(m.Name) || m.Name.StartsWith("operator", StringComparison.Ordinal)) { DeriveLog?.Invoke($"{name}.{m.Name}: reached unseen (name used as a value, by the language or by a call not resolved)"); continue; }
+                    // (a name in a string - `Reflect.Call(o, "Scale", [..])`, a handler named in markup - or reflection at all: a call by name may give
+                    // anything. With [InferDefined] it may not: such a call goes through the check the derived parameter is compiled with, and undefined
+                    // there is the ArgumentException that names the derivation, RuntimeClass.DerivedParameterWhat)
+                    if (!InferDefinedClass(decl) && (ReflectionUsed || _stringLiterals.Contains(m.Name))) { DeriveLog?.Invoke($"{name}.{m.Name}: {(ReflectionUsed ? "the program uses reflection" : "its name is in a string")} (no [InferDefined])"); continue; }
                     string key = MethodKey(m.Name, m.Params.Count);
                     if (foreign.Contains(key) || foreign.Contains("*")) { DeriveLog?.Invoke($"{name}.{m.Name}: overrides or implements one of a package or the prelude"); continue; }
                     yield return (key, m.Params);
                 }
                 else if (member is ConstructorDecl c)
                 {
+                    if (!InferDefinedClass(decl) && ReflectionUsed) { DeriveLog?.Invoke($"{name} constructor: the program uses reflection - Reflect.New (no [InferDefined])"); continue; }
                     if (_baseClasses.Contains(name) || _baseClasses.Contains(PlainName(name)) || _unseenCtors.Contains(name)) { DeriveLog?.Invoke($"{name} constructor: a base class, or a `new` not resolved"); continue; }
                     yield return (CtorKey(name, c.Params.Count), c.Params);
                 }
@@ -476,7 +480,8 @@ namespace fire.Compiler
                 foreach (var member in decl.Members)
                 {
                     if (member is not FieldDecl fd) continue;
-                    bool candidate = decl.Source >= _firstUserSource && !decl.IsRecord && fd.ArrayRanks.Count == 0
+                    // (a class of a package only with [InferDefined]; without it no class that reflection can fill: Reflect.Set may store undefined)
+                    bool candidate = (decl.Source >= _firstUserSource || InferDefinedClass(decl)) && (InferDefinedClass(decl) || !ReflectionUsed) && !decl.IsRecord && fd.ArrayRanks.Count == 0
                         && fd.Type is { NonNull: false, PointerDepth: 0, ArrayRank: 0, LambdaSignature: null, TypeArgs: null, BaseName: "int" or "float" or "bool" }
                         && (fd.Initializer == null ? InferUninitializedDefined && SetBeforeRead(decl, fd) : IsConstantValue(fd.Initializer));
                     if (candidate) { (_fieldCands.TryGetValue(fd.Name, out var list) ? list : _fieldCands[fd.Name] = new List<FieldDecl>()).Add(fd); _fieldOwner[fd] = className; }
@@ -486,6 +491,16 @@ namespace fire.Compiler
             return _fieldCands;
         }
         private string FieldKey(FieldDecl fd) => "fld:" + _fieldOwner[fd] + "." + fd.Name;
+
+        /// <summary>`[InferDefined]` before a class: its fields (and the parameters of its methods) are derived `defined` although JSON or reflection
+        /// may reach it - Json.Deserialize leaves such a field at 0 when the text does not have it and a `null` for it, Reflect.Set/Reflect.Call an
+        /// undefined, is the ArgumentException that names the derivation. Also for a class of a package (only its fields there). Without it, a class
+        /// JSON may read, a name in a string (a method) and every class when the program uses reflection are left as declared.</summary>
+        private static bool InferDefinedClass(ClassDecl decl) => decl.Attributes?.Any(a => a.Name == "InferDefined") == true;
+        /// <summary>The program uses reflection (the package `reflection` is part of it - directly or through `ui`, `data`, ...): Reflect.Set and
+        /// Reflect.Call reach any member by a name computed at run time.</summary>
+        private bool ReflectionUsed => _reflectionUsed ??= _classes.TryGetValue("Reflect", out var r) && r.Source < _firstUserSource;
+        private bool? _reflectionUsed;
 
         /// <summary>A field without an initializer whose undefined nobody can see: every constructor of its class sets it first - among its leading simple
         /// statements (assignments and local declarations whose values call nothing, hand out no `this` and do not read the field), so no method, no `x++`
@@ -610,13 +625,21 @@ namespace fire.Compiler
                 foreach (var fd in fields) if (_fieldBad.Add(fd)) DeriveLog?.Invoke($"field {_fieldOwner[fd]}.{name}: {why}");
             }
             var asked = new HashSet<string>();
+            bool jsonSeen = false;
             foreach (var node in nodes)
                 switch (node)
                 {
                     case UnaryExpr { Op: UnaryOp.AddressOf } u when NameOf(u.Operand) is { } addressed: Bad(addressed, "its address is taken"); break;
                     case WithSet set: Bad(set.Name, "`with` sets it"); break;
                     case CallExpr call:
-                        if (call.Callee is MemberExpr { Name: "Deserialize", Target: IdentifierExpr { Name: "Json" } }) { foreach (var name in FieldCandidates().Keys.ToList()) Bad(name, "the program reads JSON into objects"); return; }
+                        // (JSON makes objects without their constructors, and `$type` in the text may name any class: every class but one with
+                        // [InferDefined], whose derived fields JSON reads like `defined` ones - 0 when the text does not have them, null an error)
+                        if (!jsonSeen && call.Callee is MemberExpr { Name: "Deserialize", Target: IdentifierExpr { Name: "Json" } })
+                        {
+                            foreach (var fd in FieldCandidates().Values.SelectMany(l => l))
+                                if (!InferDefinedClass(_classes[_fieldOwner[fd]]) && _fieldBad.Add(fd)) DeriveLog?.Invoke($"field {_fieldOwner[fd]}.{fd.Name}: the program reads JSON into objects (no [InferDefined])");
+                            jsonSeen = true;
+                        }
                         if (NameOf(call.Callee) is { } callee && refMethods.Contains(callee))
                             foreach (var arg in call.Args) if (NameOf(arg) is { } passed) Bad(passed, "it may go to a `ref` parameter");
                         break;
@@ -3436,6 +3459,9 @@ namespace fire.Compiler
             NewExpr n => $"new {n.ClassRef.BaseName}(...)",
             CallExpr { Callee: MemberExpr m } => $"{(m.Target is IdentifierExpr t ? t.Name + "." : "")}{m.Name}(...)",
             CallExpr { Callee: IdentifierExpr f } => $"{f.Name}(...)",
+            NewArrayExpr a => $"new {a.ElementType.BaseName}[...]",
+            NewBufferExpr b => b.Words ? "new word[...]" : "new byte[...]",
+            ArrayLiteralExpr => "[...]",
             _ => "the argument",
         };
 
@@ -3443,13 +3469,15 @@ namespace fire.Compiler
         private bool IsStatementTemporary(Expr e) => e switch
         {
             NewExpr n => _classes.ContainsKey(PlainName(n.ClassRef.BaseName)) || n.ClassRef.TypeArgs is { Count: > 0 },
+            // (`new byte[0]`, `[1, 2]`: an array or a buffer of this statement, like an object)
+            NewArrayExpr or NewBufferExpr or ArrayLiteralExpr => true,
             CallExpr c => _callTargets.TryGetValue(c, out var target) && ReturnsFresh(target),
             _ => false,
         };
 
         /// <summary>Is a value of the declared type an object or an array (something with an owner)?</summary>
         private bool HoldsOwned(TypeRef? type, int arrayRanks) =>
-            type != null && (arrayRanks > 0 || type.ArrayRank > 0 || type.TypeArgs is not { Count: > 0 } && _classes.ContainsKey(PlainName(type.BaseName))
+            type != null && (arrayRanks > 0 || type.ArrayRank > 0 || type is { BaseName: "any", PointerDepth: 0 } || type.TypeArgs is not { Count: > 0 } && _classes.ContainsKey(PlainName(type.BaseName))
                 || type.TypeArgs is { Count: > 0 } && _classes.ContainsKey(GenericName(PlainName(type.BaseName), type.TypeArgs.Count)));
 
         private readonly Dictionary<MethodDecl, bool> _returnsFresh = new(ReferenceEqualityComparer.Instance);
@@ -3460,9 +3488,9 @@ namespace fire.Compiler
             // (a local only when it surely holds a new value of its own: declared with `new ...` and never given anything else - `var c = this` is not new)
             var nodes = AstNodes(m.Body).ToList();
             var reassigned = new HashSet<string>(nodes.OfType<AssignExpr>().Select(a => a.Target).OfType<IdentifierExpr>().Select(t => t.Name));
-            var locals = new HashSet<string>(nodes.OfType<VarDeclStmt>().Where(v => v.Initializer is NewExpr or NewArrayExpr or ArrayLiteralExpr && !reassigned.Contains(v.Name)).Select(v => v.Name));
+            var locals = new HashSet<string>(nodes.OfType<VarDeclStmt>().Where(v => v.Initializer is NewExpr or NewArrayExpr or NewBufferExpr or ArrayLiteralExpr && !reassigned.Contains(v.Name)).Select(v => v.Name));
             var returns = nodes.OfType<ReturnStmt>().ToList();
-            bool fresh = returns.Count > 0 && returns.All(r => r.Value is NewExpr || r.Value is IdentifierExpr id && locals.Contains(id.Name) && m.Params.All(p => p.Name != id.Name));
+            bool fresh = returns.Count > 0 && returns.All(r => r.Value is NewExpr or NewArrayExpr or NewBufferExpr or ArrayLiteralExpr || r.Value is IdentifierExpr id && locals.Contains(id.Name) && m.Params.All(p => p.Name != id.Name));
             return _returnsFresh[m] = fresh;
         }
 

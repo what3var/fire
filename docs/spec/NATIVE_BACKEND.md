@@ -312,8 +312,11 @@ Bekannte Abweichungen zur VM: Unicode-Klassifizierung und Groß-/Kleinschreibung
   gleich; eine freie Hälfte am Ende der Basisklasse nimmt das nächste schmale Feld der abgeleiteten). Hälfte 0 liegt über dem Kopf des Slots,
   der sich deshalb wie eine Zahl liest - jeder generische Gang über die Felder (Freigeben, Besitz, Kopie) sieht einen Wert ohne Referenz;
   Hälfte 1 liegt über der Nutzlast, ihre Art ist mit `K_Undefined` verXORt (Nullen sind `undefined`). Ein Feldname ist schmal, wenn er es
-  in jeder Klasse ist, die ihn hat, und seine Adresse nirgends genommen wird. Vorerst aus bei Threads, Sonden, Debug-Builds, getrennter
-  Übersetzung und Plugins (dort liest die Runtime Felder per Index ohne das Layout). Reflection liest und schreibt über die Feld-Helfer
+  in jeder Klasse ist, die ihn hat, und seine Adresse nirgends genommen wird. Vorerst aus bei Threads, Debug-Builds, getrennter
+  Übersetzung und Plugins (dort liest die Runtime Felder per Index ohne das Layout). Probes schalten sie nicht ab: jeder direkte Schreibzugriff
+  (DirectSetField, ein typisiertes C-Feld - CppGenerator.CFields.cs -, ein direkt aufgerufener Setter, ProbedSetter) prüft zuerst das Flag 2 des
+  Objekts und nimmt nur dann den Feld-Helfer `sf_`, der `probedSet` ruft (die Hälfte liest `gfp_` über FieldRead); ein Objekt ohne Probes schreibt
+  direkt. Nur `self` gilt nach dem Schreiben eines Felds nicht als sicher lebendig (ein Handler könnte es zerstören). Reflection liest und schreibt über die Feld-Helfer
   (`gf_`/`sf_`, sie kennen das Layout), JSON über seine Feldtabelle, die je Feld die Hälfte trägt (`JsonFieldInfo.half`, auch für das `count`
   von List/JsonObject: `JsonSpecial`) - beide schalten die schmalen Felder nicht ab. Ebenso bleibt das Wissen über Felder `byte data[]`/
   `word w[]` (ein Puffer) und `T items[]` (ein Array des Elements des Typarguments): JSON liest dafür Puffer (die Bytes geprüft), `Reflect.Set`
@@ -574,7 +577,8 @@ min-Verhältnis `alloc` 1,00, `exceptions` 1,03, `fib` 1,03, `list` 1,01, `metho
   sind erzeugte Funktionen über die Feldhelfer und Dispatcher des Programms - mit denselben Zugriffs-, Einheiten- und Property-Regeln und denselben Fehlermeldungen
   (`ReflectionException`). Für private/protected zählt der Code, der die Bibliothek aufgerufen hat: ein Aufruf einer Methode der Bibliotheksklassen von außen setzt `g_reflCaller`.
   Ein Selektor (`c => c.radius`) trägt seine Mitgliedskette in der `Lam` (`sel`). `probe`/`silence`: ein Objekt mit Proben hat Flag 2 und eine `ProbeNode` (Seitentabelle);
-  die Setter-Helfer (`sfo_` = der eigentliche Setter, `sf_` prüft zuerst das Flag) rufen dann `probedSet`: `changing`-Handler (ein `false` bricht ab), Schreiben, `changed`-Handler
+  die Setter-Helfer (`sfo_` = der eigentliche Setter, `sf_` prüft zuerst das Flag) rufen dann `probedSet` - auch die schnellen Wege (direktes
+  Schreiben, typisierte C-Felder, direkt aufgerufene Setter) prüfen das Flag und nehmen dann `sf_`, s. "Schmale Felder": `changing`-Handler (ein `false` bricht ab), Schreiben, `changed`-Handler
   bei geändertem Wert, ohne Wiederholung für dasselbe Mitglied. Die Bibliotheks-Prelude hält ihre Objekte selbst (`TakeTo`, `flat`): eine Liste besitzt ihre Elemente nicht, und die Arrays
   nativer Aufrufe sterben mit dem Scope, der sie bekam.
 

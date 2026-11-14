@@ -21275,13 +21275,21 @@ else
             try { Reflect.Set(r, "data", "text"); print(r.data) } catch (Exception e) { print("E " + e.message) }
             print(Json.Serialize(a))
             """),
-        ("Hergeleitetes defined mit Reflection: Reflect.Call/Reflect.Set gehen durch die Pruefung, mit der der Parameter/das Feld uebersetzt ist - der Typ bleibt strikt, undefined wird mit der Herleitung gemeldet; JSON haelt die Herleitung der Felder auf", """
+        ("[InferDefined]: mit Reflection und JSON leitet nur eine Klasse mit dem Attribut defined her - Reflect.Call/Reflect.Set gehen durch die Pruefung, der Typ bleibt strikt, undefined wird mit der Herleitung gemeldet; JSON laesst ein fehlendes Feld auf 0, null ist ein Fehler. Ohne Attribut bleibt alles wie deklariert", """
             #import "reflection"
+            #import "json"
+            [InferDefined]
             class C {
                 int count = 0
+                float scale = 1.5
                 construct() { }
                 undefined Bump(int by) { this.count = this.count + by }
                 int Twice(int x) { return x * 2 }
+            }
+            class Plain {
+                int n = 3
+                construct() { }
+                undefined Add(int by) { this.n = this.n + by }
             }
             var c = new C()
             c.Bump(2)
@@ -21293,6 +21301,78 @@ else
             try { Reflect.Set(c, "count", undefined) } catch (ArgumentException e) { print("T5 " + e.message) }
             Reflect.Set(c, "count", 10)
             print(c.count + " " + Reflect.Get(c, "count"))
+            var p = new Plain()
+            p.Add(1)
+            Reflect.Set(p, "n", undefined)
+            print(p.n)
+            try { Reflect.Set(p, "n", "x") } catch (ArgumentException e) { print("P1 " + e.message) }
+            var j = Json.Deserialize<C>("{\"scale\": 2}")
+            print(j.count + " " + j.scale)
+            try { var k = Json.Deserialize<C>("{\"count\": null}"); print(k.count) } catch (ArgumentException e) { print("J1 " + e.message) }
+            var q = Json.Deserialize<Plain>("{}")
+            print(q.n)
+            """),
+        ("Probes ohne Verzicht auf die schnellen Wege: schmale/gepackte Felder, typisierte C-Felder und direkte Setter pruefen das Probe-Flag des Objekts - ein Objekt ohne Probes schreibt direkt; changing, changed, Abbruch, Ausnahme im Handler, silence", """
+            #intwidth 32
+            #floatwidth 32
+            class Cfg {
+                defined int volume = 10
+                defined float gain = 0.5
+                int plain = 1
+                bool lit = false
+                int vol2 = 0
+                int Level { get { return this.vol2 } set { this.vol2 = value * 2 } }
+                construct() { }
+                undefined Bump() { this.volume = this.volume + 1 }
+                undefined Set(defined int v) { this.volume = v; print("after " + this.volume) }
+            }
+            var a = new Cfg()
+            var b = new Cfg()
+            int h = probe a.volume changed { print(name + ": " + old + " -> " + value) }
+            probe a.volume changing (int old, int nv) => nv <= 100
+            probe a.gain changed (o, n) => print("gain " + o + " -> " + n)
+            probe a.Level changed (o, n) => print("Level " + o + " -> " + n)
+            probe a.lit changed (o, n) => print("lit " + o + " -> " + n)
+            a.volume = 20
+            a.volume = 500
+            b.volume = 500
+            a.Bump()
+            b.Bump()
+            a.gain = 1.5
+            a.Level = 4
+            b.Level = 7
+            a.lit = true
+            a.plain = 5
+            print(a.volume + " " + b.volume + " " + a.gain + " " + a.Level + " " + b.Level + " " + a.lit)
+            silence h
+            a.volume = 30
+            silence a
+            a.volume = 31
+            print(a.volume)
+            for (int i = 0; i < 3; i++) { b.volume = b.volume + i; b.gain = b.gain * 2 }
+            print(b.volume + " " + b.gain)
+            var c = new Cfg()
+            probe c.volume changing (int old, int nv) => nv < 50 ? true : throw new ArgumentException("zu gross " + nv)
+            try { c.Set(5); c.Set(60); print("nicht hier") } catch (ArgumentException e) { print("E " + e.message) }
+            try { c.volume = 99 } catch (ArgumentException e) { print("E2 " + e.message) }
+            print(c.volume)
+            """),
+        ("Http.Response behaelt einen Body, der dem Aufruf gehoert (new byte[0], ein Text, ein Puffer aus einer Methode) - try this.body.TakeTo(this); ein Puffer des Aufrufers bleibt dessen", """
+            #import "http"
+            class F {
+                static Http.Response Make() { return new Http.Response(202, new byte[0]) }
+                static Http.Response Text() { return new Http.Response(200, "hallo") }
+            }
+            var r = new Http.Response(202, new byte[3])
+            print(r.status + " " + r.body.length)
+            var m = F.Make()
+            print(m.status + " " + m.body.length)
+            var t = F.Text()
+            print(t.body.length)
+            byte mine[] = new byte[4]
+            var o = new Http.Response(200, mine)
+            mine[0] = 9
+            print(o.body.length + " " + mine.length + " " + o.body[0])
             """),
         ("JsonObject.Set uebernimmt, was dem Aufruf gehoert (take, neu erzeugt), auch aus einem inneren Block und ueber vier Eintraege hinaus; ein zerstoertes Objekt beim Schreiben ist eine DestroyedException, kein stilles null", """
             #import "json"

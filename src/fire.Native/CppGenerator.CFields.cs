@@ -85,10 +85,10 @@ namespace fire.Native
             {
                 case OpCode.GetField when d >= 1 && d < 63 && KnownObjClass(Ty(d - 1)) is { } rc:
                     return CFieldOf(rc, Name(), f);
-                case OpCode.SetField or OpCode.SetFieldClaim when !_usesProbes && d >= 2 && d < 63 && KnownObjClass(Ty(d - 2)) is { } rc
+                case OpCode.SetField or OpCode.SetFieldClaim when d >= 2 && d < 63 && KnownObjClass(Ty(d - 2)) is { } rc
                     && CFieldOf(rc, Name(), f) is { } field && CFieldTakes(field.Type, Ty(d - 1)):
                     return field;
-                case OpCode.SetFieldOnThis when !_usesProbes && d >= 1 && d < 63 && f.HasSelf && !IsExtensionMethod(f.Proto) && f.Chunk.OwnerClass is { } own
+                case OpCode.SetFieldOnThis when d >= 1 && d < 63 && f.HasSelf && !IsExtensionMethod(f.Proto) && f.Chunk.OwnerClass is { } own
                     && CFieldOf(own, Name(), f) is { } thisField && CFieldTakes(thisField.Type, Ty(d - 1)):
                     return thisField;
             }

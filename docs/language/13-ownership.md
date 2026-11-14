@@ -84,13 +84,24 @@ return found                          // the devices in found go along with the 
 
 The same for a constructor that keeps an argument in a field: `new Voxelizer(Sample.Make())` with `this.sample = sample` in the constructor leaves the
 field with a destroyed object after the statement - the field only refers to the temporary. The type checker says so (warning `TC031`) when the argument
-is surely a temporary (`new ...`, or a call of a method whose every `return` gives a new object or a local of its own) and the constructor stores the
-parameter plainly. Let the constructor take it - it then keeps what it is given, and leaves a variable of the caller alone:
+is surely a temporary (`new ...`, an array or a buffer made in the argument - `new byte[0]`, `[1, 2]` -, or a call of a method whose every `return` gives a
+new object, array or local of its own) and the constructor stores the parameter (also one declared `any`) plainly. Let the constructor take it - it then
+keeps what it is given, and leaves a variable of the caller alone:
 
 ```fire
 class Voxelizer {
     Sample sample
     construct(Sample sample) { this.sample = try take sample }
+}
+```
+
+When the field gets something made from the parameter (`this.body = Bytes(body)`, which gives the parameter itself for a buffer and a new one for a
+text), take the field's value afterwards - `Http.Response` does it this way, so `new Http.Response(202, new byte[0])` keeps its body:
+
+```fire
+construct(defined int status = 200, any body = undefined) {
+    this.body = Http.Response.Bytes(body)
+    try this.body.TakeTo(this)
 }
 ```
 

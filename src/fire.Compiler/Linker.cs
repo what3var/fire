@@ -619,8 +619,8 @@ namespace fire.Compiler
             // deriving `defined` for the parameters of the program (TypeChecker.Derive): not when a plugin (or the program that loads one) can call a
             // method with anything, nor in a debug build (the debugger calls methods with what it is given)
             var deriveBefore = TypeChecker.DeriveDefinedOverride;
-            // (reflection does not: Reflect.Set and Reflect.Call go through the checks a derived field or parameter is compiled with - undefined there is the
-            // ArgumentException that names the derivation, RuntimeClass.DerivedFieldWhat/DerivedParameterWhat; JSON reads it like a `defined` one)
+            // (reflection and JSON leave out the classes without [InferDefined] there, TypeChecker.ReflectionUsed; one with it goes through the checks its
+            // derived fields and parameters are compiled with - undefined is the ArgumentException that names the derivation, RuntimeClass.DerivedFieldWhat)
             if (ClassMeta || OwnImports is { Count: > 0 }
                 || (executionModeOverride ?? assemblyInfo.ExecutionMode) == VmExecutionMode.Debug) TypeChecker.DeriveDefinedOverride = false;
             try { TypeChecker.Run(program, resolveResult, EffectiveTypeChecking, firstUserSource, TypeCheckLibraries ? 0 : firstUserSource); }
