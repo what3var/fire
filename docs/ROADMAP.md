@@ -1188,7 +1188,11 @@ Gemessen (nativ, Release, 1 Mio., die Maschine war belastet - Instruktionen mit 
 
 Offen:
 
-* `l[i]` noch näher an 3 ns: der Test der Typargumente (`targOf_List_0`) als Inline-Vergleich, der Rumpf als `static inline`.
+* `l[i]` noch näher an 3 ns: der Test der Typargumente ist eingebettet (`static inline`); es bleibt der Aufruf des Rumpfs mit einem `Value` als Ergebnis.
 * `Grow` kopiert Element für Element (etwa 60 Instruktionen je Element): ein Kopieren der gepackten Daten am Stück.
 * Methoden mit Ergebnis (`l.Get(i)`-artig) an der Aufrufstelle wie `l[i]` typisieren (der Hinweis steht schon in der Tabelle).
-* `Dictionary<K, V>`/`HashSet<T>` spezialisieren.
+* `Dictionary<K, V>`/`HashSet<T>`: **umgesetzt** `K keys[]`/`V vals[]` (nach den Typargumenten typisiert), die Hilfsarrays `defined int`/`defined bool`,
+  `HashOf<int, any>`/`Find<int, any>`/`Insert<int, any>` im `__HashTable` (der Platzhalter `any` in Spezialisierungen ist dafür neu), `arraySet`
+  schreibt eine Zahl ohne Einheit direkt in ein gepacktes int-/float-Array, `adaptSlot`/`adaptUnit` lassen eine Zahl in ihrer Einheit ohne Aufruf durch.
+  `Dictionary<int, int>` mit 200 000 Einträgen (setzen, lesen) und `HashSet<int>` (Add, Contains): 1959 → 1237 Mio. Instruktionen. Offen: der Wert
+  geht noch als `any` in die Tabelle (`Insert<int, int>` usw. für die häufigen Paare), `Resize` kopiert Element für Element.

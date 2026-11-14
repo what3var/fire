@@ -1075,13 +1075,15 @@ class Box<T> {
   otherwise the generic method runs. So the result of a program is the same with or without the specialization; it only
   says how a case is done faster or more simply.
 - Only plain types can be written (`int`, `float`, `bool`, `char`, `string`, `byte`, `word`) - no width, no unit, no
-  `defined`. A static method cannot be specialized (it has no object).
+  `defined`. `any` leaves a type argument open (`Find<int, any>` in `class Table<K, V>`: every table with int keys); at
+  least one must be fixed. A static method cannot be specialized (it has no object).
 - The VM chooses at every call; natively the call site chooses when the class of the object is known (a test of its type
   arguments, then the C body of the specialization), every other way in goes through the generic method, which chooses first.
 - `T name[]` (a field holding an array of a type parameter) is typed by the type argument at every assignment, like
   `new T[n]`: in a `Box<int>` it holds an array of raw ints. In a specialization the native backend therefore knows the
   element type and reads and writes the elements directly.
-- The standard library uses this: `List<int>` and `List<float>` have `Add`, `operator[]` (read and write) and their growing specialized.
+- The standard library uses this: `List<int>` and `List<float>` have `Add`, `operator[]` (read and write) and their growing specialized;
+  the table behind `Dictionary` and `HashSet` has its hash, its search and its insertion specialized for int keys.
 - Where the type checker knows the type arguments of the receiver (`List<int> l; l[i]`), the compiler notes them beside the code (no
   instruction); natively the result of `l[i]` is then a number - a generic `operator[]` that runs instead (an object whose type arguments
   differ after all) is checked to give one.

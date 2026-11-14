@@ -3496,17 +3496,21 @@ namespace fire.Compiler
         /// `<` with a type keyword follows.</summary>
         private List<TypeRef>? TryParseSpecialization(bool isStatic)
         {
-            if (!Check(TokenType.Lt) || !TypeKeywords.Contains(PeekAt(1).Type) || PeekAt(1).Type is TokenType.Class or TokenType.Undefined) return null;
+            // (`any`: the type argument at that place is left open - `Find<int, any>` for every table with int keys)
+            bool anyFirst = PeekAt(1).Type == TokenType.Identifier && PeekAt(1).Lexeme == "any" && PeekAt(2).Type is TokenType.Comma or TokenType.Gt;
+            if (!Check(TokenType.Lt) || !anyFirst && (!TypeKeywords.Contains(PeekAt(1).Type) || PeekAt(1).Type is TokenType.Class or TokenType.Undefined)) return null;
             var ltToken = Advance();
             var specTypes = new List<TypeRef>();
             do
             {
                 var specType = ParseTypeRef(allowArray: false);
-                if (specType.BitWidth != null || specType.Unit != null || specType.NonNull)
-                    throw Error("A specialization names plain types (int, float, bool, char, string, byte, word) - no width, unit or 'defined'", ltToken);
+                if (specType.BitWidth != null || specType.Unit != null || specType.NonNull
+                    || specType.BaseName is not ("int" or "float" or "bool" or "char" or "string" or "byte" or "word" or "any"))
+                    throw Error("A specialization names plain types (int, float, bool, char, string, byte, word) or 'any' - no width, unit or 'defined'", ltToken);
                 specTypes.Add(specType);
             } while (Match(TokenType.Comma));
             Expect(TokenType.Gt, "Expected '>' after the types of a specialization");
+            if (specTypes.All(t => t.BaseName == "any")) throw Error("A specialization fixes at least one type argument ('any' leaves one open)", ltToken);
             if (isStatic) throw Error("A specialization is chosen by the type arguments of the object - a static method has none", ltToken);
             return specTypes;
         }

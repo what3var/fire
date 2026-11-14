@@ -7833,7 +7833,7 @@ namespace fire.Runtime
             {
                 bool fits = spec.SpecArgs != null && args.Length == spec.ParamCount;
                 for (int i = 0; fits && i < args.Length && i < 64; i++) fits = (spec.SpecDefinedMask >> i & 1) == 0 || args[i].Kind != ValueKind.Undefined;
-                for (int k = 0; fits && k < spec.SpecArgs!.Length; k++) fits = DeclaredType.TypeArgOf(obj, spec.SpecOwner!, k) == spec.SpecArgs[k];
+                for (int k = 0; fits && k < spec.SpecArgs!.Length; k++) fits = spec.SpecArgs[k] == "any" || DeclaredType.TypeArgOf(obj, spec.SpecOwner!, k) == spec.SpecArgs[k];
                 if (fits) return spec;
             }
             return proto;

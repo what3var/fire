@@ -252,7 +252,8 @@ print(new Box<int>().Describe(nothing))  // something - a `defined` parameter ta
 ```
 
 - The types name every type parameter of the class (`Pair<K, V>`: `Get<int, string>()`), as plain types: `int`, `float`,
-  `bool`, `char`, `string`, `byte`, `word`. `Box<int : cm>` is not a `Box<int>`.
+  `bool`, `char`, `string`, `byte`, `word` - or `any` for one left open (`Get<int, any>()`: every pair with an int key).
+  `Box<int : cm>` is not a `Box<int>`.
 - An argument that does not fit the parameters of the specialization goes to the generic method - the result is the
   same either way; the specialization only does the case faster.
 - A field `T items[]` holds an array of the type argument's element (`Box<int>`: raw ints). Natively a specialization reads

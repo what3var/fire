@@ -530,7 +530,7 @@ namespace fire.Native
                     if (specProto.SpecOwner is not { } specOwner || specProto.SpecArgs is not { } specArgs) continue;
                     handTexts.Add(specOwner + ":" + string.Join("|", specArgs));
                     var target = GetFunc(specProto, FuncKind.Method);
-                    string tests = string.Concat(specArgs.Select((t, k) => $" && {TArgOfExpr(specOwner, k, "objAt(self)")} == {TArgRef(t)}"))
+                    string tests = string.Concat(specArgs.Select((t, k) => t == "any" ? "" : $" && {TArgOfExpr(specOwner, k, "objAt(self)")} == {TArgRef(t)}"))
                         + string.Concat(Enumerable.Range(0, Math.Min(f.ParamCount, 64)).Where(i => (specProto.SpecDefinedMask >> i & 1) != 0).Select(i => $" && P{i}.kind != K_Undefined"));
                     lines.AppendLine($"    if (self.kind == K_Class{tests}) return {target.Name}{(Wrapped ? "_b" : "")}({args});");
                 }
@@ -576,10 +576,17 @@ namespace fire.Native
             foreach (var spec in specs)
             {
                 if (spec.SpecOwner is not { } owner || spec.SpecArgs is not { } specArgs) continue;
-                string condition = string.Join(" && ", specArgs.Select((t, k) => $"{TArgOfExpr(owner, k, $"objAt({recv})")} == {TArgRef(t)}"));
+                string condition = string.Join(" && ", specArgs.Select((t, k) => (t, k)).Where(x => x.t != "any").Select(x => $"{TArgOfExpr(owner, x.k, $"objAt({recv})")} == {TArgRef(x.t)}"));
                 calls.Add((condition, GetFunc(spec, FuncKind.Method), spec.SpecDefinedMask));
             }
             return calls;
+        }
+
+        /// <summary>Do the type arguments of a specialization (`any`: every one) take those the type checker knows of a receiver ("int|string")?</summary>
+        private static bool SpecArgsFit(string[] specArgs, string known)
+        {
+            var parts = known.Split('|');
+            return parts.Length == specArgs.Length && specArgs.Select((t, k) => t == "any" || t == parts[k]).All(b => b);
         }
 
         /// <summary>The declaration of what a method returns when it is a number or a bool (`int F()`, `defined float F()`): the DeclaredKind its return is
@@ -1234,7 +1241,7 @@ namespace fire.Native
                         : TArgRef(token);
                     cases.Add((ci.Id, expr));
                 }
-                targOfCode.AppendLine($"FIRE_MAYBE_UNUSED {HelperStorage}const TArg* targOf_{Mangle(cls)}_{k}(Obj* o) {{");
+                targOfCode.AppendLine($"FIRE_MAYBE_UNUSED {HelperStorage}inline const TArg* targOf_{Mangle(cls)}_{k}(Obj* o) {{");
                 targOfCode.AppendLine("    if (!o) return NULL;");
                 targOfCode.AppendLine("    switch (o->cls) {");
                 foreach (var group in cases.GroupBy(c => c.Expr))
@@ -1694,7 +1701,12 @@ namespace fire.Native
             bool toFloat = demand.StartsWith('#');
             string unit = demand.TrimStart('#');
             if (unit == "any") return toFloat ? $"intToFloat({value})" : value;
-            return $"adaptUnit({value}, {UnitC(UnitId(DemandUnit(unit)))}, {(unit.StartsWith("any ", StringComparison.Ordinal) ? "true" : "false")}, {(toFloat ? "true" : "false")}, {Constant(Value.MakeString(Unit.DemandDisplay(unit)))})";
+            bool dimensionOnly = unit.StartsWith("any ", StringComparison.Ordinal);
+            string unitC = UnitC(UnitId(DemandUnit(unit)));
+            string call = $"adaptUnit({value}, {unitC}, {(dimensionOnly ? "true" : "false")}, {(toFloat ? "true" : "false")}, {Constant(Value.MakeString(Unit.DemandDisplay(unit)))})";
+            // (a number already in that unit - the common case - is taken as it is; `value` is a variable here)
+            if (dimensionOnly || !System.Text.RegularExpressions.Regex.IsMatch(value, @"^[A-Za-z_][A-Za-z0-9_]*$")) return call;
+            return $"(FIRE_LIKELY({value}.unit == {unitC} && ({value}.kind == K_Float{(toFloat ? "" : $" || {value}.kind == K_Int")})) ? {value} : {call})";
         }
 
         private string Run()
@@ -6973,7 +6985,7 @@ namespace fire.Native
                     // specialization gives - a C number when it has a C result; the generic operator (an object whose type arguments differ after all) is
                     // checked to give the same
                     if (f.Chunk.ReceiverTypeArgs is { } knownArgs && knownArgs.TryGetValue(ins.Addr, out var receiverArgs)
-                        && getCalls.FindIndex(gc => gc.Callee.Proto?.SpecArgs is { } sa && string.Join("|", sa) == receiverArgs) is var hi and >= 0)
+                        && getCalls.FindIndex(gc => gc.Callee.Proto?.SpecArgs is { } sa && SpecArgsFit(sa, receiverArgs)) is var hi and >= 0)
                     {
                         var hc = getCalls[hi];
                         string idxTest = (hc.Defined & 1) != 0 && (IsNullable(Ty(d - 1)) || (Ty(d - 1) & TypeNone) != 0 || Ty(d - 1) == TypeUnknown) ? $" && {gidx}.kind != K_Undefined" : "";
