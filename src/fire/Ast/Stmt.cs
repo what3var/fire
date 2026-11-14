@@ -289,7 +289,10 @@ namespace fire.Ast
         AccessModifier Access = AccessModifier.Public,
         bool IsStatic = false,
         IReadOnlyList<AttributeDecl>? Attributes = null,
-        bool IsOverride = false) : Stmt(Source, Line);   // (IsOverride: `override` - it replaces a method of a base class, TypeChecker.CheckOverrides)
+        bool IsOverride = false,
+        IReadOnlyList<TypeRef>? Specialization = null) : Stmt(Source, Line);   // (IsOverride: `override` - it replaces a method of a base class, TypeChecker.CheckOverrides)
+    // (Specialization: `undefined Add<int>(int item)` in `class List<T>` - the body for those type arguments of the class; Name is "Add<int>", the
+    // method it specializes `Add` with as many parameters - SPEC 5.8.1)
 
     /// <summary>`[Name arg1, arg2, ...]` before a method (SPEC "Attributes"): a name and expressions, known at compile time (the test runner reads
     /// `Test`, `Parameters`, `PrepareTest`, ...; reflection lists them). `ArgTexts` are the arguments as source text (a test driver evaluates them).</summary>

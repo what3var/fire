@@ -1005,6 +1005,7 @@ namespace fire.Compiler
         {
             var ctorDecls = new List<ConstructorDecl>();
             rc.ThisReads = ComputeThisReads(rc.Decl);
+            var pendingSpecs = new List<(MethodDecl Decl, FunctionProto Proto)>();
 
             foreach (var member in rc.Decl.Members)
             {
@@ -1030,6 +1031,8 @@ namespace fire.Compiler
                                 RequiredType = fd.ArrayRanks.Count == 0 ? DeclaredTypeOf(fd.Type, rc) : null,
                                 RequiredArray = fd.Type?.ArrayWidthCode(fd.ArrayRanks.Count) is var arrayCode and not 0 && (arrayCode & 0xFF) is not (fire.Values.ArrayElem.U8 or fire.Values.ArrayElem.Word)
                                     ? (ushort)(arrayCode & 0xFFFF) : (ushort)0,
+                                ArrayOfParam = !fd.IsStatic && fd.ArrayRanks.Count == 1 && fd.Type is { ArrayRank: 0, PointerDepth: 0, TypeArgs: null, Unit: null } elemType
+                                    && TypeArgText(elemType, rc, null, 0) is ['$', ..] arrayParam && !arrayParam.EndsWith('@') ? arrayParam : null,
                                 IsStatic = fd.IsStatic,
                                 TypeText = JsonTypeText(fd.Type, fd.ArrayRanks.Count, rc.Decl),
                                 Attributes = AttributeMetas(fd.Attributes),
@@ -1060,8 +1063,12 @@ namespace fire.Compiler
                         }
 
                         case MethodDecl md:
-                            rc.AddMethod(md.Name, CompileMethodProto(rc, md.Params, md.Body, md.Access, md.IsStatic, md.ReturnType?.UnitDemand, md.TypeParams, returnType: md.ReturnType, name: md.Name));
+                        {
+                            var methodProto = CompileMethodProto(rc, md.Params, md.Body, md.Access, md.IsStatic, md.ReturnType?.UnitDemand, md.TypeParams, returnType: md.ReturnType, name: md.Name);
+                            rc.AddMethod(md.Name, methodProto);
+                            if (md.Specialization != null) pendingSpecs.Add((md, methodProto));   // (linked once every method is there)
                             break;
+                        }
 
                         case ConstructorDecl ctor:
                             ctorDecls.Add(ctor);
@@ -1101,6 +1108,23 @@ namespace fire.Compiler
                     _errors.Add((ex as CompilerException ?? new CompilerException(ex.Message, member.Line)).At(rc.Decl.Source));
                 }
                 finally { s_memberSource = outerMember; }
+            }
+
+            // `Add<int>(int item)`: the generic method it stands in for (the same name and number of parameters) takes it (SPEC 5.8.1)
+            foreach (var (md, specProto) in pendingSpecs)
+            {
+                var specTypes = md.Specialization!;
+                string generic = md.Name.Substring(0, md.Name.IndexOf('<'));
+                var target = rc.Methods.TryGetValue(generic, out var candidates) ? candidates.FirstOrDefault(p => !p.IsStatic && p.ParamCount == md.Params.Count) : null;
+                string? problem = rc.Decl.TypeParams is not { Count: > 0 } classParams || classParams.Count != specTypes.Count
+                    ? $"'{md.Name}' names {specTypes.Count} type(s), but class '{rc.Decl.Name}' has {rc.Decl.TypeParams?.Count ?? 0} type parameter(s) - a specialization fixes all of them"
+                    : target == null ? $"'{md.Name}' specializes nothing: class '{rc.Decl.Name}' has no method '{generic}' with {md.Params.Count} parameter(s)" : null;
+                if (problem != null) { _errors.Add(new CompilerException(problem, md.Line).At(rc.Decl.Source)); continue; }
+                specProto.SpecOwner = rc.Name;
+                specProto.SpecArgs = specTypes.Select(t => t.BaseName).ToArray();
+                for (int i = 0; i < md.Params.Count && i < 64; i++)
+                    if (md.Params[i].Type is { NonNull: true }) specProto.SpecDefinedMask |= 1L << i;
+                target!.Specializations = (target.Specializations ?? Array.Empty<FunctionProto>()).Append(specProto).ToArray();
             }
 
             // No declaration of its own -> exactly ONE synthesised 0-arg public

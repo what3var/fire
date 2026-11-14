@@ -424,12 +424,26 @@ namespace fire.Native
         /// parameter whose type argument is a number in a known unit holds that or undefined; null otherwise.</summary>
         private int? SpecFieldType(Func f, Instr ins, string field)
         {
-            if (f.SpecClassOwner is not { } owner || f.SpecClassArgs is not { } args || f.Chunk.OwnerClass is not { } rc) return null;
             int i = f.IndexOf[ins.Addr] - 1;
             if (i < 0 || f.Decoded[i].Op != OpCode.LoadThis) return null;   // (the object of the method itself, not another one of the class)
+            if (f.Chunk.OwnerClass is { } ofRc && SpecArrayOfParamType(f, ofRc, field) is { } arrayType) return arrayType;
+            if (f.SpecClassOwner is not { } owner || f.SpecClassArgs is not { } args || f.Chunk.OwnerClass is not { } rc) return null;
             if (rc.FindFieldRequiredType(field) is not { } required || DeclaredType.Parse(required) is not { TypeParamIndex: >= 0 } spec
                 || spec.TypeParamClass != owner || spec.TypeParamIndex >= args.Length || SpecKind(args[spec.TypeParamIndex]) is not { } typed) return null;
             return TypeOf(typed.Kind, typed.Unit) | NullableBit;
+        }
+
+        /// <summary>A field `T items[]` (FieldInfo.ArrayOfParam) of `this` in code for known type arguments of the class (a specialization `Add&lt;int&gt;`
+        /// written in it, or a copy for them): an array of the element of that type argument or undefined - every assignment types it (FieldArrayCheck,
+        /// VM.GuardFieldArrayOfParam). Null otherwise.</summary>
+        private int? SpecArrayOfParamType(Func f, RuntimeClass rc, string field)
+        {
+            string? owner = f.Proto?.SpecOwner ?? f.SpecClassOwner;
+            string[]? args = f.Proto?.SpecArgs ?? f.SpecClassArgs;
+            if (owner == null || args == null || LibraryRole || _usesReflection || _usesJson || HasProperty(field) || _fieldAddressTaken.Contains(field)) return null;
+            if (ArrayOfParamParts(rc, field) is not { } ofParam || ofParam.Cls != owner || ofParam.K >= args.Length) return null;
+            if (DeclaredType.TypedElementOf(args[ofParam.K]) is not int code) return null;
+            return TypeOf(KindArr, code & 0xFF) | NullableBit;
         }
 
         /// <summary>The kind and unit a value of a type argument certainly has (`int`, `int:cm`, `float`, `bool`); null when its unit is open (`int:any`) or it is no number.</summary>
@@ -508,6 +522,18 @@ namespace fire.Native
             var lines = new StringBuilder();
             string args = string.Join(", ", (f.HasSelf ? new[] { "self" } : Array.Empty<string>()).Concat(Enumerable.Range(0, f.ParamCount).Select(i => $"P{i}")));
             string ParamTests(List<(int Slot, byte Kind, int Unit)> ps) => string.Concat(ps.Select(p => " && " + KindTest($"P{p.Slot}", p.Kind, p.Unit)));
+            // the typed specializations written in the class (`Add<int>(int item)` beside `Add(T item)`, SPEC 5.8.1): first, by the type arguments of the object
+            var handTexts = new HashSet<string>(StringComparer.Ordinal);
+            if (f.HasSelf && proto.Specializations is { } hand)
+                foreach (var specProto in hand)
+                {
+                    if (specProto.SpecOwner is not { } specOwner || specProto.SpecArgs is not { } specArgs) continue;
+                    handTexts.Add(specOwner + ":" + string.Join("|", specArgs));
+                    var target = GetFunc(specProto, FuncKind.Method);
+                    string tests = string.Concat(specArgs.Select((t, k) => $" && {TArgOfExpr(specOwner, k, "objAt(self)")} == {TArgRef(t)}"))
+                        + string.Concat(Enumerable.Range(0, Math.Min(f.ParamCount, 64)).Where(i => (specProto.SpecDefinedMask >> i & 1) != 0).Select(i => $" && P{i}.kind != K_Undefined"));
+                    lines.AppendLine($"    if (self.kind == K_Class{tests}) return {target.Name}{(Wrapped ? "_b" : "")}({args});");
+                }
             // the type arguments of the call of a generic method
             if (f.HasCallTArgs && MethodKey(proto) is { } key && _callTArgTexts.TryGetValue(key, out var texts))
                 foreach (var text in texts)
@@ -528,6 +554,7 @@ namespace fire.Native
                     if (!_classTArgTexts.TryGetValue(owner!, out var classTexts)) continue;
                     foreach (var text in classTexts)
                     {
+                        if (handTexts.Contains(owner + ":" + text)) continue;   // (written by hand)
                         var parts = text.Split('|');
                         if (SpecParamsFor(proto, owner!, parts) is not { } ps) continue;
                         var spec = SpecFunc(f, $"c:{owner}:{text}", null, ps);
@@ -539,6 +566,20 @@ namespace fire.Native
                 }
             }
             return lines.ToString();
+        }
+
+        /// <summary>The typed specializations of a method (FunctionProto.Specializations) with the test of the type arguments of the object `recv`
+        /// (a living object of the class) that chooses each.</summary>
+        private List<(string Condition, Func Callee, long Defined)> HandSpecCalls(FunctionProto[] specs, string recv)
+        {
+            var calls = new List<(string, Func, long)>();
+            foreach (var spec in specs)
+            {
+                if (spec.SpecOwner is not { } owner || spec.SpecArgs is not { } specArgs) continue;
+                string condition = string.Join(" && ", specArgs.Select((t, k) => $"{TArgOfExpr(owner, k, $"objAt({recv})")} == {TArgRef(t)}"));
+                calls.Add((condition, GetFunc(spec, FuncKind.Method), spec.SpecDefinedMask));
+            }
+            return calls;
         }
 
         /// <summary>The text of the SetTypeArgs (for a call) right before a call instruction (a CopyArgs may stand between them), or null.</summary>
@@ -832,7 +873,8 @@ namespace fire.Native
             string checks = (unit != null ? $"x = {AdaptUnitCall("x", unit)}; " : "")
                 + (kind != 0 ? FieldKindCheck(name, kind) + " " : cutWide ? "x = intProgram(x); " : "")
                 + (requiredType != null ? ClassGuard("x", requiredType, $"Field '{name}'", $"objAt({obj})") + " " : "")
-                + (requiredArray != 0 && !arrayKnown ? FieldArrayCheck(rc, name) + " " : "");
+                + (requiredArray != 0 && !arrayKnown ? FieldArrayCheck(rc, name) + " " : "")
+                + (requiredArray == 0 && !(obj == "self" && SpecArrayOfParamType(from, rc, name) is { } specArr && (valueType & ~NullableBit) == (specArr & ~NullableBit)) ? FieldArrayCheck(rc, name, $"objAt({obj})") is { Length: > 0 } ofParamCheck ? ofParamCheck + " " : "" : "");
             var (fieldSlot, fieldHalf) = FieldPlace(rc, index);
             // (a field declared with a kind - int, float, bool, `defined ...` - holds nothing but numbers and undefined: no count to keep, the store is the C store)
             string put = RawRef(rc, index, $"objAt({obj})") is { } rawPut ? $"{rawPut} = {RawFromValue(RawTypeAt(LayoutClass(rc, index), index), "x")};"
@@ -2701,7 +2743,7 @@ namespace fire.Native
                 string check = (cls.Rc.FindFieldRequiredUnit(name) is { } requiredUnit ? $"x = {AdaptUnitCall("x", requiredUnit)}; " : "")
                     + (cls.Rc.FindFieldRequiredKind(name) is var kind and not 0 ? FieldKindCheck(name, kind) + " " : "")
                     + (cls.Rc.FindFieldRequiredType(name) is { } requiredType ? ClassGuard("x", requiredType, $"Field '{name}'", "o") + " " : "")
-                    + (FieldArrayCheck(cls.Rc, name) is { Length: > 0 } arrayCheck ? arrayCheck + " " : "");
+                    + (FieldArrayCheck(cls.Rc, name, "o") is { Length: > 0 } arrayCheck ? arrayCheck + " " : "");
                 // (a record: written only while it is constructed - step 9)
                 if (cls.Rc.IsRecord) check = $"if (FIRE_UNLIKELY(!recInit(o))) {{ recordWriteError(o, {CString(name)}); return; }} " + check;
                 if (check.Length > 0) unitArms.Add((cls.Id, check + "break;"));
@@ -2719,8 +2761,20 @@ namespace fire.Native
         /// <summary>The check of a field declared int/float/bool in its setter (DeclaredKind, fire_rt guardKind).</summary>
         private string FieldKindCheck(string name, byte kind) => $"x = {GuardKindCall("x", kind, $"Field '{name}'")};";
         /// <summary>A field declared as a typed array (FieldInfo.RequiredArray): what is assigned is typed like by OpCode.TypeArray ("" for any other field).</summary>
-        private string FieldArrayCheck(RuntimeClass rc, string name) => rc.FindFieldRequiredArray(name) is var arr and not 0
-            ? $"typeArray(x, {ArrayElem.TypeOf(arr)}, {arr >> 8}, {TypeArrayUnitArgsOf(rc.FindFieldRequiredUnit(name), arr)}, 1);" : "";
+        private string FieldArrayCheck(RuntimeClass rc, string name, string? obj = null) => rc.FindFieldRequiredArray(name) is var arr and not 0
+            ? $"typeArray(x, {ArrayElem.TypeOf(arr)}, {arr >> 8}, {TypeArrayUnitArgsOf(rc.FindFieldRequiredUnit(name), arr)}, 1);"
+            // (`T items[]`: typed by the type argument of the object, like `new T[n]` - TArg.arrElem)
+            : obj != null && ArrayOfParamParts(rc, name) is { } ofParam
+                ? $"{{ const TArg* fta_ = {TArgOfExpr(ofParam.Cls, ofParam.K, obj)}; if (fta_ && fta_->arrElem) typeArray(x, fta_->arrElem - 1, 1, {TypeArrayUnitArgsOf(null)}, 1); }}"
+                : "";
+
+        /// <summary>The class and index of the type parameter of a field `T items[]` (FieldInfo.ArrayOfParam), null for any other field.</summary>
+        private static (string Cls, int K)? ArrayOfParamParts(RuntimeClass rc, string name)
+        {
+            if (rc.FindFieldArrayOfParam(name) is not { } text) return null;
+            int at = text.IndexOf('@');
+            return (text.Substring(at + 1), int.Parse(text.AsSpan(1, at - 1), CultureInfo.InvariantCulture));
+        }
         private static string KindConstant(byte declaredKind) => DeclaredKind.TagOf(declaredKind) switch
         {
             TypeTag.Int => "K_Int", TypeTag.Float => "K_Float", TypeTag.Word => "K_Word", TypeTag.Char => "K_Char", _ => "K_Bool",
@@ -2816,7 +2870,7 @@ namespace fire.Native
                         unit += FieldKindCheck(name, kind) + (_usesExceptions ? " if (FIRE_UNLIKELY(g_unwind.active)) return; " : " ");
                     if (cls.Rc.FindFieldRequiredType(name) is { } requiredType)
                         unit += ClassGuard("x", requiredType, $"Field '{name}'", "o") + (_usesExceptions ? " if (FIRE_UNLIKELY(g_unwind.active)) return; " : " ");
-                    if (FieldArrayCheck(cls.Rc, name) is { Length: > 0 } arrayCheck)
+                    if (FieldArrayCheck(cls.Rc, name, "o") is { Length: > 0 } arrayCheck)
                         unit += arrayCheck + (_usesExceptions ? " if (FIRE_UNLIKELY(g_unwind.active)) return; " : " ");
                     // (a record: written only while it is constructed - step 9)
                     if (cls.Rc.IsRecord) fieldGuardSet += $"if (FIRE_UNLIKELY(!recInit(o))) {{ recordWriteError(o, {CString(name)}); return; }} ";
@@ -4444,6 +4498,24 @@ namespace fire.Native
                         return $"({cType})FIRE_NATI({VR(k)})";
                 }
             }
+            // (every typed C parameter gets a slot that is a number of its kind and unit already: no check, no conversion)
+            bool ProvenCArgs(CAbi abi, int first, int argc)
+            {
+                for (int i = 0; i < argc; i++)
+                {
+                    int k = first + i, type = abi.ParamType[i];
+                    if (type == 0) continue;
+                    int unit = UnitOfType(type);
+                    bool proven = KindOfType(type) switch
+                    {
+                        KindInt => NarrowInt(k) && U(k) == unit,
+                        KindFloat => (K(k) == KindFloat || NarrowInt(k)) && U(k) == unit,
+                        _ => K(k) == KindWord,
+                    };
+                    if (!proven || abi.ParamDemand[i] != null) return false;
+                }
+                return true;
+            }
             List<string> CAbiArgs(CAbi abi, int first, int argc)
             {
                 var result = new List<string>();
@@ -6026,8 +6098,38 @@ namespace fire.Native
                     {
                         // an object of a known class whose method no derived class overrides: the method itself, not the dispatcher (a destroyed object throws, like there)
                         var target = GetFunc(directProto, FuncKind.Method);
-                        var (callee, specCondition) = Specialize(f, ins, target, d - argc, argc, S, Ty);
+                        var (callee, specCondition) = directProto.Specializations != null ? (target, null) : Specialize(f, ins, target, d - argc, argc, S, Ty);
                         long mask = ArgMask();
+                        if (directProto.Specializations is { } handSpecs && argc == directProto.ParamCount && HandSpecCalls(handSpecs, SR(slot)) is { Count: > 0 } specCalls)
+                        {
+                            // a typed specialization written in the class (`Add<int>`, SPEC 5.8.1): chosen here by the type arguments of the object, not in the
+                            // generic method (its trampoline does the same for every other way in)
+                            // (a `defined` parameter of the specialization: an argument that may be undefined is tested - undefined goes to the generic method;
+                            // arguments that are proven numbers of its C parameters: its C body)
+                            var cSpecArgs = specCalls.Select(sc => mask == 0 && SlotScalars() && CAbiOf(sc.Callee) is { } sabi && ProvenCArgs(sabi, d - argc, argc)
+                                ? string.Join("", Enumerable.Range(0, argc).Select(i => ", " + (sabi.ParamType[i] == 0 ? S(d - argc + i) : KindOfType(sabi.ParamType[i]) switch { KindFloat => SF(d - argc + i), KindWord => SW(d - argc + i), _ => SN(d - argc + i) })))
+                                : null).ToList();
+                            var definedTests = specCalls.Select(sc => string.Concat(Enumerable.Range(0, Math.Min(argc, 64)).Where(i => (sc.Defined >> i & 1) != 0 && (IsNullable(Ty(d - argc + i)) || (Ty(d - argc + i) & TypeNone) != 0 || Ty(d - argc + i) == TypeUnknown))
+                                .Select(i => $" && {S(d - argc + i)}.kind != K_Undefined"))).ToList();
+                            ArgsBefore(d - argc, argc, mask);
+                            string hrecv = SR(slot);
+                            string hargs = $"{hrecv}{CallArgs(d - argc, argc, mask, directProto.RefMask)}";
+                            string SpecCall(int n)
+                            {
+                                var sc = specCalls[n];
+                                if (cSpecArgs[n] is not { } cargs || CAbiOf(sc.Callee) is not { } sabi) return $"{sc.Callee.Name}({hargs})";
+                                string ccall = $"{CName(sc.Callee)}({hrecv}{cargs})";
+                                return sabi.RetType == 0 ? ccall : ScalarValueOf(BaseKindOfType(sabi.RetType), UnitOfType(sabi.RetType), ccall);
+                            }
+                            string chain = string.Concat(specCalls.Select((sc, n) => $"({sc.Condition}{definedTests[n]}) ? {SpecCall(n)} : ")) + $"{target.Name}({hargs})";
+                            string hslot = T(slot);
+                            string hnotObject = IsNullable(Ty(slot)) ? $"if (FIRE_UNLIKELY({hrecv}.kind != K_Class)) {hslot} = missingMethod({hrecv}, {CString(method)}, {argc}); else " : "";
+                            E($"{{ {hnotObject}if (FIRE_UNLIKELY(!leafAlive({hrecv}))) {hslot} = destroyedError({hrecv}); else {hslot} = {chain}; }}");
+                            ArgsAfter(argc, mask, S(slot));
+                            Check();
+                            AdoptResult(slot, specCalls.Aggregate(ReturnType(target), (t, sc) => JoinTypes(t, ReturnType(sc.Callee))));
+                            d = slot + 1; return Next();
+                        }
                         if (SlotScalars() && specCondition == null && mask == 0 && ReferenceEquals(CAbiMethodCallee(f, st, ins), callee) && CAbiOf(callee) is { } mabi)
                         {
                             // the C body (Ebene 2): the receiver is checked first (like the dispatcher would), then the arguments (like the prologue would)
@@ -6799,6 +6901,34 @@ namespace fire.Native
                     int storedType = Ty(d - 1);
                     E($"{a} = {v};");
                     d -= 2; SetR(d - 1, false); SetT(d - 1, storedType); _kindsKept = true; return Next();
+                }
+                case OpCode.ArrayGet when ObjSlot(d - 2) && !IsNullable(Ty(d - 2)) && (Ty(d - 2) & TypeNone) == 0 && !(_usesReflection && ReflectionMethodNames.Contains("GetIndex"))
+                    && DirectMethod(ObjClass(Ty(d - 2)), "GetIndex", 1, f) is { Specializations: { } getSpecs, ParamCount: 1 } getIndex:
+                {
+                    // `list[i]` on an object of a known class whose `operator[]` has typed specializations (`operator[]<int>`, SPEC 5.8.1): the one for the
+                    // type arguments of the object directly - its C body when the index is a proven int - otherwise the generic operator (aget_g does the same
+                    // through the dispatcher)
+                    Need(2);
+                    string grecv = S(d - 2), gidx = S(d - 1);
+                    var getCalls = HandSpecCalls(getSpecs, grecv);
+                    var generic = GetFunc(getIndex, FuncKind.Method);
+                    var arms = new StringBuilder();
+                    int resultType = ReturnType(generic);
+                    foreach (var gc in getCalls)
+                    {
+                        string idxTest = (gc.Defined & 1) != 0 && (IsNullable(Ty(d - 1)) || (Ty(d - 1) & TypeNone) != 0 || Ty(d - 1) == TypeUnknown) ? $" && {gidx}.kind != K_Undefined" : "";
+                        string call = SlotScalars() && CAbiOf(gc.Callee) is { } gabi && ProvenCArgs(gabi, d - 1, 1)
+                            ? (gabi.RetType == 0 ? $"{CName(gc.Callee)}({grecv}, {(gabi.ParamType[0] == 0 ? gidx : SN(d - 1))})"
+                                : ScalarValueOf(BaseKindOfType(gabi.RetType), UnitOfType(gabi.RetType), $"{CName(gc.Callee)}({grecv}, {(gabi.ParamType[0] == 0 ? gidx : SN(d - 1))})"))
+                            : $"{gc.Callee.Name}({grecv}, {gidx})";
+                        arms.Append($"({gc.Condition}{idxTest}) ? {call} : ");
+                        resultType = JoinTypes(resultType, CAbiOf(gc.Callee) is { RetType: not 0 } rabi ? rabi.RetType : ReturnType(gc.Callee));
+                    }
+                    E($"{{ if (FIRE_UNLIKELY(!leafAlive({grecv}))) {grecv} = destroyedError({grecv}); else {grecv} = {arms}{generic.Name}({grecv}, {gidx}); }}");
+                    Check();
+                    d--;
+                    AdoptResult(d - 1, resultType);
+                    return Next();
                 }
                 case OpCode.ArrayGet:
                     Need(2); E($"{S(d - 2)} = {Px}aget_g({S(d - 2)}, {S(d - 1)}, &{OwnerList()});"); Check(); d--; SetR(d - 1, true); return Next();

@@ -6172,9 +6172,16 @@ FIRE_FN Value newTypedArray(Value size, uint8_t elem, uint32_t unit, uint8_t fla
     t->packed = 1;
     a->typed = t;
     /* (a defined array starts at 0, any other undefined) */
-    {
-        Value first = (flags & TU_DEFINED) ? arrZero(t) : Undef();
-        for (i = 0; i < length; i++) arrPackedSet(a, i, first);
+    /* (the first element by arrPackedSet, the rest as copies of its bits - one plain loop per element size instead of a call per element) */
+    if (length > 0) {
+        arrPackedSet(a, 0, (flags & TU_DEFINED) ? arrZero(t) : Undef());
+        switch (arrElemSize(elem)) {
+            case 1: { uint8_t x = ((uint8_t*)t->data)[0]; for (i = 1; i < length; i++) ((uint8_t*)t->data)[i] = x; break; }
+            case 2: { uint16_t x = ((uint16_t*)t->data)[0]; for (i = 1; i < length; i++) ((uint16_t*)t->data)[i] = x; break; }
+            case 4: { uint32_t x = ((uint32_t*)t->data)[0]; for (i = 1; i < length; i++) ((uint32_t*)t->data)[i] = x; break; }
+            case 8: { uint64_t x = ((uint64_t*)t->data)[0]; for (i = 1; i < length; i++) ((uint64_t*)t->data)[i] = x; break; }
+            default: { Value first = arrPackedGet(a, 0); for (i = 1; i < length; i++) arrPackedSet(a, i, first); break; }
+        }
     }
     slotAcquire(&a->h);
     ownLink(list, &a->h);

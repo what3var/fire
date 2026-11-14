@@ -3403,6 +3403,15 @@ namespace fire.Compiler
             // '[' (array) or '='), therefore parsed here without look-back risk.
             // Only with EXPLICIT use: no effect on
             // normal, non-generic methods.
+            // `Add<int>(int item)`: a typed specialization of a method of a generic class (concrete types in the brackets, not names of type parameters)
+            if (TryParseSpecialization(isStatic) is { } specTypes)
+            {
+                if (isReadonly) throw Error("'readonly' is only valid for fields, not for methods", Peek());
+                if (!Check(TokenType.LParen)) throw Error("A specialization '<...>' must be followed by a parameter list '(...)'", Peek());
+                var specParms = ParseParamList(allowRef: true);
+                var specBody = ParseBlock();
+                return new List<Stmt> { new MethodDecl(_sourceIndex, line, type, SpecializedName(name, specTypes), specParms, specBody, null, access, false, IsOverride: isOverride, Specialization: specTypes) };
+            }
             var methodTypeParamNames = Check(TokenType.Lt) ? ParseOptionalTypeParamNames() : new List<string>();
 
             if (Check(TokenType.LParen))
@@ -3483,10 +3492,32 @@ namespace fire.Compiler
         /// types, or Python's `__radd__`) is deliberately NOT supported.</summary>
         private static Stmt WithOverride(Stmt member, bool isOverride) => isOverride && member is MethodDecl m ? m with { IsOverride = true } : member;
 
+        /// <summary>`<int>` / `<int, string>` after the name of a method or operator: the types of a typed specialization (SPEC 5.8.1); null when no
+        /// `<` with a type keyword follows.</summary>
+        private List<TypeRef>? TryParseSpecialization(bool isStatic)
+        {
+            if (!Check(TokenType.Lt) || !TypeKeywords.Contains(PeekAt(1).Type) || PeekAt(1).Type is TokenType.Class or TokenType.Undefined) return null;
+            var ltToken = Advance();
+            var specTypes = new List<TypeRef>();
+            do
+            {
+                var specType = ParseTypeRef(allowArray: false);
+                if (specType.BitWidth != null || specType.Unit != null || specType.NonNull)
+                    throw Error("A specialization names plain types (int, float, bool, char, string, byte, word) - no width, unit or 'defined'", ltToken);
+                specTypes.Add(specType);
+            } while (Match(TokenType.Comma));
+            Expect(TokenType.Gt, "Expected '>' after the types of a specialization");
+            if (isStatic) throw Error("A specialization is chosen by the type arguments of the object - a static method has none", ltToken);
+            return specTypes;
+        }
+
+        private static string SpecializedName(string name, List<TypeRef> specTypes) => name + "<" + string.Join(",", specTypes.Select(t => t.BaseName)) + ">";
+
         private Stmt ParseOperatorMember(int line, TypeRef? returnType)
         {
             Expect(TokenType.Operator, "Expected 'operator'");
             string symbol = ParseOperatorSymbol();
+            var specTypes = TryParseSpecialization(isStatic: false);
             var parms = ParseParamList();
 
             string internalName = symbol == "[]"
@@ -3504,6 +3535,7 @@ namespace fire.Compiler
                 throw Error($"'operator{symbol}' needs exactly 1 parameter (the right operand - 'this' is the left one)", Peek());
 
             var body = ParseBlock();
+            if (specTypes != null) return new MethodDecl(_sourceIndex, line, returnType, SpecializedName(internalName, specTypes), parms, body, null, Specialization: specTypes);
             return new MethodDecl(_sourceIndex, line, returnType, internalName, parms, body, null);
         }
 

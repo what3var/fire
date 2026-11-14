@@ -231,6 +231,33 @@ lengths.Add(3m)
 print(lengths[0])        // 300cm
 ```
 
+### Typed specializations
+
+A method of a generic class can have its own body for particular type arguments - written with the types in angle
+brackets after its name. It stands beside the generic method and is chosen by the type arguments of the object:
+
+```fire
+class Box<T> {
+    T items[]
+    construct() { this.items = new T[4] }
+    string Describe(T value) { return "something" }
+    string Describe<int>(defined int value) { return "the int " + value }
+    T operator[](int i) { return this.items[i] }
+    int operator[]<int>(defined int i) { return this.items[i] }
+}
+print(new Box<int>().Describe(5))        // the int 5
+print(new Box<string>().Describe("x"))   // something
+int nothing
+print(new Box<int>().Describe(nothing))  // something - a `defined` parameter takes no undefined
+```
+
+- The types name every type parameter of the class (`Pair<K, V>`: `Get<int, string>()`), as plain types: `int`, `float`,
+  `bool`, `char`, `string`, `byte`, `word`. `Box<int : cm>` is not a `Box<int>`.
+- An argument that does not fit the parameters of the specialization goes to the generic method - the result is the
+  same either way; the specialization only does the case faster.
+- A field `T items[]` holds an array of the type argument's element (`Box<int>`: raw ints). Natively a specialization reads
+  and writes it directly; `List<int>` and `List<float>` of the standard library are built like that.
+
 ## Generic methods
 
 A method can have its own type parameters. They are taken from the arguments - the call is usually written without `<...>`:

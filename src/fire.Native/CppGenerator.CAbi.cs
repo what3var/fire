@@ -51,6 +51,7 @@ namespace fire.Native
             // +1 KB on dos16; the function with Values in front of the C body costs what the C numbers save)
             if (!ScalarsOn || Wrapped || Modular || LibraryRole || f.External || f.Export != null || f.Kind is not (FuncKind.Method or FuncKind.Static)) return null;
             if (f.SpecParams != null || f.SpecTArgs != null || f.SpecClassOwner != null || f.Proto is not { } proto || f.Chunk.Handlers.Count > 0) return null;
+            if (proto.Specializations != null) return null;   // (the generic body chooses a typed specialization first - a direct C call would pass it by)
             // (a getter has one: `obj.X` on an object of a known class calls its C body - GetField, CAbiGetterCallee; a setter not)
             if (MethodKey(proto) is { } key && key.Name.StartsWith("set_", StringComparison.Ordinal)) return null;
             var code = OpInfo.Decode(f.Chunk.Code);

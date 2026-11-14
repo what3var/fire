@@ -2566,6 +2566,8 @@ namespace fire.Runtime
         /// `dropBelow`) removed from the stack. Only for calls with EXACTLY the matching argument count (no default value needed).</summary>
         private void EnterCall(FunctionProto proto, int argCount, bool dropBelow, object? newThis, ObjectInstance? constructed = null, long copyMask = 0, LambdaValue? lambda = null)
         {
+            // (a typed specialization - `Add<int>` for a List<int> - runs instead of the generic body: SPEC 5.8.1)
+            if (proto.Specializations != null && newThis is ObjectInstance specObj) proto = SpecializationFor(proto, specObj, _stack.AsSpan(_sp - argCount, argCount));
             var captures = lambda?.Captures;
             int captureCount = captures?.Length ?? 0;
             int paramCount = argCount + captureCount;
@@ -3523,6 +3525,11 @@ namespace fire.Runtime
                     hasUnitRule = true;   // (a typed array: every assignment types it - do not cache)
                     if (!GuardFieldArray(value, requiredArray, obj.RtClass.FindFieldRequiredUnit(fieldName))) return false;
                 }
+                else if (obj.RtClass?.FindFieldArrayOfParam(fieldName) is { } arrayOfParam)
+                {
+                    hasUnitRule = true;
+                    if (!GuardFieldArrayOfParam(value, arrayOfParam, obj)) return false;
+                }
                 if (site >= 0 && !hasUnitRule && obj.RtClass != null && obj.AccessGuard == null && !obj.RtClass.IsRecord
                     && obj.RtClass.FieldIndex.TryGetValue(fieldName, out int setIndex))
                     StoreSite(site, new SiteCache(obj.RtClass, null, setIndex, requiredKind: requiredKind, requiredType: requiredType));
@@ -3635,6 +3642,11 @@ namespace fire.Runtime
             {
                 hasUnitRule = true;   // (a typed array: every assignment types it - do not cache)
                 if (!GuardFieldArray(value, requiredArray, oi.RtClass.FindFieldRequiredUnit(fieldName))) return;
+            }
+            else if (oi.RtClass?.FindFieldArrayOfParam(fieldName) is { } arrayOfParam)
+            {
+                hasUnitRule = true;
+                if (!GuardFieldArrayOfParam(value, arrayOfParam, oi)) return;
             }
 
             if (!hasUnitRule && oi.RtClass != null && oi.ThreadLock == null && !oi.RtClass.IsRecord
@@ -3860,6 +3872,8 @@ namespace fire.Runtime
                     forwarder = null;
                 StoreSite(site, new SiteCache(obj.RtClass, proto, 0, forwarder, forwarderField, guard: _hintTaken));
             }
+            // (the site keeps the generic method - List<int> and List<float> share the class; EnterCall picks per object)
+            if (proto.Specializations != null) proto = SpecializationFor(proto, obj, args);
             args = FillDefaultArgs(proto, args, obj);
 
             _frames.Push(new CallFrame(_currentChunk, _ip, _currentScope, _currentThis, null));
@@ -4161,6 +4175,7 @@ namespace fire.Runtime
                 return;
             }
             CheckArity(proto, args.Length);
+            if (proto.Specializations != null && _currentThis is ObjectInstance baseThis) proto = SpecializationFor(proto, baseThis, args);
             args = FillDefaultArgs(proto, args, _currentThis);
 
             // 'this' remains the same object (non-virtual call).
@@ -6857,6 +6872,7 @@ namespace fire.Runtime
                 return null;
             }
             CheckArity(proto, args.Length);
+            if (proto.Specializations != null) proto = SpecializationFor(proto, obj, args);   // (`list[i]` of a List<int>: `operator[]<int>`)
             args = FillDefaultArgs(proto, args, obj);
 
             var savedChunk = _currentChunk;
@@ -7562,6 +7578,14 @@ namespace fire.Runtime
         private bool GuardFieldArray(Value value, ushort requiredArray, string? unit) =>
             requiredArray == 0 || TypeArrayValue(value, (byte)(requiredArray & 0xFF), requiredArray >> 8, unit, 1);
 
+        /// <summary>A field declared `T items[]` (FieldInfo.ArrayOfParam, `$k@Class`): the array is typed by the type argument of the object, like `new T[n]`.</summary>
+        private bool GuardFieldArrayOfParam(Value value, string arrayOfParam, ObjectInstance obj)
+        {
+            int at = arrayOfParam.IndexOf('@');
+            string? typeArg = DeclaredType.TypeArgOf(obj, arrayOfParam.Substring(at + 1), int.Parse(arrayOfParam.AsSpan(1, at - 1)));
+            return typeArg == null || DeclaredType.TypedElementOf(typeArg) is not int code || TypeArrayValue(value, (byte)(code & 0xFF), 1, null, 1);
+        }
+
         /// <summary>GuardLocal: the end of the prologue - a parameter declared int/float/bool holds that kind or undefined (DeclaredKind).</summary>
         private void OpGuardLocal()
         {
@@ -7800,6 +7824,19 @@ namespace fire.Runtime
                 if (r.Interfaces.Any(i => i == wanted || GenericClassNames.PlainName(i) == GenericClassNames.PlainName(wanted))) return true;
             }
             return false;
+        }
+
+        /// <summary>The specialization of a method for the type arguments of the object (`Add<int>` of a List<int>), the method itself when none fits.</summary>
+        private static FunctionProto SpecializationFor(FunctionProto proto, ObjectInstance obj, ReadOnlySpan<Value> args)
+        {
+            foreach (var spec in proto.Specializations!)
+            {
+                bool fits = spec.SpecArgs != null && args.Length == spec.ParamCount;
+                for (int i = 0; fits && i < args.Length && i < 64; i++) fits = (spec.SpecDefinedMask >> i & 1) == 0 || args[i].Kind != ValueKind.Undefined;
+                for (int k = 0; fits && k < spec.SpecArgs!.Length; k++) fits = DeclaredType.TypeArgOf(obj, spec.SpecOwner!, k) == spec.SpecArgs[k];
+                if (fits) return spec;
+            }
+            return proto;
         }
 
         private string TypeArgOfParam(string text)

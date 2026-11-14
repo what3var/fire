@@ -1159,8 +1159,9 @@ Offen:
 * **`string`, Enums, Lambdas mit Signatur** (`string names[]`, `Color c[]`, `lambda<int, int> fs[]`) ebenso.
 * **`defined` für sie**: `defined Dog pets[]` - kein Element ist undefined. Offen ist, womit ein neues Array beginnt (kein Nullwert für Objekte:
   nur mit Initialisierer oder `new Dog[n]` mit einem Erzeuger, `""` für string, der erste Wert eines Enums).
-* **Typparameter** (`T items[]` in generischem Code) nach dem Typargument, das läuft (heute `TypeArrayOfParam` nur für Zahlen); damit können `List<T>`,
-  `Dictionary<K, V>` ihre inneren Arrays deklarieren statt `any`.
+* **Typparameter** (`T items[]` in generischem Code): als Feld **umgesetzt** für Zahlen-Typargumente (FieldInfo.ArrayOfParam: jede Zuweisung typisiert
+  nach dem Typargument des Objekts, wie `new T[n]`; `List<T>` deklariert so `T items[]`). Offen: ein Klassen-/string-Typargument prüft die Elemente
+  noch nicht; `Dictionary<K, V>`/`HashSet<T>` haben ihre Arrays noch als `any`.
 * Mehrdimensional (`Dog grid[][]`), JSON, Reflection, `copy`/`taking` wie bei den Zahlen-Arrays; Meldungen in VM und nativ gleich.
 
 ## 20. `defined` für Felder herleiten: Basisklassen
@@ -1170,4 +1171,20 @@ Initialisierer nur, wenn jeder Konstruktor es als Erstes setzt (vor jedem Aufruf
 
 Offen (Wunsch des Benutzers, später): auch Klassen mit Basisklasse zulassen - dafür prüfen, ob der Konstruktor der Basisklasse (und was er aufruft,
 auch eine überschriebene Methode der abgeleiteten Klasse) über Umwege auf das Feld zugreift, bevor der eigene Konstruktor es gesetzt hat.
+
+## 21. Typisierte Spezialisierungen generischer Methoden
+
+**Umgesetzt** (SPEC 5.8.1): `undefined Add<int>(defined int item)` neben `Add(T item)` in `class List<T>` - gewählt nach den Typargumenten des
+Objekts und den Argumenten (ein `defined`-Parameter nimmt kein undefined; sonst die generische Methode), in der VM bei jedem Aufruf, nativ an der
+Aufrufstelle, wenn die Klasse bekannt ist (Test der Typargumente, dann der C-Rumpf), sonst im Trampolin der generischen Methode. `List<int>` und
+`List<float>` haben `Add`, `operator[]` und `Grow` so. Gemessen (nativ, Release, 1 Mio.): `List<int>.Add` 61 ns → etwa 22 ns (eine Klasse mit
+`defined int items[]` 20 ns).
+
+Offen:
+
+* **`list[i]` mit statischem Typargument**: der Generator kennt an der Aufrufstelle nur die Klasse (`List`), nicht `List<int>` - das Ergebnis von
+  `operator[]<int>` bleibt ein `Value`, die Rechnung danach generisch (etwa 25 ns statt 3 ns wie bei einem typisierten Array). Der Typprüfer kennt
+  das Typargument: als Hinweis an der Aufrufstelle (Seitentabelle des Chunks, ohne neuen Befehl) könnte der Generator das Ergebnis als C-Zahl nehmen
+  (Rückfall: generische Methode, Ergebnis geprüft).
+* `operator[]=` (SetIndex) direkt an der Aufrufstelle wie GetIndex; `Dictionary<K, V>`/`HashSet<T>` spezialisieren.
 

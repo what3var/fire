@@ -839,7 +839,9 @@ namespace fire.Standard
 
             // `List<int>`: a list whose elements are `int`s (for the type checker - at runtime every list holds any value); `List` alone is a list of `any`
             class List<T> : IEnumerable<T> {
-                private any items
+                // (`T items[]`: for List<int>/List<float> an array of raw numbers - every assignment types it by the type argument, and the specializations
+                // below - `Add<int>`, `operator[]<int>`, ... - know that: SPEC 5.8.1)
+                private T items[]
                 private defined int count
                 private Owns owns = Owns.Explicit
 
@@ -885,12 +887,30 @@ namespace fire.Standard
                     this.count = this.count + 1
                 }
 
+                // (a number has no owner: nothing to take - the typed array of the list takes it as it is)
+                undefined Add<int>(defined int value) {
+                    if (this.count >= this.items.length) { this.Grow() }
+                    this.items[this.count] = value
+                    this.count = this.count + 1
+                }
+                undefined Add<float>(defined float value) {
+                    if (this.count >= this.items.length) { this.Grow() }
+                    this.items[this.count] = value
+                    this.count = this.count + 1
+                }
+
                 // an element that falls out: destroyed when the list owns its elements (Owns.Values) and this one
                 undefined DropElement(any value) {
                     if (this.owns.HasFlag(Owns.Values) && value is from this) { delete value }
                 }
 
                 T operator[](int index) {
+                    return this.items[index]
+                }
+                int operator[]<int>(defined int index) {
+                    return this.items[index]
+                }
+                float operator[]<float>(defined int index) {
                     return this.items[index]
                 }
 
@@ -986,6 +1006,22 @@ namespace fire.Standard
                         i = i + 1
                     }
                     // the new array belongs to the list (a local array dies with this method), the old one is released
+                    any old = this.items
+                    this.items = newItems
+                    newItems.TakeTo(this)
+                    delete old
+                }
+                undefined Grow<int>() {
+                    int newItems[] = new int[this.items.length * 2]
+                    for (defined int i = 0; i < this.count; i++) { newItems[i] = this.items[i] }
+                    any old = this.items
+                    this.items = newItems
+                    newItems.TakeTo(this)
+                    delete old
+                }
+                undefined Grow<float>() {
+                    float newItems[] = new float[this.items.length * 2]
+                    for (defined int i = 0; i < this.count; i++) { newItems[i] = this.items[i] }
                     any old = this.items
                     this.items = newItems
                     newItems.TakeTo(this)

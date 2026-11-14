@@ -65,6 +65,15 @@ namespace fire.Bytecode
         /// program's globals runs it itself instead of as a job of the main program (docs/spec/THREADING_DESIGN.md section 7).</summary>
         public bool ReadsOnly { get; set; }
 
+        /// <summary>The typed specializations of a method of a generic class (`undefined Add<int>(int item)` beside `undefined Add(T item)`): a call on an
+        /// object whose type arguments are SpecArgs runs that body instead (VM.EnterCall, natively the trampoline of the method).</summary>
+        public FunctionProto[]? Specializations { get; set; }
+        /// <summary>Of a specialization: the class whose type parameters it fixes and their type arguments (`List`, ["int"]).</summary>
+        public string? SpecOwner { get; set; }
+        public string[]? SpecArgs { get; set; }
+        /// <summary>Of a specialization: its `defined` parameters (bit i: parameter i) - an undefined argument there leaves the call to the generic method.</summary>
+        public long SpecDefinedMask { get; set; }
+
         private NativeForwarder? _forwarder;
         private bool _forwarderChecked;
 

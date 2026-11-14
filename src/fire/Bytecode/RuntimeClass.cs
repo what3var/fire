@@ -42,6 +42,10 @@ namespace fire.Bytecode
         /// (OpCode.TypeArray: an array of that element or `undefined`, RequiredUnit is the unit of its elements); 0: none. Not for `byte`/`word` (buffers).</summary>
         public ushort RequiredArray { get; set; }
 
+        /// <summary>A field declared as an array of a type parameter of its class (`T items[]`): `$k@Class` - every assignment types the array by the type
+        /// argument of the object (`List&lt;int&gt;`: an array of raw ints, like `new T[n]`; another type argument: nothing to do); null: none.</summary>
+        public string? ArrayOfParam { get; set; }
+
         public AccessModifier AccessModifier { get; set; }
 
         /// <summary>SPEC "Static members" - `true` for a `static`
@@ -242,6 +246,15 @@ namespace fire.Bytecode
             for (var rc = this; rc != null; rc = rc.Base)
                 if (rc.OwnFieldInfo.TryGetValue(name, out var field))
                     return field.RequiredType;
+            return null;
+        }
+
+        /// <summary>Like FindFieldRequiredUnit, for an array of a type parameter (FieldInfo.ArrayOfParam, null: none).</summary>
+        public string? FindFieldArrayOfParam(string name)
+        {
+            for (var rc = this; rc != null; rc = rc.Base)
+                if (rc.OwnFieldInfo.TryGetValue(name, out var field))
+                    return field.ArrayOfParam;
             return null;
         }
 

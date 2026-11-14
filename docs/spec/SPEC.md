@@ -1051,6 +1051,38 @@ ambiguous with `<`/`>` as comparison operators at normal expression positions
 follow directly after the class name, which makes it unambiguous). A
 generic method is therefore called quite normally without `<...>`.
 
+### 5.8.1 Typed specializations (`Add<int>(int item)`)
+
+A generic class can give a method its own body for particular type arguments: concrete types in angle brackets after the
+method name (or after `operator[]` etc.), for **all** type parameters of the class, in their order.
+
+```fire
+class Box<T> {
+    T items[]
+    construct() { this.items = new T[8] }
+    undefined Put(int i, T value) { this.items[i] = value }                  // every type argument
+    undefined Put<int>(int i, defined int value) { this.items[i] = value }   // a Box<int>: no owner to take, raw ints
+    T operator[](int i) { return this.items[i] }
+    int operator[]<int>(defined int i) { return this.items[i] }
+}
+```
+
+- A specialization stands **beside** the generic method of the same name and number of parameters (before or after it in
+  the class); without one that is an error. It is not a method of its own: a call always names the generic method
+  (`b.Put(1, 5)`, `b[1]`) - `Put<int>(...)` is no call syntax.
+- A call runs the specialization when the type arguments **of the object** are exactly those written (`Box<int>`; not
+  `Box<int : cm>`, not `Box<float>`) **and** every argument fits its parameters - a `defined` parameter takes no `undefined`;
+  otherwise the generic method runs. So the result of a program is the same with or without the specialization; it only
+  says how a case is done faster or more simply.
+- Only plain types can be written (`int`, `float`, `bool`, `char`, `string`, `byte`, `word`) - no width, no unit, no
+  `defined`. A static method cannot be specialized (it has no object).
+- The VM chooses at every call; natively the call site chooses when the class of the object is known (a test of its type
+  arguments, then the C body of the specialization), every other way in goes through the generic method, which chooses first.
+- `T name[]` (a field holding an array of a type parameter) is typed by the type argument at every assignment, like
+  `new T[n]`: in a `Box<int>` it holds an array of raw ints. In a specialization the native backend therefore knows the
+  element type and reads and writes the elements directly.
+- The standard library uses this: `List<int>` and `List<float>` have `Add`, `operator[]` and their growing specialized.
+
 ### 5.9 `switch` statement (with comparison operators)
 
 ```
