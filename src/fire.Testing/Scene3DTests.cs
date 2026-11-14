@@ -214,6 +214,48 @@ static class Scene3DTests
         print("bumpdata " + H.Sum(frame))
         try { bumpy.Texture.AddBumpmap(3, 3, heights) } catch (Scene3DException e) { print("error " + e.message) }
 
+        // texture filters: an unlit quad with 8 x 8 texels that fills the picture (a texel is about 14 pixels wide); "mixed" counts the pixels between the two colours
+        var fFrame = new Framebuffer(64, 48)
+        var fScene = new Scene()
+        var fQuad = new Object(Template.Quad, 0m, 0m, 0m, 8m, 8m, 0m)
+        fQuad.Texture = Texture.Checker(8, 8)
+        fQuad.Color = S3D.Rgb(255, 255, 255)
+        fQuad.Lit = false
+        fScene.Add(fQuad)
+        var fCam = new Camera(fFrame)
+        fCam.Z = 3m
+        fCam.RotationZ = 7deg
+        fScene.Add(fCam)
+        class F {
+            static int Mixed(Framebuffer f) {
+                var b = f.ReadBytes()
+                var n = 0
+                for (var i = 0; i < b.length; i += 4) { if (b[i] > 70 && b[i] < 249) { n++ } }
+                return n
+            }
+        }
+        var mixed = new List()
+        var sums = new List()
+        for (var k = 0; k < 3; k++) {
+            fQuad.Texture.Filter = k!TextureFilter
+            fScene.Renderer = RenderMode.Software
+            fCam.Render()
+            mixed.Add(F.Mixed(fFrame))
+            sums.Add(H.Sum(fFrame))
+            var soft = fFrame.ReadBytes()
+            fScene.Renderer = RenderMode.Hardware
+            fCam.Render()
+            var hard = fFrame.ReadBytes()
+            var fOff = 0
+            for (var i = 0; i < hard.length; i++) {
+                var d = hard[i] - soft[i]
+                if (d > 24 || d < -24) { fOff++ }
+            }
+            print("filter " + fQuad.Texture.Filter + " " + (fOff * 50 < hard.length))
+        }
+        print("filters " + (mixed[1] == 0) + " " + (mixed[2] > 0) + " " + (mixed[2] * 3 < mixed[0]) + " " + sums[0] + " " + sums[1] + " " + sums[2])
+        fQuad.Texture.Filter = TextureFilter.Bilinear
+
         // the hardware renderer: where there is a GPU it draws, and its picture is close to the software one; where there is none the software renderer draws the same picture
         var software = frame.ReadBytes()
         print("renderer " + scene.Renderer + " " + cam.LastRenderer)

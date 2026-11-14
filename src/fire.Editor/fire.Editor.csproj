@@ -49,6 +49,7 @@
     <None Include="..\..\docs\language\*.md" Link="Help\Language\%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
     <AvaloniaResource Include="Assets\icons\*.png" />
     <AvaloniaResource Include="Assets\treeicons\*.png" />
+    <None Remove="Assets\logo2_64.png" />
     <None Remove="Assets\splash.png" />
     <None Remove="fileicons.res" />
     <AvaloniaResource Include="Assets\Logo-64.png" />
@@ -57,6 +58,7 @@
     <AvaloniaResource Include="..\..\LICENSE" Link="Assets\Licenses\LICENSE-fire.txt" />
     <AvaloniaResource Include="..\fire.Terminal\LICENSE-pcface.md" Link="Assets\Licenses\LICENSE-pcface.txt" />
     <AvaloniaResource Include="..\fire.Terminal\TrueType\LICENSE-libschrift.md" Link="Assets\Licenses\LICENSE-libschrift.txt" />
+    <AvaloniaResource Include="Assets\logo2_64.png" />
     <AvaloniaResource Include="Assets\splash.png" />
   </ItemGroup>
 

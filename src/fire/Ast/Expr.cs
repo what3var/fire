@@ -10,6 +10,10 @@ namespace fire.Ast
     // Primary expressions
     // ---------------------------------------------------------------
     public sealed record LiteralExpr(int Line, Value Value) : Expr(Line);
+
+    /// <summary>`int.Bits`, `int[8].Bits`, `float.Bits`, `byte.Bits`, `char.Bits`, `bool.Bits`, `word.Bits`: the width of a value type in bits (Width: the
+    /// width written in brackets, null: the type's own - the program's int and float width, word the target's) - a constant.</summary>
+    public sealed record TypeBitsExpr(int Line, string BaseName, int? Width) : Expr(Line);
     public sealed record IdentifierExpr(int Line, string Name) : Expr(Line);
     public sealed record ThisExpr(int Line) : Expr(Line);
     public sealed record BaseExpr(int Line) : Expr(Line);

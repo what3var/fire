@@ -78,7 +78,21 @@ void main() {
     vec3 base = ob.color.rgb;
     float alpha = ob.color.a;
     if (ob.flags2.y != 0) {
-        vec4 tc = textureLod(tex, vUv, 0.0);
+        // the filter of the texture (ob.bump.w): 0 bilinear (the sampler), 1 the nearest texel (the middle of the texel, read bilinear, is the texel), 2 sharp bilinear (within a texel its value,
+        // only the last screen pixel before its edge blends into the next)
+        vec2 uv = vUv;
+        if (ob.bump.w > 0.5) {
+            vec2 size = vec2(textureSize(tex, 0));
+            vec2 t = vUv * size;
+            if (ob.bump.w < 1.5) t = floor(t) + 0.5;
+            else {
+                vec2 seam = floor(t + 0.5);
+                vec2 d = max((abs(dux) + abs(duy)) * size, vec2(1e-6));
+                t = seam + clamp((t - seam) / min(d, vec2(1.0)), -0.5, 0.5);
+            }
+            uv = t / size;
+        }
+        vec4 tc = textureLod(tex, uv, 0.0);
         if (ob.emissive.w > 0.0 && tc.a < ob.emissive.w) discard;
         base *= tc.rgb;
         alpha *= tc.a;

@@ -4283,6 +4283,30 @@ namespace fire.Compiler
             _suppressShortLambda = false;
             var tok = Peek();
 
+            // `int.Bits`, `int[8].Bits`, `float[32].Bits`, `byte.Bits`, ... - the width of a value type in bits
+            if (tok.Type is TokenType.KwInt or TokenType.KwFloat or TokenType.KwBool or TokenType.KwChar or TokenType.KwByte or TokenType.KwWord)
+            {
+                int dot = PeekAt(1).Type == TokenType.Dot ? 1
+                    : PeekAt(1).Type == TokenType.LBracket && PeekAt(2).Type == TokenType.IntLiteral && PeekAt(3).Type == TokenType.RBracket && PeekAt(4).Type == TokenType.Dot ? 4 : 0;
+                if (dot > 0 && PeekAt(dot + 1).Type == TokenType.Identifier && PeekAt(dot + 1).Lexeme == "Bits")
+                {
+                    Advance();
+                    int? width = null;
+                    if (dot == 4)
+                    {
+                        Advance();
+                        var widthToken = Advance();
+                        width = int.Parse(widthToken.Lexeme, System.Globalization.CultureInfo.InvariantCulture);
+                        if (tok.Type is not (TokenType.KwInt or TokenType.KwFloat) || !(width is 8 or 16 or 32 or 64) || tok.Type == TokenType.KwFloat && width == 8)
+                            throw Error($"'{tok.Lexeme}[{width}]' is no type: a width in brackets is 8, 16, 32 or 64 for int and 16, 32 or 64 for float", widthToken);
+                        Advance();
+                    }
+                    Advance();   // '.'
+                    Advance();   // 'Bits'
+                    return new TypeBitsExpr(tok.Line, tok.Lexeme, width);
+                }
+            }
+
             switch (tok.Type)
             {
                 case TokenType.Sync:

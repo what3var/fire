@@ -264,7 +264,11 @@ Tests: `FIRE_TESTS_ONLY=linkage`. Offen: `"shared"` mit msvc (Exporte der Modul-
 Felder in `class extends` fremder Klassen (der Platz in den Objekten des Programms), benannte Argumente im nativen Programm auf ihren Objekten (die Namen und Vorgaben der Parameter in den Tabellen der Member),
 **die Größe** (vorerst bewusst zurückgestellt: schneller bauen geht vor): mit `static` ist ein Programm noch
 deutlich größer als mit `source` - CLI 2,7 MB statt 226 KB, `ui`-Beispiel 6,5 MB statt 2,3 MB, `print("hi")` 395 KB statt 26 KB (eine Library behält ihre
-Schnittstelle, das Programm legt die Deskriptoren aller Klassen an, die irgendein Code einer Library anlegt - eine Erreichbarkeit über die Modulgrenzen fehlt). Wege:
+Schnittstelle, das Programm legt die Deskriptoren aller Klassen an, die irgendein Code einer Library anlegt - eine Erreichbarkeit über die Modulgrenzen fehlt).
+**Umgesetzt:** die Erreichbarkeit der Klassen über die Modulgrenzen (`MadeBy` in der Schnittstelle, `ReachLibraryClasses`; `Reflect.New` mit Klassennamen als Text
+erkannt): `print("hi")` 514 -> 441 KB, das minimale `ui`-Programm unverändert 9,9 MB (mit `source` 2,46 MB). **Offen:** die Erreichbarkeit der Methoden - die
+Verteiler und Member-Tabellen einer Library zeigen auf alle Methoden ihrer Klassen; dafür müsste das Programm sie anlegen (Tabellen der Implementierungen je
+Name, ein indirekter Aufruf im Verteiler der Library) und die Schnittstelle je Funktion sagen, was sie ruft. Wege:
 die Erreichbarkeit beim Linken über die Modulgrenzen (die Schnittstellendateien sagen, was eine Library von einer anderen braucht; Tabellen und Deskriptoren nur
 für Erreichtes), LTO als Option, ungenutzte Libraries-Teile mit `--gc-sections` (schon an) vollständig wegfallen lassen; Schalter wie Reflection und Probes gelten noch für alle Module (eine Variante je Menge); LTO; ein fertiges `.a`
 aus dem Cache für ESP-IDF; ein Programm, das eine Klasse einer Library neu deklariert, wird mit `source` gebaut.
@@ -1102,7 +1106,12 @@ Die Messungen, die bisher von Hand liefen (Linker-Map auswerten, erzeugtes C dur
 **Umgesetzt (erste Stufe):** `forge build ... --engine native --stats` (Linkage `source`, Open Watcom, gcc, clang): Code nach Herkunft aus der Map (erzeugt je Modul,
 Hilfsfunktionen des Generators, Laufzeit, Plattform, C je Paket, C-Bibliothek), Daten, Typisierung je Modul (C-Schnittstelle, Parameter, Variablen, Stack-Slots
 mit C-Schatten), die Gründe ohne C-Schnittstelle, die größten Funktionen mit ihrem fire-Namen, bei DOS der Speicher zum Laden. Bericht im Log und in
-`<programm>.stats.txt`/`.json` (die Map daneben: `.map`). Offen: der Heap zur Laufzeit, der Vergleich zweier Builds, die Linkage `static`.
+`<programm>.stats.txt`/`.json` (die Map daneben: `.map`). **Umgesetzt seitdem:** der Vergleich zweier Builds (`forge stats vorher.stats.json nachher.stats.json`:
+Größe, Code nach Herkunft, Daten, Module, die Funktionen, die sich am meisten geändert haben) und die Linkage `static` (der Code jedes Library-Moduls aus der Map nach
+der Bibliothek: Member, Hilfsfunktionen, Kopie der Runtime); die verworfenen Sections der GNU-Map zählen nicht mehr mit (vorher war der Code zu groß).
+Der Heap zur Laufzeit: ein Build mit `--stats` (Linkage `source`) berichtet ihn mit `FIRE_STATS=1` am Ende des Hauptprogramms, bevor die Globals gehen
+(`fire_heapReport`: die Slot-Tabelle führt dafür die Köpfe - Objekte mit ihren Value-Slots nach Inhalt und gepackten Bytes, Arrays mit Value-Elementen und
+gepackten, Puffer, Lambdas, Strings, der Heap der C-Bibliothek mit glibc). Offen: der Bericht auf Abruf (aus dem Programm), mit `static`.
 
 Ausgangswerte (von Hand gemessen, Beispiel "Scene3D Physics", dos16, Watcom `-Os`, `eliminate`): EXE 760 KB, Lademodul 696 KB + 33 KB Mindestspeicher -
 **passt nicht in 640 KB**. Code: erzeugt 239 KB (davon `fire_main` 44 KB für 139 Zeilen, `Camera.Render` 17 KB für 30), Paket-C ~190 KB, Laufzeit 84 KB,

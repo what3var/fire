@@ -60,6 +60,9 @@ namespace fire.Native
             public readonly SortedSet<string> ReflectionNatives = new(StringComparer.Ordinal);
             /// <summary>The classes whose objects its code can make (of its own and of other modules): the program generates for these.</summary>
             public readonly SortedSet<string> Classes = new(StringComparer.Ordinal);
+            /// <summary>The same by the class whose code makes them or calls into them ("": the module's own code); null - an interface of before: all of
+            /// <see cref="Classes"/> count.</summary>
+            public Dictionary<string, string[]>? MadeBy;
             /// <summary>Linkage "static": the natives in C it calls (the program defines `fire_cn_` functions for them).</summary>
             public readonly SortedDictionary<string, (int Argc, bool NeedsList, string Import)> SharedNatives = new(StringComparer.Ordinal);
         }
@@ -399,7 +402,7 @@ namespace fire.Native
                 }
                 _nextClassId = next;
                 _progBase = next;
-                foreach (var name in _libraries?.SelectMany(l => l.Needs.Classes) ?? Enumerable.Empty<string>()) if (_fixedIds.ContainsKey(name)) RegisterClass(name);
+                ReachLibraryClasses();
                 // (a program that loads plugins: a plugin may make objects of any class of the libraries - each gets its full descriptor - and call any member of the
                 // program's classes by name)
                 if (_openWorld)
@@ -408,6 +411,43 @@ namespace fire.Native
                     _tablesAll = true;
                 }
             }
+        }
+
+        /// <summary>The program: the classes of the libraries whose objects can be made - not all that some code of a library makes, but what the code it reaches
+        /// makes (ROADMAP 9, the reach across the modules): from its own classes, the classes of the library members it calls and the code of every module itself,
+        /// through what the code of each reached class makes or calls (<see cref="ModuleNeeds.MadeBy"/>, with the base classes). A class it does not reach keeps its
+        /// id and gets no descriptor: the linker drops its code. `Reflect.New` of the program reaches the classes it names as literals and those with `[Keep]` (a name
+        /// made at run time finds no class that is left out - the error says so, as with `source`). All of them: a stripping level below 3 (every class stays),
+        /// `Reflect.New` in a library, JSON (it makes objects of the classes of its type), plugins, a debug build, an interface without the list.</summary>
+        private void ReachLibraryClasses()
+        {
+            if (_libraries == null || _fixedIds == null) return;
+            var made = new HashSet<string>(_libraries.SelectMany(l => l.Needs.Classes), StringComparer.Ordinal);
+            if (_openWorld || _usesJson || DebugBuild || _strip < StrippingLevel.All || _libraries.Any(l => l.Needs.MadeBy == null || l.Needs.ReflectionNatives.Contains("__refl_new")))
+            {
+                foreach (var name in made) if (_fixedIds.ContainsKey(name)) RegisterClass(name);
+                return;
+            }
+            var reached = new HashSet<string>(StringComparer.Ordinal);
+            var work = new Stack<string>();
+            void Reach(string c) { if (reached.Add(c)) work.Push(c); }
+            Reach("");
+            foreach (var info in _classList.ToList()) Reach(info.Rc.Name);
+            if (_reflNew)
+            {
+                foreach (var name in _literalClasses) Reach(name);
+                foreach (var name in made) if (_program.Program.Classes.TryGetValue(name, out var keptRc) && keptRc.Keep) Reach(name);
+            }
+            foreach (var f in _funcs.ToList()) if (f.External && f.Proto != null) Reach(DemandOwnerOf(f.Proto.Chunk));
+            while (work.Count > 0)
+            {
+                string c = work.Pop();
+                if (c.Length > 0 && _program.Program.Classes.TryGetValue(c, out var rc))
+                    for (var b = rc.Base; b != null; b = b.Base) Reach(b.Name);
+                foreach (var lib in _libraries)
+                    if (lib.Needs.MadeBy!.TryGetValue(c, out var byIt)) foreach (var m in byIt) Reach(m);
+            }
+            foreach (var name in reached) if (made.Contains(name) && _fixedIds.ContainsKey(name)) RegisterClass(name);
         }
 
         /// <summary>What this library needs from the program.</summary>
@@ -429,6 +469,7 @@ namespace fire.Native
             needs.ExcTypes.AddRange(_excTypes);
             needs.ReflectionNatives.UnionWith(_reflNativesUsed);
             needs.Classes.UnionWith(_demandedClasses);
+            needs.MadeBy = _madeBy.ToDictionary(e => e.Key, e => e.Value.ToArray(), StringComparer.Ordinal);
             foreach (var (f, sig) in _sharedNatives) needs.SharedNatives[f] = sig;
             return needs;
         }
@@ -533,6 +574,23 @@ namespace fire.Native
         private int _nextClassId;
         /// <summary>A library: the classes its code makes objects of (registered while generating, not by keeping its members).</summary>
         private readonly SortedSet<string> _demandedClasses = new(StringComparer.Ordinal);
+
+        /// <summary>A library: the classes the code of each of its classes makes or calls into ("": the code of the module itself - its top level, static
+        /// initializers, helpers outside a function). The program follows them from what it reaches (<see cref="ReachLibraryClasses"/>).</summary>
+        private readonly SortedDictionary<string, SortedSet<string>> _madeBy = new(StringComparer.Ordinal);
+        /// <summary>The class of the function being generated in a library ("": none); null outside a function body.</summary>
+        private string? _demandOwner;
+
+        private static string DemandOwnerOf(Chunk chunk) => chunk.OwnerClass?.Name ?? "";
+
+        private void NoteMadeBy(string cls)
+        {
+            if (!LibraryRole || _keeping) return;
+            string owner = _demandOwner ?? "";
+            if (owner == cls) return;
+            if (!_madeBy.TryGetValue(owner, out var set)) _madeBy[owner] = set = new SortedSet<string>(StringComparer.Ordinal);
+            set.Add(cls);
+        }
         private bool _keeping;
 
         /// <summary>A private member stays all the same: everything is kept (stripping 0, debug builds), the class or the member is marked `[Keep]` (or named as a literal

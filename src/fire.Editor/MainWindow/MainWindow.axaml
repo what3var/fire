@@ -3,7 +3,7 @@
         xmlns:dock="using:Dock.Avalonia.Controls"
         xmlns:local="using:fire.Editor"
         x:Class="fire.Editor.MainWindow"
-        Title="" Width="1300" Height="820" Icon="/Assets/Logo-64.png"
+        Title="" Width="1300" Height="820" Icon="/Assets/logo2_64.png"
         DragDrop.AllowDrop="True"
 		TransparencyLevelHint="AcrylicBlur"
         Background="#1B181E"
@@ -135,7 +135,7 @@
 			<Image Width="20"
 			    Height="20"
 				   Margin="8,6,8,4"
-			    Source="/Assets/Logo-64.png"/>
+			    Source="/Assets/logo2_64.png"/>
 			<TextBlock x:Name="txtTitle"
 					   VerticalAlignment="Center"
 					   FontSize="12"

@@ -8,5 +8,5 @@ layout(std140, row_major, set = 0, binding = 2) uniform ObjectU {
     vec4 tm1;        // c, d, ty, shininess
     ivec4 flags;     // smooth, two sided, lit, receive shadows
     ivec4 flags2;    // layers, texture, bump map, blended
-    vec4 bump;       // strength, 1/width, 1/height
+    vec4 bump;       // strength, 1/width, 1/height, filter (Texture.Filter)
 } ob;

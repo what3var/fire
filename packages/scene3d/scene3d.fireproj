@@ -17,12 +17,14 @@
       "native/s3d_model.h",
       "native/s3d_effects.h",
       "native/s3d_physics.h",
-      "native/s3d_vk.h",
       "native/s3d_shaders.h",
       "native/s3d_gpu_vk.h",
       "native/fire_bridge_scene3d.h"
     ],
     "discover": false,
+    "uses": [
+      "graphics"
+    ],
     "linkLibraries": {
       "posix": [
         "dl",
@@ -135,6 +137,18 @@
         "returns": "bool",
         "arguments": 2,
         "c": "fire_s3d_TexSetStrength"
+      },
+      {
+        "name": "__S3DTexFilter",
+        "returns": "int",
+        "arguments": 1,
+        "c": "fire_s3d_TexFilter"
+      },
+      {
+        "name": "__S3DTexSetFilter",
+        "returns": "bool",
+        "arguments": 2,
+        "c": "fire_s3d_TexSetFilter"
       },
       {
         "name": "__S3DNew",

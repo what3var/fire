@@ -1038,7 +1038,10 @@ namespace fire.Compiler
                             // (see RunStaticInitializers, called
                             // directly after CompileClasses in Compile()).
                             if (fd.IsStatic)
+                            {
                                 rc.StaticFields.Add((fd.Name, fieldInit));
+                                if (fd.IsReadonly) (rc.ReadonlyStatics ??= new HashSet<string>(StringComparer.Ordinal)).Add(fd.Name);
+                            }
                             else
                                 rc.Fields.Add((fd.Name, fieldInit));
                             // SPEC "Unit declarations": this is checked
@@ -2611,6 +2614,16 @@ namespace fire.Compiler
             {
                 case LiteralExpr lit:
                     EmitLoadConst(_wideLiteral != 0 && lit.Value.Kind == ValueKind.Int && !lit.Value.IsEnum ? lit.Value.WithWide((byte)_wideLiteral) : lit.Value);
+                    break;
+
+                // `int.Bits`, `x.Bits` of a value (SPEC 8.2): the width the type checker found - a constant (the value itself is only evaluated)
+                case TypeBitsExpr tb:
+                    EmitLoadConst(Value.MakeInt(TypeChecker.BitsOf.TryGetValue(tb, out var typeBits) ? typeBits.Value : tb.Width ?? 64));
+                    break;
+                case MemberExpr bitsOf when bitsOf.Name == "Bits" && TypeChecker.BitsOf.TryGetValue(bitsOf, out var valueBits):
+                    CompileExpr(bitsOf.Target);
+                    _chunk.EmitOp(OpCode.Pop);
+                    EmitLoadConst(Value.MakeInt(valueBits.Value));
                     break;
 
                 case IdentifierExpr id:

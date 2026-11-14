@@ -43,9 +43,9 @@ namespace fire.Standard
             /// Mathematical functions and constants (always available).
             class Math {
                 /// The circle number π.
-                static float PI = 3.141592653589793
+                static readonly float PI = 3.141592653589793
                 /// Euler's number e.
-                static float E = 2.718281828459045
+                static readonly float E = 2.718281828459045
                 /// The square root; of a value with a unit also the root of the unit (`Math.Sqrt(16m * 1m)` is `4m`).
                 static any Sqrt(any x) { return {{NativeName}}({{(int)MathMethod.Sqrt}}, x) }
                 /// The value without its sign (the unit stays).
@@ -135,11 +135,11 @@ namespace fire.Standard
             class Word {
             #if word16
                 /// The width of a word in bits on the target the program is built for: 16, 32 or 64.
-                static int Bits = 16
+                static readonly int Bits = 16
             #elif word32
-                static int Bits = 32
+                static readonly int Bits = 32
             #else
-                static int Bits = 64
+                static readonly int Bits = 64
             #endif
             }
 

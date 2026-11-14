@@ -200,6 +200,10 @@ namespace fire.Bytecode
         /// declaration order.</summary>
         public List<(string Name, FunctionProto Init)> StaticFields { get; }
 
+        /// <summary>The static fields of THIS class declared `readonly` (null: none): set only by their initializer - one whose initializer is a constant is
+        /// that constant in a native build (`Word.Bits`: a C number, not a read of a Value).</summary>
+        public HashSet<string>? ReadonlyStatics { get; set; }
+
         /// <summary>Like FindFieldAccess, but for static fields: the
         /// class that declares `name` as a static field ITSELF
         /// (base-class chain, own class first) - `null` if no

@@ -15,6 +15,7 @@
 | `forge ui <file.fxml> [-o file]` | the script generated from a [markup](../ui/markup.md) file (to look at it; `#include` does it on the fly) |
 | `forge biscuit <file.biscuit> [-o file]` | the script generated from a [schematic](../circuits/README.md) |
 | `forge fdata <file.fdata> [-o file]` | the code generated from a [data model](../data/designer.md) |
+| `forge stats <before.stats.json> <after.stats.json>` | two native builds made with `--stats` side by side: the size, the code by origin, the data, the fire functions by module, the functions that changed most |
 | `forge falstad <circuit.txt> [-o file.biscuit]` | converts a circuit of Paul Falstad's simulator into a schematic |
 | `forge data status\|migrate\|diff\|import [program] --url <url>` | the migrations of a program on a database and its schema ([Data: migrations](../data/README.md#migrations)): which ran, run them (`--to N`), the missing one as fire code, the tables as classes |
 
@@ -43,6 +44,7 @@ forge test All.firesln --filter MathTests
 | `-D name` | defines a symbol for `#if` (repeatable) |
 | `-o <file>` | the output |
 | `--keep` | keeps the generated C files |
+| `--stats` | a native build reports what it is made of (gcc, clang, MinGW, Open Watcom): the code by origin from the linker's map (the program, each module, the runtime, the C of each package, the C library; with `--linkage static` the code of each library module - its members, its helpers, its copy of the runtime), the data, the typing of the fire functions, the biggest functions; `<program>.stats.txt`/`.json` next to the program |
 | `-p <project>` | the project of a solution |
 
 The command line goes before the project's settings, which go before the directives in the source and `fire.native.json`.
@@ -62,4 +64,5 @@ that cannot be compiled ends with 1 as well. Errors are printed with their code 
 | `FIRE_FONT_DIRS` | more folders with fonts (separated by `;`) |
 | `FIRE_GFX_GPU=1` | draw every RGBA framebuffer on the GPU (Vulkan) |
 | `FIRE_NATIVE_CACHE` | where the cache of native libraries is (`ember cache`) |
+| `FIRE_STATS=1` | a native program built with `--stats` (linkage `source`) reports its heap when the main program ends, before its globals go: the objects (their Value slots: numbers, undefined, references; packed bytes), the arrays (Value elements, packed), the buffers, the lambdas, the strings, the C library's heap (glibc) - on the error output |
 | `IDF_PATH` | the ESP-IDF folder for the target `esp32` |

@@ -190,6 +190,15 @@ Skript -> Lexer -> Parser -> Resolver -> Compiler -> Bytecode (LinkedProgram)
   Funktion mit catch-Blöcken im Rahmen); `x += c` auf ihnen ist C. Nicht in Debug-Builds (der Debugger liest die Values) und nicht mit `#intwidth 16`.
   Gemessen auf dos16 (Open Watcom, `-Os`): eine Schleife `s = (s * 31 + i) % 1000003` mit `i < n` gegen den Parameter 1012 -> 334 Byte, eine
   Float-Schleife `a = a + x * x; x = x + 0.25` 1001 -> 351 Byte. Mit gcc `-O2` gleich schnell wie vorher (gcc hielt die Values schon in Registern).
+  Ebenso in C: die **int-Division** zweier schmaler Ints (abgeschnitten, `x / -1` läuft über; durch 0 fragt sie die allgemeine nach der
+  DivideByZeroException), **`^`** (zwei Ints: `intPower`, ein negativer Exponent geht zur allgemeinen; mit einem float oder als `PowerFloat`: `pow`),
+  **`~`**, **`x!int`/`x!float`** (`fire_realToInt`: zur nächsten, bei Gleichstand zur geraden, gesättigt wie in der VM - NaN 0) und die
+  **Funktionen von `Math`** auf C-Zahlen: `Abs`, `Sign`, `Min`, `Max`, `Clamp` (gleiche Art und Einheit; verglichen wie die fire-Rümpfe mit
+  `fire_cmpReal`, `x < x - x` auch für NaN und -unendlich), `Round`/`Floor`/`Ceiling` (ein Int bleibt, wie er ist), `Sqrt`, `Sin` ... `Exp`,
+  `Atan2` (ohne Einheit) - statt des Aufrufs der Funktion des Prelude (`MathIntrinsic`). `Math.PI`/`Math.E` und jedes `static readonly` mit
+  Konstante sind Konstanten (`ConstantStatic`; der Typprüfer sieht sie als `defined`). `CopyArgs` (das Präfix eines Aufrufs) und `LoadThis` lassen
+  die Schatten stehen; ein C-Rumpf wird auch mit `CopyArgs` direkt gerufen, wenn kein Argument `ref` oder `take` ist. Gemessen (gcc `-O2`, 20 Mio.
+  Schritte mit `Sqrt`, `Abs(Sin)`, `Max`, `^`, `/`, `%`, `!int`): 2410 -> 290 ms.
 * **Parameter und Rückgaben als C-Typen (Ebene 2, Stufe 2b).** Grundlage ist `defined` (SPEC 8.10b): ein `defined int`-Parameter ist nie `undefined` und
   kein Enum-Wert, eine `defined`-Rückgabe ebenso - das macht den Rumpf einer Methode skalar, ohne dass der Generator die Aufrufer kennen muss
   (`CppGenerator.CAbi.cs`). Eine Methode mit `defined int`-, `defined float`- oder `defined word`-Parametern oder mit einer `defined`-Rückgabe
@@ -1264,7 +1273,13 @@ Referenzen einer Library). Ein Modul gehört zu der Quelle, in der sein Code ste
 * Das **Programm** kennt als einziges Modul alle Klassen (eine geschlossene Welt): es ruft Member von Libraries direkt, wo der Typ es sagt (Devirtualisierung mit dem
   Wissen aller Klassen), erzeugt aber Verteiler und Feld-Helfer nur für seine eigenen Klassen. Es definiert die Klassen-Deskriptoren (A0, mit den Spalten oben), die
   JSON-Tabellen, die Liste der Reflection-Zeilen und die Debug-Tabellen. Die Tabellen seiner Klassen nennen nur die Member, die ein Modul beim Namen ruft (die **Needs**
-  der Libraries: ihre Verteiler und Feldnamen; mit Reflect.Get/Call alle). Die Klassen, von denen eine Library Objekte anlegt, stehen in ihren Needs.
+  der Libraries: ihre Verteiler und Feldnamen; mit Reflect.Get/Call alle). Die Klassen, von denen eine Library Objekte anlegt, stehen in ihren Needs - nach der
+  Klasse, deren Code sie anlegt oder aufruft (`MadeBy` in der Schnittstelle, `""`: der Code des Moduls selbst). Das Programm bekommt Deskriptoren nur für die Klassen,
+  die es erreicht (`ReachLibraryClasses`): von seinen eigenen Klassen, den Klassen der Library-Member, die es ruft, und dem Code jedes Moduls aus, über das, was der
+  Code jeder erreichten Klasse anlegt oder ruft (mit den Basisklassen). `Reflect.New` des Programms erreicht die Klassen, die es als Text nennt, und die mit `[Keep]`.
+  Alle wie bisher: Stufe unter 3, `Reflect.New` in einer Library, JSON, Plugins, Debug-Builds, eine Schnittstelle ohne die Liste. `print("hi")` mit `static`:
+  514 KB vorher, 441 KB jetzt; beim minimalen `ui`-Programm nichts (es erreicht die Klassen ohnehin) - dort bleiben die Methoden erreichter Klassen, die keiner ruft:
+  die Verteiler und Member-Tabellen einer Library zeigen auf alle Methoden ihrer Klassen.
 * **Reflection** je Modul: die Zeilen der Reflection-Tabellen (`RfClass` mit Membern und Attributen) und Reflect.New einer Klasse (`fire_new_<modul>_<Klasse>`) stehen
   in der Datei ihres Moduls; das Programm listet die Klassen, die es erreicht. Reflect.Get/Set/Call gehen über die Tabellen der Member (`fireGetField`, ...); Probes
   sehen die Setter jedes Moduls selbst nach, Reflect.Set auf ein Objekt mit Probes schreibt über den Namen (`probedSet` ohne Rohfunktion).

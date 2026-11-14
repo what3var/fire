@@ -613,6 +613,8 @@ namespace fire.Compiler
             fire.Native.BuildMonitor.Step(fire.Native.BuildPhase.CompileFire, "Compiling fire: checking types", 2, 4);
             // (the width of the program's int as below - the project's setting before the tag of the source: TC021 needs it)
             TypeChecker.ProgramIntWidth = intWidthOverride ?? ProcessIntWidth ?? Plan?.Settings?.IntWidth ?? directiveIntWidth ?? target?.IntWidth ?? 64;
+            TypeChecker.ProgramFloatWidth = floatWidthOverride ?? Plan?.Settings?.FloatWidth ?? directiveFloatWidth ?? target?.FloatWidth ?? 64;
+            TypeChecker.ProgramWordWidth = target?.WordWidth ?? 64;
             TypeChecker.NativeReturns = PackageImports.NativeReturnTypes(nativeImports);
             // deriving `defined` for the parameters of the program (TypeChecker.Derive): not when reflection or the program that loads a plugin can call a
             // method with anything, nor in a debug build (the debugger calls methods with what it is given)

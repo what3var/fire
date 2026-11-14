@@ -2,6 +2,9 @@
 
 enum Template { Box = 0, Sphere = 1, Cylinder = 2, Cone = 3, Plane = 4, Quad = 5 }
 enum BillboardMode { Off = 0, Facing = 1, Vertical = 2 }
+// How a texture is read between its texels: Bilinear (smooth), Nearest (the nearest texel: hard pixels, pixel art) or Sharp (sharp bilinear: hard pixels, but the edges between them blend over one
+// screen pixel, so texels that are not a whole number of pixels wide do not shimmer).
+enum TextureFilter { Bilinear = 0, Nearest = 1, Sharp = 2 }
 enum LightKind { Ambient = 0, Directional = 1, Point = 2 }
 // Who draws a scene: the software renderer (everywhere, the same pixels everywhere), the GPU (Vulkan; where there is none, the software renderer draws), or the lean
 // renderer (Fast: light per corner, no shadows yet, little memory - the picture is drawn in bands straight into the framebuffer, also in its palette; for old and small machines).
@@ -225,6 +228,8 @@ class Texture {
     bool hasBump { get { return __S3DTexHasBump(this.handle) } }
     // How strongly the bump map tilts the light (1 = a full step of the heights over one texel is a slope of 45 degrees).
     defined float BumpStrength { get { return __S3DTexStrength(this.handle) } set { __S3DTexSetStrength(this.handle, value) } }
+    // How the colours are read between the texels (default Bilinear; the bump map stays bilinear, RenderMode.Fast always reads the nearest texel).
+    TextureFilter Filter { get { return __S3DTexFilter(this.handle)!TextureFilter } set { __S3DTexSetFilter(this.handle, value!int) } }
 
     // A bump map made from the brightness of the texture itself: bright is high, dark is low (a little smoothed).
     undefined AddBumpmap() {
