@@ -13,6 +13,17 @@ namespace AI {
         construct(string message) : base(message) { }
     }
 
+    // The machine the model runs on (to choose one that fits).
+    class Machine {
+        // The threads of the processor.
+        static int Cores() { return __AiMachine(0) }
+        // The memory in MB, and the free memory (-1: not known).
+        static int MemoryMB() { return __AiMachine(1) }
+        static int FreeMemoryMB() { return __AiMachine(2) }
+        // Whether the products use AVX2 or NEON (without: about three times slower).
+        static bool Simd() { return __AiMachine(3) == 1 }
+    }
+
     // What a session is doing: nothing, computing the prompt, generating, done, failed (Session.Error) or cancelled.
     enum State { Idle = 0, Prompt = 1, Generating = 2, Done = 3, Failed = 4, Cancelled = 5 }
 

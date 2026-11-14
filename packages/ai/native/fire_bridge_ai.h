@@ -7,6 +7,9 @@
 #define FIRE_BRIDGE_AI_H
 
 #include "fire_ai_engine.h"
+#if defined(__APPLE__)
+#include <sys/sysctl.h>
+#endif
 
 enum { FIRE_AI_IDLE = 0, FIRE_AI_PROMPT = 1, FIRE_AI_GENERATING = 2, FIRE_AI_DONE = 3, FIRE_AI_FAILED = 4, FIRE_AI_CANCELLED = 5 };
 
@@ -569,6 +572,42 @@ static Value fire_ai_Forget(Value session) {
     if (a == NULL || fire_aib_busy(a)) return Bool(false);
     a->s->cachedCount = 0; a->s->logitsValid = 0;
     return Bool(true);
+}
+/* The machine, to choose a model: 0 the processor threads, 1 the memory in MB, 2 the free memory in MB (-1: not known), 3 whether the products have SIMD
+ * (AVX2 or NEON: 1). */
+static Value fire_ai_Machine(Value what) {
+    int64_t v = -1;
+    switch (what.i) {
+        case 0: v = fai_hardwareThreads(); break;
+        case 1: case 2:
+        {
+#if defined(_WIN32)
+            MEMORYSTATUSEX ms;
+            ms.dwLength = sizeof ms;
+            if (GlobalMemoryStatusEx(&ms)) v = (int64_t)((what.i == 1 ? ms.ullTotalPhys : ms.ullAvailPhys) / (1024 * 1024));
+#elif defined(__APPLE__)
+            if (what.i == 1) {
+                int64_t mem = 0; size_t len = sizeof mem;
+                if (sysctlbyname("hw.memsize", &mem, &len, NULL, 0) == 0) v = mem / (1024 * 1024);
+            }
+#elif defined(_SC_PHYS_PAGES)
+            long pages = sysconf(what.i == 1 ? _SC_PHYS_PAGES :
+#ifdef _SC_AVPHYS_PAGES
+                _SC_AVPHYS_PAGES
+#else
+                _SC_PHYS_PAGES
+#endif
+            ), size = sysconf(_SC_PAGE_SIZE);
+            if (pages > 0 && size > 0) v = (int64_t)pages * size / (1024 * 1024);
+#endif
+            break;
+        }
+        case 3:
+            if (g_faiHalf == NULL) fai_kernels(1);
+            v = strcmp(g_faiKernels, "C") != 0;
+            break;
+    }
+    return Int(v);
 }
 static Value fire_ai_OpenCount(void) {
     int64_t n = 0;

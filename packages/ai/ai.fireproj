@@ -126,6 +126,12 @@
         "returns": "int",
         "arguments": 0,
         "c": "fire_ai_OpenCount"
+      },
+      {
+        "name": "__AiMachine",
+        "returns": "int",
+        "arguments": 1,
+        "c": "fire_ai_Machine"
       }
     ],
     "reset": "fire_ai_reset",
