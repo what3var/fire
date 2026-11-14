@@ -190,6 +190,15 @@ Skript -> Lexer -> Parser -> Resolver -> Compiler -> Bytecode (LinkedProgram)
   Funktion mit catch-Blöcken im Rahmen); `x += c` auf ihnen ist C. Nicht in Debug-Builds (der Debugger liest die Values) und nicht mit `#intwidth 16`.
   Gemessen auf dos16 (Open Watcom, `-Os`): eine Schleife `s = (s * 31 + i) % 1000003` mit `i < n` gegen den Parameter 1012 -> 334 Byte, eine
   Float-Schleife `a = a + x * x; x = x + 0.25` 1001 -> 351 Byte. Mit gcc `-O2` gleich schnell wie vorher (gcc hielt die Values schon in Registern).
+  Ebenso in C: die **int-Division** zweier schmaler Ints (abgeschnitten, `x / -1` läuft über; durch 0 fragt sie die allgemeine nach der
+  DivideByZeroException), **`^`** (zwei Ints: `intPower`, ein negativer Exponent geht zur allgemeinen; mit einem float oder als `PowerFloat`: `pow`),
+  **`~`**, **`x!int`/`x!float`** (`fire_realToInt`: zur nächsten, bei Gleichstand zur geraden, gesättigt wie in der VM - NaN 0) und die
+  **Funktionen von `Math`** auf C-Zahlen: `Abs`, `Sign`, `Min`, `Max`, `Clamp` (gleiche Art und Einheit; verglichen wie die fire-Rümpfe mit
+  `fire_cmpReal`, `x < x - x` auch für NaN und -unendlich), `Round`/`Floor`/`Ceiling` (ein Int bleibt, wie er ist), `Sqrt`, `Sin` ... `Exp`,
+  `Atan2` (ohne Einheit) - statt des Aufrufs der Funktion des Prelude (`MathIntrinsic`). `Math.PI`/`Math.E` und jedes `static readonly` mit
+  Konstante sind Konstanten (`ConstantStatic`; der Typprüfer sieht sie als `defined`). `CopyArgs` (das Präfix eines Aufrufs) und `LoadThis` lassen
+  die Schatten stehen; ein C-Rumpf wird auch mit `CopyArgs` direkt gerufen, wenn kein Argument `ref` oder `take` ist. Gemessen (gcc `-O2`, 20 Mio.
+  Schritte mit `Sqrt`, `Abs(Sin)`, `Max`, `^`, `/`, `%`, `!int`): 2410 -> 290 ms.
 * **Parameter und Rückgaben als C-Typen (Ebene 2, Stufe 2b).** Grundlage ist `defined` (SPEC 8.10b): ein `defined int`-Parameter ist nie `undefined` und
   kein Enum-Wert, eine `defined`-Rückgabe ebenso - das macht den Rumpf einer Methode skalar, ohne dass der Generator die Aufrufer kennen muss
   (`CppGenerator.CAbi.cs`). Eine Methode mit `defined int`-, `defined float`- oder `defined word`-Parametern oder mit einer `defined`-Rückgabe

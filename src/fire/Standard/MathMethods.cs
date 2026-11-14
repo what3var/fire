@@ -43,9 +43,9 @@ namespace fire.Standard
             /// Mathematical functions and constants (always available).
             class Math {
                 /// The circle number π.
-                static float PI = 3.141592653589793
+                static readonly float PI = 3.141592653589793
                 /// Euler's number e.
-                static float E = 2.718281828459045
+                static readonly float E = 2.718281828459045
                 /// The square root; of a value with a unit also the root of the unit (`Math.Sqrt(16m * 1m)` is `4m`).
                 static any Sqrt(any x) { return {{NativeName}}({{(int)MathMethod.Sqrt}}, x) }
                 /// The value without its sign (the unit stays).

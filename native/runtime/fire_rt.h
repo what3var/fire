@@ -2363,6 +2363,15 @@ FIRE_COLD FIRE_FN Value coerceWrong(uint8_t kind, uint8_t target) {
     snprintf(text, sizeof text, "Cannot coerce type %s to %s.", coerceKindName(kind), coerceKindName(target));
     return fireError("ArgumentException", text);
 }
+/* `x!int` of a float: the nearest int (ties to even), saturated like the VM's (long)Math.Round - NaN is 0, beyond the range the largest or smallest int
+ * (a C cast of such a double is undefined). */
+FIRE_FN int64_t fire_realToInt(double r) {
+    r = nearbyint(r);
+    if (r != r) return 0;
+    if (r >= 9223372036854775807.0) return (int64_t)0x7FFFFFFFFFFFFFFFLL;
+    if (r <= -9223372036854775808.0) return (int64_t)(-0x7FFFFFFFFFFFFFFFLL - 1);
+    return (int64_t)r;
+}
 FIRE_FN Value coerceType(Value v, uint8_t target) {
     if (v.kind == target) { if (target == K_Int) v.reserved = 0; return v; }   /* (`c!int`: the number of an enum value) */
     /* a word as an int: the same bits as a signed number (like a cast in C); as a float its unsigned value. Into a word: wordOf */
@@ -2370,7 +2379,7 @@ FIRE_FN Value coerceType(Value v, uint8_t target) {
     if (v.kind == K_Word && target == K_Float) return Float(wordReal(v));
     if (v.kind == K_Word && target == K_Char) return Char((uint16_t)v.w);
     if (v.kind == K_Int && target == K_Float) return Float((Real)v.i, v.unit);
-    if (v.kind == K_Float && target == K_Int) return Int((int64_t)nearbyint((double)v.f), v.unit);
+    if (v.kind == K_Float && target == K_Int) return Int(fire_realToInt((double)v.f), v.unit);
     if (v.kind == K_Undefined && target == K_Int) return Int(0, v.unit);
     if (v.kind == K_Undefined && target == K_Float) return Float(0, v.unit);
     /* characters: the number of the 16-bit code unit; a number outside 0..65535 wraps like a 16-bit cast */

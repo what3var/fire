@@ -922,8 +922,21 @@ namespace fire.Compiler
         private StaticType FieldType(FieldDecl f, IReadOnlyDictionary<string, StaticType>? map = null)
         {
             var declared = DeclaredOrDynamic(f.Type, f.ArrayRanks.Count, map);
-            return f.Initializer == null ? declared : WithInitializerUnit(declared, f.Type, f.ArrayRanks.Count, LiteralType(f.Initializer));
+            if (f.Initializer == null) return declared;
+            var typed = WithInitializerUnit(declared, f.Type, f.ArrayRanks.Count, LiteralType(f.Initializer));
+            // a `static readonly` field with a constant (`static readonly int Bits = 64`): only its initializer sets it - defined, without `defined`
+            if (f.IsStatic && f.IsReadonly && f.ArrayRanks.Count == 0 && typed.IsValueKind && IsConstantValue(f.Initializer)) typed = typed.WithNull(Nullness.Defined);
+            return typed;
         }
+
+        /// <summary>A literal that is a value (not `undefined`), negated or converted with ':'/'::'.</summary>
+        private static bool IsConstantValue(Expr e) => e switch
+        {
+            LiteralExpr l => l.Value.Kind != ValueKind.Undefined,
+            UnaryExpr { Op: UnaryOp.Negate } u => IsConstantValue(u.Operand),
+            UnitCoerceExpr c => IsConstantValue(c.Operand),
+            _ => false,
+        };
 
         /// <summary>The type of a constant initializer (a number literal, negated or converted with ':'/'::'), Dynamic for anything else.</summary>
         private static StaticType LiteralType(Expr e) => e switch

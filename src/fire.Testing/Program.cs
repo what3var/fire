@@ -28656,6 +28656,47 @@ else
             print((total == undefined || total > 1000000) + " " + (free == undefined || total == undefined || (free >= 0 && free <= total)) + " " + (own == undefined || own > 100000))
             print((total != undefined) + " " + (own != undefined))
             """),
+        ("Rechnen auf defined Zahlen nativ in C: Math.Abs/Sign/Min/Max/Clamp/Round/Floor/Ceiling/Sqrt/Sin/.../Atan2, int-Division, ^, !int/!float, ~ - auch NaN, Unendlich, -0, Grenzwerte, Division durch 0", """
+            #strict
+            class E {
+                static readonly int Lim = 3
+                static readonly defined float Half = 0.5
+                static defined float F(defined float a, defined float b) { return Math.Max(a, b) + Math.Min(a, b) * 2.0 }
+                static string Fs(defined float x) {
+                    return Math.Abs(x) + " " + Math.Sign(x) + " " + Math.Round(x) + " " + Math.Floor(x) + " " + Math.Ceiling(x) + " " + Math.Clamp(x, -1.0, 1.0) + " " + (x!int)
+                }
+                static string Is(defined int x, defined int y) {
+                    string r = Math.Abs(x) + " " + Math.Sign(x) + " " + Math.Max(x, y) + " " + Math.Min(x, y) + " " + Math.Clamp(x, -E.Lim, E.Lim) + " " + Math.Round(x) + " " + (x!float)
+                    return r + " " + (x / y) + " " + (x % y) + " " + (x ^ 2) + " " + (y ^ 3) + " " + (~x) + " " + ((x << 3) # (y >> 1) | (x & 255))
+                }
+                static string Div(defined int x, defined int y) { try { return "" + (x / y) } catch (DivideByZeroException e) { return "div0" } }
+                static string Pw(defined int x, defined int y) { try { return "" + (x ^ y) } catch (DivideByZeroException e) { return "pow0" } }
+                static string Tr(defined float x) {
+                    return Math.Sqrt(x) + " " + Math.Sin(x) + " " + Math.Cos(x) + " " + Math.Tan(x) + " " + Math.Atan(x) + " " + Math.Atan2(x, 2.0) + " " + Math.Exp(x) + " " + Math.Log(x) + " " + Math.Log10(x) + " " + (x ^ E.Half) + " " + (x ^ 2) + " " + Math.PI * x
+                }
+                static string Ti(defined int x) {
+                    float p = 2 ^ x
+                    return Math.Sqrt(x) + " " + Math.Sin(x) + " " + Math.Atan2(x, 3) + " " + p
+                }
+                static defined int Twice(defined int x) { return x * 2 }
+            }
+            defined float nan = 0.0 / 0.0
+            defined float inf = 1.0 / 0.0
+            print(E.F(1.5, -2.5) + " " + E.F(nan, 1.0) + " " + E.F(1.0, nan))
+            foreach (x in [2.5, -2.5, 0.5, -0.0, 3.7, -3.7, 1.5e300]) { print(E.Fs(x)) }
+            print(E.Fs(nan))
+            print(E.Fs(inf))
+            print(E.Fs(-inf))
+            print(E.Is(7, 2))
+            print(E.Is(-7, 2))
+            print(E.Is(-7, -2))
+            print(E.Is(-9223372036854775807 - 1, -1))
+            print(E.Div(5, 0) + " " + E.Div(-9223372036854775807 - 1, -1))
+            print(E.Pw(0, -1) + " " + E.Pw(2, -1) + " " + E.Pw(-1, -3) + " " + E.Pw(1, -3) + " " + E.Pw(3, 41))
+            foreach (x in [0.25, 2.0, -1.0, 0.0, 10.0]) { print(E.Tr(x)) }
+            foreach (x in [0, 3, -2, 16]) { print(E.Ti(x)) }
+            print(E.Twice(E.Lim) + E.Twice(Word.Bits))
+            """),
         ("Bits: die Breite jedes Werttyps am Typ (int.Bits, int[16].Bits, float[32].Bits, byte/char/bool/word) und am Wert (x.Bits nach dem deklarierten Typ), eine Konstante", """
             int[8] small = 3
             float[32] f = 1.5
@@ -33533,6 +33574,17 @@ else
                     string wbBody = wbAt >= 0 ? wbC.Substring(wbAt, Math.Min(1500, wbC.Length - wbAt)) : "";
                     CheckNat("readonly static mit Konstante: Word.Bits ist im erzeugten C eine C-Zahl (kein Lesen des Feldes, die Rechnung bleibt in C-Zahlen)",
                         wbBody.Contains("(FireInt)64LL") && !wbBody.Contains("SF") && !wbBody.Contains("shiftLeft("), wbBody);
+                }
+                // arithmetic of defined numbers is C (ROADMAP: as fast as possible natively): Math.*, int division, ^, casts, ~ - no generic Value function
+                {
+                    var mathLinked = new Linker().CompileAndLink(new[] { "class M {\n    static defined float F(defined float x, defined int n) {\n        defined float r = Math.Sqrt(x * x) + Math.Abs(x) - Math.Max(x - 1.0, 0.0) + Math.Sin(x) + x ^ 2 + Math.PI\n        defined int k = (n / 7) % 13 + (r!int) + (~n & 255) + n ^ 3\n        return r + k + Math.Floor(x)\n    }\n}\nprint(M.F(1.5, 9))" }, null, null, VmExecutionMode.Release);
+                    string mathC = fire.Native.CppGenerator.GenerateSources(mathLinked).Program;
+                    var mathDef = System.Text.RegularExpressions.Regex.Match(mathC, @"static Real f\d+_c\([^)]*\)\n\{[\s\S]*?\n\}\n");
+                    string mathBody = mathDef.Success ? mathDef.Value : "";
+                    string[] generic = { "divide(", "mathCall(", "bitNot(", "coerceType(", "power(", "powerF(", "Float(", "Int(", "SF" };
+                    CheckNat("Rechnen auf defined Zahlen ist im erzeugten C reines C: Math.*, int-Division, ^, !int, ~, Math.PI (keine Value-Funktion)",
+                        mathBody.Contains("sqrt(") && mathBody.Contains("floor(") && mathBody.Contains("fire_realToInt(")
+                        && !mathBody.Split('\n').Where(l => !l.Contains("Value m_")).Any(l => generic.Any(g => l.Contains(g))), mathBody);   // (the rare paths - a division by 0 - ask the generic one)
                 }
                 // `--stats` with linkage static (ROADMAP 17): the code of the library modules by module (from the map), the program's functions; `stats` compares two builds
                 {
