@@ -104,7 +104,7 @@ namespace AI {
 
         // The prompt: the messages, then the start of the assistant's answer (`answerStart`: what it begins with, e.g. "The answer is").
         string Prompt(string answerStart = "") {
-            var b = this.start
+            string b = this.start
             for (var i = 0; i < this.roles.Count; i++) {
                 b += "<|im_start|>" + this.roles[i] + "\n" + this.texts[i] + "<|im_end|>\n"
             }
@@ -129,7 +129,7 @@ namespace AI {
 
         // An answer without the thinking before it (what follows </think>).
         static string WithoutThinking(string text) {
-            var at = text.IndexOf("</think>")
+            int at = text.IndexOf("</think>")
             if (at < 0) { return text }
             return text.Substring(at + 8).Trim()
         }
@@ -159,7 +159,7 @@ namespace AI {
         undefined Start(string prompt, AI.Settings settings = undefined) {
             var s = settings
             if (s == undefined) { s = new AI.Settings() }
-            var sep = "" + 31.ToChar()
+            string sep = "" + 31.ToChar()
             if (!__AiGenerate(this.handle, prompt, s.MaxTokens, sep.Join(s.Stops), s.Temperature, s.TopK, s.TopP, s.MinP, s.RepeatPenalty, s.Seed)) {
                 throw new AI.AIException(__AiLastError())
             }
@@ -168,7 +168,7 @@ namespace AI {
         // Starts weighing `options` as the continuation of `prompt` (Choice then is the most likely one). `perToken`: the average per token, so a long option
         // is not less likely only because it is long.
         undefined StartChoice(string prompt, string options[], bool perToken = false) {
-            var sep = "" + 31.ToChar()
+            string sep = "" + 31.ToChar()
             if (!__AiChoose(this.handle, prompt, sep.Join(options), perToken)) { throw new AI.AIException(__AiLastError()) }
         }
 
@@ -202,7 +202,7 @@ namespace AI {
 
         // Waits for the job; the text it produced (an exception when it failed).
         string Wait() {
-            var text = ""
+            string text = ""
             while (this.Busy) {
                 text += this.Take()
                 Sleep(2ms)

@@ -140,7 +140,7 @@ static class AiTests
         w.Text("general.name", "fire-tiny");
         w.U32("general.alignment", 32);
         w.U32("qwen2.block_count", layers);
-        w.U32("qwen2.context_length", 256);
+        w.U32("qwen2.context_length", 4096);
         w.U32("qwen2.embedding_length", embd);
         w.U32("qwen2.feed_forward_length", ff);
         w.U32("qwen2.attention.head_count", heads);
@@ -385,7 +385,38 @@ static class AiTests
     public static string Script => ScriptText.Replace("{MODEL}", ModelFile()).Replace("{BROKEN}", BrokenFile())
         + RecurrentText.Replace("{MODEL}", Write("fire-ai-tiny-qwen35.gguf", TinyQwen35())).Replace("{NAME}", "qwen35")
         + RecurrentText.Replace("{MODEL}", Write("fire-ai-tiny-lfm3.gguf", TinyLfm3())).Replace("{NAME}", "lfm3")
+        + AgentText.Replace("{MODEL}", ModelFile())
         + RealModel();
+
+    /// <summary>The package ai.agent on the tiny model: the tools in the system message, the calls the models write (XML and JSON), asking, the conversation, choosing.</summary>
+    private const string AgentText = """
+
+        var agent = new AI.Agent("{MODEL}", "Be brief.", 2048)
+        agent.Settings = AI.Settings.Exact(12)
+        agent.Tool("read_file", "Reads a file", ["path: the file"], (JsonObject args) => "content of " + args.Get("path"))
+        agent.ToolWithSchema("add", "Adds two numbers", "{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"number\"},\"b\":{\"type\":\"number\"}}}", (JsonObject args) => "" + (args.Get("a") + args.Get("b")))
+        var sys = agent.SystemPrompt
+        print("agent tools " + agent.ToolCount + " " + (sys.IndexOf("<tools>") >= 0) + " " + (sys.IndexOf("\"name\":\"read_file\"") >= 0) + " " + (sys.IndexOf("\"required\":[\"path\"]") >= 0) + " " + sys.EndsWith("Be brief."))
+        var x = AI.Agent.ParseCall("<function=read_file>\n<parameter=path>\nnotes.txt\n</parameter>\n</function>")
+        print("xml call " + x.Name + " " + x.Arguments.Get("path"))
+        var j = AI.Agent.ParseCall("{\"name\": \"add\", \"arguments\": {\"a\": 2, \"b\": 3}}")
+        print("json call " + j.Name + " " + j.Arguments.Get("a") + " " + j.Arguments.Get("b"))
+        print("no call " + (AI.Agent.ParseCall("just text") == undefined))
+        var a1 = agent.Ask("hello")
+        var a2 = agent.Ask("world")
+        print("agent asked " + agent.HistoryCount + " " + agent.HistoryRole(0) + " " + agent.HistoryText(0) + " " + agent.HistoryRole(1) + " " + (agent.HistoryText(1) == a1) + " " + agent.Running)
+        agent.Start("hello")
+        var streamed = ""
+        while (agent.Running) { streamed += agent.Update() }
+        print("agent streamed " + agent.HistoryCount + " " + (streamed.Trim() == agent.HistoryText(5)))
+        var pick = agent.Choose("hello?", ["world", "or", "ld"])
+        print("agent choice " + (pick >= 0 && pick < 3) + " " + agent.HistoryCount)
+        agent.Forget()
+        print("agent forgot " + agent.HistoryCount)
+        agent.RemoveTool("add")
+        print("agent removed " + agent.ToolCount)
+        agent.Close()
+        """;
 
     /// <summary>The models with recurrent layers: generating, the cache (the checkpoint after a prompt), the choice (each option from the checkpoint) - against a fresh
     /// session, which has no checkpoint; a prompt longer than the window of 4.</summary>
@@ -441,6 +472,8 @@ static class AiTests
 
     private const string ScriptText = """
         #import "ai"
+        #import "ai.agent"
+        #import "json"
 
         // (a checksum of a text: the answers of random weights are no words)
         class H {

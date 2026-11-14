@@ -70,7 +70,7 @@ its own way of speaking (a line in the system prompt). They are not, and do not 
 | Step | | State |
 | --- | --- | --- |
 | 1 | The package `ai`: GGUF; qwen2, qwen3, qwen35 (gated delta net), lfm3 (short convolutions, window attention), llama; Q8_0/Q4_0/Q4_K/Q5_K/Q6_K/F16/F32, the tokenizers, the cache and checkpoints, sampling, multiple choice, threads, AVX2/NEON | built |
-| 1b | The package `ai.agent`: an agent with instructions, tools (lambdas or the tools of an MCP server), the loop of tool calls, choices | |
+| 1b | The package `ai.agent`: an agent with instructions, tools (lambdas or the tools of an MCP server), the loop of tool calls, choices | built |
 | 2 | The package `mcp`: JSON-RPC 2.0, client and server, stdio and HTTP (Streamable HTTP) | |
 | 3 | The package `assistant`: characters, bubble, choices, the question line, rules, the model download | |
 | 4 | spark as an MCP server (tools, resources, notifications), *Tools > Assistant*, the setup task | |

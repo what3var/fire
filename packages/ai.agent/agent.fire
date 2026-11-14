@@ -1,0 +1,455 @@
+#import "ai"
+#import "json"
+#import "time"
+
+// ai.agent (docs/ai/agent.md): an agent on a small language model of the package ai - instructions, a conversation it remembers (but does not show),
+// tools it may call, and choices among options.
+//
+//     var agent = new AI.Agent("Qwen3.5-0.8B-Q4_0.gguf", "You help with the files of a project.")
+//     agent.Tool("read_file", "Reads a text file", ["path: the file"], (JsonObject args) => File.ReadAllText(args.Get("path")))
+//     print(agent.Ask("What is in notes.txt?"))          // calls read_file, then answers
+//     print(agent.Choose("Is this a question or a bug report: 'it crashes'?", ["A question", "A bug report"]))   // 1
+//
+// A user interface does not wait: Start(text), then Update() in its timer gives the new text (and runs the tools when the model asks for them).
+namespace AI {
+    // A tool the agent may call: its name, what it does, its parameters (all text) and what runs.
+    class AgentTool {
+        string Name
+        string Description
+        List parameters = new List()
+        List descriptions = new List()
+        string schema = ""
+        string lambda<JsonObject> handler
+
+        // The tool as the models expect it (OpenAI style JSON: name, description, parameters as a JSON schema).
+        string Json() {
+            var opts = new JsonOptions()
+            opts.typeNames = false
+            // (the objects are owned by this method until the text is made: JsonObject.Set does not take them, and a block would end them before)
+            var fn = new JsonObject()
+            var ps = new JsonObject()
+            var props = new JsonObject()
+            var required = new List()
+            var items = new List()
+            fn.Set("name", this.Name)
+            fn.Set("description", this.Description)
+            if (this.schema != "") { fn.Set("parameters", Json.Parse(this.schema)) }
+            else {
+                for (var i = 0; i < this.parameters.Count; i++) {
+                    var p = new JsonObject()
+                    p.Set("type", "string")
+                    p.Set("description", this.descriptions[i])
+                    props.Set(this.parameters[i], p)
+                    required.Add(this.parameters[i])
+                    items.Add(take p)
+                }
+                ps.Set("type", "object")
+                ps.Set("properties", props)
+                ps.Set("required", required)
+                fn.Set("parameters", ps)
+            }
+            return Json.Serialize(fn, opts)
+        }
+    }
+
+    // A call of a tool the model asked for, and what the tool answered.
+    class AgentCall {
+        string Name
+        JsonObject Arguments
+        string Result = ""
+    }
+
+    // An agent: a model, its instructions and tools, and the conversation so far. The conversation is kept as the model has read it (the cache of the
+    // session holds it: the next question only computes what is new); History gives it as messages for the one who wants to see it.
+    class Agent {
+        AI.Model model
+        AI.Session session
+        bool ownsModel = false
+        string Instructions = ""
+        // How the answers are written (Exact: the most likely words, always the same; the default writes a little freer).
+        AI.Settings Settings
+        // The rounds of tool calls of one question at most.
+        int MaxSteps = 6
+        // Let the model think first (Qwen 3.5, LFM 3): better for hard questions, slower; the thinking is not shown.
+        bool Thinking = false
+        List tools = new List()
+        // the conversation: the turns as the model read them, and as messages
+        List turns = new List()
+        List roles = new List()
+        List texts = new List()
+        int contextTokens
+        // the job: what the model wrote of the turn so far, what of it was shown
+        string raw = ""
+        int shown = 0
+        int steps = 0
+        bool running = false
+        List calls = new List()
+        // Called with each call of a tool before it runs (a user interface shows "reading notes.txt ..."); undefined: none.
+        any OnToolCall = undefined
+
+        // An agent on the model file `path` (GGUF: Qwen3.5-0.8B, LFM3-1.7B, Qwen2.5 ...).
+        construct(string path, string instructions = "", int context = 4096) {
+            this.model = new AI.Model(path)
+            this.ownsModel = true
+            this.Init(instructions, context)
+        }
+
+        // An agent on a model that is loaded already (several agents can share it).
+        construct(AI.Model model, string instructions = "", int context = 4096) {
+            this.model = model
+            this.Init(instructions, context)
+        }
+
+        undefined Init(string instructions, int context) {
+            this.Instructions = instructions
+            this.contextTokens = context
+            this.session = new AI.Session(this.model, context)
+            this.Settings = new AI.Settings()
+            this.Settings.Temperature = 0.3
+            this.Settings.MaxTokens = 768
+        }
+
+        destruct() { this.Close() }
+
+        undefined Close() {
+            if (this.session != undefined) { this.session.Close() }
+            if (this.ownsModel && this.model != undefined) { this.model.Close() }
+        }
+
+        AI.Model Model { get { return this.model } }
+
+        // A tool with parameters of text: each "name: what it is" (all are required). The handler gets them as a JsonObject and returns its answer as text.
+        undefined Tool(string name, string description, string parameters[], string lambda<JsonObject> handler) {
+            var t = new AI.AgentTool()
+            t.Name = name
+            t.Description = description
+            foreach (p in parameters) {
+                int at = p.IndexOf(":")
+                if (at < 0) { t.parameters.Add(p.Trim()); t.descriptions.Add("") }
+                else { t.parameters.Add(p.Substring(0, at).Trim()); t.descriptions.Add(p.Substring(at + 1).Trim()) }
+            }
+            t.handler = take handler
+            this.tools.Add(take t)
+        }
+
+        // A tool with the parameters as a JSON schema (numbers, choices, optional ones; the tools of an MCP server come this way).
+        undefined ToolWithSchema(string name, string description, string schemaJson, string lambda<JsonObject> handler) {
+            var t = new AI.AgentTool()
+            t.Name = name
+            t.Description = description
+            t.schema = schemaJson
+            t.handler = take handler
+            this.tools.Add(take t)
+        }
+
+        undefined RemoveTool(string name) {
+            for (var i = 0; i < this.tools.Count; i++) {
+                AI.AgentTool t = this.tools[i]
+                if (t.Name == name) { this.tools.RemoveAt(i); return }
+            }
+        }
+
+        int ToolCount { get { return this.tools.Count } }
+
+        // ---- the prompt ----
+
+        string Family { get { return this.model.Architecture } }
+
+        // The system message the model reads: the instructions and the tools in the format of the model.
+        string SystemPrompt { get { return this.SystemText() } }
+
+        string SystemText() {
+            string text = this.Instructions
+            if (this.tools.Count == 0) { return text }
+            string list = ""
+            for (var i = 0; i < this.tools.Count; i++) {
+                AI.AgentTool t = this.tools[i]
+                list += "\n" + t.Json()
+            }
+            if (this.Family == "lfm3") {
+                if (text != "") { text += "\n\n" }
+                return text + "<tools>" + list + "\n</tools>"
+            }
+            string tools = "# Tools\n\nYou have access to the following functions:\n\n<tools>" + list + "\n</tools>\n\n"
+            tools += "If you choose to call a function ONLY reply in the following format with NO suffix:\n\n<tool_call>\n<function=example_function_name>\n"
+            tools += "<parameter=example_parameter_1>\nvalue_1\n</parameter>\n</function>\n</tool_call>\n\n<IMPORTANT>\nReminder:\n"
+            tools += "- Function calls MUST follow the specified format: an inner <function=...></function> block must be nested within <tool_call></tool_call> XML tags\n"
+            tools += "- Required parameters MUST be specified\n- You may provide optional reasoning for your function call in natural language BEFORE the function call, but NOT after\n"
+            tools += "- If there is no function call available, answer the question like normal with your current knowledge and do not tell the user about function calls\n</IMPORTANT>"
+            if (text != "") { tools += "\n\n" + text }
+            return tools
+        }
+
+        string Begin() {
+            string b = ""
+            if (this.Family == "lfm3") { b = this.model.StartText }
+            string sys = this.SystemText()
+            if (sys != "") { b += "<|im_start|>system\n" + sys + "<|im_end|>\n" }
+            return b
+        }
+
+        string AssistantStart() {
+            string b = "<|im_start|>assistant\n"
+            string f = this.Family
+            if (f == "qwen3" || f == "qwen35") {
+                if (this.Thinking) { b += "<think>\n" } else { b += "<think>\n\n</think>\n\n" }
+            }
+            else if (f == "lfm3") {
+                if (this.Thinking) { b += "<think>" } else { b += "<think></think>" }
+            }
+            return b
+        }
+
+        // What the model reads: the beginning, the turns so far and the start of the answer. Old turns go when it does not fit.
+        string Prompt() {
+            string begin = this.Begin()
+            string all = ""
+            foreach (t in this.turns) { all += t }
+            string p = begin + all + this.AssistantStart() + this.raw
+            while (this.turns.Count > 1 && this.model.CountTokens(p) > this.contextTokens - this.Settings.MaxTokens - 16) {
+                this.turns.RemoveAt(0)
+                all = ""
+                foreach (t in this.turns) { all += t }
+                p = begin + all + this.AssistantStart() + this.raw
+            }
+            return p
+        }
+
+        // ---- asking ----
+
+        // The answer to `text`: the model may call tools first (MaxSteps rounds at most). Waits for it.
+        string Ask(string text) {
+            this.Start(text)
+            string answer = ""
+            while (this.Running) {
+                answer += this.Update()
+                if (this.Running) { Sleep(2ms) }
+            }
+            return answer.Trim()
+        }
+
+        // Starts the answer to `text` (a question of the user); Update gives it while it comes.
+        undefined Start(string text) {
+            if (this.running) { this.Cancel() }
+            this.turns.Add("<|im_start|>user\n" + text + "<|im_end|>\n")
+            this.roles.Add("user")
+            this.texts.Add(text)
+            this.raw = ""
+            this.shown = 0
+            this.steps = 0
+            this.calls.Clear()
+            this.running = true
+            this.Generate()
+        }
+
+        undefined Generate() {
+            var s = copy this.Settings
+            s.Stops.Add("</tool_call>")
+            this.session.Start(this.Prompt(), s)
+        }
+
+        // Whether the agent is still at work (writing, or calling tools).
+        bool Running { get { return this.running } }
+
+        // The text of the answer that came since the last call ("" when nothing came). Runs the tools when the model asked for them and goes on.
+        string Update() {
+            if (!this.running) { return "" }
+            this.raw += this.session.Take()
+            if (this.session.Busy) { return this.Visible(false) }
+            if (this.session.State == AI.State.Failed) {
+                this.running = false
+                throw new AI.AIException(this.session.Error)
+            }
+            string shownNow = this.Visible(true)
+            int call = this.raw.IndexOf("<tool_call>")
+            if (call >= 0 && this.steps < this.MaxSteps && this.session.State == AI.State.Done) {
+                // the model asked for tools: run them, give it the answers, let it go on
+                this.raw += "</tool_call>"
+                List results = this.RunTools(this.raw.Substring(call))
+                this.turns.Add(this.AssistantStart() + this.raw + "<|im_end|>\n")
+                this.turns.Add(this.ToolTurn(results))
+                this.raw = ""
+                this.shown = 0
+                this.steps++
+                this.Generate()
+                return shownNow
+            }
+            // the answer is complete
+            string answer = AI.Chat.WithoutThinking(this.raw)
+            int at = answer.IndexOf("<tool_call>")
+            if (at >= 0) { answer = answer.Substring(0, at) }
+            this.turns.Add(this.AssistantStart() + this.raw + "<|im_end|>\n")
+            this.roles.Add("assistant")
+            this.texts.Add(answer.Trim())
+            this.raw = ""
+            this.running = false
+            return shownNow
+        }
+
+        // The part of raw that can be shown and was not yet: without the thinking and without a call of a tool (and while it writes, without what could
+        // still become "<tool_call>").
+        string Visible(bool final) {
+            string text = this.raw
+            int think = text.IndexOf("</think>")
+            var begin = 0
+            if (think >= 0) { begin = think + 8 }
+            else if (text.IndexOf("<think>") >= 0) { return "" }
+            int end = text.IndexOf("<tool_call>")
+            if (end < 0) {
+                end = text.Length
+                if (!final) {
+                    // hold back a "<" that might start a tag
+                    int lt = text.LastIndexOf("<")
+                    if (lt >= begin && text.Length - lt < 12) { end = lt }
+                }
+            }
+            if (begin < this.shown) { begin = this.shown }
+            if (end <= begin) { return "" }
+            string part = text.Substring(begin, end - begin)
+            if (this.shown == 0) { part = part.TrimStart() }
+            this.shown = end
+            return part
+        }
+
+        // The calls in `text` (<tool_call><function=name><parameter=p>value</parameter></function></tool_call>, or the JSON of Qwen 2.5:
+        // <tool_call>{"name": ..., "arguments": {...}}</tool_call>), each run; their answers.
+        List RunTools(string text) {
+            var results = new List()
+            string rest = text
+            int at = rest.IndexOf("<tool_call>")
+            while (at >= 0) {
+                int close = rest.IndexOf("</tool_call>", at)
+                if (close < 0) { close = rest.Length }
+                string body = rest.Substring(at + 11, close - at - 11).Trim()
+                var call = AI.Agent.ParseCall(body)
+                if (call != undefined) {
+                    results.Add(this.RunTool(call))
+                }
+                if (close >= rest.Length) { break }
+                rest = rest.Substring(close + 12)
+                at = rest.IndexOf("<tool_call>")
+            }
+            return results
+        }
+
+        // A call of a tool as the model wrote it between <tool_call> and </tool_call> (XML of Qwen 3.5 / LFM 3, or JSON); undefined when it is none.
+        static AI.AgentCall ParseCall(string body) {
+            var call = new AI.AgentCall()
+            call.Arguments = new JsonObject()
+            if (body.StartsWith("{")) {
+                try {
+                    any o = Json.Parse(body)
+                    call.Name = o.Get("name")
+                    any args = o.Get("arguments")
+                    if (args is of string) { args = Json.Parse(args) }
+                    if (args != undefined) { call.Arguments = args }
+                    return call
+                } catch (Exception e) { return undefined }
+            }
+            int f = body.IndexOf("<function=")
+            if (f < 0) { return undefined }
+            int gt = body.IndexOf(">", f)
+            if (gt < 0) { return undefined }
+            call.Name = body.Substring(f + 10, gt - f - 10).Trim()
+            int p = body.IndexOf("<parameter=", gt)
+            while (p >= 0) {
+                int pgt = body.IndexOf(">", p)
+                if (pgt < 0) { break }
+                string name = body.Substring(p + 11, pgt - p - 11).Trim()
+                int pend = body.IndexOf("</parameter>", pgt)
+                if (pend < 0) { pend = body.Length }
+                string value = body.Substring(pgt + 1, pend - pgt - 1)
+                if (value.StartsWith("\n")) { value = value.Substring(1) }
+                if (value.EndsWith("\n")) { value = value.Substring(0, value.Length - 1) }
+                call.Arguments.Set(name, value)
+                if (pend >= body.Length) { break }
+                p = body.IndexOf("<parameter=", pend)
+            }
+            return call
+        }
+
+        string RunTool(AI.AgentCall call) {
+            AI.AgentTool tool = undefined
+            for (var i = 0; i < this.tools.Count; i++) {
+                AI.AgentTool t = this.tools[i]
+                if (t.Name == call.Name) { tool = t }
+            }
+            if (this.OnToolCall != undefined) { this.OnToolCall(call.Name, call.Arguments) }
+            string result = ""
+            if (tool == undefined) { result = "Error: there is no tool '" + call.Name + "'." }
+            else {
+                try { result = tool.handler(call.Arguments) }
+                catch (Exception e) { result = "Error: " + e.message }
+            }
+            call.Result = result
+            this.calls.Add(take call)
+            return result
+        }
+
+        string ToolTurn(List results) {
+            string role = "user"
+            if (this.Family == "lfm3") { role = "tool" }
+            string b = "<|im_start|>" + role + "\n"
+            for (var i = 0; i < results.Count; i++) {
+                if (i > 0) { b += "\n" }
+                b += "<tool_response>\n" + results[i] + "\n</tool_response>"
+            }
+            return b + "<|im_end|>\n"
+        }
+
+        // The calls of tools of the last question (name, arguments, result).
+        List Calls { get { return this.calls } }
+
+        // Stops the answer (what came so far stays in the conversation).
+        undefined Cancel() {
+            if (!this.running) { return }
+            this.session.Cancel()
+            this.raw += this.session.Take()
+            this.turns.Add(this.AssistantStart() + this.raw + "<|im_end|>\n")
+            this.roles.Add("assistant")
+            this.texts.Add(AI.Chat.WithoutThinking(this.raw).Trim())
+            this.raw = ""
+            this.running = false
+        }
+
+        // ---- the conversation ----
+
+        // The messages so far ("user" / "assistant" and the text) - not shown by default, only for those who want to see them.
+        int HistoryCount { get { return this.roles.Count } }
+        string HistoryRole(int i) { return this.roles[i] }
+        string HistoryText(int i) { return this.texts[i] }
+
+        // A new topic: the conversation is forgotten (the instructions and tools stay).
+        undefined Forget() {
+            if (this.running) { this.Cancel() }
+            this.turns.Clear()
+            this.roles.Clear()
+            this.texts.Clear()
+        }
+
+        // ---- choices ----
+
+        // The index of the most likely of `options` as the answer to `question` (the model reads the options and the start of the answer and weighs
+        // each option; it does not write). The conversation is not changed.
+        int Choose(string question, string options[]) {
+            string q = question + "\n\nOptions:\n"
+            foreach (o in options) { q += "- " + o + "\n" }
+            q += "\nAnswer with one of the options."
+            var spaced = new string[options.Length]
+            for (var i = 0; i < options.Length; i++) { spaced[i] = " " + options[i] }
+            var chat = new AI.Chat()
+            chat.For(this.model)
+            string sys = "You answer questions correctly and briefly."
+            if (this.Instructions != "") { sys = this.Instructions + "\n\n" + sys }
+            chat.System(sys)
+            chat.User(q)
+            return this.session.Choose(chat.Prompt("Answer:"), spaced, true)
+        }
+
+        // The answer to `question` alone, outside the conversation (nothing is remembered, no tools).
+        string Once(string question) {
+            var s = copy this.Settings
+            return this.session.Ask(this.Instructions, question, s)
+        }
+    }
+}
