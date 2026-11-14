@@ -119,7 +119,7 @@ namespace Net {
             if (ms <= 0) { return 0 }
             int fd = __NetNativeHandle(handle)
             if (fd >= 0) {
-                var r = __fd_wait(fd, events, ms, channel)
+                int r = __fd_wait(fd, events, ms, channel)
                 if (r >= 0) { return r & 4 }
             }
             if (channel != 0 && (__chan_count(channel) > 0 || __chan_closed(channel))) { return 4 }
