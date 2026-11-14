@@ -99,6 +99,20 @@ The reference makes the library **available**; `#import "Core"` (the import name
 the same source compiles whether `Core` is a project of the solution or a package from `ember`. Libraries can reference libraries (transitively, no cycles, the ones that others
 need come first); only a library can be referenced.
 
+**Names of libraries.** What a library declares outside of every `namespace` belongs to a namespace with its import name: `class Parser` of the library `LibA` is
+`LibA.Parser`. So two libraries can both have a `Parser` (or a `Json`, a `Value`) and a program can use both:
+
+```fire
+#import "LibA"
+#import "LibB"
+print(LibA.Parser.Name() + LibB.Parser.Name())   // the full names keep them apart
+```
+
+A file that imports the library finds its names by the short name too (`Parser`, `new Parser()`, `Mode.Fast`), as does the library itself; a short name that two
+imported libraries have is ambiguous (`E4075` in an expression, `E4062` as a type) - write the full name. A `namespace` block of a library keeps its name (`namespace
+Raser { ... }` in the library `Raser.Core` is `Raser`), and the standard libraries keep their names global (`Framebuffer`, `DateTime`). The same holds for a library
+installed as a package (one that is not a standard one).
+
 How it works (and why this is the answer to "references to other fire assemblies"):
 
 * **Source-level references.** fire compiles whole programs from sources (one parse, one resolve, one bytecode or one C++ file - the native backend needs the whole program). So a

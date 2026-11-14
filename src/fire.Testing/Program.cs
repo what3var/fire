@@ -12792,7 +12792,7 @@ uiDrawScript = """
                 namespace Amb.A { class Upper : UI.Converter { } }
                 namespace Amb.B { class Upper : UI.Converter { } }
                 #include "{{P("Amb.fxml")}}"
-                """, new[] { "AUSNAHME: 'Upper' is ambiguous: Amb.A.Upper, Amb.B.Upper (more than one '#using' brings it); write the full name (12)\n'Upper' is ambiguous: Amb.A.Upper, Amb.B.Upper (more than one '#using' brings it); write the full name (20)" });
+                """, new[] { "AUSNAHME: 'Upper' is ambiguous: Amb.A.Upper, Amb.B.Upper (more than one '#using' or imported library brings it); write the full name (12)\n'Upper' is ambiguous: Amb.A.Upper, Amb.B.Upper (more than one '#using' or imported library brings it); write the full name (20)" });
 
             File.WriteAllText(P("Rich.fxml"), """
                 <Window Class="Rich" Title="Rich" Width="480" Height="320">

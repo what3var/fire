@@ -32,7 +32,7 @@ Leitlinien:
 | 7 | [Mess-Werkzeug für Größe, Speicher und Typisierung](#16-mess-werkzeug-für-größe-speicher-und-typisierung) | 11, 13 | Entscheidungen über kleine Ziele (DOS: 640 KB) auf Zahlen statt Schätzungen stützen |
 | 7 | [Kleine und alte Ziele](#13-kleine-und-alte-ziele) (Zeigerarten, typisierte Arrays, `#intwidth 32` umgesetzt) | 0, 9 | Mikrocontroller, DOS, Win 3.x, Win9x, NT 3.51-XP: Speicher pro Wert, Breiten, neue Plattformen |
 | 8 | [Scene3D für Spiele](#16-scene3d-für-spiele) | 13 (Ziele, Breiten), 11 (Weglassen) | Spiele bis hinunter auf DOS: Größe zuerst, dann Terrain, Modelle, Animation, Effekte, Physik |
-| 3 | [Volle Qualifikation mit dem Importnamen](#18-volle-qualifikation-mit-dem-importnamen) | - | zwei Bibliotheken mit derselben Klasse auf oberster Ebene (spätestens bei JSON) sind heute nicht auseinanderzuhalten |
+| 3 | ~~[Volle Qualifikation mit dem Importnamen](#18-volle-qualifikation-mit-dem-importnamen)~~ (umgesetzt) | - | zwei Bibliotheken mit derselben Klasse auf oberster Ebene (spätestens bei JSON) sind heute nicht auseinanderzuhalten |
 
 **Arbeitsreihenfolge (Entscheidung des Benutzers, nach Tasks Schritt 8):**
 
@@ -1108,6 +1108,10 @@ C-ABI greift dann bei 3 von 227 Funktionen. Heap nach 200 Bildern: 32 fire-Objek
 insgesamt (davon 1 MB Framebuffer, der Rest Engine und Laufzeit).
 
 ## 18. Volle Qualifikation mit dem Importnamen
+
+**Umgesetzt** (docs/tools/projects.md "Names of libraries"): Bibliotheken eines Projekts und Pakete, die keine Standardpakete sind. Offen: eine Bibliothek, die für
+sich selbst gebaut wird (ihre eigenen Tests), sieht ihre Namen nur kurz (`Parser`, nicht `LibA.Parser`); Vervollständigung und Hover im Editor zeigen die vollen
+Namen noch nicht eigens an.
 
 Zwei Bibliotheken (Pakete, Projekte), die beide eine Klasse oder ein Enum gleichen Namens auf oberster Ebene haben (spätestens bei JSON: `Json`,
 `Parser`, `Value`), lassen sich heute nicht zusammen benutzen. Gewünscht: der Importname gehört zur vollen Qualifikation - `Raser.Core.Info`,

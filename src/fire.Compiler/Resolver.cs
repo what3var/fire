@@ -177,7 +177,7 @@ namespace fire.Compiler
             int typeArgs = tr.TypeArgs?.Count ?? tr.TypeArgCount;
             var matches = tr.AmbiguousCandidates(n => known(n) || typeArgs > 0 && known(GenericClassNames.Mangle(n, typeArgs)), ownNamespace);
             if (matches.Count > 1)
-                throw new ResolverException($"'{tr.BaseName}' is ambiguous: {string.Join(", ", matches)} (more than one '#using' brings it); write the full name", line);
+                throw new ResolverException($"'{tr.BaseName}' is ambiguous: {string.Join(", ", matches)} (more than one '#using' or imported library brings it); write the full name", line);
         }
 
         /// <summary>The namespace a class is declared in (`Geo.Shapes.Circle` -> `Geo.Shapes`), null for a class outside every namespace.</summary>
@@ -970,7 +970,7 @@ namespace fire.Compiler
             if (me.Target is SelfClassExpr) return _currentClass?.Name;
 
             string? className = DottedName(me.Target);
-            return className != null ? InNamespaces(className, IsKnownClassName) : null;
+            return className != null ? InNamespaces(className, IsKnownClassName, me.Line) : null;
         }
 
         /// <summary>A chain of names in an expression (`Kind`, `Shapes.Circle`) as a name that `known` knows, looked up like a type name (SPEC
@@ -978,7 +978,7 @@ namespace fire.Compiler
         /// and `Helper.Tag()` inside `namespace Geo` are `Geo.Kind.Circle` and `Geo.Helper.Tag()`. A local variable or a member of the object with the
         /// name of the first link wins over every class and enum (as in the type checker, StaticClassRef); `#using` does not apply here (only to type names).
         /// `global.Name` is the global one.</summary>
-        private string? InNamespaces(string dotted, Func<string, bool> known)
+        private string? InNamespaces(string dotted, Func<string, bool> known, int line = 0)
         {
             // `global.Helper.Tag()`: the global name that a class of the own namespace hides
             if (dotted.StartsWith("global.", StringComparison.Ordinal) && !IsVariableName("global"))
@@ -989,7 +989,19 @@ namespace fire.Compiler
             if (IsChainRoot(root)) return null;
             for (string? ns = NamespaceOf(_currentClass?.Name); !string.IsNullOrEmpty(ns); ns = NamespaceOf(ns))
                 if (known(ns + "." + dotted)) return ns + "." + dotted;
-            return known(dotted) ? dotted : null;
+            if (known(dotted)) return dotted;
+            // the namespaces of the libraries the source imports (`#import "LibA"`: `Parser` is LibA.Parser); in two of them the short name is ambiguous
+            if (Parser.SourceImportNamespaces is { } imports && imports.TryGetValue(_currentSource, out var importNamespaces))
+            {
+                var found = importNamespaces.Where(ns => known(ns + "." + dotted)).Select(ns => ns + "." + dotted).ToList();
+                if (found.Count > 1)
+                {
+                    string message = $"'{dotted.Split('.')[0]}' is in several imported libraries ({string.Join(", ", found.Select(f => "'" + f + "'"))}) - write the full name";
+                    if (!_errors.Any(e => e.RawMessage == message)) AddError(new ResolverException(message, line));
+                }
+                if (found.Count > 0) return found[0];
+            }
+            return null;
         }
 
         /// <summary>Can `name` start the chain `name.X` as a value here: a variable of a scope, or a field or property of the class that is reachable - an
@@ -2093,7 +2105,7 @@ namespace fire.Compiler
                     // the object with the name of its first link wins).
                     // An enum of the own namespace (or an outer one) by its short name, any other one by its full name ('Geometry.Kind.Round') - as
                     // with static class access (InNamespaces), `#using` does not apply.
-                    string? enumName = DottedName(me.Target) is { } enumWritten ? InNamespaces(enumWritten, n => _enums.ContainsKey(n)) : null;
+                    string? enumName = DottedName(me.Target) is { } enumWritten ? InNamespaces(enumWritten, n => _enums.ContainsKey(n), me.Line) : null;
                     if (enumName != null && _enums.TryGetValue(enumName, out var enumMembers))
                     {
                         if (!enumMembers.ContainsKey(me.Name) && me.Name is "Name" or "Parse" or "IsDefined" or "Values" && IsKnownClassName(Parser.EnumHelperClassName(enumName)))

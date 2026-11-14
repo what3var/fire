@@ -129,7 +129,30 @@ namespace fire.Compiler
         /// "where" in the program parsing is currently taking place, without needing a separate
         /// tree pass afterwards).</summary>
         private string? _currentNamespace;
+        /// <summary>The namespace of a library's declarations outside of every `namespace` (ProcessedSource.Qualify); a `namespace` block of the library
+        /// is not put into it (`namespace Raser { ... }` in the library Raser.Core stays Raser).</summary>
+        private string? _implicitNamespace;
+        private int _namespaceDepth;
         private string? _currentClassName;
+
+        /// <summary>The namespaces of the imported libraries of each source (ProcessedSource.ImportNamespaces, by its index): the resolver finds their
+        /// names by the short name in expressions too.</summary>
+        [ThreadStatic] public static Dictionary<int, IReadOnlyList<string>>? SourceImportNamespaces;
+
+        /// <summary>The parser of a source: its `#using`s, its implicit namespace (a library), and the namespaces it imports noted for the resolver.</summary>
+        private static Parser ForSource(List<Token> tokens, ProcessedSource src, int sourceIndex)
+        {
+            var parser = new Parser(tokens) { _usingNamespaces = src.Usings, _sourceIndex = sourceIndex, _fileName = src.Name };
+            if (src.Qualify != null)
+            {
+                parser._currentNamespace = parser._implicitNamespace = src.Qualify;
+                var known = _declaredNamespaces ??= new HashSet<string>(StringComparer.Ordinal);
+                for (string? ns = src.Qualify; !string.IsNullOrEmpty(ns); ns = ns.Contains('.') ? ns.Substring(0, ns.LastIndexOf('.')) : null) known.Add(ns);
+            }
+            if (src.ImportNamespaces.Count > 0) (SourceImportNamespaces ??= new())[sourceIndex] = src.ImportNamespaces;
+            else SourceImportNamespaces?.Remove(sourceIndex);
+            return parser;
+        }
 
         /// <summary>`true` while the body of a GENERIC class
         /// is being parsed (see ParsePropertyBody: static auto-property).</summary>
@@ -233,11 +256,7 @@ namespace fire.Compiler
             var tokens = new Lexer(src.Source).Tokenize();
             _declaredNamespaces ??= new HashSet<string>(StringComparer.Ordinal);
             FindNamespaces(tokens, _declaredNamespaces);
-            var parser = new Parser(tokens);
-            parser._usingNamespaces = src.Usings;
-            parser._sourceIndex = sourceIndex;
-            parser._fileName = src.Name;
-            return parser.ParseProgram();
+            return ForSource(tokens, src, sourceIndex).ParseProgram();
         }
 
         public static List<Stmt> ParseMultiple(IReadOnlyList<ProcessedSource> sources)
@@ -248,6 +267,7 @@ namespace fire.Compiler
             var unitDecls = new List<(UnitDeclStmt Decl, string? File)>();
             var namespaces = new HashSet<string>(StringComparer.Ordinal);
             _declaredNamespaces = namespaces;
+            SourceImportNamespaces = null;
             for (int i = 0; i < sources.Count; i++)
             {
                 var src = sources[i];
@@ -270,12 +290,7 @@ namespace fire.Compiler
                 List<Stmt> stmts;
                 try
                 {
-                    var tokens = tokenLists[i];
-                    var parser = new Parser(tokens);
-                    parser._usingNamespaces = src.Usings;
-                    parser._sourceIndex = i;
-                    parser._fileName = src.Name;
-                    stmts = parser.ParseProgram();
+                    stmts = ForSource(tokenLists[i], src, i).ParseProgram();
                 }
                 catch (ParseException ex) when (src.Name != null && ex.FileName == null)
                 {
@@ -2857,7 +2872,9 @@ namespace fire.Compiler
             Expect(TokenType.LBrace, "Expected '{' after the namespace name");
 
             string? savedNamespace = _currentNamespace;
-            _currentNamespace = _currentNamespace == null ? name : _currentNamespace + "." + name;
+            // (a block at the top level of a library's file: its own name, not inside the library's implicit namespace)
+            _currentNamespace = _currentNamespace == null || _namespaceDepth == 0 && _implicitNamespace != null ? name : _currentNamespace + "." + name;
+            _namespaceDepth++;
 
             var members = new List<Stmt>();
             while (!Check(TokenType.RBrace) && !Check(TokenType.Eof))
@@ -2867,6 +2884,7 @@ namespace fire.Compiler
             }
             Expect(TokenType.RBrace, "Expected '}' at the end of the namespace");
 
+            _namespaceDepth--;
             _currentNamespace = savedNamespace;
 
             return new NamespaceDecl(_sourceIndex, line, name, members);

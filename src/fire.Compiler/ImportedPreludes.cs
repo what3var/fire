@@ -87,7 +87,12 @@ namespace fire.Compiler
 
         /// <summary>The prelude of the import as processed: marked when its package says `"serializable": false` (its classes are excluded from JSON).</summary>
         private static ProcessedSource Marked(ProcessedSource source, InstalledImport? import, string module) =>
-            (import?.Import.Serializable == false ? source with { NotSerializable = true } : source) with { Module = module };
+            (import?.Import.Serializable == false ? source with { NotSerializable = true } : source) with
+            {
+                Module = module,
+                // (a package that is no standard one: its names are qualified by its import name, like a library of a project - the same source compiles as both)
+                Qualify = import is { Import.Standard: false } && !string.IsNullOrWhiteSpace(import.Import.Prelude) ? import.Name : null,
+            };
 
         private static (string Source, string Folder)? PreludeOf(InstalledImport import) =>
             import.ReadPrelude() is { } text ? (text, Path.GetDirectoryName(import.FullPath(import.Import.Prelude!))!) : null;

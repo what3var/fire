@@ -307,7 +307,7 @@ configuration of the native build, a toolchain that is missing).
 | `E4059` | Field '…' of class '…' needs a type: a field is not declared with 'var' (use the type it holds, or 'any' if every type is allowed) |
 | `E4060` | Property '…' of class '…' needs a type (use the type it holds, or 'any' if every type is allowed) |
 | `E4061` | '…' is generic with … type parameter(s), not … |
-| `E4062` | '…' is ambiguous: … (more than one '#using' brings it); write the full name |
+| `E4062` | '…' is ambiguous: … (more than one '#using' or imported library brings it); write the full name |
 | `E4063` | Method/Property '…' of class '…' implements interface '…' and must be public, not … (a member of an interface is public) |
 | `E4064` | Class '…' does not implement interface '…' completely (missing property '…' with '…') (also a property without the `set` or `get` the interface names) |
 | `E4065` | '…' of class '…' is a field - interface '…' wants a property '…' with '…' |
@@ -321,6 +321,7 @@ configuration of the native build, a toolchain that is missing).
 | `E4072` | The inline C function '…' has a result type C cannot give (int, float, bool, char, string, any, a pointer or undefined) |
 | `E4073` | The initialiser of the static field '…' reads the field itself - it is still undefined there |
 | `E4074` | The initialiser of the static field '…' reads '…', whose initialiser only runs later (static fields are initialised once at program start: class by class in the order of the program, in a class from the top down) - declare '…' first |
+| `E4075` | '…' is in several imported libraries (…) - write the full name |
 
 ### E5xxx - Bytecode compiler
 

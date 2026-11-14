@@ -120,6 +120,22 @@ static class Scene3DTests
         box.Y = 0m
         cam.Render()
         print("anchored " + H.Sum(frame))
+        // KeepMeshCoordinates: the triangle at 2..3 / 1..2 stays where its coordinates say - the same picture as the anchor at its corner moved there
+        var kept = new Object()
+        kept.AddTriangle(2m, 1m, 0m, 3m, 1m, 0m, 2m, 2m, 0m)
+        kept.Color = S3D.Rgb(255, 0, 0)
+        scene.Add(kept)
+        cam.Render()
+        var centred = H.Sum(frame)
+        kept.KeepMeshCoordinates = true
+        cam.Render()
+        var keptSum = H.Sum(frame)
+        kept.KeepMeshCoordinates = false
+        kept.SetAnchor(0.0, 0.0, 0.5)
+        kept.SetPosition(2m, 1m, 0m)
+        cam.Render()
+        print("kept " + kept.KeepMeshCoordinates + " " + (keptSum != centred) + " " + (H.Sum(frame) == keptSum))
+        scene.Remove(kept)
         scene.Remove(ball)
         print("removed " + scene.Objects.Count + " " + (scene.Get("ball") == undefined))
 

@@ -397,6 +397,22 @@ static class ProjectTests
         Write(s, "Dotted/Tool/t.script", "#import \"Raser_Core\"\nprint(1)\n");
         string wrongName = Catch(() => ProjectBuilder.Check(BuildPlan.Create(Workspace.Open(Path.Combine(s, "Dotted", "Tool", "Tool.fireproj")), Workspace.Open(Path.Combine(s, "Dotted", "Tool", "Tool.fireproj")).Projects[0])));
         Check("Import: ein unbekannter Name nennt die Importnamen der referenzierten Bibliotheken", wrongName.Contains("not a known extension") && wrongName.Contains("\"Raser.Core\""), wrongName);
+        // two libraries with the same names at the top level: the import name qualifies them (docs/tools/projects.md)
+        Write(s, "Twin/LibA/LibA.fireproj", """{ "name": "LibA", "type": "library" }""");
+        Write(s, "Twin/LibA/a.script", "enum Mode { Fast, Slow }\ninterface IShape { float Area() }\nclass Parser {\n    static string Name() { return \"A\" + Helper.X() }\n}\nclass Helper { static string X() { return \"a\" } }\nnamespace Extra {\n    class Tool { static string T() { return \"tool\" } }\n}\n");
+        Write(s, "Twin/LibB/LibB.fireproj", """{ "name": "LibB", "type": "library", "references": [ { "project": "../LibA/LibA.fireproj" } ] }""");
+        Write(s, "Twin/LibB/b.script", "#import \"LibA\"\nclass Parser {\n    static string Name() { return \"B\" + Helper.X() + LibA.Parser.Name() }\n}\nclass Helper { static string X() { return \"b\" } }\nclass Circle : IShape { float Area() { return 3.0 } }\n");
+        Write(s, "Twin/App/App.fireproj", """{ "name": "App", "references": [ { "project": "../LibA/LibA.fireproj" }, { "project": "../LibB/LibB.fireproj" } ] }""");
+        Write(s, "Twin/App/main.script", "#import \"LibA\"\n#import \"LibB\"\nprint(LibA.Parser.Name() + \" \" + LibB.Parser.Name())\nIShape shape = new LibB.Circle()\nprint(shape.Area() + \" \" + Mode.Fast + \" \" + Extra.Tool.T() + \" \" + (new LibA.Parser() is of LibA.Parser))\n");
+        var twin = Workspace.Open(Path.Combine(s, "Twin", "App", "App.fireproj"));
+        string twinRan = RunPlan(BuildPlan.Create(twin, twin.Projects[0]));
+        Check("Importname: zwei Bibliotheken mit derselben Klasse auf oberster Ebene - voll qualifiziert getrennt, kurze Namen innen und aus nur einer Bibliothek", twinRan == "Aa BbAa\n3 Fast tool True\n", twinRan);
+        Write(s, "Twin/App/main.script", "#import \"LibA\"\n#import \"LibB\"\nprint(Parser.Name())\n");
+        string twinAmbiguous = Catch(() => ProjectBuilder.Check(BuildPlan.Create(Workspace.Open(Path.Combine(s, "Twin", "App", "App.fireproj")), Workspace.Open(Path.Combine(s, "Twin", "App", "App.fireproj")).Projects[0])));
+        Check("Importname: ein kurzer Name aus zwei Bibliotheken ist mehrdeutig (E4075) und nennt beide", twinAmbiguous.Contains("'LibA.Parser', 'LibB.Parser'"), twinAmbiguous);
+        Write(s, "Twin/App/main.script", "#import \"LibA\"\nvar p = new Parser()\nprint(Parser.Name() + \" \" + (p is of LibA.Parser))\n");
+        string twinShort = RunPlan(BuildPlan.Create(Workspace.Open(Path.Combine(s, "Twin", "App", "App.fireproj")), Workspace.Open(Path.Combine(s, "Twin", "App", "App.fireproj")).Projects[0]));
+        Check("Importname: eine importierte Bibliothek - ihre Namen kurz", twinShort == "Aa True\n", twinShort);
 
         // ---- changes through the workspace --------------------------------------------------------------------------------------------------
         string c = Path.Combine(root, "changes");

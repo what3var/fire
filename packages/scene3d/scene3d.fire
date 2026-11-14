@@ -367,6 +367,9 @@ class Object {
     defined float AnchorX { get { return __S3DGetF(this.h, 9) } set { __S3DSetF(this.h, 9, value) } }
     defined float AnchorY { get { return __S3DGetF(this.h, 10) } set { __S3DSetF(this.h, 10, value) } }
     defined float AnchorZ { get { return __S3DGetF(this.h, 11) } set { __S3DSetF(this.h, 11, value) } }
+    // true: the coordinates of the mesh are kept - its origin (0, 0, 0 of Model.FromArrays, of a model file) sits at the position instead of the
+    // anchor; at position 0, 0, 0 the mesh is where its coordinates say (world coordinates). The anchor does not count while it is on.
+    defined bool KeepMeshCoordinates { get { return __S3DGetB(this.h, 8) } set { __S3DSetI(this.h, 8, value) } }
 
     undefined SetPosition(defined float x : any m, defined float y : any m, defined float z : any m) { __S3DSetF3(this.h, 0, S3D.Length(x), S3D.Length(y), S3D.Length(z), false) }
     undefined SetAnchor(defined float x, defined float y, defined float z) { __S3DSetF3(this.h, 9, x, y, z, false) }
