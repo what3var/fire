@@ -31,6 +31,12 @@ static inline int fire_plat_programPath(char* out, size_t cap) {
 }
 #endif
 
+/* The memory (Environment.TotalMemory / FreeMemory / ProcessMemory): not known on DOS (-1: undefined); Windows 3.x tells what is free (GetFreeSpace,
+ * std/fire_platform_win16.h). */
+#ifndef FIRE_ENV_OWN_MEMORY
+static inline int64_t fire_plat_memory(int which) { (void)which; return -1; }
+#endif
+
 static inline int fire_plat_getenv(const char* name, char* out, size_t cap) {
     const char* v = getenv(name);
     size_t n;

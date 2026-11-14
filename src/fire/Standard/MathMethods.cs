@@ -135,11 +135,11 @@ namespace fire.Standard
             class Word {
             #if word16
                 /// The width of a word in bits on the target the program is built for: 16, 32 or 64.
-                static int Bits = 16
+                static readonly int Bits = 16
             #elif word32
-                static int Bits = 32
+                static readonly int Bits = 32
             #else
-                static int Bits = 64
+                static readonly int Bits = 64
             #endif
             }
 

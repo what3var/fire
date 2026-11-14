@@ -1038,7 +1038,10 @@ namespace fire.Compiler
                             // (see RunStaticInitializers, called
                             // directly after CompileClasses in Compile()).
                             if (fd.IsStatic)
+                            {
                                 rc.StaticFields.Add((fd.Name, fieldInit));
+                                if (fd.IsReadonly) (rc.ReadonlyStatics ??= new HashSet<string>(StringComparer.Ordinal)).Add(fd.Name);
+                            }
                             else
                                 rc.Fields.Add((fd.Name, fieldInit));
                             // SPEC "Unit declarations": this is checked

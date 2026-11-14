@@ -1106,7 +1106,12 @@ Die Messungen, die bisher von Hand liefen (Linker-Map auswerten, erzeugtes C dur
 **Umgesetzt (erste Stufe):** `forge build ... --engine native --stats` (Linkage `source`, Open Watcom, gcc, clang): Code nach Herkunft aus der Map (erzeugt je Modul,
 Hilfsfunktionen des Generators, Laufzeit, Plattform, C je Paket, C-Bibliothek), Daten, Typisierung je Modul (C-Schnittstelle, Parameter, Variablen, Stack-Slots
 mit C-Schatten), die Gründe ohne C-Schnittstelle, die größten Funktionen mit ihrem fire-Namen, bei DOS der Speicher zum Laden. Bericht im Log und in
-`<programm>.stats.txt`/`.json` (die Map daneben: `.map`). Offen: der Heap zur Laufzeit, der Vergleich zweier Builds, die Linkage `static`.
+`<programm>.stats.txt`/`.json` (die Map daneben: `.map`). **Umgesetzt seitdem:** der Vergleich zweier Builds (`forge stats vorher.stats.json nachher.stats.json`:
+Größe, Code nach Herkunft, Daten, Module, die Funktionen, die sich am meisten geändert haben) und die Linkage `static` (der Code jedes Library-Moduls aus der Map nach
+der Bibliothek: Member, Hilfsfunktionen, Kopie der Runtime); die verworfenen Sections der GNU-Map zählen nicht mehr mit (vorher war der Code zu groß).
+Der Heap zur Laufzeit: ein Build mit `--stats` (Linkage `source`) berichtet ihn mit `FIRE_STATS=1` am Ende des Hauptprogramms, bevor die Globals gehen
+(`fire_heapReport`: die Slot-Tabelle führt dafür die Köpfe - Objekte mit ihren Value-Slots nach Inhalt und gepackten Bytes, Arrays mit Value-Elementen und
+gepackten, Puffer, Lambdas, Strings, der Heap der C-Bibliothek mit glibc). Offen: der Bericht auf Abruf (aus dem Programm), mit `static`.
 
 Ausgangswerte (von Hand gemessen, Beispiel "Scene3D Physics", dos16, Watcom `-Os`, `eliminate`): EXE 760 KB, Lademodul 696 KB + 33 KB Mindestspeicher -
 **passt nicht in 640 KB**. Code: erzeugt 239 KB (davon `fire_main` 44 KB für 139 Zeilen, `Camera.Render` 17 KB für 30), Paket-C ~190 KB, Laufzeit 84 KB,

@@ -571,6 +571,20 @@ namespace fire.Native
             return func;
         }
 
+        /// <summary>The value of a `readonly` static field whose initializer is a constant (a number, a bool, a char, a string - `static readonly int Bits = 64`):
+        /// only its initializer sets it, so every read is that constant. Null for any other field.</summary>
+        private Value? ConstantStatic(string className, string field)
+        {
+            if (!_program.Program.Classes.TryGetValue(className, out var rc) || rc.FindStaticFieldOwner(field) is not { } owner
+                || owner.ReadonlyStatics?.Contains(field) != true) return null;
+            var init = owner.StaticFields.FirstOrDefault(s => s.Name == field).Init;
+            if (init == null) return null;
+            var code = OpInfo.Decode(init.Chunk.Code);
+            if (code.Count < 2 || code[0].Op != OpCode.LoadConst || code[1].Op != OpCode.Return) return null;
+            var c = init.Chunk.Constants[code[0].A[0]];
+            return c.Kind is ValueKind.Int or ValueKind.Float or ValueKind.Bool or ValueKind.Char or ValueKind.Word or ValueKind.String ? c : null;
+        }
+
         private RuntimeClass FindClass(string name) =>
             _program.Program.Classes.TryGetValue(name, out var rc) ? rc : throw new NativeNotSupportedException($"unknown class '{name}'");
 
@@ -2031,6 +2045,8 @@ namespace fire.Native
             sb.AppendLine($"#define FIRE_TARGET_{_target.MacroName} 1");
             sb.AppendLine($"#define FIRE_HAL_{_target.HalPackage.ToUpperInvariant()} 1");
             sb.AppendLine($"#define FIRE_DEFAULT_STACK_BYTES {_target.DefaultStackBytes}");
+            // (`--stats`, one file: the heap report at the end - FIRE_STATS=1 when the program starts; not with modules: the slot table would differ between them)
+            if (_collectStats && !Modular) sb.AppendLine("#define FIRE_HEAP_STATS 1");
             // The target section: what the target configuration says - definitions, the headers that come before the platform package, and which package it is.
             foreach (var define in _target.Native.Defines)
             {
@@ -3762,6 +3778,7 @@ namespace fire.Native
                 return;
             }
             if (_usesThreads) emit("mainFinish();");
+            if (_collectStats && !Modular) emit("fire_heapReport();");   // (`--stats`: what lives, before the globals go)
             EmitLeave(f, GlobalScope, emit);
             foreach (var g in _globals.OrderBy(x => x))
                 if (VarRef($"G{g}")) emit($"release(G{g});");
@@ -4505,6 +4522,22 @@ namespace fire.Native
                 E($"{shadow} = {expr};");
                 st.Scalar |= 1UL << k;
             }
+            // a constant into the slot d: a number as a C number in its shadow (where the slots have them), anything else as a Value (LoadConst, a readonly static)
+            void PushConstant(Value c)
+            {
+                if (SlotScalars() && c.Kind == ValueKind.Float) { SetScalar(d, TypeOfConstant(c), $"(Real){DoubleLiteral(c.AsFloat(), _program.FloatWidth == 32)}"); return; }
+                if (SlotScalars() && c.Kind == ValueKind.Word) { SetScalar(d, TypeOf(KindWord, 0), $"(FireWord){c.AsWord()}ULL"); return; }
+                if (SlotScalars() && IsNarrowIntType(TypeOfConstant(c)))
+                {
+                    // a narrow int: a C number in the slot's shadow
+                    long v = c.AsInt();
+                    SetScalar(d, TypeOfConstant(c), v == long.MinValue ? "(FireInt)(-9223372036854775807LL - 1)" : $"(FireInt){v}LL");
+                    return;
+                }
+                E($"{S(d)} = {Constant(c)};");
+                SetR(d, c.Kind == ValueKind.String);
+                SetT(d, TypeOfConstant(c)); _kindsKept = true;
+            }
             // a variable that is a C number (Ebene 2): a local (no parameter, no global, no variable of a thread) whose every store is a narrow int without a
             // unit, that nothing points to and that holds no reference (VarRef)
             bool ScalarVar(string v) => ScalarVarOf(f, v);
@@ -4587,27 +4620,7 @@ namespace fire.Native
             {
                 case OpCode.LoadConst:
                 {
-                    var c = chunk.Constants[ins.A[0]];
-                    if (SlotScalars() && c.Kind == ValueKind.Float)
-                    {
-                        SetScalar(d, TypeOfConstant(c), $"(Real){DoubleLiteral(c.AsFloat(), _program.FloatWidth == 32)}");
-                        d++; return Next();
-                    }
-                    if (SlotScalars() && c.Kind == ValueKind.Word)
-                    {
-                        SetScalar(d, TypeOf(KindWord, 0), $"(FireWord){c.AsWord()}ULL");
-                        d++; return Next();
-                    }
-                    if (SlotScalars() && IsNarrowIntType(TypeOfConstant(c)))
-                    {
-                        // a narrow int: a C number in the slot's shadow
-                        long v = c.AsInt();
-                        SetScalar(d, TypeOfConstant(c), v == long.MinValue ? "(FireInt)(-9223372036854775807LL - 1)" : $"(FireInt){v}LL");
-                        d++; return Next();
-                    }
-                    E($"{S(d)} = {Constant(c)};");
-                    SetR(d, c.Kind == ValueKind.String);
-                    SetT(d, TypeOfConstant(c)); _kindsKept = true;
+                    PushConstant(chunk.Constants[ins.A[0]]);
                     d++; return Next();
                 }
                 case OpCode.Pop:
@@ -6126,6 +6139,8 @@ namespace fire.Native
                     }
                     if (FindClass(Str(ins.A[0])).FindFieldAccess(Str(ins.A[1])) is { } getAccess)
                         AccessCheck(getAccess.DeclaringClass, getAccess.Access, $"Static field '{Str(ins.A[1])}' of '{getAccess.DeclaringClass.Name}' is {DescribeAccess(getAccess.Access)} and cannot be accessed from here.");
+                    // (a `readonly` static field whose initializer is a constant - `Word.Bits`: that constant, a C number like a literal)
+                    if (ConstantStatic(Str(ins.A[0]), Str(ins.A[1])) is { } constant) { PushConstant(constant); d++; return Next(); }
                     string sfVar = StaticFieldVar(Str(ins.A[0]), Str(ins.A[1]));
                     E($"{(_usesThreads ? "FIRE_DOM_READ(); " : "")}{S(d)} = {sfVar};");   // (any code may run on a fire thread: see LoadGlobal)
                     SetR(d, VarRef(sfVar));

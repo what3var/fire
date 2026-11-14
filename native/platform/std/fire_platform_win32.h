@@ -187,6 +187,39 @@ static inline int fire_plat_programPath(char* out, size_t cap) {
     return fire_plat_toUtf8(buf, (int)n, out, cap);
 }
 
+/* The memory (Environment.TotalMemory / FreeMemory / ProcessMemory): GlobalMemoryStatusEx (the physical memory and what is available), the working set of
+ * this process (K32GetProcessMemoryInfo, else psapi's GetProcessMemoryInfo; looked up, so that old Windows without them start) - bytes, -1: not known. */
+typedef struct FireProcMem { DWORD cb, PageFaultCount; SIZE_T PeakWorkingSetSize, WorkingSetSize, QuotaPeakPagedPoolUsage, QuotaPagedPoolUsage,
+    QuotaPeakNonPagedPoolUsage, QuotaNonPagedPoolUsage, PagefileUsage, PeakPagefileUsage; } FireProcMem;
+static inline int64_t fire_plat_memory(int which) {
+    if (which == 1 || which == 2) {
+        typedef BOOL (WINAPI *StatusEx)(LPMEMORYSTATUSEX);
+        StatusEx ex = (StatusEx)(void*)GetProcAddress(GetModuleHandleA("kernel32.dll"), "GlobalMemoryStatusEx");
+        if (ex != NULL) {
+            MEMORYSTATUSEX m;
+            m.dwLength = sizeof m;
+            if (!ex(&m)) return -1;
+            return (int64_t)(which == 1 ? m.ullTotalPhys : m.ullAvailPhys);
+        } else {
+            MEMORYSTATUS m;
+            m.dwLength = sizeof m;
+            GlobalMemoryStatus(&m);
+            return (int64_t)(which == 1 ? m.dwTotalPhys : m.dwAvailPhys);
+        }
+    }
+    if (which == 3) {
+        typedef BOOL (WINAPI *ProcMem)(HANDLE, FireProcMem*, DWORD);
+        ProcMem pm = (ProcMem)(void*)GetProcAddress(GetModuleHandleA("kernel32.dll"), "K32GetProcessMemoryInfo");
+        FireProcMem c;
+        if (pm == NULL) { HMODULE psapi = LoadLibraryA("psapi.dll"); if (psapi != NULL) pm = (ProcMem)(void*)GetProcAddress(psapi, "GetProcessMemoryInfo"); }
+        if (pm == NULL) return -1;
+        memset(&c, 0, sizeof c);
+        c.cb = sizeof c;
+        return pm(GetCurrentProcess(), &c, sizeof c) ? (int64_t)c.WorkingSetSize : -1;
+    }
+    return -1;
+}
+
 static inline int fire_plat_getenv(const char* name, char* out, size_t cap) {
     wchar_t* wname = fire_plat_toWide(name);
     DWORD size, n;

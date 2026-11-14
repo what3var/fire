@@ -33,6 +33,21 @@ if (args.Length >= 2 && args[0] == "falstad")
     }
 }
 
+// `stats <before.stats.json> <after.stats.json>`: two builds with `--stats` side by side (ROADMAP 17) - the size, the code by origin, the modules, the functions.
+if (args.Length >= 1 && args[0] == "stats")
+{
+    if (args.Length != 3) { Console.Error.WriteLine("usage: stats <before.stats.json> <after.stats.json>  (the reports `build ... --stats` writes next to a program)"); return 2; }
+    try
+    {
+        var before = fire.Native.NativeStats.FromJson(File.ReadAllText(args[1]));
+        var after = fire.Native.NativeStats.FromJson(File.ReadAllText(args[2]));
+        if (before == null || after == null) { Console.Error.WriteLine($"{(before == null ? args[1] : args[2])}: not a report of `--stats`"); return 1; }
+        Console.Write(fire.Native.NativeStats.Compare(before, after));
+        return 0;
+    }
+    catch (IOException ex) { Console.Error.WriteLine(ex.Message); return 1; }
+}
+
 // `model <file.gltf|file.glb> [-o <file.f3d>] [--fps n]`: fire's model file (docs/graphics/models.md) from glTF 2.0 - what a resource "x.gltf" becomes when a program is built.
 if (args.Length >= 2 && args[0] == "model")
 {

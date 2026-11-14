@@ -23,6 +23,9 @@ namespace fire.Native
     {
         /// <summary>Linkage "shared": what the plugins built for the program need to know (`.firehost`; the names of the libraries without their extension).</summary>
         public PluginHostInfo? Host { get; init; }
+        /// <summary>`--stats`: what the generator made of each fire function of the program (the library modules come from the cache: their code is counted by
+        /// module from the map).</summary>
+        public IReadOnlyList<FuncStat>? Funcs { get; init; }
     }
 
     public sealed partial class CppGenerator
@@ -364,7 +367,7 @@ namespace fire.Native
         /// <param name="shared">Linkage "shared" (ROADMAP 9, phase C): the libraries are shared libraries (position-independent code, a variant of their own in the cache); each
         /// says the interface it was built with, the program checks it when it starts.</param>
         public static StaticBuildPlan GenerateStatic(LinkedProgram program, TargetProfile target, string toolchainStamp, StrippingLevel? stripping = null, string? cacheRoot = null,
-            bool shared = false)
+            bool shared = false, bool stats = false)
         {
             // (linkage "shared" for Windows: DLLs - the runtime a DLL of its own, what a DLL uses of the program through pointers)
             bool dll = shared && target.Native.Platform == "windows";
@@ -405,7 +408,7 @@ namespace fire.Native
                 }
                 var main = new CppGenerator(program, target)
                 {
-                    _strip = EffectiveStripping(program, stripping), _role = ModuleRole.Program, _forced = flags, _libraries = outputs, _separate = true,
+                    _strip = EffectiveStripping(program, stripping), _role = ModuleRole.Program, _forced = flags, _libraries = outputs, _separate = true, _collectStats = stats,
                     _sharedAbis = shared ? specs.ToDictionary(s => s, s => $"{InterfaceFormat}:{abi[s]}") : null, _dll = dll, _dllModules = dll ? outputs : null, _toolchainStamp = toolchainStamp,
                     _openWorld = shared,
                 };
@@ -453,7 +456,7 @@ namespace fire.Native
                         libraries.Add(new StaticLibrary(spec.Name, keys[spec], dir, cFile, name, ifaceFile, cached));
                     }
                     var files = specs.ToDictionary(s => s, s => libraries.First(l => l.Module == s.Name).LibraryName);
-                    return new StaticBuildPlan(c, main._nativesCode, libraries, log.ToString()) { Host = main.HostInfo(files, rtKey != null ? libraries[0].LibraryName : null) };
+                    return new StaticBuildPlan(c, main._nativesCode, libraries, log.ToString()) { Host = main.HostInfo(files, rtKey != null ? libraries[0].LibraryName : null), Funcs = stats ? main.FuncStats() : null };
                 }
                 if (round > 4) throw new NativeNotSupportedException("the modules do not agree on the switches of the program");
                 flags = union;

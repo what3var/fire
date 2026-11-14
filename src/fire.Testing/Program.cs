@@ -28637,6 +28637,25 @@ else
             print("thread done while the main program was in its natives: " + (frames < 4000))
             print("reads " + done.Receive() + ", sum " + sum + ", last " + Shared.last)
             """),
+        ("IO.File.ReadAllText/ReadAllBytes: eine Datei, die die Groesse 0 meldet (/proc), wird bis zum Ende gelesen; leere und gewoehnliche Dateien wie vorher", """
+            #import "filesystem"
+            var meminfo = !IO.File.Exists("/proc/meminfo") || IO.File.ReadAllText("/proc/meminfo").StartsWith("MemTotal")
+            var status = !IO.File.Exists("/proc/self/status") || IO.File.ReadAllBytes("/proc/self/status").length > 20
+            print(meminfo + " " + status)
+            var dir = IO.Path.Combine(IO.Path.GetTempPath(), "fire-readall-" + DateTime.UtcNow.Ticks)
+            IO.Directory.CreateDirectory(dir)
+            IO.File.WriteAllText(IO.Path.Combine(dir, "empty.txt"), "")
+            IO.File.WriteAllText(IO.Path.Combine(dir, "text.txt"), "hello")
+            print(IO.File.ReadAllText(IO.Path.Combine(dir, "empty.txt")).Length + " " + IO.File.ReadAllText(IO.Path.Combine(dir, "text.txt")))
+            IO.Directory.Delete(dir, true)
+            """),
+        ("Environment.TotalMemory / FreeMemory / ProcessMemory: der Speicher der Maschine, der freie und der eigene (Bytes; undefined, wo das System es nicht sagt)", """
+            any total = Environment.TotalMemory
+            any free = Environment.FreeMemory
+            any own = Environment.ProcessMemory
+            print((total == undefined || total > 1000000) + " " + (free == undefined || total == undefined || (free >= 0 && free <= total)) + " " + (own == undefined || own > 100000))
+            print((total != undefined) + " " + (own != undefined))
+            """),
         ("WebSocket.Outbox: ein anderer Task sendet auf den Socket, waehrend sein Task in Receive wartet (ein Warten auf Socket und Kanal), sendFrom mit Channel.Pair", """
             #import "http"
             #import "time"
@@ -33494,6 +33513,47 @@ else
                 var trUiSizes = trLevels.Select(lv => fire.Native.CppGenerator.GenerateSources(trUiLinked, stripping: lv).Program.Length).ToArray();
                 int trUiSize = fire.Native.CppGenerator.GenerateSources(trUiLinked).Program.Length;
                 // (level 1 is about level 0 here: ui keeps little private code that no public member reaches; the names of the left out members cost a few bytes)
+                // a readonly static field with a constant initializer is that constant in the C (`Word.Bits`: no read of a Value, the computation stays in C numbers)
+                {
+                    var wbLinked = new Linker().CompileAndLink(new[] { "class M {\n    static defined int Mask() {\n        var wb = Word.Bits\n        return (1 << (wb - 2)) + 1\n    }\n}\nprint(M.Mask())" }, null, null, VmExecutionMode.Release);
+                    string wbC = fire.Native.CppGenerator.GenerateSources(wbLinked).Program;
+                    int wbAt = wbC.IndexOf("static FireInt f", StringComparison.Ordinal);
+                    string wbBody = wbAt >= 0 ? wbC.Substring(wbAt, Math.Min(1500, wbC.Length - wbAt)) : "";
+                    CheckNat("readonly static mit Konstante: Word.Bits ist im erzeugten C eine C-Zahl (kein Lesen des Feldes, die Rechnung bleibt in C-Zahlen)",
+                        wbBody.Contains("(FireInt)64LL") && !wbBody.Contains("SF") && !wbBody.Contains("shiftLeft("), wbBody);
+                }
+                // `--stats` with linkage static (ROADMAP 17): the code of the library modules by module (from the map), the program's functions; `stats` compares two builds
+                {
+                    string stDir = Path.Combine(Path.GetTempPath(), "fire-stats-static-" + Guid.NewGuid().ToString("N"));
+                    Directory.CreateDirectory(stDir);
+                    try
+                    {
+                        string stSrc = Path.Combine(stDir, "a"), stStatic = Path.Combine(stDir, "b");
+                        var gcc = fire.Native.ToolchainDef.BuiltIn["gcc"];
+                        var srcBuilt = fire.Compiler.NativeBuilder.Build(new[] { "print(\"hi\")" }, new fire.Native.NativeConfig { Stats = true }, TargetProfile.Host, gcc, stSrc, VmExecutionMode.Release);
+                        var stBuilt = fire.Compiler.NativeBuilder.Build(new[] { "print(\"hi\")" }, new fire.Native.NativeConfig { Stats = true, Linkage = "static" }, TargetProfile.Host, gcc, stStatic, VmExecutionMode.Release);
+                        string stText = File.Exists(stStatic + ".stats.txt") ? File.ReadAllText(stStatic + ".stats.txt") : "";
+                        var a = File.Exists(stSrc + ".stats.json") ? fire.Native.NativeStats.FromJson(File.ReadAllText(stSrc + ".stats.json")) : null;
+                        var b = File.Exists(stStatic + ".stats.json") ? fire.Native.NativeStats.FromJson(File.ReadAllText(stStatic + ".stats.json")) : null;
+                        string cmp = a != null && b != null ? fire.Native.NativeStats.Compare(a, b) : "";
+                        // (the heap at the end: FIRE_STATS=1 when the program built with --stats starts)
+                        string heap = "";
+                        if (srcBuilt.Ok)
+                        {
+                            var psi = new System.Diagnostics.ProcessStartInfo(stSrc) { RedirectStandardError = true, RedirectStandardOutput = true, UseShellExecute = false };
+                            psi.Environment["FIRE_STATS"] = "1";
+                            using var proc = System.Diagnostics.Process.Start(psi)!;
+                            heap = proc.StandardError.ReadToEnd();
+                            proc.WaitForExit(30_000);
+                        }
+                        CheckNat("--stats mit linkage static: der Code der Module nach Modul (aus der Map), das Programm, die Kopien der Runtime; forge stats vergleicht zwei Builds; FIRE_STATS=1 berichtet den Heap",
+                            srcBuilt.Ok && stBuilt.Ok && stText.Contains("fire: core (library)") && stText.Contains("fire: program") && stText.Contains("runtime (copy in core)")
+                            && cmp.StartsWith("Comparison", StringComparison.Ordinal) && cmp.Contains("fire: core (library)") && b!.Code.Sum(o => o.Bytes) < b.FileBytes
+                            && heap.Contains("Heap at the end (FIRE_STATS):") && heap.Contains("strings"),
+                            stText + "\n" + cmp + "\n" + heap + (stBuilt.Log.Length > 2000 ? stBuilt.Log[^2000..] : stBuilt.Log));
+                    }
+                    finally { try { Directory.Delete(stDir, true); } catch (IOException) { } }
+                }
                 CheckNat("Weglassen (stripping): das minimale ui-Programm bleibt klein (Stufe 3 unter 5 MB C; Stufe 2 kleiner als 1, 3 kleiner als 2, 1 etwa wie 0 und mehr als doppelt so gross wie 3)",
                     trUiSize == trUiSizes[3] && trUiSize < 5_000_000 && trUiSizes[1] <= trUiSizes[0] + 20_000 && trUiSizes[2] < trUiSizes[1] && trUiSizes[3] < trUiSizes[2] && trUiSizes[0] > 2 * trUiSize,
                     string.Join(" / ", trUiSizes.Select((s, i) => $"{i}: {s}")));

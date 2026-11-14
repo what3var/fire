@@ -15,6 +15,7 @@ namespace fire.Standard
         Variables = 5,
         NewLine = 6,
         Platform = 7,
+        Memory = 8,
     }
 
     /// <summary>What a program gets from whoever starts it: its arguments (without the program's name) and its path. The environment variables are the
@@ -87,9 +88,79 @@ namespace fire.Standard
                 static string NewLine { get { return {{NativeName}}({{(int)EnvironmentMethod.NewLine}}) } }
                 /// The platform the program runs on: "windows", "linux", "macos", "wasm", "esp32", "freertos", ...
                 static string Platform { get { return {{NativeName}}({{(int)EnvironmentMethod.Platform}}) } }
+                /// The memory of the machine in bytes (the physical memory; on a board the heap); undefined where the system does not tell.
+                static int TotalMemory { get { return {{NativeName}}({{(int)EnvironmentMethod.Memory}}, 1) } }
+                /// The memory programs can still get, in bytes (Linux: MemAvailable, Windows: the available physical memory, macOS: free and inactive pages; on
+                /// a board the free heap); undefined where the system does not tell.
+                static int FreeMemory { get { return {{NativeName}}({{(int)EnvironmentMethod.Memory}}, 2) } }
+                /// The memory this program takes, in bytes (its resident set / working set; on a board the heap in use); undefined where the system does not tell.
+                static int ProcessMemory { get { return {{NativeName}}({{(int)EnvironmentMethod.Memory}}, 3) } }
             }
 
             """;
+
+        /// <summary>Environment.TotalMemory / FreeMemory / ProcessMemory in the VM (1, 2, 3): the machine's (as the native runtime asks the system - Linux
+        /// /proc/meminfo, Windows GlobalMemoryStatusEx, macOS sysctl and vm_statistics through `vm_stat`, else what .NET knows) and this process's working set; -1:
+        /// not known.</summary>
+        internal static long MemoryOf(long which)
+        {
+            try
+            {
+                switch (which)
+                {
+                    case 3: return System.Diagnostics.Process.GetCurrentProcess().WorkingSet64;
+                    case 1 or 2 when OperatingSystem.IsLinux() && System.IO.File.Exists("/proc/meminfo"):
+                    {
+                        string key = which == 1 ? "MemTotal:" : "MemAvailable:";
+                        foreach (var line in System.IO.File.ReadLines("/proc/meminfo"))
+                            if (line.StartsWith(key, StringComparison.Ordinal) && long.TryParse(line.Substring(key.Length).Trim().Split(' ')[0], out long kb)) return kb * 1024;
+                        return -1;
+                    }
+                    case 1 or 2 when OperatingSystem.IsWindows():
+                    {
+                        var m = new MemoryStatusEx { Length = (uint)System.Runtime.InteropServices.Marshal.SizeOf<MemoryStatusEx>() };
+                        return GlobalMemoryStatusEx(ref m) ? (long)(which == 1 ? m.TotalPhys : m.AvailPhys) : -1;
+                    }
+                    case 1:
+                        // (macOS and the rest: what .NET knows of the machine - the physical memory, or the limit of a container)
+                        return GC.GetGCMemoryInfo().TotalAvailableMemoryBytes;
+                    case 2 when OperatingSystem.IsMacOS():
+                        return MacFreeBytes();
+                }
+            }
+            catch (Exception e) when (e is System.ComponentModel.Win32Exception or InvalidOperationException or System.IO.IOException or UnauthorizedAccessException
+                or EntryPointNotFoundException or DllNotFoundException) { }
+            return -1;
+        }
+
+        [System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential)]
+        private struct MemoryStatusEx
+        {
+            public uint Length, MemoryLoad;
+            public ulong TotalPhys, AvailPhys, TotalPageFile, AvailPageFile, TotalVirtual, AvailVirtual, AvailExtendedVirtual;
+        }
+
+        [System.Runtime.InteropServices.DllImport("kernel32.dll", SetLastError = true)]
+        private static extern bool GlobalMemoryStatusEx(ref MemoryStatusEx buffer);
+
+        /// <summary>macOS: the free, inactive and purgeable pages times the page size, from `vm_stat` (as the native runtime counts them with host_statistics64).</summary>
+        private static long MacFreeBytes()
+        {
+            var psi = new System.Diagnostics.ProcessStartInfo("vm_stat") { RedirectStandardOutput = true, UseShellExecute = false };
+            using var p = System.Diagnostics.Process.Start(psi);
+            if (p == null) return -1;
+            string text = p.StandardOutput.ReadToEnd();
+            p.WaitForExit(2000);
+            long page = 4096, pages = 0;
+            var size = System.Text.RegularExpressions.Regex.Match(text, @"page size of (\d+) bytes");
+            if (size.Success) page = long.Parse(size.Groups[1].Value);
+            foreach (var name in new[] { "Pages free", "Pages inactive", "Pages purgeable" })
+            {
+                var m = System.Text.RegularExpressions.Regex.Match(text, name + @":\s+(\d+)");
+                if (m.Success) pages += long.Parse(m.Groups[1].Value);
+            }
+            return pages > 0 ? pages * page : -1;
+        }
 
         /// <summary>The native function `__EnvCall(id[, a[, b]])` for the program that `env` describes.</summary>
         public static Value Call(Value[] args, ProgramEnvironment env)
@@ -135,6 +206,11 @@ namespace fire.Standard
                     return Value.MakeArray(array);
                 }
                 case EnvironmentMethod.NewLine: return Value.MakeString(OperatingSystem.IsWindows() ? "\r\n" : "\n");
+                case EnvironmentMethod.Memory:
+                {
+                    long m = args.Length > 1 && args[1].Kind == ValueKind.Int ? MemoryOf(args[1].AsInt()) : -1;
+                    return m < 0 ? Value.MakeUndefined() : Value.MakeInt(m);
+                }
                 case EnvironmentMethod.Platform:
                     return Value.MakeString(OperatingSystem.IsWindows() ? "windows" : OperatingSystem.IsMacOS() ? "macos" : OperatingSystem.IsLinux() ? "linux"
                         : OperatingSystem.IsBrowser() ? "wasm" : "unknown");

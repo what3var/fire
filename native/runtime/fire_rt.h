@@ -1559,8 +1559,8 @@ FIRE_FN FireWord* bufWords(Buf* b) { return (FireWord*)(void*)b->data; }
 #if !defined(FIRE_UNCHECKED) || defined(FIRE_ELEMPTRS)
 #define FIRE_SLOTS 1
 #endif
-#if defined(FIRE_ELEMPTRS)
-#define FIRE_SLOT_HDR 1   /* the table knows the header in each slot */
+#if defined(FIRE_ELEMPTRS) || (defined(FIRE_HEAP_STATS) && defined(FIRE_SLOTS))
+#define FIRE_SLOT_HDR 1   /* the table knows the header in each slot (FIRE_HEAP_STATS: the report walks it) */
 #endif
 #ifdef FIRE_SLOTS
 #if defined(FIRE_THREADS) && defined(FIRE_NO_GIL)
@@ -1657,6 +1657,9 @@ FIRE_FN void slotAcquire(Owned* o) {
 FIRE_FN void slotRelease(Owned* o) {
     uint32_t slot = o->slot;
     FireGen g = (FireGen)((slotGenGet(slot) + 1) & FIRE_GEN_MASK);
+#ifdef FIRE_HEAP_STATS
+    slotHdr(slot) = NULL;   /* (the report counts the slots that hold a value) */
+#endif
     slotGenSet(slot, g);
     slotBornSet(slot, g);
     if (FIRE_UNLIKELY(g_slotCache.n == FIRE_SLOT_CACHE)) slotSpill(FIRE_SLOT_CACHE / 2);
@@ -1711,6 +1714,9 @@ FIRE_FN void slotAcquire(Owned* o) {
 }
 FIRE_FN void slotRelease(Owned* o) {
     uint32_t slot = o->slot;
+#ifdef FIRE_HEAP_STATS
+    slotHdr(slot) = NULL;
+#endif
     slotGenSet(slot, (slotGenGet(slot) + 1) & FIRE_GEN_MASK);
     slotBornSet(slot, slotGenGet(slot));
     if (g_slots.nfree == g_slots.freedCap) {
@@ -2684,6 +2690,72 @@ typedef struct Obj {
 FIRE_FN Value* objFields(Obj* o) { return (Value*)((char*)o + FIRE_HDR(Obj)); }
 /* The packed fields of an object (`defined int n`: a C number, laid out by the generator - CppGenerator.Packed.cs): right behind its Value slots. */
 FIRE_FN char* objRaw(Obj* o) { return (char*)objFields(o) + (size_t)o->nfields * sizeof(Value); }
+#if defined(FIRE_HEAP_STATS) && defined(FIRE_SLOT_HDR)
+/* `--stats` (ROADMAP 17), `FIRE_STATS=1` when the program starts: what lives on the heap when the main program ends (before its globals go) - the objects with
+ * their Value slots by content and their packed bytes, the arrays (Value elements, packed bytes), the buffers, the lambdas, the strings - and what the C
+ * library has handed out in all (glibc). On the error output. */
+#if defined(__GLIBC__) && defined(__GLIBC_PREREQ)
+#if __GLIBC_PREREQ(2, 33)
+#include <malloc.h>
+#define FIRE_HEAP_MALLINFO 1
+#endif
+#endif
+extern FIRE_RT_DATA fire_atomic32 g_heapStrs, g_heapStrUnits;
+FIRE_FN void fire_heapReport(void) {
+    const char* want = getenv("FIRE_STATS");
+    uint32_t i, n;
+    unsigned long objs = 0, objSlots = 0, numbers = 0, undefs = 0, refs = 0, rawBytes = 0, withExt = 0;
+    unsigned long arrs = 0, arrValues = 0, arrPacked = 0, arrPackedBytes = 0, bufs = 0, bufBytes = 0, lams = 0;
+    if (!want || !*want || (want[0] == '0' && !want[1])) return;
+#ifdef FIRE_SLOT_SEGMENTS
+    n = fire_atomic_load(&g_slots.count);
+#else
+    n = g_slots.count;
+#endif
+    for (i = 0; i < n; i++) {
+        Owned* h = slotHdr(i);
+        if (!h) continue;
+        switch (h->okind) {
+            case O_Object: {
+                Obj* o = (Obj*)h;
+                uint32_t k;
+                objs++; objSlots += o->nfields; rawBytes += o->nraw;
+                if (o->ext) withExt++;
+                for (k = 0; k < o->nfields; k++) {
+                    int kind = objFields(o)[k].kind;
+                    if (kind == K_Undefined) undefs++;
+                    else if (kind == K_String || kind == K_Class || kind == K_Lambda || kind == K_Array || kind == K_Buffer) refs++;
+                    else numbers++;
+                }
+                break;
+            }
+            case O_Array: {
+                Arr* a = (Arr*)h;
+                arrs++;
+                if (a->typed && a->typed->packed)
+                {
+                    static const uint8_t bytesOf[] = { 0, 1, 2, 4, 8, 1, 2, 4, 8, 1, 4, 1 };   /* (E_*: the C width of a packed element) */
+                    arrPacked++;
+                    arrPackedBytes += (unsigned long)a->length * (a->typed->elem < sizeof bytesOf ? bytesOf[a->typed->elem] : 8u);
+                }
+                else arrValues += a->length;
+                break;
+            }
+            case O_Buffer: bufs++; bufBytes += (unsigned long)((Buf*)h)->length * ((Buf*)h)->elem; break;
+            default: lams++; break;
+        }
+    }
+    fprintf(stderr, "Heap at the end (FIRE_STATS): %lu objects (%lu Value slots: %lu numbers, %lu undefined, %lu references; %lu packed bytes; %lu own something or have type arguments),\n",
+        objs, objSlots, numbers, undefs, refs, rawBytes, withExt);
+    fprintf(stderr, "  %lu arrays (%lu Value elements, %lu packed with about %lu bytes), %lu buffers (%lu bytes), %lu lambdas, %u strings (%u characters); a Value is %u bytes\n",
+        arrs, arrValues, arrPacked, arrPackedBytes, bufs, bufBytes, lams, fire_atomic_load(&g_heapStrs), fire_atomic_load(&g_heapStrUnits), (unsigned)sizeof(Value));
+#ifdef FIRE_HEAP_MALLINFO
+    { struct mallinfo2 mi = mallinfo2(); fprintf(stderr, "  the C library's heap: %lu bytes in use, %lu bytes mapped\n", (unsigned long)mi.uordblks, (unsigned long)(mi.arena + mi.hblkhd)); }
+#endif
+}
+#else
+#define fire_heapReport() ((void)0)
+#endif
 /* ---- Narrow fields (docs/spec/NATIVE_BACKEND.md "Schmale Felder"): a field declared `int` (with `#intwidth 32`/`16`), `float` (with `#floatwidth 32`) or
  * `bool` holds nothing but a number or a bool of that kind, or `undefined` - 8 bytes are enough (kind, a unit of 16 bits, 32 bits of payload), and two such
  * fields share the slot of one Value (the generator lays them out per class: CppGenerator.LayoutOf). Half 0 lies over the head of the slot's Value, so the
@@ -3290,7 +3362,14 @@ FIRE_FN Value adoptV(Value v, OwnList* list) {
 /* ---------------------------------------------------------------------------------------------------------------------
  * Memory of the reference-counted values
  * --------------------------------------------------------------------------------------------------------------------- */
+#ifdef FIRE_HEAP_STATS
+/* (`--stats`: the strings that live - they have no slot - and the most values that lived at once) */
+extern FIRE_RT_DATA fire_atomic32 g_heapStrs, g_heapStrUnits;
+#endif
 FIRE_FN void freeRef(Ref* r) {
+#ifdef FIRE_HEAP_STATS
+    if (R_KIND(r) == R_Str) { fire_atomic_add(&g_heapStrs, (uint32_t)-1); fire_atomic_add(&g_heapStrUnits, (uint32_t)0 - ((Str*)r)->length); }
+#endif
     if (R_KIND(r) == R_Lam) {
         Lam* l = (Lam*)r;
         if (!(l->o.flags & 1)) {
@@ -3337,6 +3416,9 @@ FIRE_FN Str* allocStr(uint32_t length, OwnList* list) {
     d[length] = 0;
     s->data = d;
     registerTemp(&s->h, list);
+#ifdef FIRE_HEAP_STATS
+    fire_atomic_add(&g_heapStrs, 1); fire_atomic_add(&g_heapStrUnits, length);
+#endif
     return s;
 }
 FIRE_FN fire_char16* strChars(Str* s) { return (fire_char16*)s->data; }
@@ -3356,6 +3438,9 @@ FIRE_FN Value strCross(Value v) {
         memcpy(d, src->data, src->length * sizeof(fire_char16));
         d[src->length] = 0;
         c->data = d;
+#ifdef FIRE_HEAP_STATS
+        fire_atomic_add(&g_heapStrs, 1); fire_atomic_add(&g_heapStrUnits, c->length);
+#endif
         return StrV(c);
     }
 #endif
@@ -4515,6 +4600,10 @@ FIRE_FN Value envCall(int64_t id, Value a, Value b, OwnList* list) {
         case 6: return newStrFromUtf8((const uint8_t*)"\n", 1, list);
 #endif
         case 7: return newStrFromUtf8((const uint8_t*)fire_plat_name(), strlen(fire_plat_name()), list);
+        case 8: {   /* Memory: 1 total, 2 free, 3 this program's (bytes; undefined where the system does not tell) */
+            int64_t m = a.kind == K_Int ? fire_plat_memory((int)a.i) : -1;
+            return m < 0 ? Undef() : Int(m);
+        }
     }
     fatal("Unknown Environment function.");
     return Undef();
@@ -12420,6 +12509,9 @@ FIRE_FN Value fire_fd_wait_or(Value fdv, Value ev, Value msv, Value chv) { (void
  * The global state, defined in the one translation unit that defines FIRE_RT_IMPLEMENTATION (the generated program, or the library of a package for the VM).
  * --------------------------------------------------------------------------------------------------------------------- */
 #ifdef FIRE_RT_IMPLEMENTATION
+#ifdef FIRE_HEAP_STATS
+fire_atomic32 g_heapStrs, g_heapStrUnits;
+#endif
 void (*g_idlePump)(void) = NULL;
 void (*g_idleWait)(int64_t ms) = NULL;
 void (*g_idleWake)(void) = NULL;

@@ -147,6 +147,9 @@ FIRE_NORETURN static inline void fire_plat_exit(int code) {
 
 /* ---- the start: WinMain ---- */
 #define FIRE_ENV_OWN_PROGRAM_PATH 1
+/* (the memory: what Windows 3.x has free in its global heap; the rest is not known) */
+#define FIRE_ENV_OWN_MEMORY 1
+static inline int64_t fire_plat_memory(int which) { return which == 2 ? (int64_t)GetFreeSpace(0) : -1; }
 static inline int fire_plat_programPath(char* out, size_t cap) {
     size_t n = strlen(g_win16Path);
     if (n == 0 || n >= cap) return 0;

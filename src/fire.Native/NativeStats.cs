@@ -52,13 +52,19 @@ namespace fire.Native
             var moduleBytes = new Dictionary<string, long>();
             var generated = new Dictionary<string, int>();
             var biggest = new List<Biggest>();
-            foreach (var (section, size) in code)
+            var library = new Regex(@"fire_m(\w+?)(?:_[0-9a-f]+)?\.a\(");
+            foreach (var (section, size, file) in code)
             {
                 string name = section.Split('.')[0];   // (gcc: `f.isra.0`, `f.part.1`, `f.constprop.0` are parts of f)
                 string fn = BaseName(name);
                 string origin;
                 FuncStat? stat = byFunc.TryGetValue(fn, out var s) ? s : null;
                 if (stat != null) origin = "fire: " + stat.Module;
+                // (linkage "static": a section of the library of a module - its members, its copies of the runtime, its helpers)
+                else if (library.Match(file) is { Success: true } lib)
+                    origin = name.StartsWith("fx_", StringComparison.Ordinal) ? "fire: " + lib.Groups[1].Value + " (library)"
+                        : origins.TryGetValue(name, out var ro) && ro.StartsWith("runtime", StringComparison.Ordinal) ? ro + " (copy in " + lib.Groups[1].Value + ")"
+                        : "fire: helpers of " + lib.Groups[1].Value + " (library)";
                 else origin = origins.TryGetValue(name, out var o) ? o : "C library";
                 if (stat != null) moduleBytes[stat.Module] = (moduleBytes.TryGetValue(stat.Module, out long mb) ? mb : 0) + size;
                 if (origin == "fire: helpers") generated[HelperKind(name)] = (generated.TryGetValue(HelperKind(name), out int g) ? g : 0) + (int)size;
@@ -144,20 +150,23 @@ namespace fire.Native
         }
 
         /// <summary>The code sections (function, bytes) and the data (class or section, bytes) of a map of Open Watcom or of GNU ld.</summary>
-        private static (List<(string Name, long Size)> Code, Dictionary<string, long> Data) ReadMap(string mapFile)
+        private static (List<(string Name, long Size, string File)> Code, Dictionary<string, long> Data) ReadMap(string mapFile)
         {
-            var code = new List<(string, long)>();
+            var code = new List<(string, long, string)>();
             var data = new Dictionary<string, long>();
             if (!File.Exists(mapFile)) return (code, data);
             var lines = File.ReadAllLines(mapFile);
             var watcom = new Regex(@"^(\S+)\s+(\w+)\s+(\w+)\s+[0-9a-f]{4}:[0-9a-f]{4}\s+([0-9a-f]{8})\s*$");
-            var gnu = new Regex(@"^ (\.[\w.$]+)\s+0x[0-9a-f]+\s+0x([0-9a-f]+)\s");
+            var gnu = new Regex(@"^ (\.[\w.$]+)\s+0x[0-9a-f]+\s+0x([0-9a-f]+)\s+(.*)$");
             var gnuName = new Regex(@"^ (\.[\w.$]+)\s*$");
-            var gnuNext = new Regex(@"^\s+0x[0-9a-f]+\s+0x([0-9a-f]+)\s");
-            bool inSegments = false;
+            var gnuNext = new Regex(@"^\s+0x[0-9a-f]+\s+0x([0-9a-f]+)\s+(.*)$");
+            bool inSegments = false, discarded = false;
             for (int i = 0; i < lines.Length; i++)
             {
                 string l = lines[i];
+                // (GNU: what `--gc-sections` dropped is listed first - not in the program)
+                if (l.StartsWith("Discarded input sections", StringComparison.Ordinal)) { discarded = true; continue; }
+                if (discarded) { if (l.StartsWith("Memory Configuration", StringComparison.Ordinal)) discarded = false; continue; }
                 if (l.Contains("|   Segments   |")) { inSegments = true; continue; }
                 if (inSegments && l.Contains("|   Memory Map   |")) inSegments = false;
                 if (inSegments)
@@ -166,18 +175,18 @@ namespace fire.Native
                     if (!w.Success) continue;
                     long size = Convert.ToInt64(w.Groups[4].Value, 16);
                     string seg = w.Groups[1].Value, cls = w.Groups[2].Value, grp = w.Groups[3].Value;
-                    if (cls == "CODE") code.Add((seg.EndsWith("_TEXT", StringComparison.Ordinal) ? seg[..^5] : seg, size));
+                    if (cls == "CODE") code.Add((seg.EndsWith("_TEXT", StringComparison.Ordinal) ? seg[..^5] : seg, size, ""));
                     else Add(data, cls == "STACK" ? "stack" : grp == "DGROUP" ? "DGROUP (near data)" : cls == "FAR_DATA" ? "far data" : cls, size);
                     continue;
                 }
-                string? section = null; long bytes = 0;
+                string? section = null; long bytes = 0; string file = "";
                 var g = gnu.Match(l);
-                if (g.Success) { section = g.Groups[1].Value; bytes = Convert.ToInt64(g.Groups[2].Value, 16); }
+                if (g.Success) { section = g.Groups[1].Value; bytes = Convert.ToInt64(g.Groups[2].Value, 16); file = g.Groups[3].Value.Trim(); }
                 else if (gnuName.Match(l) is { Success: true } gn && i + 1 < lines.Length && gnuNext.Match(lines[i + 1]) is { Success: true } nx)
-                { section = gn.Groups[1].Value; bytes = Convert.ToInt64(nx.Groups[1].Value, 16); i++; }
+                { section = gn.Groups[1].Value; bytes = Convert.ToInt64(nx.Groups[1].Value, 16); file = nx.Groups[2].Value.Trim(); i++; }
                 if (section == null || bytes == 0) continue;
-                if (section.StartsWith(".text.", StringComparison.Ordinal)) code.Add((section[6..], bytes));
-                else if (section == ".text") code.Add(("", bytes));
+                if (section.StartsWith(".text.", StringComparison.Ordinal)) code.Add((section[6..], bytes, file));
+                else if (section == ".text") code.Add(("", bytes, file));
                 else if (section.StartsWith(".rodata", StringComparison.Ordinal)) Add(data, "read-only data", bytes);
                 else if (section.StartsWith(".data", StringComparison.Ordinal)) Add(data, "data", bytes);
                 else if (section.StartsWith(".bss", StringComparison.Ordinal)) Add(data, "bss", bytes);
@@ -228,6 +237,53 @@ namespace fire.Native
             if (r.NoCAbi.Count > 0) sb.AppendLine("  no C interface: " + string.Join(", ", r.NoCAbi.Select(kv => $"{kv.Key} ({kv.Value})")));
             sb.AppendLine("  biggest functions:");
             foreach (var b in r.Biggest.Take(15)) sb.AppendLine($"    {b.Bytes,9}  {b.CName}{(b.What.Length > 0 ? " " + b.What : "")}  [{b.Origin}]");
+            return sb.ToString();
+        }
+
+        /// <summary>Two builds side by side (`forge stats before.stats.json after.stats.json`): the size of the program, the code by origin, the data, the fire
+        /// functions by module and the functions that grew or shrank most - each with the change.</summary>
+        public static string Compare(Report before, Report after)
+        {
+            var sb = new StringBuilder();
+            string K(long b) => Math.Abs(b) >= 10240 ? $"{b / 1024.0:0} KB" : $"{b} B";
+            string D(long a, long b) => b == a ? "=" : (b > a ? "+" : "-") + K(Math.Abs(b - a)) + (a != 0 ? $" ({100.0 * (b - a) / a:+0.0;-0.0}%)" : "");
+            sb.AppendLine($"Comparison ({before.Target} -> {after.Target}): program {K(before.FileBytes)} -> {K(after.FileBytes)}  {D(before.FileBytes, after.FileBytes)}");
+            if (before.LoadBytes is { } lb && after.LoadBytes is { } la) sb.AppendLine($"  loaded {K(lb)} -> {K(la)}  {D(lb, la)}");
+            void Table(string title, IReadOnlyList<Origin> a, IReadOnlyList<Origin> b)
+            {
+                var names = a.Select(o => o.Name).Union(b.Select(o => o.Name)).ToList();
+                var rows = names.Select(n => (n, A: a.FirstOrDefault(o => o.Name == n)?.Bytes ?? 0, B: b.FirstOrDefault(o => o.Name == n)?.Bytes ?? 0))
+                    .OrderByDescending(r => Math.Abs(r.B - r.A)).ThenByDescending(r => r.B).ToList();
+                sb.AppendLine($"  {title} {K(a.Sum(o => o.Bytes))} -> {K(b.Sum(o => o.Bytes))}  {D(a.Sum(o => o.Bytes), b.Sum(o => o.Bytes))}:");
+                foreach (var (n, x, y) in rows) sb.AppendLine($"    {K(x),9} -> {K(y),9}  {D(x, y),-18}  {n}");
+            }
+            Table("code", before.Code, after.Code);
+            if (before.Data.Count + after.Data.Count > 0) Table("data", before.Data, after.Data);
+            var modules = before.Typing.Select(m => m.Module).Union(after.Typing.Select(m => m.Module)).ToList();
+            if (modules.Count > 0)
+            {
+                sb.AppendLine("  fire functions by module (functions, bytes, C interface):");
+                foreach (var name in modules)
+                {
+                    var a = before.Typing.FirstOrDefault(m => m.Module == name);
+                    var b = after.Typing.FirstOrDefault(m => m.Module == name);
+                    sb.AppendLine($"    {name,-18} {a?.Functions ?? 0,4} -> {b?.Functions ?? 0,-4} {K(a?.Bytes ?? 0),8} -> {K(b?.Bytes ?? 0),-8} {D(a?.Bytes ?? 0, b?.Bytes ?? 0),-18}" +
+                        $" C interface {a?.WithCAbi ?? 0} -> {b?.WithCAbi ?? 0}");
+                }
+            }
+            // (the functions: by their C name - the biggest of each build, and the fire functions of both)
+            var sizeA = new Dictionary<string, (long Bytes, string What)>();
+            var sizeB = new Dictionary<string, (long Bytes, string What)>();
+            foreach (var x in before.Biggest) sizeA[x.CName] = (x.Bytes, x.What);
+            foreach (var x in after.Biggest) sizeB[x.CName] = (x.Bytes, x.What);
+            var changed = sizeA.Keys.Union(sizeB.Keys)
+                .Select(n => (n, A: sizeA.TryGetValue(n, out var a) ? a.Bytes : 0, B: sizeB.TryGetValue(n, out var b) ? b.Bytes : 0, What: sizeB.TryGetValue(n, out var w) ? w.What : sizeA[n].What))
+                .Where(r => r.A != r.B).OrderByDescending(r => Math.Abs(r.B - r.A)).Take(15).ToList();
+            if (changed.Count > 0)
+            {
+                sb.AppendLine("  functions that changed most (of the biggest of each build):");
+                foreach (var (n, a, b, what) in changed) sb.AppendLine($"    {K(a),9} -> {K(b),9}  {D(a, b),-18}  {n}{(what.Length > 0 ? " " + what : "")}");
+            }
             return sb.ToString();
         }
 
