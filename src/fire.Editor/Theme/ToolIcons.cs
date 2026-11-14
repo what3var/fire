@@ -1,5 +1,6 @@
 using System.Collections.Generic;
 using Avalonia.Controls;
+using Avalonia.Input;
 using Avalonia.Controls.Primitives;
 using Avalonia.Media;
 
@@ -7,7 +8,7 @@ namespace fire.Editor
 {
     /// <summary>
     /// The vector icons of the tool bars of the editors: outlines of the Material Design Icons (Pictogrammers, Assets/Licenses/LICENSE-MaterialDesignIcons.txt)
-    /// in a box of 24 x 24, drawn 16 x 16 in the colour of the text (so they follow the theme and the disabled look of a button).
+    /// in a box of 24 x 24, drawn 16 x 16 in "smoke" (WhiteSmoke, #F5F5F5: the colour of the quiet PNG icons such as Copy, Cut and the trash can), paler when the button is disabled.
     /// </summary>
     internal static class ToolIcons
     {
@@ -84,7 +85,15 @@ namespace fire.Editor
         }
 
         /// <summary>The icon `name` as a control (16 x 16).</summary>
-        public static PathIcon Create(string name, double size = 16) => new() { Data = Geometry(name), Width = size, Height = size };
+        public static PathIcon Create(string name, double size = 16)
+        {
+            var icon = new PathIcon { Data = Geometry(name), Width = size, Height = size, Foreground = Smoke };
+            icon.PropertyChanged += (_, e) => { if (e.Property == InputElement.IsEffectivelyEnabledProperty) icon.Opacity = icon.IsEffectivelyEnabled ? 1 : 0.4; };
+            return icon;
+        }
+
+        /// <summary>"Smoke": the colour of the quiet icons (WhiteSmoke).</summary>
+        public static readonly IBrush Smoke = new SolidColorBrush(Color.FromRgb(0xF5, 0xF5, 0xF5));
 
         /// <summary>Puts the icon `name` on the button (instead of its text) and gives it the tip.</summary>
         public static T Set<T>(T button, string name, string? tip = null) where T : ContentControl
