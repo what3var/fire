@@ -2081,7 +2081,9 @@ namespace fire.Compiler
         {
             if (TryCompileArithOnVariable(expr)) return;
 
-            CompileExpr(expr);
+            // (`a = try take x` as a statement: the assignment alone - its bool is not needed)
+            if (expr is AssignExpr { Value: UnaryExpr { Op: UnaryOp.TryTake } } tryTakeAssign) CompileAssign(tryTakeAssign);
+            else CompileExpr(expr);
 
             if (_chunk.EndsWithOp(OpCode.StoreLocal, 4)) { _chunk.ReplaceLastOp(OpCode.StoreLocalPop); return; }
             if (_chunk.EndsWithOp(OpCode.StoreGlobal, 2)) { _chunk.ReplaceLastOp(OpCode.StoreGlobalPop); return; }
@@ -2776,6 +2778,8 @@ namespace fire.Compiler
 
                 case AssignExpr a:
                     CompileAssign(a);
+                    // `a = try take x` as a value (SPEC 2.2): whether the ownership moved, not the value assigned
+                    if (a.Value is UnaryExpr { Op: UnaryOp.TryTake }) { _chunk.EmitOp(OpCode.Pop); _chunk.EmitOp(OpCode.TookResult); }
                     break;
 
                 case IncDecExpr incDec:

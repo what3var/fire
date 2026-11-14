@@ -21374,6 +21374,49 @@ else
             mine[0] = 9
             print(o.body.length + " " + mine.length + " " + o.body[0])
             """),
+        ("a = try take x als Wert ist ein bool (ob der Besitz gewechselt ist) - Feld, Element, Variable, im if und als return; a = take x bleibt die Zuweisung; take/try take in eine Globale des Hauptprogramms", """
+            class Item {
+                string name
+                construct(string name) { this.name = name }
+            }
+            class Box {
+                Item item
+                Item other
+                any data
+                Item items[]
+                construct() { this.items = new Item[2] }
+                construct(Item i) {
+                    this.items = new Item[2]
+                    if (this.item = try take i) { print("Box hat " + i.name + " uebernommen") }
+                    else { print("Box verweist nur auf " + i.name) }
+                }
+                bool Keep(Item i) { return this.other = try take i }
+                bool KeepAt(Item i, int k) { return this.items[k] = try take i }
+                undefined Plain(Item i) { this.other = try take i }
+            }
+            var mine = new Item("eigen")
+            var a = new Box(new Item("frisch"))
+            var b = new Box(mine)
+            print(a.item.name + " " + b.item.name)
+            var c = new Box()
+            print(c.Keep(new Item("k1")) + " " + c.Keep(mine) + " " + c.other.name)
+            print(c.KeepAt(new Item("e1"), 0) + " " + c.KeepAt(mine, 1) + " " + c.items[0].name)
+            c.Plain(new Item("p"))
+            print(c.other.name)
+            Item local = undefined
+            bool t1 = local = try take mine
+            print(t1 + " " + local.name)
+            bool t2 = (local = try take new Item("neu"))
+            print(t2 + " " + local.name)
+            var n = 5
+            bool t3 = c.data = try take n
+            print(t3 + " " + c.data)
+            c.other = take mine
+            print(c.other.name)
+            Item g = undefined
+            g = take new Item("global")
+            print(g.name)
+            """),
         ("JsonObject.Set uebernimmt, was dem Aufruf gehoert (take, neu erzeugt), auch aus einem inneren Block und ueber vier Eintraege hinaus; ein zerstoertes Objekt beim Schreiben ist eine DestroyedException, kein stilles null", """
             #import "json"
             var root = new JsonObject()

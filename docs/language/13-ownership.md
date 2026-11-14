@@ -95,6 +95,25 @@ class Voxelizer {
 }
 ```
 
+`this.a = take p` is a plain assignment that takes the ownership on top, whoever owned `p`. `this.a = try take p` assigns as well, takes the ownership
+only when the running call owns `p` (a temporary it was given, something it made), and **gives whether it did** - a `bool`, not the value:
+
+```fire
+class Box {
+    Item item
+    construct(Item i) {
+        if (this.item = try take i) { print("the box owns " + i.n) }
+        else { print("the box refers to " + i.n) }    // a variable of the caller stays the caller's
+    }
+}
+var mine = new Item("mine")
+var a = new Box(new Item("fresh"))   // the box owns fresh
+var b = new Box(mine)                // the box refers to mine
+```
+
+As a statement the result is simply dropped. A new object (`this.a = new X()`) or a value a call returns with its ownership goes to the target on its
+own, without `take`.
+
 When the field gets something made from the parameter (`this.body = Bytes(body)`, which gives the parameter itself for a buffer and a new one for a
 text), take the field's value afterwards - `Http.Response` does it this way, so `new Http.Response(202, new byte[0])` keeps its body:
 
