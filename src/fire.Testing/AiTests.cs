@@ -12,6 +12,59 @@ using fire.Values;
 static class AiTests
 {
     public const string Name = "AI: GGUF lesen, Tokenizer, Cache, Generieren, Stop-Texte, Auswahl, Fehler - nativ == VM";
+    public const string McpName = "MCP: Server und Client (Tools, Ressourcen, Prompts, Benachrichtigungen, Fehler), JSON-RPC, SSE - nativ == VM";
+
+    /// <summary>The package mcp within one program (the direct transport): what a client asks and the server answers, the errors of JSON-RPC, the events of
+    /// Streamable HTTP. (stdio and HTTP against the official Python SDK of MCP are checked by hand: docs/networking/mcp.md.)</summary>
+    public const string McpScript = """
+        #import "mcp"
+        #import "json"
+
+        var server = new Mcp.Server("fire-test", "0.1")
+        server.Instructions = "Tools for tests."
+        server.Tool("add", "Adds two numbers", "{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"number\"},\"b\":{\"type\":\"number\"}},\"required\":[\"a\",\"b\"]}",
+            (JsonObject args) => Mcp.Result.Text("" + (args.Get("a") + args.Get("b"))))
+        server.Tool("fail", "Always fails", "", (JsonObject args) => Mcp.Result.Error("it failed"))
+        server.Tool("boom", "Throws", "", (JsonObject args) => { throw new Exception("boom!") })
+        server.Resource("file:///notes.txt", "notes", "The notes", "text/plain", () => "Buy milk.")
+        server.Prompt("greet", "A greeting", ["name"], (JsonObject a) => "Say hello to " + a.Get("name"))
+        var client = new Mcp.Client(new Mcp.DirectTransport(server))
+        client.Initialize("tester", "1.0")
+        print("server " + client.ServerName + " " + client.ServerVersion + " " + client.ProtocolVersion + " " + client.Instructions + " " + (client.Capabilities.IndexOf("listChanged") >= 0))
+        foreach (t in client.Tools()) { Mcp.Tool tool = t; print("tool " + tool.Name + ": " + tool.Description + " " + tool.Schema) }
+        print("add " + client.CallTool("add", "{\"a\":2,\"b\":3}").Text)
+        var args = new JsonObject()
+        args.Set("a", 40)
+        args.Set("b", 2)
+        print("add2 " + client.CallTool("add", args).Text)
+        var r = client.CallTool("fail")
+        print("fail " + r.IsError + " " + r.Text)
+        var b = client.CallTool("boom")
+        print("boom " + b.IsError + " " + b.Text)
+        try { client.CallTool("nope") } catch (Mcp.McpException e) { print("nope " + e.code + " " + e.message) }
+        foreach (x in client.Resources()) { Mcp.Resource res = x; print("res " + res.Uri + " " + res.Name + " " + res.MimeType) }
+        print("read " + client.ReadResource("file:///notes.txt"))
+        try { client.ReadResource("file:///x") } catch (Mcp.McpException e) { print("noread " + e.code) }
+        foreach (x in client.Prompts()) { Mcp.Prompt pr = x; print("prompt " + pr.Name + " " + pr.Arguments[0]) }
+        print("get " + client.GetPrompt("greet", "{\"name\":\"Ann\"}"))
+        client.Subscribe("file:///notes.txt")
+        server.ResourceUpdated("file:///notes.txt")
+        server.ResourceUpdated("file:///other.txt")
+        server.Tool("later", "added later", "", (JsonObject a) => Mcp.Result.Text("x"))
+        server.Log("info", "hello")
+        foreach (x in client.Notifications()) { Mcp.Notification n = x; print("note " + n.Method + " " + n.Params) }
+        client.Ping()
+        print("raw " + server.Handle("not json").Substring(0, 64))
+        print("raw2 " + server.Handle("{\"jsonrpc\":\"2.0\",\"id\":\"x7\",\"method\":\"nothing\"}"))
+        print("raw3 " + server.Handle("[1,2]").Substring(0, 64))
+        print("raw4 [" + server.Handle("{\"jsonrpc\":\"2.0\",\"method\":\"notifications/cancelled\"}") + "]")
+        print("raw5 " + server.Handle("{\"jsonrpc\":\"2.0\",\"id\":9,\"method\":\"initialize\",\"params\":{\"protocolVersion\":\"1999-01-01\"}}").Substring(0, 70))
+        var events = new List()
+        Mcp.HttpTransport.Events("event: message\ndata: {\"a\":1}\n\n: comment\nevent: message\r\ndata: {\"b\":\r\ndata: 2}\r\n\r\n", events)
+        print("events " + events.Count + " " + events[0] + " " + events[1])
+        print("hex " + Mcp.HttpTransport.Hex("1a\r") + " " + Mcp.HttpTransport.Hex("FF"))
+        client.Close()
+        """;
 
     // ---- the GGUF writer ----
     private sealed class Writer
@@ -396,12 +449,15 @@ static class AiTests
         agent.Tool("read_file", "Reads a file", ["path: the file"], (JsonObject args) => "content of " + args.Get("path"))
         agent.ToolWithSchema("add", "Adds two numbers", "{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"number\"},\"b\":{\"type\":\"number\"}}}", (JsonObject args) => "" + (args.Get("a") + args.Get("b")))
         var sys = agent.SystemPrompt
-        print("agent tools " + agent.ToolCount + " " + (sys.IndexOf("<tools>") >= 0) + " " + (sys.IndexOf("\"name\":\"read_file\"") >= 0) + " " + (sys.IndexOf("\"required\":[\"path\"]") >= 0) + " " + sys.EndsWith("Be brief."))
+        print("agent schema " + (sys.IndexOf("\"name\": \"add\"") >= 0) + " " + (sys.IndexOf("\"a\": {\"type\": \"number\"}") >= 0))
+        print("agent tools " + agent.ToolCount + " " + (sys.IndexOf("<tools>") >= 0) + " " + (sys.IndexOf("\"name\": \"read_file\"") >= 0) + " " + (sys.IndexOf("\"required\": [\"path\"]") >= 0) + " " + sys.EndsWith("Be brief."))
         var x = AI.Agent.ParseCall("<function=read_file>\n<parameter=path>\nnotes.txt\n</parameter>\n</function>")
         print("xml call " + x.Name + " " + x.Arguments.Get("path"))
         var j = AI.Agent.ParseCall("{\"name\": \"add\", \"arguments\": {\"a\": 2, \"b\": 3}}")
         print("json call " + j.Name + " " + j.Arguments.Get("a") + " " + j.Arguments.Get("b"))
         print("no call " + (AI.Agent.ParseCall("just text") == undefined))
+        var sloppy = AI.Agent.ParseCall("<function=open_file>\n<parameter=path>\nmain.fire\n\n<parameter=line>\n12\n</parameter>\n</function>")
+        print("sloppy call " + sloppy.Name + " [" + sloppy.Arguments.Get("path") + "] [" + sloppy.Arguments.Get("line") + "]")
         var a1 = agent.Ask("hello")
         var a2 = agent.Ask("world")
         print("agent asked " + agent.HistoryCount + " " + agent.HistoryRole(0) + " " + agent.HistoryText(0) + " " + agent.HistoryRole(1) + " " + (agent.HistoryText(1) == a1) + " " + agent.Running)

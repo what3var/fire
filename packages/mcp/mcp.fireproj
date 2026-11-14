@@ -1,0 +1,13 @@
+{
+  "format": 1,
+  "name": "fire-mcp",
+  "type": "library",
+  "import": "mcp",
+  "standard": true,
+  "settings": {
+    "version": "1.0.0",
+    "author": "fire",
+    "license": "fire",
+    "description": "The standard library 'mcp' of fire: the Model Context Protocol (JSON-RPC 2.0) - a client and a server of tools, resources and prompts over stdio, Streamable HTTP or within a program."
+  }
+}

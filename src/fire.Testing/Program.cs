@@ -28134,6 +28134,7 @@ else
 
     // AI (packages/ai/native/fire_ai_engine.h): a tiny model with random weights (AiTests.TinyModel) answers the same in the VM and in the native build
     natCases = natCases.Append((AiTests.Name, AiTests.Script)).ToArray();
+    natCases = natCases.Append((AiTests.McpName, AiTests.McpScript)).ToArray();
 
     // Audio (packages/audio/native/fire_bridge_audio.h): the simulated device "sim" records what is played - the same in the VM and in the native build
     natCases = natCases.Concat(new (string Name, string Source)[]

@@ -31,9 +31,13 @@ namespace AI {
             var props = new JsonObject()
             var required = new List()
             var items = new List()
+            any parsed = undefined
             fn.Set("name", this.Name)
             fn.Set("description", this.Description)
-            if (this.schema != "") { fn.Set("parameters", Json.Parse(this.schema)) }
+            if (this.schema != "") {
+                parsed = Json.Parse(this.schema)
+                fn.Set("parameters", parsed)
+            }
             else {
                 for (var i = 0; i < this.parameters.Count; i++) {
                     var p = new JsonObject()
@@ -84,6 +88,8 @@ namespace AI {
         int steps = 0
         bool running = false
         List calls = new List()
+        // What the model wrote last, as it wrote it (with the calls of tools and the thinking) - for finding out why it did what it did.
+        string LastOutput = ""
         // Called with each call of a tool before it runs (a user interface shows "reading notes.txt ..."); undefined: none.
         any OnToolCall = undefined
 
@@ -164,7 +170,7 @@ namespace AI {
             string list = ""
             for (var i = 0; i < this.tools.Count; i++) {
                 AI.AgentTool t = this.tools[i]
-                list += "\n" + t.Json()
+                list += "\n" + AI.Agent.Spaced(t.Json())
             }
             if (this.Family == "lfm3") {
                 if (text != "") { text += "\n\n" }
@@ -178,6 +184,24 @@ namespace AI {
             tools += "- If there is no function call available, answer the question like normal with your current knowledge and do not tell the user about function calls\n</IMPORTANT>"
             if (text != "") { tools += "\n\n" + text }
             return tools
+        }
+
+        // JSON as the chat templates write it (json.dumps: ", " and ": " outside of strings) - the models learned it so.
+        static string Spaced(string json) {
+            string b = ""
+            bool inString = false
+            bool escaped = false
+            foreach (c in json) {
+                b += c
+                if (inString) {
+                    if (escaped) { escaped = false }
+                    else if (c == '\\') { escaped = true }
+                    else if (c == '"') { inString = false }
+                }
+                else if (c == '"') { inString = true }
+                else if (c == ',' || c == ':') { b += " " }
+            }
+            return b
         }
 
         string Begin() {
@@ -261,6 +285,7 @@ namespace AI {
                 throw new AI.AIException(this.session.Error)
             }
             string shownNow = this.Visible(true)
+            this.LastOutput = this.raw
             int call = this.raw.IndexOf("<tool_call>")
             if (call >= 0 && this.steps < this.MaxSteps && this.session.State == AI.State.Done) {
                 // the model asked for tools: run them, give it the answers, let it go on
@@ -356,16 +381,37 @@ namespace AI {
                 int pgt = body.IndexOf(">", p)
                 if (pgt < 0) { break }
                 string name = body.Substring(p + 11, pgt - p - 11).Trim()
-                int pend = body.IndexOf("</parameter>", pgt)
-                if (pend < 0) { pend = body.Length }
+                // the value ends at </parameter> - or, when the model forgot it, at the next parameter or the end of the function
+                int pend = AI.Agent.First(body, pgt, "</parameter>", "<parameter=", "</function>")
                 string value = body.Substring(pgt + 1, pend - pgt - 1)
                 if (value.StartsWith("\n")) { value = value.Substring(1) }
-                if (value.EndsWith("\n")) { value = value.Substring(0, value.Length - 1) }
-                call.Arguments.Set(name, value)
+                value = value.TrimEnd()
+                if (AI.Agent.IsName(name)) { call.Arguments.Set(name, value) }
                 if (pend >= body.Length) { break }
                 p = body.IndexOf("<parameter=", pend)
             }
             return call
+        }
+
+        // A name of a parameter: letters, digits, _ and - (what else the model wrote there is no parameter).
+        static bool IsName(string name) {
+            if (name == "") { return false }
+            foreach (c in name) {
+                if (!(c.IsLetterOrDigit() || c == '_' || c == '-')) { return false }
+            }
+            return true
+        }
+
+        // The first place at or after `start` of one of the three texts (the end of `text` when none comes).
+        static int First(string text, int start, string a, string b, string c) {
+            int best = text.Length
+            int at = text.IndexOf(a, start)
+            if (at >= 0 && at < best) { best = at }
+            at = text.IndexOf(b, start)
+            if (at >= 0 && at < best) { best = at }
+            at = text.IndexOf(c, start)
+            if (at >= 0 && at < best) { best = at }
+            return best
         }
 
         string RunTool(AI.AgentCall call) {

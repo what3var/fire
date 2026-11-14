@@ -1,0 +1,932 @@
+#import "json"
+#import "io"
+#import "time"
+#import "process"
+#import "http"
+#import "net"
+
+// MCP (docs/networking/mcp.md): the Model Context Protocol - JSON-RPC 2.0 between a client (an agent, an assistant) and a server that offers tools,
+// resources and prompts. The client and the server of this package speak it over stdio (the client starts the server as a process and talks over its
+// standard input and output), over Streamable HTTP (POST, the answers as JSON or as server-sent events, a session id) or directly within a program.
+//
+//     var client = new Mcp.Client(new Mcp.ProcessTransport("python3", ["server.py"]))
+//     client.Initialize("my-agent", "1.0")
+//     foreach (tool in client.Tools()) { print(tool.Name + ": " + tool.Description) }
+//     print(client.CallTool("add", Json.Parse("{\"a\": 2, \"b\": 3}")).Text)
+//
+//     var server = new Mcp.Server("my-tools", "1.0")
+//     server.Tool("add", "Adds two numbers", "{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"number\"},\"b\":{\"type\":\"number\"}},\"required\":[\"a\",\"b\"]}",
+//                 (JsonObject args) => Mcp.Result.Text("" + (args.Get("a") + args.Get("b"))))
+//     server.RunStdio()
+namespace Mcp {
+    // The version of the protocol the client asks for and the server answers with (an older one the other side names is accepted).
+    class Protocol {
+        static string Version() { return "2025-11-25" }
+        static string Versions() { return "2025-11-25,2025-06-18,2025-03-26,2024-11-05" }
+    }
+
+    // An error of the other side (a JSON-RPC error: -32700 parse, -32600 invalid request, -32601 no such method, -32602 invalid parameters, -32603 internal,
+    // -32002 no such resource) or of the connection (code 0).
+    class McpException : Exception {
+        defined int code
+        construct(string message, defined int code = 0) : base(message) { this.code = code }
+    }
+
+    // ---- JSON-RPC ----
+    class Rpc {
+        static JsonOptions Plain() {
+            var o = new JsonOptions()
+            o.typeNames = false
+            return o
+        }
+        static string Text(any value) { return Json.Serialize(value, Mcp.Rpc.Plain()) }
+        static string Request(string id, string method, string paramsJson) {
+            string b = "{\"jsonrpc\":\"2.0\",\"id\":" + id + ",\"method\":" + Mcp.Rpc.Text(method)
+            if (paramsJson != "") { b += ",\"params\":" + paramsJson }
+            return b + "}"
+        }
+        static string Notification(string method, string paramsJson) {
+            string b = "{\"jsonrpc\":\"2.0\",\"method\":" + Mcp.Rpc.Text(method)
+            if (paramsJson != "") { b += ",\"params\":" + paramsJson }
+            return b + "}"
+        }
+        static string Result(string id, string resultJson) { return "{\"jsonrpc\":\"2.0\",\"id\":" + id + ",\"result\":" + resultJson + "}" }
+        static string Error(string id, defined int code, string message) {
+            return "{\"jsonrpc\":\"2.0\",\"id\":" + id + ",\"error\":{\"code\":" + code + ",\"message\":" + Mcp.Rpc.Text(message) + "}}"
+        }
+        // The id of a message as JSON text ("null" when it has none).
+        static string IdOf(JsonObject m) {
+            if (!m.Has("id")) { return "null" }
+            return Mcp.Rpc.Text(m.Get("id"))
+        }
+    }
+
+    // ---- transports: a message is one JSON text ----
+    interface ITransport {
+        undefined Send(string message)
+        // The next message, or undefined when none came within `timeoutMs` (0: only what is there already).
+        any Receive(defined int timeoutMs)
+        bool Open { get }
+        undefined Close()
+    }
+
+    // The client side of stdio: starts the server as a process; a message is one line of its standard input and output. What it writes to its standard
+    // error is kept in Log (servers write their messages there).
+    class ProcessTransport : Mcp.ITransport {
+        Process proc
+        IO.TextWriter input
+        List lines = new List()
+        string Log = ""
+        bool closed = false
+
+        construct(string file, string args[] = undefined, string workingDirectory = undefined) {
+            var o = new ProcessOptions()
+            o.RedirectInput = true
+            o.RedirectOutput = true
+            o.RedirectError = true
+            if (workingDirectory != undefined) { o.WorkingDirectory = workingDirectory }
+            this.proc = Process.Start(file, args, o)
+            this.input = new IO.TextWriter(this.proc.StandardInput)
+            this.proc.OnOutput = func (string line) on this => { this.lines.Add(line) }
+            this.proc.OnError = func (string line) on this => { this.Log += line + "\n" }
+        }
+
+        undefined Send(string message) {
+            this.input.WriteLine(message)
+            this.input.Flush()
+        }
+
+        any Receive(defined int timeoutMs) {
+            var waited = 0
+            while (true) {
+                this.proc.Pump()
+                if (this.lines.Count > 0) {
+                    string line = this.lines[0]
+                    this.lines.RemoveAt(0)
+                    if (line.Trim() != "") { return line }
+                    continue
+                }
+                if (waited >= timeoutMs || this.proc.HasExited) { return undefined }
+                Sleep(1ms)
+                waited++
+            }
+            return undefined
+        }
+
+        bool Open { get { return !this.closed && !this.proc.HasExited } }
+
+        undefined Close() {
+            if (this.closed) { return }
+            this.closed = true
+            if (!this.proc.HasExited) {
+                try { this.proc.StandardInput.Close() } catch (Exception e) { }
+                if (!this.proc.WaitForExit(2000)) { this.proc.Kill() }
+            }
+            this.proc.Close()
+        }
+    }
+
+    // The server side of stdio: this program's standard input and output (one message a line). Receive waits for a line (the timeout is not kept).
+    class StdioTransport : Mcp.ITransport {
+        IO.TextReader reader
+        bool ended = false
+
+        construct() { this.reader = new IO.TextReader(IO.Stdio.In()) }
+
+        undefined Send(string message) {
+            IO.Stdio.Write(message + "\n")
+            IO.Stdio.Flush()
+        }
+
+        any Receive(defined int timeoutMs) {
+            any line = this.reader.ReadLine()
+            if (line == undefined) { this.ended = true }
+            return line
+        }
+
+        bool Open { get { return !this.ended } }
+        undefined Close() { this.ended = true }
+    }
+
+    // The client side of Streamable HTTP: every message is a POST to `url`; the answer is JSON, or server-sent events (notifications, then the answer).
+    // The server gives the session its id at the start (Mcp-Session-Id), the client sends it with every message. Listen() opens the stream on which the
+    // server sends what is not an answer (notifications of a change) - http:// only.
+    class HttpTransport : Mcp.ITransport {
+        string url
+        Http.Client client
+        List queue = new List()
+        string SessionId = ""
+        string ProtocolVersion = ""
+        // sent with every request (e.g. "Authorization": "Bearer ...")
+        Http.Headers Headers
+        Net.TcpClient stream = undefined
+        string pending = ""
+        string streamBody = ""
+        bool chunked = false
+        bool headerDone = false
+        bool closed = false
+
+        construct(string url) {
+            this.url = url
+            this.client = new Http.Client()
+            this.client.timeout = 60000
+            this.Headers = new Http.Headers()
+        }
+
+        Http.Headers RequestHeaders() {
+            var h = new Http.Headers()
+            for (var i = 0; i < this.Headers.Count; i++) { h.Add(this.Headers.names[i], this.Headers.values[i]) }
+            h.Set("Accept", "application/json, text/event-stream")
+            if (this.SessionId != "") { h.Set("Mcp-Session-Id", this.SessionId) }
+            if (this.ProtocolVersion != "") { h.Set("MCP-Protocol-Version", this.ProtocolVersion) }
+            return h
+        }
+
+        undefined Send(string message) {
+            var r = this.client.Post(this.url, message, "application/json", this.RequestHeaders())
+            any sid = r.Header("Mcp-Session-Id")
+            if (sid != undefined && sid != "") { this.SessionId = sid }
+            if (r.status == 202) { return }
+            if (r.status == 404 && this.SessionId != "") { throw new Mcp.McpException("MCP: the server does not know the session any more (404).") }
+            if (!r.Ok) { throw new Mcp.McpException("MCP: the server answered " + r.status + " " + r.reason + ": " + r.Text()) }
+            any type = r.Header("Content-Type")
+            string body = r.Text()
+            if (type != undefined && type.IndexOf("text/event-stream") >= 0) { Mcp.HttpTransport.Events(body, this.queue) }
+            else if (body.Trim() != "") { this.queue.Add(body) }
+        }
+
+        // The data of the server-sent events in `text` (an event is lines "data: ..." up to an empty line).
+        static undefined Events(string text, List into) {
+            string data = ""
+            foreach (raw in text.Split("\n")) {
+                string line = raw
+                if (line.EndsWith("\r")) { line = line.Substring(0, line.Length - 1) }
+                if (line == "") {
+                    if (data != "") { into.Add(data) }
+                    data = ""
+                }
+                else if (line.StartsWith("data:")) {
+                    string d = line.Substring(5)
+                    if (d.StartsWith(" ")) { d = d.Substring(1) }
+                    if (data != "") { data += "\n" }
+                    data += d
+                }
+            }
+            if (data != "") { into.Add(data) }
+        }
+
+        any Receive(defined int timeoutMs) {
+            var waited = 0
+            while (true) {
+                if (this.queue.Count > 0) {
+                    string m = this.queue[0]
+                    this.queue.RemoveAt(0)
+                    return m
+                }
+                if (this.stream == undefined || !this.ReadStream()) {
+                    if (waited >= timeoutMs) { return undefined }
+                    Sleep(1ms)
+                    waited++
+                }
+            }
+            return undefined
+        }
+
+        // Opens the stream of the server's own messages (GET with Accept: text/event-stream). False when the server has none (405).
+        bool Listen() {
+            var u = Http.Url.Parse(this.url)
+            if (u.scheme != "http") { return false }
+            this.stream = new Net.TcpClient(u.host, u.port)
+            string req = "GET " + u.path + " HTTP/1.1\r\nHost: " + u.host + ":" + u.port + "\r\nAccept: text/event-stream\r\n"
+            if (this.SessionId != "") { req += "Mcp-Session-Id: " + this.SessionId + "\r\n" }
+            if (this.ProtocolVersion != "") { req += "MCP-Protocol-Version: " + this.ProtocolVersion + "\r\n" }
+            for (var i = 0; i < this.Headers.Count; i++) { req += this.Headers.names[i] + ": " + this.Headers.values[i] + "\r\n" }
+            this.stream.WriteString(req + "\r\n")
+            // the status line and the headers
+            var waited = 0
+            while (!this.headerDone && waited < 5000) {
+                if (!this.ReadStream()) { Sleep(1ms); waited++ }
+            }
+            if (!this.headerDone) { this.stream.Close(); this.stream = undefined; return false }
+            return this.stream != undefined
+        }
+
+        // Reads what the stream has (without waiting); true when something came.
+        bool ReadStream() {
+            if (this.stream == undefined) { return false }
+            defined int n = trust this.stream.Available
+            if (n <= 0) { return false }
+            byte buf[] = new byte[n]
+            var got = this.stream.Read(buf, 0, n)
+            if (got <= 0) { this.stream.Close(); this.stream = undefined; return false }
+            this.pending += IO.Utf8.GetString(buf, 0, got)
+            if (!this.headerDone) {
+                int end = this.pending.IndexOf("\r\n\r\n")
+                if (end < 0) { return true }
+                string head = this.pending.Substring(0, end)
+                this.pending = this.pending.Substring(end + 4)
+                this.headerDone = true
+                if (head.IndexOf(" 200") < 0) { this.stream.Close(); this.stream = undefined; return true }
+                this.chunked = head.ToLower().IndexOf("transfer-encoding: chunked") >= 0
+            }
+            // the body: chunked or not, into the text of the events; complete events (ending with an empty line) go to the queue
+            if (this.chunked) {
+                while (true) {
+                    int le = this.pending.IndexOf("\r\n")
+                    if (le < 0) { break }
+                    int size = Mcp.HttpTransport.Hex(this.pending.Substring(0, le))
+                    if (this.pending.Length < le + 2 + size + 2) { break }
+                    this.streamBody += this.pending.Substring(le + 2, size)
+                    this.pending = this.pending.Substring(le + 2 + size + 2)
+                }
+            }
+            else {
+                this.streamBody += this.pending
+                this.pending = ""
+            }
+            string normal = this.streamBody.Replace("\r\n", "\n")
+            int last = normal.LastIndexOf("\n\n")
+            if (last >= 0) {
+                Mcp.HttpTransport.Events(normal.Substring(0, last + 2), this.queue)
+                this.streamBody = normal.Substring(last + 2)
+            }
+            return true
+        }
+
+        static int Hex(string text) {
+            var v = 0
+            foreach (c in text.Trim().ToLower()) {
+                int d = "0123456789abcdef".IndexOf(c)
+                if (d < 0) { break }
+                v = v * 16 + d
+            }
+            return v
+        }
+
+        bool Open { get { return !this.closed } }
+
+        // Ends the session (DELETE) and the stream.
+        undefined Close() {
+            if (this.closed) { return }
+            this.closed = true
+            if (this.stream != undefined) { this.stream.Close(); this.stream = undefined }
+            if (this.SessionId != "") { try { this.client.Delete(this.url, this.RequestHeaders()) } catch (Exception e) { } }
+        }
+    }
+
+    // A server in the same program: the messages go straight to it (tools of the program itself, and tests).
+    class DirectTransport : Mcp.ITransport {
+        Mcp.Server server
+        List queue = new List()
+        construct(Mcp.Server server) { this.server = server }
+        undefined Send(string message) {
+            string answer = this.server.Handle(message)
+            if (answer != "") { this.queue.Add(answer) }
+            foreach (n in this.server.TakeNotifications()) { this.queue.Add(n) }
+        }
+        any Receive(defined int timeoutMs) {
+            foreach (n in this.server.TakeNotifications()) { this.queue.Add(n) }
+            if (this.queue.Count == 0) { return undefined }
+            string m = this.queue[0]
+            this.queue.RemoveAt(0)
+            return m
+        }
+        bool Open { get { return true } }
+        undefined Close() { }
+    }
+
+    // ---- what the client gets ----
+
+    // A tool of the server: Schema is the JSON schema of its arguments.
+    class Tool {
+        string Name
+        string Title = ""
+        string Description = ""
+        string Schema = "{\"type\":\"object\"}"
+    }
+
+    // The answer of a tool: Text is all its text content together; Content the parts as they came (JsonObject: type "text", "image", "resource" ...).
+    class ToolResult {
+        string Text = ""
+        bool IsError = false
+        List Content = new List()
+        // structuredContent, when the tool gave one (JSON text, else "")
+        string Structured = ""
+    }
+
+    class Resource {
+        string Uri
+        string Name = ""
+        string Description = ""
+        string MimeType = ""
+    }
+
+    class Prompt {
+        string Name
+        string Description = ""
+        // the names of its arguments
+        List Arguments = new List()
+    }
+
+    // A message of the server that is no answer: its method ("notifications/tools/list_changed", "notifications/resources/updated", "notifications/message"
+    // ...) and its parameters (JSON text).
+    class Notification {
+        string Method
+        string Params = "{}"
+    }
+
+    // ---- the client ----
+    class Client {
+        Mcp.ITransport transport
+        defined int nextId = 1
+        List notifications = new List()
+        string ServerName = ""
+        string ServerVersion = ""
+        string ProtocolVersion = ""
+        string Instructions = ""
+        // the capabilities of the server (JSON text)
+        string Capabilities = "{}"
+        // How long a request may take (milliseconds).
+        defined int Timeout = 60000
+        // Called for every notification of the server (Poll and the requests deliver them); undefined: they are kept (Notifications()).
+        any OnNotification = undefined
+
+        // (the client owns the transport: it closes it)
+        construct(Mcp.ITransport transport) { this.transport = take transport }
+
+        destruct() { this.Close() }
+        undefined Close() { if (this.transport != undefined) { this.transport.Close() } }
+
+        // Starts the session: who the client is; the server says who it is and what it can.
+        undefined Initialize(string clientName, string clientVersion = "1.0") {
+            var p = new JsonObject()
+            p.Set("protocolVersion", Mcp.Protocol.Version())
+            var caps = new JsonObject()
+            p.Set("capabilities", caps)
+            var info = new JsonObject()
+            info.Set("name", clientName)
+            info.Set("version", clientVersion)
+            p.Set("clientInfo", info)
+            JsonObject r = Json.Parse(this.Call("initialize", Mcp.Rpc.Text(p)))
+            this.ProtocolVersion = r.Get("protocolVersion")
+            if (Mcp.Protocol.Versions().IndexOf(this.ProtocolVersion) < 0) { throw new Mcp.McpException("MCP: the server speaks version " + this.ProtocolVersion + ", which this client does not.") }
+            if (r.Has("serverInfo")) {
+                JsonObject si = r.Get("serverInfo")
+                if (si.Has("name")) { this.ServerName = si.Get("name") }
+                if (si.Has("version")) { this.ServerVersion = si.Get("version") }
+            }
+            if (r.Has("instructions")) { this.Instructions = r.Get("instructions") }
+            if (r.Has("capabilities")) { this.Capabilities = Mcp.Rpc.Text(r.Get("capabilities")) }
+            if (this.transport is of Mcp.HttpTransport) {
+                Mcp.HttpTransport h = this.transport
+                h.ProtocolVersion = this.ProtocolVersion
+            }
+            this.Notify("notifications/initialized", "")
+        }
+
+        // A request: its result as JSON text, or a McpException with the error of the server. `paramsJson`: the parameters as JSON text ("" for none).
+        string Call(string method, string paramsJson = "") {
+            var id = this.nextId
+            this.nextId++
+            this.transport.Send(Mcp.Rpc.Request("" + id, method, paramsJson))
+            var waited = 0
+            while (true) {
+                any text = this.transport.Receive(50)
+                if (text == undefined) {
+                    waited += 50
+                    if (!this.transport.Open) { throw new Mcp.McpException("MCP: the connection ended before the answer to " + method + ".") }
+                    if (waited >= this.Timeout) {
+                        this.Notify("notifications/cancelled", "{\"requestId\":" + id + ",\"reason\":\"timeout\"}")
+                        throw new Mcp.McpException("MCP: no answer to " + method + " within " + this.Timeout + " ms.")
+                    }
+                    continue
+                }
+                JsonObject m = Mcp.Client.ParseMessage(text)
+                if (m == undefined) { continue }
+                if (m.Has("method")) { this.Incoming(m); continue }
+                if (!m.Has("id") || Mcp.Rpc.IdOf(m) != "" + id) { continue }
+                if (m.Has("error")) {
+                    JsonObject e = m.Get("error")
+                    throw new Mcp.McpException("MCP: " + e.Get("message"), e.Get("code"))
+                }
+                if (!m.Has("result")) { return "{}" }
+                return Mcp.Rpc.Text(m.Get("result"))
+            }
+            return "{}"
+        }
+
+        static any ParseMessage(string text) {
+            try {
+                any m = Json.Parse(text)
+                if (m is of JsonObject) { return m }
+            } catch (Exception e) { }
+            return undefined
+        }
+
+        // A request of the server (ping, or one this client does not offer) or a notification.
+        undefined Incoming(JsonObject m) {
+            string method = m.Get("method")
+            if (m.Has("id")) {
+                string id = Mcp.Rpc.IdOf(m)
+                if (method == "ping") { this.transport.Send(Mcp.Rpc.Result(id, "{}")) }
+                else { this.transport.Send(Mcp.Rpc.Error(id, -32601, "The client does not offer " + method + ".")) }
+                return
+            }
+            var n = new Mcp.Notification()
+            n.Method = method
+            if (m.Has("params")) { n.Params = Mcp.Rpc.Text(m.Get("params")) }
+            if (this.OnNotification != undefined) { this.OnNotification(n.Method, n.Params) }
+            else { this.notifications.Add(take n) }
+        }
+
+        // A notification to the server.
+        undefined Notify(string method, string paramsJson = "") { this.transport.Send(Mcp.Rpc.Notification(method, paramsJson)) }
+
+        // Delivers what the server sent on its own (without waiting): to OnNotification, or into Notifications().
+        undefined Poll() {
+            while (true) {
+                any text = this.transport.Receive(0)
+                if (text == undefined) { return }
+                JsonObject m = Mcp.Client.ParseMessage(text)
+                if (m != undefined && m.Has("method")) { this.Incoming(m) }
+            }
+        }
+
+        // The notifications that came (and were not given to OnNotification); taken out.
+        List Notifications() {
+            this.Poll()
+            var list = this.notifications
+            this.notifications = new List()
+            return list
+        }
+
+        undefined Ping() { this.Call("ping") }
+
+        // The tools of the server (all pages).
+        List Tools() {
+            var list = new List()
+            string cursor = ""
+            while (true) {
+                string p = ""
+                if (cursor != "") { p = "{\"cursor\":" + Mcp.Rpc.Text(cursor) + "}" }
+                JsonObject r = Json.Parse(this.Call("tools/list", p))
+                foreach (t in r.Get("tools")) {
+                    JsonObject o = t
+                    var tool = new Mcp.Tool()
+                    tool.Name = o.Get("name")
+                    if (o.Has("title")) { tool.Title = o.Get("title") }
+                    if (o.Has("description")) { tool.Description = o.Get("description") }
+                    if (o.Has("inputSchema")) { tool.Schema = Mcp.Rpc.Text(o.Get("inputSchema")) }
+                    list.Add(take tool)
+                }
+                if (!r.Has("nextCursor") || r.Get("nextCursor") == undefined) { break }
+                cursor = r.Get("nextCursor")
+            }
+            return list
+        }
+
+        // Calls a tool: `arguments` a JsonObject (or undefined), or JSON text.
+        Mcp.ToolResult CallTool(string name, any arguments = undefined) {
+            string args = "{}"
+            if (arguments is of string) { args = arguments }
+            else if (arguments != undefined) { args = Mcp.Rpc.Text(arguments) }
+            JsonObject r = Json.Parse(this.Call("tools/call", "{\"name\":" + Mcp.Rpc.Text(name) + ",\"arguments\":" + args + "}"))
+            var result = new Mcp.ToolResult()
+            if (r.Has("isError") && r.Get("isError") == true) { result.IsError = true }
+            if (r.Has("structuredContent")) { result.Structured = Mcp.Rpc.Text(r.Get("structuredContent")) }
+            if (r.Has("content")) {
+                foreach (c in r.Get("content")) {
+                    JsonObject part = c
+                    if (part.Get("type") == "text") {
+                        if (result.Text != "") { result.Text += "\n" }
+                        result.Text += part.Get("text")
+                    }
+                    result.Content.Add(part)
+                }
+            }
+            if (result.Text == "" && result.Structured != "") { result.Text = result.Structured }
+            return result
+        }
+
+        List Resources() {
+            var list = new List()
+            string cursor = ""
+            while (true) {
+                string p = ""
+                if (cursor != "") { p = "{\"cursor\":" + Mcp.Rpc.Text(cursor) + "}" }
+                JsonObject r = Json.Parse(this.Call("resources/list", p))
+                foreach (x in r.Get("resources")) {
+                    JsonObject o = x
+                    var res = new Mcp.Resource()
+                    res.Uri = o.Get("uri")
+                    if (o.Has("name")) { res.Name = o.Get("name") }
+                    if (o.Has("description")) { res.Description = o.Get("description") }
+                    if (o.Has("mimeType")) { res.MimeType = o.Get("mimeType") }
+                    list.Add(take res)
+                }
+                if (!r.Has("nextCursor") || r.Get("nextCursor") == undefined) { break }
+                cursor = r.Get("nextCursor")
+            }
+            return list
+        }
+
+        // The text of a resource (its text parts together; a binary part is its base64 text).
+        string ReadResource(string uri) {
+            JsonObject r = Json.Parse(this.Call("resources/read", "{\"uri\":" + Mcp.Rpc.Text(uri) + "}"))
+            string text = ""
+            foreach (c in r.Get("contents")) {
+                JsonObject part = c
+                if (text != "") { text += "\n" }
+                if (part.Has("text")) { text += part.Get("text") }
+                else if (part.Has("blob")) { text += part.Get("blob") }
+            }
+            return text
+        }
+
+        // Asks the server to send notifications/resources/updated when the resource changes.
+        undefined Subscribe(string uri) { this.Call("resources/subscribe", "{\"uri\":" + Mcp.Rpc.Text(uri) + "}") }
+
+        List Prompts() {
+            var list = new List()
+            JsonObject r = Json.Parse(this.Call("prompts/list", ""))
+            foreach (x in r.Get("prompts")) {
+                JsonObject o = x
+                var pr = new Mcp.Prompt()
+                pr.Name = o.Get("name")
+                if (o.Has("description")) { pr.Description = o.Get("description") }
+                if (o.Has("arguments")) {
+                    foreach (a in o.Get("arguments")) {
+                        JsonObject ao = a
+                        pr.Arguments.Add(ao.Get("name"))
+                    }
+                }
+                list.Add(take pr)
+            }
+            return list
+        }
+
+        // The text of a prompt with its arguments (the texts of its messages, one after the other).
+        string GetPrompt(string name, any arguments = undefined) {
+            string args = "{}"
+            if (arguments is of string) { args = arguments }
+            else if (arguments != undefined) { args = Mcp.Rpc.Text(arguments) }
+            JsonObject r = Json.Parse(this.Call("prompts/get", "{\"name\":" + Mcp.Rpc.Text(name) + ",\"arguments\":" + args + "}"))
+            string text = ""
+            foreach (m in r.Get("messages")) {
+                JsonObject mo = m
+                JsonObject c = mo.Get("content")
+                if (c.Has("text")) {
+                    if (text != "") { text += "\n" }
+                    text += c.Get("text")
+                }
+            }
+            return text
+        }
+    }
+
+    // ---- what a server answers ----
+
+    // The answer of a tool of the server: Text("...") or Error("..."); a picture with Image.
+    class Result {
+        List parts = new List()
+        bool IsError = false
+        string Structured = ""
+
+        static Mcp.Result Text(string text) {
+            var r = new Mcp.Result()
+            r.AddText(text)
+            return r
+        }
+        static Mcp.Result Error(string text) {
+            var r = Mcp.Result.Text(text)
+            r.IsError = true
+            return r
+        }
+        Mcp.Result AddText(string text) {
+            this.parts.Add("{\"type\":\"text\",\"text\":" + Mcp.Rpc.Text(text) + "}")
+            return this
+        }
+        Mcp.Result AddImage(string base64, string mimeType) {
+            this.parts.Add("{\"type\":\"image\",\"data\":" + Mcp.Rpc.Text(base64) + ",\"mimeType\":" + Mcp.Rpc.Text(mimeType) + "}")
+            return this
+        }
+        string Json() {
+            string b = "{\"content\":[" + ",".Join(this.parts) + "]"
+            if (this.Structured != "") { b += ",\"structuredContent\":" + this.Structured }
+            if (this.IsError) { b += ",\"isError\":true" }
+            return b + "}"
+        }
+    }
+
+    class ServerTool {
+        string Name
+        string Description
+        string Schema
+        Mcp.Result lambda<JsonObject> handler
+    }
+    class ServerResource {
+        string Uri
+        string Name
+        string Description
+        string MimeType
+        string lambda handler
+    }
+    class ServerPrompt {
+        string Name
+        string Description
+        List arguments = new List()
+        string lambda<JsonObject> handler
+    }
+
+    // ---- the server ----
+
+    // A server: its tools, resources and prompts (lambdas), the answers to the requests of a client - Handle(message) for any transport, RunStdio() and
+    // HttpServer() for the two of MCP.
+    class Server {
+        string Name
+        string Version
+        // Shown to the client at the start (what the server is for).
+        string Instructions = ""
+        List tools = new List()
+        List resources = new List()
+        List prompts = new List()
+        List outgoing = new List()
+        List subscribed = new List()
+        bool initialized = false
+        string SessionId = ""
+        // Called with every request that is no part of MCP itself (method, params as JSON text) - an answer (JSON text) or undefined for "no such method".
+        any OnRequest = undefined
+
+        construct(string name, string version = "1.0") {
+            this.Name = name
+            this.Version = version
+        }
+
+        // A tool: `schemaJson` the JSON schema of its arguments ("" for none); the handler gets them and gives an Mcp.Result.
+        undefined Tool(string name, string description, string schemaJson, Mcp.Result lambda<JsonObject> handler) {
+            var t = new Mcp.ServerTool()
+            t.Name = name
+            t.Description = description
+            t.Schema = schemaJson
+            if (schemaJson == "") { t.Schema = "{\"type\":\"object\",\"properties\":{}}" }
+            t.handler = take handler
+            this.tools.Add(take t)
+            this.Changed("notifications/tools/list_changed")
+        }
+
+        undefined RemoveTool(string name) {
+            for (var i = 0; i < this.tools.Count; i++) {
+                Mcp.ServerTool t = this.tools[i]
+                if (t.Name == name) { this.tools.RemoveAt(i); this.Changed("notifications/tools/list_changed"); return }
+            }
+        }
+
+        // A resource: its text comes from the handler when it is read.
+        undefined Resource(string uri, string name, string description, string mimeType, string lambda handler) {
+            var r = new Mcp.ServerResource()
+            r.Uri = uri
+            r.Name = name
+            r.Description = description
+            r.MimeType = mimeType
+            r.handler = take handler
+            this.resources.Add(take r)
+            this.Changed("notifications/resources/list_changed")
+        }
+
+        // A prompt with the names of its arguments; the handler makes its text of them.
+        undefined Prompt(string name, string description, string arguments[], string lambda<JsonObject> handler) {
+            var p = new Mcp.ServerPrompt()
+            p.Name = name
+            p.Description = description
+            foreach (a in arguments) { p.arguments.Add(a) }
+            p.handler = take handler
+            this.prompts.Add(take p)
+            this.Changed("notifications/prompts/list_changed")
+        }
+
+        // Tells the client that a resource changed (when it subscribed to it) - and any notification of your own.
+        undefined ResourceUpdated(string uri) {
+            if (this.subscribed.IndexOf(uri) >= 0) { this.Notify("notifications/resources/updated", "{\"uri\":" + Mcp.Rpc.Text(uri) + "}") }
+        }
+        undefined Notify(string method, string paramsJson = "") { this.outgoing.Add(Mcp.Rpc.Notification(method, paramsJson)) }
+        // A message for the log of the client (level: "debug", "info", "warning", "error").
+        undefined Log(string level, string text) { this.Notify("notifications/message", "{\"level\":" + Mcp.Rpc.Text(level) + ",\"data\":" + Mcp.Rpc.Text(text) + "}") }
+
+        undefined Changed(string method) { if (this.initialized) { this.Notify(method, "") } }
+
+        // The notifications to send (taken out): the transports send them after the answers.
+        List TakeNotifications() {
+            var list = this.outgoing
+            this.outgoing = new List()
+            return list
+        }
+
+        // The answer to one message (JSON text), "" for a notification.
+        string Handle(string text) {
+            any parsed = undefined
+            try { parsed = Json.Parse(text) } catch (Exception e) { return Mcp.Rpc.Error("null", -32700, "The message is no JSON: " + e.message) }
+            if (!(parsed is of JsonObject)) { return Mcp.Rpc.Error("null", -32600, "A message is a JSON object (batches are not part of MCP " + Mcp.Protocol.Version() + ").") }
+            JsonObject m = parsed
+            if (!m.Has("method")) { return "" }   // (an answer of the client)
+            string method = m.Get("method")
+            if (!m.Has("id")) {
+                if (method == "notifications/initialized") { this.initialized = true }
+                return ""
+            }
+            string id = Mcp.Rpc.IdOf(m)
+            any p = undefined
+            if (m.Has("params")) { p = m.Get("params") }
+            try { return Mcp.Rpc.Result(id, this.Answer(method, p)) }
+            catch (Mcp.McpException e) { return Mcp.Rpc.Error(id, e.code, e.message) }
+            catch (Exception e) { return Mcp.Rpc.Error(id, -32603, e.message) }
+            return ""
+        }
+
+        static string Param(any p, string name) {
+            if (p == undefined || !p.Has(name)) { throw new Mcp.McpException("The parameter '" + name + "' is missing.", -32602) }
+            return p.Get(name)
+        }
+
+        // The result of a request (JSON text).
+        string Answer(string method, any p) {
+            if (method == "initialize") {
+                string asked = Mcp.Protocol.Version()
+                if (p != undefined && p.Has("protocolVersion")) { asked = p.Get("protocolVersion") }
+                string version = Mcp.Protocol.Version()
+                if (Mcp.Protocol.Versions().IndexOf(asked) >= 0) { version = asked }
+                string caps = "{\"tools\":{\"listChanged\":true},\"resources\":{\"subscribe\":true,\"listChanged\":true},\"prompts\":{\"listChanged\":true},\"logging\":{}}"
+                string b = "{\"protocolVersion\":" + Mcp.Rpc.Text(version) + ",\"capabilities\":" + caps + ",\"serverInfo\":{\"name\":" + Mcp.Rpc.Text(this.Name) + ",\"version\":" + Mcp.Rpc.Text(this.Version) + "}"
+                if (this.Instructions != "") { b += ",\"instructions\":" + Mcp.Rpc.Text(this.Instructions) }
+                return b + "}"
+            }
+            if (method == "ping") { return "{}" }
+            if (method == "tools/list") {
+                var items = new List()
+                foreach (x in this.tools) {
+                    Mcp.ServerTool t = x
+                    items.Add("{\"name\":" + Mcp.Rpc.Text(t.Name) + ",\"description\":" + Mcp.Rpc.Text(t.Description) + ",\"inputSchema\":" + t.Schema + "}")
+                }
+                return "{\"tools\":[" + ",".Join(items) + "]}"
+            }
+            if (method == "tools/call") {
+                string name = Mcp.Server.Param(p, "name")
+                foreach (x in this.tools) {
+                    Mcp.ServerTool t = x
+                    if (t.Name == name) {
+                        JsonObject args = new JsonObject()
+                        if (p.Has("arguments") && p.Get("arguments") != undefined) { args = p.Get("arguments") }
+                        try {
+                            Mcp.Result r = t.handler(args)
+                            return r.Json()
+                        }
+                        catch (Exception e) { return Mcp.Result.Error(e.message).Json() }
+                    }
+                }
+                throw new Mcp.McpException("There is no tool '" + name + "'.", -32602)
+            }
+            if (method == "resources/list") {
+                var items = new List()
+                foreach (x in this.resources) {
+                    Mcp.ServerResource r = x
+                    items.Add("{\"uri\":" + Mcp.Rpc.Text(r.Uri) + ",\"name\":" + Mcp.Rpc.Text(r.Name) + ",\"description\":" + Mcp.Rpc.Text(r.Description) + ",\"mimeType\":" + Mcp.Rpc.Text(r.MimeType) + "}")
+                }
+                return "{\"resources\":[" + ",".Join(items) + "]}"
+            }
+            if (method == "resources/templates/list") { return "{\"resourceTemplates\":[]}" }
+            if (method == "resources/read") {
+                string uri = Mcp.Server.Param(p, "uri")
+                foreach (x in this.resources) {
+                    Mcp.ServerResource r = x
+                    if (r.Uri == uri) {
+                        string text = r.handler()
+                        return "{\"contents\":[{\"uri\":" + Mcp.Rpc.Text(uri) + ",\"mimeType\":" + Mcp.Rpc.Text(r.MimeType) + ",\"text\":" + Mcp.Rpc.Text(text) + "}]}"
+                    }
+                }
+                throw new Mcp.McpException("There is no resource '" + uri + "'.", -32002)
+            }
+            if (method == "resources/subscribe") {
+                string uri = Mcp.Server.Param(p, "uri")
+                if (this.subscribed.IndexOf(uri) < 0) { this.subscribed.Add(uri) }
+                return "{}"
+            }
+            if (method == "resources/unsubscribe") {
+                string uri = Mcp.Server.Param(p, "uri")
+                int at = this.subscribed.IndexOf(uri)
+                if (at >= 0) { this.subscribed.RemoveAt(at) }
+                return "{}"
+            }
+            if (method == "prompts/list") {
+                var items = new List()
+                foreach (x in this.prompts) {
+                    Mcp.ServerPrompt pr = x
+                    var args = new List()
+                    foreach (a in pr.arguments) { args.Add("{\"name\":" + Mcp.Rpc.Text(a) + ",\"required\":true}") }
+                    items.Add("{\"name\":" + Mcp.Rpc.Text(pr.Name) + ",\"description\":" + Mcp.Rpc.Text(pr.Description) + ",\"arguments\":[" + ",".Join(args) + "]}")
+                }
+                return "{\"prompts\":[" + ",".Join(items) + "]}"
+            }
+            if (method == "prompts/get") {
+                string name = Mcp.Server.Param(p, "name")
+                foreach (x in this.prompts) {
+                    Mcp.ServerPrompt pr = x
+                    if (pr.Name == name) {
+                        JsonObject args = new JsonObject()
+                        if (p.Has("arguments") && p.Get("arguments") != undefined) { args = p.Get("arguments") }
+                        string text = pr.handler(args)
+                        return "{\"description\":" + Mcp.Rpc.Text(pr.Description) + ",\"messages\":[{\"role\":\"user\",\"content\":{\"type\":\"text\",\"text\":" + Mcp.Rpc.Text(text) + "}}]}"
+                    }
+                }
+                throw new Mcp.McpException("There is no prompt '" + name + "'.", -32602)
+            }
+            if (method == "logging/setLevel") { return "{}" }
+            if (method == "completion/complete") { return "{\"completion\":{\"values\":[]}}" }
+            if (this.OnRequest != undefined) {
+                string pj = "{}"
+                if (p != undefined) { pj = Mcp.Rpc.Text(p) }
+                any answer = this.OnRequest(method, pj)
+                if (answer != undefined) { return answer }
+            }
+            throw new Mcp.McpException("There is no method '" + method + "'.", -32601)
+        }
+
+        // Serves over this program's standard input and output until the client closes it.
+        undefined RunStdio() {
+            var t = new Mcp.StdioTransport()
+            while (t.Open) {
+                any line = t.Receive(0)
+                if (line == undefined) { break }
+                string answer = this.Handle(line)
+                if (answer != "") { t.Send(answer) }
+                foreach (n in this.TakeNotifications()) { t.Send(n) }
+            }
+        }
+
+        // An HTTP server for Streamable HTTP on host:port at `path` (POST: the message, the answer as JSON; GET: 405 - notifications go with the answers as
+        // server-sent events then). Serve it with ServeOne / Run of the returned Http.Server (port 0: a free one, Port says which).
+        Http.Server HttpServer(string host, defined int port, string path = "/mcp") {
+            var server = new Http.Server(host, port)
+            server.Route("POST", path, func (Http.Request req) on this => {
+                string answer = this.Handle(req.Text())
+                if (this.SessionId == "" && req.Text().IndexOf("\"initialize\"") >= 0) { this.SessionId = Net.SecureRandom.Hex(16) }
+                List notes = this.TakeNotifications()
+                if (answer == "") { return Http.Response.FromText("", 202) }
+                Http.Response r = undefined
+                if (notes.Count == 0) { r = Http.Response.FromJson(answer) }
+                else {
+                    string events = ""
+                    foreach (n in notes) { events += "event: message\ndata: " + n + "\n\n" }
+                    events += "event: message\ndata: " + answer + "\n\n"
+                    r = Http.Response.FromText(events, 200, "text/event-stream")
+                }
+                if (this.SessionId != "") { r.headers.Set("Mcp-Session-Id", this.SessionId) }
+                return r
+            })
+            server.Route("GET", path, func (Http.Request req) => Http.Response.FromText("This server sends its notifications with the answers.", 405))
+            server.Route("DELETE", path, func (Http.Request req) on this => {
+                this.SessionId = ""
+                return Http.Response.FromText("", 200)
+            })
+            return server
+        }
+    }
+}

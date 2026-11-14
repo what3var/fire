@@ -21,6 +21,7 @@
     "compression/compression.fireproj",
     "ai/ai.fireproj",
     "ai.agent/ai.agent.fireproj",
+    "mcp/mcp.fireproj",
     "tls/tls.fireproj",
     "http/http.fireproj",
     "http.rpc/http.rpc.fireproj",
