@@ -424,12 +424,26 @@ namespace fire.Native
         /// parameter whose type argument is a number in a known unit holds that or undefined; null otherwise.</summary>
         private int? SpecFieldType(Func f, Instr ins, string field)
         {
-            if (f.SpecClassOwner is not { } owner || f.SpecClassArgs is not { } args || f.Chunk.OwnerClass is not { } rc) return null;
             int i = f.IndexOf[ins.Addr] - 1;
             if (i < 0 || f.Decoded[i].Op != OpCode.LoadThis) return null;   // (the object of the method itself, not another one of the class)
+            if (f.Chunk.OwnerClass is { } ofRc && SpecArrayOfParamType(f, ofRc, field) is { } arrayType) return arrayType;
+            if (f.SpecClassOwner is not { } owner || f.SpecClassArgs is not { } args || f.Chunk.OwnerClass is not { } rc) return null;
             if (rc.FindFieldRequiredType(field) is not { } required || DeclaredType.Parse(required) is not { TypeParamIndex: >= 0 } spec
                 || spec.TypeParamClass != owner || spec.TypeParamIndex >= args.Length || SpecKind(args[spec.TypeParamIndex]) is not { } typed) return null;
             return TypeOf(typed.Kind, typed.Unit) | NullableBit;
+        }
+
+        /// <summary>A field `T items[]` (FieldInfo.ArrayOfParam) of `this` in code for known type arguments of the class (a specialization `Add&lt;int&gt;`
+        /// written in it, or a copy for them): an array of the element of that type argument or undefined - every assignment types it (FieldArrayCheck,
+        /// VM.GuardFieldArrayOfParam). Null otherwise.</summary>
+        private int? SpecArrayOfParamType(Func f, RuntimeClass rc, string field)
+        {
+            string? owner = f.Proto?.SpecOwner ?? f.SpecClassOwner;
+            string[]? args = f.Proto?.SpecArgs ?? f.SpecClassArgs;
+            if (owner == null || args == null || LibraryRole || _usesReflection || _usesJson || HasProperty(field) || _fieldAddressTaken.Contains(field)) return null;
+            if (ArrayOfParamParts(rc, field) is not { } ofParam || ofParam.Cls != owner || ofParam.K >= args.Length) return null;
+            if (DeclaredType.TypedElementOf(args[ofParam.K]) is not int code) return null;
+            return TypeOf(KindArr, code & 0xFF) | NullableBit;
         }
 
         /// <summary>The kind and unit a value of a type argument certainly has (`int`, `int:cm`, `float`, `bool`); null when its unit is open (`int:any`) or it is no number.</summary>
@@ -508,6 +522,18 @@ namespace fire.Native
             var lines = new StringBuilder();
             string args = string.Join(", ", (f.HasSelf ? new[] { "self" } : Array.Empty<string>()).Concat(Enumerable.Range(0, f.ParamCount).Select(i => $"P{i}")));
             string ParamTests(List<(int Slot, byte Kind, int Unit)> ps) => string.Concat(ps.Select(p => " && " + KindTest($"P{p.Slot}", p.Kind, p.Unit)));
+            // the typed specializations written in the class (`Add<int>(int item)` beside `Add(T item)`, SPEC 5.8.1): first, by the type arguments of the object
+            var handTexts = new HashSet<string>(StringComparer.Ordinal);
+            if (f.HasSelf && proto.Specializations is { } hand)
+                foreach (var specProto in hand)
+                {
+                    if (specProto.SpecOwner is not { } specOwner || specProto.SpecArgs is not { } specArgs) continue;
+                    handTexts.Add(specOwner + ":" + string.Join("|", specArgs));
+                    var target = GetFunc(specProto, FuncKind.Method);
+                    string tests = string.Concat(specArgs.Select((t, k) => t == "any" ? "" : $" && {TArgOfExpr(specOwner, k, "objAt(self)")} == {TArgRef(t)}"))
+                        + string.Concat(Enumerable.Range(0, f.ParamCount).Select(i => SpecArgTest(specProto, i, $"P{i}", TypeUnknown)));
+                    lines.AppendLine($"    if (self.kind == K_Class{tests}) return {target.Name}{(Wrapped ? "_b" : "")}({args});");
+                }
             // the type arguments of the call of a generic method
             if (f.HasCallTArgs && MethodKey(proto) is { } key && _callTArgTexts.TryGetValue(key, out var texts))
                 foreach (var text in texts)
@@ -528,6 +554,7 @@ namespace fire.Native
                     if (!_classTArgTexts.TryGetValue(owner!, out var classTexts)) continue;
                     foreach (var text in classTexts)
                     {
+                        if (handTexts.Contains(owner + ":" + text)) continue;   // (written by hand)
                         var parts = text.Split('|');
                         if (SpecParamsFor(proto, owner!, parts) is not { } ps) continue;
                         var spec = SpecFunc(f, $"c:{owner}:{text}", null, ps);
@@ -539,6 +566,76 @@ namespace fire.Native
                 }
             }
             return lines.ToString();
+        }
+
+        /// <summary>The typed specializations of a method (FunctionProto.Specializations) with the test of the type arguments of the object `recv`
+        /// (a living object of the class) that chooses each.</summary>
+        /// <summary>The test that argument `i` (`v`, of static type `type`) fits parameter i of a specialization as it is (DeclaredKind.Fits; FunctionProto.
+        /// SpecParamKinds): " &amp;&amp; (...)", "" when its type proves it or the parameter has no kind.</summary>
+        private static string SpecArgTest(FunctionProto spec, int i, string v, int type)
+        {
+            byte declared = spec.SpecParamKinds is { } kinds && i < kinds.Length ? kinds[i] : (byte)0;
+            if (declared == 0) return "";
+            byte kind = KindOfDeclared(declared);
+            bool nonNull = DeclaredKind.IsNonNull(declared), unitless = DeclaredKind.IsUnitless(declared);
+            // (proven by the static type: a number of that kind without a unit - never undefined when the parameter is `defined`)
+            if ((type & TypeNone) == 0 && type != TypeUnknown && BaseKindOfType(type) == kind && (!unitless || kind is KindBool or KindWord || UnitOfType(type) == 0)
+                && (!nonNull || !IsNullable(type)) && (kind != KindInt || (type & CutBit) == 0)) return "";
+            string kc = kind switch { KindInt => "K_Int", KindFloat => "K_Float", KindBool => "K_Bool", KindWord => "K_Word", _ => "K_Char" };
+            string fits = $"{v}.kind == {kc}" + (unitless && kind is KindInt or KindFloat ? $" && {v}.unit == 0" : "") + (kind == KindInt ? $" && {v}.wide == 0" + (nonNull ? $" && {v}.reserved == 0" : "") : "");
+            return nonNull ? $" && ({fits})" : $" && ({v}.kind == K_Undefined || ({fits}))";
+        }
+
+        private List<(string Condition, Func Callee, FunctionProto Spec)> HandSpecCalls(FunctionProto[] specs, string recv)
+        {
+            var calls = new List<(string, Func, FunctionProto)>();
+            foreach (var spec in specs)
+            {
+                if (spec.SpecOwner is not { } owner || spec.SpecArgs is not { } specArgs) continue;
+                string condition = string.Join(" && ", specArgs.Select((t, k) => (t, k)).Where(x => x.t != "any").Select(x => $"{TArgOfExpr(owner, x.k, $"objAt({recv})")} == {TArgRef(x.t)}"));
+                calls.Add((condition, GetFunc(spec, FuncKind.Method), spec));
+            }
+            return calls;
+        }
+
+        /// <summary>Do the type arguments of a specialization (`any`: every one) take those the type checker knows of a receiver ("int|string")?</summary>
+        private static bool SpecArgsFit(string[] specArgs, string known)
+        {
+            var parts = known.Split('|');
+            return parts.Length == specArgs.Length && specArgs.Select((t, k) => t == "any" || t == parts[k]).All(b => b);
+        }
+
+        /// <summary>The declaration of what a method returns when it is a number or a bool (`int F()`, `defined float F()`): the DeclaredKind its return is
+        /// checked against (the GuardTop in front of each Return); null otherwise.</summary>
+        private static byte? DeclaredReturn(FunctionProto proto)
+        {
+            var code = OpInfo.Decode(proto.Chunk.Code);
+            byte? declared = null;
+            for (int i = 1; i < code.Count; i++)
+            {
+                if (code[i].Op != OpCode.Return) continue;
+                // (the end of the chunk: `undefined` - which a declaration without `defined` lets through anyway)
+                if (code[i - 1].Op == OpCode.LoadConst && proto.Chunk.Constants[code[i - 1].A[0]].Kind == ValueKind.Undefined) continue;
+                if (code[i - 1].Op != OpCode.GuardTop) return null;
+                byte d = (byte)(code[i - 1].A[0] + 1);
+                // (`int F()`: a CheckUnit "unitless" in front - the number is one without a unit after it)
+                if (i >= 2 && code[i - 2].Op == OpCode.CheckUnit && proto.Chunk.Constants[code[i - 2].A[0]].AsString() == "unitless") d |= DeclaredKind.UnitlessBit;
+                if (declared != null && declared != d) return null;
+                declared = d;
+            }
+            // (undefined at the end only counts for a declaration without `defined` - with it the end has its GuardTop)
+            return declared;
+        }
+
+        /// <summary>The static type of a value checked against a declared number kind without a unit, or bool (GuardTop): TypeUnknown for anything else.</summary>
+        private static int DeclaredResultType(byte declared)
+        {
+            byte kind = KindOfDeclared(declared);
+            bool nonNull = DeclaredKind.IsNonNull(declared);
+            if (kind == KindBool) return TypeOf(KindBool, 0) | (nonNull ? 0 : NullableBit);
+            if (kind is not (KindInt or KindFloat) || !DeclaredKind.IsUnitless(declared)) return TypeUnknown;
+            if (kind == KindFloat) return TypeOf(KindFloat, 0) | (nonNull ? 0 : NullableBit);
+            return TypeOf(KindInt, 0) | (nonNull ? (DeclaredKind.KeepsWidth(declared) ? 0 : NarrowBit) : NullableBit | CutBit);
         }
 
         /// <summary>The text of the SetTypeArgs (for a call) right before a call instruction (a CopyArgs may stand between them), or null.</summary>
@@ -832,7 +929,8 @@ namespace fire.Native
             string checks = (unit != null ? $"x = {AdaptUnitCall("x", unit)}; " : "")
                 + (kind != 0 ? FieldKindCheck(name, kind) + " " : cutWide ? "x = intProgram(x); " : "")
                 + (requiredType != null ? ClassGuard("x", requiredType, $"Field '{name}'", $"objAt({obj})") + " " : "")
-                + (requiredArray != 0 && !arrayKnown ? FieldArrayCheck(rc, name) + " " : "");
+                + (requiredArray != 0 && !arrayKnown ? FieldArrayCheck(rc, name) + " " : "")
+                + (requiredArray == 0 && !(obj == "self" && SpecArrayOfParamType(from, rc, name) is { } specArr && (valueType & ~NullableBit) == (specArr & ~NullableBit)) ? FieldArrayCheck(rc, name, $"objAt({obj})") is { Length: > 0 } ofParamCheck ? ofParamCheck + " " : "" : "");
             var (fieldSlot, fieldHalf) = FieldPlace(rc, index);
             // (a field declared with a kind - int, float, bool, `defined ...` - holds nothing but numbers and undefined: no count to keep, the store is the C store)
             string put = RawRef(rc, index, $"objAt({obj})") is { } rawPut ? $"{rawPut} = {RawFromValue(RawTypeAt(LayoutClass(rc, index), index), "x")};"
@@ -953,12 +1051,17 @@ namespace fire.Native
 
         /// <summary>The static type of `obj.name`: every class of the program that has the field declares it int/float/bool with an exact unit (its setter
         /// checks every assignment, DeclaredKind) - the kind or undefined; TypeUnknown for a property, a field whose address is taken, or anything else.</summary>
-        private int FieldType(string name)
+        private int FieldType(string name) => FieldTypeIn(null, name);
+
+        /// <summary>FieldType for an object of the class <paramref name="of"/> (null: of any class): only that class and the classes derived from it count -
+        /// `IntList.items` declared `int items[]` keeps its type though the prelude's List has an `any items` (a property of the name anywhere still counts:
+        /// the access may call it).</summary>
+        private int FieldTypeIn(RuntimeClass? of, string name)
         {
             // (a field whose address is taken holds what was written through the pointer - unchecked, unless it is `defined` everywhere: K_PtrField checks)
             if (LibraryRole || HasProperty(name) || _fieldAddressTaken.Contains(name) && !DefinedEverywhere(name) || name is "Length" or "length" or "littleEndian") return TypeUnknown;
             int? result = null;
-            foreach (var cls in _classList)
+            foreach (var cls in of == null ? _classList : InstancesOf(of))
             {
                 if (!cls.Rc.FieldIndex.ContainsKey(name)) continue;
                 byte declared = cls.Rc.FindFieldRequiredKind(name);
@@ -1154,7 +1257,7 @@ namespace fire.Native
                         : TArgRef(token);
                     cases.Add((ci.Id, expr));
                 }
-                targOfCode.AppendLine($"FIRE_MAYBE_UNUSED {HelperStorage}const TArg* targOf_{Mangle(cls)}_{k}(Obj* o) {{");
+                targOfCode.AppendLine($"FIRE_MAYBE_UNUSED {HelperStorage}inline const TArg* targOf_{Mangle(cls)}_{k}(Obj* o) {{");
                 targOfCode.AppendLine("    if (!o) return NULL;");
                 targOfCode.AppendLine("    switch (o->cls) {");
                 foreach (var group in cases.GroupBy(c => c.Expr))
@@ -1614,7 +1717,12 @@ namespace fire.Native
             bool toFloat = demand.StartsWith('#');
             string unit = demand.TrimStart('#');
             if (unit == "any") return toFloat ? $"intToFloat({value})" : value;
-            return $"adaptUnit({value}, {UnitC(UnitId(DemandUnit(unit)))}, {(unit.StartsWith("any ", StringComparison.Ordinal) ? "true" : "false")}, {(toFloat ? "true" : "false")}, {Constant(Value.MakeString(Unit.DemandDisplay(unit)))})";
+            bool dimensionOnly = unit.StartsWith("any ", StringComparison.Ordinal);
+            string unitC = UnitC(UnitId(DemandUnit(unit)));
+            string call = $"adaptUnit({value}, {unitC}, {(dimensionOnly ? "true" : "false")}, {(toFloat ? "true" : "false")}, {Constant(Value.MakeString(Unit.DemandDisplay(unit)))})";
+            // (a number already in that unit - the common case - is taken as it is; `value` is a variable here)
+            if (dimensionOnly || !System.Text.RegularExpressions.Regex.IsMatch(value, @"^[A-Za-z_][A-Za-z0-9_]*$")) return call;
+            return $"(FIRE_LIKELY({value}.unit == {unitC} && ({value}.kind == K_Float{(toFloat ? "" : $" || {value}.kind == K_Int")})) ? {value} : {call})";
         }
 
         private string Run()
@@ -2696,7 +2804,7 @@ namespace fire.Native
                 string check = (cls.Rc.FindFieldRequiredUnit(name) is { } requiredUnit ? $"x = {AdaptUnitCall("x", requiredUnit)}; " : "")
                     + (cls.Rc.FindFieldRequiredKind(name) is var kind and not 0 ? FieldKindCheck(name, kind) + " " : "")
                     + (cls.Rc.FindFieldRequiredType(name) is { } requiredType ? ClassGuard("x", requiredType, $"Field '{name}'", "o") + " " : "")
-                    + (FieldArrayCheck(cls.Rc, name) is { Length: > 0 } arrayCheck ? arrayCheck + " " : "");
+                    + (FieldArrayCheck(cls.Rc, name, "o") is { Length: > 0 } arrayCheck ? arrayCheck + " " : "");
                 // (a record: written only while it is constructed - step 9)
                 if (cls.Rc.IsRecord) check = $"if (FIRE_UNLIKELY(!recInit(o))) {{ recordWriteError(o, {CString(name)}); return; }} " + check;
                 if (check.Length > 0) unitArms.Add((cls.Id, check + "break;"));
@@ -2714,8 +2822,20 @@ namespace fire.Native
         /// <summary>The check of a field declared int/float/bool in its setter (DeclaredKind, fire_rt guardKind).</summary>
         private string FieldKindCheck(string name, byte kind) => $"x = {GuardKindCall("x", kind, $"Field '{name}'")};";
         /// <summary>A field declared as a typed array (FieldInfo.RequiredArray): what is assigned is typed like by OpCode.TypeArray ("" for any other field).</summary>
-        private string FieldArrayCheck(RuntimeClass rc, string name) => rc.FindFieldRequiredArray(name) is var arr and not 0
-            ? $"typeArray(x, {ArrayElem.TypeOf(arr)}, {arr >> 8}, {TypeArrayUnitArgsOf(rc.FindFieldRequiredUnit(name), arr)}, 1);" : "";
+        private string FieldArrayCheck(RuntimeClass rc, string name, string? obj = null) => rc.FindFieldRequiredArray(name) is var arr and not 0
+            ? $"typeArray(x, {ArrayElem.TypeOf(arr)}, {arr >> 8}, {TypeArrayUnitArgsOf(rc.FindFieldRequiredUnit(name), arr)}, 1);"
+            // (`T items[]`: typed by the type argument of the object, like `new T[n]` - TArg.arrElem)
+            : obj != null && ArrayOfParamParts(rc, name) is { } ofParam
+                ? $"{{ const TArg* fta_ = {TArgOfExpr(ofParam.Cls, ofParam.K, obj)}; if (fta_ && fta_->arrElem) typeArray(x, fta_->arrElem - 1, 1, {TypeArrayUnitArgsOf(null)}, 1); }}"
+                : "";
+
+        /// <summary>The class and index of the type parameter of a field `T items[]` (FieldInfo.ArrayOfParam), null for any other field.</summary>
+        private static (string Cls, int K)? ArrayOfParamParts(RuntimeClass rc, string name)
+        {
+            if (rc.FindFieldArrayOfParam(name) is not { } text) return null;
+            int at = text.IndexOf('@');
+            return (text.Substring(at + 1), int.Parse(text.AsSpan(1, at - 1), CultureInfo.InvariantCulture));
+        }
         private static string KindConstant(byte declaredKind) => DeclaredKind.TagOf(declaredKind) switch
         {
             TypeTag.Int => "K_Int", TypeTag.Float => "K_Float", TypeTag.Word => "K_Word", TypeTag.Char => "K_Char", _ => "K_Bool",
@@ -2811,7 +2931,7 @@ namespace fire.Native
                         unit += FieldKindCheck(name, kind) + (_usesExceptions ? " if (FIRE_UNLIKELY(g_unwind.active)) return; " : " ");
                     if (cls.Rc.FindFieldRequiredType(name) is { } requiredType)
                         unit += ClassGuard("x", requiredType, $"Field '{name}'", "o") + (_usesExceptions ? " if (FIRE_UNLIKELY(g_unwind.active)) return; " : " ");
-                    if (FieldArrayCheck(cls.Rc, name) is { Length: > 0 } arrayCheck)
+                    if (FieldArrayCheck(cls.Rc, name, "o") is { Length: > 0 } arrayCheck)
                         unit += arrayCheck + (_usesExceptions ? " if (FIRE_UNLIKELY(g_unwind.active)) return; " : " ");
                     // (a record: written only while it is constructed - step 9)
                     if (cls.Rc.IsRecord) fieldGuardSet += $"if (FIRE_UNLIKELY(!recInit(o))) {{ recordWriteError(o, {CString(name)}); return; }} ";
@@ -4232,13 +4352,6 @@ namespace fire.Native
             }
             // The temporaries of the function's own scope: for the rare way of an access whose result owns nothing (an element of a buffer or of a typed
             // array - a number, or the exception), so that a loop around it needs no list of its own (no poolMark/leave per round)
-            string OuterOwnerList()
-            {
-                int home = st.Scopes[0].Id;
-                f.NeedsList.Add(home);
-                f.NeedsList.Add(TempOf(home));
-                return ListName(TempOf(home));
-            }
             // The innermost scope itself (TakeLocal, a claim of `var v = E`).
             string ScopeList()
             {
@@ -4445,6 +4558,24 @@ namespace fire.Native
                         if (BK(k) is KindInt or KindBool) return $"({cType}){VR(k)}.i";
                         return $"({cType})FIRE_NATI({VR(k)})";
                 }
+            }
+            // (every typed C parameter gets a slot that is a number of its kind and unit already: no check, no conversion)
+            bool ProvenCArgs(CAbi abi, int first, int argc)
+            {
+                for (int i = 0; i < argc; i++)
+                {
+                    int k = first + i, type = abi.ParamType[i];
+                    if (type == 0) continue;
+                    int unit = UnitOfType(type);
+                    bool proven = KindOfType(type) switch
+                    {
+                        KindInt => NarrowInt(k) && U(k) == unit,
+                        KindFloat => (K(k) == KindFloat || NarrowInt(k)) && U(k) == unit,
+                        _ => K(k) == KindWord,
+                    };
+                    if (!proven || abi.ParamDemand[i] != null) return false;
+                }
+                return true;
             }
             List<string> CAbiArgs(CAbi abi, int first, int argc)
             {
@@ -5708,6 +5839,7 @@ namespace fire.Native
                     Need(1);
                     string field = Str(ins.A[0]);
                     _fieldNames.Add(field);
+                    var fieldOwner = ObjSlot(d - 1) ? ObjClass(Ty(d - 1)) : null;   // (the class of the object: the type of the field is its - FieldTypeIn)
                     if (ObjSlot(d - 1) && DirectFieldIndex(ObjClass(Ty(d - 1)), field, f) is int fieldIndex)
                     {
                         // an object of a known class: the field by its index (a destroyed object throws, like gf_; undefined goes to gf_, which reports it)
@@ -5736,7 +5868,7 @@ namespace fire.Native
                     }
                     else if (HasProperty(field) || RestrictedField(field)) { E($"{S(d - 1)} = {FieldFn("gf", field)}({S(d - 1)}{FieldTail(field, f, () => "&" + OwnerList())});"); Check(); }
                     else { E($"{S(d - 1)} = {FieldFn("gf", field)}({S(d - 1)}{(Modular ? FieldTail(field, f, () => "&" + OwnerList()) : "")});"); Check(); }   // (a destroyed object throws)
-                    int fieldType = FieldType(field);
+                    int fieldType = FieldTypeIn(fieldOwner, field);
                     if (fieldType == TypeUnknown && SpecFieldType(f, ins, field) is { } specType) fieldType = specType;
                     if (fieldType != TypeUnknown) { SetR(d - 1, false); SetT(d - 1, fieldType); _kindsKept = true; }
                     else SetR(d - 1, true);
@@ -6027,8 +6159,37 @@ namespace fire.Native
                     {
                         // an object of a known class whose method no derived class overrides: the method itself, not the dispatcher (a destroyed object throws, like there)
                         var target = GetFunc(directProto, FuncKind.Method);
-                        var (callee, specCondition) = Specialize(f, ins, target, d - argc, argc, S, Ty);
+                        var (callee, specCondition) = directProto.Specializations != null ? (target, null) : Specialize(f, ins, target, d - argc, argc, S, Ty);
                         long mask = ArgMask();
+                        if (directProto.Specializations is { } handSpecs && argc == directProto.ParamCount && HandSpecCalls(handSpecs, SR(slot)) is { Count: > 0 } specCalls)
+                        {
+                            // a typed specialization written in the class (`Add<int>`, SPEC 5.8.1): chosen here by the type arguments of the object, not in the
+                            // generic method (its trampoline does the same for every other way in)
+                            // (a `defined` parameter of the specialization: an argument that may be undefined is tested - undefined goes to the generic method;
+                            // arguments that are proven numbers of its C parameters: its C body)
+                            var cSpecArgs = specCalls.Select(sc => mask == 0 && SlotScalars() && CAbiOf(sc.Callee) is { } sabi && ProvenCArgs(sabi, d - argc, argc)
+                                ? string.Join("", Enumerable.Range(0, argc).Select(i => ", " + (sabi.ParamType[i] == 0 ? S(d - argc + i) : KindOfType(sabi.ParamType[i]) switch { KindFloat => SF(d - argc + i), KindWord => SW(d - argc + i), _ => SN(d - argc + i) })))
+                                : null).ToList();
+                            var definedTests = specCalls.Select(sc => string.Concat(Enumerable.Range(0, argc).Select(i => SpecArgTest(sc.Spec, i, S(d - argc + i), Ty(d - argc + i))))).ToList();
+                            ArgsBefore(d - argc, argc, mask);
+                            string hrecv = SR(slot);
+                            string hargs = $"{hrecv}{CallArgs(d - argc, argc, mask, directProto.RefMask)}";
+                            string SpecCall(int n)
+                            {
+                                var sc = specCalls[n];
+                                if (cSpecArgs[n] is not { } cargs || CAbiOf(sc.Callee) is not { } sabi) return $"{sc.Callee.Name}({hargs})";
+                                string ccall = $"{CName(sc.Callee)}({hrecv}{cargs})";
+                                return sabi.RetType == 0 ? ccall : ScalarValueOf(BaseKindOfType(sabi.RetType), UnitOfType(sabi.RetType), ccall);
+                            }
+                            string chain = string.Concat(specCalls.Select((sc, n) => $"({sc.Condition}{definedTests[n]}) ? {SpecCall(n)} : ")) + $"{target.Name}({hargs})";
+                            string hslot = T(slot);
+                            string hnotObject = IsNullable(Ty(slot)) ? $"if (FIRE_UNLIKELY({hrecv}.kind != K_Class)) {hslot} = missingMethod({hrecv}, {CString(method)}, {argc}); else " : "";
+                            E($"{{ {hnotObject}if (FIRE_UNLIKELY(!leafAlive({hrecv}))) {hslot} = destroyedError({hrecv}); else {hslot} = {chain}; }}");
+                            ArgsAfter(argc, mask, S(slot));
+                            Check();
+                            AdoptResult(slot, specCalls.Aggregate(ReturnType(target), (t, sc) => JoinTypes(t, ReturnType(sc.Callee))));
+                            d = slot + 1; return Next();
+                        }
                         if (SlotScalars() && specCondition == null && mask == 0 && ReferenceEquals(CAbiMethodCallee(f, st, ins), callee) && CAbiOf(callee) is { } mabi)
                         {
                             // the C body (Ebene 2): the receiver is checked first (like the dispatcher would), then the arguments (like the prologue would)
@@ -6409,6 +6570,10 @@ namespace fire.Native
                     Need(1);
                     string unitText = Str(ins.A[0]);
                     if (IsNum(K(d - 1)) && TypedAdaptUnit(unitText)) return Next();
+                    // (a number without a unit or undefined - an element of a typed array of ints: what `unitless` demands, undefined passes anyway)
+                    // (`#unitless`, `#any`: a float - one already is; `any`: a number in any unit)
+                    if ((unitText == "unitless" && IsNum(BK(d - 1)) || unitText is "#unitless" or "#any" && BK(d - 1) == KindFloat || unitText == "any" && IsNum(BK(d - 1)))
+                        && IsNullable(Ty(d - 1)) && (Ty(d - 1) & TypeNone) == 0 && (UnitOfType(Ty(d - 1)) == 0 || unitText.EndsWith("any", StringComparison.Ordinal))) { _kindsKept = true; return Next(); }
                     // `p = check(p)` of a prologue (LoadLocal p, CheckUnit, StoreLocal p, Pop) on an alias slot: the check works on the variable itself
                     if (d - 1 < 64 && st.Alias[d - 1] is { } checkedVar && f.IndexOf.TryGetValue(ins.Addr, out int cu) && cu + 2 < f.Decoded.Count
                         && f.Decoded[cu + 1] is { Op: OpCode.StoreLocal } back && f.Decoded[cu + 2].Op == OpCode.Pop
@@ -6687,13 +6852,13 @@ namespace fire.Native
                         string idxValue = NarrowInt(d - 1) ? $"Int({ib})" : S(d - 1);
                         SetT(d - 2, elemType); SetR(d - 2, false); _kindsKept = true;
                         string shadow = ScalarName(f, st, d - 2);
-                        E($"if (FIRE_LIKELY({isBuf}leafAlive({ab}) && (uint64_t)(int64_t){ib} < bufOf({ab})->length)) {shadow} = {elem}; else {{ Value e_ = {Px}aget_g({ab}, {idxValue}, &{OuterOwnerList()}); {shadow} = {(wordsGet ? "(FireWord)e_.w" : "(FireInt)e_.i")}; }}");
+                        E($"if (FIRE_LIKELY({isBuf}leafAlive({ab}) && (uint64_t)(int64_t){ib} < bufOf({ab})->length)) {shadow} = {elem}; else {{ Value e_ = {Px}aget_g({ab}, {idxValue}, NULL); {shadow} = {(wordsGet ? "(FireWord)e_.w" : "(FireInt)e_.i")}; }}");
                         st.Scalar |= 1UL << (d - 2);
                         Check();
                         d--; return Next();
                     }
                     string a = S(d - 2), i = S(d - 1);
-                    E($"if (FIRE_LIKELY({isBuf}leafAlive({a}) && (uint64_t){i}.i < bufOf({a})->length)) {a} = {(wordsGet ? $"WordV((uint64_t)bufWords(bufOf({a}))[{i}.i])" : $"Int(bufOf({a})->data[{i}.i])")}; else {a} = {Px}aget_g({a}, {i}, &{OuterOwnerList()});");
+                    E($"if (FIRE_LIKELY({isBuf}leafAlive({a}) && (uint64_t){i}.i < bufOf({a})->length)) {a} = {(wordsGet ? $"WordV((uint64_t)bufWords(bufOf({a}))[{i}.i])" : $"Int(bufOf({a})->data[{i}.i])")}; else {a} = {Px}aget_g({a}, {i}, NULL);");
                     Check();
                     d--; SetR(d - 1, false); SetT(d - 1, TypeOf(wordsGet ? KindWord : KindInt, 0) | (wordsGet ? 0 : NarrowBit)); _kindsKept = true; return Next();
                 }
@@ -6707,9 +6872,9 @@ namespace fire.Native
                     string a = S(d - 3), i = S(d - 2), v = S(d - 1);
                     string bits = K(d - 1) == KindWord ? $"{v}.w" : $"(uint64_t)(int64_t){v}.i";
                     if (wordsSet)
-                        E($"if (FIRE_LIKELY({isSetBuf}leafAlive({a}) && (uint64_t){i}.i < bufOf({a})->length)) {{ {v} = WordV({bits}); bufWords(bufOf({a}))[{i}.i] = (FireWord){v}.w; }} else {v} = {Px}aset_g({a}, {i}, {v}, &{OuterOwnerList()});");
+                        E($"if (FIRE_LIKELY({isSetBuf}leafAlive({a}) && (uint64_t){i}.i < bufOf({a})->length)) {{ {v} = WordV({bits}); bufWords(bufOf({a}))[{i}.i] = (FireWord){v}.w; }} else {v} = {Px}aset_g({a}, {i}, {v}, NULL);");
                     else
-                        E($"if (FIRE_LIKELY({isSetBuf}leafAlive({a}) && (uint64_t){i}.i < bufOf({a})->length)) bufOf({a})->data[{i}.i] = (uint8_t)({bits}); else {v} = {Px}aset_g({a}, {i}, {v}, &{OuterOwnerList()});");
+                        E($"if (FIRE_LIKELY({isSetBuf}leafAlive({a}) && (uint64_t){i}.i < bufOf({a})->length)) bufOf({a})->data[{i}.i] = (uint8_t)({bits}); else {v} = {Px}aset_g({a}, {i}, {v}, NULL);");
                     Check();
                     int storedType = wordsSet ? TypeOf(KindWord, 0) : Ty(d - 1);
                     E($"{a} = {v};");
@@ -6733,7 +6898,7 @@ namespace fire.Native
                         string shadow = ScalarName(f, st, d - 2);
                         string fast = getKind switch { KindFloat => $"(Real){load}", KindBool => $"({load} != 0)", _ => $"(FireInt){load}" };
                         string slow = getKind switch { KindFloat => "(Real)e_.f", KindBool => "(e_.i != 0)", _ => "(FireInt)e_.i" };
-                        E($"{{ Arr* ra_; if (FIRE_LIKELY({dIsArr}leafAlive({da}) && (uint64_t)(int64_t){di} < (ra_ = arrOf({da}))->length && ra_->typed && ra_->typed->packed)) {shadow} = {fast}; else {{ Value e_ = {Px}aget_g({da}, Int({di}), &{OuterOwnerList()}); {shadow} = {slow}; }} }}");
+                        E($"{{ Arr* ra_; if (FIRE_LIKELY({dIsArr}leafAlive({da}) && (uint64_t)(int64_t){di} < (ra_ = arrOf({da}))->length && ra_->typed && ra_->typed->packed)) {shadow} = {fast}; else {{ Value e_ = {Px}aget_g({da}, Int({di}), NULL); {shadow} = {slow}; }} }}");
                         st.Scalar |= 1UL << (d - 2);
                         Check();
                         d--; return Next();
@@ -6743,7 +6908,7 @@ namespace fire.Native
                     string a = S(d - 2), i = S(d - 1);
                     // (the generic route types the array first: what the element is, is then certain even when a way of writing the field or variable
                     // missed it - it converts, or it is the exception)
-                    E($"{{ Arr* ra_; if (FIRE_LIKELY({a}.kind == K_Array && {i}.kind == K_Int && leafAlive({a}) && (uint64_t){i}.i < (ra_ = arrOf({a}))->length && ra_->typed && ra_->typed->packed && ra_->typed->elem == {getElem})) {a} = arrPackedAt(ra_, (uint32_t){i}.i, {getElem}); else if (typeArray({a}, {getElem}, 1, {TypeArrayUnitArgsOf(null, getCode)}, 1)) {a} = {Px}aget_g({a}, {i}, &{OuterOwnerList()}); }}");
+                    E($"{{ Arr* ra_; if (FIRE_LIKELY({a}.kind == K_Array && {i}.kind == K_Int && leafAlive({a}) && (uint64_t){i}.i < (ra_ = arrOf({a}))->length && ra_->typed && ra_->typed->packed && ra_->typed->elem == {getElem})) {a} = arrPackedAt(ra_, (uint32_t){i}.i, {getElem}); else if (typeArray({a}, {getElem}, 1, {TypeArrayUnitArgsOf(null, getCode)}, 1)) {a} = {Px}aget_g({a}, {i}, NULL); }}");
                     Check();
                     d--; SetR(d - 1, false); SetT(d - 1, TypeOf(getKind, 0) | (ArrayElem.IsDefined(getCode) ? 0 : NullableBit) | (getKind == KindInt ? NarrowBit : 0)); _kindsKept = true; return Next();
                 }
@@ -6772,7 +6937,7 @@ namespace fire.Native
                         ArrayElem.F8 or ArrayElem.F16 or ArrayElem.F32 => "!fire_f32IsHint(cv_)", ArrayElem.F64 => "!fire_realIsHint(cv_)", _ => "1",
                     };
                     string valueOf = vk == KindFloat ? $"Float({x})" : vk == KindBool ? $"Bool({x})" : $"Int({x})";
-                    E($"{{ Arr* ra_; {ct} cv_ = {conv}; if (FIRE_LIKELY({isArr}leafAlive({a}) && (uint64_t)(int64_t){i} < (ra_ = arrOf({a}))->length && ra_->typed && ra_->typed->packed && {hintTest})) (({ct}*)ra_->typed->data)[{i}] = cv_; else (void){Px}aset_g({a}, Int({i}), {valueOf}, &{OuterOwnerList()}); }}");
+                    E($"{{ Arr* ra_; {ct} cv_ = {conv}; if (FIRE_LIKELY({isArr}leafAlive({a}) && (uint64_t)(int64_t){i} < (ra_ = arrOf({a}))->length && ra_->typed && ra_->typed->packed && {hintTest})) (({ct}*)ra_->typed->data)[{i}] = cv_; else (void){Px}aset_g({a}, Int({i}), {valueOf}, NULL); }}");
                     Check();
                     // (the value of the assignment: the number as the element holds it)
                     int storedKind = ArrElemKind(se);
@@ -6795,14 +6960,107 @@ namespace fire.Native
                         KindFloat => setElem == ArrayElem.F64 ? "" : $"{v}.f = (Real)roundFloatToWidth((double){v}.f, {ArrayElem.Bits(setElem)}); ",
                         _ => "",
                     };
-                    E($"{{ Arr* ra_; if (FIRE_LIKELY({kindTest}{a}.kind == K_Array && {i}.kind == K_Int && leafAlive({a}) && (uint64_t){i}.i < (ra_ = arrOf({a}))->length && ra_->typed && ra_->typed->packed && ra_->typed->elem == {setElem})) {{ {convert}arrPackedSet(ra_, (uint32_t){i}.i, {v}); }} else {v} = {Px}aset_g({a}, {i}, {v}, &{OuterOwnerList()}); }}");
+                    // (a whole-width element - int, float: the C store itself, when the number is not the hint of undefined and no element of the array is a
+                    // number with the hint's bits - `real` - which a store would have to unmark; arrPackedSet otherwise)
+                    string put = setElem switch
+                    {
+                        ArrayElem.I64 => $"FireInt cv_ = (FireInt){v}.i; if (FIRE_LIKELY(cv_ != FIRE_INT_UNDEF && !ra_->typed->real)) ((FireInt*)ra_->typed->data)[{i}.i] = cv_; else arrPackedSet(ra_, (uint32_t){i}.i, {v});",
+                        ArrayElem.F64 => $"Real cv_ = {v}.f; if (FIRE_LIKELY(!fire_realIsHint(cv_) && !ra_->typed->real)) ((Real*)ra_->typed->data)[{i}.i] = cv_; else arrPackedSet(ra_, (uint32_t){i}.i, {v});",
+                        _ => $"{convert}arrPackedSet(ra_, (uint32_t){i}.i, {v});",
+                    };
+                    E($"{{ Arr* ra_; if (FIRE_LIKELY({kindTest}{a}.kind == K_Array && {i}.kind == K_Int && leafAlive({a}) && (uint64_t){i}.i < (ra_ = arrOf({a}))->length && ra_->typed && ra_->typed->packed && ra_->typed->elem == {setElem})) {{ {put} }} else {v} = {Px}aset_g({a}, {i}, {v}, NULL); }}");
                     Check();
                     int storedType = Ty(d - 1);
                     E($"{a} = {v};");
                     d -= 2; SetR(d - 1, false); SetT(d - 1, storedType); _kindsKept = true; return Next();
                 }
+                case OpCode.ArrayGet when ObjSlot(d - 2) && !IsNullable(Ty(d - 2)) && (Ty(d - 2) & TypeNone) == 0 && !(_usesReflection && ReflectionMethodNames.Contains("GetIndex"))
+                    && DirectMethod(ObjClass(Ty(d - 2)), "GetIndex", 1, f) is { Specializations: { } getSpecs, ParamCount: 1 } getIndex:
+                {
+                    // `list[i]` on an object of a known class whose `operator[]` has typed specializations (`operator[]<int>`, SPEC 5.8.1): the one for the
+                    // type arguments of the object directly - its C body when the index is a proven int - otherwise the generic operator (aget_g does the same
+                    // through the dispatcher)
+                    Need(2);
+                    string grecv = S(d - 2), gidx = S(d - 1);
+                    var getCalls = HandSpecCalls(getSpecs, grecv);
+                    var generic = GetFunc(getIndex, FuncKind.Method);
+                    var arms = new StringBuilder();
+                    int resultType = ReturnType(generic);
+                    foreach (var gc in getCalls)
+                    {
+                        string idxTest = SpecArgTest(gc.Spec, 0, gidx, Ty(d - 1));
+                        string call = SlotScalars() && CAbiOf(gc.Callee) is { } gabi && ProvenCArgs(gabi, d - 1, 1)
+                            ? (gabi.RetType == 0 ? $"{CName(gc.Callee)}({grecv}, {(gabi.ParamType[0] == 0 ? gidx : SN(d - 1))})"
+                                : ScalarValueOf(BaseKindOfType(gabi.RetType), UnitOfType(gabi.RetType), $"{CName(gc.Callee)}({grecv}, {(gabi.ParamType[0] == 0 ? gidx : SN(d - 1))})"))
+                            : $"{gc.Callee.Name}({grecv}, {gidx})";
+                        arms.Append($"({gc.Condition}{idxTest}) ? {call} : ");
+                        resultType = JoinTypes(resultType, CAbiOf(gc.Callee) is { RetType: not 0 } rabi ? rabi.RetType : ReturnType(gc.Callee));
+                    }
+                    // the type checker knows the type arguments of the receiver (`List<int> l; l[i]`, Chunk.ReceiverTypeArgs): the result is what that
+                    // specialization gives - a C number when it has a C result; the generic operator (an object whose type arguments differ after all) is
+                    // checked to give the same
+                    if (f.Chunk.ReceiverTypeArgs is { } knownArgs && knownArgs.TryGetValue(ins.Addr, out var receiverArgs)
+                        && getCalls.FindIndex(gc => gc.Callee.Proto?.SpecArgs is { } sa && SpecArgsFit(sa, receiverArgs)) is var hi and >= 0)
+                    {
+                        var hc = getCalls[hi];
+                        string idxTest = SpecArgTest(hc.Spec, 0, gidx, Ty(d - 1));
+                        string what = $"The result of '[]' of a {GenericClassNames.PlainName(getIndex.Chunk.OwnerClass?.Name ?? "")}<{receiverArgs.Replace("|", ", ")}>";
+                        if (SlotScalars() && CAbiOf(hc.Callee) is { RetType: not 0 } habi && ProvenCArgs(habi, d - 1, 1))
+                        {
+                            string cidx = habi.ParamType[0] == 0 ? gidx : SN(d - 1);
+                            E($"if (FIRE_UNLIKELY(!leafAlive({grecv}))) {grecv} = destroyedError({grecv});");
+                            Check();
+                            string checkedGeneric = CNumberOf(habi.RetType, $"({GuardKindCall($"{generic.Name}({grecv}, {gidx})", CDeclared(habi.RetType), what)})");
+                            d--;
+                            SetScalar(d - 1, habi.RetType, $"({hc.Condition}{idxTest}) ? {CName(hc.Callee)}({grecv}, {cidx}) : {checkedGeneric}");
+                            Check();
+                            return Next();
+                        }
+                        if (DeclaredReturn(hc.Callee.Proto!) is { } declared && DeclaredResultType(declared) is var specType and not TypeUnknown)
+                        {
+                            string checkedGeneric = GuardKindCall($"{generic.Name}({grecv}, {gidx})", declared, what);
+                            string specCall = SlotScalars() && CAbiOf(hc.Callee) is { RetType: 0 } vabi && ProvenCArgs(vabi, d - 1, 1)
+                                ? $"{CName(hc.Callee)}({grecv}, {(vabi.ParamType[0] == 0 ? gidx : SN(d - 1))})" : $"{hc.Callee.Name}({grecv}, {gidx})";
+                            E($"{{ if (FIRE_UNLIKELY(!leafAlive({grecv}))) {grecv} = destroyedError({grecv}); else {grecv} = ({hc.Condition}{idxTest}) ? {specCall} : {checkedGeneric}; }}");
+                            Check();
+                            d--;
+                            AdoptResult(d - 1, specType);
+                            return Next();
+                        }
+                    }
+                    E($"{{ if (FIRE_UNLIKELY(!leafAlive({grecv}))) {grecv} = destroyedError({grecv}); else {grecv} = {arms}{generic.Name}({grecv}, {gidx}); }}");
+                    Check();
+                    d--;
+                    AdoptResult(d - 1, resultType);
+                    return Next();
+                }
                 case OpCode.ArrayGet:
                     Need(2); E($"{S(d - 2)} = {Px}aget_g({S(d - 2)}, {S(d - 1)}, &{OwnerList()});"); Check(); d--; SetR(d - 1, true); return Next();
+                case OpCode.ArraySet when ObjSlot(d - 3) && !IsNullable(Ty(d - 3)) && (Ty(d - 3) & TypeNone) == 0 && !(_usesReflection && ReflectionMethodNames.Contains("SetIndex"))
+                    && IsPlainType(Ty(d - 1)) && (Ty(d - 1) & TypeNone) == 0   // (a number, a bool or undefined: nothing to claim for the object)
+                    && DirectMethod(ObjClass(Ty(d - 3)), "SetIndex", 2, f) is { Specializations: { } setSpecs, ParamCount: 2 }:
+                {
+                    // `list[i] = v` on an object of a known class whose `operator[]=` has typed specializations (SPEC 5.8.1): the one for the type arguments
+                    // of the object directly (its C body when the index and the value are proven numbers), otherwise the generic store (aset_g: it claims the
+                    // value for the object and calls the operator through the dispatcher)
+                    Need(3);
+                    string srecv = S(d - 3), sidx = S(d - 2), sval = S(d - 1);
+                    var setCalls = HandSpecCalls(setSpecs, srecv);
+                    var sarms = new StringBuilder();
+                    foreach (var sc in setCalls)
+                    {
+                        string tests = string.Concat(Enumerable.Range(0, 2).Select(k => SpecArgTest(sc.Spec, k, S(d - 2 + k), Ty(d - 2 + k))));
+                        string call = SlotScalars() && CAbiOf(sc.Callee) is { } sabi && ProvenCArgs(sabi, d - 2, 2)
+                            ? $"{CName(sc.Callee)}({srecv}{string.Concat(Enumerable.Range(0, 2).Select(k => ", " + (sabi.ParamType[k] == 0 ? S(d - 2 + k) : KindOfType(sabi.ParamType[k]) switch { KindFloat => SF(d - 2 + k), KindWord => SW(d - 2 + k), _ => SN(d - 2 + k) })))})"
+                            : $"{sc.Callee.Name}({srecv}, {sidx}, {sval})";
+                        sarms.Append($"if (leafAlive({srecv}) && {sc.Condition}{tests}) (void){call}; else ");
+                    }
+                    E($"{{ {sarms}{sval} = {Px}aset_g({srecv}, {sidx}, {sval}, &{OwnerList()}); }}");
+                    Check();
+                    E($"{srecv} = {sval};");
+                    SetR(d - 3, R(d - 1)); SetT(d - 3, Ty(d - 1)); _kindsKept = true;
+                    d -= 2; return Next();
+                }
                 case OpCode.ArraySet:
                     Need(3); E($"{S(d - 1)} = {Px}aset_g({S(d - 3)}, {S(d - 2)}, {S(d - 1)}, &{OwnerList()});"); Check(); E($"{S(d - 3)} = {S(d - 1)};"); SetR(d - 3, R(d - 1)); d -= 2; return Next();
                 case OpCode.IncDecIndex:
@@ -7293,7 +7551,9 @@ namespace fire.Native
                     if (op == "/")
                     {
                         // like Value.Divide: truncated, x / -1 wraps (no trap in C); a division by 0 is the generic one's DivideByZeroException
+                        // (the slot holds the result from here: no longer an alias of the variable it was loaded from - `this.f = p / 2` stored p)
                         SetT(d - 2, narrow); SetR(d - 2, false); _kindsKept = true;
+                        if (d - 2 < 64) st.Alias[d - 2] = null;
                         string r = ScalarName(f, st, d - 2);
                         E($"if (FIRE_LIKELY({y} != 0)) {r} = {y} == -1 ? (FireInt)(0 - (FireUInt){x}) : {x} / {y}; else {{ Value m_ = divide({ScalarValueOf(KindInt, ux, x)}, {ScalarValueOf(KindInt, uy, y)}); {r} = (FireInt)m_.i; }}");
                         st.Scalar |= 1UL << (d - 2);
@@ -7302,6 +7562,7 @@ namespace fire.Native
                     else if (op == "%")
                     {
                         SetT(d - 2, narrow); SetR(d - 2, false); _kindsKept = true;
+                        if (d - 2 < 64) st.Alias[d - 2] = null;
                         string r = ScalarName(f, st, d - 2);
                         E($"if (FIRE_LIKELY({y} > 0)) {r} = {x} % {y}; else {{ Value m_ = modulo({ScalarValueOf(KindInt, ux, x)}, {ScalarValueOf(KindInt, uy, y)}); {r} = (FireInt)m_.i; }}");
                         st.Scalar |= 1UL << (d - 2);

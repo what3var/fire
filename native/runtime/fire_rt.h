@@ -3785,7 +3785,9 @@ FIRE_FN Value intProgram(Value v) { if (v.kind == K_Int && v.wide) { v.i = FIRE_
 #endif
 /* A unit check of the generated code in place (CheckUnit): adaptUnit on the variable. `flags`: 1 only the dimension (`: any m`), 2 into a float. True when it threw. */
 FIRE_FN Value adaptUnit(Value v, uint32_t unit, bool dimensionOnly, bool toFloat, Value expectedText);
-FIRE_FN bool adaptSlot(Value* v, uint32_t unit, uint8_t flags, const Str* expectedText) {
+FIRE_ALWAYS_INLINE FIRE_FN bool adaptSlot(Value* v, uint32_t unit, uint8_t flags, const Str* expectedText) {
+    /* (the common case at once: a number already in that unit - nothing to convert; an int that has to become a float goes on) */
+    if (FIRE_LIKELY(v->unit == unit && (v->kind == K_Float || v->kind == K_Int && !(flags & 2) || v->kind == K_Undefined))) return false;
     *v = adaptUnit(*v, unit, (flags & 1) != 0, (flags & 2) != 0, StrV(expectedText));
 #ifdef FIRE_EXCEPTIONS
     return g_unwind.active;
@@ -6172,9 +6174,16 @@ FIRE_FN Value newTypedArray(Value size, uint8_t elem, uint32_t unit, uint8_t fla
     t->packed = 1;
     a->typed = t;
     /* (a defined array starts at 0, any other undefined) */
-    {
-        Value first = (flags & TU_DEFINED) ? arrZero(t) : Undef();
-        for (i = 0; i < length; i++) arrPackedSet(a, i, first);
+    /* (the first element by arrPackedSet, the rest as copies of its bits - one plain loop per element size instead of a call per element) */
+    if (length > 0) {
+        arrPackedSet(a, 0, (flags & TU_DEFINED) ? arrZero(t) : Undef());
+        switch (arrElemSize(elem)) {
+            case 1: { uint8_t x = ((uint8_t*)t->data)[0]; for (i = 1; i < length; i++) ((uint8_t*)t->data)[i] = x; break; }
+            case 2: { uint16_t x = ((uint16_t*)t->data)[0]; for (i = 1; i < length; i++) ((uint16_t*)t->data)[i] = x; break; }
+            case 4: { uint32_t x = ((uint32_t*)t->data)[0]; for (i = 1; i < length; i++) ((uint32_t*)t->data)[i] = x; break; }
+            case 8: { uint64_t x = ((uint64_t*)t->data)[0]; for (i = 1; i < length; i++) ((uint64_t*)t->data)[i] = x; break; }
+            default: { Value first = arrPackedGet(a, 0); for (i = 1; i < length; i++) arrPackedSet(a, i, first); break; }
+        }
     }
     slotAcquire(&a->h);
     ownLink(list, &a->h);
@@ -6277,6 +6286,13 @@ FIRE_FN Value arraySet(Value a, Value i, Value v) {
         if (FIRE_UNLIKELY(arr->typed != NULL)) {
             /* a typed array: the value is converted, or it is the exception - before the index is checked, like in the VM */
             bool ok;
+            ArrTyped* ft = arr->typed;
+            /* (the common case at once: a plain number - no unit, no width of its own - into a packed array of whole-width numbers without a unit, in
+             * range, not the hint of undefined, no element marked `real`: what arrElemConvert and arrPackedSet would do comes down to the C store) */
+            if (ft->packed && !ft->real && !(ft->flags & (TU_UNIT | TU_DIMONLY | TU_ANY)) && (uint64_t)i.i < arr->length && v.unit == 0 && v.wide == 0) {
+                if (ft->elem == E_I64 && v.kind == K_Int && (FireInt)v.i != FIRE_INT_UNDEF) { ((FireInt*)ft->data)[i.i] = (FireInt)v.i; return v; }
+                if (ft->elem == E_F64 && v.kind == K_Float && !fire_realIsHint(v.f)) { ((Real*)ft->data)[i.i] = v.f; return v; }
+            }
             v = arrElemConvert(arr->typed, v, &ok);
             if (!ok) return v;
             if (FIRE_UNLIKELY((uint64_t)i.i >= arr->length)) { indexError("Array index", i.i, arr->length); return v; }

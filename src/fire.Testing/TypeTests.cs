@@ -120,6 +120,9 @@ static class TypeTests
             Run("var w = undefined\nprint(1)") == "TC019|1" && Run("var w = undefined\nprint(1)", TypeCheckMode.Strict) == "|ERROR TC019"
             && Run("any a = [1]\nvar e = a[0]\nprint(e)") == "TC019|1" && Run("any a = [1]\nvar e = a[0]\nprint(e)", TypeCheckMode.Strict) == "|ERROR TC019"
             && Run("any a = [1]\nany e = a[0]\nprint(e)", TypeCheckMode.Strict) == "|1");
+        Check("var mit dem Ergebnis einer String-Methode (class extends string): der deklarierte Typ - strikt kein TC019, falsche Zuweisungen gemeldet",
+            Run("string t = \"a,b\"\nvar at = t.IndexOf(\",\")\nvar part = t.Substring(2)\nvar parts = t.Split(\",\")\nvar has = t.Contains(\"a\")\nvar up = t.ToUpper()\nprint(at + 1)\nprint(part + parts.length + has + up)", TypeCheckMode.Strict) is var strs
+            && strs == "|2\nb2TrueA,B" && Run("string t = \"ab\"\nint q = t.Substring(1)\nbool b = t.IndexOf(\"b\")", TypeCheckMode.Strict) == "|ERROR TC001 TC001", strs);
         Check("fire-Block: ein Local der Umgebung ohne taking/handover wird kopiert - TC023 (lax eine Warnung, strikt ein Fehler), wenn die Kopie Speicher kostet; eine Zahl und taking/handover still",
             Run("class W { static undefined Go() { var a = [3]\n fire { print(a[0]) } } }\nW.Go()") is var lax && lax.StartsWith("TC023|")
             && Run("class W { static undefined Go() { var a = [3]\n fire { print(a[0]) } } }\nW.Go()", TypeCheckMode.Strict) == "|ERROR TC023"

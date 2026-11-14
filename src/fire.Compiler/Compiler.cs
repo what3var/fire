@@ -541,8 +541,10 @@ namespace fire.Compiler
             s_classDecls = resolveResult.Classes;
             s_localGuards = resolveResult.LocalGuards;
             s_overloadHints = resolveResult.OverloadHints;
+            s_receiverTypeArgs = resolveResult.ReceiverTypeArgs;
             s_derivedDefined = resolveResult.DerivedDefined;
             s_derivedReturns = resolveResult.DerivedReturns;
+            s_derivedFields = resolveResult.DerivedDefinedFields;
             var compiler = new Compiler(resolveResult, natives) { _classMeta = classMeta };
             var classes = compiler.CompileClasses(program);
 
@@ -1004,6 +1006,7 @@ namespace fire.Compiler
         {
             var ctorDecls = new List<ConstructorDecl>();
             rc.ThisReads = ComputeThisReads(rc.Decl);
+            var pendingSpecs = new List<(MethodDecl Decl, FunctionProto Proto)>();
 
             foreach (var member in rc.Decl.Members)
             {
@@ -1016,8 +1019,10 @@ namespace fire.Compiler
                 {
                     switch (member)
                     {
-                        case FieldDecl fd:
+                        case FieldDecl declaredField:
                         {
+                            // (a field the type checker found is never undefined - TypeChecker.DeriveFields: like a `defined` one, it starts at 0)
+                            var fd = s_derivedFields != null && s_derivedFields.Contains(declaredField) ? declaredField with { Type = declaredField.Type! with { NonNull = true } } : declaredField;
                             var fieldInit = CompileFieldInitProto(rc, fd.Type, fd.Initializer, fd.IsStatic, fd.Line, fd.ArrayRanks);
                             rc.OwnFieldInfo[fd.Name] = new FieldInfo()
                             {
@@ -1027,6 +1032,8 @@ namespace fire.Compiler
                                 RequiredType = fd.ArrayRanks.Count == 0 ? DeclaredTypeOf(fd.Type, rc) : null,
                                 RequiredArray = fd.Type?.ArrayWidthCode(fd.ArrayRanks.Count) is var arrayCode and not 0 && (arrayCode & 0xFF) is not (fire.Values.ArrayElem.U8 or fire.Values.ArrayElem.Word)
                                     ? (ushort)(arrayCode & 0xFFFF) : (ushort)0,
+                                ArrayOfParam = !fd.IsStatic && fd.ArrayRanks.Count == 1 && fd.Type is { ArrayRank: 0, PointerDepth: 0, TypeArgs: null, Unit: null } elemType
+                                    && TypeArgText(elemType, rc, null, 0) is ['$', ..] arrayParam && !arrayParam.EndsWith('@') ? arrayParam : null,
                                 IsStatic = fd.IsStatic,
                                 TypeText = JsonTypeText(fd.Type, fd.ArrayRanks.Count, rc.Decl),
                                 Attributes = AttributeMetas(fd.Attributes),
@@ -1057,8 +1064,12 @@ namespace fire.Compiler
                         }
 
                         case MethodDecl md:
-                            rc.AddMethod(md.Name, CompileMethodProto(rc, md.Params, md.Body, md.Access, md.IsStatic, md.ReturnType?.UnitDemand, md.TypeParams, returnType: md.ReturnType, name: md.Name));
+                        {
+                            var methodProto = CompileMethodProto(rc, md.Params, md.Body, md.Access, md.IsStatic, md.ReturnType?.UnitDemand, md.TypeParams, returnType: md.ReturnType, name: md.Name);
+                            rc.AddMethod(md.Name, methodProto);
+                            if (md.Specialization != null) pendingSpecs.Add((md, methodProto));   // (linked once every method is there)
                             break;
+                        }
 
                         case ConstructorDecl ctor:
                             ctorDecls.Add(ctor);
@@ -1098,6 +1109,24 @@ namespace fire.Compiler
                     _errors.Add((ex as CompilerException ?? new CompilerException(ex.Message, member.Line)).At(rc.Decl.Source));
                 }
                 finally { s_memberSource = outerMember; }
+            }
+
+            // `Add<int>(int item)`: the generic method it stands in for (the same name and number of parameters) takes it (SPEC 5.8.1)
+            foreach (var (md, specProto) in pendingSpecs)
+            {
+                var specTypes = md.Specialization!;
+                string generic = md.Name.Substring(0, md.Name.IndexOf('<'));
+                var target = rc.Methods.TryGetValue(generic, out var candidates) ? candidates.FirstOrDefault(p => !p.IsStatic && p.ParamCount == md.Params.Count) : null;
+                string? problem = rc.Decl.TypeParams is not { Count: > 0 } classParams || classParams.Count != specTypes.Count
+                    ? $"'{md.Name}' names {specTypes.Count} type(s), but class '{rc.Decl.Name}' has {rc.Decl.TypeParams?.Count ?? 0} type parameter(s) - a specialization fixes all of them"
+                    : target == null ? $"'{md.Name}' specializes nothing: class '{rc.Decl.Name}' has no method '{generic}' with {md.Params.Count} parameter(s)" : null;
+                if (problem != null) { _errors.Add(new CompilerException(problem, md.Line).At(rc.Decl.Source)); continue; }
+                specProto.SpecOwner = rc.Name;
+                specProto.SpecArgs = specTypes.Select(t => t.BaseName).ToArray();
+                for (int i = 0; i < md.Params.Count && i < 64; i++)
+                    if (md.Params[i].Type is { NonNull: true }) specProto.SpecDefinedMask |= 1L << i;
+                specProto.SpecParamKinds = md.Params.Select(p => p.ByRef || p.ArrayRanks.Count > 0 ? (byte)0 : DeclaredKind.Of(p.Type, p.DefaultValue)).ToArray();
+                target!.Specializations = (target.Specializations ?? Array.Empty<FunctionProto>()).Append(specProto).ToArray();
             }
 
             // No declaration of its own -> exactly ONE synthesised 0-arg public
@@ -2467,7 +2496,17 @@ namespace fire.Compiler
         [ThreadStatic] private static Dictionary<Expr, string[]>? s_methodTypeArgs;
         [ThreadStatic] private static Dictionary<Expr, (TypeRef Type, string What)>? s_localGuards;
         [ThreadStatic] private static Dictionary<Expr, string>? s_overloadHints;
+        [ThreadStatic] private static Dictionary<Expr, string>? s_receiverTypeArgs;
+
+        /// <summary>The instruction about to be emitted (a CallMethod, ArrayGet, ArraySet) has a receiver whose type arguments the type checker knows: noted
+        /// by its offset (Chunk.ReceiverTypeArgs).</summary>
+        private void NoteReceiverTypeArgs(Expr at)
+        {
+            if (s_receiverTypeArgs != null && s_receiverTypeArgs.TryGetValue(at, out var text))
+                (_chunk.ReceiverTypeArgs ??= new Dictionary<int, string>())[_chunk.Code.Count] = text;
+        }
         [ThreadStatic] private static HashSet<LambdaParam>? s_derivedDefined;
+        [ThreadStatic] private static HashSet<FieldDecl>? s_derivedFields;
         [ThreadStatic] private static HashSet<Stmt.BlockStmt>? s_derivedReturns;
         /// <summary>`FIRE_NO_OVERLOAD_HINTS=1`: no OverloadHint is emitted (every call scores its candidates) - to compare and to find a wrong hint.</summary>
         private static readonly bool NoOverloadHints = Environment.GetEnvironmentVariable("FIRE_NO_OVERLOAD_HINTS") == "1";
@@ -2907,6 +2946,7 @@ namespace fire.Compiler
                 case IndexExpr ix:
                     CompileExpr(ix.Target);
                     CompileExpr(ix.Index);
+                    NoteReceiverTypeArgs(ix);
                     _chunk.EmitOp(OpCode.ArrayGet);
                     break;
 
@@ -3479,6 +3519,7 @@ namespace fire.Compiler
                 if (call.Awaited) _chunk.EmitOp(OpCode.AwaitReply);   // (in front of the other prefixes: they are looked for right in front of the call)
                 EmitCopyArgsPrefix(callCopyMask);
                 EmitArgNames(call.ArgNames);
+                NoteReceiverTypeArgs(call);
                 _chunk.EmitOp(OpCode.CallMethod);
                 _chunk.EmitU16(_chunk.AddConstant(Value.MakeString(me.Name)));
                 _chunk.EmitByte((byte)call.Args.Count);
@@ -3703,6 +3744,7 @@ namespace fire.Compiler
                     CompileExpr(a.Value);
                     if (MayBeUnclaimed(a.Value)) _chunk.EmitOp(OpCode.ClaimToArray);   // `arr[i] = new X()`: the array owns it (SPEC 2.1)
                 }
+                NoteReceiverTypeArgs(ix);
                 _chunk.EmitOp(OpCode.ArraySet);
                 return;
             }

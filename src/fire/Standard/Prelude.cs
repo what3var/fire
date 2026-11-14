@@ -839,7 +839,9 @@ namespace fire.Standard
 
             // `List<int>`: a list whose elements are `int`s (for the type checker - at runtime every list holds any value); `List` alone is a list of `any`
             class List<T> : IEnumerable<T> {
-                private any items
+                // (`T items[]`: for List<int>/List<float> an array of raw numbers - every assignment types it by the type argument, and the specializations
+                // below - `Add<int>`, `operator[]<int>`, ... - know that: SPEC 5.8.1)
+                private T items[]
                 private defined int count
                 private Owns owns = Owns.Explicit
 
@@ -885,12 +887,30 @@ namespace fire.Standard
                     this.count = this.count + 1
                 }
 
+                // (a number has no owner: nothing to take - the typed array of the list takes it as it is)
+                undefined Add<int>(defined int value) {
+                    if (this.count >= this.items.length) { this.Grow() }
+                    this.items[this.count] = value
+                    this.count = this.count + 1
+                }
+                undefined Add<float>(defined float value) {
+                    if (this.count >= this.items.length) { this.Grow() }
+                    this.items[this.count] = value
+                    this.count = this.count + 1
+                }
+
                 // an element that falls out: destroyed when the list owns its elements (Owns.Values) and this one
                 undefined DropElement(any value) {
                     if (this.owns.HasFlag(Owns.Values) && value is from this) { delete value }
                 }
 
                 T operator[](int index) {
+                    return this.items[index]
+                }
+                int operator[]<int>(defined int index) {
+                    return this.items[index]
+                }
+                float operator[]<float>(defined int index) {
                     return this.items[index]
                 }
 
@@ -900,6 +920,13 @@ namespace fire.Standard
                     if (!(value is of float || value is of int || value is of bool)) { if (this.owns.HasFlag(Owns.Values) && (value is of class || value is of lambda)) { value.TakeTo(this) } else { try value??.TakeTo(this) } }
                     this.items[index] = value
                     if (old != value) { this.DropElement(old) }
+                }
+                // (a number belongs to no one: nothing to take, nothing to drop)
+                undefined operator[]<int>(defined int index, int value) {
+                    this.items[index] = value
+                }
+                undefined operator[]<float>(defined int index, float value) {
+                    this.items[index] = value
                 }
 
                 // removes the element at `index` (the ones behind it move up); the element itself is destroyed only if the list owns it (Owns.Values)
@@ -991,6 +1018,22 @@ namespace fire.Standard
                     newItems.TakeTo(this)
                     delete old
                 }
+                undefined Grow<int>() {
+                    int newItems[] = new int[this.items.length * 2]
+                    for (defined int i = 0; i < this.count; i++) { newItems[i] = this.items[i] }
+                    any old = this.items
+                    this.items = newItems
+                    newItems.TakeTo(this)
+                    delete old
+                }
+                undefined Grow<float>() {
+                    float newItems[] = new float[this.items.length * 2]
+                    for (defined int i = 0; i < this.count; i++) { newItems[i] = this.items[i] }
+                    any old = this.items
+                    this.items = newItems
+                    newItems.TakeTo(this)
+                    delete old
+                }
 
                 ListIter<T> GetEnumerator() {
                     return new ListIter<T>(this, this.count)
@@ -1047,12 +1090,13 @@ namespace fire.Standard
             // value - `1km` is `1000m`), an IEquatable key with Equals/GetHashCode. The arrays are typed: `keys` and `vals` by the type arguments (`new K[n]`:
             // `Dictionary<int, float>` holds its keys and values raw, `Dictionary<string, Node>` as values), the others hold ints and bools.
             class __HashTable<K, V> {
-                protected any keys
-                protected any vals
-                private int hashes[]
-                private int next[]
-                protected bool live[]
-                private int buckets[]
+                // (the keys and values as arrays of their type arguments - Dictionary<int, float>: raw numbers; the rest of the table is never undefined)
+                protected K keys[]
+                protected V vals[]
+                private defined int hashes[]
+                private defined int next[]
+                protected defined bool live[]
+                private defined int buckets[]
                 private defined int count
                 protected defined int used
                 protected Owns owns
@@ -1068,13 +1112,12 @@ namespace fire.Standard
                     this.next = new int[8]
                     this.live = new bool[8]
                     this.buckets = new int[8]
-                    for (var b = 0; b < 8; b = b + 1) { this.buckets[b] = 0 }   // (a new array holds undefined)
                     this.count = 0
                     this.used = 0
                 }
 
                 // (30 bits: the hash fits the int array `hashes` also where an int has 32 bits; the buckets take its low bits)
-                int HashOf(any key) {
+                defined int HashOf(any key) {
                     if (key is of IEquatable) { return key.GetHashCode() & 1073741823 }
                     return __MathCall(15, key) & 1073741823
                 }
@@ -1085,8 +1128,8 @@ namespace fire.Standard
                 }
 
                 // the entry of `key` (hash `h`), -1 if there is none (a native build reads the elements of the typed arrays in place)
-                int Find(any key, int h) {
-                    int i = this.buckets[h & (this.buckets.length - 1)] - 1
+                defined int Find(any key, defined int h) {
+                    defined int i = this.buckets[h & (this.buckets.length - 1)] - 1
                     while (i >= 0) {
                         if (this.hashes[i] == h && this.SameKey(this.keys[i], key)) { return i }
                         i = this.next[i] - 1
@@ -1094,26 +1137,52 @@ namespace fire.Standard
                     return -1
                 }
 
+                // (int keys - whatever the values are: the hash and the comparison without asking for IEquatable, the keys read and written as numbers)
+                defined int HashOf<int, any>(defined int key) {
+                    return __MathCall(15, key) & 1073741823
+                }
+                defined int Find<int, any>(defined int key, defined int h) {
+                    defined int i = this.buckets[h & (this.buckets.length - 1)] - 1
+                    while (i >= 0) {
+                        if (this.hashes[i] == h && this.keys[i] == key) { return i }
+                        i = this.next[i] - 1
+                    }
+                    return -1
+                }
+
                 // a new entry at the end (ownership is the caller's business: it must happen in the method that was given the values)
-                undefined Insert(any key, any value, int h) {
+                undefined Insert(any key, any value, defined int h) {
                     if (this.used >= this.keys.length) { this.Resize() }
-                    var i = this.used
+                    defined int i = this.used
                     this.used = i + 1
                     this.keys[i] = key
                     this.vals[i] = value
                     this.hashes[i] = h
                     this.live[i] = true
-                    int b = h & (this.buckets.length - 1)
+                    defined int b = h & (this.buckets.length - 1)
+                    this.next[i] = this.buckets[b]
+                    this.buckets[b] = i + 1
+                    this.count = this.count + 1
+                }
+                undefined Insert<int, any>(defined int key, any value, defined int h) {
+                    if (this.used >= this.keys.length) { this.Resize() }
+                    defined int i = this.used
+                    this.used = i + 1
+                    this.keys[i] = key
+                    this.vals[i] = value
+                    this.hashes[i] = h
+                    this.live[i] = true
+                    defined int b = h & (this.buckets.length - 1)
                     this.next[i] = this.buckets[b]
                     this.buckets[b] = i + 1
                     this.count = this.count + 1
                 }
 
                 // takes the entry out of its chain; key and value stay with the caller (Drop or TakeLocal)
-                undefined Unlink(int at) {
-                    int b = this.hashes[at] & (this.buckets.length - 1)
-                    int i = this.buckets[b] - 1
-                    var prev = -1
+                undefined Unlink(defined int at) {
+                    defined int b = this.hashes[at] & (this.buckets.length - 1)
+                    defined int i = this.buckets[b] - 1
+                    defined int prev = -1
                     while (i >= 0 && i != at) {
                         prev = i
                         i = this.next[i] - 1
@@ -1136,19 +1205,18 @@ namespace fire.Standard
                     while (cap < this.count * 2) { cap = cap * 2 }
                     var nk = new K[cap]
                     var nv = new V[cap]
-                    int nh[] = new int[cap]
-                    int nn[] = new int[cap]
-                    bool nl[] = new bool[cap]
-                    int nb[] = new int[cap]
-                    for (var b0 = 0; b0 < cap; b0 = b0 + 1) { nb[b0] = 0 }
-                    var j = 0
-                    for (var i = 0; i < this.used; i = i + 1) {
+                    defined int nh[] = new int[cap]
+                    defined int nn[] = new int[cap]
+                    defined bool nl[] = new bool[cap]
+                    defined int nb[] = new int[cap]
+                    defined int j = 0
+                    for (defined int i = 0; i < this.used; i++) {
                         if (this.live[i]) {
                             nk[j] = this.keys[i]
                             nv[j] = this.vals[i]
                             nh[j] = this.hashes[i]
                             nl[j] = true
-                            var b = nh[j] & (cap - 1)
+                            defined int b = nh[j] & (cap - 1)
                             nn[j] = nb[b]
                             nb[b] = j + 1
                             j = j + 1
