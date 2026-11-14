@@ -199,6 +199,12 @@ Skript -> Lexer -> Parser -> Resolver -> Compiler -> Bytecode (LinkedProgram)
   Konstante sind Konstanten (`ConstantStatic`; der Typprüfer sieht sie als `defined`). `CopyArgs` (das Präfix eines Aufrufs) und `LoadThis` lassen
   die Schatten stehen; ein C-Rumpf wird auch mit `CopyArgs` direkt gerufen, wenn kein Argument `ref` oder `take` ist. Gemessen (gcc `-O2`, 20 Mio.
   Schritte mit `Sqrt`, `Abs(Sin)`, `Max`, `^`, `/`, `%`, `!int`): 2410 -> 290 ms.
+  **Elemente typisierter Arrays** gehen den Weg eines Puffers: ein Element eines `defined`-Arrays (TU_DEFINED, nie undefined) wird mit einem
+  Laden in den Schatten gelesen (`((Real*)ra_->typed->data)[i]`); eine C-Zahl wird an ihren Platz geschrieben, umgewandelt wie `arrElemConvert` (ein
+  Int auf die Breite geschnitten, ein float gerundet - `float[16]`/`[8]` mit `roundFloatToWidth`), nur der Hinweis-Wert von `undefined` und ein
+  zerstörtes, zu kurzes oder ausgepacktes Array gehen in `aset_g`; `ClaimToArray` einer Zahl entfällt (keine Liste je Runde mehr). Ein Value, der
+  vielleicht undefined ist, wird auf seine Art geprüft und sonst ebenso gepackt gespeichert (float-Arrays auch). Gemessen (gcc `-O2`, je Element,
+  1 Mio. Elemente): Füllen 26-31 -> 2-3 ns, über ein Feld 24-34 -> 2-4 ns, Kopie 25-29 -> 6 ns (defined: 3 ns), ein Bytepuffer 1 ns.
 * **Parameter und Rückgaben als C-Typen (Ebene 2, Stufe 2b).** Grundlage ist `defined` (SPEC 8.10b): ein `defined int`-Parameter ist nie `undefined` und
   kein Enum-Wert, eine `defined`-Rückgabe ebenso - das macht den Rumpf einer Methode skalar, ohne dass der Generator die Aufrufer kennen muss
   (`CppGenerator.CAbi.cs`). Eine Methode mit `defined int`-, `defined float`- oder `defined word`-Parametern oder mit einer `defined`-Rückgabe

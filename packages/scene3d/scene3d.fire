@@ -132,7 +132,8 @@ class Model {
     }
 
     // Positions: x, y, z per vertex (meters); uvs: u, v per vertex (or an empty array); indices: three per triangle, counter clockwise seen from outside.
-    static Model FromArrays(float positions[], float uvs[], int indices[]) {
+    // Each one is an array of numbers (`float[32] p[]` is read as it is) or a byte buffer of float32 numbers - the indices uint32 - in little endian (glTF).
+    static Model FromArrays(any positions, any uvs, any indices) {
         var h = __S3DMeshNew(positions, uvs, indices)
         if (h == 0) { throw new Scene3DException("The arrays do not make a mesh (3 numbers per vertex, 2 per texture coordinate, 3 indices per triangle, indices below the number of vertices).") }
         return new Model(h)

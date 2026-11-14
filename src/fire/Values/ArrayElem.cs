@@ -9,6 +9,20 @@ namespace fire.Values
         public const byte None = 0, I8 = 1, I16 = 2, I32 = 3, I64 = 4, F8 = 5, F16 = 6, F32 = 7, F64 = 8, Bool = 9, Char = 10, U8 = 11;
         /// <summary>`word a[]` (SPEC 8.10): like `byte a[]` a declaration of a buffer - of machine words (the native runtime: E_WORD).</summary>
         public const byte Word = 12;
+        /// <summary>`defined int a[]` (SPEC 8.4.2): a mark beside the element type in the code of a declaration (TypeRef.ArrayWidthCode, OpCode.TypeArray,
+        /// FieldInfo.RequiredArray) - the elements are never `undefined`: they start at 0 (false, '\0'), storing `undefined` is an ArgumentException.</summary>
+        public const byte DefinedFlag = 0x40;
+
+        /// <summary>The element type of such a code (without DefinedFlag).</summary>
+        public static byte TypeOf(int code) => (byte)(code & 0x3F);
+        public static bool IsDefined(int code) => (code & DefinedFlag) != 0;
+
+        /// <summary>The zero of an element type - what an element of a defined array starts with (in the unit of the elements, where it can take it).</summary>
+        public static Value Zero(byte type, string? unit)
+        {
+            Value zero = type switch { Bool => Value.MakeBool(false), Char => Value.MakeChar('\0'), _ when IsFloat(type) => Value.MakeFloat(0.0), _ => Value.MakeInt(0) };
+            return unit != null && TryConvert(type, unit, zero, out var withUnit, out _, out _) ? withUnit : zero;
+        }
 
         public enum Error : byte { None, Type, Unit, Overflow }
 
@@ -87,6 +101,19 @@ namespace fire.Values
             // (an element of `int a[]` is an int of the program: no kept width - Value.Wide - for it)
             stored = type == I64 ? (value.Wide != 0 ? Value.MakeInt(value.AsInt(), value.Unit) : value) : value.ConvertWidth(Bits(type), isFloat, type == U8);
             return true;
+        }
+
+        /// <summary>Like TryConvert, for an element of a defined array (<paramref name="defined"/>): `undefined` does not fit.</summary>
+        public static bool TryConvert(byte type, string? unit, Value value, bool defined, out Value stored, out Error error, out string? message)
+        {
+            if (defined && value.Kind == ValueKind.Undefined)
+            {
+                stored = value;
+                error = Error.Type;
+                message = $"An element of a defined array of {Name(type)} cannot be undefined.";
+                return false;
+            }
+            return TryConvert(type, unit, value, out stored, out error, out message);
         }
 
         private static string UnitText(Value value) => value.Unit is { IsUnitless: false } u ? u.ToString() : "(no unit)";

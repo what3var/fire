@@ -1912,6 +1912,13 @@ is the exception, undefined passes; anything else but an array is the exception)
 Multidimensional declarations (`int m[3][4]`) type the innermost arrays. `var`, `any`, strings, classes and pointers
 declare no element type - such an array takes any value, as before.
 
+**Defined arrays.** `defined` in front of the element type (`defined int a[]`, `defined float[32] v[]`, `defined bool f[8]`) makes the elements
+never `undefined`: the array keeps that as part of its type (ArrayElem.DefinedFlag in TypeArray and FieldInfo.RequiredArray, natively TU_DEFINED).
+A new one starts at the zero of the type (0, 0.0, false, '\0', in the unit of the elements); an array that goes into such a declaration becomes
+defined in place - its `undefined` elements become the zero; storing `undefined` into an element is an `ArgumentException` (`An element of a defined
+array of int cannot be undefined.`), through any reference (a defined array also goes into a declaration without `defined`; it stays defined). JSON
+reads `null` there as 0. An element read is `defined` for the type checker; natively it is one load into a C number.
+
 **`byte` declarations hold byte buffers** (8.10), not typed arrays: `byte x[16]` (variable, field, static field, global) is
 `new byte[16]` (16 zeros), and an array stored in a `byte` declaration - the initializer (`byte x[] = [1, 2, 3]`), a later
 assignment to the variable or field (`x = [4, 5]`, `obj.data = list.ToArray()`) - is replaced by a **new buffer with its
@@ -2406,8 +2413,8 @@ front of the type it **never holds `undefined`**: a parameter, a field, a proper
 * **JSON and reflection** keep the promise: `Json.Deserialize` leaves a `defined` field that is not in the text at zero (reading JSON runs no
   initializers) and a `null` for it is an `ArgumentException` (`$.n is an int and never undefined.`); `Reflect.Set` checks like an assignment.
 * `defined` stands in front of the type and its width (`defined int[16] x`, `defined byte b`, `defined float : m len`); it is
-  a word of its own only there (a variable may still be called `defined`). Not for an array (the elements of a typed array
-  are a matter of the array, 8.4.2), a pointer or a type argument (`List<defined int>` is an error). `int!` is an error
+  a word of its own only there (a variable may still be called `defined`). Of an array (`defined int a[]`) it says that
+  the elements are never undefined (8.4.2); not for a pointer or a type argument (`List<defined int>` is an error). `int!` is an error
   that names `defined int`. Overloads do not differ by `defined` alone.
 
 **The type checker** (docs/spec/TYPES.md) knows what is certainly defined - a literal, what an operator computes (an

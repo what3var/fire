@@ -124,6 +124,20 @@ namespace fire.Values
         /// <summary>The unit demand of the elements of a typed array (`int:cm a[]`: "cm"; null: the elements have no unit).</summary>
         public string? ElemUnit { get; private set; }
 
+        /// <summary>`defined int a[]`: the elements are never `undefined` (ArrayElem.DefinedFlag) - they start at the zero of the type, storing `undefined`
+        /// is an ArgumentException.</summary>
+        public bool ElemDefined { get; private set; }
+
+        /// <summary>Makes this typed array a defined one: an `undefined` element becomes the zero of the type (`new int[n]` starts at 0 that way).</summary>
+        public void MakeDefined()
+        {
+            if (ElemDefined || ElemType == ArrayElem.None) return;
+            var zero = ArrayElem.Zero(ElemType, ElemUnit);
+            for (int i = 0; i < Items.Length; i++)
+                if (Items[i].Kind == ValueKind.Undefined) Items[i] = zero;
+            ElemDefined = true;
+        }
+
         /// <summary>Makes this (new) array a typed one: its elements are converted; the first that does not fit is reported (`error`, `message`, the element
         /// in `offending`) and the array stays untyped.</summary>
         public bool MakeTyped(byte elemType, string? elemUnit, out ArrayElem.Error error, out string? message, out Value offending)
@@ -147,13 +161,14 @@ namespace fire.Values
         /// <summary>`array[index] = value` for a typed array: the value converted to the element type (<see cref="ArrayElem.TryConvert"/>), or the reason
         /// why it does not fit. An untyped array takes the value as it is.</summary>
         public bool TryConvertElement(Value value, out Value stored, out ArrayElem.Error error, out string? message) =>
-            ArrayElem.TryConvert(ElemType, ElemUnit, value, out stored, out error, out message);
+            ArrayElem.TryConvert(ElemType, ElemUnit, value, ElemDefined, out stored, out error, out message);
 
         /// <summary>Copies the element type of another array (a copy of a typed array is typed).</summary>
         public void CopyTypeOf(ScriptArray other)
         {
             ElemType = other.ElemType;
             ElemUnit = other.ElemUnit;
+            ElemDefined = other.ElemDefined;
             Special = _shared || IsDestroyed || ElemType != 0;
         }
 

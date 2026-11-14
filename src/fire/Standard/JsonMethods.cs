@@ -746,8 +746,11 @@ namespace fire.Standard
                 if (value.Kind != ValueKind.Array || depth > 64) return;
                 var array = value.AsArray();
                 if (depth < rank) { foreach (var inner in array.Items) TypeArrayDeep(inner, elem, rank, depth + 1, path); return; }
-                if (array.ElemType != ArrayElem.None) return;
-                if (!array.MakeTyped(elem, null, out _, out var message, out _)) throw new JsonError($"{path}: {message}");
+                // (`defined int a[]`: an element that is null in the JSON becomes 0, like when any array goes into such a declaration - natively the same)
+                bool defined = ArrayElem.IsDefined(elem);
+                elem = ArrayElem.TypeOf(elem);
+                if (array.ElemType == ArrayElem.None && !array.MakeTyped(elem, null, out _, out var message, out _)) throw new JsonError($"{path}: {message}");
+                if (defined) array.MakeDefined();
             }
 
             private Value BuildArray(ArrayNode a, string type, IOwner owner, string path, long? id)
