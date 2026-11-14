@@ -1,0 +1,202 @@
+#import "time"
+
+// AI (docs/ai/README.md): a small language model on the CPU, without a library or a service - the package's own C runs a model file in the GGUF format
+// (Qwen 2.5, SmolLM, Llama style models; weights Q8_0, Q4_0, F16 or F32). The model works on a thread of its own: a program starts a job and takes what it
+// produced when it likes (Take, State), so a user interface never waits; Complete and Choose wait for the result.
+//
+//     var model = new AI.Model("qwen2.5-0.5b-instruct-q4_0.gguf")
+//     var session = new AI.Session(model)
+//     print(session.Ask("You are a helpful assistant.", "What is the capital of France?"))
+//     print(session.Choose(AI.Chat.Question("", "Is 7 a prime number?"), ["Yes", "No"]))   // 0
+namespace AI {
+    class AIException : Exception {
+        construct(string message) : base(message) { }
+    }
+
+    // What a session is doing: nothing, computing the prompt, generating, done, failed (Session.Error) or cancelled.
+    enum State { Idle = 0, Prompt = 1, Generating = 2, Done = 3, Failed = 4, Cancelled = 5 }
+
+    // How the next token is chosen. Temperature 0: always the most likely one (the same answer every time).
+    class Settings {
+        float Temperature = 0.7
+        int TopK = 40
+        float TopP = 0.95
+        float MinP = 0.05
+        float RepeatPenalty = 1.1
+        // 0: until the model ends its answer (or the context is full).
+        int MaxTokens = 512
+        // 0: a random seed; another number: the same answer for the same prompt.
+        int Seed = 0
+        // Texts that end the answer (they are not part of it).
+        List Stops = new List()
+
+        // The most likely answer, always the same.
+        static AI.Settings Exact(int maxTokens = 512) {
+            var s = new AI.Settings()
+            s.Temperature = 0.0
+            s.MaxTokens = maxTokens
+            return s
+        }
+    }
+
+    // A model file. Its sessions use it; Close (or the destructor) frees it and them.
+    class Model {
+        defined int handle = -1
+
+        construct(string path) {
+            this.handle = __AiLoad(path)
+            if (this.handle < 0) { throw new AI.AIException(__AiLastError()) }
+        }
+
+        destruct() { this.Close() }
+
+        undefined Close() {
+            if (this.handle > 0) { __AiClose(this.handle) }
+            this.handle = -1
+        }
+
+        string Name { get { return __AiModelText(this.handle, 0) } }
+        string Architecture { get { return __AiModelText(this.handle, 1) } }
+        // The chat template of the file (Jinja text; AI.Chat writes the ChatML of Qwen and SmolLM itself).
+        string ChatTemplate { get { return __AiModelText(this.handle, 2) } }
+        // The kernels of the products: "AVX2", "NEON" or "C".
+        string Kernels { get { return __AiModelText(this.handle, 3) } }
+        int ContextLength { get { return __AiModelNumber(this.handle, 0) } }
+        int VocabularySize { get { return __AiModelNumber(this.handle, 1) } }
+        int Layers { get { return __AiModelNumber(this.handle, 2) } }
+        int Parameters { get { return __AiModelNumber(this.handle, 4) } }
+
+        // The number of tokens of a text (control tokens such as <|im_start|> written in it count as one).
+        int CountTokens(string text) { return __AiCountTokens(this.handle, text, true) }
+    }
+
+    // The prompts of a chat in ChatML (<|im_start|>role ... <|im_end|>), the format of Qwen 2.5 and SmolLM 2.
+    class Chat {
+        List roles = new List()
+        List texts = new List()
+
+        Chat Add(string role, string text) {
+            this.roles.Add(role)
+            this.texts.Add(text)
+            return this
+        }
+        Chat System(string text) { return this.Add("system", text) }
+        Chat User(string text) { return this.Add("user", text) }
+        Chat Assistant(string text) { return this.Add("assistant", text) }
+        int Count { get { return this.roles.Count } }
+        undefined Clear() { this.roles.Clear(); this.texts.Clear() }
+
+        // The prompt: the messages, then the start of the assistant's answer (`answerStart`: what it begins with, e.g. "The answer is").
+        string Prompt(string answerStart = "") {
+            var b = ""
+            for (var i = 0; i < this.roles.Count; i++) {
+                b += "<|im_start|>" + this.roles[i] + "\n" + this.texts[i] + "<|im_end|>\n"
+            }
+            return b + "<|im_start|>assistant\n" + answerStart
+        }
+
+        // A prompt of one question (`system` "": the model's own default).
+        static string Question(string system, string question, string answerStart = "") {
+            var c = new AI.Chat()
+            if (system != "") { c.System(system) }
+            c.User(question)
+            return c.Prompt(answerStart)
+        }
+    }
+
+    // A conversation with a model: the cache of what it has read. A prompt that starts like the one before only computes the new part, so a chat that grows
+    // or the same instructions before every question are cheap.
+    class Session {
+        defined int handle = -1
+        AI.Model model
+
+        // `context`: the tokens it can hold (prompt and answer); `threads` 0: as many as the machine has (8 at most).
+        construct(AI.Model model, int context = 2048, int threads = 0) {
+            this.model = model
+            this.handle = __AiSessionNew(model.handle, context, threads)
+            if (this.handle < 0) { throw new AI.AIException(__AiLastError()) }
+        }
+
+        destruct() { this.Close() }
+
+        undefined Close() {
+            if (this.handle > 0 && this.model.handle > 0) { __AiClose(this.handle) }
+            this.handle = -1
+        }
+
+        // Starts generating the text after `prompt` (control tokens written as text: AI.Chat makes such prompts). Take gets the text as it comes.
+        undefined Start(string prompt, AI.Settings settings = undefined) {
+            var s = settings
+            if (s == undefined) { s = new AI.Settings() }
+            var sep = "" + 31.ToChar()
+            if (!__AiGenerate(this.handle, prompt, s.MaxTokens, sep.Join(s.Stops), s.Temperature, s.TopK, s.TopP, s.MinP, s.RepeatPenalty, s.Seed)) {
+                throw new AI.AIException(__AiLastError())
+            }
+        }
+
+        // Starts weighing `options` as the continuation of `prompt` (Choice then is the most likely one). `perToken`: the average per token, so a long option
+        // is not less likely only because it is long.
+        undefined StartChoice(string prompt, string options[], bool perToken = false) {
+            var sep = "" + 31.ToChar()
+            if (!__AiChoose(this.handle, prompt, sep.Join(options), perToken)) { throw new AI.AIException(__AiLastError()) }
+        }
+
+        AI.State State { get { return __AiState(this.handle)!AI.State } }
+        // Whether a job is running (the prompt or the answer).
+        bool Busy {
+            get {
+                var s = __AiState(this.handle)
+                return s == 1 || s == 2
+            }
+        }
+        // The text generated since the last call.
+        string Take() { return __AiTake(this.handle) }
+        // Stops the job (after the token it is working on).
+        undefined Cancel() { __AiCancel(this.handle) }
+        // The reason of State.Failed.
+        string Error { get { return __AiError(this.handle) } }
+        // Forgets what the cache holds.
+        undefined Forget() { __AiForget(this.handle) }
+
+        int PromptTokens { get { return __AiStat(this.handle, 0) } }
+        // The tokens of the prompt computed so far (for a progress bar).
+        int PromptDone { get { return __AiStat(this.handle, 1) } }
+        int Generated { get { return __AiStat(this.handle, 2) } }
+        int PromptMilliseconds { get { return __AiStat(this.handle, 3) } }
+        int GenerateMilliseconds { get { return __AiStat(this.handle, 4) } }
+        // The option of the last choice that is the most likely (-1: none).
+        int Choice { get { return __AiStat(this.handle, 5) } }
+        // The score (log-probability) of an option of the last choice.
+        float Score(int index) { return __AiScore(this.handle, index) }
+
+        // Waits for the job; the text it produced (an exception when it failed).
+        string Wait() {
+            var text = ""
+            while (this.Busy) {
+                text += this.Take()
+                Sleep(2ms)
+            }
+            text += this.Take()
+            if (this.State == AI.State.Failed) { throw new AI.AIException(this.Error) }
+            return text
+        }
+
+        // The text after `prompt` (waits for it).
+        string Complete(string prompt, AI.Settings settings = undefined) {
+            this.Start(prompt, settings)
+            return this.Wait()
+        }
+
+        // The answer to one question (`system`: the instructions, "" for none).
+        string Ask(string system, string question, AI.Settings settings = undefined) {
+            return this.Complete(AI.Chat.Question(system, question), settings).Trim()
+        }
+
+        // The index of the most likely of `options` after `prompt` (waits for it).
+        int Choose(string prompt, string options[], bool perToken = false) {
+            this.StartChoice(prompt, options, perToken)
+            this.Wait()
+            return this.Choice
+        }
+    }
+}

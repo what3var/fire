@@ -1,0 +1,141 @@
+{
+  "format": 1,
+  "name": "fire-ai",
+  "type": "library",
+  "import": "ai",
+  "standard": true,
+  "settings": {
+    "version": "1.0.0",
+    "author": "fire",
+    "license": "fire",
+    "description": "The standard library 'ai' of fire: a small language model on the CPU (GGUF files: Qwen 2.5, SmolLM, Llama style; Q8_0, Q4_0, F16, F32) - own C, no library."
+  },
+  "native": {
+    "sources": [
+      "native/fire_ai_engine.h",
+      "native/fire_bridge_ai.h"
+    ],
+    "discover": false,
+    "functions": [
+      {
+        "name": "__AiLastError",
+        "returns": "string",
+        "arguments": 0,
+        "needsList": true,
+        "returnsReference": true,
+        "c": "fire_ai_LastError"
+      },
+      {
+        "name": "__AiLoad",
+        "returns": "int",
+        "arguments": 1,
+        "c": "fire_ai_Load"
+      },
+      {
+        "name": "__AiClose",
+        "returns": "bool",
+        "arguments": 1,
+        "c": "fire_ai_Close"
+      },
+      {
+        "name": "__AiModelText",
+        "returns": "string",
+        "arguments": 2,
+        "needsList": true,
+        "returnsReference": true,
+        "c": "fire_ai_ModelText"
+      },
+      {
+        "name": "__AiModelNumber",
+        "returns": "int",
+        "arguments": 2,
+        "c": "fire_ai_ModelNumber"
+      },
+      {
+        "name": "__AiCountTokens",
+        "returns": "int",
+        "arguments": 3,
+        "c": "fire_ai_CountTokens"
+      },
+      {
+        "name": "__AiSessionNew",
+        "returns": "int",
+        "arguments": 3,
+        "c": "fire_ai_SessionNew"
+      },
+      {
+        "name": "__AiGenerate",
+        "returns": "bool",
+        "arguments": 10,
+        "c": "fire_ai_Generate"
+      },
+      {
+        "name": "__AiChoose",
+        "returns": "bool",
+        "arguments": 4,
+        "c": "fire_ai_Choose"
+      },
+      {
+        "name": "__AiState",
+        "returns": "int",
+        "arguments": 1,
+        "c": "fire_ai_State"
+      },
+      {
+        "name": "__AiTake",
+        "returns": "string",
+        "arguments": 1,
+        "needsList": true,
+        "returnsReference": true,
+        "c": "fire_ai_Take"
+      },
+      {
+        "name": "__AiCancel",
+        "returns": "bool",
+        "arguments": 1,
+        "c": "fire_ai_Cancel"
+      },
+      {
+        "name": "__AiError",
+        "returns": "string",
+        "arguments": 1,
+        "needsList": true,
+        "returnsReference": true,
+        "c": "fire_ai_Error"
+      },
+      {
+        "name": "__AiStat",
+        "returns": "int",
+        "arguments": 2,
+        "c": "fire_ai_Stat"
+      },
+      {
+        "name": "__AiScore",
+        "returns": "float",
+        "arguments": 2,
+        "c": "fire_ai_Score"
+      },
+      {
+        "name": "__AiForget",
+        "returns": "bool",
+        "arguments": 1,
+        "c": "fire_ai_Forget"
+      },
+      {
+        "name": "__AiOpenCount",
+        "returns": "int",
+        "arguments": 0,
+        "c": "fire_ai_OpenCount"
+      }
+    ],
+    "reset": "fire_ai_reset",
+    "language": "c",
+    "uses": [
+      "io"
+    ],
+    "platforms": [
+      "posix",
+      "windows"
+    ]
+  }
+}

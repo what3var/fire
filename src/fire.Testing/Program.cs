@@ -41,6 +41,7 @@ if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "linkage") { Linkag
 // FIRE_TESTS_ONLY=bios16: the targets without an operating system (ROADMAP 13.5: the boot sector, a build booted in QEMU)
 if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "bios16") { BiosTests.RunAlone(); return; }
 if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "scene3d") { Scene3DTests.Run(); return; }
+if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "ai") { AiTests.Run(); return; }
 if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "blocks") { BlockModelTests.Run(); return; }
 if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "mesh") { MeshModelTests.Run(); return; }
 if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "diagnostics") { DiagnosticTests.Run(); return; }
@@ -28130,6 +28131,9 @@ else
 
     // Scene3D (packages/scene3d/native/fire_bridge_scene3d.h): the software renderer gives the same pixels in the VM and in the native build (and the hardware renderer, where there is a GPU, a close picture)
     natCases = natCases.Append((Scene3DTests.Name, Scene3DTests.Script)).ToArray();
+
+    // AI (packages/ai/native/fire_ai_engine.h): a tiny model with random weights (AiTests.TinyModel) answers the same in the VM and in the native build
+    natCases = natCases.Append((AiTests.Name, AiTests.Script)).ToArray();
 
     // Audio (packages/audio/native/fire_bridge_audio.h): the simulated device "sim" records what is played - the same in the VM and in the native build
     natCases = natCases.Concat(new (string Name, string Source)[]

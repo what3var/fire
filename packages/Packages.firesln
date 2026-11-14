@@ -19,6 +19,7 @@
     "process/process.fireproj",
     "hash/hash.fireproj",
     "compression/compression.fireproj",
+    "ai/ai.fireproj",
     "tls/tls.fireproj",
     "http/http.fireproj",
     "http.rpc/http.rpc.fireproj",
