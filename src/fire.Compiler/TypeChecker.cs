@@ -186,6 +186,35 @@ namespace fire.Compiler
         private readonly Dictionary<Expr, string[]> _methodTypeArgs;
         private readonly Dictionary<Expr, (TypeRef Type, string What)> _localGuards;
         private readonly Dictionary<Expr, string> _overloadHints;
+        private Dictionary<Expr, string>? _receiverTypeArgs;
+        private HashSet<string>? _specializedClasses;
+
+        /// <summary>A receiver of a class with typed specializations (SPEC 5.8.1) whose type arguments are plain value types or string (`List&lt;int&gt;`):
+        /// noted for the call or index access `at` (ResolveResult.ReceiverTypeArgs).</summary>
+        private void NoteReceiverTypeArgs(Expr at, StaticType receiver)
+        {
+            if (_receiverTypeArgs == null || receiver.Kind != StaticKind.Class || receiver.Class == null || receiver.Args is not { Count: > 0 } args) return;
+            _specializedClasses ??= _classes.Values.Where(cd => cd.Members.Any(m => m is MethodDecl { Specialization: not null })).Select(cd => cd.Name).ToHashSet(StringComparer.Ordinal);
+            if (!_specializedClasses.Contains(receiver.Class)) return;
+            var texts = new List<string>();
+            foreach (var a in args)
+            {
+                string? text = a.Kind switch
+                {
+                    StaticKind.Int when Plain(a) => "int",
+                    StaticKind.Float when Plain(a) => "float",
+                    StaticKind.Bool => "bool",
+                    StaticKind.Char => "char",
+                    StaticKind.String => "string",
+                    _ => null,
+                };
+                if (text == null) return;
+                texts.Add(text);
+            }
+            _receiverTypeArgs[at] = string.Join("|", texts);
+            // (a number without a unit: `List<int>`, not `List<int : cm>`)
+            static bool Plain(StaticType t) => t.Wide == 0 && !t.UnitIsDimension && (t.Unit == null || ReferenceEquals(t.Unit, fire.Values.Unit.Unitless) || t.Unit.IsUnitless && t.Unit.ToString() == "unitless");
+        }
         /// <summary>The declared types of the local variables (by scope, like _scopes): a value whose type does not prove the declaration is checked at runtime.</summary>
         private readonly List<Dictionary<string, TypeRef>> _localTypes = new();
         private readonly Dictionary<int, bool> _strictBySource = new();
@@ -242,6 +271,7 @@ namespace fire.Compiler
                 if (stmt is TypeCheckDirective d) checker._strictBySource[d.Source] = d.Strict;
             checker.CollectInterfaces(program);
             checker._refs = resolved.References;
+            checker._receiverTypeArgs = resolved.ReceiverTypeArgs;
             checker._trees = resolved.Trees;
             checker._scopes.Add(new Dictionary<string, StaticType>());
             checker._program = program;
@@ -2387,6 +2417,7 @@ namespace fire.Compiler
         {
             var target = Infer(ix.Target);
             Infer(ix.Index);
+            NoteReceiverTypeArgs(ix, target);
             if (target.Kind == StaticKind.Array) return target.Element!;
             if (target.Kind == StaticKind.Class && FindMethod(target, "SetIndex", 2, out var map) is { } setter) return DeclaredOrDynamic(setter.Params[1].Type, setter.Params[1].ArrayRanks.Count, map);
             return StaticType.Dynamic;
@@ -2397,6 +2428,7 @@ namespace fire.Compiler
         {
             var target = Infer(ix.Target);
             Infer(ix.Index);
+            NoteReceiverTypeArgs(ix, target);
             Dictionary<string, StaticType>? map = null;
             return target.Kind switch
             {
@@ -3002,6 +3034,7 @@ namespace fire.Compiler
                 else CheckAccess(target, m.Name, MemberUse.Call, c.Args.Count, m.Line);
                 receiverClass = target.Class;
                 calleeTarget = target;
+                if (!staticCall) NoteReceiverTypeArgs(c, target);
                 // the built-in methods of a byte buffer and `ToBytes` of a text: what they give (fire.Standard.BufferMethods)
                 if (BuiltinCallType(target, m.Name, c.Args.Count) is { } builtin) { foreach (var a in c.Args) Infer(a); return builtin; }
                 if (target.Kind == StaticKind.Class)

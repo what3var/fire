@@ -921,6 +921,13 @@ namespace fire.Standard
                     this.items[index] = value
                     if (old != value) { this.DropElement(old) }
                 }
+                // (a number belongs to no one: nothing to take, nothing to drop)
+                undefined operator[]<int>(defined int index, int value) {
+                    this.items[index] = value
+                }
+                undefined operator[]<float>(defined int index, float value) {
+                    this.items[index] = value
+                }
 
                 // removes the element at `index` (the ones behind it move up); the element itself is destroyed only if the list owns it (Owns.Values)
                 undefined RemoveAt(int index) {

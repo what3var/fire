@@ -541,6 +541,7 @@ namespace fire.Compiler
             s_classDecls = resolveResult.Classes;
             s_localGuards = resolveResult.LocalGuards;
             s_overloadHints = resolveResult.OverloadHints;
+            s_receiverTypeArgs = resolveResult.ReceiverTypeArgs;
             s_derivedDefined = resolveResult.DerivedDefined;
             s_derivedReturns = resolveResult.DerivedReturns;
             s_derivedFields = resolveResult.DerivedDefinedFields;
@@ -2494,6 +2495,15 @@ namespace fire.Compiler
         [ThreadStatic] private static Dictionary<Expr, string[]>? s_methodTypeArgs;
         [ThreadStatic] private static Dictionary<Expr, (TypeRef Type, string What)>? s_localGuards;
         [ThreadStatic] private static Dictionary<Expr, string>? s_overloadHints;
+        [ThreadStatic] private static Dictionary<Expr, string>? s_receiverTypeArgs;
+
+        /// <summary>The instruction about to be emitted (a CallMethod, ArrayGet, ArraySet) has a receiver whose type arguments the type checker knows: noted
+        /// by its offset (Chunk.ReceiverTypeArgs).</summary>
+        private void NoteReceiverTypeArgs(Expr at)
+        {
+            if (s_receiverTypeArgs != null && s_receiverTypeArgs.TryGetValue(at, out var text))
+                (_chunk.ReceiverTypeArgs ??= new Dictionary<int, string>())[_chunk.Code.Count] = text;
+        }
         [ThreadStatic] private static HashSet<LambdaParam>? s_derivedDefined;
         [ThreadStatic] private static HashSet<FieldDecl>? s_derivedFields;
         [ThreadStatic] private static HashSet<Stmt.BlockStmt>? s_derivedReturns;
@@ -2935,6 +2945,7 @@ namespace fire.Compiler
                 case IndexExpr ix:
                     CompileExpr(ix.Target);
                     CompileExpr(ix.Index);
+                    NoteReceiverTypeArgs(ix);
                     _chunk.EmitOp(OpCode.ArrayGet);
                     break;
 
@@ -3507,6 +3518,7 @@ namespace fire.Compiler
                 if (call.Awaited) _chunk.EmitOp(OpCode.AwaitReply);   // (in front of the other prefixes: they are looked for right in front of the call)
                 EmitCopyArgsPrefix(callCopyMask);
                 EmitArgNames(call.ArgNames);
+                NoteReceiverTypeArgs(call);
                 _chunk.EmitOp(OpCode.CallMethod);
                 _chunk.EmitU16(_chunk.AddConstant(Value.MakeString(me.Name)));
                 _chunk.EmitByte((byte)call.Args.Count);
@@ -3731,6 +3743,7 @@ namespace fire.Compiler
                     CompileExpr(a.Value);
                     if (MayBeUnclaimed(a.Value)) _chunk.EmitOp(OpCode.ClaimToArray);   // `arr[i] = new X()`: the array owns it (SPEC 2.1)
                 }
+                NoteReceiverTypeArgs(ix);
                 _chunk.EmitOp(OpCode.ArraySet);
                 return;
             }

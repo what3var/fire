@@ -18,6 +18,11 @@ namespace fire.Bytecode
         public List<Value> Constants { get; }
         public List<Unit> Units { get; }
         public List<FunctionProto> Functions { get; }
+
+        /// <summary>The type arguments the type checker knows of the receiver of a call, an index read or write (`List&lt;int&gt;`: "int"), by the byte
+        /// offset of the CallMethod/ArrayGet/ArraySet - only where its class has typed specializations (SPEC 5.8.1). The native backend takes the result
+        /// of the specialization as what it is (a C number); the VM does not need it. Null: none.</summary>
+        public Dictionary<int, string>? ReceiverTypeArgs { get; set; }
         public List<HandlerTemplate> Handlers { get; }
 
         /// <summary>The class whose method/constructor/property accessor

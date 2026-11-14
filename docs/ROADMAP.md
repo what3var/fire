@@ -1177,14 +1177,18 @@ auch eine überschriebene Methode der abgeleiteten Klasse) über Umwege auf das 
 **Umgesetzt** (SPEC 5.8.1): `undefined Add<int>(defined int item)` neben `Add(T item)` in `class List<T>` - gewählt nach den Typargumenten des
 Objekts und den Argumenten (ein `defined`-Parameter nimmt kein undefined; sonst die generische Methode), in der VM bei jedem Aufruf, nativ an der
 Aufrufstelle, wenn die Klasse bekannt ist (Test der Typargumente, dann der C-Rumpf), sonst im Trampolin der generischen Methode. `List<int>` und
-`List<float>` haben `Add`, `operator[]` und `Grow` so. Gemessen (nativ, Release, 1 Mio.): `List<int>.Add` 61 ns → etwa 22 ns (eine Klasse mit
-`defined int items[]` 20 ns).
+`List<float>` haben `Add`, `operator[]` (lesen und schreiben) und `Grow` so.
+
+Kennt der Typprüfer die Typargumente des Empfängers (`List<int> l; l[i]`), steht das in einer Seitentabelle des Chunks (Chunk.ReceiverTypeArgs,
+kein Befehl): nativ ist das Ergebnis von `l[i]` dann eine Zahl (int oder undefined) - der Rückfall auf die generische Methode wird darauf geprüft.
+
+Gemessen (nativ, Release, 1 Mio., die Maschine war belastet - Instruktionen mit callgrind: 856 → 526 Mio. für den ganzen Lauf):
+`List<int>.Add` 61 → etwa 21 ns, `l[i]` 28 → etwa 17 ns, `l[i] = v` etwa 7 ns, `List<float>.Add` etwa 42 → 22 ns (eine Klasse mit
+`defined int items[]`: Add 20 ns, Get 3 ns - dort ist das Ergebnis `defined`, der Aufruf wird eingebettet).
 
 Offen:
 
-* **`list[i]` mit statischem Typargument**: der Generator kennt an der Aufrufstelle nur die Klasse (`List`), nicht `List<int>` - das Ergebnis von
-  `operator[]<int>` bleibt ein `Value`, die Rechnung danach generisch (etwa 25 ns statt 3 ns wie bei einem typisierten Array). Der Typprüfer kennt
-  das Typargument: als Hinweis an der Aufrufstelle (Seitentabelle des Chunks, ohne neuen Befehl) könnte der Generator das Ergebnis als C-Zahl nehmen
-  (Rückfall: generische Methode, Ergebnis geprüft).
-* `operator[]=` (SetIndex) direkt an der Aufrufstelle wie GetIndex; `Dictionary<K, V>`/`HashSet<T>` spezialisieren.
-
+* `l[i]` noch näher an 3 ns: der Test der Typargumente (`targOf_List_0`) als Inline-Vergleich, der Rumpf als `static inline`.
+* `Grow` kopiert Element für Element (etwa 60 Instruktionen je Element): ein Kopieren der gepackten Daten am Stück.
+* Methoden mit Ergebnis (`l.Get(i)`-artig) an der Aufrufstelle wie `l[i]` typisieren (der Hinweis steht schon in der Tabelle).
+* `Dictionary<K, V>`/`HashSet<T>` spezialisieren.

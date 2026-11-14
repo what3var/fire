@@ -21220,6 +21220,13 @@ else
             var lc = new List<int : cm>()
             lc.Add(2m)
             print(sum + " " + li[100] + " " + li.Count + " " + lf[19] + " " + lf[20] + " " + lc[0])
+            li[5] = 77
+            li[6] = nothing
+            lf[0] = 4
+            lf[1] = 2.25
+            List<int> typed = li
+            defined int fromTyped = typed[5] + typed[7]
+            print(li[5] + " " + li[6] + " " + lf[0] + " " + lf[1] + " " + fromTyped)
             """),
         ("Ein Parameter geteilt (param / 2, param % 3) in ein Feld - auch im Konstruktor: das Ergebnis, nicht der Parameter (der Platz war ein Alias der Variable)", """
             class P {

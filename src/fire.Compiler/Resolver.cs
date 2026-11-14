@@ -84,6 +84,10 @@ namespace fire.Compiler
         /// (OpCode.OverloadHint); at run time the arguments are checked against the assumptions and the overload is taken without scoring. Filled by TypeChecker.</summary>
         public Dictionary<Expr, string> OverloadHints { get; } = new(ReferenceEqualityComparer.Instance);
 
+        /// <summary>Calls, index reads and writes whose receiver is a generic class with typed specializations and constant type arguments the type
+        /// checker knows (`List&lt;int&gt; l; l[i]`: "int"); the compiler notes them in Chunk.ReceiverTypeArgs. Filled by TypeChecker.</summary>
+        public Dictionary<Expr, string> ReceiverTypeArgs { get; } = new(ReferenceEqualityComparer.Instance);
+
         /// <summary>Parameters of the program declared `int`/`float` without `defined` that every call gives a number (ROADMAP 13.9, the derivation): the
         /// compiler checks them like `defined` ones - natively they are C numbers. Filled by TypeChecker (TypeChecker.DeriveDefined).</summary>
         public HashSet<LambdaParam> DerivedDefined { get; } = new(ReferenceEqualityComparer.Instance);

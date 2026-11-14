@@ -1081,7 +1081,10 @@ class Box<T> {
 - `T name[]` (a field holding an array of a type parameter) is typed by the type argument at every assignment, like
   `new T[n]`: in a `Box<int>` it holds an array of raw ints. In a specialization the native backend therefore knows the
   element type and reads and writes the elements directly.
-- The standard library uses this: `List<int>` and `List<float>` have `Add`, `operator[]` and their growing specialized.
+- The standard library uses this: `List<int>` and `List<float>` have `Add`, `operator[]` (read and write) and their growing specialized.
+- Where the type checker knows the type arguments of the receiver (`List<int> l; l[i]`), the compiler notes them beside the code (no
+  instruction); natively the result of `l[i]` is then a number - a generic `operator[]` that runs instead (an object whose type arguments
+  differ after all) is checked to give one.
 
 ### 5.9 `switch` statement (with comparison operators)
 

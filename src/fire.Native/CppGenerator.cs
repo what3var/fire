@@ -582,6 +582,39 @@ namespace fire.Native
             return calls;
         }
 
+        /// <summary>The declaration of what a method returns when it is a number or a bool (`int F()`, `defined float F()`): the DeclaredKind its return is
+        /// checked against (the GuardTop in front of each Return); null otherwise.</summary>
+        private static byte? DeclaredReturn(FunctionProto proto)
+        {
+            var code = OpInfo.Decode(proto.Chunk.Code);
+            byte? declared = null;
+            for (int i = 1; i < code.Count; i++)
+            {
+                if (code[i].Op != OpCode.Return) continue;
+                // (the end of the chunk: `undefined` - which a declaration without `defined` lets through anyway)
+                if (code[i - 1].Op == OpCode.LoadConst && proto.Chunk.Constants[code[i - 1].A[0]].Kind == ValueKind.Undefined) continue;
+                if (code[i - 1].Op != OpCode.GuardTop) return null;
+                byte d = (byte)(code[i - 1].A[0] + 1);
+                // (`int F()`: a CheckUnit "unitless" in front - the number is one without a unit after it)
+                if (i >= 2 && code[i - 2].Op == OpCode.CheckUnit && proto.Chunk.Constants[code[i - 2].A[0]].AsString() == "unitless") d |= DeclaredKind.UnitlessBit;
+                if (declared != null && declared != d) return null;
+                declared = d;
+            }
+            // (undefined at the end only counts for a declaration without `defined` - with it the end has its GuardTop)
+            return declared;
+        }
+
+        /// <summary>The static type of a value checked against a declared number kind without a unit, or bool (GuardTop): TypeUnknown for anything else.</summary>
+        private static int DeclaredResultType(byte declared)
+        {
+            byte kind = KindOfDeclared(declared);
+            bool nonNull = DeclaredKind.IsNonNull(declared);
+            if (kind == KindBool) return TypeOf(KindBool, 0) | (nonNull ? 0 : NullableBit);
+            if (kind is not (KindInt or KindFloat) || !DeclaredKind.IsUnitless(declared)) return TypeUnknown;
+            if (kind == KindFloat) return TypeOf(KindFloat, 0) | (nonNull ? 0 : NullableBit);
+            return TypeOf(KindInt, 0) | (nonNull ? (DeclaredKind.KeepsWidth(declared) ? 0 : NarrowBit) : NullableBit | CutBit);
+        }
+
         /// <summary>The text of the SetTypeArgs (for a call) right before a call instruction (a CopyArgs may stand between them), or null.</summary>
         private static string? CallTArgsText(Func f, Instr ins)
         {
@@ -6510,6 +6543,10 @@ namespace fire.Native
                     Need(1);
                     string unitText = Str(ins.A[0]);
                     if (IsNum(K(d - 1)) && TypedAdaptUnit(unitText)) return Next();
+                    // (a number without a unit or undefined - an element of a typed array of ints: what `unitless` demands, undefined passes anyway)
+                    // (`#unitless`, `#any`: a float - one already is; `any`: a number in any unit)
+                    if ((unitText == "unitless" && IsNum(BK(d - 1)) || unitText is "#unitless" or "#any" && BK(d - 1) == KindFloat || unitText == "any" && IsNum(BK(d - 1)))
+                        && IsNullable(Ty(d - 1)) && (Ty(d - 1) & TypeNone) == 0 && (UnitOfType(Ty(d - 1)) == 0 || unitText.EndsWith("any", StringComparison.Ordinal))) { _kindsKept = true; return Next(); }
                     // `p = check(p)` of a prologue (LoadLocal p, CheckUnit, StoreLocal p, Pop) on an alias slot: the check works on the variable itself
                     if (d - 1 < 64 && st.Alias[d - 1] is { } checkedVar && f.IndexOf.TryGetValue(ins.Addr, out int cu) && cu + 2 < f.Decoded.Count
                         && f.Decoded[cu + 1] is { Op: OpCode.StoreLocal } back && f.Decoded[cu + 2].Op == OpCode.Pop
@@ -6896,7 +6933,15 @@ namespace fire.Native
                         KindFloat => setElem == ArrayElem.F64 ? "" : $"{v}.f = (Real)roundFloatToWidth((double){v}.f, {ArrayElem.Bits(setElem)}); ",
                         _ => "",
                     };
-                    E($"{{ Arr* ra_; if (FIRE_LIKELY({kindTest}{a}.kind == K_Array && {i}.kind == K_Int && leafAlive({a}) && (uint64_t){i}.i < (ra_ = arrOf({a}))->length && ra_->typed && ra_->typed->packed && ra_->typed->elem == {setElem})) {{ {convert}arrPackedSet(ra_, (uint32_t){i}.i, {v}); }} else {v} = {Px}aset_g({a}, {i}, {v}, NULL); }}");
+                    // (a whole-width element - int, float: the C store itself, when the number is not the hint of undefined and no element of the array is a
+                    // number with the hint's bits - `real` - which a store would have to unmark; arrPackedSet otherwise)
+                    string put = setElem switch
+                    {
+                        ArrayElem.I64 => $"FireInt cv_ = (FireInt){v}.i; if (FIRE_LIKELY(cv_ != FIRE_INT_UNDEF && !ra_->typed->real)) ((FireInt*)ra_->typed->data)[{i}.i] = cv_; else arrPackedSet(ra_, (uint32_t){i}.i, {v});",
+                        ArrayElem.F64 => $"Real cv_ = {v}.f; if (FIRE_LIKELY(!fire_realIsHint(cv_) && !ra_->typed->real)) ((Real*)ra_->typed->data)[{i}.i] = cv_; else arrPackedSet(ra_, (uint32_t){i}.i, {v});",
+                        _ => $"{convert}arrPackedSet(ra_, (uint32_t){i}.i, {v});",
+                    };
+                    E($"{{ Arr* ra_; if (FIRE_LIKELY({kindTest}{a}.kind == K_Array && {i}.kind == K_Int && leafAlive({a}) && (uint64_t){i}.i < (ra_ = arrOf({a}))->length && ra_->typed && ra_->typed->packed && ra_->typed->elem == {setElem})) {{ {put} }} else {v} = {Px}aset_g({a}, {i}, {v}, NULL); }}");
                     Check();
                     int storedType = Ty(d - 1);
                     E($"{a} = {v};");
@@ -6924,6 +6969,38 @@ namespace fire.Native
                         arms.Append($"({gc.Condition}{idxTest}) ? {call} : ");
                         resultType = JoinTypes(resultType, CAbiOf(gc.Callee) is { RetType: not 0 } rabi ? rabi.RetType : ReturnType(gc.Callee));
                     }
+                    // the type checker knows the type arguments of the receiver (`List<int> l; l[i]`, Chunk.ReceiverTypeArgs): the result is what that
+                    // specialization gives - a C number when it has a C result; the generic operator (an object whose type arguments differ after all) is
+                    // checked to give the same
+                    if (f.Chunk.ReceiverTypeArgs is { } knownArgs && knownArgs.TryGetValue(ins.Addr, out var receiverArgs)
+                        && getCalls.FindIndex(gc => gc.Callee.Proto?.SpecArgs is { } sa && string.Join("|", sa) == receiverArgs) is var hi and >= 0)
+                    {
+                        var hc = getCalls[hi];
+                        string idxTest = (hc.Defined & 1) != 0 && (IsNullable(Ty(d - 1)) || (Ty(d - 1) & TypeNone) != 0 || Ty(d - 1) == TypeUnknown) ? $" && {gidx}.kind != K_Undefined" : "";
+                        string what = $"The result of '[]' of a {GenericClassNames.PlainName(getIndex.Chunk.OwnerClass?.Name ?? "")}<{receiverArgs.Replace("|", ", ")}>";
+                        if (SlotScalars() && CAbiOf(hc.Callee) is { RetType: not 0 } habi && ProvenCArgs(habi, d - 1, 1))
+                        {
+                            string cidx = habi.ParamType[0] == 0 ? gidx : SN(d - 1);
+                            E($"if (FIRE_UNLIKELY(!leafAlive({grecv}))) {grecv} = destroyedError({grecv});");
+                            Check();
+                            string checkedGeneric = CNumberOf(habi.RetType, $"({GuardKindCall($"{generic.Name}({grecv}, {gidx})", CDeclared(habi.RetType), what)})");
+                            d--;
+                            SetScalar(d - 1, habi.RetType, $"({hc.Condition}{idxTest}) ? {CName(hc.Callee)}({grecv}, {cidx}) : {checkedGeneric}");
+                            Check();
+                            return Next();
+                        }
+                        if (DeclaredReturn(hc.Callee.Proto!) is { } declared && DeclaredResultType(declared) is var specType and not TypeUnknown)
+                        {
+                            string checkedGeneric = GuardKindCall($"{generic.Name}({grecv}, {gidx})", declared, what);
+                            string specCall = SlotScalars() && CAbiOf(hc.Callee) is { RetType: 0 } vabi && ProvenCArgs(vabi, d - 1, 1)
+                                ? $"{CName(hc.Callee)}({grecv}, {(vabi.ParamType[0] == 0 ? gidx : SN(d - 1))})" : $"{hc.Callee.Name}({grecv}, {gidx})";
+                            E($"{{ if (FIRE_UNLIKELY(!leafAlive({grecv}))) {grecv} = destroyedError({grecv}); else {grecv} = ({hc.Condition}{idxTest}) ? {specCall} : {checkedGeneric}; }}");
+                            Check();
+                            d--;
+                            AdoptResult(d - 1, specType);
+                            return Next();
+                        }
+                    }
                     E($"{{ if (FIRE_UNLIKELY(!leafAlive({grecv}))) {grecv} = destroyedError({grecv}); else {grecv} = {arms}{generic.Name}({grecv}, {gidx}); }}");
                     Check();
                     d--;
@@ -6932,6 +7009,32 @@ namespace fire.Native
                 }
                 case OpCode.ArrayGet:
                     Need(2); E($"{S(d - 2)} = {Px}aget_g({S(d - 2)}, {S(d - 1)}, &{OwnerList()});"); Check(); d--; SetR(d - 1, true); return Next();
+                case OpCode.ArraySet when ObjSlot(d - 3) && !IsNullable(Ty(d - 3)) && (Ty(d - 3) & TypeNone) == 0 && !(_usesReflection && ReflectionMethodNames.Contains("SetIndex"))
+                    && IsPlainType(Ty(d - 1)) && (Ty(d - 1) & TypeNone) == 0   // (a number, a bool or undefined: nothing to claim for the object)
+                    && DirectMethod(ObjClass(Ty(d - 3)), "SetIndex", 2, f) is { Specializations: { } setSpecs, ParamCount: 2 }:
+                {
+                    // `list[i] = v` on an object of a known class whose `operator[]=` has typed specializations (SPEC 5.8.1): the one for the type arguments
+                    // of the object directly (its C body when the index and the value are proven numbers), otherwise the generic store (aset_g: it claims the
+                    // value for the object and calls the operator through the dispatcher)
+                    Need(3);
+                    string srecv = S(d - 3), sidx = S(d - 2), sval = S(d - 1);
+                    var setCalls = HandSpecCalls(setSpecs, srecv);
+                    var sarms = new StringBuilder();
+                    foreach (var sc in setCalls)
+                    {
+                        string tests = string.Concat(Enumerable.Range(0, 2).Where(k => (sc.Defined >> k & 1) != 0 && (IsNullable(Ty(d - 2 + k)) || (Ty(d - 2 + k) & TypeNone) != 0 || Ty(d - 2 + k) == TypeUnknown))
+                            .Select(k => $" && {S(d - 2 + k)}.kind != K_Undefined"));
+                        string call = SlotScalars() && CAbiOf(sc.Callee) is { } sabi && ProvenCArgs(sabi, d - 2, 2)
+                            ? $"{CName(sc.Callee)}({srecv}{string.Concat(Enumerable.Range(0, 2).Select(k => ", " + (sabi.ParamType[k] == 0 ? S(d - 2 + k) : KindOfType(sabi.ParamType[k]) switch { KindFloat => SF(d - 2 + k), KindWord => SW(d - 2 + k), _ => SN(d - 2 + k) })))})"
+                            : $"{sc.Callee.Name}({srecv}, {sidx}, {sval})";
+                        sarms.Append($"if (leafAlive({srecv}) && {sc.Condition}{tests}) (void){call}; else ");
+                    }
+                    E($"{{ {sarms}{sval} = {Px}aset_g({srecv}, {sidx}, {sval}, &{OwnerList()}); }}");
+                    Check();
+                    E($"{srecv} = {sval};");
+                    SetR(d - 3, R(d - 1)); SetT(d - 3, Ty(d - 1)); _kindsKept = true;
+                    d -= 2; return Next();
+                }
                 case OpCode.ArraySet:
                     Need(3); E($"{S(d - 1)} = {Px}aset_g({S(d - 3)}, {S(d - 2)}, {S(d - 1)}, &{OwnerList()});"); Check(); E($"{S(d - 3)} = {S(d - 1)};"); SetR(d - 3, R(d - 1)); d -= 2; return Next();
                 case OpCode.IncDecIndex:
