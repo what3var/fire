@@ -1245,6 +1245,22 @@ namespace fire.Compiler
                     inner._chunk.EmitOp(OpCode.Pop);
                 }
 
+            // a parameter declared as a typed array or a buffer (`int a[]`, `byte b[]`, `word w[]`): like a variable - an array becomes typed or a buffer,
+            // anything else but undefined is the exception (SPEC 8.4.2); the native generator then knows what it holds
+            for (int i = 0; i < parms.Count; i++)
+                // (one with a unit, `float v[] : m`: its unit check below converts the elements, as before)
+                if (!parms[i].ByRef && parms[i].ArrayRanks.Count > 0 && parms[i].Type?.UnitDemand == null && parms[i].Type?.ArrayWidthCode(parms[i].ArrayRanks.Count) is { } arrayCode and not 0)
+                {
+                    inner._chunk.EmitOp(OpCode.LoadLocal);
+                    inner._chunk.EmitU16(0);
+                    inner._chunk.EmitU16((ushort)i);
+                    EmitWidthIfNeeded(inner, arrayCode);
+                    inner._chunk.EmitOp(OpCode.StoreLocal);
+                    inner._chunk.EmitU16(0);
+                    inner._chunk.EmitU16((ushort)i);
+                    inner._chunk.EmitOp(OpCode.Pop);
+                }
+
             for (int i = 0; i < parms.Count; i++)
                 if (parms[i].ByRef)
                 {

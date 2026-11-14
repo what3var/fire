@@ -162,6 +162,9 @@ namespace fire.Compiler
         /// <summary>A temporary of the statement (`new X()`, the result of a call that gives a new object) goes to a constructor that keeps it in a field
         /// without taking it: it dies at the end of the statement, the field holds a destroyed object (a warning in strict mode too).</summary>
         public const string StoredTemporaryCode = "TC031";
+        /// <summary>An array (not a fresh one) given to a `byte`/`word` parameter: it is converted into a new buffer - what the method writes does not reach
+        /// the array (a warning in strict mode too).</summary>
+        public const string ArrayToBufferCode = "TC032";
         private ExpressionTrees _trees = new();
         private Dictionary<Expr, string>? _treeTypes;
 
@@ -487,7 +490,7 @@ namespace fire.Compiler
         private void Report(string code, string message, int line)
         {
             if (_source < _reportFrom) return;
-            _diagnostics.Add(new Diagnostic(line, message, Strict && code is not (UnitLossCode or AssignInConditionCode or SwitchMissingCode or SetterClaimCode or LateVarTypeCode or TakeIntoCopyCode or StoredTemporaryCode) ? DiagnosticSeverity.Error : DiagnosticSeverity.Warning, code));
+            _diagnostics.Add(new Diagnostic(line, message, Strict && code is not (UnitLossCode or AssignInConditionCode or SwitchMissingCode or SetterClaimCode or LateVarTypeCode or TakeIntoCopyCode or StoredTemporaryCode or ArrayToBufferCode) ? DiagnosticSeverity.Error : DiagnosticSeverity.Warning, code));
         }
 
         /// <summary>The condition of `if`, `while` and `for` must be a bool: a number is no condition (`if (n)`), the VM throws an ArgumentException for it.</summary>
@@ -1325,6 +1328,10 @@ namespace fire.Compiler
                 if (parameter.Type?.LambdaSignature is { IsExpression: true }) continue;   // (an expression tree: the lambda was checked against its shape)
                 var declared = Declared(parameter.Type, parameter.ArrayRanks.Count, map);
                 if (declared is { } target) CheckAssignable(args[i], target, argExprs[i].Line, $"parameter '{parameter.Name}' of '{callee}'", ArgumentCode, argExprs[i]);
+                // (an array of a variable or a field for a `byte`/`word` parameter: it is converted into a new buffer, what the method writes does not reach it)
+                if (declared is { Kind: StaticKind.Array, Element: { Raw: true, Kind: StaticKind.Int or StaticKind.Word } want } && args[i] is { Kind: StaticKind.Array, Element: { } got }
+                    && !(got.Raw && got.Kind == want.Kind) && !IsFreshOrWorded(argExprs[i]))
+                    Report(ArrayToBufferCode, $"The parameter '{parameter.Name}' of '{callee}' is a {(want.Kind == StaticKind.Word ? "word" : "byte")} buffer, the argument an array: the method gets a new buffer with its elements, and what it writes does not reach the array. Pass a buffer (`{(want.Kind == StaticKind.Word ? "word" : "byte")} data[] = ...`, `new {(want.Kind == StaticKind.Word ? "word" : "byte")}[n]`)", argExprs[i].Line);
             }
         }
 
@@ -2616,7 +2623,13 @@ namespace fire.Compiler
                 _implicitCopies = new HashSet<string>(implicitNames);
                 if (_reportedLambdas.Add(lam))
                     foreach (var name in implicitNames)
-                        Report(ImplicitCaptureCode, $"The lambda uses '{name}' of the code around it: it gets a copy of it, made with the lambda - a change does not reach '{name}' outside, and a later change outside is not seen. Write 'taking {name}' where it is used (a copy), 'handover {name}' (moved into the lambda), or bind an object with 'on'.", lam.Line);
+                    {
+                        // (an object or an array: the copy is deep - what the lambda gives back of it belongs to the copy and dies with it, and a copy of an
+                        // object that keeps a resource by its number frees that resource when it dies)
+                        string deep = Lookup(name).Kind is StaticKind.Class or StaticKind.Object or StaticKind.Array or StaticKind.Dynamic
+                            ? " If it holds an object or an array, the copy is deep, with everything it owns: what the lambda gives back of it belongs to the copy and dies with it - pass the object as a parameter of the lambda to use it itself." : "";
+                        Report(ImplicitCaptureCode, $"The lambda uses '{name}' of the code around it: it gets a copy of it, made with the lambda - a change does not reach '{name}' outside, and a later change outside is not seen.{deep} Write 'taking {name}' where it is used (a copy), 'handover {name}' (moved into the lambda), or bind an object with 'on'.", lam.Line);
+                    }
             }
             foreach (var s in lam.Body.Statements) Check(s);
             _implicitCopies = outerCopies;

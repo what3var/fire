@@ -146,7 +146,7 @@ class Framebuffer {
     undefined SetPaletteRgb(defined int index, defined int r, defined int g, defined int b) { this.SetPaletteColor(index, r + g * 256 + b * 65536 + 255 * 16777216) }
     // 768 bytes (R, G, B per entry) or, with withAlpha, 1024 bytes (R, G, B, A)
     any ReadPalette(bool withAlpha = false) { return __GRPHFbReadPalette(this.id, withAlpha) }
-    undefined WritePalette(int data[]) {
+    undefined WritePalette(byte data[]) {
         if (!__GRPHFbWritePalette(this.id, data)) {
             throw new GraphicsException(__GRPHFbLastError())
         }

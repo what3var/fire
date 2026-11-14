@@ -4695,8 +4695,9 @@ namespace fire.Compiler
 
         /// <summary>A token that cannot start a statement and so, at the start of a line, goes on with the expression of the line before (a fluent chain
         /// `.Where(...)` / `?.Name`, a binary operator, the `?` of a condition) - not `++`/`--` (a statement of their own), not `*` (`*p = 1` writes through a
-        /// pointer), not `&` (an address), `!`, `~`, `(`, `[` (they start an expression), `#` (a directive) or an assignment.</summary>
-        private static bool ContinuesAtLineStart(TokenType type) => type is TokenType.Dot or TokenType.QuestionDot or TokenType.QuestionQuestionDot
+        /// pointer), not `&` (an address), `!`, `~`, `(`, `[` (they start an expression), `#` (a directive) or an assignment. In the body of a `with` block a
+        /// `.` at the start of a line is its member (`.x = 10`), a new statement.</summary>
+        private bool ContinuesAtLineStart(TokenType type) => type == TokenType.Dot && _withVarStack.Count == 0 || type is TokenType.QuestionDot or TokenType.QuestionQuestionDot
             or TokenType.And or TokenType.Or or TokenType.Plus or TokenType.Minus or TokenType.Slash or TokenType.Percent or TokenType.Caret or TokenType.Pipe
             or TokenType.Eq or TokenType.NotEq or TokenType.Lt or TokenType.LtEq or TokenType.Gt or TokenType.GtEq or TokenType.Question;
 

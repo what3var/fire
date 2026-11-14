@@ -11,7 +11,7 @@ architecture AND language syntax).
 
 Two statements must be separated by a `;` **or** a line break – if both are missing, that is a parse error (instead of silent misbehavior in which the parser ambiguously keeps reading across a line). The end of a block (`}`) and the end of the file also count as a valid termination, which allows one-line blocks such as `{ return x }`.
 
-Consequence for the parser: every "optional keep reading" decision (binary operators, assignment `=`, the postfix chain including the coercion suffixes `:`/`!`) stops at a line break instead of greedily reaching into the next line. This does not apply inside an open `(` or `[` – multi-line function calls, argument lists and conditions work as usual, because the bracket makes it clear anyway that the expression continues. An expression can still span several lines if the operator is at the **end** of the first line (`var x = a +\n    b`), since parsing the right operand after an already consumed operator is no longer an "optional keep reading" but is mandatory. The same for a token that cannot start a statement at the **start** of the next line: `.`, `?.`, `??.`, the binary operators `+ - / % ^ | == != < <= > >= && || and or` and the `?` of a condition continue the expression of the line before (`Parser.ContinuesAtLineStart`) - fluent chains (`list\n    .Where(...)\n    .Count`). Not so `++`/`--`, `*` (a write through a pointer `*p = 1`), `&`, `!`, `~`, `(`, `[`, `#` and the assignments: they start a statement. A line that starts with a unary `-`/`+` therefore belongs to the statement before.
+Consequence for the parser: every "optional keep reading" decision (binary operators, assignment `=`, the postfix chain including the coercion suffixes `:`/`!`) stops at a line break instead of greedily reaching into the next line. This does not apply inside an open `(` or `[` – multi-line function calls, argument lists and conditions work as usual, because the bracket makes it clear anyway that the expression continues. An expression can still span several lines if the operator is at the **end** of the first line (`var x = a +\n    b`), since parsing the right operand after an already consumed operator is no longer an "optional keep reading" but is mandatory. The same for a token that cannot start a statement at the **start** of the next line: `.`, `?.`, `??.`, the binary operators `+ - / % ^ | == != < <= > >= && || and or` and the `?` of a condition continue the expression of the line before (`Parser.ContinuesAtLineStart`) - fluent chains (`list\n    .Where(...)\n    .Count`). Not so `++`/`--`, `*` (a write through a pointer `*p = 1`), `&`, `!`, `~`, `(`, `[`, `#` and the assignments: they start a statement. A line that starts with a unary `-`/`+` therefore belongs to the statement before. In the body of a `with` block a `.` at the start of a line is the member of the block (`.x = 10`), a new statement.
 
 **Explicit continuation with `_`:** If a lone `_` is the last "word" of a line (optionally followed by a line comment), the following line break is not counted as a statement separator – the next line continues the current statement as if there were no line break. The `_` itself produces no token (it is swallowed by the lexer) and in every other position remains a perfectly normal, valid identifier (e.g. as a variable name).
 
@@ -1901,7 +1901,8 @@ every write through any reference to it (`var d = a; d[0] = 300`, `ref a[i]`, `a
 It becomes typed where it is stored: the declaration's initializer, the automatic allocation (`int a[10]`), a later
 assignment to the variable or field. Its elements are converted then; one that does not fit is the exception. An array
 that is typed already stays as it is if the types agree, an array of another element type is an `ArgumentException`.
-Parameters do not type what they receive. A copy (`copy`, `flat`, `taking`, `sync`) of a typed array is typed.
+A parameter types what it receives the same way (`int a[]`: the array given to it becomes typed, in place - one with an element that does not fit
+is the exception, undefined passes; anything else but an array is the exception). A copy (`copy`, `flat`, `taking`, `sync`) of a typed array is typed.
 Multidimensional declarations (`int m[3][4]`) type the innermost arrays. `var`, `any`, strings, classes and pointers
 declare no element type - such an array takes any value, as before.
 
@@ -1913,8 +1914,9 @@ An `int` element is cut to 8 bits (`300` becomes 44, as `buffer[i] = 300` does),
 an `ArgumentException` (`An element of a byte buffer must be an int, not String.`). A buffer stored there stays as it is.
 Multidimensional `byte` declarations (`byte m[3][4]`, `byte m[][] = [[1], [2, 3]]`) make the innermost arrays buffers (an
 array of buffers). The buffer belongs to the owner of the array it replaces (the scope of a literal, the object of a field,
-the outer array for an inner one). Parameters do not convert (`byte data[]` as a parameter takes whatever is passed - the
-natives of the packages accept arrays of bytes themselves, see below). What a buffer can do differently from an array:
+the outer array for an inner one). A parameter is a declaration like a variable: `byte data[]` converts an array given to it into a new buffer (what the method writes
+does not reach the array - TC032 warns for an array of a variable or a field), a buffer and `undefined` pass, any other value is an
+`ArgumentException` (`A byte buffer is declared here, not String.`; the same for every `byte`/`word` declaration). What a buffer can do differently from an array:
 `length`/`Length`, `[i]`, `foreach`, `copy`/`flat` (byte by byte), `is of IEnumerable` and passing it to natives work the
 same; an element is always an `int` 0..255 - it cannot be `undefined` (a new buffer holds zeros), writing a non-int
 (`x[0] = "a"`, `x[0] = undefined`) is an `ArgumentException`, and a too large int is cut. `print(x)` shows `<buffer 3 bytes>`

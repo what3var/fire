@@ -5927,6 +5927,12 @@ FIRE_FN bool bufFromArray(Value v, int rank, int depth, OwnList* list, Value* ou
     uint32_t i;
     char text[120];
     *out = v;
+    /* (a `byte`/`word` declaration holds a buffer, an array that becomes one, or nothing - like `int a[]` holds an array; the VM: BufferFromArrayValue) */
+    if (v.kind != K_Array && v.kind != K_Buffer && v.kind != K_Undefined) {
+        snprintf(text, sizeof text, "A %s buffer is declared here, not %s.", words ? "word" : "byte", coerceKindName(v.kind));
+        fireError("ArgumentException", text);
+        return false;
+    }
     if (v.kind != K_Array || !leafAlive(v) || depth > 64) return true;
     a = arrOf(v);
     if (depth < rank) {
@@ -10138,7 +10144,6 @@ FIRE_FN void stillEnter(void) { if (g_isFire) { fire_atomic_add(&g_idleThreads, 
 FIRE_FN void stillLeave(void) { if (g_isFire) fire_atomic_add(&g_idleThreads, (uint32_t)-1); }
 /* (set by mainFinish when the threads that are left stand still: a fire thread that waits in `process` for an empty mailbox then ends like with `leave`) */
 extern FIRE_RT_DATA fire_atomic32 g_standstill;
-fire_atomic32 g_fdWaiters;
 extern FIRE_RT_DATA fire_atomic32 g_fdWaiters;   /* (the threads that wait for a socket - counted in g_idleThreads too) */
 FIRE_FN Value fire_fd_wait(Value fdv, Value ev, Value msv) {
 #ifdef FIRE_FD_POLL
@@ -12380,6 +12385,7 @@ ChanNode* g_mainChans = NULL;
 fire_mutex g_mainChansM;
 fire_atomic32 g_idleThreads;
 fire_atomic32 g_standstill;
+fire_atomic32 g_fdWaiters;
 int64_t g_endWaitMs = 60000;
 #ifdef FIRE_NO_GIL
 fire_mutex g_targsM;

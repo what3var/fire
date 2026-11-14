@@ -34,7 +34,8 @@ print(a + b + c)
 A statement continues on the next line when the line ends with an operator or a `.`, when the next line starts with a `.`, `?.`, a binary operator
 (`+ - / % ^ | == != < <= > >= && || and or`) or the `?` of a condition, or while a `(` or `[` is open. Not at the start of a line: `++`/`--` (a statement
 of their own), `*` (`*p = 1` writes through a pointer), `&`, `!`, `~`, `(`, `[`, `#` and assignments - they start a new statement. So a line that starts
-with `-` or `+` belongs to the statement before (`int y = 10` and `-1` on the next line is `y = 9`).
+with `-` or `+` belongs to the statement before (`int y = 10` and `-1` on the next line is `y = 9`). In a `with` block a `.` at the start of a line is the member of
+the block (`.x = 10`) and starts a statement - a chain there goes on with the `.` at the end of the line.
 
 ```fire
 var total = 1 +

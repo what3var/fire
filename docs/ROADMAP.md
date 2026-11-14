@@ -32,6 +32,7 @@ Leitlinien:
 | 7 | [Mess-Werkzeug für Größe, Speicher und Typisierung](#16-mess-werkzeug-für-größe-speicher-und-typisierung) | 11, 13 | Entscheidungen über kleine Ziele (DOS: 640 KB) auf Zahlen statt Schätzungen stützen |
 | 7 | [Kleine und alte Ziele](#13-kleine-und-alte-ziele) (Zeigerarten, typisierte Arrays, `#intwidth 32` umgesetzt) | 0, 9 | Mikrocontroller, DOS, Win 3.x, Win9x, NT 3.51-XP: Speicher pro Wert, Breiten, neue Plattformen |
 | 8 | [Scene3D für Spiele](#16-scene3d-für-spiele) | 13 (Ziele, Breiten), 11 (Weglassen) | Spiele bis hinunter auf DOS: Größe zuerst, dann Terrain, Modelle, Animation, Effekte, Physik |
+| 3 | [Volle Qualifikation mit dem Importnamen](#18-volle-qualifikation-mit-dem-importnamen) | - | zwei Bibliotheken mit derselben Klasse auf oberster Ebene (spätestens bei JSON) sind heute nicht auseinanderzuhalten |
 
 **Arbeitsreihenfolge (Entscheidung des Benutzers, nach Tasks Schritt 8):**
 
@@ -1105,3 +1106,21 @@ Ausgangswerte (von Hand gemessen, Beispiel "Scene3D Physics", dos16, Watcom `-Os
 C-Bibliothek 65 KB, FAR_DATA 48 KB. Ein Value von 8 statt 16 Byte (nur übersetzt, nicht lauffähig) spart 24 KB (3 %); ohne gezählte Aufruftiefe 27 KB, der
 C-ABI greift dann bei 3 von 227 Funktionen. Heap nach 200 Bildern: 32 fire-Objekte mit 103 Value-Slots (1,6 KB), 0 gepackte Bytes - bei 2,4 MB Heap
 insgesamt (davon 1 MB Framebuffer, der Rest Engine und Laufzeit).
+
+## 18. Volle Qualifikation mit dem Importnamen
+
+Zwei Bibliotheken (Pakete, Projekte), die beide eine Klasse oder ein Enum gleichen Namens auf oberster Ebene haben (spätestens bei JSON: `Json`,
+`Parser`, `Value`), lassen sich heute nicht zusammen benutzen. Gewünscht: der Importname gehört zur vollen Qualifikation - `Raser.Core.Info`,
+`Json.Parser` - so dass die Deklarationen auf oberster Ebene auseinandergehalten werden können.
+
+Entwurf:
+
+* Eine Deklaration einer Bibliothek außerhalb jedes `namespace` liegt in einem impliziten Namensraum mit dem Importnamen der Bibliothek; eine,
+  die schon in einem Namensraum liegt, der mit dem Importnamen beginnt, bleibt, wie sie ist (`namespace Raser.Core { ... }` wird nicht doppelt).
+* `#import "X"` macht die Namen von X außerdem kurz erreichbar (wie ein `#using X`). Haben zwei importierte Bibliotheken denselben kurzen Namen,
+  ist er mehrdeutig: ein Fehler, der beide vollen Namen nennt (der eigene Code und die Bibliothek selbst finden ihre eigenen Namen zuerst, wie bei
+  Namensräumen heute).
+* Folgen, die mitgehen müssen: die Namen in Meldungen, Reflection (`Type.Of`, `Reflect.New("...")`), JSON-Typnamen, die C-Namen im nativen
+  Backend und in den Modulen (Linkage static), der Editor (Vervollständigung, Hover). Die Standardpakete behalten ihre Namen (sie sind
+  `standard`: ihre Deklarationen bleiben global), damit `Framebuffer`, `DateTime` usw. sich nicht ändern.
+

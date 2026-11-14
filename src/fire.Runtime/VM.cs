@@ -7783,6 +7783,13 @@ namespace fire.Runtime
         /// stays) - `value` is unchanged then.</summary>
         private bool BufferFromArrayValue(ref Value value, ScriptArray? outer, int rank, int depth, bool words = false)
         {
+            // (a `byte`/`word` declaration holds a buffer, an array that becomes one, or nothing - like `int a[]` holds an array: anything else is the
+            // exception, the same text natively)
+            if (value.Kind is not (ValueKind.Array or ValueKind.Buffer or ValueKind.Undefined))
+            {
+                ThrowArgumentError($"A {(words ? "word" : "byte")} buffer is declared here, not {value.Kind}.");
+                return false;
+            }
             if (value.Kind != ValueKind.Array) return true;
             var array = value.AsArray();
             if (array.IsDestroyed || depth > 64) return true;   // (a destroyed array is reported where it is used)
