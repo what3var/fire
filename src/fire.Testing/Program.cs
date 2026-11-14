@@ -27849,6 +27849,35 @@ else
                     print("tls iconnection " + (v is of Net.IConnection) + " " + iv.RemoteHost + " " + (iv.RemotePort == port) + " " + (iv.LocalPort == v.LocalPort) + " " + v.LocalHost + " " + iv.ReadTimeout + " " + (sv is of Net.IConnection))
                     v.Close()
                     """),
+                ("Https/AppServer: der TLS-Handshake im Task der Verbindung - ein Client, der nie handshaket, haelt den naechsten nicht auf", tlsHead + """
+                    var probe = new Net.TcpListener("127.0.0.1", 0)
+                    int port = trust probe.Port
+                    probe.Close()
+                    fire {
+                        var server = new Http.AppServer("127.0.0.1", port)
+                        server.UseTls(certPem, keyPem)
+                        server.PushTo((new Http.Routes()).Map("GET", "/hello", func (Http.Context ctx) => "secure hello"))
+                        while (server.Connections < 3) { server.AcceptOne(10000) }
+                        Sleep(1500)
+                        server.Close()
+                    }
+                    Sleep(400)
+                    // (a client that connects and never makes its handshake: the server's accepting task does not wait for it)
+                    var stall = new Net.TcpClient("127.0.0.1", port)
+                    Sleep(200)
+                    var o = new Tls.Options()
+                    o.caPem = certPem
+                    var client = new Http.Client()
+                    client.timeout = 10000
+                    client.tls = o
+                    var before = DateTime.UtcNow.Ticks
+                    var r = client.Get("https://localhost:" + port + "/hello")
+                    var ms = (DateTime.UtcNow.Ticks - before) / 10000
+                    print(r.status + " [" + r.Text() + "] at once " + (ms < 3000))
+                    var r2 = client.Get("https://localhost:" + port + "/hello")
+                    print("again " + r2.status)
+                    stall.Close()
+                    """),
                 ("Https: Client und Server ueber TLS (https://-URL, Zertifikat des Tests, Zertifikatsfehler)", tlsHead + """
                     var probe = new Net.TcpListener("127.0.0.1", 0)
                     var port = probe.Port
@@ -28517,6 +28546,102 @@ else
             }
             print("connections " + server.Connections)
             server.Close()
+            """),
+        ("WebSocket permessage-deflate: ausgehandelt (Client bietet an, Server stimmt zu), Text und Bytes komprimiert hin und zurueck, kleine Nachrichten unkomprimiert, ohne Angebot unkomprimiert", """
+            #import "http"
+            #import "time"
+            class Echo : Http.IWebSocketHandler {
+                construct() { }
+                undefined Serve(Http.WebSocket ws) {
+                    while (true) {
+                        var m = ws.Receive()
+                        if (m == undefined) { break }
+                        if (m.binary) { ws.SendBytes(m.data) } else { ws.Send("echo(" + ws.Compressed + "): " + m.Text()) }
+                    }
+                }
+            }
+            var probe = new Net.TcpListener("127.0.0.1", 0)
+            int port = trust probe.Port
+            probe.Close()
+            fire {
+                var server = new Http.AppServer("127.0.0.1", port)
+                server.PushTo(new Http.WebSockets("/ws", new Echo()))
+                server.PushTo((new Http.Routes()).Map("GET", "/", func (Http.Context ctx) => Http.Response.FromHtml("<html><body>ws</body></html>")))
+                while (server.Connections < 2) { server.AcceptOne(30000) }
+                Sleep(500)
+                server.Close()
+            }
+            Sleep(300)
+            var ws = Http.WebSocket.Connect("ws://127.0.0.1:" + port + "/ws")
+            print("agreed " + ws.Compressed)
+            var long = "abc"
+            while (long.Length < 5000) { long = long + " the same words again" }
+            ws.Send("hi")
+            print(ws.ReceiveText(5000))
+            ws.Send(long)
+            var back = ws.ReceiveText(5000)
+            print("long " + back.Length + " " + back.EndsWith("again"))
+            var bytes = new byte[3000]
+            for (var i = 0; i < 3000; i++) { bytes[i] = i % 7 }
+            ws.SendBytes(bytes)
+            var b = ws.Receive(5000)
+            print("bytes " + b.data.length + " " + b.data[2999])
+            ws.Close()
+            var plain = Http.WebSocket.Connect("ws://127.0.0.1:" + port + "/ws", 10000, undefined, false)
+            plain.Send(long)
+            print("plain " + plain.Compressed + " " + plain.ReceiveText(5000).Length)
+            plain.Close()
+            """),
+        ("Http.Files: mehrere Bereiche (multipart/byteranges, Suffix, ausserhalb weggelassen, alle ausserhalb 416), If-Range, Map (Datei aus einem Lambda; ausserhalb des Ordners, versteckt, fehlend: 404)", """
+            #import "http"
+            #import "time"
+            #import "filesystem"
+            var www = IO.Path.Combine(IO.Path.GetTempPath(), "fire-files-" + DateTime.UtcNow.Ticks)
+            IO.Directory.CreateDirectory(IO.Path.Combine(www, "rel"))
+            IO.Directory.CreateDirectory(IO.Path.Combine(www, ".secret"))
+            IO.File.WriteAllText(IO.Path.Combine(www, "data.txt"), "0123456789abcdefghij")
+            IO.File.WriteAllText(IO.Path.Combine(www, "rel/v1.zip"), "v1 zip")
+            IO.File.WriteAllText(IO.Path.Combine(www, ".secret/x.txt"), "nope")
+            var probe = new Net.TcpListener("127.0.0.1", 0)
+            int port = trust probe.Port
+            probe.Close()
+            fire {
+                var server = new Http.AppServer("127.0.0.1", port)
+                var files = new Http.Files(taking www)
+                files.Map("/download/*", func (Http.Request r) => "rel/" + r.Query("v", "v0") + ".zip")
+                files.Map("/sneaky", func (Http.Request r) => "../../etc/passwd")
+                files.Map("/hidden", func (Http.Request r) => ".secret/x.txt")
+                server.PushTo(files)
+                while (server.Connections < 9) { server.AcceptOne(10000) }
+                Sleep(500)
+                server.Close()
+            }
+            Sleep(300)
+            var c = new Http.Client()
+            var site = "http://127.0.0.1:" + port
+            var h = new Http.Headers()
+            h.Set("Range", "bytes=2-4,10-12,-3")
+            var m = c.Get(site + "/data.txt", h)
+            print(m.status + " " + m.headers.Get("Content-Type").StartsWith("multipart/byteranges; boundary="))
+            string boundary = m.headers.Get("Content-Type").Substring(31)
+            print(m.Text().Replace(boundary, "B").Replace("\r\n", "|"))
+            var h1 = new Http.Headers()
+            h1.Set("Range", "bytes=5-")
+            var one = c.Get(site + "/data.txt", h1)
+            print(one.status + " " + one.headers.Get("Content-Range") + " [" + one.Text() + "]")
+            var h2 = new Http.Headers()
+            h2.Set("Range", "bytes=50-60,70-")
+            print("outside " + c.Get(site + "/data.txt", h2).status)
+            var h3 = new Http.Headers()
+            h3.Set("Range", "bytes=0-1")
+            h3.Set("If-Range", "\"other\"")
+            print("if-range " + c.Get(site + "/data.txt", h3).status)
+            var d = c.Get(site + "/download/x?v=v1")
+            print("mapped " + d.status + " [" + d.Text() + "]")
+            print("mapped missing " + c.Get(site + "/download/x").status)
+            print("sneaky " + c.Get(site + "/sneaky").status + " hidden " + c.Get(site + "/hidden").status)
+            print("plain " + c.Get(site + "/data.txt").Text())
+            IO.Directory.Delete(www, true)
             """),
         ("Http.Files: wwwroot 1:1 - index.html, Endung weggelassen, MIME, ETag (304), Range (206, Suffix, 416), HEAD; nie .fire, Punkt-Dateien, .. (auch kodiert), POST geht weiter", """
             #import "http"
@@ -30595,6 +30720,130 @@ else
                 out = out + "other session " + (ws2.ReceiveText(5000) == undefined) + " " + ws2.CloseCode + "\n"
                 var ws3 = Http.WebSocket.Connect("ws://127.0.0.1:" + port + "/_fire/ws?c=00000000000000000000000000000000", 5000, h)
                 out = out + "no such page " + (ws3.ReceiveText(5000) == undefined) + " " + ws3.CloseCode + "\n"
+                ws.Close()
+                sync global { log = out; done = 1 }
+            }
+            while (done < 1) { server.AcceptOne(20ms); sync globals }
+            print(log)
+            server.Close()
+            """),
+        ("Http.Pages: Hover (ein Trigger auf Hover - der Browser meldet Kommen und Gehen, die Farbe geht hin und zurueck) und Kontextmenue (Rechtsklick: das Menue des Elements oder seiner Vorfahren, Untermenue, die Aktion; danach geschlossen)", """
+            #import "http.pages"
+            #import "ui"
+            [Page "/menu"]
+            class MenuPage {
+                UI.Panel view
+                UI.Label status
+                UI.Button go
+                construct() {
+                    this.view = new UI.Panel(0, 0, 300, 200)
+                    var stack = new UI.StackPanel(0, 0, -1, -1)
+                    var label = new UI.Label("ready", 0, 0)
+                    var menu = new List()
+                    menu.Add(new UI.MenuItem("Copy", func () on this => { this.status.Text = "copied" }))
+                    var more = new UI.MenuItem("More")
+                    more.items.Add(new UI.MenuItem("Deep", func () on this => { this.status.Text = "deep" }))
+                    menu.Add(take more)
+                    label.contextMenu = take menu
+                    stack.Add(label)
+                    this.status = label
+                    var button = new UI.Button("Go", 0, 0)
+                    var style = new UI.Style("Button")
+                    var hover = new UI.Trigger("Hover", true)
+                    hover.Set("Background", new SolidBrush(UI.Color.Rgb(255, 0, 0)))
+                    style.AddTrigger(take hover)
+                    button.Style = take style
+                    stack.Add(button)
+                    this.go = button
+                    this.view.Add(stack)
+                }
+            }
+            var server = new Http.AppServer("127.0.0.1", 0)
+            server.PushTo(new Http.Sessions()).PushTo(new Http.Pages("Menu"))
+            int port = server.Port
+            int done = 0
+            string log = ""
+            fire taking port {
+                var c = new Http.Client()
+                var r = c.Get("http://127.0.0.1:" + port + "/menu")
+                var html = r.Text()
+                var cookie = r.Header("Set-Cookie").Substring(0, 45)
+                var at = html.IndexOf("data-circuit=\"") + 14
+                var circuit = html.Substring(at, 32)
+                var out = "marks " + (html.IndexOf("data-cm=\"1\"") >= 0) + " " + (html.IndexOf("data-hv=\"1\"") >= 0) + "\n"
+                var h = new Http.Headers()
+                h.Set("Cookie", cookie)
+                var ws = Http.WebSocket.Connect("ws://127.0.0.1:" + port + "/_fire/ws?c=" + circuit, 5000, h)
+                ws.Send("{\"e\": 3, \"k\": \"hover\", \"v\": true}")
+                out = out + "enter " + ws.ReceiveText(5000) + "\n"
+                ws.Send("{\"e\": 3, \"k\": \"hover\", \"v\": false}")
+                out = out + "leave " + ws.ReceiveText(5000) + "\n"
+                ws.Send("{\"e\": 2, \"k\": \"ctx\", \"x\": 10, \"y\": 20}")
+                out = out + "menu " + ws.ReceiveText(5000) + "\n"
+                ws.Send("{\"e\": 2, \"k\": \"cmenu\", \"v\": \"c/1/0\"}")
+                out = out + "deep " + ws.ReceiveText(5000) + "\n"
+                ws.Send("{\"e\": 2, \"k\": \"cmenu\", \"v\": \"c/0\"}")
+                out = out + "after the menu closed " + ws.ReceiveText(300) + "\n"
+                ws.Close()
+                sync global { log = out; done = 1 }
+            }
+            while (done < 1) { server.AcceptOne(20ms); sync globals }
+            print(log)
+            server.Close()
+            """),
+        ("Http.Pages: [Vector] - ein DrawingCanvas geht als seine Zeichenbefehle (Rechteck, Linie, Kreis, Text) und wird im Browser auf einem canvas abgespielt; nach einem Klick die neuen Befehle; ein anderer Canvas bleibt PNG", """
+            #import "http.pages"
+            #import "ui"
+            #import "time"
+            [Page "/draw"]
+            class DrawPage {
+                UI.Panel view
+                [Vector] UI.DrawingCanvas canvas
+                UI.DrawingCanvas picture
+                int clicks = 0
+                construct() {
+                    this.view = new UI.Panel(0, 0, 400, 300)
+                    var stack = new UI.StackPanel(0, 0, -1, -1)
+                    var c = new UI.DrawingCanvas(0, 0, 120, 80)
+                    c.OnPaint = func (UI.DrawingCanvas dc) on this => {
+                        var r = dc.renderer
+                        r.ClearTo(0xFFFFFFFF)
+                        r.FillRect(10, 10, 40 + this.clicks * 10, 20, new SolidBrush(0xFF0000FF))
+                        r.DrawLine(0, 79, 119, 0, new Pen(0xFF00AA00, 2))
+                        r.FillCircle(90, 50, 15, new SolidBrush(0xFFFF0000))
+                        r.DrawText(4, 60, "n=" + this.clicks, new SolidBrush(0xFF000000))
+                    }
+                    c.OnMouseDown = func (int x, int y, int b) on this => {
+                        this.clicks = this.clicks + 1
+                        this.canvas.Invalidate()
+                    }
+                    stack.Add(c)
+                    this.canvas = c
+                    var p = new UI.DrawingCanvas(0, 0, 40, 40)
+                    p.OnPaint = func (UI.DrawingCanvas dc) => { dc.renderer.ClearTo(0xFF00FF00) }
+                    stack.Add(p)
+                    this.picture = p
+                    this.view.Add(stack)
+                }
+            }
+            var server = new Http.AppServer("127.0.0.1", 0)
+            server.PushTo(new Http.Sessions()).PushTo(new Http.Pages("Draw"))
+            int port = server.Port
+            int done = 0
+            string log = ""
+            fire taking port {
+                var cl = new Http.Client()
+                var r = cl.Get("http://127.0.0.1:" + port + "/draw")
+                string html = r.Text()
+                string cookie = r.Header("Set-Cookie").Substring(0, 45)
+                int at = html.IndexOf("data-circuit=\"") + 14
+                string circuit = html.Substring(at, 32)
+                var out = "canvas " + (html.IndexOf("<canvas data-k=\"draw\"") >= 0) + " png " + (html.IndexOf("<img data-k=\"draw\"") >= 0) + " ops " + (html.IndexOf("[[&quot;c&quot;,4294967295],[&quot;fr&quot;,10,10,40,20,4278190335]") >= 0) + "\n"
+                var h = new Http.Headers()
+                h.Set("Cookie", cookie)
+                var ws = Http.WebSocket.Connect("ws://127.0.0.1:" + port + "/_fire/ws?c=" + circuit, 5000, h)
+                ws.Send("{\"e\": 2, \"k\": \"mouse\", \"t\": \"down\", \"x\": 5, \"y\": 5, \"b\": 1}")
+                out = out + "click " + ws.ReceiveText(5000) + "\n"
                 ws.Close()
                 sync global { log = out; done = 1 }
             }

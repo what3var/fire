@@ -82,7 +82,7 @@ server.Run()                                                    // until Stop() 
 
 | class | |
 |---|---|
-| `Http.AppServer(host, port, backlog = 128)` | `PushTo(router)` (the server owns it; returns the server), `Use(func (Http.Context ctx, Http.Next next) => ...)` (a `LambdaRouter`), `UseTls(certPem, keyPem)` (the handshake runs in the accepting task), `Run()` (until `Stop()` or the token of the running task: `await server.Run() until source.Token`), `AcceptOne(timeout)` (accepts one connection and starts its task; true if one came), `Port`, `Connections`, `Settings`, `Close()` |
+| `Http.AppServer(host, port, backlog = 128)` | `PushTo(router)` (the server owns it; returns the server), `Use(func (Http.Context ctx, Http.Next next) => ...)` (a `LambdaRouter`), `UseTls(certPem, keyPem)` (the handshake runs in the task of the connection: a client that never completes it does not hold up the others), `Run()` (until `Stop()` or the token of the running task: `await server.Run() until source.Token`), `AcceptOne(timeout)` (accepts one connection and starts its task; true if one came), `Port`, `Connections`, `Settings`, `Close()` |
 | `Http.ServerSettings` | `readTimeout` (10 s, every read and write inside a request), `keepAlive` (5 s an idle connection waits for its next request), `maxRequests` (1000 per connection), `maxBodyBytes` (1 MiB), `serverName` |
 | `Http.IRouter` | `Http.Response Handle(Http.Context ctx, Http.Next next)`: answer, or `next.Invoke(ctx)` and maybe change its answer |
 | `Http.Next` | `Invoke(ctx)`: the answer of the rest of the chain (404 when nothing is left) |
@@ -107,8 +107,14 @@ server.PushTo(new Http.Files("wwwroot", "/", true).CacheFor(3600))   // the fold
 `Http.Files(root, prefix = "/", omitExtensions = false)` is a link of the chain: the path of a GET or HEAD request maps 1:1 to a file under the folder
 (`prefix` is the part of the path that maps to it, e.g. `"/static"`); a folder answers with its `index.html` (or `index.htm`); what is not there goes on to
 the next link. The body is streamed from the file, with `Content-Type` from the extension (`Http.Mime.Of`), `ETag` and `Last-Modified` (a request with
-`If-None-Match` or `If-Modified-Since` gets a 304), `Accept-Ranges` and one range (`bytes=5-9`, `bytes=-3`: 206 with `Content-Range`; outside the file 416);
-`CacheFor(seconds)` adds `Cache-Control: max-age`.
+`If-None-Match` or `If-Modified-Since` gets a 304), `Accept-Ranges` and ranges: one (`bytes=5-9`, `bytes=-3`: 206 with `Content-Range`, streamed from
+the file) or several (`bytes=0-1,10-12`: 206 `multipart/byteranges`, each part with its `Content-Range`; a range outside the file is left out, all
+outside: 416; more than 16: the whole file); `If-Range` with the ETag or the date asks for the range only when the file is that one. `CacheFor(seconds)`
+adds `Cache-Control: max-age`.
+
+`Map(pattern, func (Http.Request r) => path)` names the file for the paths of a pattern (`"/download/*"`, `"/logo"`) with a lambda - a path under the
+folder, or undefined to go on (`files.Map("/v/*", func (Http.Request r) => "releases/" + r.Query("v", "latest") + ".zip")`). The maps come before the
+plain paths and keep their rules: inside the folder, no part with a dot at its start, no sources of fire.
 
 Never served: a path with `..` (also percent-encoded), a backslash, a colon or a part that starts with a dot (`.git`, `.env`), anything that resolves outside
 the folder, and the sources of fire (`.fire`, `.fxml`, `.fireproj`, `.firesln`). A symbolic link inside the folder is followed (the file system API cannot
@@ -217,7 +223,10 @@ ws.Close()
 * `Http.WebSocket`: `Send(text)`, `SendBytes(bytes)`, `Ping()`, `Receive(timeout = -1)` (the next `Http.WebSocketMessage` - `IsText`, `Text()`, `data`; pings are
   answered and fragments joined on the way; undefined when the other side closed it, or when `timeout` ms ran out - then `IsOpen` is still true),
   `ReceiveText(timeout)`, `Close(code = 1000, reason)`, `IsOpen`, `CloseCode`, `maxMessageBytes` (16 MiB; a longer message closes with 1009).
-  `Http.WebSocket.Connect(url, timeout, headers)` is the client (it masks its frames, the server does not). `Http.Base64.Encode(bytes)`.
+  `Http.WebSocket.Connect(url, timeout, headers, compress = true)` is the client (it masks its frames, the server does not). `Http.Base64.Encode(bytes)`.
+* **Compression** (permessage-deflate, RFC 7692): the client offers it, the server agrees (`Compression(false)` on `Http.WebSockets` says no), every
+  message on its own (no context takeover in either direction - nothing is kept between messages); a message of 64 bytes or more goes compressed
+  (`ws.compressFrom`), smaller ones as they are. `ws.Compressed` says whether it was agreed. Browsers offer it: tried with Chromium.
 * The handler is a copy for every connection, like every router. What several connections share (a chat room) is an actor that the handlers send to.
 
 ### Pages: `#import "http.pages"`
@@ -254,6 +263,10 @@ server.Run()
   `Image` is its `Source` as a PNG (`Stretch` as `object-fit`); a new picture is sent when another framebuffer is set.
 * **Drawing:** a `DrawingCanvas` paints on the server (its `OnPaint`, its framebuffer) and goes to the browser as a PNG image (`<img>`); a new picture is sent
   when it changed (a checksum). Pointer down, move (at most every 30 ms while pressed) and up on it are its `OnMouseDown`, `OnMouseMove`, `OnMouseUp`.
+  With `[Vector]` on the field of the canvas (or `browser.Vector(canvas)` later) it goes as its **drawing calls** instead: the renderer records them
+  (`Renderer.Recording`, in pixels) and the browser replays them on a `<canvas>` - rectangles, ellipses and circles, lines, paths and polygons, rounded
+  rectangles, points, text (in the browser's fonts: monospace for the console font), clipping. Less to send for a big canvas or one that changes often;
+  a frame with a call the browser cannot replay (an image, a blur, a shadow, a material, a flood fill) goes as a PNG.
 * **The way between socket and circuit:** when the browser connects, its WebSocket makes a `Channel.Pair` and hands the circuit the other end
   (an in-process channel - `Net.Channel` is the same between programs). The events go in on it, the circuit's answers and pushes come out on it; the
   socket ends it when it closes, and the circuit ends with it.
@@ -283,4 +296,8 @@ server.Run()
   browser's: Ctrl+S does not save the page). `browser.Focus(element)` gives an element the focus from the server, `browser.OnKey(func (int key, int mod)
   => ...)` gets every key of the page first (true: taken), e.g. for shortcuts:
   `this.browser.OnKey(func (int key, int mod) on this => { if (UI.Keys.Shortcut(mod) && key == 115) { this.Save(); return true }; return false })`.
-* Not yet: hover and the pointer events of elements other than a DrawingCanvas, context menus, drawing as commands instead of pictures.
+* **Hover:** an element whose style or template has a trigger on `Hover` (`new UI.Trigger("Hover", true)`) is marked; the browser says when the pointer
+  comes and goes (only for those), the server sets `Hover` and the trigger's values go out as a patch (a colour comes back when it ends).
+* **Context menus:** an element with a `contextMenu` (a list of `UI.MenuItem`) - or one inside it - gets its menu on a right click: the server sends the rows,
+  the browser shows them where the pointer is (submenus on hover, Escape or a click elsewhere closes it), the choice runs the row's `Activate`.
+* Not yet: the pointer events of elements other than a DrawingCanvas.
