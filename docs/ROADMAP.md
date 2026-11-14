@@ -1163,3 +1163,11 @@ Offen:
   `Dictionary<K, V>` ihre inneren Arrays deklarieren statt `any`.
 * Mehrdimensional (`Dog grid[][]`), JSON, Reflection, `copy`/`taking` wie bei den Zahlen-Arrays; Meldungen in VM und nativ gleich.
 
+## 20. `defined` für Felder herleiten: Basisklassen
+
+**Umgesetzt** (SPEC 8.10b): ein Feld der Klassen des Programms, dem jede Zuweisung eine Zahl gibt, wird wie `defined` übersetzt; eines ohne
+Initialisierer nur, wenn jeder Konstruktor es als Erstes setzt (vor jedem Aufruf und jedem Lesen) und die Klasse **keine Basisklasse** hat.
+
+Offen (Wunsch des Benutzers, später): auch Klassen mit Basisklasse zulassen - dafür prüfen, ob der Konstruktor der Basisklasse (und was er aufruft,
+auch eine überschriebene Methode der abgeleiteten Klasse) über Umwege auf das Feld zugreift, bevor der eigene Konstruktor es gesetzt hat.
+

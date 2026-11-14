@@ -21179,7 +21179,7 @@ else
             print(s + " " + l.count + " " + l.items.length + " " + o.items)
             try { print(l.Get(500)) } catch (Exception e) { print("out of range") }
             """),
-        ("defined fuer Felder herleiten: jede Zuweisung gibt eine Zahl (auch ohne Initialisierer, dann ab 0); == undefined, ein Wert, der undefined sein kann, und nie geschriebene Felder halten es auf", """
+        ("defined fuer Felder herleiten: jede Zuweisung gibt eine Zahl (ohne Initialisierer: jeder Konstruktor setzt es zuerst); == undefined, ein Wert, der undefined sein kann, und nie geschriebene Felder halten es auf", """
             class Counter {
                 int count
                 int step = 2
@@ -21187,9 +21187,11 @@ else
                 int lazy
                 int maybe = 1
                 int never
-                construct() { this.count = 0 }
+                int late
+                construct() { this.count = 0; total = 0.0; Counter.Twice(1); late = 1 }
                 undefined Add(int x) {
                     count++
+                    late++
                     this.total = this.total + x * 0.5
                     step = step + Counter.Twice(x)
                 }
@@ -21203,7 +21205,7 @@ else
             var c = new Counter()
             c.Add(3)
             c.Add(4)
-            print(c.count + " " + c.step + " " + c.total + " " + c.Lazy() + " " + c.never)
+            print(c.count + " " + c.step + " " + c.total + " " + c.Lazy() + " " + c.never + " " + c.late)
             c.Forget(undefined)
             print(c.maybe)
             """),
@@ -33421,7 +33423,7 @@ else
                 // fields derived `defined` (#117): every write gives a number - the field is compiled like a `defined` one (one without an initializer starts at 0);
                 // one the program asks for undefined, one that may get undefined and one nothing writes are not; FIRE_INFER_UNINITIALIZED_DEFINED=0 keeps the ones without an initializer
                 {
-                    string fieldSrc = "class C {\n    int count\n    int step = 2\n    int lazy\n    int maybe = 1\n    int never\n    construct() { count = 0 }\n    undefined Add(int x) { count++; step = step + x }\n    int Lazy() { if (lazy == undefined) { lazy = 1 } return lazy }\n    undefined Set(any v) { maybe = v }\n}\nvar c = new C()\nc.Add(2)\nc.Set(3)\nprint(c.count + c.step + c.Lazy() + c.maybe)";
+                    string fieldSrc = "class C {\n    int count\n    int step = 2\n    int lazy\n    int maybe = 1\n    int never\n    int late\n    construct() { count = 0; Tick(); late = 1 }\n    undefined Tick() { }\n    undefined Add(int x) { count++; step = step + x }\n    int Lazy() { if (lazy == undefined) { lazy = 1 } return lazy }\n    undefined Set(any v) { maybe = v }\n}\nvar c = new C()\nc.Add(2)\nc.Set(3)\nprint(c.count + c.step + c.Lazy() + c.maybe)";
                     bool Defined(fire.Bytecode.RuntimeClass rc, string f) => fire.Bytecode.DeclaredKind.IsNonNull(rc.FindFieldRequiredKind(f));
                     var fieldRc = new Linker().CompileAndLink(new[] { fieldSrc }, null, null, VmExecutionMode.Release).Program.Classes["C"];
                     string before = Environment.GetEnvironmentVariable("FIRE_INFER_UNINITIALIZED_DEFINED") ?? "";
@@ -33430,9 +33432,9 @@ else
                     try { strictRc = new Linker().CompileAndLink(new[] { fieldSrc }, null, null, VmExecutionMode.Release).Program.Classes["C"]; }
                     finally { Environment.SetEnvironmentVariable("FIRE_INFER_UNINITIALIZED_DEFINED", before.Length == 0 ? null : before); }
                     var debugRc = new Linker().CompileAndLink(new[] { fieldSrc }, null, null, VmExecutionMode.Debug).Program.Classes["C"];
-                    string fieldStates = string.Join(" ", new[] { "count", "step", "lazy", "maybe", "never" }.Select(f => f + "=" + Defined(fieldRc, f) + "/" + Defined(strictRc, f) + "/" + Defined(debugRc, f)));
-                    CheckNat("defined fuer Felder herleiten: count (ohne Initialisierer) und step sind defined, lazy (== undefined), maybe (any) und never (nie geschrieben) nicht; FIRE_INFER_UNINITIALIZED_DEFINED=0 laesst count aus, ein Debug-Build leitet nichts her",
-                        fieldStates == "count=True/False/False step=True/True/False lazy=False/False/False maybe=False/False/False never=False/False/False", fieldStates);
+                    string fieldStates = string.Join(" ", new[] { "count", "step", "lazy", "maybe", "never", "late" }.Select(f => f + "=" + Defined(fieldRc, f) + "/" + Defined(strictRc, f) + "/" + Defined(debugRc, f)));
+                    CheckNat("defined fuer Felder herleiten: count (ohne Initialisierer, der Konstruktor setzt es zuerst) und step sind defined, lazy (== undefined), maybe (any), never (nie geschrieben) und late (erst nach einem Aufruf gesetzt) nicht; FIRE_INFER_UNINITIALIZED_DEFINED=0 laesst count aus, ein Debug-Build leitet nichts her",
+                        fieldStates == "count=True/False/False step=True/True/False lazy=False/False/False maybe=False/False/False never=False/False/False late=False/False/False", fieldStates);
                 }
                 // elements of typed arrays (ROADMAP: as direct as a buffer): a defined array is read with one load into a C number, a C number is stored in place
                 {

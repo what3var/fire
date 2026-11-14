@@ -446,7 +446,7 @@ namespace fire.Compiler
                     if (member is not FieldDecl fd) continue;
                     bool candidate = decl.Source >= _firstUserSource && !decl.IsRecord && fd.ArrayRanks.Count == 0
                         && fd.Type is { NonNull: false, PointerDepth: 0, ArrayRank: 0, LambdaSignature: null, TypeArgs: null, BaseName: "int" or "float" or "bool" }
-                        && (fd.Initializer == null ? InferUninitializedDefined : IsConstantValue(fd.Initializer));
+                        && (fd.Initializer == null ? InferUninitializedDefined && SetBeforeRead(decl, fd) : IsConstantValue(fd.Initializer));
                     if (candidate) { (_fieldCands.TryGetValue(fd.Name, out var list) ? list : _fieldCands[fd.Name] = new List<FieldDecl>()).Add(fd); _fieldOwner[fd] = className; }
                     // (a field of that name that may hold undefined: a read of the name on an object of an unknown class proves nothing)
                     else if (fd.Type is not { NonNull: true }) _otherFieldNames.Add(fd.Name);
@@ -454,6 +454,47 @@ namespace fire.Compiler
             return _fieldCands;
         }
         private string FieldKey(FieldDecl fd) => "fld:" + _fieldOwner[fd] + "." + fd.Name;
+
+        /// <summary>A field without an initializer whose undefined nobody can see: every constructor of its class sets it first - among its leading simple
+        /// statements (assignments and local declarations whose values call nothing, hand out no `this` and do not read the field), so no method, no `x++`
+        /// and no other read comes before. Not for a static field, a class with a base class (its constructor may call an override) or one without a
+        /// constructor, nor when the initializer of another field reads it.</summary>
+        private bool SetBeforeRead(ClassDecl decl, FieldDecl fd)
+        {
+            if (fd.IsStatic || decl.BaseRefs?.Any(b => _classes.ContainsKey(NameOf(b))) == true) return false;
+            var ctors = decl.Members.OfType<ConstructorDecl>().ToList();
+            if (ctors.Count == 0) return false;
+            bool Mentions(object? node)
+            {
+                var nodes = new List<object>();
+                AstNames.Walk(node, nodes);
+                return nodes.Any(n => n is IdentifierExpr id && id.Name == fd.Name || n is MemberExpr m && m.Name == fd.Name);
+            }
+            bool Simple(Expr? e)
+            {
+                if (e == null) return true;
+                var nodes = new List<object>();
+                AstNames.Walk(e, nodes);
+                return !nodes.Any(n => n is CallExpr or NewExpr or ThisExpr or BaseExpr or LambdaExpr or AwaitOnExpr)
+                    && !nodes.Any(n => n is IdentifierExpr id && id.Name == fd.Name || n is MemberExpr m && m.Name == fd.Name);
+            }
+            if (decl.Members.OfType<FieldDecl>().Any(other => !ReferenceEquals(other, fd) && other.Initializer != null && Mentions(other.Initializer))) return false;
+            foreach (var ctor in ctors)
+            {
+                if (ctor.BaseArgs != null && ctor.BaseArgs.Any(Mentions)) return false;
+                bool set = false;
+                foreach (var stmt in ctor.Body.Statements)
+                {
+                    if (stmt is ExprStmt { Expression: AssignExpr a } && Simple(a.Value)
+                        && (a.Target is IdentifierExpr tid && tid.Name == fd.Name || a.Target is MemberExpr { Target: ThisExpr } tm && tm.Name == fd.Name)) { set = true; break; }
+                    if (stmt is ExprStmt { Expression: AssignExpr other } && Simple(other.Value) && other.Target is IdentifierExpr or MemberExpr { Target: ThisExpr }) continue;
+                    if (stmt is VarDeclStmt local && Simple(local.Initializer)) continue;
+                    break;
+                }
+                if (!set) return false;
+            }
+            return true;
+        }
         /// <summary>A bare name that is a field of `this` or a static field of the class (ResolvedRef).</summary>
         private bool IsFieldRef(IdentifierExpr id) => _refs.TryGetValue(id, out var r) && r is ResolvedRef.ImplicitThisMember or ResolvedRef.StaticMember && !IsLocal(id.Name);
 
