@@ -3517,7 +3517,7 @@ namespace fire.Runtime
                     if (!AdaptFieldUnit(ref value, requiredUnitName)) return false;
                 }
                 byte requiredKind = obj.RtClass?.FindFieldRequiredKind(fieldName) ?? 0;
-                if (!GuardFieldKind(ref value, requiredKind, fieldName)) return false;
+                if (!GuardFieldKind(ref value, requiredKind, fieldName, obj.RtClass)) return false;
                 string? requiredType = obj.RtClass?.FindFieldRequiredType(fieldName);
                 if (!GuardFieldType(ref value, requiredType, fieldName, obj)) return false;
                 if (obj.RtClass?.FindFieldRequiredArray(fieldName) is { } requiredArray and not 0)
@@ -3641,7 +3641,7 @@ namespace fire.Runtime
                 }
             }
             byte requiredKind = oi.RtClass?.FindFieldRequiredKind(fieldName) ?? 0;
-            if (!GuardFieldKind(ref value, requiredKind, fieldName)) return;
+            if (!GuardFieldKind(ref value, requiredKind, fieldName, oi.RtClass)) return;
             string? requiredType = oi.RtClass?.FindFieldRequiredType(fieldName);
             if (!GuardFieldType(ref value, requiredType, fieldName, oi)) return;
             if (oi.RtClass?.FindFieldRequiredArray(fieldName) is { } requiredArray and not 0)
@@ -7263,7 +7263,7 @@ namespace fire.Runtime
                 && rc.FindFieldRequiredKind(field.FieldName) is var kind and not 0 && DeclaredKind.IsNonNull(kind))
             {
                 if (rc.FindFieldRequiredUnit(field.FieldName) is { } unit && !AdaptFieldUnit(ref value, unit)) return false;
-                if (!GuardFieldKind(ref value, kind, field.FieldName)) return false;
+                if (!GuardFieldKind(ref value, kind, field.FieldName, rc)) return false;
             }
             try { ptr.AsPointer().Write(value); return true; }
             catch (PointerRangeException ex) { ThrowPointerRange(ex); return false; }
@@ -7581,8 +7581,8 @@ namespace fire.Runtime
         private void ThrowConditionError(Value condition) => ThrowArgumentError($"A condition must be a bool, not {condition.Kind}.");
 
         /// <summary>A field declared int/float/bool takes a value of that kind or undefined (DeclaredKind); false: an ArgumentException is thrown.</summary>
-        private bool GuardFieldKind(ref Value value, byte requiredKind, string fieldName) =>
-            DeclaredKind.Fits(value, requiredKind) || GuardDeclared(ref value, requiredKind, $"Field '{fieldName}'");
+        private bool GuardFieldKind(ref Value value, byte requiredKind, string fieldName, RuntimeClass? rc = null) =>
+            DeclaredKind.Fits(value, requiredKind) || GuardDeclared(ref value, requiredKind, rc?.FieldWhat(fieldName) ?? $"Field '{fieldName}'");
 
         /// <summary>A field declared as a typed array (FieldInfo.RequiredArray) holds an array of that element or undefined: the array is typed like by OpCode.TypeArray;
         /// false: the ArgumentException is thrown.</summary>

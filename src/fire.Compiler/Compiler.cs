@@ -1032,6 +1032,7 @@ namespace fire.Compiler
                                 RequiredType = fd.ArrayRanks.Count == 0 ? DeclaredTypeOf(fd.Type, rc) : null,
                                 RequiredArray = fd.Type?.ArrayWidthCode(fd.ArrayRanks.Count) is var arrayCode and not 0 && (arrayCode & 0xFF) is not (fire.Values.ArrayElem.U8 or fire.Values.ArrayElem.Word)
                                     ? (ushort)(arrayCode & 0xFFFF) : (ushort)0,
+                                DerivedDefined = !ReferenceEquals(fd, declaredField),
                                 ArrayOfParam = !fd.IsStatic && fd.ArrayRanks.Count == 1 && fd.Type is { ArrayRank: 0, PointerDepth: 0, TypeArgs: null, Unit: null } elemType
                                     && TypeArgText(elemType, rc, null, 0) is ['$', ..] arrayParam && !arrayParam.EndsWith('@') ? arrayParam : null,
                                 IsStatic = fd.IsStatic,
@@ -1378,7 +1379,8 @@ namespace fire.Compiler
                 inner._chunk.EmitOp(OpCode.GuardLocal);
                 inner._chunk.EmitU16((ushort)i);
                 inner._chunk.EmitByte((byte)((kind & 0x7F) - 1 | kind & DeclaredKind.UnitlessBit));
-                inner._chunk.EmitU16(inner._chunk.AddConstant(Value.MakeString($"Parameter '{parms[i].Name}'")));
+                bool derived = !ReferenceEquals(declared, parms[i].Type) && parms[i].Type is { NonNull: false };
+                inner._chunk.EmitU16(inner._chunk.AddConstant(Value.MakeString(derived ? RuntimeClass.DerivedParameterWhat(parms[i].Name) : $"Parameter '{parms[i].Name}'")));
                 inner._chunk.EmitU16(unit == null ? (ushort)0xFFFF : inner._chunk.AddConstant(Value.MakeString(unit)));
             }
 

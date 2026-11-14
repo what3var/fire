@@ -21275,6 +21275,25 @@ else
             try { Reflect.Set(r, "data", "text"); print(r.data) } catch (Exception e) { print("E " + e.message) }
             print(Json.Serialize(a))
             """),
+        ("Hergeleitetes defined mit Reflection: Reflect.Call/Reflect.Set gehen durch die Pruefung, mit der der Parameter/das Feld uebersetzt ist - der Typ bleibt strikt, undefined wird mit der Herleitung gemeldet; JSON haelt die Herleitung der Felder auf", """
+            #import "reflection"
+            class C {
+                int count = 0
+                construct() { }
+                undefined Bump(int by) { this.count = this.count + by }
+                int Twice(int x) { return x * 2 }
+            }
+            var c = new C()
+            c.Bump(2)
+            print(c.Twice(4) + " " + Reflect.Call(c, "Twice", [7]))
+            try { Reflect.Call(c, "Bump", ["drei"]) } catch (ArgumentException e) { print("T1 " + e.message) }
+            try { Reflect.Call(c, "Bump", [1.5]) } catch (ArgumentException e) { print("T2 " + e.message) }
+            try { Reflect.Call(c, "Bump", [undefined]) } catch (ArgumentException e) { print("T3 " + e.message) }
+            try { Reflect.Set(c, "count", "x") } catch (ArgumentException e) { print("T4 " + e.message) }
+            try { Reflect.Set(c, "count", undefined) } catch (ArgumentException e) { print("T5 " + e.message) }
+            Reflect.Set(c, "count", 10)
+            print(c.count + " " + Reflect.Get(c, "count"))
+            """),
         ("JsonObject.Set uebernimmt, was dem Aufruf gehoert (take, neu erzeugt), auch aus einem inneren Block und ueber vier Eintraege hinaus; ein zerstoertes Objekt beim Schreiben ist eine DestroyedException, kein stilles null", """
             #import "json"
             var root = new JsonObject()

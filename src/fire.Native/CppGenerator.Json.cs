@@ -163,7 +163,7 @@ namespace fire.Native
         }
 
         /// <summary>The kind of a `defined` field for JsonFieldInfo.defined (SPEC 8.10b), "0" for any other.</summary>
-        private static string DefinedKindOf(byte declared) => declared != 0 && DeclaredKind.IsNonNull(declared) ? KindConstant(declared) : "0";
+        private static string DefinedKindOf(byte declared, bool derived = false) => declared != 0 && DeclaredKind.IsNonNull(declared) ? KindConstant(declared) + (derived ? " | 0x80" : "") : "0";
 
         /// <summary>The JSON row of a class (a JsonClassInfo) and the table of its fields (written to <paramref name="sb"/> as <paramref name="fieldTable"/>). A plugin
         /// (<paramref name="unitFixups"/>): the table is not const and the units of its fields are set when the plugin is registered (the program's numbers).</summary>
@@ -178,7 +178,7 @@ namespace fire.Native
             if (rows.Count > 0)
             {
                 sb.AppendLine($"static {(unitFixups != null ? "" : "const ")}JsonFieldInfo {fieldTable}[] = {{" + string.Join(", ", rows.Select(f =>
-                    $"{{{CString(f.JsonName)}, {Math.Max(0, FieldPlace(rc, rc.FieldIndex[f.Name]).Slot)}, {CString(f.Type)}, {(unitFixups != null ? 0 : UnitId(f.Unit))}, {(rc.FindFieldRequiredUnit(f.Name) == null ? rc.FindFieldRequiredArray(f.Name) : 0)}, {DefinedKindOf(rc.FindFieldRequiredKind(f.Name))}, {RawPlaceOf(rc, rc.FieldIndex[f.Name])}, {FieldPlace(rc, rc.FieldIndex[f.Name]).Half}}}")) + ", {NULL, 0, NULL, 0, 0, 0, 0, 0, -1}};");
+                    $"{{{CString(f.JsonName)}, {Math.Max(0, FieldPlace(rc, rc.FieldIndex[f.Name]).Slot)}, {CString(f.Type)}, {(unitFixups != null ? 0 : UnitId(f.Unit))}, {(rc.FindFieldRequiredUnit(f.Name) == null ? rc.FindFieldRequiredArray(f.Name) : 0)}, {DefinedKindOf(rc.FindFieldRequiredKind(f.Name), DerivedFieldNames.Contains(f.Name) && rc.FieldWhat(f.Name) != $"Field '{f.Name}'")}, {RawPlaceOf(rc, rc.FieldIndex[f.Name])}, {FieldPlace(rc, rc.FieldIndex[f.Name]).Half}}}")) + ", {NULL, 0, NULL, 0, 0, 0, 0, 0, -1}};");
                 if (unitFixups != null)
                     for (int j = 0; j < rows.Count; j++)
                         if (UnitId(rows[j].Unit) is var u and not 0) unitFixups.Add($"{fieldTable}[{j}].unit = {UnitC(u)};");

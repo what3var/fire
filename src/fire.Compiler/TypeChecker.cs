@@ -388,7 +388,7 @@ namespace fire.Compiler
                     string key = MethodKey(m.Name, m.Params.Count);
                     (decls.TryGetValue(key, out var list) ? list : decls[key] = new List<MethodDecl>()).Add(m);
                     bool number = m.ReturnType is { PointerDepth: 0, ArrayRank: 0, LambdaSignature: null, TypeArgs: null, BaseName: "int" or "float" };
-                    if (decl.Source < _firstUserSource || !number || foreign!.Contains(key) || foreign.Contains("*") || _unseenNames.Contains(m.Name) || _stringLiterals.Contains(m.Name)
+                    if (decl.Source < _firstUserSource || !number || foreign!.Contains(key) || foreign.Contains("*") || _unseenNames.Contains(m.Name)
                         || CalledByTheLanguage.Contains(m.Name) || !_returns.TryGetValue(m, out var r) || !r.Ends && m.ReturnType is not { NonNull: true })
                         blocked.Add(key);
                 }
@@ -431,7 +431,9 @@ namespace fire.Compiler
             {
                 if (member is MethodDecl m)
                 {
-                    if (_unseenNames.Contains(m.Name) || _stringLiterals.Contains(m.Name) || CalledByTheLanguage.Contains(m.Name) || m.Name.StartsWith("operator", StringComparison.Ordinal)) { DeriveLog?.Invoke($"{name}.{m.Name}: reached unseen (name used as a value, a string, by the language or by a call not resolved)"); continue; }
+                    // (a name in a string - `Reflect.Call(o, "Scale", [..])` - does not count: such a call goes through the check the derived parameter is
+                    // compiled with, and undefined there is the ArgumentException that names the derivation, RuntimeClass.DerivedParameterWhat)
+                    if (_unseenNames.Contains(m.Name) || CalledByTheLanguage.Contains(m.Name) || m.Name.StartsWith("operator", StringComparison.Ordinal)) { DeriveLog?.Invoke($"{name}.{m.Name}: reached unseen (name used as a value, by the language or by a call not resolved)"); continue; }
                     string key = MethodKey(m.Name, m.Params.Count);
                     if (foreign.Contains(key) || foreign.Contains("*")) { DeriveLog?.Invoke($"{name}.{m.Name}: overrides or implements one of a package or the prelude"); continue; }
                     yield return (key, m.Params);

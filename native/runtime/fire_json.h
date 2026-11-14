@@ -1190,10 +1190,11 @@ static Value jsBuildInstance(JsReader* r, JsNode* o, const char* type, OwnList* 
      * name ends the table) */
     for (m = 0; c->fields && c->fields[m].name; m++) {
         const JsonFieldInfo* df = &c->fields[m];
+        uint8_t dk = (uint8_t)(df->defined & 0x7F);   /* (0x80: derived `defined`, FieldInfo.DerivedDefined) */
         if (!df->defined) continue;
         if (df->raw) continue;   /* (a packed field starts at zero anyway) */
-        jsFieldStore(obj, df->slot, df->half, df->defined == K_Int ? Int(0, df->unit) : df->defined == K_Float ? Float((Real)0, df->unit) : df->defined == K_Bool ? Bool(false)
-            : df->defined == K_Word ? WordV(0) : Char(0));
+        jsFieldStore(obj, df->slot, df->half, dk == K_Int ? Int(0, df->unit) : dk == K_Float ? Float((Real)0, df->unit) : dk == K_Bool ? Bool(false)
+            : dk == K_Word ? WordV(0) : Char(0));
     }
     for (m = 0; m < o->nmembers; m++) {
         JsMember* member = &o->members[m];
@@ -1213,8 +1214,9 @@ static Value jsBuildInstance(JsReader* r, JsNode* o, const char* type, OwnList* 
         /* (`defined int a[]`: 0x40 beside the element type - its elements are never undefined, ArrayElem.DefinedFlag) */
         if (field->arr && !J->failed && v.kind == K_Array) typeArray(v, (uint8_t)(field->arr & 0x3F), field->arr >> 8, 0, (uint8_t)((field->arr & 0x40) ? TU_DEFINED : 0), Undef(), 1);
         if (field->defined && !J->failed && v.kind == K_Undefined) {
-            jsFail(J, jsCat3(J, jsCat3(J, path, ".", key), field->defined == K_Int ? " is an int" : field->defined == K_Float ? " is a float" : field->defined == K_Word ? " is a word"
-                : field->defined == K_Char ? " is a char" : " is a bool", " and never undefined."), "ArgumentException");
+            uint8_t fk = field->defined & 0x7F;
+            jsFail(J, jsCat3(J, jsCat3(J, path, ".", key), fk == K_Int ? " is an int" : fk == K_Float ? " is a float" : fk == K_Word ? " is a word"
+                : fk == K_Char ? " is a char" : " is a bool", (field->defined & 0x80) ? " and never undefined (derived: nothing in the program stores undefined in it)." : " and never undefined."), "ArgumentException");
             break;
         }
         if (field->raw) jsRawStore(o2, field->raw, field->rawOff, v);

@@ -2824,7 +2824,11 @@ namespace fire.Native
         }
 
         /// <summary>The check of a field declared int/float/bool in its setter (DeclaredKind, fire_rt guardKind).</summary>
-        private string FieldKindCheck(string name, byte kind) => $"x = {GuardKindCall("x", kind, $"Field '{name}'")};";
+        private string FieldKindCheck(string name, byte kind) => $"x = {GuardKindCall("x", kind, DerivedFieldNames.Contains(name) ? RuntimeClass.DerivedFieldWhat(name) : $"Field '{name}'")};";
+        private HashSet<string>? _derivedFieldNames;
+        /// <summary>The names of fields the type checker derived `defined` (FieldInfo.DerivedDefined): their checks say why undefined does not go in.</summary>
+        private HashSet<string> DerivedFieldNames => _derivedFieldNames ??= _program.Program.Classes.Values
+            .SelectMany(rc => rc.OwnFieldInfo.Where(kv => kv.Value.DerivedDefined).Select(kv => kv.Key)).ToHashSet(StringComparer.Ordinal);
         /// <summary>A field declared as a typed array (FieldInfo.RequiredArray): what is assigned is typed like by OpCode.TypeArray ("" for any other field).</summary>
         private string FieldArrayCheck(RuntimeClass rc, string name, string? obj = null) => rc.FindFieldRequiredArray(name) is var arr and not 0
             ? $"typeArray(x, {ArrayElem.TypeOf(arr)}, {arr >> 8}, {TypeArrayUnitArgsOf(rc.FindFieldRequiredUnit(name), arr)}, 1);"

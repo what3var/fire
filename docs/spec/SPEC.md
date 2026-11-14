@@ -2453,12 +2453,15 @@ front of the type it **never holds `undefined`**: a parameter, a field, a proper
   a word of its own only there (a variable may still be called `defined`). Of an array (`defined int a[]`) it says that
   the elements are never undefined (8.4.2); not for a pointer or a type argument (`List<defined int>` is an error). `int!` is an error
   that names `defined int`. Overloads do not differ by `defined` alone.
-* **Derived for fields** (not in a debug build, nor with `#import "reflection"`; `FIRE_NO_DERIVE=1` switches all derivation off): a field of a
+* **Derived for fields** (not in a debug build; `FIRE_NO_DERIVE=1` switches all derivation off): a field of a
   class of the program declared `int`, `float` or `bool` without `defined` is compiled as a `defined` one when every write the type checker sees
   gives a number (or the result of a method, a parameter or another field that is derived itself) and none can write it unseen (`&`, a `ref`
   argument, `with`, `Json.Deserialize` in the program). With a number literal as initializer it keeps it; one without an initializer only when its `undefined` cannot
   be seen: every constructor of its class (no base class) sets it among its first plain statements - before any call, `this` handed out or read of
   it - and the program does not ask for it (`== undefined`, `is of`, `?.` on the name); it starts at 0 then. `FIRE_INFER_UNINITIALIZED_DEFINED=0` leaves out the fields without an initializer; `FIRE_DERIVE_LOG=1` shows the decisions.
+  With `#import "reflection"` too: `Reflect.Set` and `Reflect.Call` (on a derived parameter) check the declared kind as always and `undefined`
+  as for `defined`, and the `ArgumentException` says so: "Field 'count' (derived as never undefined: nothing in the program stores undefined in it)
+  is an int and never undefined." A `null` from JSON for such a field adds the same note.
 
 **The type checker** (docs/spec/TYPES.md) knows what is certainly defined - a literal, what an operator computes (an
 undefined operand throws), a `defined` declaration, a call of a method with a `defined` return value - and what may be

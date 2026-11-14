@@ -203,10 +203,13 @@ instructions (more fused ones, or registers instead of the stack) - a step of it
   like those of `defined` declarations (GuardLocal with the non-null bit, the return kind), so the VM checks them and the native backend passes C
   numbers. Each resolved call notes per parameter whether its argument is defined - or what it depends on: the returns of the method it is the result
   of (`ret:name/arity`) or a parameter of the calling method that its body never assigns; each method notes the same for its returns, and whether its
-  last statement returns or throws. A greatest fixpoint over these dependencies decides. Excluded: a name a call could not be resolved for, used as a
-  value or written as a string; a method that overrides or implements one of a package or the prelude; the methods the language calls itself
+  last statement returns or throws. A greatest fixpoint over these dependencies decides. Excluded: a name a call could not be resolved for or used as a
+  value (a name in a string - `Reflect.Call(o, "Scale", [..])` - does not exclude: such a call goes through the check the parameter is compiled with); a method that overrides or implements one of a package or the prelude; the methods the language calls itself
   (`GetIndex`, `CompareTo`, ...); the constructors of base classes and of classes a `new` was not resolved for. The Linker switches the derivation
-  off for a program that imports `reflection`, writes class metadata (a plugin) or is a debug build. A value that may be undefined going into a `defined` parameter,
+  off for a program that writes class metadata (a plugin), has imports of its own or is a debug build - not for `reflection`: `Reflect.Set`/`Reflect.Call`
+  check the declared kind (strict, as before) and `undefined`, and the message names the derivation ("Parameter 'by' (derived as never undefined:
+  every call in the program gives a value) is an int and never undefined.", RuntimeClass.DerivedParameterWhat/DerivedFieldWhat). `Json.Deserialize`
+  in the program still keeps the fields from being derived (reading JSON runs no initializers; a field missing from the text would be 0, not its initializer). A value that may be undefined going into a `defined` parameter,
   field, property, variable or return value is `TC022` (a warning in lax mode, an error in strict mode); it is checked at run time either way.
 * **Assignability.** `int` -> `float` is implicit (coerced). Everything converts implicitly to `string` (a `ToString` like in C#). Anything else between known types is a conflict.
 * **Units** (step 4): if both types are known and only the unit is not, the site is a *unit adaptation* `b = AdaptUnit(a, targetUnit)` with three outcomes: same unit -> `a` unchanged;
