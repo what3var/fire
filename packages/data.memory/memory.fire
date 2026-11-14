@@ -66,11 +66,15 @@ namespace Data {
         string name
         List columns         // Data.MemColumn
         List rows            // any[] per row
+        List checks          // Data.MemNode: the CHECK conditions of the columns and the table
+        List checkTexts      // their text (for the message)
         int nextId
         construct(string name) {
             this.name = name
             this.columns = new List()
             this.rows = new List()
+            this.checks = new List()
+            this.checkTexts = new List()
             this.nextId = 1
         }
         int IndexOf(string column) {
@@ -105,8 +109,23 @@ namespace Data {
                 any row = this.rows[i]
                 t.rows.Add(copy row)
             }
+            for (var i = 0; i < this.checks.Count; i++) {
+                Data.MemNode c = this.checks[i]
+                t.checks.Add(copy c)
+                t.checkTexts.Add(this.checkTexts[i])
+            }
             t.nextId = this.nextId
             return t
+        }
+    }
+
+    /// <summary>A view: its name and its SELECT (run each time the view is read).</summary>
+    class MemView {
+        string name
+        string sql
+        construct(string name, string sql) {
+            this.name = name
+            this.sql = sql
         }
     }
 
@@ -126,9 +145,19 @@ namespace Data {
     class MemStore {
         List tables          // Data.MemTable
         List indexes         // Data.MemIndex
+        List views           // Data.MemView
         construct() {
             this.tables = new List()
             this.indexes = new List()
+            this.views = new List()
+        }
+        Data.MemView FindView(string name) {
+            string lower = name.ToLower()
+            for (var i = 0; i < this.views.Count; i++) {
+                Data.MemView v = this.views[i]
+                if (v.name.ToLower() == lower) { return v }
+            }
+            return undefined
         }
         Data.MemTable Find(string name) {
             string lower = name.ToLower()
@@ -152,6 +181,10 @@ namespace Data {
             for (var i = 0; i < this.indexes.Count; i++) {
                 Data.MemIndex x = this.indexes[i]
                 s.indexes.Add(new Data.MemIndex(x.name, x.table, x.column, x.unique))
+            }
+            for (var i = 0; i < this.views.Count; i++) {
+                Data.MemView v = this.views[i]
+                s.views.Add(new Data.MemView(v.name, v.sql))
             }
             return s
         }
@@ -372,7 +405,7 @@ namespace Data {
             var words = ["SELECT", "FROM", "WHERE", "ORDER", "BY", "ASC", "DESC", "LIMIT", "OFFSET", "INSERT", "INTO", "VALUES", "DEFAULT", "UPDATE", "SET",
                 "DELETE", "CREATE", "TABLE", "DROP", "ALTER", "ADD", "COLUMN", "INDEX", "UNIQUE", "ON", "IF", "NOT", "EXISTS", "PRIMARY", "KEY", "NULL",
                 "AND", "OR", "IS", "IN", "LIKE", "BETWEEN", "AS", "DISTINCT", "TRUE", "FALSE", "BEGIN", "COMMIT", "ROLLBACK", "SAVEPOINT", "RELEASE",
-                "TO", "TRANSACTION", "AUTOINCREMENT", "END", "RENAME"]
+                "TO", "TRANSACTION", "AUTOINCREMENT", "END", "RENAME", "CHECK", "VIEW"]
             for (var i = 0; i < words.length; i++) { if (words[i] == upper) { return true } }
             return false
         }
@@ -678,6 +711,16 @@ namespace Data {
         }
 
         Data.MemNode Create() {
+            if (this.Accept("VIEW")) {
+                var v = new Data.MemNode("createview")
+                if (this.Accept("IF")) { this.Expect("NOT"); this.Expect("EXISTS"); v.flag = true }
+                v.name = this.Name()
+                this.Expect("AS")
+                int start = this.at
+                this.Select()
+                v.value = this.TextOf(start, this.at)
+                return v
+            }
             bool unique = this.Accept("UNIQUE")
             if (this.Accept("INDEX")) {
                 var n = new Data.MemNode("createindex")
@@ -699,7 +742,15 @@ namespace Data {
             n.name = this.Name()
             this.ExpectSym("(")
             while (true) {
-                if (this.IsWordToken("PRIMARY") || this.IsWordToken("UNIQUE")) {
+                if (this.Accept("CHECK")) {
+                    var chk = new Data.MemNode("check")
+                    this.ExpectSym("(")
+                    int first = this.at
+                    chk.a = this.Expr()
+                    chk.value = this.TextOf(first, this.at)
+                    this.ExpectSym(")")
+                    n.items.Add(take chk)
+                } else if (this.IsWordToken("PRIMARY") || this.IsWordToken("UNIQUE")) {
                     // a table constraint: PRIMARY KEY (c) / UNIQUE (c)
                     var con = new Data.MemNode("constraint")
                     con.flag = this.Accept("PRIMARY")
@@ -740,12 +791,27 @@ namespace Data {
                 if (this.Accept("NULL")) { continue }
                 if (this.Accept("UNIQUE")) { c.names.Add("unique"); continue }
                 if (this.Accept("DEFAULT")) { c.a = this.Primary(); continue }
+                if (this.Accept("CHECK")) {
+                    this.ExpectSym("(")
+                    int first = this.at
+                    c.b = this.Expr()
+                    c.c = new Data.MemNode("text")
+                    c.c.value = this.TextOf(first, this.at)
+                    this.ExpectSym(")")
+                    continue
+                }
                 break
             }
             return c
         }
 
         Data.MemNode Drop() {
+            if (this.Accept("VIEW")) {
+                var v = new Data.MemNode("dropview")
+                if (this.Accept("IF")) { this.Expect("EXISTS"); v.flag = true }
+                v.name = this.Name()
+                return v
+            }
             if (this.Accept("INDEX")) {
                 var n = new Data.MemNode("dropindex")
                 if (this.Accept("IF")) { this.Expect("EXISTS"); n.flag = true }
@@ -996,6 +1062,16 @@ namespace Data {
             else if (kind == "update") { this.Update(n) }
             else if (kind == "delete") { this.Delete(n) }
             else if (kind == "create") { this.Create(n) }
+            else if (kind == "createview") {
+                if (store.Find(n.name) != undefined || store.FindView(n.name) != undefined) {
+                    if (!n.flag) { Data.MemoryDriver.Fail("table " + n.name + " already exists") }
+                } else { store.views.Add(new Data.MemView(n.name, "" + n.value)) }
+            }
+            else if (kind == "dropview") {
+                var v = store.FindView(n.name)
+                if (v == undefined) { if (!n.flag) { Data.MemoryDriver.Fail("no such view: " + n.name) } }
+                else { store.views.Remove(v) }
+            }
             else if (kind == "drop") {
                 var t = store.Find(n.name)
                 if (t == undefined) { if (!n.flag) { Data.MemoryDriver.Fail("no such table: " + n.name) } }
@@ -1110,7 +1186,7 @@ namespace Data {
 
         undefined Create(Data.MemNode n) {
             var store = this.connection.store
-            if (store.Find(n.name) != undefined) {
+            if (store.Find(n.name) != undefined || store.FindView(n.name) != undefined) {
                 if (n.flag) { return }
                 Data.MemoryDriver.Fail("table " + n.name + " already exists")
             }
@@ -1121,6 +1197,17 @@ namespace Data {
                     var c = Data.MemRun.ColumnOf(item)
                     if (item.a != undefined) { c.defaultValue = this.Eval(item.a, t, undefined) }
                     t.columns.Add(take c)
+                    if (item.b != undefined) {
+                        Data.MemNode condition = item.b
+                        t.checks.Add(copy condition)
+                        Data.MemNode text = item.c
+                        t.checkTexts.Add("" + text.value)
+                    }
+                }
+                if (item.kind == "check") {
+                    Data.MemNode tableCondition = item.a
+                    t.checks.Add(copy tableCondition)
+                    t.checkTexts.Add("" + item.value)
                 }
             }
             for (var i = 0; i < n.items.Count; i++) {
@@ -1172,6 +1259,12 @@ namespace Data {
                     }
                 }
                 if (unique) { this.CheckUnique(t, c, row, self, false) }
+            }
+            // (CHECK: a condition that is false fails - NULL passes, as in SQL)
+            for (var i = 0; i < t.checks.Count; i++) {
+                Data.MemNode condition = t.checks[i]
+                any v = this.Eval(condition, t, row)
+                if (v != undefined && !Data.MemRun.True(v)) { Data.MemoryDriver.Fail("CHECK constraint failed: " + t.checkTexts[i], 275) }
             }
         }
 
@@ -1254,6 +1347,12 @@ namespace Data {
         }
 
         // The names of the columns of a SELECT (also before it ran).
+        // (the names of the columns of a view)
+        static any ViewNames(Data.MemView v, Data.MemStore store) {
+            var p = new Data.MemParser(v.sql)
+            Data.MemNode tree = p.Select()
+            return Data.MemRun.Names(tree, store)
+        }
         static any Names(Data.MemNode n, Data.MemStore store) {
             var list = new List()
             for (var i = 0; i < n.items.Count; i++) {
@@ -1266,6 +1365,9 @@ namespace Data {
                                 Data.MemColumn col = t.columns[c]
                                 list.Add(col.name)
                             }
+                        } else if (store.FindView(n.name) != undefined) {
+                            any vn = Data.MemRun.ViewNames(store.FindView(n.name), store)
+                            for (var c = 0; c < vn.length; c++) { list.Add(vn[c]) }
                         }
                     }
                 } else {
@@ -1275,6 +1377,21 @@ namespace Data {
             any a = new any[list.Count]
             for (var i = 0; i < list.Count; i++) { a[i] = list[i] }
             return a
+        }
+
+        // (the rows of a view as a table: its SELECT run now)
+        Data.MemTable ViewTable(Data.MemView v) {
+            var p = new Data.MemParser(v.sql)
+            Data.MemNode tree = p.Select()
+            var run = new Data.MemRun(this.connection, new any[0])
+            List rows = run.Select(tree)
+            var t = new Data.MemTable(v.name)
+            for (var i = 0; i < run.names.length; i++) { t.columns.Add(new Data.MemColumn("" + run.names[i])) }
+            for (var i = 0; i < rows.Count; i++) {
+                any row = rows[i]
+                t.rows.Add(copy row)
+            }
+            return t
         }
 
         // (the table "_columns": table_name, name, type, pk, notnull - what Ensure asks)
@@ -1292,6 +1409,20 @@ namespace Data {
                     row[2] = col.type
                     if (col.key) { row[3] = 1 } else { row[3] = 0 }
                     if (col.notNull) { row[4] = 1 } else { row[4] = 0 }
+                    t.rows.Add(take row)
+                }
+            }
+            // (the columns of the views)
+            for (var i = 0; i < store.views.Count; i++) {
+                Data.MemView v = store.views[i]
+                any names = Data.MemRun.ViewNames(v, store)
+                for (var c = 0; c < names.length; c++) {
+                    any row = new any[5]
+                    row[0] = v.name
+                    row[1] = names[c]
+                    row[2] = ""
+                    row[3] = 0
+                    row[4] = 0
                     t.rows.Add(take row)
                 }
             }
@@ -1322,6 +1453,9 @@ namespace Data {
             if (n.name != undefined) {
                 if (n.name.ToLower() == "_columns" || n.name.ToLower() == "_indexes") {
                     if (n.name.ToLower() == "_columns") { made = this.Columns() } else { made = this.Indexes() }
+                    t = made
+                } else if (this.connection.store.FindView(n.name) != undefined) {
+                    made = this.ViewTable(this.connection.store.FindView(n.name))
                     t = made
                 } else {
                     t = this.connection.store.Table(n.name)

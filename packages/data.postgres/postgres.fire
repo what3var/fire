@@ -324,7 +324,10 @@ namespace Data {
                 string p = parts[i]
                 if (p.StartsWith("r=")) { nonce = p.Substring(2) }
                 else if (p.StartsWith("s=")) { saltText = p.Substring(2) }
-                else if (p.StartsWith("i=")) { iterations = p.Substring(2).ToInt() }
+                else if (p.StartsWith("i=")) {
+                    any n = p.Substring(2).ToInt()
+                    if (n != undefined) { iterations = trust n }
+                }
             }
             if (nonce == undefined || saltText == undefined || iterations <= 0) { throw new Data.ConnectionException("data.postgres: the server's SCRAM message is not understood.", 28000) }
             byte salted[] = Data.PostgresAuth.SaltedPassword(password, Data.PostgresAuth.FromBase64(saltText), iterations)

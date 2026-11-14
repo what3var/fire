@@ -113,6 +113,9 @@ db.Delete(p)
 | `[Required]`, `[Length n]` | NOT NULL; `VARCHAR(n)` |
 | `[Unique]`, `[Index]` | a (unique) index on the column (`ix_<table>_<column>`) |
 | `[Ignore]` | not a column |
+| `[Check "age >= 0"]` | a condition of the column (`CHECK`); on the class: a condition of the table (`[Check "endsAt > startsAt"]`) - a broken one is a `Data.ConstraintException` |
+| `[DbType "jsonb"]` | the type of the column in the database in place of the dialect's; per database: `[DbType "postgres: jsonb; mysql: JSON; *: TEXT"]` (the names of the dialects: sqlite, mysql, sqlserver, postgres, memory; `*` the others) |
+| `[View "SELECT ..."]` | on the class: its table is a view of the query - `Ensure` makes it (`CREATE VIEW`), queries read it; it needs no key |
 
 - `Insert(obj)` writes a new row; a generated key goes into the key field of a class (a record keeps its fields - the key is the result).
 - `Update(obj)` writes every column by the key (the number of rows: 0 when there is no row), `Delete(obj)` deletes by the key, `Save(obj)` inserts or
@@ -281,7 +284,20 @@ class Article {
     [Key] int id
     [ManyToMany "article_tag", "articleId", "tagId"] List<Tag> tags   // the pairs in the join table article_tag
 }
+class Person {
+    [Key] int id
+    [HasOne "personId"] Passport passport                             // the one passport whose personId is this key
+}
+class Passport {
+    [Key] int id
+    [Unique] int personId                                             // (one-to-one: the foreign key is unique)
+    [BelongsTo "personId"] Person holder
+}
 ```
+
+`[HasOne]` is the other side of a one-to-one relation: like `[HasMany]`, but the field is one object (the first row when the table has more). It is
+loaded with `Include`, written by a session (a new object set in it is inserted with the owner's key in its foreign key) and works in conditions like a
+[BelongsTo] field: `Where(p => p.passport.number == "X1")` is a subquery by the foreign key.
 
 - **Loading:** `Include(c => c.orders)` (also `o => o.customer`, `a => a.tags`) loads a navigation field with the objects of a query - one query more
   per Include, not one per object; `s.Load(obj, "orders")` loads it later for objects of a session. Without a session the loaded objects belong to the
@@ -299,6 +315,8 @@ class Article {
   The pairs of a [ManyToMany] list are written from the difference to what was loaded or saved last (a list that was never loaded is compared with the
   rows that are there); removing an object removes its pairs.
 - `Ensure` makes the join table of a [ManyToMany] field (its two columns and an index).
+- The in-memory database knows `CHECK` (of columns and tables) and views (`CREATE VIEW ... AS SELECT ...`, `DROP VIEW`; read like a table, run each
+  time), so a model with them works there as on the other databases.
 
 ## MySQL and MariaDB
 

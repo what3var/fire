@@ -198,13 +198,13 @@ static class DiagnosticTests
 
         // ---- a data model (.fdata): its mistakes with their lines; in a project it is compiled without #include ----
         {
-            const string bad = "{\n  \"entities\": [\n    { \"name\": \"Person\",\n      \"fields\": [\n        { \"name\": \"name\", \"type\": \"text\" },\n        { \"name\": \"class\", \"type\": \"int\" }\n      ] },\n    { \"name\": \"Person\", \"fields\": [ { \"name\": \"id\", \"type\": \"int\", \"key\": true } ] },\n    { \"name\": \"Order\", \"fields\": [ { \"name\": \"id\", \"type\": \"float\", \"key\": true } ] }\n  ],\n  \"relations\": [\n    { \"kind\": \"one-to-one\", \"from\": \"Person\", \"to\": \"Order\" },\n    { \"kind\": \"one-to-many\", \"from\": \"Person\", \"to\": \"Nobody\", \"navigation\": \"x\" }\n  ]\n}\n";
+            const string bad = "{\n  \"entities\": [\n    { \"name\": \"Person\",\n      \"fields\": [\n        { \"name\": \"name\", \"type\": \"text\" },\n        { \"name\": \"class\", \"type\": \"int\" }\n      ] },\n    { \"name\": \"Person\", \"fields\": [ { \"name\": \"id\", \"type\": \"int\", \"key\": true } ] },\n    { \"name\": \"Order\", \"fields\": [ { \"name\": \"id\", \"type\": \"float\", \"key\": true } ] }\n  ],\n  \"relations\": [\n    { \"kind\": \"one-to-two\", \"from\": \"Person\", \"to\": \"Order\" },\n    { \"kind\": \"one-to-many\", \"from\": \"Person\", \"to\": \"Nobody\", \"navigation\": \"x\" }\n  ]\n}\n";
             string found = "";
             try { fire.UI.Markup.MarkupFiles.GenerateScript("Bad.fdata", bad); }
             catch (fire.UI.Markup.MarkupException ex) { found = string.Join("\n", ex.Diagnostics.Select(d => d.ToString())); }
             Check("Datenmodell: die Fehler mit ihren Zeilen (doppelt, unbekannter Typ, Schluesselwort, kein Schluessel, falscher Schluesseltyp, unbekannte Art und Entitaet einer Beziehung)",
                 found.Contains("line 8: 'Person' is declared twice.") && found.Contains("line 5: The field 'Person.name' has the type 'text'") && found.Contains("line 6: The field 'class' of 'Person' needs a name")
-                && found.Contains("line 3: The entity 'Person' has no key") && found.Contains("line 9: The key 'Order.id' is an int or a string") && found.Contains("line 12: The kind of a relation is one-to-many or many-to-many")
+                && found.Contains("line 3: The entity 'Person' has no key") && found.Contains("line 9: The key 'Order.id' is an int or a string") && found.Contains("line 12: The kind of a relation is one-to-one, one-to-many or many-to-many")
                 && found.Contains("line 13: The relation of 'Person' and 'Nobody' needs two entities"), found);
             string dir = Path.Combine(Path.GetTempPath(), "fire-fdata-" + Guid.NewGuid().ToString("N"));
             Directory.CreateDirectory(dir);
@@ -260,6 +260,39 @@ static class DiagnosticTests
                     project != null && error == null && written != null && File.Exists(written) && Path.GetFileName(Path.GetDirectoryName(written)) == "Migrations" && text.Contains("email") && text.Contains("AddColumn"), text + error + written);
             }
             finally { try { Directory.Delete(dir, true); } catch (IOException) { } }
+        }
+
+        // ---- the data model with one-to-one, a view, checks and types per database; the designer's diagrams and its clipboard ----
+        {
+            const string model = "{ \"namespace\": \"Office\", \"entities\": [\n" +
+                "  { \"name\": \"Person\", \"checks\": [\"length(name) > 0\", \"age < 200\"], \"fields\": [ { \"name\": \"id\", \"type\": \"int\", \"key\": true }, { \"name\": \"name\", \"type\": \"string\" }, { \"name\": \"age\", \"type\": \"int\", \"check\": \"age >= 0\" }, { \"name\": \"data\", \"type\": \"string\", \"dbType\": { \"postgres\": \"jsonb\", \"*\": \"TEXT\" } } ] },\n" +
+                "  { \"name\": \"Elders\", \"view\": \"SELECT id, name FROM Person WHERE age >= 65\", \"fields\": [ { \"name\": \"id\", \"type\": \"int\" }, { \"name\": \"name\", \"type\": \"string\" } ] },\n" +
+                "  { \"name\": \"Passport\", \"fields\": [ { \"name\": \"id\", \"type\": \"int\", \"key\": true }, { \"name\": \"number\", \"type\": \"string\" } ] } ],\n" +
+                "  \"relations\": [ { \"kind\": \"one-to-one\", \"from\": \"Person\", \"to\": \"Passport\", \"navigation\": \"passport\", \"inverse\": \"holder\" } ],\n" +
+                "  \"diagrams\": [ { \"name\": \"Main\", \"shapes\": { \"Person\": { \"x\": 40, \"y\": 40 } } }, { \"name\": \"Travel\", \"shapes\": { \"Passport\": { \"x\": 300, \"y\": 60 } } } ] }\n";
+            string code = "";
+            try { code = fire.UI.Markup.DataModelGenerator.Generate(model, "Office.fdata"); }
+            catch (fire.UI.Markup.MarkupException ex) { code = string.Join("\n", ex.Diagnostics.Select(d => d.ToString())); }
+            Check("Datenmodell: one-to-one ([HasOne] und [BelongsTo] auf einem eindeutigen Fremdschluessel), View, Checks von Spalte und Tabelle, dbType je Datenbank; Views zuletzt in Model.Types",
+                code.Contains("[HasOne \"personId\"] Passport passport") && code.Contains("[Unique] int personId") && code.Contains("[BelongsTo \"personId\"] Person holder")
+                && code.Contains("[View \"SELECT id, name FROM Person WHERE age >= 65\"]") && code.Contains("[Check \"(length(name) > 0) AND (age < 200)\"]")
+                && code.Contains("[Check \"age >= 0\"]") && code.Contains("[DbType \"postgres: jsonb; *: TEXT\"]") && code.Contains("[\"Office.Person\", \"Office.Passport\", \"Office.Elders\"]"), code);
+            var (pgDdl, pgError) = DataModelTools.Ddl(model, "Office.fdata", DataModelTools.Dialects.ToList().FindIndex(d => d.Name == "PostgreSQL"));
+            Check("Datenmodell: die DDL fuer PostgreSQL mit jsonb, CHECK, der View nach den Tabellen",
+                pgError == null && pgDdl.Contains("\"data\" jsonb") && pgDdl.Contains("CHECK (age >= 0)") && pgDdl.Contains("CHECK ((length(name) > 0) AND (age < 200))")
+                && pgDdl.IndexOf("CREATE VIEW \"Elders\"") > pgDdl.IndexOf("CREATE TABLE \"Passport\""), pgDdl + pgError);
+            var doc = fire.UI.Markup.DataModelDocument.Parse(model);
+            var again = fire.UI.Markup.DataModelDocument.Parse(doc.ToJson());
+            bool kept = again.ToJson() == doc.ToJson() && again.Diagrams.Count == 2 && again.Diagrams[1].Name == "Travel" && again.Shows(1, "Passport") && !again.Shows(1, "Person") && again.Shows(0, "Elders")
+                && again.Entity("Person")!.Checks.Count == 2 && again.Entity("Person")!.Fields[3].DbType == "postgres: jsonb; *: TEXT" && again.Entity("Elders")!.View != null && again.Relations[0].Kind == "one-to-one";
+            string copied = doc.CopyText("Person")!;
+            var pasted = doc.Paste(copied, 500, 40, 1);
+            bool clip = pasted.Count == 1 && pasted[0] == "Person2" && doc.Entity("Person2")!.Fields.Count == 4 && doc.Shows(1, "Person2") && doc.Places.ContainsKey("Person2") && doc.Relations.Count == 1;
+            doc.Rename("Passport", "Pass");
+            doc.Remove("Person2");
+            bool renamed = doc.Diagrams[1].Shapes.ContainsKey("Pass") && !doc.Diagrams[1].Shapes.ContainsKey("Person2") && doc.Relations[0].To == "Pass" && doc.Relations[0].Navigation == "pass" && doc.Problems().Count == 0;
+            Check("Designer: mehrere Diagramme (Main zeigt alles, die anderen ihre Kaesten), Kopieren und Einfuegen mit freiem Namen, Umbenennen und Loeschen in allen Diagrammen",
+                kept && clip && renamed, $"{kept} {clip} {renamed}\n{doc.ToJson()}");
         }
 
         // ---- forge data: the migrations of a program on a database (SQLite in a file) - the program's classes run, its top level does not ----

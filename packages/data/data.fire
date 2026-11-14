@@ -98,15 +98,21 @@ namespace Data {
             if (c.kind == "string" && c.length > 0) { return "VARCHAR(" + c.length + ")" }
             return "TEXT"
         }
-        // The definition of a column in CREATE TABLE / ADD COLUMN.
+        // The definition of a column in CREATE TABLE / ADD COLUMN ([DbType] gives the type of a database by its name, [Check] a condition).
         string ColumnDefinition(Data.ColumnMap c) {
-            var t = this.Quote(c.column) + " " + this.ColumnType(c)
+            string type = Data.ColumnMap.TypeIn(c.dbType, this.Name)
+            if (type == undefined) { type = this.ColumnType(c) }
+            var t = this.Quote(c.column) + " " + type
             if (c.key) {
                 t = t + " PRIMARY KEY"
                 if (c.generated) { t = t + this.Generated() }
             } else if (c.required) { t = t + " NOT NULL" }
+            if (c.check != undefined) { t = t + " CHECK (" + c.check + ")" }
             return t
         }
+        // A view ([View "SELECT ..."] of a [Table] class).
+        string CreateView(string name, string sql) { return "CREATE VIEW " + name + " AS " + sql }
+        string DropView(string name) { return "DROP VIEW " + this.Quote(name) }
         // (after PRIMARY KEY of a generated key)
         string Generated() { return "" }
         // An INSERT of a row with only the default values.
@@ -468,14 +474,13 @@ namespace Data {
             var d = this.driver.Dialect()
             List have = new List()
             foreach (row in this.Rows(d.ColumnsQuery(), [map.table])) { have.Add(("" + row.Get(0)).ToLower()) }
+            if (map.view != undefined) {
+                // (a view: made when it is not there - its query names the tables, which Ensure made before)
+                if (have.Count == 0) { this.driver.Exec(d.CreateView(d.Quote(map.table), map.view)) }
+                return
+            }
             if (have.Count == 0) {
-                var cols = ""
-                for (var i = 0; i < map.columns.Count; i++) {
-                    Data.ColumnMap c = map.columns[i]
-                    if (i > 0) { cols = cols + ", " }
-                    cols = cols + d.ColumnDefinition(c)
-                }
-                this.driver.Exec("CREATE TABLE " + d.Quote(map.table) + " (" + cols + ")" + d.TableOptions())
+                this.driver.Exec("CREATE TABLE " + d.Quote(map.table) + " " + map.TableBody(d) + d.TableOptions())
             } else {
                 for (var i = 0; i < map.columns.Count; i++) {
                     Data.ColumnMap c = map.columns[i]
@@ -1230,8 +1235,9 @@ namespace Data {
                         if (this.IsNew(target, r.target)) { this.entries.Add(Data.SessionEntry.Lent(target, r.target)) }
                         continue
                     }
-                    any list = Reflect.Get(e.obj, r.field)
-                    if (list == undefined) { continue }
+                    any value = Reflect.Get(e.obj, r.field)
+                    if (value == undefined) { continue }
+                    List list = Data.RelationMap.Items(r, value)
                     for (var c = 0; c < list.Count; c++) {
                         any child = list[c]
                         if (child == undefined || this.EntryOf(child) != undefined) { continue }
@@ -1284,8 +1290,10 @@ namespace Data {
                 for (var k = 0; k < pmap.relations.Count; k++) {
                     Data.RelationMap r = pmap.relations[k]
                     if (!r.many || r.target != e.typeName) { continue }
-                    any list = Reflect.Get(pe.obj, r.field)
-                    if (list == undefined || list.IndexOf(e.obj) < 0) { continue }
+                    any value = Reflect.Get(pe.obj, r.field)
+                    if (value == undefined) { continue }
+                    List list = Data.RelationMap.Items(r, value)
+                    if (list.IndexOf(e.obj) < 0) { continue }
                     if (pe.state == 1) { written = written + this.InsertEntry(pe, done, inserted) }
                     Reflect.Set(e.obj, r.foreign, Reflect.Get(pe.obj, pmap.key.field))
                 }
@@ -1316,8 +1324,9 @@ namespace Data {
                     if (r.many) {
                         if (map.key == undefined) { continue }
                         any key = Reflect.Get(e.obj, map.key.field)
-                        for (var c = 0; c < value.Count; c++) {
-                            any child = value[c]
+                        List children = Data.RelationMap.Items(r, value)
+                        for (var c = 0; c < children.Count; c++) {
+                            any child = children[c]
                             if (child != undefined && Reflect.Get(child, r.foreign) != key) { Reflect.Set(child, r.foreign, key) }
                         }
                     } else {
@@ -1542,7 +1551,7 @@ namespace Data {
             var keyTexts = new List()
             for (var i = 0; i < objects.Count; i++) {
                 any o = objects[i]
-                if (Reflect.Get(o, r.field) == undefined) { Reflect.Set(o, r.field, new List()) }   // (the object owns its list)
+                if (!r.single && Reflect.Get(o, r.field) == undefined) { Reflect.Set(o, r.field, new List()) }   // (the object owns its list)
                 any k = Reflect.Get(o, map.key.field)
                 if (k == undefined) { continue }
                 string text = Json.Serialize(k)
@@ -1569,6 +1578,13 @@ namespace Data {
                     for (var p = 0; p < objects.Count; p++) {
                         any o = objects[p]
                         if (Json.Serialize(Reflect.Get(o, map.key.field)) != text) { continue }
+                        if (r.single) {
+                            // ([HasOne]: the child is the field - the first one when the table has more)
+                            if (Reflect.Get(o, r.field) == undefined) {
+                                if (session != undefined) { Reflect.Set(o, r.field, session.Track(take c, r.target)) } else { Reflect.Set(o, r.field, take c) }
+                            }
+                            break
+                        }
                         List list = Reflect.Get(o, r.field)
                         if (session != undefined) {
                             any tracked = session.Track(take c, r.target)
@@ -1951,7 +1967,7 @@ namespace Data {
             for (var i = names.Count - 1; i >= 0; i--) {
                 string name = names[i]
                 Data.RelationMap r = map.Relation(name)
-                if (r == undefined || r.many || r.join) { return undefined }
+                if (r == undefined || (r.many && !r.single) || r.join) { return undefined }
                 map = this.db.Map(r.target)
             }
             return map
@@ -1982,33 +1998,40 @@ namespace Data {
             for (var i = names.Count - 1; i >= 0; i--) {
                 string name = names[i]
                 Data.RelationMap r = map.Relation(name)
-                if (r == undefined) { this.Fail(e, "'" + name + "' is no [BelongsTo] field of " + map.typeName) }
-                if (r.many || r.join) { this.Fail(e, "'" + name + "' is a list - use Any(...)") }
-                if (map.Column(r.foreign) == undefined) { this.Fail(e, map.typeName + " has no column '" + r.foreign + "'") }
+                if (r == undefined) { this.Fail(e, "'" + name + "' is no [BelongsTo] or [HasOne] field of " + map.typeName) }
+                if ((r.many && !r.single) || r.join) { this.Fail(e, "'" + name + "' is a list - use Any(...)") }
+                if (!r.single && map.Column(r.foreign) == undefined) { this.Fail(e, map.typeName + " has no column '" + r.foreign + "'") }
+                if (r.single) { map.NeedKey() }
                 hops.Add(r)
                 maps.Add(map)
                 map = this.db.Map(r.target)
                 map.NeedKey()
+                if (r.single && map.Column(r.foreign) == undefined) { this.Fail(e, map.typeName + " has no column '" + r.foreign + "'") }
             }
             var c = map.Column(e.Name)
             if (c == undefined) {
                 if (map.Relation(e.Name) != undefined) { this.Fail(e, "'" + e.Name + "' is a navigation: name a column of it") }
                 this.Fail(e, "'" + e.Name + "' is not a column of " + map.typeName)
             }
+            // ([BelongsTo]: the target whose key is the owner's foreign key; [HasOne]: the target whose foreign key is the owner's key)
             Data.RelationMap first = hops[0]
             Data.EntityMap firstOwner = maps[0]
-            string value = ownerQ + "." + d.Quote(firstOwner.Column(first.foreign).column)
+            string value = undefined
+            if (first.single) { value = ownerQ + "." + d.Quote(firstOwner.key.column) }
+            else { value = ownerQ + "." + d.Quote(firstOwner.Column(first.foreign).column) }
             for (var i = 0; i < hops.Count; i++) {
                 Data.RelationMap r = hops[i]
                 var target = this.db.Map(r.target)
                 string column = c.column
                 if (i + 1 < hops.Count) {
                     Data.RelationMap next = hops[i + 1]
-                    column = target.Column(next.foreign).column
+                    if (next.single) { column = target.key.column } else { column = target.Column(next.foreign).column }
                 }
+                string match = target.key.column
+                if (r.single) { match = target.Column(r.foreign).column }
                 this.aliases = this.aliases + 1
                 string alias = "t" + this.aliases
-                value = "(SELECT " + alias + "." + d.Quote(column) + " FROM " + d.Quote(target.table) + " AS " + alias + " WHERE " + alias + "." + d.Quote(target.key.column) + " = " + value + ")"
+                value = "(SELECT " + alias + "." + d.Quote(column) + " FROM " + d.Quote(target.table) + " AS " + alias + " WHERE " + alias + "." + d.Quote(match) + " = " + value + ")"
             }
             return value
         }
@@ -2198,6 +2221,10 @@ namespace Data {
         bool index
         bool required
         int length
+        // [Check "age >= 0"]: a condition of the column; [DbType "postgres: jsonb; mysql: JSON; *: TEXT"]: its type in a database (by the
+        // name of the dialect; `*`: the others) in place of the one the dialect chooses
+        string check
+        string dbType
         construct(string field, string column, string typeName, string kind) {
             this.field = field
             this.column = column
@@ -2210,6 +2237,23 @@ namespace Data {
             this.index = false
             this.required = false
         }
+        // (the type of [DbType "postgres: jsonb; mysql: JSON; *: TEXT"] for the dialect `name`; undefined: none given for it)
+        static string TypeIn(string spec, string name) {
+            if (spec == undefined) { return undefined }
+            if (spec.IndexOf(":") < 0) { return spec.Trim() }
+            string other = undefined
+            any parts = spec.Split(";")
+            for (var i = 0; i < parts.length; i++) {
+                string p = parts[i]
+                int colon = p.IndexOf(":")
+                if (colon < 0) { continue }
+                string who = p.Substring(0, colon).Trim().ToLower()
+                string type = p.Substring(colon + 1).Trim()
+                if (who == name) { return type }
+                if (who == "*") { other = type }
+            }
+            return other
+        }
     }
 
     /// <summary>A navigation field: `[HasMany "personId"] List<Order> orders` (the children whose field `personId` is this object's key) or
@@ -2219,6 +2263,7 @@ namespace Data {
         string target        // the class of the other side
         string foreign       // the field that holds the key: of the children (many), of this object (one)
         bool many
+        bool single          // [HasOne "personId"] Profile profile: one child (many with at most one; the field is the object, not a list)
         bool join            // [ManyToMany "table", "thisColumn", "otherColumn"]: the pairs in a join table
         string joinTable
         string thisColumn
@@ -2227,7 +2272,15 @@ namespace Data {
             this.field = field
             this.target = typeName
             this.many = false
+            this.single = false
             this.join = false
+        }
+        // (the children of a [HasMany] list or the one of a [HasOne] field as a list)
+        static List Items(Data.RelationMap r, any value) {
+            if (!r.single) { return value }
+            var l = new List()
+            if (value != undefined) { l.Add(value) }
+            return l
         }
         // ("List<Order>" -> "Order")
         static string ElementType(string typeName) {
@@ -2247,7 +2300,9 @@ namespace Data {
         List columns
         Data.ColumnMap key
         Data.ColumnMap version   // (the field with [Version]: optimistic concurrency in sessions)
-        List relations           // Data.RelationMap: the navigation fields ([HasMany], [BelongsTo])
+        List relations           // Data.RelationMap: the navigation fields ([HasMany], [HasOne], [BelongsTo], [ManyToMany])
+        string view              // [View "SELECT ..."]: the table is a view of this query
+        string check             // [Check "a < b"] of the class: a condition of the table
 
         construct(string typeName) {
             this.typeName = typeName
@@ -2259,6 +2314,10 @@ namespace Data {
             this.table = short
             Attribute ta = t.FindAttribute("Table")
             if (ta != undefined && ta.ArgCount() > 0) { this.table = "" + ta.Args[0] }
+            Attribute va = t.FindAttribute("View")
+            if (va != undefined && va.ArgCount() > 0) { this.view = "" + va.Args[0] }
+            Attribute cha = t.FindAttribute("Check")
+            if (cha != undefined && cha.ArgCount() > 0) { this.check = "" + cha.Args[0] }
             this.columns = new List()
             this.relations = new List()
             List members = t.Fields()
@@ -2268,6 +2327,7 @@ namespace Data {
                 if (m.IsStatic || m.HasAttribute("Ignore")) { continue }
                 Attribute many = m.FindAttribute("HasMany")
                 Attribute one = m.FindAttribute("BelongsTo")
+                Attribute owned = m.FindAttribute("HasOne")
                 Attribute pairs = m.FindAttribute("ManyToMany")
                 if (pairs != undefined) {
                     if (pairs.ArgCount() < 3) { throw new ArgumentException("Data: [ManyToMany \"table\", \"thisColumn\", \"otherColumn\"] for '" + m.Name + "' of " + typeName + ".") }
@@ -2281,9 +2341,13 @@ namespace Data {
                     this.relations.Add(take jr)
                     continue
                 }
-                if (many != undefined || one != undefined) {
+                if (many != undefined || one != undefined || owned != undefined) {
                     var r = new Data.RelationMap(m.Name, m.TypeName)
-                    if (many != undefined) {
+                    if (owned != undefined) {
+                        r.many = true
+                        r.single = true
+                        if (owned.ArgCount() > 0) { r.foreign = "" + owned.Args[0] }
+                    } else if (many != undefined) {
                         r.many = true
                         r.target = Data.RelationMap.ElementType(m.TypeName)
                         if (many.ArgCount() > 0) { r.foreign = "" + many.Args[0] }
@@ -2291,7 +2355,7 @@ namespace Data {
                         r.many = false
                         if (one.ArgCount() > 0) { r.foreign = "" + one.Args[0] }
                     }
-                    if (r.foreign == undefined || r.target == undefined) { throw new ArgumentException("Data: the relation '" + m.Name + "' of " + typeName + " needs its foreign key field ([HasMany \"personId\"] List<Order> ..., [BelongsTo \"personId\"] Person ...).") }
+                    if (r.foreign == undefined || r.target == undefined) { throw new ArgumentException("Data: the relation '" + m.Name + "' of " + typeName + " needs its foreign key field ([HasMany \"personId\"] List<Order> ..., [HasOne \"personId\"] Profile ..., [BelongsTo \"personId\"] Person ...).") }
                     r.target = Data.EntityMap.Qualify(r.target, typeName)
                     this.relations.Add(take r)
                     continue
@@ -2310,6 +2374,10 @@ namespace Data {
                 c.unique = m.HasAttribute("Unique")
                 c.index = m.HasAttribute("Index")
                 c.required = m.HasAttribute("Required")
+                Attribute fc = m.FindAttribute("Check")
+                if (fc != undefined && fc.ArgCount() > 0) { c.check = "" + fc.Args[0] }
+                Attribute dt = m.FindAttribute("DbType")
+                if (dt != undefined && dt.ArgCount() > 0) { c.dbType = "" + dt.Args[0] }
                 Attribute la = m.FindAttribute("Length")
                 if (la != undefined && la.ArgCount() > 0) { c.length = la.Args[0] }
                 if (c.key) { this.key = c }
@@ -2325,6 +2393,18 @@ namespace Data {
                 byName.key = true
                 byName.generated = byName.kind == "int"
             }
+        }
+
+        // The columns of CREATE TABLE in parentheses, with the condition of the table ([Check] of the class).
+        string TableBody(Data.Dialect d) {
+            var cols = ""
+            for (var i = 0; i < this.columns.Count; i++) {
+                Data.ColumnMap c = this.columns[i]
+                if (i > 0) { cols = cols + ", " }
+                cols = cols + d.ColumnDefinition(c)
+            }
+            if (this.check != undefined) { cols = cols + ", CHECK (" + this.check + ")" }
+            return "(" + cols + ")"
         }
 
         // (the class of a relation: as it is written, or - in a namespace - the class of the owner's namespace)
@@ -2794,19 +2874,33 @@ namespace Data {
             var down = new List()
             var notes = new List()
             var made = new List()
+            var viewsUp = new List()
+            var viewsDown = new List()
             for (var e = 0; e < entities.Count; e++) {
                 string typeName = entities[e]
                 var map = db.Map(typeName)
+                if (map.view != undefined) {
+                    // (a view: made when the database has none of that name - its query is the program's; a changed query is not compared)
+                    if (db.Rows(db.Dialect.ColumnsQuery(), [map.table]).Count == 0) {
+                        viewsUp.Add("m.Sql(" + Data.Differ.Text(db.Dialect.CreateView(db.Dialect.Quote(map.table), map.view)) + ")")
+                        viewsDown.Add("m.Sql(" + Data.Differ.Text(db.Dialect.DropView(map.table)) + ")")
+                    }
+                    continue
+                }
                 Data.SchemaTable have = Data.SchemaReader.Find(tables, map.table)
                 if (have == undefined && made.IndexOf(map.table.ToLower()) < 0) {
                     made.Add(map.table.ToLower())
                     var cols = ""
+                    bool special = map.check != undefined
                     for (var i = 0; i < map.columns.Count; i++) {
                         Data.ColumnMap c = map.columns[i]
                         if (i > 0) { cols = cols + ", " }
                         cols = cols + Data.Differ.Spec(c)
+                        if (c.check != undefined || c.dbType != undefined) { special = true }
                     }
-                    up.Add("m.CreateTable(" + Data.Differ.Text(map.table) + ", [" + cols + "])")
+                    // (with [Check] or [DbType]: the CREATE TABLE of this database as it is - m.Column knows neither)
+                    if (special) { up.Add("m.Sql(" + Data.Differ.Text("CREATE TABLE " + db.Dialect.Quote(map.table) + " " + map.TableBody(db.Dialect) + db.Dialect.TableOptions()) + ")") }
+                    else { up.Add("m.CreateTable(" + Data.Differ.Text(map.table) + ", [" + cols + "])") }
                     down.Add("m.DropTable(" + Data.Differ.Text(map.table) + ")")
                 } else if (have != undefined) {
                     for (var i = 0; i < map.columns.Count; i++) {
@@ -2863,6 +2957,9 @@ namespace Data {
                     down.Add("m.DropTable(" + Data.Differ.Text(r.joinTable) + ")")
                 }
             }
+            // (the views after the tables their queries name; dropped first)
+            for (var i = 0; i < viewsUp.Count; i++) { up.Add(viewsUp[i]) }
+            for (var i = 0; i < viewsDown.Count; i++) { down.Add(viewsDown[i]) }
             if (up.Count == 0) { return "" }
             var t = "// Made by forge data diff: what the database lacks of the mapping of the [Table] classes.\n"
             for (var i = 0; i < notes.Count; i++) { t = t + notes[i] + "\n" }
@@ -3150,18 +3247,17 @@ namespace Data {
     class Script {
         static string Of(Data.Dialect d, any typeNames) {
             var t = ""
+            var views = ""
             var made = new List()
             var maps = new Dictionary<string, Data.EntityMap>()
             for (var n = 0; n < typeNames.length; n++) {
                 string typeName = "" + typeNames[n]
                 var map = Data.Script.MapOf(maps, typeName)
-                var cols = ""
-                for (var i = 0; i < map.columns.Count; i++) {
-                    Data.ColumnMap c = map.columns[i]
-                    if (i > 0) { cols = cols + ", " }
-                    cols = cols + d.ColumnDefinition(c)
+                if (map.view != undefined) {
+                    views = views + d.CreateView(d.Quote(map.table), map.view) + ";\n"
+                    continue
                 }
-                t = t + "CREATE TABLE " + d.Quote(map.table) + " (" + cols + ")" + d.TableOptions() + ";\n"
+                t = t + "CREATE TABLE " + d.Quote(map.table) + " " + map.TableBody(d) + d.TableOptions() + ";\n"
                 for (var i = 0; i < map.relations.Count; i++) {
                     Data.RelationMap r = map.relations[i]
                     if (!r.join) { continue }
@@ -3187,7 +3283,7 @@ namespace Data {
                     t = t + "CREATE " + kind + " " + d.Quote("ix_" + map.table + "_" + c.column) + " ON " + d.Quote(map.table) + " (" + d.Quote(c.column) + ")" + d.IndexSuffix(d.Quote(c.column), c.unique) + ";\n"
                 }
             }
-            return t
+            return t + views
         }
         static Data.EntityMap MapOf(Dictionary<string, Data.EntityMap> maps, string typeName) {
             if (!maps.ContainsKey(typeName)) { maps.Add(typeName, new Data.EntityMap(typeName)) }

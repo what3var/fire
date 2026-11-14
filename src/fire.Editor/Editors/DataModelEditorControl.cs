@@ -8,6 +8,7 @@ using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Controls.Primitives;
 using Avalonia.Input;
+using Avalonia.Input.Platform;
 using Avalonia.Layout;
 using Avalonia.Media;
 using Avalonia.Threading;
@@ -30,6 +31,9 @@ namespace fire.Editor
         private sealed class DiagramView : Control
         {
             public DataModelDocument Model = new();
+            public int Diagram;                   // the diagram shown (0: the main one - every box)
+            public Dictionary<string, (double X, double Y)> Places => Model.PlacesOf(Diagram);
+            public IEnumerable<string> Visible => Model.Names.Where(n => Model.Shows(Diagram, n));
             public string? Selected;              // the name of a box, or "#<index>" of a relation
             public string? Pending;               // the first entity of a relation being drawn
             public event Action<string?>? Picked;
@@ -44,6 +48,7 @@ namespace fire.Editor
             private static readonly Typeface Bold = new(FontFamily.Default, FontStyle.Normal, FontWeight.SemiBold);
             private static readonly IBrush EntityHead = EditorTheme.Solid(Color.FromRgb(0x5B, 0x21, 0x46));
             private static readonly IBrush EnumHead = EditorTheme.Solid(Color.FromRgb(0x1E, 0x4D, 0x5C));
+            private static readonly IBrush ViewHead = EditorTheme.Solid(Color.FromRgb(0x4A, 0x3A, 0x6E));
             private static readonly IBrush TypeHead = EditorTheme.Solid(Color.FromRgb(0x3D, 0x4A, 0x1E));
             private static readonly IBrush Body = EditorTheme.Solid(Color.FromRgb(0x2B, 0x26, 0x31));
             private static readonly IBrush Line = EditorTheme.Solid(Color.FromRgb(0xC0, 0x6A, 0xDE));
@@ -53,7 +58,7 @@ namespace fire.Editor
 
             public Rect BoxOf(string name)
             {
-                var (x, y) = Model.Places.TryGetValue(name, out var p) ? p : (40, 40);
+                var (x, y) = Places.TryGetValue(name, out var p) ? p : Model.Places.TryGetValue(name, out var m) ? m : (40, 40);
                 int rows = 1;
                 if (Model.Entity(name) is { } e) rows = Math.Max(1, e.Fields.Count + Navigations(name).Count);
                 else if (Model.Enums.FirstOrDefault(n => n.Name == name) is { } en) rows = Math.Max(1, en.Values.Count);
@@ -67,7 +72,7 @@ namespace fire.Editor
                 var list = new List<(string, string, bool)>();
                 foreach (var r in Model.Relations)
                 {
-                    if (r.From == entity && r.Navigation != null) list.Add((r.Navigation, r.To, true));
+                    if (r.From == entity && r.Navigation != null) list.Add((r.Navigation, r.To, r.Kind != "one-to-one"));
                     if (r.To == entity && r.Inverse != null) list.Add((r.Inverse, r.From, r.Kind == "many-to-many"));
                 }
                 return list;
@@ -76,7 +81,7 @@ namespace fire.Editor
             public Size Extent()
             {
                 double w = 800, h = 600;
-                foreach (var n in Model.Names) { var b = BoxOf(n); w = Math.Max(w, b.Right + 200); h = Math.Max(h, b.Bottom + 200); }
+                foreach (var n in Visible) { var b = BoxOf(n); w = Math.Max(w, b.Right + 200); h = Math.Max(h, b.Bottom + 200); }
                 return new Size(w, h);
             }
             protected override Size MeasureOverride(Size availableSize) => Extent();
@@ -110,7 +115,7 @@ namespace fire.Editor
                 for (int i = 0; i < Model.Relations.Count; i++)
                 {
                     var r = Model.Relations[i];
-                    if (Model.Entity(r.From) == null || Model.Entity(r.To) == null) continue;
+                    if (Model.Entity(r.From) == null || Model.Entity(r.To) == null || !Model.Shows(Diagram, r.From) || !Model.Shows(Diagram, r.To)) continue;
                     var (a, b) = LineOf(r);
                     var pen = new Pen(Selected == "#" + i ? SelectedLine : Line, Selected == "#" + i ? 2.5 : 1.5);
                     if (r.From == r.To)
@@ -123,14 +128,15 @@ namespace fire.Editor
                     else context.DrawLine(pen, a, b);
                     string near = "1", far = "*";
                     if (r.Kind == "many-to-many") near = "*";
+                    if (r.Kind == "one-to-one") far = "1";
                     context.DrawText(Text(near, Line, 12, true), new Point(a.X + 4, a.Y - 16));
                     context.DrawText(Text(far, Line, 12, true), new Point(b.X + 4, b.Y - 16));
                 }
-                foreach (var e in Model.Entities) DrawBox(context, e.Name, EntityHead, Model.TableOf(e),
+                foreach (var e in Model.Entities.Where(x => Model.Shows(Diagram, x.Name))) DrawBox(context, e.Name, e.View != null ? ViewHead : EntityHead, e.View != null ? "view " + Model.TableOf(e) : Model.TableOf(e),
                     e.Fields.Select(f => (Describe(f), f.Key ? EditorTheme.Yellow : EditorTheme.Text))
                         .Concat(Navigations(e.Name).Select(n => ((n.List ? "  " + n.Field + " : List<" + n.Target + ">" : "  " + n.Field + " : " + n.Target), EditorTheme.Purple))).ToList());
-                foreach (var en in Model.Enums) DrawBox(context, en.Name, EnumHead, "enum", en.Values.Select(v => ("  " + v, EditorTheme.Text)).ToList());
-                foreach (var t in Model.Types) DrawBox(context, t.Name, TypeHead, "record (JSON)", t.Fields.Select(f => (Describe(f), EditorTheme.Text)).ToList());
+                foreach (var en in Model.Enums.Where(x => Model.Shows(Diagram, x.Name))) DrawBox(context, en.Name, EnumHead, "enum", en.Values.Select(v => ("  " + v, EditorTheme.Text)).ToList());
+                foreach (var t in Model.Types.Where(x => Model.Shows(Diagram, x.Name))) DrawBox(context, t.Name, TypeHead, "record (JSON)", t.Fields.Select(f => (Describe(f), EditorTheme.Text)).ToList());
                 if (Pending != null)
                     context.DrawText(Text("Relation: now click the second entity (Esc: cancel) - from " + Pending, SelectedLine, 12), new Point(10, 6));
             }
@@ -167,11 +173,11 @@ namespace fire.Editor
             /// <summary>What is under a point: a box (the last drawn first), a relation near its line, or null.</summary>
             public string? HitTest(Point p)
             {
-                foreach (var n in Model.Names.Reverse()) if (BoxOf(n).Contains(p)) return n;
+                foreach (var n in Visible.Reverse()) if (BoxOf(n).Contains(p)) return n;
                 for (int i = 0; i < Model.Relations.Count; i++)
                 {
                     var r = Model.Relations[i];
-                    if (Model.Entity(r.From) == null || Model.Entity(r.To) == null) continue;
+                    if (Model.Entity(r.From) == null || Model.Entity(r.To) == null || !Model.Shows(Diagram, r.From) || !Model.Shows(Diagram, r.To)) continue;
                     var (a, b) = LineOf(r);
                     if (Distance(p, a, b) < 6) return "#" + i;
                 }
@@ -209,8 +215,8 @@ namespace fire.Editor
                 if (_dragging == null || _grab is not { } g) return;
                 var p = e.GetPosition(this);
                 double x = Math.Max(0, Math.Round((p.X - g.X) / 10) * 10), y = Math.Max(0, Math.Round((p.Y - g.Y) / 10) * 10);
-                if (Model.Places.TryGetValue(_dragging, out var old) && old.X == x && old.Y == y) return;
-                Model.Places[_dragging] = (x, y);
+                if (Places.TryGetValue(_dragging, out var old) && old.X == x && old.Y == y) return;
+                Places[_dragging] = (x, y);
                 _moved = true;
                 Moved?.Invoke(_dragging);
                 InvalidateMeasure();
@@ -264,12 +270,34 @@ namespace fire.Editor
                 bar.Children.Add(b);
                 return b;
             }
-            Tool("+ Entity", "A new entity (a table) with a key id", () => Change(() => { var e = _model.AddEntity(null, FreePlace().X, FreePlace().Y); Select(e.Name); }));
-            Tool("+ Enum", "A new enum (stored by the name of its value)", () => Change(() => { var e = _model.AddEnum(null, FreePlace().X, FreePlace().Y); Select(e.Name); }));
-            Tool("+ Type", "A new record type, stored as JSON in a column", () => Change(() => { var t = _model.AddType(null, FreePlace().X, FreePlace().Y); Select(t.Name); }));
+            Tool("+ Entity", "A new entity (a table) with a key id", () => Change(() => { var at = FreePlace(); var e = _model.AddEntity(null, at.X, at.Y); Placed(e.Name); Select(e.Name); }));
+            Tool("+ Enum", "A new enum (stored by the name of its value)", () => Change(() => { var at = FreePlace(); var e = _model.AddEnum(null, at.X, at.Y); Placed(e.Name); Select(e.Name); }));
+            Tool("+ Type", "A new record type, stored as JSON in a column", () => Change(() => { var at = FreePlace(); var t = _model.AddType(null, at.X, at.Y); Placed(t.Name); Select(t.Name); }));
+            Tool("1 : 1", "A one-to-one relation: click the entity that has the other, then the other (it gets the unique foreign key)", () => StartRelation("one-to-one"));
             Tool("1 : n", "A one-to-many relation: click the 'one' entity, then the 'many' entity", () => StartRelation("one-to-many"));
             Tool("n : m", "A many-to-many relation (with a join table): click the two entities", () => StartRelation("many-to-many"));
             Tool("Delete", "Delete what is selected (Del)", DeleteSelected);
+            bar.Children.Add(new Border { Width = 12 });
+            _diagramChoice.SelectionChanged += (_, _) =>
+            {
+                if (_refreshingDiagrams || _diagramChoice.SelectedIndex < 0) return;
+                _diagram.Diagram = _diagramChoice.SelectedIndex;
+                Select(null);
+                _diagram.InvalidateMeasure();
+                _diagram.InvalidateVisual();
+            };
+            ToolTip.SetTip(_diagramChoice, "The diagram shown: Main has every box, the others the boxes added to them");
+            bar.Children.Add(_diagramChoice);
+            Tool("+ Diagram", "A new diagram (empty: add boxes with 'Show box…')", () => Change(() => { _model.AddDiagram(); _diagram.Diagram = _model.Diagrams.Count - 1; }));
+            Tool("Show box…", "Show a box of the model in this diagram", () => _ = ShowBoxAsync());
+            Tool("Hide box", "Take the selected box out of this diagram (it stays in the model)", HideSelected);
+            Tool("Rename diagram…", "Rename this diagram", () => _ = RenameDiagramAsync());
+            Tool("Delete diagram", "Delete this diagram (not the main one; the boxes stay in the model)", () =>
+            {
+                int d = _diagram.Diagram;
+                if (d <= 0) { _status.Text = "The main diagram stays."; return; }
+                Change(() => { _model.Diagrams.RemoveAt(d); _diagram.Diagram = 0; });
+            });
             bar.Children.Add(new Border { Width = 12 });
             Tool("Import from database…", "Read the tables of a database into the model (it replaces the model; Undo brings it back)", () => _ = ImportAsync());
             Tool("Generate database…", "Make the tables of the model in a database (what is missing - nothing is dropped)", () => _ = CreateDatabaseAsync());
@@ -328,6 +356,8 @@ namespace fire.Editor
         }
 
         private string? _beforeDrag;
+        private readonly ComboBox _diagramChoice = new() { MinWidth = 120 };
+        private bool _refreshingDiagrams;
 
         // ---- IDocumentView ----
         public string GetText() => _rawText ?? _model.ToJson();
@@ -362,12 +392,37 @@ namespace fire.Editor
         public void FocusEditor() => _diagram.Focus();
         public bool CanUndo => _undo.Count > 0;
         public bool CanRedo => _redo.Count > 0;
-        public bool HasSelection => _diagram.Selected != null;
+        public bool HasSelection => _diagram.Selected != null && !_diagram.Selected.StartsWith('#');
         public void Undo() { if (_undo.Count == 0) return; _redo.Push(_model.ToJson()); Load(_undo.Pop()); }
         public void Redo() { if (_redo.Count == 0) return; _undo.Push(_model.ToJson()); Load(_redo.Pop()); }
-        public void Cut() { }
-        public void Copy() { }
-        public void Paste() { }
+        public void Cut()
+        {
+            if (CopySelected()) DeleteSelected();
+        }
+        public void Copy() => CopySelected();
+        public void Paste() => _ = PasteAsync();
+        // (the selected box as text on the clipboard - a model of its own, so it can go into another model)
+        private bool CopySelected()
+        {
+            string? s = _diagram.Selected;
+            if (s == null || s.StartsWith('#') || _model.CopyText(s) is not { } text) return false;
+            if (TopLevel.GetTopLevel(this)?.Clipboard is { } clipboard) _ = clipboard.SetTextAsync(text);
+            _status.Text = "Copied: " + s;
+            return true;
+        }
+        private async Task PasteAsync()
+        {
+            if (TopLevel.GetTopLevel(this)?.Clipboard is not { } clipboard) return;
+            string? text = null;
+            try { text = await clipboard.TryGetTextAsync(); } catch (Exception) { }
+            if (string.IsNullOrWhiteSpace(text)) return;
+            var at = FreePlace();
+            List<string> added = new();
+            Change(() => added = _model.Paste(text, at.X, at.Y, _diagram.Diagram));
+            if (added.Count == 0) { _status.Text = "The clipboard holds no part of a data model."; return; }
+            Select(added[0]);
+            _status.Text = "Pasted: " + string.Join(", ", added);
+        }
         public void Delete() => DeleteSelected();
         public void SelectAll() { }
         public void Find() { }
@@ -414,9 +469,69 @@ namespace fire.Editor
                 for (int col = 0; col < 4; col++)
                 {
                     var r = new Rect(40 + col * 280, 40 + row * 220, DiagramView.BoxWidth, 180);
-                    if (!_model.Names.Any(n => _diagram.BoxOf(n).Intersects(r))) return (r.X, r.Y);
+                    if (!_diagram.Visible.Any(n => _diagram.BoxOf(n).Intersects(r))) return (r.X, r.Y);
                 }
             return (40, 40);
+        }
+
+        // (a new box is also in the diagram that is shown)
+        private void Placed(string name)
+        {
+            int d = _diagram.Diagram;
+            if (d > 0 && d < _model.Diagrams.Count) _model.Diagrams[d].Shapes[name] = _model.Places[name];
+        }
+
+        private void HideSelected()
+        {
+            string? s = _diagram.Selected;
+            int d = _diagram.Diagram;
+            if (d <= 0) { _status.Text = "The main diagram shows every box - delete it, or hide it in another diagram."; return; }
+            if (s == null || s.StartsWith('#')) { _status.Text = "Select a box first."; return; }
+            Change(() => _model.Diagrams[d].Shapes.Remove(s));
+            Select(null);
+        }
+
+        private async Task ShowBoxAsync()
+        {
+            int d = _diagram.Diagram;
+            if (d <= 0) { _status.Text = "The main diagram shows every box already."; return; }
+            var hidden = _model.Names.Where(n => !_model.Shows(d, n)).ToList();
+            if (hidden.Count == 0) { _status.Text = "This diagram shows every box of the model."; return; }
+            if (await AskChoice("Show a box", "The box to show in '" + _model.Diagrams[d].Name + "'", hidden) is not { } name) return;
+            var at = FreePlace();
+            Change(() => _model.Diagrams[d].Shapes[name] = at);
+            Select(name);
+        }
+
+        private async Task RenameDiagramAsync()
+        {
+            int d = Math.Clamp(_diagram.Diagram, 0, _model.Diagrams.Count - 1);
+            if (await AskText("Rename the diagram", "Name", _model.Diagrams[d].Name) is not { } name || name.Trim() == "") return;
+            if (_model.Diagrams.Any(x => x.Name == name.Trim())) { _status.Text = "There is a diagram of that name."; return; }
+            Change(() => _model.Diagrams[d].Name = name.Trim());
+        }
+
+        // (a small dialog: a text, or one of a list; null: cancelled)
+        private async Task<string?> AskText(string title, string label, string value) => await Ask(title, label, value, null);
+        private async Task<string?> AskChoice(string title, string label, List<string> items) => await Ask(title, label, "", items);
+        private async Task<string?> Ask(string title, string label, string value, List<string>? items)
+        {
+            if (TopLevel.GetTopLevel(this) is not Window owner) return null;
+            var box = new TextBox { Text = value };
+            var list = new ComboBox { ItemsSource = items, SelectedIndex = 0, HorizontalAlignment = HorizontalAlignment.Stretch };
+            var ok = new Button { Content = "OK", IsDefault = true, MinWidth = 80 };
+            var cancel = new Button { Content = "Cancel", IsCancel = true, MinWidth = 80 };
+            var panel = new StackPanel { Spacing = 6, Margin = new Thickness(14) };
+            panel.Children.Add(new TextBlock { Text = label });
+            panel.Children.Add(items == null ? box : list);
+            panel.Children.Add(new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, HorizontalAlignment = HorizontalAlignment.Right, Margin = new Thickness(0, 10, 0, 0), Children = { ok, cancel } });
+            var dialog = new Window { Title = title, Width = 380, SizeToContent = SizeToContent.Height, Content = panel, WindowStartupLocation = WindowStartupLocation.CenterOwner, Background = EditorTheme.Background };
+            bool accepted = false;
+            ok.Click += (_, _) => { accepted = true; dialog.Close(); };
+            cancel.Click += (_, _) => dialog.Close();
+            await dialog.ShowDialog(owner);
+            if (!accepted) return null;
+            return items == null ? box.Text ?? "" : list.SelectedItem as string;
         }
 
         private void StartRelation(string kind)
@@ -478,6 +593,12 @@ namespace fire.Editor
 
         private void Refresh()
         {
+            // (the diagrams of the model in the choice; the one shown stays when it is there)
+            _refreshingDiagrams = true;
+            _diagram.Diagram = Math.Clamp(_diagram.Diagram, 0, _model.Diagrams.Count - 1);
+            _diagramChoice.ItemsSource = _model.Diagrams.Select(d => d.Name).ToList();
+            _diagramChoice.SelectedIndex = _diagram.Diagram;
+            _refreshingDiagrams = false;
             _diagram.InvalidateMeasure();
             _diagram.InvalidateVisual();
             BuildProperties();
@@ -613,6 +734,21 @@ namespace fire.Editor
             Field("Query in the Context", e.Set, v => Change(() => e.Set = Null(v)), DataModelGenerator.Plural(e.Name));
             Field("Comment", e.Comment, v => Change(() => e.Comment = Null(v)));
             Flag("a record (not a class)", e.Record, v => Change(() => e.Record = v));
+            _properties.Children.Add(Label("View: its query (empty: a table)"));
+            var view = new TextBox { Text = e.View ?? "", AcceptsReturn = true, MinHeight = 50, TextWrapping = TextWrapping.Wrap, PlaceholderText = "SELECT ... FROM ..." };
+            view.LostFocus += (_, _) => { string? v = Null(view.Text ?? ""); if (v != e.View) Change(() => e.View = v); };
+            _properties.Children.Add(view);
+            if (e.View == null)
+            {
+                _properties.Children.Add(Label("Checks of the table (one condition per line)"));
+                var checks = new TextBox { Text = string.Join("\n", e.Checks), AcceptsReturn = true, MinHeight = 40, PlaceholderText = "endsAt > startsAt" };
+                checks.LostFocus += (_, _) =>
+                {
+                    var list = (checks.Text ?? "").Split('\n').Select(c => c.Trim()).Where(c => c != "").ToList();
+                    if (!list.SequenceEqual(e.Checks)) Change(() => { e.Checks.Clear(); e.Checks.AddRange(list); });
+                };
+                _properties.Children.Add(checks);
+            }
             FieldGrid(e.Fields, true);
             var nav = _diagram.Navigations(e.Name);
             if (nav.Count > 0)
@@ -649,13 +785,13 @@ namespace fire.Editor
         {
             _properties.Children.Add(Heading("Relation " + r.From + " → " + r.To));
             var entities = _model.Entities.Select(x => x.Name).ToList();
-            Choice("Kind", new[] { "one-to-many", "many-to-many" }, r.Kind, v => Change(() => r.Kind = v));
+            Choice("Kind", new[] { "one-to-one", "one-to-many", "many-to-many" }, r.Kind, v => Change(() => r.Kind = v));
             Choice(r.Kind == "one-to-many" ? "From (the one)" : "From", entities, r.From, v => Change(() => r.From = v));
-            Choice(r.Kind == "one-to-many" ? "To (the many)" : "To", entities, r.To, v => Change(() => r.To = v));
-            Field("Navigation (the list in " + r.From + ")", r.Navigation, v => Change(() => r.Navigation = Null(v)));
-            Field(r.Kind == "one-to-many" ? "Inverse (the object in " + r.To + ")" : "Inverse (the list in " + r.To + ")", r.Inverse, v => Change(() => r.Inverse = Null(v)));
-            if (r.Kind == "one-to-many")
-                Field("Foreign key (a field of " + r.To + ")", r.ForeignKey, v => Change(() => r.ForeignKey = Null(v)), LowerFirst(r.From) + "Id");
+            Choice(r.Kind == "one-to-many" ? "To (the many)" : r.Kind == "one-to-one" ? "To (has the foreign key)" : "To", entities, r.To, v => Change(() => r.To = v));
+            Field(r.Kind == "one-to-one" ? "Navigation (the object in " + r.From + ")" : "Navigation (the list in " + r.From + ")", r.Navigation, v => Change(() => r.Navigation = Null(v)));
+            Field(r.Kind == "many-to-many" ? "Inverse (the list in " + r.To + ")" : "Inverse (the object in " + r.To + ")", r.Inverse, v => Change(() => r.Inverse = Null(v)));
+            if (r.Kind != "many-to-many")
+                Field("Foreign key (a field of " + r.To + (r.Kind == "one-to-one" ? ", unique" : "") + ")", r.ForeignKey, v => Change(() => r.ForeignKey = Null(v)), LowerFirst(r.From) + "Id");
             else
             {
                 Field("Join table", r.JoinTable, v => Change(() => r.JoinTable = Null(v)), LowerFirst(r.From) + "_" + LowerFirst(r.To));
@@ -719,6 +855,8 @@ namespace fire.Editor
             {
                 _properties.Children.Add(Heading("Field " + sel.Name));
                 if (entity) Field("Column", sel.Column, v => Change(() => sel.Column = Null(v)), "(by the naming of the model)");
+                if (entity) Field("Check (a condition of the column)", sel.Check, v => Change(() => sel.Check = Null(v)), "age >= 0");
+                if (entity) Field("Type in the database (in place of the dialect's)", sel.DbType, v => Change(() => sel.DbType = Null(v)), "postgres: jsonb; mysql: JSON; *: TEXT");
                 Field("Comment", sel.Comment, v => Change(() => sel.Comment = Null(v)));
                 var flags = new WrapPanel();
                 if (entity)

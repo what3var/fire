@@ -25,8 +25,8 @@ namespace fire.UI.Markup
         // the scalar types of a field and their kind in the mapping
         private static readonly HashSet<string> Scalars = new(StringComparer.Ordinal) { "int", "float", "bool", "string", "char", "bytes", "DateTime" };
 
-        private sealed record Field(string Name, string Type, string? Column, bool Key, bool Generated, bool Required, int Length, bool Unique, bool Index, bool Version, bool Json, string? Comment, int Line);
-        private sealed record Entity(string Name, string Table, bool Record, string? Set, string? Comment, List<Field> Fields, int Line);
+        private sealed record Field(string Name, string Type, string? Column, bool Key, bool Generated, bool Required, int Length, bool Unique, bool Index, bool Version, bool Json, string? Comment, int Line, string? Check = null, string? DbType = null);
+        private sealed record Entity(string Name, string Table, bool Record, string? Set, string? Comment, List<Field> Fields, int Line, string? View = null, List<string>? Checks = null);
         private sealed record TypeDecl(string Name, List<Field> Fields, string? Comment, int Line);
         private sealed record EnumDecl(string Name, List<string> Values, string? Comment, int Line);
         private sealed record Relation(string Kind, string From, string To, string? Key, string? Navigation, string? Inverse, string? JoinTable, string? FromColumn, string? ToColumn, int Line);
@@ -74,7 +74,10 @@ namespace fire.UI.Markup
                 {
                     string name = Str(e, "name") ?? "";
                     string table = Str(e, "table") ?? TableName(name, tableNaming);
-                    entities.Add(new Entity(name, table, Bool(e, "record"), Str(e, "set"), Str(e, "comment"), ReadFields(e, lines, ep), line));
+                    var checks = e.TryGetProperty("checks", out var cs) && cs.ValueKind == JsonValueKind.Array ? cs.EnumerateArray().Where(c => c.ValueKind == JsonValueKind.String).Select(c => c.GetString()!).Where(c => c.Trim() != "").ToList() : new List<string>();
+                    string? view = Str(e, "view");
+                    if (view != null && view.Trim() == "") view = null;
+                    entities.Add(new Entity(name, table, Bool(e, "record"), Str(e, "set"), Str(e, "comment"), ReadFields(e, lines, ep), line, view, checks));
                 }
                 var relations = new List<Relation>();
                 foreach (var (r, line, _) in Items(root, "relations", lines))
@@ -112,7 +115,9 @@ namespace fire.UI.Markup
                     if (needsKey && !fields.Any(fd => fd.Key) && !fields.Any(fd => fd.Name == "id")) errors.Add(new MarkupDiagnostic(line, $"The entity '{owner}' has no key: a field with \"key\": true (or a field 'id')."));
                 }
                 foreach (var t in types) CheckFields(t.Name, t.Fields, false, t.Line);
-                foreach (var e in entities) CheckFields(e.Name, e.Fields, true, e.Line);
+                foreach (var e in entities) CheckFields(e.Name, e.Fields, e.View == null, e.Line);
+                foreach (var e in entities)
+                    if (e.View != null && (e.Checks?.Count > 0 || e.Fields.Any(fd => fd.Check != null))) errors.Add(new MarkupDiagnostic(e.Line, $"The view '{e.Name}' has no checks (its query decides its rows)."));
                 var tables = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
                 foreach (var e in entities) if (!tables.Add(e.Table)) errors.Add(new MarkupDiagnostic(e.Line, $"Two entities have the table '{e.Table}'."));
 
@@ -134,7 +139,22 @@ namespace fire.UI.Markup
                 foreach (var r in relations)
                 {
                     if (!entityNames.Contains(r.From) || !entityNames.Contains(r.To)) { errors.Add(new MarkupDiagnostic(r.Line, $"The relation of '{r.From}' and '{r.To}' needs two entities of the model.")); continue; }
-                    if (r.Kind == "one-to-many")
+                    if (r.Kind == "one-to-one")
+                    {
+                        // (one From has one To: the foreign key is a field of To, unique)
+                        string fk = r.Key ?? Lower(r.From) + "Id";
+                        if (!IsName(fk)) { errors.Add(new MarkupDiagnostic(r.Line, $"'{fk}' is no name for a foreign key.")); continue; }
+                        var to = entities.First(x => x.Name == r.To);
+                        if (!to.Fields.Any(fd => fd.Name == fk))
+                        {
+                            string column = columnNaming == "snake" && Snake(fk) != fk ? $"[Column \"{Snake(fk)}\"] " : "";
+                            Add(r.To, fk, $"{column}[Unique] {KeyType(r.From)} {fk}", r.Line);
+                        }
+                        if (r.Navigation != null) Add(r.From, r.Navigation, $"[HasOne \"{fk}\"] {r.To} {r.Navigation}", r.Line);
+                        if (r.Inverse != null) Add(r.To, r.Inverse, $"[BelongsTo \"{fk}\"] {r.From} {r.Inverse}", r.Line);
+                        if (r.Navigation == null && r.Inverse == null) errors.Add(new MarkupDiagnostic(r.Line, $"The relation of '{r.From}' and '{r.To}' needs a navigation field on one side at least (\"navigation\" or \"inverse\")."));
+                    }
+                    else if (r.Kind == "one-to-many")
                     {
                         // (one From has many To: the foreign key is a field of To)
                         string fk = r.Key ?? Lower(r.From) + "Id";
@@ -157,7 +177,7 @@ namespace fire.UI.Markup
                         Add(r.From, r.Navigation, $"[ManyToMany \"{join}\", \"{a}\", \"{b}\"] List<{r.To}> {r.Navigation}", r.Line);
                         if (r.Inverse != null) Add(r.To, r.Inverse, $"[ManyToMany \"{join}\", \"{b}\", \"{a}\"] List<{r.From}> {r.Inverse}", r.Line);
                     }
-                    else errors.Add(new MarkupDiagnostic(r.Line, $"The kind of a relation is one-to-many or many-to-many, not '{r.Kind}'."));
+                    else errors.Add(new MarkupDiagnostic(r.Line, $"The kind of a relation is one-to-one, one-to-many or many-to-many, not '{r.Kind}'."));
                 }
                 if (errors.Count > 0) throw new MarkupException(errors);
 
@@ -186,6 +206,8 @@ namespace fire.UI.Markup
                 {
                     Comment(sb, e.Comment, "    ");
                     sb.Append("    [Table \"").Append(e.Table).Append("\"]\n");
+                    if (e.View != null) sb.Append("    [View ").Append(Lit(e.View)).Append("]\n");
+                    if (e.Checks?.Count > 0) sb.Append("    [Check ").Append(Lit(e.Checks.Count == 1 ? e.Checks[0] : string.Join(" AND ", e.Checks.Select(c => "(" + c + ")")))).Append("]\n");
                     sb.Append(e.Record ? "    record " : "    class ").Append(e.Name).Append(" {\n");
                     foreach (var fd in e.Fields)
                     {
@@ -198,8 +220,10 @@ namespace fire.UI.Markup
                 // Model: what the model has
                 sb.Append("    /// <summary>The data model ").Append(ns).Append(": its entities and their tables.</summary>\n");
                 sb.Append("    class Model {\n");
-                sb.Append("        static any Types() { return [").Append(string.Join(", ", entities.Select(e => "\"" + ns + "." + e.Name + "\""))).Append("] }\n");
-                sb.Append("        static any Tables() { return [").Append(string.Join(", ", entities.Select(e => "\"" + e.Table + "\""))).Append("] }\n");
+                // (the views after the tables: their queries name them)
+                var ordered = entities.Where(e => e.View == null).Concat(entities.Where(e => e.View != null)).ToList();
+                sb.Append("        static any Types() { return [").Append(string.Join(", ", ordered.Select(e => "\"" + ns + "." + e.Name + "\""))).Append("] }\n");
+                sb.Append("        static any Tables() { return [").Append(string.Join(", ", ordered.Select(e => "\"" + e.Table + "\""))).Append("] }\n");
                 sb.Append("    }\n\n");
                 // Context: the database through the model
                 sb.Append("    /// <summary>A database through the model ").Append(ns).Append(": a query per entity, sessions, the schema.</summary>\n");
@@ -215,7 +239,7 @@ namespace fire.UI.Markup
                 sb.Append("        Data.Session Session() { return this.db.Session() }\n");
                 sb.Append("        // (the tables of the model: made when they are not there, missing columns and indexes added - never dropped)\n");
                 sb.Append("        undefined Ensure() {\n");
-                foreach (var e in entities) sb.Append("            this.db.Ensure(\"").Append(ns).Append('.').Append(e.Name).Append("\")\n");
+                foreach (var e in ordered) sb.Append("            this.db.Ensure(\"").Append(ns).Append('.').Append(e.Name).Append("\")\n");
                 sb.Append("        }\n");
                 sb.Append("        int Migrate() { return this.db.Migrate() }\n");
                 sb.Append("        // (the SQL that makes the tables of the model in an empty database, in the dialect of the connection)\n");
@@ -236,6 +260,8 @@ namespace fire.UI.Markup
             if (isEntity && fd.Index && !fd.Unique) sb.Append("[Index] ");
             if (isEntity && fd.Version) sb.Append("[Version] ");
             if (fd.Json) sb.Append("[Json] ");
+            if (isEntity && fd.Check != null) sb.Append("[Check ").Append(Lit(fd.Check)).Append("] ");
+            if (isEntity && fd.DbType != null) sb.Append("[DbType ").Append(Lit(fd.DbType)).Append("] ");
             if (fd.Type == "bytes") sb.Append("byte ").Append(fd.Name).Append("[]");
             else sb.Append(fd.Type).Append(' ').Append(fd.Name);
             return sb.ToString();
@@ -251,7 +277,20 @@ namespace fire.UI.Markup
                 int length = fd.TryGetProperty("length", out var l) && l.TryGetInt32(out int lv) ? lv : 0;
                 bool key = Bool(fd, "key");
                 bool generated = !fd.TryGetProperty("generated", out var g) || g.ValueKind != JsonValueKind.False;
-                list.Add(new Field(name, type, Str(fd, "column"), key, generated, Bool(fd, "required"), length, Bool(fd, "unique"), Bool(fd, "index"), Bool(fd, "version"), Bool(fd, "json"), Str(fd, "comment"), line));
+                string? check = Str(fd, "check");
+                if (check != null && check.Trim() == "") check = null;
+                // ("dbType": "jsonb" for every database, or { "postgres": "jsonb", "mysql": "JSON", "*": "TEXT" } - [DbType "postgres: jsonb; mysql: JSON; *: TEXT"])
+                string? dbType = null;
+                if (fd.TryGetProperty("dbType", out var dt))
+                {
+                    if (dt.ValueKind == JsonValueKind.String && dt.GetString()!.Trim() != "") dbType = dt.GetString()!.Trim();
+                    else if (dt.ValueKind == JsonValueKind.Object)
+                    {
+                        var parts = dt.EnumerateObject().Where(p => p.Value.ValueKind == JsonValueKind.String).Select(p => p.Name + ": " + p.Value.GetString()).ToList();
+                        if (parts.Count > 0) dbType = string.Join("; ", parts);
+                    }
+                }
+                list.Add(new Field(name, type, Str(fd, "column"), key, generated, Bool(fd, "required"), length, Bool(fd, "unique"), Bool(fd, "index"), Bool(fd, "version"), Bool(fd, "json"), Str(fd, "comment"), line, check, dbType));
             }
             return list;
         }
@@ -269,6 +308,8 @@ namespace fire.UI.Markup
                 i++;
             }
         }
+        // (a text as a fire string literal)
+        private static string Lit(string text) => "\"" + text.Replace("\\", "\\\\").Replace("\"", "\\\"").Replace("\n", "\\n") + "\"";
         private static string? Str(JsonElement e, string name) => e.TryGetProperty(name, out var v) && v.ValueKind == JsonValueKind.String ? v.GetString() : null;
         private static bool Bool(JsonElement e, string name) => e.TryGetProperty(name, out var v) && v.ValueKind == JsonValueKind.True;
         // (the line of every object by its path - "entities[1].fields[0]": JsonElement knows no position, the reader does)

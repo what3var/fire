@@ -31728,6 +31728,79 @@ else
             """)).ToArray();
     }
 
+    // One-to-one ([HasOne] and [BelongsTo] on a unique foreign key: Include, the session, a condition over it), a view ([View] - Ensure makes it, queries
+    // read it), checks ([Check] of a column and of the table) and the type of a column per database ([DbType]) - SQLite and the in-memory database alike
+    natCases = natCases.Append(("Data/OneToOne: [HasOne] (Include, Session mit neuem Kind und Fremdschluessel, Bedingung ueber das Kind als Unterabfrage), [View] (Ensure, Abfragen, Script), [Check] von Spalte und Tabelle (ConstraintException), [DbType] je Datenbank - SQLite und In-Memory", """
+            #import "data.sqlite"
+            #import "data.memory"
+            [Table "users"]
+            class User {
+                [Key] int id
+                [Required] [Length 50] string name
+                [Check "age >= 0"] int age
+                [DbType "sqlite: NUMERIC; memory: NUMBER; *: TEXT"] string note
+                [HasOne "userId"] Profile profile
+                construct() { }
+            }
+            [Table "profiles"]
+            [Check "length(bio) < 100"]
+            class Profile {
+                [Key] int id
+                [Unique] int userId
+                string bio
+                [BelongsTo "userId"] User user
+                construct() { }
+            }
+            [Table "adults"]
+            [View "SELECT id, name FROM users WHERE age >= 18"]
+            class Adult {
+                int id
+                string name
+                construct() { }
+            }
+            foreach (url in ["sqlite::memory:", "memory:"]) {
+                var db = new Data.Connection(url)
+                print("---- " + url)
+                print(db.CreateScriptOf(["User", "Profile", "Adult"]))
+                db.Ensure("User")
+                db.Ensure("Profile")
+                db.Ensure("Adult")
+                db.Ensure("Adult")
+                var s = db.Session()
+                var u = new User()
+                u.name = "Ada"
+                u.age = 36
+                var p = new Profile()
+                p.bio = "maths"
+                u.profile = p
+                s.Add(u)
+                var k = new User()
+                k.name = "Kid"
+                k.age = 9
+                s.Add(k)
+                s.Save()
+                print("profile user " + db.Scalar("select userId from profiles"))
+                var s2 = db.Session()
+                List<User> all = s2.From<User>().Include(x => x.profile).OrderBy(x => x.id).ToList()
+                foreach (x in all) {
+                    string bio = "none"
+                    if (x.profile != undefined) { bio = x.profile.bio }
+                    print(x.name + " " + bio)
+                }
+                all[1].profile = new Profile()
+                all[1].profile.bio = "toys"
+                s2.Save()
+                print("profiles " + db.Scalar("select count(*) from profiles"))
+                var q = db.From<User>().Where(x => x.profile.bio == "toys")
+                print(q.ToSql())
+                print("with toys " + q.First().name)
+                print("adults " + db.From<Adult>().Count() + " " + db.From<Adult>().First().name)
+                try { db.Execute("insert into users(name, age) values ('Neg', -1)") } catch (Data.ConstraintException e) { print("check " + e.message) }
+                try { db.Execute("insert into profiles(userId, bio) values (99, ?)", ["x".PadRight(120, 'y')]) } catch (Data.ConstraintException e) { print("table check " + e.message) }
+                db.Close()
+            }
+            """)).ToArray();
+
     // Navigation in queries (x.customer.name, two hops, OrderBy, == undefined, inside Any) and the objects a session reaches through relations with a key of
     // their own (new when the table has no row with it, else a row that is there - a child moved into another list)
     natCases = natCases.Append(("Data/Navigation: Bedingungen ueber [BelongsTo]-Felder (ein und zwei Spruenge, Enum, StartsWith, OrderBy, == undefined, in Any) als Unterabfragen; Objekte mit eigenem Schluessel ueber Beziehungen (neu nur ohne Zeile, sonst vorhanden; ein vorhandenes Kind wechselt die Liste) - SQLite und In-Memory", """
