@@ -20,7 +20,7 @@ var secure = server.Accept(listener.Accept())              // handshake as the s
 
 | class | |
 |---|---|
-| `Tls.Stream` | an `IO.Stream` like `Net.TcpClient`: `Read` (0 when the other side has ended the connection), `Write`, `WriteString`, `ReadTimeout`/`WriteTimeout`, `WaitReadable`, `Info`, `RemoteHost`, `RemotePort`, `LocalHost`, `LocalPort` (a `Net.IConnection`), `Connection` (the TCP connection - do not use it), `Close()` (close_notify, then the connection is closed). `Tls.Stream.Connect(host, port, options = undefined, timeout = 10000)`; `new Tls.Stream(tcp, serverName, options, timeout)` wraps a connection you made (it belongs to the stream from then on) |
+| `Tls.Stream` | an `IO.Stream` like `Net.TcpClient`: `Read` (0 when the other side has ended the connection), `Write`, `WriteString`, `ReadTimeout`/`WriteTimeout`, `WaitReadable`, `WaitReadableOr`, `Info`, `RemoteHost`, `RemotePort`, `LocalHost`, `LocalPort` (a `Net.IConnection`), `Connection` (the TCP connection - do not use it), `Close()` (close_notify, then the connection is closed). `Tls.Stream.Connect(host, port, options = undefined, timeout = 10000)`; `new Tls.Stream(tcp, serverName, options, timeout)` wraps a connection you made (it belongs to the stream from then on) |
 | `Tls.Options` | `verify` (true), `caFile`, `caPem` (PEM text; both empty: the system's certificates), `certPem` + `keyPem` (a client certificate) |
 | `Tls.Server(certPem, keyPem)` | `Accept(tcp, timeout = 10000)` returns the `Tls.Stream`, `Close()` (close the streams first) |
 | `Tls.Support.Available()` | false on a build or platform without TLS |

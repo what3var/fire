@@ -5215,13 +5215,14 @@ namespace fire.Native
                             : $"{T(first)} = Undef();");
                         d = first + 1; SetR(first, false); return Next();
                     }
-                    if (native == FdWaitMethods.NativeName && argc == 3)
+                    if (native == FdWaitMethods.NativeName && argc is 3 or 4)
                     {
-                        // waiting for a socket (fire_rt.h fire_fd_wait: the poller thread; -1 where there is none)
+                        // waiting for a socket (fire_rt.h fire_fd_wait: the poller thread; -1 where there is none) - with a fourth argument also for a
+                        // channel (fire_fd_wait_or: bit 4 when it has something or is closed)
                         // (it does not make the program one with threads: without them the result is -1 and the net package waits as before)
-                        int first = d - 3;
-                        string waitArgs = string.Join(", ", Enumerable.Range(first, 3).Select(SR));
-                        E($"{T(first)} = fire_fd_wait({waitArgs});");
+                        int first = d - argc;
+                        string waitArgs = string.Join(", ", Enumerable.Range(first, argc).Select(SR));
+                        E($"{T(first)} = {(argc == 4 ? "fire_fd_wait_or" : "fire_fd_wait")}({waitArgs});");
                         Check();
                         d = first + 1; SetR(first, false); return Next();
                     }

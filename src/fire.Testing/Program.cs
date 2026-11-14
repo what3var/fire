@@ -28592,6 +28592,68 @@ else
             print("plain " + plain.Compressed + " " + plain.ReceiveText(5000).Length)
             plain.Close()
             """),
+        ("WebSocket.Outbox: ein anderer Task sendet auf den Socket, waehrend sein Task in Receive wartet (ein Warten auf Socket und Kanal), sendFrom mit Channel.Pair", """
+            #import "http"
+            #import "time"
+            class Ticker : Http.IWebSocketHandler {
+                construct() { }
+                undefined Serve(Http.WebSocket ws) {
+                    var out = ws.Outbox
+                    fire with out {
+                        for (var i = 1; i <= 3; i++) {
+                            Sleep(50)
+                            out.Send("tick " + i)
+                        }
+                    }
+                    while (true) {
+                        var m = ws.ReceiveText()
+                        if (m == undefined) { break }
+                        ws.Send("echo " + m)
+                    }
+                }
+            }
+            class Linked : Http.IWebSocketHandler {
+                construct() { }
+                undefined Serve(Http.WebSocket ws) {
+                    var link = Channel.Pair<string, string>()
+                    var other = link.Other()
+                    fire with other {
+                        foreach (s in other) { other.Send("got " + s) }
+                    }
+                    while (true) {
+                        var m = ws.ReceiveText(-1, link)
+                        if (m == undefined) { break }
+                        link.Send(m)
+                    }
+                    link.Close()
+                }
+            }
+            var probe = new Net.TcpListener("127.0.0.1", 0)
+            int port = trust probe.Port
+            probe.Close()
+            fire {
+                var server = new Http.AppServer("127.0.0.1", port)
+                server.PushTo(new Http.WebSockets("/tick", new Ticker()))
+                server.PushTo(new Http.WebSockets("/link", new Linked()))
+                while (server.Connections < 2) { server.AcceptOne(30000) }
+                Sleep(500)
+                server.Close()
+            }
+            Sleep(300)
+            var ws = Http.WebSocket.Connect("ws://127.0.0.1:" + port + "/tick")
+            print(ws.ReceiveText(5000))
+            print(ws.ReceiveText(5000))
+            print(ws.ReceiveText(5000))
+            ws.Send("bye")
+            print(ws.ReceiveText(5000))
+            ws.Close()
+            var w2 = Http.WebSocket.Connect("ws://127.0.0.1:" + port + "/link")
+            w2.Send("a")
+            print(w2.ReceiveText(5000))
+            w2.Send("bc")
+            print(w2.ReceiveText(5000))
+            w2.Close()
+            """),
         ("Http.Files: mehrere Bereiche (multipart/byteranges, Suffix, ausserhalb weggelassen, alle ausserhalb 416), If-Range, Map (Datei aus einem Lambda; ausserhalb des Ordners, versteckt, fehlend: 404)", """
             #import "http"
             #import "time"

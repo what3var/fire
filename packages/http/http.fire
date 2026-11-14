@@ -1955,6 +1955,8 @@ namespace Http {
         // permessage-deflate (RFC 7692) was agreed: messages of at least `compressFrom` bytes go compressed (each on its own: no context takeover)
         bool deflate
         defined int compressFrom
+        // (what other tasks send through the ends of Outbox: the task that owns the socket writes it while it waits in Receive)
+        Channel<string> outbox
 
         // (the WebSocket uses the connection and the reader; Connect hands them to it, the server's task keeps them)
         construct(Net.IConnection connection, Http.Reader reader, bool client) {
@@ -1981,6 +1983,16 @@ namespace Http {
         }
         // The code of the close frame of the other side (1000 normal, 1001 going away, ...; 1006 when the connection just ended), 0 while it is open.
         defined int CloseCode { get { return this.closeCode } }
+
+        // An end of the outbox of this WebSocket for another task (`fire with`, an actor's message): what it sends there, the task that owns the socket
+        // writes as a text message while it waits in Receive/ReceiveText - at once, one wait for the socket and the outbox, no turns. A WebSocket is
+        // written by one task only (over TLS the encryption is one state): this is how others send on it.
+        Channel<string> Outbox {
+            get {
+                if (this.outbox == undefined) { this.outbox = new Channel<string>(256) }
+                return this.outbox.__End()
+            }
+        }
 
         // ws://host:port/path (wss:// over TLS): the handshake as a client.
         static Http.WebSocket Connect(string url, defined int timeout = 10000, Http.Headers headers = undefined, bool compress = true) {
@@ -2042,9 +2054,57 @@ namespace Http {
             this.Frame(9, data)
         }
 
-        // The next message, undefined when the connection is closed (or `timeout` ms ran out: then IsOpen is still true).
-        Http.WebSocketMessage Receive(int timeout = -1) {
+        // The next message, undefined when the connection is closed (or `timeout` ms ran out: then IsOpen is still true). While it waits it sends what
+        // comes into the Outbox, and what `sendFrom` (a Channel or a ChannelEnd of texts) receives - one wait for the socket and the channel.
+        Http.WebSocketMessage Receive(int timeout = -1, any sendFrom = undefined) {
             if (!this.open) { return undefined }
+            any source = sendFrom
+            if (source == undefined) { source = this.outbox }
+            if (source != undefined) {
+                var deadline = -1
+                if (timeout >= 0) { deadline = Net.Clock.Now() + timeout * 10000 }
+                while (true) {
+                    this.SendWaiting(source)
+                    if (sendFrom != undefined && this.outbox != undefined) { this.SendWaiting(this.outbox) }
+                    if (!this.open) { return undefined }
+                    if (this.reader.pos < this.reader.len) { break }
+                    any left = undefined
+                    if (deadline >= 0) {
+                        left = (deadline - Net.Clock.Now()) / 10000
+                        if (left <= 0) { return undefined }
+                    }
+                    // (a channel without a node of this process is looked at every 20 ms - so is the Outbox while the wait is for `sendFrom`)
+                    int node = source.__Node()
+                    if ((node == 0 || sendFrom != undefined && this.outbox != undefined) && (left == undefined || left > 20)) { left = 20 }
+                    var ready = this.connection.WaitReadableOr(left, node)
+                    if (ready == 1) { break }
+                    if (ready == 0 && deadline >= 0 && Net.Clock.Now() >= deadline) { return undefined }
+                    // (4: the channel - what it has goes out above; a closed and empty one is waited for no more)
+                    if (source.IsClosed && source.Count == 0) {
+                        this.SendWaiting(source)
+                        break
+                    }
+                }
+                if (deadline >= 0) {
+                    timeout = (deadline - Net.Clock.Now()) / 10000
+                    if (timeout < 0) { timeout = 0 }
+                }
+            }
+            return this.ReceiveNow(timeout)
+        }
+
+        // (what the channel has now, out as messages: a text as a text message, bytes as a binary one)
+        undefined SendWaiting(any source) {
+            any m = source.TryReceive()
+            while (m != undefined) {
+                if (this.open) {
+                    if (m is of string) { this.Send(m) } else { this.SendBytes(m) }
+                }
+                m = source.TryReceive()
+            }
+        }
+
+        Http.WebSocketMessage ReceiveNow(int timeout) {
             if (timeout < 0) { this.connection.ReadTimeout = undefined } else { this.connection.ReadTimeout = timeout }
             IO.MemoryStream parts = undefined
             var opcodeOfMessage = 0
@@ -2110,9 +2170,10 @@ namespace Http {
             }
         }
 
-        // The next text message (a binary one as UTF-8), undefined when the connection is closed or the time ran out.
-        string ReceiveText(defined int timeout = -1) {
-            var m = this.Receive(timeout)
+        // The next text message (a binary one as UTF-8), undefined when the connection is closed or the time ran out; sends what comes into the Outbox
+        // and `sendFrom` meanwhile (see Receive).
+        string ReceiveText(defined int timeout = -1, any sendFrom = undefined) {
+            var m = this.Receive(timeout, sendFrom)
             if (m == undefined) { return undefined }
             return m.Text()
         }

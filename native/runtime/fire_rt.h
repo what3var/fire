@@ -9337,6 +9337,7 @@ FIRE_FN bool fire_replyDone(void* ctx);
 FIRE_FN bool fire_tokWaitPred(void* ctx);
 FIRE_FN bool fire_complDone(void* ctx);   /* (a Completion: notifyKey of its node) */
 FIRE_FN bool fire_fdReady(void* ctx);     /* (__fd_wait: notifyKey of the waiter) */
+FIRE_FN bool fire_fdOrChanReady(void* ctx);   /* (__fd_wait with a channel: the same key - the waiter is its first member) */
 #ifdef FIRE_TASKS
 FIRE_FN bool fire_awaitDone(void* ctx);
 #endif
@@ -9368,7 +9369,7 @@ FIRE_FN bool blockUntil(bool (*pred)(void*), void* ctx, bool stopOnTerminate, in
 #ifdef FIRE_TASKS
         if (taskRunning()) {
             /* (a task - a member of the main program's group too: parked until an event or its time - Sleep wakes only at its time, the other conditions are looked at again every few ms) */
-            bool keyed = pred == fire_sectionGranted || pred == fire_sectionDone || pred == fire_replyDone || pred == fire_awaitDone || pred == fire_complDone || pred == fire_fdReady;
+            bool keyed = pred == fire_sectionGranted || pred == fire_sectionDone || pred == fire_replyDone || pred == fire_awaitDone || pred == fire_complDone || pred == fire_fdReady || pred == fire_fdOrChanReady;
             const void* key = pred == fire_sleepWake || pred == fire_tokWaitPred ? (const void*)&g_terminate : keyed || pred == fire_actorReady ? ctx : NULL;
             /* (Sleep wakes at its time, a section when it is granted or done, an awaited reply or group when it is done - notifyKey; anything else is looked
              * at again every few ms) */
@@ -10145,10 +10146,24 @@ FIRE_FN void stillLeave(void) { if (g_isFire) fire_atomic_add(&g_idleThreads, (u
 /* (set by mainFinish when the threads that are left stand still: a fire thread that waits in `process` for an empty mailbox then ends like with `leave`) */
 extern FIRE_RT_DATA fire_atomic32 g_standstill;
 extern FIRE_RT_DATA fire_atomic32 g_fdWaiters;   /* (the threads that wait for a socket - counted in g_idleThreads too) */
-FIRE_FN Value fire_fd_wait(Value fdv, Value ev, Value msv) {
+/* (__fd_wait(fd, events, ms, channel): the socket or a channel - what a channel's Send wakes (notifyEventAll wakes the keyed waits too), the socket the poller
+ * by the waiter's address, the first member) */
+typedef struct FdChanWait { FdWaiter w; void* chan; } FdChanWait;
+FIRE_FN bool fire_chanCanReceive(void* c);
+FIRE_FN bool fire_fdOrChanReady(void* ctx) { FdChanWait* c = (FdChanWait*)ctx; return fire_fdReady(&c->w) || (c->chan && fire_chanCanReceive(c->chan)); }
+FIRE_FN Value fire_fd_wait_core(Value fdv, Value ev, Value msv, void* chan);
+FIRE_FN Value fire_fd_wait(Value fdv, Value ev, Value msv) { return fire_fd_wait_core(fdv, ev, msv, NULL); }
+/* `__fd_wait(fd, events, ms, channel)`: also ends when the channel (its node handle) has something or is closed - bit 4 of the result (Http.WebSocket:
+ * the task that owns the socket sends what other tasks put into its outbox while it waits for the next message). */
+FIRE_FN Value fire_fd_wait_or(Value fdv, Value ev, Value msv, Value chv) {
+    void* chan = chv.kind == K_Int && chv.i ? (void*)(intptr_t)chv.i : NULL;
+    return fire_fd_wait_core(fdv, ev, msv, chan);
+}
+FIRE_FN Value fire_fd_wait_core(Value fdv, Value ev, Value msv, void* chan) {
 #ifdef FIRE_FD_POLL
     FdPoller* p;
-    FdWaiter w, **link;
+    FdChanWait cw;
+    FdWaiter** link;
     CancelNode* token;
     int64_t deadline = 0, until;
     int64_t ms = msv.kind == K_Int ? msv.i : msv.kind == K_Float ? (int64_t)msv.f : -1;
@@ -10156,8 +10171,11 @@ FIRE_FN Value fire_fd_wait(Value fdv, Value ev, Value msv) {
     int state;
     bool listed;
     if (fdv.kind != K_Int || fdv.i < 0 || ev.kind != K_Int || (ev.i & 3) == 0) return Int(-1);
+    if (chan && fire_chanCanReceive(chan)) return Int(4);
     if (ms == 0) return Int(0);
     if (!(p = fire_fdPoller())) return Int(-1);
+    cw.chan = chan;
+#define w cw.w
     token = fire_curToken();
     if (token && (state = cancelState(token)) != 0) { fire_throwCancelled(state); return Undef(); }
     if (ms > 0) deadline = steadyMs() + ms;
@@ -10177,10 +10195,10 @@ FIRE_FN Value fire_fd_wait(Value fdv, Value ev, Value msv) {
     fire_atomic_add(&g_fdWaiters, 1);   /* (a socket can still bring work from outside: no standstill ends the waits in `process` meanwhile) */
     if (token) {
         TokWait tw;
-        tw.pred = fire_fdReady; tw.ctx = &w; tw.token = token;
+        tw.pred = fire_fdOrChanReady; tw.ctx = &cw; tw.token = token;
         if (g_isThread) blockUntil(fire_tokWaitPred, &tw, true, until); else blockUntilServing(fire_tokWaitPred, &tw, true, until);
-    } else if (g_isThread) blockUntil(fire_fdReady, &w, true, until);
-    else blockUntilServing(fire_fdReady, &w, true, until);
+    } else if (g_isThread) blockUntil(fire_fdOrChanReady, &cw, true, until);
+    else blockUntilServing(fire_fdOrChanReady, &cw, true, until);
     fire_atomic_add(&g_fdWaiters, (uint32_t)-1);
     stillLeave();
     sectionYieldEnd(held);
@@ -10190,13 +10208,16 @@ FIRE_FN Value fire_fd_wait(Value fdv, Value ev, Value msv) {
     if (listed) *link = w.next;
     fire_mutex_unlock(&p->m);
     if (listed) fdPollWake(p);   /* (the poller forgets the socket) */
-    if (fire_fdReady(&w)) return Int((int64_t)fire_atomic_loadAcquire(&w.ready));
+    if (fire_fdReady(&w) || (chan && fire_chanCanReceive(chan)))
+        return Int((int64_t)fire_atomic_loadAcquire(&w.ready) | (chan && fire_chanCanReceive(chan) ? 4 : 0));
     if (token && (state = cancelState(token)) != 0) { fire_throwCancelled(state); return Undef(); }
     if (deadline && steadyMs() >= deadline) return Int(0);
     startLeave();   /* (terminate) */
     return Undef();
+#undef w
 #else
     (void)fdv; (void)ev; (void)msv;
+    if (chan && fire_chanCanReceive(chan)) return Int(4);
     return Int(-1);
 #endif
 }
@@ -12298,6 +12319,7 @@ FIRE_FN void fire_threadsInit(void) {
 #ifndef FIRE_THREADS
 /* (a program without fire threads: no poller - the net package waits as before) */
 FIRE_FN Value fire_fd_wait(Value fdv, Value ev, Value msv) { (void)fdv; (void)ev; (void)msv; return Int(-1); }
+FIRE_FN Value fire_fd_wait_or(Value fdv, Value ev, Value msv, Value chv) { (void)fdv; (void)ev; (void)msv; (void)chv; return Int(-1); }
 #endif
 
 /* ---------------------------------------------------------------------------------------------------------------------

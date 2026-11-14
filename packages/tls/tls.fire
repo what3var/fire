@@ -151,6 +151,14 @@ namespace Tls {
             return this.tcp.WaitReadable(timeout)
         }
 
+        // 1 when something can be read (decrypted already, or on the socket - a record may still be incomplete: Read then waits for the rest), 4 when the
+        // channel of the node `channel` has something or is closed, 0 when the time ran out (Net.IConnection).
+        defined int WaitReadableOr(any timeout, defined int channel) {
+            this.Check()
+            if (__TlsPending(this.handle) > 0) { return 1 }
+            return this.tcp.WaitReadableOr(timeout, channel)
+        }
+
         // Up to `count` bytes (at least one unless the other side has ended the connection: then 0). Waits up to ReadTimeout, then Net.TimeoutException.
         override defined int Read(byte buffer[], defined int offset, defined int count) {
             this.Check()

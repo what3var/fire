@@ -174,6 +174,8 @@ namespace fire.Standard
                 undefined Close() { __chan_close(this.node) }
                 bool IsClosed { get { return __chan_closed(this.node) } }
                 int Count { get { return __chan_count(this.node) } }
+                // (the queue Receive takes from: a wait for a socket or this channel, Net.IConnection.WaitReadableOr)
+                int __Node() { return this.node }
                 IEnumerator<T> GetEnumerator() { return new ChannelIter<T>(this) }
                 // Two directions: the end that sends A and receives B (`.Other()` gives the end that sends B and receives A).
                 static ChannelEnd<A, B> Pair<A, B>(int capacity = 16) { return new ChannelEnd<A, B>(new Channel<A>(capacity), new Channel<B>(capacity)) }
@@ -192,6 +194,7 @@ namespace fire.Standard
                 undefined Close() { this.outgoing.Close() }
                 bool IsClosed { get { return this.incoming.IsClosed } }
                 int Count { get { return this.incoming.Count } }
+                int __Node() { return this.incoming.__Node() }
                 ChannelEnd<B, A> Other() { return new ChannelEnd<B, A>(this.incoming.__End(), this.outgoing.__End()) }
                 ChannelEnd<A, B> __End() { return new ChannelEnd<A, B>(this.outgoing.__End(), this.incoming.__End()) }
                 IEnumerator<B> GetEnumerator() { return this.incoming.GetEnumerator() }
