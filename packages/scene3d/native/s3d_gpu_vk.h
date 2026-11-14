@@ -1,7 +1,7 @@
 /* fire scene3d: the hardware backend - the queue of s3d_engine.h drawn by the GPU through Vulkan (docs/graphics/3d.md, "Hardware").
  *
  * Optional at every level: Vulkan is not linked but loaded when the backend is first asked for (libvulkan.so.1, vulkan-1.dll, libvulkan.1.dylib or MoltenVK), the declarations it needs
- * come with the package (s3d_vk.h, made from the Khronos header: no SDK needed to build), and when anything is missing - no loader, no driver, no GPU, an error - `s3d_gpu_flush`
+ * come with graphics (fire_gfx_vk.h, a header of that package made from the Khronos header: no SDK needed to build), and when anything is missing - no loader, no driver, no GPU, an error - `s3d_gpu_flush`
  * returns 0 and the software renderer draws the picture. Vulkan 1.0 core and nothing else (plus the portability extensions where they are there, for MoltenVK on macOS).
  *
  * What it draws is what the software renderer draws, computed per pixel the same way (shaders/s3d_main.frag is rasterTri in GLSL): Blinn-Phong with ambient, directional and point
@@ -43,10 +43,10 @@ static void s3d_gpu_detach(S3dFrame* f) { (void)f; }
 #else
 
 #ifdef FIRE_S3D_VK_SYSTEM_HEADERS
-#include <vulkan/vulkan.h>       /* (to check s3d_vk.h against the real header) */
+#include <vulkan/vulkan.h>       /* (to check fire_gfx_vk.h against the real header) */
 #else
 #ifndef FIRE_VK_DECLS_H
-#include "s3d_vk.h"   /* (the same file as graphics/native/fire_gfx_vk.h: a native build with both has them once) */
+#include "fire_gfx_vk.h"   /* (a header of graphics - "uses": ["graphics"]: one file for both Vulkan backends) */
 #endif
 #endif
 #ifndef FIRE_S3D_SHADERS_H
@@ -83,7 +83,7 @@ typedef struct S3dVkWin32Props { VkStructureType sType; void* pNext; uint32_t me
 typedef VkResult (VKAPI_PTR *PFN_s3dWin32HandleProps)(VkDevice device, VkExternalMemoryHandleTypeFlagBits type, void* handle, S3dVkWin32Props* props);
 
 /* The surfaces of the window systems (their declarations are in the platform headers of Vulkan, vulkan_win32.h & co., which need the headers of the window systems: the
- * structures are written out here; tools/check_s3d_vk.sh compares them with the real ones where the headers are there). One function type makes all of them. */
+ * structures are written out here; graphics/native/tools/check_gfx_vk.sh compares them with the real ones where the headers are there). One function type makes all of them. */
 typedef struct S3dVkWin32SurfaceCreateInfo { VkStructureType sType; const void* pNext; VkFlags flags; void* hinstance; void* hwnd; } S3dVkWin32SurfaceCreateInfo;
 typedef struct S3dVkXlibSurfaceCreateInfo { VkStructureType sType; const void* pNext; VkFlags flags; void* dpy; unsigned long window; } S3dVkXlibSurfaceCreateInfo;
 typedef struct S3dVkWaylandSurfaceCreateInfo { VkStructureType sType; const void* pNext; VkFlags flags; void* display; void* surface; } S3dVkWaylandSurfaceCreateInfo;

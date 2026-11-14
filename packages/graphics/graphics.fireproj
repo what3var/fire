@@ -20,7 +20,6 @@
       "native/fire_gfx_images.h",
       "native/fire_gfx_slicer.h",
       "native/fire_gfx_fx.h",
-      "native/fire_gfx_vk.h",
       "native/fire_gfx_shaders.h",
       "native/fire_gfx_gpu.h",
       "native/fire_bridge_graphics.h"
@@ -29,6 +28,9 @@
     "language": "c",
     "uses": [
       "io"
+    ],
+    "headers": [
+      "native/fire_gfx_vk.h"
     ]
   }
 }
