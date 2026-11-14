@@ -3517,7 +3517,7 @@ namespace fire.Runtime
                     if (!AdaptFieldUnit(ref value, requiredUnitName)) return false;
                 }
                 byte requiredKind = obj.RtClass?.FindFieldRequiredKind(fieldName) ?? 0;
-                if (!GuardFieldKind(ref value, requiredKind, fieldName)) return false;
+                if (!GuardFieldKind(ref value, requiredKind, fieldName, obj.RtClass)) return false;
                 string? requiredType = obj.RtClass?.FindFieldRequiredType(fieldName);
                 if (!GuardFieldType(ref value, requiredType, fieldName, obj)) return false;
                 if (obj.RtClass?.FindFieldRequiredArray(fieldName) is { } requiredArray and not 0)
@@ -3529,6 +3529,12 @@ namespace fire.Runtime
                 {
                     hasUnitRule = true;
                     if (!GuardFieldArrayOfParam(value, arrayOfParam, obj)) return false;
+                }
+                else if (obj.RtClass != null && BufferFieldWords(obj.RtClass, fieldName) is { } bufferWords)
+                {
+                    // `byte data[]` / `word w[]`: a buffer - what the compiler converts at every store of the name, also for a store by name (Reflect.Set)
+                    hasUnitRule = true;
+                    if (!ConvertFieldBuffer(ref value, bufferWords, obj)) return false;
                 }
                 if (site >= 0 && !hasUnitRule && obj.RtClass != null && obj.AccessGuard == null && !obj.RtClass.IsRecord
                     && obj.RtClass.FieldIndex.TryGetValue(fieldName, out int setIndex))
@@ -3635,7 +3641,7 @@ namespace fire.Runtime
                 }
             }
             byte requiredKind = oi.RtClass?.FindFieldRequiredKind(fieldName) ?? 0;
-            if (!GuardFieldKind(ref value, requiredKind, fieldName)) return;
+            if (!GuardFieldKind(ref value, requiredKind, fieldName, oi.RtClass)) return;
             string? requiredType = oi.RtClass?.FindFieldRequiredType(fieldName);
             if (!GuardFieldType(ref value, requiredType, fieldName, oi)) return;
             if (oi.RtClass?.FindFieldRequiredArray(fieldName) is { } requiredArray and not 0)
@@ -3647,6 +3653,11 @@ namespace fire.Runtime
             {
                 hasUnitRule = true;
                 if (!GuardFieldArrayOfParam(value, arrayOfParam, oi)) return;
+            }
+            else if (oi.RtClass != null && BufferFieldWords(oi.RtClass, fieldName) is { } bufferWords)
+            {
+                hasUnitRule = true;
+                if (!ConvertFieldBuffer(ref value, bufferWords, oi)) return;
             }
 
             if (!hasUnitRule && oi.RtClass != null && oi.ThreadLock == null && !oi.RtClass.IsRecord
@@ -7252,7 +7263,7 @@ namespace fire.Runtime
                 && rc.FindFieldRequiredKind(field.FieldName) is var kind and not 0 && DeclaredKind.IsNonNull(kind))
             {
                 if (rc.FindFieldRequiredUnit(field.FieldName) is { } unit && !AdaptFieldUnit(ref value, unit)) return false;
-                if (!GuardFieldKind(ref value, kind, field.FieldName)) return false;
+                if (!GuardFieldKind(ref value, kind, field.FieldName, rc)) return false;
             }
             try { ptr.AsPointer().Write(value); return true; }
             catch (PointerRangeException ex) { ThrowPointerRange(ex); return false; }
@@ -7570,13 +7581,33 @@ namespace fire.Runtime
         private void ThrowConditionError(Value condition) => ThrowArgumentError($"A condition must be a bool, not {condition.Kind}.");
 
         /// <summary>A field declared int/float/bool takes a value of that kind or undefined (DeclaredKind); false: an ArgumentException is thrown.</summary>
-        private bool GuardFieldKind(ref Value value, byte requiredKind, string fieldName) =>
-            DeclaredKind.Fits(value, requiredKind) || GuardDeclared(ref value, requiredKind, $"Field '{fieldName}'");
+        private bool GuardFieldKind(ref Value value, byte requiredKind, string fieldName, RuntimeClass? rc = null) =>
+            DeclaredKind.Fits(value, requiredKind) || GuardDeclared(ref value, requiredKind, rc?.FieldWhat(fieldName) ?? $"Field '{fieldName}'");
 
         /// <summary>A field declared as a typed array (FieldInfo.RequiredArray) holds an array of that element or undefined: the array is typed like by OpCode.TypeArray;
         /// false: the ArgumentException is thrown.</summary>
         private bool GuardFieldArray(Value value, ushort requiredArray, string? unit) =>
             requiredArray == 0 || TypeArrayValue(value, (byte)(requiredArray & 0xFF), requiredArray >> 8, unit, 1);
+
+        /// <summary>An array stored by name into a buffer field (Reflect.Set): the buffer it becomes (BufferFromArrayValue) belongs to the object - like the
+        /// buffer of a compiled store, which the field claims (the array stays with its owner).</summary>
+        private bool ConvertFieldBuffer(ref Value value, bool words, ObjectInstance obj)
+        {
+            var before = value;
+            if (!BufferFromArrayValue(ref value, null, 1, 1, words)) return false;
+            if (before.Kind == ValueKind.Array && value.Kind == ValueKind.Buffer)
+                LeafOwnership.Adopt(value.AsBuffer(), obj);
+            return true;
+        }
+
+        /// <summary>A field declared `byte data[]` (false) or `word w[]` (true) - a buffer (FieldInfo.TypeText); null for any other field.</summary>
+        private static bool? BufferFieldWords(RuntimeClass rc, string name)
+        {
+            for (var c = rc; c != null; c = c.Base)
+                if (c.OwnFieldInfo.TryGetValue(name, out var field))
+                    return field.IsStatic ? null : field.TypeText switch { "byte[]" or "uint8[]" => false, "word[]" => true, _ => null };
+            return null;
+        }
 
         /// <summary>A field declared `T items[]` (FieldInfo.ArrayOfParam, `$k@Class`): the array is typed by the type argument of the object, like `new T[n]`.</summary>
         private bool GuardFieldArrayOfParam(Value value, string arrayOfParam, ObjectInstance obj)

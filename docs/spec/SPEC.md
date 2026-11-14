@@ -1237,7 +1237,8 @@ properties - nowhere else. Reflection lists them for every member (`Member.Attri
 `Reflect.New(name)`; before a class: the class with all its members, before a member: that member and its class; not inherited; a name given as a literal to
 reflection - `Reflect.New("X")`, `Reflect.Call(o, "M")` - is kept the same way without it; the VM keeps everything anyway; how much a native build leaves out is its
 stripping level 0-3, [Natives Backend (AOT): fire -> C](NATIVE_BACKEND.md) "Größe des Programms"); `[NotSerializable]` (before a class) - `#import "json"` neither writes nor reads objects of the class or of a class
-derived from it (an `ArgumentException`; a package does the same for all its classes with `"serializable": false`, [JSON](../stdlib/json.md)); `[NoCopy]` (before a class) -
+derived from it (an `ArgumentException`; a package does the same for all its classes with `"serializable": false`, [JSON](../stdlib/json.md)); `[InferDefined]` (before a class, also in a package) - its fields and the parameters of its methods are
+derived `defined` (8.10b) although the program reads JSON or uses reflection; `[NoCopy]` (before a class) -
 an instance stands for something that exists once (a resource, a handle): `flat`/`copy` never duplicate it, also not of a class derived from it (an
 `ArgumentException`, 2.4; inherited because a subclass of a resource is still that resource; `NativeHandle` is `[NoCopy]`; the copies of the threads -
 `taking`, the arguments of `fire global`, what `sync` copies back, the isolated copy of the globals for a host callback after the end of the program - refuse it the same way before anything is copied). A `[` on a new line after a declaration (`int count` + newline + `[Test]`) starts an attribute, it never continues the
@@ -2453,12 +2454,21 @@ front of the type it **never holds `undefined`**: a parameter, a field, a proper
   a word of its own only there (a variable may still be called `defined`). Of an array (`defined int a[]`) it says that
   the elements are never undefined (8.4.2); not for a pointer or a type argument (`List<defined int>` is an error). `int!` is an error
   that names `defined int`. Overloads do not differ by `defined` alone.
-* **Derived for fields** (not in a debug build, nor with `#import "reflection"`; `FIRE_NO_DERIVE=1` switches all derivation off): a field of a
+* **Derived for fields** (not in a debug build; `FIRE_NO_DERIVE=1` switches all derivation off): a field of a
   class of the program declared `int`, `float` or `bool` without `defined` is compiled as a `defined` one when every write the type checker sees
   gives a number (or the result of a method, a parameter or another field that is derived itself) and none can write it unseen (`&`, a `ref`
   argument, `with`, `Json.Deserialize` in the program). With a number literal as initializer it keeps it; one without an initializer only when its `undefined` cannot
   be seen: every constructor of its class (no base class) sets it among its first plain statements - before any call, `this` handed out or read of
   it - and the program does not ask for it (`== undefined`, `is of`, `?.` on the name); it starts at 0 then. `FIRE_INFER_UNINITIALIZED_DEFINED=0` leaves out the fields without an initializer; `FIRE_DERIVE_LOG=1` shows the decisions.
+  **JSON and reflection** can write a field or call a method past what the checker sees: a program that reads JSON into objects
+  (`Json.Deserialize`, also in a package it uses) derives no field, one that uses reflection (`reflection`, also through `ui`, `data`, ...) no field
+  and no parameter, and a method whose name is in a string keeps its parameters as declared - unless the class says otherwise with
+  **`[InferDefined]`** (before the class, also a class of a package - there only its fields). Its fields and parameters are derived as above, and
+  what comes from outside is checked: `Reflect.Set` and `Reflect.Call` check the declared kind as always (strictly) and `undefined` as for `defined`,
+  and the `ArgumentException` says so ("Field 'count' (derived as never undefined: nothing in the program stores undefined in it) is an int and
+  never undefined."); `Json.Deserialize` leaves a derived field that is not in the text at 0 (reading JSON runs no initializers - not the
+  initializer's value) and a `null` for it is an `ArgumentException` with the same note. A package that fills objects by reflection (`data`: a
+  `NULL` column) then gets that exception too.
 
 **The type checker** (docs/spec/TYPES.md) knows what is certainly defined - a literal, what an operator computes (an
 undefined operand throws), a `defined` declaration, a call of a method with a `defined` return value - and what may be

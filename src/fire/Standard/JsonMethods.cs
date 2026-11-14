@@ -82,6 +82,9 @@ namespace fire.Standard
 
         private sealed class JsonError : Exception { public JsonError(string message) : base(message) { } }
 
+        /// <summary>What a JSON `null` for a field derived `defined` is told (FieldInfo.DerivedDefined; fire_json.h says the same).</summary>
+        public const string DerivedNote = " (derived: nothing in the program stores undefined in it)";
+
         /// <summary>A destroyed object, array or buffer met while writing: the DestroyedException any access gives (not a silent `null` - fire_json.h says the same).</summary>
         public const string DestroyedReason = "A value to write to JSON is destroyed: an object, array or buffer that belonged to a block that has ended (give it with `take` to what keeps it) or that was deleted.";
 
@@ -907,7 +910,7 @@ namespace fire.Standard
                     if (rc.FindFieldRequiredArray(field.Name) is var requiredArray and not 0 && rc.FindFieldRequiredUnit(field.Name) == null)
                         TypeArrayDeep(built, (byte)(requiredArray & 0xFF), requiredArray >> 8, 1, path + "." + key);
                     if (built.Kind == ValueKind.Undefined && rc.FindFieldRequiredKind(field.Name) is var declared and not 0 && DeclaredKind.IsNonNull(declared))
-                        throw _host.Error("ArgumentException", $"{path}.{key} is {(DeclaredKind.ValueKindOf(declared) switch { ValueKind.Int => "an int", ValueKind.Float => "a float", ValueKind.Word => "a word", ValueKind.Char => "a char", _ => "a bool" })} and never undefined.");
+                        throw _host.Error("ArgumentException", $"{path}.{key} is {(DeclaredKind.ValueKindOf(declared) switch { ValueKind.Int => "an int", ValueKind.Float => "a float", ValueKind.Word => "a word", ValueKind.Char => "a char", _ => "a bool" })} and never undefined{(rc.FieldWhat(field.Name).Length > field.Name.Length + 8 ? DerivedNote : "")}.");
                     obj.Fields[field.Name] = built;
                 }
                 if (HasOnDeserialized(rc)) Hooks.Add(obj);

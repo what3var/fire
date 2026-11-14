@@ -1169,6 +1169,10 @@ Offen:
 **Umgesetzt** (SPEC 8.10b): ein Feld der Klassen des Programms, dem jede Zuweisung eine Zahl gibt, wird wie `defined` übersetzt; eines ohne
 Initialisierer nur, wenn jeder Konstruktor es als Erstes setzt (vor jedem Aufruf und jedem Lesen) und die Klasse **keine Basisklasse** hat.
 
+Mit JSON und Reflection (Wunsch des Benutzers): ohne Zutun bleibt eine Klasse dann wie deklariert (JSON macht Objekte ohne Konstruktor, `$type`
+kann jede Klasse nennen; Reflection erreicht jedes Mitglied per Name); `[InferDefined]` vor der Klasse - auch in einem Paket - schaltet die Herleitung
+für sie ein, und was von außen kommt, wird geprüft (Meldung nennt die Herleitung, JSON: fehlend 0, `null` ein Fehler). SPEC 8.10b, TYPES.md.
+
 Offen (Wunsch des Benutzers, später): auch Klassen mit Basisklasse zulassen - dafür prüfen, ob der Konstruktor der Basisklasse (und was er aufruft,
 auch eine überschriebene Methode der abgeleiteten Klasse) über Umwege auf das Feld zugreift, bevor der eigene Konstruktor es gesetzt hat.
 
