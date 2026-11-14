@@ -1264,7 +1264,13 @@ Referenzen einer Library). Ein Modul gehört zu der Quelle, in der sein Code ste
 * Das **Programm** kennt als einziges Modul alle Klassen (eine geschlossene Welt): es ruft Member von Libraries direkt, wo der Typ es sagt (Devirtualisierung mit dem
   Wissen aller Klassen), erzeugt aber Verteiler und Feld-Helfer nur für seine eigenen Klassen. Es definiert die Klassen-Deskriptoren (A0, mit den Spalten oben), die
   JSON-Tabellen, die Liste der Reflection-Zeilen und die Debug-Tabellen. Die Tabellen seiner Klassen nennen nur die Member, die ein Modul beim Namen ruft (die **Needs**
-  der Libraries: ihre Verteiler und Feldnamen; mit Reflect.Get/Call alle). Die Klassen, von denen eine Library Objekte anlegt, stehen in ihren Needs.
+  der Libraries: ihre Verteiler und Feldnamen; mit Reflect.Get/Call alle). Die Klassen, von denen eine Library Objekte anlegt, stehen in ihren Needs - nach der
+  Klasse, deren Code sie anlegt oder aufruft (`MadeBy` in der Schnittstelle, `""`: der Code des Moduls selbst). Das Programm bekommt Deskriptoren nur für die Klassen,
+  die es erreicht (`ReachLibraryClasses`): von seinen eigenen Klassen, den Klassen der Library-Member, die es ruft, und dem Code jedes Moduls aus, über das, was der
+  Code jeder erreichten Klasse anlegt oder ruft (mit den Basisklassen). `Reflect.New` des Programms erreicht die Klassen, die es als Text nennt, und die mit `[Keep]`.
+  Alle wie bisher: Stufe unter 3, `Reflect.New` in einer Library, JSON, Plugins, Debug-Builds, eine Schnittstelle ohne die Liste. `print("hi")` mit `static`:
+  514 KB vorher, 441 KB jetzt; beim minimalen `ui`-Programm nichts (es erreicht die Klassen ohnehin) - dort bleiben die Methoden erreichter Klassen, die keiner ruft:
+  die Verteiler und Member-Tabellen einer Library zeigen auf alle Methoden ihrer Klassen.
 * **Reflection** je Modul: die Zeilen der Reflection-Tabellen (`RfClass` mit Membern und Attributen) und Reflect.New einer Klasse (`fire_new_<modul>_<Klasse>`) stehen
   in der Datei ihres Moduls; das Programm listet die Klassen, die es erreicht. Reflect.Get/Set/Call gehen über die Tabellen der Member (`fireGetField`, ...); Probes
   sehen die Setter jedes Moduls selbst nach, Reflect.Set auf ein Objekt mit Probes schreibt über den Namen (`probedSet` ohne Rohfunktion).

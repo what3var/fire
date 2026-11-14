@@ -551,6 +551,7 @@ namespace fire.Native
 
         private Func GetFunc(FunctionProto proto, FuncKind kind, int captureCount = 0)
         {
+            if (_demandOwner != null && !_keeping) NoteMadeBy(DemandOwnerOf(proto.Chunk));   // (a library: the class whose code this calls is reached with the caller's)
             if (_funcByProto.TryGetValue(proto, out var existing))
             {
                 if (existing.Kind != kind) throw new NativeNotSupportedException($"a function is used both as {existing.Kind} and as {kind}: {Describe(proto)}");
@@ -575,7 +576,7 @@ namespace fire.Native
 
         private ClassInfo RegisterClass(string name)
         {
-            if (LibraryRole && !_keeping && _self != null && _classList.Count >= _self.Classes.Count) _demandedClasses.Add(name);
+            if (LibraryRole && !_keeping && _self != null && _classList.Count >= _self.Classes.Count) { _demandedClasses.Add(name); NoteMadeBy(name); }
             if (_classes.TryGetValue(name, out var info)) return info;
             var rc = FindClass(name);
             if (ForeignClass(name, rc) is { } foreign) return foreign;
@@ -1618,6 +1619,7 @@ namespace fire.Native
                     catch (NativeNotSupportedException ex) when (_funcs[i].Kind is not FuncKind.Main) { _funcs[i].Code = UnsupportedStub(_funcs[i], ex.Message); }
                 }
                 RegisterTargets();
+                if (_role == ModuleRole.Program) ReachLibraryClasses();   // (the classes of the libraries the code reached so far can make)
                 // (made once more when the file is put together: the strings, units and type arguments they use are registered by now)
                 if (Modular) ModularHelpers();   // (modules: all of its helpers - their checks register strings, units, `is of` tests, type arguments and functions)
                 else
@@ -3251,6 +3253,15 @@ namespace fire.Native
         private void GenerateChunk(Func f)
         {
             if (f.External) return;   // (a member of another module: that module generates it)
+            // (a library: what this function makes and calls counts for its class - the program follows only the classes it reaches, CollectNeeds MadeBy)
+            string? owner = _demandOwner;
+            _demandOwner = LibraryRole ? DemandOwnerOf(f.Chunk) : null;
+            try { GenerateChunkCore(f); }
+            finally { _demandOwner = owner; }
+        }
+
+        private void GenerateChunkCore(Func f)
+        {
             var chunk = f.Chunk;
             _cur = f;
             f.CAbi = CAbiOf(f);

@@ -264,7 +264,11 @@ Tests: `FIRE_TESTS_ONLY=linkage`. Offen: `"shared"` mit msvc (Exporte der Modul-
 Felder in `class extends` fremder Klassen (der Platz in den Objekten des Programms), benannte Argumente im nativen Programm auf ihren Objekten (die Namen und Vorgaben der Parameter in den Tabellen der Member),
 **die Größe** (vorerst bewusst zurückgestellt: schneller bauen geht vor): mit `static` ist ein Programm noch
 deutlich größer als mit `source` - CLI 2,7 MB statt 226 KB, `ui`-Beispiel 6,5 MB statt 2,3 MB, `print("hi")` 395 KB statt 26 KB (eine Library behält ihre
-Schnittstelle, das Programm legt die Deskriptoren aller Klassen an, die irgendein Code einer Library anlegt - eine Erreichbarkeit über die Modulgrenzen fehlt). Wege:
+Schnittstelle, das Programm legt die Deskriptoren aller Klassen an, die irgendein Code einer Library anlegt - eine Erreichbarkeit über die Modulgrenzen fehlt).
+**Umgesetzt:** die Erreichbarkeit der Klassen über die Modulgrenzen (`MadeBy` in der Schnittstelle, `ReachLibraryClasses`; `Reflect.New` mit Klassennamen als Text
+erkannt): `print("hi")` 514 -> 441 KB, das minimale `ui`-Programm unverändert 9,9 MB (mit `source` 2,46 MB). **Offen:** die Erreichbarkeit der Methoden - die
+Verteiler und Member-Tabellen einer Library zeigen auf alle Methoden ihrer Klassen; dafür müsste das Programm sie anlegen (Tabellen der Implementierungen je
+Name, ein indirekter Aufruf im Verteiler der Library) und die Schnittstelle je Funktion sagen, was sie ruft. Wege:
 die Erreichbarkeit beim Linken über die Modulgrenzen (die Schnittstellendateien sagen, was eine Library von einer anderen braucht; Tabellen und Deskriptoren nur
 für Erreichtes), LTO als Option, ungenutzte Libraries-Teile mit `--gc-sections` (schon an) vollständig wegfallen lassen; Schalter wie Reflection und Probes gelten noch für alle Module (eine Variante je Menge); LTO; ein fertiges `.a`
 aus dem Cache für ESP-IDF; ein Programm, das eine Klasse einer Library neu deklariert, wird mit `source` gebaut.
