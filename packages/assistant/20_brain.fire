@@ -1,0 +1,398 @@
+#import "ai"
+#import "ai.models"
+#import "ai.agent"
+#import "mcp"
+#import "json"
+#import "filesystem"
+
+// The mind of the assistant, without its window (docs/ai/assistant.md): what the bubble says and which choices it offers, the model (asked for before
+// it is downloaded), the agent that answers, the connection to spark (MCP) and the tips that need no model.
+//
+//     var brain = new Assistant.Brain("sparky")
+//     brain.Start()                      // says hello, or offers the model
+//     while (true) { if (brain.Tick()) { show(brain.Text, brain.Choices) } }
+//     brain.Choose(0)                    // a choice was clicked
+//     brain.Ask("How do I read a file?")
+namespace Assistant {
+    // What the assistant is doing.
+    enum Phase { Idle, Offer, Downloading, Loading, Thinking, Answering, Failed }
+
+    class Brain {
+        Assistant.Character Character
+        Assistant.Phase Phase = Assistant.Phase.Idle
+        // What the bubble shows, and its choices (texts); Changed says that one of them changed since the last Tick.
+        string Text = ""
+        List Choices = new List()
+        List actions = new List()
+        bool Visible = true
+        Assistant.Settings Settings
+        AI.ModelInstaller installer = undefined
+        AI.Agent agent = undefined
+        Mcp.Client spark = undefined
+        Mcp.HttpTransport sparkTransport = undefined
+        string sparkFile = ""
+        defined int sparkRetry = 0
+        string pendingQuestion = ""
+        string lastError = ""
+        // Tips already given (by their key: one is not given twice).
+        List given = new List()
+
+        construct(string characterId = "") {
+            this.Settings = Assistant.Settings.Load()
+            if (characterId != "") { this.Settings.Character = characterId }
+            this.Character = Assistant.Character.Find(this.Settings.Character)
+        }
+
+        destruct() { this.Close() }
+
+        undefined Close() {
+            if (this.installer != undefined) { this.installer.Close() }
+            if (this.agent != undefined) {
+                this.agent.Close()
+                this.agent = undefined
+            }
+            if (this.spark != undefined) {
+                try { this.spark.Close() } catch (Exception e) { }
+                this.spark = undefined
+            }
+        }
+
+        // ---- the bubble ----
+
+        undefined Say(string text) {
+            this.Text = text
+            this.Choices.Clear()
+            this.actions.Clear()
+            this.Visible = true
+        }
+
+        undefined Offer(string text, string action) {
+            this.Choices.Add(text)
+            this.actions.Add(action)
+        }
+
+        // The mood of the character for what it does.
+        Assistant.Mood Mood() {
+            if (this.Phase == Assistant.Phase.Thinking || this.Phase == Assistant.Phase.Loading || this.Phase == Assistant.Phase.Downloading) { return Assistant.Mood.Think }
+            if (this.Phase == Assistant.Phase.Answering) { return Assistant.Mood.Talk }
+            if (!this.Visible) { return Assistant.Mood.Sleep }
+            return Assistant.Mood.Idle
+        }
+
+        // Whether a model can answer now.
+        bool Ready { get { return this.agent != undefined } }
+
+        // ---- the start ----
+
+        // Says hello; without a model it offers the one that fits this machine (nothing is downloaded before the user says so).
+        undefined Start() {
+            string path = AI.Models.Pick(this.Settings.Model)
+            if (path != "") {
+                this.Say(this.Character.Hello)
+                this.Load(path)
+                return
+            }
+            this.OfferModel()
+        }
+
+        undefined OfferModel() {
+            AI.ModelInfo m = AI.Models.Recommended()
+            this.Phase = Assistant.Phase.Offer
+            this.Say(this.Character.Hello + "\n\nTo answer questions I need a small AI model on this computer (nothing leaves it): " +
+                m.Name + ", " + m.SizeText() + ", " + m.License + ", once from Hugging Face.")
+            this.Offer("Download (" + m.SizeText() + ")", "download:" + m.Id)
+            any strong = AI.Models.Stronger()
+            if (strong != undefined) {
+                AI.ModelInfo s = strong
+                this.Offer("The stronger one (" + s.Name + ", " + s.SizeText() + ")", "license:" + s.Id)
+            }
+            this.Offer("Not now", "later")
+        }
+
+        // ---- choices ----
+
+        // A choice of the bubble was clicked.
+        undefined Choose(defined int index) {
+            if (index < 0 || index >= this.actions.Count) { return }
+            string action = this.actions[index]
+            this.Do(action)
+        }
+
+        undefined Do(string action) {
+            int colon = action.IndexOf(":")
+            string verb = action
+            string arg = ""
+            if (colon >= 0) {
+                verb = action.Substring(0, colon)
+                arg = action.Substring(colon + 1)
+            }
+            if (verb == "download") { this.Download(arg) }
+            else if (verb == "license") {
+                AI.ModelInfo m = AI.Models.Find(arg)
+                this.Say(m.Name + " is under the " + m.License + ". Details: " + m.LicenseUrl)
+                this.Offer("Agree and download (" + m.SizeText() + ")", "download:" + m.Id)
+                this.Offer("Back", "offer")
+            }
+            else if (verb == "offer") { this.OfferModel() }
+            else if (verb == "later") {
+                this.Phase = Assistant.Phase.Idle
+                this.Say("All right. I can still give tips; switch me on again with a click on me.")
+                this.Visible = false
+            }
+            else if (verb == "cancel") {
+                if (this.installer != undefined) {
+                    this.installer.Close()
+                    this.installer = undefined
+                }
+                this.Phase = Assistant.Phase.Idle
+                this.Say("Stopped. What came so far is kept: the next download goes on from there.")
+                this.Offer("Go on", "offer")
+            }
+            else if (verb == "ask") { this.Ask(arg) }
+            else if (verb == "explain") { this.ExplainErrors() }
+            else if (verb == "close") { this.Visible = false }
+            else if (verb == "stop") {
+                if (this.agent != undefined) { this.agent.Cancel() }
+                this.Phase = Assistant.Phase.Idle
+            }
+        }
+
+        undefined Download(string id) {
+            AI.ModelInfo m = AI.Models.Find(id)
+            this.installer = new AI.ModelInstaller(m)
+            this.Phase = Assistant.Phase.Downloading
+            this.Say("Downloading " + m.Name + "...")
+            this.Offer("Stop", "cancel")
+            this.Settings.Model = m.Id
+            this.Settings.Save()
+        }
+
+        // ---- the model ----
+
+        undefined Load(string path) {
+            this.Phase = Assistant.Phase.Loading
+            try {
+                this.agent = new AI.Agent(path, this.Instructions())
+                this.agent.MaxSteps = 4
+                this.agent.Settings.MaxTokens = 400
+                this.agent.Settings.Temperature = 0.3
+                this.ConnectTools()
+                this.Phase = Assistant.Phase.Idle
+                if (this.pendingQuestion != "") {
+                    string q = this.pendingQuestion
+                    this.pendingQuestion = ""
+                    this.Ask(q)
+                }
+            }
+            catch (Exception e) {
+                this.agent = undefined
+                this.Phase = Assistant.Phase.Failed
+                this.Say("I could not load the model: " + e.message)
+            }
+        }
+
+        // What the model is told: who it is, what fire looks like (a small model guesses another language otherwise) and how to find out more.
+        string Instructions() {
+            return this.Character.Voice + " You are the assistant in spark, the editor of the programming language fire. Answer in a few sentences, " +
+                "in the language of the question. fire is a new language you do not know well: look things up with search_docs and read_doc (or a sample) " +
+                "before you write fire code, and only use what the documentation shows.\n\n" + Assistant.Brain.CheatSheet()
+        }
+
+        // The basics of fire, short enough for a small context.
+        static string CheatSheet() {
+            return "fire in short:\n" +
+                "- no semicolons; comments with //; print(\"a \" + x)\n" +
+                "- variables: var x = 5, int n = 3, string s = \"text\", float f = 1.5, bool b = true\n" +
+                "- if (a > b) { ... } else { ... }; while (c) { ... }; for (var i = 0; i < 10; i++) { ... }; foreach (item in list) { ... }\n" +
+                "- functions: int Add(int a, int b) { return a + b }\n" +
+                "- classes: class Point { int X\n  construct(int x) { this.X = x } } - fields always with this.; new Point(3)\n" +
+                "- lists: var list = new List(); list.Add(1); list.Count; list[0]; arrays: int a[] = new int[10]; a.length\n" +
+                "- lambdas: func (int x) => x * 2\n" +
+                "- packages: #import \"filesystem\" (IO.File.ReadAllText, ReadAllLines, WriteAllText), #import \"json\", #import \"http\", #import \"ui\"\n" +
+                "- strings: s.Length, s.Substring(a, n), s.IndexOf(t), s.Split(\",\"), s.Trim(), s.ToUpper()"
+        }
+
+        // The tools of spark the model may use (reading and looking up; it changes nothing by itself).
+        undefined ConnectTools() {
+            if (this.agent == undefined || this.spark == undefined) { return }
+            Mcp.Client client = this.spark
+            foreach (t in client.Tools()) {
+                Mcp.Tool tool = t
+                string name = tool.Name
+                if (Assistant.Brain.Allowed(name)) {
+                    this.agent.ToolWithSchema(name, tool.Description, tool.Schema, func (JsonObject args) on client => CallTool((taking name), args).Text)
+                }
+            }
+        }
+
+        static bool Allowed(string name) {
+            return name == "search_docs" || name == "read_doc" || name == "list_samples" || name == "list_sample_files" || name == "read_sample_file" ||
+                name == "get_selection" || name == "get_diagnostics" || name == "spark_state"
+        }
+
+        // ---- asking ----
+
+        // A question of the user: the model answers in the bubble (the conversation is kept, but not shown).
+        undefined Ask(string question) {
+            if (question.Trim() == "") { return }
+            if (this.agent == undefined) {
+                if (this.Phase == Assistant.Phase.Downloading || this.Phase == Assistant.Phase.Loading) {
+                    this.pendingQuestion = question
+                    return
+                }
+                string tip = Assistant.Tips.Answer(question)
+                if (tip != "") {
+                    this.Say(tip)
+                    return
+                }
+                this.OfferModel()
+                return
+            }
+            this.agent.Start(question)
+            this.Phase = Assistant.Phase.Thinking
+            this.Say("")
+            this.Offer("Stop", "stop")
+        }
+
+        // Forgets the conversation ("new topic").
+        undefined Forget() {
+            if (this.agent != undefined) { this.agent.Forget() }
+        }
+
+        // The conversation so far (role: text per line) - shown only when the user asks for it.
+        string History() {
+            if (this.agent == undefined) { return "" }
+            string text = ""
+            for (int i = 0; i < this.agent.HistoryCount; i++) {
+                text += (this.agent.HistoryRole(i) == "user" ? "You: " : this.Character.Name + ": ") + this.agent.HistoryText(i) + "\n\n"
+            }
+            return text.Trim()
+        }
+
+        // ---- spark ----
+
+        // Connects to spark's MCP server (its connection file, docs/tools/spark-mcp.md); false when spark does not offer it.
+        bool ConnectSpark(string file = "") {
+            if (file == "") { file = IO.Path.Combine(AI.Models.DataFolder(), "fire", "spark-mcp.json") }
+            this.sparkFile = file
+            if (!IO.File.Exists(file)) { return false }
+            try {
+                any conn = Json.Parse(IO.File.ReadAllText(file))
+                this.sparkTransport = new Mcp.HttpTransport(conn.Get("url"))
+                this.sparkTransport.Headers.Set("Authorization", "Bearer " + conn.Get("token"))
+                this.spark = new Mcp.Client(this.sparkTransport)
+                this.spark.Initialize("fire-assistant", "1.0")
+                this.spark.Subscribe("spark://state")
+                this.sparkTransport.Listen()
+                this.ConnectTools()
+                return true
+            }
+            catch (Exception e) {
+                this.lastError = e.message
+                this.spark = undefined
+                return false
+            }
+        }
+
+        bool Connected { get { return this.spark != undefined } }
+
+        // What spark reported (a build, a run): a tip when something went wrong.
+        undefined SparkEvents() {
+            if (this.spark == undefined) { return }
+            List notes = undefined
+            try { notes = this.spark.Notifications() }
+            catch (Exception e) {
+                // spark went away
+                this.spark = undefined
+                return
+            }
+            foreach (n in notes) {
+                Mcp.Notification note = n
+                if (note.Method == "notifications/message") {
+                    any p = Json.Parse(note.Params)
+                    any data = p.Get("data")
+                    if (data != undefined && data is of JsonObject) { this.OnSparkEvent(data) }
+                }
+            }
+        }
+
+        undefined OnSparkEvent(JsonObject data) {
+            any ev = data.Get("event")
+            if (ev == "build") {
+                any ok = data.Get("ok")
+                any errors = data.Get("errors")
+                if (ok == false && errors != undefined && errors > 0) {
+                    if (this.Phase == Assistant.Phase.Thinking || this.Phase == Assistant.Phase.Answering) { return }
+                    this.Say(errors == 1 ? "The build has an error." : "The build has " + errors + " errors.")
+                    if (this.agent != undefined) { this.Offer("Explain it", "explain") }
+                    this.Offer("Not now", "close")
+                }
+            }
+        }
+
+        // The model explains the errors of the build (it reads them with get_diagnostics).
+        undefined ExplainErrors() {
+            string list = ""
+            if (this.spark != undefined) {
+                try { list = this.spark.CallTool("get_diagnostics").Text } catch (Exception e) { }
+            }
+            if (list.Length > 1500) { list = list.Substring(0, 1500) }
+            this.Ask("Explain the first error of my build and how to fix it:\n" + list)
+        }
+
+        // ---- the cycle ----
+
+        // Does a piece of the work (download, the model's answer, spark's events); true when the bubble changed.
+        bool Tick() {
+            string before = this.Text
+            int choices = this.Choices.Count
+            if (this.Phase == Assistant.Phase.Downloading && this.installer != undefined) {
+                bool more = this.installer.Step()
+                AI.ModelInfo m = this.installer.Model
+                if (more) {
+                    string what = this.installer.State == AI.InstallState.Checking ? "Checking " : "Downloading "
+                    this.Text = what + m.Name + "... " + this.installer.Percent() + "% (" + (this.installer.Received() / 1000000) + " of " + m.SizeText() + ")"
+                }
+                else {
+                    if (this.installer.Ok()) {
+                        string path = m.Path()
+                        this.installer = undefined
+                        this.Say("Done! Loading the model...")
+                        this.Load(path)
+                        if (this.Phase == Assistant.Phase.Idle && this.agent != undefined && this.Text.StartsWith("Done!")) {
+                            this.Say("Ready. Ask me anything about fire.")
+                        }
+                    }
+                    else {
+                        this.Phase = Assistant.Phase.Failed
+                        this.Say("The download failed: " + this.installer.Error)
+                        this.installer = undefined
+                        this.Offer("Try again", "offer")
+                        this.Offer("Not now", "later")
+                    }
+                }
+            }
+            if ((this.Phase == Assistant.Phase.Thinking || this.Phase == Assistant.Phase.Answering) && this.agent != undefined) {
+                try {
+                    string part = this.agent.Update()
+                    if (part != "") {
+                        this.Phase = Assistant.Phase.Answering
+                        this.Text = this.Text + part
+                    }
+                    if (!this.agent.Running) {
+                        this.Phase = Assistant.Phase.Idle
+                        this.Choices.Clear()
+                        this.actions.Clear()
+                        if (this.Text.Trim() == "") { this.Text = "Hmm, I have no answer to that." }
+                    }
+                }
+                catch (Exception e) {
+                    this.Phase = Assistant.Phase.Failed
+                    this.Say("Something went wrong: " + e.message)
+                }
+            }
+            this.SparkEvents()
+            return this.Text != before || this.Choices.Count != choices
+        }
+    }
+}

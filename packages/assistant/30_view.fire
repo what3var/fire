@@ -1,0 +1,179 @@
+#import "ui"
+
+// The window of the assistant: the character at the bottom, the bubble above it with the text, up to four choices and the question line.
+//
+//     var view = new Assistant.View(new Assistant.Brain())
+//     view.Run()
+namespace Assistant {
+    class View {
+        Assistant.Brain Brain
+        Framebuffer fb
+        Window win
+        UI.Root ui
+        UI.DrawingCanvas figure
+        UI.DrawingCanvas bubble
+        UI.TextArea text
+        UI.StackPanel choices
+        UI.TextBox question
+        UI.Button historyButton
+        UI.Button newButton
+        UI.Button characterButton
+        defined int frame = 0
+        bool showHistory = false
+        string shown = ""
+        defined int W = 380
+        defined int H = 392
+
+        construct(Assistant.Brain brain) {
+            this.Brain = take brain
+            this.fb = new Framebuffer(this.W, this.H)
+            this.win = new Window(this.fb, "Assistant - " + this.Brain.Character.Name)
+            this.ui = new UI.Root(this.fb, this.win)
+            this.Build()
+        }
+
+        undefined Build() {
+            // the bubble: a rounded box with a tail towards the character (painted once, behind the text)
+            this.bubble = new UI.DrawingCanvas(0, 0, this.W, this.H)
+            this.bubble.OnPaint = func (UI.DrawingCanvas c) on this => PaintBubble(c)
+            this.ui.Add(this.bubble)
+            this.text = new UI.TextArea("", 16, 14, this.W - 32, 130)
+            this.text.ReadOnly = true
+            this.text.WordWrap = true
+            this.ui.Add(this.text)
+            this.choices = new UI.StackPanel(18, 150, this.W - 36, -1, false, 4, 0)
+            this.ui.Add(this.choices)
+            this.question = new UI.TextBox("", 120, this.H - 64, this.W - 136, 26)
+            this.question.OnEnter = func () on this => AskTyped()
+            this.ui.Add(this.question)
+            var ask = new UI.Label("Ask me:", 120, this.H - 86)
+            this.ui.Add(ask)
+            this.historyButton = new UI.Button("History", 120, this.H - 32, 74, 24)
+            this.historyButton.OnClick = func () on this => ToggleHistory()
+            this.ui.Add(this.historyButton)
+            this.newButton = new UI.Button("New topic", 198, this.H - 32, 84, 24)
+            this.newButton.OnClick = func () on this => NewTopic()
+            this.ui.Add(this.newButton)
+            this.characterButton = new UI.Button("Other", 286, this.H - 32, 78, 24)
+            this.characterButton.OnClick = func () on this => NextCharacter()
+            this.ui.Add(this.characterButton)
+            // the character (it moves: painted every frame); a click shows or hides the bubble
+            this.figure = new UI.DrawingCanvas(6, this.H - 132, 104, 128)
+            this.figure.Continuous = true
+            this.figure.OnPaint = func (UI.DrawingCanvas c) on this => PaintFigure(c)
+            this.figure.OnMouseDown = func (int x, int y, int b) on this => ToggleBubble()
+            this.ui.Add(this.figure)
+            this.ui.onTick = func () on this => Cycle()
+        }
+
+        undefined PaintBubble(UI.DrawingCanvas c) {
+            var r = c.renderer
+            defined int w = c.framebuffer.Width()
+            defined int h = c.framebuffer.Height() - 110
+            r.ClearTo(this.ui.Dark ? UI.Color.Rgb(32, 32, 32) : UI.Color.Rgb(243, 243, 243))
+            if (!this.Brain.Visible) { return }
+            defined int fill = this.ui.Dark ? UI.Color.Rgb(52, 52, 56) : UI.Color.Rgb(255, 253, 240)
+            defined int edge = this.ui.Dark ? UI.Color.Rgb(90, 90, 96) : UI.Color.Rgb(214, 204, 160)
+            r.DrawShadow(8, 8, w - 16, h - 20, 12, 8, 0x30000000, 2)
+            r.FillRoundRect(8, 8, w - 16, h - 20, 12, new SolidBrush(fill))
+            r.DrawRoundRect(8, 8, w - 16, h - 20, 12, new Pen(edge, 1))
+            // the tail towards the character
+            float tail[] = [40.0, (h - 13) * 1.0, 72.0, (h - 13) * 1.0, 46.0, h * 1.0]
+            r.FillPolygon(tail, new SolidBrush(fill))
+            r.DrawLine(40, h - 13, 46, h, new Pen(edge, 1))
+            r.DrawLine(72, h - 13, 46, h, new Pen(edge, 1))
+        }
+
+        undefined PaintFigure(UI.DrawingCanvas c) {
+            var r = c.renderer
+            r.ClearTo(this.ui.Dark ? UI.Color.Rgb(32, 32, 32) : UI.Color.Rgb(243, 243, 243))
+            this.Brain.Character.Paint(r, 0.0, 0.0, c.framebuffer.Width() * 1.0, c.framebuffer.Height() * 1.0, this.frame, this.Brain.Mood())
+        }
+
+        // Every frame: the brain works a little, the bubble follows it.
+        undefined Cycle() {
+            this.frame++
+            bool changed = this.Brain.Tick()
+            if (changed || this.frame == 1) { this.Show() }
+        }
+
+        undefined Show() {
+            // the text lies on the bubble: its colour, no frame
+            defined int fill = this.ui.Dark ? UI.Color.Rgb(52, 52, 56) : UI.Color.Rgb(255, 253, 240)
+            this.text.Background = new SolidBrush(fill)
+            this.text.Pen = new Pen(fill, 1)
+            this.text.Visible = this.Brain.Visible
+            this.choices.Visible = this.Brain.Visible
+            string t = this.showHistory ? this.Brain.History() : this.Brain.Text
+            if (t != this.shown) {
+                this.text.Text = t
+                this.shown = t
+            }
+            this.choices.Clear()
+            if (!this.showHistory) {
+                for (int i = 0; i < this.Brain.Choices.Count && i < 4; i++) {
+                    var b = new UI.Button(this.Brain.Choices[i], 0, 0, this.W - 36, 24)
+                    b.OnClick = func () on this => Pick((taking i))
+                    this.choices.Add(b)
+                }
+            }
+            this.bubble.Invalidate()
+        }
+
+        undefined Pick(defined int i) {
+            this.showHistory = false
+            this.Brain.Choose(i)
+            this.Show()
+        }
+
+        undefined AskTyped() {
+            string q = this.question.Text
+            this.question.Text = ""
+            this.showHistory = false
+            this.Brain.Visible = true
+            this.Brain.Ask(q)
+            this.Show()
+        }
+
+        undefined ToggleHistory() {
+            this.showHistory = !this.showHistory
+            this.historyButton.Text = this.showHistory ? "Answer" : "History"
+            this.shown = ""
+            this.Show()
+        }
+
+        undefined NewTopic() {
+            this.Brain.Forget()
+            this.Brain.Say("New topic. What would you like to know?")
+            this.showHistory = false
+            this.historyButton.Text = "History"
+            this.Show()
+        }
+
+        undefined NextCharacter() {
+            List all = Assistant.Character.All()
+            defined int at = 0
+            for (int i = 0; i < all.Count; i++) {
+                Assistant.Character c = all[i]
+                if (c.Id == this.Brain.Character.Id) { at = i }
+            }
+            Assistant.Character next = all[(at + 1) % all.Count]
+            this.Brain.Character = next
+            this.Brain.Settings.Character = next.Id
+            this.Brain.Settings.Save()
+            this.Brain.Say(next.Hello)
+            this.Show()
+        }
+
+        undefined ToggleBubble() {
+            this.Brain.Visible = !this.Brain.Visible
+            this.Show()
+        }
+
+        // Shows the window until it is closed.
+        undefined Run() {
+            this.ui.Run()
+            this.Brain.Close()
+        }
+    }
+}

@@ -1,0 +1,207 @@
+#import "graphics"
+
+// The characters of the assistant (docs/ai/assistant.md): drawn with shapes, so they scale. Sparky (a small flame), Flint (a stone with a spark),
+// Wick (a little candle). Each one breathes, blinks, thinks, talks and sleeps.
+// (colours as the framebuffer keeps them: 0xAABBGGRR - UI.Color.Rgb(r, g, b) makes them)
+namespace Assistant {
+    enum Mood { Idle, Think, Talk, Sleep, Wave }
+
+    class Character {
+        string Id
+        string Name
+        // How it speaks (a line for the instructions of the model).
+        string Voice
+        // What it says when it appears.
+        string Hello
+
+        construct(string id, string name, string voice, string hello) {
+            this.Id = id
+            this.Name = name
+            this.Voice = voice
+            this.Hello = hello
+        }
+
+        static List all = undefined
+
+        // (the renderer draws on whole pixels)
+        static defined int I(defined float v) { return trust Math.Round(v)!int }
+        static undefined Ellipse(Renderer r, defined float cx, defined float cy, defined float rx, defined float ry, Brush b) {
+            r.FillEllipse(Assistant.Character.I(cx), Assistant.Character.I(cy), Math.Max(1, Assistant.Character.I(rx)), Math.Max(1, Assistant.Character.I(ry)), b)
+        }
+        static undefined Circle(Renderer r, defined float cx, defined float cy, defined float rad, Brush b) {
+            r.FillCircle(Assistant.Character.I(cx), Assistant.Character.I(cy), Math.Max(1, Assistant.Character.I(rad)), b)
+        }
+        static undefined Line(Renderer r, defined float x0, defined float y0, defined float x1, defined float y1, Pen p) {
+            r.DrawLine(Assistant.Character.I(x0), Assistant.Character.I(y0), Assistant.Character.I(x1), Assistant.Character.I(y1), p)
+        }
+        static undefined Round(Renderer r, defined float x, defined float y, defined float w, defined float h, defined float rad, Brush b) {
+            r.FillRoundRect(Assistant.Character.I(x), Assistant.Character.I(y), Assistant.Character.I(w), Assistant.Character.I(h), Assistant.Character.I(rad), b)
+        }
+
+        static List All() {
+            if (Assistant.Character.all != undefined) { return Assistant.Character.all }
+            Assistant.Character.all = new List()
+            List a = Assistant.Character.all
+            a.Add(new Assistant.Character("sparky", "Sparky", "You are Sparky, a small, lively flame. You are cheerful and quick, and you keep it short.",
+                "Hi, I'm Sparky! Ask me about fire, or let me watch for errors."))
+            a.Add(new Assistant.Character("flint", "Flint", "You are Flint, a calm stone with a spark. You answer briefly and to the point.",
+                "Flint here. Ask when you need me."))
+            a.Add(new Assistant.Character("wick", "Wick", "You are Wick, a friendly little candle. You are patient and explain step by step.",
+                "Hello, I'm Wick. Take your time - I'm here when you have a question."))
+            return Assistant.Character.all
+        }
+
+        static Assistant.Character Find(string id) {
+            foreach (x in Assistant.Character.All()) {
+                Assistant.Character c = x
+                if (c.Id == id) { return c }
+            }
+            return Assistant.Character.All()[0]
+        }
+
+        // Paints the character into the area (x, y, w, h); `frame` counts up by one per frame (about 60 a second).
+        undefined Paint(Renderer r, defined float x, defined float y, defined float w, defined float h, defined int frame, Assistant.Mood mood) {
+            defined float t = frame / 60.0
+            // breathing: a little up and down (slower when it sleeps)
+            defined float breath = Math.Sin(t * (mood == Assistant.Mood.Sleep ? 1.2 : 2.4)) * h * 0.015
+            defined float cx = x + w / 2
+            defined float cy = y + h * 0.58 + breath
+            defined float s = Math.Min(w, h) / 100.0
+            // the shadow on the ground
+            Assistant.Character.Ellipse(r, cx, y + h * 0.95, 30 * s, 5 * s, new SolidBrush(0x30000000))
+            if (this.Id == "flint") { this.PaintFlint(r, cx, cy, s, t, mood) }
+            else {
+                if (this.Id == "wick") { this.PaintWick(r, cx, cy, s, t, mood) }
+                else { this.PaintSparky(r, cx, cy, s, t, mood) }
+            }
+        }
+
+        // A flame around (cx, cy): a drop with a pointed top that flickers.
+        static float[] Flame(defined float cx, defined float cy, defined float rx, defined float ry, defined float t, defined float flicker) {
+            defined int n = 40
+            float pts[] = new float[n * 2]
+            for (defined int i = 0; i < n; i++) {
+                defined float a = i * 2 * Math.PI / n
+                defined float sx = Math.Sin(a)
+                defined float c = Math.Cos(a)
+                // the upper half narrows to a point
+                defined float up = c < 0 ? -c : 0
+                defined float width = rx * (1 - up * up * 0.85)
+                defined float height = c < 0 ? ry * (1 + up * 0.9) : ry * 0.75
+                defined float wave = Math.Sin(t * 7 + up * 5) * flicker * up * rx
+                pts[i * 2] = cx + sx * width + wave
+                pts[i * 2 + 1] = cy + c * height
+            }
+            return pts
+        }
+
+        static undefined Eyes(Renderer r, defined float cx, defined float cy, defined float gap, defined float size, defined float t, Assistant.Mood mood) {
+            var white = new SolidBrush(0xFFFFFFFF)
+            var dark = new SolidBrush(0xFF2A2A2A)
+            if (mood == Assistant.Mood.Sleep) {
+                var pen = new Pen(0xFF2A2A2A, Math.Max(1, Assistant.Character.I(size * 0.35)))
+                Assistant.Character.Line(r, cx - gap - size, cy, cx - gap + size, cy, pen)
+                Assistant.Character.Line(r, cx + gap - size, cy, cx + gap + size, cy, pen)
+                return
+            }
+            // a blink every few seconds
+            defined float phase = t % 3.7
+            defined float open = phase < 0.12 ? 0.15 : 1.0
+            // thinking: the eyes look up and to the side
+            defined float lookX = mood == Assistant.Mood.Think ? size * 0.35 : 0
+            defined float lookY = mood == Assistant.Mood.Think ? -size * 0.4 : 0
+            Assistant.Character.Ellipse(r, cx - gap, cy, size, size * 1.2 * open, white)
+            Assistant.Character.Ellipse(r, cx + gap, cy, size, size * 1.2 * open, white)
+            if (open > 0.5) {
+                Assistant.Character.Circle(r, cx - gap + lookX, cy + lookY, size * 0.55, dark)
+                Assistant.Character.Circle(r, cx + gap + lookX, cy + lookY, size * 0.55, dark)
+                Assistant.Character.Circle(r, cx - gap + lookX + size * 0.2, cy + lookY - size * 0.25, size * 0.18, white)
+                Assistant.Character.Circle(r, cx + gap + lookX + size * 0.2, cy + lookY - size * 0.25, size * 0.18, white)
+            }
+        }
+
+        static undefined Mouth(Renderer r, defined float cx, defined float cy, defined float size, defined float t, Assistant.Mood mood, defined int color) {
+            var brush = new SolidBrush(color)
+            if (mood == Assistant.Mood.Talk) {
+                defined float open = 0.3 + Math.Abs(Math.Sin(t * 11)) * 0.7
+                Assistant.Character.Ellipse(r, cx, cy, size * 0.8, size * 0.6 * open, brush)
+                return
+            }
+            if (mood == Assistant.Mood.Sleep) {
+                Assistant.Character.Circle(r, cx, cy, size * 0.25, brush)
+                return
+            }
+            if (mood == Assistant.Mood.Think) {
+                Assistant.Character.Line(r, cx - size * 0.5, cy, cx + size * 0.4, cy - size * 0.15, new Pen(color, Math.Max(1, Assistant.Character.I(size * 0.25))))
+                return
+            }
+            // a smile
+            defined int n = 9
+            float pts[] = new float[n * 2]
+            for (defined int i = 0; i < n; i++) {
+                defined float a = Math.PI * (0.15 + 0.7 * i / (n - 1))
+                pts[i * 2] = cx + Math.Cos(a) * size
+                pts[i * 2 + 1] = cy - size * 0.3 + Math.Sin(a) * size * 0.6
+            }
+            r.DrawPath(pts, new Pen(color, Math.Max(1, Assistant.Character.I(size * 0.25))), false)
+        }
+
+        undefined PaintSparky(Renderer r, defined float cx, defined float cy, defined float s, defined float t, Assistant.Mood mood) {
+            defined float flicker = mood == Assistant.Mood.Sleep ? 0.05 : (mood == Assistant.Mood.Think ? 0.25 : 0.15)
+            defined float size = mood == Assistant.Mood.Sleep ? 0.85 : 1.0
+            r.FillPolygon(Assistant.Character.Flame(cx, cy, 30 * s * size, 30 * s * size, t, flicker), new SolidBrush(0xFF2A56E8))
+            r.FillPolygon(Assistant.Character.Flame(cx, cy + 5 * s, 23 * s * size, 22 * s * size, t + 0.4, flicker), new SolidBrush(0xFF2F9AF5))
+            r.FillPolygon(Assistant.Character.Flame(cx, cy + 10 * s, 15 * s * size, 14 * s * size, t + 0.8, flicker), new SolidBrush(0xFF5CD4FF))
+            Assistant.Character.Eyes(r, cx, cy - 2 * s, 8 * s, 4.5 * s, t, mood)
+            Assistant.Character.Mouth(r, cx, cy + 10 * s, 5 * s, t, mood, 0xFF102A7A)
+            if (mood == Assistant.Mood.Wave) {
+                // a little arm of fire
+                defined float a = Math.Sin(t * 9) * 0.5
+                Assistant.Character.Circle(r, cx + 32 * s + Math.Cos(a) * 6 * s, cy - 10 * s + Math.Sin(a) * 6 * s, 5 * s, new SolidBrush(0xFF2F9AF5))
+            }
+        }
+
+        undefined PaintFlint(Renderer r, defined float cx, defined float cy, defined float s, defined float t, Assistant.Mood mood) {
+            // a rounded, slightly uneven stone
+            defined int n = 36
+            float pts[] = new float[n * 2]
+            for (defined int i = 0; i < n; i++) {
+                defined float a = i * 2 * Math.PI / n
+                defined float bump = 1 + Math.Sin(a * 3 + 1) * 0.05 + Math.Sin(a * 5) * 0.03
+                pts[i * 2] = cx + Math.Cos(a) * 34 * s * bump
+                pts[i * 2 + 1] = cy + 6 * s + Math.Sin(a) * 26 * s * bump
+            }
+            r.FillPolygon(pts, new SolidBrush(0xFF8C837D))
+            Assistant.Character.Ellipse(r, cx - 10 * s, cy - 6 * s, 16 * s, 8 * s, new SolidBrush(0xFFA8A09A))
+            // the spark on its head: a small star that pulses (brighter while it thinks)
+            defined float glow = mood == Assistant.Mood.Sleep ? 0.4 : 0.75 + Math.Sin(t * (mood == Assistant.Mood.Think ? 12 : 4)) * 0.25
+            defined float sx = cx + 12 * s
+            defined float sy = cy - 26 * s
+            float star[] = new float[16]
+            for (defined int i = 0; i < 8; i++) {
+                defined float a = i * Math.PI / 4 + t
+                defined float rad = (i % 2 == 0 ? 8 : 3) * s * glow
+                star[i * 2] = sx + Math.Cos(a) * rad
+                star[i * 2 + 1] = sy + Math.Sin(a) * rad
+            }
+            r.FillPolygon(star, new SolidBrush(0xFF3DC8FF))
+            Assistant.Character.Eyes(r, cx, cy + 2 * s, 9 * s, 4 * s, t, mood)
+            Assistant.Character.Mouth(r, cx, cy + 14 * s, 5 * s, t, mood, 0xFF423D3A)
+        }
+
+        undefined PaintWick(Renderer r, defined float cx, defined float cy, defined float s, defined float t, Assistant.Mood mood) {
+            // the candle
+            Assistant.Character.Round(r, cx - 18 * s, cy - 20 * s, 36 * s, 56 * s, 7 * s, new SolidBrush(0xFFD2E9F3))
+            Assistant.Character.Round(r, cx - 18 * s, cy - 20 * s, 9 * s, 56 * s, 4 * s, new SolidBrush(0xFFEAF8FF))
+            // wax that ran down
+            Assistant.Character.Ellipse(r, cx + 8 * s, cy - 12 * s, 4 * s, 9 * s, new SolidBrush(0xFFC0DCE9))
+            Assistant.Character.Line(r, cx, cy - 20 * s, cx, cy - 27 * s, new Pen(0xFF3A3A3A, Math.Max(1, Assistant.Character.I(2 * s))))
+            if (mood != Assistant.Mood.Sleep) {
+                r.FillPolygon(Assistant.Character.Flame(cx, cy - 34 * s, 7 * s, 8 * s, t, 0.2), new SolidBrush(0xFF2F9AF5))
+                r.FillPolygon(Assistant.Character.Flame(cx, cy - 32 * s, 4 * s, 5 * s, t + 0.5, 0.2), new SolidBrush(0xFF7AE0FF))
+            }
+            Assistant.Character.Eyes(r, cx, cy - 2 * s, 7 * s, 3.6 * s, t, mood)
+            Assistant.Character.Mouth(r, cx, cy + 10 * s, 4.5 * s, t, mood, 0xFF4A6A8A)
+        }
+    }
+}

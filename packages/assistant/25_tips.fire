@@ -1,0 +1,34 @@
+namespace Assistant {
+    // Answers without a model: a few questions that come often, by their words. "" when none fits.
+    class Tips {
+        static string Answer(string question) {
+            string q = " " + question.ToLower() + " "
+            if (Assistant.Tips.Has(q, "run|start|f5|execute|ausf|starten")) {
+                return "Press F5 (or Debug > Start) to run the program; Shift+F5 stops it. The output is in the Output panel."
+            }
+            if (Assistant.Tips.Has(q, "print|output|ausgabe")) { return "print(\"text \" + value) writes a line into the Output panel." }
+            if (Assistant.Tips.Has(q, "file|datei|read|lesen")) {
+                return "#import \"filesystem\", then IO.File.ReadAllText(path) or IO.File.ReadAllLines(path); WriteAllText(path, text) writes. See Help > stdlib/filesystem."
+            }
+            if (Assistant.Tips.Has(q, "list|array|liste")) {
+                return "var list = new List() - Add(x), Count, list[i], foreach (x in list) { }. An array: int a[] = new int[10], a.length."
+            }
+            if (Assistant.Tips.Has(q, "class|klasse|object|objekt")) {
+                return "class Point { int X\n    construct(int x) { this.X = x } }\nvar p = new Point(3) - fields always with this."
+            }
+            if (Assistant.Tips.Has(q, "window|fenster|button|ui ")) {
+                return "#import \"ui\": var ui = new UI.Root(fb, win), then UI.Button, UI.Label, UI.TextBox... - or a .fxml file. See the sample \"UI\"."
+            }
+            if (Assistant.Tips.Has(q, "help|hilfe|docs|doku")) { return "The documentation is under Help (F1); the samples under File > New > From Sample." }
+            return ""
+        }
+
+        static bool Has(string text, string words) {
+            foreach (w in words.Split("|")) {
+                string part = w
+                if (text.IndexOf(part) >= 0) { return true }
+            }
+            return false
+        }
+    }
+}

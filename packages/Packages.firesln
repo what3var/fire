@@ -22,6 +22,7 @@
     "ai/ai.fireproj",
     "ai.agent/ai.agent.fireproj",
     "ai.models/ai.models.fireproj",
+    "assistant/assistant.fireproj",
     "mcp/mcp.fireproj",
     "tls/tls.fireproj",
     "http/http.fireproj",
