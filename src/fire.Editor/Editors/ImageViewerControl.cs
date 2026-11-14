@@ -71,14 +71,13 @@ namespace fire.Editor
 
         public ImageViewerControl()
         {
-            var zoomOut = new Button { Content = "−" }; zoomOut.Classes.Add("tool"); zoomOut.Click += (_, _) => Step(-1);
-            var zoomIn = new Button { Content = "+" }; zoomIn.Classes.Add("tool"); zoomIn.Click += (_, _) => Step(+1);
-            var actual = new Button { Content = "1:1" }; actual.Classes.Add("tool"); actual.Click += (_, _) => SetZoom(1);
-            var fit = new Button { Content = "Fit" }; fit.Classes.Add("tool"); fit.Click += (_, _) => Fit();
-            var grid = new ToggleButton { Content = "Grid" }; grid.Classes.Add("tool");
+            var zoomOut = ToolIcons.Button("ZoomOut", "Zoom out", () => Step(-1));
+            var zoomIn = ToolIcons.Button("ZoomIn", "Zoom in", () => Step(+1));
+            var actual = ToolIcons.Button("ActualSize", "Actual size (1:1)", () => SetZoom(1));
+            var fit = ToolIcons.Button("Fit", "Fit the picture into the view", Fit);
+            var grid = ToolIcons.Toggle("Grid", "Show the pixel grid");
             grid.Click += (_, _) => { _canvas.Grid = grid.IsChecked == true; _canvas.InvalidateVisual(); };
-            var edit = new Button { Content = "Edit pixels" }; edit.Classes.Add("tool");
-            edit.Click += (_, _) => EditRequested?.Invoke();
+            var edit = ToolIcons.Button("ImageEdit", "Edit the pixels (in the pixel editor)", () => EditRequested?.Invoke());
             var bar = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 2, Margin = new Thickness(4, 2), Children = { zoomOut, zoomIn, actual, fit, grid, edit, _info } };
             _scroll = new ScrollViewer
             {

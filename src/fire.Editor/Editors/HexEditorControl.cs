@@ -153,7 +153,7 @@ namespace fire.Editor
             _view.SizeChanged += (_, _) => UpdateScrollBar();
             _scrollBar.ValueChanged += (_, e) => { _topRow = Math.Max(0, (int)Math.Round(e.NewValue)); _view.InvalidateVisual(); };
             var goTo = new Button { Content = "Go to..." }; goTo.Classes.Add("tool"); goTo.Click += async (_, _) => await GoToOffsetDialog();
-            var find = new Button { Content = "Find..." }; find.Classes.Add("tool"); find.Click += (_, _) => Find();
+            var find = ToolIcons.Button("Find", "Find bytes or text", Find);
             var bar = new StackPanel { Orientation = Avalonia.Layout.Orientation.Horizontal, Spacing = 2, Margin = new Thickness(4, 2), Children = { goTo, find, _info } };
             var grid = new Grid { ColumnDefinitions = new ColumnDefinitions("*,Auto") };
             grid.Children.Add(_view);

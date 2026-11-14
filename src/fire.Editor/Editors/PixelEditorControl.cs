@@ -231,17 +231,17 @@ namespace fire.Editor
         {
             _toolButtons = new[]
             {
-                Tool_("Pencil", Tool.Pencil, "Draw (left: first colour, right: second colour)"), Tool_("Eraser", Tool.Eraser, "Make pixels transparent"),
-                Tool_("Line", Tool.Line, "Draw a line"), Tool_("Rectangle", Tool.Rectangle, "Draw a rectangle (Filled: solid)"),
-                Tool_("Fill", Tool.Fill, "Fill an area of one colour"), Tool_("Picker", Tool.Picker, "Take the colour of a pixel"),
+                Tool_("Pencil", Tool.Pencil, "Pencil: draw (left: first colour, right: second colour)"), Tool_("Eraser", Tool.Eraser, "Eraser: make pixels transparent"),
+                Tool_("Line", Tool.Line, "Line: draw a line"), Tool_("Rectangle", Tool.Rectangle, "Rectangle: draw a rectangle (Filled: solid)"),
+                Tool_("Fill", Tool.Fill, "Fill: fill an area of one colour"), Tool_("Picker", Tool.Picker, "Picker: take the colour of a pixel"),
             };
             _toolButtons[0].IsChecked = true;
 
-            var zoomOut = Button_("−", () => Step(-1)); var zoomIn = Button_("+", () => Step(+1));
-            var fit = Button_("Fit", Fit);
-            var grid = new ToggleButton { Content = "Grid", IsChecked = true }; grid.Classes.Add("tool");
+            var zoomOut = ToolIcons.Button("ZoomOut", "Zoom out", () => Step(-1)); var zoomIn = ToolIcons.Button("ZoomIn", "Zoom in", () => Step(+1));
+            var fit = ToolIcons.Button("Fit", "Fit the picture into the view", Fit);
+            var grid = ToolIcons.Toggle("Grid", "Show the pixel grid", true);
             grid.Click += (_, _) => { _view.Grid = grid.IsChecked == true; _view.InvalidateVisual(); };
-            var size = Button_("Size...", async () => await AskSize());
+            var size = ToolIcons.Button("Size", "The size of the picture", async () => await AskSize());
             _modeButton.Classes.Add("tool");
             _modeButton.Click += (_, _) => SwitchMode();
 
@@ -287,9 +287,7 @@ namespace fire.Editor
 
         private ToggleButton Tool_(string text, Tool tool, string tip)
         {
-            var b = new ToggleButton { Content = text };
-            b.Classes.Add("tool");
-            ToolTip.SetTip(b, tip);
+            var b = ToolIcons.Toggle(text, tip);
             b.Click += (_, _) =>
             {
                 _tool = tool;

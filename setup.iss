@@ -31,6 +31,12 @@
 #define MyAppAssoc7Name "fire markdown"
 #define MyAppAssoc7Ext ".md"
 #define MyAppAssoc7Key StringChange(MyAppAssoc7Name, " ", "") + MyAppAssoc7Ext
+#define MyAppAssoc8Name "fire block model"
+#define MyAppAssoc8Ext ".fblocks"
+#define MyAppAssoc8Key StringChange(MyAppAssoc8Name, " ", "") + MyAppAssoc8Ext
+#define MyAppAssoc9Name "fire mesh model"
+#define MyAppAssoc9Ext ".fmesh"
+#define MyAppAssoc9Key StringChange(MyAppAssoc9Name, " ", "") + MyAppAssoc9Ext
 
 ; Icons in spark.exe (src\fire.Editor\fileicons.rc / fileicons.res), addressed by resource ID.
 ; DefaultIcon only accepts "file,index" or "file,-ID" (no names), so "-ID" keeps working when icons are added.
@@ -44,6 +50,8 @@
 #define IconBiscuit    IconId(107)
 #define IconMarkdown   IconId(108)
 #define IconCanvas     IconId(109)
+#define IconBlocks     IconId(110)
+#define IconMesh       IconId(111)
 
 [Setup]
 ; NOTE: The value of AppId uniquely identifies this application. Do not use the same AppId value in installers for other applications.
@@ -90,6 +98,8 @@ Name: "assoc_sln";     Description: "solutions (.firesln)";               GroupD
 Name: "assoc_proj";    Description: "projects (.fireproj)";               GroupDescription: "Open these file types with {#MyAppName}:"
 Name: "assoc_biscuit"; Description: "circuits (.biscuit)";                GroupDescription: "Open these file types with {#MyAppName}:"
 Name: "assoc_xmd";     Description: "canvases (.xmd)";                    GroupDescription: "Open these file types with {#MyAppName}:"
+Name: "assoc_blocks";  Description: "block models (.fblocks)";           GroupDescription: "Open these file types with {#MyAppName}:"
+Name: "assoc_mesh";    Description: "mesh models (.fmesh)";               GroupDescription: "Open these file types with {#MyAppName}:"
 Name: "assoc_md";      Description: "Markdown (.md), in ""Open with"" only"; GroupDescription: "Open these file types with {#MyAppName}:"; Flags: unchecked
 
 [Dirs]
@@ -136,6 +146,16 @@ Root: HKA; Subkey: "Software\Classes\{#MyAppAssoc6Ext}\OpenWithProgids"; ValueTy
 Root: HKA; Subkey: "Software\Classes\{#MyAppAssoc6Key}"; ValueType: string; ValueName: ""; ValueData: "{#MyAppAssoc6Name}"; Flags: uninsdeletekey; Tasks: assoc_xmd
 Root: HKA; Subkey: "Software\Classes\{#MyAppAssoc6Key}\DefaultIcon"; ValueType: string; ValueName: ""; ValueData: "{#IconCanvas}"; Tasks: assoc_xmd
 Root: HKA; Subkey: "Software\Classes\{#MyAppAssoc6Key}\shell\open\command"; ValueType: string; ValueName: ""; ValueData: """{app}\{#MyAppExeName}"" ""%1"""; Tasks: assoc_xmd
+; fblocks (block model)
+Root: HKA; Subkey: "Software\Classes\{#MyAppAssoc8Ext}\OpenWithProgids"; ValueType: string; ValueName: "{#MyAppAssoc8Key}"; ValueData: ""; Flags: uninsdeletevalue; Tasks: assoc_blocks
+Root: HKA; Subkey: "Software\Classes\{#MyAppAssoc8Key}"; ValueType: string; ValueName: ""; ValueData: "{#MyAppAssoc8Name}"; Flags: uninsdeletekey; Tasks: assoc_blocks
+Root: HKA; Subkey: "Software\Classes\{#MyAppAssoc8Key}\DefaultIcon"; ValueType: string; ValueName: ""; ValueData: "{#IconBlocks}"; Tasks: assoc_blocks
+Root: HKA; Subkey: "Software\Classes\{#MyAppAssoc8Key}\shell\open\command"; ValueType: string; ValueName: ""; ValueData: """{app}\{#MyAppExeName}"" ""%1"""; Tasks: assoc_blocks
+; fmesh (mesh model)
+Root: HKA; Subkey: "Software\Classes\{#MyAppAssoc9Ext}\OpenWithProgids"; ValueType: string; ValueName: "{#MyAppAssoc9Key}"; ValueData: ""; Flags: uninsdeletevalue; Tasks: assoc_mesh
+Root: HKA; Subkey: "Software\Classes\{#MyAppAssoc9Key}"; ValueType: string; ValueName: ""; ValueData: "{#MyAppAssoc9Name}"; Flags: uninsdeletekey; Tasks: assoc_mesh
+Root: HKA; Subkey: "Software\Classes\{#MyAppAssoc9Key}\DefaultIcon"; ValueType: string; ValueName: ""; ValueData: "{#IconMesh}"; Tasks: assoc_mesh
+Root: HKA; Subkey: "Software\Classes\{#MyAppAssoc9Key}\shell\open\command"; ValueType: string; ValueName: ""; ValueData: """{app}\{#MyAppExeName}"" ""%1"""; Tasks: assoc_mesh
 ; md: only in "Open with" (the task is unchecked by default)
 Root: HKA; Subkey: "Software\Classes\{#MyAppAssoc7Ext}\OpenWithProgids"; ValueType: string; ValueName: "{#MyAppAssoc7Key}"; ValueData: ""; Flags: uninsdeletevalue; Tasks: assoc_md
 Root: HKA; Subkey: "Software\Classes\{#MyAppAssoc7Key}"; ValueType: string; ValueName: ""; ValueData: "{#MyAppAssoc7Name}"; Flags: uninsdeletekey; Tasks: assoc_md

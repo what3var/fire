@@ -15,8 +15,10 @@
 #define IDI_FIREBISCUIT  107
 #define IDI_MARKDOWN     108
 #define IDI_CANVAS       109
+#define IDI_BLOCKS       110
+#define IDI_MESH         111
 
-IDI_FIRE         ICON "filetypes hires\\ico fire.ico"
+IDI_FIRE         ICON "filetypes hires\\ico fire 2.ico"
 IDI_FIREAPP      ICON "filetypes hires\\ico fireapp.ico"
 IDI_FIREPROJ     ICON "filetypes hires\\ico fireproj.ico"
 IDI_FIRESCRIPT   ICON "filetypes hires\\ico firescript.ico"
@@ -25,3 +27,5 @@ IDI_FIREXML      ICON "filetypes hires\\ico firexml.ico"
 IDI_FIREBISCUIT  ICON "filetypes hires\\ico biscuit.ico"
 IDI_MARKDOWN     ICON "filetypes hires\\ico md.ico"
 IDI_CANVAS       ICON "filetypes hires\\ico xmd.ico"
+IDI_BLOCKS       ICON "filetypes hires\\ico block.ico"
+IDI_MESH         ICON "filetypes hires\\ico mesh.ico"

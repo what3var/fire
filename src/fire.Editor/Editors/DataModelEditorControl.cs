@@ -276,7 +276,7 @@ namespace fire.Editor
             Tool("1 : 1", "A one-to-one relation: click the entity that has the other, then the other (it gets the unique foreign key)", () => StartRelation("one-to-one"));
             Tool("1 : n", "A one-to-many relation: click the 'one' entity, then the 'many' entity", () => StartRelation("one-to-many"));
             Tool("n : m", "A many-to-many relation (with a join table): click the two entities", () => StartRelation("many-to-many"));
-            Tool("Delete", "Delete what is selected (Del)", DeleteSelected);
+            ToolIcons.Set(Tool("", "Delete what is selected (Del)", DeleteSelected), "Delete");
             bar.Children.Add(new Border { Width = 12 });
             _diagramChoice.SelectionChanged += (_, _) =>
             {
@@ -841,9 +841,9 @@ namespace fire.Editor
                 if (entity) { Check(f.Unique, v => f.Unique = v); Check(f.Index, v => f.Index = v); }
                 var moves = new StackPanel { Orientation = Orientation.Horizontal };
                 Button Small(string text, string tip, Action a) { var b = new Button { Content = text, Padding = new Thickness(4, 0), MinWidth = 0 }; b.Classes.Add("tool"); ToolTip.SetTip(b, tip); b.Click += (_, _) => a(); moves.Children.Add(b); return b; }
-                Small("↑", "Up", () => Change(() => DataModelDocument.MoveField(fields, f, -1)));
-                Small("↓", "Down", () => Change(() => DataModelDocument.MoveField(fields, f, 1)));
-                Small("×", "Delete the field", () => Change(() => fields.Remove(f)));
+                ToolIcons.Set(Small("", "Up", () => Change(() => DataModelDocument.MoveField(fields, f, -1))), "Up");
+                ToolIcons.Set(Small("", "Down", () => Change(() => DataModelDocument.MoveField(fields, f, 1))), "Down");
+                ToolIcons.Set(Small("", "Delete the field", () => Change(() => fields.Remove(f))), "Close");
                 Put(moves);
                 row++;
             }
