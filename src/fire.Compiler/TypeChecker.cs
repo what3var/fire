@@ -3002,6 +3002,30 @@ namespace fire.Compiler
             };
         }
 
+        /// <summary>What a call of a method of a base-type extension gives (`class extends string { int IndexOf(any value) ... }`, SPEC 5.5.1 - the parser
+        /// collects them in the class `$string`): the declared type when every method of that name that takes that many arguments declares the same one;
+        /// null otherwise (not a base type, no such method, overloads that differ).</summary>
+        private StaticType? ExtensionCallType(StaticType target, string name, int argc)
+        {
+            string? typeName = target.Kind switch
+            {
+                StaticKind.String => "string", StaticKind.Char => "char", StaticKind.Int => "int", StaticKind.Float => "float", StaticKind.Bool => "bool",
+                _ => null,
+            };
+            if (typeName == null || !_classes.TryGetValue(fire.Standard.BaseTypeExtensions.ClassName(typeName), out var ext)) return null;
+            StaticType? result = null;
+            foreach (var md in ext.Members.OfType<MethodDecl>())
+            {
+                if (md.IsStatic || md.Name != name || md.Params.Count < argc || md.Params.Skip(argc).Any(p => p.DefaultValue == null)) continue;
+                if (md.ReturnType == null || md.ReturnType.IsInferred) return null;
+                var type = ResultOf(md, null);
+                if (type.IsDynamic) return null;
+                if (result != null && result != type) return null;
+                result = type;
+            }
+            return result;
+        }
+
         private StaticType InferCall(CallExpr c)
         {
             var type = InferCallCore(c);
@@ -3037,6 +3061,8 @@ namespace fire.Compiler
                 if (!staticCall) NoteReceiverTypeArgs(c, target);
                 // the built-in methods of a byte buffer and `ToBytes` of a text: what they give (fire.Standard.BufferMethods)
                 if (BuiltinCallType(target, m.Name, c.Args.Count) is { } builtin) { foreach (var a in c.Args) Infer(a); return builtin; }
+                // a method of a base-type extension (`class extends string`: `text.IndexOf(..)` is an int, `text.Split(..)` a string[]): what it declares
+                if (!staticCall && ExtensionCallType(target, m.Name, c.Args.Count) is { } extended) { foreach (var a in c.Args) Infer(a); return extended; }
                 if (target.Kind == StaticKind.Class)
                 {
                     candidates = FindMethods(target, m.Name, c.Args.Count);

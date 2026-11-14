@@ -25,6 +25,9 @@ namespace fire.Native
             _usesJson = true;
             UseExceptions();   // a JSON text that cannot be read is a JsonException
             if (!_errorClasses.Contains("JsonException")) _errorClasses.Add("JsonException");
+            // (a destroyed object, array or buffer to write: the DestroyedException any access gives - fire_json.h JSON_DESTROYED; a class that is not
+            // serializable: an ArgumentException)
+            foreach (var cls in new[] { "DestroyedException", "ArgumentException" }) if (!_errorClasses.Contains(cls)) _errorClasses.Add(cls);
             _version++;
         }
 

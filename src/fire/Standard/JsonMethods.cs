@@ -82,6 +82,9 @@ namespace fire.Standard
 
         private sealed class JsonError : Exception { public JsonError(string message) : base(message) { } }
 
+        /// <summary>A destroyed object, array or buffer met while writing: the DestroyedException any access gives (not a silent `null` - fire_json.h says the same).</summary>
+        public const string DestroyedReason = "A value to write to JSON is destroyed: an object, array or buffer that belonged to a block that has ended (give it with `take` to what keeps it) or that was deleted.";
+
         /// <summary>Why a class is not written or read (an ArgumentException; native/runtime/fire_json.h says the same).</summary>
         public const string NotSerializableReason = "it is not serializable ([NotSerializable] on it or a base class, or \"serializable\": false in its package).";
 
@@ -205,6 +208,8 @@ namespace fire.Standard
             private readonly HashSet<object> _ownerInGraph = new(ReferenceEqualityComparer.Instance);   // reached from its owner too: written out there
             private int _depth;
 
+            private Exception Destroyed() => _host.Error("DestroyedException", DestroyedReason);
+
             public Writer(IJsonHost host, int flags)
             {
                 _host = host;
@@ -313,6 +318,7 @@ namespace fire.Standard
                     case ValueKind.Buffer:
                     {
                         var buffer = v.AsBuffer();
+                        if (buffer.IsDestroyed) throw Destroyed();
                         if (_ids.TryGetValue(buffer, out int bid) && !_written.Add(buffer)) { _sb.Append("{\"$ref\":").Append(bid).Append('}'); return; }
                         string b64 = Convert.ToBase64String(buffer.Bytes);
                         if ((type == "byte[]" || type == "buffer") && !_ids.ContainsKey(buffer)) { WriteString(b64); return; }
@@ -324,10 +330,12 @@ namespace fire.Standard
                         return;
                     }
                     case ValueKind.Array:
+                        if (v.AsArray().IsDestroyed) throw Destroyed();
                         WriteArray(v.AsArray(), ElementType(type), container);
                         return;
                     case ValueKind.Class:
-                        if (v.AsObjectRef() is not ObjectInstance obj || obj.IsDestroyed) { _sb.Append("null"); return; }
+                        if (v.AsObjectRef() is not ObjectInstance obj) { _sb.Append("null"); return; }
+                        if (obj.IsDestroyed) throw Destroyed();
                         WriteObject(obj, type, container, isRoot);
                         return;
                     default:

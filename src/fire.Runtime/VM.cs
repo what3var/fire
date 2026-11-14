@@ -7832,7 +7832,8 @@ namespace fire.Runtime
             foreach (var spec in proto.Specializations!)
             {
                 bool fits = spec.SpecArgs != null && args.Length == spec.ParamCount;
-                for (int i = 0; fits && i < args.Length && i < 64; i++) fits = (spec.SpecDefinedMask >> i & 1) == 0 || args[i].Kind != ValueKind.Undefined;
+                for (int i = 0; fits && i < args.Length && i < 64; i++)
+                    fits = spec.SpecParamKinds is { } kinds && i < kinds.Length ? DeclaredKind.Fits(args[i], kinds[i]) : (spec.SpecDefinedMask >> i & 1) == 0 || args[i].Kind != ValueKind.Undefined;
                 for (int k = 0; fits && k < spec.SpecArgs!.Length; k++) fits = spec.SpecArgs[k] == "any" || DeclaredType.TypeArgOf(obj, spec.SpecOwner!, k) == spec.SpecArgs[k];
                 if (fits) return spec;
             }

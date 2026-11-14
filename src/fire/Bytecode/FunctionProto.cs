@@ -73,6 +73,9 @@ namespace fire.Bytecode
         public string[]? SpecArgs { get; set; }
         /// <summary>Of a specialization: its `defined` parameters (bit i: parameter i) - an undefined argument there leaves the call to the generic method.</summary>
         public long SpecDefinedMask { get; set; }
+        /// <summary>Of a specialization: the DeclaredKind of each parameter (0: none) - an argument that does not fit it as it is (DeclaredKind.Fits: another
+        /// kind, a unit, undefined for `defined`) leaves the call to the generic method, which checks or converts it as always.</summary>
+        public byte[]? SpecParamKinds { get; set; }
 
         private NativeForwarder? _forwarder;
         private bool _forwarderChecked;

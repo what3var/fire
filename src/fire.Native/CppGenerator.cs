@@ -531,7 +531,7 @@ namespace fire.Native
                     handTexts.Add(specOwner + ":" + string.Join("|", specArgs));
                     var target = GetFunc(specProto, FuncKind.Method);
                     string tests = string.Concat(specArgs.Select((t, k) => t == "any" ? "" : $" && {TArgOfExpr(specOwner, k, "objAt(self)")} == {TArgRef(t)}"))
-                        + string.Concat(Enumerable.Range(0, Math.Min(f.ParamCount, 64)).Where(i => (specProto.SpecDefinedMask >> i & 1) != 0).Select(i => $" && P{i}.kind != K_Undefined"));
+                        + string.Concat(Enumerable.Range(0, f.ParamCount).Select(i => SpecArgTest(specProto, i, $"P{i}", TypeUnknown)));
                     lines.AppendLine($"    if (self.kind == K_Class{tests}) return {target.Name}{(Wrapped ? "_b" : "")}({args});");
                 }
             // the type arguments of the call of a generic method
@@ -570,14 +570,30 @@ namespace fire.Native
 
         /// <summary>The typed specializations of a method (FunctionProto.Specializations) with the test of the type arguments of the object `recv`
         /// (a living object of the class) that chooses each.</summary>
-        private List<(string Condition, Func Callee, long Defined)> HandSpecCalls(FunctionProto[] specs, string recv)
+        /// <summary>The test that argument `i` (`v`, of static type `type`) fits parameter i of a specialization as it is (DeclaredKind.Fits; FunctionProto.
+        /// SpecParamKinds): " &amp;&amp; (...)", "" when its type proves it or the parameter has no kind.</summary>
+        private static string SpecArgTest(FunctionProto spec, int i, string v, int type)
         {
-            var calls = new List<(string, Func, long)>();
+            byte declared = spec.SpecParamKinds is { } kinds && i < kinds.Length ? kinds[i] : (byte)0;
+            if (declared == 0) return "";
+            byte kind = KindOfDeclared(declared);
+            bool nonNull = DeclaredKind.IsNonNull(declared), unitless = DeclaredKind.IsUnitless(declared);
+            // (proven by the static type: a number of that kind without a unit - never undefined when the parameter is `defined`)
+            if ((type & TypeNone) == 0 && type != TypeUnknown && BaseKindOfType(type) == kind && (!unitless || kind is KindBool or KindWord || UnitOfType(type) == 0)
+                && (!nonNull || !IsNullable(type)) && (kind != KindInt || (type & CutBit) == 0)) return "";
+            string kc = kind switch { KindInt => "K_Int", KindFloat => "K_Float", KindBool => "K_Bool", KindWord => "K_Word", _ => "K_Char" };
+            string fits = $"{v}.kind == {kc}" + (unitless && kind is KindInt or KindFloat ? $" && {v}.unit == 0" : "") + (kind == KindInt ? $" && {v}.wide == 0" + (nonNull ? $" && {v}.reserved == 0" : "") : "");
+            return nonNull ? $" && ({fits})" : $" && ({v}.kind == K_Undefined || ({fits}))";
+        }
+
+        private List<(string Condition, Func Callee, FunctionProto Spec)> HandSpecCalls(FunctionProto[] specs, string recv)
+        {
+            var calls = new List<(string, Func, FunctionProto)>();
             foreach (var spec in specs)
             {
                 if (spec.SpecOwner is not { } owner || spec.SpecArgs is not { } specArgs) continue;
                 string condition = string.Join(" && ", specArgs.Select((t, k) => (t, k)).Where(x => x.t != "any").Select(x => $"{TArgOfExpr(owner, x.k, $"objAt({recv})")} == {TArgRef(x.t)}"));
-                calls.Add((condition, GetFunc(spec, FuncKind.Method), spec.SpecDefinedMask));
+                calls.Add((condition, GetFunc(spec, FuncKind.Method), spec));
             }
             return calls;
         }
@@ -6154,8 +6170,7 @@ namespace fire.Native
                             var cSpecArgs = specCalls.Select(sc => mask == 0 && SlotScalars() && CAbiOf(sc.Callee) is { } sabi && ProvenCArgs(sabi, d - argc, argc)
                                 ? string.Join("", Enumerable.Range(0, argc).Select(i => ", " + (sabi.ParamType[i] == 0 ? S(d - argc + i) : KindOfType(sabi.ParamType[i]) switch { KindFloat => SF(d - argc + i), KindWord => SW(d - argc + i), _ => SN(d - argc + i) })))
                                 : null).ToList();
-                            var definedTests = specCalls.Select(sc => string.Concat(Enumerable.Range(0, Math.Min(argc, 64)).Where(i => (sc.Defined >> i & 1) != 0 && (IsNullable(Ty(d - argc + i)) || (Ty(d - argc + i) & TypeNone) != 0 || Ty(d - argc + i) == TypeUnknown))
-                                .Select(i => $" && {S(d - argc + i)}.kind != K_Undefined"))).ToList();
+                            var definedTests = specCalls.Select(sc => string.Concat(Enumerable.Range(0, argc).Select(i => SpecArgTest(sc.Spec, i, S(d - argc + i), Ty(d - argc + i))))).ToList();
                             ArgsBefore(d - argc, argc, mask);
                             string hrecv = SR(slot);
                             string hargs = $"{hrecv}{CallArgs(d - argc, argc, mask, directProto.RefMask)}";
@@ -6973,7 +6988,7 @@ namespace fire.Native
                     int resultType = ReturnType(generic);
                     foreach (var gc in getCalls)
                     {
-                        string idxTest = (gc.Defined & 1) != 0 && (IsNullable(Ty(d - 1)) || (Ty(d - 1) & TypeNone) != 0 || Ty(d - 1) == TypeUnknown) ? $" && {gidx}.kind != K_Undefined" : "";
+                        string idxTest = SpecArgTest(gc.Spec, 0, gidx, Ty(d - 1));
                         string call = SlotScalars() && CAbiOf(gc.Callee) is { } gabi && ProvenCArgs(gabi, d - 1, 1)
                             ? (gabi.RetType == 0 ? $"{CName(gc.Callee)}({grecv}, {(gabi.ParamType[0] == 0 ? gidx : SN(d - 1))})"
                                 : ScalarValueOf(BaseKindOfType(gabi.RetType), UnitOfType(gabi.RetType), $"{CName(gc.Callee)}({grecv}, {(gabi.ParamType[0] == 0 ? gidx : SN(d - 1))})"))
@@ -6988,7 +7003,7 @@ namespace fire.Native
                         && getCalls.FindIndex(gc => gc.Callee.Proto?.SpecArgs is { } sa && SpecArgsFit(sa, receiverArgs)) is var hi and >= 0)
                     {
                         var hc = getCalls[hi];
-                        string idxTest = (hc.Defined & 1) != 0 && (IsNullable(Ty(d - 1)) || (Ty(d - 1) & TypeNone) != 0 || Ty(d - 1) == TypeUnknown) ? $" && {gidx}.kind != K_Undefined" : "";
+                        string idxTest = SpecArgTest(hc.Spec, 0, gidx, Ty(d - 1));
                         string what = $"The result of '[]' of a {GenericClassNames.PlainName(getIndex.Chunk.OwnerClass?.Name ?? "")}<{receiverArgs.Replace("|", ", ")}>";
                         if (SlotScalars() && CAbiOf(hc.Callee) is { RetType: not 0 } habi && ProvenCArgs(habi, d - 1, 1))
                         {
@@ -7034,8 +7049,7 @@ namespace fire.Native
                     var sarms = new StringBuilder();
                     foreach (var sc in setCalls)
                     {
-                        string tests = string.Concat(Enumerable.Range(0, 2).Where(k => (sc.Defined >> k & 1) != 0 && (IsNullable(Ty(d - 2 + k)) || (Ty(d - 2 + k) & TypeNone) != 0 || Ty(d - 2 + k) == TypeUnknown))
-                            .Select(k => $" && {S(d - 2 + k)}.kind != K_Undefined"));
+                        string tests = string.Concat(Enumerable.Range(0, 2).Select(k => SpecArgTest(sc.Spec, k, S(d - 2 + k), Ty(d - 2 + k))));
                         string call = SlotScalars() && CAbiOf(sc.Callee) is { } sabi && ProvenCArgs(sabi, d - 2, 2)
                             ? $"{CName(sc.Callee)}({srecv}{string.Concat(Enumerable.Range(0, 2).Select(k => ", " + (sabi.ParamType[k] == 0 ? S(d - 2 + k) : KindOfType(sabi.ParamType[k]) switch { KindFloat => SF(d - 2 + k), KindWord => SW(d - 2 + k), _ => SN(d - 2 + k) })))})"
                             : $"{sc.Callee.Name}({srecv}, {sidx}, {sval})";

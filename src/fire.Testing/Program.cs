@@ -21228,6 +21228,31 @@ else
             defined int fromTyped = typed[5] + typed[7]
             print(li[5] + " " + li[6] + " " + lf[0] + " " + lf[1] + " " + fromTyped)
             """),
+        ("JsonObject.Set uebernimmt, was dem Aufruf gehoert (take, neu erzeugt), auch aus einem inneren Block und ueber vier Eintraege hinaus; ein zerstoertes Objekt beim Schreiben ist eine DestroyedException, kein stilles null", """
+            #import "json"
+            var root = new JsonObject()
+            bool flag = true
+            if (flag) {
+                var inner = new JsonObject()
+                inner.Set("a", 1)
+                root.Set("inner", take inner)
+                var la = new JsonObject()
+                la.Set("c", 3)
+                root.Set("la", take la)
+                root.Set("list", [new JsonObject(), 5])
+            }
+            var other = new JsonObject()
+            other.Set("b", 2)
+            root.Set("taken", take other)
+            root.Set("made", new JsonObject())
+            print(Json.Serialize(root))
+            var lost = new JsonObject()
+            if (flag) {
+                var gone = new JsonObject()
+                lost.Set("gone", gone)
+            }
+            try { print(Json.Serialize(lost)) } catch (DestroyedException e) { print("DestroyedException: " + e.message) }
+            """),
         ("Dictionary/HashSet mit int-Schluesseln (HashOf/Find/Insert<int, any>), Platzhalter any in Spezialisierungen, undefined als Schluessel und Wert, Einheiten-Schluessel, Owns.Values", """
             var d = new Dictionary<string, int>()
             d["a"] = 1; d["b"] = 2; d.Add("c", 3)

@@ -1125,6 +1125,7 @@ namespace fire.Compiler
                 specProto.SpecArgs = specTypes.Select(t => t.BaseName).ToArray();
                 for (int i = 0; i < md.Params.Count && i < 64; i++)
                     if (md.Params[i].Type is { NonNull: true }) specProto.SpecDefinedMask |= 1L << i;
+                specProto.SpecParamKinds = md.Params.Select(p => p.ByRef || p.ArrayRanks.Count > 0 ? (byte)0 : DeclaredKind.Of(p.Type, p.DefaultValue)).ToArray();
                 target!.Specializations = (target.Specializations ?? Array.Empty<FunctionProto>()).Append(specProto).ToArray();
             }
 

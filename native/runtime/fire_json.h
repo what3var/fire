@@ -103,6 +103,8 @@ static const char* jsCat5(JsCtx* J, const char* a, const char* b, const char* c,
 static bool jsEq(const char* a, const char* b) { return strcmp(a, b) == 0; }
 static bool jsEndsWith(const char* s, const char* tail) { size_t n = strlen(tail), m = strlen(s); return m >= n && memcmp(s + m - n, tail, n) == 0; }
 
+/* A destroyed object, array or buffer met while writing: the DestroyedException any access gives, not a silent `null` (JsonMethods.DestroyedReason). */
+#define JSON_DESTROYED "A value to write to JSON is destroyed: an object, array or buffer that belonged to a block that has ended (give it with `take` to what keeps it) or that was deleted."
 static void jsFail(JsCtx* J, const char* text, const char* cls) {
     if (J->failed) return;
     J->failed = true;
@@ -598,7 +600,7 @@ static void jsWriteValue(JsWriter* w, Value v, const char* type, const void* con
             int id;
             JsSeen* e;
             const char* b64;
-            if (!leafAlive(v)) { jsAscii(J, &w->out, "null"); return; }
+            if (!leafAlive(v)) { jsFail(J, JSON_DESTROYED, "DestroyedException"); return; }
             b = bufOf(v);
             if (b->elem != 1) {
                 /* a buffer of machine words (SPEC 8.10): an array of numbers (unsigned) */
@@ -627,11 +629,11 @@ static void jsWriteValue(JsWriter* w, Value v, const char* type, const void* con
             return;
         }
         case K_Array:
-            if (!leafAlive(v)) { jsAscii(J, &w->out, "null"); return; }
+            if (!leafAlive(v)) { jsFail(J, JSON_DESTROYED, "DestroyedException"); return; }
             jsWriteArray(w, arrOf(v), jsElementType(J, type), container, containerKind);
             return;
         case K_Class:
-            if (!leafAlive(v)) { jsAscii(J, &w->out, "null"); return; }
+            if (!leafAlive(v)) { jsFail(J, JSON_DESTROYED, "DestroyedException"); return; }
             jsWriteObject(w, objAt(v), type, container, containerKind, isRoot);
             return;
         default:
