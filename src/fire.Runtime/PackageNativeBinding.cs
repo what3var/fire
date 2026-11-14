@@ -190,7 +190,11 @@ namespace fire.Runtime
             {
                 Marshal.WriteByte(error, 0);
                 for (int i = 0; i < args.Length; i++) ToNative(args[i], argBlock + i * ValSize, ref allocs, ref pins, ref after, name);
-                int rc = lib.Call(fn.Index, argBlock, args.Length, result, error, 512);
+                // (the main program with fire threads goes away for the call when no argument is of the shared area: the threads take their sections meanwhile)
+                var awayVm = VM.CurrentThreadVm is { IsFireThreadVm: false } mainCaller && mainCaller.NativeAwayBegin(args) ? mainCaller : null;
+                int rc;
+                try { rc = lib.Call(fn.Index, argBlock, args.Length, result, error, 512); }
+                finally { awayVm?.NativeAwayEnd(); }
                 if (rc == 2)
                 {
                     // the native throws an exception of the program: "ClassName\nmessage" (as UTF-8)

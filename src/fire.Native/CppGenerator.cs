@@ -2328,8 +2328,22 @@ namespace fire.Native
             if (_usesThreads)
             {
                 // a call on an object of the main program's globals from a fire thread: a job of the main program, the thread waits (rule 10 - in a section
-                // of its own, `sync global`, it runs here)
-                sb.AppendLine("    if (FIRE_UNLIKELY(g_isThread) && g_secDepth == 0 && g_domainOn && (self.kind != K_Class || leafAlive(self)) && sharedValue(self)) {");   // (a destroyed object is not read: the call below says so)
+                // of its own, `sync global`, it runs here); a method that only reads (FunctionProto.ReadsOnly) runs here too, like reads of the fields
+                var reading = new List<int>();
+                bool anyWriting = false;
+                foreach (var cls in _classList)
+                    if (cls.Rc.IsTypeOverloaded(name, argc)) anyWriting |= cls.Rc.Candidates(name, argc).Protos.Any(p => !p.IsStatic);
+                    else if (cls.Rc.FindMethodWithAccess(name, argc).Proto is { IsStatic: false } m) { if (m.ReadsOnly) reading.Add(cls.Id); else anyWriting = true; }
+                string notReading = reading.Count == 0 ? "" : " && (self.kind != K_Class || " + (anyWriting ? "!(" + string.Join(" || ", reading.Select(id => $"asObj(self)->cls == {id}")) + ")" : "false") + ")";
+                if (reading.Count > 0 && !anyWriting) notReading = " && self.kind != K_Class";
+                sb.AppendLine($"    if (FIRE_UNLIKELY(g_isThread) && g_secDepth == 0 && g_domainOn && (self.kind != K_Class || leafAlive(self)) && sharedValue(self){notReading}) {{");   // (a destroyed object is not read: the call below says so)
+                // (the main program is away in a native: the call runs here in a section of its own - like in `sync global` - instead of waiting for it)
+                sb.AppendLine("        if (fire_mainAway()) {");
+                sb.AppendLine("            bool ss_ = sectionScopeEnter(true);");
+                sb.AppendLine($"            Value r_ = {direct}(self{argList}{tail});");
+                sb.AppendLine("            sectionScopeExit(ss_);");
+                sb.AppendLine("            return r_;");
+                sb.AppendLine("        }");
                 sb.AppendLine($"        {CArray("Value", "gv", Enumerable.Range(0, argc).Select(i => $"a{i}").DefaultIfEmpty("Undef()").ToList())}");
                 sb.AppendLine($"        return globalsCall(self, {msg}, gv, {argc}, {CString(name)});");
                 sb.AppendLine("    }");
@@ -5215,13 +5229,14 @@ namespace fire.Native
                             : $"{T(first)} = Undef();");
                         d = first + 1; SetR(first, false); return Next();
                     }
-                    if (native == FdWaitMethods.NativeName && argc == 3)
+                    if (native == FdWaitMethods.NativeName && argc is 3 or 4)
                     {
-                        // waiting for a socket (fire_rt.h fire_fd_wait: the poller thread; -1 where there is none)
+                        // waiting for a socket (fire_rt.h fire_fd_wait: the poller thread; -1 where there is none) - with a fourth argument also for a
+                        // channel (fire_fd_wait_or: bit 4 when it has something or is closed)
                         // (it does not make the program one with threads: without them the result is -1 and the net package waits as before)
-                        int first = d - 3;
-                        string waitArgs = string.Join(", ", Enumerable.Range(first, 3).Select(SR));
-                        E($"{T(first)} = fire_fd_wait({waitArgs});");
+                        int first = d - argc;
+                        string waitArgs = string.Join(", ", Enumerable.Range(first, argc).Select(SR));
+                        E($"{T(first)} = {(argc == 4 ? "fire_fd_wait_or" : "fire_fd_wait")}({waitArgs});");
                         Check();
                         d = first + 1; SetR(first, false); return Next();
                     }
@@ -5347,9 +5362,20 @@ namespace fire.Native
                         string typedRet = typed ? NativeCTypes.ReturnCType(packageNative.Fn) ?? "" : "";
                         // (the lock of the package around the call, in a program with fire threads - nothing with the GIL)
                         int pkgLock = PkgLock(native);
+                        bool awayWrapped = false;
                         string pkgEnter = pkgLock >= 0 ? $"{{ FIRE_PKG_ENTER(fire_pkgM[{pkgLock}]) " : "", pkgLeave = pkgLock >= 0 ? $" FIRE_PKG_LEAVE(fire_pkgM[{pkgLock}]) }}" : "";
+                        // (the main program goes away for the native when no argument is of the shared domain: the threads need not wait for it meanwhile -
+                        // fire_rt.h fire_awayBegin; a C number of a typed parameter is no object)
+                        if (_usesThreads && !packageNative.Host)
+                        {
+                            var awayArgs = Enumerable.Range(first, argc).Where(k => !(typed && NativeCTypes.ParamCType(packageNative.Fn, k - first) is not null)).Select(k => $"fire_awayArg({SR(k)})").ToList();
+                            string awayIf = awayArgs.Count == 0 ? "!g_isThread" : string.Join(" && ", awayArgs);
+                            pkgEnter = $"{{ bool aw_ = {awayIf}; if (aw_) fire_awayBegin(); " + (pkgEnter.Length > 0 ? pkgEnter : "{ ");
+                            pkgLeave = (pkgLeave.Length > 0 ? pkgLeave : " }") + " if (aw_) fire_awayEnd(); }";
+                            awayWrapped = true;
+                        }
                         // (an int[64] result in a program with 32-bit ints, or no scalars here: the Value of the C number)
-                        if (typedRet != "" && (!SlotScalars() || (typedRet == "int64_t" && _program.IntWidth == 32) || pkgLock >= 0))
+                        if (typedRet != "" && (!SlotScalars() || (typedRet == "int64_t" && _program.IntWidth == 32) || pkgLock >= 0 || awayWrapped))
                         {
                             E($"{pkgEnter}{T(first)} = {NativeCTypes.ToValue(typedRet, $"{packageNative.Function}({args})")};{pkgLeave}");
                             typedRet = "";
@@ -5370,7 +5396,7 @@ namespace fire.Native
                             d = first + 1; SetR(first, false); _kindsKept = true;
                             return Next();
                         }
-                        E($"{pkgEnter}{T(first)} = {(packageNative.IsC ? cFunction : NativeThunk(packageNative.Function, argc, packageNative.NeedsList))}({args});{pkgLeave}");
+                        E($"{pkgEnter}{T(first)} = {(packageNative.IsC ? cFunction : NativeThunk(packageNative.Function, argc, packageNative.NeedsList))}({args});{pkgLeave}");   // (pkgEnter/pkgLeave: also the main program's going away)
                         Check();
                         // a function of the host (`Sleep`) ends at terminate: leave now, not at the next loop
                         if (packageNative.Host && _usesThreads && sb != null) E($"if (FIRE_UNLIKELY(pollSignals())) goto {ExitLabel(f, st, locals)};");

@@ -86,7 +86,7 @@ namespace fire.Native
                 }
         }
 
-        /// <summary>The enum of this name in the program (the process may hold another program's enum of the same name); without the program's list, the last of the process.</summary>
+        /// <summary>The enum of this name in the program (the process may hold another program's enum of the same name - never that one); null: none.</summary>
         private fire.Values.EnumType? ProgramEnum(string name)
         {
             if (_program.Program.Enums is { } enums)
@@ -94,7 +94,7 @@ namespace fire.Native
                 if (enums.TryGetValue(name, out var type)) return type;
                 foreach (var t in enums.Values) if (t.Matches(name)) return t;
             }
-            return fire.Values.EnumType.Named(name);
+            return null;
         }
 
         private static readonly HashSet<string> JsonPlainTypes = new(StringComparer.Ordinal)

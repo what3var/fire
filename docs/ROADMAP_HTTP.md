@@ -116,7 +116,9 @@ ran out or its token is cancelled. **Built** (poll()/WSAPoll, not yet epoll/kque
    build. Only a client that already has a session may call (401 otherwise); `[Nickname]` gives a class its public name (decided by the user). Found on the way (VM): `list.Add(actor)` and the assignment of an actor to a field posted a message `tryTakeTo` to the actor - ownership calls on an
    actor are no messages now. Open: events (with step 5), the random instance ids of the roadmap (instances are addressed by class and session for now).
 5. WebSocket - **built** (`Http.WebSockets`, `Http.WebSocket`, docs/networking/http.md): RFC 6455 server and client, fragments, ping/pong, close, origins. Built since:
-   compression (permessage-deflate without context takeover, tried with Chromium). Open: sending to a socket from another task (the reader/writer split).
+   compression (permessage-deflate without context takeover, tried with Chromium). Sending from another task: built - `ws.Outbox` (an end of a channel
+   for another task) and `Receive(timeout, sendFrom)`; the owning task writes while it waits, one wait for "the socket or a channel" (`__fd_wait` with
+   the node of a channel: poll in the VM, the keyed wait of the native runtime woken by the channel).
 6. FXML to HTML/CSS, `fire.js`, live updates - **first part built** (package `http.pages`, docs/networking/http.md): a circuit per page (an actor that owns the
    UI root without a window), HTML with CSS layout (decided by the user: the browser lays out - flex, grid, nested flex for DockPanel, HTML text for the new
    `UI.FlowPanel`), events over the WebSocket, the changes found by comparing the properties. Tried in headless Chromium (Playwright).
@@ -129,13 +131,12 @@ ran out or its token is cancelled. **Built** (poll()/WSAPoll, not yet epoll/kque
    the circuit, the waiting call registers a `Completion` in the PageDirectory that the browser's answer sets (an answer that comes before the
    registration waits there for it).
    **Socket and circuit are joined by a `Channel.Pair`** (made by the socket, its other end handed to the circuit as an actor message): events in,
-   answers and pushes out, no actor round trip per event; the end of the socket ends the circuit. The socket still looks at the WebSocket and the channel
-   in turn (20 ms): waiting on both at once needs a wait for "a socket or a channel" (or a writer of its own for the WebSocket, as Net.Channel has one
-   per direction - over TLS that is not possible on the raw socket).
+   answers and pushes out, no actor round trip per event; the end of the socket ends the circuit. The socket waits for the WebSocket and the channel at
+   once (`ws.ReceiveText(-1, link)`, no 20 ms turns any more).
 
 ## Open
 
-* A wait for "a socket or a channel" (see step 7): then the page's socket needs no 20 ms turns.
+* Stage 2 of the waiting: a general `await any [...]` over sockets, channels and completions (built is the wait for one socket and one channel).
 
 * Which FXML elements the browser covers first.
 * Whether the copy of the router chain per connection is cheap enough (measure; else one per worker).

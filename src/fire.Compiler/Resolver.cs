@@ -2817,7 +2817,7 @@ namespace fire.Compiler
         }
 
         // (every node below `node`, in no particular order)
-        private static void Walk(object? node, List<object> into)
+        internal static void Walk(object? node, List<object> into)
         {
             switch (node)
             {

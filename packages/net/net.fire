@@ -108,6 +108,25 @@ namespace Net {
             if (fd < 0 || __fd_wait(fd, events, ms) < 0) { Net.Clock.Pause(deadline, tries) }
         }
 
+        // The same, and the wait also ends when the channel of the node `channel` (Channel.__Node) has something or is closed: what a task that owns a socket
+        // needs to send what other tasks give it while it waits for the next message (Http.WebSocket). The result: 4 when the channel ended it, else 0.
+        static defined int WaitForOr(defined int handle, defined int events, defined int deadline, defined int tries, defined int channel) {
+            var ms = 500
+            if (deadline >= 0) {
+                var left = (deadline - Net.Clock.Now()) / 10000
+                if (left < ms) { ms = left }
+            }
+            if (ms <= 0) { return 0 }
+            int fd = __NetNativeHandle(handle)
+            if (fd >= 0) {
+                var r = __fd_wait(fd, events, ms, channel)
+                if (r >= 0) { return r & 4 }
+            }
+            if (channel != 0 && (__chan_count(channel) > 0 || __chan_closed(channel))) { return 4 }
+            Net.Clock.Pause(deadline, tries)
+            return 0
+        }
+
         // Waits a moment before the next attempt: 1 ms at first, up to 10 ms when it takes long (and not past the deadline). The natives are only asked, never made to wait: a program
         // that waits for the network does not hold the library, so the other fire threads, `terminate` and the main queue keep working.
         static undefined Pause(defined int deadline, defined int tries) {
@@ -180,6 +199,9 @@ namespace Net {
         int RemotePort { get; }
         string LocalHost { get; }
         int LocalPort { get; }
+        // Waits until something can be read (1), or the channel of the node `channel` (Channel.__Node) has something or is closed (4), or the time ran
+        // out (0) - one wait for both, no turns.
+        defined int WaitReadableOr(any timeout, defined int channel)
     }
 
     // A connection (TCP): an IO.Stream. Read returns 0 when the other side has closed its end.
@@ -298,6 +320,22 @@ namespace Net {
                 if ((bits & 1) != 0) { return true }
                 if (Net.Clock.Expired(deadline)) { return false }
                 Net.Clock.WaitFor(this.handle, 1, deadline, tries)
+                tries = tries + 1
+            }
+        }
+
+        // 1 when something can be read, 4 when the channel of the node `channel` has something or is closed, 0 when the time ran out (Net.IConnection).
+        defined int WaitReadableOr(any timeout, defined int channel) {
+            this.Check()
+            var deadline = Net.Clock.Deadline(Net.Clock.Millis(timeout))
+            var tries = 0
+            while (true) {
+                var bits = __NetPoll(this.handle, 1, 0, 0)
+                if (bits < 0) { Net.NetErrors.Throw() }
+                if ((bits & 1) != 0) { return 1 }
+                if (channel != 0 && (__chan_count(channel) > 0 || __chan_closed(channel))) { return 4 }
+                if (Net.Clock.Expired(deadline)) { return 0 }
+                if (Net.Clock.WaitForOr(this.handle, 1, deadline, tries, channel) == 4) { return 4 }
                 tries = tries + 1
             }
         }

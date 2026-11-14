@@ -1045,8 +1045,9 @@ namespace Http {
             // ends - the circuit ends with it)
             var link = Channel.Pair<string, string>()
             c.Attach(link.Other())
+            // (one wait for the socket and the link: what the circuit sends goes out at once, no turns)
             while (true) {
-                var text = ws.ReceiveText(20)
+                var text = ws.ReceiveText(-1, link)
                 if (text == undefined) {
                     if (!ws.IsOpen) { break }
                 } else {
@@ -1059,11 +1060,6 @@ namespace Http {
                         }
                     }
                     link.Send(text)
-                }
-                any out = link.TryReceive()
-                while (out != undefined) {
-                    ws.Send(out)
-                    out = link.TryReceive()
                 }
             }
             link.Close()

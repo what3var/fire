@@ -3543,6 +3543,11 @@ FIRE_FN Value callLamU(Value callee, int argc, const Value* args, OwnList* list)
     return callLamV(callee, argc, args, list);
 }
 /* A lambda that the runtime or a native calls (a probe, a job, a callback): in a debug build the VM runs it nested - no stops inside. */
+#ifdef FIRE_NO_GIL
+extern FIRE_RT_DATA int32_t g_awayDepth;
+FIRE_FN int32_t fire_awayPause(void);
+FIRE_FN void fire_awayResume(int32_t depth);
+#endif
 FIRE_FN Value callLam(Value callee, int argc, const Value* args, OwnList* list) {
 #ifdef FIRE_DEBUG
     Value r;
@@ -3550,6 +3555,15 @@ FIRE_FN Value callLam(Value callee, int argc, const Value* args, OwnList* list) 
     r = callLamV(callee, argc, args, list);
     g_dbgNest--;
     return r;
+#elif defined(FIRE_NO_GIL)
+    /* (a callback of a native the main program is away in: it is back for the callback) */
+    if (FIRE_UNLIKELY(g_awayDepth != 0) && !g_isThread) {
+        int32_t away = fire_awayPause();
+        Value r = callLamV(callee, argc, args, list);
+        fire_awayResume(away);
+        return r;
+    }
+    return callLamV(callee, argc, args, list);
 #else
     return callLamV(callee, argc, args, list);
 #endif
@@ -8378,12 +8392,29 @@ extern FIRE_RT_DATA fire_atomic32 g_gilWaiting;
  *   - a fire thread takes the read side when it first touches the shared domain (FIRE_DOM_TOUCH, FIRE_DOM_READ) and lets go of it at its next safe point or
  *     wait - threads read side by side, and a thread that never touches the domain never waits for it;
  *   - a section (a change of the domain by a thread, granted by the waiting main program) holds the write side alone. */
-typedef struct DomLock { fire_mutex m; fire_cond cv; int32_t readers, writersWaiting; fire_atomic32 readersWaiting; bool mainIn, mainWaiting, writer; } DomLock;
+typedef struct DomLock { fire_mutex m; fire_cond cv; int32_t readers, writersWaiting; fire_atomic32 readersWaiting, away; bool mainIn, mainWaiting, writer; } DomLock;
 extern FIRE_RT_DATA DomLock g_dom;
+/* (a compare-and-swap of a word - only here, without the GIL, where the compiler has atomics) */
+static inline bool fire_domCas(fire_atomic32* a, uint32_t expected, uint32_t desired) {
+#if defined(__GNUC__) || defined(__clang__)
+    return __atomic_compare_exchange_n(&a->v, &expected, desired, false, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE);
+#elif defined(_MSC_VER)
+    return (uint32_t)_InterlockedCompareExchange((volatile long*)&a->v, (long)desired, (long)expected) == expected;
+#else
+    return fire_atomic_cas32(a, expected, desired) == expected;
+#endif
+}
+/* The main program is away in a native of a package (fire_awayBegin, g_dom.away 1): a thread that waits for the lock of the globals takes the main program's
+ * place (2) - the native does not touch the shared domain; the main program, back, waits for it as after a wait (fire_awayEnd). Under g_dom.m. */
+static inline bool domLendMain(void) {
+    if (!g_dom.mainIn || g_dom.mainWaiting || !fire_domCas(&g_dom.away, 1, 2)) return false;
+    g_dom.mainIn = false;
+    return true;
+}
 FIRE_COLD FIRE_FN void domReadEnter(void) {
     fire_mutex_lock(&g_dom.m);
     fire_atomic_add(&g_dom.readersWaiting, 1);
-    while (g_dom.mainIn || g_dom.mainWaiting || g_dom.writer) fire_cond_wait(&g_dom.cv, &g_dom.m);
+    while (g_dom.mainIn || g_dom.mainWaiting || g_dom.writer) { if (!domLendMain()) fire_cond_wait(&g_dom.cv, &g_dom.m); }
     fire_atomic_add(&g_dom.readersWaiting, (uint32_t)-1);
     g_dom.readers++;
     fire_cond_notifyAll(&g_dom.cv);
@@ -8430,7 +8461,7 @@ FIRE_FN void domWriterEnter(void) {
     domReadLeave();
     fire_mutex_lock(&g_dom.m);
     g_dom.writersWaiting++;
-    while (g_dom.mainIn || g_dom.readers > 0 || g_dom.writer) fire_cond_wait(&g_dom.cv, &g_dom.m);
+    while (g_dom.mainIn || g_dom.readers > 0 || g_dom.writer) { if (!domLendMain()) fire_cond_wait(&g_dom.cv, &g_dom.m); }
     g_dom.writersWaiting--;
     g_dom.writer = true;
     fire_mutex_unlock(&g_dom.m);
@@ -9167,6 +9198,61 @@ FIRE_FN void notifyEventAll(void) {
  * wait for it; looked at only at a loop's jump back, and only in the mode `safepoints` - see g_globalJobs). */
 enum { ATTN_ALL = 1, ATTN_MAIN = 2, ATTN_SECT = 4, ATTN_PEER = 8 };   /* (ATTN_PEER: a fire thread is asked for a section of its own, see ThreadRec) */
 extern FIRE_RT_DATA fire_atomic32 g_attn;
+#ifdef FIRE_NO_GIL
+/* The main program in a native of a package whose arguments are not of the shared domain (docs/spec/THREADING_DESIGN.md section 7): it does not touch the
+ * globals meanwhile, so the threads need not wait for it - one that waits to read takes its place (domLendMain), one that asks for a section gets it
+ * (fire_sectionGrantedAway) and a call on an object of the globals runs in such a section. Going away costs a store; only when a thread took the place
+ * does the main program wait at its return, as after a wait. A callback of the native into fire code (callLam) comes back first (fire_awayPause). */
+extern FIRE_RT_DATA int32_t g_awayDepth;   /* (the main program's: how deep it is in natives that let it go away) */
+FIRE_FN void fire_awayBegin(void) {
+    if (g_isThread || g_awayDepth++ != 0) return;
+    fire_atomic_storeRelease(&g_dom.away, 1);
+    /* (who waits already: the readers at the lock, the sections in the queue) */
+    if (fire_atomic_load(&g_dom.readersWaiting) || (fire_atomic_load(&g_attn) & ATTN_SECT)) {
+        fire_mutex_lock(&g_dom.m);
+        fire_cond_notifyAll(&g_dom.cv);
+        fire_mutex_unlock(&g_dom.m);
+        notifyEventAll();
+    }
+}
+FIRE_FN void fire_awayEnd(void) {
+    if (g_isThread || --g_awayDepth != 0) return;
+    if (fire_atomic_exchange(&g_dom.away, 0) == 2) {
+        /* (a thread took the place: wait for it like after a wait - the package's lock goes back meanwhile, the order is the globals first) */
+        if (g_pkgHeld) fire_mutex_unlock(g_pkgHeld);
+        domMainEnter();
+        if (g_pkgHeld) fire_mutex_lock(g_pkgHeld);
+    }
+}
+/* (a callback of the native: the main program is back for it, and away again after it) */
+FIRE_FN int32_t fire_awayPause(void) {
+    int32_t depth = g_awayDepth;
+    if (depth == 0 || g_isThread) return 0;
+    g_awayDepth = 1;
+    fire_awayEnd();
+    return depth;
+}
+FIRE_FN void fire_awayResume(int32_t depth) {
+    if (depth == 0) return;
+    fire_awayBegin();
+    g_awayDepth = depth;
+}
+/* (may the main program go away for a native with this argument: not one of the shared domain - the native would read it while a thread changes it) */
+FIRE_FN bool fire_awayArg(Value v) {
+    if (v.kind == K_Class) return !(FIRE_FLAGS_READ(&asObj(v)->h) & 64);   /* (64: F_SHARED, the shared domain) */
+    if (v.kind == K_Array || v.kind == K_Buffer) { Owned* o = ownedOf(v); return o != NULL && !(FIRE_FLAGS_READ(o) & 64); }
+    return true;
+}
+/* (is the main program away now: a call of a thread on an object of the globals runs in a section of its own instead of as a job) */
+FIRE_FN bool fire_mainAway(void) { return fire_atomic_load(&g_dom.away) != 0; }
+#else
+#define fire_mainAway() false
+#define fire_awayBegin() ((void)0)
+#define fire_awayEnd() ((void)0)
+#define fire_awayPause() 0
+#define fire_awayResume(d) ((void)(d))
+#define fire_awayArg(v) false
+#endif
 
 /* `requested` is read by every thread at its safe points (atomic); the claim (the first call wins) and `value` are under g_thrM. */
 typedef struct TerminateState { fire_atomic32 requested; Value value; } TerminateState;
@@ -9337,6 +9423,8 @@ FIRE_FN bool fire_replyDone(void* ctx);
 FIRE_FN bool fire_tokWaitPred(void* ctx);
 FIRE_FN bool fire_complDone(void* ctx);   /* (a Completion: notifyKey of its node) */
 FIRE_FN bool fire_fdReady(void* ctx);     /* (__fd_wait: notifyKey of the waiter) */
+FIRE_FN bool fire_fdOrChanReady(void* ctx);   /* (__fd_wait with a channel: the same key - the waiter is its first member) */
+FIRE_FN bool fire_sectionGrantedAway(void* ctx);   /* (a section: notifyKey of its request, or notifyEventAll when the main program goes away) */
 #ifdef FIRE_TASKS
 FIRE_FN bool fire_awaitDone(void* ctx);
 #endif
@@ -9368,7 +9456,7 @@ FIRE_FN bool blockUntil(bool (*pred)(void*), void* ctx, bool stopOnTerminate, in
 #ifdef FIRE_TASKS
         if (taskRunning()) {
             /* (a task - a member of the main program's group too: parked until an event or its time - Sleep wakes only at its time, the other conditions are looked at again every few ms) */
-            bool keyed = pred == fire_sectionGranted || pred == fire_sectionDone || pred == fire_replyDone || pred == fire_awaitDone || pred == fire_complDone || pred == fire_fdReady;
+            bool keyed = pred == fire_sectionGranted || pred == fire_sectionGrantedAway || pred == fire_sectionDone || pred == fire_replyDone || pred == fire_awaitDone || pred == fire_complDone || pred == fire_fdReady || pred == fire_fdOrChanReady;
             const void* key = pred == fire_sleepWake || pred == fire_tokWaitPred ? (const void*)&g_terminate : keyed || pred == fire_actorReady ? ctx : NULL;
             /* (Sleep wakes at its time, a section when it is granted or done, an awaited reply or group when it is done - notifyKey; anything else is looked
              * at again every few ms) */
@@ -10145,10 +10233,24 @@ FIRE_FN void stillLeave(void) { if (g_isFire) fire_atomic_add(&g_idleThreads, (u
 /* (set by mainFinish when the threads that are left stand still: a fire thread that waits in `process` for an empty mailbox then ends like with `leave`) */
 extern FIRE_RT_DATA fire_atomic32 g_standstill;
 extern FIRE_RT_DATA fire_atomic32 g_fdWaiters;   /* (the threads that wait for a socket - counted in g_idleThreads too) */
-FIRE_FN Value fire_fd_wait(Value fdv, Value ev, Value msv) {
+/* (__fd_wait(fd, events, ms, channel): the socket or a channel - what a channel's Send wakes (notifyEventAll wakes the keyed waits too), the socket the poller
+ * by the waiter's address, the first member) */
+typedef struct FdChanWait { FdWaiter w; void* chan; } FdChanWait;
+FIRE_FN bool fire_chanCanReceive(void* c);
+FIRE_FN bool fire_fdOrChanReady(void* ctx) { FdChanWait* c = (FdChanWait*)ctx; return fire_fdReady(&c->w) || (c->chan && fire_chanCanReceive(c->chan)); }
+FIRE_FN Value fire_fd_wait_core(Value fdv, Value ev, Value msv, void* chan);
+FIRE_FN Value fire_fd_wait(Value fdv, Value ev, Value msv) { return fire_fd_wait_core(fdv, ev, msv, NULL); }
+/* `__fd_wait(fd, events, ms, channel)`: also ends when the channel (its node handle) has something or is closed - bit 4 of the result (Http.WebSocket:
+ * the task that owns the socket sends what other tasks put into its outbox while it waits for the next message). */
+FIRE_FN Value fire_fd_wait_or(Value fdv, Value ev, Value msv, Value chv) {
+    void* chan = chv.kind == K_Int && chv.i ? (void*)(intptr_t)chv.i : NULL;
+    return fire_fd_wait_core(fdv, ev, msv, chan);
+}
+FIRE_FN Value fire_fd_wait_core(Value fdv, Value ev, Value msv, void* chan) {
 #ifdef FIRE_FD_POLL
     FdPoller* p;
-    FdWaiter w, **link;
+    FdChanWait cw;
+    FdWaiter** link;
     CancelNode* token;
     int64_t deadline = 0, until;
     int64_t ms = msv.kind == K_Int ? msv.i : msv.kind == K_Float ? (int64_t)msv.f : -1;
@@ -10156,8 +10258,11 @@ FIRE_FN Value fire_fd_wait(Value fdv, Value ev, Value msv) {
     int state;
     bool listed;
     if (fdv.kind != K_Int || fdv.i < 0 || ev.kind != K_Int || (ev.i & 3) == 0) return Int(-1);
+    if (chan && fire_chanCanReceive(chan)) return Int(4);
     if (ms == 0) return Int(0);
     if (!(p = fire_fdPoller())) return Int(-1);
+    cw.chan = chan;
+#define w cw.w
     token = fire_curToken();
     if (token && (state = cancelState(token)) != 0) { fire_throwCancelled(state); return Undef(); }
     if (ms > 0) deadline = steadyMs() + ms;
@@ -10177,10 +10282,10 @@ FIRE_FN Value fire_fd_wait(Value fdv, Value ev, Value msv) {
     fire_atomic_add(&g_fdWaiters, 1);   /* (a socket can still bring work from outside: no standstill ends the waits in `process` meanwhile) */
     if (token) {
         TokWait tw;
-        tw.pred = fire_fdReady; tw.ctx = &w; tw.token = token;
+        tw.pred = fire_fdOrChanReady; tw.ctx = &cw; tw.token = token;
         if (g_isThread) blockUntil(fire_tokWaitPred, &tw, true, until); else blockUntilServing(fire_tokWaitPred, &tw, true, until);
-    } else if (g_isThread) blockUntil(fire_fdReady, &w, true, until);
-    else blockUntilServing(fire_fdReady, &w, true, until);
+    } else if (g_isThread) blockUntil(fire_fdOrChanReady, &cw, true, until);
+    else blockUntilServing(fire_fdOrChanReady, &cw, true, until);
     fire_atomic_add(&g_fdWaiters, (uint32_t)-1);
     stillLeave();
     sectionYieldEnd(held);
@@ -10190,13 +10295,16 @@ FIRE_FN Value fire_fd_wait(Value fdv, Value ev, Value msv) {
     if (listed) *link = w.next;
     fire_mutex_unlock(&p->m);
     if (listed) fdPollWake(p);   /* (the poller forgets the socket) */
-    if (fire_fdReady(&w)) return Int((int64_t)fire_atomic_loadAcquire(&w.ready));
+    if (fire_fdReady(&w) || (chan && fire_chanCanReceive(chan)))
+        return Int((int64_t)fire_atomic_loadAcquire(&w.ready) | (chan && fire_chanCanReceive(chan) ? 4 : 0));
     if (token && (state = cancelState(token)) != 0) { fire_throwCancelled(state); return Undef(); }
     if (deadline && steadyMs() >= deadline) return Int(0);
     startLeave();   /* (terminate) */
     return Undef();
+#undef w
 #else
     (void)fdv; (void)ev; (void)msv;
+    if (chan && fire_chanCanReceive(chan)) return Int(4);
     return Int(-1);
 #endif
 }
@@ -10414,6 +10522,13 @@ FIRE_FN uint32_t reqCount(void) {
 }
 
 FIRE_FN bool fire_sectionGranted(void* ctx) { return fire_atomic_loadAcquire(&((SectionReq*)ctx)->granted) != 0; }
+/* (... or the main program is away in a native: the thread takes the section itself - the request stays in the queue, the main program finds it done) */
+FIRE_FN bool fire_sectionGrantedAway(void* ctx) {
+    if (fire_sectionGranted(ctx)) return true;
+    if (!fire_mainAway()) return false;
+    fire_atomic_storeRelease(&((SectionReq*)ctx)->granted, 1);
+    return true;
+}
 FIRE_FN bool fire_sectionDone(void* ctx) { return fire_atomic_loadAcquire(&((SectionReq*)ctx)->done) != 0; }
 /* One side lets go of the request (the last one frees it). */
 FIRE_FN void sectionReqDrop(SectionReq* r) { if (fire_atomic_addAcqRel(&r->refs, (uint32_t)-1) == 1) free(r); }
@@ -10426,7 +10541,7 @@ FIRE_FN void sectionAcquire(void) {
     reqPush(q);
     fire_atomic_or(&g_attn, ATTN_SECT);
     notifyEvent();
-    blockUntil(fire_sectionGranted, r, false, 0);
+    blockUntil(fire_sectionGrantedAway, r, false, 0);
 #ifdef FIRE_NO_GIL
     domWriterEnter();
 #endif
@@ -12298,6 +12413,7 @@ FIRE_FN void fire_threadsInit(void) {
 #ifndef FIRE_THREADS
 /* (a program without fire threads: no poller - the net package waits as before) */
 FIRE_FN Value fire_fd_wait(Value fdv, Value ev, Value msv) { (void)fdv; (void)ev; (void)msv; return Int(-1); }
+FIRE_FN Value fire_fd_wait_or(Value fdv, Value ev, Value msv, Value chv) { (void)fdv; (void)ev; (void)msv; (void)chv; return Int(-1); }
 #endif
 
 /* ---------------------------------------------------------------------------------------------------------------------
@@ -12374,6 +12490,7 @@ TerminateState g_terminate;
 fire_mutex g_thrM, g_reqM, g_mailboxM, g_cancelM;
 #ifdef FIRE_NO_GIL
 DomLock g_dom;
+int32_t g_awayDepth;
 fire_atomic32 g_lentEpoch = {1}, g_lentGraveN;
 LentReader* g_lentReaders = NULL;
 LentGrave* g_lentGraves = NULL;

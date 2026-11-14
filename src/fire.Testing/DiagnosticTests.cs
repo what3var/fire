@@ -384,6 +384,14 @@ static class DiagnosticTests
             var (kept, keptOut) = Compile(classes + "var k = new Keeper(new Sample())\nvar mine = new Sample()\nvar h = new Holder(mine)\nprint(k.s.v + h.s.v)");
             Check("TC031: kein Hinweis, wenn der Konstruktor nimmt oder das Argument eine Variable ist", kept.Count == 0 && keptOut == "14", string.Join("\n", kept.Select(d => d.ToLogLine())) + keptOut);
             var (lines, linesOut) = Compile("var list = new List<int>([5, 3, 8, 1])\nlist.\n    Sort()\nvar n = list\n    .Count\nvar m = list?.Count\n    + 1\n    - 2\nbool big = n\n    > 3\n    && n < 10\n    || false\nint x = 1\nx++\nprint(n + \" \" + m + \" \" + big + \" \" + x + \" \" + list[0])");
+            // JSON reads an enum of the running program, not the last one of that name in the process (two programs, each with its own `enum Mode`)
+            const string first = "#import \"json\"\nenum Mode { Slow, Fast }\nclass Car { Mode mode = Mode.Slow }\nCar c = Json.Deserialize<Car>(\"{\\\"mode\\\": \\\"Fast\\\"}\")\nprint(c.mode)";
+            const string second = "#import \"json\"\nenum Mode { Off, On, Auto }\nclass Lamp { Mode mode = Mode.Off }\nLamp l = Json.Deserialize<Lamp>(\"{\\\"mode\\\": \\\"Auto\\\"}\")\nprint(l.mode)";
+            var (firstDiag, firstOut) = Compile(first);
+            var (secondDiag, secondOut) = Compile(second);
+            var (againDiag, againOut) = Compile(first);
+            Check("JSON: ein Enum-Name gilt im laufenden Programm, nicht prozessweit (zwei Programme mit eigenem 'Mode')", firstOut == "Fast" && secondOut == "Auto" && againOut == "Fast",
+                string.Join("\n", firstDiag.Concat(secondDiag).Concat(againDiag).Select(d => d.ToLogLine())) + $" | {firstOut} | {secondOut} | {againOut}");
             var (toBuffer, toBufferOut) = Compile("class B {\n    static undefined Fill(byte b[]) { b[0] = 7 }\n}\nint ints[2] = [1, 2]\nB.Fill(ints)\nB.Fill([3, 4])\nbyte buf[2]\nB.Fill(buf)\nprint(ints[0] + \" \" + buf[0])");
             Check("TC032: ein Array einer Variablen an einen byte-Parameter wird ein neuer Puffer (Warnung), ein Literal und ein Puffer nicht", toBuffer.Count == 1 && toBuffer[0].Code == "TC032" && !toBuffer[0].IsError && toBuffer[0].Line == 5 && toBufferOut == "1 7", string.Join("\n", toBuffer.Select(d => d.ToLogLine())) + toBufferOut);
             var (withLines, withOut) = Compile("class Point {\n    int x\n    int y\n}\nvar p = new Point()\nwith p {\n    .x = 10\n    .y = 20\n}\nwith p {\n    print(.x + .y)\n}");

@@ -23,10 +23,32 @@ namespace fire.Runtime
         /// <summary>The files embedded by `new Resource("path")` (docs/stdlib/resources.md); the id of a resource is its index. Set by the linker after compiling.</summary>
         public List<ResourceEntry> Resources { get; set; } = new();
 
-        /// <summary>The enums the program declares, by their full name (null: not known - a program read back from a cache). The C++ generator takes the
-        /// enum of a field from here: <see cref="fire.Values.EnumType.Named"/> is the last of that name in the process, which may be another program's.</summary>
+        /// <summary>The enums the program declares, by their full name: what JSON reads into a field of an enum (ProgramEnums, the VM's IJsonHost.FindEnum),
+        /// and the enum of a field for the C++ generator - always this program's, never another one's of the same name in the process.</summary>
         [MemoryPack.MemoryPackIgnore]
-        public IReadOnlyDictionary<string, fire.Values.EnumType>? Enums { get; set; }
+        public IReadOnlyDictionary<string, fire.Values.EnumType>? Enums
+        {
+            get => _enums;
+            set
+            {
+                _enums = value;
+                EnumDecls = value?.Values.Select(e => new EnumDecl { Name = e.Name, Flags = e.IsFlags, Members = e.Members.Select(m => m.Name).ToList(), Values = e.Members.Select(m => m.Value).ToList() }).ToList() ?? new();
+                if (value != null && Classes != null) ProgramEnums.Register(Classes, value);
+            }
+        }
+        private IReadOnlyDictionary<string, fire.Values.EnumType>? _enums;
+
+        /// <summary>The enums as data (what a program cache keeps; RelinkAfterDeserialize makes Enums from it).</summary>
+        public List<EnumDecl> EnumDecls { get; set; } = new();
+
+        [MemoryPackable]
+        public sealed partial class EnumDecl
+        {
+            public string Name { get; set; } = "";
+            public bool Flags { get; set; }
+            public List<string> Members { get; set; } = new();
+            public List<long> Values { get; set; } = new();
+        }
 
         /// <summary>The units the program declares (`unit Inch: in { ... }`); the VM makes them known before it runs the program (Unit.UseCustomUnits).</summary>
         public List<fire.Values.CustomUnit> CustomUnits { get; set; } = new();
@@ -56,6 +78,12 @@ namespace fire.Runtime
         /// CompileClasses).</summary>
         public void RelinkAfterDeserialize()
         {
+            // (the enums of the program again, from their data: the same types as before - EnumType.Intern - and known to its VMs)
+            if (_enums == null && EnumDecls.Count > 0)
+            {
+                var decls = EnumDecls;
+                Enums = decls.ToDictionary(d => d.Name, d => fire.Values.EnumType.Intern(d.Name, d.Flags, d.Members.Zip(d.Values).Select(m => (m.First, m.Second)).ToList()), StringComparer.Ordinal);
+            }
             foreach (var rc in Classes.Values)
             {
                 if (rc.Base != null)

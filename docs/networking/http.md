@@ -223,6 +223,16 @@ ws.Close()
 * `Http.WebSocket`: `Send(text)`, `SendBytes(bytes)`, `Ping()`, `Receive(timeout = -1)` (the next `Http.WebSocketMessage` - `IsText`, `Text()`, `data`; pings are
   answered and fragments joined on the way; undefined when the other side closed it, or when `timeout` ms ran out - then `IsOpen` is still true),
   `ReceiveText(timeout)`, `Close(code = 1000, reason)`, `IsOpen`, `CloseCode`, `maxMessageBytes` (16 MiB; a longer message closes with 1009).
+* **Sending from other tasks:** a WebSocket is written by the task that owns it (over TLS the encryption is one state). `ws.Outbox` gives an end of its
+  outbox (`Channel<string>`) - another task gets it with `fire with` and sends texts there; the owning task writes them while it waits in `Receive` /
+  `ReceiveText`, at once: the wait is one wait for the socket and the channel (poll on the socket, woken by the channel), no turns.
+  `Receive(timeout, sendFrom)` / `ReceiveText(timeout, sendFrom)` does the same for a channel of your own (a `Channel<string>`, an end of a
+  `Channel.Pair<string, string>`, a `Net.Channel<string>`): what it receives goes out as text messages.
+  ```fire
+  var out = ws.Outbox
+  fire with out { out.Send("tick") }      // another task
+  var m = ws.ReceiveText()                 // "tick" goes out while this waits
+  ```
   `Http.WebSocket.Connect(url, timeout, headers, compress = true)` is the client (it masks its frames, the server does not). `Http.Base64.Encode(bytes)`.
 * **Compression** (permessage-deflate, RFC 7692): the client offers it, the server agrees (`Compression(false)` on `Http.WebSockets` says no), every
   message on its own (no context takeover in either direction - nothing is kept between messages); a message of 64 bytes or more goes compressed
@@ -269,7 +279,8 @@ server.Run()
   a frame with a call the browser cannot replay (an image, a blur, a shadow, a material, a flood fill) goes as a PNG.
 * **The way between socket and circuit:** when the browser connects, its WebSocket makes a `Channel.Pair` and hands the circuit the other end
   (an in-process channel - `Net.Channel` is the same between programs). The events go in on it, the circuit's answers and pushes come out on it; the
-  socket ends it when it closes, and the circuit ends with it.
+  socket ends it when it closes, and the circuit ends with it. The socket waits for the browser and the channel at once (`ws.ReceiveText(-1, link)`):
+  what the circuit sends goes out without a delay.
 * **Changes without an event:** a tenth of a second without an event, the circuit looks itself what changed (another task changed the page, a
   `Continuous` canvas, JS calls) and sends the changes on the channel.
 * **JS in the browser:** a page with a field `Http.Browser browser` gets it set. `any v = browser.Call("name", [args])` calls `window[name](...args)` (a

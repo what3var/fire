@@ -1563,6 +1563,7 @@ namespace fire.Compiler
             return new FunctionProto(inner._chunk, parms.Count, access, CompileParamDefaults(rc, parms), isStatic)
             {
                 RefMask = RefMaskOf(parms), ParamTypes = inner.OverloadTypesOf(parms, rc), TypeParamCount = typeParams?.Count ?? 0, ParamNames = parms.Select(p => p.Name).ToArray(),
+                ReadsOnly = rc != null && !isStatic && accessor != 2 && ReadingMethods.Of(parms, body),
             };
         }
 

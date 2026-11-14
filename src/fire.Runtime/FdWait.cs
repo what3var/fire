@@ -51,6 +51,10 @@ namespace fire.Runtime
         internal Value FdWaitNative(Value[] a)
         {
             if (a.Length < 3 || a[0].Kind != ValueKind.Int || a[0].AsInt() < 0 || a[1].Kind != ValueKind.Int || (a[1].AsInt() & 3) == 0) return Value.MakeInt(-1);
+            // (a fourth argument: the node of a channel - the wait also ends when it has something or is closed, bit 4; the native runtime: fire_fd_wait_or)
+            var channel = a.Length > 3 && a[3].Kind == ValueKind.Int ? ChannelHandles.Get(a[3].AsInt()) : null;
+            bool ChannelReady() { if (channel == null) return false; if (channel.Closed) return true; lock (channel.Gate) return channel.Items.Count > 0; }
+            if (ChannelReady()) return Value.MakeInt(4);
             long fd = a[0].AsInt();
             int events = (int)(a[1].AsInt() & 3);
             long ms = a[2].Kind == ValueKind.Int ? a[2].AsInt() : a[2].Kind == ValueKind.Float ? (long)a[2].AsFloat() : -1;
@@ -78,9 +82,10 @@ namespace fire.Runtime
                     long until = deadline;
                     if (token != null && token.Deadline is var t and not 0 && (until == 0 || t < until)) until = t;
                     // (short slices: the main program serves its queue and windows between them, a thread looks at terminate and its token)
-                    int slice = PoolTask == null && !IsFireThreadVm ? 5 : 20;
+                    int slice = PoolTask == null && !IsFireThreadVm || channel != null ? 5 : 20;
                     if (until != 0) slice = (int)Math.Clamp((until - now) * 1000 / Stopwatch.Frequency, 1, slice);
                     result = FdPoll.Once(fd, events, slice);
+                    if (ChannelReady()) { result = (result > 0 ? result : 0) | 4; break; }
                     if (result != 0) break;
                 }
             }

@@ -11,6 +11,7 @@ namespace fire.Runtime
         IOwner IJsonHost.CurrentOwner => _currentScope;
 
         RuntimeClass? IJsonHost.FindClass(string name) => _classes.TryGetValue(name, out var rc) ? rc : null;
+        fire.Values.EnumType? IJsonHost.FindEnum(string name) => ProgramEnums.Find(_classes, name);
 
         string[]? IJsonHost.CallTypeArgs
         {
