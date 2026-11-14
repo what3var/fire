@@ -945,12 +945,13 @@ namespace fire.Native
             // an object with probes (flag 2) takes the setter, which tells them; every other one is written by the index
             // (the setter of a restricted name takes the caller's class: here it may, see DirectFieldIndex)
             string tail = FieldTail(name, from, () => "NULL");
-            string probed = _usesProbes ? $"if (FIRE_UNLIKELY(objAt({obj})->h.flags & 2)) {FieldFn("sf", name)}({obj}, x{tail}); else " : "";
+            bool mayBeProbed = MayBeProbed(rc, name);
+            string probed = mayBeProbed ? $"if (FIRE_UNLIKELY(objAt({obj})->h.flags & 2)) {FieldFn("sf", name)}({obj}, x{tail}); else " : "";
             // (a receiver that may be undefined: the setter reports that)
             string notObject = nullable ? $"if (FIRE_UNLIKELY({obj}.kind != K_Class)) {FieldFn("sf", name)}({obj}, x{tail}); else " : "";
             // (an object known to be alive - `self` right after a check of it, Flow.SelfAlive - needs no check)
             string dead = objAlive && !nullable ? "" : $"if (FIRE_UNLIKELY(!leafAlive({obj}))) destroyedError({obj}); else ";
-            _lastSetMayThrow = checksThrow || nullable || dead.Length > 0 || _usesProbes;
+            _lastSetMayThrow = checksThrow || nullable || dead.Length > 0 || mayBeProbed;
             return $"{{ Value x = {value}; {notObject}{dead}{probed}{{ {checks}{store} }} }}";
         }
 
@@ -975,10 +976,40 @@ namespace fire.Native
             return proto;
         }
 
+        /// <summary>What a probe can watch, as far as the code says (OpCode.Probe: the class of the object - null when not known - and the member - null for
+        /// `obj.*`); a probe by a name computed at run time (Reflect.Probe) can watch anything (_probeAnything).</summary>
+        private readonly HashSet<(RuntimeClass? Cls, string? Member)> _probeTargets = new();
+        private bool _probeAnything;
+        private void NoteProbeTarget(RuntimeClass? cls, string? member) { if (_probeTargets.Add((cls, member))) _version++; }
+        private void NoteProbeAnything() { if (!_probeAnything) { _probeAnything = true; _version++; } }
+
+        /// <summary>Can a write of the member `name` of an object of the class `rc` (null: not known) reach a probe? Not without probes, nor when no probe
+        /// can watch it: none on that member (or on a computed property that reads it, or on `obj.*`) of a class related to `rc`. Only such a write tests
+        /// the flag of the object and takes the setter helper (ProbedSetter); after any other one `self` is still alive.</summary>
+        private bool MayBeProbed(RuntimeClass? rc, string name)
+        {
+            if (!_usesProbes) return false;
+            // (another module, a plugin or a library may register probes the code here does not see)
+            if (_probeAnything || rc == null || Modular || _separate || _openWorld || _dll || LibraryRole) return true;
+            static bool Related(RuntimeClass a, RuntimeClass b)
+            {
+                for (var c = a; c != null; c = c.Base) if (ReferenceEquals(c, b)) return true;
+                for (var c = b; c != null; c = c.Base) if (ReferenceEquals(c, a)) return true;
+                return false;
+            }
+            foreach (var (cls, member) in _probeTargets)
+            {
+                if (cls != null && !Related(cls, rc)) continue;
+                if (member == null || member == name) return true;
+                if ((cls ?? rc).ComputedSources(member) is { } sources && sources.Contains(name)) return true;
+            }
+            return false;
+        }
+
         /// <summary>With probes: an object that has some (flag 2) takes the field helper - its setter tells them (WrapProbeSetter) - instead of the direct
         /// store or setter call that follows (`if (...) sf_x(obj, v); else `); empty without probes.</summary>
-        private string ProbedSetter(string obj, string field, string value, Func f, System.Func<string> list) =>
-            _usesProbes ? $"if (FIRE_UNLIKELY(objAt({obj})->h.flags & 2)) {FieldFn("sf", field)}({obj}, {value}{FieldTail(field, f, list)}); else " : "";
+        private string ProbedSetter(RuntimeClass? rc, string obj, string field, string value, Func f, System.Func<string> list) =>
+            MayBeProbed(rc, field) ? $"if (FIRE_UNLIKELY(objAt({obj})->h.flags & 2)) {FieldFn("sf", field)}({obj}, {value}{FieldTail(field, f, list)}); else " : "";
 
         /// <summary>The one accessor (`get_name`, or `set_name` for <paramref name="setter"/>) of the property `name` that every object an `rc` can be runs, when
         /// the code of `from` may use it on each of them (known at compile time); null when a class has a field of that name, the accessors differ, or the
@@ -4280,8 +4311,8 @@ namespace fire.Native
                 // (an object with probes - flag 2 - takes the field helper, whose setter tells them, WrapProbeSetter; a handler may throw)
                 string ProbedCField(string o)
                 {
-                    if (!_usesProbes) return "";
                     string name = f.Chunk.Constants[ins.A[0]].AsString();
+                    if (!MayBeProbed(cfield.Rc, name)) return "";
                     string leave = CheckExit() is { } exit ? $" if (FIRE_UNLIKELY(g_unwind.active)) goto {exit};" : "";
                     return $"if (FIRE_UNLIKELY(objAt({o})->h.flags & 2)) {{ {FieldFn("sf", name)}({o}, {ScalarValueOf(KindOfType(ct), UnitOfType(ct), Number(d - 1))}{FieldTail(name, f, () => "NULL")});{leave} }} else ";
                 }
@@ -5490,6 +5521,7 @@ namespace fire.Native
                         UseReflection();
                         UseReflectionLevel(native); _reflNativesUsed.Add(native);
                         if (native is "__refl_probe" or "__refl_silence" or "__refl_silence_handle") UseProbes();
+                        if (native == "__refl_probe") NoteProbeAnything();   // (Reflect.Probe: a name computed at run time)
                         int first = d - argc;
                         string callerArg = "g_reflCaller";
                         string list = "&" + OwnerList();
@@ -5909,10 +5941,10 @@ namespace fire.Native
                     if (ObjSlot(d - 2) && DirectSetField(ObjClass(Ty(d - 2)), field, sfObj, sfValue, Ty(d - 1), f, IsNullable(Ty(d - 2)), objAlive: onSelf && st.SelfAlive) is { } direct)
                     {
                         E(initOpen + direct + initClose);
-                        if (onSelf && !_usesProbes) _selfAliveAfter = true;   // (checked: `self` lives - unless a probe's setter ran)
+                        if (onSelf && !MayBeProbed(ObjClass(Ty(d - 2)), field)) _selfAliveAfter = true;   // (checked: `self` lives - unless a probe's setter may have run)
                     }
                     else if (ObjSlot(d - 2) && !IsNullable(Ty(d - 2)) && DirectAccessor(ObjClass(Ty(d - 2)), field, true, f) is { } setter)
-                        E($"{initOpen}if (FIRE_UNLIKELY(!leafAlive({sfObj}))) destroyedError({sfObj}); else {ProbedSetter(sfObj, field, sfValue, f, () => "&" + OwnerList())}{{ Value r_ = {GetFunc(setter, FuncKind.Method).Name}({sfObj}, {sfValue}); adopt(r_, &{OwnerList()}); }}{initClose}");
+                        E($"{initOpen}if (FIRE_UNLIKELY(!leafAlive({sfObj}))) destroyedError({sfObj}); else {ProbedSetter(ObjClass(Ty(d - 2)), sfObj, field, sfValue, f, () => "&" + OwnerList())}{{ Value r_ = {GetFunc(setter, FuncKind.Method).Name}({sfObj}, {sfValue}); adopt(r_, &{OwnerList()}); }}{initClose}");
                     else E($"{initOpen}{FieldFn("sf", field)}({sfObj}, {sfValue}{FieldTail(field, f, () => "&" + OwnerList())});{initClose}");
                     Check();
                     AssignValue(d - 2, d - 1);
@@ -5937,7 +5969,7 @@ namespace fire.Native
                     string? direct = ObjSlot(d - 2) ? DirectSetField(ObjClass(Ty(d - 2)), field, obj, v, Ty(d - 1), f, IsNullable(Ty(d - 2))) : null;
                     var setter = direct == null && ObjSlot(d - 2) && !IsNullable(Ty(d - 2)) ? DirectAccessor(ObjClass(Ty(d - 2)), field, true, f) : null;
                     string store = direct ?? (setter != null
-                        ? $"if (FIRE_UNLIKELY(!leafAlive({obj}))) destroyedError({obj}); else {ProbedSetter(obj, field, v, f, () => "&" + OwnerList())}{{ Value r_ = {GetFunc(setter, FuncKind.Method).Name}({obj}, {v}); adopt(r_, &{OwnerList()}); }}"
+                        ? $"if (FIRE_UNLIKELY(!leafAlive({obj}))) destroyedError({obj}); else {ProbedSetter(ObjClass(Ty(d - 2)), obj, field, v, f, () => "&" + OwnerList())}{{ Value r_ = {GetFunc(setter, FuncKind.Method).Name}({obj}, {v}); adopt(r_, &{OwnerList()}); }}"
                         : $"{FieldFn("sf", field)}({obj}, {v}{FieldTail(field, f, () => "&" + OwnerList())});");
                     if (direct != null || setter == null && !HasProperty(field))
                     {
@@ -5981,7 +6013,7 @@ namespace fire.Native
                     if (_usesThreads && !plainStore && !setterValue) E($"noteHolderClaim({obj}, {v}, &{temp});");
                     var setter = direct == null && ObjSlot(d - 2) && !IsNullable(Ty(d - 2)) ? DirectAccessor(ObjClass(Ty(d - 2)), field, true, f) : null;
                     string store = direct ?? (setter != null
-                        ? $"if (FIRE_UNLIKELY(!leafAlive({obj}))) destroyedError({obj}); else {ProbedSetter(obj, field, v, f, () => "&" + OwnerList())}{{ Value r_ = {GetFunc(setter, FuncKind.Method).Name}({obj}, {v}); adopt(r_, &{OwnerList()}); }}"
+                        ? $"if (FIRE_UNLIKELY(!leafAlive({obj}))) destroyedError({obj}); else {ProbedSetter(ObjClass(Ty(d - 2)), obj, field, v, f, () => "&" + OwnerList())}{{ Value r_ = {GetFunc(setter, FuncKind.Method).Name}({obj}, {v}); adopt(r_, &{OwnerList()}); }}"
                         : $"{FieldFn("sf", field)}({obj}, {v}{FieldTail(field, f, () => "&" + OwnerList())});");
                     string claimInit = InitOpen(obj);
                     if (claimInit.Length > 0) store = claimInit + store + " g_recInit = wi_.next; }";
@@ -6015,11 +6047,11 @@ namespace fire.Native
                     {
                         E(direct);
                         if (_lastSetMayThrow) Check();
-                        _selfAliveAfter = !_usesProbes;   // (checked: `self` lives - unless a probe's setter ran)
+                        _selfAliveAfter = !MayBeProbed(selfClass, field);   // (checked: `self` lives - unless a probe's setter may have run)
                         d--; return Next();
                     }
                     else if (f.HasSelf && !IsExtensionMethod(f.Proto) && f.Chunk.OwnerClass is { } selfClass2 && DirectAccessor(selfClass2, field, true, f) is { } selfSetter)
-                        E($"if (FIRE_UNLIKELY(!leafAlive(self))) destroyedError(self); else {ProbedSetter("self", field, thisValue, f, () => "&" + OwnerList())}{{ Value r_ = {GetFunc(selfSetter, FuncKind.Method).Name}(self, {thisValue}); adopt(r_, &{OwnerList()}); }}");
+                        E($"if (FIRE_UNLIKELY(!leafAlive(self))) destroyedError(self); else {ProbedSetter(selfClass2, "self", field, thisValue, f, () => "&" + OwnerList())}{{ Value r_ = {GetFunc(selfSetter, FuncKind.Method).Name}(self, {thisValue}); adopt(r_, &{OwnerList()}); }}");
                     else E($"{FieldFn("sf", field)}(self, {thisValue}{FieldTail(field, f, () => "&" + OwnerList())});");
                     Check();
                     d--; return Next();
@@ -7110,6 +7142,7 @@ namespace fire.Native
                 case OpCode.Probe:
                 {
                     Need(2); UseProbes();
+                    NoteProbeTarget(ObjSlot(d - 2) ? ObjClass(Ty(d - 2)) : null, (ins.A[1] & 2) != 0 ? null : Str(ins.A[0]));
                     string member = (ins.A[1] & 2) != 0 ? "NULL" : CString(Str(ins.A[0]));
                     E($"{{ char err[500]; int64_t id = rf_probeAdd({S(d - 2)}, {member}, {((ins.A[1] & 1) != 0 ? "true" : "false")}, {S(d - 1)}, err, sizeof err); if (id == -2) {{ }} else if (id < 0) {{ fireError(strstr(err, \"has no member\") ? \"MissingMemberException\" : \"ArgumentException\", err); }} else {S(d - 2)} = Int(id); }}");
                     Check();

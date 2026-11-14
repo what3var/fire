@@ -316,7 +316,10 @@ Bekannte Abweichungen zur VM: Unicode-Klassifizierung und Groß-/Kleinschreibung
   Übersetzung und Plugins (dort liest die Runtime Felder per Index ohne das Layout). Probes schalten sie nicht ab: jeder direkte Schreibzugriff
   (DirectSetField, ein typisiertes C-Feld - CppGenerator.CFields.cs -, ein direkt aufgerufener Setter, ProbedSetter) prüft zuerst das Flag 2 des
   Objekts und nimmt nur dann den Feld-Helfer `sf_`, der `probedSet` ruft (die Hälfte liest `gfp_` über FieldRead); ein Objekt ohne Probes schreibt
-  direkt. Nur `self` gilt nach dem Schreiben eines Felds nicht als sicher lebendig (ein Handler könnte es zerstören). Reflection liest und schreibt über die Feld-Helfer
+  direkt. Geprüft wird nur, was eine Probe erreichen kann (MayBeProbed): die Ziele der `probe`-Anweisungen - Klasse des Objekts, soweit bekannt, und
+  Mitglied, `obj.*` alle, eine berechnete Property auch die Felder, die ihr Getter liest - auf verwandte Klassen; `Reflect.Probe` (ein Name zur
+  Laufzeit), Module, Plugins und Bibliotheken machen alles prüfbar. Jeder andere Schreibzugriff schreibt ohne Test, und `self` gilt danach weiter als
+  lebendig (nach einem prüfbaren nicht: ein Handler könnte es zerstören). Reflection liest und schreibt über die Feld-Helfer
   (`gf_`/`sf_`, sie kennen das Layout), JSON über seine Feldtabelle, die je Feld die Hälfte trägt (`JsonFieldInfo.half`, auch für das `count`
   von List/JsonObject: `JsonSpecial`) - beide schalten die schmalen Felder nicht ab. Ebenso bleibt das Wissen über Felder `byte data[]`/
   `word w[]` (ein Puffer) und `T items[]` (ein Array des Elements des Typarguments): JSON liest dafür Puffer (die Bytes geprüft), `Reflect.Set`

@@ -21356,6 +21356,18 @@ else
             try { c.Set(5); c.Set(60); print("nicht hier") } catch (ArgumentException e) { print("E " + e.message) }
             try { c.volume = 99 } catch (ArgumentException e) { print("E2 " + e.message) }
             print(c.volume)
+            class Calc {
+                defined int v = 1
+                int other = 0
+                int Twice { get { return this.v * 2 } }
+                construct() { }
+                undefined Step() { this.other = this.other + 1; this.v = this.v + this.other; this.other = this.other + this.v }
+            }
+            var k = new Calc()
+            probe k.Twice changed (o, n) => print("Twice " + o + " -> " + n)
+            k.Step()
+            k.Step()
+            print(k.v + " " + k.other + " " + k.Twice)
             """),
         ("Http.Response behaelt einen Body, der dem Aufruf gehoert (new byte[0], ein Text, ein Puffer aus einer Methode) - try this.body.TakeTo(this); ein Puffer des Aufrufers bleibt dessen", """
             #import "http"

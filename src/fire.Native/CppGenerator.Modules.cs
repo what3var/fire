@@ -497,6 +497,7 @@ namespace fire.Native
                     UseReflection();
                     UseReflectionLevel(native);
                     if (native is "__refl_probe" or "__refl_silence" or "__refl_silence_handle") UseProbes();
+                    if (native == "__refl_probe") NoteProbeAnything();
                 }
             }
         }
