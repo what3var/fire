@@ -30,7 +30,7 @@ namespace fire.Compiler
     /// <summary>A static type: `Element` is the element type of an array, `ParamCount`/`Return` the signature of a lambda (-1 / null: not known).</summary>
     internal sealed record StaticType(StaticKind Kind, string? Class = null, StaticType? Element = null, int ParamCount = -1, StaticType? Return = null, IReadOnlyList<StaticType>? Params = null,
         IReadOnlyList<StaticType>? Args = null, Unit? Unit = null, bool UnitIsDimension = false, string? TypeParam = null, bool Raw = false, bool DeclaredAny = false, byte Wide = 0,
-        Nullness Null = Nullness.Unknown)
+        Nullness Null = Nullness.Unknown, byte Bits = 0)
     {
         // (Null: whether a value of a value type certainly is not undefined - a literal, what an operator computes, `defined int` - or may be undefined
         // as far as the code declares it: a parameter, field or uninitialized variable declared `int`, the literal `undefined` (SPEC 8.10b); not part of the type)
@@ -756,6 +756,8 @@ namespace fire.Compiler
             if (IsRawType(type)) result = result with { Unit = Unit.Unitless, UnitIsDimension = false, Raw = true };
             // `int[64]`, `int[32]`: keeps that width beyond the program's int (Value.Wide)
             if (result.Kind == StaticKind.Int && type is { BaseName: "int", BitWidth: 32 or 64, Unsigned: false }) result = result with { Wide = (byte)type.BitWidth! };
+            // (`int[8]`, `float[32]`: the width written - what `x.Bits` says)
+            if (result.Kind is StaticKind.Int or StaticKind.Float && type.BitWidth is int declaredBits && arrayRanks + type.ArrayRank == 0) result = result with { Bits = (byte)declaredBits };
             // `defined int` (SPEC 8.10b): never undefined
             if (type.NonNull && arrayRanks + type.ArrayRank == 0) result = result.WithNull(Nullness.Defined);
             for (int i = 0; i < arrayRanks + type.ArrayRank; i++) result = StaticType.ArrayOf(result);
@@ -1888,6 +1890,9 @@ namespace fire.Compiler
         {
             switch (expr)
             {
+                case TypeBitsExpr tb:
+                    BitsOf.AddOrUpdate(tb, new System.Runtime.CompilerServices.StrongBox<int>(BitsOfType(tb.BaseName, tb.Width)));
+                    return StaticType.Int.WithUnit(Unit.Unitless).WithNull(Nullness.Defined);
                 case LiteralExpr l:
                     return l.Value.Kind switch
                     {
@@ -2260,11 +2265,35 @@ namespace fire.Compiler
             }
         }
 
+        /// <summary>`int.Bits` / `x.Bits` (SPEC 8.2): the width of the value type in bits - the expression -> its value; the compiler puts in the constant.</summary>
+        public static readonly System.Runtime.CompilerServices.ConditionalWeakTable<Expr, System.Runtime.CompilerServices.StrongBox<int>> BitsOf = new();
+        /// <summary>The width of a float of the program (`#floatwidth`, 64 unless set) and of a word on the target (16, 32 or 64), for `float.Bits` / `word.Bits`.</summary>
+        public static int ProgramFloatWidth = 64;
+        public static int ProgramWordWidth = 64;
+
+        private static int BitsOfType(string baseName, int? width) => baseName switch
+        {
+            "int" => width ?? ProgramIntWidth,
+            "float" => width ?? ProgramFloatWidth,
+            "byte" => 8,
+            "char" => 16,
+            "bool" => 1,
+            _ => ProgramWordWidth,
+        };
+
         private StaticType InferMember(MemberExpr m, MemberUse use = MemberUse.Read)
         {
             // `Color.Red`: a value of the enum
             if (_refs.TryGetValue(m, out var resolvedRef) && resolvedRef is ResolvedRef.EnumMember { Type: { } enumType }) return StaticType.EnumOf(enumType.Name);
             var target = Infer(m.Target);
+            // `x.Bits` of a value: the width of its type (`int[8] x`: 8) - a constant the compiler puts in
+            if (m.Name == "Bits" && use == MemberUse.Read && target.IsValueKind && target.Kind != StaticKind.Array)
+            {
+                string baseName = target.Kind switch { StaticKind.Int => target.Raw ? "byte" : "int", StaticKind.Float => "float", StaticKind.Bool => "bool", StaticKind.Char => "char", _ => "word" };
+                int? declared = target.Bits != 0 ? target.Bits : target.Wide != 0 ? target.Wide : null;
+                BitsOf.AddOrUpdate(m, new System.Runtime.CompilerServices.StrongBox<int>(BitsOfType(baseName, declared)));
+                return StaticType.Int.WithUnit(Unit.Unitless).WithNull(Nullness.Defined);
+            }
             bool isStatic = false;
             if (target.IsDynamic && StaticClassRef(m.Target) is { } staticClass) { target = StaticType.ClassOf(staticClass); isStatic = true; }
             CheckAccess(target, m.Name, use, 0, m.Line, isStatic);

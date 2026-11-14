@@ -292,6 +292,20 @@ print(5000000000!int[32])   // 705032704
 print(0.1!float[32])        // 0.10000000149011612
 ```
 
+**How wide is it?** `Bits` gives the width of a value type in bits - at the type and at a value. It is a constant, natively a plain number:
+
+```fire
+print(int.Bits)             // 64 (32 with #intwidth 32)
+print(int[16].Bits)         // 16
+print(float[32].Bits)       // 32
+print(byte.Bits)            // 8
+print(char.Bits)            // 16
+print(bool.Bits)            // 1
+print(word.Bits)            // 64 on the desktop - the target's word, like Word.Bits
+int[8] small = 3
+print(small.Bits)           // 8: the width of the declared type
+```
+
 `-1!byte` is `-(1!byte)`: the `!` binds tighter than the minus sign, so write `(-1)!byte`.
 
 `byte` is raw data and has **no unit**: `byte b = 5m` (or a unit at a `byte` declaration) is the type checker's error TC017 - in every mode.

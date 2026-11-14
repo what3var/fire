@@ -1713,6 +1713,12 @@ the type checker's `TC017`, an error in lax mode too (take the number with `::un
 cannot see (`any x = 5m; byte b = x`) loses its unit when it is stored: the stored value never has one (the VM and natively).
 A word also goes into a `byte` (and an `int[N]`): cut like an int.
 
+**The width as a number: `Bits`.** Every value type tells its width in bits, at the type and at a value: `int.Bits` (the
+program's int: 64, or 32/16 with `#intwidth`), `int[8].Bits` (8), `float.Bits` (the program's float), `float[32].Bits`, `byte.Bits`
+(8), `char.Bits` (16), `bool.Bits` (1), `word.Bits` (the target's word, the same as `Word.Bits`); `x.Bits` of a variable, field or
+any expression of a value type is the width of its declared type (`int[8] small; small.Bits` is 8). It is a `defined int` and a
+constant: the compiler puts the number in (the expression `x` is still evaluated), natively a plain C number. Not for arrays and objects.
+
 #### 8.2.1 Program-wide float precision (`#floatwidth`)
 
 ```

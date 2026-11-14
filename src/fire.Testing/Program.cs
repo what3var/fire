@@ -28656,6 +28656,18 @@ else
             print((total == undefined || total > 1000000) + " " + (free == undefined || total == undefined || (free >= 0 && free <= total)) + " " + (own == undefined || own > 100000))
             print((total != undefined) + " " + (own != undefined))
             """),
+        ("Bits: die Breite jedes Werttyps am Typ (int.Bits, int[16].Bits, float[32].Bits, byte/char/bool/word) und am Wert (x.Bits nach dem deklarierten Typ), eine Konstante", """
+            int[8] small = 3
+            float[32] f = 1.5
+            byte bb = 2
+            char c = 'a'
+            bool t = true
+            int n = 7
+            print(int.Bits + " " + int[16].Bits + " " + int[64].Bits + " " + float.Bits + " " + float[32].Bits + " " + byte.Bits + " " + char.Bits + " " + bool.Bits + " " + (word.Bits == Word.Bits))
+            print(small.Bits + " " + f.Bits + " " + bb.Bits + " " + c.Bits + " " + t.Bits + " " + n.Bits + " " + (n + 1).Bits)
+            defined int k = n.Bits / 8
+            print(k)
+            """),
         ("WebSocket.Outbox: ein anderer Task sendet auf den Socket, waehrend sein Task in Receive wartet (ein Warten auf Socket und Kanal), sendFrom mit Channel.Pair", """
             #import "http"
             #import "time"

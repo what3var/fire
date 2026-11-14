@@ -2012,6 +2012,7 @@ namespace fire.Compiler
             switch (expr)
             {
                 case LiteralExpr:
+                case TypeBitsExpr:
                     break;
 
                 case IdentifierExpr id:
