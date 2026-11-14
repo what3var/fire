@@ -27707,6 +27707,92 @@ else
             string tlsHead = "#import \"tls\"\n#import \"http\"\n#import \"time\"\nvar certPem = " + certText + "\nvar keyPem = " + keyText + "\n";
             natCases = natCases.Concat(new (string Name, string Source)[]
             {
+                ("Tls/Engine: TLS ueber Puffer (Tls.Engine) - Handshake ueber eine einfache TCP-Verbindung (Drain senden, Feed des Empfangenen), 10 KB in mehreren Records hin, die Antwort zurueck, Zertifikat ohne CA abgelehnt, geschlossen", tlsHead + """
+                    // (the engine's records over a plain TCP connection: what Drain gives is sent, what comes is fed)
+                    class Shuttle {
+                        static undefined Send(Net.TcpClient tcp, Tls.Engine e) {
+                            byte out[] = e.Drain()
+                            if (out.length > 0) { tcp.Write(out, 0, out.length) }
+                        }
+                        static bool Receive(Net.TcpClient tcp, Tls.Engine e) {
+                            byte buf[] = new byte[16384]
+                            var n = tcp.Read(buf, 0, 16384)
+                            if (n <= 0) { return false }
+                            e.Feed(buf, 0, n)
+                            return true
+                        }
+                    }
+                    print("available " + Tls.Support.Available())
+                    var probe = new Net.TcpListener("127.0.0.1", 0)
+                    int port = trust probe.Port
+                    probe.Close()
+                    fire {
+                        var l = new Net.TcpListener("127.0.0.1", port)
+                        var server = new Tls.Server(certPem, keyPem)
+                        var served = 0
+                        while (served < 2) {
+                            var tcp = l.TryAccept(10000)
+                            if (tcp == undefined) { break }
+                            served = served + 1
+                            try {
+                                var s = server.Accept(tcp, 5000)
+                                var buf = new byte[20000]
+                                var n = s.Read(buf, 0, 20000)
+                                var got = n
+                                while (got < 10000 && n > 0) {
+                                    n = s.Read(buf, got, 20000 - got)
+                                    if (n > 0) { got = got + n }
+                                }
+                                s.WriteString("echo " + got + " " + IO.Utf8.GetString(buf, 0, 12))
+                                s.Close()
+                            } catch (Net.NetException e) { }
+                        }
+                        server.Close()
+                        l.Close()
+                    }
+                    Sleep(400)
+                    var o = new Tls.Options()
+                    o.caPem = certPem
+                    var tcp = new Net.TcpClient("127.0.0.1", port)
+                    tcp.ReadTimeout = 5000
+                    var e = new Tls.Engine("localhost", o)
+                    var rounds = 0
+                    while (!e.Step()) {
+                        Shuttle.Send(tcp, e)
+                        if (!Shuttle.Receive(tcp, e)) { break }
+                        rounds++
+                    }
+                    Shuttle.Send(tcp, e)
+                    print("handshake " + (rounds > 0) + " " + e.Info.StartsWith("TLS"))
+                    var text = "hello engine"
+                    while (text.Length < 10000) { text = text + " and more" }
+                    var data = IO.Utf8.GetBytes(text)
+                    e.Write(data, 0, data.length)
+                    Shuttle.Send(tcp, e)
+                    var answer = ""
+                    var plain = new byte[256]
+                    while (true) {
+                        var n = e.Read(plain, 0, 256)
+                        if (n > 0) { answer = answer + IO.Utf8.GetString(plain, 0, n); continue }
+                        if (n == 0) { break }
+                        if (!Shuttle.Receive(tcp, e)) { break }
+                    }
+                    print("answer " + answer)
+                    e.Close()
+                    tcp.Close()
+                    try { var x = new Tls.Engine("localhost", o); x.Close(); x.Step() } catch (Net.ClosedException c) { print("closed " + c.code) }
+                    var tcp2 = new Net.TcpClient("127.0.0.1", port)
+                    tcp2.ReadTimeout = 5000
+                    var strict = new Tls.Engine("localhost")
+                    try {
+                        while (!strict.Step()) {
+                            Shuttle.Send(tcp2, strict)
+                            if (!Shuttle.Receive(tcp2, strict)) { break }
+                        }
+                        print("strict accepted?")
+                    } catch (Tls.CertificateException c) { print("untrusted " + c.code) }
+                    tcp2.Close()
+                    """),
                 ("Tls: Handshake, verschluesselte Daten, Zertifikatspruefung (unbekannt, falscher Name, ausgeschaltet) ueber Loopback", tlsHead + """
                     print("available " + Tls.Support.Available())
                     var probe = new Net.TcpListener("127.0.0.1", 0)

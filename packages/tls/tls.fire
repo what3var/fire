@@ -235,7 +235,7 @@ namespace Tls {
 
     // TLS over buffers instead of a socket, for a protocol that carries the TLS records itself (SQL Server's TDS sends the handshake in its PRELOGIN
     // packets). The client side: Step does what it can of the handshake, Drain gives the bytes to send, Feed takes the bytes that came; after the
-    // handshake Write encrypts (Drain gives the records) and Read decrypts what was fed. Only with OpenSSL so far (else a Net.NetException).
+    // handshake Write encrypts (Drain gives the records) and Read decrypts what was fed. With OpenSSL, mbedTLS and SChannel (without TLS: a Net.NetException).
     class Engine {
         defined int handle
         bool closed

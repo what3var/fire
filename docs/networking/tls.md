@@ -63,6 +63,7 @@ e.Write(data, 0, data.length)       // encrypts: Drain gives the records
 int n = e.Read(buffer, 0, buffer.length)   // decrypts what was fed: -1 more must be fed first, 0 the other side ended the session
 ```
 
-The certificate is checked as with `Tls.Stream` (`options.verify`, `caFile`, `caPem`); `Info` gives the protocol and the cipher. Only on OpenSSL so far
-(two memory BIOs): with mbedTLS, SChannel or without TLS the constructor throws a `Net.NetException` that says so.
+The certificate is checked as with `Tls.Stream` (`options.verify`, `caFile`, `caPem`); `Info` gives the protocol and the cipher. It runs on every TLS
+library of the package: OpenSSL (two memory BIOs), mbedTLS (its I/O callbacks on two buffers) and SChannel (its records kept in buffers instead of
+the socket - tried under Wine); only a build without TLS (`FIRE_NO_TLS`) throws a `Net.NetException` that says so.
 
