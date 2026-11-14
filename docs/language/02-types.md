@@ -130,6 +130,12 @@ parameter or a return that is derived itself, a default that is a number) is che
 every `return` gives a number and the method cannot run off its end. Nothing is derived for a method that something may call unseen: a call
 through a value of an unknown type (`any`), the method used as a value or named in a string, an override of a method of a package or the prelude,
 the constructors of a base class - and not at all in a program that imports `reflection`, in a plugin or module, or in a debug build.
+The same holds for **fields** of your classes declared `int`, `float` or `bool`: a field whose every write gives a number (`count++`, `step = step + 1`,
+the result of a method or a parameter that is derived itself) is a `defined` one. One with a number literal as initializer keeps it; one **without an
+initializer** starts at 0 instead of `undefined` - in a release build nobody sees the difference, as long as the program never asks: a field it compares
+with `undefined` (`if (cache == undefined) ...`), tests with `is of` or reads with `?.`, a field nothing writes, one that `with`, a pointer, a `ref`
+argument or `Json.Deserialize` may set is left alone. `FIRE_INFER_UNINITIALIZED_DEFINED=0` keeps the fields without an initializer out of it.
+Natively such a field is a C number in the object.
 `FIRE_DERIVE_LOG=1` shows what was decided, `FIRE_NO_DERIVE=1` switches it off.
 
 ## The type checker: lax and strict

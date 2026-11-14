@@ -15,7 +15,7 @@ namespace fire.Native
             if (!ScalarsOn || DirectFieldIndex(rc, name, from) is not int index) return null;
             byte declared = rc.FindFieldRequiredKind(name);
             if (declared == 0 || !DeclaredKind.IsNonNull(declared)) return null;
-            int type = FieldType(name);
+            int type = FieldTypeIn(rc, name);
             byte kind = KindOfType(type);
             if (!(IsNarrowIntType(type) || kind is KindFloat or KindBool or KindWord)) return null;
             var (slot, half) = FieldPlace(rc, index);

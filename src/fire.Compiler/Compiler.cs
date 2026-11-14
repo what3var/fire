@@ -543,6 +543,7 @@ namespace fire.Compiler
             s_overloadHints = resolveResult.OverloadHints;
             s_derivedDefined = resolveResult.DerivedDefined;
             s_derivedReturns = resolveResult.DerivedReturns;
+            s_derivedFields = resolveResult.DerivedDefinedFields;
             var compiler = new Compiler(resolveResult, natives) { _classMeta = classMeta };
             var classes = compiler.CompileClasses(program);
 
@@ -1016,8 +1017,10 @@ namespace fire.Compiler
                 {
                     switch (member)
                     {
-                        case FieldDecl fd:
+                        case FieldDecl declaredField:
                         {
+                            // (a field the type checker found is never undefined - TypeChecker.DeriveFields: like a `defined` one, it starts at 0)
+                            var fd = s_derivedFields != null && s_derivedFields.Contains(declaredField) ? declaredField with { Type = declaredField.Type! with { NonNull = true } } : declaredField;
                             var fieldInit = CompileFieldInitProto(rc, fd.Type, fd.Initializer, fd.IsStatic, fd.Line, fd.ArrayRanks);
                             rc.OwnFieldInfo[fd.Name] = new FieldInfo()
                             {
@@ -2468,6 +2471,7 @@ namespace fire.Compiler
         [ThreadStatic] private static Dictionary<Expr, (TypeRef Type, string What)>? s_localGuards;
         [ThreadStatic] private static Dictionary<Expr, string>? s_overloadHints;
         [ThreadStatic] private static HashSet<LambdaParam>? s_derivedDefined;
+        [ThreadStatic] private static HashSet<FieldDecl>? s_derivedFields;
         [ThreadStatic] private static HashSet<Stmt.BlockStmt>? s_derivedReturns;
         /// <summary>`FIRE_NO_OVERLOAD_HINTS=1`: no OverloadHint is emitted (every call scores its candidates) - to compare and to find a wrong hint.</summary>
         private static readonly bool NoOverloadHints = Environment.GetEnvironmentVariable("FIRE_NO_OVERLOAD_HINTS") == "1";

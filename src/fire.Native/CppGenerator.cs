@@ -953,12 +953,17 @@ namespace fire.Native
 
         /// <summary>The static type of `obj.name`: every class of the program that has the field declares it int/float/bool with an exact unit (its setter
         /// checks every assignment, DeclaredKind) - the kind or undefined; TypeUnknown for a property, a field whose address is taken, or anything else.</summary>
-        private int FieldType(string name)
+        private int FieldType(string name) => FieldTypeIn(null, name);
+
+        /// <summary>FieldType for an object of the class <paramref name="of"/> (null: of any class): only that class and the classes derived from it count -
+        /// `IntList.items` declared `int items[]` keeps its type though the prelude's List has an `any items` (a property of the name anywhere still counts:
+        /// the access may call it).</summary>
+        private int FieldTypeIn(RuntimeClass? of, string name)
         {
             // (a field whose address is taken holds what was written through the pointer - unchecked, unless it is `defined` everywhere: K_PtrField checks)
             if (LibraryRole || HasProperty(name) || _fieldAddressTaken.Contains(name) && !DefinedEverywhere(name) || name is "Length" or "length" or "littleEndian") return TypeUnknown;
             int? result = null;
-            foreach (var cls in _classList)
+            foreach (var cls in of == null ? _classList : InstancesOf(of))
             {
                 if (!cls.Rc.FieldIndex.ContainsKey(name)) continue;
                 byte declared = cls.Rc.FindFieldRequiredKind(name);
@@ -4232,13 +4237,6 @@ namespace fire.Native
             }
             // The temporaries of the function's own scope: for the rare way of an access whose result owns nothing (an element of a buffer or of a typed
             // array - a number, or the exception), so that a loop around it needs no list of its own (no poolMark/leave per round)
-            string OuterOwnerList()
-            {
-                int home = st.Scopes[0].Id;
-                f.NeedsList.Add(home);
-                f.NeedsList.Add(TempOf(home));
-                return ListName(TempOf(home));
-            }
             // The innermost scope itself (TakeLocal, a claim of `var v = E`).
             string ScopeList()
             {
@@ -5708,6 +5706,7 @@ namespace fire.Native
                     Need(1);
                     string field = Str(ins.A[0]);
                     _fieldNames.Add(field);
+                    var fieldOwner = ObjSlot(d - 1) ? ObjClass(Ty(d - 1)) : null;   // (the class of the object: the type of the field is its - FieldTypeIn)
                     if (ObjSlot(d - 1) && DirectFieldIndex(ObjClass(Ty(d - 1)), field, f) is int fieldIndex)
                     {
                         // an object of a known class: the field by its index (a destroyed object throws, like gf_; undefined goes to gf_, which reports it)
@@ -5736,7 +5735,7 @@ namespace fire.Native
                     }
                     else if (HasProperty(field) || RestrictedField(field)) { E($"{S(d - 1)} = {FieldFn("gf", field)}({S(d - 1)}{FieldTail(field, f, () => "&" + OwnerList())});"); Check(); }
                     else { E($"{S(d - 1)} = {FieldFn("gf", field)}({S(d - 1)}{(Modular ? FieldTail(field, f, () => "&" + OwnerList()) : "")});"); Check(); }   // (a destroyed object throws)
-                    int fieldType = FieldType(field);
+                    int fieldType = FieldTypeIn(fieldOwner, field);
                     if (fieldType == TypeUnknown && SpecFieldType(f, ins, field) is { } specType) fieldType = specType;
                     if (fieldType != TypeUnknown) { SetR(d - 1, false); SetT(d - 1, fieldType); _kindsKept = true; }
                     else SetR(d - 1, true);
@@ -6687,13 +6686,13 @@ namespace fire.Native
                         string idxValue = NarrowInt(d - 1) ? $"Int({ib})" : S(d - 1);
                         SetT(d - 2, elemType); SetR(d - 2, false); _kindsKept = true;
                         string shadow = ScalarName(f, st, d - 2);
-                        E($"if (FIRE_LIKELY({isBuf}leafAlive({ab}) && (uint64_t)(int64_t){ib} < bufOf({ab})->length)) {shadow} = {elem}; else {{ Value e_ = {Px}aget_g({ab}, {idxValue}, &{OuterOwnerList()}); {shadow} = {(wordsGet ? "(FireWord)e_.w" : "(FireInt)e_.i")}; }}");
+                        E($"if (FIRE_LIKELY({isBuf}leafAlive({ab}) && (uint64_t)(int64_t){ib} < bufOf({ab})->length)) {shadow} = {elem}; else {{ Value e_ = {Px}aget_g({ab}, {idxValue}, NULL); {shadow} = {(wordsGet ? "(FireWord)e_.w" : "(FireInt)e_.i")}; }}");
                         st.Scalar |= 1UL << (d - 2);
                         Check();
                         d--; return Next();
                     }
                     string a = S(d - 2), i = S(d - 1);
-                    E($"if (FIRE_LIKELY({isBuf}leafAlive({a}) && (uint64_t){i}.i < bufOf({a})->length)) {a} = {(wordsGet ? $"WordV((uint64_t)bufWords(bufOf({a}))[{i}.i])" : $"Int(bufOf({a})->data[{i}.i])")}; else {a} = {Px}aget_g({a}, {i}, &{OuterOwnerList()});");
+                    E($"if (FIRE_LIKELY({isBuf}leafAlive({a}) && (uint64_t){i}.i < bufOf({a})->length)) {a} = {(wordsGet ? $"WordV((uint64_t)bufWords(bufOf({a}))[{i}.i])" : $"Int(bufOf({a})->data[{i}.i])")}; else {a} = {Px}aget_g({a}, {i}, NULL);");
                     Check();
                     d--; SetR(d - 1, false); SetT(d - 1, TypeOf(wordsGet ? KindWord : KindInt, 0) | (wordsGet ? 0 : NarrowBit)); _kindsKept = true; return Next();
                 }
@@ -6707,9 +6706,9 @@ namespace fire.Native
                     string a = S(d - 3), i = S(d - 2), v = S(d - 1);
                     string bits = K(d - 1) == KindWord ? $"{v}.w" : $"(uint64_t)(int64_t){v}.i";
                     if (wordsSet)
-                        E($"if (FIRE_LIKELY({isSetBuf}leafAlive({a}) && (uint64_t){i}.i < bufOf({a})->length)) {{ {v} = WordV({bits}); bufWords(bufOf({a}))[{i}.i] = (FireWord){v}.w; }} else {v} = {Px}aset_g({a}, {i}, {v}, &{OuterOwnerList()});");
+                        E($"if (FIRE_LIKELY({isSetBuf}leafAlive({a}) && (uint64_t){i}.i < bufOf({a})->length)) {{ {v} = WordV({bits}); bufWords(bufOf({a}))[{i}.i] = (FireWord){v}.w; }} else {v} = {Px}aset_g({a}, {i}, {v}, NULL);");
                     else
-                        E($"if (FIRE_LIKELY({isSetBuf}leafAlive({a}) && (uint64_t){i}.i < bufOf({a})->length)) bufOf({a})->data[{i}.i] = (uint8_t)({bits}); else {v} = {Px}aset_g({a}, {i}, {v}, &{OuterOwnerList()});");
+                        E($"if (FIRE_LIKELY({isSetBuf}leafAlive({a}) && (uint64_t){i}.i < bufOf({a})->length)) bufOf({a})->data[{i}.i] = (uint8_t)({bits}); else {v} = {Px}aset_g({a}, {i}, {v}, NULL);");
                     Check();
                     int storedType = wordsSet ? TypeOf(KindWord, 0) : Ty(d - 1);
                     E($"{a} = {v};");
@@ -6733,7 +6732,7 @@ namespace fire.Native
                         string shadow = ScalarName(f, st, d - 2);
                         string fast = getKind switch { KindFloat => $"(Real){load}", KindBool => $"({load} != 0)", _ => $"(FireInt){load}" };
                         string slow = getKind switch { KindFloat => "(Real)e_.f", KindBool => "(e_.i != 0)", _ => "(FireInt)e_.i" };
-                        E($"{{ Arr* ra_; if (FIRE_LIKELY({dIsArr}leafAlive({da}) && (uint64_t)(int64_t){di} < (ra_ = arrOf({da}))->length && ra_->typed && ra_->typed->packed)) {shadow} = {fast}; else {{ Value e_ = {Px}aget_g({da}, Int({di}), &{OuterOwnerList()}); {shadow} = {slow}; }} }}");
+                        E($"{{ Arr* ra_; if (FIRE_LIKELY({dIsArr}leafAlive({da}) && (uint64_t)(int64_t){di} < (ra_ = arrOf({da}))->length && ra_->typed && ra_->typed->packed)) {shadow} = {fast}; else {{ Value e_ = {Px}aget_g({da}, Int({di}), NULL); {shadow} = {slow}; }} }}");
                         st.Scalar |= 1UL << (d - 2);
                         Check();
                         d--; return Next();
@@ -6743,7 +6742,7 @@ namespace fire.Native
                     string a = S(d - 2), i = S(d - 1);
                     // (the generic route types the array first: what the element is, is then certain even when a way of writing the field or variable
                     // missed it - it converts, or it is the exception)
-                    E($"{{ Arr* ra_; if (FIRE_LIKELY({a}.kind == K_Array && {i}.kind == K_Int && leafAlive({a}) && (uint64_t){i}.i < (ra_ = arrOf({a}))->length && ra_->typed && ra_->typed->packed && ra_->typed->elem == {getElem})) {a} = arrPackedAt(ra_, (uint32_t){i}.i, {getElem}); else if (typeArray({a}, {getElem}, 1, {TypeArrayUnitArgsOf(null, getCode)}, 1)) {a} = {Px}aget_g({a}, {i}, &{OuterOwnerList()}); }}");
+                    E($"{{ Arr* ra_; if (FIRE_LIKELY({a}.kind == K_Array && {i}.kind == K_Int && leafAlive({a}) && (uint64_t){i}.i < (ra_ = arrOf({a}))->length && ra_->typed && ra_->typed->packed && ra_->typed->elem == {getElem})) {a} = arrPackedAt(ra_, (uint32_t){i}.i, {getElem}); else if (typeArray({a}, {getElem}, 1, {TypeArrayUnitArgsOf(null, getCode)}, 1)) {a} = {Px}aget_g({a}, {i}, NULL); }}");
                     Check();
                     d--; SetR(d - 1, false); SetT(d - 1, TypeOf(getKind, 0) | (ArrayElem.IsDefined(getCode) ? 0 : NullableBit) | (getKind == KindInt ? NarrowBit : 0)); _kindsKept = true; return Next();
                 }
@@ -6772,7 +6771,7 @@ namespace fire.Native
                         ArrayElem.F8 or ArrayElem.F16 or ArrayElem.F32 => "!fire_f32IsHint(cv_)", ArrayElem.F64 => "!fire_realIsHint(cv_)", _ => "1",
                     };
                     string valueOf = vk == KindFloat ? $"Float({x})" : vk == KindBool ? $"Bool({x})" : $"Int({x})";
-                    E($"{{ Arr* ra_; {ct} cv_ = {conv}; if (FIRE_LIKELY({isArr}leafAlive({a}) && (uint64_t)(int64_t){i} < (ra_ = arrOf({a}))->length && ra_->typed && ra_->typed->packed && {hintTest})) (({ct}*)ra_->typed->data)[{i}] = cv_; else (void){Px}aset_g({a}, Int({i}), {valueOf}, &{OuterOwnerList()}); }}");
+                    E($"{{ Arr* ra_; {ct} cv_ = {conv}; if (FIRE_LIKELY({isArr}leafAlive({a}) && (uint64_t)(int64_t){i} < (ra_ = arrOf({a}))->length && ra_->typed && ra_->typed->packed && {hintTest})) (({ct}*)ra_->typed->data)[{i}] = cv_; else (void){Px}aset_g({a}, Int({i}), {valueOf}, NULL); }}");
                     Check();
                     // (the value of the assignment: the number as the element holds it)
                     int storedKind = ArrElemKind(se);
@@ -6795,7 +6794,7 @@ namespace fire.Native
                         KindFloat => setElem == ArrayElem.F64 ? "" : $"{v}.f = (Real)roundFloatToWidth((double){v}.f, {ArrayElem.Bits(setElem)}); ",
                         _ => "",
                     };
-                    E($"{{ Arr* ra_; if (FIRE_LIKELY({kindTest}{a}.kind == K_Array && {i}.kind == K_Int && leafAlive({a}) && (uint64_t){i}.i < (ra_ = arrOf({a}))->length && ra_->typed && ra_->typed->packed && ra_->typed->elem == {setElem})) {{ {convert}arrPackedSet(ra_, (uint32_t){i}.i, {v}); }} else {v} = {Px}aset_g({a}, {i}, {v}, &{OuterOwnerList()}); }}");
+                    E($"{{ Arr* ra_; if (FIRE_LIKELY({kindTest}{a}.kind == K_Array && {i}.kind == K_Int && leafAlive({a}) && (uint64_t){i}.i < (ra_ = arrOf({a}))->length && ra_->typed && ra_->typed->packed && ra_->typed->elem == {setElem})) {{ {convert}arrPackedSet(ra_, (uint32_t){i}.i, {v}); }} else {v} = {Px}aset_g({a}, {i}, {v}, NULL); }}");
                     Check();
                     int storedType = Ty(d - 1);
                     E($"{a} = {v};");

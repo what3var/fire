@@ -90,6 +90,8 @@ namespace fire.Compiler
         /// <summary>The bodies of the methods of the program declared `int`/`float` whose returns are certainly numbers (the derivation): checked like a
         /// `defined` return type.</summary>
         public HashSet<Stmt.BlockStmt> DerivedReturns { get; } = new(ReferenceEqualityComparer.Instance);
+        /// <summary>The fields of the program the type checker found are never undefined (TypeChecker.DeriveFields, #117): compiled like `defined` ones.</summary>
+        public HashSet<FieldDecl> DerivedDefinedFields { get; } = new(ReferenceEqualityComparer.Instance);
         public required IReadOnlyDictionary<string, ClassDecl> Classes { get; init; }
         public required int GlobalSlotCount { get; init; }
         public required IReadOnlyDictionary<string, ExternDecl> Externs { get; init; }

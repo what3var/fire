@@ -21152,6 +21152,61 @@ else
             any bb = b
             print(bb.F(undefined))
             """),
+        ("Typisierte Array-Felder ueber this (Klasse bekannt, auch wenn eine andere Klasse ein Feld gleichen Namens anders deklariert); Methoden, die nichts besitzen, ohne Rahmen", """
+            class IntList {
+                defined int items[]
+                defined int count
+                construct() { items = new int[2] }
+                undefined Add(defined int item) {
+                    if (count >= items.length) { Grow() }
+                    items[count] = item
+                    count++
+                }
+                defined int Get(defined int index) { return items[index] }
+                undefined Grow() {
+                    defined int bigger[] = new int[items.length * 2]
+                    for (defined int i = 0; i < count; i++) { bigger[i] = items[i] }
+                    items = take bigger
+                }
+            }
+            class Other { any items }
+            var o = new Other()
+            o.items = "text"
+            var l = new IntList()
+            for (defined int i = 0; i < 100; i++) { l.Add(i * 3) }
+            defined int s = 0
+            for (defined int i = 0; i < l.count; i++) { s = s + l.Get(i) }
+            print(s + " " + l.count + " " + l.items.length + " " + o.items)
+            try { print(l.Get(500)) } catch (Exception e) { print("out of range") }
+            """),
+        ("defined fuer Felder herleiten: jede Zuweisung gibt eine Zahl (auch ohne Initialisierer, dann ab 0); == undefined, ein Wert, der undefined sein kann, und nie geschriebene Felder halten es auf", """
+            class Counter {
+                int count
+                int step = 2
+                float total
+                int lazy
+                int maybe = 1
+                int never
+                construct() { this.count = 0 }
+                undefined Add(int x) {
+                    count++
+                    this.total = this.total + x * 0.5
+                    step = step + Counter.Twice(x)
+                }
+                static int Twice(int v) { return v * 2 }
+                int Lazy() {
+                    if (lazy == undefined) { lazy = 42 }
+                    return lazy
+                }
+                undefined Forget(any v) { maybe = v }
+            }
+            var c = new Counter()
+            c.Add(3)
+            c.Add(4)
+            print(c.count + " " + c.step + " " + c.total + " " + c.Lazy() + " " + c.never)
+            c.Forget(undefined)
+            print(c.maybe)
+            """),
         ("Await: await actor.Methode() - Ergebnis, neues Objekt (übergeben), Feld (Kopie), String, Array, Ausnahme zurück zum Aufrufer, am eigenen Home sofort", """
             class Exception { string message; construct(string message = "") { this.message = message } }
             class Box {
@@ -33339,6 +33394,57 @@ else
             }
         }
 
+        // the C of numbers (readonly static constants, arithmetic of defined numbers, elements of typed arrays) and fields derived `defined`
+        if (TestSelected("Generator: C-Zahlen (readonly static, Rechnen, typisierte Arrays) und hergeleitete defined-Felder") || TestSelected("readonly static mit Konstante")
+            || TestSelected("Rechnen auf defined") || TestSelected("Elemente typisierter Arrays") || TestSelected("defined fuer Felder"))
+        {
+                // a readonly static field with a constant initializer is that constant in the C (`Word.Bits`: no read of a Value, the computation stays in C numbers)
+                {
+                    var wbLinked = new Linker().CompileAndLink(new[] { "class M {\n    static defined int Mask() {\n        var wb = Word.Bits\n        return (1 << (wb - 2)) + 1\n    }\n}\nprint(M.Mask())" }, null, null, VmExecutionMode.Release);
+                    string wbC = fire.Native.CppGenerator.GenerateSources(wbLinked).Program;
+                    int wbAt = wbC.IndexOf("static FireInt f", StringComparison.Ordinal);
+                    string wbBody = wbAt >= 0 ? wbC.Substring(wbAt, Math.Min(1500, wbC.Length - wbAt)) : "";
+                    CheckNat("readonly static mit Konstante: Word.Bits ist im erzeugten C eine C-Zahl (kein Lesen des Feldes, die Rechnung bleibt in C-Zahlen)",
+                        wbBody.Contains("(FireInt)64LL") && !wbBody.Contains("SF") && !wbBody.Contains("shiftLeft("), wbBody);
+                }
+                // arithmetic of defined numbers is C (ROADMAP: as fast as possible natively): Math.*, int division, ^, casts, ~ - no generic Value function
+                {
+                    var mathLinked = new Linker().CompileAndLink(new[] { "class M {\n    static defined float F(defined float x, defined int n) {\n        defined float r = Math.Sqrt(x * x) + Math.Abs(x) - Math.Max(x - 1.0, 0.0) + Math.Sin(x) + x ^ 2 + Math.PI\n        defined int k = (n / 7) % 13 + (r!int) + (~n & 255) + n ^ 3\n        return r + k + Math.Floor(x)\n    }\n}\nprint(M.F(1.5, 9))" }, null, null, VmExecutionMode.Release);
+                    string mathC = fire.Native.CppGenerator.GenerateSources(mathLinked).Program;
+                    var mathDef = System.Text.RegularExpressions.Regex.Match(mathC, @"static Real f\d+_c\([^)]*\)\n\{[\s\S]*?\n\}\n");
+                    string mathBody = mathDef.Success ? mathDef.Value : "";
+                    string[] generic = { "divide(", "mathCall(", "bitNot(", "coerceType(", "power(", "powerF(", "Float(", "Int(", "SF" };
+                    CheckNat("Rechnen auf defined Zahlen ist im erzeugten C reines C: Math.*, int-Division, ^, !int, ~, Math.PI (keine Value-Funktion)",
+                        mathBody.Contains("sqrt(") && mathBody.Contains("floor(") && mathBody.Contains("fire_realToInt(")
+                        && !mathBody.Split('\n').Where(l => !l.Contains("Value m_")).Any(l => generic.Any(g => System.Text.RegularExpressions.Regex.IsMatch(l, @"\b" + System.Text.RegularExpressions.Regex.Escape(g)))), mathBody);   // (the rare paths - a division by 0 - ask the generic one)
+                }
+                // fields derived `defined` (#117): every write gives a number - the field is compiled like a `defined` one (one without an initializer starts at 0);
+                // one the program asks for undefined, one that may get undefined and one nothing writes are not; FIRE_INFER_UNINITIALIZED_DEFINED=0 keeps the ones without an initializer
+                {
+                    string fieldSrc = "class C {\n    int count\n    int step = 2\n    int lazy\n    int maybe = 1\n    int never\n    construct() { count = 0 }\n    undefined Add(int x) { count++; step = step + x }\n    int Lazy() { if (lazy == undefined) { lazy = 1 } return lazy }\n    undefined Set(any v) { maybe = v }\n}\nvar c = new C()\nc.Add(2)\nc.Set(3)\nprint(c.count + c.step + c.Lazy() + c.maybe)";
+                    bool Defined(fire.Bytecode.RuntimeClass rc, string f) => fire.Bytecode.DeclaredKind.IsNonNull(rc.FindFieldRequiredKind(f));
+                    var fieldRc = new Linker().CompileAndLink(new[] { fieldSrc }, null, null, VmExecutionMode.Release).Program.Classes["C"];
+                    string before = Environment.GetEnvironmentVariable("FIRE_INFER_UNINITIALIZED_DEFINED") ?? "";
+                    Environment.SetEnvironmentVariable("FIRE_INFER_UNINITIALIZED_DEFINED", "0");
+                    fire.Bytecode.RuntimeClass strictRc;
+                    try { strictRc = new Linker().CompileAndLink(new[] { fieldSrc }, null, null, VmExecutionMode.Release).Program.Classes["C"]; }
+                    finally { Environment.SetEnvironmentVariable("FIRE_INFER_UNINITIALIZED_DEFINED", before.Length == 0 ? null : before); }
+                    var debugRc = new Linker().CompileAndLink(new[] { fieldSrc }, null, null, VmExecutionMode.Debug).Program.Classes["C"];
+                    string fieldStates = string.Join(" ", new[] { "count", "step", "lazy", "maybe", "never" }.Select(f => f + "=" + Defined(fieldRc, f) + "/" + Defined(strictRc, f) + "/" + Defined(debugRc, f)));
+                    CheckNat("defined fuer Felder herleiten: count (ohne Initialisierer) und step sind defined, lazy (== undefined), maybe (any) und never (nie geschrieben) nicht; FIRE_INFER_UNINITIALIZED_DEFINED=0 laesst count aus, ein Debug-Build leitet nichts her",
+                        fieldStates == "count=True/False/False step=True/True/False lazy=False/False/False maybe=False/False/False never=False/False/False", fieldStates);
+                }
+                // elements of typed arrays (ROADMAP: as direct as a buffer): a defined array is read with one load into a C number, a C number is stored in place
+                {
+                    var arrLinked = new Linker().CompileAndLink(new[] { "class A {\n    static defined float Fill(defined float a[], defined int n) {\n        for (defined int i = 0; i < n; i++) { a[i] = i * 0.5 }\n        defined float s = 0.0\n        for (defined int i = 0; i < n; i++) { s = s + a[i] }\n        return s\n    }\n}\ndefined float a[] = new float[4]\nprint(A.Fill(a, 4))" }, null, null, VmExecutionMode.Release);
+                    string arrC = fire.Native.CppGenerator.GenerateSources(arrLinked).Program;
+                    var arrDef = System.Text.RegularExpressions.Regex.Match(arrC, @"static Real f\d+_c\([^)]*\)\n\{[\s\S]*?\n\}\n");
+                    string arrBody = arrDef.Success ? arrDef.Value : "";
+                    CheckNat("Elemente typisierter Arrays nativ direkt: ein defined float-Array wird mit einem Laden gelesen, eine C-Zahl an ihren Platz geschrieben (kein Value, kein claimToHolder, keine Liste je Runde)",
+                        arrBody.Contains("((Real*)ra_->typed->data)[") && arrBody.Contains("] = cv_;") && !arrBody.Contains("claimToHolder") && !arrBody.Contains(".mark = poolMark()") && !arrBody.Contains("arrPackedAt"), arrBody);
+                }
+        }
+
         // TinyCC with tasks: no thread-local storage and no builtins for atomics in tcc - the runtime brings its own (x86 instructions, a few slots on a key
         // of pthreads: FIRE_TLS_EMULATED) - the thread cases built with tcc run without the GIL, on the scheduler of tasks, and print what the VM prints
         const string tccTitle = "TinyCC: die Thread-Faelle laufen mit Tasks (ohne GIL; Atomics und Thread-Slots der Runtime) - dieselbe Ausgabe wie die VM";
@@ -33620,35 +33726,6 @@ else
                 var trUiSizes = trLevels.Select(lv => fire.Native.CppGenerator.GenerateSources(trUiLinked, stripping: lv).Program.Length).ToArray();
                 int trUiSize = fire.Native.CppGenerator.GenerateSources(trUiLinked).Program.Length;
                 // (level 1 is about level 0 here: ui keeps little private code that no public member reaches; the names of the left out members cost a few bytes)
-                // a readonly static field with a constant initializer is that constant in the C (`Word.Bits`: no read of a Value, the computation stays in C numbers)
-                {
-                    var wbLinked = new Linker().CompileAndLink(new[] { "class M {\n    static defined int Mask() {\n        var wb = Word.Bits\n        return (1 << (wb - 2)) + 1\n    }\n}\nprint(M.Mask())" }, null, null, VmExecutionMode.Release);
-                    string wbC = fire.Native.CppGenerator.GenerateSources(wbLinked).Program;
-                    int wbAt = wbC.IndexOf("static FireInt f", StringComparison.Ordinal);
-                    string wbBody = wbAt >= 0 ? wbC.Substring(wbAt, Math.Min(1500, wbC.Length - wbAt)) : "";
-                    CheckNat("readonly static mit Konstante: Word.Bits ist im erzeugten C eine C-Zahl (kein Lesen des Feldes, die Rechnung bleibt in C-Zahlen)",
-                        wbBody.Contains("(FireInt)64LL") && !wbBody.Contains("SF") && !wbBody.Contains("shiftLeft("), wbBody);
-                }
-                // arithmetic of defined numbers is C (ROADMAP: as fast as possible natively): Math.*, int division, ^, casts, ~ - no generic Value function
-                {
-                    var mathLinked = new Linker().CompileAndLink(new[] { "class M {\n    static defined float F(defined float x, defined int n) {\n        defined float r = Math.Sqrt(x * x) + Math.Abs(x) - Math.Max(x - 1.0, 0.0) + Math.Sin(x) + x ^ 2 + Math.PI\n        defined int k = (n / 7) % 13 + (r!int) + (~n & 255) + n ^ 3\n        return r + k + Math.Floor(x)\n    }\n}\nprint(M.F(1.5, 9))" }, null, null, VmExecutionMode.Release);
-                    string mathC = fire.Native.CppGenerator.GenerateSources(mathLinked).Program;
-                    var mathDef = System.Text.RegularExpressions.Regex.Match(mathC, @"static Real f\d+_c\([^)]*\)\n\{[\s\S]*?\n\}\n");
-                    string mathBody = mathDef.Success ? mathDef.Value : "";
-                    string[] generic = { "divide(", "mathCall(", "bitNot(", "coerceType(", "power(", "powerF(", "Float(", "Int(", "SF" };
-                    CheckNat("Rechnen auf defined Zahlen ist im erzeugten C reines C: Math.*, int-Division, ^, !int, ~, Math.PI (keine Value-Funktion)",
-                        mathBody.Contains("sqrt(") && mathBody.Contains("floor(") && mathBody.Contains("fire_realToInt(")
-                        && !mathBody.Split('\n').Where(l => !l.Contains("Value m_")).Any(l => generic.Any(g => System.Text.RegularExpressions.Regex.IsMatch(l, @"\b" + System.Text.RegularExpressions.Regex.Escape(g)))), mathBody);   // (the rare paths - a division by 0 - ask the generic one)
-                }
-                // elements of typed arrays (ROADMAP: as direct as a buffer): a defined array is read with one load into a C number, a C number is stored in place
-                {
-                    var arrLinked = new Linker().CompileAndLink(new[] { "class A {\n    static defined float Fill(defined float a[], defined int n) {\n        for (defined int i = 0; i < n; i++) { a[i] = i * 0.5 }\n        defined float s = 0.0\n        for (defined int i = 0; i < n; i++) { s = s + a[i] }\n        return s\n    }\n}\ndefined float a[] = new float[4]\nprint(A.Fill(a, 4))" }, null, null, VmExecutionMode.Release);
-                    string arrC = fire.Native.CppGenerator.GenerateSources(arrLinked).Program;
-                    var arrDef = System.Text.RegularExpressions.Regex.Match(arrC, @"static Real f\d+_c\([^)]*\)\n\{[\s\S]*?\n\}\n");
-                    string arrBody = arrDef.Success ? arrDef.Value : "";
-                    CheckNat("Elemente typisierter Arrays nativ direkt: ein defined float-Array wird mit einem Laden gelesen, eine C-Zahl an ihren Platz geschrieben (kein Value, kein claimToHolder, keine Liste je Runde)",
-                        arrBody.Contains("((Real*)ra_->typed->data)[") && arrBody.Contains("] = cv_;") && !arrBody.Contains("claimToHolder") && !arrBody.Contains(".mark = poolMark()") && !arrBody.Contains("arrPackedAt"), arrBody);
-                }
                 // `--stats` with linkage static (ROADMAP 17): the code of the library modules by module (from the map), the program's functions; `stats` compares two builds
                 {
                     string stDir = Path.Combine(Path.GetTempPath(), "fire-stats-static-" + Guid.NewGuid().ToString("N"));
