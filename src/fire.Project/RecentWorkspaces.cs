@@ -110,6 +110,12 @@ namespace fire.Projects
         /// <summary>The ESP-IDF folder for Run and Debug on an ESP32 (null: the environment variable IDF_PATH).</summary>
         public string? IdfPath { get; set; }
 
+        /// <summary>spark offers its editor to AI tools over MCP (Tools > MCP Server; docs/tools/spark-mcp.md). Off unless the user switches it on (or the assistant).</summary>
+        public bool McpServer { get; set; }
+
+        /// <summary>The assistant (docs/ai/assistant.md) is switched on. Off unless the user (or the setup) switches it on.</summary>
+        public bool Assistant { get; set; }
+
         public static string DefaultPath => System.IO.Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "fire", "spark-settings.json");
 
         private static readonly JsonSerializerOptions Options = new() { PropertyNamingPolicy = JsonNamingPolicy.CamelCase, WriteIndented = true };

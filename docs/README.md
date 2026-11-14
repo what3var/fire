@@ -48,7 +48,7 @@ The [language reference](language/README.md) - one page per topic, with examples
 
 ## Tools
 
-* [spark, the editor](tools/spark.md)
+* [spark, the editor](tools/spark.md) · [spark as an MCP server](tools/spark-mcp.md)
 * [Projects and solutions](tools/projects.md) (`.fireproj`, `.firesln`)
 * [forge on the command line](tools/forge.md)
 * [Testing](tools/testing.md) (`[Test]`, `forge test`, the Test Explorer)

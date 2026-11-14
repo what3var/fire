@@ -310,6 +310,9 @@
 					<MenuItem Header="Open the _Standard Libraries (Source)" Click="OpenStandardSources_Click"/>
 					<Separator/>
 					<MenuItem Header="_Toolchain Settings..." Click="NativeBuildSettings_Click"/>
+					<Separator/>
+					<MenuItem Header="_MCP Server (for AI Tools)" x:Name="mnuMcpServer" ToggleType="CheckBox" Click="McpServer_Click"
+                              ToolTip.Tip="Offers the editor to AI tools on this computer over MCP: documents, errors, Check, Run (docs/tools/spark-mcp.md)"/>
 				</MenuItem>
 				<!-- a check = the window is visible (updated when the menu opens, see ViewMenu_SubmenuOpened) -->
 				<MenuItem Header="_View" x:Name="mnuView" SubmenuOpened="ViewMenu_SubmenuOpened">

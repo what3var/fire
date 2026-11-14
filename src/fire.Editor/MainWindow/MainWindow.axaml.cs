@@ -321,6 +321,8 @@ namespace fire.Editor
             bool fromCommandLine = _documents.Count > 0;
             // the welcome window, once the splash is gone (not when files were given on the command line)
             if (!fromCommandLine && _settings.ShowWelcome) _ = ShowWelcomeAfterSplash();
+            // the MCP server for AI tools, when the user switched it (or the assistant) on
+            StartMcpServerIfWanted();
         }
 
         private async Task ShowWelcomeAfterSplash()
@@ -394,6 +396,7 @@ namespace fire.Editor
             {
                 _active = doc;
                 RefreshActiveUi();
+                McpStateChanged();
             }
         }
 
@@ -553,6 +556,7 @@ namespace fire.Editor
             if (_stackHiddenForNative) ApplyEngineToPanels(false);
             SaveLayout();
             SaveToolStrips();
+            StopMcpServer();
             _strips.CloseFloatingWindows();
             _devices.Shutdown(); // disconnects the devices; only the owner may take down the shared manager
         }

@@ -72,6 +72,7 @@ namespace fire.Editor
             if ((_profile != null || _profileNative != null) && !active && (!_session.HasProgram || _session.IsFinished)) FinishProfile();
             if (active == _runtimeActive) return;
             _runtimeActive = active;
+            McpRunChanged(active);
             _tools.TryGetValue("runtime", out var tool);
             if (active)
             {
@@ -440,7 +441,7 @@ namespace fire.Editor
             {
                 EndBuildJob(job, BuildOutcome.Failed, _session.CompileError ?? "");
                 UpdateStatus($"Compile error: {_session.CompileError}");
-                if (!FailureShown(job)) _ = Dialogs.Message(this, _session.CompileError ?? "", "Compile error");
+                if (!FailureShown(job) && !_quietCompile) _ = Dialogs.Message(this, _session.CompileError ?? "", "Compile error");   // (a check of a tool: the errors are in the error list, no dialog)
                 return false;
             }
             EndBuildJob(job, BuildOutcome.Succeeded);

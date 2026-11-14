@@ -51,5 +51,17 @@ namespace fire.Editor
 
         /// <summary>Jumps to line `line` (1-based) and sets the focus into the editor.</summary>
         void GoToLine(int line);
+
+        // For the tools of an assistant (the MCP server of spark): the selection, and a change of it. A view that has no text keeps the defaults.
+        /// <summary>The selected text ("" when nothing is selected).</summary>
+        string GetSelectedText() => "";
+        /// <summary>The first and the last line of the selection (both the caret's line when nothing is selected).</summary>
+        (int First, int Last) GetSelectionLines() => (GetCaretLine(), GetCaretLine());
+        /// <summary>The column of the caret (1-based).</summary>
+        int GetCaretColumn() => 1;
+        /// <summary>Replaces the selection by `text` (with nothing selected: puts it in at the caret) - one step of undo. False when the view cannot (read-only, no text).</summary>
+        bool ReplaceSelection(string text) => false;
+        /// <summary>Replaces the lines first..last (1-based; last = first - 1: puts `text` in before line `first`) by `text` - one step of undo. False when the view cannot.</summary>
+        bool ReplaceLines(int first, int last, string text) => false;
     }
 }

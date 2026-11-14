@@ -287,10 +287,13 @@ namespace AI {
             string shownNow = this.Visible(true)
             this.LastOutput = this.raw
             int call = this.raw.IndexOf("<tool_call>")
-            if (call >= 0 && this.steps < this.MaxSteps && this.session.State == AI.State.Done) {
-                // the model asked for tools: run them, give it the answers, let it go on
+            if (call >= 0 && this.steps <= this.MaxSteps && this.session.State == AI.State.Done) {
+                // the model asked for tools: run them, give it the answers, let it go on - after MaxSteps rounds it gets no more answers but the request to
+                // answer with what it has (a small model goes on searching otherwise, and the question stays without an answer)
                 this.raw += "</tool_call>"
-                List results = this.RunTools(this.raw.Substring(call))
+                List results = new List()
+                if (this.steps < this.MaxSteps) { results = this.RunTools(this.raw.Substring(call)) }
+                else { results.Add("No more tools now: answer the question with what you found so far.") }
                 this.turns.Add(this.AssistantStart() + this.raw + "<|im_end|>\n")
                 this.turns.Add(this.ToolTurn(results))
                 this.raw = ""
@@ -402,6 +405,40 @@ namespace AI {
             return true
         }
 
+        // The arguments as the schema wants them: the models write every value as text (XML), and small ones add a comma or a word ("12,", "3 lines").
+        // A number, integer or boolean property gets the number or truth its text begins with.
+        static undefined Coerce(JsonObject args, string schema) {
+            any parsed = undefined
+            try { parsed = Json.Parse(schema) } catch (Exception e) { return }
+            if (!(parsed is of JsonObject) || !parsed.Has("properties")) { return }
+            JsonObject props = parsed.Get("properties")
+            foreach (k in args.Keys()) {
+                string key = k
+                if (!props.Has(key)) { continue }
+                any spec = props.Get(key)
+                any v = args.Get(key)
+                if (!(spec is of JsonObject) || !spec.Has("type") || !(v is of string)) { continue }
+                string type = spec.Get("type")
+                string text = v
+                text = text.Trim()
+                if (type == "integer" || type == "number") {
+                    string digits = ""
+                    for (var i = 0; i < text.Length; i++) {
+                        char c = text[i]
+                        if (c.IsDigit() || (i == 0 && c == '-') || (type == "number" && c == '.')) { digits += c } else { break }
+                    }
+                    if (digits != "" && digits != "-") {
+                        if (type == "integer" || digits.IndexOf(".") < 0) { args.Set(key, digits.ToInt()) } else { args.Set(key, digits.ToFloat()) }
+                    }
+                }
+                else if (type == "boolean") {
+                    string lower = text.ToLower()
+                    if (lower.StartsWith("true") || lower.StartsWith("yes")) { args.Set(key, true) }
+                    else if (lower.StartsWith("false") || lower.StartsWith("no")) { args.Set(key, false) }
+                }
+            }
+        }
+
         // The first place at or after `start` of one of the three texts (the end of `text` when none comes).
         static int First(string text, int start, string a, string b, string c) {
             int best = text.Length
@@ -424,6 +461,7 @@ namespace AI {
             string result = ""
             if (tool == undefined) { result = "Error: there is no tool '" + call.Name + "'." }
             else {
+                if (tool.schema != "") { AI.Agent.Coerce(call.Arguments, tool.schema) }
                 try { result = tool.handler(call.Arguments) }
                 catch (Exception e) { result = "Error: " + e.message }
             }

@@ -87,6 +87,38 @@ namespace fire.Editor
 
         public string GetText() => _editor.Text;
         public int GetCaretLine() => _editor.TextArea.Caret.Line;
+
+        // (IDocumentView: the selection for the tools of an assistant)
+        public bool ReplaceLines(int first, int last, string text)
+        {
+            if (IsReadOnly) return false;
+            var doc = _editor.Document;
+            if (first < 1 || first > doc.LineCount + 1 || last < first - 1 || last > doc.LineCount) return false;
+            int start = first > doc.LineCount ? doc.TextLength : doc.GetLineByNumber(first).Offset;
+            int end = last < first ? start : doc.GetLineByNumber(last).EndOffset + doc.GetLineByNumber(last).DelimiterLength;
+            if (last >= first && last == doc.LineCount && !text.EndsWith("\n")) end = doc.GetLineByNumber(last).EndOffset;
+            if (first > doc.LineCount && doc.TextLength > 0 && !doc.Text.EndsWith("\n")) text = "\n" + text;
+            doc.Replace(start, end - start, text);
+            _editor.TextArea.Caret.Line = Math.Min(first, doc.LineCount);
+            return true;
+        }
+        public string GetSelectedText() => _editor.SelectedText;
+        public (int First, int Last) GetSelectionLines()
+        {
+            int caret = _editor.TextArea.Caret.Line;
+            if (_editor.SelectionLength == 0) return (caret, caret);
+            var doc = _editor.Document;
+            return (doc.GetLineByOffset(_editor.SelectionStart).LineNumber, doc.GetLineByOffset(_editor.SelectionStart + _editor.SelectionLength).LineNumber);
+        }
+        public int GetCaretColumn() => _editor.TextArea.Caret.Column;
+        public bool ReplaceSelection(string text)
+        {
+            if (IsReadOnly) return false;
+            int start = _editor.SelectionLength > 0 ? _editor.SelectionStart : _editor.CaretOffset;
+            _editor.Document.Replace(start, _editor.SelectionLength, text);
+            _editor.Select(start + text.Length, 0);
+            return true;
+        }
         public void FocusEditor() => _editor.Focus();
         public bool CanUndo => _editor.Document.UndoStack.CanUndo;
         public bool CanRedo => _editor.Document.UndoStack.CanRedo;

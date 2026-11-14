@@ -42,6 +42,7 @@ if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "linkage") { Linkag
 if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "bios16") { BiosTests.RunAlone(); return; }
 if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "scene3d") { Scene3DTests.Run(); return; }
 if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "ai") { AiTests.Run(); return; }
+if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "mcpserver") { McpServerTests.Run(); return; }
 if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "blocks") { BlockModelTests.Run(); return; }
 if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "mesh") { MeshModelTests.Run(); return; }
 if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "diagnostics") { DiagnosticTests.Run(); return; }
@@ -16124,6 +16125,7 @@ static int CountOccurrences(string haystack, string needle)
 
 ProjectTests.Run();
 NotesTests.Run();
+McpServerTests.Run();
 DiagnosticTests.Run();
 SyntaxTests.Run();
 TypeTests.Run();
