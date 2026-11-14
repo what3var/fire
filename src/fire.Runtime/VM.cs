@@ -7814,6 +7814,9 @@ namespace fire.Runtime
         /// does not fit, or an array of another element type.</summary>
         private bool TypeArrayValue(Value value, byte elemType, int rank, string? unit, int depth)
         {
+            // (`defined int a[]`: ArrayElem.DefinedFlag beside the element type - the elements are never undefined)
+            bool defined = ArrayElem.IsDefined(elemType);
+            elemType = ArrayElem.TypeOf(elemType);
             if (value.Kind == ValueKind.Undefined) return true;
             if (value.Kind != ValueKind.Array)
             {
@@ -7826,16 +7829,16 @@ namespace fire.Runtime
             if (depth < rank)
             {
                 foreach (var inner in array.Items)
-                    if (!TypeArrayValue(inner, elemType, rank, unit, depth + 1)) return false;
+                    if (!TypeArrayValue(inner, (byte)(elemType | (defined ? ArrayElem.DefinedFlag : 0)), rank, unit, depth + 1)) return false;
                 return true;
             }
-            if (array.ElemType == elemType && array.ElemUnit == unit) return true;
+            if (array.ElemType == elemType && array.ElemUnit == unit) { if (defined) array.MakeDefined(); return true; }
             if (array.ElemType != ArrayElem.None)
             {
                 ThrowArgumentError($"An array of {ArrayElem.Name(array.ElemType)} cannot be stored where an array of {ArrayElem.Name(elemType)} is declared.");   // (the same text natively)
                 return false;
             }
-            if (array.MakeTyped(elemType, unit, out var error, out var message, out var offending)) return true;
+            if (array.MakeTyped(elemType, unit, out var error, out var message, out var offending)) { if (defined) array.MakeDefined(); return true; }
             ThrowArrayElementError(unit, offending, error, message!);
             return false;
         }

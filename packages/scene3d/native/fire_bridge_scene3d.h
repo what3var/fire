@@ -55,7 +55,6 @@ static int64_t fire_s3d_add(FireS3dTable* t, void* item) {
     return (int64_t)t->count++;
 }
 
-static float fire_s3d_F(Value v) { return (float)toR(v); }
 
 static Value fire_s3d_meshHandle(S3dMesh* m) {
     int64_t h = fire_s3d_add(&g_s3dMeshes, m);
@@ -63,29 +62,53 @@ static Value fire_s3d_meshHandle(S3dMesh* m) {
     return Int(h);
 }
 
-/* Mesh from three arrays: positions (x, y, z per vertex), texture coordinates (u, v per vertex; may be empty) and indices (three per triangle). Returns the handle, 0 on bad data. */
+/* The numbers of a mesh (Model.FromArrays): an array - a typed one is read in place (`float[32] p[]`: the floats as they are), nothing is unpacked -, or a byte
+ * buffer of float32 numbers (the indices: uint32), little endian like glTF. The count of numbers; -1 for anything else. */
+static int64_t fire_s3d_len(Value v) {
+    if (v.kind == K_Array) return arrOf(v)->length;
+    if (v.kind == K_Buffer && bufOf(v)->elem == 1) return (int64_t)(bufOf(v)->length / 4u);
+    return -1;
+}
+static uint32_t fire_s3d_le32(Value v, uint32_t i) {
+    const uint8_t* b = bufOf(v)->data + (size_t)i * 4u;
+    return (uint32_t)b[0] | (uint32_t)b[1] << 8 | (uint32_t)b[2] << 16 | (uint32_t)b[3] << 24;
+}
+static float fire_s3d_num(Value v, uint32_t i) {
+    Arr* a;
+    if (v.kind == K_Buffer) { uint32_t u = fire_s3d_le32(v, i); float f; memcpy(&f, &u, sizeof f); return f; }
+    a = arrOf(v);
+    if (a->typed && a->typed->packed && a->typed->elem == E_F32) return ((const float*)a->typed->data)[i];
+    return (float)toR(arrElemGet(a, i));
+}
+static int64_t fire_s3d_index(Value v, uint32_t i) {
+    Value e;
+    if (v.kind == K_Buffer) return (int64_t)fire_s3d_le32(v, i);
+    e = arrElemGet(arrOf(v), i);
+    return e.kind == K_Int ? (int64_t)e.i : e.kind == K_Float && e.f == (Real)(int64_t)e.f ? (int64_t)e.f : -1;
+}
+
+/* Mesh from three arrays or float32 buffers: positions (x, y, z per vertex), texture coordinates (u, v per vertex; may be empty) and indices (three per triangle).
+ * Returns the handle, 0 on bad data. */
 static Value fire_s3d_MeshNew(Value positions, Value uvs, Value indices) {
-    Arr *p, *t, *ix;
+    int64_t pn = fire_s3d_len(positions), tn = fire_s3d_len(uvs), xn = fire_s3d_len(indices);
     uint32_t vertices, i;
     S3dMesh* mesh;
-    if (positions.kind != K_Array || uvs.kind != K_Array || indices.kind != K_Array) return Int(0);
-    p = arrOf(positions); t = arrOf(uvs); ix = arrOf(indices);
-    if (p->length == 0 || p->length % 3 != 0 || ix->length == 0 || ix->length % 3 != 0) return Int(0);
-    vertices = p->length / 3;
-    if (t->length != 0 && t->length != vertices * 2) return Int(0);
+    if (pn <= 0 || pn % 3 != 0 || tn < 0 || xn <= 0 || xn % 3 != 0 || pn > 0x7FFFFFFF || xn > 0x7FFFFFFF) return Int(0);
+    vertices = (uint32_t)(pn / 3);
+    if (tn != 0 && tn != (int64_t)vertices * 2) return Int(0);
     mesh = s3d_meshNew();
     if (mesh == NULL) return Int(0);
-    if (!S3D_GROW(mesh->pos, mesh->posCap, p->length) || !S3D_GROW(mesh->uv, mesh->uvCap, (s3d_size)vertices * 2) || !S3D_GROW(mesh->idx, mesh->idxCap, ix->length)) { s3d_meshFree(mesh); return Int(0); }
-    for (i = 0; i < p->length; i++) mesh->pos[i] = fire_s3d_F(arrItems(p)[i]);
-    mesh->posN = p->length;
-    for (i = 0; i < vertices * 2; i++) mesh->uv[i] = i < t->length ? fire_s3d_F(arrItems(t)[i]) : 0.0f;
+    if (!S3D_GROW(mesh->pos, mesh->posCap, (s3d_size)pn) || !S3D_GROW(mesh->uv, mesh->uvCap, (s3d_size)vertices * 2) || !S3D_GROW(mesh->idx, mesh->idxCap, (s3d_size)xn)) { s3d_meshFree(mesh); return Int(0); }
+    for (i = 0; i < (uint32_t)pn; i++) mesh->pos[i] = fire_s3d_num(positions, i);
+    mesh->posN = (s3d_size)pn;
+    for (i = 0; i < vertices * 2; i++) mesh->uv[i] = tn != 0 ? fire_s3d_num(uvs, i) : 0.0f;
     mesh->uvN = (s3d_size)vertices * 2;
-    for (i = 0; i < ix->length; i++) {
-        int64_t k = arrItems(ix)[i].i;
+    for (i = 0; i < (uint32_t)xn; i++) {
+        int64_t k = fire_s3d_index(indices, i);
         if (k < 0 || (uint64_t)k >= vertices) { s3d_meshFree(mesh); return Int(0); }
         mesh->idx[i] = (uint32_t)k;
     }
-    mesh->idxN = ix->length;
+    mesh->idxN = (s3d_size)xn;
     if (!s3d_meshFinish(mesh)) { s3d_meshFree(mesh); return Int(0); }
     return fire_s3d_meshHandle(mesh);
 }

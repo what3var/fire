@@ -840,7 +840,7 @@ namespace fire.Standard
             // `List<int>`: a list whose elements are `int`s (for the type checker - at runtime every list holds any value); `List` alone is a list of `any`
             class List<T> : IEnumerable<T> {
                 private any items
-                private int count
+                private defined int count
                 private Owns owns = Owns.Explicit
 
                 /// The number of elements.
@@ -879,8 +879,8 @@ namespace fire.Standard
                     if (this.count >= this.items.length) {
                         this.Grow()
                     }
-                    // (it takes what belongs to the call - `??.`: a number has no TakeTo; with Owns.Values also an object or a lambda of someone else)
-                    if (this.owns.HasFlag(Owns.Values) && (value is of class || value is of lambda)) { value.TakeTo(this) } else { try value??.TakeTo(this) }
+                    // (it takes what belongs to the call - `??.`: a number has no TakeTo, it is passed by at once; with Owns.Values also an object or a lambda of someone else)
+                    if (!(value is of float || value is of int || value is of bool)) { if (this.owns.HasFlag(Owns.Values) && (value is of class || value is of lambda)) { value.TakeTo(this) } else { try value??.TakeTo(this) } }
                     this.items[this.count] = value
                     this.count = this.count + 1
                 }
@@ -896,8 +896,8 @@ namespace fire.Standard
 
                 undefined operator[](int index, T value) {
                     any old = this.items[index]
-                    // (it takes what belongs to the call - `??.`: a number has no TakeTo; with Owns.Values also an object or a lambda of someone else)
-                    if (this.owns.HasFlag(Owns.Values) && (value is of class || value is of lambda)) { value.TakeTo(this) } else { try value??.TakeTo(this) }
+                    // (it takes what belongs to the call - `??.`: a number has no TakeTo, it is passed by at once; with Owns.Values also an object or a lambda of someone else)
+                    if (!(value is of float || value is of int || value is of bool)) { if (this.owns.HasFlag(Owns.Values) && (value is of class || value is of lambda)) { value.TakeTo(this) } else { try value??.TakeTo(this) } }
                     this.items[index] = value
                     if (old != value) { this.DropElement(old) }
                 }
@@ -935,8 +935,8 @@ namespace fire.Standard
                         this.items[i] = this.items[i - 1]
                         i = i - 1
                     }
-                    // (it takes what belongs to the call - `??.`: a number has no TakeTo; with Owns.Values also an object or a lambda of someone else)
-                    if (this.owns.HasFlag(Owns.Values) && (value is of class || value is of lambda)) { value.TakeTo(this) } else { try value??.TakeTo(this) }
+                    // (it takes what belongs to the call - `??.`: a number has no TakeTo, it is passed by at once; with Owns.Values also an object or a lambda of someone else)
+                    if (!(value is of float || value is of int || value is of bool)) { if (this.owns.HasFlag(Owns.Values) && (value is of class || value is of lambda)) { value.TakeTo(this) } else { try value??.TakeTo(this) } }
                     this.items[index] = value
                     this.count = this.count + 1
                 }
@@ -1053,8 +1053,8 @@ namespace fire.Standard
                 private int next[]
                 protected bool live[]
                 private int buckets[]
-                private int count
-                protected int used
+                private defined int count
+                protected defined int used
                 protected Owns owns
 
                 /// The number of entries.
@@ -1267,8 +1267,8 @@ namespace fire.Standard
                     if (this.Find(key, h) >= 0) { throw new ArgumentException("The key '" + key + "' is already in the dictionary.") }
                     // (it takes what belongs to the call - `??.`: a number has no TakeTo; with Owns.Keys also an object or a lambda of someone else)
                     if (this.owns.HasFlag(Owns.Keys) && (key is of class || key is of lambda)) { key.TakeTo(this) } else { try key??.TakeTo(this) }
-                    // (it takes what belongs to the call - `??.`: a number has no TakeTo; with Owns.Values also an object or a lambda of someone else)
-                    if (this.owns.HasFlag(Owns.Values) && (value is of class || value is of lambda)) { value.TakeTo(this) } else { try value??.TakeTo(this) }
+                    // (it takes what belongs to the call - `??.`: a number has no TakeTo, it is passed by at once; with Owns.Values also an object or a lambda of someone else)
+                    if (!(value is of float || value is of int || value is of bool)) { if (this.owns.HasFlag(Owns.Values) && (value is of class || value is of lambda)) { value.TakeTo(this) } else { try value??.TakeTo(this) } }
                     this.Insert(key, value, h)
                 }
 
@@ -1283,8 +1283,8 @@ namespace fire.Standard
                 undefined operator[](K key, V value) {
                     var h = this.HashOf(key)
                     var at = this.Find(key, h)
-                    // (it takes what belongs to the call - `??.`: a number has no TakeTo; with Owns.Values also an object or a lambda of someone else)
-                    if (this.owns.HasFlag(Owns.Values) && (value is of class || value is of lambda)) { value.TakeTo(this) } else { try value??.TakeTo(this) }
+                    // (it takes what belongs to the call - `??.`: a number has no TakeTo, it is passed by at once; with Owns.Values also an object or a lambda of someone else)
+                    if (!(value is of float || value is of int || value is of bool)) { if (this.owns.HasFlag(Owns.Values) && (value is of class || value is of lambda)) { value.TakeTo(this) } else { try value??.TakeTo(this) } }
                     if (at >= 0) {
                         any old = this.vals[at]
                         this.vals[at] = value
@@ -1383,7 +1383,7 @@ namespace fire.Standard
                 bool Add(T item) {
                     var h = this.HashOf(item)
                     if (this.Find(item, h) >= 0) { return false }
-                    // (it takes what belongs to the call - `??.`: a number has no TakeTo; with Owns.Values also an object or a lambda of someone else)
+                    // (it takes what belongs to the call - `??.`: a number has no TakeTo, it is passed by at once; with Owns.Values also an object or a lambda of someone else)
                     if (this.owns.HasFlag(Owns.Values) && (item is of class || item is of lambda)) { item.TakeTo(this) } else { try item??.TakeTo(this) }
                     this.Insert(item, undefined, h)
                     return true

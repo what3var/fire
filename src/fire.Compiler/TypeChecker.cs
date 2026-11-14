@@ -759,7 +759,8 @@ namespace fire.Compiler
             // (`int[8]`, `float[32]`: the width written - what `x.Bits` says)
             if (result.Kind is StaticKind.Int or StaticKind.Float && type.BitWidth is int declaredBits && arrayRanks + type.ArrayRank == 0) result = result with { Bits = (byte)declaredBits };
             // `defined int` (SPEC 8.10b): never undefined
-            if (type.NonNull && arrayRanks + type.ArrayRank == 0) result = result.WithNull(Nullness.Defined);
+            // (`defined int a[]`: its elements are; the array itself may be undefined)
+            if (type.NonNull && (arrayRanks + type.ArrayRank == 0 || result.IsValueKind)) result = result.WithNull(Nullness.Defined);
             for (int i = 0; i < arrayRanks + type.ArrayRank; i++) result = StaticType.ArrayOf(result);
             return result;
         }

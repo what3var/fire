@@ -145,6 +145,18 @@ static class Scene3DTests
         print("tri " + tri.Triangles + " " + tri.Width + " " + tri.Height)
         var obj = new Object("v 0 0 0\nv 1 0 0\nv 1 1 0\nv 0 1 0\nf 1 2 3 4\n")
         print("obj " + obj.Triangles + " " + obj.Width + " " + obj.Depth)
+        // a model from arrays: of numbers, a float[32] array (read as it is), byte buffers of float32 and uint32 numbers (glTF)
+        float[32] arrF32[] = [0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0]
+        byte arrPos[36]
+        byte arrIdx[12]
+        for (int ai = 0; ai < 9; ai++) { arrPos.WriteFloat32(ai * 4, arrF32[ai], true) }
+        for (int ai = 0; ai < 3; ai++) { arrIdx.WriteInt32(ai * 4, ai, true) }
+        byte arrNoUv[0]
+        var fromBuffers = Model.FromArrays(arrPos, arrNoUv, arrIdx)
+        var fromF32 = Model.FromArrays(arrF32, [0.0, 0.0, 1.0, 0.0, 0.0, 1.0], [0, 1, 2])
+        bool badArrays = false
+        try { Model.FromArrays(arrPos, arrNoUv, [0, 1, 7]) } catch (Scene3DException e) { badArrays = true }
+        print("arrays " + fromBuffers.Triangles + " " + fromF32.Triangles + " " + Model.FromArrays([0, 0, 0, 1, 0, 0, 0, 1, 0, 1, 1, 0], [], [0, 1, 2, 1, 3, 2]).Triangles + " " + badArrays)
 
         // transparency, billboards, shadows, layers, bump maps
         var glass = new Object(Template.Box, 0m, 0.5m, 1.5m, 1m, 1m, 0.2m)

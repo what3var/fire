@@ -1502,7 +1502,8 @@ typedef struct ArrTyped {
     uint8_t flags;           /* TU_*, below */
     uint8_t own;             /* AT_*: what is a block of its own (freed with the array) */
 } ArrTyped;
-enum { TU_UNIT = 1, TU_DIMONLY = 2, TU_ANY = 4 };   /* a unit demand; of its dimension only (`: any m`); any unit (`: any`) - the last two keep Values */
+enum { TU_UNIT = 1, TU_DIMONLY = 2, TU_ANY = 4, TU_DEFINED = 8 };   /* a unit demand; of its dimension only (`: any m`); any unit (`: any`) - the two keep Values;
+                                                                    * `defined int a[]`: the elements are never undefined (they start at 0) */
 enum { AT_DATA = 1, AT_SELF = 2, AT_INLINE = 4 };   /* `data` / the ArrTyped itself are blocks of their own; AT_INLINE: the array has Values after its header */
 
 /* Fixed-size array of Values (elements start as `undefined`). It owns the inner arrays that were made together with it (`new int[3][4]`, `[[1, 2], [3]]`), not
@@ -5805,6 +5806,15 @@ FIRE_FN size_t arrElemSize(uint8_t e) {
 /* The hints of `undefined` for the float elements: NaNs with a payload nothing computes. */
 #define FIRE_UNDEF_F32 0x7FC0F1E5u
 #define FIRE_UNDEF_F64 0x7FF8F1E5F1E5F1E5ull
+/* A number that has the bits of the hint of `undefined` (it is stored by arrPackedSet, which marks it real): the generated stores into packed arrays ask. */
+FIRE_ALWAYS_INLINE FIRE_FN bool fire_f32IsHint(float x) { uint32_t b; memcpy(&b, &x, sizeof b); return b == FIRE_UNDEF_F32; }
+FIRE_ALWAYS_INLINE FIRE_FN bool fire_realIsHint(Real x) {
+#ifdef FIRE_FLOAT32
+    uint32_t b; memcpy(&b, &x, sizeof b); return b == FIRE_UNDEF_F32;
+#else
+    uint64_t b; memcpy(&b, &x, sizeof b); return b == FIRE_UNDEF_F64;
+#endif
+}
 
 /* The value as an element of the typed array `t` (VM: ArrayElem.TryConvert): an int cut to the width, a float rounded, an int becomes a float in a float
  * array, a number converted into the unit of the elements; `undefined` fits every type. Anything else is the exception (ArgumentException,
@@ -5820,6 +5830,13 @@ FIRE_COLD FIRE_FN Value arrElemWrong(const ArrTyped* t, Value v, bool* ok) {
 FIRE_FN Value arrElemConvert(const ArrTyped* t, Value v, bool* ok) {
     bool isFloat;
     *ok = true;
+    if (FIRE_UNLIKELY(v.kind == K_Undefined && (t->flags & TU_DEFINED))) {
+        char text[120];
+        snprintf(text, sizeof text, "An element of a defined array of %s cannot be undefined.", arrElemName(t->elem));
+        fireError("ArgumentException", text);
+        *ok = false;
+        return Undef();
+    }
     if (t->elem == E_Bool || t->elem == E_Char) {
         if (v.kind == K_Undefined) return Undef();
         if (v.kind == (t->elem == E_Bool ? K_Bool : K_Char)) return v;
@@ -5957,7 +5974,15 @@ FIRE_FN ArrTyped* arrTypedNew(uint8_t elem, uint32_t unit, uint8_t flags, Value 
 
 /* Makes the untyped array `a` typed: its elements are converted (false: one did not fit, the exception is thrown and `a` stays as it was). An array with a
  * unit demand of its own dimension only (`: any m`) keeps its Values (each keeps its unit); every other one is packed. */
+FIRE_FN void arrMakeDefined(Arr* a);
 FIRE_FN bool arrMakeTyped(Arr* a, uint8_t elem, uint32_t unit, uint8_t flags, Value unitText) {
+    /* (`defined int a[]`: typed first, then its undefined elements become 0 - arrMakeDefined) */
+    if (flags & TU_DEFINED) {
+        if (!arrMakeTyped(a, elem, unit, (uint8_t)(flags & ~TU_DEFINED), unitText)) return false;
+        arrMakeDefined(a);
+        return true;
+    }
+    {
     ArrTyped probe;
     ArrTyped* t;
     Value* items = (Value*)((char*)a + FIRE_HDR(Arr));
@@ -5989,6 +6014,30 @@ FIRE_FN bool arrMakeTyped(Arr* a, uint8_t elem, uint32_t unit, uint8_t flags, Va
     }
 #undef FIRE_ARR_PLAIN_UNDEF
     return true;
+    }
+}
+
+/* The zero of the elements of a typed array: what an element of a defined one starts with (in the unit of the elements). */
+FIRE_FN Value arrZero(const ArrTyped* t) {
+    uint32_t u = (t->flags & TU_UNIT) ? t->unit : 0;
+    if (t->elem == E_Bool) return Bool(false);
+    if (t->elem == E_Char) return Char(0);
+    return arrElemIsFloat(t->elem) ? Float(0, u) : Int(0, u);
+}
+/* Makes the typed array `a` a defined one (`defined int a[]`, TU_DEFINED): an undefined element becomes the zero of the type (`new int[n]` starts at 0). */
+FIRE_FN void arrMakeDefined(Arr* a) {
+    ArrTyped* t = a->typed;
+    uint32_t i;
+    if (!t || (t->flags & TU_DEFINED)) return;
+    if (t->packed) {
+        Value zero = arrZero(t);
+        for (i = 0; i < a->length; i++) if (arrPackedGet(a, i).kind == K_Undefined) arrPackedSet(a, i, zero);
+    } else {
+        Value zero = arrZero(t);
+        Value* items = (Value*)t->data;
+        for (i = 0; i < a->length; i++) if (items[i].kind == K_Undefined) items[i] = zero;
+    }
+    t->flags |= TU_DEFINED;
 }
 
 /* OpCode.TypeArray: the array `v` (at depth `rank` its inner arrays) goes into a declaration of a typed array. False: the exception was thrown. */
@@ -6021,7 +6070,11 @@ FIRE_FN bool typeArraySlow(Value v, uint8_t elem, int rank, uint32_t unit, uint8
         return true;
     }
     if (a->typed) {
-        if (a->typed->elem == elem && a->typed->flags == flags && (!(flags & TU_UNIT) || a->typed->unit == unit)) return true;
+        /* (a defined array goes where one of its elements is declared; a declaration of a defined one makes an array defined) */
+        if (a->typed->elem == elem && (a->typed->flags & ~TU_DEFINED) == (flags & ~TU_DEFINED) && (!(flags & TU_UNIT) || a->typed->unit == unit)) {
+            if (flags & TU_DEFINED) arrMakeDefined(a);
+            return true;
+        }
         snprintf(text, sizeof text, "An array of %s cannot be stored where an array of %s is declared.", arrElemName(a->typed->elem), arrElemName(elem));
         fireError("ArgumentException", text);
         return false;
@@ -6118,7 +6171,11 @@ FIRE_FN Value newTypedArray(Value size, uint8_t elem, uint32_t unit, uint8_t fla
     t->data = (char*)a + head;
     t->packed = 1;
     a->typed = t;
-    for (i = 0; i < length; i++) arrPackedSet(a, i, Undef());
+    /* (a defined array starts at 0, any other undefined) */
+    {
+        Value first = (flags & TU_DEFINED) ? arrZero(t) : Undef();
+        for (i = 0; i < length; i++) arrPackedSet(a, i, first);
+    }
     slotAcquire(&a->h);
     ownLink(list, &a->h);
     return ArrV(a);

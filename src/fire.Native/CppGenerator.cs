@@ -675,6 +675,12 @@ namespace fire.Native
             _ => KindUnknown,
         };
         private static int ArrElemBits(int elem) => elem switch { ArrayElem.I8 => 8, ArrayElem.I16 => 16, ArrayElem.I32 => 32, _ => 64 };
+        /// <summary>The C type of a packed element (fire_rt.h arrElemSize): an int of its width, a float (float[8]/[16]/[32] are stored as float), Real, a bool byte.</summary>
+        private static string ArrElemCType(int elem) => elem switch
+        {
+            ArrayElem.I8 => "int8_t", ArrayElem.I16 => "int16_t", ArrayElem.I32 => "int32_t", ArrayElem.I64 => "FireInt",
+            ArrayElem.F8 or ArrayElem.F16 or ArrayElem.F32 => "float", ArrayElem.F64 => "Real", ArrayElem.Bool => "uint8_t", _ => "uint16_t",
+        };
         private static bool IsPlainType(int type) => type is TypeNone or TypeUndefined || BaseKindOfType(type) is KindInt or KindFloat or KindBool or KindWord;
 
         private readonly List<string> _objTypeNames = new();
@@ -1577,15 +1583,17 @@ namespace fire.Native
         /// <summary>The C that converts `value` into the unit a declaration demands (fire_rt.h adaptUnit; a leading `#`: the declaration is a float).</summary>
         /// <summary>The unit arguments of typeArray/newTypedArray for the unit demand constant of an OpCode.TypeArray (0xFFFF: none): `unit, flags, text`
         /// (flags TU_UNIT 1, TU_DIMONLY 2, TU_ANY 4 of fire_rt.h; text as the messages show it).</summary>
-        private string TypeArrayUnitArgs(Chunk chunk, int constIdx) => TypeArrayUnitArgsOf(constIdx == 0xFFFF ? null : chunk.Constants[constIdx].AsString());
-        /// <summary>The unit arguments of typeArray for a unit demand (UnitDemand; null: none).</summary>
-        private string TypeArrayUnitArgsOf(string? demand)
+        private string TypeArrayUnitArgs(Chunk chunk, int constIdx, int elemCode = 0) => TypeArrayUnitArgsOf(constIdx == 0xFFFF ? null : chunk.Constants[constIdx].AsString(), elemCode);
+        /// <summary>The unit arguments of typeArray for a unit demand (UnitDemand; null: none) - and TU_DEFINED for the code of a defined array
+        /// (ArrayElem.DefinedFlag in <paramref name="elemCode"/>).</summary>
+        private string TypeArrayUnitArgsOf(string? demand, int elemCode = 0)
         {
-            if (demand == null) return $"0, 0, {Constant(Value.MakeString("(no unit)"))}";
+            int defined = ArrayElem.IsDefined(elemCode) ? 8 : 0;
+            if (demand == null) return $"0, {defined}, {Constant(Value.MakeString("(no unit)"))}";
             string unit = demand.TrimStart('#');
-            if (unit == "any") return $"0, 4, {Constant(Value.MakeString("any"))}";
+            if (unit == "any") return $"0, {4 | defined}, {Constant(Value.MakeString("any"))}";
             bool dimensionOnly = unit.StartsWith("any ", StringComparison.Ordinal);
-            return $"{UnitC(UnitId(DemandUnit(unit)))}, {(dimensionOnly ? 3 : 1)}, {Constant(Value.MakeString(Unit.DemandDisplay(unit)))}";
+            return $"{UnitC(UnitId(DemandUnit(unit)))}, {(dimensionOnly ? 3 : 1) | defined}, {Constant(Value.MakeString(Unit.DemandDisplay(unit)))}";
         }
 
         /// <summary>CheckUnit on a Value variable as a statement: adaptSlot in place (no copy of the Value in and out), leaving for `exit` when it threw (null: no
@@ -2707,7 +2715,7 @@ namespace fire.Native
         private string FieldKindCheck(string name, byte kind) => $"x = {GuardKindCall("x", kind, $"Field '{name}'")};";
         /// <summary>A field declared as a typed array (FieldInfo.RequiredArray): what is assigned is typed like by OpCode.TypeArray ("" for any other field).</summary>
         private string FieldArrayCheck(RuntimeClass rc, string name) => rc.FindFieldRequiredArray(name) is var arr and not 0
-            ? $"typeArray(x, {arr & 0xFF}, {arr >> 8}, {TypeArrayUnitArgsOf(rc.FindFieldRequiredUnit(name))}, 1);" : "";
+            ? $"typeArray(x, {ArrayElem.TypeOf(arr)}, {arr >> 8}, {TypeArrayUnitArgsOf(rc.FindFieldRequiredUnit(name), arr)}, 1);" : "";
         private static string KindConstant(byte declaredKind) => DeclaredKind.TagOf(declaredKind) switch
         {
             TypeTag.Int => "K_Int", TypeTag.Float => "K_Float", TypeTag.Word => "K_Word", TypeTag.Char => "K_Char", _ => "K_Bool",
@@ -4096,6 +4104,7 @@ namespace fire.Native
             or OpCode.BitAnd or OpCode.BitOr or OpCode.BitXor or OpCode.ShiftLeft or OpCode.ShiftRight or OpCode.ShiftRightLogical or OpCode.ConvertWidth or OpCode.ArrayGet
             or OpCode.Div or OpCode.Neg or OpCode.LogicalNot or OpCode.CheckUnit or OpCode.Dup or OpCode.StepAdd or OpCode.StepSub or OpCode.Trust
             or OpCode.Power or OpCode.PowerFloat or OpCode.CoerceType or OpCode.BitNot
+            or OpCode.ClaimToArray or OpCode.ArraySet    // (a typed array's: the C number goes in; the generic store makes its own Values)
             or OpCode.CopyArgs    // (a prefix of the call: nothing to do here - the call decides what becomes a Value)
             or OpCode.LoadThis;   // (`x * x + y * y` of fields: the numbers below stay C numbers)
 
@@ -6449,7 +6458,7 @@ namespace fire.Native
                     }
                     else if (at < f.Decoded.Count && f.Decoded[at] is { Op: OpCode.TypeArray } typed && typed.A[1] == 1)
                     {
-                        E($"{S(d - 1)} = newTypedArray({S(d - 1)}, {typed.A[0]}, {TypeArrayUnitArgs(chunk, typed.A[2])}, &{OwnerList()});");
+                        E($"{S(d - 1)} = newTypedArray({S(d - 1)}, {ArrayElem.TypeOf(typed.A[0])}, {TypeArrayUnitArgs(chunk, typed.A[2], typed.A[0])}, &{OwnerList()});");
                         SetR(d - 1, true);
                         if (typed.A[2] == 0xFFFF) { SetT(d - 1, TypeOf(KindArr, typed.A[0])); _kindsKept = true; }
                         return Next();
@@ -6481,7 +6490,7 @@ namespace fire.Native
                     bool known = ins.A[1] == 1 && ins.A[2] == 0xFFFF;
                     // (an array typed so already - newTypedArray right before, a variable of that type: nothing to do)
                     if (known && Ty(d - 1) is var had && BK(d - 1) == KindArr && U(d - 1) == ins.A[0] && (had & TypeNone) == 0) { _kindsKept = true; return Next(); }
-                    E($"typeArray({S(d - 1)}, {ins.A[0]}, {ins.A[1]}, {TypeArrayUnitArgs(chunk, ins.A[2])}, 1);");
+                    E($"typeArray({S(d - 1)}, {ArrayElem.TypeOf(ins.A[0])}, {ins.A[1]}, {TypeArrayUnitArgs(chunk, ins.A[2], ins.A[0])}, 1);");
                     Check();
                     // what TypeArray lets through: an array of this element, or undefined
                     if (known) { SetT(d - 1, TypeOf(KindArr, ins.A[0]) | NullableBit); _kindsKept = true; }
@@ -6626,6 +6635,8 @@ namespace fire.Native
                     d--; return Next();
                 case OpCode.ClaimToArray:
                     Need(3);
+                    // (a number, a bool, undefined: nothing to own - a C number stays one)
+                    if (IsScalar(d - 1) || IsPlainType(Ty(d - 1))) { _kindsKept = true; return Next(); }
                     E($"claimToHolder({S(d - 3)}, {S(d - 1)}, &{OwnerList()});");
                     return Next();
                 case OpCode.TakeToObject:
@@ -6704,26 +6715,87 @@ namespace fire.Native
                     E($"{a} = {v};");
                     d -= 2; SetR(d - 1, false); SetT(d - 1, storedType); _kindsKept = true; return Next();
                 }
-                case OpCode.ArrayGet when ArrSlot(d - 2) is var getElem and not 0 && ArrElemKind(getElem) != KindUnknown && _program.Optimize == OptimizeFor.Speed:
+                case OpCode.ArrayGet when ArrSlot(d - 2) is var getCode and not 0 && ArrElemKind(ArrayElem.TypeOf(getCode)) != KindUnknown && _program.Optimize == OptimizeFor.Speed:
                 {
+                    Need(2);
+                    byte getElem = ArrayElem.TypeOf(getCode);
+                    byte getKind = ArrElemKind(getElem);
+                    if (ArrayElem.IsDefined(getCode) && SlotScalars() && NarrowInt(d - 1) && U(d - 1) == 0)
+                    {
+                        // an element of a defined array (`defined float a[]`: never undefined) into the shadow: one load like a buffer's - the generic access
+                        // for a destroyed array, an index out of range (it throws there) or an unpacked one
+                        string da = S(d - 2), di = SN(d - 1);
+                        string dIsArr = IsNullable(Ty(d - 2)) ? $"{da}.kind == K_Array && " : "";
+                        string load = $"(({ArrElemCType(getElem)}*)ra_->typed->data)[{di}]";
+                        int elemType = getKind switch { KindFloat => TypeOf(KindFloat, 0), KindBool => TypeOf(KindBool, 0), _ => TypeOf(KindInt, 0) | NarrowBit };
+                        SetT(d - 2, elemType); SetR(d - 2, false); _kindsKept = true;
+                        if (d - 2 < 64) st.Alias[d - 2] = null;
+                        string shadow = ScalarName(f, st, d - 2);
+                        string fast = getKind switch { KindFloat => $"(Real){load}", KindBool => $"({load} != 0)", _ => $"(FireInt){load}" };
+                        string slow = getKind switch { KindFloat => "(Real)e_.f", KindBool => "(e_.i != 0)", _ => "(FireInt)e_.i" };
+                        E($"{{ Arr* ra_; if (FIRE_LIKELY({dIsArr}leafAlive({da}) && (uint64_t)(int64_t){di} < (ra_ = arrOf({da}))->length && ra_->typed && ra_->typed->packed)) {shadow} = {fast}; else {{ Value e_ = {Px}aget_g({da}, Int({di}), &{OuterOwnerList()}); {shadow} = {slow}; }} }}");
+                        st.Scalar |= 1UL << (d - 2);
+                        Check();
+                        d--; return Next();
+                    }
                     // an element of a typed array the generator knows (TypeArray let it through): read in place (arrPackedAt with a constant element folds to one
                     // load) - the generic access for undefined, a destroyed array, an index out of range or an unpacked array; an int, float or bool, or undefined
-                    Need(2);
                     string a = S(d - 2), i = S(d - 1);
                     // (the generic route types the array first: what the element is, is then certain even when a way of writing the field or variable
                     // missed it - it converts, or it is the exception)
-                    E($"{{ Arr* ra_; if (FIRE_LIKELY({a}.kind == K_Array && {i}.kind == K_Int && leafAlive({a}) && (uint64_t){i}.i < (ra_ = arrOf({a}))->length && ra_->typed && ra_->typed->packed && ra_->typed->elem == {getElem})) {a} = arrPackedAt(ra_, (uint32_t){i}.i, {getElem}); else if (typeArray({a}, {getElem}, 1, {TypeArrayUnitArgsOf(null)}, 1)) {a} = {Px}aget_g({a}, {i}, &{OuterOwnerList()}); }}");
+                    E($"{{ Arr* ra_; if (FIRE_LIKELY({a}.kind == K_Array && {i}.kind == K_Int && leafAlive({a}) && (uint64_t){i}.i < (ra_ = arrOf({a}))->length && ra_->typed && ra_->typed->packed && ra_->typed->elem == {getElem})) {a} = arrPackedAt(ra_, (uint32_t){i}.i, {getElem}); else if (typeArray({a}, {getElem}, 1, {TypeArrayUnitArgsOf(null, getCode)}, 1)) {a} = {Px}aget_g({a}, {i}, &{OuterOwnerList()}); }}");
                     Check();
-                    d--; SetR(d - 1, false); SetT(d - 1, TypeOf(ArrElemKind(getElem), 0) | NullableBit | (ArrElemKind(getElem) == KindInt ? NarrowBit : 0)); _kindsKept = true; return Next();
+                    d--; SetR(d - 1, false); SetT(d - 1, TypeOf(getKind, 0) | (ArrayElem.IsDefined(getCode) ? 0 : NullableBit) | (getKind == KindInt ? NarrowBit : 0)); _kindsKept = true; return Next();
                 }
-                case OpCode.ArraySet when !_usesThreads && ArrSlot(d - 3) is var setElem and not 0 && ArrElemKind(setElem) is KindInt or KindBool && K(d - 1) == ArrElemKind(setElem) && U(d - 1) == 0
-                    && _program.Optimize == OptimizeFor.Speed:
+                case OpCode.ArraySet when !_usesThreads && ArrSlot(d - 3) is var scalarCode and not 0 && SlotScalars() && IsScalar(d - 1) && NarrowInt(d - 2) && U(d - 2) == 0
+                    && ScalarElemFits(ArrayElem.TypeOf(scalarCode), d - 1) && _program.Optimize == OptimizeFor.Speed:
                 {
-                    // a store into an element of a known typed array: in place - what arraySet does for it (arrElemConvert: an int cut to the width of the element)
+                    // a C number into an element of a known typed array: converted in C (cut to the width of an int, rounded to the float of the element) and
+                    // stored in place - the generic store for a destroyed array, an index out of range, an unpacked array or a number that is the hint of
+                    // `undefined` (it marks it real there)
                     Need(3);
+                    byte se = ArrayElem.TypeOf(scalarCode);
+                    string a = S(d - 3), i = SN(d - 2);
+                    string isArr = IsNullable(Ty(d - 3)) ? $"{a}.kind == K_Array && " : "";
+                    string ct = ArrElemCType(se);
+                    byte vk = K(d - 1);
+                    string x = vk == KindFloat ? SF(d - 1) : vk == KindBool ? SB(d - 1) : SN(d - 1);
+                    string conv = ArrElemKind(se) switch
+                    {
+                        KindBool => $"(uint8_t)({x} ? 1 : 0)",
+                        KindFloat => se is ArrayElem.F16 or ArrayElem.F8 ? $"(float)roundFloatToWidth((double)({(vk == KindFloat ? x : $"(Real){x}")}), {ArrayElem.Bits(se)})" : $"({ct})({(vk == KindFloat ? x : $"(Real){x}")})",
+                        _ => $"({ct})({x})",
+                    };
+                    string hintTest = se switch
+                    {
+                        ArrayElem.I8 => "cv_ != INT8_MIN", ArrayElem.I16 => "cv_ != INT16_MIN", ArrayElem.I32 => "cv_ != INT32_MIN", ArrayElem.I64 => "cv_ != FIRE_INT_UNDEF",
+                        ArrayElem.F8 or ArrayElem.F16 or ArrayElem.F32 => "!fire_f32IsHint(cv_)", ArrayElem.F64 => "!fire_realIsHint(cv_)", _ => "1",
+                    };
+                    string valueOf = vk == KindFloat ? $"Float({x})" : vk == KindBool ? $"Bool({x})" : $"Int({x})";
+                    E($"{{ Arr* ra_; {ct} cv_ = {conv}; if (FIRE_LIKELY({isArr}leafAlive({a}) && (uint64_t)(int64_t){i} < (ra_ = arrOf({a}))->length && ra_->typed && ra_->typed->packed && {hintTest})) (({ct}*)ra_->typed->data)[{i}] = cv_; else (void){Px}aset_g({a}, Int({i}), {valueOf}, &{OuterOwnerList()}); }}");
+                    Check();
+                    // (the value of the assignment: the number as the element holds it)
+                    int storedKind = ArrElemKind(se);
+                    string stored = storedKind switch { KindFloat => $"(Real)({conv})", KindBool => $"({x})", _ => $"(FireInt)({conv})" };
+                    SetScalar(d - 3, storedKind switch { KindFloat => TypeOf(KindFloat, 0), KindBool => TypeOf(KindBool, 0), _ => TypeOf(KindInt, 0) | NarrowBit }, stored);
+                    d -= 2; return Next();
+                }
+                case OpCode.ArraySet when !_usesThreads && ArrSlot(d - 3) is var setCode and not 0 && ArrElemKind(ArrayElem.TypeOf(setCode)) is KindInt or KindBool or KindFloat
+                    && BK(d - 1) == ArrElemKind(ArrayElem.TypeOf(setCode)) && U(d - 1) == 0 && _program.Optimize == OptimizeFor.Speed:
+                {
+                    // a store into an element of a known typed array: in place - what arraySet does for it (arrElemConvert: an int cut to the width of the element,
+                    // a float rounded to it); a value that may be undefined is tested - undefined takes the generic store (an error for a defined array)
+                    Need(3);
+                    byte setElem = ArrayElem.TypeOf(setCode);
                     string a = S(d - 3), i = S(d - 2), v = S(d - 1);
-                    string convert = ArrElemKind(setElem) == KindInt ? $"{v}.reserved = 0; {v} = intToWidth({v}, {ArrElemBits(setElem)}, false); " : "";
-                    E($"{{ Arr* ra_; if (FIRE_LIKELY({a}.kind == K_Array && {i}.kind == K_Int && leafAlive({a}) && (uint64_t){i}.i < (ra_ = arrOf({a}))->length && ra_->typed && ra_->typed->packed && ra_->typed->elem == {setElem})) {{ {convert}arrPackedSet(ra_, (uint32_t){i}.i, {v}); }} else {v} = {Px}aset_g({a}, {i}, {v}, &{OuterOwnerList()}); }}");
+                    string kindTest = IsNullable(Ty(d - 1)) ? $"{v}.kind == {(BK(d - 1) switch { KindFloat => "K_Float", KindBool => "K_Bool", _ => "K_Int" })} && " : "";
+                    string convert = ArrElemKind(setElem) switch
+                    {
+                        KindInt => $"{v}.reserved = 0; {v} = intToWidth({v}, {ArrElemBits(setElem)}, false); ",
+                        KindFloat => setElem == ArrayElem.F64 ? "" : $"{v}.f = (Real)roundFloatToWidth((double){v}.f, {ArrayElem.Bits(setElem)}); ",
+                        _ => "",
+                    };
+                    E($"{{ Arr* ra_; if (FIRE_LIKELY({kindTest}{a}.kind == K_Array && {i}.kind == K_Int && leafAlive({a}) && (uint64_t){i}.i < (ra_ = arrOf({a}))->length && ra_->typed && ra_->typed->packed && ra_->typed->elem == {setElem})) {{ {convert}arrPackedSet(ra_, (uint32_t){i}.i, {v}); }} else {v} = {Px}aset_g({a}, {i}, {v}, &{OuterOwnerList()}); }}");
                     Check();
                     int storedType = Ty(d - 1);
                     E($"{a} = {v};");
@@ -7301,6 +7373,15 @@ namespace fire.Native
                 SetR(d - 1, false); SetT(d - 1, TypeOf(ints ? KindInt : KindFloat, unit) | (ints && (Ty(d - 1) & Ty(d) & NarrowBit) != 0 ? NarrowBit : 0)); _kindsKept = true;
                 return true;
             }
+            // a C number in slot k that goes into an element of the typed array `elem` as it is (an int of the program without a unit into ints, an int
+            // or a float without a unit into floats, a bool into bools)
+            bool ScalarElemFits(byte elem, int k) => ArrElemKind(elem) switch
+            {
+                KindInt => NarrowInt(k) && U(k) == 0,
+                KindFloat => (K(k) == KindFloat || NarrowInt(k)) && U(k) == 0,
+                KindBool => K(k) == KindBool,
+                _ => false,
+            };
             // `a ^ b` of two C numbers of the same unit (Value.Power / PowerFloat): two narrow ints the int power (wrapping; a negative exponent goes to
             // the generic one: 0, 1, -1 or a DivideByZeroException), anything with a float - or `toFloat` (PowerFloat) - pow() in the left one's unit
             bool ScalarPower(bool toFloat)
