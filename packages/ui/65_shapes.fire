@@ -308,7 +308,7 @@ namespace UI {
         Geometry data
 
         construct(any data = undefined, defined int x = 0, defined int y = 0) : base(x, y, -1, -1) {
-            this.data = data
+            this.data = try take data
         }
 
         override string StyleKey() { return "Path" }

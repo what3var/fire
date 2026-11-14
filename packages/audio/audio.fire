@@ -91,7 +91,7 @@ namespace Audio {
             if (offset < 0 || offset + length > data.length) { throw new AudioException("offset/length are outside of the buffer.", 1) }
             this.rate = rate
             this.channels = channels
-            this.data = data
+            this.data = try take data
             this.offset = offset
             this.length = length - (length % (channels * 2))
         }

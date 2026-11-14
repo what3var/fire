@@ -394,7 +394,7 @@ namespace Data {
         construct(string kind, string text, any value) {
             this.kind = kind
             this.text = text
-            this.value = value
+            this.value = try take value
             this.start = 0
             this.stop = 0
         }
@@ -1089,7 +1089,7 @@ namespace Data {
         List outerAliases
         construct(Data.MemoryConnection connection, any args) {
             this.connection = connection
-            this.args = args
+            this.args = try take args
             this.names = new any[0]
             this.alias = ""
             this.outerTables = new List()

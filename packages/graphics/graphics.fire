@@ -194,7 +194,7 @@ class ToolPath {
     construct(defined int kind, bool closed, float points[]) {
         this.kind = kind
         this.closed = closed
-        this.points = points
+        this.points = try take points
     }
 
     defined int Count() { return this.points.length / 2 }
