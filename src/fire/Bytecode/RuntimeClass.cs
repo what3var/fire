@@ -42,6 +42,14 @@ namespace fire.Bytecode
         /// (OpCode.TypeArray: an array of that element or `undefined`, RequiredUnit is the unit of its elements); 0: none. Not for `byte`/`word` (buffers).</summary>
         public ushort RequiredArray { get; set; }
 
+        /// <summary>A field declared as an array of a type parameter of its class (`T items[]`): `$k@Class` - every assignment types the array by the type
+        /// argument of the object (`List&lt;int&gt;`: an array of raw ints, like `new T[n]`; another type argument: nothing to do); null: none.</summary>
+        public string? ArrayOfParam { get; set; }
+
+        /// <summary>A field declared `int`/`float`/`bool` without `defined` that the type checker found never undefined (TypeChecker.DeriveFields): it is
+        /// compiled like a `defined` one (RequiredKind) - a store of undefined by name (Reflect.Set, JSON) is the ArgumentException, which says why.</summary>
+        public bool DerivedDefined { get; set; }
+
         public AccessModifier AccessModifier { get; set; }
 
         /// <summary>SPEC "Static members" - `true` for a `static`
@@ -242,6 +250,26 @@ namespace fire.Bytecode
             for (var rc = this; rc != null; rc = rc.Base)
                 if (rc.OwnFieldInfo.TryGetValue(name, out var field))
                     return field.RequiredType;
+            return null;
+        }
+
+        /// <summary>The text a check of the field names it with (`Field 'n'`, for a field derived `defined` with the reason: FieldInfo.DerivedDefined).</summary>
+        public string FieldWhat(string name)
+        {
+            for (var rc = this; rc != null; rc = rc.Base)
+                if (rc.OwnFieldInfo.TryGetValue(name, out var field))
+                    return field.DerivedDefined ? DerivedFieldWhat(name) : $"Field '{name}'";
+            return $"Field '{name}'";
+        }
+        public static string DerivedFieldWhat(string name) => $"Field '{name}' (derived as never undefined: nothing in the program stores undefined in it)";
+        public static string DerivedParameterWhat(string name) => $"Parameter '{name}' (derived as never undefined: every call in the program gives a value)";
+
+        /// <summary>Like FindFieldRequiredUnit, for an array of a type parameter (FieldInfo.ArrayOfParam, null: none).</summary>
+        public string? FindFieldArrayOfParam(string name)
+        {
+            for (var rc = this; rc != null; rc = rc.Base)
+                if (rc.OwnFieldInfo.TryGetValue(name, out var field))
+                    return field.ArrayOfParam;
             return null;
         }
 

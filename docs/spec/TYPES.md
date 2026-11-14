@@ -204,9 +204,16 @@ instructions (more fused ones, or registers instead of the stack) - a step of it
   numbers. Each resolved call notes per parameter whether its argument is defined - or what it depends on: the returns of the method it is the result
   of (`ret:name/arity`) or a parameter of the calling method that its body never assigns; each method notes the same for its returns, and whether its
   last statement returns or throws. A greatest fixpoint over these dependencies decides. Excluded: a name a call could not be resolved for, used as a
-  value or written as a string; a method that overrides or implements one of a package or the prelude; the methods the language calls itself
+  value or written as a string (not in a class with `[InferDefined]`); every method and constructor of a class without `[InferDefined]` when the
+  program uses reflection (TypeChecker.ReflectionUsed: the class `Reflect` of the package is part of it); a method that overrides or implements one of a package or the prelude; the methods the language calls itself
   (`GetIndex`, `CompareTo`, ...); the constructors of base classes and of classes a `new` was not resolved for. The Linker switches the derivation
-  off for a program that imports `reflection`, writes class metadata (a plugin) or is a debug build. A value that may be undefined going into a `defined` parameter,
+  off for a program that writes class metadata (a plugin), has imports of its own or is a debug build. Fields: DisqualifyFields leaves out every
+  field of a class without `[InferDefined]` when the program (a package included) calls `Json.Deserialize` - `$type` in the text may name any class -
+  and FieldCandidates every one when it uses reflection; `[InferDefined]` makes a class of a package a candidate too. What reaches a derived member of
+  such a class from outside goes through the checks it is compiled with: `Reflect.Set`/`Reflect.Call` check the declared kind and `undefined`, and the
+  message names the derivation ("Parameter 'by' (derived as never undefined: every call in the program gives a value) is an int and never undefined.",
+  RuntimeClass.DerivedParameterWhat/DerivedFieldWhat); JSON reads a derived field like a `defined` one (0 when missing, `null` an error; the flag 0x80
+  of the field's row adds the note). A value that may be undefined going into a `defined` parameter,
   field, property, variable or return value is `TC022` (a warning in lax mode, an error in strict mode); it is checked at run time either way.
 * **Assignability.** `int` -> `float` is implicit (coerced). Everything converts implicitly to `string` (a `ToString` like in C#). Anything else between known types is a conflict.
 * **Units** (step 4): if both types are known and only the unit is not, the site is a *unit adaptation* `b = AdaptUnit(a, targetUnit)` with three outcomes: same unit -> `a` unchanged;

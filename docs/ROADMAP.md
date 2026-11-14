@@ -1159,7 +1159,44 @@ Offen:
 * **`string`, Enums, Lambdas mit Signatur** (`string names[]`, `Color c[]`, `lambda<int, int> fs[]`) ebenso.
 * **`defined` für sie**: `defined Dog pets[]` - kein Element ist undefined. Offen ist, womit ein neues Array beginnt (kein Nullwert für Objekte:
   nur mit Initialisierer oder `new Dog[n]` mit einem Erzeuger, `""` für string, der erste Wert eines Enums).
-* **Typparameter** (`T items[]` in generischem Code) nach dem Typargument, das läuft (heute `TypeArrayOfParam` nur für Zahlen); damit können `List<T>`,
-  `Dictionary<K, V>` ihre inneren Arrays deklarieren statt `any`.
+* **Typparameter** (`T items[]` in generischem Code): als Feld **umgesetzt** für Zahlen-Typargumente (FieldInfo.ArrayOfParam: jede Zuweisung typisiert
+  nach dem Typargument des Objekts, wie `new T[n]`; `List<T>` deklariert so `T items[]`). Offen: ein Klassen-/string-Typargument prüft die Elemente
+  noch nicht; `Dictionary<K, V>`/`HashSet<T>` haben ihre Arrays noch als `any`.
 * Mehrdimensional (`Dog grid[][]`), JSON, Reflection, `copy`/`taking` wie bei den Zahlen-Arrays; Meldungen in VM und nativ gleich.
 
+## 20. `defined` für Felder herleiten: Basisklassen
+
+**Umgesetzt** (SPEC 8.10b): ein Feld der Klassen des Programms, dem jede Zuweisung eine Zahl gibt, wird wie `defined` übersetzt; eines ohne
+Initialisierer nur, wenn jeder Konstruktor es als Erstes setzt (vor jedem Aufruf und jedem Lesen) und die Klasse **keine Basisklasse** hat.
+
+Mit JSON und Reflection (Wunsch des Benutzers): ohne Zutun bleibt eine Klasse dann wie deklariert (JSON macht Objekte ohne Konstruktor, `$type`
+kann jede Klasse nennen; Reflection erreicht jedes Mitglied per Name); `[InferDefined]` vor der Klasse - auch in einem Paket - schaltet die Herleitung
+für sie ein, und was von außen kommt, wird geprüft (Meldung nennt die Herleitung, JSON: fehlend 0, `null` ein Fehler). SPEC 8.10b, TYPES.md.
+
+Offen (Wunsch des Benutzers, später): auch Klassen mit Basisklasse zulassen - dafür prüfen, ob der Konstruktor der Basisklasse (und was er aufruft,
+auch eine überschriebene Methode der abgeleiteten Klasse) über Umwege auf das Feld zugreift, bevor der eigene Konstruktor es gesetzt hat.
+
+## 21. Typisierte Spezialisierungen generischer Methoden
+
+**Umgesetzt** (SPEC 5.8.1): `undefined Add<int>(defined int item)` neben `Add(T item)` in `class List<T>` - gewählt nach den Typargumenten des
+Objekts und den Argumenten (ein `defined`-Parameter nimmt kein undefined; sonst die generische Methode), in der VM bei jedem Aufruf, nativ an der
+Aufrufstelle, wenn die Klasse bekannt ist (Test der Typargumente, dann der C-Rumpf), sonst im Trampolin der generischen Methode. `List<int>` und
+`List<float>` haben `Add`, `operator[]` (lesen und schreiben) und `Grow` so.
+
+Kennt der Typprüfer die Typargumente des Empfängers (`List<int> l; l[i]`), steht das in einer Seitentabelle des Chunks (Chunk.ReceiverTypeArgs,
+kein Befehl): nativ ist das Ergebnis von `l[i]` dann eine Zahl (int oder undefined) - der Rückfall auf die generische Methode wird darauf geprüft.
+
+Gemessen (nativ, Release, 1 Mio., die Maschine war belastet - Instruktionen mit callgrind: 856 → 526 Mio. für den ganzen Lauf):
+`List<int>.Add` 61 → etwa 21 ns, `l[i]` 28 → etwa 17 ns, `l[i] = v` etwa 7 ns, `List<float>.Add` etwa 42 → 22 ns (eine Klasse mit
+`defined int items[]`: Add 20 ns, Get 3 ns - dort ist das Ergebnis `defined`, der Aufruf wird eingebettet).
+
+Offen:
+
+* `l[i]` noch näher an 3 ns: der Test der Typargumente ist eingebettet (`static inline`); es bleibt der Aufruf des Rumpfs mit einem `Value` als Ergebnis.
+* `Grow` kopiert Element für Element (etwa 60 Instruktionen je Element): ein Kopieren der gepackten Daten am Stück.
+* Methoden mit Ergebnis (`l.Get(i)`-artig) an der Aufrufstelle wie `l[i]` typisieren (der Hinweis steht schon in der Tabelle).
+* `Dictionary<K, V>`/`HashSet<T>`: **umgesetzt** `K keys[]`/`V vals[]` (nach den Typargumenten typisiert), die Hilfsarrays `defined int`/`defined bool`,
+  `HashOf<int, any>`/`Find<int, any>`/`Insert<int, any>` im `__HashTable` (der Platzhalter `any` in Spezialisierungen ist dafür neu), `arraySet`
+  schreibt eine Zahl ohne Einheit direkt in ein gepacktes int-/float-Array, `adaptSlot`/`adaptUnit` lassen eine Zahl in ihrer Einheit ohne Aufruf durch.
+  `Dictionary<int, int>` mit 200 000 Einträgen (setzen, lesen) und `HashSet<int>` (Add, Contains): 1959 → 1237 Mio. Instruktionen. Offen: der Wert
+  geht noch als `any` in die Tabelle (`Insert<int, int>` usw. für die häufigen Paare), `Resize` kopiert Element für Element.

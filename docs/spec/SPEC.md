@@ -223,7 +223,10 @@ does not pass on there (`TC018`: the value dies with the setter on that path). A
   running call (a local, an argument the call was given with `take` or as the result of a call, a statement temporary), or to `this`; at the top level also to the global scope. Otherwise nothing
   changes - the value keeps its owner and is still passed or assigned as a reference. A destroyed value is not taken and does not throw (unlike `take`). A function can thereby keep
   what is handed to it without stealing from the caller: `undefined Keep(Item i) { this.held = try take i }` keeps `b.Keep(new Item())` and `b.Keep(take mine)`, but leaves `b.Keep(mine)` with the caller.
-  Like `take` it is allowed only as an argument of a call and on the right of `=` / `var a =`.
+  Like `take` it is allowed only as an argument of a call and on the right of `=` / `var a =`. **As a value, `a = try take x` is a `bool`**: whether the
+  ownership moved (`if (this.item = try take i) { ... }`, `return this.other = try take i`) - not the value assigned, which `a` holds anyway; the type checker
+  types it so and does not warn about it as a condition (TC009). `a = take x` keeps the value of an assignment. (VM: OpCode.TookResult after the store reads
+  what the TryTakeTo* before it found; natively a local `took_` of the function.)
 - `obj.TakeTo(other)` – the owner becomes `other` (an object instance).
 - All four are built-in methods of every object instance - and of every array and buffer (`TakeTo(obj)` needs an object as the target; a class that declares a method of the same name itself takes precedence). A function can thereby keep an object that belongs to it (e.g. a copy passed as a parameter, 2.4): `param.TakeTo(this)`.
 - **What travels along.** Every one of them takes a last argument of the enum `Takes` (always available): `TakeLocal(Takes.Locals)`, `TakeUpwards(Takes.Children)`, `TakeTo(obj, Takes.All)`, `TakeGlobal(Takes.This)`. Without it the mode is `Takes.This`.
@@ -1051,6 +1054,43 @@ ambiguous with `<`/`>` as comparison operators at normal expression positions
 follow directly after the class name, which makes it unambiguous). A
 generic method is therefore called quite normally without `<...>`.
 
+### 5.8.1 Typed specializations (`Add<int>(int item)`)
+
+A generic class can give a method its own body for particular type arguments: concrete types in angle brackets after the
+method name (or after `operator[]` etc.), for **all** type parameters of the class, in their order.
+
+```fire
+class Box<T> {
+    T items[]
+    construct() { this.items = new T[8] }
+    undefined Put(int i, T value) { this.items[i] = value }                  // every type argument
+    undefined Put<int>(int i, defined int value) { this.items[i] = value }   // a Box<int>: no owner to take, raw ints
+    T operator[](int i) { return this.items[i] }
+    int operator[]<int>(defined int i) { return this.items[i] }
+}
+```
+
+- A specialization stands **beside** the generic method of the same name and number of parameters (before or after it in
+  the class); without one that is an error. It is not a method of its own: a call always names the generic method
+  (`b.Put(1, 5)`, `b[1]`) - `Put<int>(...)` is no call syntax.
+- A call runs the specialization when the type arguments **of the object** are exactly those written (`Box<int>`; not
+  `Box<int : cm>`, not `Box<float>`) **and** every argument fits its parameters - a `defined` parameter takes no `undefined`;
+  otherwise the generic method runs. So the result of a program is the same with or without the specialization; it only
+  says how a case is done faster or more simply.
+- Only plain types can be written (`int`, `float`, `bool`, `char`, `string`, `byte`, `word`) - no width, no unit, no
+  `defined`. `any` leaves a type argument open (`Find<int, any>` in `class Table<K, V>`: every table with int keys); at
+  least one must be fixed. A static method cannot be specialized (it has no object).
+- The VM chooses at every call; natively the call site chooses when the class of the object is known (a test of its type
+  arguments, then the C body of the specialization), every other way in goes through the generic method, which chooses first.
+- `T name[]` (a field holding an array of a type parameter) is typed by the type argument at every assignment, like
+  `new T[n]`: in a `Box<int>` it holds an array of raw ints. In a specialization the native backend therefore knows the
+  element type and reads and writes the elements directly.
+- The standard library uses this: `List<int>` and `List<float>` have `Add`, `operator[]` (read and write) and their growing specialized;
+  the table behind `Dictionary` and `HashSet` has its hash, its search and its insertion specialized for int keys.
+- Where the type checker knows the type arguments of the receiver (`List<int> l; l[i]`), the compiler notes them beside the code (no
+  instruction); natively the result of `l[i]` is then a number - a generic `operator[]` that runs instead (an object whose type arguments
+  differ after all) is checked to give one.
+
 ### 5.9 `switch` statement (with comparison operators)
 
 ```
@@ -1200,7 +1240,8 @@ properties - nowhere else. Reflection lists them for every member (`Member.Attri
 `Reflect.New(name)`; before a class: the class with all its members, before a member: that member and its class; not inherited; a name given as a literal to
 reflection - `Reflect.New("X")`, `Reflect.Call(o, "M")` - is kept the same way without it; the VM keeps everything anyway; how much a native build leaves out is its
 stripping level 0-3, [Natives Backend (AOT): fire -> C](NATIVE_BACKEND.md) "Größe des Programms"); `[NotSerializable]` (before a class) - `#import "json"` neither writes nor reads objects of the class or of a class
-derived from it (an `ArgumentException`; a package does the same for all its classes with `"serializable": false`, [JSON](../stdlib/json.md)); `[NoCopy]` (before a class) -
+derived from it (an `ArgumentException`; a package does the same for all its classes with `"serializable": false`, [JSON](../stdlib/json.md)); `[InferDefined]` (before a class, also in a package) - its fields and the parameters of its methods are
+derived `defined` (8.10b) although the program reads JSON or uses reflection; `[NoCopy]` (before a class) -
 an instance stands for something that exists once (a resource, a handle): `flat`/`copy` never duplicate it, also not of a class derived from it (an
 `ArgumentException`, 2.4; inherited because a subclass of a resource is still that resource; `NativeHandle` is `[NoCopy]`; the copies of the threads -
 `taking`, the arguments of `fire global`, what `sync` copies back, the isolated copy of the globals for a host callback after the end of the program - refuse it the same way before anything is copied). A `[` on a new line after a declaration (`int count` + newline + `[Test]`) starts an attribute, it never continues the
@@ -2416,6 +2457,21 @@ front of the type it **never holds `undefined`**: a parameter, a field, a proper
   a word of its own only there (a variable may still be called `defined`). Of an array (`defined int a[]`) it says that
   the elements are never undefined (8.4.2); not for a pointer or a type argument (`List<defined int>` is an error). `int!` is an error
   that names `defined int`. Overloads do not differ by `defined` alone.
+* **Derived for fields** (not in a debug build; `FIRE_NO_DERIVE=1` switches all derivation off): a field of a
+  class of the program declared `int`, `float` or `bool` without `defined` is compiled as a `defined` one when every write the type checker sees
+  gives a number (or the result of a method, a parameter or another field that is derived itself) and none can write it unseen (`&`, a `ref`
+  argument, `with`, `Json.Deserialize` in the program). With a number literal as initializer it keeps it; one without an initializer only when its `undefined` cannot
+  be seen: every constructor of its class (no base class) sets it among its first plain statements - before any call, `this` handed out or read of
+  it - and the program does not ask for it (`== undefined`, `is of`, `?.` on the name); it starts at 0 then. `FIRE_INFER_UNINITIALIZED_DEFINED=0` leaves out the fields without an initializer; `FIRE_DERIVE_LOG=1` shows the decisions.
+  **JSON and reflection** can write a field or call a method past what the checker sees: a program that reads JSON into objects
+  (`Json.Deserialize`, also in a package it uses) derives no field, one that uses reflection (`reflection`, also through `ui`, `data`, ...) no field
+  and no parameter, and a method whose name is in a string keeps its parameters as declared - unless the class says otherwise with
+  **`[InferDefined]`** (before the class, also a class of a package - there only its fields). Its fields and parameters are derived as above, and
+  what comes from outside is checked: `Reflect.Set` and `Reflect.Call` check the declared kind as always (strictly) and `undefined` as for `defined`,
+  and the `ArgumentException` says so ("Field 'count' (derived as never undefined: nothing in the program stores undefined in it) is an int and
+  never undefined."); `Json.Deserialize` leaves a derived field that is not in the text at 0 (reading JSON runs no initializers - not the
+  initializer's value) and a `null` for it is an `ArgumentException` with the same note. A package that fills objects by reflection (`data`: a
+  `NULL` column) then gets that exception too.
 
 **The type checker** (docs/spec/TYPES.md) knows what is certainly defined - a literal, what an operator computes (an
 undefined operand throws), a `defined` declaration, a call of a method with a `defined` return value - and what may be

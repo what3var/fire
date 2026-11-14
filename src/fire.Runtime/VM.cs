@@ -668,6 +668,8 @@ namespace fire.Runtime
 
         // (rule 10: the value of the last `x = take v` / `obj.f = take v` of this fire thread - its store into the main program's globals moves it there)
         private object? _pendingGlobalTake;
+        /// <summary>Whether the last TryTakeToScope/Object/Array moved its value - OpCode.TookResult right after the store pushes it (`a = try take x`).</summary>
+        private bool _took;
 
         /// <summary>Rule 10 (docs/ROADMAP_TASKS.md step 8): what a fire thread writes into the main program's globals (a global variable, a field of one
         /// of their objects) goes there - a value as it is; an object (array, buffer, lambda) of this thread only when it is fresh (`new`, a call's
@@ -2566,6 +2568,8 @@ namespace fire.Runtime
         /// `dropBelow`) removed from the stack. Only for calls with EXACTLY the matching argument count (no default value needed).</summary>
         private void EnterCall(FunctionProto proto, int argCount, bool dropBelow, object? newThis, ObjectInstance? constructed = null, long copyMask = 0, LambdaValue? lambda = null)
         {
+            // (a typed specialization - `Add<int>` for a List<int> - runs instead of the generic body: SPEC 5.8.1)
+            if (proto.Specializations != null && newThis is ObjectInstance specObj) proto = SpecializationFor(proto, specObj, _stack.AsSpan(_sp - argCount, argCount));
             var captures = lambda?.Captures;
             int captureCount = captures?.Length ?? 0;
             int paramCount = argCount + captureCount;
@@ -3515,13 +3519,24 @@ namespace fire.Runtime
                     if (!AdaptFieldUnit(ref value, requiredUnitName)) return false;
                 }
                 byte requiredKind = obj.RtClass?.FindFieldRequiredKind(fieldName) ?? 0;
-                if (!GuardFieldKind(ref value, requiredKind, fieldName)) return false;
+                if (!GuardFieldKind(ref value, requiredKind, fieldName, obj.RtClass)) return false;
                 string? requiredType = obj.RtClass?.FindFieldRequiredType(fieldName);
                 if (!GuardFieldType(ref value, requiredType, fieldName, obj)) return false;
                 if (obj.RtClass?.FindFieldRequiredArray(fieldName) is { } requiredArray and not 0)
                 {
                     hasUnitRule = true;   // (a typed array: every assignment types it - do not cache)
                     if (!GuardFieldArray(value, requiredArray, obj.RtClass.FindFieldRequiredUnit(fieldName))) return false;
+                }
+                else if (obj.RtClass?.FindFieldArrayOfParam(fieldName) is { } arrayOfParam)
+                {
+                    hasUnitRule = true;
+                    if (!GuardFieldArrayOfParam(value, arrayOfParam, obj)) return false;
+                }
+                else if (obj.RtClass != null && BufferFieldWords(obj.RtClass, fieldName) is { } bufferWords)
+                {
+                    // `byte data[]` / `word w[]`: a buffer - what the compiler converts at every store of the name, also for a store by name (Reflect.Set)
+                    hasUnitRule = true;
+                    if (!ConvertFieldBuffer(ref value, bufferWords, obj)) return false;
                 }
                 if (site >= 0 && !hasUnitRule && obj.RtClass != null && obj.AccessGuard == null && !obj.RtClass.IsRecord
                     && obj.RtClass.FieldIndex.TryGetValue(fieldName, out int setIndex))
@@ -3628,13 +3643,23 @@ namespace fire.Runtime
                 }
             }
             byte requiredKind = oi.RtClass?.FindFieldRequiredKind(fieldName) ?? 0;
-            if (!GuardFieldKind(ref value, requiredKind, fieldName)) return;
+            if (!GuardFieldKind(ref value, requiredKind, fieldName, oi.RtClass)) return;
             string? requiredType = oi.RtClass?.FindFieldRequiredType(fieldName);
             if (!GuardFieldType(ref value, requiredType, fieldName, oi)) return;
             if (oi.RtClass?.FindFieldRequiredArray(fieldName) is { } requiredArray and not 0)
             {
                 hasUnitRule = true;   // (a typed array: every assignment types it - do not cache)
                 if (!GuardFieldArray(value, requiredArray, oi.RtClass.FindFieldRequiredUnit(fieldName))) return;
+            }
+            else if (oi.RtClass?.FindFieldArrayOfParam(fieldName) is { } arrayOfParam)
+            {
+                hasUnitRule = true;
+                if (!GuardFieldArrayOfParam(value, arrayOfParam, oi)) return;
+            }
+            else if (oi.RtClass != null && BufferFieldWords(oi.RtClass, fieldName) is { } bufferWords)
+            {
+                hasUnitRule = true;
+                if (!ConvertFieldBuffer(ref value, bufferWords, oi)) return;
             }
 
             if (!hasUnitRule && oi.RtClass != null && oi.ThreadLock == null && !oi.RtClass.IsRecord
@@ -3860,6 +3885,8 @@ namespace fire.Runtime
                     forwarder = null;
                 StoreSite(site, new SiteCache(obj.RtClass, proto, 0, forwarder, forwarderField, guard: _hintTaken));
             }
+            // (the site keeps the generic method - List<int> and List<float> share the class; EnterCall picks per object)
+            if (proto.Specializations != null) proto = SpecializationFor(proto, obj, args);
             args = FillDefaultArgs(proto, args, obj);
 
             _frames.Push(new CallFrame(_currentChunk, _ip, _currentScope, _currentThis, null));
@@ -4161,6 +4188,7 @@ namespace fire.Runtime
                 return;
             }
             CheckArity(proto, args.Length);
+            if (proto.Specializations != null && _currentThis is ObjectInstance baseThis) proto = SpecializationFor(proto, baseThis, args);
             args = FillDefaultArgs(proto, args, _currentThis);
 
             // 'this' remains the same object (non-virtual call).
@@ -5327,25 +5355,32 @@ namespace fire.Runtime
                 case OpCode.TryTakeToScope:
                 {
                     int depth = ReadU16();
-                    if (OwnedByRunningCall(_stack[_sp - 1])) OwnershipWalk.TakeValue(_stack[_sp - 1], depth == 0xFFFF ? _globalScope : _currentScope.GetAncestor(depth), this);
+                    _took = OwnedByRunningCall(_stack[_sp - 1]);
+                    if (_took) OwnershipWalk.TakeValue(_stack[_sp - 1], depth == 0xFFFF ? _globalScope : _currentScope.GetAncestor(depth), this);
                     break;
                 }
                 case OpCode.TryTakeToObject:
                 {
                     var holder = RequireObjectInstance(_stack[_sp - 2], "take");
-                    if (OwnedByRunningCall(_stack[_sp - 1])) OwnershipWalk.TakeValue(_stack[_sp - 1], holder, this);
+                    _took = OwnedByRunningCall(_stack[_sp - 1]);
+                    if (_took) OwnershipWalk.TakeValue(_stack[_sp - 1], holder, this);
                     break;
                 }
                 case OpCode.TryTakeToArray:
                 {
                     var holder = _stack[_sp - 3];
                     if (IsDestroyedLeaf(holder)) { ThrowDestroyed(holder); break; }
-                    if (holder.Kind == ValueKind.Array && OwnedByRunningCall(_stack[_sp - 1])) OwnershipWalk.TakeValue(_stack[_sp - 1], holder.AsArray(), this);
+                    _took = false;
+                    if (holder.Kind == ValueKind.Array && OwnedByRunningCall(_stack[_sp - 1])) { OwnershipWalk.TakeValue(_stack[_sp - 1], holder.AsArray(), this); _took = true; }
                     // (`obj[k] = try take v` of an object with an indexer: the object owns the value, like natively)
                     else if (holder.Kind == ValueKind.Class && holder.AsObjectRef() is ObjectInstance { IsDestroyed: false } indexed && OwnedByRunningCall(_stack[_sp - 1]))
-                        OwnershipWalk.TakeValue(_stack[_sp - 1], indexed, this);
+                    { OwnershipWalk.TakeValue(_stack[_sp - 1], indexed, this); _took = true; }
                     break;
                 }
+                // `a = try take x` as a value (SPEC 2.2): whether it moved
+                case OpCode.TookResult:
+                    Push(Value.MakeBool(_took));
+                    break;
 
                 case OpCode.ReleaseTemps:
                     _currentScope.ReleaseTemps(this);
@@ -6857,6 +6892,7 @@ namespace fire.Runtime
                 return null;
             }
             CheckArity(proto, args.Length);
+            if (proto.Specializations != null) proto = SpecializationFor(proto, obj, args);   // (`list[i]` of a List<int>: `operator[]<int>`)
             args = FillDefaultArgs(proto, args, obj);
 
             var savedChunk = _currentChunk;
@@ -7236,7 +7272,7 @@ namespace fire.Runtime
                 && rc.FindFieldRequiredKind(field.FieldName) is var kind and not 0 && DeclaredKind.IsNonNull(kind))
             {
                 if (rc.FindFieldRequiredUnit(field.FieldName) is { } unit && !AdaptFieldUnit(ref value, unit)) return false;
-                if (!GuardFieldKind(ref value, kind, field.FieldName)) return false;
+                if (!GuardFieldKind(ref value, kind, field.FieldName, rc)) return false;
             }
             try { ptr.AsPointer().Write(value); return true; }
             catch (PointerRangeException ex) { ThrowPointerRange(ex); return false; }
@@ -7554,13 +7590,41 @@ namespace fire.Runtime
         private void ThrowConditionError(Value condition) => ThrowArgumentError($"A condition must be a bool, not {condition.Kind}.");
 
         /// <summary>A field declared int/float/bool takes a value of that kind or undefined (DeclaredKind); false: an ArgumentException is thrown.</summary>
-        private bool GuardFieldKind(ref Value value, byte requiredKind, string fieldName) =>
-            DeclaredKind.Fits(value, requiredKind) || GuardDeclared(ref value, requiredKind, $"Field '{fieldName}'");
+        private bool GuardFieldKind(ref Value value, byte requiredKind, string fieldName, RuntimeClass? rc = null) =>
+            DeclaredKind.Fits(value, requiredKind) || GuardDeclared(ref value, requiredKind, rc?.FieldWhat(fieldName) ?? $"Field '{fieldName}'");
 
         /// <summary>A field declared as a typed array (FieldInfo.RequiredArray) holds an array of that element or undefined: the array is typed like by OpCode.TypeArray;
         /// false: the ArgumentException is thrown.</summary>
         private bool GuardFieldArray(Value value, ushort requiredArray, string? unit) =>
             requiredArray == 0 || TypeArrayValue(value, (byte)(requiredArray & 0xFF), requiredArray >> 8, unit, 1);
+
+        /// <summary>An array stored by name into a buffer field (Reflect.Set): the buffer it becomes (BufferFromArrayValue) belongs to the object - like the
+        /// buffer of a compiled store, which the field claims (the array stays with its owner).</summary>
+        private bool ConvertFieldBuffer(ref Value value, bool words, ObjectInstance obj)
+        {
+            var before = value;
+            if (!BufferFromArrayValue(ref value, null, 1, 1, words)) return false;
+            if (before.Kind == ValueKind.Array && value.Kind == ValueKind.Buffer)
+                LeafOwnership.Adopt(value.AsBuffer(), obj);
+            return true;
+        }
+
+        /// <summary>A field declared `byte data[]` (false) or `word w[]` (true) - a buffer (FieldInfo.TypeText); null for any other field.</summary>
+        private static bool? BufferFieldWords(RuntimeClass rc, string name)
+        {
+            for (var c = rc; c != null; c = c.Base)
+                if (c.OwnFieldInfo.TryGetValue(name, out var field))
+                    return field.IsStatic ? null : field.TypeText switch { "byte[]" or "uint8[]" => false, "word[]" => true, _ => null };
+            return null;
+        }
+
+        /// <summary>A field declared `T items[]` (FieldInfo.ArrayOfParam, `$k@Class`): the array is typed by the type argument of the object, like `new T[n]`.</summary>
+        private bool GuardFieldArrayOfParam(Value value, string arrayOfParam, ObjectInstance obj)
+        {
+            int at = arrayOfParam.IndexOf('@');
+            string? typeArg = DeclaredType.TypeArgOf(obj, arrayOfParam.Substring(at + 1), int.Parse(arrayOfParam.AsSpan(1, at - 1)));
+            return typeArg == null || DeclaredType.TypedElementOf(typeArg) is not int code || TypeArrayValue(value, (byte)(code & 0xFF), 1, null, 1);
+        }
 
         /// <summary>GuardLocal: the end of the prologue - a parameter declared int/float/bool holds that kind or undefined (DeclaredKind).</summary>
         private void OpGuardLocal()
@@ -7800,6 +7864,20 @@ namespace fire.Runtime
                 if (r.Interfaces.Any(i => i == wanted || GenericClassNames.PlainName(i) == GenericClassNames.PlainName(wanted))) return true;
             }
             return false;
+        }
+
+        /// <summary>The specialization of a method for the type arguments of the object (`Add<int>` of a List<int>), the method itself when none fits.</summary>
+        private static FunctionProto SpecializationFor(FunctionProto proto, ObjectInstance obj, ReadOnlySpan<Value> args)
+        {
+            foreach (var spec in proto.Specializations!)
+            {
+                bool fits = spec.SpecArgs != null && args.Length == spec.ParamCount;
+                for (int i = 0; fits && i < args.Length && i < 64; i++)
+                    fits = spec.SpecParamKinds is { } kinds && i < kinds.Length ? DeclaredKind.Fits(args[i], kinds[i]) : (spec.SpecDefinedMask >> i & 1) == 0 || args[i].Kind != ValueKind.Undefined;
+                for (int k = 0; fits && k < spec.SpecArgs!.Length; k++) fits = spec.SpecArgs[k] == "any" || DeclaredType.TypeArgOf(obj, spec.SpecOwner!, k) == spec.SpecArgs[k];
+                if (fits) return spec;
+            }
+            return proto;
         }
 
         private string TypeArgOfParam(string text)

@@ -62,8 +62,10 @@ class JsonObject {
         return this.values[i]
     }
 
-    /// <summary>Sets a member (a new one goes to the end).</summary>
+    /// <summary>Sets a member (a new one goes to the end). The JsonObject takes what belongs to the call (an object, an array made for it, `take x`) -
+    /// like List.Add: it lives as long as the JsonObject, also when it was made in an inner block.</summary>
     undefined Set(string key, any value) {
+        if (!(value is of float || value is of int || value is of bool)) { try value??.TakeTo(this) }
         int i = this.IndexOf(key)
         if (i >= 0) {
             this.values[i] = value
@@ -76,8 +78,15 @@ class JsonObject {
                 newKeys[j] = this.keys[j]
                 newValues[j] = this.values[j]
             }
+            // (the new arrays belong to the JsonObject - a local array dies with this method - the old ones are released)
+            any oldKeys = this.keys
+            any oldValues = this.values
             this.keys = newKeys
             this.values = newValues
+            newKeys.TakeTo(this)
+            newValues.TakeTo(this)
+            delete oldKeys
+            delete oldValues
         }
         this.keys[this.count] = key
         this.values[this.count] = value

@@ -323,6 +323,9 @@ namespace Http {
             this.headers = new Http.Headers()
             this.url = ""
             this.body = Http.Response.Bytes(body)
+            // (a body that belongs to this call - `new Http.Response(202, new byte[0])`, a buffer made for it - belongs to the response; one of the
+            // caller stays the caller's: the response refers to it)
+            try this.body.TakeTo(this)
             this.stream = undefined
             this.streamLength = -1
             this.upgrade = undefined

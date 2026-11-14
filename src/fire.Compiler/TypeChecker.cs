@@ -186,6 +186,35 @@ namespace fire.Compiler
         private readonly Dictionary<Expr, string[]> _methodTypeArgs;
         private readonly Dictionary<Expr, (TypeRef Type, string What)> _localGuards;
         private readonly Dictionary<Expr, string> _overloadHints;
+        private Dictionary<Expr, string>? _receiverTypeArgs;
+        private HashSet<string>? _specializedClasses;
+
+        /// <summary>A receiver of a class with typed specializations (SPEC 5.8.1) whose type arguments are plain value types or string (`List&lt;int&gt;`):
+        /// noted for the call or index access `at` (ResolveResult.ReceiverTypeArgs).</summary>
+        private void NoteReceiverTypeArgs(Expr at, StaticType receiver)
+        {
+            if (_receiverTypeArgs == null || receiver.Kind != StaticKind.Class || receiver.Class == null || receiver.Args is not { Count: > 0 } args) return;
+            _specializedClasses ??= _classes.Values.Where(cd => cd.Members.Any(m => m is MethodDecl { Specialization: not null })).Select(cd => cd.Name).ToHashSet(StringComparer.Ordinal);
+            if (!_specializedClasses.Contains(receiver.Class)) return;
+            var texts = new List<string>();
+            foreach (var a in args)
+            {
+                string? text = a.Kind switch
+                {
+                    StaticKind.Int when Plain(a) => "int",
+                    StaticKind.Float when Plain(a) => "float",
+                    StaticKind.Bool => "bool",
+                    StaticKind.Char => "char",
+                    StaticKind.String => "string",
+                    _ => null,
+                };
+                if (text == null) return;
+                texts.Add(text);
+            }
+            _receiverTypeArgs[at] = string.Join("|", texts);
+            // (a number without a unit: `List<int>`, not `List<int : cm>`)
+            static bool Plain(StaticType t) => t.Wide == 0 && !t.UnitIsDimension && (t.Unit == null || ReferenceEquals(t.Unit, fire.Values.Unit.Unitless) || t.Unit.IsUnitless && t.Unit.ToString() == "unitless");
+        }
         /// <summary>The declared types of the local variables (by scope, like _scopes): a value whose type does not prove the declaration is checked at runtime.</summary>
         private readonly List<Dictionary<string, TypeRef>> _localTypes = new();
         private readonly Dictionary<int, bool> _strictBySource = new();
@@ -242,8 +271,10 @@ namespace fire.Compiler
                 if (stmt is TypeCheckDirective d) checker._strictBySource[d.Source] = d.Strict;
             checker.CollectInterfaces(program);
             checker._refs = resolved.References;
+            checker._receiverTypeArgs = resolved.ReceiverTypeArgs;
             checker._trees = resolved.Trees;
             checker._scopes.Add(new Dictionary<string, StaticType>());
+            checker._program = program;
             foreach (var stmt in program)
             {
                 checker._source = stmt.Source;
@@ -260,7 +291,8 @@ namespace fire.Compiler
         // it unseen: not when a call of that name could not be resolved (a receiver of an unknown type, `any`), when the name is used as a value (a method
         // as a lambda) or appears as a string (reflection, callbacks by name), when a package or the prelude has a method of that name and arity (the run
         // time or a package may call it), for the methods the language calls itself (indexers, CompareTo, ...), nor for the constructors of a class that
-        // is a base class. The Linker switches it off for a program that uses reflection, for a module or plugin, and in a debug build.
+        // is a base class, nor - without [InferDefined] on the class (InferDefinedClass) - when the program uses reflection. The Linker switches it off for a
+        // module or plugin and in a debug build.
 
         /// <summary>Whether the check derives `defined` for the parameters of the program (FIRE_NO_DERIVE=1 switches it off).</summary>
         [ThreadStatic] public static bool? DeriveDefinedOverride;
@@ -281,6 +313,9 @@ namespace fire.Compiler
             // (a method of the program - or an override of it in the program: the key is its name and arity; one of a package or the prelude is not derived)
             CallExpr c when _callTargets.TryGetValue(c, out var md) && md.Source >= _firstUserSource => "ret:" + MethodKey(md.Name, md.Params.Count),
             IdentifierExpr id when _plainParams != null && _plainParams.TryGetValue(id.Name, out var p) && !IsLocalShadow(id) => ParamId(p),
+            // (a field that may be derived itself: DeriveFields)
+            MemberExpr m when DeriveDefined && FieldNeed(m, m.Name) is { } fieldKey => fieldKey,
+            IdentifierExpr fid when DeriveDefined && IsFieldRef(fid) && FieldNeed(fid, fid.Name) is { } bareKey => bareKey,
             _ => null,
         };
         private bool IsLocalShadow(IdentifierExpr id) => false;   // (PlainParams leaves out a parameter whose name the body declares again)
@@ -354,7 +389,7 @@ namespace fire.Compiler
                     string key = MethodKey(m.Name, m.Params.Count);
                     (decls.TryGetValue(key, out var list) ? list : decls[key] = new List<MethodDecl>()).Add(m);
                     bool number = m.ReturnType is { PointerDepth: 0, ArrayRank: 0, LambdaSignature: null, TypeArgs: null, BaseName: "int" or "float" };
-                    if (decl.Source < _firstUserSource || !number || foreign!.Contains(key) || foreign.Contains("*") || _unseenNames.Contains(m.Name) || _stringLiterals.Contains(m.Name)
+                    if (decl.Source < _firstUserSource || !number || foreign!.Contains(key) || foreign.Contains("*") || _unseenNames.Contains(m.Name)
                         || CalledByTheLanguage.Contains(m.Name) || !_returns.TryGetValue(m, out var r) || !r.Ends && m.ReturnType is not { NonNull: true })
                         blocked.Add(key);
                 }
@@ -372,6 +407,9 @@ namespace fire.Compiler
                         if (seen.Defined[j] && Derivable(parameters[j])) { ok.Add(ParamId(parameters[j])); paramNeeds[ParamId(parameters[j])] = seen.Needs[j] ?? new List<string>(); }
                 }
             }
+            // the fields that may be derived (every write gave a number, or something that depends on other returns, parameters or fields)
+            foreach (var fd in FieldCandidates().Values.SelectMany(l => l))
+                if (!_fieldBad.Contains(fd)) { ok.Add(FieldKey(fd)); paramNeeds[FieldKey(fd)] = _fieldNeeds.TryGetValue(fd, out var fieldNeeds) ? fieldNeeds : new List<string>(); }
             // a greatest fixpoint: what depends on something that is not certain is not either
             for (bool changed = true; changed;)
             {
@@ -394,13 +432,18 @@ namespace fire.Compiler
             {
                 if (member is MethodDecl m)
                 {
-                    if (_unseenNames.Contains(m.Name) || _stringLiterals.Contains(m.Name) || CalledByTheLanguage.Contains(m.Name) || m.Name.StartsWith("operator", StringComparison.Ordinal)) { DeriveLog?.Invoke($"{name}.{m.Name}: reached unseen (name used as a value, a string, by the language or by a call not resolved)"); continue; }
+                    if (_unseenNames.Contains(m.Name) || CalledByTheLanguage.Contains(m.Name) || m.Name.StartsWith("operator", StringComparison.Ordinal)) { DeriveLog?.Invoke($"{name}.{m.Name}: reached unseen (name used as a value, by the language or by a call not resolved)"); continue; }
+                    // (a name in a string - `Reflect.Call(o, "Scale", [..])`, a handler named in markup - or reflection at all: a call by name may give
+                    // anything. With [InferDefined] it may not: such a call goes through the check the derived parameter is compiled with, and undefined
+                    // there is the ArgumentException that names the derivation, RuntimeClass.DerivedParameterWhat)
+                    if (!InferDefinedClass(decl) && (ReflectionUsed || _stringLiterals.Contains(m.Name))) { DeriveLog?.Invoke($"{name}.{m.Name}: {(ReflectionUsed ? "the program uses reflection" : "its name is in a string")} (no [InferDefined])"); continue; }
                     string key = MethodKey(m.Name, m.Params.Count);
                     if (foreign.Contains(key) || foreign.Contains("*")) { DeriveLog?.Invoke($"{name}.{m.Name}: overrides or implements one of a package or the prelude"); continue; }
                     yield return (key, m.Params);
                 }
                 else if (member is ConstructorDecl c)
                 {
+                    if (!InferDefinedClass(decl) && ReflectionUsed) { DeriveLog?.Invoke($"{name} constructor: the program uses reflection - Reflect.New (no [InferDefined])"); continue; }
                     if (_baseClasses.Contains(name) || _baseClasses.Contains(PlainName(name)) || _unseenCtors.Contains(name)) { DeriveLog?.Invoke($"{name} constructor: a base class, or a `new` not resolved"); continue; }
                     yield return (CtorKey(name, c.Params.Count), c.Params);
                 }
@@ -413,6 +456,204 @@ namespace fire.Compiler
 
         private static bool Derivable(LambdaParam p) => p is { ByRef: false, Type: { NonNull: false, PointerDepth: 0, ArrayRank: 0, LambdaSignature: null, TypeArgs: null, BaseName: "int" or "float" } }
             && p.ArrayRanks.Count == 0;
+
+        // ---- deriving `defined` for fields (#117): a field of a class of the program declared `int`/`float`/`bool` without `defined` is one when every
+        // write gives a number (or a value that depends on returns, parameters or fields that are derived) and nothing writes it unseen (a pointer, `ref`,
+        // `with`, JSON); one without an initializer starts at 0 then (FIRE_INFER_UNINITIALIZED_DEFINED=0: only fields with a constant initializer) - not when
+        // the program asks whether it is undefined (`== undefined`, `is of`, `?.`). Natively such a field is a C number in the object.
+        private IReadOnlyList<Stmt> _program = Array.Empty<Stmt>();
+        private readonly Dictionary<Expr, StaticType> _exprTypes = new(ReferenceEqualityComparer.Instance);
+        private Dictionary<string, List<FieldDecl>>? _fieldCands;
+        private readonly Dictionary<FieldDecl, string> _fieldOwner = new(ReferenceEqualityComparer.Instance);
+        private readonly HashSet<string> _otherFieldNames = new();
+        private readonly HashSet<FieldDecl> _fieldBad = new(ReferenceEqualityComparer.Instance);
+        private readonly Dictionary<FieldDecl, List<string>> _fieldNeeds = new(ReferenceEqualityComparer.Instance);
+        /// <summary>A field without an initializer may be derived `defined` too (it starts at 0 instead of undefined - nobody can ask): FIRE_INFER_UNINITIALIZED_DEFINED=0 switches it off.</summary>
+        public static bool InferUninitializedDefined => Environment.GetEnvironmentVariable("FIRE_INFER_UNINITIALIZED_DEFINED") != "0";
+
+        /// <summary>The fields that may be derived, by name.</summary>
+        private Dictionary<string, List<FieldDecl>> FieldCandidates()
+        {
+            if (_fieldCands != null) return _fieldCands;
+            _fieldCands = new Dictionary<string, List<FieldDecl>>();
+            foreach (var (className, decl) in _classes)
+                foreach (var member in decl.Members)
+                {
+                    if (member is not FieldDecl fd) continue;
+                    // (a class of a package only with [InferDefined]; without it no class that reflection can fill: Reflect.Set may store undefined)
+                    bool candidate = (decl.Source >= _firstUserSource || InferDefinedClass(decl)) && (InferDefinedClass(decl) || !ReflectionUsed) && !decl.IsRecord && fd.ArrayRanks.Count == 0
+                        && fd.Type is { NonNull: false, PointerDepth: 0, ArrayRank: 0, LambdaSignature: null, TypeArgs: null, BaseName: "int" or "float" or "bool" }
+                        && (fd.Initializer == null ? InferUninitializedDefined && SetBeforeRead(decl, fd) : IsConstantValue(fd.Initializer));
+                    if (candidate) { (_fieldCands.TryGetValue(fd.Name, out var list) ? list : _fieldCands[fd.Name] = new List<FieldDecl>()).Add(fd); _fieldOwner[fd] = className; }
+                    // (a field of that name that may hold undefined: a read of the name on an object of an unknown class proves nothing)
+                    else if (fd.Type is not { NonNull: true }) _otherFieldNames.Add(fd.Name);
+                }
+            return _fieldCands;
+        }
+        private string FieldKey(FieldDecl fd) => "fld:" + _fieldOwner[fd] + "." + fd.Name;
+
+        /// <summary>`[InferDefined]` before a class: its fields (and the parameters of its methods) are derived `defined` although JSON or reflection
+        /// may reach it - Json.Deserialize leaves such a field at 0 when the text does not have it and a `null` for it, Reflect.Set/Reflect.Call an
+        /// undefined, is the ArgumentException that names the derivation. Also for a class of a package (only its fields there). Without it, a class
+        /// JSON may read, a name in a string (a method) and every class when the program uses reflection are left as declared.</summary>
+        private static bool InferDefinedClass(ClassDecl decl) => decl.Attributes?.Any(a => a.Name == "InferDefined") == true;
+        /// <summary>The program uses reflection (the package `reflection` is part of it - directly or through `ui`, `data`, ...): Reflect.Set and
+        /// Reflect.Call reach any member by a name computed at run time.</summary>
+        private bool ReflectionUsed => _reflectionUsed ??= _classes.TryGetValue("Reflect", out var r) && r.Source < _firstUserSource;
+        private bool? _reflectionUsed;
+
+        /// <summary>A field without an initializer whose undefined nobody can see: every constructor of its class sets it first - among its leading simple
+        /// statements (assignments and local declarations whose values call nothing, hand out no `this` and do not read the field), so no method, no `x++`
+        /// and no other read comes before. Not for a static field, a class with a base class (its constructor may call an override) or one without a
+        /// constructor, nor when the initializer of another field reads it.</summary>
+        private bool SetBeforeRead(ClassDecl decl, FieldDecl fd)
+        {
+            if (fd.IsStatic || decl.BaseRefs?.Any(b => _classes.ContainsKey(NameOf(b))) == true) return false;
+            var ctors = decl.Members.OfType<ConstructorDecl>().ToList();
+            if (ctors.Count == 0) return false;
+            bool Mentions(object? node)
+            {
+                var nodes = new List<object>();
+                AstNames.Walk(node, nodes);
+                return nodes.Any(n => n is IdentifierExpr id && id.Name == fd.Name || n is MemberExpr m && m.Name == fd.Name);
+            }
+            bool Simple(Expr? e)
+            {
+                if (e == null) return true;
+                var nodes = new List<object>();
+                AstNames.Walk(e, nodes);
+                return !nodes.Any(n => n is CallExpr or NewExpr or ThisExpr or BaseExpr or LambdaExpr or AwaitOnExpr)
+                    && !nodes.Any(n => n is IdentifierExpr id && id.Name == fd.Name || n is MemberExpr m && m.Name == fd.Name);
+            }
+            if (decl.Members.OfType<FieldDecl>().Any(other => !ReferenceEquals(other, fd) && other.Initializer != null && Mentions(other.Initializer))) return false;
+            foreach (var ctor in ctors)
+            {
+                if (ctor.BaseArgs != null && ctor.BaseArgs.Any(Mentions)) return false;
+                bool set = false;
+                foreach (var stmt in ctor.Body.Statements)
+                {
+                    if (stmt is ExprStmt { Expression: AssignExpr a } && Simple(a.Value)
+                        && (a.Target is IdentifierExpr tid && tid.Name == fd.Name || a.Target is MemberExpr { Target: ThisExpr } tm && tm.Name == fd.Name)) { set = true; break; }
+                    if (stmt is ExprStmt { Expression: AssignExpr other } && Simple(other.Value) && other.Target is IdentifierExpr or MemberExpr { Target: ThisExpr }) continue;
+                    if (stmt is VarDeclStmt local && Simple(local.Initializer)) continue;
+                    break;
+                }
+                if (!set) return false;
+            }
+            return true;
+        }
+        /// <summary>A bare name that is a field of `this` or a static field of the class (ResolvedRef).</summary>
+        private bool IsFieldRef(IdentifierExpr id) => _refs.TryGetValue(id, out var r) && r is ResolvedRef.ImplicitThisMember or ResolvedRef.StaticMember && !IsLocal(id.Name);
+
+        /// <summary>The class whose field a member access or a bare field name means (`this.f`, `f`, `Class.f`, `obj.f` with a known class), null when it is not known.</summary>
+        private string? ReceiverClass(Expr access) => access switch
+        {
+            IdentifierExpr id when _refs.TryGetValue(id, out var r) && r is ResolvedRef.StaticMember sm => sm.ClassName,
+            IdentifierExpr => _class?.Name,
+            MemberExpr { Target: ThisExpr } => _class?.Name,
+            MemberExpr m when StaticClassRef(m.Target) is { } staticClass => staticClass,
+            MemberExpr m when _exprTypes.TryGetValue(m.Target, out var t) && t.Kind == StaticKind.Class && t.Class != null => t.Class,
+            _ => null,
+        };
+        /// <summary>The fields an access can mean that may be derived: the one of its class (or a base class), every one of the name when the class is not known.</summary>
+        private List<FieldDecl> FieldsOf(Expr access, string name)
+        {
+            if (!DeriveDefined || !FieldCandidates().TryGetValue(name, out var all)) return new List<FieldDecl>();
+            string? cls = ReceiverClass(access);
+            if (cls == null) return all;
+            for (int guard = 0; guard < 64 && cls != null && _classes.TryGetValue(cls, out var decl); guard++)
+            {
+                if (decl.Members.OfType<FieldDecl>().FirstOrDefault(f => f.Name == name) is { } own) return all.Where(f => ReferenceEquals(f, own)).ToList();
+                var baseRef = decl.BaseRefs?.FirstOrDefault(b => _classes.ContainsKey(NameOf(b)));
+                cls = baseRef == null ? null : NameOf(baseRef);
+            }
+            return new List<FieldDecl>();
+        }
+        /// <summary>A read of a field that may be derived (for NeedsOf): its key, when the access means exactly one such field and no other field of the name.</summary>
+        private string? FieldNeed(Expr access, string name)
+        {
+            var fields = FieldsOf(access, name);
+            if (fields.Count != 1 || ReceiverClass(access) == null && (_otherFieldNames.Contains(name) || FieldCandidates()[name].Count != 1)) return null;
+            return _fieldBad.Contains(fields[0]) ? null : FieldKey(fields[0]);
+        }
+
+        /// <summary>A write of a field: a number, or what it depends on (a call, a parameter, another field, the branches of `?:`).</summary>
+        private void NoteFieldWrite(Expr target, string name, Expr value, StaticType type)
+        {
+            var fields = FieldsOf(target, name);
+            if (fields.Count == 0) return;
+            var needs = FieldValueNeeds(value, type);
+            foreach (var fd in fields)
+            {
+                if (needs == null) { if (_fieldBad.Add(fd)) DeriveLog?.Invoke($"field {_fieldOwner[fd]}.{name}: the write in line {value.Line} may give undefined"); continue; }
+                (_fieldNeeds.TryGetValue(fd, out var all) ? all : _fieldNeeds[fd] = new List<string>()).AddRange(needs);
+            }
+        }
+        private List<string>? FieldValueNeeds(Expr value, StaticType? type)
+        {
+            type ??= _exprTypes.TryGetValue(value, out var known) ? known : null;
+            if (type is { Null: Nullness.Defined or Nullness.Inferred } && type.IsValueKind) return new List<string>();
+            switch (value)
+            {
+                case ConditionalExpr c:
+                    var a = FieldValueNeeds(c.Then, null);
+                    var b = a == null ? null : FieldValueNeeds(c.Else, null);
+                    if (a == null || b == null) return null;
+                    a.AddRange(b);
+                    return a;
+                // (`x!int` of undefined is 0)
+                case TypeCoerceExpr: return new List<string>();
+            }
+            return NeedsOf(value) is { } single ? new List<string> { single } : null;
+        }
+
+        /// <summary>The fields that something writes past the assignments the checker sees (a pointer, a `ref` argument, `with`, JSON), and - for a field
+        /// without an initializer - the ones the program asks for undefined (by name: the class is not looked at here).</summary>
+        private void DisqualifyFields()
+        {
+            if (FieldCandidates().Count == 0) return;
+            var nodes = new List<object>();
+            AstNames.Walk(_program, nodes);
+            var refMethods = new HashSet<string>();
+            foreach (var (_, decl) in _classes)
+                foreach (var m in decl.Members.OfType<MethodDecl>())
+                    if (m.Params.Any(p => p.ByRef)) refMethods.Add(m.Name);
+            static string? NameOf(Expr e) => e switch { MemberExpr m => m.Name, IdentifierExpr id => id.Name, _ => null };
+            void Bad(string name, string why)
+            {
+                if (!FieldCandidates().TryGetValue(name, out var fields)) return;
+                foreach (var fd in fields) if (_fieldBad.Add(fd)) DeriveLog?.Invoke($"field {_fieldOwner[fd]}.{name}: {why}");
+            }
+            var asked = new HashSet<string>();
+            bool jsonSeen = false;
+            foreach (var node in nodes)
+                switch (node)
+                {
+                    case UnaryExpr { Op: UnaryOp.AddressOf } u when NameOf(u.Operand) is { } addressed: Bad(addressed, "its address is taken"); break;
+                    case WithSet set: Bad(set.Name, "`with` sets it"); break;
+                    case CallExpr call:
+                        // (JSON makes objects without their constructors, and `$type` in the text may name any class: every class but one with
+                        // [InferDefined], whose derived fields JSON reads like `defined` ones - 0 when the text does not have them, null an error)
+                        if (!jsonSeen && call.Callee is MemberExpr { Name: "Deserialize", Target: IdentifierExpr { Name: "Json" } })
+                        {
+                            foreach (var fd in FieldCandidates().Values.SelectMany(l => l))
+                                if (!InferDefinedClass(_classes[_fieldOwner[fd]]) && _fieldBad.Add(fd)) DeriveLog?.Invoke($"field {_fieldOwner[fd]}.{fd.Name}: the program reads JSON into objects (no [InferDefined])");
+                            jsonSeen = true;
+                        }
+                        if (NameOf(call.Callee) is { } callee && refMethods.Contains(callee))
+                            foreach (var arg in call.Args) if (NameOf(arg) is { } passed) Bad(passed, "it may go to a `ref` parameter");
+                        break;
+                    case BinaryExpr { Op: BinaryOp.Eq or BinaryOp.NotEq } cmp:
+                        if (cmp.Left is LiteralExpr { Value.Kind: ValueKind.Undefined } && NameOf(cmp.Right) is { } r) asked.Add(r);
+                        if (cmp.Right is LiteralExpr { Value.Kind: ValueKind.Undefined } && NameOf(cmp.Left) is { } l) asked.Add(l);
+                        break;
+                    case IsOfExpr isOf when NameOf(isOf.Operand) is { } tested: asked.Add(tested); break;
+                    case ConditionalAccessExpr access when NameOf(access.Target) is { } accessed: asked.Add(accessed); break;
+                }
+            foreach (var name in asked)
+                if (FieldCandidates().TryGetValue(name, out var fields))
+                    foreach (var fd in fields.Where(f => f.Initializer == null)) if (_fieldBad.Add(fd)) DeriveLog?.Invoke($"field {_fieldOwner[fd]}.{name}: the program asks whether it is undefined");
+        }
 
         private void Derive(ResolveResult resolved)
         {
@@ -443,7 +684,16 @@ namespace fire.Compiler
                 }
                 return keys;
             }
+            DisqualifyFields();
             var ok = DeriveReturns(Foreign);
+            foreach (var (name, fields) in FieldCandidates())
+                foreach (var fd in fields)
+                {
+                    // (a field without an initializer that nothing writes stays as it is: undefined - every read would show it)
+                    bool derived = ok.Contains(FieldKey(fd)) && (fd.Initializer != null || _fieldNeeds.ContainsKey(fd));
+                    if (derived) resolved.DerivedDefinedFields.Add(fd);
+                    if (derived || !_fieldBad.Contains(fd)) DeriveLog?.Invoke($"field {_fieldOwner[fd]}.{name}: {(derived ? fd.Initializer == null ? "defined (not initialized: starts at 0)" : "defined" : !_fieldNeeds.ContainsKey(fd) && fd.Initializer == null ? "nothing writes it (it stays undefined)" : "it depends on something that is not certain")}");
+                }
             foreach (var (name, decl) in _classes)
             {
                 if (decl.Source < _firstUserSource) continue;
@@ -498,7 +748,8 @@ namespace fire.Compiler
         {
             // `if (a = b)` is almost always a typo for `==`; `if ((a = b))` says it is meant (a warning in strict mode too)
             // (a compound assignment `a |= b` is `a = a | b` with the target itself as the left operand - not a typo)
-            if (condition is AssignExpr assign && !(assign.Value is BinaryExpr bin && ReferenceEquals(bin.Left, assign.Target))
+            // (`if (a = try take x)` asks whether it moved: meant)
+            if (condition is AssignExpr assign && !(assign.Value is BinaryExpr bin && ReferenceEquals(bin.Left, assign.Target)) && assign.Value is not UnaryExpr { Op: UnaryOp.TryTake }
                 && !Parser.ParenthesizedAssignments.TryGetValue(condition, out _))
                 Report(AssignInConditionCode, "An assignment as a condition - did you mean '=='? (write '((a = b))' if the assignment is meant)", condition.Line);
             var type = Infer(condition);
@@ -1886,6 +2137,13 @@ namespace fire.Compiler
 
         private StaticType Infer(Expr expr)
         {
+            var result = InferWithNull(expr);
+            if (DeriveDefined) _exprTypes[expr] = result;   // (what a write of a field gave: DeriveFields)
+            return result;
+        }
+
+        private StaticType InferWithNull(Expr expr)
+        {
             var type = InferCore(expr);
             if (_treeTypes != null) _treeTypes[expr] = type.ToString();   // (an expression tree: the type of each node)
             // what certainly is not undefined (SPEC 8.10b): a literal, what an operator computes (an undefined operand throws), `trust x`
@@ -1945,6 +2203,10 @@ namespace fire.Compiler
                 case CallExpr c: return InferCall(c);
                 case NewExpr n: return InferNew(n);
                 case IncDecExpr inc:
+                    // (`x++` of a field: a number goes in - DeriveFields)
+                    if (DeriveDefined && (inc.Target is MemberExpr || inc.Target is IdentifierExpr incField && IsFieldRef(incField)))
+                        foreach (var fd in FieldsOf(inc.Target, inc.Target is MemberExpr im ? im.Name : ((IdentifierExpr)inc.Target).Name))
+                            if (!_fieldNeeds.ContainsKey(fd)) _fieldNeeds[fd] = new List<string>();
                     if (inc.Target is MemberExpr incMember) return InferMember(incMember, MemberUse.Write);
                     if (inc.Target is IdentifierExpr incId) CheckImplicitThisAccess(incId, MemberUse.Write);
                     return Infer(inc.Target);
@@ -2162,6 +2424,9 @@ namespace fire.Compiler
             };
             var value = Infer(a.Value, target);
             if (a.Target is IdentifierExpr pendingId && _pendingVars.Count > 0) TypePendingVar(pendingId, value);
+            // (a write of a field - what it gives decides whether the field may be derived `defined`: DeriveFields)
+            if (DeriveDefined && (a.Target is MemberExpr || a.Target is IdentifierExpr fieldId && IsFieldRef(fieldId)))
+                NoteFieldWrite(a.Target, a.Target is MemberExpr wm ? wm.Name : ((IdentifierExpr)a.Target).Name, a.Value, value);
             string what = a.Target switch { IdentifierExpr id => $"'{id.Name}'", MemberExpr m => $"'{m.Name}'", IndexExpr => "an element", _ => "the target" };
             CheckAssignable(value, target, a.Line, what, valueExpr: a.Value);
             if (a.Target is IdentifierExpr local && LocalType(local.Name) is { } localType) GuardLocalValue(a.Value, value, target, localType, local.Name);
@@ -2169,6 +2434,8 @@ namespace fire.Compiler
             if (a.Target is IdentifierExpr assigned && target.IsValueKind && target.Null != Nullness.Defined)
                 for (int i = _scopes.Count - 1; i >= 0; i--)
                     if (_scopes[i].TryGetValue(assigned.Name, out var current)) { _scopes[i][assigned.Name] = current.WithNull(value.Null is Nullness.Defined or Nullness.Inferred ? Nullness.Inferred : Nullness.MayBeUndefined); break; }
+            // (`a = try take x` gives whether the ownership moved - `if (this.a = try take x)`, SPEC 2.2)
+            if (a.Value is UnaryExpr { Op: UnaryOp.TryTake }) return StaticType.Bool.WithNull(Nullness.Defined);
             return target.IsDynamic ? value : target;
         }
 
@@ -2178,6 +2445,7 @@ namespace fire.Compiler
         {
             var target = Infer(ix.Target);
             Infer(ix.Index);
+            NoteReceiverTypeArgs(ix, target);
             if (target.Kind == StaticKind.Array) return target.Element!;
             if (target.Kind == StaticKind.Class && FindMethod(target, "SetIndex", 2, out var map) is { } setter) return DeclaredOrDynamic(setter.Params[1].Type, setter.Params[1].ArrayRanks.Count, map);
             return StaticType.Dynamic;
@@ -2188,6 +2456,7 @@ namespace fire.Compiler
         {
             var target = Infer(ix.Target);
             Infer(ix.Index);
+            NoteReceiverTypeArgs(ix, target);
             Dictionary<string, StaticType>? map = null;
             return target.Kind switch
             {
@@ -2761,6 +3030,30 @@ namespace fire.Compiler
             };
         }
 
+        /// <summary>What a call of a method of a base-type extension gives (`class extends string { int IndexOf(any value) ... }`, SPEC 5.5.1 - the parser
+        /// collects them in the class `$string`): the declared type when every method of that name that takes that many arguments declares the same one;
+        /// null otherwise (not a base type, no such method, overloads that differ).</summary>
+        private StaticType? ExtensionCallType(StaticType target, string name, int argc)
+        {
+            string? typeName = target.Kind switch
+            {
+                StaticKind.String => "string", StaticKind.Char => "char", StaticKind.Int => "int", StaticKind.Float => "float", StaticKind.Bool => "bool",
+                _ => null,
+            };
+            if (typeName == null || !_classes.TryGetValue(fire.Standard.BaseTypeExtensions.ClassName(typeName), out var ext)) return null;
+            StaticType? result = null;
+            foreach (var md in ext.Members.OfType<MethodDecl>())
+            {
+                if (md.IsStatic || md.Name != name || md.Params.Count < argc || md.Params.Skip(argc).Any(p => p.DefaultValue == null)) continue;
+                if (md.ReturnType == null || md.ReturnType.IsInferred) return null;
+                var type = ResultOf(md, null);
+                if (type.IsDynamic) return null;
+                if (result != null && result != type) return null;
+                result = type;
+            }
+            return result;
+        }
+
         private StaticType InferCall(CallExpr c)
         {
             var type = InferCallCore(c);
@@ -2793,8 +3086,11 @@ namespace fire.Compiler
                 else CheckAccess(target, m.Name, MemberUse.Call, c.Args.Count, m.Line);
                 receiverClass = target.Class;
                 calleeTarget = target;
+                if (!staticCall) NoteReceiverTypeArgs(c, target);
                 // the built-in methods of a byte buffer and `ToBytes` of a text: what they give (fire.Standard.BufferMethods)
                 if (BuiltinCallType(target, m.Name, c.Args.Count) is { } builtin) { foreach (var a in c.Args) Infer(a); return builtin; }
+                // a method of a base-type extension (`class extends string`: `text.IndexOf(..)` is an int, `text.Split(..)` a string[]): what it declares
+                if (!staticCall && ExtensionCallType(target, m.Name, c.Args.Count) is { } extended) { foreach (var a in c.Args) Infer(a); return extended; }
                 if (target.Kind == StaticKind.Class)
                 {
                     candidates = FindMethods(target, m.Name, c.Args.Count);
@@ -3166,6 +3462,9 @@ namespace fire.Compiler
             NewExpr n => $"new {n.ClassRef.BaseName}(...)",
             CallExpr { Callee: MemberExpr m } => $"{(m.Target is IdentifierExpr t ? t.Name + "." : "")}{m.Name}(...)",
             CallExpr { Callee: IdentifierExpr f } => $"{f.Name}(...)",
+            NewArrayExpr a => $"new {a.ElementType.BaseName}[...]",
+            NewBufferExpr b => b.Words ? "new word[...]" : "new byte[...]",
+            ArrayLiteralExpr => "[...]",
             _ => "the argument",
         };
 
@@ -3173,13 +3472,15 @@ namespace fire.Compiler
         private bool IsStatementTemporary(Expr e) => e switch
         {
             NewExpr n => _classes.ContainsKey(PlainName(n.ClassRef.BaseName)) || n.ClassRef.TypeArgs is { Count: > 0 },
+            // (`new byte[0]`, `[1, 2]`: an array or a buffer of this statement, like an object)
+            NewArrayExpr or NewBufferExpr or ArrayLiteralExpr => true,
             CallExpr c => _callTargets.TryGetValue(c, out var target) && ReturnsFresh(target),
             _ => false,
         };
 
         /// <summary>Is a value of the declared type an object or an array (something with an owner)?</summary>
         private bool HoldsOwned(TypeRef? type, int arrayRanks) =>
-            type != null && (arrayRanks > 0 || type.ArrayRank > 0 || type.TypeArgs is not { Count: > 0 } && _classes.ContainsKey(PlainName(type.BaseName))
+            type != null && (arrayRanks > 0 || type.ArrayRank > 0 || type is { BaseName: "any", PointerDepth: 0 } || type.TypeArgs is not { Count: > 0 } && _classes.ContainsKey(PlainName(type.BaseName))
                 || type.TypeArgs is { Count: > 0 } && _classes.ContainsKey(GenericName(PlainName(type.BaseName), type.TypeArgs.Count)));
 
         private readonly Dictionary<MethodDecl, bool> _returnsFresh = new(ReferenceEqualityComparer.Instance);
@@ -3190,9 +3491,9 @@ namespace fire.Compiler
             // (a local only when it surely holds a new value of its own: declared with `new ...` and never given anything else - `var c = this` is not new)
             var nodes = AstNodes(m.Body).ToList();
             var reassigned = new HashSet<string>(nodes.OfType<AssignExpr>().Select(a => a.Target).OfType<IdentifierExpr>().Select(t => t.Name));
-            var locals = new HashSet<string>(nodes.OfType<VarDeclStmt>().Where(v => v.Initializer is NewExpr or NewArrayExpr or ArrayLiteralExpr && !reassigned.Contains(v.Name)).Select(v => v.Name));
+            var locals = new HashSet<string>(nodes.OfType<VarDeclStmt>().Where(v => v.Initializer is NewExpr or NewArrayExpr or NewBufferExpr or ArrayLiteralExpr && !reassigned.Contains(v.Name)).Select(v => v.Name));
             var returns = nodes.OfType<ReturnStmt>().ToList();
-            bool fresh = returns.Count > 0 && returns.All(r => r.Value is NewExpr || r.Value is IdentifierExpr id && locals.Contains(id.Name) && m.Params.All(p => p.Name != id.Name));
+            bool fresh = returns.Count > 0 && returns.All(r => r.Value is NewExpr or NewArrayExpr or NewBufferExpr or ArrayLiteralExpr || r.Value is IdentifierExpr id && locals.Contains(id.Name) && m.Params.All(p => p.Name != id.Name));
             return _returnsFresh[m] = fresh;
         }
 

@@ -1853,6 +1853,8 @@ diesen Zuständen in lokalen Variablen (nur für die häufigen Instruktionen, al
   wenn der Aufrufer ihn besitzt (`CallerOwns`: ein Scope seines Aufrufs ab `ReturnScope` bis zur Funktions-Scope, sein `this` (`ReturnThis`), auf oberster Ebene auch die globale Scope); bei einer nativen Funktion/einem
   eingebauten Aufruf `TryTakeToScope 0`. Zuweisungen: `TryTakeToScope depth`, `TryTakeToObject`, `TryTakeToArray` - Stack und Ziel wie bei `TakeTo...`, verschoben wird nur, wenn `OwnedByRunningCall` (der Besitzer ist
   ein Scope des laufenden Aufrufs - `IsCurrentCallOwner` - oder `_currentThis`) zutrifft. Ein totes Ding wird nicht genommen und wirft nicht.
+  Als Wert (`if (this.a = try take x)`, `return a[i] = try take x`) folgt der Zuweisung `Pop` und **`TookResult`**: es legt ab, ob das `TryTakeTo...` davor
+  verschoben hat (VM: `_took`; nativ eine lokale `took_` der Funktion, die `tryTakeOwned` setzt). Als Anweisung entfällt beides.
 - **Zeiger-Bereiche.** `ScopeSlotPointerTarget`/`FieldPointerTarget` tragen einen Versatz (`Advance` addiert nur), benutzbar ist nur Versatz 0; `ElementPointerTarget` prüft Index und Zerstörtheit. Sie werfen `PointerRangeException`, die
   `TryReadPointer`/`TryWritePointer` der VM in `IndexOutOfBoundsException`/`DestroyedException` verwandeln. `ptr - ptr` ist `PointerTarget.DistanceTo`.
 
