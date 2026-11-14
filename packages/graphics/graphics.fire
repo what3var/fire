@@ -400,6 +400,9 @@ class Renderer {
     // Logical pixels -> pixels of the framebuffer (1.5 = 150 %): everything that is drawn, clipped or measured is scaled, TrueType text is drawn at the larger size
     // (sharp, not stretched); the bitmap fonts keep their size. A UI.Root sets it from the system (Root.Scaling). 1 = no scaling (the default).
     defined float scale = 1.0
+    // The drawing calls as data (http.pages replays them on a canvas of the browser): a list of JSON arrays in pixels of the framebuffer, ["u"] for a
+    // call that cannot be replayed (an image, a blur). Undefined (the default): nothing is recorded.
+    List Recording = undefined
 
     construct(Framebuffer framebuffer) {
         this.id = __GRPHRndCreate(framebuffer.id)
@@ -422,6 +425,7 @@ class Renderer {
     // Restricts drawing (fills, shapes, text, blit) to the rectangle (x, y, w, h) of the framebuffer; ResetClip lifts it (the whole framebuffer again).
     // It does not apply to Clear/ClearTo.
     undefined SetClip(defined int x, defined int y, defined int w, defined int h) {
+        if (this.Recording != undefined) { this.Recording.Add("[\"clip\"," + this.RectText(x, y, w, h) + "]") }
         if (this.scale == 1.0) { __GRPHRndSetClip(this.id, x, y, w, h) }
         else { __GRPHRndSetClip(this.id, this.Px(x), this.Px(y), this.Px(x + w) - this.Px(x), this.Px(y + h) - this.Px(y)) }
     }
@@ -462,20 +466,78 @@ class Renderer {
         if (this.scale != 1.0) { pen.Width = this.Len(w) }
         return w
     }
-    undefined ResetClip() { __GRPHRndResetClip(this.id) }
+    undefined ResetClip() {
+        __GRPHRndResetClip(this.id)
+        if (this.Recording != undefined) { this.Recording.Add("[\"noclip\"]") }
+    }
+
+    // ---- the recording (Recording) ----
+    undefined Note(string op) { if (this.Recording != undefined) { this.Recording.Add(op) } }
+    // (the colour of a brush; -1: one that is not a plain colour)
+    static int ColorOf(Brush brush) {
+        if (brush is of SolidBrush) {
+            SolidBrush b = brush
+            return b.Color
+        }
+        return -1
+    }
+    undefined NoteFill(string kind, string args, Brush brush) {
+        int c = Renderer.ColorOf(brush)
+        if (c == -1) { this.Recording.Add("[\"u\"]"); return }
+        this.Recording.Add("[\"" + kind + "\"," + args + "," + c + "]")
+    }
+    undefined NoteStroke(string kind, string args, Pen pen) {
+        var w = pen.Width
+        if (this.scale != 1.0) { w = this.Len(w) }
+        this.Recording.Add("[\"" + kind + "\"," + args + "," + pen.Color + "," + w + "]")
+    }
+    string PointsText(float points[]) {
+        var t = "["
+        for (int i = 0; i < points.length; i++) {
+            if (i > 0) { t = t + "," }
+            t = t + Math.Floor(points[i] * this.scale + 0.5)!int
+        }
+        return t + "]"
+    }
+    static string JsonBool(bool b) {
+        if (b) { return "true" }
+        return "false"
+    }
+    // (a text as a JSON string)
+    static string Quote(string text) {
+        var t = "\""
+        for (int i = 0; i < text.Length; i++) {
+            string c = text.Substring(i, 1)
+            if (c == "\"" || c == "\\") { t = t + "\\" + c }
+            else if (c == "\n") { t = t + "\\n" }
+            else if (c == "\r") { t = t + "\\r" }
+            else if (c == "\t") { t = t + "\\t" }
+            else { t = t + c }
+        }
+        return t + "\""
+    }
+    // (a rectangle in pixels: x,y,w,h)
+    string RectText(defined int x, defined int y, defined int w, defined int h) { return this.Px(x) + "," + this.Px(y) + "," + (this.Px(x + w) - this.Px(x)) + "," + (this.Px(y + h) - this.Px(y)) }
 
     // ---- Terminal ----
     undefined Print(string text) { __GRPHRndPrint(this.id, text) }
     undefined Locate(defined int row, defined int column) { __GRPHRndLocate(this.id, row, column) }
     // Clears the whole framebuffer with the background colour of SetColor and sets the cursor to (0, 0)
-    undefined Clear() { __GRPHRndClear(this.id) }
+    undefined Clear() {
+        this.Note("[\"u\"]")
+        __GRPHRndClear(this.id)
+    }
     // Sets the whole framebuffer to a colour (without blending, also with alpha)
-    undefined ClearTo(defined int color) { __GRPHRndClearTo(this.id, color) }
+    undefined ClearTo(defined int color) {
+        if (this.Recording != undefined) { this.Recording.Add("[\"c\"," + color + "]") }
+        __GRPHRndClearTo(this.id, color)
+    }
     undefined SetColor(defined int foreground, defined int background) { __GRPHRndSetColor(this.id, foreground, background) }
 
     // ---- Pixel ----
     // A pixel in the colour (a number as with the brush; blended if it is semi-transparent and AlphaBlending is on)
     undefined SetPixel(defined int x, defined int y, defined int color) {
+        if (this.Recording != undefined) { this.Recording.Add("[\"fr\"," + this.Px(x) + "," + this.Px(y) + ",1,1," + color + "]") }
         if (this.scale == 1.0) { __GRPHRndSetPixel(this.id, x, y, color) } else { __GRPHRndSetPixel(this.id, this.Px(x), this.Px(y), color) }
     }
     // The colour of the pixel as a SIGNED 32-bit number (opaque colours are negative)
@@ -495,6 +557,16 @@ class Renderer {
         if (background != undefined) { back = background.id }
         var fontId = 0
         if (font != undefined) { fontId = font.id }
+        if (this.Recording != undefined) {
+            // (["t", x, y, text, colour, background (-1 none), the height of the letters, the console font])
+            int fc = Renderer.ColorOf(foreground)
+            int bc = -1
+            if (background != undefined) { bc = Renderer.ColorOf(background) }
+            int height = 0
+            if (fontId == 0) { height = __GRPHRndCellHeight(this.id) } else { height = this.TextSize(size) }
+            if (fc == -1 || (background != undefined && bc == -1)) { this.Recording.Add("[\"u\"]") }
+            else { this.Recording.Add("[\"t\"," + this.Px(x) + "," + this.Px(y) + "," + Renderer.Quote(text) + "," + fc + "," + bc + "," + height + "," + Renderer.JsonBool(fontId == 0) + "]") }
+        }
         if (fontId == 0) {
             __GRPHRndDrawText(this.id, this.Px(x), this.Px(y), text, foreground.id, back)
         } else {
@@ -534,32 +606,54 @@ class Renderer {
 
     // ---- Fills (brush) ----
     undefined FillRect(defined int x, defined int y, defined int w, defined int h, Brush brush) {
+        if (this.Recording != undefined) { this.NoteFill("fr", this.RectText(x, y, w, h), brush) }
         if (this.scale == 1.0) { __GRPHRndFillRect(this.id, x, y, w, h, brush.id) }
         else { __GRPHRndFillRect(this.id, this.Px(x), this.Px(y), this.Px(x + w) - this.Px(x), this.Px(y + h) - this.Px(y), brush.id) }
     }
     // Fills the whole framebuffer (blended if AlphaBlending is on; ClearTo sets without blending)
-    undefined Fill(Brush brush) { __GRPHRndFill(this.id, brush.id) }
+    undefined Fill(Brush brush) {
+        if (this.Recording != undefined) { this.NoteFill("fa", "0", brush) }
+        __GRPHRndFill(this.id, brush.id)
+    }
     // Circle around (cx, cy) with radius r, ellipse with the semi-axes rx (horizontal) and ry (vertical), including the edge
-    undefined FillCircle(defined int cx, defined int cy, defined int r, Brush brush) { __GRPHRndFillCircle(this.id, this.Px(cx), this.Px(cy), this.Len(r), brush.id) }
-    undefined FillEllipse(defined int cx, defined int cy, defined int rx, defined int ry, Brush brush) { __GRPHRndFillEllipse(this.id, this.Px(cx), this.Px(cy), this.Len(rx), this.Len(ry), brush.id) }
-    undefined FillTriangle(defined int x0, defined int y0, defined int x1, defined int y1, defined int x2, defined int y2, Brush brush) { __GRPHRndFillTriangle(this.id, this.Px(x0), this.Px(y0), this.Px(x1), this.Px(y1), this.Px(x2), this.Px(y2), brush.id) }
+    undefined FillCircle(defined int cx, defined int cy, defined int r, Brush brush) {
+        if (this.Recording != undefined) { this.NoteFill("fe", this.Px(cx) + "," + this.Px(cy) + "," + this.Len(r) + "," + this.Len(r), brush) }
+        __GRPHRndFillCircle(this.id, this.Px(cx), this.Px(cy), this.Len(r), brush.id)
+    }
+    undefined FillEllipse(defined int cx, defined int cy, defined int rx, defined int ry, Brush brush) {
+        if (this.Recording != undefined) { this.NoteFill("fe", this.Px(cx) + "," + this.Px(cy) + "," + this.Len(rx) + "," + this.Len(ry), brush) }
+        __GRPHRndFillEllipse(this.id, this.Px(cx), this.Px(cy), this.Len(rx), this.Len(ry), brush.id)
+    }
+    undefined FillTriangle(defined int x0, defined int y0, defined int x1, defined int y1, defined int x2, defined int y2, Brush brush) {
+        if (this.Recording != undefined) { this.NoteFill("fp", "[" + this.Px(x0) + "," + this.Px(y0) + "," + this.Px(x1) + "," + this.Px(y1) + "," + this.Px(x2) + "," + this.Px(y2) + "]", brush) }
+        __GRPHRndFillTriangle(this.id, this.Px(x0), this.Px(y0), this.Px(x1), this.Px(y1), this.Px(x2), this.Px(y2), brush.id)
+    }
     // points: an array [x0, y0, x1, y1, ...]; filled by the even-odd rule (overlapping parts stay empty)
     undefined FillPolygon(float points[], Brush brush) {
+        if (this.Recording != undefined) { this.NoteFill("fp", this.PointsText(points), brush) }
         if (this.scale == 1.0) { __GRPHRndFillPolygon(this.id, points, brush.id) }
         else { __GRPHRndFillPolygon(this.id, this.Points(points), brush.id) }
     }
     // Fills the connected area with the colour of the pixel (x, y). With `border`, FloodFill instead fills up to pixels of that colour (like PAINT in QBasic).
-    undefined FloodFill(defined int x, defined int y, Brush brush) { __GRPHRndFloodFill(this.id, this.Px(x), this.Px(y), brush.id) }
-    undefined FloodFillBorder(defined int x, defined int y, Brush brush, defined int border) { __GRPHRndFloodFillBorder(this.id, this.Px(x), this.Px(y), brush.id, border) }
+    undefined FloodFill(defined int x, defined int y, Brush brush) {
+        this.Note("[\"u\"]")
+        __GRPHRndFloodFill(this.id, this.Px(x), this.Px(y), brush.id)
+    }
+    undefined FloodFillBorder(defined int x, defined int y, Brush brush, defined int border) {
+        this.Note("[\"u\"]")
+        __GRPHRndFloodFillBorder(this.id, this.Px(x), this.Px(y), brush.id, border)
+    }
 
     // ---- Zeichnen (Stift) ----
     undefined DrawPoint(defined int x, defined int y, Pen pen) {
+        if (this.Recording != undefined) { this.NoteStroke("dp", this.Px(x) + "," + this.Px(y), pen) }
         if (this.scale == 1.0) { __GRPHRndDrawPoint(this.id, x, y, pen.id); return }
         var w = this.PenOn(pen)
         __GRPHRndDrawPoint(this.id, this.Px(x), this.Px(y), pen.id)
         pen.Width = w
     }
     undefined DrawLine(defined int x0, defined int y0, defined int x1, defined int y1, Pen pen) {
+        if (this.Recording != undefined) { this.NoteStroke("dl", this.Px(x0) + "," + this.Px(y0) + "," + this.Px(x1) + "," + this.Px(y1), pen) }
         if (this.scale == 1.0) { __GRPHRndDrawLine(this.id, x0, y0, x1, y1, pen.id); return }
         var w = this.PenOn(pen)
         __GRPHRndDrawLine(this.id, this.Px(x0), this.Px(y0), this.Px(x1), this.Px(y1), pen.id)
@@ -567,6 +661,7 @@ class Renderer {
     }
     // A path through the points [x0, y0, x1, y1, ...]; closed connects the last to the first
     undefined DrawPath(float points[], Pen pen, bool closed = false) {
+        if (this.Recording != undefined) { this.NoteStroke("ds", this.PointsText(points) + "," + Renderer.JsonBool(closed), pen) }
         if (this.scale == 1.0) { __GRPHRndDrawPath(this.id, points, pen.id, closed); return }
         var w = this.PenOn(pen)
         __GRPHRndDrawPath(this.id, this.Points(points), pen.id, closed)
@@ -574,30 +669,35 @@ class Renderer {
     }
     // Outlines: paths made from the pixels of the shape
     undefined DrawRect(defined int x, defined int y, defined int w, defined int h, Pen pen) {
+        if (this.Recording != undefined) { this.NoteStroke("dr", this.RectText(x, y, w, h), pen) }
         if (this.scale == 1.0) { __GRPHRndDrawRect(this.id, x, y, w, h, pen.id); return }
         var pw = this.PenOn(pen)
         __GRPHRndDrawRect(this.id, this.Px(x), this.Px(y), this.Px(x + w) - this.Px(x), this.Px(y + h) - this.Px(y), pen.id)
         pen.Width = pw
     }
     undefined DrawCircle(defined int cx, defined int cy, defined int r, Pen pen) {
+        if (this.Recording != undefined) { this.NoteStroke("de", this.Px(cx) + "," + this.Px(cy) + "," + this.Len(r) + "," + this.Len(r), pen) }
         if (this.scale == 1.0) { __GRPHRndDrawCircle(this.id, cx, cy, r, pen.id); return }
         var w = this.PenOn(pen)
         __GRPHRndDrawCircle(this.id, this.Px(cx), this.Px(cy), this.Len(r), pen.id)
         pen.Width = w
     }
     undefined DrawEllipse(defined int cx, defined int cy, defined int rx, defined int ry, Pen pen) {
+        if (this.Recording != undefined) { this.NoteStroke("de", this.Px(cx) + "," + this.Px(cy) + "," + this.Len(rx) + "," + this.Len(ry), pen) }
         if (this.scale == 1.0) { __GRPHRndDrawEllipse(this.id, cx, cy, rx, ry, pen.id); return }
         var w = this.PenOn(pen)
         __GRPHRndDrawEllipse(this.id, this.Px(cx), this.Px(cy), this.Len(rx), this.Len(ry), pen.id)
         pen.Width = w
     }
     undefined DrawTriangle(defined int x0, defined int y0, defined int x1, defined int y1, defined int x2, defined int y2, Pen pen) {
+        if (this.Recording != undefined) { this.NoteStroke("ds", "[" + this.Px(x0) + "," + this.Px(y0) + "," + this.Px(x1) + "," + this.Px(y1) + "," + this.Px(x2) + "," + this.Px(y2) + "],true", pen) }
         if (this.scale == 1.0) { __GRPHRndDrawTriangle(this.id, x0, y0, x1, y1, x2, y2, pen.id); return }
         var w = this.PenOn(pen)
         __GRPHRndDrawTriangle(this.id, this.Px(x0), this.Px(y0), this.Px(x1), this.Px(y1), this.Px(x2), this.Px(y2), pen.id)
         pen.Width = w
     }
     undefined DrawPolygon(float points[], Pen pen, bool closed = true) {
+        if (this.Recording != undefined) { this.NoteStroke("ds", this.PointsText(points) + "," + Renderer.JsonBool(closed), pen) }
         if (this.scale == 1.0) { __GRPHRndDrawPolygon(this.id, points, pen.id, closed); return }
         var w = this.PenOn(pen)
         __GRPHRndDrawPolygon(this.id, this.Points(points), pen.id, closed)
@@ -606,11 +706,13 @@ class Renderer {
 
     // ---- rounded rectangles and effects (docs/spec/UI_PLATFORM.md): antialiased at their edges; the radius is clamped to half the shorter side (0: a plain rectangle) ----
     undefined FillRoundRect(defined int x, defined int y, defined int w, defined int h, defined int radius, Brush brush) {
+        if (this.Recording != undefined) { this.NoteFill("frr", this.RectText(x, y, w, h) + "," + this.Len(radius), brush) }
         if (this.scale == 1.0) { __GRPHRndFillRoundRect(this.id, x, y, w, h, radius, brush.id); return }
         __GRPHRndFillRoundRect(this.id, this.Px(x), this.Px(y), this.Px(x + w) - this.Px(x), this.Px(y + h) - this.Px(y), this.Len(radius), brush.id)
     }
     // The outline, as wide as the pen (its shape does not count)
     undefined DrawRoundRect(defined int x, defined int y, defined int w, defined int h, defined int radius, Pen pen) {
+        if (this.Recording != undefined) { this.NoteStroke("drr", this.RectText(x, y, w, h) + "," + this.Len(radius), pen) }
         if (this.scale == 1.0) { __GRPHRndDrawRoundRect(this.id, x, y, w, h, radius, pen.id); return }
         var pw = this.PenOn(pen)
         __GRPHRndDrawRoundRect(this.id, this.Px(x), this.Px(y), this.Px(x + w) - this.Px(x), this.Px(y + h) - this.Px(y), this.Len(radius), pen.id)
@@ -619,11 +721,13 @@ class Renderer {
     // A fine shadow around the rounded rectangle (drawn before it: under the rectangle nothing is drawn). `color`'s alpha is its strongest opacity (subtle: 0x14000000 to
     // 0x26000000), `softness` how far it fades out, `offsetY` how far it lies lower. Its blurred mask is made at a quarter of the size and kept for the next time.
     undefined DrawShadow(defined int x, defined int y, defined int w, defined int h, defined int radius, defined int softness, defined int color, defined int offsetY = 0) {
+        this.Note("[\"u\"]")
         if (this.scale == 1.0) { __GRPHRndDrawShadow(this.id, x, y, w, h, radius, softness, color, offsetY); return }
         __GRPHRndDrawShadow(this.id, this.Px(x), this.Px(y), this.Px(x + w) - this.Px(x), this.Px(y + h) - this.Px(y), this.Len(radius), this.Len(softness), color, this.Len(offsetY))
     }
     // Blurs what is drawn in the rounded rectangle by `radius` pixels (the cost does not grow with the radius)
     undefined Blur(defined int x, defined int y, defined int w, defined int h, defined int radius, defined int cornerRadius = 0) {
+        this.Note("[\"u\"]")
         if (this.scale == 1.0) { __GRPHRndBlur(this.id, x, y, w, h, radius, cornerRadius); return }
         __GRPHRndBlur(this.id, this.Px(x), this.Px(y), this.Px(x + w) - this.Px(x), this.Px(y + h) - this.Px(y), this.Len(radius), this.Len(cornerRadius))
     }
@@ -632,6 +736,7 @@ class Renderer {
     // when there is no transparency. `options` (MaterialOptions): Blur off - no blur (glass and acrylic become a translucent tint); Transparency off - opaque (the tint
     // over baseColor); Dark - the hairline of a dark theme.
     undefined DrawMaterial(MaterialKind kind, defined int x, defined int y, defined int w, defined int h, defined int radius, defined int tint, defined int baseColor, defined int options = 3) {
+        this.Note("[\"u\"]")
         if (this.scale == 1.0) { __GRPHRndDrawMaterial(this.id, kind!int, x, y, w, h, radius, tint, baseColor, options); return }
         __GRPHRndDrawMaterial(this.id, kind!int, this.Px(x), this.Px(y), this.Px(x + w) - this.Px(x), this.Px(y + h) - this.Px(y), this.Len(radius), tint, baseColor, options)
     }
@@ -641,12 +746,15 @@ class Renderer {
     // with its top left corner at (x, y); BlitRegion: the section (sx, sy, sw, sh) to (dx, dy); BlitScaled: additionally brought to the size dw x dh (nearest neighbour;
     // a NEGATIVE width/height mirrors). `key`: for a palette image the transparent index (-1 = its TransparentIndex).
     undefined Blit(Framebuffer source, defined int x, defined int y, defined int mode = 0, defined int key = -1) {
+        this.Note("[\"u\"]")
         __GRPHRndBlit(this.id, source.id, 0, 0, source.Width(), source.Height(), this.Px(x), this.Px(y), this.Len(source.Width()), this.Len(source.Height()), mode, key)
     }
     undefined BlitRegion(Framebuffer source, defined int sx, defined int sy, defined int sw, defined int sh, defined int dx, defined int dy, defined int mode = 0, defined int key = -1) {
+        this.Note("[\"u\"]")
         __GRPHRndBlit(this.id, source.id, sx, sy, sw, sh, this.Px(dx), this.Px(dy), this.Len(sw), this.Len(sh), mode, key)
     }
     undefined BlitScaled(Framebuffer source, defined int sx, defined int sy, defined int sw, defined int sh, defined int dx, defined int dy, defined int dw, defined int dh, defined int mode = 0, defined int key = -1) {
+        this.Note("[\"u\"]")
         __GRPHRndBlit(this.id, source.id, sx, sy, sw, sh, this.Px(dx), this.Px(dy), this.Px(dx + dw) - this.Px(dx), this.Px(dy + dh) - this.Px(dy), mode, key)
     }
 }

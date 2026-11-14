@@ -300,7 +300,7 @@ namespace fire.Native
             var visible = new HashSet<string>(module.Classes, StringComparer.Ordinal);
             foreach (var dep in module.Deps) visible.UnionWith(dep.Classes);
             var classes = program.Program.Classes.Where(kv => visible.Contains(kv.Value.Name)).ToDictionary(kv => kv.Key, kv => kv.Value);
-            var compiled = new CompiledProgram { TopLevel = new Chunk(), Classes = classes, ExternSignatures = program.Program.ExternSignatures, Resources = program.Program.Resources, CustomUnits = new() };
+            var compiled = new CompiledProgram { TopLevel = new Chunk(), Classes = classes, ExternSignatures = program.Program.ExternSignatures, Resources = program.Program.Resources, CustomUnits = new(), Enums = program.Program.Enums };
             return new LinkedProgram(compiled, program.NativeImports, program.FirstUserSource, program.ExecutionMode)
             {
                 NativeNames = program.NativeNames, FloatWidth = program.FloatWidth, IntWidth = program.IntWidth, WordWidth = program.WordWidth, PackageNatives = program.PackageNatives, PackageNativeLibraries = program.PackageNativeLibraries,

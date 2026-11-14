@@ -45,3 +45,25 @@ The versions are TLS 1.2 and 1.3; SNI is sent; a server that closes without `clo
 * **ESP32**: the mbedTLS of ESP-IDF; add the component `mbedtls` to the project. To check servers without giving CA certificates define `FIRE_TLS_CA_ATTACH(conf)` as `esp_crt_bundle_attach(conf)` in the target (`includes`: `esp_crt_bundle.h`); there is no system
   store on a microcontroller. (Not tried on a board yet.)
 * mbedTLS checks host *names* only, not IP addresses in the certificate: connecting to `127.0.0.1` against a certificate with an IP entry works with OpenSSL, not with mbedTLS.
+
+## TLS over buffers: `Tls.Engine`
+
+Some protocols carry the TLS records themselves instead of putting TLS under them - SQL Server's TDS sends the handshake inside its PRELOGIN packets and
+then the packets inside TLS. `new Tls.Engine(serverName, options)` is a client session without a socket:
+
+```fire
+var e = new Tls.Engine("db.local", options)
+while (!e.Step()) {                 // the handshake, step by step
+    send(e.Drain())                 // the records to send (empty: none)
+    var answer = receive()
+    e.Feed(answer, 0, answer.length)  // the records that came
+}
+send(e.Drain())
+e.Write(data, 0, data.length)       // encrypts: Drain gives the records
+int n = e.Read(buffer, 0, buffer.length)   // decrypts what was fed: -1 more must be fed first, 0 the other side ended the session
+```
+
+The certificate is checked as with `Tls.Stream` (`options.verify`, `caFile`, `caPem`); `Info` gives the protocol and the cipher. It runs on every TLS
+library of the package: OpenSSL (two memory BIOs), mbedTLS (its I/O callbacks on two buffers) and SChannel (its records kept in buffers instead of
+the socket - tried under Wine); only a build without TLS (`FIRE_NO_TLS`) throws a `Net.NetException` that says so.
+

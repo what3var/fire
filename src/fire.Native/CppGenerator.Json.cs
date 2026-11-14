@@ -82,8 +82,19 @@ namespace fire.Native
                     UnitId(field.Unit);
                     foreach (var arg in JsonTypeArgTexts(field.Type)) TArgRef(arg);
                     // (a field of an enum: JSON makes values of it - the enum is in the table even when no code names it)
-                    if (fire.Values.EnumType.Named(field.Type.TrimStart('#').Replace("[]", "")) is { } enumType) EnumIndex(enumType);
+                    if (ProgramEnum(field.Type.TrimStart('#').Replace("[]", "")) is { } enumType) EnumIndex(enumType);
                 }
+        }
+
+        /// <summary>The enum of this name in the program (the process may hold another program's enum of the same name); without the program's list, the last of the process.</summary>
+        private fire.Values.EnumType? ProgramEnum(string name)
+        {
+            if (_program.Program.Enums is { } enums)
+            {
+                if (enums.TryGetValue(name, out var type)) return type;
+                foreach (var t in enums.Values) if (t.Matches(name)) return t;
+            }
+            return fire.Values.EnumType.Named(name);
         }
 
         private static readonly HashSet<string> JsonPlainTypes = new(StringComparer.Ordinal)
@@ -230,7 +241,7 @@ namespace fire.Native
                     (listCls, listItems, listCount) = (ci.Id, FieldPlace(rc, items).Slot, FieldPlace(rc, count).Slot);
                     // `owns` as its field initialiser gives it (Owns.Explicit) - the reader runs no initialisers; a packed field starts at zero (Explicit) anyway
                     if (rc.FieldIndex.TryGetValue("owns", out int owns) && !(PackedOn && RawLayoutOf(rc) is var (offs, _) && owns < offs.Length && offs[owns] >= 0)
-                        && fire.Values.EnumType.Named("Owns") is { } ownsType)
+                        && ProgramEnum("Owns") is { } ownsType)
                         (listOwns, ownsEnum) = (FieldPlace(rc, owns).Slot, EnumIndex(ownsType));
                 }
                 if (rc.Name == "JsonObject" && rc.FieldIndex.TryGetValue("keys", out int keys) && rc.FieldIndex.TryGetValue("values", out int values) && rc.FieldIndex.TryGetValue("count", out int n))

@@ -1,0 +1,1878 @@
+// data.sqlserver (docs/data/README.md): the SQL Server driver of Data, written in fire over a TCP connection (TDS, no client library):
+//     new Data.Connection("sqlserver://db.local:1433/shop", new Data.Credentials("app", secret))
+//     ?encrypt=mandatory     the default: everything encrypted (TLS inside TDS - its handshake in the PRELOGIN packets), the certificate is checked
+//     ?encrypt=optional      only the login encrypted when the server does not ask for more (as old clients did; the data goes in the clear)
+//     ?encrypt=strict        TDS 8.0: TLS first, then TDS inside it (SQL Server 2022 with a certificate for it, Azure SQL)
+//     ?encrypt=off           no TLS at all - only where the server allows it and nobody can listen (the password is only obfuscated)
+//     &mars=true             Multiple Active Result Sets: several results open at once on the connection (SMP sessions), no rows kept in memory
+//     host\instance or ?instance=NAME   a named instance: its port from the SQL Server Browser (UDP 1434; &browser=port for another)
+//     &trust=true            accept any certificate (test servers with their own); &ca=file.pem: the authorities to trust
+//     &timeout=10000         connecting and waiting for an answer, in ms
+// TDS 7.4: PRELOGIN, LOGIN7 (a SQL login), SQL batches for SQL without parameters, sp_executesql with typed parameters (the "?" of the SQL become @p0,
+// @p1, ...), the token stream (COLMETADATA, ROW, NBCROW, DONE, ERROR, ENVCHANGE), rows streamed from the socket, the transaction descriptor of the
+// server in every request.
+#import "data"
+#import "net"
+#import "tls"
+#import "io"
+
+namespace Data {
+    [Keep]
+    [Driver "sqlserver"]
+    class SqlServerDriver : Data.IDriver {
+        construct() { }
+        Data.IDriverConnection Open(string target, Data.Credentials credentials) { return new Data.TdsConnection(target, credentials) }
+
+        // An ERROR token as the exception of its kind.
+        static undefined Fail(defined int number, string message) {
+            if (number == 2627 || number == 2601 || number == 547 || number == 515 || number == 544 || number == 8152 || number == 2628) { throw new Data.ConstraintException(message, number) }
+            if (number == 1205 || number == 1222) { throw new Data.BusyException(message, number) }
+            if (number == 18456 || number == 4060 || number == 18452 || number == 18486 || number == 18487 || number == 18488) { throw new Data.ConnectionException(message, number) }
+            throw new Data.DataException(message, number)
+        }
+    }
+
+    class SqlServerDialect : Data.Dialect {
+        construct() : base("sqlserver") { }
+        override string Quote(string name) { return "[" + name.Replace("]", "]]") + "]" }
+        override string Begin() { return "BEGIN TRANSACTION" }
+        override string Commit() { return "COMMIT TRANSACTION" }
+        override string Rollback() { return "ROLLBACK TRANSACTION" }
+        override string Savepoint(string name) { return "SAVE TRANSACTION " + name }
+        override string Release(string name) { return "" }   // (a savepoint of SQL Server is not released)
+        override string RollbackTo(string name) { return "ROLLBACK TRANSACTION " + name }
+        override string ColumnType(Data.ColumnMap c) {
+            if (c.kind == "int") { return "BIGINT" }
+            if (c.kind == "bool") { return "BIT" }
+            if (c.kind == "float") { return "FLOAT" }
+            if (c.kind == "bytes") { return "VARBINARY(MAX)" }
+            if (c.kind == "time") { return "NVARCHAR(40)" }
+            if (c.kind == "enum") { return "NVARCHAR(255)" }
+            if (c.kind == "json") { return "NVARCHAR(MAX)" }
+            if (c.length > 0 && c.length <= 4000) { return "NVARCHAR(" + c.length + ")" }
+            if (c.key || c.unique || c.index) { return "NVARCHAR(450)" }   // (an index key has at most 900 bytes)
+            return "NVARCHAR(MAX)"
+        }
+        override string Generated() { return " IDENTITY(1,1)" }
+        override string ColumnsQuery() { return "SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = SCHEMA_NAME() AND TABLE_NAME = ?" }
+        override string TablesQuery() { return "SELECT name FROM sys.tables ORDER BY name" }
+        override string ColumnInfoQuery() { return "SELECT c.name, t.name + CASE WHEN t.name IN ('nvarchar', 'varchar', 'nchar', 'char', 'varbinary', 'binary') THEN '(' + CASE WHEN c.max_length = -1 THEN 'max' WHEN t.name IN ('nvarchar', 'nchar') THEN CAST(c.max_length / 2 AS varchar(10)) ELSE CAST(c.max_length AS varchar(10)) END + ')' ELSE '' END, c.is_nullable, CASE WHEN EXISTS (SELECT 1 FROM sys.index_columns ic JOIN sys.indexes i ON i.object_id = ic.object_id AND i.index_id = ic.index_id WHERE i.is_primary_key = 1 AND ic.object_id = c.object_id AND ic.column_id = c.column_id) THEN 1 ELSE 0 END FROM sys.columns c JOIN sys.types t ON t.user_type_id = c.user_type_id WHERE c.object_id = OBJECT_ID(?) ORDER BY c.column_id" }
+        override string IndexesQuery() { return "SELECT i.name, c.name, i.is_unique FROM sys.indexes i JOIN sys.index_columns ic ON ic.object_id = i.object_id AND ic.index_id = i.index_id JOIN sys.columns c ON c.object_id = ic.object_id AND c.column_id = ic.column_id WHERE i.object_id = OBJECT_ID(?) AND i.is_primary_key = 0 AND i.name IS NOT NULL ORDER BY i.name, ic.key_ordinal" }
+        override string DropIndex(string name, string table) { return "DROP INDEX " + this.Quote(name) + " ON " + this.Quote(table) }
+        override string RenameColumn(string table, string column, string to) { return "EXEC sp_rename N'" + (table + "." + column).Replace("'", "''") + "', N'" + to.Replace("'", "''") + "', 'COLUMN'" }
+        override string IndexQuery() { return "SELECT count(*) FROM sys.indexes WHERE object_id = OBJECT_ID(?) AND name = ?" }
+        override string CreateTableIfMissing(string table, string body) { return "IF OBJECT_ID(N'" + table.Replace("'", "''") + "', N'U') IS NULL CREATE TABLE " + table + " " + body }
+        override string AddColumn(string table, string definition) { return "ALTER TABLE " + table + " ADD " + definition }
+        override string IndexSuffix(string column, bool unique) {
+            if (unique) { return " WHERE " + column + " IS NOT NULL" }
+            return ""
+        }
+        override string Truth(string value) { return "(" + value + " = 1)" }
+        override string AsValue(string condition) { return "CASE WHEN " + condition + " THEN 1 ELSE 0 END" }
+        override string Paging(int count, int offset, bool ordered) {
+            if (count < 0 && offset <= 0) { return "" }
+            var t = ""
+            if (!ordered) { t = " ORDER BY (SELECT NULL)" }
+            int skip = 0
+            if (offset > 0) { skip = offset }
+            t = t + " OFFSET " + skip + " ROWS"
+            if (count >= 0) { t = t + " FETCH NEXT " + count + " ROWS ONLY" }
+            return t
+        }
+        override string Limit(int count, int offset) { return this.Paging(count, offset, true) }
+        // (texts compared by their code points: the default collations ignore the case of the letters, fire's StartsWith does not)
+        override string StartsWith(string a, string b) { return "CHARINDEX(" + b + " COLLATE Latin1_General_100_BIN2, " + a + " COLLATE Latin1_General_100_BIN2) = 1" }
+        override string EndsWith(string a, string b, string b2) { return "RIGHT(" + a + ", LEN(" + b + " + N'x') - 1) COLLATE Latin1_General_100_BIN2 = " + b2 + " COLLATE Latin1_General_100_BIN2" }
+        override string Contains(string a, string b) { return "CHARINDEX(" + b + " COLLATE Latin1_General_100_BIN2, " + a + " COLLATE Latin1_General_100_BIN2) > 0" }
+        override string Length(string a) { return "(LEN(" + a + " + N'x') - 1)" }   // (LEN ignores spaces at the end)
+        override string Concat(string a, string b) { return "(" + a + " + " + b + ")" }
+    }
+
+    // ---- bytes ----
+
+    /// <summary>A TDS message being written: little-endian numbers, UTF-16 texts.</summary>
+    class TdsOut {
+        IO.MemoryStream m
+        construct() { this.m = new IO.MemoryStream() }
+        undefined Byte(defined int v) {
+            byte b[] = new byte[1]
+            b[0] = v & 255
+            this.m.Write(b, 0, 1)
+        }
+        undefined Int(defined int v, defined int size) {
+            byte b[] = new byte[size]
+            for (var i = 0; i < size; i++) { b[i] = (v >> (8 * i)) & 255 }
+            this.m.Write(b, 0, size)
+        }
+        undefined Bytes(byte data[]) { if (data.length > 0) { this.m.Write(data, 0, data.length) } }
+        undefined Zeros(defined int n) { for (var i = 0; i < n; i++) { this.Byte(0) } }
+        defined int Length { get { return this.m.Length } }
+        byte[] ToBuffer() { return this.m.ToBuffer() }
+        // (a name: its length in characters as one byte, then UTF-16)
+        undefined BText(string text) {
+            byte u[] = Data.Tds.Utf16(text)
+            this.Byte(u.length / 2)
+            this.Bytes(u)
+        }
+    }
+
+    /// <summary>Helpers of the wire: UTF-16, IEEE numbers, dates.</summary>
+    class Tds {
+        // A text as UTF-16LE (from its UTF-8: every code point, those above U+FFFF as two units).
+        static byte[] Utf16(string text) {
+            byte s[] = IO.Utf8.GetBytes(text)
+            var out = new IO.MemoryStream()
+            byte two[] = new byte[2]
+            int i = 0
+            while (i < s.length) {
+                int b = s[i]
+                int cp = b
+                int n = 1
+                if (b >= 0xF0) {
+                    int b1 = s[i + 1]
+                    int b2 = s[i + 2]
+                    int b3 = s[i + 3]
+                    cp = ((b & 7) << 18) | ((b1 & 63) << 12) | ((b2 & 63) << 6) | (b3 & 63)
+                    n = 4
+                } else if (b >= 0xE0) {
+                    int b1 = s[i + 1]
+                    int b2 = s[i + 2]
+                    cp = ((b & 15) << 12) | ((b1 & 63) << 6) | (b2 & 63)
+                    n = 3
+                } else if (b >= 0xC0) {
+                    int b1 = s[i + 1]
+                    cp = ((b & 31) << 6) | (b1 & 63)
+                    n = 2
+                }
+                i = i + n
+                if (cp >= 0x10000) {
+                    int v = cp - 0x10000
+                    int hi = 0xD800 + (v >> 10)
+                    int lo = 0xDC00 + (v & 1023)
+                    two[0] = hi & 255
+                    two[1] = hi >> 8
+                    out.Write(two, 0, 2)
+                    two[0] = lo & 255
+                    two[1] = lo >> 8
+                    out.Write(two, 0, 2)
+                } else {
+                    two[0] = cp & 255
+                    two[1] = cp >> 8
+                    out.Write(two, 0, 2)
+                }
+            }
+            return out.ToBuffer()
+        }
+        // UTF-16LE bytes as a text.
+        static string FromUtf16(byte data[], defined int offset, defined int count) {
+            var out = new IO.MemoryStream()
+            int i = offset
+            int end = offset + count
+            while (i + 1 < end) {
+                int lo0 = data[i]
+                int hi0 = data[i + 1]
+                int u = lo0 | (hi0 << 8)
+                i = i + 2
+                int cp = u
+                if (u >= 0xD800 && u < 0xDC00 && i + 1 < end) {
+                    int lo1 = data[i]
+                    int hi1 = data[i + 1]
+                    int u2 = lo1 | (hi1 << 8)
+                    if (u2 >= 0xDC00 && u2 < 0xE000) {
+                        cp = 0x10000 + ((u - 0xD800) << 10) + (u2 - 0xDC00)
+                        i = i + 2
+                    }
+                }
+                Data.Tds.PutUtf8(out, cp)
+            }
+            return IO.Utf8.GetString(out.ToBuffer())
+        }
+        // Bytes of a single-byte code page (windows-1252) as a text.
+        static string FromLatin(byte data[], defined int offset, defined int count) {
+            var out = new IO.MemoryStream()
+            // (0x80 .. 0x9F of windows-1252)
+            var high = [0x20AC, 0x81, 0x201A, 0x0192, 0x201E, 0x2026, 0x2020, 0x2021, 0x02C6, 0x2030, 0x0160, 0x2039, 0x0152, 0x8D, 0x017D, 0x8F, 0x90, 0x2018, 0x2019, 0x201C, 0x201D, 0x2022, 0x2013, 0x2014, 0x02DC, 0x2122, 0x0161, 0x203A, 0x0153, 0x9D, 0x017E, 0x0178]
+            for (var i = 0; i < count; i++) {
+                int b = data[offset + i]
+                int cp = b
+                if (b >= 0x80 && b < 0xA0) { cp = high[b - 0x80] }
+                Data.Tds.PutUtf8(out, cp)
+            }
+            return IO.Utf8.GetString(out.ToBuffer())
+        }
+        static undefined PutUtf8(IO.MemoryStream out, defined int cp) {
+            byte b[] = new byte[4]
+            int n = 1
+            if (cp < 0x80) { b[0] = cp }
+            else if (cp < 0x800) {
+                b[0] = 0xC0 | (cp >> 6)
+                b[1] = 0x80 | (cp & 63)
+                n = 2
+            } else if (cp < 0x10000) {
+                b[0] = 0xE0 | (cp >> 12)
+                b[1] = 0x80 | ((cp >> 6) & 63)
+                b[2] = 0x80 | (cp & 63)
+                n = 3
+            } else {
+                b[0] = 0xF0 | (cp >> 18)
+                b[1] = 0x80 | ((cp >> 12) & 63)
+                b[2] = 0x80 | ((cp >> 6) & 63)
+                b[3] = 0x80 | (cp & 63)
+                n = 4
+            }
+            out.Write(b, 0, n)
+        }
+
+        // The bits of a double (IEEE 754).
+        static defined int Bits64(float value) {
+            if (value == 0.0) { return 0 }
+            int sign = 0
+            float a = value
+            if (a < 0.0) {
+                sign = 1
+                a = 0.0 - a
+            }
+            int e = 0
+            while (a >= 2.0) {
+                a = a / 2.0
+                e++
+            }
+            while (a < 1.0 && e > -1022) {
+                a = a * 2.0
+                e--
+            }
+            int mant = 0
+            int exp = 0
+            if (a < 1.0) {
+                // (subnormal: below 2^-1022)
+                mant = (a * 4503599627370496.0)!int
+                exp = 0
+            } else {
+                mant = ((a - 1.0) * 4503599627370496.0)!int
+                exp = e + 1023
+            }
+            if (exp >= 2047) { throw new ArgumentException("data.sqlserver: the number " + value + " is too big for a FLOAT.") }
+            return (sign << 63) | (exp << 52) | mant
+        }
+        // A double from its bits.
+        static float Float64(defined int bits) {
+            int sign = (bits >> 63) & 1
+            int exp = (bits >> 52) & 0x7FF
+            int mant = bits & 4503599627370495
+            float v = 0.0
+            if (exp == 0) { v = mant / 4503599627370496.0 * 2.0 ^ (0 - 1022) }
+            else if (exp == 0x7FF) { v = 1.0e308 * 10.0 }
+            else { v = (1.0 + mant / 4503599627370496.0) * 2.0 ^ (exp - 1023) }
+            if (sign == 1) { return 0.0 - v }
+            return v
+        }
+        static float Float32(defined int bits) {
+            int sign = (bits >> 31) & 1
+            int exp = (bits >> 23) & 0xFF
+            int mant = bits & 8388607
+            float v = 0.0
+            if (exp == 0) { v = mant / 8388608.0 * 2.0 ^ (0 - 126) }
+            else if (exp == 0xFF) { v = 1.0e308 * 10.0 }
+            else { v = (1.0 + mant / 8388608.0) * 2.0 ^ (exp - 127) }
+            if (sign == 1) { return 0.0 - v }
+            return v
+        }
+
+        static string Pad(defined int v, defined int width) {
+            var t = "" + v
+            while (t.Length < width) { t = "0" + t }
+            return t
+        }
+        // A day (0: 0001-01-01) as "YYYY-MM-DD" (the days of the proleptic Gregorian calendar).
+        static string Date(defined int days) {
+            int z = days - 719162 + 719468   // (days since 1970-01-01, shifted to 0000-03-01)
+            int era = z / 146097
+            if (z < 0 && z % 146097 != 0) { era = era - 1 }
+            int doe = z - era * 146097
+            int yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365
+            int y = yoe + era * 400
+            int doy = doe - (365 * yoe + yoe / 4 - yoe / 100)
+            int mp = (5 * doy + 2) / 153
+            int d = doy - (153 * mp + 2) / 5 + 1
+            int m = mp + 3
+            if (mp >= 10) { m = mp - 9 }
+            if (m <= 2) { y = y + 1 }
+            return Data.Tds.Pad(y, 4) + "-" + Data.Tds.Pad(m, 2) + "-" + Data.Tds.Pad(d, 2)
+        }
+        // A time in units of 10^-scale seconds as "HH:MM:SS[.fffffff]".
+        static string Time(defined int units, defined int scale) {
+            int per = 1
+            for (var i = 0; i < scale; i++) { per = per * 10 }
+            int secs = units / per
+            int frac = units % per
+            var t = Data.Tds.Pad(secs / 3600, 2) + ":" + Data.Tds.Pad((secs / 60) % 60, 2) + ":" + Data.Tds.Pad(secs % 60, 2)
+            if (scale > 0) { t = t + "." + Data.Tds.Pad(frac, scale) }
+            return t
+        }
+    }
+
+    /// <summary>A column of a result: its name and its TYPE_INFO.</summary>
+    class TdsColumn {
+        string name
+        defined int type
+        defined int size        // (the length of the type: 1/2/4/8 for numbers, the max length of a text; 0xFFFF: PLP)
+        defined int precision
+        defined int scale
+        byte collation[]
+        construct(string name, defined int type, defined int size, defined int precision, defined int scale, byte collation[]) {
+            this.name = name
+            this.type = type
+            this.size = size
+            this.precision = precision
+            this.scale = scale
+            this.collation = take collation
+        }
+        bool Utf8 {
+            get {
+                if (this.collation == undefined || this.collation.length < 4) { return false }
+                int b2 = this.collation[2]
+                int b3 = this.collation[3]
+                int flags = ((b2 >> 4) | (b3 << 4)) & 255
+                return (flags & 0x40) != 0
+            }
+        }
+    }
+
+    /// <summary>A stream of TDS packets: the connection itself, or with MARS one SMP session of it. It keeps what came for it (`inbox`), the
+    /// numbers of the SMP flow control, and - while it is not the one being read - the state of its response.</summary>
+    class TdsChannel {
+        defined int sid
+        byte inbox[]
+        defined int inPos
+        defined int sendSeq
+        defined int peerWindow
+        defined int recvSeq
+        defined int myWindow
+        bool closed
+        // (the state of its response while another channel is read)
+        byte packet[]
+        defined int at
+        bool last
+        bool reading
+        List columns
+        // the token of the statement whose rows are streaming on it (0: free)
+        defined int owner
+        construct(defined int sid) {
+            this.sid = sid
+            this.inbox = new byte[0]
+            this.inPos = 0
+            this.sendSeq = 0
+            this.peerWindow = 4
+            this.recvSeq = 0
+            this.myWindow = 4
+            this.closed = false
+            this.packet = new byte[0]
+            this.at = 0
+            this.last = true
+            this.reading = false
+            this.columns = new List()
+            this.owner = 0
+        }
+        // (bytes that came for it)
+        undefined Append(byte data[]) {
+            int keep = this.inbox.length - this.inPos
+            byte all[] = new byte[keep + data.length]
+            for (var i = 0; i < keep; i++) { all[i] = this.inbox[this.inPos + i] }
+            for (var i = 0; i < data.length; i++) { all[keep + i] = data[i] }
+            this.inbox = take all
+            this.inPos = 0
+        }
+        defined int Available { get { return this.inbox.length - this.inPos } }
+    }
+
+    /// <summary>The rest of the rows of a result that a command interrupted.</summary>
+    class TdsParked {
+        defined int token
+        List rows
+        construct(defined int token, List rows) {
+            this.token = token
+            this.rows = take rows
+        }
+    }
+
+    // ---- the connection ----
+
+    class TdsConnection : Data.IDriverConnection {
+        Net.TcpClient tcp
+        Tls.Stream tls
+        // TLS inside TDS: the engine, and whether the packets go through it now
+        Tls.Engine engine
+        bool wrapped
+        bool closed
+        Data.SqlServerDialect dialect
+        defined int timeout
+        defined int packetSize
+        byte collation[]
+        byte transaction[]
+        // the message being read: the payload of its current packet, the position, the last packet
+        byte packet[]
+        defined int at
+        bool last
+        bool reading
+        // the result of the response: its columns, the error to throw at its end, the row count
+        List columns
+        defined int changes
+        bool counted
+        defined int lastId
+        string error
+        defined int errorNumber
+        // the result whose rows are being read (0: none) - on the current channel -, the parked rest of results interrupted by a command (without MARS)
+        defined int tokens
+        List parked
+        // the channels: one without MARS, the SMP sessions with it; the one being read; MARS asked for, SMP running
+        List channels
+        Data.TdsChannel ch
+        bool mars
+        bool smp
+        defined int streamToken {
+            get { return this.ch.owner }
+            set { this.ch.owner = value }
+        }
+
+        construct(string target, Data.Credentials credentials) {
+            this.dialect = new Data.SqlServerDialect()
+            this.closed = true
+            this.packetSize = 4096
+            this.transaction = new byte[8]
+            this.collation = new byte[5]
+            this.collation[0] = 0x09
+            this.collation[1] = 0x04
+            this.collation[2] = 0xD0
+            this.collation[3] = 0x00
+            this.collation[4] = 0x34
+            this.columns = new List()
+            this.parked = new List()
+            this.channels = new List()
+            this.channels.Add(new Data.TdsChannel(0))
+            this.ch = this.channels[0]
+            this.mars = false
+            this.smp = false
+            this.tokens = 0
+            this.reading = false
+            this.wrapped = false
+            // //host[:port]/database?options
+            string rest = target
+            if (rest.StartsWith("//")) { rest = rest.Substring(2) }
+            string options = ""
+            int q = rest.IndexOf("?")
+            if (q >= 0) {
+                options = rest.Substring(q + 1)
+                rest = rest.Substring(0, q)
+            }
+            string user = ""
+            string password = ""
+            if (credentials != undefined) {
+                if (credentials.User != undefined) { user = credentials.User }
+                if (credentials.Password != undefined) { password = credentials.Password }
+            }
+            string database = ""
+            int slash = rest.IndexOf("/")
+            if (slash >= 0) {
+                database = rest.Substring(slash + 1)
+                rest = rest.Substring(0, slash)
+            }
+            string host = rest
+            defined int port = 1433
+            bool portGiven = false
+            string instance = undefined
+            int back = rest.IndexOf("\\")
+            if (back >= 0) {
+                instance = rest.Substring(back + 1)
+                host = rest.Substring(0, back)
+                rest = host
+            }
+            int colon = rest.LastIndexOf(":")
+            if (colon >= 0) {
+                portGiven = true
+                host = rest.Substring(0, colon)
+                any parsed = rest.Substring(colon + 1).TryToInt()
+                if (parsed == undefined) { throw new ArgumentException("data.sqlserver: the port '" + rest.Substring(colon + 1) + "' is not a number.") }
+                port = trust parsed
+            }
+            defined int browser = 1434
+            string encrypt = "mandatory"
+            bool trustAll = false
+            string ca = undefined
+            this.timeout = 10000
+            if (options != "") {
+                any parts = options.Split("&")
+                for (var i = 0; i < parts.length; i++) {
+                    string option = parts[i]
+                    int eq = option.IndexOf("=")
+                    if (eq < 0) { continue }
+                    string key = option.Substring(0, eq).ToLower()
+                    string value = option.Substring(eq + 1)
+                    if (key == "encrypt") { encrypt = value.ToLower() }
+                    else if (key == "trust" || key == "trustservercertificate") { trustAll = value.ToLower() == "true" || value == "1" }
+                    else if (key == "ca") { ca = value }
+                    else if (key == "mars" || key == "multipleactiveresultsets") { this.mars = value.ToLower() == "true" || value == "1" }
+                    else if (key == "instance") { instance = value }
+                    else if (key == "browser") {
+                        any b = value.TryToInt()
+                        if (b == undefined) { throw new ArgumentException("data.sqlserver: browser is the UDP port of the SQL Server Browser, not '" + value + "'.") }
+                        browser = trust b
+                    }
+                    else if (key == "timeout") {
+                        any t = value.TryToInt()
+                        if (t == undefined) { throw new ArgumentException("data.sqlserver: timeout is a number of ms, not '" + value + "'.") }
+                        this.timeout = trust t
+                    }
+                    else { throw new ArgumentException("data.sqlserver: unknown option '" + option + "' (encrypt=mandatory|optional|strict|off, trust=true, ca=file, mars=true, instance=name, browser=port, timeout=ms).") }
+                }
+            }
+            if (!(encrypt == "mandatory" || encrypt == "optional" || encrypt == "strict" || encrypt == "off")) { throw new ArgumentException("data.sqlserver: encrypt is mandatory, optional, strict or off, not '" + encrypt + "'.") }
+            // (a named instance: its port from the SQL Server Browser, unless one was given)
+            if (instance != undefined && instance != "" && !portGiven) { port = Data.TdsConnection.InstancePort(host, instance, browser, this.timeout) }
+            var o = new Tls.Options()
+            o.verify = !trustAll
+            if (ca != undefined) { o.caFile = ca }
+            try {
+                var tcp = new Net.TcpClient(host, port, this.timeout)
+                tcp.NoDelay = true
+                tcp.ReadTimeout = this.timeout
+                this.tcp = take tcp
+            } catch (Net.NetException e) {
+                throw new Data.ConnectionException("data.sqlserver: cannot connect to " + host + ":" + port + " (" + e.message + ").", 2)
+            }
+            this.closed = false
+            if (encrypt == "strict") {
+                var plain = take this.tcp
+                try {
+                    var stream = new Tls.Stream(take plain, host, o, this.timeout)
+                    this.tls = take stream
+                } catch (Net.NetException e) {
+                    this.closed = true
+                    throw new Data.ConnectionException("data.sqlserver: the TLS handshake with " + host + " failed (" + e.message + "; strict needs SQL Server 2022 with a certificate for it - else encrypt=mandatory).", 20)
+                }
+            }
+            int server = this.Prelogin(encrypt)
+            // (TLS inside TDS: all of it (the client or the server asked for it), or only the login (both said OFF))
+            bool loginOnly = false
+            if (encrypt != "strict" && encrypt != "off" && server != 2) {
+                loginOnly = encrypt == "optional" && server == 0
+                try { this.Handshake(host, o) } catch (Net.NetException e) {
+                    this.closed = true
+                    throw new Data.ConnectionException("data.sqlserver: the TLS handshake with " + host + " failed (" + e.message + "; a server with a certificate of its own: trust=true or ca=file).", 20)
+                }
+                this.wrapped = true
+            }
+            this.Login(host, user, password, database, loginOnly)
+            // (MARS: after the login every TDS packet goes in an SMP session - first session 0)
+            if (this.mars) {
+                this.smp = true
+                this.SmpWrite(0x01, 0, 0, 4, new byte[0])
+            }
+        }
+        destruct() { this.Close() }
+
+        // The TCP port of a named instance: CLNT_UCAST_INST (0x04 and the name) to the SQL Server Browser; its answer (0x05, a length, then
+        // "ServerName;S;InstanceName;I;IsClustered;No;Version;V;tcp;PORT;;" for each instance) gives it.
+        static defined int InstancePort(string host, string instance, defined int browser, defined int timeout) {
+            var udp = new Net.UdpSocket()
+            var ask = new Data.TdsOut()
+            ask.Byte(0x04)
+            ask.Bytes(IO.Utf8.GetBytes(instance))
+            ask.Byte(0)
+            byte question[] = ask.ToBuffer()
+            byte answer[] = new byte[65535]
+            int n = 0
+            // (UDP may lose the question: three tries)
+            for (var attempt = 0; attempt < 3; attempt++) {
+                udp.SendTo(question, host, browser)
+                try {
+                    n = udp.ReceiveFrom(answer, 0, answer.length, timeout / 3)
+                    break
+                } catch (Net.TimeoutException e) { n = 0 }
+            }
+            udp.Close()
+            if (n < 3) { throw new Data.ConnectionException("data.sqlserver: the SQL Server Browser on " + host + ":" + browser + " (UDP) did not answer for the instance '" + instance + "' - is it running, or give the port (host:port).", 26) }
+            string text = IO.Utf8.GetString(answer, 3, n - 3)
+            any parts = text.Split(";")
+            bool mine = false
+            for (var i = 0; i + 1 < parts.length; i++) {
+                string key = parts[i]
+                string value = parts[i + 1]
+                if (key == "InstanceName") { mine = value.ToLower() == instance.ToLower() }
+                if (mine && key == "tcp") {
+                    any p = value.TryToInt()
+                    if (p != undefined) { return trust p }
+                }
+            }
+            throw new Data.ConnectionException("data.sqlserver: the SQL Server Browser on " + host + " knows no instance '" + instance + "' with TCP.", 26)
+        }
+
+        // ---- packets ----
+        any Io() {
+            if (this.tls != undefined) { return this.tls }
+            return this.tcp
+        }
+        undefined Check() { if (this.closed) { throw new Data.StateException("data.sqlserver: the connection is closed.") } }
+        // (the bytes of the connection: through the engine while TDS carries TLS, else the TLS stream (strict) or the socket)
+        defined int IoRead(byte buffer[], defined int offset, defined int count) {
+            if (!this.wrapped) {
+                any io = this.Io()
+                int n = io.Read(buffer, offset, count)
+                return n
+            }
+            byte chunk[] = new byte[16384]
+            while (true) {
+                int n = this.engine.Read(buffer, offset, count)
+                if (n >= 0) { return n }
+                int got = this.tcp.Read(chunk, 0, chunk.length)
+                if (got <= 0) { return 0 }
+                this.engine.Feed(chunk, 0, got)
+            }
+            return 0
+        }
+        undefined IoWrite(byte buffer[], defined int offset, defined int count) {
+            if (!this.wrapped) {
+                any io = this.Io()
+                io.Write(buffer, offset, count)
+                return
+            }
+            this.engine.Write(buffer, offset, count)
+            byte out[] = this.engine.Drain()
+            if (out.length > 0) { this.tcp.Write(out, 0, out.length) }
+        }
+        undefined IoFlush() {
+            if (this.wrapped) { return }
+            any io = this.Io()
+            io.Flush()
+        }
+        undefined ReadFully(byte buffer[], defined int count) {
+            int done = 0
+            while (done < count) {
+                int n = this.IoRead(buffer, done, count - done)
+                if (n <= 0) {
+                    this.closed = true
+                    throw new Data.ConnectionException("data.sqlserver: the server closed the connection.", 10054)
+                }
+                done = done + n
+            }
+        }
+        // A message of `type`: split into packets of the negotiated size.
+        undefined Send(defined int type, byte payload[]) {
+            this.Check()
+            if (this.smp) { this.Free() }
+            else if (this.streamToken != 0) { this.Park() }
+            if (this.reading) { this.DrainResponse() }
+            int at = 0
+            int id = 1
+            int room = this.packetSize - 8
+            while (true) {
+                int n = payload.length - at
+                bool end = true
+                if (n > room) {
+                    n = room
+                    end = false
+                }
+                byte head[] = new byte[8]
+                head[0] = type
+                head[1] = 0
+                if (end) { head[1] = 1 }
+                int length = n + 8
+                head[2] = (length >> 8) & 255
+                head[3] = length & 255
+                head[6] = id & 255
+                // (one write per packet: through TLS a record each)
+                byte whole[] = new byte[n + 8]
+                for (var k = 0; k < 8; k++) { whole[k] = head[k] }
+                for (var k = 0; k < n; k++) { whole[8 + k] = payload[at + k] }
+                if (this.smp) { this.SmpData(whole) } else { this.IoWrite(whole, 0, n + 8) }
+                at = at + n
+                id++
+                if (end) { break }
+            }
+            this.IoFlush()
+            this.reading = true
+            this.last = false
+            this.packet = new byte[0]
+            this.at = 0
+        }
+        // (the next packet of the response)
+        undefined NextPacket() {
+            if (this.last) { throw new Data.DataException("data.sqlserver: the answer of the server ended too soon.") }
+            byte head[] = this.Take(8)
+            int status = head[1]
+            int h2 = head[2]
+            int h3 = head[3]
+            int length = (h2 << 8) | h3
+            byte body[] = this.Take(length - 8)
+            this.packet = take body
+            this.at = 0
+            this.last = (status & 1) != 0
+        }
+        // (n bytes of the current channel: from the socket, or with MARS from what came for its session)
+        byte[] Take(defined int n) {
+            if (!this.smp) {
+                byte out[] = new byte[n]
+                if (n > 0) { this.ReadFully(out, n) }
+                return out
+            }
+            var c = this.ch
+            while (c.Available < n) { this.Pump() }
+            byte out[] = new byte[n]
+            for (var i = 0; i < n; i++) { out[i] = c.inbox[c.inPos + i] }
+            c.inPos = c.inPos + n
+            return out
+        }
+
+        // ---- MARS: the sessions of SMP ----
+        // (an SMP packet: SMID 0x53, flags (SYN 1, ACK 2, FIN 4, DATA 8), session, length, sequence number, window)
+        undefined SmpWrite(defined int flags, defined int sid, defined int seq, defined int window, byte payload[]) {
+            var m = new Data.TdsOut()
+            m.Byte(0x53)
+            m.Byte(flags)
+            m.Int(sid, 2)
+            m.Int(16 + payload.length, 4)
+            m.Int(seq, 4)
+            m.Int(window, 4)
+            m.Bytes(payload)
+            byte all[] = m.ToBuffer()
+            this.IoWrite(all, 0, all.length)
+            this.IoFlush()
+        }
+        // (a TDS packet in the current session - when the server's window allows it)
+        undefined SmpData(byte whole[]) {
+            var c = this.ch
+            while (c.sendSeq + 1 > c.peerWindow) { this.Pump() }
+            c.sendSeq = c.sendSeq + 1
+            this.SmpWrite(0x08, c.sid, c.sendSeq, c.myWindow, whole)
+        }
+        // (one SMP packet from the socket, to its session)
+        undefined Pump() {
+            byte head[] = new byte[16]
+            this.ReadFully(head, 16)
+            int smid = head[0]
+            if (smid != 0x53) {
+                this.closed = true
+                throw new Data.DataException("data.sqlserver: the server did not answer in SMP (MARS).")
+            }
+            int flags = head[1]
+            int sid = head[2] | (head[3] << 8)
+            int length = head[4] | (head[5] << 8) | (head[6] << 16) | (head[7] << 24)
+            int seq = head[8] | (head[9] << 8) | (head[10] << 16) | (head[11] << 24)
+            int window = head[12] | (head[13] << 8) | (head[14] << 16) | (head[15] << 24)
+            byte payload[] = new byte[length - 16]
+            if (length > 16) { this.ReadFully(payload, length - 16) }
+            Data.TdsChannel c = undefined
+            for (var i = 0; i < this.channels.Count; i++) {
+                Data.TdsChannel k = this.channels[i]
+                if (k.sid == sid) { c = k }
+            }
+            if (c == undefined) { return }
+            c.peerWindow = window
+            if ((flags & 0x08) != 0) {
+                c.Append(payload)
+                c.recvSeq = seq
+                if (c.myWindow - seq < 2) {
+                    // (more may come: the window moves on)
+                    c.myWindow = seq + 4
+                    this.SmpWrite(0x02, c.sid, c.sendSeq, c.myWindow, new byte[0])
+                }
+            }
+            if ((flags & 0x04) != 0) { c.closed = true }
+        }
+        // (the current channel must be free for a request: else a free one, or a new session)
+        undefined Free() {
+            if (this.ch.owner == 0) { return }
+            for (var i = 0; i < this.channels.Count; i++) {
+                Data.TdsChannel k = this.channels[i]
+                if (k.owner == 0 && !k.closed) {
+                    this.Use(k)
+                    return
+                }
+            }
+            int sid = this.channels.Count
+            this.channels.Add(new Data.TdsChannel(sid))
+            Data.TdsChannel fresh = this.channels[this.channels.Count - 1]
+            this.SmpWrite(0x01, sid, 0, 4, new byte[0])
+            this.Use(fresh)
+        }
+        // (reading goes on in another channel: the state of the response goes with each)
+        undefined Use(Data.TdsChannel target) {
+            if (target == this.ch) { return }
+            var c = this.ch
+            c.packet = take this.packet
+            c.at = this.at
+            c.last = this.last
+            c.reading = this.reading
+            c.columns = take this.columns
+            this.packet = take target.packet
+            this.at = target.at
+            this.last = target.last
+            this.reading = target.reading
+            this.columns = take target.columns
+            this.ch = target
+        }
+        undefined UseSid(defined int sid) {
+            for (var i = 0; i < this.channels.Count; i++) {
+                Data.TdsChannel k = this.channels[i]
+                if (k.sid == sid) {
+                    this.Use(k)
+                    return
+                }
+            }
+        }
+        // How many SMP sessions the connection has (1 without MARS).
+        defined int Sessions { get { return this.channels.Count } }
+
+        defined int Byte() {
+            while (this.at >= this.packet.length) { this.NextPacket() }
+            int b = this.packet[this.at]
+            this.at = this.at + 1
+            return b
+        }
+        defined int Int(defined int size) {
+            int v = 0
+            for (var i = 0; i < size; i++) { v = v | (this.Byte() << (8 * i)) }
+            return v
+        }
+        defined int Signed(defined int size) {
+            int v = this.Int(size)
+            if (size >= 8) { return v }
+            int top = 1 << (8 * size - 1)
+            if (v >= top) { return v - top * 2 }
+            return v
+        }
+        byte[] Bytes(defined int n) {
+            byte out[] = new byte[n]
+            int done = 0
+            while (done < n) {
+                while (this.at >= this.packet.length) { this.NextPacket() }
+                int chunk = this.packet.length - this.at
+                if (chunk > n - done) { chunk = n - done }
+                for (var i = 0; i < chunk; i++) { out[done + i] = this.packet[this.at + i] }
+                this.at = this.at + chunk
+                done = done + chunk
+            }
+            return out
+        }
+        undefined Skip(defined int n) { for (var i = 0; i < n; i++) { this.Byte() } }
+        // (a text with its length in characters: one byte / two bytes)
+        string BText() {
+            int n = this.Byte()
+            byte u[] = this.Bytes(n * 2)
+            return Data.Tds.FromUtf16(u, 0, u.length)
+        }
+        string UsText() {
+            int n = this.Int(2)
+            byte u[] = this.Bytes(n * 2)
+            return Data.Tds.FromUtf16(u, 0, u.length)
+        }
+        // (the end of the response: every packet read)
+        bool AtEnd { get { return this.last && this.at >= this.packet.length } }
+
+        // ---- PRELOGIN and LOGIN7 ----
+        // PRELOGIN: what this client wants of encryption; the answer of the server (0 off, 1 on, 2 not supported, 3 required).
+        defined int Prelogin(string encrypt) {
+            bool strict = encrypt == "strict"
+            // the options (token, offset, length), 0xFF, then their data: VERSION, ENCRYPTION, INSTOPT, THREADID, MARS
+            var data = new Data.TdsOut()
+            data.Int(0x10, 4)                     // (VERSION: 16.0.0 of this client)
+            data.Int(0, 2)
+            int enc = 2                           // (ENCRYPT_NOT_SUP)
+            if (encrypt == "mandatory") { enc = 1 }
+            if (strict || encrypt == "optional") { enc = 0 }   // (strict: inside TLS already)
+            data.Byte(enc)
+            data.Byte(0)                          // (INSTOPT: the default instance)
+            data.Int(0, 4)                        // (THREADID)
+            if (this.mars) { data.Byte(1) } else { data.Byte(0) }   // (MARS)
+            var p = new Data.TdsOut()
+            int offset = 5 * 5 + 1
+            any lengths = [6, 1, 1, 4, 1]
+            for (var i = 0; i < 5; i++) {
+                int length = lengths[i]
+                p.Byte(i)
+                p.Byte((offset >> 8) & 255)
+                p.Byte(offset & 255)
+                p.Byte((length >> 8) & 255)
+                p.Byte(length & 255)
+                offset = offset + length
+            }
+            p.Byte(0xFF)
+            p.Bytes(data.ToBuffer())
+            this.Send(0x12, p.ToBuffer())
+            // the answer: its options in the same form - ENCRYPTION tells what the server wants
+            var all = new IO.MemoryStream()
+            while (!this.AtEnd) {
+                byte one[] = new byte[1]
+                one[0] = this.Byte()
+                all.Write(one, 0, 1)
+            }
+            this.reading = false
+            byte answer[] = all.ToBuffer()
+            int i2 = 0
+            defined int serverEnc = 2
+            while (i2 + 4 < answer.length && answer[i2] != 0xFF) {
+                int token = answer[i2]
+                int o1 = answer[i2 + 1]
+                int o2 = answer[i2 + 2]
+                int off = (o1 << 8) | o2
+                if (token == 1 && off < answer.length) { int v = answer[off]; serverEnc = trust v }
+                if (token == 4 && off < answer.length && answer[off] == 0) { this.mars = false }
+                i2 = i2 + 5
+            }
+            if (encrypt == "off" && (serverEnc == 1 || serverEnc == 3)) {
+                this.closed = true
+                throw new Data.ConnectionException("data.sqlserver: the server wants encryption - connect with encrypt=mandatory (the default).", 20)
+            }
+            if (encrypt == "mandatory" && serverEnc == 2) {
+                this.closed = true
+                throw new Data.ConnectionException("data.sqlserver: the server cannot encrypt (it has no certificate) - encrypt=off only where nobody can listen.", 20)
+            }
+            return serverEnc
+        }
+
+        // The TLS handshake inside TDS: its records go in PRELOGIN packets both ways.
+        undefined Handshake(string host, Tls.Options o) {
+            var engine = new Tls.Engine(host, o)
+            this.engine = take engine
+            while (true) {
+                bool done = this.engine.Step()
+                byte out[] = this.engine.Drain()
+                if (out.length > 0) { this.Send(0x12, out) }
+                if (done) { break }
+                byte answer[] = this.Message()
+                this.engine.Feed(answer, 0, answer.length)
+            }
+            this.reading = false
+        }
+        // (the payload of a whole message: its packets one after the other)
+        byte[] Message() {
+            var all = new IO.MemoryStream()
+            while (true) {
+                while (this.at >= this.packet.length && !this.last) { this.NextPacket() }
+                if (this.at < this.packet.length) { all.Write(this.packet, this.at, this.packet.length - this.at) }
+                this.at = this.packet.length
+                if (this.last) { break }
+            }
+            this.reading = false
+            return all.ToBuffer()
+        }
+
+        undefined Login(string host, string user, string password, string database, bool loginOnly) {
+            any texts = [host, user, "", "fire", host, "", "fire Data", "", database]
+            var body = new Data.TdsOut()
+            var fixed = new Data.TdsOut()
+            int offset = 94
+            for (var i = 0; i < 9; i++) {
+                string t = texts[i]
+                byte u[] = Data.Tds.Utf16(t)
+                if (i == 2) {
+                    // (the password: every byte with its halves swapped, XOR 0xA5)
+                    u = Data.Tds.Utf16(password)
+                    for (var j = 0; j < u.length; j++) {
+                        int b = u[j]
+                        u[j] = (((b << 4) & 0xF0) | (b >> 4)) # 0xA5
+                    }
+                }
+                if (i == 5) {
+                    fixed.Int(0, 2)
+                    fixed.Int(0, 2)
+                    continue
+                }
+                fixed.Int(offset, 2)
+                fixed.Int(u.length / 2, 2)
+                body.Bytes(u)
+                offset = offset + u.length
+            }
+            fixed.Zeros(6)                        // (ClientID)
+            fixed.Int(offset, 2)                  // (SSPI)
+            fixed.Int(0, 2)
+            fixed.Int(offset, 2)                  // (AtchDBFile)
+            fixed.Int(0, 2)
+            fixed.Int(offset, 2)                  // (ChangePassword)
+            fixed.Int(0, 2)
+            fixed.Int(0, 4)                       // (cbSSPILong)
+            byte rest[] = body.ToBuffer()
+            var m = new Data.TdsOut()
+            m.Int(94 + rest.length, 4)
+            m.Int(0x74000004, 4)                  // (TDS 7.4)
+            m.Int(8000, 4)                        // (the packet size asked for)
+            m.Int(0x01000000, 4)                  // (the version of the client program)
+            m.Int(1, 4)                           // (the process)
+            m.Int(0, 4)                           // (the connection)
+            m.Byte(0xE0)                          // (USE_DB_ON, INIT_DB_FATAL, SET_LANG_ON)
+            m.Byte(0x03)                          // (INIT_LANG_FATAL, ODBC_ON)
+            m.Byte(0)
+            m.Byte(0)
+            m.Int(0, 4)                           // (the time zone)
+            m.Int(0x0409, 4)                      // (LCID)
+            m.Bytes(fixed.ToBuffer())
+            m.Bytes(rest)
+            this.Send(0x10, m.ToBuffer())
+            if (loginOnly) { this.wrapped = false }   // (encryption for the login only: the answer comes in the clear)
+            bool ack = false
+            while (!this.AtEnd) {
+                int token = this.Byte()
+                if (token == 0xAD) {
+                    int length = this.Int(2)
+                    this.Skip(length)
+                    ack = true
+                } else { this.Token(token) }
+            }
+            this.reading = false
+            if (this.error != undefined) {
+                this.closed = true
+                this.Raise()
+            }
+            if (!ack) {
+                this.closed = true
+                throw new Data.ConnectionException("data.sqlserver: the server did not accept the login.", 18456)
+            }
+        }
+
+        // ---- tokens ----
+        // A token that is not a row or the metadata of one (the caller has read its first byte).
+        undefined Token(defined int token) {
+            if (token == 0xAA || token == 0xAB) {
+                // ERROR / INFO: number, state, class, message, server, procedure, line
+                int length = this.Int(2)
+                int number = this.Int(4)
+                this.Byte()
+                int level = this.Byte()
+                string message = this.UsText()
+                this.BText()
+                this.BText()
+                this.Int(4)
+                if (token == 0xAA && this.error == undefined) {
+                    this.error = message
+                    this.errorNumber = number
+                }
+                return
+            }
+            if (token == 0xE3) { this.EnvChange(); return }
+            if (token == 0xFD || token == 0xFE || token == 0xFF) {
+                int status = this.Int(2)
+                this.Int(2)
+                int count = this.Int(8)
+                if ((status & 0x10) != 0) {
+                    this.changes = count
+                    this.counted = true
+                }
+                return
+            }
+            if (token == 0x79) { this.Int(4); return }                                           // RETURNSTATUS
+            if (token == 0xA9 || token == 0xA5 || token == 0xA4 || token == 0xED || token == 0xAD) { this.Skip(this.Int(2)); return }   // ORDER, COLINFO, TABNAME, SSPI, LOGINACK
+            if (token == 0xAE) {
+                // FEATUREEXTACK: features until 0xFF
+                while (true) {
+                    int feature = this.Byte()
+                    if (feature == 0xFF) { break }
+                    this.Skip(this.Int(4))
+                }
+                return
+            }
+            if (token == 0xAC) { this.ReturnValue(); return }
+            if (token == 0x81) { this.Metadata(); return }
+            if (token == 0xD1 || token == 0xD2) { this.Row(token == 0xD2); return }
+            throw new Data.DataException("data.sqlserver: an unknown token " + token + " in the answer.")
+        }
+        undefined EnvChange() {
+            int length = this.Int(2)
+            byte data[] = this.Bytes(length)
+            int type = data[0]
+            if (type == 4 && length > 2) {
+                // (the packet size as a text)
+                int n = data[1]
+                string size = Data.Tds.FromUtf16(data, 2, n * 2)
+                any v = size.TryToInt()
+                if (v != undefined) { this.packetSize = trust v }
+            } else if (type == 7 && length >= 7) {
+                int n = data[1]
+                if (n == 5) { for (var i = 0; i < 5; i++) { this.collation[i] = data[2 + i] } }
+            } else if (type == 8 && length >= 10) {
+                for (var i = 0; i < 8; i++) { this.transaction[i] = data[2 + i] }
+            } else if (type == 9 || type == 10 || type == 11 || type == 17) {
+                for (var i = 0; i < 8; i++) { this.transaction[i] = 0 }
+            }
+        }
+        // (RETURNVALUE: an output parameter - read and dropped)
+        undefined ReturnValue() {
+            this.Int(2)
+            this.BText()
+            this.Byte()
+            this.Int(4)
+            this.Int(2)
+            var c = this.TypeInfo("")
+            this.Value(c)
+        }
+
+        // COLMETADATA: the columns of the result that follows.
+        undefined Metadata() {
+            int count = this.Int(2)
+            this.columns = new List()
+            if (count == 0xFFFF) { return }
+            for (var i = 0; i < count; i++) {
+                this.Int(4)                       // (UserType)
+                this.Int(2)                       // (Flags)
+                var c = this.TypeInfo("")
+                int t = c.type
+                if (t == 0x22 || t == 0x23 || t == 0x63) {
+                    // (text, ntext, image: the parts of the table's name)
+                    int parts = this.Byte()
+                    for (var j = 0; j < parts; j++) { this.UsText() }
+                }
+                c.name = this.BText()
+                this.columns.Add(take c)
+            }
+        }
+        Data.TdsColumn TypeInfo(string name) {
+            int t = this.Byte()
+            int size = 0
+            int precision = 0
+            int scale = 0
+            byte collation[] = undefined
+            if (t == 0x30 || t == 0x32) { size = 1 }
+            else if (t == 0x34) { size = 2 }
+            else if (t == 0x38 || t == 0x3A || t == 0x3B || t == 0x7A) { size = 4 }
+            else if (t == 0x3C || t == 0x3D || t == 0x3E || t == 0x7F) { size = 8 }
+            else if (t == 0x1F) { size = 0 }
+            else if (t == 0x24 || t == 0x26 || t == 0x68 || t == 0x6D || t == 0x6E || t == 0x6F) { size = this.Byte() }
+            else if (t == 0x6A || t == 0x6C) {
+                size = this.Byte()
+                precision = this.Byte()
+                scale = this.Byte()
+            }
+            else if (t == 0x28) { size = 3 }
+            else if (t == 0x29 || t == 0x2A || t == 0x2B) { scale = this.Byte() }
+            else if (t == 0xA5 || t == 0xAD) { size = this.Int(2) }
+            else if (t == 0xA7 || t == 0xAF || t == 0xE7 || t == 0xEF) {
+                size = this.Int(2)
+                collation = this.Bytes(5)
+            }
+            else if (t == 0x22 || t == 0x23 || t == 0x63) {
+                size = this.Int(4)
+                if (t != 0x22) { collation = this.Bytes(5) }
+            }
+            else if (t == 0xF1) {
+                // (XML: a schema or not)
+                size = 0xFFFF
+                int schema = this.Byte()
+                if (schema == 1) {
+                    this.BText()
+                    this.BText()
+                    this.UsText()
+                }
+            }
+            else if (t == 0x62) { size = this.Int(4) }   // (sql_variant)
+            else { throw new Data.DataException("data.sqlserver: the column type " + t + " is not supported.") }
+            return new Data.TdsColumn(name, t, size, precision, scale, take collation)
+        }
+
+        // A value of a column as a fire value.
+        any Value(Data.TdsColumn c) {
+            int t = c.type
+            // (fixed lengths)
+            if (t == 0x1F) { return undefined }
+            if (t == 0x30) { return this.Int(1) }
+            if (t == 0x32) { return this.Int(1) != 0 }
+            if (t == 0x34) { return this.Signed(2) }
+            if (t == 0x38) { return this.Signed(4) }
+            if (t == 0x7F) { return this.Int(8) }
+            if (t == 0x3B) { return Data.Tds.Float32(this.Int(4)) }
+            if (t == 0x3E) { return Data.Tds.Float64(this.Int(8)) }
+            if (t == 0x3C) { return this.Money(8) }
+            if (t == 0x7A) { return this.Money(4) }
+            if (t == 0x3D) { return this.DateTime(8) }
+            if (t == 0x3A) { return this.DateTime(4) }
+            // (a length byte, 0: NULL)
+            if (t == 0x26 || t == 0x68 || t == 0x6D || t == 0x6E || t == 0x6F || t == 0x24 || t == 0x6A || t == 0x6C || t == 0x28 || t == 0x29 || t == 0x2A || t == 0x2B) {
+                int n = this.Byte()
+                if (n == 0) { return undefined }
+                if (t == 0x26) {
+                    if (n == 1) { return this.Int(1) }
+                    return this.Signed(n)
+                }
+                if (t == 0x68) { return this.Int(1) != 0 }
+                if (t == 0x6D) {
+                    if (n == 4) { return Data.Tds.Float32(this.Int(4)) }
+                    return Data.Tds.Float64(this.Int(8))
+                }
+                if (t == 0x6E) { return this.Money(n) }
+                if (t == 0x6F) { return this.DateTime(n) }
+                if (t == 0x24) { return this.Guid() }
+                if (t == 0x6A || t == 0x6C) { return this.Decimal(n, c.scale) }
+                if (t == 0x28) { return Data.Tds.Date(this.Int(3)) }
+                if (t == 0x29) { return Data.Tds.Time(this.Int(n), c.scale) }
+                // (datetime2, datetimeoffset: the time, the day, the offset in minutes)
+                int timeBytes = n - 3
+                if (t == 0x2B) { timeBytes = n - 5 }
+                int units = this.Int(timeBytes)
+                int day = this.Int(3)
+                if (t == 0x2A) { return Data.Tds.Date(day) + " " + Data.Tds.Time(units, c.scale) }
+                return Data.TdsConnection.Local(day, units, c.scale, this.Signed(2))
+            }
+            // (texts and bytes: a two-byte length (0xFFFF: NULL) or PLP)
+            if (t == 0xA5 || t == 0xAD || t == 0xA7 || t == 0xAF || t == 0xE7 || t == 0xEF || t == 0xF1) {
+                byte data[] = undefined
+                if (c.size == 0xFFFF) { data = this.Plp() }
+                else {
+                    int n = this.Int(2)
+                    if (n == 0xFFFF) { return undefined }
+                    data = this.Bytes(n)
+                }
+                if (data == undefined) { return undefined }
+                return Data.TdsConnection.TextOf(c, data)
+            }
+            if (t == 0x22 || t == 0x23 || t == 0x63) {
+                // (text, ntext, image: a text pointer, a time stamp, the data)
+                int pointer = this.Byte()
+                if (pointer == 0) { return undefined }
+                this.Skip(pointer)
+                this.Skip(8)
+                int n = this.Int(4)
+                byte data[] = this.Bytes(n)
+                return Data.TdsConnection.TextOf(c, data)
+            }
+            if (t == 0x62) {
+                int n = this.Int(4)
+                if (n == 0) { return undefined }
+                return this.Variant(n)
+            }
+            throw new Data.DataException("data.sqlserver: the column type " + t + " is not supported.")
+        }
+        // (sql_variant: its base type, the properties of that type, the value without a length)
+        any Variant(defined int n) {
+            int t = this.Byte()
+            int props = this.Byte()
+            int length = n - 2 - props
+            int scale = 0
+            byte collation[] = undefined
+            if (t == 0x6A || t == 0x6C) {
+                this.Byte()
+                scale = this.Byte()
+                return this.Decimal(length, scale)
+            }
+            if (t == 0x29 || t == 0x2A || t == 0x2B) { scale = this.Byte() }
+            else if (t == 0xA7 || t == 0xAF || t == 0xE7 || t == 0xEF) {
+                this.Int(2)
+                collation = this.Bytes(5)
+            }
+            else if (t == 0xA5 || t == 0xAD) { this.Int(2) }
+            else { this.Skip(props) }
+            if (t == 0xA7 || t == 0xAF || t == 0xE7 || t == 0xEF || t == 0xA5 || t == 0xAD) {
+                var c = new Data.TdsColumn("", t, length, 0, scale, take collation)
+                return Data.TdsConnection.TextOf(c, this.Bytes(length))
+            }
+            if (t == 0x24) { return this.Guid() }
+            if (t == 0x28) { return Data.Tds.Date(this.Int(3)) }
+            if (t == 0x29) { return Data.Tds.Time(this.Int(length), scale) }
+            if (t == 0x2A || t == 0x2B) {
+                int timeBytes = length - 3
+                if (t == 0x2B) { timeBytes = length - 5 }
+                int units = this.Int(timeBytes)
+                int day = this.Int(3)
+                if (t == 0x2B) { return Data.TdsConnection.Local(day, units, scale, this.Signed(2)) }
+                return Data.Tds.Date(day) + " " + Data.Tds.Time(units, scale)
+            }
+            // (the numbers of fixed length)
+            var fixed = new Data.TdsColumn("", t, length, 0, 0, undefined)
+            return this.Value(fixed)
+        }
+        static any TextOf(Data.TdsColumn c, byte data[]) {
+            int t = c.type
+            if (t == 0xE7 || t == 0xEF || t == 0x63 || t == 0xF1) { return Data.Tds.FromUtf16(data, 0, data.length) }
+            if (t == 0xA7 || t == 0xAF || t == 0x23) {
+                if (c.Utf8) { return IO.Utf8.GetString(data) }
+                return Data.Tds.FromLatin(data, 0, data.length)
+            }
+            return data
+        }
+        // (a datetimeoffset - UTC on the wire - as its local time with the offset: "2026-11-13 10:00:00 +02:00")
+        static string Local(defined int day, defined int units, defined int scale, defined int minutes) {
+            int per = 1
+            for (var i = 0; i < scale; i++) { per = per * 10 }
+            int perDay = 86400 * per
+            int local = units + minutes * 60 * per
+            int d = day
+            while (local < 0) {
+                local = local + perDay
+                d = d - 1
+            }
+            while (local >= perDay) {
+                local = local - perDay
+                d = d + 1
+            }
+            return Data.Tds.Date(d) + " " + Data.Tds.Time(local, scale) + " " + Data.TdsConnection.Offset(minutes)
+        }
+        static string Offset(defined int minutes) {
+            var sign = "+"
+            int m = minutes
+            if (m < 0) {
+                sign = "-"
+                m = 0 - m
+            }
+            return sign + Data.Tds.Pad(m / 60, 2) + ":" + Data.Tds.Pad(m % 60, 2)
+        }
+        // (PLP: the total length (or unknown), chunks until one of length 0; undefined: NULL)
+        byte[] Plp() {
+            int total = this.Int(8)
+            if (total == -1) { return undefined }
+            var out = new IO.MemoryStream()
+            while (true) {
+                int n = this.Int(4)
+                if (n == 0) { break }
+                byte chunk[] = this.Bytes(n)
+                out.Write(chunk, 0, n)
+            }
+            return out.ToBuffer()
+        }
+        float Money(defined int n) {
+            if (n == 4) { return this.Signed(4) / 10000.0 }
+            int hi = this.Signed(4)
+            int lo = this.Int(4)
+            return ((hi << 32) | lo) / 10000.0
+        }
+        string DateTime(defined int n) {
+            if (n == 4) {
+                int days = this.Int(2)
+                int minutes = this.Int(2)
+                return Data.Tds.Date(days + 693595) + " " + Data.Tds.Pad(minutes / 60, 2) + ":" + Data.Tds.Pad(minutes % 60, 2) + ":00"
+            }
+            int days = this.Signed(4)
+            int ticks = this.Int(4)                 // (1/300 seconds)
+            int ms = (ticks * 10 + 1) / 3
+            return Data.Tds.Date(days + 693595) + " " + Data.Tds.Time(ms, 3)
+        }
+        any Decimal(defined int n, defined int scale) {
+            int sign = this.Byte()
+            byte mag[] = this.Bytes(n - 1)
+            int v = 0
+            float big = 0.0
+            bool wide = false
+            for (var i = mag.length - 1; i >= 0; i--) {
+                int b = mag[i]
+                if (!wide && v >= 36028797018963968) {
+                    wide = true
+                    big = v * 1.0
+                }
+                if (wide) { big = big * 256.0 + b } else { v = (v << 8) | b }
+            }
+            float div = 1.0
+            for (var i = 0; i < scale; i++) { div = div * 10.0 }
+            if (!wide && scale == 0) {
+                if (sign == 0) { return 0 - v }
+                return v
+            }
+            float f = big
+            if (!wide) { f = v * 1.0 }
+            f = f / div
+            if (sign == 0) { return 0.0 - f }
+            return f
+        }
+        string Guid() {
+            byte g[] = this.Bytes(16)
+            var digits = "0123456789abcdef"
+            any order = [3, 2, 1, 0, -1, 5, 4, -1, 7, 6, -1, 8, 9, -1, 10, 11, 12, 13, 14, 15]
+            var t = ""
+            for (var i = 0; i < order.length; i++) {
+                int k = order[i]
+                if (k < 0) {
+                    t = t + "-"
+                    continue
+                }
+                int b = g[k]
+                t = t + digits.Substring(b >> 4, 1) + digits.Substring(b & 15, 1)
+            }
+            return t
+        }
+
+        // ROW / NBCROW: the values of a row of the current columns.
+        any ReadRow(bool nbc) {
+            int n = this.columns.Count
+            any values = new any[n]
+            byte nulls[] = undefined
+            if (nbc) { nulls = this.Bytes((n + 7) / 8) }
+            for (var i = 0; i < n; i++) {
+                if (nbc) {
+                    int b = nulls[i / 8]
+                    if ((b & (1 << (i % 8))) != 0) {
+                        values[i] = undefined
+                        continue
+                    }
+                }
+                Data.TdsColumn c = this.columns[i]
+                values[i] = this.Value(c)
+            }
+            return values
+        }
+        // (a row that nobody reads)
+        undefined Row(bool nbc) { this.ReadRow(nbc) }
+
+        // (the rest of the response is read; its errors are kept)
+        undefined DrainResponse() {
+            while (!this.AtEnd) { this.Token(this.Byte()) }
+            this.reading = false
+        }
+        // (the error of the response, if there was one)
+        undefined Raise() {
+            if (this.error == undefined) { return }
+            string message = this.error
+            int number = this.errorNumber
+            this.error = undefined
+            Data.SqlServerDriver.Fail(number, message)
+        }
+
+        // ---- requests ----
+        // (ALL_HEADERS: the transaction descriptor and that one request is outstanding)
+        undefined Headers(Data.TdsOut m) {
+            m.Int(22, 4)
+            m.Int(18, 4)
+            m.Int(2, 2)
+            m.Bytes(this.transaction)
+            m.Int(1, 4)
+        }
+
+        // SQL without parameters: a batch; every result is read. The transactions of the dialect go as requests of the transaction manager (as with
+        // MARS they must: a transaction begun in a batch may not outlive it there).
+        undefined Exec(string sql) {
+            if (this.Transact(sql)) { return }
+            var m = new Data.TdsOut()
+            this.Headers(m)
+            m.Bytes(Data.Tds.Utf16(sql))
+            this.changes = 0
+            this.error = undefined
+            this.Send(0x01, m.ToBuffer())
+            this.DrainResponse()
+            this.Raise()
+        }
+
+        // (BEGIN / COMMIT / ROLLBACK [TRANSACTION name] / SAVE TRANSACTION name as a TM request: begin 5, commit 7, rollback 8, save 9)
+        bool Transact(string sql) {
+            int type = 0
+            string name = ""
+            if (sql == "BEGIN TRANSACTION") { type = 5 }
+            else if (sql == "COMMIT TRANSACTION") { type = 7 }
+            else if (sql == "ROLLBACK TRANSACTION") { type = 8 }
+            else if (sql.StartsWith("SAVE TRANSACTION ")) {
+                type = 9
+                name = sql.Substring(17)
+            } else if (sql.StartsWith("ROLLBACK TRANSACTION ")) {
+                type = 8
+                name = sql.Substring(21)
+            }
+            if (type == 0) { return false }
+            var m = new Data.TdsOut()
+            this.Headers(m)
+            m.Int(type, 2)
+            // (the name with its length in bytes here, not in characters)
+            byte u[] = Data.Tds.Utf16(name)
+            if (type == 5) {
+                m.Byte(0)                         // (the isolation level as it is)
+                m.Byte(0)
+            } else {
+                m.Byte(u.length)
+                m.Bytes(u)
+                if (type == 7 || type == 8) { m.Byte(0) }   // (no new transaction after it)
+            }
+            this.changes = 0
+            this.error = undefined
+            this.Send(0x0E, m.ToBuffer())
+            this.DrainResponse()
+            this.Raise()
+            return true
+        }
+
+        Data.IStatement Prepare(string sql) {
+            this.Check()
+            return new Data.TdsStatement(this, sql)
+        }
+
+        defined int NewToken() {
+            this.tokens = this.tokens + 1
+            return this.tokens
+        }
+        // A command while the rows of a result are still on the socket: they are read and kept for their statement.
+        undefined Park() {
+            int token = this.streamToken
+            this.streamToken = 0
+            var rows = new List()
+            while (!this.AtEnd) {
+                int t = this.Byte()
+                if (t == 0xD1 || t == 0xD2) { rows.Add(this.ReadRow(t == 0xD2)) }
+                else if (t == 0x81) {
+                    // (the next result: not the reader's - the rest is read and dropped)
+                    this.Metadata()
+                    this.DrainResponse()
+                    break
+                } else { this.Token(t) }
+            }
+            this.reading = false
+            this.parked.Add(new Data.TdsParked(token, take rows))
+        }
+        // (the next parked row of a result; undefined: none)
+        any Unpark(int token, Data.TdsStatement s) {
+            for (var i = 0; i < this.parked.Count; i++) {
+                Data.TdsParked e = this.parked[i]
+                if (e.token == token) {
+                    if (e.rows.Count == 0) {
+                        this.parked.RemoveAt(i)
+                        return undefined
+                    }
+                    any row = take e.rows[0]
+                    e.rows.RemoveAt(0)
+                    return row
+                }
+            }
+            return undefined
+        }
+        undefined Discard(int token) {
+            if (token == 0) { return }
+            for (var i = 0; i < this.channels.Count; i++) {
+                Data.TdsChannel k = this.channels[i]
+                if (k.owner == token) {
+                    this.Use(k)
+                    this.streamToken = 0
+                    this.DrainResponse()
+                    this.error = undefined
+                    return
+                }
+            }
+            for (var i = 0; i < this.parked.Count; i++) {
+                Data.TdsParked e = this.parked[i]
+                if (e.token == token) {
+                    this.parked.RemoveAt(i)
+                    return
+                }
+            }
+        }
+
+        int Changes() { return this.changes }
+        int LastId() { return this.lastId }
+        Data.Dialect Dialect() { return this.dialect }
+
+        undefined Close() {
+            if (this.closed) { return }
+            this.closed = true
+            try {
+                if (this.engine != undefined) { this.engine.Close() }
+                if (this.tls != undefined) { this.tls.Close() } else if (this.tcp != undefined) { this.tcp.Close() }
+            } catch (e) { }
+        }
+
+        // "TLSv1.2 ECDHE-RSA-AES256-GCM-SHA384" while TDS carries TLS (or the TLS of strict); "" in the clear.
+        string Security {
+            get {
+                if (this.wrapped) { return this.engine.Info }
+                if (this.tls != undefined) { return this.tls.Info }
+                return ""
+            }
+        }
+    }
+
+    class TdsStatement : Data.IStatement {
+        Data.TdsConnection connection
+        string sql
+        defined int params
+        bool identity
+        any args
+        any current
+        List names
+        defined int token
+        defined int sid
+        bool done
+        bool ran
+
+        construct(Data.TdsConnection connection, string sql) {
+            this.connection = connection
+            this.token = 0
+            this.done = true
+            this.ran = false
+            this.names = new List()
+            // the "?" become @p0, @p1, ... (not inside texts, quoted names or comments)
+            var out = new IO.MemoryStream()
+            byte s[] = IO.Utf8.GetBytes(sql)
+            int n = 0
+            int i = 0
+            while (i < s.length) {
+                int c = s[i]
+                if (c == 39 || c == 34 || c == 91) {
+                    // ' " [ ... up to its end (a doubled quote stays inside)
+                    int close = c
+                    if (c == 91) { close = 93 }
+                    out.Write(s, i, 1)
+                    i++
+                    while (i < s.length) {
+                        int d = s[i]
+                        out.Write(s, i, 1)
+                        i++
+                        if (d == close) {
+                            if (i < s.length && s[i] == close) {
+                                out.Write(s, i, 1)
+                                i++
+                                continue
+                            }
+                            break
+                        }
+                    }
+                    continue
+                }
+                if (c == 45 && i + 1 < s.length && s[i + 1] == 45) {
+                    while (i < s.length && s[i] != 10) {
+                        out.Write(s, i, 1)
+                        i++
+                    }
+                    continue
+                }
+                if (c == 47 && i + 1 < s.length && s[i + 1] == 42) {
+                    while (i < s.length && !(s[i] == 42 && i + 1 < s.length && s[i + 1] == 47)) {
+                        out.Write(s, i, 1)
+                        i++
+                    }
+                    if (i < s.length) {
+                        out.Write(s, i, 2)
+                        i = i + 2
+                    }
+                    continue
+                }
+                if (c == 63) {
+                    byte name[] = IO.Utf8.GetBytes("@p" + n)
+                    out.Write(name, 0, name.length)
+                    n++
+                    i++
+                    continue
+                }
+                out.Write(s, i, 1)
+                i++
+            }
+            this.sql = IO.Utf8.GetString(out.ToBuffer())
+            this.params = n
+            // (an INSERT also asks for the key it generated - in the same scope, as SCOPE_IDENTITY needs it)
+            string head = sql.Trim().ToUpper()
+            this.identity = head.StartsWith("INSERT") && head.IndexOf(" OUTPUT ") < 0
+            if (this.identity) { this.sql = this.sql + "; SELECT CAST(SCOPE_IDENTITY() AS BIGINT)" }
+        }
+        destruct() { this.Close() }
+
+        undefined Bind(any args) {
+            int have = 0
+            if (args != undefined) { have = args.length }
+            if (have != this.params) { throw new ArgumentException("The statement has " + this.params + " parameter(s), " + have + " value(s) were given.") }
+            if (args == undefined) { this.args = new any[0] } else { this.args = copy args }
+            this.Reset()
+        }
+
+        // (an NVARCHAR parameter: up to 4000 characters with a length, longer as PLP)
+        static undefined Text(Data.TdsOut m, byte u[], byte collation[]) {
+            m.Byte(0xE7)
+            if (u.length <= 8000) {
+                m.Int(8000, 2)
+                m.Bytes(collation)
+                m.Int(u.length, 2)
+                m.Bytes(u)
+            } else {
+                m.Int(0xFFFF, 2)
+                m.Bytes(collation)
+                Data.TdsStatement.PlpOf(m, u)
+            }
+        }
+        static undefined PlpOf(Data.TdsOut m, byte data[]) {
+            m.Int(data.length, 8)
+            if (data.length > 0) {
+                m.Int(data.length, 4)
+                m.Bytes(data)
+            }
+            m.Int(0, 4)
+        }
+        static string Declared(any v) {
+            if (v == undefined) { return "nvarchar(4000)" }
+            if (v is of int) { return "bigint" }
+            if (v is of bool) { return "bit" }
+            if (v is of float) { return "float" }
+            if (v is of string || v is of char) {
+                string t = "" + v
+                if (t.Length > 4000) { return "nvarchar(max)" }
+                return "nvarchar(4000)"
+            }
+            if (v.length > 8000) { return "varbinary(max)" }
+            return "varbinary(8000)"
+        }
+
+        // (RPC sp_executesql: the statement, the declarations, the values)
+        undefined Run() {
+            var cn = this.connection
+            var m = new Data.TdsOut()
+            cn.Headers(m)
+            m.Int(0xFFFF, 2)
+            m.Int(10, 2)                          // (sp_executesql)
+            m.Int(0, 2)
+            int n = this.args.length
+            var decl = ""
+            for (var i = 0; i < n; i++) {
+                if (i > 0) { decl = decl + ", " }
+                decl = decl + "@p" + i + " " + Data.TdsStatement.Declared(this.args[i])
+            }
+            m.Byte(0)
+            m.Byte(0)
+            Data.TdsStatement.Text(m, Data.Tds.Utf16(this.sql), cn.collation)
+            if (n > 0) {
+                m.Byte(0)
+                m.Byte(0)
+                Data.TdsStatement.Text(m, Data.Tds.Utf16(decl), cn.collation)
+            }
+            for (var i = 0; i < n; i++) {
+                any v = this.args[i]
+                m.BText("@p" + i)
+                m.Byte(0)
+                if (v == undefined) {
+                    m.Byte(0xE7)
+                    m.Int(8000, 2)
+                    m.Bytes(cn.collation)
+                    m.Int(0xFFFF, 2)
+                } else if (v is of int) {
+                    int x = v
+                    m.Byte(0x26)
+                    m.Byte(8)
+                    m.Byte(8)
+                    m.Int(x, 8)
+                } else if (v is of bool) {
+                    m.Byte(0x68)
+                    m.Byte(1)
+                    m.Byte(1)
+                    if (v) { m.Byte(1) } else { m.Byte(0) }
+                } else if (v is of float) {
+                    float f = v
+                    m.Byte(0x6D)
+                    m.Byte(8)
+                    m.Byte(8)
+                    m.Int(Data.Tds.Bits64(f), 8)
+                } else if (v is of string || v is of char) {
+                    Data.TdsStatement.Text(m, Data.Tds.Utf16("" + v), cn.collation)
+                } else {
+                    byte data[] = new byte[v.length]
+                    for (var j = 0; j < v.length; j++) { data[j] = v[j] }
+                    m.Byte(0xA5)
+                    if (data.length <= 8000) {
+                        m.Int(8000, 2)
+                        m.Int(data.length, 2)
+                        m.Bytes(data)
+                    } else {
+                        m.Int(0xFFFF, 2)
+                        Data.TdsStatement.PlpOf(m, data)
+                    }
+                }
+            }
+            cn.changes = 0
+            cn.error = undefined
+            cn.Send(0x03, m.ToBuffer())
+            if (this.identity) {
+                // (the count of the INSERT, then the generated key - the whole answer)
+                int count = -1
+                any key = undefined
+                cn.counted = false
+                while (!cn.AtEnd) {
+                    int t = cn.Byte()
+                    if (t == 0xD1 || t == 0xD2) {
+                        any row = cn.ReadRow(t == 0xD2)
+                        key = row[0]
+                    } else {
+                        cn.Token(t)
+                        if (count < 0 && cn.counted) { count = cn.changes }
+                    }
+                }
+                cn.reading = false
+                if (count >= 0) { cn.changes = count }
+                if (key != undefined) { cn.lastId = key }
+                cn.Raise()
+                this.done = true
+                return
+            }
+            // (up to the first result's columns: its rows stay on the socket - Next reads them)
+            while (!cn.AtEnd) {
+                int t = cn.Byte()
+                if (t == 0x81) {
+                    cn.Metadata()
+                    this.names = new List()
+                    for (var i = 0; i < cn.columns.Count; i++) {
+                        Data.TdsColumn c = cn.columns[i]
+                        string name = c.name
+                        this.names.Add(name)
+                    }
+                    this.token = cn.NewToken()
+                    cn.streamToken = this.token
+                    this.sid = cn.ch.sid
+                    this.done = false
+                    return
+                }
+                cn.Token(t)
+            }
+            cn.reading = false
+            this.done = true
+            cn.Raise()
+        }
+
+        bool Next() {
+            if (!this.ran) {
+                this.ran = true
+                this.Run()
+            }
+            if (this.done) { return false }
+            var cn = this.connection
+            if (cn.smp) { cn.UseSid(this.sid) }
+            if (cn.streamToken == this.token) {
+                while (!cn.AtEnd) {
+                    int t = cn.Byte()
+                    if (t == 0xD1 || t == 0xD2) {
+                        this.current = cn.ReadRow(t == 0xD2)
+                        return true
+                    }
+                    if (t == 0xFD || t == 0xFE || t == 0xFF || t == 0x81) {
+                        // (the end of the rows: the rest of the answer - other results - is read and dropped)
+                        if (t == 0x81) { cn.Metadata() } else { cn.Token(t) }
+                        cn.DrainResponse()
+                        break
+                    }
+                    cn.Token(t)
+                }
+                cn.reading = false
+                cn.streamToken = 0
+                this.done = true
+                cn.changes = 0
+                cn.Raise()
+                return false
+            }
+            any row = cn.Unpark(this.token, this)
+            if (row == undefined) {
+                this.done = true
+                return false
+            }
+            this.current = take row
+            return true
+        }
+        any Values() {
+            any row = this.current
+            return copy row
+        }
+        any Names() {
+            // (the names come with the result: asked before the first row, the statement runs now)
+            if (!this.ran) {
+                this.ran = true
+                this.Run()
+            }
+            any names = new any[this.names.Count]
+            for (var i = 0; i < this.names.Count; i++) { names[i] = this.names[i] }
+            return names
+        }
+        undefined Reset() {
+            this.Finish()
+            this.ran = false
+            this.done = true
+            this.current = undefined
+        }
+        undefined Finish() {
+            var cn = this.connection
+            if (this.token != 0 && cn != undefined && !cn.closed) {
+                try { cn.Discard(this.token) } catch (e) { }
+            }
+            this.token = 0
+        }
+        undefined Close() { this.Finish() }
+    }
+}

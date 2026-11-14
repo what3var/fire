@@ -1,0 +1,13 @@
+{
+  "format": 1,
+  "name": "fire-data.mysql",
+  "type": "library",
+  "import": "data.mysql",
+  "standard": true,
+  "settings": {
+    "version": "1.0.0",
+    "author": "fire",
+    "license": "fire",
+    "description": "The standard library 'data.mysql' of fire: the MySQL/MariaDB driver of Data - the wire protocol written in fire (TLS, mysql_native_password, caching_sha2_password, prepared statements)."
+  }
+}

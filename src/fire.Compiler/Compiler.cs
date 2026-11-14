@@ -634,7 +634,7 @@ namespace fire.Compiler
                 };
             }
 
-            return new CompiledProgram { TopLevel = compiler._chunk, Classes = classes, ExternSignatures = externSignatures };
+            return new CompiledProgram { TopLevel = compiler._chunk, Classes = classes, ExternSignatures = externSignatures, Enums = new Dictionary<string, EnumType>(compiler._enumTypes, StringComparer.Ordinal) };
         }
 
         // -----------------------------------------------------------
@@ -828,7 +828,7 @@ namespace fire.Compiler
         private static void MarkKeepAndSerializable(RuntimeClass rc, ClassDecl cd)
         {
             static bool Has(IReadOnlyList<AttributeDecl>? attributes, string name) => attributes?.Any(a => a.Name == name) == true;
-            rc.Keep = Has(cd.Attributes, "Keep") || Has(cd.Attributes, "Remote") || Has(cd.Attributes, "Page");   // ([Remote], [Page]: http.rpc / http.pages make and call it by its name)
+            rc.Keep = Has(cd.Attributes, "Keep") || Has(cd.Attributes, "Remote") || Has(cd.Attributes, "Page") || Has(cd.Attributes, "Table") || Has(cd.Attributes, "Driver") || Has(cd.Attributes, "Migration");   // ([Remote], [Page]: http.rpc / http.pages make and call it by its name; [Table], [Driver], [Migration]: data reads and makes it by reflection)
             if (Has(cd.Attributes, "NotSerializable")) rc.NotSerializable = true;
             rc.NoCopy = Has(cd.Attributes, "NoCopy");
             foreach (var member in cd.Members)

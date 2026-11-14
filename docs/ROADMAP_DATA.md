@@ -42,7 +42,7 @@ interface Data.IDriver {
   transactions (a copy of the touched tables, thrown away by a rollback). It runs the ORM's expression trees itself: no SQL text in between.
   Raw SQL there is a `NotSupportedException` at first; a small SQL subset can come later. Use: tests (fast, the same code as with a real database),
   caches, small programs. `Snapshot(path)`/`Load(path)` write and read it as JSON.
-- **MySQL/MariaDB:** handshake v10, `caching_sha2_password` and `mysql_native_password` (with TLS; RSA key exchange without TLS later), the binary
+- **MySQL/MariaDB:** handshake v10, `caching_sha2_password` and `mysql_native_password` (over TLS or with RSA-OAEP without TLS - built), the binary
   protocol for prepared statements, streaming result sets.
 - **SQL Server:** TDS 7.4: PRELOGIN, TLS **inside** TDS (the TLS handshake runs in TDS packets - `tls` needs a stream that is not a socket: to be
   checked first, it is the biggest risk), LOGIN7 (SQL login; Windows/Kerberos later), RPC `sp_executesql` with typed parameters, token stream
@@ -143,7 +143,7 @@ record Order {
 - `[Table]` and `[Entity]` imply `[Keep]` (like `[Remote]`, `[Page]`): stripping does not remove what only reflection reaches.
 - Types: `int`, `float`, `string` (`[Length n]`, else the dialect's long text), `bool`, `DateTime`, `byte[]`, enums (by name; `[AsNumber]`), units (stored in the
   base unit, the unit is in the schema), `undefined` is NULL (`[Required]` makes it NOT NULL), a record without `[Table]` as a JSON column.
-- The mapping is read once per class (`Data.Model.Of<Person>()`), cached, and can be built in code instead of attributes (`model.Entity<Person>().Key(p => p.id)`) -
+- The mapping is read once per class (`Data.Model.Of<Person>()`), cached, and can be built in code instead of attributes (built as `Data.Mapping.Entity<Person>().Key(p => p.id)`) -
   also what the designer generates.
 - Records are the natural rows for reading (immutable, `==` by fields, lent over channels); classes are entities that change.
 
@@ -251,25 +251,29 @@ Own methods for the generated classes come in an extension (`extension Person { 
 
 | Step | What | Depends on |
 |---|---|---|
-| 1 | `data` and `data.sqlite`: connection, parameters, `Query`/`Execute`, rows to records and classes, transactions, errors; awaitable | - |
-| 2 | Mapping (attributes, convention, `Data.Model`), `Ensure`, `Insert/Update/Delete/Save` per object | 1 |
-| 3 | `data.memory` with the raw API (rows, keys, transactions) | 2 |
-| 4 | Query builder on expression trees: SQL for SQLite, evaluation in `data.memory`; `ToSql` | 2, expressions step 1-3 |
-| 5 | Session: identity map, snapshots, Save in one transaction, generated keys, `[Version]` | 2, 4 |
-| 6 | Relations: navigation fields, `Include`, `Any`/subqueries, join tables | 4, 5 |
-| 7 | Pool, `Data.PerRequest`, Rpc DI | 1 |
-| 8 | `data.mysql` (wire protocol, TLS, prepared statements) | 1, 7 |
-| 9 | `data.sqlserver` (TDS, TLS in TDS, `sp_executesql`) | 1, 7 |
-| 10 | Migrations, `forge data diff/apply/import` | 2, a driver with schema reading |
-| 11 | Designer: the `.fdata` format and forge's generator (classes, Model, Context, DDL) | 2, 10 |
-| 12 | Designer in spark: diagram, properties, import from a database, generate database/migration, preview | 11 |
-| 13 | PostgreSQL | 1, 7 |
+| 1 | `data` and `data.sqlite`: connection, parameters, `Query`/`Execute`, rows to records and classes, transactions, errors; awaitable - **built** ([docs/data](data/README.md)) | - |
+| 2 | Mapping (attributes, convention, `Data.Model`), `Ensure`, `Insert/Update/Delete/Save` per object - **built** (`Data.EntityMap`; `Data.Entity` for `p.Save(db)`, the mapping in code `Data.Mapping.Entity<T>()` built too) | 1 |
+| 3 | `data.memory` with the raw API (rows, keys, transactions) - **built**, with a subset of SQL (decided by the user: the same code as with a real database) | 2 |
+| 4 | Query builder on expression trees: SQL for SQLite, evaluation in `data.memory`; `ToSql` - **built** (`Data.Query<T>`, `Data.SqlWriter`; data.memory runs the same SQL; `Include`; `Select` (in the SELECT or in the program), `GroupBy` with aggregates/Having, `Join`/`LeftJoin` built too) | 2, expressions step 1-3 |
+| 5 | Session: identity map, snapshots, Save in one transaction, generated keys, `[Version]` - **built** (`Data.Session`, `Data.ConcurrencyException`) | 2, 4 |
+| 6 | Relations: navigation fields, `Include`, `Any`/subqueries, join tables - **built** ([HasMany], [BelongsTo], [ManyToMany], Include/Load in sessions, Any/All as EXISTS, writing through lists, also without a session) | 4, 5 |
+| 7 | Pool, `Data.PerRequest`, Rpc DI - **built** (`Data.Pool` with an actor home; `Http.Database` in the package `http.data`; Http.Rpc takes constructor parameters from the items of the request) | 1 |
+| 8 | `data.mysql` (wire protocol, TLS, prepared statements) - **built** (in fire on `net`/`tls`; native, caching_sha2 and sha256 logins, RSA-OAEP without TLS, the binary protocol, streamed results, procedures; tested against MariaDB 10.11 and MySQL 8.0) | 1, 7 |
+| 9 | `data.sqlserver` (TDS, TLS in TDS, `sp_executesql`) - **built** (in fire; `Tls.Engine` for TLS inside TDS (OpenSSL, mbedTLS, SChannel), mandatory/optional/off, strict untried; streamed rows, SCOPE_IDENTITY; MARS over SMP, named instances over the SQL Server Browser, transactions as TM requests; tested against SQL Server 2022 on Linux; Windows login later) | 1, 7 |
+| 10 | Migrations, `forge data diff/apply/import` - **built** (`[Migration]` + `Data.Migrator`, `db.Migrate/MigrateTo/Applied/Schema`, `forge data status/migrate/diff/import`; on all five databases) | 2, a driver with schema reading |
+| 11 | Designer: the `.fdata` format and forge's generator (classes, Model, Context, DDL) - **built** ([docs/data/designer.md](data/designer.md); `#include`, projects, `forge fdata`; one-to-one (`[HasOne]`), views (`[View]`), checks (`[Check]`) and types per database (`[DbType]`) built too) | 2, 10 |
+| 12 | Designer in spark: diagram, properties, import from a database, generate database/migration, preview - **built** (`DataModelEditorControl` on `DataModelDocument`; `Data.ModelImporter` reads a database as `.fdata` with relations guessed from `…Id`/`_id` columns and join tables, `forge data import --format fdata`; DDL per dialect via `Data.Script.Of`; several diagrams, copy/paste of boxes, views/checks/types in the properties) | 11 |
+| 13 | PostgreSQL - **built** (`data.postgres` in fire on `net`/`tls`: the protocol 3.0, SCRAM-SHA-256/MD5/password, the extended query protocol, streamed rows, SQLSTATE in `State`; tested against PostgreSQL 16; COPY, LISTEN/NOTIFY and cancel still open) | 1, 7 |
 
 Tests: every driver runs the same suite (`Data.Tests.Run(url)`: types, NULL, parameters, transactions, errors, queries, session) - SQLite and memory in the
 normal tests (VM == native), MySQL and SQL Server against a server when one is configured (`FIRE_TEST_MYSQL`, `FIRE_TEST_SQLSERVER`).
 
 ## Open
 
-- TLS inside TDS (SQL Server): can `tls` run over a stream that is not a socket?
+- ~~The type argument of a generic method at run time~~ - `Type.Of<T>()` is there: `QueryList<T>`, `QueryOne<T>`, `Find<T>`, `All<T>`, `Ensure<T>` are built.
+- `data.memory`: `memory:name` is shared by the connections of the program (a transaction locks it for the others); threads open their own.
+- The connection is a class (`new Data.Connection(url)`), not a function `Data.Open(url)`: a namespace has no functions of its own.
+
+- ~~TLS inside TDS (SQL Server): can `tls` run over a stream that is not a socket?~~ - `Tls.Engine` (TLS over buffers) on OpenSSL, mbedTLS and SChannel.
 - `with` for records (`copy r with { age = 37 }`) - a language question, helpful for writing records.
 - Change notifications (SQLite update hook, SQL Server query notifications) for live UI lists - later, with the bindings of the UI library.

@@ -103,10 +103,10 @@ ran out or its token is cancelled. **Built** (poll()/WSAPoll, not yet epoll/kque
 
 0. Poller in the scheduler (waits of the network without polling) and `Completion` - built.
 1. Server core: a task per connection, keep-alive, router chain (a copy per connection), `Http.Context`, streamed bodies, limits - **built**
-   (`Http.AppServer`, docs/networking/http.md). A chain with lambdas goes to the tasks since step 8 (e) (lambdas to other threads). Open: the TLS handshake runs in the
-   accepting task.
-2. File client and `wwwroot` (safety, caching, MIME) - **built** (`Http.Files`, docs/networking/http.md). Open: the `Map(pattern, lambda)` form of the
-   file client (with the lambdas of step 8 point 4), symbolic links (the file system API cannot tell them), several ranges in one request.
+   (`Http.AppServer`, docs/networking/http.md). A chain with lambdas goes to the tasks since step 8 (e) (lambdas to other threads). The TLS handshake runs in the
+   task of the connection (`Tls.Server.AcceptOn` with the server's context).
+2. File client and `wwwroot` (safety, caching, MIME) - **built** (`Http.Files`, docs/networking/http.md). Built since: `Map(pattern, lambda)` (the file of a
+   request from a lambda), several ranges in one request (multipart/byteranges), If-Range. Open: symbolic links (the file system API cannot tell them).
 3. Sessions (their home, time limit) and `ISessionStore` (files) - **built** (`Http.Sessions`, docs/networking/http.md): one home actor for all sessions of a
    server on a thread of its own, ids from `Net.SecureRandom`, `Renew`, `End`, memory and file stores. Found on the way: `taking` copied an actor that it
    reached through a field (VM and native) - now its reference goes along. Open: one home per session (when one home becomes the bottleneck), live objects
@@ -115,16 +115,16 @@ ran out or its token is cancelled. **Built** (poll()/WSAPoll, not yet epoll/kque
    single (one home actor for session and single instances), `[Timeout]`, constructor injection from a list of services; `[Remote]` keeps them in a native
    build. Only a client that already has a session may call (401 otherwise); `[Nickname]` gives a class its public name (decided by the user). Found on the way (VM): `list.Add(actor)` and the assignment of an actor to a field posted a message `tryTakeTo` to the actor - ownership calls on an
    actor are no messages now. Open: events (with step 5), the random instance ids of the roadmap (instances are addressed by class and session for now).
-5. WebSocket - **built** (`Http.WebSockets`, `Http.WebSocket`, docs/networking/http.md): RFC 6455 server and client, fragments, ping/pong, close, origins. Open:
-   sending to a socket from another task (the reader/writer split of an FXML page: the page's task writes, the reading task gets what comes in) and
-   compression (permessage-deflate).
+5. WebSocket - **built** (`Http.WebSockets`, `Http.WebSocket`, docs/networking/http.md): RFC 6455 server and client, fragments, ping/pong, close, origins. Built since:
+   compression (permessage-deflate without context takeover, tried with Chromium). Open: sending to a socket from another task (the reader/writer split).
 6. FXML to HTML/CSS, `fire.js`, live updates - **first part built** (package `http.pages`, docs/networking/http.md): a circuit per page (an actor that owns the
    UI root without a window), HTML with CSS layout (decided by the user: the browser lays out - flex, grid, nested flex for DockPanel, HTML text for the new
    `UI.FlowPanel`), events over the WebSocket, the changes found by comparing the properties. Tried in headless Chromium (Playwright).
    Built since: images, pushes without an event, lists with templates and the columns of a ListView (header, sorting), menus (MenuBar), trees.
-   Focus and keys (to the focused element through the UI root, `browser.Focus`, `browser.OnKey`). Open: hover, context menus.
+   Focus and keys (to the focused element through the UI root, `browser.Focus`, `browser.OnKey`). Hover (the elements with a trigger
+   on Hover) and context menus (a right click, the menu of the element or one around it) - built.
 7. Canvas recording, JS calls - **first part built**: a `DrawingCanvas` paints on the server and goes as a PNG (exact, simpler than recording the calls;
-   recording them for canvas 2D stays open for big or fast canvases), its pointer events; pushes without an event (the circuit looks after a tenth of a second without one);
+   or - with `[Vector]` / `browser.Vector` - as its recorded drawing calls, replayed on a canvas 2D), its pointer events; pushes without an event (the circuit looks after a tenth of a second without one);
    `browser.Call(name, args, callback)` / `browser.Run(code)`; **the waiting form** `any v = browser.Call(name, args)` is built: the socket never waits for
    the circuit, the waiting call registers a `Completion` in the PageDirectory that the browser's answer sets (an answer that comes before the
    registration waits there for it).

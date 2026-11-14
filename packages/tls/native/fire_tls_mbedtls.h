@@ -34,6 +34,12 @@ typedef struct FireTlsSession {
     mbedtls_x509_crt ca;
     FireNetSock fd;
     int eof;
+    /* TLS over buffers (fire_tls_clientOpenMem): what came from the other side and is not read yet, what waits to be sent */
+    int mem;
+    uint8_t* inData;
+    size_t inLength, inAt, inCapacity;
+    uint8_t* outData;
+    size_t outLength, outCapacity;
 } FireTlsSession;
 
 static int fire_tls_supported(void) { return 1; }
@@ -70,6 +76,8 @@ static void fire_tls_freeSession(FireTlsSession* s) {
     mbedtls_ssl_free(&s->ssl);
     mbedtls_x509_crt_free(&s->ca);
     fire_tls_freeContext(s->own);
+    free(s->inData);
+    free(s->outData);
     free(s);
 }
 
@@ -310,6 +318,85 @@ static void fire_tls_closeSession(FireTlsSession* s) {
     if (s == NULL) return;
     mbedtls_ssl_close_notify(&s->ssl);   /* best effort: the socket is non-blocking */
     fire_tls_freeSession(s);
+}
+
+/* ---- TLS over buffers: the records go to and come from two buffers instead of the socket ---- */
+static int fire_tls_memGrow(uint8_t** data, size_t* capacity, size_t need) {
+    size_t c;
+    uint8_t* d;
+    if (need <= *capacity) return 1;
+    c = *capacity ? *capacity : 4096;
+    while (c < need) c *= 2;
+    d = (uint8_t*)realloc(*data, c);
+    if (d == NULL) return 0;
+    *data = d;
+    *capacity = c;
+    return 1;
+}
+static int fire_tls_memSendCb(void* ctx, const unsigned char* buf, size_t len) {
+    FireTlsSession* s = (FireTlsSession*)ctx;
+    if (!fire_tls_memGrow(&s->outData, &s->outCapacity, s->outLength + len)) return MBEDTLS_ERR_SSL_ALLOC_FAILED;
+    memcpy(s->outData + s->outLength, buf, len);
+    s->outLength += len;
+    return (int)len;
+}
+static int fire_tls_memRecvCb(void* ctx, unsigned char* buf, size_t len) {
+    FireTlsSession* s = (FireTlsSession*)ctx;
+    size_t n = s->inLength - s->inAt;
+    if (n == 0) return MBEDTLS_ERR_SSL_WANT_READ;   /* nothing yet: the bytes of the other side come with memFeed */
+    if (n > len) n = len;
+    memcpy(buf, s->inData + s->inAt, n);
+    s->inAt += n;
+    if (s->inAt == s->inLength) s->inAt = s->inLength = 0;
+    return (int)n;
+}
+static FireTlsSession* fire_tls_clientOpenMem(const FireTlsOptions* opt, FireNetStatus* st) {
+    FireTlsSession* s = fire_tls_clientOpen((FireNetSock)-1, opt, st);
+    if (s == NULL) return NULL;
+    s->mem = 1;
+    mbedtls_ssl_set_bio(&s->ssl, s, fire_tls_memSendCb, fire_tls_memRecvCb, NULL);
+    return s;
+}
+static int fire_tls_memFeed(FireTlsSession* s, const uint8_t* data, int count, FireNetStatus* st) {
+    if (!s->mem) return fire_net_fail(st, FIRE_NET_E_INVALID_ARGUMENT, "The TLS session is not one over a buffer.");
+    if (count <= 0) return 1;
+    if (s->inAt > 0) {   /* (what was read goes: the rest moves to the front) */
+        memmove(s->inData, s->inData + s->inAt, s->inLength - s->inAt);
+        s->inLength -= s->inAt;
+        s->inAt = 0;
+    }
+    if (!fire_tls_memGrow(&s->inData, &s->inCapacity, s->inLength + (size_t)count)) return fire_net_fail(st, FIRE_NET_E_OTHER, "Out of memory.");
+    memcpy(s->inData + s->inLength, data, (size_t)count);
+    s->inLength += (size_t)count;
+    return 1;
+}
+static int fire_tls_memDrain(FireTlsSession* s, uint8_t* out, int max) {
+    size_t n;
+    if (!s->mem || max <= 0 || s->outLength == 0) return 0;
+    n = s->outLength < (size_t)max ? s->outLength : (size_t)max;
+    memcpy(out, s->outData, n);
+    memmove(s->outData, s->outData + n, s->outLength - n);
+    s->outLength -= n;
+    return (int)n;
+}
+static int fire_tls_memWaiting(FireTlsSession* s) { return s->mem ? (int)s->outLength : 0; }
+static int fire_tls_memRead(FireTlsSession* s, uint8_t* data, int count, int* got, FireNetStatus* st) {
+    int ret;
+    *got = 0;
+    if (count <= 0) return 1;
+    ret = mbedtls_ssl_read(&s->ssl, data, (size_t)count);
+    if (ret > 0) { *got = ret; return 1; }
+    if (ret == 0 || ret == MBEDTLS_ERR_SSL_PEER_CLOSE_NOTIFY) return 1;
+    if (ret == MBEDTLS_ERR_SSL_WANT_READ || ret == MBEDTLS_ERR_SSL_WANT_WRITE) { *got = -1; return 1; }
+    return fire_tls_failMbed(st, FIRE_TLS_E_TLS, "TLS read: ", ret);
+}
+static int fire_tls_memWrite(FireTlsSession* s, const uint8_t* data, int count, int* sent, FireNetStatus* st) {
+    int ret;
+    *sent = 0;
+    if (count <= 0) return 1;
+    ret = mbedtls_ssl_write(&s->ssl, data, (size_t)count);
+    if (ret > 0) { *sent = ret; return 1; }
+    return fire_tls_failMbed(st, ret == MBEDTLS_ERR_SSL_PEER_CLOSE_NOTIFY ? FIRE_NET_E_CLOSED : FIRE_TLS_E_TLS, "TLS write: ", ret);
 }
 
 #endif

@@ -99,6 +99,7 @@ namespace fire.Compiler
               fire.Compiler model <file.gltf|file.glb> [-o <file.f3d>] [--fps n]
               fire.Compiler run|build <project.fireproj | solution.firesln> [-p <project>] [...]
               fire.Compiler test  [<file>... | <project.fireproj> | <solution.firesln>] [-p <project>] [--engine vm|native] [-m ...] [-f 32|64] [-i 32|64]
+              fire.Compiler data migrate|status|diff|import [<file>... | <project.fireproj>] --url <url> [...]   (forge data --help)
 
             run     compiles the files into one program and runs it. What follows `--` goes to the program (Environment.Args; for a project instead of its settings.arguments).
             build   turns them into a program (a project without -o or "output": <project>/bin/<target>-<mode>/<name>, target vm or the native one, mode dbg/rel/perf):
@@ -164,7 +165,7 @@ namespace fire.Compiler
                 case "native": command = CommandKind.Native; break;
                 case "test": command = CommandKind.Test; break;
                 default:
-                    return Fail(CommandKind.Help, $"Unknown command '{args[0]}' (expected: run, build, native or test).");
+                    return Fail(CommandKind.Help, $"Unknown command '{args[0]}' (expected: run, build, native, test or data).");
             }
 
             var files = new List<string>();
@@ -430,6 +431,8 @@ namespace fire.Compiler
 
         public static int Run(IReadOnlyList<string> args, TextWriter stdout, TextWriter stderr)
         {
+            // `forge data ...`: the migrations and the schema of a database (DataCommand) - its own options
+            if (args.Count > 0 && string.Equals(args[0], "data", StringComparison.OrdinalIgnoreCase)) return DataCommand.Run(args.Skip(1).ToList(), stdout, stderr);
             var options = CommandLineParser.Parse(args);
 
             if (options.Error != null)

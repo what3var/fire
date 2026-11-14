@@ -220,8 +220,16 @@ namespace Tls {
         // The handshake as the server over a connection that a Net.TcpListener accepted; returns the encrypted stream (it owns the connection). Close the streams before the server.
         Tls.Stream Accept(Net.TcpClient tcp, any timeout = 10000) {
             if (this.closed) { throw new Net.ClosedException("The TLS server is closed.", 2) }
+            return Tls.Server.AcceptOn(this.context, tcp, timeout)
+        }
+
+        // The handle of the server's context: a task that serves a connection makes its handshake with it (AcceptOn) - the Server stays where it is.
+        defined int Context { get { return this.context } }
+
+        // The handshake as the server with the context of a Tls.Server (its Context) - in the task of the connection, not in the one that accepts.
+        static Tls.Stream AcceptOn(defined int context, Net.TcpClient tcp, any timeout = 10000) {
             var stream = new Tls.Stream(tcp)
-            stream.handle = Tls.Errors.Handle(__TlsAccept(this.context, tcp.NativeHandle))
+            stream.handle = Tls.Errors.Handle(__TlsAccept(context, tcp.NativeHandle))
             stream.Handshake(timeout)
             return stream
         }
@@ -230,6 +238,86 @@ namespace Tls {
             if (this.closed) { return }
             this.closed = true
             if (this.context >= 0) { __TlsFreeContext(this.context) }
+        }
+    }
+
+    // TLS over buffers instead of a socket, for a protocol that carries the TLS records itself (SQL Server's TDS sends the handshake in its PRELOGIN
+    // packets). The client side: Step does what it can of the handshake, Drain gives the bytes to send, Feed takes the bytes that came; after the
+    // handshake Write encrypts (Drain gives the records) and Read decrypts what was fed. With OpenSSL, mbedTLS and SChannel (without TLS: a Net.NetException).
+    class Engine {
+        defined int handle
+        bool closed
+
+        construct(string serverName, Tls.Options options = undefined) {
+            this.handle = -1
+            this.closed = false
+            var o = options
+            if (o == undefined) { o = new Tls.Options() }
+            var verify = 0
+            if (o.verify) { verify = 1 }
+            this.handle = Tls.Errors.Handle(__TlsOpenMem(serverName, verify, o.caFile, o.caPem, o.certPem, o.keyPem))
+        }
+
+        destruct() { this.Close() }
+
+        undefined Check() { if (this.closed) { throw new Net.ClosedException("The TLS engine is closed.", 2) } }
+
+        // The next step of the handshake: true when it is complete (else: Drain, send, wait for the answer, Feed, Step again).
+        bool Step() {
+            this.Check()
+            var state = __TlsHandshake(this.handle)
+            if (state < 0) { Tls.Errors.Throw() }
+            return state == 1
+        }
+
+        // The bytes that came from the other side.
+        undefined Feed(byte buffer[], defined int offset, defined int count) {
+            this.Check()
+            if (!__TlsFeed(this.handle, buffer, offset, count)) { Tls.Errors.Throw() }
+        }
+
+        // The bytes to send to the other side (empty: none).
+        byte[] Drain() {
+            this.Check()
+            byte out[] = __TlsDrain(this.handle)
+            if (out == undefined) { Tls.Errors.Throw() }
+            return out
+        }
+
+        // Decrypted bytes: their number, -1 when more must be fed first, 0 when the other side ended the session.
+        defined int Read(byte buffer[], defined int offset, defined int count) {
+            this.Check()
+            var n = __TlsMemRead(this.handle, buffer, offset, count)
+            if (n == -2) { return -1 }
+            if (n < 0) { Tls.Errors.Throw() }
+            return n
+        }
+
+        // Encrypts all `count` bytes (Drain gives the records).
+        undefined Write(byte buffer[], defined int offset, defined int count) {
+            this.Check()
+            var done = 0
+            while (done < count) {
+                var n = __TlsMemWrite(this.handle, buffer, offset + done, count - done)
+                if (n < 0) { Tls.Errors.Throw() }
+                done = done + n
+            }
+        }
+
+        // "TLSv1.2 ECDHE-RSA-AES256-GCM-SHA384": the protocol and the cipher.
+        string Info {
+            get {
+                this.Check()
+                var text = __TlsInfo(this.handle)
+                if (text == undefined) { Tls.Errors.Throw() }
+                return text
+            }
+        }
+
+        undefined Close() {
+            if (this.closed) { return }
+            this.closed = true
+            if (this.handle >= 0) { __TlsClose(this.handle) }
         }
     }
 }

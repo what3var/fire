@@ -21,12 +21,14 @@ namespace Http {
             if (brush == undefined || !(brush is of SolidBrush)) { return undefined }
             SolidBrush b = brush
             int c = b.Color
+            // (fire's colours are 0xAABBGGRR: red is the lowest byte; alpha 0 is transparent)
+            int alpha = (c >> 24) & 255
+            if (alpha == 0 && c > 255) { return "transparent" }
             var digits = "0123456789abcdef"
             var t = "#"
-            var shift = 16777216
-            for (var i = 0; i < 6; i++) {
-                shift = shift / 16
-                t = t + digits.CharAt((c / shift) % 16)
+            for (var i = 0; i < 3; i++) {
+                int part = (c >> (8 * i)) & 255
+                t = t + digits.CharAt(part / 16) + digits.CharAt(part % 16)
             }
             return t
         }
@@ -86,7 +88,10 @@ namespace Http {
             else if (e is of UI.TextBox) { UI.TextBox tb = e; t = tb.Text }
             var p = "{\"e\": " + id + ", \"t\": " + Json.Serialize(t) + ", \"v\": " + Http.PageHtml.Bool(e.Visible) + ", \"n\": " + Http.PageHtml.Bool(e.Enabled)
             if (e is of UI.CheckBox) { UI.CheckBox ch = e; p = p + ", \"c\": " + Http.PageHtml.Bool(ch.IsChecked) }
-            if (e is of UI.DrawingCanvas) { p = p + ", \"img\": " + Json.Serialize(Http.PageHtml.Image(e)) }
+            if (e is of UI.DrawingCanvas) {
+                var ops = Http.PageHtml.Ops(e)
+                if (ops != undefined) { p = p + ", \"ops\": " + ops } else { p = p + ", \"img\": " + Json.Serialize(Http.PageHtml.Image(e)) }
+            }
             if (e is of UI.ItemsControl) {
                 UI.ItemsControl lc = e
                 p = p + ", \"rows\": " + Http.PageHtml.RowsJson(lc) + ", \"sel\": " + lc.SelectedIndex
@@ -98,10 +103,11 @@ namespace Http {
             if (e is of UI.Image) { UI.Image pic = e; p = p + ", \"img\": " + Json.Serialize(Http.PageHtml.Picture(pic.Source)) }
             var fg = Http.PageHtml.Color(e.Foreground)
             if (e is of UI.Label) { UI.Label lc = e; var own = Http.PageHtml.Color(lc.Color); if (own != undefined) { fg = own } }
-            if (fg != undefined) { p = p + ", \"fg\": \"" + fg + "\"" }
+            // (always both: "" takes a colour back - the end of a hover)
+            if (fg == undefined) { fg = "" }
             var bg = Http.PageHtml.Color(e.Background)
-            if (bg != undefined) { p = p + ", \"bg\": \"" + bg + "\"" }
-            return p + "}"
+            if (bg == undefined) { bg = "" }
+            return p + ", \"fg\": \"" + fg + "\", \"bg\": \"" + bg + "\"}"
         }
 
         // The picture of a DrawingCanvas as a data URL (PNG; "" before it painted) and a checksum of it.
@@ -271,7 +277,25 @@ namespace Http {
 
         static defined int ImageSignature(UI.DrawingCanvas dc) {
             if (dc.framebuffer == undefined) { return 0 }
+            var ops = Http.PageHtml.Ops(dc)
+            if (ops != undefined) { return Hash.Crc32.Of(ops) }
             return Hash.Crc32.Of(dc.framebuffer.ToPng())
+        }
+
+        // The drawing calls of a canvas as a JSON array (browser.Vector: the browser replays them on its canvas), undefined when it has none to give or
+        // one of them cannot be replayed (an image, a blur - then the PNG goes).
+        static string Ops(UI.DrawingCanvas dc) {
+            if (dc.renderer == undefined || dc.renderer.Recording == undefined) { return undefined }
+            List ops = dc.renderer.Recording
+            if (ops.Count > 20000) { return undefined }
+            var t = "["
+            for (var i = 0; i < ops.Count; i++) {
+                string op = ops[i]
+                if (op == "[\"u\"]") { return undefined }
+                if (i > 0) { t = t + "," }
+                t = t + op
+            }
+            return t + "]"
         }
 
         static string Bool(bool b) {
@@ -325,7 +349,24 @@ namespace Http {
             if (id >= 0) { a = " id=\"f" + id + "\"" + a }   // (the elements of a template row have none)
             if (!e.Visible) { a = a + " hidden" }
             if (e.ToolTip != "") { a = a + " title=\"" + Http.PageHtml.Escape(e.ToolTip) + "\"" }
+            if (id >= 0 && Http.PageHtml.HoverStyled(e)) { a = a + " data-hv=\"1\"" }   // (the browser says when the pointer comes and goes)
+            if (id >= 0 && e.contextMenu != undefined && e.contextMenu.Count > 0) { a = a + " data-cm=\"1\"" }
             return a
+        }
+
+        // (does a trigger of the element's style or template ask for Hover? then the pointer's coming and going goes to the server)
+        static bool HoverStyled(UI.Element e) { return Http.PageHtml.AsksHover(e.styleStates) || Http.PageHtml.AsksHover(e.templateStates) }
+        static bool AsksHover(List states) {
+            if (states == undefined) { return false }
+            for (var i = 0; i < states.Count; i++) {
+                any state = states[i]
+                any trigger = state.trigger
+                for (var c = 0; c < trigger.conditions.Count; c++) {
+                    any condition = trigger.conditions[c]
+                    if (condition.property == "Hover") { return true }
+                }
+            }
+            return false
         }
 
         // The HTML of an element and what is inside it.
@@ -333,6 +374,8 @@ namespace Http {
             if (e is of UI.DrawingCanvas) {
                 UI.DrawingCanvas dc = e
                 var size = " width=\"" + dc.actualWidth + "\" height=\"" + dc.actualHeight + "\""
+                var ops = Http.PageHtml.Ops(dc)
+                if (ops != undefined) { return "<canvas data-k=\"draw\"" + Http.PageHtml.Attrs(e, elements, "f-draw", "") + size + " data-ops=\"" + Http.PageHtml.Escape(ops) + "\"></canvas>" }
                 return "<img data-k=\"draw\" draggable=\"false\"" + Http.PageHtml.Attrs(e, elements, "f-draw", "") + size + " src=\"" + Http.PageHtml.Image(dc) + "\">"
             }
             if (e is of UI.TreeView) {
@@ -529,6 +572,11 @@ namespace Http {
             return done.Wait(limit)
         }
 
+        // The canvas goes to the browser as its drawing calls, replayed on a canvas of the browser (rectangles, ellipses, lines, paths, rounded
+        // rectangles, text in the browser's fonts) instead of a PNG of each frame: less to send for a big canvas or one that changes often. A frame with a
+        // call the browser cannot replay (an image, a blur, a material) goes as a PNG.
+        undefined Vector(UI.DrawingCanvas canvas) { this.state.vectors.Add(canvas) }
+
         // Gives the element the focus - in the UI root of the page (its keys go to it) and in the browser.
         undefined Focus(UI.Element element) { this.state.root.SetFocus(element) }
 
@@ -562,6 +610,11 @@ namespace Http {
         ChannelEnd<string, string> link
         // the element with the focus as the browser has it (its number; -1 none)
         defined int seenFocus = -1
+        // the context menu to show with the next answer (JSON: the element, the place, the rows) and the element whose menu is open
+        string contextMenu = undefined
+        defined int menuOwner = -1
+        // the canvases that go as their drawing calls (browser.Vector)
+        List vectors = new List()
 
         construct(string typeName, string id, string session) {
             this.id = id
@@ -582,12 +635,29 @@ namespace Http {
                 this.browser = new Http.Browser(this)
                 Reflect.Set(this.page, "browser", this.browser)
             }
+            // (the canvases of fields with [Vector]: as their drawing calls from the first frame on - browser.Vector does it later)
+            List fields = Type.Of(this.page).Fields()
+            for (var i = 0; i < fields.Count; i++) {
+                Member m = fields[i]
+                if (m.IsStatic || !m.HasAttribute("Vector")) { continue }
+                any canvas = Reflect.Get(this.page, m.Name)
+                if (canvas is of UI.DrawingCanvas) { this.vectors.Add(canvas) }
+            }
         }
 
         // (the layout of the UI library - the sizes of the panels with places and of the drawing canvases - and the painting of the canvases)
         undefined Layout() {
             this.root.content.Measure(this.root, 1280, 800)
             this.root.content.Arrange(this.root, 0, 0, 1280, 800)
+            // (a canvas of browser.Vector records what its next painting draws: a new list for a frame that will be painted)
+            for (var i = 0; i < this.vectors.Count; i++) {
+                UI.DrawingCanvas dc = this.vectors[i]
+                if (dc.actualWidth <= 0 || dc.actualHeight <= 0) { continue }
+                dc.Ensure(dc.actualWidth, dc.actualHeight)
+                if (dc.renderer == undefined) { continue }
+                if (dc.renderer.Recording == undefined) { dc.dirty = true }
+                if (dc.dirty || dc.Continuous) { dc.renderer.Recording = new List() }
+            }
             this.root.content.Poll(this.root)
             Http.PageHtml.BuildRows(this.root.content, this.root)
         }
@@ -668,6 +738,29 @@ namespace Http {
                             if (kind != "toggle") { tv.SelectNode(node) }
                             if (kind == "activate") { tv.Activate() }
                         }
+                    } else if (kind == "hover") {
+                        bool over = o.Get("v")
+                        e.Hover = over
+                    } else if (kind == "ctx" && e.contextMenu != undefined) {
+                        // (a right click: the menu of the element - the browser shows it where the pointer is)
+                        this.menuOwner = id
+                        int x = o.Get("x")
+                        int y = o.Get("y")
+                        this.contextMenu = "{\"e\": " + id + ", \"x\": " + x + ", \"y\": " + y + ", \"html\": " + Json.Serialize(Http.PageHtml.MenuRows(e.contextMenu, "c")) + "}"
+                    } else if (kind == "cmenu" && e.contextMenu != undefined && id == this.menuOwner) {
+                        string path = o.Get("v")
+                        any steps = path.Split("/")
+                        List level = e.contextMenu
+                        UI.MenuItem item = undefined
+                        for (var i = 1; i < steps.length; i++) {
+                            string step = steps[i]
+                            any at = step.TryToInt()
+                            if (at == undefined || level == undefined || at < 0 || at >= level.Count) { item = undefined; break }
+                            item = level[at]
+                            level = item.items
+                        }
+                        this.menuOwner = -1
+                        if (item != undefined && item.Enabled && !item.separator && !item.HasSubmenu()) { item.Activate() }
                     } else if (kind == "menu" && e is of UI.MenuBar) {
                         UI.MenuBar mb = e
                         string path = o.Get("v")
@@ -733,7 +826,12 @@ namespace Http {
                     out = out + Http.PageHtml.Patch(now[i], i)
                 }
             }
-            return "{\"patches\": [" + out + "]" + this.TakeOutbox() + this.FocusChange() + "}"
+            var menu = ""
+            if (this.contextMenu != undefined) {
+                menu = ", \"menu\": " + this.contextMenu
+                this.contextMenu = undefined
+            }
+            return "{\"patches\": [" + out + "]" + menu + this.TakeOutbox() + this.FocusChange() + "}"
         }
 
         // (the member "focus" of an answer when the code of the page moved the focus - browser.Focus, a key that moved it)
@@ -894,9 +992,10 @@ namespace Http {
 
         undefined Remove(string id) {
             if (!this.circuits.ContainsKey(id)) { return }
+            // (stopped first, then forgotten)
             Http.PageCircuit c = this.circuits[id]
-            this.circuits.Remove(id)
             c.Stop()
+            this.circuits.Remove(id)
         }
 
         defined int Count() { return this.circuits.Count }
@@ -911,8 +1010,8 @@ namespace Http {
             }
             for (var i = 0; i < gone.Count; i++) {
                 Http.PageCircuit c = circuits[gone[i]]
-                circuits.Remove(gone[i])
                 c.Stop()
+                circuits.Remove(gone[i])
             }
         }
 
@@ -1054,7 +1153,8 @@ namespace Http {
                 ".f-menubar{display:flex;background:#f0f0f0;border-bottom:1px solid #8884;user-select:none}.f-menu{position:relative}.f-mtitle{display:block;padding:3px 10px;cursor:default}.f-menu.open>.f-mtitle,.f-mtitle:hover{background:#0078d722}" +
                 ".f-pop{display:none;position:absolute;left:0;top:100%;min-width:160px;background:#fff;color:#000;border:1px solid #8888;box-shadow:2px 2px 6px #0003;z-index:10;padding:2px 0}.f-menu.open>.f-pop{display:block}" +
                 ".f-mi{position:relative;display:flex;padding:3px 8px 3px 22px;white-space:nowrap;cursor:default}.f-mi:hover{background:#0078d7;color:#fff}.f-mi>.f-pop{left:100%;top:-3px}.f-mi:hover>.f-pop{display:block}" +
-                ".f-dis,.f-dis:hover{background:none;color:#888}.f-chk{position:absolute;left:6px}.f-key{margin-left:auto;padding-left:24px;opacity:.7}.f-sep{border-top:1px solid #8884;margin:3px 0}"
+                ".f-dis,.f-dis:hover{background:none;color:#888}.f-chk{position:absolute;left:6px}.f-key{margin-left:auto;padding-left:24px;opacity:.7}.f-sep{border-top:1px solid #8884;margin:3px 0}" +
+                ".f-ctx{position:fixed;z-index:20}.f-ctx>.f-pop{display:block;position:static}"
         }
 
         // The script of the pages: the WebSocket, the events (input debounced), the changes.
@@ -1065,8 +1165,13 @@ namespace Http {
                 "function idOf(el){while(el&&!(el.id&&el.id.charAt(0)=='f')){el=el.parentElement}return el?+el.id.substring(1):-1}" +
                 "document.addEventListener('click',function(ev){var t=ev.target.closest('[data-k=click]');if(t){send({e:idOf(t),k:'click'})}});" +
                 "document.addEventListener('click',function(ev){var r=ev.target.closest('.f-row');if(r){var g=ev.target.closest('.f-tree .f-tog');send({e:idOf(r.parentElement),k:g?'toggle':'select',v:+r.dataset.i})}});" +
-                "function closeMenus(){document.querySelectorAll('.f-menu.open').forEach(function(m){m.classList.remove('open')})}" +
-                "document.addEventListener('click',function(ev){var t=ev.target.closest('.f-mtitle');if(t){var m=t.parentElement,was=m.classList.contains('open');closeMenus();if(!was){m.classList.add('open')}return}var i=ev.target.closest('.f-mi');if(i){if(!i.classList.contains('f-sub')&&!i.classList.contains('f-dis')){send({e:idOf(i.closest('.f-menubar')),k:'menu',v:i.dataset.p});closeMenus()}return}closeMenus()});" +
+                "function closeMenus(){document.querySelectorAll('.f-menu.open').forEach(function(m){m.classList.remove('open')});var c=document.querySelector('.f-ctx');if(c){c.remove()}}" +
+                "document.addEventListener('click',function(ev){var t=ev.target.closest('.f-mtitle');if(t){var m=t.parentElement,was=m.classList.contains('open');closeMenus();if(!was){m.classList.add('open')}return}var i=ev.target.closest('.f-mi');if(i){if(!i.classList.contains('f-sub')&&!i.classList.contains('f-dis')){var cx=i.closest('.f-ctx');if(cx){send({e:+cx.dataset.e,k:'cmenu',v:i.dataset.p})}else{send({e:idOf(i.closest('.f-menubar')),k:'menu',v:i.dataset.p})}closeMenus()}return}closeMenus()});" +
+                "function closeCtx(){var c=document.querySelector('.f-ctx');if(c){c.remove()}}" +
+                "document.addEventListener('contextmenu',function(ev){var t=ev.target.closest('[data-cm]');if(t){ev.preventDefault();closeCtx();send({e:idOf(t),k:'ctx',x:ev.clientX,y:ev.clientY})}});" +
+                "document.addEventListener('keydown',function(ev){if(ev.key=='Escape'){closeCtx()}},true);" +
+                "var hovered=null;document.addEventListener('mouseover',function(ev){var t=ev.target.closest('[data-hv]');if(t===hovered){return}if(hovered){send({e:idOf(hovered),k:'hover',v:false})}hovered=t;if(t){send({e:idOf(t),k:'hover',v:true})}});" +
+                "document.addEventListener('mouseleave',function(){if(hovered){send({e:idOf(hovered),k:'hover',v:false});hovered=null}});" +
                 "document.addEventListener('mouseover',function(ev){var t=ev.target.closest('.f-mtitle');if(t&&document.querySelector('.f-menu.open')&&!t.parentElement.classList.contains('open')){closeMenus();t.parentElement.classList.add('open')}});" +
                 "document.addEventListener('click',function(ev){var c=ev.target.closest('.f-head .f-cell');if(c){send({e:idOf(c.parentElement.parentElement),k:'sort',v:+c.dataset.c})}});" +
                 "document.addEventListener('dblclick',function(ev){var r=ev.target.closest('.f-row');if(r){send({e:idOf(r.parentElement),k:'activate',v:+r.dataset.i})}});" +
@@ -1077,7 +1182,22 @@ namespace Http {
                 "if(p.v!==undefined){el.hidden=!p.v}" +
                 "if(p.n!==undefined){var d=(el.tagName=='BUTTON'||el.tagName=='INPUT')?el:el.querySelector('input');if(d){d.disabled=!p.n}}" +
                 "if(p.rows!==undefined){var h=el.querySelector('.f-head');el.innerHTML='';if(h){if(p.head!==undefined){h.innerHTML=p.head}el.appendChild(h)}p.rows.forEach(function(t,i){var r=document.createElement('div');r.className='f-row'+(i==p.sel?' f-sel':'');r.dataset.i=i;r.innerHTML=t;el.appendChild(r)});var s=el.querySelector('.f-sel');if(s&&s.scrollIntoView){s.scrollIntoView({block:'nearest'})}}" +
-                "if(p.menu!==undefined){el.innerHTML=p.menu}if(p.img!==undefined){el.src=p.img}if(p.fg!==undefined){el.style.color=p.fg}if(p.bg!==undefined){el.style.background=p.bg}}" +
+                "if(p.menu!==undefined){el.innerHTML=p.menu}if(p.img!==undefined){el.src=p.img}if(p.ops!==undefined){play(el,p.ops)}if(p.fg!==undefined){el.style.color=p.fg}if(p.bg!==undefined){el.style.background=p.bg}}" +
+                "function col(c){return 'rgba('+(c&255)+','+((c>>>8)&255)+','+((c>>>16)&255)+','+(((c>>>24)&255)/255)+')'}" +
+                "function pts(x,a,closed){x.beginPath();for(var i=0;i+1<a.length;i+=2){if(i==0){x.moveTo(a[i]+.5,a[i+1]+.5)}else{x.lineTo(a[i]+.5,a[i+1]+.5)}}if(closed){x.closePath()}}" +
+                "function rr(x,a,b,w,h,r){r=Math.min(r,w/2,h/2);x.beginPath();x.moveTo(a+r,b);x.arcTo(a+w,b,a+w,b+h,r);x.arcTo(a+w,b+h,a,b+h,r);x.arcTo(a,b+h,a,b,r);x.arcTo(a,b,a+w,b,r);x.closePath()}" +
+                "function play(cv,ops){var x=cv.getContext('2d');x.setTransform(1,0,0,1,0,0);x.save();ops.forEach(function(o){var k=o[0];" +
+                "if(k=='c'){x.save();x.setTransform(1,0,0,1,0,0);x.clearRect(0,0,cv.width,cv.height);x.fillStyle=col(o[1]);x.fillRect(0,0,cv.width,cv.height);x.restore()}" +
+                "else if(k=='fa'){x.fillStyle=col(o[2]);x.fillRect(0,0,cv.width,cv.height)}else if(k=='fr'){x.fillStyle=col(o[5]);x.fillRect(o[1],o[2],o[3],o[4])}" +
+                "else if(k=='fe'){x.fillStyle=col(o[5]);x.beginPath();x.ellipse(o[1]+.5,o[2]+.5,o[3]+.5,o[4]+.5,0,0,7);x.fill()}else if(k=='fp'){x.fillStyle=col(o[2]);pts(x,o[1],1);x.fill('evenodd')}" +
+                "else if(k=='frr'){x.fillStyle=col(o[6]);rr(x,o[1],o[2],o[3],o[4],o[5]);x.fill()}" +
+                "else if(k=='dl'||k=='dr'||k=='de'||k=='ds'||k=='drr'||k=='dp'){var n=o.length;x.strokeStyle=col(o[n-2]);x.lineWidth=o[n-1];" +
+                "if(k=='dl'){x.beginPath();x.moveTo(o[1]+.5,o[2]+.5);x.lineTo(o[3]+.5,o[4]+.5);x.stroke()}else if(k=='dr'){x.strokeRect(o[1]+.5,o[2]+.5,o[3]-1,o[4]-1)}" +
+                "else if(k=='de'){x.beginPath();x.ellipse(o[1]+.5,o[2]+.5,o[3],o[4],0,0,7);x.stroke()}else if(k=='ds'){pts(x,o[1],o[2]);x.stroke()}" +
+                "else if(k=='drr'){rr(x,o[1]+.5,o[2]+.5,o[3]-1,o[4]-1,o[5]);x.stroke()}else{x.fillStyle=col(o[3]);var s=Math.max(1,o[4]);x.fillRect(o[1]-(s>>1),o[2]-(s>>1),s,s)}}" +
+                "else if(k=='t'){x.font=o[6]+'px '+(o[7]?'monospace':'sans-serif');x.textBaseline='top';if(o[5]!=-1){x.fillStyle=col(o[5]);x.fillRect(o[1],o[2],x.measureText(o[3]).width,o[6])}x.fillStyle=col(o[4]);x.fillText(o[3],o[1],o[2])}" +
+                "else if(k=='clip'){x.restore();x.save();x.beginPath();x.rect(o[1],o[2],o[3],o[4]);x.clip()}else if(k=='noclip'){x.restore();x.save()}});x.restore()}" +
+                "function playAll(){document.querySelectorAll('canvas[data-ops]').forEach(function(c){try{play(c,JSON.parse(c.dataset.ops))}catch(e){}})}playAll();" +
                 "function runJs(list){(list||[]).forEach(function(j){if(j.id<0){try{(0,eval)(j.code)}catch(x){}return}var r;try{r=window[j.fn].apply(window,j.args)}catch(x){send({k:'js',e:-1,id:j.id});return}Promise.resolve(r).then(function(v){send({k:'js',e:-1,id:j.id,v:v})},function(){send({k:'js',e:-1,id:j.id})})})}" +
                 "var lastFocus=-1;document.addEventListener('focusin',function(ev){var e=idOf(ev.target);if(e!==lastFocus){lastFocus=e;send({e:e,k:'focus'})}});" +
                 "document.addEventListener('focusout',function(ev){if(!ev.relatedTarget&&lastFocus!==-1){lastFocus=-1;send({e:-1,k:'focus'})}});" +
@@ -1091,7 +1211,8 @@ namespace Http {
                 "document.addEventListener('pointerdown',function(ev){var t=ev.target;if(t.dataset&&t.dataset.k=='draw'){down=1;t.setPointerCapture(ev.pointerId);var p=pos(ev,t);send({e:idOf(t),k:'mouse',t:'down',x:p.x,y:p.y,b:ev.button+1});ev.preventDefault()}});" +
                 "document.addEventListener('pointermove',function(ev){var t=ev.target;if(down&&t.dataset&&t.dataset.k=='draw'){var n=Date.now();if(n-last<30){return}last=n;var p=pos(ev,t);send({e:idOf(t),k:'mouse',t:'move',x:p.x,y:p.y})}});" +
                 "document.addEventListener('pointerup',function(ev){var t=ev.target;if(down&&t.dataset&&t.dataset.k=='draw'){down=0;var p=pos(ev,t);send({e:idOf(t),k:'mouse',t:'up',x:p.x,y:p.y,b:ev.button+1})}});" +
-                "ws.onmessage=function(m){var d=JSON.parse(m.data);if(d.html!==undefined){document.getElementById('fire-root').innerHTML=d.html}else{(d.patches||[]).forEach(function(p){var el=document.getElementById('f'+p.e);if(el){apply(el,p)}})}" +
+                "ws.onmessage=function(m){var d=JSON.parse(m.data);if(d.html!==undefined){document.getElementById('fire-root').innerHTML=d.html;playAll()}else{(d.patches||[]).forEach(function(p){var el=document.getElementById('f'+p.e);if(el){apply(el,p)}})}" +
+                "if(d.menu!==undefined){var cm=document.createElement('div');cm.className='f-ctx';cm.dataset.e=d.menu.e;cm.innerHTML='<div class=\\'f-pop\\'>'+d.menu.html+'</div>';cm.style.left=d.menu.x+'px';cm.style.top=d.menu.y+'px';document.body.appendChild(cm)}" +
                 "if(d.focus!==undefined){var f=document.getElementById('f'+d.focus);if(f){lastFocus=d.focus;var c=f.matches('input,button,textarea,[tabindex]')?f:f.querySelector('input,button,textarea,[tabindex]');(c||f).focus()}}runJs(d.js)};" +
                 "})();"
         }

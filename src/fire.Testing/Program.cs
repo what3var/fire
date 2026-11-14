@@ -27707,6 +27707,92 @@ else
             string tlsHead = "#import \"tls\"\n#import \"http\"\n#import \"time\"\nvar certPem = " + certText + "\nvar keyPem = " + keyText + "\n";
             natCases = natCases.Concat(new (string Name, string Source)[]
             {
+                ("Tls/Engine: TLS ueber Puffer (Tls.Engine) - Handshake ueber eine einfache TCP-Verbindung (Drain senden, Feed des Empfangenen), 10 KB in mehreren Records hin, die Antwort zurueck, Zertifikat ohne CA abgelehnt, geschlossen", tlsHead + """
+                    // (the engine's records over a plain TCP connection: what Drain gives is sent, what comes is fed)
+                    class Shuttle {
+                        static undefined Send(Net.TcpClient tcp, Tls.Engine e) {
+                            byte out[] = e.Drain()
+                            if (out.length > 0) { tcp.Write(out, 0, out.length) }
+                        }
+                        static bool Receive(Net.TcpClient tcp, Tls.Engine e) {
+                            byte buf[] = new byte[16384]
+                            var n = tcp.Read(buf, 0, 16384)
+                            if (n <= 0) { return false }
+                            e.Feed(buf, 0, n)
+                            return true
+                        }
+                    }
+                    print("available " + Tls.Support.Available())
+                    var probe = new Net.TcpListener("127.0.0.1", 0)
+                    int port = trust probe.Port
+                    probe.Close()
+                    fire {
+                        var l = new Net.TcpListener("127.0.0.1", port)
+                        var server = new Tls.Server(certPem, keyPem)
+                        var served = 0
+                        while (served < 2) {
+                            var tcp = l.TryAccept(10000)
+                            if (tcp == undefined) { break }
+                            served = served + 1
+                            try {
+                                var s = server.Accept(tcp, 5000)
+                                var buf = new byte[20000]
+                                var n = s.Read(buf, 0, 20000)
+                                var got = n
+                                while (got < 10000 && n > 0) {
+                                    n = s.Read(buf, got, 20000 - got)
+                                    if (n > 0) { got = got + n }
+                                }
+                                s.WriteString("echo " + got + " " + IO.Utf8.GetString(buf, 0, 12))
+                                s.Close()
+                            } catch (Net.NetException e) { }
+                        }
+                        server.Close()
+                        l.Close()
+                    }
+                    Sleep(400)
+                    var o = new Tls.Options()
+                    o.caPem = certPem
+                    var tcp = new Net.TcpClient("127.0.0.1", port)
+                    tcp.ReadTimeout = 5000
+                    var e = new Tls.Engine("localhost", o)
+                    var rounds = 0
+                    while (!e.Step()) {
+                        Shuttle.Send(tcp, e)
+                        if (!Shuttle.Receive(tcp, e)) { break }
+                        rounds++
+                    }
+                    Shuttle.Send(tcp, e)
+                    print("handshake " + (rounds > 0) + " " + e.Info.StartsWith("TLS"))
+                    var text = "hello engine"
+                    while (text.Length < 10000) { text = text + " and more" }
+                    var data = IO.Utf8.GetBytes(text)
+                    e.Write(data, 0, data.length)
+                    Shuttle.Send(tcp, e)
+                    var answer = ""
+                    var plain = new byte[256]
+                    while (true) {
+                        var n = e.Read(plain, 0, 256)
+                        if (n > 0) { answer = answer + IO.Utf8.GetString(plain, 0, n); continue }
+                        if (n == 0) { break }
+                        if (!Shuttle.Receive(tcp, e)) { break }
+                    }
+                    print("answer " + answer)
+                    e.Close()
+                    tcp.Close()
+                    try { var x = new Tls.Engine("localhost", o); x.Close(); x.Step() } catch (Net.ClosedException c) { print("closed " + c.code) }
+                    var tcp2 = new Net.TcpClient("127.0.0.1", port)
+                    tcp2.ReadTimeout = 5000
+                    var strict = new Tls.Engine("localhost")
+                    try {
+                        while (!strict.Step()) {
+                            Shuttle.Send(tcp2, strict)
+                            if (!Shuttle.Receive(tcp2, strict)) { break }
+                        }
+                        print("strict accepted?")
+                    } catch (Tls.CertificateException c) { print("untrusted " + c.code) }
+                    tcp2.Close()
+                    """),
                 ("Tls: Handshake, verschluesselte Daten, Zertifikatspruefung (unbekannt, falscher Name, ausgeschaltet) ueber Loopback", tlsHead + """
                     print("available " + Tls.Support.Available())
                     var probe = new Net.TcpListener("127.0.0.1", 0)
@@ -27762,6 +27848,35 @@ else
                     IO.IStream sv = iv
                     print("tls iconnection " + (v is of Net.IConnection) + " " + iv.RemoteHost + " " + (iv.RemotePort == port) + " " + (iv.LocalPort == v.LocalPort) + " " + v.LocalHost + " " + iv.ReadTimeout + " " + (sv is of Net.IConnection))
                     v.Close()
+                    """),
+                ("Https/AppServer: der TLS-Handshake im Task der Verbindung - ein Client, der nie handshaket, haelt den naechsten nicht auf", tlsHead + """
+                    var probe = new Net.TcpListener("127.0.0.1", 0)
+                    int port = trust probe.Port
+                    probe.Close()
+                    fire {
+                        var server = new Http.AppServer("127.0.0.1", port)
+                        server.UseTls(certPem, keyPem)
+                        server.PushTo((new Http.Routes()).Map("GET", "/hello", func (Http.Context ctx) => "secure hello"))
+                        while (server.Connections < 3) { server.AcceptOne(10000) }
+                        Sleep(1500)
+                        server.Close()
+                    }
+                    Sleep(400)
+                    // (a client that connects and never makes its handshake: the server's accepting task does not wait for it)
+                    var stall = new Net.TcpClient("127.0.0.1", port)
+                    Sleep(200)
+                    var o = new Tls.Options()
+                    o.caPem = certPem
+                    var client = new Http.Client()
+                    client.timeout = 10000
+                    client.tls = o
+                    var before = DateTime.UtcNow.Ticks
+                    var r = client.Get("https://localhost:" + port + "/hello")
+                    var ms = (DateTime.UtcNow.Ticks - before) / 10000
+                    print(r.status + " [" + r.Text() + "] at once " + (ms < 3000))
+                    var r2 = client.Get("https://localhost:" + port + "/hello")
+                    print("again " + r2.status)
+                    stall.Close()
                     """),
                 ("Https: Client und Server ueber TLS (https://-URL, Zertifikat des Tests, Zertifikatsfehler)", tlsHead + """
                     var probe = new Net.TcpListener("127.0.0.1", 0)
@@ -28431,6 +28546,102 @@ else
             }
             print("connections " + server.Connections)
             server.Close()
+            """),
+        ("WebSocket permessage-deflate: ausgehandelt (Client bietet an, Server stimmt zu), Text und Bytes komprimiert hin und zurueck, kleine Nachrichten unkomprimiert, ohne Angebot unkomprimiert", """
+            #import "http"
+            #import "time"
+            class Echo : Http.IWebSocketHandler {
+                construct() { }
+                undefined Serve(Http.WebSocket ws) {
+                    while (true) {
+                        var m = ws.Receive()
+                        if (m == undefined) { break }
+                        if (m.binary) { ws.SendBytes(m.data) } else { ws.Send("echo(" + ws.Compressed + "): " + m.Text()) }
+                    }
+                }
+            }
+            var probe = new Net.TcpListener("127.0.0.1", 0)
+            int port = trust probe.Port
+            probe.Close()
+            fire {
+                var server = new Http.AppServer("127.0.0.1", port)
+                server.PushTo(new Http.WebSockets("/ws", new Echo()))
+                server.PushTo((new Http.Routes()).Map("GET", "/", func (Http.Context ctx) => Http.Response.FromHtml("<html><body>ws</body></html>")))
+                while (server.Connections < 2) { server.AcceptOne(30000) }
+                Sleep(500)
+                server.Close()
+            }
+            Sleep(300)
+            var ws = Http.WebSocket.Connect("ws://127.0.0.1:" + port + "/ws")
+            print("agreed " + ws.Compressed)
+            var long = "abc"
+            while (long.Length < 5000) { long = long + " the same words again" }
+            ws.Send("hi")
+            print(ws.ReceiveText(5000))
+            ws.Send(long)
+            var back = ws.ReceiveText(5000)
+            print("long " + back.Length + " " + back.EndsWith("again"))
+            var bytes = new byte[3000]
+            for (var i = 0; i < 3000; i++) { bytes[i] = i % 7 }
+            ws.SendBytes(bytes)
+            var b = ws.Receive(5000)
+            print("bytes " + b.data.length + " " + b.data[2999])
+            ws.Close()
+            var plain = Http.WebSocket.Connect("ws://127.0.0.1:" + port + "/ws", 10000, undefined, false)
+            plain.Send(long)
+            print("plain " + plain.Compressed + " " + plain.ReceiveText(5000).Length)
+            plain.Close()
+            """),
+        ("Http.Files: mehrere Bereiche (multipart/byteranges, Suffix, ausserhalb weggelassen, alle ausserhalb 416), If-Range, Map (Datei aus einem Lambda; ausserhalb des Ordners, versteckt, fehlend: 404)", """
+            #import "http"
+            #import "time"
+            #import "filesystem"
+            var www = IO.Path.Combine(IO.Path.GetTempPath(), "fire-files-" + DateTime.UtcNow.Ticks)
+            IO.Directory.CreateDirectory(IO.Path.Combine(www, "rel"))
+            IO.Directory.CreateDirectory(IO.Path.Combine(www, ".secret"))
+            IO.File.WriteAllText(IO.Path.Combine(www, "data.txt"), "0123456789abcdefghij")
+            IO.File.WriteAllText(IO.Path.Combine(www, "rel/v1.zip"), "v1 zip")
+            IO.File.WriteAllText(IO.Path.Combine(www, ".secret/x.txt"), "nope")
+            var probe = new Net.TcpListener("127.0.0.1", 0)
+            int port = trust probe.Port
+            probe.Close()
+            fire {
+                var server = new Http.AppServer("127.0.0.1", port)
+                var files = new Http.Files(taking www)
+                files.Map("/download/*", func (Http.Request r) => "rel/" + r.Query("v", "v0") + ".zip")
+                files.Map("/sneaky", func (Http.Request r) => "../../etc/passwd")
+                files.Map("/hidden", func (Http.Request r) => ".secret/x.txt")
+                server.PushTo(files)
+                while (server.Connections < 9) { server.AcceptOne(10000) }
+                Sleep(500)
+                server.Close()
+            }
+            Sleep(300)
+            var c = new Http.Client()
+            var site = "http://127.0.0.1:" + port
+            var h = new Http.Headers()
+            h.Set("Range", "bytes=2-4,10-12,-3")
+            var m = c.Get(site + "/data.txt", h)
+            print(m.status + " " + m.headers.Get("Content-Type").StartsWith("multipart/byteranges; boundary="))
+            string boundary = m.headers.Get("Content-Type").Substring(31)
+            print(m.Text().Replace(boundary, "B").Replace("\r\n", "|"))
+            var h1 = new Http.Headers()
+            h1.Set("Range", "bytes=5-")
+            var one = c.Get(site + "/data.txt", h1)
+            print(one.status + " " + one.headers.Get("Content-Range") + " [" + one.Text() + "]")
+            var h2 = new Http.Headers()
+            h2.Set("Range", "bytes=50-60,70-")
+            print("outside " + c.Get(site + "/data.txt", h2).status)
+            var h3 = new Http.Headers()
+            h3.Set("Range", "bytes=0-1")
+            h3.Set("If-Range", "\"other\"")
+            print("if-range " + c.Get(site + "/data.txt", h3).status)
+            var d = c.Get(site + "/download/x?v=v1")
+            print("mapped " + d.status + " [" + d.Text() + "]")
+            print("mapped missing " + c.Get(site + "/download/x").status)
+            print("sneaky " + c.Get(site + "/sneaky").status + " hidden " + c.Get(site + "/hidden").status)
+            print("plain " + c.Get(site + "/data.txt").Text())
+            IO.Directory.Delete(www, true)
             """),
         ("Http.Files: wwwroot 1:1 - index.html, Endung weggelassen, MIME, ETag (304), Range (206, Suffix, 416), HEAD; nie .fire, Punkt-Dateien, .. (auch kodiert), POST geht weiter", """
             #import "http"
@@ -29448,6 +29659,956 @@ else
             print("button " + b.rx + "," + b.ry + " " + b.actualWidth + "x" + b.actualHeight)
             print(flow.Text)
             """),
+        ("Data/memory: die In-Memory-Datenbank mit derselben Pruefung wie SQLite (SQL-Teilmenge: Tabellen, Index, INSERT/UPDATE/DELETE, SELECT mit WHERE/ORDER BY/LIMIT/DISTINCT/Aggregaten/Funktionen, Transaktionen, Constraints), die generischen Formen QueryList<T>/Find<T>/All<T>/Ensure<T> und Abfragen mit Ausdrucksbaeumen (From<T>, Where, OrderBy, Skip/Take, Count, Any, First, Delete, ToSql); Sessions (Identity Map, Save in einer Transaktion, nur geaenderte Spalten, [Version], Remove, Detach/Attach, Rollback bei Fehlern); Beziehungen (HasMany, BelongsTo, ManyToMany: Include, Any/All als EXISTS, Schreiben ueber Listen, Join-Zeilen aus der Differenz)", """
+            #import "data.memory"
+            #import "time"
+            class Client {
+                [Key] int id
+                string name
+                [HasMany "clientId"] List<Purchase> orders
+                construct(string name) { this.name = name }
+            }
+            class Purchase {
+                [Key] int id
+                int clientId
+                float total
+                string note
+                [BelongsTo "clientId"] Client client
+                construct(float total, string note) {
+                    this.total = total
+                    this.note = note
+                }
+            }
+            class Label {
+                [Key] int id
+                string label
+                construct(string label) { this.label = label }
+            }
+            class Post {
+                [Key] int id
+                string title
+                [ManyToMany "post_label", "postId", "labelId"] List<Label> labels2
+                construct(string title) {
+                    this.title = title
+                    this.labels2 = new List<Label>()
+                }
+            }
+            [Table "ledgers"]
+            class Ledger {
+                [Key] int id
+                string owner
+                int balance
+                [Version] int version
+                construct(string owner, int balance) {
+                    this.owner = owner
+                    this.balance = balance
+                }
+            }
+            class Memo {
+                int id
+                string text
+                construct(string st) { this.text = st }
+            }
+            enum Rank { Low, Mid, High }
+            [Table "residents"]
+            class Resident {
+                [Key] int id
+                [Column "full_name"] string name
+                int age
+                Rank level
+                DateTime born
+                string city
+                construct(string name, int age, Rank level, int year, string city) {
+                    this.name = name
+                    this.age = age
+                    this.level = level
+                    this.born = new DateTime(year, 1, 1)
+                    this.city = city
+                }
+            }
+            class Lookup {
+                static int Adults(Data.Connection qdb, int lowest) { return qdb.From<Resident>().Where(p => p.age >= taking lowest).Count() }
+            }
+            enum Level { Low, Mid, High }
+            record Address {
+                string city
+                string zip
+                construct(string city, string zip) { this.city = city; this.zip = zip }
+            }
+            [Table "people"]
+            class Customer {
+                [Key] int id
+                [Column "full_name"] [Required] [Length 100] string name
+                int age
+                [Unique] string email
+                bool active
+                float height
+                DateTime born
+                Level level
+                [Json] Address address
+                [Ignore] string shown
+                List tags
+                construct(string name, int age, string email) {
+                    this.name = name
+                    this.age = age
+                    this.email = email
+                    this.active = true
+                    this.level = Level.Mid
+                }
+            }
+            record Tag {
+                construct(string code, string label) { this.code = code; this.label = label }
+                [Key] string code
+                string label
+            }
+            class Revision {
+                int number
+                string note
+            }
+            record Pupil {
+                int id
+                string name
+                construct(string name) { this.name = name }
+            }
+            record Person {
+                int id
+                string name
+                int age
+                bool active
+            }
+            class Item {
+                int id
+                string title
+                float price
+                byte blob[]
+            }
+            print("memory")
+            var db = new Data.Connection("memory:")
+            db.Execute("create table person(id integer primary key, name text not null, age integer, active integer); create table item(id integer primary key, title text, price real, blob blob)")
+            print("insert " + db.Execute("insert into person(name, age, active) values (?, ?, ?)", ["Ada", 36, true]))
+            db.Execute("insert into person(name, age, active) values (?, ?, ?)", ["Grace", 85, false])
+            db.Execute("insert into person(name, age, active) values (?, ?, ?)", ["Linus Ünïcødé 🐧", undefined, true])
+            print("last id " + db.LastInsertId)
+            foreach (row in db.Query("select id, name, age from person where age > ? or age is null order by id", [40])) { print("row " + row) }
+            var rows = db.Rows("select name, age from person order by name")
+            print("rows " + rows.Count + " first " + rows[0]["name"] + " " + rows[0].Int("age"))
+            print("count " + db.Scalar("select count(*) from person"))
+            var people = db.QueryList("Person", "select * from person order by id")
+            foreach (p in people) { print("person " + p.id + " " + p.name + " " + p.age + " " + p.active) }
+            Person one = db.QueryOne("Person", "select * from person where name = ?", ["Grace"])
+            print("one " + one.name + " active " + one.active + " equal " + (one == db.QueryOne("Person", "select * from person where id = 2")))
+            db.Execute("insert into item(title, price, blob) values (?, ?, ?)", ["Box", 9.5, [1, 2, 255]])
+            Item it = db.QueryOne("Item", "select * from item")
+            print("item " + it.title + " " + it.price + " blob " + it.blob.length + " " + it.blob[2])
+            try { db.Execute("insert into person(id, name) values (?, ?)", [1, "Dup"]) } catch (Data.ConstraintException e) { print("constraint " + e.Code + " " + e.message) }
+            try { db.Execute("select * from nothing", []) } catch (Data.DataException e) { print("error " + e.Code + " " + e.message) }
+            try { db.Execute("insert into person(name) values (?)", []) } catch (ArgumentException e) { print("args " + e.message) }
+            db.Transaction(t => { t.Execute("update person set age = age + 1 where id = ?", [1]) })
+            print("after commit " + db.Scalar("select age from person where id = 1"))
+            try {
+                db.Transaction(t => {
+                    t.Execute("update person set age = 0 where id = ?", [1])
+                    throw new Exception("stop")
+                })
+            } catch (e) { print("rolled back: " + e.message) }
+            print("after rollback " + db.Scalar("select age from person where id = 1"))
+            db.Begin()
+            db.Execute("delete from person where id = ?", [3])
+            db.Begin()
+            db.Execute("delete from person where id = ?", [2])
+            db.Rollback()
+            db.Commit()
+            print("nested " + db.Scalar("select count(*) from person"))
+            var mem = new Data.Connection("memory:")
+            mem.Execute("create table t(x)")
+            print("memory " + mem.Execute("insert into t values (?), (?)", [1, 2]))
+            mem.Close()
+            try { new Data.Connection("nosuch:x") } catch (Data.ConnectionException e) { print("driver " + e.message) }
+            try { new Data.Connection("memory:x") } catch (ArgumentException e) { print("url " + e.message) }
+            db.Close()
+            print("end")
+            var q = new Data.Connection("memory:")
+            q.Execute("create table n(v integer, s text, f real)")
+            q.Execute("insert into n values (1, 'a', 1.5), (2, 'b', null), (3, 'c', 2.5), (4, null, 4.0), (2, 'bb', 0.5)")
+            print("agg " + q.Rows("select count(*), count(s), sum(v), min(v), max(s), avg(f), count(distinct v) from n")[0])
+            print("ops " + q.Rows("select v * 2 + 1 as x, s || '!' as y, v / 2, v % 3, -v from n where v between 2 and 3 order by v desc, s")[0])
+            foreach (row in q.Query("select v, s from n where s like 'b%' or s is null order by s desc limit 2 offset 0")) { print("like " + row) }
+            print("in " + q.Scalar("select count(*) from n where v in (1, 3) and not s = 'c'") + " " + q.Scalar("select count(*) from n where v not in (1, 2)"))
+            print("distinct " + q.Rows("select distinct v from n order by v").Count + " fns " + q.Rows("select upper(s), length(s), coalesce(s, 'none'), abs(-v), substr('hello', 2, 3) from n where v = 4")[0])
+            print("update " + q.Execute("update n set f = f * 2 where v = ?", [2]) + " delete " + q.Execute("delete from n where f is null"))
+            print("no column")
+            try { q.Execute("select nope from n", []) } catch (Data.DataException e) { print("  " + e.message) }
+            try { q.Execute("selec 1", []) } catch (Data.DataException e) { print("  " + e.message) }
+            print("select 1 " + q.Scalar("select 1 + 2"))
+            q.Execute("create unique index ix on n (s)")
+            try { q.Execute("insert into n(v, s) values (?, ?)", [9, "a"]) } catch (Data.ConstraintException e) { print("index " + e.Code + " " + e.message) }
+            var cdb = new Data.Connection("memory:")
+            cdb.Ensure("Customer")
+            cdb.Ensure("Customer")
+            foreach (row in cdb.Rows("select name, type, pk, notnull from _columns where table_name = 'people'")) { print("col " + row.Text("name") + " " + row.Text("type") + " pk " + row.Int("pk") + " nn " + row.Int("notnull")) }
+            var cada = new Customer("Ada", 36, "cada@x.org")
+            cada.height = 1.65
+            cada.born = new DateTime(1815, 12, 10, 8, 30, 0)
+            cada.level = Level.High
+            cada.address = new Address("London", "W1")
+            print("insert key " + cdb.Insert(cada) + " field " + cada.id)
+            var cgrace = new Customer("Grace", 85, "cgrace@x.org")
+            cdb.Save(cgrace)
+            print("saved " + cgrace.id)
+            cgrace.age = 86
+            print("save again " + cdb.Save(cgrace) + " rows " + cdb.Scalar("select count(*) from people"))
+            Customer found = cdb.Find("Customer", 1)
+            print("found " + found.name + " " + found.age + " " + found.active + " " + found.height + " " + found.born + " " + found.level + " " + found.address.city + " shown " + found.shown)
+            print("raw " + cdb.Rows("select full_name, born, level, address from people where id = 1")[0])
+            try { cdb.Insert(new Customer("Dup", 1, "cada@x.org")) } catch (Data.ConstraintException e) { print("unique " + e.message) }
+            try { cdb.Insert(new Customer(undefined, 1, "n@x.org")) } catch (Data.ConstraintException e) { print("required " + e.message) }
+            found.age = 37
+            print("update " + cdb.Update(found) + " -> " + cdb.Scalar("select age from people where id = 1"))
+            print("all " + cdb.All("Customer").Count)
+            print("delete " + cdb.Delete(cgrace) + " left " + cdb.Scalar("select count(*) from people") + " find " + cdb.Find("Customer", 2))
+            cdb.Execute("create table Tag(code text primary key, label text)")
+            print("tag key " + cdb.Insert(new Tag("fx", "fire")))
+            Tag tg = cdb.Find("Tag", "fx")
+            print("tag " + tg.label)
+            cdb.Ensure("Revision")
+            var rv = new Revision()
+            rv.number = 3
+            rv.note = "x"
+            print("no key insert " + cdb.Insert(rv) + " rows " + cdb.Scalar("select count(*) from Revision"))
+            try { cdb.Update(rv) } catch (ArgumentException e) { print("no key: " + e.message) }
+            cdb.Execute("drop table people")
+            cdb.Ensure("Customer")
+            print("recreated " + cdb.Rows("select name from _columns where table_name = ?", ["people"]).Count)
+            cdb.Close()
+            var gdb = new Data.Connection("memory:")
+            gdb.Ensure<Pupil>()
+            gdb.Insert(new Pupil("Ada"))
+            gdb.Insert(new Pupil("Grace"))
+            List<Pupil> pupils = gdb.All<Pupil>()
+            print(pupils.Count + " " + pupils[1].name)
+            Pupil pp = gdb.Find<Pupil>(2)
+            print(pp.name)
+            List<Pupil> some2 = gdb.QueryList<Pupil>("select * from Pupil where name like ?", ["A%"])
+            print(some2.Count + " " + some2[0].name + " " + gdb.QueryOne<Pupil>("select * from Pupil order by id desc").name)
+            var qdb = new Data.Connection("memory:")
+            qdb.Ensure<Resident>()
+            qdb.Insert(new Resident("Ada", 36, Rank.High, 1815, "London"))
+            qdb.Insert(new Resident("Grace", 85, Rank.Mid, 1906, "New York"))
+            qdb.Insert(new Resident("Linus", 28, Rank.Low, 1969, undefined))
+            qdb.Insert(new Resident("Alan", 41, Rank.High, 1912, "London"))
+            var lowest = 30
+            List<Resident> grown = qdb.From<Resident>().Where(p => p.age >= taking lowest).OrderBy(p => p.name).ToList()
+            foreach (p in grown) { print("adult " + p.name + " " + p.age) }
+            print("sql " + qdb.From<Resident>().Where(p => p.age >= taking lowest && p.city != undefined).OrderByDescending(p => p.age).Skip(1).Take(2).ToSql())
+            print("paged " + qdb.From<Resident>().OrderBy(p => p.id).Skip(1).Take(2).ToList().Count)
+            print("first " + qdb.From<Resident>().Where(p => p.name.StartsWith("A")).OrderByDescending(p => p.age).First().name)
+            print("none " + qdb.From<Resident>().Where(p => p.name == "Nobody").FirstOrDefault())
+            print("count " + qdb.From<Resident>().Count() + " " + qdb.From<Resident>().Where(p => p.city == undefined).Count() + " any " + qdb.From<Resident>().Where(p => p.age > 100).Any())
+            print("enum " + qdb.From<Resident>().Where(p => p.level == Rank.High).Count())
+            var rk = Rank.Mid
+            print("enum captured " + qdb.From<Resident>().Where(p => p.level == taking rk).First().name)
+            var since = new DateTime(1900, 1, 1)
+            print("since " + qdb.From<Resident>().Where(p => p.born > taking since).OrderBy(p => p.born).First().name)
+            print("text " + qdb.From<Resident>().Where(p => p.name.EndsWith("ce") || p.name.Contains("inu")).Count() + " " + qdb.From<Resident>().Where(p => p.name.ToLower() == "ada").Count() + " " + qdb.From<Resident>().Where(p => p.name.Length == 4).Count())
+            print("case " + qdb.From<Resident>().Where(p => p.name.StartsWith("a")).Count())
+            var wanted = ["Ada", "Linus"]
+            print("in " + qdb.From<Resident>().Where(p => (taking wanted).Contains(p.name)).Count())
+            var wantedList = new List<string>()
+            wantedList.Add("Grace")
+            print("in list " + qdb.From<Resident>().Where(p => (taking wantedList).Contains(p.name)).Count())
+            print("not " + qdb.From<Resident>().Where(p => !(p.age < 40)).Where(p => p.city == "London").Count())
+            print("math " + qdb.From<Resident>().Where(p => p.age * 2 + 1 > 100 - 20).Count())
+            print("then " + qdb.From<Resident>().OrderBy(p => p.city).ThenByDescending(p => p.age).First().name)
+            print("method " + Lookup.Adults(qdb, 40))
+            try { qdb.From<Resident>().Where(p => p.name.Trim() == "x").Count() } catch (Data.NotTranslatableException e) { print("not translatable: " + e.message) }
+            print("deleted " + qdb.From<Resident>().Where(p => p.age < 30).Delete() + " left " + qdb.From<Resident>().Count())
+            List<Resident> fetched = await qdb.From<Resident>().Where(p => p.city == "London").ToList()
+            print("fetched " + fetched.Count)
+            var sdb = new Data.Connection("memory:")
+            sdb.Ensure<Ledger>()
+            sdb.Ensure<Memo>()
+            var ss = sdb.Session()
+            Ledger sada = ss.Add(new Ledger("Ada", 100))
+            ss.Add(new Ledger("Grace", 50))
+            print("pending " + ss.HasChanges + " count " + ss.Count)
+            print("saved " + ss.Save() + " key " + sada.id + " version " + sada.version + " changes " + ss.HasChanges)
+            Ledger sagain = ss.Find<Ledger>(1)
+            print("identity " + (sagain == sada))
+            sada.balance = 90
+            print("changed " + ss.IsChanged(sada) + " " + ss.HasChanges)
+            Ledger sgrace = ss.Find<Ledger>(2)
+            sgrace.balance = 60
+            print("saved " + ss.Save() + " versions " + sada.version + " " + sgrace.version + " sdb " + sdb.Scalar("select balance from ledgers where id = 1") + " " + sdb.Scalar("select version from ledgers where id = 1"))
+            print("nothing " + ss.Save())
+            List<Ledger> srich = ss.From<Ledger>().Where(a => a.balance > 70).ToList()
+            print("query identity " + srich.Count + " " + (srich[0] == sada))
+            List<Ledger> sall = ss.All<Ledger>()
+            print("sall " + sall.Count + " " + (sall[1] == sgrace))
+            // somebody else changes Grace
+            var sother = sdb.Session()
+            Ledger sg2 = sother.Find<Ledger>(2)
+            sg2.balance = 1
+            sother.Save()
+            sgrace.balance = 70
+            sada.balance = 80
+            try { ss.Save() } catch (Data.ConcurrencyException e) { print("conflict: " + e.message) }
+            print("rolled sback " + sdb.Scalar("select balance from ledgers where id = 1") + " " + sdb.Scalar("select balance from ledgers where id = 2") + " sada version " + sada.version)
+            // fresh session: remove and add in one save
+            var st = sdb.Session()
+            Ledger sa1 = st.Find<Ledger>(1)
+            st.Remove(sa1)
+            st.Add(new Memo("hello"))
+            print("remove " + st.Save() + " left " + sdb.Scalar("select count(*) from ledgers") + " notes " + sdb.Scalar("select count(*) from Memo") + " find " + st.Find<Ledger>(1))
+            // failure inside a save: nothing written, the generated key is reset
+            var su = sdb.Session()
+            Memo sn1 = su.Add(new Memo("one"))
+            su.Add(new Memo(undefined))
+            sdb.Execute("create unique index ix_memo_text on Memo (text)")
+            Memo sdup = su.Add(new Memo("hello"))
+            try { su.Save() } catch (Data.ConstraintException e) { print("failed: " + e.message + " key reset " + sn1.id + " notes " + sdb.Scalar("select count(*) from Memo")) }
+            su.Remove(sdup)
+            print("retry " + su.Save() + " key " + (sn1.id > 0) + " notes " + sdb.Scalar("select count(*) from Memo"))
+            // detach and attach
+            Memo skept = su.Detach(sn1)
+            skept.text = "changed outside"
+            print("detached " + su.Save() + " " + sdb.Scalar("select text from Memo where id = ?", [skept.id]))
+            var sw = sdb.Session()
+            sw.Attach(take skept)
+            Memo sback = sw.Find<Memo>(sn1.id)
+            sback.text = "attached"
+            print("attached " + sw.Save() + " " + sdb.Scalar("select text from Memo where id = ?", [sback.id]))
+            try { ss.Remove(new Memo("x")) } catch (ArgumentException e) { print("not mine: " + e.message) }
+            var rdb = new Data.Connection("memory:")
+            rdb.Ensure<Client>()
+            rdb.Ensure<Purchase>()
+            // writing a tree in a session: the children get their parent'rs key
+            var rs = rdb.Session()
+            Client rada = rs.Add(new Client("Ada"))
+            rada.orders = new List<Purchase>()
+            rada.orders.Add(new Purchase(120.0, "big"))
+            rada.orders.Add(new Purchase(15.5, "small"))
+            Client rbob = rs.Add(new Client("Bob"))
+            rbob.orders = new List<Purchase>()
+            rbob.orders.Add(new Purchase(30.0, "mid"))
+            var rcyd = new Client("Cyd")
+            var rlone = new Purchase(500.0, "for rcyd")
+            rlone.client = rcyd
+            rs.Add(take rlone)
+            print("saved " + rs.Save())
+            foreach (row in rdb.Rows("select ro.id, ro.clientId, ro.note from \"Purchase\" as ro order by ro.id")) { print("row " + row) }
+            // Include without a session
+            List<Client> rclients = rdb.From<Client>().Include(rc => rc.orders).OrderBy(rc => rc.name).ToList()
+            foreach (rc in rclients) {
+                var rnotes = ""
+                foreach (ro in rc.orders) { rnotes = rnotes + " " + ro.note }
+                print("client " + rc.name + ":" + rnotes)
+            }
+            List<Purchase> orders = rdb.From<Purchase>().Include(ro => ro.client).OrderBy(ro => ro.id).ToList()
+            foreach (ro in orders) { print("order " + ro.note + " of " + ro.client.name) }
+            // Any / All as subqueries
+            var rlimit = 100.0
+            print("sql " + rdb.From<Client>().Where(rc => rc.orders.Any(ro => ro.total > taking rlimit)).ToSql())
+            print("big buyers " + rdb.From<Client>().Where(rc => rc.orders.Any(ro => ro.total > taking rlimit)).Count())
+            print("with orders " + rdb.From<Client>().Where(rc => rc.orders.Any()).Count() + " all small " + rdb.From<Client>().Where(rc => rc.orders.All(ro => ro.total < 50.0)).Count())
+            print("named " + rdb.From<Client>().Where(rc => rc.name != "Ada" && rc.orders.Any(ro => ro.note.StartsWith("m"))).First().name)
+            // in a session: Include gives the session'rs objects, a move between lists is an update
+            var rt = rdb.Session()
+            List<Client> rmine = rt.From<Client>().Include(rc => rc.orders).OrderBy(rc => rc.id).ToList()
+            Client rfirst = rmine[0]
+            Client rsecond = rmine[1]
+            Purchase rmoved = rfirst.orders[1]
+            print("identity " + (rt.Find<Purchase>(rmoved.id) == rmoved))
+            rfirst.orders.Remove(rmoved)
+            rsecond.orders.Add(rmoved)
+            rsecond.orders.Add(new Purchase(7.0, "new for rbob"))
+            print("saved " + rt.Save() + " rbob has " + rdb.Scalar("select count(*) from \"Purchase\" where clientId = ?", [rsecond.id]))
+            var ru = rdb.Session()
+            List<Purchase> rtheirs = ru.From<Purchase>().Where(ro => ro.clientId == 2).Include(ro => ro.client).ToList()
+            print("rone owner " + (rtheirs[0].client == rtheirs[1].client) + " " + rtheirs[0].client.name)
+            ru.Load(rtheirs[0].client, "orders")
+            print("loaded " + rtheirs[0].client.orders.Count)
+            List<Purchase> rcopies = rdb.From<Purchase>().Where(ro => ro.clientId == 2).Include(ro => ro.client).ToList()
+            print("no session: rcopies " + rcopies.Count + " " + rcopies[0].client.name + " own " + (rcopies[0].client == rcopies[1].client))
+            Client rone = rdb.From<Client>().Where(rc => rc.name == "Ada").Include(rc => rc.orders).First()
+            print("rfirst with include " + rone.orders.Count)
+            var jdb = new Data.Connection("memory:")
+            jdb.Ensure<Label>()
+            jdb.Ensure<Post>()
+            var js = jdb.Session()
+            Label jFire = js.Add(new Label("fire"))
+            Label jData = js.Add(new Label("data"))
+            Post ja = js.Add(new Post("Databases in fire"))
+            ja.labels2.Add(jFire)
+            ja.labels2.Add(jData)
+            Post jb = js.Add(new Post("Threads"))
+            jb.labels2.Add(jFire)
+            jb.labels2.Add(new Label("tasks"))
+            print("saved " + js.Save() + " pairs " + jdb.Scalar("select count(*) from post_label") + " labels2 " + jdb.Scalar("select count(*) from Label"))
+            var jt = jdb.Session()
+            List<Post> jall = jt.From<Post>().Include(jx => jx.labels2).OrderBy(jx => jx.id).ToList()
+            foreach (jart in jall) {
+                var jlabels = ""
+                foreach (jtg in jart.labels2) { jlabels = jlabels + " " + jtg.label }
+                print("article " + jart.title + ":" + jlabels)
+            }
+            print("shared tag object " + (jall[0].labels2[0] == jall[1].labels2[0]))
+            jall[0].labels2.RemoveAt(1)
+            jall[1].labels2.Add(jt.Find<Label>(2))
+            print("saved " + jt.Save() + " pairs " + jdb.Scalar("select count(*) from post_label") + " nothing more " + jt.Save())
+            print("about fire " + jdb.From<Post>().Where(jx => jx.labels2.Any(jg => jg.label == "fire")).Count() + " about data " + jdb.From<Post>().Where(jx => jx.labels2.Any(jg => jg.label == "data")).First().title + " untagged " + jdb.From<Post>().Where(jx => !jx.labels2.Any()).Count())
+            var ju = jdb.Session()
+            Post jfirst = ju.Find<Post>(1)
+            jfirst.labels2 = new List<Label>()
+            jfirst.labels2.Add(ju.Find<Label>(3))
+            print("not loaded, set " + ju.Save() + " pairs of 1: " + jdb.Scalar("select count(*) from post_label where postId = 1") + " tag " + jdb.Scalar("select labelId from post_label where postId = 1"))
+            ju.Remove(jfirst)
+            print("removed " + ju.Save() + " pairs " + jdb.Scalar("select count(*) from post_label"))
+            List<Post> jplain = jdb.From<Post>().Include(jx => jx.labels2).OrderBy(jx => jx.id).ToList()
+            print("no session labels2 " + jplain[0].labels2.Count + " " + jplain[0].labels2[0].label)
+            """),
+        ("Data/Pool: Verbindungen eines Pools fuer Threads (Take/Give verschieben, hoechstens max offen, Timeout, Rollback beim Zurueckgeben, kaputte vergessen, Use, Close) und fuer Requests (Http.Database: eine Verbindung pro Request, bei Bedarf, zurueck auch bei Ausnahmen; Http.Rpc-Konstruktor mit Data.Connection)", """
+            #import "time"
+            #import "filesystem"
+            #import "data.sqlite"
+            #import "http.rpc"
+            #import "http.data"
+            [Remote]
+            class Items {
+                Data.Connection db
+                construct(Data.Connection db) { this.db = db }
+                [Remote] int Count() { return this.db.Scalar("select count(*) from items") }
+                [Remote] int Add(string name) {
+                    this.db.Execute("insert into items(name) values (?)", [name])
+                    return this.db.LastInsertId
+                }
+            }
+            class Job {
+                static undefined Insert(Data.Pool pool, int n) {
+                    var c = pool.Take()
+                    c.Execute("insert into hits(worker) values (?)", [n])
+                    Sleep(20ms)
+                    pool.Give(take c)
+                }
+            }
+            class Checks {
+                static undefined Run(Data.Pool pool) {
+                    var a = pool.Take()
+                    var b = pool.Take()
+                    try { pool.Take(100ms) } catch (TimeoutException e) { print("full: " + e.message) }
+                    a.Begin()
+                    a.Execute("insert into hits(worker) values (?)", [99])
+                    pool.Give(take a)
+                    print("rolled back on give " + pool.Use(c => c.Scalar("select count(*) from hits where worker = 99")))
+                    b.Close()
+                    pool.Give(take b)
+                    print("broken one forgotten: open " + pool.Open + " idle " + pool.Idle)
+                    try { pool.Use(c => c.Execute("insert into nope values (1)")) } catch (Data.DataException e) { print("use threw: " + e.message + " idle " + pool.Idle) }
+                    pool.Close()
+                    try { pool.Take() } catch (Data.StateException e) { print("closed: " + e.message) }
+                }
+            }
+            string file = IO.Path.GetTempFileName()
+            string url = "sqlite:" + file + "?timeout=10000"
+            var setup = new Data.Connection(url)
+            setup.Execute("create table hits(id integer primary key, worker integer)")
+            setup.Close()
+            var pool = new Data.Pool(url, undefined, 2)
+            int done = 0
+            for (var k = 1; k <= 6; k++) {
+                fire taking pool taking k {
+                    Job.Insert(pool, k)
+                    sync global { done = done + 1 }
+                }
+            }
+            while (done < 6) { Sleep(10ms); sync globals }
+            print("jobs " + done + " open " + pool.Open + " idle " + pool.Idle)
+            int rows = pool.Use(c => c.Scalar("select count(*) from hits"))
+            print("rows " + rows)
+            Checks.Run(pool)
+            IO.File.Delete(file)
+            string hfile = IO.Path.GetTempFileName()
+            string hurl = "sqlite:" + hfile + "?timeout=10000"
+            var hsetup = new Data.Connection(hurl)
+            hsetup.Execute("create table items(id integer primary key, name text)")
+            hsetup.Close()
+            var hpool = new Data.Pool(hurl, undefined, 2)
+            var routes = new Http.Routes()
+            routes.Map("GET", "/count", func (Http.Context ctx) => "count " + Http.Database.Of(ctx).Scalar("select count(*) from items"))
+            routes.Map("POST", "/add", func (Http.Context ctx) => {
+                var db = Http.Database.Of(ctx)
+                db.Execute("insert into items(name) values (?)", [ctx.Request.Text()])
+                return "added " + db.LastInsertId
+            })
+            routes.Map("GET", "/same", func (Http.Context ctx) => "same " + (Http.Database.Of(ctx) == Http.Database.Of(ctx)))
+            routes.Map("GET", "/tx", func (Http.Context ctx) => {
+                var db = Http.Database.Of(ctx)
+                db.Begin()
+                db.Execute("insert into items(name) values (?)", ["never"])
+                return "left open"
+            })
+            routes.Map("GET", "/boom", func (Http.Context ctx) => {
+                Http.Database.Of(ctx).Execute("insert into items(name) values (?)", ["boom"])
+                throw new ArgumentException("boom")
+            })
+            routes.Map("GET", "/none", func (Http.Context ctx) => "no database used")
+            var server = new Http.AppServer("127.0.0.1", 0)
+            server.Settings.showErrors = true
+            server.PushTo(new Http.Sessions()).PushTo(new Http.Database(hpool)).PushTo(new Http.Rpc("/rpc")).PushTo(take routes)
+            int port = server.Port
+            int hdone = 0
+            string hlog = ""
+            fire taking port {
+                var c = new Http.Client()
+                var site = "http://127.0.0.1:" + port
+                var out = ""
+                out = out + c.Get(site + "/count").Text() + "\n"
+                out = out + c.Post(site + "/add", "Ada", "text/plain").Text() + "\n"
+                out = out + c.Post(site + "/add", "Grace", "text/plain").Text() + "\n"
+                out = out + c.Get(site + "/same").Text() + "\n"
+                out = out + "tx " + c.Get(site + "/tx").Text() + " -> " + c.Get(site + "/count").Text() + "\n"
+                out = out + "boom " + c.Get(site + "/boom").status + " -> " + c.Get(site + "/count").Text() + "\n"
+                out = out + c.Get(site + "/none").Text() + "\n"
+                var r = c.Get(site + "/count")
+                var cookie = r.Header("Set-Cookie").Substring(0, 45)
+                var h = new Http.Headers()
+                h.Set("Cookie", cookie)
+                h.Set("Content-Type", "application/json")
+                out = out + "rpc add " + c.Request("POST", site + "/rpc/Items/Add", "[\"Linus\"]", h).Text() + "\n"
+                out = out + "rpc count " + c.Request("POST", site + "/rpc/Items/Count", "[]", h).Text() + "\n"
+                sync global { hlog = out; hdone = 1 }
+            }
+            while (hdone < 1) { server.AcceptOne(20ms); sync globals }
+            print(hlog)
+            print("hpool open " + hpool.Open + " idle " + hpool.Idle)
+            server.Close()
+            hpool.Close()
+            IO.File.Delete(hfile)
+            """),
+        ("Data/SQLite: Execute, Query (Zeilen nacheinander), Rows, Scalar, QueryList/QueryOne auf Records und Klassen, Unicode, NULL, BLOB, Fehlerarten, Transaktionen mit Savepoints, :memory:, await, Threads mit eigenen Verbindungen, handover; Mapping mit Attributen, Ensure, Insert/Update/Delete/Save/Find/All, Enum nach Namen, DateTime, [Json]; Abfragen mit Ausdrucksbaeumen als SQL; Sessions; Beziehungen", """
+            #import "time"
+            #import "filesystem"
+            #import "data.sqlite"
+            class Client {
+                [Key] int id
+                string name
+                [HasMany "clientId"] List<Purchase> orders
+                construct(string name) { this.name = name }
+            }
+            class Purchase {
+                [Key] int id
+                int clientId
+                float total
+                string note
+                [BelongsTo "clientId"] Client client
+                construct(float total, string note) {
+                    this.total = total
+                    this.note = note
+                }
+            }
+            class Label {
+                [Key] int id
+                string label
+                construct(string label) { this.label = label }
+            }
+            class Post {
+                [Key] int id
+                string title
+                [ManyToMany "post_label", "postId", "labelId"] List<Label> labels2
+                construct(string title) {
+                    this.title = title
+                    this.labels2 = new List<Label>()
+                }
+            }
+            [Table "ledgers"]
+            class Ledger {
+                [Key] int id
+                string owner
+                int balance
+                [Version] int version
+                construct(string owner, int balance) {
+                    this.owner = owner
+                    this.balance = balance
+                }
+            }
+            class Memo {
+                int id
+                string text
+                construct(string st) { this.text = st }
+            }
+            enum Rank { Low, Mid, High }
+            [Table "residents"]
+            class Resident {
+                [Key] int id
+                [Column "full_name"] string name
+                int age
+                Rank level
+                DateTime born
+                string city
+                construct(string name, int age, Rank level, int year, string city) {
+                    this.name = name
+                    this.age = age
+                    this.level = level
+                    this.born = new DateTime(year, 1, 1)
+                    this.city = city
+                }
+            }
+            class Lookup {
+                static int Adults(Data.Connection qdb, int lowest) { return qdb.From<Resident>().Where(p => p.age >= taking lowest).Count() }
+            }
+            enum Level { Low, Mid, High }
+            record Address {
+                string city
+                string zip
+                construct(string city, string zip) { this.city = city; this.zip = zip }
+            }
+            [Table "people"]
+            class Customer {
+                [Key] int id
+                [Column "full_name"] [Required] [Length 100] string name
+                int age
+                [Unique] string email
+                bool active
+                float height
+                DateTime born
+                Level level
+                [Json] Address address
+                [Ignore] string shown
+                List tags
+                construct(string name, int age, string email) {
+                    this.name = name
+                    this.age = age
+                    this.email = email
+                    this.active = true
+                    this.level = Level.Mid
+                }
+            }
+            record Tag {
+                construct(string code, string label) { this.code = code; this.label = label }
+                [Key] string code
+                string label
+            }
+            class Revision {
+                int number
+                string note
+            }
+            record Person {
+                int id
+                string name
+                int age
+                bool active
+            }
+            class Item {
+                int id
+                string title
+                float price
+                byte blob[]
+            }
+            class Work {
+                static int Count(string url) {
+                    var db = new Data.Connection(url)
+                    int n = db.Scalar("select count(*) from person")
+                    db.Close()
+                    return n
+                }
+                static undefined Fill(string url, int start, int count) {
+                    var db = new Data.Connection(url)
+                    db.Transaction(t => {
+                        for (var i = 0; i < 50; i++) { t.Execute("insert into person(name) values (?)", ["p" + i]) }
+                    })
+                    db.Close()
+                }
+            }
+            print("sqlite " + (Data.SqliteDriver.Version().Length > 0))
+            var db = new Data.Connection("sqlite::memory:")
+            db.Execute("create table person(id integer primary key, name text not null, age integer, active integer); create table item(id integer primary key, title text, price real, blob blob)")
+            print("insert " + db.Execute("insert into person(name, age, active) values (?, ?, ?)", ["Ada", 36, true]))
+            db.Execute("insert into person(name, age, active) values (?, ?, ?)", ["Grace", 85, false])
+            db.Execute("insert into person(name, age, active) values (?, ?, ?)", ["Linus Ünïcødé 🐧", undefined, true])
+            print("last id " + db.LastInsertId)
+            foreach (row in db.Query("select id, name, age from person where age > ? or age is null order by id", [40])) { print("row " + row) }
+            var rows = db.Rows("select name, age from person order by name")
+            print("rows " + rows.Count + " first " + rows[0]["name"] + " " + rows[0].Int("age"))
+            print("count " + db.Scalar("select count(*) from person"))
+            var people = db.QueryList("Person", "select * from person order by id")
+            foreach (p in people) { print("person " + p.id + " " + p.name + " " + p.age + " " + p.active) }
+            Person one = db.QueryOne("Person", "select * from person where name = ?", ["Grace"])
+            print("one " + one.name + " active " + one.active + " equal " + (one == db.QueryOne("Person", "select * from person where id = 2")))
+            db.Execute("insert into item(title, price, blob) values (?, ?, ?)", ["Box", 9.5, [1, 2, 255]])
+            Item it = db.QueryOne("Item", "select * from item")
+            print("item " + it.title + " " + it.price + " blob " + it.blob.length + " " + it.blob[2])
+            try { db.Execute("insert into person(id, name) values (?, ?)", [1, "Dup"]) } catch (Data.ConstraintException e) { print("constraint " + e.Code + " " + e.message) }
+            try { db.Execute("select * from nothing", []) } catch (Data.DataException e) { print("error " + e.Code + " " + e.message) }
+            try { db.Execute("insert into person(name) values (?)", []) } catch (ArgumentException e) { print("args " + e.message) }
+            db.Transaction(t => { t.Execute("update person set age = age + 1 where id = ?", [1]) })
+            print("after commit " + db.Scalar("select age from person where id = 1"))
+            try {
+                db.Transaction(t => {
+                    t.Execute("update person set age = 0 where id = ?", [1])
+                    throw new Exception("stop")
+                })
+            } catch (e) { print("rolled back: " + e.message) }
+            print("after rollback " + db.Scalar("select age from person where id = 1"))
+            db.Begin()
+            db.Execute("delete from person where id = ?", [3])
+            db.Begin()
+            db.Execute("delete from person where id = ?", [2])
+            db.Rollback()
+            db.Commit()
+            print("nested " + db.Scalar("select count(*) from person"))
+            var mem = new Data.Connection("sqlite::memory:")
+            mem.Execute("create table t(x)")
+            print("memory " + mem.Execute("insert into t values (?), (?)", [1, 2]) + " open " + Data.SqliteDriver.OpenCount())
+            mem.Close()
+            try { new Data.Connection("nosuch:x") } catch (Data.ConnectionException e) { print("driver " + e.message) }
+            try { new Data.Connection("sqlite:/nonexistent/dir/x.db") } catch (Data.ConnectionException e) { print("open " + e.Code) }
+            db.Close()
+            print("open after " + Data.SqliteDriver.OpenCount())
+            string file = IO.Path.GetTempFileName()
+            var db2 = new Data.Connection("sqlite:" + file)
+            db2.Execute("drop table if exists person; create table person(id integer primary key, name text)")
+            db2.Execute("insert into person(name) values (?), (?)", ["Ada", "Grace"])
+            List awaited = await db2.QueryList("Person", "select * from person order by id")
+            print("awaited " + awaited.Count + " " + awaited[1].name)
+            var other = new Data.Connection("sqlite:" + file)
+            any both = await [db2.Scalar("select count(*) from person"), other.Scalar("select max(id) from person")]
+            print("both " + both[0] + " " + both[1])
+            other.Close()
+            string url = "sqlite:" + file + "?timeout=10000"
+            int done = 0
+            for (var k = 0; k < 4; k++) {
+                fire taking url taking k {
+                    Work.Fill(url, k * 50, 50)
+                    sync global { done = done + 1 }
+                }
+            }
+            while (done < 4) { Sleep(10ms); sync globals }
+            print("after threads " + await Work.Count(url))
+            var moved = new Data.Connection("sqlite:" + file)
+            int got = 0
+            fire handover moved {
+                int n = moved.Scalar("select count(*) from person where name = ?", ["Ada"])
+                moved.Close()
+                sync global { got = n }
+            }
+            while (got == 0) { Sleep(10ms); sync globals }
+            print("handover " + got + " open " + Data.SqliteDriver.OpenCount())
+            db2.Close()
+            IO.File.Delete(file)
+            print("file gone")
+            var cdb = new Data.Connection("sqlite::memory:")
+            cdb.Ensure("Customer")
+            cdb.Ensure("Customer")
+            foreach (row in cdb.Rows("select name, type, pk, \"notnull\" from pragma_table_info('people') order by cid")) { print("col " + row.Text("name") + " " + row.Text("type") + " pk " + row.Int("pk") + " nn " + row.Int("notnull")) }
+            var cada = new Customer("Ada", 36, "cada@x.org")
+            cada.height = 1.65
+            cada.born = new DateTime(1815, 12, 10, 8, 30, 0)
+            cada.level = Level.High
+            cada.address = new Address("London", "W1")
+            print("insert key " + cdb.Insert(cada) + " field " + cada.id)
+            var cgrace = new Customer("Grace", 85, "cgrace@x.org")
+            cdb.Save(cgrace)
+            print("saved " + cgrace.id)
+            cgrace.age = 86
+            print("save again " + cdb.Save(cgrace) + " rows " + cdb.Scalar("select count(*) from people"))
+            Customer found = cdb.Find("Customer", 1)
+            print("found " + found.name + " " + found.age + " " + found.active + " " + found.height + " " + found.born + " " + found.level + " " + found.address.city + " shown " + found.shown)
+            print("raw " + cdb.Rows("select full_name, born, level, address from people where id = 1")[0])
+            try { cdb.Insert(new Customer("Dup", 1, "cada@x.org")) } catch (Data.ConstraintException e) { print("unique " + e.message) }
+            try { cdb.Insert(new Customer(undefined, 1, "n@x.org")) } catch (Data.ConstraintException e) { print("required " + e.message) }
+            found.age = 37
+            print("update " + cdb.Update(found) + " -> " + cdb.Scalar("select age from people where id = 1"))
+            print("all " + cdb.All("Customer").Count)
+            print("delete " + cdb.Delete(cgrace) + " left " + cdb.Scalar("select count(*) from people") + " find " + cdb.Find("Customer", 2))
+            cdb.Execute("create table Tag(code text primary key, label text)")
+            print("tag key " + cdb.Insert(new Tag("fx", "fire")))
+            Tag tg = cdb.Find("Tag", "fx")
+            print("tag " + tg.label)
+            cdb.Ensure("Revision")
+            var rv = new Revision()
+            rv.number = 3
+            rv.note = "x"
+            print("no key insert " + cdb.Insert(rv) + " rows " + cdb.Scalar("select count(*) from Revision"))
+            try { cdb.Update(rv) } catch (ArgumentException e) { print("no key: " + e.message) }
+            cdb.Execute("alter table people drop column height")
+            cdb.Ensure("Customer")
+            print("column found " + cdb.Rows("select name from pragma_table_info('people') where name = 'height'").Count)
+            cdb.Close()
+            var qdb = new Data.Connection("sqlite::memory:")
+            qdb.Ensure<Resident>()
+            qdb.Insert(new Resident("Ada", 36, Rank.High, 1815, "London"))
+            qdb.Insert(new Resident("Grace", 85, Rank.Mid, 1906, "New York"))
+            qdb.Insert(new Resident("Linus", 28, Rank.Low, 1969, undefined))
+            qdb.Insert(new Resident("Alan", 41, Rank.High, 1912, "London"))
+            var lowest = 30
+            List<Resident> grown = qdb.From<Resident>().Where(p => p.age >= taking lowest).OrderBy(p => p.name).ToList()
+            foreach (p in grown) { print("adult " + p.name + " " + p.age) }
+            print("sql " + qdb.From<Resident>().Where(p => p.age >= taking lowest && p.city != undefined).OrderByDescending(p => p.age).Skip(1).Take(2).ToSql())
+            print("paged " + qdb.From<Resident>().OrderBy(p => p.id).Skip(1).Take(2).ToList().Count)
+            print("first " + qdb.From<Resident>().Where(p => p.name.StartsWith("A")).OrderByDescending(p => p.age).First().name)
+            print("none " + qdb.From<Resident>().Where(p => p.name == "Nobody").FirstOrDefault())
+            print("count " + qdb.From<Resident>().Count() + " " + qdb.From<Resident>().Where(p => p.city == undefined).Count() + " any " + qdb.From<Resident>().Where(p => p.age > 100).Any())
+            print("enum " + qdb.From<Resident>().Where(p => p.level == Rank.High).Count())
+            var rk = Rank.Mid
+            print("enum captured " + qdb.From<Resident>().Where(p => p.level == taking rk).First().name)
+            var since = new DateTime(1900, 1, 1)
+            print("since " + qdb.From<Resident>().Where(p => p.born > taking since).OrderBy(p => p.born).First().name)
+            print("text " + qdb.From<Resident>().Where(p => p.name.EndsWith("ce") || p.name.Contains("inu")).Count() + " " + qdb.From<Resident>().Where(p => p.name.ToLower() == "ada").Count() + " " + qdb.From<Resident>().Where(p => p.name.Length == 4).Count())
+            print("case " + qdb.From<Resident>().Where(p => p.name.StartsWith("a")).Count())
+            var wanted = ["Ada", "Linus"]
+            print("in " + qdb.From<Resident>().Where(p => (taking wanted).Contains(p.name)).Count())
+            var wantedList = new List<string>()
+            wantedList.Add("Grace")
+            print("in list " + qdb.From<Resident>().Where(p => (taking wantedList).Contains(p.name)).Count())
+            print("not " + qdb.From<Resident>().Where(p => !(p.age < 40)).Where(p => p.city == "London").Count())
+            print("math " + qdb.From<Resident>().Where(p => p.age * 2 + 1 > 100 - 20).Count())
+            print("then " + qdb.From<Resident>().OrderBy(p => p.city).ThenByDescending(p => p.age).First().name)
+            print("method " + Lookup.Adults(qdb, 40))
+            try { qdb.From<Resident>().Where(p => p.name.Trim() == "x").Count() } catch (Data.NotTranslatableException e) { print("not translatable: " + e.message) }
+            print("deleted " + qdb.From<Resident>().Where(p => p.age < 30).Delete() + " left " + qdb.From<Resident>().Count())
+            List<Resident> fetched = await qdb.From<Resident>().Where(p => p.city == "London").ToList()
+            print("fetched " + fetched.Count)
+            var sdb = new Data.Connection("sqlite::memory:")
+            sdb.Ensure<Ledger>()
+            sdb.Ensure<Memo>()
+            var ss = sdb.Session()
+            Ledger sada = ss.Add(new Ledger("Ada", 100))
+            ss.Add(new Ledger("Grace", 50))
+            print("pending " + ss.HasChanges + " count " + ss.Count)
+            print("saved " + ss.Save() + " key " + sada.id + " version " + sada.version + " changes " + ss.HasChanges)
+            Ledger sagain = ss.Find<Ledger>(1)
+            print("identity " + (sagain == sada))
+            sada.balance = 90
+            print("changed " + ss.IsChanged(sada) + " " + ss.HasChanges)
+            Ledger sgrace = ss.Find<Ledger>(2)
+            sgrace.balance = 60
+            print("saved " + ss.Save() + " versions " + sada.version + " " + sgrace.version + " sdb " + sdb.Scalar("select balance from ledgers where id = 1") + " " + sdb.Scalar("select version from ledgers where id = 1"))
+            print("nothing " + ss.Save())
+            List<Ledger> srich = ss.From<Ledger>().Where(a => a.balance > 70).ToList()
+            print("query identity " + srich.Count + " " + (srich[0] == sada))
+            List<Ledger> sall = ss.All<Ledger>()
+            print("sall " + sall.Count + " " + (sall[1] == sgrace))
+            // somebody else changes Grace
+            var sother = sdb.Session()
+            Ledger sg2 = sother.Find<Ledger>(2)
+            sg2.balance = 1
+            sother.Save()
+            sgrace.balance = 70
+            sada.balance = 80
+            try { ss.Save() } catch (Data.ConcurrencyException e) { print("conflict: " + e.message) }
+            print("rolled sback " + sdb.Scalar("select balance from ledgers where id = 1") + " " + sdb.Scalar("select balance from ledgers where id = 2") + " sada version " + sada.version)
+            // fresh session: remove and add in one save
+            var st = sdb.Session()
+            Ledger sa1 = st.Find<Ledger>(1)
+            st.Remove(sa1)
+            st.Add(new Memo("hello"))
+            print("remove " + st.Save() + " left " + sdb.Scalar("select count(*) from ledgers") + " notes " + sdb.Scalar("select count(*) from Memo") + " find " + st.Find<Ledger>(1))
+            // failure inside a save: nothing written, the generated key is reset
+            var su = sdb.Session()
+            Memo sn1 = su.Add(new Memo("one"))
+            su.Add(new Memo(undefined))
+            sdb.Execute("create unique index ix_memo_text on Memo (text)")
+            Memo sdup = su.Add(new Memo("hello"))
+            try { su.Save() } catch (Data.ConstraintException e) { print("failed: " + e.message + " key reset " + sn1.id + " notes " + sdb.Scalar("select count(*) from Memo")) }
+            su.Remove(sdup)
+            print("retry " + su.Save() + " key " + (sn1.id > 0) + " notes " + sdb.Scalar("select count(*) from Memo"))
+            // detach and attach
+            Memo skept = su.Detach(sn1)
+            skept.text = "changed outside"
+            print("detached " + su.Save() + " " + sdb.Scalar("select text from Memo where id = ?", [skept.id]))
+            var sw = sdb.Session()
+            sw.Attach(take skept)
+            Memo sback = sw.Find<Memo>(sn1.id)
+            sback.text = "attached"
+            print("attached " + sw.Save() + " " + sdb.Scalar("select text from Memo where id = ?", [sback.id]))
+            try { ss.Remove(new Memo("x")) } catch (ArgumentException e) { print("not mine: " + e.message) }
+            var rdb = new Data.Connection("sqlite::memory:")
+            rdb.Ensure<Client>()
+            rdb.Ensure<Purchase>()
+            // writing a tree in a session: the children get their parent'rs key
+            var rs = rdb.Session()
+            Client rada = rs.Add(new Client("Ada"))
+            rada.orders = new List<Purchase>()
+            rada.orders.Add(new Purchase(120.0, "big"))
+            rada.orders.Add(new Purchase(15.5, "small"))
+            Client rbob = rs.Add(new Client("Bob"))
+            rbob.orders = new List<Purchase>()
+            rbob.orders.Add(new Purchase(30.0, "mid"))
+            var rcyd = new Client("Cyd")
+            var rlone = new Purchase(500.0, "for rcyd")
+            rlone.client = rcyd
+            rs.Add(take rlone)
+            print("saved " + rs.Save())
+            foreach (row in rdb.Rows("select ro.id, ro.clientId, ro.note from \"Purchase\" as ro order by ro.id")) { print("row " + row) }
+            // Include without a session
+            List<Client> rclients = rdb.From<Client>().Include(rc => rc.orders).OrderBy(rc => rc.name).ToList()
+            foreach (rc in rclients) {
+                var rnotes = ""
+                foreach (ro in rc.orders) { rnotes = rnotes + " " + ro.note }
+                print("client " + rc.name + ":" + rnotes)
+            }
+            List<Purchase> orders = rdb.From<Purchase>().Include(ro => ro.client).OrderBy(ro => ro.id).ToList()
+            foreach (ro in orders) { print("order " + ro.note + " of " + ro.client.name) }
+            // Any / All as subqueries
+            var rlimit = 100.0
+            print("sql " + rdb.From<Client>().Where(rc => rc.orders.Any(ro => ro.total > taking rlimit)).ToSql())
+            print("big buyers " + rdb.From<Client>().Where(rc => rc.orders.Any(ro => ro.total > taking rlimit)).Count())
+            print("with orders " + rdb.From<Client>().Where(rc => rc.orders.Any()).Count() + " all small " + rdb.From<Client>().Where(rc => rc.orders.All(ro => ro.total < 50.0)).Count())
+            print("named " + rdb.From<Client>().Where(rc => rc.name != "Ada" && rc.orders.Any(ro => ro.note.StartsWith("m"))).First().name)
+            // in a session: Include gives the session'rs objects, a move between lists is an update
+            var rt = rdb.Session()
+            List<Client> rmine = rt.From<Client>().Include(rc => rc.orders).OrderBy(rc => rc.id).ToList()
+            Client rfirst = rmine[0]
+            Client rsecond = rmine[1]
+            Purchase rmoved = rfirst.orders[1]
+            print("identity " + (rt.Find<Purchase>(rmoved.id) == rmoved))
+            rfirst.orders.Remove(rmoved)
+            rsecond.orders.Add(rmoved)
+            rsecond.orders.Add(new Purchase(7.0, "new for rbob"))
+            print("saved " + rt.Save() + " rbob has " + rdb.Scalar("select count(*) from \"Purchase\" where clientId = ?", [rsecond.id]))
+            var ru = rdb.Session()
+            List<Purchase> rtheirs = ru.From<Purchase>().Where(ro => ro.clientId == 2).Include(ro => ro.client).ToList()
+            print("rone owner " + (rtheirs[0].client == rtheirs[1].client) + " " + rtheirs[0].client.name)
+            ru.Load(rtheirs[0].client, "orders")
+            print("loaded " + rtheirs[0].client.orders.Count)
+            List<Purchase> rcopies = rdb.From<Purchase>().Where(ro => ro.clientId == 2).Include(ro => ro.client).ToList()
+            print("no session: rcopies " + rcopies.Count + " " + rcopies[0].client.name + " own " + (rcopies[0].client == rcopies[1].client))
+            Client rone = rdb.From<Client>().Where(rc => rc.name == "Ada").Include(rc => rc.orders).First()
+            print("rfirst with include " + rone.orders.Count)
+            var jdb = new Data.Connection("sqlite::memory:")
+            jdb.Ensure<Label>()
+            jdb.Ensure<Post>()
+            var js = jdb.Session()
+            Label jFire = js.Add(new Label("fire"))
+            Label jData = js.Add(new Label("data"))
+            Post ja = js.Add(new Post("Databases in fire"))
+            ja.labels2.Add(jFire)
+            ja.labels2.Add(jData)
+            Post jb = js.Add(new Post("Threads"))
+            jb.labels2.Add(jFire)
+            jb.labels2.Add(new Label("tasks"))
+            print("saved " + js.Save() + " pairs " + jdb.Scalar("select count(*) from post_label") + " labels2 " + jdb.Scalar("select count(*) from Label"))
+            var jt = jdb.Session()
+            List<Post> jall = jt.From<Post>().Include(jx => jx.labels2).OrderBy(jx => jx.id).ToList()
+            foreach (jart in jall) {
+                var jlabels = ""
+                foreach (jtg in jart.labels2) { jlabels = jlabels + " " + jtg.label }
+                print("article " + jart.title + ":" + jlabels)
+            }
+            print("shared tag object " + (jall[0].labels2[0] == jall[1].labels2[0]))
+            jall[0].labels2.RemoveAt(1)
+            jall[1].labels2.Add(jt.Find<Label>(2))
+            print("saved " + jt.Save() + " pairs " + jdb.Scalar("select count(*) from post_label") + " nothing more " + jt.Save())
+            print("about fire " + jdb.From<Post>().Where(jx => jx.labels2.Any(jg => jg.label == "fire")).Count() + " about data " + jdb.From<Post>().Where(jx => jx.labels2.Any(jg => jg.label == "data")).First().title + " untagged " + jdb.From<Post>().Where(jx => !jx.labels2.Any()).Count())
+            var ju = jdb.Session()
+            Post jfirst = ju.Find<Post>(1)
+            jfirst.labels2 = new List<Label>()
+            jfirst.labels2.Add(ju.Find<Label>(3))
+            print("not loaded, set " + ju.Save() + " pairs of 1: " + jdb.Scalar("select count(*) from post_label where postId = 1") + " tag " + jdb.Scalar("select labelId from post_label where postId = 1"))
+            ju.Remove(jfirst)
+            print("removed " + ju.Save() + " pairs " + jdb.Scalar("select count(*) from post_label"))
+            List<Post> jplain = jdb.From<Post>().Include(jx => jx.labels2).OrderBy(jx => jx.id).ToList()
+            print("no session labels2 " + jplain[0].labels2.Count + " " + jplain[0].labels2[0].label)
+            """),
         ("Http.Pages: eine FXML-View als Seite - HTML mit CSS-Layout (Flex), Circuit pro Seite, Eingabe, Klick, Checkbox und Button im FlowPanel ueber den WebSocket, nur die Aenderungen zurueck, fremde Sitzung 4401, unbekannte Seite 4404", """
             #import "http.pages"
             // Generated from Hello.fxml - do not edit, change the markup. Derive from the class and override the methods named in on...="...":
@@ -29559,6 +30720,130 @@ else
                 out = out + "other session " + (ws2.ReceiveText(5000) == undefined) + " " + ws2.CloseCode + "\n"
                 var ws3 = Http.WebSocket.Connect("ws://127.0.0.1:" + port + "/_fire/ws?c=00000000000000000000000000000000", 5000, h)
                 out = out + "no such page " + (ws3.ReceiveText(5000) == undefined) + " " + ws3.CloseCode + "\n"
+                ws.Close()
+                sync global { log = out; done = 1 }
+            }
+            while (done < 1) { server.AcceptOne(20ms); sync globals }
+            print(log)
+            server.Close()
+            """),
+        ("Http.Pages: Hover (ein Trigger auf Hover - der Browser meldet Kommen und Gehen, die Farbe geht hin und zurueck) und Kontextmenue (Rechtsklick: das Menue des Elements oder seiner Vorfahren, Untermenue, die Aktion; danach geschlossen)", """
+            #import "http.pages"
+            #import "ui"
+            [Page "/menu"]
+            class MenuPage {
+                UI.Panel view
+                UI.Label status
+                UI.Button go
+                construct() {
+                    this.view = new UI.Panel(0, 0, 300, 200)
+                    var stack = new UI.StackPanel(0, 0, -1, -1)
+                    var label = new UI.Label("ready", 0, 0)
+                    var menu = new List()
+                    menu.Add(new UI.MenuItem("Copy", func () on this => { this.status.Text = "copied" }))
+                    var more = new UI.MenuItem("More")
+                    more.items.Add(new UI.MenuItem("Deep", func () on this => { this.status.Text = "deep" }))
+                    menu.Add(take more)
+                    label.contextMenu = take menu
+                    stack.Add(label)
+                    this.status = label
+                    var button = new UI.Button("Go", 0, 0)
+                    var style = new UI.Style("Button")
+                    var hover = new UI.Trigger("Hover", true)
+                    hover.Set("Background", new SolidBrush(UI.Color.Rgb(255, 0, 0)))
+                    style.AddTrigger(take hover)
+                    button.Style = take style
+                    stack.Add(button)
+                    this.go = button
+                    this.view.Add(stack)
+                }
+            }
+            var server = new Http.AppServer("127.0.0.1", 0)
+            server.PushTo(new Http.Sessions()).PushTo(new Http.Pages("Menu"))
+            int port = server.Port
+            int done = 0
+            string log = ""
+            fire taking port {
+                var c = new Http.Client()
+                var r = c.Get("http://127.0.0.1:" + port + "/menu")
+                var html = r.Text()
+                var cookie = r.Header("Set-Cookie").Substring(0, 45)
+                var at = html.IndexOf("data-circuit=\"") + 14
+                var circuit = html.Substring(at, 32)
+                var out = "marks " + (html.IndexOf("data-cm=\"1\"") >= 0) + " " + (html.IndexOf("data-hv=\"1\"") >= 0) + "\n"
+                var h = new Http.Headers()
+                h.Set("Cookie", cookie)
+                var ws = Http.WebSocket.Connect("ws://127.0.0.1:" + port + "/_fire/ws?c=" + circuit, 5000, h)
+                ws.Send("{\"e\": 3, \"k\": \"hover\", \"v\": true}")
+                out = out + "enter " + ws.ReceiveText(5000) + "\n"
+                ws.Send("{\"e\": 3, \"k\": \"hover\", \"v\": false}")
+                out = out + "leave " + ws.ReceiveText(5000) + "\n"
+                ws.Send("{\"e\": 2, \"k\": \"ctx\", \"x\": 10, \"y\": 20}")
+                out = out + "menu " + ws.ReceiveText(5000) + "\n"
+                ws.Send("{\"e\": 2, \"k\": \"cmenu\", \"v\": \"c/1/0\"}")
+                out = out + "deep " + ws.ReceiveText(5000) + "\n"
+                ws.Send("{\"e\": 2, \"k\": \"cmenu\", \"v\": \"c/0\"}")
+                out = out + "after the menu closed " + ws.ReceiveText(300) + "\n"
+                ws.Close()
+                sync global { log = out; done = 1 }
+            }
+            while (done < 1) { server.AcceptOne(20ms); sync globals }
+            print(log)
+            server.Close()
+            """),
+        ("Http.Pages: [Vector] - ein DrawingCanvas geht als seine Zeichenbefehle (Rechteck, Linie, Kreis, Text) und wird im Browser auf einem canvas abgespielt; nach einem Klick die neuen Befehle; ein anderer Canvas bleibt PNG", """
+            #import "http.pages"
+            #import "ui"
+            #import "time"
+            [Page "/draw"]
+            class DrawPage {
+                UI.Panel view
+                [Vector] UI.DrawingCanvas canvas
+                UI.DrawingCanvas picture
+                int clicks = 0
+                construct() {
+                    this.view = new UI.Panel(0, 0, 400, 300)
+                    var stack = new UI.StackPanel(0, 0, -1, -1)
+                    var c = new UI.DrawingCanvas(0, 0, 120, 80)
+                    c.OnPaint = func (UI.DrawingCanvas dc) on this => {
+                        var r = dc.renderer
+                        r.ClearTo(0xFFFFFFFF)
+                        r.FillRect(10, 10, 40 + this.clicks * 10, 20, new SolidBrush(0xFF0000FF))
+                        r.DrawLine(0, 79, 119, 0, new Pen(0xFF00AA00, 2))
+                        r.FillCircle(90, 50, 15, new SolidBrush(0xFFFF0000))
+                        r.DrawText(4, 60, "n=" + this.clicks, new SolidBrush(0xFF000000))
+                    }
+                    c.OnMouseDown = func (int x, int y, int b) on this => {
+                        this.clicks = this.clicks + 1
+                        this.canvas.Invalidate()
+                    }
+                    stack.Add(c)
+                    this.canvas = c
+                    var p = new UI.DrawingCanvas(0, 0, 40, 40)
+                    p.OnPaint = func (UI.DrawingCanvas dc) => { dc.renderer.ClearTo(0xFF00FF00) }
+                    stack.Add(p)
+                    this.picture = p
+                    this.view.Add(stack)
+                }
+            }
+            var server = new Http.AppServer("127.0.0.1", 0)
+            server.PushTo(new Http.Sessions()).PushTo(new Http.Pages("Draw"))
+            int port = server.Port
+            int done = 0
+            string log = ""
+            fire taking port {
+                var cl = new Http.Client()
+                var r = cl.Get("http://127.0.0.1:" + port + "/draw")
+                string html = r.Text()
+                string cookie = r.Header("Set-Cookie").Substring(0, 45)
+                int at = html.IndexOf("data-circuit=\"") + 14
+                string circuit = html.Substring(at, 32)
+                var out = "canvas " + (html.IndexOf("<canvas data-k=\"draw\"") >= 0) + " png " + (html.IndexOf("<img data-k=\"draw\"") >= 0) + " ops " + (html.IndexOf("[[&quot;c&quot;,4294967295],[&quot;fr&quot;,10,10,40,20,4278190335]") >= 0) + "\n"
+                var h = new Http.Headers()
+                h.Set("Cookie", cookie)
+                var ws = Http.WebSocket.Connect("ws://127.0.0.1:" + port + "/_fire/ws?c=" + circuit, 5000, h)
+                ws.Send("{\"e\": 2, \"k\": \"mouse\", \"t\": \"down\", \"x\": 5, \"y\": 5, \"b\": 1}")
+                out = out + "click " + ws.ReceiveText(5000) + "\n"
                 ws.Close()
                 sync global { log = out; done = 1 }
             }
@@ -30236,6 +31521,1065 @@ else
             try { client.Get("ftp://127.0.0.1/") } catch (Http.HttpException e) { print("ftp " + e.code) }
             """),
     }).ToArray();
+
+    // The MySQL/MariaDB driver against a running server - only when there is one: FIRE_TEST_MYSQL=mysql://127.0.0.1:3306/test (an empty database: its tables
+    // are dropped), FIRE_TEST_MYSQL_USER, FIRE_TEST_MYSQL_PASSWORD. The mapping, the queries, the sessions and the relations are those of the case of the
+    // in-memory database (the same program on another driver), the SQL before them is MySQL's.
+    foreach (string mysqlUrl in (Environment.GetEnvironmentVariable("FIRE_TEST_MYSQL") ?? "").Split(' ', StringSplitOptions.RemoveEmptyEntries))
+    {
+        string Lit(string? t) => t == null ? "undefined" : "\"" + t.Replace("\\", "\\\\").Replace("\"", "\\\"") + "\"";
+        string open = $"MyDb.Open({Lit(mysqlUrl)}, {Lit(Environment.GetEnvironmentVariable("FIRE_TEST_MYSQL_USER"))}, {Lit(Environment.GetEnvironmentVariable("FIRE_TEST_MYSQL_PASSWORD"))})";
+        string mem = natCases.First(c => c.Name.StartsWith("Data/memory:", StringComparison.Ordinal)).Source;
+        string header = mem.Substring(0, mem.IndexOf("print(\"memory\")", StringComparison.Ordinal)).Replace("#import \"data.memory\"", "#import \"data.mysql\"\n#import \"hash\"");
+        string orm = mem.Substring(mem.IndexOf("var cdb = new Data.Connection(\"memory:\")", StringComparison.Ordinal))
+            .Replace("new Data.Connection(\"memory:\")", "MyDb.Open(MyDb.url, MyDb.user, MyDb.password)")
+            .Replace("cdb.Rows(\"select name, type, pk, notnull from _columns where table_name = 'people'\")", "cdb.Rows(\"select column_name as name, column_type as type, column_key = 'PRI' as pk, is_nullable = 'NO' as notnull from information_schema.columns where table_schema = database() and table_name = 'people' order by ordinal_position\")")
+            .Replace("\"select name from _columns where table_name = ?\"", "\"select column_name from information_schema.columns where table_schema = database() and table_name = ?\"")
+            .Replace("create table Tag(code text primary key, label text)", "create table Tag(code varchar(20) primary key, label text)")
+            .Replace("\\\"Purchase\\\"", "Purchase")
+            .Replace("create unique index ix_memo_text on Memo (text)", "create unique index ix_memo_text on Memo (text(100))");
+        natCases = natCases.Append(("Data/MySQL " + mysqlUrl + ": der Treiber in fire gegen einen laufenden Server (FIRE_TEST_MYSQL): Handshake, Prepared Statements im Binaerprotokoll (Zahlen, Text, Unicode, NULL, BLOB, DOUBLE/FLOAT, DECIMAL, DATETIME, UNSIGNED), mehrere Anweisungen, Fehlerarten, Transaktionen mit Savepoints, TLS (prefer/require), Streaming (Zeilen vom Socket, geparkt bei Befehlen dazwischen), Prozeduren mit mehreren Ergebnissen, Login-Pruefwerte und RSA-OAEP gegen einen bekannten Schluesseltext, auf MySQL 8 die Logins ohne TLS (Schluessel vom Server, Cache, sha256_password); dann Mapping, Abfragen, Sessions und Beziehungen wie bei der In-Memory-Datenbank", header + $$"""
+            class MyDb {
+                static string url
+                static string user
+                static string password
+                // (a connection to the test database without its tables)
+                static Data.Connection Open(string url, string user, string password) {
+                    MyDb.url = url
+                    MyDb.user = user
+                    MyDb.password = password
+                    var c = new Data.Connection(url, new Data.Credentials(user, password))
+                    var names = c.Rows("select table_name from information_schema.tables where table_schema = database()")
+                    c.Execute("SET FOREIGN_KEY_CHECKS = 0")
+                    foreach (n in names) { c.Execute("DROP TABLE `" + n[0] + "`") }
+                    c.Execute("SET FOREIGN_KEY_CHECKS = 1")
+                    c.Execute("ALTER DATABASE CHARACTER SET utf8mb4")
+                    return c
+                }
+                static string Hex(byte data[]) {
+                    var t = ""
+                    var digits = "0123456789abcdef"
+                    for (var i = 0; i < data.length; i++) {
+                        int b = data[i]
+                        t = t + digits.Substring(b >> 4, 1) + digits.Substring(b & 15, 1)
+                    }
+                    return t
+                }
+            }
+            print("mysql")
+            var db = {{open}}
+            db.Execute("create table person(id bigint primary key auto_increment, name varchar(100) not null, age int, active tinyint); create table item(id bigint primary key auto_increment, title text, price double, blob1 longblob, f float, d datetime(3), n bigint unsigned, s smallint, m decimal(10,2))")
+            print("insert " + db.Execute("insert into person(name, age, active) values (?, ?, ?)", ["Ada", 36, true]))
+            db.Execute("insert into person(name, age, active) values (?, ?, ?)", ["Grace", 85, false])
+            db.Execute("insert into person(name, age, active) values (?, ?, ?)", ["Linus Ünïcødé 🐧", undefined, true])
+            print("last id " + db.LastInsertId)
+            foreach (row in db.Query("select id, name, age from person where age > ? or age is null order by id", [40])) { print("row " + row) }
+            print("count " + db.Scalar("select count(*) from person") + " text " + db.Scalar("select name from person where id = 3"))
+            db.Execute("insert into item(title, price, blob1, f, d, n, s, m) values (?, ?, ?, ?, ?, ?, ?, ?)", ["Box", 9.5, [1, 2, 255], 1.25, "2026-11-13 10:20:30.250", 18000000000, -5, "12.50"])
+            db.Execute("insert into item(title, price) values (?, ?)", ["Tiny", -0.000123])
+            foreach (row in db.Rows("select title, price, f, d, n, s, m, length(blob1) from item order by id")) { print("item " + row) }
+            byte blob[] = db.Scalar("select blob1 from item where id = 1")
+            print("blob " + blob.length + " " + blob[2])
+            print("update " + db.Execute("update person set age = age + 1 where age is not null") + " delete " + db.Execute("delete from item where id = ?", [2]))
+            print("multi")
+            db.Execute("insert into item(title) values ('a'); insert into item(title) values ('b'); select 1; update item set price = 1 where price is null")
+            print("items " + db.Scalar("select count(*) from item") + " priced " + db.Scalar("select count(*) from item where price = 1"))
+            try { db.Execute("insert into person(id, name) values (?, ?)", [1, "Dup"]) } catch (Data.ConstraintException e) { print("constraint " + e.Code) }
+            try { db.Execute("insert into person(age) values (?)", [1]) } catch (Data.ConstraintException e) { print("not null " + e.Code) }
+            try { db.Execute("select * from nothing") } catch (Data.DataException e) { print("error " + e.Code) }
+            try { db.Execute("selec 1") } catch (Data.DataException e) { print("syntax " + e.Code) }
+            try { db.Execute("insert into person(name) values (?)", []) } catch (ArgumentException e) { print("args " + e.message) }
+            db.Transaction(t => { t.Execute("update person set age = age + 1 where id = ?", [1]) })
+            print("after commit " + db.Scalar("select age from person where id = 1"))
+            try {
+                db.Transaction(t => {
+                    t.Execute("update person set age = 0 where id = ?", [1])
+                    throw new Exception("stop")
+                })
+            } catch (e) { print("rolled back: " + e.message) }
+            print("after rollback " + db.Scalar("select age from person where id = 1"))
+            db.Begin()
+            db.Execute("delete from person where id = ?", [3])
+            db.Begin()
+            db.Execute("delete from person where id = ?", [2])
+            db.Rollback()
+            db.Commit()
+            print("nested " + db.Scalar("select count(*) from person"))
+            print("case " + db.From<Pupil>().Where(p => p.name.StartsWith("a")).ToSql())
+            db.Close()
+            var tls = new Data.Connection(MyDb.url + "?tls=require", new Data.Credentials(MyDb.user, MyDb.password))
+            print("tls " + (tls.Scalar("show status like 'Ssl_version'") != undefined) + " " + (("" + tls.Rows("show status like 'Ssl_cipher'")[0][1]).Length > 0))
+            tls.Close()
+            var plain = new Data.Connection(MyDb.url + "?tls=off", new Data.Credentials(MyDb.user, MyDb.password))
+            print("plain " + plain.Rows("show status like 'Ssl_cipher'")[0][1])
+            plain.Close()
+            try { new Data.Connection(MyDb.url, new Data.Credentials(MyDb.user, "wrong")) } catch (Data.ConnectionException e) { print("login " + e.Code) }
+            try { new Data.Connection(MyDb.url + "?tls=maybe") } catch (ArgumentException e) { print("option " + e.message) }
+            byte salt[] = new byte[20]
+            for (var i = 0; i < 20; i++) { salt[i] = i + 1 }
+            print("native " + MyDb.Hex(Data.MysqlConnection.Scramble("mysql_native_password", "secret", salt)))
+            print("sha2 " + MyDb.Hex(Data.MysqlConnection.Scramble("caching_sha2_password", "secret", salt)))
+            // (RSA-OAEP with a fixed seed: the ciphertext computed elsewhere (Python, decrypted again with openssl) - SPKI and PKCS#1 keys)
+            byte seed[] = new byte[20]
+            for (var i = 0; i < 20; i++) { seed[i] = 100 + i }
+            var spki = "-----BEGIN PUBLIC KEY-----\nMIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAtsB8+42pIYlHpvk8nMCQ\n9TdESiuUKoH+siuDhELaokE11/63+18vPgPMxfVvlcRlrHbGCP3m9KfORehTnG4D\nYO6piO5UEBBY6sCtDCC6WenihFQkHIhSjzH1bQPqaVknQvESsKT3PQUwNyEhdGNy\nkLgkBq2VUlvg1N7ppXDa3Onnr1pwix5nc4KAmpbfn+azM9JHin2ddvM0XzpFuiFC\nYleYcgHO37rUe5JdBjR2xQ8Rf5yB5LlSx2BzhP5hG71Gr92KOUWDTEtGLUZX1nKO\nZkOb2LpVF2dYvsQJ/5WIxyerVBo1vi87A1WwY3oVtPaGgUMj81xUFaPYyoD6P/7K\n1wIDAQAB\n-----END PUBLIC KEY-----"
+            var pkcs1 = "-----BEGIN RSA PUBLIC KEY-----\nMIIBCgKCAQEAtsB8+42pIYlHpvk8nMCQ9TdESiuUKoH+siuDhELaokE11/63+18v\nPgPMxfVvlcRlrHbGCP3m9KfORehTnG4DYO6piO5UEBBY6sCtDCC6WenihFQkHIhS\njzH1bQPqaVknQvESsKT3PQUwNyEhdGNykLgkBq2VUlvg1N7ppXDa3Onnr1pwix5n\nc4KAmpbfn+azM9JHin2ddvM0XzpFuiFCYleYcgHO37rUe5JdBjR2xQ8Rf5yB5LlS\nx2BzhP5hG71Gr92KOUWDTEtGLUZX1nKOZkOb2LpVF2dYvsQJ/5WIxyerVBo1vi87\nA1WwY3oVtPaGgUMj81xUFaPYyoD6P/7K1wIDAQAB\n-----END RSA PUBLIC KEY-----"
+            var expected = "21cde573f17c4b53bee75cabb37561afb9545d456bb0761f986bd0820c876a45849cf7abb7fa60562954afed7490cb33c742d7ec3f9911eb040c441b526456a73fff3dc9dccf44f1e1a73ffd8598e797646f39428b32d64e9c80dbefbac1b27d85fa484809c1a70625f4da8567e6da118f1684eae139fa3472d2098e00eaf556ac746b890b346960cfc0c311bb5697768f99448212c48aa8acbe35cf84a57c232522926e45f929db61f4357e95fd53679282164bb9531253606c6a4e3728ecbc6f041f00751270efed9e6c27eb51e9542b147465d9576723b377307b97279f7777c41e45507287591c3ae839a77dc0ca419b47967e31935f84277a95cf41d142"
+            print("rsa " + (MyDb.Hex(Data.MysqlRsa.Password(spki, "secret", salt, seed)) == expected) + " " + (MyDb.Hex(Data.MysqlRsa.Password(pkcs1, "secret", salt, seed)) == expected))
+            try { Data.MysqlRsa.Password("-----BEGIN PUBLIC KEY-----\nAAAA\n-----END PUBLIC KEY-----", "x", salt, seed) } catch (Data.ConnectionException e) { print("bad key " + e.message) }
+            // (streaming: rows come from the socket one by one; a command in between parks the rest; a reader left early)
+            var sdb0 = new Data.Connection(MyDb.url, new Data.Credentials(MyDb.user, MyDb.password))
+            sdb0.Execute("create table many(id int primary key, v varchar(20))")
+            sdb0.Begin()
+            for (var i = 0; i < 300; i++) { sdb0.Execute("insert into many values (?, ?)", [i, "v" + i]) }
+            sdb0.Commit()
+            int seen = 0
+            int sum = 0
+            foreach (row in sdb0.Query("select id, v from many order by id")) {
+                seen++
+                int id = row.Int("id")
+                sum = sum + id
+                if (id % 100 == 0) { sdb0.Execute("update many set v = ? where id = ?", ["changed", id + 1]) }
+            }
+            print("streamed " + seen + " sum " + sum + " changed " + sdb0.Scalar("select count(*) from many where v = 'changed'"))
+            int early = 0
+            foreach (row in sdb0.Query("select id from many order by id")) {
+                early++
+                if (early == 5) { break }
+            }
+            print("early " + early + " then " + sdb0.Scalar("select count(*) from many") + " " + sdb0.Rows("select v from many where id = 1")[0][0])
+            var outer = sdb0.Query("select id from many where id < 3 order by id")
+            var inner = sdb0.Query("select id from many where id >= 297 order by id")
+            var both = ""
+            foreach (row in outer) {
+                both = both + " " + row[0]
+                foreach (r2 in inner) { both = both + "/" + r2[0] }
+            }
+            print("nested readers" + both)
+            sdb0.Execute("drop procedure if exists two")
+            sdb0.Execute("create procedure two(in lim int) begin select id from many where id < lim order by id; select count(*) from many; end")
+            print("call " + sdb0.Rows("call two(?)", [3]).Count + " then " + sdb0.Scalar("select 7"))
+            sdb0.Execute("call two(2)")
+            print("call exec then " + sdb0.Scalar("select 8"))
+            // (the logins without TLS: RSA - on a server with caching_sha2_password (MySQL 8) when the test user may make users (CREATE USER, RELOAD))
+            string version = sdb0.Scalar("select version()")
+            if (version.IndexOf("MariaDB") >= 0) { print("logins: MariaDB") }
+            else {
+                string server = MyDb.url.Substring(0, MyDb.url.LastIndexOf("/") + 1)
+                try {
+                    sdb0.Execute("drop user if exists fire_rsa, fire_sha")
+                    sdb0.Execute("create user fire_rsa identified with caching_sha2_password by 'pw!rsa'")
+                    sdb0.Execute("create user fire_sha identified with sha256_password by 'pw!sha'")
+                    sdb0.Execute("flush privileges")
+                    try { new Data.Connection(server + "?tls=off", new Data.Credentials("fire_rsa", "pw!rsa")) } catch (Data.ConnectionException e) { print("no key " + e.Code) }
+                    var r1 = new Data.Connection(server + "?tls=off&fetchkey=true", new Data.Credentials("fire_rsa", "pw!rsa"))
+                    print("fetched key " + r1.Scalar("select current_user()"))
+                    r1.Close()
+                    var r2 = new Data.Connection(server + "?tls=off", new Data.Credentials("fire_rsa", "pw!rsa"))
+                    print("cached " + r2.Scalar("select current_user()"))
+                    r2.Close()
+                    try { new Data.Connection(server + "?tls=off&fetchkey=true", new Data.Credentials("fire_rsa", "wrong")) } catch (Data.ConnectionException e) { print("wrong " + e.Code) }
+                    var r3 = new Data.Connection(server + "?tls=off&fetchkey=true", new Data.Credentials("fire_sha", "pw!sha"))
+                    print("sha256 " + r3.Scalar("select current_user()"))
+                    r3.Close()
+                    var r4 = new Data.Connection(server + "?tls=require", new Data.Credentials("fire_sha", "pw!sha"))
+                    print("sha256 tls " + r4.Scalar("select current_user()"))
+                    r4.Close()
+                    sdb0.Execute("drop user fire_rsa, fire_sha")
+                } catch (Data.DataException e) { print("logins: not allowed " + e.Code) }
+            }
+            sdb0.Close()
+            print("end")
+            {{orm}}
+            """)).ToArray();
+    }
+
+    // The SQL Server driver against a running server - only when there is one: FIRE_TEST_SQLSERVER=sqlserver://127.0.0.1:1433/test?trust=true (an
+    // empty database: its tables are dropped; several separated by spaces - each with a database of its own: the native programs run at the same time),
+    // FIRE_TEST_SQLSERVER_USER, FIRE_TEST_SQLSERVER_PASSWORD. As for MySQL: the
+    // SQL of SQL Server first, then the mapping, queries, sessions and relations of the case of the in-memory database.
+    foreach (string sqlUrl in (Environment.GetEnvironmentVariable("FIRE_TEST_SQLSERVER") ?? "").Split(' ', StringSplitOptions.RemoveEmptyEntries))
+    {
+        string Lit2(string? t) => t == null ? "undefined" : "\"" + t.Replace("\\", "\\\\").Replace("\"", "\\\"") + "\"";
+        string sopen = $"MsDb.Open({Lit2(sqlUrl)}, {Lit2(Environment.GetEnvironmentVariable("FIRE_TEST_SQLSERVER_USER"))}, {Lit2(Environment.GetEnvironmentVariable("FIRE_TEST_SQLSERVER_PASSWORD"))})";
+        string smem = natCases.First(c => c.Name.StartsWith("Data/memory:", StringComparison.Ordinal)).Source;
+        string sheader = smem.Substring(0, smem.IndexOf("print(\"memory\")", StringComparison.Ordinal)).Replace("#import \"data.memory\"", "#import \"data.sqlserver\"\n#import \"net\"\n#import \"io\"");
+        string sorm = smem.Substring(smem.IndexOf("var cdb = new Data.Connection(\"memory:\")", StringComparison.Ordinal))
+            .Replace("new Data.Connection(\"memory:\")", "MsDb.Open(MsDb.url, MsDb.user, MsDb.password)")
+            .Replace("cdb.Rows(\"select name, type, pk, notnull from _columns where table_name = 'people'\")", "cdb.Rows(\"select c.COLUMN_NAME as name, c.DATA_TYPE as type, case when k.COLUMN_NAME is null then 0 else 1 end as pk, case when c.IS_NULLABLE = 'NO' then 1 else 0 end as notnull from INFORMATION_SCHEMA.COLUMNS c left join INFORMATION_SCHEMA.KEY_COLUMN_USAGE k on k.TABLE_NAME = c.TABLE_NAME and k.COLUMN_NAME = c.COLUMN_NAME and OBJECTPROPERTY(OBJECT_ID(k.CONSTRAINT_SCHEMA + '.' + k.CONSTRAINT_NAME), 'IsPrimaryKey') = 1 where c.TABLE_NAME = 'people' order by c.ORDINAL_POSITION\")")
+            .Replace("\"select name from _columns where table_name = ?\"", "\"select COLUMN_NAME from INFORMATION_SCHEMA.COLUMNS where TABLE_NAME = ?\"")
+            .Replace("create table Tag(code text primary key, label text)", "create table Tag(code nvarchar(20) primary key, label nvarchar(100))")
+            .Replace("create unique index ix_memo_text on Memo (text)", "alter table Memo alter column [text] nvarchar(450); create unique index ix_memo_text on Memo ([text])");
+        natCases = natCases.Append(("Data/SqlServer " + sqlUrl + ": der TDS-Treiber (mit mars=true ueber SMP-Sitzungen, ohne mit geparkten Zeilen), benannte Instanzen ueber den SQL Server Browser in fire gegen einen laufenden Server (FIRE_TEST_SQLSERVER): PRELOGIN, LOGIN7, TLS in TDS (mandatory, optional nur der Login, off, Zertifikat geprueft), SQL-Batches und sp_executesql mit typisierten Parametern (Zahlen, Text, Unicode, NULL, VARBINARY, FLOAT, DECIMAL, MONEY, Datum und Zeit, GUID, sql_variant), Texte und Bytes ueber mehrere Pakete und als PLP, Fehlerarten, Transaktionen mit Savepoints (Deskriptor), IDENTITY ueber SCOPE_IDENTITY, Streaming mit geparkten Zeilen, Prozeduren mit mehreren Ergebnissen; dann Mapping, Abfragen, Sessions und Beziehungen wie bei der In-Memory-Datenbank", sheader + $$"""
+            class MsDb {
+                static string url
+                static string user
+                static string password
+                // (a connection to the test database without its tables)
+                static Data.Connection Open(string url, string user, string password) {
+                    MsDb.url = url
+                    MsDb.user = user
+                    MsDb.password = password
+                    var c = new Data.Connection(url, new Data.Credentials(user, password))
+                    var names = c.Rows("select name from sys.tables")
+                    foreach (n in names) { c.Execute("DROP TABLE [" + n[0] + "]") }
+                    return c
+                }
+                // (the URL with a named instance in place of the port: sqlserver://host\fire/db?options&browser=...)
+                static string Named(string instance, defined int browser) {
+                    string u = MsDb.url.Substring(12)
+                    string options = ""
+                    int q = u.IndexOf("?")
+                    if (q >= 0) {
+                        options = u.Substring(q + 1)
+                        u = u.Substring(0, q)
+                    }
+                    int slash = u.IndexOf("/")
+                    string hostPort = u.Substring(0, slash)
+                    string db = u.Substring(slash + 1)
+                    string host = hostPort
+                    int colon = hostPort.LastIndexOf(":")
+                    if (colon >= 0) { host = hostPort.Substring(0, colon) }
+                    return "sqlserver://" + host + "\\" + instance + "/" + db + "?" + options + "&browser=" + browser
+                }
+                static defined int PortOf() {
+                    string u = MsDb.url.Substring(12)
+                    int slash = u.IndexOf("/")
+                    string hostPort = u.Substring(0, slash)
+                    int colon = hostPort.LastIndexOf(":")
+                    if (colon < 0) { return 1433 }
+                    any p = hostPort.Substring(colon + 1).TryToInt()
+                    return trust p
+                }
+                static string WithOptions(string options) {
+                    string u = MsDb.url
+                    int q = u.IndexOf("?")
+                    if (q >= 0) { u = u.Substring(0, q) }
+                    return u + options
+                }
+            }
+            class BrowserJob {
+                Net.UdpSocket udp
+                defined int port
+                construct(Net.UdpSocket udp, defined int port) {
+                    this.udp = take udp
+                    this.port = port
+                }
+            }
+            class Browser {
+                // (a SQL Server Browser for the test: two answers, the instance asked for on the port of the job - "nosuch" is not there)
+                static undefined Serve(BrowserJob job) {
+                    var udp = job.udp
+                    int port = job.port
+                    byte q[] = new byte[256]
+                    for (var i = 0; i < 2; i++) {
+                        int n = udp.ReceiveFrom(q, 0, 256, 10000)
+                        string name = IO.Utf8.GetString(q, 1, n - 2)
+                        var text = "ServerName;db;InstanceName;OTHER;IsClustered;No;Version;16.0;tcp;9;;ServerName;db;InstanceName;" + name.ToUpper() + ";IsClustered;No;Version;16.0;tcp;" + port + ";;"
+                        if (name == "nosuch") { text = "ServerName;db;InstanceName;OTHER;IsClustered;No;Version;16.0;tcp;9;;" }
+                        byte t[] = IO.Utf8.GetBytes(text)
+                        byte a[] = new byte[t.length + 3]
+                        a[0] = 5
+                        a[1] = t.length & 255
+                        a[2] = t.length >> 8
+                        for (var j = 0; j < t.length; j++) { a[3 + j] = t[j] }
+                        udp.SendTo(a, udp.FromHost, udp.FromPort)
+                    }
+                    udp.Close()
+                }
+            }
+            print("sqlserver")
+            var db = {{sopen}}
+            db.Execute("create table person(id bigint identity(1,1) primary key, name nvarchar(100) not null, age int, active bit)")
+            db.Execute("create table item(id bigint identity(1,1) primary key, title nvarchar(max), price float, blob1 varbinary(max), f real, d datetime2, n decimal(20,0), s smallint, m money, sm smallmoney, dm decimal(10,2), dt datetime, sdt smalldatetime, dd date, tt time(3), dto datetimeoffset(0), g uniqueidentifier, vc varchar(20), ch nchar(3), tiny tinyint)")
+            print("insert " + db.Execute("insert into person(name, age, active) values (?, ?, ?)", ["Ada", 36, true]))
+            print("key " + db.LastInsertId)
+            db.Execute("insert into person(name, age, active) values (?, ?, ?)", ["Grace", 85, false])
+            db.Execute("insert into person(name, age, active) values (?, ?, ?)", ["Linus Ünïcødé 🐧", undefined, true])
+            print("key " + db.LastInsertId)
+            foreach (row in db.Query("select id, name, age, active from person where age > ? or age is null order by id", [40])) { print("row " + row) }
+            print("count " + db.Scalar("select count(*) from person") + " text " + db.Scalar("select name from person where id = 3") + " len " + db.Scalar("select len(name) from person where id = 3"))
+            db.Execute("insert into item(title, price, blob1, f, d, n, s, m, sm, dm, dt, sdt, dd, tt, dto, g, vc, ch, tiny) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", ["Box", 9.5, [1, 2, 255], 1.25, "2026-11-13 10:20:30.1234567", 18000000000, -5, "12.3456", "-7.5", "12.50", "1815-12-10 08:30:00.997", "2024-02-29 23:59:00", "0001-01-01", "13:14:15.678", "2026-11-13 10:00:00 +02:00", "6F9619FF-8B86-D011-B42D-00C04FC964FF", "Käse", "abc", 200])
+            db.Execute("insert into item(title, price) values (?, ?)", ["Tiny", -0.000123])
+            foreach (row in db.Rows("select title, price, f, d, n, s, m, sm, dm, dt, sdt, dd, tt, dto, g, vc, ch, tiny, datalength(blob1) as bl from item order by id")) { print("item " + row) }
+            byte blob[] = db.Scalar("select blob1 from item where id = 1")
+            print("blob " + blob.length + " " + blob[2])
+            print("floats " + db.Scalar("select price from item where price = ?", [9.5]) + " " + db.Scalar("select ? * 2", [0.1]) + " " + db.Scalar("select ?", [-1.5e300]) + " " + db.Scalar("select ?", [5e-324]) + " " + db.Scalar("select cast(1e-310 as float)"))
+            print("numbers " + db.Scalar("select ?", [-9223372036854775807]) + " " + db.Scalar("select cast(12345678901234567890123 as decimal(38,0))") + " " + db.Scalar("select cast(-0.001 as decimal(10,3))") + " " + db.Scalar("select ?", [true]) + " " + db.Scalar("select cast(? as int) + 1", ["41"]))
+            print("variant " + db.Rows("select cast(1 as sql_variant) a, cast(N'ü' as sql_variant) b, cast(2.5 as sql_variant) c, cast(null as sql_variant) d")[0])
+            // (texts and bytes bigger than a packet, and than 8000 bytes: PLP)
+            var big = ""
+            for (var i = 0; i < 3000; i++) { big = big + "abc🐧" }
+            db.Execute("insert into item(title) values (?)", [big])
+            string back = db.Scalar("select title from item where id = ?", [db.LastInsertId])
+            print("big text " + back.Length + " " + (back == big) + " " + db.Scalar("select len(title) from item where id = ?", [db.LastInsertId]))
+            byte bigBytes[] = new byte[20000]
+            for (var i = 0; i < 20000; i++) { bigBytes[i] = i % 251 }
+            db.Execute("update item set blob1 = ? where id = 2", [bigBytes])
+            byte bb[] = db.Scalar("select blob1 from item where id = 2")
+            print("big bytes " + bb.length + " " + bb[19999] + " " + db.Scalar("select datalength(blob1) from item where id = 2"))
+            print("update " + db.Execute("update person set age = age + 1 where age is not null") + " delete " + db.Execute("delete from item where id = ?", [2]))
+            db.Execute("insert into item(title) values ('a'); insert into item(title) values ('b'); select 1; update item set price = 1 where price is null")
+            print("items " + db.Scalar("select count(*) from item") + " priced " + db.Scalar("select count(*) from item where price = 1"))
+            try { db.Execute("set identity_insert person on; insert into person(id, name) values (1, 'Dup')") } catch (Data.ConstraintException e) { print("constraint " + e.Code) }
+            db.Execute("set identity_insert person off")
+            try { db.Execute("insert into person(age) values (?)", [1]) } catch (Data.ConstraintException e) { print("not null " + e.Code) }
+            try { db.Execute("select * from nothing") } catch (Data.DataException e) { print("error " + e.Code) }
+            try { db.Execute("select from") } catch (Data.DataException e) { print("syntax " + e.Code) }
+            try { db.Execute("insert into person(name) values (?)", []) } catch (ArgumentException e) { print("args " + e.message) }
+            print("after errors " + db.Scalar("select 7"))
+            db.Transaction(t => { t.Execute("update person set age = age + 1 where id = ?", [1]) })
+            print("after commit " + db.Scalar("select age from person where id = 1") + " open " + db.Scalar("select @@trancount"))
+            try {
+                db.Transaction(t => {
+                    t.Execute("update person set age = 0 where id = ?", [1])
+                    throw new Exception("stop")
+                })
+            } catch (e) { print("rolled back: " + e.message) }
+            print("after rollback " + db.Scalar("select age from person where id = 1"))
+            db.Begin()
+            db.Execute("delete from person where id = ?", [3])
+            db.Begin()
+            db.Execute("delete from person where id = ?", [2])
+            db.Rollback()
+            print("inside " + db.Scalar("select @@trancount") + " " + db.Scalar("select count(*) from person"))
+            db.Commit()
+            print("nested " + db.Scalar("select count(*) from person") + " open " + db.Scalar("select @@trancount"))
+            print("case " + db.From<Pupil>().Where(p => p.name.StartsWith("a")).ToSql())
+            // (streaming: rows from the socket one by one; a command in between parks the rest; a reader left early)
+            db.Execute("create table many(id int primary key, v nvarchar(20))")
+            db.Begin()
+            for (var i = 0; i < 300; i++) { db.Execute("insert into many values (?, ?)", [i, "v" + i]) }
+            db.Commit()
+            int seen = 0
+            int sum = 0
+            foreach (row in db.Query("select id, v from many order by id")) {
+                seen++
+                int id = row.Int("id")
+                sum = sum + id
+                if (id % 100 == 0) { db.Execute("update many set v = ? where id = ?", ["changed", id + 1]) }
+            }
+            print("streamed " + seen + " sum " + sum + " changed " + db.Scalar("select count(*) from many where v = 'changed'"))
+            int early = 0
+            foreach (row in db.Query("select id from many order by id")) {
+                early++
+                if (early == 5) { break }
+            }
+            print("early " + early + " then " + db.Scalar("select count(*) from many") + " " + db.Rows("select v from many where id = 1")[0][0])
+            var both = ""
+            foreach (row in db.Query("select id from many where id < 3 order by id")) {
+                both = both + " " + row[0]
+                foreach (r2 in db.Query("select id from many where id >= ? and id < ? order by id", [297, 299])) { both = both + "/" + r2[0] }
+                db.Execute("update many set v = 'n' where id = ?", [row.Int("id") + 10])
+            }
+            Data.TdsConnection tc = db.driver
+            print("nested readers" + both + " updated " + db.Scalar("select count(*) from many where v = 'n'") + " mars " + tc.mars + " sessions " + (tc.Sessions > 1))
+            db.Execute("create or alter procedure two @lim int as begin select id from many where id < @lim order by id; select count(*) from many; end")
+            print("call " + db.Rows("exec two @lim = ?", [3]).Count + " then " + db.Scalar("select 8"))
+            db.Close()
+            // (the encryption: everything, only the login, nothing; a certificate that is not trusted; a wrong login)
+            any modes = ["?encrypt=optional&trust=true", "?encrypt=off"]
+            for (var i = 0; i < modes.length; i++) {
+                string m = modes[i]
+                try {
+                    var e1 = new Data.Connection(MsDb.WithOptions(m), new Data.Credentials(MsDb.user, MsDb.password))
+                    Data.TdsConnection t1 = e1.driver
+                    print(m + ": " + e1.Scalar("select 1") + " [" + t1.Security + "]")
+                    e1.Close()
+                } catch (Data.ConnectionException e) { print(m + ": " + e.message) }
+            }
+            var e2 = new Data.Connection(MsDb.WithOptions("?trust=true"), new Data.Credentials(MsDb.user, MsDb.password))
+            Data.TdsConnection t2 = e2.driver
+            print("mandatory: " + (t2.Security.Length > 0))
+            e2.Close()
+            try { new Data.Connection(MsDb.WithOptions(""), new Data.Credentials(MsDb.user, MsDb.password)) } catch (Data.ConnectionException e) { print("untrusted " + e.Code) }
+            try { new Data.Connection(MsDb.url, new Data.Credentials(MsDb.user, "wrong")) } catch (Data.ConnectionException e) { print("login " + e.Code) }
+            try { new Data.Connection(MsDb.WithOptions("?encrypt=maybe")) } catch (ArgumentException e) { print("option " + e.message) }
+            // (a named instance: the port from the SQL Server Browser)
+            var udp = new Net.UdpSocket("127.0.0.1", 0)
+            int browserPort = udp.Port
+            var job = new BrowserJob(take udp, MsDb.PortOf())
+            fire handover job { Browser.Serve(job) }
+            var spare = new Net.UdpSocket("127.0.0.1", 0)
+            int silentPort = spare.Port
+            spare.Close()
+            var named = new Data.Connection(MsDb.Named("fire", browserPort), new Data.Credentials(MsDb.user, MsDb.password))
+            print("named instance " + named.Scalar("select 5"))
+            named.Close()
+            try { new Data.Connection(MsDb.Named("nosuch", browserPort), new Data.Credentials(MsDb.user, MsDb.password)) } catch (Data.ConnectionException e) { print("unknown instance " + e.Code) }
+            try { new Data.Connection(MsDb.Named("x", silentPort) + "&timeout=600", new Data.Credentials(MsDb.user, MsDb.password)) } catch (Data.ConnectionException e) { print("no browser " + e.Code) }
+            print("end")
+            {{sorm}}
+            """)).ToArray();
+    }
+
+    // The PostgreSQL driver against a running server - only when there is one: FIRE_TEST_POSTGRES=postgres://127.0.0.1:5432/test (an empty database: the
+    // tables of its schema are dropped; one database per URL - the native runs are parallel), FIRE_TEST_POSTGRES_USER, FIRE_TEST_POSTGRES_PASSWORD;
+    // FIRE_TEST_POSTGRES_LOGINS="md5user:pw plainuser:pw": more logins to try (MD5, the password as it is, a user only over TLS). The mapping, the queries,
+    // the sessions and the relations are those of the case of the in-memory database (the names with capitals quoted: PostgreSQL folds the others).
+    foreach (string pgUrl in (Environment.GetEnvironmentVariable("FIRE_TEST_POSTGRES") ?? "").Split(' ', StringSplitOptions.RemoveEmptyEntries))
+    {
+        string Lit3(string? t) => t == null ? "undefined" : "\"" + t.Replace("\\", "\\\\").Replace("\"", "\\\"") + "\"";
+        string popen = $"PgDb.Open({Lit3(pgUrl)}, {Lit3(Environment.GetEnvironmentVariable("FIRE_TEST_POSTGRES_USER"))}, {Lit3(Environment.GetEnvironmentVariable("FIRE_TEST_POSTGRES_PASSWORD"))})";
+        string logins = string.Join(", ", (Environment.GetEnvironmentVariable("FIRE_TEST_POSTGRES_LOGINS") ?? "").Split(' ', StringSplitOptions.RemoveEmptyEntries).Select(Lit3));
+        string pmem = natCases.First(c => c.Name.StartsWith("Data/memory:", StringComparison.Ordinal)).Source;
+        string pheader = pmem.Substring(0, pmem.IndexOf("print(\"memory\")", StringComparison.Ordinal)).Replace("#import \"data.memory\"", "#import \"data.postgres\"");
+        string porm = pmem.Substring(pmem.IndexOf("var cdb = new Data.Connection(\"memory:\")", StringComparison.Ordinal))
+            .Replace("new Data.Connection(\"memory:\")", "PgDb.Open(PgDb.url, PgDb.user, PgDb.password)")
+            .Replace("cdb.Rows(\"select name, type, pk, notnull from _columns where table_name = 'people'\")", "cdb.Rows(\"select c.column_name as name, c.data_type as type, exists (select 1 from information_schema.key_column_usage k join information_schema.table_constraints t on t.constraint_name = k.constraint_name and t.constraint_type = 'PRIMARY KEY' where k.table_name = c.table_name and k.column_name = c.column_name) as pk, c.is_nullable = 'NO' as notnull from information_schema.columns c where c.table_schema = current_schema() and c.table_name = 'people' order by c.ordinal_position\")")
+            .Replace("\"select name from _columns where table_name = ?\"", "\"select column_name from information_schema.columns where table_schema = current_schema() and table_name = ?\"")
+            .Replace("create table Tag(", "create table \\\"Tag\\\"(")
+            .Replace("from Revision", "from \\\"Revision\\\"")
+            .Replace("from Pupil", "from \\\"Pupil\\\"")
+            .Replace("from Memo", "from \\\"Memo\\\"")
+            .Replace("on Memo (text)", "on \\\"Memo\\\" (text)")
+            .Replace("from Label", "from \\\"Label\\\"")
+            .Replace("ro.id, ro.clientId,", "ro.id, ro.\\\"clientId\\\",")
+            .Replace("where clientId = ?", "where \\\"clientId\\\" = ?")
+            .Replace("where postId = 1", "where \\\"postId\\\" = 1")
+            .Replace("select labelId", "select \\\"labelId\\\"");
+        natCases = natCases.Append(("Data/Postgres " + pgUrl + ": der Treiber in fire gegen einen laufenden Server (FIRE_TEST_POSTGRES): Startup, TLS (prefer, require, disable), SCRAM-SHA-256 (RFC 7677) und MD5, erweitertes Protokoll mit ? als $n (nicht in Texten, Namen, Kommentaren, Dollar-Quotes), Typen (Zahlen, Text, Unicode, NULL, bytea binaer, boolean, double, numeric, timestamp), mehrere Anweisungen, Fehlerarten mit SQLSTATE, Transaktionen mit Savepoints, lastval hinter einem Savepoint, Streaming (geparkt bei Befehlen dazwischen, verschachtelte Leser, vorzeitig verlassen); dann Mapping, Abfragen, Sessions und Beziehungen wie bei der In-Memory-Datenbank", pheader + $$"""
+            class PgDb {
+                static string url
+                static string user
+                static string password
+                // (a connection to the test database without its tables)
+                static Data.Connection Open(string url, string user, string password) {
+                    PgDb.url = url
+                    PgDb.user = user
+                    PgDb.password = password
+                    var c = new Data.Connection(url, new Data.Credentials(user, password))
+                    var names = c.Rows("select table_name from information_schema.tables where table_schema = current_schema() and table_type = 'BASE TABLE'")
+                    foreach (n in names) { c.Execute("DROP TABLE IF EXISTS \"" + n[0] + "\" CASCADE") }
+                    return c
+                }
+            }
+            print("postgres")
+            var db = {{popen}}
+            db.Execute("create table person(id bigint generated by default as identity primary key, name varchar(100) not null, age int, active boolean); create table item(id bigserial primary key, title text, price double precision, blob1 bytea, f real, d timestamp(3), n bigint, s smallint, m numeric(10,2), j jsonb)")
+            print("insert " + db.Execute("insert into person(name, age, active) values (?, ?, ?)", ["Ada", 36, true]))
+            db.Execute("insert into person(name, age, active) values (?, ?, ?)", ["Grace", 85, false])
+            db.Execute("insert into person(name, age, active) values (?, ?, ?)", ["Linus Ünïcødé 🐧", undefined, true])
+            print("last id " + db.LastInsertId)
+            foreach (row in db.Query("select id, name, age, active from person where age > ? or age is null order by id", [40])) { print("row " + row) }
+            print("count " + db.Scalar("select count(*) from person") + " text " + db.Scalar("select name from person where id = 3") + " truth " + db.Scalar("select count(*) from person where active = ?", [true]))
+            db.Execute("insert into item(title, price, blob1, f, d, n, s, m, j) values (?, ?, ?, ?, ?, ?, ?, ?, ?)", ["Box", 9.5, [1, 2, 0, 255], 1.25, "2026-11-13 10:20:30.250", 18000000000, -5, "12.50", "{\"a\": [1, 2]}"])
+            db.Execute("insert into item(title, price) values (?, ?)", ["Tiny", -0.000123])
+            foreach (row in db.Rows("select title, price, f, d, n, s, m, length(blob1), j from item order by id")) { print("item " + row) }
+            byte blob[] = db.Scalar("select blob1 from item where id = 1")
+            print("blob " + blob.length + " " + blob[2] + " " + blob[3])
+            print("update " + db.Execute("update person set age = age + 1 where age is not null") + " delete " + db.Execute("delete from item where id = ?", [2]))
+            print("marks " + db.Scalar("select 'a?b' || ? || $$c?d$$ /* ? */ -- ?\n", ["!"]) + " " + db.Scalar("select \"title?\" from (select title as \"title?\" from item where id = ?) x", [1]))
+            print("multi")
+            db.Execute("insert into item(title) values ('a'); insert into item(title) values ('b'); select 1; update item set price = 1 where price is null")
+            print("items " + db.Scalar("select count(*) from item") + " priced " + db.Scalar("select count(*) from item where price = 1"))
+            db.Execute("DO $$ BEGIN INSERT INTO item(title) VALUES ('from do'); END $$")
+            print("do " + db.Scalar("select count(*) from item where title = 'from do'"))
+            try { db.Execute("insert into person(id, name) values (?, ?)", [1, "Dup"]) } catch (Data.ConstraintException e) { print("constraint " + e.Code + " " + e.State) }
+            try { db.Execute("insert into person(age) values (?)", [1]) } catch (Data.ConstraintException e) { print("not null " + e.State) }
+            try { db.Execute("select * from nothing") } catch (Data.DataException e) { print("error " + e.State + " " + e.Code) }
+            try { db.Execute("selec 1") } catch (Data.DataException e) { print("syntax " + e.State) }
+            try { db.Execute("insert into person(name) values (?)", []) } catch (ArgumentException e) { print("args " + e.message) }
+            try { db.Execute("insert into person(name, age) values (?, ?)", ["x", "no number"]) } catch (Data.DataException e) { print("bad value " + e.State) }
+            print("still " + db.Scalar("select count(*) from person"))
+            db.Transaction(t => { t.Execute("update person set age = age + 1 where id = ?", [1]) })
+            print("after commit " + db.Scalar("select age from person where id = 1"))
+            try {
+                db.Transaction(t => {
+                    t.Execute("update person set age = 0 where id = ?", [1])
+                    throw new Exception("stop")
+                })
+            } catch (e) { print("rolled back: " + e.message) }
+            print("after rollback " + db.Scalar("select age from person where id = 1"))
+            db.Begin()
+            db.Execute("delete from person where id = ?", [3])
+            db.Begin()
+            db.Execute("delete from person where id = ?", [2])
+            db.Rollback()
+            db.Commit()
+            print("nested " + db.Scalar("select count(*) from person"))
+            db.Begin()
+            db.Execute("create table nokey(v int)")
+            db.Execute("insert into nokey values (1)")
+            print("lastval without a sequence " + db.LastInsertId + " then " + db.Scalar("select count(*) from nokey"))
+            db.Commit()
+            print("case " + db.From<Pupil>().Where(p => p.name.StartsWith("a")).ToSql())
+            db.Close()
+            var tls = new Data.Connection(PgDb.url + "?sslmode=require", new Data.Credentials(PgDb.user, PgDb.password))
+            print("tls " + tls.Scalar("select ssl from pg_stat_ssl where pid = pg_backend_pid()"))
+            tls.Close()
+            var plain = new Data.Connection(PgDb.url + "?sslmode=disable", new Data.Credentials(PgDb.user, PgDb.password))
+            print("plain " + plain.Scalar("select ssl from pg_stat_ssl where pid = pg_backend_pid()"))
+            plain.Close()
+            try { new Data.Connection(PgDb.url, new Data.Credentials(PgDb.user, "wrong")) } catch (Data.ConnectionException e) { print("login " + e.State) }
+            try { new Data.Connection(PgDb.url + "?sslmode=maybe") } catch (ArgumentException e) { print("option " + e.message) }
+            any scram = Data.PostgresAuth.ScramFinal("pencil", "n=user,r=rOprNGfwEbeRWgbNEkqO", "r=rOprNGfwEbeRWgbNEkqO%hvYDpWUa2RaTCAfuxFIlj)hNlF$k0,s=W22ZaJ0SNY7soEsUEjb6gQ==,i=4096")
+            print("scram " + (scram[0] == "c=biws,r=rOprNGfwEbeRWgbNEkqO%hvYDpWUa2RaTCAfuxFIlj)hNlF$k0,p=dHzbZapWIk4jUhN+Ute9ytag9zjfMHgsqmmiz7AndVQ=") + " " + (scram[1] == "6rriTRBi23WpRR/wtup+mMhUZUn/dB5nLTJRsjl95G4="))
+            byte salt[] = new byte[4]
+            for (var i = 0; i < 4; i++) { salt[i] = i + 1 }
+            print("md5 " + (Data.PostgresAuth.Md5("app", "secret", salt) == "md5911f527656472583a006e7727877b33e"))
+            foreach (login in [{{logins}}]) {
+                string text = login
+                int colon = text.IndexOf(":")
+                var other = new Data.Connection(PgDb.url, new Data.Credentials(text.Substring(0, colon), text.Substring(colon + 1)))
+                print("login as " + (other.Scalar("select current_user") == text.Substring(0, colon)))
+                other.Close()
+            }
+            // (streaming: rows come from the socket one by one; a command in between parks the rest; a reader left early; two readers at once)
+            var sdb0 = new Data.Connection(PgDb.url, new Data.Credentials(PgDb.user, PgDb.password))
+            sdb0.Execute("create table many(id int primary key, v varchar(20))")
+            sdb0.Begin()
+            for (var i = 0; i < 300; i++) { sdb0.Execute("insert into many values (?, ?)", [i, "v" + i]) }
+            sdb0.Commit()
+            int seen = 0
+            int sum = 0
+            foreach (row in sdb0.Query("select id, v from many order by id")) {
+                seen++
+                int id = row.Int("id")
+                sum = sum + id
+                if (id % 100 == 0) { sdb0.Execute("update many set v = ? where id = ?", ["changed", id + 1]) }
+            }
+            print("streamed " + seen + " sum " + sum + " changed " + sdb0.Scalar("select count(*) from many where v = 'changed'"))
+            int early = 0
+            foreach (row in sdb0.Query("select id from many order by id")) {
+                early++
+                if (early == 5) { break }
+            }
+            print("early " + early + " then " + sdb0.Scalar("select count(*) from many") + " " + sdb0.Rows("select v from many where id = 1")[0][0])
+            var outer = sdb0.Query("select id from many where id < 3 order by id")
+            var inner = sdb0.Query("select id from many where id >= 297 order by id")
+            var both = ""
+            foreach (row in outer) {
+                both = both + " " + row[0]
+                foreach (r2 in inner) { both = both + "/" + r2[0] }
+            }
+            print("nested readers" + both)
+            try {
+                foreach (row in sdb0.Query("select 1 / (id - 150) from many order by id")) { }
+            } catch (Data.DataException e) { print("error in the rows " + e.State + " then " + sdb0.Scalar("select 9")) }
+            sdb0.Close()
+            print("end")
+            {{porm}}
+            """)).ToArray();
+    }
+
+    // One-to-one ([HasOne] and [BelongsTo] on a unique foreign key: Include, the session, a condition over it), a view ([View] - Ensure makes it, queries
+    // read it), checks ([Check] of a column and of the table) and the type of a column per database ([DbType]) - SQLite and the in-memory database alike
+    natCases = natCases.Append(("Data/OneToOne: [HasOne] (Include, Session mit neuem Kind und Fremdschluessel, Bedingung ueber das Kind als Unterabfrage), [View] (Ensure, Abfragen, Script), [Check] von Spalte und Tabelle (ConstraintException), [DbType] je Datenbank - SQLite und In-Memory", """
+            #import "data.sqlite"
+            #import "data.memory"
+            [Table "users"]
+            class User {
+                [Key] int id
+                [Required] [Length 50] string name
+                [Check "age >= 0"] int age
+                [DbType "sqlite: NUMERIC; memory: NUMBER; *: TEXT"] string note
+                [HasOne "userId"] Profile profile
+                construct() { }
+            }
+            [Table "profiles"]
+            [Check "length(bio) < 100"]
+            class Profile {
+                [Key] int id
+                [Unique] int userId
+                string bio
+                [BelongsTo "userId"] User user
+                construct() { }
+            }
+            [Table "adults"]
+            [View "SELECT id, name FROM users WHERE age >= 18"]
+            class Adult {
+                int id
+                string name
+                construct() { }
+            }
+            foreach (url in ["sqlite::memory:", "memory:"]) {
+                var db = new Data.Connection(url)
+                print("---- " + url)
+                print(db.CreateScriptOf(["User", "Profile", "Adult"]))
+                db.Ensure("User")
+                db.Ensure("Profile")
+                db.Ensure("Adult")
+                db.Ensure("Adult")
+                var s = db.Session()
+                var u = new User()
+                u.name = "Ada"
+                u.age = 36
+                var p = new Profile()
+                p.bio = "maths"
+                u.profile = p
+                s.Add(u)
+                var k = new User()
+                k.name = "Kid"
+                k.age = 9
+                s.Add(k)
+                s.Save()
+                print("profile user " + db.Scalar("select userId from profiles"))
+                var s2 = db.Session()
+                List<User> all = s2.From<User>().Include(x => x.profile).OrderBy(x => x.id).ToList()
+                foreach (x in all) {
+                    string bio = "none"
+                    if (x.profile != undefined) { bio = x.profile.bio }
+                    print(x.name + " " + bio)
+                }
+                all[1].profile = new Profile()
+                all[1].profile.bio = "toys"
+                s2.Save()
+                print("profiles " + db.Scalar("select count(*) from profiles"))
+                var q = db.From<User>().Where(x => x.profile.bio == "toys")
+                print(q.ToSql())
+                print("with toys " + q.First().name)
+                print("adults " + db.From<Adult>().Count() + " " + db.From<Adult>().First().name)
+                try { db.Execute("insert into users(name, age) values ('Neg', -1)") } catch (Data.ConstraintException e) { print("check " + e.message) }
+                try { db.Execute("insert into profiles(userId, bio) values (99, ?)", ["x".PadRight(120, 'y')]) } catch (Data.ConstraintException e) { print("table check " + e.message) }
+                db.Close()
+            }
+            """)).ToArray();
+
+    // Projections (Select of a column, a navigation, `new X(...)` - in the SELECT, else in the program), groups (GroupBy with Select of aggregates,
+    // Having, OrderBy; ToList of the groups), joins (Join and LeftJoin with Where, OrderBy, Select, ToList as pairs, Count) - as SQL on SQLite, in the
+    // program on the in-memory database (no GROUP BY and JOIN there): the same output
+    natCases = natCases.Append(("Data/Queries: Select (Spalte, Navigation, new X(...) im SELECT, sonst im Programm), GroupBy (Select mit Count/Sum, Having mit Count(Bedingung), OrderBy, ToList der Gruppen), Join und LeftJoin (Where, OrderBy, Select, Paare, Count) - SQL auf SQLite, im Programm auf der In-Memory-Datenbank: dieselbe Ausgabe", """
+            #import "data.sqlite"
+            #import "data.memory"
+            enum Status { Open, Paid }
+            [Table "customers"]
+            class Customer {
+                [Key] int id
+                string name
+                string city
+                construct() { }
+            }
+            [Table "orders"]
+            class Order {
+                [Key] int id
+                int customerId
+                float total
+                Status status
+                [BelongsTo "customerId"] Customer customer
+                construct() { }
+            }
+            record Line {
+                string name
+                float total
+                construct(string name, float total) { this.name = name; this.total = total }
+            }
+            record Total {
+                int customer
+                int count
+                float sum
+                construct(int customer, int count, float sum) { this.customer = customer; this.count = count; this.sum = sum }
+            }
+            foreach (url in ["sqlite::memory:", "memory:"]) {
+                var db = new Data.Connection(url)
+                print("---- " + url)
+                db.Ensure<Customer>()
+                db.Ensure<Order>()
+                foreach (n in [["Ada", "London"], ["Grace", "New York"], ["Linus", undefined]]) {
+                    var c = new Customer()
+                    c.name = n[0]
+                    c.city = n[1]
+                    db.Insert(c)
+                }
+                var who = [1, 1, 2, 1, 2]
+                var amounts = [10.5, 20.0, 5.25, 3.0, 7.0]
+                var paidOnes = [false, true, true, true, false]
+                for (var i = 0; i < 5; i++) {
+                    var x = new Order()
+                    x.customerId = who[i]
+                    x.total = amounts[i]
+                    if (paidOnes[i]) { x.status = Status.Paid } else { x.status = Status.Open }
+                    db.Insert(x)
+                }
+                List<string> names = db.From<Customer>().OrderBy(c => c.name).Select(c => c.name)
+                print("names " + Json.Serialize(names))
+                float limit = 6.0
+                List<Line> lines = db.From<Order>().Where(o => o.total > taking limit).OrderBy(o => o.id).Select(o => new Line(o.customer.name, o.total * 2))
+                foreach (l in lines) { print("line " + l.name + " " + l.total) }
+                List<bool> paid = db.From<Order>().OrderBy(o => o.id).Select(o => o.status == Status.Paid)
+                print("paid " + Json.Serialize(paid))
+                List<Status> states = db.From<Order>().OrderBy(o => o.id).Select(o => o.status)
+                print("states " + Json.Serialize(states))
+                List<string> local = db.From<Customer>().OrderBy(c => c.id).Select(c => c.name.Substring(0, 2) + "!")
+                print("in the program " + Json.Serialize(local))
+                List<Total> totals = db.From<Order>().GroupBy(o => o.customerId).OrderBy(g => g.Key).Select(g => new Total(g.Key, g.Count(), g.Sum(o => o.total)))
+                foreach (t in totals) { print("total " + t.customer + " " + t.count + " " + t.sum) }
+                List<int> big = db.From<Order>().GroupBy(o => o.customerId).Having(g => g.Count(o => o.status == Status.Paid) >= 2).Select(g => g.Key)
+                print("big " + Json.Serialize(big))
+                var groups = db.From<Order>().Where(o => o.total > 4).GroupBy(o => o.status).ToList()
+                foreach (g in groups) { print("group " + g.Key + " " + g.Count() + " " + g.Max(o => o.total)) }
+                List<Line> joined = db.From<Order>().Join<Customer>((o, c) => o.customerId == c.id).Where((o, c) => c.city != undefined).OrderBy((o, c) => o.total).Select((o, c) => new Line(c.city, o.total))
+                foreach (l in joined) { print("join " + l.name + " " + l.total) }
+                var pairs = db.From<Customer>().LeftJoin<Order>((c, o) => o.customerId == c.id && o.total > 9).OrderBy((c, o) => c.id).ToList()
+                foreach (p in pairs) {
+                    string t = "none"
+                    if (p.Second != undefined) { t = "" + p.Second.total }
+                    print("pair " + p.First.name + " " + t)
+                }
+                print("joined count " + db.From<Order>().Where(o => o.status == Status.Open).Join<Customer>((o, c) => o.customerId == c.id).Count())
+                db.Close()
+            }
+            """)).ToArray();
+    // The mapping in code (Data.Mapping.Entity<T>(): table, key, column, required, length, ignore, index, check, relations) and objects that write
+    // themselves (Data.Entity: Save, Reload, Delete); a database in memory shared by name (memory:shop): two connections, the lock of a transaction,
+    // the rollback when a connection closes in one, Forget
+    natCases = natCases.Append(("Data/Mapping: Mapping im Code (Data.Mapping.Entity<T>(): Tabelle, Schluessel, Spalte, Required, Length, Ignore, Index, Check, HasMany/BelongsTo) und Data.Entity (Save, Reload, Delete) - SQLite und In-Memory; eine geteilte In-Memory-Datenbank (memory:name: zwei Verbindungen, Sperre einer Transaktion als BusyException, Rollback beim Schliessen, Forget)", """
+            #import "data.sqlite"
+            #import "data.memory"
+            class Author : Data.Entity {
+                int id
+                string fullName
+                string secret
+                List<Book> books
+                construct() { }
+            }
+            class Book : Data.Entity {
+                int number
+                int authorId
+                string title
+                Author author
+                construct() { }
+            }
+            Data.Mapping.Entity<Author>().Table("authors").Key(a => a.id).Column(a => a.fullName, "full_name").Required(a => a.fullName).Length(a => a.fullName, 80).Ignore(a => a.secret).HasMany(a => a.books, "authorId")
+            Data.Mapping.Entity<Book>().Table("books").Key(b => b.number).Index(b => b.authorId).Check(b => b.title, "length(title) > 0").BelongsTo(b => b.author, "authorId")
+            foreach (url in ["sqlite::memory:", "memory:"]) {
+                print("---- " + url)
+                var db = new Data.Connection(url)
+                print(db.CreateScriptOf(["Author", "Book"]))
+                db.Ensure<Author>()
+                db.Ensure<Book>()
+                var a = new Author()
+                a.fullName = "Ursula"
+                a.secret = "not stored"
+                print("saved " + a.Save(db) + " id " + a.id)
+                var b = new Book()
+                b.authorId = a.id
+                b.title = "Earthsea"
+                b.Save(db)
+                a.fullName = "Ursula K."
+                a.Save(db)
+                print("row " + db.Rows("select * from authors")[0])
+                a.fullName = "changed here"
+                print("reload " + a.Reload(db) + " " + a.fullName)
+                List<Author> all = db.From<Author>().Include(x => x.books).Where(x => x.books.Any(k => k.title.StartsWith("Earth"))).ToList()
+                print("found " + all[0].fullName + " " + all[0].books.Count + " " + all[0].books[0].title)
+                try { db.Execute("insert into books(authorId, title) values (1, '')") } catch (Data.ConstraintException e) { print("check " + e.message) }
+                print("deleted " + b.Delete(db) + " left " + db.From<Book>().Count())
+                db.Close()
+            }
+            #import "data.memory"
+            var a = new Data.Connection("memory:shop")
+            var b = new Data.Connection("memory:Shop")
+            var other = new Data.Connection("memory:other")
+            a.Execute("create table t(id integer primary key, v text)")
+            a.Execute("insert into t(v) values (?)", ["one"])
+            print("b sees " + b.Scalar("select count(*) from t") + " other " + other.Scalar("select count(*) from _columns where table_name = 't'"))
+            b.Execute("insert into t(v) values (?)", ["two"])
+            print("a sees " + a.Scalar("select count(*) from t"))
+            a.Begin()
+            a.Execute("insert into t(v) values (?)", ["three"])
+            try { b.Execute("insert into t(v) values (?)", ["four"]) } catch (Data.BusyException e) { print("busy " + e.Code) }
+            try { b.Begin() } catch (Data.BusyException e) { print("busy begin") }
+            print("b reads " + b.Scalar("select count(*) from t"))
+            a.Rollback()
+            print("after rollback a " + a.Scalar("select count(*) from t") + " b " + b.Scalar("select count(*) from t"))
+            b.Transaction(t => { t.Execute("insert into t(v) values (?)", ["five"]) })
+            print("after b's transaction a " + a.Scalar("select count(*) from t"))
+            a.Begin()
+            a.Execute("delete from t")
+            a.Close()
+            print("a closed in a transaction: b " + b.Scalar("select count(*) from t"))
+            b.Execute("insert into t(v) values (?)", ["six"])
+            Data.MemoryDriver.Forget("shop")
+            var c = new Data.Connection("memory:shop")
+            print("forgotten: c " + c.Scalar("select count(*) from _columns where table_name = 't'") + " b still " + b.Scalar("select count(*) from t"))
+            try { new Data.Connection("memory:no space") } catch (ArgumentException e) { print(e.message) }
+            var own = new Data.Connection("memory:")
+            own.Execute("create table t(x int)")
+            print("own " + own.Scalar("select count(*) from t"))
+            """)).ToArray();
+
+    // Navigation in queries (x.customer.name, two hops, OrderBy, == undefined, inside Any) and the objects a session reaches through relations with a key of
+    // their own (new when the table has no row with it, else a row that is there - a child moved into another list)
+    natCases = natCases.Append(("Data/Navigation: Bedingungen ueber [BelongsTo]-Felder (ein und zwei Spruenge, Enum, StartsWith, OrderBy, == undefined, in Any) als Unterabfragen; Objekte mit eigenem Schluessel ueber Beziehungen (neu nur ohne Zeile, sonst vorhanden; ein vorhandenes Kind wechselt die Liste) - SQLite und In-Memory", """
+            #import "data.sqlite"
+            #import "data.memory"
+            enum Level { Low, High }
+            [Table "countries"]
+            class Country {
+                [Key] string code
+                string name
+                construct() { }
+            }
+            [Table "customers"]
+            class Customer {
+                [Key] int id
+                string name
+                Level level
+                string countryCode
+                [BelongsTo "countryCode"] Country country
+                [HasMany "customerId"] List<Purchase> purchases
+                construct() { }
+            }
+            [Table "purchases"]
+            class Purchase {
+                [Key] int id
+                float total
+                int customerId
+                [BelongsTo "customerId"] Customer customer
+                construct() { }
+            }
+            class App {
+                static undefined Run(string url) {
+                    print("== " + url)
+                    var db = new Data.Connection(url)
+                    db.Ensure<Country>()
+                    db.Ensure<Customer>()
+                    db.Ensure<Purchase>()
+                    // (a session: objects with a key of their own reached through relations)
+                    var s = db.Session()
+                    var de = new Country()
+                    de.code = "de"
+                    de.name = "Germany"
+                    var ada = new Customer()
+                    ada.name = "Ada"
+                    ada.level = Level.High
+                    ada.country = de
+                    var p1 = new Purchase()
+                    p1.total = 10.0
+                    p1.customer = ada
+                    s.Add(p1)
+                    print("saved " + s.Save() + " countries " + db.Scalar("select count(*) from countries") + " customers " + db.Scalar("select count(*) from customers"))
+                    // (the same country again in a new session: its row is there - not inserted again)
+                    var s2 = db.Session()
+                    var de2 = new Country()
+                    de2.code = "de"
+                    de2.name = "Germany"
+                    var bob = new Customer()
+                    bob.name = "Bob"
+                    bob.level = Level.Low
+                    bob.country = de2
+                    var p2 = new Purchase()
+                    p2.total = 99.0
+                    p2.customer = bob
+                    s2.Add(p2)
+                    print("saved " + s2.Save() + " countries " + db.Scalar("select count(*) from countries") + " customers " + db.Scalar("select count(*) from customers"))
+                    // (a child whose row is there, put into the list of another parent: its foreign key moves)
+                    var s3 = db.Session()
+                    Customer a = s3.Find<Customer>(ada.id)
+                    var moved = new Purchase()
+                    moved.id = p2.id
+                    moved.total = 99.0
+                    moved.customerId = p2.customerId
+                    a.purchases = new List<Purchase>()
+                    a.purchases.Add(moved)
+                    print("moved " + s3.Save() + " purchases of ada " + db.Scalar("select count(*) from purchases where customerId = ?", [ada.id]) + " rows " + db.Scalar("select count(*) from purchases"))
+                    // (navigation in queries)
+                    var q = db.From<Purchase>().Where(x => x.customer.name == "Ada")
+                    print(q.ToSql())
+                    print("by name " + q.Count() + " high " + db.From<Purchase>().Where(x => x.customer.level == Level.High).Count() + " starts " + db.From<Purchase>().Where(x => x.customer.name.StartsWith("B")).Count())
+                    print("two hops " + db.From<Purchase>().Where(x => x.customer.country.name == "Germany").Count() + " " + db.From<Purchase>().Where(x => x.customer.country.name == "Germany").ToSql())
+                    List<Purchase> ordered = db.From<Purchase>().OrderBy(x => x.customer.name).ToList()
+                    print("ordered " + ordered[0].total + " " + ordered[1].total + " none " + db.From<Purchase>().Where(x => x.customer == undefined).Count())
+                    print("in any " + db.From<Customer>().Where(c => c.purchases.Any(p => p.customer.country.code == "de")).Count())
+                    try { db.From<Customer>().Where(c => c.purchases.Any(p => p.customer.purchases == undefined)).Count() } catch (Data.NotTranslatableException e) { print("list: " + e.message) }
+                    db.Close()
+                }
+            }
+            App.Run("sqlite::memory:")
+            App.Run("memory:")
+            """)).ToArray();
+
+    // A data model (.fdata, docs/data/designer.md): the code forge generates from it - entities with the attributes of the mapping, an enum, a record as JSON,
+    // relations on both sides, Model and Context - used on SQLite and the in-memory database
+    {
+        string shopModel = """
+            {
+              "format": 1,
+              "namespace": "Shop",
+              "naming": { "tables": "snake_plural", "columns": "snake" },
+              "enums": [ { "name": "Level", "values": ["Low", "Mid", "High"], "comment": "How important a customer is" } ],
+              "types": [ { "name": "Address", "fields": [ { "name": "city", "type": "string" }, { "name": "zipCode", "type": "string" } ] } ],
+              "entities": [
+                { "name": "Customer", "set": "Customers", "comment": "Someone who buys",
+                  "fields": [
+                    { "name": "id", "type": "int", "key": true },
+                    { "name": "fullName", "type": "string", "length": 100, "required": true },
+                    { "name": "email", "type": "string", "length": 200, "unique": true },
+                    { "name": "level", "type": "Level" },
+                    { "name": "born", "type": "DateTime" },
+                    { "name": "address", "type": "Address", "json": true },
+                    { "name": "version", "type": "int", "version": true }
+                  ] },
+                { "name": "Purchase", "fields": [ { "name": "id", "type": "int", "key": true }, { "name": "total", "type": "float", "required": true }, { "name": "note", "type": "string", "comment": "free text" } ] },
+                { "name": "Category", "table": "categories", "fields": [ { "name": "code", "type": "string", "key": true, "length": 20 }, { "name": "label", "type": "string" }, { "name": "picture", "type": "bytes" } ] }
+              ],
+              "relations": [
+                { "kind": "one-to-many", "from": "Customer", "to": "Purchase", "navigation": "purchases", "inverse": "customer" },
+                { "kind": "many-to-many", "from": "Purchase", "to": "Category", "navigation": "categories", "inverse": "purchases", "joinTable": "purchase_category" }
+              ],
+              "diagrams": [ { "name": "Main", "shapes": { "Customer": { "x": 40, "y": 40 }, "Purchase": { "x": 320, "y": 40 } } } ]
+            }
+            """;
+        natCases = natCases.Append(("Data/Model: ein Datenmodell (.fdata) als Code - Entitaeten mit Attributen, Enum, Record als JSON, one-to-many und many-to-many auf beiden Seiten, Benennung snake_plural/snake, Model und Context (Ensure, Script, Abfragen, Session) - SQLite und In-Memory",
+            fire.UI.Markup.MarkupFiles.GenerateScript("Shop.fdata", shopModel) + """
+            #import "data.sqlite"
+            #import "data.memory"
+            class App {
+                static undefined Run(string url) {
+                    print("== " + url)
+                    var db = new Data.Connection(url)
+                    var ctx = new Shop.Context(db)
+                    print(ctx.Script())
+                    ctx.Ensure()
+                    var s = ctx.Session()
+                    var ada = new Shop.Customer()
+                    ada.fullName = "Ada"
+                    ada.email = "ada@x.org"
+                    ada.level = Shop.Level.High
+                    ada.address = new Shop.Address("London", "W1")
+                    var p = new Shop.Purchase()
+                    p.total = 12.5
+                    p.customer = ada
+                    var c = new Shop.Category()
+                    c.code = "books"
+                    c.label = "Books"
+                    p.categories = new List<Shop.Category>()
+                    p.categories.Add(c)
+                    s.Add(ada)
+                    s.Add(p)
+                    print("saved " + s.Save())
+                    Shop.Customer back = ctx.Customers.Where(x => x.fullName == "Ada").Include(x => x.purchases).First()
+                    print(back.fullName + " " + back.level + " " + back.address.city + " " + back.address.zipCode + " purchases " + back.purchases.Count + " version " + back.version)
+                    print("raw " + db.Scalar("select full_name from customers") + " " + db.Scalar("select customer_id from purchases"))
+                    int who = back.id
+                    print("books " + ctx.Purchases.Where(x => x.categories.Any(k => k.code == "books")).Count() + " by " + ctx.Purchases.Where(x => x.customerId == taking who).Count() + " via " + ctx.Purchases.Where(x => x.customer.fullName == "Ada").Count())
+                    print("model " + Shop.Model.Types().length + " " + Shop.Model.Tables()[0] + " " + Shop.Model.Types()[2])
+                    db.Close()
+                }
+            }
+            App.Run("sqlite::memory:")
+            App.Run("memory:")
+            """)).ToArray();
+    }
+
+    // Migrations ([Migration] classes, Data.Migrator, MigrateTo up and down, a failure rolled back), the schema as the database has it, the difference to the
+    // mapping as a migration (Data.Differ) and the tables as classes (Data.Importer) - on the in-memory database and SQLite
+    natCases = natCases.Append(("Data/Migrations: [Migration]-Klassen mit Up/Down, Migrate/MigrateTo hin und zurueck, eine fehlschlagende Migration wird zurueckgerollt, Schema() mit Spalten und Indizes, der Unterschied zum Mapping als Migration, Import als Klassen - In-Memory und SQLite", """
+            #import "data.sqlite"
+            #import "data.memory"
+
+            [Migration 1, "people"]
+            class M1 {
+                undefined Up(Data.Migrator m) {
+                    m.CreateTable("people", [m.Key("id"), m.Column("name", "string", 100, true), m.Column("age", "int")])
+                    m.CreateIndex("ix_people_name", "people", "name")
+                }
+                undefined Down(Data.Migrator m) { m.DropTable("people") }
+            }
+            [Migration 2, "email and a rename"]
+            class M2 {
+                undefined Up(Data.Migrator m) {
+                    m.AddColumn("people", m.Column("email", "string", 200))
+                    m.CreateIndex("ix_people_email", "people", "email", true)
+                    m.RenameColumn("people", "age", "years")
+                    m.Sql("insert into people(name, years, email) values (?, ?, ?)", ["Ada", 36, "ada@x.org"])
+                }
+                undefined Down(Data.Migrator m) {
+                    m.Sql("delete from people where name = ?", ["Ada"])
+                    m.RenameColumn("people", "years", "age")
+                    m.DropIndex("ix_people_email", "people")
+                    m.DropColumn("people", "email")
+                }
+            }
+            [Migration 3, "broken"]
+            class M3 {
+                undefined Up(Data.Migrator m) {
+                    m.AddColumn("people", m.Column("tmp", "int"))
+                    m.Sql("insert into nowhere values (1)")
+                }
+                undefined Down(Data.Migrator m) { }
+            }
+
+            [Table "people"]
+            class Person {
+                [Key] int id
+                [Required] [Length 100] string name
+                int years
+                [Unique] [Length 200] string email
+                [Index] string city
+                bool active
+                construct() { }
+            }
+            [Table "pets"]
+            class Pet {
+                [Key] int id
+                string name
+                int personId
+                construct() { }
+            }
+
+            class App {
+                static string List(List l) {
+                    var t = "["
+                    for (var i = 0; i < l.Count; i++) {
+                        if (i > 0) { t = t + ", " }
+                        t = t + l[i]
+                    }
+                    return t + "]"
+                }
+                static undefined Show(Data.Connection db) {
+                    List tables = db.Schema()
+                    for (var i = 0; i < tables.Count; i++) {
+                        Data.SchemaTable t = tables[i]
+                        var cols = ""
+                        for (var c = 0; c < t.columns.Count; c++) {
+                            Data.SchemaColumn col = t.columns[c]
+                            cols = cols + " " + col.name
+                            if (col.key) { cols = cols + "*" }
+                            if (!col.nullable) { cols = cols + "!" }
+                        }
+                        var ix = ""
+                        for (var c = 0; c < t.indexes.Count; c++) {
+                            Data.SchemaIndex x = t.indexes[c]
+                            ix = ix + " " + x.name + "(" + x.column + ")"
+                            if (x.unique) { ix = ix + "u" }
+                        }
+                        print("  " + t.name + ":" + cols + " |" + ix)
+                    }
+                }
+                static string First() {
+                    List f = Data.Migrations.Found()
+                    Data.MigrationInfo i = f[0]
+                    return i.version + " " + i.title + " " + i.typeName
+                }
+                static undefined Run(string url) {
+                    print("== " + url)
+                    var db = new Data.Connection(url)
+                    print("to 2: " + db.MigrateTo(2) + " applied " + App.List(db.Applied()))
+                    App.Show(db)
+                    print("rows " + db.Scalar("select count(*) from people") + " " + db.Scalar("select years from people"))
+                    try { db.Migrate() } catch (Data.DataException e) { print("failed: " + e.message) }
+                    print("after the failure " + App.List(db.Applied()) + " columns " + (db.Rows("select * from people")[0].names.length))
+                    print("down to 1: " + db.MigrateTo(1) + " applied " + App.List(db.Applied()))
+                    App.Show(db)
+                    print("down to 0: " + db.MigrateTo(0) + " tables " + db.Schema().Count)
+                    db.MigrateTo(2)
+                    print(Data.Differ.Diff(db, 4, "the rest"))
+                    print(Data.Importer.Import(db, "Shop"))
+                    // (the steps of the Migrator one by one, and its mistakes)
+                    var m = new Data.Migrator(db)
+                    m.CreateTable("notes", [m.Key("code", "string", false), m.Column("text", "string"), m.Column("at", "time"), m.Column("kind", "enum"), m.Column("data", "json"), m.Column("blob", "bytes"), m.Column("price", "float")])
+                    m.Sql("insert into notes(code, text, price) values (?, ?, ?)", ["a", "x", 1.5])
+                    print("notes " + db.Scalar("select price from notes where code = ?", ["a"]) + " steps " + m.log.Count)
+                    try { m.Column("x", "money") } catch (ArgumentException e) { print("kind: " + e.message) }
+                    print("found " + Data.Migrations.Found().Count + " first " + App.First())
+                    db.Close()
+                }
+            }
+            App.Run("memory:")
+            App.Run("sqlite::memory:")
+            """)).ToArray();
 
     // Time and Sleep (bridges/fire_bridge_time.hpp)
     natCases = natCases.Concat(new (string Name, string Source)[]

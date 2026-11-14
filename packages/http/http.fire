@@ -4,6 +4,7 @@
 #import "time"
 #import "filesystem"
 #import "hash"
+#import "compression"
 
 namespace Http {
     // 1 bad URL, 2 bad message (a malformed request or response), 3 too many redirects, 4 too large, 5 not supported
@@ -953,6 +954,12 @@ namespace Http {
             return fallback
         }
         undefined SetItem(string name, any value) { this.items[name] = value }
+        // The values of the items (for the services of Http.Rpc: what the routers before it put there).
+        List ItemValues() {
+            var all = new List()
+            foreach (var pair in this.items) { all.Add(pair.Value) }
+            return all
+        }
     }
 
     // A router from a lambda: func (Http.Context ctx, Http.Next next) => ... returns the Http.Response.
@@ -1045,7 +1052,8 @@ namespace Http {
         // A router from a lambda (see LambdaRouter).
         Http.AppServer Use(lambda<Http.Context, Http.Next> handler) { return this.PushTo(new Http.LambdaRouter(take handler)) }
 
-        // Serves HTTPS: the certificate (with its chain) and the private key as PEM text. The handshake runs in the accepting task.
+        // Serves HTTPS: the certificate (with its chain) and the private key as PEM text. The handshake runs in the task of the connection: a slow client
+        // does not hold up the others.
         undefined UseTls(string certPem, string keyPem) { this.tlsServer = new Tls.Server(certPem, keyPem) }
 
         undefined Stop() { this.stopped = true }
@@ -1056,25 +1064,31 @@ namespace Http {
             if (tcp == undefined) { return false }
             this.served = this.served + 1
             tcp.NoDelay = true
-            Net.IConnection connection = tcp
-            if (this.tlsServer != undefined) {
-                try { connection = this.tlsServer.Accept(tcp, this.settings.readTimeout) }
-                catch (Net.NetException e) { return true }   // (a client that did not complete the handshake)
-            }
-            if (!Http.AppServer.Spawn(connection, this.chain, this.settings)) {
+            int tls = -1
+            if (this.tlsServer != undefined) { tls = this.tlsServer.Context }
+            if (!Http.AppServer.Spawn(tcp, tls, this.chain, this.settings)) {
                 // (a chain that cannot be copied for a task - a [NoCopy] object in a router: the connection is served here, one request without
                 // keep-alive)
-                Http.AppServer.Serve(connection, this.chain, this.settings, false)
+                Net.IConnection connection = Http.AppServer.Secure(tcp, tls, this.settings)
+                if (connection != undefined) { Http.AppServer.Serve(connection, this.chain, this.settings, false) }
             }
             return true
         }
 
-        // The task of a connection: it owns the connection and serves it with copies of the chain and the settings. False when the chain cannot be copied
-        // (nothing moved then).
-        static bool Spawn(Net.IConnection connection, List chain, Http.ServerSettings settings) {
+        // (the connection as the task serves it: over TLS after the handshake with the server's context - undefined when the client did not complete it)
+        static Net.IConnection Secure(Net.TcpClient tcp, int tls, Http.ServerSettings settings) {
+            if (tls < 0) { return tcp }
+            try { return Tls.Server.AcceptOn(trust tls, tcp, settings.readTimeout) }
+            catch (Net.NetException e) { return undefined }
+        }
+
+        // The task of a connection: it owns the connection, makes the TLS handshake (when the server has a context for it) and serves it with copies of the
+        // chain and the settings. False when the chain cannot be copied (nothing moved then).
+        static bool Spawn(Net.TcpClient tcp, int tls, List chain, Http.ServerSettings settings) {
             try {
-                fire handover connection taking chain taking settings {
-                    Http.AppServer.Serve(connection, chain, settings, true)
+                fire handover tcp taking chain taking settings taking tls {
+                    Net.IConnection connection = Http.AppServer.Secure(tcp, tls, settings)
+                    if (connection != undefined) { Http.AppServer.Serve(connection, chain, settings, true) }
                 }
             } catch (ArgumentException e) {
                 return false
@@ -1135,6 +1149,7 @@ namespace Http {
                         Http.AppServer.Send(connection, response, false, true, settings)
                         connection.ReadTimeout = undefined
                         var ws = new Http.WebSocket(connection, reader, false)
+                        ws.deflate = response.headers.Get("Sec-WebSocket-Extensions") != undefined
                         ws.headers = response.upgradeHeaders
                         ws.target = response.upgradeTarget
                         try { response.upgrade.Serve(ws) } catch (Net.NetException e) { }
@@ -1317,16 +1332,31 @@ namespace Http {
         }
     }
 
+    // (a pattern of Http.Files.Map and its lambda)
+    class FileMap {
+        string pattern
+        lambda<Http.Request> file
+        construct(string pattern, lambda<Http.Request> file) {
+            this.pattern = pattern
+            this.file = take file
+        }
+        bool Matches(string path) {
+            if (this.pattern.EndsWith("*")) { return path.StartsWith(this.pattern.Substring(0, this.pattern.Length - 1)) }
+            return this.pattern == path
+        }
+    }
+
     // Static files from a folder (by convention `wwwroot`) as a link of the chain: the path of the request maps 1:1 to a file under the folder; what is
     // not there goes on to the next link. Only GET and HEAD. Never served: a path with `..` or a part that starts with a dot (.git, .env), the sources of
-    // fire (.fire, .fxml, .fireproj, .firesln), anything outside the folder. ETag and Last-Modified (304 for If-None-Match / If-Modified-Since), one range
-    // (206), the body streamed from the file.
+    // fire (.fire, .fxml, .fireproj, .firesln), anything outside the folder. ETag and Last-Modified (304 for If-None-Match / If-Modified-Since), ranges
+    // (206: one streamed from the file, several as multipart/byteranges; If-Range), the body streamed from the file. Map: files named by a lambda.
     class Files : IRouter {
         string root
         string prefix
         List defaults
         bool omitExtensions
         defined int maxAge
+        List maps            // Http.FileMap: a pattern and the lambda that names the file of a request
 
         // `root` the folder, `prefix` the part of the path that maps to it ("/" or e.g. "/static"); `omitExtensions`: "/about" also finds about.html.
         construct(string root, string prefix = "/", bool omitExtensions = false) {
@@ -1338,6 +1368,17 @@ namespace Http {
             this.defaults.Add("index.htm")
             this.omitExtensions = omitExtensions
             this.maxAge = -1
+            this.maps = new List()
+        }
+
+        // A file named by a lambda for the paths of a pattern ("/docs/*", "/logo"): it gets the request and returns the path of the file under the folder
+        // (or undefined: on to the next link) - `Map("/v/*", func (Http.Request r) => "releases/" + r.Query("v", "latest") + ".zip")`. The same rules as
+        // for the paths of the requests: inside the folder, no hidden parts, no sources of fire. The maps come before the plain paths.
+        Http.Files Map(string pattern, lambda<Http.Request> file) {
+            var m = new Http.FileMap(pattern, take file)
+            m.TakeTo(this)
+            this.maps.Add(m)
+            return this
         }
 
         // Cache-Control: max-age for every file (seconds; -1: none).
@@ -1349,6 +1390,14 @@ namespace Http {
         Http.Response Handle(Http.Context ctx, Http.Next next) {
             var request = ctx.Request
             if (request.method != "GET" && request.method != "HEAD") { return next.Invoke(ctx) }
+            for (var i = 0; i < this.maps.Count; i++) {
+                Http.FileMap m = this.maps[i]
+                if (!m.Matches(request.path)) { continue }
+                any named = m.file(request)
+                if (named == undefined) { continue }
+                var mapped = this.Inside("" + named)
+                if (mapped != undefined) { return Http.Files.Serve(mapped, request, this.maxAge) }
+            }
             var file = this.Resolve(request.path)
             if (file == undefined) { return next.Invoke(ctx) }
             return Http.Files.Serve(file, request, this.maxAge)
@@ -1388,6 +1437,23 @@ namespace Http {
             return undefined
         }
 
+        // (a path under the folder that a map named: the file when it may be served, else undefined)
+        string Inside(string rel) {
+            string r = rel.Replace("\\", "/")
+            while (r.StartsWith("/")) { r = r.Substring(1) }
+            if (r.IndexOf(":") >= 0 || r.IndexOf("\0") >= 0) { return undefined }
+            any parts = r.Split("/")
+            for (var i = 0; i < parts.length; i++) {
+                string part = parts[i]
+                if (part == ".." || part.StartsWith(".")) { return undefined }
+            }
+            var full = IO.Path.GetFullPath(IO.Path.Combine(this.root, r))
+            var inside = this.root
+            if (!inside.EndsWith(IO.Path.DirectorySeparatorChar)) { inside = inside + IO.Path.DirectorySeparatorChar }
+            if (!full.StartsWith(inside) || Http.Files.Hidden(full) || !IO.File.Exists(full)) { return undefined }
+            return full
+        }
+
         // The sources of fire are never served.
         static bool Hidden(string file) {
             string ext = IO.Path.GetExtension(file).ToLower()
@@ -1408,41 +1474,94 @@ namespace Http {
                 Http.Files.Stamp(nm, tag, lastModified, maxAge)
                 return nm
             }
-            int first = 0
-            int upto = size - 1
-            bool partial = false
+            // (the ranges asked for: none - the whole file -, one - 206 with its part -, several - 206 multipart/byteranges; none of them in the file: 416)
+            List firsts = new List()
+            List uptos = new List()
+            bool asked = false
             var range = request.headers.Get("Range")
-            if (range != undefined && range.StartsWith("bytes=") && range.IndexOf(",") < 0) {
-                string spec = range.Substring(6).Trim()
-                any dash = spec.IndexOf("-")
-                if (dash >= 0) {
-                    string a = spec.Substring(0, dash).Trim()
-                    string b = spec.Substring(dash + 1).Trim()
-                    if (a.Length == 0) {
-                        // the last b bytes
-                        var last = Http.Num.Parse(b)
-                        if (last > 0) { first = size - last; if (first < 0) { first = 0 }; partial = true }
-                    } else {
-                        first = Http.Num.Parse(a)
-                        if (b.Length > 0) { upto = Http.Num.Parse(b) }
-                        if (upto >= size) { upto = size - 1 }
-                        partial = first >= 0
+            var ifRange = request.headers.Get("If-Range")
+            if (range != undefined && range.StartsWith("bytes=") && (ifRange == undefined || ifRange == tag || ifRange == lastModified)) {
+                any specs = range.Substring(6).Split(",")
+                // (more than 16 ranges: answered with the whole file, as RFC 9110 allows)
+                if (specs.length <= 16) {
+                    asked = true
+                    for (var i = 0; i < specs.length; i++) {
+                        string spec = specs[i]
+                        spec = spec.Trim()
+                        int dash = spec.IndexOf("-")
+                        if (dash < 0) { asked = false; break }
+                        string a = spec.Substring(0, dash).Trim()
+                        string b = spec.Substring(dash + 1).Trim()
+                        int first = 0
+                        int upto = size - 1
+                        if (a.Length == 0) {
+                            // the last b bytes
+                            var last = Http.Num.Parse(b)
+                            if (last <= 0) { continue }
+                            first = size - last
+                            if (first < 0) { first = 0 }
+                        } else {
+                            first = Http.Num.Parse(a)
+                            if (first < 0) { asked = false; break }
+                            if (b.Length > 0) {
+                                upto = Http.Num.Parse(b)
+                                if (upto < first) { asked = false; break }
+                            }
+                            if (upto >= size) { upto = size - 1 }
+                        }
+                        if (first >= size || first > upto) { continue }   // (a range outside the file: left out)
+                        firsts.Add(first)
+                        uptos.Add(upto)
                     }
-                    if (partial && (first > upto || first >= size || first < 0)) {
+                    if (asked && firsts.Count == 0) {
                         var bad = Http.Response.Error(416)
                         bad.headers.Set("Content-Range", "bytes */" + size)
                         return bad
                     }
                 }
             }
-            var stream = new IO.FileStream(file, IO.FileMode.Open, IO.FileAccess.Read)
             Http.Response r = undefined
-            if (partial) {
-                stream.Seek(trust first)   // (partial: first >= 0, a number)
+            if (asked && firsts.Count == 1) {
+                int first = firsts[0]
+                int upto = uptos[0]
+                var stream = new IO.FileStream(file, IO.FileMode.Open, IO.FileAccess.Read)
+                stream.Seek(first)
                 var part = new Http.LimitedStream(take stream, upto - first + 1)
                 r = Http.Response.FromStream(take part, type, upto - first + 1, 206)
                 r.headers.Set("Content-Range", "bytes " + first + "-" + upto + "/" + size)
+            } else if (asked) {
+                // (several ranges: their parts, each with its type and range, between the lines of a boundary)
+                string boundary = "fire-" + modified.Ticks + "-" + size
+                var body = new IO.MemoryStream()
+                var stream = new IO.FileStream(file, IO.FileMode.Open, IO.FileAccess.Read)
+                for (var i = 0; i < firsts.Count; i++) {
+                    int first = firsts[i]
+                    int upto = uptos[i]
+                    byte head[] = IO.Utf8.GetBytes("--" + boundary + "\r\nContent-Type: " + type + "\r\nContent-Range: bytes " + first + "-" + upto + "/" + size + "\r\n\r\n")
+                    body.Write(head, 0, head.length)
+                    stream.Seek(first)
+                    int left = upto - first + 1
+                    byte buf[] = new byte[8192]
+                    while (left > 0) {
+                        int want = 8192
+                        if (left < want) { want = left }
+                        int n = stream.Read(buf, 0, want)
+                        if (n <= 0) { break }
+                        body.Write(buf, 0, n)
+                        left = left - n
+                    }
+                    byte end[] = IO.Utf8.GetBytes("\r\n")
+                    body.Write(end, 0, end.length)
+                }
+                stream.Close()
+                byte close[] = IO.Utf8.GetBytes("--" + boundary + "--\r\n")
+                body.Write(close, 0, close.length)
+                byte all[] = body.ToBuffer()
+                r = new Http.Response(206)
+                r.body = take all
+                r.headers.Set("Content-Type", "multipart/byteranges; boundary=" + boundary)
             } else {
+                var stream = new IO.FileStream(file, IO.FileMode.Open, IO.FileAccess.Read)
                 r = Http.Response.FromStream(take stream, type, size)
             }
             r.headers.Set("Accept-Ranges", "bytes")
@@ -1833,6 +1952,9 @@ namespace Http {
         // (the server side: the header fields and the target of the request that opened it)
         Http.Headers headers
         string target
+        // permessage-deflate (RFC 7692) was agreed: messages of at least `compressFrom` bytes go compressed (each on its own: no context takeover)
+        bool deflate
+        defined int compressFrom
 
         // (the WebSocket uses the connection and the reader; Connect hands them to it, the server's task keeps them)
         construct(Net.IConnection connection, Http.Reader reader, bool client) {
@@ -1842,9 +1964,13 @@ namespace Http {
             this.open = true
             this.closeCode = 0
             this.maxMessageBytes = 16777216
+            this.deflate = false
+            this.compressFrom = 64
         }
 
         bool IsOpen { get { return this.open } }
+        // Were the messages agreed to go compressed (permessage-deflate)?
+        bool Compressed { get { return this.deflate } }
         // A header field of the request that opened the WebSocket (the server side; undefined on the client).
         string Header(string name) { return this.headers?.Get(name) }
         // A query parameter of the request that opened it (`/ws?page=7`).
@@ -1857,7 +1983,7 @@ namespace Http {
         defined int CloseCode { get { return this.closeCode } }
 
         // ws://host:port/path (wss:// over TLS): the handshake as a client.
-        static Http.WebSocket Connect(string url, defined int timeout = 10000, Http.Headers headers = undefined) {
+        static Http.WebSocket Connect(string url, defined int timeout = 10000, Http.Headers headers = undefined, bool compress = true) {
             var u = Http.Url.Parse(url.Replace("ws://", "http://").Replace("wss://", "https://"))
             Net.IConnection c = Http.Transport.Open(u, timeout)
             c.ReadTimeout = timeout
@@ -1869,6 +1995,7 @@ namespace Http {
             h.Set("Connection", "Upgrade")
             h.Set("Sec-WebSocket-Key", key)
             h.Set("Sec-WebSocket-Version", "13")
+            if (compress) { h.Set("Sec-WebSocket-Extensions", "permessage-deflate; client_no_context_takeover; server_no_context_takeover") }
             if (headers != undefined) { for (var i = 0; i < headers.Count; i++) { h.Set(headers.names[i], headers.values[i]) } }
             Http.Wire.Write(c, "GET " + u.path + " HTTP/1.1", h, undefined)
             var reader = new Http.Reader(c)
@@ -1879,6 +2006,8 @@ namespace Http {
             if (rh.Get("Sec-WebSocket-Accept") != Http.WebSocket.AcceptOf(key)) { c.Close(); throw new Http.HttpException("A wrong Sec-WebSocket-Accept.", 2) }
             c.ReadTimeout = undefined
             var ws = new Http.WebSocket(c, reader, true)
+            var agreed = rh.Get("Sec-WebSocket-Extensions")
+            ws.deflate = agreed != undefined && agreed.IndexOf("permessage-deflate") >= 0
             c.TakeTo(ws)
             reader.TakeTo(ws)
             return ws
@@ -1887,8 +2016,27 @@ namespace Http {
         // The answer to a key (Sec-WebSocket-Accept).
         static string AcceptOf(string key) { return Http.Base64.Encode(Hash.Sha1.Of(key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11")) }
 
-        undefined Send(string text) { this.Frame(1, IO.Utf8.GetBytes(text)) }
-        undefined SendBytes(byte data[]) { this.Frame(2, data) }
+        undefined Send(string text) { this.Message(1, IO.Utf8.GetBytes(text)) }
+        undefined SendBytes(byte data[]) { this.Message(2, data) }
+        // (a message: compressed when it was agreed and it is not small - the raw DEFLATE data, an empty stored block after it as RFC 7692 7.2.3.4
+        // shows, its last four bytes 00 00 FF FF taken off)
+        undefined Message(defined int opcode, byte data[]) {
+            if (!this.deflate || data.length < this.compressFrom) { this.Frame(opcode, data); return }
+            byte packed[] = Compression.Deflate.Compress(data)
+            var framed = new byte[packed.length + 1]
+            for (var i = 0; i < packed.length; i++) { framed[i] = packed[i] }
+            framed[packed.length] = 0
+            this.FrameWith(opcode, framed, 64)
+        }
+        // (the data of a compressed message: 00 00 FF FF back at its end, a final empty block after it - so the one-shot decompressor gets a whole stream)
+        static byte[] Inflate(byte data[]) {
+            var whole = new byte[data.length + 6]
+            for (var i = 0; i < data.length; i++) { whole[i] = data[i] }
+            whole[data.length + 2] = 255
+            whole[data.length + 3] = 255
+            whole[data.length + 4] = 3
+            return Compression.Deflate.Decompress(whole)
+        }
         undefined Ping(byte data[] = undefined) {
             if (data == undefined) { data = new byte[0] }
             this.Frame(9, data)
@@ -1900,6 +2048,7 @@ namespace Http {
             if (timeout < 0) { this.connection.ReadTimeout = undefined } else { this.connection.ReadTimeout = timeout }
             IO.MemoryStream parts = undefined
             var opcodeOfMessage = 0
+            bool compressed = false
             while (true) {
                 int b0 = 0
                 try { b0 = this.ReadByte() } catch (Net.TimeoutException e) { return undefined }
@@ -1909,6 +2058,10 @@ namespace Http {
                 if (b1 < 0) { this.Ended(1006); return undefined }
                 var fin = b0 >= 128
                 int opcode = b0 % 16
+                if ((b0 & 64) != 0) {
+                    if (!this.deflate || opcode >= 8) { this.Close(1002, "RSV1 without permessage-deflate"); return undefined }
+                    if (opcode == 1 || opcode == 2) { compressed = true }
+                }
                 var masked = b1 >= 128
                 int len = b1 % 128
                 if (len == 126) { len = this.ReadByte() * 256 + this.ReadByte() }
@@ -1931,13 +2084,27 @@ namespace Http {
                 if (opcode == 9) { this.Frame(10, payload); continue }
                 if (opcode == 10) { continue }
                 if (opcode == 1 || opcode == 2) { opcodeOfMessage = opcode }
-                if (fin && parts == undefined) { return new Http.WebSocketMessage(opcode == 2 || (opcode == 0 && opcodeOfMessage == 2), take payload) }
+                if (fin && parts == undefined) {
+                    if (compressed) {
+                        byte plain[] = undefined
+                        try { plain = Http.WebSocket.Inflate(payload) } catch (IO.IOException e) { this.Close(1007, "bad compressed data"); return undefined }
+                        if (plain.length > this.maxMessageBytes) { this.Close(1009, "too big"); return undefined }
+                        return new Http.WebSocketMessage(opcode == 2 || (opcode == 0 && opcodeOfMessage == 2), take plain)
+                    }
+                    return new Http.WebSocketMessage(opcode == 2 || (opcode == 0 && opcodeOfMessage == 2), take payload)
+                }
                 if (parts == undefined) { parts = new IO.MemoryStream() }
                 parts.Write(payload, 0, payload.length)
                 if (parts.Length > this.maxMessageBytes) { this.Close(1009, "too big"); return undefined }
                 if (fin) {
                     var all = parts.ToBuffer()
                     parts.Close()
+                    if (compressed) {
+                        byte plain[] = undefined
+                        try { plain = Http.WebSocket.Inflate(all) } catch (IO.IOException e) { this.Close(1007, "bad compressed data"); return undefined }
+                        if (plain.length > this.maxMessageBytes) { this.Close(1009, "too big"); return undefined }
+                        return new Http.WebSocketMessage(opcodeOfMessage == 2, take plain)
+                    }
                     return new Http.WebSocketMessage(opcodeOfMessage == 2, take all)
                 }
             }
@@ -1998,13 +2165,15 @@ namespace Http {
         }
 
         // One frame: a client masks it (RFC 6455 5.3), a server does not.
-        undefined Frame(defined int opcode, byte data[]) {
+        undefined Frame(defined int opcode, byte data[]) { this.FrameWith(opcode, data, 0) }
+        // (`rsv`: 64 for the first frame of a compressed message)
+        undefined FrameWith(defined int opcode, byte data[], defined int rsv) {
             var n = data.length
             var headLen = 2
             if (n >= 126 && n < 65536) { headLen = 4 } else if (n >= 65536) { headLen = 10 }
             if (this.client) { headLen = headLen + 4 }
             var frame = new byte[headLen + n]
-            frame[0] = 128 + opcode
+            frame[0] = 128 + rsv + opcode
             var maskBit = 0
             if (this.client) { maskBit = 128 }
             var at = 2
@@ -2038,11 +2207,19 @@ namespace Http {
         string path
         Http.IWebSocketHandler handler
         List origins
+        bool compress
 
         construct(string path, Http.IWebSocketHandler handler) {
             this.path = path
             this.handler = take handler
             this.origins = new List()
+            this.compress = true
+        }
+
+        // permessage-deflate when the client offers it (the default; browsers do): false - the messages go as they are.
+        Http.WebSockets Compression(bool enabled) {
+            this.compress = enabled
+            return this
         }
 
         Http.WebSockets AllowOrigin(string origin) {
@@ -2067,6 +2244,11 @@ namespace Http {
             r.headers.Set("Upgrade", "websocket")
             r.headers.Set("Connection", "Upgrade")
             r.headers.Set("Sec-WebSocket-Accept", Http.WebSocket.AcceptOf(key))
+            var offered = request.headers.Get("Sec-WebSocket-Extensions")
+            if (this.compress && offered != undefined && offered.IndexOf("permessage-deflate") >= 0) {
+                // (each message on its own in both directions: no window kept between them)
+                r.headers.Set("Sec-WebSocket-Extensions", "permessage-deflate; server_no_context_takeover; client_no_context_takeover")
+            }
             r.upgrade = this.handler
             var copied = new Http.Headers()
             for (var i = 0; i < request.headers.Count; i++) { copied.Add(request.headers.names[i], request.headers.values[i]) }

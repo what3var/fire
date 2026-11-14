@@ -23,6 +23,11 @@ namespace fire.Runtime
         /// <summary>The files embedded by `new Resource("path")` (docs/stdlib/resources.md); the id of a resource is its index. Set by the linker after compiling.</summary>
         public List<ResourceEntry> Resources { get; set; } = new();
 
+        /// <summary>The enums the program declares, by their full name (null: not known - a program read back from a cache). The C++ generator takes the
+        /// enum of a field from here: <see cref="fire.Values.EnumType.Named"/> is the last of that name in the process, which may be another program's.</summary>
+        [MemoryPack.MemoryPackIgnore]
+        public IReadOnlyDictionary<string, fire.Values.EnumType>? Enums { get; set; }
+
         /// <summary>The units the program declares (`unit Inch: in { ... }`); the VM makes them known before it runs the program (Unit.UseCustomUnits).</summary>
         public List<fire.Values.CustomUnit> CustomUnits { get; set; } = new();
 

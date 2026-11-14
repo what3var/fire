@@ -167,6 +167,7 @@
 						<MenuItem Header="_Circuit" Click="NewCircuit_Click"/>
 						<MenuItem Header="_Block Model" Click="NewBlockModel_Click"/>
 						<MenuItem Header="_Mesh Model (CAD)" Click="NewMeshModel_Click"/>
+						<MenuItem Header="_Data Model" Click="NewDataModel_Click"/>
 					</MenuItem>
 					<MenuItem Header="_Open..." Click="Open_Click" InputGesture="Ctrl+O"/>
 					<Separator/>
@@ -361,6 +362,7 @@
 									<MenuItem Header="_Circuit" Click="NewCircuit_Click"/>
 									<MenuItem Header="_Block Model" Click="NewBlockModel_Click"/>
 									<MenuItem Header="_Mesh Model (CAD)" Click="NewMeshModel_Click"/>
+									<MenuItem Header="_Data Model" Click="NewDataModel_Click"/>
 									<Separator/>
 									<MenuItem Header="_Project..." Click="NewProject_Click"/>
 									<MenuItem Header="_Solution..." Click="NewSolution_Click"/>
