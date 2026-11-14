@@ -29,6 +29,7 @@ static class AiTests
         public void Bool(string key, bool v) { using var w = Key(key, 7); w.Write((byte)(v ? 1 : 0)); }
         public void Texts(string key, IReadOnlyList<string> v) { using var w = Key(key, 9); w.Write(8u); w.Write((ulong)v.Count); foreach (var s in v) Str(w, s); }
         public void Ints(string key, IReadOnlyList<int> v) { using var w = Key(key, 9); w.Write(5u); w.Write((ulong)v.Count); foreach (var i in v) w.Write(i); }
+        public void Bools(string key, IReadOnlyList<bool> v) { using var w = Key(key, 9); w.Write(7u); w.Write((ulong)v.Count); foreach (var b in v) w.Write((byte)(b ? 1 : 0)); }
 
         private float[] Values(long count, float scale)
         {
@@ -178,6 +179,162 @@ static class AiTests
         return w.Bytes();
     }
 
+    /// <summary>The vocabulary of the tiny models (the bytes, a few merges, the control tokens), to a multiple of 32.</summary>
+    private static (List<string> Tokens, List<int> Types, List<string> Merges) TinyVocab(params string[] specials)
+    {
+        var tokens = new List<string>(ByteChars());
+        var types = Enumerable.Repeat(1, 256).ToList();
+        var merges = new List<string>();
+        void Merge(string a, string b) { merges.Add(a + " " + b); if (!tokens.Contains(a + b)) { tokens.Add(a + b); types.Add(1); } }
+        Merge("h", "e"); Merge("l", "l"); Merge("ll", "o"); Merge("he", "llo"); Merge("\u0120", "w"); Merge("o", "r"); Merge("\u0120w", "or"); Merge("l", "d"); Merge("\u0120wor", "ld");
+        foreach (var special in specials) { tokens.Add(special); types.Add(3); }
+        while (tokens.Count % 32 != 0) { tokens.Add("<|extra_" + tokens.Count + "|>"); types.Add(3); }
+        return (tokens, types, merges);
+    }
+
+    private static float[] Ones(int n) => Enumerable.Repeat(1f, n).ToArray();
+
+    /// <summary>A tiny Qwen 3.5: three layers of the gated delta net (the convolution, the state of each head) and one of gated attention with the norms of q and k and
+    /// rotary positions on a part of the head.</summary>
+    public static byte[] TinyQwen35()
+    {
+        const int embd = 64, heads = 2, kvHeads = 1, headDim = 32, ff = 128, layers = 4, S = 16, Hk = 2, Hv = 4, convK = 4;
+        int keyDim = Hk * S, valueDim = Hv * S, convDim = 2 * keyDim + valueDim;
+        var w = new Writer();
+        var (tokens, types, merges) = TinyVocab("<|endoftext|>", "<|im_start|>", "<|im_end|>");
+        int vocab = tokens.Count;
+        w.Text("general.architecture", "qwen35");
+        w.Text("general.name", "fire-tiny-qwen35");
+        w.U32("qwen35.block_count", layers);
+        w.U32("qwen35.context_length", 256);
+        w.U32("qwen35.embedding_length", embd);
+        w.U32("qwen35.feed_forward_length", ff);
+        w.U32("qwen35.attention.head_count", heads);
+        w.U32("qwen35.attention.head_count_kv", kvHeads);
+        w.U32("qwen35.attention.key_length", headDim);
+        w.U32("qwen35.attention.value_length", headDim);
+        w.U32("qwen35.rope.dimension_count", 8);
+        w.F32("qwen35.rope.freq_base", 10000000f);
+        w.F32("qwen35.attention.layer_norm_rms_epsilon", 1e-6f);
+        w.U32("qwen35.ssm.conv_kernel", convK);
+        w.U32("qwen35.ssm.state_size", S);
+        w.U32("qwen35.ssm.group_count", Hk);
+        w.U32("qwen35.ssm.time_step_rank", Hv);
+        w.U32("qwen35.ssm.inner_size", (uint)valueDim);
+        w.U32("qwen35.full_attention_interval", 4);
+        w.Text("tokenizer.ggml.model", "gpt2");
+        w.Text("tokenizer.ggml.pre", "qwen35");
+        w.Texts("tokenizer.ggml.tokens", tokens);
+        w.Ints("tokenizer.ggml.token_type", types);
+        w.Texts("tokenizer.ggml.merges", merges);
+        w.U32("tokenizer.ggml.eos_token_id", (uint)tokens.IndexOf("<|im_end|>"));
+        w.Tensor("token_embd.weight", new long[] { embd, vocab }, 8, 1.0f);
+        w.Tensor("output_norm.weight", new long[] { embd }, 0, values: Ones(embd));
+        for (int l = 0; l < layers; l++)
+        {
+            string p = "blk." + l + ".";
+            w.Tensor(p + "attn_norm.weight", new long[] { embd }, 0, values: Ones(embd));
+            w.Tensor(p + "post_attention_norm.weight", new long[] { embd }, 0, values: Ones(embd));
+            if ((l + 1) % 4 != 0)
+            {
+                w.Tensor(p + "attn_qkv.weight", new long[] { embd, convDim }, 8);
+                w.Tensor(p + "attn_gate.weight", new long[] { embd, valueDim }, 2);
+                w.Tensor(p + "ssm_conv1d.weight", new long[] { convK, convDim }, 0, 0.5f);
+                w.Tensor(p + "ssm_dt.bias", new long[] { Hv }, 0, 0.5f);
+                w.Tensor(p + "ssm_a", new long[] { Hv }, 0, values: new[] { -0.5f, -1f, -2f, -0.1f });
+                w.Tensor(p + "ssm_beta.weight", new long[] { embd, Hv }, 8);
+                w.Tensor(p + "ssm_alpha.weight", new long[] { embd, Hv }, 0);
+                w.Tensor(p + "ssm_norm.weight", new long[] { S }, 0, values: Ones(S));
+                w.Tensor(p + "ssm_out.weight", new long[] { valueDim, embd }, 2);
+            }
+            else
+            {
+                w.Tensor(p + "attn_q.weight", new long[] { embd, heads * headDim * 2 }, 2);
+                w.Tensor(p + "attn_k.weight", new long[] { embd, kvHeads * headDim }, 8);
+                w.Tensor(p + "attn_v.weight", new long[] { embd, kvHeads * headDim }, 1);
+                w.Tensor(p + "attn_output.weight", new long[] { heads * headDim, embd }, 2);
+                w.Tensor(p + "attn_q_norm.weight", new long[] { headDim }, 0, values: Ones(headDim));
+                w.Tensor(p + "attn_k_norm.weight", new long[] { headDim }, 0, values: Ones(headDim));
+            }
+            w.Tensor(p + "ffn_gate.weight", new long[] { embd, ff }, 2);
+            w.Tensor(p + "ffn_up.weight", new long[] { embd, ff }, 8);
+            w.Tensor(p + "ffn_down.weight", new long[] { ff, embd }, 0);
+        }
+        return w.Bytes();
+    }
+
+    /// <summary>A tiny LFM 3: short convolutions, attention over all positions (with the frequency factors of the rotary positions) and over a window of 4, the
+    /// gate of each head, the norms after the attention and the feed forward, the start token.</summary>
+    public static byte[] TinyLfm3()
+    {
+        const int embd = 64, heads = 4, kvHeads = 2, headDim = 16, ff = 128, layers = 4, convL = 3;
+        var w = new Writer();
+        var (tokens, types, merges) = TinyVocab("<|startoftext|>", "<|im_start|>", "<|im_end|>");
+        int vocab = tokens.Count;
+        w.Text("general.architecture", "lfm3");
+        w.Text("general.name", "fire-tiny-lfm3");
+        w.U32("lfm3.block_count", layers);
+        w.U32("lfm3.context_length", 256);
+        w.U32("lfm3.embedding_length", embd);
+        w.U32("lfm3.feed_forward_length", ff);
+        w.U32("lfm3.attention.head_count", heads);
+        w.Ints("lfm3.attention.head_count_kv", new[] { 0, kvHeads, 0, kvHeads });
+        w.Bools("lfm3.attention.sliding_window_pattern", new[] { false, false, false, true });
+        w.U32("lfm3.attention.sliding_window", 4);
+        w.U32("lfm3.attention.key_length", headDim);
+        w.U32("lfm3.rope.dimension_count", headDim);
+        w.F32("lfm3.rope.freq_base", 1000000f);
+        w.F32("lfm3.rope.freq_base_swa", 10000f);
+        w.F32("lfm3.attention.layer_norm_rms_epsilon", 1e-5f);
+        w.U32("lfm3.shortconv.l_cache", convL);
+        w.Text("tokenizer.ggml.model", "gpt2");
+        w.Text("tokenizer.ggml.pre", "lfm2");
+        w.Texts("tokenizer.ggml.tokens", tokens);
+        w.Ints("tokenizer.ggml.token_type", types);
+        w.Texts("tokenizer.ggml.merges", merges);
+        w.U32("tokenizer.ggml.bos_token_id", (uint)tokens.IndexOf("<|startoftext|>"));
+        w.U32("tokenizer.ggml.eos_token_id", (uint)tokens.IndexOf("<|im_end|>"));
+        w.Bool("tokenizer.ggml.add_bos_token", false);
+        w.Tensor("token_embd.weight", new long[] { embd, vocab }, 8, 1.0f);
+        w.Tensor("output_norm.weight", new long[] { embd }, 0, values: Ones(embd));
+        w.Tensor("rope_freqs.weight", new long[] { headDim / 2 }, 0, values: Enumerable.Range(0, headDim / 2).Select(i => 1f + i * 0.5f).ToArray());
+        for (int l = 0; l < layers; l++)
+        {
+            string p = "blk." + l + ".";
+            w.Tensor(p + "attn_norm.weight", new long[] { embd }, 0, values: Ones(embd));
+            w.Tensor(p + "ffn_norm.weight", new long[] { embd }, 0, values: Ones(embd));
+            w.Tensor(p + "post_attention_norm.weight", new long[] { embd }, 0, values: Ones(embd));
+            w.Tensor(p + "post_ffw_norm.weight", new long[] { embd }, 0, values: Ones(embd));
+            if (l % 2 == 0)
+            {
+                w.Tensor(p + "shortconv.conv.weight", new long[] { convL, embd }, 0, 0.5f);
+                w.Tensor(p + "shortconv.in_proj.weight", new long[] { embd, 3 * embd }, 8);
+                w.Tensor(p + "shortconv.out_proj.weight", new long[] { embd, embd }, 2);
+            }
+            else
+            {
+                w.Tensor(p + "attn_q.weight", new long[] { embd, heads * headDim }, 2);
+                w.Tensor(p + "attn_k.weight", new long[] { embd, kvHeads * headDim }, 8);
+                w.Tensor(p + "attn_v.weight", new long[] { embd, kvHeads * headDim }, 8);
+                w.Tensor(p + "attn_output.weight", new long[] { heads * headDim, embd }, 2);
+                w.Tensor(p + "attn_q_norm.weight", new long[] { headDim }, 0, values: Ones(headDim));
+                w.Tensor(p + "attn_k_norm.weight", new long[] { headDim }, 0, values: Ones(headDim));
+                w.Tensor(p + "attn_gate.weight", new long[] { embd, heads }, 0);
+            }
+            w.Tensor(p + "ffn_gate.weight", new long[] { embd, ff }, 2);
+            w.Tensor(p + "ffn_up.weight", new long[] { embd, ff }, 8);
+            w.Tensor(p + "ffn_down.weight", new long[] { ff, embd }, 1);
+        }
+        return w.Bytes();
+    }
+
+    private static string Write(string name, byte[] bytes)
+    {
+        string path = Path.Combine(Path.GetTempPath(), name);
+        if (!File.Exists(path) || !File.ReadAllBytes(path).AsSpan().SequenceEqual(bytes)) File.WriteAllBytes(path, bytes);
+        return path.Replace("\\", "/");
+    }
+
     private static string ModelFile()
     {
         string path = Path.Combine(Path.GetTempPath(), "fire-ai-tiny.gguf");
@@ -225,9 +382,48 @@ static class AiTests
         Console.WriteLine(vm == native ? "SAME" : "DIFFERENT");
     }
 
-    public static string Script => ScriptText.Replace("{MODEL}", ModelFile()).Replace("{BROKEN}", BrokenFile()) + RealModel();
+    public static string Script => ScriptText.Replace("{MODEL}", ModelFile()).Replace("{BROKEN}", BrokenFile())
+        + RecurrentText.Replace("{MODEL}", Write("fire-ai-tiny-qwen35.gguf", TinyQwen35())).Replace("{NAME}", "qwen35")
+        + RecurrentText.Replace("{MODEL}", Write("fire-ai-tiny-lfm3.gguf", TinyLfm3())).Replace("{NAME}", "lfm3")
+        + RealModel();
 
-    /// <summary>With FIRE_TEST_AI_MODEL (a Qwen 2.5 instruct model, e.g. qwen2.5-0.5b-instruct-q4_0.gguf): it answers a simple question and picks the right option.</summary>
+    /// <summary>The models with recurrent layers: generating, the cache (the checkpoint after a prompt), the choice (each option from the checkpoint) - against a fresh
+    /// session, which has no checkpoint; a prompt longer than the window of 4.</summary>
+    private const string RecurrentText = """
+
+        var m{NAME} = new AI.Model("{MODEL}")
+        var s{NAME} = new AI.Session(m{NAME}, 256, 2)
+        var p{NAME} = AI.Chat.Question("Be brief.", "hello world, hello world", "", m{NAME})
+        var a{NAME} = s{NAME}.Complete(p{NAME}, AI.Settings.Exact(20))
+        var b{NAME} = s{NAME}.Complete(p{NAME}, AI.Settings.Exact(20))
+        print("{NAME} " + m{NAME}.Architecture + " " + m{NAME}.Layers + " " + s{NAME}.Generated + " " + H.Sum(a{NAME}) + " " + (a{NAME} == b{NAME}) + " " + m{NAME}.CountTokens(p{NAME}))
+        var c{NAME} = s{NAME}.Choose(p{NAME}, ["world", "or", "hello"])
+        var ok{NAME} = true
+        for (var i = 0; i < 3; i++) {
+            var fresh = new AI.Session(m{NAME}, 256, 2)
+            var one = ["world", "or", "hello"]
+            fresh.Choose(p{NAME}, [one[i]])
+            if (fresh.Score(0) != s{NAME}.Score(i)) { ok{NAME} = false }
+            fresh.Close()
+        }
+        // after the choice the answer is the same again (back to the checkpoint)
+        var d{NAME} = s{NAME}.Complete(p{NAME}, AI.Settings.Exact(20))
+        print("{NAME} choice " + c{NAME} + " " + ok{NAME} + " " + (d{NAME} == a{NAME}))
+        // a chat that goes on: the next prompt starts with the answer before
+        var chat{NAME} = new AI.Chat()
+        chat{NAME}.For(m{NAME}).User("hello")
+        var r1{NAME} = s{NAME}.Complete(chat{NAME}.Prompt(), AI.Settings.Exact(8))
+        chat{NAME}.Assistant(r1{NAME}).User("world")
+        var r2{NAME} = s{NAME}.Complete(chat{NAME}.Prompt(), AI.Settings.Exact(8))
+        var fresh2{NAME} = new AI.Session(m{NAME}, 256, 2)
+        print("{NAME} chat " + (fresh2{NAME}.Complete(chat{NAME}.Prompt(), AI.Settings.Exact(8)) == r2{NAME}))
+        fresh2{NAME}.Close()
+        s{NAME}.Close()
+        m{NAME}.Close()
+        """;
+
+    /// <summary>With FIRE_TEST_AI_MODEL (an instruct model: Qwen3.5-0.8B-Q4_0.gguf, LFM3-1.7B-QAD-Q4_0.gguf, qwen2.5-0.5b-instruct-q4_0.gguf): it answers a simple question
+    /// and picks the right option.</summary>
     private static string RealModel()
     {
         if (Environment.GetEnvironmentVariable("FIRE_TEST_AI_MODEL") is not { Length: > 0 } path) return "";
@@ -237,7 +433,7 @@ static class AiTests
             var rs = new AI.Session(real, 1024)
             var answer = rs.Ask("You are a helpful assistant.", "What is the capital of France? Answer in one sentence.", AI.Settings.Exact(40))
             print("real " + (answer.IndexOf("Paris") >= 0) + " " + real.Architecture)
-            print("real choice " + rs.Choose(AI.Chat.Question("You are a helpful assistant.", "Which of these is a fruit? Answer with one word."), ["Hammer", "Banana", "Car"]))
+            print("real choice " + rs.Choose(AI.Chat.Question("You answer questions correctly and briefly.", "Which of these is a fruit?\n\nOptions:\n- Hammer\n- Banana\n- Car\n\nAnswer with one of the options.", "Answer:", real), [" Hammer", " Banana", " Car"], true))
             rs.Close()
             real.Close()
             """.Replace("{PATH}", path.Replace("\\", "/"));

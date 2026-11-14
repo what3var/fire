@@ -20,7 +20,7 @@ The assistant is started by spark (stdio: spark starts the program and talks ove
 
 ## Principles
 
-* **Off by default.** The setup has its own, unchecked task "The assistant (downloads a model of about 400 MB when it is first switched on)". In spark
+* **Off by default.** The setup has its own, unchecked task "The assistant (downloads a model of about 500 MB when it is first switched on)". In spark
   it can be switched on and off at any time (*Tools > Assistant*), and "Don't show again" in every bubble switches it off.
 * **The model only after asking.** The first time it is switched on, the assistant says what it will download, from where and how large it is, and waits
   for "Download". Without a model it still gives the tips that need none (the rules below).
@@ -28,6 +28,11 @@ The assistant is started by spark (stdio: spark starts the program and talks ove
   and a tip it gave is not given again.
 * **No history on screen.** A question gets an answer in the bubble; the chat behind it is kept (the cache makes follow-up questions cheap) but not
   shown. "Show history" shows it, "New topic" forgets it.
+
+## The model
+
+Qwen3.5-0.8B (Apache 2.0, 507 MB) by default; LFM3-1.7B (1.05 GB, LFM Open License: free below 10 million USD revenue a year) as the stronger choice in
+the settings - it is trained for tools, the right one when the assistant acts in spark through MCP.
 
 ## The characters
 
@@ -64,7 +69,8 @@ its own way of speaking (a line in the system prompt). They are not, and do not 
 
 | Step | | State |
 | --- | --- | --- |
-| 1 | The package `ai`: GGUF, qwen2 and llama, Q8_0/Q4_0/F16/F32, the tokenizers, the cache, sampling, multiple choice, threads, AVX2/NEON | built |
+| 1 | The package `ai`: GGUF; qwen2, qwen3, qwen35 (gated delta net), lfm3 (short convolutions, window attention), llama; Q8_0/Q4_0/Q4_K/Q5_K/Q6_K/F16/F32, the tokenizers, the cache and checkpoints, sampling, multiple choice, threads, AVX2/NEON | built |
+| 1b | The package `ai.agent`: an agent with instructions, tools (lambdas or the tools of an MCP server), the loop of tool calls, choices | |
 | 2 | The package `mcp`: JSON-RPC 2.0, client and server, stdio and HTTP (Streamable HTTP) | |
 | 3 | The package `assistant`: characters, bubble, choices, the question line, rules, the model download | |
 | 4 | spark as an MCP server (tools, resources, notifications), *Tools > Assistant*, the setup task | |

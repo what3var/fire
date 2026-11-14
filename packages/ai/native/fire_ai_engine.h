@@ -84,12 +84,20 @@ static uint16_t fai_toHalf(float f) {
 }
 
 /* ---- tensors ----------------------------------------------------------------------------------------------------------------------------------- */
-enum { FAI_F32 = 0, FAI_F16 = 1, FAI_Q4_0 = 2, FAI_Q8_0 = 8 };
+enum { FAI_F32 = 0, FAI_F16 = 1, FAI_Q4_0 = 2, FAI_Q4_1 = 3, FAI_Q8_0 = 8, FAI_Q4_K = 12, FAI_Q5_K = 13, FAI_Q6_K = 14 };
 #define FAI_QK 32
 typedef struct FaiQ8 { uint16_t d; int8_t q[FAI_QK]; } FaiQ8;     /* 34 bytes */
 typedef struct FaiQ4 { uint16_t d; uint8_t q[FAI_QK / 2]; } FaiQ4; /* 18 bytes */
+#define FAI_QKK 256
+/* Q6_K: 256 values of 6 bits in 16 groups with a scale each (the low 4 bits, the high 2 bits, the scales, the scale of the block) - 210 bytes */
+typedef struct FaiQ41 { uint16_t d, m; uint8_t q[FAI_QK / 2]; } FaiQ41;    /* 20 bytes: x = d * q + m */
+/* Q4_K / Q5_K: 8 groups of 32 with a 6-bit scale and minimum each (packed into 12 bytes), x = d * scale * q - dmin * min */
+typedef struct FaiQ4K { uint16_t d, dmin; uint8_t sc[12]; uint8_t qs[FAI_QKK / 2]; } FaiQ4K;                       /* 144 bytes */
+typedef struct FaiQ5K { uint16_t d, dmin; uint8_t sc[12]; uint8_t qh[FAI_QKK / 8]; uint8_t qs[FAI_QKK / 2]; } FaiQ5K; /* 176 bytes */
+typedef struct FaiQ6K { uint8_t ql[FAI_QKK / 2]; uint8_t qh[FAI_QKK / 4]; int8_t sc[FAI_QKK / 16]; uint16_t d; } FaiQ6K;
 
 typedef struct FaiTensor {
+    uint8_t* owned;  /* the weights converted to Q8_0 at loading (freed with the model), else NULL */
     char name[96];
     int type;
     int64_t ne[4];   /* ne[0]: the length of a row (the inputs), ne[1]: the rows (the outputs) */
@@ -103,7 +111,40 @@ static size_t fai_rowBytes(int type, int64_t n) {
         case FAI_F16: return (size_t)n * 2;
         case FAI_Q8_0: return (size_t)(n / FAI_QK) * sizeof(FaiQ8);
         case FAI_Q4_0: return (size_t)(n / FAI_QK) * sizeof(FaiQ4);
+        case FAI_Q6_K: return (size_t)(n / FAI_QKK) * sizeof(FaiQ6K);
+        case FAI_Q4_1: return (size_t)(n / FAI_QK) * sizeof(FaiQ41);
+        case FAI_Q4_K: return (size_t)(n / FAI_QKK) * sizeof(FaiQ4K);
+        case FAI_Q5_K: return (size_t)(n / FAI_QKK) * sizeof(FaiQ5K);
         default: return 0;
+    }
+}
+
+static void fai_scaleMin(int j, const uint8_t* q, int* d, int* m) {
+    if (j < 4) { *d = q[j] & 63; *m = q[j + 4] & 63; }
+    else { *d = (q[j + 4] & 0xF) | ((q[j - 4] >> 6) << 4); *m = (q[j + 4] >> 4) | ((q[j] >> 6) << 4); }
+}
+/* The 256 values of a Q4_K or Q5_K block as small integers 0..31, and the scale and minimum of each group of 32. */
+static void fai_unpackK(int type, const uint8_t* block, uint8_t v[FAI_QKK], int sc[8], int mn[8], float* d, float* dmin) {
+    int j, l, g;
+    if (type == FAI_Q4_K) {
+        const FaiQ4K* q = (const FaiQ4K*)block;
+        const uint8_t* qs = q->qs;
+        *d = fai_half(q->d); *dmin = fai_half(q->dmin);
+        for (g = 0; g < 8; g++) fai_scaleMin(g, q->sc, &sc[g], &mn[g]);
+        for (j = 0; j < 4; j++, qs += 32)
+            for (l = 0; l < 32; l++) { v[j * 64 + l] = qs[l] & 0x0F; v[j * 64 + 32 + l] = qs[l] >> 4; }
+    }
+    else {
+        const FaiQ5K* q = (const FaiQ5K*)block;
+        const uint8_t* qs = q->qs;
+        int u1 = 1, u2 = 2;
+        *d = fai_half(q->d); *dmin = fai_half(q->dmin);
+        for (g = 0; g < 8; g++) fai_scaleMin(g, q->sc, &sc[g], &mn[g]);
+        for (j = 0; j < 4; j++, qs += 32, u1 <<= 2, u2 <<= 2)
+            for (l = 0; l < 32; l++) {
+                v[j * 64 + l] = (uint8_t)((qs[l] & 0x0F) + ((q->qh[l] & u1) ? 16 : 0));
+                v[j * 64 + 32 + l] = (uint8_t)((qs[l] >> 4) + ((q->qh[l] & u2) ? 16 : 0));
+            }
     }
 }
 
@@ -128,6 +169,42 @@ static void fai_dequantRow(const FaiTensor* t, int64_t row, float* out) {
                 for (i = 0; i < FAI_QK / 2; i++) {
                     out[b * FAI_QK + i] = d * (float)((q->q[i] & 0x0F) - 8);
                     out[b * FAI_QK + i + FAI_QK / 2] = d * (float)((q->q[i] >> 4) - 8);
+                }
+            }
+            break;
+        case FAI_Q4_1:
+            for (b = 0; b < n / FAI_QK; b++) {
+                const FaiQ41* q = (const FaiQ41*)p + b;
+                float d = fai_half(q->d), mm = fai_half(q->m);
+                for (i = 0; i < FAI_QK / 2; i++) { out[b * FAI_QK + i] = d * (float)(q->q[i] & 0x0F) + mm; out[b * FAI_QK + i + FAI_QK / 2] = d * (float)(q->q[i] >> 4) + mm; }
+            }
+            break;
+        case FAI_Q4_K: case FAI_Q5_K:
+            for (b = 0; b < n / FAI_QKK; b++) {
+                uint8_t v[FAI_QKK];
+                int sc[8], mn[8], g, l;
+                float d, dmin;
+                fai_unpackK(t->type, p + fai_rowBytes(t->type, FAI_QKK) * (size_t)b, v, sc, mn, &d, &dmin);
+                for (g = 0; g < 8; g++) for (l = 0; l < 32; l++) out[b * FAI_QKK + g * 32 + l] = d * sc[g] * (float)v[g * 32 + l] - dmin * mn[g];
+            }
+            break;
+        case FAI_Q6_K:
+            for (b = 0; b < n / FAI_QKK; b++) {
+                const FaiQ6K* q = (const FaiQ6K*)p + b;
+                float d = fai_half(q->d), *y = out + b * FAI_QKK;
+                const uint8_t *ql = q->ql, *qh = q->qh;
+                const int8_t* sc = q->sc;
+                int half;
+                for (half = 0; half < 2; half++) {
+                    int l;
+                    for (l = 0; l < 32; l++) {
+                        int is = l / 16;
+                        y[l] = d * sc[is] * (float)(((ql[l] & 0x0F) | (((qh[l] >> 0) & 3) << 4)) - 32);
+                        y[l + 32] = d * sc[is + 2] * (float)(((ql[l + 32] & 0x0F) | (((qh[l] >> 2) & 3) << 4)) - 32);
+                        y[l + 64] = d * sc[is + 4] * (float)(((ql[l] >> 4) | (((qh[l] >> 4) & 3) << 4)) - 32);
+                        y[l + 96] = d * sc[is + 6] * (float)(((ql[l + 32] >> 4) | (((qh[l] >> 6) & 3) << 4)) - 32);
+                    }
+                    y += 128; ql += 64; qh += 32; sc += 8;
                 }
             }
             break;
@@ -280,6 +357,74 @@ static void fai_kernels(int simd) {
 #ifdef FAI_NEON
     fai_dotQ8 = fai_dotQ8_neon; fai_dotQ4 = fai_dotQ4_neon; g_faiKernels = "NEON";
 #endif
+}
+/* A row of Q6_K with the x in Q8_0 blocks: each group of 16 lies in one block of x, so the products are integers per group, scaled by the group,
+ * the block of the weights and the block of x. */
+static float fai_dotQ6K(const FaiQ6K* w, const FaiQ8* x, int64_t blocks) {
+    float sum = 0;
+    int64_t b;
+    for (b = 0; b < blocks; b++) {
+        const FaiQ6K* q = &w[b];
+        const uint8_t *ql = q->ql, *qh = q->qh;
+        const int8_t* sc = q->sc;
+        int8_t v[FAI_QKK];
+        int half, l, g;
+        float d = FAI_H(q->d), blockSum = 0;
+        for (half = 0; half < 2; half++) {
+            int8_t* y = v + half * 128;
+            for (l = 0; l < 32; l++) {
+                y[l] = (int8_t)(((ql[l] & 0x0F) | (((qh[l] >> 0) & 3) << 4)) - 32);
+                y[l + 32] = (int8_t)(((ql[l + 32] & 0x0F) | (((qh[l] >> 2) & 3) << 4)) - 32);
+                y[l + 64] = (int8_t)(((ql[l] >> 4) | (((qh[l] >> 4) & 3) << 4)) - 32);
+                y[l + 96] = (int8_t)(((ql[l + 32] >> 4) | (((qh[l] >> 6) & 3) << 4)) - 32);
+            }
+            ql += 64; qh += 32;
+        }
+        for (g = 0; g < 16; g++) {
+            const FaiQ8* xb = &x[b * 8 + g / 2];
+            const int8_t* xq = xb->q + (g & 1) * 16;
+            const int8_t* wq = v + g * 16;
+            int32_t s32 = 0;
+            for (l = 0; l < 16; l++) s32 += (int32_t)wq[l] * xq[l];
+            blockSum += (float)(s32 * sc[g]) * FAI_H(xb->d);
+        }
+        sum += d * blockSum;
+    }
+    return sum;
+}
+static float fai_dotQ41(const FaiQ41* w, const FaiQ8* x, int64_t blocks) {
+    float sum = 0;
+    int64_t b;
+    int i;
+    for (b = 0; b < blocks; b++) {
+        int32_t s32 = 0, sx = 0;
+        for (i = 0; i < FAI_QK / 2; i++) {
+            s32 += (int32_t)(w[b].q[i] & 0x0F) * x[b].q[i] + (int32_t)(w[b].q[i] >> 4) * x[b].q[i + FAI_QK / 2];
+            sx += x[b].q[i] + x[b].q[i + FAI_QK / 2];
+        }
+        sum += FAI_H(x[b].d) * (FAI_H(w[b].d) * (float)s32 + FAI_H(w[b].m) * (float)sx);
+    }
+    return sum;
+}
+/* Q4_K / Q5_K with x in Q8_0: each group of 32 is one block of x. */
+static float fai_dotK(int type, const uint8_t* row, const FaiQ8* x, int64_t blocks) {
+    float sum = 0;
+    int64_t b;
+    size_t bb = fai_rowBytes(type, FAI_QKK);
+    for (b = 0; b < blocks; b++) {
+        uint8_t v[FAI_QKK];
+        int sc[8], mn[8], g, l;
+        float d, dmin, acc = 0;
+        fai_unpackK(type, row + bb * (size_t)b, v, sc, mn, &d, &dmin);
+        for (g = 0; g < 8; g++) {
+            const FaiQ8* xb = &x[b * 8 + g];
+            int32_t s32 = 0, sx = 0;
+            for (l = 0; l < 32; l++) { s32 += (int32_t)v[g * 32 + l] * xb->q[l]; sx += xb->q[l]; }
+            acc += FAI_H(xb->d) * (d * (float)(sc[g] * s32) - dmin * (float)(mn[g] * sx));
+        }
+        sum += acc;
+    }
+    return sum;
 }
 static float fai_dotF(const float* w, const float* x, int64_t n) { float s = 0; int64_t i; for (i = 0; i < n; i++) s += w[i] * x[i]; return s; }
 static float fai_dotH(const uint8_t* w, const float* x, int64_t n) {
@@ -455,6 +600,9 @@ static void fai_matJob(void* a, int64_t from, int64_t to) {
             switch (w->type) {
                 case FAI_Q8_0: v = fai_dotQ8((const FaiQ8*)row, j->xq + b * j->xqStride, n / FAI_QK); break;
                 case FAI_Q4_0: v = fai_dotQ4((const FaiQ4*)row, j->xq + b * j->xqStride, n / FAI_QK); break;
+                case FAI_Q6_K: v = fai_dotQ6K((const FaiQ6K*)row, j->xq + b * j->xqStride, n / FAI_QKK); break;
+                case FAI_Q4_1: v = fai_dotQ41((const FaiQ41*)row, j->xq + b * j->xqStride, n / FAI_QK); break;
+                case FAI_Q4_K: case FAI_Q5_K: v = fai_dotK(w->type, row, j->xq + b * j->xqStride, n / FAI_QKK); break;
                 case FAI_F16: v = fai_dotH(row, j->x + b * j->xStride, n); break;
                 default: v = fai_dotF((const float*)row, j->x + b * j->xStride, n); break;
             }
@@ -643,20 +791,39 @@ typedef struct FaiVocab {
 } FaiVocab;
 
 /* ---- the model ---------------------------------------------------------------------------------------------------------------------------------- */
+enum { FAI_ARCH_QWEN2 = 0, FAI_ARCH_LLAMA, FAI_ARCH_QWEN3, FAI_ARCH_QWEN35, FAI_ARCH_LFM3 };
+/* What a layer mixes the tokens with: attention over all positions, attention over the last `swa` positions, a gated delta net (a state per head that is
+ * updated by each token: Qwen 3.5) or a short convolution over the last few tokens (LFM). */
+enum { FAI_MIX_ATTN = 0, FAI_MIX_SWA, FAI_MIX_DELTA, FAI_MIX_CONV };
+#define FAI_MAX_LAYERS 256
+
 typedef struct FaiLayer {
-    const FaiTensor *attnNorm, *wq, *wk, *wv, *wo, *bq, *bk, *bv, *ffnNorm, *gate, *up, *down;
+    int mix;
+    int nHeadKv;
+    const FaiTensor *attnNorm, *wq, *wk, *wv, *wo, *bq, *bk, *bv, *qNorm, *kNorm, *attnGate;
+    const FaiTensor *postAttnNorm, *ffnNorm, *postFfnNorm, *gate, *up, *down;
+    /* the delta net */
+    const FaiTensor *ssmQkv, *ssmConv, *ssmDt, *ssmA, *ssmBeta, *ssmAlpha, *ssmNorm, *ssmOut;
+    /* the short convolution */
+    const FaiTensor *convW, *convIn, *convOut;
 } FaiLayer;
 
 typedef struct FaiModel {
     FaiFile file;
-    char arch[32], name[128];
+    char arch[32], name[128], pre[32];
+    int archId;
     char* chatTemplate;
-    int nLayer, nEmbd, nHead, nHeadKv, nFf, headDim, ctxTrain;
-    float eps, ropeBase;
-    int ropeNeox;              /* qwen2: the halves of a head are rotated together; llama: pairs of neighbours */
+    int nLayer, nEmbd, nHead, nHeadKv, nFf, headDim, nRot, ctxTrain;
+    int headKvOf[FAI_MAX_LAYERS]; int headKvArray;
+    int swaOf[FAI_MAX_LAYERS]; int swaArray, swa;
+    float eps, ropeBase, ropeBaseSwa;
+    int ropeNeox;              /* the halves of a head are rotated together (qwen, lfm); llama: pairs of neighbours */
+    /* the delta net (qwen35): conv kernel, the size of a head (k and v), the heads of k (groups) and of v, the inner size; every `fullEvery`th layer attends */
+    int ssmConvK, ssmState, ssmGroups, ssmVHeads, ssmInner, fullEvery;
+    int convL;                 /* lfm: the length of the short convolution */
     uint64_t tensorCount;
     FaiTensor* tensors;
-    const FaiTensor *tokEmbd, *outNorm, *output;
+    const FaiTensor *tokEmbd, *outNorm, *output, *ropeFreqs;
     FaiLayer* layers;
     FaiVocab vocab;
 } FaiModel;
@@ -680,7 +847,9 @@ static FaiVocab* g_faiSortVocab;
 static int fai_cmpSpecialQ(const void* a, const void* b) { return fai_cmpSpecial(a, b, g_faiSortVocab); }
 
 static void fai_modelFree(FaiModel* m) {
+    uint64_t i;
     if (m == NULL) return;
+    if (m->tensors) for (i = 0; i < m->tensorCount; i++) free(m->tensors[i].owned);
     free(m->tensors); free(m->layers); free(m->chatTemplate);
     free(m->vocab.tokens); free(m->vocab.types); free(m->vocab.scores); free(m->vocab.merges); free(m->vocab.special);
     free(m->vocab.tokenIds.slots); free(m->vocab.mergeRanks.slots);
@@ -762,6 +931,20 @@ static FaiModel* fai_modelLoad(const char* path, FaiError* e) {
         if (fai_keyEq(k, kn, "tokenizer.ggml.unknown_token_id")) { m->vocab.unk = (int32_t)fai_number(&r, t); continue; }
         if (fai_keyEq(k, kn, "tokenizer.ggml.padding_token_id")) { m->vocab.pad = (int32_t)fai_number(&r, t); continue; }
         if (fai_keyEq(k, kn, "tokenizer.ggml.add_bos_token")) { m->vocab.addBos = fai_number(&r, t) != 0; continue; }
+        if (fai_keyEq(k, kn, "tokenizer.ggml.pre") && t == GG_STR) { uint64_t n; const char* s = fai_str(&r, &n); if (n >= sizeof m->pre) n = sizeof m->pre - 1; memcpy(m->pre, s, n); m->pre[n] = 0; continue; }
+        if (arch[0] && kn > strlen(arch) && memcmp(k, arch, strlen(arch)) == 0 && t == GG_ARR &&
+            (fai_keyIs(k, kn, arch, ".attention.head_count_kv") || fai_keyIs(k, kn, arch, ".attention.sliding_window_pattern"))) {
+            /* a value per layer */
+            int kvs = fai_keyIs(k, kn, arch, ".attention.head_count_kv");
+            uint32_t et = fai_u32(&r);
+            uint64_t n = fai_u64(&r);
+            for (j = 0; j < n && !r.bad; j++) {
+                int v = (int)fai_number(&r, et);
+                if (j < FAI_MAX_LAYERS) { if (kvs) m->headKvOf[j] = v; else m->swaOf[j] = v; }
+            }
+            if (kvs) m->headKvArray = 1; else m->swaArray = 1;
+            continue;
+        }
         if (arch[0] && kn > strlen(arch) && memcmp(k, arch, strlen(arch)) == 0 && t != GG_ARR && t != GG_STR) {
             double v = fai_number(&r, t);
             if (fai_keyIs(k, kn, arch, ".block_count")) m->nLayer = (int)v;
@@ -769,24 +952,42 @@ static FaiModel* fai_modelLoad(const char* path, FaiError* e) {
             else if (fai_keyIs(k, kn, arch, ".feed_forward_length")) m->nFf = (int)v;
             else if (fai_keyIs(k, kn, arch, ".attention.head_count")) m->nHead = (int)v;
             else if (fai_keyIs(k, kn, arch, ".attention.head_count_kv")) m->nHeadKv = (int)v;
+            else if (fai_keyIs(k, kn, arch, ".attention.key_length")) m->headDim = (int)v;
             else if (fai_keyIs(k, kn, arch, ".context_length")) m->ctxTrain = (int)v;
             else if (fai_keyIs(k, kn, arch, ".rope.freq_base")) m->ropeBase = (float)v;
+            else if (fai_keyIs(k, kn, arch, ".rope.freq_base_swa")) m->ropeBaseSwa = (float)v;
             else if (fai_keyIs(k, kn, arch, ".attention.layer_norm_rms_epsilon")) m->eps = (float)v;
-            else if (fai_keyIs(k, kn, arch, ".rope.dimension_count")) m->headDim = (int)v;
+            else if (fai_keyIs(k, kn, arch, ".rope.dimension_count")) m->nRot = (int)v;
+            else if (fai_keyIs(k, kn, arch, ".attention.sliding_window")) m->swa = (int)v;
+            else if (fai_keyIs(k, kn, arch, ".ssm.conv_kernel")) m->ssmConvK = (int)v;
+            else if (fai_keyIs(k, kn, arch, ".ssm.state_size")) m->ssmState = (int)v;
+            else if (fai_keyIs(k, kn, arch, ".ssm.group_count")) m->ssmGroups = (int)v;
+            else if (fai_keyIs(k, kn, arch, ".ssm.time_step_rank")) m->ssmVHeads = (int)v;
+            else if (fai_keyIs(k, kn, arch, ".ssm.inner_size")) m->ssmInner = (int)v;
+            else if (fai_keyIs(k, kn, arch, ".full_attention_interval")) m->fullEvery = (int)v;
+            else if (fai_keyIs(k, kn, arch, ".shortconv.l_cache")) m->convL = (int)v;
             continue;
         }
         (void)key;
         fai_skipValue(&r, t);
     }
     if (r.bad) { fai_fail(e, "The model file '%s' is broken (its header).", path); fai_modelFree(m); return NULL; }
-    if (strcmp(m->arch, "qwen2") == 0) m->ropeNeox = 1;
-    else if (strcmp(m->arch, "llama") == 0) m->ropeNeox = 0;
-    else { fai_fail(e, "The architecture '%s' is not supported (qwen2 and llama are).", m->arch); fai_modelFree(m); return NULL; }
-    if (m->nHeadKv == 0) m->nHeadKv = m->nHead;
-    if (m->nLayer <= 0 || m->nEmbd <= 0 || m->nHead <= 0 || m->nFf <= 0 || m->nEmbd % m->nHead != 0 || m->nHead % m->nHeadKv != 0) {
+    m->ropeNeox = 1;
+    if (strcmp(m->arch, "qwen2") == 0) m->archId = FAI_ARCH_QWEN2;
+    else if (strcmp(m->arch, "llama") == 0) { m->archId = FAI_ARCH_LLAMA; m->ropeNeox = 0; }
+    else if (strcmp(m->arch, "qwen3") == 0) m->archId = FAI_ARCH_QWEN3;
+    else if (strcmp(m->arch, "qwen35") == 0) m->archId = FAI_ARCH_QWEN35;
+    else if (strcmp(m->arch, "lfm3") == 0) m->archId = FAI_ARCH_LFM3;
+    else { fai_fail(e, "The architecture '%s' is not supported (qwen2, qwen3, qwen35, llama and lfm3 are).", m->arch); fai_modelFree(m); return NULL; }
+    if (m->nLayer > FAI_MAX_LAYERS) { fai_fail(e, "The model file '%s' has too many layers.", path); fai_modelFree(m); return NULL; }
+    if (m->nHeadKv == 0 && !m->headKvArray) m->nHeadKv = m->nHead;
+    if (m->headDim == 0 && m->nHead > 0) m->headDim = m->nEmbd / m->nHead;
+    if (m->nRot == 0 || m->nRot > m->headDim) m->nRot = m->headDim;
+    if (m->ropeBaseSwa == 0) m->ropeBaseSwa = m->ropeBase;
+    if (m->fullEvery <= 0) m->fullEvery = 4;
+    if (m->nLayer <= 0 || m->nEmbd <= 0 || m->nHead <= 0 || m->nFf <= 0 || m->headDim <= 0 || (m->headDim & 1)) {
         fai_fail(e, "The model file '%s' lacks the sizes of the model.", path); fai_modelFree(m); return NULL;
     }
-    if (m->headDim == 0 || m->headDim != m->nEmbd / m->nHead) m->headDim = m->nEmbd / m->nHead;
     if (m->vocab.tokens == NULL) { fai_fail(e, "The model file '%s' has no tokenizer.", path); fai_modelFree(m); return NULL; }
 
     /* the tensors */
@@ -812,29 +1013,73 @@ static FaiModel* fai_modelLoad(const char* path, FaiError* e) {
     for (i = 0; i < m->tensorCount; i++) {
         FaiTensor* t = &m->tensors[i];
         size_t bytes = fai_rowBytes(t->type, t->ne[0]) * (size_t)(t->ne[1] * t->ne[2] * t->ne[3]);
-        if (t->type != FAI_F32 && t->type != FAI_F16 && t->type != FAI_Q8_0 && t->type != FAI_Q4_0) {
+        if (fai_rowBytes(t->type, FAI_QKK) == 0) {
             char text[160];
             snprintf(text, sizeof text, "%s (type %d)", t->name, t->type);
-            fai_fail(e, "The weights %s are of a kind that is not supported (F32, F16, Q8_0 and Q4_0 are: take a Q8_0 or Q4_0 file).", text);
+            fai_fail(e, "The weights %s are of a kind that is not supported (F32, F16, Q8_0, Q4_0, Q4_1, Q4_K, Q5_K and Q6_K are: take a Q8_0, Q4_0 or Q4_K_M file).", text);
             fai_modelFree(m); return NULL;
         }
-        if (t->type != FAI_F32 && t->type != FAI_F16 && t->ne[0] % FAI_QK != 0) { fai_fail(e, "The tensor %s has an odd size.", t->name); fai_modelFree(m); return NULL; }
+        if (t->type != FAI_F32 && t->type != FAI_F16 && t->ne[0] % (t->type >= FAI_Q4_K ? FAI_QKK : FAI_QK) != 0) { fai_fail(e, "The tensor %s has an odd size.", t->name); fai_modelFree(m); return NULL; }
         if (dataStart + t->offset + bytes > m->file.size) { fai_fail(e, "The model file '%s' is cut off.", path); fai_modelFree(m); return NULL; }
         t->data = m->file.base + dataStart + t->offset;
+    }
+    /* weights of the other quantizations (Q4_1, Q4_K, Q5_K, Q6_K: in the mixed files) become Q8_0 once: the fast products are those of Q8_0 and Q4_0 */
+    for (i = 0; i < m->tensorCount; i++) {
+        FaiTensor* t = &m->tensors[i];
+        int64_t rows = t->ne[1] * t->ne[2] * t->ne[3], r;
+        size_t rb;
+        float* tmp;
+        if (t->type != FAI_Q4_1 && t->type != FAI_Q4_K && t->type != FAI_Q5_K && t->type != FAI_Q6_K) continue;
+        rb = fai_rowBytes(FAI_Q8_0, t->ne[0]);
+        t->owned = (uint8_t*)malloc(rb * (size_t)rows);
+        tmp = (float*)malloc((size_t)t->ne[0] * sizeof(float));
+        if (t->owned == NULL || tmp == NULL) { free(tmp); fai_fail(e, "Out of memory: the model does not fit.", NULL); fai_modelFree(m); return NULL; }
+        for (r = 0; r < rows; r++) { fai_dequantRow(t, r, tmp); fai_quantQ8(tmp, t->ne[0], (FaiQ8*)(t->owned + rb * (size_t)r)); }
+        free(tmp);
+        t->data = t->owned;
+        t->type = FAI_Q8_0;
     }
     m->tokEmbd = fai_tensor(m, "token_embd.weight");
     m->outNorm = fai_tensor(m, "output_norm.weight");
     m->output = fai_tensor(m, "output.weight");
+    m->ropeFreqs = fai_tensor(m, "rope_freqs.weight");
     if (m->output == NULL) m->output = m->tokEmbd;   /* tied */
     m->layers = (FaiLayer*)calloc((size_t)m->nLayer, sizeof(FaiLayer));
     if (m->layers == NULL || m->tokEmbd == NULL || m->outNorm == NULL) { fai_fail(e, "The model file '%s' lacks weights.", path); fai_modelFree(m); return NULL; }
     for (i = 0; i < (uint64_t)m->nLayer; i++) {
         FaiLayer* L = &m->layers[i];
         char n[96];
+        int arch = m->archId;
+        L->nHeadKv = m->headKvArray ? m->headKvOf[i] : m->nHeadKv;
+        if (arch == FAI_ARCH_QWEN35) L->mix = (i + 1) % (uint64_t)m->fullEvery != 0 ? FAI_MIX_DELTA : FAI_MIX_ATTN;
+        else if (arch == FAI_ARCH_LFM3) L->mix = L->nHeadKv == 0 ? FAI_MIX_CONV : (m->swaArray && m->swaOf[i] ? FAI_MIX_SWA : FAI_MIX_ATTN);
+        else L->mix = FAI_MIX_ATTN;
 #define FAI_T(field, part, need) snprintf(n, sizeof n, "blk.%d.%s", (int)i, part); L->field = fai_tensor(m, n); if ((need) && L->field == NULL) { fai_fail(e, "The model lacks the weights %s.", n); fai_modelFree(m); return NULL; }
-        FAI_T(attnNorm, "attn_norm.weight", 1) FAI_T(wq, "attn_q.weight", 1) FAI_T(wk, "attn_k.weight", 1) FAI_T(wv, "attn_v.weight", 1)
-        FAI_T(wo, "attn_output.weight", 1) FAI_T(bq, "attn_q.bias", 0) FAI_T(bk, "attn_k.bias", 0) FAI_T(bv, "attn_v.bias", 0)
-        FAI_T(ffnNorm, "ffn_norm.weight", 1) FAI_T(gate, "ffn_gate.weight", 1) FAI_T(up, "ffn_up.weight", 1) FAI_T(down, "ffn_down.weight", 1)
+        FAI_T(attnNorm, "attn_norm.weight", 1)
+        FAI_T(gate, "ffn_gate.weight", 1) FAI_T(up, "ffn_up.weight", 1) FAI_T(down, "ffn_down.weight", 1)
+        if (arch == FAI_ARCH_QWEN35) { FAI_T(ffnNorm, "post_attention_norm.weight", 1) }   /* (named post attention, it is the norm before the feed forward) */
+        else { FAI_T(ffnNorm, "ffn_norm.weight", 1) }
+        if (arch == FAI_ARCH_LFM3) { FAI_T(postAttnNorm, "post_attention_norm.weight", 0) FAI_T(postFfnNorm, "post_ffw_norm.weight", 0) }
+        if (L->mix == FAI_MIX_ATTN || L->mix == FAI_MIX_SWA) {
+            FAI_T(wq, "attn_q.weight", 1) FAI_T(wk, "attn_k.weight", 1) FAI_T(wv, "attn_v.weight", 1) FAI_T(wo, "attn_output.weight", 1)
+            FAI_T(bq, "attn_q.bias", 0) FAI_T(bk, "attn_k.bias", 0) FAI_T(bv, "attn_v.bias", 0)
+            FAI_T(qNorm, "attn_q_norm.weight", arch == FAI_ARCH_QWEN3 || arch == FAI_ARCH_QWEN35 || arch == FAI_ARCH_LFM3)
+            FAI_T(kNorm, "attn_k_norm.weight", arch == FAI_ARCH_QWEN3 || arch == FAI_ARCH_QWEN35 || arch == FAI_ARCH_LFM3)
+            if (arch == FAI_ARCH_LFM3) { FAI_T(attnGate, "attn_gate.weight", 1) }
+            if (L->nHeadKv <= 0 || m->nHead % L->nHeadKv != 0) { fai_fail(e, "The model file '%s' has an odd number of heads.", path); fai_modelFree(m); return NULL; }
+        }
+        else if (L->mix == FAI_MIX_DELTA) {
+            FAI_T(ssmQkv, "attn_qkv.weight", 1) FAI_T(attnGate, "attn_gate.weight", 1) FAI_T(ssmConv, "ssm_conv1d.weight", 1) FAI_T(ssmDt, "ssm_dt.bias", 1)
+            FAI_T(ssmA, "ssm_a", 1) FAI_T(ssmBeta, "ssm_beta.weight", 1) FAI_T(ssmAlpha, "ssm_alpha.weight", 1) FAI_T(ssmNorm, "ssm_norm.weight", 1) FAI_T(ssmOut, "ssm_out.weight", 1)
+            if (m->ssmState <= 0 || m->ssmGroups <= 0 || m->ssmVHeads <= 0 || m->ssmVHeads % m->ssmGroups != 0 || m->ssmConvK < 2 || m->ssmInner != m->ssmState * m->ssmVHeads ||
+                L->ssmConv->type != FAI_F32 || L->ssmConv->ne[0] != m->ssmConvK) {
+                fai_fail(e, "The model file '%s' has a delta net of sizes that are not supported.", path); fai_modelFree(m); return NULL;
+            }
+        }
+        else {
+            FAI_T(convW, "shortconv.conv.weight", 1) FAI_T(convIn, "shortconv.in_proj.weight", 1) FAI_T(convOut, "shortconv.out_proj.weight", 1)
+            if (m->convL < 2 || L->convW->type != FAI_F32 || L->convW->ne[0] != m->convL) { fai_fail(e, "The model file '%s' has a convolution that is not supported.", path); fai_modelFree(m); return NULL; }
+        }
 #undef FAI_T
     }
 
@@ -911,6 +1156,7 @@ static int fai_isDigit(uint32_t c) {
            c == 0xB2 || c == 0xB3 || c == 0xB9 || (c >= 0xBC && c <= 0xBE) || (c >= 0x2070 && c <= 0x2079 && c != 0x2071 && c != 0x2072 && c != 0x2073) || (c >= 0x2080 && c <= 0x2089) ||
            (c >= 0x2150 && c <= 0x2189) || (c >= 0x2460 && c <= 0x249B) || (c >= 0x2776 && c <= 0x2793) || (c >= 0x3007 && c == 0x3007);
 }
+static int g_faiMarksAreLetters;   /* qwen35: [\\p{L}\\p{M}]+ (set by the tokenizer before it splits) */
 static int fai_isLetter(uint32_t c) {
     if (c < 0x80) return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z');
     if (fai_isSpace(c) || fai_isDigit(c)) return 0;
@@ -920,9 +1166,9 @@ static int fai_isLetter(uint32_t c) {
     if (c >= 0x3000 && c <= 0x303F) return c == 0x3005 || c == 0x3006 || (c >= 0x3031 && c <= 0x3035) || c == 0x303B || c == 0x303C;
     if (c >= 0xFF00 && c <= 0xFF20) return 0;
     if ((c >= 0xFF3B && c <= 0xFF40) || (c >= 0xFF5B && c <= 0xFF65)) return 0;
-    if ((c >= 0x0300 && c <= 0x036F) || (c >= 0x0483 && c <= 0x0489)) return 0;   /* combining marks (\p{M}) */
+    if ((c >= 0x0300 && c <= 0x036F) || (c >= 0x0483 && c <= 0x0489)) return g_faiMarksAreLetters;   /* combining marks (\p{M}) */
     if (c >= 0x1F000 && c <= 0x1FFFF) return 0;   /* emoji and symbols */
-    if ((c >= 0xFE00 && c <= 0xFE0F) || c == 0x200D) return 0;
+    if ((c >= 0xFE00 && c <= 0xFE0F) || c == 0x200D) return g_faiMarksAreLetters && c != 0x200D;
     if (c == 0x037E || c == 0x0387 || (c >= 0x055A && c <= 0x055F) || c == 0x0589 || c == 0x05BE || c == 0x05C0 || c == 0x05C3 || c == 0x05C6 || c == 0x05F3 || c == 0x05F4 ||
         c == 0x060C || c == 0x061B || c == 0x061F || c == 0x06D4 || c == 0x0964 || c == 0x0965 || c == 0x0E4F || c == 0x0E5A || c == 0x0E5B) return 0;
     return 1;
@@ -1010,14 +1256,14 @@ static int fai_push(FaiTokens* v, int32_t t) {
 
 /* BPE of one piece (already in the byte characters): the pair of the lowest rank is merged until no pair is in the merges. */
 typedef struct FaiSym { const char* p; uint32_t n; } FaiSym;
-static int fai_bpeWord(const FaiVocab* v, const char* w, size_t n, FaiTokens* out) {
+static int fai_bpeWord(const FaiVocab* v, const char* w, size_t n, int ignoreMerges, FaiTokens* out) {
     FaiSym small[64];
     FaiSym* sym = n <= 64 ? small : (FaiSym*)malloc(n * sizeof(FaiSym));
     size_t count = 0, i;
     char buf[512];
     int64_t whole;
     if (sym == NULL) return 0;
-    whole = fai_mapFind(&v->tokenIds, w, n);
+    whole = ignoreMerges ? fai_mapFind(&v->tokenIds, w, n) : -1;
     if (whole >= 0) { if (sym != small) free(sym); return fai_push(out, (int32_t)whole); }
     for (i = 0; i < n;) {
         size_t l;
@@ -1059,7 +1305,7 @@ static int fai_bpeWord(const FaiVocab* v, const char* w, size_t n, FaiTokens* ou
     return 1;
 }
 
-typedef struct FaiBpeCtx { const FaiVocab* v; const uint8_t* s; FaiTokens* out; int ok; } FaiBpeCtx;
+typedef struct FaiBpeCtx { const FaiVocab* v; const uint8_t* s; FaiTokens* out; int ok, ignoreMerges; } FaiBpeCtx;
 static void fai_bpePiece(void* a, size_t from, size_t to) {
     FaiBpeCtx* c = (FaiBpeCtx*)a;
     char small[256];
@@ -1067,7 +1313,7 @@ static void fai_bpePiece(void* a, size_t from, size_t to) {
     char* w = cap <= sizeof small ? small : (char*)malloc(cap);
     if (w == NULL) { c->ok = 0; return; }
     for (i = from; i < to; i++) n += fai_utf8Put(w + n, g_faiByteChar[c->s[i]]);
-    if (!fai_bpeWord(c->v, w, n, c->out)) c->ok = 0;
+    if (!fai_bpeWord(c->v, w, n, c->ignoreMerges, c->out)) c->ok = 0;
     if (w != small) free(w);
 }
 
@@ -1136,8 +1382,13 @@ static int fai_tokenize(const FaiModel* m, const char* text, size_t n, int speci
         if (next > start) {
             if (v->kind == FAI_VOCAB_BPE) {
                 FaiBpeCtx c;
-                c.v = v; c.s = s + start; c.out = out; c.ok = 1;
-                fai_pretokenize(s + start, next - start, strcmp(m->arch, "llama") == 0 ? 3 : 1, fai_bpePiece, &c);
+                /* the pre-tokenizer of the file: llama 3 and lfm take up to 3 digits in a row and the whole word when it is a token; qwen 3.5 counts the
+                 * combining marks as letters */
+                int llama3 = strcmp(m->pre, "llama-bpe") == 0 || strcmp(m->pre, "llama3") == 0 || strcmp(m->pre, "lfm2") == 0 || strcmp(m->pre, "smollm") == 0 ||
+                             (m->pre[0] == 0 && m->archId == FAI_ARCH_LLAMA);
+                c.v = v; c.s = s + start; c.out = out; c.ok = 1; c.ignoreMerges = llama3;
+                g_faiMarksAreLetters = strcmp(m->pre, "qwen35") == 0;
+                fai_pretokenize(s + start, next - start, llama3 ? 3 : 1, fai_bpePiece, &c);
                 if (!c.ok) return 0;
             }
             else if (!fai_spmText(v, s + start, next - start, first, out)) return 0;
@@ -1184,17 +1435,27 @@ static size_t fai_tokenBytes(const FaiModel* m, int32_t id, int special, char* o
 /* The tokens of a prompt go through the layers together, this many at a time: each row of weights is read once for all of them. */
 #define FAI_BATCH 16
 
-/* ---- a session: the cache of keys and values, the buffers ------------------------------------------------------------------------------------------- */
+/* ---- a session: the cache of keys and values, the states of the recurrent layers, the buffers ---------------------------------------------------------
+ * The attention layers keep the keys and values of every position: going back to an earlier position is free. The delta net and the convolution keep a
+ * state that every token changes: going back needs a copy of it, the checkpoint (taken after a prompt: a choice of options and the next question start
+ * from there). */
 typedef struct FaiSession {
     const FaiModel* m;
     FaiPool* pool;
     int ctx;              /* the positions of the cache */
-    float* keys;          /* [layer][pos][kvDim] */
-    float* values;
-    int32_t* cached;      /* the tokens whose keys and values are in the cache */
+    float* kv;            /* the keys and values of the attention layers: [layer: kvOff][pos][kvDim] keys, then values */
+    size_t* kvOff;        /* per layer: where its keys start in kv (its values follow after ctx * kvDim) */
+    float* rs;            /* the recurrent states: per delta / conv layer its convolution window, then (delta) the state of each head */
+    size_t* rsOff;
+    size_t rsSize;
+    float* checkpoint;    /* a copy of rs ... */
+    float* checkpointLogits;
+    int checkpointPos;    /* ... after this many tokens (-1: none) */
+    int32_t* cached;      /* the tokens whose keys, values and states are in the cache */
     int cachedCount;
-    /* the buffers of one step */
-    float *x, *xb, *xb2, *q, *k, *v, *att, *hb, *hb2, *logits, *ropeCos, *ropeSin;   /* FAI_BATCH tokens each (att: the heads of one) */
+    /* the buffers of one step (FAI_BATCH tokens each) */
+    float *x, *xb, *xb2, *q, *k, *v, *g, *ao, *att, *hb, *hb2, *mix, *z, *logits, *ropeCos, *ropeSin, *ropeCosSwa, *ropeSinSwa;
+    int qWidth, mixWidth;
     FaiQ8* xq;            /* FAI_BATCH rows of the largest width */
     int xqStride;         /* blocks per row of xq */
     int logitsValid;      /* the logits belong to the last cached token */
@@ -1203,43 +1464,86 @@ typedef struct FaiSession {
 
 static void fai_sessionFree(FaiSession* s) {
     if (s == NULL) return;
-    free(s->keys); free(s->values); free(s->cached);
-    free(s->x); free(s->xb); free(s->xb2); free(s->q); free(s->k); free(s->v); free(s->att); free(s->hb); free(s->hb2); free(s->logits);
-    free(s->ropeCos); free(s->ropeSin); free(s->xq);
+    free(s->kv); free(s->kvOff); free(s->rs); free(s->rsOff); free(s->checkpoint); free(s->checkpointLogits); free(s->cached);
+    free(s->x); free(s->xb); free(s->xb2); free(s->q); free(s->k); free(s->v); free(s->g); free(s->ao); free(s->att); free(s->hb); free(s->hb2); free(s->mix); free(s->z);
+    free(s->logits); free(s->ropeCos); free(s->ropeSin); free(s->ropeCosSwa); free(s->ropeSinSwa); free(s->xq);
     free(s);
+}
+
+static int fai_imax(int a, int b) { return a > b ? a : b; }
+
+/* The cosines and sines of the rotary positions: angle = pos * base^(-2i / nRot) / factor_i. */
+static int fai_ropeTable(const FaiModel* m, int ctx, float base, const FaiTensor* factors, float** cosOut, float** sinOut) {
+    int half = m->nRot / 2, p, i;
+    float *c = (float*)malloc((size_t)ctx * (size_t)half * sizeof(float)), *sn = (float*)malloc((size_t)ctx * (size_t)half * sizeof(float));
+    const float* f = factors && factors->type == FAI_F32 && factors->ne[0] >= half ? (const float*)factors->data : NULL;
+    if (c == NULL || sn == NULL) { free(c); free(sn); return 0; }
+    for (p = 0; p < ctx; p++)
+        for (i = 0; i < half; i++) {
+            double theta = (double)p * pow((double)base, -2.0 * i / (double)m->nRot) / (f ? (double)f[i] : 1.0);
+            c[(size_t)p * half + i] = (float)cos(theta); sn[(size_t)p * half + i] = (float)sin(theta);
+        }
+    *cosOut = c; *sinOut = sn;
+    return 1;
 }
 
 static FaiSession* fai_sessionNew(const FaiModel* m, FaiPool* pool, int ctx, FaiError* e) {
     FaiSession* s = (FaiSession*)calloc(1, sizeof(FaiSession));
-    int kvDim = m->nHeadKv * m->headDim, maxDim = m->nEmbd > m->nFf ? m->nEmbd : m->nFf, half = m->headDim / 2, p, i;
-    size_t cache;
+    int hd = m->headDim, qd = m->nHead * hd, l, maxKv = 0, maxDim, anySwa = 0, anyFull = 0;
+    size_t kvTotal = 0, rsTotal = 0, B = FAI_BATCH;
+    int convDim = m->ssmGroups * m->ssmState * 2 + m->ssmInner;
     if (s == NULL) { fai_fail(e, "Out of memory.", NULL); return NULL; }
     if (ctx <= 0) ctx = 2048;
     if (m->ctxTrain > 0 && ctx > m->ctxTrain) ctx = m->ctxTrain;
-    s->m = m; s->pool = pool; s->ctx = ctx; s->rng = 0x9E3779B97F4A7C15ull;
-    cache = (size_t)m->nLayer * (size_t)ctx * (size_t)kvDim;
-    s->keys = (float*)malloc(cache * sizeof(float));
-    s->values = (float*)malloc(cache * sizeof(float));
-    s->cached = (int32_t*)malloc((size_t)ctx * sizeof(int32_t));
-    {
-        size_t B = FAI_BATCH;
-        s->x = (float*)calloc(B * (size_t)m->nEmbd, sizeof(float)); s->xb = (float*)calloc(B * (size_t)m->nEmbd, sizeof(float)); s->xb2 = (float*)calloc(B * (size_t)m->nEmbd, sizeof(float));
-        s->q = (float*)calloc(B * (size_t)m->nEmbd, sizeof(float)); s->k = (float*)calloc(B * (size_t)kvDim, sizeof(float)); s->v = (float*)calloc(B * (size_t)kvDim, sizeof(float));
-        s->att = (float*)calloc((size_t)m->nHead * (size_t)ctx, sizeof(float));
-        s->hb = (float*)calloc(B * (size_t)m->nFf, sizeof(float)); s->hb2 = (float*)calloc(B * (size_t)m->nFf, sizeof(float));
-        s->logits = (float*)calloc((size_t)m->output->ne[1], sizeof(float));
-        s->xqStride = maxDim / FAI_QK + 1;
-        s->xq = (FaiQ8*)calloc(B * (size_t)s->xqStride, sizeof(FaiQ8));
+    s->m = m; s->pool = pool; s->ctx = ctx; s->rng = 0x9E3779B97F4A7C15ull; s->checkpointPos = -1;
+    s->kvOff = (size_t*)calloc((size_t)m->nLayer, sizeof(size_t));
+    s->rsOff = (size_t*)calloc((size_t)m->nLayer, sizeof(size_t));
+    if (!s->kvOff || !s->rsOff) { fai_sessionFree(s); fai_fail(e, "Out of memory.", NULL); return NULL; }
+    for (l = 0; l < m->nLayer; l++) {
+        const FaiLayer* L = &m->layers[l];
+        if (L->mix == FAI_MIX_ATTN || L->mix == FAI_MIX_SWA) {
+            int kvDim = L->nHeadKv * hd;
+            s->kvOff[l] = kvTotal;
+            kvTotal += 2 * (size_t)ctx * (size_t)kvDim;
+            maxKv = fai_imax(maxKv, kvDim);
+            if (L->mix == FAI_MIX_SWA) anySwa = 1; else anyFull = 1;
+        }
+        else if (L->mix == FAI_MIX_DELTA) {
+            s->rsOff[l] = rsTotal;
+            rsTotal += (size_t)(m->ssmConvK - 1) * (size_t)convDim + (size_t)m->ssmVHeads * (size_t)m->ssmState * (size_t)m->ssmState;
+        }
+        else {
+            s->rsOff[l] = rsTotal;
+            rsTotal += (size_t)(m->convL - 1) * (size_t)m->nEmbd;
+        }
     }
-    s->ropeCos = (float*)malloc((size_t)ctx * (size_t)half * sizeof(float)); s->ropeSin = (float*)malloc((size_t)ctx * (size_t)half * sizeof(float));
-    if (!s->keys || !s->values || !s->cached || !s->x || !s->xb || !s->xb2 || !s->q || !s->k || !s->v || !s->att || !s->hb || !s->hb2 || !s->logits || !s->xq || !s->ropeCos || !s->ropeSin) {
+    s->rsSize = rsTotal;
+    s->qWidth = m->archId == FAI_ARCH_QWEN35 ? 2 * qd : qd;   /* qwen35: the query and its gate per head */
+    s->mixWidth = fai_imax(fai_imax(convDim, 3 * m->nEmbd), m->ssmInner);
+    maxDim = fai_imax(fai_imax(fai_imax(m->nEmbd, m->nFf), qd), m->ssmInner);
+    s->kv = kvTotal ? (float*)malloc(kvTotal * sizeof(float)) : NULL;
+    s->rs = rsTotal ? (float*)calloc(rsTotal, sizeof(float)) : NULL;
+    s->checkpoint = rsTotal ? (float*)malloc(rsTotal * sizeof(float)) : NULL;
+    s->cached = (int32_t*)malloc((size_t)ctx * sizeof(int32_t));
+    s->x = (float*)calloc(B * (size_t)m->nEmbd, sizeof(float)); s->xb = (float*)calloc(B * (size_t)m->nEmbd, sizeof(float)); s->xb2 = (float*)calloc(B * (size_t)m->nEmbd, sizeof(float));
+    s->q = (float*)calloc(B * (size_t)s->qWidth, sizeof(float)); s->g = (float*)calloc(B * (size_t)fai_imax(qd, m->nHead), sizeof(float));
+    s->k = (float*)calloc(B * (size_t)fai_imax(maxKv, 1), sizeof(float)); s->v = (float*)calloc(B * (size_t)fai_imax(maxKv, 1), sizeof(float));
+    s->ao = (float*)calloc(B * (size_t)fai_imax(qd, m->ssmInner), sizeof(float));
+    s->att = (float*)calloc((size_t)m->nHead * (size_t)ctx, sizeof(float));
+    s->hb = (float*)calloc(B * (size_t)m->nFf, sizeof(float)); s->hb2 = (float*)calloc(B * (size_t)m->nFf, sizeof(float));
+    s->mix = (float*)calloc(B * (size_t)s->mixWidth, sizeof(float)); s->z = (float*)calloc(B * (size_t)fai_imax(m->ssmInner, 1), sizeof(float));
+    s->logits = (float*)calloc((size_t)m->output->ne[1], sizeof(float));
+    s->checkpointLogits = (float*)calloc((size_t)m->output->ne[1], sizeof(float));
+    s->xqStride = maxDim / FAI_QK + 1;
+    s->xq = (FaiQ8*)calloc(B * (size_t)s->xqStride, sizeof(FaiQ8));
+    if ((kvTotal && !s->kv) || (rsTotal && (!s->rs || !s->checkpoint)) || !s->cached || !s->x || !s->xb || !s->xb2 || !s->q || !s->g || !s->k || !s->v || !s->ao || !s->att ||
+        !s->hb || !s->hb2 || !s->mix || !s->z || !s->logits || !s->checkpointLogits || !s->xq) {
         fai_sessionFree(s); fai_fail(e, "Out of memory: the context does not fit (a smaller one needs less).", NULL); return NULL;
     }
-    for (p = 0; p < ctx; p++)
-        for (i = 0; i < half; i++) {
-            double theta = (double)p * pow((double)m->ropeBase, -2.0 * i / (double)m->headDim);
-            s->ropeCos[(size_t)p * half + i] = (float)cos(theta); s->ropeSin[(size_t)p * half + i] = (float)sin(theta);
-        }
+    if ((anyFull || m->archId != FAI_ARCH_LFM3) && !fai_ropeTable(m, ctx, m->ropeBase, m->archId == FAI_ARCH_LFM3 ? m->ropeFreqs : NULL, &s->ropeCos, &s->ropeSin)) {
+        fai_sessionFree(s); fai_fail(e, "Out of memory.", NULL); return NULL;
+    }
+    if (anySwa && !fai_ropeTable(m, ctx, m->ropeBaseSwa, NULL, &s->ropeCosSwa, &s->ropeSinSwa)) { fai_sessionFree(s); fai_fail(e, "Out of memory.", NULL); return NULL; }
     return s;
 }
 
@@ -1257,17 +1561,19 @@ static void fai_rmsnorm(float* out, const float* x, const FaiTensor* w, int n, f
 static void fai_matmulN(FaiSession* s, const FaiTensor* w, const float* x, int64_t xStride, float* out, int64_t outStride, const FaiTensor* bias, int count) {
     FaiMatJob j;
     int b;
-    if (w->type == FAI_Q8_0 || w->type == FAI_Q4_0)
+    if (w->type != FAI_F32 && w->type != FAI_F16)
         for (b = 0; b < count; b++) fai_quantQ8(x + b * xStride, w->ne[0], s->xq + b * s->xqStride);
     j.w = w; j.x = x; j.xq = s->xq; j.out = out; j.bias = bias ? (const float*)bias->data : NULL;
     j.count = count; j.xStride = xStride; j.xqStride = s->xqStride; j.outStride = outStride;
     fai_run(s->pool, w->ne[1], fai_matJob, &j);
 }
 
-static void fai_rope(const FaiSession* s, float* vec, int heads, int pos) {
+/* The rotary positions of `heads` heads (the first nRot values of each). */
+static void fai_rope(const FaiSession* s, float* vec, int heads, int pos, int swa) {
     const FaiModel* m = s->m;
-    int hd = m->headDim, half = hd / 2, h, i;
-    const float *c = s->ropeCos + (size_t)pos * half, *sn = s->ropeSin + (size_t)pos * half;
+    int hd = m->headDim, half = m->nRot / 2, h, i;
+    const float* c = (swa ? s->ropeCosSwa : s->ropeCos) + (size_t)pos * half;
+    const float* sn = (swa ? s->ropeSinSwa : s->ropeSin) + (size_t)pos * half;
     for (h = 0; h < heads; h++) {
         float* v = vec + h * hd;
         if (m->ropeNeox)
@@ -1282,64 +1588,206 @@ static void fai_attJob(void* a, int64_t from, int64_t to) {
     FaiAttJob* j = (FaiAttJob*)a;
     FaiSession* s = j->s;
     const FaiModel* m = s->m;
-    int hd = m->headDim, kvDim = m->nHeadKv * hd, group = m->nHead / m->nHeadKv, t;
+    const FaiLayer* L = &m->layers[j->layer];
+    int hd = m->headDim, kvDim = L->nHeadKv * hd, group = m->nHead / L->nHeadKv, t, first = 0;
     float scale = 1.0f / sqrtf((float)hd);
-    size_t base = (size_t)j->layer * (size_t)s->ctx * (size_t)kvDim;
+    const float* keys = s->kv + s->kvOff[j->layer];
+    const float* values = keys + (size_t)s->ctx * (size_t)kvDim;
     int64_t h;
+    if (L->mix == FAI_MIX_SWA && m->swa > 0 && j->pos - m->swa + 1 > 0) first = j->pos - m->swa + 1;
     for (h = from; h < to; h++) {
         const float* q = j->q + h * hd;
         float* att = s->att + h * s->ctx;
         float* out = j->out + h * hd;
         int kvh = (int)h / group, i;
         float maxv = -1e30f, sum = 0;
-        for (t = 0; t <= j->pos; t++) {
-            const float* k = s->keys + base + (size_t)t * kvDim + (size_t)kvh * hd;
+        for (t = first; t <= j->pos; t++) {
+            const float* k = keys + (size_t)t * kvDim + (size_t)kvh * hd;
             float d = 0;
             for (i = 0; i < hd; i++) d += q[i] * k[i];
             d *= scale; att[t] = d;
             if (d > maxv) maxv = d;
         }
-        for (t = 0; t <= j->pos; t++) { att[t] = expf(att[t] - maxv); sum += att[t]; }
+        for (t = first; t <= j->pos; t++) { att[t] = expf(att[t] - maxv); sum += att[t]; }
         for (i = 0; i < hd; i++) out[i] = 0;
-        for (t = 0; t <= j->pos; t++) {
-            const float* v = s->values + base + (size_t)t * kvDim + (size_t)kvh * hd;
-            float a = att[t] / sum;
-            for (i = 0; i < hd; i++) out[i] += a * v[i];
+        for (t = first; t <= j->pos; t++) {
+            const float* v = values + (size_t)t * kvDim + (size_t)kvh * hd;
+            float w = att[t] / sum;
+            for (i = 0; i < hd; i++) out[i] += w * v[i];
         }
     }
 }
 
-/* `count` tokens (FAI_BATCH at most) at the positions pos .. pos + count - 1: their keys and values go into the cache. `wantLogits`: the scores of the token after the
- * last one are computed (the end of a prompt, a generated token) - the others skip the largest product. */
+static float fai_sigmoid(float x) { return 1.0f / (1.0f + expf(-x)); }
+static float fai_silu(float x) { return x / (1.0f + expf(-x)); }
+static float fai_softplus(float x) { return x > 20.0f ? x : log1pf(expf(x)); }
+
+/* The attention of a layer for `count` tokens from `pos`: s->xb (normed) in, s->xb2 out. */
+static void fai_attention(FaiSession* s, int l, int count, int pos) {
+    const FaiModel* m = s->m;
+    const FaiLayer* L = &m->layers[l];
+    int n = m->nEmbd, hd = m->headDim, qd = m->nHead * hd, kvDim = L->nHeadKv * hd, qw = s->qWidth, b, h, i;
+    int swa = L->mix == FAI_MIX_SWA;
+    float* keys = s->kv + s->kvOff[l];
+    float* values = keys + (size_t)s->ctx * (size_t)kvDim;
+    fai_matmulN(s, L->wq, s->xb, n, s->q, qw, L->bq, count);
+    fai_matmulN(s, L->wk, s->xb, n, s->k, kvDim, L->bk, count);
+    fai_matmulN(s, L->wv, s->xb, n, s->v, kvDim, L->bv, count);
+    if (m->archId == FAI_ARCH_LFM3) fai_matmulN(s, L->attnGate, s->xb, n, s->g, m->nHead, NULL, count);
+    for (b = 0; b < count; b++) {
+        float* q = s->q + (size_t)b * qw;
+        float* k = s->k + (size_t)b * kvDim;
+        size_t at = (size_t)(pos + b) * (size_t)kvDim;
+        if (m->archId == FAI_ARCH_QWEN35) {
+            /* per head: hd values of the query, then hd of its gate - the queries together in front, the gates into g */
+            float* g = s->g + (size_t)b * qd;
+            for (h = 0; h < m->nHead; h++) memcpy(g + h * hd, q + h * 2 * hd + hd, (size_t)hd * sizeof(float));
+            for (h = 0; h < m->nHead; h++) memmove(q + h * hd, q + h * 2 * hd, (size_t)hd * sizeof(float));
+        }
+        if (L->qNorm) for (h = 0; h < m->nHead; h++) fai_rmsnorm(q + h * hd, q + h * hd, L->qNorm, hd, m->eps);
+        if (L->kNorm) for (h = 0; h < L->nHeadKv; h++) fai_rmsnorm(k + h * hd, k + h * hd, L->kNorm, hd, m->eps);
+        fai_rope(s, q, m->nHead, pos + b, swa);
+        fai_rope(s, k, L->nHeadKv, pos + b, swa);
+        memcpy(keys + at, k, (size_t)kvDim * sizeof(float));
+        memcpy(values + at, s->v + (size_t)b * kvDim, (size_t)kvDim * sizeof(float));
+    }
+    for (b = 0; b < count; b++) {
+        FaiAttJob aj;
+        float* out = s->ao + (size_t)b * qd;
+        aj.s = s; aj.layer = l; aj.pos = pos + b; aj.q = s->q + (size_t)b * qw; aj.out = out;
+        fai_run(s->pool, m->nHead, fai_attJob, &aj);
+        if (m->archId == FAI_ARCH_QWEN35) { const float* g = s->g + (size_t)b * qd; for (i = 0; i < qd; i++) out[i] *= fai_sigmoid(g[i]); }
+        else if (m->archId == FAI_ARCH_LFM3) {
+            const float* g = s->g + (size_t)b * m->nHead;
+            for (h = 0; h < m->nHead; h++) { float gs = fai_sigmoid(g[h]); for (i = 0; i < hd; i++) out[h * hd + i] *= gs; }
+        }
+    }
+    fai_matmulN(s, L->wo, s->ao, qd, s->xb2, n, NULL, count);
+}
+
+/* A causal convolution over the last `width` inputs of each channel: `window` holds the width - 1 before (oldest first), `w` the weights of each
+ * channel (oldest first). The window moves on by the input. */
+static void fai_convStep(float* window, const float* w, const float* in, float* out, int channels, int width) {
+    int c, i, kk = width - 1;
+    for (c = 0; c < channels; c++) {
+        float* win = window + (size_t)c * kk;
+        const float* wc = w + (size_t)c * width;
+        float sum = in[c] * wc[kk];
+        for (i = 0; i < kk; i++) sum += win[i] * wc[i];
+        for (i = 0; i + 1 < kk; i++) win[i] = win[i + 1];
+        win[kk - 1] = in[c];
+        out[c] = sum;
+    }
+}
+
+/* The gated delta net of a layer (Qwen 3.5): s->xb in, s->xb2 out. The tokens one after the other through the convolution and the states of the heads. */
+typedef struct FaiDeltaJob { FaiSession* s; float* state; const float *q, *k, *v, *gate, *beta; float* out; } FaiDeltaJob;
+static void fai_deltaJob(void* a, int64_t from, int64_t to) {
+    FaiDeltaJob* j = (FaiDeltaJob*)a;
+    const FaiModel* m = j->s->m;
+    int S = m->ssmState, i, r;
+    float scale = 1.0f / sqrtf((float)S);
+    int64_t h;
+    for (h = from; h < to; h++) {
+        /* the state of the head, stored by rows j: M[j][i] = S[i][j] */
+        float* M = j->state + (size_t)h * S * S;
+        int kh = (int)(h % m->ssmGroups);
+        const float *k = j->k + (size_t)kh * S, *q = j->q + (size_t)kh * S, *v = j->v + (size_t)h * S;
+        float decay = expf(j->gate[h]), beta = j->beta[h];
+        float* o = j->out + (size_t)h * S;
+        for (r = 0; r < S; r++) {
+            float* row = M + (size_t)r * S;
+            float dot = 0, delta;
+            for (i = 0; i < S; i++) { row[i] *= decay; dot += row[i] * k[i]; }
+            delta = (v[r] - dot) * beta;
+            dot = 0;
+            for (i = 0; i < S; i++) { row[i] += delta * k[i]; dot += row[i] * q[i]; }
+            o[r] = dot * scale;
+        }
+    }
+}
+static void fai_delta(FaiSession* s, int l, int count) {
+    const FaiModel* m = s->m;
+    const FaiLayer* L = &m->layers[l];
+    int n = m->nEmbd, S = m->ssmState, Hk = m->ssmGroups, Hv = m->ssmVHeads, keyDim = Hk * S, valueDim = Hv * S, convDim = 2 * keyDim + valueDim, mw = s->mixWidth, b, h, i;
+    float* window = s->rs + s->rsOff[l];
+    float* state = window + (size_t)(m->ssmConvK - 1) * (size_t)convDim;
+    float conv[16384];
+    float* cbuf = convDim <= (int)(sizeof conv / sizeof conv[0]) ? conv : (float*)malloc((size_t)convDim * sizeof(float));
+    float gate[256], beta[256];
+    if (cbuf == NULL || Hv > 256) return;
+    fai_matmulN(s, L->ssmQkv, s->xb, n, s->mix, mw, NULL, count);
+    fai_matmulN(s, L->attnGate, s->xb, n, s->z, valueDim, NULL, count);
+    fai_matmulN(s, L->ssmBeta, s->xb, n, s->q, Hv, NULL, count);      /* (q and k are free here: beta and alpha of each token) */
+    fai_matmulN(s, L->ssmAlpha, s->xb, n, s->k, Hv, NULL, count);
+    for (b = 0; b < count; b++) {
+        float* o = s->ao + (size_t)b * valueDim;
+        const float* z = s->z + (size_t)b * valueDim;
+        FaiDeltaJob dj;
+        fai_convStep(window, (const float*)L->ssmConv->data, s->mix + (size_t)b * mw, cbuf, convDim, m->ssmConvK);
+        for (i = 0; i < convDim; i++) cbuf[i] = fai_silu(cbuf[i]);
+        /* q and k of each key head scaled to length 1 */
+        for (h = 0; h < 2 * Hk; h++) {
+            float* x = cbuf + (size_t)h * S;
+            double ss = 0;
+            float inv;
+            for (i = 0; i < S; i++) ss += (double)x[i] * x[i];
+            inv = (float)(1.0 / sqrt(ss + m->eps));
+            for (i = 0; i < S; i++) x[i] *= inv;
+        }
+        for (h = 0; h < Hv; h++) {
+            beta[h] = fai_sigmoid(s->q[(size_t)b * Hv + h]);
+            gate[h] = fai_softplus(s->k[(size_t)b * Hv + h] + ((const float*)L->ssmDt->data)[h]) * ((const float*)L->ssmA->data)[h];
+        }
+        dj.s = s; dj.state = state; dj.q = cbuf; dj.k = cbuf + keyDim; dj.v = cbuf + 2 * keyDim; dj.gate = gate; dj.beta = beta; dj.out = o;
+        fai_run(s->pool, Hv, fai_deltaJob, &dj);
+        /* the gated norm of each head: rms norm (the weights of a head) times silu(z) */
+        for (h = 0; h < Hv; h++) {
+            fai_rmsnorm(o + h * S, o + h * S, L->ssmNorm, S, m->eps);
+            for (i = 0; i < S; i++) o[h * S + i] *= fai_silu(z[h * S + i]);
+        }
+    }
+    if (cbuf != conv) free(cbuf);
+    fai_matmulN(s, L->ssmOut, s->ao, valueDim, s->xb2, n, NULL, count);
+}
+
+/* The short convolution of a layer (LFM): b, c, x = in_proj(xb); y = c * conv(b * x) over the last convL tokens; out_proj(y). */
+static void fai_shortConv(FaiSession* s, int l, int count) {
+    const FaiModel* m = s->m;
+    const FaiLayer* L = &m->layers[l];
+    int n = m->nEmbd, mw = s->mixWidth, b, i;
+    float* window = s->rs + s->rsOff[l];
+    fai_matmulN(s, L->convIn, s->xb, n, s->mix, mw, NULL, count);
+    for (b = 0; b < count; b++) {
+        float* bcx = s->mix + (size_t)b * mw;
+        float* y = s->ao + (size_t)b * n;
+        for (i = 0; i < n; i++) bcx[i] *= bcx[2 * n + i];             /* b * x (into the place of b) */
+        fai_convStep(window, (const float*)L->convW->data, bcx, y, n, m->convL);
+        for (i = 0; i < n; i++) y[i] *= bcx[n + i];                    /* times c */
+    }
+    fai_matmulN(s, L->convOut, s->ao, n, s->xb2, n, NULL, count);
+}
+
+/* `count` tokens (FAI_BATCH at most) at the positions pos .. pos + count - 1: their keys, values and states go into the cache. `wantLogits`: the scores of
+ * the token after the last one are computed (the end of a prompt, a generated token) - the others skip the largest product. */
 static void fai_forward(FaiSession* s, const int32_t* tokens, int count, int pos, int wantLogits) {
     const FaiModel* m = s->m;
-    int n = m->nEmbd, hd = m->headDim, kvDim = m->nHeadKv * hd, ff = m->nFf, l, i, b;
+    int n = m->nEmbd, ff = m->nFf, l, i, b;
     for (b = 0; b < count; b++) fai_dequantRow(m->tokEmbd, tokens[b], s->x + (size_t)b * n);
     for (l = 0; l < m->nLayer; l++) {
         const FaiLayer* L = &m->layers[l];
         for (b = 0; b < count; b++) fai_rmsnorm(s->xb + (size_t)b * n, s->x + (size_t)b * n, L->attnNorm, n, m->eps);
-        fai_matmulN(s, L->wq, s->xb, n, s->q, n, L->bq, count);
-        fai_matmulN(s, L->wk, s->xb, n, s->k, kvDim, L->bk, count);
-        fai_matmulN(s, L->wv, s->xb, n, s->v, kvDim, L->bv, count);
-        for (b = 0; b < count; b++) {
-            size_t at = ((size_t)l * (size_t)s->ctx + (size_t)(pos + b)) * (size_t)kvDim;
-            fai_rope(s, s->q + (size_t)b * n, m->nHead, pos + b);
-            fai_rope(s, s->k + (size_t)b * kvDim, m->nHeadKv, pos + b);
-            memcpy(s->keys + at, s->k + (size_t)b * kvDim, (size_t)kvDim * sizeof(float));
-            memcpy(s->values + at, s->v + (size_t)b * kvDim, (size_t)kvDim * sizeof(float));
-        }
-        for (b = 0; b < count; b++) {
-            FaiAttJob aj;
-            aj.s = s; aj.layer = l; aj.pos = pos + b; aj.q = s->q + (size_t)b * n; aj.out = s->xb + (size_t)b * n;
-            fai_run(s->pool, m->nHead, fai_attJob, &aj);
-        }
-        fai_matmulN(s, L->wo, s->xb, n, s->xb2, n, NULL, count);
+        if (L->mix == FAI_MIX_DELTA) fai_delta(s, l, count);
+        else if (L->mix == FAI_MIX_CONV) fai_shortConv(s, l, count);
+        else fai_attention(s, l, count, pos);
+        if (L->postAttnNorm) for (b = 0; b < count; b++) fai_rmsnorm(s->xb2 + (size_t)b * n, s->xb2 + (size_t)b * n, L->postAttnNorm, n, m->eps);
         for (i = 0; i < n * count; i++) s->x[i] += s->xb2[i];
         for (b = 0; b < count; b++) fai_rmsnorm(s->xb + (size_t)b * n, s->x + (size_t)b * n, L->ffnNorm, n, m->eps);
         fai_matmulN(s, L->gate, s->xb, n, s->hb, ff, NULL, count);
         fai_matmulN(s, L->up, s->xb, n, s->hb2, ff, NULL, count);
-        for (i = 0; i < ff * count; i++) { float g = s->hb[i]; s->hb[i] = g / (1.0f + expf(-g)) * s->hb2[i]; }
+        for (i = 0; i < ff * count; i++) s->hb[i] = fai_silu(s->hb[i]) * s->hb2[i];
         fai_matmulN(s, L->down, s->hb, ff, s->xb2, n, NULL, count);
+        if (L->postFfnNorm) for (b = 0; b < count; b++) fai_rmsnorm(s->xb2 + (size_t)b * n, s->xb2 + (size_t)b * n, L->postFfnNorm, n, m->eps);
         for (i = 0; i < n * count; i++) s->x[i] += s->xb2[i];
     }
     if (wantLogits) {
@@ -1349,6 +1797,14 @@ static void fai_forward(FaiSession* s, const int32_t* tokens, int count, int pos
     s->logitsValid = wantLogits;
 }
 
+/* Remembers the recurrent states and the logits as they are now (after cachedCount tokens). */
+static void fai_checkpoint(FaiSession* s) {
+    if (s->rsSize == 0 || !s->logitsValid) return;
+    memcpy(s->checkpoint, s->rs, s->rsSize * sizeof(float));
+    memcpy(s->checkpointLogits, s->logits, (size_t)s->m->output->ne[1] * sizeof(float));
+    s->checkpointPos = s->cachedCount;
+}
+
 /* Brings the cache to `tokens`: what it holds of their start stays, the rest is computed; afterwards the logits are those after the last token.
  * `stop`: when it becomes non-zero (another thread), the work stops (returns 0). 0 also when they do not fit into the context. */
 static int fai_feed(FaiSession* s, const int32_t* tokens, int count, volatile int* stop) {
@@ -1356,13 +1812,32 @@ static int fai_feed(FaiSession* s, const int32_t* tokens, int count, volatile in
     if (count > s->ctx || count <= 0) return 0;
     while (same < s->cachedCount && same < count && s->cached[same] == tokens[same]) same++;
     if (same == count && same == s->cachedCount && s->logitsValid) return 1;
-    if (same == count) same--;   /* the logits of the last one are needed again */
+    if (s->rsSize > 0) {
+        /* the recurrent states cannot go back: to the checkpoint (when it is a start of the tokens), else to the beginning */
+        if (same < s->cachedCount || (same == count && !s->logitsValid)) {
+            if (s->checkpointPos >= 0 && s->checkpointPos <= same && s->checkpointPos <= s->cachedCount) {
+                memcpy(s->rs, s->checkpoint, s->rsSize * sizeof(float));
+                memcpy(s->logits, s->checkpointLogits, (size_t)s->m->output->ne[1] * sizeof(float));
+                same = s->checkpointPos;
+                s->cachedCount = same;
+                s->logitsValid = 1;
+                if (same == count) return 1;
+            }
+            else { memset(s->rs, 0, s->rsSize * sizeof(float)); same = 0; s->checkpointPos = -1; }
+        }
+    }
+    else if (same == count) same--;   /* the logits of the last one are needed again */
     for (i = same; i < count;) {
         int b = count - i < FAI_BATCH ? count - i : FAI_BATCH;
-        if (stop && *stop) { s->cachedCount = i; s->logitsValid = 0; return 0; }
+        if (stop && *stop) {
+            s->cachedCount = i; s->logitsValid = 0;
+            if (s->rsSize > 0 && s->checkpointPos > i) s->checkpointPos = -1;
+            return 0;
+        }
         fai_forward(s, tokens + i, b, i, i + b == count);
         memcpy(s->cached + i, tokens + i, (size_t)b * sizeof(int32_t));
         i += b;
+        s->cachedCount = i;
     }
     s->cachedCount = count;
     return 1;

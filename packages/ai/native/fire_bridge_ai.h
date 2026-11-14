@@ -164,6 +164,7 @@ static void fire_aib_runJob(FireAiSession* a) {
         if (!fai_feed(s, tk.t, (int)tk.n, &a->stop)) { free(tk.t); a->state = a->stop ? FIRE_AI_CANCELLED : FIRE_AI_FAILED; if (!a->stop) snprintf(a->error, sizeof a->error, "The prompt could not be computed."); return; }
         a->promptDone = (int)tk.n;
         a->promptSeconds = fire_aib_now() - t0;
+        fai_checkpoint(s);   /* (a model with recurrent layers comes back here for the next question that starts with this prompt) */
         a->state = FIRE_AI_GENERATING;
         t0 = fire_aib_now();
         {
@@ -235,6 +236,7 @@ static void fire_aib_runJob(FireAiSession* a) {
         if (!fai_feed(s, tk.t, (int)tk.n, &a->stop)) { free(tk.t); a->state = a->stop ? FIRE_AI_CANCELLED : FIRE_AI_FAILED; return; }
         a->promptDone = (int)tk.n;
         a->promptSeconds = fire_aib_now() - t0;
+        fai_checkpoint(s);   /* every option starts from here */
         for (o = 0; o < j->optionCount; o++) {
             FaiTokens all = {0};
             size_t base = tk.n, k;
@@ -355,7 +357,7 @@ static Value fire_ai_Close(Value h) {
     return Bool(true);
 }
 
-/* A text about the model: 0 its name, 1 its architecture, 2 its chat template, 3 the kernels of the products (C, AVX2, NEON). */
+/* A text about the model: 0 its name, 1 its architecture, 2 its chat template, 3 the kernels of the products (C, AVX2, NEON), 4 the text of its start token. */
 static Value fire_ai_ModelText(Value h, Value what, OwnList* list) {
     FaiModel* m = (FaiModel*)fire_aib_find(h, 1);
     const char* t = "";
@@ -364,6 +366,9 @@ static Value fire_ai_ModelText(Value h, Value what, OwnList* list) {
         case 1: t = m->arch; break;
         case 2: t = m->chatTemplate ? m->chatTemplate : ""; break;
         case 3: t = g_faiKernels; break;
+        case 4:
+            if (m->vocab.bos >= 0 && (uint32_t)m->vocab.bos < m->vocab.count) return fire_aib_str(m->vocab.tokens[m->vocab.bos].p, m->vocab.tokens[m->vocab.bos].n, list);
+            break;
     }
     return fire_aib_str(t, strlen(t), list);
 }

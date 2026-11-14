@@ -1,13 +1,13 @@
 #import "time"
 
 // AI (docs/ai/README.md): a small language model on the CPU, without a library or a service - the package's own C runs a model file in the GGUF format
-// (Qwen 2.5, SmolLM, Llama style models; weights Q8_0, Q4_0, F16 or F32). The model works on a thread of its own: a program starts a job and takes what it
+// (Qwen 2.5 / 3 / 3.5, LFM 3, SmolLM and Llama style models; weights Q8_0, Q4_0, Q4_K, F16, F32 and the mixed files of these). The model works on a thread of its own: a program starts a job and takes what it
 // produced when it likes (Take, State), so a user interface never waits; Complete and Choose wait for the result.
 //
-//     var model = new AI.Model("qwen2.5-0.5b-instruct-q4_0.gguf")
+//     var model = new AI.Model("Qwen3.5-0.8B-Q4_0.gguf")
 //     var session = new AI.Session(model)
 //     print(session.Ask("You are a helpful assistant.", "What is the capital of France?"))
-//     print(session.Choose(AI.Chat.Question("", "Is 7 a prime number?"), ["Yes", "No"]))   // 0
+//     print(session.Choose(AI.Chat.Question("", "Is 7 a prime number?", "", model), ["Yes", "No"]))   // 0
 namespace AI {
     class AIException : Exception {
         construct(string message) : base(message) { }
@@ -59,6 +59,8 @@ namespace AI {
         string Architecture { get { return __AiModelText(this.handle, 1) } }
         // The chat template of the file (Jinja text; AI.Chat writes the ChatML of Qwen and SmolLM itself).
         string ChatTemplate { get { return __AiModelText(this.handle, 2) } }
+        // The text of its start token ("<|startoftext|>"; "" when it has none).
+        string StartText { get { return __AiModelText(this.handle, 4) } }
         // The kernels of the products: "AVX2", "NEON" or "C".
         string Kernels { get { return __AiModelText(this.handle, 3) } }
         int ContextLength { get { return __AiModelNumber(this.handle, 0) } }
@@ -70,10 +72,24 @@ namespace AI {
         int CountTokens(string text) { return __AiCountTokens(this.handle, text, true) }
     }
 
-    // The prompts of a chat in ChatML (<|im_start|>role ... <|im_end|>), the format of Qwen 2.5 and SmolLM 2.
+    // The prompts of a chat in ChatML (<|im_start|>role ... <|im_end|>): the format of Qwen 2.5 / 3 / 3.5, SmolLM and LFM 3. `For(model)` adds what a model
+    // wants besides: LFM its start token, Qwen 3 / 3.5 and LFM 3 the empty thinking block that tells them to answer at once (Thinking = true lets them
+    // think first: the answer then starts with <think> ... </think>, AI.Chat.WithoutThinking removes it).
     class Chat {
         List roles = new List()
         List texts = new List()
+        string family = ""
+        string start = ""
+        bool Thinking = false
+
+        // The format of `model` (its architecture and start token).
+        Chat For(AI.Model model) {
+            if (model != undefined) {
+                this.family = model.Architecture
+                if (this.family == "lfm3") { this.start = model.StartText }
+            }
+            return this
+        }
 
         Chat Add(string role, string text) {
             this.roles.Add(role)
@@ -88,19 +104,34 @@ namespace AI {
 
         // The prompt: the messages, then the start of the assistant's answer (`answerStart`: what it begins with, e.g. "The answer is").
         string Prompt(string answerStart = "") {
-            var b = ""
+            var b = this.start
             for (var i = 0; i < this.roles.Count; i++) {
                 b += "<|im_start|>" + this.roles[i] + "\n" + this.texts[i] + "<|im_end|>\n"
             }
-            return b + "<|im_start|>assistant\n" + answerStart
+            b += "<|im_start|>assistant\n"
+            if (this.family == "qwen3" || this.family == "qwen35") {
+                if (this.Thinking) { b += "<think>\n" } else { b += "<think>\n\n</think>\n\n" }
+            }
+            else if (this.family == "lfm3") {
+                if (this.Thinking) { b += "<think>" } else { b += "<think></think>" }
+            }
+            return b + answerStart
         }
 
-        // A prompt of one question (`system` "": the model's own default).
-        static string Question(string system, string question, string answerStart = "") {
+        // A prompt of one question (`system` "": none) in the format of `model` (undefined: plain ChatML).
+        static string Question(string system, string question, string answerStart = "", AI.Model model = undefined) {
             var c = new AI.Chat()
+            c.For(model)
             if (system != "") { c.System(system) }
             c.User(question)
             return c.Prompt(answerStart)
+        }
+
+        // An answer without the thinking before it (what follows </think>).
+        static string WithoutThinking(string text) {
+            var at = text.IndexOf("</think>")
+            if (at < 0) { return text }
+            return text.Substring(at + 8).Trim()
         }
     }
 
@@ -189,7 +220,7 @@ namespace AI {
 
         // The answer to one question (`system`: the instructions, "" for none).
         string Ask(string system, string question, AI.Settings settings = undefined) {
-            return this.Complete(AI.Chat.Question(system, question), settings).Trim()
+            return AI.Chat.WithoutThinking(this.Complete(AI.Chat.Question(system, question, "", this.model), settings)).Trim()
         }
 
         // The index of the most likely of `options` after `prompt` (waits for it).
