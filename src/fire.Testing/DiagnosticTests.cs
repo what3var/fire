@@ -221,6 +221,37 @@ static class DiagnosticTests
             finally { try { Directory.Delete(dir, true); } catch (IOException) { } }
         }
 
+        // ---- Ruhrpott-Raser: a keyword where a name is expected, static initialisers in order, a temporary kept by a constructor, lines going on ----
+        {
+            foreach (var (src, word, code) in new[] { ("int where = 3\nprint(where)", "where", "E3057"), ("class A {\n    static int F(int from) { return from }\n}", "from", "E3145"),
+                                                       ("var base = 1", "base", "E3055"), ("class A {\n    int under\n}", "under", "E3137") })
+            {
+                var (kw, _) = Compile(src);
+                Check($"Schluesselwort als Name: die Meldung nennt '{word}' und behaelt ihren Code", kw.Count == 1 && kw[0].Code == code && kw[0].Message.Contains($"'{word}' is a keyword and cannot be a name"), string.Join("\n", kw.Select(d => d.ToLogLine())));
+            }
+            var (later, _) = Compile("class A {\n    static int x = B.y + 1\n}\nclass B {\n    static int y = 5\n}\nprint(A.x)");
+            Check("Statische Initialisierer: ein Feld, dessen Initialisierer spaeter laeuft, ist ein Fehler (E4074)", later.Count == 1 && later[0].Code == "E4074" && later[0].Line == 2 && later[0].Message.Contains("'B.y'"), string.Join("\n", later.Select(d => d.ToLogLine())));
+            var (self, _) = Compile("class A {\n    static int x = x + 1\n}\nprint(A.x)");
+            Check("Statische Initialisierer: das Feld selbst ist ein Fehler (E4073)", self.Count == 1 && self[0].Code == "E4073", string.Join("\n", self.Select(d => d.ToLogLine())));
+            var (inOrder, inOrderOut) = Compile("class A {\n    static int a = 2\n    static int b = A.a * 3\n    static any f = () => B.late\n    static int c = A.Twice()\n    static int Twice() { return A.a * 2 }\n}\nclass B {\n    static int late = A.b + 1\n}\nany g = A.f\nprint(A.b + \" \" + A.c + \" \" + B.late + \" \" + g())");
+            Check("Statische Initialisierer: frueher gesetzte Felder, Methoden und Lambdas bleiben erlaubt", inOrder.Count == 0 && inOrderOut == "6 4 7 7", string.Join("\n", inOrder.Select(d => d.ToLogLine())) + inOrderOut);
+            const string classes = "class Sample {\n    int v = 7\n    static Sample Make() { return new Sample() }\n}\nclass Holder {\n    Sample s\n    construct(Sample s) { this.s = s }\n}\nclass Keeper {\n    Sample s\n    construct(Sample s) { this.s = try take s }\n}\n";
+            var (temp, _) = Compile(classes + "var h = new Holder(Sample.Make())\nvar h2 = new Holder(new Sample())\nprint(1)");
+            Check("TC031: ein Temporaerwert, den der Konstruktor ohne take in einem Feld behaelt (new und Aufruf, der ein neues Objekt gibt)",
+                temp.Count == 2 && temp.All(d => d.Code == "TC031" && !d.IsError) && temp[0].Line == 13 && temp[0].Message.Contains("'Sample.Make(...)'") && temp[1].Message.Contains("'new Sample(...)'") && temp[0].Message.Contains("this.s = try take s"),
+                string.Join("\n", temp.Select(d => d.ToLogLine())));
+            var (kept, keptOut) = Compile(classes + "var k = new Keeper(new Sample())\nvar mine = new Sample()\nvar h = new Holder(mine)\nprint(k.s.v + h.s.v)");
+            Check("TC031: kein Hinweis, wenn der Konstruktor nimmt oder das Argument eine Variable ist", kept.Count == 0 && keptOut == "14", string.Join("\n", kept.Select(d => d.ToLogLine())) + keptOut);
+            var (lines, linesOut) = Compile("var list = new List<int>([5, 3, 8, 1])\nlist.\n    Sort()\nvar n = list\n    .Count\nvar m = list?.Count\n    + 1\n    - 2\nbool big = n\n    > 3\n    && n < 10\n    || false\nint x = 1\nx++\nprint(n + \" \" + m + \" \" + big + \" \" + x + \" \" + list[0])");
+            var (toBuffer, toBufferOut) = Compile("class B {\n    static undefined Fill(byte b[]) { b[0] = 7 }\n}\nint ints[2] = [1, 2]\nB.Fill(ints)\nB.Fill([3, 4])\nbyte buf[2]\nB.Fill(buf)\nprint(ints[0] + \" \" + buf[0])");
+            Check("TC032: ein Array einer Variablen an einen byte-Parameter wird ein neuer Puffer (Warnung), ein Literal und ein Puffer nicht", toBuffer.Count == 1 && toBuffer[0].Code == "TC032" && !toBuffer[0].IsError && toBuffer[0].Line == 5 && toBufferOut == "1 7", string.Join("\n", toBuffer.Select(d => d.ToLogLine())) + toBufferOut);
+            var (withLines, withOut) = Compile("class Point {\n    int x\n    int y\n}\nvar p = new Point()\nwith p {\n    .x = 10\n    .y = 20\n}\nwith p {\n    print(.x + .y)\n}");
+            Check("Zeilen: im with-Block beginnt ein '.' am Zeilenanfang eine neue Anweisung (.x = 10 / .y = 20)", withLines.Count == 0 && withOut == "30", string.Join("\n", withLines.Select(d => d.ToLogLine())) + withOut);
+            var (shadow, shadowOut) = Compile("class Info { static string Name = \"info\" }\nclass T {\n    undefined Info() { }\n    static string Of() { return Info.Name }\n}\nprint(T.Of())");
+            Check("Namen: in einer statischen Methode verdeckt eine Instanzmethode gleichen Namens die Klasse nicht (Environment.Platform in ProcessTests)", shadow.Count == 0 && shadowOut == "info", string.Join("\n", shadow.Select(d => d.ToLogLine())) + shadowOut);
+            Check("Zeilen: '.' am Zeilenende und '.', '?.', Operatoren, && und || am Zeilenanfang setzen fort; ++ beginnt eine neue Anweisung", lines.Count == 0 && linesOut == "4 3 True 2 1", string.Join("\n", lines.Select(d => d.ToLogLine())) + linesOut);
+        }
+
         // ---- a native build reports them in its result ----
         {
             var config = new fire.Native.NativeConfig();

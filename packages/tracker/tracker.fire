@@ -3,9 +3,9 @@
 
 namespace Tracker {
     class TrackerException : Exception {
-        int code
+        defined int code
 
-        construct(string message, int code = 7) : base(message) {
+        construct(string message, defined int code = 7) : base(message) {
             this.code = code
         }
     }
@@ -29,7 +29,7 @@ namespace Tracker {
             throw new TrackerException(message, code)
         }
 
-        static int Handle(int handle) {
+        static defined int Handle(defined int handle) {
             if (handle < 0) { Throw() }
             return handle
         }
@@ -37,7 +37,7 @@ namespace Tracker {
 
     // Names of notes: Tracker.Note.Name(428) is "C-2" (the period of a note as the pattern stores it).
     class Note {
-        static string Name(int period) {
+        static string Name(defined int period) {
             if (period <= 0) { return "---" }
             var periods = [856, 808, 762, 720, 678, 640, 604, 570, 538, 508, 480, 453, 428, 404, 381, 360, 339, 320, 302, 285, 269, 254, 240, 226, 214, 202, 190, 180, 170, 160, 151, 143, 135, 127, 120, 113]
             var names = ["C-", "C#", "D-", "D#", "E-", "F-", "F#", "G-", "G#", "A-", "A#", "B-"]
@@ -54,11 +54,11 @@ namespace Tracker {
 
     // A module being played: the score, the instruments and the state of the replayer.
     class Song {
-        int handle
+        defined int handle
         bool closed
 
         // `bytes`: the file; `rate` the sample rate of the sound it is mixed to; `offset` and `length` select part of the buffer.
-        construct(byte bytes[], int rate = 44100, int offset = 0, int length = -1) {
+        construct(byte bytes[], defined int rate = 44100, defined int offset = 0, defined int length = -1) {
             this.closed = false
             this.handle = -1
             if (length < 0) { length = bytes.length - offset }
@@ -66,7 +66,7 @@ namespace Tracker {
         }
 
         // Reads a module from the bytes of a file.
-        static Tracker.Song Load(byte bytes[], int rate = 44100) { return new Song(bytes, rate) }
+        static Tracker.Song Load(byte bytes[], defined int rate = 44100) { return new Song(bytes, rate) }
 
         destruct() { try { this.Close() } catch (TrackerException e) { } }
 
@@ -74,14 +74,14 @@ namespace Tracker {
             if (this.closed) { throw new TrackerException("The song is closed.", 2) }
         }
 
-        int Get(int what) {
+        defined int Get(defined int what) {
             this.Check()
             var v = __TrackerGet(this.handle, what)
             if (v < 0) { Tracker.Errors.Throw() }
             return v
         }
 
-        undefined SetValue(int what, int value) {
+        undefined SetValue(defined int what, defined int value) {
             this.Check()
             if (!__TrackerSet(this.handle, what, value)) { Tracker.Errors.Throw() }
         }
@@ -106,7 +106,7 @@ namespace Tracker {
         bool Finished { get { return this.Get(7) == 1 } }
         // How long the song plays, from the start to the end, in milliseconds (a dry run of the replayer).
         int Milliseconds { get { return this.Get(8) } }
-        int Rate {
+        defined int Rate {
             get { return this.Get(9) }
             set { this.SetValue(5, value) }
         }
@@ -120,7 +120,7 @@ namespace Tracker {
             }
         }
         // How much the left and the right ear hear of each other's channels: 0 is mono, 100 the hard panning of the Amiga (channels 0 and 3 left, 1 and 2 right); default 50.
-        int Separation {
+        defined int Separation {
             get { return this.Get(11) }
             set { this.SetValue(1, value) }
         }
@@ -134,32 +134,32 @@ namespace Tracker {
             }
         }
         // The volume of the whole mix in percent (0 .. 400, default 100).
-        int Gain {
+        defined int Gain {
             get { return this.Get(13) }
             set { this.SetValue(3, value) }
         }
 
         // Silences a channel (or lets it play again).
-        undefined Mute(int channel, bool muted = true) {
+        undefined Mute(defined int channel, bool muted = true) {
             var mask = this.Get(14)
             var bit = 1 << channel
             if (muted) { mask = mask | bit } else { mask = mask & (4294967295 # bit) }
             this.SetValue(4, mask)
         }
 
-        bool IsMuted(int channel) { return (this.Get(14) & (1 << channel)) != 0 }
+        bool IsMuted(defined int channel) { return (this.Get(14) & (1 << channel)) != 0 }
 
         // The name of an instrument (0 .. 30), its length in bytes, its volume (0 .. 64), whether it loops.
-        string SampleName(int index) {
+        string SampleName(defined int index) {
             this.Check()
             return __TrackerText(this.handle, 1, index)
         }
-        int SampleLength(int index) { return this.SampleInfo(index, 0) }
-        int SampleVolume(int index) { return this.SampleInfo(index, 2) }
-        int SampleFinetune(int index) { return this.SampleInfo(index, 1) }
-        bool SampleLoops(int index) { return this.SampleInfo(index, 4) > 0 }
+        defined int SampleLength(defined int index) { return this.SampleInfo(index, 0) }
+        defined int SampleVolume(defined int index) { return this.SampleInfo(index, 2) }
+        defined int SampleFinetune(defined int index) { return this.SampleInfo(index, 1) }
+        bool SampleLoops(defined int index) { return this.SampleInfo(index, 4) > 0 }
 
-        int SampleInfo(int index, int what) {
+        defined int SampleInfo(defined int index, defined int what) {
             this.Check()
             var v = __TrackerSampleInfo(this.handle, index, what)
             if (v < 0) { Tracker.Errors.Throw() }
@@ -167,13 +167,13 @@ namespace Tracker {
         }
 
         // The score: what is written at `order`, `row` for `channel`: the sample number (1 .. 31, 0: none), the note's period (see Tracker.Note.Name), the effect (0 .. 15) and its parameter.
-        int CellSample(int order, int row, int channel) { return this.Cell(order, row, channel, 0) }
-        int CellPeriod(int order, int row, int channel) { return this.Cell(order, row, channel, 1) }
-        int CellEffect(int order, int row, int channel) { return this.Cell(order, row, channel, 2) }
-        int CellParam(int order, int row, int channel) { return this.Cell(order, row, channel, 3) }
+        defined int CellSample(defined int order, defined int row, defined int channel) { return this.Cell(order, row, channel, 0) }
+        defined int CellPeriod(defined int order, defined int row, defined int channel) { return this.Cell(order, row, channel, 1) }
+        defined int CellEffect(defined int order, defined int row, defined int channel) { return this.Cell(order, row, channel, 2) }
+        defined int CellParam(defined int order, defined int row, defined int channel) { return this.Cell(order, row, channel, 3) }
 
         // The pattern cell as text, like a tracker shows it: "C-2 01 C20".
-        string CellText(int order, int row, int channel) {
+        string CellText(defined int order, defined int row, defined int channel) {
             var sample = this.CellSample(order, row, channel)
             var effect = this.CellEffect(order, row, channel)
             var param = this.CellParam(order, row, channel)
@@ -185,7 +185,7 @@ namespace Tracker {
             return Tracker.Note.Name(this.CellPeriod(order, row, channel)) + " " + s + " " + e
         }
 
-        int Cell(int order, int row, int channel, int what) {
+        defined int Cell(defined int order, defined int row, defined int channel, defined int what) {
             this.Check()
             var v = __TrackerPatternCell(this.handle, order, row, channel, what)
             if (v < 0) { Tracker.Errors.Throw() }
@@ -193,10 +193,10 @@ namespace Tracker {
         }
 
         // The state of a channel right now, for a display: its volume (0 .. 64), its period, its instrument, and whether a sample is sounding.
-        int ChannelVolume(int channel) { return this.Cell(0, 0, channel, 4) }
-        int ChannelPeriod(int channel) { return this.Cell(0, 0, channel, 5) }
-        int ChannelSample(int channel) { return this.Cell(0, 0, channel, 6) }
-        bool ChannelPlaying(int channel) { return this.Cell(0, 0, channel, 7) == 1 }
+        defined int ChannelVolume(defined int channel) { return this.Cell(0, 0, channel, 4) }
+        defined int ChannelPeriod(defined int channel) { return this.Cell(0, 0, channel, 5) }
+        defined int ChannelSample(defined int channel) { return this.Cell(0, 0, channel, 6) }
+        bool ChannelPlaying(defined int channel) { return this.Cell(0, 0, channel, 7) == 1 }
 
         // Goes back to the start.
         undefined Restart() {
@@ -205,7 +205,7 @@ namespace Tracker {
         }
 
         // Goes to a position without sound (speed, tempo and volumes are those of the song there). Returns false if the song never gets there.
-        bool Seek(int order, int row = 0) {
+        bool Seek(defined int order, defined int row = 0) {
             this.Check()
             var r = __TrackerSeek(this.handle, order, row)
             return r
@@ -213,7 +213,7 @@ namespace Tracker {
 
         // Mixes `frames` frames into the buffer from `offset` on (16 bit samples, little endian: 2 bytes per frame and channel; `channels` 2 is stereo, 1 mono). Returns how many frames it mixed:
         // fewer than asked only at the end of the song, 0 when it is over.
-        int Render(byte buffer[], int offset, int frames, int channels = 2) {
+        defined int Render(byte buffer[], defined int offset, defined int frames, defined int channels = 2) {
             this.Check()
             var n = __TrackerRender(this.handle, buffer, offset, frames, channels)
             if (n < 0) { Tracker.Errors.Throw() }
@@ -221,7 +221,7 @@ namespace Tracker {
         }
 
         // The whole song as a sound in memory (from the start, without looping; at most `maxMilliseconds`).
-        Audio.Sound ToSound(int maxMilliseconds = 600000, int channels = 2) {
+        Audio.Sound ToSound(defined int maxMilliseconds = 600000, defined int channels = 2) {
             var wasLoop = this.Loop
             this.Loop = false
             this.Restart()
@@ -252,11 +252,11 @@ namespace Tracker {
         Tracker.Song song
         Audio.Output output
         byte buffer[]
-        int filled
-        int sent
+        defined int filled
+        defined int sent
         bool ended
         bool stopped
-        int channels
+        defined int channels
 
         construct(Tracker.Song song, Audio.Output output) {
             if (output.Rate != song.Rate) {

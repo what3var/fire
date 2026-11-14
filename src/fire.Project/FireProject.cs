@@ -189,17 +189,26 @@ namespace fire.Projects
             public bool? Serializable { get; }
         }
 
-        /// <summary>The name a library is imported by: `import`, else the name of the project with every character that a name cannot have replaced by `_`.</summary>
+        /// <summary>The name a library is imported by: `import`, else the name of the project with every character that a name cannot have replaced by `_`;
+        /// its dots stay (`Raser.Core` is imported as `Raser.Core`), and a part that does not start with a letter gets an `L` before it.</summary>
         public string ImportName
         {
             get
             {
                 if (!string.IsNullOrWhiteSpace(Import)) return Import!;
-                var chars = Name.Select(c => char.IsLetterOrDigit(c) && c < 128 || c == '_' ? c : '_').ToArray();
-                string s = new string(chars);
-                if (s.Length == 0 || !char.IsLetter(s[0])) s = "L" + s;
-                return s;
+                return DeriveImportName(Name);
             }
+        }
+
+        /// <summary>The import name derived from the name `name` of a project (see ImportName).</summary>
+        public static string DeriveImportName(string name)
+        {
+            var parts = name.Split('.', StringSplitOptions.RemoveEmptyEntries).Select(part =>
+            {
+                string s = new string(part.Select(c => char.IsLetterOrDigit(c) && c < 128 || c == '_' ? c : '_').ToArray());
+                return s.Length == 0 || !char.IsLetter(s[0]) ? "L" + s : s;
+            }).ToList();
+            return parts.Count == 0 ? "L" : string.Join(".", parts);
         }
 
         /// <summary>All problems of the description itself (empty: fine); the files are checked when they are resolved (see ProjectFiles).</summary>

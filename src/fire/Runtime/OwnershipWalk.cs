@@ -83,7 +83,7 @@ namespace fire.Runtime
         /// <summary>Does something belong (via the chain of owners) to a local scope?</summary>
         public static bool IsLocal(IOwner? owner, Func<Scope, bool> isLocalScope)
         {
-            while (owner is ObjectInstance or ScriptArray) owner = owner is ObjectInstance oi ? oi.Owner : ((ScriptArray)owner).LeafOwner;
+            while (owner is ObjectInstance or IOwnedLeaf) owner = owner is ObjectInstance oi ? oi.Owner : ((IOwnedLeaf)owner).LeafOwner;
             return owner is Scope scope && isLocalScope(scope);
         }
 

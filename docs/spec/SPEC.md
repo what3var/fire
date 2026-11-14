@@ -11,7 +11,7 @@ architecture AND language syntax).
 
 Two statements must be separated by a `;` **or** a line break – if both are missing, that is a parse error (instead of silent misbehavior in which the parser ambiguously keeps reading across a line). The end of a block (`}`) and the end of the file also count as a valid termination, which allows one-line blocks such as `{ return x }`.
 
-Consequence for the parser: every "optional keep reading" decision (binary operators, assignment `=`, the postfix chain including the coercion suffixes `:`/`!`) stops at a line break instead of greedily reaching into the next line. This does not apply inside an open `(` or `[` – multi-line function calls, argument lists and conditions work as usual, because the bracket makes it clear anyway that the expression continues. An expression can still span several lines if the operator is at the **end** of the first line (`var x = a +\n    b`), since parsing the right operand after an already consumed operator is no longer an "optional keep reading" but is mandatory.
+Consequence for the parser: every "optional keep reading" decision (binary operators, assignment `=`, the postfix chain including the coercion suffixes `:`/`!`) stops at a line break instead of greedily reaching into the next line. This does not apply inside an open `(` or `[` – multi-line function calls, argument lists and conditions work as usual, because the bracket makes it clear anyway that the expression continues. An expression can still span several lines if the operator is at the **end** of the first line (`var x = a +\n    b`), since parsing the right operand after an already consumed operator is no longer an "optional keep reading" but is mandatory. The same for a token that cannot start a statement at the **start** of the next line: `.`, `?.`, `??.`, the binary operators `+ - / % ^ | == != < <= > >= && || and or` and the `?` of a condition continue the expression of the line before (`Parser.ContinuesAtLineStart`) - fluent chains (`list\n    .Where(...)\n    .Count`). Not so `++`/`--`, `*` (a write through a pointer `*p = 1`), `&`, `!`, `~`, `(`, `[`, `#` and the assignments: they start a statement. A line that starts with a unary `-`/`+` therefore belongs to the statement before. In the body of a `with` block a `.` at the start of a line is the member of the block (`.x = 10`), a new statement.
 
 **Explicit continuation with `_`:** If a lone `_` is the last "word" of a line (optionally followed by a line comment), the following line break is not counted as a statement separator – the next line continues the current statement as if there were no line break. The `_` itself produces no token (it is swallowed by the lexer) and in every other position remains a perfectly normal, valid identifier (e.g. as a variable name).
 
@@ -74,7 +74,7 @@ From loose (far up) to tightly binding (far down):
 == != ##                  equality (`##` is a synonym for `!=`)
 < <= > >=                 comparison
 ..                        range (int only): `1..5` is [1, 2, 3, 4, 5], `5..1` counts down
-<< >>                     bit shift operators (int only)
+<< >> >>>                 bit shift operators (int and word only; >>> the logical shift right)
 + -                       addition/subtraction
 * / %                     multiplication/division/modulo
 ^                         exponentiation       (right-associative, NOT bitwise XOR)
@@ -115,11 +115,17 @@ break that. Since type argument lists run through their own, completely separate
 methods (never through the normal expression precedence chain), there is
 no conflict anyway.
 
-**Compound assignment**: `a += b`, `-=`, `*=`, `/=`, `%=`, `^=` (power), `&=`, `|=`, `#=` (xor), `<<=` and `>>=` mean `a = a op b` (the right side is
+**`>>>`** is the logical shift right (three `>`, joined by the parser like `>>`): an `int` is shifted as the unsigned number of the width of the
+program's int (64; 32/16 with `#intwidth`; a value that keeps a wider width - `int[64]` - its width), zeros come in at the top; the count is taken `& 63`,
+a count of the width or more gives 0. On a `word` it is `>>`. A class can overload it (`operator>>>`). VM: Value.ShiftRightLogical, natively `ushr` /
+`FIRE_SCALAR_USHR`. The bit functions of the prelude class `Bits` and the typed reads and writes of byte buffers: docs/language/03-operators.md "Bit
+functions", 07-arrays-and-lists.md "Reading and writing numbers".
+
+**Compound assignment**: `a += b`, `-=`, `*=`, `/=`, `%=`, `^=` (power), `&=`, `|=`, `#=` (xor), `<<=`, `>>=` and `>>>=` mean `a = a op b` (the right side is
 the whole expression to the right: `a *= b + c` is `a = a * (b + c)`; the operators are right-associative like `=`; `+=` also appends to a string; units work as
 in `a = a + b`). The target is evaluated twice, so it must not have effects of its own: a name, a member (`c.n += 1`) or an element whose operands are names,
 members, literals and operators (`arr[i + 1] *= 5`) is fine, a call, `++`/`--` or an assignment in the target is the error `E3159` (write the assignment out).
-`<<=` and `>>=` are the only shift tokens the lexer knows (`<<` and `>>` stay two single characters, see above, since `>>=` can never close a type argument list).
+`<<=`, `>>=` and `>>>=` are the only shift tokens the lexer knows (`<<` and `>>` stay two single characters, see above, since `>>=` can never close a type argument list).
 
 **Loops**: the initialiser of a `for` is a declaration with `var` or with a type (`for (int i = 0; i < n; i++)`, `for (float x = 0.5; ...)`) or an expression; `foreach (x in list)` can also be written
 `foreach (var x in list)`.
@@ -1660,6 +1666,11 @@ until the next build replaces them; the Error List has a filter for the warnings
 
 A reference `ClassName.Member` to a static member that the class (or a base class) does not have is an error when the program is compiled (`E4056`), not a failure at run time.
 
+The initialisers of static fields run once at program start, before the first top-level statement: class by class in the order of the program
+(prelude, imported libraries, then the files in their order), in a class from the top down. A static initialiser that reads (by name or as
+`Class.field`, also through a base class) a static field whose initialiser runs later - or the field itself - is a resolver error; reads in a lambda
+of the initialiser and in methods it calls are not checked.
+
 ### 8.2 Bit widths for `int`/`float`
 
 ```
@@ -1890,7 +1901,8 @@ every write through any reference to it (`var d = a; d[0] = 300`, `ref a[i]`, `a
 It becomes typed where it is stored: the declaration's initializer, the automatic allocation (`int a[10]`), a later
 assignment to the variable or field. Its elements are converted then; one that does not fit is the exception. An array
 that is typed already stays as it is if the types agree, an array of another element type is an `ArgumentException`.
-Parameters do not type what they receive. A copy (`copy`, `flat`, `taking`, `sync`) of a typed array is typed.
+A parameter types what it receives the same way (`int a[]`: the array given to it becomes typed, in place - one with an element that does not fit
+is the exception, undefined passes; anything else but an array is the exception). A copy (`copy`, `flat`, `taking`, `sync`) of a typed array is typed.
 Multidimensional declarations (`int m[3][4]`) type the innermost arrays. `var`, `any`, strings, classes and pointers
 declare no element type - such an array takes any value, as before.
 
@@ -1902,8 +1914,9 @@ An `int` element is cut to 8 bits (`300` becomes 44, as `buffer[i] = 300` does),
 an `ArgumentException` (`An element of a byte buffer must be an int, not String.`). A buffer stored there stays as it is.
 Multidimensional `byte` declarations (`byte m[3][4]`, `byte m[][] = [[1], [2, 3]]`) make the innermost arrays buffers (an
 array of buffers). The buffer belongs to the owner of the array it replaces (the scope of a literal, the object of a field,
-the outer array for an inner one). Parameters do not convert (`byte data[]` as a parameter takes whatever is passed - the
-natives of the packages accept arrays of bytes themselves, see below). What a buffer can do differently from an array:
+the outer array for an inner one). A parameter is a declaration like a variable: `byte data[]` converts an array given to it into a new buffer (what the method writes
+does not reach the array - TC032 warns for an array of a variable or a field), a buffer and `undefined` pass, any other value is an
+`ArgumentException` (`A byte buffer is declared here, not String.`; the same for every `byte`/`word` declaration). What a buffer can do differently from an array:
 `length`/`Length`, `[i]`, `foreach`, `copy`/`flat` (byte by byte), `is of IEnumerable` and passing it to natives work the
 same; an element is always an `int` 0..255 - it cannot be `undefined` (a new buffer holds zeros), writing a non-int
 (`x[0] = "a"`, `x[0] = undefined`) is an `ArgumentException`, and a too large int is cut. `print(x)` shows `<buffer 3 bytes>`
@@ -2414,7 +2427,7 @@ packing them into Values.
 from it, like `graphics`/`devices`: native functions `__IO...` plus a fire prelude). `#import "filesystem"` (the package `fire-filesystem`, fire only, on the natives of `io`)
 adds the file system to the same namespace: `IO.FileStream`, `IO.File`, `IO.Directory`, `IO.Path`, `IO.FileMode`, `IO.FileAccess`, `IO.SearchOption` - named like
 System.IO in .NET ([Files, directories and paths](../stdlib/filesystem.md)). Everything lives in `namespace IO`, so that it does not collide with your own classes such as `File` or `Stream`; an enum in a
-namespace is only reachable **fully qualified** (`IO.FileMode.Create`).
+namespace is reachable **fully qualified** (`IO.FileMode.Create`) - by its short name only from inside the namespace itself.
 
 Structure: streams (`IO.MemoryStream`, your own streams; with `filesystem` also `IO.FileStream`), text (`IO.TextReader`, `IO.TextWriter`, `IO.Utf8`), standard
 input/output (`IO.Stdio`); with `filesystem` the file/directory API (`IO.File`, `IO.Directory`, `IO.Path`) - all described below.
@@ -2451,8 +2464,8 @@ var rest = r.ReadAll()              // everything up to the end as a buffer
 new), `OpenOrCreate`, `Append`. `IO.FileAccess`: `Read`, `Write`, `ReadWrite`.
 
 **File and directory API (`#import "filesystem"`).** Static methods, always written with the namespace
-(`IO.File.Exists(...)`, a static access is only resolved via the exactly written
-name). The names are those of .NET ([Files, directories and paths](../stdlib/filesystem.md) has the full list).
+(`IO.File.Exists(...)`; a static access is resolved via the written name - by a short name only inside the class's own namespace and its outer ones,
+not through `#using`). The names are those of .NET ([Files, directories and paths](../stdlib/filesystem.md) has the full list).
 
 ```
 #import "filesystem"

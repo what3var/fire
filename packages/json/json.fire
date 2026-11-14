@@ -23,7 +23,7 @@ class JsonOptions {
         this.typeNames = true
     }
 
-    int Flags() {
+    defined int Flags() {
         int flags = 0
         if (this.indented) { flags = flags + 1 }
         if (!this.typeNames) { flags = flags + 2 }
@@ -46,7 +46,7 @@ class JsonObject {
     /// <summary>The number of members.</summary>
     int Count { get { return this.count } }
 
-    int IndexOf(string key) {
+    defined int IndexOf(string key) {
         for (int i = 0; i < this.count; i++) {
             if (this.keys[i] == key) { return i }
         }

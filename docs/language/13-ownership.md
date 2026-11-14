@@ -82,6 +82,18 @@ foreach (d in all) { if (d.Matches()) { found.Add(d) } }
 return found                          // the devices in found go along with the return
 ```
 
+The same for a constructor that keeps an argument in a field: `new Voxelizer(Sample.Make())` with `this.sample = sample` in the constructor leaves the
+field with a destroyed object after the statement - the field only refers to the temporary. The type checker says so (warning `TC031`) when the argument
+is surely a temporary (`new ...`, or a call of a method whose every `return` gives a new object or a local of its own) and the constructor stores the
+parameter plainly. Let the constructor take it - it then keeps what it is given, and leaves a variable of the caller alone:
+
+```fire
+class Voxelizer {
+    Sample sample
+    construct(Sample sample) { this.sample = try take sample }
+}
+```
+
 ## Returning objects
 
 A returned object goes on to where the call's result lands - a variable, a field, an element, the next call - together with everything it points to
@@ -161,8 +173,15 @@ using it then throws a `DestroyedException`. Whoever wants to keep an object tak
 | `obj.TakeTo(other)` | the object `other` |
 | `obj.TakeLocal()` | the current scope |
 | `obj.TakeUpwards()` | the scope around the current owner |
-| `obj.TakeGlobal()` | the global scope |
-| `try obj.TakeTo(other)` | only if the caller owns `obj` now; returns `True`/`False` |
+| `obj.TakeGlobal()` | the global scope of the main program - also in a fire thread (see below) |
+| `obj.TakeGlobal(true)` | the global scope of the running thread (`currentThread`; in the main program the same as `TakeGlobal()`) |
+| `try obj.TakeTo(other)` | only if the caller owns `obj` now; returns `True`/`False` (a number or a text has no `TakeTo`: `try x??.TakeTo(other)` skips it, see [Conditional access](03-operators.md#conditional-access--and-)) |
+
+`TakeGlobal()` in a fire thread hands the object to the **main program**: it and everything it owns (its children, their children, ...) belong to the
+main program from then on and outlive the thread. The thread keeps its references, but uses the object like any global of the main program - reading
+directly, a write in a section, a method call as a job of the main program (see [Threads and actors](15-threads-and-actors.md#global-variables)).
+What the object points to without owning it must not be an object of the thread (the main program would reach it): that is the ArgumentException and
+nothing moves - `TakeGlobal(Takes.Locals)` (or `Takes.All`) takes such objects along, `TakeGlobal(true)` keeps the object in the thread.
 
 `take x` as an argument or on the right of `=` hands `x` over to the receiver, whoever owned it before:
 
@@ -320,7 +339,31 @@ still known - `x is of class` is `True`.
 
 ## Testing the owner
 
-`obj is from owner` is `True` when `owner` owns `obj` directly, `obj is under owner` when `owner` is anywhere above it.
+`obj is from owner` is `True` when `owner` owns `obj` directly, `obj is under owner` when `owner` is anywhere above it. Two scopes can be named as the
+owner:
+
+| Test | True when |
+|---|---|
+| `x is from local` | `x` belongs to a scope of the running call - a local of it, something it made in this statement, or an argument it was handed fresh (`f(new Foo())`) - in the top-level code: to its scope |
+| `x is from global` | `x` belongs to the global scope (a global variable, the top-level code) |
+
+The tests work for objects, arrays, buffers and lambdas; a number, a text or `undefined` belongs to nothing - every test is `False`. (A variable
+called `local` or `global` as the owner: `x is from (local)`.)
+
+```fire
+class Bag {
+    List items = new List()
+    undefined Put(any x) {
+        if (x is from local) { print("mine to keep") }
+        try x??.TakeTo(this)        // keeps it only if the call owns it; a number has no TakeTo: skipped
+        this.items.Add(x)
+    }
+}
+var bag = new Bag()
+bag.Put(new Bag())                  // mine to keep
+bag.Put([1, 2])                     // mine to keep
+bag.Put(5)
+```
 
 ## Copying: `flat` and `copy`
 

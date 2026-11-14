@@ -9,7 +9,7 @@ class LinqWhereEnumerator : IEnumerator {
     IEnumerator inner
     lambda<any> pred
     any current
-    construct(IEnumerator inner, lambda<any> pred) { this.inner = inner; this.pred = pred; inner.TakeTo(this) }
+    construct(IEnumerator inner, lambda<any> pred) { this.inner = inner; this.pred = take pred; inner.TakeTo(this) }
     bool MoveNext() {
         var p = this.pred
         while (this.inner.MoveNext()) {
@@ -25,7 +25,7 @@ class LinqSelectEnumerator : IEnumerator {
     IEnumerator inner
     lambda<any> fn
     any current
-    construct(IEnumerator inner, lambda<any> fn) { this.inner = inner; this.fn = fn; inner.TakeTo(this) }
+    construct(IEnumerator inner, lambda<any> fn) { this.inner = inner; this.fn = take fn; inner.TakeTo(this) }
     bool MoveNext() {
         if (!this.inner.MoveNext()) { return false }
         var f = this.fn
@@ -40,7 +40,7 @@ class LinqSelectManyEnumerator : IEnumerator {
     lambda<any> fn
     any sub
     any current
-    construct(IEnumerator inner, lambda<any> fn) { this.inner = inner; this.fn = fn; inner.TakeTo(this) }
+    construct(IEnumerator inner, lambda<any> fn) { this.inner = inner; this.fn = take fn; inner.TakeTo(this) }
     bool MoveNext() {
         var f = this.fn
         while (true) {
@@ -59,8 +59,8 @@ class LinqSelectManyEnumerator : IEnumerator {
 
 class LinqTakeEnumerator : IEnumerator {
     IEnumerator inner
-    int left
-    construct(IEnumerator inner, int n) { this.inner = inner; this.left = n; inner.TakeTo(this) }
+    defined int left
+    construct(IEnumerator inner, defined int n) { this.inner = inner; this.left = n; inner.TakeTo(this) }
     bool MoveNext() {
         if (this.left <= 0) { return false }
         this.left = this.left - 1
@@ -71,8 +71,8 @@ class LinqTakeEnumerator : IEnumerator {
 
 class LinqSkipEnumerator : IEnumerator {
     IEnumerator inner
-    int skip
-    construct(IEnumerator inner, int n) { this.inner = inner; this.skip = n; inner.TakeTo(this) }
+    defined int skip
+    construct(IEnumerator inner, defined int n) { this.inner = inner; this.skip = n; inner.TakeTo(this) }
     bool MoveNext() {
         while (this.skip > 0) {
             this.skip = this.skip - 1
@@ -88,7 +88,7 @@ class LinqTakeWhileEnumerator : IEnumerator {
     lambda<any> pred
     any current
     bool done
-    construct(IEnumerator inner, lambda<any> pred) { this.inner = inner; this.pred = pred; this.done = false; inner.TakeTo(this) }
+    construct(IEnumerator inner, lambda<any> pred) { this.inner = inner; this.pred = take pred; this.done = false; inner.TakeTo(this) }
     bool MoveNext() {
         if (this.done) { return false }
         var p = this.pred
@@ -106,7 +106,7 @@ class LinqSkipWhileEnumerator : IEnumerator {
     IEnumerator inner
     lambda<any> pred
     bool started
-    construct(IEnumerator inner, lambda<any> pred) { this.inner = inner; this.pred = pred; this.started = false; inner.TakeTo(this) }
+    construct(IEnumerator inner, lambda<any> pred) { this.inner = inner; this.pred = take pred; this.started = false; inner.TakeTo(this) }
     bool MoveNext() {
         if (this.started) { return this.inner.MoveNext() }
         this.started = true
@@ -142,7 +142,7 @@ class LinqZipEnumerator : IEnumerator {
     IEnumerator b
     lambda<any, any> fn
     any current
-    construct(IEnumerator a, IEnumerator b, lambda<any, any> fn) { this.a = a; this.b = b; this.fn = fn; a.TakeTo(this); b.TakeTo(this) }
+    construct(IEnumerator a, IEnumerator b, lambda<any, any> fn) { this.a = a; this.b = b; this.fn = take fn; a.TakeTo(this); b.TakeTo(this) }
     bool MoveNext() {
         if (!this.a.MoveNext()) { return false }
         if (!this.b.MoveNext()) { return false }
@@ -154,10 +154,10 @@ class LinqZipEnumerator : IEnumerator {
 }
 
 class LinqRangeEnumerator : IEnumerator {
-    int next
-    int left
-    int current
-    construct(int start, int count) { this.next = start; this.left = count }
+    defined int next
+    defined int left
+    defined int current
+    construct(defined int start, defined int count) { this.next = start; this.left = count }
     bool MoveNext() {
         if (this.left <= 0) { return false }
         this.current = this.next
@@ -165,7 +165,7 @@ class LinqRangeEnumerator : IEnumerator {
         this.left = this.left - 1
         return true
     }
-    int GetCurrent() { return this.current }
+    defined int GetCurrent() { return this.current }
 }
 
 class Linq {
@@ -188,7 +188,7 @@ class Linq {
 
     static Query<T> From<T>(IEnumerable<T> source) {
         var s = source
-        var query = new Query(() => Linq.Iter(s))
+        var query = new Query(func () on s => Linq.Iter(this))
         try source.TakeTo(query)   // `Linq.From(new Bag())`: a fresh argument belongs to this call - the query keeps it
         return query
     }
@@ -197,13 +197,13 @@ class Linq {
     // it reads it lazily, long after the function that built it has returned.
     static Query<T> FromOwned<T>(IEnumerable<T> source) {
         var s = source
-        var query = new Query(() => Linq.Iter(s))
+        var query = new Query(func () on s => Linq.Iter(this))
         source.TakeTo(query)
         return query
     }
 
-    static Query<int> Range(int start, int count) {
-        return new Query(() => new LinqRangeEnumerator(start, count))
+    static Query<int> Range(defined int start, defined int count) {
+        return new Query(() => new LinqRangeEnumerator((taking start), (taking count)))
     }
 
     static Query<T> Repeat<T>(T value, int count) {
@@ -252,7 +252,7 @@ class Query<T> : IEnumerable<T> {
     lambda factory
 
     // `factory` is a lambda without parameters that supplies a fresh enumerator on every pass
-    construct(lambda factory) { this.factory = factory }
+    construct(lambda factory) { this.factory = take factory }
 
     IEnumerator<T> GetEnumerator() {
         var f = this.factory
@@ -262,11 +262,11 @@ class Query<T> : IEnumerable<T> {
     // ---- lazy operators
     Query<T> Where(bool lambda<T> pred) {
         var f = this.factory
-        return new Query(() => new LinqWhereEnumerator(f(), pred))
+        return new Query(() => new LinqWhereEnumerator((taking f)(), (taking pred)))
     }
     Query<R> Select<R>(R lambda<T> fn) {
         var f = this.factory
-        return new Query(() => new LinqSelectEnumerator(f(), fn))
+        return new Query(() => new LinqSelectEnumerator((taking f)(), (taking fn)))
     }
     // Projection onto a member, chosen via selector: `list.SelectMember(p => p.name)` (field or property), `SelectField` (a field only),
     // `SelectProperty` (a property only) - the lambda must be a pure member chain (see `lambda member<T>`). Unlike
@@ -274,51 +274,55 @@ class Query<T> : IEnumerable<T> {
     Query SelectField(lambda field<class> sel) {
         var f = this.factory
         any path = flat sel.Path   // (the selector dies with this call; the query keeps its own copy)
-        var query = new Query(() => new LinqSelectEnumerator(f(), x => Linq.GetPath(x, path, "field")))
+        var query = new Query(() => new LinqSelectEnumerator((taking f)(), x => Linq.GetPath(x, (taking path), "field")))
         path.TakeTo(query)
         return query
     }
     Query SelectProperty(lambda property<class> sel) {
         var f = this.factory
         any path = flat sel.Path   // (the selector dies with this call; the query keeps its own copy)
-        var query = new Query(() => new LinqSelectEnumerator(f(), x => Linq.GetPath(x, path, "property")))
+        var query = new Query(() => new LinqSelectEnumerator((taking f)(), x => Linq.GetPath(x, (taking path), "property")))
         path.TakeTo(query)
         return query
     }
     Query SelectMember(lambda member<class> sel) {
         var f = this.factory
         any path = flat sel.Path   // (the selector dies with this call; the query keeps its own copy)
-        var query = new Query(() => new LinqSelectEnumerator(f(), x => Linq.GetPath(x, path, "member")))
+        var query = new Query(() => new LinqSelectEnumerator((taking f)(), x => Linq.GetPath(x, (taking path), "member")))
         path.TakeTo(query)
         return query
     }
     Query SelectMany(lambda<T> fn) {
         var f = this.factory
-        return new Query(() => new LinqSelectManyEnumerator(f(), fn))
+        return new Query(() => new LinqSelectManyEnumerator((taking f)(), (taking fn)))
     }
-    Query<T> Take(int n) {
+    Query<T> Take(defined int n) {
         var f = this.factory
-        return new Query(() => new LinqTakeEnumerator(f(), n))
+        return new Query(() => new LinqTakeEnumerator((taking f)(), (taking n)))
     }
-    Query<T> Skip(int n) {
+    Query<T> Skip(defined int n) {
         var f = this.factory
-        return new Query(() => new LinqSkipEnumerator(f(), n))
+        return new Query(() => new LinqSkipEnumerator((taking f)(), (taking n)))
     }
     Query<T> TakeWhile(bool lambda<T> pred) {
         var f = this.factory
-        return new Query(() => new LinqTakeWhileEnumerator(f(), pred))
+        return new Query(() => new LinqTakeWhileEnumerator((taking f)(), (taking pred)))
     }
     Query<T> SkipWhile(bool lambda<T> pred) {
         var f = this.factory
-        return new Query(() => new LinqSkipWhileEnumerator(f(), pred))
+        return new Query(() => new LinqSkipWhileEnumerator((taking f)(), (taking pred)))
     }
     Query<T> Concat(IEnumerable<T> other) {
         var f = this.factory
-        return new Query(() => new LinqConcatEnumerator(f(), Linq.Iter(other)))
+        var query = new Query(func () on other => new LinqConcatEnumerator((taking f)(), Linq.Iter(this)))
+        try other??.TakeTo(query)   // (a fresh one - `.Concat([7, 8])` - belongs to this call: the query keeps it)
+        return query
     }
     Query<R> Zip<U, R>(IEnumerable<U> other, R lambda<T, U> fn) {
         var f = this.factory
-        return new Query(() => new LinqZipEnumerator(f(), Linq.Iter(other), fn))
+        var query = new Query(func () on other => new LinqZipEnumerator((taking f)(), Linq.Iter(this), (taking fn)))
+        try other??.TakeTo(query)   // (a fresh one belongs to this call: the query keeps it)
+        return query
     }
 
     // ---- eager operators (work on a copy, return a Query again)
@@ -382,7 +386,7 @@ class Query<T> : IEnumerable<T> {
         if (!found) { throw new LinqEmptyException("The sequence contains no element") }
         return last
     }
-    T ElementAt(int index) {
+    T ElementAt(defined int index) {
         var i = 0
         foreach (x in this) {
             if (i == index) { return x }
@@ -402,12 +406,12 @@ class Query<T> : IEnumerable<T> {
         foreach (x in this) { if (!pred(x)) { return false } }
         return true
     }
-    int Count() {
+    defined int Count() {
         var n = 0
         foreach (x in this) { n = n + 1 }
         return n
     }
-    int Count(bool lambda<T> pred) {
+    defined int Count(bool lambda<T> pred) {
         var n = 0
         foreach (x in this) { if (pred(x)) { n = n + 1 } }
         return n
@@ -437,8 +441,8 @@ class Query<T> : IEnumerable<T> {
         if (!found) { throw new LinqEmptyException("The sequence contains no element") }
         return best
     }
-    float Average() { return this.Average(x => x) }
-    float Average(lambda<T> fn) {
+    defined float Average() { return this.Average(x => x) }
+    defined float Average(lambda<T> fn) {
         var s = 0.0
         var n = 0
         foreach (x in this) { s = s + fn(x); n = n + 1 }
@@ -475,8 +479,8 @@ class extends List {
     Query SelectProperty(lambda property<class> sel) { return Linq.From(this).SelectProperty(sel) }
     Query SelectMember(lambda member<class> sel) { return Linq.From(this).SelectMember(sel) }
     Query SelectMany(lambda<T> fn) { return Linq.From(this).SelectMany(fn) }
-    Query<T> Take(int n) { return Linq.From(this).Take(n) }
-    Query<T> Skip(int n) { return Linq.From(this).Skip(n) }
+    Query<T> Take(defined int n) { return Linq.From(this).Take(n) }
+    Query<T> Skip(defined int n) { return Linq.From(this).Skip(n) }
     Query<T> TakeWhile(bool lambda<T> pred) { return Linq.From(this).TakeWhile(pred) }
     Query<T> SkipWhile(bool lambda<T> pred) { return Linq.From(this).SkipWhile(pred) }
     Query<T> Concat(IEnumerable<T> other) { return Linq.From(this).Concat(other) }
@@ -491,22 +495,22 @@ class extends List {
     T FirstOrDefault(T fallback) { return Linq.From(this).FirstOrDefault(fallback) }
     T FirstOrDefault(bool lambda<T> pred, T fallback) { return Linq.From(this).FirstOrDefault(pred, fallback) }
     T Last() { return Linq.From(this).Last() }
-    T ElementAt(int index) { return Linq.From(this).ElementAt(index) }
+    T ElementAt(defined int index) { return Linq.From(this).ElementAt(index) }
     bool Any() { return Linq.From(this).Any() }
     bool Any(bool lambda<T> pred) { return Linq.From(this).Any(pred) }
     bool All(bool lambda<T> pred) { return Linq.From(this).All(pred) }
-    int Count() { return Linq.From(this).Count() }
-    int Count(bool lambda<T> pred) { return Linq.From(this).Count(pred) }
+    defined int Count() { return Linq.From(this).Count() }
+    defined int Count(bool lambda<T> pred) { return Linq.From(this).Count(pred) }
     T Sum() { return Linq.From(this).Sum() }
     R Sum<R>(R lambda<T> fn) { return Linq.From(this).Sum(fn) }
     T Min() { return Linq.From(this).Min() }
     R Min<R>(R lambda<T> fn) { return Linq.From(this).Min(fn) }
     T Max() { return Linq.From(this).Max() }
     R Max<R>(R lambda<T> fn) { return Linq.From(this).Max(fn) }
-    float Average() { return Linq.From(this).Average() }
-    float Average(lambda<T> fn) { return Linq.From(this).Average(fn) }
+    defined float Average() { return Linq.From(this).Average() }
+    defined float Average(lambda<T> fn) { return Linq.From(this).Average(fn) }
     A Aggregate<A>(A seed, A lambda<A, T> fn) { return Linq.From(this).Aggregate(seed, fn) }
-    bool Contains(T value) { return Linq.From(this).Contains(value) }
+    // (Contains: List has it itself)
     undefined ForEach(lambda<T> fn) { return Linq.From(this).ForEach(fn) }
     string Join(string separator) { return Linq.From(this).Join(separator) }
     List<T> ToList() { return new List(this.ToArray()) }
@@ -519,8 +523,8 @@ class extends array {
     Query SelectProperty(lambda property<class> sel) { return Linq.From(this).SelectProperty(sel) }
     Query SelectMember(lambda member<class> sel) { return Linq.From(this).SelectMember(sel) }
     Query SelectMany(lambda<any> fn) { return Linq.From(this).SelectMany(fn) }
-    Query<any> Take(int n) { return Linq.From(this).Take(n) }
-    Query<any> Skip(int n) { return Linq.From(this).Skip(n) }
+    Query<any> Take(defined int n) { return Linq.From(this).Take(n) }
+    Query<any> Skip(defined int n) { return Linq.From(this).Skip(n) }
     Query<any> TakeWhile(bool lambda<any> pred) { return Linq.From(this).TakeWhile(pred) }
     Query<any> SkipWhile(bool lambda<any> pred) { return Linq.From(this).SkipWhile(pred) }
     Query<any> Concat(IEnumerable<any> other) { return Linq.From(this).Concat(other) }
@@ -535,20 +539,20 @@ class extends array {
     any FirstOrDefault(any fallback) { return Linq.From(this).FirstOrDefault(fallback) }
     any FirstOrDefault(bool lambda<any> pred, any fallback) { return Linq.From(this).FirstOrDefault(pred, fallback) }
     any Last() { return Linq.From(this).Last() }
-    any ElementAt(int index) { return Linq.From(this).ElementAt(index) }
+    any ElementAt(defined int index) { return Linq.From(this).ElementAt(index) }
     bool Any() { return Linq.From(this).Any() }
     bool Any(bool lambda<any> pred) { return Linq.From(this).Any(pred) }
     bool All(bool lambda<any> pred) { return Linq.From(this).All(pred) }
-    int Count() { return Linq.From(this).Count() }
-    int Count(bool lambda<any> pred) { return Linq.From(this).Count(pred) }
+    defined int Count() { return Linq.From(this).Count() }
+    defined int Count(bool lambda<any> pred) { return Linq.From(this).Count(pred) }
     any Sum() { return Linq.From(this).Sum() }
     R Sum<R>(R lambda<any> fn) { return Linq.From(this).Sum(fn) }
     any Min() { return Linq.From(this).Min() }
     R Min<R>(R lambda<any> fn) { return Linq.From(this).Min(fn) }
     any Max() { return Linq.From(this).Max() }
     R Max<R>(R lambda<any> fn) { return Linq.From(this).Max(fn) }
-    float Average() { return Linq.From(this).Average() }
-    float Average(lambda<any> fn) { return Linq.From(this).Average(fn) }
+    defined float Average() { return Linq.From(this).Average() }
+    defined float Average(lambda<any> fn) { return Linq.From(this).Average(fn) }
     A Aggregate<A>(A seed, A lambda<A, any> fn) { return Linq.From(this).Aggregate(seed, fn) }
     bool Contains(any value) { return Linq.From(this).Contains(value) }
     undefined ForEach(lambda<any> fn) { return Linq.From(this).ForEach(fn) }

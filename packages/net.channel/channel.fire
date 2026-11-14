@@ -1,0 +1,233 @@
+#import "net"
+#import "json"
+
+// net.channel (docs/networking/net-channel.md): Net.Channel<T> - the Channel<T> of the prelude over a TCP connection. Every side has an end: Send puts a
+// value into the other side's queue, Receive takes the next one of its own. It behaves like the Channel of a program:
+//   - a value (number, text, bool) goes as it is; an object or an array only fresh or with a word (`copy x`, `take x`): it goes to the other side alone,
+//     every reference of the sender to it is dead from then on (it is destroyed with the call of Send);
+//   - a record without a word is lent: the sender stays its owner; the other side gets it to read (`take` there is the AccessDeniedException); when the
+//     owner destroys it or moves it on, the other side's next use is the DestroyedException; when the connection ends, its lent records end with it.
+//
+// The wire: one line of UTF-8 per message - "v <json>" a value that moved, "l <id> <json>" a lent record, "g <id>" its lending ended, "c" the sender
+// closed its direction. A reader thread puts what arrives into the queue (it owns the lent records), a writer thread sends what Send queued.
+
+// (outside the namespace: `Channel` is the one of the prelude here)
+class NetChannelPart {
+    static any Queue() { return new Channel<string>(64) }
+    static any Signal() { return new Channel<int>(1) }
+    static any Inbox(defined int capacity) { return new Channel<any>(capacity) }
+}
+
+// The lines of a connection: the bytes that came, cut at "\n" (a byte that is never part of another UTF-8 character).
+class NetChannelLines {
+    byte data[]
+    defined int count
+    construct() {
+        this.data = new byte[4096]
+        this.count = 0
+    }
+    undefined Feed(byte buffer[], defined int n) {
+        if (this.count + n > this.data.length) {
+            int size = this.data.length * 2
+            while (size < this.count + n) { size = size * 2 }
+            byte grown[] = new byte[size]
+            for (int i = 0; i < this.count; i++) { grown[i] = this.data[i] }
+            this.data = grown
+        }
+        for (int i = 0; i < n; i++) { this.data[this.count + i] = buffer[i] }
+        this.count = this.count + n
+    }
+    // The next whole line (without "\n"), undefined when none is complete yet.
+    string Next() {
+        for (int i = 0; i < this.count; i++) {
+            if (this.data[i] == 10) {
+                string line = IO.Utf8.GetString(this.data, 0, i)
+                int rest = this.count - i - 1
+                for (int j = 0; j < rest; j++) { this.data[j] = this.data[i + 1 + j] }
+                this.count = rest
+                return line
+            }
+        }
+        return undefined
+    }
+}
+
+class NetChannelWire {
+    // Up to buffer.length bytes; 0 when the other side closed, the connection broke or the queue `inbox` was closed (the end of the program closed
+    // the channels of the main program: nobody will receive any more).
+    static defined int Read(defined int handle, byte buffer[], any inbox) {
+        var tries = 0
+        while (true) {
+            var n = __NetRecv(handle, buffer, 0, buffer.length, 0)
+            if (n >= 0) { return n }
+            if (__NetLastError() != 4 || inbox.IsClosed) { return 0 }
+            Net.Clock.WaitFor(handle, 1, Net.Clock.Deadline(-1), tries)
+            tries = tries + 1
+        }
+    }
+    // The line and "\n"; false when the connection broke.
+    static bool Write(defined int handle, string line) {
+        var bytes = IO.Utf8.GetBytes(line + "\n")
+        var done = 0
+        while (done < bytes.length) {
+            var tries = 0
+            var n = -1
+            while (true) {
+                n = __NetSend(handle, bytes, done, bytes.length - done, 0)
+                if (n >= 0) { break }
+                if (__NetLastError() != 4) { return false }
+                Net.Clock.WaitFor(handle, 2, Net.Clock.Deadline(-1), tries)
+                tries = tries + 1
+            }
+            done = done + n
+        }
+        return true
+    }
+    // The number at the start of `text` (up to a space or the end).
+    static defined int Id(string text) {
+        int space = text.IndexOf(" ")
+        if (space < 0) { return text.ToInt() }
+        return text.Substring(0, space).ToInt()
+    }
+}
+
+namespace Net {
+    /// <summary>The other side of a Net.Channel connected to a port (`listener.Accept()`).</summary>
+    class ChannelListener<T> {
+        Net.TcpListener listener
+
+        /// <summary>Waits for channels on `port` ("" listens on every interface; port 0 takes a free one - see Port).</summary>
+        construct(string host, defined int port) { this.listener = new Net.TcpListener(host, port) }
+
+        int Port { get { return this.listener.Port } }
+
+        /// <summary>The next channel that connects (waits without a limit unless one is given: then Net.TimeoutException).</summary>
+        Net.Channel<T> Accept(any timeout = undefined) {
+            var client = this.listener.Accept(timeout)
+            int handle = client.handle
+            client.handle = -1
+            client.closed = true
+            return new Net.Channel<T>(handle)
+        }
+
+        undefined Close() { this.listener.Close() }
+    }
+
+    /// <summary>A Channel&lt;T&gt; over a TCP connection: `new Net.Channel<T>(host, port)` connects to a Net.ChannelListener&lt;T&gt;.</summary>
+    [NoCopy] class Channel<T> : IChannel<T> {
+        any inbox
+        any outbox
+        any writerDone
+        defined int handle
+        defined int nextId
+        bool sendClosed
+
+        /// <summary>Connects (the limit: 10 seconds unless given; undefined: none).</summary>
+        construct(string host, defined int port, any timeout = 10000) {
+            var client = new Net.TcpClient(host, port, timeout)
+            int h = client.handle
+            client.handle = -1
+            client.closed = true
+            this.Start(h, 16)
+        }
+
+        /// <summary>A connection a listener accepted (do not call this yourself).</summary>
+        construct(defined int handle) { this.Start(handle, 16) }
+
+        destruct() {
+            if (this.handle < 0) { return }
+            this.Close()
+            this.writerDone.Receive()        // (what was queued is sent)
+            __NetShutdown(this.handle, 2)    // (the reader thread ends: it closes the socket)
+            this.handle = -1
+        }
+
+        undefined Start(defined int handle, defined int capacity) {
+            this.handle = handle
+            this.nextId = 0
+            this.sendClosed = false
+            this.inbox = NetChannelPart.Inbox(capacity)
+            this.outbox = NetChannelPart.Queue()
+            this.writerDone = NetChannelPart.Signal()
+            any inbox = this.inbox
+            any outbox = this.outbox
+            any writerDone = this.writerDone
+            fire with outbox, writerDone taking handle {
+                foreach (line in outbox) {
+                    if (!NetChannelWire.Write(handle, line)) { break }
+                }
+                NetChannelWire.Write(handle, "c")
+                __NetShutdown(handle, 1)
+                writerDone.Close()
+            }
+            fire with inbox, writerDone taking handle {
+                if (true) {
+                    var lines = new NetChannelLines()
+                    var lent = new Dictionary<int, any>(Owns.Values)   // (the lent records: this thread owns them for the other side)
+                    byte buffer[] = new byte[4096]
+                    bool open = true
+                    while (open) {
+                        string line = lines.Next()
+                        if (line == undefined) {
+                            int n = NetChannelWire.Read(handle, buffer, inbox)
+                            if (n <= 0) { open = false } else { lines.Feed(buffer, n) }
+                        } else if (line.StartsWith("v ")) {
+                            inbox.Send(Json.Deserialize(line.Substring(2), "any"))
+                        } else if (line.StartsWith("l ")) {
+                            string rest = line.Substring(2)
+                            int id = NetChannelWire.Id(rest)
+                            any record = Json.Deserialize(rest.Substring(rest.IndexOf(" ") + 1), "any")
+                            lent[id] = record
+                            any lentRecord = lent[id]
+                            inbox.Send(lentRecord)
+                        } else if (line.StartsWith("g ")) {
+                            lent.Remove(NetChannelWire.Id(line.Substring(2)))
+                        } else if (line == "c") {
+                            inbox.Close()
+                        }
+                    }
+                    inbox.Close()
+                    delete lent                      // (the connection ended: so did its lendings)
+                }
+                writerDone.Receive()
+                __NetClose(handle)
+            }
+        }
+
+        /// <summary>Puts the value into the other side's queue (it waits while the local queue of what is to be sent is full); false when this side
+        /// closed. A record without a word is lent; another object or an array goes only fresh, copied or taken (the ArgumentException).</summary>
+        bool Send(T value) {
+            if (this.sendClosed) { return false }
+            if (!(value is from local)) {
+                int id = this.nextId + 1
+                int kind = __chan_watch(value, this.outbox.node, "g " + id)
+                if (kind == 1) {
+                    this.nextId = id
+                    return this.outbox.Send("l " + id + " " + Json.Serialize(value))
+                }
+                if (kind == 2) { throw new ArgumentException("Net.Channel.Send: an object goes into a channel only with a word - 'copy x' (a copy) or 'take x' (moved) - or fresh ('new', the result of a call).") }
+            }
+            return this.outbox.Send("v " + Json.Serialize(value))
+        }
+
+        /// <summary>The next value (waits; at most `limit`: then the TimeoutException) - undefined when the other side closed and everything was received.</summary>
+        T Receive(any limit = undefined) { return this.inbox.Receive(limit) }
+
+        /// <summary>The next value if one is there, else undefined (does not wait).</summary>
+        T TryReceive() { return this.inbox.TryReceive() }
+
+        /// <summary>Ends this side's direction: the other side receives what was sent, then undefined.</summary>
+        undefined Close() {
+            if (this.sendClosed) { return }
+            this.sendClosed = true
+            this.outbox.Close()
+        }
+
+        bool IsClosed { get { return this.sendClosed } }
+
+        /// <summary>Values that arrived and were not received yet.</summary>
+        int Count { get { return this.inbox.Count } }
+
+        IEnumerator<T> GetEnumerator() { return this.inbox.GetEnumerator() }
+    }
+}

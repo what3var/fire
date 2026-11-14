@@ -6,7 +6,7 @@ namespace UI {
 
         construct() { this.points = new List() }
 
-        int Count() { return this.points.Count / 2 }
+        defined int Count() { return this.points.Count / 2 }
 
         // The points as an array for the renderer.
         int[] ToArray() {
@@ -21,17 +21,17 @@ namespace UI {
     class Geometry {
         List figures
         // the current point (start of the next segment) and the start of the current figure
-        int cx = 0
-        int cy = 0
-        int startX = 0
-        int startY = 0
+        defined int cx = 0
+        defined int cy = 0
+        defined int startX = 0
+        defined int startY = 0
         Figure current
         // number of segments per curve
-        int segments = 16
+        defined int segments = 16
 
         construct() { this.figures = new List() }
 
-        Figure Begin(int x, int y) {
+        Figure Begin(defined int x, defined int y) {
             var f = new Figure()
             f.TakeTo(this)
             this.figures.Add(f)
@@ -45,9 +45,9 @@ namespace UI {
             return f
         }
 
-        undefined MoveTo(int x, int y) { this.Begin(x, y) }
+        undefined MoveTo(defined int x, defined int y) { this.Begin(x, y) }
 
-        undefined LineTo(int x, int y) {
+        undefined LineTo(defined int x, defined int y) {
             if (this.current == undefined) { this.Begin(this.cx, this.cy) }
             this.current.points.Add(x)
             this.current.points.Add(y)
@@ -56,7 +56,7 @@ namespace UI {
         }
 
         // Quadratic curve to the point (x, y) with the control point (qx, qy).
-        undefined QuadTo(int qx, int qy, int x, int y) {
+        undefined QuadTo(defined int qx, defined int qy, defined int x, defined int y) {
             var x0 = this.cx
             var y0 = this.cy
             for (var i = 1; i <= this.segments; i = i + 1) {
@@ -69,7 +69,7 @@ namespace UI {
         }
 
         // Cubic curve to the point (x, y) with the control points (c1x, c1y) and (c2x, c2y).
-        undefined CubicTo(int c1x, int c1y, int c2x, int c2y, int x, int y) {
+        undefined CubicTo(defined int c1x, defined int c1y, defined int c2x, defined int c2y, defined int x, defined int y) {
             var x0 = this.cx
             var y0 = this.cy
             for (var i = 1; i <= this.segments; i = i + 1) {
@@ -95,7 +95,7 @@ namespace UI {
         }
 
         // An arc of an ellipse around (mx, my) with the semi-axes rx and ry, from `start` degrees (0 = right, growing downwards) by `sweep` degrees.
-        undefined AddArc(int mx, int my, int rx, int ry, int start, int sweep) {
+        undefined AddArc(defined int mx, defined int my, defined int rx, defined int ry, defined int start, defined int sweep) {
             var steps = UI.M.Max(2, this.segments * UI.M.Max(1, sweep / 90))
             if (sweep < 0) { steps = UI.M.Max(2, this.segments * UI.M.Max(1, -sweep / 90)) }
             for (var i = 0; i <= steps; i = i + 1) {
@@ -106,14 +106,14 @@ namespace UI {
             }
         }
 
-        undefined AddEllipse(int mx, int my, int rx, int ry) {
+        undefined AddEllipse(defined int mx, defined int my, defined int rx, defined int ry) {
             this.AddArc(mx, my, rx, ry, 0, 360)
             this.current.points.RemoveAt(this.current.points.Count - 1)
             this.current.points.RemoveAt(this.current.points.Count - 1)
             this.Close()
         }
 
-        undefined AddRect(int x, int y, int w, int h) {
+        undefined AddRect(defined int x, defined int y, defined int w, defined int h) {
             this.Begin(x, y)
             this.LineTo(x + w, y)
             this.LineTo(x + w, y + h)
@@ -122,7 +122,7 @@ namespace UI {
         }
 
         // The size of the rectangle around all points (bottom right = largest coordinates).
-        int Width() {
+        defined int Width() {
             var w = 0
             for (var i = 0; i < this.figures.Count; i = i + 1) {
                 any p = this.figures[i].points
@@ -131,7 +131,7 @@ namespace UI {
             return w
         }
 
-        int Height() {
+        defined int Height() {
             var h = 0
             for (var i = 0; i < this.figures.Count; i = i + 1) {
                 any p = this.figures[i].points
@@ -148,7 +148,7 @@ namespace UI {
             var n = data.Length
             var args = new List()
             while (pos < n) {
-                any c = data.CharAt(pos).ToInt()
+                defined int c = data.CharAt(pos).ToInt()
                 if (c == 32 || c == 44 || c == 9 || c == 10 || c == 13) {
                     pos = pos + 1
                     continue
@@ -168,7 +168,7 @@ namespace UI {
                 }
                 var value = 0
                 while (pos < n) {
-                    any d = data.CharAt(pos).ToInt() - 48
+                    int d = data.CharAt(pos).ToInt() - 48
                     if (d < 0 || d > 9) { break }
                     value = value * 10 + d
                     pos = pos + 1
@@ -191,7 +191,7 @@ namespace UI {
             return g
         }
 
-        static int ArgCount(int command) {
+        static defined int ArgCount(defined int command) {
             var c = command
             if (c >= 97) { c = c - 32 }
             if (c == 77 || c == 76) { return 2 }
@@ -201,7 +201,7 @@ namespace UI {
             return 0
         }
 
-        undefined Apply(int command, any args) {
+        undefined Apply(defined int command, any args) {
             var relative = command >= 97
             var c = command
             if (relative) { c = c - 32 }
@@ -225,18 +225,18 @@ namespace UI {
         Brush Fill
         Pen Stroke
 
-        construct(int x = 0, int y = 0, int width = -1, int height = -1) : base(x, y, width, height) { }
+        construct(defined int x = 0, defined int y = 0, defined int width = -1, defined int height = -1) : base(x, y, width, height) { }
 
         override string StyleKey() { return "Shape" }
     }
 
     // A rectangle of the size of the element.
     class Rectangle : Shape {
-        construct(int x = 0, int y = 0, int width = -1, int height = -1) : base(x, y, width, height) { }
+        construct(defined int x = 0, defined int y = 0, defined int width = -1, defined int height = -1) : base(x, y, width, height) { }
 
         override string StyleKey() { return "Rectangle" }
 
-        override undefined Draw(Root root, int ax, int ay) {
+        override undefined Draw(Root root, defined int ax, defined int ay) {
             if (!this.NeedsDraw(root, ax, ay)) { return }
             if (this.Fill != undefined) { root.renderer.FillRect(ax, ay, this.actualWidth, this.actualHeight, this.Fill) }
             if (this.Stroke != undefined) { root.renderer.DrawRect(ax, ay, this.actualWidth, this.actualHeight, this.Stroke) }
@@ -245,11 +245,11 @@ namespace UI {
 
     // An ellipse that fills the rectangle of the element.
     class Ellipse : Shape {
-        construct(int x = 0, int y = 0, int width = -1, int height = -1) : base(x, y, width, height) { }
+        construct(defined int x = 0, defined int y = 0, defined int width = -1, defined int height = -1) : base(x, y, width, height) { }
 
         override string StyleKey() { return "Ellipse" }
 
-        override undefined Draw(Root root, int ax, int ay) {
+        override undefined Draw(Root root, defined int ax, defined int ay) {
             if (!this.NeedsDraw(root, ax, ay)) { return }
             var rx = this.actualWidth / 2
             var ry = this.actualHeight / 2
@@ -263,12 +263,12 @@ namespace UI {
 
     // A segment from (x1, y1) to (x2, y2) in the element (coordinates relative to its top left corner).
     class Line : Shape {
-        int X1 = 0
-        int Y1 = 0
-        int X2 = 0
-        int Y2 = 0
+        defined int X1 = 0
+        defined int Y1 = 0
+        defined int X2 = 0
+        defined int Y2 = 0
 
-        construct(int x1 = 0, int y1 = 0, int x2 = 0, int y2 = 0) : base(0, 0, -1, -1) {
+        construct(defined int x1 = 0, defined int y1 = 0, defined int x2 = 0, defined int y2 = 0) : base(0, 0, -1, -1) {
             this.X1 = x1
             this.Y1 = y1
             this.X2 = x2
@@ -277,12 +277,12 @@ namespace UI {
 
         override string StyleKey() { return "Line" }
 
-        override undefined MeasureCore(Root root, int aw, int ah) {
+        override undefined MeasureCore(Root root, defined int aw, defined int ah) {
             this.cw = UI.M.Max(this.X1, this.X2) + 1
             this.ch = UI.M.Max(this.Y1, this.Y2) + 1
         }
 
-        override undefined Draw(Root root, int ax, int ay) {
+        override undefined Draw(Root root, defined int ax, defined int ay) {
             if (!this.NeedsDraw(root, ax, ay)) { return }
             if (this.Stroke != undefined) { root.renderer.DrawLine(ax + this.X1, ay + this.Y1, ax + this.X2, ay + this.Y2, this.Stroke) }
         }
@@ -307,7 +307,7 @@ namespace UI {
     class Path : Shape {
         Geometry data
 
-        construct(any data = undefined, int x = 0, int y = 0) : base(x, y, -1, -1) {
+        construct(any data = undefined, defined int x = 0, defined int y = 0) : base(x, y, -1, -1) {
             this.data = data
         }
 
@@ -318,7 +318,7 @@ namespace UI {
             this.data = UI.Geometry.Parse(text)
         }
 
-        override undefined MeasureCore(Root root, int aw, int ah) {
+        override undefined MeasureCore(Root root, defined int aw, defined int ah) {
             if (this.data == undefined) {
                 this.cw = 0
                 this.ch = 0
@@ -328,7 +328,7 @@ namespace UI {
             this.ch = this.data.Height() + 1
         }
 
-        override undefined Draw(Root root, int ax, int ay) {
+        override undefined Draw(Root root, defined int ax, defined int ay) {
             if (!this.NeedsDraw(root, ax, ay)) { return }
             if (this.data == undefined) { return }
             for (var i = 0; i < this.data.figures.Count; i = i + 1) {
@@ -360,9 +360,9 @@ namespace UI {
         bool dirty = true
         bool external = false
         // how the image gets onto the surface: UI.BlitMode (Copy, Transparent, Blend)
-        int blendMode = 0
+        defined int blendMode = 0
 
-        construct(int x = 0, int y = 0, int width = 200, int height = 150) : base(x, y, width, height) { }
+        construct(defined int x = 0, defined int y = 0, defined int width = 200, defined int height = 150) : base(x, y, width, height) { }
 
         override string StyleKey() { return "DrawingCanvas" }
 
@@ -407,7 +407,7 @@ namespace UI {
         }
 
         // Makes sure that the own buffer is as big as the element.
-        undefined Ensure(int w, int h) {
+        undefined Ensure(defined int w, defined int h) {
             if (this.external || w <= 0 || h <= 0) { return }
             if (this.framebuffer != undefined && this.framebuffer.Width() == w && this.framebuffer.Height() == h) { return }
             this.DropOwn()
@@ -416,7 +416,7 @@ namespace UI {
             this.dirty = true
         }
 
-        override undefined MeasureCore(Root root, int aw, int ah) {
+        override undefined MeasureCore(Root root, defined int aw, defined int ah) {
             if (this.external && this.framebuffer != undefined) {
                 this.cw = this.framebuffer.Width()
                 this.ch = this.framebuffer.Height()
@@ -426,7 +426,7 @@ namespace UI {
             this.ch = 0
         }
 
-        override undefined Draw(Root root, int ax, int ay) {
+        override undefined Draw(Root root, defined int ax, defined int ay) {
             if (!this.NeedsDraw(root, ax, ay)) { return }
             if (this.framebuffer == undefined) { return }
             root.PushClip(ax, ay, this.actualWidth, this.actualHeight)
@@ -434,22 +434,22 @@ namespace UI {
             root.PopClip()
         }
 
-        override undefined MouseDown(Root root, int button, int px, int py) {
+        override undefined MouseDown(Root root, defined int button, defined int px, defined int py) {
             var callback = this.OnMouseDown
             if (callback != undefined) { callback(px - this.ax, py - this.ay, button) }
         }
 
-        override undefined MouseMove(Root root, int px, int py) {
+        override undefined MouseMove(Root root, defined int px, defined int py) {
             var callback = this.OnMouseMove
             if (callback != undefined) { callback(px - this.ax, py - this.ay) }
         }
 
-        override undefined Hover(Root root, int px, int py) {
+        override undefined Hover(Root root, defined int px, defined int py) {
             var callback = this.OnMouseMove
             if (callback != undefined) { callback(px - this.ax, py - this.ay) }
         }
 
-        override undefined MouseUp(Root root, int button, int px, int py) {
+        override undefined MouseUp(Root root, defined int button, defined int px, defined int py) {
             var callback = this.OnMouseUp
             if (callback != undefined) { callback(px - this.ax, py - this.ay, button) }
         }

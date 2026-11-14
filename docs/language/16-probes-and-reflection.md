@@ -89,9 +89,12 @@ try {
 }
 ```
 
+`Reflect.Set(obj, name, value)` owns like `obj.name = value`: what belongs to the call - a fresh value (`new List<Item>()`, an array literal),
+`copy x`, `take x` - belongs to `obj` from then on; an object of someone else stays theirs (the field refers to it). The same in the VM and natively.
+
 | Class | Members |
 |---|---|
-| `Type` | `Type.Of(obj or name)`, `Type.Named(name)` (or `undefined`), `Type.Names()`; `Name`, `Base`, `Interfaces`, `DeclaredInterfaces`, `IsActor`, `All`, `Fields()`, `Properties()`, `Methods()`, `Constructors()`, `Find(name)`, `Has(name)`, `IsSubclassOf(type)`, `New(args)`, `Attributes`, `FindAttribute(name)`, `HasAttribute(name)`, `HasFlag(flag)`, `Flags(enum)` |
+| `Type` | `Type.Of(obj or name)`, `Type.Of<T>()` (the type argument of a generic class or method that runs; also `Type.Of<Person>()`), `Type.Named(name)` (or `undefined`), `Type.Names()`; `Name`, `Base`, `Interfaces`, `DeclaredInterfaces`, `IsActor`, `All`, `Fields()`, `Properties()`, `Methods()`, `Constructors()`, `Find(name)`, `Has(name)`, `IsSubclassOf(type)`, `New(args)`, `Attributes`, `FindAttribute(name)`, `HasAttribute(name)`, `HasFlag(flag)`, `Flags(enum)` |
 | `Member` | `Name`, `Kind` (`field`, `property`, `method`, `constructor`), `TypeName`, `Access`, `IsStatic`, `IsReadonly`, `CanRead`, `CanWrite`, `Unit`, `DeclaredIn`, `ParamNames`, `ParamTypes`, `ParamCount()`, `Attributes`, `FindAttribute(name)`, `HasAttribute(name)`, `HasFlag(flag)`, `Flags(enum)`, `Get(obj)`, `Set(obj, v)`, `Call(obj, args)`, `Probe(obj, kind, handler)` |
 | `Attribute` | `Name`, `Args`, `ArgTexts`, `ArgCount()` - an attribute of a class, method, field or property (see [Classes](08-classes.md#attributes)) |
 | `Reflect` | `Get`, `Set`, `Call`, `New`, `Has`, `Probe`, `ProbeAll`, `Silence`, `SilenceAll`, `SilenceHandle` |
@@ -149,12 +152,15 @@ in the settings of a project, `--stripping` on the command line; a number or a n
 | `2` `methods` | every class with its constructors, fields and properties (getters and setters); a method only when the program uses it |
 | `3` `all` (the default) | only what the program reaches: also a class the program never makes or uses is left out |
 
-At every level two things stay:
+At every level these stay:
 
 - what is marked `[Keep]` (see [Classes](08-classes.md#attributes)), and
 - the names the program gives **as literals** to reflection: `Reflect.New("Dog", [])`, `Type.Named("Dog")`, `Type.Of("Dog")` keep the class `Dog` like `[Keep]`,
   `Reflect.Call(obj, "Bark", [])`, `Reflect.Get(obj, "legs")`, `type.Find("Bark")` keep the members of that name (of the classes whose objects exist). Every text in the
   function that calls reflection counts (also `var n = "Bark"` a line before), a text made at run time or read from a file does not.
+- the classes and members an **expression tree** names (`p => p.address.city == "Bonn"`: `Person`, `Address`, `address`, `city` - see
+  [Lambdas](12-lambdas.md#expression-trees-lambda-expressiont)): a translator finds them with `Type.Named(...).Find(...)`, also when the program never
+  makes an `Address`.
 
 Reflection that works on an object (`Reflect.Get/Set/Has`, probes, `Type.Of(obj)`) finds every field and property of that object's class at every level;
 `Type.Of(obj).Methods()` lists the methods that are there. Looking up what was left out is an error that says so - natively only, the VM keeps everything:
@@ -165,7 +171,7 @@ Member 'Dog.Wag' was left out of the build (stripping 2). Add [Keep] to 'Dog.Wag
 ```
 
 (a `ReflectionException`; for a private member the advice is stripping 0). `Type.Names()` lists the classes that are there, `Reflect.Has(obj, name)` is false for a
-method that was left out. The JSON `"$type"` is data of the run as well: at level 3 it can only name the classes reading can make ([JSON](../stdlib/json.md)).
+method that was left out. The JSON `"$type"` is data of the run as well: at level 3 it can only name the classes reading can make (JSON (`docs/stdlib/json.md`)).
 
 ```fire
 #import "reflection"

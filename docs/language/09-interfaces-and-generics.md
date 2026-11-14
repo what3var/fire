@@ -178,6 +178,22 @@ print(k is of Kennel)
 - `where T is in "mm"` - `T` is a unit of the same dimension as `mm`.
 - `where T is of float : is in "mm"` - both; `where T is of Dog, is of Cat` - one of them.
 
+In the code of a generic class or method, `T is of Name` asks the same at run time - about the type argument that runs, not about a value:
+
+```fire
+class Box<T> {
+    string What() {
+        if (T is of Animal) { return "animal" }    // Box<Dog>: the base class counts
+        if (T is of IShape) { return "shape" }     // a class that implements IShape
+        if (T is of int) { return "int" }
+        return "other"
+    }
+}
+print(new Box<Dog>().What() + " " + new Box<int>().What())   // animal int
+```
+
+`List<int>` is of `List`; a type argument that is not known (the type is not generic there) is of nothing (`false`). The same in the VM and natively.
+
 The conditions are checked at `new`. At run time fire does not create a separate class per type argument - a `Box<int>` and a `Box<string>` are
 the same class - but every object keeps its type arguments, and what is stored in a `T` is checked against them:
 

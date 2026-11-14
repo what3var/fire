@@ -831,6 +831,19 @@ namespace fire.Values
             return MakeInt(a._intValue >> (int)b._intValue, a.Unit, NumericWidth.W64, a._wide);
         }
 
+        /// <summary>`>>>`: the logical shift right - zeros come in at the top. An int is shifted as the unsigned number of its width (the program's int: 64,
+        /// or 32/16 with `#intwidth`; a value that keeps a wider width, its width): `-1 >>> 60` is 15, with `#intwidth 32` `-1 >>> 28` is 15. The count is
+        /// taken & 63 like that of `<<`/`>>`; a count of the width or more gives 0. A word shifts like `>>` (a word is unsigned anyway).</summary>
+        public static Value ShiftRightLogical(Value a, Value b)
+        {
+            if (AnyWord(a, b)) return WordOp(WordOperation.Shr, a, b);
+            RequireInt(a, ">>>"); RequireInt(b, ">>>");
+            int w = a._wide >= 64 ? 64 : a._wide == 32 ? 32 : !Ints32 ? 64 : Ints16 ? 16 : 32;
+            int c = (int)(b._intValue & 63);
+            ulong bits = w >= 64 ? (ulong)a._intValue : (ulong)a._intValue & ((1UL << w) - 1);
+            return MakeInt(c >= w ? 0 : (long)(bits >> c), a.Unit, NumericWidth.W64, a._wide);
+        }
+
         /// <summary>`^` (power, NOT bitwise XOR - that is `#`, see BitXor).
         /// A power is always a float (`2 ^ 3` is 8.0, `2 ^ -1` is 0.5): its type must not depend on the value of the exponent - a variable keeps its
         /// type (docs/spec/TYPES.md), and `int ^ int` as an int would be one for some exponents only. A whole result is `x!int` away.</summary>
@@ -988,6 +1001,8 @@ namespace fire.Values
                     return (a.Kind == ValueKind.Word ? WordToDouble(a.AsWord()) : a.ToDouble()) == (b.Kind == ValueKind.Word ? WordToDouble(b.AsWord()) : b.ToDouble());
                 return (unchecked((ulong)a._bits) & WordMask) == (unchecked((ulong)b._bits) & WordMask);
             }
+            // (two records: by their content - step 9)
+            if (a.Kind == ValueKind.Class && b.Kind == ValueKind.Class && fire.Runtime.RecordValues.Equal(a, b)) return true;
             if (a.Kind is not (ValueKind.Int or ValueKind.Float) || b.Kind is not (ValueKind.Int or ValueKind.Float)) return a.Equals(b);
             if (!ReferenceEquals(a._ref, b._ref))
             {

@@ -10,23 +10,23 @@ namespace UI {
     // x/y only apply in a Canvas (and in the Panel, which arranges like a Canvas). ax/ay is the position on the screen at the last drawing
     // (so that hit testing and drawing always mean the same).
     class Element {
-        int Left
-        int Top
-        int Width = -1
-        int Height = -1
-        int MinWidth = 0
-        int MinHeight = 0
-        int MaxWidth = -1
-        int MaxHeight = -1
+        defined int Left
+        defined int Top
+        defined int Width = -1
+        defined int Height = -1
+        defined int MinWidth = 0
+        defined int MinHeight = 0
+        defined int MaxWidth = -1
+        defined int MaxHeight = -1
         Thickness Margin
         UI.HAlign HorizontalAlign = UI.HAlign.Stretch
         UI.VAlign VerticalAlign = UI.VAlign.Stretch
         // Attached properties of the containers: DockPanel (Dock), Grid (GridRow, GridColumn, GridRowSpan, GridColumnSpan)
         UI.Dock Dock = UI.Dock.Left
-        int GridRow = 0
-        int GridColumn = 0
-        int GridRowSpan = 1
-        int GridColumnSpan = 1
+        defined int GridRow = 0
+        defined int GridColumn = 0
+        defined int GridRowSpan = 1
+        defined int GridColumnSpan = 1
         bool Visible = true
         bool Enabled = true
         // the mouse pointer over the element (UI.Cursor; -1: that of the element around it)
@@ -45,7 +45,7 @@ namespace UI {
         // ("8x14", "8x8") or one installed on the system. "" = that of the surrounding element, in the end `theme.font` (default "": the console font of the renderer).
         // fontSize is the height of the letters in pixels (0 = that of the surrounding element, in the end `theme.fontSize`); the bitmap fonts ignore it.
         string Font = ""
-        int FontSize = 0
+        defined int FontSize = 0
         // Name (for the parts of a template, see FindPart)
         string Name = ""
         // Own resources (undefined until you assign a ResourceDictionary) and style (undefined: the implicit style, see StyleKey)
@@ -75,20 +75,20 @@ namespace UI {
 
         // Result of the layout
         // cw/ch: content size (without margin), dw/dh: desired size (with margin)
-        int cw = 0
-        int ch = 0
-        int dw = 0
-        int dh = 0
+        defined int cw = 0
+        defined int ch = 0
+        defined int dw = 0
+        defined int dh = 0
         // Position in the container and size after Arrange
-        int rx = 0
-        int ry = 0
-        int actualWidth = 0
-        int actualHeight = 0
+        defined int rx = 0
+        defined int ry = 0
+        defined int actualWidth = 0
+        defined int actualHeight = 0
         // Position on the screen at the last drawing
-        int ax = 0
-        int ay = 0
+        defined int ax = 0
+        defined int ay = 0
 
-        construct(int x = 0, int y = 0, int width = -1, int height = -1) {
+        construct(defined int x = 0, defined int y = 0, defined int width = -1, defined int height = -1) {
             this.Left = x
             this.Top = y
             this.Width = width
@@ -115,7 +115,7 @@ namespace UI {
         }
 
         // The size of the letters in pixels, in the same way.
-        int FontPixels(Root root) {
+        defined int FontPixels(Root root) {
             var e = this
             while (e != undefined) {
                 if (e.FontSize > 0) { return e.FontSize }
@@ -125,11 +125,11 @@ namespace UI {
         }
 
         // The width of `text` in the font of this element, and the height of a line of text.
-        int TextWidth(Root root, string text) { return root.renderer.TextWidth(text, root.FontFor(this.FontName(root)), this.FontPixels(root)) }
-        int TextHeight(Root root) { return root.renderer.TextHeight(root.FontFor(this.FontName(root)), this.FontPixels(root)) }
+        defined int TextWidth(Root root, string text) { return root.renderer.TextWidth(text, root.FontFor(this.FontName(root)), this.FontPixels(root)) }
+        defined int TextHeight(Root root) { return root.renderer.TextHeight(root.FontFor(this.FontName(root)), this.FontPixels(root)) }
 
         // Draws `text` in the font of this element with its upper left corner at (x, y) (brush `brush` for the letters).
-        undefined DrawString(Root root, int x, int y, string text, Brush brush) {
+        undefined DrawString(Root root, defined int x, defined int y, string text, Brush brush) {
             root.renderer.DrawText(x, y, text, brush, undefined, root.FontFor(this.FontName(root)), this.FontPixels(root))
         }
 
@@ -241,7 +241,7 @@ namespace UI {
         }
 
         // Must the element (at screen position ax, ay) be painted - does it lie in the area that is currently being repainted? Sets ax and ay while doing so.
-        bool NeedsDraw(Root root, int ax, int ay) {
+        bool NeedsDraw(Root root, defined int ax, defined int ay) {
             this.ax = ax
             this.ay = ay
             return root.Needs(ax, ay, this.actualWidth, this.actualHeight)
@@ -289,15 +289,15 @@ namespace UI {
         bool Focusable() { return false }
 
         // The corners of the element when it floats (a menu, a popup): its shadow follows them (Root.PopupShadow). 0: square.
-        int PopupRadius(Root root) { return 0 }
+        defined int PopupRadius(Root root) { return 0 }
 
         // The content (without margin): sets cw/ch. aw/ah: at most this much space (-1: unbounded). An element without content wants nothing.
-        undefined MeasureCore(Root root, int aw, int ah) {
+        undefined MeasureCore(Root root, defined int aw, defined int ah) {
             this.cw = 0
             this.ch = 0
         }
 
-        undefined Measure(Root root, int aw, int ah) {
+        undefined Measure(Root root, defined int aw, defined int ah) {
             if (!this.Visible) {
                 this.dw = 0
                 this.dh = 0
@@ -328,10 +328,10 @@ namespace UI {
         }
 
         // Arranges the children (their space is w x h). An element without children does nothing.
-        undefined ArrangeCore(Root root, int w, int h) { }
+        undefined ArrangeCore(Root root, defined int w, defined int h) { }
 
         // The space in the container is (px, py, pw, ph), margin included.
-        undefined Arrange(Root root, int px, int py, int pw, int ph) {
+        undefined Arrange(Root root, defined int px, defined int py, defined int pw, defined int ph) {
             if (!this.Visible) {
                 if (this.actualWidth != 0 || this.actualHeight != 0) { root.layoutMoved = true }
                 this.actualWidth = 0
@@ -369,7 +369,7 @@ namespace UI {
         }
 
         // With a template its tree determines the size, otherwise the content of the element itself.
-        undefined MeasureContent(Root root, int iw, int ih) {
+        undefined MeasureContent(Root root, defined int iw, defined int ih) {
             var t = this.templateRoot
             if (t == undefined) {
                 this.MeasureCore(root, iw, ih)
@@ -380,7 +380,7 @@ namespace UI {
             this.ch = t.dh
         }
 
-        undefined ArrangeContent(Root root, int w, int h) {
+        undefined ArrangeContent(Root root, defined int w, defined int h) {
             var t = this.templateRoot
             if (t == undefined) {
                 this.ArrangeCore(root, w, h)
@@ -390,7 +390,7 @@ namespace UI {
         }
 
         // Draws the template; false if there is none (then the control draws itself).
-        bool DrawTemplate(Root root, int ax, int ay) {
+        bool DrawTemplate(Root root, defined int ax, defined int ay) {
             var t = this.templateRoot
             this.ax = ax
             this.ay = ay
@@ -399,13 +399,13 @@ namespace UI {
             return true
         }
 
-        undefined Draw(Root root, int ax, int ay) {
+        undefined Draw(Root root, defined int ax, defined int ay) {
             this.ax = ax
             this.ay = ay
         }
 
         // The element (or a descendant) under the screen position (px, py), otherwise undefined.
-        UI.Element HitTest(int px, int py) {
+        UI.Element HitTest(defined int px, defined int py) {
             if (!this.Visible) { return undefined }
             if (px >= this.ax && px < this.ax + this.actualWidth && py >= this.ay && py < this.ay + this.actualHeight) { return this }
             return undefined
@@ -416,12 +416,12 @@ namespace UI {
             if (this.Visible && this.Enabled && this.Focusable()) { list.Add(this) }
         }
 
-        bool Contains(int px, int py) {
+        bool Contains(defined int px, defined int py) {
             return px >= this.ax && px < this.ax + this.actualWidth && py >= this.ay && py < this.ay + this.actualHeight
         }
 
         // The mouse wheel: dy > 0 means up. Returns true if the element consumed it (otherwise the root asks the container).
-        bool MouseWheel(Root root, int dx, int dy) { return false }
+        bool MouseWheel(Root root, defined int dx, defined int dy) { return false }
 
         /// <summary>The mouse pointer over the element (UI.Cursor.Arrow, IBeam, Hand, SizeWE, ...; Inherit: that of the element around it).</summary>
         UI.Cursor Cursor {
@@ -431,27 +431,27 @@ namespace UI {
 
         /// <summary>The mouse pointer at (px, py) over the element (or while it holds the mouse): Cursor; an element whose parts want different ones (a
         /// splitter, a grip) overrides it. Inherit: the element around it decides.</summary>
-        UI.Cursor CursorAt(Root root, int px, int py) { return this.cursor }
+        UI.Cursor CursorAt(Root root, defined int px, defined int py) { return this.cursor }
 
         // For a floating element: a click outside. It closes (and consumes the click if it hit its owner `owner`).
-        bool PopupOutside(Root root, int px, int py) {
+        bool PopupOutside(Root root, defined int px, defined int py) {
             var consumed = this.owner != undefined && this.owner.Contains(px, py)
             root.ClosePopup(this)
             return consumed
         }
 
         // The pointer moves over the element (without a pressed mouse button on it).
-        undefined Hover(Root root, int px, int py) { }
+        undefined Hover(Root root, defined int px, defined int py) { }
 
-        undefined MouseDown(Root root, int button, int px, int py) { }
-        undefined MouseUp(Root root, int button, int px, int py) { }
-        undefined MouseMove(Root root, int px, int py) { }
-        undefined KeyDown(Root root, int key, int mod) { }
+        undefined MouseDown(Root root, defined int button, defined int px, defined int py) { }
+        undefined MouseUp(Root root, defined int button, defined int px, defined int py) { }
+        undefined MouseMove(Root root, defined int px, defined int py) { }
+        undefined KeyDown(Root root, defined int key, defined int mod) { }
         undefined TextInput(Root root, string text) { }
 
         // Does the element want this arrow/navigation key itself (for example a text field Left/Right, a list Up/Down)? Otherwise the root uses it to move the focus to the next element in the direction
         // (keyboard, joystick operation). A list releases the key at its edge so that you can get out of it.
-        bool WantsKey(int key) { return false }
+        bool WantsKey(defined int key) { return false }
 
         // Does the element take Tab itself (a TextArea with AcceptsTab)? Otherwise Tab moves the focus. Shift+Tab and Ctrl+Tab always move it.
         bool TakesTab() { return false }
@@ -460,7 +460,7 @@ namespace UI {
         // in the direction of the finger and returns true if the element has taken over the swipe.
         bool CanPan() { return false }
         bool Dragging() { return false }
-        bool PanBy(Root root, int dx, int dy) { return false }
+        bool PanBy(Root root, defined int dx, defined int dy) { return false }
 
         // ---- Drag & drop (docs/ui/README.md) ----
         // A drag starts when the left mouse button is held on the element and the pointer moves a few pixels: OnDragStart (x, y of the press) gives what
@@ -476,20 +476,20 @@ namespace UI {
         lambda<UI.DragData, UI.DropEffect> OnDragDone
 
         // The methods behind them; a control overrides them (a TextBox takes text).
-        UI.DragData DragStart(Root root, int px, int py) {
+        UI.DragData DragStart(Root root, defined int px, defined int py) {
             var callback = this.OnDragStart
             if (callback == undefined) { return undefined }
             return callback(px, py)
         }
         bool AcceptsDrops() { return this.AllowDrop }
-        UI.DropEffect DragOver(Root root, UI.DragData data, int px, int py) {
+        UI.DropEffect DragOver(Root root, UI.DragData data, defined int px, defined int py) {
             var callback = this.OnDragOver
             if (callback == undefined) { return UI.DropEffect.Copy }
             any effect = callback(data, px, py)
             if (effect == undefined) { return UI.DropEffect.Copy }
             return effect
         }
-        UI.DropEffect Drop(Root root, UI.DragData data, int px, int py) {
+        UI.DropEffect Drop(Root root, UI.DragData data, defined int px, defined int py) {
             var callback = this.OnDrop
             if (callback == undefined) { return UI.DropEffect.None }
             any effect = callback(data, px, py)
@@ -520,7 +520,7 @@ namespace UI {
         // Frame (showBorder, `pen`): undefined = the pen `border` of the theme
         bool Filled = true
 
-        construct(int x = 0, int y = 0, int width = -1, int height = -1) : base(x, y, width, height) {
+        construct(defined int x = 0, defined int y = 0, defined int width = -1, defined int height = -1) : base(x, y, width, height) {
             this.children = new List()
         }
 
@@ -547,7 +547,7 @@ namespace UI {
         // Destroy all children.
         undefined Clear() {
             for (var i = 0; i < this.children.Count; i = i + 1) {
-                any child = this.children[i]
+                Element child = this.children[i]
                 child.parent = undefined
                 delete child
             }
@@ -561,11 +561,11 @@ namespace UI {
         }
 
         // Canvas arrangement: every child wants to be as big as it is; the size of the panel is that of the children, as far as it has no fixed one.
-        override undefined MeasureCore(Root root, int aw, int ah) {
+        override undefined MeasureCore(Root root, defined int aw, defined int ah) {
             var w = 0
             var h = 0
             for (var i = 0; i < this.children.Count; i = i + 1) {
-                any child = this.children[i]
+                Element child = this.children[i]
                 child.Measure(root, -1, -1)
                 if (!child.Visible) { continue }
                 w = UI.M.Max(w, child.Left + child.dw)
@@ -575,14 +575,14 @@ namespace UI {
             this.ch = h
         }
 
-        override undefined ArrangeCore(Root root, int w, int h) {
+        override undefined ArrangeCore(Root root, defined int w, defined int h) {
             for (var i = 0; i < this.children.Count; i = i + 1) {
-                any child = this.children[i]
+                Element child = this.children[i]
                 child.Arrange(root, child.Left, child.Top, child.dw, child.dh)
             }
         }
 
-        override undefined Draw(Root root, int ax, int ay) {
+        override undefined Draw(Root root, defined int ax, defined int ay) {
             base.Draw(root, ax, ay)
             if (root.Needs(ax, ay, this.actualWidth, this.actualHeight)) {
                 if (this.Filled) {
@@ -599,14 +599,14 @@ namespace UI {
             this.DrawChildren(root, ax, ay)
         }
 
-        undefined DrawChildren(Root root, int ax, int ay) {
+        undefined DrawChildren(Root root, defined int ax, defined int ay) {
             for (var i = 0; i < this.children.Count; i = i + 1) {
-                any child = this.children[i]
+                Element child = this.children[i]
                 if (child.Visible) { child.Draw(root, ax + child.rx, ay + child.ry) }
             }
         }
 
-        override UI.Element HitTest(int px, int py) {
+        override UI.Element HitTest(defined int px, defined int py) {
             if (!this.Visible) { return undefined }
             if (!this.Contains(px, py)) { return undefined }
             var i = this.children.Count - 1
@@ -641,7 +641,7 @@ namespace UI {
     class Canvas : Panel {
         override string StyleKey() { return "Canvas" }
 
-        construct(int x = 0, int y = 0, int width = -1, int height = -1) : base(x, y, width, height) {
+        construct(defined int x = 0, defined int y = 0, defined int width = -1, defined int height = -1) : base(x, y, width, height) {
             this.Filled = false
         }
     }
@@ -653,17 +653,17 @@ namespace UI {
         override string StyleKey() { return "StackPanel" }
 
         bool Horizontal
-        int Spacing
-        int Padding
+        defined int Spacing
+        defined int Padding
 
-        construct(int x = 0, int y = 0, int width = -1, int height = -1, bool horizontal = false, int spacing = 0, int padding = 0) : base(x, y, width, height) {
+        construct(defined int x = 0, defined int y = 0, defined int width = -1, defined int height = -1, bool horizontal = false, defined int spacing = 0, defined int padding = 0) : base(x, y, width, height) {
             this.Horizontal = horizontal
             this.Spacing = spacing
             this.Padding = padding
             this.Filled = false
         }
 
-        override undefined MeasureCore(Root root, int aw, int ah) {
+        override undefined MeasureCore(Root root, defined int aw, defined int ah) {
             var pad2 = this.Padding * 2
             var iw = aw
             var ih = ah
@@ -673,7 +673,7 @@ namespace UI {
             var across = 0
             var count = 0
             for (var i = 0; i < this.children.Count; i = i + 1) {
-                any child = this.children[i]
+                Element child = this.children[i]
                 if (this.Horizontal) { child.Measure(root, -1, ih) } else { child.Measure(root, iw, -1) }
                 if (!child.Visible) { continue }
                 if (this.Horizontal) {
@@ -695,12 +695,12 @@ namespace UI {
             }
         }
 
-        override undefined ArrangeCore(Root root, int w, int h) {
+        override undefined ArrangeCore(Root root, defined int w, defined int h) {
             var pos = this.Padding
             var iw = w - this.Padding * 2
             var ih = h - this.Padding * 2
             for (var i = 0; i < this.children.Count; i = i + 1) {
-                any child = this.children[i]
+                Element child = this.children[i]
                 if (!child.Visible) { continue }
                 if (this.Horizontal) {
                     child.Arrange(root, pos, this.Padding, child.dw, ih)
@@ -715,7 +715,7 @@ namespace UI {
 
     // Like StackPanel, but like the elements used to be: with background and the old defaults (spacing and padding 4).
     class Stack : StackPanel {
-        construct(int x = 0, int y = 0, int width = -1, int height = -1, bool horizontal = false, int spacing = 4, int padding = 4) : base(x, y, width, height, horizontal, spacing, padding) {
+        construct(defined int x = 0, defined int y = 0, defined int width = -1, defined int height = -1, bool horizontal = false, defined int spacing = 4, defined int padding = 4) : base(x, y, width, height, horizontal, spacing, padding) {
             this.Filled = true
         }
     }
@@ -727,7 +727,7 @@ namespace UI {
 
         bool LastChildFill = true
 
-        construct(int x = 0, int y = 0, int width = -1, int height = -1) : base(x, y, width, height) {
+        construct(defined int x = 0, defined int y = 0, defined int width = -1, defined int height = -1) : base(x, y, width, height) {
             this.Filled = false
         }
 
@@ -737,7 +737,7 @@ namespace UI {
             this.Add(child)
         }
 
-        override undefined MeasureCore(Root root, int aw, int ah) {
+        override undefined MeasureCore(Root root, defined int aw, defined int ah) {
             // From the inside out: what lies left/right takes width, what lies top/bottom takes height; the rest remains for the other children.
             var usedW = 0
             var usedH = 0
@@ -745,7 +745,7 @@ namespace UI {
             var maxH = 0
             var last = this.LastVisible()
             for (var i = 0; i < this.children.Count; i = i + 1) {
-                any child = this.children[i]
+                Element child = this.children[i]
                 if (!child.Visible) { continue }
                 var availW = -1
                 var availH = -1
@@ -768,7 +768,7 @@ namespace UI {
             this.ch = UI.M.Max(maxH, usedH)
         }
 
-        int LastVisible() {
+        defined int LastVisible() {
             var last = -1
             for (var i = 0; i < this.children.Count; i = i + 1) {
                 if (this.children[i].Visible) { last = i }
@@ -776,14 +776,14 @@ namespace UI {
             return last
         }
 
-        override undefined ArrangeCore(Root root, int w, int h) {
+        override undefined ArrangeCore(Root root, defined int w, defined int h) {
             var left = 0
             var top = 0
             var right = w
             var bottom = h
             var last = this.LastVisible()
             for (var i = 0; i < this.children.Count; i = i + 1) {
-                any child = this.children[i]
+                Element child = this.children[i]
                 if (!child.Visible) { continue }
                 var fills = this.LastChildFill && i == last
                 if (fills) {
@@ -811,14 +811,14 @@ namespace UI {
         override string StyleKey() { return "WrapPanel" }
 
         bool Vertical = false
-        int ItemWidth = -1
-        int ItemHeight = -1
+        defined int ItemWidth = -1
+        defined int ItemHeight = -1
 
-        construct(int x = 0, int y = 0, int width = -1, int height = -1) : base(x, y, width, height) {
+        construct(defined int x = 0, defined int y = 0, defined int width = -1, defined int height = -1) : base(x, y, width, height) {
             this.Filled = false
         }
 
-        override undefined MeasureCore(Root root, int aw, int ah) {
+        override undefined MeasureCore(Root root, defined int aw, defined int ah) {
             var lineLen = 0
             var lineThick = 0
             var total = 0
@@ -826,15 +826,15 @@ namespace UI {
             var limit = aw
             if (this.Vertical) { limit = ah }
             for (var i = 0; i < this.children.Count; i = i + 1) {
-                any child = this.children[i]
+                Element child = this.children[i]
                 child.Measure(root, this.ItemWidth, this.ItemHeight)
                 if (!child.Visible) { continue }
-                any w = child.dw
-                any h = child.dh
+                var w = child.dw
+                var h = child.dh
                 if (this.ItemWidth >= 0) { w = this.ItemWidth }
                 if (this.ItemHeight >= 0) { h = this.ItemHeight }
-                any along = w
-                any thick = h
+                var along = w
+                var thick = h
                 if (this.Vertical) {
                     along = h
                     thick = w
@@ -859,7 +859,7 @@ namespace UI {
             }
         }
 
-        override undefined ArrangeCore(Root root, int w, int h) {
+        override undefined ArrangeCore(Root root, defined int w, defined int h) {
             var limit = w
             if (this.Vertical) { limit = h }
             var lineLen = 0
@@ -868,10 +868,10 @@ namespace UI {
             // a row is only arranged when it is full (its thickness is not known beforehand)
             var start = 0
             for (var i = 0; i < this.children.Count; i = i + 1) {
-                any child = this.children[i]
+                Element child = this.children[i]
                 if (!child.Visible) { continue }
-                any along = child.dw
-                any thick = child.dh
+                var along = child.dw
+                var thick = child.dh
                 if (this.ItemWidth >= 0) { along = this.ItemWidth }
                 if (this.ItemHeight >= 0) { thick = this.ItemHeight }
                 if (this.Vertical) {
@@ -894,13 +894,13 @@ namespace UI {
         }
 
         // The children first..last-1 lie in a row (column) that begins at `offset` and is `thick` thick.
-        undefined ArrangeLine(Root root, int first, int last, int offset, int thick) {
+        undefined ArrangeLine(Root root, defined int first, defined int last, defined int offset, defined int thick) {
             var pos = 0
             for (var i = first; i < last; i = i + 1) {
-                any child = this.children[i]
+                Element child = this.children[i]
                 if (!child.Visible) { continue }
-                any cwid = child.dw
-                any chei = child.dh
+                var cwid = child.dw
+                var chei = child.dh
                 if (this.ItemWidth >= 0) { cwid = this.ItemWidth }
                 if (this.ItemHeight >= 0) { chei = this.ItemHeight }
                 if (this.Vertical) {
@@ -916,14 +916,14 @@ namespace UI {
 
     // A row or column of a Grid: mode 0 = Auto (as big as the content), 1 = fixed pixels, 2 = star (a share of the rest, `value` is the weight).
     class Track {
-        int mode
-        int value
-        int min = 0
-        int max = -1
+        defined int mode
+        defined int value
+        defined int min = 0
+        defined int max = -1
         // resolved size
-        int size
+        defined int size
 
-        construct(int mode, int value) {
+        construct(defined int mode, defined int value) {
             this.mode = mode
             this.value = value
             // a fixed track already has its size before the layout needs the tracks of the other axis
@@ -952,7 +952,7 @@ namespace UI {
         List rows
         List columns
 
-        construct(int x = 0, int y = 0, int width = -1, int height = -1) : base(x, y, width, height) {
+        construct(defined int x = 0, defined int y = 0, defined int width = -1, defined int height = -1) : base(x, y, width, height) {
             this.Filled = false
             this.rows = new List()
             this.columns = new List()
@@ -982,7 +982,7 @@ namespace UI {
         }
 
         // Put a child into a cell.
-        undefined AddAt(Element child, int row, int column, int rowSpan = 1, int columnSpan = 1) {
+        undefined AddAt(Element child, defined int row, defined int column, defined int rowSpan = 1, defined int columnSpan = 1) {
             child.GridRow = row
             child.GridColumn = column
             child.GridRowSpan = rowSpan
@@ -997,21 +997,21 @@ namespace UI {
         }
 
         // The sum of the sizes of the tracks start..start+span-1
-        int SpanSize(List list, int start, int span) {
+        defined int SpanSize(List list, defined int start, defined int span) {
             var total = 0
-            for (var i = start; i < start + span && i < list.Count; i = i + 1) { total = total + list[i].size }
+            for (var i = start; i < start + span && i < list.Count; i = i + 1) { Track track = list[i]; total = total + track.size }
             return total
         }
 
         // The track `index` (clamped to the bounds of the grid)
-        int Fit(List list, int index) {
+        defined int Fit(List list, defined int index) {
             if (index < 0) { return 0 }
             if (index >= list.Count) { return list.Count - 1 }
             return index
         }
 
         // Distributes `avail` (or, for -1, as much as the content wants) to the star tracks.
-        undefined ResolveStars(List list, int avail, int used) {
+        undefined ResolveStars(List list, defined int avail, defined int used) {
             var weights = 0
             for (var i = 0; i < list.Count; i = i + 1) {
                 if (list[i].mode == 2) { weights = weights + list[i].value }
@@ -1031,14 +1031,14 @@ namespace UI {
             }
         }
 
-        override undefined MeasureCore(Root root, int aw, int ah) {
+        override undefined MeasureCore(Root root, defined int aw, defined int ah) {
             var rows = this.Tracks(this.rows)
             var cols = this.Tracks(this.columns)
             this.ResolveAxis(root, rows, cols, ah, false)
             this.ResolveAxis(root, cols, rows, aw, true)
             // measure every child with the final size of its cell (also those that did not determine a track)
             for (var c = 0; c < this.children.Count; c = c + 1) {
-                any child = this.children[c]
+                Element child = this.children[c]
                 if (!child.Visible) {
                     child.Measure(root, 0, 0)
                     continue
@@ -1051,15 +1051,15 @@ namespace UI {
             }
             var w = 0
             var h = 0
-            for (var i = 0; i < rows.Count; i = i + 1) { h = h + rows[i].size }
-            for (var i = 0; i < cols.Count; i = i + 1) { w = w + cols[i].size }
+            for (var i = 0; i < rows.Count; i = i + 1) { Track track = rows[i]; h = h + track.size }
+            for (var i = 0; i < cols.Count; i = i + 1) { Track track = cols[i]; w = w + track.size }
             this.cw = w
             this.ch = h
         }
 
         // Determines the sizes of the tracks of one axis: first fixed ones, then those from the content (Auto), then the stars.
         // along: the tracks of this axis, other: those of the other axis; avail: the space in this axis; isColumn: along are the columns.
-        undefined ResolveAxis(Root root, any along, any other, int avail, bool isColumn) {
+        undefined ResolveAxis(Root root, any along, any other, defined int avail, bool isColumn) {
             var used = 0
             for (var i = 0; i < along.Count; i = i + 1) {
                 any t = along[i]
@@ -1070,7 +1070,7 @@ namespace UI {
             var starsByContent = avail < 0
             for (var pass = 0; pass < 2; pass = pass + 1) {
                 for (var c = 0; c < this.children.Count; c = c + 1) {
-                    any child = this.children[c]
+                    Element child = this.children[c]
                     if (!child.Visible) { continue }
                     var begin = 0
                     var span = 1
@@ -1101,15 +1101,15 @@ namespace UI {
                         cellW = this.CellSizeOther(other, child, true)
                     }
                     child.Measure(root, cellW, cellH)
-                    any want = child.dh
+                    var want = child.dh
                     if (isColumn) { want = child.dw }
                     // what is already fixed (fixed tracks in the range) does not have to be carried by the content any more
                     var have = 0
-                    for (var k = begin; k < begin + span && k < along.Count; k = k + 1) { have = have + along[k].size }
-                    any missing = want - have
+                    for (var k = begin; k < begin + span && k < along.Count; k = k + 1) { Track track = along[k]; have = have + track.size }
+                    var missing = want - have
                     if (missing > 0) {
-                        any each = missing / contentTracks
-                        any extra = missing - each * contentTracks
+                        var each = missing / contentTracks
+                        var extra = missing - each * contentTracks
                         for (var k = begin; k < begin + span && k < along.Count; k = k + 1) {
                             if (along[k].mode == 0 || (along[k].mode == 2 && starsByContent)) {
                                 along[k].size = along[k].size + each
@@ -1123,7 +1123,7 @@ namespace UI {
                 }
             }
             for (var i = 0; i < along.Count; i = i + 1) {
-                any t = along[i]
+                Track t = along[i]
                 if (t.mode == 0) { t.size = UI.M.Clamp(t.size, t.min, t.max) }
                 if (t.mode == 2 && starsByContent) { t.size = UI.M.Clamp(t.size, t.min, t.max) }
                 if (t.mode != 2 || starsByContent) { used = used + t.size }
@@ -1132,7 +1132,7 @@ namespace UI {
         }
 
         // The size of the child's cell in the other axis, as far as already known (fixed tracks), otherwise -1.
-        int CellSizeOther(any other, Element child, bool isColumnAxis) {
+        defined int CellSizeOther(any other, Element child, bool isColumnAxis) {
             var begin = 0
             var span = 1
             if (isColumnAxis) {
@@ -1145,40 +1145,40 @@ namespace UI {
             if (span < 1) { span = 1 }
             var total = 0
             for (var k = begin; k < begin + span && k < other.Count; k = k + 1) {
-                if (other[k].mode == 1) { total = total + other[k].size } else { return -1 }
+                if (other[k].mode == 1) { Track track = other[k]; total = total + track.size } else { return -1 }
             }
             return total
         }
 
-        override undefined ArrangeCore(Root root, int w, int h) {
+        override undefined ArrangeCore(Root root, defined int w, defined int h) {
             var rows = this.Tracks(this.rows)
             var cols = this.Tracks(this.columns)
             // with the final size: redistribute the stars
             this.Restar(rows, h)
             this.Restar(cols, w)
             for (var c = 0; c < this.children.Count; c = c + 1) {
-                any child = this.children[c]
+                Element child = this.children[c]
                 if (!child.Visible) { continue }
                 var r = this.Fit(rows, child.GridRow)
                 var k = this.Fit(cols, child.GridColumn)
-                any rs = child.GridRowSpan
-                any cs = child.GridColumnSpan
+                var rs = child.GridRowSpan
+                var cs = child.GridColumnSpan
                 if (rs < 1) { rs = 1 }
                 if (cs < 1) { cs = 1 }
                 var px = 0
-                for (var i = 0; i < k; i = i + 1) { px = px + cols[i].size }
+                for (var i = 0; i < k; i = i + 1) { Track track = cols[i]; px = px + track.size }
                 var py = 0
-                for (var i = 0; i < r; i = i + 1) { py = py + rows[i].size }
+                for (var i = 0; i < r; i = i + 1) { Track track = rows[i]; py = py + track.size }
                 child.Arrange(root, px, py, this.SpanSize(cols, k, cs), this.SpanSize(rows, r, rs))
             }
         }
 
         // Redistributes the space to the stars of the axis (the other tracks keep their size).
-        undefined Restar(List list, int avail) {
+        undefined Restar(List list, defined int avail) {
             var used = 0
             var stars = 0
             for (var i = 0; i < list.Count; i = i + 1) {
-                if (list[i].mode == 2) { stars = stars + 1 } else { used = used + list[i].size }
+                if (list[i].mode == 2) { stars = stars + 1 } else { Track track = list[i]; used = used + track.size }
             }
             if (stars > 0) { this.ResolveStars(list, avail, used) }
         }
@@ -1187,10 +1187,10 @@ namespace UI {
     // A child with frame, background and inner margin (padding). thickness is the width of the frame in pixels (0: none).
     class Border : Element {
         Element child
-        int Thickness = 1
+        defined int Thickness = 1
         Thickness Padding
 
-        construct(int x = 0, int y = 0, int width = -1, int height = -1) : base(x, y, width, height) {
+        construct(defined int x = 0, defined int y = 0, defined int width = -1, defined int height = -1) : base(x, y, width, height) {
             this.Padding = new Thickness(0)
         }
 
@@ -1208,7 +1208,7 @@ namespace UI {
             if (this.child != undefined) { this.child.Poll(root) }
         }
 
-        override undefined MeasureCore(Root root, int aw, int ah) {
+        override undefined MeasureCore(Root root, defined int aw, defined int ah) {
             var inset = this.Thickness * 2
             var padW = this.Padding.left + this.Padding.right + inset
             var padH = this.Padding.top + this.Padding.bottom + inset
@@ -1227,7 +1227,7 @@ namespace UI {
             this.ch = h + padH
         }
 
-        override undefined ArrangeCore(Root root, int w, int h) {
+        override undefined ArrangeCore(Root root, defined int w, defined int h) {
             if (this.child == undefined) { return }
             var l = this.Padding.left + this.Thickness
             var t = this.Padding.top + this.Thickness
@@ -1236,7 +1236,7 @@ namespace UI {
             this.child.Arrange(root, l, t, iw, ih)
         }
 
-        override undefined Draw(Root root, int ax, int ay) {
+        override undefined Draw(Root root, defined int ax, defined int ay) {
             base.Draw(root, ax, ay)
             if (root.Needs(ax, ay, this.actualWidth, this.actualHeight)) {
                 if (this.Background != undefined) { root.renderer.FillRect(ax, ay, this.actualWidth, this.actualHeight, this.Background) }
@@ -1249,7 +1249,7 @@ namespace UI {
             if (this.child != undefined && this.child.Visible) { this.child.Draw(root, ax + this.child.rx, ay + this.child.ry) }
         }
 
-        override UI.Element HitTest(int px, int py) {
+        override UI.Element HitTest(defined int px, defined int py) {
             if (!this.Visible) { return undefined }
             if (!this.Contains(px, py)) { return undefined }
             if (this.child != undefined) {

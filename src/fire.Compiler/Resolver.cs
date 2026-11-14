@@ -7,6 +7,15 @@ using fire.Values;
 
 namespace fire.Compiler
 {
+    /// <summary>What the type checker leaves the compiler for the expression trees: the lambdas that become one, the type of every expression in them.</summary>
+    public sealed class ExpressionTrees
+    {
+        public HashSet<LambdaExpr> Lambdas { get; } = new(ReferenceEqualityComparer.Instance);
+        public Dictionary<Expr, string> Types { get; } = new(ReferenceEqualityComparer.Instance);
+        /// <summary>A tree (a LambdaExpression) where a lambda is expected: its compiled lambda goes there (`lambda<T> f = tree`).</summary>
+        public HashSet<Expr> ToCompiled { get; } = new(ReferenceEqualityComparer.Instance);
+    }
+
     /// <summary>A resolver error. The resolver does
     /// NOT stop at the first error, but collects all further ones (from the
     /// first error on the result is discarded anyway, but the user should not
@@ -62,6 +71,9 @@ namespace fire.Compiler
         /// <summary>The type arguments the type checker found for a call of a generic method (`Box.Of(5)`: `int`), as DeclaredType texts ("" for one that
         /// is not known): the compiler gives them to the call (SetTypeArgs), the native generator can specialise the method for them. Filled by TypeChecker.</summary>
         public Dictionary<Expr, string[]> MethodTypeArgs { get; } = new(ReferenceEqualityComparer.Instance);
+        /// <summary>The lambdas the type checker found at a parameter `lambda expression<T>` (docs/ROADMAP_EXPRESSIONS.md) and the types of what is in them: the
+        /// compiler builds their trees.</summary>
+        public ExpressionTrees Trees { get; } = new();
 
         /// <summary>Values going into a local variable (declaration or assignment) whose type the type checker could not prove for its declaration
         /// (`int x = someAny`, `Dog d = animal`, `T item = v`): the compiler checks them at runtime (GuardTop/GuardTopType). Filled by TypeChecker.</summary>
@@ -71,6 +83,13 @@ namespace fire.Compiler
         /// arguments: the overload and what it assumed of each argument (Bytecode.OverloadHint text). The compiler puts it in front of the call
         /// (OpCode.OverloadHint); at run time the arguments are checked against the assumptions and the overload is taken without scoring. Filled by TypeChecker.</summary>
         public Dictionary<Expr, string> OverloadHints { get; } = new(ReferenceEqualityComparer.Instance);
+
+        /// <summary>Parameters of the program declared `int`/`float` without `defined` that every call gives a number (ROADMAP 13.9, the derivation): the
+        /// compiler checks them like `defined` ones - natively they are C numbers. Filled by TypeChecker (TypeChecker.DeriveDefined).</summary>
+        public HashSet<LambdaParam> DerivedDefined { get; } = new(ReferenceEqualityComparer.Instance);
+        /// <summary>The bodies of the methods of the program declared `int`/`float` whose returns are certainly numbers (the derivation): checked like a
+        /// `defined` return type.</summary>
+        public HashSet<Stmt.BlockStmt> DerivedReturns { get; } = new(ReferenceEqualityComparer.Instance);
         public required IReadOnlyDictionary<string, ClassDecl> Classes { get; init; }
         public required int GlobalSlotCount { get; init; }
         public required IReadOnlyDictionary<string, ExternDecl> Externs { get; init; }
@@ -158,7 +177,7 @@ namespace fire.Compiler
             int typeArgs = tr.TypeArgs?.Count ?? tr.TypeArgCount;
             var matches = tr.AmbiguousCandidates(n => known(n) || typeArgs > 0 && known(GenericClassNames.Mangle(n, typeArgs)), ownNamespace);
             if (matches.Count > 1)
-                throw new ResolverException($"'{tr.BaseName}' is ambiguous: {string.Join(", ", matches)} (more than one '#using' brings it); write the full name", line);
+                throw new ResolverException($"'{tr.BaseName}' is ambiguous: {string.Join(", ", matches)} (more than one '#using' or imported library brings it); write the full name", line);
         }
 
         /// <summary>The namespace a class is declared in (`Geo.Shapes.Circle` -> `Geo.Shapes`), null for a class outside every namespace.</summary>
@@ -801,6 +820,7 @@ namespace fire.Compiler
                 var t = p.Type;
                 if (p.ByRef || t == null || t.IsInferred || t.BaseName == "any" || typeParamNames.Contains(t.BaseName) && t.TypeArgs == null && t.ArrayRank == 0 && p.ArrayRanks.Count == 0) return "";
                 if (p.ArrayRanks.Count > 0 || t.ArrayRank > 0) return "array";
+                if (t.LambdaSignature is { IsExpression: true }) return "LambdaExpression";   // (a tree: an overload next to `lambda<T>`)
                 if (t.LambdaSignature != null || t.BaseName == "lambda") return "lambda";
                 return t.BaseName == "byte" ? "int" : (t.Namespaces is { Count: > 0 } ns ? string.Join(".", ns) + "." : "") + t.BaseName;
             }).ToArray();
@@ -940,16 +960,8 @@ namespace fire.Compiler
         /// identifier chain or the chain yields no known class name
         /// (then `me` is an ordinary, dynamic expression).
         ///
-        /// DELIBERATE RESTRICTION: checks ONLY the exactly written (possibly
-        /// already fully qualified) name, NO resolution via #using/the
-        /// current namespace - unlike a TypeRef, an
-        /// IdentifierExpr/MemberExpr carries no namespace context of its own (that
-        /// is only set when PARSING a TypeRef, see
-        /// Parser.CurrentNamespaces) - 'Circle.Foo()' would with
-        /// '#using Geometry' therefore NOT be recognised as 'Geometry.Circle', only
-        /// 'Geometry.Circle.Foo()' written out in full works. A
-        /// later extension for that would need namespace info on EVERY
-        /// identifier, not only on TypeRef - a larger change of its own.</summary>
+        /// The name is looked up like a type name in the namespace of the class the code is written in and its outer ones, then as written
+        /// (InNamespaces) - not through `#using` (an IdentifierExpr carries no namespace context of its own, only a TypeRef does: Parser.CurrentNamespaces).</summary>
         private string? TryResolveStaticMemberAccess(MemberExpr me)
         {
             // The class we are currently in (see Ast.SelfClassExpr) -
@@ -958,7 +970,64 @@ namespace fire.Compiler
             if (me.Target is SelfClassExpr) return _currentClass?.Name;
 
             string? className = DottedName(me.Target);
-            return className != null && IsKnownClassName(className) ? className : null;
+            return className != null ? InNamespaces(className, IsKnownClassName, me.Line) : null;
+        }
+
+        /// <summary>A chain of names in an expression (`Kind`, `Shapes.Circle`) as a name that `known` knows, looked up like a type name (SPEC
+        /// "Namespaces"): in the namespace of the class the code is written in and its outer ones, from the inside out, then as written - `Kind.Circle`
+        /// and `Helper.Tag()` inside `namespace Geo` are `Geo.Kind.Circle` and `Geo.Helper.Tag()`. A local variable or a member of the object with the
+        /// name of the first link wins over every class and enum (as in the type checker, StaticClassRef); `#using` does not apply here (only to type names).
+        /// `global.Name` is the global one.</summary>
+        private string? InNamespaces(string dotted, Func<string, bool> known, int line = 0)
+        {
+            // `global.Helper.Tag()`: the global name that a class of the own namespace hides
+            if (dotted.StartsWith("global.", StringComparison.Ordinal) && !IsVariableName("global"))
+                return known(dotted.Substring(7)) ? dotted.Substring(7) : null;
+            int dot = dotted.IndexOf('.');
+            string root = dot < 0 ? dotted : dotted.Substring(0, dot);
+            // (the order of the lookup: a local variable and a member of the object first - they win over every class and enum, the own as well as a global one)
+            if (IsChainRoot(root)) return null;
+            for (string? ns = NamespaceOf(_currentClass?.Name); !string.IsNullOrEmpty(ns); ns = NamespaceOf(ns))
+                if (known(ns + "." + dotted)) return ns + "." + dotted;
+            if (known(dotted)) return dotted;
+            // the namespaces of the libraries the source imports (`#import "LibA"`: `Parser` is LibA.Parser); in two of them the short name is ambiguous
+            if (Parser.SourceImportNamespaces is { } imports && imports.TryGetValue(_currentSource, out var importNamespaces))
+            {
+                var found = importNamespaces.Where(ns => known(ns + "." + dotted)).Select(ns => ns + "." + dotted).ToList();
+                if (found.Count > 1)
+                {
+                    string message = $"'{dotted.Split('.')[0]}' is in several imported libraries ({string.Join(", ", found.Select(f => "'" + f + "'"))}) - write the full name";
+                    if (!_errors.Any(e => e.RawMessage == message)) AddError(new ResolverException(message, line));
+                }
+                if (found.Count > 0) return found[0];
+            }
+            return null;
+        }
+
+        /// <summary>Can `name` start the chain `name.X` as a value here: a variable of a scope, or a field or property of the class that is reachable - an
+        /// instance one not in a static method or static initialiser (there is no `this`), and no method (`Environment.Platform` in a static method of a class
+        /// with a test method `Environment()` is the class Environment)?</summary>
+        private bool IsChainRoot(string name)
+        {
+            for (var s = _current; s != null; s = s.Parent)
+                if (!s.IsGlobal && s.Slots.ContainsKey(name)) return true;
+            var visited = new HashSet<ClassDecl>();
+            for (var cd = _currentClass; cd != null && visited.Add(cd); cd = GetBaseClassDecl(cd))
+                foreach (var member in cd.Members)
+                    switch (member)
+                    {
+                        case FieldDecl fd when fd.Name == name: return fd.IsStatic || !_inStaticMethod;
+                        case PropertyDecl pd when pd.Name == name: return pd.IsStatic || !_inStaticMethod;
+                    }
+            return false;
+        }
+
+        /// <summary>Is `name` a variable here: of a scope (not the global one) or a member of the object?</summary>
+        private bool IsVariableName(string name)
+        {
+            for (var s = _current; s != null; s = s.Parent)
+                if (!s.IsGlobal && s.Slots.ContainsKey(name)) return true;
+            return _currentClass != null && FindMemberInClassChain(_currentClass, name) != null;
         }
 
         /// <summary>The dotted name that `target` writes as a pure identifier chain
@@ -1193,20 +1262,47 @@ namespace fire.Compiler
 
         private ResolvedRef ResolveIdentifierRef(string name, int line)
         {
+            // the chain (like C#): the local scopes, the members of the object (its class and the base classes), then the global variables and
+            // the natives - a field `count` hides a global `count` inside the class
             int depth = 0;
             var scope = _current;
+            ResolverScope? global = null;
+            int globalSlot = -1;
             while (scope != null)
             {
                 if (scope.Slots.TryGetValue(name, out int slot))
                 {
+                    if (scope.IsGlobal) { global = scope; globalSlot = slot; break; }
                     scope.RequiredUnits.TryGetValue(name, out var requiredUnit);
                     scope.Widths.TryGetValue(name, out int width);
-                    return scope.IsGlobal
-                        ? new ResolvedRef.Global(slot, requiredUnit, width)
-                        : new ResolvedRef.Local(depth, slot, requiredUnit, scope.RefNames.Contains(name), width);
+                    return new ResolvedRef.Local(depth, slot, requiredUnit, scope.RefNames.Contains(name), width);
                 }
                 depth++;
                 scope = scope.Parent;
+            }
+
+            if (_currentClass != null && FindMemberInClassChain(_currentClass, name) is { } member)
+            {
+                if (member.IsStatic) { CheckStaticInitOrder(member.ClassName, name, line); return new ResolvedRef.StaticMember(member.ClassName); }
+                // (a fire body runs without `this`: its own variables and the captures - `taking`, `with` - win over a field of the same name)
+                if (_fireScope != null && !_inBoundLambda)
+                {
+                    if (global != null) return new ResolvedRef.Global(globalSlot, global.RequiredUnits.GetValueOrDefault(name), global.Widths.GetValueOrDefault(name));
+                    throw new ResolverException(
+                        $"'{name}' is an instance member - a 'fire' block runs without 'this': give the thread what it needs with 'taking' or 'with'", line);
+                }
+                if (!_inStaticMethod) return new ResolvedRef.ImplicitThisMember();
+                if (global == null)
+                    throw new ResolverException(
+                        $"'{name}' is an instance member - it is not reachable in a static method or static " +
+                        "field initializer without a bound 'this'", line);
+            }
+
+            if (global != null)
+            {
+                global.RequiredUnits.TryGetValue(name, out var requiredUnit);
+                global.Widths.TryGetValue(name, out int width);
+                return new ResolvedRef.Global(globalSlot, requiredUnit, width);
             }
 
             if (_nativeNames.Contains(name))
@@ -1217,29 +1313,6 @@ namespace fire.Compiler
                 throw new ResolverException(
                     $"'{name}' is registered as 'tryable' - it can only be called with 'try {name}(...)', " +
                     "not as a direct call.", line);
-
-            // SPEC "Implicit member references" - inside a class
-            // a field/a method/a property may also be addressed WITHOUT
-            // 'this.'/'ClassName.' prefix, just like a
-            // local variable (in addition to, not instead of, the explicit
-            // forms - see the MemberExpr case for 'this.X'/'ClassName.X').
-            // Deliberately checked AFTER natives/externs - a class member
-            // of the same name should not surprisingly shadow an existing native/extern
-            // function.
-            if (_currentClass != null)
-            {
-                var found = FindMemberInClassChain(_currentClass, name);
-                if (found != null)
-                {
-                    if (found.Value.IsStatic)
-                        return new ResolvedRef.StaticMember(found.Value.ClassName);
-                    if (_inStaticMethod)
-                        throw new ResolverException(
-                            $"'{name}' is an instance member - it is not reachable in a static method or static " +
-                            "field initializer without a bound 'this'", line);
-                    return new ResolvedRef.ImplicitThisMember();
-                }
-            }
 
             // A lambda with `on target` (SPEC 4.2): the members of the bound object are visible unqualified. Whose class that is is only
             // known at runtime - the name is read/written/called there like `this.name` (an unknown name is then a runtime error).
@@ -1367,6 +1440,10 @@ namespace fire.Compiler
 
                 case GlobalJobsDirective:
                     break; // takes effect only at runtime (see Compiler.Compile: SetAutoSync)
+
+                case EndWaitDirective ew:
+                    ResolveExpr(ew.Value);
+                    break; // takes effect only at runtime (see Compiler.Compile: SetEndWait)
 
                 case TimeoutDirective td:
                     ResolveExpr(td.Value);
@@ -1782,9 +1859,32 @@ namespace fire.Compiler
             _current = new ResolverScope(_globalScope);
             bool savedInStaticMethod = _inStaticMethod;
             _inStaticMethod = fd.IsStatic; // SPEC "Static members" - no 'this' in a static field initialiser
+            var savedStaticInit = _staticInit;
+            _staticInit = fd.IsStatic && _currentClass != null ? (_currentClass.Name, fd.Name) : null;
             ResolveExpr(fd.Initializer);
+            if (_staticInit is { } done) _staticInitDone.Add(done);
+            _staticInit = savedStaticInit;
             _inStaticMethod = savedInStaticMethod;
             _current = saved;
+        }
+
+        /// <summary>The static field whose initialiser is being resolved (null: none), and the static fields whose initialisers are done - in the order in which
+        /// they run (SPEC "Static members": once at program start, class by class in the order of the program, in a class from the top down).</summary>
+        private (string Class, string Field)? _staticInit;
+        private readonly HashSet<(string Class, string Field)> _staticInitDone = new();
+
+        /// <summary>A static initialiser reads the static field `name` of the class `className` (the class written, or one of its bases): an error when that
+        /// field has an initialiser that only runs later - it would still be `undefined` (a read of another class's field that has none is fine).</summary>
+        private void CheckStaticInitOrder(string className, string name, int line)
+        {
+            if (_staticInit == null || !_classes.TryGetValue(className, out var cd) || FindMemberInClassChain(cd, name) is not { IsStatic: true } member) return;
+            if (!_classes.TryGetValue(member.ClassName, out var owner)) return;
+            if (owner.Members.OfType<FieldDecl>().FirstOrDefault(f => f.Name == name && f.IsStatic) is not { Initializer: not null }) return;
+            if (_staticInitDone.Contains((member.ClassName, name))) return;
+            var (initClass, initField) = _staticInit.Value;
+            AddError(new ResolverException((member.ClassName, name) == _staticInit.Value
+                ? $"The initialiser of the static field '{initClass}.{initField}' reads the field itself - it is still undefined there"
+                : $"The initialiser of the static field '{initClass}.{initField}' reads '{member.ClassName}.{name}', whose initialiser only runs later (static fields are initialised once at program start: class by class in the order of the program, in a class from the top down) - declare '{member.ClassName}.{name}' first", line));
         }
 
         /// <summary>Optional parameters (with a default value) must be CONTIGUOUS at the end of the
@@ -1919,7 +2019,7 @@ namespace fire.Compiler
                     break;
 
                 case ThisExpr te:
-                    if (_inStaticMethod)
+                    if (_inStaticMethod && !_inBoundLambda)   // (in a lambda bound with `on`, `this` is its target - also in a static method)
                         throw new ResolverException(
                             "'this' is not valid in a static method or static field initializer " +
                             "(no instance bound)", te.Line);
@@ -1980,7 +2080,9 @@ namespace fire.Compiler
                     break;
 
                 case IsOfExpr iof:
-                    ResolveExpr(iof.Operand);
+                    // `T is of X` with T a type parameter (and no variable of that name): the type argument is tested (OpCode.TypeParamIsOf)
+                    if (!(iof.Operand is IdentifierExpr { Name: var tpName } && _currentTypeParamNames.GetValueOrDefault(tpName) > 0 && FindScopeOf(tpName) == null))
+                        ResolveExpr(iof.Operand);
                     // `value is of IFoo`: an interface is also allowed as a type (the class names it in `class X : IFoo`)
                     if (!_interfaces.ContainsKey(iof.TypeRef.BaseName)) ValidateTypeName(iof.TypeRef, iof.Line);
                     break;
@@ -1999,19 +2101,11 @@ namespace fire.Compiler
                     break;
 
                 case MemberExpr me:
-                    // 'EnumName.Member' - recognised purely by the
-                    // target name (as a bare identifier) being a known enum name.
-                    // Deliberate design decision: an enum name always "wins"
-                    // there against a variable of the same name in the scope
-                    // (just as a class name cannot be
-                    // shadowed by a variable either) - the same name collision would be
-                    // confusing anyway and easy to avoid in practice.
-                    // An enum in a namespace is reachable this way too, but then
-                    // fully qualified ('Geometry.Kind.Round') - as with
-                    // static class access (see TryResolveStaticMemberAccess)
-                    // only the exactly written name counts, no `#using`/
-                    // namespace resolution.
-                    string? enumName = DottedName(me.Target);
+                    // 'EnumName.Member' - the target is a chain of names that is a known enum (InNamespaces: a local variable or a member of
+                    // the object with the name of its first link wins).
+                    // An enum of the own namespace (or an outer one) by its short name, any other one by its full name ('Geometry.Kind.Round') - as
+                    // with static class access (InNamespaces), `#using` does not apply.
+                    string? enumName = DottedName(me.Target) is { } enumWritten ? InNamespaces(enumWritten, n => _enums.ContainsKey(n), me.Line) : null;
                     if (enumName != null && _enums.TryGetValue(enumName, out var enumMembers))
                     {
                         if (!enumMembers.ContainsKey(me.Name) && me.Name is "Name" or "Parse" or "IsDefined" or "Values" && IsKnownClassName(Parser.EnumHelperClassName(enumName)))
@@ -2026,8 +2120,8 @@ namespace fire.Compiler
                         break;
                     }
                     // 'ClassName.Member' (SPEC "Static members") - as
-                    // in the enum case: a known class name always "wins"
-                    // against a variable of the same name. The actual
+                    // in the enum case: a local variable or a member of the same name wins
+                    // over the class (InNamespaces). The actual
                     // access (does the member exist, is it REALLY
                     // static, access modifier) is deliberately NOT checked here,
                     // but only in the VM (GetStaticField/
@@ -2042,6 +2136,7 @@ namespace fire.Compiler
                         CheckStaticMemberExists(staticClassName, me);
                         WarnForClassUse(staticClassName, me.Line);
                         WarnForMember(ClassChainNames(staticClassName), me.Name, _calleeArity.TryGetValue(me, out int staticArgs) ? staticArgs : null, me.Line);
+                        CheckStaticInitOrder(staticClassName, me.Name, me.Line);
                         _refs[me] = new ResolvedRef.StaticMember(staticClassName);
                         break;
                     }
@@ -2177,6 +2272,21 @@ namespace fire.Compiler
                     ResolveTryCallExpr(tryCallExpr);
                     break;
 
+                case ConditionalAccessExpr conditional:
+                    // `a?.b...` / `a??.b...`: the target, then the chain on its value (the placeholder stands for it)
+                    ResolveExpr(conditional.Target);
+                    ResolveExpr(conditional.Inner);
+                    break;
+
+                case ConditionalTargetExpr:
+                    break;
+
+                case WithExpr with:
+                    // `copy x with { .a = v }`: the copy, then the values of the assignments
+                    ResolveExpr(with.Source);
+                    foreach (var set in with.Sets) ResolveExprAllowTake(set.Value);   // (`.a = take y` like an assignment)
+                    break;
+
                 default:
                     throw new ResolverException($"Unknown expression type {expr.GetType().Name}", expr.Line);
             }
@@ -2229,10 +2339,6 @@ namespace fire.Compiler
             switch (target)
             {
                 case IdentifierExpr id:
-                    if (IsCapturedVariable(id.Name))
-                        throw new ResolverException(
-                            $"'{id.Name}' is a COPY of the outer variable inside the lambda (capture) and cannot be assigned there " +
-                            "(declare a new local variable with a different name)", id.Line);
                     if (IsReadonlyVariable(id.Name))
                         throw new ResolverException(
                             $"'{id.Name}' is 'readonly' and cannot be assigned after its declaration", id.Line);
@@ -2364,7 +2470,7 @@ namespace fire.Compiler
                 var declared = AstNames.Declared(fs.Body);
                 foreach (var name in used)
                 {
-                    if (declared.Contains(name) || captureList.Exists(c => c.VarName == name) || name == fs.WithVarName) continue;
+                    if (declared.Contains(name) || captureList.Exists(c => c.VarName == name) || fs.With.Any(w => w.VarName == name)) continue;
                     var scope = FindScopeOf(name);
                     if (scope == null || scope.IsGlobal) continue;   // (the globals of the main program: the thread reads them directly)
                     int firstMoved = captureList.FindIndex(c => c.Handover);
@@ -2380,8 +2486,7 @@ namespace fire.Compiler
                 if (capture.Handover && _fireScope != null && FindScopeOf(capture.VarName) == _fireScope && _fireScope.Slots[capture.VarName] < _fireSharedSlots)
                     throw new ResolverException($"'handover' needs a variable of this thread: '{capture.VarName}' is a global variable of the main program", fs.Line);
             }
-            if (fs.WithSource != null)
-                ResolveExpr(fs.WithSource);
+            foreach (var with in fs.With) ResolveExpr(with.Source);
 
             var saved = _current;
             _current = new ResolverScope(null, isGlobal: true);
@@ -2432,13 +2537,13 @@ namespace fire.Compiler
                 _current.Slots[capture.VarName] = nextCaptureSlot++;
                 _current.ReadonlySlots.Remove(capture.VarName);
             }
-            if (fs.WithVarName != null)
+            foreach (var with in fs.With)
             {
-                if (!capturesSeen.Add(fs.WithVarName))
-                    throw new ResolverException($"'{fs.WithVarName}' was already captured in this 'fire'", fs.Line);
-                if (_current.Slots.TryGetValue(fs.WithVarName, out int shadowedWith)) _current.Slots["\u0001shadow:" + fs.WithVarName] = shadowedWith;
-                _current.Slots[fs.WithVarName] = nextCaptureSlot++;
-                _current.ReadonlySlots.Remove(fs.WithVarName);
+                if (!capturesSeen.Add(with.VarName))
+                    throw new ResolverException($"'{with.VarName}' was already captured in this 'fire'", fs.Line);
+                if (_current.Slots.TryGetValue(with.VarName, out int shadowedWith)) _current.Slots["\u0001shadow:" + with.VarName] = shadowedWith;
+                _current.Slots[with.VarName] = nextCaptureSlot++;
+                _current.ReadonlySlots.Remove(with.VarName);
             }
 
             int savedLoopDepth = _loopDepth;
@@ -2543,6 +2648,7 @@ namespace fire.Compiler
 
             List<IdentifierExpr>? captures = null;
             List<Expr>? loads = null;
+            List<string>? implicitNames = null;
             foreach (var name in names)
             {
                 if (paramNames.Contains(name)) continue;
@@ -2568,6 +2674,16 @@ namespace fire.Compiler
                     _fireScope.RequiredUnits.TryGetValue(name, out requiredUnit);
                     _refs[outer] = new ResolvedRef.Global(threadSlot, requiredUnit);
                 }
+                else if (!reachesFire && _globalScope.Slots.TryGetValue(name, out int globalSlot) && !name.StartsWith('\u0001') && !name.StartsWith('$')
+                    && lambda.CaptureModes != null && lambda.CaptureModes.ContainsKey(name))
+                {
+                    // a global variable (ROADMAP_TASKS step 8): without a word the lambda reads and changes the original (no capture - writes and method
+                    // calls from another thread go to the main program); `taking g` captures a copy; it belongs to the program and cannot move into a lambda
+                    if (lambda.CaptureModes.TryGetValue(name, out bool movesGlobal) && movesGlobal)
+                        throw new ResolverException($"'handover {name}': '{name}' is a global variable - it belongs to the program and cannot move into a lambda; write 'taking {name}' (a copy)", lambda.Line);
+                    _globalScope.RequiredUnits.TryGetValue(name, out requiredUnit);
+                    _refs[outer] = new ResolvedRef.Global(globalSlot, requiredUnit);
+                }
                 else
                 {
                     if (lambda.CaptureModes != null && lambda.CaptureModes.ContainsKey(name))
@@ -2577,8 +2693,13 @@ namespace fire.Compiler
                 Define(name, lambda.Line, requiredUnit: requiredUnit);
                 _current.CaptureNames.Add(name);
                 (captures ??= new List<IdentifierExpr>()).Add(outer);
-                // (`taking x` / `handover x` in the body: the lambda gets a copy / takes it over when it is made)
-                Expr load = outer;
+                // (`taking x` / `handover x` in the body: the lambda gets a copy / takes it over when it is made; without a word a copy too - marked
+                // implicit, the type checker says so: TC023)
+                Expr load = new UnaryExpr(lambda.Line, UnaryOp.DeepCopy, outer);
+                // (an element of `await [ ... ]`: the caller waits until it is done - its variables are lent, not copied, like the arguments of a single
+                // `await`; natively awaitRun runs the elements side by side only when no two of them reach the same object)
+                if (lambda.LendCaptures) load = outer;
+                else if (lambda.CaptureModes == null || !lambda.CaptureModes.ContainsKey(name)) (implicitNames ??= new List<string>()).Add(name);
                 if (lambda.CaptureModes != null && lambda.CaptureModes.TryGetValue(name, out bool moved))
                 {
                     if (moved)
@@ -2588,11 +2709,10 @@ namespace fire.Compiler
                         _refs[mover] = new ResolvedRef.Native(fire.Standard.LambdaHandover.NativeName);
                         load = new CallExpr(lambda.Line, mover, new List<Expr> { outer });
                     }
-                    else load = new UnaryExpr(lambda.Line, UnaryOp.DeepCopy, outer);
                 }
                 (loads ??= new List<Expr>()).Add(load);
             }
-            if (captures != null) _refs[lambda] = new ResolvedRef.LambdaCaptures(captures, loads != null && loads.Exists(l => !ReferenceEquals(l, null) && l is not IdentifierExpr) ? loads : null);
+            if (captures != null) _refs[lambda] = new ResolvedRef.LambdaCaptures(captures, loads, implicitNames);
         }
 
         /// <summary>Is the code currently being resolved inside a lambda with `on target`? Then unknown names are members of the bound object.</summary>
@@ -2602,8 +2722,10 @@ namespace fire.Compiler
         {
             bool savedBound = _inBoundLambda;
             _inBoundLambda = lambda.OnTarget != null;
+            var savedStaticInit = _staticInit;
+            _staticInit = null;   // (a lambda in a static initialiser runs later: it may read any static field)
             try { ResolveLambdaCore(lambda); }
-            finally { _inBoundLambda = savedBound; }
+            finally { _inBoundLambda = savedBound; _staticInit = savedStaticInit; }
         }
 
         private void ResolveLambdaCore(LambdaExpr lambda)
@@ -2669,6 +2791,11 @@ namespace fire.Compiler
     {
         private static readonly Dictionary<Type, System.Reflection.MemberInfo[]> Members = new();
 
+        // `x??.name` whose member the type checker proves (the type of x has it): the compiler checks only for undefined
+        private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<ConditionalAccessExpr, object> s_provenMembers = new();
+        public static void ProveMember(ConditionalAccessExpr e) => s_provenMembers.AddOrUpdate(e, true);
+        public static bool ProvenMember(ConditionalAccessExpr e) => s_provenMembers.TryGetValue(e, out _);
+
         /// <summary>The names a node declares anywhere below it (variables, `foreach` variables, the variable of a catch, the parameters of lambdas, the
         /// captures of a nested `fire`) - what a body uses under such a name is its own, not a variable of the code around it.</summary>
         public static HashSet<string> Declared(object? node)
@@ -2684,7 +2811,7 @@ namespace fire.Compiler
                     case CatchClause c: declared.Add(c.VarName); break;
                     case LambdaParam p: declared.Add(p.Name); break;
                     case FireTakingCapture t: declared.Add(t.VarName); break;
-                    case FireStmt { WithVarName: { } with }: declared.Add(with); break;
+                    case FireStmt fireWith: foreach (var w in fireWith.With) declared.Add(w.VarName); break;
                 }
             return declared;
         }
@@ -2726,6 +2853,64 @@ namespace fire.Compiler
                 }
                 return members;
             }
+        }
+
+        /// <summary>The names of <paramref name="names"/> that the body of a lambda only reads (ROADMAP_TASKS step 8): every use is a call of it, a
+        /// read of one of its fields or elements that is consumed at once (an operand, a condition, `print`, a text), or the operand of an operator - never
+        /// an assignment, a method call on it, an argument, a `return`, a `take` or an alias. A name the body declares again is not read-only.</summary>
+        /// <summary>The variables a body assigns to (`x = ...`, `x += ...`, `x++`) - for the derivation of the type checker: a parameter it never assigns
+        /// still holds what the call gave it.</summary>
+        public static HashSet<string> Assigned(Stmt.BlockStmt body)
+        {
+            var all = new List<object>();
+            Walk(body, all);
+            var names = new HashSet<string>();
+            foreach (var n in all)
+                switch (n)
+                {
+                    case AssignExpr { Target: IdentifierExpr id }: names.Add(id.Name); break;
+                    case IncDecExpr { Target: IdentifierExpr id }: names.Add(id.Name); break;
+                    case VarDeclStmt v: names.Add(v.Name); break;   // (a variable of the same name hides the parameter somewhere)
+                }
+            return names;
+        }
+
+        public static HashSet<string> ReadOnly(LambdaExpr lambda, IEnumerable<string> names)
+        {
+            var all = new List<object>();
+            Walk(lambda.Body, all);
+            var declared = Declared(lambda.Body);
+            var wanted = new HashSet<string>(names);
+            wanted.ExceptWith(declared);
+            var safe = new HashSet<object>(ReferenceEqualityComparer.Instance);
+            // the root variable of a read `x`, `x.a.b`, `x[i]`
+            IdentifierExpr? RootOf(Expr? e) => e switch
+            {
+                IdentifierExpr id => id,
+                MemberExpr m => RootOf(m.Target),
+                IndexExpr ix => RootOf(ix.Target),
+                _ => null,
+            };
+            void Consumed(Expr? e) { if (RootOf(e) is { } root && wanted.Contains(root.Name)) safe.Add(root); }
+            foreach (var n in all)
+                switch (n)
+                {
+                    case BinaryExpr b: Consumed(b.Left); Consumed(b.Right); break;
+                    case UnaryExpr { Op: UnaryOp.Negate or UnaryOp.LogicalNot or UnaryOp.BitNot } u: Consumed(u.Operand); break;
+                    case ConditionalExpr c: Consumed(c.Condition); break;
+                    case IfStmt i: Consumed(i.Condition); break;
+                    case WhileStmt w: Consumed(w.Condition); break;
+                    case InterpolatedStringExpr s: foreach (var part in s.Parts) if (part is InterpolationExprPart pe) Consumed(pe.Expression); break;
+                    case IndexExpr ix: Consumed(ix.Index); break;
+                    case CallExpr { Callee: IdentifierExpr callee } call:
+                        if (wanted.Contains(callee.Name)) safe.Add(callee);   // (a call of the captured lambda)
+                        else if (callee.Name == "print") foreach (var a in call.Args) Consumed(a);
+                        break;
+                }
+            var result = new HashSet<string>(wanted);
+            foreach (var n in all)
+                if (n is IdentifierExpr id && result.Contains(id.Name) && !safe.Contains(id)) result.Remove(id.Name);
+            return result;
         }
 
         public static void Collect(object? node, List<string> names, HashSet<string> seen)

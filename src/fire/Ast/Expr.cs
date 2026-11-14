@@ -52,7 +52,11 @@ namespace fire.Ast
         Expr? OnTarget,
         Stmt.BlockStmt Body,
         bool AutoCapture = true,
-        IReadOnlyDictionary<string, bool>? CaptureModes = null) : Expr(Line);   // `taking x` (false) / `handover x` (true) in the body: how x is captured
+        IReadOnlyDictionary<string, bool>? CaptureModes = null,
+        bool ExpressionBody = false,
+        bool LendCaptures = false) : Expr(Line);
+    // (ExpressionBody: `x => expression`, not `x => { ... }` - what an expression tree takes)   // `taking x` (false) / `handover x` (true) in the body: how x is captured
+    // (LendCaptures: an element of `await [ ... ]` - the caller waits until it is done, so it sees the caller's variables lent, like a single `await`)
 
     /// <summary>`sync X` / `try sync X` / `sync flat X` / `try sync flat X`
     /// (docs/spec/THREADING_DESIGN.md section 4) - an EXPRESSION (not a
@@ -91,6 +95,18 @@ namespace fire.Ast
     /// success, `undefined` on failure/timeout - NO
     /// exception.</summary>
     public sealed record TryCallExpr(int Line, Expr Call) : Expr(Line);
+    /// <summary>`target?.member...` / `target??.member...` (conditional access): <see cref="Inner"/> is the rest of the chain, written on
+    /// <see cref="Placeholder"/> (the value of the target). It runs only when the target is not undefined - with <see cref="CheckMember"/> (`??.`) also only
+    /// when the value has the member <see cref="Member"/> (at run time, unless the type checker proves it - AstNames.ProvenMember). Otherwise
+    /// the result is undefined and nothing of the chain is evaluated (its arguments neither).</summary>
+    public sealed record ConditionalAccessExpr(int Line, Expr Target, Expr Inner, ConditionalTargetExpr Placeholder, bool CheckMember, string Member) : Expr(Line);
+    /// <summary>The value of the target of a <see cref="ConditionalAccessExpr"/> inside its chain (it is on the stack: it compiles to nothing).</summary>
+    public sealed record ConditionalTargetExpr(int Line) : Expr(Line)
+    {
+        // (each placeholder is its own: equality by reference, so that a table keyed by it never mixes two of them up)
+        public bool Equals(ConditionalTargetExpr? other) => ReferenceEquals(this, other);
+        public override int GetHashCode() => System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(this);
+    }
 
     /// <summary>TypeArgs: explicit type arguments in `new Name&lt;Arg1, ...&gt;(...)`
     /// for a generic class (see ClassDecl.TypeParams) - empty for
@@ -150,7 +166,7 @@ namespace fire.Ast
     public enum UnaryOp { Negate, LogicalNot, BitNot, Dereference, AddressOf, FlatCopy, DeepCopy, Take, Trust, TryTake }
     public sealed record UnaryExpr(int Line, UnaryOp Op, Expr Operand) : Expr(Line);
 
-    public enum BinaryOp { Add, Sub, Mul, Div, Mod, Eq, NotEq, Lt, LtEq, Gt, GtEq, And, Or, BitAnd, BitOr, BitXor, ShiftLeft, ShiftRight, Power }
+    public enum BinaryOp { Add, Sub, Mul, Div, Mod, Eq, NotEq, Lt, LtEq, Gt, GtEq, And, Or, BitAnd, BitOr, BitXor, ShiftLeft, ShiftRight, Power, ShiftRightLogical }
     public sealed record BinaryExpr(int Line, BinaryOp Op, Expr Left, Expr Right) : Expr(Line)
     {
         /// <summary>`a ^ b` whose target is a float (set by the type checker, SPEC 1.1): the float power (OpCode.PowerFloat) even of two ints, which otherwise give
@@ -180,7 +196,9 @@ namespace fire.Ast
     /// `from` (`1cm..5cm`). Runs as `__Range.Of(from, to)` of the prelude.</summary>
     public sealed record RangeExpr(int Line, Expr From, Expr To) : Expr(Line);
     public sealed record IsOfExpr(int Line, Expr Operand, TypeRef TypeRef) : Expr(Line);
-    public sealed record IsFromExpr(int Line, Expr Operand, Expr OwnerExpr, bool Transitive) : Expr(Line);
+    /// <summary>`x is from owner` / `x is under owner`; with <see cref="Place"/> "local" or "global" (`x is from local`, `x is from global`) the owner is a
+    /// scope: a scope of the running call, the global scope (OwnerExpr is then a literal undefined).</summary>
+    public sealed record IsFromExpr(int Line, Expr Operand, Expr OwnerExpr, bool Transitive, string? Place = null) : Expr(Line);
 
     // ---------------------------------------------------------------
     // Postfix: Aufruf / Member / Index / Zuweisung
@@ -201,6 +219,12 @@ namespace fire.Ast
     public sealed record MemberExpr(int Line, Expr Target, string Name) : Expr(Line);
     public sealed record IndexExpr(int Line, Expr Target, Expr Index) : Expr(Line);
     public sealed record AssignExpr(int Line, Expr Target, Expr Value) : Expr(Line);
+
+    /// <summary>`copy x with { .a = 1, .b = take y }` / `flat x with { ... }` / `r with { ... }` (docs/ROADMAP_TASKS.md step 9): the copy of `Source` (Copy:
+    /// DeepCopy, FlatCopy; null - no word, only for a record: a deep copy), then the assignments in their order with the rules of an ordinary assignment;
+    /// the constructor does not run. The fields of a record copy are written like in its construction.</summary>
+    public sealed record WithExpr(int Line, Expr Source, UnaryOp? Copy, IReadOnlyList<WithSet> Sets) : Expr(Line);
+    public sealed record WithSet(int Line, string Name, Expr Value);
 
     /// <summary>`++x`/`--x` (IsPrefix=true, the result is the NEW value) or
     /// `x++`/`x--` (IsPrefix=false, the result is the OLD value before the

@@ -10,12 +10,12 @@ namespace Circuits {
     /// `IsHigh`) and drives the pins it wants to (`Drive`, `DriveHigh`; through `outputResistance` like the output of a chip; `Release` makes a pin an input
     /// again). Derive from it and override `Update(time)`; the pins come from `AddPin`.</summary>
     class Attached : Part {
-        float supply
-        float rout
+        defined float supply
+        defined float rout
         List levels
         List driven
 
-        construct(string name, float supply : any = 5, float outputResistance : any = 10) : base(name) {
+        construct(string name, defined float supply : any = 5, defined float outputResistance : any = 10) : base(name) {
             this.supply = Circuits.Units.Volts(supply)
             this.rout = Circuits.Units.Ohms(outputResistance)
             if (this.rout <= 0.0) { throw new ArgumentException("The output resistance must be more than 0.") }
@@ -34,25 +34,25 @@ namespace Circuits {
         /// <summary>A pin by name or number.</summary>
         Port Pin(any key) { return this.PortAt(key) }
 
-        int PinCount { get { return this.ports.Count } }
+        defined int PinCount { get { return this.ports.Count } }
 
         /// <summary>The supply of the logic: high is above half of it, DriveHigh drives it.</summary>
-        float:V Supply {
+        defined float:V Supply {
             get { return this.supply * 1V }
             set { this.supply = Circuits.Units.Volts(value) }
         }
 
         /// <summary>The voltage of a pin against ground (volts, after the last step).</summary>
-        float VoltsAt(int pin) { return this.ports[pin].Raw() }
+        float VoltsAt(defined int pin) { return this.ports[pin].Raw() }
 
         /// <summary>Is the pin above half the supply?</summary>
-        bool IsHigh(int pin) { return this.VoltsAt(pin) > this.supply / 2 }
+        bool IsHigh(defined int pin) { return this.VoltsAt(pin) > this.supply / 2 }
 
         /// <summary>Does the part drive the pin?</summary>
-        bool IsDriven(int pin) { return this.driven[pin] }
+        bool IsDriven(defined int pin) { return this.driven[pin] }
 
         /// <summary>Drives the pin with a voltage (through the output resistance).</summary>
-        undefined Drive(int pin, float volts : any) {
+        undefined Drive(defined int pin, defined float volts : any) {
             this.levels[pin] = Circuits.Units.Volts(volts)
             if (!this.driven[pin]) {
                 this.driven[pin] = true
@@ -61,12 +61,12 @@ namespace Circuits {
         }
 
         /// <summary>Drives the pin with the supply (true) or 0 V.</summary>
-        undefined DriveHigh(int pin, bool high) {
+        undefined DriveHigh(defined int pin, bool high) {
             if (high) { this.Drive(pin, this.supply) } else { this.Drive(pin, 0.0) }
         }
 
         /// <summary>Lets go of the pin: it is an input again (high impedance).</summary>
-        undefined Release(int pin) {
+        undefined Release(defined int pin) {
             if (this.driven[pin]) {
                 this.driven[pin] = false
                 this.InvalidateSoon()
@@ -74,13 +74,13 @@ namespace Circuits {
         }
 
         /// <summary>The current that flows out of a driven pin into the circuit (amperes; 0 for an input).</summary>
-        float CurrentAt(int pin) {
+        defined float CurrentAt(defined int pin) {
             if (!this.driven[pin]) { return 0.0 }
             float level = this.levels[pin]
             return (level - this.VoltsAt(pin)) / this.rout
         }
 
-        override float CurrentRaw() {
+        override defined float CurrentRaw() {
             if (this.ports.Count == 0) { return 0.0 }
             return this.CurrentAt(0)
         }
@@ -110,11 +110,11 @@ namespace Circuits {
     /// <summary>A line of the simulated GPIO chip (`Gpio.Pin("sim", line)`, the port `gpio:gpiosim`) as a pin of the circuit: while the program has the line as
     /// an output, the pin drives the circuit with its level (0 V or the supply); otherwise the line follows the circuit (high above half the supply).</summary>
     class GpioLine : Attached {
-        int line
+        defined int line
         // what the part drives on the line of the chip: -1 nothing, 0 low, 1 high
-        int onChip = -1
+        defined int onChip = -1
 
-        construct(int line, float supply : any = 3.3, float outputResistance : any = 25) : base("GPIO" + line, supply, outputResistance) {
+        construct(defined int line, defined float supply : any = 3.3, defined float outputResistance : any = 25) : base("GPIO" + line, supply, outputResistance) {
             if (line < 0 || line >= Gpio.Sim.Lines()) { throw new ArgumentException("The simulated GPIO chip has the lines 0.." + (Gpio.Sim.Lines() - 1) + ".") }
             this.line = line
             this.AddPin("p")
@@ -122,7 +122,7 @@ namespace Circuits {
 
         destruct() { this.LetGo() }
 
-        int Line { get { return this.line } }
+        defined int Line { get { return this.line } }
         Port P { get { return this.ports[0] } }
 
         undefined LetGo() {
@@ -155,12 +155,12 @@ namespace Circuits {
     /// the values into its registers - with 8 bits one register per channel (register k), with more bits two (2k: the high byte, 2k+1: the low byte).
     /// 0 V is 0, `reference` the largest number.</summary>
     class I2cAdc : Attached {
-        int address
-        float reference
-        int bits
+        defined int address
+        defined float reference
+        defined int bits
         List codes
 
-        construct(int address = 0x48, int channels = 4, float reference : any = 5, int bits = 8) : base("ADC", 5, 10) {
+        construct(defined int address = 0x48, defined int channels = 4, defined float reference : any = 5, defined int bits = 8) : base("ADC", 5, 10) {
             if (channels < 1 || channels > 64) { throw new ArgumentException("An ADC has 1 to 64 channels.") }
             if (bits < 1 || bits > 16) { throw new ArgumentException("An ADC has 1 to 16 bits.") }
             this.address = address
@@ -176,12 +176,12 @@ namespace Circuits {
 
         destruct() { try { I2c.Sim.Remove(this.address) } catch (Exception e) { } }
 
-        int Address { get { return this.address } }
-        int Bits { get { return this.bits } }
-        Port In(int channel) { return this.ports[channel] }
+        defined int Address { get { return this.address } }
+        defined int Bits { get { return this.bits } }
+        Port In(defined int channel) { return this.ports[channel] }
 
         /// <summary>The number the converter gives for the channel now.</summary>
-        int Code(int channel) {
+        defined int Code(defined int channel) {
             var full = (1 << this.bits) - 1
             var x = this.VoltsAt(channel) / this.reference
             if (x < 0.0) { x = 0.0 }
@@ -212,10 +212,10 @@ namespace Circuits {
     /// <summary>A digital-to-analog converter on the simulated I2C bus (like an MCP4725 with 8 bits): what the program writes into register k comes out of the
     /// output Out{k} as k / 255 of `reference`.</summary>
     class I2cDac : Attached {
-        int address
-        float reference
+        defined int address
+        defined float reference
 
-        construct(int address = 0x60, int channels = 1, float reference : any = 5, float outputResistance : any = 10) : base("DAC", 5, outputResistance) {
+        construct(defined int address = 0x60, defined int channels = 1, defined float reference : any = 5, defined float outputResistance : any = 10) : base("DAC", 5, outputResistance) {
             if (channels < 1 || channels > 64) { throw new ArgumentException("A DAC has 1 to 64 channels.") }
             this.address = address
             this.reference = Circuits.Units.Volts(reference)
@@ -228,8 +228,8 @@ namespace Circuits {
 
         destruct() { try { I2c.Sim.Remove(this.address) } catch (Exception e) { } }
 
-        int Address { get { return this.address } }
-        Port Out(int channel) { return this.ports[channel] }
+        defined int Address { get { return this.address } }
+        Port Out(defined int channel) { return this.ports[channel] }
 
         override undefined Update(float time) {
             for (int ch = 0; ch < this.ports.Count; ch++) {
@@ -242,20 +242,20 @@ namespace Circuits {
     /// <summary>A shift register with outputs at the simulated SPI device (like a 74HC595): the last byte the program sent comes out of Q0..Q7 (Q7 the highest
     /// bit) as 0 V or the supply.</summary>
     class SpiShiftOut : Attached {
-        int seen = -1
-        int value = 0
+        defined int seen = -1
+        defined int value = 0
 
-        construct(float supply : any = 5, float outputResistance : any = 25) : base("SR-OUT", supply, outputResistance) {
+        construct(defined float supply : any = 5, defined float outputResistance : any = 25) : base("SR-OUT", supply, outputResistance) {
             for (int i = 0; i < 8; i++) {
                 this.AddPin("q" + i)
                 this.DriveHigh(i, false)
             }
         }
 
-        Port Q(int bit) { return this.ports[bit] }
+        Port Q(defined int bit) { return this.ports[bit] }
 
         /// <summary>The byte on the outputs.</summary>
-        int Value { get { return this.value } }
+        defined int Value { get { return this.value } }
 
         override undefined Update(float time) {
             var total = Spi.Sim.TotalSent()
@@ -273,17 +273,17 @@ namespace Circuits {
     /// <summary>A shift register with inputs at the simulated SPI device (like a 74HC165): the program reads the levels of D0..D7 (D7 the highest bit) as the
     /// first byte of every transfer.</summary>
     class SpiShiftIn : Attached {
-        int value = -1
-        int transfers = -1
+        defined int value = -1
+        defined int transfers = -1
 
-        construct(float supply : any = 5) : base("SR-IN", supply, 10) {
+        construct(defined float supply : any = 5) : base("SR-IN", supply, 10) {
             for (int i = 0; i < 8; i++) { this.AddPin("d" + i) }
         }
 
-        Port D(int bit) { return this.ports[bit] }
+        Port D(defined int bit) { return this.ports[bit] }
 
         /// <summary>The byte the inputs make now.</summary>
-        int Value {
+        defined int Value {
             get {
                 var v = 0
                 for (int i = 0; i < 8; i++) {
@@ -315,12 +315,12 @@ namespace Circuits {
     /// circuit is simulated up to now.</summary>
     class Alongside : Simulation {
         Circuits.Circuit circuit
-        int startTicks
-        float startTime
-        float speed
-        float maxLag
+        defined int startTicks
+        defined float startTime
+        defined float speed
+        defined float maxLag
 
-        construct(Circuits.Circuit circuit, float speed, float maxLag) : base() {
+        construct(Circuits.Circuit circuit, defined float speed, defined float maxLag) : base() {
             this.circuit = circuit
             this.speed = speed
             this.maxLag = maxLag

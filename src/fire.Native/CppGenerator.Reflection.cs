@@ -53,6 +53,13 @@ namespace fire.Native
             }
         }
 
+        /// <summary>The nodes of expression trees (the prelude) that name classes and members: a function that makes them (the builder at a call) keeps its names.</summary>
+        private static readonly HashSet<string> TreeNodeClasses = new(StringComparer.Ordinal)
+        {
+            "Expression", "LambdaExpression", "MemberExpression", "CallExpression", "NewExpression", "IsTypeExpression", "ConvertExpression", "ParameterExpression",
+            "ExpressionRewriter", "__ExpressionReplacer", "__ExpressionParameterRenamer",
+        };
+
         private static bool IsMemberName(string text) =>
             (char.IsLetter(text[0]) || text[0] == '_') && text.All(ch => char.IsLetterOrDigit(ch) || ch == '_');
 
@@ -409,7 +416,7 @@ namespace fire.Native
                     string guard = CheckAccess && access != AccessModifier.Public
                         ? $"if (!{AllowedExpr(rc, access)}) return {(LibraryRole ? "rfFail" : "accessDeniedNew")}({CStr($"The constructor of '{rc.Name}' is {DescribeAccess(access)} and cannot be called from here.")}); "
                         : "";
-                    byArgc.Add($"            case {argc}: {{ {guard}Value o = {NewObjectCall(info, "list")}; {pre}{GetFunc(ctor, FuncKind.Ctor).Name}(o{items}{defaults}); ctorEnd(o); return o; }}");
+                    byArgc.Add($"            case {argc}: {{ {guard}Value o = {NewObjectCall(info, "list")}; {pre}{RecInitEnter(info)}{GetFunc(ctor, FuncKind.Ctor).Name}(o{items}{defaults}); {RecInitLeave(info)}ctorEnd(o); return o; }}");
                 }
             }
             return byArgc;
@@ -708,7 +715,7 @@ FIRE_MAYBE_UNUSED static Value rf_selector_path(Value l, OwnList* list) {
                 string items = string.Concat(Enumerable.Range(0, argc).Select(i => $", items[{i}]"));
                 callSb.AppendLine($"    if (argc == {argc} && strIs(name, {CStr(name)})) {{");
                 callSb.AppendLine("        switch (asObj(obj)->cls) {");
-                if (inst.Count > 0) callSb.AppendLine("            " + string.Concat(inst.Select(i => $"case {i}: ")) + $"return call_{Mangle(name)}_{argc}(obj{items}{DispatchTail(name, argc, "list", "caller")});");
+                if (inst.Count > 0) callSb.AppendLine("            " + string.Concat(inst.Select(i => $"case {i}: ")) + $"{{ Value r = call_{Mangle(name)}_{argc}(obj{items}{DispatchTail(name, argc, "list", "caller")}); adopt(r, list); return r; }}");   // (the result goes to the caller, like the dispatchers do - a fresh string otherwise kept its count)
                 if (stat.Count > 0) callSb.AppendLine("            " + string.Concat(stat.Select(i => $"case {i}: ")) + $"{{ char t[300]; strToUtf8(name, t, sizeof t); char u[400]; snprintf(u, sizeof u, \"'%s' is a static method - Reflect.Call only calls instance methods.\", t); return rfFail(u); }}");
                 callSb.AppendLine("            default: break;");
                 callSb.AppendLine("        }");

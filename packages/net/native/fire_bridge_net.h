@@ -206,6 +206,15 @@ static Value fire_net_NativeHandle(Value h) {
     fire_net_ok();
     return Int((int64_t)s->fd);
 }
+/* Fills buffer[offset..offset+count) with random bytes of the operating system: 1, or 0 without a source (then the error "not supported"). */
+static Value fire_net_Random(Value buffer, Value offset, Value count) {
+    Buf* b = bufferArg(buffer, "Net.SecureRandom.Fill");
+    if (b == NULL) return Undef();
+    if (!fire_net_checkRange(b->length, offset.i, count.i)) return Int(-1);
+    if (!fire_net_randomBytes(b->data + offset.i, (size_t)count.i)) return Int(fire_net_error(FIRE_NET_E_UNSUPPORTED, "This platform has no source of random bytes."));
+    fire_net_ok();
+    return Int(1);
+}
 /* 1 if the platform has a network, else 0. */
 static Value fire_net_Supported(void) { return Int(fire_net_supported() ? 1 : 0); }
 

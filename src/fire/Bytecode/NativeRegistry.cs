@@ -148,12 +148,25 @@ namespace fire.Bytecode
             var env = environment ?? new fire.Standard.ProgramEnvironment();
             Register(fire.Standard.EnvironmentMethods.NativeName, args => fire.Standard.EnvironmentMethods.Call(args, env));
             Register(fire.Standard.LibraryMethods.NativeName, fire.Standard.LibraryMethods.Call);
+            Register(fire.Standard.BitsMethods.NativeName, fire.Standard.BitsMethods.Call);
             Register(fire.Standard.AwaitMethods.NativeName, fire.Standard.AwaitMethods.Call);
             Register(fire.Standard.LambdaHandover.NativeName, fire.Standard.LambdaHandover.Call);
             foreach (var cancelName in fire.Standard.CancelMethods.Names)
             {
                 string bound = cancelName;
                 Register(bound, args => fire.Standard.CancelMethods.Call(bound, args));
+            }
+            Register(fire.Standard.FdWaitMethods.NativeName, fire.Standard.FdWaitMethods.Call);
+            Register(fire.Standard.TypeArgMethods.NativeName, fire.Standard.TypeArgMethods.Call);
+            foreach (var completionName in fire.Standard.CompletionMethods.Names)
+            {
+                string bound = completionName;
+                Register(bound, args => fire.Standard.CompletionMethods.Call(bound, args));
+            }
+            foreach (var channelName in fire.Standard.ChannelMethods.Names)
+            {
+                string bound = channelName;
+                Register(bound, args => fire.Standard.ChannelMethods.Call(bound, args));
             }
         }
     }

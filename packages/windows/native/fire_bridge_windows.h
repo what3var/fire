@@ -463,8 +463,16 @@ static int fire_winb_ensureOpen(FireWinShared* s, int vsync) {
 #if defined(FIRE_RT_IDLE_HOOKS)
 /* (in the library for the VM the waits are the VM's: it calls fire_pkg_idle on the thread that waits - only that thread's windows are pumped; a window
  * system serves a window only on the thread that created it) */
+#ifdef FIRE_TLS_SLOT   /* (TinyCC has no thread-local storage: slots on a key of the platform) */
+#define t_winbSelf (*(char*)&FIRE_TLS_SLOT(3))
+#define g_winbDisplayBusy (*(int*)&FIRE_TLS_SLOT(4))
+#elif defined(FIRE_THREADS) || defined(FIRE_LIBRARY)
 static FIRE_TLS_KEYWORD char t_winbSelf;
 static FIRE_TLS_KEYWORD int g_winbDisplayBusy;   /* (this thread is in a call of the display - the pacing of a frame waits inside it: no pump then) */
+#else
+static char t_winbSelf;
+static int g_winbDisplayBusy;
+#endif
 static void fire_winb_idlePump(void) {
     fire_gfx_size i;
     if (g_winbDisplayBusy) return;
@@ -830,7 +838,7 @@ static Value fire_win_WinMgrStart(Value mgrId, Value service) {
     if (fire_winb_started(m)) return Bool(false);
     if (service.kind != K_Lambda) return Bool(false);
     if (!registered) { registered = 1; hostAddService(fire_winb_serveManagers); }
-    retain(service);
+    retain(lamKeep(service));   /* (the manager keeps it: it leaves its owner) */
     m->service = service;
 #ifdef FIRE_WINDOW_COOP
     hostHold((int32_t)m->attachedCount);
@@ -1322,7 +1330,7 @@ static Value fire_win_WinRegisterEvent(Value id, Value type, Value lam) {
     t = (int32_t)type.i;
     if (lamOf(lam)->nparams != fire_winb_callbackParams(t)) return Bool(false);
     if (!fire_gfx_grow((void**)&w->callbacks, &w->callbackCap, w->callbackCount, sizeof(FireWinCallback))) fatal("Out of memory.");
-    retain(lam);
+    retain(lamKeep(lam));   /* (the window keeps it: it leaves its owner) */
     w->callbacks[w->callbackCount].type = t;
     w->callbacks[w->callbackCount].lam = lam;
     w->callbackCount++;

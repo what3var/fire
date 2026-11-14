@@ -307,6 +307,19 @@ namespace fire.Runtime
                 (_currentThreadVm ?? throw new InvalidOperationException("'handover' needs a running program.")).LambdaHandoverNow(args);
             fire.Standard.CancelMethods.Implementation = (name, args) =>
                 (_currentThreadVm ?? throw new InvalidOperationException("Cancellation needs a running program.")).CancelNative(name, args);
+            fire.Standard.TypeArgMethods.Implementation = args =>
+            {
+                var vm = _currentThreadVm ?? throw new InvalidOperationException("__type_arg needs a running program.");
+                var texts = ((fire.Standard.IJsonHost)vm).CallTypeArgs;
+                int i = args.Length > 0 && args[0].Kind == ValueKind.Int ? (int)args[0].AsInt() : 0;
+                return texts != null && i >= 0 && i < texts.Length && texts[i].Length > 0 ? Value.MakeString(texts[i]) : Value.MakeUndefined();
+            };
+            fire.Standard.FdWaitMethods.Implementation = args =>
+                (_currentThreadVm ?? throw new InvalidOperationException("__fd_wait needs a running program.")).FdWaitNative(args);
+            fire.Standard.CompletionMethods.Implementation = (name, args) =>
+                (_currentThreadVm ?? throw new InvalidOperationException("A Completion needs a running program.")).CompletionNative(name, args);
+            fire.Standard.ChannelMethods.Implementation = (name, args) =>
+                (_currentThreadVm ?? throw new InvalidOperationException("A Channel needs a running program.")).ChannelNative(name, args);
         }
 
         /// <summary>`__await_run(lambdas, res, fails)` (fire.Standard.AwaitMethods): calls every lambda with (res, fails, i), one after the other, nested like a
@@ -361,6 +374,10 @@ namespace fire.Runtime
         /// into the global fire-thread queue. Only a VM instance that REALLY arose via `fire`
         /// is to get this special behaviour.</summary>
         public bool IsFireThreadVm { get; }
+        /// <summary>A fire thread the main program waits for at its end (FireRuntime counts it); its waits in channels and for sockets count as standing still.</summary>
+        internal bool CountsAsThread { get; init; }
+        /// <summary>`#endwait`: how long the main program waits for its threads at its end (ms; -1: no limit).</summary>
+        private long _endWaitMs = FireRuntime.DefaultEndWaitMs;
 
         /// <summary>A script `throw` for which no matching `catch` was found in THIS VM instance -
         /// set instead of thrown (see ThrowException, last branch): deliberately NO C# exception any more
@@ -594,12 +611,40 @@ namespace fire.Runtime
             return value;
         }
 
-        private void StoreSharedGlobal(int slot, Value value)
+        // (rule 10: the value of the last `x = take v` / `obj.f = take v` of this fire thread - its store into the main program's globals moves it there)
+        private object? _pendingGlobalTake;
+
+        /// <summary>Rule 10 (docs/ROADMAP_TASKS.md step 8): what a fire thread writes into the main program's globals (a global variable, a field of one
+        /// of their objects) goes there - a value as it is; an object (array, buffer, lambda) of this thread only when it is fresh (`new`, a call's
+        /// result, `copy x`) or taken (`take x`): it moves to `target` like `handover` and joins the globals' domain. Another one of this thread is the
+        /// ArgumentException (false); one of the main program stays the reference it is.</summary>
+        private bool ToMainGlobals(ref Value value, IOwner target, ThreadShareLock treeLock, string what)
+        {
+            object? taken = _pendingGlobalTake;
+            _pendingGlobalTake = null;
+            if (value.Kind is not (ValueKind.Class or ValueKind.Array or ValueKind.Buffer or ValueKind.Lambda)) return true;
+            if (value.Kind == ValueKind.Class ? ((ObjectInstance)value.AsObjectRef()).IsDestroyed : IsDestroyedLeaf(value)) return true;
+            if (InMainGlobals(value)) return true;
+            object identity = value.Kind switch { ValueKind.Class => value.AsObjectRef(), ValueKind.Array => value.AsArray(), ValueKind.Buffer => value.AsBuffer(), _ => value.AsLambda() };
+            if (!ReferenceEquals(taken, identity) && !IsUnclaimed(value))
+            {
+                ThrowArgumentError($"{what} belongs to the main program: an object of this thread goes there only with a word - 'copy x' (a copy) or 'take x' (moved).");
+                return false;
+            }
+            value = ObjectHandover.MoveAll(new[] { value }, target, senderHome: EnsureHomeInbox())[0];
+            ShareValue(value, treeLock, new HashSet<object>(ReferenceEqualityComparer.Instance));
+            return true;
+        }
+
+        /// <summary>False: the value was refused (the ArgumentException is raised, the stack is the handler's).</summary>
+        private bool StoreSharedGlobal(int slot, Value value)
         {
             var broker = _threadBroker!;
             EnterGlobalsSection();
             try
             {
+                if (!ToMainGlobals(ref value, broker.Scope, broker.Lock, "A global variable")) return false;
+                _stack[_sp - 1] = value;   // (the value the assignment gives: the moved one)
                 broker.Lock.Enter();
                 try
                 {
@@ -610,6 +655,7 @@ namespace fire.Runtime
                 finally { broker.Lock.Exit(); }
             }
             finally { ExitGlobalsSection(); }
+            return true;
         }
 
         /// <summary>Main program, after the first `fire`: writing the globals under the lock (fire threads read at the same time).</summary>
@@ -659,8 +705,51 @@ namespace fire.Runtime
             finally { if (inThread) ExitGlobalsSection(); }
         }
 
-        /// <summary>Method call of a fire thread on an object of the shared area: the method runs as a whole while the thread
-        /// holds the section - so even its read-modify-write is atomic.</summary>
+        /// <summary>Rule 10 (docs/ROADMAP_TASKS.md step 8): the arguments go to the main program - a value as it is; an object (an array, a buffer, a
+        /// lambda) of this thread only with a word: `copy`/`flat` (a copy), `take` (moved, like `handover`), or fresh (`new`, a call's result: moved);
+        /// one of the main program's globals as the reference it is. Then the call is a job of the main program, the result comes back like `await on`.</summary>
+        private void CallGlobalsMethodAtHome(ObjectInstance obj, string methodName, Value[] args, long copyMask)
+        {
+            var holder = new Scope(null);
+            object? home = EnsureHomeInbox();
+            for (int i = 0; i < args.Length; i++)
+            {
+                int bits = i < 16 ? (int)(copyMask >> (4 * i)) & 15 : 0;
+                var a = args[i];
+                if (bits == 3) { a = args[i] = ReadRefArgument(a); bits = 0; }
+                if (a.Kind is not (ValueKind.Class or ValueKind.Array or ValueKind.Buffer or ValueKind.Lambda)) continue;
+                if (a.Kind == ValueKind.Class ? ((ObjectInstance)a.AsObjectRef()).IsDestroyed : IsDestroyedLeaf(a)) continue;
+                if (bits is 1 or 2) args[i] = ObjectCloner.Clone(a, holder, deep: bits == 2);
+                else if (bits is 5 or 7 || IsUnclaimed(a)) args[i] = ObjectHandover.MoveAll(new[] { a }, holder, senderHome: home)[0];
+                else if (!InMainGlobals(a))
+                {
+                    ThrowArgumentError($"'{methodName}' runs in the main program (an object of its globals): an object of this thread goes there only with a word - 'copy x' (a copy) or 'take x' (moved).");
+                    return;
+                }
+            }
+            var reply = new ActorReply();
+            _threadBroker!.PostMethodJob(obj, methodName, args, holder, reply);
+            TakeReply(reply);
+        }
+
+        private static object? IdentityOf(Value v) => v.Kind switch
+        {
+            ValueKind.Class => v.AsObjectRef(),
+            ValueKind.Array => v.AsArray(),
+            ValueKind.Buffer => v.AsBuffer(),
+            ValueKind.Lambda => v.AsLambda(),
+            _ => null,
+        };
+
+        /// <summary>Does the value belong to the main program's globals (an object of their domain, a shared array)?</summary>
+        private bool InMainGlobals(Value v) => v.Kind switch
+        {
+            ValueKind.Class => v.AsObjectRef() is ObjectInstance { InGlobalsDomain: true } || v.AsObjectRef() is ObjectInstance { Mailbox: not null },
+            ValueKind.Array => v.AsArray().IsShared,
+            // (a lambda or buffer carries no mark: it is the main program's when its owner is - the globals' scope or an object of their domain)
+            _ => LeafOf(v) is { LeafOwner: { } owner } && (ReferenceEquals(owner, _threadBroker?.Scope) || owner is ObjectInstance { InGlobalsDomain: true }),
+        };
+
         private Value? CallGlobalsMethodInSection(ObjectInstance obj, string methodName, Value[] args)
         {
             EnterGlobalsSection();
@@ -775,6 +864,26 @@ namespace fire.Runtime
 
         /// <summary>Executes a `fire global` job on this (the owner) VM. An unhandled exception in it is treated like that of a
         /// fire thread: it goes to the main program (`catch threads`), otherwise it aborts.</summary>
+        /// <summary>A method call of a fire thread on an object of the main program's globals (rule 10): it runs here, its result or exception goes back.</summary>
+        internal void RunGlobalsMethodJob(ObjectInstance target, string methodName, Value[] args, Scope argHolder, ActorReply reply)
+        {
+            var freshOwner = _currentScope.Temp;
+            Value result;
+            ObjectInstance? error;
+            _noAutoSyncDepth++;
+            try
+            {
+                if (IsDeadObject(target)) { reply.Failure = "The object of the main program's globals is destroyed."; reply.Done.Set(); VmScheduler.Wake(); return; }
+                error = CallMethodInline(target, methodName, args, out result, argHolder);
+            }
+            catch (ScriptErrorException e) { reply.Failure = e.Message; reply.Done.Set(); VmScheduler.Wake(); return; }
+            finally { _noAutoSyncDepth--; }
+            if (error != null) { error.ReparentTo(reply.Holder); reply.Exception = error; }
+            else reply.Result = ReplyValue(result, freshOwner, reply.Holder);
+            reply.Done.Set();
+            VmScheduler.Wake();
+        }
+
         internal void RunGlobalsJob(LambdaValue lambda, Value[] args, ActorReply? reply = null)
         {
             ObjectInstance? error;
@@ -917,6 +1026,7 @@ namespace fire.Runtime
         {
             PollSignalsAfterOp();
             if (!_stopExecutionRequested && _seenQueued != System.Threading.Volatile.Read(ref s_queued)) AutoSyncAt(true);
+            if (!_stopExecutionRequested) ServeHomeInbox();
         }
 
         private bool PollSignalsSlow()
@@ -986,7 +1096,21 @@ namespace fire.Runtime
                 _acceptingCallbacks = false; // host callbacks take the other way afterwards
                 _currentThreadVm = null; // a callback firing later on this thread does not look for a finished VM
                 _ownerBroker?.Close();   // no owner any more: waiting fire threads are released
+                _homeInbox?.Close();     // (the calls of lambdas bound to this thread's objects fail from now on)
             }
+        }
+
+        // ---- docs/ROADMAP_TASKS.md step 8 (e): the calls other threads send for lambdas bound to objects of this fire thread
+        private HomeInbox? _homeInbox;
+        /// <summary>The inbox of this fire thread (made when a lambda bound to one of its objects leaves it).</summary>
+        internal object EnsureHomeInbox() => _homeInbox ??= new HomeInbox();
+        internal void CloseHomeInbox() => _homeInbox?.Close();
+        /// <summary>Runs the calls that came (at a safe point of this thread, or while it waits); true if the VM was ended by one.</summary>
+        private bool ServeHomeInbox()
+        {
+            if (_homeInbox == null || !_homeInbox.HasPending || _noAutoSyncDepth > 0 || _nestedDepth > 0) return false;
+            _homeInbox.Drain(this);
+            return _stopExecutionRequested;
         }
 
         private void RunLoop()
@@ -1060,7 +1184,7 @@ namespace fire.Runtime
             if (!DestroyGlobalsAtEnd) return;
             // (the members of the main program's group - handlers that wait - end before its globals do)
             if (!IsFireThreadVm) while (VmGroup.Any && !_stopExecutionRequested) { VmGroup.RunReady(); if (VmGroup.Any) FireRuntime.WaitForWake(5); }
-            if (!IsFireThreadVm) FireRuntime.WaitForAllFireThreads(_ownerBroker); // the main program (every VM that is not a fire thread); meanwhile it serves the threads' queue
+            if (!IsFireThreadVm) FireRuntime.WaitForAllFireThreads(_ownerBroker, _endWaitMs); // the main program (every VM that is not a fire thread); meanwhile it serves the threads' queue
             // An exception a thread did not catch, delivered after the main program's last safe point, is not dropped: `catch threads`, or the
             // program ends with it (like at a safe point - the global scope then stays, as after any unhandled exception; native: the same at its end).
             if (IsMainThreadVm && !afterShutdown)
@@ -1253,6 +1377,23 @@ namespace fire.Runtime
         /// in the non-blocking case when the mailbox is currently empty -
         /// when blocking this method always returns `true` (it waits until
         /// something is there).</summary>
+        /// <summary>A thread waits in `process` for a message: it counts as standing still, like a wait in a channel (FireRuntime.WaitForAllFireThreads).
+        /// false: no message will come - the program ends in a standstill (the thread leaves), or the thread is stopped.</summary>
+        private bool WaitInProcess(fire.Runtime.ActorMailbox box)
+        {
+            FireRuntime.IdleEnter(this);
+            try
+            {
+                while (!box.HasMessages)
+                {
+                    if (_stopExecutionRequested || FireRuntime.Standstill) return box.HasMessages;
+                    box.WaitForMessage(20);
+                }
+                return true;
+            }
+            finally { FireRuntime.IdleLeave(this); }
+        }
+
         private bool ProcessOneMessage(ObjectInstance actor, bool blocking)
         {
             var mailbox = actor.Mailbox
@@ -1261,6 +1402,14 @@ namespace fire.Runtime
 
             if (!mailbox.TryProcessOne(blocking, out var message))
                 return false;
+
+            if (message.Lambda is { } lambdaCall)
+            {
+                // a lambda bound to the actor, called elsewhere (docs/ROADMAP_TASKS.md step 8 (e)): it runs here like a job, its result goes back
+                if (message.Reply != null) RunGlobalsJob(lambdaCall, message.Args, message.Reply);
+                else { var lambdaError = CallLambdaInline(lambdaCall, message.Args); if (lambdaError != null) ThrowException(Value.MakeClassRef(lambdaError)); }
+                return true;
+            }
 
             var rc = ResolveClass(actor.ClassName);
             var proto = FindOverload(rc, message.MethodName, message.Args, actor).Proto
@@ -1802,7 +1951,7 @@ namespace fire.Runtime
             {
                 // (every assignment of a value and every call with declared parameters: not through Execute, whose frame is expensive to set up)
                 case OpCode.HoistValue:
-                    if (_stack[_sp - 1].Kind is ValueKind.Class or ValueKind.Array or ValueKind.Buffer) HoistValue(_stack[_sp - 1]);
+                    if (_stack[_sp - 1].Kind is ValueKind.Class or ValueKind.Array or ValueKind.Buffer or ValueKind.Lambda) HoistValue(_stack[_sp - 1]);
                     return;
                 case OpCode.GuardLocal: OpGuardLocal(); return;
                 case OpCode.GuardLocalType: OpGuardLocalType(); return;
@@ -2029,7 +2178,7 @@ namespace fire.Runtime
                     // A back jump (loop) is a safe point for shutdown signals (see PollSignals); `_ip` here still
                     // points to the operand, PollSignalsSlow calculates with the instruction boundary before it.
                     int target = _code[_ip] | (_code[_ip + 1] << 8);
-                    if (target <= _ip && (PollSignals() || PollQueueAtLoop())) return;
+                    if (target <= _ip && (PollSignals() || PollQueueAtLoop() || (_homeInbox != null && ServeHomeInbox()))) return;
                     _ip = target;
                     return;
                 }
@@ -2086,7 +2235,7 @@ namespace fire.Runtime
                 {
                     int slot = ReadU16();
                     var value = _stack[_sp - 1];
-                    if (slot < _sharedCount) StoreSharedGlobal(slot, value);
+                    if (slot < _sharedCount) { if (!StoreSharedGlobal(slot, value)) return; }
                     else if (_ownerBroker != null) StoreOwnerGlobal(slot, value);
                     else _globalScope.SlotRef(slot) = value;
                     _sp--;
@@ -2188,7 +2337,7 @@ namespace fire.Runtime
             Step(subtract ? OpCode.Sub : OpCode.Add);
             if (_arithFault) { _arithFault = false; if (_unhandledPaused) _sp--; return; }
             var value = _stack[_sp - 1];
-            if (slot < _sharedCount) StoreSharedGlobal(slot, value);
+            if (slot < _sharedCount) { if (!StoreSharedGlobal(slot, value)) return; }
             else if (_ownerBroker != null) StoreOwnerGlobal(slot, value);
             else _globalScope.SlotRef(slot) = value;
             _sp--;
@@ -2291,9 +2440,47 @@ namespace fire.Runtime
             var proto = _currentChunk.Functions[protoIdx];
             object? onTarget = hasOnTarget ? BoxValueForOnTarget(Pop()) : null;
             var lambdaValue = new LambdaValue(proto, onTarget) { TypeArgs = TakeLambdaTypeArgs() };
+            LeafOwnership.Adopt(lambdaValue, _currentScope.Temp);   // (a new lambda belongs to the statement until a slot claims it, like a new array)
             Push(Value.MakeLambda(lambdaValue));
             return;
         }
+        }
+
+        /// <summary>The store of a new lambda (ROADMAP_TASKS step 8): what it captured and is still in the temporaries of the statement - the copies of
+        /// `taking` (and of a variable without a word), the instances `handover` moved - belongs to the lambda and dies with it.</summary>
+        private void OwnStore(LambdaValue lambda)
+        {
+            var temp = _currentScope.Temp;
+            if (lambda.Captures == null || !temp.HasOwned) return;
+            foreach (var c in lambda.Captures)
+                if (c.Kind is ValueKind.Class or ValueKind.Array or ValueKind.Buffer or ValueKind.Lambda && RootedIn(c, temp)) OwnershipWalk.TakeValue(c, lambda, this);
+        }
+
+        /// <summary>What a call of the lambda gets for capture i (ROADMAP_TASKS step 8): a copy of the store's value that belongs to the call (`taking`, a
+        /// variable without a word - unless the body only reads it), the store's instance itself (`handover`: lent; once it was taken away, the store has
+        /// none), or the store's value (a number, a text, a copy that is only read).</summary>
+        private Value CaptureForCall(LambdaValue lambda, int i, Scope callScope)
+        {
+            var c = lambda.Captures![i];
+            var proto = lambda.Proto;
+            if (i >= 64) return c.Kind is ValueKind.Class or ValueKind.Array or ValueKind.Buffer or ValueKind.Lambda ? ObjectCloner.Clone(c, callScope, deep: true) : c;
+            if ((proto.CaptureMovedMask >> i & 1) != 0)
+            {
+                if (c.Kind is ValueKind.Class or ValueKind.Array or ValueKind.Buffer or ValueKind.Lambda && !ReferenceEquals(OwnerOfLive(c), lambda))
+                    lambda.Captures[i] = c = Value.MakeUndefined();   // (taken away in an earlier call - `take`)
+                return c;
+            }
+            if ((proto.CaptureCopyMask >> i & 1) != 0 && c.Kind is ValueKind.Class or ValueKind.Array or ValueKind.Buffer or ValueKind.Lambda && !IsDestroyedLeaf(c)
+                && !(c.Kind == ValueKind.Class && c.AsObjectRef() is ObjectInstance { IsDestroyed: true }))
+                return ObjectCloner.Clone(c, callScope, deep: true);
+            return c;
+        }
+
+        /// <summary>The captures of a lambda as the slots behind its parameters (the calls that build their scope themselves).</summary>
+        private void DefineCaptureSlots(LambdaValue lambda, Scope funcScope)
+        {
+            if (lambda.Captures == null) return;
+            for (int i = 0; i < lambda.Captures.Length; i++) funcScope.DefineSlot(CaptureForCall(lambda, i, funcScope));
         }
 
         private void OpMakeLambdaCapturing()
@@ -2305,7 +2492,10 @@ namespace fire.Runtime
             object? onTarget = hasOnTarget ? BoxValueForOnTarget(Pop()) : null;
             var captures = new Value[captureCount];
             for (int i = captureCount - 1; i >= 0; i--) captures[i] = Pop();
-            Push(Value.MakeLambda(new LambdaValue(proto, onTarget, null, captures) { TypeArgs = TakeLambdaTypeArgs() }));
+            var lambda = new LambdaValue(proto, onTarget, null, captures) { TypeArgs = TakeLambdaTypeArgs() };
+            LeafOwnership.Adopt(lambda, _currentScope.Temp);
+            OwnStore(lambda);
+            Push(Value.MakeLambda(lambda));
         }
 
         // -----------------------------------------------------------
@@ -2319,14 +2509,19 @@ namespace fire.Runtime
         /// <summary>Switches into the call of `proto`: the topmost `argCount` stack values are taken directly as
         /// parameter slots of the new scope and (together with the receiver/callee below them, if
         /// `dropBelow`) removed from the stack. Only for calls with EXACTLY the matching argument count (no default value needed).</summary>
-        private void EnterCall(FunctionProto proto, int argCount, bool dropBelow, object? newThis, ObjectInstance? constructed = null, long copyMask = 0, Value[]? captures = null)
+        private void EnterCall(FunctionProto proto, int argCount, bool dropBelow, object? newThis, ObjectInstance? constructed = null, long copyMask = 0, LambdaValue? lambda = null)
         {
+            var captures = lambda?.Captures;
             int captureCount = captures?.Length ?? 0;
             int paramCount = argCount + captureCount;
             var scope = RentCallScope(paramCount + SlotSlack, paramCount);
             var slots = scope.SlotArray;
             Array.Copy(_stack, _sp - argCount, slots, 0, argCount);
-            if (captureCount != 0) Array.Copy(captures!, 0, slots, argCount, captureCount); // Lambda captures directly behind the parameters
+            if (captureCount != 0)   // Lambda captures directly behind the parameters (from its store - ROADMAP_TASKS step 8)
+            {
+                if ((proto.CaptureCopyMask | proto.CaptureMovedMask) == 0) Array.Copy(captures!, 0, slots, argCount, captureCount);
+                else for (int i = 0; i < captureCount; i++) slots[argCount + i] = CaptureForCall(lambda!, i, scope);
+            }
             _sp -= argCount + (dropBelow ? 1 : 0);
 
             _frames.Push(new CallFrame(_currentChunk, _ip, _currentScope, _currentThis, constructed));
@@ -2408,6 +2603,7 @@ namespace fire.Runtime
                 case ValueKind.Class: ((ObjectInstance)arg.AsObjectRef()).ReparentToArgument(calleeScope); break;   // (a destroyed object stays; the check ran before the call)
                 case ValueKind.Array when !arg.AsArray().IsDestroyed: LeafOwnership.Reparent(arg.AsArray(), calleeScope); break;
                 case ValueKind.Buffer when !arg.AsBuffer().IsDestroyed: LeafOwnership.Reparent(arg.AsBuffer(), calleeScope); break;
+                case ValueKind.Lambda when arg.AsLambda() is LambdaValue { IsDestroyed: false } lambda: LeafOwnership.Reparent(lambda, calleeScope); break;
             }
         }
 
@@ -2440,6 +2636,11 @@ namespace fire.Runtime
         private bool ThrowIfDeadForTake(Value v)
         {
             if (v.Kind == ValueKind.Class && v.AsObjectRef() is ObjectInstance obj && IsDeadObject(obj)) { ThrowDestroyedObject(obj); return true; }
+            if (v.Kind == ValueKind.Class && v.AsObjectRef() is ObjectInstance { LentBy: { } lender } && !ReferenceEquals(lender, this))
+            {
+                ThrowAccessDenied(LentTakeText);
+                return true;
+            }
             if (IsDestroyedLeaf(v)) { ThrowDestroyed(v); return true; }
             return false;
         }
@@ -2457,8 +2658,9 @@ namespace fire.Runtime
                 }
                 case ValueKind.Array:
                 case ValueKind.Buffer:
+                case ValueKind.Lambda:   // (a lambda made in the call's arguments - `list.Add(() => ...)` - belongs to the call like a new object)
                 {
-                    var leaf = arg.Kind == ValueKind.Array ? (IOwnedLeaf)arg.AsArray() : arg.AsBuffer();
+                    if (LeafOf(arg) is not { } leaf) break;
                     if (!leaf.IsDestroyed && RootedIn(arg, callerScope.Temp)) LeafOwnership.Reparent(leaf, calleeScope);
                     break;
                 }
@@ -2504,17 +2706,52 @@ namespace fire.Runtime
             // Fast path: a lambda with exactly this parameter count (no default value needed).
             if (_stack[_sp - 1 - argCount] is { Kind: ValueKind.Lambda } fastCallee
                 && fastCallee.AsLambda() is LambdaValue fastLambda
-                && fastLambda.Proto.ParamCount == argCount)
+                && fastLambda.Proto.ParamCount == argCount && !fastLambda.IsDestroyed && !RunsElsewhere(fastLambda))
             {
                 _pendingCallTypeArgs = fastLambda.TypeArgs;   // (taken by the TakeCallTypeArgs of a lambda made in generic code)
                 _pendingExplicitTypeArgs = false;
-                EnterCall(fastLambda.Proto, argCount, dropBelow: true, fastLambda.OnTarget, copyMask: copyMask, captures: fastLambda.Captures);
+                EnterCall(fastLambda.Proto, argCount, dropBelow: true, fastLambda.OnTarget, copyMask: copyMask, lambda: fastLambda);
                 return;
             }
 
             OpCallSlow(argCount, copyMask);
             return;
         }
+        }
+
+        /// <summary>Does a call of the lambda run elsewhere (docs/ROADMAP_TASKS.md step 8 (e))? Bound to an object of the main program and called in a fire
+        /// thread: its body runs in the main program; bound to an object of another fire thread: not served yet.</summary>
+        private bool RunsElsewhere(LambdaValue lambda) => lambda.Home switch
+        {
+            LambdaHome.MainProgram => IsFireThreadVm,
+            // (an actor: elsewhere unless this is the thread that made it; a fire thread: unless this is that thread)
+            LambdaHome.OtherThread => lambda.HomeBox == null
+                ? !(lambda.OnTarget is ObjectInstance { Mailbox: { } mailbox } && ReferenceEquals(mailbox.Home, this))
+                : !ReferenceEquals(lambda.HomeBox, _homeInbox),
+            _ => false,
+        };
+
+        /// <summary>The call of a lambda whose target lives in the main program, from a fire thread: a job of the main program like `await on obj` - the
+        /// arguments are copied for it, the thread waits (and yields) until the result or the exception comes back.</summary>
+        private void CallAtHome(LambdaValue lambda, Value[] args)
+        {
+            CheckArity(lambda.Proto, args.Length);
+            foreach (var a in args)
+                if (a.Kind == ValueKind.Class) ObjectCopier.RequireNoCopyFree(a, "fire global");
+            var holder = new Scope(null);
+            for (int i = 0; i < args.Length; i++)
+                if (args[i].Kind is ValueKind.Class or ValueKind.Array or ValueKind.Buffer) args[i] = ObjectCloner.Clone(args[i], holder, deep: true);
+            var reply = new ActorReply();
+            if (lambda.Home == LambdaHome.MainProgram) _threadBroker!.PostJob(lambda, args, holder, reply);
+            else if (lambda.HomeBox is HomeInbox inbox)
+            {
+                // a fire thread: it runs the call at its safe points or while it waits
+                if (!inbox.Post(lambda, args, reply)) { ThrowArgumentError(HomeInbox.EndedText); return; }
+            }
+            else if (lambda.OnTarget is ObjectInstance { Mailbox: { } mailbox })
+                mailbox.Enqueue(new ActorMessage("", args, holder, reply, lambda));   // (an actor: at the `process` of its home)
+            else { ThrowArgumentError("The lambda is bound to an object that lives elsewhere and cannot be reached from here."); return; }
+            TakeReply(reply);
         }
 
         private void OpCallSlow(int argCount, long copyMask)
@@ -2529,6 +2766,8 @@ namespace fire.Runtime
                     $"Call of a value of type {calleeVal.Kind} which is not a lambda.");
 
             var lambda = (LambdaValue)calleeVal.AsLambda();
+            if (IsDestroyedLeaf(calleeVal)) { ThrowDestroyed(calleeVal); return; }   // (a lambda that died with its owner - ROADMAP_TASKS step 8)
+            if (RunsElsewhere(lambda)) { CallAtHome(lambda, args); return; }
             CheckArity(lambda.Proto, args.Length);
             args = FillDefaultArgs(lambda.Proto, args, lambda.OnTarget);
 
@@ -2536,7 +2775,7 @@ namespace fire.Runtime
 
             var funcScope = new Scope(_globalScope);
             foreach (var a in args) funcScope.DefineSlot(a);
-            if (lambda.Captures != null) foreach (var c in lambda.Captures) funcScope.DefineSlot(c);
+            DefineCaptureSlots(lambda, funcScope);
             _pendingCallTypeArgs = lambda.TypeArgs;
             _pendingExplicitTypeArgs = false;
             ApplyCopyMask(funcScope, copyMask, lambda.Proto.RefMask);
@@ -2634,14 +2873,12 @@ namespace fire.Runtime
                 }
                 case ValueKind.Array:
                 case ValueKind.Buffer:
+                case ValueKind.Lambda:   // (a lambda with its store - ROADMAP_TASKS step 8)
                 {
-                    var leaf = LeafOf(retVal)!;
-                    if (leaf.IsDestroyed || !OwnershipWalk.IsLocal(leaf.LeafOwner, isLocalScope)) return;
+                    if (LeafOf(retVal) is not { } leaf || leaf.IsDestroyed || !OwnershipWalk.IsLocal(leaf.LeafOwner, isLocalScope)) return;
                     LeafOwnership.Reparent(leaf, target);
                     break;
                 }
-                case ValueKind.Lambda:
-                    break;   // (a lambda owns nothing, but what it captured from the call goes along with it)
                 default:
                     return;
             }
@@ -2696,6 +2933,16 @@ namespace fire.Runtime
             // blocks leaves them all at once.
             if (_frames.Count > 0) MoveReturned(retVal, OwnsWithinCall);
 
+            // (a record at the end of its (outermost) constructor - before the scopes of the call let go of what they hold: it holds only what does not
+            // change, step 9)
+            if (_frames.Count > 0 && _frames.Peek().ConstructedInstance is { RtClass.IsRecord: true } record
+                && !_frames.Skip(1).Any(f => ReferenceEquals(f.ConstructedInstance, record)) && (_recordInit == null || !_recordInit.Contains(record))
+                && RecordValues.FirstChangeableField(record) is { } changeable)
+            {
+                ThrowArgumentError($"The field '{changeable}' of the record '{record.ClassName}' holds {DescribeKindOf(record.Fields[changeable])}: a record holds only what does not change - numbers, texts, enums, records, lambdas without captures.");
+                return;
+            }
+
             ReleaseCallScopes();
 
             var frame = _frames.Pop();
@@ -2710,6 +2957,36 @@ namespace fire.Runtime
             return;
         }
         }
+
+        /// <summary>Is the record being constructed - a constructor of it on the stack of calls, or a copy / `with` that fills it (<see cref="_recordInit"/>)?</summary>
+        private bool InConstruction(ObjectInstance record)
+        {
+            if (_recordInit != null && _recordInit.Contains(record)) return true;
+            if (ReferenceEquals(record, _initTarget)) return true;
+            foreach (var f in _frames) if (ReferenceEquals(f.ConstructedInstance, record)) return true;
+            return false;
+        }
+
+        /// <summary>A channel or an end of a two-way one (Channel.Pair): `fire with` gives a thread an end of its own (its `__End`).</summary>
+        internal static bool IsChannelLike(ObjectInstance obj) => obj.RtClass is { Name: "Channel" or "ChannelEnd" };
+
+        /// <summary>The records that a copy or `with` is filling right now (their writes are allowed).</summary>
+        private HashSet<ObjectInstance>? _recordInit;
+        /// <summary>`with`: the copy whose fields its assignments write (OpCode.InitNext, until RecordCheck 0).</summary>
+        private ObjectInstance? _initTarget;
+        internal const string WithNeedsWordText = "'with' without 'copy' or 'flat' is for records: write 'copy x with { ... }' (a deep copy) or 'flat x with { ... }'.";
+
+        private void ThrowRecordWrite(ObjectInstance record, string fieldName) =>
+            ThrowAccessDenied($"The record '{record.ClassName}' is unchangeable: its field '{fieldName}' is written only while it is constructed - a changed copy is 'copy r with {{ .{fieldName} = ... }}'.");
+
+        private static string DescribeKindOf(Value v) => v.Kind switch
+        {
+            ValueKind.Class => $"an object of the class '{((ObjectInstance)v.AsObjectRef()).ClassName}'",
+            ValueKind.Array => "an array",
+            ValueKind.Buffer => "a buffer",
+            ValueKind.Lambda => "a lambda with captures",
+            _ => v.Kind.ToString(),
+        };
 
         private void OpNewObject()
         {
@@ -2964,7 +3241,7 @@ namespace fire.Runtime
             int fieldNameIdx = ReadU16();
             bool getter = (ReadByte() & 1) != 0;
             var value = _stack[_sp - 1];
-            if (value.Kind is not (ValueKind.Class or ValueKind.Array or ValueKind.Buffer) || !IsCurrentCallOwner(OwnerOfLive(value)))
+            if (value.Kind is not (ValueKind.Class or ValueKind.Array or ValueKind.Buffer or ValueKind.Lambda) || !IsCurrentCallOwner(OwnerOfLive(value)))
             {
                 SetFieldAt(site, fieldNameIdx);
                 return;
@@ -3008,8 +3285,10 @@ namespace fire.Runtime
                 finally { _takeSetterArg = false; }
                 return;
             }
+            bool toMain = _threadBroker != null && target is { InGlobalsDomain: true };
+            if (toMain) _pendingGlobalTake = IdentityOf(value);   // (the store moves it into the main program - rule 10)
             if (!SetFieldSlow(name, -1)) return;
-            if (target == null || IsDeadObject(target)) return;
+            if (toMain || target == null || IsDeadObject(target)) return;
             if (setterValue) OwnershipWalk.TakeValue(value, target, this);
             else ClaimTree(value, target);
         }
@@ -3029,6 +3308,7 @@ namespace fire.Runtime
             ValueKind.Class => v.AsObjectRef() is ObjectInstance { IsDestroyed: false } o ? o.Owner : null,
             ValueKind.Array => v.AsArray() is { IsDestroyed: false } a ? a.LeafOwner : null,
             ValueKind.Buffer => v.AsBuffer() is { IsDestroyed: false } b ? b.LeafOwner : null,
+            ValueKind.Lambda => v.AsLambda() is LambdaValue { IsDestroyed: false } l ? l.LeafOwner : null,
             _ => null,
         };
 
@@ -3138,7 +3418,12 @@ namespace fire.Runtime
                 && ((ObjectInstance)sectionTarget.AsObjectRef()).InGlobalsDomain)
             {
                 EnterGlobalsSection();
-                try { return SetFieldSlowCore(fieldName, site); }
+                try
+                {
+                    var holderObj = (ObjectInstance)sectionTarget.AsObjectRef();
+                    if (!ToMainGlobals(ref _stack[_sp - 1], holderObj, holderObj.ThreadLock ?? _threadBroker.Lock, $"The field '{fieldName}' of an object of the globals")) return false;
+                    return SetFieldSlowCore(fieldName, site);
+                }
                 finally { ExitGlobalsSection(); }
             }
             return SetFieldSlowCore(fieldName, site);
@@ -3150,6 +3435,7 @@ namespace fire.Runtime
             var value = Pop();
             var obj = RequireObjectInstance(Pop(), "Field assignment");
             if (IsDeadObject(obj)) { ThrowDestroyedObject(obj); return false; }
+            if (obj.RtClass is { IsRecord: true } && !InConstruction(obj)) { ThrowRecordWrite(obj, fieldName); return false; }
 
             if (obj.HasFieldLocked(fieldName))
             {
@@ -3182,7 +3468,7 @@ namespace fire.Runtime
                     hasUnitRule = true;   // (a typed array: every assignment types it - do not cache)
                     if (!GuardFieldArray(value, requiredArray, obj.RtClass.FindFieldRequiredUnit(fieldName))) return false;
                 }
-                if (site >= 0 && !hasUnitRule && obj.RtClass != null && obj.AccessGuard == null
+                if (site >= 0 && !hasUnitRule && obj.RtClass != null && obj.AccessGuard == null && !obj.RtClass.IsRecord
                     && obj.RtClass.FieldIndex.TryGetValue(fieldName, out int setIndex))
                     StoreSite(site, new SiteCache(obj.RtClass, null, setIndex, requiredKind: requiredKind, requiredType: requiredType));
                 obj.SetFieldLocked(fieldName, value);
@@ -3267,6 +3553,7 @@ namespace fire.Runtime
             if (_currentThis is not ObjectInstance oi)
                 throw new InvalidOperationException("SetFieldOnThis without a bound ObjectInstance as 'this'.");
             if (IsDeadObject(oi)) { ThrowDestroyedObject(oi); return; }
+            if (oi.RtClass is { IsRecord: true } && !InConstruction(oi)) { ThrowRecordWrite(oi, fieldName); return; }
 
             // SPEC "Unit declarations" - the same check as in
             // SetField (see there for the reason why this happens at
@@ -3295,7 +3582,7 @@ namespace fire.Runtime
                 if (!GuardFieldArray(value, requiredArray, oi.RtClass.FindFieldRequiredUnit(fieldName))) return;
             }
 
-            if (!hasUnitRule && oi.RtClass != null && oi.ThreadLock == null
+            if (!hasUnitRule && oi.RtClass != null && oi.ThreadLock == null && !oi.RtClass.IsRecord
                 && oi.RtClass.FieldIndex.TryGetValue(fieldName, out int thisIndex))
                 StoreSite(site, new SiteCache(oi.RtClass, null, thisIndex, requiredKind: requiredKind, requiredType: requiredType));
             oi.SetFieldLocked(fieldName, value);
@@ -3423,7 +3710,11 @@ namespace fire.Runtime
                 }
                 if (copyMask != 0) ApplyCopyMaskToArgs(args, copyMask);
                 RejectArgNames("the built-in method '" + methodName + "'");
-                if (TryCallBuiltinMethod(target, methodName, args, out Value builtinResult))
+                bool builtinHit;
+                Value builtinResult;
+                try { builtinHit = TryCallBuiltinMethod(target, methodName, args, out builtinResult); }
+                catch (fire.Standard.BufferRangeException range) { ThrowIndexOutOfBounds(range.Index, range.Length, "Buffer index"); return; }
+                if (builtinHit)
                 {
                     AdoptFresh(builtinResult);
                     Push(builtinResult);
@@ -3442,7 +3733,15 @@ namespace fire.Runtime
             // instead of a direct call, regardless of the calling
             // thread - this call itself returns 'undefined' and
             // continues normally (no jump into any chunk).
-            if (obj.Mailbox != null && !(_awaitReplyNow && ReferenceEquals(obj.Mailbox.Home, this)))
+            // (the ownership methods of an actor - the claim of an assignment or of `list.Add(actor)`, `try x.TakeTo(this)` - are never messages: at its home
+            // they run as for any object; from another thread the actor stays with its home and only its reference is stored)
+            bool ownershipCall = methodName is "TakeLocal" or "TakeUpwards" or "TakeGlobal" or "TakeTo" or "tryTakeLocal" or "tryTakeUpwards" or "tryTakeGlobal" or "tryTakeTo";
+            if (obj.Mailbox != null && ownershipCall && !ReferenceEquals(obj.Mailbox.Home, this))
+            {
+                Push(Value.MakeBool(false));
+                return;
+            }
+            if (obj.Mailbox != null && !ownershipCall && !(_awaitReplyNow && ReferenceEquals(obj.Mailbox.Home, this)))
             {
                 var holder = new Scope(null);   // the message owns its unclaimed arguments until it runs (SPEC 2.4)
                 if (copyMask != 0) ApplyCopyMaskToArgs(args, copyMask, holder);
@@ -3462,12 +3761,11 @@ namespace fire.Runtime
             }
             _awaitReplyNow = false;   // (an `await` of the actor's own home runs the method at once, like a call)
 
-            // Fire thread calls a method of an object of the shared area: it runs as a whole in a section (atomic).
+            // A fire thread calls a method of an object of the main program's globals: it runs in the main program (rule 10 of step 8) - a job, the
+            // thread waits (and serves its own calls) until the result or the exception comes back.
             if (NeedsSection(obj))
             {
-                if (copyMask != 0) ApplyCopyMaskToArgs(args, copyMask);
-                var sectionResult = CallGlobalsMethodInSection(obj, methodName, args);
-                if (sectionResult != null) Push(sectionResult.Value); // null: an exception has redirected the flow
+                CallGlobalsMethodAtHome(obj, methodName, args, copyMask);
                 return;
             }
 
@@ -3524,6 +3822,7 @@ namespace fire.Runtime
             bool conditional = name.StartsWith("tryTake", StringComparison.Ordinal);
             string method = conditional ? name.Substring(3) : name;
             if (method is not ("TakeLocal" or "TakeUpwards" or "TakeGlobal" or "TakeTo")) return false;
+            bool currentThread = TakeGlobalFlag(method, ref args);
             int baseArgs = method == "TakeTo" ? 1 : 0;
             if (args.Length != baseArgs && args.Length != baseArgs + 1) return false;
             int mode = args.Length > baseArgs ? TakesMode(args[baseArgs]) : Takes.This;
@@ -3542,6 +3841,13 @@ namespace fire.Runtime
                     target = obj.Owner as Scope;
                     break;
                 case "TakeGlobal":
+                    if (_threadBroker != null && !currentThread)
+                    {
+                        // (to the main program: what goes along by the mode comes below the object first, in the thread - then the check and the move)
+                        if (mode != Takes.This && !obj.IsDestroyed) OwnershipWalk.MoveReachable(Value.MakeClassRef(obj), mode, OwnsWithinCall, obj, EnumerateItems);
+                        if (TakeGlobalSafe(Value.MakeClassRef(obj))) TakeGlobalMain(Value.MakeClassRef(obj));
+                        return true;
+                    }
                     obj.TakeGlobal(_globalScope);
                     target = _globalScope;
                     break;
@@ -3561,6 +3867,115 @@ namespace fire.Runtime
             }
             if (mode != Takes.This && target != null) OwnershipWalk.MoveReachable(Value.MakeClassRef(obj), mode, OwnsWithinCall, target, EnumerateItems);
             return true;
+        }
+
+        /// <summary>`x.TakeGlobal(currentThread)` (also after a `Takes` mode): the flag is the last argument, a bool - taken off `args`. False (the default):
+        /// the global scope of the main program, also in a fire thread; true: the global scope of the running thread.</summary>
+        private static bool TakeGlobalFlag(string method, ref Value[] args)
+        {
+            if (method != "TakeGlobal" || args.Length == 0 || args[^1].Kind != ValueKind.Bool) return false;
+            bool flag = args[^1].AsBool();
+            args = args[..^1];
+            return flag;
+        }
+
+        /// <summary>`x.TakeGlobal()` in a fire thread: x goes to the global scope of the main program and into the globals' domain (in a section); it keeps its
+        /// identity - the thread's references stay valid and reach it as an object of the globals (rule 10).</summary>
+        private void TakeGlobalMain(Value v)
+        {
+            var broker = _threadBroker!;
+            EnterGlobalsSection();
+            try
+            {
+                if (v.Kind == ValueKind.Class) ((ObjectInstance)v.AsObjectRef()).ReparentTo(broker.Scope);
+                else if (LeafOf(v) is { } leaf) LeafOwnership.Reparent(leaf, broker.Scope);
+                ShareValue(v, broker.Lock, new HashSet<object>(ReferenceEqualityComparer.Instance));
+                RehomeToMain(v);
+            }
+            finally { ExitGlobalsSection(); }
+        }
+
+        /// <summary>Before `x.TakeGlobal()` in a fire thread: what x and what it owns point to must be in what moves, the main program's already (its globals, an
+        /// actor) or a value - else the main program would reach an object of this thread through a field: the ArgumentException (false), nothing moves.</summary>
+        private bool TakeGlobalSafe(Value root)
+        {
+            object? rootNode = IdentityOf(root);
+            var seen = new HashSet<object>(ReferenceEqualityComparer.Instance);
+            var work = new Stack<Value>();
+            work.Push(root);
+            while (work.Count > 0)
+            {
+                var v = work.Pop();
+                IEnumerable<Value> refs = v.Kind switch
+                {
+                    ValueKind.Class => ((ObjectInstance)v.AsObjectRef()).Fields.Select(f => f.Value)
+                        .Concat(((ObjectInstance)v.AsObjectRef()).OwnedObjects.Select(Value.MakeClassRef)),
+                    ValueKind.Array => ArrayItems(v.AsArray()),
+                    ValueKind.Lambda => ((LambdaValue)v.AsLambda()).Captures ?? Array.Empty<Value>(),
+                    _ => Array.Empty<Value>(),
+                };
+                foreach (var r in refs)
+                {
+                    if (r.Kind is not (ValueKind.Class or ValueKind.Array or ValueKind.Buffer or ValueKind.Lambda)) continue;
+                    if (r.Kind == ValueKind.Class ? ((ObjectInstance)r.AsObjectRef()).IsDestroyed : IsDestroyedLeaf(r)) continue;
+                    if (InMainGlobals(r)) continue;
+                    var node = IdentityOf(r)!;
+                    if (!ReferenceEquals(node, rootNode) && !OwnedWithin(rootNode!, node))
+                    {
+                        ThrowArgumentError("'TakeGlobal': the value points to an object of this thread that it does not own - the main program would reach it. Take it along "
+                            + "(TakeGlobal(Takes.Locals), Takes.All), let the value own it (TakeTo) or keep it in this thread (TakeGlobal(true)).");
+                        return false;
+                    }
+                    if (seen.Add(node)) work.Push(r);
+                }
+            }
+            return true;
+        }
+
+        private static IEnumerable<Value> ArrayItems(ScriptArray a)
+        {
+            for (long i = 0; a.TryGet(i, out var item); i++) yield return item;
+        }
+
+        /// <summary>Is `root` in the chain of owners of `node`?</summary>
+        private static bool OwnedWithin(object root, object node)
+        {
+            object? o = node switch { ObjectInstance oi => oi.Owner, IOwnedLeaf l => l.LeafOwner, _ => null };
+            for (int guard = 0; o != null && guard < 100000; guard++)
+            {
+                if (ReferenceEquals(o, root)) return true;
+                o = o switch { ObjectInstance oi => oi.Owner, IOwnedLeaf l => l.LeafOwner, _ => null };
+            }
+            return false;
+        }
+
+        /// <summary>(a lambda in what moved whose calls were to come to this thread - bound to what is the main program's now: its calls go there)</summary>
+        private void RehomeToMain(Value root)
+        {
+            var seen = new HashSet<object>(ReferenceEqualityComparer.Instance);
+            var work = new Stack<Value>();
+            work.Push(root);
+            while (work.Count > 0)
+            {
+                var v = work.Pop();
+                switch (v.Kind)
+                {
+                    case ValueKind.Class when v.AsObjectRef() is ObjectInstance { IsDestroyed: false, InGlobalsDomain: true } obj && seen.Add(obj):
+                        foreach (var field in obj.Fields) work.Push(field.Value);
+                        break;
+                    case ValueKind.Array when !v.AsArray().IsDestroyed && seen.Add(v.AsArray()):
+                        for (long i = 0; v.AsArray().TryGet(i, out var item); i++) work.Push(item);
+                        break;
+                    case ValueKind.Lambda when v.AsLambda() is LambdaValue { IsDestroyed: false } l && seen.Add(l):
+                        if (l.Home == LambdaHome.OtherThread && ReferenceEquals(l.HomeBox, _homeInbox) && l.OnTarget is ObjectInstance { InGlobalsDomain: true, Mailbox: null })
+                        {
+                            l.Home = LambdaHome.MainProgram;
+                            l.HomeBox = null;
+                        }
+                        if (l.Captures != null) foreach (var c in l.Captures) work.Push(c);
+                        break;
+                }
+            }
         }
 
         private static int TakesMode(Value v)
@@ -3602,6 +4017,7 @@ namespace fire.Runtime
             bool conditional = name.StartsWith("tryTake", StringComparison.Ordinal);
             string method = conditional ? name.Substring(3) : name;
             if (method is not ("TakeUpwards" or "TakeGlobal" or "TakeTo" or "TakeLocal")) return false;
+            bool currentThread = TakeGlobalFlag(method, ref args);
             int baseArgs = method == "TakeTo" ? 1 : 0;
             if (args.Length != baseArgs && args.Length != baseArgs + 1) return false;
             int mode = args.Length > baseArgs ? TakesMode(args[baseArgs]) : Takes.This;
@@ -3615,6 +4031,13 @@ namespace fire.Runtime
             switch (method)
             {
                 case "TakeUpwards": LeafOwnership.TakeUpwards(leaf); target = leaf.LeafOwner!; break;
+                case "TakeGlobal" when _threadBroker != null && !currentThread:
+                {
+                    var leafValue = leaf switch { ScriptArray a => Value.MakeArray(a), LambdaValue l => Value.MakeLambda(l), _ => Value.MakeBuffer((ByteBuffer)leaf) };
+                    if (mode != Takes.This && !leaf.IsDestroyed) OwnershipWalk.MoveReachable(leafValue, mode, OwnsWithinCall, _currentScope, EnumerateItems);
+                    if (TakeGlobalSafe(leafValue)) TakeGlobalMain(leafValue);
+                    return true;
+                }
                 case "TakeGlobal": LeafOwnership.Reparent(leaf, _globalScope); target = _globalScope; break;
                 case "TakeTo":
                 {
@@ -3626,7 +4049,7 @@ namespace fire.Runtime
                 default: LeafOwnership.Reparent(leaf, _currentScope); target = _currentScope; break;
             }
             if (mode != Takes.This && !leaf.IsDestroyed)
-                OwnershipWalk.MoveReachable(leaf is ScriptArray a ? Value.MakeArray(a) : Value.MakeBuffer((ByteBuffer)leaf), mode, OwnsWithinCall, target, EnumerateItems);
+                OwnershipWalk.MoveReachable(leaf switch { ScriptArray a => Value.MakeArray(a), LambdaValue l => Value.MakeLambda(l), _ => Value.MakeBuffer((ByteBuffer)leaf) }, mode, OwnsWithinCall, target, EnumerateItems);
             return true;
         }
 
@@ -3645,10 +4068,11 @@ namespace fire.Runtime
                 }
                 case ValueKind.Array:
                 case ValueKind.Buffer:
+                case ValueKind.Lambda:
                     LeafOwnership.Destroy(LeafOf(v)!, this);
                     return;
                 default:
-                    throw new InvalidOperationException($"'delete' expects an object, an array or a buffer, not {v.Kind}.");
+                    throw new InvalidOperationException($"'delete' expects an object, an array, a buffer or a lambda, not {v.Kind}.");
             }
         }
 
@@ -3812,6 +4236,8 @@ namespace fire.Runtime
                 if (staticInThread) EnterGlobalsSection();
                 try
                 {
+                    // (rule 10: what a fire thread stores here is the main program's - see ToMainGlobals)
+                    if (staticInThread && !ToMainGlobals(ref setValue, _threadBroker!.Scope, _threadBroker.Lock, "A static field")) return;
                     staticWriteBroker.Lock.Enter();
                     try { setOwner.StaticFieldValues[setFieldName] = setValue; }
                     finally { staticWriteBroker.Lock.Exit(); }
@@ -4121,6 +4547,13 @@ namespace fire.Runtime
             {
                 // Array of the shared area: a fire thread changes it only in a section, everywhere under the lock
                 long sharedIdx = indexVal.AsInt();
+                if (_threadBroker != null)
+                {
+                    // (rule 10: an object of this thread goes there only fresh or taken - see ToMainGlobals)
+                    EnterGlobalsSection();
+                    try { if (!ToMainGlobals(ref value, target.AsArray(), _threadBroker.Lock, "An element of an array of the globals")) return; }
+                    finally { ExitGlobalsSection(); }
+                }
                 if (TrySetSharedElement(target.AsArray(), sharedIdx, value)) Push(value);
                 else ThrowIndexOutOfBounds(sharedIdx, target.AsArray().Length);
             }
@@ -4309,6 +4742,7 @@ namespace fire.Runtime
                 case OpCode.BitXor: BinaryNumericOrOperator(Value.BitXor, "operator#"); break;
                 case OpCode.ShiftLeft: BinaryNumericOrOperator(Value.ShiftLeft, "operator<<"); break;
                 case OpCode.ShiftRight: BinaryNumericOrOperator(Value.ShiftRight, "operator>>"); break;
+                case OpCode.ShiftRightLogical: BinaryNumericOrOperator(Value.ShiftRightLogical, "operator>>>"); break;
 
                 case OpCode.FormatValue:
                 {
@@ -4399,7 +4833,13 @@ namespace fire.Runtime
                         ThrowArgumentError("'on' binds a lambda to an object; the value before 'on' is not a lambda.");
                         break;
                     }
-                    Push(Value.MakeLambda(((LambdaValue)lambdaValue.AsLambda()).WithOnTarget(BoxValueForOnTarget(onTarget))));
+                    if (IsDestroyedLeaf(lambdaValue)) { ThrowDestroyed(lambdaValue); break; }
+                    // (its own store: copies of the first lambda's - each lambda owns what it holds)
+                    var rebound = ((LambdaValue)lambdaValue.AsLambda()).WithOnTarget(BoxValueForOnTarget(onTarget));
+                    LeafOwnership.Adopt(rebound, _currentScope.Temp);
+                    if (rebound.Captures != null)
+                        for (int i = 0; i < rebound.Captures.Length; i++) rebound.Captures[i] = ObjectCloner.Clone(rebound.Captures[i], rebound, deep: true);
+                    Push(Value.MakeLambda(rebound));
                     break;
                 }
                 case OpCode.TypeArray:
@@ -4419,6 +4859,13 @@ namespace fire.Runtime
                 }
                 case OpCode.Trust:
                     break;   // (`trust x`: only the native backend acts on it)
+                case OpCode.TypeParamIsOf:
+                {
+                    string ofParam = TypeArgOfParam(_constants[ReadU16()].AsString());
+                    string ofTarget = _constants[ReadU16()].AsString();
+                    Push(Value.MakeBool(ofParam.Length > 0 && TypeNameIsOf(ofParam, ofTarget)));
+                    break;
+                }
                 case OpCode.TypeArrayOfParam:
                 {
                     string paramText = _constants[ReadU16()].AsString();
@@ -4797,7 +5244,7 @@ namespace fire.Runtime
                 }
 
                 case OpCode.HoistValue:
-                    if (_stack[_sp - 1].Kind is ValueKind.Class or ValueKind.Array or ValueKind.Buffer) HoistValue(_stack[_sp - 1]);
+                    if (_stack[_sp - 1].Kind is ValueKind.Class or ValueKind.Array or ValueKind.Buffer or ValueKind.Lambda) HoistValue(_stack[_sp - 1]);
                     break;
 
                 case OpCode.TakeToScope:
@@ -4805,6 +5252,7 @@ namespace fire.Runtime
                     int depth = ReadU16();
                     if (ThrowIfDeadForTake(_stack[_sp - 1])) break;
                     OwnershipWalk.TakeValue(_stack[_sp - 1], depth == 0xFFFF ? _globalScope : _currentScope.GetAncestor(depth), this);
+                    if (depth == 0xFFFF && _threadBroker != null) _pendingGlobalTake = IdentityOf(_stack[_sp - 1]);   // (a global of the main program: rule 10)
                     break;
                 }
 
@@ -4830,6 +5278,9 @@ namespace fire.Runtime
                     var holder = _stack[_sp - 3];
                     if (IsDestroyedLeaf(holder)) { ThrowDestroyed(holder); break; }
                     if (holder.Kind == ValueKind.Array && OwnedByRunningCall(_stack[_sp - 1])) OwnershipWalk.TakeValue(_stack[_sp - 1], holder.AsArray(), this);
+                    // (`obj[k] = try take v` of an object with an indexer: the object owns the value, like natively)
+                    else if (holder.Kind == ValueKind.Class && holder.AsObjectRef() is ObjectInstance { IsDestroyed: false } indexed && OwnedByRunningCall(_stack[_sp - 1]))
+                        OwnershipWalk.TakeValue(_stack[_sp - 1], indexed, this);
                     break;
                 }
 
@@ -4841,6 +5292,8 @@ namespace fire.Runtime
                 {
                     int depth = ReadU16();
                     int flags = ReadByte();
+                    // (a fresh value for a global of the main program: its store moves it there - rule 10)
+                    if (depth == 0xFFFF && _threadBroker != null && IsUnclaimed(_stack[_sp - 1])) _pendingGlobalTake = IdentityOf(_stack[_sp - 1]);
                     ClaimToScope(_stack[_sp - 1], depth == 0xFFFF ? _globalScope : _currentScope.GetAncestor(depth), flags);
                     break;
                 }
@@ -4849,7 +5302,12 @@ namespace fire.Runtime
                 {
                     var value = Pop();
                     var holderValue = Pop();
-                    if (holderValue.Kind == ValueKind.Class && holderValue.AsObjectRef() is ObjectInstance holder && !holder.IsDestroyed) ClaimTree(value, holder);
+                    if (holderValue.Kind == ValueKind.Class && holderValue.AsObjectRef() is ObjectInstance holder && !holder.IsDestroyed)
+                    {
+                        // (for an object of the main program's globals: the store moves it there - rule 10)
+                        if (_threadBroker != null && holder.InGlobalsDomain) { if (IsUnclaimed(value)) _pendingGlobalTake = IdentityOf(value); }
+                        else ClaimTree(value, holder);
+                    }
                     Push(value);
                     break;
                 }
@@ -4859,7 +5317,12 @@ namespace fire.Runtime
                 case OpCode.ClaimToArray:
                 {
                     var holder = _stack[_sp - 3];
-                    if (holder.Kind == ValueKind.Array && !holder.AsArray().IsDestroyed) ClaimTree(_stack[_sp - 1], holder.AsArray());
+                    if (holder.Kind == ValueKind.Array && !holder.AsArray().IsDestroyed)
+                    {
+                        // (for an array of the main program's globals: the store moves it there - rule 10)
+                        if (_threadBroker != null && holder.AsArray().IsShared) { if (IsUnclaimed(_stack[_sp - 1])) _pendingGlobalTake = IdentityOf(_stack[_sp - 1]); }
+                        else ClaimTree(_stack[_sp - 1], holder.AsArray());
+                    }
                     break;
                 }
 
@@ -4867,6 +5330,8 @@ namespace fire.Runtime
                 {
                     var holder = RequireObjectInstance(_stack[_sp - 2], "take");
                     if (ThrowIfDeadForTake(_stack[_sp - 1])) break;
+                    // (a fire thread takes it for an object of the main program's globals: it moves there with the store - rule 10)
+                    if (_threadBroker != null && holder.InGlobalsDomain) { _pendingGlobalTake = IdentityOf(_stack[_sp - 1]); break; }
                     OwnershipWalk.TakeValue(_stack[_sp - 1], holder, this);
                     break;
                 }
@@ -4876,7 +5341,15 @@ namespace fire.Runtime
                     var holder = _stack[_sp - 3];
                     if (IsDestroyedLeaf(holder)) { ThrowDestroyed(holder); break; }
                     if (ThrowIfDeadForTake(_stack[_sp - 1])) break;
+                    // (a fire thread takes it for an array of the main program's globals: it moves there with the store - rule 10)
+                    if (holder.Kind == ValueKind.Array && _threadBroker != null && holder.AsArray().IsShared) { _pendingGlobalTake = IdentityOf(_stack[_sp - 1]); break; }
                     if (holder.Kind == ValueKind.Array) OwnershipWalk.TakeValue(_stack[_sp - 1], holder.AsArray(), this);
+                    // (`obj[k] = take v` of an object with an indexer - a Dictionary: the object owns the value, like natively - its setter keeps it)
+                    else if (holder.Kind == ValueKind.Class && holder.AsObjectRef() is ObjectInstance { IsDestroyed: false } indexed)
+                    {
+                        if (_threadBroker != null && indexed.InGlobalsDomain) { _pendingGlobalTake = IdentityOf(_stack[_sp - 1]); break; }
+                        OwnershipWalk.TakeValue(_stack[_sp - 1], indexed, this);
+                    }
                     break;
                 }
 
@@ -5057,17 +5530,75 @@ namespace fire.Runtime
                     break;
                 }
 
+                case OpCode.InitNext:
+                    // (`with`: the store that follows writes the copy - [copy, copy, value])
+                    _initTarget = _stack[_sp - 2].Kind == ValueKind.Class ? _stack[_sp - 2].AsObjectRef() as ObjectInstance : null;
+                    break;
+
+                case OpCode.RecordCheck:
+                {
+                    int mode = ReadByte();
+                    var top = _stack[_sp - 1];
+                    if (mode == 1)
+                    {
+                        if (top.Kind == ValueKind.Class && !RecordValues.IsRecord(top) && !((ObjectInstance)top.AsObjectRef()).IsDestroyed)
+                            ThrowArgumentError(WithNeedsWordText);
+                        break;
+                    }
+                    _initTarget = null;
+                    if (RecordValues.IsRecord(top) && RecordValues.FirstChangeableField((ObjectInstance)top.AsObjectRef()) is { } changeable)
+                    {
+                        var record = (ObjectInstance)top.AsObjectRef();
+                        ThrowArgumentError($"The field '{changeable}' of the record '{record.ClassName}' holds {DescribeKindOf(record.Fields[changeable])}: a record holds only what does not change - numbers, texts, enums, records, lambdas without captures.");
+                    }
+                    break;
+                }
+
+                case OpCode.HasMember:
+                {
+                    // `x??.name`: is x there (not undefined, not destroyed) and has it the member - a field, property or method of its class, or a built-in one?
+                    string memberName = _constants[ReadU16()].AsString();
+                    var v = Pop();
+                    bool has = v.Kind switch
+                    {
+                        ValueKind.Undefined => false,
+                        ValueKind.Class => v.AsObjectRef() is ObjectInstance { IsDestroyed: false } o && !IsDeadObject(o)
+                            && (fire.Runtime.BuiltinMembers.IsOwnership(memberName) || ReflectHas(o, memberName)),
+                        ValueKind.Array or ValueKind.Buffer or ValueKind.Lambda => !IsDestroyedLeaf(v) && fire.Runtime.BuiltinMembers.Has(v.Kind, false, memberName),
+                        _ => fire.Runtime.BuiltinMembers.Has(v.Kind, v.IsEnum, memberName),
+                    };
+                    Push(Value.MakeBool(has));
+                    break;
+                }
+
                 case OpCode.IsFrom:
                 {
-                    bool transitive = ReadByte() != 0;
+                    // 0 `is from owner`, 1 `is under owner`, 2 `is from local` (a scope of the running call), 3 `is from global` (the global scope)
+                    int fromMode = ReadByte();
                     var ownerVal = Pop();
                     var operandVal = Pop();
-                    var operandObj = RequireObjectInstance(operandVal, "'is from'/'is under'");
+                    IOwner? direct = OwnerOfValue(operandVal);   // (null: a value type, a destroyed one - it belongs to nothing)
+                    if (fromMode >= 2)
+                    {
+                        Push(Value.MakeBool(fromMode == 2 ? IsCurrentCallOwner(direct) : direct is Scope { Home.IsGlobal: true }));
+                        break;
+                    }
                     var ownerObj = RequireObjectInstance(ownerVal, "'is from'/'is under' (owner expression)");
-                    bool result = transitive
-                        ? operandObj.IsTransitivelyOwnedBy(ownerObj)
-                        : operandObj.IsOwnedBy(ownerObj);
-                    Push(Value.MakeBool(result));
+                    if (operandVal.Kind == ValueKind.Class)
+                    {
+                        var operandObj = RequireObjectInstance(operandVal, "'is from'/'is under'");
+                        Push(Value.MakeBool(fromMode == 1 ? operandObj.IsTransitivelyOwnedBy(ownerObj) : operandObj.IsOwnedBy(ownerObj)));
+                        break;
+                    }
+                    // an array, a buffer, a lambda (owned leaves): its owner, or one above it
+                    IOwner? up = direct;
+                    bool found = up != null && ReferenceEquals(up, ownerObj);
+                    for (int guard = 0; fromMode == 1 && !found && up != null && guard < 10000; guard++)
+                    {
+                        up = up switch { ObjectInstance oi => oi.Owner, IOwnedLeaf l => l.LeafOwner, _ => null };
+                        found = ReferenceEquals(up, ownerObj);
+                    }
+                    Push(Value.MakeBool(found));
                     break;
                 }
 
@@ -5141,7 +5672,9 @@ namespace fire.Runtime
                     // TypeRef.LambdaSignature, Compiler.EmitCheckLambdaSignature).
                     int expectedParamCount = ReadByte();
                     var v = Peek();
-                    // a mismatch is a catchable ArgumentException (the value stays on the stack, as the handler unwinds it)
+                    // a mismatch is a catchable ArgumentException (the value stays on the stack, as the handler unwinds it); undefined is no lambda yet
+                    // (`lambda<any> callback = undefined`)
+                    if (v.Kind == ValueKind.Undefined) break;
                     if (v.Kind != ValueKind.Lambda)
                         ThrowArgumentError($"Expected a lambda with {expectedParamCount} parameter(s), got a value that is no lambda.");
                     else if (((LambdaValue)v.AsLambda()).Proto.ParamCount is var actualCount && actualCount != expectedParamCount)
@@ -5176,7 +5709,8 @@ namespace fire.Runtime
                     int protoIdx = ReadU16();
                     int globalSlotCount = ReadU16();
                     int takingCount = ReadByte();
-                    bool hasWith = (ReadByte() & 1) != 0;   // (bit 1: `fire dedicated` - a VM thread is a system thread anyway)
+                    int fireFlags = ReadByte();   // (bit 1: `fire dedicated` - a VM thread is a system thread anyway)
+                    int withCount = (fireFlags & 1) == 0 ? 0 : Math.Max(1, fireFlags >> 2);   // (bits 2-7: how many `with` - step 9)
                     int handoverCount = ReadByte();   // the last ones of the taking values are `handover` (moved, not copied)
                     // Order reversed to compiling (stack!): with
                     // was pushed LAST, so lies on top, is popped FIRST;
@@ -5184,7 +5718,15 @@ namespace fire.Runtime
                     // list order (last first) - both together
                     // brought into the right order again (see
                     // Compiler.CompileFireStmt).
-                    Value? withValue = hasWith ? Pop() : null;
+                    var withValues = new Value[withCount];
+                    for (int i = withCount - 1; i >= 0; i--) withValues[i] = Pop();
+                    // (a channel: the thread gets an end of its own on the same queue - step 9)
+                    for (int i = 0; i < withCount; i++)
+                        if (withValues[i].Kind == ValueKind.Class && withValues[i].AsObjectRef() is ObjectInstance { IsDestroyed: false } channel && IsChannelLike(channel))
+                        {
+                            if (CallMethodNested(channel, "__End", Array.Empty<Value>()) is not { } end) return;
+                            withValues[i] = end;
+                        }
                     var takingValues = new Value[takingCount];
                     for (int i = takingCount - 1; i >= 0; i--) takingValues[i] = Pop();
                     // `[NoCopy]` (SPEC 5.12): every `taking` is a copy - an instance of such a class (also in a field or an element), and a lambda or a pointer
@@ -5209,7 +5751,7 @@ namespace fire.Runtime
                     var fireToken = _pendingFireToken;   // (`fire ... until x`)
                     _pendingFireToken = null;
                     FireRuntime.FireVmTaking(
-                        fireProto.Chunk, _natives, _classes, broker, globalSlotCount, takingValues, withValue,
+                        fireProto.Chunk, _natives, _classes, broker, globalSlotCount, takingValues, withValues,
                         executionMode: ExecutionMode, handoverCount: handoverCount, token: fireToken);
                     break;
                 }
@@ -5221,6 +5763,15 @@ namespace fire.Runtime
                 case OpCode.SetAutoSync:
                     _globalJobs = (GlobalJobsMode)ReadByte();
                     break;
+
+                case OpCode.SetEndWait:
+                {
+                    var limit = Pop();
+                    if (limit.Kind == ValueKind.Undefined) _endWaitMs = -1;
+                    else if (!TimeNatives.TryTimeTicks(limit, out long endTicks, out var endError)) throw new InvalidOperationException("#endwait " + endError);
+                    else _endWaitMs = Math.Max(0, endTicks / 10_000);
+                    break;
+                }
 
                 case OpCode.SetTimeout:
                 {
@@ -5253,6 +5804,7 @@ namespace fire.Runtime
                 case OpCode.PostGlobal:
                 {
                     int jobFlags = ReadByte();
+                    int jobWith = ReadByte();   // (the last arguments: `with` references - as they are, a channel as an end of its own)
                     int jobArgCount = jobFlags & 0x3F;
                     bool onTarget = (jobFlags & 0x80) != 0;   // `fire on x` / `await on x`: the first argument is the object itself
                     bool awaitJob = (jobFlags & 0x40) != 0;   // `await on x`: the result comes back
@@ -5281,11 +5833,20 @@ namespace fire.Runtime
                     // The arguments belong to the job, not to this thread: objects are deeply copied, their owner is a holder scope that
                     // the main program releases after the run.
                     // `[NoCopy]` (SPEC 5.12): checked for all of them first - nothing is copied or queued when one is refused (the ArgumentException).
-                    foreach (var ja in jobArgs)
-                        if (ja.Kind == ValueKind.Class) ObjectCopier.RequireNoCopyFree(ja, "fire global");
+                    int copiedArgs = jobArgs.Length - jobWith;
+                    for (int i = 0; i < copiedArgs; i++)
+                        if (jobArgs[i].Kind == ValueKind.Class) ObjectCopier.RequireNoCopyFree(jobArgs[i], "fire global");
                     var holder = new Scope(null);
-                    for (int i = onTarget ? 1 : 0; i < jobArgs.Length; i++)
+                    for (int i = onTarget ? 1 : 0; i < copiedArgs; i++)
                         if (jobArgs[i].Kind == ValueKind.Class) jobArgs[i] = ObjectCloner.Clone(jobArgs[i], holder, deep: true);
+                    for (int i = copiedArgs; i < jobArgs.Length; i++)
+                        if (jobArgs[i].Kind == ValueKind.Class && jobArgs[i].AsObjectRef() is ObjectInstance { IsDestroyed: false } jobChannel && IsChannelLike(jobChannel))
+                        {
+                            // (a channel: the job gets an end of its own on the same queue - step 9)
+                            if (CallMethodNested(jobChannel, "__End", Array.Empty<Value>()) is not { } end) { holder.Release(this); return; }
+                            ((ObjectInstance)end.AsObjectRef()).ReparentTo(holder);
+                            jobArgs[i] = end;
+                        }
 
                     var postBroker = IsFireThreadVm ? _threadBroker! : EnsureOwnerBroker();
                     if (awaitJob)
@@ -5364,7 +5925,15 @@ namespace fire.Runtime
                     if (actorTarget.Mailbox is { HasMessages: false } && CanSuspend) { SuspendForProcess(actorTarget); break; }
                     bool waits = PoolTask != null && actorTarget.Mailbox is { HasMessages: false };
                     if (waits) VmScheduler.BlockEnter();
-                    try { ProcessOneMessage(actorTarget, blocking: true); }
+                    try
+                    {
+                        if (CountsAsThread && actorTarget.Mailbox is { HasMessages: false } box && !WaitInProcess(box))
+                        {
+                            if (!_stopExecutionRequested) { RequestLeave(); ShutdownSelfNow(); }
+                            break;
+                        }
+                        ProcessOneMessage(actorTarget, blocking: true);
+                    }
                     finally { if (waits) VmScheduler.BlockLeave(); }
                     break;
                 }
@@ -5964,6 +6533,7 @@ namespace fire.Runtime
                 case "string": return v.Kind == ValueKind.String;
                 case "undefined": return v.Kind == ValueKind.Undefined;
                 case "class": return v.Kind == ValueKind.Class;
+                case "lambda": return v.Kind == ValueKind.Lambda;
             }
             if (v.IsEnum) return v.Enum!.Matches(typeName);
             // Arrays and buffers are enumerable (GetEnumerator, foreach): they fulfil the interface IEnumerable of the prelude
@@ -6067,11 +6637,27 @@ namespace fire.Runtime
         public ObjectInstance? CallLambdaInline(LambdaValue lambda, Value[] args) => CallInline(lambda, args, out _);
 
         /// <summary>CallLambdaInline with the result of the lambda (undefined when it threw or the program ended).</summary>
-        private ObjectInstance? CallInline(LambdaValue lambda, Value[] args, out Value result)
+        private ObjectInstance? CallInline(LambdaValue lambda, Value[] args, out Value result) => CallInlineProto(lambda.Proto, lambda.OnTarget, args, lambda, out result);
+
+        /// <summary>A method of an object, run like <see cref="CallInline"/> (its exception comes back instead of going to the handlers around): the calls
+        /// of fire threads on the objects of the main program's globals (docs/ROADMAP_TASKS.md step 8, rule 10).</summary>
+        private ObjectInstance? CallMethodInline(ObjectInstance obj, string methodName, Value[] args, out Value result, Scope? argOwner = null)
+        {
+            var rc = ResolveClass(obj.ClassName);
+            var proto = FindOverload(rc, methodName, args, obj).Proto;
+            if (proto == null)
+            {
+                if (TryCallOwnershipMethod(obj, methodName, args, out result)) return null;
+                throw MethodNotFound(rc, methodName, args.Length);
+            }
+            return CallInlineProto(proto, obj, args, null, out result, argOwner);
+        }
+
+        private ObjectInstance? CallInlineProto(FunctionProto proto, object? thisObject, Value[] args, LambdaValue? lambda, out Value result, Scope? argOwner = null)
         {
             result = Value.MakeUndefined();
-            CheckArity(lambda.Proto, args.Length);
-            args = FillDefaultArgs(lambda.Proto, args, lambda.OnTarget);
+            CheckArity(proto, args.Length);
+            args = FillDefaultArgs(proto, args, thisObject);
 
             int frameDepth = _frames.Count;
             var callerScope = _currentScope;
@@ -6084,13 +6670,21 @@ namespace fire.Runtime
 
             var funcScope = new Scope(_globalScope);
             foreach (var a in args) funcScope.DefineSlot(a);
-            if (lambda.Captures != null) foreach (var c in lambda.Captures) funcScope.DefineSlot(c);
-            _pendingCallTypeArgs = lambda.TypeArgs;
+            if (argOwner != null)
+                foreach (var a in args)
+                {
+                    // (what the job owned - a moved argument - belongs to the call, like an argument it was handed; it dies after the call unless kept)
+                    if (!ReferenceEquals(OwnerOfValue(a), argOwner)) continue;
+                    if (a.Kind == ValueKind.Class) ((ObjectInstance)a.AsObjectRef()).ReparentToArgument(funcScope);
+                    else if (LeafOf(a) is { } argLeaf) LeafOwnership.Reparent(argLeaf, funcScope);
+                }
+            if (lambda != null) DefineCaptureSlots(lambda, funcScope);
+            _pendingCallTypeArgs = lambda?.TypeArgs;
             _pendingExplicitTypeArgs = false;
 
-            _currentThis = lambda.OnTarget;
+            _currentThis = thisObject;
             _currentScope = funcScope;
-            _currentChunk = lambda.Proto.Chunk;
+            _currentChunk = proto.Chunk;
             _ip = 0;
 
             try
@@ -6151,7 +6745,7 @@ namespace fire.Runtime
 
             var funcScope = new Scope(_globalScope);
             foreach (var a in args) funcScope.DefineSlot(a);
-            if (lambda.Captures != null) foreach (var c in lambda.Captures) funcScope.DefineSlot(c);
+            DefineCaptureSlots(lambda, funcScope);
             _pendingCallTypeArgs = lambda.TypeArgs;
             _pendingExplicitTypeArgs = false;
 
@@ -6369,19 +6963,25 @@ namespace fire.Runtime
 
         /// <summary>A result for a caller on another thread (`await actor.M()`, `await on`): what the call made (it landed in <paramref name="freshOwner"/>)
         /// goes over (handover), anything else - a field, a global - as a copy; both into <paramref name="holder"/>.</summary>
-        private static Value ReplyValue(Value result, Scope freshOwner, Scope holder)
+        private Value ReplyValue(Value result, Scope freshOwner, Scope holder)
         {
+            // (an actor - kept in a field of the actor, a registry of actors: its reference goes back, like `fire with`)
+            if (result.Kind == ValueKind.Class && result.AsObjectRef() is ObjectInstance { } obj && (obj.Mailbox != null || (obj.RtClass?.IsActor ?? false))) return result;
             if (OwnerOfValue(result) is not { } owner) return result;
-            return ReferenceEquals(owner, freshOwner)
-                ? ObjectHandover.MoveAll(new[] { result }, holder)[0]
+            object? home = IsFireThreadVm ? EnsureHomeInbox() : null;   // (a bound lambda in the result: its calls come back here - step 8 (e))
+            var value = ReferenceEquals(owner, freshOwner)
+                ? ObjectHandover.MoveAll(new[] { result }, holder, senderHome: home)[0]
                 : ObjectCloner.Clone(result, holder, deep: true);
+            if (value.Kind == ValueKind.Lambda && value.AsLambda() is LambdaValue { Home: LambdaHome.Here, OnTarget: ObjectInstance } bound) ObjectCopier.SetHome(bound, bound, home);
+            return value;
         }
 
         /// <summary>The waiting caller of `await actor.M()` / `await on`: waits for the reply, then throws its exception or pushes its result (it belongs to
         /// this call now, like a returned value).</summary>
         private void TakeReply(ActorReply reply)
         {
-            if (!reply.Done.IsSet && CancelledClass() == null && TrySuspendReply(reply)) return;   // (a task of the pool: it leaves the loop until the reply is there)
+            // (a task of the pool leaves the loop until the reply is there - not one that serves calls of other threads: it serves them while it waits)
+            if (!reply.Done.IsSet && CancelledClass() == null && _homeInbox == null && TrySuspendReply(reply)) return;
             bool blocked = PoolTask != null && !reply.Done.IsSet;
             if (blocked) VmScheduler.BlockEnter();
             try { WaitReply(reply); }
@@ -6393,11 +6993,13 @@ namespace fire.Runtime
             while (!reply.Done.Wait(PoolTask == null && VmGroup.Any ? 5 : 20))
             {
                 if (PoolTask == null) VmGroup.WaitTurn();   // (the main program waits: a handler that waited may go on, its windows read their events)
+                ServeHomeInbox();   // (the calls of other threads for this thread's lambdas: no thread waits for the other forever)
                 if (CheckShutdownSignals()) { Push(Value.MakeUndefined()); StopExecution(); return; }
                 // (cancelled: the caller stops waiting - what it waited for may still run)
                 if (CancelledClass() is { } cancelled) { NativeFail(cancelled, cancelled == "TimeoutException" ? "The time limit ran out." : "The task was cancelled."); _nativeRedirected = false; return; }
             }
             if (reply.Exception != null) { ThrowException(Value.MakeClassRef(reply.Exception)); return; }
+            if (reply.Failure != null) { ThrowArgumentError(reply.Failure); return; }
             var result = reply.Result;
             if (ReferenceEquals(OwnerOfValue(result), reply.Holder))
             {
@@ -6442,6 +7044,7 @@ namespace fire.Runtime
             ValueKind.Class when v.AsObjectRef() is ObjectInstance { IsDestroyed: false } o => o.Owner,
             ValueKind.Array when !v.AsArray().IsDestroyed => v.AsArray().LeafOwner,
             ValueKind.Buffer when !v.AsBuffer().IsDestroyed => v.AsBuffer().LeafOwner,
+            ValueKind.Lambda when v.AsLambda() is LambdaValue { IsDestroyed: false } l => l.LeafOwner,
             _ => null,
         };
 
@@ -6450,12 +7053,6 @@ namespace fire.Runtime
         private void ClaimTree(Value v, IOwner target)
         {
             var temp = _currentScope.Temp;
-            if (v.Kind == ValueKind.Lambda)
-            {
-                // a lambda owns nothing: what it captured and is still in the temporaries (a returned lambda's captures) goes to the slot
-                if (temp.HasOwned) OwnershipWalk.MoveReachable(v, Takes.Locals, s => ReferenceEquals(s, temp), target);
-                return;
-            }
             if (!RootedIn(v, temp)) return;
             OwnershipWalk.TakeValue(v, target, this);
             if (temp.HasOwned) OwnershipWalk.MoveReachable(v, Takes.Locals, s => ReferenceEquals(s, temp), target);
@@ -6467,7 +7064,7 @@ namespace fire.Runtime
             var temp = _currentScope.Temp;
             if (!temp.HasOwned) return;
             for (int i = 0; i < arr.Items.Length; i++)
-                if (arr.Items[i].Kind is ValueKind.Class or ValueKind.Array or ValueKind.Buffer) ClaimTree(arr.Items[i], arr);
+                if (arr.Items[i].Kind is ValueKind.Class or ValueKind.Array or ValueKind.Buffer or ValueKind.Lambda) ClaimTree(arr.Items[i], arr);
         }
 
         /// <summary>Is the value unclaimed - does it belong to the statement temporaries of the current scope (SPEC 2.1)?</summary>
@@ -6481,7 +7078,7 @@ namespace fire.Runtime
             for (int guard = 0; o != null && guard < 10000; guard++)
             {
                 if (ReferenceEquals(o, temp)) return true;
-                o = o switch { ObjectInstance oi => oi.Owner, ScriptArray a => a.LeafOwner, _ => null };
+                o = o switch { ObjectInstance oi => oi.Owner, IOwnedLeaf leaf => leaf.LeafOwner, _ => null };
             }
             return false;
         }
@@ -6490,7 +7087,6 @@ namespace fire.Runtime
         /// block between the current one and that scope moves up to it (within the call; the global scope only from the top-level code).</summary>
         private void ClaimToScope(Value v, Scope target, int flags)
         {
-            if (v.Kind == ValueKind.Lambda) { if ((flags & 1) != 0) ClaimTree(v, target); return; }
             if ((flags & 1) != 0 && RootedIn(v, _currentScope.Temp)) { ClaimTree(v, target); return; }
             if (OwnerOfValue(v) is not Scope owner || ReferenceEquals(owner, target)) return;
             bool move = false;
@@ -6518,6 +7114,7 @@ namespace fire.Runtime
                 ValueKind.Class => ((ObjectInstance)v.AsObjectRef()).Owner,
                 ValueKind.Array => v.AsArray().LeafOwner,
                 ValueKind.Buffer => v.AsBuffer().LeafOwner,
+                ValueKind.Lambda => (v.AsLambda() as LambdaValue)?.LeafOwner,
                 _ => null,
             };
             if (owner is not Scope scope || !OwnsWithinCall(scope)) return;
@@ -6541,21 +7138,22 @@ namespace fire.Runtime
         {
             ValueKind.Array => v.AsArray(),
             ValueKind.Buffer => v.AsBuffer(),
+            ValueKind.Lambda => v.AsLambda() as LambdaValue,   // (a lambda belongs to its owner like an array - ROADMAP_TASKS step 8)
             _ => null,
         };
 
         /// <summary>Is the value a destroyed array/buffer whose use is checked (not in performance mode)?</summary>
         private bool IsDestroyedLeaf(Value v) =>
-            v.Kind is ValueKind.Array or ValueKind.Buffer && ExecutionMode != VmExecutionMode.Performance
-            && (v.Kind == ValueKind.Array ? v.AsArray().IsDestroyed : v.AsBuffer().IsDestroyed);
+            v.Kind is ValueKind.Array or ValueKind.Buffer or ValueKind.Lambda && ExecutionMode != VmExecutionMode.Performance
+            && (v.Kind == ValueKind.Array ? v.AsArray().IsDestroyed : v.Kind == ValueKind.Buffer ? v.AsBuffer().IsDestroyed : v.AsLambda() is LambdaValue { IsDestroyed: true });
 
         /// <summary>Use of a destroyed array/buffer: a catchable `DestroyedException` (prelude).</summary>
         private void ThrowDestroyed(Value leaf)
         {
             var rc = ResolveClass("DestroyedException");
-            string what = leaf.Kind == ValueKind.Buffer ? "buffer" : "array";
+            string what = leaf.Kind == ValueKind.Buffer ? "buffer" : leaf.Kind == ValueKind.Lambda ? "lambda" : "array";
             // (`fire handover`: a reference from before the handover - the array lives on in the thread, under a new identity)
-            bool handedOver = leaf.Kind == ValueKind.Buffer ? leaf.AsBuffer().LivesInAnotherThread : leaf.AsArray().LivesInAnotherThread;
+            bool handedOver = leaf.Kind == ValueKind.Buffer ? leaf.AsBuffer().LivesInAnotherThread : leaf.Kind == ValueKind.Array && leaf.AsArray().LivesInAnotherThread;
             var instance = ConstructNested(rc, new[] { Value.MakeString(handedOver ? $"Access to {(leaf.Kind == ValueKind.Buffer ? "a buffer" : "an array")} that was handed over to a thread ('fire handover')." : $"Access to a destroyed {what}.") });
             ThrowException(Value.MakeClassRef(instance));
         }
@@ -6803,7 +7401,8 @@ namespace fire.Runtime
                         result = Value.MakeBuffer(buf.IsWords ? buf.WordBytes(ByteOrder.Big) : buf.Order == ByteOrder.Big ? buf.Clone() : buf.Reversed(ByteOrder.Big));
                         return true;
                     }
-                    return false;
+                    // the typed reads and writes and the fast operations (fire.Standard.BufferMethods: ReadInt16, WriteFloat32, Fill, CopyTo, ...)
+                    return fire.Standard.BufferMethods.TryCall(buf, methodName, args, out result);
                 }
 
                 default:
@@ -7122,6 +7721,24 @@ namespace fire.Runtime
 
         /// <summary>The type argument a type parameter of the running code stands for (`$k@Class`: of `this`, `$k@`: of the call of the generic method); "" when
         /// it is not known.</summary>
+        /// <summary>OpCode.TypeParamIsOf: is the type `name` (a type argument's text) `target` or one that derives from it / implements it?</summary>
+        private bool TypeNameIsOf(string name, string target)
+        {
+            int angle = name.IndexOf('<');
+            string plain = angle >= 0 ? name.Substring(0, angle).Trim() : name.Trim();
+            int t = target.IndexOf('<');
+            string wanted = t >= 0 ? target.Substring(0, t) : target;
+            if (plain == wanted || GenericClassNames.PlainName(plain) == GenericClassNames.PlainName(wanted)) return true;
+            if (!_classes.TryGetValue(plain, out var rc) && !(angle >= 0 && _classes.TryGetValue(GenericClassNames.Mangle(plain, name.Count(c => c == ',') + 1), out rc)))
+                return false;
+            for (var r = rc; r != null; r = r.Base)
+            {
+                if (GenericClassNames.PlainName(r.Name) == GenericClassNames.PlainName(wanted)) return true;
+                if (r.Interfaces.Any(i => i == wanted || GenericClassNames.PlainName(i) == GenericClassNames.PlainName(wanted))) return true;
+            }
+            return false;
+        }
+
         private string TypeArgOfParam(string text)
         {
             int at = text.IndexOf('@');
@@ -7166,6 +7783,13 @@ namespace fire.Runtime
         /// stays) - `value` is unchanged then.</summary>
         private bool BufferFromArrayValue(ref Value value, ScriptArray? outer, int rank, int depth, bool words = false)
         {
+            // (a `byte`/`word` declaration holds a buffer, an array that becomes one, or nothing - like `int a[]` holds an array: anything else is the
+            // exception, the same text natively)
+            if (value.Kind is not (ValueKind.Array or ValueKind.Buffer or ValueKind.Undefined))
+            {
+                ThrowArgumentError($"A {(words ? "word" : "byte")} buffer is declared here, not {value.Kind}.");
+                return false;
+            }
             if (value.Kind != ValueKind.Array) return true;
             var array = value.AsArray();
             if (array.IsDestroyed || depth > 64) return true;   // (a destroyed array is reported where it is used)

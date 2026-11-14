@@ -123,9 +123,9 @@ namespace fire.Runtime
         /// until the lambda lets them go is open (docs/ROADMAP_TASKS.md): for now the global scope of the program (they live as long as it).</summary>
         internal Value LambdaHandoverNow(Value[] a)
         {
-            if (a.Length != 1 || a[0].Kind is not (ValueKind.Class or ValueKind.Array or ValueKind.Buffer)) return a.Length > 0 ? a[0] : Value.MakeUndefined();
+            if (a.Length != 1 || a[0].Kind is not (ValueKind.Class or ValueKind.Array or ValueKind.Buffer or ValueKind.Lambda)) return a.Length > 0 ? a[0] : Value.MakeUndefined();
             ObjectHandover.RequireMovable(a[0], fromFireThread: IsFireThreadVm);
-            return ObjectHandover.MoveAll(new[] { a[0] }, _globalScope)[0];
+            return ObjectHandover.MoveAll(new[] { a[0] }, _currentScope.Temp)[0];   // (into the statement's temporaries: the lambda made next takes it into its store)
         }
 
         internal Value CancelNative(string name, Value[] a)

@@ -17,7 +17,9 @@ print("main goes on")
 - `fire { ... }` runs the block in a new thread. It has no result and ends at the end of its block (or earlier with `leave`).
 - Inside a class, `fire Method(args)` runs a method of `this` in a new thread. Its arguments are copied like `taking` - except a direct `new`
   (`fire Work(new Job())`), which is handed over to the thread without a copy.
-- The program waits at its end for all running threads.
+- A `fire { ... }` block inside a method runs without `this`: the fields of the object are not reachable in it (a compile error) - it gets what it
+  needs with `taking`, `handover` or `with`, and those names win over a field of the same name.
+- The program waits at its end for all running threads - see [The end of the program](#the-end-of-the-program).
 - A fire thread is a light task on a pool of system threads (one per core) - in a native build and in the VM; thousands of threads that wait cost no
   system thread each. `fire dedicated { ... }` (also
   `fire dedicated Work(x)`, with the same clauses) gives it a system thread of its own - for work that waits in natives for a long time. In the VM
@@ -53,8 +55,9 @@ print("main: " + counter.value)             // main: 15
 | `sync flat x` / `try sync flat x` | writes back only the direct fields (array: the elements) |
 
 - `taking` can be repeated: `fire taking a taking b { ... }`. Numbers and strings can be taken too (`taking i`). An array is copied as well (`taking arr`).
-- The copy is made at the `fire`, before the thread starts. A lambda or a pointer in a field or an element cannot be copied: the `fire` throws an
-  `ArgumentException` ("'taking' rejected: lambda values cannot be copied for a thread.") and the thread does not start.
+- The copy is made at the `fire`, before the thread starts. A lambda is copied with what it captured (see [Lambdas in threads](#lambdas-in-threads)).
+  A raw pointer in a field or an element cannot be copied: the `fire` throws an `ArgumentException` ("'taking' rejected: raw pointers cannot be copied
+  for a thread.") and the thread does not start.
 - `taking` always copies - nothing is moved to the thread. An instance of a **`[NoCopy]`** class (a resource like `NativeHandle`) cannot be copied: when `x`
   (or a field or an element of it) is one, the `fire` throws an `ArgumentException` and the thread does not start. The same goes for an object that
   `fire global` would copy for its job (it is not queued) and for `sync`, when it would copy one back into the original (nothing is written back);
@@ -93,8 +96,8 @@ Work.Run()
   of the main program are no locals: the thread reads them directly (see [Global variables](#global-variables)).
 - The same words work in a **lambda**: `() => (taking item).v` captures a copy of `item`, made when the lambda is made; `() => (handover item).v` moves
   the instance into the lambda like a handover to a thread - `item` is `undefined` afterwards and every other reference from before is dead (a
-  `DestroyedException`). Without a word a lambda captures the variable's value as before: an object is shared, nothing is copied - no warning (a lambda
-  never goes to another thread).
+  `DestroyedException`). Without a word a lambda gets a copy, like `taking`, with the warning `TC023`. A `taking` copy is new in every call of the lambda;
+  the `handover` instance belongs to the lambda and is lent to each call (see [Lambdas](12-lambdas.md#captured-values)).
 - A lambda inside a `fire` block captures the block's own variables like locals (`fire { var n = 41; var f = () => n + 1 }`) - so `await [ ... ]`
   works in a `fire` block too.
 
@@ -134,9 +137,42 @@ Sleep(100ms)
 - What the thread later shares itself (an object it assigns to a global variable in `sync global { }`) is a new reference and works, like any
   object a thread shares; the main program then must not change it while the thread does.
 - `handover` can be repeated and mixed with `taking`: `fire taking a handover b handover c { ... }`, also `fire Method(args) handover h`.
-- A lambda or a pointer in a field or an element cannot go to another thread, and a thread cannot hand over what belongs to the main program's
-  global variables: the `fire` throws an `ArgumentException` and nothing moves. A global variable of the main program named in a thread is a compile
+- A lambda moves with what it owns (see below). A raw pointer in a field or an element cannot go to another thread, and a thread cannot hand over what
+  belongs to the main program's global variables: the `fire` throws an `ArgumentException` and nothing moves. A global variable of the main program named in a thread is a compile
   error. Actors and destroyed objects stay shared references. `fire global` has no `handover` (a job gets copies).
+
+## Lambdas in threads
+
+A lambda goes to a thread like any other value - as a `taking` copy, moved with `handover`, or in a field or an element of what the thread gets:
+
+- **`taking`** gives the thread a copy of the lambda with copies of what it captured (its store, see [Lambdas](12-lambdas.md#captured-values)).
+  **`handover`** moves the lambda with its store; the sender's variable is `undefined` afterwards.
+- A lambda without `on` then simply runs in the thread, on its own copies.
+- A lambda **bound with `on`** keeps its target. Its body always runs where the target lives: called in a thread with an object of the main
+  program as its target, the call is a job of the main program (like `await on obj { ... }`). The arguments are copied for it, the thread waits -
+  and yields meanwhile - until the result comes back; an exception the body does not catch is thrown at the call in the thread. So the lambda changes
+  the original object, not a copy, and nothing of the main program is touched by two threads at once.
+- In the main program the same lambda is called directly. The same holds for the other homes of a target:
+  - **an object of a fire thread**: the call goes to that thread, which runs it at its safe points - the jump back of a loop - and while it waits
+    itself (`Sleep`, `await`, a call of its own that runs elsewhere). Two threads that call each other's lambdas therefore do not block each other.
+    Has the thread ended, its objects are gone: the call is an `ArgumentException` ("... a fire thread that has ended ...");
+  - **an actor**: the call is a message in its mailbox, its home runs it at `process` (like `await actor.M()`); on the actor's home itself it runs
+    at once.
+
+```fire
+class Counter { int n = 0 }
+class Demo {
+    static undefined Run() {
+        var c = new Counter()
+        var add = func (int k) on c => { n = n + k; return n }
+        var sum = await taking add {
+            return add(5) + add(2)          // both run in the main program, on c itself
+        }
+        print(sum + " " + c.n)              // 12 7
+    }
+}
+Demo.Run()
+```
 
 ## Global variables
 
@@ -154,6 +190,41 @@ for (var i = 0; i < 3; i++) {
 Sleep(300ms)
 print(total)                                // 3
 ```
+
+What a thread writes into the globals - a global variable or static field, a field or an element of one of their objects or arrays - **belongs to
+the main program** from then on, and a **method** of one of their objects runs **in the main program** (the thread waits for its result or exception,
+like with `await on`; a `Sleep` in it does not hold up the main program). So an object of the thread goes there only with a word that says what
+happens to it:
+
+```fire
+#import "time"
+class Box { int v; construct(int v) { this.v = v } }
+class Store {
+    List<Box> items = new List<Box>()
+    undefined Put(Box b) { this.items.Add(take b) }
+}
+var store = new Store()
+Box last = undefined
+var done = false
+fire {
+    var mine = new Box(7)
+    last = new Box(1)                           // fresh (`new`, the result of a call): it moves
+    store.Put(copy mine)                        // a copy goes, `mine` stays the thread's
+    store.Put(take mine)                        // `mine` moves - every other reference to it is dead, as after `handover`
+    var other = new Box(3)
+    try { store.Put(other) } catch (ArgumentException e) { print(e.message) }   // no word: refused
+    done = true
+}
+while (!done) { Sleep(1ms) }
+print(last.v + " " + store.items.Count)        // 1 2 - they outlive the thread
+```
+
+- Values (numbers, strings, ...) go as they are; so do objects of the main program itself, actors and destroyed objects.
+- Without a word the store is the ArgumentException "... belongs to the main program: an object of this thread goes there only with a word - 'copy x'
+  (a copy) or 'take x' (moved)" and nothing is stored; the call is the ArgumentException "'Put' runs in the main program ..." and does not run.
+  Inside `sync global { ... }` the same - only a method called there runs in the thread (the section holds the main program anyway).
+- What moves leaves the thread like `handover`: it is the main program's, also after the thread has ended.
+- Reading stays direct: a thread sees the globals as they are, without a job.
 
 `fire global { ... }` does not start a thread: it queues a **job** that the main program runs with the real globals. When the main program lets the
 waiting threads in and runs the jobs is a build setting, `#globaljobs` (the same in the VM and in a native build):
@@ -176,7 +247,7 @@ print(sync globals)                                  // 0: nothing left
 - A call and a native function (`print`) are never such a point; with `safepoints` the job above would run after `loop 0`.
 - `sync globals` runs everything that is queued and returns how many entries that were.
 - Inside a destructor, a running job and `catch threads` the queue waits; the next job never starts inside another one.
-- The project setting `globalJobs` and `--global-jobs` on the command line go before the directive ([Projects and solutions](../tools/projects.md)).
+- The project setting `globalJobs` and `--global-jobs` on the command line go before the directive (Projects and solutions (`docs/tools/projects.md`)).
 
 ## Waiting for a result: `await`
 
@@ -203,12 +274,15 @@ print(n + " " + sum)
   own per call. `await` is a word only in front of what it awaits; elsewhere `await` is an ordinary name.
 - `await [f(a), g(b), taking x { return ... }]` runs several calls at once and waits for all; the result is an array of their results in the order of
   the brackets. When some fail, all are waited for and the first exception in that order is thrown. Each element is what a single `await` takes, clauses
-  included (`await [Load(a), Merge(x, y) taking y]`). The calls get the caller's objects lent; in a native build they run side by side on all cores when
+  included (`await [Load(a), Merge(x, y) taking y]`). The calls get the caller's objects lent - its locals too, also in a thread (an actor or a
+  Completion as an argument is the same one, a change of an object is seen after the `await`); in a native build they run side by side on all cores when
   no two of them reach the same object (otherwise one after the other); the VM runs them one after the other.
 - `await actor.Method()` waits for the result of an actor's method (see [Actors](#actors)).
 - `fire on window { ... }` runs a block in the main program - where its windows live - with `window` as the real object (and copies of what it takes with
   `taking`); the caller goes on. `await on window { return window.Title }` waits for the block's result. From a thread the object must be one of the main
   program (a global variable) or an actor. In the main program itself `await on` runs the block at once and `fire on` at its next safe point.
+  `fire on window taking x with actorA, channelB { ... }` gives the block references as they are, like `fire with` (an actor; a channel as an end of
+  its own - the block can answer through it).
 - An event handler of a window is a task of the main program's group (natively and in the VM): when it waits (`Sleep`, `await`), the window goes on, and the
   handler continues later on the same thread. Only one handler runs at a time, and only where it waits does another one get its turn.
 - While the main program waits (`Sleep`, `await`, the end of the program), its windows keep answering the system: they repaint and stay responsive;
@@ -240,6 +314,105 @@ source.Cancel()                                  // the thread's Sleep ends at o
 - `new CancellationSource()` made inside a task follows the task's token; `CancellationSource.Detached()` follows nobody. `CancelAfter(5s)` cancels later.
   Sources and tokens are never copied (`[NoCopy]`): a thread gets one with `until`.
 
+### A value that another task delivers: `Completion`
+
+```fire
+#import "time"
+var c = new Completion()
+var s = c.Share()                                // a second Completion on the same value, for the other task
+fire handover s {
+    Sleep(20ms)
+    s.Set("ready")
+}
+print(c.Wait(2s))                                // ready - waits until the value is there (at most 2 s)
+```
+
+- `Set(value)` delivers the value; only the first `Set` (or `Fail`) counts, a later one returns `False`. The Completion keeps a **copy** of the value
+  (objects, arrays and buffers deep, like `taking`), and every `Wait()` returns a copy of its own - the tasks never share it.
+- `Fail(exception)` delivers an exception instead: `Wait()` throws (a copy of) it. `IsDone` asks without waiting.
+- `Wait(limit)` waits like `Sleep` - the task gives its worker to others, the main program keeps serving its windows and its queue - until the value is
+  there. It follows the task's token (`until`, a cancelled source: `CancelledException`), and after `limit` it throws a `TimeoutException`; without a
+  limit it waits as long as it takes.
+- A Completion is never copied (`[NoCopy]`): `Share()` gives another one on the same value, which goes to a thread with `handover`, as the argument of an
+  actor's method (`reader.Expect(id, c.Share())`) or lent to an awaited call. The value lives as long as one of them does.
+
+## Channels
+
+A `Channel<T>` is a queue between threads: `Send(v)` puts a value in (it waits while the channel is full), `Receive()` takes the next one out (it
+waits while it is empty). Waiting does not hold anything up: the scheduler runs other tasks meanwhile. A thread gets a channel with `fire with` - an
+end of its own on the same queue:
+
+```fire
+#import "time"
+class Job { int n; construct(int n) { this.n = n } }
+var jobs = new Channel<Job>(4)      // at most 4 waiting values (the default: 16)
+var results = new Channel<int>()
+fire with jobs, results {
+    foreach (job in jobs) { results.Send(job.n * job.n) }   // until the channel is closed and empty
+    results.Close()
+}
+for (int i = 1; i <= 3; i++) { jobs.Send(new Job(i)) }
+jobs.Close()
+int sum = 0
+foreach (r in results) { sum = sum + r }
+print(sum)                          // 14
+```
+
+- A value (a number, a text, a bool) goes as it is. An object or an array goes only fresh (`new`, the result of a call) or with a word:
+  `Send(copy x)` (a copy) or `Send(take x)` (moved - like `handover`, every other reference to it is dead; a record keeps its identity, because
+  nobody can change it). Without one it is TC029 (an error, also in lax mode) where the type is known, else the ArgumentException.
+- A record without a word is **lent**: `Send(r)` - the sender stays its owner, the receiver gets a reference and reads it in its own thread (fields,
+  methods, `==`, `copy r` for one of its own; sending it on lends it again). Only the owner moves it: `take r` in the receiver is the
+  AccessDeniedException. The lending lasts as long as the record does: when the owner destroys it (its scope ends), the next use in any thread is
+  the DestroyedException - a read that is under way at that moment still ends normally (natively the memory goes only once no reader can be looking at
+  it any more). When the owner moves it on (`take r`, `handover`), the receivers' references end the same way:
+
+```fire
+record Note { string text; construct(string t) { this.text = t } }
+var notes = new Channel<Note>()
+var read = new Channel<int>()
+var gone = new Channel<int>()
+fire with notes, read, gone {
+    var n = notes.Receive()
+    print(n.text)                   // hello - lent, not copied
+    read.Send(1)
+    gone.Receive()
+    try { print(n.text) } catch (DestroyedException e) { print("gone with its owner") }
+}
+if (true) {
+    var note = new Note("hello")
+    notes.Send(note)                // lent: `note` is still this scope's
+    read.Receive()
+}                                   // the scope ends: the note dies - in the thread too
+gone.Send(1)
+```
+
+- What travels belongs to the channel; after `Receive` it belongs to the receiver - when the receiving thread ends, it ends with it. What nobody
+  received is destroyed with the channel.
+- `Receive(limit)` waits at most `limit` (the TimeoutException); `TryReceive()` does not wait - undefined when nothing is there. A closed and empty
+  channel gives undefined (`foreach` ends there).
+- `Send` gives False when the channel is closed (nothing moved). `Close()`, `IsClosed`, `Count`.
+- The channel closes when the one that made it ends (the main program: see [The end of the program](#the-end-of-the-program)). It is never copied (`fire taking ch` is the ArgumentException) - it goes with `with`.
+- Both directions: `Channel.Pair<A, B>()` gives an end that sends `A` and receives `B`; `.Other()` is the end that sends `B` and receives `A` (it goes to
+  the thread with `fire with`). `Close()` ends the direction of the end it is called on:
+
+```fire
+#import "time"
+var left = Channel.Pair<string, int>()
+var right = left.Other()
+fire with right {
+    foreach (s in right) { right.Send(s.Length) }
+}
+left.Send("hello")
+print(left.Receive())               // 5
+left.Close()
+```
+
+- `IChannelEnd<A, B>` is what every channel offers - `Send` of A, `Receive`/`TryReceive`/`foreach` of B, `Close`, `IsClosed`, `Count`: an end of
+  `Channel.Pair<A, B>` is one. `IChannel<T>` is an `IChannelEnd<T, T>`: `Channel<T>` and `Net.Channel<T>` implement it - a method that takes an
+  `IChannel<int>` works with both, one that takes an `IChannelEnd<int, int>` also with an end of `Channel.Pair<int, int>`.
+- Between programs: `Net.Channel<T>` (`#import "net.channel"`) is the same over a TCP connection - see Net.Channel (`docs/networking/net-channel.md`).
+
 ## Actors
 
 An `actor` is declared like a class. A method call on an actor does not run the method: it puts a **message** into the actor's mailbox. The thread
@@ -266,7 +439,10 @@ print(try process logger)                   // False - the mailbox is empty
 ```
 
 - `process a` waits for the next message and runs it; `try process a` runs one if there is one and returns `True`/`False`.
-- References to actors may be passed to threads with `fire with a` - the one controlled exception to "no shared memory".
+- References to actors may be passed to threads with `fire with a` (several: `fire with a, b`; together with `taking`/`handover`) - the one
+  controlled exception to "no shared memory". An actor that a thread reaches
+  through a field or an element of what it takes (`taking`, an argument of `fire Method(...)`) is not copied either: its reference goes along, so a
+  router or a service object that holds an actor can be taken to a thread and still talks to the one actor.
 - A thread that needs an answer awaits it: `var n = await counter.Get()` posts the message and waits until the actor's home has run it at its
   `process`; the result comes back (an exception that nothing in the method caught is thrown at the `await`). What the method made (`return new Box()`)
   is handed over; what the actor keeps - a field, a global - comes back as a copy. On the actor's home thread `await a.M()` runs the method at once,
@@ -292,6 +468,33 @@ catch terminate(v) {
 }
 terminate(3)
 print("never printed")
+```
+
+## The end of the program
+
+When the main program's code ends, it waits for the threads that are still running before it destroys its globals. Two rules keep that from hanging:
+
+- **Standstill**: when every thread that is left waits in a channel (`Receive`, `Send`, `foreach`), for a socket or in `process` (for a message to an
+  actor of its own), nobody can go on - the channels the main program made are closed. When after that everything that is left stands still again
+  (the threads the closing woke have sent what they still had to send) and no thread waits for a socket (it can still bring work from outside),
+  a `process` that waits for a message ends its thread like `leave` (its
+  `finally` blocks and destructors run; a message that is already there is still run). A `foreach` over a closed channel ends, a `Receive`
+  gives undefined, a `Net.Channel` sends its end. So a home thread that loops over `process` (a pool, a directory of pages, the home of RPC calls) does
+  not keep the program for the 60 seconds of the limit. Threads that wait for something else (a channel of their own, `Sleep`) are left alone.
+- **Limit**: 60 seconds after the end of the main program the threads that are still there are ended like with `terminate` (at their next safe point
+  or wait), with a line on stderr. `#endwait 5s` sets another limit, `#endwait undefined` none. While a window keeps the program open, the time does not
+  count.
+
+```fire
+var numbers = new Channel<int>()
+fire with numbers {
+    int sum = 0
+    foreach (n in numbers) { sum = sum + n }
+    print(sum)                      // 6 - the channel closed at the end of the main program
+}
+numbers.Send(1)
+numbers.Send(2)
+numbers.Send(3)
 ```
 
 ## Errors in threads

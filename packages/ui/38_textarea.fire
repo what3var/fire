@@ -9,9 +9,9 @@ namespace UI {
     // and only the rows that can be seen are drawn.
     class TextArea : Element {
         string Text
-        int caret = 0
+        defined int caret = 0
         // the other end of the selection (-1 or equal to caret: nothing is selected)
-        int anchor = -1
+        defined int anchor = -1
         // long lines are broken at the width of the area (at spaces where possible) instead of scrolling sideways
         bool WordWrap = false
         // Enter inserts a line break; Tab inserts a tab only with AcceptsTab (Shift+Tab and Ctrl+Tab always move the focus)
@@ -20,9 +20,9 @@ namespace UI {
         // the user can select and copy, but not change the text (the program still can)
         bool ReadOnly = false
         // at most this many characters (0: no limit); typed text that does not fit is not taken, pasted text is cut
-        int MaxLength = 0
+        defined int MaxLength = 0
         // a tab reaches the next column that is a multiple of TabSize
-        int TabSize = 4
+        defined int TabSize = 4
         lambda OnChange
         bool changed = false
         Scroller vbar
@@ -30,50 +30,50 @@ namespace UI {
         // at the last layout: the bars that are shown and the size of the visible section (inside the frame, without the bars)
         bool showV = false
         bool showH = false
-        int viewW = 0
-        int viewH = 0
+        defined int viewW = 0
+        defined int viewH = 0
         // the space between the frame and the text
-        int padding = 3
+        defined int padding = 3
         // the font at the last layout: the renderer's own (columns are counted, not measured), the width of its cells, the height of a line
         bool mono = true
-        int cellW = 8
-        int lineH = 14
+        defined int cellW = 8
+        defined int lineH = 14
         string measuredKey = ""
 
         // The line index for the text `indexed`: where each line starts (lineStart[0] = 0) and how wide it is in pixels (-1: not measured yet), `widest` the widest line (-1: unknown).
         int lineStart[]
         int lineWidth[]
-        int lineCount = 1
+        defined int lineCount = 1
         string indexed = ""
         bool hasTabs = false
-        int widest = -1
+        defined int widest = -1
         // With WordWrap: where each row on the screen starts, for the width `wrapWidth` (-1: not built; the rows are then the lines).
         int rowStart[]
-        int rowCount = 0
-        int wrapWidth = -1
+        defined int rowCount = 0
+        defined int wrapWidth = -1
 
         // Up/Down keep this x position (-1: that of the caret)
-        int goalX = -1
+        defined int goalX = -1
         // the caret is scrolled into view at the next layout
         bool reveal = false
         // the held mouse button selects: 1 characters, 2 words (after a double click), 3 lines (after a triple click); the first word or line stays selected
         bool selecting = false
-        int selectMode = 1
-        int wordStart = 0
-        int wordEnd = 0
+        defined int selectMode = 1
+        defined int wordStart = 0
+        defined int wordEnd = 0
         // Undo/Redo (Ctrl+Z, Ctrl+Y / Ctrl+Shift+Z): at most UndoLimit steps (0: no history); what the next ReplaceSelection is (1 typing, 2 deleting, 0 other)
         UI.TextHistory history
-        int UndoLimit = 100
-        int pendingKind = 0
+        defined int UndoLimit = 100
+        defined int pendingKind = 0
         // dragging the selection (see TextBox): the press was on it, the drag came from here, a drop here moved it already, where a drop would go (-1: nowhere)
         bool pressInSelection = false
-        int pressOffset = 0
+        defined int pressOffset = 0
         bool dragOwn = false
-        int dragFrom = 0
+        defined int dragFrom = 0
         bool dragMovedHere = false
-        int dropPos = -1
+        defined int dropPos = -1
 
-        construct(string text = "", int x = 0, int y = 0, int width = 240, int height = 120) : base(x, y, width, height) {
+        construct(string text = "", defined int x = 0, defined int y = 0, defined int width = 240, defined int height = 120) : base(x, y, width, height) {
             this.cursor = UI.Cursor.IBeam
             this.vbar = new Scroller(false)
             this.hbar = new Scroller(true)
@@ -169,7 +169,7 @@ namespace UI {
             this.Apply(step.start, step.removed.Length, step.inserted, step.caretAfter, step.anchorAfter)
             return true
         }
-        undefined Apply(int start, int count, string value, int caret, int anchor) {
+        undefined Apply(defined int start, defined int count, string value, defined int caret, defined int anchor) {
             this.Splice(start, count, value)
             this.caret = caret
             this.anchor = anchor
@@ -180,7 +180,7 @@ namespace UI {
         }
 
         // Replaces `count` characters from `start` by `value` (no MaxLength check here) and records it for Undo; the caret goes behind it.
-        undefined EditText(int start, int count, string value, int kind) {
+        undefined EditText(defined int start, defined int count, string value, defined int kind) {
             this.EnsureIndex()
             this.history.Check(this.Text)
             any removed = this.Text.Substring(start, count)
@@ -240,7 +240,7 @@ namespace UI {
             this.Clamp()
         }
 
-        undefined SetLines(int starts[], int widths[], int count) {
+        undefined SetLines(int starts[], int widths[], defined int count) {
             var oldStarts = this.lineStart
             var oldWidths = this.lineWidth
             this.lineStart = starts
@@ -252,7 +252,7 @@ namespace UI {
             delete oldWidths
         }
 
-        undefined SetRows(int rows[], int count) {
+        undefined SetRows(int rows[], defined int count) {
             var old = this.rowStart
             this.rowStart = rows
             rows.TakeTo(this)
@@ -261,14 +261,14 @@ namespace UI {
         }
 
         // The number of lines, the text of one (without the line break), the line of an offset and where a line starts and ends (before its line break).
-        int LineCount { get { this.EnsureIndex(); return this.lineCount } }
-        string GetLine(int index) {
+        defined int LineCount { get { this.EnsureIndex(); return this.lineCount } }
+        string GetLine(defined int index) {
             this.EnsureIndex()
             if (index < 0 || index >= this.lineCount) { return "" }
             var start = this.lineStart[index]
             return this.Text.Substring(start, this.LineEnd(index) - start)
         }
-        int LineOf(int offset) {
+        defined int LineOf(defined int offset) {
             var starts = this.lineStart
             var lo = 0
             var hi = this.lineCount - 1
@@ -278,32 +278,38 @@ namespace UI {
             }
             return lo
         }
-        int LineStartOf(int line) { return this.lineStart[line] }
-        int LineEnd(int line) {
-            if (line + 1 < this.lineCount) { return this.lineStart[line + 1] - 1 }
+        // An entry of an index (the starts of the lines or of the rows): the index is complete up to its count - a missing entry is a fault of the index.
+        static defined int At(int index[], defined int i) {
+            any v = index[i]
+            if (v == undefined) { throw new IndexOutOfBoundsException("The text index has no entry " + i + ".") }
+            return trust v
+        }
+        defined int LineStartOf(defined int line) { return UI.TextArea.At(this.lineStart, line) }
+        defined int LineEnd(defined int line) {
+            if (line + 1 < this.lineCount) { return UI.TextArea.At(this.lineStart, line + 1) - 1 }
             return this.Text.Length
         }
         // The line and the column (in characters) of the caret, both from 0.
-        int CaretLine { get { this.EnsureIndex(); return this.LineOf(this.caret) } }
+        defined int CaretLine { get { this.EnsureIndex(); return this.LineOf(this.caret) } }
         int CaretColumn { get { this.EnsureIndex(); return this.caret - this.lineStart[this.LineOf(this.caret)] } }
 
         // ---- rows: the lines as they are shown (with WordWrap a line can take several rows) ----
 
         bool Wrapped() { return this.WordWrap && this.wrapWidth >= 0 }
-        int RowCount() {
+        defined int RowCount() {
             if (this.Wrapped()) { return this.rowCount }
             return this.lineCount
         }
-        int RowStart(int row) {
-            if (this.Wrapped()) { return this.rowStart[row] }
-            return this.lineStart[row]
+        defined int RowStart(defined int row) {
+            if (this.Wrapped()) { return UI.TextArea.At(this.rowStart, row) }
+            return UI.TextArea.At(this.lineStart, row)
         }
-        int RowOf(int offset) {
+        defined int RowOf(defined int offset) {
             if (!this.Wrapped()) { return this.LineOf(offset) }
             return UI.TextArea.Search(this.rowStart, this.rowCount, offset)
         }
         // The index of the last entry <= value in the sorted array (its first `count` entries).
-        static int Search(int a[], int count, int value) {
+        static defined int Search(int a[], defined int count, defined int value) {
             var lo = 0
             var hi = count - 1
             while (lo < hi) {
@@ -313,20 +319,20 @@ namespace UI {
             return lo
         }
         // Is the row the last one of its line (and not broken off by WordWrap)?
-        bool RowEndsLine(int row) {
+        bool RowEndsLine(defined int row) {
             if (row + 1 >= this.RowCount()) { return true }
             var next = this.RowStart(row + 1)
             return this.Text.CharAt(next - 1).ToInt() == 10
         }
         // Where the characters of the row end (exclusive; without the line break).
-        int RowTextEnd(int row) {
+        defined int RowTextEnd(defined int row) {
             if (row + 1 >= this.RowCount()) { return this.Text.Length }
             var next = this.RowStart(row + 1)
             if (this.Text.CharAt(next - 1).ToInt() == 10) { return next - 1 }
             return next
         }
         // The last offset the caret can have in the row: the end of the line, or before the last character of a row that WordWrap broke off (its end is the start of the next row).
-        int RowLimit(int row) {
+        defined int RowLimit(defined int row) {
             var end = this.RowTextEnd(row)
             if (!this.RowEndsLine(row) && end > this.RowStart(row)) { return end - 1 }
             return end
@@ -335,7 +341,7 @@ namespace UI {
         // ---- measuring (tabs reach the next multiple of TabSize columns, counted from the start of the row) ----
 
         // The column of `offset` in the row that starts at `rs`.
-        int ColumnOf(int rs, int offset) {
+        defined int ColumnOf(defined int rs, defined int offset) {
             if (!this.hasTabs || offset <= rs) { return offset - rs }
             any piece = this.Text.Substring(rs, offset - rs)
             var column = 0
@@ -351,7 +357,7 @@ namespace UI {
         }
 
         // The characters [begin, finish) of the row that starts at `rs` as they are shown (tabs as spaces).
-        string Shown(int rs, int begin, int finish) {
+        string Shown(defined int rs, defined int begin, defined int finish) {
             if (finish <= begin) { return "" }
             any piece = this.Text.Substring(begin, finish - begin)
             if (!this.hasTabs || piece.IndexOf("\t") < 0) { return piece }
@@ -372,14 +378,14 @@ namespace UI {
         }
 
         // The x position (from the start of the text) of `offset` in the row that starts at `rs`.
-        int XOf(Root root, int rs, int offset) {
+        defined int XOf(Root root, defined int rs, defined int offset) {
             if (offset <= rs) { return 0 }
             if (this.mono) { return this.ColumnOf(rs, offset) * this.cellW }
             return this.TextWidth(root, this.Shown(rs, rs, offset))
         }
 
         // The offset in the row nearest to x (`nearest`: the boundary between two characters; otherwise the character under x).
-        int OffsetAtX(Root root, int row, int x, bool nearest = true) {
+        defined int OffsetAtX(Root root, defined int row, defined int x, bool nearest = true) {
             var rs = this.RowStart(row)
             var limit = this.RowLimit(row)
             if (x <= 0 || limit <= rs) { return rs }
@@ -404,13 +410,13 @@ namespace UI {
         }
 
         // The width of a line in pixels (for the horizontal scroll bar).
-        int MeasureLine(Root root, int line) {
+        defined int MeasureLine(Root root, defined int line) {
             var start = this.lineStart[line]
             return this.XOf(root, start, this.LineEnd(line))
         }
 
         // The widest line (measures the lines that are not measured yet).
-        int Widest(Root root) {
+        defined int Widest(Root root) {
             if (this.widest >= 0) { return this.widest }
             var widths = this.lineWidth
             var n = this.lineCount
@@ -431,7 +437,7 @@ namespace UI {
 
         // Appends to `rows` where the rows of the line [ls, le) start, for rows at most `room` pixels wide: a row breaks after the last space that fits
         // (spaces at the break stay at the end of the row), a word longer than the row is broken where the row is full.
-        undefined WrapLine(Root root, List<int> rows, int ls, int le, int room) {
+        undefined WrapLine(Root root, List<int> rows, defined int ls, defined int le, defined int room) {
             rows.Add(ls)
             var pos = ls
             var simple = this.mono && !this.hasTabs
@@ -466,7 +472,7 @@ namespace UI {
         }
 
         // Builds the rows for the width `room` (if they are not built for it yet).
-        undefined EnsureRows(Root root, int room) {
+        undefined EnsureRows(Root root, defined int room) {
             if (this.wrapWidth == room) { return }
             var rows = new List<int>()
             var n = this.lineCount
@@ -482,7 +488,7 @@ namespace UI {
 
         // Replaces `count` characters from `start` by `value` (with "\n" line breaks) and brings the line index (and the rows) up to date: the lines in between
         // are measured anew, the starts behind them move.
-        undefined Splice(int start, int count, string value) {
+        undefined Splice(defined int start, defined int count, string value) {
             this.EnsureIndex()
             var text = this.Text
             var l0 = this.LineOf(start)
@@ -594,13 +600,13 @@ namespace UI {
             this.Clamp()
             return this.anchor >= 0 && this.anchor != this.caret
         }
-        int SelectionStart {
+        defined int SelectionStart {
             get {
                 if (!this.HasSelection()) { return this.caret }
                 return UI.M.Min(this.anchor, this.caret)
             }
         }
-        int SelectionLength {
+        defined int SelectionLength {
             get {
                 if (!this.HasSelection()) { return 0 }
                 return UI.M.Abs(this.caret - this.anchor)
@@ -609,7 +615,7 @@ namespace UI {
         string SelectedText { get { return this.Text.Substring(this.SelectionStart, this.SelectionLength) } }
 
         // Selects `length` characters from `start` (the caret goes to the end and is scrolled into view).
-        undefined Select(int start, int length) {
+        undefined Select(defined int start, defined int length) {
             var total = this.Text.Length
             start = UI.M.Clamp(start, 0, total)
             length = UI.M.Clamp(length, 0, total - start)
@@ -654,7 +660,7 @@ namespace UI {
         }
 
         // The caret goes to `position`: with `extend` the selection grows or shrinks, without it the selection goes. `keepGoal`: Up/Down keep their x position.
-        undefined MoveCaret(int position, bool extend, bool keepGoal = false) {
+        undefined MoveCaret(defined int position, bool extend, bool keepGoal = false) {
             this.Clamp()
             if (extend) {
                 if (this.anchor < 0) { this.anchor = this.caret }
@@ -667,7 +673,7 @@ namespace UI {
         }
 
         // Up/Down/PageUp/PageDown: `rows` rows further, at the x position the caret had when the moving began.
-        undefined MoveRows(Root root, int rows, bool extend) {
+        undefined MoveRows(Root root, defined int rows, bool extend) {
             this.EnsureIndex()
             var row = this.RowOf(this.caret)
             if (this.goalX < 0) { this.goalX = this.XOf(root, this.RowStart(row), this.caret) }
@@ -680,12 +686,12 @@ namespace UI {
         }
 
         // The rows that fit into the visible section (PageUp/PageDown).
-        int PageRows() { return UI.M.Max(1, this.viewH / UI.M.Max(1, this.lineH) - 1) }
+        defined int PageRows() { return UI.M.Max(1, this.viewH / UI.M.Max(1, this.lineH) - 1) }
 
         // ---- layout and drawing ----
 
         // Without a fixed size: a few lines.
-        override undefined MeasureCore(Root root, int aw, int ah) {
+        override undefined MeasureCore(Root root, defined int aw, defined int ah) {
             this.cw = 160
             this.ch = 4 * this.TextHeight(root) + 2 * this.padding + 2
         }
@@ -695,7 +701,7 @@ namespace UI {
             this.EnsureIndex()
         }
 
-        override undefined ArrangeCore(Root root, int w, int h) {
+        override undefined ArrangeCore(Root root, defined int w, defined int h) {
             this.EnsureIndex()
             this.lineH = UI.M.Max(1, this.TextHeight(root))
             this.mono = this.FontName(root) == ""
@@ -772,7 +778,7 @@ namespace UI {
             else if (x + 2 + 2 * pad > this.hbar.offset + this.viewW) { this.hbar.Set(x + 2 + 2 * pad - this.viewW) }
         }
 
-        override undefined Draw(Root root, int ax, int ay) {
+        override undefined Draw(Root root, defined int ax, defined int ay) {
             if (!this.NeedsDraw(root, ax, ay)) { return }
             this.Clamp()
             var theme = root.theme
@@ -825,7 +831,7 @@ namespace UI {
         }
 
         // One row at (left, y): the part that can be seen, the selection on its own background (a selected line break as a small box behind the text).
-        undefined DrawRow(Root root, int row, int left, int y, int selStart, int selEnd, Brush color) {
+        undefined DrawRow(Root root, defined int row, defined int left, defined int y, defined int selStart, defined int selEnd, Brush color) {
             var theme = root.theme
             var rs = this.RowStart(row)
             var re = this.RowTextEnd(row)
@@ -857,17 +863,17 @@ namespace UI {
 
         // ---- the mouse ----
 
-        bool OverVBar(int px, int py) { return this.showV && px >= this.ax + 1 + this.viewW && py >= this.ay + 1 && py < this.ay + 1 + this.viewH }
-        bool OverHBar(int px, int py) { return this.showH && py >= this.ay + 1 + this.viewH && px >= this.ax + 1 && px < this.ax + 1 + this.viewW }
+        bool OverVBar(defined int px, defined int py) { return this.showV && px >= this.ax + 1 + this.viewW && py >= this.ay + 1 && py < this.ay + 1 + this.viewH }
+        bool OverHBar(defined int px, defined int py) { return this.showH && py >= this.ay + 1 + this.viewH && px >= this.ax + 1 && px < this.ax + 1 + this.viewW }
 
         // The row under the point (above or below the area: the row there, beyond the first or last: that one).
-        int RowAtPoint(int py) {
+        defined int RowAtPoint(defined int py) {
             var y = py - (this.ay + 1 + this.padding) + this.vbar.offset
             if (y < 0) { return 0 }
             return UI.M.Clamp(y / this.lineH, 0, this.RowCount() - 1)
         }
         // The offset at the point: the boundary between two characters nearest to it (`nearest`) or the character under it.
-        int OffsetAt(Root root, int px, int py, bool nearest = true) {
+        defined int OffsetAt(Root root, defined int px, defined int py, bool nearest = true) {
             this.EnsureIndex()
             var row = this.RowAtPoint(py)
             var x = px - (this.ax + 1 + this.padding) + this.hbar.offset
@@ -876,7 +882,7 @@ namespace UI {
 
         // A click puts the caret there, dragging selects; a double click selects the word under the pointer (letters, digits and _; on spaces or punctuation
         // the run of them), a triple click the line (with its line break). Dragging after a double/triple click selects whole words/lines.
-        override undefined MouseDown(Root root, int button, int px, int py) {
+        override undefined MouseDown(Root root, defined int button, defined int px, defined int py) {
             if (button != 1) { return }
             if (this.OverVBar(px, py)) {
                 this.vbar.Press(py - (this.ay + 1), this.viewH)
@@ -929,14 +935,14 @@ namespace UI {
         }
 
         // Is the point on the selected text?
-        bool InSelection(Root root, int px, int py) {
+        bool InSelection(Root root, defined int px, defined int py) {
             if (!this.HasSelection()) { return false }
             var at = this.OffsetAt(root, px, py, false)
             var s = this.SelectionStart
             return at >= s && at < s + this.SelectionLength && at < this.Text.Length
         }
 
-        override undefined MouseMove(Root root, int px, int py) {
+        override undefined MouseMove(Root root, defined int px, defined int py) {
             if (this.vbar.dragging) {
                 this.vbar.Drag(py - (this.ay + 1), this.viewH)
                 return
@@ -978,7 +984,7 @@ namespace UI {
             }
         }
 
-        override undefined MouseUp(Root root, int button, int px, int py) {
+        override undefined MouseUp(Root root, defined int button, defined int px, defined int py) {
             this.selecting = false
             this.vbar.Release()
             this.hbar.Release()
@@ -988,18 +994,18 @@ namespace UI {
             }
         }
 
-        override undefined Hover(Root root, int px, int py) {
+        override undefined Hover(Root root, defined int px, defined int py) {
             this.vbar.SetHover(this.OverVBar(px, py))
             this.hbar.SetHover(this.OverHBar(px, py))
         }
 
         // an I-beam over the text, the arrow over the bars
-        override UI.Cursor CursorAt(Root root, int px, int py) {
+        override UI.Cursor CursorAt(Root root, defined int px, defined int py) {
             if (this.OverVBar(px, py) || this.OverHBar(px, py)) { return UI.Cursor.Arrow }
             return this.cursor
         }
 
-        override bool MouseWheel(Root root, int dx, int dy) {
+        override bool MouseWheel(Root root, defined int dx, defined int dy) {
             var step = 3 * this.lineH
             if (dx != 0 && this.showH) {
                 this.hbar.By(-dx * step)
@@ -1018,7 +1024,7 @@ namespace UI {
 
         override bool CanPan() { return this.showV || this.showH }
         override bool Dragging() { return this.vbar.dragging || this.hbar.dragging }
-        override bool PanBy(Root root, int dx, int dy) {
+        override bool PanBy(Root root, defined int dx, defined int dy) {
             if (!this.showV && !this.showH) { return false }
             if (this.showH) { this.hbar.By(-dx) }
             if (this.showV) { this.vbar.By(-dy) }
@@ -1034,13 +1040,13 @@ namespace UI {
         override bool TakesTab() { return this.AcceptsTab && !this.ReadOnly }
 
         // The area keeps all arrows and the keys that move in the text; Tab only with AcceptsTab.
-        override bool WantsKey(int key) {
+        override bool WantsKey(defined int key) {
             if (key == UI.Keys.Tab()) { return this.TakesTab() }
             return key == UI.Keys.Left() || key == UI.Keys.Right() || key == UI.Keys.Up() || key == UI.Keys.Down() || key == UI.Keys.Home() || key == UI.Keys.End() ||
                 key == UI.Keys.PageUp() || key == UI.Keys.PageDown()
         }
 
-        override undefined KeyDown(Root root, int key, int mod) {
+        override undefined KeyDown(Root root, defined int key, defined int mod) {
             this.EnsureIndex()
             this.Clamp()
             var length = this.Text.Length
@@ -1113,7 +1119,7 @@ namespace UI {
 
         // ---- dragging the selection (as in the TextBox): to another field a copy, within the area moved (with Ctrl copied), out of the window into another
         // program, which may move it (then it is deleted here). OnDragStart of the program decides first. ----
-        override UI.DragData DragStart(Root root, int px, int py) {
+        override UI.DragData DragStart(Root root, defined int px, defined int py) {
             if (this.OnDragStart != undefined) { return base.DragStart(root, px, py) }
             if (!this.pressInSelection || !this.HasSelection()) { return undefined }
             this.pressInSelection = false
@@ -1143,7 +1149,7 @@ namespace UI {
 
         // ---- a drop target for text and files (the paths, one per line); OnDragOver/OnDrop of the program decide first. While something is dragged over the
         // area, a second caret shows where it would go. ----
-        override UI.DropEffect DragOver(Root root, UI.DragData data, int px, int py) {
+        override UI.DropEffect DragOver(Root root, UI.DragData data, defined int px, defined int py) {
             if (this.OnDragOver != undefined) { return base.DragOver(root, data, px, py) }
             var effect = this.DropEffectAt(root, data, px, py)
             var at = -1
@@ -1154,7 +1160,7 @@ namespace UI {
             }
             return effect
         }
-        UI.DropEffect DropEffectAt(Root root, UI.DragData data, int px, int py) {
+        UI.DropEffect DropEffectAt(Root root, UI.DragData data, defined int px, defined int py) {
             if (this.ReadOnly) { return UI.DropEffect.None }
             if (data.Source == this) {
                 if (!this.dragOwn || !this.HasSelection()) { return UI.DropEffect.None }
@@ -1177,7 +1183,7 @@ namespace UI {
             }
             base.DragLeave(root)
         }
-        override UI.DropEffect Drop(Root root, UI.DragData data, int px, int py) {
+        override UI.DropEffect Drop(Root root, UI.DragData data, defined int px, defined int py) {
             this.dropPos = -1
             this.Invalidate()
             if (this.OnDrop != undefined) { return base.Drop(root, data, px, py) }

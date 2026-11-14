@@ -3,8 +3,8 @@
 
 /// <summary>An error of starting or talking to a process: `code` is one of ProcessCodes (the program was not found, no permission, the platform has no processes, ...).</summary>
 class ProcessException : Exception {
-    int code
-    construct(string message, int code = 6) {
+    defined int code
+    construct(string message, defined int code = 6) {
         this.message = message
         this.code = code
     }
@@ -12,14 +12,14 @@ class ProcessException : Exception {
 
 /// <summary>The codes of ProcessException.code (the same numbers as in the bridge).</summary>
 class ProcessCodes {
-    static int InvalidArgument() { return 1 }
-    static int InvalidHandle() { return 2 }
-    static int FileNotFound() { return 3 }
-    static int Permission() { return 4 }
-    static int NotSupported() { return 5 }
-    static int Other() { return 6 }
-    static int NotExited() { return 7 }
-    static int DirectoryNotFound() { return 8 }
+    static defined int InvalidArgument() { return 1 }
+    static defined int InvalidHandle() { return 2 }
+    static defined int FileNotFound() { return 3 }
+    static defined int Permission() { return 4 }
+    static defined int NotSupported() { return 5 }
+    static defined int Other() { return 6 }
+    static defined int NotExited() { return 7 }
+    static defined int DirectoryNotFound() { return 8 }
 
     // throws the error of the last native call of this thread
     static undefined Throw() { throw new ProcessException(__ProcLastErrorMessage(), __ProcLastError()) }
@@ -46,10 +46,10 @@ class ProcessOptions {
 
 /// <summary>What Process.Run gives: the exit code and everything the process wrote.</summary>
 class ProcessResult {
-    int ExitCode
+    defined int ExitCode
     string Output
     string Error
-    construct(int exitCode, string output, string error) {
+    construct(defined int exitCode, string output, string error) {
         this.ExitCode = exitCode
         this.Output = output
         this.Error = error
@@ -71,7 +71,7 @@ class ProcessStream : IO.Stream {
     override bool CanRead { get { return !this.closed && this.which != 0 } }
     override bool CanWrite { get { return !this.closed && this.which == 0 } }
 
-    override int Read(byte buffer[], int offset, int count) {
+    override defined int Read(byte buffer[], defined int offset, defined int count) {
         if (this.closed) { throw new IO.StreamClosedException("The stream is closed.", 9) }
         if (this.which == 0) { throw new IO.IOException("The input of a process cannot be read.", 8) }
         var tries = 0
@@ -85,7 +85,7 @@ class ProcessStream : IO.Stream {
     }
 
     // Reads what is there now without waiting: the bytes read, 0 at the end, -1 when nothing is there yet.
-    int ReadAvailable(byte buffer[], int offset, int count) {
+    defined int ReadAvailable(byte buffer[], defined int offset, defined int count) {
         if (this.closed) { throw new IO.StreamClosedException("The stream is closed.", 9) }
         var n = __ProcRead(this.owner.handle, this.which, buffer, offset, count)
         if (n == -1) { ProcessCodes.Throw() }
@@ -93,7 +93,7 @@ class ProcessStream : IO.Stream {
         return n
     }
 
-    override int Write(byte buffer[], int offset, int count) {
+    override defined int Write(byte buffer[], defined int offset, defined int count) {
         if (this.closed) { throw new IO.StreamClosedException("The stream is closed.", 9) }
         if (this.which != 0) { throw new IO.IOException("The output of a process cannot be written.", 8) }
         var done = 0
@@ -132,7 +132,7 @@ class ProcessStream : IO.Stream {
 ///     p.WaitForExit()
 /// </summary>
 class Process {
-    int handle = -1
+    defined int handle = -1
     private ProcessStream input
     private ProcessStream output
     private ProcessStream error
@@ -260,7 +260,7 @@ class Process {
     }
 
     /// The exit code (a ProcessException if it has not ended yet); a process that a signal ended: 128 + the number of the signal.
-    int ExitCode {
+    defined int ExitCode {
         get {
             this.Check()
             var code = __ProcExitCode(this.handle)
@@ -321,7 +321,7 @@ class Process {
     }
 
     // reads what is there of one pipe and hands the complete lines over: 0 nothing, 1 something, 2 the end (the rest goes over as the last line)
-    private int Drain(ProcessStream stream, IO.MemoryStream pending, lambda<string> handler) {
+    private defined int Drain(ProcessStream stream, IO.MemoryStream pending, lambda<string> handler) {
         var chunk = new byte[4096]
         var result = 0
         while (true) {
@@ -351,7 +351,7 @@ class Process {
     }
 
     // a line without its line break ("\n", "\r\n")
-    static string LineOf(byte bytes[], int offset, int count) {
+    static string LineOf(byte bytes[], defined int offset, defined int count) {
         if (count > 0 && bytes[offset + count - 1] == 13) { count = count - 1 }
         if (count == 0) { return "" }
         return IO.Utf8.GetString(bytes, offset, count)
@@ -376,7 +376,7 @@ class Process {
     }
 
     // ---- waiting: the natives are only asked, never made to wait ----
-    static int DeadlineOf(any timeout) {
+    static defined int DeadlineOf(any timeout) {
         if (timeout == undefined) { return -1 }
         var ms = 0
         if (timeout is of int) { ms = timeout } else { ms = TimeSpan.Of(timeout).Ticks / 10000 }
@@ -384,7 +384,7 @@ class Process {
         return DateTime.UtcNow.Ticks + ms * 10000
     }
 
-    static any LeftOf(int deadline) {
+    static any LeftOf(defined int deadline) {
         if (deadline < 0) { return undefined }
         var left = (deadline - DateTime.UtcNow.Ticks) / 10000
         if (left < 0) { return 0 }
@@ -392,7 +392,7 @@ class Process {
     }
 
     // a moment between two attempts: 1 ms at first, up to 10 ms when it takes long
-    static undefined Pause(int tries) {
+    static undefined Pause(defined int tries) {
         var ms = 1
         if (tries >= 3) { ms = 2 }
         if (tries >= 8) { ms = 5 }

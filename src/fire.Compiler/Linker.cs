@@ -35,7 +35,7 @@ namespace fire.Compiler
         /// <summary>The width of `int` the command line sets for every program of this process (`-i 32`); wins against `#intwidth`, the project and the target.</summary>
         public static int? ProcessIntWidth { get; set; }
 
-        /// <summary>Also check the preludes and libraries (not only the code of the user): used by the tests that keep the declared types of the standard library honest (`FIRE_TYPECHECK_ALL=1` does it for a build).</summary>
+        /// <summary>Also report the conflicts in the preludes and libraries (they are always checked - what the check finds for the code holds there too -, but by default only the code of the user is reported): used by the tests that keep the declared types of the standard library honest (`FIRE_TYPECHECK_ALL=1` does it for a build).</summary>
         public bool TypeCheckLibraries { get; set; } = Environment.GetEnvironmentVariable("FIRE_TYPECHECK_ALL") == "1";
 
         private TypeCheckMode EffectiveTypeChecking => TypeChecking ?? ProcessDefaultTypeChecking
@@ -301,7 +301,7 @@ namespace fire.Compiler
 
         /// <summary>A statement at the top level that only declares (runs nothing): a class, interface, enum, function, namespace, extension or a directive.</summary>
         private static bool IsDeclaration(Ast.Stmt stmt) =>
-            stmt is Ast.ClassDecl or Ast.InterfaceDecl or Ast.EnumDecl or Ast.ExternDecl or Ast.ClassExtensionDecl or Ast.NamespaceDecl or Ast.MethodDecl or Ast.NoOpStmt or Ast.NoShadowDirective or Ast.GlobalJobsDirective or Ast.TypeCheckDirective or Ast.TimeoutDirective;
+            stmt is Ast.ClassDecl or Ast.InterfaceDecl or Ast.EnumDecl or Ast.ExternDecl or Ast.ClassExtensionDecl or Ast.NamespaceDecl or Ast.MethodDecl or Ast.NoOpStmt or Ast.NoShadowDirective or Ast.GlobalJobsDirective or Ast.TypeCheckDirective or Ast.TimeoutDirective or Ast.EndWaitDirective;
 
         /// <summary>`forge test` (docs/tools/testing.md): makes the source of the test driver from the parsed program and the index of its first own source. While it is set (on this thread), the
         /// statements at the top level of the program's files are left out and the driver is the last source.</summary>
@@ -402,8 +402,14 @@ namespace fire.Compiler
                 {
                     string importName = args[0].AsString();
                     if (ownImport != null && string.Equals(importName, ownImport, StringComparison.OrdinalIgnoreCase)) return null;
-                    if (ProjectLibraries.TryImport(Plan, importName, projectImports, nativeImports)) return null;   // a library of the project: its files come with it
-                    foreach (var key in ImportedPreludes.WithDependencies(ImportedPreludes.ParseImportName(importName))) nativeImports.Add(key);
+                    if (ProjectLibraries.TryImport(Plan, importName, projectImports, nativeImports))
+                    {
+                        // a library of the project: its files come with it, its names are found by the short name in this file too
+                        if (ProjectLibraries.NamespaceOf(Plan, importName) is { } libraryNamespace) ctx.AddImportNamespace(libraryNamespace);
+                        return null;
+                    }
+                    foreach (var key in ProjectLibraries.ImportKeys(importName, name => ProjectLibraries.UnknownHint(Plan, name))) nativeImports.Add(key);
+                    if (ProjectLibraries.PackageNamespaceOf(importName) is { } packageNamespace) ctx.AddImportNamespace(packageNamespace);
                     return null;
                 }
                 throw new Exception($"Wrong arguments for the 'import' directive.");
@@ -608,7 +614,13 @@ namespace fire.Compiler
             // (the width of the program's int as below - the project's setting before the tag of the source: TC021 needs it)
             TypeChecker.ProgramIntWidth = intWidthOverride ?? ProcessIntWidth ?? Plan?.Settings?.IntWidth ?? directiveIntWidth ?? target?.IntWidth ?? 64;
             TypeChecker.NativeReturns = PackageImports.NativeReturnTypes(nativeImports);
-            TypeChecker.Run(program, resolveResult, EffectiveTypeChecking, TypeCheckLibraries ? 0 : firstUserSource);
+            // deriving `defined` for the parameters of the program (TypeChecker.Derive): not when reflection or the program that loads a plugin can call a
+            // method with anything, nor in a debug build (the debugger calls methods with what it is given)
+            var deriveBefore = TypeChecker.DeriveDefinedOverride;
+            if (nativeImports.Contains(NativeImports.Reflection) || ClassMeta || OwnImports is { Count: > 0 }
+                || (executionModeOverride ?? assemblyInfo.ExecutionMode) == VmExecutionMode.Debug) TypeChecker.DeriveDefinedOverride = false;
+            try { TypeChecker.Run(program, resolveResult, EffectiveTypeChecking, firstUserSource, TypeCheckLibraries ? 0 : firstUserSource); }
+            finally { TypeChecker.DeriveDefinedOverride = deriveBefore; }
             fire.Native.BuildMonitor.Step(fire.Native.BuildPhase.CompileFire, "Compiling fire: generating bytecode", 3, 4);
             var compiled = Compiler.Compile(program, resolveResult, natives, ClassMeta, ForcedGlobalJobs, GlobalJobsDefault);
             // the classes of a package with `"serializable": false` (docs/stdlib/json.md)

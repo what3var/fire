@@ -42,6 +42,12 @@ namespace fire.Bytecode
         /// (`c => c.radius`, `p => p.address.city`), the names from outside to inside - otherwise null. Basis of the lambda type `selector`.</summary>
         public string[]? SelectorPath { get; set; }
 
+        /// <summary>A lambda's captures (ROADMAP_TASKS step 8), bit i for capture i: copied for each call from the lambda's store (`taking`, a variable
+        /// without a word, unless the body only reads it - then the store's copy is lent).</summary>
+        public ulong CaptureCopyMask { get; set; }
+        /// <summary>... moved in by `handover`: each call gets the store's instance (lent); once it was taken away, the store has none.</summary>
+        public ulong CaptureMovedMask { get; set; }
+
         /// <summary>Per parameter of a method or constructor: its type for overloading by type (see Overloads; "" untyped). Null: all untyped (a lambda).</summary>
         public string?[]? ParamTypes { get; set; }
 

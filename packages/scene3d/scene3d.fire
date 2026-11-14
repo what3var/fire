@@ -13,13 +13,13 @@ class Scene3DException : Exception {
 
 // Units: lengths in meters, angles in radians (the units of the language convert, a number without a unit is refused).
 class S3D {
-    static float Length(any v) {
+    static defined float Length(any v) {
         if (!(v is in m)) { throw new Scene3DException("A length needs a unit of length (m, cm, mm, ...), got: " + v) }
         any f = v * 1.0
         return (f:m) / 1m
     }
 
-    static float Angle(any v) {
+    static defined float Angle(any v) {
         if (v is in deg) {
             any d = v * 1.0
             return ((d:deg) / 1deg) * 0.017453292519943295
@@ -32,14 +32,14 @@ class S3D {
     }
 
     // A time in seconds (s, ms, min, ...: a number without a unit is refused).
-    static float Seconds(any v) {
+    static defined float Seconds(any v) {
         if (!(v is in s)) { throw new Scene3DException("A time needs a unit of time (s, ms, ...), got: " + v) }
         any f = v * 1.0
         return (f:s) / 1s
     }
 
     // A speed in meters a second (m/s, km/h, ...).
-    static float Speed(float v : m/s) { return v / (1m / 1s) }
+    static defined float Speed(defined float v : m/s) { return v / (1m / 1s) }
 
     static defined float:m Meters(defined float m) { return m * 1m }
     static defined float:deg Degrees(defined float radians) { return (radians * 57.29577951308232) * 1deg }
@@ -68,11 +68,11 @@ class S3D {
 // docs/graphics/models.md): parts in a tree with their colours, and animations (Object.Play). forge makes .f3d from glTF 2.0 (a resource "x.gltf"/"x.glb" is
 // converted when the program is built, `forge model x.gltf`).
 class Model {
-    int handle
-    int model
+    defined int handle
+    defined int model
 
     // (the handle of a mesh: use FromObj, FromArrays or FromTemplate)
-    construct(int handle) {
+    construct(defined int handle) {
         this.handle = handle
         this.model = 0
     }
@@ -111,7 +111,7 @@ class Model {
             return list
         }
     }
-    float:s AnimationLength(string name) {
+    defined float:s AnimationLength(string name) {
         if (this.model > 0) {
             var n = __S3DModelInfo(this.model, 1)
             for (var i = 0; i < n; i++) {
@@ -136,7 +136,7 @@ class Model {
     }
 
     // A box, sphere, cylinder, cone, plane or quad of the size 1m (a plane is 1m x 1m lying down, a quad 1m x 1m standing, facing +Z); `detail` is the number of segments around a round shape.
-    static Model FromTemplate(Template template, int detail = 24) {
+    static Model FromTemplate(Template template, defined int detail = 24) {
         var h = __S3DMeshTemplate(template!int, detail)
         if (h == 0) { throw new Scene3DException("Unknown template: " + template) }
         return new Model(h)
@@ -155,9 +155,9 @@ class Model {
 // (The scene lives in the renderer: objects, lights, cameras, materials and scenes are items there, and their properties read and write the slots of the item -
 // fire_bridge_scene3d.h lists them. Nothing is put together in fire for every picture.)
 class Material {
-    int h
+    defined int h
 
-    construct(float specular = 0.0, float shininess = 32.0, bool smooth = true, bool twoSided = false, int emissive = 0) {
+    construct(defined float specular = 0.0, defined float shininess = 32.0, defined bool smooth = true, defined bool twoSided = false, defined int emissive = 0) {
         this.h = __S3DNew(5)
         if (this.h == 0) { throw new Scene3DException("No memory for a material.") }
         this.Specular = specular
@@ -169,11 +169,11 @@ class Material {
 
     destruct() { __S3DFree(this.h) }
 
-    float Specular { get { return __S3DGetF(this.h, 0) } set { __S3DSetF(this.h, 0, value) } }
-    float Shininess { get { return __S3DGetF(this.h, 1) } set { __S3DSetF(this.h, 1, value) } }
-    bool Smooth { get { return __S3DGetB(this.h, 0) } set { __S3DSetI(this.h, 0, value) } }
-    bool TwoSided { get { return __S3DGetB(this.h, 1) } set { __S3DSetI(this.h, 1, value) } }
-    int Emissive { get { return __S3DGetI(this.h, 2) } set { __S3DSetI(this.h, 2, value) } }
+    defined float Specular { get { return __S3DGetF(this.h, 0) } set { __S3DSetF(this.h, 0, value) } }
+    defined float Shininess { get { return __S3DGetF(this.h, 1) } set { __S3DSetF(this.h, 1, value) } }
+    defined bool Smooth { get { return __S3DGetB(this.h, 0) } set { __S3DSetI(this.h, 0, value) } }
+    defined bool TwoSided { get { return __S3DGetB(this.h, 1) } set { __S3DSetI(this.h, 1, value) } }
+    defined int Emissive { get { return __S3DGetI(this.h, 2) } set { __S3DSetI(this.h, 2, value) } }
 
     static Material Matte() { return new Material(0.0, 32.0) }
     static Material Plastic() { return new Material(0.4, 32.0) }
@@ -182,9 +182,9 @@ class Material {
 
 // A picture to put on objects (RGBA). It belongs to a scene (scene.Add(texture, "key")) or is assigned to an object directly.
 class Texture {
-    int handle
-    int width
-    int height
+    defined int handle
+    defined int width
+    defined int height
 
     // From a framebuffer in the colour mode Rgba (the pixels are copied).
     construct(Framebuffer source) {
@@ -194,7 +194,7 @@ class Texture {
         if (this.handle == 0) { throw new Scene3DException("The framebuffer cannot be a texture (it has to be in the colour mode Rgba).") }
     }
 
-    construct(int width, int height, byte bytes[]) {
+    construct(defined int width, defined int height, byte bytes[]) {
         this.handle = __S3DTexNew(width, height, bytes)
         this.width = width
         this.height = height
@@ -202,7 +202,7 @@ class Texture {
     }
 
     // (the handle of a picture of the renderer: use Checker)
-    construct(int handle, int width, int height, bool made) {
+    construct(defined int handle, defined int width, defined int height, bool made) {
         this.handle = handle
         this.width = width
         this.height = height
@@ -213,18 +213,18 @@ class Texture {
     }
 
     // A checker board of cells x cells squares (the colours are 0xAABBGGRR) in a picture of size x size pixels.
-    static Texture Checker(int size = 64, int cells = 8, int colorA = 4294967295, int colorB = 4282400832) {
+    static Texture Checker(defined int size = 64, defined int cells = 8, defined int colorA = 4294967295, defined int colorB = 4282400832) {
         var h = __S3DTexChecker(size, cells, colorA, colorB)
         if (h == 0) { throw new Scene3DException("A checker board needs 1 <= cells <= size <= 4096.") }
         return new Texture(h, size, size, true)
     }
 
     int Width { get { return this.width } }
-    int Height { get { return this.height } }
+    defined int Height { get { return this.height } }
     // Whether the texture has a bump map.
     bool hasBump { get { return __S3DTexHasBump(this.handle) } }
     // How strongly the bump map tilts the light (1 = a full step of the heights over one texel is a slope of 45 degrees).
-    float BumpStrength { get { return __S3DTexStrength(this.handle) } set { __S3DTexSetStrength(this.handle, value) } }
+    defined float BumpStrength { get { return __S3DTexStrength(this.handle) } set { __S3DTexSetStrength(this.handle, value) } }
 
     // A bump map made from the brightness of the texture itself: bright is high, dark is low (a little smoothed).
     undefined AddBumpmap() {
@@ -237,7 +237,7 @@ class Texture {
     }
 
     // A bump map from bytes: width * height heights (0..255), or width * height * 4 bytes (R, G, B, A) whose brightness is the height.
-    undefined AddBumpmap(int width, int height, byte bytes[]) {
+    undefined AddBumpmap(defined int width, defined int height, byte bytes[]) {
         var channels = 1
         if (bytes.length == width * height * 4) { channels = 4 }
         else if (bytes.length != width * height) { throw new Scene3DException("A bump map needs width * height bytes (heights) or width * height * 4 bytes (R, G, B, A).") }
@@ -250,9 +250,9 @@ class Texture {
 
 // A light: ambient (everywhere), directional (parallel rays, like the sun) or point (from a place, weaker with the distance).
 class Light {
-    int h
+    defined int h
 
-    construct(LightKind kind = LightKind.Point, int color = 4294967295, float intensity = 1.0) {
+    construct(LightKind kind = LightKind.Point, defined int color = 4294967295, defined float intensity = 1.0) {
         this.h = __S3DNew(2)
         if (this.h == 0) { throw new Scene3DException("No memory for a light.") }
         __S3DSetI(this.h, 0, kind!int)
@@ -262,42 +262,42 @@ class Light {
 
     destruct() { __S3DFree(this.h) }
 
-    static Light Ambient(int color = 4294967295, float intensity = 0.3) { return new Light(LightKind.Ambient, color, intensity) }
+    static Light Ambient(defined int color = 4294967295, defined float intensity = 0.3) { return new Light(LightKind.Ambient, color, intensity) }
 
     // Rays that travel in the direction (dx, dy, dz) (a vector without a unit).
-    static Light Directional(float dx, float dy, float dz, int color = 4294967295, float intensity = 1.0) {
+    static Light Directional(defined float dx, defined float dy, defined float dz, defined int color = 4294967295, defined float intensity = 1.0) {
         var l = new Light(LightKind.Directional, color, intensity)
         l.Direction(dx, dy, dz)
         return l
     }
 
-    static Light Point(float x : any m, float y : any m, float z : any m, int color = 4294967295, float intensity = 1.0) {
+    static Light Point(defined float x : any m, defined float y : any m, defined float z : any m, defined int color = 4294967295, defined float intensity = 1.0) {
         var l = new Light(LightKind.Point, color, intensity)
         __S3DSetF3(l.h, 1, S3D.Length(x), S3D.Length(y), S3D.Length(z), false)
         return l
     }
 
-    undefined Direction(float dx, float dy, float dz) { __S3DSetF3(this.h, 4, dx, dy, dz, false) }
+    undefined Direction(defined float dx, defined float dy, defined float dz) { __S3DSetF3(this.h, 4, dx, dy, dz, false) }
 
     LightKind Kind { get { return __S3DGetI(this.h, 0)!LightKind } set { __S3DSetI(this.h, 0, value!int) } }
-    int Color { get { return __S3DGetI(this.h, 1) } set { __S3DSetI(this.h, 1, value) } }
-    float Intensity { get { return __S3DGetF(this.h, 0) } set { __S3DSetF(this.h, 0, value) } }
-    float X : m { get { return __S3DGetF(this.h, 1) * 1m } set { __S3DSetF(this.h, 1, S3D.Length(value)) } }
-    float Y : m { get { return __S3DGetF(this.h, 2) * 1m } set { __S3DSetF(this.h, 2, S3D.Length(value)) } }
-    float Z : m { get { return __S3DGetF(this.h, 3) * 1m } set { __S3DSetF(this.h, 3, S3D.Length(value)) } }
+    defined int Color { get { return __S3DGetI(this.h, 1) } set { __S3DSetI(this.h, 1, value) } }
+    defined float Intensity { get { return __S3DGetF(this.h, 0) } set { __S3DSetF(this.h, 0, value) } }
+    defined float X : m { get { return __S3DGetF(this.h, 1) * 1m } set { __S3DSetF(this.h, 1, S3D.Length(value)) } }
+    defined float Y : m { get { return __S3DGetF(this.h, 2) * 1m } set { __S3DSetF(this.h, 2, S3D.Length(value)) } }
+    defined float Z : m { get { return __S3DGetF(this.h, 3) * 1m } set { __S3DSetF(this.h, 3, S3D.Length(value)) } }
     // The distance at which a point light has half of its strength.
-    float Range : m { get { return __S3DGetF(this.h, 7) * 1m } set { __S3DSetF(this.h, 7, S3D.Length(value)) } }
+    defined float Range : m { get { return __S3DGetF(this.h, 7) * 1m } set { __S3DSetF(this.h, 7, S3D.Length(value)) } }
     // false: the light is off (it lights nothing and casts no shadow).
-    bool Enabled { get { return __S3DGetB(this.h, 2) } set { __S3DSetI(this.h, 2, value) } }
+    defined bool Enabled { get { return __S3DGetB(this.h, 2) } set { __S3DSetI(this.h, 2, value) } }
     // Whether what the light hits throws shadows (the scene's Shadows has to be on, too).
-    bool CastShadows { get { return __S3DGetB(this.h, 3) } set { __S3DSetI(this.h, 3, value) } }
+    defined bool CastShadows { get { return __S3DGetB(this.h, 3) } set { __S3DSetI(this.h, 3, value) } }
     // The layers of objects that it lights: a number whose bits (1, 2, 4, ... up to 8388608) are layers; an object is lit when it shares a layer with the light (default: all).
-    int Layers { get { return __S3DGetI(this.h, 4) } set { __S3DSetI(this.h, 4, value) } }
+    defined int Layers { get { return __S3DGetI(this.h, 4) } set { __S3DSetI(this.h, 4, value) } }
 }
 
 // Something in the scene with triangles, a position, a size and a look.
 class Object {
-    int h
+    defined int h
     Texture texture
     Material material
     string Key
@@ -329,9 +329,9 @@ class Object {
     undefined Stop() { __S3DObjAnimate(this.h, 3, 0.0) }
     // The time goes on for the object (call it every frame with the time that passed: obj.Advance(16ms); Scene.Advance does it for all objects): its animation,
     // its spin, the scroll of its texture, its particles (scene3d.effects).
-    undefined Advance(float time : any s) { __S3DObjAdvance(this.h, S3D.Seconds(time)) }
+    undefined Advance(defined float time : any s) { __S3DObjAdvance(this.h, S3D.Seconds(time)) }
     // The time in the animation (set it to show a moment of it).
-    float AnimationTime : s {
+    defined float AnimationTime : s {
         get { return __S3DObjAnimate(this.h, 2, 0.0) * 1s }
         set { __S3DObjAnimate(this.h, 1, S3D.Seconds(value)) }
     }
@@ -340,7 +340,7 @@ class Object {
     bool Playing { get { return __S3DObjClip(this.h, 1) != "" } }
 
     // From a template (Template.Box, Sphere, Cylinder, Cone, Plane, Quad): at (x, y, z), the outer dimensions width, height and depth (a plane has no height, a quad no depth: pass 0m).
-    construct(Template template, float x : any m, float y : any m, float z : any m, float width : any m, float height : any m, float depth : any m, int detail = 24) {
+    construct(Template template, defined float x : any m, defined float y : any m, defined float z : any m, defined float width : any m, defined float height : any m, defined float depth : any m, defined int detail = 24) {
         this.Init()
         if (!__S3DObjTemplate(this.h, template!int, detail, S3D.Length(x), S3D.Length(y), S3D.Length(z), S3D.Length(width), S3D.Length(height), S3D.Length(depth))) {
             throw new Scene3DException("Unknown template: " + template)
@@ -356,69 +356,72 @@ class Object {
     }
 
     // ---- position, rotation, anchor ----
-    float X : m { get { return __S3DGetF(this.h, 0) * 1m } set { __S3DSetF(this.h, 0, S3D.Length(value)) } }
-    float Y : m { get { return __S3DGetF(this.h, 1) * 1m } set { __S3DSetF(this.h, 1, S3D.Length(value)) } }
-    float Z : m { get { return __S3DGetF(this.h, 2) * 1m } set { __S3DSetF(this.h, 2, S3D.Length(value)) } }
+    defined float X : m { get { return __S3DGetF(this.h, 0) * 1m } set { __S3DSetF(this.h, 0, S3D.Length(value)) } }
+    defined float Y : m { get { return __S3DGetF(this.h, 1) * 1m } set { __S3DSetF(this.h, 1, S3D.Length(value)) } }
+    defined float Z : m { get { return __S3DGetF(this.h, 2) * 1m } set { __S3DSetF(this.h, 2, S3D.Length(value)) } }
     float RotationX : any { get { return S3D.Degrees(__S3DGetF(this.h, 3)) } set { __S3DSetF(this.h, 3, S3D.Angle(value)) } }
     float RotationY : any { get { return S3D.Degrees(__S3DGetF(this.h, 4)) } set { __S3DSetF(this.h, 4, S3D.Angle(value)) } }
     float RotationZ : any { get { return S3D.Degrees(__S3DGetF(this.h, 5)) } set { __S3DSetF(this.h, 5, S3D.Angle(value)) } }
 
     // Where the position takes hold of the object, as a fraction of its width, height and depth (default 0.5: the centre).
-    float AnchorX { get { return __S3DGetF(this.h, 9) } set { __S3DSetF(this.h, 9, value) } }
-    float AnchorY { get { return __S3DGetF(this.h, 10) } set { __S3DSetF(this.h, 10, value) } }
-    float AnchorZ { get { return __S3DGetF(this.h, 11) } set { __S3DSetF(this.h, 11, value) } }
+    defined float AnchorX { get { return __S3DGetF(this.h, 9) } set { __S3DSetF(this.h, 9, value) } }
+    defined float AnchorY { get { return __S3DGetF(this.h, 10) } set { __S3DSetF(this.h, 10, value) } }
+    defined float AnchorZ { get { return __S3DGetF(this.h, 11) } set { __S3DSetF(this.h, 11, value) } }
+    // true: the coordinates of the mesh are kept - its origin (0, 0, 0 of Model.FromArrays, of a model file) sits at the position instead of the
+    // anchor; at position 0, 0, 0 the mesh is where its coordinates say (world coordinates). The anchor does not count while it is on.
+    defined bool KeepMeshCoordinates { get { return __S3DGetB(this.h, 8) } set { __S3DSetI(this.h, 8, value) } }
 
-    undefined SetPosition(float x : any m, float y : any m, float z : any m) { __S3DSetF3(this.h, 0, S3D.Length(x), S3D.Length(y), S3D.Length(z), false) }
-    undefined SetAnchor(float x, float y, float z) { __S3DSetF3(this.h, 9, x, y, z, false) }
-    undefined SetRotation(float x : any, float y : any, float z : any) { __S3DSetF3(this.h, 3, S3D.Angle(x), S3D.Angle(y), S3D.Angle(z), false) }
-    undefined Move(float dx : any m, float dy : any m, float dz : any m) { __S3DSetF3(this.h, 0, S3D.Length(dx), S3D.Length(dy), S3D.Length(dz), true) }
-    undefined Rotate(float x : any, float y : any, float z : any) { __S3DSetF3(this.h, 3, S3D.Angle(x), S3D.Angle(y), S3D.Angle(z), true) }
+    undefined SetPosition(defined float x : any m, defined float y : any m, defined float z : any m) { __S3DSetF3(this.h, 0, S3D.Length(x), S3D.Length(y), S3D.Length(z), false) }
+    undefined SetAnchor(defined float x, defined float y, defined float z) { __S3DSetF3(this.h, 9, x, y, z, false) }
+    undefined SetRotation(defined float x : any, defined float y : any, defined float z : any) { __S3DSetF3(this.h, 3, S3D.Angle(x), S3D.Angle(y), S3D.Angle(z), false) }
+    undefined Move(defined float dx : any m, defined float dy : any m, defined float dz : any m) { __S3DSetF3(this.h, 0, S3D.Length(dx), S3D.Length(dy), S3D.Length(dz), true) }
+    undefined Rotate(defined float x : any, defined float y : any, defined float z : any) { __S3DSetF3(this.h, 3, S3D.Angle(x), S3D.Angle(y), S3D.Angle(z), true) }
 
     // ---- size: the outer dimensions (what is set becomes the scale of the axis) ----
     // (the size of the mesh itself, before it is scaled)
-    float MeshWidth() { return __S3DObjExtent(this.h, 0, false) }
-    float MeshHeight() { return __S3DObjExtent(this.h, 1, false) }
-    float MeshDepth() { return __S3DObjExtent(this.h, 2, false) }
+    defined float MeshWidth() { return __S3DObjExtent(this.h, 0, false) }
+    defined float MeshHeight() { return __S3DObjExtent(this.h, 1, false) }
+    defined float MeshDepth() { return __S3DObjExtent(this.h, 2, false) }
 
-    float Width : m {
+    defined float Width : m {
         get { return __S3DObjExtent(this.h, 0, true) * 1m }
         set { if (!__S3DObjSize(this.h, 0, S3D.Length(value))) { throw new Scene3DException("This object has no width to scale.") } }
     }
-    float Height : m {
+    defined float Height : m {
         get { return __S3DObjExtent(this.h, 1, true) * 1m }
         set { if (!__S3DObjSize(this.h, 1, S3D.Length(value))) { throw new Scene3DException("This object has no height to scale.") } }
     }
-    float Depth : m {
+    defined float Depth : m {
         get { return __S3DObjExtent(this.h, 2, true) * 1m }
         set { if (!__S3DObjSize(this.h, 2, S3D.Length(value))) { throw new Scene3DException("This object has no depth to scale.") } }
     }
 
-    undefined SetSize(float width : any m, float height : any m, float depth : any m) {
+    undefined SetSize(defined float width : any m, defined float height : any m, defined float depth : any m) {
         this.Width = width
         this.Height = height
         this.Depth = depth
     }
 
     // The scale factors themselves (1 = the size of the mesh).
-    float ScaleX { get { return __S3DGetF(this.h, 6) } set { __S3DSetF(this.h, 6, value) } }
-    float ScaleY { get { return __S3DGetF(this.h, 7) } set { __S3DSetF(this.h, 7, value) } }
-    float ScaleZ { get { return __S3DGetF(this.h, 8) } set { __S3DSetF(this.h, 8, value) } }
+    defined float ScaleX { get { return __S3DGetF(this.h, 6) } set { __S3DSetF(this.h, 6, value) } }
+    defined float ScaleY { get { return __S3DGetF(this.h, 7) } set { __S3DSetF(this.h, 7, value) } }
+    defined float ScaleZ { get { return __S3DGetF(this.h, 8) } set { __S3DSetF(this.h, 8, value) } }
 
     // ---- look ----
     // The colour (0xAABBGGRR, S3D.Rgb).
-    int Color { get { return __S3DGetI(this.h, 0) } set { __S3DSetI(this.h, 0, value) } }
-    bool Visible { get { return __S3DGetB(this.h, 1) } set { __S3DSetI(this.h, 1, value) } }
+    defined int Color { get { return __S3DGetI(this.h, 0) } set { __S3DSetI(this.h, 0, value) } }
+    defined bool Visible { get { return __S3DGetB(this.h, 1) } set { __S3DSetI(this.h, 1, value) } }
     // 1 = solid, below that the object is see-through (a texture with transparent pixels is see-through, too). Transparent objects are drawn after the solid ones, from far to near.
-    float Opacity { get { return __S3DGetF(this.h, 17) } set { __S3DSetF(this.h, 17, value) } }
+    defined float Opacity { get { return __S3DGetF(this.h, 17) } set { __S3DSetF(this.h, 17, value) } }
     // Above 0: pixels of the texture that are more transparent than this are left out completely and the rest is solid (leaves, fences: no sorting problems).
-    float AlphaCutoff { get { return __S3DGetF(this.h, 18) } set { __S3DSetF(this.h, 18, value) } }
+    defined float AlphaCutoff { get { return __S3DGetF(this.h, 18) } set { __S3DSetF(this.h, 18, value) } }
     // false: no lighting, the colour as it is.
-    bool Lit { get { return __S3DGetB(this.h, 3) } set { __S3DSetI(this.h, 3, value) } }
+    defined bool Lit { get { return __S3DGetB(this.h, 3) } set { __S3DSetI(this.h, 3, value) } }
     // Whether the object throws shadows / shows the shadows of others (a transparent object throws none).
-    bool CastShadows { get { return __S3DGetB(this.h, 4) } set { __S3DSetI(this.h, 4, value) } }
-    bool ReceiveShadows { get { return __S3DGetB(this.h, 5) } set { __S3DSetI(this.h, 5, value) } }
+    defined bool CastShadows { get { return __S3DGetB(this.h, 4) } set { __S3DSetI(this.h, 4, value) } }
+    defined bool ReceiveShadows { get { return __S3DGetB(this.h, 5) } set { __S3DSetI(this.h, 5, value) } }
     // The layers of the object (see Light.Layers): only lights that share a layer with it light it (default: all).
-    int Layers { get { return __S3DGetI(this.h, 6) } set { __S3DSetI(this.h, 6, value) } }
+    defined int Layers { get { return __S3DGetI(this.h, 6) } set { __S3DSetI(this.h, 6, value) } }
     // BillboardMode.Facing: the object always faces the camera (Template.Quad: sprites, labels); Vertical: it turns around the vertical axis only (trees).
     BillboardMode Billboard { get { return __S3DGetI(this.h, 7)!BillboardMode } set { __S3DSetI(this.h, 7, value!int) } }
 
@@ -445,11 +448,11 @@ class Object {
     }
 
     // The part of the object one copy of the texture covers (default: the whole object once); a smaller size repeats the texture.
-    float TextureWidth : m { get { return __S3DGetF(this.h, 14) * 1m } set { __S3DSetF(this.h, 14, S3D.Length(value)) } }
-    float TextureHeight : m { get { return __S3DGetF(this.h, 15) * 1m } set { __S3DSetF(this.h, 15, S3D.Length(value)) } }
+    defined float TextureWidth : m { get { return __S3DGetF(this.h, 14) * 1m } set { __S3DSetF(this.h, 14, S3D.Length(value)) } }
+    defined float TextureHeight : m { get { return __S3DGetF(this.h, 15) * 1m } set { __S3DSetF(this.h, 15, S3D.Length(value)) } }
     // Where the texture starts on the object, and its rotation.
-    float TextureX : m { get { return __S3DGetF(this.h, 12) * 1m } set { __S3DSetF(this.h, 12, S3D.Length(value)) } }
-    float TextureY : m { get { return __S3DGetF(this.h, 13) * 1m } set { __S3DSetF(this.h, 13, S3D.Length(value)) } }
+    defined float TextureX : m { get { return __S3DGetF(this.h, 12) * 1m } set { __S3DSetF(this.h, 12, S3D.Length(value)) } }
+    defined float TextureY : m { get { return __S3DGetF(this.h, 13) * 1m } set { __S3DSetF(this.h, 13, S3D.Length(value)) } }
     float TextureRotation : any { get { return S3D.Degrees(__S3DGetF(this.h, 16)) } set { __S3DSetF(this.h, 16, S3D.Angle(value)) } }
 
     // ---- movement by itself (Advance moves it on) ----
@@ -457,15 +460,15 @@ class Object {
     float SpinX : any { get { return S3D.Degrees(__S3DGetF(this.h, 19)) } set { __S3DSetF(this.h, 19, S3D.Angle(value)) } }
     float SpinY : any { get { return S3D.Degrees(__S3DGetF(this.h, 20)) } set { __S3DSetF(this.h, 20, S3D.Angle(value)) } }
     float SpinZ : any { get { return S3D.Degrees(__S3DGetF(this.h, 21)) } set { __S3DSetF(this.h, 21, S3D.Angle(value)) } }
-    undefined SetSpin(float x : any, float y : any, float z : any) { __S3DSetF3(this.h, 19, S3D.Angle(x), S3D.Angle(y), S3D.Angle(z), false) }
+    undefined SetSpin(defined float x : any, defined float y : any, defined float z : any) { __S3DSetF3(this.h, 19, S3D.Angle(x), S3D.Angle(y), S3D.Angle(z), false) }
     // How fast the texture runs over the object (water, lava, a conveyor belt): TextureX / TextureY move on by this much a second.
     defined float TextureScrollX : m/s { get { return __S3DGetF(this.h, 22) * 1m / 1s } set { __S3DSetF(this.h, 22, S3D.Speed(value)) } }
     defined float TextureScrollY : m/s { get { return __S3DGetF(this.h, 23) * 1m / 1s } set { __S3DSetF(this.h, 23, S3D.Speed(value)) } }
 
-    int Triangles { get { return __S3DObjTriangles(this.h) } }
+    defined int Triangles { get { return __S3DObjTriangles(this.h) } }
 
     // ---- triangles of an empty object (coordinates in meters, counter clockwise seen from outside) ----
-    undefined AddTriangle(float x1 : any m, float y1 : any m, float z1 : any m, float x2 : any m, float y2 : any m, float z2 : any m, float x3 : any m, float y3 : any m, float z3 : any m) {
+    undefined AddTriangle(defined float x1 : any m, defined float y1 : any m, defined float z1 : any m, defined float x2 : any m, defined float y2 : any m, defined float z2 : any m, defined float x3 : any m, defined float y3 : any m, defined float z3 : any m) {
         if (!(__S3DObjCorner(this.h, S3D.Length(x1), S3D.Length(y1), S3D.Length(z1)) && __S3DObjCorner(this.h, S3D.Length(x2), S3D.Length(y2), S3D.Length(z2))
             && __S3DObjCorner(this.h, S3D.Length(x3), S3D.Length(y3), S3D.Length(z3)))) {
             throw new Scene3DException("Only an empty object takes triangles.")
@@ -475,7 +478,7 @@ class Object {
 
 // The view of a camera on its scene, drawn into a framebuffer (in the colour mode Rgba).
 class Camera {
-    int h
+    defined int h
     Framebuffer framebuffer
     byte pixels[]
     byte clearBytes[]
@@ -493,14 +496,14 @@ class Camera {
     destruct() { __S3DFree(this.h) }
 
     Framebuffer Framebuffer { get { return this.framebuffer } }
-    float X : m { get { return __S3DGetF(this.h, 0) * 1m } set { __S3DSetF(this.h, 0, S3D.Length(value)) } }
-    float Y : m { get { return __S3DGetF(this.h, 1) * 1m } set { __S3DSetF(this.h, 1, S3D.Length(value)) } }
-    float Z : m { get { return __S3DGetF(this.h, 2) * 1m } set { __S3DSetF(this.h, 2, S3D.Length(value)) } }
+    defined float X : m { get { return __S3DGetF(this.h, 0) * 1m } set { __S3DSetF(this.h, 0, S3D.Length(value)) } }
+    defined float Y : m { get { return __S3DGetF(this.h, 1) * 1m } set { __S3DSetF(this.h, 1, S3D.Length(value)) } }
+    defined float Z : m { get { return __S3DGetF(this.h, 2) * 1m } set { __S3DSetF(this.h, 2, S3D.Length(value)) } }
     float RotationX : any { get { return S3D.Degrees(__S3DGetF(this.h, 3)) } set { __S3DSetF(this.h, 3, S3D.Angle(value)) } }
     float RotationY : any { get { return S3D.Degrees(__S3DGetF(this.h, 4)) } set { __S3DSetF(this.h, 4, S3D.Angle(value)) } }
     float RotationZ : any { get { return S3D.Degrees(__S3DGetF(this.h, 5)) } set { __S3DSetF(this.h, 5, S3D.Angle(value)) } }
     // The vertical angle of view (default 60deg).
-    float FieldOfView : any {
+    defined float FieldOfView : any {
         get { return S3D.Degrees(__S3DGetF(this.h, 6)) }
         set {
             var a = S3D.Angle(value)
@@ -509,19 +512,19 @@ class Camera {
         }
     }
     // What is nearer than Near or farther than Far is not drawn.
-    float Near : m { get { return __S3DGetF(this.h, 7) * 1m } set { __S3DSetF(this.h, 7, S3D.Length(value)) } }
-    float Far : m { get { return __S3DGetF(this.h, 8) * 1m } set { __S3DSetF(this.h, 8, S3D.Length(value)) } }
+    defined float Near : m { get { return __S3DGetF(this.h, 7) * 1m } set { __S3DSetF(this.h, 7, S3D.Length(value)) } }
+    defined float Far : m { get { return __S3DGetF(this.h, 8) * 1m } set { __S3DSetF(this.h, 8, S3D.Length(value)) } }
     // The colour of what no object covers (0xAABBGGRR).
-    int Background { get { return __S3DGetI(this.h, 0) } set { __S3DSetI(this.h, 0, value) } }
+    defined int Background { get { return __S3DGetI(this.h, 0) } set { __S3DSetI(this.h, 0, value) } }
     // true: with the scene's RenderMode.Hardware the pictures go straight from the GPU into the window that shows the framebuffer, without the way through the framebuffer.
     // The framebuffer is then cleared to transparent by Render: what the program draws into it afterwards is laid over the picture (a HUD). Where that is not possible (no GPU,
     // no window, a window system the GPU cannot draw into) the camera draws as without.
-    bool DirectDrawing { get { return __S3DGetB(this.h, 1) } set { __S3DSetI(this.h, 1, value) } }
+    defined bool DirectDrawing { get { return __S3DGetB(this.h, 1) } set { __S3DSetI(this.h, 1, value) } }
 
-    undefined SetPosition(float x : any m, float y : any m, float z : any m) { __S3DSetF3(this.h, 0, S3D.Length(x), S3D.Length(y), S3D.Length(z), false) }
+    undefined SetPosition(defined float x : any m, defined float y : any m, defined float z : any m) { __S3DSetF3(this.h, 0, S3D.Length(x), S3D.Length(y), S3D.Length(z), false) }
 
     // Turns the camera (pitch and yaw, no roll) towards a point.
-    undefined LookAt(float x : any m, float y : any m, float z : any m) { __S3DCamLookAt(this.h, S3D.Length(x), S3D.Length(y), S3D.Length(z)) }
+    undefined LookAt(defined float x : any m, defined float y : any m, defined float z : any m) { __S3DCamLookAt(this.h, S3D.Length(x), S3D.Length(y), S3D.Length(z)) }
 
     // Draws what the camera sees into its framebuffer.
     undefined Render() {
@@ -566,7 +569,7 @@ class Camera {
     }
 
     // The last picture went straight from the GPU into the window (DirectDrawing), not through the framebuffer.
-    bool DrewDirectly { get { return __S3DCamRenderer(this.h) == 2 } }
+    defined bool DrewDirectly { get { return __S3DCamRenderer(this.h) == 2 } }
 
     // Who drew the last picture: RenderMode.Software, RenderMode.Hardware (the scene asked for the hardware renderer and there is a GPU) or RenderMode.Fast.
     RenderMode LastRenderer {
@@ -581,7 +584,7 @@ class Camera {
 
 // The space: objects, cameras, lights and textures, each also reachable by a key.
 class Scene {
-    int h
+    defined int h
     List Objects
     List Cameras
     List Lights
@@ -600,37 +603,37 @@ class Scene {
 
     destruct() { __S3DFree(this.h) }
 
-    int AmbientColor { get { return __S3DGetI(this.h, 0) } set { __S3DSetI(this.h, 0, value) } }
-    float AmbientIntensity { get { return __S3DGetF(this.h, 0) } set { __S3DSetF(this.h, 0, value) } }
+    defined int AmbientColor { get { return __S3DGetI(this.h, 0) } set { __S3DSetI(this.h, 0, value) } }
+    defined float AmbientIntensity { get { return __S3DGetF(this.h, 0) } set { __S3DSetF(this.h, 0, value) } }
     // false: no shadows at all (faster).
-    bool Shadows { get { return __S3DGetB(this.h, 1) } set { __S3DSetI(this.h, 1, value) } }
+    defined bool Shadows { get { return __S3DGetB(this.h, 1) } set { __S3DSetI(this.h, 1, value) } }
     // The size of a shadow map in pixels (64 .. 4096): bigger is sharper and slower.
-    int ShadowResolution { get { return __S3DGetI(this.h, 2) } set { __S3DSetI(this.h, 2, value) } }
+    defined int ShadowResolution { get { return __S3DGetI(this.h, 2) } set { __S3DSetI(this.h, 2, value) } }
     // How many threads draw (0 = as many as the machine has, up to 8; 1 = one). The picture is the same for every number.
-    int Threads { get { return __S3DGetI(this.h, 3) } set { __S3DSetI(this.h, 3, value) } }
+    defined int Threads { get { return __S3DGetI(this.h, 3) } set { __S3DSetI(this.h, 3, value) } }
     // RenderMode.Software (default) or RenderMode.Hardware: the GPU draws (Vulkan), where there is one; else the software renderer.
     RenderMode Renderer { get { return __S3DGetI(this.h, 4)!RenderMode } set { __S3DSetI(this.h, 4, value!int) } }
 
     // ---- the effects on the whole picture ----
     // Fog: from `start` on, the picture goes into the colour, from `end` on it is all fog - also where no object is (the background). It hides the end of the
     // world and is cheap (Fast and Software; the GPU draws no fog yet). NoFog() takes it away.
-    undefined Fog(int color, float start : any m, float end : any m) {
+    undefined Fog(defined int color, defined float start : any m, defined float end : any m) {
         __S3DEffects()
         __S3DSetI(this.h, 5, color)
         __S3DSetF(this.h, 1, S3D.Length(start))
         __S3DSetF(this.h, 2, S3D.Length(end))
     }
     undefined NoFog() { __S3DSetF(this.h, 1, 0.0); __S3DSetF(this.h, 2, 0.0) }
-    int FogColor { get { return __S3DGetI(this.h, 5) } set { __S3DEffects(); __S3DSetI(this.h, 5, value) } }
-    float FogStart : m { get { return __S3DGetF(this.h, 1) * 1m } set { __S3DEffects(); __S3DSetF(this.h, 1, S3D.Length(value)) } }
-    float FogEnd : m { get { return __S3DGetF(this.h, 2) * 1m } set { __S3DEffects(); __S3DSetF(this.h, 2, S3D.Length(value)) } }
+    defined int FogColor { get { return __S3DGetI(this.h, 5) } set { __S3DEffects(); __S3DSetI(this.h, 5, value) } }
+    defined float FogStart : m { get { return __S3DGetF(this.h, 1) * 1m } set { __S3DEffects(); __S3DSetF(this.h, 1, S3D.Length(value)) } }
+    defined float FogEnd : m { get { return __S3DGetF(this.h, 2) * 1m } set { __S3DEffects(); __S3DSetF(this.h, 2, S3D.Length(value)) } }
     // The tint: the whole picture towards a colour by `amount` (0 nothing .. 1 all the colour): fading out (black), a flash (white), under water (blue).
-    undefined Tint(int color, float amount) { __S3DEffects(); __S3DSetI(this.h, 6, color); __S3DSetF(this.h, 3, amount) }
-    int TintColor { get { return __S3DGetI(this.h, 6) } set { __S3DEffects(); __S3DSetI(this.h, 6, value) } }
-    float TintAmount { get { return __S3DGetF(this.h, 3) } set { __S3DEffects(); __S3DSetF(this.h, 3, value) } }
+    undefined Tint(defined int color, defined float amount) { __S3DEffects(); __S3DSetI(this.h, 6, color); __S3DSetF(this.h, 3, amount) }
+    defined int TintColor { get { return __S3DGetI(this.h, 6) } set { __S3DEffects(); __S3DSetI(this.h, 6, value) } }
+    defined float TintAmount { get { return __S3DGetF(this.h, 3) } set { __S3DEffects(); __S3DSetF(this.h, 3, value) } }
 
     // The time goes on for every object of the scene (Object.Advance: animations, spin, texture scroll, particles) - once a frame: scene.Advance(16ms).
-    undefined Advance(float time : any s) { __S3DSceneAdvance(this.h, S3D.Seconds(time)) }
+    undefined Advance(defined float time : any s) { __S3DSceneAdvance(this.h, S3D.Seconds(time)) }
 
     // Adds an object, camera, light or texture (to Objects, Cameras, Lights or Textures); with a key the item can be fetched with Get(key). Returns the item.
     any Add(any item, string key = "") {

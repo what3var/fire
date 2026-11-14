@@ -80,8 +80,8 @@ class Device : IDevice {
     bool Shared() { return false }
 
     /// <summary>0 = Unavailable, 1 = Unchecked, 2 = Available.</summary>
-    int Availability() { return 2 }
-    int TestAvailability() { return this.Availability() }
+    defined int Availability() { return 2 }
+    defined int TestAvailability() { return this.Availability() }
 
     bool Connect() { return true }
     undefined Disconnect() { }
@@ -440,9 +440,9 @@ class DeviceManager {
 /// <summary>A serial port (or the loopback device `loopback:echo`): the devices of the platform - in the editor those of the editor's device manager, which stay
 /// connected after the program and whose packets the editor traces.</summary>
 class SerialPort : Device {
-    int handle
+    defined int handle
 
-    construct(Driver driver, int handle) : base(driver, __DEVPortName(handle)) {
+    construct(Driver driver, defined int handle) : base(driver, __DEVPortName(handle)) {
         this.handle = handle
     }
 
@@ -450,8 +450,8 @@ class SerialPort : Device {
     override bool Connected() { return __DEVIsConnected(this.handle) }
     override bool Shared() { return __DEVIsShared(this.handle) }
     override string PortName() { return __DEVPortName(this.handle) }
-    override int Availability() { return __DEVAvailability(this.handle) }
-    override int TestAvailability() { return __DEVTestAvailability(this.handle) }
+    override defined int Availability() { return __DEVAvailability(this.handle) }
+    override defined int TestAvailability() { return __DEVTestAvailability(this.handle) }
     override bool Connect() { return __DEVConnect(this.handle) }
     override undefined Disconnect() { __DEVDisconnect(this.handle) }
 

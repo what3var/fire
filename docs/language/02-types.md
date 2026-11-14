@@ -118,11 +118,19 @@ try { Stats.Mix(missing, 1) } catch (ArgumentException e) { print(e.message) }  
 - A field or variable declared `defined` without an initializer starts at zero (in its unit), `false`, the word 0 or the char 0.
 - A method declared `defined int` must return a number on every path: the end of its body (which would return `undefined`) is the exception.
 - The type checker warns (`TC022`) where something that may be `undefined` goes in - a parameter, field or uninitialized variable declared without
-  `defined`, the literal `undefined`. A local variable counts as defined while it was only given numbers (`int total = 0` above), so ordinary code
+  `defined`, the result of a method that returns `int` (not `defined int`), the literal `undefined`. A local variable counts as defined while it was only given numbers (`int total = 0` above), so ordinary code
   stays quiet. When you know better, say so with **`trust`**: `Stats.Mix(trust missing, 1)` - no warning (the VM still checks).
 
 Natively `defined` pays off: such parameters and return values are passed as plain C numbers, without packing them into values - on a 16-bit
 target the code of a small arithmetic method shrinks to a fraction.
+
+You do not have to write `defined` everywhere: the compiler **derives** it for the parameters and the return values of your own methods and
+constructors. A parameter declared `int` or `float` that every call gives a number (a literal, the result of an operator, a `defined` value, a
+parameter or a return that is derived itself, a default that is a number) is checked and passed like a `defined` one; so is a return value when
+every `return` gives a number and the method cannot run off its end. Nothing is derived for a method that something may call unseen: a call
+through a value of an unknown type (`any`), the method used as a value or named in a string, an override of a method of a package or the prelude,
+the constructors of a base class - and not at all in a program that imports `reflection`, in a plugin or module, or in a debug build.
+`FIRE_DERIVE_LOG=1` shows what was decided, `FIRE_NO_DERIVE=1` switches it off.
 
 ## The type checker: lax and strict
 

@@ -16,6 +16,11 @@ namespace fire.UI.Markup
             public required string Local { get; init; }
             /// <summary>The field that holds the element (named elements, and elements that are the target of a binding); null if there is none.</summary>
             public string? Field { get; set; }
+            /// <summary>An element with handlers that has no field: the field the handlers read it from (a lambda reaches the element through `this`, it
+            /// does not capture it - a capture would be a copy, ROADMAP_TASKS step 8); null if it needs none (or it is a part of a template).</summary>
+            public string? HandlerField { get; set; }
+            /// <summary>A part of a template (a data or control template): its handlers find it in `fxTemplateEls` (it is made again for each row).</summary>
+            public bool InTemplate { get; set; }
         }
 
         private sealed class Binding
@@ -148,6 +153,20 @@ namespace fire.UI.Markup
             if (document.Kind == MarkupRootKind.View) code.Line("UI.Panel view");
             if (preview) code.Line("List fxAll");
             foreach (var info in infos.Values.Where(i => i.Field != null)) code.Line($"{info.Def.Class} {info.Field}");
+            // (the elements the handlers reach through `this`: a field each, the parts of templates in one list)
+            {
+                var inTemplates = new HashSet<MarkupElement>();
+                void Mark(MarkupElement e) { inTemplates.Add(e); foreach (var c in e.Children) Mark(c); }
+                foreach (var t in document.DataTemplates) if (t.Root != null) Mark(t.Root);
+                foreach (var t in document.Templates) if (t.Root != null) Mark(t.Root);
+                foreach (var info in infos.Values.Where(i => i.Field == null && i.Def.Class.Length > 0 && i.Element.Handlers.Count > 0))
+                {
+                    if (inTemplates.Contains(info.Element)) { info.InTemplate = true; continue; }
+                    info.HandlerField = "fxEl_" + info.Local;
+                    code.Line($"{info.Def.Class} {info.HandlerField}");
+                }
+                if (!preview && infos.Values.Any(i => i.InTemplate)) code.Line("List fxTemplateEls");
+            }
             foreach (var style in document.Styles.Where(st => st.Key != null)) code.Line($"UI.Style fxStyle_{style.Key}");
             foreach (var template in document.Templates) code.Line($"UI.ControlTemplate fxTemplate_{template.Key}");
             foreach (var template in document.DataTemplates) code.Line($"UI.DataTemplate fxData_{template.Key}");
@@ -180,6 +199,7 @@ namespace fire.UI.Markup
                 if (preview) code.Line("this.ui.Add(this.view)");
             }
             if (preview) code.Line("this.fxAll = new List()");
+            if (!preview && infos.Values.Any(i => i.InTemplate)) code.Line("this.fxTemplateEls = new List()");
             foreach (var (key, type) in preview ? new List<(string Key, string Type)>() : converters) code.Line($"this.fxConv_{key} = new {type}()");
             foreach (var b in bindings) code.Line($"this.fxHandles{b.Index} = new List()");
 
@@ -349,11 +369,18 @@ namespace fire.UI.Markup
                 && !element.Children.Any(c => c.Tag == "Item"))
                 for (int row = 0; row < 3; row++) code.Line($"{local}.Add(\"\")");
 
+            if (!s_preview && element.Handlers.Count > 0)
+            {
+                if (info.HandlerField != null) code.Line($"this.{info.HandlerField} = {local}");
+                else if (info.InTemplate && info.Field == null) { code.Line($"var {local}At = this.fxTemplateEls.Count"); code.Line($"this.fxTemplateEls.Add({local})"); }
+            }
             foreach (var (eventName, handler, _) in s_preview ? new List<(string Event, string Handler, int Line)>() : element.Handlers)
             {
                 var args = info.Def.Event(eventName)!.Args;
                 string parameters = string.Join(", ", args);
-                code.Line($"{local}.{info.Def.Event(eventName)!.FieldName} = func ({parameters}) on this => {{ {handler}({local}{string.Concat(args.Select(a => ", " + a))}) }}");
+                // (the handler finds its element through `this` - a field, or its place in the list of the template parts)
+                string element0 = info.Field != null ? "this." + info.Field : info.HandlerField != null ? "this." + info.HandlerField : $"this.fxTemplateEls[(taking {local}At)]";
+                code.Line($"{local}.{info.Def.Event(eventName)!.FieldName} = func ({parameters}) on this => {{ {handler}({element0}{string.Concat(args.Select(a => ", " + a))}) }}");
             }
 
             foreach (var child in element.Children) EmitElement(code, infos, child, local, info.Def, errors, partBindings, templateTarget, dataItem);

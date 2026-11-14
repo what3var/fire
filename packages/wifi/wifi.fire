@@ -6,9 +6,9 @@ namespace WiFi {
 
     class WiFiException : Exception {
         string message
-        int code
+        defined int code
 
-        construct(string message, int code = 7) {
+        construct(string message, defined int code = 7) {
             this.message = message
             this.code = code
         }
@@ -53,19 +53,19 @@ namespace WiFi {
             if (code == 4) { throw new BusyException(message) }
             if (code == 6) { throw new UnsupportedException(message) }
             if (code == 8) { throw new AuthException(message) }
-            if (code == 9) { throw new TimeoutException(message) }
+            if (code == 9) { throw new WiFi.TimeoutException(message) }
             if (code == 10) { throw new NotConnectedException(message) }
             throw new WiFiException(message, code)
         }
 
-        static int Handle(int handle) {
+        static defined int Handle(defined int handle) {
             if (handle < 0) { Throw() }
             return handle
         }
     }
 
     class Clock {
-        static int Millis(any limit) {
+        static defined int Millis(any limit) {
             if (limit == undefined) { return -1 }
             var span = TimeSpan.Of(limit)
             var ms = span.Ticks / 10000
@@ -73,21 +73,21 @@ namespace WiFi {
             return ms
         }
 
-        static int Now() { return DateTime.UtcNow.Ticks }
+        static defined int Now() { return DateTime.UtcNow.Ticks }
 
         // The moment (ticks) a limit of `ms` ends, -1: never.
-        static int Deadline(int ms) {
+        static defined int Deadline(defined int ms) {
             if (ms < 0) { return -1 }
             return WiFi.Clock.Now() + ms * 10000
         }
 
-        static bool Expired(int deadline) {
+        static bool Expired(defined int deadline) {
             if (deadline < 0) { return false }
             return WiFi.Clock.Now() >= deadline
         }
 
         // A moment before the next question: 1 ms at first, up to 20 ms when it takes long (and not past the deadline).
-        static undefined Pause(int deadline, int tries) {
+        static undefined Pause(defined int deadline, defined int tries) {
             var ms = 1
             if (tries >= 3) { ms = 5 }
             if (tries >= 20) { ms = 20 }
@@ -126,11 +126,11 @@ namespace WiFi {
     class Network {
         string ssid
         string bssid
-        int rssi
-        int channel
-        int auth
+        defined int rssi
+        defined int channel
+        defined int auth
 
-        construct(string ssid, string bssid, int rssi, int channel, int auth) {
+        construct(string ssid, string bssid, defined int rssi, defined int channel, defined int auth) {
             this.ssid = ssid
             this.bssid = bssid
             this.rssi = rssi
@@ -144,10 +144,10 @@ namespace WiFi {
 
     // The station: joins a network.
     class Station {
-        int handle
+        defined int handle
         bool closed
         string name
-        int lastState
+        defined int lastState
         lambda<any> onState
 
         construct(string name = undefined) {
@@ -179,7 +179,7 @@ namespace WiFi {
                 var done = __WiFiScanStep(this.handle)
                 if (done == 1) { break }
                 if (done < 0) { WiFi.Errors.Throw() }
-                if (WiFi.Clock.Expired(deadline)) { throw new TimeoutException("The scan did not finish in time.") }
+                if (WiFi.Clock.Expired(deadline)) { throw new WiFi.TimeoutException("The scan did not finish in time.") }
                 WiFi.Clock.Pause(deadline, tries)
                 tries = tries + 1
             }
@@ -210,7 +210,7 @@ namespace WiFi {
                 if (s == 0) { throw new NotConnectedException("The connection was lost while joining.") }
                 if (WiFi.Clock.Expired(deadline)) {
                     __WiFiDisconnect(this.handle)
-                    throw new TimeoutException("Joining '" + ssid + "' did not finish in time.")
+                    throw new WiFi.TimeoutException("Joining '" + ssid + "' did not finish in time.")
                 }
                 WiFi.Clock.Pause(deadline, tries)
                 tries = tries + 1
@@ -225,7 +225,7 @@ namespace WiFi {
         }
 
         // WiFi.State.Idle / Connecting / Connected; a failed join throws the exception of the failure (NotFoundException, AuthException, ...).
-        int State {
+        defined int State {
             get {
                 this.Check()
                 var s = __WiFiConnectState(this.handle)
@@ -262,7 +262,7 @@ namespace WiFi {
         string Mac { get { return this.Text(2) } }
 
         // The signal strength of the joined network in dBm (0: not connected).
-        int Rssi {
+        defined int Rssi {
             get {
                 this.Check()
                 var r = __WiFiStationRssi(this.handle)
@@ -271,7 +271,7 @@ namespace WiFi {
             }
         }
 
-        string Text(int which) {
+        string Text(defined int which) {
             this.Check()
             var t = __WiFiStationText(this.handle, which)
             if (t == undefined) { WiFi.Errors.Throw() }
@@ -287,7 +287,7 @@ namespace WiFi {
 
     // The access point: the board is a network that others join.
     class AccessPoint {
-        int handle
+        defined int handle
         bool closed
         string name
 
@@ -309,7 +309,7 @@ namespace WiFi {
         }
 
         // Starts the network `ssid` (without a password: open; else 8 to 63 characters, WPA2) on a channel (1 .. 13) for up to `maxClients` stations (1 .. 10).
-        undefined Start(string ssid, string password = "", int channel = 1, int maxClients = 4) {
+        undefined Start(string ssid, string password = "", defined int channel = 1, defined int maxClients = 4) {
             this.Check()
             if (!__WiFiApStart(this.handle, ssid, password, channel, maxClients)) { WiFi.Errors.Throw() }
         }
@@ -333,7 +333,7 @@ namespace WiFi {
         string Mac { get { return this.Text(1) } }
 
         // How many stations are joined.
-        int Clients {
+        defined int Clients {
             get {
                 this.Check()
                 var n = __WiFiApClients(this.handle)
@@ -342,7 +342,7 @@ namespace WiFi {
             }
         }
 
-        string Text(int which) {
+        string Text(defined int which) {
             this.Check()
             var t = __WiFiApText(this.handle, which)
             if (t == undefined) { WiFi.Errors.Throw() }
@@ -359,7 +359,7 @@ namespace WiFi {
     // The simulated radio "sim" from the outside: the networks in the air (for tests, and to try a program without the board).
     class Sim {
         // Puts a network in the air: an empty password makes it open; a network of the same name is replaced.
-        static undefined AddNetwork(string ssid, string password = "", int rssi = -60, int channel = 1) {
+        static undefined AddNetwork(string ssid, string password = "", defined int rssi = -60, defined int channel = 1) {
             if (!__WiFiSimAddNetwork(ssid, password, rssi, channel)) { WiFi.Errors.Throw() }
         }
 
@@ -370,18 +370,18 @@ namespace WiFi {
         static undefined Drop() { __WiFiSimDrop() }
 
         // How many questions a join and a scan take to answer (default 2 and 1).
-        static undefined Delays(int joinQuestions, int scanQuestions) {
+        static undefined Delays(defined int joinQuestions, defined int scanQuestions) {
             if (!__WiFiSimDelays(joinQuestions, scanQuestions)) { WiFi.Errors.Throw() }
         }
 
         // A station joins the simulated access point; returns how many are joined now.
-        static int ClientJoins() {
+        static defined int ClientJoins() {
             var n = __WiFiSimApClients(1)
             if (n < 0) { WiFi.Errors.Throw() }
             return n
         }
 
-        static int ClientLeaves() {
+        static defined int ClientLeaves() {
             var n = __WiFiSimApClients(-1)
             if (n < 0) { WiFi.Errors.Throw() }
             return n

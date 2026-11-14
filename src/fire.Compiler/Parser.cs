@@ -129,7 +129,30 @@ namespace fire.Compiler
         /// "where" in the program parsing is currently taking place, without needing a separate
         /// tree pass afterwards).</summary>
         private string? _currentNamespace;
+        /// <summary>The namespace of a library's declarations outside of every `namespace` (ProcessedSource.Qualify); a `namespace` block of the library
+        /// is not put into it (`namespace Raser { ... }` in the library Raser.Core stays Raser).</summary>
+        private string? _implicitNamespace;
+        private int _namespaceDepth;
         private string? _currentClassName;
+
+        /// <summary>The namespaces of the imported libraries of each source (ProcessedSource.ImportNamespaces, by its index): the resolver finds their
+        /// names by the short name in expressions too.</summary>
+        [ThreadStatic] public static Dictionary<int, IReadOnlyList<string>>? SourceImportNamespaces;
+
+        /// <summary>The parser of a source: its `#using`s, its implicit namespace (a library), and the namespaces it imports noted for the resolver.</summary>
+        private static Parser ForSource(List<Token> tokens, ProcessedSource src, int sourceIndex)
+        {
+            var parser = new Parser(tokens) { _usingNamespaces = src.Usings, _sourceIndex = sourceIndex, _fileName = src.Name };
+            if (src.Qualify != null)
+            {
+                parser._currentNamespace = parser._implicitNamespace = src.Qualify;
+                var known = _declaredNamespaces ??= new HashSet<string>(StringComparer.Ordinal);
+                for (string? ns = src.Qualify; !string.IsNullOrEmpty(ns); ns = ns.Contains('.') ? ns.Substring(0, ns.LastIndexOf('.')) : null) known.Add(ns);
+            }
+            if (src.ImportNamespaces.Count > 0) (SourceImportNamespaces ??= new())[sourceIndex] = src.ImportNamespaces;
+            else SourceImportNamespaces?.Remove(sourceIndex);
+            return parser;
+        }
 
         /// <summary>`true` while the body of a GENERIC class
         /// is being parsed (see ParsePropertyBody: static auto-property).</summary>
@@ -233,11 +256,7 @@ namespace fire.Compiler
             var tokens = new Lexer(src.Source).Tokenize();
             _declaredNamespaces ??= new HashSet<string>(StringComparer.Ordinal);
             FindNamespaces(tokens, _declaredNamespaces);
-            var parser = new Parser(tokens);
-            parser._usingNamespaces = src.Usings;
-            parser._sourceIndex = sourceIndex;
-            parser._fileName = src.Name;
-            return parser.ParseProgram();
+            return ForSource(tokens, src, sourceIndex).ParseProgram();
         }
 
         public static List<Stmt> ParseMultiple(IReadOnlyList<ProcessedSource> sources)
@@ -248,6 +267,7 @@ namespace fire.Compiler
             var unitDecls = new List<(UnitDeclStmt Decl, string? File)>();
             var namespaces = new HashSet<string>(StringComparer.Ordinal);
             _declaredNamespaces = namespaces;
+            SourceImportNamespaces = null;
             for (int i = 0; i < sources.Count; i++)
             {
                 var src = sources[i];
@@ -270,12 +290,7 @@ namespace fire.Compiler
                 List<Stmt> stmts;
                 try
                 {
-                    var tokens = tokenLists[i];
-                    var parser = new Parser(tokens);
-                    parser._usingNamespaces = src.Usings;
-                    parser._sourceIndex = i;
-                    parser._fileName = src.Name;
-                    stmts = parser.ParseProgram();
+                    stmts = ForSource(tokenLists[i], src, i).ParseProgram();
                 }
                 catch (ParseException ex) when (src.Name != null && ex.FileName == null)
                 {
@@ -563,7 +578,7 @@ namespace fire.Compiler
         private IReadOnlyList<string> CurrentNamespaces() =>
             _currentNamespace == null
                 ? _usingNamespaces
-                : new[] { _currentNamespace }.Concat(_usingNamespaces).ToList();
+                : new OwnNamespaceList(new[] { _currentNamespace }.Concat(_usingNamespaces));
 
         /// <summary>Appends `simpleName` to the current namespace (SPEC
         /// "Namespaces") - `_currentNamespace + "." + simpleName`, or
@@ -868,6 +883,8 @@ namespace fire.Compiler
             if (Check(TokenType.LBracket) && PeekAt(1).Type == TokenType.Identifier && AttributesBeforeClass() is { } classAttributes) return classAttributes;
             if (Check(TokenType.Namespace)) return ParseNamespaceDecl();
             if (Check(TokenType.Actor)) return ParseActorDecl();
+            // `record Name { ... }`: `record` is a word only in front of a class head (no keyword - it stays a name everywhere else)
+            if (IsRecordStart()) return ParseRecordDecl();
             if (Check(TokenType.Interface)) return ParseInterfaceDecl();
             if (Check(TokenType.Identifier) && Peek().Lexeme == "inline" && PeekAt(1).Type == TokenType.Identifier && PeekAt(1).Lexeme == "c" && !PeekAt(1).NewlineBefore && PeekAt(2).Type != TokenType.Assign)
                 return ParseInlineCDecl();
@@ -1457,6 +1474,9 @@ namespace fire.Compiler
         private LambdaSignature ParseLambdaSignature(string? returnTypeName)
         {
             var paramTypes = new List<string>();
+            // `[R] lambda expression<T, ...>`: an expression tree (docs/ROADMAP_EXPRESSIONS.md)
+            bool expression = Check(TokenType.Identifier) && Peek().Lexeme == "expression" && PeekAt(1).Type == TokenType.Lt;
+            if (expression) Advance();
             if (Match(TokenType.Lt))
             {
                 if (!Check(TokenType.Gt))
@@ -1469,7 +1489,7 @@ namespace fire.Compiler
                 }
                 Expect(TokenType.Gt, "Expected '>' after the lambda parameter types");
             }
-            return new LambdaSignature(returnTypeName, paramTypes);
+            return new LambdaSignature(returnTypeName, paramTypes, IsExpression: expression);
         }
 
         /// <summary>Array declarator AFTER the identifier: one or more
@@ -1798,6 +1818,14 @@ namespace fire.Compiler
                 return new GlobalJobsDirective(_sourceIndex, line, mode);
             }
 
+            if (Check(TokenType.Identifier) && Peek().Lexeme == "endwait")
+            {
+                Advance();
+                var limit = ParseExpression();
+                ExpectStatementTerminator();
+                return new EndWaitDirective(_sourceIndex, line, limit);
+            }
+
             if (Check(TokenType.Identifier) && Peek().Lexeme == "timeout")
             {
                 Advance();
@@ -1810,7 +1838,7 @@ namespace fire.Compiler
             // Preprocessing.Preprocessor.ProcessInner/ProcessedSource) - a
             // '#using' line is already recognised there and removed from the text,
             // the parser never sees it any more. No case for it needed here any more.
-            throw Error($"Unknown preprocessor directive '#{Peek().Lexeme}' (known: '#extern \"libName\"', '#noshadow', '#nosync', '#globaljobs safepoints|sleep|sync', '#timeout value', '#lax', '#strict')", Peek());
+            throw Error($"Unknown preprocessor directive '#{Peek().Lexeme}' (known: '#extern \"libName\"', '#noshadow', '#nosync', '#globaljobs safepoints|sleep|sync', '#timeout value', '#endwait value', '#lax', '#strict')", Peek());
         }
 
         private Stmt ParseUnsafeStmt()
@@ -2044,7 +2072,7 @@ namespace fire.Compiler
             if (Check(TokenType.Identifier) && Peek().Lexeme == "global" && (PeekAt(1).Type == TokenType.LBrace || PeekAt(1).Type == TokenType.Taking || PeekAt(1).Type == TokenType.Handover))
                 return ParseFireGlobal(line);
 
-            var (takingCaptures, withVarName, withSource) = ParseFireTakingWithClauses();
+            var (takingCaptures, withVars) = ParseFireTakingWithClauses();
             var until = _clauseUntil;
             _captureUses.Add(new Dictionary<string, bool>());
             Stmt.BlockStmt body;
@@ -2061,7 +2089,7 @@ namespace fire.Compiler
                         throw Error($"'{name}' is captured with '{(takingCaptures[named].Handover ? "handover" : "taking")}' and written with '{(handover ? "handover" : "taking")}' in the block", Peek());
                     continue;
                 }
-                if (name == withVarName) continue;
+                if (withVars.Exists(w => w.VarName == name)) continue;
                 var capture = new FireTakingCapture(name, new IdentifierExpr(line, name), Handover: handover);
                 if (handover) takingCaptures.Add(capture);
                 else
@@ -2070,7 +2098,7 @@ namespace fire.Compiler
                     if (firstMoved < 0) takingCaptures.Add(capture); else takingCaptures.Insert(firstMoved, capture);
                 }
             }
-            return WithHandoverReset(new FireStmt(_sourceIndex, line, takingCaptures, withVarName, withSource, body, dedicated, until));
+            return WithHandoverReset(new FireStmt(_sourceIndex, line, takingCaptures, withVars, body, dedicated, until));
         }
 
         /// <summary>`fire handover x`: after the `fire` the sender's variable is `undefined` (it no longer owns the value) - desugared into
@@ -2151,7 +2179,10 @@ namespace fire.Compiler
 
         /// <summary>`on x [taking ...] { ... }`: the lambda of the block - its first parameter is the object under its own name (inside the block the name is
         /// the real object), then the copies - and the arguments.</summary>
-        private (LambdaExpr Lambda, List<Expr> Args) ParseOnBlock(string what)
+        private (LambdaExpr Lambda, List<Expr> Args) ParseOnBlock(string what) { var (lambda, args, _) = ParseOnBlockWith(what); return (lambda, args); }
+
+        /// <summary>`fire on window taking x with actorA, channelB { ... }`: also the `with` references (the last arguments; only for `fire on`).</summary>
+        private (LambdaExpr Lambda, List<Expr> Args, int WithCount) ParseOnBlockWith(string what)
         {
             var onTok = Advance();   // 'on'
             var target = ParseUnary();
@@ -2162,8 +2193,8 @@ namespace fire.Compiler
                 ThisExpr => throw Error($"'{what} on this' - name the object ('{what} on window')", onTok),
                 _ => throw Error($"'{what} on' expects the object a block runs on ('{what} on window {{ ... }}')", onTok),
             };
-            var (captures, withVarName, _) = ParseFireTakingWithClauses();
-            if (withVarName != null) throw Error($"'with' does not exist for '{what} on'", Peek());
+            var (captures, onWith) = ParseFireTakingWithClauses();
+            if (onWith.Count > 0 && what != "fire") throw Error($"'with' does not exist for '{what} on'", Peek());
             if (_clauseUntil != null) throw Error($"'until' does not exist for '{what} on' (the block runs in the main program)", Peek());
             if (captures.Any(c => c.Handover)) throw Error($"'handover' does not exist for '{what} on' (the block gets copies: use 'taking')", Peek());
             var body = ParseBlock();
@@ -2172,22 +2203,28 @@ namespace fire.Compiler
             parameters.AddRange(captures.Where(c => c.VarName != name).Select(c => new LambdaParam(c.VarName, null, new List<Expr?>())));
             var args = new List<Expr> { target };
             args.AddRange(captures.Where(c => c.VarName != name).Select(c => c.Source));
-            return (new LambdaExpr(onTok.Line, parameters, null, body, AutoCapture: false), args);
+            foreach (var with in onWith)
+            {
+                if (with.VarName == name || captures.Exists(c => c.VarName == with.VarName)) throw Error($"'{with.VarName}' is named twice in this '{what} on'", Peek());
+                parameters.Add(new LambdaParam(with.VarName, null, new List<Expr?>()));
+                args.Add(with.Source);
+            }
+            return (new LambdaExpr(onTok.Line, parameters, null, body, AutoCapture: false), args, onWith.Count);
         }
 
         /// <summary>`fire on window [taking x] { ... }`: a job of the main program (its group) - see Ast.PostGlobalStmt.OnTarget.</summary>
         private Stmt ParseFireOn(int line)
         {
-            var (lambda, args) = ParseOnBlock("fire");
-            return new PostGlobalStmt(_sourceIndex, line, lambda, args, OnTarget: true);
+            var (lambda, args, withCount) = ParseOnBlockWith("fire");
+            return new PostGlobalStmt(_sourceIndex, line, lambda, args, OnTarget: true, WithCount: withCount);
         }
 
         /// <summary>`fire global { ... } [taking X ...]` - siehe Ast.PostGlobalStmt.</summary>
         private Stmt ParseFireGlobal(int line)
         {
             Advance(); // 'global'
-            var (captures, withVarName, _) = ParseFireTakingWithClauses();
-            if (withVarName != null)
+            var (captures, globalWith) = ParseFireTakingWithClauses();
+            if (globalWith.Count > 0)
                 throw Error("'with' does not exist for 'fire global'", Peek());
             if (_clauseUntil != null)
                 throw Error("'until' does not exist for 'fire global' (a job of the main program)", Peek());
@@ -2202,11 +2239,10 @@ namespace fire.Compiler
         /// <summary>`taking X`/`with actorA`, in any order, `with`
         /// at most once, `taking` repeatable any number of times (see
         /// Ast.FireStmt.TakingCaptures documentation for the slot order).</summary>
-        private (List<FireTakingCapture> Taking, string? WithVarName, Expr? WithSource) ParseFireTakingWithClauses()
+        private (List<FireTakingCapture> Taking, List<FireWith> With) ParseFireTakingWithClauses()
         {
             var takingCaptures = new List<FireTakingCapture>();
-            string? withVarName = null;
-            Expr? withSource = null;
+            var withVars = new List<FireWith>();
 
             _clauseUntil = null;
             while (Check(TokenType.Taking) || Check(TokenType.Handover) || Check(TokenType.With) || IsUntilClause())
@@ -2235,18 +2271,20 @@ namespace fire.Compiler
                 }
                 else
                 {
-                    if (withVarName != null)
-                        throw Error("'with' was already used in this 'fire'", Peek());
+                    // `with actorA, channelB` (also `with a with b`): references the thread gets as they are
                     Advance();
-                    var nameTok = Expect(TokenType.Identifier, "Expected an identifier after 'with'");
-                    withVarName = nameTok.Lexeme;
-                    withSource = new IdentifierExpr(nameTok.Line, withVarName);
+                    do
+                    {
+                        var nameTok = Expect(TokenType.Identifier, "Expected an identifier after 'with'");
+                        if (withVars.Exists(w => w.VarName == nameTok.Lexeme)) throw Error($"'{nameTok.Lexeme}' is named twice after 'with'", nameTok);
+                        withVars.Add(new FireWith(nameTok.Lexeme, new IdentifierExpr(nameTok.Line, nameTok.Lexeme)));
+                    } while (Match(TokenType.Comma));
                 }
             }
 
             // the handovers after all copies (see Ast.FireTakingCapture.Handover: the slot order is the compiler's, the sources are plain variables)
             takingCaptures = takingCaptures.Where(c => !c.Handover).Concat(takingCaptures.Where(c => c.Handover)).ToList();
-            return (takingCaptures, withVarName, withSource);
+            return (takingCaptures, withVars);
         }
 
         /// <summary>`fire MethodA(args) [taking/with clauses]` (see
@@ -2272,7 +2310,7 @@ namespace fire.Compiler
             }
             Expect(TokenType.RParen, "Expected ')' after 'fire " + methodName + "(...)'");
 
-            var (explicitTaking, withVarName, withSource) = ParseFireTakingWithClauses();
+            var (explicitTaking, withVars) = ParseFireTakingWithClauses();
             var callUntil = _clauseUntil;
             ExpectStatementTerminator();
 
@@ -2296,7 +2334,7 @@ namespace fire.Compiler
             var callExpr = new CallExpr(line, new MemberExpr(line, new IdentifierExpr(line, thisCaptureName), methodName), argRefs);
             var body = new Stmt.BlockStmt(_sourceIndex, line, new List<Stmt> { new ExprStmt(_sourceIndex, line, callExpr) });
 
-            return WithHandoverReset(new FireStmt(_sourceIndex, line, allCaptures, withVarName, withSource, body, dedicated, callUntil));
+            return WithHandoverReset(new FireStmt(_sourceIndex, line, allCaptures, withVars, body, dedicated, callUntil));
         }
 
         /// <summary>`await Call(args) [taking x | handover x ...]` / `await [taking x | handover x ...] { ... return v }` (docs/ROADMAP_TASKS.md section 3).
@@ -2349,7 +2387,7 @@ namespace fire.Compiler
                         new("__fails", new TypeRef("any", null, 0), new List<Expr?>()),
                         new("__i", new TypeRef("int", null, 0), new List<Expr?>()),
                     };
-                    lambdas.Add(new LambdaExpr(at, parameters, null, body));
+                    lambdas.Add(new LambdaExpr(at, parameters, null, body, LendCaptures: true));
                 } while (Match(TokenType.Comma));
             }
             Expect(TokenType.RBracket, "Expected ']' after the calls of 'await [ ... ]'");
@@ -2387,8 +2425,8 @@ namespace fire.Compiler
             }
             if (Check(TokenType.Taking) || Check(TokenType.Handover) || Check(TokenType.LBrace))
             {
-                var (captures, withName, _) = ParseFireTakingWithClauses();
-                if (withName != null) throw Error("'with' does not exist for 'await' (an actor's method is awaited by calling it: 'await actor.Method()')", Peek());
+                var (captures, awaitWith) = ParseFireTakingWithClauses();
+                if (awaitWith.Count > 0) throw Error("'with' does not exist for 'await' (an actor's method is awaited by calling it: 'await actor.Method()')", Peek());
                 var blockUntil = _clauseUntil;
                 var body = ParseBlock();
                 var parameters = captures.Select(c => new LambdaParam(c.VarName, new TypeRef("any", null, 0), new List<Expr?>())).ToList();
@@ -2518,6 +2556,10 @@ namespace fire.Compiler
         // -----------------------------------------------------------
         private Stmt ParseClassDecl() => ParseClassOrActorDecl(isActor: false);
         private Stmt ParseActorDecl() => ParseClassOrActorDecl(isActor: true);
+        private Stmt ParseRecordDecl() => ParseClassOrActorDecl(isActor: false, isRecord: true);
+        /// <summary>`record Name {`, `record Name : IFoo {`, `record Name<T> {` (step 9: a record - its fields are written only while it is constructed).</summary>
+        private bool IsRecordStart() => Check(TokenType.Identifier) && Peek().Lexeme == "record" && PeekAt(1).Type == TokenType.Identifier
+            && PeekAt(2).Type is TokenType.LBrace or TokenType.Colon or TokenType.Lt;
 
         /// <summary>Common grammar for `class Name { ... }` and
         /// `actor Name { ... }` (see Ast.ClassDecl.IsActor documentation) - both
@@ -2531,13 +2573,14 @@ namespace fire.Compiler
         /// existing, ORIGINAL declaration untouched - which
         /// keyword one writes for the extension itself therefore
         /// plays no role.</summary>
-        private Stmt ParseClassOrActorDecl(bool isActor)
+        private Stmt ParseClassOrActorDecl(bool isActor, bool isRecord = false)
         {
             int line = Peek().Line;
             if (isActor) Expect(TokenType.Actor, "Expected 'actor'");
+            else if (isRecord) Advance();   // (`record`, see IsRecordStart)
             else Expect(TokenType.Class, "Expected 'class'");
 
-            if (Check(TokenType.Extends))
+            if (!isRecord && Check(TokenType.Extends))
                 return ParseClassExtensionDecl(line);
 
             string name = Expect(TokenType.Identifier, "Expected a class name").Lexeme;
@@ -2566,7 +2609,8 @@ namespace fire.Compiler
                     // `class Home : Command<IDevice>`: the type arguments are (as everywhere) not evaluated, only their COUNT chooses the generic
                     // class or the generic interface of this name (see GenericClassNames.ResolveNewTarget).
                     var baseTypeArgs = Check(TokenType.Lt) ? ParseTypeArgRefs() : null;
-                    baseRefs.Add(new TypeRef(baseName, null, 0, Namespaces: namespaces, TypeArgCount: baseTypeArgs?.Count ?? 0, TypeArgs: baseTypeArgs));
+                    // (`class Port : Port` in a namespace: the base is the other Port - a class of the own namespace does not win over itself)
+                    baseRefs.Add(new TypeRef(baseName, null, 0, Namespaces: baseName == name && namespaces is OwnNamespaceList ? namespaces.ToList() : namespaces, TypeArgCount: baseTypeArgs?.Count ?? 0, TypeArgs: baseTypeArgs));
                 } while (Match(TokenType.Comma));
             }
 
@@ -2604,7 +2648,7 @@ namespace fire.Compiler
             }
             Expect(TokenType.RBrace, "Expected '}' at the end of the class");
 
-            return new ClassDecl(_sourceIndex, line, QualifyDeclName(name), baseRefs, members, typeParams, IsActor: isActor);
+            return new ClassDecl(_sourceIndex, line, QualifyDeclName(name), baseRefs, members, typeParams, IsActor: isActor, IsRecord: isRecord);
         }
 
         /// <summary>`&lt;T1, T2, ...&gt;` directly after a class/method name -
@@ -2828,7 +2872,9 @@ namespace fire.Compiler
             Expect(TokenType.LBrace, "Expected '{' after the namespace name");
 
             string? savedNamespace = _currentNamespace;
-            _currentNamespace = _currentNamespace == null ? name : _currentNamespace + "." + name;
+            // (a block at the top level of a library's file: its own name, not inside the library's implicit namespace)
+            _currentNamespace = _currentNamespace == null || _namespaceDepth == 0 && _implicitNamespace != null ? name : _currentNamespace + "." + name;
+            _namespaceDepth++;
 
             var members = new List<Stmt>();
             while (!Check(TokenType.RBrace) && !Check(TokenType.Eof))
@@ -2838,6 +2884,7 @@ namespace fire.Compiler
             }
             Expect(TokenType.RBrace, "Expected '}' at the end of the namespace");
 
+            _namespaceDepth--;
             _currentNamespace = savedNamespace;
 
             return new NamespaceDecl(_sourceIndex, line, name, members);
@@ -2875,7 +2922,8 @@ namespace fire.Compiler
                 {
                     string baseName = ParseDottedName("interface names");
                     var baseTypeArgs = Check(TokenType.Lt) ? ParseTypeArgRefs() : null;
-                    baseRefs.Add(new TypeRef(baseName, null, 0, Namespaces: namespaces, TypeArgCount: baseTypeArgs?.Count ?? 0, TypeArgs: baseTypeArgs));
+                    // (`class Port : Port` in a namespace: the base is the other Port - a class of the own namespace does not win over itself)
+                    baseRefs.Add(new TypeRef(baseName, null, 0, Namespaces: baseName == name && namespaces is OwnNamespaceList ? namespaces.ToList() : namespaces, TypeArgCount: baseTypeArgs?.Count ?? 0, TypeArgs: baseTypeArgs));
                 } while (Match(TokenType.Comma));
             }
             var typeParams = typeParamNames.Count > 0 ? ParseWhereClauses(typeParamNames, line) : null;
@@ -3166,12 +3214,12 @@ namespace fire.Compiler
             List<AttributeDecl> attributes;
             try { attributes = ParseAttributes(); }
             catch (ParseException) { _pos = start; return null; }
-            if (attributes.Count == 0 || !(Check(TokenType.Class) || Check(TokenType.Actor)))
+            if (attributes.Count == 0 || !(Check(TokenType.Class) || Check(TokenType.Actor) || IsRecordStart()))
             {
                 _pos = start;
                 return null;
             }
-            var decl = (ClassDecl)(Check(TokenType.Class) ? ParseClassDecl() : ParseActorDecl());
+            var decl = (ClassDecl)(Check(TokenType.Class) ? ParseClassDecl() : IsRecordStart() ? ParseRecordDecl() : ParseActorDecl());
             return decl with { Attributes = attributes };
         }
 
@@ -3473,6 +3521,7 @@ namespace fire.Compiler
                 return "[]";
             }
             if (Check(TokenType.Lt) && PeekAt(1).Type == TokenType.Lt) { Advance(); Advance(); return "<<"; }
+            if (Check(TokenType.Gt) && PeekAt(1).Type == TokenType.Gt && PeekAt(2).Type == TokenType.Gt) { Advance(); Advance(); Advance(); return ">>>"; }
             if (Check(TokenType.Gt) && PeekAt(1).Type == TokenType.Gt) { Advance(); Advance(); return ">>"; }
             if (Match(TokenType.Plus)) return "+";
             if (Match(TokenType.Minus)) return "-";
@@ -3707,6 +3756,7 @@ namespace fire.Compiler
             TokenType.HashAssign => BinaryOp.BitXor,
             TokenType.ShlAssign => BinaryOp.ShiftLeft,
             TokenType.ShrAssign => BinaryOp.ShiftRight,
+            TokenType.UShrAssign => BinaryOp.ShiftRightLogical,
             _ => null,
         };
 
@@ -3840,7 +3890,13 @@ namespace fire.Compiler
                     }
                     else if (Match(TokenType.From))
                     {
-                        left = new IsFromExpr(line, left, ParseShift(), Transitive: false);
+                        // `x is from local` / `x is from global`: the owner is a scope (a variable of that name: `x is from (local)`)
+                        if (Check(TokenType.Identifier) && Peek().Lexeme is "local" or "global" && PeekAt(1).Type is not (TokenType.Dot or TokenType.LParen or TokenType.LBracket))
+                        {
+                            string place = Advance().Lexeme;
+                            left = new IsFromExpr(line, left, new LiteralExpr(line, Value.MakeUndefined()), Transitive: false, Place: place);
+                        }
+                        else left = new IsFromExpr(line, left, ParseShift(), Transitive: false);
                     }
                     else if (Match(TokenType.Under))
                     {
@@ -3884,6 +3940,13 @@ namespace fire.Compiler
                     int line = Peek().Line;
                     Advance(); Advance();
                     left = new BinaryExpr(line, BinaryOp.ShiftLeft, left, ParseAdditive());
+                }
+                else if (Check(TokenType.Gt) && PeekAt(1).Type == TokenType.Gt && PeekAt(2).Type == TokenType.Gt)
+                {
+                    // `>>>`: the logical shift (zeros come in at the top)
+                    int line = Peek().Line;
+                    Advance(); Advance(); Advance();
+                    left = new BinaryExpr(line, BinaryOp.ShiftRightLogical, left, ParseAdditive());
                 }
                 else if (Check(TokenType.Gt) && PeekAt(1).Type == TokenType.Gt)
                 {
@@ -3993,7 +4056,11 @@ namespace fire.Compiler
             if (Check(TokenType.Flat) || Check(TokenType.Copy))
             {
                 var copyTok = Advance();
-                return new UnaryExpr(copyTok.Line, copyTok.Type == TokenType.Flat ? UnaryOp.FlatCopy : UnaryOp.DeepCopy, ParseUnary());
+                var copyOp = copyTok.Type == TokenType.Flat ? UnaryOp.FlatCopy : UnaryOp.DeepCopy;
+                var copied = ParseUnary();
+                // `copy x with { ... }`: the copy of x, then the assignments (the postfix `x with { ... }` was read with the operand)
+                if (copied is WithExpr { Copy: null } plainWith) return plainWith with { Line = copyTok.Line, Copy = copyOp };
+                return new UnaryExpr(copyTok.Line, copyOp, copied);
             }
 
             // `trust x` (SPEC 8.10b): the developer vouches that x is not undefined - no warning where a `defined` value is expected, and a native
@@ -4048,9 +4115,41 @@ namespace fire.Compiler
         /// not an object).</summary>
         private Expr ParsePostfix()
         {
-            var expr = ParsePrimary();
+            var expr = ParsePostfixRest(ParsePrimary());
+            // `x with { .a = 1, .b = 2 }` (step 9): a changed copy - after `copy`/`flat` (see ParseUnary), or of a record without a word
+            while (Check(TokenType.With) && PeekAt(1).Type == TokenType.LBrace)
+            {
+                int line = Advance().Line;
+                Advance();   // {
+                var sets = new List<WithSet>();
+                while (!Check(TokenType.RBrace) && !Check(TokenType.Eof))
+                {
+                    var dot = Expect(TokenType.Dot, "Expected '.name = value' in 'with { ... }'");
+                    string name = Expect(TokenType.Identifier, "Expected the name of a field after '.' in 'with { ... }'").Lexeme;
+                    Expect(TokenType.Assign, "Expected '=' after the name of the field in 'with { ... }'");
+                    sets.Add(new WithSet(dot.Line, name, ParseExpression()));
+                    if (!Match(TokenType.Comma) && !Check(TokenType.RBrace) && !Peek().NewlineBefore) throw Error("Expected ',' or '}' in 'with { ... }'", Peek());
+                }
+                Expect(TokenType.RBrace, "Expected '}' at the end of 'with { ... }'");
+                expr = new WithExpr(line, expr, null, sets);
+            }
+            return expr;
+        }
+
+        private Expr ParsePostfixRest(Expr expr)
+        {
             while (LineContinues())
             {
+                if (Check(TokenType.QuestionDot) || Check(TokenType.QuestionQuestionDot))
+                {
+                    // `a?.b.c(x)`, `a??.M()`: the rest of the chain runs only when a is there (and has the member) - otherwise undefined
+                    var qTok = Advance();
+                    string member = Expect(TokenType.Identifier, $"Expected a name after '{qTok.Lexeme}'").Lexeme;
+                    var placeholder = new ConditionalTargetExpr(qTok.Line);
+                    var inner = ParsePostfixRest(new MemberExpr(qTok.Line, placeholder, member));
+                    if (inner is IncDecExpr) throw Error($"'{qTok.Lexeme}' cannot be used with '++'/'--' (write an if)", qTok);
+                    return new ConditionalAccessExpr(qTok.Line, expr, inner, placeholder, qTok.Type == TokenType.QuestionQuestionDot, member);
+                }
                 if (Check(TokenType.Dot))
                 {
                     int line = Advance().Line;
@@ -4210,6 +4309,9 @@ namespace fire.Compiler
                     // 'Name' is actually registered that way).
                     Advance(); // 'try'
                     var innerCall = ParsePostfix();
+                    // `try x??.TakeTo(this)`: the `try` belongs to the call at the end of the conditional chain
+                    if (innerCall is ConditionalAccessExpr { Inner: CallExpr tryInner } tryConditional)
+                        return tryConditional with { Inner = new TryCallExpr(tok.Line, tryInner) };
                     if (innerCall is not CallExpr)
                         throw Error("Expected 'sync', 'process' or a function call after 'try'", tok);
                     return new TryCallExpr(tok.Line, innerCall);
@@ -4543,6 +4645,7 @@ namespace fire.Compiler
             Stmt.BlockStmt body;
             _captureUses.Add(new Dictionary<string, bool>());
             Dictionary<string, bool> uses;
+            bool expressionBody = !Check(TokenType.LBrace);
             try
             {
                 if (Check(TokenType.LBrace))
@@ -4559,7 +4662,7 @@ namespace fire.Compiler
             }
             finally { uses = PopCaptureUses(); }
 
-            return new LambdaExpr(line, parms, onTarget, body, CaptureModes: uses.Count > 0 ? uses : null);
+            return new LambdaExpr(line, parms, onTarget, body, CaptureModes: uses.Count > 0 ? uses : null, ExpressionBody: expressionBody);
         }
 
         // -----------------------------------------------------------
@@ -4606,7 +4709,15 @@ namespace fire.Compiler
         /// that binary operators, assignment and the postfix chain do not
         /// accidentally read on across a new statement in the next line
         /// (it must not).</summary>
-        private bool LineContinues() => _bracketDepth > 0 || !Peek().NewlineBefore;
+        private bool LineContinues() => _bracketDepth > 0 || !Peek().NewlineBefore || ContinuesAtLineStart(Peek().Type);
+
+        /// <summary>A token that cannot start a statement and so, at the start of a line, goes on with the expression of the line before (a fluent chain
+        /// `.Where(...)` / `?.Name`, a binary operator, the `?` of a condition) - not `++`/`--` (a statement of their own), not `*` (`*p = 1` writes through a
+        /// pointer), not `&` (an address), `!`, `~`, `(`, `[` (they start an expression), `#` (a directive) or an assignment. In the body of a `with` block a
+        /// `.` at the start of a line is its member (`.x = 10`), a new statement.</summary>
+        private bool ContinuesAtLineStart(TokenType type) => type == TokenType.Dot && _withVarStack.Count == 0 || type is TokenType.QuestionDot or TokenType.QuestionQuestionDot
+            or TokenType.And or TokenType.Or or TokenType.Plus or TokenType.Minus or TokenType.Slash or TokenType.Percent or TokenType.Caret or TokenType.Pipe
+            or TokenType.Eq or TokenType.NotEq or TokenType.Lt or TokenType.LtEq or TokenType.Gt or TokenType.GtEq or TokenType.Question;
 
         /// <summary>Enforces the statement separation rule: between two statements
         /// there must be a ';' or a line break. End of block ('}') and end of file
@@ -4624,6 +4735,13 @@ namespace fire.Compiler
         }
 
         private static ParseException Error(string message, Token at) =>
-            new(message, at.Line, at.Column);
+            new(message + KeywordHint(message, at), at.Line, at.Column);
+
+        /// <summary>Where a name is expected and a keyword stands (`int where = 3`, `F(int from)`, `var base = 1`): says so - otherwise "Expected a
+        /// variable name" leaves one wondering what is wrong with `where`.</summary>
+        private static string KeywordHint(string message, Token at) =>
+            at.Type != TokenType.Identifier && Lexer.IsKeyword(at.Lexeme) && message.StartsWith("Expected", StringComparison.Ordinal)
+            && (message.Contains("name", StringComparison.Ordinal) || message.Contains("identifier", StringComparison.Ordinal))
+                ? $" ('{at.Lexeme}'{ErrorCatalog.KeywordHintTail}" : "";
     }
 }

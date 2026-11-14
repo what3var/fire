@@ -26,7 +26,7 @@ namespace fire.Standard
         /// `string` and `char` (`class extends string { ... }`, SPEC 5.5.1/8.12), which are generated from the
         /// method tables in <see cref="StringMethods"/>/<see cref="CharMethods"/>,
         /// so that the method IDs in the fire text do not have to be maintained by hand.</summary>
-        public static readonly string Source = CoreSource + StringMethods.PreludeSource + CharMethods.PreludeSource + ResourceMethods.PreludeSource + MathMethods.PreludeSource + EnvironmentMethods.PreludeSource + LibraryMethods.PreludeSource;
+        public static readonly string Source = CoreSource + StringMethods.PreludeSource + CharMethods.PreludeSource + ResourceMethods.PreludeSource + MathMethods.PreludeSource + EnvironmentMethods.PreludeSource + LibraryMethods.PreludeSource + BitsMethods.PreludeSource;
 
         private const string CoreSource = """
             /// The base class of all exceptions (SPEC 7.1): it carries a `message`. Own exception classes derive from it (`class NotFound : Exception { }`);
@@ -107,6 +107,532 @@ namespace fire.Standard
                 bool IsCancelled { get { return __cancel_state(this.node) != 0 } }
                 undefined Cancel() { __cancel_cancel(this.node) }
                 undefined CancelAfter(any time) { __cancel_after(this.node, time) }
+            }
+
+            /// A value that another task delivers (docs/ROADMAP_TASKS.md section 6): `Set(value)` - the first `Set` or `Fail` counts, the Completion keeps a
+            /// copy -, `Fail(exception)`, `IsDone`; `Wait(limit)` waits until it is there and returns a copy of the value (or throws a copy of the exception).
+            /// A wait follows the token of the task (`until`, cancelling) and ends with a TimeoutException after `limit`. A Completion is never copied:
+            /// `Share()` gives another one on the same value, for another task (`fire handover s { s.Set(1) }`, the argument of an actor's method).
+            [NoCopy]
+            class Completion {
+                int node = 0
+                construct() { this.node = __completion_new() }
+                destruct() { __completion_release(this.node) }
+                Completion Share() {
+                    var c = new Completion()
+                    __completion_release(c.node)
+                    c.node = __completion_ref(this.node)
+                    return c
+                }
+                bool IsDone { get { return __completion_done(this.node) } }
+                bool Set(any value) { return __completion_set(this.node, value, false) }
+                bool Fail(Exception e) { return __completion_set(this.node, e, true) }
+                any Wait(any limit = undefined) { return __completion_wait(this.node, limit) }
+            }
+
+            // A queue between threads (docs/ROADMAP_TASKS.md step 9): `Send` waits while it is full, `Receive` while it is empty (both serve meanwhile);
+            // a closed and empty channel gives undefined (`foreach` ends). A thread gets it with `fire with ch` - an end of its own on the same queue.
+            // A value goes as it is; an object, an array or a record only fresh (`new`, the result of a call), copied (`copy x`) or taken (`take x`): it
+            // belongs to the channel while it travels, to the receiver after Receive. The channel closes when the one that made it ends. A channel is never
+            // copied (`fire taking ch` is the ArgumentException): it goes to a thread with `fire with`.
+            /// One end of a channel that sends A and receives B - what every channel offers: a two-way end of Channel.Pair<A, B> (ChannelEnd<A, B>), and
+            /// (as IChannel<T>, both directions the same type) Channel<T> between threads, Net.Channel<T> (`#import "net.channel"`) between programs.
+            interface IChannelEnd<A, B> : IEnumerable<B> {
+                bool Send(A value)
+                B Receive(any limit = undefined)
+                B TryReceive()
+                undefined Close()
+                bool IsClosed { get; }
+                int Count { get; }
+            }
+
+            /// A channel that sends and receives T: Channel<T>, Net.Channel<T> - code that takes an IChannel<T> works with both (and with an end of
+            /// Channel.Pair<T, T>, which is an IChannelEnd<T, T>).
+            interface IChannel<T> : IChannelEnd<T, T> {
+            }
+
+            [NoCopy]
+            class Channel<T> : IChannel<T> {
+                int node = 0
+                bool original = true
+                construct(int capacity = 16) { this.node = __chan_new(capacity) }
+                destruct() {
+                    if (this.original) { __chan_close(this.node) }
+                    __chan_release(this.node)
+                }
+                // (an end of its own on the same queue: what `fire with` gives a thread)
+                Channel<T> __End() {
+                    var c = new Channel<T>(1)
+                    __chan_release(c.node)
+                    c.node = __chan_ref(this.node)
+                    c.original = false
+                    return c
+                }
+                bool Send(T value) { return __chan_send(this.node, value, value is from local) }
+                T Receive(any limit = undefined) { return __chan_receive(this.node, limit, true) }
+                T TryReceive() { return __chan_receive(this.node, undefined, false) }
+                undefined Close() { __chan_close(this.node) }
+                bool IsClosed { get { return __chan_closed(this.node) } }
+                int Count { get { return __chan_count(this.node) } }
+                IEnumerator<T> GetEnumerator() { return new ChannelIter<T>(this) }
+                // Two directions: the end that sends A and receives B (`.Other()` gives the end that sends B and receives A).
+                static ChannelEnd<A, B> Pair<A, B>(int capacity = 16) { return new ChannelEnd<A, B>(new Channel<A>(capacity), new Channel<B>(capacity)) }
+            }
+
+            // One end of a two-way channel (Channel.Pair): Send goes to the other end, Receive takes what the other end sent. Like a channel it goes to a
+            // thread with `fire with` (an end of its own) and is never copied; Close ends this end's direction.
+            [NoCopy]
+            class ChannelEnd<A, B> : IChannelEnd<A, B> {
+                Channel<A> outgoing
+                Channel<B> incoming
+                construct(Channel<A> o, Channel<B> i) { this.outgoing = take o; this.incoming = take i }
+                bool Send(A value) { return this.outgoing.Send(try take value) }
+                B Receive(any limit = undefined) { return this.incoming.Receive(limit) }
+                B TryReceive() { return this.incoming.TryReceive() }
+                undefined Close() { this.outgoing.Close() }
+                bool IsClosed { get { return this.incoming.IsClosed } }
+                int Count { get { return this.incoming.Count } }
+                ChannelEnd<B, A> Other() { return new ChannelEnd<B, A>(this.incoming.__End(), this.outgoing.__End()) }
+                ChannelEnd<A, B> __End() { return new ChannelEnd<A, B>(this.outgoing.__End(), this.incoming.__End()) }
+                IEnumerator<B> GetEnumerator() { return this.incoming.GetEnumerator() }
+            }
+
+            // ---- Expression trees (docs/ROADMAP_EXPRESSIONS.md): a lambda written at a call of a parameter `lambda expression<T>` arrives as a tree of
+            // these nodes - what the body reads, compares and calls - next to its compiled code (Invoke). The nodes do not change; ToString is the
+            // body in fire syntax; a visitor walks them.
+
+            /// A node of an expression tree: its kind ("Binary", "Member", ...) and the type the type checker found ("int", "Person", "any").
+            /// Equals is structural - the same shape: kinds, types, operators, names, constants; a Captured node by its name and type, not its value (a
+            /// translator caches the SQL of a shape: the same tree with other captured values has the same text). GetHashCode fits it (a Dictionary key).
+            class Expression : IEquatable {
+                string Kind
+                string Type
+                construct(string kind, string type) { this.Kind = kind; this.Type = type }
+                /// The same shape (see the class).
+                bool Equals(any other) {
+                    if (!(other is of Expression)) { return false }
+                    if (other.Kind != this.Kind || other.Type != this.Type || other.__Shape() != this.__Shape()) { return false }
+                    any mine = this.__Parts()
+                    any theirs = other.__Parts()
+                    if (mine.length != theirs.length) { return false }
+                    for (int i = 0; i < mine.length; i++) {
+                        if (mine[i] == undefined) { if (theirs[i] != undefined) { return false } }
+                        else if (!mine[i].Equals(theirs[i])) { return false }
+                    }
+                    return true
+                }
+                int GetHashCode() {
+                    int h = __MathCall(15, this.Kind + "|" + this.Type + "|" + this.__Shape()) & 1073741823
+                    any parts = this.__Parts()
+                    for (int i = 0; i < parts.length; i++) {
+                        int part = 7
+                        if (parts[i] != undefined) { part = parts[i].GetHashCode() }
+                        h = (h * 31 + part) & 1073741823
+                    }
+                    return h
+                }
+                // (what a node is besides its kind, type and children - Equals and GetHashCode compare it; its children in order)
+                string __Shape() { return "" }
+                any __Parts() { return [] }
+                // (a new node of the same shape whose children went through the rewriter)
+                Expression __Rebuild(ExpressionRewriter r) { return copy this }
+
+                /// A new tree in which every part equal to `part` (Equals) is a copy of `replacement`. The result has no compiled code (Invoke: an
+                /// ArgumentException); a translator reads it.
+                static Expression Replace(Expression tree, Expression part, Expression replacement) {
+                    return new __ExpressionReplacer(part, replacement).Rewrite(tree)
+                }
+                /// `a && b` of two conditions with the same parameters (b's parameters become a's); its Invoke runs both compiled lambdas.
+                static LambdaExpression And(LambdaExpression a, LambdaExpression b) { return Expression.__Join("&&", a, b) }
+                /// `a || b` (as And).
+                static LambdaExpression Or(LambdaExpression a, LambdaExpression b) { return Expression.__Join("||", a, b) }
+                /// `!a`.
+                static LambdaExpression Not(LambdaExpression a) {
+                    var tree = new LambdaExpression(Expression.__CopyParameters(a), new UnaryExpression("!", new ExpressionRewriter().Rewrite(a.Body), "bool"), "bool")
+                    any fa = copy a.Compiled
+                    if (fa != undefined) {
+                        if (a.Parameters.length == 1) { tree.Compiled = (any x) => !(handover fa)(x) }
+                        else if (a.Parameters.length == 2) { tree.Compiled = (any x, any y) => !(handover fa)(x, y) }
+                    }
+                    return tree
+                }
+                static LambdaExpression __Join(string op, LambdaExpression a, LambdaExpression b) {
+                    if (a.Parameters.length != b.Parameters.length) {
+                        throw new ArgumentException("Expression." + (op == "&&" ? "And" : "Or") + ": the conditions take " + a.Parameters.length + " and " + b.Parameters.length + " parameter(s)")
+                    }
+                    var right = new __ExpressionParameterRenamer(b, a).Rewrite(b.Body)
+                    var tree = new LambdaExpression(Expression.__CopyParameters(a), new BinaryExpression(op, new ExpressionRewriter().Rewrite(a.Body), right, "bool"), "bool")
+                    any fa = copy a.Compiled
+                    any fb = copy b.Compiled
+                    if (fa != undefined && fb != undefined) {
+                        bool both = op == "&&"
+                        if (a.Parameters.length == 1) { tree.Compiled = (any x) => Expression.__Two((handover fa), (handover fb), (taking both), x, undefined, 1) }
+                        else if (a.Parameters.length == 2) { tree.Compiled = (any x, any y) => Expression.__Two((handover fa), (handover fb), (taking both), x, y, 2) }
+                    }
+                    return tree
+                }
+                static bool __Two(any fa, any fb, bool both, any x, any y, int n) {
+                    bool first = n == 1 ? fa(x) : fa(x, y)
+                    if (both && !first) { return false }
+                    if (!both && first) { return true }
+                    return n == 1 ? fb(x) : fb(x, y)
+                }
+                static any __CopyParameters(LambdaExpression a) {
+                    any ps = new any[a.Parameters.length]
+                    for (int i = 0; i < ps.length; i++) { ps[i] = copy a.Parameters[i] }
+                    return ps
+                }
+                /// The node for the visitor (ExpressionVisitor.VisitBinary, ...).
+                any Accept(ExpressionVisitor visitor) { return undefined }
+                any Visit(ExpressionVisitor visitor) { return this.Accept(visitor) }
+                string ToString() { return this.Kind }
+                /// The Captured nodes of the tree in their order (the values that do not depend on a parameter - the parameters of an SQL text).
+                List<CapturedExpression> Captures() {
+                    var found = new List<CapturedExpression>()
+                    var walker = new ExpressionCapturesWalker(found)
+                    this.Accept(walker)
+                    return found
+                }
+                // (a parameter `lambda expression<T>`: the call built the tree - a bare lambda came through a call the compiler did not know)
+                static bool __Require(any v, string name) {
+                    if (v == undefined || v is of LambdaExpression) { return true }
+                    throw new ArgumentException("'" + name + "' is an expression tree: it needs the lambda written at a call the compiler knows (a call through 'any' passes only the code)")
+                }
+                // (a value as fire writes it: texts in quotes)
+                static string __Text(any v) {
+                    if (v == undefined) { return "undefined" }
+                    if (v is of string) { return "\"" + v.Replace("\\", "\\\\").Replace("\"", "\\\"").Replace("\n", "\\n") + "\"" }
+                    if (v is of bool) { if (v) { return "true" } return "false" }
+                    return "" + v
+                }
+                static any __Copy(any items) {
+                    any parts = new any[items.length]
+                    for (int i = 0; i < items.length; i++) { parts[i] = items[i] }
+                    return parts
+                }
+                static string __List(any items) {
+                    string text = ""
+                    for (int i = 0; i < items.length; i++) {
+                        if (i > 0) { text = text + ", " }
+                        text = text + items[i].ToString()
+                    }
+                    return text
+                }
+            }
+
+            /// The lambda: its parameters and its body; Invoke runs the compiled lambda (a nested lambda of a tree has none: Compiled is undefined).
+            class LambdaExpression : Expression {
+                ParameterExpression Parameters[]
+                Expression Body
+                string ResultType
+                any Compiled
+                construct(any parameters, Expression body, string resultType) : base("Lambda", resultType) {
+                    this.Parameters = take parameters
+                    this.Body = take body
+                    this.ResultType = resultType
+                }
+                // (the compiled lambda of the call - the compiler hands it on right after the tree)
+                LambdaExpression __Attach(any compiled) { this.Compiled = try take compiled; return this }
+                override string __Shape() { return this.Parameters.length + ":" + this.ResultType }
+                override any __Parts() {
+                    any parts = new any[this.Parameters.length + 1]
+                    for (int i = 0; i < this.Parameters.length; i++) { parts[i] = this.Parameters[i] }
+                    parts[this.Parameters.length] = this.Body
+                    return parts
+                }
+                override Expression __Rebuild(ExpressionRewriter r) {
+                    any ps = new any[this.Parameters.length]
+                    for (int i = 0; i < ps.length; i++) { ps[i] = r.Rewrite(this.Parameters[i]) }
+                    return new LambdaExpression(take ps, r.Rewrite(this.Body), this.ResultType)
+                }
+                override any Accept(ExpressionVisitor visitor) { return visitor.VisitLambda(this) }
+                override string ToString() {
+                    string body = this.Body.ToString()
+                    if (this.Parameters.length == 1) { return this.Parameters[0].Name + " => " + body }
+                    return "(" + Expression.__List(this.Parameters) + ") => " + body
+                }
+                /// The compiled lambda with these arguments.
+                any Invoke(any a = undefined, any b = undefined, any c = undefined) {
+                    any f = this.Compiled
+                    if (f == undefined) { throw new ArgumentException("This lambda of an expression tree has no compiled code: a nested lambda (invoke the tree around it), or a tree made by Expression.Replace or an ExpressionRewriter.") }
+                    int n = this.Parameters.length
+                    if (n == 0) { return f() }
+                    if (n == 1) { return f(a) }
+                    if (n == 2) { return f(a, b) }
+                    return f(a, b, c)
+                }
+                /// The compiled lambda itself.
+                any Compile() { return this.Compiled }
+            }
+
+            class ParameterExpression : Expression {
+                string Name
+                int Index
+                construct(string name, int index, string type) : base("Parameter", type) { this.Name = name; this.Index = index }
+                override any Accept(ExpressionVisitor visitor) { return visitor.VisitParameter(this) }
+                // (a parameter by its place, not its name: `p => p.age` and `x => x.age` have the same shape)
+                override string __Shape() { return "" + this.Index }
+                override string ToString() { return this.Name }
+            }
+
+            /// `p.age`: a field or a property of what Target gives.
+            class MemberExpression : Expression {
+                Expression Target
+                string Name
+                bool IsField
+                bool IsProperty
+                construct(Expression target, string name, string type, bool isField, bool isProperty) : base("Member", type) {
+                    this.Target = take target
+                    this.Name = name
+                    this.IsField = isField
+                    this.IsProperty = isProperty
+                }
+                override any Accept(ExpressionVisitor visitor) { return visitor.VisitMember(this) }
+                override string ToString() { return this.Target.ToString() + "." + this.Name }
+                override string __Shape() { return this.Name + ":" + this.IsField + ":" + this.IsProperty }
+                override any __Parts() { return [this.Target] }
+                override Expression __Rebuild(ExpressionRewriter r) { return new MemberExpression(r.Rewrite(this.Target), this.Name, this.Type, this.IsField, this.IsProperty) }
+            }
+
+            /// A literal: `18`, `"A"`, `true`, `undefined`, `5m`.
+            class ConstantExpression : Expression {
+                any Value
+                construct(any value, string type) : base("Constant", type) { this.Value = try take value }
+                override any Accept(ExpressionVisitor visitor) { return visitor.VisitConstant(this) }
+                override string ToString() { return Expression.__Text(this.Value) }
+                override string __Shape() { return Expression.__Text(this.Value) }
+            }
+
+            /// What does not depend on a parameter - a variable, a field, a member of one, a call: its value when the tree was made.
+            class CapturedExpression : Expression {
+                string Name
+                any Value
+                construct(string name, any value, string type) : base("Captured", type) { this.Name = name; this.Value = try take value }
+                override any Accept(ExpressionVisitor visitor) { return visitor.VisitCaptured(this) }
+                override string ToString() { return this.Name }
+                // (by its name: the value is what changes from call to call)
+                override string __Shape() { return this.Name }
+            }
+
+            /// `!x`, `-x`.
+            class UnaryExpression : Expression {
+                string Op
+                Expression Operand
+                construct(string op, Expression operand, string type) : base("Unary", type) { this.Op = op; this.Operand = take operand }
+                override any Accept(ExpressionVisitor visitor) { return visitor.VisitUnary(this) }
+                override string ToString() { return this.Op + this.Operand.ToString() }
+                override string __Shape() { return this.Op }
+                override any __Parts() { return [this.Operand] }
+                override Expression __Rebuild(ExpressionRewriter r) { return new UnaryExpression(this.Op, r.Rewrite(this.Operand), this.Type) }
+            }
+
+            /// `a op b` (`==` `!=` `<` `<=` `>` `>=` `&&` `||` `+` `-` `*` `/` `%` `??`, ...).
+            class BinaryExpression : Expression {
+                string Op
+                Expression Left
+                Expression Right
+                construct(string op, Expression left, Expression right, string type) : base("Binary", type) {
+                    this.Op = op
+                    this.Left = take left
+                    this.Right = take right
+                }
+                override any Accept(ExpressionVisitor visitor) { return visitor.VisitBinary(this) }
+                override string ToString() { return "(" + this.Left.ToString() + " " + this.Op + " " + this.Right.ToString() + ")" }
+                override string __Shape() { return this.Op }
+                override any __Parts() { return [this.Left, this.Right] }
+                override Expression __Rebuild(ExpressionRewriter r) { return new BinaryExpression(this.Op, r.Rewrite(this.Left), r.Rewrite(this.Right), this.Type) }
+            }
+
+            /// `test ? a : b`.
+            class ConditionalExpression : Expression {
+                Expression Test
+                Expression IfTrue
+                Expression IfFalse
+                construct(Expression test, Expression ifTrue, Expression ifFalse, string type) : base("Conditional", type) {
+                    this.Test = take test
+                    this.IfTrue = take ifTrue
+                    this.IfFalse = take ifFalse
+                }
+                override any Accept(ExpressionVisitor visitor) { return visitor.VisitConditional(this) }
+                override any __Parts() { return [this.Test, this.IfTrue, this.IfFalse] }
+                override Expression __Rebuild(ExpressionRewriter r) { return new ConditionalExpression(r.Rewrite(this.Test), r.Rewrite(this.IfTrue), r.Rewrite(this.IfFalse), this.Type) }
+                override string ToString() { return "(" + this.Test.ToString() + " ? " + this.IfTrue.ToString() + " : " + this.IfFalse.ToString() + ")" }
+            }
+
+            /// `s.StartsWith(x)`, `M.Abs(x)` (Target undefined: a static method of DeclaringType).
+            class CallExpression : Expression {
+                Expression Target
+                string Method
+                string DeclaringType
+                Expression Arguments[]
+                construct(Expression target, string method, string declaringType, any arguments, string type) : base("Call", type) {
+                    this.Target = take target
+                    this.Method = method
+                    this.DeclaringType = declaringType
+                    this.Arguments = take arguments
+                }
+                override any Accept(ExpressionVisitor visitor) { return visitor.VisitCall(this) }
+                override string __Shape() { return this.Method + ":" + this.DeclaringType }
+                override any __Parts() {
+                    any parts = new any[this.Arguments.length + 1]
+                    parts[0] = this.Target
+                    for (int i = 0; i < this.Arguments.length; i++) { parts[i + 1] = this.Arguments[i] }
+                    return parts
+                }
+                override Expression __Rebuild(ExpressionRewriter r) {
+                    any args = new any[this.Arguments.length]
+                    for (int i = 0; i < args.length; i++) { args[i] = r.Rewrite(this.Arguments[i]) }
+                    any target = undefined
+                    if (this.Target != undefined) { target = r.Rewrite(this.Target) }
+                    return new CallExpression(take target, this.Method, this.DeclaringType, take args, this.Type)
+                }
+                override string ToString() {
+                    string target = this.DeclaringType
+                    if (this.Target != undefined) { target = this.Target.ToString() }
+                    return target + "." + this.Method + "(" + Expression.__List(this.Arguments) + ")"
+                }
+            }
+
+            /// `new T(arguments)`.
+            class NewExpression : Expression {
+                Expression Arguments[]
+                construct(any arguments, string type) : base("New", type) { this.Arguments = take arguments }
+                override any Accept(ExpressionVisitor visitor) { return visitor.VisitNew(this) }
+                override any __Parts() { return Expression.__Copy(this.Arguments) }
+                override Expression __Rebuild(ExpressionRewriter r) {
+                    any args = new any[this.Arguments.length]
+                    for (int i = 0; i < args.length; i++) { args[i] = r.Rewrite(this.Arguments[i]) }
+                    return new NewExpression(take args, this.Type)
+                }
+                override string ToString() { return "new " + this.Type + "(" + Expression.__List(this.Arguments) + ")" }
+            }
+
+            /// `x is of T`.
+            class IsTypeExpression : Expression {
+                Expression Operand
+                string TypeName
+                construct(Expression operand, string typeName) : base("IsType", "bool") { this.Operand = take operand; this.TypeName = typeName }
+                override any Accept(ExpressionVisitor visitor) { return visitor.VisitIsType(this) }
+                override string __Shape() { return this.TypeName }
+                override any __Parts() { return [this.Operand] }
+                override Expression __Rebuild(ExpressionRewriter r) { return new IsTypeExpression(r.Rewrite(this.Operand), this.TypeName) }
+                override string ToString() { return "(" + this.Operand.ToString() + " is of " + this.TypeName + ")" }
+            }
+
+            /// `row["name"]`, `arr[0]`.
+            class IndexExpression : Expression {
+                Expression Target
+                Expression Index
+                construct(Expression target, Expression index, string type) : base("Index", type) { this.Target = take target; this.Index = take index }
+                override any Accept(ExpressionVisitor visitor) { return visitor.VisitIndex(this) }
+                override any __Parts() { return [this.Target, this.Index] }
+                override Expression __Rebuild(ExpressionRewriter r) { return new IndexExpression(r.Rewrite(this.Target), r.Rewrite(this.Index), this.Type) }
+                override string ToString() { return this.Target.ToString() + "[" + this.Index.ToString() + "]" }
+            }
+
+            /// `x!int`.
+            class ConvertExpression : Expression {
+                Expression Operand
+                construct(Expression operand, string type) : base("Convert", type) { this.Operand = take operand }
+                override any Accept(ExpressionVisitor visitor) { return visitor.VisitConvert(this) }
+                override any __Parts() { return [this.Operand] }
+                override Expression __Rebuild(ExpressionRewriter r) { return new ConvertExpression(r.Rewrite(this.Operand), this.Type) }
+                override string ToString() { return this.Operand.ToString() + "!" + this.Type }
+            }
+
+            /// Walks a tree: one method per kind; by default it visits the children and returns undefined (a translator overrides what it knows).
+            class ExpressionVisitor {
+                any VisitLambda(LambdaExpression e) {
+                    for (int i = 0; i < e.Parameters.length; i++) { e.Parameters[i].Accept(this) }
+                    e.Body.Accept(this)
+                    return undefined
+                }
+                any VisitParameter(ParameterExpression e) { return undefined }
+                any VisitMember(MemberExpression e) { e.Target.Accept(this); return undefined }
+                any VisitConstant(ConstantExpression e) { return undefined }
+                any VisitCaptured(CapturedExpression e) { return undefined }
+                any VisitUnary(UnaryExpression e) { e.Operand.Accept(this); return undefined }
+                any VisitBinary(BinaryExpression e) { e.Left.Accept(this); e.Right.Accept(this); return undefined }
+                any VisitConditional(ConditionalExpression e) { e.Test.Accept(this); e.IfTrue.Accept(this); e.IfFalse.Accept(this); return undefined }
+                any VisitCall(CallExpression e) {
+                    if (e.Target != undefined) { e.Target.Accept(this) }
+                    for (int i = 0; i < e.Arguments.length; i++) { e.Arguments[i].Accept(this) }
+                    return undefined
+                }
+                any VisitNew(NewExpression e) {
+                    for (int i = 0; i < e.Arguments.length; i++) { e.Arguments[i].Accept(this) }
+                    return undefined
+                }
+                any VisitIsType(IsTypeExpression e) { e.Operand.Accept(this); return undefined }
+                any VisitIndex(IndexExpression e) { e.Target.Accept(this); e.Index.Accept(this); return undefined }
+                any VisitConvert(ConvertExpression e) { e.Operand.Accept(this); return undefined }
+            }
+
+            class ExpressionCapturesWalker : ExpressionVisitor {
+                any found
+                construct(any found) { this.found = found }
+                override any VisitCaptured(CapturedExpression e) { this.found.Add(e); return undefined }
+            }
+
+            /// Makes a new tree from a tree: Rewrite(e) gives a copy of `e` whose children went through Rewrite. Derive and override Rewrite to change
+            /// parts (`base.Rewrite(e)` for the rest). The new tree has no compiled code.
+            class ExpressionRewriter {
+                Expression Rewrite(Expression e) { return e.__Rebuild(this) }
+            }
+
+            class __ExpressionReplacer : ExpressionRewriter {
+                Expression part
+                Expression replacement
+                construct(Expression part, Expression replacement) { this.part = copy part; this.replacement = copy replacement }
+                override Expression Rewrite(Expression e) {
+                    if (e.Equals(this.part)) { return copy this.replacement }
+                    return base.Rewrite(e)
+                }
+            }
+
+            // (the parameters of `source` become those of `target` - by name; a nested lambda that names its own parameter so hides it)
+            class __ExpressionParameterRenamer : ExpressionRewriter {
+                any names
+                any to
+                construct(LambdaExpression source, LambdaExpression target) {
+                    this.names = new List<string>()
+                    this.to = new List<string>()
+                    for (int i = 0; i < source.Parameters.length; i++) { this.names.Add(source.Parameters[i].Name); this.to.Add(target.Parameters[i].Name) }
+                }
+                override Expression Rewrite(Expression e) {
+                    if (e is of ParameterExpression) {
+                        ParameterExpression p = e!ParameterExpression
+                        int at = this.names.IndexOf(p.Name)
+                        if (at >= 0) { return new ParameterExpression(this.to[at], p.Index, p.Type) }
+                        return base.Rewrite(e)
+                    }
+                    if (e is of LambdaExpression) {
+                        LambdaExpression l = e!LambdaExpression
+                        any hidden = new List<int>()
+                        any hiddenNames = new List<string>()
+                        for (int i = 0; i < l.Parameters.length; i++) {
+                            int at = this.names.IndexOf(l.Parameters[i].Name)
+                            if (at >= 0) { hidden.Add(at); hiddenNames.Add(this.names[at]); this.names[at] = "" }
+                        }
+                        any result = base.Rewrite(e)
+                        for (int i = 0; i < hidden.Count; i++) { this.names[hidden[i]] = hiddenNames[i] }
+                        return result
+                    }
+                    return base.Rewrite(e)
+                }
+            }
+
+            class ChannelIter<T> : IEnumerator<T> {
+                any ch
+                T current
+                construct(any ch) { this.ch = ch }
+                bool MoveNext() {
+                    T v = this.ch.Receive()
+                    if (v == undefined) { return false }
+                    this.current = try take v   // (a lent record stays its owner's)
+                    return true
+                }
+                T GetCurrent() { return this.current }
             }
 
             // (`until x`: a token, a source or a time limit as the node a task follows)
@@ -218,7 +744,7 @@ namespace fire.Standard
                 construct() { }
 
                 construct(lambda command) {
-                    this.Command = command
+                    this.Command = try take command   // (a fresh lambda belongs to the call: the command keeps it)
                 }
 
                 /// <summary>Calls the lambda `Command`; without a lambda nothing happens.</summary>
@@ -239,7 +765,7 @@ namespace fire.Standard
                 construct() { }
 
                 construct(lambda<T> command) {
-                    this.Command = command
+                    this.Command = try take command   // (a fresh lambda belongs to the call: the command keeps it)
                 }
 
                 /// <summary>Calls the lambda `Command` with the context; without a lambda nothing happens.</summary>
@@ -315,7 +841,7 @@ namespace fire.Standard
                 private Owns owns = Owns.Explicit
 
                 /// The number of elements.
-                int Count { get { return this.count } }
+                defined int Count { get { return this.count } }
 
                 construct() {
                     this.items = new T[8]
@@ -350,16 +876,15 @@ namespace fire.Standard
                     if (this.count >= this.items.length) {
                         this.Grow()
                     }
-                    if (value is of class) {
-                        if (this.owns.HasFlag(Owns.Values)) { value.TakeTo(this) } else { try value.TakeTo(this) }
-                    }
+                    // (it takes what belongs to the call - `??.`: a number has no TakeTo; with Owns.Values also an object or a lambda of someone else)
+                    if (this.owns.HasFlag(Owns.Values) && (value is of class || value is of lambda)) { value.TakeTo(this) } else { try value??.TakeTo(this) }
                     this.items[this.count] = value
                     this.count = this.count + 1
                 }
 
                 // an element that falls out: destroyed when the list owns its elements (Owns.Values) and this one
                 undefined DropElement(any value) {
-                    if (value is of class && this.owns.HasFlag(Owns.Values) && value is from this) { delete value }
+                    if (this.owns.HasFlag(Owns.Values) && value is from this) { delete value }
                 }
 
                 T operator[](int index) {
@@ -368,9 +893,8 @@ namespace fire.Standard
 
                 undefined operator[](int index, T value) {
                     any old = this.items[index]
-                    if (value is of class) {
-                        if (this.owns.HasFlag(Owns.Values)) { value.TakeTo(this) } else { try value.TakeTo(this) }
-                    }
+                    // (it takes what belongs to the call - `??.`: a number has no TakeTo; with Owns.Values also an object or a lambda of someone else)
+                    if (this.owns.HasFlag(Owns.Values) && (value is of class || value is of lambda)) { value.TakeTo(this) } else { try value??.TakeTo(this) }
                     this.items[index] = value
                     if (old != value) { this.DropElement(old) }
                 }
@@ -392,7 +916,7 @@ namespace fire.Standard
                 T TakeAt(int index) {
                     any value = this.items[index]
                     any taken = undefined   // (declared here: the call owns what `take` gives it, not the block of the `if`)
-                    if (value is of class && value is from this) { taken = take value }
+                    if (value is from this) { taken = take value }
                     this.RemoveAt(index)
                     if (taken != undefined) { return taken }
                     return value
@@ -408,9 +932,8 @@ namespace fire.Standard
                         this.items[i] = this.items[i - 1]
                         i = i - 1
                     }
-                    if (value is of class) {
-                        if (this.owns.HasFlag(Owns.Values)) { value.TakeTo(this) } else { try value.TakeTo(this) }
-                    }
+                    // (it takes what belongs to the call - `??.`: a number has no TakeTo; with Owns.Values also an object or a lambda of someone else)
+                    if (this.owns.HasFlag(Owns.Values) && (value is of class || value is of lambda)) { value.TakeTo(this) } else { try value??.TakeTo(this) }
                     this.items[index] = value
                     this.count = this.count + 1
                 }
@@ -426,6 +949,9 @@ namespace fire.Standard
                     }
                     return -1
                 }
+
+                // is `value` in the list (`==`, an object: the same one)?
+                bool Contains(T value) { return this.IndexOf(value) >= 0 }
 
                 // removes `value` (the first one); false if it is not in the list
                 bool Remove(T value) {
@@ -466,6 +992,51 @@ namespace fire.Standard
                 ListIter<T> GetEnumerator() {
                     return new ListIter<T>(this, this.count)
                 }
+
+                // sorts the elements by `<` (numbers, texts, a class with operator<); stable: equal elements keep their order
+                undefined Sort() { this.SortBy(undefined) }
+
+                // sorts the elements by `compare(a, b)`: below 0 - a comes first, 0 - equal (they keep their order), above 0 - b comes first
+                undefined Sort(int lambda<T, T> compare) { this.SortBy(compare) }
+
+                // (a merge sort from below: runs of 1, 2, 4, ... merged between the items and a second array, which goes away at the end; the elements
+                // stay the list's - only their places change)
+                private undefined SortBy(any compare) {
+                    int n = this.count
+                    if (n < 2) { return }
+                    any src = this.items
+                    any dst = new T[n]
+                    any spare = dst
+                    int width = 1
+                    while (width < n) {
+                        int lo = 0
+                        while (lo < n) {
+                            int mid = lo + width < n ? lo + width : n
+                            int hi = lo + 2 * width < n ? lo + 2 * width : n
+                            int a = lo
+                            int b = mid
+                            int k = lo
+                            while (k < hi) {
+                                bool right = a >= mid
+                                if (!right && b < hi) {
+                                    if (compare == undefined) { right = src[b] < src[a] } else { right = compare(src[a], src[b]) > 0 }
+                                }
+                                if (right) { dst[k] = src[b]; b = b + 1 } else { dst[k] = src[a]; a = a + 1 }
+                                k = k + 1
+                            }
+                            lo = hi
+                        }
+                        any swap = src
+                        src = dst
+                        dst = swap
+                        width = width * 2
+                    }
+                    // (the sorted run ended in the second array: back into the items)
+                    if (src != this.items) {
+                        for (int i = 0; i < n; i = i + 1) { this.items[i] = src[i] }
+                    }
+                    delete spare
+                }
             }
 
             // The table of Dictionary and HashSet: the entries in the order they came in (`keys`, `vals`, their hashes; `live` false for a removed one) and
@@ -484,7 +1055,7 @@ namespace fire.Standard
                 protected Owns owns
 
                 /// The number of entries.
-                int Count { get { return this.count } }
+                defined int Count { get { return this.count } }
 
                 construct(Owns owns) {
                     this.owns = owns
@@ -553,7 +1124,7 @@ namespace fire.Standard
 
                 // a key or value that falls out: destroyed when the table owns that part (`what`) and this object
                 undefined Drop(any x, Owns what) {
-                    if (x is of class && this.owns.HasFlag(what) && x is from this) { delete x }
+                    if (this.owns.HasFlag(what) && x is from this) { delete x }
                 }
 
                 // room for more entries: the live ones move to new arrays (in their order, without the removed ones)
@@ -691,12 +1262,10 @@ namespace fire.Standard
                 undefined Add(K key, V value) {
                     var h = this.HashOf(key)
                     if (this.Find(key, h) >= 0) { throw new ArgumentException("The key '" + key + "' is already in the dictionary.") }
-                    if (key is of class) {
-                        if (this.owns.HasFlag(Owns.Keys)) { key.TakeTo(this) } else { try key.TakeTo(this) }
-                    }
-                    if (value is of class) {
-                        if (this.owns.HasFlag(Owns.Values)) { value.TakeTo(this) } else { try value.TakeTo(this) }
-                    }
+                    // (it takes what belongs to the call - `??.`: a number has no TakeTo; with Owns.Keys also an object or a lambda of someone else)
+                    if (this.owns.HasFlag(Owns.Keys) && (key is of class || key is of lambda)) { key.TakeTo(this) } else { try key??.TakeTo(this) }
+                    // (it takes what belongs to the call - `??.`: a number has no TakeTo; with Owns.Values also an object or a lambda of someone else)
+                    if (this.owns.HasFlag(Owns.Values) && (value is of class || value is of lambda)) { value.TakeTo(this) } else { try value??.TakeTo(this) }
                     this.Insert(key, value, h)
                 }
 
@@ -711,18 +1280,16 @@ namespace fire.Standard
                 undefined operator[](K key, V value) {
                     var h = this.HashOf(key)
                     var at = this.Find(key, h)
-                    if (value is of class) {
-                        if (this.owns.HasFlag(Owns.Values)) { value.TakeTo(this) } else { try value.TakeTo(this) }
-                    }
+                    // (it takes what belongs to the call - `??.`: a number has no TakeTo; with Owns.Values also an object or a lambda of someone else)
+                    if (this.owns.HasFlag(Owns.Values) && (value is of class || value is of lambda)) { value.TakeTo(this) } else { try value??.TakeTo(this) }
                     if (at >= 0) {
                         any old = this.vals[at]
                         this.vals[at] = value
                         if (old != value) { this.Drop(old, Owns.Values) }
                         return
                     }
-                    if (key is of class) {
-                        if (this.owns.HasFlag(Owns.Keys)) { key.TakeTo(this) } else { try key.TakeTo(this) }
-                    }
+                    // (it takes what belongs to the call - `??.`: a number has no TakeTo; with Owns.Keys also an object or a lambda of someone else)
+                    if (this.owns.HasFlag(Owns.Keys) && (key is of class || key is of lambda)) { key.TakeTo(this) } else { try key??.TakeTo(this) }
                     this.Insert(key, value, h)
                 }
 
@@ -771,7 +1338,7 @@ namespace fire.Standard
                     this.Unlink(at)
                     this.Drop(k, Owns.Keys)
                     any taken = undefined   // (declared here: the call owns what `take` gives it, not the block of the `if`)
-                    if (v is of class && v is from this) {
+                    if (v is from this) {
                         taken = take v
                         return taken
                     }
@@ -813,9 +1380,8 @@ namespace fire.Standard
                 bool Add(T item) {
                     var h = this.HashOf(item)
                     if (this.Find(item, h) >= 0) { return false }
-                    if (item is of class) {
-                        if (this.owns.HasFlag(Owns.Values)) { item.TakeTo(this) } else { try item.TakeTo(this) }
-                    }
+                    // (it takes what belongs to the call - `??.`: a number has no TakeTo; with Owns.Values also an object or a lambda of someone else)
+                    if (this.owns.HasFlag(Owns.Values) && (item is of class || item is of lambda)) { item.TakeTo(this) } else { try item??.TakeTo(this) }
                     this.Insert(item, undefined, h)
                     return true
                 }
@@ -839,7 +1405,7 @@ namespace fire.Standard
                     any k = this.keys[at]
                     this.Unlink(at)
                     any taken = undefined   // (declared here: the call owns what `take` gives it, not the block of the `if`)
-                    if (k is of class && k is from this) {
+                    if (k is from this) {
                         taken = take k
                         return taken
                     }

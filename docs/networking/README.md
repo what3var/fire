@@ -1,10 +1,11 @@
 # Networking
 
-fire talks to the network with three packages, each imported on its own:
+fire talks to the network with these packages, each imported on its own:
 
 | Import | Package | What |
 | --- | --- | --- |
 | `#import "net"` | `fire-net` | TCP clients and servers, UDP, DNS - this page |
+| `#import "net.channel"` | `fire-net.channel` | `Net.Channel<T>`: a channel between programs over TCP, values as JSON, lent records - [Net.Channel](net-channel.md) |
 | `#import "http"` | `fire-http` | an HTTP/1.1 client and server, written in fire on top of `net` - [HTTP](http.md) |
 | `#import "tls"` | `fire-tls` | TLS 1.2/1.3 over a TCP connection; `http` uses it for `https://` - [TLS](tls.md) |
 | `#import "wifi"` | `fire-wifi` | the radio of a board: scan, join, access point - [WiFi](wifi.md) |
@@ -65,8 +66,11 @@ platform       fire_net_*            connect/listen/accept/send/recv/poll/resolv
 * **Handles, not objects:** a socket is an integer handle in a table of the bridge, like the streams of `io`. The fire classes own the handle (`Close()`, destructor closes it).
 * **Streams:** a connected TCP socket is an `IO.Stream` (`Read`, `Write`, `ReadByte`, ..., not seekable) so everything that works with streams works with the network
   (`IO.Stdio`, text readers, a future HTTP package). `UdpSocket` is message based: `SendTo(address, buffer)`, `ReceiveFrom(buffer)` returns the sender.
-* **Blocking with a timeout, and polling:** every call that waits takes an optional `TimeSpan` (`Read`, `Accept`, `Connect`, `ReceiveFrom`); `Available()` / `Poll(read, write, timeout)` ask without
-  waiting. Waiting is **not deaf** like `Sleep`: the fire code polls the natives (a timeout of 0) and sleeps 1 to 10 ms between the attempts - it never sits inside the library - so `terminate`, threads and the main queue keep working (THREADING_DESIGN.md section 7). No hidden background threads on small targets.
+* **Blocking with a timeout, and waiting:** every call that waits takes an optional `TimeSpan` (`Read`, `Accept`, `Connect`, `ReceiveFrom`); `Available()` / `Poll(read, write, timeout)` ask without
+  waiting. Waiting is **not deaf** like `Sleep`: the natives are only asked (a timeout of 0), never made to wait. Between two attempts the fire code waits with `__fd_wait` of the runtime: in a
+  program with fire threads a **poller thread** of the runtime (poll()/WSAPoll) wakes the task when the socket is ready - nobody polls, an idle connection costs nothing (docs/ROADMAP_HTTP.md step 0);
+  the wait follows the task's token (`until`, cancelling) and gives the worker to other tasks. Without fire threads, with TinyCC and on the boards it sleeps 1 to 10 ms between the attempts as before.
+  Either way `terminate`, threads and the main queue keep working (THREADING_DESIGN.md section 7). No hidden background threads on small targets.
 * **Errors:** `NetException` with a `code` (`Refused`, `TimedOut`, `Unreachable`, `AddressInUse`, `Closed`, `Unsupported`, ...), never a crash; an error text from the OS goes into `message`.
 * **Addresses:** `NetAddress` (IPv4 and IPv6, `Parse("10.0.0.5:80")`, `Dns.Resolve("example.org")` returns a list), and `"host:port"` strings accepted where an address is expected.
 * **Policy:** like `IoPolicy` for files, the host can restrict the network (allow nothing, allow loopback only, an allow list of hosts/ports); the editor and `forge` pass it. Default for a
@@ -83,6 +87,7 @@ Everything is in `namespace Net`. The package needs `io` and `time` (they come w
 | `Net.IConnection` (interface) | what a network connection can do, implemented by `Net.TcpClient` and `Tls.Stream`: it extends `IO.IStream` (`Read(buffer, offset, count)`, `Write(buffer, offset, count)`, `Flush()`, `Close()`) and has the properties `ReadTimeout`, `WriteTimeout` (`get`/`set`, milliseconds or a time like `5s`, `undefined` for no limit) and `RemoteHost`, `RemotePort`, `LocalHost`, `LocalPort` (`get`). Code that works with any connection (like `Http.Server`) takes a `Net.IConnection`; since it is an `IO.IStream`, it goes without a cast to code that only reads and writes (`IO.IStream s = connection`, a parameter of type `IO.IStream`). |
 | `Net.TcpListener(host, port, backlog = 16)` | host `""` listens on every interface, port 0 takes a free port: `Port`, `Host`; `Accept(timeout = undefined)` returns a `TcpClient` (`Net.TimeoutException` when the limit runs out), `TryAccept(timeout)` returns undefined instead, `Pending(timeout = 0)`, `Close()` |
 | `Net.UdpSocket(host = "", port = 0)` | `SendTo(buffer, offset, count, host, port)`, `SendTo(buffer, host, port)`, `SendString(text, host, port)`, `ReceiveFrom(buffer, offset, count, timeout = undefined)` returns the size of the datagram (a longer one is cut), the sender is `FromHost`/`FromPort`; `Port`, `Available` (size of the next datagram), `WaitReadable(timeout = 0)`, `Broadcast`, `Close()` |
+| `Net.SecureRandom` | random bytes of the operating system, for keys and tokens (not the `random` package): `Fill(buffer, offset = 0, count = -1)`, `Bytes(count)`, `Hex(count)` (2 * count hex digits). Linux and the other Unixes `/dev/urandom`, macOS `arc4random_buf`, Windows `RtlGenRandom`, ESP32 `esp_fill_random`; a `Net.NetException` (code 9) without a source |
 | `Net.Dns` | `Resolve(name)` returns a list of the addresses as text (IPv4 and IPv6; a literal address gives itself), `First(name)` |
 
 Errors: `Net.NetException` (`message`, `code`) and its subclasses `RefusedException` (3), `TimeoutException` (4), `ClosedException` (2 handle closed, 7 reset or ended, 12 not connected), `PermissionException` (8 the host's policy, 13 the operating system), `ResolveException` (10);

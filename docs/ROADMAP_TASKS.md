@@ -377,6 +377,15 @@ token of the running task.
   a source that follows its task, `CancelAfter`, `await actor.M() until`, `Detached`; ThreadSanitizer and AddressSanitizer clean (the given-up replies
   were a leak before the claim of who frees them).
 
+### Completion (built, for the HTTP server)
+
+A value that another task delivers - the counterpart of .NET's `TaskCompletionSource`, needed where an answer arrives later over another path (a JS call of
+an FXML page whose result comes back over the WebSocket, an answer of a device): `new Completion()`, `Set(value)` / `Fail(exception)` (the first counts),
+`IsDone`, `Wait(limit)` (follows the task's token, `TimeoutException` after the limit), `Share()` (a second Completion on the same value; `[NoCopy]` like
+the sources). The value is copied in at `Set` (strings as copies for another thread) and copied out for every `Wait`. Prelude class over natives
+(`__completion_*`): VM `fire.Runtime.Completions` (a node table like the cancellation's, the wait like `Sleep`), native `fire_rt.h` `fire_completion_*`
+(a counted node, `blockUntil` with the token, `deepCopy` with `cross`). Test: natCase "Completion: ..." (VM == native).
+
 ### Step 7 in detail - the VM on the scheduler
 
 * **Done (fire.Runtime/VmScheduler.cs, VM.Tasks.cs):** a fire thread of the VM is a task of a pool of system threads (as many as the machine has cores,
@@ -431,9 +440,134 @@ The rules that make a lambda the same kind of thing as a `fire` body - everythin
    (`copy = take node`) or handed to it as the owner (`copy.Add(take node)`) - the type checker warns once more (a code of its own: ownership given
    to an implicit copy - it dies with the copy, not with the variable of the code around it).
 
-**Still to settle on the way:** whether a change of a captured copy lasts from one call to the next (the copy is the lambda's variable, as long as the
-lambda lives - assumed) or each call starts from the copy made with the lambda; whether "the lambda's scope" in 5 is the lambda's life (assumed) or
-one call.
+7. **The captures belong to the scope that the lambda makes, not to the scope that declares it** (the user): a copy (`taking`, implicit) and what
+   `handover` moves in are owned by the lambda's own scope and live and die with it.
+
+**Found on the way:** natively a `taking` copy in a lambda dies after the first call (`var t = () => (taking b).v; t(); t()` - the second call throws
+`DestroyedException`; the VM keeps it): the copy is owned by the temporaries of the statement that makes the lambda. Fixed by rule 7.
+
+8. **The lambda's store, one copy per call** (the user): when the lambda is made, its captures go into a store that belongs to the lambda - the
+   `taking`/implicit copies copied in once, the `handover` instances moved in. Each call gets a fresh copy of each `taking`/implicit capture (it
+   belongs to the call's scope and dies with the call: a change does not last, every call starts the same) and the same `handover` instance from
+   the store (lent: a change lasts; `take` passes it on, then the store has none). A copy that the body only reads (field reads, comparisons,
+   passing it as a value to print/conversion) is lent from the store instead of copied - the same behaviour without the cost; `TC023` still says
+   every implicit copy (also so the user knows when a big list is copied).
+9. **Lambdas are part of the owner structure** (the user), like objects: a new lambda belongs to the scope that makes it and dies with it (its
+   store with it, `destruct()` included); assigned fresh to a field or handed to a method that keeps it, the holder claims it (like `obj.f = new X()`);
+   `take` passes it on; a `return` takes it with its store; a call of a dead lambda is a `DestroyedException`.
+
+Order of the work: (a) lambdas in the owner structure, VM and native; (b) the store, the copy per call, the lent `handover` and the read-only
+lending; (c) the compiler part (implicit copies, TC023/TC024, globals); (d) the preludes (Linq, `Library.Get`), tests and docs; (e) `on` on the
+owner's thread, lambdas to other threads.
+
+10. **Globals stay accessible** (the user, replaces rule 2 for globals): a global without a word is not captured - a lambda (and a thread) reads the
+    original; a write and a method call from another thread run as a task on the global's own thread (the main program). `(taking g)` gives a copy;
+    `handover g` is a compile error.
+
+**Rule 10, the plan** (the last part of step 8): today a fire thread reads the globals of the main program directly (natively under the read
+lock of the globals' domain, in the VM through the broker), and a change waits until the main program lets the thread in - the thread then runs the
+write, or a method of a global object, itself with exclusive access (a section). With rule 10 the body runs where the global lives, like the calls
+of a bound lambda in (e):
+
+* **Reads stay direct**: a global variable, a field of an object of the globals' domain - the original, as today.
+* **A write** to a global variable or to a field of an object of the globals' domain, from a fire thread (outside `sync global`): a job of the main
+  program; the thread waits (and serves its own calls meanwhile) until it ran. An object that is written there needs a word, as for a channel:
+  `g = copy x` or `g = handover x`; a fresh value (`new X()`, a call's result) means `handover` without one (the user): it moves.
+* **A method call** on an object of the globals' domain from a fire thread: runs in the main program (like a lambda bound to it); its arguments
+  follow the same rule (values as they are, an object with `copy` or `handover`, a fresh one moves); the result comes back as a copy (what the
+  method made: moved). An exception that the method does not catch is thrown at the call in the thread.
+* **`sync global { ... }`** stays the way to make several reads and writes one atomic step (a section, as today).
+* **When** the main program runs these jobs is `#globaljobs`, as for `fire global` (safe points, `Sleep`, `sync globals`); the queue is the same.
+* What changes for programs: a method of a global object that sleeps or waits now does it in the main program (the main program waits, not the
+  thread) - the test "Sleep in a method of a global object gives the section free" turns into "... runs in the main program". The VM and the
+  native runtime the same; tests for the write, the method call (result, exception), the word for objects, a write while the main program waits.
+
+**Rule 10, done** (VM and natively the same): the word for an object is `take` (`g = take x`, `store.Put(take x)`) - `handover x` is the capture
+syntax of a fire body. A write (global variable, static field, field or element of an object or array of the globals' domain) moves a fresh, copied
+(`copy x`) or taken object into the main program like `handover` (every reference from before is dead) and into the globals' domain; another object of
+the thread is the ArgumentException and nothing is stored. Values, objects of the main program (also lambdas and buffers it owns), actors and
+destroyed objects go as they are. A write itself still runs in the thread inside a section (only the ownership moves) - a method call is the job of
+the main program: VM `CallGlobalsMethodAtHome` (GlobalsBroker.PostMethodJob, `RunGlobalsMethodJob`), natively the dispatcher calls `globalsCall` (a
+`JobReq` with the method's `msg_` function; what moved travels in the job's list as the argument list of the call, `MYARGS`), the result and an
+exception come back like `await on`. Inside `sync global { ... }` the method runs in the thread (the section holds the main program); the word is
+needed there too. Natively the generated code marks a take or claim for a global (`noteGlobalTake`, `noteGlobalClaim`, `noteHolderClaim`, takeToHolder
+on a shared holder) and the store moves it (`toMainGlobals`, `toMainHolder`); a call in a thread program sets `g_argIn` (the argument list, or NULL)
+so that the dispatcher sees what travels. Tests: "Threads: Regel 10 - ..." (two cases), the handover case now uses `back = take c.other`.
+
+**Status:** (a)-(d) are done in the VM and natively. Natively a lambda stays counted (the memory, also for natives that keep a callback) and carries an
+owner header and a store (`Lam.o`, `Lam.store`, okind `O_Lambda`): destroyed with its owner, freed with its last count; the generated lambda body gets
+`lamCaptureCopy` (a copy in its function scope) or `lamCaptureLent` per capture. (e), first part: lambdas go to threads - `taking` copies one with its store
+(its captures copied for the thread), `handover` moves it with its store, a lambda in a field or an element of what a thread gets is copied/moved with
+it; a lambda bound with `on` keeps its target and records its home (`LambdaValue.Home`, natively `Lam.home`): called in a fire thread with an object of
+the main program as its target, the call is a job of the main program like `await on` (arguments copied, the thread waits and yields, the result or
+the exception comes back). Second part: a target in a fire thread - the call goes to that thread (VM: HomeInbox, natively the calls of its ThreadRec), which runs it at the
+jump back of a loop and while it waits (a reply, `Sleep`); once the thread has ended the call is an ArgumentException. A target that is an actor: a
+message that its home runs at `process`. Natively, with the GIL (debug builds), a call for a fire thread runs where it is called (one thread runs at a
+time). Found on the way: the values a native fire thread got (`taking` copies, strings) kept a count at its end - released now. `is of lambda` is new (the collections of the prelude take lambdas like
+objects - `List.Add(() => ...)` keeps them). (e) and rule 10 are done (see above).
+Found on the way: `List<int[]>.Add([1, 2])` - an array handed to a collection died with the statement (the prelude took only objects). Decided (the
+user): `x is from local` (x has an owner, and it is a scope of the running call) and `x is from global` instead of a type test for arrays; `Take...`
+on a value type stays an error, and the conditional access decides instead: `a?.b` (only when a is not undefined) and `a??.b` (also only when a has
+the member - checked at run time only where the type checker cannot prove it; a type that proves it absent, also in its derived classes, is TC025). The
+collections take with `try x??.TakeTo(this)` whatever belongs to the call (objects, arrays, buffers, lambdas) and skip a number; `Owns.Values` still
+takes an object or a lambda of someone else as before, an array only when it belongs to the call.
+
+### Step 9 - records, `with`, channels (decided by the user)
+
+The threads share nothing that can change - and get ways to pass what does not change, or what moves, without a lock:
+
+* **Records** (`record Order { string id; int qty }`): written only in the constructor (or by a start value), unchangeable after it - a write is a
+  compile error where the type is known, through `any` the class decides at run time (natively a kind of value of its own, `K_Record`: no flag in
+  the object). Fields hold only what does not change either: numbers, texts, enums, records, lambdas without captures. `==` compares the content
+  (a record can be a key). Methods and properties only read.
+* **Records have an owner** like objects, and a count like strings and lambdas: the owner decides the lifetime (when it ends the record is dead -
+  every reference to it, in any thread, gets the DestroyedException), the count only keeps the memory while somebody can still read it (a read on
+  another thread while the owner ends is safe). Since nobody can write, a transfer does not kill the other references (unlike `handover`): the
+  sender may go on reading as long as the record lives.
+* **`with`**: `copy r with { .x = 1, .y = 2 }` - a copy with the named fields changed; for records also `r with { ... }`. For objects as a
+  convenience too (`copy obj with { ... }`, `flat obj with { ... }`): the copy, then the assignments in their order with the rules of an ordinary
+  assignment (setters, visibility, `take`). The constructor does not run (as in C#). (`copy x` / `flat x` work as expressions already.)
+* **`Channel<T>`**: a bounded queue between threads - `Send`, `Receive`, `TryReceive`, `Close`, `foreach`; sending waits when it is full,
+  receiving when it is empty (waiting serves, no lock). `Channel.Pair<A, B>()` for both directions. Later `Net.Channel<T>`: the same over a
+  socket, the values as JSON.
+  - A record **with ownership** (`Send(take r)`): like a parcel - while it travels it belongs to the channel, after `Receive` to the receiver; when
+    the receiver ends, the record is dead (the sender's references get the DestroyedException). Undelivered (the channel is closed, the other side
+    has ended): destroyed - had the receiver taken it, it would be gone now too. `try channel.Send(take r)`: False when the channel is closed or
+    the other side has ended - then nothing moved.
+  - A record **without ownership** (`Send(r)`): lent - the sender stays the owner, the receiver has a reference; it dies with the sender.
+  - An object needs a word (the user): `Send(copy obj)` or `Send(handover obj)` - without one it is a compile error (lax and strict alike: the
+    definition must be clear). A fresh value (`Send(new Job(...))`) needs none: it moves.
+* **Status records** (VM and natively the same, tests "Records: ..." and the type tests): `record Name { ... }` (`record` is a word only in front of a
+  class head); written only while it is constructed - its constructor (with what it calls), field initializers, a copy, `Json.Deserialize`,
+  `Reflect.New`; TC026 for a write outside where the type is known (lax too), else the AccessDeniedException at run time (also `Reflect.Set`); TC027 for
+  a field that can change, a field `any` checked at the end of the outermost constructor (the ArgumentException); a record derives only from a record;
+  `==` and the hash of a key by content. Natively no own kind of value: the class descriptor carries the record (`recEq`, `recHash`, `recCheck`,
+  generated per record class), the writes go through the field helpers (no direct store), which ask the chain of the records being constructed
+  (`g_recInit`, set around the constructor call of `new`) - an object needs no flag. Open with the channels: the count that keeps the memory of a
+  record that another thread reads, and the transfer that does not kill the other references.
+* **Status `with`** (VM and natively): `r with { .x = 1 }` for records, `copy/flat obj with { ... }` for objects - the copy, then the assignments with
+  the rules of an ordinary one (setters, `take`, claims), OpCode.InitNext lets each store write the copy (also a record's field), OpCode.RecordCheck
+  checks a record at the end; without a word on a class TC028 / the ArgumentException.
+* **Status channels** (VM and natively, tests "Channel<T>: ..." and "Threads: fire on x ... with"): `Channel<T>` in the prelude ([NoCopy], a counted
+  node: fire.Runtime.Channels / fire_rt.h fire_chan_*), `Send` (waits while full, False when closed - instead of `try Send`), `Receive(limit)`,
+  `TryReceive`, `Close`, `IsClosed`, `Count`, `foreach`. A thread gets it with `fire with ch` (also several: `fire with a, ch`, and `fire on x taking y
+  with a, ch` for a job of the main program) - an end of its own on the same queue; the channel closes when the one that made it ends. Objects,
+  arrays and records go only fresh, copied or taken (the parcel: it belongs to the channel, then to the receiver, and dies with it; undelivered it
+  dies with the channel; a record keeps its identity); TC029 / the ArgumentException without a word. Done: `Channel.Pair<A, B>()` - a ChannelEnd<A, B>
+  that sends A and receives B, `.Other()` the end that sends B and receives A. Done: a record without a word is lent (`Send(r)`, tests "Channel<T>: ein
+  Record ohne Wort wird geliehen ..." and "... unter Last"): the sender stays the owner, receivers read it; only the owner moves it (`take` elsewhere:
+  AccessDeniedException); when the owner destroys it, the next use anywhere is the DestroyedException - strictly: a read under way ends, the next one
+  fails. Natively (the user: "möglichst streng") the lent records are in a table (g_lentOwner: record -> the owner's strand) and a destroyed one
+  becomes a grave: dead at once (its generation), its memory goes when every strand that reads lent records (it joined on its first receive) has
+  passed a safe point or waits - epochs announced at gilYield and around the waits (lentAnnounce/lentQuiet); its strings are counted atomically from
+  the lending on. With the GIL nothing waits. ownedOf hides a lent record from every strand but its owner (nothing moves it, even while it has no owner
+  for a moment); a move by the owner retires the readers' references. Done: `Net.Channel<T>` (package net.channel, docs/networking/net-channel.md; the
+  user: "identisch zum normalen Channel") - the same over TCP, one JSON line per message (`v` moved, `l <id>` lent, `g <id>` the lending ended, `c`
+  closed): objects only fresh/copied/taken (they belong to the other side alone), a record without a word is lent - the reader thread of the other
+  side owns its copy and lends it into the queue; `__chan_watch` (VM: ObjectInstance.LentEnd, natively g_lentWatch) puts the `g` line into the queue
+  of what is to be sent when the record dies or its owner moves it, so its end arrives in the order of the connection.
+* **No shared objects** (the user): with records and channels everything is covered - an object stays where it lives; other threads reach it only
+  through calls of lambdas bound to it, jobs, `await on` and actors.
 
 ## Steps
 
@@ -445,8 +579,22 @@ one call.
 5. Pinned tasks, task groups and the UI loop on the scheduler (event waits of the display backends).
 6. Cancellation tokens and `until`.
 7. The VM on the scheduler.
-8. Captures only with a word, globals by `taking`, `on` runs on its target (see "Step 8" above) - next.
+8. Captures only with a word, globals by `taking`, `on` runs on its target (see "Step 8" above) - done, rule 10 included.
+9. Records, `with`, `Channel<T>` (see "Step 9" above).
 
 ## Open
 
-Step 8: the two points under "Still to settle on the way".
+Step 9: records, `with`, `Channel<T>`, `Channel.Pair`, lent records over a channel and `Net.Channel<T>` are done (see "Step 9" above).
+The end of the program (the user: "Stillstand + Zeitlimit", 60 s without a directive): when every fire thread that is left waits in a channel or for a
+socket, the channels the main program made close (VM: ChannelHandles.CloseMainMade from FireRuntime.WaitForAllFireThreads, natively chanCloseMainMade
+from mainFinish); `#endwait value` (default 60 s, `undefined`: none) ends the threads that are still there like `terminate`. A thread that waits in
+`process` for a message counts as standing still too (the user: "ein Warten in process zählt wie ein Warten in einem Kanal"): when, after the channels
+closed, everything stands still again (at least 100 ms later - the woken threads may still send messages) and no thread waits for a socket (g_fdWaiters
+/ FireRuntime._socketWaiting: the network can still bring work), its wait ends the thread like `leave` (found
+with the pages of http.pages: a circuit ended before the directory sent it its Stop - natively a read of the freed actor, now also guarded in the
+dispatcher) (VM: FireRuntime.Standstill, WaitInProcess / SuspendForProcess; native: g_standstill, fire_actorReadyOrStill in processMsg).
+In the VM a standstill also needs no pending request of the main program (a thread that starts a thread asks it to - until then the new one is not
+counted). Found with it: the elements of `await [ ... ]` copied the caller's locals in a thread (a lambda's capture without a word) instead of lending
+them - an actor as an argument was an ArgumentException in the VM, a Completion a copy that nobody set (natively the awaited calls then waited forever);
+they are lent now (LambdaExpr.LendCaptures), natively awaitRun runs them side by side only when no two reach the same object. `IChannelEnd<A, B>` (prelude):
+the ends of Channel.Pair; `IChannel<T>` (an IChannelEnd<T, T>): Channel<T> and Net.Channel<T>.

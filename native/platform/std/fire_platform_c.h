@@ -60,6 +60,24 @@ static inline uint32_t fire_atomic_exchange(fire_atomic32* a, uint32_t x) { retu
 static inline uint32_t fire_atomic_loadAcquire(fire_atomic32* a) { return (uint32_t)_InterlockedOr((volatile long*)&a->v, 0); }
 static inline void fire_atomic_storeRelease(fire_atomic32* a, uint32_t x) { (void)_InterlockedExchange((volatile long*)&a->v, (long)x); }
 static inline uint32_t fire_atomic_addAcqRel(fire_atomic32* a, uint32_t x) { return (uint32_t)_InterlockedExchangeAdd((volatile long*)&a->v, (long)x); }
+#elif defined(__TINYC__) && (defined(__x86_64__) || defined(__i386__))
+/* TinyCC has no builtins for atomics: the instructions of x86 (lock xadd, xchg, lock cmpxchg); loads and stores are ordered by the processor (TSO), the
+ * empty asm keeps the compiler from moving accesses across them - enough for the scheduler of tasks without the GIL (FIRE_NO_GIL) */
+#define FIRE_PLAT_ASM_ATOMICS 1
+static inline uint32_t fire_atomic_load(fire_atomic32* a) { uint32_t x = a->v; __asm__ __volatile__("" : : : "memory"); return x; }
+static inline void fire_atomic_store(fire_atomic32* a, uint32_t x) { __asm__ __volatile__("" : : : "memory"); a->v = x; }
+static inline uint32_t fire_atomic_add(fire_atomic32* a, uint32_t x) { __asm__ __volatile__("lock; xaddl %0, %1" : "+r"(x), "+m"(a->v) : : "memory"); return x; }
+static inline uint32_t fire_atomic_exchange(fire_atomic32* a, uint32_t x) { __asm__ __volatile__("xchgl %0, %1" : "+r"(x), "+m"(a->v) : : "memory"); return x; }
+static inline uint32_t fire_atomic_cas32(fire_atomic32* a, uint32_t expected, uint32_t desired) {
+    uint32_t prev;
+    __asm__ __volatile__("lock; cmpxchgl %2, %1" : "=a"(prev), "+m"(a->v) : "r"(desired), "0"(expected) : "memory");
+    return prev;
+}
+static inline uint32_t fire_atomic_or(fire_atomic32* a, uint32_t x) { uint32_t old; do old = a->v; while (fire_atomic_cas32(a, old, old | x) != old); return old; }
+static inline uint32_t fire_atomic_and(fire_atomic32* a, uint32_t x) { uint32_t old; do old = a->v; while (fire_atomic_cas32(a, old, old & x) != old); return old; }
+static inline uint32_t fire_atomic_loadAcquire(fire_atomic32* a) { return fire_atomic_load(a); }
+static inline void fire_atomic_storeRelease(fire_atomic32* a, uint32_t x) { fire_atomic_store(a, x); }
+static inline uint32_t fire_atomic_addAcqRel(fire_atomic32* a, uint32_t x) { return fire_atomic_add(a, x); }
 #else
 static inline uint32_t fire_atomic_load(fire_atomic32* a) { return a->v; }
 static inline void fire_atomic_store(fire_atomic32* a, uint32_t x) { a->v = x; }

@@ -9,10 +9,10 @@ namespace Circuits {
     class Element {
         string type
         string name
-        int x1
-        int y1
-        int x2
-        int y2
+        defined int x1
+        defined int y1
+        defined int x2
+        defined int y2
         List keys
         List values
         // made by the schematic: the part (it belongs to the circuit), the scope of a Scope element (it belongs to the element)
@@ -27,7 +27,7 @@ namespace Circuits {
         bool dirty = true
         string error = ""
 
-        construct(string type, int x1, int y1, int x2, int y2) {
+        construct(string type, defined int x1, defined int y1, defined int x2, defined int y2) {
             this.type = type
             this.name = ""
             this.x1 = x1
@@ -78,12 +78,18 @@ namespace Circuits {
         }
 
         /// <summary>The pins: the number of them, and where pin i is.</summary>
-        int PinCount { get { return this.pins.Count / 2 } }
-        int PinX(int i) { return this.pins[i * 2] }
-        int PinY(int i) { return this.pins[i * 2 + 1] }
+        defined int PinCount { get { return this.pins.Count / 2 } }
+        defined int PinX(defined int i) { return this.PinCoord(i * 2) }
+        defined int PinY(defined int i) { return this.PinCoord(i * 2 + 1) }
+        // (an entry of the pins: x and y of every pin are there - a missing one is a fault of the element)
+        defined int PinCoord(defined int k) {
+            any v = this.pins[k]
+            if (v == undefined) { throw new IndexOutOfBoundsException("The element has no pin coordinate " + k + ".") }
+            return trust v
+        }
 
         /// <summary>The voltage at pin i against ground (volts as a plain number).</summary>
-        float PinVoltage(int i) {
+        defined float PinVoltage(defined int i) {
             if (i >= this.nets.Count) { return 0.0 }
             Circuits.Port p = this.nets[i]
             if (p == undefined) { return 0.0 }
@@ -225,7 +231,7 @@ namespace Circuits {
         static bool Known(string type) { return Circuits.Symbols.Entry(type) != "" }
 
         /// <summary>A new element of a kind with the default properties.</summary>
-        static Circuits.Element Make(string type, int x1, int y1, int x2, int y2) {
+        static Circuits.Element Make(string type, defined int x1, defined int y1, defined int x2, defined int y2) {
             var entry = Circuits.Symbols.Entry(type)
             if (entry == "") { throw new ArgumentException("There is no element '" + type + "' (see Circuits.Symbols.Catalog()).") }
             var e = new Circuits.Element(type, x1, y1, x2, y2)
@@ -243,7 +249,7 @@ namespace Circuits {
         }
 
         /// <summary>How an element is placed by default: the distance from its first point to its second (dx, dy).</summary>
-        static int DefaultLength(string type) {
+        static defined int DefaultLength(string type) {
             if (type == "Ground" || type == "Rail" || type == "LogicInput" || type == "LogicOutput" || type == "Label" || type == "Pin" || type == "GpioLine" || type == "Sweep") { return 4 }
             if (type == "Text") { return 0 }
             if (type == "Scope") { return 16 }
@@ -295,7 +301,7 @@ namespace Circuits {
         }
 
         /// <summary>The distance of the pins of a chip in grid units ("spacing", default 2; Falstad's large chips have 4).</summary>
-        static int ChipSpacing(Circuits.Element e) {
+        static defined int ChipSpacing(Circuits.Element e) {
             any n = e.Get("spacing").TryToInt()
             if (n == undefined || n < 1) { return 2 }
             if (n > 8) { return 8 }
@@ -303,7 +309,7 @@ namespace Circuits {
         }
 
         /// <summary>The rows of a chip (the longer side; empty names are gaps).</summary>
-        static int ChipRows(Circuits.Element e) {
+        static defined int ChipRows(Circuits.Element e) {
             any sides = Circuits.Symbols.ChipPins(e).Split("|")
             any a = Circuits.Symbols.Names(sides[0]).length
             any b = Circuits.Symbols.Names(sides[1]).length
@@ -321,7 +327,7 @@ namespace Circuits {
             return text
         }
 
-        static int Channels(Circuits.Element e, int fallback) {
+        static defined int Channels(Circuits.Element e, defined int fallback) {
             any n = e.Get("channels").TryToInt()
             if (n == undefined || n < 1) { return fallback }
             if (n > 16) { return 16 }
@@ -348,27 +354,27 @@ namespace Circuits {
             return v
         }
 
-        static int Line(Circuits.Element e) {
+        static defined int Line(Circuits.Element e) {
             any n = e.Get("line").TryToInt()
             if (n == undefined || n < 0) { return 0 }
             return n
         }
 
-        static int Bits(Circuits.Element e) {
+        static defined int Bits(Circuits.Element e) {
             any n = e.Get("bits").TryToInt()
             if (n == undefined || n < 1) { return 4 }
             if (n > 16) { return 16 }
             return n
         }
 
-        static int Throws(Circuits.Element e) {
+        static defined int Throws(Circuits.Element e) {
             any n = e.Get("throws").TryToInt()
             if (n == undefined || n < 2) { return 2 }
             if (n > 8) { return 8 }
             return n
         }
 
-        static int Inputs(Circuits.Element e) {
+        static defined int Inputs(Circuits.Element e) {
             any n = e.Get("inputs").TryToInt()
             if (n == undefined || n < 2) { return 2 }
             if (n > 8) { return 8 }
@@ -376,7 +382,7 @@ namespace Circuits {
         }
 
         // sign as in Falstad's simulator: of dy, or of dx for a horizontal element
-        static int Dsign(Circuits.Element e) {
+        static defined int Dsign(Circuits.Element e) {
             var dx = e.x2 - e.x1
             var dy = e.y2 - e.y1
             if (dy == 0) {
@@ -397,7 +403,7 @@ namespace Circuits {
             return t
         }
 
-        static undefined Interp(Circuits.Element e, float f, float g, List into) {
+        static undefined Interp(Circuits.Element e, defined float f, defined float g, List into) {
             float dx = e.x2 - e.x1
             float dy = e.y2 - e.y1
             any len = Math.Sqrt(dx * dx + dy * dy)
@@ -733,7 +739,7 @@ namespace Circuits {
             Circuits.Symbols.Interp(e, end / len, 0.0, e.pins)
         }
 
-        static int Sign(int v) {
+        static defined int Sign(defined int v) {
             if (v > 0) { return 1 }
             if (v < 0) { return -1 }
             return 0
@@ -822,7 +828,7 @@ namespace Circuits {
             return false
         }
 
-        static int Count(Circuits.Element e, string key, int fallback, int low, int high) {
+        static defined int Count(Circuits.Element e, string key, defined int fallback, defined int low, defined int high) {
             any n = e.Get(key).TryToInt()
             if (n == undefined) { return fallback }
             if (n < low) { return low }
@@ -831,7 +837,7 @@ namespace Circuits {
         }
 
         // the bits and flags of a kernel chip from its properties (as its constructor makes them)
-        static int ChipBits(Circuits.Element e) {
+        static defined int ChipBits(Circuits.Element e) {
             var t = e.type
             if (t == "Multiplexer" || t == "Demultiplexer") { return Circuits.Symbols.Count(e, "selectBits", 2, 1, 6) }
             if (t == "RingCounter") { return Circuits.Symbols.Count(e, "bits", 10, 2, 32) }
@@ -841,7 +847,7 @@ namespace Circuits {
             return 0
         }
 
-        static int ChipFlags(Circuits.Element e) {
+        static defined int ChipFlags(Circuits.Element e) {
             var t = e.type
             if (t == "TFlipFlop") { return Circuits.TFlipFlop.Flags(e.Flag("reset"), e.Flag("set")) }
             if (t == "Latch") { return Circuits.Latch.Flags(e.Flag("levelTriggered"), e.Flag("reset"), e.Flag("set"), e.Flag("resetActiveLow")) }
@@ -880,13 +886,13 @@ namespace Circuits {
         }
 
         // the size of a cell of a Falstad chip in grid units (4, or 2 for a small one)
-        static int FalstadCell(Circuits.Element e) {
+        static defined int FalstadCell(Circuits.Element e) {
             any n = e.Get("spacing").TryToInt()
             if (n == undefined || n < 1) { return 4 }
             return n
         }
 
-        static int Int(string text) {
+        static defined int Int(string text) {
             any n = text.TryToInt()
             if (n == undefined) { return 0 }
             return n
@@ -918,7 +924,7 @@ namespace Circuits {
             }
         }
 
-        static int ChipWidth(Circuits.Element e) {
+        static defined int ChipWidth(Circuits.Element e) {
             var w = e.x2 - e.x1
             if (w < 0) { w = -w }
             if (w < 4) { return 12 }
@@ -938,7 +944,7 @@ namespace Circuits {
 
         /// <summary>A value of a property: a number with the prefixes f p n u µ m k M G T and a unit after it ("4.7kOhm", "10uF", "1meg"), or an expression of
         /// the parameters of the circuit ("2*R").</summary>
-        static float Value(Circuits.Element e, string key, Circuits.Circuit circuit) {
+        static defined float Value(Circuits.Element e, string key, Circuits.Circuit circuit) {
             var text = e.Get(key)
             any v = Circuits.Symbols.Number(text)
             if (v != undefined) { return v }
@@ -1299,7 +1305,7 @@ namespace Circuits {
         string error = ""
         /// <summary>The element and the pin (from 0) it is bound to, set when the schematic connects ("", -1 if none).</summary>
         string element = ""
-        int slot = -1
+        defined int slot = -1
 
         construct(string name, string direction, string pin, string color) {
             this.name = name
@@ -1323,7 +1329,7 @@ namespace Circuits {
         string className = ""
         string namespaceName = ""
         // counts the changes (an editor saves when it moved on)
-        int version = 0
+        defined int version = 0
         bool reconnect = true
         bool applying = false
         // the connections as Connect found them last (which pins share a node): a change that keeps them (moving a scope, a text, or a group as a
@@ -1340,7 +1346,7 @@ namespace Circuits {
         List PortDefinitions() { return this.portDefs }
 
         /// <summary>The color of the n-th port when it gets none: red, violet, orange, blue, green, magenta, ochre, cyan.</summary>
-        static string PortColor(int n) {
+        static string PortColor(defined int n) {
             var colors = ["#E03030", "#9040E0", "#E08020", "#3070E0", "#20A050", "#D030A0", "#B09010", "#10A0B0"]
             return colors[n % 8]
         }
@@ -1384,7 +1390,7 @@ namespace Circuits {
         }
 
         /// <summary>Changes the input or output number `index`: "name", "direction" (input/output), "pin" ("R1.2") or "color" ("#RRGGBB").</summary>
-        undefined SetPortDefinition(int index, string key, string value) {
+        undefined SetPortDefinition(defined int index, string key, string value) {
             if (index < 0 || index >= this.portDefs.Count) { return }
             Circuits.PortDefinition d = this.portDefs[index]
             if (key == "name") { d.name = value }
@@ -1396,14 +1402,14 @@ namespace Circuits {
         }
 
         /// <summary>Removes the input or output number `index`.</summary>
-        undefined RemovePortDefinition(int index) {
+        undefined RemovePortDefinition(defined int index) {
             if (index < 0 || index >= this.portDefs.Count) { return }
             this.portDefs.RemoveAt(index)
             this.Changed(true)
         }
 
         /// <summary>The input or output bound to pin `slot` (from 0) of the element (undefined if none).</summary>
-        Circuits.PortDefinition PortAtPin(Circuits.Element e, int slot) {
+        Circuits.PortDefinition PortAtPin(Circuits.Element e, defined int slot) {
             if (e.name == "") { return undefined }
             foreach (d in this.portDefs) {
                 if (d.slot == slot && d.element == e.name) { return d }
@@ -1442,7 +1448,7 @@ namespace Circuits {
         }
 
         /// <summary>The pin (from 0) of the element that "which" names: a number counted from 1 or the name of the port of its part; -1 if none.</summary>
-        static int PinIndex(Circuits.Element target, string which) {
+        static defined int PinIndex(Circuits.Element target, string which) {
             var count = target.pins.Count / 2
             any number = which.TryToInt()
             if (number != undefined) {
@@ -1462,10 +1468,10 @@ namespace Circuits {
 
         List Elements() { return this.elements }
         Circuits.Circuit Circuit() { return this.circuit }
-        int Version { get { return this.version } }
+        defined int Version { get { return this.version } }
 
         /// <summary>Adds an element of a kind between two points of the grid, with properties "key=value;key=value" over the defaults. Returns it.</summary>
-        Circuits.Element Add(string type, int x1, int y1, int x2, int y2, string properties = "", string name = "") {
+        Circuits.Element Add(string type, defined int x1, defined int y1, defined int x2, defined int y2, string properties = "", string name = "") {
             var e = Circuits.Symbols.Make(type, x1, y1, x2, y2)
             e.name = name
             Circuits.Schematic.SetAll(e, properties)
@@ -1530,7 +1536,7 @@ namespace Circuits {
         }
 
         /// <summary>Moves an element to new points.</summary>
-        undefined Move(Circuits.Element e, int x1, int y1, int x2, int y2) {
+        undefined Move(Circuits.Element e, defined int x1, defined int y1, defined int x2, defined int y2) {
             if (e.x1 == x1 && e.y1 == y1 && e.x2 == x2 && e.y2 == y2) { return }
             e.x1 = x1
             e.y1 = y1
@@ -1958,19 +1964,19 @@ namespace Circuits {
             return true
         }
 
-        static int Root(any parent, int i) {
+        static defined int Root(int parent[], defined int i) {
             var r = i
-            while (parent[r] != r) { r = parent[r] }
+            while (parent[r] != r) { r = trust parent[r] }   // (an int[] holds numbers only)
             var k = i
             while (parent[k] != r) {
-                any next = parent[k]
+                var next = parent[k]
                 parent[k] = r
                 k = next
             }
             return r
         }
 
-        static undefined Union(any parent, int a, int b) {
+        static undefined Union(any parent, defined int a, defined int b) {
             var ra = Circuits.Schematic.Root(parent, a)
             var rb = Circuits.Schematic.Root(parent, b)
             if (ra != rb) { parent[rb] = ra }
@@ -2026,7 +2032,7 @@ namespace Circuits {
         }
 
         /// <summary>A number with an SI prefix ("4.7k", "10u", "0").</summary>
-        static string Format(float v) {
+        static string Format(defined float v) {
             if (v == 0.0) { return "0" }
             any a = Math.Abs(v)
             var prefixes = ["p", "n", "u", "m", "", "k", "M", "G"]
@@ -2041,7 +2047,7 @@ namespace Circuits {
             return s + prefixes[k]
         }
 
-        static string Trim(float x) {
+        static string Trim(defined float x) {
             any r = Math.Round(x * 1000000.0) / 1000000.0
             if (r == Math.Round(r)) { return "" + Math.Round(r)!int }
             var s = "" + r

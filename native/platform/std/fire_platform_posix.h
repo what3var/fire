@@ -20,13 +20,31 @@
 #endif
 
 #if defined(FIRE_THREADS) && defined(__TINYC__) && !defined(FIRE_TLS_STRUCT) && !defined(FIRE_GREEN_THREADS)
-/* TinyCC has no thread-local storage: the state of a thread hangs on a key of pthreads instead (fire_rt.h: FIRE_TLS_STRUCT, fire_tl()) */
-#define FIRE_TLS_STRUCT 1
+/* TinyCC has no thread-local storage. A build without the GIL (fire_rt.h: FIRE_NO_GIL, then tasks) keeps the few pointers that must be per thread - the
+ * running task, the worker, the coroutine of the worker, the windows' tokens - in slots on a key of pthreads (FIRE_TLS_EMULATED, FIRE_TLS_SLOT); a build
+ * with the GIL (a debug build, modules) hangs the whole state of a thread on the key (FIRE_TLS_STRUCT, fire_tl()). */
 static pthread_key_t fire_tlsKey;
 static pthread_once_t fire_tlsOnce = PTHREAD_ONCE_INIT;
 static void fire_tlsMakeKey(void) { pthread_key_create(&fire_tlsKey, NULL); }
 static inline void* fire_tls_get(void) { pthread_once(&fire_tlsOnce, fire_tlsMakeKey); return pthread_getspecific(fire_tlsKey); }
 static inline void fire_tls_set(void* p) { pthread_once(&fire_tlsOnce, fire_tlsMakeKey); pthread_setspecific(fire_tlsKey, p); }
+typedef struct FireTlsSlots { void* v[8]; } FireTlsSlots;
+static pthread_key_t fire_tlsSlotKey;
+static pthread_once_t fire_tlsSlotOnce = PTHREAD_ONCE_INIT;
+static void fire_tlsMakeSlotKey(void) { pthread_key_create(&fire_tlsSlotKey, free); }
+static inline FireTlsSlots* fire_tlsSlots(void) {
+    FireTlsSlots* s;
+    pthread_once(&fire_tlsSlotOnce, fire_tlsMakeSlotKey);
+    s = (FireTlsSlots*)pthread_getspecific(fire_tlsSlotKey);
+    if (!s) { s = (FireTlsSlots*)calloc(1, sizeof *s); pthread_setspecific(fire_tlsSlotKey, s); }
+    return s;
+}
+#define FIRE_TLS_SLOT(i) (fire_tlsSlots()->v[i])
+#if !defined(FIRE_GIL) && !defined(FIRE_DEBUG) && !defined(FIRE_MODULES) && !defined(FIRE_DLL) && (defined(__x86_64__) || defined(__i386__))
+#define FIRE_TLS_EMULATED 1
+#else
+#define FIRE_TLS_STRUCT 1
+#endif
 #endif
 
 static inline int64_t fire_plat_nowMs(void) {
@@ -127,7 +145,7 @@ static inline void fire_thread_detach(fire_thread* t) { pthread_detach(t->t); fr
 /* the cores of the machine (the workers of the scheduler of tasks) */
 #include <unistd.h>
 static inline int fire_plat_cores(void) { long n = sysconf(_SC_NPROCESSORS_ONLN); return n > 0 ? (int)n : 1; }
-#ifndef FIRE_GREEN_THREADS
+#if !defined(FIRE_GREEN_THREADS) && (!defined(__TINYC__) || defined(FIRE_TLS_EMULATED))   /* (TinyCC: only with the slots above) */
 #include "fire_coro.h"   /* the coroutines of the tasks (fire_rt.h: FIRE_TASKS) */
 #define FIRE_PLAT_CORO 1
 #endif

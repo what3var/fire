@@ -42,6 +42,12 @@
         "c": "fire_net_OpenCount"
       },
       {
+        "name": "__NetRandom",
+        "returns": "int",
+        "arguments": 3,
+        "c": "fire_net_Random"
+      },
+      {
         "name": "__NetSupported",
         "returns": "int",
         "arguments": 0,

@@ -126,11 +126,12 @@ namespace fire.Compiler
                         if (host.Modules.FirstOrDefault(m => m.Name == module) is { Library.Length: > 0 } m) imports.Add(Path.Combine(hostDir!, m.Library));
                     var missing = imports.FirstOrDefault(f => !File.Exists(f));
                     if (missing != null) return Fail($"The library '{Path.GetFileName(missing)}' of the program is not next to it ({hostDir}).");
-                    // (with natives in C++: linked by the C++ compiler, its runtime in the DLL)
+                    // (with natives in C++: linked by the C++ compiler, its runtime in the DLL - -static, since the posix MinGW would otherwise leave libwinpthread-1.dll
+                    // to be found next to the program; the DLLs of the program given by path stay imports)
                     string cc = natObj != null ? ToolchainDetector.Find(toolchain) ?? toolchain.EffectiveCompiler : ToolchainDetector.FindC(toolchain) ?? toolchain.EffectiveCCompiler;
                     var libs = (toolchain.Libs ?? new()).Concat(target.Native.LinkLibs).ToList();
                     string objects = $"\"{Path.Combine(workDir, "fire_plugin.o")}\"" + (natObj != null ? $" \"{natObj}\"" : "");
-                    string arguments = $"-shared -static-libgcc{(natObj != null ? " -static-libstdc++" : "")} -o \"{library}\" {objects}{string.Concat(imports.Select(i => $" \"{i}\""))} -Wl,--export-all-symbols -s {string.Join(" ", libs)}";
+                    string arguments = $"-shared -static-libgcc{(natObj != null ? " -static-libstdc++ -static" : "")} -o \"{library}\" {objects}{string.Concat(imports.Select(i => $" \"{i}\""))} -Wl,--export-all-symbols -s {string.Join(" ", libs)}";
                     log.AppendLine($"{cc} {arguments}");
                     BuildMonitor.Step(BuildPhase.Link, "Linking the plugin's DLL", 1, 2);
                     (ok, text) = Run(cc, arguments, workDir);

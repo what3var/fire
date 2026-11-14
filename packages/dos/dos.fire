@@ -9,30 +9,30 @@ class DosException : Exception {
 
 // The registers of an interrupt call: set what the function wants, read what it gives back. DS/ES 0: the program's own data segment.
 class DosRegisters {
-    int ax = 0
-    int bx = 0
-    int cx = 0
-    int dx = 0
-    int si = 0
-    int di = 0
-    int ds = 0
-    int es = 0
-    int flags = 0
+    defined int ax = 0
+    defined int bx = 0
+    defined int cx = 0
+    defined int dx = 0
+    defined int si = 0
+    defined int di = 0
+    defined int ds = 0
+    defined int es = 0
+    defined int flags = 0
 
     construct() { }
-    construct(int ax) { this.ax = ax }
+    construct(defined int ax) { this.ax = ax }
 
     // The carry flag after the call (most DOS functions: an error, AX its code).
     bool Carry { get { return (this.flags & 1) != 0 } }
     // The halves of AX..DX.
-    int Ah { get { return (this.ax >> 8) & 255 } }
-    int Al { get { return this.ax & 255 } }
-    int Bh { get { return (this.bx >> 8) & 255 } }
-    int Bl { get { return this.bx & 255 } }
-    int Ch { get { return (this.cx >> 8) & 255 } }
-    int Cl { get { return this.cx & 255 } }
-    int Dh { get { return (this.dx >> 8) & 255 } }
-    int Dl { get { return this.dx & 255 } }
+    defined int Ah { get { return (this.ax >> 8) & 255 } }
+    defined int Al { get { return this.ax & 255 } }
+    defined int Bh { get { return (this.bx >> 8) & 255 } }
+    defined int Bl { get { return this.bx & 255 } }
+    defined int Ch { get { return (this.cx >> 8) & 255 } }
+    defined int Cl { get { return this.cx & 255 } }
+    defined int Dh { get { return (this.dx >> 8) & 255 } }
+    defined int Dl { get { return this.dx & 255 } }
 }
 
 class Dos {
@@ -42,7 +42,7 @@ class Dos {
     }
 
     // INT `number` (0..255) with the registers; they hold what the function gave back afterwards (also returned).
-    static DosRegisters Interrupt(int number, DosRegisters r) {
+    static DosRegisters Interrupt(defined int number, DosRegisters r) {
         Dos.Check()
         if (number < 0 || number > 255) { throw new ArgumentException("An interrupt is 0 to 255, not " + number + ".") }
         var out = __DosInt(number, r.ax, r.bx, r.cx, r.dx, r.si, r.di, r.ds, r.es)
@@ -70,21 +70,21 @@ class Dos {
     }
 
     // A block of DOS memory of `paragraphs` x 16 bytes: its segment (DosException when there is not that much: the message says how much there is).
-    static int Alloc(int paragraphs) {
+    static defined int Alloc(defined int paragraphs) {
         var r = new DosRegisters(18432)
         r.bx = paragraphs
         Dos.Call(r)
         if (r.Carry) { throw new DosException("DOS has no block of " + paragraphs + " paragraphs (the largest free one has " + r.bx + ").") }
         return r.ax
     }
-    static undefined Free(int segment) {
+    static undefined Free(defined int segment) {
         var r = new DosRegisters(18688)
         r.es = segment
         Dos.Call(r)
         if (r.Carry) { throw new DosException("The segment " + segment + " is no block of DOS (error " + r.ax + ").") }
     }
     // The largest free block of DOS memory, in paragraphs.
-    static int LargestFree() {
+    static defined int LargestFree() {
         var r = new DosRegisters(18432)
         r.bx = 65535
         Dos.Call(r)
@@ -92,14 +92,14 @@ class Dos {
     }
 
     // The interrupt vector `number` as segment * 65536 + offset.
-    static int GetVector(int number) {
+    static defined int GetVector(defined int number) {
         var r = new DosRegisters(13568 + (number & 255))
         Dos.Call(r)
         return r.es * 65536 + r.bx
     }
     // Points the vector `number` at segment * 65536 + offset (only an address that stays valid - a handler of a resident program, a vector read
     // before; a handler of your own: Machine.Irq).
-    static undefined SetVector(int number, int address) {
+    static undefined SetVector(defined int number, defined int address) {
         var r = new DosRegisters(9472 + (number & 255))
         r.ds = (address >> 16) & 65535
         r.dx = address & 65535
@@ -108,13 +108,13 @@ class Dos {
 
     // Where the bytes of a buffer are, from `offset` on: segment * 65536 + offset - for a function that wants a buffer in DS:DX, ES:DI, ...
     // (valid while the buffer lives).
-    static int FarOf(byte buffer[], int offset = 0) {
+    static defined int FarOf(byte buffer[], defined int offset = 0) {
         Dos.Check()
         var at = __DosFarOf(buffer, offset)
         if (at == undefined) { throw new ArgumentException("No such place in the buffer: " + offset + ".") }
         if (at == -1) { throw new DosException("The buffer lies above the first megabyte (dos32): DOS cannot reach it - take DOS memory (Dos.Alloc) and fill it with Machine.Memory.") }
         return at
     }
-    static int SegmentOf(byte buffer[], int offset = 0) { return (Dos.FarOf(buffer, offset) >> 16) & 65535 }
-    static int OffsetOf(byte buffer[], int offset = 0) { return Dos.FarOf(buffer, offset) & 65535 }
+    static defined int SegmentOf(byte buffer[], defined int offset = 0) { return (Dos.FarOf(buffer, offset) >> 16) & 65535 }
+    static defined int OffsetOf(byte buffer[], defined int offset = 0) { return Dos.FarOf(buffer, offset) & 65535 }
 }

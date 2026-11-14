@@ -14,34 +14,34 @@ namespace UI {
         bool readOnly = false
         /// <summary>Simulate while the view is shown.</summary>
         bool running = true
-        float lastFrame = 0.0
+        defined float lastFrame = 0.0
         // cycles of the simulation since the last picture (the dots of the current move by that many)
-        int pendingCycles = 0
+        defined int pendingCycles = 0
         /// <summary>Pixels per unit of the grid (zoom).</summary>
-        float scale = 10.0
+        defined float scale = 10.0
         /// <summary>Where the point (0, 0) of the grid is, in pixels from the upper left corner of the view.</summary>
-        float offsetX = 40.0
-        float offsetY = 40.0
+        defined float offsetX = 40.0
+        defined float offsetY = 40.0
         bool showGrid = true
         bool showCurrent = true
         bool showValues = true
         /// <summary>The voltage that gets the full colour (green or red).</summary>
-        float voltageRange = 5.0
+        defined float voltageRange = 5.0
         /// <summary>How fast the dots of the current move (grid units per second of the interface per ampere, on a logarithmic scale).</summary>
-        float currentSpeed = 1.0
+        defined float currentSpeed = 1.0
         /// <summary>Elements snap to this many grid units when they are placed or moved.</summary>
-        int snap = 2
+        defined int snap = 2
         // pixels of the framebuffer per logical pixel while the view draws: it draws at the full resolution of the screen itself (the renderer at scale 1),
         // so that lines and text are sharp at any scaling, not placed on the coarser grid of logical pixels
-        float dev = 1.0
+        defined float dev = 1.0
         bool device = false
         // the context menu (a right click without dragging): its rows and the element it was opened on
         List contextItems
         Circuits.Element contextElement
         // the pin a context menu was opened on (index into the pins of contextElement)
-        int contextPin = -1
-        int downPX = 0
-        int downPY = 0
+        defined int contextPin = -1
+        defined int downPX = 0
+        defined int downPY = 0
 
         /// <summary>Called with the view when the schematic was changed by the user (to save it), when the selection changes, and when an element should be
         /// edited (a double click; without OnEdit the view shows its own editor).</summary>
@@ -56,21 +56,21 @@ namespace UI {
         string infoType = ""
         List infoProps
         // what the mouse does: 0 nothing, 1 move the selection, 2 select with a rectangle, 3 place a new element, 4 draw a wire, 5 pan, 6 stretch one end, 7 hold a momentary switch
-        int mode = 0
+        defined int mode = 0
         string placeType = ""
         Circuits.Element ghost
-        float downX = 0.0
-        float downY = 0.0
-        int downGX = 0
-        int downGY = 0
-        int lastGX = 0
-        int lastGY = 0
-        float mouseUX = 0.0
-        float mouseUY = 0.0
+        defined float downX = 0.0
+        defined float downY = 0.0
+        defined int downGX = 0
+        defined int downGY = 0
+        defined int lastGX = 0
+        defined int lastGY = 0
+        defined float mouseUX = 0.0
+        defined float mouseUY = 0.0
         bool moved = false
-        int stretchEnd = 0
+        defined int stretchEnd = 0
         Circuits.Element pressedElement
-        int lastClickCycle = -100
+        defined int lastClickCycle = -100
         Circuits.Element lastClickElement
         // the selection before a move (to undo it if nothing moved)
         List undo
@@ -91,20 +91,20 @@ namespace UI {
         // the current through the wires (worked out per cycle) and the phases of the dots per element
         List phases
         List wireCurrents
-        int graphVersion = -1
+        defined int graphVersion = -1
         List junctions
         List openPins
         // the frame of the element being drawn: its first point (pixels) and the unit vectors along it and to its right (pixels per unit)
-        float fx = 0.0
-        float fy = 0.0
-        float fdx = 0.0
-        float fdy = 0.0
-        float fnx = 0.0
-        float fny = 0.0
-        float flen = 0.0
-        int framesShown = 0
+        defined float fx = 0.0
+        defined float fy = 0.0
+        defined float fdx = 0.0
+        defined float fdy = 0.0
+        defined float fnx = 0.0
+        defined float fny = 0.0
+        defined float flen = 0.0
+        defined int framesShown = 0
 
-        construct(Circuits.Circuit circuit, int x = 0, int y = 0, int width = -1, int height = -1) : base(x, y, width, height) {
+        construct(Circuits.Circuit circuit, defined int x = 0, defined int y = 0, defined int width = -1, defined int height = -1) : base(x, y, width, height) {
             this.circuit = circuit
             this.selection = new List()
             this.undo = new List()
@@ -126,7 +126,7 @@ namespace UI {
 
         override string StyleKey() { return "CircuitView" }
         override bool Focusable() { return true }
-        override bool WantsKey(int key) { return true }
+        override bool WantsKey(defined int key) { return true }
 
         /// <summary>The schematic that is shown.</summary>
         Circuits.Schematic Schematic { get { return this.circuit.Schematic } }
@@ -352,7 +352,7 @@ namespace UI {
         }
 
         // how often the clipboard was pasted since it was copied: each paste lands a bit further away
-        int pasteCount = 0
+        defined int pasteCount = 0
 
         /// <summary>Puts elements from the clipboard into the schematic (with undo), a bit away from where they were copied, and selects them: a JSON list of
         /// elements, or a whole `.biscuit` text. A name an element already has is not given twice (the copy has none). False if the text holds no elements.</summary>
@@ -442,7 +442,7 @@ namespace UI {
 
         /// <summary>Replaces `find` with `replace` in the names and property values of all elements (or only the selected ones), in one step of undo; the number
         /// of elements changed. Names that would clash or be no name are left.</summary>
-        int ReplaceAll(string find, string replace, bool selectionOnly = false) {
+        defined int ReplaceAll(string find, string replace, bool selectionOnly = false) {
             if (this.readOnly || find == "") { return 0 }
             var s = this.Schematic
             var list = new List()
@@ -615,7 +615,7 @@ namespace UI {
 
         /// <summary>Operates element number `index` as Positions lists it: the position of a potentiometer (0..1, the whole group), a switch or a logic
         /// input on or off ("true"/"false"), a push button held ("true") or let go, a selector switch to a throw. Not part of the undo history.</summary>
-        undefined Operate(int index, string value) {
+        undefined Operate(defined int index, string value) {
             var els = this.Schematic.Elements()
             if (index < 0 || index >= els.Count) { return }
             Circuits.Element e = els[index]
@@ -674,7 +674,7 @@ namespace UI {
         }
 
         /// <summary>Changes the input or output number `index` (with undo): "name", "direction", "pin" or "color".</summary>
-        undefined SetPort(int index, string key, string value) {
+        undefined SetPort(defined int index, string key, string value) {
             var defs = this.Schematic.PortDefinitions()
             if (this.readOnly || index < 0 || index >= defs.Count) { return }
             Circuits.PortDefinition d = defs[index]
@@ -688,7 +688,7 @@ namespace UI {
 
         /// <summary>Makes pin `slot` (from 0) of the element an input ("input") or output ("output") of the circuit, in one step of undo: an element without a name
         /// gets one first (R1, W2, ...), since a pin is named by its element.</summary>
-        undefined BindPin(Circuits.Element e, int slot, string direction) {
+        undefined BindPin(Circuits.Element e, defined int slot, string direction) {
             if (this.readOnly || e == undefined || slot < 0 || slot >= e.pins.Count / 2) { return }
             this.Remember()
             var s = this.Schematic
@@ -699,7 +699,7 @@ namespace UI {
         }
 
         /// <summary>Removes the input or output number `index` (with undo).</summary>
-        undefined RemovePort(int index) {
+        undefined RemovePort(defined int index) {
             var defs = this.Schematic.PortDefinitions()
             if (this.readOnly || index < 0 || index >= defs.Count) { return }
             this.Remember()
@@ -757,7 +757,7 @@ namespace UI {
 
         // ---- coordinates ----
 
-        int Snap(int v) {
+        defined int Snap(defined int v) {
             var s = this.snap
             if (s <= 1) { return v }
             if (v >= 0) { return (v + s / 2) / s * s }
@@ -765,15 +765,15 @@ namespace UI {
         }
 
         // pixels in the view (relative to its corner) to grid units
-        float ToUnitX(float px) { return (px - this.offsetX) / this.scale }
-        float ToUnitY(float py) { return (py - this.offsetY) / this.scale }
-        int GridX(float px) { return this.Snap(Math.Round(this.ToUnitX(px))!int) }
-        int GridY(float py) { return this.Snap(Math.Round(this.ToUnitY(py))!int) }
+        defined float ToUnitX(defined float px) { return (px - this.offsetX) / this.scale }
+        defined float ToUnitY(defined float py) { return (py - this.offsetY) / this.scale }
+        defined int GridX(defined float px) { return this.Snap(Math.Round(this.ToUnitX(px))!int) }
+        defined int GridY(defined float py) { return this.Snap(Math.Round(this.ToUnitY(py))!int) }
         // grid units to pixels on the screen
-        int SX(float ux) { return Math.Round((this.ax + this.offsetX + ux * this.scale) * this.dev)!int }
-        int SY(float uy) { return Math.Round((this.ay + this.offsetY + uy * this.scale) * this.dev)!int }
+        defined int SX(defined float ux) { return Math.Round((this.ax + this.offsetX + ux * this.scale) * this.dev)!int }
+        defined int SY(defined float uy) { return Math.Round((this.ay + this.offsetY + uy * this.scale) * this.dev)!int }
         // a length in logical pixels as pixels of the framebuffer while drawing
-        int Dp(float v) { return Math.Round(v * this.dev)!int }
+        defined int Dp(defined float v) { return Math.Round(v * this.dev)!int }
 
         // ---- simulation ----
 
@@ -804,7 +804,7 @@ namespace UI {
 
         // ---- the colours ----
 
-        int VoltageColor(float v) {
+        defined int VoltageColor(defined float v) {
             var t = v / this.voltageRange
             if (t > 1.0) { t = 1.0 }
             if (t < -1.0) { t = -1.0 }
@@ -819,7 +819,7 @@ namespace UI {
         undefined Frame(Circuits.Element e) { this.FrameAt(e.x1, e.y1, e.x2, e.y2) }
 
         // the frame from (x1, y1) to (x2, y2) on the grid
-        undefined FrameAt(int x1, int y1, int x2, int y2) {
+        undefined FrameAt(defined int x1, defined int y1, defined int x2, defined int y2) {
             float dx = x2 - x1
             float dy = y2 - y1
             any len = Math.Sqrt(dx * dx + dy * dy)
@@ -840,21 +840,21 @@ namespace UI {
             this.fny = -this.fdx
         }
 
-        int PX(float s, float t) { return Math.Round(this.fx + this.fdx * s + this.fnx * t)!int }
-        int PY(float s, float t) { return Math.Round(this.fy + this.fdy * s + this.fny * t)!int }
+        defined int PX(defined float s, defined float t) { return Math.Round(this.fx + this.fdx * s + this.fnx * t)!int }
+        defined int PY(defined float s, defined float t) { return Math.Round(this.fy + this.fdy * s + this.fny * t)!int }
 
         // the area the lines of the element being drawn cover (screen pixels; the selection is drawn around it)
         bool tracking = false
-        int tx0 = 0
-        int ty0 = 0
-        int tx1 = 0
-        int ty1 = 0
+        defined int tx0 = 0
+        defined int ty0 = 0
+        defined int tx1 = 0
+        defined int ty1 = 0
         bool tracked = false
         // the areas of the elements of the last picture: the elements and four numbers each
         List areaElements
         List areaValues
 
-        undefined Grow(int x, int y, int r) {
+        undefined Grow(defined int x, defined int y, defined int r) {
             if (!this.tracking) { return }
             if (!this.tracked) {
                 this.tx0 = x - r
@@ -870,7 +870,7 @@ namespace UI {
             if (y + r > this.ty1) { this.ty1 = y + r }
         }
 
-        undefined Seg(Root root, float s1, float t1, float s2, float t2, int color) {
+        undefined Seg(Root root, defined float s1, defined float t1, defined float s2, defined float t2, int color) {
             this.pen.Color = color
             var x1 = this.PX(s1, t1)
             var y1 = this.PY(s1, t1)
@@ -881,14 +881,14 @@ namespace UI {
             root.renderer.DrawLine(x1, y1, x2, y2, this.pen)
         }
 
-        undefined Arc(Root root, float s, float t, float r, int color) {
+        undefined Arc(Root root, defined float s, defined float t, defined float r, int color) {
             this.pen.Color = color
             var rr = Math.Round(r * this.scale * this.dev)!int
             this.Grow(this.PX(s, t), this.PY(s, t), rr)
             root.renderer.DrawCircle(this.PX(s, t), this.PY(s, t), rr, this.pen)
         }
 
-        undefined Dot(Root root, float s, float t, float r, int color) {
+        undefined Dot(Root root, defined float s, defined float t, defined float r, defined int color) {
             this.brush.Color = color
             var rr = Math.Round(r * this.scale * this.dev)!int
             if (rr < 1) { rr = 1 }
@@ -896,7 +896,7 @@ namespace UI {
             root.renderer.FillCircle(this.PX(s, t), this.PY(s, t), rr, this.brush)
         }
 
-        undefined Text(Root root, float s, float t, string text, int color, bool centered = true) {
+        undefined Text(Root root, defined float s, defined float t, string text, defined int color, bool centered = true) {
             this.textBrush.Color = color
             var x = this.PX(s, t)
             var y = this.PY(s, t)
@@ -909,7 +909,7 @@ namespace UI {
 
         // a text beside the element: at (s, t) in the frame, on the side of t, away from the element (left or right of a vertical element, above or below a
         // horizontal one)
-        undefined Label(Root root, float s, float t, string text, int color) {
+        undefined Label(Root root, defined float s, defined float t, string text, defined int color) {
             this.textBrush.Color = color
             var x = this.PX(s, t)
             var y = this.PY(s, t)
@@ -928,7 +928,7 @@ namespace UI {
         }
 
         // a text after the end of the element, in its direction (a rail: right of it when it points right, left of it when it points left)
-        undefined EndText(Root root, float s, string text, int color) {
+        undefined EndText(Root root, defined float s, string text, defined int color) {
             this.textBrush.Color = color
             var x = this.PX(s, 0.0)
             var y = this.PY(s, 0.0)
@@ -945,7 +945,7 @@ namespace UI {
         }
 
         // a path of points (s, t) in the frame, with a colour that goes from c1 to c2
-        undefined Poly(Root root, any pts, int c1, int c2) {
+        undefined Poly(Root root, any pts, defined int c1, defined int c2) {
             any n = pts.length / 2
             for (int i = 0; i + 1 < n; i++) {
                 var c = c1
@@ -956,7 +956,7 @@ namespace UI {
 
         // ---- drawing ----
 
-        override undefined Draw(Root root, int ax, int ay) {
+        override undefined Draw(Root root, defined int ax, defined int ay) {
             if (!this.NeedsDraw(root, ax, ay)) { return }
             root.PushClip(ax, ay, this.actualWidth, this.actualHeight)
             // drawn in pixels of the framebuffer (see dev)
@@ -972,7 +972,7 @@ namespace UI {
             root.PopClip()
         }
 
-        undefined DrawAll(Root root, int lax, int lay) {
+        undefined DrawAll(Root root, defined int lax, defined int lay) {
             var ax = this.Dp(lax)
             var ay = this.Dp(lay)
             var w = this.Dp(lax + this.actualWidth) - ax
@@ -1048,7 +1048,7 @@ namespace UI {
         // ---- the info box (top right, like the one at the bottom right of Falstad's simulator) ----
 
         // the box for the selected element, its right edge at `right`
-        undefined DrawInfo(Root root, Circuits.Element e, int right, int top) {
+        undefined DrawInfo(Root root, Circuits.Element e, defined int right, defined int top) {
             var lines = this.InfoLines(e)
             if (lines.Count == 0) { return }
             var lh = this.TextHeight(root) + this.Dp(1)
@@ -1072,7 +1072,7 @@ namespace UI {
         }
 
         /// <summary>The pace of a circuit for the eye: "real time", "1/100 real time", "10x real time".</summary>
-        static string SpeedText(float speed) {
+        static string SpeedText(defined float speed) {
             if (Math.Abs(speed - 1.0) < 0.000001) { return "real time" }
             if (speed < 1.0) {
                 var d = 1.0 / speed
@@ -1082,7 +1082,7 @@ namespace UI {
         }
 
         // a value with its unit for the eye ("4.7mA"), "-" for none
-        static string Show(float v, string unit) { return UI.CircuitView.Short(v) + unit }
+        static string Show(defined float v, string unit) { return UI.CircuitView.Short(v) + unit }
 
         /// <summary>The lines of the info box for an element: its kind and name, its values with a unit, the voltage, current and power - for a scope or a
         /// probe what it measured (max, min, peak to peak, average, rms, frequency, period; the strongest line of a spectrum).</summary>
@@ -1185,17 +1185,17 @@ namespace UI {
             if (e.Get("display") == "spectrum") {
                 var size = 512
                 any sizeText = Circuits.Symbols.Number(e.Get("fftSize"))
-                if (sizeText != undefined && sizeText >= 16.0) { size = Math.Round(sizeText)!int }
+                if (sizeText != undefined && sizeText >= 16.0) { size = trust Math.Round(sizeText)!int }
                 var fmax = 0.0
                 any fmaxText = Circuits.Symbols.Number(e.Get("maxFrequency"))
-                if (fmaxText != undefined && fmaxText > 0.0) { fmax = fmaxText }
+                if (fmaxText != undefined && fmaxText > 0.0) { fmax = trust fmaxText }
                 var mags = scope.Spectrum("y", size, fmax)
                 if (mags.length >= 9) {
                     var peak = 0.0
                     var peakBin = 1
                     for (int k = 1; k < mags.length; k++) {
                         if (mags[k] > peak) {
-                            peak = mags[k]
+                            peak = trust mags[k]
                             peakBin = k
                         }
                     }
@@ -1209,7 +1209,7 @@ namespace UI {
         }
 
         // the last sample of the power is y * x
-        float PowerFactor(Circuits.Scope scope, string quantity) {
+        defined float PowerFactor(Circuits.Scope scope, string quantity) {
             if (quantity == "power") { return scope.Last("x") }
             return 1.0
         }
@@ -1229,7 +1229,7 @@ namespace UI {
         }
 
         // the text of a probe: what its "measure" asks for, from what it recorded (the voltage now while there is nothing yet)
-        string ProbeText(Circuits.Element e, float v) {
+        string ProbeText(Circuits.Element e, defined float v) {
             var measure = e.Get("measure")
             if (measure == "" || measure == "voltage" || e.scope == undefined) { return UI.CircuitView.Show(v, "V") }
             var st = e.scope.Stats("y")
@@ -1247,20 +1247,20 @@ namespace UI {
         }
 
         // While the view draws, text is measured and drawn at the size of the screen (the renderer is at scale 1 then).
-        int DeviceFontPixels(Root root) {
+        defined int DeviceFontPixels(Root root) {
             var size = this.FontPixels(root)
             if (size <= 0) { size = 14 }
             return Math.Round(size * this.dev)!int
         }
-        override int TextWidth(Root root, string text) {
+        override defined int TextWidth(Root root, string text) {
             if (!this.device) { return base.TextWidth(root, text) }
             return root.renderer.TextWidth(text, root.FontFor(this.FontName(root)), this.DeviceFontPixels(root))
         }
-        override int TextHeight(Root root) {
+        override defined int TextHeight(Root root) {
             if (!this.device) { return base.TextHeight(root) }
             return root.renderer.TextHeight(root.FontFor(this.FontName(root)), this.DeviceFontPixels(root))
         }
-        override undefined DrawString(Root root, int x, int y, string text, Brush brush) {
+        override undefined DrawString(Root root, defined int x, defined int y, string text, Brush brush) {
             if (!this.device) {
                 base.DrawString(root, x, y, text, brush)
                 return
@@ -1269,7 +1269,7 @@ namespace UI {
         }
 
         /// <summary>A number for the eye: 3 significant digits with an SI prefix ("1.81", "47.5m").</summary>
-        static string Short(float v) {
+        static string Short(defined float v) {
             if (v == 0.0) { return "0" }
             any a = Math.Abs(v)
             any digits = Math.Floor(Math.Log(a) / Math.Log(10.0))
@@ -1316,7 +1316,7 @@ namespace UI {
 
         // The background and the grid dots. The grid costs thousands of dots: it is drawn into a layer of its own only when the size, the zoom, the
         // position or the grid change (then one row of dots, copied to the other rows) - every other picture copies the layer in one go.
-        undefined DrawBackground(Root root, int ax, int ay, int w, int h) {
+        undefined DrawBackground(Root root, defined int ax, defined int ay, defined int w, defined int h) {
             if (!this.showGrid || this.readOnly || this.scale < 5.0 || w <= 0 || h <= 0) {
                 root.renderer.FillRect(ax, ay, w, h, this.back)
                 return
@@ -1335,7 +1335,7 @@ namespace UI {
         }
 
         // the grid into the layer (whose top left corner is at (ax, ay) of the framebuffer)
-        undefined DrawGrid(Renderer r, int ax, int ay, int w, int h) {
+        undefined DrawGrid(Renderer r, defined int ax, defined int ay, defined int w, defined int h) {
             r.FillRect(0, 0, w, h, this.back)
             var step = this.snap
             if (step < 1) { step = 1 }
@@ -1701,7 +1701,7 @@ namespace UI {
         }
 
         // how far the name is from the line of the element (the other side than the values)
-        float NameSide(Circuits.Element e) {
+        defined float NameSide(Circuits.Element e) {
             var t = e.type
             if (t == "Transistor" || t == "Mosfet" || t == "Jfet" || t == "Darlington") { return 3.0 }
             if (t == "Thyristor" || t == "Triac" || t == "Diac") { return 2.6 }
@@ -1713,7 +1713,7 @@ namespace UI {
             return 1.6
         }
 
-        undefined Value(Root root, Circuits.Element e, string key, string unit, float s, float t) {
+        undefined Value(Root root, Circuits.Element e, string key, string unit, defined float s, defined float t) {
             if (!this.showValues) { return }
             this.Label(root, s, t, this.Pretty(e, key, unit), UI.Color.Rgb(170, 170, 170))
         }
@@ -1726,7 +1726,7 @@ namespace UI {
             return Circuits.Schematic.Format(v) + unit
         }
 
-        undefined Box(Root root, float s, float t, float half, int color) {
+        undefined Box(Root root, defined float s, defined float t, defined float half, int color) {
             this.thin.Color = color
             var r = Math.Round(half * this.scale * this.dev)!int
             this.Grow(this.PX(s, t), this.PY(s, t), r)
@@ -1734,7 +1734,7 @@ namespace UI {
         }
 
         // a sine (kind 0) or square (kind 1) in a circle at (s, t)
-        undefined Wave(Root root, float s, float t, int kind, int color) {
+        undefined Wave(Root root, defined float s, defined float t, defined int kind, defined int color) {
             if (kind == 2) {
                 this.Seg(root, s - 0.9, t + 0.4, s - 0.45, t - 0.4, color)
                 this.Seg(root, s - 0.45, t - 0.4, s + 0.45, t + 0.4, color)
@@ -1767,7 +1767,7 @@ namespace UI {
             }
         }
 
-        int LedColor(string color, float b) {
+        defined int LedColor(string color, defined float b) {
             var r = 255
             var g = 40
             var bl = 40
@@ -1787,7 +1787,7 @@ namespace UI {
             return UI.Color.Rgb(Math.Round(r * k)!int, Math.Round(g * k)!int, Math.Round(bl * k)!int)
         }
 
-        undefined DrawTransistor(Root root, Circuits.Element e, float L) {
+        undefined DrawTransistor(Root root, Circuits.Element e, defined float L) {
             var vb = e.PinVoltage(0)
             var vc = e.PinVoltage(1)
             var ve = e.PinVoltage(2)
@@ -1826,7 +1826,7 @@ namespace UI {
             if (this.showValues) { this.Label(root, L - 2.0, -2.6 * Circuits.Symbols.Dsign(e), e.Get("model"), UI.Color.Rgb(140, 140, 140)) }
         }
 
-        undefined DrawMosfet(Root root, Circuits.Element e, float L) {
+        undefined DrawMosfet(Root root, Circuits.Element e, defined float L) {
             var vg = e.PinVoltage(0)
             var vs = e.PinVoltage(1)
             var vd = e.PinVoltage(2)
@@ -1843,7 +1843,7 @@ namespace UI {
             if (this.showValues) { this.Label(root, L - 2.0, -2.6 * Circuits.Symbols.Dsign(e), e.Get("model"), UI.Color.Rgb(140, 140, 140)) }
         }
 
-        undefined DrawJfet(Root root, Circuits.Element e, float L) {
+        undefined DrawJfet(Root root, Circuits.Element e, defined float L) {
             var vg = e.PinVoltage(0)
             var vs = e.PinVoltage(1)
             var vd = e.PinVoltage(2)
@@ -1867,7 +1867,7 @@ namespace UI {
         }
 
         // a point of the grid in the current frame: (s, t)
-        float[] Local(int gx, int gy) {
+        float[] Local(defined int gx, defined int gy) {
             var r = new float[2]
             float x = (this.ax + this.offsetX + gx * this.scale) * this.dev - this.fx
             float y = (this.ay + this.offsetY + gy * this.scale) * this.dev - this.fy
@@ -1922,13 +1922,13 @@ namespace UI {
             if (fired) { this.Label(root, m, -2.4 * this.Sign(g[1]), "on", UI.Color.Rgb(240, 200, 80)) }
         }
 
-        float Sign(float v) {
+        defined float Sign(defined float v) {
             if (v < 0.0) { return -1.0 }
             return 1.0
         }
 
         // a unijunction transistor: the base bar beside the second point with B1 and B2 at its ends, the emitter slanting into it
-        undefined DrawUjt(Root root, Circuits.Element e, float L) {
+        undefined DrawUjt(Root root, Circuits.Element e, defined float L) {
             var h = 1.0 * Circuits.Symbols.Dsign(e)
             if (e.Flag("flip")) { h = -h }
             var ce = this.VoltageColor(e.PinVoltage(0))
@@ -1976,7 +1976,7 @@ namespace UI {
         }
 
         // a vacuum triode: grid at the first point, plate and cathode beside the second
-        undefined DrawTriode(Root root, Circuits.Element e, float L) {
+        undefined DrawTriode(Root root, Circuits.Element e, defined float L) {
             var fl = 1.0 * Circuits.Symbols.Dsign(e)
             if (e.Flag("flip")) { fl = -fl }
             var vp = e.PinVoltage(0)
@@ -1998,7 +1998,7 @@ namespace UI {
 
         // a pentode: the envelope, the plate on the side of the plate pin, the control grid along the axis, the screen grid to its pin beyond the tube,
         // the suppressor grid joined to the cathode
-        undefined DrawPentode(Root root, Circuits.Element e, float L) {
+        undefined DrawPentode(Root root, Circuits.Element e, defined float L) {
             var fl = 1.0 * Circuits.Symbols.Dsign(e)
             if (e.Flag("flip")) { fl = -fl }
             var vp = e.PinVoltage(0)
@@ -2026,7 +2026,7 @@ namespace UI {
         }
 
         // a vacuum diode: the envelope in the middle, the plate bar facing the cathode bar
-        undefined DrawVacuumDiode(Root root, Circuits.Element e, float L) {
+        undefined DrawVacuumDiode(Root root, Circuits.Element e, defined float L) {
             var m = L / 2
             var c0 = this.VoltageColor(e.PinVoltage(0))
             var c1 = this.VoltageColor(e.PinVoltage(1))
@@ -2040,7 +2040,7 @@ namespace UI {
         }
 
         // diac (two diodes against each other), varactor (a diode with a capacitor plate), tunnel diode (a diode with a bracket)
-        undefined DrawDiodeLike(Root root, Circuits.Element e, float L) {
+        undefined DrawDiodeLike(Root root, Circuits.Element e, defined float L) {
             var m = L / 2
             var c0 = this.VoltageColor(e.PinVoltage(0))
             var c1 = this.VoltageColor(e.PinVoltage(1))
@@ -2070,7 +2070,7 @@ namespace UI {
             }
         }
 
-        undefined DrawOpAmp(Root root, Circuits.Element e, float L) {
+        undefined DrawOpAmp(Root root, Circuits.Element e, defined float L) {
             var hs = 2.0 * Circuits.Symbols.Dsign(e)
             if (e.Flag("flip")) { hs = -hs }
             var vm = e.PinVoltage(0)
@@ -2088,7 +2088,7 @@ namespace UI {
             if (e.type == "Comparator") { this.Text(root, L / 2, 0.0, "cmp", UI.Color.Rgb(140, 140, 140)) }
         }
 
-        undefined DrawGate(Root root, Circuits.Element e, float L) {
+        undefined DrawGate(Root root, Circuits.Element e, defined float L) {
             var t = e.type
             var white = UI.Color.Rgb(220, 220, 220)
             var n = e.pins.Count / 2 - 1
@@ -2204,7 +2204,7 @@ namespace UI {
         }
 
         // the digit of a 7-segment display in its box: the segments a..g (and the point) lit while their pin is high
-        undefined DrawDigit(Root root, Circuits.Element e, float left, float top, float right, float bottom) {
+        undefined DrawDigit(Root root, Circuits.Element e, defined float left, defined float top, defined float right, defined float bottom) {
             any supply = Circuits.Symbols.Number(e.Get("supply"))
             if (supply == undefined) { supply = 5.0 }
             var w = (right - left) * 0.36
@@ -2294,7 +2294,7 @@ namespace UI {
         }
 
         // half circles along the line from (s, t) in steps of (ds, dt), `bumps` of them, bulging to the side `side` (+1 / -1)
-        undefined Coil(Root root, float s, float t, float ds, float dt, int bumps, float side, float va, float vb) {
+        undefined Coil(Root root, defined float s, defined float t, defined float ds, defined float dt, defined int bumps, defined float side, defined float va, defined float vb) {
             var steps = bumps * 6
             any len = Math.Sqrt(ds * ds + dt * dt)
             any ns = dt / len * side
@@ -2538,14 +2538,14 @@ namespace UI {
 
         // the parts with two pins that are a box or a special line between their leads
         // a rectangle in the frame of the element (it turns with the element)
-        undefined Rect(Root root, float s1, float t1, float s2, float t2, int color) {
+        undefined Rect(Root root, defined float s1, defined float t1, defined float s2, defined float t2, defined int color) {
             this.Seg(root, s1, t1, s2, t1, color)
             this.Seg(root, s2, t1, s2, t2, color)
             this.Seg(root, s2, t2, s1, t2, color)
             this.Seg(root, s1, t2, s1, t1, color)
         }
 
-        undefined DrawTwoPin(Root root, Circuits.Element e, float L) {
+        undefined DrawTwoPin(Root root, Circuits.Element e, defined float L) {
             var t = e.type
             var m = L / 2
             var v0 = e.PinVoltage(0)
@@ -2668,12 +2668,12 @@ namespace UI {
             // over time: the time base (10 divisions across), the trigger, the power as v * i
             var perDiv = 0.0
             any perDivText = Circuits.Symbols.Number(e.Get("timePerDiv").Replace("s", ""))
-            if (perDivText != undefined && perDivText > 0.0) { perDiv = perDivText }
+            if (perDivText != undefined && perDivText > 0.0) { perDiv = trust perDivText }
             var trigger = 0
             if (e.Get("trigger") == "rising") { trigger = 1 } else if (e.Get("trigger") == "falling") { trigger = 2 }
             var level = 0.0
             any levelText = Circuits.Symbols.Number(e.Get("triggerLevel"))
-            if (levelText != undefined) { level = levelText }
+            if (levelText != undefined) { level = trust levelText }
             var other = ""
             if (quantity == "power") { other = "x" }
             var columns = w - 2
@@ -2713,7 +2713,7 @@ namespace UI {
         }
 
         // a scope as an XY display: the current of the element (up) over its voltage (across) - its characteristic curve
-        undefined DrawXY(Root root, Circuits.Element e, Circuits.Scope scope, int x0, int y0, int w, int h) {
+        undefined DrawXY(Root root, Circuits.Element e, Circuits.Scope scope, defined int x0, defined int y0, defined int w, defined int h) {
             var vName = "y"
             var iName = "x"
             if (e.Get("quantity") != "voltage") {
@@ -2770,13 +2770,13 @@ namespace UI {
 
         // a scope as an FFT analyzer: the spectrum of the last fftSize samples (taken at twice maxFrequency, Hann window; computed natively), in dB below its
         // strongest line, from 0 Hz to maxFrequency (0: at the rate of the simulation, up to a little above the highest line that is not 60 dB down)
-        undefined DrawSpectrum(Root root, Circuits.Element e, Circuits.Scope scope, int x0, int y0, int w, int h, string label) {
+        undefined DrawSpectrum(Root root, Circuits.Element e, Circuits.Scope scope, defined int x0, defined int y0, defined int w, defined int h, string label) {
             var size = 512
             any sizeText = Circuits.Symbols.Number(e.Get("fftSize"))
-            if (sizeText != undefined && sizeText >= 16.0) { size = Math.Round(sizeText)!int }
+            if (sizeText != undefined && sizeText >= 16.0) { size = trust Math.Round(sizeText)!int }
             var fmax = 0.0
             any fmaxText = Circuits.Symbols.Number(e.Get("maxFrequency"))
-            if (fmaxText != undefined && fmaxText > 0.0) { fmax = fmaxText }
+            if (fmaxText != undefined && fmaxText > 0.0) { fmax = trust fmaxText }
             var spectrum = scope.Spectrum("y", size, fmax)
             this.textBrush.Color = UI.Color.Rgb(140, 200, 140)
             if (spectrum.length < 9) {
@@ -2790,7 +2790,7 @@ namespace UI {
             var peakBin = 1
             for (int k = 1; k < mags.length; k++) {
                 if (mags[k] > peak) {
-                    peak = mags[k]
+                    peak = trust mags[k]
                     peakBin = k
                 }
             }
@@ -2873,7 +2873,7 @@ namespace UI {
         }
 
         // the current through an element from its first pin to its second (amperes; 0 if it has none to show)
-        float CurrentOf(Circuits.Element e) {
+        defined float CurrentOf(Circuits.Element e) {
             var p = e.part
             if (p == undefined) { return 0.0 }
             var t = e.type
@@ -2945,9 +2945,9 @@ namespace UI {
         // the current of every wire (from its first point to its second; 0 for the other elements and where it cannot be told)
         // the connections of the wires (which points the pins of each element are on, which wires join which points): built only when the elements
         // change (a cheap signature of their ends and pins), not for every picture - finding the points was most of the time of WireCurrents
-        int wcSignature = -1
-        int wcCount = -1
-        int wcPoints = 0
+        defined int wcSignature = -1
+        defined int wcCount = -1
+        defined int wcPoints = 0
         List wcPinStart = undefined
         List wcPinPoint = undefined
         List wcWa = undefined
@@ -2955,7 +2955,7 @@ namespace UI {
         List wcWi = undefined
 
         undefined WireTopology(List els) {
-            var sig = 0
+            defined int sig = 0
             foreach (e in els) { sig = (sig * 31 + e.x1 * 7 + e.y1 * 13 + e.x2 * 17 + e.y2 * 19 + e.pins.Count) % 1000000007 }
             if (sig == this.wcSignature && els.Count == this.wcCount && this.wcPinPoint != undefined) { return }
             var xs = new List()
@@ -3052,7 +3052,7 @@ namespace UI {
             return result
         }
 
-        int PointIndex(List xs, List ys, int x, int y) {
+        defined int PointIndex(List xs, List ys, defined int x, defined int y) {
             for (int k = 0; k < xs.Count; k++) {
                 if (xs[k] == x && ys[k] == y) { return k }
             }
@@ -3064,7 +3064,7 @@ namespace UI {
         // ---- the mouse ----
 
         // the element under the point (grid units), undefined if none
-        Circuits.Element ElementAt(float ux, float uy) {
+        Circuits.Element ElementAt(defined float ux, defined float uy) {
             var els = this.Schematic.Elements()
             Circuits.Element best = undefined
             var bestD = 1.2
@@ -3079,7 +3079,7 @@ namespace UI {
             return best
         }
 
-        float Distance(Circuits.Element e, float ux, float uy) {
+        defined float Distance(Circuits.Element e, defined float ux, defined float uy) {
             var t = e.type
             if (t == "Scope" || Circuits.Symbols.IsChip(t)) {
                 var x0 = UI.M.Min(e.x1, e.x2) + 0.0
@@ -3115,7 +3115,7 @@ namespace UI {
             return d
         }
 
-        float SegDistance(float px, float py, float x1, float y1, float x2, float y2) {
+        defined float SegDistance(defined float px, defined float py, defined float x1, defined float y1, defined float x2, defined float y2) {
             var dx = x2 - x1
             var dy = y2 - y1
             var l2 = dx * dx + dy * dy
@@ -3161,7 +3161,7 @@ namespace UI {
         }
 
         // which end of an element (1 or 2) is near the point, 0 if none
-        int EndAt(Circuits.Element e, float ux, float uy) {
+        defined int EndAt(Circuits.Element e, defined float ux, defined float uy) {
             if (Circuits.Symbols.IsChip(e.type) || e.type == "Text") { return 0 }
             var r = 6.0 / this.scale
             if (r < 0.6) { r = 0.6 }
@@ -3172,7 +3172,7 @@ namespace UI {
 
         // is the point (grid units) close to a pin? Then downGX/downGY become that pin.
         // the pin near a point: its element (contextPin is its index) or undefined
-        Circuits.Element PinElementAt(float ux, float uy) {
+        Circuits.Element PinElementAt(defined float ux, defined float uy) {
             var r = 5.0 / this.scale
             if (r < 0.5) { r = 0.5 }
             foreach (e in this.Schematic.Elements()) {
@@ -3187,7 +3187,7 @@ namespace UI {
             return undefined
         }
 
-        bool NearPin(float ux, float uy) {
+        bool NearPin(defined float ux, defined float uy) {
             var r = 5.0 / this.scale
             if (r < 0.5) { r = 0.5 }
             foreach (e in this.Schematic.Elements()) {
@@ -3203,7 +3203,7 @@ namespace UI {
         }
 
         // is there a pin at the grid point?
-        bool PinAt(int gx, int gy) {
+        bool PinAt(defined int gx, defined int gy) {
             foreach (e in this.Schematic.Elements()) {
                 for (int i = 0; i < e.pins.Count / 2; i++) {
                     if (e.pins[i * 2] == gx && e.pins[i * 2 + 1] == gy) { return true }
@@ -3212,7 +3212,7 @@ namespace UI {
             return false
         }
 
-        override undefined MouseDown(Root root, int button, int px, int py) {
+        override undefined MouseDown(Root root, defined int button, defined int px, defined int py) {
             root.SetFocus(this)
             this.downPX = px
             this.downPY = py
@@ -3275,7 +3275,7 @@ namespace UI {
             this.mode = 2
         }
 
-        override undefined MouseMove(Root root, int px, int py) {
+        override undefined MouseMove(Root root, defined int px, defined int py) {
             var lx = px - this.ax + 0.0
             var ly = py - this.ay + 0.0
             var ux = this.ToUnitX(lx)
@@ -3338,7 +3338,7 @@ namespace UI {
         }
 
         // the pointer: a cross while placing or over a pin (a wire starts there), a hand over a switch, arrows over what can be moved
-        override UI.Cursor CursorAt(Root root, int px, int py) {
+        override UI.Cursor CursorAt(Root root, defined int px, defined int py) {
             if (this.cursor >= 0) { return this.cursor }
             if (this.placeType != "") { return UI.Cursor.Cross }
             // pressed: moving (1), placing or drawing a wire (3, 4), stretching (6), the rectangle (2), panning (5), a switch held (7)
@@ -3356,7 +3356,7 @@ namespace UI {
             return UI.Cursor.Arrow
         }
 
-        override undefined Hover(Root root, int px, int py) {
+        override undefined Hover(Root root, defined int px, defined int py) {
             var ux = this.ToUnitX(px - this.ax + 0.0)
             var uy = this.ToUnitY(py - this.ay + 0.0)
             var hit = this.ElementAt(ux, uy)
@@ -3381,7 +3381,7 @@ namespace UI {
             return text
         }
 
-        override undefined MouseUp(Root root, int button, int px, int py) {
+        override undefined MouseUp(Root root, defined int button, defined int px, defined int py) {
             var mode = this.mode
             this.mode = 0
             var s = this.Schematic
@@ -3505,7 +3505,7 @@ namespace UI {
             return prefix + n
         }
 
-        override bool MouseWheel(Root root, int dx, int dy) {
+        override bool MouseWheel(Root root, defined int dx, defined int dy) {
             if (dy == 0) { return false }
             // zoom around the pointer
             var lx = root.mouseX - this.ax + 0.0
@@ -3524,7 +3524,7 @@ namespace UI {
             return true
         }
 
-        override undefined KeyDown(Root root, int key, int mod) {
+        override undefined KeyDown(Root root, defined int key, defined int mod) {
             var ctrl = (mod / 64) % 4 != 0
             var shift = mod % 4 != 0
             if (key == UI.Keys.Escape()) {
@@ -3556,7 +3556,7 @@ namespace UI {
         /// <summary>Edits the properties of an element: OnEdit if it is set (an editor around the view), else the editor of the view.</summary>
         // ---- the context menu ----
 
-        undefined ShowContextMenu(Root root, int px, int py) {
+        undefined ShowContextMenu(Root root, defined int px, defined int py) {
             var ux = this.ToUnitX(px - this.ax + 0.0)
             var uy = this.ToUnitY(py - this.ay + 0.0)
             // on a pin: a scope for the voltage of that pin
@@ -3708,7 +3708,7 @@ namespace UI {
 
         /// <summary>Puts a scope below an element that shows its voltage or current ("voltage"/"current") over time or as a spectrum ("time"/"spectrum").
         /// An element without a name gets one (the scope finds it by its name). Returns the scope element.</summary>
-        Circuits.Element AttachScope(Circuits.Element e, string quantity = "voltage", string display = "time", int pin = -1) {
+        Circuits.Element AttachScope(Circuits.Element e, string quantity = "voltage", string display = "time", defined int pin = -1) {
             if (e == undefined || this.readOnly) { return undefined }
             this.Remember()
             var s = this.Schematic

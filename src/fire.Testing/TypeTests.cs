@@ -72,6 +72,32 @@ static class TypeTests
             """) == "TC001 TC002|");
         Check("strict (Schalter): derselbe Konflikt ist ein Fehler", Run("int x = 3\nx = \"hello\"", TypeCheckMode.Strict) == "|ERROR TC001");
         Check("#strict in der Datei", Run("#strict\nint x = \"a\"") == "|ERROR TC001");
+        // A fire body runs without `this`: a capture (taking, with) wins over a field of the same name; a field without one is an error at compile time
+        Check("fire: ein Capture verdeckt ein gleichnamiges Feld, ein Feld ohne Capture ist im fire-Block ein Fehler (er laeuft ohne this)",
+            Run("class P { int n = 5\n undefined Go() { int n = 7\n fire taking n { int k = n + 1 } } }\nnew P().Go()\nprint(\"ok\")") is var fireCap && fireCap == "|ok"
+            && Run("class P { int n = 5\n undefined Go() { fire { int k = n } } }\nnew P().Go()") is var fireField && fireField.StartsWith("|ERROR E4"), _lastRun);
+        // Expression trees (docs/ROADMAP_EXPRESSIONS.md): only a lambda written at the call with an expression body, nothing that changes something (TC030)
+        Check("Expression trees: ein Block, ein Lambda in einer Variablen, eine Zuweisung, ++ sind TC030 (auch lax); ein Ausdruck geht",
+            Run("class P { int age\n construct(int a) { this.age = a } }\nclass Probe { string Show(lambda expression<P> e) { return e.ToString() } }\nvar pr = new Probe()\nprint(pr.Show(p => { return p.age > 1 }))") is var treeBlock && treeBlock == "|ERROR TC030"
+            && Run("class P { int age\n construct(int a) { this.age = a } }\nclass Probe { string Show(lambda expression<P> e) { return e.ToString() } }\nvar pr = new Probe()\nvar f = (P p) => p.age > 1\nprint(pr.Show(f))") == "|ERROR TC030"
+            && Run("class P { int age\n construct(int a) { this.age = a } }\nclass Probe { string Show(lambda expression<P> e) { return e.ToString() } }\nvar pr = new Probe()\nint k = 0\nprint(pr.Show(p => k == p.age))") == "|p => (k == p.age)"
+            && Run("class P { int age\n construct(int a) { this.age = a } }\nclass Probe { string Show(lambda expression<P> e) { return e.ToString() } }\nvar pr = new Probe()\nprint(pr.Show(p => p.age++))") == "|ERROR TC030", _lastRun);
+        // Records (step 9): a write outside the construction (TC026) and a field that can change (TC027) are errors in lax mode too; a record derives only from a record
+        Check("Records: Schreiben ausserhalb der Konstruktion ist TC026 (auch lax), im Konstruktor erlaubt",
+            Run("record P { int x\n construct(int x) { this.x = x }\n undefined M() { this.x = 2 } }\nvar p = new P(1)\np.x = 3\np.x++") is var recW && recW == "|ERROR TC026 TC026 TC026", recW);
+        Check("Records: ein Feld, das sich aendern kann (Klasse, Array), ist TC027; Werte, Records, Lambdas, any sind erlaubt",
+            Run("class B { int v }\nrecord Q { B b; int a[] }\nrecord R { int i; string s; Q q; lambda f; any x }\nprint(1)") is var recF && recF == "|ERROR TC027 TC027", recF);
+        Check("Records: ein Record erbt nur von einem Record, eine Klasse nicht von einem",
+            Run("record P { int x }\nclass C : P { }\nprint(1)") is var recI && recI == "|ERROR E5000", recI);
+        Check("with: ohne copy/flat nur fuer Records - auf einer Klasse TC028 (auch lax), ein unbekanntes Feld TC008",
+            Run("class C { int v }\nrecord R { int x }\nvar d = new C() with { .v = 1 }\nprint(1)") is var recWith && recWith == "|ERROR TC028"
+            && Run("#strict\nrecord R { int x }\nvar e = new R() with { .y = 2 }") == "|ERROR TC008", recWith);
+        Check("Channel: ein Objekt ohne Wort (copy/take) und nicht frisch ist TC029 (auch lax); copy, take, new und Werte sind erlaubt",
+            Run("class J { int n }\nvar ch = new Channel<J>()\nvar j = new J()\nch.Send(j)\nprint(1)") is var chW && chW == "|ERROR TC029"
+            && Run("class J { int n }\nvar ch = new Channel<J>()\nvar j = new J()\nch.Send(copy j)\nch.Send(take j)\nch.Send(new J())\nvar ci = new Channel<int>()\nci.Send(3)\nprint(ch.Count + ci.Count)") == "|4"
+            && Run("record RL { int n }\nvar ch = new Channel<RL>()\nvar r = new RL()\nch.Send(r)\nprint(ch.Count)") == "|1", chW);
+        Check("Records: ueber any ist das Schreiben die AccessDeniedException, == vergleicht den Inhalt",
+            Run("record P { int x\n construct(int x) { this.x = x } }\nany p = new P(1)\ntry { p.x = 2 } catch (AccessDeniedException e) { print(\"denied\") }\nprint((p == new P(1)) + \" \" + p.x)") is var recA && recA == "|denied\nTrue 1", recA);
         Check("#lax in der Datei schlaegt den Schalter strict", Run("#lax\nint x = 1\ntry { x = \"a\" } catch (ArgumentException e) { print(\"guard\") }\nprint(x)", TypeCheckMode.Strict) == "TC001|guard\n1");
         Check("int geht implizit an float, alles geht an string, undefined an alles", Run("float f = 2\nstring s = 12\nint u = undefined\nprint(f)\nprint(s)") == "|2\n12");
         Check("ein Objekt geht an seine Basisklasse, ein Downcast bleibt erlaubt, Unverwandtes nicht", Run("""
@@ -567,7 +593,7 @@ static class TypeTests
                     private static int Counter() { return 7 }
                     private int Hush { get { return this.secret } set { this.secret = value } }
                     int Same(Base other) { return other.secret + other.Hidden() + Base.sv + Base.Counter() + other.Hush }
-                    int InLambda() { var me = this; var f = func () => me.secret + me.Hidden(); return f() }
+                    int InLambda() { var me = this; var f = func () => (taking me).secret + me.Hidden(); return f() }
                 }
                 class Child : Base {
                     int Peek() { return this.shared + this.Guarded() + shared + Guarded() }
@@ -597,7 +623,7 @@ static class TypeTests
                 ("privates Feld der Basisklasse ohne this", "class C2 : Base { int P() { return secret } }"),
                 ("private Methode der Basisklasse ohne this", "class C2 : Base { int P() { return Hidden() } }"),
                 ("private Methode der Basisklasse ueber base", "class C2 : Base { int P() { return base.Hidden() } }"),
-                ("im Lambda einer anderen Klasse", "class C2 { int P(Base b) { var f = func () => b.secret; return f() } }"),
+                ("im Lambda einer anderen Klasse", "class C2 { int P(Base b) { var f = func () => (taking b).secret; return f() } }"),
                 ("Parameter einer anderen Klasse", "class F { static int G(Base b) { return b.secret } }"),
                 ("Rueckgabetyp", "class F { static Base Make() { return new Base() } }\nprint(F.Make().Hidden())"),
             })

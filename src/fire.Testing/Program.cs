@@ -12792,7 +12792,7 @@ uiDrawScript = """
                 namespace Amb.A { class Upper : UI.Converter { } }
                 namespace Amb.B { class Upper : UI.Converter { } }
                 #include "{{P("Amb.fxml")}}"
-                """, new[] { "AUSNAHME: 'Upper' is ambiguous: Amb.A.Upper, Amb.B.Upper (more than one '#using' brings it); write the full name (12)\n'Upper' is ambiguous: Amb.A.Upper, Amb.B.Upper (more than one '#using' brings it); write the full name (20)" });
+                """, new[] { "AUSNAHME: 'Upper' is ambiguous: Amb.A.Upper, Amb.B.Upper (more than one '#using' or imported library brings it); write the full name (12)\n'Upper' is ambiguous: Amb.A.Upper, Amb.B.Upper (more than one '#using' or imported library brings it); write the full name (20)" });
 
             File.WriteAllText(P("Rich.fxml"), """
                 <Window Class="Rich" Title="Rich" Width="480" Height="320">
@@ -14314,24 +14314,27 @@ DebuggerTests.Run();
         print(f())
         """, new[] { "7" });
 
-    CheckLq("Capture: Zuweisung an den Capture ist ein Fehler", """
+    // (step 8 of docs/ROADMAP_TASKS.md: a lambda gets a copy of what it uses without a word - TC023 -, an object is shared only when it is bound with `on`)
+    CheckLq("Capture: ohne Wort bekommt das Lambda eine Kopie - eine Zuweisung aendert nur sie, nicht die Variable draussen", """
         class T {
-            static Run() {
+            static undefined Run() {
                 var n = 1
                 var f = () => { n = 2; return n }
-                print(f())
+                print(f() + " " + n)
             }
         }
         T.Run()
-        """, new[] { "AUSNAHME: 'n' is a COPY of the outer variable inside the lambda (capture) and cannot be assigned there (declare a new local variable with a different name) (4)" });
+        """, new[] { "2 1" });
 
-    CheckLq("Capture: ein Objekt wird als Referenz geteilt", """
+    CheckLq("Capture: ein Objekt ohne Wort wird kopiert, mit on gebunden geteilt", """
         class Box { int n; construct() { this.n = 0 } }
         class T {
-            static Run() {
+            static undefined Run() {
                 var b = new Box()
-                var bump = () => { b.n = b.n + 1 }
-                bump(); bump()
+                var copied = () => { b.n = b.n + 1 }
+                copied(); copied()
+                var bound = func () on b => { n = n + 1 }
+                bound(); bound()
                 print(b.n)
             }
         }
@@ -15882,7 +15885,7 @@ static int CountOccurrences(string haystack, string needle)
         CheckMd("Sprachdoku: alle Links zeigen auf vorhandene Seiten und Ueberschriften im selben Ordner", string.Join(", ", broken), "");
         var (topics, more) = fire.Editor.LanguageHelp.Contents(File.ReadAllText(Path.Combine(languageDir, "README.md")));
         CheckMd("Sprachdoku: das Inhaltsverzeichnis liefert die Themenseiten fuers Hilfemenue",
-            $"{topics.Count} {topics[0].Title}={topics[0].File} {topics[^1].File}", "19 1. Basics=01-basics.md 19-standard-library.md");
+            $"{topics.Count} {topics[0].Title}={topics[0].File} {topics[^1].File}", "20 1. Basics=01-basics.md 20-time.md");
         CheckMd("Sprachdoku: weitere Seiten (Roadmap) nach den Themen", string.Join(",", more.Select(p => p.Title + "=" + p.File)), "Roadmap=roadmap.md");
         var unlisted = Directory.GetFiles(languageDir, "*.md").Select(Path.GetFileName)
             .Where(f => f != "README.md" && !topics.Concat(more).Any(t => t.File == f)).ToList();
@@ -15976,6 +15979,35 @@ static int CountOccurrences(string haystack, string needle)
         items.FirstOrDefault(i => i.Text == "Add")?.Documentation?.Summary == "Adds two numbers." && items.FirstOrDefault(i => i.Text == "Plain")?.Documentation == null);
     var classItems = fire.Editor.CompletionEngine.GetSuggestions(docSource + "\nvar d = new Ca", docSource.Length + 15, fire.Editor.ScriptSymbolIndex.Build(docSource + "\nvar d = new Ca"));
     CheckDoc("Vervollstaendigung: Klassen tragen ihre Dokumentation", classItems.FirstOrDefault(i => i.Text == "Calc")?.Documentation?.Summary == "A calculator. Works on ints.");
+
+    // Lambdas with an expression body (docs/ROADMAP_EXPRESSIONS.md step 7): the parameter's type from the called method's `bool lambda<T>` /
+    // `lambda expression<T>` (T from the receiver: `new Q<Person>()`), completion as in a lambda with a block; the hover says "expression tree"
+    string treeSource = "class Order { int total }\nclass Person { int age\n string name\n List<Order> orders }\nclass Q<T> {\n string Plain(bool lambda<T> f) { return \"\" }\n string Tree(lambda expression<T> e) { return \"\" }\n string Two(lambda expression<T, Order> e) { return \"\" }\n}\nvar q = new Q<Person>()\nvar qo = new Q<Order>()\n";
+    List<string> TreeCompletion(string call)
+    {
+        string full = treeSource + call;
+        return fire.Editor.CompletionEngine.GetSuggestions(full, full.Length, fire.Editor.ScriptSymbolIndex.Build(full)).Select(i => i.Text).ToList();
+    }
+    fire.Editor.ResolvedSymbol? TreeHover(string call, string at)
+    {
+        string full = treeSource + call;
+        return fire.Editor.NavigationEngine.TryResolveSymbol(full, full.LastIndexOf(at, StringComparison.Ordinal), fire.Editor.ScriptSymbolIndex.Build(full));
+    }
+    var person = new[] { "age", "name", "orders" };
+    CheckDoc("Lambda mit Ausdrucksrumpf: der Parameter hat den Typ aus lambda<T> und aus lambda expression<T> (T vom Empfaenger), auch weiter hinten im Rumpf und mit geschriebenem Typ",
+        new[] { "q.Plain(p => p.", "q.Tree(p => p.", "q.Tree(p => p.age > 3 && p.", "q.Tree((Person x) => x.", "new Q<Person>().Tree(p => p." }
+            .All(c => TreeCompletion(c) is var names && person.All(names.Contains) && !names.Contains("total")),
+        string.Join(" | ", TreeCompletion("q.Tree(p => p.")));
+    CheckDoc("Lambda mit Ausdrucksrumpf: zwei Parameter (lambda expression<T, Order>), ein anderes Typargument (Q<Order>); ein Geschwister-Argument sieht den Parameter nicht",
+        TreeCompletion("q.Two((p, o) => o.").SequenceEqual(new[] { "total" }) && TreeCompletion("qo.Tree(o => o.").SequenceEqual(new[] { "total" })
+            && TreeCompletion("q.Tree(p => p.age > 1, p.").Count > 5,
+        string.Join(",", TreeCompletion("q.Two((p, o) => o.")) + " / " + string.Join(",", TreeCompletion("qo.Tree(o => o.")));
+    var treeHover = TreeHover("q.Tree(p => p.age > 3)", "p.age");
+    var plainHover = TreeHover("q.Plain(p => p.age > 3)", "p.age");
+    CheckDoc("Hover ueber einem Lambda-Parameter: Typ und \"expression tree\" bei lambda expression<T>, die Methode mit ihrer Signatur",
+        treeHover?.Header == "(lambda parameter) p : Person - expression tree" && treeHover.Documentation?.Summary.Contains("Q.Tree as an expression tree (lambda expression<T>)") == true
+            && plainHover?.Header == "(lambda parameter) p : Person" && TreeHover("q.Two((p, o) => o.total > p.age)", "Two")?.Header == "(method) Q.Two(lambda expression<T, Order> e) → string",
+        treeHover?.Header + " / " + plainHover?.Header);
 
     // Call context: tooltip stays during the arguments, new Foo( jumps to the constructor
     string callSource = """
@@ -16667,6 +16699,71 @@ else
             Keep k = new Keep()
             try { k.Fill() } catch (Exception e) { print("gone: " + e.message) }
             """),
+        ("Bedingter Zugriff: a?.b (nur undefined), a??.b (auch der Member, zur Laufzeit nur wo der Typ ihn nicht beweist), die Kette und ihre Argumente werden uebersprungen", """
+            interface IAnimal { string Name() }
+            class Dog : IAnimal { string Name() { return "dog" } string Bark() { return "wuff" } }
+            class Cat : IAnimal { string Name() { return "cat" } }
+            class Box { int v = 3; Box next; int Twice(int k) { return this.v * k } }
+            class Demo {
+                static undefined Run() {
+                    Box b = new Box()
+                    Box none = undefined
+                    print(b?.v + " " + none?.v + " " + b?.Twice(2) + " " + none?.Twice(2))
+                    b.next = new Box()
+                    print(b?.next.v + " " + none?.next.v + " " + b?.next?.next?.v)
+                    IAnimal a = new Dog()
+                    IAnimal c = new Cat()
+                    print(a??.Bark() + " " + c??.Bark() + " " + a??.Name())
+                    any x = 5
+                    any y = new Box()
+                    any z = [1, 2]
+                    any f = () => 1
+                    print(x??.v + " " + y??.v + " " + z??.Length + " " + z??.Count + " " + (x??.ToChar() == 5!char))
+                    int calls = 0
+                    none?.Twice(calls++)
+                    a??.Bark()
+                    print(calls)
+                    var h = new Box()
+                    print((try y??.TakeTo(h)) + " " + (try x??.TakeTo(h)) + " " + (try f??.TakeTo(h)))
+                    string s = "abc"
+                    print(s?.Length + " " + s??.Length)
+                    print(true ? 1 : 2)
+                }
+            }
+            Demo.Run()
+            """),
+        ("is from local / is from global, try x??.TakeTo ueberspringt Werttypen, Arrays und Lambdas in Listen bleiben (List.Add nimmt, was dem Aufruf gehoert)", """
+            class Box { int v = 1 }
+            class Holder { Box b }
+            class Demo {
+                static bool Local(any x) { return x is from local }
+                static undefined Run() {
+                    var b = new Box()
+                    var h = new Holder()
+                    int n = 5
+                    any an = n
+                    any s = "t"
+                    var arr = [1, 2]
+                    print((try an??.TakeTo(h)) + " " + (try s??.TakeTo(h)) + " " + (try arr.TakeTo(h)))
+                    print((n is from local) + " " + (b is from local) + " " + (arr is from global) + " " + (n is from h) + " " + (arr is from h))
+                    print(Local(new Box()) + " " + Local(b) + " " + Local([3]) + " " + Local(7) + " " + Local(() => 1))
+                    h.b = new Box()
+                    print((h.b is from local) + " " + (h.b is from h) + " " + (h.b is from global))
+                    var as = new List<int[]>()
+                    as.Add([1, 2])
+                    print(as[0][1] + " " + (as[0] is from as))
+                    var fs = new List<lambda>()
+                    fs.Add(() => 42)
+                    print(fs[0]() + " " + (fs[0] is from fs))
+                    var ns = new List<int>()
+                    ns.Add(3)
+                    print(ns[0])
+                }
+            }
+            var g = new Box()
+            print((g is from global) + " " + (g is from local))
+            Demo.Run()
+            """),
         ("Auto-Properties mit Initialwert; Probes auf Feldern bleiben (nur ein beobachtetes Objekt nimmt den Setter, die anderen schreiben per Index)", """
             class Counter {
                 int Count { get; set; } = 5
@@ -17101,7 +17198,7 @@ else
             print(w)
             foreach (n in [5, 9, -3]) { switch (n) { case 5, 6: print("five-six"); case < 0, > 100: print("out"); case default: print("other") } }
             print(1_000_000)
-            class Button { lambda onClick; construct(lambda f) { this.onClick = f } undefined Click() { this.onClick(); onClick() } }
+            class Button { lambda onClick; construct(lambda f) { this.onClick = take f } undefined Click() { this.onClick(); onClick() } }
             var b = new Button(() => print("clicked"))
             b.Click()
             b.onClick()
@@ -19363,7 +19460,7 @@ else
             print("check: " + h.Check)
             print("end")
             """),
-        ("Threads: taking kopiert alles Erreichbare (Array-Literal im Feld, fremde Objekte, Arrays, Puffer) - Besitzer der Kopien ist der Thread; Lambda im Feld: ArgumentException", """
+        ("Threads: taking kopiert alles Erreichbare (Array-Literal im Feld, fremde Objekte, Arrays, Puffer) - Besitzer der Kopien ist der Thread; ein Lambda ohne Captures im Feld geht mit", """
             #nosync
             class Item { int v
                 construct(int v) { this.v = v } }
@@ -19380,8 +19477,11 @@ else
             var nested = [[5, 6], [7]]
             var l = new L()
             l.f = func() => 1
-            try { fire taking l { print("never") } } catch (ArgumentException e) { print("lambda: " + e.message) }
-            try { fire taking p taking l { print("never") } } catch (ArgumentException e) { print("lambda 2: " + e.message) }
+            try { fire taking l { sync global { done = done + 1 } } } catch (ArgumentException e) { print("lambda: " + e.message) }
+            try { fire taking p taking l { sync global { done = done + 1 } } } catch (ArgumentException e) { print("lambda 2: " + e.message) }
+            while (done < 2) { sync globals }
+            print("lambdas without captures go along: " + done)
+            done = 0
             fire taking p taking arr taking objs taking nested {
                 print("sum " + (p.items[0].v + p.items[1].v + p.other.v + p.own.v))
                 print("own " + (p.own is from p) + " " + (p.items[0] is from p))
@@ -19648,8 +19748,8 @@ else
             var p = new Item(9)
             var l = new L()
             l.f = func() => 1
-            try { fire handover l { print("never") } } catch (ArgumentException e) { print("lambda: " + e.message) }
-            print("l kept: " + (l != undefined))
+            var lr = await handover l { return l.f() }      // (a lambda in a field goes along - docs/ROADMAP_TASKS.md step 8 (e))
+            print("lambda in a field: " + lr)
             try { fire taking r { print("never") } } catch (ArgumentException e) { print("taking: " + e.message) }
             fire taking p handover c handover r {
                 sync global { step = 1 }
@@ -19717,7 +19817,7 @@ else
                 print("thread: " + c.res.id + " " + c.items[0].v + " " + c.other.v + " " + b.res.id + " " + b.other.v)
                 print("thread same: " + (b.other == c.other) + " " + (c.res is from c) + " " + c.res.Twice())
                 c.other.v = 30
-                sync global { back = c.other; step = 1 }
+                sync global { back = take c.other; step = 1 }   // (rule 10: an object of the thread goes into a global only with a word)
                 while (step < 2) { Sleep(1ms) }
             }
             while (step < 1) { sync globals }
@@ -20752,6 +20852,306 @@ else
             var none = await []
             print("empty " + none.Length)
             """),
+        ("Await: await [ ... ] in einem Thread - die Elemente leihen die Locals (keine Kopie), ein Actor als Argument, Completion: eine Aufgabe wartet, die andere schlaeft und gibt", """
+            #import "time"
+            class Box { int v = 3 }
+            actor Hub {
+                Completion c
+                int got = 0
+                undefined Register(Completion w) { this.c = take w }
+                undefined Give(int v) { this.got = v; this.c.Set(v) }
+                undefined Report(string text) { print(text) }
+            }
+            class Work {
+                static int N(Box b) { b.v = b.v + 1; return b.v }
+                static int A(Hub h) { Sleep(30ms); h.Give(7); return 1 }
+                static int B(Completion w) { any v = w.Wait(5s); return v }
+            }
+            var h = new Hub()
+            var c = new Completion()
+            h.Register(c.Share())
+            process h
+            var w = c.Share()
+            fire with h handover w {
+                var b = new Box()
+                var n = await [Work.N(b), Work.N(b)]
+                print("box " + b.v)
+                var r = await [Work.A(h), Work.B(w)]
+                h.Report("done " + r[0] + " " + r[1])
+            }
+            process h
+            process h
+            print("got " + h.got)
+            """),
+        ("List.Sort: ints, Texte, floats, leer, mit Vergleich (stabil, Objekte), 1000 Elemente absteigend", """
+            var a = new List<int>([5, 3, 9, 1, 3, 7, 2, 8, 6, 4, 0])
+            a.Sort()
+            var t = ""
+            foreach (x in a) { t = t + x + " " }
+            print(t)
+            var w = new List<string>(["pear", "apple", "fig", "banana"])
+            w.Sort()
+            print(w[0] + " " + w[1] + " " + w[2] + " " + w[3])
+            w.Sort((x, y) => x.Length - y.Length)
+            print(w[0] + " " + w[1] + " " + w[2] + " " + w[3])
+            class P { string name
+                int age
+                construct(string n, int a) { this.name = n; this.age = a } }
+            var ps = new List<P>()
+            ps.Add(new P("a", 30)); ps.Add(new P("b", 20)); ps.Add(new P("c", 30)); ps.Add(new P("d", 10))
+            ps.Sort((x, y) => x.age - y.age)
+            var s = ""
+            foreach (p in ps) { s = s + p.name + p.age + " " }
+            print(s)
+            var f = new List<float>([2.5, -1.0, 0.5])
+            f.Sort()
+            print(f[0] + " " + f[1] + " " + f[2])
+            var e = new List<int>()
+            e.Sort()
+            print(e.Count)
+            var big = new List<int>()
+            for (int i = 0; i < 1000; i++) { big.Add((i * 7919) % 1000) }
+            big.Sort((x, y) => y - x)
+            print(big[0] + " " + big[999] + " " + big.Count)
+            """),
+        ("List.Sort einer Liste, die ihre Elemente besitzt (Owns.Values): sortiert wird nichts zerstoert, Clear zerstoert alle", """
+            class Node {
+                int v
+                construct(int v) { this.v = v }
+                destruct() { print("destroyed " + this.v) }
+            }
+            var l = new List<Node>(Owns.Values)
+            l.Add(new Node(3)); l.Add(new Node(1)); l.Add(new Node(2))
+            l.Sort((a, b) => a.v - b.v)
+            print("sorted " + l[0].v + l[1].v + l[2].v)
+            l.Clear()
+            print("cleared " + l.Count)
+            """),
+        ("Puffer und typisierte Arrays als Parameter und Feld: Elementzugriffe in Schleifen (schneller Weg), undefined, falsche Werte, Umwandlung eines Arrays", """
+            class Counter {
+                byte data[64]
+                construct() { for (int i = 0; i < 64; i++) { if (i % 3 == 0) { this.data[i] = i } } }
+                int CountField() {
+                    int n = 0
+                    for (int i = 0; i < 64; i++) { if (this.data[i] != 0) { n++ } }
+                    return n
+                }
+                static int CountBytes(byte b[]) {
+                    int n = 0
+                    for (int i = 0; i < 64; i++) { if (b[i] != 0) { n = n + b[i] } }
+                    return n
+                }
+                static int SumInts(int a[]) {
+                    int n = 0
+                    for (int i = 0; i < a.Length; i++) { n = n + a[i] }
+                    return n
+                }
+                static undefined Fill(byte b[], int v) { for (int i = 0; i < 4; i++) { b[i] = v + i } }
+                static string Kind(byte b[]) { return b == undefined ? "undefined" : "buffer " + b.Length }
+            }
+            var c = new Counter()
+            print(c.CountField())
+            print(Counter.CountBytes(c.data))
+            int ints[5] = [1, 2, 3, 4, 5]
+            print(Counter.SumInts(ints))
+            print(Counter.SumInts([10, 20]))
+            byte small[4]
+            Counter.Fill(small, 250)
+            print(small[0] + " " + small[3])
+            print(Counter.Kind(undefined))
+            print(Counter.Kind([1, 2, 3]))
+            try { print(Counter.Kind("text")) } catch (ArgumentException e) { print("error: " + e.message) }
+            try { print(Counter.CountBytes(undefined)) } catch (Exception e) { print("undefined: " + e.message) }
+            try { print(Counter.SumInts([1, "x"])) } catch (ArgumentException e) { print("ints: " + e.message) }
+            """),
+        ("C-Rumpf mit einem Value unbekannten Typs als Ergebnis: der Platz vergisst den Typ des ersten Arguments (z0 + Shape.Meters(shape, 0) las den float als int - Ruhrpott-Raser)", """
+            class Shape {
+                static defined float Meters(defined int shape, defined int corner) { any v = shape > 100000 ? "x" : ((shape >> (corner * 2)) & 3) * 0.05; return v }
+                defined float Scaled(defined int shape) { any v = shape > 100000 ? "x" : shape * 0.25; return v }
+            }
+            int shapes[] = [255, 254, 253]
+            float sum = 0.0
+            var s = new Shape()
+            for (int i = 0; i < 3; i++) {
+                int shape = shapes[i]
+                float z0 = 1.0
+                float h0 = z0 + Shape.Meters(shape, 0)
+                float h1 = z0 + s.Scaled(shape)
+                sum = sum + h0 + h1
+            }
+            print(sum)
+            """),
+        ("Bit-Hilfen: >>> und >>>=, Bits (PopCount, LeadingZeros, TrailingZeros, Rotate, ReverseBytes/Bits, Extract/Insert, Float-Bits 64/32/16), Puffer: ReadInt16 ... WriteFloat64 in beiden Byte-Reihenfolgen, Fill, CopyTo (ueberlappend), Slice, IndexOf, Compare, Fehler", """
+            // logical shift
+            print(-1 >>> 60)
+            print(-16 >>> 2 > 0)
+            print(8 >>> 1)
+            print(-1 >> 60)
+            var u = -256
+            u >>>= 4
+            print(u)
+            print(1 >>> 64)
+            // bits
+            print(Bits.PopCount(255) + " " + Bits.PopCount(-1) + " " + Bits.PopCount(-1, 32))
+            print(Bits.LeadingZeros(1) + " " + Bits.LeadingZeros(1, 32) + " " + Bits.LeadingZeros(0, 16) + " " + Bits.TrailingZeros(8) + " " + Bits.TrailingZeros(0))
+            print(Bits.RotateLeft(1, 1) + " " + Bits.RotateRight(1, 1) + " " + Bits.RotateLeft(0x81, 1, 8) + " " + Bits.RotateRight(1, 1, 32) + " " + Bits.RotateLeft(-1, 5))
+            print(Bits.ReverseBytes(0x11223344, 32) + " " + Bits.ReverseBytes(0x0102, 16) + " " + Bits.ReverseBits(1, 8) + " " + Bits.ReverseBits(6, 4))
+            print(Bits.Extract(0xABCD, 4, 8) + " " + Bits.Insert(0xFF00, 0xA, 4, 4) + " " + Bits.Extract(-1, 0, 64))
+            // float bits
+            print(Bits.FromFloat64(1.0) + " " + Bits.FromFloat64(-2.5) + " " + Bits.ToFloat64(4607182418800017408))
+            print(Bits.FromFloat32(1.0) + " " + Bits.FromFloat32(-1.0) + " " + Bits.ToFloat32(0x40490FDB) + " " + Bits.FromFloat32(0.0 / 0.0))
+            print(Bits.FromFloat16(1.0) + " " + Bits.FromFloat16(-2.0) + " " + Bits.FromFloat16(65504.0) + " " + Bits.FromFloat16(70000.0) + " " + Bits.FromFloat16(0.0000001) + " " + Bits.FromFloat16(0.1))
+            print(Bits.ToFloat16(0x3C00) + " " + Bits.ToFloat16(0xC000) + " " + Bits.ToFloat16(0x7BFF) + " " + (Bits.ToFloat16(1) * 16777216.0) + " " + Bits.ToFloat16(0x7C00) + " " + Bits.ToFloat16(0x2E66))
+            word w = 0x80
+            print(Bits.RotateLeft(w, 1) + " " + Bits.PopCount(w) + " " + (w >>> 3))
+            // buffers
+            var b = new byte[16]
+            b.WriteInt16(0, -2)
+            b.WriteUInt16(2, 0xBEEF, false)
+            b.WriteInt32(4, 0x12345678)
+            b.WriteFloat32(8, 1.5)
+            b.WriteFloat16(12, -0.5)
+            b.WriteUInt8(14, 300)
+            print(b.ReadInt16(0) + " " + b.ReadUInt16(0) + " " + b.ReadUInt16(2, false) + " " + b.ReadUInt16(2) + " " + b.ReadInt32(4) + " " + b.ReadUInt8(4) + " " + b.ReadInt8(15))
+            print(b.ReadFloat32(8) + " " + b.ReadFloat16(12) + " " + b.ReadUInt8(14) + " " + b[2] + " " + b[3])
+            var d = new byte[8]
+            d.WriteFloat64(0, 3.25)
+            d.WriteInt64(0, d.ReadInt64(0) + 0)
+            print(d.ReadFloat64(0) + " " + d.ReadInt64(0) + " " + d.ReadUInt32(4) + " " + d.ReadInt32(4, false))
+            var c = new byte[6]
+            c.Fill(7)
+            c.Fill(1, 2, 2)
+            print(c[0] + " " + c[2] + " " + c[3] + " " + c[4])
+            var e = new byte[6]
+            c.CopyTo(e, 1, 2, 3)
+            print(e[0] + " " + e[1] + " " + e[2] + " " + e[3] + " " + e[4])
+            c.CopyTo(c, 1, 0, 4)
+            print(c[0] + " " + c[1] + " " + c[2] + " " + c[3] + " " + c[4] + " " + c[5])
+            var s = c.Slice(1, 3)
+            print(s.length + " " + s[0] + " " + s[2] + " " + c.Slice(4).length)
+            var hay = "hello world".ToBytes()
+            print(hay.IndexOf(111) + " " + hay.IndexOf(111, 5) + " " + hay.IndexOf("wor".ToBytes()) + " " + hay.IndexOf(999) + " " + hay.IndexOf("xyz".ToBytes()))
+            print(hay.Compare("hello world".ToBytes()) + " " + hay.Compare("hello".ToBytes()) + " " + "abc".ToBytes().Compare("abd".ToBytes()))
+            try { b.ReadInt32(14) } catch (IndexOutOfBoundsException ex) { print(ex.message) }
+            try { b.WriteFloat32(2, "x") } catch (ArgumentException ex) { print(ex.message) }
+            try { Bits.PopCount(1.5) } catch (ArgumentException ex) { print(ex.message) }
+            try { c.Fill(0, 4, 5) } catch (IndexOutOfBoundsException ex) { print(ex.message) }
+            """),
+        ("Bit-Hilfen: operator>>> einer Klasse, >>>= und Generics, die mit >>> enden (Box<Box<Box<int>>>)", """
+            class Reg {
+                int v
+                construct(int v) { this.v = v }
+                Reg operator>>>(int n) { return new Reg(this.v * 100 + n) }
+            }
+            class Box<T> { T item }
+            Reg r = new Reg(3) >>> 2
+            print(r.v)
+            var bb = new Box<Box<Box<int>>>()
+            print(bb is of Box)
+            var deep = new List<List<List<int>>>()
+            print(deep.Count)
+            var x = 0x80
+            x >>>= 4
+            print(x)
+            """),
+        ("Bit-Hilfen mit #intwidth 32: >>> in 32 Bit, die Breite der Bit-Funktionen, Float-Bits als int[64], ReadUInt32 behaelt seine 64 Bit", """
+            #intwidth 32
+            print(-1 >>> 28)
+            print(-1 >>> 0)
+            print(-8 >>> 1)
+            print(Bits.PopCount(-1) + " " + Bits.LeadingZeros(1) + " " + Bits.RotateLeft(-2, 1) + " " + Bits.RotateRight(1, 1))
+            print(Bits.FromFloat32(-1.0) + " " + Bits.FromFloat64(1.0))
+            var b = new byte[8]
+            b.WriteUInt32(0, 4000000000)
+            print(b.ReadUInt32(0) + " " + b.ReadInt32(0))
+            """),
+        ("Namespace: Nachbarklassen und Enums mit dem kurzen Namen - statische Methoden und Felder, Enum-Werte, Kind.Name, verschachtelt von innen nach aussen, global.Name, eine Variable verdeckt", """
+            class Helper { static string Tag() { return "global" } }
+            enum Kind { A, B }
+            namespace Geo {
+                enum Kind { Square, Circle }
+                class Helper {
+                    static int count = 0
+                    static string Tag() { return "geo" }
+                }
+                class Shape {
+                    static string Run() {
+                        Helper.count = Helper.count + 2
+                        Helper.count++
+                        return Helper.Tag() + " " + Kind.Circle + " " + Kind.Name(Kind.Square) + " " + Helper.count + " " + global.Helper.Tag()
+                    }
+                    static string Local() {
+                        var Shape = "local"
+                        var Helper = "helper"
+                        var Kind = [1, 2, 3]
+                        return Shape.Length + " " + Helper.Length + " " + Kind.Length
+                    }
+                }
+                namespace Deep {
+                    class Helper { static string Tag() { return "deep" } }
+                    class Inner {
+                        static string Run() { return Helper.Tag() + " " + Kind.Square + " " + Geo.Helper.Tag() + " " + Deep.Helper.Tag() }
+                    }
+                }
+            }
+            class Outside { static string Run() { return Helper.Tag() + " " + Kind.B + " " + Geo.Helper.Tag() + " " + Geo.Kind.Circle } }
+            print(Geo.Shape.Run())
+            print(Geo.Shape.Local())
+            print(Geo.Deep.Inner.Run())
+            print(Outside.Run())
+            """),
+        ("Getter mit C-Rumpf: obj.X einer bekannten Klasse liest die C-Zahl (defined float, int, Einheit), ein Getter ohne defined und eine Unterklasse wie vorher", """
+            class Box {
+                defined float w
+                defined float h
+                construct(defined float w, defined float h) { this.w = w; this.h = h }
+                defined float Area { get { return this.w * this.h } }
+                defined int Big { get { return this.w * 2.0 > 3.0 ? 7 : 1 } }
+                defined float Side : m { get { return this.w * 1m } }
+                float Maybe { get { return this.w > 100.0 ? undefined : this.w } }
+            }
+            class Sub : Box {
+                construct(defined float w) : base(w, 2.0) { }
+            }
+            var b = new Box(3.0, 4.0)
+            print(b.Area + 1.0)
+            print(b.Big * 2)
+            print(b.Side + 50cm)
+            print(b.Maybe)
+            b.w = 200.0
+            print(b.Maybe)
+            Box s = new Sub(5.0)
+            print(s.Area)
+            var sum = 0.0
+            for (var i = 0; i < 1000; i++) { b.w = i * 0.5; sum = sum + b.Area + b.Big }
+            print(sum)
+            """),
+        ("defined herleiten: Parameter und Rueckgaben, denen jeder Aufruf eine Zahl gibt; ein Aufruf ueber any, ein Lambda mit undefined und ein Override halten es auf", """
+            class Grid {
+                int w
+                construct(int w) { this.w = w }
+                int Index(int col, int row) { return row * this.w + col }
+                int Clamp(int v, int lo, int hi) { if (v < lo) { return lo } if (v > hi) { return hi } return v }
+                int Loose(int v) { if (v == undefined) { return -1 } return v }
+                int ByAny(int v) { if (v == undefined) { return -2 } return v }
+                int Named(int v = 7) { return v * 2 }
+            }
+            class Base { int F(int x) { if (x == undefined) { return 0 } return x } }
+            class Derived : Base { override int F(int x) { if (x == undefined) { return 100 } return x + 1 } }
+            var g = new Grid(10)
+            print(g.Index(g.Clamp(12, 0, 9), 3))
+            print(g.Loose(4))
+            var through = func (int x) => g.Loose(x)
+            print(through(undefined))
+            any a = g
+            print(a.ByAny(undefined))
+            print(g.ByAny(5))
+            print(g.Named() + " " + g.Named(v: 3))
+            Base b = new Derived()
+            print(b.F(1))
+            any bb = b
+            print(bb.F(undefined))
+            """),
         ("Await: await actor.Methode() - Ergebnis, neues Objekt (übergeben), Feld (Kopie), String, Array, Ausnahme zurück zum Aufrufer, am eigenen Home sofort", """
             class Exception { string message; construct(string message = "") { this.message = message } }
             class Box {
@@ -20916,6 +21316,55 @@ else
             while (done < 2) { sync globals; Sleep(5ms) }
             var detached = CancellationSource.Detached()
             print(detached.IsCancelled)
+            """),
+        ("Completion: Set in einem anderen Thread (Share, handover), Kopie fuer jeden Wait, nur der erste Set zaehlt, String, Zeitlimit, Fail, Abbruch per until, geliehen an await, Actor-Argument", """
+            #import "time"
+            class Box { int v
+                string name
+                construct(int v, string name) { this.v = v; this.name = name } }
+            class W {
+                static int Later(Completion c) { Sleep(20ms); c.Set(new Box(7, "seven")); return 1 }
+                static int Never() { var x = new Completion(); x.Wait(); return 1 }
+            }
+            actor Reader {
+                undefined Answer(Completion c, int v) { c.Set(v * 2) }
+            }
+            var c = new Completion()
+            var s = c.Share()
+            bool second = true
+            fire handover s {
+                Sleep(20ms)
+                s.Set(new Box(42, "answer"))
+                bool again = s.Set(1)
+                sync global { second = again }
+            }
+            Box b = c.Wait(2s)
+            b.v = 0
+            Box b2 = c.Wait()
+            print(b2.v + " " + b2.name + " " + c.IsDone)
+            while (second) { sync globals; Sleep(1ms) }
+            print("second set: " + second)
+            var t = new Completion()
+            print(t.IsDone + " " + t.Set("text " + 5) + " " + t.Wait())
+            var never = new Completion()
+            try { never.Wait(30ms); print("no") } catch (TimeoutException e) { print("timeout: " + e.message) }
+            var f = new Completion()
+            var fs = f.Share()
+            fire handover fs { fs.Fail(new Exception("broken")) }
+            try { f.Wait(2s); print("no") } catch (Exception e) { print("failed: " + e.message) }
+            var src = new CancellationSource()
+            src.CancelAfter(30ms)
+            try { int r = await W.Never() until src.Token; print("no") } catch (CancelledException e) { print("cancelled") }
+            var w = new Completion()
+            int n = await W.Later(w)
+            Box lent = w.Wait()
+            print("lent: " + n + " " + lent.name)
+            var reader = new Reader()
+            var answer = new Completion()
+            fire with reader { Sleep(10ms) }
+            reader.Answer(answer.Share(), 21)
+            process reader
+            print("actor: " + answer.Wait(1s))
             """),
         ("Tasks: 600 fire-Threads schlafen und schreiben in Sektionen (die VM als Tasks eines Pools, docs/ROADMAP_TASKS.md Schritt 7)", """
             #import "time"
@@ -21238,6 +21687,113 @@ else
             }
             while (done == 0) { sync globals }
             print("total " + total)
+            """),
+        ("Threads: Lambdas gehen in Threads - taking kopiert den Store, ein mit on gebundenes laeuft im Hauptprogramm auf dem Original (await, handover, in einer Liste)", """
+            class Counter { int n = 0 }
+            class Box { int v = 2 }
+            class Demo {
+                static undefined Run() {
+                    var c = new Counter()
+                    var inc = func (int k) on c => { n = n + k; return n }
+                    var b = new Box()
+                    var plain = (int k) => k * (taking b).v
+                    var got = await taking inc taking plain {
+                        print("thread plain " + plain(10))
+                        int a = inc(5)
+                        int z = inc(2)
+                        return a * 100 + z
+                    }
+                    print("result " + got + " main n " + c.n)
+                    var h = func (int k) on c => { n = n * k; return n }
+                    var m = await handover h { return h(3) }
+                    print("moved " + m + " main n " + c.n + " h " + (h == undefined))
+                    var lst = new List<lambda>()
+                    lst.Add(take func () on c => { n = n + 1; return n })
+                    var r = await taking lst { return lst[0]() + lst[0]() }
+                    print("list " + r + " main n " + c.n)
+                    var bad = await taking plain { return plain(1) }
+                    print("plain " + bad)
+                }
+            }
+            Demo.Run()
+            """),
+        ("Threads: Lambdas in Threads - eine Ausnahme kommt vom Hauptprogramm zurueck, ein Lambda im Feld, ein ungebundenes rechnet im Thread", """
+            class Counter { int n = 0 }
+            class Holder { lambda f; int k = 1 }
+            class Demo {
+                static undefined Run() {
+                    var c = new Counter()
+                    var boom = func () on c => { n = 99; throw new ArgumentException("from home") }
+                    var r1 = await taking boom {
+                        try { boom() } catch (ArgumentException e) { return "caught " + e.message }
+                        return "none"
+                    }
+                    print(r1 + " n " + c.n)
+                    var h = new Holder()
+                    h.f = take func (int k) on c => { n = n + k; return n }
+                    var r2 = await taking h { return h.f(h.k) + h.f(10) }
+                    print("field " + r2 + " n " + c.n)
+                    var r3 = await taking c {
+                        var mine = func () on c => { return n }
+                        var inner = await taking mine { try { return mine() } catch (ArgumentException e) { return -1 } }
+                        return inner
+                    }
+                    print("other thread " + r3)
+                    var pure = (int a, int b) => a * b
+                    var r4 = await taking pure { return pure(6, 7) }
+                    print("pure " + r4)
+                }
+            }
+            Demo.Run()
+            """),
+        ("Threads: Lambdas mit einem Ziel in einem Fire-Thread laufen dort (an seinen Sicherheitspunkten, Sleep), mit einem Actor als Ziel bei dessen process", """
+            #import "time"
+            class Counter { int n = 0 }
+            actor Log { int total; construct() { this.total = 0 } }
+            class Demo {
+                static undefined Run() {
+                    var done = await {
+                        var o = new Counter()
+                        var add = func (int k) on o => { n = n + k; return n }
+                        fire taking add {
+                            print("B got " + add(5))
+                            add(2)   // (not printed: A prints next - the order would be a race)
+                        }
+                        int guard = 0
+                        while (o.n < 7 && guard < 5000) { Sleep(1ms); guard++ }
+                        return o.n
+                    }
+                    print("A saw " + done)
+                    // an actor as the target: the call is a message, its home runs it at `process`
+                    var acc = new Log()
+                    var bump = func (int k) on acc => { total = total + k; return total }
+                    fire taking bump {
+                        print("actor gave " + bump(3))
+                        bump(4)
+                    }
+                    process acc
+                    process acc
+                    print("actor total " + acc.total)
+                }
+            }
+            Demo.Run()
+            """),
+        ("Threads: Lambdas - ist der Thread ihres Ziels zu Ende, ist der Aufruf eine ArgumentException", """
+            #import "time"
+            class Counter { int n = 0 }
+            class Demo {
+                static undefined Run() {
+                    fire {
+                        var o = new Counter()
+                        var f = func () on o => { n = n + 1; return n }
+                        fire taking f {
+                            Sleep(100ms)
+                            try { print(f()) } catch (ArgumentException e) { print("ended: " + e.message) }
+                        }
+                    }
+                }
+            }
+            Demo.Run()
             """),
         ("Threads: Globals: fire global mit taking", """
             var total = 0
@@ -21899,7 +22455,7 @@ else
             var d = new Lost(new Part("lost"))
             print("end")
         """),
-        ("Threads: Sleep in einer Methode eines globalen Objekts gibt die Sektion frei (Hauptprogramm wird nicht ausgehungert)", """
+        ("Threads: eine Methode eines globalen Objekts laeuft im Hauptprogramm (Regel 10) - ihr Sleep hungert das Hauptprogramm nicht aus", """
             #import "time"
             class W {
                 int n = 0
@@ -21916,6 +22472,434 @@ else
             Sleep(150ms)
             print("main woke")
             print("n>0: " + (w.n > 0))
+        """),
+        ("Threads: Regel 10 - Methoden globaler Objekte laufen im Hauptprogramm; ein Objekt des Threads geht nur frisch, mit copy oder take hin (sonst ArgumentException)", """
+            #import "time"
+            class Box { int v = 0; construct(int v) { this.v = v } }
+            class Store {
+                List<Box> items = new List<Box>()
+                any cb
+                int Count() { return this.items.Count }
+                undefined Put(Box b) { this.items.Add(take b) }
+                int Sum() { int s = 0; foreach (b in this.items) { s = s + b.v }; return s }
+                Box First() { return this.items[0] }
+                undefined Fail() { throw new ArgumentException("from main") }
+                undefined SetCb(any g) { this.cb = take g }
+                int Slow(int x) { Sleep(5ms); return x * 2 }
+            }
+            var store = new Store()
+            var shared = new Box(11)
+            var g0 = () => 5
+            var step = 0
+            fire {
+                var mine = new Box(7)
+                store.Put(new Box(1))
+                store.Put(copy mine)
+                store.Put(take mine)
+                store.Put(shared)
+                try { print(mine.v) } catch (DestroyedException e) { print("moved: " + e.message) }
+                try { var other = new Box(3); store.Put(other) } catch (ArgumentException e) { print("word: " + e.message) }
+                print("in thread " + store.Count() + " " + store.Sum() + " first " + store.First().v + " slow " + store.Slow(21))
+                try { store.Fail() } catch (ArgumentException e) { print("caught " + e.message) }
+                store.SetCb(() => 8)
+                print("cb " + store.cb())
+                store.SetCb(g0)
+                step = 1
+            }
+            while (step < 1) { Sleep(1ms) }
+            print("main " + store.Count() + " " + store.Sum() + " " + store.cb() + " " + shared.v)
+        """),
+        ("Records: unveraenderlich nach der Konstruktion (ueber any die AccessDeniedException, auch per Reflect.Set), == und Dictionary-Schluessel nach Inhalt, Feldpruefung am Ende des Konstruktors, copy, JSON, Reflect.New, Vererbung, in einem Thread", """
+            #import "json"
+            #import "reflection"
+            #import "time"
+            record Point {
+                int x
+                int y
+                construct(int x, int y) { this.x = x; this.y = y }
+                int Sum() { return this.x + this.y }
+            }
+            record Line {
+                Point a
+                Point b
+                string name = "line"
+                construct(Point a, Point b) { this.a = take a; this.b = take b }
+            }
+            record Base { int id = 1 }
+            record Derived : Base { int extra = 2 }
+            class Box { int v }
+            record Bad {
+                any held
+                construct(any h) { this.held = take h }
+            }
+            var p = new Point(1, 2)
+            var q = new Point(1, 2)
+            var r = new Point(2, 1)
+            print(p.Sum() + " " + (p == q) + " " + (p == r) + " " + (p != q))
+            var l1 = new Line(new Point(1, 2), new Point(2, 1))
+            var l2 = new Line(new Point(1, 2), new Point(2, 1))
+            print((l1 == l2) + " " + l1.name + " " + (l1 == new Line(new Point(1, 2), new Point(9, 9))))
+            any anyP = p
+            try { anyP.x = 5 } catch (AccessDeniedException e) { print("write: " + e.message) }
+            try { Reflect.Set(p, "y", 9) } catch (AccessDeniedException e) { print("reflect: " + e.message) }
+            print(p.x + " " + p.y)
+            var d = new Dictionary<Point, string>()
+            d[p] = "first"
+            print(d[new Point(1, 2)] + " " + d.Count)
+            d[q] = "second"
+            print(d[p] + " " + d.Count + " " + d.ContainsKey(r))
+            try { var b = new Bad(new Box()) } catch (ArgumentException e) { print("bad: " + e.message) }
+            print(new Bad("text").held + " " + new Bad(new Point(5, 5)).held.x)
+            var c = copy p
+            print((c == p) + " " + c.x)
+            var text = Json.Serialize(p)
+            Point back = Json.Deserialize<Point>(text)
+            print(text + " " + (back == p))
+            var made = Reflect.New("Point", [3, 4])
+            print(made.Sum())
+            var dv = new Derived()
+            print(dv.id + dv.extra + " " + (dv is of Base) + " " + (dv == new Derived()))
+            Point got = undefined
+            var step = 0
+            fire taking p {
+                print("thread " + p.x + " " + p.y)
+                sync global { got = take p; step = 1 }
+            }
+            while (step < 1) { Sleep(1ms) }
+            print("main " + got.x + " " + (got == new Point(1, 2)))
+        """),
+        ("Records: with - eine geaenderte Kopie (r with { ... }, copy/flat obj with { ... }), Setter und take in den Zuweisungen, verschachtelt, Pruefung am Ende, ohne Wort nur fuer Records", """
+            record Point {
+                int x
+                int y
+                construct(int x, int y) { this.x = x; this.y = y }
+            }
+            record Line { Point a; Point b; string name = "l" }
+            record Holder { any v = 1 }
+            class Part { int n; construct(int n) { this.n = n } }
+            class Box {
+                int v
+                string label = "box"
+                List<int> items = new List<int>()
+                Part part
+                int Twice { get { return this.v * 2 } set { this.v = value / 2 } }
+            }
+            var p = new Point(1, 2)
+            var q = p with { .x = 5 }
+            var r = copy p with { .y = 7, .x = 3 }
+            print(p.x + " " + p.y + " | " + q.x + " " + q.y + " | " + r.x + " " + r.y + " " + (q == new Point(5, 2)))
+            var l = new Line()
+            var l2 = l with { .a = new Point(1, 1), .name = "m" }
+            print(l2.a.x + " " + l2.name + " " + l.name)
+            var b = new Box()
+            b.v = 3
+            b.items.Add(1)
+            var part = new Part(8)
+            var c = copy b with { .label = "copy", .Twice = 20, .part = take part }
+            var f = flat b with { .v = 9 }
+            c.items.Add(2)
+            print(b.v + " " + b.label + " " + b.items.Count + " | " + c.v + " " + c.label + " " + c.items.Count + " " + c.part.n + " " + (c.part is from c) + " | " + f.v + " " + f.label + " " + (f.items == b.items))
+            any ab = b
+            try { any z = ab with { .v = 1 } } catch (ArgumentException e) { print("word: " + e.message) }
+            var h = new Holder()
+            try { var z = copy h with { .v = new Box() } } catch (ArgumentException e) { print("kind: " + e.message) }
+            print((h with { .v = "text" }).v)
+            any ah = h
+            try { any z = ah with { .v = [1, 2] } } catch (ArgumentException e) { print("held: " + e.message) }
+            var nested = copy l2 with { .b = l2.a with { .y = 9 } }
+            print(nested.b.y + " " + nested.a.y + " " + (nested.a == l2.a))
+            try { ah.v = 2 } catch (AccessDeniedException e) { print("the original stays: " + h.v) }
+        """),
+        ("Threads: fire with a, b - mehrere Actors fuer einen Thread, zusammen mit taking", """
+            #import "time"
+            actor Counter {
+                int n = 0
+                undefined Add(int k) { this.n = this.n + k }
+                int Get() { return this.n }
+            }
+            actor Log {
+                string text = ""
+                undefined Put(string s) { this.text = this.text + s }
+                string Text() { return this.text }
+            }
+            var c = new Counter()
+            var l = new Log()
+            var step = 2
+            var done = false
+            fire taking step with c, l {
+                c.Add(3)
+                l.Put("a")
+                c.Add(step)
+                l.Put("b")
+                print("thread " + (await c.Get()) + " " + (await l.Text()))
+                done = true
+            }
+            while (!done) { process c; process l; Sleep(1ms) }
+            print("main " + c.n + " " + l.text)
+        """),
+        ("Channel<T>: Send/Receive zwischen Threads (fire with), foreach bis zum Schliessen, Objekte nur frisch/copy/take (Laufzeit und TC029 fuer bekannte Typen), Records behalten ihre Identitaet und sterben mit dem Empfaenger, Unzugestelltes stirbt mit dem Kanal, TryReceive, Zeitlimit, [NoCopy]", """
+            #import "time"
+            record Note {
+                string text
+                construct(string t) { this.text = t }
+            }
+            class Job { int n; construct(int n) { this.n = n } }
+            class Part { int n; construct(int n) { this.n = n } destruct() { print("part " + this.n + " gone") } }
+            var jobs = new Channel<Job>(2)
+            var results = new Channel<int>()
+            var notes = new Channel<Note>()
+            var ack = new Channel<int>()
+            fire with jobs, results, notes, ack {
+                foreach (j in jobs) { results.Send(j.n * 10) }
+                var got = notes.Receive()
+                results.Send(got.text.Length)
+                results.Close()
+                ack.Receive()   // (the note lives until the main program has looked at it)
+            }
+            for (int i = 1; i <= 5; i++) { jobs.Send(new Job(i)) }
+            var mine = new Job(9)
+            any anyMine = mine
+            try { jobs.Send(anyMine) } catch (ArgumentException e) { print("word: " + e.message) }
+            jobs.Send(copy mine)
+            mine.n = 100
+            jobs.Close()
+            print("closed " + jobs.IsClosed + " send " + jobs.Send(new Job(1)))
+            var n1 = new Note("hello")
+            var seen = n1
+            notes.Send(take n1)
+            print("seen " + seen.text)
+            int sum = 0
+            foreach (r in results) { sum = sum + r }
+            print("sum " + sum)
+            ack.Send(1)
+            bool died = false
+            for (int k = 0; k < 2000 && !died; k++) {
+                try { if (seen.text.Length > 0) { Sleep(1ms) } } catch (DestroyedException e) { died = true }
+            }
+            if (died) { print("the note died with its receiver") } else { print(seen.text) }
+            var parts = new Channel<Part>()
+            var part = new Part(1)
+            var alias = part
+            parts.Send(take part)
+            try { print(alias.n) } catch (DestroyedException e) { print("moved: " + e.message) }
+            print("try " + parts.TryReceive().n + " " + (parts.TryReceive() == undefined) + " count " + parts.Count)
+            try { parts.Receive(5ms) } catch (TimeoutException e) { print("timeout") }
+            parts.Send(new Part(2))
+            try { fire taking parts { parts.Close() } } catch (ArgumentException e) { print("taking: " + e.message) }
+            print("end " + parts.Count)
+        """),
+        ("Threads: fire on x taking k with kanal, actor - der Job im Hauptprogramm bekommt die Referenzen wie mit fire with (ein eigenes Ende des Kanals) und antwortet ueber den Kanal", """
+            #import "time"
+            class Store { int v = 40 }
+            actor Log {
+                string text = ""
+                undefined Put(string s) { this.text = this.text + s }
+            }
+            var store = new Store()
+            var log = new Log()
+            var done = false
+            fire with log {
+                var answers = new Channel<int>()
+                int k = 2
+                fire on store taking k with answers, log {
+                    log.Put("job ")
+                    answers.Send(store.v + k)
+                }
+                print("thread got " + answers.Receive())
+                done = true
+            }
+            while (!done) { try process log; Sleep(1ms) }
+            Sleep(10ms)
+            try process log
+            print("main " + log.text)
+        """),
+        ("Channel.Pair<A, B>: zwei Richtungen - ein Ende sendet A und empfaengt B, Other() das Gegenstueck, fire with gibt ein eigenes Ende, Objekte frisch", """
+            #import "time"
+            class Job { int n; construct(int n) { this.n = n } }
+            var left = Channel.Pair<string, int>()
+            var right = left.Other()
+            fire with right {
+                foreach (s in right) { right.Send(s.Length) }
+                right.Close()
+            }
+            left.Send("abc")
+            left.Send("hello")
+            print(left.Receive() + " " + left.Receive())
+            left.Close()
+            print("rest " + (left.Receive() == undefined))
+            var jobs = Channel.Pair<Job, Job>()
+            var other = jobs.Other()
+            fire with other {
+                var j = other.Receive()
+                other.Send(new Job(j.n * 2))
+            }
+            jobs.Send(new Job(21))
+            print("job " + jobs.Receive().n)
+        """),
+        ("Channel<T>: ein Record ohne Wort wird geliehen - der Besitzer behaelt ihn, der Empfaenger liest (Methoden, ==, copy), take ist ihm verwehrt (AccessDeniedException); stirbt er beim Besitzer, ist der naechste Zugriff die DestroyedException, gibt der Besitzer ihn weiter (take), enden die Leihen", """
+            record Tag {
+                string name
+                construct(string n) { this.name = n }
+            }
+            record Note {
+                string text
+                Tag tag
+                construct(string t, string n) { this.text = t; this.tag = new Tag(n) }
+                string Describe() { return this.text + "/" + this.tag.name }
+            }
+            var notes = new Channel<Note>()
+            var back = new Channel<string>()
+            var go = new Channel<int>()
+            fire with notes, back, go {
+                var n = notes.Receive()
+                var c = copy n
+                back.Send("got " + n.Describe() + " " + (n == c))
+                try { var mine = take n } catch (AccessDeniedException e) { back.Send("take: " + e.message) }
+                go.Receive()
+                try { back.Send("after " + n.text) } catch (DestroyedException e) { back.Send("dead after its owner") }
+                back.Send("copy " + c.Describe())
+                var m = notes.Receive()
+                back.Send("second " + m.text)
+                go.Receive()
+                try { back.Send("moved " + m.text) } catch (DestroyedException e) { back.Send("handed on: dead") }
+                back.Close()
+            }
+            if (true) {
+                var keep = new Note("hello", "a")
+                notes.Send(keep)
+                print(back.Receive())
+                print(back.Receive())
+                print("owner " + keep.text)
+            }
+            go.Send(1)
+            print(back.Receive())
+            print(back.Receive())
+            var other = new Channel<Note>()
+            var second = new Note("again", "b")
+            notes.Send(second)
+            print(back.Receive())
+            other.Send(take second)
+            go.Send(2)
+            foreach (s in back) { print(s) }
+            print("other " + other.Receive().text)
+        """),
+        ("Channel<T>: geliehene Records unter Last - der Leser liest in Schleifen, waehrend der Besitzer sie zerstoert: der laufende Zugriff endet, der naechste ist die DestroyedException (nativ: der Speicher geht erst, wenn kein Leser mehr hinsehen kann)", """
+            record Tag {
+                string label
+                construct(string l) { this.label = l }
+            }
+            record Item {
+                string name
+                int n
+                Tag tag
+                construct(string s, int n) { this.name = s; this.n = n; this.tag = new Tag("t" + n) }
+                int Sum() {
+                    int r = 0
+                    for (int k = 0; k < 20; k++) { r = r + this.name.Length + this.tag.label.Length }
+                    return r
+                }
+            }
+            var ch = new Channel<Item>(64)
+            var done = new Channel<int>()
+            fire with ch, done {
+                int seen = 0
+                int reads = 0
+                foreach (it in ch) {
+                    seen = seen + 1
+                    try {
+                        for (int k = 0; k < 50; k++) { reads = reads + it.name.Length + it.n + it.Sum() }
+                        string both = it.name + it.tag.label
+                        reads = reads + both.Length
+                    } catch (DestroyedException e) { reads = reads - 1 }
+                }
+                done.Send(seen)
+            }
+            for (int i = 0; i < 1500; i++) {
+                if (true) {
+                    var it = new Item("item" + i, i)
+                    ch.Send(it)
+                }
+            }
+            ch.Close()
+            print("seen " + done.Receive())
+        """),
+        ("Threads: TakeGlobal() im Thread gibt das Objekt samt allem, was es besitzt, dem Hauptprogramm; ein Feld auf ein fremdes Thread-Objekt ist die ArgumentException (Takes.Locals nimmt es mit), TakeGlobal(true) bleibt im Thread", """
+            #import "time"
+            class Leaf { int v; construct(int v) { this.v = v } }
+            class Node { Leaf a; Node inner; Leaf other; construct(int v) { this.a = new Leaf(v) } }
+            class Cache {
+                static Node cached
+                static Node Get() {
+                    if (Cache.cached != undefined) { return Cache.cached }
+                    var n = new Node(3)
+                    n.TakeGlobal()
+                    Cache.cached = n
+                    n.a.v = 4
+                    return n
+                }
+            }
+            Node keep = undefined
+            Node keep2 = undefined
+            Node mineOnly = undefined
+            var step = 0
+            fire {
+                print("cache " + Cache.Get().a.v + " " + Cache.Get().a.v)
+                var n = new Node(1)
+                n.inner = new Node(2)
+                n.TakeGlobal()
+                keep = n
+                n.inner.a.v = 20
+                var loose = new Leaf(7)
+                var m = new Node(5)
+                m.other = loose
+                try { m.TakeGlobal() } catch (ArgumentException e) { print("refused: " + e.message) }
+                m.TakeGlobal(Takes.Locals)
+                keep2 = m
+                var own = new Node(6)
+                own.TakeGlobal(true)
+                try { mineOnly = own } catch (ArgumentException e) { print("own: " + e.message) }
+                step = 1
+            }
+            while (step < 1) { Sleep(1ms) }
+            Sleep(20ms)
+            print("main " + Cache.cached.a.v + " " + keep.a.v + " " + keep.inner.a.v + " " + keep2.other.v + " " + (keep2.other is from keep2) + " " + (mineOnly == undefined))
+        """),
+        ("Threads: Regel 10 - Schreiben in globale Variablen, Felder und Elemente der Globals: frisch, copy und take bewegen das Objekt ins Hauptprogramm, ohne Wort ArgumentException", """
+            #import "time"
+            class Box { int v = 0; construct(int v) { this.v = v } }
+            class Holder { Box last; List<Box> list = new List<Box>() }
+            var h = new Holder()
+            Box a = undefined
+            Box b = undefined
+            Box c = undefined
+            Box d = undefined
+            var arr = [new Box(0), new Box(0)]
+            var shared = new Box(40)
+            var step = 0
+            fire {
+                var mine = new Box(7)
+                var other = new Box(8)
+                a = new Box(5)
+                b = copy mine
+                c = take other
+                d = shared
+                h.last = new Box(9)
+                arr[0] = new Box(1)
+                arr[1] = take mine
+                try { print(mine.v) } catch (DestroyedException e) { print("moved: " + e.message) }
+                var k = new Box(4)
+                try { a = k } catch (ArgumentException e) { print("global: " + e.message) }
+                try { h.last = k } catch (ArgumentException e) { print("field: " + e.message) }
+                try { arr[0] = k } catch (ArgumentException e) { print("element: " + e.message) }
+                try { h.list.Add(k) } catch (ArgumentException e) { print("add: " + e.message) }
+                h.list.Add(copy k)
+                k.v = 44
+                print("thread " + a.v + " " + b.v + " " + c.v + " " + h.last.v + " " + arr[0].v + " " + arr[1].v + " " + h.list[0].v + " " + k.v)
+                step = 1
+            }
+            while (step < 1) { Sleep(1ms) }
+            Sleep(20ms)
+            print("main " + a.v + " " + b.v + " " + c.v + " " + d.v + " " + h.last.v + " " + arr[0].v + " " + arr[1].v + " " + h.list.Count + " " + h.list[0].v)
         """),
     }).ToArray();
 
@@ -25293,8 +26277,8 @@ else
                     res.B.Connect(c.A)
                     c.B.Connect(this.Ground)
                     output.Connect(res.B)
-                    this.Bind((Circuits.Circuit p) => res.Resistance = p.Get("R"))
-                    this.Bind((Circuits.Circuit p) => c.Capacitance = p.Get("C"))
+                    this.Bind(func (Circuits.Circuit p) on res => { Resistance = p.Get("R") })   // (bound to the part: a capture would be a copy)
+                    this.Bind(func (Circuits.Circuit p) on c => { Capacitance = p.Get("C") })
                 }
                 float Cutoff() { return this.Value("1/(2*pi*R*C)") }
             }
@@ -27340,6 +28324,1735 @@ else
     // Network (bridges/fire_bridge_net.hpp): TCP, UDP and name resolution on the loopback interface - the same in the VM and in the native build
     natCases = natCases.Concat(new (string Name, string Source)[]
     {
+        ("Http.AppServer: Router als Klassen - ein Task pro Verbindung (30 langsame Anfragen parallel), Keep-Alive mit drei Anfragen hintereinander, Context.Number, 404 am Ende der Kette", """
+            #import "http"
+            #import "time"
+            class Stamp : Http.IRouter {
+                Http.Response Handle(Http.Context ctx, Http.Next next) {
+                    Http.Response r = next.Invoke(ctx)
+                    r.headers.Set("X-Number", "" + ctx.Number)
+                    return r
+                }
+            }
+            class Hello : Http.IRouter {
+                string greeting = "hello"
+                Http.Response Handle(Http.Context ctx, Http.Next next) {
+                    if (ctx.Request.path == "/hello") { return Http.Response.FromText(this.greeting + " " + ctx.Request.Query("n", "?")) }
+                    if (ctx.Request.path == "/slow") { Sleep(30ms); return Http.Response.FromText("slow") }
+                    return next.Invoke(ctx)
+                }
+            }
+            var server = new Http.AppServer("127.0.0.1", 0)
+            server.PushTo(new Stamp()).PushTo(new Hello())
+            int port = server.Port
+            int done = 0
+            string log = ""
+            fire taking port {
+                var c = new Net.TcpClient("127.0.0.1", port)
+                c.ReadTimeout = 5000
+                c.WriteString("GET /hello?n=1 HTTP/1.1\r\nHost: x\r\n\r\nGET /hello?n=2 HTTP/1.1\r\nHost: x\r\n\r\nGET /nothing HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n")
+                var all = new IO.MemoryStream()
+                var buf = new byte[4096]
+                while (true) {
+                    var n = c.Read(buf, 0, 4096)
+                    if (n <= 0) { break }
+                    all.Write(buf, 0, n)
+                }
+                var bytes = all.ToBuffer()
+                string text = IO.Utf8.GetString(bytes, 0, bytes.length)
+                sync global { log = text; done = done + 1 }
+            }
+            int parallel = 0
+            for (var i = 0; i < 30; i++) {
+                fire taking port {
+                    var client = new Http.Client()
+                    var r = client.Get("http://127.0.0.1:" + port + "/slow")
+                    sync global { if (r.Text() == "slow") { parallel = parallel + 1 }; done = done + 1 }
+                }
+            }
+            var start = DateTime.UtcNow.Ticks
+            while (done < 31) { server.AcceptOne(20ms); sync globals }
+            var ms = (DateTime.UtcNow.Ticks - start) / 10000
+            foreach (var l in log.Split("\n")) {
+                string t = l.Trim()
+                if (t.StartsWith("HTTP/") || t.StartsWith("hello") || t.StartsWith("Connection") || t.StartsWith("X-Number") || t.StartsWith("Not Found")) { print(t) }
+            }
+            print("parallel " + parallel + " connections " + server.Connections + " fast " + (ms < 700))
+            server.Close()
+            """),
+        ("Http.AppServer: Lambda-Router (Use, Routes) - Items, Antwort nachbearbeitet, Text, POST, Ausnahme = 500, gestreamte Antwort (chunked); auch die Kette mit Lambdas bekommt Keep-Alive (Lambdas gehen in den Task)", """
+            #import "http"
+            #import "time"
+            class Boom : Exception { construct(string m) { this.message = m } }
+            var server = new Http.AppServer("127.0.0.1", 0)
+            server.Use(func (Http.Context ctx, Http.Next next) => {
+                ctx.SetItem("user", "anna")
+                Http.Response r = next.Invoke(ctx)
+                r.headers.Set("X-Chain", "seen " + ctx.Number)
+                return r
+            })
+            var routes = new Http.Routes()
+            routes.Map("GET", "/hello", func (Http.Context ctx) => "hello " + ctx.Item("user") + " " + ctx.Request.Query("n", "?"))
+            routes.Map("POST", "/echo", func (Http.Context ctx) => ctx.Request.Text())
+            routes.Map("GET", "/boom", func (Http.Context ctx) => { throw new Boom("x") })
+            routes.Map("GET", "/stream", func (Http.Context ctx) => {
+                var m = new IO.MemoryStream()
+                var data = IO.Utf8.GetBytes("streamed body of some length")
+                m.Write(data, 0, data.length)
+                m.Position = 0
+                return Http.Response.FromStream(take m, "text/plain")
+            })
+            server.PushTo(take routes)
+            int port = server.Port
+            int done = 0
+            string log = ""
+            fire taking port {
+                // two requests on one connection (keep-alive), then a third that closes
+                var c = new Net.TcpClient("127.0.0.1", port)
+                c.ReadTimeout = 5000
+                c.WriteString("GET /hello?n=1 HTTP/1.1\r\nHost: x\r\n\r\nGET /hello?n=2 HTTP/1.1\r\nHost: x\r\n\r\nGET /missing HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n")
+                var all = new IO.MemoryStream()
+                var buf = new byte[4096]
+                while (true) { var n = c.Read(buf, 0, 4096); if (n <= 0) { break }; all.Write(buf, 0, n) }
+                var bytes = all.ToBuffer()
+                string text = IO.Utf8.GetString(bytes, 0, bytes.length)
+                var client = new Http.Client()
+                var r = client.Post("http://127.0.0.1:" + port + "/echo", "ping", "text/plain")
+                var b = client.Get("http://127.0.0.1:" + port + "/boom")
+                var s = client.Get("http://127.0.0.1:" + port + "/stream")
+                var t = r.status + " " + r.Text() + " | " + b.status + " | " + s.status + " " + s.Text() + " " + s.Header("Transfer-Encoding") + " " + s.Header("X-Chain")
+                sync global { log = text + "\nCLIENT " + t; done = done + 2 }
+            }
+            while (done < 2) { server.AcceptOne(50ms); sync globals }
+            var lines = log.Split("\n")
+            foreach (var l in lines) {
+                var t = l.Trim()
+                if (t.StartsWith("HTTP/") || t.StartsWith("hello") || t.StartsWith("Connection") || t.StartsWith("X-Chain") || t.StartsWith("CLIENT") || t.StartsWith("Not Found")) { print(t) }
+            }
+            print("connections " + server.Connections)
+            server.Close()
+            """),
+        ("Http.Files: wwwroot 1:1 - index.html, Endung weggelassen, MIME, ETag (304), Range (206, Suffix, 416), HEAD; nie .fire, Punkt-Dateien, .. (auch kodiert), POST geht weiter", """
+            #import "http"
+            #import "filesystem"
+            #import "time"
+            var root = IO.Path.Combine(IO.Path.GetTempPath(), "fire-wwwroot-test-" + DateTime.UtcNow.Ticks)
+            IO.Directory.CreateDirectory(IO.Path.Combine(root, "sub"))
+            IO.File.WriteAllText(IO.Path.Combine(root, "index.html"), "<h1>home</h1>")
+            IO.File.WriteAllText(IO.Path.Combine(root, "about.html"), "about page")
+            IO.File.WriteAllText(IO.Path.Combine(root, "data.json"), "{\"a\": 1}")
+            IO.File.WriteAllText(IO.Path.Combine(root, "sub", "big.txt"), "0123456789abcdefghij")
+            IO.File.WriteAllText(IO.Path.Combine(root, "secret.fire"), "print(1)")
+            IO.File.WriteAllText(IO.Path.Combine(root, ".env"), "KEY=1")
+            class Last : Http.IRouter {
+                Http.Response Handle(Http.Context ctx, Http.Next next) { return Http.Response.FromText("fallback " + ctx.Request.path, 404) }
+            }
+            var server = new Http.AppServer("127.0.0.1", 0)
+            server.PushTo(new Http.Files(root, "/", true)).PushTo(new Last())
+            int port = server.Port
+            int done = 0
+            string log = ""
+            fire taking port {
+                var c = new Http.Client()
+                var site = "http://127.0.0.1:" + port
+                var out = ""
+                var r = c.Get(site + "/")
+                out = out + "root " + r.status + " " + r.Header("Content-Type") + " " + r.Text() + "\n"
+                r = c.Get(site + "/about")
+                out = out + "omit " + r.status + " " + r.Text() + "\n"
+                r = c.Get(site + "/data.json")
+                out = out + "json " + r.status + " " + r.Header("Content-Type") + " " + r.Length + "\n"
+                var tag = r.Header("ETag")
+                var h = new Http.Headers()
+                h.Set("If-None-Match", tag)
+                r = c.Request("GET", site + "/data.json", undefined, h)
+                out = out + "etag " + r.status + " " + r.Length + "\n"
+                var h2 = new Http.Headers()
+                h2.Set("Range", "bytes=5-9")
+                r = c.Request("GET", site + "/sub/big.txt", undefined, h2)
+                out = out + "range " + r.status + " " + r.Text() + " " + r.Header("Content-Range") + "\n"
+                var h3 = new Http.Headers()
+                h3.Set("Range", "bytes=-3")
+                r = c.Request("GET", site + "/sub/big.txt", undefined, h3)
+                out = out + "suffix " + r.status + " " + r.Text() + "\n"
+                var h4 = new Http.Headers()
+                h4.Set("Range", "bytes=50-60")
+                r = c.Request("GET", site + "/sub/big.txt", undefined, h4)
+                out = out + "outside " + r.status + " " + r.Header("Content-Range") + "\n"
+                r = c.Get(site + "/secret.fire")
+                out = out + "source " + r.status + " " + r.Text() + "\n"
+                r = c.Get(site + "/.env")
+                out = out + "dot " + r.status + "\n"
+                r = c.Get(site + "/../outside.txt")
+                out = out + "up " + r.status + "\n"
+                r = c.Get(site + "/sub/%2e%2e/%2e%2e/etc/passwd")
+                out = out + "encoded up " + r.status + "\n"
+                r = c.Head(site + "/sub/big.txt")
+                out = out + "head " + r.status + " " + r.Header("Content-Length") + " " + r.Length + "\n"
+                r = c.Post(site + "/index.html", "x", "text/plain")
+                out = out + "post " + r.status + "\n"
+                sync global { log = out; done = 1 }
+            }
+            while (done < 1) { server.AcceptOne(20ms); sync globals }
+            print(log)
+            server.Close()
+            IO.Directory.Delete(root, true)
+            """),
+        ("Http.Sessions: Cookie (HttpOnly), Werte ueber Verbindungen hinweg am Zuhause der Sitzungen (ein Actor), Renew nach dem Login, ungueltige Id, Ablauf, End, Dateispeicher", """
+            #import "http"
+            #import "filesystem"
+            #import "time"
+            class Counter : Http.IRouter {
+                Http.Response Handle(Http.Context ctx, Http.Next next) {
+                    Http.Session s = ctx.Item("session")
+                    var path = ctx.Request.path
+                    if (path == "/count") {
+                        int n = Http.Num.Parse(s.Get("n", "0")) + 1
+                        s.Set("n", n)
+                        return Http.Response.FromText("n=" + n)
+                    }
+                    if (path == "/login") { s.Set("user", "anna"); s.Renew(); return Http.Response.FromText("welcome " + s.Get("user")) }
+                    if (path == "/logout") { s.End(); return Http.Response.FromText("bye") }
+                    return next.Invoke(ctx)
+                }
+            }
+            var folder = IO.Path.Combine(IO.Path.GetTempPath(), "fire-sessions-" + DateTime.UtcNow.Ticks)
+            var sessions = new Http.Sessions(300, new Http.FileSessionStore(folder))
+            var server = new Http.AppServer("127.0.0.1", 0)
+            server.PushTo(take sessions).PushTo(new Counter())
+            int port = server.Port
+            int done = 0
+            string log = ""
+            fire taking port {
+                var c = new Http.Client()
+                var site = "http://127.0.0.1:" + port
+                var out = ""
+                var r = c.Get(site + "/count")
+                var cookie = r.Header("Set-Cookie")
+                var id = cookie.Substring(13, 32)
+                out = out + r.Text() + " cookie " + cookie.StartsWith("fire-session=") + " " + (cookie.IndexOf("HttpOnly") > 0) + "\n"
+                var h = new Http.Headers()
+                h.Set("Cookie", "theme=dark; fire-session=" + id)
+                r = c.Request("GET", site + "/count", undefined, h)
+                out = out + r.Text() + " again " + (r.Header("Set-Cookie") == undefined) + "\n"
+                r = c.Request("GET", site + "/count", undefined, h)
+                out = out + r.Text() + "\n"
+                r = c.Get(site + "/count")
+                out = out + "other " + r.Text() + "\n"
+                r = c.Request("GET", site + "/login", undefined, h)
+                var renewed = r.Header("Set-Cookie").Substring(13, 32)
+                out = out + r.Text() + " new id " + (renewed != id) + "\n"
+                r = c.Request("GET", site + "/count", undefined, h)
+                out = out + "old id after login " + r.Text() + "\n"
+                var h2 = new Http.Headers()
+                h2.Set("Cookie", "fire-session=" + renewed)
+                r = c.Request("GET", site + "/count", undefined, h2)
+                out = out + "renewed keeps " + r.Text() + "\n"
+                var h3 = new Http.Headers()
+                h3.Set("Cookie", "fire-session=../../etc/passwd")
+                r = c.Request("GET", site + "/count", undefined, h3)
+                out = out + "bad id " + r.Text() + "\n"
+                Sleep(400ms)
+                r = c.Request("GET", site + "/count", undefined, h2)
+                out = out + "after the time " + r.Text() + "\n"
+                r = c.Request("GET", site + "/logout", undefined, h2)
+                out = out + r.Text() + " " + r.Header("Set-Cookie") + "\n"
+                sync global { log = out; done = 1 }
+            }
+            while (done < 1) { server.AcceptOne(20ms); sync globals }
+            print(log)
+            server.Close()
+            IO.Directory.Delete(folder, true)
+            """),
+        ("Threads: ein Actor in einem Feld dessen, was ein Thread mit taking bekommt, bleibt der Actor selbst (keine Kopie) - Completion bringt seine Referenz aus seinem Thread", """
+            #import "time"
+            actor Store {
+                List items
+                bool stopped
+                construct() { this.items = new List(); this.stopped = false }
+                int Add(string s) { this.items.Add(s); return this.items.Count }
+                int Count() { return this.items.Count }
+                undefined Stop() { this.stopped = true }
+            }
+            class Service {
+                Store store
+                string name
+                construct(Store s, string name) { this.store = s; this.name = name }
+            }
+            var ready = new Completion()
+            var back = ready.Share()
+            fire handover back {
+                var home = new Store()
+                back.Set(home)
+                while (!home.stopped) { process home }
+            }
+            Store st = ready.Wait(5s)
+            int first = await st.Add("main")
+            var services = new List()
+            services.Add(new Service(st, "svc"))
+            int done = 0
+            fire taking services {
+                Service svc = services[0]
+                var s = svc.store
+                int before = await s.Count() until 2s
+                int after = await s.Add("thread")
+                print("thread " + before + " " + after + " " + svc.name)
+                sync global { done = 1 }
+            }
+            var t0 = 0
+            while (done < 1 && t0 < 300) { sync globals; Sleep(10ms); t0 = t0 + 1 }
+            int n = await st.Count()
+            print("main " + first + " " + n)
+            st.Stop()
+            """),
+        ("Net.Channel<T>: ein Kanal ueber TCP wie Channel<T> - Werte als JSON, Objekte nur frisch/copy/take (ArgumentException), ein Record ohne Wort wird geliehen (take verwehrt, stirbt er beim Besitzer, ist er auch drueben tot - in der Reihenfolge der Verbindung), Close: undefined nach dem Rest", """
+            #import "net.channel"
+            record Note {
+                string text
+                construct(string t) { this.text = t }
+            }
+            class Job {
+                int n
+                construct(int n) { this.n = n }
+            }
+            var listener = new Net.ChannelListener<any>("127.0.0.1", 0)
+            int port = listener.Port
+            var finished = new Channel<string>()
+            fire with finished taking port {
+                if (true) {
+                    var ch = new Net.Channel<any>("127.0.0.1", port)
+                    any n = ch.Receive()
+                    any job = ch.Receive()
+                    any note = ch.Receive()
+                    string line = "thread " + n + " " + job.n + " " + note.text
+                    try { any mine = take note } catch (AccessDeniedException e) { line = line + " take denied" }
+                    finished.Send(line)
+                    ch.Send(job.n * 2)
+                    any go = ch.Receive()
+                    try { finished.Send("thread " + go + " " + note.text) } catch (DestroyedException e) { finished.Send("thread " + go + ": the note ended with its owner") }
+                    ch.Send("bye")
+                    ch.Close()
+                    any rest = ch.Receive()
+                    finished.Send("thread rest " + (rest == undefined))
+                }
+                finished.Close()
+            }
+            if (true) {
+                var ch = listener.Accept()
+                ch.Send(5)
+                ch.Send(new Job(21))
+                var j = new Job(3)
+                try { ch.Send(j) } catch (ArgumentException e) { print("word: " + e.message) }
+                if (true) {
+                    var note = new Note("hello")
+                    ch.Send(note)
+                    print(finished.Receive())
+                    print("main answer " + ch.Receive())
+                }
+                ch.Send("go")
+                print(finished.Receive())
+                print("main " + ch.Receive())
+                print("main end " + (ch.Receive() == undefined))
+            }
+            foreach (s in finished) { print(s) }
+            listener.Close()
+            print("done")
+            """),
+        ("Eigentum: obj[k] = take p mit einem Parameter p gibt den Wert dem Objekt mit dem Indexer (Dictionary), wie Add(k, take p); ein Parameter lambda<any> mit der Vorgabe undefined darf fehlen", """
+            class P { int n; construct(int n) { this.n = n } }
+            class Reg {
+                Dictionary<string, P> d = new Dictionary<string, P>()
+                undefined Put(string k, P p) { this.d[k] = take p }
+                undefined Add(string k, P p) { this.d.Add(k, take p) }
+            }
+            var r = new Reg()
+            r.Put("a", new P(1))
+            r.Add("b", new P(2))
+            try { print(r.d["a"].n) } catch (DestroyedException e) { print("a destroyed") }
+            print(r.d["b"].n)
+            var p3 = new P(3)
+            r.d["c"] = take p3
+            print(r.d["c"].n)
+            class Cb {
+                static undefined Run(int x, lambda<any> callback = undefined) {
+                    if (callback == undefined) { print("no callback " + x) } else { callback(x) }
+                }
+                undefined Go(lambda<any> cb = undefined) { print("go " + (cb == undefined)) }
+            }
+            Cb.Run(1)
+            Cb.Run(2, (v) => print("cb " + v))
+            new Cb().Go()
+            """),
+        ("IChannel<T>: Channel<T> und Net.Channel<T> haben dasselbe Interface - eine Methode mit IChannel<int> arbeitet mit beiden", """
+            #import "net.channel"
+            class Use {
+                static int Sum(IChannel<int> ch) {
+                    int s = 0
+                    foreach (x in ch) { s = s + x }
+                    return s
+                }
+                static undefined Fill(IChannel<int> ch, int n) {
+                    for (int i = 1; i <= n; i++) { ch.Send(i) }
+                    ch.Close()
+                }
+            }
+            var local = new Channel<int>()
+            fire with local { Use.Fill(local, 4) }
+            print("local " + Use.Sum(local))
+            var listener = new Net.ChannelListener<int>("127.0.0.1", 0)
+            int port = listener.Port
+            fire taking port {
+                var ch = new Net.Channel<int>("127.0.0.1", port)
+                Use.Fill(ch, 5)
+            }
+            if (true) {
+                var net = listener.Accept()
+                IChannel<int> any1 = net
+                print("net " + Use.Sum(net) + " " + (net is of IChannel) + " " + any1.IsClosed)
+                net.Close()
+            }
+            listener.Close()
+            """),
+        ("IChannelEnd<A, B>: die Enden von Channel.Pair haben ein Interface, IChannel<T> ist ein IChannelEnd<T, T> - eine Methode mit IChannelEnd<int, int> nimmt Channel<int> und ein Ende von Pair<int, int>", """
+            #import "net.channel"
+            class Use {
+                static int Sum(IChannelEnd<string, int> ch) {
+                    ch.Send("a")
+                    ch.Send("bcd")
+                    ch.Close()
+                    int s = 0
+                    foreach (x in ch) { s = s + x }
+                    return s
+                }
+                static int Total(IChannel<int> ch) {
+                    int s = 0
+                    foreach (x in ch) { s = s + x }
+                    return s
+                }
+                static int Both(IChannelEnd<int, int> ch) {
+                    ch.Send(7)
+                    return ch.Receive()
+                }
+            }
+            var left = Channel.Pair<string, int>()
+            var right = left.Other()
+            fire with right {
+                foreach (s in right) { right.Send(s.Length) }
+                right.Close()
+            }
+            print("pair " + Use.Sum(left) + " " + (left is of IChannelEnd))
+            var plain = new Channel<int>()
+            plain.Send(1)
+            plain.Send(2)
+            plain.Close()
+            print("plain " + Use.Total(plain))
+            var loop = new Channel<int>()
+            print("same " + Use.Both(loop) + " " + (loop is of IChannelEnd) + " " + (loop is of IChannel))
+            var echo = Channel.Pair<int, int>()
+            var back = echo.Other()
+            fire with back { back.Send(back.Receive() * 2) }
+            print("echo " + Use.Both(echo))
+            """),
+        ("Expression trees: lambda expression<T> - ToString in fire-Syntax, Captured-Werte, verschachtelte Lambdas, Invoke", """
+            class Order { int total; construct(int t) { this.total = t } }
+            class Person {
+                int age
+                string name
+                List<Order> orders = new List<Order>()
+                construct(int a, string n) { this.age = a; this.name = n }
+                bool IsAdult { get { return this.age >= 18 } }
+            }
+            class Probe<T> {
+                string Show(lambda expression<T> e) { return e.ToString() }
+                any Run(lambda expression<T> e, T x) { return e.Invoke(x) }
+            }
+            var pr = new Probe<Person>()
+            var min = 18
+            var prefix = "A"
+            print(pr.Show(p => p.age >= min && !(p.name == undefined)))
+            print(pr.Show(p => p.orders.Any(o => o.total > 10)))
+            print(pr.Show(p => p.name.StartsWith(prefix) || p.age * 2 > 40 - min))
+            print(pr.Run(p => p.age >= min && p.name.StartsWith(prefix), new Person(20, "Anna")))
+            print(pr.Run(p => p.age >= min, new Person(10, "Bo")))
+            """),
+        ("Expression trees: jede Knotenart (Member, Call statisch und am Ziel, Index, Conditional, New, IsType, Convert, Unary), Captures() mit den Werten beim Bauen, ExpressionVisitor", """
+            class Filter { int minAge; construct(int m) { this.minAge = m } }
+            class Tag { string name; construct(string n) { this.name = n } }
+            class Person {
+                int age
+                string name
+                Tag tag
+                int scores[]
+                construct(int a, string n) { this.age = a; this.name = n; this.tag = new Tag("t" + a); this.scores = [a, a * 2] }
+                bool IsAdult { get { return this.age >= 18 } }
+                int Twice(int x) { return x * 2 }
+            }
+            class Animal { }
+            class Dog : Animal { }
+            class Util { static int Limit() { return 30 } }
+            class Probe<T> {
+                string Show(lambda expression<T> e) { return e.ToString() }
+                any Run(lambda expression<T> e, T x) { return e.Invoke(x) }
+                LambdaExpression Keep(lambda expression<T> e) { return e }
+            }
+            class Counter : ExpressionVisitor {
+                int members = 0
+                int captured = 0
+                override any VisitMember(MemberExpression e) { this.members = this.members + 1; e.Target.Accept(this); return undefined }
+                override any VisitCaptured(CapturedExpression e) { this.captured = this.captured + 1; return undefined }
+            }
+            var pr = new Probe<Person>()
+            var filter = new Filter(18)
+            int n = 3
+            print(pr.Show(p => p.age >= filter.minAge && p.IsAdult))
+            print(pr.Show(p => p.Twice(n) + Util.Limit() > p.scores[1]))
+            print(pr.Show(p => p.age > 20 ? p.name : p.tag.name))
+            print(pr.Show(p => new Tag(p.name)))
+            print(pr.Show(p => p.age!float / 2))
+            print(pr.Show(p => p.tag is of Tag && -p.age < 0 && "x" + p.name != "y"))
+            var anna = new Person(20, "Anna")
+            print(pr.Run(p => p.Twice(n) + Util.Limit() > p.scores[1], anna) + " " + pr.Run(p => p.age > 20 ? p.name : p.tag.name, anna))
+            var tree = pr.Keep(p => p.age >= filter.minAge && p.Twice(n) > Util.Limit())
+            filter.minAge = 99
+            n = 100
+            var caps = tree.Captures()
+            string text = ""
+            foreach (c in caps) { text = text + c.Name + "=" + c.Value + " " }
+            print(text + "| " + tree.Invoke(anna))
+            var count = new Counter()
+            tree.Accept(count)
+            print("members " + count.members + " captured " + count.captured + " kind " + tree.Body.Kind + " " + tree.Body.Type + " " + tree.Parameters[0].Type)
+            var b = tree.Body
+            print(b.Left.Left.Kind + " " + b.Left.Left.Name + " " + b.Left.Left.IsField + " " + b.Left.Left.Target.Kind)
+            """),
+        ("Expression trees: Konstruktor, statische Methode, zwei Parameter, geerbte Methode", """
+            class P { int age; int id; construct(int a) { this.age = a; this.id = a } }
+            class O { int personId; construct(int p) { this.personId = p } }
+            class Q {
+                string text
+                construct(lambda expression<P> e) { this.text = e.ToString() }
+                static string S(lambda expression<P> e) { return e.ToString() }
+                static string J(lambda expression<P, O> e) { return e.ToString() + " " + e.Invoke(new P(3), new O(3)) }
+            }
+            class Base { string B(lambda expression<P> e) { return "base " + e.ToString() } }
+            class Derived : Base { }
+            int lim = 5
+            print(new Q(p => p.age > lim).text)
+            print(Q.S(p => p.age < 3))
+            print(Q.J((p, o) => p.id == o.personId))
+            print(new Derived().B(p => p.age == lim))
+            """),
+        ("Expression trees: Captures in einem verschachtelten Lambda (lokal, global, Member eines Objekts) - ueber die Ladebefehle des inneren Lambdas", """
+            #import "linq"
+            class Filter { int minTotal; construct(int m) { this.minTotal = m } }
+            class Order { int total; construct(int t) { this.total = t } }
+            class Person {
+                List<Order> orders = new List<Order>()
+                int bonus
+                construct(int b) { this.bonus = b }
+            }
+            class Probe<T> {
+                LambdaExpression Keep(lambda expression<T> e) { return e }
+            }
+            var pr = new Probe<Person>()
+            int min = 10
+            var filter = new Filter(50)
+            var t = pr.Keep(p => p.orders.Any((Order o) => o.total > min && o.total < filter.minTotal + p.bonus))
+            print(t.ToString())
+            string caps = ""
+            foreach (c in t.Captures()) { caps = caps + c.Name + "=" + c.Value + " " }
+            print(caps)
+            var x = new Person(5)
+            x.orders.Add(new Order(52))
+            print(t.Invoke(x))
+            """),
+        ("Expression trees: Captures aus einer Methode (Parameter), Index, Contains(undefined)", """
+            class Order { int total; construct(int t) { this.total = t } }
+            class Person { List<Order> orders = new List<Order>() }
+            class Probe<T> { LambdaExpression Keep(lambda expression<T> e) { return e } }
+            class Run {
+                static undefined Go(int min) {
+                    var pr = new Probe<Person>()
+                    var t = pr.Keep(p => p.orders.Contains(undefined) || p.orders.Count > min && p.orders.Count < (min + 5))
+                    print(t.ToString())
+                    var u = pr.Keep(p => p.orders.Count > 0 && p.orders[0].total > min)
+                    print(u.ToString() + " " + u.Captures()[0].Value)
+                }
+            }
+            Run.Go(3)
+            """),
+        ("Expression trees: ein Baum laesst sich einer lambda zuweisen (uebersetzt), umgekehrt nicht noetig", """
+            class P { int age; construct(int a) { this.age = a } }
+            class Probe<T> { LambdaExpression Keep(lambda expression<T> e) { return e } }
+            class U {
+                static bool Call(bool lambda<P> f, P p) { return f(p) }
+                static bool lambda<P> Back(LambdaExpression t) { return t }
+            }
+            var t = new Probe<P>().Keep(p => p.age > 3)
+            bool lambda<P> f = t
+            print(f(new P(5)) + " " + f(new P(1)) + " " + t.ToString())
+            print(U.Call(t, new P(5)) + " " + U.Back(t)(new P(1)))
+            """),
+        ("Generics: T is of X - Basisklasse, Interface, Werttyp, generische Methode", """
+            interface IShape { float Area() }
+            class Animal { }
+            class Dog : Animal { }
+            class Square : IShape { float Area() { return 4.0 } }
+            class Box<T> {
+                string What() {
+                    if (T is of Animal) { return "animal" }
+                    if (T is of IShape) { return "shape" }
+                    if (T is of int) { return "int" }
+                    return "other"
+                }
+            }
+            class Q { static string Kind<T>() { return (T is of Animal) + " " + (T is of Dog) + " " + (T is of IShape) } }
+            print(new Box<Dog>().What() + " " + new Box<Animal>().What() + " " + new Box<Square>().What() + " " + new Box<int>().What() + " " + new Box<string>().What())
+            print(Q.Kind<Dog>() + " | " + Q.Kind<Animal>() + " | " + Q.Kind<Square>() + " | " + Q.Kind<List<int>>())
+            """),
+        ("Reflection: Type.Of<T>() in generischer Klasse und Methode", """
+            #import "reflection"
+            class Person { int age; string name }
+            class Repo<T> { string Kind() { return Type.Of<T>().Name } }
+            class Q { static string Of<T>(int n) { return Type.Of<T>().Name + " " + n } }
+            print(Type.Of<Person>().Name)
+            print(Q.Of<Person>(3))
+            print(new Repo<Person>().Kind())
+            print(Type.Of(new Person()).Name)
+            """),
+        ("JSON: Enums als Name, Zahl, Flags, in Arrays, als Wurzel; unbekannter Name ist JsonException", """
+            #import "json"
+            enum Color { Red, Green, Blue }
+            class Box { Color color; construct() { } }
+            var b = Json.Deserialize<Box>("{\"color\":\"Green\"}")
+            print(b.color + " " + (b.color is of Color) + " " + (b.color == Color.Green))
+            var c = Json.Deserialize<Box>("{\"color\":2}")
+            print(c.color + " " + (c.color is of Color) + " " + (c.color == Color.Blue))
+            Color d = 2
+            print(d + " " + (d is of Color))
+            flag enum Perm { Read = 1, Write = 2, Exec = 4 }
+            class Acl { Perm perm; Color colors[]; construct() { } }
+            var a = Json.Deserialize<Acl>("{\"perm\":\"Read, Exec\",\"colors\":[0,\"Blue\"]}")
+            print(a.perm + " " + (a.perm is of Perm) + " " + a.colors[0] + " " + a.colors[1] + " " + (a.colors[1] is of Color))
+            var back = Json.Deserialize<Box>(Json.Serialize(new Box()))
+            print(back.color)
+            print(Json.Deserialize<Color>("1") + " " + Json.Deserialize<Color>("\"Blue\""))
+            try { Json.Deserialize<Box>("{\"color\":\"Pink\"}") } catch (JsonException e) { print(e.message) }
+            """),
+        ("Besitz: copy x als Argument (Konstruktor, Methode, in einer Funktion) - Arrays, 2D-Arrays, Puffer, Listen und innere Objekte der Kopie gehoeren der Kopie", """
+            class Bag {
+                string items[] = ["x", "y"]
+                int grid[][] = [[1, 2], [3, 4]]
+                byte data[] = new byte[3]
+                List<string> names = new List<string>()
+                Bag inner
+            }
+            class Holder { any v; construct() { } construct(any x) { this.v = take x } undefined Set(any x) { this.v = take x } }
+            class Run {
+                static Holder Make(Bag b) { return new Holder(copy b) }
+                static undefined Go() {
+                    var b = new Bag()
+                    b.names.Add("Ada")
+                    b.data[1] = 7
+                    b.inner = new Bag()
+                    b.inner.names.Add("Linus")
+                    var h = Run.Make(b)
+                    var g = new Holder()
+                    g.Set(copy b)
+                    print(h.v.items[1] + " " + h.v.grid[1][0] + " " + h.v.data[1] + " " + h.v.names[0] + " " + h.v.inner.names[0] + " " + h.v.inner.grid[0][1])
+                    print(g.v.items[0] + " " + g.v.grid[0][1] + " " + g.v.names.Count)
+                    b.names.Add("x")
+                    print(h.v.names.Count + " " + b.names.Count)
+                }
+            }
+            class Holder2 { }
+            Run.Go()
+            var wanted = new List<string>()
+            wanted.Add("Ada")
+            class P { string name; construct(string n) { this.name = n } }
+            class Probe<T> { LambdaExpression Keep(lambda expression<T> e) { return e } }
+            var t = new Probe<P>().Keep(p => wanted.IndexOf(p.name) >= 0)
+            any c = t.Captures()[0].Value
+            print(c.Count + " " + c[0] + " " + t.Invoke(new P("Ada")))
+            """),
+        ("Expression trees: ein Baum-Parameter wird an einen anderen weitergereicht (auch als LambdaExpression); List.Contains; eine gefangene List im Baum", """
+            class P { int age; construct(int a) { this.age = a } }
+            class Inner<T> { string Show(lambda expression<T> e) { return e.ToString() + " " + e.Invoke(new P(5)) } }
+            class Outer<T> {
+                string Show(lambda expression<T> e) { return new Inner<T>().Show(e) }
+                string Keep(lambda expression<T> e) { LambdaExpression t = e; return new Inner<T>().Show(t) }
+            }
+            print(new Outer<P>().Show(p => p.age > 3))
+            print(new Outer<P>().Keep(p => p.age > 9))
+            var l = new List<string>()
+            l.Add("a")
+            print(l.Contains("a") + " " + l.Contains("b"))
+            class Q { string name; construct(string n) { this.name = n } }
+            class Probe<T> { LambdaExpression Keep(lambda expression<T> e) { return e } }
+            var wanted = new List<string>()
+            wanted.Add("Ada"); wanted.Add("Linus")
+            var t = new Probe<Q>().Keep(p => wanted.IndexOf(p.name) >= 0)
+            print(t.ToString())
+            any c = t.Captures()[0].Value
+            print(c.Count)
+            print(c[0])
+            print(t.Invoke(new Q("Ada")))
+            var arr = ["Ada", "Linus"]
+            var u = new Probe<Q>().Keep(p => arr.IndexOf(p.name) >= 0)
+            any d = u.Captures()[0].Value
+            print(d.length + " " + d[0])
+            print(new Probe<Q>().Keep(q => wanted.Contains(q.name)).Invoke(new Q("Linus")))
+            """),
+        ("Expression trees: Equals/GetHashCode nach der Form (Captures nach Name, Dictionary-Schluessel), And/Or/Not mit Invoke, Replace, zwei Parameter", """
+            #import "linq"
+            class Order { int total; construct(int t) { this.total = t } }
+            class P { int age; string name; List<Order> orders = new List<Order>(); construct(int a, string n) { this.age = a; this.name = n } }
+            class Probe<T> { LambdaExpression Keep(lambda expression<T> e) { return e } }
+            class Probe2<A, B> { LambdaExpression Keep(lambda expression<A, B> e) { return e } }
+            var pr = new Probe<P>()
+            var min = 18
+            var a = pr.Keep(p => p.age > min && p.name != undefined)
+            min = 30
+            var b = pr.Keep(x => x.age > min && x.name != undefined)
+            var c = pr.Keep(p => p.age >= min)
+            print(a.Equals(b) + " " + (a.GetHashCode() == b.GetHashCode()) + " " + a.Equals(c) + " " + a.Equals(a) + " " + a.Equals(5))
+            var cache = new Dictionary<LambdaExpression, string>()
+            cache.Add(a, "SQL A")
+            print(cache.ContainsKey(b) + " " + cache[b] + " " + cache.ContainsKey(c))
+            var both = Expression.And(a, pr.Keep(q => q.orders.Any(q => q.total > 5)))
+            print(both.ToString())
+            var ada = new P(40, "Ada")
+            ada.orders.Add(new Order(10))
+            print(both.Invoke(ada) + " " + both.Invoke(new P(40, "Linus")) + " " + both.Invoke(new P(5, "Kid")))
+            var either = Expression.Or(pr.Keep(p => p.age < 10), pr.Keep(p => p.name == "Ada"))
+            print(either.ToString() + " " + either.Invoke(new P(5, "x")) + " " + either.Invoke(new P(50, "Ada")) + " " + either.Invoke(new P(50, "Bob")))
+            var no = Expression.Not(c)
+            print(no.ToString() + " " + no.Invoke(new P(5, "x")) + " " + no.Invoke(new P(50, "x")))
+            var age = pr.Keep(p => p.age).Body
+            any r = Expression.Replace(a, age, pr.Keep(p => p.orders.Count).Body)
+            print(r.ToString() + " " + r.Equals(a) + " " + a.ToString())
+            try { r.Invoke(ada) } catch (ArgumentException e) { print(e.message) }
+            var j = new Probe2<P, Order>().Keep((p, o) => p.age > o.total)
+            var k = new Probe2<P, Order>().Keep((x, y) => y.total < 100)
+            var jk = Expression.And(j, k)
+            print(jk.ToString() + " " + jk.Invoke(ada, new Order(5)) + " " + jk.Invoke(ada, new Order(500)))
+            try { Expression.And(a, j) } catch (ArgumentException e) { print(e.message) }
+            print(a.Captures()[0].Value + " " + b.Captures()[0].Value)
+            """),
+        ("Lambdas: handover einer Lambda in eine Lambda (VM wie nativ: sie zieht um und bleibt aufrufbar)", """
+            class M {
+                static any Both(any fa, any fb) {
+                    any ca = copy fa
+                    any cb = copy fb
+                    return (any x) => (handover ca)(x) && (handover cb)(x)
+                }
+                static any Both2(any fa, any fb) {
+                    any ca = copy fa
+                    any cb = copy fb
+                    any r = (any x) => Run.Two((handover ca), (handover cb), x)
+                    return r
+                }
+            }
+            class Run { static bool Two(any a, any b, any x) { return a(x) && b(x) } }
+            any f = M.Both((any x) => x > 1, (any x) => x < 5)
+            print(f(3) + " " + f(7) + " " + f(0))
+            any g = M.Both2((any x) => x > 1, (any x) => x < 5)
+            print(g(3) + " " + g(7) + " " + g(0))
+            """),
+        ("Expression trees: Ueberladungen lambda<T> / lambda expression<T> - ein Ausdrucks-Lambda bekommt den Baum, Block, Variable und any die Lambda, ein fertiger Baum den Baum", """
+            class P { int age; construct(int a) { this.age = a } }
+            class Q<T> {
+                string Where(bool lambda<T> f) { return "lambda" }
+                string Where(lambda expression<T> e) { return "tree " + e.ToString() }
+                string Only(lambda expression<T> e) { return "only " + e.ToString() }
+            }
+            var q = new Q<P>()
+            print(q.Where(p => p.age > 3))
+            bool lambda<P> f = (P p) => p.age > 3
+            print(q.Where(f))
+            print(q.Where(p => { return p.age > 3 }))
+            print(q.Only(p => p.age > 3))
+            any a = q
+            print(a.Where((P p) => p.age > 3))
+            class Keep<T> { LambdaExpression K(lambda expression<T> e) { return e } }
+            var t = new Keep<P>().K(p => p.age > 9)
+            print(q.Where(t))
+            """),
+        ("Expression trees: Stripping 3 behaelt Klassen und Member, die ein Baum nennt (ein Uebersetzer findet sie mit Type.Find, auch ohne ein Objekt der Klasse)", """
+            #import "reflection"
+            class Address { string city; int zip; string Tag() { return this.city } }
+            class Person { int age; Address address; construct(int a) { this.age = a } }
+            class Probe<T> { LambdaExpression Keep(lambda expression<T> e) { return e } }
+            class Names : ExpressionVisitor {
+                any found = new List<string>()
+                override any VisitMember(MemberExpression e) {
+                    e.Target.Accept(this)
+                    Type t = Type.Named(e.Target.Type)
+                    this.found.Add(e.Target.Type + "." + e.Name + "=" + (t != undefined && t.Find(e.Name) != undefined))
+                    return undefined
+                }
+                override any VisitCall(CallExpression e) {
+                    e.Target.Accept(this)
+                    Type t = Type.Named(e.Target.Type)
+                    this.found.Add(e.Target.Type + "." + e.Method + "()=" + (t != undefined && t.Find(e.Method) != undefined))
+                    return undefined
+                }
+            }
+            var t = new Probe<Person>().Keep(p => p.age > 3 && p.address.city == "Bonn" && p.address.Tag() != "")
+            var v = new Names()
+            t.Accept(v)
+            foreach (s in v.found) { print(s) }
+            var ada = new Person(2)
+            print(t.Invoke(ada))
+            """),
+        ("Reflection: Reflect.Set uebernimmt, was dem Aufruf gehoert (new, copy, take, ein Array-Literal) wie eine Feldzuweisung; ein fremdes Objekt bleibt dessen", """
+            #import "reflection"
+            class Item { int n; construct(int n) { this.n = n } }
+            class Box { List<Item> items; Item one; int nums[] }
+            var b = new Box()
+            Reflect.Set(b, "items", new List<Item>())
+            b.items.Add(new Item(1))
+            print(b.items.Count)
+            Reflect.Set(b, "one", new Item(7))
+            print(b.one.n)
+            var src = new List<Item>()
+            src.Add(new Item(3))
+            Reflect.Set(b, "items", copy src)
+            print(b.items.Count + " " + b.items[0].n)
+            var mine = new Item(9)
+            Reflect.Set(b, "one", take mine)
+            print(b.one.n + " " + (mine == undefined))
+            var shared = new Item(5)
+            Reflect.Set(b, "one", shared)
+            print(b.one.n + " " + shared.n)
+            Reflect.Set(b, "nums", [1, 2, 3])
+            print(b.nums.length)
+            """),
+        ("JSON: eine gelesene List ist eine normale Liste (owns wie nach dem Feld-Initialisierer: Add geht), auch als Wurzel", """
+            #import "json"
+            class Item { int n }
+            class Box { List<Item> items = new List<Item>() }
+            var b = Json.Deserialize<Box>("{\"items\":[{\"n\":1},{\"n\":2}]}")
+            print(b.items.Count)
+            var it = new Item()
+            it.n = 3
+            b.items.Add(it)
+            print(b.items.Count + " " + b.items[2].n)
+            var l = Json.Deserialize<List<Item>>("[{\"n\":4}]")
+            l.Add(new Item())
+            print(l.Count)
+            """),
+        ("Programmende: warten alle uebrigen Threads in Kanaelen, schliessen die Kanaele des Hauptprogramms (foreach endet)", """
+            var ch = new Channel<int>()
+            var out = new Channel<string>()
+            fire with ch, out {
+                int sum = 0
+                foreach (x in ch) { sum = sum + x }
+                print("consumer done " + sum)
+            }
+            ch.Send(1)
+            ch.Send(2)
+            print("main end")
+            """),
+        ("Programmende: ein Thread, der in process wartet, zaehlt als Stillstand - er endet wie mit leave (finally laeuft), ohne das Zeitlimit", """
+            #import "time"
+            #endwait 20s
+            actor Home {
+                int n = 0
+                undefined Add(int v) { this.n = this.n + v }
+            }
+            var ch = new Channel<int>()
+            fire with ch {
+                var h = new Home()
+                fire with h {
+                    Sleep(50ms)
+                    h.Add(5)
+                    h.Add(6)
+                }
+                try { while (true) { process h } } finally { print("home ends " + h.n) }
+            }
+            fire with ch {
+                int sum = 0
+                foreach (v in ch) { sum = sum + v }
+            }
+            ch.Send(1)
+            print("main end")
+            """),
+        ("Programmende: #endwait 300ms - ein Thread, der dann noch laeuft, wird beendet wie mit terminate (Meldung auf stderr)", """
+            #import "time"
+            #endwait 300ms
+            fire {
+                int n = 0
+                while (true) { Sleep(10ms); n = n + 1 }
+            }
+            print("main end")
+            """),
+        ("Programmende: ein Net.Channel des Hauptprogramms ohne Close - seine Kanaele schliessen, die Verbindung endet, der Thread drueben auch", """
+            #import "net.channel"
+            var listener = new Net.ChannelListener<any>("127.0.0.1", 0)
+            int port = listener.Port
+            fire taking port {
+                var ch = new Net.Channel<any>("127.0.0.1", port)
+                any v = ch.Receive()
+                ch.Send(v + 1)
+                foreach (x in ch) { print("thread got " + x) }
+                print("thread done")
+            }
+            var ch = listener.Accept()
+            ch.Send(41)
+            print(ch.Receive())
+            """),
+        ("Http.Rpc: [Remote]-Klassen ueber HTTP und JSON - nur mit Sitzung (401), [Nickname] fuer gleichnamige Klassen, Methode, Objekt als Argument, Dienst per DI (Actor), Property, Ausnahme 500, nicht [Remote] 404, falsche Argumente 400, Lebensdauer request, session und single", """
+            #import "http.rpc"
+            #import "time"
+            actor Clock {
+                int Ticks() { return 42 }
+            }
+            class Item { string name
+                int count }
+            [Remote]
+            class Calc {
+                Clock clock
+                int calls = 0
+                construct(Clock clock) { this.clock = clock }
+                [Remote] int Add(int a, int b) { this.calls = this.calls + 1; return a + b }
+                [Remote] string Describe(Item item) { return item.name + " x" + item.count }
+                [Remote] int Time() { var c = this.clock; int t = await c.Ticks(); return t }
+                [Remote] int Calls { get { return this.calls } }
+                [Remote] undefined Fail() { throw new ArgumentException("broken") }
+                int Hidden() { return 1 }
+            }
+            [Remote]
+            [Lifetime "session"]
+            class Cart {
+                List items
+                construct() { this.items = new List() }
+                [Remote] int Put(string name) { this.items.Add(name); return this.items.Count }
+                [Remote] List Items() { return this.items }
+            }
+            [Remote]
+            [Lifetime "single"]
+            [Timeout 600]
+            class Visits {
+                int n = 0
+                [Remote] int Next() { this.n = this.n + 1; return this.n }
+            }
+            class NotRemote { int X() { return 1 } }
+            namespace Shop {
+                [Remote]
+                [Nickname "cart2"]
+                class Basket { [Remote] string Who() { return "shop" } }
+            }
+            namespace Admin {
+                [Remote]
+                [Nickname "basket"]
+                class Basket { [Remote] string Who() { return "admin" } }
+            }
+            var clock = new Clock()
+            var services = new List()
+            services.Add(clock)
+            var server = new Http.AppServer("127.0.0.1", 0)
+            server.PushTo(new Http.Sessions()).PushTo(new Http.Rpc("/rpc", take services))
+            int port = server.Port
+            int done = 0
+            string log = ""
+            fire taking port {
+                var c = new Http.Client()
+                var site = "http://127.0.0.1:" + port + "/rpc/"
+                var out = ""
+                var r = c.Post(site + "Calc/Add", "[2, 3]", "application/json")
+                out = out + "no session " + r.status + " " + r.Text() + "\n"
+                var cookie = r.Header("Set-Cookie").Substring(0, 45)
+                var h = new Http.Headers()
+                h.Set("Cookie", cookie)
+                h.Set("Content-Type", "application/json")
+                var bad = new Http.Headers()
+                bad.Set("Cookie", "fire-session=00000000000000000000000000000000")
+                r = c.Request("POST", site + "Calc/Add", "[2, 3]", bad)
+                out = out + "unknown session " + r.status + "\n"
+                r = c.Request("POST", site + "Calc/Add", "[2, 3]", h)
+                out = out + "add " + r.status + " " + r.Text() + "\n"
+                r = c.Request("POST", site + "Calc/Describe", "[{\"name\": \"pen\", \"count\": 3}]", h)
+                out = out + "object " + r.status + " " + r.Text() + "\n"
+                r = c.Request("POST", site + "Calc/Time", "", h)
+                out = out + "service " + r.status + " " + r.Text() + "\n"
+                r = c.Request("GET", site + "Calc/Calls", undefined, h)
+                out = out + "request lifetime " + r.Text() + "\n"
+                r = c.Request("POST", site + "Calc/Fail", "[]", h)
+                out = out + "throws " + r.status + " " + r.Text() + "\n"
+                r = c.Request("POST", site + "Calc/Hidden", "[]", h)
+                out = out + "hidden " + r.status + "\n"
+                r = c.Request("POST", site + "NotRemote/X", "[]", h)
+                out = out + "not remote " + r.status + "\n"
+                r = c.Request("POST", site + "Calc/Add", "[1]", h)
+                out = out + "wrong count " + r.status + "\n"
+                r = c.Request("POST", site + "Calc/Add", "[1,", h)
+                out = out + "bad json " + r.status + "\n"
+                r = c.Request("POST", site + "Cart/Put", "[\"apple\"]", h)
+                r = c.Request("POST", site + "Cart/Put", "[\"pear\"]", h)
+                out = out + "session " + r.Text() + "\n"
+                r = c.Request("POST", site + "Cart/Items", "[]", h)
+                out = out + "items " + r.Text() + "\n"
+                var first = c.Post(site + "Calc/Add", "[1, 1]", "application/json")
+                var h2 = new Http.Headers()
+                h2.Set("Cookie", first.Header("Set-Cookie").Substring(0, 45))
+                r = c.Request("POST", site + "Cart/Items", "[]", h2)
+                out = out + "other session " + r.Text() + "\n"
+                r = c.Request("POST", site + "cart2/Who", "[]", h)
+                out = out + "nickname " + r.Text() + "\n"
+                r = c.Request("POST", site + "basket/Who", "[]", h)
+                out = out + "other nickname " + r.Text() + "\n"
+                r = c.Request("POST", site + "Shop.Basket/Who", "[]", h)
+                out = out + "class name hidden " + r.status + "\n"
+                r = c.Request("POST", site + "Visits/Next", "[]", h)
+                r = c.Request("POST", site + "Visits/Next", "[]", h)
+                out = out + "single " + r.Text() + "\n"
+                sync global { log = out; done = 1 }
+            }
+            while (done < 1) {
+                server.AcceptOne(20ms)
+                sync globals
+                while (try process clock) { }
+            }
+            print(log)
+            server.Close()
+            """),
+        ("Http.Rpc: zwei [Remote]-Klassen mit demselben oeffentlichen Namen sind eine ArgumentException", """
+            #import "http.rpc"
+            namespace A {
+                [Remote]
+                [Nickname "same"]
+                class One { [Remote] int X() { return 1 } }
+            }
+            namespace B {
+                [Remote]
+                [Nickname "same"]
+                class Two { [Remote] int X() { return 2 } }
+            }
+            try {
+                var rpc = new Http.Rpc()
+                print("no")
+            } catch (ArgumentException e) { print(e.message) }
+            """),
+        ("Actors: list.Add(actor) und die Zuweisung eines Actors in ein Feld (auch in einem Thread) sind keine Nachrichten (tryTakeTo) - der Actor bleibt bei seinem Zuhause", """
+            #import "time"
+            actor Clock {
+                int n = 0
+                int Tick() { this.n = this.n + 1; return this.n }
+            }
+            class Holder {
+                Clock clock
+                construct(Clock c) { this.clock = c }
+            }
+            var clock = new Clock()
+            var list = new List()
+            list.Add(clock)
+            int done = 0
+            fire with clock {
+                var h = new Holder(clock)
+                var c = h.clock
+                int t = await c.Tick()
+                sync global { done = t }
+            }
+            while (done < 1) {
+                sync globals
+                while (try process clock) { }
+                Sleep(1ms)
+            }
+            var stray = 0
+            while (try process clock) { stray = stray + 1 }
+            print("tick " + done + " list " + list.Count + " stray messages " + stray)
+            """),
+        ("Http.WebSockets: Handshake (101, Sec-WebSocket-Accept), Text, 70000 Bytes (64-Bit-Laenge), 300 Zeichen (16-Bit-Laenge), Ping, Zeitlimit beim Empfang, Close 1000, 426 ohne Upgrade, fremder Origin abgewiesen", """
+            #import "http"
+            #import "time"
+            class Echo : Http.IWebSocketHandler {
+                string prefix = "echo: "
+                undefined Serve(Http.WebSocket ws) {
+                    while (true) {
+                        var m = ws.Receive()
+                        if (m == undefined) { break }
+                        if (m.IsText) {
+                            var t = m.Text()
+                            if (t == "bye") { ws.Close(1000, "done"); break }
+                            ws.Send(this.prefix + t)
+                        } else {
+                            ws.Send("bytes " + m.data.length + " last " + m.data[m.data.length - 1])
+                        }
+                    }
+                }
+            }
+            var server = new Http.AppServer("127.0.0.1", 0)
+            server.PushTo((new Http.WebSockets("/chat", new Echo())).AllowOrigin("http://good.example"))
+            int port = server.Port
+            int done = 0
+            string log = ""
+            fire taking port {
+                var out = ""
+                var h = new Http.Headers()
+                h.Set("Origin", "http://good.example")
+                var ws = Http.WebSocket.Connect("ws://127.0.0.1:" + port + "/chat", 5000, h)
+                ws.Send("hello")
+                out = out + ws.ReceiveText(5000) + "\n"
+                var big = new byte[70000]
+                for (var i = 0; i < big.length; i++) { big[i] = i % 251 }
+                ws.SendBytes(big)
+                out = out + ws.ReceiveText(5000) + "\n"
+                var mid = ""
+                for (var i = 0; i < 300; i++) { mid = mid + "x" }
+                ws.Send(mid)
+                out = out + "mid " + ws.ReceiveText(5000).Length + "\n"
+                ws.Ping()
+                ws.Send("after ping")
+                out = out + ws.ReceiveText(5000) + "\n"
+                out = out + "nothing yet " + (ws.Receive(50) == undefined) + " open " + ws.IsOpen + "\n"
+                ws.Send("bye")
+                out = out + "closed " + (ws.Receive(5000) == undefined) + " code " + ws.CloseCode + " open " + ws.IsOpen + "\n"
+                var c = new Http.Client()
+                var r = c.Get("http://127.0.0.1:" + port + "/chat")
+                out = out + "plain get " + r.status + "\n"
+                var bad = new Http.Headers()
+                bad.Set("Origin", "http://evil.example")
+                try { Http.WebSocket.Connect("ws://127.0.0.1:" + port + "/chat", 5000, bad); out = out + "no\n" } catch (Http.HttpException e) { out = out + "evil origin refused\n" }
+                sync global { log = out; done = 1 }
+            }
+            while (done < 1) { server.AcceptOne(20ms); sync globals }
+            print(log)
+            server.Close()
+            """),
+        ("UI.FlowPanel: Text bricht Wort fuer Wort ueber Runs hinweg um, ein Button steht in der Zeile (unten buendig), LineBreak, Text", """
+            #import "ui"
+            var fb = new Framebuffer(400, 300)
+            var win = new Window(fb, "flow")
+            var root = new UI.Root(fb, win)
+            var flow = new UI.FlowPanel(0, 0, 120, -1)
+            flow.AddText("Hello world, please ")
+            var b = new UI.Button("OK", 0, 0, 40, 26)
+            flow.Add(b)
+            flow.AddText(" click it when you are done.")
+            flow.Add(new UI.LineBreak())
+            flow.AddText("Second paragraph")
+            root.content.Add(flow)
+            root.content.Measure(root, 400, 300)
+            root.content.Arrange(root, 0, 0, 400, 300)
+            print("size " + flow.actualWidth + "x" + flow.actualHeight)
+            var line = ""
+            var lastY = -1
+            for (var i = 0; i < flow.pieces.Count; i++) {
+                UI.FlowPiece p = flow.pieces[i]
+                if (p.y != lastY && lastY != -1) { print(line); line = "" }
+                lastY = p.y
+                if (p.text != undefined) { line = line + "[" + p.text + "]" } else { line = line + "<button@" + p.x + "," + p.y + ">" }
+            }
+            print(line)
+            print("button " + b.rx + "," + b.ry + " " + b.actualWidth + "x" + b.actualHeight)
+            print(flow.Text)
+            """),
+        ("Http.Pages: eine FXML-View als Seite - HTML mit CSS-Layout (Flex), Circuit pro Seite, Eingabe, Klick, Checkbox und Button im FlowPanel ueber den WebSocket, nur die Aenderungen zurueck, fremde Sitzung 4401, unbekannte Seite 4404", """
+            #import "http.pages"
+            // Generated from Hello.fxml - do not edit, change the markup. Derive from the class and override the methods named in on...="...":
+            //     class Hello : HelloBase { override undefined Save(any sender) { ... } }
+            #import "ui"
+
+            class HelloBase {
+                UI.Panel view
+                UI.Label title
+                UI.TextBox nameBox
+                UI.CheckBox loud
+                UI.Button ok
+                UI.Button more
+                UI.Run count
+
+                construct() {
+                    this.view = new UI.Panel(0, 0, 400, 300)
+                    var e0 = new UI.StackPanel(0, 0, -1, -1)
+                    e0.Spacing = 6
+                    e0.Padding = 10
+                    var e1 = new UI.Label("", 0, 0)
+                    e1.Text = "Hello"
+                    e0.Add(e1)
+                    this.title = e1
+                    var e2 = new UI.TextBox("", 0, 0)
+                    e2.Text = "world"
+                    e0.Add(e2)
+                    this.nameBox = e2
+                    var e3 = new UI.CheckBox("", 0, 0)
+                    e3.Text = "Loud"
+                    e0.Add(e3)
+                    this.loud = e3
+                    var e4 = new UI.Button("", 0, 0)
+                    e4.Text = "Greet"
+                    e4.OnClick = func () on this => { Greet(this.ok) }
+                    e0.Add(e4)
+                    this.ok = e4
+                    var e5 = new UI.FlowPanel(0, 0, -1, -1)
+                    e5.Width = 200
+                    var e6 = new UI.Run("")
+                    e6.Text = "Press "
+                    e5.Add(e6)
+                    var e7 = new UI.Button("", 0, 0)
+                    e7.Text = "+"
+                    e7.OnClick = func () on this => { More(this.more) }
+                    e5.Add(e7)
+                    this.more = e7
+                    var e8 = new UI.Run("")
+                    e8.Text = " to count: "
+                    e5.Add(e8)
+                    var e9 = new UI.Run("")
+                    e9.Text = "0"
+                    e5.Add(e9)
+                    this.count = e9
+                    e0.Add(e5)
+                    this.view.Add(e0)
+                }
+
+                // the handler of an event in the markup - override it in the derived class
+                undefined Greet(any sender) { }
+                // the handler of an event in the markup - override it in the derived class
+                undefined More(any sender) { }
+
+                // adds the view to a container (UI.Root.content, a Panel or a Stack)
+                undefined Attach(any container) { container.Add(this.view) }
+            }
+            [Page "/hello"]
+            class HelloPage : HelloBase {
+                int n = 0
+                override undefined Greet(any sender) {
+                    var t = "Hello " + this.nameBox.Text
+                    if (this.loud.IsChecked) { t = t.ToUpper() + "!" }
+                    this.title.Text = t
+                }
+                override undefined More(any sender) {
+                    this.n = this.n + 1
+                    this.count.Text = "" + this.n
+                }
+            }
+            var server = new Http.AppServer("127.0.0.1", 0)
+            server.PushTo(new Http.Sessions()).PushTo(new Http.Pages("Hello"))
+            int port = server.Port
+            int done = 0
+            string log = ""
+            fire taking port {
+                var c = new Http.Client()
+                var r = c.Get("http://127.0.0.1:" + port + "/hello")
+                var html = r.Text()
+                var cookie = r.Header("Set-Cookie").Substring(0, 45)
+                var at = html.IndexOf("data-circuit=\"") + 14
+                var circuit = html.Substring(at, 32)
+                var out = "page " + r.status + " " + (html.IndexOf("<button data-k=\"click\" id=\"f5\"") >= 0) + " flex " + (html.IndexOf("display:flex;flex-direction:column;gap:6px") >= 0) + "\n"
+                var h = new Http.Headers()
+                h.Set("Cookie", cookie)
+                var ws = Http.WebSocket.Connect("ws://127.0.0.1:" + port + "/_fire/ws?c=" + circuit, 5000, h)
+                ws.Send("{\"e\": 3, \"k\": \"input\", \"v\": \"fire\"}")
+                out = out + "input " + ws.ReceiveText(5000) + "\n"
+                ws.Send("{\"e\": 5, \"k\": \"click\"}")
+                out = out + "click " + ws.ReceiveText(5000) + "\n"
+                ws.Send("{\"e\": 4, \"k\": \"check\", \"v\": true}")
+                ws.ReceiveText(5000)
+                ws.Send("{\"e\": 5, \"k\": \"click\"}")
+                out = out + "loud " + ws.ReceiveText(5000) + "\n"
+                ws.Send("{\"e\": 8, \"k\": \"click\"}")
+                out = out + "flow " + ws.ReceiveText(5000) + "\n"
+                var other = new Http.Headers()
+                other.Set("Cookie", "fire-session=00000000000000000000000000000000")
+                var ws2 = Http.WebSocket.Connect("ws://127.0.0.1:" + port + "/_fire/ws?c=" + circuit, 5000, other)
+                out = out + "other session " + (ws2.ReceiveText(5000) == undefined) + " " + ws2.CloseCode + "\n"
+                var ws3 = Http.WebSocket.Connect("ws://127.0.0.1:" + port + "/_fire/ws?c=00000000000000000000000000000000", 5000, h)
+                out = out + "no such page " + (ws3.ReceiveText(5000) == undefined) + " " + ws3.CloseCode + "\n"
+                ws.Close()
+                sync global { log = out; done = 1 }
+            }
+            while (done < 1) { server.AcceptOne(20ms); sync globals }
+            print(log)
+            server.Close()
+            """),
+        ("Http.Pages: DrawingCanvas als PNG (neu nach einem Mausklick), browser.Call mit Callback und browser.Run gehen mit der Antwort hinaus, das Ergebnis kommt als Ereignis zurueck", """
+            #import "http.pages"
+            [Page "/draw"]
+            class DrawPage {
+                UI.Panel view
+                UI.Label result
+                UI.DrawingCanvas canvas
+                Http.Browser browser
+                List points
+                construct() {
+                    this.points = new List()
+                    this.view = new UI.Panel(0, 0, 300, 200)
+                    var stack = new UI.StackPanel(0, 0, -1, -1)
+                    var r = new UI.Label("no result")
+                    this.result = r
+                    stack.Add(take r)
+                    var b = new UI.Button("Add")
+                    b.OnClick = func () on this => { this.Ask() }
+                    stack.Add(take b)
+                    var c = new UI.DrawingCanvas(0, 0, 40, 30)
+                    c.OnPaint = func (UI.DrawingCanvas dc) on this => { this.Paint(dc) }
+                    c.OnMouseDown = func (int x, int y, int button) on this => { this.points.Add(x); this.points.Add(y); this.canvas.Invalidate() }
+                    this.canvas = c
+                    stack.Add(take c)
+                    this.view.Add(take stack)
+                }
+                undefined Ask() {
+                    this.browser.Call("add", [2, 3], func (any v) on this => { this.result.Text = "sum " + v })
+                    this.browser.Run("document.title = 'changed'")
+                }
+                undefined Paint(UI.DrawingCanvas dc) {
+                    dc.renderer.ClearTo(UI.Color.Rgb(255, 255, 255))
+                    for (var i = 0; i + 1 < this.points.Count; i = i + 2) {
+                        int x = this.points[i]
+                        int y = this.points[i + 1]
+                        dc.renderer.FillRect(x, y, 4, 4, new SolidBrush(UI.Color.Rgb(200, 0, 0)))
+                    }
+                }
+            }
+            var server = new Http.AppServer("127.0.0.1", 0)
+            server.Settings.showErrors = true
+            server.PushTo(new Http.Sessions()).PushTo(new Http.Pages("Draw"))
+            int port = server.Port
+            int done = 0
+            string log = ""
+            fire taking port {
+                var c = new Http.Client()
+                var r = c.Get("http://127.0.0.1:" + port + "/draw")
+                var html = r.Text()
+                var cookie = r.Header("Set-Cookie").Substring(0, 45)
+                var at = html.IndexOf("data-circuit=\"") + 14
+                var circuit = html.Substring(at, 32)
+                var out = "page " + r.status + " img " + (html.IndexOf("<img data-k=\"draw\"") >= 0) + " png " + (html.IndexOf("src=\"data:image/png;base64,iVBOR") >= 0) + "\n"
+                var h = new Http.Headers()
+                h.Set("Cookie", cookie)
+                var ws = Http.WebSocket.Connect("ws://127.0.0.1:" + port + "/_fire/ws?c=" + circuit, 5000, h)
+                ws.Send("{\"e\": 3, \"k\": \"click\"}")
+                var a = ws.ReceiveText(5000)
+                out = out + "click " + a.Substring(0, a.IndexOf("[") + 1) + " js " + (a.IndexOf("\"js\": [{\"id\": 0, \"fn\": \"add\", \"args\": [2,3]}, {\"id\": -1, \"code\": ") > 0) + "\n"
+                ws.Send("{\"e\": -1, \"k\": \"js\", \"id\": 0, \"v\": 5}")
+                out = out + "result " + ws.ReceiveText(5000) + "\n"
+                ws.Send("{\"e\": 4, \"k\": \"mouse\", \"t\": \"down\", \"x\": 10, \"y\": 10, \"b\": 1}")
+                var m = ws.ReceiveText(5000)
+                out = out + "mouse " + (m.IndexOf("\"img\": \"data:image/png;base64,") > 0) + "\n"
+                ws.Send("{\"e\": 4, \"k\": \"mouse\", \"t\": \"move\", \"x\": 12, \"y\": 10}")
+                out = out + "move nothing " + (ws.ReceiveText(400) == undefined) + "\n"   // (nothing changed: no answer)
+                ws.Close()
+                sync global { log = out; done = 1 }
+            }
+            while (done < 1) { server.AcceptOne(20ms); sync globals }
+            print(log)
+            server.Close()
+            """),
+        ("Http.Pages: browser.Call wartet auf das Ergebnis (zwei Aufrufe nacheinander im Handler, der Socket bleibt frei), daneben die Form mit Callback", """
+            #import "http.pages"
+            [Page "/ask"]
+            class AskPage {
+                UI.Panel view
+                UI.Label result
+                Http.Browser browser
+                construct() {
+                    this.view = new UI.Panel(0, 0, 300, 200)
+                    var stack = new UI.StackPanel(0, 0, -1, -1)
+                    var r = new UI.Label("no result")
+                    this.result = r
+                    stack.Add(take r)
+                    var b = new UI.Button("Ask")
+                    b.OnClick = func () on this => { this.Ask() }
+                    stack.Add(take b)
+                    var later = new UI.Button("Later")
+                    later.OnClick = func () on this => { this.browser.Call("add", [1, 1], func (any v) on this => { this.result.Text = "callback " + v }) }
+                    stack.Add(take later)
+                    this.view.Add(take stack)
+                }
+                undefined Ask() {
+                    this.result.Text = "asking"
+                    any v = this.browser.Call("add", [4, 5])
+                    any w = this.browser.Call("add", [v, 1])
+                    this.result.Text = "await " + v + " " + w
+                }
+            }
+            var server = new Http.AppServer("127.0.0.1", 0)
+            server.Settings.showErrors = true
+            server.PushTo(new Http.Sessions()).PushTo(new Http.Pages("Ask"))
+            int port = server.Port
+            int done = 0
+            string log = ""
+            fire taking port {
+                var c = new Http.Client()
+                var r = c.Get("http://127.0.0.1:" + port + "/ask")
+                var html = r.Text()
+                var cookie = r.Header("Set-Cookie").Substring(0, 45)
+                var at = html.IndexOf("data-circuit=\"") + 14
+                var circuit = html.Substring(at, 32)
+                var out = "page " + r.status + "\n"
+                var h = new Http.Headers()
+                h.Set("Cookie", cookie)
+                var ws = Http.WebSocket.Connect("ws://127.0.0.1:" + port + "/_fire/ws?c=" + circuit, 5000, h)
+                ws.Send("{\"e\": 3, \"k\": \"click\"}")
+                out = out + "call 1 " + ws.ReceiveText(5000) + "\n"
+                ws.Send("{\"e\": -1, \"k\": \"js\", \"id\": 0, \"v\": 9}")
+                out = out + "call 2 " + ws.ReceiveText(5000) + "\n"
+                ws.Send("{\"e\": -1, \"k\": \"js\", \"id\": 1, \"v\": 10}")
+                out = out + "done " + ws.ReceiveText(5000) + "\n"
+                ws.Send("{\"e\": 4, \"k\": \"click\"}")
+                out = out + "later " + ws.ReceiveText(5000) + "\n"
+                ws.Send("{\"e\": -1, \"k\": \"js\", \"id\": 2, \"v\": 2}")
+                out = out + "callback " + ws.ReceiveText(5000) + "\n"
+                ws.Close()
+                sync global { log = out; done = 1 }
+            }
+            while (done < 1) { server.AcceptOne(20ms); sync globals }
+            print(log)
+            server.Close()
+            """),
+        ("Http.Pages: ListView mit Spalten (Kopfzeile, Zellen, Klick auf einen Titel sortiert, nochmal umgekehrt) und ListBox mit ItemTemplate (Zeilen als HTML ohne ids)", """
+            #import "http.pages"
+            class Person { string name
+                int age
+                construct(string n, int a) { this.name = n; this.age = a } }
+            [Page "/cols"]
+            class ColsPage {
+                UI.Panel view
+                UI.ListView table
+                UI.ListBox cards
+                UI.Label chosen
+                construct() {
+                    this.view = new UI.Panel(0, 0, 400, 400)
+                    var stack = new UI.StackPanel(0, 0, -1, -1)
+                    var lv = new UI.ListView(0, 0, 240, 100)
+                    lv.AddColumn("Name", "name", 120)
+                    lv.AddColumn("Age", "age", -1)
+                    lv.Add(new Person("Ben", 40))
+                    lv.Add(new Person("Anna", 30))
+                    lv.OnSelect = func () on this => { this.chosen.Text = "row " + this.table.SelectedIndex }
+                    this.table = lv
+                    stack.Add(take lv)
+                    var lb = new UI.ListBox(0, 0, 160, 100)
+                    lb.ItemTemplate = new UI.DataTemplate(func (any item) => {
+                        var sp = new UI.StackPanel(0, 0, -1, -1, true)
+                        sp.Add(new UI.Label(item.name))
+                        sp.Add(new UI.Label(" (" + item.age + ")"))
+                        return sp
+                    })
+                    lb.Add(new Person("Carl", 7))
+                    this.cards = lb
+                    stack.Add(take lb)
+                    var b = new UI.Button("More")
+                    b.OnClick = func () on this => { this.cards.Add(new Person("Dora", 9)) }
+                    stack.Add(take b)
+                    var l = new UI.Label("none")
+                    this.chosen = l
+                    stack.Add(take l)
+                    this.view.Add(take stack)
+                }
+            }
+            var server = new Http.AppServer("127.0.0.1", 0)
+            server.Settings.showErrors = true
+            server.PushTo(new Http.Sessions()).PushTo(new Http.Pages("Cols"))
+            int port = server.Port
+            int done = 0
+            string log = ""
+            fire taking port {
+                var c = new Http.Client()
+                var r = c.Get("http://127.0.0.1:" + port + "/cols")
+                string html = r.Text()
+                string cookie = r.Header("Set-Cookie").Substring(0, 45)
+                int at = html.IndexOf("data-circuit=\"") + 14
+                string circuit = html.Substring(at, 32)
+                int list = html.IndexOf("class=\"f-list f-cols\"")
+                var out = "page " + r.status + " cols " + (list > 0) + "\n"
+                out = out + "head " + (html.IndexOf("<div class=\"f-head\"><span class=\"f-cell\" data-c=\"0\" style=\"width:120px\">Name</span><span class=\"f-cell\" data-c=\"1\" style=\"flex:1\">Age</span></div>") > 0) + "\n"
+                out = out + "cells " + (html.IndexOf("data-i=\"0\"><span class=\"f-cell\" style=\"width:120px\">Ben</span><span class=\"f-cell\" style=\"flex:1\">40</span></div>") > 0) + "\n"
+                int card = html.IndexOf(">Carl<")
+                out = out + "template " + (card > 0) + " " + html.Substring(html.LastIndexOf("data-i=\"0\"", card), card - html.LastIndexOf("data-i=\"0\"", card) + 6) + "\n"
+                var h = new Http.Headers()
+                h.Set("Cookie", cookie)
+                var ws = Http.WebSocket.Connect("ws://127.0.0.1:" + port + "/_fire/ws?c=" + circuit, 5000, h)
+                ws.Send("{\"e\": 2, \"k\": \"sort\", \"v\": 0}")
+                out = out + "sort " + ws.ReceiveText(5000) + "\n"
+                ws.Send("{\"e\": 2, \"k\": \"sort\", \"v\": 0}")
+                out = out + "again " + ws.ReceiveText(5000) + "\n"
+                ws.Send("{\"e\": 2, \"k\": \"select\", \"v\": 1}")
+                out = out + "select " + ws.ReceiveText(5000) + "\n"
+                ws.Send("{\"e\": 4, \"k\": \"click\"}")
+                out = out + "more " + ws.ReceiveText(5000) + "\n"
+                ws.Close()
+                sync global { log = out; done = 1 }
+            }
+            while (done < 1) { server.AcceptOne(20ms); sync globals }
+            print(log)
+            server.Close()
+            """),
+        ("Http.Pages: MenuBar (Untermenue, Trenner, Haken, gesperrt, Tastenkuerzel; ein Pfad waehlt die Zeile) und TreeView (Knoten auf/zu, waehlen, Doppelklick aktiviert)", """
+            #import "http.pages"
+            [Page "/tree"]
+            class TreePage {
+                UI.Panel view
+                UI.TreeView tree
+                UI.Label said
+                UI.MenuItem bold
+                construct() {
+                    this.view = new UI.Panel(0, 0, 400, 400)
+                    var stack = new UI.StackPanel(0, 0, -1, -1)
+                    var bar = new UI.MenuBar()
+                    var file = new UI.MenuItem("File")
+                    file.Add(new UI.MenuItem("Open", func () on this => { this.said.Text = "open" }))
+                    file.Add(UI.MenuItem.Separator())
+                    var recent = new UI.MenuItem("Recent")
+                    recent.Add(new UI.MenuItem("a.txt", func () on this => { this.said.Text = "recent a" }))
+                    file.Add(take recent)
+                    var quit = new UI.MenuItem("Quit")
+                    quit.Enabled = false
+                    quit.Shortcut = "Ctrl+Q"
+                    file.Add(take quit)
+                    bar.Add(take file)
+                    var view = new UI.MenuItem("View")
+                    var b = new UI.MenuItem("Bold", func () on this => { this.said.Text = "bold " + this.bold.IsChecked })
+                    b.Checkable = true
+                    this.bold = b
+                    view.Add(take b)
+                    bar.Add(take view)
+                    stack.Add(take bar)
+                    var tv = new UI.TreeView(0, 0, 200, 120)
+                    var root = new UI.TreeNode("src")
+                    var ui = new UI.TreeNode("ui")
+                    ui.Add(new UI.TreeNode("list.fire"))
+                    root.Add(take ui)
+                    root.Add(new UI.TreeNode("main.fire"))
+                    tv.AddNode(take root)
+                    tv.AddNode(new UI.TreeNode("README"))
+                    tv.OnSelect = func () on this => { this.said.Text = "node " + this.tree.selected.Text }
+                    tv.OnActivate = func () on this => { this.said.Text = "activated " + this.tree.selected.Text }
+                    this.tree = tv
+                    stack.Add(take tv)
+                    var l = new UI.Label("none")
+                    this.said = l
+                    stack.Add(take l)
+                    this.view.Add(take stack)
+                }
+            }
+            var server = new Http.AppServer("127.0.0.1", 0)
+            server.Settings.showErrors = true
+            server.PushTo(new Http.Sessions()).PushTo(new Http.Pages("Tree"))
+            int port = server.Port
+            int done = 0
+            string log = ""
+            fire taking port {
+                var c = new Http.Client()
+                var r = c.Get("http://127.0.0.1:" + port + "/tree")
+                string html = r.Text()
+                string cookie = r.Header("Set-Cookie").Substring(0, 45)
+                int at = html.IndexOf("data-circuit=\"") + 14
+                string circuit = html.Substring(at, 32)
+                var out = "page " + r.status + "\n"
+                int m = html.IndexOf("<div data-k=\"menu\"")
+                out = out + "menu " + html.Substring(m, html.IndexOf("<div data-k=\"list\"") - m) + "\n"
+                int t = html.IndexOf("<div data-k=\"list\"")
+                out = out + "tree " + html.Substring(t, html.IndexOf("<div id=\"f4\"", t) - t) + "\n"
+                var h = new Http.Headers()
+                h.Set("Cookie", cookie)
+                var ws = Http.WebSocket.Connect("ws://127.0.0.1:" + port + "/_fire/ws?c=" + circuit, 5000, h)
+                ws.Send("{\"e\": 3, \"k\": \"toggle\", \"v\": 0}")
+                out = out + "open " + ws.ReceiveText(5000) + "\n"
+                ws.Send("{\"e\": 3, \"k\": \"select\", \"v\": 2}")
+                out = out + "select " + ws.ReceiveText(5000) + "\n"
+                ws.Send("{\"e\": 3, \"k\": \"activate\", \"v\": 1}")
+                out = out + "activate " + ws.ReceiveText(5000) + "\n"
+                ws.Send("{\"e\": 2, \"k\": \"menu\", \"v\": \"0/2/0\"}")
+                out = out + "recent " + ws.ReceiveText(5000) + "\n"
+                ws.Send("{\"e\": 2, \"k\": \"menu\", \"v\": \"1/0\"}")
+                out = out + "bold " + ws.ReceiveText(5000) + "\n"
+                ws.Send("{\"e\": 2, \"k\": \"menu\", \"v\": \"0/3\"}")
+                out = out + "disabled nothing " + (ws.ReceiveText(400) == undefined) + "\n"
+                ws.Send("{\"e\": 2, \"k\": \"menu\", \"v\": \"7/x\"}")
+                out = out + "bad path nothing " + (ws.ReceiveText(400) == undefined) + "\n"
+                ws.Close()
+                sync global { log = out; done = 1 }
+            }
+            while (done < 1) { server.AcceptOne(20ms); sync globals }
+            print(log)
+            server.Close()
+            """),
+        ("Http.Pages: Fokus und Tasten (Pfeile in der Liste, Enter im TextBox = OnEnter, browser.Focus vom Server, browser.OnKey fuer die ganze Seite)", """
+            #import "http.pages"
+            [Page "/keys"]
+            class KeysPage {
+                UI.Panel view
+                UI.TextBox name
+                UI.ListBox list
+                UI.Label said
+                Http.Browser browser
+                construct() {
+                    this.view = new UI.Panel(0, 0, 400, 400)
+                    var stack = new UI.StackPanel(0, 0, -1, -1)
+                    var tb = new UI.TextBox("", 0, 0, 120, -1)
+                    tb.OnEnter = func () on this => { this.said.Text = "enter " + this.name.Text }
+                    this.name = tb
+                    stack.Add(take tb)
+                    var lb = new UI.ListBox(0, 0, 120, 80)
+                    lb.Add("one")
+                    lb.Add("two")
+                    lb.Add("three")
+                    lb.OnSelect = func () on this => { this.said.Text = "row " + this.list.SelectedIndex }
+                    this.list = lb
+                    stack.Add(take lb)
+                    var b = new UI.Button("Edit")
+                    b.OnClick = func () on this => { this.Edit() }
+                    stack.Add(take b)
+                    var l = new UI.Label("none")
+                    this.said = l
+                    stack.Add(take l)
+                    this.view.Add(take stack)
+                }
+                undefined Edit() {
+                    this.browser.Focus(this.name)
+                    this.browser.OnKey(func (int key, int mod) on this => {
+                        if (UI.Keys.Shortcut(mod) && key == 115) {
+                            this.said.Text = "saved"
+                            return true
+                        }
+                        return false
+                    })
+                }
+            }
+            var server = new Http.AppServer("127.0.0.1", 0)
+            server.Settings.showErrors = true
+            server.PushTo(new Http.Sessions()).PushTo(new Http.Pages("Keys"))
+            int port = server.Port
+            int done = 0
+            string log = ""
+            fire taking port {
+                var c = new Http.Client()
+                var r = c.Get("http://127.0.0.1:" + port + "/keys")
+                string html = r.Text()
+                string cookie = r.Header("Set-Cookie").Substring(0, 45)
+                int at = html.IndexOf("data-circuit=\"") + 14
+                string circuit = html.Substring(at, 32)
+                var out = "page " + r.status + "\n"
+                var h = new Http.Headers()
+                h.Set("Cookie", cookie)
+                var ws = Http.WebSocket.Connect("ws://127.0.0.1:" + port + "/_fire/ws?c=" + circuit, 5000, h)
+                ws.Send("{\"e\": 3, \"k\": \"focus\"}")
+                out = out + "focus list nothing " + (ws.ReceiveText(400) == undefined) + "\n"
+                ws.Send("{\"e\": 3, \"k\": \"key\", \"key\": 1073741905, \"mod\": 0}")
+                out = out + "down " + ws.ReceiveText(5000) + "\n"
+                ws.Send("{\"e\": 3, \"k\": \"key\", \"key\": 1073741901, \"mod\": 0}")
+                out = out + "end " + ws.ReceiveText(5000) + "\n"
+                ws.Send("{\"e\": 4, \"k\": \"click\"}")
+                out = out + "edit " + ws.ReceiveText(5000) + "\n"
+                ws.Send("{\"e\": 2, \"k\": \"input\", \"v\": \"Ada\"}")
+                out = out + "input " + ws.ReceiveText(5000) + "\n"
+                ws.Send("{\"e\": 2, \"k\": \"key\", \"key\": 13, \"mod\": 0}")
+                out = out + "enter " + ws.ReceiveText(5000) + "\n"
+                ws.Send("{\"e\": -1, \"k\": \"focus\"}")
+                out = out + "blur nothing " + (ws.ReceiveText(400) == undefined) + "\n"
+                ws.Send("{\"e\": -1, \"k\": \"key\", \"key\": 115, \"mod\": 64}")
+                out = out + "ctrl+s " + ws.ReceiveText(5000) + "\n"
+                ws.Close()
+                sync global { log = out; done = 1 }
+            }
+            while (done < 1) { server.AcceptOne(20ms); sync globals }
+            print(log)
+            server.Close()
+            """),
+        ("Http.Pages: ListBox (Zeilen aus DisplayMember, Klick waehlt, Doppelklick aktiviert, neue Zeilen als Patch) und Image (PNG)", """
+            #import "http.pages"
+            class Person { string name
+                construct(string n) { this.name = n } }
+            [Page "/list"]
+            class ListPage {
+                UI.Panel view
+                UI.ListBox people
+                UI.Label chosen
+                UI.Image picture
+                construct() {
+                    this.view = new UI.Panel(0, 0, 300, 300)
+                    var stack = new UI.StackPanel(0, 0, -1, -1)
+                    var lb = new UI.ListBox(0, 0, 160, 80)
+                    lb.DisplayMember = "name"
+                    lb.Add(new Person("Anna"))
+                    lb.Add(new Person("Ben"))
+                    lb.OnSelect = func () on this => { this.chosen.Text = "picked " + this.people.SelectedIndex }
+                    lb.OnActivate = func () on this => { this.people.Add(new Person("Carl")) }
+                    this.people = lb
+                    stack.Add(take lb)
+                    var l = new UI.Label("none")
+                    this.chosen = l
+                    stack.Add(take l)
+                    var img = new UI.Image(undefined, 0, 0, 16, 16)
+                    img.Source = new Framebuffer(8, 8)
+                    this.picture = img
+                    stack.Add(take img)
+                    this.view.Add(take stack)
+                }
+            }
+            var server = new Http.AppServer("127.0.0.1", 0)
+            server.Settings.showErrors = true
+            server.PushTo(new Http.Sessions()).PushTo(new Http.Pages("List"))
+            int port = server.Port
+            int done = 0
+            string log = ""
+            fire taking port {
+                var c = new Http.Client()
+                var r = c.Get("http://127.0.0.1:" + port + "/list")
+                var html = r.Text()
+                var cookie = r.Header("Set-Cookie").Substring(0, 45)
+                var at = html.IndexOf("data-circuit=\"") + 14
+                var circuit = html.Substring(at, 32)
+                var out = "page " + r.status + " rows " + (html.IndexOf("<div class=\"f-row\" data-i=\"1\">Ben</div>") > 0) + " image " + (html.IndexOf("class=\"f-image\" style=\"object-fit:contain;width:16px;height:16px;\" alt=\"\" src=\"data:image/png;base64,") > 0) + "\n"
+                var h = new Http.Headers()
+                h.Set("Cookie", cookie)
+                var ws = Http.WebSocket.Connect("ws://127.0.0.1:" + port + "/_fire/ws?c=" + circuit, 5000, h)
+                ws.Send("{\"e\": 2, \"k\": \"select\", \"v\": 1}")
+                out = out + "select " + ws.ReceiveText(5000) + "\n"
+                ws.Send("{\"e\": 2, \"k\": \"activate\", \"v\": 0}")
+                out = out + "activate " + ws.ReceiveText(5000) + "\n"
+                ws.Close()
+                sync global { log = out; done = 1 }
+            }
+            while (done < 1) { server.AcceptOne(20ms); sync globals }
+            print(log)
+            server.Close()
+            """),
+        ("Net: der Poller weckt wartende Threads (40 Verbindungen in fire-Threads, Daten kommen spaeter), Zeitlimit, Abbruch eines Read per until", """
+            #import "net"
+            #import "time"
+            var l = new Net.TcpListener("127.0.0.1", 0, 64)   // (40 connections at once: a backlog of 16 drops some when the machine is busy)
+            int port = l.Port
+            int done = 0
+            int sum = 0
+            for (var i = 0; i < 40; i++) {
+                fire taking i taking port {
+                    var c = new Net.TcpClient("127.0.0.1", port)
+                    c.ReadTimeout = 30000
+                    var buf = new byte[4]
+                    int n = c.Read(buf, 0, 4)
+                    int v = buf[0]
+                    sync global { done = done + 1; sum = sum + v }
+                    c.Close()
+                }
+            }
+            var peers = new List()
+            for (var i = 0; i < 40; i++) { peers.Add(l.Accept(30000)) }
+            Sleep(50ms)
+            print("waiting " + done)
+            for (var i = 0; i < 40; i++) {
+                var b = new byte[1]
+                b[0] = i + 1
+                Net.TcpClient p = peers[i]
+                p.Write(b, 0, 1)
+            }
+            while (done < 40) { sync globals; Sleep(2ms) }
+            print("all " + done + " sum " + sum)
+            var c = new Net.TcpClient("127.0.0.1", port)
+            Net.TcpClient s = l.Accept(2000)
+            var buf = new byte[4]
+            c.ReadTimeout = 60
+            try { c.Read(buf, 0, 4); print("no") } catch (Net.TimeoutException e) { print("timeout " + e.code) }
+            c.ReadTimeout = 10000
+            var src = new CancellationSource()
+            src.CancelAfter(40ms)
+            try { int r = await Reader.Read(c) until src.Token; print("no " + r) } catch (CancelledException e) { print("cancelled read") }
+            s.WriteString("x")
+            print("still works " + c.Read(buf, 0, 4))
+            class Reader { static int Read(Net.TcpClient c) { var b = new byte[4]; return c.Read(b, 0, 4) } }
+            """),
         ("Net: TCP, UDP, DNS ueber Loopback, Zeitlimits, Fehler", """
             #import "net"
             var l = new Net.TcpListener("127.0.0.1", 0)
@@ -28005,6 +30718,9 @@ else
                     expected += "stderr: " + vmUnhandled.GetValueOrDefault(c.Source, "(the VM did not stop with an exception)");
                     actual = exit == 1 ? stdout + "stderr: " + stderr.TrimEnd('\n', '\r') : $"Exitcode {exit}: {stdout}{stderr}";
                 }
+                // (the end of the program ended a thread: the line on stderr is checked on its own - the VM writes it to the console, not to the output)
+                else if (c.Name.Contains("(Meldung auf stderr)"))
+                    actual = exit == 0 && stderr.Contains("ended like with terminate") ? stdout : $"Exitcode {exit}: {stdout}stderr: {stderr}";
                 // `terminate(n)` with a whole number is the exit code of the process (like the command line runner)
                 else actual = exit == 0 || (c.Name.StartsWith("Threads:") && c.Source.Contains("terminate(")) ? stdout + stderr : $"Exitcode {exit}: {stdout}{stderr}";
                 CheckNat($"Native == VM: {c.Name}", expected == actual, $"  erwartet (VM):\n{expected}\n  erhalten (C++):\n{actual}");
@@ -28044,6 +30760,39 @@ else
                 });
                 CheckNat(tsanTitle, tsanReports.IsEmpty, string.Join("\n\n", tsanReports.OrderBy(r => r.Index).Select(r => r.Text)));
             }
+        }
+
+        // TinyCC with tasks: no thread-local storage and no builtins for atomics in tcc - the runtime brings its own (x86 instructions, a few slots on a key
+        // of pthreads: FIRE_TLS_EMULATED) - the thread cases built with tcc run without the GIL, on the scheduler of tasks, and print what the VM prints
+        const string tccTitle = "TinyCC: die Thread-Faelle laufen mit Tasks (ohne GIL; Atomics und Thread-Slots der Runtime) - dieselbe Ausgabe wie die VM";
+        if (TestSelected(tccTitle) && File.Exists("/usr/bin/tcc") && !OperatingSystem.IsWindows())
+        {
+            var expectedOf = new Dictionary<string, string>();
+            for (int i = 0; i < natCases.Length; i++) expectedOf[natCases[i].Name] = vmResults[i];
+            // (the cases that the filter left out of the run above: their VM output here, one after the other like there)
+            foreach (var c in natThreadCases)
+                if (!expectedOf.ContainsKey(c.Name)) { expectedOf[c.Name] = vmOutput(c.Source); Value.SingleFloats = false; Value.Ints32 = false; Value.Ints16 = false; }
+            var tccReports = new System.Collections.Concurrent.ConcurrentBag<(int Index, string Text)>();
+            int tccRan = 0;
+            Parallel.For(0, natThreadCases.Length, new ParallelOptions { MaxDegreeOfParallelism = TestJobs.Count }, i =>
+            {
+                var c = natThreadCases[i];
+                if (!expectedOf.TryGetValue(c.Name, out var expected) || c.Source.Contains("terminate(")) return;
+                fire.Native.NativeSources generated;
+                try { generated = fire.Native.CppGenerator.GenerateSources(new Linker().CompileAndLink(new[] { c.Source }, null, null, VmExecutionMode.Release)); }
+                catch (fire.Native.NativeNotSupportedException) { return; }
+                if (generated.Natives != null) return;   // (natives in C++: not for tcc)
+                string cFile = Path.Combine(workDir, $"tcc{i}.c"), exe = Path.Combine(workDir, $"tcc{i}.bin");
+                File.WriteAllText(cFile, generated.Program);
+                var (bout, berr, bexit) = TestProcess.Run("/usr/bin/tcc", $"-I\"{workDir}\" \"{cFile}\" -o \"{exe}\" -lpthread -lm -ldl", workDir);
+                if (bexit != 0) { tccReports.Add((i, $"{c.Name}: tcc: {bout}{berr}")); return; }
+                if (!File.ReadAllText(cFile).Contains("FIRE_THREADS")) return;
+                var (stdout, stderr, exit) = TestProcess.Run(exe, "", workDir, timeoutMs: 120_000);
+                Interlocked.Increment(ref tccRan);
+                string actual = exit == 0 ? stdout + stderr : $"Exitcode {exit}: {stdout}{stderr}";
+                if (actual != expected) tccReports.Add((i, $"{c.Name}:\n  erwartet (VM):\n{expected}\n  erhalten (tcc):\n{actual}"));
+            });
+            CheckNat(tccTitle + $" ({tccRan} Faelle)", tccReports.IsEmpty && tccRan > 0, string.Join("\n\n", tccReports.OrderBy(r => r.Index).Select(r => r.Text)));
         }
 
         // (the trim cases and the TLS case under Wine at the same time)
@@ -29750,7 +32499,7 @@ else
                 var windowRuns = new List<Action>();
                 // Builds a case with fire's own display (packages/windows/native/fire_display_desktop.h) and runs it: `display` "dummy" (headless: the events of FIRE_DISPLAY_SELFTEST...), "x11" (a real X server: Xvfb), "x11-two"
                 // (`script` is the reader, `second` the writer that starts 0.3 s after it on the same X server; the output is the reader's) or "x11-late" (the writer
-                // first, the reader 1 s later: what was copied before the reader started). `secondCommand` runs instead of the writer built from `second`,
+                // first, the reader 3 s later - under the load of the parallel builds the writer needs a while for the clipboard: what was copied before the reader started). `secondCommand` runs instead of the writer built from `second`,
                 // `firstCommand` instead of the reader built from `script` (the VM: forge run).
                 // PrepareWindowCase generates, builds and runs a case (in parallel with other cases: TestJobs.Ordered - each run has an X server of its own,
                 // TestJobs.XvfbServer) and returns the step that reports what happened, in the order of the cases.
@@ -29809,7 +32558,7 @@ else
                                 string both = Path.Combine(workDir, name + ".sh");
                                 string reader = firstCommand ?? $"\"{exe}\"", writer = secondCommand ?? $"\"{exe2}\"";
                                 File.WriteAllText(both, display == "x11-late"
-                                    ? $"{writer} > /dev/null 2>&1 &\nw=$!\nsleep 1\n{reader} > \"{readerOut}\" 2>&1\nr=$?\nwait $w\nexit $(( $? + r ))\n"
+                                    ? $"{writer} > /dev/null 2>&1 &\nw=$!\nsleep 3\n{reader} > \"{readerOut}\" 2>&1\nr=$?\nwait $w\nexit $(( $? + r ))\n"
                                     : $"{reader} > \"{readerOut}\" 2>&1 &\nr=$!\nsleep 0.3\n{writer} > /dev/null 2>&1\nw=$?\nwait $r\nexit $(( $? + w ))\n");
                                 string writerLog = RunProc(xvfbRun!, $"{TestJobs.XvfbServer()} sh \"{both}\"", workDir, out runExit, null, x11);
                                 actual = (File.Exists(readerOut) ? File.ReadAllText(readerOut) : "") + writerLog;
@@ -29903,7 +32652,7 @@ else
                 #import "windows"
                 #import "time"
                 var t = 0
-                while (!Clipboard.HasText && t < 1500) { Sleep(20ms); t++ }   // (up to 30 s: the writer may be the VM, whose first start installs the standard packages)
+                while (!Clipboard.HasText && t < 4500) { Sleep(20ms); t++ }   // (up to 90 s: the writer may be the VM, whose first start installs the standard packages and builds their native parts - next to the other builds of the run)
                 print("text [" + Clipboard.GetText() + "]")
                 t = 0
                 while (!Clipboard.HasImage && t < 120) { Sleep(20ms); t++ }

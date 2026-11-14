@@ -36,10 +36,10 @@ class ImageException : GraphicsException {
 }
 
 class Framebuffer {
-    int id
+    defined int id
 
     // mode: ColorMode.Rgba (default) or ColorMode.Palette. (mode -2 is internal: an empty shell for the factory methods below.)
-    construct(int width, int height, int mode = 0) {
+    construct(defined int width, defined int height, defined int mode = 0) {
         if (mode == -2) {
             this.id = 0
         } else {
@@ -61,7 +61,7 @@ class Framebuffer {
     // an image with a palette (PNG with palette, GIF, BMP up to 8 bit) becomes a palette framebuffer with the palette of the file, everything else
     // RGBA; ColorMode.Rgba / ColorMode.Palette forces a mode (an RGBA image is then mapped onto the default palette).
     // Error: ImageException.
-    static Framebuffer FromImage(byte data[], int mode = -1) {
+    static Framebuffer FromImage(byte data[], defined int mode = -1) {
         var fb = new Framebuffer(0, 0, -2)
         fb.id = __GRPHFbLoadImage(data, mode)
         if (fb.id < 0) {
@@ -71,11 +71,11 @@ class Framebuffer {
     }
 
     // An image from an embedded resource (`Framebuffer.FromResource(new Resource("images/logo.png"))`): the file is inside the program.
-    static Framebuffer FromResource(any resource, int mode = -1) {
+    static Framebuffer FromResource(any resource, defined int mode = -1) {
         return Framebuffer.FromImage(resource.Bytes(), mode)
     }
 
-    static Framebuffer FromFile(string path, int mode = -1) {
+    static Framebuffer FromFile(string path, defined int mode = -1) {
         var fb = new Framebuffer(0, 0, -2)
         fb.id = __GRPHFbLoadFile(path, mode)
         if (fb.id < 0) {
@@ -86,7 +86,7 @@ class Framebuffer {
 
     // Raw pixels from a byte buffer, row by row from top to bottom: ColorMode.Rgba width*height*4 bytes (R, G, B, A per pixel),
     // ColorMode.Palette width*height bytes (one index per pixel) and optionally a palette (768 bytes RGB or 1024 bytes RGBA).
-    static Framebuffer FromPixels(int width, int height, any pixels, int mode = 0, any palette = undefined) {
+    static Framebuffer FromPixels(defined int width, defined int height, any pixels, defined int mode = 0, any palette = undefined) {
         var fb = new Framebuffer(0, 0, -2)
         fb.id = __GRPHFbFromPixels(width, height, pixels, mode, palette)
         if (fb.id < 0) {
@@ -95,17 +95,17 @@ class Framebuffer {
         return fb
     }
 
-    int Width() { return __GRPHFbWidth(this.id) }
-    int Height() { return __GRPHFbHeight(this.id) }
+    defined int Width() { return __GRPHFbWidth(this.id) }
+    defined int Height() { return __GRPHFbHeight(this.id) }
 
     // Brings the framebuffer to a new size: the content is kept at the top left, what is added is transparent (palette: index 0). Valid are both sides from 1 to 16384
     // and at most 64 million pixels; for any other size (for example 0 for a minimised window) it stays as it is, and the answer is false.
     // A console (renderer) on this framebuffer follows the new size; pointers to the pixels (natives) are no longer valid afterwards.
-    bool Resize(int width, int height) { return __GRPHFbResize(this.id, width, height) }
-    int Mode() { return __GRPHFbMode(this.id) }
+    bool Resize(defined int width, defined int height) { return __GRPHFbResize(this.id, width, height) }
+    defined int Mode() { return __GRPHFbMode(this.id) }
 
     // Raw data: RGBA 4 bytes per pixel (R, G, B, A), palette 1 byte per pixel (the index); ByteCount() is the size.
-    int ByteCount() { return __GRPHFbByteCount(this.id) }
+    defined int ByteCount() { return __GRPHFbByteCount(this.id) }
 
     // On the GPU (docs/spec/UI_PLATFORM.md, part 4): the drawing the GPU does goes there; the pixels come back only when something reads them (GetPixel, a window, a
     // drawing the GPU does not do) - and only when the GPU drew since. false where there is no GPU (Framebuffer.GpuError() says why), for a palette framebuffer,
@@ -116,9 +116,9 @@ class Framebuffer {
     }
     static string GpuError() { return __GRPHFbGpuError() }
     // How often pictures came back from the GPU to the CPU so far (a window that shows an accelerated framebuffer takes them from the GPU: part 4.4) - for tests
-    static int GpuReadbacks() { return __GRPHFbGpuReadbacks() }
-    int ReadByte(int offset) { return __GRPHFbReadByte(this.id, offset) }
-    undefined WriteByte(int offset, int value) { __GRPHFbWriteByte(this.id, offset, value) }
+    static defined int GpuReadbacks() { return __GRPHFbGpuReadbacks() }
+    defined int ReadByte(defined int offset) { return __GRPHFbReadByte(this.id, offset) }
+    undefined WriteByte(defined int offset, defined int value) { __GRPHFbWriteByte(this.id, offset, value) }
     byte[] ReadBytes() { return __GRPHFbReadBytes(this.id) }
     // The framebuffer as the bytes of a PNG file (RGBA, 8 bits per channel): to save it (IO.File.WriteAllBytes) or to put it on the clipboard. A palette framebuffer
     // is resolved through its palette (its transparent index becomes transparent); Framebuffer.FromImage reads it back.
@@ -131,22 +131,22 @@ class Framebuffer {
 
     // The 256-colour palette (for a palette framebuffer it is the colour table of the image, for an RGBA framebuffer it resolves palette indices
     // that are given as a colour). Colours are r + g*256 + b*65536 + a*16777216 (alpha 255 = opaque).
-    int GetPaletteColor(int index) {
+    defined int GetPaletteColor(defined int index) {
         any color = __GRPHFbGetPaletteColor(this.id, index)
         if (color < 0) {
             throw new GraphicsException(__GRPHFbLastError())
         }
         return color
     }
-    undefined SetPaletteColor(int index, int color) {
+    undefined SetPaletteColor(defined int index, defined int color) {
         if (!__GRPHFbSetPaletteColor(this.id, index, color)) {
             throw new GraphicsException(__GRPHFbLastError())
         }
     }
-    undefined SetPaletteRgb(int index, int r, int g, int b) { this.SetPaletteColor(index, r + g * 256 + b * 65536 + 255 * 16777216) }
+    undefined SetPaletteRgb(defined int index, defined int r, defined int g, defined int b) { this.SetPaletteColor(index, r + g * 256 + b * 65536 + 255 * 16777216) }
     // 768 bytes (R, G, B per entry) or, with withAlpha, 1024 bytes (R, G, B, A)
     any ReadPalette(bool withAlpha = false) { return __GRPHFbReadPalette(this.id, withAlpha) }
-    undefined WritePalette(int data[]) {
+    undefined WritePalette(byte data[]) {
         if (!__GRPHFbWritePalette(this.id, data)) {
             throw new GraphicsException(__GRPHFbLastError())
         }
@@ -155,7 +155,7 @@ class Framebuffer {
     // The mask of this image as a NEW palette framebuffer of the same size: index 1 (white) = this pixel is to be milled out (see Slicer),
     // index 0 (black) is not. Pixels with a lower opacity than alphaThreshold never count; otherwise the brightness against threshold decides
     // (0-255): darkIsRemoved = dark pixels are milled out, false = bright ones.
-    Framebuffer ToMask(int threshold = 128, bool darkIsRemoved = true, int alphaThreshold = 128) {
+    Framebuffer ToMask(defined int threshold = 128, bool darkIsRemoved = true, defined int alphaThreshold = 128) {
         var mask = new Framebuffer(0, 0, -2)
         mask.id = __GRPHFbToMask(this.id, threshold, darkIsRemoved, alphaThreshold)
         if (mask.id < 0) {
@@ -191,15 +191,15 @@ class ToolPath {
     bool closed       // true: the last point is connected to the first
     float points[]    // flat array [x0, y0, x1, y1, ...]
 
-    construct(int kind, bool closed, float points[]) {
+    construct(defined int kind, bool closed, float points[]) {
         this.kind = kind
         this.closed = closed
         this.points = points
     }
 
-    int Count() { return this.points.length / 2 }
-    float X(int index) { return this.points[index * 2] }
-    float Y(int index) { return this.points[index * 2 + 1] }
+    defined int Count() { return this.points.length / 2 }
+    float X(defined int index) { return this.points[index * 2] }
+    float Y(defined int index) { return this.points[index * 2 + 1] }
 }
 
 // Splits a mask (see Framebuffer.ToMask) into tool paths with a fixed line width: Euclidean distance transform, the tool centre
@@ -208,9 +208,9 @@ class ToolPath {
 class Slicer {
     float lineWidth        // Line width or tool diameter in mm
     float pixelSize        // Edge length of a pixel of the mask in mm (e.g. 25.4 / dpi)
-    float overlap = 0.5    // Overlap of neighbouring paths as a fraction of the line width (0 to 0.95); from 0.5 on, Contour leaves no residual islands
-    int strategy = 0       // FillStrategy (default Contour)
-    float simplifyTolerance = -1.0   // Tolerance of the point reduction in mm; negative = automatic (1/4 pixel), 0 = none
+    defined float overlap = 0.5    // Overlap of neighbouring paths as a fraction of the line width (0 to 0.95); from 0.5 on, Contour leaves no residual islands
+    defined int strategy = 0       // FillStrategy (default Contour)
+    defined float simplifyTolerance = -1.0   // Tolerance of the point reduction in mm; negative = automatic (1/4 pixel), 0 = none
     bool flipY = true      // true: Y points up (machine coordinates), false: down, as in the image
 
     construct(float lineWidth, float pixelSize) {
@@ -222,7 +222,7 @@ class Slicer {
     }
 
     // Distance between adjacent tracks in mm
-    float StepOver { get { return this.lineWidth * (1.0 - this.overlap) } }
+    defined float StepOver { get { return this.lineWidth * (1.0 - this.overlap) } }
 
     // Returns a List of ToolPath (empty if no place is wide enough for the line width). The mask: a framebuffer whose set pixels
     // (palette: index not 0, RGBA: visible and not black) are milled out - usually from Framebuffer.ToMask.
@@ -255,9 +255,9 @@ enum PenShape {
 // framebuffer's palette, any other is a direct value r + g*256 + b*65536 + a*16777216 (a = 255 opaque; see UI.Color.Rgb). An alpha below 255 is blended
 // (Renderer.AlphaBlending); in a palette framebuffer a colour from alpha 128 up is copied and one below it is not drawn.
 class Brush {
-    int id
+    defined int id
 
-    construct(int id) {
+    construct(defined int id) {
         this.id = id
     }
 
@@ -277,7 +277,7 @@ class SolidBrush : Brush {
     }
 
     // The colour (a change applies to everything drawn with this brush afterwards)
-    int Color {
+    defined int Color {
         get { return __GRPHBshGetColor(this.id) }
         set { __GRPHBshSetColor(this.id, value) }
     }
@@ -286,9 +286,9 @@ class SolidBrush : Brush {
 // A pen draws points, lines and paths (and thus the outlines of the shapes) with a tip of `width` pixels; colour as with the brush. The tip is rendered once
 // beforehand and copied or blended at every pixel of the line; width 1 draws exactly the pixels of a simple line.
 class Pen {
-    int id
+    defined int id
 
-    construct(int color, int width = 1, int shape = 0) {
+    construct(defined int color, defined int width = 1, defined int shape = 0) {
         this.id = __GRPHPenCreate(color, width, shape)
         if (this.id == -1) {
             throw new HandleUnavailableException("The pen could not be created.")
@@ -307,7 +307,7 @@ class Pen {
     }
 
     // 1 to 512 (larger values are limited)
-    int Width {
+    defined int Width {
         get { return __GRPHPenGetWidth(this.id) }
         set { __GRPHPenSetWidth(this.id, value) }
     }
@@ -322,9 +322,9 @@ class Pen {
 // A font for text at pixel positions (Renderer.DrawText): the console font of the renderer (ID 0), one of the two built-in bitmap fonts ("8x14", "8x8") or a TrueType font
 // (.ttf). Get fonts with Fonts.Get / Fonts.Add - a Font is only a name for the font that the program holds; releasing it is not needed.
 class Font {
-    int id
+    defined int id
 
-    construct(int id) {
+    construct(defined int id) {
         this.id = id
     }
 
@@ -396,10 +396,10 @@ class Fonts {
 // The renderer draws into a framebuffer: terminal text (Print, Locate, SetColor) and graphics in PIXEL coordinates. Fills take a Brush, drawing takes a Pen.
 // Everything is clipped at the edge of the framebuffer.
 class Renderer {
-    int id
+    defined int id
     // Logical pixels -> pixels of the framebuffer (1.5 = 150 %): everything that is drawn, clipped or measured is scaled, TrueType text is drawn at the larger size
     // (sharp, not stretched); the bitmap fonts keep their size. A UI.Root sets it from the system (Root.Scaling). 1 = no scaling (the default).
-    float scale = 1.0
+    defined float scale = 1.0
 
     construct(Framebuffer framebuffer) {
         this.id = __GRPHRndCreate(framebuffer.id)
@@ -421,25 +421,25 @@ class Renderer {
 
     // Restricts drawing (fills, shapes, text, blit) to the rectangle (x, y, w, h) of the framebuffer; ResetClip lifts it (the whole framebuffer again).
     // It does not apply to Clear/ClearTo.
-    undefined SetClip(int x, int y, int w, int h) {
+    undefined SetClip(defined int x, defined int y, defined int w, defined int h) {
         if (this.scale == 1.0) { __GRPHRndSetClip(this.id, x, y, w, h) }
         else { __GRPHRndSetClip(this.id, this.Px(x), this.Px(y), this.Px(x + w) - this.Px(x), this.Px(y + h) - this.Px(y)) }
     }
 
     // A logical coordinate in pixels of the framebuffer (rounded).
-    int Px(float v) {
+    defined int Px(defined float v) {
         if (this.scale == 1.0) { return v!int }
         return Math.Floor(v * this.scale + 0.5)!int
     }
     // A length (a radius, a width) in pixels of the framebuffer: at least 1 when the logical length is not 0.
-    int Len(float v) {
+    defined int Len(defined float v) {
         if (v == 0) { return 0 }
         var n = Math.Floor(v * this.scale + 0.5)!int
         if (n == 0) { return 1 }
         return n
     }
     // Pixels of the framebuffer back to logical ones (rounded up: a measured text never comes out too small).
-    int Logical(int v) {
+    defined int Logical(defined int v) {
         if (this.scale == 1.0) { return v }
         return Math.Ceiling(v / this.scale)!int
     }
@@ -450,14 +450,14 @@ class Renderer {
         return out
     }
     // The size of TrueType text in pixels of the framebuffer (0 = 14).
-    int TextSize(int size) {
-        var s = size
-        if (s <= 0) { s = 14 }
-        if (this.scale == 1.0) { return size }
+    defined int TextSize(int size) {
+        defined int s = 14
+        if (size != undefined && size > 0) { s = trust size }
+        if (this.scale == 1.0) { return s }
         return this.Len(s)
     }
     // Draws with a pen of the scaled width (the pen keeps its own).
-    int PenOn(Pen pen) {
+    defined int PenOn(Pen pen) {
         var w = pen.Width
         if (this.scale != 1.0) { pen.Width = this.Len(w) }
         return w
@@ -466,31 +466,31 @@ class Renderer {
 
     // ---- Terminal ----
     undefined Print(string text) { __GRPHRndPrint(this.id, text) }
-    undefined Locate(int row, int column) { __GRPHRndLocate(this.id, row, column) }
+    undefined Locate(defined int row, defined int column) { __GRPHRndLocate(this.id, row, column) }
     // Clears the whole framebuffer with the background colour of SetColor and sets the cursor to (0, 0)
     undefined Clear() { __GRPHRndClear(this.id) }
     // Sets the whole framebuffer to a colour (without blending, also with alpha)
-    undefined ClearTo(int color) { __GRPHRndClearTo(this.id, color) }
-    undefined SetColor(int foreground, int background) { __GRPHRndSetColor(this.id, foreground, background) }
+    undefined ClearTo(defined int color) { __GRPHRndClearTo(this.id, color) }
+    undefined SetColor(defined int foreground, defined int background) { __GRPHRndSetColor(this.id, foreground, background) }
 
     // ---- Pixel ----
     // A pixel in the colour (a number as with the brush; blended if it is semi-transparent and AlphaBlending is on)
-    undefined SetPixel(int x, int y, int color) {
+    undefined SetPixel(defined int x, defined int y, defined int color) {
         if (this.scale == 1.0) { __GRPHRndSetPixel(this.id, x, y, color) } else { __GRPHRndSetPixel(this.id, this.Px(x), this.Px(y), color) }
     }
     // The colour of the pixel as a SIGNED 32-bit number (opaque colours are negative)
-    int GetPixel(int x, int y) {
+    defined int GetPixel(defined int x, defined int y) {
         if (this.scale == 1.0) { return __GRPHRndGetPixel(this.id, x, y) }
         return __GRPHRndGetPixel(this.id, this.Px(x), this.Px(y))
     }
     // The palette index of the pixel (RGBA framebuffer: the entry that comes closest to its colour)
-    int GetPixelIndex(int x, int y) { return __GRPHRndGetPixelIndex(this.id, this.Px(x), this.Px(y)) }
-    int CellWidth() { return __GRPHRndCellWidth(this.id) }
-    int CellHeight() { return __GRPHRndCellHeight(this.id) }
+    defined int GetPixelIndex(defined int x, defined int y) { return __GRPHRndGetPixelIndex(this.id, this.Px(x), this.Px(y)) }
+    defined int CellWidth() { return __GRPHRndCellWidth(this.id) }
+    defined int CellHeight() { return __GRPHRndCellHeight(this.id) }
 
     // Text at pixel coordinates: the character pixels with `foreground`, with `background` the whole cell (the line of text with a TrueType font) beneath (without: only the character pixels).
     // `font` (a Font, see Fonts.Get; without or the console font: the font of the renderer) and `size` (the height of the letters in pixels, 0 = 14; the two bitmap fonts ignore it) choose the font.
-    undefined DrawText(int x, int y, string text, Brush foreground, Brush background = undefined, any font = undefined, int size = 0) {
+    undefined DrawText(defined int x, defined int y, string text, Brush foreground, Brush background = undefined, any font = undefined, defined int size = 0) {
         var back = 0
         if (background != undefined) { back = background.id }
         var fontId = 0
@@ -503,7 +503,7 @@ class Renderer {
     }
 
     // Width of `text` in pixels in the font (what DrawText would take); the console font is monospaced.
-    int TextWidth(string text, any font = undefined, int size = 0) {
+    defined int TextWidth(string text, any font = undefined, defined int size = 0) {
         var fontId = 0
         if (font != undefined) { fontId = font.id }
         if (fontId == 0) {
@@ -513,7 +513,7 @@ class Renderer {
     }
 
     // Height of a line of text in pixels in the font.
-    int TextHeight(any font = undefined, int size = 0) {
+    defined int TextHeight(any font = undefined, defined int size = 0) {
         var fontId = 0
         if (font != undefined) { fontId = font.id }
         if (fontId == 0) {
@@ -523,7 +523,7 @@ class Renderer {
     }
 
     // Pixels from the top of a line of text to its baseline in the font (the console font: the height of a cell).
-    int TextAscent(any font = undefined, int size = 0) {
+    defined int TextAscent(any font = undefined, defined int size = 0) {
         var fontId = 0
         if (font != undefined) { fontId = font.id }
         if (fontId == 0) {
@@ -533,33 +533,33 @@ class Renderer {
     }
 
     // ---- Fills (brush) ----
-    undefined FillRect(int x, int y, int w, int h, Brush brush) {
+    undefined FillRect(defined int x, defined int y, defined int w, defined int h, Brush brush) {
         if (this.scale == 1.0) { __GRPHRndFillRect(this.id, x, y, w, h, brush.id) }
         else { __GRPHRndFillRect(this.id, this.Px(x), this.Px(y), this.Px(x + w) - this.Px(x), this.Px(y + h) - this.Px(y), brush.id) }
     }
     // Fills the whole framebuffer (blended if AlphaBlending is on; ClearTo sets without blending)
     undefined Fill(Brush brush) { __GRPHRndFill(this.id, brush.id) }
     // Circle around (cx, cy) with radius r, ellipse with the semi-axes rx (horizontal) and ry (vertical), including the edge
-    undefined FillCircle(int cx, int cy, int r, Brush brush) { __GRPHRndFillCircle(this.id, this.Px(cx), this.Px(cy), this.Len(r), brush.id) }
-    undefined FillEllipse(int cx, int cy, int rx, int ry, Brush brush) { __GRPHRndFillEllipse(this.id, this.Px(cx), this.Px(cy), this.Len(rx), this.Len(ry), brush.id) }
-    undefined FillTriangle(int x0, int y0, int x1, int y1, int x2, int y2, Brush brush) { __GRPHRndFillTriangle(this.id, this.Px(x0), this.Px(y0), this.Px(x1), this.Px(y1), this.Px(x2), this.Px(y2), brush.id) }
+    undefined FillCircle(defined int cx, defined int cy, defined int r, Brush brush) { __GRPHRndFillCircle(this.id, this.Px(cx), this.Px(cy), this.Len(r), brush.id) }
+    undefined FillEllipse(defined int cx, defined int cy, defined int rx, defined int ry, Brush brush) { __GRPHRndFillEllipse(this.id, this.Px(cx), this.Px(cy), this.Len(rx), this.Len(ry), brush.id) }
+    undefined FillTriangle(defined int x0, defined int y0, defined int x1, defined int y1, defined int x2, defined int y2, Brush brush) { __GRPHRndFillTriangle(this.id, this.Px(x0), this.Px(y0), this.Px(x1), this.Px(y1), this.Px(x2), this.Px(y2), brush.id) }
     // points: an array [x0, y0, x1, y1, ...]; filled by the even-odd rule (overlapping parts stay empty)
     undefined FillPolygon(float points[], Brush brush) {
         if (this.scale == 1.0) { __GRPHRndFillPolygon(this.id, points, brush.id) }
         else { __GRPHRndFillPolygon(this.id, this.Points(points), brush.id) }
     }
     // Fills the connected area with the colour of the pixel (x, y). With `border`, FloodFill instead fills up to pixels of that colour (like PAINT in QBasic).
-    undefined FloodFill(int x, int y, Brush brush) { __GRPHRndFloodFill(this.id, this.Px(x), this.Px(y), brush.id) }
-    undefined FloodFillBorder(int x, int y, Brush brush, int border) { __GRPHRndFloodFillBorder(this.id, this.Px(x), this.Px(y), brush.id, border) }
+    undefined FloodFill(defined int x, defined int y, Brush brush) { __GRPHRndFloodFill(this.id, this.Px(x), this.Px(y), brush.id) }
+    undefined FloodFillBorder(defined int x, defined int y, Brush brush, defined int border) { __GRPHRndFloodFillBorder(this.id, this.Px(x), this.Px(y), brush.id, border) }
 
     // ---- Zeichnen (Stift) ----
-    undefined DrawPoint(int x, int y, Pen pen) {
+    undefined DrawPoint(defined int x, defined int y, Pen pen) {
         if (this.scale == 1.0) { __GRPHRndDrawPoint(this.id, x, y, pen.id); return }
         var w = this.PenOn(pen)
         __GRPHRndDrawPoint(this.id, this.Px(x), this.Px(y), pen.id)
         pen.Width = w
     }
-    undefined DrawLine(int x0, int y0, int x1, int y1, Pen pen) {
+    undefined DrawLine(defined int x0, defined int y0, defined int x1, defined int y1, Pen pen) {
         if (this.scale == 1.0) { __GRPHRndDrawLine(this.id, x0, y0, x1, y1, pen.id); return }
         var w = this.PenOn(pen)
         __GRPHRndDrawLine(this.id, this.Px(x0), this.Px(y0), this.Px(x1), this.Px(y1), pen.id)
@@ -573,25 +573,25 @@ class Renderer {
         pen.Width = w
     }
     // Outlines: paths made from the pixels of the shape
-    undefined DrawRect(int x, int y, int w, int h, Pen pen) {
+    undefined DrawRect(defined int x, defined int y, defined int w, defined int h, Pen pen) {
         if (this.scale == 1.0) { __GRPHRndDrawRect(this.id, x, y, w, h, pen.id); return }
         var pw = this.PenOn(pen)
         __GRPHRndDrawRect(this.id, this.Px(x), this.Px(y), this.Px(x + w) - this.Px(x), this.Px(y + h) - this.Px(y), pen.id)
         pen.Width = pw
     }
-    undefined DrawCircle(int cx, int cy, int r, Pen pen) {
+    undefined DrawCircle(defined int cx, defined int cy, defined int r, Pen pen) {
         if (this.scale == 1.0) { __GRPHRndDrawCircle(this.id, cx, cy, r, pen.id); return }
         var w = this.PenOn(pen)
         __GRPHRndDrawCircle(this.id, this.Px(cx), this.Px(cy), this.Len(r), pen.id)
         pen.Width = w
     }
-    undefined DrawEllipse(int cx, int cy, int rx, int ry, Pen pen) {
+    undefined DrawEllipse(defined int cx, defined int cy, defined int rx, defined int ry, Pen pen) {
         if (this.scale == 1.0) { __GRPHRndDrawEllipse(this.id, cx, cy, rx, ry, pen.id); return }
         var w = this.PenOn(pen)
         __GRPHRndDrawEllipse(this.id, this.Px(cx), this.Px(cy), this.Len(rx), this.Len(ry), pen.id)
         pen.Width = w
     }
-    undefined DrawTriangle(int x0, int y0, int x1, int y1, int x2, int y2, Pen pen) {
+    undefined DrawTriangle(defined int x0, defined int y0, defined int x1, defined int y1, defined int x2, defined int y2, Pen pen) {
         if (this.scale == 1.0) { __GRPHRndDrawTriangle(this.id, x0, y0, x1, y1, x2, y2, pen.id); return }
         var w = this.PenOn(pen)
         __GRPHRndDrawTriangle(this.id, this.Px(x0), this.Px(y0), this.Px(x1), this.Px(y1), this.Px(x2), this.Px(y2), pen.id)
@@ -605,12 +605,12 @@ class Renderer {
     }
 
     // ---- rounded rectangles and effects (docs/spec/UI_PLATFORM.md): antialiased at their edges; the radius is clamped to half the shorter side (0: a plain rectangle) ----
-    undefined FillRoundRect(int x, int y, int w, int h, int radius, Brush brush) {
+    undefined FillRoundRect(defined int x, defined int y, defined int w, defined int h, defined int radius, Brush brush) {
         if (this.scale == 1.0) { __GRPHRndFillRoundRect(this.id, x, y, w, h, radius, brush.id); return }
         __GRPHRndFillRoundRect(this.id, this.Px(x), this.Px(y), this.Px(x + w) - this.Px(x), this.Px(y + h) - this.Px(y), this.Len(radius), brush.id)
     }
     // The outline, as wide as the pen (its shape does not count)
-    undefined DrawRoundRect(int x, int y, int w, int h, int radius, Pen pen) {
+    undefined DrawRoundRect(defined int x, defined int y, defined int w, defined int h, defined int radius, Pen pen) {
         if (this.scale == 1.0) { __GRPHRndDrawRoundRect(this.id, x, y, w, h, radius, pen.id); return }
         var pw = this.PenOn(pen)
         __GRPHRndDrawRoundRect(this.id, this.Px(x), this.Px(y), this.Px(x + w) - this.Px(x), this.Px(y + h) - this.Px(y), this.Len(radius), pen.id)
@@ -618,12 +618,12 @@ class Renderer {
     }
     // A fine shadow around the rounded rectangle (drawn before it: under the rectangle nothing is drawn). `color`'s alpha is its strongest opacity (subtle: 0x14000000 to
     // 0x26000000), `softness` how far it fades out, `offsetY` how far it lies lower. Its blurred mask is made at a quarter of the size and kept for the next time.
-    undefined DrawShadow(int x, int y, int w, int h, int radius, int softness, int color, int offsetY = 0) {
+    undefined DrawShadow(defined int x, defined int y, defined int w, defined int h, defined int radius, defined int softness, defined int color, defined int offsetY = 0) {
         if (this.scale == 1.0) { __GRPHRndDrawShadow(this.id, x, y, w, h, radius, softness, color, offsetY); return }
         __GRPHRndDrawShadow(this.id, this.Px(x), this.Px(y), this.Px(x + w) - this.Px(x), this.Px(y + h) - this.Px(y), this.Len(radius), this.Len(softness), color, this.Len(offsetY))
     }
     // Blurs what is drawn in the rounded rectangle by `radius` pixels (the cost does not grow with the radius)
-    undefined Blur(int x, int y, int w, int h, int radius, int cornerRadius = 0) {
+    undefined Blur(defined int x, defined int y, defined int w, defined int h, defined int radius, defined int cornerRadius = 0) {
         if (this.scale == 1.0) { __GRPHRndBlur(this.id, x, y, w, h, radius, cornerRadius); return }
         __GRPHRndBlur(this.id, this.Px(x), this.Px(y), this.Px(x + w) - this.Px(x), this.Px(y + h) - this.Px(y), this.Len(radius), this.Len(cornerRadius))
     }
@@ -631,7 +631,7 @@ class Renderer {
     // Tint - each with a hairline at its edge. `tint`: the colour over the background, its alpha how much (glass 10-20 %, acrylic 40-60 %); `baseColor`: what lies under it
     // when there is no transparency. `options` (MaterialOptions): Blur off - no blur (glass and acrylic become a translucent tint); Transparency off - opaque (the tint
     // over baseColor); Dark - the hairline of a dark theme.
-    undefined DrawMaterial(MaterialKind kind, int x, int y, int w, int h, int radius, int tint, int baseColor, int options = 3) {
+    undefined DrawMaterial(MaterialKind kind, defined int x, defined int y, defined int w, defined int h, defined int radius, defined int tint, defined int baseColor, defined int options = 3) {
         if (this.scale == 1.0) { __GRPHRndDrawMaterial(this.id, kind!int, x, y, w, h, radius, tint, baseColor, options); return }
         __GRPHRndDrawMaterial(this.id, kind!int, this.Px(x), this.Px(y), this.Px(x + w) - this.Px(x), this.Px(y + h) - this.Px(y), this.Len(radius), tint, baseColor, options)
     }
@@ -640,13 +640,13 @@ class Renderer {
     // Copies another framebuffer (e.g. a loaded image) here, also between the colour modes (see BlitMode; Blend only blends with AlphaBlending). Blit: the whole image
     // with its top left corner at (x, y); BlitRegion: the section (sx, sy, sw, sh) to (dx, dy); BlitScaled: additionally brought to the size dw x dh (nearest neighbour;
     // a NEGATIVE width/height mirrors). `key`: for a palette image the transparent index (-1 = its TransparentIndex).
-    undefined Blit(Framebuffer source, int x, int y, int mode = 0, int key = -1) {
+    undefined Blit(Framebuffer source, defined int x, defined int y, defined int mode = 0, defined int key = -1) {
         __GRPHRndBlit(this.id, source.id, 0, 0, source.Width(), source.Height(), this.Px(x), this.Px(y), this.Len(source.Width()), this.Len(source.Height()), mode, key)
     }
-    undefined BlitRegion(Framebuffer source, int sx, int sy, int sw, int sh, int dx, int dy, int mode = 0, int key = -1) {
+    undefined BlitRegion(Framebuffer source, defined int sx, defined int sy, defined int sw, defined int sh, defined int dx, defined int dy, defined int mode = 0, defined int key = -1) {
         __GRPHRndBlit(this.id, source.id, sx, sy, sw, sh, this.Px(dx), this.Px(dy), this.Len(sw), this.Len(sh), mode, key)
     }
-    undefined BlitScaled(Framebuffer source, int sx, int sy, int sw, int sh, int dx, int dy, int dw, int dh, int mode = 0, int key = -1) {
+    undefined BlitScaled(Framebuffer source, defined int sx, defined int sy, defined int sw, defined int sh, defined int dx, defined int dy, defined int dw, defined int dh, defined int mode = 0, defined int key = -1) {
         __GRPHRndBlit(this.id, source.id, sx, sy, sw, sh, this.Px(dx), this.Px(dy), this.Px(dx + dw) - this.Px(dx), this.Px(dy + dh) - this.Px(dy), mode, key)
     }
 }

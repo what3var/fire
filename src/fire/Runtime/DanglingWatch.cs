@@ -41,6 +41,7 @@ namespace fire.Runtime
         {
             ObjectInstance o => o.Owner is DeadOwner ? null : o.Owner,
             ScriptArray a => a.LeafOwner,
+            LambdaValue l => l.LeafOwner,
             ByteBuffer b => b.LeafOwner,
             _ => null,
         };

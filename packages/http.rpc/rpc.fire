@@ -1,0 +1,292 @@
+#import "http"
+#import "reflection"
+#import "json"
+
+// http.rpc (docs/networking/http.md, docs/ROADMAP_HTTP.md step 4): methods and properties of classes marked [Remote] are called over HTTP with JSON.
+//
+//     POST /rpc/<Class>/<Method>     body: the arguments as a JSON array (empty: none)       -> {"result": ...}
+//     GET  /rpc/<Class>/<Property>                                                            -> {"result": ...}
+//     POST /rpc/<Class>/<Property>   body: [value]                                            -> {"result": null}
+//
+// Only a client that already has a session may call (Http.Sessions before Http.Rpc; no cookie of a living session: 401). Only a class with [Remote] is
+// reachable, and of it only the members with [Remote]; `[Nickname "cart"]` gives a class its public name (then its class name is not reachable - and two
+// classes of the same name in different namespaces can both be offered). Errors: 401 (no session), 404 (no such class or member, or not [Remote]), 400
+// (the arguments do not fit), 405 (another HTTP method), 500 ({"error": message, "type": class} - what the member threw).
+//
+// The lifetime of the instance, an attribute of the class: [Lifetime "request"] (the default: a new instance for every call), [Lifetime "session"] (one per
+// session and class - Http.Sessions must come before in the chain), [Lifetime "single"] (one for the whole server). Session and single instances live at the
+// home of the RPC instances, an actor on a thread of its own, so their calls run one after the other; one that is not called for its timeout ends -
+// [Timeout 600] (seconds; default 300). The constructor's parameters are given by their type from the services of the router (dependency injection).
+namespace Http {
+    // What a call answers: the status and the JSON text (crosses threads as a text).
+    class RpcCall {
+        // "<status>\n<json>" of a call of `member` on `instance` (a [Remote] class `typeName`).
+        static string Run(any instance, string typeName, string memberName, string httpMethod, string body) {
+            Type t = Type.Named(typeName)
+            if (t == undefined) { return Http.RpcCall.Fail(404, "No class '" + typeName + "'.", "") }
+            Member m = t.Find(memberName)
+            if (m == undefined || !m.HasAttribute("Remote") || m.IsStatic) { return Http.RpcCall.Fail(404, "No remote member '" + memberName + "'.", "") }
+            try {
+                if (m.Kind == "method") {
+                    if (httpMethod != "POST") { return Http.RpcCall.Fail(405, "A method is called with POST.", "") }
+                    any args = Http.RpcCall.Args(body, m)
+                    if (args == undefined) { return Http.RpcCall.Fail(400, "'" + memberName + "' takes " + m.ParamCount() + " argument(s) as a JSON array.", "") }
+                    any result = m.Call(instance, args)
+                    return Http.RpcCall.Ok(result)
+                }
+                if (m.Kind == "property" || m.Kind == "field") {
+                    if (httpMethod == "GET") { return Http.RpcCall.Ok(m.Get(instance)) }
+                    if (httpMethod != "POST") { return Http.RpcCall.Fail(405, "A property is read with GET and written with POST.", "") }
+                    any parsed = Http.RpcCall.Parse(body)
+                    if (!Http.RpcCall.IsArray(parsed) || parsed.length != 1) { return Http.RpcCall.Fail(400, "A property is written with [value].", "") }
+                    m.Set(instance, Http.RpcCall.Convert(parsed[0], m.TypeName))
+                    return Http.RpcCall.Ok(undefined)
+                }
+                return Http.RpcCall.Fail(404, "'" + memberName + "' cannot be called.", "")
+            } catch (JsonException e) {
+                return Http.RpcCall.Fail(400, e.message, "JsonException")
+            } catch (e) {
+                return Http.RpcCall.Fail(500, e.message, Type.Of(e).Name)
+            }
+        }
+
+        // The arguments for `m` from the JSON array, converted to its parameter types; undefined when they do not fit.
+        static any Args(string body, Member m) {
+            any parsed = Http.RpcCall.Parse(body)
+            if (!Http.RpcCall.IsArray(parsed)) { return undefined }
+            if (parsed.length != m.ParamCount()) { return undefined }
+            any types = m.ParamTypes
+            var args = new any[parsed.length]
+            for (var i = 0; i < parsed.length; i++) { args[i] = Http.RpcCall.Convert(parsed[i], types[i]) }
+            return args
+        }
+
+        // (an array of JSON - not a text, not an object)
+        static bool IsArray(any v) { return v is of IEnumerable && !(v is of string) && !(v is of class) }
+
+        static any Parse(string body) {
+            if (body == undefined || body.Trim().Length == 0) { return new any[0] }
+            return Json.Parse(body)
+        }
+
+        // A value of JSON for a parameter of the type `typeName`: numbers, texts, bool and arrays as they are, an object as an instance of the class.
+        static any Convert(any value, string typeName) {
+            if (value is of JsonObject && typeName != undefined && typeName != "any" && typeName != "JsonObject") {
+                return Json.Deserialize(Json.Serialize(value), typeName)
+            }
+            return value
+        }
+
+        static string Ok(any result) {
+            var options = new JsonOptions()
+            options.typeNames = false
+            return "200\n{\"result\": " + Json.Serialize(result, options) + "}"
+        }
+
+        static string Fail(defined int status, string message, string type) {
+            return "" + status + "\n{\"error\": " + Json.Serialize(message) + ", \"type\": " + Json.Serialize(type) + "}"
+        }
+
+        // The answer of a "<status>\n<json>".
+        static Http.Response Answer(string out) {
+            any nl = out.IndexOf("\n")
+            var r = Http.Response.FromJson(out.Substring(nl + 1), Http.Num.Parse(out.Substring(0, nl)))
+            return r
+        }
+
+        // A new instance of `t`: the first constructor whose parameters all come from the services (by their type); undefined when none fits.
+        static any Make(Type t, List services) {
+            List ctors = t.Constructors()
+            if (ctors.Count == 0) { return t.New(new any[0]) }
+            for (var c = 0; c < ctors.Count; c++) {
+                Member ctor = ctors[c]
+                any types = ctor.ParamTypes
+                var args = new any[types.length]
+                var ok = true
+                for (var i = 0; i < types.length && ok; i++) {
+                    any service = Http.RpcCall.Service(services, types[i])
+                    if (service == undefined) { ok = false } else { args[i] = service }
+                }
+                if (ok) { return t.New(args) }
+            }
+            return undefined
+        }
+
+        // The service of the type (or a subclass, or a class that implements the interface) `typeName`.
+        static any Service(List services, string typeName) {
+            if (services == undefined) { return undefined }
+            any wanted = Type.Named(typeName)
+            for (var i = 0; i < services.Count; i++) {
+                any s = services[i]
+                Type st = Type.Of(s)
+                if (st.Name == typeName || wanted != undefined && st.IsSubclassOf(wanted)) { return s }
+                any ifaces = st.Interfaces
+                for (var k = 0; k < ifaces.length; k++) { if (ifaces[k] == typeName) { return s } }
+            }
+            return undefined
+        }
+
+        // The lifetime of a class ("request", "session", "single") and its timeout in ticks.
+        static string LifetimeOf(Type t) {
+            Attribute a = t.FindAttribute("Lifetime")
+            if (a == undefined || a.ArgCount() == 0) { return "request" }
+            string l = "" + a.Args[0]
+            return l.ToLower()
+        }
+
+        // (the instances that were not called for their timeout end)
+        static undefined Sweep(Dictionary<string, Http.RpcSlot> slots) {
+            var now = DateTime.UtcNow.Ticks
+            var gone = new List()
+            foreach (var pair in slots) {
+                Http.RpcSlot s = pair.Value
+                if (now - s.touched > s.timeoutTicks) { gone.Add(pair.Key) }
+            }
+            for (var i = 0; i < gone.Count; i++) { slots.Remove(gone[i]) }
+        }
+
+        static defined int TimeoutTicksOf(Type t) {
+            Attribute a = t.FindAttribute("Timeout")
+            if (a == undefined || a.ArgCount() == 0) { return 300 * 10000000 }
+            int seconds = a.Args[0]
+            return seconds * 10000000
+        }
+    }
+
+    // An instance of lifetime session or single at its home.
+    class RpcSlot {
+        any instance
+        defined int touched
+        defined int timeoutTicks
+
+        construct(any instance, defined int timeoutTicks) {
+            this.instance = take instance
+            this.touched = DateTime.UtcNow.Ticks
+            this.timeoutTicks = timeoutTicks
+        }
+    }
+
+    // The home of the RPC instances of lifetime session and single: an actor on a thread of its own.
+    actor RpcHome {
+        Dictionary<string, Http.RpcSlot> slots
+        List services
+        bool stopped
+
+        construct(List services) {
+            this.slots = new Dictionary<string, Http.RpcSlot>()
+            this.services = take services
+            this.stopped = false
+        }
+
+        // The call on the instance of `key` (made when it is not there).
+        string Call(string key, string typeName, string memberName, string httpMethod, string body) {
+            Http.RpcCall.Sweep(this.slots)   // (not this.Sweep(): a call of an actor's own method would only post a message)
+            Type t = Type.Named(typeName)
+            if (t == undefined) { return Http.RpcCall.Fail(404, "No class '" + typeName + "'.", "") }
+            if (!this.slots.ContainsKey(key)) {
+                any made = Http.RpcCall.Make(t, this.services)
+                if (made == undefined) { return Http.RpcCall.Fail(500, "No constructor of '" + typeName + "' fits the services.", "") }
+                this.slots.Add(key, new Http.RpcSlot(take made, Http.RpcCall.TimeoutTicksOf(t)))
+            }
+            Http.RpcSlot slot = this.slots[key]
+            slot.touched = DateTime.UtcNow.Ticks
+            return Http.RpcCall.Run(slot.instance, typeName, memberName, httpMethod, body)
+        }
+
+        defined int Count() { return this.slots.Count }
+
+        undefined Stop() { this.stopped = true }
+
+    }
+
+    // The RPC endpoint as a link of the chain: requests under `prefix` (default "/rpc") call [Remote] classes; the rest goes on.
+    class Rpc : IRouter, IClosable {
+        string prefix
+        List services
+        Http.RpcHome home
+        Dictionary<string, string> names    // the public name of every [Remote] class (its [Nickname], else its full name) -> its class
+
+        // `services`: what the constructors of the [Remote] classes get by their type (actors - shared by every call - or plain objects - copied for every
+        // connection and once for the home).
+        construct(string prefix = "/rpc", List services = undefined) {
+            this.prefix = prefix
+            if (this.prefix.EndsWith("/")) { this.prefix = this.prefix.Substring(0, this.prefix.Length - 1) }
+            if (services == undefined) { services = new List() }
+            this.services = take services
+            this.names = Http.Rpc.PublicNames()
+            var homeServices = copy this.services
+            var ready = new Completion()
+            var back = ready.Share()
+            Http.Rpc.StartHome(take homeServices, take back)
+            this.home = ready.Wait(10s)
+        }
+
+        // The [Remote] classes by their public name: `[Nickname "cart"]` gives a class the name it has over HTTP (the class name is not reachable then),
+        // otherwise it is its full name (`Shop.Cart`). Two classes with the same public name are an ArgumentException.
+        static Dictionary<string, string> PublicNames() {
+            var map = new Dictionary<string, string>()
+            any all = Type.Names()
+            for (var i = 0; i < all.length; i++) {
+                string full = all[i]
+                Type t = Type.Named(full)
+                if (t == undefined || !t.HasAttribute("Remote")) { continue }
+                var name = full
+                Attribute nick = t.FindAttribute("Nickname")
+                if (nick != undefined && nick.ArgCount() > 0) { name = "" + nick.Args[0] }
+                if (map.ContainsKey(name)) { throw new ArgumentException("Two remote classes have the public name '" + name + "' ('" + map[name] + "' and '" + full + "'): give one of them a [Nickname].") }
+                map.Add(name, full)
+            }
+            return map
+        }
+
+        static undefined StartHome(List services, Completion back) {
+            fire handover services handover back {
+                var home = new Http.RpcHome(take services)
+                back.Set(home)
+                while (!home.stopped) { process home }
+            }
+        }
+
+        Http.Response Handle(Http.Context ctx, Http.Next next) {
+            var request = ctx.Request
+            if (!request.path.StartsWith(this.prefix + "/")) { return next.Invoke(ctx) }
+            string rest = request.path.Substring(this.prefix.Length + 1)
+            any slash = rest.LastIndexOf("/")
+            if (slash <= 0) { return Http.RpcCall.Answer(Http.RpcCall.Fail(404, "Expected " + this.prefix + "/<Class>/<Member>.", "")) }
+            string publicName = rest.Substring(0, slash)
+            string memberName = rest.Substring(slash + 1)
+            // (only a client with a session it already had: no cookie of a living session - or no Http.Sessions before - is a 401)
+            any current = ctx.Item("session")
+            if (current == undefined) { return Http.RpcCall.Answer(Http.RpcCall.Fail(401, "A call needs a session: put Http.Sessions before Http.Rpc.", "")) }
+            Http.Session session = current
+            if (session.IsNew) { return Http.RpcCall.Answer(Http.RpcCall.Fail(401, "A call needs a session that the client already has.", "")) }
+            if (!this.names.ContainsKey(publicName)) { return Http.RpcCall.Answer(Http.RpcCall.Fail(404, "No remote class '" + publicName + "'.", "")) }
+            var typeName = this.names[publicName]
+            Type t = Type.Named(typeName)
+            var body = request.Text()
+            var lifetime = Http.RpcCall.LifetimeOf(t)
+            if (lifetime == "request") {
+                any instance = Http.RpcCall.Make(t, this.services)
+                if (instance == undefined) { return Http.RpcCall.Answer(Http.RpcCall.Fail(500, "No constructor of '" + typeName + "' fits the services.", "")) }
+                return Http.RpcCall.Answer(Http.RpcCall.Run(instance, typeName, memberName, request.method, body))
+            }
+            var key = typeName
+            if (lifetime == "session") { key = session.Id + "/" + typeName }
+            var h = this.home
+            string out = await h.Call(key, typeName, memberName, request.method, body)
+            return Http.RpcCall.Answer(out)
+        }
+
+        // The number of living instances of lifetime session and single.
+        defined int Instances() {
+            var h = this.home
+            int n = await h.Count()
+            return n
+        }
+
+        undefined Close() {
+            var h = this.home
+            h.Stop()
+        }
+    }
+}

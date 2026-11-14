@@ -81,7 +81,8 @@ try {
   variable or field. Its elements are converted then. An array typed already for another element type is an `ArgumentException`, and so is a value
   that is no array at all (`int a[] = 5`): a typed array declaration holds an array or `undefined`, like `int x` holds an int. This holds for every way
   a field is set - an assignment, `Reflect.Set`, `Json.Deserialize` (which reads the array typed).
-- Parameters do not type what they receive. Copies (`copy`, `flat`, [`taking`](15-threads-and-actors.md)) of a typed array are typed.
+- A parameter `int a[]` types what it receives like a variable (in place: the caller's array becomes typed; an element that does not fit is the
+  exception). Copies (`copy`, `flat`, [`taking`](15-threads-and-actors.md)) of a typed array are typed.
 - `int m[3][4]` types the inner arrays. `var`, `any`, strings, classes and pointers declare no element type: such an array takes any value.
 - **A declaration with a size makes the array** - a local or global where it is declared, a field together with its object
   (`class Box { int data[3] }`: `new Box().data.length` is 3). Without a size (`int arr[]`) the variable or field stays `undefined` until an array is assigned.
@@ -141,7 +142,10 @@ print(c[0])         // 1
 | `TakeAt(index)` | removes the element at `index` and gives it to the caller (with its ownership, if the list owned it) |
 | `Remove(value)` | removes the first equal element; `False` if there is none |
 | `IndexOf(value)` | position of the first equal element, `-1` if there is none |
+| `Contains(value)` | `true` if an equal element is in the list (`IndexOf(value) >= 0`) |
 | `Clear()` | removes everything |
+| `Sort()` | sorts the elements by `<` (numbers, texts, a class with `operator<`); stable - equal elements keep their order |
+| `Sort((a, b) => ...)` | sorts by a comparison: below 0 - `a` first, 0 - equal (they keep their order), above 0 - `b` first |
 
 ```fire
 var list = new List<int>()
@@ -153,6 +157,9 @@ print(list[0])              // 1
 list.RemoveAt(0)
 print(list.IndexOf(7))      // 1
 foreach (x in list) { print(x) }
+var ages = new List<int>([30, 20, 40])
+ages.Sort()                              // 20 30 40
+ages.Sort((a, b) => b - a)               // 40 30 20
 
 var names = new List<string>(["Ada", "Linus"])
 names.Add("Grace")
@@ -303,6 +310,71 @@ print(text.ToString())      // Hi
 | `ToUnicodeChar()`, `ToUnicodeChar(n)` | the first character |
 | `littleEndian` | the byte order of the buffer |
 | `ToLittleEndian()`, `ToBigEndian()` | a copy in that byte order (the whole buffer is reversed if needed) |
+| `ReadInt16(at)`, `WriteFloat32(at, x)`, ... | a number of 1, 2, 4 or 8 bytes at a position (see below) |
+| `Fill`, `CopyTo`, `Slice`, `IndexOf`, `Compare` | fast operations on the bytes (see below) |
+
+### Reading and writing numbers
+
+A buffer reads and writes whole numbers and floats at a byte position - in the byte order of the buffer (`littleEndian`: a new buffer is little
+endian), or in the one given as the last argument (`true`: little endian, `false`: big endian):
+
+```fire
+var header = new byte[16]
+header.WriteUInt32(0, 0x46495245, false)    // "FIRE", big endian
+header.WriteInt16(4, -2)
+header.WriteFloat32(8, 1.5)
+header.WriteFloat16(12, -0.5)               // half precision
+print(header.ReadUInt32(0, false))          // 1179210309
+print(header.ReadInt16(4))                  // -2
+print(header.ReadUInt16(4))                 // 65534
+print(header.ReadFloat32(8))                // 1.5
+print(header.ReadFloat16(12))               // -0.5
+```
+
+| Read | Write | Bytes | Value |
+|---|---|---|---|
+| `ReadInt8(at)`, `ReadUInt8(at)` | `WriteInt8(at, v)`, `WriteUInt8(at, v)` | 1 | -128 .. 127 / 0 .. 255 |
+| `ReadInt16(at[, little])`, `ReadUInt16` | `WriteInt16(at, v[, little])`, `WriteUInt16` | 2 | -32768 .. 32767 / 0 .. 65535 |
+| `ReadInt32(at[, little])`, `ReadUInt32` | `WriteInt32(at, v[, little])`, `WriteUInt32` | 4 | 32 bits signed / unsigned |
+| `ReadInt64(at[, little])` | `WriteInt64(at, v[, little])` | 8 | 64 bits |
+| `ReadFloat16(at[, little])` | `WriteFloat16(at, x[, little])` | 2 | IEEE binary16 (half precision) |
+| `ReadFloat32(at[, little])` | `WriteFloat32(at, x[, little])` | 4 | IEEE binary32 |
+| `ReadFloat64(at[, little])` | `WriteFloat64(at, x[, little])` | 8 | IEEE binary64 |
+
+- A write takes the low bits of the number (`WriteUInt8(0, 300)` writes 44, `WriteInt16` and `WriteUInt16` write the same bytes); a float is rounded
+  to the format (`WriteFloat16`: to nearest even, above 65504 infinity). A `word` can be written as an int; a number with a unit is an
+  `ArgumentException`.
+- A read that does not fit the program's `int` (`ReadUInt32` or `ReadInt64` with `#intwidth 32`) keeps its 64 bits, like the result of a native.
+- A position outside the buffer (`at < 0` or `at + size > length`) is an `IndexOutOfBoundsException`; a buffer of words (`word a[]`) is an
+  `ArgumentException` - its bytes depend on the target.
+
+### Fast operations
+
+```fire
+var b = new byte[8]
+b.Fill(0xFF)                      // every byte
+b.Fill(0, 2, 4)                   // 4 bytes from position 2
+var c = new byte[8]
+b.CopyTo(c, 0)                    // all of b into c from position 0
+b.CopyTo(c, 1, 2, 3)              // 3 bytes of b from 2 into c from 1 (overlapping parts of one buffer are fine)
+var part = b.Slice(2, 4)          // a new buffer with the 4 bytes from 2 (in the same byte order)
+var text = "hello world".ToBytes()
+print(text.IndexOf(111))          // 4 - the first 'o'
+print(text.IndexOf(111, 5))       // 7 - from position 5
+print(text.IndexOf("wor".ToBytes()))  // 6 - a sequence of bytes
+print(text.Compare("hello".ToBytes()))  // 1 - like comparing texts: -1, 0 or 1
+```
+
+| Method | What |
+|---|---|
+| `Fill(value[, start, count])` | sets the bytes to `value` (its low 8 bits) |
+| `CopyTo(target, targetAt[, start, count])` | copies bytes into another buffer (or into itself: overlapping parts are copied as if through a copy) |
+| `Slice(start[, count])` | a new buffer with those bytes |
+| `IndexOf(value[, start])` | the position of the first byte `value` (0 .. 255) or of the first occurrence of a byte buffer; -1 if there is none |
+| `Compare(other)` | -1, 0 or 1: byte by byte, a shorter buffer that is the start of the other is smaller |
+
+A range outside a buffer is an `IndexOutOfBoundsException`. Natively these are a loop or `memset`/`memmove` over the bytes; for bits of single
+numbers see [Bit functions](03-operators.md#bit-functions).
 
 ### `byte` declarations are buffers
 
@@ -329,7 +401,10 @@ class Packet {
   `magic[0] = undefined`) is an `ArgumentException`.
 - `length`, `[i]`, `foreach`, `copy`/`flat` and `is of IEnumerable` work as for arrays; `print` shows `<buffer n bytes>`, JSON writes a buffer as
   base64 text.
-- A parameter `byte data[]` takes what it is given (an array stays an array).
+- A parameter `byte data[]` is a `byte` declaration too: an array given to it becomes a new buffer with its elements (what the method writes then
+  does not reach the array - the warning `TC032` says so for an array of a variable or a field), a buffer and `undefined` pass, anything else is an
+  `ArgumentException` (`A byte buffer is declared here, not String.`). So the native backend knows what it holds: `b[i]` in a loop reads the byte
+  in place.
 
 ### `word` declarations are buffers of machine words
 

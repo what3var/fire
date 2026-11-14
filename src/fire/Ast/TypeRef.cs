@@ -21,7 +21,9 @@ namespace fire.Ast
     /// since a dynamically typed lambda cannot reliably disclose its parameter TYPES
     /// up front.</summary>
     [MemoryPackable]
-    public sealed partial record LambdaSignature(string? ReturnTypeName, IReadOnlyList<string> ParamTypeNames, bool IsSelector = false, string SelectorKind = "member");
+    /// `IsExpression`: `lambda expression&lt;T&gt;` (docs/ROADMAP_EXPRESSIONS.md) - the lambda written at the call becomes an expression tree: in the method
+    /// the parameter is a LambdaExpression (Parameters, Body, Invoke).
+    public sealed partial record LambdaSignature(string? ReturnTypeName, IReadOnlyList<string> ParamTypeNames, bool IsSelector = false, string SelectorKind = "member", bool IsExpression = false);
 
     /// <summary>
     /// A type reference: base name (base-type keyword or class name), optional
@@ -127,6 +129,10 @@ namespace fire.Ast
         /// "unknown class/unknown type".</summary>
         public string ResolveBaseName(Func<string, bool> isKnown)
         {
+            // the chain (like C#): the namespace the code is written in, then the global names, then the `#using` namespaces; `global.X` is the global X
+            // that a class of the own namespace hides (`global::X` in C#)
+            if (BaseName.StartsWith("global.", StringComparison.Ordinal)) return BaseName.Substring("global.".Length);
+            if (Namespaces is OwnNamespaceList && BaseName.IndexOf('.') < 0 && isKnown(Namespaces[0] + "." + BaseName)) return Namespaces[0] + "." + BaseName;
             if (isKnown(BaseName)) return BaseName;
             if (Namespaces != null)
                 foreach (var ns in Namespaces)
@@ -169,4 +175,10 @@ namespace fire.Ast
         }
     }
 
+    /// <summary>The namespaces a name is looked up in, when the first one is the namespace the code is written in (the parser's CurrentNamespaces
+    /// inside a `namespace` block): its classes win over global ones of the same name (TypeRef.ResolveBaseName).</summary>
+    public sealed class OwnNamespaceList : System.Collections.Generic.List<string>
+    {
+        public OwnNamespaceList(System.Collections.Generic.IEnumerable<string> items) : base(items) { }
+    }
 }

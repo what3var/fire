@@ -47,6 +47,9 @@ namespace fire.Ast
     /// directive is evaluated at the very start of the program) or a number in milliseconds - as with `Sleep`. The compiler emits for this at the very start
     /// `SetTimeout`; must be a top-level statement.</summary>
     public sealed record TimeoutDirective(int Source, int Line, Expr Value) : Stmt(Source, Line);
+    /// <summary>`#endwait value` (`10s`, `undefined`: no limit): how long the main program waits at its end for the threads that are still running (default
+    /// 60 s) - then they are ended like with `terminate` (docs/language/15-threads-and-actors.md "The end of the program").</summary>
+    public sealed record EndWaitDirective(int Source, int Line, Expr Value) : Stmt(Source, Line);
 
     /// <summary>A single enum member. If ValueExpr is missing -> the value is that
     /// of the predecessor + 1 (0 for the first member) - classic C-like
@@ -129,7 +132,7 @@ namespace fire.Ast
     /// Runtime.FireRuntime.FireVmTaking), in the order in which they end up in the
     /// new global scope of the fire thread (Resolver.
     /// ResolveFireStmt/Compiler.CompileFireStmt MUST use the same
-    /// order). `WithVarName`/`WithSource`: at most one actor reference,
+    /// order). `With`: the references (actors, channels),
     /// passed DIRECTLY (no copy, see Ast.ProcessStmt docs),
     /// ALWAYS occupies the slot AFTER all TakingCaptures.
     ///
@@ -142,12 +145,14 @@ namespace fire.Ast
     /// the resolver/compiler, indistinguishable from a "real" `fire { ... }` block -
     /// complete code reuse without any special handling
     /// beyond the parser.</summary>
+    /// <summary>`with actorA, channelB` (step 9): a reference the thread gets as it is - an actor, a channel (a channel: an end of its own on the same queue).</summary>
+    public sealed record FireWith(string VarName, Expr Source);
+
     public sealed record FireStmt(
         int Source,
         int Line,
         IReadOnlyList<FireTakingCapture> TakingCaptures,
-        string? WithVarName,
-        Expr? WithSource,
+        IReadOnlyList<FireWith> With,
         Stmt.BlockStmt Body,
         bool Dedicated = false,                          // `fire dedicated { }`: natively a system thread of its own, not a task of the pool
         IReadOnlyList<Expr>? Until = null) : Stmt(Source, Line);   // `fire until token { }`: the thread follows the token (each `__Cancel.Limit(x)`)
@@ -168,7 +173,7 @@ namespace fire.Ast
     /// lambda whose parameters are the `taking` captures (they are passed as value/copy when enqueued) - like any lambda, the lambda sees
     /// the globals, but no locals of the caller.
     /// OnTarget (`fire on window { ... }`, docs/ROADMAP_TASKS.md section 5): the first argument is the object the block runs on - passed as it is, not copied.</summary>
-    public sealed record PostGlobalStmt(int Source, int Line, LambdaExpr Lambda, IReadOnlyList<Expr> Args, bool OnTarget = false) : Stmt(Source, Line);
+    public sealed record PostGlobalStmt(int Source, int Line, LambdaExpr Lambda, IReadOnlyList<Expr> Args, bool OnTarget = false, int WithCount = 0) : Stmt(Source, Line);   // (WithCount: the last arguments are `with` references - as they are, a channel as an end of its own)
 
     /// <summary>`process X` (docs/spec/THREADING_DESIGN.md Abschnitt 2) -
     /// blocking: waits until a message arrives in the mailbox of the
@@ -315,7 +320,8 @@ namespace fire.Ast
         IReadOnlyList<Stmt> Members,
         IReadOnlyList<TypeParam>? TypeParams = null,
         bool IsActor = false,
-        IReadOnlyList<AttributeDecl>? Attributes = null) : Stmt(Source, Line);   // (Attributes: `[Name ...]` before the class, read by reflection)
+        IReadOnlyList<AttributeDecl>? Attributes = null,
+        bool IsRecord = false) : Stmt(Source, Line);   // (IsRecord: `record Name { ... }` - written only while it is constructed, step 9)   // (Attributes: `[Name ...]` before the class, read by reflection)
 
     // ---------------------------------------------------------------
     // Interfaces (SPEC 8.5): method and property signatures, no fields/bodies.

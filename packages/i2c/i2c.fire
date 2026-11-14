@@ -2,9 +2,9 @@
 namespace I2c {
     class I2cException : Exception {
         string message
-        int code
+        defined int code
 
-        construct(string message, int code = 7) {
+        construct(string message, defined int code = 7) {
             this.message = message
             this.code = code
         }
@@ -50,11 +50,11 @@ namespace I2c {
             if (code == 5) { throw new PermissionException(message) }
             if (code == 6) { throw new UnsupportedException(message) }
             if (code == 8) { throw new NoAckException(message) }
-            if (code == 9) { throw new TimeoutException(message) }
+            if (code == 9) { throw new I2c.TimeoutException(message) }
             throw new I2cException(message, code)
         }
 
-        static int Handle(int handle) {
+        static defined int Handle(defined int handle) {
             if (handle < 0) { Throw() }
             return handle
         }
@@ -77,13 +77,13 @@ namespace I2c {
 
     // One bus.
     class Bus {
-        int handle
+        defined int handle
         bool closed
         string name
-        int speed
+        defined int speed
 
         // `bus`: a number (1 is "i2c-1"), a name ("i2c-1", "sim") or the text of a number; `speed` in Hz (the ESP32 uses it; Linux leaves it to the device tree).
-        construct(any bus, int speed = 100000) {
+        construct(any bus, defined int speed = 100000) {
             this.handle = -1
             this.closed = false
             this.speed = speed
@@ -98,7 +98,7 @@ namespace I2c {
         string Name { get { return this.name } }
         bool IsClosed { get { return this.closed } }
 
-        int Speed {
+        defined int Speed {
             get { return this.speed }
             set {
                 this.Check()
@@ -113,33 +113,33 @@ namespace I2c {
         }
 
         // Writes `count` bytes of the buffer (all of it from `offset` on without a count) to the device.
-        undefined Write(int address, byte buffer[], int offset = 0, int count = -1) {
+        undefined Write(defined int address, byte buffer[], defined int offset = 0, defined int count = -1) {
             this.Check()
             if (count < 0) { count = buffer.length - offset }
             if (__I2cWrite(this.handle, address, buffer, offset, count) < 0) { I2c.Errors.Throw() }
         }
 
-        undefined WriteByte(int address, int value) {
+        undefined WriteByte(defined int address, defined int value) {
             var b = new byte[1]
             b[0] = value & 255
             this.Write(address, b)
         }
 
         // Reads `count` bytes from the device into the buffer.
-        undefined ReadInto(int address, byte buffer[], int offset, int count) {
+        undefined ReadInto(defined int address, byte buffer[], defined int offset, defined int count) {
             this.Check()
             if (__I2cRead(this.handle, address, buffer, offset, count) < 0) { I2c.Errors.Throw() }
         }
 
         // Reads `count` bytes from the device.
-        byte[] Read(int address, int count) {
+        byte[] Read(defined int address, defined int count) {
             var data = new byte[count]
             this.ReadInto(address, data, 0, count)
             return data
         }
 
         // Writes `outCount` bytes (without: all), then reads `inCount` bytes with a repeated start in between (no other master can step in); returns the bytes read.
-        byte[] WriteRead(int address, byte buffer[], int inCount, int outCount = -1) {
+        byte[] WriteRead(defined int address, byte buffer[], defined int inCount, defined int outCount = -1) {
             this.Check()
             if (outCount < 0) { outCount = buffer.length }
             var data = new byte[inCount]
@@ -148,7 +148,7 @@ namespace I2c {
         }
 
         // One byte of a register: writes the register number, reads the value.
-        int ReadRegister(int address, int register) {
+        defined int ReadRegister(defined int address, defined int register) {
             var r = new byte[1]
             r[0] = register & 255
             var data = this.WriteRead(address, r, 1)
@@ -156,13 +156,13 @@ namespace I2c {
         }
 
         // `count` bytes from the register on (the device counts the register up).
-        byte[] ReadRegisters(int address, int register, int count) {
+        byte[] ReadRegisters(defined int address, defined int register, defined int count) {
             var r = new byte[1]
             r[0] = register & 255
             return this.WriteRead(address, r, count)
         }
 
-        undefined WriteRegister(int address, int register, int value) {
+        undefined WriteRegister(defined int address, defined int register, defined int value) {
             var b = new byte[2]
             b[0] = register & 255
             b[1] = value & 255
@@ -170,7 +170,7 @@ namespace I2c {
         }
 
         // Writes the bytes into the registers from `register` on.
-        undefined WriteRegisters(int address, int register, byte data[]) {
+        undefined WriteRegisters(defined int address, defined int register, byte data[]) {
             var b = new byte[data.length + 1]
             b[0] = register & 255
             for (var i = 0; i < data.length; i++) { b[i + 1] = data[i] }
@@ -178,7 +178,7 @@ namespace I2c {
         }
 
         // true if a device answers at the address.
-        bool Probe(int address) {
+        bool Probe(defined int address) {
             this.Check()
             var r = __I2cProbe(this.handle, address)
             if (r < 0) { I2c.Errors.Throw() }
@@ -204,21 +204,21 @@ namespace I2c {
     // The simulated bus "sim" from the outside: the devices on it (for tests, and to try a program without the hardware).
     class Sim {
         // Puts a device with 256 registers (all 0) at the address; an existing one is replaced.
-        static undefined Add(int address) {
+        static undefined Add(defined int address) {
             if (!__I2cSimAdd(address)) { I2c.Errors.Throw() }
         }
 
-        static undefined Remove(int address) {
+        static undefined Remove(defined int address) {
             if (!__I2cSimRemove(address)) { I2c.Errors.Throw() }
         }
 
         // Sets a register of a device (what a sensor measures).
-        static undefined SetRegister(int address, int register, int value) {
+        static undefined SetRegister(defined int address, defined int register, defined int value) {
             if (!__I2cSimSetRegister(address, register, value)) { I2c.Errors.Throw() }
         }
 
         // A register of a device (what a program wrote there).
-        static int GetRegister(int address, int register) {
+        static defined int GetRegister(defined int address, defined int register) {
             var v = __I2cSimGetRegister(address, register)
             if (v < 0) { I2c.Errors.Throw() }
             return v
@@ -233,10 +233,10 @@ namespace I2c {
     /// <summary>An I2C bus as a device of the device framework (`i2c:i2c-1`, `i2c:sim`). A bus has no data of its own (Read/Write throw NotSupportedException):
     /// its devices are `At(address)` - each an I2c.Target with its own identifier (`i2c:i2c-1/0x48`).</summary>
     class BusDevice : Device {
-        int speed
+        defined int speed
         I2c.Bus bus
 
-        construct(Driver driver, string name, int speed = 100000) : base(driver, name) {
+        construct(Driver driver, string name, defined int speed = 100000) : base(driver, name) {
             this.speed = speed
             this.bus = undefined
         }
@@ -269,7 +269,7 @@ namespace I2c {
         }
 
         /// <summary>The device at this address on the bus (the same object for the same address).</summary>
-        I2c.Target At(int address) {
+        I2c.Target At(defined int address) {
             var name = this.name + "/0x" + I2c.Target.Hex(address)
             var owner = this.owner
             if (owner != undefined) {
@@ -287,16 +287,16 @@ namespace I2c {
     /// waiting (WriteString, ReadString, WaitFor) work on them like on every device.</summary>
     class Target : Device {
         I2c.BusDevice busDevice
-        int address
+        defined int address
         // how many bytes Read() reads
-        int ReadSize = 1
+        defined int ReadSize = 1
 
-        construct(Driver driver, I2c.BusDevice bus, int address) : base(driver, bus.Name + "/0x" + I2c.Target.Hex(address)) {
+        construct(Driver driver, I2c.BusDevice bus, defined int address) : base(driver, bus.Name + "/0x" + I2c.Target.Hex(address)) {
             this.busDevice = bus
             this.address = address
         }
 
-        int Address { get { return this.address } }
+        defined int Address { get { return this.address } }
         I2c.BusDevice OnBus { get { return this.busDevice } }
 
         override bool Connected() { return this.busDevice.Connected() }
@@ -304,7 +304,7 @@ namespace I2c {
 
         override any Read() { return this.Read(this.ReadSize) }
 
-        byte[] Read(int count) {
+        byte[] Read(defined int count) {
             var data = this.busDevice.Bus.Read(this.address, count)
             DeviceManager.Host.Trace(this, false, data)
             return data
@@ -317,18 +317,18 @@ namespace I2c {
         }
 
         /// <summary>Writes the bytes, then reads `inCount` bytes with a repeated start in between.</summary>
-        byte[] WriteRead(byte data[], int inCount) {
+        byte[] WriteRead(byte data[], defined int inCount) {
             DeviceManager.Host.Trace(this, true, data)
             var result = this.busDevice.Bus.WriteRead(this.address, data, inCount)
             DeviceManager.Host.Trace(this, false, result)
             return result
         }
 
-        int ReadRegister(int register) { return this.busDevice.Bus.ReadRegister(this.address, register) }
-        undefined WriteRegister(int register, int value) { this.busDevice.Bus.WriteRegister(this.address, register, value) }
+        defined int ReadRegister(defined int register) { return this.busDevice.Bus.ReadRegister(this.address, register) }
+        undefined WriteRegister(defined int register, defined int value) { this.busDevice.Bus.WriteRegister(this.address, register, value) }
 
         // two hex digits (the address in an identifier)
-        static string Hex(int value) {
+        static string Hex(defined int value) {
             var digits = "0123456789abcdef"
             return digits.Substring((value >> 4) & 15, 1) + digits.Substring(value & 15, 1)
         }
@@ -338,9 +338,9 @@ namespace I2c {
 /// <summary>The I2C buses of this machine for the device framework: `DeviceManager.AddDriver(new I2cDriver())`. Buses are `i2c:i2c-1`, `i2c:sim`; a device at an
 /// address is found by its identifier (`DeviceManager.Get("i2c:i2c-1/0x48")`) or made with `bus.At(0x48)`.</summary>
 class I2cDriver : Driver {
-    int speed
+    defined int speed
 
-    construct(int speed = 100000) : base("i2c") {
+    construct(defined int speed = 100000) : base("i2c") {
         this.speed = speed
     }
 
@@ -371,7 +371,7 @@ class I2cDriver : Driver {
         }
         if (start >= text.Length) { return undefined }
         for (int i = start; i < text.Length; i++) {
-            any digit = "0123456789abcdef".IndexOf(text.Substring(i, 1).ToLower())
+            int digit = "0123456789abcdef".IndexOf(text.Substring(i, 1).ToLower())
             if (digit < 0 || digit >= radix) { return undefined }
             address = address * radix + digit
         }

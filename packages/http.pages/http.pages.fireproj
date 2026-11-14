@@ -1,0 +1,13 @@
+{
+  "format": 1,
+  "name": "fire-http.pages",
+  "type": "library",
+  "import": "http.pages",
+  "standard": true,
+  "settings": {
+    "version": "1.0.0",
+    "author": "fire",
+    "license": "fire",
+    "description": "The standard library 'http.pages' of fire: FXML views as web pages - HTML with CSS layout, the events of the browser over a WebSocket, the changes back."
+  }
+}

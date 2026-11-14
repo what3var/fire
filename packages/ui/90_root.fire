@@ -5,10 +5,10 @@ namespace UI {
         Element owner
         Framebuffer picture
         Renderer renderer
-        int x = 0
-        int y = 0
-        int w = 0
-        int h = 0
+        defined int x = 0
+        defined int y = 0
+        defined int w = 0
+        defined int h = 0
     }
 
     class Root {
@@ -19,17 +19,17 @@ namespace UI {
         Panel content
         // Resources and implicit styles for the whole interface (see ResourceDictionary)
         ResourceDictionary resources
-        int width
-        int height
+        defined int width
+        defined int height
         // Cell size of the font in pixels (width and height of a character)
-        int cw
-        int ch
+        defined int cw
+        defined int ch
         // The fonts that elements have asked for by name (see FontFor)
         List fontNames
         List fontObjects
         bool closed = false
-        int mouseX = 0
-        int mouseY = 0
+        defined int mouseX = 0
+        defined int mouseY = 0
         Element hoverElement
         Element pressedElement
         Element focusElement
@@ -48,8 +48,8 @@ namespace UI {
         // Drag & drop between the elements (docs/ui/README.md): the press a drag may start from, what is dragged, its source, the element under the pointer that
         // takes it and what it would do
         Element dragFrom
-        int dragX0 = 0
-        int dragY0 = 0
+        defined int dragX0 = 0
+        defined int dragY0 = 0
         bool dragging = false
         UI.DragData dragData
         Element dragSource
@@ -61,47 +61,47 @@ namespace UI {
         Element hoverTarget
         UI.DragData hoverData
         // The label at the pointer while a drag goes on (see MoveDragImage): where it is drawn (dragImageW = 0: nowhere)
-        int dragImageX = 0
-        int dragImageY = 0
-        int dragImageW = 0
-        int dragImageH = 0
+        defined int dragImageX = 0
+        defined int dragImageY = 0
+        defined int dragImageW = 0
+        defined int dragImageH = 0
         // ... or a picture instead of the label (DragData.Image, or the snapshot of the source element that the root made and owns), its top left corner at
         // (dragPicX, dragPicY) from the pointer, dragPicW x dragPicH logical pixels big
         Framebuffer dragPicture
         Framebuffer dragSnapshot
-        int dragPicX = 0
-        int dragPicY = 0
-        int dragPicW = 0
-        int dragPicH = 0
+        defined int dragPicX = 0
+        defined int dragPicY = 0
+        defined int dragPicW = 0
+        defined int dragPicH = 0
         // The modifier keys held now (as KeyDown/KeyUp report them; UI.Keys.Shift/Shortcut read it): a text field copies instead of moving a drop with Ctrl
-        int modifiers = 0
+        defined int modifiers = 0
         // Counts the cycles of this root (Tick, Cycle): elements measure short intervals with it (a double click)
-        int cycles = 0
+        defined int cycles = 0
         // Clicks in a row, for Element.MouseDown: 1 a single click, 2 a double click, 3 a triple click, ... A press counts on when it is the same button as the one
         // before, within `doubleClickTime` milliseconds and `doubleClickDistance` pixels of it. The time comes from `clock` (a lambda that gives milliseconds, for
         // example `func () => { return DateTime.Now.Ticks / 10000 }` with #import "time"); without it the cycles of the root count (one is about 1/60 s with VSync).
-        int clickCount = 0
-        int doubleClickTime = 400
-        int doubleClickDistance = 4
+        defined int clickCount = 0
+        defined int doubleClickTime = 400
+        defined int doubleClickDistance = 4
         int lambda clock
-        int lastClickButton = -1
-        int lastClickX = 0
-        int lastClickY = 0
-        int lastClickTime = 0
+        defined int lastClickButton = -1
+        defined int lastClickX = 0
+        defined int lastClickY = 0
+        defined int lastClickTime = 0
         // Tooltips (Element.ToolTip): after the pointer rested `toolTipDelay` milliseconds on an element (the time of `clock`, else of the cycles), until it moves on,
         // presses, scrolls or a key comes
-        int toolTipDelay = 500
+        defined int toolTipDelay = 500
         Element tipElement
-        int tipSince = 0
+        defined int tipSince = 0
         UI.ToolTipPopup tipPopup
         // Invalidate: if something has changed, Update arranges anew and repaints - only the area that has changed, as long as no element has moved elsewhere.
         bool dirty = true
         bool fullRedraw = true
         bool hasDirtyRect = false
-        int dirtyX0 = 0
-        int dirtyY0 = 0
-        int dirtyX1 = 0
-        int dirtyY1 = 0
+        defined int dirtyX0 = 0
+        defined int dirtyY0 = 0
+        defined int dirtyX1 = 0
+        defined int dirtyY1 = 0
         // while arranging the position or size of an element has changed
         bool layoutMoved = false
         // while arranging and drawing: write accesses to the fields of the elements are then no changes
@@ -109,37 +109,37 @@ namespace UI {
         lambda<any, any, any, any> watcher
 
         // Touchscreen: the finger that guides the pointer (-1: none; a second finger next to it is ignored), where it touched down, where it was last, whether it is currently swiping (and which element is then moved)
-        int touchFinger = -1
-        int touchX0 = 0
-        int touchY0 = 0
-        int touchX = 0
-        int touchY = 0
+        defined int touchFinger = -1
+        defined int touchX0 = 0
+        defined int touchY0 = 0
+        defined int touchX = 0
+        defined int touchY = 0
         bool touchPanning = false
         Element touchPanner
         // from this many pixels of movement a tap becomes a swipe
-        int touchSlop = 10
+        defined int touchSlop = 10
 
         // Joystick: D-pad (hat) and left stick become the arrow keys, buttons become Enter/Escape/Tab. The button numbers are those of the device (for an Xbox pad: 0 = A, 1 = B, 4 = LB, 5 = RB); -1 switches a button off.
-        int joyAxisX = 0
-        int joyAxisY = 1
-        int joyButtonActivate = 0
-        int joyButtonCancel = 1
-        int joyButtonPrevious = 4
-        int joyButtonNext = 5
+        defined int joyAxisX = 0
+        defined int joyAxisY = 1
+        defined int joyButtonActivate = 0
+        defined int joyButtonCancel = 1
+        defined int joyButtonPrevious = 4
+        defined int joyButtonNext = 5
         // Holding repeats the key: after `joyRepeatDelay` cycles, then every `joyRepeatInterval` (one cycle is a tick - with VSync about 1/60 s)
-        int joyRepeatDelay = 24
-        int joyRepeatInterval = 6
-        int joyStickX = 0
-        int joyStickY = 0
-        int joyHatX = 0
-        int joyHatY = 0
-        int joyKey = 0
-        int joyHold = 0
+        defined int joyRepeatDelay = 24
+        defined int joyRepeatInterval = 6
+        defined int joyStickX = 0
+        defined int joyStickY = 0
+        defined int joyHatX = 0
+        defined int joyHatY = 0
+        defined int joyKey = 0
+        defined int joyHold = 0
 
         // The look from the system (SystemTheme.Current()): set them to override it - see Scaling, Dark, Accent
-        float scaling = 1.0
+        defined float scaling = 1.0
         bool dark = false
-        int accent = 0x0078D7
+        defined int accent = 0x0078D7
         // a board without a desktop: whole-number scaling, the fast built-in font
         bool embedded = false
         // the materials of the floating elements, kept while nothing behind them is repainted (see PopupSurface)
@@ -191,7 +191,7 @@ namespace UI {
         // The scale of the interface: logical pixels -> pixels of the screen (1.5 = 150 %). Starts with the scaling of the system, like every other program on it;
         // setting it overrides that (`root.Scaling = 1.0`). The elements keep their sizes in logical pixels, the window and the framebuffer grow with it, text is
         // drawn sharp at the larger size.
-        float Scaling {
+        defined float Scaling {
             get { return this.scaling }
             set { this.ApplyScaling(value) }
         }
@@ -207,7 +207,7 @@ namespace UI {
         }
 
         // The accent colour as 0xRRGGBB (focus, selection, hovered buttons). Starts with the accent colour of the system; setting it overrides that.
-        int Accent {
+        defined int Accent {
             get { return this.accent }
             set {
                 this.accent = value
@@ -245,7 +245,7 @@ namespace UI {
             if (this.dark || this.accent != 0x0078D7) { this.theme.SetColors(this.dark, this.accent) }
             this.theme.transparency = UI.Effects.Transparency && system.transparency && !this.embedded
             this.theme.glass = UI.Effects.Glass && this.theme.transparency
-            float systemScale = system.scale
+            defined float systemScale = system.scale   // (the scale of the system: always a number)
             if (this.embedded) { systemScale = Math.Max(1.0, Math.Round(systemScale)) }
             this.content = new Panel(0, 0, this.width, this.height)
             this.content.Filled = false
@@ -268,10 +268,10 @@ namespace UI {
         }
 
         // A new scale: the renderer draws at it, the framebuffer and the window get the logical size times the scale.
-        undefined ApplyScaling(float scale) {
+        undefined ApplyScaling(defined float scale) {
             var s = scale
             if (s < 0.25) { s = 0.25 }
-            if (this.embedded) { s = Math.Max(1.0, Math.Round(s)) }
+            if (this.embedded) { s = trust Math.Max(1.0, Math.Round(s)) }   // (Math gives a number for a number)
             this.scaling = s
             this.renderer.scale = s
             this.cw = this.renderer.Logical(this.renderer.CellWidth())
@@ -286,7 +286,7 @@ namespace UI {
         }
 
         // A position of the window (pixels of the screen) in logical pixels.
-        int ToLogical(int v) {
+        defined int ToLogical(defined int v) {
             if (this.scaling == 1.0) { return v }
             return Math.Floor(v / this.scaling)!int
         }
@@ -319,7 +319,7 @@ namespace UI {
         }
 
         // The area (x, y, w, h) must be repainted.
-        undefined InvalidateRect(int x, int y, int w, int h) {
+        undefined InvalidateRect(defined int x, defined int y, defined int w, defined int h) {
             this.dirty = true
             var x1 = x + w + 1
             var y1 = y + h + 1
@@ -346,7 +346,7 @@ namespace UI {
         }
 
         // Does the rectangle lie in the area that is currently being repainted? (Elements outside do not paint.)
-        bool Needs(int x, int y, int w, int h) {
+        bool Needs(defined int x, defined int y, defined int w, defined int h) {
             if (this.fullRedraw) { return true }
             if (!this.hasDirtyRect) { return false }
             return x < this.dirtyX1 && x + w > this.dirtyX0 && y < this.dirtyY1 && y + h > this.dirtyY0
@@ -466,7 +466,7 @@ namespace UI {
 
         // The background of the interface: the colour of the theme - translucent where the desktop draws a material behind the window (WindowBackdrop), so that
         // it shows (copied with its alpha, not mixed).
-        undefined FillBack(int x, int y, int w, int h) {
+        undefined FillBack(defined int x, defined int y, defined int w, defined int h) {
             var given = Backdrop.None
             if (this.windowBackdrop != Backdrop.None && this.theme.transparency && this.window != undefined) { given = this.window.Backdrop }
             if (given == Backdrop.None) {
@@ -488,7 +488,7 @@ namespace UI {
 
         // A box of the style: filled with `fill` and outlined with `border` (either may be undefined), with the corners of the theme (`radius` -1) or `radius`.
         // A radius of 0 is the plain rectangle, as before.
-        undefined Box(int x, int y, int w, int h, Brush fill, Pen border, int radius = -1) {
+        undefined Box(defined int x, defined int y, defined int w, defined int h, Brush fill, Pen border, defined int radius = -1) {
             if (radius < 0) { radius = this.theme.radius }
             if (radius == 0) {
                 if (fill != undefined) { this.renderer.FillRect(x, y, w, h, fill) }
@@ -500,19 +500,19 @@ namespace UI {
         }
 
         // How far the shadow of a floating element reaches beyond it (0 without transparency).
-        int ShadowMargin() {
+        defined int ShadowMargin() {
             if (!this.theme.transparency) { return 0 }
             return this.theme.shadowSize + 3
         }
 
         // A floating element and its shadow must be repainted.
-        undefined InvalidatePopup(Element popup, int x, int y) {
+        undefined InvalidatePopup(Element popup, defined int x, defined int y) {
             var m = this.ShadowMargin()
             this.InvalidateRect(x - m, y - m, popup.actualWidth + 2 * m, popup.actualHeight + 2 * m)
         }
 
         // The fine shadow under a floating element (before it is drawn; the element says its corners, see Element.PopupRadius).
-        undefined PopupShadow(Element popup, int x, int y) {
+        undefined PopupShadow(Element popup, defined int x, defined int y) {
             if (!this.theme.transparency || !popup.Visible) { return }
             var color = 0x1F000000
             if (this.dark) { color = 0x48000000 }
@@ -522,7 +522,7 @@ namespace UI {
         // The surface of a floating element (a menu): acrylic over what lies behind it - or, without glass, its plain background `back` - with the corners of the
         // theme and a hairline. The acrylic is kept (a framebuffer per element) and only made anew when what lies behind it was repainted around it: a row that
         // changes inside the menu does not blur the menu itself again.
-        undefined PopupSurface(Element popup, int x, int y, int w, int h, Brush back) {
+        undefined PopupSurface(Element popup, defined int x, defined int y, defined int w, defined int h, Brush back) {
             var t = this.theme
             var radius = t.popupRadius
             if (!t.glass || !t.transparency) {
@@ -589,7 +589,7 @@ namespace UI {
 
         // Restricts drawing to the rectangle (intersected with the current one); PopClip restores the previous one. The elements call both
         // in pairs (for example a ScrollViewer around its children).
-        undefined PushClip(int x, int y, int w, int h) {
+        undefined PushClip(defined int x, defined int y, defined int w, defined int h) {
             var r = new Rect(x, y, w, h)
             if (this.clips.Count > 0) { r.IntersectWith(this.clips[this.clips.Count - 1]) }
             r.TakeTo(this)
@@ -611,7 +611,7 @@ namespace UI {
 
         // Shows an element floating at the screen position (x, y) above everything; it belongs to the root from now on. `transient`: destroy
         // on closing (menus). `owner`: the element that opened it (a click on it only closes, does not reopen right away).
-        undefined ShowPopup(Element popup, int x, int y, bool transient = true, Element owner = undefined) {
+        undefined ShowPopup(Element popup, defined int x, defined int y, bool transient = true, Element owner = undefined) {
             popup.TakeTo(this)
             popup.Left = x
             popup.Top = y
@@ -650,14 +650,14 @@ namespace UI {
         }
 
         // Shows a menu (list of MenuItem) with its top left corner at (x, y); a chosen row or a click next to it closes it.
-        UI.MenuPopup ShowMenu(List items, int x, int y, Element owner = undefined) {
+        UI.MenuPopup ShowMenu(List items, defined int x, defined int y, Element owner = undefined) {
             var menu = new MenuPopup(items)
             this.ShowPopup(menu, x, y, true, owner)
             return menu
         }
 
         // The element under the mouse pointer: first the floating elements (the topmost first), then the interface.
-        UI.Element Hit(int px, int py) {
+        UI.Element Hit(defined int px, defined int py) {
             var i = this.popups.Count - 1
             while (i >= 0) {
                 any hit = this.popups[i].HitTest(px, py)
@@ -789,8 +789,8 @@ namespace UI {
         // of them per cycle, and each one asks the elements below it (hover, cursor) - that would take the time of the program.
         undefined DispatchEvents() {
             bool moved = false
-            int mx = 0
-            int my = 0
+            defined int mx = 0   // (the position of a mouse move of the window system: always numbers)
+            defined int my = 0
             while (true) {
                 any e = this.window.NextEvent()   // (declared in the loop: the event array belongs to this iteration)
                 if (e == undefined) { break }
@@ -876,12 +876,12 @@ namespace UI {
         }
 
         // Is this one of the four arrow keys?
-        bool IsArrow(int key) {
+        bool IsArrow(defined int key) {
             return key == UI.Keys.Left() || key == UI.Keys.Right() || key == UI.Keys.Up() || key == UI.Keys.Down()
         }
 
         // Arrow key: the focus moves to the next focusable element in this direction. If there is none, the ScrollViewer around the element (or under the pointer) is scrolled instead.
-        undefined FocusMove(int key) {
+        undefined FocusMove(defined int key) {
             var list = new List()
             this.content.Collect(list)
             var current = this.focusElement
@@ -937,14 +937,14 @@ namespace UI {
         }
 
         // The distance of two segments [a0, a1) and [b0, b1) (0 if they overlap).
-        int Gap(int a0, int a1, int b0, int b1) {
+        defined int Gap(defined int a0, defined int a1, defined int b0, defined int b1) {
             if (b0 >= a1) { return b0 - a1 }
             if (a0 >= b1) { return a0 - b1 }
             return 0
         }
 
         // Scrolls (like the mouse wheel) the next ScrollViewer or the list above/around `element` in the direction of the arrow key.
-        undefined ScrollFrom(Element element, int key) {
+        undefined ScrollFrom(Element element, defined int key) {
             var dx = 0
             var dy = 0
             if (key == UI.Keys.Up()) { dy = 1 }
@@ -962,7 +962,7 @@ namespace UI {
         // ---- Touchscreen ----
 
         // A finger touches down: like a pressed left mouse button at this place. If it moves no further than `touchSlop`, lifting is a click; if it drags over a list or a ScrollViewer, it becomes a swipe.
-        undefined TouchDown(int finger, int px, int py) {
+        undefined TouchDown(defined int finger, defined int px, defined int py) {
             if (this.touchFinger >= 0) { return }
             this.touchFinger = finger
             this.touchX0 = px
@@ -975,7 +975,7 @@ namespace UI {
             this.MouseDown(1, px, py)
         }
 
-        undefined TouchMove(int finger, int px, int py) {
+        undefined TouchMove(defined int finger, defined int px, defined int py) {
             if (finger != this.touchFinger) { return }
             if (!this.touchPanning) {
                 var dx = px - this.touchX0
@@ -1016,7 +1016,7 @@ namespace UI {
             return undefined
         }
 
-        undefined TouchUp(int finger, int px, int py) {
+        undefined TouchUp(defined int finger, defined int px, defined int py) {
             if (finger != this.touchFinger) { return }
             this.touchFinger = -1
             if (this.touchPanning) {
@@ -1036,7 +1036,7 @@ namespace UI {
         // ---- Joystick ----
 
         // An axis moves (-1 to 1): the left stick becomes a direction, with a dead zone in the middle.
-        undefined JoyAxis(int axis, any v) {
+        undefined JoyAxis(defined int axis, any v) {
             if (axis == this.joyAxisX) { this.joyStickX = this.StickDirection(v, this.joyStickX) }
             else if (axis == this.joyAxisY) { this.joyStickY = this.StickDirection(v, this.joyStickY) }
             else { return }
@@ -1044,7 +1044,7 @@ namespace UI {
         }
 
         // -1, 0 or 1: deflected from 0.6 on, back to the middle only below 0.3 (in between it stays as it was).
-        int StickDirection(any v, int old) {
+        defined int StickDirection(any v, defined int old) {
             if (v > 0.6) { return 1 }
             if (v < -0.6) { return -1 }
             if (v > -0.3 && v < 0.3) { return 0 }
@@ -1052,7 +1052,7 @@ namespace UI {
         }
 
         // The D-pad (hat) has a bit mask: 1 up, 2 right, 4 down, 8 left.
-        undefined JoyHat(int mask) {
+        undefined JoyHat(defined int mask) {
             this.joyHatY = 0
             this.joyHatX = 0
             if (mask % 2 == 1) { this.joyHatY = -1 }
@@ -1087,7 +1087,7 @@ namespace UI {
         }
 
         // A joystick button was pressed.
-        undefined JoyButton(int button) {
+        undefined JoyButton(defined int button) {
             if (button == this.joyButtonActivate) { this.KeyDown(UI.Keys.Enter(), 0) }
             else if (button == this.joyButtonCancel) { this.KeyDown(UI.Keys.Escape(), 0) }
             else if (button == this.joyButtonPrevious) { this.FocusStep(true) }
@@ -1124,11 +1124,11 @@ namespace UI {
         }
 
         // what the wheel moved that is not a whole notch yet (a touchpad gives fractions: they add up)
-        float wheelRestX = 0.0
-        float wheelRestY = 0.0
+        defined float wheelRestX = 0.0
+        defined float wheelRestY = 0.0
 
         // A wheel event of the window: the distances may be fractions (touchpads, high resolution wheels); whole notches go to MouseWheel.
-        undefined WheelEvent(any rawX, any rawY, int px, int py) {
+        undefined WheelEvent(any rawX, any rawY, defined int px, defined int py) {
             float x = rawX
             float y = rawY
             this.wheelRestX = this.wheelRestX + x
@@ -1142,12 +1142,12 @@ namespace UI {
         }
 
         // the whole part (towards 0)
-        static int Whole(float v) {
+        static defined int Whole(defined float v) {
             if (v >= 0.0) { return Math.Floor(v)!int }
             return Math.Ceiling(v)!int
         }
 
-        undefined MouseWheel(int dx, int dy, int px, int py) {
+        undefined MouseWheel(defined int dx, defined int dy, defined int px, defined int py) {
             this.HideToolTip()
             this.mouseX = px
             this.mouseY = py
@@ -1158,7 +1158,7 @@ namespace UI {
             }
         }
 
-        undefined MouseDown(int button, int px, int py) {
+        undefined MouseDown(defined int button, defined int px, defined int py) {
             this.HideToolTip()
             this.tipElement = undefined
             this.MouseDownCore(button, px, py)
@@ -1166,14 +1166,14 @@ namespace UI {
         }
 
         // The time for counting clicks, in milliseconds: from `clock`, otherwise from the cycles (60 per second).
-        int ClickTime() {
+        defined int ClickTime() {
             var c = this.clock
             if (c != undefined) { return c() }
             return this.cycles * 1000 / 60
         }
 
         // Counts the press into clickCount: the same button, soon enough and near enough to the one before makes it a double (triple, ...) click.
-        undefined CountClick(int button, int px, int py) {
+        undefined CountClick(defined int button, defined int px, defined int py) {
             var now = this.ClickTime()
             var near = UI.M.Abs(px - this.lastClickX) <= this.doubleClickDistance && UI.M.Abs(py - this.lastClickY) <= this.doubleClickDistance
             if (button == this.lastClickButton && near && now - this.lastClickTime <= this.doubleClickTime) { this.clickCount = this.clickCount + 1 }
@@ -1184,7 +1184,7 @@ namespace UI {
             this.lastClickTime = now
         }
 
-        undefined MouseDownCore(int button, int px, int py) {
+        undefined MouseDownCore(defined int button, defined int px, defined int py) {
             this.mouseX = px
             this.mouseY = py
             this.CountClick(button, px, py)
@@ -1227,19 +1227,19 @@ namespace UI {
         }
 
         // Does the point lie in a floating element?
-        bool InsidePopup(int px, int py) {
+        bool InsidePopup(defined int px, defined int py) {
             for (var i = 0; i < this.popups.Count; i = i + 1) {
                 if (this.popups[i].HitTest(px, py) != undefined) { return true }
             }
             return false
         }
 
-        undefined MouseUp(int button, int px, int py) {
+        undefined MouseUp(defined int button, defined int px, defined int py) {
             this.MouseUpCore(button, px, py)
             this.UpdateCursor(px, py)
         }
 
-        undefined MouseUpCore(int button, int px, int py) {
+        undefined MouseUpCore(defined int button, defined int px, defined int py) {
             this.mouseX = px
             this.mouseY = py
             this.dragFrom = undefined
@@ -1252,7 +1252,7 @@ namespace UI {
             if (target != undefined) { target.MouseUp(this, button, px, py) }
         }
 
-        undefined MouseMove(int px, int py) {
+        undefined MouseMove(defined int px, defined int py) {
             this.mouseX = px
             this.mouseY = py
             var hit = this.Hit(px, py)
@@ -1319,14 +1319,14 @@ namespace UI {
         }
 
         // The element under the point that takes drops (AllowDrop), or undefined.
-        UI.Element DropTargetAt(int px, int py) {
+        UI.Element DropTargetAt(defined int px, defined int py) {
             var target = this.Hit(px, py)
             while (target != undefined && !(target.Enabled && target.AcceptsDrops())) { target = target.parent }
             return target
         }
 
         // The pointer moves during a drag: the target under it says what a drop would do (outside the window: nothing takes it).
-        undefined DragMove(int px, int py) {
+        undefined DragMove(defined int px, defined int py) {
             UI.Element target = undefined
             if (this.Inside(px, py)) { target = this.DropTargetAt(px, py) }
             var old = this.dragTarget
@@ -1340,7 +1340,7 @@ namespace UI {
         // take (Text or Files) and may leave (AllowExternal), the drag goes on in the desktop (Window.StartDrag) - the target it was over is left, the program
         // waits until the user lets go, and the source hears in OnDragDone what the other program did (None, Copy or Move). False: the drag stays inside.
         // Where the desktop cannot take a drag (Window.CanStartDrag: Wayland, macOS, no desktop) it stays inside as well: the user can come back into the window.
-        bool DragOut(int px, int py) {
+        bool DragOut(defined int px, defined int py) {
             if (this.Inside(px, py)) { return false }
             var data = this.dragData
             if (data == undefined || !data.AllowExternal || (!data.HasText && !data.HasFiles)) { return false }
@@ -1359,7 +1359,7 @@ namespace UI {
         }
 
         // The button was let go: the target takes the data (if it wants it), the source hears how it ended.
-        undefined FinishDrag(int px, int py) {
+        undefined FinishDrag(defined int px, defined int py) {
             this.DragMove(px, py)
             var effect = UI.DropEffect.None
             var target = this.dragTarget
@@ -1392,11 +1392,11 @@ namespace UI {
         bool IsDragging { get { return this.dragging } }
 
         // Is the point inside the window?
-        bool Inside(int px, int py) { return px >= 0 && py >= 0 && px < this.width && py < this.height }
+        bool Inside(defined int px, defined int py) { return px >= 0 && py >= 0 && px < this.width && py < this.height }
 
         // Something of another program is dragged over the window (an event DragHover): the element under it that takes drops hears OnDragOver with a DragData whose
         // content is not known yet (Pending, External); the element it leaves hears OnDragLeave.
-        undefined ExternalHover(int px, int py) {
+        undefined ExternalHover(defined int px, defined int py) {
             this.mouseX = px
             this.mouseY = py
             var target = this.DropTargetAt(px, py)
@@ -1500,7 +1500,7 @@ namespace UI {
         }
 
         // The label (or the picture) follows the pointer (px, py): only its old and its new place are repainted.
-        undefined MoveDragImage(int px, int py) {
+        undefined MoveDragImage(defined int px, defined int py) {
             if (this.dragImageW > 0) { this.InvalidateRect(this.dragImageX, this.dragImageY, this.dragImageW, this.dragImageH) }
             if (this.dragPicture != undefined) {
                 // (a pointer outside the window: the picture stays at its edge)
@@ -1580,7 +1580,7 @@ namespace UI {
         UI.Cursor shownCursor = UI.Cursor.Inherit
 
         /// <summary>The mouse pointer at (px, py): the element that holds the mouse, else the one below it, asks itself and the elements around it (CursorAt).</summary>
-        UI.Cursor CursorFor(int px, int py) {
+        UI.Cursor CursorFor(defined int px, defined int py) {
             // a drag: a hand over a target that takes it, "not allowed" elsewhere
             if (this.dragging) {
                 if (this.dragEffect == UI.DropEffect.None) { return UI.Cursor.No }
@@ -1596,14 +1596,14 @@ namespace UI {
             return UI.Cursor.Arrow
         }
 
-        undefined UpdateCursor(int px, int py) {
+        undefined UpdateCursor(defined int px, defined int py) {
             var c = this.CursorFor(px, py)
             if (c == this.shownCursor) { return }
             this.shownCursor = c
             if (this.window != undefined) { this.window.Cursor = c!int }
         }
 
-        undefined KeyDown(int key, int mod) {
+        undefined KeyDown(defined int key, defined int mod) {
             this.HideToolTip()
             this.tipElement = undefined
             this.modifiers = mod
@@ -1646,7 +1646,7 @@ namespace UI {
         }
 
         // A key was let go: only the modifier keys matter (see KeyDown).
-        undefined KeyUp(int key, int mod) {
+        undefined KeyUp(defined int key, defined int mod) {
             this.modifiers = mod
             if (this.dragging) {
                 this.DragMove(this.mouseX, this.mouseY)

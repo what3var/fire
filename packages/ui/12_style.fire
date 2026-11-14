@@ -194,7 +194,7 @@ namespace UI {
         List triggers
 
         construct(lambda<Element> factory) {
-            this.factory = factory
+            this.factory = take factory
             this.bindings = new List()
             this.triggers = new List()
         }
@@ -215,7 +215,7 @@ namespace UI {
     class DataTemplate {
         lambda<any> factory
 
-        construct(lambda<any> factory) { this.factory = factory }
+        construct(lambda<any> factory) { this.factory = take factory }
 
         UI.Element Build(any item) {
             var make = this.factory
@@ -289,7 +289,7 @@ namespace UI {
             this.styles = new List()
         }
 
-        int IndexOf(string key) {
+        defined int IndexOf(string key) {
             for (var i = 0; i < this.keys.Count; i = i + 1) {
                 if (this.keys[i] == key) { return i }
             }

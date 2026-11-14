@@ -28,16 +28,17 @@ Leitlinien:
 | 6 | [Ungenutzten Code weglassen](#11-ungenutzten-code-weglassen) (A-C und die Stufen 0-3 umgesetzt) | 0; mit 5 abstimmen | Bauzeit und Größe nativer Programme (ein minimales `ui`-Programm: 7,85 MB C vorher, 2,29 MB nach Phase A-C, 2,76 MB heute in Stufe 3) |
 | 6 | [Bau-Reihenfolge der Quellen von Paket-Natives](#12-bau-reihenfolge-der-quellen-von-paket-natives) | 9 | ein Paket mit Headern, die einander brauchen, hängt heute an der Reihenfolge seiner Liste |
 | 6 | [UI-Markup: fehlende Eigenschaften](#14-ui-markup-fehlende-eigenschaften) | - | klein; `.fxml` ist der Hauptweg für Oberflächen, dort fehlen ToolTip, Cursor und Drag & Drop |
-| 0 | [Arrays statt Byte-Puffer an Natives](#15-arrays-statt-byte-puffer-an-natives) | - | **Absturz** (Segfault) der VM bei einem häufigen Fehler; vor allem anderen |
+| 0 | ~~[Arrays statt Byte-Puffer an Natives](#15-arrays-statt-byte-puffer-an-natives)~~ (umgesetzt) | - | **Absturz** (Segfault) der VM bei einem häufigen Fehler; vor allem anderen |
 | 7 | [Mess-Werkzeug für Größe, Speicher und Typisierung](#16-mess-werkzeug-für-größe-speicher-und-typisierung) | 11, 13 | Entscheidungen über kleine Ziele (DOS: 640 KB) auf Zahlen statt Schätzungen stützen |
 | 7 | [Kleine und alte Ziele](#13-kleine-und-alte-ziele) (Zeigerarten, typisierte Arrays, `#intwidth 32` umgesetzt) | 0, 9 | Mikrocontroller, DOS, Win 3.x, Win9x, NT 3.51-XP: Speicher pro Wert, Breiten, neue Plattformen |
 | 8 | [Scene3D für Spiele](#16-scene3d-für-spiele) | 13 (Ziele, Breiten), 11 (Weglassen) | Spiele bis hinunter auf DOS: Größe zuerst, dann Terrain, Modelle, Animation, Effekte, Physik |
+| 3 | ~~[Volle Qualifikation mit dem Importnamen](#18-volle-qualifikation-mit-dem-importnamen)~~ (umgesetzt) | - | zwei Bibliotheken mit derselben Klasse auf oberster Ebene (spätestens bei JSON) sind heute nicht auseinanderzuhalten |
 
 **Arbeitsreihenfolge (Entscheidung des Benutzers, nach Tasks Schritt 8):**
 
 1. [Arrays statt Byte-Puffer an Natives](#15-arrays-statt-byte-puffer-an-natives) vervollständigen.
-2. Der Rest der laufenden Arbeitsliste: Ebene 2 (typisierte Locals und Felder als C-Typen, 13.9), Besitz ohne Aufruftiefe (`TakeTo` mit C-ABI),
-   schlankere Konstruktoren, weniger Value-Kopien (Alias-Slots, dann Zeiger-Argumente/Ergebnisse), spark: CPU-Last im Leerlauf und der FPS-Einbruch von scene3d.
+2. Der Rest der laufenden Arbeitsliste: Ebene 2 (typisierte Locals und Felder als C-Typen, 13.9), ~~Besitz ohne Aufruftiefe (`TakeTo` mit C-ABI)~~,
+   ~~schlankere Konstruktoren~~ (beide erledigt, 13.9), ~~weniger Value-Kopien (Alias-Slots, dann Zeiger-Argumente/Ergebnisse)~~ (umgesetzt, 13.9), spark: CPU-Last im Leerlauf und der FPS-Einbruch von scene3d.
 3. Die kleinen Punkte aus [Kleine und alte Ziele](#13-kleine-und-alte-ziele) ("Dazwischen, klein").
 4. Die Reste aus Generator, Linkage und Größe (Abschnitte 9, 11, 12, 17) - nur, was wirklich Vorteile bringt.
 5. UI zuletzt (Abschnitte 10 und 14).
@@ -685,6 +686,55 @@ Daten-Stack bei XC8), AVR nur mit einem eigenen kleinen Profil.
    selbst (Kopien, Aufrufe mit Values, Feldzugriffe) - das nimmt erst diese Ebene 2. Schon umgesetzt: kein `retain`/`release` für Parameter, die nach ihrer
    Prüfung `int`/`float`/`bool` sind (DOS 109 -> 103 KB, gcc 108 -> 79 KB), der Zustand des Threads im Datensegment unter Watcom/Huge (`FIRE_CC_NEAR_DATA`).
    Methoden mit erklärtem skalaren Rückgabetyp ohne `adopt`: mit `defined` (die VM erzwingt ihn, der Generator gibt die C-Zahl zurück).
+   **Messung (Punkt 2 der Arbeitsreihenfolge):** ein Programm mit Klassen, Feldern und Rechnen: mit `defined` an Feldern und Parametern ~30 % weniger Laufzeit
+   und ~23 % weniger fire-Code; direkte Aufrufe statt der Verteiler allein (Typ-Hinweise des Typprüfers an den Generator) brachten nichts - verworfen.
+   **Entscheidung des Benutzers: herleiten, die Sprache bleibt** - und die Pakete erklären, was kein `undefined` annimmt, selbst mit `defined`
+   (am Aufruf geprüft, der C-Rumpf rechnet mit C-Zahlen). Wo ein Wert wirklich `undefined` sein kann, testet der Paketcode ihn ausdrücklich (Vorgabe
+   oder Abbruch) und übergibt ihn mit `trust`. **Umgestellt:** scene3d (mit physics, effects, terrain), time, random, audio, hash, compression, io,
+   net, net.channel, tls, http, gpio, i2c, spi, usb, wifi, tracker, machine, x86, dos, xms, process, console, linq - die Zahlen-Parameter, deren Rumpf
+   `undefined` weder prüft noch speichert, dazu die Felder und Properties, in die sie gehen. Gefunden dabei: `Http.Url.Parse("http://h:abc/")` gab
+   eine URL mit Port `undefined` (jetzt die HttpException). **Danach umgestellt:** graphics, windows, ui, ui.docking, dialogs, circuits, circuits.ui und
+   der Rest der Pakete. **Die Prüfung nachgepflegt (der Benutzer: "das sollten wir auch bei Feldern"):** im Paketcode gelten Felder, Properties und
+   Rückgaben ohne `defined` wie im Code des Programms als "vielleicht undefined" (TypeChecker.Checked), ebenso das Ergebnis einer Methode des Programms,
+   die `int` statt `defined int` zurückgibt; `trust x` gilt auch für einen Wert unbekannten Typs; `List`/`Dictionary`/`HashSet.Count` des Prelude sind
+   `defined int`. Alle Bibliotheken bleiben strikt ohne Befund - die Stellen sind umgestellt: Rückgaben (`defined int Read(...)` über alle Überschreibungen
+   einheitlich, auch die der Interfaces), Felder ohne Startwert, die nie auf `undefined` getestet werden, Parameter, die in solche Felder gehen; wo ein Wert
+   wirklich fehlen kann, ein Test (`TextArea.At`, `Element.PinCoord`: Abbruch mit IndexOutOfBoundsException; `Model.Param`: die Vorgabe) und `trust`; die
+   untypisierten Listen der ui (`children`, Tracks) mit typisierten Locals (`Element child = this.children[i]`). Ein Feld ohne Startwert, das jetzt
+   `defined` ist, beginnt bei 0 statt bei `undefined`. Gefunden im vollen Testlauf: der Scanner hatte auch 102 lokale Variablen in Methoden zu `defined`
+   gemacht (sein Muster für Felder traf jede eingerückte Deklaration) - in http.pages wurde ein fehlender Wert eines JSON-Ereignisses so zur
+   ArgumentException (VM: ein Laufzeitfehler, nativ die DestroyedException danach); zurückgenommen, bewusst `defined` bleiben nur Locals, deren Wert
+   immer eine Zahl ist (die Skalierung des Systems, die Mauskoordinaten eines Ereignisses). Gemessen (die Vorlage "Desktop" mit ui, nativ, Release, linux): fire-Code von ui 397 -> 357 KB
+   (-10 %), graphics 24 -> 22 KB, windows 51 -> 49 KB, die erzeugten Helfer +27 KB, das Programm 2407 -> 2387 KB.
+   **Danach:** die Regel gilt auch für Aufrufe der Pakete aus dem Code des Programms (keine neuen Meldungen in den Vorlagen). **Das Herleiten für den
+   Code des Programms** (TypeChecker.Derive, docs/spec/TYPES.md): Parameter und Rückgaben der eigenen Methoden und Konstruktoren, denen jeder Aufruf
+   eine Zahl gibt, werden wie `defined` geprüft und nativ als C-Zahlen übergeben - ein größter Fixpunkt über Argumente, die Rückgaben anderer Methoden
+   oder unveränderte Parameter sind; ausgenommen, was ungesehen aufgerufen werden kann (Aufrufe über `any`, Methoden als Werte oder in Zeichenketten,
+   Überschreibungen von Paketmethoden, Konstruktoren von Basisklassen), Programme mit Reflection, Plugins und Debug-Builds. `FIRE_DERIVE_LOG=1`
+   zeigt die Entscheidungen, `FIRE_NO_DERIVE=1` schaltet es ab.
+   **Aus der Arbeitsliste (Punkt 2 der Reihenfolge):** *Besitz ohne Aufruftiefe* war schon umgesetzt (der Besitz-Stack `g_argIn`/`MYARGS`: eine
+   Methode mit `try TakeTo` hat eine C-Schnittstelle, VM und nativ gleich). *Schlankere Konstruktoren:* im Konstruktor gilt `self` von Anfang an als
+   lebendig (eine Prüfung statt einer je Feld), ebenso nach dem ersten Setzen eines Felds von `self` (dos16 "Scene3D Physics": Code 466 -> 465 KB).
+   Versucht und wieder verworfen: C-Rümpfe für Konstruktoren (`new X(1.0, 2.0)` mit C-Zahlen) - weder schneller (3 Mio. `new Vec(x, y, z)` und
+   1 Mio. Objekte mit Unterobjekt: gleich schnell im Rauschen) noch kleiner (linux "Scene3D Physics" +0,3 KB, dos16 +1 KB: die Funktion mit Values
+   vor dem C-Rumpf kostet, was die C-Zahlen sparen).
+   *Ebene 2, Getter:* ein Getter mit `defined`-Rückgabe hat einen C-Rumpf, `obj.X` auf einer bekannten Klasse ruft ihn (NATIVE_BACKEND.md); eine
+   Schleife mit Properties nativ 105 -> 33 ms und 1,1 KB kleiner. Die Properties von scene3d, effects und physics, deren Getter ein getyptes Native
+   liest, sind dafür `defined` (83; die Parameter des Material-Konstruktors und `Body.Dynamic(mass)` mit, damit der Paketcode ohne Befund bleibt;
+   im Beispiel "Scene3D Benchmark" `defined bool direct`). "Scene3D Physics": linux -4 KB, dos16 -0,4 KB; mit den Properties von scene3d nativ
+   62 -> 22 ms; die Vorlage "Desktop" bleibt gleich. Setter mit C-Rumpf versucht und verworfen (eine Schleife mit einem Setter 14 -> 16 ms, -16 Byte).
+   *Weniger Value-Kopien:* die Alias-Slots und die Zeigerkonvention (Größenziele) gab es schon (NATIVE_BACKEND.md "Kopien von Values",
+   "Zeigerkonvention"); dazu jetzt die C-Rümpfe: ihre Values per Adresse, ihre C-Zahlen per Wert (`fN_c_p(const Value* self_p, Real P0)`), ihre Hülle
+   mit Values ganz per Adresse. dos16 "Scene3D Physics" geladen 565 588 -> 564 692 Byte. Ergebnisse gehen schon heute über den Rückgabepuffer des
+   Aufrufers (Watcom), dort bleibt nichts zu holen.
+   *spark und scene3d:* die CPU-Last von spark im Leerlauf ist nach dem Benutzer wieder weg (gemessen unter Xvfb: ~5 % eines Kerns im Startfenster).
+   Der FPS-Einbruch von scene3d war vorübergehend: dasselbe Programm misst mit dem Stand vom 2.11. (2cccf9bb) und heute gleich (VM Release und Debug,
+   nativ, X11, Wine), und der Benutzer misst unter Windows (Intel UHD 620, "Scene3D Benchmark", 1280x720) Software 21, Hardware 31, DirectDrawing
+   59 Bilder/s - Software bei 640x480 damit wie früher um 60. Gefunden dabei: DirectDrawing ging unter Windows seit der eigenen Anzeige nicht mehr
+   direkt ins Fenster ("0 straight into the window"): ab Windows 8 ist jedes Fenster eines von DirectComposition (`FIRE_NATIVE_DCOMP`), das der
+   Vulkan-Weg von scene3d nicht kannte. **Jetzt** wie in graphics: das Gerät importiert Texturen von D3D11 (VK_KHR_external_memory_win32, dieselbe
+   LUID), der Presenter zeichnet Szene und Overlay in ein eigenes Bild in der Größe des Framebuffers, kopiert es in die Textur des Fensters und lässt
+   die Brücke des Fensters präsentieren (DirectComposition streckt es auf das Fenster) - übersetzt (mingw, -Wall), unter Windows noch nicht gelaufen.
 
 Für alle neuen Ziele: Zielprofile, Toolchain OpenWatcom (`bios16`/`bios32` auch gcc `-m32 -ffreestanding`, `efi-x64` clang/mingw), eine Plattformschicht pro Familie;
 Tests ohne Fenster über den seriellen Port bzw. die Konsole: DOSBox-X / dosemu2 (`dos16`, `dos32`, Win 3.11), QEMU (`bios16`/`bios32`; `efi-x64` mit der Firmware OVMF),
@@ -718,6 +768,15 @@ Tests ohne Fenster über den seriellen Port bzw. die Konsole: DOSBox-X / dosemu2
   Rücksprung in den Real Mode), **`efi`** (Protokolle der Firmware: GOP, Konsole, Variablen, Zeit), **`xms`** (siehe 3).
 
 **Dazwischen, klein:**
+
+* **Umgesetzt (Wunsch des Benutzers): Bit-Hilfen.** `>>>`/`>>>=` (logischer Shift in der Breite des `int` des Programms, `operator>>>` überladbar),
+  die Klasse `Bits` (PopCount, Leading/TrailingZeros, Rotate, ReverseBytes/Bits, Extract/Insert, die IEEE-Bits von float 64/32/16 - half precision),
+  typisierte Lese- und Schreibzugriffe im Byte-Puffer (`ReadInt8` ... `ReadFloat64`, `Write...`, in der Byte-Reihenfolge des Puffers oder der
+  angegebenen) und schnelle Puffer-Operationen (`Fill`, `CopyTo`, `Slice`, `IndexOf`, `Compare`); VM und nativ bitgleich (auch dos16 in DOSBox-X),
+  der Typprüfer kennt die Ergebnistypen. Doku: language/03-operators.md "Bit functions", 07-arrays-and-lists.md "Reading and writing numbers".
+* **`print` eines float nativ mit einer Stelle zu viel** (gefunden bei den Bit-Hilfen): `print(1.0 / 16777216.0)` gibt in der VM `5.960464477539063E-08`,
+  nativ `5.9604644775390625E-08` - die kürzeste Darstellung, die den Wert wieder ergibt, hat 16 Stellen; nativ werden 17 genommen. Klein, aber VM
+  und nativ sollen gleich drucken.
 
 * **Breiten pro Programm statt pro Prozess.** `Value.Ints32` und `Value.SingleFloats` sind statisch: Übersetzt der Editor ein Programm, während ein anderes mit
   `#intwidth 32` läuft, schneidet er dessen Konstanten ab. Die Breiten gehören zum Programm und werden über ein Objekt weitergereicht (das Zahlenmodell des Programms:
@@ -759,6 +818,9 @@ Canvas-Anordnung - ein Kind bekommt nur seine Wunschgröße, `HorizontalAlign`/`
 `Left`/`Top`) wie ein Grid mit einer Zelle an - gestreckt auf die Fenstergröße, mit `Margin` und Ausrichtung; Kinder mit Position bleiben wie heute.
 
 ## 15. Arrays statt Byte-Puffer an Natives
+
+**Umgesetzt** (Merge von `native-c`, "safe byte arguments"): Byte-Argumente der Natives werden geprüft (`bytesArg`/`bufferArg`), ein Array aus Zahlen an einem
+`byte[]`-Parameter geht als Kopie in einen Puffer, `byte a[] = [...]` legt einen Puffer an; `IO.File.WriteAllBytes("x.bin", [1, 2, 3])` schreibt 3 Bytes.
 
 Gefunden beim Durchgehen der Doku (Branch `doc-2611-1`): ein Array an einem `byte[]`-Parameter eines Packages bringt die VM zum **Absturz**
 (Segmentation fault) statt zu einer Exception:
@@ -965,10 +1027,12 @@ nach Arbeiten auf `targets`).
 und die drei Geschwindigkeiten (`TextureScrollX/Y`, `Emitter.Speed`) sind `defined` (`S3D.Speed` wieder nicht: sonst warnt der Typprüfer bei jedem
 Aufrufer mit einem gewöhnlichen `float : m/s`). Zuerst gemessen: dos16 431 314 -> 430 335 Byte (C-Rümpfe
 ohne Values). Dabei fiel ein Generatorfehler auf (Value-Hülle unter `fN` statt `fN_b` auf Zielen, die die Aufruftiefe zählen); `targets` hat ihn mit
-1c2af40 grundsätzlich gelöst: ein Programm, das die Aufruftiefe zählt, hat keine C-Rümpfe. scene3d-Programme zählen sie immer (`Scene.Add` nimmt mit
-`try TakeTo`) - `defined` ist hier darum heute neutral (dos16 431 752 -> 431 766 Byte; nativ und VM ohne messbaren Unterschied). **Nicht** übernommen:
+1c2af40 grundsätzlich gelöst: ein Programm, das die Aufruftiefe zählt, hat keine C-Rümpfe. scene3d-Programme zählten sie damals immer (`Scene.Add` nimmt mit
+`try TakeTo`; seit dem Besitz-Stack auf `targets` nicht mehr: `try TakeTo` geht mit C-Rümpfen) - `defined` war hier darum damals neutral (dos16 431 752 -> 431 766 Byte; nativ und VM ohne messbaren Unterschied). **Nicht** übernommen:
 die Handles als `defined int h` (+2,6 KB auf dos16: sie gehen fast nur an Natives, die Values nehmen, und werden dafür neu eingepackt) und die übrigen
-Eigenschaften (keine Änderung: Accessoren bekommen keinen C-Rumpf). Lohnen würde es sich, wenn die Natives C-Zahlen nehmen (`__S3DGetF(int, int)`) und
+Eigenschaften (keine Änderung: Accessoren bekamen keinen C-Rumpf - seit die Getter einen haben, sind die 83 Properties von scene3d, effects und
+physics, deren Getter ein getyptes Native liest, `defined`: "Scene3D Physics" linux 797 360 -> 793 264 Byte, dos16 geladen 564 692 -> 564 244, eine
+Schleife mit Properties nativ 62 -> 22 ms). Lohnen würde es sich, wenn die Natives C-Zahlen nehmen (`__S3DGetF(int, int)`) und
 C-Rümpfe auch neben dem Zählen der Aufruftiefe gingen - Punkte für `targets`. `FIRE_TESTS_ONLY=scene3d` prüft das dos16-C weiter mit.
 
 **Größe nach M5 (gemessen mit `forge build --stats`, dos16, ein Programm mit Szene, Boden, Ball-Körper, Kamera im schlanken Renderer, 60 Bilder):**
@@ -1042,3 +1106,25 @@ Ausgangswerte (von Hand gemessen, Beispiel "Scene3D Physics", dos16, Watcom `-Os
 C-Bibliothek 65 KB, FAR_DATA 48 KB. Ein Value von 8 statt 16 Byte (nur übersetzt, nicht lauffähig) spart 24 KB (3 %); ohne gezählte Aufruftiefe 27 KB, der
 C-ABI greift dann bei 3 von 227 Funktionen. Heap nach 200 Bildern: 32 fire-Objekte mit 103 Value-Slots (1,6 KB), 0 gepackte Bytes - bei 2,4 MB Heap
 insgesamt (davon 1 MB Framebuffer, der Rest Engine und Laufzeit).
+
+## 18. Volle Qualifikation mit dem Importnamen
+
+**Umgesetzt** (docs/tools/projects.md "Names of libraries"): Bibliotheken eines Projekts und Pakete, die keine Standardpakete sind. Offen: eine Bibliothek, die für
+sich selbst gebaut wird (ihre eigenen Tests), sieht ihre Namen nur kurz (`Parser`, nicht `LibA.Parser`); Vervollständigung und Hover im Editor zeigen die vollen
+Namen noch nicht eigens an.
+
+Zwei Bibliotheken (Pakete, Projekte), die beide eine Klasse oder ein Enum gleichen Namens auf oberster Ebene haben (spätestens bei JSON: `Json`,
+`Parser`, `Value`), lassen sich heute nicht zusammen benutzen. Gewünscht: der Importname gehört zur vollen Qualifikation - `Raser.Core.Info`,
+`Json.Parser` - so dass die Deklarationen auf oberster Ebene auseinandergehalten werden können.
+
+Entwurf:
+
+* Eine Deklaration einer Bibliothek außerhalb jedes `namespace` liegt in einem impliziten Namensraum mit dem Importnamen der Bibliothek; eine,
+  die schon in einem Namensraum liegt, der mit dem Importnamen beginnt, bleibt, wie sie ist (`namespace Raser.Core { ... }` wird nicht doppelt).
+* `#import "X"` macht die Namen von X außerdem kurz erreichbar (wie ein `#using X`). Haben zwei importierte Bibliotheken denselben kurzen Namen,
+  ist er mehrdeutig: ein Fehler, der beide vollen Namen nennt (der eigene Code und die Bibliothek selbst finden ihre eigenen Namen zuerst, wie bei
+  Namensräumen heute).
+* Folgen, die mitgehen müssen: die Namen in Meldungen, Reflection (`Type.Of`, `Reflect.New("...")`), JSON-Typnamen, die C-Namen im nativen
+  Backend und in den Modulen (Linkage static), der Editor (Vervollständigung, Hover). Die Standardpakete behalten ihre Namen (sie sind
+  `standard`: ihre Deklarationen bleiben global), damit `Framebuffer`, `DateTime` usw. sich nicht ändern.
+

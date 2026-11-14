@@ -81,6 +81,8 @@ namespace fire.Native
                 {
                     UnitId(field.Unit);
                     foreach (var arg in JsonTypeArgTexts(field.Type)) TArgRef(arg);
+                    // (a field of an enum: JSON makes values of it - the enum is in the table even when no code names it)
+                    if (fire.Values.EnumType.Named(field.Type.TrimStart('#').Replace("[]", "")) is { } enumType) EnumIndex(enumType);
                 }
         }
 
@@ -214,7 +216,7 @@ namespace fire.Native
             }
             else if (_moduleBodies == null) sb.AppendLine("#include \"fire_json.h\"   // (the engine: in the library of the module that calls it)");
             var rows = new List<string>();
-            int listCls = -1, listItems = -1, listCount = -1, objCls = -1, objKeys = -1, objValues = -1, objCount = -1;
+            int listCls = -1, listItems = -1, listCount = -1, objCls = -1, objKeys = -1, objValues = -1, objCount = -1, listOwns = -1, ownsEnum = 0;
             var jsonById = _classList.ToDictionary(c => c.Id);
             int jsonIds = _classList.Count == 0 ? 0 : _classList.Max(c => c.Id) + 1;
             for (int jsonId = 0; jsonId < jsonIds; jsonId++)
@@ -226,6 +228,10 @@ namespace fire.Native
                 {
                     flags |= 4;
                     (listCls, listItems, listCount) = (ci.Id, FieldPlace(rc, items).Slot, FieldPlace(rc, count).Slot);
+                    // `owns` as its field initialiser gives it (Owns.Explicit) - the reader runs no initialisers; a packed field starts at zero (Explicit) anyway
+                    if (rc.FieldIndex.TryGetValue("owns", out int owns) && !(PackedOn && RawLayoutOf(rc) is var (offs, _) && owns < offs.Length && offs[owns] >= 0)
+                        && fire.Values.EnumType.Named("Owns") is { } ownsType)
+                        (listOwns, ownsEnum) = (FieldPlace(rc, owns).Slot, EnumIndex(ownsType));
                 }
                 if (rc.Name == "JsonObject" && rc.FieldIndex.TryGetValue("keys", out int keys) && rc.FieldIndex.TryGetValue("values", out int values) && rc.FieldIndex.TryGetValue("count", out int n))
                 {
@@ -236,7 +242,7 @@ namespace fire.Native
             }
             sb.AppendLine($"static const JsonClassInfo kJsonClasses[] = {{{(rows.Count == 0 ? "{\"\", \"\", 0, NULL, 0, 0, 0, 0}" : string.Join(",\n    ", rows))}}};");
             sb.AppendLine($"static const uint32_t kJsonClassCount = {rows.Count};");
-            sb.AppendLine($"static const JsonSpecial kJsonSpecial = {{{listCls}, {listItems}, {listCount}, {objCls}, {objKeys}, {objValues}, {objCount}}};");
+            sb.AppendLine($"static const JsonSpecial kJsonSpecial = {{{listCls}, {listItems}, {listCount}, {objCls}, {objKeys}, {objValues}, {objCount}, {listOwns}, {ownsEnum}}};");
             var targs = _targIds.OrderBy(kv => kv.Value).ToList();
             sb.AppendLine("typedef struct JsonTArgText { const char* text; const TArg* targ; } JsonTArgText;");
             sb.AppendLine($"static const JsonTArgText kJsonTArgs[] = {{{(targs.Count == 0 ? "{NULL, NULL}" : string.Join(", ", targs.Select(t => $"{{{CString(t.Key)}, &ta_{t.Value}}}")))}}};");

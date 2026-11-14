@@ -162,6 +162,9 @@ namespace fire.UI.Markup
             Define("Canvas", true, "new UI.Canvas(0, 0, -1, -1)", PanelLook),
             Define("DockPanel", true, "new UI.DockPanel(0, 0, -1, -1)", PanelLook.Append(new("LastChildFill", PropertyKind.Bool)).ToArray()),
             Define("WrapPanel", true, "new UI.WrapPanel(0, 0, -1, -1)", PanelLook.Concat(new PropertyDef[] { new("Vertical", PropertyKind.Bool), new("ItemWidth", PropertyKind.Int), new("ItemHeight", PropertyKind.Int) }).ToArray()),
+            Define("FlowPanel", true, "new UI.FlowPanel(0, 0, -1, -1)", PanelLook.Append(new("LineSpacing", PropertyKind.Int)).ToArray()),
+            Define("Run", false, "new UI.Run(\"\")", new PropertyDef[] { new("Text", PropertyKind.Text), new("Color", PropertyKind.Color) }),
+            Define("LineBreak", false, "new UI.LineBreak()", Array.Empty<PropertyDef>()),
             Define("Grid", true, "new UI.Grid(0, 0, -1, -1)", PanelLook.Concat(new PropertyDef[]
             {
                 new("Rows", PropertyKind.Text) { Method = "SetRows" }, new("Columns", PropertyKind.Text) { Method = "SetColumns" },

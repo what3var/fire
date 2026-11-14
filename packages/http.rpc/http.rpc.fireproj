@@ -1,0 +1,13 @@
+{
+  "format": 1,
+  "name": "fire-http.rpc",
+  "type": "library",
+  "import": "http.rpc",
+  "standard": true,
+  "settings": {
+    "version": "1.0.0",
+    "author": "fire",
+    "license": "fire",
+    "description": "The standard library 'http.rpc' of fire: calls of methods and properties of [Remote] classes over HTTP and JSON, with the lifetimes request, session and single."
+  }
+}

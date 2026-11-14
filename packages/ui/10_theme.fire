@@ -25,12 +25,12 @@ namespace UI {
         // The font of all text that does not choose another (Element.font): a name for Fonts.Get - a font added with Fonts.Add, a built-in one ("8x14", "8x8") or one installed
         // on the system; "" is the console font of the renderer. fontSize is the height of the letters in pixels (TrueType fonts; the bitmap fonts ignore it).
         string font = ""
-        int fontSize = 14
+        defined int fontSize = 14
         // The shape (docs/spec/UI_PLATFORM.md, "Materialien und Stil"): the corners of controls and of floating elements (menus, popups; 0: square, as before), the softness
         // of their shadows. Metrics belong to the theme, not to the controls.
-        int radius = 4
-        int popupRadius = 8
-        int shadowSize = 8
+        defined int radius = 4
+        defined int popupRadius = 8
+        defined int shadowSize = 8
         // The effects (Root.Glass, Root.Transparency; they start with UI.Effects and the system): glass and acrylic behind menus and popups; translucent surfaces and
         // shadows at all. Off, the interface stays complete - flat, opaque, and cheaper.
         bool glass = true
@@ -59,10 +59,10 @@ namespace UI {
         }
 
         // An accent 0xRRGGBB as a colour of the renderer.
-        static int FromRgb(int rgb) { return UI.Color.Rgb((rgb >> 16) & 255, (rgb >> 8) & 255, rgb & 255) }
+        static defined int FromRgb(defined int rgb) { return UI.Color.Rgb((rgb >> 16) & 255, (rgb >> 8) & 255, rgb & 255) }
 
         // The colour `t` (0 to 1) of the way from a (0xRRGGBB) to b.
-        static int Mix(int a, int b, float t) {
+        static defined int Mix(defined int a, defined int b, defined float t) {
             var r = ((a >> 16) & 255) + (((b >> 16) & 255) - ((a >> 16) & 255)) * t
             var g = ((a >> 8) & 255) + (((b >> 8) & 255) - ((a >> 8) & 255)) * t
             var bl = (a & 255) + ((b & 255) - (a & 255)) * t
@@ -70,7 +70,7 @@ namespace UI {
         }
 
         // The colour of a brush (a solid one; another kind: `fallback`).
-        static int ColorOf(Brush brush, int fallback) {
+        static defined int ColorOf(Brush brush, defined int fallback) {
             if (brush is of SolidBrush) {
                 SolidBrush solid = brush!SolidBrush
                 return solid.Color
@@ -79,7 +79,7 @@ namespace UI {
         }
 
         // A brush of the theme gets a colour (a solid one; a brush of another kind that a program put there stays as it is).
-        static undefined Paint(Brush brush, int color) {
+        static undefined Paint(Brush brush, defined int color) {
             if (brush is of SolidBrush) {
                 SolidBrush solid = brush!SolidBrush
                 solid.Color = color
@@ -88,7 +88,7 @@ namespace UI {
 
         // All colours for the light or the dark look with this accent colour (0xRRGGBB): Root.Dark and Root.Accent set them. The brushes and pens stay the same
         // objects (styles and elements that took one keep it), only their colours change.
-        undefined SetColors(bool dark, int accent) {
+        undefined SetColors(bool dark, defined int accent) {
             var a = UI.Theme.FromRgb(accent)
             if (dark) {
                 UI.Theme.Paint(this.back, UI.Color.Rgb(32, 32, 32))

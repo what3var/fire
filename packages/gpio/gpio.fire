@@ -7,9 +7,9 @@ namespace Gpio {
 
     class GpioException : Exception {
         string message
-        int code
+        defined int code
 
-        construct(string message, int code = 7) {
+        construct(string message, defined int code = 7) {
             this.message = message
             this.code = code
         }
@@ -47,14 +47,14 @@ namespace Gpio {
             throw new GpioException(message, code)
         }
 
-        static int Handle(int handle) {
+        static defined int Handle(defined int handle) {
             if (handle < 0) { Throw() }
             return handle
         }
     }
 
     class Clock {
-        static int Millis(any limit) {
+        static defined int Millis(any limit) {
             if (limit == undefined) { return -1 }
             var span = TimeSpan.Of(limit)
             var ms = span.Ticks / 10000
@@ -62,7 +62,7 @@ namespace Gpio {
             return ms
         }
 
-        static int Now() { return DateTime.UtcNow.Ticks }
+        static defined int Now() { return DateTime.UtcNow.Ticks }
     }
 
     // The chips of this machine.
@@ -90,23 +90,23 @@ namespace Gpio {
 
     // One line of a chip. Input or Output claims it (a second Pin on the same line then throws BusyException); Close gives it back.
     class Pin {
-        int handle
+        defined int handle
         bool closed
         string chip
-        int line
-        int direction
+        defined int line
+        defined int direction
         lambda<any, any> onEdge
 
         // The line `line` of the default chip (Board.DefaultChip()).
-        construct(int line) {
+        construct(defined int line) {
             this.Open(Gpio.Board.DefaultChip(), line)
         }
 
-        construct(string chip, int line) {
+        construct(string chip, defined int line) {
             this.Open(chip, line)
         }
 
-        undefined Open(string chip, int line) {
+        undefined Open(string chip, defined int line) {
             this.handle = -1
             this.closed = false
             this.chip = chip
@@ -119,7 +119,7 @@ namespace Gpio {
         destruct() { try { this.Close() } catch (GpioException e) { } }
 
         string Chip { get { return this.chip } }
-        int Line { get { return this.line } }
+        defined int Line { get { return this.line } }
         bool IsClosed { get { return this.closed } }
         bool IsInput { get { return this.direction == 0 } }
         bool IsOutput { get { return this.direction == 1 } }
@@ -156,7 +156,7 @@ namespace Gpio {
         }
 
         // The level as 0 or 1.
-        int ReadInt() {
+        defined int ReadInt() {
             if (this.Read()) { return 1 }
             return 0
         }
@@ -176,7 +176,7 @@ namespace Gpio {
         }
 
         // The next edge that is waiting, without waiting: Gpio.Edge.Rising/Falling, or Gpio.Edge.None if there is none. EdgeTime says when it happened.
-        int TakeEdge() {
+        defined int TakeEdge() {
             this.Check()
             var e = __GpioPollEdge(this.handle)
             if (e < 0) { Gpio.Errors.Throw() }
@@ -192,7 +192,7 @@ namespace Gpio {
         }
 
         // Waits for the next edge up to the time limit (a TimeSpan, a time value like 500ms or milliseconds; undefined: for ever): the edge, or Gpio.Edge.None when the time ran out.
-        int WaitEdge(any timeout = undefined) {
+        defined int WaitEdge(any timeout = undefined) {
             var limit = Gpio.Clock.Millis(timeout)
             var deadline = -1
             if (limit >= 0) { deadline = Gpio.Clock.Now() + limit * 10000 }
@@ -214,7 +214,7 @@ namespace Gpio {
         }
 
         // Hands every waiting edge to `onEdge` (a function of the edge and its time in microseconds); returns how many there were. Call it from the loop of the program.
-        int Poll() {
+        defined int Poll() {
             var n = 0
             while (true) {
                 var e = this.TakeEdge()
@@ -236,38 +236,38 @@ namespace Gpio {
     // The simulated chip "sim" from the outside: wires between lines and levels that something outside drives (for tests, and to try a program without the board).
     class Sim {
         // Number of lines of the chip.
-        static int Lines() { return 32 }
+        static defined int Lines() { return 32 }
 
         // Connects two lines: what one drives, the other sees.
-        static undefined Wire(int a, int b) {
+        static undefined Wire(defined int a, defined int b) {
             if (!__GpioSimWire(a, b)) { Gpio.Errors.Throw() }
         }
 
-        static undefined Unwire(int a, int b) {
+        static undefined Unwire(defined int a, defined int b) {
             if (!__GpioSimUnwire(a, b)) { Gpio.Errors.Throw() }
         }
 
         // Drives a line from outside (a button, a sensor): true high, false low. A pin that is an output fights with it (low wins).
-        static undefined Drive(int line, bool level) {
+        static undefined Drive(defined int line, bool level) {
             var v = 0
             if (level) { v = 1 }
             if (!__GpioSimDrive(line, v)) { Gpio.Errors.Throw() }
         }
 
         // Lets go of a line that was driven from outside.
-        static undefined Release(int line) {
+        static undefined Release(defined int line) {
             if (!__GpioSimDrive(line, -1)) { Gpio.Errors.Throw() }
         }
 
         // The level on a line, whoever drives it.
-        static bool Level(int line) {
+        static bool Level(defined int line) {
             var v = __GpioSimLevel(line)
             if (v < 0) { Gpio.Errors.Throw() }
             return v == 1
         }
 
         // What the program drives on the line: 1 or 0 while the line is an output of the program, -1 while it is not.
-        static int Output(int line) {
+        static defined int Output(defined int line) {
             var v = __GpioSimOutput(line)
             if (v < -1) { Gpio.Errors.Throw() }
             return v
@@ -284,10 +284,10 @@ namespace Gpio {
     /// port-wide access throw NotSupportedException. Single lines: PinAt(n).</summary>
     class Port : Device {
         string chip
-        int width
+        defined int width
         List pins
 
-        construct(Driver driver, string name, string chip, int width) : base(driver, name) {
+        construct(Driver driver, string name, string chip, defined int width) : base(driver, name) {
             this.chip = chip
             this.width = width
             this.pins = new List()
@@ -298,10 +298,10 @@ namespace Gpio {
         string Chip { get { return this.chip } }
 
         /// <summary>How many lines the port has.</summary>
-        int Lines { get { return this.width } }
+        defined int Lines { get { return this.width } }
 
         /// <summary>The line `line` as a pin of this port (claimed on first use; the port gives it back on Disconnect).</summary>
-        Gpio.Pin PinAt(int line) {
+        Gpio.Pin PinAt(defined int line) {
             if (line < 0 || line >= this.width) { throw new GpioException("The port '" + this.name + "' has no line " + line + ".", 3) }
             any pin = this.pins[line]
             if (pin == undefined) {
@@ -359,10 +359,10 @@ namespace Gpio {
 /// <summary>The GPIO ports of this machine for the device framework: `DeviceManager.AddDriver(new GpioDriver())`. The chips of the platform become the ports `gpioa`,
 /// `gpiob`, ... (in the order of Gpio.Board.Chips()), the simulated chip is `gpiosim`.</summary>
 class GpioDriver : Driver {
-    int width
+    defined int width
 
     // `width`: the lines of a real port (the simulated one has Gpio.Sim.Lines())
-    construct(int width = 32) : base("gpio") {
+    construct(defined int width = 32) : base("gpio") {
         this.width = width
     }
 
