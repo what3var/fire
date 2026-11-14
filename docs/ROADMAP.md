@@ -33,6 +33,7 @@ Leitlinien:
 | 7 | [Kleine und alte Ziele](#13-kleine-und-alte-ziele) (Zeigerarten, typisierte Arrays, `#intwidth 32` umgesetzt) | 0, 9 | Mikrocontroller, DOS, Win 3.x, Win9x, NT 3.51-XP: Speicher pro Wert, Breiten, neue Plattformen |
 | 8 | [Scene3D für Spiele](#16-scene3d-für-spiele) | 13 (Ziele, Breiten), 11 (Weglassen) | Spiele bis hinunter auf DOS: Größe zuerst, dann Terrain, Modelle, Animation, Effekte, Physik |
 | 3 | ~~[Volle Qualifikation mit dem Importnamen](#18-volle-qualifikation-mit-dem-importnamen)~~ (umgesetzt) | - | zwei Bibliotheken mit derselben Klasse auf oberster Ebene (spätestens bei JSON) sind heute nicht auseinanderzuhalten |
+| 4 | [Arrays mit jedem Typ](#19-arrays-mit-jedem-typ) (Werttypen und `defined` umgesetzt) | 13 (typisierte Arrays) | ein Array soll mit allen Typen funktionieren, auch mit `defined`: Klassen, Interfaces, Records, string, Enums, Lambdas, Typparameter |
 
 **Arbeitsreihenfolge (Entscheidung des Benutzers, nach Tasks Schritt 8):**
 
@@ -1139,4 +1140,26 @@ Entwurf:
 * Folgen, die mitgehen müssen: die Namen in Meldungen, Reflection (`Type.Of`, `Reflect.New("...")`), JSON-Typnamen, die C-Namen im nativen
   Backend und in den Modulen (Linkage static), der Editor (Vervollständigung, Hover). Die Standardpakete behalten ihre Namen (sie sind
   `standard`: ihre Deklarationen bleiben global), damit `Framebuffer`, `DateTime` usw. sich nicht ändern.
+
+## 19. Arrays mit jedem Typ
+
+Grundsatz (Entscheidung des Benutzers): **Arrays sollen mit allen Typen funktionieren, auch mit `defined`.** Eine Deklaration mit Klammern hinter dem
+Namen (`T name[]`, `T name[n]`, `T m[][]`) hält für jeden Typ `T` ein Array, das nur Werte dieses Typs (und - ohne `defined` - `undefined`) nimmt,
+durch jede Referenz, wie heute die typisierten Arrays aus Zahlen (SPEC 8.4.2).
+
+**Umgesetzt:** die Werttypen `int`, `int[8|16|32|64]`, `float`, `float[8|16|32|64]`, `bool`, `char` (gepackt, nativ eine C-Zahl je Element, Zugriffe
+etwa so schnell wie bei einem Puffer), `byte`/`word` als Puffer, und **`defined`** für sie (`defined int a[]`: die Elemente sind nie undefined,
+beginnen bei 0, undefined zu speichern ist eine ArgumentException; ArrayElem.DefinedFlag, nativ TU_DEFINED).
+
+Offen:
+
+* **Klassen, Interfaces und Records** (`Dog pets[]`, `IShape shapes[]`): nur Objekte dieser Klasse (oder abgeleiteter), dieses Interfaces, oder
+  `undefined`; ein anderes Objekt ist eine ArgumentException wie bei einem Feld mit dieser Klasse. Der Typprüfer kennt den Elementtyp (heute `any`
+  nach dem Lesen); nativ ruft der Generator Methoden der Elemente direkt (Klasse bekannt) statt über den Verteiler.
+* **`string`, Enums, Lambdas mit Signatur** (`string names[]`, `Color c[]`, `lambda<int, int> fs[]`) ebenso.
+* **`defined` für sie**: `defined Dog pets[]` - kein Element ist undefined. Offen ist, womit ein neues Array beginnt (kein Nullwert für Objekte:
+  nur mit Initialisierer oder `new Dog[n]` mit einem Erzeuger, `""` für string, der erste Wert eines Enums).
+* **Typparameter** (`T items[]` in generischem Code) nach dem Typargument, das läuft (heute `TypeArrayOfParam` nur für Zahlen); damit können `List<T>`,
+  `Dictionary<K, V>` ihre inneren Arrays deklarieren statt `any`.
+* Mehrdimensional (`Dog grid[][]`), JSON, Reflection, `copy`/`taking` wie bei den Zahlen-Arrays; Meldungen in VM und nativ gleich.
 

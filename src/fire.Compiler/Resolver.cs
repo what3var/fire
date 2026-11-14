@@ -1173,8 +1173,9 @@ namespace fire.Compiler
         private static void ValidateNonNull(TypeRef? type, int arrayRanks, int line)
         {
             if (type is not { NonNull: true }) return;
-            if (arrayRanks > 0 || type.ArrayRank > 0)
-                throw new ResolverException($"'defined {type.BaseName}' is a single value that is never undefined - not an array", line);
+            // (`defined int a[]`: an array whose elements are never undefined - of a value type, written with the brackets after the name)
+            if (type.ArrayRank > 0 || arrayRanks > 0 && fire.Values.ArrayElem.Of(type) == 0)
+                throw new ResolverException($"'defined {type.BaseName}' is a value that is never undefined - an array of them is written 'defined {type.BaseName} name[]' (int, float, bool, char, byte, word)", line);
         }
 
         /// <summary>Validates a complete TypeRef: base name like

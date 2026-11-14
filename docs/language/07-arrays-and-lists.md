@@ -87,7 +87,25 @@ try {
 - **A declaration with a size makes the array** - a local or global where it is declared, a field together with its object
   (`class Box { int data[3] }`: `new Box().data.length` is 3). Without a size (`int arr[]`) the variable or field stays `undefined` until an array is assigned.
 - Natively a typed array is **packed**: one C number per element (`int8_t` for `int[8]`, `float` for `float[32]`, one byte for `bool`) instead of a
-  16-byte value - `int[8] a[100000]` needs 100 KB instead of 1.6 MB.
+  16-byte value - `int[8] a[100000]` needs 100 KB instead of 1.6 MB. Its elements are read and written in place, about as fast as a buffer's.
+
+**`defined` arrays.** `defined int a[]` (any value type: `int`, `int[N]`, `float`, `float[N]`, `bool`, `char`) holds elements that are never `undefined`:
+
+```fire
+defined float speeds[] = new float[3]
+print(speeds[0])                // 0 - a new defined array starts at 0 (false, '\0')
+speeds[1] = 2.5
+int raw[] = [1, undefined, 3]
+defined int sure[] = raw        // the array becomes defined: its undefined element becomes 0
+print(raw[1])                   // 0 - it is the same array
+any nothing = undefined
+try { sure[0] = nothing } catch (ArgumentException e) { print(e.message) }   // An element of a defined array of int cannot be undefined.
+```
+
+- Reading an element gives a `defined` value (the type checker knows it; storing `undefined` where it can see it is `TC022`). Natively an element of a
+  defined array is read with one load into a C number - use it for the numbers of a hot loop.
+- The array stays defined through every reference: an `int b[] = sure` may not store `undefined` either. The variable or field itself may still be
+  `undefined` (no array yet). `byte`/`word` declarations are buffers - never undefined anyway.
 
 ## Arrays as parameters and return values
 

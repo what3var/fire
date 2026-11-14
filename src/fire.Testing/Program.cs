@@ -28697,6 +28697,60 @@ else
             foreach (x in [0, 3, -2, 16]) { print(E.Ti(x)) }
             print(E.Twice(E.Lim) + E.Twice(Word.Bits))
             """),
+        ("defined-Arrays (defined int a[]: beginnen bei 0, undefined ist eine ArgumentException, ein Array wird beim Speichern defined) und typisierte Elemente nativ in C: int[8]/int[32] abgeschnitten, float[32] gerundet, der Hinweis-Wert, Kopie mit undefined", """
+            class D {
+                defined float vals[]
+                int counts[]
+                construct(defined int n) { vals = new float[n]; counts = new int[n] }
+                undefined Fill() { for (defined int i = 0; i < vals.length; i++) { vals[i] = i * 1.5; counts[i] = i * i } }
+                static defined int Twice(defined int x) { return x * 2 }
+                static defined float Sum(defined float a[]) { defined float s = 0.0; for (defined int i = 0; i < a.length; i++) { s = s + a[i] } return s }
+                static undefined Copy(float a[], float b[]) { for (defined int i = 0; i < a.length; i++) { b[i] = a[i] } }
+            }
+            defined int a[] = new int[3]
+            print(a[0] + " " + a[1] + " " + a[2])
+            a[1] = 5
+            print(D.Twice(a[1]))
+            defined bool flags[] = new bool[2]
+            flags[1] = true
+            print(flags[0] + " " + flags[1])
+            defined char cs[] = new char[2]
+            print(cs[0]!int)
+            defined float f[] = [1.5, 2.5]
+            print(D.Sum(f))
+            var d = new D(4)
+            print(d.vals[3] + " " + d.counts[3])
+            d.Fill()
+            print(d.vals[3] + " " + d.counts[3] + " " + D.Sum(d.vals))
+            any u = undefined
+            try { a[0] = u } catch (ArgumentException e) { print("undefined into a defined array") }
+            int b[] = [1, undefined, 3]
+            defined int c[] = b
+            print(c[1] + " " + b[1])
+            int plain[] = c
+            try { plain[2] = u } catch (ArgumentException e) { print("still defined") }
+            defined int m[][] = new int[2][3]
+            print(m[1][2])
+            int[8] small[] = new int[3]
+            for (defined int i = 0; i < 3; i++) { small[i] = 120 + i * 5 }
+            print(small[0] + " " + small[1] + " " + small[2])
+            int[32] w[] = new int[2]
+            defined int big = -2147483647 - 1
+            w[0] = big
+            w[1] = u
+            print(w[0] + " " + w[1])
+            float[32] h[] = new float[2]
+            h[0] = 0.1
+            print(h[0])
+            float x[] = [1.0, undefined, 3.0]
+            float y[] = new float[3]
+            D.Copy(x, y)
+            print(y[0] + " " + y[1] + " " + y[2])
+            defined float nanv = 0.0 / 0.0
+            float z[] = new float[1]
+            z[0] = nanv
+            print(z[0])
+            """),
         ("Bits: die Breite jedes Werttyps am Typ (int.Bits, int[16].Bits, float[32].Bits, byte/char/bool/word) und am Wert (x.Bits nach dem deklarierten Typ), eine Konstante", """
             int[8] small = 3
             float[32] f = 1.5
@@ -33584,7 +33638,16 @@ else
                     string[] generic = { "divide(", "mathCall(", "bitNot(", "coerceType(", "power(", "powerF(", "Float(", "Int(", "SF" };
                     CheckNat("Rechnen auf defined Zahlen ist im erzeugten C reines C: Math.*, int-Division, ^, !int, ~, Math.PI (keine Value-Funktion)",
                         mathBody.Contains("sqrt(") && mathBody.Contains("floor(") && mathBody.Contains("fire_realToInt(")
-                        && !mathBody.Split('\n').Where(l => !l.Contains("Value m_")).Any(l => generic.Any(g => l.Contains(g))), mathBody);   // (the rare paths - a division by 0 - ask the generic one)
+                        && !mathBody.Split('\n').Where(l => !l.Contains("Value m_")).Any(l => generic.Any(g => System.Text.RegularExpressions.Regex.IsMatch(l, @"\b" + System.Text.RegularExpressions.Regex.Escape(g)))), mathBody);   // (the rare paths - a division by 0 - ask the generic one)
+                }
+                // elements of typed arrays (ROADMAP: as direct as a buffer): a defined array is read with one load into a C number, a C number is stored in place
+                {
+                    var arrLinked = new Linker().CompileAndLink(new[] { "class A {\n    static defined float Fill(defined float a[], defined int n) {\n        for (defined int i = 0; i < n; i++) { a[i] = i * 0.5 }\n        defined float s = 0.0\n        for (defined int i = 0; i < n; i++) { s = s + a[i] }\n        return s\n    }\n}\ndefined float a[] = new float[4]\nprint(A.Fill(a, 4))" }, null, null, VmExecutionMode.Release);
+                    string arrC = fire.Native.CppGenerator.GenerateSources(arrLinked).Program;
+                    var arrDef = System.Text.RegularExpressions.Regex.Match(arrC, @"static Real f\d+_c\([^)]*\)\n\{[\s\S]*?\n\}\n");
+                    string arrBody = arrDef.Success ? arrDef.Value : "";
+                    CheckNat("Elemente typisierter Arrays nativ direkt: ein defined float-Array wird mit einem Laden gelesen, eine C-Zahl an ihren Platz geschrieben (kein Value, kein claimToHolder, keine Liste je Runde)",
+                        arrBody.Contains("((Real*)ra_->typed->data)[") && arrBody.Contains("] = cv_;") && !arrBody.Contains("claimToHolder") && !arrBody.Contains(".mark = poolMark()") && !arrBody.Contains("arrPackedAt"), arrBody);
                 }
                 // `--stats` with linkage static (ROADMAP 17): the code of the library modules by module (from the map), the program's functions; `stats` compares two builds
                 {

@@ -1201,7 +1201,8 @@ static Value jsBuildInstance(JsReader* r, JsNode* o, const char* type, OwnList* 
         if (!field) continue;   /* (a member the class does not have: left out) */
         s.container = obj; s.index = field->slot; s.has = true;
         v = jsBuild(r, member->node, jsSubstitute(J, field->type, o2, c), objOwned(o2), jsCat3(J, path, ".", key), field->unit, s);
-        if (field->arr && !J->failed && v.kind == K_Array) typeArray(v, (uint8_t)(field->arr & 0xFF), field->arr >> 8, 0, 0, Undef(), 1);
+        /* (`defined int a[]`: 0x40 beside the element type - its elements are never undefined, ArrayElem.DefinedFlag) */
+        if (field->arr && !J->failed && v.kind == K_Array) typeArray(v, (uint8_t)(field->arr & 0x3F), field->arr >> 8, 0, (uint8_t)((field->arr & 0x40) ? TU_DEFINED : 0), Undef(), 1);
         if (field->defined && !J->failed && v.kind == K_Undefined) {
             jsFail(J, jsCat3(J, jsCat3(J, path, ".", key), field->defined == K_Int ? " is an int" : field->defined == K_Float ? " is a float" : field->defined == K_Word ? " is a word"
                 : field->defined == K_Char ? " is a char" : " is a bool", " and never undefined."), "ArgumentException");

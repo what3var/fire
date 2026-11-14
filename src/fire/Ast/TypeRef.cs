@@ -100,7 +100,8 @@ namespace fire.Ast
         /// stored in it becomes a typed array (OpCode.TypeArray) - 0x10000 | rank &lt;&lt; 8 | the element type (Values.ArrayElem); 0 when the type has none
         /// (`var`, `any`, strings, classes), the declaration has no array brackets or it is a pointer.</summary>
         public int ArrayWidthCode(int rank) =>
-            rank > 0 && rank < 256 && PointerDepth == 0 && ArrayRank == 0 && fire.Values.ArrayElem.Of(this) is var elem and not 0 ? 0x10000 | (rank << 8) | elem : 0;
+            rank > 0 && rank < 256 && PointerDepth == 0 && ArrayRank == 0 && fire.Values.ArrayElem.Of(this) is var elem and not 0
+                ? 0x10000 | (rank << 8) | elem | (NonNull && elem is not (fire.Values.ArrayElem.U8 or fire.Values.ArrayElem.Word) ? fire.Values.ArrayElem.DefinedFlag : 0) : 0;
 
         [MemoryPack.MemoryPackIgnore] public string? UnitDemand => RequiredUnit is { } required && fire.Values.Unit.DemandText(required) is var unit ? (BaseName == "float" ? "#" + unit : unit) : null;
 
