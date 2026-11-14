@@ -227,6 +227,16 @@ static Value fire_s3d_TexSetStrength(Value h, Value v) {
     if (t) t->strength = (float)toR(v);
     return Bool(t != NULL);
 }
+/* How the colours are read between the texels (Texture.Filter: S3D_FILTER_*). */
+static Value fire_s3d_TexFilter(Value h) {
+    S3dTexture* t = (S3dTexture*)fire_s3d_find(&g_s3dTextures, h);
+    return Int(t ? (int64_t)t->filter : 0);
+}
+static Value fire_s3d_TexSetFilter(Value h, Value v) {
+    S3dTexture* t = (S3dTexture*)fire_s3d_find(&g_s3dTextures, h);
+    if (t && v.i >= S3D_FILTER_BILINEAR && v.i <= S3D_FILTER_SHARP) t->filter = (int)v.i;
+    return Bool(t != NULL);
+}
 
 /* ---- the scene: objects, lights, cameras, materials and scenes live here as items (the fire objects hold their handles) --------------------------------------------------------
  * An item is a block of numbers (`f`: floats, `n`: integers and flags; the slots are listed below and in the prelude) and what its kind needs besides. The properties of the fire

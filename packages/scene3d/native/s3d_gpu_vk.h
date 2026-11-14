@@ -143,7 +143,7 @@ typedef struct S3dGpuObjectU {
     float tm1[4];       /* c d ty, shininess */
     int32_t flags[4];   /* smooth, two sided, lit, receive shadows */
     int32_t flags2[4];  /* layers, texture, bump map, blended */
-    float bump[4];      /* strength, 1/width, 1/height */
+    float bump[4];      /* strength, 1/width, 1/height, filter (S3D_FILTER_*) */
 } S3dGpuObjectU;
 typedef struct S3dGpuShadowPush { float model[16]; int32_t map; } S3dGpuShadowPush;
 
@@ -1403,7 +1403,7 @@ static void s3d_gpu_objectUniforms(const S3dBatch* b, S3dGpuObjectU* o) {
     o->flags[0] = s->smooth; o->flags[1] = s->twoSided; o->flags[2] = s->lit; o->flags[3] = s->receiveShadows;
     o->flags2[0] = s->layers; o->flags2[1] = b->tex != NULL; o->flags2[2] = b->bumpWanted; o->flags2[3] = b->blended;
     o->bump[0] = s->bump;
-    if (b->tex) { o->bump[1] = 1.0f / (float)b->tex->w; o->bump[2] = 1.0f / (float)b->tex->h; }
+    if (b->tex) { o->bump[1] = 1.0f / (float)b->tex->w; o->bump[2] = 1.0f / (float)b->tex->h; o->bump[3] = (float)b->tex->filter; }
 }
 
 /* Draws the queue: 1 when the picture is in `rgba`, 2 when it stays on the GPU for the windows of the camera (DirectDrawing), 0 when the GPU cannot draw it. */

@@ -139,6 +139,18 @@
         "c": "fire_s3d_TexSetStrength"
       },
       {
+        "name": "__S3DTexFilter",
+        "returns": "int",
+        "arguments": 1,
+        "c": "fire_s3d_TexFilter"
+      },
+      {
+        "name": "__S3DTexSetFilter",
+        "returns": "bool",
+        "arguments": 2,
+        "c": "fire_s3d_TexSetFilter"
+      },
+      {
         "name": "__S3DNew",
         "returns": "int",
         "arguments": 1,

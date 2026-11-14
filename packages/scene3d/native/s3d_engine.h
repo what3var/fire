@@ -337,7 +337,12 @@ struct S3dTexture {
     uint8_t* lean;     /* the lean renderer (s3d_lean.h): the texels as indices of the palette `leanKey`, or NULL */
     uint32_t leanKey;
     float strength;    /* (the bridge: how strongly the bump map tilts the light, Texture.BumpStrength) */
+    int filter;        /* how the colours are read between the texels: S3D_FILTER_* (the bump map is always bilinear; the lean renderer always reads the nearest texel) */
 };
+
+/* Texture.Filter: bilinear (smooth), the nearest texel (hard pixels), or sharp bilinear (hard pixels, but a one screen pixel wide blend at the texel edges: no shimmer when the texels are not a whole number of
+ * pixels wide). */
+enum { S3D_FILTER_BILINEAR = 0, S3D_FILTER_NEAREST = 1, S3D_FILTER_SHARP = 2 };
 
 static void s3d_texFree(S3dTexture* t) {
     if (t == NULL) return;
@@ -677,14 +682,46 @@ static inline S3dTexels s3d_texels(int w, int h, float u, float v) {
 }
 
 /* Texture coordinates in repeat mode, bilinear. `alpha` is the transparency of the point (0..1). */
-static inline S3dVec3 s3d_sampleTexture(const S3dTexture* t, float u, float v, float* alpha) {
-    S3dTexels q = s3d_texels(t->w, t->h, u, v);
+static inline S3dVec3 s3d_sampleTexels(const S3dTexture* t, S3dTexels q, float* alpha) {
     const uint8_t *p00 = &t->rgba[q.i00 * 4], *p10 = &t->rgba[q.i10 * 4], *p01 = &t->rgba[q.i01 * 4], *p11 = &t->rgba[q.i11 * 4];
     float w00 = (1 - q.tx) * (1 - q.ty), w10 = q.tx * (1 - q.ty), w01 = (1 - q.tx) * q.ty, w11 = q.tx * q.ty;
     const float k = 1.0f / 255.0f;
     *alpha = (p00[3] * w00 + p10[3] * w10 + p01[3] * w01 + p11[3] * w11) * k;
     return s3d_v3((p00[0] * w00 + p10[0] * w10 + p01[0] * w01 + p11[0] * w11) * k, (p00[1] * w00 + p10[1] * w10 + p01[1] * w01 + p11[1] * w11) * k,
                   (p00[2] * w00 + p10[2] * w10 + p01[2] * w01 + p11[2] * w11) * k);
+}
+static inline S3dVec3 s3d_sampleTexture(const S3dTexture* t, float u, float v, float* alpha) { return s3d_sampleTexels(t, s3d_texels(t->w, t->h, u, v), alpha); }
+
+/* One coordinate of sharp bilinear (in texels, the centres at i + 0.5): within a texel it stays on its value, only the last `fw` texels (one screen pixel) before the edge blend into the next. When a
+ * texel is smaller than a pixel it is plain bilinear. */
+static inline float s3d_sharpen(float p, float fw) {
+    float seam = (float)s3d_floorInt(p + 0.5f), d = fw < 1.0f ? fw : 1.0f, r;
+    if (d < 1e-6f) d = 1e-6f;
+    r = (p - seam) / d;
+    if (r < -0.5f) r = -0.5f;
+    if (r > 0.5f) r = 0.5f;
+    return seam + r;
+}
+
+/* The colour with the texture's filter. `fu`, `fv`: how many texels one screen pixel covers along u and v (for sharp bilinear). */
+static inline S3dVec3 s3d_sampleFiltered(const S3dTexture* t, float u, float v, float fu, float fv, float* alpha) {
+    if (t->filter == S3D_FILTER_NEAREST) {
+        S3dTexels q;
+        int x = (int)((u - (float)s3d_floorInt(u)) * (float)t->w), y = (int)((v - (float)s3d_floorInt(v)) * (float)t->h);
+        if (x >= t->w) x = t->w - 1;
+        if (y >= t->h) y = t->h - 1;
+        if (x < 0) x = 0;
+        if (y < 0) y = 0;
+        q.i00 = q.i10 = q.i01 = q.i11 = (s3d_size)y * (s3d_size)t->w + (s3d_size)x;
+        q.tx = q.ty = 0;
+        return s3d_sampleTexels(t, q, alpha);
+    }
+    if (t->filter == S3D_FILTER_SHARP) {
+        float px = (u - (float)s3d_floorInt(u)) * (float)t->w, py = (v - (float)s3d_floorInt(v)) * (float)t->h;
+        px = s3d_sharpen(px, fu); py = s3d_sharpen(py, fv);
+        return s3d_sampleTexels(t, s3d_texels(t->w, t->h, px / (float)t->w, py / (float)t->h), alpha);
+    }
+    return s3d_sampleTexture(t, u, v, alpha);
 }
 
 static inline float s3d_sampleBump(const S3dTexture* t, float u, float v) {
@@ -753,7 +790,13 @@ static void s3d_rasterTri(uint8_t* rgba, S3dFrame* f, const S3dContext* ctx, con
                     float ta;
                     S3dVec3 tc;
                     u = cur[2] * kk; v = cur[3] * kk;
-                    tc = s3d_sampleTexture(tex, u, v, &ta);
+                    if (tex->filter == S3D_FILTER_SHARP) {
+                        /* the texels under one screen pixel: the derivatives of u = (u/w) / (1/w) along x and y */
+                        float uxd = (t->gx[2] - u * t->gx[1]) * kk, uyd = (t->gy[2] - u * t->gy[1]) * kk;
+                        float vxd = (t->gx[3] - v * t->gx[1]) * kk, vyd = (t->gy[3] - v * t->gy[1]) * kk;
+                        tc = s3d_sampleFiltered(tex, u, v, (fabsf(uxd) + fabsf(uyd)) * (float)tex->w, (fabsf(vxd) + fabsf(vyd)) * (float)tex->h, &ta);
+                    }
+                    else tc = s3d_sampleFiltered(tex, u, v, 1, 1, &ta);
                     if (s->cutoff > 0 && ta < s->cutoff) visible = 0;
                     base = s3d_v3(base.x * tc.x, base.y * tc.y, base.z * tc.z);
                     alpha *= ta;
