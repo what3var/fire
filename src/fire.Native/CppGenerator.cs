@@ -7292,7 +7292,9 @@ namespace fire.Native
                     if (op == "/")
                     {
                         // like Value.Divide: truncated, x / -1 wraps (no trap in C); a division by 0 is the generic one's DivideByZeroException
+                        // (the slot holds the result from here: no longer an alias of the variable it was loaded from - `this.f = p / 2` stored p)
                         SetT(d - 2, narrow); SetR(d - 2, false); _kindsKept = true;
+                        if (d - 2 < 64) st.Alias[d - 2] = null;
                         string r = ScalarName(f, st, d - 2);
                         E($"if (FIRE_LIKELY({y} != 0)) {r} = {y} == -1 ? (FireInt)(0 - (FireUInt){x}) : {x} / {y}; else {{ Value m_ = divide({ScalarValueOf(KindInt, ux, x)}, {ScalarValueOf(KindInt, uy, y)}); {r} = (FireInt)m_.i; }}");
                         st.Scalar |= 1UL << (d - 2);
@@ -7301,6 +7303,7 @@ namespace fire.Native
                     else if (op == "%")
                     {
                         SetT(d - 2, narrow); SetR(d - 2, false); _kindsKept = true;
+                        if (d - 2 < 64) st.Alias[d - 2] = null;
                         string r = ScalarName(f, st, d - 2);
                         E($"if (FIRE_LIKELY({y} > 0)) {r} = {x} % {y}; else {{ Value m_ = modulo({ScalarValueOf(KindInt, ux, x)}, {ScalarValueOf(KindInt, uy, y)}); {r} = (FireInt)m_.i; }}");
                         st.Scalar |= 1UL << (d - 2);
