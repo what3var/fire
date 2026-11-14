@@ -28,6 +28,28 @@ The server answers one connection after the other with `Connection: close`: simp
 runs in the thread of its server. A route's lambda must not fail with a *runtime error* (`x.y` on undefined ends the thread, like anywhere): throw an exception of your own class; `OnError` sees it. Errors of the library are `Http.HttpException`
 (`code`: 1 bad URL, 2 malformed message, 3 too many redirects, 4 too large, 5 not supported); network errors are the `Net.NetException`s of the net package. `https://` URLs work through the `tls` package ([TLS](tls.md)): `client.tls = options` (a `Tls.Options`) says whom to trust; `server.UseTls(certPem, keyPem)` serves HTTPS.
 
+## Large files: `Http.Download`
+
+`Http.Client` keeps a body in memory (up to `maxBodyBytes`); a large file goes straight into a file with `Http.Download`:
+
+```fire
+var d = new Http.Download("https://example.org/big.bin", "/tmp/big.bin")
+while (d.Step()) { print(d.Received + " of " + d.Total) }      // Step(maxBytes = 1 MiB): a piece, true while it goes on
+if (d.Error != "") { print(d.Error) }
+```
+
+It writes into `<path>.part` and renames it when the file is complete; a `.part` that is there already is continued (`Range`; a server that ignores it
+sends all again). `Start()` connects and reads the head (`Total`: the size, -1 while unknown), `Run()` does all of it and waits, `Close()` stops (the
+part stays), `Retry()` starts again after an error. `Received`, `Total`, `Done`, `Error`, `FinalUrl` (after redirects); `timeout`, `maxRedirects`,
+`userAgent`, `tls`. A file that is there already counts as done. (Chunked answers are not supported here.)
+
+## Proxies
+
+The client and `Http.Download` go through a proxy when the environment names one: `HTTPS_PROXY` for https, `HTTP_PROXY` for http (or the lower case names) - a `CONNECT` tunnel, for https with TLS inside it -
+with `user:password@` in the URL for `Proxy-Authorization: Basic`. `NO_PROXY` lists the hosts that do
+not (a name, `.suffix` or `suffix`, `*` for all); `localhost` and `127.0.0.1` never go through one. `Http.Transport.ProxyFor(url)` says which proxy a URL
+takes.
+
 ## A server and a client in one program
 
 ```fire

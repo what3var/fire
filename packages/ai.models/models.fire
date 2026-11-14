@@ -1,0 +1,317 @@
+#import "ai"
+#import "http"
+#import "hash"
+#import "filesystem"
+
+// ai.models (docs/ai/models.md): the small language models for the package ai - which there are, which fits this machine, where they are, and the download
+// (resumable, checked by its SHA-256).
+//
+//     AI.ModelInfo m = AI.Models.Recommended()           // e.g. Qwen3.5-0.8B
+//     if (!m.Installed()) {
+//         var setup = new AI.ModelInstaller(m)           // (ask first: it is 500 MB)
+//         while (setup.Step()) { print(setup.Percent() + "%") }
+//     }
+//     var model = new AI.Model(m.Path())
+namespace AI {
+    // A model of the catalog.
+    class ModelInfo {
+        // A short name ("qwen3.5-0.8b"), the name to show, what it is good for.
+        string Id
+        string Name
+        string Description
+        // Where it comes from: the repository on Hugging Face and the file, its size and SHA-256.
+        string Repo
+        string File
+        defined int Size
+        string Sha256
+        // The license (a text to show before the download) and a link to it.
+        string License
+        string LicenseUrl
+        // The memory it needs (MB, the machine as a whole) and the memory with which it is pleasant.
+        defined int MinMemoryMB
+        defined int GoodMemoryMB
+
+        construct(string id, string name, string description, string repo, string file, defined int size, string sha256, string license, string licenseUrl,
+                  defined int minMemoryMB, defined int goodMemoryMB) {
+            this.Id = id
+            this.Name = name
+            this.Description = description
+            this.Repo = repo
+            this.File = file
+            this.Size = size
+            this.Sha256 = sha256
+            this.License = license
+            this.LicenseUrl = licenseUrl
+            this.MinMemoryMB = minMemoryMB
+            this.GoodMemoryMB = goodMemoryMB
+        }
+
+        // The address of the file.
+        string Url() { return AI.Models.MirrorUrl() + this.Repo + "/resolve/main/" + this.File }
+        // Where it is (or will be) on this machine.
+        string Path() { return IO.Path.Combine(AI.Models.Folder(), this.File) }
+        // Whether it is there (in full: the download leaves a ".part" file until it is done).
+        bool Installed() { return IO.File.Exists(this.Path()) && IO.File.Size(this.Path()) == this.Size }
+        // The size to show ("507 MB").
+        string SizeText() { return (this.Size / 1000000) + " MB" }
+    }
+
+    // The catalog, the choice and the folder.
+    class Models {
+        static List all = undefined
+
+        // Where the files come from: Hugging Face, or a mirror with the same paths ("<mirror>/<repo>/resolve/main/<file>") - set here or in the variable
+        // FIRE_MODELS_MIRROR (e.g. a server of the company).
+        static string Mirror = ""
+
+        static string MirrorUrl() {
+            string m = AI.Models.Mirror
+            if (m == "") {
+                any env = Environment.Get("FIRE_MODELS_MIRROR")
+                if (env != undefined) { m = env }
+            }
+            if (m == "") { m = "https://huggingface.co/" }
+            if (!m.EndsWith("/")) { m = m + "/" }
+            return m
+        }
+
+        // The models fire knows, the default first (the list belongs to the package: do not change it).
+        static List Catalog() {
+            if (AI.Models.all != undefined) { return AI.Models.all }
+            AI.Models.all = new List()
+            List all = AI.Models.all
+            all.Add(new AI.ModelInfo("qwen3.5-0.8b", "Qwen3.5 0.8B", "Small and quick: tips, choices, short answers (the default).",
+                "unsloth/Qwen3.5-0.8B-GGUF", "Qwen3.5-0.8B-Q4_0.gguf", 507154688, "444406ddd926550c724ec18d5120a9d40ded44908a063b0e66e9a7e5464c652c",
+                "Apache 2.0", "https://www.apache.org/licenses/LICENSE-2.0", 2048, 4096))
+            all.Add(new AI.ModelInfo("lfm3-1.7b", "LFM3 1.7B", "Stronger with tools and longer answers; about half as fast.",
+                "LiquidAI/LFM3-1.7B-GGUF", "LFM3-1.7B-QAD-Q4_0.gguf", 1049615680, "43a7d09a0e9cba91b63eb7052488b9564569bddfd65754d2e426465e572a7452",
+                "LFM Open License v1.0 (free for companies below 10 million USD revenue a year)", "https://huggingface.co/LiquidAI/LFM3-1.7B-GGUF/blob/main/LICENSE",
+                4096, 8192))
+            all.Add(new AI.ModelInfo("qwen3.5-2b", "Qwen3.5 2B", "Larger Qwen: better answers, slower.",
+                "unsloth/Qwen3.5-2B-GGUF", "Qwen3.5-2B-Q4_0.gguf", 1214873856, "cd70221bebaee0503e0f6717e174250cd7825aa88438b3aabec9ad55731d9bb1",
+                "Apache 2.0", "https://www.apache.org/licenses/LICENSE-2.0", 6144, 12288))
+            all.Add(new AI.ModelInfo("qwen2.5-0.5b", "Qwen2.5 0.5B", "The smallest: for weak machines.",
+                "Qwen/Qwen2.5-0.5B-Instruct-GGUF", "qwen2.5-0.5b-instruct-q4_0.gguf", 428730208, "7671c0c304e6ce5a7fc577bcb12aba01e2c155cc2efd29b2213c95b18edaf6ed",
+                "Apache 2.0", "https://www.apache.org/licenses/LICENSE-2.0", 1024, 2048))
+            return AI.Models.all
+        }
+
+        // A model of the catalog by its id (or its file name); undefined when there is none.
+        static any Find(string id) {
+            foreach (x in AI.Models.Catalog()) {
+                AI.ModelInfo m = x
+                if (m.Id == id || m.File == id) { return m }
+            }
+            return undefined
+        }
+
+        // The folder of the models: FIRE_MODELS when it is set, else "fire/models" in the folder of the user's application data (%AppData% on Windows,
+        // ~/.config on Linux, ~/Library/Application Support on macOS). It is made when it is not there.
+        static string Folder() {
+            any env = Environment.Get("FIRE_MODELS")
+            string folder = ""
+            if (env != undefined && env != "") { folder = env }
+            else { folder = IO.Path.Combine(AI.Models.DataFolder(), "fire", "models") }
+            if (!IO.Directory.Exists(folder)) { IO.Directory.CreateDirectory(folder) }
+            return folder
+        }
+
+        // The folder of the user's application data (as .NET's ApplicationData: spark's settings are there as well).
+        static string DataFolder() {
+            any v = undefined
+            if (Environment.Platform == "windows") {
+                v = Environment.Get("APPDATA")
+                if (v != undefined && v != "") { return v }
+            }
+            any home = Environment.Get("HOME")
+            if (home == undefined || home == "") { home = Environment.Get("USERPROFILE") }
+            if (home == undefined || home == "") { return IO.Path.GetTempPath() }
+            if (Environment.Platform == "macos") { return IO.Path.Combine(home, "Library", "Application Support") }
+            v = Environment.Get("XDG_CONFIG_HOME")
+            if (v != undefined && v != "") { return v }
+            return IO.Path.Combine(home, ".config")
+        }
+
+        // The model for this machine, without asking: Qwen3.5 0.8B, the smallest on a weak one (less than 3 GB memory, or no SIMD with less than 4 threads).
+        static AI.ModelInfo Recommended() {
+            int memory = AI.Machine.MemoryMB()
+            if ((memory > 0 && memory < 3072) || (!AI.Machine.Simd() && AI.Machine.Cores() < 4)) { return AI.Models.Find("qwen2.5-0.5b") }
+            return AI.Models.Find("qwen3.5-0.8b")
+        }
+
+        // The stronger model to offer when the machine is good enough for it (8 GB memory, 4 threads, SIMD); undefined when it is not.
+        static any Stronger() {
+            AI.ModelInfo m = AI.Models.Find("lfm3-1.7b")
+            int memory = AI.Machine.MemoryMB()
+            if ((memory < 0 || memory >= m.GoodMemoryMB) && AI.Machine.Cores() >= 4 && AI.Machine.Simd()) { return m }
+            return undefined
+        }
+
+        // Whether a model can run here at all (enough memory).
+        static bool Fits(AI.ModelInfo m) {
+            int memory = AI.Machine.MemoryMB()
+            return memory < 0 || memory >= m.MinMemoryMB
+        }
+
+        // The models that are there, in the order of the catalog.
+        static List Installed() {
+            var list = new List()
+            foreach (x in AI.Models.Catalog()) {
+                AI.ModelInfo m = x
+                if (m.Installed()) { list.Add(m) }
+            }
+            return list
+        }
+
+        // The path of the model to use: `preferred` (an id) when it is there, else the first one that is there; "" when there is none.
+        static string Pick(string preferred = "") {
+            if (preferred != "") {
+                any p = AI.Models.Find(preferred)
+                if (p != undefined) {
+                    AI.ModelInfo m = p
+                    if (m.Installed()) { return m.Path() }
+                }
+                else {
+                    if (IO.File.Exists(preferred)) { return preferred }
+                }
+            }
+            foreach (x in AI.Models.Catalog()) {
+                AI.ModelInfo m = x
+                if (m.Installed()) { return m.Path() }
+            }
+            return ""
+        }
+
+        // Removes a model (and what a stopped download left).
+        static undefined Remove(AI.ModelInfo m) {
+            if (IO.File.Exists(m.Path())) { IO.File.Delete(m.Path()) }
+            if (IO.File.Exists(m.Path() + ".part")) { IO.File.Delete(m.Path() + ".part") }
+        }
+    }
+
+    // What an installation is doing.
+    enum InstallState { Waiting, Downloading, Checking, Done, Failed }
+
+    // Downloads a model in steps (a user interface calls Step() in its timer; Run() waits): the file comes into "<name>.part" (a stopped download goes on
+    // where it stopped), then its SHA-256 is checked; a wrong file is removed.
+    class ModelInstaller {
+        AI.ModelInfo Model
+        AI.InstallState State = AI.InstallState.Waiting
+        // Why it failed ("" while it did not).
+        string Error = ""
+        Http.Download download = undefined
+        IO.FileStream check = undefined
+        Hash.Sha256 hasher = undefined
+        byte chunk[]
+        defined int checkedBytes = 0
+        defined int retries = 0
+
+        construct(AI.ModelInfo model) {
+            this.Model = try take model   // (a temporary becomes the installer's; one of the catalog stays the catalog's)
+            this.chunk = new byte[1048576]
+        }
+
+        destruct() { this.Close() }
+
+        // The bytes so far (of the download, then of the check) and all of them.
+        int Received() {
+            if (this.State == AI.InstallState.Done) { return this.Model.Size }
+            if (this.State == AI.InstallState.Checking) { return this.checkedBytes }
+            if (this.download == undefined) { return 0 }
+            return this.download.Received
+        }
+        int Total() { return this.Model.Size }
+        // 0 to 100 (the download and the check each as a whole).
+        int Percent() {
+            if (this.Model.Size <= 0) { return 0 }
+            return this.Received() * 100 / this.Model.Size
+        }
+        bool Done() { return this.State == AI.InstallState.Done || this.State == AI.InstallState.Failed }
+        bool Ok() { return this.State == AI.InstallState.Done }
+
+        // Does a piece of the work (about a megabyte); true while there is more to do.
+        bool Step() {
+            if (this.State == AI.InstallState.Done || this.State == AI.InstallState.Failed) { return false }
+            if (this.State == AI.InstallState.Waiting) {
+                if (this.Model.Installed() && this.checkedBytes == 0) {
+                    // there: checked once more, as after a download
+                    return this.BeginCheck()
+                }
+                this.State = AI.InstallState.Downloading
+                this.download = new Http.Download(this.Model.Url(), this.Model.Path())
+                this.download.Start()
+                return this.AfterDownload()
+            }
+            if (this.State == AI.InstallState.Downloading) {
+                this.download.Step()
+                return this.AfterDownload()
+            }
+            // checking
+            int n = this.check.Read(this.chunk, 0, this.chunk.length)
+            if (n > 0) {
+                this.hasher.Update(this.chunk, 0, n)
+                this.checkedBytes = this.checkedBytes + n
+                return true
+            }
+            this.check.Close()
+            this.check = undefined
+            string sum = this.hasher.FinishHex()
+            if (sum.ToLower() != this.Model.Sha256.ToLower()) {
+                IO.File.Delete(this.Model.Path())
+                return this.Fail("The file is not the right one (its SHA-256 is " + sum + "); it was removed.")
+            }
+            this.State = AI.InstallState.Done
+            return false
+        }
+
+        bool AfterDownload() {
+            if (this.download.Error != "") {
+                // the network went away: a few times again (the .part file stays)
+                if (this.retries < 3) {
+                    this.retries++
+                    this.download.Retry()
+                    return true
+                }
+                return this.Fail(this.download.Error)
+            }
+            if (!this.download.Done) { return true }
+            int size = IO.File.Size(this.Model.Path())
+            if (size != this.Model.Size) {
+                IO.File.Delete(this.Model.Path())
+                return this.Fail("The file has " + size + " bytes, not " + this.Model.Size + "; it was removed.")
+            }
+            this.download.Close()
+            return this.BeginCheck()
+        }
+
+        bool BeginCheck() {
+            this.State = AI.InstallState.Checking
+            this.checkedBytes = 0
+            this.hasher = new Hash.Sha256()
+            this.check = IO.File.OpenRead(this.Model.Path())
+            return true
+        }
+
+        bool Fail(string why) {
+            this.Error = why
+            this.State = AI.InstallState.Failed
+            this.Close()
+            return false
+        }
+
+        // Does it all (waits); true when the model is there and right.
+        bool Run() {
+            while (this.Step()) { }
+            return this.Ok()
+        }
+
+        // Stops it (what came stays: a new installer goes on from there).
+        undefined Close() {
+            if (this.download != undefined) { this.download.Close() }
+            if (this.check != undefined) {
+                this.check.Close()
+                this.check = undefined
+            }
+        }
+    }
+}
