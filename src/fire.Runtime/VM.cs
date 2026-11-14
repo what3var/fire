@@ -668,6 +668,8 @@ namespace fire.Runtime
 
         // (rule 10: the value of the last `x = take v` / `obj.f = take v` of this fire thread - its store into the main program's globals moves it there)
         private object? _pendingGlobalTake;
+        /// <summary>Whether the last TryTakeToScope/Object/Array moved its value - OpCode.TookResult right after the store pushes it (`a = try take x`).</summary>
+        private bool _took;
 
         /// <summary>Rule 10 (docs/ROADMAP_TASKS.md step 8): what a fire thread writes into the main program's globals (a global variable, a field of one
         /// of their objects) goes there - a value as it is; an object (array, buffer, lambda) of this thread only when it is fresh (`new`, a call's
@@ -5353,25 +5355,32 @@ namespace fire.Runtime
                 case OpCode.TryTakeToScope:
                 {
                     int depth = ReadU16();
-                    if (OwnedByRunningCall(_stack[_sp - 1])) OwnershipWalk.TakeValue(_stack[_sp - 1], depth == 0xFFFF ? _globalScope : _currentScope.GetAncestor(depth), this);
+                    _took = OwnedByRunningCall(_stack[_sp - 1]);
+                    if (_took) OwnershipWalk.TakeValue(_stack[_sp - 1], depth == 0xFFFF ? _globalScope : _currentScope.GetAncestor(depth), this);
                     break;
                 }
                 case OpCode.TryTakeToObject:
                 {
                     var holder = RequireObjectInstance(_stack[_sp - 2], "take");
-                    if (OwnedByRunningCall(_stack[_sp - 1])) OwnershipWalk.TakeValue(_stack[_sp - 1], holder, this);
+                    _took = OwnedByRunningCall(_stack[_sp - 1]);
+                    if (_took) OwnershipWalk.TakeValue(_stack[_sp - 1], holder, this);
                     break;
                 }
                 case OpCode.TryTakeToArray:
                 {
                     var holder = _stack[_sp - 3];
                     if (IsDestroyedLeaf(holder)) { ThrowDestroyed(holder); break; }
-                    if (holder.Kind == ValueKind.Array && OwnedByRunningCall(_stack[_sp - 1])) OwnershipWalk.TakeValue(_stack[_sp - 1], holder.AsArray(), this);
+                    _took = false;
+                    if (holder.Kind == ValueKind.Array && OwnedByRunningCall(_stack[_sp - 1])) { OwnershipWalk.TakeValue(_stack[_sp - 1], holder.AsArray(), this); _took = true; }
                     // (`obj[k] = try take v` of an object with an indexer: the object owns the value, like natively)
                     else if (holder.Kind == ValueKind.Class && holder.AsObjectRef() is ObjectInstance { IsDestroyed: false } indexed && OwnedByRunningCall(_stack[_sp - 1]))
-                        OwnershipWalk.TakeValue(_stack[_sp - 1], indexed, this);
+                    { OwnershipWalk.TakeValue(_stack[_sp - 1], indexed, this); _took = true; }
                     break;
                 }
+                // `a = try take x` as a value (SPEC 2.2): whether it moved
+                case OpCode.TookResult:
+                    Push(Value.MakeBool(_took));
+                    break;
 
                 case OpCode.ReleaseTemps:
                     _currentScope.ReleaseTemps(this);

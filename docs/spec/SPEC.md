@@ -223,7 +223,10 @@ does not pass on there (`TC018`: the value dies with the setter on that path). A
   running call (a local, an argument the call was given with `take` or as the result of a call, a statement temporary), or to `this`; at the top level also to the global scope. Otherwise nothing
   changes - the value keeps its owner and is still passed or assigned as a reference. A destroyed value is not taken and does not throw (unlike `take`). A function can thereby keep
   what is handed to it without stealing from the caller: `undefined Keep(Item i) { this.held = try take i }` keeps `b.Keep(new Item())` and `b.Keep(take mine)`, but leaves `b.Keep(mine)` with the caller.
-  Like `take` it is allowed only as an argument of a call and on the right of `=` / `var a =`.
+  Like `take` it is allowed only as an argument of a call and on the right of `=` / `var a =`. **As a value, `a = try take x` is a `bool`**: whether the
+  ownership moved (`if (this.item = try take i) { ... }`, `return this.other = try take i`) - not the value assigned, which `a` holds anyway; the type checker
+  types it so and does not warn about it as a condition (TC009). `a = take x` keeps the value of an assignment. (VM: OpCode.TookResult after the store reads
+  what the TryTakeTo* before it found; natively a local `took_` of the function.)
 - `obj.TakeTo(other)` – the owner becomes `other` (an object instance).
 - All four are built-in methods of every object instance - and of every array and buffer (`TakeTo(obj)` needs an object as the target; a class that declares a method of the same name itself takes precedence). A function can thereby keep an object that belongs to it (e.g. a copy passed as a parameter, 2.4): `param.TakeTo(this)`.
 - **What travels along.** Every one of them takes a last argument of the enum `Takes` (always available): `TakeLocal(Takes.Locals)`, `TakeUpwards(Takes.Children)`, `TakeTo(obj, Takes.All)`, `TakeGlobal(Takes.This)`. Without it the mode is `Takes.This`.

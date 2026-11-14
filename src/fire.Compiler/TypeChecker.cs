@@ -748,7 +748,8 @@ namespace fire.Compiler
         {
             // `if (a = b)` is almost always a typo for `==`; `if ((a = b))` says it is meant (a warning in strict mode too)
             // (a compound assignment `a |= b` is `a = a | b` with the target itself as the left operand - not a typo)
-            if (condition is AssignExpr assign && !(assign.Value is BinaryExpr bin && ReferenceEquals(bin.Left, assign.Target))
+            // (`if (a = try take x)` asks whether it moved: meant)
+            if (condition is AssignExpr assign && !(assign.Value is BinaryExpr bin && ReferenceEquals(bin.Left, assign.Target)) && assign.Value is not UnaryExpr { Op: UnaryOp.TryTake }
                 && !Parser.ParenthesizedAssignments.TryGetValue(condition, out _))
                 Report(AssignInConditionCode, "An assignment as a condition - did you mean '=='? (write '((a = b))' if the assignment is meant)", condition.Line);
             var type = Infer(condition);
@@ -2433,6 +2434,8 @@ namespace fire.Compiler
             if (a.Target is IdentifierExpr assigned && target.IsValueKind && target.Null != Nullness.Defined)
                 for (int i = _scopes.Count - 1; i >= 0; i--)
                     if (_scopes[i].TryGetValue(assigned.Name, out var current)) { _scopes[i][assigned.Name] = current.WithNull(value.Null is Nullness.Defined or Nullness.Inferred ? Nullness.Inferred : Nullness.MayBeUndefined); break; }
+            // (`a = try take x` gives whether the ownership moved - `if (this.a = try take x)`, SPEC 2.2)
+            if (a.Value is UnaryExpr { Op: UnaryOp.TryTake }) return StaticType.Bool.WithNull(Nullness.Defined);
             return target.IsDynamic ? value : target;
         }
 

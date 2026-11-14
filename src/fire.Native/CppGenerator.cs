@@ -4328,7 +4328,9 @@ namespace fire.Native
                 foreach (var sc in st.Scopes) { f.NeedsList.Add(sc.Id); f.NeedsList.Add(TempOf(sc.Id)); }
                 var lists = CallLists(f, st);
                 string decl = lists.Count == 0 ? "" : CArray("OwnList*", "TL_", lists);
-                return $"{{ {decl}if (tryTakeOwned({value}, {(lists.Count == 0 ? "NULL" : "TL_")}, {lists.Count}, {(f.HasSelf ? "self" : "Undef()")}, MYARGS)) {take} }}";
+                // (whether it moved: OpCode.TookResult - `a = try take x` as a value)
+                f.Scalars["took_"] = "bool";
+                return $"{{ {decl}took_ = tryTakeOwned({value}, {(lists.Count == 0 ? "NULL" : "TL_")}, {lists.Count}, {(f.HasSelf ? "self" : "Undef()")}, MYARGS); if (took_) {take} }}";
             }
             // A statement that always throws (destroyedError): it leaves for the handler right after it - the fast path has no check of the unwinding
             string Thrower(string stmt) => _usesExceptions && sb != null ? $"{{ {stmt} goto {ExitLabel(f, st, locals)}; }}" : stmt;
@@ -6682,6 +6684,12 @@ namespace fire.Native
                     if (known) { SetT(d - 1, TypeOf(KindArr, ins.A[0]) | NullableBit); _kindsKept = true; }
                     return Next();
                 }
+                case OpCode.TookResult:
+                    // `a = try take x` as a value: whether the try take before the store moved it (TryTakeStmt)
+                    f.Scalars["took_"] = "bool";
+                    SetScalar(d, TypeOf(KindBool, 0), "took_");
+                    d++;
+                    return Next();
                 case OpCode.TypeParamIsOf:
                 {
                     // `T is of X`: the name of the type argument that runs among the names that are X (X, what derives from it, what implements it)
@@ -6755,7 +6763,8 @@ namespace fire.Native
                     Need(1);
                     int depth = ins.A[0];
                     string list;
-                    if (depth == 0xFFFF) list = "g_globalOwn";
+                    // (the global scope: g_globalOwn is set at the start of the program only when something uses it)
+                    if (depth == 0xFFFF) { if (!_usesGlobalOwn) { _usesGlobalOwn = true; _version++; } list = "g_globalOwn"; }
                     else
                     {
                         var sc = st.Scopes[Math.Max(0, st.Scopes.Count - 1 - depth)];
