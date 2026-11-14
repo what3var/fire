@@ -440,7 +440,9 @@ namespace fire.Native
         {
             string? owner = f.Proto?.SpecOwner ?? f.SpecClassOwner;
             string[]? args = f.Proto?.SpecArgs ?? f.SpecClassArgs;
-            if (owner == null || args == null || LibraryRole || _usesReflection || _usesJson || HasProperty(field) || _fieldAddressTaken.Contains(field)) return null;
+            // (Reflect.Set types it like any store - sf_, FieldArrayCheck; what JSON reads for it is an array the accesses check - packed, of that element - before
+            // they read it in place)
+            if (owner == null || args == null || LibraryRole || HasProperty(field) || _fieldAddressTaken.Contains(field)) return null;
             if (ArrayOfParamParts(rc, field) is not { } ofParam || ofParam.Cls != owner || ofParam.K >= args.Length) return null;
             if (DeclaredType.TypedElementOf(args[ofParam.K]) is not int code) return null;
             return TypeOf(KindArr, code & 0xFF) | NullableBit;
@@ -831,7 +833,9 @@ namespace fire.Native
         // ---- Narrow fields (fire_rt.h nvGet/nvSet, docs/spec/NATIVE_BACKEND.md "Schmale Felder"): two fields declared `int` (with `#intwidth 32`/`16`),
         // `float` (with `#floatwidth 32`) or `bool` share the slot of one Value. Not where something reads the fields of an object by their index without
         // knowing the layout: threads (sync, handover), reflection and probes, JSON, the debugger, separate modules and plugins.
-        private bool NarrowFieldsOn => !_usesThreads && !_usesReflection && !_usesProbes && !_usesJson && !DebugBuild && !Modular && !_openWorld && !_separate && !_dll;
+        // (reflection reads and writes fields through the field helpers - gf_/sf_, which know the layout; JSON through its table of fields with their places -
+        // JsonFieldInfo.half - so neither turns them off)
+        private bool NarrowFieldsOn => !_usesThreads && !_usesProbes && !DebugBuild && !Modular && !_openWorld && !_separate && !_dll;
         private readonly Dictionary<string, bool> _narrowEligible = new(StringComparer.Ordinal);
         /// <summary>Is the field `name` narrow - in every class that has a field of this name (its declaration: `int` without a wider width, `float`, `bool`)?</summary>
         private bool NarrowName(string name)
@@ -1069,7 +1073,7 @@ namespace fire.Native
                 {
                     // a field declared `byte data[]` / `word w[]` (in every class that has the name - the compiler converts each store of the name then, and a
                     // store of anything but a buffer, an array or undefined is the exception): a buffer or undefined. Reflection and JSON write past that.
-                    if (_usesReflection || _usesJson) return TypeUnknown;
+                    // (JSON reads a buffer for it - it checks the bytes; Reflect.Set converts like a compiled store: rf_set)
                     int bufType = TypeOf(KindBuf, bufferUnit) | NullableBit;
                     if (result is { } knownBuf && knownBuf != bufType) return TypeUnknown;
                     result = bufType;
@@ -6937,7 +6941,7 @@ namespace fire.Native
                         ArrayElem.F8 or ArrayElem.F16 or ArrayElem.F32 => "!fire_f32IsHint(cv_)", ArrayElem.F64 => "!fire_realIsHint(cv_)", _ => "1",
                     };
                     string valueOf = vk == KindFloat ? $"Float({x})" : vk == KindBool ? $"Bool({x})" : $"Int({x})";
-                    E($"{{ Arr* ra_; {ct} cv_ = {conv}; if (FIRE_LIKELY({isArr}leafAlive({a}) && (uint64_t)(int64_t){i} < (ra_ = arrOf({a}))->length && ra_->typed && ra_->typed->packed && {hintTest})) (({ct}*)ra_->typed->data)[{i}] = cv_; else (void){Px}aset_g({a}, Int({i}), {valueOf}, NULL); }}");
+                    E($"{{ Arr* ra_; {ct} cv_ = {conv}; if (FIRE_LIKELY({isArr}leafAlive({a}) && (uint64_t)(int64_t){i} < (ra_ = arrOf({a}))->length && ra_->typed && ra_->typed->packed && ra_->typed->elem == {se} && !ra_->typed->real && {hintTest})) (({ct}*)ra_->typed->data)[{i}] = cv_; else (void){Px}aset_g({a}, Int({i}), {valueOf}, NULL); }}");
                     Check();
                     // (the value of the assignment: the number as the element holds it)
                     int storedKind = ArrElemKind(se);

@@ -10,14 +10,14 @@ FIRE_BEGIN
 /* A field as JSON sees it (JsonMethods.JsonField): the name in the JSON text, the slot in the object, the declared type (`int`, `Point`, `List<Point>`, `$0`, "" for
  * an untyped one) and the unit it is declared with (0: none). */
 /* `arr`: a field declared as a typed array without a unit (FieldInfo.RequiredArray: the element | the rank << 8; 0: none) - what is read for it is typed */
-typedef struct JsonFieldInfo { const char* name; uint32_t slot; const char* type; uint32_t unit; uint16_t arr; uint8_t defined; uint8_t raw; uint16_t rawOff; } JsonFieldInfo;   /* (raw: a packed field - FIRE_RAW_*, at rawOff of objRaw) */   /* (defined: the kind of a `defined` field, SPEC 8.10b) */
+typedef struct JsonFieldInfo { const char* name; uint32_t slot; const char* type; uint32_t unit; uint16_t arr; uint8_t defined; uint8_t raw; uint16_t rawOff; int8_t half; } JsonFieldInfo;   /* (half: a narrow field - nvGet/nvSet, 0 or 1; -1: a whole slot) */   /* (raw: a packed field - FIRE_RAW_*, at rawOff of objRaw) */   /* (defined: the kind of a `defined` field, SPEC 8.10b) */
 /* A class: its name (as the program knows it, `Box`1` for a generic one whose plain name is taken), the plain name, its fields, `flags` (1 actor, 2 has
  * OnDeserialized(), 4 the List of the prelude, 8 JsonObject, 16 not serializable: `[NotSerializable]` or `"serializable": false` in its package) and the number of its
  * type parameters. */
 /* (fields: the njson fields that go to JSON, then the `defined` fields that do not, then a row with a NULL name) */
 typedef struct JsonClassInfo { const char* name; const char* plain; uint32_t nfields; const JsonFieldInfo* fields; uint32_t njson; uint8_t flags; uint8_t ntparams; uint16_t nraw; } JsonClassInfo;   /* (nraw: the bytes of its packed fields) */
 /* The slots of the classes JSON fills itself (-1: not in the program). */
-typedef struct JsonSpecial { int32_t listCls, listItems, listCount; int32_t objCls, objKeys, objValues, objCount; int32_t listOwns, ownsEnum; } JsonSpecial;
+typedef struct JsonSpecial { int32_t listCls, listItems, listCount; int32_t objCls, objKeys, objValues, objCount; int32_t listOwns, ownsEnum; int8_t listCountHalf, objCountHalf; } JsonSpecial;   /* (the halves: a narrow count - nvGet/nvSet; -1: a whole slot) */
 
 /* Generated (the program): the class with this id (null: none), the id of a class name (-1: none), the text of a type argument (null: not known), the type
  * argument of a text (null: none), the special slots. */
@@ -28,6 +28,8 @@ FIRE_HOST_EXTERN const char* jsonExcludedNamed(const char* name);
 FIRE_HOST_EXTERN const char* jsonTArgText(const TArg* t);
 FIRE_HOST_EXTERN const TArg* jsonTArgFor(const char* text);
 FIRE_HOST_EXTERN const JsonSpecial* jsonSpecial(void);
+/* A field of an object by its place: a narrow one (two share the slot: `half` 0 or 1) or a whole slot (`half` -1). */
+static Value jsFieldGet(Obj* o, uint32_t slot, int half) { return half >= 0 ? nvGet(&objFields(o)[slot], half) : objFields(o)[slot]; }
 
 /* The engine (below, in the program): `__JsonCall(id, ...)` - 1 Serialize(value, flags), 2 Deserialize(text[, typeName]) -> [value, objects with
  * OnDeserialized], 3 Parse(text). `callType` is the type argument of the generic method that calls it (`Json.Deserialize<Person>`), null when there is none. */
@@ -389,7 +391,7 @@ static void jsDiscover(JsWriter* w, Value start) {
             if (!c) continue;
             if (c->flags & JSON_FLAG_LIST) {
                 const JsonSpecial* sp = jsonSpecial();
-                Value items = objFields(o)[sp->listItems], count = objFields(o)[sp->listCount];
+                Value items = objFields(o)[sp->listItems], count = jsFieldGet(o, (uint32_t)sp->listCount, sp->listCountHalf);
                 if (items.kind == K_Array && leafAlive(items)) {
                     Arr* a = arrOf(items);
                     int64_t m = count.kind == K_Int ? count.i : 0;
@@ -527,7 +529,7 @@ static void jsWriteObject(JsWriter* w, Obj* o, const char* type, const void* con
     if (c->flags & JSON_FLAG_OBJECT) withType = false;
 
     if (c->flags & JSON_FLAG_LIST) {
-        Value items = objFields(o)[sp->listItems], countV = objFields(o)[sp->listCount];
+        Value items = objFields(o)[sp->listItems], countV = jsFieldGet(o, (uint32_t)sp->listCount, sp->listCountHalf);
         int64_t count = countV.kind == K_Int ? countV.i : 0;
         JsStrs own = jsTypeArgs(J, o, c);
         const char* elementType = own.n == 1 ? own.p[0] : jsElementType(J, type);
@@ -553,7 +555,7 @@ static void jsWriteObject(JsWriter* w, Obj* o, const char* type, const void* con
     if (withType) { jsKey(w, "$type", &first); jsStringUtf8(J, &w->out, jsTypeName(w, o, c)); }
     if (shared) { jsKey(w, "$id", &first); jsNumber(w, id); }
     if (c->flags & JSON_FLAG_OBJECT) {
-        Value keys = objFields(o)[sp->objKeys], values = objFields(o)[sp->objValues], countV = objFields(o)[sp->objCount];
+        Value keys = objFields(o)[sp->objKeys], values = objFields(o)[sp->objValues], countV = jsFieldGet(o, (uint32_t)sp->objCount, sp->objCountHalf);
         int64_t n = countV.kind == K_Int ? countV.i : 0, i;
         if (keys.kind == K_Array && values.kind == K_Array && leafAlive(keys) && leafAlive(values)) {
             Arr* ka = arrOf(keys);
@@ -569,7 +571,7 @@ static void jsWriteObject(JsWriter* w, Obj* o, const char* type, const void* con
         uint32_t i;
         for (i = 0; i < c->njson && !J->failed; i++) {
             const JsonFieldInfo* f = &c->fields[i];
-            Value value = f->raw ? rawGet(o, f->raw, f->rawOff, f->unit) : objFields(o)[f->slot];
+            Value value = f->raw ? rawGet(o, f->raw, f->rawOff, f->unit) : jsFieldGet(o, f->slot, f->half);
             if (value.kind == K_Lambda || isPtr(value)) continue;
             jsKey(w, f->name, &first);
             jsWriteValue(w, value, jsSubstitute(J, f->type, o, c), o, K_Class, false, f->unit);
@@ -890,6 +892,11 @@ static void jsStore(Value container, uint32_t slot, Value v) {
     *target = v;
     retain(v);
 }
+/* A field of an object by its place: a narrow one (two share the slot: `half` 0 or 1 - only a number of its kind or undefined is there, the reader checked it) or a
+ * whole slot (`half` -1). */
+/* (a packed field: not inlined into the reader - GCC then takes the bytes behind the object's head for a write past it, -Wstringop-overflow) */
+static FIRE_COLD void jsRawStore(Obj* o, uint8_t raw, uint16_t off, Value v) { rawSet(o, raw, off, v); }
+static void jsFieldStore(Value obj, uint32_t slot, int half, Value v) { if (half >= 0) nvSet(&objFields(objAt(obj))[slot], half, v); else jsStore(obj, slot, v); }
 
 static const char* jsDescribe(JsCtx* J, const char* type) {
     if (type[0] == 0) return "a value";
@@ -1054,7 +1061,7 @@ static Value jsBuildList(JsReader* r, JsNode* a, const char* type, OwnList* owne
         jsStore(itemsV, (uint32_t)i, item);
     }
     jsStore(list, (uint32_t)sp->listItems, itemsV);
-    jsStore(list, (uint32_t)sp->listCount, fire_IntU((int64_t)n, 0));
+    jsFieldStore(list, (uint32_t)sp->listCount, sp->listCountHalf, fire_IntU((int64_t)n, 0));
     /* (what the field initialiser of List gives - the reader runs no initialisers: Add/Insert ask `owns`) */
     if (sp->listOwns >= 0) jsStore(list, (uint32_t)sp->listOwns, EnumV(0, (uint16_t)sp->ownsEnum));
     return list;
@@ -1185,7 +1192,7 @@ static Value jsBuildInstance(JsReader* r, JsNode* o, const char* type, OwnList* 
         const JsonFieldInfo* df = &c->fields[m];
         if (!df->defined) continue;
         if (df->raw) continue;   /* (a packed field starts at zero anyway) */
-        jsStore(obj, df->slot, df->defined == K_Int ? Int(0, df->unit) : df->defined == K_Float ? Float((Real)0, df->unit) : df->defined == K_Bool ? Bool(false)
+        jsFieldStore(obj, df->slot, df->half, df->defined == K_Int ? Int(0, df->unit) : df->defined == K_Float ? Float((Real)0, df->unit) : df->defined == K_Bool ? Bool(false)
             : df->defined == K_Word ? WordV(0) : Char(0));
     }
     for (m = 0; m < o->nmembers; m++) {
@@ -1210,8 +1217,8 @@ static Value jsBuildInstance(JsReader* r, JsNode* o, const char* type, OwnList* 
                 : field->defined == K_Char ? " is a char" : " is a bool", " and never undefined."), "ArgumentException");
             break;
         }
-        if (field->raw) rawSet(o2, field->raw, field->rawOff, v);
-        else jsStore(obj, field->slot, v);
+        if (field->raw) jsRawStore(o2, field->raw, field->rawOff, v);
+        else jsFieldStore(obj, field->slot, field->half, v);
     }
     if (c->flags & JSON_FLAG_HOOK) {
         jsGrow(J, (void**)&r->hooks, r->nhooks, &r->capHooks, sizeof(Value));
@@ -1249,7 +1256,7 @@ static Value jsBuildJsonObject(JsReader* r, JsNode* o, OwnList* owner, const cha
     }
     jsStore(obj, (uint32_t)sp->objKeys, keys);
     jsStore(obj, (uint32_t)sp->objValues, values);
-    jsStore(obj, (uint32_t)sp->objCount, fire_IntU((int64_t)n, 0));
+    jsFieldStore(obj, (uint32_t)sp->objCount, sp->objCountHalf, fire_IntU((int64_t)n, 0));
     return obj;
 }
 

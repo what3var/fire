@@ -3530,6 +3530,12 @@ namespace fire.Runtime
                     hasUnitRule = true;
                     if (!GuardFieldArrayOfParam(value, arrayOfParam, obj)) return false;
                 }
+                else if (obj.RtClass != null && BufferFieldWords(obj.RtClass, fieldName) is { } bufferWords)
+                {
+                    // `byte data[]` / `word w[]`: a buffer - what the compiler converts at every store of the name, also for a store by name (Reflect.Set)
+                    hasUnitRule = true;
+                    if (!ConvertFieldBuffer(ref value, bufferWords, obj)) return false;
+                }
                 if (site >= 0 && !hasUnitRule && obj.RtClass != null && obj.AccessGuard == null && !obj.RtClass.IsRecord
                     && obj.RtClass.FieldIndex.TryGetValue(fieldName, out int setIndex))
                     StoreSite(site, new SiteCache(obj.RtClass, null, setIndex, requiredKind: requiredKind, requiredType: requiredType));
@@ -3647,6 +3653,11 @@ namespace fire.Runtime
             {
                 hasUnitRule = true;
                 if (!GuardFieldArrayOfParam(value, arrayOfParam, oi)) return;
+            }
+            else if (oi.RtClass != null && BufferFieldWords(oi.RtClass, fieldName) is { } bufferWords)
+            {
+                hasUnitRule = true;
+                if (!ConvertFieldBuffer(ref value, bufferWords, oi)) return;
             }
 
             if (!hasUnitRule && oi.RtClass != null && oi.ThreadLock == null && !oi.RtClass.IsRecord
@@ -7577,6 +7588,26 @@ namespace fire.Runtime
         /// false: the ArgumentException is thrown.</summary>
         private bool GuardFieldArray(Value value, ushort requiredArray, string? unit) =>
             requiredArray == 0 || TypeArrayValue(value, (byte)(requiredArray & 0xFF), requiredArray >> 8, unit, 1);
+
+        /// <summary>An array stored by name into a buffer field (Reflect.Set): the buffer it becomes (BufferFromArrayValue) belongs to the object - like the
+        /// buffer of a compiled store, which the field claims (the array stays with its owner).</summary>
+        private bool ConvertFieldBuffer(ref Value value, bool words, ObjectInstance obj)
+        {
+            var before = value;
+            if (!BufferFromArrayValue(ref value, null, 1, 1, words)) return false;
+            if (before.Kind == ValueKind.Array && value.Kind == ValueKind.Buffer)
+                LeafOwnership.Adopt(value.AsBuffer(), obj);
+            return true;
+        }
+
+        /// <summary>A field declared `byte data[]` (false) or `word w[]` (true) - a buffer (FieldInfo.TypeText); null for any other field.</summary>
+        private static bool? BufferFieldWords(RuntimeClass rc, string name)
+        {
+            for (var c = rc; c != null; c = c.Base)
+                if (c.OwnFieldInfo.TryGetValue(name, out var field))
+                    return field.IsStatic ? null : field.TypeText switch { "byte[]" or "uint8[]" => false, "word[]" => true, _ => null };
+            return null;
+        }
 
         /// <summary>A field declared `T items[]` (FieldInfo.ArrayOfParam, `$k@Class`): the array is typed by the type argument of the object, like `new T[n]`.</summary>
         private bool GuardFieldArrayOfParam(Value value, string arrayOfParam, ObjectInstance obj)

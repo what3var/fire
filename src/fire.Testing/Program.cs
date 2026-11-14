@@ -21228,6 +21228,53 @@ else
             defined int fromTyped = typed[5] + typed[7]
             print(li[5] + " " + li[6] + " " + lf[0] + " " + lf[1] + " " + fromTyped)
             """),
+        ("Schmale Felder (#intwidth 32, #floatwidth 32) mit JSON und Reflection: Json.Serialize/Deserialize und Reflect.Get/Set lesen und schreiben die Haelften, falsche Arten gemeldet", """
+            #intwidth 32
+            #floatwidth 32
+            #import "json"
+            #import "reflection"
+            class P {
+                int a
+                int b
+                float x
+                bool lit
+                float y
+                int len : mm
+                construct() { }
+            }
+            var p = new P()
+            p.a = 3; p.b = -4; p.x = 1.5; p.lit = true; p.y = 2.25; p.len = 2cm
+            string text = Json.Serialize(p)
+            print(text)
+            P q = Json.Deserialize<P>(text)
+            print(q.a + " " + q.b + " " + q.x + " " + q.lit + " " + q.y + " " + q.len)
+            P r = Json.Deserialize<P>("{\"b\": 9, \"y\": 4}")
+            print(r.a + " " + r.b + " " + r.x + " " + r.lit + " " + r.y)
+            print(Reflect.Get(p, "b") + " " + Reflect.Get(p, "y") + " " + Reflect.Get(p, "lit"))
+            Reflect.Set(p, "b", 77)
+            Reflect.Set(p, "x", 6)
+            Reflect.Set(p, "lit", false)
+            try { Reflect.Set(p, "a", "no") } catch (Exception e) { print("E " + e.message) }
+            print(p.a + " " + p.b + " " + p.x + " " + p.lit + " " + p.y)
+            var o = Json.Parse("{\"k\": 1, \"m\": [1, 2], \"s\": \"t\"}")
+            print(o.Count + " " + o.Get("k") + " " + Json.Serialize(o))
+            var lst = Json.Deserialize<List<int>>("[4, 5, 6]")
+            print(lst.Count + " " + lst[2] + " " + Json.Serialize(lst))
+            """),
+        ("byte/word-Felder mit JSON und Reflection: JSON liest Puffer (Bytes geprueft), Reflect.Set macht aus einem Array einen Puffer des Objekts und meldet anderes - das Typwissen ueber das Feld bleibt", """
+            #import "json"
+            #import "reflection"
+            class Bx { byte data[]; word w[]; int n }
+            var a = Json.Deserialize("{\"data\": [1, 2, 30], \"w\": [5, 6], \"n\": 1}", "Bx")
+            print(a.data.length + " " + a.data[2] + " " + a.w[1])
+            var c = Json.Deserialize("{\"data\": \"AQID\"}", "Bx")
+            print(c.data.length + " " + c.data[2])
+            var r = new Bx()
+            Reflect.Set(r, "data", [7, 8, 9])
+            print(r.data[1] + " " + r.data.length)
+            try { Reflect.Set(r, "data", "text"); print(r.data) } catch (Exception e) { print("E " + e.message) }
+            print(Json.Serialize(a))
+            """),
         ("JsonObject.Set uebernimmt, was dem Aufruf gehoert (take, neu erzeugt), auch aus einem inneren Block und ueber vier Eintraege hinaus; ein zerstoertes Objekt beim Schreiben ist eine DestroyedException, kein stilles null", """
             #import "json"
             var root = new JsonObject()

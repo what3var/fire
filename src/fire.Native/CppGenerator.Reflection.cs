@@ -661,7 +661,14 @@ FIRE_MAYBE_UNUSED static Value rf_selector_path(Value l, OwnList* list) {
             foreach (var name in Modular ? new List<string>() : fieldNames)
             {
                 get.AppendLine($"    if (strIs(name, {CStr(name)})) return gf_{Mangle(name)}(obj{tail(name, false)});");
-                set.AppendLine($"    if (strIs(name, {CStr(name)})) {{ sf_{Mangle(name)}(obj, value{tail(name, true)}); return Undef(); }}");
+                // (`byte data[]`/`word w[]`: a store by name gets the buffer a compiled store converts to - so the generator may count on it, FieldTypeIn; a
+                // buffer made of an array belongs to the object, like the one of a compiled store, which the field claims)
+                var bufferArms = _classList.Where(c => c.Rc.FieldIndex.ContainsKey(name) && BufferFieldOf(c.Rc, name) != null)
+                    .GroupBy(c => BufferFieldOf(c.Rc, name) == BufWords)
+                    .Select(g => string.Concat(g.Select(c => $"case {c.Id}: ")) + $"{{ Value nb_ = {(g.Key ? "typeWordBuffer" : "typeBuffer")}(value, 1, list); if (nb_.kind == K_Buffer && value.kind == K_Array && ownedOf(nb_) && scopeListOf(ownedOf(nb_))) claimToHolder(obj, nb_, scopeListOf(ownedOf(nb_))); value = nb_; }} break; ").ToList();
+                string toBuffer = bufferArms.Count == 0 ? ""
+                    : $"switch (asObj(obj)->cls) {{ {string.Concat(bufferArms)}default: break; }} {(_usesExceptions ? "if (FIRE_UNLIKELY(g_unwind.active)) return Undef(); " : "")}";
+                set.AppendLine($"    if (strIs(name, {CStr(name)})) {{ {toBuffer}sf_{Mangle(name)}(obj, value{tail(name, true)}); return Undef(); }}");
             }
             sb.AppendLine($@"FIRE_MAYBE_UNUSED static Value rf_get(Value obj, Value name, OwnList* list, uint32_t caller) {{
     (void)list; (void)caller;

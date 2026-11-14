@@ -178,7 +178,7 @@ namespace fire.Native
             if (rows.Count > 0)
             {
                 sb.AppendLine($"static {(unitFixups != null ? "" : "const ")}JsonFieldInfo {fieldTable}[] = {{" + string.Join(", ", rows.Select(f =>
-                    $"{{{CString(f.JsonName)}, {Math.Max(0, FieldPlace(rc, rc.FieldIndex[f.Name]).Slot)}, {CString(f.Type)}, {(unitFixups != null ? 0 : UnitId(f.Unit))}, {(rc.FindFieldRequiredUnit(f.Name) == null ? rc.FindFieldRequiredArray(f.Name) : 0)}, {DefinedKindOf(rc.FindFieldRequiredKind(f.Name))}, {RawPlaceOf(rc, rc.FieldIndex[f.Name])}}}")) + ", {NULL, 0, NULL, 0, 0, 0, 0, 0}};");
+                    $"{{{CString(f.JsonName)}, {Math.Max(0, FieldPlace(rc, rc.FieldIndex[f.Name]).Slot)}, {CString(f.Type)}, {(unitFixups != null ? 0 : UnitId(f.Unit))}, {(rc.FindFieldRequiredUnit(f.Name) == null ? rc.FindFieldRequiredArray(f.Name) : 0)}, {DefinedKindOf(rc.FindFieldRequiredKind(f.Name))}, {RawPlaceOf(rc, rc.FieldIndex[f.Name])}, {FieldPlace(rc, rc.FieldIndex[f.Name]).Half}}}")) + ", {NULL, 0, NULL, 0, 0, 0, 0, 0, -1}};");
                 if (unitFixups != null)
                     for (int j = 0; j < rows.Count; j++)
                         if (UnitId(rows[j].Unit) is var u and not 0) unitFixups.Add($"{fieldTable}[{j}].unit = {UnitC(u)};");
@@ -230,7 +230,7 @@ namespace fire.Native
             }
             else if (_moduleBodies == null) sb.AppendLine("#include \"fire_json.h\"   // (the engine: in the library of the module that calls it)");
             var rows = new List<string>();
-            int listCls = -1, listItems = -1, listCount = -1, objCls = -1, objKeys = -1, objValues = -1, objCount = -1, listOwns = -1, ownsEnum = 0;
+            int listCls = -1, listItems = -1, listCount = -1, objCls = -1, objKeys = -1, objValues = -1, objCount = -1, listOwns = -1, ownsEnum = 0, listCountHalf = -1, objCountHalf = -1;
             var jsonById = _classList.ToDictionary(c => c.Id);
             int jsonIds = _classList.Count == 0 ? 0 : _classList.Max(c => c.Id) + 1;
             for (int jsonId = 0; jsonId < jsonIds; jsonId++)
@@ -241,7 +241,7 @@ namespace fire.Native
                 if (rc.Name == "List" && rc.FieldIndex.TryGetValue("items", out int items) && rc.FieldIndex.TryGetValue("count", out int count))
                 {
                     flags |= 4;
-                    (listCls, listItems, listCount) = (ci.Id, FieldPlace(rc, items).Slot, FieldPlace(rc, count).Slot);
+                    (listCls, listItems, listCount, listCountHalf) = (ci.Id, FieldPlace(rc, items).Slot, FieldPlace(rc, count).Slot, FieldPlace(rc, count).Half);
                     // `owns` as its field initialiser gives it (Owns.Explicit) - the reader runs no initialisers; a packed field starts at zero (Explicit) anyway
                     if (rc.FieldIndex.TryGetValue("owns", out int owns) && !(PackedOn && RawLayoutOf(rc) is var (offs, _) && owns < offs.Length && offs[owns] >= 0)
                         && ProgramEnum("Owns") is { } ownsType)
@@ -250,13 +250,13 @@ namespace fire.Native
                 if (rc.Name == "JsonObject" && rc.FieldIndex.TryGetValue("keys", out int keys) && rc.FieldIndex.TryGetValue("values", out int values) && rc.FieldIndex.TryGetValue("count", out int n))
                 {
                     flags |= 8;
-                    (objCls, objKeys, objValues, objCount) = (ci.Id, FieldPlace(rc, keys).Slot, FieldPlace(rc, values).Slot, FieldPlace(rc, n).Slot);
+                    (objCls, objKeys, objValues, objCount, objCountHalf) = (ci.Id, FieldPlace(rc, keys).Slot, FieldPlace(rc, values).Slot, FieldPlace(rc, n).Slot, FieldPlace(rc, n).Half);
                 }
                 rows.Add(JsonRow(ci, $"kJsonF{ci.Id}", flags, sb, null));
             }
             sb.AppendLine($"static const JsonClassInfo kJsonClasses[] = {{{(rows.Count == 0 ? "{\"\", \"\", 0, NULL, 0, 0, 0, 0}" : string.Join(",\n    ", rows))}}};");
             sb.AppendLine($"static const uint32_t kJsonClassCount = {rows.Count};");
-            sb.AppendLine($"static const JsonSpecial kJsonSpecial = {{{listCls}, {listItems}, {listCount}, {objCls}, {objKeys}, {objValues}, {objCount}, {listOwns}, {ownsEnum}}};");
+            sb.AppendLine($"static const JsonSpecial kJsonSpecial = {{{listCls}, {listItems}, {listCount}, {objCls}, {objKeys}, {objValues}, {objCount}, {listOwns}, {ownsEnum}, {listCountHalf}, {objCountHalf}}};");
             var targs = _targIds.OrderBy(kv => kv.Value).ToList();
             sb.AppendLine("typedef struct JsonTArgText { const char* text; const TArg* targ; } JsonTArgText;");
             sb.AppendLine($"static const JsonTArgText kJsonTArgs[] = {{{(targs.Count == 0 ? "{NULL, NULL}" : string.Join(", ", targs.Select(t => $"{{{CString(t.Key)}, &ta_{t.Value}}}")))}}};");

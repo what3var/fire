@@ -3787,7 +3787,7 @@ FIRE_FN Value intProgram(Value v) { if (v.kind == K_Int && v.wide) { v.i = FIRE_
 FIRE_FN Value adaptUnit(Value v, uint32_t unit, bool dimensionOnly, bool toFloat, Value expectedText);
 FIRE_ALWAYS_INLINE FIRE_FN bool adaptSlot(Value* v, uint32_t unit, uint8_t flags, const Str* expectedText) {
     /* (the common case at once: a number already in that unit - nothing to convert; an int that has to become a float goes on) */
-    if (FIRE_LIKELY(v->unit == unit && (v->kind == K_Float || v->kind == K_Int && !(flags & 2) || v->kind == K_Undefined))) return false;
+    if (FIRE_LIKELY(v->unit == unit && (v->kind == K_Float || (v->kind == K_Int && !(flags & 2)) || v->kind == K_Undefined))) return false;
     *v = adaptUnit(*v, unit, (flags & 1) != 0, (flags & 2) != 0, StrV(expectedText));
 #ifdef FIRE_EXCEPTIONS
     return g_unwind.active;
