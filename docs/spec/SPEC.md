@@ -1901,7 +1901,8 @@ every write through any reference to it (`var d = a; d[0] = 300`, `ref a[i]`, `a
 It becomes typed where it is stored: the declaration's initializer, the automatic allocation (`int a[10]`), a later
 assignment to the variable or field. Its elements are converted then; one that does not fit is the exception. An array
 that is typed already stays as it is if the types agree, an array of another element type is an `ArgumentException`.
-Parameters do not type what they receive. A copy (`copy`, `flat`, `taking`, `sync`) of a typed array is typed.
+A parameter types what it receives the same way (`int a[]`: the array given to it becomes typed, in place - one with an element that does not fit
+is the exception, undefined passes; anything else but an array is the exception). A copy (`copy`, `flat`, `taking`, `sync`) of a typed array is typed.
 Multidimensional declarations (`int m[3][4]`) type the innermost arrays. `var`, `any`, strings, classes and pointers
 declare no element type - such an array takes any value, as before.
 
@@ -1913,8 +1914,9 @@ An `int` element is cut to 8 bits (`300` becomes 44, as `buffer[i] = 300` does),
 an `ArgumentException` (`An element of a byte buffer must be an int, not String.`). A buffer stored there stays as it is.
 Multidimensional `byte` declarations (`byte m[3][4]`, `byte m[][] = [[1], [2, 3]]`) make the innermost arrays buffers (an
 array of buffers). The buffer belongs to the owner of the array it replaces (the scope of a literal, the object of a field,
-the outer array for an inner one). Parameters do not convert (`byte data[]` as a parameter takes whatever is passed - the
-natives of the packages accept arrays of bytes themselves, see below). What a buffer can do differently from an array:
+the outer array for an inner one). A parameter is a declaration like a variable: `byte data[]` converts an array given to it into a new buffer (what the method writes
+does not reach the array - TC032 warns for an array of a variable or a field), a buffer and `undefined` pass, any other value is an
+`ArgumentException` (`A byte buffer is declared here, not String.`; the same for every `byte`/`word` declaration). What a buffer can do differently from an array:
 `length`/`Length`, `[i]`, `foreach`, `copy`/`flat` (byte by byte), `is of IEnumerable` and passing it to natives work the
 same; an element is always an `int` 0..255 - it cannot be `undefined` (a new buffer holds zeros), writing a non-int
 (`x[0] = "a"`, `x[0] = undefined`) is an `ArgumentException`, and a too large int is cut. `print(x)` shows `<buffer 3 bytes>`

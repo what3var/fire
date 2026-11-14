@@ -20927,6 +20927,43 @@ else
             l.Clear()
             print("cleared " + l.Count)
             """),
+        ("Puffer und typisierte Arrays als Parameter und Feld: Elementzugriffe in Schleifen (schneller Weg), undefined, falsche Werte, Umwandlung eines Arrays", """
+            class Counter {
+                byte data[64]
+                construct() { for (int i = 0; i < 64; i++) { if (i % 3 == 0) { this.data[i] = i } } }
+                int CountField() {
+                    int n = 0
+                    for (int i = 0; i < 64; i++) { if (this.data[i] != 0) { n++ } }
+                    return n
+                }
+                static int CountBytes(byte b[]) {
+                    int n = 0
+                    for (int i = 0; i < 64; i++) { if (b[i] != 0) { n = n + b[i] } }
+                    return n
+                }
+                static int SumInts(int a[]) {
+                    int n = 0
+                    for (int i = 0; i < a.Length; i++) { n = n + a[i] }
+                    return n
+                }
+                static undefined Fill(byte b[], int v) { for (int i = 0; i < 4; i++) { b[i] = v + i } }
+                static string Kind(byte b[]) { return b == undefined ? "undefined" : "buffer " + b.Length }
+            }
+            var c = new Counter()
+            print(c.CountField())
+            print(Counter.CountBytes(c.data))
+            int ints[5] = [1, 2, 3, 4, 5]
+            print(Counter.SumInts(ints))
+            print(Counter.SumInts([10, 20]))
+            byte small[4]
+            Counter.Fill(small, 250)
+            print(small[0] + " " + small[3])
+            print(Counter.Kind(undefined))
+            print(Counter.Kind([1, 2, 3]))
+            try { print(Counter.Kind("text")) } catch (ArgumentException e) { print("error: " + e.message) }
+            try { print(Counter.CountBytes(undefined)) } catch (Exception e) { print("undefined: " + e.message) }
+            try { print(Counter.SumInts([1, "x"])) } catch (ArgumentException e) { print("ints: " + e.message) }
+            """),
         ("C-Rumpf mit einem Value unbekannten Typs als Ergebnis: der Platz vergisst den Typ des ersten Arguments (z0 + Shape.Meters(shape, 0) las den float als int - Ruhrpott-Raser)", """
             class Shape {
                 static defined float Meters(defined int shape, defined int corner) { any v = shape > 100000 ? "x" : ((shape >> (corner * 2)) & 3) * 0.05; return v }

@@ -81,7 +81,8 @@ try {
   variable or field. Its elements are converted then. An array typed already for another element type is an `ArgumentException`, and so is a value
   that is no array at all (`int a[] = 5`): a typed array declaration holds an array or `undefined`, like `int x` holds an int. This holds for every way
   a field is set - an assignment, `Reflect.Set`, `Json.Deserialize` (which reads the array typed).
-- Parameters do not type what they receive. Copies (`copy`, `flat`, [`taking`](15-threads-and-actors.md)) of a typed array are typed.
+- A parameter `int a[]` types what it receives like a variable (in place: the caller's array becomes typed; an element that does not fit is the
+  exception). Copies (`copy`, `flat`, [`taking`](15-threads-and-actors.md)) of a typed array are typed.
 - `int m[3][4]` types the inner arrays. `var`, `any`, strings, classes and pointers declare no element type: such an array takes any value.
 - **A declaration with a size makes the array** - a local or global where it is declared, a field together with its object
   (`class Box { int data[3] }`: `new Box().data.length` is 3). Without a size (`int arr[]`) the variable or field stays `undefined` until an array is assigned.
@@ -400,7 +401,10 @@ class Packet {
   `magic[0] = undefined`) is an `ArgumentException`.
 - `length`, `[i]`, `foreach`, `copy`/`flat` and `is of IEnumerable` work as for arrays; `print` shows `<buffer n bytes>`, JSON writes a buffer as
   base64 text.
-- A parameter `byte data[]` takes what it is given (an array stays an array).
+- A parameter `byte data[]` is a `byte` declaration too: an array given to it becomes a new buffer with its elements (what the method writes then
+  does not reach the array - the warning `TC032` says so for an array of a variable or a field), a buffer and `undefined` pass, anything else is an
+  `ArgumentException` (`A byte buffer is declared here, not String.`). So the native backend knows what it holds: `b[i]` in a loop reads the byte
+  in place.
 
 ### `word` declarations are buffers of machine words
 

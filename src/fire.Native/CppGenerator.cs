@@ -941,6 +941,16 @@ namespace fire.Native
             {
                 if (!cls.Rc.FieldIndex.ContainsKey(name)) continue;
                 byte declared = cls.Rc.FindFieldRequiredKind(name);
+                if (declared == 0 && cls.Rc.FindFieldRequiredArray(name) == 0 && BufferFieldOf(cls.Rc, name) is { } bufferUnit)
+                {
+                    // a field declared `byte data[]` / `word w[]` (in every class that has the name - the compiler converts each store of the name then, and a
+                    // store of anything but a buffer, an array or undefined is the exception): a buffer or undefined. Reflection and JSON write past that.
+                    if (_usesReflection || _usesJson) return TypeUnknown;
+                    int bufType = TypeOf(KindBuf, bufferUnit) | NullableBit;
+                    if (result is { } knownBuf && knownBuf != bufType) return TypeUnknown;
+                    result = bufType;
+                    continue;
+                }
                 if (declared == 0 && cls.Rc.FindFieldRequiredArray(name) is var requiredArray and not 0)
                 {
                     // a field declared as a typed array without a unit: an array of that element or undefined (every assignment types it, FieldInfo.RequiredArray)
@@ -965,6 +975,15 @@ namespace fire.Native
                 result = type;
             }
             return result ?? TypeUnknown;
+        }
+
+        /// <summary>The kind of buffer a field is declared as (`byte data[]`, `uint8 data[16]`: BufBytes, `word w[]`: BufWords - one rank), null: none.</summary>
+        private static int? BufferFieldOf(RuntimeClass rc, string name)
+        {
+            for (var c = rc; c != null; c = c.Base)
+                if (c.OwnFieldInfo.TryGetValue(name, out var field))
+                    return field.IsStatic ? null : field.TypeText switch { "byte[]" or "uint8[]" => BufBytes, "word[]" => BufWords, _ => null };
+            return null;
         }
 
         /// <summary>The check of a declaration with a class, an interface or a constrained type parameter (a parameter, a field; DeclaredType, `spec` its
@@ -3252,6 +3271,13 @@ namespace fire.Native
             // Parameters can be anything: assume they may be references (a call-site analysis could narrow this). A parameter declared int/float/bool
             // has its type from the GuardLocal of the prologue.
             f.GuardAddr = code.Where(c => c.Op is OpCode.GuardLocal or OpCode.GuardLocalType).ToDictionary(c => c.A[0], c => c.Addr);
+            // (a parameter declared as a typed array or a buffer - `int a[]`, `byte b[]` - is typed by the prologue: LoadLocal, TypeArray, StoreLocal; what it
+            // holds from that store on is what the store says, before it what the caller passed)
+            for (int k = 0; k + 2 < code.Count; k++)
+                if (code[k].Op == OpCode.LoadLocal && code[k].A[0] == 0 && code[k].A[1] < f.ParamLike && code[k + 1].Op == OpCode.TypeArray
+                    && code[k + 2].Op == OpCode.StoreLocal && code[k + 2].A[0] == 0 && code[k + 2].A[1] == code[k].A[1] && !f.GuardAddr.ContainsKey(code[k].A[1])
+                    && code.Take(k).All(c => c.Op is OpCode.LoadLocal or OpCode.TypeArray or OpCode.StoreLocal or OpCode.Pop or OpCode.ConvertWidth or OpCode.CopyArgs or OpCode.TakeCallTypeArgs))
+                    f.GuardAddr[code[k].A[1]] = code[k + 2].Addr;
             // (a parameter declared int/float/bool - GuardLocal - holds no reference after its check: it is only counted when the function stores one in it;
             // then its retain at the entry comes back too, so a guard that fails before it still leaves the counts right)
             var scalarParams = code.Where(c => c.Op == OpCode.GuardLocal && c.A[0] < f.ParamLike).Select(c => c.A[0]).ToHashSet();
@@ -4144,6 +4170,15 @@ namespace fire.Native
             {
                 if (st.Scopes.Count - 1 < 64) st.TempsDirty |= 1UL << (st.Scopes.Count - 1);
                 int home = st.Scopes[^1].Id;
+                f.NeedsList.Add(home);
+                f.NeedsList.Add(TempOf(home));
+                return ListName(TempOf(home));
+            }
+            // The temporaries of the function's own scope: for the rare way of an access whose result owns nothing (an element of a buffer or of a typed
+            // array - a number, or the exception), so that a loop around it needs no list of its own (no poolMark/leave per round)
+            string OuterOwnerList()
+            {
+                int home = st.Scopes[0].Id;
                 f.NeedsList.Add(home);
                 f.NeedsList.Add(TempOf(home));
                 return ListName(TempOf(home));
@@ -6356,11 +6391,16 @@ namespace fire.Native
                     // (a buffer of that element made right before: nothing to convert)
                     Need(1); _kindsKept = true; return Next();
                 case OpCode.TypeArray when ins.A[0] == ArrayElem.U8:
-                    // a `byte` declaration holds a byte buffer (SPEC 8.4.2): an array stored there becomes one (fire_rt.h bufFromArray)
-                    Need(1); E($"{S(d - 1)} = typeBuffer({S(d - 1)}, {ins.A[1]}, &{OwnerList()});"); Check(); return Next();
+                    // a `byte` declaration holds a byte buffer (SPEC 8.4.2): an array stored there becomes one (fire_rt.h bufFromArray), anything else but
+                    // undefined is the exception - afterwards it is a buffer of bytes or undefined (a rank above 1: an array of them)
+                    Need(1); E($"{S(d - 1)} = typeBuffer({S(d - 1)}, {ins.A[1]}, &{OwnerList()});"); Check();
+                    if (ins.A[1] == 1) { SetT(d - 1, TypeOf(KindBuf, BufBytes) | NullableBit); _kindsKept = true; }
+                    return Next();
                 case OpCode.TypeArray when ins.A[0] == ArrayElem.Word:
                     // a `word` declaration holds a buffer of machine words (SPEC 8.10)
-                    Need(1); E($"{S(d - 1)} = typeWordBuffer({S(d - 1)}, {ins.A[1]}, &{OwnerList()});"); Check(); return Next();
+                    Need(1); E($"{S(d - 1)} = typeWordBuffer({S(d - 1)}, {ins.A[1]}, &{OwnerList()});"); Check();
+                    if (ins.A[1] == 1) { SetT(d - 1, TypeOf(KindBuf, BufWords) | NullableBit); _kindsKept = true; }
+                    return Next();
                 case OpCode.TypeArray:
                 {
                     Need(1);
@@ -6545,8 +6585,10 @@ namespace fire.Native
                     Need(1);
                     E($"deleteValue({S(d - 1)});");
                     d--; return Next();
-                case OpCode.ArrayGet when K(d - 2) == KindBuf && K(d - 1) == KindInt:
+                case OpCode.ArrayGet when BK(d - 2) == KindBuf && (Ty(d - 2) & TypeNone) == 0 && U(d - 2) is BufBytes or BufWords && K(d - 1) == KindInt:
                 {
+                    // (a buffer that may be undefined - a `byte b[]` parameter: its kind is checked too, undefined takes the generic access that throws)
+                    string isBuf = IsNullable(Ty(d - 2)) ? $"{S(d - 2)}.kind == K_Buffer && " : "";
                     // an element of a buffer the generator knows (a byte, or a machine word): read in place - the generic access for a destroyed buffer or
                     // an index out of range (it throws there)
                     Need(2);
@@ -6560,18 +6602,19 @@ namespace fire.Native
                         string idxValue = NarrowInt(d - 1) ? $"Int({ib})" : S(d - 1);
                         SetT(d - 2, elemType); SetR(d - 2, false); _kindsKept = true;
                         string shadow = ScalarName(f, st, d - 2);
-                        E($"if (FIRE_LIKELY(leafAlive({ab}) && (uint64_t)(int64_t){ib} < bufOf({ab})->length)) {shadow} = {elem}; else {{ Value e_ = {Px}aget_g({ab}, {idxValue}, &{OwnerList()}); {shadow} = {(wordsGet ? "(FireWord)e_.w" : "(FireInt)e_.i")}; }}");
+                        E($"if (FIRE_LIKELY({isBuf}leafAlive({ab}) && (uint64_t)(int64_t){ib} < bufOf({ab})->length)) {shadow} = {elem}; else {{ Value e_ = {Px}aget_g({ab}, {idxValue}, &{OuterOwnerList()}); {shadow} = {(wordsGet ? "(FireWord)e_.w" : "(FireInt)e_.i")}; }}");
                         st.Scalar |= 1UL << (d - 2);
                         Check();
                         d--; return Next();
                     }
                     string a = S(d - 2), i = S(d - 1);
-                    E($"if (FIRE_LIKELY(leafAlive({a}) && (uint64_t){i}.i < bufOf({a})->length)) {a} = {(wordsGet ? $"WordV((uint64_t)bufWords(bufOf({a}))[{i}.i])" : $"Int(bufOf({a})->data[{i}.i])")}; else {a} = {Px}aget_g({a}, {i}, &{OwnerList()});");
+                    E($"if (FIRE_LIKELY({isBuf}leafAlive({a}) && (uint64_t){i}.i < bufOf({a})->length)) {a} = {(wordsGet ? $"WordV((uint64_t)bufWords(bufOf({a}))[{i}.i])" : $"Int(bufOf({a})->data[{i}.i])")}; else {a} = {Px}aget_g({a}, {i}, &{OuterOwnerList()});");
                     Check();
                     d--; SetR(d - 1, false); SetT(d - 1, TypeOf(wordsGet ? KindWord : KindInt, 0) | (wordsGet ? 0 : NarrowBit)); _kindsKept = true; return Next();
                 }
-                case OpCode.ArraySet when K(d - 3) == KindBuf && K(d - 2) == KindInt && (K(d - 1) == KindWord && U(d - 3) == BufWords || K(d - 1) == KindInt && (U(d - 3) == BufBytes || U(d - 1) == 0)):
+                case OpCode.ArraySet when BK(d - 3) == KindBuf && (Ty(d - 3) & TypeNone) == 0 && U(d - 3) is BufBytes or BufWords && K(d - 2) == KindInt && (K(d - 1) == KindWord && U(d - 3) == BufWords || K(d - 1) == KindInt && (U(d - 3) == BufBytes || U(d - 1) == 0)):
                 {
+                    string isSetBuf = IsNullable(Ty(d - 3)) ? $"{S(d - 3)}.kind == K_Buffer && " : "";
                     // a store into an element of a known buffer: in place (the generic access for a destroyed buffer or an index out of range); a word buffer
                     // stores the word (an int cut to the width) and gives it back, a byte buffer the byte of the number and gives the number back
                     Need(3);
@@ -6579,9 +6622,9 @@ namespace fire.Native
                     string a = S(d - 3), i = S(d - 2), v = S(d - 1);
                     string bits = K(d - 1) == KindWord ? $"{v}.w" : $"(uint64_t)(int64_t){v}.i";
                     if (wordsSet)
-                        E($"if (FIRE_LIKELY(leafAlive({a}) && (uint64_t){i}.i < bufOf({a})->length)) {{ {v} = WordV({bits}); bufWords(bufOf({a}))[{i}.i] = (FireWord){v}.w; }} else {v} = {Px}aset_g({a}, {i}, {v}, &{OwnerList()});");
+                        E($"if (FIRE_LIKELY({isSetBuf}leafAlive({a}) && (uint64_t){i}.i < bufOf({a})->length)) {{ {v} = WordV({bits}); bufWords(bufOf({a}))[{i}.i] = (FireWord){v}.w; }} else {v} = {Px}aset_g({a}, {i}, {v}, &{OuterOwnerList()});");
                     else
-                        E($"if (FIRE_LIKELY(leafAlive({a}) && (uint64_t){i}.i < bufOf({a})->length)) bufOf({a})->data[{i}.i] = (uint8_t)({bits}); else {v} = {Px}aset_g({a}, {i}, {v}, &{OwnerList()});");
+                        E($"if (FIRE_LIKELY({isSetBuf}leafAlive({a}) && (uint64_t){i}.i < bufOf({a})->length)) bufOf({a})->data[{i}.i] = (uint8_t)({bits}); else {v} = {Px}aset_g({a}, {i}, {v}, &{OuterOwnerList()});");
                     Check();
                     int storedType = wordsSet ? TypeOf(KindWord, 0) : Ty(d - 1);
                     E($"{a} = {v};");
@@ -6595,7 +6638,7 @@ namespace fire.Native
                     string a = S(d - 2), i = S(d - 1);
                     // (the generic route types the array first: what the element is, is then certain even when a way of writing the field or variable
                     // missed it - it converts, or it is the exception)
-                    E($"{{ Arr* ra_; if (FIRE_LIKELY({a}.kind == K_Array && {i}.kind == K_Int && leafAlive({a}) && (uint64_t){i}.i < (ra_ = arrOf({a}))->length && ra_->typed && ra_->typed->packed && ra_->typed->elem == {getElem})) {a} = arrPackedAt(ra_, (uint32_t){i}.i, {getElem}); else if (typeArray({a}, {getElem}, 1, {TypeArrayUnitArgsOf(null)}, 1)) {a} = {Px}aget_g({a}, {i}, &{OwnerList()}); }}");
+                    E($"{{ Arr* ra_; if (FIRE_LIKELY({a}.kind == K_Array && {i}.kind == K_Int && leafAlive({a}) && (uint64_t){i}.i < (ra_ = arrOf({a}))->length && ra_->typed && ra_->typed->packed && ra_->typed->elem == {getElem})) {a} = arrPackedAt(ra_, (uint32_t){i}.i, {getElem}); else if (typeArray({a}, {getElem}, 1, {TypeArrayUnitArgsOf(null)}, 1)) {a} = {Px}aget_g({a}, {i}, &{OuterOwnerList()}); }}");
                     Check();
                     d--; SetR(d - 1, false); SetT(d - 1, TypeOf(ArrElemKind(getElem), 0) | NullableBit | (ArrElemKind(getElem) == KindInt ? NarrowBit : 0)); _kindsKept = true; return Next();
                 }
@@ -6606,7 +6649,7 @@ namespace fire.Native
                     Need(3);
                     string a = S(d - 3), i = S(d - 2), v = S(d - 1);
                     string convert = ArrElemKind(setElem) == KindInt ? $"{v}.reserved = 0; {v} = intToWidth({v}, {ArrElemBits(setElem)}, false); " : "";
-                    E($"{{ Arr* ra_; if (FIRE_LIKELY({a}.kind == K_Array && {i}.kind == K_Int && leafAlive({a}) && (uint64_t){i}.i < (ra_ = arrOf({a}))->length && ra_->typed && ra_->typed->packed && ra_->typed->elem == {setElem})) {{ {convert}arrPackedSet(ra_, (uint32_t){i}.i, {v}); }} else {v} = {Px}aset_g({a}, {i}, {v}, &{OwnerList()}); }}");
+                    E($"{{ Arr* ra_; if (FIRE_LIKELY({a}.kind == K_Array && {i}.kind == K_Int && leafAlive({a}) && (uint64_t){i}.i < (ra_ = arrOf({a}))->length && ra_->typed && ra_->typed->packed && ra_->typed->elem == {setElem})) {{ {convert}arrPackedSet(ra_, (uint32_t){i}.i, {v}); }} else {v} = {Px}aset_g({a}, {i}, {v}, &{OuterOwnerList()}); }}");
                     Check();
                     int storedType = Ty(d - 1);
                     E($"{a} = {v};");
