@@ -60,7 +60,7 @@ namespace Shop {
     enum Level { Low, Mid, High }
     record Address { string city; string zipCode; construct(string city, string zipCode) { ... } }
     [Table "customers"]
-    class Customer {
+    class Customer : Data.Entity {          // (a class writes itself: c.Save(db), c.Delete(db), c.Reload(db))
         [Key] int id
         [Column "full_name"] [Required] [Length 100] string fullName
         ...

@@ -124,6 +124,25 @@ db.Delete(p)
 - `Ensure(typeName)` makes the table, adds the columns it lacks and the indexes - for tests, tools and small programs; migrations come later.
 - A class with `[Table]` is kept by a native build (stripping) - its fields are read by reflection. A class without it works as well, as long as the
   program uses it elsewhere.
+- `db.Reload(obj)` reads the row of an object again into its fields (false: there is none).
+
+A class that derives from `Data.Entity` writes itself: `p.Save(db)`, `p.Insert(db)`, `p.Update(db)`, `p.Delete(db)`, `p.Reload(db)` (the classes of a
+[data model](designer.md) do).
+
+### Mapping in code
+
+The mapping can be given in code instead of attributes - for classes of a library you cannot change, or to keep them free of attributes. Each call is the
+attribute of its name and counts before one written on the field; it is given before a connection uses the class (it reads the mapping once):
+
+```fire
+Data.Mapping.Entity<Author>().Table("authors").Key(a => a.id).Column(a => a.fullName, "full_name").Required(a => a.fullName)
+    .Length(a => a.fullName, 80).Ignore(a => a.secret).HasMany(a => a.books, "authorId")
+Data.Mapping.Entity<Book>().Table("books").Key(b => b.number).Index(b => b.authorId).Check(b => b.title, "length(title) > 0").BelongsTo(b => b.author, "authorId")
+```
+
+`Table`, `View`, `Check(condition)` for the class; `Key(f, generated = true)`, `Column`, `Ignore`, `Required`, `Length`, `Unique`, `Index`, `Version`,
+`Json`, `Check(f, condition)`, `DbType`, `HasMany`, `HasOne`, `BelongsTo`, `ManyToMany` for a field. A class with a table in code is one of the [Table]
+classes for `forge data diff`. `Data.Mapping.Clear()` forgets everything (tests).
 
 ## Transactions
 
@@ -235,6 +254,32 @@ List<Person> london = await db.From<Person>().Where(p => p.city == "London").ToL
   or [ManyToMany] field) is reached with `Any`/`All` (below), not by a member.
 - Anything else - a method of your own, a member of a list, `is of` - is a `Data.NotTranslatableException` that names the part of the lambda.
 - The same query runs on every driver; the in-memory database gets the same SQL.
+
+### Projections, groups, joins
+
+```fire
+record Line { string name; float total; construct(string n, float t) { this.name = n; this.total = t } }
+record Total { int customer; int count; float sum; construct(int c, int n, float s) { this.customer = c; this.count = n; this.sum = s } }
+List<string> names = db.From<Customer>().OrderBy(c => c.name).Select(c => c.name)
+List<Line> lines = db.From<Order>().Where(o => o.total > 6).Select(o => new Line(o.customer.name, o.total * 2))
+List<Total> totals = db.From<Order>().GroupBy(o => o.customerId).Having(g => g.Count() > 1).OrderBy(g => g.Key)
+    .Select(g => new Total(g.Key, g.Count(), g.Sum(o => o.total)))
+List<Data.Group<Order>> groups = db.From<Order>().GroupBy(o => o.status).ToList()          // g.Key, g.Items, g.Count(), g.Max(o => o.total)
+List<Line> joined = db.From<Order>().Join<Customer>((o, c) => o.customerId == c.id).Where((o, c) => c.city != undefined)
+    .OrderBy((o, c) => o.total).Select((o, c) => new Line(c.city, o.total))
+List<Data.Pair<Customer, Order>> pairs = db.From<Customer>().LeftJoin<Order>((c, o) => o.customerId == c.id).ToList()   // p.First, p.Second
+```
+
+- `Select(p => value)` reads only what it needs: a column, a navigation, arithmetic - or `new X(a, b, ...)`, each argument a column of the SELECT, the
+  object made with its constructor. The values become what the tree says they are (a `bool` of 1/0, a `DateTime` of its text, an enum of its name).
+  A projection the database cannot compute (a method of the program: `c => c.name.Substring(0, 2)`) runs in the program on the objects the query reads.
+- `GroupBy(key)` gives the groups of the query; `Select(g => ...)` with `g.Key` and the aggregates `g.Count()`, `g.Count(o => condition)`,
+  `g.Sum(o => ...)`, `g.Average`, `g.Min`, `g.Max` is a `GROUP BY` in the database, `Having(g => ...)` its `HAVING`, `OrderBy(g => ...)` its order.
+  `ToList()` reads the objects and groups them in the program (`Data.Group<T>`: `Key`, `Items` and the same aggregates on them).
+- `Join<U>((a, b) => condition)` and `LeftJoin<U>` (also the objects without a partner: `Second` is undefined) pair the objects of the query (its own
+  `Where` stays) with those of another table: `Where`, `OrderBy`, `OrderByDescending`, `Skip`, `Take` on both, `Select((a, b) => ...)`, `ToList()` as
+  `Data.Pair<T, U>` (`First`, `Second`), `Count()` - one statement with `JOIN ... ON`.
+- On the in-memory database (no GROUP BY and JOIN in its SQL) groups and joins run in the program, by the compiled lambdas - with the same results.
 
 ## Sessions: a unit of work
 
@@ -493,14 +538,17 @@ of a mapping to edit.
 ## The in-memory database
 
 `#import "data.memory"`, `new Data.Connection("memory:")`: a database in the memory of the program, its own for the connection - written in fire, no
-file, nothing to install. It is for tests (the same code as with a database on disk, fast, empty at every start) and for small programs. It understands
+file, nothing to install. `memory:shop` is a database shared by name: every connection that names it (in any case) sees the same tables - a pool, a
+test that opens several connections. A transaction of one connection locks it for writing: another connection that writes or begins one meanwhile gets a
+`Data.BusyException` (reading sees what the transaction wrote so far); a connection closed in a transaction rolls it back.
+`Data.MemoryDriver.Forget("shop")` drops it (the next connection gets an empty one). It is for tests (the same code as with a database on disk, fast, empty at every start) and for small programs. It understands
 a subset of SQL, the part that programs and the mapping use, with SQLite's rules for values, NULL and errors:
 
 | | |
 |---|---|
-| schema | `CREATE TABLE [IF NOT EXISTS] t (c TYPE [PRIMARY KEY] [NOT NULL] [UNIQUE] [DEFAULT v], ..., [PRIMARY KEY (c)], [UNIQUE (c)])`, `DROP TABLE [IF EXISTS]`, `ALTER TABLE t ADD [COLUMN] ...`, `ALTER TABLE t DROP [COLUMN] c`, `ALTER TABLE t RENAME [COLUMN] a TO b`, `CREATE [UNIQUE] INDEX [IF NOT EXISTS] i ON t (c)`, `DROP INDEX` |
+| schema | `CREATE TABLE [IF NOT EXISTS] t (c TYPE [PRIMARY KEY] [NOT NULL] [UNIQUE] [DEFAULT v] [CHECK (e)], ..., [PRIMARY KEY (c)], [UNIQUE (c)], [CHECK (e)])`, `CREATE VIEW v AS SELECT ...`, `DROP VIEW`, `DROP TABLE [IF EXISTS]`, `ALTER TABLE t ADD [COLUMN] ...`, `ALTER TABLE t DROP [COLUMN] c`, `ALTER TABLE t RENAME [COLUMN] a TO b`, `CREATE [UNIQUE] INDEX [IF NOT EXISTS] i ON t (c)`, `DROP INDEX` |
 | rows | `INSERT INTO t [(c, ...)] VALUES (...)[, (...)]`, `INSERT ... DEFAULT VALUES`, `UPDATE t SET c = e, ... [WHERE e]`, `DELETE FROM t [WHERE e]` |
-| queries | `SELECT [DISTINCT] * \| e [AS name], ... [FROM t] [WHERE e] [ORDER BY e [ASC\|DESC], ...] [LIMIT n [OFFSET m]]` - one table |
+| queries | `SELECT [DISTINCT] * \| e [AS name], ... [FROM t] [WHERE e] [ORDER BY e [ASC\|DESC], ...] [LIMIT n [OFFSET m]]` - one table or view, scalar subqueries `(SELECT ...)` and `EXISTS` |
 | expressions | literals, `?`, columns, `+ - * / %`, `\|\|`, `= != <> < <= > >=`, `AND OR NOT`, `IS [NOT] NULL`, `[NOT] LIKE`, `[NOT] IN (...)`, `[NOT] BETWEEN`, `lower upper length abs trim substr coalesce ifnull` |
 | aggregates | `count(*)`, `count(e)`, `count(DISTINCT e)`, `sum`, `total`, `min`, `max`, `avg` - over all matching rows (no GROUP BY yet) |
 | transactions | `BEGIN`, `COMMIT`, `ROLLBACK`, `SAVEPOINT s`, `RELEASE s`, `ROLLBACK TO s` - so `Transaction(...)` and nested ones work |
@@ -509,7 +557,7 @@ An `INTEGER PRIMARY KEY` is generated like SQLite's rowid; PRIMARY KEY, UNIQUE (
 (`Data.ConstraintException` with SQLite's codes). What is not in the subset - joins, GROUP BY, subqueries - is a `Data.DataException` ("syntax error").
 The table `_columns` (`table_name`, `name`, `type`, `pk`, `notnull`) describes the tables (what `Ensure` asks), `_indexes` (`name`, `table_name`,
 `column_name`, `is_unique`) their indexes. Queries of the ORM with expression trees
-(next steps) run on the rows directly, without SQL.
+run as the same SQL; groups and joins of the ORM run in the program.
 
 ## Writing a driver
 

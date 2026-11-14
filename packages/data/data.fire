@@ -110,6 +110,11 @@ namespace Data {
             if (c.check != undefined) { t = t + " CHECK (" + c.check + ")" }
             return t
         }
+        // A condition as a value of the SELECT list (SQL Server has no boolean values: CASE WHEN ... THEN 1 ELSE 0 END).
+        string AsValue(string condition) { return condition }
+        // Does the database run GROUP BY and JOIN? (the in-memory one: no - groups and joins run in the program there)
+        bool Groups() { return true }
+        bool Joins() { return true }
         // A view ([View "SELECT ..."] of a [Table] class).
         string CreateView(string name, string sql) { return "CREATE VIEW " + name + " AS " + sql }
         string DropView(string name) { return "DROP VIEW " + this.Quote(name) }
@@ -597,6 +602,19 @@ namespace Data {
             if (key == undefined || (map.key.generated && key == 0)) { return this.Insert(obj) }
             if (this.Update(obj) == 0) { return this.Insert(obj) }
             return key
+        }
+        // Reads the row of the object again (by its key) into its fields; false when there is none.
+        bool Reload(any obj) {
+            var map = this.MapOf(obj)
+            map.NeedKey()
+            any fresh = this.Find(map.typeName, Reflect.Get(obj, map.key.field))
+            if (fresh == undefined) { return false }
+            for (var i = 0; i < map.columns.Count; i++) {
+                Data.ColumnMap c = map.columns[i]
+                any v = Reflect.Get(fresh, c.field)
+                if (v == undefined || v is of int || v is of float || v is of string || v is of bool) { Reflect.Set(obj, c.field, v) } else { Reflect.Set(obj, c.field, copy v) }
+            }
+            return true
         }
 
         undefined Ensure<T>() { this.Ensure(Type.Of<T>().Name) }
@@ -1780,6 +1798,49 @@ namespace Data {
             return q.text + " " + Json.Serialize(q.Parameters())
         }
 
+        // ---- projections, groups, joins ----
+
+        // The values of a projection (`p => p.name`, `p => new Line(p.name, p.customer.name)`): only those columns are read - when the database can
+        // compute them (columns, navigations, arithmetic, the functions of conditions); else the objects are read and the lambda runs on each.
+        List<R> Select<R>(R lambda expression<T> projection) {
+            LambdaExpression e = projection
+            var out = new List<R>()
+            List rows = undefined
+            try { rows = this.SelectInDb(e) } catch (Data.NotTranslatableException x) { rows = undefined }
+            if (rows != undefined) {
+                for (var i = 0; i < rows.Count; i++) { out.Add(rows[i]) }
+                return out
+            }
+            List<T> all = this.ToList()
+            for (var i = 0; i < all.Count; i++) { out.Add(e.Invoke(all[i])) }
+            return out
+        }
+        // (the projection in the SELECT; undefined: none - a NotTranslatableException when a part cannot run there)
+        List SelectInDb(LambdaExpression e) {
+            var map = this.db.Map(this.typeName)
+            var pw = new Data.SqlWriter(map, this.db.Dialect)
+            pw.db = this.db
+            pw.Enter(e)
+            var parts = Data.Projection.Parts(e.Body)
+            var cols = ""
+            for (var i = 0; i < parts.Count; i++) {
+                Expression p = parts[i]
+                if (i > 0) { cols = cols + ", " }
+                cols = cols + Data.Projection.Column(pw, p) + " AS " + this.db.Dialect.Quote("c" + i)
+            }
+            var q = this.Sql("SELECT " + cols, true)
+            return Data.Projection.Run(this.db, e.Body, parts, q.text, Data.Projection.Join(pw.values, q.values), this.typeName)
+        }
+
+        // Groups of the objects by a key (`o => o.customerId`, `o => o.status`): Select on the groups (`g => new Total(g.Key, g.Count(), g.Sum(o => o.total))`)
+        // runs as GROUP BY in the database; Having and OrderBy on the groups as well.
+        Data.Grouping<T> GroupBy(lambda expression<T> key) { return new Data.Grouping<T>(this, take key) }
+
+        // Pairs of objects of two tables by a condition (`Join<Customer>((o, c) => o.customerId == c.id)`): Where, OrderBy and Select on both, ToList as pairs.
+        Data.Joined<T, U> Join<U>(lambda expression<T, U> condition) { return new Data.Joined<T, U>(this, take condition, Type.Of<U>().Name, false) }
+        // The same, with every object of this query - also those without a partner (its Second is undefined): LEFT JOIN.
+        Data.Joined<T, U> LeftJoin<U>(lambda expression<T, U> condition) { return new Data.Joined<T, U>(this, take condition, Type.Of<U>().Name, true) }
+
         // (the statement: `head` FROM the table, the conditions, and with `full` the order and the paging)
         Data.SqlWriter Sql(string head, bool full) {
             var map = this.db.Map(this.typeName)
@@ -1807,6 +1868,481 @@ namespace Data {
             }
             w.text = sql
             return w
+        }
+    }
+
+    /// <summary>The parts of a projection (the arguments of `new X(...)`, else the body) and its rows as values (Data.Query.Select).</summary>
+    class Projection {
+        // (a part of the SELECT list: a condition - a comparison, &&, ||, ! - as the dialect's value)
+        static string Column(Data.SqlWriter w, Expression p) {
+            if (p.Type == "bool" && (p is of BinaryExpression || p is of UnaryExpression || p is of CallExpression)) { return w.dialect.AsValue(w.Condition(p)) }
+            return w.Sql(p)
+        }
+        static List Parts(Expression body) {
+            var parts = new List()
+            if (body is of NewExpression) {
+                NewExpression n = body
+                for (var i = 0; i < n.Arguments.length; i++) { parts.Add(n.Arguments[i]) }
+            } else { parts.Add(body) }
+            return parts
+        }
+        static any Join(List a, List b) {
+            var all = new List()
+            for (var i = 0; i < a.Count; i++) { all.Add(a[i]) }
+            for (var i = 0; i < b.Count; i++) { all.Add(b[i]) }
+            return Data.Connection.ArrayOf(all)
+        }
+        // (a value of the database as a value of the type the tree says: a bool of 1/0, a DateTime of its text, an enum of its name)
+        static any As(any v, string typeName) {
+            if (v == undefined || typeName == undefined || typeName == "" || typeName == "any") { return v }
+            string kind = Data.EntityMap.KindOf(typeName, false)
+            if (kind == undefined) { return v }
+            if (kind == "bytes" || kind == "json") { return v }
+            if (kind == "string" && typeName == "char") { return v }
+            return Json.Deserialize(Data.RowMap.Value(v, kind), typeName)
+        }
+        // (the rows of the SELECT as values: `new X(...)` made with its constructor, else the one value)
+        static List Run(Data.Connection db, Expression body, List parts, string sql, any args, string owner) {
+            var out = new List()
+            string made = undefined
+            if (body is of NewExpression) {
+                made = body.Type
+                if (Type.Named(made) == undefined) { made = Data.EntityMap.Qualify(made, owner) }
+            }
+            foreach (row in db.Rows(sql, args)) {
+                any values = new any[parts.Count]
+                for (var i = 0; i < parts.Count; i++) {
+                    Expression p = parts[i]
+                    values[i] = Data.Projection.As(row.Get(i), p.Type)
+                }
+                if (made != undefined) { out.Add(Reflect.New(made, values)) } else { out.Add(values[0]) }
+            }
+            return out
+        }
+    }
+
+    /// <summary>A group of objects (Data.Query.GroupBy): its key and its objects - the aggregates run in the database in a Select of the groups, or here
+    /// on the objects when the groups are read as they are.</summary>
+    class Group<T> {
+        any Key
+        List<T> Items
+        construct(any key) {
+            this.Key = key
+            this.Items = new List<T>()
+        }
+        int Count() { return this.Items.Count }
+        int Count(bool lambda<T> condition) {
+            int n = 0
+            for (var i = 0; i < this.Items.Count; i++) { if (condition(this.Items[i])) { n++ } }
+            return n
+        }
+        any Sum(lambda<T> value) {
+            any total = 0
+            for (var i = 0; i < this.Items.Count; i++) {
+                any v = value(this.Items[i])
+                if (v != undefined) { total = total + v }
+            }
+            return total
+        }
+        any Average(lambda<T> value) {
+            float total = 0.0
+            int n = 0
+            for (var i = 0; i < this.Items.Count; i++) {
+                any v = value(this.Items[i])
+                if (v != undefined) { total = total + v; n++ }
+            }
+            if (n == 0) { return undefined }
+            return total / n
+        }
+        any Min(lambda<T> value) { return this.Extreme(value, false) }
+        any Max(lambda<T> value) { return this.Extreme(value, true) }
+        any Extreme(lambda<T> value, bool greatest) {
+            any best = undefined
+            for (var i = 0; i < this.Items.Count; i++) {
+                any v = value(this.Items[i])
+                if (v == undefined) { continue }
+                if (best == undefined || (greatest && v > best) || (!greatest && v < best)) { best = v }
+            }
+            return best
+        }
+    }
+
+    /// <summary>The groups of a query (Data.Query.GroupBy): Having and OrderBy on the groups, Select of what each group gives (GROUP BY in the database),
+    /// or ToList: the groups with their objects.</summary>
+    class Grouping<T> {
+        Data.Query<T> query
+        LambdaExpression key
+        List havings
+        List orders
+        List descending
+        construct(Data.Query<T> query, LambdaExpression key) {
+            this.query = query
+            this.key = take key
+            this.havings = new List()
+            this.orders = new List()
+            this.descending = new List()
+        }
+        // Only the groups for which the condition holds (`g => g.Count() > 2`): HAVING.
+        Data.Grouping<T> Having(lambda expression<Data.Group<T>> condition) {
+            this.havings.Add(take condition)
+            return this
+        }
+        Data.Grouping<T> OrderBy(lambda expression<Data.Group<T>> key) {
+            this.orders.Add(take key)
+            this.descending.Add(false)
+            return this
+        }
+        Data.Grouping<T> OrderByDescending(lambda expression<Data.Group<T>> key) {
+            this.orders.Add(take key)
+            this.descending.Add(true)
+            return this
+        }
+        // What each group gives: `g => new Total(g.Key, g.Count(), g.Sum(o => o.total))`, `g => g.Key`.
+        List<R> Select<R>(R lambda expression<Data.Group<T>> projection) {
+            LambdaExpression e = projection
+            var out = new List<R>()
+            List rows = undefined
+            try { rows = this.SelectInDb(e) } catch (Data.NotTranslatableException x) { rows = undefined }
+            if (rows != undefined) {
+                for (var i = 0; i < rows.Count; i++) { out.Add(rows[i]) }
+                return out
+            }
+            List<Data.Group<T>> groups = this.ToList()
+            for (var i = 0; i < groups.Count; i++) { out.Add(e.Invoke(groups[i])) }
+            return out
+        }
+        List SelectInDb(LambdaExpression e) {
+            var db = this.query.db
+            var d = db.Dialect
+            var map = db.Map(this.query.typeName)
+            if (this.query.limited >= 0 || this.query.skipped > 0) { throw new Data.NotTranslatableException("Data: GroupBy after Take/Skip runs in the program.") }
+            if (!d.Groups()) { throw new Data.NotTranslatableException("Data: the database groups no rows - the program does.") }
+            // (the key, then the parts; each writer's parameters in the order of the text)
+            var kw = new Data.SqlWriter(map, d)
+            kw.db = db
+            string key = kw.Lambda(this.key)
+            if (kw.values.Count > 0) { throw new Data.NotTranslatableException("Data: a key with values of the program groups in the program.") }
+            var pw = new Data.SqlWriter(map, d)
+            pw.db = db
+            pw.EnterGroup(e, key)
+            var parts = Data.Projection.Parts(e.Body)
+            var cols = ""
+            for (var i = 0; i < parts.Count; i++) {
+                Expression p = parts[i]
+                if (i > 0) { cols = cols + ", " }
+                cols = cols + Data.Projection.Column(pw, p) + " AS " + d.Quote("c" + i)
+            }
+            var q = this.query.Sql("SELECT " + cols, false)
+            var tail = " GROUP BY " + key
+            var hw = new Data.SqlWriter(map, d)
+            hw.db = db
+            for (var i = 0; i < this.havings.Count; i++) {
+                LambdaExpression h = this.havings[i]
+                hw.EnterGroup(h, key)
+                if (i == 0) { tail = tail + " HAVING " } else { tail = tail + " AND " }
+                tail = tail + hw.Condition(h.Body)
+            }
+            for (var i = 0; i < this.orders.Count; i++) {
+                LambdaExpression o = this.orders[i]
+                hw.EnterGroup(o, key)
+                if (i == 0) { tail = tail + " ORDER BY " } else { tail = tail + ", " }
+                tail = tail + d.Order(hw.Sql(o.Body), this.descending[i])
+            }
+            // (the parameters in the order of the text: the parts, the conditions of the query, HAVING and ORDER BY)
+            var args = new List()
+            for (var i = 0; i < pw.values.Count; i++) { args.Add(pw.values[i]) }
+            for (var i = 0; i < q.values.Count; i++) { args.Add(q.values[i]) }
+            for (var i = 0; i < hw.values.Count; i++) { args.Add(hw.values[i]) }
+            return Data.Projection.Run(db, e.Body, parts, q.text + tail, Data.Connection.ArrayOf(args), this.query.typeName)
+        }
+        // The groups with their objects (read here: every object of the query, then grouped by the key's value).
+        List<Data.Group<T>> ToList() {
+            var groups = new List<Data.Group<T>>()
+            var keys = new List()
+            List<T> all = this.query.ToList()
+            for (var i = 0; i < all.Count; i++) {
+                any k = this.key.Invoke(all[i])
+                string text = Json.Serialize(k)
+                int at = keys.IndexOf(text)
+                if (at < 0) {
+                    keys.Add(text)
+                    groups.Add(new Data.Group<T>(k))
+                    at = groups.Count - 1
+                }
+                Data.Group<T> g = groups[at]
+                g.Items.Add(all[i])
+            }
+            var kept = new List()
+            for (var i = 0; i < groups.Count; i++) {
+                bool ok = true
+                for (var h = 0; h < this.havings.Count; h++) {
+                    LambdaExpression c = this.havings[h]
+                    if (!c.Invoke(groups[i])) { ok = false }
+                }
+                if (ok) { kept.Add(groups[i]) }
+            }
+            List sorted = Data.InProgram.Sorted(kept, this.orders, this.descending, false)
+            var result = new List<Data.Group<T>>()
+            for (var i = 0; i < sorted.Count; i++) { result.Add(sorted[i]) }
+            return result
+        }
+        int Count() { return this.ToList().Count }
+    }
+
+    /// <summary>What a query does in the program when the database cannot: conditions and orders by the compiled lambdas of their trees.</summary>
+    class InProgram {
+        // (a condition of one object or of a pair; a part that reads a member of undefined - the missing partner of a LEFT JOIN - is false, as NULL is in SQL)
+        static bool Holds(LambdaExpression e, any a, any b) {
+            try {
+                any v = undefined
+                if (e.Parameters.length == 2) { v = e.Invoke(a, b) } else { v = e.Invoke(a) }
+                return v == true
+            } catch (ArgumentException x) { return false }
+        }
+        static bool All(List conditions, any a, any b) {
+            for (var i = 0; i < conditions.Count; i++) { if (!Data.InProgram.Holds(conditions[i], a, b)) { return false } }
+            return true
+        }
+        // (a key of the order; undefined when it reads a member of undefined)
+        static any KeyOf(LambdaExpression e, any item, bool pair) {
+            try {
+                if (pair) { return e.Invoke(item.First, item.Second) }
+                return e.Invoke(item)
+            } catch (ArgumentException x) { return undefined }
+        }
+        // (-1, 0, 1: undefined first, as the ORDER BY of the dialects)
+        static int Compare(any a, any b) {
+            if (a == undefined && b == undefined) { return 0 }
+            if (a == undefined) { return -1 }
+            if (b == undefined) { return 1 }
+            if (a < b) { return -1 }
+            if (a > b) { return 1 }
+            return 0
+        }
+        // (the items sorted by the keys - stable: equal ones keep their order)
+        static List Sorted(List items, List orders, List descending, bool pair) {
+            var out = new List()
+            for (var i = 0; i < items.Count; i++) { out.Add(items[i]) }
+            if (orders.Count == 0) { return out }
+            for (var i = 1; i < out.Count; i++) {
+                int j = i
+                while (j > 0 && Data.InProgram.Before(out[j], out[j - 1], orders, descending, pair)) {
+                    any t = out[j]
+                    out[j] = out[j - 1]
+                    out[j - 1] = t
+                    j--
+                }
+            }
+            return out
+        }
+        static bool Before(any x, any y, List orders, List descending, bool pair) {
+            for (var k = 0; k < orders.Count; k++) {
+                LambdaExpression e = orders[k]
+                int c = Data.InProgram.Compare(Data.InProgram.KeyOf(e, x, pair), Data.InProgram.KeyOf(e, y, pair))
+                if (descending[k]) { c = 0 - c }
+                if (c != 0) { return c < 0 }
+            }
+            return false
+        }
+    }
+
+    /// <summary>Two objects of a join (Data.Joined.ToList): the one of the query and its partner (undefined in a LeftJoin without one).</summary>
+    class Pair<T, U> {
+        T First
+        U Second
+        construct(T first, U second) {
+            this.First = take first
+            this.Second = take second
+        }
+    }
+
+    /// <summary>A join of two tables (Data.Query.Join): Where and OrderBy on both objects, Select of values, ToList as pairs - one SQL statement.</summary>
+    class Joined<T, U> {
+        Data.Query<T> query
+        LambdaExpression condition
+        string other
+        bool left
+        List wheres
+        List orders
+        List descending
+        int skipped
+        int limited
+        construct(Data.Query<T> query, LambdaExpression condition, string other, bool left) {
+            this.query = query
+            this.condition = take condition
+            this.other = other
+            this.left = left
+            this.wheres = new List()
+            this.orders = new List()
+            this.descending = new List()
+            this.skipped = 0
+            this.limited = -1
+        }
+        Data.Joined<T, U> Where(lambda expression<T, U> condition) {
+            this.wheres.Add(take condition)
+            return this
+        }
+        Data.Joined<T, U> OrderBy(lambda expression<T, U> key) {
+            this.orders.Add(take key)
+            this.descending.Add(false)
+            return this
+        }
+        Data.Joined<T, U> OrderByDescending(lambda expression<T, U> key) {
+            this.orders.Add(take key)
+            this.descending.Add(true)
+            return this
+        }
+        Data.Joined<T, U> Skip(int count) { this.skipped = count; return this }
+        Data.Joined<T, U> Take(int count) { this.limited = count; return this }
+
+        // (the statement after the columns: FROM ... JOIN ... ON ... WHERE ... ORDER BY ... paging; the writer holds its parameters)
+        Data.SqlWriter Tail(Data.Dialect d, Data.EntityMap a, Data.EntityMap b) {
+            var w = new Data.SqlWriter(a, d)
+            w.db = this.query.db
+            w.EnterJoin(this.condition, b)
+            string kind = " JOIN "
+            if (this.left) { kind = " LEFT JOIN " }
+            var sql = " FROM " + d.Quote(a.table) + " AS j0" + kind + d.Quote(b.table) + " AS j1 ON " + w.Condition(this.condition.Body)
+            // (the conditions of the query itself: on the first table)
+            var filter = ""
+            var qw = new Data.SqlWriter(a, d)
+            qw.db = this.query.db
+            for (var i = 0; i < this.query.wheres.Count; i++) {
+                LambdaExpression e = this.query.wheres[i]
+                qw.Enter(e)
+                qw.scopeQualifiers[0] = "j0"
+                if (filter != "") { filter = filter + " AND " }
+                filter = filter + qw.Condition(e.Body)
+            }
+            for (var i = 0; i < qw.values.Count; i++) { w.values.Add(qw.values[i]) }
+            for (var i = 0; i < this.wheres.Count; i++) {
+                LambdaExpression e = this.wheres[i]
+                w.EnterJoin(e, b)
+                if (filter != "") { filter = filter + " AND " }
+                filter = filter + w.Condition(e.Body)
+            }
+            if (filter != "") { sql = sql + " WHERE " + filter }
+            if (this.orders.Count > 0) {
+                sql = sql + " ORDER BY "
+                for (var i = 0; i < this.orders.Count; i++) {
+                    LambdaExpression e = this.orders[i]
+                    w.EnterJoin(e, b)
+                    if (i > 0) { sql = sql + ", " }
+                    sql = sql + d.Order(w.Sql(e.Body), this.descending[i])
+                }
+            }
+            sql = sql + d.Paging(this.limited, this.skipped, this.orders.Count > 0)
+            w.text = sql
+            return w
+        }
+
+        // Values of each pair: `(o, c) => new Line(c.name, o.total)`.
+        List<R> Select<R>(R lambda expression<T, U> projection) {
+            LambdaExpression e = projection
+            if (!this.query.db.Dialect.Joins()) {
+                var made = new List<R>()
+                List<Data.Pair<T, U>> pairs = this.InProgram()
+                for (var i = 0; i < pairs.Count; i++) {
+                    Data.Pair<T, U> p = pairs[i]
+                    made.Add(e.Invoke(p.First, p.Second))
+                }
+                return made
+            }
+            var db = this.query.db
+            var d = db.Dialect
+            var a = db.Map(this.query.typeName)
+            var b = db.Map(this.other)
+            var pw = new Data.SqlWriter(a, d)
+            pw.db = db
+            pw.EnterJoin(e, b)
+            var parts = Data.Projection.Parts(e.Body)
+            var cols = ""
+            for (var i = 0; i < parts.Count; i++) {
+                Expression p = parts[i]
+                if (i > 0) { cols = cols + ", " }
+                cols = cols + Data.Projection.Column(pw, p) + " AS " + d.Quote("c" + i)
+            }
+            var t = this.Tail(d, a, b)
+            List rows = Data.Projection.Run(db, e.Body, parts, "SELECT " + cols + t.text, Data.Projection.Join(pw.values, t.values), this.query.typeName)
+            var out = new List<R>()
+            for (var i = 0; i < rows.Count; i++) { out.Add(rows[i]) }
+            return out
+        }
+
+        // The pairs: both objects of each row (in a LeftJoin the second is undefined when there is none).
+        List<Data.Pair<T, U>> ToList() {
+            if (!this.query.db.Dialect.Joins()) { return this.InProgram() }
+            var db = this.query.db
+            var d = db.Dialect
+            var a = db.Map(this.query.typeName)
+            var b = db.Map(this.other)
+            var cols = ""
+            for (var i = 0; i < a.columns.Count; i++) {
+                Data.ColumnMap c = a.columns[i]
+                if (cols != "") { cols = cols + ", " }
+                cols = cols + "j0." + d.Quote(c.column)
+            }
+            for (var i = 0; i < b.columns.Count; i++) {
+                Data.ColumnMap c = b.columns[i]
+                cols = cols + ", j1." + d.Quote(c.column)
+            }
+            var t = this.Tail(d, a, b)
+            var ma = new Data.RowMap(this.query.typeName)
+            var mb = new Data.RowMap(this.other)
+            var namesA = new any[a.columns.Count]
+            for (var i = 0; i < a.columns.Count; i++) { Data.ColumnMap c = a.columns[i]; namesA[i] = c.column }
+            var namesB = new any[b.columns.Count]
+            for (var i = 0; i < b.columns.Count; i++) { Data.ColumnMap c = b.columns[i]; namesB[i] = c.column }
+            ma.Columns(namesA)
+            mb.Columns(namesB)
+            var out = new List<Data.Pair<T, U>>()
+            foreach (row in db.Rows("SELECT " + cols + t.text, t.Parameters())) {
+                any va = new any[a.columns.Count]
+                for (var i = 0; i < a.columns.Count; i++) { va[i] = row.Get(i) }
+                any vb = new any[b.columns.Count]
+                bool none = true
+                for (var i = 0; i < b.columns.Count; i++) {
+                    vb[i] = row.Get(a.columns.Count + i)
+                    if (vb[i] != undefined) { none = false }
+                }
+                T first = ma.Make(va)
+                U second = undefined
+                if (!none) { second = mb.Make(vb) }
+                out.Add(new Data.Pair<T, U>(take first, take second))
+            }
+            return out
+        }
+        // (the join in the program: the objects of the query and those of the other table, paired by the compiled lambdas)
+        List<Data.Pair<T, U>> InProgram() {
+            List<T> firsts = this.query.ToList()
+            List seconds = this.query.db.All(this.other)
+            var pairs = new List()
+            for (var i = 0; i < firsts.Count; i++) {
+                any a = firsts[i]
+                bool matched = false
+                for (var j = 0; j < seconds.Count; j++) {
+                    any b = seconds[j]
+                    if (!Data.InProgram.Holds(this.condition, a, b) || !Data.InProgram.All(this.wheres, a, b)) { continue }
+                    matched = true
+                    pairs.Add(new Data.Pair<T, U>(copy a, copy b))
+                }
+                if (!matched && this.left && Data.InProgram.All(this.wheres, a, undefined)) { pairs.Add(new Data.Pair<T, U>(copy a, undefined)) }
+            }
+            List sorted = Data.InProgram.Sorted(pairs, this.orders, this.descending, true)
+            var out = new List<Data.Pair<T, U>>()
+            for (var i = 0; i < sorted.Count; i++) {
+                if (i < this.skipped) { continue }
+                if (this.limited >= 0 && out.Count >= this.limited) { break }
+                out.Add(sorted[i])
+            }
+            return out
+        }
+        int Count() {
+            if (!this.query.db.Dialect.Joins()) { return this.InProgram().Count }
+            var db = this.query.db
+            var t = this.Tail(db.Dialect, db.Map(this.query.typeName), db.Map(this.other))
+            any n = db.Scalar("SELECT count(*)" + t.text, t.Parameters())
+            return n!int
         }
     }
 
@@ -1848,6 +2384,57 @@ namespace Data {
             this.Enter(e)
             return this.Sql(e.Body)
         }
+        // (a lambda of groups (g => ...): g.Key is `key`, g.Count(), g.Sum(x => ...) are aggregates over the rows of the table)
+        string groupName
+        string groupKey
+        undefined EnterGroup(LambdaExpression e, string key) {
+            if (e.Parameters.length != 1) { throw new Data.NotTranslatableException("A lambda of groups has one parameter (the group), not " + e.Parameters.length + ": " + e) }
+            this.scopeNames = new List()
+            this.scopeMaps = new List()
+            this.scopeQualifiers = new List()
+            this.groupName = e.Parameters[0].Name
+            this.groupKey = key
+        }
+        // (a lambda of a join ((a, b) => ...): a is the first table (j0), b the second (j1))
+        undefined EnterJoin(LambdaExpression e, Data.EntityMap other) {
+            if (e.Parameters.length != 2) { throw new Data.NotTranslatableException("A lambda of a join has two parameters, not " + e.Parameters.length + ": " + e) }
+            this.scopeNames = new List()
+            this.scopeMaps = new List()
+            this.scopeQualifiers = new List()
+            this.scopeNames.Add(e.Parameters[0].Name)
+            this.scopeMaps.Add(this.map)
+            this.scopeQualifiers.Add("j0")
+            this.scopeNames.Add(e.Parameters[1].Name)
+            this.scopeMaps.Add(other)
+            this.scopeQualifiers.Add("j1")
+        }
+        // (an aggregate of a group: g.Count(), g.Count(x => cond), g.Sum/Average/Min/Max(x => value))
+        string Aggregate(CallExpression e) {
+            string m = e.Method
+            string fn = undefined
+            if (m == "Sum") { fn = "sum" }
+            else if (m == "Average") { fn = "avg" }
+            else if (m == "Min") { fn = "min" }
+            else if (m == "Max") { fn = "max" }
+            else if (m != "Count") { this.Fail(e, "a group has Key, Count, Sum, Average, Min and Max") }
+            if (e.Arguments.length == 0) {
+                if (m == "Count") { return "count(*)" }
+                this.Fail(e, m + " needs a lambda (x => x.total)")
+            }
+            if (!(e.Arguments[0] is of LambdaExpression)) { this.Fail(e, m + " takes a lambda (x => ...)") }
+            LambdaExpression inner = e.Arguments[0]
+            this.scopeNames.Add(inner.Parameters[0].Name)
+            this.scopeMaps.Add(this.map)
+            this.scopeQualifiers.Add("")
+            string sql = undefined
+            if (m == "Count") { sql = "sum(CASE WHEN " + this.Condition(inner.Body) + " THEN 1 ELSE 0 END)" }
+            else { sql = fn + "(" + this.Sql(inner.Body) + ")" }
+            this.scopeNames.RemoveAt(this.scopeNames.Count - 1)
+            this.scopeMaps.RemoveAt(this.scopeMaps.Count - 1)
+            this.scopeQualifiers.RemoveAt(this.scopeQualifiers.Count - 1)
+            return sql
+        }
+
         // (the scope of a query lambda: its parameter is the mapped class)
         undefined Enter(LambdaExpression e) {
             if (e.Parameters.length != 1) { throw new Data.NotTranslatableException("A query lambda has one parameter (the object), not " + e.Parameters.length + ": " + e) }
@@ -1922,6 +2509,13 @@ namespace Data {
             return this.Value(e.Value, undefined)
         }
         override any VisitMember(MemberExpression e) {
+            if (e.Target is of ParameterExpression && this.groupName != undefined) {
+                ParameterExpression gp = e.Target
+                if (gp.Name == this.groupName) {
+                    if (e.Name == "Key") { return this.groupKey }
+                    this.Fail(e, "a group has Key and the aggregates Count, Sum, Average, Min, Max")
+                }
+            }
             if (e.Target is of ParameterExpression) {
                 ParameterExpression p = e.Target
                 int at = this.ScopeOf(p.Name)
@@ -2092,6 +2686,10 @@ namespace Data {
         }
         override any VisitCall(CallExpression e) {
             string m = e.Method
+            if (this.groupName != undefined && e.Target is of ParameterExpression) {
+                ParameterExpression gp = e.Target
+                if (gp.Name == this.groupName) { return this.Aggregate(e) }
+            }
             // (a navigation field of the object with Any(...) / All(...): EXISTS of a subquery of the children)
             if ((m == "Any" || m == "All") && e.Target is of MemberExpression) {
                 MemberExpression nav = e.Target
@@ -2256,6 +2854,79 @@ namespace Data {
         }
     }
 
+    /// <summary>The mapping given in code instead of attributes (docs/data/README.md "Mapping in code"): `Data.Mapping.Entity<Person>().Table("people")
+    /// .Key(p => p.id).Column(p => p.name, "full_name").Ignore(p => p.shown).HasMany(p => p.orders, "personId")` - each call is the attribute of that
+    /// name, and it counts before one written on the field. Given before the first use of the class (a connection reads its mapping once).</summary>
+    class Mapping {
+        static Dictionary<string, any> entries = new Dictionary<string, any>()
+        // The mapping of a class in code.
+        static Data.EntityBuilder<T> Entity<T>() { return new Data.EntityBuilder<T>(Type.Of<T>().Name) }
+        // (the arguments of an attribute given in code - member "" for the class; undefined: none)
+        static any Args(string typeName, string member, string name) {
+            string key = typeName + "|" + member + "|" + name
+            if (!Data.Mapping.entries.ContainsKey(key)) { return undefined }
+            any args = Data.Mapping.entries[key]
+            return copy args
+        }
+        static undefined Set(string typeName, string member, string name, any args) {
+            string key = typeName + "|" + member + "|" + name
+            if (Data.Mapping.entries.ContainsKey(key)) { Data.Mapping.entries.Remove(key) }
+            Data.Mapping.entries.Add(key, copy args)
+        }
+        // Forgets the mapping in code of every class (tests).
+        static undefined Clear() { Data.Mapping.entries.Clear() }
+        // (the field a lambda names: p => p.name)
+        static string FieldOf(LambdaExpression e) {
+            if (!(e.Body is of MemberExpression)) { throw new ArgumentException("Data.Mapping: a field of the object (p => p.name), not " + e + ".") }
+            MemberExpression m = e.Body
+            if (!(m.Target is of ParameterExpression)) { throw new ArgumentException("Data.Mapping: a field of the object itself (p => p.name), not " + e + ".") }
+            return m.Name
+        }
+    }
+
+    /// <summary>The mapping of one class in code (Data.Mapping.Entity<T>()): each method is the attribute of its name; they chain.</summary>
+    class EntityBuilder<T> {
+        string typeName
+        construct(string typeName) { this.typeName = typeName }
+        undefined On(lambda expression<T> field, string name, any args) { Data.Mapping.Set(this.typeName, Data.Mapping.FieldOf(field), name, args) }
+        // ---- the class ----
+        Data.EntityBuilder<T> Table(string name) { Data.Mapping.Set(this.typeName, "", "Table", [name]); return this }
+        Data.EntityBuilder<T> View(string query) { Data.Mapping.Set(this.typeName, "", "View", [query]); return this }
+        Data.EntityBuilder<T> Check(string condition) { Data.Mapping.Set(this.typeName, "", "Check", [condition]); return this }
+        // ---- the fields ----
+        Data.EntityBuilder<T> Key(lambda expression<T> field, bool generated = true) {
+            if (generated) { this.On(field, "Key", new any[0]) } else { this.On(field, "Key", ["manual"]) }
+            return this
+        }
+        Data.EntityBuilder<T> Column(lambda expression<T> field, string name) { this.On(field, "Column", [name]); return this }
+        Data.EntityBuilder<T> Ignore(lambda expression<T> field) { this.On(field, "Ignore", new any[0]); return this }
+        Data.EntityBuilder<T> Required(lambda expression<T> field) { this.On(field, "Required", new any[0]); return this }
+        Data.EntityBuilder<T> Length(lambda expression<T> field, int length) { this.On(field, "Length", [length]); return this }
+        Data.EntityBuilder<T> Unique(lambda expression<T> field) { this.On(field, "Unique", new any[0]); return this }
+        Data.EntityBuilder<T> Index(lambda expression<T> field) { this.On(field, "Index", new any[0]); return this }
+        Data.EntityBuilder<T> Version(lambda expression<T> field) { this.On(field, "Version", new any[0]); return this }
+        Data.EntityBuilder<T> Json(lambda expression<T> field) { this.On(field, "Json", new any[0]); return this }
+        Data.EntityBuilder<T> Check(lambda expression<T> field, string condition) { this.On(field, "Check", [condition]); return this }
+        Data.EntityBuilder<T> DbType(lambda expression<T> field, string type) { this.On(field, "DbType", [type]); return this }
+        // ---- the relations ----
+        Data.EntityBuilder<T> HasMany(lambda expression<T> field, string foreignKey) { this.On(field, "HasMany", [foreignKey]); return this }
+        Data.EntityBuilder<T> HasOne(lambda expression<T> field, string foreignKey) { this.On(field, "HasOne", [foreignKey]); return this }
+        Data.EntityBuilder<T> BelongsTo(lambda expression<T> field, string foreignKey) { this.On(field, "BelongsTo", [foreignKey]); return this }
+        Data.EntityBuilder<T> ManyToMany(lambda expression<T> field, string joinTable, string thisColumn, string otherColumn) { this.On(field, "ManyToMany", [joinTable, thisColumn, otherColumn]); return this }
+    }
+
+    /// <summary>A base for mapped classes that write themselves: `class Person : Data.Entity { ... }`, then `p.Save(db)`, `p.Delete(db)`, `p.Reload(db)`.</summary>
+    class Entity {
+        construct() { }
+        // Inserts the object when it is new (no key yet), else updates its row; the key.
+        any Save(Data.Connection db) { return db.Save(this) }
+        any Insert(Data.Connection db) { return db.Insert(this) }
+        int Update(Data.Connection db) { return db.Update(this) }
+        int Delete(Data.Connection db) { return db.Delete(this) }
+        // Reads its row again (by the key) into its fields; false: there is none.
+        bool Reload(Data.Connection db) { return db.Reload(this) }
+    }
+
     /// <summary>A navigation field: `[HasMany "personId"] List<Order> orders` (the children whose field `personId` is this object's key) or
     /// `[BelongsTo "personId"] Person owner` (the object whose key is this object's field `personId`).</summary>
     class RelationMap {
@@ -2312,30 +2983,30 @@ namespace Data {
             int dot = short.LastIndexOf(".")
             if (dot >= 0) { short = short.Substring(dot + 1) }
             this.table = short
-            Attribute ta = t.FindAttribute("Table")
-            if (ta != undefined && ta.ArgCount() > 0) { this.table = "" + ta.Args[0] }
-            Attribute va = t.FindAttribute("View")
-            if (va != undefined && va.ArgCount() > 0) { this.view = "" + va.Args[0] }
-            Attribute cha = t.FindAttribute("Check")
-            if (cha != undefined && cha.ArgCount() > 0) { this.check = "" + cha.Args[0] }
+            any ta = Data.EntityMap.ClassArgs(t, typeName, "Table")
+            if (ta != undefined && ta.length > 0) { this.table = "" + ta[0] }
+            any va = Data.EntityMap.ClassArgs(t, typeName, "View")
+            if (va != undefined && va.length > 0) { this.view = "" + va[0] }
+            any cha = Data.EntityMap.ClassArgs(t, typeName, "Check")
+            if (cha != undefined && cha.length > 0) { this.check = "" + cha[0] }
             this.columns = new List()
             this.relations = new List()
             List members = t.Fields()
             Data.ColumnMap byName = undefined
             for (var i = 0; i < members.Count; i++) {
                 Member m = members[i]
-                if (m.IsStatic || m.HasAttribute("Ignore")) { continue }
-                Attribute many = m.FindAttribute("HasMany")
-                Attribute one = m.FindAttribute("BelongsTo")
-                Attribute owned = m.FindAttribute("HasOne")
-                Attribute pairs = m.FindAttribute("ManyToMany")
+                if (m.IsStatic || Data.EntityMap.Args(m, typeName, "Ignore") != undefined) { continue }
+                any many = Data.EntityMap.Args(m, typeName, "HasMany")
+                any one = Data.EntityMap.Args(m, typeName, "BelongsTo")
+                any owned = Data.EntityMap.Args(m, typeName, "HasOne")
+                any pairs = Data.EntityMap.Args(m, typeName, "ManyToMany")
                 if (pairs != undefined) {
-                    if (pairs.ArgCount() < 3) { throw new ArgumentException("Data: [ManyToMany \"table\", \"thisColumn\", \"otherColumn\"] for '" + m.Name + "' of " + typeName + ".") }
+                    if (pairs.length < 3) { throw new ArgumentException("Data: [ManyToMany \"table\", \"thisColumn\", \"otherColumn\"] for '" + m.Name + "' of " + typeName + ".") }
                     var jr = new Data.RelationMap(m.Name, Data.RelationMap.ElementType(m.TypeName))
                     jr.join = true
-                    jr.joinTable = "" + pairs.Args[0]
-                    jr.thisColumn = "" + pairs.Args[1]
-                    jr.otherColumn = "" + pairs.Args[2]
+                    jr.joinTable = "" + pairs[0]
+                    jr.thisColumn = "" + pairs[1]
+                    jr.otherColumn = "" + pairs[2]
                     if (jr.target == undefined) { throw new ArgumentException("Data: [ManyToMany] needs a List<T> field ('" + m.Name + "' of " + typeName + ").") }
                     jr.target = Data.EntityMap.Qualify(jr.target, typeName)
                     this.relations.Add(take jr)
@@ -2346,42 +3017,42 @@ namespace Data {
                     if (owned != undefined) {
                         r.many = true
                         r.single = true
-                        if (owned.ArgCount() > 0) { r.foreign = "" + owned.Args[0] }
+                        if (owned.length > 0) { r.foreign = "" + owned[0] }
                     } else if (many != undefined) {
                         r.many = true
                         r.target = Data.RelationMap.ElementType(m.TypeName)
-                        if (many.ArgCount() > 0) { r.foreign = "" + many.Args[0] }
+                        if (many.length > 0) { r.foreign = "" + many[0] }
                     } else {
                         r.many = false
-                        if (one.ArgCount() > 0) { r.foreign = "" + one.Args[0] }
+                        if (one.length > 0) { r.foreign = "" + one[0] }
                     }
                     if (r.foreign == undefined || r.target == undefined) { throw new ArgumentException("Data: the relation '" + m.Name + "' of " + typeName + " needs its foreign key field ([HasMany \"personId\"] List<Order> ..., [HasOne \"personId\"] Profile ..., [BelongsTo \"personId\"] Person ...).") }
                     r.target = Data.EntityMap.Qualify(r.target, typeName)
                     this.relations.Add(take r)
                     continue
                 }
-                string kind = Data.EntityMap.KindOf(m.TypeName, m.HasAttribute("Json"))
+                string kind = Data.EntityMap.KindOf(m.TypeName, Data.EntityMap.Args(m, typeName, "Json") != undefined)
                 if (kind == undefined) { continue }
                 string column = m.Name
-                Attribute ca = m.FindAttribute("Column")
-                if (ca != undefined && ca.ArgCount() > 0) { column = "" + ca.Args[0] }
+                any ca = Data.EntityMap.Args(m, typeName, "Column")
+                if (ca != undefined && ca.length > 0) { column = "" + ca[0] }
                 var c = new Data.ColumnMap(m.Name, column, m.TypeName, kind)
-                Attribute ka = m.FindAttribute("Key")
+                any ka = Data.EntityMap.Args(m, typeName, "Key")
                 if (ka != undefined) {
                     c.key = true
-                    c.generated = kind == "int" && !(ka.ArgCount() > 0 && ("" + ka.Args[0]) == "manual")
+                    c.generated = kind == "int" && !(ka.length > 0 && ("" + ka[0]) == "manual")
                 }
-                c.unique = m.HasAttribute("Unique")
-                c.index = m.HasAttribute("Index")
-                c.required = m.HasAttribute("Required")
-                Attribute fc = m.FindAttribute("Check")
-                if (fc != undefined && fc.ArgCount() > 0) { c.check = "" + fc.Args[0] }
-                Attribute dt = m.FindAttribute("DbType")
-                if (dt != undefined && dt.ArgCount() > 0) { c.dbType = "" + dt.Args[0] }
-                Attribute la = m.FindAttribute("Length")
-                if (la != undefined && la.ArgCount() > 0) { c.length = la.Args[0] }
+                c.unique = Data.EntityMap.Args(m, typeName, "Unique") != undefined
+                c.index = Data.EntityMap.Args(m, typeName, "Index") != undefined
+                c.required = Data.EntityMap.Args(m, typeName, "Required") != undefined
+                any fc = Data.EntityMap.Args(m, typeName, "Check")
+                if (fc != undefined && fc.length > 0) { c.check = "" + fc[0] }
+                any dt = Data.EntityMap.Args(m, typeName, "DbType")
+                if (dt != undefined && dt.length > 0) { c.dbType = "" + dt[0] }
+                any la = Data.EntityMap.Args(m, typeName, "Length")
+                if (la != undefined && la.length > 0) { c.length = la[0] }
                 if (c.key) { this.key = c }
-                if (m.HasAttribute("Version")) {
+                if (Data.EntityMap.Args(m, typeName, "Version") != undefined) {
                     if (kind != "int") { throw new ArgumentException("Data: [Version] needs an int field ('" + m.Name + "' of " + typeName + ").") }
                     this.version = c
                 }
@@ -2393,6 +3064,27 @@ namespace Data {
                 byName.key = true
                 byName.generated = byName.kind == "int"
             }
+        }
+
+        // (an attribute of a field - given in code (Data.Mapping) or written on it: its arguments; undefined when it has none)
+        static any Args(Member m, string typeName, string name) {
+            any code = Data.Mapping.Args(typeName, m.Name, name)
+            if (code != undefined) { return code }
+            Attribute a = m.FindAttribute(name)
+            if (a == undefined) { return undefined }
+            any args = new any[a.ArgCount()]
+            for (var i = 0; i < args.length; i++) { args[i] = a.Args[i] }
+            return args
+        }
+        // (an attribute of the class)
+        static any ClassArgs(Type t, string typeName, string name) {
+            any code = Data.Mapping.Args(typeName, "", name)
+            if (code != undefined) { return code }
+            Attribute a = t.FindAttribute(name)
+            if (a == undefined) { return undefined }
+            any args = new any[a.ArgCount()]
+            for (var i = 0; i < args.length; i++) { args[i] = a.Args[i] }
+            return args
         }
 
         // The columns of CREATE TABLE in parentheses, with the condition of the table ([Check] of the class).
@@ -2845,7 +3537,7 @@ namespace Data {
                 string full = all[i]
                 Type t = Type.Named(full)
                 if (t == undefined) { continue }
-                if (t.FindAttribute("Table") != undefined) { list.Add(full) }
+                if (t.FindAttribute("Table") != undefined || Data.Mapping.Args(full, "", "Table") != undefined) { list.Add(full) }
             }
             return list
         }

@@ -16,19 +16,42 @@ namespace Data {
     [Driver "memory"]
     class MemoryDriver : Data.IDriver {
         construct() { }
+        // (the databases with a name: shared by the connections that name them - `memory:shop`)
+        static Dictionary<string, Data.MemStore> named = new Dictionary<string, Data.MemStore>()
+        static int connections = 0
         Data.IDriverConnection Open(string target, Data.Credentials credentials) {
-            if (target != "") { throw new ArgumentException("data.memory: the URL is 'memory:' (a database of its own for the connection), not 'memory:" + target + "'.") }
-            return new Data.MemoryConnection()
+            var c = new Data.MemoryConnection()
+            Data.MemoryDriver.connections = Data.MemoryDriver.connections + 1
+            c.id = Data.MemoryDriver.connections
+            if (target == "") { return c }
+            string name = target.ToLower()
+            for (var i = 0; i < name.Length; i++) {
+                char ch = name[i]
+                if (!((ch >= 'a' && ch <= 'z') || (ch >= '0' && ch <= '9') || ch == '_' || ch == '-' || ch == '.')) { throw new ArgumentException("data.memory: the name of a shared database is letters, digits, _ - . ('memory:shop'), not '" + target + "'.") }
+            }
+            if (!Data.MemoryDriver.named.ContainsKey(name)) { Data.MemoryDriver.named.Add(name, new Data.MemStore()) }
+            c.store = Data.MemoryDriver.named[name]
+            c.shared = name
+            return c
+        }
+        // Forgets a shared database (its tables are gone for the connections that open it next; those open keep what they have).
+        static undefined Forget(string name) {
+            string key = name.ToLower()
+            if (Data.MemoryDriver.named.ContainsKey(key)) { Data.MemoryDriver.named.Remove(key) }
         }
         static undefined Fail(string message, int code = 1) {
             int primary = code % 256
             if (primary == 19) { throw new Data.ConstraintException(message, code) }
+            if (primary == 5) { throw new Data.BusyException(message, code) }
             throw new Data.DataException(message, code)
         }
     }
 
     class MemoryDialect : Data.Dialect {
         construct() : base("memory") { }
+        // (GROUP BY and JOIN are not in the SQL of the in-memory database: groups and joins run in the program)
+        override bool Groups() { return false }
+        override bool Joins() { return false }
         override string ColumnsQuery() { return "SELECT name FROM _columns WHERE table_name = ?" }
         override string TablesQuery() { return "SELECT DISTINCT table_name FROM _columns ORDER BY table_name" }
         override string ColumnInfoQuery() { return "SELECT name, type, notnull = 0, pk FROM _columns WHERE table_name = ?" }
@@ -146,10 +169,19 @@ namespace Data {
         List tables          // Data.MemTable
         List indexes         // Data.MemIndex
         List views           // Data.MemView
+        int lockedBy         // the connection whose transaction is open (0: none) - the others wait for nobody: they are busy
         construct() {
             this.tables = new List()
             this.indexes = new List()
             this.views = new List()
+            this.lockedBy = 0
+        }
+        // (the state of another store, copied in - the store stays the one its connections share)
+        undefined Restore(Data.MemStore state) {
+            var c = state.Copy()
+            this.tables = take c.tables
+            this.indexes = take c.indexes
+            this.views = take c.views
         }
         Data.MemView FindView(string name) {
             string lower = name.ToLower()
@@ -194,6 +226,8 @@ namespace Data {
 
     class MemoryConnection : Data.IDriverConnection {
         Data.MemStore store
+        int id
+        string shared        // the name of a shared database (undefined: its own)
         List saved           // Data.MemStore per open transaction or savepoint (the state before it)
         List savedNames      // its name ("" for BEGIN)
         int changes
@@ -230,7 +264,14 @@ namespace Data {
         int Changes() { return this.changes }
         int LastId() { return this.lastId }
         Data.Dialect Dialect() { return this.dialect }
-        undefined Close() { }
+        // (a transaction left open is rolled back: the others may write again)
+        undefined Close() {
+            if (this.saved.Count > 0) { this.Rollback() }
+        }
+        // (a write while another connection of the shared database is in a transaction: busy)
+        undefined CheckWrite() {
+            if (this.store.lockedBy != 0 && this.store.lockedBy != this.id) { Data.MemoryDriver.Fail("database is locked (another connection of memory:" + this.shared + " is in a transaction)", 5) }
+        }
 
         // ---- transactions ----
         undefined Save(string name) {
@@ -244,19 +285,23 @@ namespace Data {
         }
         undefined Begin() {
             if (this.saved.Count > 0) { Data.MemoryDriver.Fail("cannot start a transaction within a transaction") }
+            this.CheckWrite()
             this.Save("")
+            this.store.lockedBy = this.id
         }
         undefined Commit() {
             if (this.saved.Count == 0) { Data.MemoryDriver.Fail("cannot commit - no transaction is active") }
             this.saved = new List()
             this.savedNames = new List()
+            this.store.lockedBy = 0
         }
         undefined Rollback() {
             if (this.saved.Count == 0) { Data.MemoryDriver.Fail("cannot rollback - no transaction is active") }
             Data.MemStore first = this.saved[0]
-            this.store = first.Copy()
+            this.store.Restore(first)
             this.saved = new List()
             this.savedNames = new List()
+            this.store.lockedBy = 0
         }
         undefined Savepoint(string name) { this.Save(name.ToLower()) }
         undefined Release(string name) {
@@ -269,7 +314,7 @@ namespace Data {
         undefined RollbackTo(string name) {
             int at = this.SavedAt(name.ToLower())
             Data.MemStore before = this.saved[at]
-            this.store = before.Copy()
+            this.store.Restore(before)
             while (this.saved.Count > at + 1) {
                 this.saved.RemoveAt(this.saved.Count - 1)
                 this.savedNames.RemoveAt(this.savedNames.Count - 1)
@@ -1057,6 +1102,7 @@ namespace Data {
             var store = this.connection.store
             string kind = n.kind
             if (kind == "select") { return this.Select(n) }
+            if (!(kind == "begin" || kind == "commit" || kind == "rollback" || kind == "savepoint" || kind == "release" || kind == "rollbackto")) { this.connection.CheckWrite() }
             this.connection.changes = 0
             if (kind == "insert") { this.Insert(n) }
             else if (kind == "update") { this.Update(n) }

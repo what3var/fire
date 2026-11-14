@@ -143,7 +143,7 @@ record Order {
 - `[Table]` and `[Entity]` imply `[Keep]` (like `[Remote]`, `[Page]`): stripping does not remove what only reflection reaches.
 - Types: `int`, `float`, `string` (`[Length n]`, else the dialect's long text), `bool`, `DateTime`, `byte[]`, enums (by name; `[AsNumber]`), units (stored in the
   base unit, the unit is in the schema), `undefined` is NULL (`[Required]` makes it NOT NULL), a record without `[Table]` as a JSON column.
-- The mapping is read once per class (`Data.Model.Of<Person>()`), cached, and can be built in code instead of attributes (`model.Entity<Person>().Key(p => p.id)`) -
+- The mapping is read once per class (`Data.Model.Of<Person>()`), cached, and can be built in code instead of attributes (built as `Data.Mapping.Entity<Person>().Key(p => p.id)`) -
   also what the designer generates.
 - Records are the natural rows for reading (immutable, `==` by fields, lent over channels); classes are entities that change.
 
@@ -252,9 +252,9 @@ Own methods for the generated classes come in an extension (`extension Person { 
 | Step | What | Depends on |
 |---|---|---|
 | 1 | `data` and `data.sqlite`: connection, parameters, `Query`/`Execute`, rows to records and classes, transactions, errors; awaitable - **built** ([docs/data](data/README.md)) | - |
-| 2 | Mapping (attributes, convention, `Data.Model`), `Ensure`, `Insert/Update/Delete/Save` per object - **built** (`Data.EntityMap`; `p.Save(db)` as a method and the model in code still open) | 1 |
+| 2 | Mapping (attributes, convention, `Data.Model`), `Ensure`, `Insert/Update/Delete/Save` per object - **built** (`Data.EntityMap`; `Data.Entity` for `p.Save(db)`, the mapping in code `Data.Mapping.Entity<T>()` built too) | 1 |
 | 3 | `data.memory` with the raw API (rows, keys, transactions) - **built**, with a subset of SQL (decided by the user: the same code as with a real database) | 2 |
-| 4 | Query builder on expression trees: SQL for SQLite, evaluation in `data.memory`; `ToSql` - **built** (`Data.Query<T>`, `Data.SqlWriter`; data.memory runs the same SQL; `Select`, `Include`, `GroupBy`, `Join` still open) | 2, expressions step 1-3 |
+| 4 | Query builder on expression trees: SQL for SQLite, evaluation in `data.memory`; `ToSql` - **built** (`Data.Query<T>`, `Data.SqlWriter`; data.memory runs the same SQL; `Include`; `Select` (in the SELECT or in the program), `GroupBy` with aggregates/Having, `Join`/`LeftJoin` built too) | 2, expressions step 1-3 |
 | 5 | Session: identity map, snapshots, Save in one transaction, generated keys, `[Version]` - **built** (`Data.Session`, `Data.ConcurrencyException`) | 2, 4 |
 | 6 | Relations: navigation fields, `Include`, `Any`/subqueries, join tables - **built** ([HasMany], [BelongsTo], [ManyToMany], Include/Load in sessions, Any/All as EXISTS, writing through lists, also without a session) | 4, 5 |
 | 7 | Pool, `Data.PerRequest`, Rpc DI - **built** (`Data.Pool` with an actor home; `Http.Database` in the package `http.data`; Http.Rpc takes constructor parameters from the items of the request) | 1 |
@@ -271,7 +271,7 @@ normal tests (VM == native), MySQL and SQL Server against a server when one is c
 ## Open
 
 - ~~The type argument of a generic method at run time~~ - `Type.Of<T>()` is there: `QueryList<T>`, `QueryOne<T>`, `Find<T>`, `All<T>`, `Ensure<T>` are built.
-- `data.memory`: one database per connection; a database shared by several connections (and threads) by name needs a home actor - later.
+- `data.memory`: `memory:name` is shared by the connections of the program (a transaction locks it for the others); threads open their own.
 - The connection is a class (`new Data.Connection(url)`), not a function `Data.Open(url)`: a namespace has no functions of its own.
 
 - ~~TLS inside TDS (SQL Server): can `tls` run over a stream that is not a socket?~~ - `Tls.Engine` (TLS over buffers) on OpenSSL; mbedTLS and SChannel still to do.

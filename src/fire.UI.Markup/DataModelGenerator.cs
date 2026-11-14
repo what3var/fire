@@ -208,7 +208,8 @@ namespace fire.UI.Markup
                     sb.Append("    [Table \"").Append(e.Table).Append("\"]\n");
                     if (e.View != null) sb.Append("    [View ").Append(Lit(e.View)).Append("]\n");
                     if (e.Checks?.Count > 0) sb.Append("    [Check ").Append(Lit(e.Checks.Count == 1 ? e.Checks[0] : string.Join(" AND ", e.Checks.Select(c => "(" + c + ")")))).Append("]\n");
-                    sb.Append(e.Record ? "    record " : "    class ").Append(e.Name).Append(" {\n");
+                    // (a class writes itself: p.Save(db), p.Delete(db), p.Reload(db) - Data.Entity)
+                    sb.Append(e.Record ? "    record " : "    class ").Append(e.Name).Append(e.Record ? " {\n" : " : Data.Entity {\n");
                     foreach (var fd in e.Fields)
                     {
                         if (fd.Comment != null) sb.Append("        // ").Append(fd.Comment.Replace("\n", " ")).Append('\n');

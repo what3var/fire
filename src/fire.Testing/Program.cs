@@ -31801,6 +31801,169 @@ else
             }
             """)).ToArray();
 
+    // Projections (Select of a column, a navigation, `new X(...)` - in the SELECT, else in the program), groups (GroupBy with Select of aggregates,
+    // Having, OrderBy; ToList of the groups), joins (Join and LeftJoin with Where, OrderBy, Select, ToList as pairs, Count) - as SQL on SQLite, in the
+    // program on the in-memory database (no GROUP BY and JOIN there): the same output
+    natCases = natCases.Append(("Data/Queries: Select (Spalte, Navigation, new X(...) im SELECT, sonst im Programm), GroupBy (Select mit Count/Sum, Having mit Count(Bedingung), OrderBy, ToList der Gruppen), Join und LeftJoin (Where, OrderBy, Select, Paare, Count) - SQL auf SQLite, im Programm auf der In-Memory-Datenbank: dieselbe Ausgabe", """
+            #import "data.sqlite"
+            #import "data.memory"
+            enum Status { Open, Paid }
+            [Table "customers"]
+            class Customer {
+                [Key] int id
+                string name
+                string city
+                construct() { }
+            }
+            [Table "orders"]
+            class Order {
+                [Key] int id
+                int customerId
+                float total
+                Status status
+                [BelongsTo "customerId"] Customer customer
+                construct() { }
+            }
+            record Line {
+                string name
+                float total
+                construct(string name, float total) { this.name = name; this.total = total }
+            }
+            record Total {
+                int customer
+                int count
+                float sum
+                construct(int customer, int count, float sum) { this.customer = customer; this.count = count; this.sum = sum }
+            }
+            foreach (url in ["sqlite::memory:", "memory:"]) {
+                var db = new Data.Connection(url)
+                print("---- " + url)
+                db.Ensure<Customer>()
+                db.Ensure<Order>()
+                foreach (n in [["Ada", "London"], ["Grace", "New York"], ["Linus", undefined]]) {
+                    var c = new Customer()
+                    c.name = n[0]
+                    c.city = n[1]
+                    db.Insert(c)
+                }
+                var who = [1, 1, 2, 1, 2]
+                var amounts = [10.5, 20.0, 5.25, 3.0, 7.0]
+                var paidOnes = [false, true, true, true, false]
+                for (var i = 0; i < 5; i++) {
+                    var x = new Order()
+                    x.customerId = who[i]
+                    x.total = amounts[i]
+                    if (paidOnes[i]) { x.status = Status.Paid } else { x.status = Status.Open }
+                    db.Insert(x)
+                }
+                List<string> names = db.From<Customer>().OrderBy(c => c.name).Select(c => c.name)
+                print("names " + Json.Serialize(names))
+                float limit = 6.0
+                List<Line> lines = db.From<Order>().Where(o => o.total > taking limit).OrderBy(o => o.id).Select(o => new Line(o.customer.name, o.total * 2))
+                foreach (l in lines) { print("line " + l.name + " " + l.total) }
+                List<bool> paid = db.From<Order>().OrderBy(o => o.id).Select(o => o.status == Status.Paid)
+                print("paid " + Json.Serialize(paid))
+                List<Status> states = db.From<Order>().OrderBy(o => o.id).Select(o => o.status)
+                print("states " + Json.Serialize(states))
+                List<string> local = db.From<Customer>().OrderBy(c => c.id).Select(c => c.name.Substring(0, 2) + "!")
+                print("in the program " + Json.Serialize(local))
+                List<Total> totals = db.From<Order>().GroupBy(o => o.customerId).OrderBy(g => g.Key).Select(g => new Total(g.Key, g.Count(), g.Sum(o => o.total)))
+                foreach (t in totals) { print("total " + t.customer + " " + t.count + " " + t.sum) }
+                List<int> big = db.From<Order>().GroupBy(o => o.customerId).Having(g => g.Count(o => o.status == Status.Paid) >= 2).Select(g => g.Key)
+                print("big " + Json.Serialize(big))
+                var groups = db.From<Order>().Where(o => o.total > 4).GroupBy(o => o.status).ToList()
+                foreach (g in groups) { print("group " + g.Key + " " + g.Count() + " " + g.Max(o => o.total)) }
+                List<Line> joined = db.From<Order>().Join<Customer>((o, c) => o.customerId == c.id).Where((o, c) => c.city != undefined).OrderBy((o, c) => o.total).Select((o, c) => new Line(c.city, o.total))
+                foreach (l in joined) { print("join " + l.name + " " + l.total) }
+                var pairs = db.From<Customer>().LeftJoin<Order>((c, o) => o.customerId == c.id && o.total > 9).OrderBy((c, o) => c.id).ToList()
+                foreach (p in pairs) {
+                    string t = "none"
+                    if (p.Second != undefined) { t = "" + p.Second.total }
+                    print("pair " + p.First.name + " " + t)
+                }
+                print("joined count " + db.From<Order>().Where(o => o.status == Status.Open).Join<Customer>((o, c) => o.customerId == c.id).Count())
+                db.Close()
+            }
+            """)).ToArray();
+    // The mapping in code (Data.Mapping.Entity<T>(): table, key, column, required, length, ignore, index, check, relations) and objects that write
+    // themselves (Data.Entity: Save, Reload, Delete); a database in memory shared by name (memory:shop): two connections, the lock of a transaction,
+    // the rollback when a connection closes in one, Forget
+    natCases = natCases.Append(("Data/Mapping: Mapping im Code (Data.Mapping.Entity<T>(): Tabelle, Schluessel, Spalte, Required, Length, Ignore, Index, Check, HasMany/BelongsTo) und Data.Entity (Save, Reload, Delete) - SQLite und In-Memory; eine geteilte In-Memory-Datenbank (memory:name: zwei Verbindungen, Sperre einer Transaktion als BusyException, Rollback beim Schliessen, Forget)", """
+            #import "data.sqlite"
+            #import "data.memory"
+            class Author : Data.Entity {
+                int id
+                string fullName
+                string secret
+                List<Book> books
+                construct() { }
+            }
+            class Book : Data.Entity {
+                int number
+                int authorId
+                string title
+                Author author
+                construct() { }
+            }
+            Data.Mapping.Entity<Author>().Table("authors").Key(a => a.id).Column(a => a.fullName, "full_name").Required(a => a.fullName).Length(a => a.fullName, 80).Ignore(a => a.secret).HasMany(a => a.books, "authorId")
+            Data.Mapping.Entity<Book>().Table("books").Key(b => b.number).Index(b => b.authorId).Check(b => b.title, "length(title) > 0").BelongsTo(b => b.author, "authorId")
+            foreach (url in ["sqlite::memory:", "memory:"]) {
+                print("---- " + url)
+                var db = new Data.Connection(url)
+                print(db.CreateScriptOf(["Author", "Book"]))
+                db.Ensure<Author>()
+                db.Ensure<Book>()
+                var a = new Author()
+                a.fullName = "Ursula"
+                a.secret = "not stored"
+                print("saved " + a.Save(db) + " id " + a.id)
+                var b = new Book()
+                b.authorId = a.id
+                b.title = "Earthsea"
+                b.Save(db)
+                a.fullName = "Ursula K."
+                a.Save(db)
+                print("row " + db.Rows("select * from authors")[0])
+                a.fullName = "changed here"
+                print("reload " + a.Reload(db) + " " + a.fullName)
+                List<Author> all = db.From<Author>().Include(x => x.books).Where(x => x.books.Any(k => k.title.StartsWith("Earth"))).ToList()
+                print("found " + all[0].fullName + " " + all[0].books.Count + " " + all[0].books[0].title)
+                try { db.Execute("insert into books(authorId, title) values (1, '')") } catch (Data.ConstraintException e) { print("check " + e.message) }
+                print("deleted " + b.Delete(db) + " left " + db.From<Book>().Count())
+                db.Close()
+            }
+            #import "data.memory"
+            var a = new Data.Connection("memory:shop")
+            var b = new Data.Connection("memory:Shop")
+            var other = new Data.Connection("memory:other")
+            a.Execute("create table t(id integer primary key, v text)")
+            a.Execute("insert into t(v) values (?)", ["one"])
+            print("b sees " + b.Scalar("select count(*) from t") + " other " + other.Scalar("select count(*) from _columns where table_name = 't'"))
+            b.Execute("insert into t(v) values (?)", ["two"])
+            print("a sees " + a.Scalar("select count(*) from t"))
+            a.Begin()
+            a.Execute("insert into t(v) values (?)", ["three"])
+            try { b.Execute("insert into t(v) values (?)", ["four"]) } catch (Data.BusyException e) { print("busy " + e.Code) }
+            try { b.Begin() } catch (Data.BusyException e) { print("busy begin") }
+            print("b reads " + b.Scalar("select count(*) from t"))
+            a.Rollback()
+            print("after rollback a " + a.Scalar("select count(*) from t") + " b " + b.Scalar("select count(*) from t"))
+            b.Transaction(t => { t.Execute("insert into t(v) values (?)", ["five"]) })
+            print("after b's transaction a " + a.Scalar("select count(*) from t"))
+            a.Begin()
+            a.Execute("delete from t")
+            a.Close()
+            print("a closed in a transaction: b " + b.Scalar("select count(*) from t"))
+            b.Execute("insert into t(v) values (?)", ["six"])
+            Data.MemoryDriver.Forget("shop")
+            var c = new Data.Connection("memory:shop")
+            print("forgotten: c " + c.Scalar("select count(*) from _columns where table_name = 't'") + " b still " + b.Scalar("select count(*) from t"))
+            try { new Data.Connection("memory:no space") } catch (ArgumentException e) { print(e.message) }
+            var own = new Data.Connection("memory:")
+            own.Execute("create table t(x int)")
+            print("own " + own.Scalar("select count(*) from t"))
+            """)).ToArray();
+
     // Navigation in queries (x.customer.name, two hops, OrderBy, == undefined, inside Any) and the objects a session reaches through relations with a key of
     // their own (new when the table has no row with it, else a row that is there - a child moved into another list)
     natCases = natCases.Append(("Data/Navigation: Bedingungen ueber [BelongsTo]-Felder (ein und zwei Spruenge, Enum, StartsWith, OrderBy, == undefined, in Any) als Unterabfragen; Objekte mit eigenem Schluessel ueber Beziehungen (neu nur ohne Zeile, sonst vorhanden; ein vorhandenes Kind wechselt die Liste) - SQLite und In-Memory", """
