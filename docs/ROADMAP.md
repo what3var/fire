@@ -376,6 +376,9 @@ vier Stufen gegen die VM ("Weglassen (stripping)" in der nativen Gruppe, mit `st
   kommt, braucht `[Keep]` oder eine kleinere Stufe.
 * Was bleibt, ist beim `ui`-Programm echter Code (`UI.Root`: Ereignisse, Fokus, Popups, Ziehen und Ablegen); kleiner würde es nur durch weniger Code im Package oder ein `ui`, dessen
   Teile (Drag & Drop, Popups) erst beim Benutzen erreicht werden.
+* **Zu prüfen:** das minimale `ui`-Programm (Fenster, Root, ein Label) ist mit der Arbeit von `http-server` (Stand des Merges in `master`) auf 4,06 MB C in
+  Stufe 3 gewachsen (vorher unter 4 MB); der Test erlaubt vorerst bis 5 MB. Herausfinden, was gewachsen ist (z. B. `forge stats` vorher/nachher:
+  Recording des Renderers, Hover/Kontextmenüs, Grafik), und ob es das minimale Programm wirklich braucht - dann die Grenze wieder senken.
 
 ## 12. Bau-Reihenfolge der Quellen von Paket-Natives
 
