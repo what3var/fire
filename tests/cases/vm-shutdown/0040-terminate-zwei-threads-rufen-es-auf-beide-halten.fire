@@ -1,0 +1,19 @@
+class Item {
+    int n
+    construct(int n) { this.n = n }
+    destruct() { print("~I" + this.n) }
+}
+class Box {
+    string name
+    Item item
+    Item extra
+    construct(string name) { this.name = name }
+    destruct() { print("~B" + this.name) }
+}
+var g = new Item(1)
+fire { terminate(1); print("nie a") }
+fire { terminate(2); print("nie b") }
+var w = 0
+while (w < 100000) { w = w + 1 }
+print("nie main")
+//# name: terminate: zwei Threads rufen es auf, beide halten sofort an

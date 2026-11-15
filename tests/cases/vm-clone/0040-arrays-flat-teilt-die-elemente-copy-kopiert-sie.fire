@@ -1,0 +1,35 @@
+class Item {
+    int n
+    construct(int n) { this.n = n }
+    destruct() { print("~I" + this.n) }
+}
+class Box {
+    string name
+    int size
+    Item item
+    Box other
+    Item list[]
+    int Extra { get; set; }
+    construct(string name) { this.name = name; this.size = 1 }
+    destruct() { print("~B" + this.name) }
+}
+var b = new Box("arr")
+b.list = [new Item(1), new Item(2)]
+var f = flat b
+var c = copy b
+c.list[0].n = 10
+f.list[1].n = 20
+print(b.list[0].n + " " + b.list[1].n + " " + c.list[0].n)
+print(f.list == b.list)
+print(c.list == b.list)
+var nums = [1, 2, 3]
+var n1 = flat nums
+var n2 = copy nums
+n1[0] = 100
+n2[1] = 200
+print(nums[0] + " " + nums[1] + " " + n1[0] + " " + n2[1])
+var bytes = "AB".ToBytes()
+var b2 = copy bytes
+b2[0] = 67
+print(bytes[0] + " " + b2[0])
+//# name: Arrays: flat teilt die Elemente, copy kopiert sie; Array als Operand

@@ -1,0 +1,2 @@
+class A { byte[8] F() { return 1 } }
+//# name: byte[8] bleibt widerspruechlich

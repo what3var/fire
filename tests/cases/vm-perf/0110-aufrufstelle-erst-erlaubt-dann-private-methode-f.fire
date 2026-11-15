@@ -1,0 +1,12 @@
+class Open { int f; Go() { return "offen" } construct() { this.f = 1 } }
+class Closed { private int f; private Go() { return "zu" } construct() { this.f = 2 } }
+var Probe = func (o) => {
+    try { return o.Go() } catch (AccessDeniedException e) { return "verweigert" }
+}
+var ProbeField = func (o) => {
+    try { return o.f } catch (AccessDeniedException e) { return "feld verweigert" }
+}
+var objs = [new Open(), new Closed(), new Open(), new Closed()]
+for (var i = 0; i < 4; i = i + 1) { print(Probe(objs[i])); print(ProbeField(objs[i])) }
+//# modes: Debug Release
+//# name: Aufrufstelle: erst erlaubt, dann private Methode/Feld (Zugriffsschutz bleibt)

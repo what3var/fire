@@ -1,0 +1,10 @@
+class extends string {
+    string Wrap() { return "[" + this + "]" }
+    string Wrap(string edge) { return edge + this + edge }
+    string Tag(string name = "b") { return "<" + name + ">" + this + "</" + name + ">" }
+}
+print("x".Wrap())
+print("x".Wrap("*"))
+print("x".Tag())
+print("x".Tag("i"))
+//# name: Ueberladung nach Parameteranzahl und optionale Parameter

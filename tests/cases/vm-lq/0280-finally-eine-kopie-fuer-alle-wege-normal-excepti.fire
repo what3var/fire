@@ -1,0 +1,49 @@
+class Exception { string message; construct(string message = "") { this.message = message } }
+class T {
+    static N() { var x = 1; try { x = x + 1 } finally { print("N fin x=" + x) } return x }
+    static P() { var x = 5; try { throw new Exception("p") } finally { print("P fin x=" + x) } }
+    static R() { var x = 7; try { return x } finally { print("R fin x=" + x); x = 99 } }
+    static RC() { var y = 3; try { throw new Exception("c") } catch (e) { return y + 1 } finally { print("RC fin y=" + y) } }
+    static CE() { try { throw new Exception("a") } catch (e) { throw new Exception("b") } finally { print("CE fin") } }
+    static RR() { try { try { return 1 } finally { print("inner") } } finally { print("outer") } }
+    static RF(class l) { try { foreach (x in l) { return x } } finally { print("RF fin") } return 0 }
+    static FR() { try { return 1 } finally { return 2 } }
+    static Run() {
+        print(1 + T.N() + 1)
+        try { T.P() } catch (e) { print("caught " + e.message) }
+        print(1 + T.R() + 1)
+        print(1 + T.RC() + 1)
+        try { T.CE() } catch (e) { print("caught " + e.message) }
+        print(10 + T.RR() + 10)
+        print(10 + T.RF([4, 5]) + 10)
+        print(10 + T.FR() + 10)
+        var log = ""
+        for (var i = 0; i < 4; i = i + 1) {
+            try {
+                if (i == 1) { continue }
+                if (i == 3) { break }
+                log = log + "b" + i
+            } finally { log = log + "f" + i }
+        }
+        print(log)
+        var log2 = ""
+        var n = 0
+        while (true) {
+            n = n + 1
+            try {
+                try { if (n == 2) { break } log2 = log2 + "t" + n }
+                finally { log2 = log2 + "i" + n }
+            } finally { log2 = log2 + "o" + n }
+        }
+        print(log2)
+        var log3 = ""
+        for (var j = 0; j < 3; j = j + 1) {
+            try { throw new Exception("x") } catch (e) { if (j == 1) { continue } log3 = log3 + "c" + j } finally { log3 = log3 + "f" + j }
+        }
+        print(log3)
+        try { try { throw new Exception("in") } finally { print("f1") } } catch (e) { print("out " + e.message) }
+        print(2 * T.N() + 3)
+    }
+}
+T.Run()
+//# name: finally: EINE Kopie fuer alle Wege - normal, Exception, return (auch im catch/foreach), break/continue, Fehler im catch; sieht die Locals

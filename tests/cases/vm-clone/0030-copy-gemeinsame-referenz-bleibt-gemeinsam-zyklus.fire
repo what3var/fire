@@ -1,0 +1,28 @@
+class Item {
+    int n
+    construct(int n) { this.n = n }
+    destruct() { print("~I" + this.n) }
+}
+class Box {
+    string name
+    int size
+    Item item
+    Box other
+    Item list[]
+    int Extra { get; set; }
+    construct(string name) { this.name = name; this.size = 1 }
+    destruct() { print("~B" + this.name) }
+}
+var shared = new Item(5)
+var x = new Box("x")
+x.item = shared
+x.other = new Box("y")
+x.other.item = shared
+x.other.other = x
+var c = copy x
+print(c.item == c.other.item)
+print(c.item == shared)
+print(c.other.other == c)
+print(c.other.other == x)
+print(c.other != x.other)
+//# name: copy: gemeinsame Referenz bleibt gemeinsam, Zyklus bleibt Zyklus

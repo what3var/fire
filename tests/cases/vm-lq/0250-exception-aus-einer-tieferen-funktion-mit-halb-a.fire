@@ -1,0 +1,14 @@
+class Exception { string message; construct(string message = "") { this.message = message } }
+class T {
+    static Boom(int n) { return 100 + n + T.Fail() }
+    static Fail() { throw new Exception("boom") }
+    static Run() {
+        var total = 0
+        for (var i = 0; i < 3; i = i + 1) {
+            try { total = total + 1 + T.Boom(i) } catch (e) { total = total + 1000 }
+        }
+        print(total + 5)
+    }
+}
+T.Run()
+//# name: Exception aus einer tieferen Funktion mit halb ausgewerteten Ausdruecken, weiter aussen gefangen

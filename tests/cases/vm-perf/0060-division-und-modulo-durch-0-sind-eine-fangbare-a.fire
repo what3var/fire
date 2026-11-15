@@ -1,0 +1,4 @@
+var zero = 0
+try { print(5 % zero) } catch (Exception e) { print("mod") }
+print("weiter")
+//# name: Division und Modulo durch 0 sind eine fangbare Ausnahme

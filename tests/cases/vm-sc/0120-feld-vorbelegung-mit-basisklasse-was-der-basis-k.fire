@@ -1,0 +1,14 @@
+class B {
+    construct() { this.Setup() }
+    Setup() { }
+}
+class D : B {
+    int x
+    int y = 5
+    string s = "init"
+    int z
+    override Setup() { this.x = 99; this.y = 7; this.z = 8 }
+}
+var d = new D()
+print((d.x == undefined) + " " + d.y + " " + d.s + " " + (d.z == undefined))
+//# name: Feld-Vorbelegung mit Basisklasse: was der Basis-Konstruktor in ein Feld der abgeleiteten Klasse schreibt, wird von dessen Initialisierer wie bisher ueberschrieben

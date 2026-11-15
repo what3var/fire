@@ -1,0 +1,41 @@
+class T {
+    static int Nested(int n) {
+        try {
+            n = n + 0
+        } finally {
+            try {
+                try {
+                } finally {
+                    if (n > 1) { return 1 }
+                }
+            } finally {
+                if (n > 0) { return 4 }
+            }
+        }
+    }
+    static int WithLoops(int n) {
+        var xs = [1, 2, 3]
+        try {
+            foreach (x in xs) {
+                try {
+                    foreach (y in xs) {
+                        try { if (y == n) { return x * 10 + y } } finally { if (n == 3) { return 99 } }
+                    }
+                } finally {
+                    n = n + 0
+                }
+            }
+        } finally {
+            foreach (z in xs) { if (z == 2 && n == 0) { return 77 } }
+        }
+        return -1
+    }
+}
+print(T.Nested(2))
+print(T.Nested(1))
+print(T.Nested(0))
+print(1 + T.WithLoops(1) + 2)
+print(T.WithLoops(2))
+print(T.WithLoops(3))
+print(T.WithLoops(0))
+//# name: return in ineinander liegenden finally-Bloecken: die Bewohner des Stacks bleiben fuer das naechste finally liegen

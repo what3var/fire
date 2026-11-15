@@ -1,0 +1,13 @@
+Circle : Shape
+field public float radius 0 Circle False 
+field private int secret 0 Circle False 
+field public int id 0 Circle True 
+field public float w 0 Circle False mm
+constructor public  Circle 1 Circle False 
+property public float Diameter 0 Circle False 
+method public float Area 0 Circle False 
+method public  Scale 2 Circle False 
+method private  Hidden 0 Circle False 
+method public int PeekSecret 0 Circle False 
+field public string name 0 Shape False 
+method public string Describe 0 Shape False 

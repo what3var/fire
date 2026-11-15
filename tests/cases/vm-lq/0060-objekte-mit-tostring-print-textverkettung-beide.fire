@@ -1,0 +1,16 @@
+#import "time"
+class Exception { string message; construct(string message = "") { this.message = message } }
+class P { string n; construct(string n) { this.n = n } ToString() { return "P(" + this.n + ")" } }
+class Q { int x; construct() { this.x = 1 } }
+class Bad { ToString() { throw new Exception("nein") } }
+var d = new DateTime(2024, 3, 15, 14, 30, 5)
+print(d)
+print("jetzt: " + d + " / " + new P("x") + " / " + TimeSpan.FromSeconds(75))
+print(d + " ist heute")
+print($"{d} {new P("y")}")
+print(new P("z"))
+print(("q=" + new Q()).Length > 3)
+try { print("b=" + new Bad()) } catch (e) { print("1 " + e.message) }
+try { print(new Bad()) } catch (e) { print("2 " + e.message) }
+print("ende")
+//# name: Objekte mit ToString(): print, Textverkettung (beide Seiten), Interpolation; ohne ToString bleibt die alte Darstellung, eine Exception darin laeuft zum Aufrufer

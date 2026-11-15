@@ -1,0 +1,23 @@
+class C { int v; int P { get { return 7 } } Twice(int n) { return n * 2 } construct() { this.v = 1 } }
+class W {
+    static F(lambda field<C> s, C c) { return s.Name + "=" + s.Get(c) }
+    static P(lambda property<C> s, C c) { return s.Name + "=" + s.Get(c) }
+    static M(lambda member<C> s, C c) { return s.Name + "=" + s.Get(c) }
+    static S(lambda selector<C> s, C c) { return s.Name + ":" + s.ActualKind(c) }
+    static Call(lambda selector<> s, C c) { return s.Call(c, [21]) }
+    static Meth(lambda method<C> s, C c) { return s.Name + "->" + s.Call(c, [4]) }
+    static GetOnly(lambda selector<C> s, C c) { return s.Get(c) }
+}
+var c = new C()
+print(W.F(x => x.v, c) + " " + W.P(x => x.P, c) + " " + W.M(x => x.v, c) + " " + W.M(x => x.P, c))
+print(W.S(x => x.v, c) + " " + W.S(x => x.P, c) + " " + W.S(x => x.Twice, c) + " " + W.Call(x => x.Twice, c))
+try { W.F(x => x.P, c) } catch (e) { print("1 " + e.message) }
+try { W.P(x => x.v, c) } catch (e) { print("2 " + e.message) }
+try { W.M(x => x.Twice, c) } catch (e) { print("3 " + e.message) }
+try { W.F(x => x.nope, c) } catch (e) { print("4 " + e.message) }
+try { W.GetOnly(x => x.Twice, c) } catch (e) { print("5 " + e.message) }
+try { W.Call(x => x.v, c) } catch (e) { print("6 " + e.message) }
+print(W.Meth(x => x.Twice, c))
+try { W.Meth(x => x.v, c) } catch (e) { print("7 " + e.message) }
+try { W.Meth(x => x.P, c) } catch (e) { print("8 " + e.message) }
+//# name: Selektor-Arten: field, property, member (Feld oder Property), method (nur Methode), selector (alles)

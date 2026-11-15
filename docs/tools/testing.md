@@ -202,6 +202,16 @@ FIRE_TESTS_ONLY=native FIRE_TESTS_FILTER="<title>" dotnet fire.Testing.dll
 
 A case without an expected output is a failed check that says so, and so is a case the compiler refuses (`WIRD NICHT UEBERSETZT: <errors>`).
 
+**The cases that only run in the VM** are files too, one folder per check of the test program (`tests/cases/vm-perf`, `vm-life`, `vm-shutdown`, `vm-gl`,
+`vm-lq`, `vm-rf`, `vm-sc`, `vm-sc-checked`, `vm-ext`, `vm-arr`, `vm-clone` and `vm-ext-error`, `vm-arr-error`, `vm-clone-error`): the same `.fire` and
+`.expected` - an exception nothing catches is the last line there, `UNBEHANDELT: <message>` - and, for a case that is no program, `.error` instead of
+`.expected`: a part of the compiler's message. More lines about a case: `//# modes: Debug Release` (the execution modes of the VM it runs in; without the
+line those of its check, usually all three) and `//# packed` (it also runs as a packed program does: written as a program file and read back). The test
+program runs each folder with the check it came from (`foreach (var c in TestCases.Load("vm-perf")) CheckPerf(...)`), in the place the calls were. These
+expected outputs are written by hand, as they were in the code; `FIRE_TESTS_UPDATE` does not touch them. What hangs on the host - the UI with its fake
+renderer, the device manager, host callbacks, the rules for files and the network - stays code. `FIRE_TESTS_COLLECT=<file>` writes what every such check
+checks (title, source, expected lines) as one JSON object per line: the list before and after moving cases must be the same.
+
 **Cases that master adds.** As long as master holds these cases as text in `Program.cs`, `tests/tools/merge-master.sh` merges it: the cases master added
 or changed go into the files (`tests/tools/cases.py`: a new case gets a number between its neighbours, a changed one loses its expected output, a case
 keeps its file as long as it keeps its title), the rest of `Program.cs` is merged as usual. Then build, record with `FIRE_TESTS_UPDATE=1`, look, commit.

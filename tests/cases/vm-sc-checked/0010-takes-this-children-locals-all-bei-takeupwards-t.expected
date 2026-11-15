@@ -1,0 +1,26 @@
+~q1
+1 p1
+q1 dead
+2 q2
+~r3
+3 q3
+r3 dead
+4 foreign
+5 p4
+6
+7 a1a2
+end
+~h
+~p5
+~q5
+~p1
+~p2
+~q2
+~p3
+~q3
+~p4
+~foreign
+~p6
+~q6
+~a1
+~a2

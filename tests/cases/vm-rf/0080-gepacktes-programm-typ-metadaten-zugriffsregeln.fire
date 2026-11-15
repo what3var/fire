@@ -1,0 +1,11 @@
+#import "reflection"
+class Exception { string message; construct(string message = "") { this.message = message } }
+class A { float r; private int s; construct() { this.r = 1.5; this.s = 3 } }
+var t = Type.Of(new A())
+foreach (m in t.All) { print(m.Access + " " + m.TypeName + " " + m.Name) }
+try { Reflect.Get(new A(), "s") } catch (e) { print("privat") }
+try { throw new Exception("x") } catch (e) { print("gefangen") }
+//# note: packed: metadata and try/catch must survive the serialisation (catch clauses used to be lost)
+//# modes: Debug Release
+//# packed
+//# name: Gepacktes Programm: Typ-Metadaten, Zugriffsregeln und try/catch ueberleben die Serialisierung

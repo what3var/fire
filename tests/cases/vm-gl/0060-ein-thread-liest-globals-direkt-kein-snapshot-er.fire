@@ -1,0 +1,10 @@
+var flag = 0
+var done = 0
+fire {
+    while (flag == 0) { }
+    sync global { done = done + 1 }
+}
+flag = 1
+while (done == 0) { sync globals }
+print("fertig " + done)
+//# name: Ein Thread liest Globals direkt (kein Snapshot): er sieht spaetere Aenderungen des Hauptprogramms

@@ -1,0 +1,9 @@
+class Exception { string message; construct(string message = "") { this.message = message } }
+var n = 0
+for (var i = 0; i < 4; i = i + 1) {
+    try { throw new Exception("x") }
+    catch (e) { n = n + 1; continue }
+    n = n + 100
+}
+print(n)
+//# name: continue aus catch

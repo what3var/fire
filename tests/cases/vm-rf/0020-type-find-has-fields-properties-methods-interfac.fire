@@ -1,0 +1,31 @@
+class Shape {
+    string name
+    construct(string name) { this.name = name }
+    string Describe() { return "shape " + this.name }
+}
+class Circle : Shape {
+    float radius
+    private int secret
+    readonly int id
+    float w : mm = 5mm
+    construct(float radius) : base("circle") { this.radius = radius; this.secret = 42; this.id = 7 }
+    float Diameter { get { return this.radius * 2 } set { this.radius = value / 2 } }
+    float Area() { return this.radius * this.radius * 3 }
+    Scale(float f, int times) { this.radius = this.radius * f }
+    private Hidden() { return "hidden" }
+    int PeekSecret() { return Reflect.Get(this, "secret") }
+}
+interface IThing { Ping() }
+class Thing : Circle, IThing { construct() : base(1.0) { } Ping() { return 1 } }
+var t = Type.Of("Thing")
+print(t.Base.Name + " " + t.Interfaces.length + " " + t.Interfaces[0])
+print(t.Fields().Count + " " + t.Properties().Count + " " + t.Methods().Count + " " + t.Constructors().Count)
+print(t.Has("radius") + " " + t.Has("nope") + " " + t.Find("Diameter").CanWrite + " " + t.Find("Area").IsMethod())
+print(t.IsSubclassOf(Type.Of("Shape")) + " " + Type.Of("Shape").IsSubclassOf(t) + " " + (Type.Named("Gibts") == undefined))
+interface IBase { Base() }
+interface IMore : IBase { More() }
+class Deeper : Thing, IMore { Base() { } More() { } }
+var d = Type.Of("Deeper")
+print(",".Join(d.Interfaces) + " | " + ",".Join(d.DeclaredInterfaces))
+//# modes: Debug Release
+//# name: Type: Find/Has/Fields/Properties/Methods/Interfaces, Named und IsSubclassOf

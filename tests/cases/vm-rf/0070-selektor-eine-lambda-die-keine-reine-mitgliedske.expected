@@ -1,0 +1,2 @@
+1 The lambda is not a selector: it needs exactly one parameter, and its body may only be a member chain on it (`c => c.radius`, `p => p.address.city`).
+2 A selector ('lambda member<...>' etc.) expects a lambda like `c => c.radius`, got: Int.

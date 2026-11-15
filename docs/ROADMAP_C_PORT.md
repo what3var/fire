@@ -176,10 +176,13 @@ Noch kein C; alles hier ist für sich nützlich und macht den Rest prüfbar.
      schreibt sie neu. Die 12 übrigen Fälle entstehen zur Laufzeit (Zertifikat, Ordner des Laufs, Datenbankserver) und bleiben im Code.
    * **Was auf `master` dazukommt**, solange dort noch Text in `Program.cs` steht: `tests/tools/merge-master.sh` holt neue und geänderte Fälle beim
      Merge in die Dateien (zuerst gebraucht für den Merge bis PR 49: ein neuer Fall).
-   * **Offen:** die Familien mit Skript und erwarteten Zeilen, die nur in der VM laufen (`CheckPerf`, `CheckLq`, `CheckRf`, `CheckSc`, `CheckGl`,
-     `CheckCb`, `CheckLife`, `CheckExt`, `CheckArr`, `CheckClone`, `CheckIo`, `CheckUi`, ...), jede mit eigenem Aufbau (Modi, Regeln, Fake-Renderer);
-     Diagnosen (`DiagnosticTests`, `TypeTests`, `SyntaxTests`) als Fälle mit erwarteten Meldungen; Completion (`CheckCompletion`) mit `forge serve`.
-     Was am Editor, an Fenstern oder an Toolchains hängt, bleibt Code.
+   * ~~Die Familien, die nur in der VM laufen~~ (umgesetzt): 193 der 197 Prüfungen von `CheckPerf`, `CheckLife`, `CheckShutdown`, `CheckGl`, `CheckLq`,
+     `CheckRf`, `CheckSc`, `CheckScChecked`, `CheckExt`, `CheckArr`, `CheckClone` und ihren Fehler-Varianten sind Dateien in `tests/cases/vm-*`
+     (mit Modi, `packed`, `.error`); das Testprogramm ruft je Ordner dieselbe Prüfung auf wie vorher. `Program.cs`: noch 18 700 Zeilen.
+   * **Offen:** diese Fälle laufen in C# über von Hand gebaute Abläufe (Prelude + Skript, eigene Natives); ob jeder mit `forge run` dieselbe Ausgabe
+     gibt - so wird ihn der Läufer in C ausführen -, ist zu prüfen. Die rund 100 Einzeltests am Anfang von `Program.cs` (je ein Skript mit eigenen
+     Prüfungen); Diagnosen (`DiagnosticTests`, `TypeTests`, `SyntaxTests`) als Fälle mit erwarteten Meldungen; Completion (`CheckCompletion`) mit
+     `forge serve`. Was am Wirt hängt (`CheckUi`, `CheckDev`, `CheckCb`, `CheckIo`, `CheckNet`, `CheckGf`), an Fenstern oder an Toolchains, bleibt Code.
 3. ~~**Determinismus**~~ (geprüft, es war nichts zu beseitigen): zweimal übersetzt ergibt byte-gleiche `.fbc` und denselben Text von
    `fire_program.c` - für ein Skript mit einem Stück von allem und für jedes Beispiel von spark (dieselben Tests), von Hand auch über zwei Prozesse.
 4. ~~**Referenzstände**~~ (umgesetzt): `tests/reference.sh <forge> <ordner>` schreibt für jeden Fall aus `tests/cases` und jedes Beispiel von spark

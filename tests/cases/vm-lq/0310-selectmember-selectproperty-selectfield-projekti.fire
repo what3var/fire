@@ -1,0 +1,17 @@
+#import "linq"
+class P { string name; int price; construct(string n, int p) { this.name = n; this.price = p } }
+class Item { string name; int price; int Double { get { return this.price * 2 } } construct(string n, int p) { this.name = n; this.price = p } }
+class T {
+    static Run() {
+        var items = [new Item("a", 3), new Item("b", 1)]
+        print(items.SelectMember(p => p.name).Join(",") + " " + items.SelectMember(p => p.Double).Join(",") + " " + items.SelectField(p => p.price).Join(",") + " " + items.SelectProperty(p => p.Double).Join(","))
+        var l = new List(items)
+        print(l.SelectField(p => p.name).Join("") + " " + l.OrderBy(p => p.price).SelectMember(p => p.name).Join(""))
+        try { items.SelectField(p => p.Double).ToList() } catch (e) { print("1 " + e.message) }
+        try { items.SelectProperty(p => p.price).ToList() } catch (e) { print("2 " + e.message) }
+        try { items.SelectMember(p => p.nope).ToList() } catch (e) { print("3 " + e.message) }
+        try { items.SelectMember(p => p.price + 1) } catch (e) { print("4 " + e.message) }
+    }
+}
+T.Run()
+//# name: SelectMember/SelectProperty/SelectField: Projektion per Selektor (Feld oder Property / nur Property / nur Feld), Fehler als ReflectionException

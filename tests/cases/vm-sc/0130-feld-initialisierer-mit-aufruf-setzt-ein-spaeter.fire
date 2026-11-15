@@ -1,0 +1,8 @@
+class A {
+    int a = this.Init()
+    int b
+    Init() { this.b = 41; return 1 }
+}
+var o = new A()
+print(o.a + " " + (o.b == undefined))
+//# name: Feld-Initialisierer mit Aufruf setzt ein spaeteres Feld ohne Initialisierer zurueck (wie bisher)

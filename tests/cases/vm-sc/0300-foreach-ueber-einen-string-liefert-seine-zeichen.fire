@@ -1,0 +1,3 @@
+foreach (c in "ab") { print(c) }
+try { lambda<int> f = (any x, any y) => x } catch (ArgumentException e) { print("caught: " + e.message) }
+//# name: foreach ueber einen string liefert seine Zeichen; ein Lambda mit falscher Parameterzahl ist eine fangbare ArgumentException

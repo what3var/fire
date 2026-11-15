@@ -1,0 +1,10 @@
+#import "time"
+class Exception { string message; construct(string message = "") { this.message = message } }
+var a = TimeSpan.FromSeconds(90)
+var b = new TimeSpan(1, 2, 3, 4, 500)
+print(a.ToString() + " " + a.TotalMinutes + " " + a.Minutes + " " + a.Seconds)
+print(b.ToString() + " " + b.Days + " " + b.Hours + " " + b.Milliseconds)
+print((a + b).ToString() + " | " + (b - a).ToString() + " | " + (a * 2).ToString() + " | " + (a / 3).ToString())
+print((a < b) + " " + (a ## b) + " " + (a == TimeSpan.FromSeconds(90)) + " " + a.CompareTo(b) + " " + a.Negate().Abs().Equals(a))
+print(TimeSpan.Of(1.5s).TotalMilliseconds + " " + TimeSpan.Of(250ms).TotalSeconds + " " + TimeSpan.Of(2).TotalMilliseconds + " " + TimeSpan.FromMinutes(2).TotalSeconds)
+//# name: TimeSpan: Fabriken, Komponenten, Summen, Vergleiche, Text

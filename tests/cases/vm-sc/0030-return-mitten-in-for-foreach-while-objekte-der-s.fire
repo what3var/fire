@@ -1,0 +1,34 @@
+class D {
+    string n
+    construct(string n) { this.n = n }
+    destruct() { print("~" + this.n) }
+}class T {
+    static FindFor() {
+        var outer = new D("outer")
+        for (var i = 0; i < 5; i = i + 1) {
+            var o = new D("f" + i)
+            if (i == 1) { return i }
+        }
+        return -1
+    }
+    static FindForeach() {
+        var items = [1, 2, 3]
+        foreach (x in items) {
+            var o = new D("e" + x)
+            if (x == 2) { return x }
+        }
+        return -1
+    }
+    static FindWhile() {
+        var k = 0
+        while (true) {
+            var o = new D("w" + k)
+            if (k == 1) { return k }
+            k = k + 1
+        }
+    }
+}
+print(T.FindFor())
+print(T.FindForeach())
+print(T.FindWhile())
+//# name: return mitten in for/foreach/while: Objekte der Schleifenkoerper und der Schleifenvariablen werden zerstoert

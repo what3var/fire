@@ -1,0 +1,18 @@
+class Item { int n; construct(int n) { this.n = n } }
+class Shelf {
+    Item slots[] = new Item[2]
+    Item last
+    PutWrong(Item item) { this.slots[0] = item }
+    PutRight(Item item) { this.slots[1] = take item }
+    Remember() { Item local = new Item(7); this.last = local }
+    Fine() { Item tmp[] = new Item[1]; Item a = new Item(1); tmp[0] = a }
+}
+Shelf s = new Shelf()
+s.PutWrong(take new Item(1))
+s.PutRight(take new Item(2))
+s.Remember()
+s.Remember()
+s.Fine()
+print(s.slots[1].n)
+//# modes: Debug
+//# name: Debug: Warnung, wenn ein Aufruf beim Ende ein Objekt zerstoert, auf das ein Feld oder Array noch zeigt

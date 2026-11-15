@@ -1,0 +1,15 @@
+char c = 'a'
+print(c.IsLetter())
+print(c.IsDigit())
+print('7'.IsDigit())
+print(' '.IsWhiteSpace())
+print(c.IsLetterOrDigit())
+print(c.IsUpper())
+print(c.ToUpper())
+print('Q'.ToLower())
+print('Q'.IsUpper())
+print('q'.IsLower())
+print(c.ToInt())
+print(c.ToString() + "b")
+print(c.ToByte())
+//# name: char-Methoden des Prelude

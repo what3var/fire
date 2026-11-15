@@ -1,0 +1,2 @@
+class extends string { destruct() { } }
+//# name: Destruktor in Basistyp-Erweiterung

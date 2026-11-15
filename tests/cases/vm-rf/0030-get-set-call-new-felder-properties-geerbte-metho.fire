@@ -1,0 +1,32 @@
+class Shape {
+    string name
+    construct(string name) { this.name = name }
+    string Describe() { return "shape " + this.name }
+}
+class Circle : Shape {
+    float radius
+    private int secret
+    readonly int id
+    float w : mm = 5mm
+    construct(float radius) : base("circle") { this.radius = radius; this.secret = 42; this.id = 7 }
+    float Diameter { get { return this.radius * 2 } set { this.radius = value / 2 } }
+    float Area() { return this.radius * this.radius * 3 }
+    Scale(float f, int times) { this.radius = this.radius * f }
+    private Hidden() { return "hidden" }
+    int PeekSecret() { return Reflect.Get(this, "secret") }
+}
+var c = new Circle(5.0)
+print(Reflect.Get(c, "radius"))
+Reflect.Set(c, "radius", 6.0)
+print(Reflect.Get(c, "Diameter") + " " + Reflect.Has(c, "Area") + " " + Reflect.Has(c, "nope"))
+Reflect.Set(c, "Diameter", 20.0)
+print(c.radius)
+print(Reflect.Call(c, "Area", []) + " " + Reflect.Call(c, "Describe", []))
+Reflect.Call(c, "Scale", [2.0, 1])
+print(c.radius)
+var c2 = Reflect.New("Circle", [2.0])
+print(c2.radius + " " + c2.Describe())
+var m = Type.Of(c).Find("radius")
+m.Set(c, 1.5)
+print(m.Get(c))
+//# name: Get/Set/Call/New: Felder, Properties, geerbte Methoden, Konstruktion

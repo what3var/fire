@@ -1,0 +1,14 @@
+class T {
+    static Make(int offset) { return x => x + offset }
+    static Run() {
+        var f = T.Make(100)
+        var nested = a => (b => a + b)
+        var fs = new List()
+        for (var i = 0; i < 3; i = i + 1) { var q = i * 10; fs.Add(() => q + i) }
+        var parts = ""
+        foreach (fn in fs) { parts = parts + fn() + " " }
+        print(f(1) + " " + nested(1)(2) + " " + parts)
+    }
+}
+T.Run()
+//# name: Capture: Parameter der umgebenden Methode, verschachtelte Lambdas, Schleifenvariable

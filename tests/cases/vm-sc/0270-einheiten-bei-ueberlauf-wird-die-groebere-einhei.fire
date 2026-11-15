@@ -1,0 +1,3 @@
+print(1500mm + 900000000000000000m)
+print(900000000000000000m + 1500mm)
+//# name: Einheiten: bei Ueberlauf wird die groebere Einheit Ziel, das Komma faellt weg

@@ -1,0 +1,26 @@
+class Item {
+    int n
+    construct(int n) { this.n = n }
+    destruct() { print("~I" + this.n) }
+}
+class Box {
+    string name
+    int size
+    Item item
+    Box other
+    Item list[]
+    int Extra { get; set; }
+    construct(string name) { this.name = name; this.size = 1 }
+    destruct() { print("~B" + this.name) }
+}
+{
+    var owner = new Box("own")
+    owner.item = new Item(7)
+    var holder = new Box("holder")
+    holder.item = owner.item
+    var c = copy holder
+    c.item.n = 8
+    print(holder.item.n + " " + c.item.n)
+}
+print("danach")
+//# name: Owner ausserhalb der Kopie: die Kopie gehoert dem Scope
