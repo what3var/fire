@@ -4960,7 +4960,7 @@ namespace fire.Runtime
                 case OpCode.TypeArrayOfParam:
                 {
                     string paramText = _constants[ReadU16()].AsString();
-                    if (DeclaredType.TypedElementOf(TypeArgOfParam(paramText)) is int code) TypeArrayValue(Peek(), (byte)(code & 0xFF), 1, null, 1);
+                    if (DeclaredType.ArrayOfTypeArg(TypeArgOfParam(paramText), EnumOfTypeArg) is var (elem, elemText)) TypeArrayValue(Peek(), elem, 1, elemText, 1);
                     break;
                 }
                 case OpCode.ConvertWidth:
@@ -7623,8 +7623,11 @@ namespace fire.Runtime
         {
             int at = arrayOfParam.IndexOf('@');
             string? typeArg = DeclaredType.TypeArgOf(obj, arrayOfParam.Substring(at + 1), int.Parse(arrayOfParam.AsSpan(1, at - 1)));
-            return typeArg == null || DeclaredType.TypedElementOf(typeArg) is not int code || TypeArrayValue(value, (byte)(code & 0xFF), 1, null, 1);
+            return DeclaredType.ArrayOfTypeArg(typeArg, EnumOfTypeArg) is not var (elem, elemText) || TypeArrayValue(value, elem, 1, elemText, 1);
         }
+
+        /// <summary>The enum of the program a type argument names (`Bag&lt;Color&gt;`), null for a class or anything else.</summary>
+        private EnumType? EnumOfTypeArg(string typeArg) => typeArg == "string" || _classes.ContainsKey(typeArg) ? null : ProgramEnums.Find(_classes, typeArg);
 
         /// <summary>GuardLocal: the end of the prologue - a parameter declared int/float/bool holds that kind or undefined (DeclaredKind).</summary>
         private void OpGuardLocal()
@@ -7650,9 +7653,9 @@ namespace fire.Runtime
             ref var guarded = ref _currentScope.SlotRef(slot);
             var owner = _currentThis as ObjectInstance;   // (a `T` of the class: the type argument of the object of the method)
             var callTypeArgs = _currentScope.TypeArgs;    // (a `U` of the method: the type argument of the call - the prologue runs in its scope)
-            if (DeclaredType.Fits(guarded, requiredType, owner, callTypeArgs)) return;
+            if (DeclaredType.Fits(guarded, requiredType, owner, callTypeArgs, TypeIsOf)) return;
             var checkedValue = guarded;
-            if (DeclaredType.FitsOrConvert(ref checkedValue, requiredType, owner, callTypeArgs, out var unitDemand))
+            if (DeclaredType.FitsOrConvert(ref checkedValue, requiredType, owner, callTypeArgs, out var unitDemand, TypeIsOf))
             {
                 if (unitDemand == null || AdaptFieldUnit(ref checkedValue, unitDemand)) guarded = checkedValue;
                 return;
@@ -7679,9 +7682,9 @@ namespace fire.Runtime
             ref var top = ref _stack[_sp - 1];
             var owner = _currentThis as ObjectInstance;
             var callTypeArgs = CallScopeTypeArgs();
-            if (DeclaredType.Fits(top, requiredType, owner, callTypeArgs)) return;
+            if (DeclaredType.Fits(top, requiredType, owner, callTypeArgs, TypeIsOf)) return;
             var checkedValue = top;
-            if (DeclaredType.FitsOrConvert(ref checkedValue, requiredType, owner, callTypeArgs, out var unitDemand))
+            if (DeclaredType.FitsOrConvert(ref checkedValue, requiredType, owner, callTypeArgs, out var unitDemand, TypeIsOf))
             {
                 if (unitDemand == null || AdaptFieldUnit(ref checkedValue, unitDemand)) top = checkedValue;
                 return;
@@ -7701,7 +7704,7 @@ namespace fire.Runtime
         private bool GuardFieldType(ref Value value, string? requiredType, string fieldName, ObjectInstance? owner)
         {
             // (a number type argument with a unit: converted into it, a UnitMismatchException for another dimension)
-            if (DeclaredType.FitsOrConvert(ref value, requiredType, owner, null, out var unitDemand)) return unitDemand == null || AdaptFieldUnit(ref value, unitDemand);
+            if (DeclaredType.FitsOrConvert(ref value, requiredType, owner, null, out var unitDemand, TypeIsOf)) return unitDemand == null || AdaptFieldUnit(ref value, unitDemand);
             ThrowArgumentError(DeclaredType.Mismatch(value, requiredType!, $"Field '{fieldName}'", owner));
             return false;
         }
@@ -7849,6 +7852,16 @@ namespace fire.Runtime
         /// <summary>The type argument a type parameter of the running code stands for (`$k@Class`: of `this`, `$k@`: of the call of the generic method); "" when
         /// it is not known.</summary>
         /// <summary>OpCode.TypeParamIsOf: is the type `name` (a type argument's text) `target` or one that derives from it / implements it?</summary>
+        private Func<string, string, bool>? _typeIsOf;
+        /// <summary>TypeNameIsOf for DeclaredType.Fits (the type arguments of a declaration: a `List&lt;Dog&gt;` goes where a `List&lt;Animal&gt;` is declared).</summary>
+        private Func<string, string, bool> TypeIsOf => _typeIsOf ??= TypeNameIsOf;
+
+        /// <summary>An array of the class `have` (the DeclaredType text of its elements) goes where one of `want` is declared: Dog is an Animal. The array
+        /// keeps its element type and still checks what is stored (`Animal all[] = dogs; all[0] = cat` is the ArgumentException of the Dog array).</summary>
+        private bool ClassArrayIsOf(string? have, string? want) =>
+            have != null && want != null && DeclaredType.Parse(ArrayElem.ClassText(have)).SingleName is { } haveName
+            && DeclaredType.Parse(ArrayElem.ClassText(want)).SingleName is { } wantName && _classes.ContainsKey(haveName) && TypeNameIsOf(haveName, wantName);
+
         private bool TypeNameIsOf(string name, string target)
         {
             int angle = name.IndexOf('<');
@@ -7911,6 +7924,7 @@ namespace fire.Runtime
                 return true;
             }
             if (array.ElemType == elemType && array.ElemUnit == unit) return !defined || MakeArrayDefined(array);
+            if (array.ElemType == ArrayElem.Class && elemType == ArrayElem.Class && ClassArrayIsOf(array.ElemUnit, unit)) return !defined || MakeArrayDefined(array);
             if (array.ElemType != ArrayElem.None)
             {
                 ThrowArgumentError($"An array of {ArrayElem.Name(array.ElemType, array.ElemUnit)} cannot be stored where an array of {ArrayElem.Name(elemType, unit)} is declared.");   // (the same text natively)

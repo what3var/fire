@@ -899,9 +899,9 @@ namespace fire.Standard
                     this.count = this.count + 1
                 }
 
-                // an element that falls out: destroyed when the list owns its elements (Owns.Values) and this one
+                // an element that falls out: destroyed when the list owns it (it was handed over to the list - made in the call, `take`, `TakeTo`, Owns.Values)
                 undefined DropElement(any value) {
-                    if (this.owns.HasFlag(Owns.Values) && value is from this) { delete value }
+                    if (value is from this) { delete value }
                 }
 
                 T operator[](int index) {
@@ -929,7 +929,7 @@ namespace fire.Standard
                     this.items[index] = value
                 }
 
-                // removes the element at `index` (the ones behind it move up); the element itself is destroyed only if the list owns it (Owns.Values)
+                // removes the element at `index` (the ones behind it move up); the element itself is destroyed if the list owns it
                 undefined RemoveAt(int index) {
                     any old = this.items[index]
                     var i = index
@@ -993,7 +993,7 @@ namespace fire.Standard
                     return true
                 }
 
-                // empties the list (the elements are destroyed only if the list owns them, Owns.Values)
+                // empties the list (the elements the list owns are destroyed)
                 undefined Clear() {
                     var i = 0
                     while (i < this.count) {
@@ -1222,9 +1222,9 @@ namespace fire.Standard
                     this.count = this.count - 1
                 }
 
-                // a key or value that falls out: destroyed when the table owns that part (`what`) and this object
-                undefined Drop(any x, Owns what) {
-                    if (this.owns.HasFlag(what) && x is from this) { delete x }
+                // a key or value that falls out: destroyed when the table owns it (it was handed over to the table - made in the call, `take`, `TakeTo`, Owns.Keys/Values)
+                undefined Drop(any x) {
+                    if (x is from this) { delete x }
                 }
 
                 // room for more entries: the live ones move to new arrays (in their order, without the removed ones)
@@ -1292,8 +1292,8 @@ namespace fire.Standard
                     delete oldBuckets
                 }
 
-                // empties the table; what it owns (`keyPart`, `valuePart`) is destroyed
-                undefined ClearEntries(Owns keyPart, Owns valuePart) {
+                // empties the table; what it owns is destroyed
+                undefined ClearEntries() {
                     for (var i = 0; i < this.used; i = i + 1) {
                         if (this.live[i]) {
                             any k = this.keys[i]
@@ -1301,8 +1301,8 @@ namespace fire.Standard
                             this.keys[i] = undefined
                             this.vals[i] = undefined
                             this.live[i] = false
-                            this.Drop(k, keyPart)
-                            this.Drop(v, valuePart)
+                            this.Drop(k)
+                            this.Drop(v)
                         }
                     }
                     for (var b = 0; b < this.buckets.length; b = b + 1) { this.buckets[b] = 0 }
@@ -1399,7 +1399,7 @@ namespace fire.Standard
                     if (at >= 0) {
                         any old = this.vals[at]
                         this.vals[at] = value
-                        if (old != value) { this.Drop(old, Owns.Values) }
+                        if (old != value) { this.Drop(old) }
                         return
                     }
                     // (it takes what belongs to the call - `??.`: a number has no TakeTo; with Owns.Keys also an object or a lambda of someone else)
@@ -1462,8 +1462,8 @@ namespace fire.Standard
                     any k = this.keys[at]
                     any v = this.vals[at]
                     this.Unlink(at)
-                    this.Drop(k, Owns.Keys)
-                    this.Drop(v, Owns.Values)
+                    this.Drop(k)
+                    this.Drop(v)
                     return true
                 }
 
@@ -1474,7 +1474,7 @@ namespace fire.Standard
                     any k = this.keys[at]
                     any v = this.vals[at]
                     this.Unlink(at)
-                    this.Drop(k, Owns.Keys)
+                    this.Drop(k)
                     any taken = undefined   // (declared here: the call owns what `take` gives it, not the block of the `if`)
                     if (v is from this) {
                         taken = take v
@@ -1484,7 +1484,7 @@ namespace fire.Standard
                 }
 
                 /// Empties the dictionary (what it owns is destroyed).
-                undefined Clear() { this.ClearEntries(Owns.Keys, Owns.Values) }
+                undefined Clear() { this.ClearEntries() }
 
                 /// The keys in the order they came in (a new list).
                 List<K> Keys {
@@ -1532,7 +1532,7 @@ namespace fire.Standard
                     if (at < 0) { return false }
                     any k = this.keys[at]
                     this.Unlink(at)
-                    this.Drop(k, Owns.Values)
+                    this.Drop(k)
                     return true
                 }
 
@@ -1551,7 +1551,7 @@ namespace fire.Standard
                 }
 
                 /// Empties the set (what it owns is destroyed).
-                undefined Clear() { this.ClearEntries(Owns.Values, Owns.Values) }
+                undefined Clear() { this.ClearEntries() }
 
                 HashSetIter<T> GetEnumerator() {
                     return new HashSetIter<T>(this)

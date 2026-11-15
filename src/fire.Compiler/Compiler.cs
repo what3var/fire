@@ -432,11 +432,13 @@ namespace fire.Compiler
         private string? DeclaredTypeOf(TypeRef? type, RuntimeClass? owner)
         {
             string? text = MapSpec(DeclaredTypeOfCore(type, owner));
+            // `Color c` (DECISIONS D8): a value of that enum or undefined - a number goes in with a cast (`5!Color`)
+            if (text == null && type is { PointerDepth: 0, ArrayRank: 0, LambdaSignature: null, IsInferred: false } && (_refParams.EnumNames.Contains(type.BaseName) || _enumTypes.ContainsKey(type.BaseName))
+                && EnumTypeNamed(type.BaseName) is { } declaredEnum) text = DeclaredType.OfName(declaredEnum.Name);
             // `defined Dog d`, `defined string s`, `defined Color c` (SPEC 8.10b): undefined does not fit (a number: DeclaredKind)
             if (type is { NonNull: true, PointerDepth: 0, ArrayRank: 0, LambdaSignature: null } && DeclaredKind.Of(type) == 0)
             {
                 if (text == null && type.BaseName == "string") text = DeclaredType.OfName("string");
-                else if (text == null && _refParams.EnumNames.Contains(type.BaseName) && EnumTypeNamed(type.BaseName) is { } enumType) text = DeclaredType.OfName(enumType.Name);
                 if (text != null) text = DeclaredType.NonNullOf(text);
             }
             return text;
@@ -468,10 +470,17 @@ namespace fire.Compiler
         private int ClassArrayCode(TypeRef? type, int rank, RuntimeClass? owner, out string? text)
         {
             text = null;
-            if (rank <= 0 || rank >= 256 || type is not { PointerDepth: 0, ArrayRank: 0, LambdaSignature: null, IsInferred: false } || type.ArrayWidthCode(rank) != 0) return 0;
-            if (type.BaseName == "string") text = DeclaredType.OfName("string");
+            if (rank <= 0 || rank >= 256 || type is not { PointerDepth: 0, ArrayRank: 0, IsInferred: false } || type.ArrayWidthCode(rank) != 0) return 0;
+            // (`lambda<int, int> fs[]`: lambdas with that many parameters - not a selector or a tree, which are other values)
+            // (`lambda expression<T> es[]`: trees - objects of the class LambdaExpression; a selector is a reflection object of several classes: untyped)
+            if (type.LambdaSignature is { } signature)
+            {
+                if (signature.IsSelector) return 0;
+                text = signature.IsExpression ? DeclaredTypeOf(new TypeRef("LambdaExpression", null, 0), owner) : DeclaredType.OfLambda(signature.ParamTypeNames.Count);
+            }
+            else if (type.BaseName == "string") text = DeclaredType.OfName("string");
             else if (_refParams.EnumNames.Contains(type.BaseName) && EnumTypeNamed(type.BaseName) is { } enumType) text = DeclaredType.OfName(enumType.Name) + "\u0002" + enumType.Key;
-            else if (type.BaseName is not ("any" or "class" or "var" or "undefined") && DeclaredTypeOf(type with { NonNull = false }, owner) is { } declared && DeclaredType.Parse(declared).TypeParamIndex < 0) text = declared;
+            else if (type.BaseName is not ("any" or "class" or "var" or "undefined") && DeclaredTypeOf(type with { NonNull = false }, owner) is { } declared && DeclaredType.Parse(declared).TypeParamIndex < 0) text = DeclaredType.WithoutTypeArgs(declared);   // (the elements of `List<int> ls[]`: lists, their type arguments are not checked)
             if (text == null) return 0;
             return 0x10000 | (rank << 8) | ArrayElem.Class | (type.NonNull ? ArrayElem.DefinedFlag : 0);
         }
@@ -487,7 +496,14 @@ namespace fire.Compiler
                 return DeclaredType.OfTypeParam(ownParams[k], k, owner.Name, Resolve);
             if (_refParams.IsTypeParam(type.BaseName)) return null;
             string name = type.TypeArgs is { Count: > 0 } args ? GenericClassNames.ResolveNewTarget(type, args.Count, Known) : type.ResolveBaseName(Known);
-            return Known(name) ? DeclaredType.OfName(name) : null;
+            if (!Known(name)) return null;
+            // `Bag<int> b` (DECISIONS D10): the type arguments an object of the class must have, where the run time knows them
+            if (type.TypeArgs is { Count: > 0 } declaredArgs && _knownClassNames.Contains(name))
+            {
+                var texts = declaredArgs.Select((a, k) => MapTypeRef(TypeArgText(a, owner, null, k))).ToList();
+                if (texts.Any(t => t.Length > 0)) return DeclaredType.WithTypeArgs(DeclaredType.OfName(name), texts);
+            }
+            return DeclaredType.OfName(name);
         }
 
         /// <summary>A type argument as the run time keeps it (DeclaredType text): `int`, a class or an interface, `in:cm` for a unit (when the type parameter
@@ -506,7 +522,8 @@ namespace fire.Compiler
                 case "bool": case "char": case "string": return tr.BaseName;
                 case "any": case "class": return "";
             }
-            if (_refParams.EnumNames.Contains(tr.BaseName)) return "";   // (an enum: the type checker sees to it; at run time `Color c` takes what it gets, like `any`)
+            // (an enum by its full name: `T item` then takes a value of that enum, `T items[]` is an array of it - DECISIONS D4)
+            if (_refParams.EnumNames.Contains(tr.BaseName)) return EnumTypeNamed(tr.BaseName)?.Name ?? "";
             bool Known(string n) => _knownClassNames.Contains(n) || _refParams.InterfaceNames.Contains(n);
             string name = tr.TypeArgs is { Count: > 0 } args ? GenericClassNames.ResolveNewTarget(tr, args.Count, Known) : tr.ResolveBaseName(Known);
             if (Known(name)) return name;
@@ -1264,7 +1281,7 @@ namespace fire.Compiler
                     inner.CompileExprFor(initializer, arrayRanks is { Count: > 0 } ? 0 : type?.WidthCode ?? 0);
                     if (isStatic) inner.EmitClaimToScope(0xFFFF, unclaimed: MayBeUnclaimed(initializer), hoist: false);   // a static field: the program
                 }
-                inner.EmitCheckLambdaSignatureIfNeeded(type);
+                if (arrayRanks is not { Count: > 0 }) inner.EmitCheckLambdaSignatureIfNeeded(type);   // (`lambda<int> fs[]`: its elements are checked, ClassArrayCode)
             }
             // `int data[16]` as a field: the array is made with the object (like a variable `int data[16]`; `int data[]` stays undefined)
             else if (arrayRanks is { Count: > 0 } && arrayRanks[0] != null)
@@ -1361,7 +1378,7 @@ namespace fire.Compiler
 
             for (int i = 0; i < parms.Count; i++)
             {
-                var sig = parms[i].Type?.LambdaSignature;
+                var sig = parms[i].ArrayRanks.Count == 0 ? parms[i].Type?.LambdaSignature : null;   // (an array of lambdas: typed above, like `Dog pets[]`)
                 if (sig == null) continue;
                 if (sig.IsExpression)
                 {
@@ -1848,7 +1865,7 @@ namespace fire.Compiler
                     if (vd.Initializer != null)
                     {
                         CompileExprFor(vd.Initializer, vd.ArrayRanks.Count == 0 ? vd.Type?.WidthCode ?? 0 : 0);
-                        EmitCheckLambdaSignatureIfNeeded(vd.Type);
+                        if (vd.ArrayRanks.Count == 0) EmitCheckLambdaSignatureIfNeeded(vd.Type);
                     }
                     else if (autoArrayAlloc)
                         // `int arr[10]` / `int matrix[3][4]` without an initialiser ->

@@ -73,7 +73,10 @@ print(g.Label + " " + g.Limit)      // gauge 5
 - `{ get; set; }`, `{ get; }` or `{ set; }`; the type is required (`any` if every type is allowed), a unit is written as in a class (`float Delay : ms`).
 - The class implements it with a **property** of the same name - an auto-property, one with its own `get`/`set`, or one inherited from the base class.
   It needs at least the accessors the interface names; a read-only member may be implemented by a read-write property. A missing property (or a missing
-  `set`) is `E4064`, a `private`/`protected` one `E4063`, another value type or unit (`string` for `int`, `int : s` for `int : ms`) `E4066`.
+  `set`) is `E4064`, a `private`/`protected` one `E4063`, a type that does not fit `E4066`.
+- The type: value types and units must be the same (`string` for `int` or `int : s` for `int : ms` is `E4066`). For classes, interfaces, arrays, type
+  arguments and `defined` the getter may give something more special (`Dog Pet { get; }` for `Animal Pet { get; }`, `defined int` for `int`,
+  `List<Dog>` for `List<Animal>`) and a setter may take something more general - so a property with `get; set;` has exactly the interface's type.
 - A **field** of the same name does not implement it (`E4065`), and neither do methods `get_Limit()`/`set_Limit(v)` - a property is what the interface promises.
 - Through a value of the interface type the property has its declared type and unit (`g.Limit = "x"` is `TC001`), and writing a property declared without
   `set` (or reading one without `get`) is the error `TC016`, even when the class of the object would have the accessor.
@@ -158,6 +161,31 @@ print(s.Get())
 - The type checker replaces `T` by the argument: `new Box<int>(5).Get()` is an `int`, and `b.item = "x"` is reported.
 - Without arguments a generic class is its **raw form**: `new List()` takes values of every type.
 - A generic class can have the same name as a non-generic one (`Box` and `Box<T>`); the number of type arguments at `new` selects the class.
+
+### Declarations with type arguments are checked
+
+A parameter, a field, a return value or a variable declared with a generic class and type arguments takes only an object with those type
+arguments - anything else is an `ArgumentException` at run time:
+
+```fire
+class U { static int Count(List<int> l) { return l.Count } }
+any floats = new List<float>()
+U.Count(floats)         // ArgumentException: Parameter 'l' is a List<int>, not List<float>.
+```
+
+An object whose type arguments are not known (`new Bag()`) passes, and so does an object of a class derived from the generic one with these type
+arguments (`class IntBag : Bag<int>`).
+
+A type argument may be a derived class: a `List<Dog>` goes where a `List<Animal>` (or a `List<INamed>`) is declared, like a Dog array goes where
+`Animal a[]` is. The list stays a `List<Dog>` - it still checks what is put in:
+
+```fire
+List<Dog> dogs = new List<Dog>()
+List<Animal> animals = dogs          // fine: every Dog is an Animal
+animals.Add(new Cat("Tom"))          // ArgumentException: Parameter 'value' is a T (Dog), not Cat.
+```
+
+The other direction (`List<Animal>` where `List<Dog>` is declared) is refused.
 
 ### Conditions: `where`
 

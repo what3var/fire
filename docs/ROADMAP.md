@@ -13,7 +13,7 @@ Leitlinien:
 
 | Phase | Punkt | Hängt ab von | Warum an dieser Stelle |
 |---|---|---|---|
-| **als Nächstes** | [Lambdas: Captures nur mit `taking`/`handover`, Globals per `taking`, `on` läuft auf dem Ziel](ROADMAP_TASKS.md#step-8---captures-only-with-a-word-globals-by-taking-on-runs-on-its-target-next-decided-by-the-user) | Tasks 1-7 | Entscheidung des Benutzers: ein Lambda hält nur Eigenes oder läuft beim Besitzer seines Ziels - die Sprache wird rund |
+| - | ~~[Lambdas: Captures nur mit `taking`/`handover`, Globals per `taking`, `on` läuft auf dem Ziel](ROADMAP_TASKS.md#step-8---captures-only-with-a-word-globals-by-taking-on-runs-on-its-target-next-decided-by-the-user)~~ (umgesetzt) | Tasks 1-7 | Entscheidung des Benutzers: ein Lambda hält nur Eigenes oder läuft beim Besitzer seines Ziels - die Sprache wird rund |
 | 0 | ~~[Native-C-Port (Kern)](#0-native-c-port-kern)~~ (umgesetzt) | - | Debugging, binäre Libraries und alle neuen Natives bauen auf der Runtime auf; sonst doppelt |
 | 1 | [Echte Enums, Flag-Enums als Attribute](#1-echte-enums) | 0 | Compiler, Typprüfer, VM, Generator; `Owns` für die Container braucht sie |
 | 1 | [Benannte Argumente](#2-benannte-argumente) | - | `new Dictionary<K, V>(Owns.All)` liest sich besser mit Namen; allgemein nützlich |
@@ -33,7 +33,7 @@ Leitlinien:
 | 7 | [Kleine und alte Ziele](#13-kleine-und-alte-ziele) (Zeigerarten, typisierte Arrays, `#intwidth 32` umgesetzt) | 0, 9 | Mikrocontroller, DOS, Win 3.x, Win9x, NT 3.51-XP: Speicher pro Wert, Breiten, neue Plattformen |
 | 8 | [Scene3D für Spiele](#16-scene3d-für-spiele) | 13 (Ziele, Breiten), 11 (Weglassen) | Spiele bis hinunter auf DOS: Größe zuerst, dann Terrain, Modelle, Animation, Effekte, Physik |
 | 3 | ~~[Volle Qualifikation mit dem Importnamen](#18-volle-qualifikation-mit-dem-importnamen)~~ (umgesetzt) | - | zwei Bibliotheken mit derselben Klasse auf oberster Ebene (spätestens bei JSON) sind heute nicht auseinanderzuhalten |
-| 4 | [Arrays mit jedem Typ](#19-arrays-mit-jedem-typ) (Werttypen und `defined` umgesetzt) | 13 (typisierte Arrays) | ein Array soll mit allen Typen funktionieren, auch mit `defined`: Klassen, Interfaces, Records, string, Enums, Lambdas, Typparameter |
+| 4 | ~~[Arrays mit jedem Typ](#19-arrays-mit-jedem-typ)~~ (umgesetzt) | 13 (typisierte Arrays) | ein Array soll mit allen Typen funktionieren, auch mit `defined`: Klassen, Interfaces, Records, string, Enums, Lambdas, Typparameter |
 
 **Arbeitsreihenfolge (Entscheidung des Benutzers, nach Tasks Schritt 8):**
 
@@ -78,7 +78,7 @@ Stand (Branch `native-c`): **umgesetzt**. Der Generator erzeugt C11 (`fire_progr
 Geprüft: die Testsuite unter Linux (gcc 13, AddressSanitizer/UBSan) - native Fälle wie vor dem Umbau, gcc und clang ohne Warnungen (`-Wall -Wextra`, clang
 auch `-pedantic`), FreeRTOS-Fälle auf dem Simulator. Benchmarks vorher/nachher ([Natives Backend (AOT): fire -> C](spec/NATIVE_BACKEND.md), "Benchmarks vor und nach dem C-Port"): der Programmstart
 ist als C gut 0,5 ms kürzer, die Rechenzeit gleich oder bis 20 % besser ; `method` war durch den Zugriffsschutz knapp 4x langsamer (`this.count`
-über `gf_count`/`sf_count`) - behoben: ein privates Feld wird direkt gelesen und geschrieben, wenn der Zugriff schon beim Übersetzen erlaubt ist; ebenso private/geschützte Methoden und Properties. Die Zugriffsregeln entscheidet der Typprüfer, wo die Klasse des Objekts bekannt ist (`TC012`, auch lax ein Fehler); zur Laufzeit geprüft werden nur noch `any` und die Reflection. Aufrufe über ein Interface brauchen keine Prüfung: die Implementierung eines Interface-Mitglieds muss öffentlich sein (`E4063`), nativ gehen sie an einen eigenen Verteiler ohne Aufruferklasse. Interfaces haben Properties (`int ReadTimeout { get; set; }`, implementiert von einer öffentlichen Property, `E4064`/`E4065`/`E4066`, `TC016`) und erweitern andere Interfaces (`interface IConnection : IO.IStream`, Zyklen `E4068`) - VM und nativ gleich, auch über Module und Plugins (SPEC 8.5); `Net.IConnection` nutzt beides. Ein Mitglied, das ein Interface-Typ (samt seinen Basis-Interfaces) nicht deklariert, ist `TC008` wie bei einer bekannten Klasse (lax Warnung, strikt Fehler; die Besitz-Methoden `TakeTo`/`TakeLocal`/... gehen immer, der Cast `x!Klasse` erreicht den Rest); `Type.Interfaces` der Reflection listet alle Interfaces, die die Klasse erreicht (auch über Basisklassen und Interface-Vererbung, volle Namen), `Type.DeclaredInterfaces` nur die genannten - VM und nativ gleich, auch Module und Plugins. Offen dabei: der Typ einer implementierenden Property wird nur bei Werttypen und Einheiten mit dem des Interfaces verglichen. Emscripten (6.0): ein Programm unter node und ein Fenster im Browser (Testgruppe `packer`). Offen: MSVC und
+über `gf_count`/`sf_count`) - behoben: ein privates Feld wird direkt gelesen und geschrieben, wenn der Zugriff schon beim Übersetzen erlaubt ist; ebenso private/geschützte Methoden und Properties. Die Zugriffsregeln entscheidet der Typprüfer, wo die Klasse des Objekts bekannt ist (`TC012`, auch lax ein Fehler); zur Laufzeit geprüft werden nur noch `any` und die Reflection. Aufrufe über ein Interface brauchen keine Prüfung: die Implementierung eines Interface-Mitglieds muss öffentlich sein (`E4063`), nativ gehen sie an einen eigenen Verteiler ohne Aufruferklasse. Interfaces haben Properties (`int ReadTimeout { get; set; }`, implementiert von einer öffentlichen Property, `E4064`/`E4065`/`E4066`, `TC016`) und erweitern andere Interfaces (`interface IConnection : IO.IStream`, Zyklen `E4068`) - VM und nativ gleich, auch über Module und Plugins (SPEC 8.5); `Net.IConnection` nutzt beides. Ein Mitglied, das ein Interface-Typ (samt seinen Basis-Interfaces) nicht deklariert, ist `TC008` wie bei einer bekannten Klasse (lax Warnung, strikt Fehler; die Besitz-Methoden `TakeTo`/`TakeLocal`/... gehen immer, der Cast `x!Klasse` erreicht den Rest); `Type.Interfaces` der Reflection listet alle Interfaces, die die Klasse erreicht (auch über Basisklassen und Interface-Vererbung, volle Namen), `Type.DeclaredInterfaces` nur die genannten - VM und nativ gleich, auch Module und Plugins. Der Typ einer implementierenden Property wird voll mit dem des Interfaces verglichen (`E4066`: Klassen, Interfaces, Enums, Arrays, Typargumente, Lambdas, `defined` - der Getter darf Spezielleres geben, der Setter Allgemeineres nehmen; SPEC 8.5). Emscripten (6.0): ein Programm unter node und ein Fenster im Browser (Testgruppe `packer`). Offen: MSVC und
 macOS sind hier nicht installiert. ESP32: mit ESP-IDF 5.5 gebaut (ohne Warnung) und im Emulator von Espressif (QEMU) ausgeführt - Ausgabe wie in der VM;
 auf echter Hardware noch nicht.
 
@@ -136,6 +136,9 @@ kein Parameter hat, oder ein doppelt gesetzter ist ein Fehler beim Übersetzen. 
   * `Owns.Keys`, `Owns.Values`, `Owns.All`: der Container übernimmt jeden Schlüssel bzw. Wert, der hineinkommt, und zerstört ihn, wenn er herausfällt (`Remove`,
     Überschreiben, `Clear`) - außer er wird vorher herausgenommen (`var n = take dict.Take(key)`).
   * Bei `List` und `HashSet` gelten `Owns.Values`/`Owns.All` für die Elemente.
+  * **Geändert** (Wunsch des Benutzers, ein Nachbau wuchs von 142 auf 846 MB): was dem Container gehört (`x is from this` - im Aufruf erzeugt, mit `take`
+    oder `x.TakeTo(dict)` übergeben), wird bei `Remove`, `RemoveAt`, Überschreiben und `Clear` **immer** zerstört, auch mit `Owns.Explicit`; die Flags
+    entscheiden nur noch, was der Container übernimmt. Fremde Objekte fallen nur heraus; `Take`/`TakeAt` geben ein eigenes dem Aufrufer.
 
 Stand: umgesetzt (VM und nativ), dokumentiert in [Arrays und Listen](language/07-arrays-and-lists.md#dictionaries-and-sets-dictionaryk-v-hashsett). Abweichungen
 vom Entwurf: Schlüssel mit eigener Gleichheit implementieren das Interface `IEquatable` (`Equals`, `GetHashCode`); die Anzahl ist wie bei `List` die
@@ -437,7 +440,7 @@ abhängt, **einbinden** könnte (scene3d nimmt den von graphics) - das gehört z
 * **Editor**: das Werkzeugfenster *Properties* zeigt die Eigenschaften der im Projektmappen-Explorer gewählten Datei (`FilePropertiesHost` mit `IFilePropertiesProvider`); eine C/C++-Datei
   eines Projekts hat *Part of the native build*, *Build order*, *Platforms*, *Position* und *Listed as*, geändert wird die `.fireproj` (`ProjectNativeFiles`).
 * Tests: `FIRE_TESTS_ONLY=projects` (Lesen/Schreiben, Sortierung, Meldung, Rundreise, eine C-Bibliothek mit voneinander abhängigen Headern in der VM und nativ, Packen, die Dateioptionen).
-* Offen: Header eines Pakets, von dem man abhängt, einbinden (scene3d nimmt den Vulkan-Ausschnitt von graphics) - die Quellen der Abhängigkeiten zuerst, jede einmal.
+* **Umgesetzt:** Header eines Pakets, von dem man abhängt, einbinden: `"native": { "uses": [ "io" ] }` im Manifest - die Quellen der benutzten Pakete kommen zuerst, jede einmal ([Natives der Pakete](packages/natives.md)).
 
 ## 13. Kleine und alte Ziele
 
@@ -514,8 +517,12 @@ Daten-Stack bei XC8), AVR nur mit einem eigenen kleinen Profil.
      Ein Wortpuffer der VM mit 16/32-Bit-Wörtern (ein Bau der VM für ein fremdes Ziel) geht an eine Paket-Bibliothek als Kopie in 64-Bit-Wörtern und kommt
      auf seine Breite gekürzt zurück.
      Überladung nach `word` (`f(int)`/`f(word)`/`f(float)`): ein Wort passt genau, ein int besser in `word` als in `float`, ein float nie (Typprüfer, VM, nativ).
-     **Offen:** echte `uint8_t`/`uintN_t`-C-Variablen für `byte`/`word`-Locals und -Parameter (die Locals bleiben 16-Byte-Werte); ein Puffer als Parameter oder aus einem
-     Feld ist dem Generator nicht bekannt (allgemeiner Zugriff);
+     **Umgesetzt** (nachgeprüft am erzeugten C): `byte`/`word`-Locals sind C-Variablen (`FireWord` für ein Wort, `FireInt` für ein Byte - ein Register, kein
+     16-Byte-Wert; ein eigener `uint8_t`-Typ brächte nichts), `defined word`-Parameter und -Rückgaben gehen als `FireWord` durch die C-Schnittstelle (ohne
+     `defined` kann ein Wort undefined sein und bleibt ein Value), und ein Puffer als Parameter (`byte buf[]`) oder aus einem Feld ist dem Generator bekannt:
+     der Zugriff steht am Platz (`bufOf(s)->data[i]`). Prüfsummen-Schleife über einen Parameter und über ein Feld, 2 x 200 x 10 000: etwa 20 Instruktionen
+     je Durchlauf (callgrind).
+     Offen:
      16 Bit über ein Ziel mit
      `wordWidth` 16 getestet (VM und nativ auf dem Rechner, kein echtes 16-Bit-Ziel); ein Wort an einen `int`-Parameter (auch der Methoden eines Preludes) will `w!int` (TC001, so gewollt).
      (Umgesetzt: ein Wort an `extern`-Funktionen und `Library.Get` geht als seine Bits, VM und nativ.)
@@ -804,7 +811,7 @@ Tests ohne Fenster über den seriellen Port bzw. die Konsole: DOSBox-X / dosemu2
   Faktor der Einheitentabelle als `Real`); AVR: `nearbyint`, `localtime_r` ohne Rückgabe.
 * **Ziele:** ESP32-C3/C6 als Varianten von `esp32`; ein generisches Ziel Cortex-M/RISC-V mit FreeRTOS (Vorgaben für STM32F4/H7, RP2040, SAMD51, PIC32);
   AVR und PIC24 später mit einem eigenen kleinen Profil (Konstanten im Flash).
-* **Strikte Arrays für Strings und Klassen** (`string a[]`, `Dog a[]`): die Art beim Schreiben prüfen (ohne zu packen).
+* ~~**Strikte Arrays für Strings und Klassen**~~ (`string a[]`, `Dog a[]`): umgesetzt mit [Arrays mit jedem Typ](#19-arrays-mit-jedem-typ).
 
 ## 14. UI-Markup: fehlende Eigenschaften
 
@@ -1084,8 +1091,7 @@ scene3d-Preludes daran höchstens 3,5 KB).
   still: falsche Werte, Hänger, "Invalid Opcode" - je nach Code. Jetzt `option stack=32768` für den Linker (TargetProfile.Pc). Damit laufen in DOSBox-X:
   zwei Objekte aus Vorlagen (vorher Hänger), Körper und Schritte der Physik, die Effekte (Nebel ins Palettenbild), 60 Bilder mit Physik im schlanken
   Renderer.
-* dos16-Programme stürzen seit 8ab2aa2 in DOSBox-X mit "Invalid Opcode" (INT 6) ab, je nach Code; mit 02e959e laufen sie. Damit ist scene3d (auch der
-  schlanke Renderer und die Terrains) unter DOS bisher nicht ausgeführt, nur gebaut.
+* ~~dos16-Programme stürzen in DOSBox-X mit "Invalid Opcode" ab~~ - behoben (02e959e und der Stapel oben); scene3d läuft unter DOS.
 * Der Generator erzeugt für `sync`/`try` ein `switch` über `int64_t` (`EndFinally`), das Watcom auf 16 Bit ablehnt (E1078).
 
 Reihenfolge: 1 -> 2 -> 3 (Format, Import, Animation) -> 3.1 Blöcke -> 4 -> 5 -> 3.1 CAD (alle umgesetzt); A (kompakte Meshes) vor oder mit 3, B/C/D nach Bedarf dazwischen.
@@ -1153,8 +1159,8 @@ beginnen bei 0, undefined zu speichern ist eine ArgumentException; ArrayElem.Def
 
 **Umgesetzt** (SPEC 8.4.2): **Klassen, Interfaces, Records, `string` und Enums** (`Dog pets[]`, `IShape shapes[]`, `Pt ps[]`, `string names[]`,
 `Color cs[]`) als Variable, Feld, Parameter und Global: ein Element nimmt nur Werte dieses Typs (Unterklassen, implementierende Klassen) oder
-`undefined`, sonst eine ArgumentException mit derselben Meldung in VM und nativ; ein Array einer anderen Klasse geht nicht in die Deklaration
-(auch nicht in die einer Basisklasse - das Array behält seinen Elementtyp). Die Elemente bleiben Values (ArrayElem.Class mit dem Typnamen als Text,
+`undefined`, sonst eine ArgumentException mit derselben Meldung in VM und nativ; ein Array einer anderen Klasse geht nicht in die Deklaration;
+eines einer abgeleiteten Klasse schon (Kovarianz, DECISIONS D10) - es behält seinen Elementtyp und prüft weiter, was gespeichert wird. Die Elemente bleiben Values (ArrayElem.Class mit dem Typnamen als Text,
 ein Enum mit seinem Schlüssel; nativ E_CLASS/TU_CLASS und eine Tabelle g_arrClasses mit Prüfung, Anzeigename und Nullwert je Typ).
 **`defined`** dafür (Entscheidung des Benutzers): `defined string` beginnt bei `""`, ein `defined` Enum beim ersten Wert; `defined Dog pets[]` hat
 keinen Nullwert und nimmt nur Arrays, in denen jedes Element gegeben ist (`new Dog[2]` dort ist eine ArgumentException).
@@ -1163,18 +1169,27 @@ keinen Nullwert und nimmt nur Arrays, in denen jedes Element gegeben ist (`new D
 Wert), `defined Dog pet`, `defined IShape s`: an Parameter, Feld, Property, Rückgabe, Variable, über Reflection und in JSON nie undefined (das Merkmal
 steht vorn im DeclaredType-Text, DeclaredType.NonNullOf; nativ prüft ClassGuard es mit, JSON mit JsonFieldInfo.defined 0x41-0x43). Ein Objekt hat keinen
 Nullwert (Entscheidung des Benutzers): eine Variable braucht ihren Initialisierer, ein Feld ohne einen setzt jeder Konstruktor als eine seiner Anweisungen,
-sonst ein Übersetzungsfehler. Offen: nativ liest der Generator ein solches Feld noch als „vielleicht undefined“ (die Prüfung danach bleibt).
+sonst ein Übersetzungsfehler. Nativ liest der Generator ein solches Feld weiter als „vielleicht undefined“ - mit Absicht: bevor der Konstruktor es
+setzt (Feld-Initialisierer, ein Basiskonstruktor, der eine überschriebene Methode ruft), ist es noch undefined, und die gesparte Prüfung wäre ein
+Vergleich neben der ohnehin nötigen Prüfung „lebt das Objekt“.
 
-Offen:
+**Umgesetzt:** **Lambdas mit Signatur** (`lambda<int, int> fs[]`, auch `defined`): die Elemente sind Lambdas mit dieser Parameterzahl oder `undefined`
+(was auch eine einzelne `lambda<...>`-Deklaration prüft; die Typen der Signatur sind nur Hinweise - DeclaredType.OfLambda, Bedingung `lambda/n`).
+Ein Array von Bäumen (`lambda expression<T> es[]`) ist ein Array von `LambdaExpression`. Selektoren (`lambda member<T> xs[]`) bleiben ohne
+Elementtyp: ein Selektor ist je nach Art ein anderes Reflection-Objekt.
 
-* **Lambdas mit Signatur** (`lambda<int, int> fs[]`): noch ohne Elementtyp.
-* Der Typprüfer kennt den Elementtyp beim Lesen und Schreiben (TC001); nativ ruft der Generator Methoden der Elemente noch über den Verteiler statt
-  direkt.
+Dazu im Einzelnen:
+
+* Der Typprüfer kennt den Elementtyp beim Lesen und Schreiben (TC001). **Umgesetzt:** nativ kennt der Generator ihn auch (CppGenerator.ClassArrType:
+  KindArr mit ArrayElem.Class und dem Objekttyp der Elemente) - ein gelesenes Element von `Dog pets[]` (Variable, Parameter, Feld) ist ein Dog oder
+  undefined: Felder liest er direkt am Platz, Methoden ruft er wie bei einem Feld `Dog d` (eingebettet oder direkt, eine überschriebene über den Verteiler).
 * **Typparameter** (`T items[]` in generischem Code): als Feld **umgesetzt** für Zahlen-Typargumente (FieldInfo.ArrayOfParam: jede Zuweisung typisiert
-  nach dem Typargument des Objekts, wie `new T[n]`; `List<T>` deklariert so `T items[]`). Offen: ein Klassen-/string-Typargument prüft die Elemente
-  noch nicht; `Dictionary<K, V>`/`HashSet<T>` haben ihre Arrays noch als `any`.
-* JSON liest und schreibt Klassen-Arrays noch wie `any`-Arrays (ohne Prüfung der Elemente). Mehrdimensional (`Dog grid[][]`) typisiert wie bei den
-  Zahl-Arrays die inneren Arrays.
+  nach dem Typargument des Objekts, wie `new T[n]`; `List<T>` deklariert so `T items[]`). **Umgesetzt:** auch ein Klassen-, Interface- oder
+  string-Typargument typisiert das Array (`List<Dog>`: ein Array von Dog; DeclaredType.ArrayOfTypeArg, nativ TArg.arrClass); `Dictionary<K, V>`/`HashSet<T>`
+  deklarieren `K keys[]`/`V vals[]` ebenso. Ein Enum-Typargument ebenso (es trägt zur Laufzeit den Namen des Enums, DECISIONS D4): `T item` nimmt nur
+  Werte des Enums, `T items[]` ist ein Array davon.
+* **Umgesetzt:** JSON typisiert, was es für ein Feld `Dog pets[]`/`string names[]`/`Color cs[]` liest, wie jede andere Zuweisung (JsonFieldInfo.arrClass;
+  `defined Dog must[]` mit einem `null`: die ArgumentException). Mehrdimensional (`Dog grid[][]`) typisiert wie bei den Zahl-Arrays die inneren Arrays.
 
 ## 20. `defined` für Felder herleiten: Basisklassen
 
@@ -1207,11 +1222,19 @@ Gemessen (nativ, Release, 1 Mio., die Maschine war belastet - Instruktionen mit 
 
 Offen:
 
-* `l[i]` noch näher an 3 ns: der Test der Typargumente ist eingebettet (`static inline`); es bleibt der Aufruf des Rumpfs mit einem `Value` als Ergebnis.
+* `l[i]` noch näher an 3 ns: der Test der Typargumente ist eingebettet (`static inline`). **Umgesetzt:** (1) ein Empfänger, der undefined sein kann -
+  ein Parameter `List<int> l` -, nimmt denselben Weg wie ein sicher vorhandener (vorher ging `l[i]` und `l[i] = v` dort über `aget_g`/`aset_g`: der
+  allgemeine Zugriff nur noch, wenn er wirklich kein Objekt ist); (2) der C-Rumpf einer kleinen Spezialisierung (`operator[]<int>`, bis 40 Byte
+  Bytecode) wird an der Aufrufstelle eingebettet (FIRE_ALWAYS_INLINE). Gemessen mit callgrind, `s = s + l[i]` in einer Methode mit Parameter
+  `List<int> l`, je Durchlauf: 225 → 77 Instruktionen. Es bleibt: das Ergebnis ist ein `Value` (int oder undefined - ein Element der Liste kann
+  undefined sein), die Prüfungen „lebt die Liste“ und „lebt das Array“ je Zugriff.
 * `Grow` kopiert Element für Element (etwa 60 Instruktionen je Element): ein Kopieren der gepackten Daten am Stück. **Umgesetzt:** `__array_copy(src, dst, n)`
   (nativ fire_arrayCopy: ein Block bei gleich gepackten Arrays, sonst wie `dst[i] = src[i]`; VM ArrayCopyMethods) in `Grow<int>`/`Grow<float>` und in
   `__HashTable.Resize`, wenn nichts entfernt wurde - `List<int>.Add` 19 → 15 ns.
-* Methoden mit Ergebnis (`l.Get(i)`-artig) an der Aufrufstelle wie `l[i]` typisieren (der Hinweis steht schon in der Tabelle).
+* **Umgesetzt:** Methoden mit Ergebnis (`b.Get(i)` mit `defined int Get<int>(defined int i)`) sind an der Aufrufstelle wie `l[i]` typisiert, wenn der
+  Typprüfer die Typargumente des Empfängers kennt (Chunk.ReceiverTypeArgs): das Ergebnis ist das der Spezialisierung - eine C-Zahl, wenn ihr Rumpf eine
+  gibt -, der Rückfall auf die generische Methode wird darauf geprüft. Dazu erkennt der Generator den Rückgabetyp einer `defined`-Spezialisierung
+  (zwei Guards vor dem Return, DeclaredReturn) und `float` ohne Einheit.
 * `Dictionary<K, V>`/`HashSet<T>`: **umgesetzt** `K keys[]`/`V vals[]` (nach den Typargumenten typisiert), die Hilfsarrays `defined int`/`defined bool`,
   `HashOf<int, any>`/`Find<int, any>`/`Insert<int, any>` im `__HashTable` (der Platzhalter `any` in Spezialisierungen ist dafür neu), `arraySet`
   schreibt eine Zahl ohne Einheit direkt in ein gepacktes int-/float-Array, `adaptSlot`/`adaptUnit` lassen eine Zahl in ihrer Einheit ohne Aufruf durch.
@@ -1220,4 +1243,21 @@ Offen:
   `operator[]<int, int>`/`<int, float>` (lesen und schreiben) und `Insert<int, int>`/`<int, float>`; die Spezialisierungen stehen nach Genauigkeit sortiert
   (weniger `any` zuerst); in einer Spezialisierung ist die für `self` gewisse ohne Test der C-Rumpf mit C-Ergebnis (KnownSelfTypeArgs); der Hash eines
   int-Schlüssels ist nativ eine C-Zahl (IntKeyHash). `Dictionary<int, int>` mit 200 000 Einträgen: setzen 355 → 150 ns, lesen 95-140 → 56 ns.
-  Offen: `Find` prüft je Kettenglied `self` und die Arrays (Lebendigkeit über Schleifen hinweg in der Flussanalyse).
+  **Umgesetzt:** (1) der Präfix CopyArgs vor einem Aufruf ließ die Typen der Argumente fallen - `this.Find(key, this.HashOf(key))` ging so mit Values
+  über den getesteten Weg; die Typen bleiben, und ein „nicht übernommenes“ Argument, das sicher eine Zahl ist, hindert den C-Rumpf nicht mehr;
+  (2) ein Feld `V vals[]` der Basisklasse ist in einer Spezialisierung der abgeleiteten typisiert (`this.vals[at]` in `GetIndex<int, int>` des
+  Dictionary: KnownSelfTypeArgs über die Basisklassen); (3) `self` bleibt über Sprünge, Rechnen und Vergleiche mit Zahlen und über Zugriffe auf
+  typisierte Arrays hinweg als lebend bekannt (SelfNeutralHere). Gemessen mit callgrind (`Dictionary<int, int>` über einen Parameter, 50 000 setzen,
+  250 000 lesen): 210 → 124 Mio. Instruktionen. Es bleibt: `Find` prüft je Kettenglied jedes seiner Arrays (lebt es, ist es gepackt, der Index) -
+  etwa 125 Instruktionen je Aufruf; `Resize` nach einem Entfernen verdichtet Eintrag für Eintrag (das ist seine Aufgabe, kein Blockkopieren möglich).
+  **Umgesetzt** (danach): (1) `self` bleibt über Bedingungen (`JumpIfFalse` nach `&&`: `truthy` führt keinen Code aus), über ein `ExitScope` ohne
+  Listen und über `CheckUnit` einer Zahl hinweg als lebend bekannt - `Find` prüft `self` nicht mehr je Kettenglied; (2) die Prüfung „läuft eine
+  Ausnahme ab“ nach einem Elementzugriff steht nur noch im langsamen Zweig (der schnelle kann nicht werfen): 127,6 → 121,2 Mio. Instruktionen.
+  (3) **Arrays in Variablen** (Flow.Arrays): ein typisiertes Array, das in eine lokale Variable gespeichert wird, wird einmal geprüft (lebt es, ist
+  es typisiert und gepackt, Länge und Daten in C-Hilfsvariablen); solange nur Befehle folgen, die keinen Code ausführen und nichts entpacken
+  (Rechnen und Vergleichen mit Zahlen, Sprünge, Feldzugriffe über den Index, Zahlen in typisierte Arrays schreiben, `i++` einer C-Zahl), ist ein
+  Element ein Vergleich mit der Länge und ein Laden; nach einem `leave` der Temporären oder einem `TypeArray` werden die bekannten Arrays neu
+  geprüft. Eine Schleife `s = s + a[i]` über ein lokales `defined int a[]` (100 x 10 000): 18,5 → 7,5 Mio. Instruktionen. Ausprobiert und
+  verworfen: `Find` mit den Arrays in Variablen - die drei Variablen bringen Besitzlisten und `leave` mit, bei Ketten der Länge 1 teurer
+  (121 → 195 Mio.). Offen: dasselbe für Arrays aus Feldern von `self` und für Parameter (ihr Typ ist dem Generator oft unbekannt: ein Vergleich
+  mit einem unbekannten Wert könnte einen Operator aufrufen).

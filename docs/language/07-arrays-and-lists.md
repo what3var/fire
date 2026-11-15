@@ -259,8 +259,10 @@ own of what comes in:
 | `Owns.Keys` | every key of a dictionary |
 | `Owns.All` | keys and values |
 
-What the container owns because of `Keys`, `Values` or `All` is **destroyed when it falls out**: `Remove`, overwriting (`dict[k] = other`,
-`list[i] = other`), `RemoveAt`, `Clear`. `Take` / `TakeAt` take a value out instead and give it to the caller, who owns it then:
+What the container owns is **destroyed when it falls out**: `Remove`, overwriting (`dict[k] = other`, `list[i] = other`), `RemoveAt`, `Clear`.
+That holds for everything that was handed over to it - with `Owns.Explicit` too: an object made in the call, one given with `take`, one moved in
+with `node.TakeTo(dict)`. An object that belongs to someone else (a plain reference in an `Owns.Explicit` container) only leaves the container.
+`Take` / `TakeAt` take a value out instead and give it to the caller, who owns it then:
 
 ```fire
 class Node {
@@ -277,7 +279,8 @@ nodes.Clear()                       // ~c
 print(kept.n)                       // b
 ```
 
-With `Owns.Explicit` nothing is destroyed when it falls out: what the container owns stays alive until the container itself ends.
+With `Owns.Explicit` the same holds for what was handed over (`dict["a"] = new Node("a")`, `node.TakeTo(dict)`); a value that is only referenced
+(`dict["k"] = keep`) stays with its owner. To keep an object that the container owns, take it out with `Take` / `TakeAt` instead of `Remove`.
 
 ## Queries: `#import "linq"`
 
