@@ -12859,7 +12859,9 @@ bool timeObjTicks(Value v, int64_t* ticks) {
 }
 
 bool userToString(Value object, OwnList* list, Value* result) {
-    const FireClassDesc* d = classDescOf(asObj(object)->cls);
+    const FireClassDesc* d;
+    if (FIRE_UNLIKELY(!leafAlive(object))) return false;   /* (a destroyed object: its memory may be gone - the text is "<object>") */
+    d = classDescOf(asObj(object)->cls);
     if (!d || !d->toString) return false;
 #ifdef FIRE_DEBUG
     FIRE_DBG_NESTED(*result = d->toString(object));

@@ -25,6 +25,12 @@ Vorschlag des Benutzers: `try delete x` versucht, den Inhalt des Bezeichners zu 
 sonst `true`. Für die Container wurde es nicht gebraucht (`x is from this` genügt, D3). Offen ist, ob es trotzdem kommt - und ob es nur löscht,
 was dem Aufrufer gehört, oder jedes Objekt wie `delete`.
 
+### D9. Was gibt `print` für ein zerstörtes Objekt aus?
+
+Die VM wirft eine DestroyedException, wenn die Klasse ein `ToString()` hat, und schreibt sonst `<object P>`. Nativ ist der Speicher des Objekts
+schon freigegeben - seine Klasse ist nicht mehr bekannt -, dort steht `<object>` (vorher las `print` dort freigegebenen Speicher; behoben).
+Vorschlag: beide werfen immer die DestroyedException, wie jede andere Verwendung eines zerstörten Objekts.
+
 ## Entschieden
 
 ### D8. Eine Deklaration `Color c` prüft zur Laufzeit

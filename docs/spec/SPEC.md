@@ -1970,8 +1970,8 @@ enum as the type argument a `T item` takes only a value of that enum or `undefin
 **Arrays of lambdas.** `lambda<int, int> fs[]` (and `int lambda<int> fs[]`) types the array, too: an element is a lambda with that many parameters or
 `undefined` - what a single `lambda<...>` declaration checks (the types of a signature are hints for the type checker). Anything else is an
 `ArgumentException` (`An element of an array of lambda with 2 parameter(s) must be a lambda with 2 parameter(s) (or undefined), not a lambda with 1
-parameter(s).`). `defined lambda<int> fs[]` only takes an array whose elements are all given. Selectors and trees (`lambda member<T>`,
-`lambda expression<T>`) are not typed this way.
+parameter(s).`). `defined lambda<int> fs[]` only takes an array whose elements are all given. An array of trees
+(`lambda expression<T> es[]`) is an array of `LambdaExpression`; an array of selectors (`lambda member<T> xs[]`) stays untyped.
 
 **Defined arrays.** `defined` in front of the element type (`defined int a[]`, `defined float[32] v[]`, `defined bool f[8]`) makes the elements
 never `undefined`: the array keeps that as part of its type (ArrayElem.DefinedFlag in TypeArray and FieldInfo.RequiredArray, natively TU_DEFINED).

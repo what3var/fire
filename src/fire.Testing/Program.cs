@@ -29503,6 +29503,20 @@ else
             var v = Color.Red
             try { v = five; print("var unchecked") } catch (ArgumentException e) { print("E12 " + e.message) }
             """),
+        ("Arrays von Baeumen (ROADMAP 19): lambda expression<T> es[] ist ein Array von LambdaExpression - ein Lambda oder eine Zahl als Element ist eine ArgumentException", """
+            class P { int a; construct(int a) { this.a = a } }
+            class Q {
+                lambda expression<P, bool> kept[]
+                construct() { this.kept = new LambdaExpression[2] }
+                undefined Keep(lambda expression<P, bool> e) { this.kept[0] = try take e }
+                undefined Raw(any x) { this.kept[1] = x }
+            }
+            var q = new Q()
+            q.Keep(func (P p) => p.a > 1)
+            print(q.kept[0])
+            try { q.Raw(5) } catch (ArgumentException e) { print("E1 " + e.message) }
+            try { q.Raw(func (P p) => p.a > 1) } catch (ArgumentException e) { print("E2 " + e.message) }
+            """),
         ("defined fuer strings, Enums und Objekte (SPEC 8.10b): ein string beginnt bei \"\", ein Enum beim ersten Wert, ein Objekt braucht seinen Wert (Feld: jeder Konstruktor setzt es); undefined ist eine ArgumentException an Feld, Parameter, Rueckgabe, Variable, Reflection und in JSON (fehlend oder null)", """
             #import "json"
             #import "reflection"

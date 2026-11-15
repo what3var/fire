@@ -13,7 +13,7 @@ Leitlinien:
 
 | Phase | Punkt | Hängt ab von | Warum an dieser Stelle |
 |---|---|---|---|
-| **als Nächstes** | [Lambdas: Captures nur mit `taking`/`handover`, Globals per `taking`, `on` läuft auf dem Ziel](ROADMAP_TASKS.md#step-8---captures-only-with-a-word-globals-by-taking-on-runs-on-its-target-next-decided-by-the-user) | Tasks 1-7 | Entscheidung des Benutzers: ein Lambda hält nur Eigenes oder läuft beim Besitzer seines Ziels - die Sprache wird rund |
+| - | ~~[Lambdas: Captures nur mit `taking`/`handover`, Globals per `taking`, `on` läuft auf dem Ziel](ROADMAP_TASKS.md#step-8---captures-only-with-a-word-globals-by-taking-on-runs-on-its-target-next-decided-by-the-user)~~ (umgesetzt) | Tasks 1-7 | Entscheidung des Benutzers: ein Lambda hält nur Eigenes oder läuft beim Besitzer seines Ziels - die Sprache wird rund |
 | 0 | ~~[Native-C-Port (Kern)](#0-native-c-port-kern)~~ (umgesetzt) | - | Debugging, binäre Libraries und alle neuen Natives bauen auf der Runtime auf; sonst doppelt |
 | 1 | [Echte Enums, Flag-Enums als Attribute](#1-echte-enums) | 0 | Compiler, Typprüfer, VM, Generator; `Owns` für die Container braucht sie |
 | 1 | [Benannte Argumente](#2-benannte-argumente) | - | `new Dictionary<K, V>(Owns.All)` liest sich besser mit Namen; allgemein nützlich |
@@ -33,7 +33,7 @@ Leitlinien:
 | 7 | [Kleine und alte Ziele](#13-kleine-und-alte-ziele) (Zeigerarten, typisierte Arrays, `#intwidth 32` umgesetzt) | 0, 9 | Mikrocontroller, DOS, Win 3.x, Win9x, NT 3.51-XP: Speicher pro Wert, Breiten, neue Plattformen |
 | 8 | [Scene3D für Spiele](#16-scene3d-für-spiele) | 13 (Ziele, Breiten), 11 (Weglassen) | Spiele bis hinunter auf DOS: Größe zuerst, dann Terrain, Modelle, Animation, Effekte, Physik |
 | 3 | ~~[Volle Qualifikation mit dem Importnamen](#18-volle-qualifikation-mit-dem-importnamen)~~ (umgesetzt) | - | zwei Bibliotheken mit derselben Klasse auf oberster Ebene (spätestens bei JSON) sind heute nicht auseinanderzuhalten |
-| 4 | [Arrays mit jedem Typ](#19-arrays-mit-jedem-typ) (Werttypen und `defined` umgesetzt) | 13 (typisierte Arrays) | ein Array soll mit allen Typen funktionieren, auch mit `defined`: Klassen, Interfaces, Records, string, Enums, Lambdas, Typparameter |
+| 4 | ~~[Arrays mit jedem Typ](#19-arrays-mit-jedem-typ)~~ (umgesetzt) | 13 (typisierte Arrays) | ein Array soll mit allen Typen funktionieren, auch mit `defined`: Klassen, Interfaces, Records, string, Enums, Lambdas, Typparameter |
 
 **Arbeitsreihenfolge (Entscheidung des Benutzers, nach Tasks Schritt 8):**
 
@@ -440,7 +440,7 @@ abhängt, **einbinden** könnte (scene3d nimmt den von graphics) - das gehört z
 * **Editor**: das Werkzeugfenster *Properties* zeigt die Eigenschaften der im Projektmappen-Explorer gewählten Datei (`FilePropertiesHost` mit `IFilePropertiesProvider`); eine C/C++-Datei
   eines Projekts hat *Part of the native build*, *Build order*, *Platforms*, *Position* und *Listed as*, geändert wird die `.fireproj` (`ProjectNativeFiles`).
 * Tests: `FIRE_TESTS_ONLY=projects` (Lesen/Schreiben, Sortierung, Meldung, Rundreise, eine C-Bibliothek mit voneinander abhängigen Headern in der VM und nativ, Packen, die Dateioptionen).
-* Offen: Header eines Pakets, von dem man abhängt, einbinden (scene3d nimmt den Vulkan-Ausschnitt von graphics) - die Quellen der Abhängigkeiten zuerst, jede einmal.
+* **Umgesetzt:** Header eines Pakets, von dem man abhängt, einbinden: `"native": { "uses": [ "io" ] }` im Manifest - die Quellen der benutzten Pakete kommen zuerst, jede einmal ([Natives der Pakete](packages/natives.md)).
 
 ## 13. Kleine und alte Ziele
 
@@ -1172,9 +1172,10 @@ Vergleich neben der ohnehin nötigen Prüfung „lebt das Objekt“.
 
 **Umgesetzt:** **Lambdas mit Signatur** (`lambda<int, int> fs[]`, auch `defined`): die Elemente sind Lambdas mit dieser Parameterzahl oder `undefined`
 (was auch eine einzelne `lambda<...>`-Deklaration prüft; die Typen der Signatur sind nur Hinweise - DeclaredType.OfLambda, Bedingung `lambda/n`).
-Selektoren und Bäume (`lambda member<T>`, `lambda expression<T>`) bleiben ohne Elementtyp.
+Ein Array von Bäumen (`lambda expression<T> es[]`) ist ein Array von `LambdaExpression`. Selektoren (`lambda member<T> xs[]`) bleiben ohne
+Elementtyp: ein Selektor ist je nach Art ein anderes Reflection-Objekt.
 
-Offen:
+Dazu im Einzelnen:
 
 * Der Typprüfer kennt den Elementtyp beim Lesen und Schreiben (TC001). **Umgesetzt:** nativ kennt der Generator ihn auch (CppGenerator.ClassArrType:
   KindArr mit ArrayElem.Class und dem Objekttyp der Elemente) - ein gelesenes Element von `Dog pets[]` (Variable, Parameter, Feld) ist ein Dog oder

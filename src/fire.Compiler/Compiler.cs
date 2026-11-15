@@ -472,7 +472,12 @@ namespace fire.Compiler
             text = null;
             if (rank <= 0 || rank >= 256 || type is not { PointerDepth: 0, ArrayRank: 0, IsInferred: false } || type.ArrayWidthCode(rank) != 0) return 0;
             // (`lambda<int, int> fs[]`: lambdas with that many parameters - not a selector or a tree, which are other values)
-            if (type.LambdaSignature is { } signature) { if (signature.IsSelector || signature.IsExpression) return 0; text = DeclaredType.OfLambda(signature.ParamTypeNames.Count); }
+            // (`lambda expression<T> es[]`: trees - objects of the class LambdaExpression; a selector is a reflection object of several classes: untyped)
+            if (type.LambdaSignature is { } signature)
+            {
+                if (signature.IsSelector) return 0;
+                text = signature.IsExpression ? DeclaredTypeOf(new TypeRef("LambdaExpression", null, 0), owner) : DeclaredType.OfLambda(signature.ParamTypeNames.Count);
+            }
             else if (type.BaseName == "string") text = DeclaredType.OfName("string");
             else if (_refParams.EnumNames.Contains(type.BaseName) && EnumTypeNamed(type.BaseName) is { } enumType) text = DeclaredType.OfName(enumType.Name) + "\u0002" + enumType.Key;
             else if (type.BaseName is not ("any" or "class" or "var" or "undefined") && DeclaredTypeOf(type with { NonNull = false }, owner) is { } declared && DeclaredType.Parse(declared).TypeParamIndex < 0) text = declared;
