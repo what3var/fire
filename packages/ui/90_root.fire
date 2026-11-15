@@ -217,8 +217,8 @@ namespace UI {
         }
 
         construct(Framebuffer framebuffer, Window window) {
-            this.framebuffer = framebuffer
-            this.window = window
+            this.framebuffer = try take framebuffer
+            this.window = try take window
             this.renderer = new Renderer(framebuffer)
             this.theme = new Theme()
             this.resources = new ResourceDictionary()

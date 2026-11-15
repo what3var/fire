@@ -18,9 +18,15 @@ namespace fire.Bytecode
     {
         private const char DisplayEnd = '\u0001';
         private const char TypeParamEnd = '\u0003';
+        /// <summary>At the start of the text: a declaration with `defined` (`defined Dog d`, `defined string s`) - undefined does not fit.</summary>
+        private const char NonNullMark = '\u0004';
+
+        /// <summary>The declaration `text` with `defined`: undefined does not fit it (an ArgumentException "... is a Dog and never undefined.").</summary>
+        public static string NonNullOf(string text) => text.Length > 0 && text[0] == NonNullMark ? text : NonNullMark + text;
+        public static bool IsNonNull(string? text) => text is { Length: > 0 } && text[0] == NonNullMark;
 
         public sealed record Condition(bool IsUnit, string Name, Unit? Unit);
-        public sealed record Spec(string Display, Condition[][] Alternatives, int TypeParamIndex = -1, string? TypeParamClass = null)
+        public sealed record Spec(string Display, Condition[][] Alternatives, int TypeParamIndex = -1, string? TypeParamClass = null, bool NonNull = false)
         {
             /// <summary>A single `is of` a class name (not a basic type, not an interface): what the native generator types as "an object of it".</summary>
             public string? SingleName => Alternatives is [[{ IsUnit: false, Name: var n }]] ? n : null;
@@ -63,6 +69,8 @@ namespace fire.Bytecode
 
         private static Spec ParseText(string t)
         {
+            bool nonNull = t.Length > 0 && t[0] == NonNullMark;
+            if (nonNull) t = t.Substring(1);
             int end = t.IndexOf(DisplayEnd);
             string rest = t.Substring(end + 1);
             int index = -1;
@@ -77,7 +85,7 @@ namespace fire.Bytecode
             }
             var alternatives = rest.Length == 0 ? Array.Empty<Condition[]>()
                 : rest.Split('|').Select(alt => alt.Split('&').Select(ConditionOf).ToArray()).ToArray();
-            return new Spec(t.Substring(0, end), alternatives, index, owner);
+            return new Spec(t.Substring(0, end), alternatives, index, owner, nonNull);
         }
 
         /// <summary>A condition from its text (`Animal`, `int`, `in:cm`) - also a type argument of an object (`int:cm`: the kind, its unit is NumberDemand's).</summary>
@@ -134,7 +142,8 @@ namespace fire.Bytecode
         /// method for a parameter, the object written to for a field).</summary>
         public static bool Fits(in Value value, string? required, ObjectInstance? owner = null, string[]? callTypeArgs = null)
         {
-            if (required == null || value.Kind == ValueKind.Undefined) return true;
+            if (required == null) return true;
+            if (value.Kind == ValueKind.Undefined) return !IsNonNull(required);
             if (value.Kind == ValueKind.Class && value.AsObjectRef() is ObjectInstance { RtClass: null }) return true;   // (a dead object: every use of it reports that)
             var spec = Parse(required);
             if (spec.TypeParamIndex >= 0)
@@ -210,6 +219,7 @@ namespace fire.Bytecode
                 display = spec.Display.Split(' ')[0] + " (" + DisplayOf(typeArg) + ")";
             string have = value.Kind == ValueKind.Class && value.AsObjectRef() is ObjectInstance obj ? GenericClassNames.PlainName(obj.ClassName) : value.Kind.ToString();
             string article = "AEIOUaeiou".Contains(display[0]) ? "an" : "a";
+            if (value.Kind == ValueKind.Undefined) return $"{what} is {article} {display} and never undefined.";   // (`defined Dog d`)
             return $"{what} is {article} {display}, not {have}.";
         }
     }

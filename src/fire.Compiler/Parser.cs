@@ -1279,10 +1279,23 @@ namespace fire.Compiler
             return type with { NonNull = true };
         }
 
-        /// <summary>`defined` (a word of its own only here) followed by a value type: int, float, bool, word, char, byte.</summary>
-        private bool DefinedAhead(int offset) =>
-            PeekAt(offset).Type == TokenType.Identifier && PeekAt(offset).Lexeme == "defined"
-            && PeekAt(offset + 1).Type is TokenType.KwInt or TokenType.KwFloat or TokenType.KwBool or TokenType.KwWord or TokenType.KwChar or TokenType.KwByte;
+        /// <summary>`defined` (a word of its own only here) followed by a type: int, float, bool, word, char, byte, string, a class, an interface, an enum.</summary>
+        private bool DefinedAhead(int offset)
+        {
+            if (PeekAt(offset).Type != TokenType.Identifier || PeekAt(offset).Lexeme != "defined") return false;
+            if (PeekAt(offset + 1).Type is TokenType.KwInt or TokenType.KwFloat or TokenType.KwBool or TokenType.KwWord or TokenType.KwChar or TokenType.KwByte) return true;
+            // (an array of strings, of a class or of an enum - `defined string names[]`, `defined Dog pets[]`, ROADMAP 19: a name and then the brackets)
+            int at = offset + 1;
+            if (PeekAt(at).Type == TokenType.KwString) at++;
+            else if (PeekAt(at).Type == TokenType.Identifier)
+            {
+                at++;
+                while (PeekAt(at).Type == TokenType.Dot && PeekAt(at + 1).Type == TokenType.Identifier) at += 2;
+            }
+            else return false;
+            // (`defined string s`, `defined Dog d`, `defined Color c`, `defined List<int> l`, `defined Dog Get()`: a name or type arguments follow - SPEC 8.10b)
+            return PeekAt(at).Type is TokenType.Identifier or TokenType.Lt;
+        }
 
         private TypeRef ParseTypeRefCore(bool allowArray)
         {

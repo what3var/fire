@@ -429,7 +429,52 @@ namespace fire.Compiler
         /// <summary>What a declaration `C x` (a parameter, a field) with a class, an interface or a type parameter of `owner` that has `where` conditions
         /// promises, checked at run time (GuardLocalType, FieldInfo.RequiredType, DeclaredType); null for a number, a string, an unconstrained type
         /// parameter (or one of a method), an array, a lambda, `any`...</summary>
-        private string? DeclaredTypeOf(TypeRef? type, RuntimeClass? owner) => MapSpec(DeclaredTypeOfCore(type, owner));
+        private string? DeclaredTypeOf(TypeRef? type, RuntimeClass? owner)
+        {
+            string? text = MapSpec(DeclaredTypeOfCore(type, owner));
+            // `defined Dog d`, `defined string s`, `defined Color c` (SPEC 8.10b): undefined does not fit (a number: DeclaredKind)
+            if (type is { NonNull: true, PointerDepth: 0, ArrayRank: 0, LambdaSignature: null } && DeclaredKind.Of(type) == 0)
+            {
+                if (text == null && type.BaseName == "string") text = DeclaredType.OfName("string");
+                else if (text == null && _refParams.EnumNames.Contains(type.BaseName) && EnumTypeNamed(type.BaseName) is { } enumType) text = DeclaredType.OfName(enumType.Name);
+                if (text != null) text = DeclaredType.NonNullOf(text);
+            }
+            return text;
+        }
+
+        /// <summary>What a `defined` declaration without an initializer starts with: 0 for a number (DeclaredKind), "" for a string, the first value of an
+        /// enum (SPEC 8.10b); null for an object, which has none (the resolver asks for its value).</summary>
+        private Value? DefinedZeroOf(TypeRef? type)
+        {
+            if (type is not { NonNull: true, PointerDepth: 0, ArrayRank: 0, LambdaSignature: null }) return null;
+            if (DeclaredKind.Of(type) is var kind and not 0) return DeclaredKind.ZeroOf(kind, ZeroUnitOf(type));
+            if (type.BaseName == "string") return Value.MakeString("");
+            if (_refParams.EnumNames.Contains(type.BaseName) && EnumTypeNamed(type.BaseName) is { Members.Count: > 0 } enumType)
+                return Value.MakeEnum(enumType.Members[0].Value, enumType);
+            return null;
+        }
+
+        /// <summary>An array of a class, an interface, a record, `string` or an enum (`Dog pets[]`, `defined string names[]`, ROADMAP 19): the code of
+        /// OpCode.TypeArray (ArrayElem.Class, the rank, `defined`) and the DeclaredType text of its elements - for an enum with its declaration after
+        /// '\u0002' (the first value a defined array starts with). 0 for any other declaration (a number array has its own code: TypeRef.ArrayWidthCode).</summary>
+        /// <summary>What a store into a variable types or cuts (EmitWidthIfNeeded): an array of a class, `string` or an enum by its DeclaredType text
+        /// (ClassArrayCode), anything else by its width code and unit.</summary>
+        private void EmitVariableTyping(int width, string? unit, TypeRef? arrayElem, int arrayRank)
+        {
+            if (arrayElem != null && ClassArrayCode(arrayElem, arrayRank, _enclosingClass, out var text) is var code and not 0) EmitWidthIfNeeded(this, code, text);
+            else EmitWidthIfNeeded(this, width, unit);
+        }
+
+        private int ClassArrayCode(TypeRef? type, int rank, RuntimeClass? owner, out string? text)
+        {
+            text = null;
+            if (rank <= 0 || rank >= 256 || type is not { PointerDepth: 0, ArrayRank: 0, LambdaSignature: null, IsInferred: false } || type.ArrayWidthCode(rank) != 0) return 0;
+            if (type.BaseName == "string") text = DeclaredType.OfName("string");
+            else if (_refParams.EnumNames.Contains(type.BaseName) && EnumTypeNamed(type.BaseName) is { } enumType) text = DeclaredType.OfName(enumType.Name) + "\u0002" + enumType.Key;
+            else if (type.BaseName is not ("any" or "class" or "var" or "undefined") && DeclaredTypeOf(type with { NonNull = false }, owner) is { } declared && DeclaredType.Parse(declared).TypeParamIndex < 0) text = declared;
+            if (text == null) return 0;
+            return 0x10000 | (rank << 8) | ArrayElem.Class | (type.NonNull ? ArrayElem.DefinedFlag : 0);
+        }
 
         private string? DeclaredTypeOfCore(TypeRef? type, RuntimeClass? owner)
         {
@@ -1031,7 +1076,9 @@ namespace fire.Compiler
                                 RequiredKind = fd.ArrayRanks.Count == 0 ? DeclaredKind.Of(fd.Type, fd.Initializer) : (byte)0,
                                 RequiredType = fd.ArrayRanks.Count == 0 ? DeclaredTypeOf(fd.Type, rc) : null,
                                 RequiredArray = fd.Type?.ArrayWidthCode(fd.ArrayRanks.Count) is var arrayCode and not 0 && (arrayCode & 0xFF) is not (fire.Values.ArrayElem.U8 or fire.Values.ArrayElem.Word)
-                                    ? (ushort)(arrayCode & 0xFFFF) : (ushort)0,
+                                    ? (ushort)(arrayCode & 0xFFFF) : ClassArrayCode(fd.Type, fd.ArrayRanks.Count, rc, out _) is var classArray and not 0 ? (ushort)(classArray & 0xFFFF) : (ushort)0,
+                                // (`Dog pets[]`: the DeclaredType text of the elements, ROADMAP 19)
+                                RequiredArrayType = ClassArrayCode(fd.Type, fd.ArrayRanks.Count, rc, out var classArrayText) != 0 ? classArrayText : null,
                                 DerivedDefined = !ReferenceEquals(fd, declaredField),
                                 ArrayOfParam = !fd.IsStatic && fd.ArrayRanks.Count == 1 && fd.Type is { ArrayRank: 0, PointerDepth: 0, TypeArgs: null, Unit: null } elemType
                                     && TypeArgText(elemType, rc, null, 0) is ['$', ..] arrayParam && !arrayParam.EndsWith('@') ? arrayParam : null,
@@ -1127,7 +1174,10 @@ namespace fire.Compiler
                 for (int i = 0; i < md.Params.Count && i < 64; i++)
                     if (md.Params[i].Type is { NonNull: true }) specProto.SpecDefinedMask |= 1L << i;
                 specProto.SpecParamKinds = md.Params.Select(p => p.ByRef || p.ArrayRanks.Count > 0 ? (byte)0 : DeclaredKind.Of(p.Type, p.DefaultValue)).ToArray();
-                target!.Specializations = (target.Specializations ?? Array.Empty<FunctionProto>()).Append(specProto).ToArray();
+                // (the more specific first - fewer `any` among the type arguments: `Insert<int, int>` before `Insert<int, any>`; the VM, the trampoline and a
+                // call site take the first that fits)
+                target!.Specializations = (target.Specializations ?? Array.Empty<FunctionProto>()).Append(specProto)
+                    .OrderBy(p => p.SpecArgs?.Count(a => a == "any") ?? 0).ToArray();
             }
 
             // No declaration of its own -> exactly ONE synthesised 0-arg public
@@ -1229,8 +1279,8 @@ namespace fire.Compiler
                 else inner.EmitClaimToScope(0xFFFF, unclaimed: true, hoist: false);
             }
             // `defined int count` (SPEC 8.10b): a field that never holds undefined starts at zero (in the unit it demands)
-            else if (arrayRanks is not { Count: > 0 } && type is { NonNull: true } && DeclaredKind.Of(type) is var nonNullKind and not 0)
-                inner.EmitLoadConst(DeclaredKind.ZeroOf(nonNullKind, ZeroUnitOf(type)));
+            else if (arrayRanks is not { Count: > 0 } && inner.DefinedZeroOf(type) is { } fieldZero)
+                inner.EmitLoadConst(fieldZero);   // (`defined string name` starts at "", `defined Color c` at the first value)
             else inner.EmitLoadConst(Value.MakeUndefined());
             inner._chunk.EmitOp(OpCode.Return);
             return new FunctionProto(inner._chunk, 0, AccessModifier.Private);
@@ -1282,17 +1332,24 @@ namespace fire.Compiler
             // anything else but undefined is the exception (SPEC 8.4.2); the native generator then knows what it holds
             for (int i = 0; i < parms.Count; i++)
                 // (one with a unit, `float v[] : m`: its unit check below converts the elements, as before)
-                if (!parms[i].ByRef && parms[i].ArrayRanks.Count > 0 && parms[i].Type?.UnitDemand == null && parms[i].Type?.ArrayWidthCode(parms[i].ArrayRanks.Count) is { } arrayCode and not 0)
+            {
+                if (parms[i].ByRef || parms[i].ArrayRanks.Count == 0 || parms[i].Type?.UnitDemand != null) continue;
+                int arrayCode = parms[i].Type?.ArrayWidthCode(parms[i].ArrayRanks.Count) ?? 0;
+                int paramClassArray = inner.ClassArrayCode(parms[i].Type, parms[i].ArrayRanks.Count, inner._enclosingClass, out var paramClassText);
+                if (arrayCode != 0 || paramClassArray != 0)
                 {
+                    // (`Dog pets[]`: an array of a class, `string` or an enum - its DeclaredType text where the unit stands, ROADMAP 19)
                     inner._chunk.EmitOp(OpCode.LoadLocal);
                     inner._chunk.EmitU16(0);
                     inner._chunk.EmitU16((ushort)i);
-                    EmitWidthIfNeeded(inner, arrayCode);
+                    if (paramClassArray != 0) EmitWidthIfNeeded(inner, paramClassArray, paramClassText);
+                    else EmitWidthIfNeeded(inner, arrayCode);
                     inner._chunk.EmitOp(OpCode.StoreLocal);
                     inner._chunk.EmitU16(0);
                     inner._chunk.EmitU16((ushort)i);
                     inner._chunk.EmitOp(OpCode.Pop);
                 }
+            }
 
             for (int i = 0; i < parms.Count; i++)
                 if (parms[i].ByRef)
@@ -1580,6 +1637,9 @@ namespace fire.Compiler
             // (a return the type checker found is always a number - ResolveResult.DerivedReturns - is checked like a `defined` one)
             if (returnType is { NonNull: false } && s_derivedReturns != null && s_derivedReturns.Contains(body)) returnType = returnType with { NonNull = true };
             if (returnType is { NonNull: true } && DeclaredKind.Of(returnType) is var returnKind and not 0) { inner._returnKind = returnKind; inner._returnWhat = $"The return value of '{name}'"; }
+            // (`defined Dog Get()`, `defined string Name()`: what goes back is checked like a parameter, never undefined)
+            else if (returnType is { NonNull: true } && inner.DeclaredTypeOf(returnType, inner._enclosingClass) is { } returnSpec && DeclaredType.IsNonNull(returnSpec))
+                { inner._returnSpec = returnSpec; inner._returnWhat = $"The return value of '{name}'"; }
             // SPEC "Static members": a static method has no
             // bound 'this' - the inner compiler remembers that in order to
             // reject 'this'/'super' in the body (see resolver instead of
@@ -1800,8 +1860,8 @@ namespace fire.Compiler
                         // from there on the slots stay 'undefined', as before with
                         // a completely undetermined-size declarator.
                         CompileArrayAlloc(vd.ArrayRanks, 0, IsByteBuffer(vd.Type, vd.ArrayRanks.Count));
-                    else if (vd.Type is { NonNull: true } && DeclaredKind.Of(vd.Type) is var zeroKind and not 0)
-                        EmitLoadConst(DeclaredKind.ZeroOf(zeroKind, ZeroUnitOf(vd.Type)));   // (`defined int n` starts at 0: SPEC 8.10b)
+                    else if (vd.ArrayRanks.Count == 0 && DefinedZeroOf(vd.Type) is { } zero)
+                        EmitLoadConst(zero);   // (`defined int n` starts at 0, `defined string s` at "", a defined enum at its first value: SPEC 8.10b)
                     else
                         EmitLoadConst(Value.MakeUndefined());
 
@@ -1814,7 +1874,9 @@ namespace fire.Compiler
                     // CompileAssign, otherwise one could bypass the check through an
                     // "unsuitable" first assignment).
                     EmitCheckUnitIfNeeded(this, vd.Type?.UnitDemand);
-                    EmitWidthIfNeeded(this, vd.ArrayRanks.Count == 0 ? vd.Type?.WidthCode ?? 0 : vd.Type?.ArrayWidthCode(vd.ArrayRanks.Count) ?? 0, vd.Type?.UnitDemand);
+                    // (an array of a class, `string` or an enum: typed like a number array - its DeclaredType text where the unit stands)
+                    if (ClassArrayCode(vd.Type, vd.ArrayRanks.Count, _enclosingClass, out var classArrayText) is var classArrayCode and not 0) EmitWidthIfNeeded(this, classArrayCode, classArrayText);
+                    else EmitWidthIfNeeded(this, vd.ArrayRanks.Count == 0 ? vd.Type?.WidthCode ?? 0 : vd.Type?.ArrayWidthCode(vd.ArrayRanks.Count) ?? 0, vd.Type?.UnitDemand);
 
                     // `var v = E`: an unclaimed value belongs to the scope that declares v (SPEC 2.1); `int a[10]` is made for it
                     if (vd.Initializer != null ? MayBeUnclaimed(vd.Initializer) : autoArrayAlloc) EmitClaimToScope(0, unclaimed: true, hoist: false);
@@ -2566,11 +2628,20 @@ namespace fire.Compiler
         private string? _returnUnit;
         /// <summary>`defined int Count()`: the DeclaredKind its return values are checked against (GuardTop), 0: none; and how the error names the value.</summary>
         private byte _returnKind;
+        /// <summary>`defined Dog Get()`: the DeclaredType (with `defined`) its return values are checked against (GuardTopType), null: none.</summary>
+        private string? _returnSpec;
         private string _returnWhat = "";
 
         /// <summary>The value on top of the stack goes back from a method declared `defined int` (`defined float`, ...): it is checked like a parameter (GuardTop).</summary>
         private void EmitReturnGuard()
         {
+            if (_returnSpec != null)
+            {
+                _chunk.EmitOp(OpCode.GuardTopType);
+                _chunk.EmitU16(_chunk.AddConstant(Value.MakeString(_returnSpec)));
+                _chunk.EmitU16(_chunk.AddConstant(Value.MakeString(_returnWhat)));
+                return;
+            }
             if (_returnKind == 0) return;
             _chunk.EmitOp(OpCode.GuardTop);
             _chunk.EmitByte((byte)((_returnKind & 0x7F) - 1));
@@ -3789,14 +3860,14 @@ namespace fire.Compiler
                     // initial check simply through a later, "wrong"
                     // assignment.
                     EmitCheckUnitIfNeeded(this, local.RequiredUnit);
-                    EmitWidthIfNeeded(this, local.Width, local.RequiredUnit);
+                    EmitVariableTyping(local.Width, local.RequiredUnit, local.ArrayElem, local.ArrayRank);
                     // `v = E`: an unclaimed value belongs to the scope that declares v; a value of an inner block moves up to it (SPEC 2.1)
                     if (!local.ByRef) EmitClaimToScope(local.Depth, unclaimed: MayBeUnclaimed(a.Value), hoist: local.Depth > 0);
                     EmitStoreVariable(local);
                     break;
                 case ResolvedRef.Global global:
                     EmitCheckUnitIfNeeded(this, global.RequiredUnit);
-                    EmitWidthIfNeeded(this, global.Width, global.RequiredUnit);
+                    EmitVariableTyping(global.Width, global.RequiredUnit, global.ArrayElem, global.ArrayRank);
                     // a global variable: an unclaimed value belongs to the global scope; a value of a block of the top-level code moves up to it (SPEC 2.1)
                     EmitClaimToScope(0xFFFF, unclaimed: MayBeUnclaimed(a.Value), hoist: _currentScopeDepth > 0 && IsTopLevelCode);
                     _chunk.EmitOp(OpCode.StoreGlobal);
@@ -3852,13 +3923,13 @@ namespace fire.Compiler
             {
                 case ResolvedRef.Local local:
                     EmitCheckUnitIfNeeded(this, local.RequiredUnit);
-                    EmitWidthIfNeeded(this, local.Width, local.RequiredUnit);
+                    EmitVariableTyping(local.Width, local.RequiredUnit, local.ArrayElem, local.ArrayRank);
                     EmitTakeToScope(local.ByRef ? 0 : local.Depth, take.Op == UnaryOp.TryTake);
                     EmitStoreVariable(local);
                     break;
                 case ResolvedRef.Global global:
                     EmitCheckUnitIfNeeded(this, global.RequiredUnit);
-                    EmitWidthIfNeeded(this, global.Width, global.RequiredUnit);
+                    EmitVariableTyping(global.Width, global.RequiredUnit, global.ArrayElem, global.ArrayRank);
                     EmitTakeToScope(0xFFFF, take.Op == UnaryOp.TryTake);
                     _chunk.EmitOp(OpCode.StoreGlobal);
                     _chunk.EmitU16(global.Slot);
@@ -4038,12 +4109,12 @@ namespace fire.Compiler
                         // `++`/`--` is after all only an (more compactly written)
                         // assignment.
                         EmitCheckUnitIfNeeded(this, local.RequiredUnit);
-                    EmitWidthIfNeeded(this, local.Width, local.RequiredUnit);
+                    EmitVariableTyping(local.Width, local.RequiredUnit, local.ArrayElem, local.ArrayRank);
                         EmitStoreVariable(local);
                         break;
                     case ResolvedRef.Global global:
                         EmitCheckUnitIfNeeded(this, global.RequiredUnit);
-                    EmitWidthIfNeeded(this, global.Width, global.RequiredUnit);
+                    EmitVariableTyping(global.Width, global.RequiredUnit, global.ArrayElem, global.ArrayRank);
                         _chunk.EmitOp(OpCode.StoreGlobal);
                         _chunk.EmitU16(global.Slot);
                         break;

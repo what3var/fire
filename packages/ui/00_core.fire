@@ -329,7 +329,7 @@ namespace UI {
         construct(string text = "", any value = undefined, string kind = "") {
             this.Text = text
             this.Files = new List<string>()
-            this.Value = value
+            this.Value = try take value
             this.Kind = kind
         }
 

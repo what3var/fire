@@ -446,7 +446,7 @@ namespace Http {
         bool eof
 
         construct(IO.IStream source) {
-            this.source = source
+            this.source = try take source
             this.chunk = new byte[4096]
             this.pos = 0
             this.len = 0
@@ -1212,7 +1212,7 @@ namespace Http {
         defined int index
 
         construct(List chain, defined int index) {
-            this.chain = chain
+            this.chain = try take chain
             this.index = index
         }
 

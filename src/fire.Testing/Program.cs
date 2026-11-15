@@ -21361,6 +21361,18 @@ else
             try { c.Set(5); c.Set(60); print("nicht hier") } catch (ArgumentException e) { print("E " + e.message) }
             try { c.volume = 99 } catch (ArgumentException e) { print("E2 " + e.message) }
             print(c.volume)
+            class Calc {
+                defined int v = 1
+                int other = 0
+                int Twice { get { return this.v * 2 } }
+                construct() { }
+                undefined Step() { this.other = this.other + 1; this.v = this.v + this.other; this.other = this.other + this.v }
+            }
+            var k = new Calc()
+            probe k.Twice changed (o, n) => print("Twice " + o + " -> " + n)
+            k.Step()
+            k.Step()
+            print(k.v + " " + k.other + " " + k.Twice)
             """),
         ("Http.Response behaelt einen Body, der dem Aufruf gehoert (new byte[0], ein Text, ein Puffer aus einer Methode) - try this.body.TakeTo(this); ein Puffer des Aufrufers bleibt dessen", """
             #import "http"
@@ -21421,6 +21433,52 @@ else
             Item g = undefined
             g = take new Item("global")
             print(g.name)
+            """),
+        ("Feld-Herleitung mit Basisklasse: ein Feld ohne Initialisierer wird defined, wenn die Konstruktion der Basisklassen es nicht ueber eine Ueberschreibung lesen kann (sonst sieht der Basiskonstruktor undefined); Methoden der Basis werden verfolgt", """
+            class B {
+                int b = 1
+                construct() { this.b = 2 }
+                int Peek() { return -1 }
+            }
+            class D : B {
+                int n
+                construct() { this.n = 5 }
+                override int Peek() { return this.n }
+            }
+            class B2 {
+                construct() { print("B2 sieht " + this.Peek()) }
+                int Peek() { return -1 }
+            }
+            class D2 : B2 {
+                int n
+                construct() { this.n = 5 }
+                override int Peek() { return this.n }
+            }
+            class B3 {
+                int s
+                construct() { this.Setup() }
+                undefined Setup() { this.s = this.Helper() }
+                int Helper() { return 3 }
+            }
+            class D3 : B3 {
+                int n
+                construct() { this.n = 4 }
+                int Helper2() { return this.n }
+            }
+            class B4 {
+                construct(int x) { print("B4 " + x + " " + this.Look()) }
+                int Look() { return 0 }
+            }
+            class D4 : B4 {
+                int n
+                construct() : base(7) { this.n = 1 }
+                override int Look() { return this.n }
+            }
+            var d = new D()
+            var d2 = new D2()
+            var d3 = new D3()
+            var d4 = new D4()
+            print(d.n + d.Peek() + " " + d2.n + " " + d3.n + d3.Helper2() + " " + d3.s + " " + d4.n)
             """),
         ("JsonObject.Set uebernimmt, was dem Aufruf gehoert (take, neu erzeugt), auch aus einem inneren Block und ueber vier Eintraege hinaus; ein zerstoertes Objekt beim Schreiben ist eine DestroyedException, kein stilles null", """
             #import "json"
@@ -29140,6 +29198,116 @@ else
             float z[] = new float[1]
             z[0] = nanv
             print(z[0])
+            """),
+        ("Arrays mit jedem Typ (SPEC 8.4.2): Klassen (auch Unterklassen), Interfaces, Records, string, Enums, als Feld und Parameter; falsche Elemente und Arrays einer anderen Klasse sind eine ArgumentException, defined string beginnt bei \"\", ein defined Enum beim ersten Wert, ein defined Klassen-Array nur mit allen Elementen", """
+            interface IShape { float Area() }
+            class Animal { string name; construct(string n) { this.name = n } }
+            class Dog : Animal { construct(string n) : base(n) { } }
+            class Cat : Animal { construct(string n) : base(n) { } }
+            class Sq : IShape { float s; construct(float s) { this.s = s } float Area() { return this.s * this.s } }
+            record Pt { int x; int y; construct(int x, int y) { this.x = x; this.y = y } }
+            enum Color { Red, Green, Blue }
+            class Zoo {
+                Dog dogs[]
+                defined string tags[]
+                construct() { this.dogs = new Dog[2]; this.tags = new string[2] }
+                static int Count(Dog ds[]) { int n = 0; foreach (d in ds) { if (d != undefined) { n++ } } return n }
+            }
+            any cat = new Cat("Tom")
+            any dog = new Dog("x")
+            any text = "nein"
+            any three = 3
+            any none = undefined
+            Dog pets[] = new Dog[3]
+            pets[0] = new Dog("Rex")
+            try { pets[1] = cat } catch (ArgumentException e) { print("E1 " + e.message) }
+            try { pets[2] = text } catch (ArgumentException e) { print("E2 " + e.message) }
+            print(pets[0].name + " " + pets[1] + " " + pets.length + " " + Zoo.Count(pets))
+            Animal all[] = [new Dog("a"), new Cat("b")]
+            print(all[1].name)
+            IShape shapes[] = [new Sq(2.0)]
+            try { shapes[0] = dog } catch (ArgumentException e) { print("E3 " + e.message) }
+            print(shapes[0].Area())
+            string names[] = ["x", "y"]
+            try { names[0] = three } catch (ArgumentException e) { print("E4 " + e.message) }
+            defined string ds[] = new string[2]
+            print("[" + ds[0] + "]" + ds.length)
+            try { ds[1] = none } catch (ArgumentException e) { print("E5 " + e.message) }
+            Color cs[] = [Color.Red, Color.Blue]
+            try { cs[0] = three } catch (ArgumentException e) { print("E6 " + e.message) }
+            defined Color dc[] = new Color[2]
+            print(dc[0] + " " + dc[1])
+            Pt ps[] = new Pt[1]
+            try { ps[0] = dog } catch (ArgumentException e) { print("E7 " + e.message) }
+            ps[0] = new Pt(1, 2)
+            print(ps[0].x + ps[0].y)
+            try { defined Dog dd[] = new Dog[2] } catch (ArgumentException e) { print("E8 " + e.message) }
+            defined Dog full[] = [new Dog("f1"), new Dog("f2")]
+            print(full[1].name)
+            class Tagged { defined string names[3]
+                defined Color colors[2] }
+            var tg = new Tagged()
+            print("[" + tg.names[2] + "]" + tg.names.length + " " + tg.colors[1])
+            var z = new Zoo()
+            try { z.dogs[0] = cat } catch (ArgumentException e) { print("E9 " + e.message) }
+            print("[" + z.tags[1] + "]")
+            any petsAny = pets
+            try { Cat cats[] = petsAny } catch (ArgumentException e) { print("E10 " + e.message) }
+            pets = new Dog[1]
+            try { pets[0] = cat } catch (ArgumentException e) { print("E11 " + e.message) }
+            """),
+        ("defined fuer strings, Enums und Objekte (SPEC 8.10b): ein string beginnt bei \"\", ein Enum beim ersten Wert, ein Objekt braucht seinen Wert (Feld: jeder Konstruktor setzt es); undefined ist eine ArgumentException an Feld, Parameter, Rueckgabe, Variable, Reflection und in JSON (fehlend oder null)", """
+            #import "json"
+            #import "reflection"
+            enum Color { Red, Green, Blue }
+            interface IShape { float Area() }
+            class Sq : IShape { float s; construct(float s) { this.s = s } float Area() { return this.s * this.s } }
+            class Dog { string name; construct(string n) { this.name = n } construct() { this.name = "" } }
+            class Cat { }
+            class Owner {
+                defined string title
+                defined Color fav
+                defined Dog pet
+                defined IShape shape = new Sq(2.0)
+                construct(Dog d) { this.pet = try take d }
+                construct() { pet = new Dog("Standard") }
+                defined Dog Pet() { return this.pet }
+                defined string Bad() { any none = undefined; return none }
+                static string Greet(defined string who) { return "Hallo " + who }
+                static string Name(defined Dog d) { return d.name }
+            }
+            class Pal { defined Color c
+                defined string n
+                int k }
+            any none = undefined
+            any cat = new Cat()
+            defined string s
+            defined Color c
+            print("[" + s + "] " + c)
+            var o = new Owner(new Dog("Rex"))
+            print("[" + o.title + "] " + o.fav + " " + o.pet.name + " " + o.shape.Area() + " " + o.Pet().name + " " + new Owner().pet.name)
+            try { o.pet = none } catch (ArgumentException e) { print("E1 " + e.message) }
+            try { o.title = none } catch (ArgumentException e) { print("E2 " + e.message) }
+            try { o.pet = cat } catch (ArgumentException e) { print("E3 " + e.message) }
+            try { Owner.Greet(none) } catch (ArgumentException e) { print("E4 " + e.message) }
+            try { Owner.Name(none) } catch (ArgumentException e) { print("E5 " + e.message) }
+            try { o.Bad() } catch (ArgumentException e) { print("E6 " + e.message) }
+            try { s = none } catch (ArgumentException e) { print("E7 " + e.message) }
+            try { defined Dog d = none } catch (ArgumentException e) { print("E8 " + e.message) }
+            try { c = none } catch (ArgumentException e) { print("E9 " + e.message) }
+            try { new Owner(none) } catch (ArgumentException e) { print("E10 " + e.message) }
+            try { Reflect.Set(o, "pet", none) } catch (ArgumentException e) { print("E11 " + e.message) }
+            defined Dog d2 = new Dog("Bello")
+            print(Owner.Greet("Welt") + " " + Owner.Name(d2) + " " + s.length)
+            string text = Json.Serialize(o)
+            print(text)
+            var back = Json.Deserialize<Owner>(text)
+            print(back.pet.name + "[" + back.title + "]")
+            try { var b2 = Json.Deserialize<Owner>("{\"title\":\"t\"}"); print("ohne pet: " + b2.pet) } catch (ArgumentException e) { print("J1 " + e.message) }
+            try { var b3 = Json.Deserialize<Owner>("{\"pet\":null}"); print("pet null: " + b3.pet) } catch (ArgumentException e) { print("J2 " + e.message) }
+            try { var b4 = Json.Deserialize<Owner>("{\"title\":null,\"pet\":{\"name\":\"a\"}}"); print("title null: [" + b4.title + "]") } catch (ArgumentException e) { print("J3 " + e.message) }
+            var p = Json.Deserialize<Pal>("{\"k\":1}")
+            print(p.c + "[" + p.n + "]" + p.k)
             """),
         ("Bits: die Breite jedes Werttyps am Typ (int.Bits, int[16].Bits, float[32].Bits, byte/char/bool/word) und am Wert (x.Bits nach dem deklarierten Typ), eine Konstante", """
             int[8] small = 3

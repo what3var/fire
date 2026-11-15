@@ -900,6 +900,12 @@ namespace fire.Standard
                 foreach (var fieldName in rc.FlattenedFieldNames)
                     if (rc.FindFieldRequiredKind(fieldName) is var kind and not 0 && DeclaredKind.IsNonNull(kind))
                         obj.Fields[fieldName] = DeclaredKind.ZeroOf(kind, rc.FindFieldRequiredUnit(fieldName)?.TrimStart('#') is { } zeroUnit && !zeroUnit.StartsWith("any", StringComparison.Ordinal) ? Unit.Parse(zeroUnit) : null);
+                    // (`defined string s` holds "", `defined Color c` its first value; `defined Dog d` has no zero - the text must give it, see below)
+                    else if (rc.FindFieldRequiredType(fieldName) is { } nonNullType && DeclaredType.IsNonNull(nonNullType) && DeclaredType.Parse(nonNullType).SingleName is { } typeName)
+                    {
+                        if (typeName == "string") obj.Fields[fieldName] = Value.MakeString("");
+                        else if (_host.FindEnum(typeName) is { Members.Count: > 0 } zeroEnum) obj.Fields[fieldName] = Value.MakeEnum(zeroEnum.Members[0].Value, zeroEnum);
+                    }
                 foreach (var (key, child) in o.Members)
                 {
                     if (key.StartsWith("$", StringComparison.Ordinal)) continue;
@@ -907,12 +913,18 @@ namespace fire.Standard
                     if (field == null) continue;   // (a member the class does not have: left out)
                     var built = Build(child, Substitute(field.Type, obj), obj, path + "." + key, field.Unit, (obj, field.Name));
                     // a field declared as a typed array without a unit (FieldInfo.RequiredArray) holds a typed array, like after any other assignment
-                    if (rc.FindFieldRequiredArray(field.Name) is var requiredArray and not 0 && rc.FindFieldRequiredUnit(field.Name) == null)
+                    if (rc.FindFieldRequiredArray(field.Name) is var requiredArray and not 0 && rc.FindFieldRequiredUnit(field.Name) == null && rc.FindFieldRequiredArrayType(field.Name) == null)
                         TypeArrayDeep(built, (byte)(requiredArray & 0xFF), requiredArray >> 8, 1, path + "." + key);
                     if (built.Kind == ValueKind.Undefined && rc.FindFieldRequiredKind(field.Name) is var declared and not 0 && DeclaredKind.IsNonNull(declared))
                         throw _host.Error("ArgumentException", $"{path}.{key} is {(DeclaredKind.ValueKindOf(declared) switch { ValueKind.Int => "an int", ValueKind.Float => "a float", ValueKind.Word => "a word", ValueKind.Char => "a char", _ => "a bool" })} and never undefined{(rc.FieldWhat(field.Name).Length > field.Name.Length + 8 ? DerivedNote : "")}.");
+                    if (built.Kind == ValueKind.Undefined && DeclaredType.IsNonNull(rc.FindFieldRequiredType(field.Name)))
+                        throw _host.Error("ArgumentException", DeclaredType.Mismatch(built, rc.FindFieldRequiredType(field.Name)!, path + "." + key));
                     obj.Fields[field.Name] = built;
                 }
+                // `defined Dog d` (SPEC 8.10b): a field the text does not give is no object - an ArgumentException like a `null`
+                foreach (var fieldName in rc.FlattenedFieldNames)
+                    if (DeclaredType.IsNonNull(rc.FindFieldRequiredType(fieldName)) && (!obj.Fields.TryGetValue(fieldName, out var held) || held.Kind == ValueKind.Undefined))
+                        throw _host.Error("ArgumentException", DeclaredType.Mismatch(Value.MakeUndefined(), rc.FindFieldRequiredType(fieldName)!, path + "." + fieldName));
                 if (HasOnDeserialized(rc)) Hooks.Add(obj);
                 return value;
             }

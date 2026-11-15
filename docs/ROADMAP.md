@@ -1151,18 +1151,30 @@ durch jede Referenz, wie heute die typisierten Arrays aus Zahlen (SPEC 8.4.2).
 etwa so schnell wie bei einem Puffer), `byte`/`word` als Puffer, und **`defined`** für sie (`defined int a[]`: die Elemente sind nie undefined,
 beginnen bei 0, undefined zu speichern ist eine ArgumentException; ArrayElem.DefinedFlag, nativ TU_DEFINED).
 
+**Umgesetzt** (SPEC 8.4.2): **Klassen, Interfaces, Records, `string` und Enums** (`Dog pets[]`, `IShape shapes[]`, `Pt ps[]`, `string names[]`,
+`Color cs[]`) als Variable, Feld, Parameter und Global: ein Element nimmt nur Werte dieses Typs (Unterklassen, implementierende Klassen) oder
+`undefined`, sonst eine ArgumentException mit derselben Meldung in VM und nativ; ein Array einer anderen Klasse geht nicht in die Deklaration
+(auch nicht in die einer Basisklasse - das Array behält seinen Elementtyp). Die Elemente bleiben Values (ArrayElem.Class mit dem Typnamen als Text,
+ein Enum mit seinem Schlüssel; nativ E_CLASS/TU_CLASS und eine Tabelle g_arrClasses mit Prüfung, Anzeigename und Nullwert je Typ).
+**`defined`** dafür (Entscheidung des Benutzers): `defined string` beginnt bei `""`, ein `defined` Enum beim ersten Wert; `defined Dog pets[]` hat
+keinen Nullwert und nimmt nur Arrays, in denen jedes Element gegeben ist (`new Dog[2]` dort ist eine ArgumentException).
+
+**Umgesetzt** (Wunsch des Benutzers, SPEC 8.10b): ebenso **einzelne Werte** - `defined string name` (beginnt bei `""`), `defined Color c` (beim ersten
+Wert), `defined Dog pet`, `defined IShape s`: an Parameter, Feld, Property, Rückgabe, Variable, über Reflection und in JSON nie undefined (das Merkmal
+steht vorn im DeclaredType-Text, DeclaredType.NonNullOf; nativ prüft ClassGuard es mit, JSON mit JsonFieldInfo.defined 0x41-0x43). Ein Objekt hat keinen
+Nullwert (Entscheidung des Benutzers): eine Variable braucht ihren Initialisierer, ein Feld ohne einen setzt jeder Konstruktor als eine seiner Anweisungen,
+sonst ein Übersetzungsfehler. Offen: nativ liest der Generator ein solches Feld noch als „vielleicht undefined“ (die Prüfung danach bleibt).
+
 Offen:
 
-* **Klassen, Interfaces und Records** (`Dog pets[]`, `IShape shapes[]`): nur Objekte dieser Klasse (oder abgeleiteter), dieses Interfaces, oder
-  `undefined`; ein anderes Objekt ist eine ArgumentException wie bei einem Feld mit dieser Klasse. Der Typprüfer kennt den Elementtyp (heute `any`
-  nach dem Lesen); nativ ruft der Generator Methoden der Elemente direkt (Klasse bekannt) statt über den Verteiler.
-* **`string`, Enums, Lambdas mit Signatur** (`string names[]`, `Color c[]`, `lambda<int, int> fs[]`) ebenso.
-* **`defined` für sie**: `defined Dog pets[]` - kein Element ist undefined. Offen ist, womit ein neues Array beginnt (kein Nullwert für Objekte:
-  nur mit Initialisierer oder `new Dog[n]` mit einem Erzeuger, `""` für string, der erste Wert eines Enums).
+* **Lambdas mit Signatur** (`lambda<int, int> fs[]`): noch ohne Elementtyp.
+* Der Typprüfer kennt den Elementtyp beim Lesen und Schreiben (TC001); nativ ruft der Generator Methoden der Elemente noch über den Verteiler statt
+  direkt.
 * **Typparameter** (`T items[]` in generischem Code): als Feld **umgesetzt** für Zahlen-Typargumente (FieldInfo.ArrayOfParam: jede Zuweisung typisiert
   nach dem Typargument des Objekts, wie `new T[n]`; `List<T>` deklariert so `T items[]`). Offen: ein Klassen-/string-Typargument prüft die Elemente
   noch nicht; `Dictionary<K, V>`/`HashSet<T>` haben ihre Arrays noch als `any`.
-* Mehrdimensional (`Dog grid[][]`), JSON, Reflection, `copy`/`taking` wie bei den Zahlen-Arrays; Meldungen in VM und nativ gleich.
+* JSON liest und schreibt Klassen-Arrays noch wie `any`-Arrays (ohne Prüfung der Elemente). Mehrdimensional (`Dog grid[][]`) typisiert wie bei den
+  Zahl-Arrays die inneren Arrays.
 
 ## 20. `defined` für Felder herleiten: Basisklassen
 
@@ -1173,8 +1185,11 @@ Mit JSON und Reflection (Wunsch des Benutzers): ohne Zutun bleibt eine Klasse da
 kann jede Klasse nennen; Reflection erreicht jedes Mitglied per Name); `[InferDefined]` vor der Klasse - auch in einem Paket - schaltet die Herleitung
 für sie ein, und was von außen kommt, wird geprüft (Meldung nennt die Herleitung, JSON: fehlend 0, `null` ein Fehler). SPEC 8.10b, TYPES.md.
 
-Offen (Wunsch des Benutzers, später): auch Klassen mit Basisklasse zulassen - dafür prüfen, ob der Konstruktor der Basisklasse (und was er aufruft,
-auch eine überschriebene Methode der abgeleiteten Klasse) über Umwege auf das Feld zugreift, bevor der eigene Konstruktor es gesetzt hat.
+**Umgesetzt** (Wunsch des Benutzers): auch Klassen mit Basisklasse (TypeChecker.BaseConstructionSafe). Die Konstruktoren und Feld-Initialisierer der
+Basisklassen laufen zuerst (auch ohne `: base(...)` der parameterlose); was sie von `this` benutzen - und die Methoden und Properties der Basisklassen,
+die sie so erreichen, verfolgt - darf kein Mitglied sein, das die Klasse selbst oder eine von ihr abgeleitete deklariert (eine Überschreibung könnte das
+Feld lesen), und `this` geht nicht hinaus. Die Feld-Initialisierer der abgeleiteten Klassen rufen nichts und lesen das Feld nicht. Eine unbekannte
+Basisklasse: nicht hergeleitet.
 
 ## 21. Typisierte Spezialisierungen generischer Methoden
 
@@ -1193,10 +1208,16 @@ Gemessen (nativ, Release, 1 Mio., die Maschine war belastet - Instruktionen mit 
 Offen:
 
 * `l[i]` noch näher an 3 ns: der Test der Typargumente ist eingebettet (`static inline`); es bleibt der Aufruf des Rumpfs mit einem `Value` als Ergebnis.
-* `Grow` kopiert Element für Element (etwa 60 Instruktionen je Element): ein Kopieren der gepackten Daten am Stück.
+* `Grow` kopiert Element für Element (etwa 60 Instruktionen je Element): ein Kopieren der gepackten Daten am Stück. **Umgesetzt:** `__array_copy(src, dst, n)`
+  (nativ fire_arrayCopy: ein Block bei gleich gepackten Arrays, sonst wie `dst[i] = src[i]`; VM ArrayCopyMethods) in `Grow<int>`/`Grow<float>` und in
+  `__HashTable.Resize`, wenn nichts entfernt wurde - `List<int>.Add` 19 → 15 ns.
 * Methoden mit Ergebnis (`l.Get(i)`-artig) an der Aufrufstelle wie `l[i]` typisieren (der Hinweis steht schon in der Tabelle).
 * `Dictionary<K, V>`/`HashSet<T>`: **umgesetzt** `K keys[]`/`V vals[]` (nach den Typargumenten typisiert), die Hilfsarrays `defined int`/`defined bool`,
   `HashOf<int, any>`/`Find<int, any>`/`Insert<int, any>` im `__HashTable` (der Platzhalter `any` in Spezialisierungen ist dafür neu), `arraySet`
   schreibt eine Zahl ohne Einheit direkt in ein gepacktes int-/float-Array, `adaptSlot`/`adaptUnit` lassen eine Zahl in ihrer Einheit ohne Aufruf durch.
   `Dictionary<int, int>` mit 200 000 Einträgen (setzen, lesen) und `HashSet<int>` (Add, Contains): 1959 → 1237 Mio. Instruktionen. Offen: der Wert
-  geht noch als `any` in die Tabelle (`Insert<int, int>` usw. für die häufigen Paare), `Resize` kopiert Element für Element.
+  geht noch als `any` in die Tabelle (`Insert<int, int>` usw. für die häufigen Paare), `Resize` kopiert Element für Element. **Umgesetzt:**
+  `operator[]<int, int>`/`<int, float>` (lesen und schreiben) und `Insert<int, int>`/`<int, float>`; die Spezialisierungen stehen nach Genauigkeit sortiert
+  (weniger `any` zuerst); in einer Spezialisierung ist die für `self` gewisse ohne Test der C-Rumpf mit C-Ergebnis (KnownSelfTypeArgs); der Hash eines
+  int-Schlüssels ist nativ eine C-Zahl (IntKeyHash). `Dictionary<int, int>` mit 200 000 Einträgen: setzen 355 → 150 ns, lesen 95-140 → 56 ns.
+  Offen: `Find` prüft je Kettenglied `self` und die Arrays (Lebendigkeit über Schleifen hinweg in der Flussanalyse).

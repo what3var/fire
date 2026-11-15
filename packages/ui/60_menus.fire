@@ -51,7 +51,7 @@ namespace UI {
         MenuPopup parentMenu
 
         construct(List entries) : base(0, 0, -1, -1) {
-            this.entries = entries
+            this.entries = try take entries
             this.grabsKeys = true
         }
 

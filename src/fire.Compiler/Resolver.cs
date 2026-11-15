@@ -1180,9 +1180,36 @@ namespace fire.Compiler
         {
             if (type is not { NonNull: true }) return;
             // (`defined int a[]`: an array whose elements are never undefined - of a value type, written with the brackets after the name)
-            if (type.ArrayRank > 0 || arrayRanks > 0 && fire.Values.ArrayElem.Of(type) == 0)
+            // (`defined string names[]`, `defined Dog pets[]`: an array of strings, of a class or of an enum - ROADMAP 19; not of `any` or a lambda)
+            bool classArray = arrayRanks > 0 && type is { PointerDepth: 0, LambdaSignature: null } && type.BaseName is not ("any" or "class" or "var" or "undefined" or "lambda");
+            if (type.ArrayRank > 0 || arrayRanks > 0 && fire.Values.ArrayElem.Of(type) == 0 && !classArray)
                 throw new ResolverException($"'defined {type.BaseName}' is a value that is never undefined - an array of them is written 'defined {type.BaseName} name[]' (int, float, bool, char, byte, word)", line);
+            // (`defined string s`, `defined Dog d`, `defined Color c`: never undefined - not `any`, `var` or a lambda, which name no type to hold)
+            if (arrayRanks == 0 && (type.LambdaSignature != null || type.BaseName is "any" or "class" or "var" or "undefined" or "lambda" || type.IsInferred))
+                throw new ResolverException($"'defined' needs a type that says what the value is - '{type.BaseName}' takes anything (write 'defined int', 'defined string', a class, an interface or an enum)", line);
         }
+
+        /// <summary>A field `defined Dog d` without an initializer (SPEC 8.10b): every constructor of the class sets it - as one of its statements (not inside
+        /// a branch or a loop: `this.d = x`, `d = x`, `if (this.d = try take x)`); a static one, or a class without a constructor, needs the initializer.</summary>
+        private static void CheckDefinedObjectField(ClassDecl cd, FieldDecl fd)
+        {
+            string written = $"'defined {fd.Type!.BaseName} {fd.Name}'";
+            if (fd.IsStatic) throw new ResolverException($"{written} needs a value: an object has no zero to start with (write 'static defined {fd.Type.BaseName} {fd.Name} = ...')", fd.Line);
+            var ctors = cd.Members.OfType<ConstructorDecl>().ToList();
+            if (ctors.Count == 0)
+                throw new ResolverException($"{written} needs a value: an object has no zero to start with - give it an initializer or set it in a constructor", fd.Line);
+            bool Sets(Expr e) => e is AssignExpr { Target: IdentifierExpr { Name: var n } } && n == fd.Name
+                || e is AssignExpr { Target: MemberExpr { Target: ThisExpr, Name: var m } } && m == fd.Name;
+            foreach (var ctor in ctors)
+                if (!ctor.Body.Statements.Any(st => st is ExprStmt { Expression: var e } && Sets(e) || st is IfStmt { Condition: var c } && Sets(c)))
+                    throw new ResolverException($"{written} has no zero to start with: the constructor in line {ctor.Line} must set it (this.{fd.Name} = ...), or the field needs an initializer", ctor.Line);
+        }
+
+        /// <summary>`defined Dog d` (SPEC 8.10b): an object has no zero to start with - a declaration of a class, an interface or a record needs its value;
+        /// `defined string` starts at "", a defined enum at its first value, a number at 0.</summary>
+        private bool HasNoZero(TypeRef? type, int arrayRanks) =>
+            type is { NonNull: true, PointerDepth: 0, ArrayRank: 0, LambdaSignature: null } && arrayRanks == 0 && fire.Bytecode.DeclaredKind.Of(type) == 0
+            && type.BaseName != "string" && !IsEnumTypeName(type.BaseName);
 
         /// <summary>Validates a complete TypeRef: base name like
         /// ValidateTypeName, plus - if present - that a bit width only stands with
@@ -1223,6 +1250,9 @@ namespace fire.Compiler
             public readonly Dictionary<string, string> RequiredUnits = new();
             /// <summary>Declared bit widths (TypeRef.WidthCode) of the variables of this scope: an assignment cuts the value to them.</summary>
             public readonly Dictionary<string, int> Widths = new();
+            /// <summary>A variable declared as an array (`Dog pets[]`): the declared element type and the rank - the compiler types what is assigned
+            /// (an array of a class, `string` or an enum, ROADMAP 19).</summary>
+            public readonly Dictionary<string, (TypeRef Type, int Rank)> ArrayDecls = new();
 
             /// <summary>Names of the `ref` parameters of this scope (the slot holds a pointer to the caller's variable).</summary>
             public readonly HashSet<string> RefNames = new();
@@ -1244,7 +1274,7 @@ namespace fire.Compiler
         private void PushScope() => _current = new ResolverScope(_current);
         private void PopScope() => _current = _current.Parent!;
 
-        private void Define(string name, int line, bool isReadonly = false, string? requiredUnit = null, bool isRef = false, int width = 0)
+        private void Define(string name, int line, bool isReadonly = false, string? requiredUnit = null, bool isRef = false, int width = 0, TypeRef? arrayElem = null, int arrayRank = 0)
         {
             if (_current.Slots.ContainsKey(name))
             {
@@ -1259,12 +1289,14 @@ namespace fire.Compiler
                 _current.RequiredUnits.Remove(name);
                 _current.RefNames.Remove(name);
                 _current.Widths.Remove(name);
+                _current.ArrayDecls.Remove(name);
             }
             _current.Slots[name] = _current.Slots.Count;
             if (isRef) _current.RefNames.Add(name);
             if (isReadonly) _current.ReadonlySlots.Add(name);
             if (requiredUnit != null) _current.RequiredUnits[name] = requiredUnit;
             if (width != 0) _current.Widths[name] = width;
+            if (arrayElem != null && arrayRank > 0) _current.ArrayDecls[name] = (arrayElem, arrayRank);
         }
 
         private ResolvedRef ResolveIdentifierRef(string name, int line)
@@ -1282,7 +1314,8 @@ namespace fire.Compiler
                     if (scope.IsGlobal) { global = scope; globalSlot = slot; break; }
                     scope.RequiredUnits.TryGetValue(name, out var requiredUnit);
                     scope.Widths.TryGetValue(name, out int width);
-                    return new ResolvedRef.Local(depth, slot, requiredUnit, scope.RefNames.Contains(name), width);
+                    scope.ArrayDecls.TryGetValue(name, out var arrayDecl);
+                    return new ResolvedRef.Local(depth, slot, requiredUnit, scope.RefNames.Contains(name), width, arrayDecl.Type, arrayDecl.Rank);
                 }
                 depth++;
                 scope = scope.Parent;
@@ -1294,7 +1327,8 @@ namespace fire.Compiler
                 // (a fire body runs without `this`: its own variables and the captures - `taking`, `with` - win over a field of the same name)
                 if (_fireScope != null && !_inBoundLambda)
                 {
-                    if (global != null) return new ResolvedRef.Global(globalSlot, global.RequiredUnits.GetValueOrDefault(name), global.Widths.GetValueOrDefault(name));
+                    if (global != null) return new ResolvedRef.Global(globalSlot, global.RequiredUnits.GetValueOrDefault(name), global.Widths.GetValueOrDefault(name),
+                        global.ArrayDecls.GetValueOrDefault(name).Type, global.ArrayDecls.GetValueOrDefault(name).Rank);
                     throw new ResolverException(
                         $"'{name}' is an instance member - a 'fire' block runs without 'this': give the thread what it needs with 'taking' or 'with'", line);
                 }
@@ -1309,7 +1343,8 @@ namespace fire.Compiler
             {
                 global.RequiredUnits.TryGetValue(name, out var requiredUnit);
                 global.Widths.TryGetValue(name, out int width);
-                return new ResolvedRef.Global(globalSlot, requiredUnit, width);
+                global.ArrayDecls.TryGetValue(name, out var globalArray);
+                return new ResolvedRef.Global(globalSlot, requiredUnit, width, globalArray.Type, globalArray.Rank);
             }
 
             if (_nativeNames.Contains(name))
@@ -1387,7 +1422,8 @@ namespace fire.Compiler
                 // identifier" - a pure follow-up error of the one
                 // real error.
                 if (stmt is VarDeclStmt vd && !_current.Slots.ContainsKey(vd.Name))
-                    Define(vd.Name, vd.Line, vd.IsReadonly, vd.Type?.UnitDemand, width: vd.ArrayRanks.Count == 0 ? vd.Type?.WidthCode ?? 0 : vd.Type?.ArrayWidthCode(vd.ArrayRanks.Count) ?? 0);
+                    Define(vd.Name, vd.Line, vd.IsReadonly, vd.Type?.UnitDemand, width: vd.ArrayRanks.Count == 0 ? vd.Type?.WidthCode ?? 0 : vd.Type?.ArrayWidthCode(vd.ArrayRanks.Count) ?? 0,
+                        arrayElem: vd.Type, arrayRank: vd.ArrayRanks.Count);
             }
         }
 
@@ -1460,6 +1496,8 @@ namespace fire.Compiler
                     if (vd.Initializer != null) ResolveExprAllowTake(vd.Initializer);
                     if (vd.Type != null) ValidateTypeRef(vd.Type, vd.Line);
                     ValidateNonNull(vd.Type, vd.ArrayRanks.Count, vd.Line);
+                    if (vd.Initializer == null && HasNoZero(vd.Type, vd.ArrayRanks.Count))
+                        throw new ResolverException($"'defined {vd.Type!.BaseName} {vd.Name}' needs a value: an object has no zero to start with (write 'defined {vd.Type.BaseName} {vd.Name} = ...')", vd.Line);
                     ResolveArrayRanks(vd.ArrayRanks);
                     if (vd.Initializer == null && vd.ArrayRanks.Count == 0 && (vd.Type == null || vd.Type.IsInferred))
                         throw new ResolverException($"'var {vd.Name}' needs an initializer: the type of a 'var' comes from its value (or declare it with a type: 'int {vd.Name}')", vd.Line);
@@ -1485,7 +1523,8 @@ namespace fire.Compiler
                         throw new ResolverException(
                             $"'{vd.Name}[{sizeLit.Value.AsInt()}]' expects {sizeLit.Value.AsInt()} elements, " +
                             $"but the array literal initializer has {arrLit.Elements.Count}", vd.Line);
-                    Define(vd.Name, vd.Line, vd.IsReadonly, vd.Type?.UnitDemand, width: vd.ArrayRanks.Count == 0 ? vd.Type?.WidthCode ?? 0 : vd.Type?.ArrayWidthCode(vd.ArrayRanks.Count) ?? 0);
+                    Define(vd.Name, vd.Line, vd.IsReadonly, vd.Type?.UnitDemand, width: vd.ArrayRanks.Count == 0 ? vd.Type?.WidthCode ?? 0 : vd.Type?.ArrayWidthCode(vd.ArrayRanks.Count) ?? 0,
+                        arrayElem: vd.Type, arrayRank: vd.ArrayRanks.Count);
                     if (KnownClassOf(vd.Type, vd.Initializer, vd.ArrayRanks.Count > 0) is { } declaredClass) _current.KnownClasses[vd.Name] = declaredClass;
                     break;
 
@@ -1781,6 +1820,8 @@ namespace fire.Compiler
                                 AddError(new ResolverException($"Field '{fd.Name}' of class '{cd.Name}' needs a type: a field is not declared with 'var' (use the type it holds, or 'any' if every type is allowed)", fd.Line));
                             else Guard(() => ValidateTypeRef(fd.Type, fd.Line));
                             Guard(() => ValidateNonNull(fd.Type, fd.ArrayRanks.Count, fd.Line));
+                            if (fd.Initializer == null && HasNoZero(fd.Type, fd.ArrayRanks.Count))
+                                Guard(() => CheckDefinedObjectField(cd, fd));
                             ResolveArrayRanks(fd.ArrayRanks);
                             ResolveFieldInitializer(fd);
                             break;
@@ -1943,7 +1984,8 @@ namespace fire.Compiler
                 if (p.Type != null) Guard(() => ValidateTypeRef(p.Type, body.Line));
                 Guard(() => ValidateNonNull(p.Type, p.ArrayRanks.Count, body.Line));
                 ResolveArrayRanks(p.ArrayRanks);
-                Guard(() => Define(p.Name, body.Line, requiredUnit: p.Type?.UnitDemand, isRef: p.ByRef, width: p.ArrayRanks.Count == 0 ? p.Type?.WidthCode ?? 0 : 0));
+                Guard(() => Define(p.Name, body.Line, requiredUnit: p.Type?.UnitDemand, isRef: p.ByRef, width: p.ArrayRanks.Count == 0 ? p.Type?.WidthCode ?? 0 : 0,
+                    arrayElem: p.ByRef ? null : p.Type, arrayRank: p.ArrayRanks.Count));
                 if (KnownClassOf(p.Type, null, p.ArrayRanks.Count > 0) is { } parameterClass) _current.KnownClasses[p.Name] = parameterClass;
             }
 

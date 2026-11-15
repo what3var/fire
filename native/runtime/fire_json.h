@@ -1193,6 +1193,13 @@ static Value jsBuildInstance(JsReader* r, JsNode* o, const char* type, OwnList* 
         uint8_t dk = (uint8_t)(df->defined & 0x7F);   /* (0x80: derived `defined`, FieldInfo.DerivedDefined) */
         if (!df->defined) continue;
         if (df->raw) continue;   /* (a packed field starts at zero anyway) */
+        if (df->defined & 0x40) {   /* (`defined string s` holds "", `defined Color c` its first value; `defined Dog d` has none - checked below) */
+            static const fire_char16 kNone = 0;
+            uint16_t e = (df->defined & 0x3F) == 2 ? jsEnumIndex(df->type) : 0;
+            if ((df->defined & 0x3F) == 1) jsFieldStore(obj, df->slot, df->half, newStrFrom(&kNone, 0, objOwned(o2)));
+            else if (e && g_enums[e - 1].count > 0) jsFieldStore(obj, df->slot, df->half, EnumV(g_enums[e - 1].members[0].value, e));
+            continue;
+        }
         jsFieldStore(obj, df->slot, df->half, dk == K_Int ? Int(0, df->unit) : dk == K_Float ? Float((Real)0, df->unit) : dk == K_Bool ? Bool(false)
             : dk == K_Word ? WordV(0) : Char(0));
     }
@@ -1213,6 +1220,10 @@ static Value jsBuildInstance(JsReader* r, JsNode* o, const char* type, OwnList* 
         v = jsBuild(r, member->node, jsSubstitute(J, field->type, o2, c), objOwned(o2), jsCat3(J, path, ".", key), field->unit, s);
         /* (`defined int a[]`: 0x40 beside the element type - its elements are never undefined, ArrayElem.DefinedFlag) */
         if (field->arr && !J->failed && v.kind == K_Array) typeArray(v, (uint8_t)(field->arr & 0x3F), field->arr >> 8, 0, (uint8_t)((field->arr & 0x40) ? TU_DEFINED : 0), Undef(), 1);
+        if ((field->defined & 0x40) && !J->failed && v.kind == K_Undefined) {   /* (`defined Dog d`: null is no object) */
+            jsFail(J, jsCat5(J, jsCat3(J, path, ".", key), " is ", strchr("AEIOUaeiou", field->type[0]) ? "an " : "a ", field->type, " and never undefined."), "ArgumentException");
+            break;
+        }
         if (field->defined && !J->failed && v.kind == K_Undefined) {
             uint8_t fk = field->defined & 0x7F;
             jsFail(J, jsCat3(J, jsCat3(J, path, ".", key), fk == K_Int ? " is an int" : fk == K_Float ? " is a float" : fk == K_Word ? " is a word"
@@ -1221,6 +1232,14 @@ static Value jsBuildInstance(JsReader* r, JsNode* o, const char* type, OwnList* 
         }
         if (field->raw) jsRawStore(o2, field->raw, field->rawOff, v);
         else jsFieldStore(obj, field->slot, field->half, v);
+    }
+    /* `defined Dog d` (SPEC 8.10b): a field the text does not give is no object - an ArgumentException like a `null` */
+    for (m = 0; !J->failed && c->fields && c->fields[m].name; m++) {
+        const JsonFieldInfo* df = &c->fields[m];
+        if ((df->defined & 0x40) && !df->raw && jsFieldGet(o2, df->slot, df->half).kind == K_Undefined) {
+            jsFail(J, jsCat5(J, jsCat3(J, path, ".", df->name), " is ", strchr("AEIOUaeiou", df->type[0]) ? "an " : "a ", df->type, " and never undefined."), "ArgumentException");
+            break;
+        }
     }
     if (c->flags & JSON_FLAG_HOOK) {
         jsGrow(J, (void**)&r->hooks, r->nhooks, &r->capHooks, sizeof(Value));

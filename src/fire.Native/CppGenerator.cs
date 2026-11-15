@@ -599,6 +599,29 @@ namespace fire.Native
             return calls;
         }
 
+        /// <summary>The type arguments of `this` as the class `owner` (the class of the running method or one of its bases) sees them, when the running code is
+        /// a specialization or a copy for known type arguments (`GetIndex&lt;int, int&gt;` of a Dictionary: `int, int` for its __HashTable); null otherwise.</summary>
+        private static string[]? KnownSelfTypeArgs(Func f, string owner)
+        {
+            var args = f.Proto?.SpecArgs ?? f.SpecClassArgs;
+            var rc = f.Chunk.OwnerClass;
+            if (args == null || rc == null || (f.Proto?.SpecOwner ?? f.SpecClassOwner) != rc.Name) return null;
+            while (rc != null && rc.Name != owner)
+            {
+                var given = rc.BaseTypeArgs ?? Array.Empty<string>();
+                var outer = args;
+                args = given.Select(t => !t.StartsWith('$') ? t
+                    : int.TryParse(t.AsSpan(1), NumberStyles.Integer, CultureInfo.InvariantCulture, out int j) && j < outer.Length ? outer[j] : "any").ToArray();
+                rc = rc.Base;
+            }
+            return rc == null ? null : args;
+        }
+
+        /// <summary>Is the specialization certainly the one for `self` (KnownSelfTypeArgs fit its type arguments, `any` none of them)?</summary>
+        private static bool SpecKnownForSelf(Func f, FunctionProto spec) =>
+            spec.SpecOwner is { } owner && spec.SpecArgs is { } specArgs && KnownSelfTypeArgs(f, owner) is { } known && known.Length == specArgs.Length
+            && specArgs.Select((t, k) => t == "any" || t == known[k] && known[k] != "any").All(b => b);
+
         /// <summary>Do the type arguments of a specialization (`any`: every one) take those the type checker knows of a receiver ("int|string")?</summary>
         private static bool SpecArgsFit(string[] specArgs, string known)
         {
@@ -944,12 +967,13 @@ namespace fire.Native
             // an object with probes (flag 2) takes the setter, which tells them; every other one is written by the index
             // (the setter of a restricted name takes the caller's class: here it may, see DirectFieldIndex)
             string tail = FieldTail(name, from, () => "NULL");
-            string probed = _usesProbes ? $"if (FIRE_UNLIKELY(objAt({obj})->h.flags & 2)) {FieldFn("sf", name)}({obj}, x{tail}); else " : "";
+            bool mayBeProbed = MayBeProbed(rc, name);
+            string probed = mayBeProbed ? $"if (FIRE_UNLIKELY(objAt({obj})->h.flags & 2)) {FieldFn("sf", name)}({obj}, x{tail}); else " : "";
             // (a receiver that may be undefined: the setter reports that)
             string notObject = nullable ? $"if (FIRE_UNLIKELY({obj}.kind != K_Class)) {FieldFn("sf", name)}({obj}, x{tail}); else " : "";
             // (an object known to be alive - `self` right after a check of it, Flow.SelfAlive - needs no check)
             string dead = objAlive && !nullable ? "" : $"if (FIRE_UNLIKELY(!leafAlive({obj}))) destroyedError({obj}); else ";
-            _lastSetMayThrow = checksThrow || nullable || dead.Length > 0 || _usesProbes;
+            _lastSetMayThrow = checksThrow || nullable || dead.Length > 0 || mayBeProbed;
             return $"{{ Value x = {value}; {notObject}{dead}{probed}{{ {checks}{store} }} }}";
         }
 
@@ -974,10 +998,40 @@ namespace fire.Native
             return proto;
         }
 
+        /// <summary>What a probe can watch, as far as the code says (OpCode.Probe: the class of the object - null when not known - and the member - null for
+        /// `obj.*`); a probe by a name computed at run time (Reflect.Probe) can watch anything (_probeAnything).</summary>
+        private readonly HashSet<(RuntimeClass? Cls, string? Member)> _probeTargets = new();
+        private bool _probeAnything;
+        private void NoteProbeTarget(RuntimeClass? cls, string? member) { if (_probeTargets.Add((cls, member))) _version++; }
+        private void NoteProbeAnything() { if (!_probeAnything) { _probeAnything = true; _version++; } }
+
+        /// <summary>Can a write of the member `name` of an object of the class `rc` (null: not known) reach a probe? Not without probes, nor when no probe
+        /// can watch it: none on that member (or on a computed property that reads it, or on `obj.*`) of a class related to `rc`. Only such a write tests
+        /// the flag of the object and takes the setter helper (ProbedSetter); after any other one `self` is still alive.</summary>
+        private bool MayBeProbed(RuntimeClass? rc, string name)
+        {
+            if (!_usesProbes) return false;
+            // (another module, a plugin or a library may register probes the code here does not see)
+            if (_probeAnything || rc == null || Modular || _separate || _openWorld || _dll || LibraryRole) return true;
+            static bool Related(RuntimeClass a, RuntimeClass b)
+            {
+                for (var c = a; c != null; c = c.Base) if (ReferenceEquals(c, b)) return true;
+                for (var c = b; c != null; c = c.Base) if (ReferenceEquals(c, a)) return true;
+                return false;
+            }
+            foreach (var (cls, member) in _probeTargets)
+            {
+                if (cls != null && !Related(cls, rc)) continue;
+                if (member == null || member == name) return true;
+                if ((cls ?? rc).ComputedSources(member) is { } sources && sources.Contains(name)) return true;
+            }
+            return false;
+        }
+
         /// <summary>With probes: an object that has some (flag 2) takes the field helper - its setter tells them (WrapProbeSetter) - instead of the direct
         /// store or setter call that follows (`if (...) sf_x(obj, v); else `); empty without probes.</summary>
-        private string ProbedSetter(string obj, string field, string value, Func f, System.Func<string> list) =>
-            _usesProbes ? $"if (FIRE_UNLIKELY(objAt({obj})->h.flags & 2)) {FieldFn("sf", field)}({obj}, {value}{FieldTail(field, f, list)}); else " : "";
+        private string ProbedSetter(RuntimeClass? rc, string obj, string field, string value, Func f, System.Func<string> list) =>
+            MayBeProbed(rc, field) ? $"if (FIRE_UNLIKELY(objAt({obj})->h.flags & 2)) {FieldFn("sf", field)}({obj}, {value}{FieldTail(field, f, list)}); else " : "";
 
         /// <summary>The one accessor (`get_name`, or `set_name` for <paramref name="setter"/>) of the property `name` that every object an `rc` can be runs, when
         /// the code of `from` may use it on each of them (known at compile time); null when a class has a field of that name, the accessors differ, or the
@@ -1086,7 +1140,8 @@ namespace fire.Native
                 if (declared == 0 && cls.Rc.FindFieldRequiredArray(name) is var requiredArray and not 0)
                 {
                     // a field declared as a typed array without a unit: an array of that element or undefined (every assignment types it, FieldInfo.RequiredArray)
-                    if ((requiredArray >> 8) != 1 || cls.Rc.FindFieldRequiredUnit(name) != null) return TypeUnknown;
+                    // (an array of a class keeps its Values: no packed element type - ArrayElem.Class)
+                    if ((requiredArray >> 8) != 1 || cls.Rc.FindFieldRequiredUnit(name) != null || ArrayElem.TypeOf(requiredArray) == ArrayElem.Class) return TypeUnknown;
                     int arrType = TypeOf(KindArr, requiredArray & 0xFF) | NullableBit;
                     if (result is { } knownArr && knownArr != arrType) return TypeUnknown;
                     result = arrType;
@@ -1125,12 +1180,15 @@ namespace fire.Native
         {
             var parsed = DeclaredType.Parse(spec);
             string altCheck = "";
+            // (`defined Dog d`, `defined string s`: undefined does not fit - "... is a Dog and never undefined.")
+            string undefCheck = parsed.NonNull ? $"if (FIRE_UNLIKELY({value}.kind == K_Undefined)) guardClassFailed({value}, {CString(parsed.Display)}, {CString(what)}); " : "";
             if (parsed.Alternatives.Length > 0)
             {
                 string fits = string.Join(" || ", parsed.Alternatives.Select(alt => "(" + string.Join(" && ", alt.Select(c => HoldsExpr(value, c))) + ")"));
                 // (a destroyed object first: its memory is gone, `is of` must not read its class)
                 altCheck = $"if (FIRE_UNLIKELY({value}.kind != K_Undefined && ({value}.kind != K_Class || leafAlive({value})) && !({fits}))) guardClassFailed({value}, {CString(parsed.Display)}, {CString(what)});";
             }
+            altCheck = undefCheck + altCheck;
             if (parsed.TypeParamIndex < 0) return altCheck;
             // a type parameter: the type argument of the object (class) or of the call (method) decides when it is known, its `where` otherwise
             int k = parsed.TypeParamIndex;
@@ -1315,6 +1373,8 @@ namespace fire.Native
 
         /// <summary>Does a value of this static type pass the check of a declaration (DeclaredType, encoded) as it is?</summary>
         private bool FitsClassType(int type, string spec) =>
+            DeclaredType.Parse(spec).NonNull ? !IsNullable(type) && type != TypeUndefined && FitsClassTypeCore(type, spec) : FitsClassTypeCore(type, spec);
+        private bool FitsClassTypeCore(int type, string spec) =>
             type == TypeUndefined || DeclaredType.Parse(spec).TypeParamIndex < 0 && BaseKindOfType(type) == KindObj && (type & TypeNone) == 0
                 && (InterfaceOfType(type) is { } iface ? DeclaredType.Parse(spec).SingleName == iface : DeclaredClass(spec) is { } rc && ClassIs(ObjClass(type), rc.Name));
 
@@ -1700,11 +1760,44 @@ namespace fire.Native
         private string TypeArrayUnitArgsOf(string? demand, int elemCode = 0)
         {
             int defined = ArrayElem.IsDefined(elemCode) ? 8 : 0;
+            // (an array of a class, a string or an enum: its entry in g_arrClasses - TU_CLASS, ROADMAP 19)
+            if (ArrayElem.TypeOf(elemCode) == ArrayElem.Class && demand != null)
+                return $"{ArrClassId(demand)}, {16 | defined}, {Constant(Value.MakeString(ArrayElem.Name(ArrayElem.Class, demand)))}";
             if (demand == null) return $"0, {defined}, {Constant(Value.MakeString("(no unit)"))}";
             string unit = demand.TrimStart('#');
             if (unit == "any") return $"0, {4 | defined}, {Constant(Value.MakeString("any"))}";
             bool dimensionOnly = unit.StartsWith("any ", StringComparison.Ordinal);
             return $"{UnitC(UnitId(DemandUnit(unit)))}, {(dimensionOnly ? 3 : 1) | defined}, {Constant(Value.MakeString(Unit.DemandDisplay(unit)))}";
+        }
+
+        /// <summary>The arrays of a class, a string or an enum (ArrayElem.Class) by their DeclaredType text: the 1-based index of each in g_arrClasses.</summary>
+        private readonly Dictionary<string, int> _arrClasses = new(StringComparer.Ordinal);
+        private int ArrClassId(string text)
+        {
+            if (!_arrClasses.TryGetValue(text, out int id))
+            {
+                _arrClasses[text] = id = _arrClasses.Count + 1;
+                foreach (var alt in DeclaredType.Parse(ArrayElem.ClassText(text)).Alternatives) foreach (var c in alt) HoldsExpr("v", c);   // (registers the `isof_` it needs)
+                Constant(ArrayElem.Zero(ArrayElem.Class, text));   // (and the constant a defined one starts with: `""`, before the constants are written)
+                _version++;
+            }
+            return id;
+        }
+
+        /// <summary>g_arrClasses: for each array of a class what fits (the conditions of its declaration), its name and what a defined one starts with.</summary>
+        private string ArrClassTable()
+        {
+            if (_arrClasses.Count == 0) return "";
+            var sb = new StringBuilder();
+            foreach (var (text, id) in _arrClasses.OrderBy(kv => kv.Value))
+            {
+                var spec = DeclaredType.Parse(ArrayElem.ClassText(text));
+                string fits = spec.Alternatives.Length == 0 ? "true" : string.Join(" || ", spec.Alternatives.Select(alt => "(" + string.Join(" && ", alt.Select(c => HoldsExpr("v", c))) + ")"));
+                sb.AppendLine($"static bool {Px}acf_{id}(Value v) {{ return {fits}; }}");
+                sb.AppendLine($"static Value {Px}acz_{id}(void) {{ return {Constant(ArrayElem.Zero(ArrayElem.Class, text))}; }}");
+            }
+            sb.AppendLine($"static const ArrClass {Px}kArrClasses[] = {{{string.Join(", ", _arrClasses.OrderBy(kv => kv.Value).Select(kv => $"{{{Px}acf_{kv.Value}, {CString(ArrayElem.Name(ArrayElem.Class, kv.Key))}, {Px}acz_{kv.Value}}}"))}}};");
+            return sb.ToString();
         }
 
         /// <summary>CheckUnit on a Value variable as a statement: adaptSlot in place (no copy of the Value in and out), leaving for `exit` when it threw (null: no
@@ -2088,6 +2181,12 @@ namespace fire.Native
                     sb.AppendLine($"static const FireEnumMember kEnumM{i}[] = {{{string.Join(", ", _enumList[i].Members.Select(m => $"{{{CString(m.Name)}, {(m.Value == long.MinValue ? "INT64_MIN" : m.Value.ToString(CultureInfo.InvariantCulture) + "LL")}}}").DefaultIfEmpty("{\"\", 0}"))}}};");
                 sb.AppendLine($"static const FireEnum kEnums[] = {{{string.Join(", ", _enumList.Select((e, i) => $"{{{CString(e.Name)}, {(e.IsFlags ? 1 : 0)}, kEnumM{i}, {e.Members.Count}}}"))}}};");
                 _initCode.AppendLine($"    g_enums = kEnums; g_enumCount = {_enumList.Count};");
+            }
+            // the arrays of a class, a string or an enum (ROADMAP 19): what their elements must be
+            if (_arrClasses.Count > 0)
+            {
+                sb.Append(ArrClassTable());
+                _initCode.AppendLine($"    g_arrClasses = {Px}kArrClasses;");
             }
             if (DebugBuild) sb.Append(DebugProgramTables());
             sb.Append(SharedLibraryChecks());
@@ -2835,7 +2934,7 @@ namespace fire.Native
             .SelectMany(rc => rc.OwnFieldInfo.Where(kv => kv.Value.DerivedDefined).Select(kv => kv.Key)).ToHashSet(StringComparer.Ordinal);
         /// <summary>A field declared as a typed array (FieldInfo.RequiredArray): what is assigned is typed like by OpCode.TypeArray ("" for any other field).</summary>
         private string FieldArrayCheck(RuntimeClass rc, string name, string? obj = null) => rc.FindFieldRequiredArray(name) is var arr and not 0
-            ? $"typeArray(x, {ArrayElem.TypeOf(arr)}, {arr >> 8}, {TypeArrayUnitArgsOf(rc.FindFieldRequiredUnit(name), arr)}, 1);"
+            ? $"typeArray(x, {ArrayElem.TypeOf(arr)}, {arr >> 8}, {TypeArrayUnitArgsOf(rc.FindFieldArrayUnit(name), arr)}, 1);"
             // (`T items[]`: typed by the type argument of the object, like `new T[n]` - TArg.arrElem)
             : obj != null && ArrayOfParamParts(rc, name) is { } ofParam
                 ? $"{{ const TArg* fta_ = {TArgOfExpr(ofParam.Cls, ofParam.K, obj)}; if (fta_ && fta_->arrElem) typeArray(x, fta_->arrElem - 1, 1, {TypeArrayUnitArgsOf(null)}, 1); }}"
@@ -4139,6 +4238,16 @@ namespace fire.Native
         /// <summary>The scalar shadow of slot k (after its type: a bool `_b`, an int `_n`); it is declared with the function.</summary>
         /// <summary>A CallNative of a typed native in C whose every argument is a C number (NativeCTypes), called directly: it reads the scalar shadows
         /// itself - the slots need not become Values first.</summary>
+        /// <summary>`__MathCall(15, key)` (the hash of HashOf&lt;int, any&gt;) of an int without a unit that is a C number: computed as one (fire_mixHash, like
+        /// keyHash) - the arguments stay C numbers.</summary>
+        private bool IntKeyHash(Func f, Flow st, Instr ins)
+        {
+            if (ins.Op != OpCode.CallNative || ins.A[1] != 2 || ins.A[0] >= _natives.Count || _natives[ins.A[0]] != MathMethods.NativeName) return false;
+            int at = f.IndexOf[ins.Addr], key = st.Depth - 1;
+            if (at < 2 || f.Decoded[at - 2] is not { Op: OpCode.LoadConst } code || f.Chunk.Constants[code.A[0]] is not { Kind: ValueKind.Int } c || c.AsInt() != (long)MathMethod.Hash) return false;
+            return key >= 0 && key < 64 && (st.Scalar >> key & 1) != 0 && KindOfType(st.Types[key]) == KindInt && UnitOfType(st.Types[key]) == 0;
+        }
+
         private bool TypedNativeCall(Instr ins)
         {
             if (ins.Op != OpCode.CallNative || ins.A[0] >= _natives.Count || !_packageNatives.TryGetValue(_natives[ins.A[0]], out var pn) || pn.Argc != ins.A[1]) return false;
@@ -4264,7 +4373,7 @@ namespace fire.Native
             string VR(int k) => k >= 0 && k < 64 && st.Alias[k] is { } aliasedV ? aliasedV : SlotName(st.Region, k);
             if (AnyAlias(st) && !AliasAware(ins.Op)) MaterializeAliases(st, E);
             // (`Math.Abs(x)` ...: MathIntrinsic takes C numbers - the call of the prelude's function makes them Values first, below)
-            if (st.Scalar != 0 && !ScalarAware(ins.Op) && !TypedNativeCall(ins) && !(ins.Op == OpCode.CallStaticMethod && (CAbiStaticCallee(f, ins) != null || Str(ins.A[0]) == "Math"))
+            if (st.Scalar != 0 && !ScalarAware(ins.Op) && !TypedNativeCall(ins) && !IntKeyHash(f, st, ins) && !(ins.Op == OpCode.CallStaticMethod && (CAbiStaticCallee(f, ins) != null || Str(ins.A[0]) == "Math"))
                 && !(ins.Op == OpCode.GetStaticField && ConstantStatic(Str(ins.A[0]), Str(ins.A[1])) != null)   // (`Math.PI`: a constant) && !(ins.Op == OpCode.CallMethod && CAbiMethodCallee(f, st, ins) != null)
                 && !(ins.Op == OpCode.GetField && CAbiGetterCallee(f, st, ins) != null)
                 && !GuardTopProven(st, ins)
@@ -4279,8 +4388,8 @@ namespace fire.Native
                 // (an object with probes - flag 2 - takes the field helper, whose setter tells them, WrapProbeSetter; a handler may throw)
                 string ProbedCField(string o)
                 {
-                    if (!_usesProbes) return "";
                     string name = f.Chunk.Constants[ins.A[0]].AsString();
+                    if (!MayBeProbed(cfield.Rc, name)) return "";
                     string leave = CheckExit() is { } exit ? $" if (FIRE_UNLIKELY(g_unwind.active)) goto {exit};" : "";
                     return $"if (FIRE_UNLIKELY(objAt({o})->h.flags & 2)) {{ {FieldFn("sf", name)}({o}, {ScalarValueOf(KindOfType(ct), UnitOfType(ct), Number(d - 1))}{FieldTail(name, f, () => "NULL")});{leave} }} else ";
                 }
@@ -5382,6 +5491,12 @@ namespace fire.Native
                     if (native == MathMethods.NativeName && argc is 2 or 3)
                     {
                         int first = d - argc;
+                        // (the hash of an int key without a unit - `__MathCall(15, key)` in HashOf<int, any>: a C number, like keyHash does it)
+                        if (IntKeyHash(f, st, ins))
+                        {
+                            SetScalar(first, TypeOf(KindInt, 0), $"(FireInt)fire_mixHash((uint64_t){SN(first + 1)})");
+                            d = first + 1; return Next();
+                        }
                         E($"{S(first)} = mathCall({S(first)}.i, {S(first + 1)}, {(argc == 3 ? S(first + 2) : "Undef()")});");
                         Check();
                         d = first + 1; SetR(first, false); return Next();
@@ -5412,6 +5527,15 @@ namespace fire.Native
                         int first = d - 1;
                         string moved = SR(first);
                         E($"{T(first)} = fire_lambdaHandover({moved}, &{OwnerList()});");
+                        Check();
+                        d = first + 1; SetR(first, false); return Next();
+                    }
+                    if (native == ArrayCopyMethods.NativeName && argc == 3)
+                    {
+                        // `__array_copy(src, dst, count)` (the prelude's Grow): the packed numbers in one block (fire_rt.h fire_arrayCopy)
+                        int first = d - 3;
+                        string copyArgs = string.Join(", ", Enumerable.Range(first, 3).Select(SR));
+                        E($"{T(first)} = fire_arrayCopy({copyArgs});");
                         Check();
                         d = first + 1; SetR(first, false); return Next();
                     }
@@ -5489,6 +5613,7 @@ namespace fire.Native
                         UseReflection();
                         UseReflectionLevel(native); _reflNativesUsed.Add(native);
                         if (native is "__refl_probe" or "__refl_silence" or "__refl_silence_handle") UseProbes();
+                        if (native == "__refl_probe") NoteProbeAnything();   // (Reflect.Probe: a name computed at run time)
                         int first = d - argc;
                         string callerArg = "g_reflCaller";
                         string list = "&" + OwnerList();
@@ -5908,10 +6033,10 @@ namespace fire.Native
                     if (ObjSlot(d - 2) && DirectSetField(ObjClass(Ty(d - 2)), field, sfObj, sfValue, Ty(d - 1), f, IsNullable(Ty(d - 2)), objAlive: onSelf && st.SelfAlive) is { } direct)
                     {
                         E(initOpen + direct + initClose);
-                        if (onSelf && !_usesProbes) _selfAliveAfter = true;   // (checked: `self` lives - unless a probe's setter ran)
+                        if (onSelf && !MayBeProbed(ObjClass(Ty(d - 2)), field)) _selfAliveAfter = true;   // (checked: `self` lives - unless a probe's setter may have run)
                     }
                     else if (ObjSlot(d - 2) && !IsNullable(Ty(d - 2)) && DirectAccessor(ObjClass(Ty(d - 2)), field, true, f) is { } setter)
-                        E($"{initOpen}if (FIRE_UNLIKELY(!leafAlive({sfObj}))) destroyedError({sfObj}); else {ProbedSetter(sfObj, field, sfValue, f, () => "&" + OwnerList())}{{ Value r_ = {GetFunc(setter, FuncKind.Method).Name}({sfObj}, {sfValue}); adopt(r_, &{OwnerList()}); }}{initClose}");
+                        E($"{initOpen}if (FIRE_UNLIKELY(!leafAlive({sfObj}))) destroyedError({sfObj}); else {ProbedSetter(ObjClass(Ty(d - 2)), sfObj, field, sfValue, f, () => "&" + OwnerList())}{{ Value r_ = {GetFunc(setter, FuncKind.Method).Name}({sfObj}, {sfValue}); adopt(r_, &{OwnerList()}); }}{initClose}");
                     else E($"{initOpen}{FieldFn("sf", field)}({sfObj}, {sfValue}{FieldTail(field, f, () => "&" + OwnerList())});{initClose}");
                     Check();
                     AssignValue(d - 2, d - 1);
@@ -5936,7 +6061,7 @@ namespace fire.Native
                     string? direct = ObjSlot(d - 2) ? DirectSetField(ObjClass(Ty(d - 2)), field, obj, v, Ty(d - 1), f, IsNullable(Ty(d - 2))) : null;
                     var setter = direct == null && ObjSlot(d - 2) && !IsNullable(Ty(d - 2)) ? DirectAccessor(ObjClass(Ty(d - 2)), field, true, f) : null;
                     string store = direct ?? (setter != null
-                        ? $"if (FIRE_UNLIKELY(!leafAlive({obj}))) destroyedError({obj}); else {ProbedSetter(obj, field, v, f, () => "&" + OwnerList())}{{ Value r_ = {GetFunc(setter, FuncKind.Method).Name}({obj}, {v}); adopt(r_, &{OwnerList()}); }}"
+                        ? $"if (FIRE_UNLIKELY(!leafAlive({obj}))) destroyedError({obj}); else {ProbedSetter(ObjClass(Ty(d - 2)), obj, field, v, f, () => "&" + OwnerList())}{{ Value r_ = {GetFunc(setter, FuncKind.Method).Name}({obj}, {v}); adopt(r_, &{OwnerList()}); }}"
                         : $"{FieldFn("sf", field)}({obj}, {v}{FieldTail(field, f, () => "&" + OwnerList())});");
                     if (direct != null || setter == null && !HasProperty(field))
                     {
@@ -5980,7 +6105,7 @@ namespace fire.Native
                     if (_usesThreads && !plainStore && !setterValue) E($"noteHolderClaim({obj}, {v}, &{temp});");
                     var setter = direct == null && ObjSlot(d - 2) && !IsNullable(Ty(d - 2)) ? DirectAccessor(ObjClass(Ty(d - 2)), field, true, f) : null;
                     string store = direct ?? (setter != null
-                        ? $"if (FIRE_UNLIKELY(!leafAlive({obj}))) destroyedError({obj}); else {ProbedSetter(obj, field, v, f, () => "&" + OwnerList())}{{ Value r_ = {GetFunc(setter, FuncKind.Method).Name}({obj}, {v}); adopt(r_, &{OwnerList()}); }}"
+                        ? $"if (FIRE_UNLIKELY(!leafAlive({obj}))) destroyedError({obj}); else {ProbedSetter(ObjClass(Ty(d - 2)), obj, field, v, f, () => "&" + OwnerList())}{{ Value r_ = {GetFunc(setter, FuncKind.Method).Name}({obj}, {v}); adopt(r_, &{OwnerList()}); }}"
                         : $"{FieldFn("sf", field)}({obj}, {v}{FieldTail(field, f, () => "&" + OwnerList())});");
                     string claimInit = InitOpen(obj);
                     if (claimInit.Length > 0) store = claimInit + store + " g_recInit = wi_.next; }";
@@ -6014,11 +6139,11 @@ namespace fire.Native
                     {
                         E(direct);
                         if (_lastSetMayThrow) Check();
-                        _selfAliveAfter = !_usesProbes;   // (checked: `self` lives - unless a probe's setter ran)
+                        _selfAliveAfter = !MayBeProbed(selfClass, field);   // (checked: `self` lives - unless a probe's setter may have run)
                         d--; return Next();
                     }
                     else if (f.HasSelf && !IsExtensionMethod(f.Proto) && f.Chunk.OwnerClass is { } selfClass2 && DirectAccessor(selfClass2, field, true, f) is { } selfSetter)
-                        E($"if (FIRE_UNLIKELY(!leafAlive(self))) destroyedError(self); else {ProbedSetter("self", field, thisValue, f, () => "&" + OwnerList())}{{ Value r_ = {GetFunc(selfSetter, FuncKind.Method).Name}(self, {thisValue}); adopt(r_, &{OwnerList()}); }}");
+                        E($"if (FIRE_UNLIKELY(!leafAlive(self))) destroyedError(self); else {ProbedSetter(selfClass2, "self", field, thisValue, f, () => "&" + OwnerList())}{{ Value r_ = {GetFunc(selfSetter, FuncKind.Method).Name}(self, {thisValue}); adopt(r_, &{OwnerList()}); }}");
                     else E($"{FieldFn("sf", field)}(self, {thisValue}{FieldTail(field, f, () => "&" + OwnerList())});");
                     Check();
                     d--; return Next();
@@ -6202,6 +6327,20 @@ namespace fire.Native
                                 if (cSpecArgs[n] is not { } cargs || CAbiOf(sc.Callee) is not { } sabi) return $"{sc.Callee.Name}({hargs})";
                                 string ccall = $"{CName(sc.Callee)}({hrecv}{cargs})";
                                 return sabi.RetType == 0 ? ccall : ScalarValueOf(BaseKindOfType(sabi.RetType), UnitOfType(sabi.RetType), ccall);
+                            }
+                            // (in a specialization, on `self`: the first one whose type arguments are those of `self` is certain - without a test; its C body
+                            // keeps a C result, `this.Find(key, this.HashOf(key))` in GetIndex<int, int> calls both C bodies with C numbers)
+                            int known = SlotScalars() && hrecv == "self" && f.HasSelf ? specCalls.FindIndex(sc => SpecKnownForSelf(f, sc.Spec)) : -1;
+                            if (known >= 0 && cSpecArgs[known] is { } kargs && definedTests[known].Length == 0 && specCalls.Take(known).All(sc => !SpecKnownForSelf(f, sc.Spec))
+                                && CAbiOf(specCalls[known].Callee) is { } kabi)
+                            {
+                                E($"if (FIRE_UNLIKELY(!leafAlive(self))) {Thrower("destroyedError(self);")}");
+                                string kcall = $"{CName(specCalls[known].Callee)}(self{kargs})";
+                                if (kabi.RetType != 0) SetScalar(slot, kabi.RetType, kcall);
+                                else { E($"{T(slot)} = {kcall};"); SetR(slot, false); SetT(slot, ReturnType(specCalls[known].Callee)); }
+                                ArgsAfter(argc, mask, S(slot));
+                                Check();
+                                d = slot + 1; return Next();
                             }
                             string chain = string.Concat(specCalls.Select((sc, n) => $"({sc.Condition}{definedTests[n]}) ? {SpecCall(n)} : ")) + $"{target.Name}({hargs})";
                             string hslot = T(slot);
@@ -6581,7 +6720,8 @@ namespace fire.Native
                     }
                     E(ClassGuard(v, spec, Str(ins.A[2]), SelfObj(f), f.HasCallTArgs ? "ctargs" : null));
                     Check();
-                    JoinVarType(VarKey(f, v), DeclaredClass(spec) is { } guardedRc ? ObjType(guardedRc) | NullableBit : InterfaceType(spec) ?? TypeUnknown);
+                    // (`defined Dog p`: never undefined after the guard)
+                    JoinVarType(VarKey(f, v), DeclaredClass(spec) is { } guardedRc ? ObjType(guardedRc) | (DeclaredType.Parse(spec).NonNull ? 0 : NullableBit) : InterfaceType(spec) ?? TypeUnknown);
                     _kindsKept = true;
                     return Next();
                 }
@@ -6643,7 +6783,8 @@ namespace fire.Native
                         E($"{S(d - 1)} = newWordBuffer({S(d - 1)}, &{OwnerList()});");
                         SetR(d - 1, true); SetT(d - 1, TypeOf(KindBuf, BufWords)); _kindsKept = true; return Next();
                     }
-                    else if (at < f.Decoded.Count && f.Decoded[at] is { Op: OpCode.TypeArray } typed && typed.A[1] == 1)
+                    else if (at < f.Decoded.Count && f.Decoded[at] is { Op: OpCode.TypeArray } typed && typed.A[1] == 1 && ArrayElem.TypeOf(typed.A[0]) != ArrayElem.Class)
+                        // (an array of a class keeps Values: made plain, its TypeArray checks it - a defined one throws there, once)
                     {
                         E($"{S(d - 1)} = newTypedArray({S(d - 1)}, {ArrayElem.TypeOf(typed.A[0])}, {TypeArrayUnitArgs(chunk, typed.A[2], typed.A[0])}, &{OwnerList()});");
                         SetR(d - 1, true);
@@ -7109,6 +7250,7 @@ namespace fire.Native
                 case OpCode.Probe:
                 {
                     Need(2); UseProbes();
+                    NoteProbeTarget(ObjSlot(d - 2) ? ObjClass(Ty(d - 2)) : null, (ins.A[1] & 2) != 0 ? null : Str(ins.A[0]));
                     string member = (ins.A[1] & 2) != 0 ? "NULL" : CString(Str(ins.A[0]));
                     E($"{{ char err[500]; int64_t id = rf_probeAdd({S(d - 2)}, {member}, {((ins.A[1] & 1) != 0 ? "true" : "false")}, {S(d - 1)}, err, sizeof err); if (id == -2) {{ }} else if (id < 0) {{ fireError(strstr(err, \"has no member\") ? \"MissingMemberException\" : \"ArgumentException\", err); }} else {S(d - 2)} = Int(id); }}");
                     Check();

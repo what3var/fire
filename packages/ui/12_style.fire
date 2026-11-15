@@ -11,7 +11,7 @@ namespace UI {
 
         construct(string property, any value, string target = "") {
             this.property = property
-            this.value = value
+            this.value = try take value
             this.target = target
             UI.M.Own(this, value)
         }
@@ -37,7 +37,7 @@ namespace UI {
 
         construct(string property, any value, string source = "") {
             this.property = property
-            this.value = value
+            this.value = try take value
             this.source = source
         }
 
@@ -96,7 +96,7 @@ namespace UI {
         List saved
 
         construct(Trigger trigger) {
-            this.trigger = trigger
+            this.trigger = try take trigger
             this.saved = new List()
         }
 
@@ -242,10 +242,10 @@ namespace UI {
         construct(Element target, string targetProperty, any source, string sourceProperty, bool twoWay = false, Converter converter = undefined, bool once = false) {
             this.target = target
             this.targetProperty = targetProperty
-            this.source = source
+            this.source = try take source
             this.sourceProperty = sourceProperty
             this.twoWay = twoWay
-            this.converter = converter
+            this.converter = try take converter
             this.once = once
         }
 
