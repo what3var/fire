@@ -29625,6 +29625,32 @@ else
             try { target.Take(bs) } catch (ArgumentException e) { print("E11 " + e.message) }
             print("end")
             """),
+        ("Spezialisierungen (ROADMAP 21): Dictionary<int, int>, <int, float>, <string, Node> und HashSet<int> ueber Parameter - setzen, lesen, entfernen, wachsen, fehlender Schluessel, Keys, foreach", """
+            class Node { string n; construct(string n) { this.n = n } }
+            class U {
+                static int Run(Dictionary<int, int> d, int n) {
+                    for (int i = 0; i < n; i++) { d[i * 7] = i }
+                    int s = 0
+                    for (int i = 0; i < n; i++) { s = s + d[i * 7] }
+                    for (int i = 0; i < n; i = i + 2) { d.Remove(i * 7) }
+                    for (int i = n; i < n * 3; i++) { d[i] = i }
+                    return s + d.Count
+                }
+                static float F(Dictionary<int, float> d) { d[1] = 1.5; d[2] = 2.5; return d[1] + d[2] }
+                static string S(Dictionary<string, Node> d) { var a = new Node("a"); d["a"] = a; return d["a"].n + d.ContainsKey("b") }
+                static bool H(HashSet<int> h) { h.Add(3); h.Add(3); h.Remove(4); return h.Contains(3) && !h.Contains(4) && h.Count == 1 }
+            }
+            print(U.Run(new Dictionary<int, int>(), 300))
+            print(U.F(new Dictionary<int, float>()))
+            print(U.S(new Dictionary<string, Node>()))
+            print(U.H(new HashSet<int>()))
+            var d = new Dictionary<int, int>()
+            d[5] = 6
+            try { print(d[7]) } catch (ArgumentException e) { print("E1 " + e.message) }
+            var keys = d.Keys
+            print(keys.Count + " " + keys[0])
+            foreach (var kv in d) { print(kv.Key + "=" + kv.Value) }
+            """),
         ("defined fuer strings, Enums und Objekte (SPEC 8.10b): ein string beginnt bei \"\", ein Enum beim ersten Wert, ein Objekt braucht seinen Wert (Feld: jeder Konstruktor setzt es); undefined ist eine ArgumentException an Feld, Parameter, Rueckgabe, Variable, Reflection und in JSON (fehlend oder null)", """
             #import "json"
             #import "reflection"
@@ -30299,7 +30325,7 @@ else
             print(b.color + " " + (b.color is of Color) + " " + (b.color == Color.Green))
             var c = Json.Deserialize<Box>("{\"color\":2}")
             print(c.color + " " + (c.color is of Color) + " " + (c.color == Color.Blue))
-            Color d = 2
+            Color d = 2!Color
             print(d + " " + (d is of Color))
             flag enum Perm { Read = 1, Write = 2, Exec = 4 }
             class Acl { Perm perm; Color colors[]; construct() { } }

@@ -1240,4 +1240,10 @@ Offen:
   `operator[]<int, int>`/`<int, float>` (lesen und schreiben) und `Insert<int, int>`/`<int, float>`; die Spezialisierungen stehen nach Genauigkeit sortiert
   (weniger `any` zuerst); in einer Spezialisierung ist die für `self` gewisse ohne Test der C-Rumpf mit C-Ergebnis (KnownSelfTypeArgs); der Hash eines
   int-Schlüssels ist nativ eine C-Zahl (IntKeyHash). `Dictionary<int, int>` mit 200 000 Einträgen: setzen 355 → 150 ns, lesen 95-140 → 56 ns.
-  Offen: `Find` prüft je Kettenglied `self` und die Arrays (Lebendigkeit über Schleifen hinweg in der Flussanalyse).
+  **Umgesetzt:** (1) der Präfix CopyArgs vor einem Aufruf ließ die Typen der Argumente fallen - `this.Find(key, this.HashOf(key))` ging so mit Values
+  über den getesteten Weg; die Typen bleiben, und ein „nicht übernommenes“ Argument, das sicher eine Zahl ist, hindert den C-Rumpf nicht mehr;
+  (2) ein Feld `V vals[]` der Basisklasse ist in einer Spezialisierung der abgeleiteten typisiert (`this.vals[at]` in `GetIndex<int, int>` des
+  Dictionary: KnownSelfTypeArgs über die Basisklassen); (3) `self` bleibt über Sprünge, Rechnen und Vergleiche mit Zahlen und über Zugriffe auf
+  typisierte Arrays hinweg als lebend bekannt (SelfNeutralHere). Gemessen mit callgrind (`Dictionary<int, int>` über einen Parameter, 50 000 setzen,
+  250 000 lesen): 210 → 124 Mio. Instruktionen. Es bleibt: `Find` prüft je Kettenglied jedes seiner Arrays (lebt es, ist es gepackt, der Index) -
+  etwa 125 Instruktionen je Aufruf; `Resize` nach einem Entfernen verdichtet Eintrag für Eintrag (das ist seine Aufgabe, kein Blockkopieren möglich).

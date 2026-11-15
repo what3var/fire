@@ -443,7 +443,10 @@ namespace fire.Native
             // (Reflect.Set types it like any store - sf_, FieldArrayCheck; what JSON reads for it is an array the accesses check - packed, of that element - before
             // they read it in place)
             if (owner == null || args == null || LibraryRole || HasProperty(field) || _fieldAddressTaken.Contains(field)) return null;
-            if (ArrayOfParamParts(rc, field) is not { } ofParam || ofParam.Cls != owner || ofParam.K >= args.Length) return null;
+            // (the field may be one of a base class - `vals` of the __HashTable in `GetIndex<int, int>` of a Dictionary: its type arguments as that class sees them)
+            if (ArrayOfParamParts(rc, field) is not { } ofParam) return null;
+            if (ofParam.Cls != owner) args = KnownSelfTypeArgs(f, ofParam.Cls);
+            if (args == null || ofParam.K >= args.Length) return null;
             if (DeclaredType.TypedElementOf(args[ofParam.K]) is not int code) return null;
             return TypeOf(KindArr, code & 0xFF) | NullableBit;
         }
@@ -4252,9 +4255,10 @@ namespace fire.Native
             for (int k = Math.Max(0, before - 3); k < Math.Min(before, 64); k++) fromNone |= st.Types[k] == TypeNone;
             bool selfAliveBefore = st.SelfAlive;
             _selfAliveAfter = null;
+            bool neutralHere = selfAliveBefore && SelfNeutralHere(ins.Op, st.Types, before);   // (by the types of the operands, before the step changes them)
             var result = StepCore(f, chunk, ins, st, sb, locals);
             // (`self` stays checked across what runs no code of its own and destroys nothing; a field access of `self` says itself)
-            st.SelfAlive = _selfAliveAfter ?? (selfAliveBefore && SelfNeutral(ins.Op));
+            st.SelfAlive = _selfAliveAfter ?? (selfAliveBefore && (SelfNeutral(ins.Op) || neutralHere));
             // (slots that were popped are no scalars; a fall into a jump target makes the scalars Values - the target expects them there)
             st.Scalar &= st.Depth >= 64 ? ~0UL : (1UL << Math.Max(st.Depth, 0)) - 1;
             for (int k = Math.Max(st.Depth, 0); k < 64; k++) st.Alias[k] = null;
@@ -4343,6 +4347,31 @@ namespace fire.Native
         private static bool SelfNeutral(OpCode op) => op is OpCode.LoadConst or OpCode.LoadLocal or OpCode.LoadThis or OpCode.LoadGlobal or OpCode.Pop or OpCode.Dup
             or OpCode.StoreLocal or OpCode.StoreLocalPop or OpCode.DeclareLocal or OpCode.ClaimToScope or OpCode.CopyArgs or OpCode.GuardTop
             or OpCode.GuardLocal or OpCode.GuardLocalType;   // (the checks of the parameters run no code of the program: they convert or throw)
+        /// <summary>An instruction that runs no code of the program and destroys nothing because of what its operands are (ROADMAP 21: the hash table's
+        /// `Find` walks its chains without checking `self` again): a jump; arithmetic, a comparison or a condition on numbers and bools (an operator
+        /// overload needs an object); an element or the length of a typed array or a buffer (an array has no code of its own - a wrong index throws).</summary>
+        private static bool SelfNeutralHere(OpCode op, int[] types, int depth)
+        {
+            bool Plain(int k) => k >= 0 && k < 64 && types[k] != TypeUnknown && IsPlainType(types[k]);
+            bool ArrayAt(int k) => k >= 0 && k < 64 && (types[k] & TypeNone) == 0 && BaseKindOfType(types[k]) is KindArr or KindBuf;
+            switch (op)
+            {
+                case OpCode.Jump: case OpCode.EnterScope:
+                    return true;
+                case OpCode.JumpIfFalse: case OpCode.JumpIfFalsePeek: case OpCode.JumpIfTruePeek: case OpCode.Neg: case OpCode.LogicalNot:
+                    return Plain(depth - 1);
+                case OpCode.Add: case OpCode.Sub: case OpCode.Mul: case OpCode.Div: case OpCode.Mod: case OpCode.BitAnd:
+                case OpCode.Eq: case OpCode.NotEq: case OpCode.Lt: case OpCode.LtEq: case OpCode.Gt: case OpCode.GtEq:
+                case OpCode.JumpIfNotLt: case OpCode.JumpIfNotLtEq: case OpCode.JumpIfNotGt: case OpCode.JumpIfNotGtEq: case OpCode.JumpIfNotEq: case OpCode.JumpIfNotNotEq:
+                    return Plain(depth - 1) && Plain(depth - 2);
+                case OpCode.ArrayGet:
+                    return ArrayAt(depth - 2) && Plain(depth - 1);
+                case OpCode.GetField:
+                    return ArrayAt(depth - 1);
+                default:
+                    return false;
+            }
+        }
         private static bool AnyAlias(Flow st) { foreach (var a in st.Alias) if (a != null) return true; return false; }
         /// <summary>A load of a variable may leave the slot an alias of it (Flow.Alias): not in a debug build, not in a function with `try` (its catch blocks see
         /// the slots), not in one that takes the address of a local (a write through the pointer would not be seen).</summary>
@@ -6350,6 +6379,9 @@ namespace fire.Native
                         var target = GetFunc(directProto, FuncKind.Method);
                         var (callee, specCondition) = directProto.Specializations != null ? (target, null) : Specialize(f, ins, target, d - argc, argc, S, Ty);
                         long mask = ArgMask();
+                        // (an unclaimed argument that is certainly a number - `this.Find(key, this.HashOf(key))`: nothing to own, the C bodies take it)
+                        for (int i = 0; i < Math.Min(argc, 16); i++)
+                            if ((mask >> (4 * i) & 15) == 4 && K(d - argc + i) is KindInt or KindFloat or KindBool or KindWord) mask &= ~(15L << (4 * i));
                         if (directProto.Specializations is { } handSpecs && argc == directProto.ParamCount && HandSpecCalls(handSpecs, SR(slot)) is { Count: > 0 } specCalls)
                         {
                             // a typed specialization written in the class (`Add<int>`, SPEC 5.8.1): chosen here by the type arguments of the object, not in the
@@ -7366,6 +7398,8 @@ namespace fire.Native
                     Check();
                     d--; SetR(d - 1, R(d)); return Next();
                 case OpCode.CopyArgs:
+                    // (a prefix of the call that follows: it touches no slot - their kinds stay, `this.Find(key, this.HashOf(key))` keeps the hash an int)
+                    _kindsKept = true;
                     return Next();
                 case OpCode.AddressOfLocal:
                 {
