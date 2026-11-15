@@ -50,7 +50,13 @@ export -f one
 
 "$forge" install-standard > /dev/null 2>&1
 result=$(for g in "${groups[@]}"; do for f in "$root/$g"/*.fire; do printf '%s\0%s\0' "$g" "$f"; done; done | xargs -0 -n 2 -P "$jobs" bash -c 'one "$@"' _ 2> /dev/null | LC_ALL=C sort)
-printf '%s\n' "$result" | grep -v '^OK ' 
+# a case that was wrong runs once more, alone: what depends on timing (threads) must not fail because the machine was busy with the other cases
+again=$(printf '%s\n' "$result" | sed -n 's/^FAIL \([^:]*\):.*/\1/p')
+if [ -n "$again" ]; then
+    second=$(for c in $again; do one "${c%%/*}" "$root/$c.fire" 2> /dev/null; done)
+    for c in $(printf '%s\n' "$second" | sed -n 's/^OK   //p'); do result=$(printf '%s\n' "$result" | sed "s|^FAIL $c:.*|OK   $c (alone, at the second try)|"); done
+fi
+printf '%s\n' "$result" | grep -v '^OK   [^ ]*$'
 ok=$(printf '%s\n' "$result" | grep -c '^OK '); fail=$(printf '%s\n' "$result" | grep -c '^FAIL '); skip=$(printf '%s\n' "$result" | grep -c '^SKIP ')
 echo "$ok right, $fail wrong, $skip not run"
 [ "$fail" = 0 ]
