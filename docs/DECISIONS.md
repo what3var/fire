@@ -27,6 +27,13 @@ was dem Aufrufer gehört, oder jedes Objekt wie `delete`.
 
 ## Entschieden
 
+### D11. Ein Methodenname ist statisch oder für Instanzen, nicht beides
+
+Gefunden von einem Agenten: `static bool Inside(R a, R b)` neben `bool Inside(int x, int y)` in einer Klasse. Als Programm meldete der Compiler
+`E4057` für `R.Inside(a, a)`, obwohl die statische Überladung passte; im Paket `ui` kam beim Übersetzen nichts und erst zur Laufzeit eine
+ArgumentException ("not a static method"). Entscheidung des Benutzers: verboten, schon bei der Deklaration - `E4076` im Resolver, für eine Klasse
+und über ihre Basisklassen, auch in Paketen (das Paket wird dann nicht gebaut). SPEC 5.4.3, Resolver.ValidateStaticAndInstance.
+
 ### D9. `print` eines zerstörten Objekts ist die DestroyedException
 
 `print(x)`, `"" + x` und `$"{x}"` mit einem zerstörten Objekt werfen die DestroyedException, wie jede andere Verwendung - in VM und nativ, mit und
