@@ -1,0 +1,9 @@
+var n = 100000
+var a = new int[n]
+var total = 0
+for (var pass = 0; pass < 5; pass = pass + 1) {
+    for (var i = 0; i < n; i = i + 1) { a[i] = i + pass }
+    for (var i = 0; i < n; i = i + 1) { total = total + a[i] }
+}
+print(total)
+//# name: Fill an array and sum it up (ArrayGet/ArraySet)

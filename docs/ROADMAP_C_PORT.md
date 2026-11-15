@@ -161,6 +161,12 @@ Gelten für jeden Merge, der `native/runtime` oder den Generator berührt, und s
 * **Geschwindigkeit**: die Benchmarks aus NATIVE_BACKEND ("Messwerte") nicht langsamer, über die Messschwankung hinaus;
 * **Bauzeit**: nicht länger (forge in C sollte sie verkürzen).
 
+Größe und Geschwindigkeit misst `tests/native-baseline.py measure <forge> <stand.tsv>`: die neun Programme aus `tests/bench` (dieselben, die
+`fire.Benchmarks` in der VM misst) und ein leeres, nativ gebaut - Bytes, Code, Daten, Bauzeit, kürzester von 30 Läufen, Ausgabe;
+`compare <vorher.tsv> <nachher.tsv>` meldet, was größer oder (über die Toleranz hinaus) langsamer wurde. Stand heute (gcc 13, Linux x64): ein leeres
+Programm 22,7 KB, `list` 104,7 KB; zwei Messungen hintereinander geben dieselben Größen und Zeiten innerhalb weniger Prozent. Noch nicht dabei: ein
+`ui`-Programm und ein DOS-Ziel (braucht Open Watcom).
+
 ### Phase A - Vorbereitung im C#-Bestand
 
 Noch kein C; alles hier ist für sich nützlich und macht den Rest prüfbar.
@@ -202,8 +208,8 @@ Noch kein C; alles hier ist für sich nützlich und macht den Rest prüfbar.
 4. ~~**Referenzstände**~~ (umgesetzt): `tests/reference.sh <forge> <ordner>` schreibt für jeden Fall aus `tests/cases` und jedes Beispiel von spark
    den Text des Programms (`forge dump`), die Programmdatei, das C des nativen Backends und das Protokoll von forge, dazu `manifest.sha256`; zwei
    Stände vergleicht `diff -r`. Der Stand des C#-Compilers: 460 Programme ohne Fehler, rund 1 GB, auf 4 Kernen eine halbe Stunde (nicht eingecheckt -
-   er ändert sich mit jedem Commit am Compiler). **Offen:** Größen und Benchmarks der Referenzprogramme
-   ([Prüfungen für den nativen Build](#prüfungen-für-den-nativen-build)); AST und Diagnosen einzeln (kommen mit den Diagnose-Fällen aus Schritt 2).
+   er ändert sich mit jedem Commit am Compiler). Größe und Geschwindigkeit nativer Programme misst `tests/native-baseline.py`
+   ([Prüfungen für den nativen Build](#prüfungen-für-den-nativen-build)), die Diagnosen stehen bei den Fällen (`.diagnostics`). **Offen:** der AST als Text.
 5. **spark baut nur noch über die Befehlszeile von forge** (statt `NativeBuilder`/`ProjectBuilder` im eigenen Prozess) - der erste Teil von L4, noch ganz in C#.
 6. ~~Tabellen, die beide Seiten brauchen, aus **einer** Quelle~~ (umgesetzt): `native/tables` hält `opcodes.def` (Name, Nummer, Operandengrößen),
    `errors.def` (Code, Bereich, Text), `natives.def` (die Natives jedes Programms mit ihrem Index) und `prelude.fire` (das Prelude als ein Text).
