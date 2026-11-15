@@ -1964,8 +1964,8 @@ with the first value of the enum; `defined Dog d[]` has no zero, so it only take
 `new Dog[2]` there is an `ArgumentException` (`An element of a defined array of Dog cannot be undefined.`). VM and native backend behave the
 same (ArrayElem.Class, natively E_CLASS/TU_CLASS with a table of checks, g_arrClasses). JSON types what it reads for such a field like any other
 assignment. Generic code does the same by the type argument: `T items[]` and `new T[n]` in `class Bag<T>` are an array of Dog for a `Bag<Dog>`, of
-strings for a `Bag<string>` (so `List<Dog>`, `Dictionary<string, Dog>` hold typed arrays; an enum type argument is not known at run time and types
-nothing).
+strings for a `Bag<string>`, of the enum for a `Bag<Color>` (so `List<Dog>`, `Dictionary<string, Dog>`, `List<Color>` hold typed arrays; with an
+enum as the type argument a `T item` takes only a value of that enum or `undefined`).
 
 **Arrays of lambdas.** `lambda<int, int> fs[]` (and `int lambda<int> fs[]`) types the array, too: an element is a lambda with that many parameters or
 `undefined` - what a single `lambda<...>` declaration checks (the types of a signature are hints for the type checker). Anything else is an

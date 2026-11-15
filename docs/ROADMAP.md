@@ -1182,7 +1182,8 @@ Offen:
 * **Typparameter** (`T items[]` in generischem Code): als Feld **umgesetzt** für Zahlen-Typargumente (FieldInfo.ArrayOfParam: jede Zuweisung typisiert
   nach dem Typargument des Objekts, wie `new T[n]`; `List<T>` deklariert so `T items[]`). **Umgesetzt:** auch ein Klassen-, Interface- oder
   string-Typargument typisiert das Array (`List<Dog>`: ein Array von Dog; DeclaredType.ArrayOfTypeArg, nativ TArg.arrClass); `Dictionary<K, V>`/`HashSet<T>`
-  deklarieren `K keys[]`/`V vals[]` ebenso. Ein Enum-Typargument ist zur Laufzeit nicht bekannt und typisiert nichts.
+  deklarieren `K keys[]`/`V vals[]` ebenso. Ein Enum-Typargument ebenso (es trägt zur Laufzeit den Namen des Enums, DECISIONS D4): `T item` nimmt nur
+  Werte des Enums, `T items[]` ist ein Array davon.
 * **Umgesetzt:** JSON typisiert, was es für ein Feld `Dog pets[]`/`string names[]`/`Color cs[]` liest, wie jede andere Zuweisung (JsonFieldInfo.arrClass;
   `defined Dog must[]` mit einem `null`: die ArgumentException). Mehrdimensional (`Dog grid[][]`) typisiert wie bei den Zahl-Arrays die inneren Arrays.
 

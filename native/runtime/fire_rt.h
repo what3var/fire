@@ -5038,7 +5038,7 @@ FIRE_COLD FIRE_FN void guardClassFailed(Value v, const char* cls, const char* wh
     if (v.kind == K_Undefined)   /* (`defined Dog d`: never undefined) */
         snprintf(text, sizeof text, "%s is %s %s and never undefined.", what, vowel ? "an" : "a", cls);
     else
-        snprintf(text, sizeof text, "%s is %s %s, not %s.", what, vowel ? "an" : "a", cls, v.kind == K_Class ? className(asObj(v)->cls) : kindName(v));
+        snprintf(text, sizeof text, "%s is %s %s, not %s.", what, vowel ? "an" : "a", cls, v.kind == K_Class ? className(asObj(v)->cls) : enumOf(v) ? enumOf(v)->name : kindName(v));
     fireError("ArgumentException", text);
 }
 

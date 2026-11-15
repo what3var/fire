@@ -29412,6 +29412,48 @@ else
             for (int k = 0; k < 1000; k++) { total = total + loc[k % 3 == 1 ? 0 : k % 3].legs }
             print(total)
             """),
+        ("Ein Enum als Typargument ist zur Laufzeit bekannt (DECISIONS D4): T item nimmt nur Werte des Enums, T items[] ist ein Array davon, T is of Color, List/Dictionary/HashSet/JSON mit Enums", """
+            #import "json"
+            enum Color { Red, Green, Blue }
+            enum Size { S, M }
+            class Bag<T> {
+                T items[]
+                int n
+                construct() { this.items = new T[4]; this.n = 0 }
+                undefined Put(T item) { this.items[this.n] = item; this.n = this.n + 1 }
+                undefined Raw(any x) { any a[] = this.items; a[this.n] = x; this.n = this.n + 1 }
+                undefined Take(any arr) { this.items = arr }
+                T At(int i) { return this.items[i] }
+                bool IsColor() { return T is of Color }
+            }
+            class Palette { List<Color> colors; construct() { this.colors = new List<Color>() } }
+            any five = 5
+            any m = Size.M
+            var b = new Bag<Color>()
+            b.Put(Color.Green)
+            print(b.At(0) + " " + b.At(1) + " " + b.IsColor())
+            try { b.Put(five) } catch (ArgumentException e) { print("E1 " + e.message) }
+            try { b.Put(m) } catch (ArgumentException e) { print("E2 " + e.message) }
+            try { b.Raw(five) } catch (ArgumentException e) { print("E3 " + e.message) }
+            try { b.Raw(m) } catch (ArgumentException e) { print("E4 " + e.message) }
+            Color cs[] = [Color.Blue, undefined]
+            b.Take(cs)
+            print(b.At(0))
+            Size ss[] = [Size.S]
+            try { b.Take(ss) } catch (ArgumentException e) { print("E5 " + e.message) }
+            var l = new List<Color>()
+            l.Add(Color.Red); l.Add(Color.Blue)
+            print(l[1] + " " + l.Count + " " + l.Contains(Color.Blue))
+            var d = new Dictionary<Color, string>()
+            d[Color.Green] = "g"
+            print(d[Color.Green] + " " + d.ContainsKey(Color.Red))
+            var hs = new HashSet<Color>(); hs.Add(Color.Red); print(hs.Contains(Color.Red))
+            var p = new Palette(); p.colors.Add(Color.Green)
+            string text = Json.Serialize(p)
+            print(text)
+            var back = Json.Deserialize<Palette>(text)
+            print(back.colors[0] + " " + back.colors.Count)
+            """),
         ("defined fuer strings, Enums und Objekte (SPEC 8.10b): ein string beginnt bei \"\", ein Enum beim ersten Wert, ein Objekt braucht seinen Wert (Feld: jeder Konstruktor setzt es); undefined ist eine ArgumentException an Feld, Parameter, Rueckgabe, Variable, Reflection und in JSON (fehlend oder null)", """
             #import "json"
             #import "reflection"

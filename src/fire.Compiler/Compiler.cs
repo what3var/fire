@@ -508,7 +508,8 @@ namespace fire.Compiler
                 case "bool": case "char": case "string": return tr.BaseName;
                 case "any": case "class": return "";
             }
-            if (_refParams.EnumNames.Contains(tr.BaseName)) return "";   // (an enum: the type checker sees to it; at run time `Color c` takes what it gets, like `any`)
+            // (an enum by its full name: `T item` then takes a value of that enum, `T items[]` is an array of it - DECISIONS D4)
+            if (_refParams.EnumNames.Contains(tr.BaseName)) return EnumTypeNamed(tr.BaseName)?.Name ?? "";
             bool Known(string n) => _knownClassNames.Contains(n) || _refParams.InterfaceNames.Contains(n);
             string name = tr.TypeArgs is { Count: > 0 } args ? GenericClassNames.ResolveNewTarget(tr, args.Count, Known) : tr.ResolveBaseName(Known);
             if (Known(name)) return name;

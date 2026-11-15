@@ -25,13 +25,23 @@ Vorschlag des Benutzers: `try delete x` versucht, den Inhalt des Bezeichners zu 
 sonst `true`. Für die Container wurde es nicht gebraucht (`x is from this` genügt, D3). Offen ist, ob es trotzdem kommt - und ob es nur löscht,
 was dem Aufrufer gehört, oder jedes Objekt wie `delete`.
 
-### D4. Ein Enum als Typargument typisiert kein Array
+### D8. Prüft eine einzelne Deklaration `Color c` zur Laufzeit?
 
-`T items[]` in `Bag<Color>`: das Typargument eines Enums ist zur Laufzeit nicht bekannt (der Typprüfer prüft es), das Array bleibt untypisiert.
-Für Klassen, Interfaces, `string` und Zahlen typisiert das Typargument das Array (ROADMAP 19). Offen, ob Enums als Typargument zur Laufzeit
-bekannt werden sollen.
+Heute nimmt ein Parameter, ein Feld oder eine Variable `Color c` (ohne `defined`) zur Laufzeit jeden Wert; nur der Typprüfer meldet eine falsche
+Zuweisung. Geprüft wird dagegen `defined Color c`, ein Array `Color cs[]` und - seit D4 - ein `T` mit dem Typargument `Color`. Soll auch
+`Color c` prüfen (ein Wert des Enums oder undefined, sonst eine ArgumentException), wie es `Dog d` für Klassen tut? Dafür: einheitlich.
+Dagegen: Programme, die heute eine Zahl in eine Enum-Deklaration legen, bekämen eine Ausnahme.
 
 ## Entschieden
+
+### D4. Ein Enum als Typargument ist zur Laufzeit bekannt
+
+`Bag<Color>`: bisher ließ der Compiler das Typargument eines Enums zur Laufzeit leer - mit der Begründung, dass auch eine einzelne Deklaration
+`Color c` zur Laufzeit nimmt, was kommt (der Typprüfer prüft sie). Dadurch typisierte `T items[]` für ein Enum nichts, `T is of Color` war falsch
+und `T item` nahm jeden Wert. Jetzt (Wunsch des Benutzers) trägt das Typargument den vollen Namen des Enums: `T item` nimmt nur Werte dieses
+Enums oder undefined, `T items[]`/`new T[n]` ist ein Array davon (wie `Color cs[]`), `T is of Color` stimmt; `List<Color>`,
+`Dictionary<Color, V>`, `HashSet<Color>` prüfen so ihre Elemente. Compiler.TypeArgText, DeclaredType.ArrayOfTypeArg (ROADMAP 19).
+Offen bleibt die Folgefrage D8.
 
 ### D3. Container zerstören, was ihnen gehört, wenn es herausfällt
 

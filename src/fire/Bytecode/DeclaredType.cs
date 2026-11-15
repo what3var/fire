@@ -46,11 +46,14 @@ namespace fire.Bytecode
 
         /// <summary>How an array is typed for a type argument (`T items[]`, `new T[n]`; ROADMAP 19): the element type and - for a class, an interface or
         /// `string` (ArrayElem.Class) - the DeclaredType text of the elements; null for what types nothing (a number with a unit, `in cm`, unknown).</summary>
-        public static (byte Elem, string? Text)? ArrayOfTypeArg(string? typeArg)
+        /// <summary>`findEnum`: the enum of the program a type argument names (null: none) - an array of it has the enum's declaration after its text,
+        /// like one declared `Color cs[]` (ArrayElem.Zero).</summary>
+        public static (byte Elem, string? Text)? ArrayOfTypeArg(string? typeArg, Func<string, EnumType?>? findEnum = null)
         {
             if (string.IsNullOrEmpty(typeArg) || typeArg[0] == '$' || typeArg.StartsWith("in:", StringComparison.Ordinal)) return null;
             if (TypedElementOf(typeArg) is int code) return ((byte)(code & 0xFF), null);
             if (NumberDemand(typeArg) != null || typeArg is "bool" or "char" or "word") return null;
+            if (findEnum?.Invoke(typeArg) is { } enumType) return (fire.Values.ArrayElem.Class, OfName(enumType.Name) + "\u0002" + enumType.Key);
             return (fire.Values.ArrayElem.Class, OfName(typeArg));
         }
 
@@ -237,7 +240,7 @@ namespace fire.Bytecode
             string display = spec.Display;
             if (spec.TypeParamIndex >= 0 && TypeArgFor(spec, owner, callTypeArgs) is { } typeArg)
                 display = spec.Display.Split(' ')[0] + " (" + DisplayOf(typeArg) + ")";
-            string have = value.Kind == ValueKind.Class && value.AsObjectRef() is ObjectInstance obj ? GenericClassNames.PlainName(obj.ClassName) : value.Kind.ToString();
+            string have = value.Kind == ValueKind.Class && value.AsObjectRef() is ObjectInstance obj ? GenericClassNames.PlainName(obj.ClassName) : value.IsEnum ? value.Enum!.Name : value.Kind.ToString();
             string article = "AEIOUaeiou".Contains(display[0]) ? "an" : "a";
             if (value.Kind == ValueKind.Undefined) return $"{what} is {article} {display} and never undefined.";   // (`defined Dog d`)
             return $"{what} is {article} {display}, not {have}.";

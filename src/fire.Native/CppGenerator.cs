@@ -1233,7 +1233,7 @@ namespace fire.Native
             {
                 _targIds[text] = id = _targIds.Count;
                 HoldsExpr("v", DeclaredType.ConditionOf(text));   // (registers the `isof_` it needs)
-                if (DeclaredType.ArrayOfTypeArg(text) is (_, { } elemText)) ArrClassId(elemText);   // (and its entry in g_arrClasses: TArg.arrClass)
+                if (DeclaredType.ArrayOfTypeArg(text, ProgramEnum) is (_, { } elemText)) ArrClassId(elemText);   // (and its entry in g_arrClasses: TArg.arrClass)
             }
             return $"&{Px}ta_{id}";
         }
@@ -1359,7 +1359,7 @@ namespace fire.Native
                 }
                 sb.AppendLine($"static bool {Px}tah_{id}(Value v) {{ return {holds}; }}");
                 // (`T items[]`, `new T[n]`: how this type argument types an array - a class or `string` by its entry in g_arrClasses, ROADMAP 19)
-                var (arrElem, arrClass) = DeclaredType.ArrayOfTypeArg(text) is var (elemOfArg, elemText) ? (elemOfArg + 1, elemText != null ? ArrClassId(elemText) : 0) : (0, 0);
+                var (arrElem, arrClass) = DeclaredType.ArrayOfTypeArg(text, ProgramEnum) is var (elemOfArg, elemText) ? (elemOfArg + 1, elemText != null ? ArrClassId(elemText) : 0) : (0, 0);
                 sb.AppendLine($"static const TArg {Px}ta_{id} = {{{CString(DeclaredType.DisplayOf(text))}, {Px}tah_{id}, {(text.StartsWith("float", StringComparison.Ordinal) && DeclaredType.NumberDemand(text) != null ? "true" : "false")}, {kind}, {adapt}, {arrElem}, {arrClass}}};");
             }
             foreach (var (text, id) in _targListIds.OrderBy(kv => kv.Value))
