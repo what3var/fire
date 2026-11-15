@@ -1414,6 +1414,34 @@ static int fire_dwl_beginMove(FireDwlWindow* w) {
     pthread_mutex_unlock(&w->lock);
     return 1;
 }
+/* (the picture of a window comes from its .desktop file: xdg-toplevel-icon is not common yet; a task bar entry is the compositor's choice) */
+static void fire_dwl_setIcon(FireDwlWindow* w, const uint32_t* rgba, int width, int height) { (void)w; (void)rgba; (void)width; (void)height; }
+
+/* Window.ClickThrough: the input region of the surface (wl_surface.set_input_region; with the next commit) - outside it the pointer reaches what lies below.
+ * The own title bar always takes clicks. */
+static void fire_dwl_setInputShape(FireDwlWindow* w, const int* rects, int count, int fbW, int fbH) {
+    FireWlc* l = w->l;
+    void* region;
+    int i, T;
+    double sx, sy;
+    if (w->d == NULL || w->surface == NULL) return;
+    pthread_mutex_lock(&w->lock);
+    if (count < 0) { FIRE_WL_REQ(l, w->surface, 5, (void*)NULL); pthread_mutex_unlock(&w->lock); return; }   /* (NULL: the whole surface) */
+    T = fire_dwl_titleH(w);
+    sx = fbW > 0 ? (double)w->winW / fbW : 1.0; sy = fbH > 0 ? (double)w->winH / fbH : 1.0;
+    region = fire_dwl_new(l, w->compositor, 1, l->iRegion);   /* wl_compositor.create_region */
+    if (region != NULL) {
+        if (T > 0) FIRE_WL_REQ(l, region, 1, 0, 0, w->winW, T);   /* add */
+        for (i = 0; i < count; i++) {
+            int x0 = (int)(rects[i * 4] * sx), y0 = (int)(rects[i * 4 + 1] * sy);
+            int x1 = (int)((rects[i * 4] + rects[i * 4 + 2]) * sx + 0.999), y1 = (int)((rects[i * 4 + 1] + rects[i * 4 + 3]) * sy + 0.999);
+            FIRE_WL_REQ(l, region, 1, x0, y0 + T, x1 - x0, y1 - y0);
+        }
+        FIRE_WL_REQ(l, w->surface, 5, region);   /* wl_surface.set_input_region */
+        FIRE_WL_REQ0(l, region, 0); l->destroy(region);
+    }
+    pthread_mutex_unlock(&w->lock);
+}
 /* (Wayland does not tell a window where it is) */
 static int fire_dwl_position(FireDwlWindow* w, int* r) { (void)w; (void)r; return 0; }
 static int fire_dwl_workArea(FireDwlWindow* w, int* r) { (void)w; (void)r; return 0; }

@@ -17,12 +17,30 @@ namespace Assistant {
     // What the assistant is doing.
     enum Phase { Idle, Offer, Downloading, Loading, Thinking, Answering, Failed }
 
+    // A spark that is open (its file in spark-mcp/: the pid, the project and its folder) and the connection to its MCP server.
+    class SparkLink {
+        string Id = ""
+        string Project = ""
+        string Folder = ""
+        Mcp.HttpTransport Transport = undefined
+        Mcp.Client Client = undefined
+
+        undefined Close() {
+            if (this.Client != undefined) {
+                try { this.Client.Close() } catch (Exception e) { }
+            }
+        }
+    }
+
     class Brain {
         Assistant.Character Character
         Assistant.Phase Phase = Assistant.Phase.Idle
         // What the bubble shows, and its choices (texts); Changed says that one of them changed since the last Tick.
         string Text = ""
         List Choices = new List()
+        // While the model thinks: what it did so far (the tools it called, a line each) - the thought bubble shows it.
+        List Activity = new List()
+        defined int thinkingTicks = 0
         List actions = new List()
         bool Visible = true
         // The question line is shown (after a poke: a click on the character, or Ctrl+^ in spark).
@@ -38,17 +56,100 @@ namespace Assistant {
         Mcp.HttpTransport sparkTransport = undefined
         string sparkFile = ""
         defined int sparkRetry = 0
+        // every open spark (one assistant serves all of them); `spark` is the client of the current one, `SparkId` its id
+        List links = new List()
+        string SparkId = ""
+        bool sparkToolsAdded = false
+        defined int scanTicks = 0
         // the documentation, when spark does not offer it
         Assistant.Docs docs = undefined
         string pendingQuestion = ""
         string lastError = ""
         // Tips already given (by their key: one is not given twice).
         List given = new List()
+        // The conversation and the folder it works in (saved after each answer), and what git says about the folder.
+        Assistant.Session Current
+        string Repo = ""
+        string Branch = ""
+        // A change that waits for the user's "Allow" (undefined: none); the question line takes a commit message next (the menu's Commit).
+        Assistant.PendingAction Pending = undefined
+        bool WantsCommitMessage = false
 
         construct(string characterId = "") {
             this.Settings = Assistant.Settings.Load()
             if (characterId != "") { this.Settings.Character = characterId }
             this.Character = Assistant.Character.Find(this.Settings.Character)
+            // the session it was in last; else a new one in the folder it was started in
+            any last = Assistant.Session.Load(this.Settings.Session)
+            if (last != undefined) { this.Current = take last }
+            else { this.Current = Assistant.Session.New(IO.Directory.GetCurrentDirectory()) }
+            this.Settings.Session = this.Current.Id
+            this.LookAtFolder()
+        }
+
+        // ---- the session and its folder ----
+
+        // The folder the assistant works in (the session's).
+        string Folder { get { return this.Current.Folder } }
+
+        // What git says about the folder (its repository and branch) - again after a change of the folder, and now and then (a checkout elsewhere).
+        undefined LookAtFolder() {
+            this.Repo = Assistant.GitInfo.RootOf(this.Current.Folder)
+            this.Branch = Assistant.GitInfo.BranchOf(this.Repo)
+        }
+
+        // The conversation goes into the session's file (after each answer).
+        undefined KeepSession() {
+            if (this.agent != undefined) { this.Current.Keep(this.agent) }
+            this.Current.Save()
+            this.Settings.Session = this.Current.Id
+            this.Settings.Save()
+        }
+
+        // The agent takes the conversation of the session (a session that goes on, or another one).
+        undefined ReplaySession() {
+            if (this.agent == undefined) { return }
+            this.agent.Forget()
+            foreach (x in this.Current.Messages) {
+                Assistant.Message m = x
+                this.agent.Remember(m.Role, m.Text)
+            }
+        }
+
+        // Goes on with the session `id` (the current one is kept first).
+        undefined SwitchSession(string id) {
+            if (id == this.Current.Id) { return }
+            any other = Assistant.Session.Load(id)
+            if (other == undefined) { return }
+            this.KeepSession()
+            this.Current = take other
+            this.Settings.Session = this.Current.Id
+            this.Settings.Save()
+            this.LookAtFolder()
+            this.ReplaySession()
+            this.Say(this.Current.Title == "New session" ? "A new session. What would you like to know?" : "Back in \"" + this.Current.Title + "\".")
+            this.Asking = true
+        }
+
+        // A new session in the folder of the current one (or in `folder`).
+        undefined NewSession(string folder = "") {
+            this.KeepSession()
+            this.Current = Assistant.Session.New(folder == "" ? this.Current.Folder : folder)
+            this.Current.Save()
+            this.Settings.Session = this.Current.Id
+            this.Settings.Save()
+            this.LookAtFolder()
+            if (this.agent != undefined) { this.agent.Forget() }
+            this.Say("A new session. What would you like to know?")
+            this.Asking = true
+        }
+
+        // The session works in `folder` from now on (the user agreed).
+        undefined SetFolder(string folder) {
+            this.Current.Folder = folder
+            this.Current.Save()
+            this.LookAtFolder()
+            if (this.agent != undefined) { this.agent.Instructions = this.Instructions() }
         }
 
         destruct() { this.Close() }
@@ -59,10 +160,12 @@ namespace Assistant {
                 this.agent.Close()
                 this.agent = undefined
             }
-            if (this.spark != undefined) {
-                try { this.spark.Close() } catch (Exception e) { }
-                this.spark = undefined
+            this.spark = undefined
+            foreach (x in this.links) {
+                Assistant.SparkLink l = x
+                l.Close()
             }
+            this.links.Clear()
         }
 
         // ---- the bubble ----
@@ -184,6 +287,8 @@ namespace Assistant {
                 this.Offer("Go on", "offer")
             }
             else if (verb == "ask") { this.Ask(arg) }
+            else if (verb == "allow") { this.Decide(true) }
+            else if (verb == "deny") { this.Decide(false) }
             else if (verb == "explain") { this.ExplainErrors() }
             else if (verb == "close") { this.Visible = false }
             else if (verb == "stop") {
@@ -209,9 +314,11 @@ namespace Assistant {
             try {
                 this.agent = new AI.Agent(path, this.Instructions())
                 this.agent.MaxSteps = 4
+                this.agent.OnToolCall = func (string name, JsonObject args) on this => ToolCalled(name, args)
                 this.agent.Settings.MaxTokens = 400
                 this.agent.Settings.Temperature = 0.3
                 this.ConnectTools()
+                this.ReplaySession()
                 this.Phase = Assistant.Phase.Idle
                 if (this.pendingQuestion != "") {
                     string q = this.pendingQuestion
@@ -230,7 +337,9 @@ namespace Assistant {
         string Instructions() {
             return this.Character.Voice + " You are the assistant in spark, the editor of the programming language fire. Answer in a few sentences, " +
                 "in the language of the question. fire is a new language you do not know well: look things up with search_docs and read_doc (or a sample) " +
-                "before you write fire code, and only use what the documentation shows.\n\n" + Assistant.Brain.CheatSheet()
+                "before you write fire code, and only use what the documentation shows. To look at files use list_files and read_file; to change files, " +
+                "run commands, use git or work in another folder use write_file, run_command, git and change_folder - the user is asked first.\n\nYou work in the folder " + this.Current.Folder +
+                (this.Branch != "" ? " (a git repository, branch " + this.Branch + ")" : "") + ".\n\n" + Assistant.Brain.CheatSheet()
         }
 
         // The basics of fire, short enough for a small context.
@@ -250,18 +359,35 @@ namespace Assistant {
         // The tools of spark the model may use (reading and looking up; it changes nothing by itself).
         undefined ConnectTools() {
             if (this.agent == undefined) { return }
+            this.ActionTools()
             if (this.spark == undefined) {
                 this.LocalTools()
                 return
             }
+            this.SparkTools()
+        }
+
+        // The tools of spark (once; they go to the spark that is current when they are called - all sparks offer the same).
+        undefined SparkTools() {
+            if (this.agent == undefined || this.spark == undefined || this.sparkToolsAdded) { return }
+            this.sparkToolsAdded = true
             Mcp.Client client = this.spark
             foreach (t in client.Tools()) {
                 Mcp.Tool tool = t
                 string name = tool.Name
                 if (Assistant.Brain.Allowed(name)) {
-                    this.agent.ToolWithSchema(name, tool.Description, tool.Schema, func (JsonObject args) on client => CallTool((taking name), args).Text)
+                    this.agent.ToolWithSchema(name, tool.Description, tool.Schema, func (JsonObject args) on this => CallSpark((taking name), args))
                 }
             }
+        }
+
+        string CallSpark(string name, JsonObject args) {
+            if (this.spark == undefined) { return "Error: spark is not open." }
+            try {
+                Mcp.Client c = this.spark
+                return c.CallTool(name, args).Text
+            }
+            catch (Exception e) { return "Error: " + e.message }
         }
 
         // Without spark: the documentation of fire from its folder (Assistant.Docs.Find) - the same two tools spark offers.
@@ -280,6 +406,190 @@ namespace Assistant {
                 func (JsonObject args) on d => Read(Assistant.Brain.Arg(args, "path"), Assistant.Brain.Arg(args, "heading")))
         }
 
+        // The tools that work in the folder: reading and listing at once; writing, commands, git that changes things and another folder after the user
+        // agreed (the tool says so; the user's answer comes as the next message).
+        undefined ActionTools() {
+            this.agent.ToolWithSchema("list_files", "Lists the files and folders in a folder of the working folder.",
+                "{\"type\":\"object\",\"properties\":{\"path\":{\"type\":\"string\",\"description\":\"a folder relative to the working folder; '.' for itself\"}}}",
+                func (JsonObject args) on this => ToolList(args))
+            this.agent.ToolWithSchema("read_file", "Reads a text file of the working folder.",
+                "{\"type\":\"object\",\"properties\":{\"path\":{\"type\":\"string\",\"description\":\"the file, relative to the working folder\"}},\"required\":[\"path\"]}",
+                func (JsonObject args) on this => ToolRead(args))
+            this.agent.ToolWithSchema("write_file", "Writes a text file in the working folder (the whole content). The user is asked first.",
+                "{\"type\":\"object\",\"properties\":{\"path\":{\"type\":\"string\"},\"content\":{\"type\":\"string\"}},\"required\":[\"path\",\"content\"]}",
+                func (JsonObject args) on this => ToolWrite(args))
+            this.agent.ToolWithSchema("run_command", "Runs a command line in the working folder (the shell of the system). The user is asked first.",
+                "{\"type\":\"object\",\"properties\":{\"command\":{\"type\":\"string\"}},\"required\":[\"command\"]}",
+                func (JsonObject args) on this => ToolCommand(args))
+            this.agent.ToolWithSchema("git", "Runs git in the working folder, e.g. 'status', 'log --oneline -5', 'diff', 'commit -m \\\"text\\\"'. Reading runs at once; " +
+                "what changes the repository is asked first.",
+                "{\"type\":\"object\",\"properties\":{\"args\":{\"type\":\"string\",\"description\":\"the arguments of git\"}},\"required\":[\"args\"]}",
+                func (JsonObject args) on this => ToolGit(args))
+            this.agent.ToolWithSchema("change_folder", "Works in another folder from now on. The user is asked first.",
+                "{\"type\":\"object\",\"properties\":{\"path\":{\"type\":\"string\",\"description\":\"the full path of the folder\"}},\"required\":[\"path\"]}",
+                func (JsonObject args) on this => ToolFolder(args))
+        }
+
+        string ToolList(JsonObject args) { return new Assistant.Actions(this.Current.Folder).List(Assistant.Brain.Arg(args, "path")) }
+        string ToolRead(JsonObject args) { return new Assistant.Actions(this.Current.Folder).Read(Assistant.Brain.Arg(args, "path")) }
+
+        // A change the model asks for: it waits for the user; the model hears that it was asked.
+        string AskFirst(Assistant.PendingAction action) {
+            if (this.Pending != undefined) { return "Another change is waiting for the user's answer: wait for it." }
+            action.FromModel = true
+            this.Pending = take action
+            return "The user was asked to allow it; their answer comes as the next message. Do not call the tool again now."
+        }
+
+        string ToolWrite(JsonObject args) {
+            string path = Assistant.Brain.Arg(args, "path")
+            string content = Assistant.Brain.Arg(args, "content")
+            if (new Assistant.Actions(this.Current.Folder).Resolve(path) == "") { return "Error: " + path + " is outside the working folder." }
+            var a = new Assistant.PendingAction()
+            a.Kind = "write"
+            a.Path = path
+            a.Content = content
+            a.Question = "Write " + new Assistant.Actions(this.Current.Folder).Show(path) + " (" + content.Split("\n").length + " lines)?"
+            return this.AskFirst(take a)
+        }
+
+        string ToolCommand(JsonObject args) {
+            var a = new Assistant.PendingAction()
+            a.Kind = "command"
+            a.Content = Assistant.Brain.Arg(args, "command")
+            a.Question = "Run: " + a.Content + "?"
+            return this.AskFirst(take a)
+        }
+
+        string ToolGit(JsonObject args) {
+            List<string> words = Assistant.Actions.Words(Assistant.Brain.Arg(args, "args"))
+            if (words.Count > 0 && words[0] == "git") { words.RemoveAt(0) }
+            if (words.Count == 0) { return "Error: which git command?" }
+            if (!Assistant.Actions.HasGit()) {
+                this.OfferGit()
+                return "git is not installed; the user was offered to install it."
+            }
+            if (Assistant.Actions.ReadsOnly(words[0])) { return new Assistant.Actions(this.Current.Folder).Git(words) }
+            var a = new Assistant.PendingAction()
+            a.Kind = "git"
+            a.Args = take words
+            a.Question = "git " + Assistant.Brain.Arg(args, "args") + "?"
+            return this.AskFirst(take a)
+        }
+
+        string ToolFolder(JsonObject args) {
+            string path = Assistant.Brain.Arg(args, "path")
+            if (!IO.Directory.Exists(path)) { return "Error: there is no folder " + path + "." }
+            var a = new Assistant.PendingAction()
+            a.Kind = "folder"
+            a.Path = path
+            a.Question = "Work in " + path + " from now on?"
+            return this.AskFirst(take a)
+        }
+
+        // git is missing: the bubble says how to get it (on Windows it offers to install it with winget).
+        undefined OfferGit() {
+            if (this.Pending != undefined) { return }
+            var a = new Assistant.PendingAction()
+            a.Kind = "installgit"
+            a.Content = Assistant.Actions.GitInstallCommand()
+            a.Question = Assistant.Actions.HowToInstallGit()
+            this.Pending = take a
+        }
+
+        // A git operation of the menu: reading ones at once, the others after "Allow" (commit: the question line takes the message first).
+        undefined GitMenu(string what) {
+            if (!Assistant.Actions.HasGit()) {
+                this.OfferGit()
+                this.ShowPending("")
+                return
+            }
+            if (this.Repo == "" && what != "init") {
+                this.Say("This folder is no git repository: " + this.Current.Folder)
+                return
+            }
+            if (what == "status") { this.Say(new Assistant.Actions(this.Current.Folder).Git(Assistant.Actions.Words("status --short --branch"))) }
+            else if (what == "log") { this.Say(new Assistant.Actions(this.Current.Folder).Git(Assistant.Actions.Words("log --oneline -10"))) }
+            else if (what == "commit") {
+                this.Say("The message of the commit (all changes are committed):")
+                this.WantsCommitMessage = true
+                this.Asking = true
+            }
+            else {
+                var a = new Assistant.PendingAction()
+                a.Kind = "git"
+                a.Args = take Assistant.Actions.Words(what)
+                a.Question = "git " + what + "?"
+                this.Pending = take a
+                this.ShowPending("")
+            }
+            this.LookAtFolder()
+        }
+
+        // The commit message from the question line: git add -A and commit, after "Allow".
+        undefined CommitWith(string message) {
+            this.WantsCommitMessage = false
+            var a = new Assistant.PendingAction()
+            a.Kind = "commit"
+            a.Content = message
+            a.Question = "Commit all changes as \"" + message + "\"?"
+            this.Pending = take a
+            this.ShowPending("")
+        }
+
+        // The bubble asks for the pending change (after `before`, what the model said).
+        undefined ShowPending(string before) {
+            if (this.Pending == undefined) { return }
+            Assistant.PendingAction a = this.Pending
+            this.Say((before.Trim() != "" ? before.Trim() + "\n\n" : "") + a.Question)
+            if (a.Kind == "installgit") {
+                if (a.Content != "") { this.Offer("Install git", "allow") }
+                this.Offer("Not now", "deny")
+                return
+            }
+            this.Offer("Allow", "allow")
+            this.Offer("Don't", "deny")
+        }
+
+        // The user's answer to the pending change.
+        undefined Decide(bool allowed) {
+            if (this.Pending == undefined) { return }
+            Assistant.PendingAction a = this.Pending
+            string result = "Not done."
+            if (allowed) {
+                var act = new Assistant.Actions(this.Current.Folder)
+                if (a.Kind == "write") { result = act.Write(a.Path, a.Content) }
+                else if (a.Kind == "command") { result = act.Command(a.Content) }
+                else if (a.Kind == "git") { result = act.Git(a.Args) }
+                else if (a.Kind == "commit") {
+                    string added = act.Git(Assistant.Actions.Words("add -A"))
+                    var c = new List<string>()
+                    c.Add("commit")
+                    c.Add("-m")
+                    c.Add(a.Content)
+                    result = act.Git(c)
+                }
+                else if (a.Kind == "folder") {
+                    this.SetFolder(a.Path)
+                    result = "Now working in " + a.Path + "."
+                }
+                else if (a.Kind == "installgit") {
+                    result = act.Command(a.Content)
+                    result = (Assistant.Actions.HasGit() ? "git is installed now." : "git could not be installed:") + "\n" + result
+                }
+                this.LookAtFolder()
+            }
+            bool fromModel = a.FromModel
+            string question = a.Question
+            this.Pending = undefined
+            if (fromModel && this.agent != undefined) {
+                this.agent.Remember("user", (allowed ? "I allowed: " : "I did not allow: ") + question + "\nResult: " + result)
+                this.KeepSession()
+            }
+            this.Say(result)
+            this.Asking = true
+        }
+
         static string Arg(JsonObject args, string name) {
             any v = args.Get(name)
             if (v == undefined) { return "" }
@@ -296,6 +606,10 @@ namespace Assistant {
         // A question of the user: the model answers in the bubble (the conversation is kept, but not shown).
         undefined Ask(string question) {
             if (question.Trim() == "") { return }
+            if (this.WantsCommitMessage) {
+                this.CommitWith(question.Trim())
+                return
+            }
             if (this.agent == undefined) {
                 if (this.Phase == Assistant.Phase.Downloading || this.Phase == Assistant.Phase.Loading) {
                     this.pendingQuestion = question
@@ -311,8 +625,42 @@ namespace Assistant {
             }
             this.agent.Start(question)
             this.Phase = Assistant.Phase.Thinking
-            this.Say("")
+            this.Activity.Clear()
+            this.thinkingTicks = 0
+            this.Say(this.ThinkingText())
             this.Offer("Stop", "stop")
+        }
+
+        // A tool the model calls: a short line for the thought bubble ("Searching the docs: list sort").
+        undefined ToolCalled(string name, JsonObject args) {
+            string what = name
+            string detail = Assistant.Brain.Arg(args, "query")
+            if (detail == "") { detail = Assistant.Brain.Arg(args, "path") }
+            if (detail == "") { detail = Assistant.Brain.Arg(args, "command") }
+            if (name == "search_docs") { what = "Searching the docs" }
+            else if (name == "read_doc") { what = "Reading" }
+            else if (name == "read_file") { what = "Reading" }
+            else if (name == "list_files") { what = "Looking around" }
+            else if (name == "write_file") { what = "Writing" }
+            else if (name == "run_command") { what = "Running" }
+            else if (name == "change_folder") { what = "Moving to" }
+            if (name == "git") { detail = Assistant.Brain.Arg(args, "args") }
+            // (a path: its file name)
+            if (detail.IndexOf("/") >= 0 || detail.IndexOf("\\") >= 0) { detail = IO.Path.GetFileName(detail.TrimEnd()) }
+            if (detail.Length > 40) { detail = detail.Substring(0, 37) + "..." }
+            this.Activity.Add(detail == "" ? what : what + ": " + detail)
+        }
+
+        // The text of the thought bubble: thinking (with dots that move) and what the model did so far.
+        string ThinkingText() {
+            string dots = "."
+            defined int n = (this.thinkingTicks / 20) % 3
+            if (n >= 1) { dots = ".." }
+            if (n >= 2) { dots = "..." }
+            string text = "Thinking" + dots
+            defined int first = this.Activity.Count > 6 ? this.Activity.Count - 6 : 0
+            for (int i = first; i < this.Activity.Count; i++) { text += "\n- " + this.Activity[i] }
+            return text
         }
 
         // Forgets the conversation ("new topic").
@@ -357,47 +705,175 @@ namespace Assistant {
 
         bool Connected { get { return this.spark != undefined } }
 
-        // What spark reported (a build, a run): a tip when something went wrong.
-        undefined SparkEvents() {
-            if (this.spark == undefined) { return }
-            List notes = undefined
-            try { notes = this.spark.Notifications() }
-            catch (Exception e) {
-                // spark went away
-                this.spark = undefined
-                if (this.ExitWithSpark) { this.Quit = true }
-                return
-            }
-            foreach (n in notes) {
-                Mcp.Notification note = n
-                if (note.Method == "notifications/message") {
-                    any p = Json.Parse(note.Params)
-                    any data = p.Get("data")
-                    if (data != undefined && data is of JsonObject) { this.OnSparkEvent(data) }
+        static string SparkFolder() { return IO.Path.Combine(AI.Models.DataFolder(), "fire", "spark-mcp") }
+
+        // Looks for sparks that opened or closed (their files in spark-mcp/): a new one is connected, one whose file is gone is let go.
+        undefined ScanSparks() {
+            string dir = Assistant.Brain.SparkFolder()
+            var seen = new List()
+            if (IO.Directory.Exists(dir)) {
+                foreach (f in IO.Directory.GetFiles(dir, "*.json")) {
+                    string file = f
+                    string id = IO.Path.GetFileNameWithoutExtension(file)
+                    seen.Add(id)
+                    any known = this.LinkOf(id)
+                    if (known != undefined) {
+                        // (the project of a spark changes: its file is written again)
+                        Assistant.SparkLink k = known
+                        try {
+                            any j = Json.Parse(IO.File.ReadAllText(file))
+                            k.Project = "" + j.Get("project")
+                            k.Folder = "" + j.Get("folder")
+                        }
+                        catch (Exception e) { }
+                        continue
+                    }
+                    try {
+                        any conn = Json.Parse(IO.File.ReadAllText(file))
+                        var link = new Assistant.SparkLink()
+                        link.Id = id
+                        any pr = conn.Get("project")
+                        any fo = conn.Get("folder")
+                        link.Project = pr == undefined ? "spark" : "" + pr
+                        link.Folder = fo == undefined ? "" : "" + fo
+                        link.Transport = new Mcp.HttpTransport(conn.Get("url"))
+                        link.Transport.Headers.Set("Authorization", "Bearer " + conn.Get("token"))
+                        link.Client = new Mcp.Client(link.Transport)
+                        link.Client.Initialize("fire-assistant", "1.0")
+                        link.Client.Subscribe("spark://state")
+                        link.Transport.Listen()
+                        this.links.Add(take link)
+                        // the first spark is the current one
+                        if (this.spark == undefined) { this.UseSpark(id, false) }
+                    }
+                    catch (Exception e) { this.lastError = e.message }
                 }
             }
+            // gone: its file removed - or it does not answer (it ended without removing its file)
+            var gone = new List()
+            foreach (x in this.links) {
+                Assistant.SparkLink l = x
+                if (seen.IndexOf(l.Id) < 0) {
+                    gone.Add(l.Id)
+                    continue
+                }
+                try { l.Client.Ping() } catch (Exception e) { gone.Add(l.Id) }
+            }
+            foreach (g in gone) { this.DropSpark(g) }
         }
 
-        undefined OnSparkEvent(JsonObject data) {
+        any LinkOf(string id) {
+            foreach (x in this.links) {
+                Assistant.SparkLink l = x
+                if (l.Id == id) { return l }
+            }
+            return undefined
+        }
+
+        // The spark `id` becomes the current one: its tools answer the model; with `folder` the session works in its folder.
+        undefined UseSpark(string id, bool folder) {
+            any found = this.LinkOf(id)
+            if (found == undefined) { return }
+            Assistant.SparkLink l = found
+            this.spark = l.Client
+            this.SparkId = id
+            this.SparkTools()
+            if (folder && l.Folder != "" && l.Folder != this.Current.Folder) { this.SetFolder(l.Folder) }
+        }
+
+        // A spark is gone (closed, or its file is gone): without any left the assistant ends when spark started it.
+        undefined DropSpark(string id) {
+            for (int i = 0; i < this.links.Count; i++) {
+                Assistant.SparkLink l = this.links[i]
+                if (l.Id == id) {
+                    if (this.SparkId == id) {
+                        this.spark = undefined
+                        this.SparkId = ""
+                    }
+                    l.Close()
+                    this.links.RemoveAt(i)
+                    break
+                }
+            }
+            if (this.spark == undefined && this.links.Count > 0) {
+                Assistant.SparkLink first = this.links[0]
+                this.UseSpark(first.Id, false)
+            }
+            if (this.links.Count == 0 && this.ExitWithSpark) { this.Quit = true }
+        }
+
+        // The open sparks for the menu: id, project (and the current one).
+        List SparkIds() {
+            var ids = new List()
+            foreach (x in this.links) {
+                Assistant.SparkLink l = x
+                ids.Add(l.Id)
+            }
+            return ids
+        }
+
+        string SparkTitle(string id) {
+            any found = this.LinkOf(id)
+            if (found == undefined) { return id }
+            Assistant.SparkLink l = found
+            return l.Project
+        }
+
+        // What spark reported (a build, a run): a tip when something went wrong.
+        undefined SparkEvents() {
+            // (now and then: sparks that opened or closed)
+            this.scanTicks++
+            if (this.scanTicks >= 120 || this.scanTicks == 1) {
+                this.scanTicks = 1
+                this.ScanSparks()
+            }
+            var gone = new List()
+            foreach (x in this.links) {
+                Assistant.SparkLink l = x
+                List notes = undefined
+                try { notes = l.Client.Notifications() }
+                catch (Exception e) {
+                    // the spark went away
+                    gone.Add(l.Id)
+                    continue
+                }
+                foreach (n in notes) {
+                    Mcp.Notification note = n
+                    if (note.Method == "notifications/message") {
+                        any p = Json.Parse(note.Params)
+                        any data = p.Get("data")
+                        if (data != undefined && data is of JsonObject) {
+                            if (this.OnSparkEvent(l.Id, data)) { gone.Add(l.Id) }
+                        }
+                    }
+                }
+            }
+            foreach (g in gone) { this.DropSpark(g) }
+        }
+
+        // An event of the spark `id`; true when that spark closes.
+        bool OnSparkEvent(string id, JsonObject data) {
             any ev = data.Get("event")
             if (ev == "poke") {
+                // Ctrl+^ in a spark: the assistant works with that spark (and its folder) from now on
+                if (id != this.SparkId) { this.UseSpark(id, true) }
                 this.Poke()
-                return
+                return false
             }
-            if (ev == "closing" && this.ExitWithSpark) {
-                this.Quit = true
-                return
-            }
+            if (ev == "closing") { return true }
+            // (the events of another spark than the current one are not the user's concern now)
+            if (id != this.SparkId) { return false }
             if (ev == "build") {
                 any ok = data.Get("ok")
                 any errors = data.Get("errors")
                 if (ok == false && errors != undefined && errors > 0) {
-                    if (this.Phase == Assistant.Phase.Thinking || this.Phase == Assistant.Phase.Answering) { return }
+                    if (this.Phase == Assistant.Phase.Thinking || this.Phase == Assistant.Phase.Answering) { return false }
                     this.Say(errors == 1 ? "The build has an error." : "The build has " + errors + " errors.")
                     if (this.agent != undefined) { this.Offer("Explain it", "explain") }
                     this.Offer("Not now", "close")
                 }
             }
+            return false
         }
 
         // The model explains the errors of the build (it reads them with get_diagnostics).
@@ -442,18 +918,37 @@ namespace Assistant {
                     }
                 }
             }
+            // the model asked for a change: its turn ends here (a small model would ask again and again), the bubble asks the user
+            if ((this.Phase == Assistant.Phase.Thinking || this.Phase == Assistant.Phase.Answering) && this.agent != undefined && this.Pending != undefined) {
+                Assistant.PendingAction p = this.Pending
+                if (p.FromModel) {
+                    this.agent.Cancel()
+                    if (this.Phase == Assistant.Phase.Thinking) { this.Text = "" }
+                    this.Phase = Assistant.Phase.Idle
+                    this.KeepSession()
+                    this.ShowPending(this.Text)
+                }
+            }
             if ((this.Phase == Assistant.Phase.Thinking || this.Phase == Assistant.Phase.Answering) && this.agent != undefined) {
                 try {
                     string part = this.agent.Update()
                     if (part != "") {
+                        // (the first words of the answer: the thought bubble becomes a speech bubble)
+                        if (this.Phase == Assistant.Phase.Thinking) { this.Text = "" }
                         this.Phase = Assistant.Phase.Answering
                         this.Text = this.Text + part
+                    } else if (this.Phase == Assistant.Phase.Thinking) {
+                        this.thinkingTicks++
+                        this.Text = this.ThinkingText()
                     }
                     if (!this.agent.Running) {
+                        if (this.Phase == Assistant.Phase.Thinking) { this.Text = "" }
                         this.Phase = Assistant.Phase.Idle
                         this.Choices.Clear()
                         this.actions.Clear()
-                        if (this.Text.Trim() == "") { this.Text = "Hmm, I have no answer to that." }
+                        if (this.Text.Trim() == "" && this.Pending == undefined) { this.Text = "Hmm, I have no answer to that." }
+                        this.KeepSession()
+                        if (this.Pending != undefined) { this.ShowPending(this.Text) }
                         // a follow-up question can come right away
                         this.Asking = true
                     }

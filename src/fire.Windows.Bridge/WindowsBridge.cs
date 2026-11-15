@@ -133,6 +133,8 @@ namespace fire.Windows.Bridge
                 ["BeginMove"] = args => Value.MakeUndefined(),
                 ["WorkArea"] = args => Value.MakeInt(-1),
                 ["Position"] = args => Value.MakeInt(-1),
+                ["SetIcon"] = args => Value.MakeUndefined(),
+                ["SetClickThrough"] = args => Value.MakeUndefined(),
                 // Window.PresentPath: the C# windows show pixels
                 ["PresentPath"] = args => Value.MakeString("pixels"),
             };
@@ -197,6 +199,8 @@ namespace fire.Windows.Bridge
                 ["BeginMove"] = args => Value.MakeUndefined() /*STUB*/,
                 ["WorkArea"] = args => Value.MakeInt(-1) /*STUB*/,
                 ["Position"] = args => Value.MakeInt(-1) /*STUB*/,
+                ["SetIcon"] = args => Value.MakeUndefined() /*STUB*/,
+                ["SetClickThrough"] = args => Value.MakeUndefined() /*STUB*/,
                 ["PresentPath"] = args => Value.MakeUndefined() /*STUB*/,
             };
         }

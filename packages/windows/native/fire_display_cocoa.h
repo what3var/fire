@@ -559,9 +559,17 @@ static int fire_dns_setStyle(FireDnsWindow* w, int flags) {
     FIRE_NS(void, (FireId, FireSel, FireNSSize), w->window, "setContentSize:", size);
     FIRE_NS(void, (FireId, FireSel, long), w->window, "setLevel:", (flags & FIRE_STYLE_TOPMOST) ? 3L /* NSFloatingWindowLevel */ : 0L);
     FIRE_NS(signed char, (FireId, FireSel, FireId), w->window, "makeFirstResponder:", w->view);
+    /* not in the task bar: the Dock has no windows, only programs - a program of such windows becomes an accessory (no Dock icon, no menu bar of its own) */
+    FIRE_NS(signed char, (FireId, FireSel, long), FIRE_NS0(FireId, FIRE_CLS("NSApplication"), "sharedApplication"), "setActivationPolicy:",
+        (flags & FIRE_STYLE_NOTASKBAR) ? 1L /* NSApplicationActivationPolicyAccessory */ : 0L /* Regular */);
     objc_autoreleasePoolPop(pool);
     return flags;
 }
+
+/* (macOS: clicks on the transparent pixels of a window that is not opaque go through to what lies below by themselves) */
+static void fire_dns_setInputShape(FireDnsWindow* w, const int* rects, int count, int fbW, int fbH) { (void)w; (void)rects; (void)count; (void)fbW; (void)fbH; }
+/* (macOS: a window has no picture of its own - the Dock shows the program's, that of its bundle) */
+static void fire_dns_setIcon(FireDnsWindow* w, const uint32_t* rgba, int width, int height) { (void)w; (void)rgba; (void)width; (void)height; }
 
 /* (points of the screen, from the top left corner of the first screen) */
 static void fire_dns_move(FireDnsWindow* w, int x, int y) {

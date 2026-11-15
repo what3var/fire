@@ -1,0 +1,167 @@
+#import "process"
+#import "filesystem"
+
+namespace Assistant {
+    // Something the assistant wants to do that changes things (a file written, a command, a git operation that is not only reading, another folder):
+    // it waits for the user's "Allow" in the bubble.
+    class PendingAction {
+        // "write", "command", "git", "folder", "installgit"
+        string Kind = ""
+        string Path = ""
+        string Content = ""
+        List<string> Args = new List<string>()
+        // what the bubble says ("Write notes.txt (12 lines)?")
+        string Question = ""
+        // the model asked for it (it hears the result); else the user did (the menu)
+        bool FromModel = false
+    }
+
+    // What the assistant can do in its folder without spark: read and list files, write them, run commands and git - each change only after the user
+    // agreed. Paths are taken relative to the folder; a path outside it is refused.
+    class Actions {
+        string Folder = ""
+
+        construct(string folder) { this.Folder = folder }
+
+        // The full path of `path` in the folder; "" when it leaves the folder.
+        string Resolve(string path) {
+            string p = path.Trim()
+            if (p == "" || p == ".") { return this.Folder }
+            string full = IO.Path.GetFullPath(IO.Path.IsPathRooted(p) ? p : IO.Path.Combine(this.Folder, p))
+            string root = IO.Path.GetFullPath(this.Folder)
+            if (!full.StartsWith(root)) { return "" }
+            return full
+        }
+
+        // A path as the user reads it: relative to the folder when it is in it.
+        string Show(string path) {
+            string full = this.Resolve(path)
+            if (full == "") { return path }
+            string root = IO.Path.GetFullPath(this.Folder)
+            if (full.Length > root.Length && full.StartsWith(root)) { return full.Substring(root.Length + 1) }
+            return path
+        }
+
+        string List(string path) {
+            string dir = this.Resolve(path)
+            if (dir == "") { return "Error: " + path + " is outside the folder " + this.Folder + "." }
+            if (!IO.Directory.Exists(dir)) { return "Error: there is no folder " + path + "." }
+            string text = ""
+            defined int n = 0
+            foreach (d in IO.Directory.GetDirectories(dir)) {
+                string name = IO.Path.GetFileName(d)
+                if (name.StartsWith(".")) { continue }
+                text += name + "/\n"
+                n++
+                if (n >= 200) { return text + "(more)" }
+            }
+            foreach (f in IO.Directory.GetFiles(dir)) {
+                text += IO.Path.GetFileName(f) + "\n"
+                n++
+                if (n >= 200) { return text + "(more)" }
+            }
+            return text == "" ? "(empty)" : text
+        }
+
+        string Read(string path) {
+            string file = this.Resolve(path)
+            if (file == "") { return "Error: " + path + " is outside the folder " + this.Folder + "." }
+            if (!IO.File.Exists(file)) { return "Error: there is no file " + path + "." }
+            string text = IO.File.ReadAllText(file)
+            if (text.Length > 6000) { text = text.Substring(0, 6000) + "\n(... cut, " + text.Length + " characters in all)" }
+            return text
+        }
+
+        string Write(string path, string content) {
+            string file = this.Resolve(path)
+            if (file == "") { return "Error: " + path + " is outside the folder." }
+            string dir = IO.Path.GetDirectoryName(file)
+            if (!IO.Directory.Exists(dir)) { IO.Directory.CreateDirectory(dir) }
+            IO.File.WriteAllText(file, content)
+            return "Written: " + this.Show(path) + " (" + content.Length + " characters)."
+        }
+
+        // A command line in the folder (the shell of the system: cmd on Windows, sh elsewhere); its output (cut when long).
+        string Command(string line) {
+            try {
+                var options = new ProcessOptions()
+                options.WorkingDirectory = this.Folder
+                options.MergeError = true
+                bool windows = Environment.Platform == "windows"
+                ProcessResult r = windows ? Process.Run("cmd", ["/c", line], options, 60000) : Process.Run("sh", ["-c", line], options, 60000)
+                return Assistant.Actions.Cut("exit code " + r.ExitCode + "\n" + r.Output + r.Error)
+            }
+            catch (Exception e) { return "Error: " + e.message }
+        }
+
+        // git with `args` in the folder; its output.
+        string Git(List<string> args) {
+            try {
+                var options = new ProcessOptions()
+                options.WorkingDirectory = this.Folder
+                string a[] = new string[args.Count]
+                for (int i = 0; i < args.Count; i++) { a[i] = args[i] }
+                ProcessResult r = Process.Run("git", a, options, 120000)
+                string text = r.Output + (r.Error != "" ? "\n" + r.Error : "")
+                if (r.ExitCode != 0) { text = "git ended with " + r.ExitCode + "\n" + text }
+                return Assistant.Actions.Cut(text.Trim() == "" ? "(no output)" : text.Trim())
+            }
+            catch (Exception e) { return "Error: " + e.message }
+        }
+
+        static string Cut(string text) {
+            if (text.Length > 4000) { return text.Substring(0, 4000) + "\n(... cut)" }
+            return text
+        }
+
+        // Whether git can be started (git --version).
+        static bool HasGit() {
+            try {
+                ProcessResult r = Process.Run("git", ["--version"], new ProcessOptions(), 10000)
+                return r.ExitCode == 0
+            }
+            catch (Exception e) { return false }
+        }
+
+        // How git is installed on this system: a command the assistant can run after asking (Windows: winget), or "" with the advice in HowToInstallGit.
+        static string GitInstallCommand() {
+            if (Environment.Platform == "windows") { return "winget install --id Git.Git -e --source winget" }
+            return ""
+        }
+
+        static string HowToInstallGit() {
+            string os = Environment.Platform
+            if (os == "windows") { return "git is not installed. I can install it with winget (Git for Windows)." }
+            if (os == "macos") { return "git is not installed. Install it with the command line tools of Xcode: xcode-select --install" }
+            return "git is not installed. Install it with the package manager of the system, e.g. sudo apt install git (Debian, Ubuntu) or sudo dnf install git (Fedora)."
+        }
+
+        // The git subcommands that only read: they run without asking.
+        static bool ReadsOnly(string sub) {
+            return sub == "status" || sub == "log" || sub == "diff" || sub == "show" || sub == "branch" || sub == "remote" || sub == "blame" ||
+                sub == "ls-files" || sub == "rev-parse" || sub == "describe" || sub == "shortlog" || sub == "tag" || sub == "stash list"
+        }
+
+        // The words of a command line ("commit -m \"a b\"" -> commit, -m, a b).
+        static List<string> Words(string line) {
+            var words = new List<string>()
+            string current = ""
+            bool quoted = false
+            bool started = false
+            for (int i = 0; i < line.Length; i++) {
+                string c = line.Substring(i, 1)
+                if (c == "\"") { quoted = !quoted; started = true; continue }
+                if (c == " " && !quoted) {
+                    if (started) { words.Add(current) }
+                    current = ""
+                    started = false
+                    continue
+                }
+                current += c
+                started = true
+            }
+            if (started) { words.Add(current) }
+            return words
+        }
+    }
+}

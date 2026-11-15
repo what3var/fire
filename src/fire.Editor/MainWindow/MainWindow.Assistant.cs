@@ -59,10 +59,49 @@ namespace fire.Editor
             if (sender is Avalonia.Controls.MenuItem item) item.IsChecked = _settings.Assistant;
         }
 
+        /// <summary>The process of the assistant that one of the open sparks started (its id in assistant.pid beside the connection files): one assistant serves
+        /// all sparks - it connects to each of them (their files in spark-mcp/).</summary>
+        private static string AssistantPidFile => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "fire", "assistant.pid");
+
+        private static bool OtherAssistantRuns()
+        {
+            try
+            {
+                if (!File.Exists(AssistantPidFile) || !int.TryParse(File.ReadAllText(AssistantPidFile).Trim(), out int pid)) return false;
+                using var other = Process.GetProcessById(pid);
+                return !other.HasExited;
+            }
+            catch (Exception) { return false; }
+        }
+
+        /// <summary>Other sparks that are open (their connection files, their processes alive) - the assistant stays for them when this one closes.</summary>
+        private static bool OtherSparksOpen()
+        {
+            try
+            {
+                string folder = fire.Projects.Mcp.McpServer.InstanceFolderOf("spark");
+                if (!Directory.Exists(folder)) return false;
+                foreach (string file in Directory.GetFiles(folder, "*.json"))
+                {
+                    if (!int.TryParse(Path.GetFileNameWithoutExtension(file), out int pid) || pid == Environment.ProcessId) continue;
+                    try { using var p = Process.GetProcessById(pid); if (!p.HasExited) return true; }
+                    catch (Exception) { try { File.Delete(file); } catch (Exception) { } }   // (a spark that ended without removing its file)
+                }
+            }
+            catch (Exception) { }
+            return false;
+        }
+
         private void StartAssistant()
         {
             if (_assistant is { HasExited: false }) return;
             StartMcpServer();
+            // another spark's assistant runs: it finds this spark by itself (its connection file)
+            if (OtherAssistantRuns())
+            {
+                UpdateStatus("The assistant runs already - it works with this spark too (Ctrl+^ calls it here).");
+                return;
+            }
             string script = Path.Combine(AppContext.BaseDirectory, "Assistant", "assistant.fire");
             string forge = Path.Combine(AppContext.BaseDirectory, OperatingSystem.IsWindows() ? "forge.exe" : "forge");
             if (!File.Exists(script) || !File.Exists(forge))
@@ -100,6 +139,7 @@ namespace fire.Editor
                     }
                 });
                 _assistant = p;
+                try { File.WriteAllText(AssistantPidFile, p.Id.ToString()); } catch (Exception) { }
                 UpdateStatus("The assistant starts...");
             }
             catch (Exception ex) { UpdateStatus("The assistant could not start: " + ex.Message); }
@@ -113,18 +153,23 @@ namespace fire.Editor
                 UpdateStatus("The assistant is off (Tools > Assistant).");
                 return;
             }
-            if (_assistant is not { HasExited: false }) StartAssistant();
+            if (_assistant is not { HasExited: false } && !OtherAssistantRuns()) StartAssistant();
             _mcp.Log("info", new System.Text.Json.Nodes.JsonObject { ["event"] = "poke" }, "spark");
         }
 
         private void StopAssistant()
         {
+            // the assistant hears that this spark goes; it ends when no spark is left
+            _mcp?.Log("info", new System.Text.Json.Nodes.JsonObject { ["event"] = "closing" }, "spark");
             var p = _assistant;
             _assistant = null;
             if (p == null) return;
-            // it ends by itself when spark is gone; to be sure it is ended here
-            _mcp?.Log("info", new System.Text.Json.Nodes.JsonObject { ["event"] = "closing" }, "spark");
-            try { if (!p.WaitForExit(300) && !p.HasExited) p.Kill(true); } catch (Exception) { }
+            // (started by this spark: ended here - unless other sparks are open, which it serves too)
+            if (!OtherSparksOpen())
+            {
+                try { if (!p.WaitForExit(300) && !p.HasExited) p.Kill(true); } catch (Exception) { }
+                try { File.Delete(AssistantPidFile); } catch (Exception) { }
+            }
             p.Dispose();
         }
     }

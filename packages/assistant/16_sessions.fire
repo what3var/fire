@@ -1,0 +1,131 @@
+#import "ai.models"
+#import "json"
+#import "filesystem"
+#import "time"
+
+namespace Assistant {
+    // A message of a conversation as it is kept: "user" or "assistant", and the text.
+    class Message {
+        string Role = ""
+        string Text = ""
+    }
+
+    // A conversation with the assistant and the folder it works in (sessions/<id>.json beside the settings). The assistant goes on with the last one;
+    // the user switches between them or starts a new one.
+    class Session {
+        string Id = ""
+        string Title = ""
+        string Folder = ""
+        List<Assistant.Message> Messages = new List<Assistant.Message>()
+
+        static string Store() { return IO.Path.Combine(AI.Models.DataFolder(), "fire", "assistant", "sessions") }
+
+        string File() { return IO.Path.Combine(Assistant.Session.Store(), this.Id + ".json") }
+
+        undefined Save() {
+            try {
+                string dir = Assistant.Session.Store()
+                if (!IO.Directory.Exists(dir)) { IO.Directory.CreateDirectory(dir) }
+                IO.File.WriteAllText(this.File(), Json.Serialize(this))
+            }
+            catch (Exception e) { }
+        }
+
+        // The session `id`; undefined when there is none (or it cannot be read).
+        static any Load(string id) {
+            if (id == "") { return undefined }
+            string file = IO.Path.Combine(Assistant.Session.Store(), id + ".json")
+            if (!IO.File.Exists(file)) { return undefined }
+            try {
+                Assistant.Session s = Json.Deserialize<Assistant.Session>(IO.File.ReadAllText(file))
+                return s
+            }
+            catch (Exception e) { return undefined }
+        }
+
+        // A new session in `folder` (its id: the next free number).
+        static Assistant.Session New(string folder) {
+            var s = new Assistant.Session()
+            defined int n = 1
+            while (IO.File.Exists(IO.Path.Combine(Assistant.Session.Store(), "" + n + ".json"))) { n++ }
+            s.Id = "" + n
+            s.Folder = folder
+            s.Title = "New session"
+            return s
+        }
+
+        // The ids of the sessions, the one used last first.
+        static List All() {
+            var ids = new List()
+            var times = new List()
+            string dir = Assistant.Session.Store()
+            if (!IO.Directory.Exists(dir)) { return ids }
+            foreach (f in IO.Directory.GetFiles(dir, "*.json")) {
+                string path = f
+                any t = IO.File.GetLastWriteTimeUtc(path).Ticks
+                string name = IO.Path.GetFileNameWithoutExtension(path)
+                defined int at = 0
+                while (at < times.Count && times[at] >= t) { at++ }
+                ids.Insert(at, name)
+                times.Insert(at, t)
+            }
+            return ids
+        }
+
+        // Takes the conversation of an agent (its history) and names the session after its first question.
+        undefined Keep(AI.Agent agent) {
+            this.Messages.Clear()
+            for (int i = 0; i < agent.HistoryCount; i++) {
+                var m = new Assistant.Message()
+                m.Role = agent.HistoryRole(i)
+                m.Text = agent.HistoryText(i)
+                this.Messages.Add(take m)
+            }
+            if ((this.Title == "" || this.Title == "New session") && this.Messages.Count > 0) {
+                Assistant.Message first = this.Messages[0]
+                string t = first.Text.Replace("\n", " ").Trim()
+                if (t.Length > 40) { t = t.Substring(0, 37) + "..." }
+                this.Title = t
+            }
+        }
+    }
+
+    // What git says about a folder without running git: the root of its repository and the branch (from .git/HEAD).
+    class GitInfo {
+        // The folder of the repository `folder` is in (it or one above it with .git); "" when it is in none.
+        static string RootOf(string folder) {
+            string dir = folder
+            while (dir != undefined && dir != "") {
+                string dotGit = IO.Path.Combine(dir, ".git")
+                if (IO.Directory.Exists(dotGit) || IO.File.Exists(dotGit)) { return dir }
+                string up = IO.Path.GetDirectoryName(dir)
+                if (up == undefined || up == dir) { return "" }
+                dir = up
+            }
+            return ""
+        }
+
+        // The branch checked out in the repository at `root` ("dev/engine"; a detached head: its first 7 digits); "" when it cannot be read.
+        static string BranchOf(string root) {
+            if (root == "") { return "" }
+            string dotGit = IO.Path.Combine(root, ".git")
+            try {
+                string gitDir = dotGit
+                if (IO.File.Exists(dotGit)) {
+                    // a worktree or submodule: "gitdir: <path>"
+                    string link = IO.File.ReadAllText(dotGit).Trim()
+                    if (link.StartsWith("gitdir:")) {
+                        gitDir = link.Substring(7).Trim()
+                        if (!IO.Path.IsPathRooted(gitDir)) { gitDir = IO.Path.Combine(root, gitDir) }
+                    }
+                }
+                string head = IO.File.ReadAllText(IO.Path.Combine(gitDir, "HEAD")).Trim()
+                if (head.StartsWith("ref: refs/heads/")) { return head.Substring(16) }
+                if (head.StartsWith("ref: ")) { return head.Substring(5) }
+                if (head.Length >= 7) { return head.Substring(0, 7) }
+            }
+            catch (Exception e) { }
+            return ""
+        }
+    }
+}

@@ -37,6 +37,8 @@ namespace UI {
         bool device = false
         // the context menu (a right click without dragging): its rows and the element it was opened on
         List contextItems
+        // the rows of the canvas menu while it is open (the menu does not own them)
+        List canvasItems
         Circuits.Element contextElement
         // the pin a context menu was opened on (index into the pins of contextElement)
         defined int contextPin = -1
@@ -3654,7 +3656,8 @@ namespace UI {
                 current.IsChecked = this.showCurrent
                 items.Add(take current)
             }
-            root.ShowMenu(items, px, py, this)
+            this.canvasItems = take items
+            root.ShowMenu(this.canvasItems, px, py, this)
         }
 
         // an element whose voltage a scope can show (it has pins on the circuit)

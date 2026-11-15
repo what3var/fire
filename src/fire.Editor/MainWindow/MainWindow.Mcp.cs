@@ -47,6 +47,7 @@ namespace fire.Editor
                 server.Activity += text => Dispatcher.UIThread.Post(() => UpdateStatus(text));
                 server.Start();
                 _mcp = server;
+                DescribeMcp();
                 UpdateStatus($"MCP server: {server.Url} (token in {server.ConnectionFile}).");
             }
             catch (Exception ex) { UpdateStatus("The MCP server could not start: " + ex.Message); }
@@ -70,7 +71,23 @@ namespace fire.Editor
         // ---- the events the clients hear about ----
 
         /// <summary>The active document or the run changed: the clients that subscribed to spark://state are told.</summary>
-        private void McpStateChanged() => _mcp?.ResourceUpdated(StateUri);
+        private void McpStateChanged()
+        {
+            if (_mcp == null) return;
+            DescribeMcp();
+            _mcp.ResourceUpdated(StateUri);
+        }
+
+        /// <summary>What this spark works on, in its connection file: the solution (or the active document's folder) - the assistant shows it when several sparks
+        /// are open and works in its folder.</summary>
+        private void DescribeMcp()
+        {
+            if (_mcp == null) return;
+            string? path = _workspace.FilePath ?? FullPathOf(ActiveDocument);
+            string folder = path == null ? "" : (Directory.Exists(path) ? path : Path.GetDirectoryName(path) ?? "");
+            string project = _workspace.FilePath != null ? Path.GetFileNameWithoutExtension(_workspace.FilePath) : (folder == "" ? "spark" : Path.GetFileName(folder));
+            _mcp.Describe(project, folder);
+        }
 
         private void McpBuildFinished(string what, bool ok, int errors, int warnings)
         {
