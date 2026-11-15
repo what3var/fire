@@ -28,6 +28,8 @@ namespace Assistant {
         defined int pressY = 0
         bool placed = false
         bool showHistory = false
+        // a choice that was clicked: taken in the next cycle (its button goes when the choices are made anew - not while it handles its own click)
+        defined int picked = -1
         string shown = ""
         // the window, the bubble in it (as high as what it shows, between MinBH and MaxBH; 0 while it is closed), the character below it
         defined int W = 240
@@ -84,6 +86,14 @@ namespace Assistant {
             this.text.FadeBottom = 28
             this.ui.Add(this.text)
             this.choices = new UI.StackPanel(14, 140, this.W - 28, -1, false, 4, 0)
+            // four buttons made once: a choice changes their text (a button made anew would destroy the one the pointer is on - the interface still knows it)
+            for (int i = 0; i < 4; i++) {
+                var b = new UI.Button("", 0, 0, this.W - 28, -1)
+                b.WordWrap = true
+                b.Visible = false
+                b.OnClick = func () on this => Pick((taking i))
+                this.choices.Add(b)
+            }
             this.ui.Add(this.choices)
             this.question = new UI.TextBox("", 14, this.BH - 52, this.W - 28, 26)
             this.question.Hint = "Ask me..."
@@ -177,6 +187,7 @@ namespace Assistant {
         undefined Cycle() {
             this.frame++
             if (!this.placed && this.frame < 120) { this.Place() }
+            if (this.picked >= 0) { this.TakePicked() }
             bool changed = this.Brain.Tick()
             if (this.Brain.Quit) {
                 this.win.Close()
@@ -201,18 +212,17 @@ namespace Assistant {
                 this.text.Text = t
                 this.shown = t
             }
-            this.choices.Clear()
             defined int count = 0
             defined int choicesHeight = 0
-            if (shownNow && !this.showHistory) {
-                for (int i = 0; i < this.Brain.Choices.Count && i < 4; i++) {
+            for (int i = 0; i < 4; i++) {
+                UI.Button b = this.choices.children[i]
+                bool used = shownNow && !this.showHistory && i < this.Brain.Choices.Count
+                b.Visible = used
+                if (used) {
                     // (a long choice breaks into lines)
-                    var b = new UI.Button(this.Brain.Choices[i], 0, 0, this.W - 28, -1)
-                    b.WordWrap = true
-                    b.OnClick = func () on this => Pick((taking i))
+                    b.Text = this.Brain.Choices[i]
                     b.Measure(this.ui, this.W - 28, -1)
                     choicesHeight = choicesHeight + UI.M.Max(24, b.dh) + 4
-                    this.choices.Add(b)
                     count++
                 }
             }
@@ -235,7 +245,11 @@ namespace Assistant {
             this.ui.Invalidate()
         }
 
-        undefined Pick(defined int i) {
+        undefined Pick(defined int i) { this.picked = i }
+
+        undefined TakePicked() {
+            defined int i = this.picked
+            this.picked = -1
             this.showHistory = false
             this.Brain.Choose(i)
             this.Show()
