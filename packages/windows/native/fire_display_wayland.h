@@ -261,6 +261,7 @@ typedef struct FireDwlWindow {
     int configured, closed, maximized, activated;
     int pendingW, pendingH;  /* the size of the last configure (0: the window decides) */
     int serverDecorations, csd;   /* the compositor draws the frame / the window draws its title bar */
+    int frameless;                /* Window.Frameless: neither (the compositor is asked for client side decorations, and the window draws none) */
     int winW, winH;          /* the framebuffer's part of the window (logical pixels) */
     int vsync, touchMouse, cursor, direct, backdrop;
     char* title;
@@ -432,7 +433,7 @@ static void fire_dwl_toplevelClose(void* data, void* t) { FireDwlWindow* w = (Fi
 static const struct { void (*configure)(void*, void*, int32_t, int32_t, FireWlArray*); void (*close)(void*, void*); } fire_dwlToplevelListener = { fire_dwl_toplevelConfigure, fire_dwl_toplevelClose };
 /* (FIRE_WAYLAND_CSD=0: no title bar of fire's own - the tests, on a compositor that draws none) */
 static int fire_dwl_ownTitleBar(void) { const char* e = getenv("FIRE_WAYLAND_CSD"); return e == NULL || strcmp(e, "0") != 0; }
-static void fire_dwl_decoConfigure(void* data, void* d, uint32_t mode) { FireDwlWindow* w = (FireDwlWindow*)data; (void)d; w->serverDecorations = mode == 2; w->csd = mode != 2 && fire_dwl_ownTitleBar(); }
+static void fire_dwl_decoConfigure(void* data, void* d, uint32_t mode) { FireDwlWindow* w = (FireDwlWindow*)data; (void)d; w->serverDecorations = mode == 2; w->csd = mode != 2 && fire_dwl_ownTitleBar() && !w->frameless; }
 static const struct { void (*configure)(void*, void*, uint32_t); } fire_dwlDecoListener = { fire_dwl_decoConfigure };
 
 /* ---- the cursor ---- */
@@ -1250,7 +1251,7 @@ static int fire_dwl_open(FireDwlWindow* w, const char* title, int width, int hei
     l->addListener(w->toplevel, (FireWlVoid*)(void*)&fire_dwlToplevelListener, w);
     FIRE_WL_REQ(l, w->toplevel, 2, w->title);
     FIRE_WL_REQ(l, w->toplevel, 3, "fire");
-    w->csd = fire_dwl_ownTitleBar();
+    w->csd = fire_dwl_ownTitleBar() && !w->frameless;
     if (w->decoMgr != NULL) {
         w->deco = fire_dwl_new1(l, w->decoMgr, 1, &fire_wlDeco, w->toplevel);
         l->addListener(w->deco, (FireWlVoid*)(void*)&fire_dwlDecoListener, w);
@@ -1384,6 +1385,36 @@ static int fire_dwl_setBackdrop(FireDwlWindow* w, int kind) {
     return w->backdrop;
 }
 static double fire_dwl_scale(FireDwlWindow* w) { return fire_dwl_scaleOf(w); }
+
+static void fire_dwl_draw(FireDwlWindow* w);
+/* Frameless: the compositor is asked to draw no frame (client side decorations), and fire's own title bar stays away. A compositor keeps no window on top
+ * for a program and places windows itself: TopMost and SetPosition are not given. */
+static int fire_dwl_setStyle(FireDwlWindow* w, int flags) {
+    int frameless = (flags & FIRE_STYLE_FRAMELESS) != 0;
+    if (w->d == NULL) return 0;
+    pthread_mutex_lock(&w->lock);
+    if (frameless != w->frameless) {
+        w->frameless = frameless;
+        if (w->deco != NULL) FIRE_WL_REQ(w->l, w->deco, 1, frameless ? 1u : 2u);   /* set_mode: client side / server side */
+        w->csd = !w->serverDecorations && fire_dwl_ownTitleBar() && !frameless;
+        w->damageAll = 1;
+        if (w->lastFrame != NULL && !w->direct) fire_dwl_draw(w);
+        w->l->flush(w->d);
+    }
+    pthread_mutex_unlock(&w->lock);
+    return frameless ? FIRE_STYLE_FRAMELESS : 0;
+}
+static void fire_dwl_move(FireDwlWindow* w, int x, int y) { (void)w; (void)x; (void)y; }
+/* xdg_toplevel.move with the serial of the press: the compositor moves the window with the held button. */
+static int fire_dwl_beginMove(FireDwlWindow* w) {
+    if (w->d == NULL || w->toplevel == NULL || w->seat == NULL || w->pressSerial == 0) return 0;
+    pthread_mutex_lock(&w->lock);
+    FIRE_WL_REQ(w->l, w->toplevel, 5, w->seat, w->pressSerial);
+    w->l->flush(w->d);
+    pthread_mutex_unlock(&w->lock);
+    return 1;
+}
+static int fire_dwl_workArea(FireDwlWindow* w, int* r) { (void)w; (void)r; return 0; }
 
 static void fire_dwl_draw(FireDwlWindow* w);
 

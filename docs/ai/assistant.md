@@ -17,7 +17,8 @@ can use spark the same way.
 
 spark starts the assistant (`forge run Assistant/assistant.fire`, the package `assistant`) when it is switched on, and the assistant connects to spark's
 MCP server (HTTP on localhost, with the token of the connection file, [spark as an MCP server](../tools/spark-mcp.md)). It ends with spark. Its window is
-small and transparent where the desktop allows it: only the character and its bubble are seen.
+small, without a frame, above the other windows and transparent where the desktop allows it: only the character and its bubble are seen, at the
+bottom right of the desktop. Dragging the character moves it; a click pokes it.
 
 ## Principles
 
@@ -80,5 +81,5 @@ its own way of speaking (a line in the system prompt). They are not, and do not 
 | 2b | The package `ai.models`: the catalog, the choice by the machine, the download (resumable, SHA-256) | built |
 | 3 | The package `assistant`: characters, bubble, choices, the question line, tips, the model setup, build errors explained | built |
 | 4 | spark as an MCP server (tools, resources, notifications), *Tools > Assistant*, Ctrl+^, the setup task | built |
-| 4b | A window without a frame that stays on top, next to spark's window (the package `windows` cannot do that yet) | |
+| 4b | A window without a frame that stays on top, at the bottom right of the desktop; dragging the character moves it (`Window.Frameless`, `TopMost`, `SetPosition`, `WorkArea`, `BeginMove`) | built |
 | 5 | Code completion and small tasks | |

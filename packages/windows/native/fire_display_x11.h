@@ -173,6 +173,11 @@ typedef struct FireXlib {
     int (*XISelectEvents)(void*, FireXId, FireXIEventMask*, int);
     /* libXcursor */
     FireXId (*CursorLibraryLoadCursor)(void*, const char*);
+    /* placing the window (optional) */
+    int (*MoveWindow)(void*, FireXId, int, int);
+    int (*UngrabPointer)(void*, FireXId);
+    int (*DisplayWidth)(void*, int);
+    int (*DisplayHeight)(void*, int);
 } FireXlib;
 
 static int fire_dx11_sym(void* lib, const char* name, void* fn) {
@@ -230,6 +235,10 @@ static FireXlib* fire_dx11_lib(void) {
             if (!(fire_dx11_sym(x.xi, "XIQueryVersion", &x.XIQueryVersion) && fire_dx11_sym(x.xi, "XISelectEvents", &x.XISelectEvents))) x.XISelectEvents = NULL;
             x.xcursor = fire_dx11_open2("libXcursor.so.1", "libXcursor.so");
             fire_dx11_sym(x.xcursor, "XcursorLibraryLoadCursor", &x.CursorLibraryLoadCursor);
+            fire_dx11_sym(l, "XMoveWindow", &x.MoveWindow);
+            fire_dx11_sym(l, "XUngrabPointer", &x.UngrabPointer);
+            fire_dx11_sym(l, "XDisplayWidth", &x.DisplayWidth);
+            fire_dx11_sym(l, "XDisplayHeight", &x.DisplayHeight);
             /* (several threads talk to X - every window on its own connection, the clipboard on another): libX11 must know before anything else */
             x.InitThreads();
         }
@@ -275,7 +284,8 @@ static void fire_dx11_pace(double* last) {
 /* ---- the atoms ---- */
 typedef struct FireDx11Atoms {
     FireXId wmProtocols, wmDelete, netWmName, netWmPid, utf8, clipboard, targets, incr, textPlainUtf8, textPlain, string, text, png, bmp, uriList, gnomeFiles, property,
-        xdndAware, xdndEnter, xdndPosition, xdndStatus, xdndLeave, xdndDrop, xdndFinished, xdndSelection, xdndTypeList, xdndActionCopy, cm, kdeBlur, netSupported, atom, cardinal;
+        xdndAware, xdndEnter, xdndPosition, xdndStatus, xdndLeave, xdndDrop, xdndFinished, xdndSelection, xdndTypeList, xdndActionCopy, cm, kdeBlur, netSupported, atom, cardinal,
+        motifHints, netWmState, netWmStateAbove, netWmMoveResize, netWorkArea, netCurrentDesktop;
 } FireDx11Atoms;
 static void fire_dx11_atoms(FireXlib* x, void* d, FireDx11Atoms* a) {
     a->wmProtocols = x->InternAtom(d, "WM_PROTOCOLS", 0);
@@ -308,6 +318,12 @@ static void fire_dx11_atoms(FireXlib* x, void* d, FireDx11Atoms* a) {
     a->cm = x->InternAtom(d, "_NET_WM_CM_S0", 0);
     a->kdeBlur = x->InternAtom(d, "_KDE_NET_WM_BLUR_BEHIND_REGION", 0);
     a->netSupported = x->InternAtom(d, "_NET_SUPPORTED", 0);
+    a->motifHints = x->InternAtom(d, "_MOTIF_WM_HINTS", 0);
+    a->netWmState = x->InternAtom(d, "_NET_WM_STATE", 0);
+    a->netWmStateAbove = x->InternAtom(d, "_NET_WM_STATE_ABOVE", 0);
+    a->netWmMoveResize = x->InternAtom(d, "_NET_WM_MOVERESIZE", 0);
+    a->netWorkArea = x->InternAtom(d, "_NET_WORKAREA", 0);
+    a->netCurrentDesktop = x->InternAtom(d, "_NET_CURRENT_DESKTOP", 0);
     a->atom = 4;       /* XA_ATOM */
     a->cardinal = 6;   /* XA_CARDINAL */
 }
@@ -752,6 +768,9 @@ typedef struct FireDx11Window {
     int imgW, imgH;
     uint32_t* pixels;   /* (without MIT-SHM: the memory of the image) */
     int backdrop;
+    /* Window.Frameless / TopMost (FIRE_STYLE_*), the position asked for (posSet), the last press of a button (for BeginMove) */
+    int style, posSet, posX, posY;
+    int pressRootX, pressRootY, pressButton;
     /* the input method */
     void* im;
     void* ic;
@@ -979,6 +998,30 @@ static int fire_dx11_makeImage(FireDx11Window* w, int width, int height) {
 }
 
 /* Makes the X window (again, with a 32-bit visual when `argb`). */
+/* The style of the window (w->style): without the frame of the window manager (_MOTIF_WM_HINTS, understood by all the usual ones) and above the other windows
+ * (_NET_WM_STATE_ABOVE - before the window is mapped as a property, afterwards as a request to the window manager). */
+static void fire_dx11_applyStyle(FireDx11Window* w, int mapped) {
+    FireXlib* x = w->x;
+    long hints[5] = { 2 /* MWM_HINTS_DECORATIONS */, 0, (w->style & FIRE_STYLE_FRAMELESS) ? 0 : 1, 0, 0 };
+    x->ChangeProperty(w->d, w->win, w->a.motifHints, w->a.motifHints, 32, 0 /* PropModeReplace */, (const unsigned char*)hints, 5);
+    if (!mapped) {
+        if (w->style & FIRE_STYLE_TOPMOST) x->ChangeProperty(w->d, w->win, w->a.netWmState, w->a.atom, 32, 0, (const unsigned char*)&w->a.netWmStateAbove, 1);
+        else x->DeleteProperty(w->d, w->win, w->a.netWmState);
+    } else {
+        FireXEv e;
+        memset(&e, 0, sizeof e);
+        e.xclient.type = FIRE_X_CLIENT_MESSAGE;
+        e.xclient.display = w->d;
+        e.xclient.window = w->win;
+        e.xclient.message_type = w->a.netWmState;
+        e.xclient.format = 32;
+        e.xclient.data.l[0] = (w->style & FIRE_STYLE_TOPMOST) ? 1 : 0;   /* _NET_WM_STATE_ADD / REMOVE */
+        e.xclient.data.l[1] = (long)w->a.netWmStateAbove;
+        e.xclient.data.l[3] = 1;   /* a normal program */
+        x->SendEvent(w->d, w->root, 0, 0x80000 | 0x100000 /* SubstructureRedirect | SubstructureNotify */, &e);
+    }
+}
+
 static int fire_dx11_makeWindow(FireDx11Window* w, int argb) {
     FireXlib* x = w->x;
     FireXSetAttributes attr;
@@ -1026,7 +1069,10 @@ static int fire_dx11_makeWindow(FireDx11Window* w, int argb) {
             w->touch = x->XISelectEvents(w->d, w->win, &m, 1) == 0;
         }
     }
+    fire_dx11_applyStyle(w, 0);
+    if (w->posSet && x->MoveWindow != NULL) x->MoveWindow(w->d, w->win, w->posX, w->posY);
     x->MapWindow(w->d, w->win);
+    if (w->posSet && x->MoveWindow != NULL) x->MoveWindow(w->d, w->win, w->posX, w->posY);
     fire_dx11_openIM(w);
     if (w->cursor >= 0 && w->cursors[w->cursor]) x->DefineCursor(w->d, w->win, w->cursors[w->cursor]);
     x->Flush(w->d);
@@ -1142,6 +1188,68 @@ static int fire_dx11_setBackdrop(FireDx11Window* w, int kind) {
     } else x->DeleteProperty(w->d, w->win, w->a.kdeBlur);
     x->Flush(w->d);
     return w->backdrop;
+}
+
+static int fire_dx11_setStyle(FireDx11Window* w, int flags) {
+    if (w->d == NULL) return 0;
+    w->style = flags;
+    fire_dx11_applyStyle(w, 1);
+    w->x->Flush(w->d);
+    return flags;
+}
+
+static void fire_dx11_move(FireDx11Window* w, int x0, int y0) {
+    w->posSet = 1; w->posX = x0; w->posY = y0;
+    if (w->d == NULL || w->x->MoveWindow == NULL) return;
+    w->x->MoveWindow(w->d, w->win, x0, y0);
+    w->x->Flush(w->d);
+}
+
+/* The window manager moves the window with the held button (_NET_WM_MOVERESIZE): the press that started it lets go of its grab first. */
+static int fire_dx11_beginMove(FireDx11Window* w) {
+    FireXEv e;
+    if (w->d == NULL || w->pressButton == 0) return 0;
+    if (w->x->UngrabPointer != NULL) w->x->UngrabPointer(w->d, 0 /* CurrentTime */);
+    memset(&e, 0, sizeof e);
+    e.xclient.type = FIRE_X_CLIENT_MESSAGE;
+    e.xclient.display = w->d;
+    e.xclient.window = w->win;
+    e.xclient.message_type = w->a.netWmMoveResize;
+    e.xclient.format = 32;
+    e.xclient.data.l[0] = w->pressRootX;
+    e.xclient.data.l[1] = w->pressRootY;
+    e.xclient.data.l[2] = 8;   /* _NET_WM_MOVERESIZE_MOVE */
+    e.xclient.data.l[3] = w->pressButton;
+    e.xclient.data.l[4] = 1;
+    w->x->SendEvent(w->d, w->root, 0, 0x80000 | 0x100000, &e);
+    w->x->Flush(w->d);
+    return 1;
+}
+
+/* _NET_WORKAREA of the current desktop (the screen without the panels); else the whole screen. */
+static int fire_dx11_workArea(FireDx11Window* w, int* r) {
+    FireXlib* x = w->x;
+    FireXId type = 0;
+    size_t n = 0;
+    unsigned char* area;
+    long desktop = 0;
+    if (w->d == NULL) return 0;
+    {
+        unsigned char* cur = fire_dx11_readProperty(x, w->d, w->root, w->a.netCurrentDesktop, 0, &type, &n);
+        if (cur != NULL && n >= sizeof(long)) desktop = ((long*)(void*)cur)[0];
+        free(cur);
+    }
+    area = fire_dx11_readProperty(x, w->d, w->root, w->a.netWorkArea, 0, &type, &n);
+    if (area != NULL && n >= (size_t)(desktop + 1) * 4 * sizeof(long)) {
+        long* v = (long*)(void*)area + desktop * 4;
+        r[0] = (int)v[0]; r[1] = (int)v[1]; r[2] = (int)v[2]; r[3] = (int)v[3];
+        free(area);
+        return r[2] > 0 && r[3] > 0;
+    }
+    free(area);
+    if (x->DisplayWidth == NULL || x->DisplayHeight == NULL) return 0;
+    r[0] = 0; r[1] = 0; r[2] = x->DisplayWidth(w->d, w->screen); r[3] = x->DisplayHeight(w->d, w->screen);
+    return 1;
 }
 
 static double fire_dx11_scale(FireDx11Window* w) { return w->scale; }
@@ -1336,6 +1444,8 @@ static int fire_dx11_pump(FireDx11Window* w, FireDisplayEvents* out, int fbWidth
             case FIRE_X_BUTTON_PRESS: case FIRE_X_BUTTON_RELEASE: {
                 unsigned b = e.xbutton.button;
                 int down = e.type == FIRE_X_BUTTON_PRESS;
+                if (down && b >= 1 && b <= 3) { w->pressRootX = e.xbutton.x_root; w->pressRootY = e.xbutton.y_root; w->pressButton = (int)b; }
+                else if (!down && (int)b == w->pressButton) w->pressButton = 0;
                 float fx = (float)e.xbutton.x, fy = (float)e.xbutton.y;
                 if (b >= 4 && b <= 7) {
                     if (down) fire_display_queueScroll(&w->queue, b == 6 ? -1.0f : b == 7 ? 1.0f : 0.0f, b == 4 ? 1.0f : b == 5 ? -1.0f : 0.0f, fx, fy);

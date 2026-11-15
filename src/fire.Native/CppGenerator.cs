@@ -228,30 +228,10 @@ namespace fire.Native
         /// <summary>A `Takes` mode is used: `Takes.Children` needs the enumerator of the IEnumerable classes (fire_enumerateItems).</summary>
         private bool _usesTakeEnumerate;
 
-        /// <summary>The natives of `#import "graphics"` (`__GRPH` + name; `Fb` framebuffer, `Rnd` renderer, `Bsh` brush, `Pen` pen, `Slc` slicer, `Fnt` font): arguments and whether the result is a string/buffer/array.</summary>
-        public static readonly IReadOnlyDictionary<string, (int Argc, bool Reference)> GraphicsBridgeNatives = new Dictionary<string, (int Argc, bool Reference)>
-        {
-            ["FbCreate"] = (3, false), ["FbDestroy"] = (1, false), ["FbWidth"] = (1, false), ["FbHeight"] = (1, false), ["FbReadByte"] = (2, false), ["FbWriteByte"] = (3, false),
-            ["FbMode"] = (1, false), ["FbByteCount"] = (1, false), ["FbReadBytes"] = (1, true), ["FbWriteBytes"] = (2, false), ["FbGetPaletteColor"] = (2, false), ["FbSetPaletteColor"] = (3, false),
-            ["FbReadPalette"] = (2, true), ["FbWritePalette"] = (2, false), ["FbLoadImage"] = (2, false), ["FbLoadFile"] = (2, false), ["FbFromPixels"] = (5, false), ["FbLastError"] = (0, true), ["FbToPng"] = (1, true),
-            ["FbResize"] = (3, false), ["FbGetTransparentIndex"] = (1, false), ["FbSetTransparentIndex"] = (2, false), ["FbToMask"] = (4, false),
-            ["FbSetAccelerated"] = (2, false), ["FbGetAccelerated"] = (1, false), ["FbGpuError"] = (0, true), ["FbGpuReadbacks"] = (0, false),
-            ["RndCreate"] = (1, false), ["RndDestroy"] = (1, false), ["RndPrint"] = (2, false), ["RndLocate"] = (3, false), ["RndClear"] = (1, false),
-            ["RndClearTo"] = (2, false), ["RndSetColor"] = (3, false), ["RndSetPixel"] = (4, false), ["RndGetPixel"] = (3, false), ["RndGetPixelIndex"] = (3, false),
-            ["RndCellWidth"] = (1, false), ["RndCellHeight"] = (1, false), ["RndGetAlphaBlending"] = (1, false), ["RndSetAlphaBlending"] = (2, false),
-            ["RndDrawText"] = (6, false), ["RndFillRect"] = (6, false), ["RndFill"] = (2, false), ["RndFillCircle"] = (5, false), ["RndFillEllipse"] = (6, false),
-            ["RndFillTriangle"] = (8, false), ["RndFillPolygon"] = (3, false), ["RndFloodFill"] = (4, false), ["RndFloodFillBorder"] = (5, false),
-            ["RndDrawPoint"] = (4, false), ["RndDrawLine"] = (6, false), ["RndDrawPath"] = (4, false), ["RndDrawRect"] = (6, false), ["RndDrawCircle"] = (5, false),
-            ["RndDrawEllipse"] = (6, false), ["RndDrawTriangle"] = (8, false), ["RndDrawPolygon"] = (4, false), ["RndBlit"] = (12, false), ["RndSetClip"] = (5, false), ["RndResetClip"] = (1, false), ["RndDrawTextFont"] = (8, false),
-            ["RndFillRoundRect"] = (7, false), ["RndDrawRoundRect"] = (7, false), ["RndDrawShadow"] = (9, false), ["RndBlur"] = (7, false), ["RndDrawMaterial"] = (10, false),
-            ["BshCreateSolid"] = (1, false),
-            ["BshDestroy"] = (1, false), ["BshGetColor"] = (1, false), ["BshSetColor"] = (2, false), ["PenCreate"] = (3, false), ["PenDestroy"] = (1, false),
-            ["PenGetColor"] = (1, false), ["PenSetColor"] = (2, false), ["PenGetWidth"] = (1, false), ["PenSetWidth"] = (2, false), ["PenGetShape"] = (1, false),
-            ["PenSetShape"] = (2, false),
-            ["SlcSlice"] = (7, true),
-            ["FntLoad"] = (1, false), ["FntAdd"] = (2, false), ["FntOpen"] = (1, false), ["FntDestroy"] = (1, false), ["FntName"] = (1, true), ["FntIsBitmap"] = (1, false),
-            ["FntAscent"] = (2, false), ["FntHeight"] = (2, false), ["FntMeasure"] = (3, false),
-        };
+        /// <summary>The natives of `#import "graphics"` (`__GRPH` + name; `Fb` framebuffer, `Rnd` renderer, `Bsh` brush, `Pen` pen, `Slc` slicer, `Fnt` font): arguments and whether
+        /// the result is a string/buffer/array. Declared by the package (packages/graphics/graphics.fireproj, `native.bridge`).</summary>
+        public static IReadOnlyDictionary<string, (int Argc, bool Reference)> GraphicsBridgeNatives => BridgeOf(NativeImports.Graphics, "__GRPH").Natives;
+
         /// <summary>What fire's own display links: Linux loads its window systems at run time (dl, pthread for the clipboard's thread); Windows links what every Windows has;
         /// macOS its frameworks (`framework:` - the build makes `-framework` of it).</summary>
         private IEnumerable<string> OwnDisplayLibraries() => DisplayLibraries(_target);
@@ -265,23 +245,42 @@ namespace fire.Native
             return new[] { "dl", "pthread" };
         }
 
-        /// <summary>The natives of `#import "windows"` (`__GRPHWin` + name): arguments and whether the result is an array (it belongs to the innermost scope).</summary>
-        public static readonly IReadOnlyDictionary<string, (int Argc, bool Reference)> WindowsBridgeNatives = new Dictionary<string, (int Argc, bool Reference)>
-        {
-            ["Create"] = (2, false), ["Destroy"] = (1, false), ["Tick"] = (1, false), ["EnableEvents"] = (1, false), ["NextEvent"] = (1, true), ["RegisterEvent"] = (3, false),
-            ["SetVSync"] = (2, false), ["GetVSync"] = (1, false), ["SetAutoResize"] = (2, false), ["GetAutoResize"] = (1, false), ["SetTouchMouse"] = (2, false), ["GetTouchMouse"] = (1, false),
-            ["Pump"] = (1, false), ["Present"] = (1, false), ["MgrCreate"] = (0, false), ["MgrAttach"] = (2, false), ["MgrDetach"] = (2, false), ["MgrStart"] = (2, false), ["MgrWait"] = (2, false),
-            ["SetBlocked"] = (2, false), ["MgrServed"] = (1, false), ["SetAutoClose"] = (2, false), ["GetAutoClose"] = (1, false), ["SetSize"] = (3, false), ["SystemTheme"] = (0, true),
-            ["SetCursor"] = (2, false), ["ClipboardSetText"] = (1, false), ["ClipboardGetText"] = (0, true), ["ClipboardHasText"] = (0, false),
-            ["ClipboardGetImage"] = (0, true), ["ClipboardSetImage"] = (1, false), ["ClipboardHasImage"] = (0, false),
-            ["ClipboardGetFiles"] = (0, true), ["ClipboardSetFiles"] = (1, false), ["ClipboardHasFiles"] = (0, false), ["StartDrag"] = (3, false),
-            ["CanStartDrag"] = (1, false), ["SetTextInputRect"] = (5, false), ["SetBackdrop"] = (2, false), ["GetBackdrop"] = (1, false), ["GetScale"] = (1, false),
-            ["PresentArea"] = (5, false), ["PresentPath"] = (1, true),
-        };
+        /// <summary>The natives of `#import "windows"` (`__GRPHWin` + name): arguments and whether the result is an array (it belongs to the innermost scope). Declared by the
+        /// package (packages/windows/windows.fireproj, `native.bridge`).</summary>
+        public static IReadOnlyDictionary<string, (int Argc, bool Reference)> WindowsBridgeNatives => BridgeOf(NativeImports.Windows, "__GRPHWin").Natives;
 
-        /// <summary>The natives of `#import "windows"` whose C function takes the list of the scope as its last argument (they hand out what they make).</summary>
-        public static readonly IReadOnlySet<string> WindowsNeedsList = new HashSet<string> { "WinNextEvent", "WinSystemTheme", "WinClipboardGetText", "WinClipboardGetImage", "WinClipboardGetFiles", "WinPresentPath" };
-        public static readonly IReadOnlySet<string> GraphicsNeedsList = new HashSet<string> { "FbReadBytes", "FbReadPalette", "FbLastError", "SlcSlice", "FntName", "FbToPng", "FbGpuError" };
+        /// <summary>The natives of `#import "windows"` whose C function takes the list of the scope as its last argument (they hand out what they make): `Win` + name.</summary>
+        public static IReadOnlySet<string> WindowsNeedsList => BridgeOf(NativeImports.Windows, "__GRPHWin").NeedsList;
+        public static IReadOnlySet<string> GraphicsNeedsList => BridgeOf(NativeImports.Graphics, "__GRPH").NeedsList;
+
+        private static readonly object BridgeLock = new();
+        private static readonly Dictionary<(object Store, string Import), (IReadOnlyDictionary<string, (int Argc, bool Reference)> Natives, IReadOnlySet<string> NeedsList)> BridgeCache = new();
+
+        /// <summary>The natives of the display that a package declares in `native.bridge` (graphics, windows), by their name without `prefix`; the list of those that take the
+        /// scope's list (windows: with "Win" in front, as the C functions are named). Read once per package store.</summary>
+        private static (IReadOnlyDictionary<string, (int Argc, bool Reference)> Natives, IReadOnlySet<string> NeedsList) BridgeOf(string import, string prefix)
+        {
+            var store = fire.Package.Manager.PackageStore.Default;
+            lock (BridgeLock)
+            {
+                if (BridgeCache.TryGetValue((store, import), out var known)) return known;
+                var natives = new Dictionary<string, (int Argc, bool Reference)>(StringComparer.Ordinal);
+                var needsList = new HashSet<string>(StringComparer.Ordinal);
+                var found = store.FindImport(import);
+                if (found?.Import.Native is { } native)
+                    foreach (var fn in native.Bridge)
+                    {
+                        if (!fn.Name.StartsWith(prefix, StringComparison.Ordinal)) continue;
+                        string key = fn.Name.Substring(prefix.Length);
+                        natives[key] = (fn.Arguments, fn.NeedsList);
+                        if (fn.NeedsList) needsList.Add(import == NativeImports.Windows ? "Win" + key : key);
+                    }
+                var result = ((IReadOnlyDictionary<string, (int Argc, bool Reference)>)natives, (IReadOnlySet<string>)needsList);
+                // (a store without the package yet is asked again later)
+                if (natives.Count > 0) BridgeCache[(store, import)] = result;
+                return result;
+            }
+        }
 
         /// <summary>The program declares actors (classes with IsActor): calls of their methods are messages.</summary>
         private bool _usesActors;

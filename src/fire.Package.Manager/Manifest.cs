@@ -156,6 +156,9 @@ namespace fire.Package.Manager
         /// <summary>System libraries the C++ needs for one platform or target (the key as in <see cref="PlatformSources"/>), e.g. <c>{ "windows": [ "ws2_32" ] }</c>: the build links them (`-lws2_32`, `ws2_32.lib`).</summary>
         public Dictionary<string, List<string>> LinkLibraries { get; set; } = new();
         public List<PackageNativeFunction> Functions { get; set; } = new();
+        /// <summary>The natives of the display (graphics, windows): declared here like <see cref="Functions"/>, but they live in the one shared library of the display
+        /// (fire_gfx, its windows and framebuffers have one state) and are called directly by the generator - not a library of the package of their own.</summary>
+        public List<PackageNativeFunction> Bridge { get; set; } = new();
         /// <summary>Exception classes of the prelude that natives throw with `fireError("ClassName", "message")` (the class has a constructor with one text argument). In the virtual
         /// machine the library reports the error to the VM, which throws the class; a native build needs to know the classes to construct them.</summary>
         public List<string> Exceptions { get; set; } = new();

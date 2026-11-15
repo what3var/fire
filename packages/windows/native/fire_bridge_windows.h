@@ -60,6 +60,10 @@ typedef struct FireWinShared {
     int textRect[4], textRectReq; /* where the program's text cursor is (Window.SetTextInputArea), for the thread (textRectReq: new) */
     int backdropReq;              /* what the desktop should show behind the window (FIRE_BACKDROP_*; -1: nothing new) */
     int backdrop;                 /* what it shows (the answer of the display) */
+    int styleReq, style;          /* Window.Frameless / TopMost (FIRE_STYLE_* bits; -1: nothing new), and what the display gave */
+    int moveReq, moveX, moveY;    /* Window.SetPosition for the thread (screen pixels) */
+    int beginMoveReq;             /* Window.BeginMove: the user moves the window with the held button */
+    int workReq, work[4], workKnown;   /* Window.WorkArea: asked for, and the answer (x, y, w, h of the desktop without its panels) */
     double scale;                 /* pixels of the screen per logical pixel (the display's answer, 0: not known yet) */
     int dragReq, dragDone, dragResult;   /* Window.StartDrag for the thread: what is dragged (UTF-8; the paths one per line), and its answer */
     char* dragText;
@@ -94,6 +98,7 @@ static FireWinShared* fire_winb_sharedNew(const char* title, int width, int heig
     s->vsyncReq = -1; s->touchReq = -1;
     s->cursorReq = -1;
     s->backdropReq = -1;
+    s->styleReq = -1;
     return s;
 }
 /* Shows a frame in the window (on the thread that owns it): through the presenter of the framebuffer (`fn`; it draws into the window itself and lays the frame over its picture),
@@ -433,6 +438,14 @@ static void fire_winb_applyRequests(FireWinShared* s) {
 #endif
 #ifdef FIRE_DISPLAY_SCALE
     s->scale = fire_display_scale(&s->display);
+#endif
+#ifdef FIRE_DISPLAY_PLACEMENT
+    if (s->styleReq >= 0) { s->style = fire_display_setStyle(&s->display, s->styleReq); s->styleReq = -1; }
+    if (s->moveReq) { fire_display_move(&s->display, s->moveX, s->moveY); s->moveReq = 0; }
+    if (s->beginMoveReq) { fire_display_beginMove(&s->display); s->beginMoveReq = 0; }
+    if (s->workReq) { s->workKnown = fire_display_workArea(&s->display, s->work); s->workReq = 0; }
+#else
+    s->styleReq = -1; s->moveReq = 0; s->beginMoveReq = 0; s->workReq = 0;
 #endif
 }
 /* A window that cannot be opened is never silent: it counts as closed, and the error output says so - in the VM the host's (spark: the Output panel). */
@@ -1409,6 +1422,56 @@ static Value fire_win_WinSetBackdrop(Value id, Value kind) {
     if (!threaded && s->opened && !s->failed) fire_winb_applyRequests(s);
     if (threaded) fire_winb_unlock(&s->m);
     return Undef();
+}
+/* Window.Frameless / Window.TopMost (`flags`: FIRE_STYLE_FRAMELESS 1, FIRE_STYLE_TOPMOST 2): without the frame and title bar of the desktop, above the other
+ * windows. Wayland draws no frame then but cannot keep a window on top. */
+static Value fire_win_WinSetStyle(Value id, Value flags) {
+    FireWinState* w = fire_winb_windowOf(id);
+    FireWinShared* s = w->sh;
+    int threaded = fire_winb_threaded(w);
+    if (threaded) fire_winb_lock(&s->m);
+    s->styleReq = (int)flags.i & 3;
+    if (!threaded && s->opened && !s->failed) fire_winb_applyRequests(s);
+    if (threaded) fire_winb_unlock(&s->m);
+    return Undef();
+}
+/* Window.SetPosition(x, y): the top left corner of the window on the screen (its pixels; Wayland places windows itself). */
+static Value fire_win_WinMove(Value id, Value x, Value y) {
+    FireWinState* w = fire_winb_windowOf(id);
+    FireWinShared* s = w->sh;
+    int threaded = fire_winb_threaded(w);
+    if (threaded) fire_winb_lock(&s->m);
+    s->moveReq = 1; s->moveX = (int)x.i; s->moveY = (int)y.i;
+    if (!threaded && s->opened && !s->failed) fire_winb_applyRequests(s);
+    if (threaded) fire_winb_unlock(&s->m);
+    return Undef();
+}
+/* Window.BeginMove(): called while a mouse button is down in the window (OnMouseDown) - the desktop moves the window with the mouse until the button is let go
+ * (a window without a title bar is moved this way). */
+static Value fire_win_WinBeginMove(Value id) {
+    FireWinState* w = fire_winb_windowOf(id);
+    FireWinShared* s = w->sh;
+    int threaded = fire_winb_threaded(w);
+    if (threaded) fire_winb_lock(&s->m);
+    s->beginMoveReq = 1;
+    if (!threaded && s->opened && !s->failed) fire_winb_applyRequests(s);
+    if (threaded) fire_winb_unlock(&s->m);
+    return Undef();
+}
+/* Window.WorkArea(): part `i` (0 x, 1 y, 2 width, 3 height) of the desktop without its panels and task bars, in screen pixels; -1 while it is not known (a managed
+ * window answers with its next cycle). */
+static Value fire_win_WinWorkArea(Value id, Value i) {
+    FireWinState* w = fire_winb_windowOf(id);
+    FireWinShared* s = w->sh;
+    int threaded = fire_winb_threaded(w), v = -1, k = (int)i.i;
+    if (threaded) fire_winb_lock(&s->m);
+    if (k == 0) {
+        s->workReq = 1;
+        if (!threaded && s->opened && !s->failed) fire_winb_applyRequests(s);
+    }
+    if (s->workKnown && k >= 0 && k < 4) v = s->work[k];
+    if (threaded) fire_winb_unlock(&s->m);
+    return Int(v);
 }
 /* Window.PresentArea: only (x, y, w, h) of the framebuffer changed for the next frame - the display may hand over only that. Several before a frame add up. */
 static Value fire_win_WinPresentArea(Value id, Value x, Value y, Value width, Value height) {

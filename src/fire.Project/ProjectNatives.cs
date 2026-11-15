@@ -53,6 +53,7 @@ namespace fire.Projects
             if (n.Platforms != null) native.Platforms.AddRange(n.Platforms);
             if (n.LinkLibraries != null) foreach (var (key, libs) in n.LinkLibraries) native.LinkLibraries[key] = libs.ToList();
             if (n.Exceptions != null) native.Exceptions.AddRange(n.Exceptions);
+            if (n.Bridge != null) native.Bridge.AddRange(n.Bridge);
             if (n.Uses != null) native.Uses.AddRange(n.Uses);
             if (n.Headers != null) native.Headers.AddRange(ExpandOrdered(dir, n.Headers, found));
             foreach (var p in found) problems?.Add($"{project.Name}: native: {p}");

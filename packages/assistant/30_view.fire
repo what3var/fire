@@ -22,6 +22,11 @@ namespace Assistant {
         UI.Button characterButton
         UI.Button closeButton
         defined int frame = 0
+        // a press on the character: a click pokes it, a drag moves the window
+        bool pressed = false
+        defined int pressX = 0
+        defined int pressY = 0
+        bool placed = false
         bool showHistory = false
         string shown = ""
         // the window, the bubble in it, the character below it
@@ -35,6 +40,9 @@ namespace Assistant {
             this.H = this.BH + this.FH
             this.fb = new Framebuffer(this.W, this.H)
             this.win = new Window(this.fb, this.Brain.Character.Name)
+            // no frame, above the other windows: only the character and its bubble are seen
+            this.win.Frameless = true
+            this.win.TopMost = true
             this.ui = new UI.Root(this.fb, this.win)
             this.ui.WindowBackdrop = Backdrop.Transparent
             this.Build()
@@ -83,7 +91,9 @@ namespace Assistant {
             this.figure.Continuous = true
             this.figure.blendMode = 2
             this.figure.OnPaint = func (UI.DrawingCanvas c) on this => PaintFigure(c)
-            this.figure.OnMouseDown = func (int x, int y, int b) on this => Poke()
+            this.figure.OnMouseDown = func (int x, int y, int b) on this => Press(x, y)
+            this.figure.OnMouseMove = func (int x, int y) on this => Drag(x, y)
+            this.figure.OnMouseUp = func (int x, int y, int b) on this => Release()
             this.ui.Add(this.figure)
             this.ui.onTick = func () on this => Cycle()
         }
@@ -114,9 +124,39 @@ namespace Assistant {
             this.Brain.Character.Paint(r, 0.0, 0.0, c.framebuffer.Width() * 1.0, c.framebuffer.Height() * 1.0, this.frame, this.Brain.Mood())
         }
 
+        undefined Press(defined int x, defined int y) {
+            this.pressed = true
+            this.pressX = x
+            this.pressY = y
+        }
+
+        // Dragged a few pixels: the desktop moves the window with the mouse (it has no title bar).
+        undefined Drag(defined int x, defined int y) {
+            if (!this.pressed) { return }
+            if (Math.Abs(x - this.pressX) + Math.Abs(y - this.pressY) > 4) {
+                this.pressed = false
+                this.win.BeginMove()
+            }
+        }
+
+        undefined Release() {
+            if (!this.pressed) { return }
+            this.pressed = false
+            this.Poke()
+        }
+
+        // At the start: the bottom right corner of the desktop (the work area comes with a cycle of the window).
+        undefined Place() {
+            int area[] = this.win.WorkArea()
+            if (area[2] <= 0) { return }
+            this.placed = true
+            this.win.SetPosition(area[0] + area[2] - this.W - 16, area[1] + area[3] - this.H - 8)
+        }
+
         // Every frame: the brain works a little, the bubble follows it.
         undefined Cycle() {
             this.frame++
+            if (!this.placed && this.frame < 120) { this.Place() }
             bool changed = this.Brain.Tick()
             if (this.Brain.Quit) {
                 this.win.Close()

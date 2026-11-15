@@ -101,6 +101,11 @@ static int fire_dhl_touchMouse(const FireDhlWindow* w) { return w->touchMouse; }
 static void fire_dhl_setTextInputRect(FireDhlWindow* w, int x, int y, int width, int height) { w->textX = x; w->textY = y; w->textW = width; w->textH = height; }
 
 /* Without a desktop nothing lies behind the window: it can only be transparent (the frame keeps its alpha). */
+/* (no screen: the style is given as asked, the position is only noted, the desktop counts as 1920 x 1080) */
+static int fire_dhl_setStyle(FireDhlWindow* w, int flags) { (void)w; return flags; }
+static void fire_dhl_move(FireDhlWindow* w, int x, int y) { (void)w; (void)x; (void)y; }
+static int fire_dhl_beginMove(FireDhlWindow* w) { (void)w; return 0; }
+static int fire_dhl_workArea(FireDhlWindow* w, int* r) { (void)w; r[0] = 0; r[1] = 0; r[2] = 1920; r[3] = 1080; return 1; }
 static int fire_dhl_setBackdrop(FireDhlWindow* w, int kind) { w->backdrop = kind <= FIRE_BACKDROP_NONE ? FIRE_BACKDROP_NONE : FIRE_BACKDROP_TRANSPARENT; return w->backdrop; }
 
 static double fire_dhl_scale(FireDhlWindow* w) { (void)w; return 1.0; }

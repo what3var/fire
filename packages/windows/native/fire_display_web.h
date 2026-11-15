@@ -245,6 +245,11 @@ static void fire_dweb_setTouchMouse(FireDwebWindow* w, int v) { w->touchMouse = 
 static void fire_dweb_setSize(FireDwebWindow* w, int width, int height) { if (!w->open) return; w->winW = width; w->winH = height; fire_dwebjs_setCssSize(w->id, width, height); }
 static void fire_dweb_setCursor(FireDwebWindow* w, int c) { if (w->open) fire_dwebjs_setCursor(w->id, c); }
 static void fire_dweb_setTextInputRect(FireDwebWindow* w, int x, int y, int width, int height) { if (w->open) fire_dwebjs_setTextRect(w->id, x, y, width, height); }
+/* (the page is the window: no frame of its own to take away, no place to move it to) */
+static int fire_dweb_setStyle(FireDwebWindow* w, int flags) { (void)w; return flags & FIRE_STYLE_FRAMELESS; }
+static void fire_dweb_move(FireDwebWindow* w, int x, int y) { (void)w; (void)x; (void)y; }
+static int fire_dweb_beginMove(FireDwebWindow* w) { (void)w; return 0; }
+static int fire_dweb_workArea(FireDwebWindow* w, int* r) { (void)w; (void)r; return 0; }
 static int fire_dweb_setBackdrop(FireDwebWindow* w, int kind) { return w->open ? fire_dwebjs_setBackdrop(w->id, kind) : FIRE_BACKDROP_NONE; }
 static double fire_dweb_scale(FireDwebWindow* w) { (void)w; return fire_dwebjs_scale(); }
 
