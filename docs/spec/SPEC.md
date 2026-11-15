@@ -1950,8 +1950,19 @@ assignment to the variable or field. Its elements are converted then; one that d
 that is typed already stays as it is if the types agree, an array of another element type is an `ArgumentException`.
 A parameter types what it receives the same way (`int a[]`: the array given to it becomes typed, in place - one with an element that does not fit
 is the exception, undefined passes; anything else but an array is the exception). A copy (`copy`, `flat`, `taking`, `sync`) of a typed array is typed.
-Multidimensional declarations (`int m[3][4]`) type the innermost arrays. `var`, `any`, strings, classes and pointers
-declare no element type - such an array takes any value, as before.
+Multidimensional declarations (`int m[3][4]`) type the innermost arrays. `var`, `any`, lambdas, type parameters with a non-number
+type argument and pointers declare no element type - such an array takes any value, as before.
+
+**Arrays of classes, interfaces, records, strings and enums.** `Dog pets[]`, `IShape shapes[]`, `Pt ps[]`, `string names[]`, `Color cs[]`
+(variable, field, parameter, global) type the array the same way: an element takes an object of that class (or of a class derived from it), of a
+class that implements the interface, the record, a string, a value of the enum - or `undefined`; any other value is an `ArgumentException`
+(`An element of an array of Dog must be a Dog (or undefined), not Cat.`), through any reference. The elements stay values (no packing). An array
+typed with another class does not go into such a declaration (`An array of Dog cannot be stored where an array of Cat is declared.`), even when one
+class derives from the other: the array keeps the element type it was given, so `Animal all[] = pets` is refused as well. `new Dog[n]` starts with
+n `undefined` elements. `defined` works for them too: `defined string s[] = new string[n]` starts with `""`, `defined Color c[] = new Color[n]`
+with the first value of the enum; `defined Dog d[]` has no zero, so it only takes an array whose elements are all given (`[new Dog("a")]`) -
+`new Dog[2]` there is an `ArgumentException` (`An element of a defined array of Dog cannot be undefined.`). VM and native backend behave the
+same (ArrayElem.Class, natively E_CLASS/TU_CLASS with a table of checks, g_arrClasses). JSON and generic code do not check these elements yet (ROADMAP 19).
 
 **Defined arrays.** `defined` in front of the element type (`defined int a[]`, `defined float[32] v[]`, `defined bool f[8]`) makes the elements
 never `undefined`: the array keeps that as part of its type (ArrayElem.DefinedFlag in TypeArray and FieldInfo.RequiredArray, natively TU_DEFINED).
@@ -2461,8 +2472,10 @@ front of the type it **never holds `undefined`**: a parameter, a field, a proper
   class of the program declared `int`, `float` or `bool` without `defined` is compiled as a `defined` one when every write the type checker sees
   gives a number (or the result of a method, a parameter or another field that is derived itself) and none can write it unseen (`&`, a `ref`
   argument, `with`, `Json.Deserialize` in the program). With a number literal as initializer it keeps it; one without an initializer only when its `undefined` cannot
-  be seen: every constructor of its class (no base class) sets it among its first plain statements - before any call, `this` handed out or read of
-  it - and the program does not ask for it (`== undefined`, `is of`, `?.` on the name); it starts at 0 then. `FIRE_INFER_UNINITIALIZED_DEFINED=0` leaves out the fields without an initializer; `FIRE_DERIVE_LOG=1` shows the decisions.
+  be seen: every constructor of its class sets it among its first plain statements - before any call, `this` handed out or read of
+  it - and the program does not ask for it (`== undefined`, `is of`, `?.` on the name), and nothing reaches it before: the constructors of the base classes
+  (which run first, also without `: base(...)`) and what they call of their own use no member that the class or a class derived from it declares (an
+  override could read the field) and do not hand out `this`; the field initializers of the derived classes call nothing and do not read it; it starts at 0 then. `FIRE_INFER_UNINITIALIZED_DEFINED=0` leaves out the fields without an initializer; `FIRE_DERIVE_LOG=1` shows the decisions.
   **JSON and reflection** can write a field or call a method past what the checker sees: a program that reads JSON into objects
   (`Json.Deserialize`, also in a package it uses) derives no field, one that uses reflection (`reflection`, also through `ui`, `data`, ...) no field
   and no parameter, and a method whose name is in a string keeps its parameters as declared - unless the class says otherwise with

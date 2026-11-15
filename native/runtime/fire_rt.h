@@ -1487,6 +1487,11 @@ FIRE_FN void ownListInit(OwnList* l, uint32_t mark, Owned* holder) {
 /* The element types of typed arrays (`int a[]`, `int[8] a[]`, `float[32] a[]`, `bool a[]`, `char a[]`, `byte a[]`; SPEC 8.4.2) - the same numbers as
  * Values.ArrayElem of the VM. */
 enum { E_None, E_I8, E_I16, E_I32, E_I64, E_F8, E_F16, E_F32, E_F64, E_Bool, E_Char, E_U8 };
+/* An array of a class, an interface, a record, a string or an enum (`Dog pets[]`, ROADMAP 19; Values.ArrayElem.Class): the elements stay Values; with TU_CLASS
+ * the `unit` of its ArrTyped is the 1-based index of its entry in g_arrClasses (what fits, the name, what a defined one starts with). */
+enum { E_CLASS = 13 };
+typedef struct ArrClass { bool (*fits)(Value v); const char* display; Value (*zero)(void); } ArrClass;
+extern FIRE_RT_DATA const ArrClass* g_arrClasses;
 
 /* What a typed array has more than an untyped one. Its elements are usually packed: one C number per element (int8_t ... int64_t, float, Real, bool as
  * uint8_t, char as uint16_t) instead of a Value. `undefined` is a rarely used value of the type (the hint: INT8_MIN ..., a NaN with a fixed payload, 0xFF for
@@ -1502,7 +1507,7 @@ typedef struct ArrTyped {
     uint8_t flags;           /* TU_*, below */
     uint8_t own;             /* AT_*: what is a block of its own (freed with the array) */
 } ArrTyped;
-enum { TU_UNIT = 1, TU_DIMONLY = 2, TU_ANY = 4, TU_DEFINED = 8 };   /* a unit demand; of its dimension only (`: any m`); any unit (`: any`) - the two keep Values;
+enum { TU_UNIT = 1, TU_DIMONLY = 2, TU_ANY = 4, TU_DEFINED = 8, TU_CLASS = 16 };   /* a unit demand; of its dimension only (`: any m`); any unit (`: any`) - the two keep Values;
                                                                     * `defined int a[]`: the elements are never undefined (they start at 0) */
 enum { AT_DATA = 1, AT_SELF = 2, AT_INLINE = 4 };   /* `data` / the ArrTyped itself are blocks of their own; AT_INLINE: the array has Values after its header */
 
@@ -5785,6 +5790,9 @@ FIRE_FN Value destroyedError(Value leaf) {
 
 /* `a[i]` for arrays, buffers and strings (objects with a GetIndex method are handled by the generated code). */
 /* ---- Typed arrays (SPEC 8.4.2, ArrTyped above; the VM: Values.ArrayElem) ------------------------------------------------------------------ */
+FIRE_FN const char* arrElemName(uint8_t e);
+/* The element type of a typed array as messages write it: the class of an array of objects, else the number type. */
+FIRE_FN const char* arrTypeName(uint8_t e, uint32_t unit, uint8_t flags) { return (flags & TU_CLASS) && g_arrClasses && unit ? g_arrClasses[unit - 1].display : arrElemName(e); }
 FIRE_FN const char* arrElemName(uint8_t e) {
     switch (e) {
         case E_I8: return "int[8]"; case E_I16: return "int[16]"; case E_I32: return "int[32]"; case E_I64: return "int";
@@ -5829,15 +5837,31 @@ FIRE_COLD FIRE_FN Value arrElemWrong(const ArrTyped* t, Value v, bool* ok) {
     *ok = false;
     return Undef();
 }
+/* An element of an array of a class that is something else (VM: ArrayElem.TryConvert). */
+FIRE_COLD FIRE_FN Value arrClassWrong(const ArrTyped* t, Value v, bool* ok) {
+    char text[300];
+    const char* display = arrTypeName(t->elem, t->unit, t->flags);
+    const FireEnum* en = enumOf(v);
+    snprintf(text, sizeof text, "An element of an array of %s must be %s %s (or undefined), not %s.", display, strchr("AEIOUaeiou", display[0]) ? "an" : "a", display,
+             v.kind == K_Class ? className(asObj(v)->cls) : en ? en->name : kindName(v));
+    fireError("ArgumentException", text);
+    *ok = false;
+    return Undef();
+}
 FIRE_FN Value arrElemConvert(const ArrTyped* t, Value v, bool* ok) {
     bool isFloat;
     *ok = true;
     if (FIRE_UNLIKELY(v.kind == K_Undefined && (t->flags & TU_DEFINED))) {
-        char text[120];
-        snprintf(text, sizeof text, "An element of a defined array of %s cannot be undefined.", arrElemName(t->elem));
+        char text[200];
+        snprintf(text, sizeof text, "An element of a defined array of %s cannot be undefined.", arrTypeName(t->elem, t->unit, t->flags));
         fireError("ArgumentException", text);
         *ok = false;
         return Undef();
+    }
+    /* (an array of a class, a string or an enum: what fits stays as it is - a destroyed object too, every use of it reports that) */
+    if (t->flags & TU_CLASS) {
+        if (v.kind == K_Undefined || (v.kind == K_Class && !leafAlive(v)) || g_arrClasses[t->unit - 1].fits(v)) return v;
+        return arrClassWrong(t, v, ok);
     }
     if (t->elem == E_Bool || t->elem == E_Char) {
         if (v.kind == K_Undefined) return Undef();
@@ -5976,13 +6000,12 @@ FIRE_FN ArrTyped* arrTypedNew(uint8_t elem, uint32_t unit, uint8_t flags, Value 
 
 /* Makes the untyped array `a` typed: its elements are converted (false: one did not fit, the exception is thrown and `a` stays as it was). An array with a
  * unit demand of its own dimension only (`: any m`) keeps its Values (each keeps its unit); every other one is packed. */
-FIRE_FN void arrMakeDefined(Arr* a);
+FIRE_FN bool arrMakeDefined(Arr* a);
 FIRE_FN bool arrMakeTyped(Arr* a, uint8_t elem, uint32_t unit, uint8_t flags, Value unitText) {
     /* (`defined int a[]`: typed first, then its undefined elements become 0 - arrMakeDefined) */
     if (flags & TU_DEFINED) {
         if (!arrMakeTyped(a, elem, unit, (uint8_t)(flags & ~TU_DEFINED), unitText)) return false;
-        arrMakeDefined(a);
-        return true;
+        return arrMakeDefined(a);
     }
     {
     ArrTyped probe;
@@ -5998,8 +6021,8 @@ FIRE_FN bool arrMakeTyped(Arr* a, uint8_t elem, uint32_t unit, uint8_t flags, Va
     t = arrTypedNew(elem, unit, flags, unitText);
     t->own |= AT_INLINE;
     a->typed = t;
-    if (flags & (TU_DIMONLY | TU_ANY)) {
-        for (i = 0; i < a->length; i++) items[i] = arrElemConvert(t, items[i], &ok);   /* (numbers: nothing to count) */
+    if (flags & (TU_DIMONLY | TU_ANY | TU_CLASS)) {
+        for (i = 0; i < a->length; i++) items[i] = arrElemConvert(t, items[i], &ok);   /* (numbers, or objects that stay: nothing to count) */
         t->data = items;
         return true;
     }
@@ -6022,15 +6045,27 @@ FIRE_FN bool arrMakeTyped(Arr* a, uint8_t elem, uint32_t unit, uint8_t flags, Va
 /* The zero of the elements of a typed array: what an element of a defined one starts with (in the unit of the elements). */
 FIRE_FN Value arrZero(const ArrTyped* t) {
     uint32_t u = (t->flags & TU_UNIT) ? t->unit : 0;
+    if (t->flags & TU_CLASS) return g_arrClasses[t->unit - 1].zero();   /* ("" for strings, an enum's first value, undefined for objects) */
     if (t->elem == E_Bool) return Bool(false);
     if (t->elem == E_Char) return Char(0);
     return arrElemIsFloat(t->elem) ? Float(0, u) : Int(0, u);
 }
-/* Makes the typed array `a` a defined one (`defined int a[]`, TU_DEFINED): an undefined element becomes the zero of the type (`new int[n]` starts at 0). */
-FIRE_FN void arrMakeDefined(Arr* a) {
+/* Makes the typed array `a` a defined one (`defined int a[]`, TU_DEFINED): an undefined element becomes the zero of the type (`new int[n]` starts at 0). An
+ * array of objects has no zero: one with an undefined element cannot be defined - the ArgumentException, false. */
+FIRE_FN bool arrMakeDefined(Arr* a) {
     ArrTyped* t = a->typed;
     uint32_t i;
-    if (!t || (t->flags & TU_DEFINED)) return;
+    if (!t || (t->flags & TU_DEFINED)) return true;
+    if ((t->flags & TU_CLASS) && arrZero(t).kind == K_Undefined) {
+        Value* items = (Value*)t->data;
+        for (i = 0; i < a->length; i++)
+            if (items[i].kind == K_Undefined) {
+                char text[200];
+                snprintf(text, sizeof text, "An element of a defined array of %s cannot be undefined.", arrTypeName(t->elem, t->unit, t->flags));
+                fireError("ArgumentException", text);
+                return false;
+            }
+    }
     if (t->packed) {
         Value zero = arrZero(t);
         for (i = 0; i < a->length; i++) if (arrPackedGet(a, i).kind == K_Undefined) arrPackedSet(a, i, zero);
@@ -6040,12 +6075,13 @@ FIRE_FN void arrMakeDefined(Arr* a) {
         for (i = 0; i < a->length; i++) if (items[i].kind == K_Undefined) items[i] = zero;
     }
     t->flags |= TU_DEFINED;
+    return true;
 }
 
 /* OpCode.TypeArray: the array `v` (at depth `rank` its inner arrays) goes into a declaration of a typed array. False: the exception was thrown. */
-FIRE_COLD FIRE_FN bool typeArrayWrong(Value v, uint8_t elem) {
-    char text[160];
-    snprintf(text, sizeof text, "An array of %s is declared here, not %s.", arrElemName(elem), coerceKindName(v.kind));
+FIRE_COLD FIRE_FN bool typeArrayWrong(Value v, uint8_t elem, uint32_t unit, uint8_t flags) {
+    char text[240];
+    snprintf(text, sizeof text, "An array of %s is declared here, not %s.", arrTypeName(elem, unit, flags), coerceKindName(v.kind));
     fireError("ArgumentException", text);
     return false;
 }
@@ -6053,15 +6089,15 @@ FIRE_FN bool typeArraySlow(Value v, uint8_t elem, int rank, uint32_t unit, uint8
 /* (the common case - an array that has this type already, `int b[] = this.buckets` - embedded: one look at its type) */
 FIRE_ALWAYS_INLINE FIRE_FN bool typeArray(Value v, uint8_t elem, int rank, uint32_t unit, uint8_t flags, Value unitText, int depth) {
     if (FIRE_LIKELY(rank == 1 && v.kind == K_Array && leafAlive(v) && arrOf(v)->typed && arrOf(v)->typed->elem == elem && arrOf(v)->typed->flags == flags
-                    && (!(flags & TU_UNIT) || arrOf(v)->typed->unit == unit))) return true;
+                    && (!(flags & (TU_UNIT | TU_CLASS)) || arrOf(v)->typed->unit == unit))) return true;
     return typeArraySlow(v, elem, rank, unit, flags, unitText, depth);
 }
 FIRE_FN bool typeArraySlow(Value v, uint8_t elem, int rank, uint32_t unit, uint8_t flags, Value unitText, int depth) {
     Arr* a;
-    char text[160];
+    char text[300];
     if (v.kind == K_Undefined) return true;
     /* (a declaration of a typed array holds an array or nothing - like `int x` holds an int) */
-    if (v.kind != K_Array) return typeArrayWrong(v, elem);
+    if (v.kind != K_Array) return typeArrayWrong(v, elem, unit, flags);
     if (!leafAlive(v) || depth > 64) return true;
     a = arrOf(v);
     if (depth < rank) {
@@ -6073,11 +6109,15 @@ FIRE_FN bool typeArraySlow(Value v, uint8_t elem, int rank, uint32_t unit, uint8
     }
     if (a->typed) {
         /* (a defined array goes where one of its elements is declared; a declaration of a defined one makes an array defined) */
-        if (a->typed->elem == elem && (a->typed->flags & ~TU_DEFINED) == (flags & ~TU_DEFINED) && (!(flags & TU_UNIT) || a->typed->unit == unit)) {
-            if (flags & TU_DEFINED) arrMakeDefined(a);
+        if (a->typed->elem == elem && (a->typed->flags & ~TU_DEFINED) == (flags & ~TU_DEFINED) && (!(flags & (TU_UNIT | TU_CLASS)) || a->typed->unit == unit)) {
+            if (flags & TU_DEFINED) return arrMakeDefined(a);
             return true;
         }
-        snprintf(text, sizeof text, "An array of %s cannot be stored where an array of %s is declared.", arrElemName(a->typed->elem), arrElemName(elem));
+        {
+        char other[120];
+        snprintf(other, sizeof other, "%s", arrTypeName(a->typed->elem, a->typed->unit, a->typed->flags));
+        snprintf(text, sizeof text, "An array of %s cannot be stored where an array of %s is declared.", other, arrTypeName(elem, unit, flags));
+        }
         fireError("ArgumentException", text);
         return false;
     }
@@ -6242,6 +6282,28 @@ FIRE_FN bool arrCopyTyped(Arr* dst, const Arr* src) {
         memcpy(t->real, s->real, (src->length + 7) / 8);
     }
     return true;
+}
+
+/* `__array_copy(src, dst, count)` (the prelude: List.Grow<int>/<float>): the first `count` elements of src into dst - the packed numbers in one block when
+ * both are packed of the same element and unit (with the marks of real hint values), else one by one like `dst[i] = src[i]`. */
+FIRE_FN Value arrayGet(Value a, Value i);
+FIRE_FN Value arraySet(Value a, Value i, Value v);
+FIRE_FN Value fire_arrayCopy(Value src, Value dst, Value count) {
+    Arr *s, *d;
+    uint32_t n, i;
+    if (src.kind != K_Array || dst.kind != K_Array || count.kind != K_Int) return fireError("ArgumentException", "__array_copy needs two arrays and a count.");
+    if (!leafAlive(src) || !leafAlive(dst)) return fireError("DestroyedException", "Access to a destroyed array.");
+    s = arrOf(src); d = arrOf(dst);
+    if (count.i < 0 || (uint64_t)count.i > s->length || (uint64_t)count.i > d->length) return fireError("IndexOutOfBoundsException", "__array_copy: the count is outside the arrays.");
+    n = (uint32_t)count.i;
+    if (s->typed && d->typed && s->typed->packed && d->typed->packed && s->typed->elem == d->typed->elem && s->typed->unit == d->typed->unit
+        && (s->typed->flags & ~TU_DEFINED) == (d->typed->flags & ~TU_DEFINED) && (!(d->typed->flags & TU_DEFINED) || (s->typed->flags & TU_DEFINED))) {
+        dataCopy(d->typed->data, s->typed->data, (uint32_t)((uint64_t)n * arrElemSize(s->typed->elem)));
+        if (s->typed->real || d->typed->real) for (i = 0; i < n; i++) arrSetReal(d->typed, i, d->length, arrIsReal(s->typed, i));
+        return Undef();
+    }
+    for (i = 0; i < n; i++) { arraySet(dst, Int((FireInt)i), arrayGet(src, Int((FireInt)i))); if (FIRE_UNLIKELY(g_unwind.active)) break; }
+    return Undef();
 }
 
 FIRE_FN Value arrayGet(Value a, Value i) {
@@ -12637,6 +12699,7 @@ uint32_t g_fieldPtrCount, g_fieldPtrCap;
 bool g_domainOn = false;
 const ResEntry* g_resources = NULL;
 const FireEnum* g_enums = NULL;
+const ArrClass* g_arrClasses = NULL;
 uint32_t g_enumCount = 0;
 int g_resourceCount = 0;
 int g_argc = 0;

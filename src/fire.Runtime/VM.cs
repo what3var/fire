@@ -3525,7 +3525,7 @@ namespace fire.Runtime
                 if (obj.RtClass?.FindFieldRequiredArray(fieldName) is { } requiredArray and not 0)
                 {
                     hasUnitRule = true;   // (a typed array: every assignment types it - do not cache)
-                    if (!GuardFieldArray(value, requiredArray, obj.RtClass.FindFieldRequiredUnit(fieldName))) return false;
+                    if (!GuardFieldArray(value, requiredArray, obj.RtClass.FindFieldArrayUnit(fieldName))) return false;
                 }
                 else if (obj.RtClass?.FindFieldArrayOfParam(fieldName) is { } arrayOfParam)
                 {
@@ -3649,7 +3649,7 @@ namespace fire.Runtime
             if (oi.RtClass?.FindFieldRequiredArray(fieldName) is { } requiredArray and not 0)
             {
                 hasUnitRule = true;   // (a typed array: every assignment types it - do not cache)
-                if (!GuardFieldArray(value, requiredArray, oi.RtClass.FindFieldRequiredUnit(fieldName))) return;
+                if (!GuardFieldArray(value, requiredArray, oi.RtClass.FindFieldArrayUnit(fieldName))) return;
             }
             else if (oi.RtClass?.FindFieldArrayOfParam(fieldName) is { } arrayOfParam)
             {
@@ -4313,7 +4313,7 @@ namespace fire.Runtime
             }
             if (!GuardFieldKind(ref setValue, setOwner.FindFieldRequiredKind(setFieldName), setFieldName)) return;
             if (!GuardFieldType(ref setValue, setOwner.FindFieldRequiredType(setFieldName), setFieldName, null)) return;
-            if (!GuardFieldArray(setValue, setOwner.FindFieldRequiredArray(setFieldName), setOwner.FindFieldRequiredUnit(setFieldName))) return;
+            if (!GuardFieldArray(setValue, setOwner.FindFieldRequiredArray(setFieldName), setOwner.FindFieldArrayUnit(setFieldName))) return;
 
             var staticWriteBroker = _threadBroker ?? _ownerBroker;
             if (staticWriteBroker == null)
@@ -5247,7 +5247,7 @@ namespace fire.Runtime
                     if (initOwner.FindFieldRequiredUnit(initFieldName) is { } requiredUnitName && !AdaptFieldUnit(ref initValue, requiredUnitName)) break;
                     if (!GuardFieldKind(ref initValue, initOwner.FindFieldRequiredKind(initFieldName), initFieldName)) break;
                     if (!GuardFieldType(ref initValue, initOwner.FindFieldRequiredType(initFieldName), initFieldName, null)) break;
-                    if (!GuardFieldArray(initValue, initOwner.FindFieldRequiredArray(initFieldName), initOwner.FindFieldRequiredUnit(initFieldName))) break;
+                    if (!GuardFieldArray(initValue, initOwner.FindFieldRequiredArray(initFieldName), initOwner.FindFieldArrayUnit(initFieldName))) break;
 
                     initOwner.StaticFieldValues[initFieldName] = initValue;
                     break;
@@ -7899,7 +7899,7 @@ namespace fire.Runtime
             if (value.Kind != ValueKind.Array)
             {
                 // a declaration of a typed array holds an array or nothing - like `int x` holds an int (the same text natively)
-                ThrowArgumentError($"An array of {ArrayElem.Name(elemType)} is declared here, not {value.Kind}.");
+                ThrowArgumentError($"An array of {ArrayElem.Name(elemType, unit)} is declared here, not {value.Kind}.");
                 return false;
             }
             var array = value.AsArray();
@@ -7910,14 +7910,23 @@ namespace fire.Runtime
                     if (!TypeArrayValue(inner, (byte)(elemType | (defined ? ArrayElem.DefinedFlag : 0)), rank, unit, depth + 1)) return false;
                 return true;
             }
-            if (array.ElemType == elemType && array.ElemUnit == unit) { if (defined) array.MakeDefined(); return true; }
+            if (array.ElemType == elemType && array.ElemUnit == unit) return !defined || MakeArrayDefined(array);
             if (array.ElemType != ArrayElem.None)
             {
-                ThrowArgumentError($"An array of {ArrayElem.Name(array.ElemType)} cannot be stored where an array of {ArrayElem.Name(elemType)} is declared.");   // (the same text natively)
+                ThrowArgumentError($"An array of {ArrayElem.Name(array.ElemType, array.ElemUnit)} cannot be stored where an array of {ArrayElem.Name(elemType, unit)} is declared.");   // (the same text natively)
                 return false;
             }
-            if (array.MakeTyped(elemType, unit, out var error, out var message, out var offending)) { if (defined) array.MakeDefined(); return true; }
+            if (array.MakeTyped(elemType, unit, out var error, out var message, out var offending)) return !defined || MakeArrayDefined(array);
             ThrowArrayElementError(unit, offending, error, message!);
+            return false;
+        }
+
+        /// <summary>Makes a typed array a defined one (its zero: ArrayElem.Zero - an enum's first value, "" for strings); an array of objects with an element that
+        /// is undefined cannot be one: the ArgumentException (the same text natively).</summary>
+        private bool MakeArrayDefined(ScriptArray array)
+        {
+            if (array.MakeDefined(ArrayElem.Zero(array.ElemType, array.ElemUnit))) return true;
+            ThrowArgumentError($"An element of a defined array of {ArrayElem.Name(array.ElemType, array.ElemUnit)} cannot be undefined.");
             return false;
         }
 

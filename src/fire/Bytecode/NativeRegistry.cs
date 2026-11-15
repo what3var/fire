@@ -151,6 +151,7 @@ namespace fire.Bytecode
             Register(fire.Standard.BitsMethods.NativeName, fire.Standard.BitsMethods.Call);
             Register(fire.Standard.AwaitMethods.NativeName, fire.Standard.AwaitMethods.Call);
             Register(fire.Standard.LambdaHandover.NativeName, fire.Standard.LambdaHandover.Call);
+            Register(fire.Standard.ArrayCopyMethods.NativeName, fire.Standard.ArrayCopyMethods.Call);
             foreach (var cancelName in fire.Standard.CancelMethods.Names)
             {
                 string bound = cancelName;

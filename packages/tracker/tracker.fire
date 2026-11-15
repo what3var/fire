@@ -262,8 +262,8 @@ namespace Tracker {
             if (output.Rate != song.Rate) {
                 throw new TrackerException("The output plays " + output.Rate + " Hz, the song is mixed to " + song.Rate + ": open the output with Tracker.Player.Open(song).", 1)
             }
-            this.song = song
-            this.output = output
+            this.song = try take song
+            this.output = try take output
             this.channels = output.Channels
             this.buffer = new byte[4096 * 2 * this.channels]
             this.filled = 0

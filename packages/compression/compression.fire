@@ -302,7 +302,7 @@ namespace Zip {
         defined int at = 0
 
         construct(IO.Stream source, defined int start, defined int length) {
-            this.source = source
+            this.source = try take source
             this.start = start
             this.length = length
         }

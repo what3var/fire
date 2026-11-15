@@ -205,6 +205,11 @@ Skript -> Lexer -> Parser -> Resolver -> Compiler -> Bytecode (LinkedProgram)
   zerstörtes, zu kurzes oder ausgepacktes Array gehen in `aset_g`; `ClaimToArray` einer Zahl entfällt (keine Liste je Runde mehr). Ein Value, der
   vielleicht undefined ist, wird auf seine Art geprüft und sonst ebenso gepackt gespeichert (float-Arrays auch). Gemessen (gcc `-O2`, je Element,
   1 Mio. Elemente): Füllen 26-31 -> 2-3 ns, über ein Feld 24-34 -> 2-4 ns, Kopie 25-29 -> 6 ns (defined: 3 ns), ein Bytepuffer 1 ns.
+  **Arrays von Klassen, Interfaces, Records, `string` und Enums** (SPEC 8.4.2) bleiben Values (nicht gepackt): `typeArray` bekommt die
+  Elementart E_CLASS mit TU_CLASS und im Feld `unit` den Index (ab 1) in eine Tabelle `g_arrClasses` (`kArrClasses`, neben den Enums erzeugt), die je
+  Typ eine Prüfung (`acf_N`, der Ausdruck von `is` für den Typ), den Anzeigenamen der Meldungen und den Nullwert eines `defined`-Arrays (`acz_N`:
+  `""`, der erste Wert des Enums, sonst undefined - dann nimmt es nur Arrays ohne undefined) hält. Zwei Arrays gelten als gleich typisiert, wenn der
+  Index gleich ist. `new Dog[n]` mit TypeArray dahinter wird nicht zu `newTypedArray` zusammengefasst.
 * **Parameter und Rückgaben als C-Typen (Ebene 2, Stufe 2b).** Grundlage ist `defined` (SPEC 8.10b): ein `defined int`-Parameter ist nie `undefined` und
   kein Enum-Wert, eine `defined`-Rückgabe ebenso - das macht den Rumpf einer Methode skalar, ohne dass der Generator die Aufrufer kennen muss
   (`CppGenerator.CAbi.cs`). Eine Methode mit `defined int`-, `defined float`- oder `defined word`-Parametern oder mit einer `defined`-Rückgabe
@@ -316,7 +321,10 @@ Bekannte Abweichungen zur VM: Unicode-Klassifizierung und Groß-/Kleinschreibung
   Übersetzung und Plugins (dort liest die Runtime Felder per Index ohne das Layout). Probes schalten sie nicht ab: jeder direkte Schreibzugriff
   (DirectSetField, ein typisiertes C-Feld - CppGenerator.CFields.cs -, ein direkt aufgerufener Setter, ProbedSetter) prüft zuerst das Flag 2 des
   Objekts und nimmt nur dann den Feld-Helfer `sf_`, der `probedSet` ruft (die Hälfte liest `gfp_` über FieldRead); ein Objekt ohne Probes schreibt
-  direkt. Nur `self` gilt nach dem Schreiben eines Felds nicht als sicher lebendig (ein Handler könnte es zerstören). Reflection liest und schreibt über die Feld-Helfer
+  direkt. Geprüft wird nur, was eine Probe erreichen kann (MayBeProbed): die Ziele der `probe`-Anweisungen - Klasse des Objekts, soweit bekannt, und
+  Mitglied, `obj.*` alle, eine berechnete Property auch die Felder, die ihr Getter liest - auf verwandte Klassen; `Reflect.Probe` (ein Name zur
+  Laufzeit), Module, Plugins und Bibliotheken machen alles prüfbar. Jeder andere Schreibzugriff schreibt ohne Test, und `self` gilt danach weiter als
+  lebendig (nach einem prüfbaren nicht: ein Handler könnte es zerstören). Reflection liest und schreibt über die Feld-Helfer
   (`gf_`/`sf_`, sie kennen das Layout), JSON über seine Feldtabelle, die je Feld die Hälfte trägt (`JsonFieldInfo.half`, auch für das `count`
   von List/JsonObject: `JsonSpecial`) - beide schalten die schmalen Felder nicht ab. Ebenso bleibt das Wissen über Felder `byte data[]`/
   `word w[]` (ein Puffer) und `T items[]` (ein Array des Elements des Typarguments): JSON liest dafür Puffer (die Bytes geprüft), `Reflect.Set`

@@ -35,10 +35,34 @@ namespace fire.Values
             Id = id;
         }
 
+        /// <summary>The declaration as a text (`Color{Red=0,Green=1}`, `flag Access{Read=1,Write=2}`): what Intern keys it by, FromKey makes it again (the
+        /// first value of a defined array of an enum, ArrayElem.Zero).</summary>
+        public string Key => KeyOf(Name, IsFlags, Members);
+
+        private static string KeyOf(string name, bool isFlags, IReadOnlyList<(string Name, long Value)> members) =>
+            (isFlags ? "flag " : "") + name + "{" + string.Join(",", members.Select(m => m.Name + "=" + m.Value.ToString(System.Globalization.CultureInfo.InvariantCulture))) + "}";
+
+        /// <summary>The type of a Key (null when the text is none).</summary>
+        public static EnumType? FromKey(string key)
+        {
+            bool isFlags = key.StartsWith("flag ", StringComparison.Ordinal);
+            string rest = isFlags ? key.Substring(5) : key;
+            int open = rest.IndexOf('{');
+            if (open <= 0 || !rest.EndsWith('}')) return null;
+            var members = new List<(string, long)>();
+            foreach (var part in rest.Substring(open + 1, rest.Length - open - 2).Split(',', StringSplitOptions.RemoveEmptyEntries))
+            {
+                int eq = part.LastIndexOf('=');
+                if (eq <= 0 || !long.TryParse(part.AsSpan(eq + 1), System.Globalization.NumberStyles.AllowLeadingSign, System.Globalization.CultureInfo.InvariantCulture, out long v)) return null;
+                members.Add((part.Substring(0, eq), v));
+            }
+            return Intern(rest.Substring(0, open), isFlags, members);
+        }
+
         /// <summary>The type of this declaration (the same object for the same declaration).</summary>
         public static EnumType Intern(string name, bool isFlags, IReadOnlyList<(string Name, long Value)> members)
         {
-            string key = (isFlags ? "flag " : "") + name + "{" + string.Join(",", members.Select(m => m.Name + "=" + m.Value)) + "}";
+            string key = KeyOf(name, isFlags, members);
             lock (Lock)
             {
                 if (ByKey.TryGetValue(key, out var known)) return known;

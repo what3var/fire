@@ -301,7 +301,7 @@ namespace Data {
     class ReaderEnumerator : IEnumerator<Data.Row> {
         Data.Reader reader
         Data.Row current
-        construct(Data.Reader reader) { this.reader = reader }
+        construct(Data.Reader reader) { this.reader = try take reader }
         bool MoveNext() {
             this.current = this.reader.Next()
             return this.current != undefined
@@ -1927,7 +1927,7 @@ namespace Data {
         any Key
         List<T> Items
         construct(any key) {
-            this.Key = key
+            this.Key = try take key
             this.Items = new List<T>()
         }
         int Count() { return this.Items.Count }

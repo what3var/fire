@@ -1020,7 +1020,7 @@ namespace fire.Standard
                 }
                 undefined Grow<int>() {
                     int newItems[] = new int[this.items.length * 2]
-                    for (defined int i = 0; i < this.count; i++) { newItems[i] = this.items[i] }
+                    __array_copy(this.items, newItems, this.count)   // (the packed numbers in one block)
                     any old = this.items
                     this.items = newItems
                     newItems.TakeTo(this)
@@ -1028,7 +1028,7 @@ namespace fire.Standard
                 }
                 undefined Grow<float>() {
                     float newItems[] = new float[this.items.length * 2]
-                    for (defined int i = 0; i < this.count; i++) { newItems[i] = this.items[i] }
+                    __array_copy(this.items, newItems, this.count)
                     any old = this.items
                     this.items = newItems
                     newItems.TakeTo(this)
@@ -1178,6 +1178,34 @@ namespace fire.Standard
                     this.count = this.count + 1
                 }
 
+                // (int keys and number values: both as C numbers into the typed arrays)
+                undefined Insert<int, int>(defined int key, defined int value, defined int h) {
+                    if (this.used >= this.keys.length) { this.Resize() }
+                    defined int i = this.used
+                    this.used = i + 1
+                    this.keys[i] = key
+                    this.vals[i] = value
+                    this.hashes[i] = h
+                    this.live[i] = true
+                    defined int b = h & (this.buckets.length - 1)
+                    this.next[i] = this.buckets[b]
+                    this.buckets[b] = i + 1
+                    this.count = this.count + 1
+                }
+                undefined Insert<int, float>(defined int key, defined float value, defined int h) {
+                    if (this.used >= this.keys.length) { this.Resize() }
+                    defined int i = this.used
+                    this.used = i + 1
+                    this.keys[i] = key
+                    this.vals[i] = value
+                    this.hashes[i] = h
+                    this.live[i] = true
+                    defined int b = h & (this.buckets.length - 1)
+                    this.next[i] = this.buckets[b]
+                    this.buckets[b] = i + 1
+                    this.count = this.count + 1
+                }
+
                 // takes the entry out of its chain; key and value stay with the caller (Drop or TakeLocal)
                 undefined Unlink(defined int at) {
                     defined int b = this.hashes[at] & (this.buckets.length - 1)
@@ -1210,16 +1238,31 @@ namespace fire.Standard
                     defined bool nl[] = new bool[cap]
                     defined int nb[] = new int[cap]
                     defined int j = 0
-                    for (defined int i = 0; i < this.used; i++) {
-                        if (this.live[i]) {
-                            nk[j] = this.keys[i]
-                            nv[j] = this.vals[i]
-                            nh[j] = this.hashes[i]
-                            nl[j] = true
-                            defined int b = nh[j] & (cap - 1)
-                            nn[j] = nb[b]
-                            nb[b] = j + 1
-                            j = j + 1
+                    if (this.count == this.used) {
+                        // (nothing was removed: keys, values and hashes in one block each - the chains are new)
+                        __array_copy(this.keys, nk, this.used)
+                        __array_copy(this.vals, nv, this.used)
+                        __array_copy(this.hashes, nh, this.used)
+                        for (defined int i = 0; i < this.used; i++) {
+                            nl[i] = true
+                            defined int b = nh[i] & (cap - 1)
+                            nn[i] = nb[b]
+                            nb[b] = i + 1
+                        }
+                        j = this.used
+                    }
+                    else {
+                        for (defined int i = 0; i < this.used; i++) {
+                            if (this.live[i]) {
+                                nk[j] = this.keys[i]
+                                nv[j] = this.vals[i]
+                                nh[j] = this.hashes[i]
+                                nl[j] = true
+                                defined int b = nh[j] & (cap - 1)
+                                nn[j] = nb[b]
+                                nb[b] = j + 1
+                                j = j + 1
+                            }
                         }
                     }
                     any oldKeys = this.keys
@@ -1361,6 +1404,30 @@ namespace fire.Standard
                     }
                     // (it takes what belongs to the call - `??.`: a number has no TakeTo; with Owns.Keys also an object or a lambda of someone else)
                     if (this.owns.HasFlag(Owns.Keys) && (key is of class || key is of lambda)) { key.TakeTo(this) } else { try key??.TakeTo(this) }
+                    this.Insert(key, value, h)
+                }
+
+                // (int keys and number values - Dictionary<int, int>, Dictionary<int, float>: no ownership to look at, the numbers as C numbers)
+                int operator[]<int, int>(defined int key) {
+                    defined int at = this.Find(key, this.HashOf(key))
+                    if (at < 0) { throw new ArgumentException("The key '" + key + "' is not in the dictionary.") }
+                    return this.vals[at]
+                }
+                undefined operator[]<int, int>(defined int key, defined int value) {
+                    defined int h = this.HashOf(key)
+                    defined int at = this.Find(key, h)
+                    if (at >= 0) { this.vals[at] = value; return }
+                    this.Insert(key, value, h)
+                }
+                float operator[]<int, float>(defined int key) {
+                    defined int at = this.Find(key, this.HashOf(key))
+                    if (at < 0) { throw new ArgumentException("The key '" + key + "' is not in the dictionary.") }
+                    return this.vals[at]
+                }
+                undefined operator[]<int, float>(defined int key, defined float value) {
+                    defined int h = this.HashOf(key)
+                    defined int at = this.Find(key, h)
+                    if (at >= 0) { this.vals[at] = value; return }
                     this.Insert(key, value, h)
                 }
 

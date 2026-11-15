@@ -129,13 +129,20 @@ namespace fire.Values
         public bool ElemDefined { get; private set; }
 
         /// <summary>Makes this typed array a defined one: an `undefined` element becomes the zero of the type (`new int[n]` starts at 0 that way).</summary>
-        public void MakeDefined()
+        public void MakeDefined() => MakeDefined(ArrayElem.Zero(ElemType, ElemUnit));
+
+        /// <summary>Like MakeDefined with the zero given (the first value of an enum). False - and the array stays as it is - when the zero is undefined
+        /// (an array of objects has none) and an element is: such an array is defined only with every element given.</summary>
+        public bool MakeDefined(Value zero)
         {
-            if (ElemDefined || ElemType == ArrayElem.None) return;
-            var zero = ArrayElem.Zero(ElemType, ElemUnit);
+            if (ElemDefined || ElemType == ArrayElem.None) return true;
+            if (zero.Kind == ValueKind.Undefined)
+                for (int i = 0; i < Items.Length; i++)
+                    if (Items[i].Kind == ValueKind.Undefined) return false;
             for (int i = 0; i < Items.Length; i++)
                 if (Items[i].Kind == ValueKind.Undefined) Items[i] = zero;
             ElemDefined = true;
+            return true;
         }
 
         /// <summary>Makes this (new) array a typed one: its elements are converted; the first that does not fit is reported (`error`, `message`, the element

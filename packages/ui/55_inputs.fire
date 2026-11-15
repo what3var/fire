@@ -670,7 +670,7 @@ namespace UI {
         UI.Stretch Stretch = UI.Stretch.Uniform
 
         construct(any source = undefined, defined int x = 0, defined int y = 0, defined int width = -1, defined int height = -1) : base(x, y, width, height) {
-            this.Source = source
+            this.Source = try take source
         }
 
         override string StyleKey() { return "Image" }

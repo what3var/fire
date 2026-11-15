@@ -431,7 +431,7 @@ namespace IO {
         string line
 
         construct(IO.TextReader reader) {
-            this.reader = reader
+            this.reader = try take reader
             this.line = undefined
         }
 
