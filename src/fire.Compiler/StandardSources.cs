@@ -173,10 +173,14 @@ namespace fire.Compiler
                 string lib = Path.Combine(dir, PackageLibrary.FileNameFor(import));
                 string hashFile = lib + ".hash";
                 if (!File.Exists(lib) || !File.Exists(hashFile) || File.ReadAllText(hashFile).Trim() != NativeHashOf(import)) continue;
+                // (built against the runtime of these programs: its key - PackageLibrary.RuntimeKey - goes along)
+                string key = PackageLibrary.RuntimeKey(import);
+                if (!File.Exists(PackageLibrary.KeyFile(lib)) || File.ReadAllText(PackageLibrary.KeyFile(lib)).Trim() != key) continue;
                 string target = Path.Combine(package.Directory, "lib", PackageLibrary.Rid, Path.GetFileName(lib));
                 Directory.CreateDirectory(Path.GetDirectoryName(target)!);
                 File.Copy(lib, target, overwrite: true);
                 File.SetLastWriteTimeUtc(target, DateTime.UtcNow);   // newer than the sources: PackageLibrary.Locate takes it
+                File.WriteAllText(PackageLibrary.KeyFile(target), key);
             }
         }
 
@@ -204,9 +208,28 @@ namespace fire.Compiler
                         string lib = Path.Combine(dir, PackageLibrary.FileNameFor(import));
                         File.Copy(built, lib, overwrite: true);
                         File.WriteAllText(lib + ".hash", NativeHashOf(import));
+                        File.WriteAllText(PackageLibrary.KeyFile(lib), PackageLibrary.RuntimeKey(import));
                         result.Add(lib);
                     }
                     catch (PackageException ex) { log?.Invoke($"{import.Package.Name}: no prebuilt library for {PackageLibrary.Rid} ({string.Join('\n', ex.Message.Split('\n').Take(20))})"); }
+                }
+                // the library of graphics and windows for the VM (one library for both, PackageLibrary.EnsureGraphics)
+                var graphics = store.FindImport("graphics");
+                var windows = store.FindImport("windows");
+                if (graphics != null && windows != null)
+                {
+                    try
+                    {
+                        string built = PackageLibrary.EnsureGraphics(graphics, windows, log);
+                        string dir = Path.Combine(prebuiltFolder, PackageLibrary.GraphicsPrebuiltFolder, PackageLibrary.Rid);
+                        Directory.CreateDirectory(dir);
+                        string lib = Path.Combine(dir, PackageLibrary.GraphicsFileName);
+                        File.Copy(built, lib, overwrite: true);
+                        File.WriteAllText(lib + ".hash", PackageLibrary.GraphicsSourceHash(graphics, windows));
+                        File.WriteAllText(PackageLibrary.KeyFile(lib), PackageLibrary.GraphicsRuntimeKey(graphics, windows));
+                        result.Add(lib);
+                    }
+                    catch (PackageException ex) { log?.Invoke($"graphics and windows: no prebuilt library for {PackageLibrary.Rid} ({string.Join('\n', ex.Message.Split('\n').Take(20))})"); }
                 }
             }
             finally
