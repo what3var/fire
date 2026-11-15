@@ -48,5 +48,8 @@ export -f one
     fi
 } | xargs -0 -n 4 -P "$jobs" bash -c 'one "$@"' _
 
-cd "$out" && find . -type f ! -name manifest.sha256 | LC_ALL=C sort | xargs sha256sum > manifest.sha256
-echo "$(grep -c . manifest.sha256) files in $out ($(du -sh . | cut -f1)); $(grep -L 'exit [^0]' $(find . -name '*.log') | wc -l) of $(find . -name '*.log' | wc -l) without an error"
+cd "$out" || exit 1
+find . -type f ! -name manifest.sha256 -print0 | LC_ALL=C sort -z | xargs -0 sha256sum > manifest.sha256
+logs=$(find . -name '*.log' | wc -l); bad=$(find . -name '*.log' -print0 | xargs -0 grep -l 'exit [^0]' | wc -l)
+echo "$(grep -c . manifest.sha256) files in $out ($(du -sh . | cut -f1)); $((logs - bad)) of $logs programs without an error"
+[ "$bad" = 0 ] || { echo "with errors:"; find . -name '*.log' -print0 | xargs -0 grep -l 'exit [^0]' | sed 's/^/  /'; }

@@ -16177,13 +16177,20 @@ else
     }
 
     var vmUnhandled = new Dictionary<string, string>();
+    const string NotCompiled = "WIRD NICHT UEBERSETZT: ";
     string vmOutput(string source)
     {
         // `terminate` and `catch threads/terminate` are process-wide state of the VM: an earlier case must not leave its handlers behind
         VM.ResetTerminateForTests();
         GlobalHandlers.ResetForTests();
         var lines = new List<string>();
-        var session = RuntimeSession.Build(new[] { source }, VmExecutionMode.Release, args => { lines.Add(args[0].ToString()!); return Value.MakeUndefined(); });
+        RuntimeSession session;
+        try { session = RuntimeSession.Build(new[] { source }, VmExecutionMode.Release, args => { lines.Add(args[0].ToString()!); return Value.MakeUndefined(); }); }
+        catch (Exception ex) when (fire.Compiler.CompileDiagnostics.Of(ex).Count > 0)
+        {
+            // a case that is not a program (any more): its check fails with the errors of the compiler - it does not end the whole run
+            return NotCompiled + string.Join("\n", fire.Compiler.CompileDiagnostics.Of(ex).Select(d => d.Code + " " + d.Message)) + "\n";
+        }
         session.Run();
         // what the command line runner writes to stderr for an exception that nothing catches (an "Abbruch:" case compares it with the native program)
         if (session.VirtualMachine?.UnhandledException is { } unhandled) lock (vmUnhandled) vmUnhandled[source] = new UncaughtScriptException(unhandled).Message;
@@ -17484,7 +17491,9 @@ else
                 string? unhandled = vmUnhandled.GetValueOrDefault(natCases[i].Source);
                 if (update)
                 {
-                    if (file.Expected != vmResults[i] || file.Unhandled != unhandled) { TestCases.Record(file, vmResults[i], unhandled); recorded++; }
+                    // (a case the compiler refuses has nothing to record: it stays a failed check until the case or the compiler is right again)
+                    if (vmResults[i].StartsWith(NotCompiled, StringComparison.Ordinal)) Console.WriteLine($"FEHLER: {natCases[i].Name} ({file.Id}.fire)\n  {vmResults[i].TrimEnd().Replace("\n", "\n  ")}");
+                    else if (file.Expected != vmResults[i] || file.Unhandled != unhandled) { TestCases.Record(file, vmResults[i], unhandled); recorded++; }
                     continue;
                 }
                 string title = $"VM: {natCases[i].Name}: die erwartete Ausgabe ({file.Id}.expected)";
