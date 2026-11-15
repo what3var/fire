@@ -432,11 +432,13 @@ namespace fire.Compiler
         private string? DeclaredTypeOf(TypeRef? type, RuntimeClass? owner)
         {
             string? text = MapSpec(DeclaredTypeOfCore(type, owner));
+            // `Color c` (DECISIONS D8): a value of that enum or undefined - a number goes in with a cast (`5!Color`)
+            if (text == null && type is { PointerDepth: 0, ArrayRank: 0, LambdaSignature: null, IsInferred: false } && (_refParams.EnumNames.Contains(type.BaseName) || _enumTypes.ContainsKey(type.BaseName))
+                && EnumTypeNamed(type.BaseName) is { } declaredEnum) text = DeclaredType.OfName(declaredEnum.Name);
             // `defined Dog d`, `defined string s`, `defined Color c` (SPEC 8.10b): undefined does not fit (a number: DeclaredKind)
             if (type is { NonNull: true, PointerDepth: 0, ArrayRank: 0, LambdaSignature: null } && DeclaredKind.Of(type) == 0)
             {
                 if (text == null && type.BaseName == "string") text = DeclaredType.OfName("string");
-                else if (text == null && _refParams.EnumNames.Contains(type.BaseName) && EnumTypeNamed(type.BaseName) is { } enumType) text = DeclaredType.OfName(enumType.Name);
                 if (text != null) text = DeclaredType.NonNullOf(text);
             }
             return text;

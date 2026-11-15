@@ -25,14 +25,15 @@ Vorschlag des Benutzers: `try delete x` versucht, den Inhalt des Bezeichners zu 
 sonst `true`. Für die Container wurde es nicht gebraucht (`x is from this` genügt, D3). Offen ist, ob es trotzdem kommt - und ob es nur löscht,
 was dem Aufrufer gehört, oder jedes Objekt wie `delete`.
 
-### D8. Prüft eine einzelne Deklaration `Color c` zur Laufzeit?
-
-Heute nimmt ein Parameter, ein Feld oder eine Variable `Color c` (ohne `defined`) zur Laufzeit jeden Wert; nur der Typprüfer meldet eine falsche
-Zuweisung. Geprüft wird dagegen `defined Color c`, ein Array `Color cs[]` und - seit D4 - ein `T` mit dem Typargument `Color`. Soll auch
-`Color c` prüfen (ein Wert des Enums oder undefined, sonst eine ArgumentException), wie es `Dog d` für Klassen tut? Dafür: einheitlich.
-Dagegen: Programme, die heute eine Zahl in eine Enum-Deklaration legen, bekämen eine Ausnahme.
-
 ## Entschieden
+
+### D8. Eine Deklaration `Color c` prüft zur Laufzeit
+
+Ein Parameter, ein Feld, eine Property, eine Rückgabe oder eine Variable, die mit einem Enum deklariert ist, nimmt einen Wert dieses Enums oder
+undefined - alles andere ist eine ArgumentException (`Parameter 'c' is a Color, not Int.`), wie bei `Dog d` für Klassen. Vorher prüfte das nur
+der Typprüfer (und zur Laufzeit `defined Color c`, `Color cs[]` und ein `T` mit dem Typargument `Color`). Eine Zahl geht mit einem Cast hinein
+(`5!Color`); ein Enum-Wert geht weiter ohne Cast in ein `int`. Entscheidung des Benutzers. Compiler.DeclaredTypeOf, TypeChecker.GuardLocalValue /
+GuardValue (SPEC 8.10b).
 
 ### D4. Ein Enum als Typargument ist zur Laufzeit bekannt
 
@@ -41,7 +42,7 @@ Dagegen: Programme, die heute eine Zahl in eine Enum-Deklaration legen, bekämen
 und `T item` nahm jeden Wert. Jetzt (Wunsch des Benutzers) trägt das Typargument den vollen Namen des Enums: `T item` nimmt nur Werte dieses
 Enums oder undefined, `T items[]`/`new T[n]` ist ein Array davon (wie `Color cs[]`), `T is of Color` stimmt; `List<Color>`,
 `Dictionary<Color, V>`, `HashSet<Color>` prüfen so ihre Elemente. Compiler.TypeArgText, DeclaredType.ArrayOfTypeArg (ROADMAP 19).
-Offen bleibt die Folgefrage D8.
+Die Folgefrage ist D8.
 
 ### D3. Container zerstören, was ihnen gehört, wenn es herausfällt
 

@@ -29454,6 +29454,55 @@ else
             var back = Json.Deserialize<Palette>(text)
             print(back.colors[0] + " " + back.colors.Count)
             """),
+        ("Eine Enum-Deklaration prueft zur Laufzeit (DECISIONS D8): Color c nimmt einen Wert des Enums oder undefined - Parameter, Feld, Property, statisches Feld, Rueckgabe, Variable, var, Reflection; eine Zahl geht mit einem Cast hinein", """
+            #import "reflection"
+            #import "json"
+            enum Color { Red, Green, Blue }
+            enum Size { S, M }
+            flag enum Access { Read = 1, Write = 2, Exec = 4 }
+            class Box {
+                Color c
+                Access a = Access.Read
+                static Color last
+                Color Tint { get { return this.c } set { this.c = value } }
+                construct() { }
+                undefined Paint(Color c) { this.c = c }
+                Color Bad() { any five = 5; return five }
+                Color Good() { return this.c }
+                static string Name(Color c = Color.Blue) { return "" + c }
+            }
+            any five = 5
+            any m = Size.M
+            any none = undefined
+            var b = new Box()
+            print(b.c + " " + b.a + " " + Box.last + " " + Box.Name())
+            b.Paint(Color.Green); b.Paint(none); b.c = Color.Blue; b.Tint = Color.Red
+            b.a = Access.Read | Access.Write
+            print(b.c + " " + b.a + " " + b.Good() + " " + (b.a & Access.Write))
+            try { b.Paint(five) } catch (ArgumentException e) { print("E1 " + e.message) }
+            try { b.Paint(m) } catch (ArgumentException e) { print("E2 " + e.message) }
+            try { b.c = five } catch (ArgumentException e) { print("E3 " + e.message) }
+            try { b.Tint = five } catch (ArgumentException e) { print("E4 " + e.message) }
+            try { b.Bad() } catch (ArgumentException e) { print("E5 " + e.message) }
+            try { Box.last = five } catch (ArgumentException e) { print("E6 " + e.message) }
+            try { Color loc = five; print("no error " + loc) } catch (ArgumentException e) { print("E7 " + e.message) }
+            Color g = Color.Green
+            try { g = five } catch (ArgumentException e) { print("E8 " + e.message) }
+            try { g = "Blue" } catch (ArgumentException e) { print("E9 " + e.message) }
+            try { Reflect.Set(b, "c", five) } catch (ArgumentException e) { print("E10 " + e.message) }
+            try { b.a = five } catch (ArgumentException e) { print("E11 " + e.message) }
+            g = five!Color
+            b.c = 1!Color
+            b.Paint(2!Color)
+            Color viaCast = 0!Color
+            print(g + " " + b.c + " " + viaCast)
+            int n = Color.Blue
+            print(n + 1)
+            var back = Json.Deserialize<Box>("{\"c\":\"Green\",\"a\":3}")
+            print(back.c + " " + back.a)
+            var v = Color.Red
+            try { v = five; print("var unchecked") } catch (ArgumentException e) { print("E12 " + e.message) }
+            """),
         ("defined fuer strings, Enums und Objekte (SPEC 8.10b): ein string beginnt bei \"\", ein Enum beim ersten Wert, ein Objekt braucht seinen Wert (Feld: jeder Konstruktor setzt es); undefined ist eine ArgumentException an Feld, Parameter, Rueckgabe, Variable, Reflection und in JSON (fehlend oder null)", """
             #import "json"
             #import "reflection"

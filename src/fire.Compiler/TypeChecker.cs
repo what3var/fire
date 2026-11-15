@@ -1341,6 +1341,7 @@ namespace fire.Compiler
             StaticKind.Bool => new TypeRef("bool", null, 0),
             StaticKind.Class when type.Args == null && type.Class is { } name && (_classes.TryGetValue(name, out var decl) ? decl.TypeParams is not { Count: > 0 } : _interfaces.TryGetValue(name, out var iface) && iface.TypeParams is not { Count: > 0 })
                 => new TypeRef(name, null, 0),
+            StaticKind.Enum when type.Class is { } enumName => new TypeRef(enumName, null, 0),
             _ => null,
         };
 
@@ -1367,6 +1368,8 @@ namespace fire.Compiler
                 StaticKind.Float => value.Kind is not (StaticKind.Float or StaticKind.Int),
                 StaticKind.Bool => value.Kind != StaticKind.Bool,
                 StaticKind.Class => value.Kind != StaticKind.Class || !DerivesFrom(value.Class!, target.Class!),
+                // (`Color c`: a value of that enum - a number goes in with a cast, DECISIONS D8)
+                StaticKind.Enum => value.Kind != StaticKind.Enum || value.Class != target.Class,
                 StaticKind.Dynamic => target.TypeParam != null && value.TypeParam != target.TypeParam,
                 _ => false,
             };
@@ -1383,6 +1386,8 @@ namespace fire.Compiler
                 StaticKind.Float => value.Kind is not (StaticKind.Float or StaticKind.Int),
                 StaticKind.Bool => value.Kind != StaticKind.Bool,
                 StaticKind.Class => value.Kind != StaticKind.Class || !DerivesFrom(value.Class!, target.Class!),
+                // (`Color c`: a value of that enum - a number goes in with a cast, DECISIONS D8)
+                StaticKind.Enum => value.Kind != StaticKind.Enum || value.Class != target.Class,
                 StaticKind.Dynamic => target.TypeParam != null && value.TypeParam != target.TypeParam,
                 _ => false,
             };
