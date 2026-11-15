@@ -6489,7 +6489,7 @@ FIRE_FN bool ptrValid(Value p, Value* err) {
 }
 
 FIRE_FN Value ptrRead(Value p) {
-    Value err;
+    Value err = Undef();   /* (gcc -O2 cannot see that ptrValid sets it when it says false) */
     if (FIRE_UNLIKELY(!isPtr(p))) fatal("Dereference of a value that is not a pointer.");
     if (FIRE_UNLIKELY(!ptrValid(p, &err))) return err;
     if (p.kind == K_PtrVar) return *(const Value*)p.p;
@@ -6508,7 +6508,7 @@ FIRE_FN Value ptrDiff(Value a, Value b) {
 
 /* `*p = v`: the storage holds a count of what it holds now. */
 FIRE_FN void ptrWrite(Value p, Value v) {
-    Value err, old;
+    Value err = Undef(), old;   /* (see ptrRead) */
     Value* target;
     if (FIRE_UNLIKELY(!isPtr(p))) fatal("Assignment through a value that is not a pointer.");
     if (FIRE_UNLIKELY(!ptrValid(p, &err))) return;

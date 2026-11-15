@@ -16230,7 +16230,7 @@ else
                 print(Show.Of(x) + " / " + sh.Me(x) + " / " + new Show(x).made)
             }
             """),
-        ("Ueberladung nach Typ: ref-Parameter, statisch und Instanz gemischt, Basistyp-Erweiterung, generic vor class vor any", """
+        ("Ueberladung nach Typ: ref-Parameter, gleiche Parameterzahl statisch und fuer Instanzen (nicht gemischt: E4076), Basistyp-Erweiterung, generic vor class vor any", """
             class Inc {
                 static string Bump(ref int x) { x = x + 1; return "ref int" }
                 static string Bump(string s) { return "string " + s }
@@ -16253,10 +16253,14 @@ else
 
             class Mixed {
                 static string Go(int x) { return "static int" }
-                string Go(string s) { return "instance string" }
+                static string Go(string s) { return "static string" }
+                string Run(int x) { return "instance int" }
+                string Run(string s) { return "instance string" }
             }
             print(Mixed.Go(1))
-            print(new Mixed().Go("s"))
+            print(Mixed.Go("s"))
+            print(new Mixed().Run(1))
+            print(new Mixed().Run("s"))
 
             class extends string {
                 string Tag(int n) { return this + "#" + n }
@@ -23073,7 +23077,8 @@ else
                 print("thread " + (await c.Get()) + " " + (await l.Text()))
                 done = true
             }
-            while (!done) { process c; process l; Sleep(1ms) }
+            // (try process: a `process` that waits would wait for ever when the thread ends between the check of `done` and the next message)
+            while (!done) { try process c; try process l; Sleep(1ms) }
             print("main " + c.n + " " + l.text)
         """),
         ("Channel<T>: Send/Receive zwischen Threads (fire with), foreach bis zum Schliessen, Objekte nur frisch/copy/take (Laufzeit und TC029 fuer bekannte Typen), Records behalten ihre Identitaet und sterben mit dem Empfaenger, Unzugestelltes stirbt mit dem Kanal, TryReceive, Zeitlimit, [NoCopy]", """
