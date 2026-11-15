@@ -1210,8 +1210,9 @@ namespace fire.Native
                     : ownerObj != "NULL" ? TArgOfExpr(a.Substring(a.IndexOf('@') + 1), int.Parse(a.AsSpan(1, a.IndexOf('@') - 1), CultureInfo.InvariantCulture), ownerObj) : "NULL").ToList();
                 if (wanted.Any(w => w != "NULL"))
                 {
-                    string has = string.Join(", ", Enumerable.Range(0, wanted.Count).Select(k => TArgOfExpr(genericRc.Name, k, $"objAt({value})")));
-                    altCheck += $" if ({value}.kind == K_Class && leafAlive({value})) {{ const TArg* tw_[] = {{{string.Join(", ", wanted)}}}; const TArg* th_[] = {{{has}}}; int ti_; for (ti_ = 0; ti_ < {wanted.Count}; ti_++) if (FIRE_UNLIKELY(tw_[ti_] && th_[ti_] && tw_[ti_] != th_[ti_] && !(th_[ti_]->isA && typeNameIn(tw_[ti_]->display, th_[ti_]->isA)))) {{ guardTypeArgsFailed({CString(parsed.Display)}, tw_, th_, {wanted.Count}, {CString(what)}); break; }} }}";
+                    // (element by element: an initializer of an automatic array must be constant in C89 - Open Watcom)
+                    string fill = string.Concat(Enumerable.Range(0, wanted.Count).Select(k => $" tw_[{k}] = {wanted[k]}; th_[{k}] = {TArgOfExpr(genericRc.Name, k, $"objAt({value})")};"));
+                    altCheck += $" if ({value}.kind == K_Class && leafAlive({value})) {{ const TArg* tw_[{wanted.Count}]; const TArg* th_[{wanted.Count}]; int ti_;{fill} for (ti_ = 0; ti_ < {wanted.Count}; ti_++) if (FIRE_UNLIKELY(tw_[ti_] && th_[ti_] && tw_[ti_] != th_[ti_] && !(th_[ti_]->isA && typeNameIn(tw_[ti_]->display, th_[ti_]->isA)))) {{ guardTypeArgsFailed({CString(parsed.Display)}, tw_, th_, {wanted.Count}, {CString(what)}); break; }} }}";
                 }
             }
             if (parsed.TypeParamIndex < 0) return altCheck;
@@ -3404,13 +3405,17 @@ namespace fire.Native
             /// <summary>`self` was checked to be alive (a field access of `self`), and nothing since could have destroyed it - the next access of a field of `self`
             /// needs no check. Never at a jump target that is reached without it.</summary>
             public bool SelfAlive;
+            /// <summary>Variables that hold a typed array whose state is in C helpers (`v_ok`: alive, typed, packed, of the element; `v_a`, `v_len`, `v_d`:
+            /// the array, its length, its numbers), set when it was stored and nothing since could have changed it - an element is then one comparison
+            /// and one load (ROADMAP 21). Never at a jump target that is reached without it. Immutable: replaced on change.</summary>
+            public string[] Arrays = Array.Empty<string>();
             public List<HEntry> Handlers = new();
             /// <summary>The catch lambda this code belongs to (null: the function itself).</summary>
             public Region? Region;
             /// <summary>The `finally` blocks that this code is inside of (their entry addresses), outermost first.</summary>
             public List<int> Fins = new();
 
-            public Flow Clone() => new() { Depth = Depth, Scopes = new List<(int, int)>(Scopes), Refs = Refs, Types = (int[])Types.Clone(), Scalar = Scalar, Alias = (string?[])Alias.Clone(), TempsDirty = TempsDirty, SelfAlive = SelfAlive, Handlers = new List<HEntry>(Handlers), Region = Region, Fins = new List<int>(Fins) };
+            public Flow Clone() => new() { Depth = Depth, Scopes = new List<(int, int)>(Scopes), Refs = Refs, Types = (int[])Types.Clone(), Scalar = Scalar, Alias = (string?[])Alias.Clone(), TempsDirty = TempsDirty, SelfAlive = SelfAlive, Arrays = Arrays, Handlers = new List<HEntry>(Handlers), Region = Region, Fins = new List<int>(Fins) };
 
             /// <summary>Forgets the types of the slots from <paramref name="from"/> on.</summary>
             public void ClearTypes(int from)
@@ -3650,6 +3655,7 @@ namespace fire.Native
                 if ((existing.Refs | state.Refs) != existing.Refs) { existing.Refs |= state.Refs; work.Push(target); }
                 if ((existing.TempsDirty | state.TempsDirty) != existing.TempsDirty) { existing.TempsDirty |= state.TempsDirty; work.Push(target); }
                 if (existing.SelfAlive && !state.SelfAlive) { existing.SelfAlive = false; work.Push(target); }
+                if (existing.Arrays.Length > 0 && existing.Arrays.Except(state.Arrays).Any()) { existing.Arrays = existing.Arrays.Intersect(state.Arrays).ToArray(); work.Push(target); }
                 // (a slot is scalar here only if it is on every way - a jump target never is: every jump and every fall into a target materializes)
                 if ((existing.Scalar & state.Scalar) != existing.Scalar) { existing.Scalar &= state.Scalar; work.Push(target); }
                 // a slot keeps its kind only if every way here agrees
@@ -4272,8 +4278,24 @@ namespace fire.Native
             for (int k = Math.Max(0, before - 3); k < Math.Min(before, 64); k++) fromNone |= st.Types[k] == TypeNone;
             bool selfAliveBefore = st.SelfAlive;
             _selfAliveAfter = null;
-            bool neutralHere = selfAliveBefore && SelfNeutralHere(ins.Op, st.Types, before);   // (by the types of the operands, before the step changes them)
+            _neutralAfter = false;
+            bool neutralHere = (selfAliveBefore || st.Arrays.Length > 0) && SelfNeutralHere(ins.Op, st.Types, before);   // (by the types of the operands, before the step changes them)
+            // (a number into a typed array converts or throws: it runs no code and unpacks nothing - the known arrays stay known)
+            bool arraysNeutralHere = st.Arrays.Length > 0 && ins.Op == OpCode.ArraySet && before >= 3 && before <= 64
+                && (st.Types[before - 3] & TypeNone) == 0 && BaseKindOfType(st.Types[before - 3]) == KindArr
+                && st.Types[before - 2] != TypeUnknown && IsPlainType(st.Types[before - 2]) && st.Types[before - 1] != TypeUnknown && IsPlainType(st.Types[before - 1])
+                // (a number given to an array to own is nothing to own; a new array is only made)
+                || st.Arrays.Length > 0 && ins.Op == OpCode.ClaimToArray && before >= 1 && before <= 64 && st.Types[before - 1] != TypeUnknown && IsPlainType(st.Types[before - 1])
+                || st.Arrays.Length > 0 && ins.Op == OpCode.NewArray;
             var result = StepCore(f, chunk, ins, st, sb, locals);
+            // (the arrays whose state is known stay known across what runs no code and changes no variable - a store forgets its variable itself)
+            // (typing an array runs no code but may convert one - perhaps one that is known: they are checked again)
+            if (st.Arrays.Length > 0 && ins.Op is OpCode.TypeArray or OpCode.TypeArrayOfParam && result.FallsThrough)
+            {
+                foreach (var known in st.Arrays) sb?.Append("    ").AppendLine(ArrayCheckText(known, _knownArrayElem[(f, known)]));
+                _neutralAfter = true;
+            }
+            if (st.Arrays.Length > 0 && !(SelfNeutral(ins.Op) || neutralHere || arraysNeutralHere || _neutralAfter)) st.Arrays = Array.Empty<string>();
             // (`self` stays checked across what runs no code of its own and destroys nothing; a field access of `self` says itself)
             st.SelfAlive = _selfAliveAfter ?? (selfAliveBefore && (SelfNeutral(ins.Op) || neutralHere));
             // (slots that were popped are no scalars; a fall into a jump target makes the scalars Values - the target expects them there)
@@ -4361,6 +4383,13 @@ namespace fire.Native
         }
         /// <summary>Set by an instruction that leaves `self` known to be alive (or not), see Flow.SelfAlive; null: SelfNeutral decides.</summary>
         private bool? _selfAliveAfter;
+        /// <summary>Set by an instruction that ran no code of the program and destroyed nothing although its kind may (ReleaseTemps, ExitScope without lists).</summary>
+        private bool _neutralAfter;
+        /// <summary>The C that sets the helpers of a variable in Flow.Arrays from its array (alive, typed, packed, of the element: `v_ok`).</summary>
+        private static string ArrayCheckText(string v, byte elem) =>
+            $"{{ Arr* ra_; {v}_ok = {v}.kind == K_Array && leafAlive({v}) && (ra_ = arrOf({v}))->typed && ra_->typed->packed && ra_->typed->elem == {elem}; if ({v}_ok) {{ {v}_a = ra_; {v}_len = ra_->length; {v}_d = ra_->typed->data; }} }}";
+        /// <summary>The element of each variable in Flow.Arrays (its C helpers are checked again for it).</summary>
+        private readonly Dictionary<(Func, string), byte> _knownArrayElem = new();
         private static bool SelfNeutral(OpCode op) => op is OpCode.LoadConst or OpCode.LoadLocal or OpCode.LoadThis or OpCode.LoadGlobal or OpCode.Pop or OpCode.Dup
             or OpCode.StoreLocal or OpCode.StoreLocalPop or OpCode.DeclareLocal or OpCode.ClaimToScope or OpCode.CopyArgs or OpCode.GuardTop
             or OpCode.GuardLocal or OpCode.GuardLocalType;   // (the checks of the parameters run no code of the program: they convert or throw)
@@ -4374,8 +4403,10 @@ namespace fire.Native
             switch (op)
             {
                 case OpCode.Jump: case OpCode.EnterScope:
+                // (a condition runs no code: a bool decides, anything else is the ArgumentException of `truthy`)
+                case OpCode.JumpIfFalse: case OpCode.JumpIfFalsePeek: case OpCode.JumpIfTruePeek:
                     return true;
-                case OpCode.JumpIfFalse: case OpCode.JumpIfFalsePeek: case OpCode.JumpIfTruePeek: case OpCode.Neg: case OpCode.LogicalNot:
+                case OpCode.Neg: case OpCode.LogicalNot: case OpCode.CheckUnit:
                     return Plain(depth - 1);
                 case OpCode.Add: case OpCode.Sub: case OpCode.Mul: case OpCode.Div: case OpCode.Mod: case OpCode.BitAnd:
                 case OpCode.Eq: case OpCode.NotEq: case OpCode.Lt: case OpCode.LtEq: case OpCode.Gt: case OpCode.GtEq:
@@ -4459,7 +4490,12 @@ namespace fire.Native
             string T(int k) { if (k >= 0 && k < 64) st.Alias[k] = null; return S(k); }
             // (the Value of a slot that is no scalar, read)
             string VR(int k) => k >= 0 && k < 64 && st.Alias[k] is { } aliasedV ? aliasedV : SlotName(st.Region, k);
-            if (AnyAlias(st) && !AliasAware(ins.Op)) MaterializeAliases(st, E);
+            if (AnyAlias(st) && !AliasAware(ins.Op))
+            {
+                // (an element of a known array - Flow.Arrays: the array stays the variable, its helpers are read)
+                int keepAlias = ins.Op == OpCode.ArrayGet && st.Depth >= 2 && st.Depth - 2 < 64 && st.Alias[st.Depth - 2] is { } ga && Array.IndexOf(st.Arrays, ga) >= 0 ? st.Depth - 2 : -1;
+                for (int k = 0; k < 64; k++) if (k != keepAlias) MaterializeAlias(st, k, E);
+            }
             // (`Math.Abs(x)` ...: MathIntrinsic takes C numbers - the call of the prelude's function makes them Values first, below)
             if (st.Scalar != 0 && !ScalarAware(ins.Op) && !TypedNativeCall(ins) && !IntKeyHash(f, st, ins) && !(ins.Op == OpCode.CallStaticMethod && (CAbiStaticCallee(f, ins) != null || Str(ins.A[0]) == "Math"))
                 && !(ins.Op == OpCode.GetStaticField && ConstantStatic(Str(ins.A[0]), Str(ins.A[1])) != null)   // (`Math.PI`: a constant) && !(ins.Op == OpCode.CallMethod && CAbiMethodCallee(f, st, ins) != null)
@@ -4513,6 +4549,26 @@ namespace fire.Native
                 if (!_usesExceptions || sb == null) return;
                 E($"if (FIRE_UNLIKELY(g_unwind.active)) goto {ExitLabel(f, st, locals)};");
             }
+            // The check of Check() as text, for the slow branch of an access whose fast branch cannot throw (ROADMAP 21: one test less per element)
+            // A typed array stored in a variable: its state into C helpers (Flow.Arrays) - one test here instead of one per element later
+            void ForgetArray(string v) { if (Array.IndexOf(st.Arrays, v) >= 0) st.Arrays = st.Arrays.Where(a => a != v).ToArray(); }
+            void KnowArray(string v, int slot)
+            {
+                ForgetArray(v);
+                if (_program.Optimize != OptimizeFor.Speed || DebugBuild || !AliasOn(f) || st.Region != null || !(v[0] == 'P' || v[0] == 'B')) return;
+                int code = ArrSlot(slot);
+                if (code == 0) return;
+                byte elem = ArrayElem.TypeOf(code);
+                if (ArrElemKind(elem) == KindUnknown) return;
+                f.Scalars[v + "_ok"] = "bool"; f.Scalars[v + "_a"] = "Arr*"; f.Scalars[v + "_len"] = "uint32_t"; f.Scalars[v + "_d"] = "void*";
+                _knownArrayElem[(f, v)] = elem;
+                CheckArray(v, elem);
+                st.Arrays = st.Arrays.Append(v).ToArray();
+            }
+            void CheckArray(string v, byte elem) => E(ArrayCheckText(v, elem));
+            // the variable a slot is an alias of, when the state of its typed array (of this element) is known
+            string? KnownArray(int k, byte elem) => k >= 0 && k < 64 && st.Alias[k] is { } av && Array.IndexOf(st.Arrays, av) >= 0 && ArrayElem.TypeOf(ArrSlot(k)) == elem ? av : null;
+            string CheckIn() => _usesExceptions && sb != null ? $" if (FIRE_UNLIKELY(g_unwind.active)) goto {ExitLabel(f, st, locals)};" : "";
             // The label the code leaves for when an exception is unwinding (null: no exceptions, or no code is written)
             string? CheckExit() => _usesExceptions && sb != null ? ExitLabel(f, st, locals) : null;
             // `try take x` (SPEC 2.2): the statement `take` runs only when the running call owns x (its scopes, the argument list it was given, `this`) -
@@ -4943,6 +4999,7 @@ namespace fire.Native
                 // (the slots that are aliases of the variable get their own Value first - but the slot that is stored: it stays one, of the value stored)
                 string stored = SR(slot);
                 if (stored == variable) return;   // (`x = x`)
+                ForgetArray(variable);
                 MaterializeAliases(st, E, variable);
                 string key = VarKey(f, variable);
                 bool valueRef = R(slot);
@@ -5020,6 +5077,7 @@ namespace fire.Native
                     else if (R(d - 1)) { MarkVarRef(key); E($"{v} = {SR(d - 1)}; retain({v});"); }
                     else E($"{v} = {SR(d - 1)};");
                     JoinVarType(key, Ty(d - 1));
+                    if (id != GlobalScope && !ScalarVar(v)) KnowArray(v, d - 1); else ForgetArray(v);
                     st.Scopes[^1] = (id, declared + 1);
                     _kindsKept = true;
                     d--; return Next();
@@ -5048,6 +5106,7 @@ namespace fire.Native
                     string v = Var(st, ins.A[0], ins.A[1], locals);
                     StoreVar(v, d - 1);
                     if (!RawParam(v)) JoinVarType(VarKey(f, v), Ty(d - 1));
+                    if (!RawParam(v) && !ScalarVar(v)) KnowArray(v, d - 1);
                     _kindsKept = true;
                     if (ins.Op == OpCode.StoreLocalPop) d--;
                     return Next();
@@ -5090,6 +5149,7 @@ namespace fire.Native
                     int constUnit = stepMode && varUnit != 0 ? varUnit : UnitOfType(constType);
                     if (local && ScalarVar(v))
                     {
+                        _neutralAfter = true;   // (C arithmetic on a C number: no code runs, the known arrays stay known)
                         // a variable that is a C number: `x += c` in C (an int wraps like the program's int, a word at its width); a store that is no narrow
                         // int (no int for a word) would have made it a Value
                         bool word = ScalarVarCType(f, v) == "FireWord";
@@ -5526,6 +5586,8 @@ namespace fire.Native
                     {
                         EmitLeave(f, id, E);
                         ReleaseScopeVariables(id, reset: true);
+                        // (a scope without lists destroys nothing: `self` stays checked - a loop body of numbers, ROADMAP 21)
+                        if (!f.NeedsList.Contains(TempOf(id)) && !f.NeedsList.Contains(id) && !ScopeVariables(f, id, locals).Any(v => VarRef(VarKey(f, v)))) { _selfAliveAfter = st.SelfAlive; _neutralAfter = true; }
                     }
                     st.Scopes.RemoveAt(st.Scopes.Count - 1);
                     _kindsKept = true;
@@ -6084,6 +6146,7 @@ namespace fire.Native
                         // (only a destroyed object throws: the check of the unwinding is on that path)
                         else if (gfObj == "self" && st.SelfAlive) { E($"{T(d - 1)} = {read};"); _selfAliveAfter = true; }
                         else { string thrower = Thrower($"destroyedError({gfObj});"); E($"if (FIRE_UNLIKELY(!leafAlive({gfObj}))) {thrower} {T(d - 1)} = {read};"); if (gfObj == "self") _selfAliveAfter = true; }
+                        _neutralAfter = true;   // (a field read by its index runs no code: the known arrays stay known)
                     }
                     else if (SlotScalars() && CAbiGetterCallee(f, st, ins) is { } cgetter && CAbiOf(cgetter) is { } gabi)
                     {
@@ -7052,8 +7115,14 @@ namespace fire.Native
                     int scopeBit = st.Scopes.Count - 1;
                     // (nothing went into the list since the last end of a statement: nothing to leave)
                     bool dirty = scopeBit >= 64 || (st.TempsDirty >> scopeBit & 1) != 0;
-                    if (f.NeedsList.Contains(temp) && dirty) E($"leave(&{ListName(temp)});");
-                    else _selfAliveAfter = st.SelfAlive;   // (nothing was left: nothing destroyed)
+                    if (f.NeedsList.Contains(temp) && dirty)
+                    {
+                        E($"leave(&{ListName(temp)});");
+                        // (what it destroyed may have run code: the arrays whose state is known are checked again - once, not per element)
+                        foreach (var known in st.Arrays) CheckArray(known, _knownArrayElem[(f, known)]);
+                        _neutralAfter = st.Arrays.Length > 0;
+                    }
+                    else { _selfAliveAfter = st.SelfAlive; _neutralAfter = true; }   // (nothing was left: nothing destroyed)
                     if (scopeBit < 64) st.TempsDirty &= ~(1UL << scopeBit);
                     return Next();
                 }
@@ -7147,14 +7216,12 @@ namespace fire.Native
                         string idxValue = NarrowInt(d - 1) ? $"Int({ib})" : S(d - 1);
                         SetT(d - 2, elemType); SetR(d - 2, false); _kindsKept = true;
                         string shadow = ScalarName(f, st, d - 2);
-                        E($"if (FIRE_LIKELY({isBuf}leafAlive({ab}) && (uint64_t)(int64_t){ib} < bufOf({ab})->length)) {shadow} = {elem}; else {{ Value e_ = {Px}aget_g({ab}, {idxValue}, NULL); {shadow} = {(wordsGet ? "(FireWord)e_.w" : "(FireInt)e_.i")}; }}");
+                        E($"if (FIRE_LIKELY({isBuf}leafAlive({ab}) && (uint64_t)(int64_t){ib} < bufOf({ab})->length)) {shadow} = {elem}; else {{ Value e_ = {Px}aget_g({ab}, {idxValue}, NULL); {shadow} = {(wordsGet ? "(FireWord)e_.w" : "(FireInt)e_.i")};{CheckIn()} }}");
                         st.Scalar |= 1UL << (d - 2);
-                        Check();
                         d--; return Next();
                     }
                     string a = S(d - 2), i = S(d - 1);
-                    E($"if (FIRE_LIKELY({isBuf}leafAlive({a}) && (uint64_t){i}.i < bufOf({a})->length)) {a} = {(wordsGet ? $"WordV((uint64_t)bufWords(bufOf({a}))[{i}.i])" : $"Int(bufOf({a})->data[{i}.i])")}; else {a} = {Px}aget_g({a}, {i}, NULL);");
-                    Check();
+                    E($"if (FIRE_LIKELY({isBuf}leafAlive({a}) && (uint64_t){i}.i < bufOf({a})->length)) {a} = {(wordsGet ? $"WordV((uint64_t)bufWords(bufOf({a}))[{i}.i])" : $"Int(bufOf({a})->data[{i}.i])")}; else {{ {a} = {Px}aget_g({a}, {i}, NULL);{CheckIn()} }}");
                     d--; SetR(d - 1, false); SetT(d - 1, TypeOf(wordsGet ? KindWord : KindInt, 0) | (wordsGet ? 0 : NarrowBit)); _kindsKept = true; return Next();
                 }
                 case OpCode.ArraySet when BK(d - 3) == KindBuf && (Ty(d - 3) & TypeNone) == 0 && U(d - 3) is BufBytes or BufWords && K(d - 2) == KindInt && (K(d - 1) == KindWord && U(d - 3) == BufWords || K(d - 1) == KindInt && (U(d - 3) == BufBytes || U(d - 1) == 0)):
@@ -7184,6 +7251,21 @@ namespace fire.Native
                     {
                         // an element of a defined array (`defined float a[]`: never undefined) into the shadow: one load like a buffer's - the generic access
                         // for a destroyed array, an index out of range (it throws there) or an unpacked one
+                        if (KnownArray(d - 2, getElem) is { } ka)
+                        {
+                            // (the state of the array is known - Flow.Arrays: the length, then the number)
+                            string ki = SN(d - 1);
+                            int kType = getKind switch { KindFloat => TypeOf(KindFloat, 0), KindBool => TypeOf(KindBool, 0), _ => TypeOf(KindInt, 0) | NarrowBit };
+                            string kLoad = $"(({ArrElemCType(getElem)}*){ka}_d)[{ki}]";
+                            string kFast = getKind switch { KindFloat => $"(Real){kLoad}", KindBool => $"({kLoad} != 0)", _ => $"(FireInt){kLoad}" };
+                            string kSlow = getKind switch { KindFloat => "(Real)e_.f", KindBool => "(e_.i != 0)", _ => "(FireInt)e_.i" };
+                            st.Alias[d - 2] = null;
+                            SetT(d - 2, kType); SetR(d - 2, false); _kindsKept = true;
+                            string kShadow = ScalarName(f, st, d - 2);
+                            E($"if (FIRE_LIKELY({ka}_ok && (uint64_t)(int64_t){ki} < {ka}_len)) {kShadow} = {kFast}; else {{ Value e_ = {Px}aget_g({ka}, Int({ki}), NULL); {kShadow} = {kSlow};{CheckIn()} }}");
+                            st.Scalar |= 1UL << (d - 2);
+                            d--; return Next();
+                        }
                         string da = S(d - 2), di = SN(d - 1);
                         string dIsArr = IsNullable(Ty(d - 2)) ? $"{da}.kind == K_Array && " : "";
                         string load = $"(({ArrElemCType(getElem)}*)ra_->typed->data)[{di}]";
@@ -7193,18 +7275,24 @@ namespace fire.Native
                         string shadow = ScalarName(f, st, d - 2);
                         string fast = getKind switch { KindFloat => $"(Real){load}", KindBool => $"({load} != 0)", _ => $"(FireInt){load}" };
                         string slow = getKind switch { KindFloat => "(Real)e_.f", KindBool => "(e_.i != 0)", _ => "(FireInt)e_.i" };
-                        E($"{{ Arr* ra_; if (FIRE_LIKELY({dIsArr}leafAlive({da}) && (uint64_t)(int64_t){di} < (ra_ = arrOf({da}))->length && ra_->typed && ra_->typed->packed)) {shadow} = {fast}; else {{ Value e_ = {Px}aget_g({da}, Int({di}), NULL); {shadow} = {slow}; }} }}");
+                        E($"{{ Arr* ra_; if (FIRE_LIKELY({dIsArr}leafAlive({da}) && (uint64_t)(int64_t){di} < (ra_ = arrOf({da}))->length && ra_->typed && ra_->typed->packed)) {shadow} = {fast}; else {{ Value e_ = {Px}aget_g({da}, Int({di}), NULL); {shadow} = {slow};{CheckIn()} }} }}");
                         st.Scalar |= 1UL << (d - 2);
-                        Check();
                         d--; return Next();
                     }
                     // an element of a typed array the generator knows (TypeArray let it through): read in place (arrPackedAt with a constant element folds to one
                     // load) - the generic access for undefined, a destroyed array, an index out of range or an unpacked array; an int, float or bool, or undefined
+                    if (KnownArray(d - 2, getElem) is { } kn)
+                    {
+                        string kv = S(d - 1);
+                        st.Alias[d - 2] = null;
+                        string ks = SlotName(st.Region, d - 2);
+                        E($"if (FIRE_LIKELY({kn}_ok && {kv}.kind == K_Int && (uint64_t){kv}.i < {kn}_len)) {ks} = arrPackedAt({kn}_a, (uint32_t){kv}.i, {getElem}); else {{ if (typeArray({kn}, {getElem}, 1, {TypeArrayUnitArgsOf(null, getCode)}, 1)) {ks} = {Px}aget_g({kn}, {kv}, NULL);{CheckIn()} }}");
+                        d--; SetR(d - 1, false); SetT(d - 1, TypeOf(getKind, 0) | (ArrayElem.IsDefined(getCode) ? 0 : NullableBit) | (getKind == KindInt ? NarrowBit : 0)); _kindsKept = true; return Next();
+                    }
                     string a = S(d - 2), i = S(d - 1);
                     // (the generic route types the array first: what the element is, is then certain even when a way of writing the field or variable
                     // missed it - it converts, or it is the exception)
-                    E($"{{ Arr* ra_; if (FIRE_LIKELY({a}.kind == K_Array && {i}.kind == K_Int && leafAlive({a}) && (uint64_t){i}.i < (ra_ = arrOf({a}))->length && ra_->typed && ra_->typed->packed && ra_->typed->elem == {getElem})) {a} = arrPackedAt(ra_, (uint32_t){i}.i, {getElem}); else if (typeArray({a}, {getElem}, 1, {TypeArrayUnitArgsOf(null, getCode)}, 1)) {a} = {Px}aget_g({a}, {i}, NULL); }}");
-                    Check();
+                    E($"{{ Arr* ra_; if (FIRE_LIKELY({a}.kind == K_Array && {i}.kind == K_Int && leafAlive({a}) && (uint64_t){i}.i < (ra_ = arrOf({a}))->length && ra_->typed && ra_->typed->packed && ra_->typed->elem == {getElem})) {a} = arrPackedAt(ra_, (uint32_t){i}.i, {getElem}); else {{ if (typeArray({a}, {getElem}, 1, {TypeArrayUnitArgsOf(null, getCode)}, 1)) {a} = {Px}aget_g({a}, {i}, NULL);{CheckIn()} }} }}");
                     d--; SetR(d - 1, false); SetT(d - 1, TypeOf(getKind, 0) | (ArrayElem.IsDefined(getCode) ? 0 : NullableBit) | (getKind == KindInt ? NarrowBit : 0)); _kindsKept = true; return Next();
                 }
                 case OpCode.ArraySet when !_usesThreads && ArrSlot(d - 3) is var scalarCode and not 0 && SlotScalars() && IsScalar(d - 1) && NarrowInt(d - 2) && U(d - 2) == 0

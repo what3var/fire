@@ -228,14 +228,54 @@ namespace fire.Compiler
         private static IEnumerable<InstalledImport> AllImports(PackageStore store) =>
             store.Installed().SelectMany(p => p.Manifest.Imports.Select(i => new InstalledImport(p, i))).ToList();
 
+        // One installation at a time per package store (spark and forge - the assistant - start together): a named mutex of the machine, waited for without
+        // exceptions (a file lock threw one every 200 ms while it waited). The other one may build for minutes at the first start: 15 minutes, then an IOException.
         private static IDisposable Lock(PackageStore store)
         {
+            string root = Path.GetFullPath(store.Root).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+            if (OperatingSystem.IsWindows()) root = root.ToLowerInvariant();
+            string name = "fire-packages-" + Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(root)), 0, 12);
+            Mutex mutex;
+            // (where the system has no named mutex for this process - seen once on Linux - the lock file as before)
+            try { mutex = new Mutex(false, name); }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or WaitHandleCannotBeOpenedException or PlatformNotSupportedException) { return FileLock(store); }
+            bool owned;
+            try { owned = mutex.WaitOne(TimeSpan.Zero); }
+            catch (AbandonedMutexException) { owned = true; }   // (the other one ended without letting go: its half done work is checked again)
+            if (!owned)
+            {
+                using var waiting = fire.Native.BackgroundWork.Begin("Waiting for another program that installs the packages");
+                try { owned = mutex.WaitOne(TimeSpan.FromMinutes(15)); }
+                catch (AbandonedMutexException) { owned = true; }
+            }
+            if (!owned)
+            {
+                mutex.Dispose();
+                throw new IOException("Another program has been installing the standard packages for 15 minutes.");
+            }
+            return new MutexScope(mutex);
+        }
+
+        private static IDisposable FileLock(PackageStore store)
+        {
             string file = Path.Combine(store.Root, ".source-lock");
-            var deadline = DateTime.UtcNow.AddMinutes(2);
+            var deadline = DateTime.UtcNow.AddMinutes(15);
             while (true)
             {
                 try { return new FileStream(file, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None, 1, FileOptions.DeleteOnClose); }
-                catch (IOException) when (DateTime.UtcNow < deadline) { Thread.Sleep(200); }
+                catch (IOException) when (DateTime.UtcNow < deadline) { Thread.Sleep(500); }
+            }
+        }
+
+        private sealed class MutexScope(Mutex mutex) : IDisposable
+        {
+            private bool _done;
+            public void Dispose()
+            {
+                if (_done) return;
+                _done = true;
+                try { mutex.ReleaseMutex(); } catch (ApplicationException) { }
+                mutex.Dispose();
             }
         }
     }

@@ -714,6 +714,32 @@ static class TypeTests
                 && CompileText(iface + "class Lim : ILimit { int Limit { get; set; }\n protected string Name { get; }\n float Delay : ms { get; } }").Contains("Property 'Name' of class 'Lim' implements interface 'ILimit' and must be public, not protected"), hidden);
             Check("Interface-Property: ein anderer Werttyp oder eine andere Einheit ist E4066", Run(iface + "class Lim : ILimit { string Limit { get; set; }\n string Name { get; }\n float Delay : ms { get; } }\nprint(1)") is var otherType && otherType == "|ERROR E4066"
                 && Run(iface + "class Lim : ILimit { int Limit { get; set; }\n string Name { get; }\n float Delay : s { get; } }\nprint(1)") == "|ERROR E4066", otherType);
+            {
+                const string animals = "class Animal { }\nclass Dog : Animal { }\ninterface INamed { string Name { get; } }\nclass Bird : Animal, INamed { string Name { get { return \"b\" } } }\n";
+                string Prop(string ifaceProp, string classProp) => Run(animals + "interface I { " + ifaceProp + " }\nclass C : I { " + classProp + " }\nprint(\"ok\")");
+                var cases = new (string Iface, string Class, string Want)[]
+                {
+                    ("Animal A { get; }", "Dog A { get; set; }", "|ok"),                 // a getter may give a derived class
+                    ("INamed A { get; }", "Bird A { get; set; }", "|ok"),                // ... or a class of the interface
+                    ("List<Animal> A { get; }", "List<Dog> A { get; set; }", "|ok"),     // ... or derived type arguments (D10)
+                    ("int A { get; }", "defined int A { get; set; }", "|ok"),            // ... or a defined value
+                    ("Dog A { set; }", "Animal A { get; set; }", "|ok"),                 // a setter may take more
+                    ("any A { get; }", "Dog A { get; set; }", "|ok"),
+                    ("Animal A { get; set; }", "Dog A { get; set; }", "|ERROR E4066"),   // get and set: the same type
+                    ("Dog A { get; }", "Animal A { get; set; }", "|ERROR E4066"),
+                    ("Dog A { get; }", "string A { get; set; }", "|ERROR E4066"),
+                    ("List<Animal> A { get; set; }", "List<Dog> A { get; set; }", "|ERROR E4066"),
+                    ("defined int A { get; }", "int A { get; set; }", "|ERROR E4066"),
+                    ("int A { get; set; }", "defined int A { get; set; }", "|ERROR E4066"),
+                    ("Dog A { get; }", "any A { get; set; }", "|ERROR E4066"),
+                    ("lambda<int> A { get; }", "lambda<int, int> A { get; set; }", "|ERROR E4066"),
+                };
+                var wrong = cases.Select(c => (c, got: Prop(c.Iface, c.Class))).Where(r => r.got != r.c.Want).Select(r => $"{r.c.Iface} / {r.c.Class}: {r.got}").ToList();
+                Check("Interface-Property: Klassen, Interfaces, Typargumente, defined und Lambdas - der Getter darf Spezielleres geben, der Setter Allgemeineres nehmen (ROADMAP 0)",
+                    wrong.Count == 0, string.Join("; ", wrong));
+                Check("Interface-Property: die Meldung nennt beide Typen", CompileText(animals + "interface I { Animal A { get; set; } }\nclass C : I { Dog A { get; set; } }")
+                    .Contains("Property 'A' of class 'C' is 'Dog', interface 'I' declares it as 'Animal'"), "");
+            }
             Check("Interface-Property: Zuweisung an eine get-only Property ueber das Interface ist TC016 (auch lax ein Fehler)", Run(iface + """
                 class Lim : ILimit { int Limit { get; set; }
                  string Name { get; set; }
@@ -780,6 +806,10 @@ static class TypeTests
                 && Run(ifaces + "class Holder<T> where T is of IStream { T item }\nvar a = new Holder<IReader>()") == "|ERROR E4013", where);
             Check("Interface-Vererbung: ein geerbtes Mitglied fehlt (E4010)", Run(ifaces + "class Mem : IStream { int Read() { return 1 }\n int Size { get { return 1 } } }\nprint(1)") is var missing && missing == "|ERROR E4010", missing);
             Check("Interface-Vererbung: ein geerbtes Mitglied privat (E4063)", Run(ifaces + "class Mem : IStream { int Read() { return 1 }\n private undefined Write(int v) { }\n int Size { get { return 1 } } }\nprint(1)") is var priv && priv == "|ERROR E4063", priv);
+            Check("Statisch und Instanz mit demselben Namen ist E4076 (DECISIONS D11), auch ueber die Basisklasse; getrennte Namen gehen",
+                Run("class R {\n bool Inside(int a, int b) { return true }\n static bool Inside(R a, R b) { return false }\n}\nprint(1)") is var mixed && mixed.StartsWith("|ERROR E4076")
+                && Run("class B { static int F(int a) { return 1 } }\nclass C : B { int F() { return 2 } }\nprint(1)").StartsWith("|ERROR E4076")
+                && Run("class R { int G() { return 1 } static int H() { return 2 } }\nprint(R.H() + new R().G())") == "|3", mixed);
             Check("Interface-Vererbung: ein Zyklus ist E4068, eine Klasse als Basis E4067", Run("interface IA : IB { }\ninterface IB : IC { }\ninterface IC : IA { }\nprint(1)") is var cycle && cycle.StartsWith("|ERROR E4068")
                 && Run("class K { }\ninterface IA : K { }\nprint(1)") == "|ERROR E4067"
                 && CompileText("interface IA : IB { }\ninterface IB : IA { }").Contains("Interface 'IA' extends itself (IA -> IB -> IA)"), cycle);

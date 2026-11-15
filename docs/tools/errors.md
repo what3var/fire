@@ -311,7 +311,7 @@ configuration of the native build, a toolchain that is missing).
 | `E4063` | Method/Property '…' of class '…' implements interface '…' and must be public, not … (a member of an interface is public) |
 | `E4064` | Class '…' does not implement interface '…' completely (missing property '…' with '…') (also a property without the `set` or `get` the interface names) |
 | `E4065` | '…' of class '…' is a field - interface '…' wants a property '…' with '…' |
-| `E4066` | Property '…' of class '…' is '…', interface '…' declares it as '…' (another value type or unit) |
+| `E4066` | Property '…' of class '…' is '…', interface '…' declares it as '…' (a type that does not fit: another value type or unit, a class the getter's type does not derive from, a different type with `get; set;`, `defined` missing on a getter) |
 | `E4067` | '…' of interface '…' is not a known interface (an interface can only extend interfaces) |
 | `E4068` | Interface '…' extends itself (… -> … -> …) |
 | `E4058` | 'var …' needs an initializer: the type of a 'var' comes from its value (or declare it with a type: 'int …') |
@@ -322,6 +322,7 @@ configuration of the native build, a toolchain that is missing).
 | `E4073` | The initialiser of the static field '…' reads the field itself - it is still undefined there |
 | `E4074` | The initialiser of the static field '…' reads '…', whose initialiser only runs later (static fields are initialised once at program start: class by class in the order of the program, in a class from the top down) - declare '…' first |
 | `E4075` | '…' is in several imported libraries (…) - write the full name |
+| `E4076` | '…' of class '…' is both a static method and an instance method (the other one: line …) - give one of them another name (also over base classes; in a package the package is not built) |
 
 ### E5xxx - Bytecode compiler
 

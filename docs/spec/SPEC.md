@@ -721,6 +721,14 @@ overloads without hiding the inherited overloads of the base class – the call
 searches across the whole inheritance chain for the overload that matches the
 arguments.
 
+A name is either **static or for instances**, not both: a class may not declare
+`static bool Inside(R a, R b)` next to `bool Inside(int x, int y)`, and a
+derived class may not add an instance method named like a static method of a
+base class (or the other way round) - `E4076`, also in packages, where it stops
+the package from being built. (Otherwise `R.Inside(a, b)`, `r.Inside(a, b)` and
+`Inside(a, b)` inside the class would choose between them by how they are
+written.)
+
 **Constructors** work the same way – several `construct(...)` with
 different numbers or types of parameters in the same class:
 
@@ -2061,8 +2069,11 @@ class List : IEnumerable {
   accessors without bodies, the type is required (`E3162`; a body is `E3161`). A class implements it with a **property** of that name (an auto-property or one
   with its own `get`/`set`, also inherited from the base class) that has at least the accessors of the interface: a read-only member may be implemented by a
   read-write property. A field of the same name does not count (`E4065`), nor do methods `get_Limit()`/`set_Limit(v)`; a missing property or accessor is
-  `E4064`, a non-public one `E4063`, a different value type or unit (`string` for `int`, `int : s` for `int : ms`) `E4066` (class types and `any` are not
-  compared). Through a value of the interface type the property has the declared type and unit (`l.Limit = "x"` is `TC001`), and writing a property the
+  `E4064`, a non-public one `E4063`, a type that does not fit `E4066`: value types and units must be the same (`string` for `int`, `int : s` for
+  `int : ms`); for classes, interfaces, enums, arrays, type arguments, lambdas (the number of parameters) and `defined` the accessors decide - what
+  the getter gives must fit the interface's type (`Dog A { get; }` for `Animal A { get; }`, `defined int` for `int`, `List<Dog>` for `List<Animal>`),
+  what the interface lets a caller set must fit the property's type (`Animal A { set; }` for `Dog A { set; }`), so `get; set;` means the same type.
+  `any` in the interface, a type parameter and an untyped property are not compared. Through a value of the interface type the property has the declared type and unit (`l.Limit = "x"` is `TC001`), and writing a property the
   interface declares without `set` is `TC016` (also in lax mode - even if the class of the object has a setter). At run time nothing is special: `x.Limit`
   calls `get_Limit` of the object's class, as for any property (VM and native alike).
 - **Interface inheritance:** `interface IConnection : IO.IStream, IOther { ... }` - an interface extends one or more interfaces (only interfaces: a class there
