@@ -1,0 +1,153 @@
+#!/usr/bin/env python3
+"""The cases "native == VM" of src/fire.Testing/Program.cs as files (docs/tools/testing.md "The cases as files").
+
+  cases.py strip <Program.cs> <output.cs> [<cases folder>]
+
+reads a Program.cs that holds the cases as text (the way master has them: `var natCases = new (string Name, string Source)[] { ("title", \"\"\" ... \"\"\"), ... }`
+and the `natCases = natCases.Concat(...)` / `.Append(...)` that follow), writes it without the cases whose source is a plain text (they are loaded from the
+files instead) and - with a folder - brings the files up to date: a case that is new gets a number between its neighbours, a case whose source changed is
+written again and loses its expected output (record it: FIRE_TESTS_UPDATE=1), a case that is gone loses its files. A case keeps its file as long as it keeps
+its title. Cases whose source is made at run time stay in the code. Used by tests/tools/merge-master.sh when master brings new cases."""
+import os, re, sys, unicodedata
+
+HEAD_VAR = '    var natCases = new (string Name, string Source)[]'
+HEAD_CONCAT = '    natCases = natCases.Concat(new (string Name, string Source)[]'
+ENTRY = re.compile(r'^        \("((?:[^"\\]|\\["\\])*)", """$')
+SINGLE = re.compile(r'^    natCases = natCases\.Append\(\("((?:[^"\\]|\\["\\])*)", """$')
+
+def unescape(s): return s.replace('\\"', '"').replace('\\\\', '\\')
+
+def body_of(lines, indent):
+    """The text of a raw string literal: its lines without the indentation of the closing quotes."""
+    out = []
+    for l in lines:
+        if l.strip() == '': out.append(l[len(indent):] if l.startswith(indent) else '')
+        elif not l.startswith(indent): return None
+        else: out.append(l[len(indent):])
+    return '\n'.join(out)
+
+def strip(text):
+    """(the text without the literal cases, the cases as (title, source, notes) in their order)"""
+    crlf = '\r\n' in text[:3000]
+    lines = text.split('\r\n' if crlf else '\n')
+    moved, out, i, n = [], [], 0, len(lines)
+    def prev_code(idx):
+        j = idx - 1
+        while j >= 0 and (lines[j].strip() == '' or lines[j].strip().startswith('//')): j -= 1
+        return lines[j] if j >= 0 else ''
+    while i < n:
+        l = lines[i]
+        if l in (HEAD_VAR, HEAD_CONCAT) and lines[i + 1] == '    {':
+            isvar = l == HEAD_VAR
+            end_marker = '    };' if isvar else '    }).ToArray();'
+            j = i + 2
+            while lines[j] != end_marker: j += 1
+            inner, kept, pending, k = lines[i + 2:j], [], [], 0
+            while k < len(inner):
+                m = ENTRY.match(inner[k])
+                if m:
+                    e = k + 1
+                    while e < len(inner) and not re.match(r'^\s*"""\),?\s*$', inner[e]): e += 1
+                    closing = inner[e] if e < len(inner) else None
+                    src = body_of(inner[k + 1:e], re.match(r'^\s*', closing).group(0)) if closing is not None and re.match(r'^\s*"""\),$', closing) else None
+                    if src is not None and '"""' not in src:
+                        moved.append((unescape(m.group(1)), src, [c.strip()[2:].strip() for c in pending])); pending = []
+                        k = e + 1; continue
+                    kept += pending + inner[k:e + 1]; pending = []
+                    k = e + 1; continue
+                if inner[k].strip().startswith('//'): pending.append(inner[k]); k += 1; continue
+                kept += pending; pending = []; kept.append(inner[k]); k += 1
+            kept += pending
+            if isvar:
+                out.append('    // the cases "native == VM" are files: tests/cases/native (TestCases); here only those whose source is made at run time')
+                out.append('    var natCases = TestCases.Load("native").Select(c => (c.Name, c.Source)).Concat(new (string Name, string Source)[]')
+                out.append('    {'); out += kept; out.append('    }).ToArray();')
+            elif any(x.strip() and not x.strip().startswith('//') for x in kept):
+                out.append(l); out.append('    {'); out += kept; out.append(end_marker)
+            else:
+                out += kept
+                if j + 1 < n and lines[j + 1].strip() == '' and out and out[-1].strip() == '': j += 1
+            i = j + 1; continue
+        m = SINGLE.match(l)
+        if m and not prev_code(i).strip().startswith(('if', 'else', 'foreach', 'for ', 'while')):
+            e = i + 1
+            while e < n and not re.match(r'^\s*"""\)\)\.ToArray\(\);\s*$', lines[e]) and not lines[e].startswith('    natCases'): e += 1
+            if e < n and re.match(r'^\s*"""\)\)\.ToArray\(\);\s*$', lines[e]):
+                src = body_of(lines[i + 1:e], re.match(r'^\s*', lines[e]).group(0))
+                if src is not None and '"""' not in src:
+                    notes = []
+                    while out and out[-1].strip().startswith('//'): notes.insert(0, out.pop().strip()[2:].strip())
+                    moved.append((unescape(m.group(1)), src, notes))
+                    i = e + 1
+                    if i < n and lines[i].strip() == '' and out and out[-1].strip() == '': i += 1
+                    continue
+        out.append(l); i += 1
+    return ('\r\n' if crlf else '\n').join(out), moved
+
+def slug(name):
+    b = ''
+    for ch in unicodedata.normalize('NFD', name):
+        if len(b) >= 48: break
+        c = ch.lower()
+        if 'a' <= c <= 'z' or '0' <= c <= '9': b += c
+        elif c in ' -_/:.,()' and b and b[-1] != '-': b += '-'
+    return b.strip('-')
+
+def file_text(name, src, notes): return src + '\n' + ''.join('//# note: ' + x + '\n' for x in notes) + '//# name: ' + name + '\n'
+
+def title_of(text):
+    for line in reversed(text.split('\n')):
+        if line.startswith('//# name: '): return line[len('//# name: '):]
+        if line and not line.startswith('//# '): break
+    return None
+
+def sync(moved, folder):
+    os.makedirs(folder, exist_ok=True)
+    existing = {}   # title -> id
+    for f in sorted(os.listdir(folder)):
+        if f.endswith('.fire'):
+            t = title_of(open(os.path.join(folder, f), encoding='utf-8', newline='').read())
+            if t is not None: existing[t] = f[:-5]
+    titles = [m[0] for m in moved]
+    if len(set(titles)) != len(titles): sys.exit('two cases have the same title: ' + ', '.join(sorted({t for t in titles if titles.count(t) > 1})))
+    ids, last = {}, 0
+    used = {int(i.split('-')[0]) for i in existing.values()}
+    for idx, (name, _, _) in enumerate(moved):
+        if name in existing: ids[name] = existing[name]; last = max(last, int(existing[name].split('-')[0])); continue
+        # a number between the case before and the next case that has a file
+        nxt = next((int(existing[t].split('-')[0]) for t in titles[idx + 1:] if t in existing and int(existing[t].split('-')[0]) > last), None)
+        number = last + 10 if nxt is None else last + (nxt - last) // 2
+        if number == last or number in used: sys.exit(f'no free number for the new case "{name}" after {last:04d}: renumber the files around it')
+        used.add(number); last = number
+        ids[name] = '%04d-%s' % (number, slug(name))
+    new = changed = gone = 0
+    for name, src, notes in moved:
+        path = os.path.join(folder, ids[name] + '.fire')
+        text = file_text(name, src, notes)
+        old = open(path, encoding='utf-8', newline='').read() if os.path.exists(path) else None
+        if old == text: continue
+        if old is None: new += 1; print('new:     ' + ids[name])
+        else:
+            # (its own lines about the case stay: `//# output: varies`)
+            keep = [l for l in old.split('\n') if l == '//# output: varies']
+            if keep: text = text[:text.rindex('//# name: ')] + keep[0] + '\n' + text[text.rindex('//# name: '):]
+            if old == text: continue
+            changed += 1; print('changed: ' + ids[name])
+            for ext in ('.expected', '.unhandled'):
+                if os.path.exists(path[:-5] + ext): os.remove(path[:-5] + ext)
+        open(path, 'w', encoding='utf-8', newline='').write(text)
+    for title, fid in existing.items():
+        if title not in ids:
+            gone += 1; print('gone:    ' + fid)
+            for ext in ('.fire', '.expected', '.unhandled'):
+                if os.path.exists(os.path.join(folder, fid + ext)): os.remove(os.path.join(folder, fid + ext))
+    print(f'{len(moved)} cases as files: {new} new, {changed} changed, {gone} gone')
+    return new + changed
+
+if __name__ == '__main__':
+    if len(sys.argv) < 4 or sys.argv[1] != 'strip': sys.exit(__doc__)
+    text = open(sys.argv[2], 'rb').read().decode('utf-8')
+    stripped, moved = strip(text)
+    open(sys.argv[3], 'wb').write(stripped.encode('utf-8'))
+    if len(sys.argv) > 4: sync(moved, sys.argv[4])
+    else: print(f'{len(moved)} cases taken out')
