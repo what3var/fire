@@ -205,8 +205,12 @@ Noch kein C; alles hier ist für sich nützlich und macht den Rest prüfbar.
    er ändert sich mit jedem Commit am Compiler). **Offen:** Größen und Benchmarks der Referenzprogramme
    ([Prüfungen für den nativen Build](#prüfungen-für-den-nativen-build)); AST und Diagnosen einzeln (kommen mit den Diagnose-Fällen aus Schritt 2).
 5. **spark baut nur noch über die Befehlszeile von forge** (statt `NativeBuilder`/`ProjectBuilder` im eigenen Prozess) - der erste Teil von L4, noch ganz in C#.
-6. Tabellen, die beide Seiten brauchen, aus **einer** Quelle: Opcodes mit Operandengrößen, Fehlerkatalog, Methodentabellen des Preludes
-   (`StringMethods` usw.) als Datendateien, aus denen C# und C erzeugt werden; das Prelude selbst als `.fire`-Dateien statt C#-Strings.
+6. ~~Tabellen, die beide Seiten brauchen, aus **einer** Quelle~~ (umgesetzt): `native/tables` hält `opcodes.def` (Name, Nummer, Operandengrößen),
+   `errors.def` (Code, Bereich, Text), `natives.def` (die Natives jedes Programms mit ihrem Index) und `prelude.fire` (das Prelude als ein Text).
+   Die Quelle bleibt der C#-Code, solange er lebt: `forge tables native/tables` schreibt die Dateien, die Tests (`FIRE_TESTS_ONLY=tables`) schlagen
+   fehl, wenn sie nicht dem Code entsprechen. Die `.def`-Dateien sind Listen von Makroaufrufen, die C direkt einbindet (mit gcc und clang geprüft).
+   **Offen:** die Tabellen hinter den Natives der Basistypen (`__StringCall` mit einer Methodennummer: `StringMethods` usw.) - die Nummern stehen im
+   Prelude, die Bedeutung in C# und in `fire_rt.h`; die Codes der Typprüfung (`TC...`), die keinen Katalog haben.
 
 ### Phase B - die VM in C
 

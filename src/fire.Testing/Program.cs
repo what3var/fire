@@ -49,6 +49,7 @@ if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "mesh") { MeshModel
 if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "diagnostics") { DiagnosticTests.Run(); return; }
 // FIRE_TESTS_ONLY=programfile: the program file .fbc and `forge dump` (docs/ROADMAP_C_PORT.md, phase A)
 if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "programfile") { ProgramFileTests.Run(); return; }
+if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "tables") { TablesTests.Run(); return; }
 if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "syntax") { SyntaxTests.Run(); return; }
 if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "types") { TypeTests.Run(); return; }
 if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "testing") { TestingTests.Run(); return; }
@@ -11345,6 +11346,7 @@ NotesTests.Run();
 McpServerTests.Run();
 AiModelsTests.Run();
 DiagnosticTests.Run();
+TablesTests.Run();
 ProgramFileTests.Run();
 SyntaxTests.Run();
 TypeTests.Run();
