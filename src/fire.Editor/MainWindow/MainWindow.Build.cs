@@ -313,6 +313,7 @@ namespace fire.Editor
             _buildItems = diagnostics.Select(d => ToItem(d, defaultFile, defaultPath)).ToList();
             _buildItemsSource = $"Last build, {DateTime.Now:HH:mm:ss}";
             UpdateErrorPanel();
+            McpBuildFinished(what, ok, errors, warnings);
         }
 
         /// <summary>Translates the active script to C++ for the configured target and builds it with the configured toolchain (or writes the files of a project).</summary>

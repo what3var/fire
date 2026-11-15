@@ -386,6 +386,8 @@ namespace UI {
     // or `TakeEntered()`, every change of the text `onChange`/`TakeChanged()`.
     class TextBox : Element {
         string Text
+        // A hint shown in grey while the box is empty ("Search...", "Ask me..."); it is not part of the text.
+        string Hint = ""
         defined int caret = 0
         // the other end of the selection (-1 or equal to caret: nothing is selected); the selection is the text between it and the caret
         defined int anchor = -1
@@ -643,6 +645,11 @@ namespace UI {
                 if (this.scroll + count > s1) { this.DrawString(root, x1, ty, this.Text.Substring(s1, this.scroll + count - s1), color) }
             } else if (count > 0) {
                 this.DrawString(root, ax + 4, ty, this.Text.Substring(this.scroll, count), color)
+            } else if (this.Text.Length == 0 && this.Hint != "") {
+                var hint = this.Hint
+                var fitHint = hint.Length
+                while (fitHint > 0 && this.TextWidth(root, hint.Substring(0, fitHint)) > room) { fitHint = fitHint - 1 }
+                this.DrawString(root, ax + 4, ty, hint.Substring(0, fitHint), theme.textDisabled)
             }
             if (this.Focused && this.dropPos < 0) {
                 var cx = ax + 4 + this.Span(root, this.scroll, this.caret - this.scroll)

@@ -101,6 +101,7 @@ One line of text.
 | `Text`, `SetText(text)` | the text (setting it clears the undo history) |
 | `MaxLength` | 0: no limit; typed text that does not fit is refused, pasted text is cut |
 | `ReadOnly` | can be selected and copied, not changed; Enter still reports |
+| `Hint` | a grey hint while the box is empty ("Search...") - not part of the text |
 | `OnChange` / `TakeChanged()` | the text changed by the user |
 | `OnEnter` / `TakeEntered()` | Enter was pressed |
 | `SelectionStart`, `SelectionLength`, `SelectedText`, `Select(start, length)`, `SelectAll()`, `ReplaceSelection(text)` | the selection |
@@ -137,6 +138,7 @@ Everything of the `TextBox` (selection, clipboard, undo, drag & drop, `MaxLength
 | `WordWrap` | wraps long lines at the last space that fits (a too long word where the line is full) instead of scrolling sideways |
 | `AcceptsReturn` (true), `AcceptsTab` (false) | Enter inserts a line break; Tab inserts a tab (else Tab moves the focus) |
 | `TabSize` | 4: a tab reaches to the next column that is a multiple of it |
+| `FadeBottom` | 0; pixels at the bottom edge in which the text fades into the background while more text follows below (not scrolled to the end) |
 | `LineCount`, `GetLine(i)`, `CaretLine`, `CaretColumn` | the lines (`Text` separates them with `"\n"`; `"\r\n"` and `"\r"` become `"\n"`) |
 | `SetText(text)` | sets the text, the caret to the start |
 | `AppendText(text)` | appends and scrolls to the end - for a log |

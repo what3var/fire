@@ -111,6 +111,45 @@ class Window {
         set { __GRPHWinSetBackdrop(this.id, value!int) }
     }
 
+    // Without the frame and title bar of the desktop (a tool window, a character on the desktop): the program draws all of it, and BeginMove lets the user
+    // move it. On Wayland the compositor's frame goes away as well.
+    bool frameless = false
+    bool topMost = false
+    bool Frameless {
+        get { return this.frameless }
+        set {
+            this.frameless = value
+            this.ApplyStyle()
+        }
+    }
+    // Above the other windows (not on Wayland: there the compositor decides).
+    bool TopMost {
+        get { return this.topMost }
+        set {
+            this.topMost = value
+            this.ApplyStyle()
+        }
+    }
+    undefined ApplyStyle() { __GRPHWinSetStyle(this.id, (this.frameless ? 1 : 0) + (this.topMost ? 2 : 0)) }
+
+    // Puts the top left corner of the window at (x, y) on the screen (its pixels; WorkArea says where there is room). Wayland places windows itself.
+    undefined SetPosition(defined int x, defined int y) { __GRPHWinMove(this.id, x, y) }
+
+    // Called while a mouse button is down in the window (a MouseDown): the desktop moves the window with the mouse until the button is let go - the title
+    // bar of a frameless window.
+    undefined BeginMove() { __GRPHWinBeginMove(this.id) }
+
+    // The desktop without its panels and task bars, in screen pixels: [x, y, width, height]; [-1, -1, -1, -1] while it is not known (a window on a manager's
+    // thread answers after its next cycle - ask again then). Wayland does not say.
+    int[] WorkArea() {
+        int area[] = new int[4]
+        area[0] = __GRPHWinWorkArea(this.id, 0)
+        area[1] = __GRPHWinWorkArea(this.id, 1)
+        area[2] = __GRPHWinWorkArea(this.id, 2)
+        area[3] = __GRPHWinWorkArea(this.id, 3)
+        return area
+    }
+
     // How the window showed its last frame (docs/spec/UI_PLATFORM.md, part 4.4): "gpu+directcomposition" (Windows: the frame from the GPU into DirectComposition's
     // swap chain), "gpu" (into a swap chain of Vulkan; or a package's presenter, scene3d DirectDrawing), "directcomposition" (Windows: the pixels into
     // DirectComposition), "pixels" (the pixels, the display's usual way). With a manager's thread: after its next cycle.

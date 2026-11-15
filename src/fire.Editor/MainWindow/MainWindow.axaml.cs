@@ -321,6 +321,9 @@ namespace fire.Editor
             bool fromCommandLine = _documents.Count > 0;
             // the welcome window, once the splash is gone (not when files were given on the command line)
             if (!fromCommandLine && _settings.ShowWelcome) _ = ShowWelcomeAfterSplash();
+            // the MCP server for AI tools, when the user switched it (or the assistant) on
+            StartMcpServerIfWanted();
+            StartAssistantIfWanted();
         }
 
         private async Task ShowWelcomeAfterSplash()
@@ -394,6 +397,7 @@ namespace fire.Editor
             {
                 _active = doc;
                 RefreshActiveUi();
+                McpStateChanged();
             }
         }
 
@@ -553,6 +557,8 @@ namespace fire.Editor
             if (_stackHiddenForNative) ApplyEngineToPanels(false);
             SaveLayout();
             SaveToolStrips();
+            StopAssistant();
+            StopMcpServer();
             _strips.CloseFloatingWindows();
             _devices.Shutdown(); // disconnects the devices; only the owner may take down the shared manager
         }
@@ -1068,6 +1074,14 @@ namespace fire.Editor
             bool ctrl = (e.KeyModifiers & (KeyModifiers.Control | KeyModifiers.Meta)) != 0;
             bool shift = (e.KeyModifiers & KeyModifiers.Shift) != 0;
             bool alt = (e.KeyModifiers & KeyModifiers.Alt) != 0;
+
+            // Ctrl+^ (the key left of 1, on every layout): pokes the assistant (docs/ai/assistant.md)
+            if (ctrl && !alt && e.PhysicalKey == PhysicalKey.Backquote)
+            {
+                PokeAssistant();
+                e.Handled = true;
+                return;
+            }
 
             // Ctrl+Break: cancels the build that runs (Shift+F5 does too, see Stop_Click)
             if (BuildProgressWindow.IsCancelGesture(e) && _buildJob != null)

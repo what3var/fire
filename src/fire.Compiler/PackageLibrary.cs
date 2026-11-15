@@ -329,13 +329,10 @@ namespace fire.Compiler
                 }
             sb.AppendLine("#include \"fire_pkg_wrapper.h\"");
             var entries = new List<(string Name, int Argc, string Call)>();
-            foreach (var (key, info) in CppGenerator.GraphicsBridgeNatives)
-                entries.Add(("__GRPH" + key, info.Argc, $"fire_gfx_{key}({string.Join(", ", Enumerable.Range(0, info.Argc).Select(k => $"a[{k}]").Concat(CppGenerator.GraphicsNeedsList.Contains(key) ? new[] { "list" } : Array.Empty<string>()))})"));
-            foreach (var (key, info) in CppGenerator.WindowsBridgeNatives)
-            {
-                string name = "Win" + key;
-                entries.Add(("__GRPHWin" + key, info.Argc, $"fire_win_{name}({string.Join(", ", Enumerable.Range(0, info.Argc).Select(k => $"a[{k}]").Concat(CppGenerator.WindowsNeedsList.Contains(name) ? new[] { "list" } : Array.Empty<string>()))})"));
-            }
+            // the natives as the two packages declare them (native.bridge): the C function, its arguments, the scope's list
+            foreach (var import in new[] { graphics, windows })
+                foreach (var fn in import.Import.Native?.Bridge ?? new List<PackageNativeFunction>())
+                    entries.Add((fn.Name, fn.Arguments, $"{fn.Symbol}({string.Join(", ", Enumerable.Range(0, fn.Arguments).Select(k => $"a[{k}]").Concat(fn.NeedsList ? new[] { "list" } : Array.Empty<string>()))})"));
             for (int i = 0; i < entries.Count; i++)
                 sb.AppendLine($"static Value thunk_{i}(const Value* a, OwnList* list) {{ (void)a; (void)list; return {entries[i].Call}; }}");
             sb.AppendLine("static const FirePkgFn kEntries[] = {");

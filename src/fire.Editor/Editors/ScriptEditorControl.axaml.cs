@@ -876,6 +876,38 @@ namespace fire.Editor
 
         public int GetCaretLine() => Editor.TextArea.Caret.Line;
 
+        // (IDocumentView: the selection for the tools of an assistant)
+        public bool ReplaceLines(int first, int last, string text)
+        {
+            if (IsReadOnly) return false;
+            var doc = Editor.Document;
+            if (first < 1 || first > doc.LineCount + 1 || last < first - 1 || last > doc.LineCount) return false;
+            int start = first > doc.LineCount ? doc.TextLength : doc.GetLineByNumber(first).Offset;
+            int end = last < first ? start : doc.GetLineByNumber(last).EndOffset + doc.GetLineByNumber(last).DelimiterLength;
+            if (last >= first && last == doc.LineCount && !text.EndsWith("\n")) end = doc.GetLineByNumber(last).EndOffset;
+            if (first > doc.LineCount && doc.TextLength > 0 && !doc.Text.EndsWith("\n")) text = "\n" + text;
+            doc.Replace(start, end - start, text);
+            Editor.TextArea.Caret.Line = Math.Min(first, doc.LineCount);
+            return true;
+        }
+        public string GetSelectedText() => Editor.SelectedText;
+        public (int First, int Last) GetSelectionLines()
+        {
+            int caret = Editor.TextArea.Caret.Line;
+            if (Editor.SelectionLength == 0) return (caret, caret);
+            var doc = Editor.Document;
+            return (doc.GetLineByOffset(Editor.SelectionStart).LineNumber, doc.GetLineByOffset(Editor.SelectionStart + Editor.SelectionLength).LineNumber);
+        }
+        public int GetCaretColumn() => Editor.TextArea.Caret.Column;
+        public bool ReplaceSelection(string text)
+        {
+            if (IsReadOnly) return false;
+            int start = Editor.SelectionLength > 0 ? Editor.SelectionStart : Editor.CaretOffset;
+            Editor.Document.Replace(start, Editor.SelectionLength, text);
+            Editor.Select(start + text.Length, 0);
+            return true;
+        }
+
         public void SetCaretByLineColumn(int line, int column)
         {
             if (Editor.Document.LineCount == 0) return;

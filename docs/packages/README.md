@@ -89,7 +89,9 @@ What makes these projects special is small: `"standard": true` lets a project ha
 keeps its classes out of JSON ([JSON](../stdlib/json.md); written to the import in `package.json`), and `"native": { "discover": false,
 "functions": [...] }` names the natives explicitly (`"c": "fire_io_FileOpen"` for a package in C, `"cpp": "mathkit::Add"` for one in C++). Five imports are known to the compiler by name: `graphics`,
 `windows`, `ui`, `linq`, `reflection` - their fire code still comes from the package; the C of `graphics` and `windows` runs in the VM (as a library built for
-the machine) and in native builds alike. Only the core prelude (`Exception`,
+the machine) and in native builds alike. Their natives are declared in their projects as well, under `"native": { "bridge": [...] }` (the same entries as
+`functions`: `name`, `arguments`, `c`, `needsList`): they are not a library of the package of their own but live together in the one library of the display
+(its windows and framebuffers share one state), and the compiler calls them directly - a new native of a window is one line there. Only the core prelude (`Exception`,
 `List<T>`, `Math`, string methods, ...) is built into the compiler.
 
 Inside its own project a library is the program: `#import "time"` in the tests of `time` means the project's files (and its C++, built for the VM), not the installed package.

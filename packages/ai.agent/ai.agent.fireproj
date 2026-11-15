@@ -1,0 +1,13 @@
+{
+  "format": 1,
+  "name": "fire-ai.agent",
+  "type": "library",
+  "import": "ai.agent",
+  "standard": true,
+  "settings": {
+    "version": "1.0.0",
+    "author": "fire",
+    "license": "fire",
+    "description": "The standard library 'ai.agent' of fire: an agent on a small language model of the package ai - instructions, a conversation, tools it calls, choices."
+  }
+}

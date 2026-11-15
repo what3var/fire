@@ -26,6 +26,9 @@ namespace fire.Editor
 
         public void Clear() => Editor.Document.Text = "";
 
+        /// <summary>What the program wrote so far.</summary>
+        public string Text => Editor.Document.Text;
+
         /// <summary>Where a line typed below the output goes (true: it went out); null: no program takes input from here - the line is hidden.</summary>
         public Func<string, bool>? InputTarget
         {

@@ -336,7 +336,7 @@ static void fire_dns_didBecomeKey(FireId self, FireSel cmd, FireId note) { FireD
 static void fire_dns_didResignKey(FireId self, FireSel cmd, FireId note) { FireDnsWindow* w = fire_dns_of(self); (void)cmd; (void)note; if (w) fire_display_queueSimple(&w->queue, FIRE_EV_FOCUS_LOST); }
 
 /* The classes (made once): FireView (the content), FireWindowDelegate. */
-static FireClass fire_dns_viewClass, fire_dns_delegateClass;
+static FireClass fire_dns_viewClass, fire_dns_delegateClass, fire_dns_windowClass;
 static void fire_dns_method(FireClass c, const char* name, void (*fn)(void), const char* types) { class_addMethod(c, sel_registerName(name), fn, types); }
 #define FIRE_DNS_FN(f) ((void (*)(void))(f))
 static void fire_dns_classes(void) {
@@ -380,6 +380,11 @@ static void fire_dns_classes(void) {
     fire_dns_method(fire_dns_viewClass, "performDragOperation:", FIRE_DNS_FN(fire_dns_performDrag), "c@:@");
     { void* proto = objc_getProtocol("NSTextInputClient"); if (proto) class_addProtocol(fire_dns_viewClass, proto); }
     objc_registerClassPair(fire_dns_viewClass);
+    /* (a window without a title bar takes no keys unless it says it can) */
+    fire_dns_windowClass = objc_allocateClassPair(objc_getClass("NSWindow"), "FireWindow", 0);
+    fire_dns_method(fire_dns_windowClass, "canBecomeKeyWindow", FIRE_DNS_FN(fire_dns_yes), "c@:");
+    fire_dns_method(fire_dns_windowClass, "canBecomeMainWindow", FIRE_DNS_FN(fire_dns_yes), "c@:");
+    objc_registerClassPair(fire_dns_windowClass);
     fire_dns_delegateClass = objc_allocateClassPair(objc_getClass("NSObject"), "FireWindowDelegate", 0);
     class_addIvar(fire_dns_delegateClass, "fireWindow", sizeof(void*), sizeof(void*) == 8 ? 3 : 2, "^v");
     fire_dns_method(fire_dns_delegateClass, "windowShouldClose:", FIRE_DNS_FN(fire_dns_shouldClose), "c@:@");
@@ -426,7 +431,7 @@ static int fire_dns_open(FireDnsWindow* w, const char* title, int width, int hei
     fire_display_queueInit(&w->queue);
     w->vsync = vsync;
     w->winW = width; w->winH = height;
-    w->window = FIRE_NS(FireId, (FireId, FireSel, FireNSRect, unsigned long, unsigned long, signed char), FIRE_NS0(FireId, FIRE_CLS("NSWindow"), "alloc"),
+    w->window = FIRE_NS(FireId, (FireId, FireSel, FireNSRect, unsigned long, unsigned long, signed char), FIRE_NS0(FireId, (FireId)(void*)fire_dns_windowClass, "alloc"),
                         "initWithContentRect:styleMask:backing:defer:", fire_dns_rectMake(0, 0, width, height), 15ul /* titled, closable, miniaturizable, resizable */, 2ul /* buffered */, (signed char)0);
     if (w->window == NULL) { objc_autoreleasePoolPop(pool); return 0; }
     FIRE_NS(void, (FireId, FireSel, signed char), w->window, "setReleasedWhenClosed:", (signed char)0);
@@ -534,6 +539,56 @@ static int fire_dns_setBackdrop(FireDnsWindow* w, int kind) {
     }
     objc_autoreleasePoolPop(pool);
     return w->backdrop;
+}
+
+/* The height of the first screen (Cocoa counts from its bottom left corner; fire from the top left). */
+static double fire_dns_primaryHeight(void) {
+    FireId screens = FIRE_NS0(FireId, FIRE_CLS("NSScreen"), "screens");
+    if (screens == NULL || FIRE_NS0(unsigned long, screens, "count") == 0) return 0;
+    return fire_dns_rect(FIRE_NS(FireId, (FireId, FireSel, unsigned long), screens, "objectAtIndex:", 0ul), "frame").size.height;
+}
+
+/* Frameless: a borderless window (its content keeps its size); TopMost: the level of floating windows. */
+static int fire_dns_setStyle(FireDnsWindow* w, int flags) {
+    void* pool;
+    FireNSSize size;
+    if (w->window == NULL) return 0;
+    pool = objc_autoreleasePoolPush();
+    FIRE_NS(void, (FireId, FireSel, unsigned long), w->window, "setStyleMask:", (flags & FIRE_STYLE_FRAMELESS) ? 0ul /* borderless */ : 15ul);
+    size.width = w->winW; size.height = w->winH;
+    FIRE_NS(void, (FireId, FireSel, FireNSSize), w->window, "setContentSize:", size);
+    FIRE_NS(void, (FireId, FireSel, long), w->window, "setLevel:", (flags & FIRE_STYLE_TOPMOST) ? 3L /* NSFloatingWindowLevel */ : 0L);
+    FIRE_NS(signed char, (FireId, FireSel, FireId), w->window, "makeFirstResponder:", w->view);
+    objc_autoreleasePoolPop(pool);
+    return flags;
+}
+
+/* (points of the screen, from the top left corner of the first screen) */
+static void fire_dns_move(FireDnsWindow* w, int x, int y) {
+    FireNSPoint p;
+    if (w->window == NULL) return;
+    p.x = x; p.y = fire_dns_primaryHeight() - y;
+    FIRE_NS(void, (FireId, FireSel, FireNSPoint), w->window, "setFrameTopLeftPoint:", p);
+}
+
+/* The window follows the mouse from the press that is being handled (macOS 10.11). */
+static int fire_dns_beginMove(FireDnsWindow* w) {
+    FireId app = FIRE_NS0(FireId, FIRE_CLS("NSApplication"), "sharedApplication");
+    FireId event = FIRE_NS0(FireId, app, "currentEvent");
+    if (w->window == NULL || event == NULL) return 0;
+    FIRE_NS(void, (FireId, FireSel, FireId), w->window, "performWindowDragWithEvent:", event);
+    return 1;
+}
+
+/* The visible frame of the screen of the window (without the menu bar and the Dock), from the top left. */
+static int fire_dns_workArea(FireDnsWindow* w, int* r) {
+    FireId screen = w->window != NULL ? FIRE_NS0(FireId, w->window, "screen") : NULL;
+    FireNSRect v;
+    if (screen == NULL) screen = FIRE_NS0(FireId, FIRE_CLS("NSScreen"), "mainScreen");
+    if (screen == NULL) return 0;
+    v = fire_dns_rect(screen, "visibleFrame");
+    r[0] = (int)v.origin.x; r[1] = (int)(fire_dns_primaryHeight() - (v.origin.y + v.size.height)); r[2] = (int)v.size.width; r[3] = (int)v.size.height;
+    return 1;
 }
 
 static double fire_dns_scale(FireDnsWindow* w) { return w->scale; }

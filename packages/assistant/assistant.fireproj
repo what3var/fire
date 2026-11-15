@@ -1,0 +1,13 @@
+{
+  "format": 1,
+  "name": "fire-assistant",
+  "type": "library",
+  "import": "assistant",
+  "standard": true,
+  "settings": {
+    "version": "1.0.0",
+    "author": "fire",
+    "license": "fire",
+    "description": "The standard library 'assistant' of fire: the assistant of spark - its characters, the bubble with choices and a question line, tips, the model setup."
+  }
+}

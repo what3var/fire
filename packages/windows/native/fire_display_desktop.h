@@ -58,6 +58,7 @@
 #define FIRE_DISPLAY_AVAILABLE 1
 #define FIRE_DISPLAY_TEXT_INPUT_RECT 1
 #define FIRE_DISPLAY_BACKDROP 1
+#define FIRE_DISPLAY_PLACEMENT 1
 #define FIRE_DISPLAY_SCALE 1
 #define FIRE_DISPLAY_PRESENT_AREA 1
 #define FIRE_DISPLAY_START_DRAG 1
@@ -232,6 +233,34 @@ static int fire_display_setBackdrop(FireDisplayWindow* w, int kind) {
     FIRE_DD_SWITCH(w->kind, FIRE_DD_B)
 #undef FIRE_DD_B
     return FIRE_BACKDROP_NONE;
+}
+
+/* Window.Frameless / TopMost: FIRE_STYLE_* bits; the answer is what the display gave. */
+static int fire_display_setStyle(FireDisplayWindow* w, int flags) {
+#define FIRE_DD_B(m, p) return fire_##p##_setStyle(&w->u.m, flags);
+    FIRE_DD_SWITCH(w->kind, FIRE_DD_B)
+#undef FIRE_DD_B
+    return 0;
+}
+/* The top left corner of the window on the screen (screen pixels). */
+static void fire_display_move(FireDisplayWindow* w, int x, int y) {
+#define FIRE_DD_B(m, p) fire_##p##_move(&w->u.m, x, y); break;
+    FIRE_DD_SWITCH(w->kind, FIRE_DD_B)
+#undef FIRE_DD_B
+}
+/* The user moves the window with the held mouse button (from a press in the window). */
+static int fire_display_beginMove(FireDisplayWindow* w) {
+#define FIRE_DD_B(m, p) return fire_##p##_beginMove(&w->u.m);
+    FIRE_DD_SWITCH(w->kind, FIRE_DD_B)
+#undef FIRE_DD_B
+    return 0;
+}
+/* The desktop without its panels (x, y, w, h in screen pixels of the screen of the window); 0 when the display does not say. */
+static int fire_display_workArea(FireDisplayWindow* w, int* r) {
+#define FIRE_DD_B(m, p) return fire_##p##_workArea(&w->u.m, r);
+    FIRE_DD_SWITCH(w->kind, FIRE_DD_B)
+#undef FIRE_DD_B
+    return 0;
 }
 
 static double fire_display_scale(FireDisplayWindow* w) {

@@ -1,0 +1,15 @@
+namespace Assistant {
+    class App {
+        // The assistant as a program: connects to spark when it runs (its MCP server), introduces itself at its first start (otherwise it waits
+        // quietly to be poked), and shows its window. `character`: sparky, flint or wick ("" for the last one chosen); `withSpark`: it ends when spark
+        // ends (spark started it).
+        static undefined Run(string character = "", bool withSpark = false) {
+            var brain = new Assistant.Brain(character)
+            brain.ExitWithSpark = withSpark
+            brain.ConnectSpark()
+            brain.Start()
+            var view = new Assistant.View(brain)
+            view.Run()
+        }
+    }
+}

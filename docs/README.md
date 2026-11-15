@@ -31,7 +31,8 @@ The [language reference](language/README.md) - one page per topic, with examples
 | --- | --- |
 | **User interfaces** | [Overview and first window](ui/README.md) · [Layout and containers](ui/containers.md) · [Controls](ui/controls.md) · [Lists and trees](ui/lists.md) · [Menus, tool bars, popups](ui/menus.md) · [Shapes, images, drawing](ui/shapes.md) · [Styles, templates, binding](ui/styling.md) · [Input, drag & drop](ui/input.md) · [Windows, theme, effects](ui/windows.md) · [Common dialogs](ui/dialogs.md) · [Docking](ui/docking.md) · [Markup (`.fxml`)](ui/markup.md) |
 | **Graphics** | [2D: framebuffers, renderer, windows](graphics/README.md) · [Fonts](graphics/fonts.md) · [3D scenes](graphics/3d.md) · [Models and animations](graphics/models.md) · [Terrains](graphics/terrain.md) · [Particles and effects](graphics/effects.md) · [Physics](graphics/physics.md) |
-| **Networking** | [Overview, TCP and UDP](networking/README.md) · [HTTP](networking/http.md) · [TLS](networking/tls.md) · [WiFi](networking/wifi.md) |
+| **Networking** | [Overview, TCP and UDP](networking/README.md) · [HTTP](networking/http.md) · [TLS](networking/tls.md) · [MCP](networking/mcp.md) · [WiFi](networking/wifi.md) |
+| **AI** | [A small language model on the CPU](ai/README.md) · [The models](ai/models.md) · [An agent with tools](ai/agent.md) · [The assistant of spark](ai/assistant.md) |
 | **Audio** | [Sound output and input](audio/README.md) · [Tracker modules](audio/tracker.md) |
 | **Circuits** | [Simulation, schematics, the circuit editor](circuits/README.md) |
 | **Devices** | [Device framework](devices/README.md) · [GPIO](devices/gpio.md) · [I2C](devices/i2c.md) · [SPI](devices/spi.md) · [USB](devices/usb.md) |
@@ -47,7 +48,7 @@ The [language reference](language/README.md) - one page per topic, with examples
 
 ## Tools
 
-* [spark, the editor](tools/spark.md)
+* [spark, the editor](tools/spark.md) · [spark as an MCP server](tools/spark-mcp.md)
 * [Projects and solutions](tools/projects.md) (`.fireproj`, `.firesln`)
 * [forge on the command line](tools/forge.md)
 * [Testing](tools/testing.md) (`[Test]`, `forge test`, the Test Explorer)

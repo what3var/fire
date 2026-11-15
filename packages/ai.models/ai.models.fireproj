@@ -1,0 +1,13 @@
+{
+  "format": 1,
+  "name": "fire-ai.models",
+  "type": "library",
+  "import": "ai.models",
+  "standard": true,
+  "settings": {
+    "version": "1.0.0",
+    "author": "fire",
+    "license": "fire",
+    "description": "The standard library 'ai.models' of fire: the small language models for the package ai - a catalog, the choice that fits the machine, the download (checked by its SHA-256)."
+  }
+}

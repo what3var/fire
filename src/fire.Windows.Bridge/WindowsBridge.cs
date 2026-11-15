@@ -127,6 +127,11 @@ namespace fire.Windows.Bridge
                 ["GetScale"] = args => Value.MakeFloat(1.0),
                 // Window.PresentArea: the C# windows always hand over the whole frame
                 ["PresentArea"] = args => Value.MakeUndefined(),
+                // Window.Frameless/TopMost/SetPosition/BeginMove/WorkArea: only the C display (fire_display_*.h) places windows
+                ["SetStyle"] = args => Value.MakeUndefined(),
+                ["Move"] = args => Value.MakeUndefined(),
+                ["BeginMove"] = args => Value.MakeUndefined(),
+                ["WorkArea"] = args => Value.MakeInt(-1),
                 // Window.PresentPath: the C# windows show pixels
                 ["PresentPath"] = args => Value.MakeString("pixels"),
             };
@@ -186,6 +191,10 @@ namespace fire.Windows.Bridge
                 ["GetBackdrop"] = args => Value.MakeInt(0) /*STUB*/,
                 ["GetScale"] = args => Value.MakeFloat(1.0) /*STUB*/,
                 ["PresentArea"] = args => Value.MakeUndefined() /*STUB*/,
+                ["SetStyle"] = args => Value.MakeUndefined() /*STUB*/,
+                ["Move"] = args => Value.MakeUndefined() /*STUB*/,
+                ["BeginMove"] = args => Value.MakeUndefined() /*STUB*/,
+                ["WorkArea"] = args => Value.MakeInt(-1) /*STUB*/,
                 ["PresentPath"] = args => Value.MakeUndefined() /*STUB*/,
             };
         }

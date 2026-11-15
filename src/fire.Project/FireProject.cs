@@ -45,6 +45,8 @@ namespace fire.Projects
         public List<string>? Platforms { get; set; }
         public Dictionary<string, List<string>>? LinkLibraries { get; set; }
         public List<fire.Package.Manager.PackageNativeFunction>? Functions { get; set; }
+        /// <summary>The natives of the display (graphics, windows): see <see cref="fire.Package.Manager.PackageNative.Bridge"/>.</summary>
+        public List<fire.Package.Manager.PackageNativeFunction>? Bridge { get; set; }
         public List<string>? Exceptions { get; set; }
         public string? Reset { get; set; }
         /// <summary>Imports whose platform layer the natives build on (ROADMAP 13.3b; see PackageNative.Uses).</summary>

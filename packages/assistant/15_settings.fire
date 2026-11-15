@@ -1,0 +1,61 @@
+#import "ai.models"
+#import "json"
+#import "filesystem"
+
+namespace Assistant {
+    // What the assistant remembers between its starts: the character, the model, the tips the user does not want (assistant.json beside spark's
+    // settings: %AppData%\fire, ~/.config/fire, ~/Library/Application Support/fire).
+    class Settings {
+        string Character = "sparky"
+        // The id of the model (ai.models), "" for the one that fits.
+        string Model = ""
+        // Tips the user switched off (their keys, separated by commas).
+        string Muted = ""
+        string file = ""
+        // Whether the file was there (false at the very first start: the assistant introduces itself).
+        bool Existed = false
+
+        static string File() { return IO.Path.Combine(AI.Models.DataFolder(), "fire", "assistant.json") }
+
+        static Assistant.Settings Load(string file = "") {
+            var s = new Assistant.Settings()
+            if (file == "") { file = Assistant.Settings.File() }
+            s.file = file
+            if (IO.File.Exists(file)) {
+                s.Existed = true
+                try {
+                    any j = Json.Parse(IO.File.ReadAllText(file))
+                    any c = j.Get("character")
+                    if (c != undefined) { s.Character = c }
+                    any m = j.Get("model")
+                    if (m != undefined) { s.Model = m }
+                    any mu = j.Get("muted")
+                    if (mu != undefined) { s.Muted = mu }
+                }
+                catch (Exception e) { }
+            }
+            return s
+        }
+
+        undefined Save() {
+            var j = new JsonObject()
+            j.Set("character", this.Character)
+            j.Set("model", this.Model)
+            j.Set("muted", this.Muted)
+            try {
+                string dir = IO.Path.GetDirectoryName(this.file)
+                if (!IO.Directory.Exists(dir)) { IO.Directory.CreateDirectory(dir) }
+                IO.File.WriteAllText(this.file, Json.Serialize(j))
+            }
+            catch (Exception e) { }
+        }
+
+        bool IsMuted(string key) { return ("," + this.Muted + ",").IndexOf("," + key + ",") >= 0 }
+
+        undefined Mute(string key) {
+            if (this.IsMuted(key)) { return }
+            this.Muted = this.Muted == "" ? key : this.Muted + "," + key
+            this.Save()
+        }
+    }
+}

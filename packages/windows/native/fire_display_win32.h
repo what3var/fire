@@ -136,7 +136,11 @@ typedef struct FireDw32Window {
     FireDcompWindow dc;    /* DirectComposition (dc.on: the window shows its frames that way) */
     WCHAR* title;          /* (to make the window anew) */
     int askedBackdrop;     /* what the program asked for behind the window (made anew: asked again) */
+    int style;             /* Window.Frameless / TopMost (FIRE_STYLE_*; made anew: given again) */
 } FireDw32Window;
+
+/* The window style for w->style: a popup without frame and title bar, or the usual window. */
+static DWORD fire_dw32_styleBits(const FireDw32Window* w) { return (w->style & FIRE_STYLE_FRAMELESS) ? (WS_POPUP | WS_MINIMIZEBOX) : WS_OVERLAPPEDWINDOW; }
 
 static ULONG STDMETHODCALLTYPE fire_dw32_dropAddRef(FireW32DropTarget* t) { return (ULONG)InterlockedIncrement(&t->refs); }
 static ULONG STDMETHODCALLTYPE fire_dw32_dropRelease(FireW32DropTarget* t) { return (ULONG)InterlockedDecrement(&t->refs); }   /* (it lives in the window) */
@@ -509,7 +513,7 @@ static WCHAR* fire_dw32_wide(const char* s) {
 static void fire_dw32_outer(FireDw32Window* w, int width, int height, int* ow, int* oh) {
     FireW32* lib = fire_dw32_lib();
     RECT r;
-    DWORD style = WS_OVERLAPPEDWINDOW;
+    DWORD style = fire_dw32_styleBits(w);
     SetRect(&r, 0, 0, width, height);
     if (lib->AdjustWindowRectExForDpi != NULL && lib->GetDpiForWindow != NULL && w->hwnd != NULL) lib->AdjustWindowRectExForDpi(&r, style, FALSE, 0, lib->GetDpiForWindow(w->hwnd));
     else AdjustWindowRectEx(&r, style, FALSE, 0);
@@ -531,7 +535,8 @@ static void fire_dw32_darkTitle(FireDw32Window* w) {
  * to it: the dark title bar, what other programs drop. 0: it failed. */
 static int fire_dw32_create(FireDw32Window* w, DWORD ex, int x, int y, int ow, int oh) {
     FireW32* lib = fire_dw32_lib();
-    w->hwnd = CreateWindowExW(ex, fire_dw32_class(), w->title ? w->title : L"", WS_OVERLAPPEDWINDOW, x, y, ow, oh, NULL, NULL, GetModuleHandleW(NULL), w);
+    if (w->style & FIRE_STYLE_TOPMOST) ex |= WS_EX_TOPMOST;
+    w->hwnd = CreateWindowExW(ex, fire_dw32_class(), w->title ? w->title : L"", fire_dw32_styleBits(w), x, y, ow, oh, NULL, NULL, GetModuleHandleW(NULL), w);
     if (w->hwnd == NULL) return 0;
     fire_dw32_darkTitle(w);
     /* what other programs drop: OLE (positions while it is dragged, files and text) on this thread */
@@ -683,6 +688,44 @@ static int fire_dw32_setBackdrop(FireDw32Window* w, int kind) {
     w->backdrop = got;
     InvalidateRect(w->hwnd, NULL, FALSE);
     return got;
+}
+
+/* Frameless: a popup window (the client area keeps its size); TopMost: above the other windows (HWND_TOPMOST). */
+static int fire_dw32_setStyle(FireDw32Window* w, int flags) {
+    int ow, oh;
+    DWORD visible;
+    w->style = flags;
+    if (w->hwnd == NULL) return flags;
+    visible = (GetWindowLongPtrW(w->hwnd, GWL_STYLE) & WS_VISIBLE) ? WS_VISIBLE : 0;
+    SetWindowLongPtrW(w->hwnd, GWL_STYLE, (LONG_PTR)(fire_dw32_styleBits(w) | visible));
+    fire_dw32_outer(w, w->winW, w->winH, &ow, &oh);
+    SetWindowPos(w->hwnd, (flags & FIRE_STYLE_TOPMOST) ? HWND_TOPMOST : HWND_NOTOPMOST, 0, 0, ow, oh, SWP_NOMOVE | SWP_FRAMECHANGED | SWP_NOACTIVATE);
+    return flags;
+}
+
+static void fire_dw32_move(FireDw32Window* w, int x, int y) {
+    if (w->hwnd == NULL) return;
+    SetWindowPos(w->hwnd, NULL, x, y, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+}
+
+/* As if the title bar were pressed: Windows moves the window with the held button. (Posted: the move runs in the window's own message loop, not in here.) */
+static int fire_dw32_beginMove(FireDw32Window* w) {
+    POINT p;
+    if (w->hwnd == NULL || !(GetAsyncKeyState(VK_LBUTTON) & 0x8000)) return 0;
+    GetCursorPos(&p);
+    ReleaseCapture();
+    PostMessageW(w->hwnd, WM_NCLBUTTONDOWN, HTCAPTION, MAKELPARAM(p.x, p.y));
+    return 1;
+}
+
+/* The work area of the monitor of the window (without the task bar). */
+static int fire_dw32_workArea(FireDw32Window* w, int* r) {
+    MONITORINFO mi;
+    HMONITOR m = MonitorFromWindow(w->hwnd, MONITOR_DEFAULTTONEAREST);
+    mi.cbSize = sizeof mi;
+    if (m == NULL || !GetMonitorInfoW(m, &mi)) return 0;
+    r[0] = mi.rcWork.left; r[1] = mi.rcWork.top; r[2] = mi.rcWork.right - mi.rcWork.left; r[3] = mi.rcWork.bottom - mi.rcWork.top;
+    return 1;
 }
 
 static double fire_dw32_scale(FireDw32Window* w) { return w->scale; }
