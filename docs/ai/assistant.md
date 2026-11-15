@@ -84,5 +84,5 @@ its own way of speaking (a line in the system prompt). They are not, and do not 
 | 2b | The package `ai.models`: the catalog, the choice by the machine, the download (resumable, SHA-256) | built |
 | 3 | The package `assistant`: characters, bubble, choices, the question line, tips, the model setup, build errors explained | built |
 | 4 | spark as an MCP server (tools, resources, notifications), *Tools > Assistant*, Ctrl+^, the setup task | built |
-| 4b | A window without a frame that stays on top, at the bottom right of the desktop; dragging the character moves it (`Window.Frameless`, `TopMost`, `SetPosition`, `WorkArea`, `BeginMove`) | built |
+| 4b | A window without a frame that stays on top, at the bottom right of the desktop; dragging the character moves it; no button in the task bar, the character as its picture (`Window.Frameless`, `TopMost`, `SetPosition`, `WorkArea`, `BeginMove`, `ShowInTaskbar`, `SetIcon`) | built |
 | 5 | Code completion and small tasks | |

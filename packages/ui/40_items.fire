@@ -274,7 +274,10 @@ namespace UI {
         undefined DropRows() {
             for (var i = 0; i < this.rowElements.Count; i = i + 1) {
                 any row = this.rowElements[i]
-                if (row != undefined) { delete row }
+                if (row != undefined) {
+                    if (this.host != undefined) { this.host.Forget(row) }
+                    delete row
+                }
             }
             this.rowElements = new List()
             this.builtCount = -1

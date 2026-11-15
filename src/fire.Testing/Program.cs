@@ -26064,6 +26064,42 @@ else
             root.Draw()
             print("back " + fb.Width() + "x" + fb.Height())
             """),
+        ("UI: ein Klick, der die Buttons seines Panels neu macht (Clear, Add) - die Wurzel vergisst das zerstoerte Element unter dem Zeiger (vorher DestroyedException beim naechsten Mausereignis)", """
+            #import "ui"
+            class Rebuilder {
+                UI.StackPanel panel
+                defined int clicks = 0
+                construct(UI.StackPanel p) { this.panel = p }
+                undefined Build() {
+                    this.panel.Clear()
+                    for (int i = 0; i < 2; i++) {
+                        var b = new UI.Button("Button " + i + " (" + this.clicks + ")", 0, 0, 180, 26)
+                        b.OnClick = func () on this => Clicked()
+                        this.panel.Add(b)
+                    }
+                }
+                undefined Clicked() {
+                    this.clicks++
+                    this.Build()
+                }
+            }
+            var fb = new Framebuffer(200, 120)
+            var win = new Window(fb, "t")
+            var ui = new UI.Root(fb, win)
+            var panel = new UI.StackPanel(10, 10, 180, -1, false, 4, 0)
+            ui.Add(panel)
+            var r = new Rebuilder(panel)
+            r.Build()
+            ui.Draw()
+            for (int k = 0; k < 3; k++) {
+                ui.Dispatch([9, 50, 20])
+                ui.Dispatch([8, 1, 50, 20])
+                ui.Dispatch([11, 1, 50, 20])
+                ui.Dispatch([9, 52, 22])
+                ui.Draw()
+            }
+            print("clicks " + r.clicks + " " + panel.children.Count)
+            """),
         ("UI: TextArea (Zeilenindex, Tippen, Auf/Ab, WordWrap, Auswahl), Doppel-/Dreifachklick, Text des Drag-Bilds, Undo/Redo, Markierung ziehen, Schnappschuss, Doppelklick im Baum", """
             #import "ui"
             var fb = new Framebuffer(320, 200)

@@ -136,7 +136,9 @@ typedef struct FireDw32Window {
     FireDcompWindow dc;    /* DirectComposition (dc.on: the window shows its frames that way) */
     WCHAR* title;          /* (to make the window anew) */
     int askedBackdrop;     /* what the program asked for behind the window (made anew: asked again) */
-    int style;             /* Window.Frameless / TopMost (FIRE_STYLE_*; made anew: given again) */
+    int style;             /* Window.Frameless / TopMost / not ShowInTaskbar (FIRE_STYLE_*; made anew: given again) */
+    HICON icon;            /* Window.SetIcon (NULL: the program's own); given again to a window made anew */
+    RECT* inputRects; int inputCount;   /* Window.ClickThrough: the window region (client pixels; inputCount -1: the whole window); given again to a window made anew */
 } FireDw32Window;
 
 /* The window style for w->style: a popup without frame and title bar, or the usual window. */
@@ -533,11 +535,15 @@ static void fire_dw32_darkTitle(FireDw32Window* w) {
 
 /* Makes the OS window (`ex`: WS_EX_NOREDIRECTIONBITMAP for DirectComposition) with its outer size at (x, y) - CW_USEDEFAULT: where Windows puts it - and what belongs
  * to it: the dark title bar, what other programs drop. 0: it failed. */
+static void fire_dw32_applyInputShape(FireDw32Window* w);
 static int fire_dw32_create(FireDw32Window* w, DWORD ex, int x, int y, int ow, int oh) {
     FireW32* lib = fire_dw32_lib();
     if (w->style & FIRE_STYLE_TOPMOST) ex |= WS_EX_TOPMOST;
+    if (w->style & FIRE_STYLE_NOTASKBAR) ex |= WS_EX_TOOLWINDOW;   /* (a tool window has no button in the task bar, and none in Alt+Tab) */
     w->hwnd = CreateWindowExW(ex, fire_dw32_class(), w->title ? w->title : L"", fire_dw32_styleBits(w), x, y, ow, oh, NULL, NULL, GetModuleHandleW(NULL), w);
     if (w->hwnd == NULL) return 0;
+    if (w->icon != NULL) { SendMessageW(w->hwnd, WM_SETICON, ICON_BIG, (LPARAM)w->icon); SendMessageW(w->hwnd, WM_SETICON, ICON_SMALL, (LPARAM)w->icon); }
+    if (w->inputRects != NULL) fire_dw32_applyInputShape(w);
     fire_dw32_darkTitle(w);
     /* what other programs drop: OLE (positions while it is dragged, files and text) on this thread */
     w->oleDrop = 0;
@@ -614,6 +620,8 @@ static int fire_dw32_open(FireDw32Window* w, const char* title, int width, int h
 
 static void fire_dw32_close(FireDw32Window* w) {
     fire_dw32_destroy(w);
+    if (w->icon != NULL) { DestroyIcon(w->icon); w->icon = NULL; }
+    free(w->inputRects); w->inputRects = NULL; w->inputCount = -1;
     free(w->title); w->title = NULL;
     free(w->bgra); w->bgra = NULL; w->bgraCap = 0;
     fire_display_queueFree(&w->queue);
@@ -698,6 +706,16 @@ static int fire_dw32_setStyle(FireDw32Window* w, int flags) {
     if (w->hwnd == NULL) return flags;
     visible = (GetWindowLongPtrW(w->hwnd, GWL_STYLE) & WS_VISIBLE) ? WS_VISIBLE : 0;
     SetWindowLongPtrW(w->hwnd, GWL_STYLE, (LONG_PTR)(fire_dw32_styleBits(w) | visible));
+    {
+        /* ShowInTaskbar: WS_EX_TOOLWINDOW - the task bar sees it only when the window is shown anew (the other bits, NOREDIRECTIONBITMAP among them, stay) */
+        LONG_PTR ex = GetWindowLongPtrW(w->hwnd, GWL_EXSTYLE);
+        LONG_PTR want = (flags & FIRE_STYLE_NOTASKBAR) ? ((ex | WS_EX_TOOLWINDOW) & ~(LONG_PTR)WS_EX_APPWINDOW) : (ex & ~(LONG_PTR)WS_EX_TOOLWINDOW);
+        if (want != ex) {
+            if (visible) ShowWindow(w->hwnd, SW_HIDE);
+            SetWindowLongPtrW(w->hwnd, GWL_EXSTYLE, want);
+            if (visible) ShowWindow(w->hwnd, SW_SHOWNOACTIVATE);
+        }
+    }
     fire_dw32_outer(w, w->winW, w->winH, &ow, &oh);
     SetWindowPos(w->hwnd, (flags & FIRE_STYLE_TOPMOST) ? HWND_TOPMOST : HWND_NOTOPMOST, 0, 0, ow, oh, SWP_NOMOVE | SWP_FRAMECHANGED | SWP_NOACTIVATE);
     /* (DWM forgets what it composed behind a window whose frame changed: asked again) */
@@ -721,6 +739,72 @@ static int fire_dw32_beginMove(FireDw32Window* w) {
 }
 
 /* The work area of the monitor of the window (without the task bar). */
+/* Window.SetIcon: the picture of the window (title bar, task bar, Alt+Tab) - an icon of 32-bit colour with alpha, Windows scales it; NULL: the program's own. */
+static void fire_dw32_setIcon(FireDw32Window* w, const uint32_t* rgba, int width, int height) {
+    HICON made = NULL;
+    if (rgba != NULL && width > 0 && height > 0) {
+        BITMAPV5HEADER bi;
+        void* bits = NULL;
+        HDC dc = GetDC(NULL);
+        HBITMAP color, mask;
+        memset(&bi, 0, sizeof bi);
+        bi.bV5Size = sizeof bi; bi.bV5Width = width; bi.bV5Height = -height; bi.bV5Planes = 1; bi.bV5BitCount = 32; bi.bV5Compression = BI_BITFIELDS;
+        bi.bV5RedMask = 0x00FF0000; bi.bV5GreenMask = 0x0000FF00; bi.bV5BlueMask = 0x000000FF; bi.bV5AlphaMask = 0xFF000000;
+        color = CreateDIBSection(dc, (BITMAPINFO*)&bi, DIB_RGB_COLORS, &bits, NULL, 0);
+        ReleaseDC(NULL, dc);
+        mask = CreateBitmap(width, height, 1, 1, NULL);
+        if (color != NULL && mask != NULL && bits != NULL) {
+            ICONINFO ii;
+            int i, n = width * height;
+            uint32_t* d = (uint32_t*)bits;
+            /* (B, G, R, A in memory; the alpha straight, as icons take it) */
+            for (i = 0; i < n; i++) { uint32_t v = rgba[i]; d[i] = (v & 0xFF00FF00u) | ((v & 0xFFu) << 16) | ((v >> 16) & 0xFFu); }
+            memset(&ii, 0, sizeof ii);
+            ii.fIcon = TRUE; ii.hbmMask = mask; ii.hbmColor = color;
+            made = CreateIconIndirect(&ii);
+        }
+        if (color != NULL) DeleteObject(color);
+        if (mask != NULL) DeleteObject(mask);
+    }
+    if (w->hwnd != NULL) { SendMessageW(w->hwnd, WM_SETICON, ICON_BIG, (LPARAM)made); SendMessageW(w->hwnd, WM_SETICON, ICON_SMALL, (LPARAM)made); }
+    if (w->icon != NULL) DestroyIcon(w->icon);
+    w->icon = made;
+}
+
+/* Window.ClickThrough: the window region - outside it the window is not there for the mouse (nor drawn: there it is transparent anyway). */
+static void fire_dw32_applyInputShape(FireDw32Window* w) {
+    HRGN rgn = NULL;
+    if (w->hwnd == NULL) return;
+    if (w->inputCount >= 0) {
+        size_t size = sizeof(RGNDATAHEADER) + sizeof(RECT) * (size_t)(w->inputCount ? w->inputCount : 1);
+        RGNDATA* data = (RGNDATA*)calloc(1, size);
+        if (data == NULL) return;
+        data->rdh.dwSize = sizeof(RGNDATAHEADER); data->rdh.iType = RDH_RECTANGLES; data->rdh.nCount = (DWORD)w->inputCount;
+        data->rdh.nRgnSize = (DWORD)(sizeof(RECT) * (size_t)w->inputCount);
+        if (w->inputCount > 0) memcpy(data->Buffer, w->inputRects, sizeof(RECT) * (size_t)w->inputCount);
+        rgn = ExtCreateRegion(NULL, (DWORD)size, data);
+        free(data);
+        if (rgn == NULL) return;
+    }
+    SetWindowRgn(w->hwnd, rgn, TRUE);   /* (the window owns the region from now on; NULL: the whole window) */
+}
+
+static void fire_dw32_setInputShape(FireDw32Window* w, const int* rects, int count, int fbW, int fbH) {
+    int i;
+    free(w->inputRects); w->inputRects = NULL; w->inputCount = -1;
+    if (count >= 0) {
+        double sx = fbW > 0 ? (double)w->winW / fbW : 1.0, sy = fbH > 0 ? (double)w->winH / fbH : 1.0;
+        w->inputRects = (RECT*)malloc(sizeof(RECT) * (size_t)(count ? count : 1));
+        if (w->inputRects == NULL) return;
+        for (i = 0; i < count; i++) {
+            w->inputRects[i].left = (LONG)(rects[i * 4] * sx); w->inputRects[i].top = (LONG)(rects[i * 4 + 1] * sy);
+            w->inputRects[i].right = (LONG)((rects[i * 4] + rects[i * 4 + 2]) * sx + 0.999); w->inputRects[i].bottom = (LONG)((rects[i * 4 + 1] + rects[i * 4 + 3]) * sy + 0.999);
+        }
+        w->inputCount = count;
+    }
+    fire_dw32_applyInputShape(w);
+}
+
 /* The top left corner of the window on the screen. */
 static int fire_dw32_position(FireDw32Window* w, int* r) {
     RECT rc;

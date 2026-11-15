@@ -13,6 +13,8 @@ namespace Assistant {
         Window win
         UI.Root ui
         UI.DrawingCanvas figure
+        // while the model thinks: a small flickering flame (black and white) left of "Thinking"
+        UI.DrawingCanvas flame
         UI.DrawingCanvas bubble
         UI.TextArea text
         UI.StackPanel choices
@@ -47,10 +49,22 @@ namespace Assistant {
             // no frame, above the other windows: only the character and its bubble are seen
             this.win.Frameless = true
             this.win.TopMost = true
+            this.win.ShowInTaskbar = false   // (a helper, not a program of its own)
+            this.win.ClickThrough = true     // (clicks next to the bubble and the character reach the windows below)
+            this.PaintIcon()
             this.ui = new UI.Root(this.fb, this.win)
             this.ui.WindowBackdrop = Backdrop.Transparent
             this.ui.WindowBackground = new SolidBrush(UI.Color.Transparent())   // (nothing behind the bubble and the character)
             this.Build()
+        }
+
+        // The character as the window's picture (Alt+Tab, where the desktop shows one).
+        undefined PaintIcon() {
+            var fb = new Framebuffer(64, 64)
+            var r = new Renderer(fb)
+            r.ClearTo(UI.Color.Transparent())
+            this.Brain.Character.Paint(r, 0.0, 0.0, 64.0, 64.0, 0, Assistant.Mood.Idle)
+            this.win.SetIcon(fb)
         }
 
         static UI.Button Small(UI.Geometry icon, defined int x, defined int y) {
@@ -100,6 +114,12 @@ namespace Assistant {
             this.question.OnEnter = func () on this => AskTyped()
             this.ui.Add(this.question)
             // the character (it moves: painted every frame); a click pokes it
+            this.flame = new UI.DrawingCanvas(14, 38, 14, 18)
+            this.flame.Continuous = true
+            this.flame.blendMode = 2
+            this.flame.Visible = false
+            this.flame.OnPaint = func (UI.DrawingCanvas c) on this => PaintFlame(c)
+            this.ui.Add(this.flame)
             this.figure = new UI.DrawingCanvas(4, this.BH, 100, this.FH)
             this.figure.Continuous = true
             this.figure.blendMode = 2
@@ -121,6 +141,17 @@ namespace Assistant {
             defined int h = this.BH - 12
             defined int fill = this.Fill()
             defined int edge = this.ui.Dark ? UI.Color.Rgb(90, 90, 96) : UI.Color.Rgb(214, 204, 160)
+            if (this.Brain.Phase == Assistant.Phase.Thinking) {
+                // a thought bubble: rounder, and small circles that rise from the character instead of the tail
+                r.DrawShadow(4, 4, w - 8, h - 4, 24, 6, 0x30000000, 2)
+                r.FillRoundRect(4, 4, w - 8, h - 4, 24, new SolidBrush(fill))
+                r.DrawRoundRect(4, 4, w - 8, h - 4, 24, new Pen(edge, 1))
+                r.FillCircle(52, h + 3, 6, new SolidBrush(fill))
+                r.DrawCircle(52, h + 3, 6, new Pen(edge, 1))
+                r.FillCircle(44, h + 14, 3, new SolidBrush(fill))
+                r.DrawCircle(44, h + 14, 3, new Pen(edge, 1))
+                return
+            }
             r.DrawShadow(4, 4, w - 8, h - 4, 12, 6, 0x30000000, 2)
             r.FillRoundRect(4, 4, w - 8, h - 4, 12, new SolidBrush(fill))
             r.DrawRoundRect(4, 4, w - 8, h - 4, 12, new Pen(edge, 1))
@@ -129,6 +160,22 @@ namespace Assistant {
             r.FillPolygon(tail, new SolidBrush(fill))
             r.DrawLine(38, h, 44, h + 12, new Pen(edge, 1))
             r.DrawLine(66, h, 44, h + 12, new Pen(edge, 1))
+        }
+
+        // A flame of a few strokes whose tip and sides move a little every frame - white inside, a black edge, a black core.
+        undefined PaintFlame(UI.DrawingCanvas c) {
+            var r = c.renderer
+            r.ClearTo(UI.Color.Transparent())
+            float t = this.frame * 0.25
+            float sway = Math.Sin(t) * 1.6 + Math.Sin(t * 2.3) * 0.8
+            float lean = Math.Sin(t * 1.7) * 0.9
+            float tipY = 1.0 + Math.Sin(t * 3.1) * 1.2
+            float outer[] = [7.0 + sway, tipY, 11.5 + lean, 8.0, 12.5, 12.0, 11.0, 15.5, 7.0, 17.0, 3.0, 15.5, 1.5, 12.0, 2.5 + lean, 8.0]
+            r.FillPolygon(outer, new SolidBrush(0xFFFFFFFF))
+            r.DrawPolygon(outer, new Pen(0xFF000000, 1), true)
+            float coreTip = 8.0 + Math.Sin(t * 2.6) * 1.0
+            float inner[] = [7.0 + sway * 0.5, coreTip, 9.5, 12.5, 7.0, 15.0, 4.5, 12.5]
+            r.FillPolygon(inner, new SolidBrush(0xFF000000))
         }
 
         undefined PaintFigure(UI.DrawingCanvas c) {
@@ -240,6 +287,11 @@ namespace Assistant {
             this.question.Top = this.BH - 46
             this.choices.Top = bottom - choicesHeight + 4
             this.text.Height = UI.M.Max(20, bottom - choicesHeight - 36)
+            // thinking: the flame left of the text, the text a little to the right
+            bool thinking = shownNow && this.Brain.Phase == Assistant.Phase.Thinking
+            this.flame.Visible = thinking
+            this.text.Left = thinking ? 30 : 12
+            this.text.Width = thinking ? this.W - 42 : this.W - 24
             if (asking) { this.ui.SetFocus(this.question) }
             this.bubble.Invalidate()
             this.ui.Invalidate()
@@ -299,6 +351,7 @@ namespace Assistant {
             }
             Assistant.Character next = all[(at + 1) % all.Count]
             this.Brain.Character = next
+            this.PaintIcon()
             this.Brain.Settings.Character = next.Id
             this.Brain.Settings.Save()
             this.Brain.Say(next.Hello)

@@ -73,6 +73,9 @@ size, the interface is laid out anew and painted. `ui.width`, `ui.height` are th
 called afterwards. Note that the top container does not stretch by itself ([filling the window](containers.md#filling-the-window)).
 `window.AutoResize = false` stretches the fixed picture instead.
 
+An element that is taken out of its panel or destroyed while the pointer is on it (a click that makes its buttons anew) is forgotten by the root: hover,
+pressed, focus, drag and tool tip let go of it (`Root.Forget`, called by `Panel.Remove`, `Panel.Clear` and the lists).
+
 The program can size the window itself: `ui.SetSize(width, height)` (logical pixels) brings the framebuffer and the window to it (times the scale) and lays the
 interface out anew - for a window that is as big as what it shows (the assistant's bubble grows with its text; with `window.Position()` and `SetPosition` its
 bottom stays where it was).

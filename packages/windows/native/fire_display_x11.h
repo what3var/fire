@@ -168,6 +168,9 @@ typedef struct FireXlib {
     int (*ShmAttach)(void*, FireXShmInfo*);
     int (*ShmDetach)(void*, FireXShmInfo*);
     int (*ShmPutImage)(void*, FireXId, void*, FireXImage*, int, int, int, int, unsigned, unsigned, int);
+    /* SHAPE (libXext): where the window takes clicks (Window.ClickThrough) */
+    void (*ShapeCombineRectangles)(void*, FireXId, int, int, int, void*, int, int, int);
+    void (*ShapeCombineMask)(void*, FireXId, int, int, int, FireXId, int);
     /* XInput 2 (libXi) */
     int (*XIQueryVersion)(void*, int*, int*);
     int (*XISelectEvents)(void*, FireXId, FireXIEventMask*, int);
@@ -231,6 +234,8 @@ static FireXlib* fire_dx11_lib(void) {
             if (!(fire_dx11_sym(x.ext, "XShmQueryExtension", &x.ShmQueryExtension) && fire_dx11_sym(x.ext, "XShmCreateImage", &x.ShmCreateImage)
                   && fire_dx11_sym(x.ext, "XShmAttach", &x.ShmAttach) && fire_dx11_sym(x.ext, "XShmDetach", &x.ShmDetach) && fire_dx11_sym(x.ext, "XShmPutImage", &x.ShmPutImage)))
                 x.ShmQueryExtension = NULL;
+            if (!(fire_dx11_sym(x.ext, "XShapeCombineRectangles", &x.ShapeCombineRectangles) && fire_dx11_sym(x.ext, "XShapeCombineMask", &x.ShapeCombineMask)))
+                x.ShapeCombineRectangles = NULL;
             x.xi = fire_dx11_open2("libXi.so.6", "libXi.so");
             if (!(fire_dx11_sym(x.xi, "XIQueryVersion", &x.XIQueryVersion) && fire_dx11_sym(x.xi, "XISelectEvents", &x.XISelectEvents))) x.XISelectEvents = NULL;
             x.xcursor = fire_dx11_open2("libXcursor.so.1", "libXcursor.so");
@@ -285,7 +290,8 @@ static void fire_dx11_pace(double* last) {
 typedef struct FireDx11Atoms {
     FireXId wmProtocols, wmDelete, netWmName, netWmPid, utf8, clipboard, targets, incr, textPlainUtf8, textPlain, string, text, png, bmp, uriList, gnomeFiles, property,
         xdndAware, xdndEnter, xdndPosition, xdndStatus, xdndLeave, xdndDrop, xdndFinished, xdndSelection, xdndTypeList, xdndActionCopy, cm, kdeBlur, netSupported, atom, cardinal,
-        motifHints, netWmState, netWmStateAbove, netWmMoveResize, netWorkArea, netCurrentDesktop;
+        motifHints, netWmState, netWmStateAbove, netWmMoveResize, netWorkArea, netCurrentDesktop,
+        netWmStateSkipTaskbar, netWmStateSkipPager, netWmIcon;
 } FireDx11Atoms;
 static void fire_dx11_atoms(FireXlib* x, void* d, FireDx11Atoms* a) {
     a->wmProtocols = x->InternAtom(d, "WM_PROTOCOLS", 0);
@@ -324,6 +330,9 @@ static void fire_dx11_atoms(FireXlib* x, void* d, FireDx11Atoms* a) {
     a->netWmMoveResize = x->InternAtom(d, "_NET_WM_MOVERESIZE", 0);
     a->netWorkArea = x->InternAtom(d, "_NET_WORKAREA", 0);
     a->netCurrentDesktop = x->InternAtom(d, "_NET_CURRENT_DESKTOP", 0);
+    a->netWmStateSkipTaskbar = x->InternAtom(d, "_NET_WM_STATE_SKIP_TASKBAR", 0);
+    a->netWmStateSkipPager = x->InternAtom(d, "_NET_WM_STATE_SKIP_PAGER", 0);
+    a->netWmIcon = x->InternAtom(d, "_NET_WM_ICON", 0);
     a->atom = 4;       /* XA_ATOM */
     a->cardinal = 6;   /* XA_CARDINAL */
 }
@@ -770,6 +779,8 @@ typedef struct FireDx11Window {
     int backdrop;
     /* Window.Frameless / TopMost (FIRE_STYLE_*), the position asked for (posSet), the last press of a button (for BeginMove) */
     int style, posSet, posX, posY;
+    unsigned long* icon; int iconLongs;
+    short* inputShape; int inputCount;   /* Window.ClickThrough: the rectangles that take clicks (XRectangle: x, y, w, h as shorts; inputCount -1: the whole window) */   /* Window.SetIcon: _NET_WM_ICON as it goes to the window (width, height, ARGB) - set again on a window made anew */
     int pressRootX, pressRootY, pressButton;
     /* the input method */
     void* im;
@@ -1005,7 +1016,11 @@ static void fire_dx11_applyStyle(FireDx11Window* w, int mapped) {
     long hints[5] = { 2 /* MWM_HINTS_DECORATIONS */, 0, (w->style & FIRE_STYLE_FRAMELESS) ? 0 : 1, 0, 0 };
     x->ChangeProperty(w->d, w->win, w->a.motifHints, w->a.motifHints, 32, 0 /* PropModeReplace */, (const unsigned char*)hints, 5);
     if (!mapped) {
-        if (w->style & FIRE_STYLE_TOPMOST) x->ChangeProperty(w->d, w->win, w->a.netWmState, w->a.atom, 32, 0, (const unsigned char*)&w->a.netWmStateAbove, 1);
+        long states[3];
+        int n = 0;
+        if (w->style & FIRE_STYLE_TOPMOST) states[n++] = (long)w->a.netWmStateAbove;
+        if (w->style & FIRE_STYLE_NOTASKBAR) { states[n++] = (long)w->a.netWmStateSkipTaskbar; states[n++] = (long)w->a.netWmStateSkipPager; }
+        if (n > 0) x->ChangeProperty(w->d, w->win, w->a.netWmState, w->a.atom, 32, 0, (const unsigned char*)states, n);
         else x->DeleteProperty(w->d, w->win, w->a.netWmState);
     } else {
         FireXEv e;
@@ -1019,7 +1034,65 @@ static void fire_dx11_applyStyle(FireDx11Window* w, int mapped) {
         e.xclient.data.l[1] = (long)w->a.netWmStateAbove;
         e.xclient.data.l[3] = 1;   /* a normal program */
         x->SendEvent(w->d, w->root, 0, 0x80000 | 0x100000 /* SubstructureRedirect | SubstructureNotify */, &e);
+        /* not in the task bar (and not in the pager): ShowInTaskbar */
+        e.xclient.data.l[0] = (w->style & FIRE_STYLE_NOTASKBAR) ? 1 : 0;
+        e.xclient.data.l[1] = (long)w->a.netWmStateSkipTaskbar;
+        e.xclient.data.l[2] = (long)w->a.netWmStateSkipPager;
+        x->SendEvent(w->d, w->root, 0, 0x80000 | 0x100000, &e);
     }
+}
+
+/* Window.ClickThrough: the input shape of the window (SHAPE: ShapeInput) - clicks outside the rectangles go to the window below. */
+static void fire_dx11_applyInputShape(FireDx11Window* w) {
+    FireXlib* x = w->x;
+    if (w->d == NULL || w->win == 0 || x->ShapeCombineRectangles == NULL) return;
+    if (w->inputCount < 0) x->ShapeCombineMask(w->d, w->win, 2 /* ShapeInput */, 0, 0, 0 /* None: the whole window */, 0 /* ShapeSet */);
+    else x->ShapeCombineRectangles(w->d, w->win, 2 /* ShapeInput */, 0, 0, w->inputShape, w->inputCount, 0 /* ShapeSet */, 0 /* Unsorted */);
+}
+
+static void fire_dx11_setInputShape(FireDx11Window* w, const int* rects, int count, int fbW, int fbH) {
+    int i;
+    free(w->inputShape); w->inputShape = NULL; w->inputCount = -1;
+    if (count >= 0) {
+        double sx = fbW > 0 ? (double)w->winW / fbW : 1.0, sy = fbH > 0 ? (double)w->winH / fbH : 1.0;
+        w->inputShape = (short*)malloc(sizeof(short) * 4 * (size_t)(count ? count : 1));
+        if (w->inputShape == NULL) return;
+        for (i = 0; i < count; i++) {
+            int x0 = (int)(rects[i * 4] * sx), y0 = (int)(rects[i * 4 + 1] * sy);
+            int x1 = (int)((rects[i * 4] + rects[i * 4 + 2]) * sx + 0.999), y1 = (int)((rects[i * 4 + 1] + rects[i * 4 + 3]) * sy + 0.999);
+            w->inputShape[i * 4] = (short)x0; w->inputShape[i * 4 + 1] = (short)y0;
+            w->inputShape[i * 4 + 2] = (short)(x1 - x0); w->inputShape[i * 4 + 3] = (short)(y1 - y0);
+        }
+        w->inputCount = count;
+    }
+    fire_dx11_applyInputShape(w);
+    if (w->d != NULL) w->x->Flush(w->d);
+}
+
+/* Window.SetIcon: the picture of the window (task bar, Alt+Tab) as _NET_WM_ICON; NULL: none. */
+static void fire_dx11_applyIcon(FireDx11Window* w) {
+    FireXlib* x = w->x;
+    if (w->d == NULL || w->win == 0) return;
+    if (w->icon != NULL) x->ChangeProperty(w->d, w->win, w->a.netWmIcon, w->a.cardinal, 32, 0, (const unsigned char*)w->icon, w->iconLongs);
+    else x->DeleteProperty(w->d, w->win, w->a.netWmIcon);
+}
+
+static void fire_dx11_setIcon(FireDx11Window* w, const uint32_t* rgba, int width, int height) {
+    int i, n;
+    free(w->icon); w->icon = NULL; w->iconLongs = 0;
+    free(w->inputShape); w->inputShape = NULL; w->inputCount = -1;
+    if (rgba != NULL && width > 0 && height > 0) {
+        n = width * height;
+        w->icon = (unsigned long*)malloc(sizeof(unsigned long) * (size_t)(n + 2));
+        if (w->icon != NULL) {
+            w->icon[0] = (unsigned long)width; w->icon[1] = (unsigned long)height;
+            /* (format 32 of Xlib: one long per value; ARGB with A in the top byte) */
+            for (i = 0; i < n; i++) { uint32_t v = rgba[i]; w->icon[2 + i] = (unsigned long)((v & 0xFF00FF00u) | ((v & 0xFFu) << 16) | ((v >> 16) & 0xFFu)); }
+            w->iconLongs = n + 2;
+        }
+    }
+    fire_dx11_applyIcon(w);
+    if (w->d != NULL) w->x->Flush(w->d);
 }
 
 static int fire_dx11_makeWindow(FireDx11Window* w, int argb) {
@@ -1070,6 +1143,8 @@ static int fire_dx11_makeWindow(FireDx11Window* w, int argb) {
         }
     }
     fire_dx11_applyStyle(w, 0);
+    fire_dx11_applyIcon(w);
+    if (w->inputShape != NULL) fire_dx11_applyInputShape(w);
     if (w->posSet && x->MoveWindow != NULL) x->MoveWindow(w->d, w->win, w->posX, w->posY);
     x->MapWindow(w->d, w->win);
     if (w->posSet && x->MoveWindow != NULL) x->MoveWindow(w->d, w->win, w->posX, w->posY);
@@ -1119,6 +1194,7 @@ static void fire_dx11_close(FireDx11Window* w) {
     x->CloseDisplay(w->d);
     w->d = NULL;
     free(w->title); w->title = NULL;
+    free(w->icon); w->icon = NULL; w->iconLongs = 0;
     free(w->preedit); w->preedit = NULL; w->preeditLen = w->preeditCap = 0;
     fire_display_queueFree(&w->queue);
 }

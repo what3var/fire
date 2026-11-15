@@ -23,6 +23,9 @@ namespace Assistant {
         // What the bubble shows, and its choices (texts); Changed says that one of them changed since the last Tick.
         string Text = ""
         List Choices = new List()
+        // While the model thinks: what it did so far (the tools it called, a line each) - the thought bubble shows it.
+        List Activity = new List()
+        defined int thinkingTicks = 0
         List actions = new List()
         bool Visible = true
         // The question line is shown (after a poke: a click on the character, or Ctrl+^ in spark).
@@ -209,6 +212,7 @@ namespace Assistant {
             try {
                 this.agent = new AI.Agent(path, this.Instructions())
                 this.agent.MaxSteps = 4
+                this.agent.OnToolCall = func (string name, JsonObject args) on this => ToolCalled(name, args)
                 this.agent.Settings.MaxTokens = 400
                 this.agent.Settings.Temperature = 0.3
                 this.ConnectTools()
@@ -311,8 +315,37 @@ namespace Assistant {
             }
             this.agent.Start(question)
             this.Phase = Assistant.Phase.Thinking
-            this.Say("")
+            this.Activity.Clear()
+            this.thinkingTicks = 0
+            this.Say(this.ThinkingText())
             this.Offer("Stop", "stop")
+        }
+
+        // A tool the model calls: a short line for the thought bubble ("Searching the docs: list sort").
+        undefined ToolCalled(string name, JsonObject args) {
+            string what = name
+            string detail = Assistant.Brain.Arg(args, "query")
+            if (detail == "") { detail = Assistant.Brain.Arg(args, "path") }
+            if (detail == "") { detail = Assistant.Brain.Arg(args, "command") }
+            if (name == "search_docs") { what = "Searching the docs" }
+            else if (name == "read_doc") { what = "Reading" }
+            else if (name == "read_file") { what = "Reading" }
+            else if (name == "list_files") { what = "Looking around" }
+            else if (name == "git") { what = "git" }
+            if (detail.Length > 40) { detail = detail.Substring(0, 37) + "..." }
+            this.Activity.Add(detail == "" ? what : what + ": " + detail)
+        }
+
+        // The text of the thought bubble: thinking (with dots that move) and what the model did so far.
+        string ThinkingText() {
+            string dots = "."
+            defined int n = (this.thinkingTicks / 20) % 3
+            if (n >= 1) { dots = ".." }
+            if (n >= 2) { dots = "..." }
+            string text = "Thinking" + dots
+            defined int first = this.Activity.Count > 6 ? this.Activity.Count - 6 : 0
+            for (int i = first; i < this.Activity.Count; i++) { text += "\n- " + this.Activity[i] }
+            return text
         }
 
         // Forgets the conversation ("new topic").
@@ -446,10 +479,16 @@ namespace Assistant {
                 try {
                     string part = this.agent.Update()
                     if (part != "") {
+                        // (the first words of the answer: the thought bubble becomes a speech bubble)
+                        if (this.Phase == Assistant.Phase.Thinking) { this.Text = "" }
                         this.Phase = Assistant.Phase.Answering
                         this.Text = this.Text + part
+                    } else if (this.Phase == Assistant.Phase.Thinking) {
+                        this.thinkingTicks++
+                        this.Text = this.ThinkingText()
                     }
                     if (!this.agent.Running) {
+                        if (this.Phase == Assistant.Phase.Thinking) { this.Text = "" }
                         this.Phase = Assistant.Phase.Idle
                         this.Choices.Clear()
                         this.actions.Clear()
