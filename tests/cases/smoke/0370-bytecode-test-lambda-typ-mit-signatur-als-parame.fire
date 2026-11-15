@@ -1,0 +1,11 @@
+class Runner {
+    Execute(lambda<int> callback, int x) {
+        return callback(x)
+    }
+}
+
+var r = new Runner()
+var doubleIt = func (n) => n * 2
+print(r.Execute(doubleIt, 21))
+//# note: what the test program said to expect (for a reader, it was not checked): 42
+//# name: Bytecode-Test: Lambda-Typ mit Signatur als Parameter (Kurzform '=> ausdruck')

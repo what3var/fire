@@ -1,0 +1,11 @@
+class Wrapper<T> {
+    T value
+    construct(T value) { this.value = value }
+}
+
+var wrapped = new Wrapper<int>(21)
+print("Einstufiges Generic 'Wrapper<int>' funktioniert weiterhin: " + wrapped.value)
+print("Direkt danach, in derselben Zeile, als Ausdruck: " + (new Wrapper<int>(5).value << 1))
+print("Und unabhaengig davon ein '>>'-Shift: " + (64 >> 2))
+//# note: what the test program said to expect (for a reader, it was not checked): ... 21 / ... 10 / ... 16
+//# name: Operatoren: '<<'/'>>' kollidieren nicht mit generischen Typargumenten

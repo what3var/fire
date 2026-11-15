@@ -1,0 +1,15 @@
+var m = new int[2][3]
+print(m.length)
+print(m[0].length)
+m[1][2] = 42
+print(m[1][2])
+print(m[0][0])
+
+int matrix[2][2]
+matrix[0][0] = 1
+matrix[0][1] = 2
+matrix[1][0] = 3
+matrix[1][1] = 4
+print(matrix[1][1])
+//# note: what the test program said to expect (for a reader, it was not checked): 2 / 3 / 42 / undefined / 4
+//# name: Bytecode-Test: mehrdimensionale Array-Allokation (new + Deklarator-Sugar)

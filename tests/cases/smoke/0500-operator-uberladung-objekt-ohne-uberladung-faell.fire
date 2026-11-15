@@ -1,0 +1,11 @@
+class Plain {
+    int value
+    construct(int value) { this.value = value }
+}
+
+var p1 = new Plain(5)
+var p2 = new Plain(5)
+print("p1 == p2 (keine Ueberladung, Referenzvergleich, erwartet false): " + (p1 == p2))
+print("p1 == p1 (dasselbe Objekt, erwartet true): " + (p1 == p1))
+//# note: what the test program said to expect (for a reader, it was not checked): false / true
+//# name: Operator-Überladung: Objekt ohne Überladung faellt weiterhin auf Standardverhalten zurueck

@@ -1,0 +1,8 @@
+namespace Geo {
+    enum Kind { Round, Flat = 5, Sharp }
+}
+print(Geo.Kind.Round)
+print(Geo.Kind.Flat)
+print(Geo.Kind.Sharp)
+//# note: what the test program said to expect (for a reader, it was not checked): 0 / 5 / 6
+//# name: Enums in Namespaces: vollqualifizierter Zugriff

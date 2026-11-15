@@ -1,0 +1,10 @@
+var hex = 0xFFCC8080
+var bin = 0b01101100
+print("0xFFCC8080 = " + hex)
+print("0b01101100 = " + bin)
+print("0b1010 & 0b0110 = " + (0b1010 & 0b0110))
+
+var zeroBits = 0b
+print("0b (null Bit, weiterhin die alte Einheiten-Bedeutung) = " + zeroBits)
+//# note: what the test program said to expect (for a reader, it was not checked): 4291592320 / 108 / 2 / 0b
+//# name: Operatoren: 0x/0b-Literale, inkl. weiterhin gültigem '0b' als Bit-Einheit

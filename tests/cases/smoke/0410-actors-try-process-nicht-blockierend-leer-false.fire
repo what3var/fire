@@ -1,0 +1,24 @@
+actor Counter {
+    int value
+
+    construct() {
+        this.value = 0
+    }
+
+    increment() {
+        this.value = this.value + 1
+    }
+}
+
+var counter = new Counter()
+var before = try process counter
+print("try process VOR jeder Nachricht (erwartet false): " + before)
+
+fire with counter {
+    counter.increment()
+}
+
+process counter
+print("Hauptprogramm: counter.value = " + counter.value)
+//# note: what the test program said to expect (for a reader, it was not checked): 'false' dann 'counter.value = 1'
+//# name: Actors: 'try process' nicht-blockierend (leer -> false, dann true)

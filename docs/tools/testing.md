@@ -212,6 +212,9 @@ expected outputs are written by hand, as they were in the code; `FIRE_TESTS_UPDA
 renderer, the device manager, host callbacks, the rules for files and the network - stays code. `FIRE_TESTS_COLLECT=<file>` writes what every such check
 checks (title, source, expected lines) as one JSON object per line: the list before and after moving cases must be the same.
 
+`tests/cases/smoke` holds the oldest tests of the language - one small program per feature, run the way `forge run` runs it, compared with the output
+next to it (`//# note:` keeps the sentence the test program used to print for a reader instead of checking).
+
 **Without the test program:** `tests/run-cases.sh <forge> [<group>...]` runs every case with `forge run` and compares what it prints - the check a forge
 and a VM in C will be measured with, and a quick one for the ones in C# (all 630 cases: a few minutes). A case that only makes sense inside the test
 program says so: `//# skip: forge run - <why>`. `tests/reference.sh <forge> <folder>` writes what the compiler makes of every case (the program as

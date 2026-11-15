@@ -1,0 +1,8 @@
+var counter = 10
+var greeting = "hallo"
+
+fire {
+    print("Fire-Thread sieht: counter = " + counter + ", greeting = " + greeting)
+}
+//# note: what the test program said to expect (for a reader, it was not checked): 'Fire-Thread sieht: counter = 10, greeting = hallo'
+//# name: Multithreading: Read-only-Snapshot der Hauptprogramm-Globals in 'fire'

@@ -1,0 +1,23 @@
+class MyError {
+    string message
+    construct(msg) { this.message = msg }
+}
+
+var doWork = func () => {
+    print("vor throw")
+    var result = throw new MyError("etwas ging schief")
+    print("nach throw, result = " + result)
+    return result
+}
+
+var r = 0
+try {
+    r = doWork()
+} catch (MyError e) {
+    print("gefangen: " + e.message)
+    e.resume(42)
+    print("SOLLTE NIE LAUFEN")
+}
+print("r = " + r)
+//# note: what the test program said to expect (for a reader, it was not checked): vor throw / gefangen: etwas ging schief / nach throw, result = 42 / r = 42
+//# name: Bytecode-Test: resume (fortsetzbare Exceptions)

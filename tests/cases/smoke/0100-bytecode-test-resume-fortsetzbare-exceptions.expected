@@ -1,0 +1,4 @@
+vor throw
+gefangen: etwas ging schief
+nach throw, result = 42
+r = 42

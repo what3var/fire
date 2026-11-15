@@ -1,0 +1,7 @@
+buf.length = 4
+buf[0] = 65
+buf.ToString() (ASCII) = ABCD
+bytes.length = 5
+bytes.ToString() = Hello
+c.ToByte() = 65
+b.ToChar() = A

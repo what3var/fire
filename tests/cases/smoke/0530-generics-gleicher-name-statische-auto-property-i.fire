@@ -1,0 +1,11 @@
+class Counter { }
+
+class Counter<T> {
+    static int Total { get; }
+    Read() { return Total }
+}
+
+var c = new Counter<int>()
+print("gelesen: " + c.Read())
+//# note: what the test program said to expect (for a reader, it was not checked): gelesen: undefined - das Backing-Field gehört zur GENERISCHEN Klasse, nicht zur gleichnamigen
+//# name: Generics: gleicher Name, statische Auto-Property in der generischen Klasse

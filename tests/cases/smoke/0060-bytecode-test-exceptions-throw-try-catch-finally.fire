@@ -1,0 +1,17 @@
+class MyError {
+    string message
+    construct(string message) { this.message = message }
+}
+
+var result = 0
+try {
+    throw new MyError("boom")
+} catch (MyError e) {
+    print(e.message)
+    result = 1
+} finally {
+    print(999)
+}
+print(result)
+//# note: what the test program said to expect (for a reader, it was not checked): boom / 999 / 1
+//# name: Bytecode-Test: Exceptions (throw/try/catch/finally, typisiertes Matching)
