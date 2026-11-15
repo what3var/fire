@@ -70,6 +70,7 @@ namespace Assistant {
             this.text = new UI.TextArea("", 12, 36, this.W - 24, 100)
             this.text.ReadOnly = true
             this.text.WordWrap = true
+            this.text.FadeBottom = 28
             this.ui.Add(this.text)
             this.choices = new UI.StackPanel(14, 140, this.W - 28, -1, false, 4, 0)
             this.ui.Add(this.choices)

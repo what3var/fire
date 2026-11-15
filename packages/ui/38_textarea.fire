@@ -23,6 +23,8 @@ namespace UI {
         defined int MaxLength = 0
         // a tab reaches the next column that is a multiple of TabSize
         defined int TabSize = 4
+        // Pixels at the bottom edge in which the text fades into the background while there is more text below (not scrolled to the end); 0: none.
+        defined int FadeBottom = 0
         lambda OnChange
         bool changed = false
         Scroller vbar
@@ -819,6 +821,17 @@ namespace UI {
                 var dx = left + this.XOf(root, this.RowStart(dr), this.dropPos)
                 var dy = top + dr * lh
                 r.DrawLine(dx, dy, dx, dy + lh - 1, theme.caret)
+            }
+            // more text below: it fades out over the bottom edge
+            if (this.FadeBottom > 0 && this.vbar.offset + this.viewH < this.vbar.extent && back is of SolidBrush) {
+                SolidBrush solid = back
+                defined int rgb = solid.Color & 0xFFFFFF
+                defined int fade = UI.M.Min(this.FadeBottom, this.viewH)
+                var line = new SolidBrush(rgb)
+                for (var i = 0; i < fade; i = i + 1) {
+                    line.Color = rgb | (((i + 1) * 255 / fade) << 24)
+                    r.FillRect(ax + 1, ay + 1 + this.viewH - fade + i, this.viewW, 1, line)
+                }
             }
             root.PopClip()
             if (this.showV) { this.vbar.Draw(root, ax + 1 + this.viewW, ay + 1, this.viewH) }
