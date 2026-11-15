@@ -31,6 +31,14 @@ Die VM wirft eine DestroyedException, wenn die Klasse ein `ToString()` hat, und 
 schon freigegeben - seine Klasse ist nicht mehr bekannt -, dort steht `<object>` (vorher las `print` dort freigegebenen Speicher; behoben).
 Vorschlag: beide werfen immer die DestroyedException, wie jede andere Verwendung eines zerstörten Objekts.
 
+### D10. Prüft eine Deklaration `Bag<int> b` die Typargumente?
+
+Ein Parameter, ein Feld oder eine Variable `Bag<int> b` nimmt zur Laufzeit jedes Objekt der Klasse `Bag` - auch ein `Bag<string>` (über `any`
+hineingereicht; der Typprüfer meldet es sonst). Die VM rechnet dann mit dem falschen Wert weiter; nativ meldet der Generator es erst am Ergebnis
+(`The result of 'Get' of a Bag<int> is an int, not String.`), weil er sich auf die Typargumente verlässt - VM und nativ weichen dort ab.
+Vorschlag: die Deklaration prüft die Typargumente mit (`Parameter 'b' is a Bag<int>, not Bag<string>.`), in VM und nativ; ein Objekt ohne bekannte
+Typargumente geht weiter durch.
+
 ## Entschieden
 
 ### D8. Eine Deklaration `Color c` prüft zur Laufzeit

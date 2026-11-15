@@ -29517,6 +29517,62 @@ else
             try { q.Raw(5) } catch (ArgumentException e) { print("E1 " + e.message) }
             try { q.Raw(func (P p) => p.a > 1) } catch (ArgumentException e) { print("E2 " + e.message) }
             """),
+        ("Spezialisierungen (ROADMAP 21): Methoden mit Ergebnis und l[i] / l[i] = v auf einem Parameter List<int> l, Bag<int> b - auch undefined als Empfaenger, ein zu grosser Index, ein fehlender Schluessel", """
+            class Bag<T> {
+                T items[]
+                int n
+                construct() { this.items = new T[8]; this.n = 0 }
+                undefined Put(T v) { this.items[this.n] = v; this.n = this.n + 1 }
+                T Get(int i) { return this.items[i] }
+                defined int Get<int>(defined int i) { return this.items[i] }
+                float Get<float>(defined int i) { return this.items[i] }
+                T Twice(T v) { return v }
+                defined int Twice<int>(defined int v) { return v * 2 }
+            }
+            class U {
+                static int Sum(Bag<int> b, int n) { int s = 0; for (int i = 0; i < n; i++) { s = s + b.Get(i) } return s }
+                static float FSum(Bag<float> b, int n) { float s = 0.0; for (int i = 0; i < n; i++) { s = s + b.Get(i) } return s }
+                static int Tw(Bag<int> b, int v) { return b.Twice(v) + 1 }
+                static string Any(Bag<string> b) { return b.Get(0) + b.Twice("x") }
+            }
+            var b = new Bag<int>(); b.Put(3); b.Put(4)
+            print(U.Sum(b, 2) + " " + U.Tw(b, 5))
+            var f = new Bag<float>(); f.Put(1.5); f.Put(2.5); print(U.FSum(f, 2))
+            var s = new Bag<string>(); s.Put("a"); print(U.Any(s))
+            any none = undefined
+            try { U.Sum(none, 1) } catch (Exception e) { print("E1 " + e.message) }
+            try { U.Sum(b, 5) } catch (Exception e) { print("E3 " + e.message) }
+            try { U.Tw(b, none) } catch (Exception e) { print("E4 " + e.message) }
+            """),
+        ("Spezialisierungen (ROADMAP 21): Indexzugriffe auf Parameter, die undefined sein koennen - List<int>, List<float>, List<string>, Dictionary<int, int>", """
+            class B {
+                static int Sum(List<int> l, int n) { int s = 0; for (int i = 0; i < n; i++) { s = s + l[i] } return s }
+                static undefined Fill(List<int> l, int n) { for (int i = 0; i < n; i++) { l[i] = i * 2 } }
+                static float FSum(List<float> l) { float s = 0.0; for (int i = 0; i < l.Count; i++) { s = s + l[i] } return s }
+                static string First(List<string> l) { return l[0] }
+                static int Get(Dictionary<int, int> d, int k) { return d[k] }
+                static undefined Put(Dictionary<int, int> d, int k, int v) { d[k] = v }
+            }
+            List<int> l = new List<int>()
+            for (int i = 0; i < 10; i++) { l.Add(i) }
+            print(B.Sum(l, 10))
+            B.Fill(l, 10); print(B.Sum(l, 10))
+            List<float> f = new List<float>(); f.Add(1.5); f.Add(2.5); print(B.FSum(f))
+            List<string> ss = new List<string>(); ss.Add("a"); print(B.First(ss))
+            Dictionary<int, int> d = new Dictionary<int, int>(); B.Put(d, 3, 4); print(B.Get(d, 3))
+            any none = undefined
+            try { B.Sum(none, 1) } catch (Exception e) { print("E1 " + e.message) }
+            try { B.Fill(none, 1) } catch (Exception e) { print("E2 " + e.message) }
+            try { B.Get(none, 1) } catch (Exception e) { print("E3 " + e.message) }
+            try { B.Put(none, 1, 2) } catch (Exception e) { print("E4 " + e.message) }
+            try { B.Sum(l, 99) } catch (Exception e) { print("E5 " + e.message) }
+            try { B.Get(d, 99) } catch (Exception e) { print("E6 " + e.message) }
+            {
+                List<int> tmp = new List<int>(); tmp.Add(1)
+                l = tmp
+            }
+            try { B.Sum(l, 1) } catch (Exception e) { print("E7 " + e.message) }
+            """),
         ("defined fuer strings, Enums und Objekte (SPEC 8.10b): ein string beginnt bei \"\", ein Enum beim ersten Wert, ein Objekt braucht seinen Wert (Feld: jeder Konstruktor setzt es); undefined ist eine ArgumentException an Feld, Parameter, Rueckgabe, Variable, Reflection und in JSON (fehlend oder null)", """
             #import "json"
             #import "reflection"

@@ -644,7 +644,12 @@ namespace fire.Native
                 if (code[i - 1].Op != OpCode.GuardTop) return null;
                 byte d = (byte)(code[i - 1].A[0] + 1);
                 // (`int F()`: a CheckUnit "unitless" in front - the number is one without a unit after it)
-                if (i >= 2 && code[i - 2].Op == OpCode.CheckUnit && proto.Chunk.Constants[code[i - 2].A[0]].AsString() == "unitless") d |= DeclaredKind.UnitlessBit;
+                // (`defined int F()` has two guards - the type checker's for a value it cannot prove and the one of `defined`: the CheckUnit stands before both)
+                int before = i - 2;
+                while (before >= 0 && code[before].Op == OpCode.GuardTop) before--;
+                // (the end of a `defined` function: `undefined` in front of its guard - it throws there, no result)
+                if (before >= 0 && code[before].Op == OpCode.LoadConst && proto.Chunk.Constants[code[before].A[0]].Kind == ValueKind.Undefined) continue;
+                if (before >= 0 && code[before].Op == OpCode.CheckUnit && proto.Chunk.Constants[code[before].A[0]].AsString().TrimStart('#') == "unitless") d |= DeclaredKind.UnitlessBit;
                 if (declared != null && declared != d) return null;
                 declared = d;
             }
@@ -6367,6 +6372,36 @@ namespace fire.Native
                             string chain = string.Concat(specCalls.Select((sc, n) => $"({sc.Condition}{definedTests[n]}) ? {SpecCall(n)} : ")) + $"{target.Name}({hargs})";
                             string hslot = T(slot);
                             string hnotObject = IsNullable(Ty(slot)) ? $"if (FIRE_UNLIKELY({hrecv}.kind != K_Class)) {hslot} = missingMethod({hrecv}, {CString(method)}, {argc}); else " : "";
+                            // the type checker knows the type arguments of the receiver (`Bag<int> b; b.Get(i)`, Chunk.ReceiverTypeArgs): the result is what
+                            // that specialization gives, like for `l[i]` - a C number when it has a C result; the generic method (an object whose type
+                            // arguments differ after all, an argument that is undefined) is checked to give the same
+                            if (mask == 0 && f.Chunk.ReceiverTypeArgs is { } callArgsKnown && callArgsKnown.TryGetValue(ins.Addr, out var callReceiverArgs)
+                                && specCalls.FindIndex(sc => sc.Callee.Proto?.SpecArgs is { } sa && SpecArgsFit(sa, callReceiverArgs)) is var hinted and >= 0
+                                && DeclaredReturn(specCalls[hinted].Callee.Proto!) is { } hintedReturn
+                                && (DeclaredResultType(hintedReturn) != TypeUnknown || cSpecArgs[hinted] != null && CAbiOf(specCalls[hinted].Callee) is { RetType: not 0 }))
+                            {
+                                int hintedType = DeclaredResultType(hintedReturn);
+                                var hc = specCalls[hinted];
+                                string what = $"The result of '{method}' of a {GenericClassNames.PlainName(directProto.Chunk.OwnerClass?.Name ?? "")}<{callReceiverArgs.Replace("|", ", ")}>";
+                                string checkedGeneric = GuardKindCall($"{target.Name}({hargs})", hintedReturn, what);
+                                if (cSpecArgs[hinted] is { } hintedCArgs && CAbiOf(hc.Callee) is { RetType: not 0 } hintedAbi)
+                                {
+                                    E($"{hnotObject}if (FIRE_UNLIKELY(!leafAlive({hrecv}))) {hslot} = destroyedError({hrecv});");
+                                    Check();
+                                    SetScalar(slot, hintedAbi.RetType, $"({hc.Condition}{definedTests[hinted]}) ? {CName(hc.Callee)}({hrecv}{hintedCArgs}) : {CNumberOf(hintedAbi.RetType, $"({checkedGeneric})")}");
+                                    ArgsAfter(argc, mask, S(slot));
+                                    Check();
+                                    d = slot + 1; return Next();
+                                }
+                                if (hintedType != TypeUnknown)
+                                {
+                                    E($"{{ {hnotObject}if (FIRE_UNLIKELY(!leafAlive({hrecv}))) {hslot} = destroyedError({hrecv}); else {hslot} = ({hc.Condition}{definedTests[hinted]}) ? {SpecCall(hinted)} : {checkedGeneric}; }}");
+                                    ArgsAfter(argc, mask, S(slot));
+                                    Check();
+                                    AdoptResult(slot, hintedType);
+                                    d = slot + 1; return Next();
+                                }
+                            }
                             E($"{{ {hnotObject}if (FIRE_UNLIKELY(!leafAlive({hrecv}))) {hslot} = destroyedError({hrecv}); else {hslot} = {chain}; }}");
                             ArgsAfter(argc, mask, S(slot));
                             Check();

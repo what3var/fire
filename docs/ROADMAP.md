@@ -1228,7 +1228,10 @@ Offen:
 * `Grow` kopiert Element für Element (etwa 60 Instruktionen je Element): ein Kopieren der gepackten Daten am Stück. **Umgesetzt:** `__array_copy(src, dst, n)`
   (nativ fire_arrayCopy: ein Block bei gleich gepackten Arrays, sonst wie `dst[i] = src[i]`; VM ArrayCopyMethods) in `Grow<int>`/`Grow<float>` und in
   `__HashTable.Resize`, wenn nichts entfernt wurde - `List<int>.Add` 19 → 15 ns.
-* Methoden mit Ergebnis (`l.Get(i)`-artig) an der Aufrufstelle wie `l[i]` typisieren (der Hinweis steht schon in der Tabelle).
+* **Umgesetzt:** Methoden mit Ergebnis (`b.Get(i)` mit `defined int Get<int>(defined int i)`) sind an der Aufrufstelle wie `l[i]` typisiert, wenn der
+  Typprüfer die Typargumente des Empfängers kennt (Chunk.ReceiverTypeArgs): das Ergebnis ist das der Spezialisierung - eine C-Zahl, wenn ihr Rumpf eine
+  gibt -, der Rückfall auf die generische Methode wird darauf geprüft. Dazu erkennt der Generator den Rückgabetyp einer `defined`-Spezialisierung
+  (zwei Guards vor dem Return, DeclaredReturn) und `float` ohne Einheit.
 * `Dictionary<K, V>`/`HashSet<T>`: **umgesetzt** `K keys[]`/`V vals[]` (nach den Typargumenten typisiert), die Hilfsarrays `defined int`/`defined bool`,
   `HashOf<int, any>`/`Find<int, any>`/`Insert<int, any>` im `__HashTable` (der Platzhalter `any` in Spezialisierungen ist dafür neu), `arraySet`
   schreibt eine Zahl ohne Einheit direkt in ein gepacktes int-/float-Array, `adaptSlot`/`adaptUnit` lassen eine Zahl in ihrer Einheit ohne Aufruf durch.
