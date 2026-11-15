@@ -3,8 +3,8 @@
 // scene3d.effects (docs/graphics/effects.md): particles. The particles live and are drawn in the renderer (s3d_effects.h): a pool of a fixed size for each
 // emitter, nothing of them in fire - and a program that does not import this package carries nothing of it. Fog and tint are part of the Scene itself.
 
-// An emitter: an object of the scene that sends out particles from its place - soft discs that face the camera, from a first colour and size to a last one
-// over their life. Scene.Advance (or Advance) moves them on; everything is the same in the VM and in a native build (the chance comes from Seed).
+// An emitter: an object of the scene that sends out particles from its place - soft discs that face the camera (or streaks along their way: Stretch), from a
+// first colour and size to a last one over their life. Scene.Advance (or Advance) moves them on; everything is the same in the VM and in a native build (the chance comes from Seed).
 class Emitter : Object {
     construct(defined float x : any m = 0m, defined float y : any m = 0m, defined float z : any m = 0m) : base() {
         if (!__S3DEmitter(this.h)) { throw new Scene3DException("No memory for an emitter.") }
@@ -47,6 +47,10 @@ class Emitter : Object {
             __S3DEmitterSet(this.h, 19, v)
         }
     }
+    // 0s (default): each particle is a soft disc. Above 0: a soft streak along the way it flies - from where it is back to where it was this long ago (its length is
+    // its speed times Stretch: 8 m/s and 40ms are 32 cm; the size is its width). Rain falls in streaks (Emitter.Rain: 40ms). Only the look: the particles are the same.
+    defined float Stretch : s { get { return __S3DEmitterGet(this.h, 21) * 1s } set { __S3DEmitterSet(this.h, 21, S3D.Seconds(value)) } }
+
     // The start of the emitter's chance: the same seed and the same steps give the same particles.
     defined int Seed { get { return __S3DEmitterInt(this.h, 2, 0, false) } set { __S3DEmitterInt(this.h, 2, value, true) } }
 
@@ -78,7 +82,7 @@ class Emitter : Object {
     static Emitter Smoke(defined float x : any m, defined float y : any m, defined float z : any m) { return Emitter.Ready(1, x, y, z, 0.0) }
     // Sparks: fast, bright, falling.
     static Emitter Sparks(defined float x : any m, defined float y : any m, defined float z : any m) { return Emitter.Ready(2, x, y, z, 0.0) }
-    // Rain over a square of `size` (the emitter is the sky above it: put it high).
+    // Rain over a square of `size` (the emitter is the sky above it: put it high): falling streaks (Stretch 40ms).
     static Emitter Rain(defined float x : any m, defined float y : any m, defined float z : any m, defined float size : any m = 10m) { return Emitter.Ready(3, x, y, z, S3D.Length(size)) }
     // Snow over a square of `size` (put it high).
     static Emitter Snow(defined float x : any m, defined float y : any m, defined float z : any m, defined float size : any m = 10m) { return Emitter.Ready(4, x, y, z, S3D.Length(size)) }

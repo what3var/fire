@@ -23,7 +23,7 @@ while (running) {
 ## Emitters
 
 An `Emitter` is an `Object` of the scene without triangles: its position is where the particles come from. Each particle is a **soft disc that faces the
-camera**; over its life it goes from `StartColor` to `EndColor` and from `StartSize` to `EndSize`. Particles live in the world: an emitter that moves
+camera** - or a **soft streak** along the way it flies (`Stretch`, below); over its life it goes from `StartColor` to `EndColor` and from `StartSize` to `EndSize`. Particles live in the world: an emitter that moves
 leaves a trail.
 
 | | |
@@ -37,9 +37,21 @@ leaves a trail.
 | `SetArea(x, y, z)` | half the size of the box around the emitter where they start (rain over a square) |
 | `StartSize`, `EndSize`, `StartColor`, `EndColor` | the look over a life (`S3D.Rgba(r, g, b, a)`: an end colour with alpha 0 fades them out) |
 | `Additive` | `true`: the colour is added to the picture (fire, sparks, magic: it lights up); `false`: laid over it (smoke, rain, snow) |
+| `Stretch` | `0s` (default): discs. Above 0: each particle is a soft streak from where it is back to where it was `Stretch` ago - its length is its speed times `Stretch` (`8m / 1s` and `40ms`: 32 cm), its width the size; rain (`40ms`), sparks, tracer shots |
 | `Running` | `false`: no new ones (the living ones fly on and go) |
 | `Burst(n)`, `Clear()`, `Count` | `n` at once (a hit, an explosion), all gone, how many live |
 | `Seed` | the start of the emitter's own chance |
+
+**Streaks.** A streak is a line on the screen between the particle and its place `Stretch` seconds before (a part behind the camera is cut off), with round ends and
+soft sides, a little fainter towards its old end; each of its pixels is tested against the depth of the picture at its own distance. A streak thinner than a pixel stays
+one pixel wide and gets fainter instead, so far away rain does not flicker. It is only the look: the particles move and live the same with and without it.
+
+```fire
+var rain = Emitter.Rain(0m, 12m, 0m, 30m)     // streaks already (Stretch 40ms)
+rain.Stretch = 60ms                           // longer ones (a storm)
+var sparks = Emitter.Sparks(0m, 1m, 0m)
+sparks.Stretch = 30ms                         // sparks that fly in lines
+```
 
 Particles are drawn **after** the triangles: what is nearer hides them (they are tested against the depth of the picture), but they do not hide each other
 or write a depth themselves. Blended ones are drawn from far to near. The fog of the scene covers them like everything else.
@@ -54,7 +66,7 @@ particles - a replay or a test can count on it.
 | `Emitter.Fire(x, y, z)` | flames: yellow to dark red, added, rising |
 | `Emitter.Smoke(x, y, z)` | grey, slow, growing, fading |
 | `Emitter.Sparks(x, y, z)` | fast, bright, falling |
-| `Emitter.Rain(x, y, z, size)` | rain over a square of `size` (the emitter is the sky: put it high) |
+| `Emitter.Rain(x, y, z, size)` | rain over a square of `size` (the emitter is the sky: put it high), falling streaks (`Stretch` 40ms) |
 | `Emitter.Snow(x, y, z, size)` | snow over a square of `size` |
 | `Emitter.Explosion(x, y, z, count)` | `count` particles at once in all directions, then nothing more (`Burst(count)` for the next one) |
 
@@ -95,7 +107,7 @@ hidden by objects.
 
 | | |
 | --- | --- |
-| a particle | 32 bytes in the pool; drawn: its disc (radius² pixels) |
+| a particle | 32 bytes in the pool; drawn: its disc (radius² pixels), a streak its length times its width |
 | fog | a pass over the picture (Fast: a few integer comparisons per pixel) |
 | tint | a pass over the picture |
 

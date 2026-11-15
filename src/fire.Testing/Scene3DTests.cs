@@ -532,6 +532,46 @@ static class Scene3DTests
         scene.Remove(flames)
         scene.Remove(smoke)
         scene.Remove(boom)
+        // streaks (Emitter.Stretch): rain falls in streaks; the same seed and steps give the same particles and the same picture, streaks or not
+        var rainFrame = new Framebuffer(64, 48)
+        var rainScene = new Scene()
+        rainScene.Add(new Object(Template.Plane, 0m, 0m, 0m, 20m, 0m, 20m))
+        rainScene.Add(Light.Directional(-0.4, -1.0, -0.3))
+        var rainCam = new Camera(rainFrame)
+        rainCam.SetPosition(0m, 1.7m, 6m)
+        rainCam.LookAt(0m, 2m, -4m)
+        rainScene.Add(rainCam)
+        var rain1 = Emitter.Rain(0m, 8m, -2m, 12m)
+        rain1.Seed = 42
+        rainScene.Add(rain1)
+        for (var i = 0; i < 30; i++) { rainScene.Advance(33ms) }
+        rainCam.Render()
+        var streaks1 = H.Sum(rainFrame)
+        var rainCount = rain1.Count
+        rainScene.Remove(rain1)
+        var rain2 = Emitter.Rain(0m, 8m, -2m, 12m)
+        rain2.Seed = 42
+        rainScene.Add(rain2)
+        for (var i = 0; i < 30; i++) { rainScene.Advance(33ms) }
+        rainCam.Render()
+        print("streaks " + (rain2.Stretch > 39ms && rain2.Stretch < 41ms) + " " + (H.Sum(rainFrame) == streaks1) + " " + (rain2.Count == rainCount) + " " + rainCount + " " + streaks1)
+        rain2.Stretch = 0s
+        rainCam.Render()
+        var discs = H.Sum(rainFrame)
+        rain2.Stretch = 0.2s
+        rainCam.Render()
+        print("stretch " + (discs != streaks1) + " " + (H.Sum(rainFrame) != streaks1) + " " + (rain2.Count == rainCount) + " " + discs)
+        rainScene.Renderer = RenderMode.Fast
+        rainCam.Render()
+        print("streaks fast " + H.Sum(rainFrame))
+        var sparks = Emitter.Sparks(0m, 1m, 0m)
+        sparks.Stretch = 30ms
+        sparks.Seed = 5
+        rainScene.Add(sparks)
+        rainScene.Renderer = RenderMode.Software
+        for (var i = 0; i < 10; i++) { rainScene.Advance(33ms) }
+        rainCam.Render()
+        print("sparks " + H.Sum(rainFrame) + " " + sparks.Count)
         try { flames.Speed = 3 } catch (UnitMismatchException e) { print("unit " + e.message) }
 
         // physics (scene3d.physics): a ball bounces, crates stack, a character walks up a step, stops at a wall, jumps; a trigger, rays, a terrain, a lift
