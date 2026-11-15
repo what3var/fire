@@ -16,10 +16,20 @@ static class TestCases
         public string? Unhandled { get; init; }
         /// <summary>The output is not the same on every run or machine (`//# output: varies`): the case has no expected output, the engines are only compared with each other.</summary>
         public bool Varies { get; init; }
+        /// <summary>The execution modes of the VM the case runs in (`//# modes: Debug Release`); null: the modes its group runs in.</summary>
+        public fire.Runtime.VmExecutionMode[]? Modes { get; init; }
+        /// <summary>The case also runs as a packed program does: written as a program file and read back (`//# packed`).</summary>
+        public bool Packed { get; init; }
+        /// <summary>A case that is no program: a part of the compiler's error message (`.error` next to the source, instead of `.expected`).</summary>
+        public string? Error { get; init; }
+        /// <summary>The expected output as lines.</summary>
+        public string[] Lines => string.IsNullOrEmpty(Expected) ? Array.Empty<string>() : Expected.Substring(0, Expected.Length - 1).Split('\n');
     }
 
     private const string NameTag = "//# name: ";
     private const string VariesTag = "//# output: varies";
+    private const string ModesTag = "//# modes: ";
+    private const string PackedTag = "//# packed";
 
     /// <summary>The folder `tests/cases` of the repository this test program was built from.</summary>
     public static string Root([System.Runtime.CompilerServices.CallerFilePath] string here = "") =>
@@ -38,7 +48,8 @@ static class TestCases
             if (!text.EndsWith('\n')) throw new InvalidDataException($"{file}: a case ends with a line '{NameTag}<title>'.");
             int end = text.Length - 1;   // (the line feed that ends the last line)
             string? name = null;
-            bool varies = false;
+            bool varies = false, packed = false;
+            fire.Runtime.VmExecutionMode[]? modes = null;
             while (true)
             {
                 int start = text.LastIndexOf('\n', end - 1) + 1;
@@ -46,6 +57,9 @@ static class TestCases
                 string line = text.Substring(start, end - start);
                 if (line.StartsWith(NameTag, StringComparison.Ordinal)) name = line.Substring(NameTag.Length);
                 else if (line == VariesTag) varies = true;
+                else if (line == PackedTag) packed = true;
+                else if (line.StartsWith(ModesTag, StringComparison.Ordinal))
+                    modes = line.Substring(ModesTag.Length).Split(' ', StringSplitOptions.RemoveEmptyEntries).Select(m => Enum.Parse<fire.Runtime.VmExecutionMode>(m)).ToArray();
                 end = start - 1;
             }
             if (name == null) throw new InvalidDataException($"{file}: a case ends with a line '{NameTag}<title>'.");
@@ -54,7 +68,8 @@ static class TestCases
             string unhandledFile = Path.ChangeExtension(file, ".unhandled");
             list.Add(new Case(Path.GetFileNameWithoutExtension(file), name, source, !varies && System.IO.File.Exists(expectedFile) ? System.IO.File.ReadAllText(expectedFile, Encoding.UTF8) : null)
             {
-                File = file, Varies = varies,
+                File = file, Varies = varies, Modes = modes, Packed = packed,
+                Error = System.IO.File.Exists(Path.ChangeExtension(file, ".error")) ? System.IO.File.ReadAllText(Path.ChangeExtension(file, ".error"), Encoding.UTF8).TrimEnd('\n') : null,
                 Unhandled = !varies && System.IO.File.Exists(unhandledFile) ? System.IO.File.ReadAllText(unhandledFile, Encoding.UTF8).TrimEnd('\n') : null,
             });
         }
@@ -82,6 +97,18 @@ static class TestCases
         }
         return "";
     }
+
+    /// <summary>FIRE_TESTS_COLLECT=&lt;file&gt;: every check of a family that has (or may get) its cases as files writes what it checks into this file, one JSON object per
+    /// line - the family, the title, the source, the expected lines (or the part of an error message), the modes. tests/tools/cases.py makes the files from it, and
+    /// the same list before and after shows that moving the cases lost nothing.</summary>
+    public static void Collect(string family, string title, string script, string[]? expected, fire.Runtime.VmExecutionMode[]? modes = null, bool packed = false, string? error = null)
+    {
+        if (CollectFile == null) return;
+        var o = new Dictionary<string, object?> { ["family"] = family, ["title"] = title, ["script"] = script, ["expected"] = expected, ["modes"] = modes?.Select(m => m.ToString()).ToArray(), ["packed"] = packed, ["error"] = error };
+        lock (CollectLock) System.IO.File.AppendAllText(CollectFile, System.Text.Json.JsonSerializer.Serialize(o) + "\n");
+    }
+    private static readonly string? CollectFile = Environment.GetEnvironmentVariable("FIRE_TESTS_COLLECT") is { Length: > 0 } f ? f : null;
+    private static readonly object CollectLock = new();
 
     /// <summary>The names and sources of cases as one text, to compare two sets of cases (the cases in the code against the cases in files).</summary>
     public static string Listing(IEnumerable<(string Name, string Source)> cases)

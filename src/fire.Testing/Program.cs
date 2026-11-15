@@ -6010,6 +6010,7 @@ Console.WriteLine("=== Basistyp-Erweiterungen (class extends string/char/int/...
 
     void CheckExt(string title, string script, params string[] expected)
     {
+        TestCases.Collect("ext", title, script, expected);
         string[] actual;
         try { actual = RunExt(script).ToArray(); }
         catch (Exception ex) { actual = new[] { "AUSNAHME: " + ex.Message }; }
@@ -6021,6 +6022,7 @@ Console.WriteLine("=== Basistyp-Erweiterungen (class extends string/char/int/...
     // The error text must contain `fragment` (parser/resolver/runtime error).
     void CheckExtError(string title, string script, string fragment)
     {
+        TestCases.Collect("ext-error", title, script, null, error: fragment);
         string actual;
         try { actual = "kein Fehler: " + string.Join(" | ", RunExt(script)); }
         catch (Exception ex) { actual = ex.Message; }
@@ -6200,6 +6202,7 @@ Console.WriteLine("=== Array als Rueckgabetyp (int[] Name(), leere Klammern) ===
 
     void CheckArr(string title, string script, params string[] expected)
     {
+        TestCases.Collect("arr", title, script, expected);
         string[] actual;
         try { actual = RunArr(script).ToArray(); }
         catch (Exception ex) { actual = new[] { "AUSNAHME: " + ex.Message }; }
@@ -6210,6 +6213,7 @@ Console.WriteLine("=== Array als Rueckgabetyp (int[] Name(), leere Klammern) ===
 
     void CheckArrError(string title, string script, string fragment)
     {
+        TestCases.Collect("arr-error", title, script, null, error: fragment);
         string actual;
         try { actual = "kein Fehler: " + string.Join(" | ", RunArr(script)); }
         catch (Exception ex) { actual = ex.Message; }
@@ -6312,6 +6316,7 @@ Console.WriteLine("=== VM-Optimierungen: Value, Stack, Inline-Caches (Regression
     // access/bounds checks - the examples here therefore do not trigger them, except where `modes` says so).
     void CheckPerf(string title, string script, string[] expected, VmExecutionMode[]? modes = null)
     {
+        TestCases.Collect("perf", title, script, expected, modes);
         foreach (var mode in modes ?? new[] { VmExecutionMode.Debug, VmExecutionMode.Release, VmExecutionMode.Performance })
         {
             string[] actual;
@@ -6853,6 +6858,7 @@ Console.WriteLine("=== Kopieren: flat x / copy x (SPEC 2.4) ===");
 
     void CheckClone(string title, string script, params string[] expected)
     {
+        TestCases.Collect("clone", title, script, expected);
         string[] actual;
         try { actual = RunClone(script).ToArray(); }
         catch (Exception ex) { actual = new[] { "AUSNAHME: " + ex.Message }; }
@@ -6863,6 +6869,7 @@ Console.WriteLine("=== Kopieren: flat x / copy x (SPEC 2.4) ===");
 
     void CheckCloneError(string title, string script, string fragment)
     {
+        TestCases.Collect("clone-error", title, script, null, error: fragment);
         string actual;
         try { actual = "kein Fehler: " + string.Join(" | ", RunClone(script)); }
         catch (Exception ex) { actual = ex.Message; }
@@ -7124,6 +7131,7 @@ Console.WriteLine("=== Kopien: Owner bei Parametern und Zuweisungen; leave zerst
 
     void CheckLife(string title, string script, string[] expected, VmExecutionMode[]? modes = null)
     {
+        TestCases.Collect("life", title, script, expected, modes);
         foreach (var mode in modes ?? allModes)
         {
             string[] actual;
@@ -7270,6 +7278,7 @@ Console.WriteLine("=== Kopien: Owner bei Parametern und Zuweisungen; leave zerst
     //      (the main program waits for all fire threads, only then are the global destructors run)
     void CheckShutdown(string title, string script, string[] expected)
     {
+        TestCases.Collect("shutdown", title, script, expected);
         foreach (var mode in allModes)
         {
             string[] actual;
@@ -13376,6 +13385,7 @@ callbackTests:
 
     void CheckGl(string title, string script, string[] expected, VmExecutionMode[]? modes = null)
     {
+        TestCases.Collect("gl", title, script, expected, modes);
         foreach (var mode in modes ?? new[] { VmExecutionMode.Debug, VmExecutionMode.Release, VmExecutionMode.Performance })
         {
             string[] actual;
@@ -14134,6 +14144,7 @@ DebuggerTests.Run();
 
     void CheckLq(string title, string script, string[] expected, VmExecutionMode[]? modes = null)
     {
+        TestCases.Collect("lq", title, script, expected, modes);
         foreach (var mode in modes ?? new[] { VmExecutionMode.Debug, VmExecutionMode.Release, VmExecutionMode.Performance })
         {
             string[] actual;
@@ -14632,6 +14643,7 @@ DebuggerTests.Run();
 
     void CheckRf(string title, string script, string[] expected, VmExecutionMode[]? modes = null, bool packed = false)
     {
+        TestCases.Collect("rf", title, script, expected, modes, packed);
         foreach (var mode in modes ?? new[] { VmExecutionMode.Debug, VmExecutionMode.Release, VmExecutionMode.Performance })
         {
             string[] actual;
@@ -15001,6 +15013,7 @@ DebuggerTests.Run();
 
     void CheckSc(string title, string script, string[] expected)
     {
+        TestCases.Collect("sc", title, script, expected);
         foreach (var mode in new[] { VmExecutionMode.Debug, VmExecutionMode.Release, VmExecutionMode.Performance })
         {
             string[] actual;
@@ -15015,6 +15028,7 @@ DebuggerTests.Run();
     // like CheckSc, but not in the Performance mode (it does not check for destroyed objects)
     void CheckScChecked(string title, string script, string[] expected)
     {
+        TestCases.Collect("sc-checked", title, script, expected);
         foreach (var mode in new[] { VmExecutionMode.Debug, VmExecutionMode.Release })
         {
             string[] actual;

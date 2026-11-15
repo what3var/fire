@@ -144,7 +144,126 @@ def sync(moved, folder):
     print(f'{len(moved)} cases as files: {new} new, {changed} changed, {gone} gone')
     return new + changed
 
+
+# ---- the families of checks that only run in the VM: CheckPerf("title", script, expected, ...) and the like ----
+
+FAMILIES = {   # helper -> (folder under tests/cases, the call that runs a case from its file)
+    'CheckExt': ('vm-ext', 'CheckExt(c.Name, c.Source, c.Lines)'), 'CheckExtError': ('vm-ext-error', 'CheckExtError(c.Name, c.Source, c.Error!)'),
+    'CheckArr': ('vm-arr', 'CheckArr(c.Name, c.Source, c.Lines)'), 'CheckArrError': ('vm-arr-error', 'CheckArrError(c.Name, c.Source, c.Error!)'),
+    'CheckPerf': ('vm-perf', 'CheckPerf(c.Name, c.Source, c.Lines, c.Modes)'),
+    'CheckClone': ('vm-clone', 'CheckClone(c.Name, c.Source, c.Lines)'), 'CheckCloneError': ('vm-clone-error', 'CheckCloneError(c.Name, c.Source, c.Error!)'),
+    'CheckLife': ('vm-life', 'CheckLife(c.Name, c.Source, c.Lines, c.Modes)'), 'CheckShutdown': ('vm-shutdown', 'CheckShutdown(c.Name, c.Source, c.Lines)'),
+    'CheckGl': ('vm-gl', 'CheckGl(c.Name, c.Source, c.Lines, c.Modes)'), 'CheckLq': ('vm-lq', 'CheckLq(c.Name, c.Source, c.Lines, c.Modes)'),
+    'CheckRf': ('vm-rf', 'CheckRf(c.Name, c.Source, c.Lines, c.Modes, c.Packed)'),
+    'CheckSc': ('vm-sc', 'CheckSc(c.Name, c.Source, c.Lines)'), 'CheckScChecked': ('vm-sc-checked', 'CheckScChecked(c.Name, c.Source, c.Lines)'),
+}
+
+def statement_end(text, start):
+    """The index behind the `;` of the call that starts at `start` (a helper name followed by `(`): strings, raw strings, chars and comments are skipped."""
+    i, depth, n = start, 0, len(text)
+    while i < n:
+        c = text[i]
+        if c == '/' and text.startswith('//', i): i = text.index('\n', i); continue
+        if c == '/' and text.startswith('/*', i): i = text.index('*/', i) + 2; continue
+        if c == '"' or (c in '$@' and re.match(r'[$@]+"', text[i:])):
+            j = i
+            while text[j] in '$@': j += 1
+            verbatim = '@' in text[i:j]
+            q = 0
+            while j + q < n and text[j + q] == '"': q += 1
+            if q >= 3:   # a raw string: ends with as many quotes
+                i = text.index('"' * q, j + q) + q
+                while i < n and text[i] == '"': i += 1
+                continue
+            if q == 2: i = j + 2; continue   # ""
+            j += 1
+            while True:
+                if text[j] == '\\' and not verbatim: j += 2; continue
+                if text[j] == '"':
+                    if verbatim and text[j + 1] == '"': j += 2; continue
+                    break
+                j += 1
+            i = j + 1; continue
+        if c == "'":
+            j = i + 1
+            while text[j] != "'": j += 2 if text[j] == '\\' else 1
+            i = j + 1; continue
+        if c == '(': depth += 1
+        elif c == ')':
+            depth -= 1
+            if depth == 0:
+                m = re.match(r'\s*;', text[i + 1:])
+                return i + 1 + m.end() if m else None
+        i += 1
+    return None
+
+def move_calls(text, collected):
+    """(the text with the calls of the families replaced by a loop over their files, the cases per folder as (title, source, notes, entry))"""
+    crlf = '\r\n' in text[:3000]
+    if crlf: text = text.replace('\r\n', '\n')
+    by = {}   # (folder, title) -> entry, only titles that one check has
+    count = {}
+    for e in collected: count[(e['family'], e['title'])] = count.get((e['family'], e['title']), 0) + 1
+    for e in collected:
+        if count[(e['family'], e['title'])] == 1: by[('vm-' + e['family'], e['title'])] = e
+    call = re.compile(r'^    (' + '|'.join(FAMILIES) + r')\("((?:[^"\\]|\\["\\])*)", ', re.M)
+    out, pos, cases, started, between = [], 0, {}, set(), []
+    for m in call.finditer(text):
+        if m.start() < pos: continue
+        helper, title = m.group(1), unescape(m.group(2))
+        folder, loop = FAMILIES[helper]
+        e = by.get((folder, title))
+        end = statement_end(text, m.start() + 4)
+        if e is None or end is None or text[end:end + 1] != '\n': continue
+        if e['expected'] is not None and any('\n' in x or '\r' in x for x in e['expected']): continue
+        if '\n' in title or '\r' in e['script']: continue
+        # comments right above the call belong to the case
+        head = text[pos:m.start()]
+        lines = head.split('\n')   # (the last element is '' : the call starts a line)
+        notes = []
+        while len(lines) > 1 and lines[-2].strip().startswith('//'): notes.insert(0, lines.pop(-2).strip()[2:].strip())
+        head = '\n'.join(lines)
+        out.append(head)
+        if folder not in started:
+            started.add(folder)
+            out.append(f'    // the cases of this check are files: tests/cases/{folder} (TestCases)\n    foreach (var c in TestCases.Load("{folder}")) {loop};\n')
+        cases.setdefault(folder, []).append((title, e['script'], notes, e))
+        pos = end + 1
+        # (one empty line where the calls were, not one per call)
+        tail = ''.join(out[-3:])
+        while text[pos:pos + 1] == '\n' and (tail.endswith('\n\n') or tail.strip() == ''): pos += 1
+    out.append(text[pos:])
+    result = ''.join(out)
+    if crlf: result = result.replace('\n', '\r\n')
+    return result, cases
+
+def write_vm_cases(cases, root):
+    total = 0
+    for folder, items in sorted(cases.items()):
+        d = os.path.join(root, folder); os.makedirs(d, exist_ok=True)
+        for idx, (title, script, notes, e) in enumerate(items):
+            fid = '%04d-%s' % ((idx + 1) * 10, slug(title))
+            extra = ''
+            if e.get('modes'): extra += '//# modes: ' + ' '.join(e['modes']) + '\n'
+            if e.get('packed'): extra += '//# packed\n'
+            text = script + '\n' + ''.join('//# note: ' + x + '\n' for x in notes) + extra + '//# name: ' + title + '\n'
+            open(os.path.join(d, fid + '.fire'), 'w', encoding='utf-8', newline='').write(text)
+            if e['error'] is not None: open(os.path.join(d, fid + '.error'), 'w', encoding='utf-8', newline='').write(e['error'] + '\n')
+            else: open(os.path.join(d, fid + '.expected'), 'w', encoding='utf-8', newline='').write(''.join(x + '\n' for x in e['expected']))
+            total += 1
+        print(f'{folder}: {len(items)} cases')
+    print(f'{total} cases as files')
+
 if __name__ == '__main__':
+    if len(sys.argv) == 6 and sys.argv[1] == 'calls':
+        # cases.py calls <Program.cs> <collected.jsonl of FIRE_TESTS_COLLECT> <output.cs> <tests/cases>: the checks of the VM families as files (done once)
+        import json
+        collected = [json.loads(l) for l in open(sys.argv[3], encoding='utf-8') if l.strip()]
+        result, cases = move_calls(open(sys.argv[2], 'rb').read().decode('utf-8'), collected)
+        open(sys.argv[4], 'wb').write(result.encode('utf-8'))
+        write_vm_cases(cases, sys.argv[5])
+        sys.exit(0)
+
     if len(sys.argv) < 4 or sys.argv[1] != 'strip': sys.exit(__doc__)
     text = open(sys.argv[2], 'rb').read().decode('utf-8')
     stripped, moved = strip(text)
