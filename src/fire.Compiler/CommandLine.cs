@@ -94,8 +94,8 @@ namespace fire.Compiler
               fire.Compiler run   <file>... [-m DEBUG|RELEASE|PERFORMANCE] [-f 32|64] [-i 32|64] [--global-jobs safepoints|sleep|sync] [-- <arguments of the program>...]
               fire.Compiler build <file>... [-o <target.exe>] [-m DEBUG|RELEASE|PERFORMANCE] [-f 32|64] [-i 32|64] [--engine vm|native] [-t <target>] [--toolchain <name>] [--config <file>] [--keep] [--stripping 0-3] [--keep-all] [--optimize speed|size] [--linkage source|static|shared|plugin] [--host <program>] [--global-jobs safepoints|sleep|sync]
               fire.Compiler native <file>... [-o <target.cpp>] [-t <target>] [-f 32|64] [-i 32|64] [--config <file>] [--stripping 0-3] [--keep-all] [--optimize speed|size] [--global-jobs safepoints|sleep|sync]
-              fire.Compiler bytecode <file>... [-o <out.fbc>] [-m ...] [-f 32|64] [-i 32|64] [-D name]...
-              fire.Compiler dump  <file>... | <program.fbc> [-o <file>] [-m ...] [-f 32|64] [-i 32|64] [-D name]...
+              fire.Compiler bytecode <file>... | <project.fireproj> [-o <out.fbc>] [-m ...] [-f 32|64] [-i 32|64] [-D name]...
+              fire.Compiler dump  <file>... | <project.fireproj> | <program.fbc> [-o <file>] [-m ...] [-f 32|64] [-i 32|64] [-D name]...
               fire.Compiler ui    <file.fxml> [-o <file>]
               fire.Compiler biscuit <file.biscuit> [-o <file>]
               fire.Compiler falstad <circuit.txt> [-o <file.biscuit>]
@@ -572,12 +572,27 @@ namespace fire.Compiler
         {
             foreach (var file in options.Files)
                 if (!File.Exists(file)) { stderr.WriteLine($"File not found: {file}"); return ExitUsage; }
-            if (options.Files.Any(IsProjectFile)) { stderr.WriteLine($"{options.Command.ToString().ToLowerInvariant()} takes source files, not a project or a solution."); return ExitUsage; }
+            // a project or a solution: the program it builds (of a solution the startup project, or -p)
+            fire.Projects.BuildPlan? plan = null;
+            if (options.Files.Any(IsProjectFile))
+            {
+                if (options.Files.Count != 1) { stderr.WriteLine($"{options.Command.ToString().ToLowerInvariant()} takes source files or one project."); return ExitUsage; }
+                try
+                {
+                    var workspace = fire.Projects.Workspace.Open(options.Files[0]);
+                    plan = ProjectBuilder.PlanOrThrow(workspace, ProjectBuilder.SelectProject(workspace, options.ProjectName));
+                }
+                catch (fire.Projects.ProjectException ex) { stderr.WriteLine(ex.Message); return ExitUsage; }
+                if (plan.Type == fire.Projects.OutputType.Library) { stderr.WriteLine($"'{plan.Name}' is a library: it is no program by itself (a program that imports it carries it)."); return ExitUsage; }
+            }
             fire.Runtime.LinkedProgram program;
             try
             {
                 if (options.Command == CommandKind.Dump && options.Files.Count == 1 && fire.Bytecode.ProgramFile.IsProgram(ReadHead(options.Files[0])))
                     program = fire.Bytecode.ProgramFile.Read(File.ReadAllBytes(options.Files[0]));
+                else if (plan != null)
+                    program = new Linker { Defines = options.Defines, Plan = plan, SourcePaths = plan.SourcePaths.Cast<string?>().ToList() }
+                        .CompileAndLink(plan.SourceTexts, null, null, options.Mode, options.FloatWidth);
                 else
                     program = new Linker { Defines = options.Defines, BasePath = BaseDirectory(options), SourcePaths = SourceFiles(options) }
                         .CompileAndLink(options.Files.Select(File.ReadAllText).ToList(), null, null, options.Mode, options.FloatWidth);
