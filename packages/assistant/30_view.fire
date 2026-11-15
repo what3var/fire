@@ -97,11 +97,11 @@ namespace Assistant {
             // the header: folder and branch, the small buttons at the right (history, sessions, close)
             this.folderLabel = new UI.Label("", 34, 15)
             this.folderLabel.Color = new SolidBrush(UI.Color.Rgb(255, 255, 255))
-            this.folderLabel.FontSize = 14
+            this.folderLabel.FontSize = 13
             this.ui.Add(this.folderLabel)
             this.branchLabel = new UI.Label("", 34, 35)
             this.branchLabel.Color = new SolidBrush(UI.Color.Rgb(255, 255, 255))
-            this.branchLabel.FontSize = 14
+            this.branchLabel.FontSize = 13
             // the branch in bold (the bold file of the theme's font, where there is one)
             string bold = this.ui.theme.font + " Bold"
             if (this.ui.theme.font != "" && Fonts.Has(bold)) { this.branchLabel.Font = bold }
