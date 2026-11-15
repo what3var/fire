@@ -1,0 +1,7 @@
+record RL { int n }
+var ch = new Channel<RL>()
+var r = new RL()
+ch.Send(r)
+print(ch.Count)
+//# modes: Release
+//# name: types 18: record RL { int n }

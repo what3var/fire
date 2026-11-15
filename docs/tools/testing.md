@@ -215,6 +215,12 @@ checks (title, source, expected lines) as one JSON object per line: the list bef
 `tests/cases/smoke` holds the oldest tests of the language - one small program per feature, run the way `forge run` runs it, compared with the output
 next to it (`//# note:` keeps the sentence the test program used to print for a reader instead of checking).
 
+`tests/cases/diag`, `types` and `syntax` hold every source the checks of `DiagnosticTests`, `TypeTests` and `SyntaxTests` compile, each with what forge
+says about it: `.diagnostics` is the error output (the warnings and errors with their codes and lines, an exception nothing catches), `.expected` what
+the program prints; `//# types: strict` runs the case with `--types strict`. These files are recorded, not written by hand
+(`tests/tools/cases.py record <forge> tests/cases/types`): they say what the compiler does today, the checks in C# say what is meant - a new message or
+a moved line shows up as a difference to look at.
+
 **Without the test program:** `tests/run-cases.sh <forge> [<group>...]` runs every case with `forge run` and compares what it prints - the check a forge
 and a VM in C will be measured with, and a quick one for the ones in C# (all 630 cases: a few minutes). A case that only makes sense inside the test
 program says so: `//# skip: forge run - <why>`. `tests/reference.sh <forge> <folder>` writes what the compiler makes of every case (the program as

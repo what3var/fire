@@ -1,0 +1,3 @@
+word[16] w = 1
+//# modes: Release
+//# name: types 226: word[16] w = 1

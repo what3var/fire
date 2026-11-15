@@ -1,0 +1,4 @@
+warning TC001: Cannot assign a value of type 'string' to 'a' of type 'int' (line 6)
+warning TC001: Cannot assign a value of type 'string' to 'b' of type 'int' (line 7)
+warning TC001: Cannot assign a value of type 'string' to 'c' of type 'int' (line 8)
+Unhandled exception of type 'ArgumentException': Variable 'a' is an int, not String.

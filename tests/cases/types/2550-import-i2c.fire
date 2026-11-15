@@ -1,0 +1,5 @@
+#import "i2c"
+print(1)
+//# types: strict
+//# modes: Release
+//# name: types 255: #import "i2c"

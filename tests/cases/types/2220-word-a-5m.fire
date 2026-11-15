@@ -1,0 +1,8 @@
+word a = 5m
+word b : s = 1
+class W { word f : kg
+ undefined Set(word v : mm) { } }
+word c = 1
+c = 2s
+//# modes: Release
+//# name: types 222: word a = 5m

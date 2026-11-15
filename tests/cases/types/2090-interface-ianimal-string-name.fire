@@ -1,0 +1,22 @@
+interface IAnimal { string Name() }
+interface IPet { }
+interface IRobot { }
+class Animal { }
+class Dog : Animal, IAnimal { string Name() { return "Rex" } }
+class Puppy : Dog, IPet { }
+class Cat : Animal { }
+class Car { }
+Animal a = new Puppy()
+print(a!Dog.Name())
+Dog d = new Puppy()
+print(d!Animal)
+print(d!IPet)
+IAnimal ia = d
+print(ia!Dog.Name() + " " + ia!Puppy)
+IAnimal none = undefined
+print(none!IRobot)
+any x = new Cat()
+try { print(x!Dog) } catch (ArgumentException e) { print("any") }
+print(65!char)
+//# modes: Release
+//# name: types 209: interface IAnimal { string Name() }

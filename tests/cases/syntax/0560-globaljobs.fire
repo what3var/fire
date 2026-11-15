@@ -1,0 +1,4 @@
+#globaljobs
+print(1)
+//# modes: Release
+//# name: syntax 56: #globaljobs

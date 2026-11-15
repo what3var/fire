@@ -1,0 +1,12 @@
+class Bag { any kind
+    any items
+    construct(any initial) {
+        if (initial is of int) { this.kind = initial; return }
+        this.items = try take initial
+    }
+}
+var l = new List<int>([1, 2])
+var b = new Bag([3, 4])
+print(l.Count + b.items.length)
+//# modes: Release
+//# name: diag 32: class Bag { any kind

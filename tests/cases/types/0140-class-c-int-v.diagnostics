@@ -1,0 +1,1 @@
+error TC028: 'with' without 'copy' or 'flat' is for records - 'C' is a class: write 'copy x with { ... }' (a deep copy) or 'flat x with { ... }' (line 3)

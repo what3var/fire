@@ -1,0 +1,4 @@
+int c : mm = 2kg
+//# types: strict
+//# modes: Release
+//# name: types 100: int c : mm = 2kg

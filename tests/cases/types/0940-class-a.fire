@@ -1,0 +1,4 @@
+class A { }
+A<int> a = new A()
+//# modes: Release
+//# name: types 94: class A { }

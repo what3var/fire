@@ -1,0 +1,6 @@
+class W { static undefined Go() { int k = 3
+ fire { print(k) } } }
+W.Go()
+//# types: strict
+//# modes: Release
+//# name: types 36: class W { static undefined Go() { int k = 3

@@ -1,0 +1,1 @@
+0280-unit-a-aa-coerce-cc-2.fire(1): error E3000: The unit 'aa' is defined by units that are defined by it (aa, cc) - one of them needs a 'coerce' to a unit outside of the circle, or none

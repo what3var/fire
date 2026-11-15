@@ -1,0 +1,11 @@
+class Box { int v
+    construct(int v) { this.v = v }
+    int operator[](int i) { return this.v }
+}
+string t = "abc"
+try { int c = t[0] } catch (ArgumentException e) { }
+var bx = new Box(3)
+try { bool w = bx[0] } catch (ArgumentException e) { }
+print(bx[1])
+//# modes: Release
+//# name: types 90: class Box { int v

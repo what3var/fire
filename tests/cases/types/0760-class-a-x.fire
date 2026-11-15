@@ -1,0 +1,3 @@
+class A { x }
+//# modes: Release
+//# name: types 76: class A { x }

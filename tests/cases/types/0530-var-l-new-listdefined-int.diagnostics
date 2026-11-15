@@ -1,0 +1,1 @@
+0530-var-l-new-listdefined-int.fire(1): error E3000: 'defined int' cannot be a type argument - 'defined' belongs to variables, parameters, fields, properties and return types

@@ -1,0 +1,7 @@
+class Base { static int Count = 3
+ static Twice(int x) { return x * 2 } }
+class Derived : Base { }
+enum Kind { A, B }
+print(Derived.Count + " " + Base.Twice(4) + " " + Kind.B)
+//# modes: Release
+//# name: diag 21: class Base { static int Count = 3

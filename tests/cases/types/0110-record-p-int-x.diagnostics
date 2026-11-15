@@ -1,0 +1,3 @@
+error TC026: 'x' is a field of the record 'P': a record is written only while it is constructed (in its constructor) - a changed copy is 'copy r with { .x = ... }' (line 3)
+error TC026: 'x' is a field of the record 'P': a record is written only while it is constructed (in its constructor) - a changed copy is 'copy r with { .x = ... }' (line 5)
+error TC026: 'x' is a field of the record 'P': a record is written only while it is constructed (in its constructor) - a changed copy is 'copy r with { .x = ... }' (line 6)

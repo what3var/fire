@@ -1,0 +1,17 @@
+class Sample {
+    int v = 7
+    static Sample Make() { return new Sample() }
+}
+class Holder {
+    Sample s
+    construct(Sample s) { this.s = s }
+}
+class Keeper {
+    Sample s
+    construct(Sample s) { this.s = try take s }
+}
+var h = new Holder(Sample.Make())
+var h2 = new Holder(new Sample())
+print(1)
+//# modes: Release
+//# name: diag 30: class Sample {

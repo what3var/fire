@@ -1,0 +1,10 @@
+var x = 0
+try { x += 0.5 } catch (ArgumentException e) { print(e.message) }
+print(x)
+var f = 0.
+f += 0.5
+print(f)
+var g = 3.
+print(g / 2)
+//# modes: Release
+//# name: types 24: var x = 0

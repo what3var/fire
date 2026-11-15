@@ -1,0 +1,1 @@
+0320-prefixed-unit-celsius-c-coerce-k-value-2.fire(1): error E3000: A unit with an offset takes no prefixes - declare 'C' without 'prefixed'

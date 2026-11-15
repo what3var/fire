@@ -1,0 +1,4 @@
+int q
+print(1)
+//# modes: Release
+//# name: types 70: int q

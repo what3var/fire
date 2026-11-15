@@ -1,0 +1,12 @@
+class A { protected string M() { return "a" } int P { get { return 1 } } bool operator==(any o) { return false } T Id<T>(T x) { return x } }
+class B : A {
+    [Doc "x"]
+    protected override string M() { return "b" }
+    override int P { get { return 2 } }
+    override bool operator==(any o) { return true }
+    override T Id<T>(T x) { return x }
+    string Show() { return this.M() + this.P + (this == 1) + this.Id(5) }
+}
+print(new B().Show())
+//# modes: Release
+//# name: syntax 37: class A { protected string M() { return "a" } int P { get { return 1 }

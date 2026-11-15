@@ -1,0 +1,1 @@
+0410-class-b-override-int-x.fire(1): error E3000: A field cannot be 'override' - only methods, properties and operators replace inherited ones

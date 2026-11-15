@@ -1,0 +1,1 @@
+error TC023: The thread uses the local 'k' of the code around it: it gets a copy of it - a change does not reach the variable outside. Write 'taking k' where it is used (a copy) or 'handover k' (moved to the thread). (line 2)

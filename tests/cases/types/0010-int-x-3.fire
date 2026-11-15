@@ -1,0 +1,5 @@
+int x = 3
+try { x = "hello" } catch (ArgumentException e) { print(e.message) }
+print(x)
+//# modes: Release
+//# name: types 1: int x = 3

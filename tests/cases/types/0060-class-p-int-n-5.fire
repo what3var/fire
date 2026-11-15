@@ -1,0 +1,5 @@
+class P { int n = 5
+ undefined Go() { fire { int k = n } } }
+new P().Go()
+//# modes: Release
+//# name: types 6: class P { int n = 5

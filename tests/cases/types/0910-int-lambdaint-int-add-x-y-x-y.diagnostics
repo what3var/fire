@@ -1,0 +1,6 @@
+warning TC001: Cannot assign a value of type 'int' to 'r' of type 'bool' (line 2)
+warning TC002: Parameter 'z' of the lambda is of type 'int', but the lambda is called with 'string' (line 3)
+warning TC001: Cannot assign a value of type 'int lambda<int>' to 'wrong' of type 'lambda<string>' (line 3)
+warning TC003: Cannot assign a value of type 'string' to the return value of type 'int' (line 4)
+warning TC004: Parameter 'p' of the lambda has no type and is assumed to be 'any'. Please add a type (use 'any' if every type is allowed). (line 5)
+warning TC001: Cannot assign a value of type 'int' to 'g' of type 'bool' (line 7)

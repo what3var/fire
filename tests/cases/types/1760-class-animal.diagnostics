@@ -1,0 +1,1 @@
+error E4066: Property 'A' of class 'C' is 'lambda<int, int>', interface 'I' declares it as 'lambda<int>' (line 6)

@@ -1,0 +1,1 @@
+error E4010: Class 'Mem' does not implement interface 'IWriter' completely (missing method 'Write' with 1 parameter(s)) (line 4)

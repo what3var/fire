@@ -35,7 +35,7 @@ one() {   # <group> <case file>
         code=${out##*x}; out=${out%x*}
         err=$(grep -v '^warning ' "$tmp")
         if [ -f "$n.diagnostics" ]; then   # a case about the messages of the compiler: the whole error output, and the output
-            cmp -s "$tmp" "$n.diagnostics" || bad="$bad $mode(diagnostics)"
+            grep -v -e '^Building the native part of ' -e '^Installing the standard package ' "$tmp" | cmp -s - "$n.diagnostics" || bad="$bad $mode(diagnostics)"
             want=$(cat "$n.expected"; echo x); [ "$out" = "${want%x}" ] || bad="$bad $mode"
             continue
         fi

@@ -1,0 +1,4 @@
+unit Gauss: Gs { coerce m => 2 }
+print(2Gs:m + " " + 1ms + " " + 1hs:s)
+//# modes: Release
+//# name: syntax 26: unit Gauss: Gs { coerce m => 2 }

@@ -1,0 +1,1 @@
+error E4059: Field 'x' of class 'A' needs a type: a field is not declared with 'var' (use the type it holds, or 'any' if every type is allowed) (line 1)

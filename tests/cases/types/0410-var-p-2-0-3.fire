@@ -1,0 +1,6 @@
+var p = 2.0 ^ 3
+int i = p
+print(1)
+//# types: strict
+//# modes: Release
+//# name: types 41: var p = 2.0 ^ 3

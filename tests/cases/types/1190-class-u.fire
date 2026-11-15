@@ -1,0 +1,6 @@
+class U {
+    int F(int x) { return 1 }
+    int F(int y) { return 2 }
+}
+//# modes: Release
+//# name: types 119: class U {

@@ -1,0 +1,6 @@
+class C { int v }
+record R { int x }
+var d = new C() with { .v = 1 }
+print(1)
+//# modes: Release
+//# name: types 14: class C { int v }

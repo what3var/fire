@@ -1,0 +1,4 @@
+class K { defined string s }
+print("[" + new K().s + "]")
+//# modes: Release
+//# name: types 52: class K { defined string s }

@@ -1,0 +1,14 @@
+class A {
+    static int a = 2
+    static int b = A.a * 3
+    static any f = () => B.late
+    static int c = A.Twice()
+    static int Twice() { return A.a * 2 }
+}
+class B {
+    static int late = A.b + 1
+}
+any g = A.f
+print(A.b + " " + A.c + " " + B.late + " " + g())
+//# modes: Release
+//# name: diag 29: class A {

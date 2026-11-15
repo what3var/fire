@@ -1,0 +1,12 @@
+interface IAnimal { string Name() }
+interface IPet { }
+interface IRobot { }
+class Animal { }
+class Dog : Animal, IAnimal { string Name() { return "Rex" } }
+class Puppy : Dog, IPet { }
+class Cat : Animal { }
+class Car { }
+Cat c = undefined
+print(c!Dog)
+//# modes: Release
+//# name: types 206: interface IAnimal { string Name() }

@@ -1,0 +1,22 @@
+interface IReader { int Read() }
+interface IWriter { undefined Write(int v) }
+interface IStream : IReader, IWriter { int Size { get; } }
+class Mem : IStream {
+    int last
+    int Read() { return this.last }
+    undefined Write(int v) { this.last = v }
+    int Size { get { return 1 } }
+}
+class Use {
+    static int Pull(IReader r) { return r.Read() }
+    static string Pick(IWriter w) { return "writer" }
+    static string Pick(string s) { return "string" }
+}
+IStream s = new Mem()
+s.Write(7)
+IReader r = s
+IWriter w = s
+print(Use.Pull(s) + " " + r.Read() + " " + Use.Pick(s) + " " + s.Size)
+print((s is of IReader) + " " + (new Mem() is of IWriter) + " " + (r!IStream).Size)
+//# modes: Release
+//# name: types 182: interface IReader { int Read() }

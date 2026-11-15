@@ -1,0 +1,11 @@
+enum C { A, B }
+class K { defined int n
+defined float f
+defined bool b
+static string S(defined int v) { return "" + v } }
+var k = new K()
+defined int d
+var trust = 3
+print(k.n + " " + k.f + " " + k.b + " " + d + " " + K.S(C.B!int) + " " + (trust + 1))
+//# modes: Release
+//# name: types 49: enum C { A, B }

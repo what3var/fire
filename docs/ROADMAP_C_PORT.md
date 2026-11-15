@@ -180,7 +180,7 @@ Noch kein C; alles hier ist für sich nützlich und macht den Rest prüfbar.
      `CheckRf`, `CheckSc`, `CheckScChecked`, `CheckExt`, `CheckArr`, `CheckClone` und ihren Fehler-Varianten sind Dateien in `tests/cases/vm-*`
      (mit Modi, `packed`, `.error`); das Testprogramm ruft je Ordner dieselbe Prüfung auf wie vorher. `Program.cs`: noch 18 700 Zeilen.
    * ~~Der Läufer ohne das Testprogramm~~ (umgesetzt): `tests/run-cases.sh <forge>` führt jeden Fall mit `forge run` aus und vergleicht - das Maß für
-     forge und die VM in C. Stand mit dem C#-forge (nach dem Merge bis PR 51, mit `smoke`): 684 von 689 richtig. Neun Reflection-Fälle bekamen dafür ihr `#import "reflection"` (das
+     forge und die VM in C. Stand mit dem C#-forge (nach dem Merge bis PR 51): 1059 von 1064 richtig. Neun Reflection-Fälle bekamen dafür ihr `#import "reflection"` (das
      Testprogramm hatte die Bibliothek stillschweigend dazugelegt), ein Fall ist als nur im Testprogramm sinnvoll markiert (`//# skip: forge run`).
    * **Offen - vier Fälle weichen unter `forge run` ab** (im Testprogramm, das die VM im eigenen Prozess startet, laufen sie):
      `native/0030` (wird seit E4076 nicht mehr übersetzt: `Go` statisch und als Instanzmethode - der Fall ist anzupassen),
@@ -191,9 +191,12 @@ Noch kein C; alles hier ist für sich nützlich und macht den Rest prüfbar.
      sei - **geprüft wurde nichts**. 58 davon (ein Skript, läuft mit `forge run` sauber durch) sind jetzt Fälle in `tests/cases/smoke` mit
      festgehaltener Ausgabe; der alte Satz steht als `//# note:` im Fall. Zwei dieser Sätze waren überholt (Enums in Namespaces drucken Namen statt
      Zahlen; ein nicht fertig konstruiertes Objekt ruft kein `destruct()` mehr) - festgehalten ist, was die VM heute tut.
-   * **Offen:** die übrigen Abschnitte dort (eigene Natives, mehrere Dateien, erwartete Fehler, Aufbau von Hand); Diagnosen (`DiagnosticTests`,
-     `TypeTests`, `SyntaxTests`) als Fälle mit erwarteten Meldungen; Completion (`CheckCompletion`) mit `forge serve`. Was am Wirt hängt (`CheckUi`,
-     `CheckDev`, `CheckCb`, `CheckIo`, `CheckNet`, `CheckGf`), an Fenstern oder an Toolchains, bleibt Code.
+   * ~~Diagnosen~~ (umgesetzt, zusätzlich zu den Prüfungen in C#): jede Quelle, die `DiagnosticTests`, `TypeTests` und `SyntaxTests` übersetzen, ist
+     ein Fall in `tests/cases/diag`, `types`, `syntax` (375) mit dem, was forge dazu sagt (`.diagnostics`: Warnungen, Fehler, Abbruch) und ausgibt -
+     das Maß "Diagnosen gleich" für das Frontend in C. `tests/tools/cases.py record <forge> <ordner>` schreibt sie neu.
+   * **Offen:** die übrigen Abschnitte am Anfang von `Program.cs` (eigene Natives, mehrere Dateien, erwartete Fehler, Aufbau von Hand); Completion
+     (`CheckCompletion`) mit `forge serve`. Was am Wirt hängt (`CheckUi`, `CheckDev`, `CheckCb`, `CheckIo`, `CheckNet`, `CheckGf`), an Fenstern oder
+     an Toolchains, bleibt Code.
 3. ~~**Determinismus**~~ (geprüft, es war nichts zu beseitigen): zweimal übersetzt ergibt byte-gleiche `.fbc` und denselben Text von
    `fire_program.c` - für ein Skript mit einem Stück von allem und für jedes Beispiel von spark (dieselben Tests), von Hand auch über zwei Prozesse.
 4. ~~**Referenzstände**~~ (umgesetzt): `tests/reference.sh <forge> <ordner>` schreibt für jeden Fall aus `tests/cases` und jedes Beispiel von spark

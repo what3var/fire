@@ -1,0 +1,7 @@
+class P { int n = 5
+ undefined Go() { int n = 7
+ fire taking n { int k = n + 1 } } }
+new P().Go()
+print("ok")
+//# modes: Release
+//# name: types 5: class P { int n = 5

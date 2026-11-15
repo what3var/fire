@@ -1,0 +1,14 @@
+#import "time"
+class Item { int v }
+var a = new Item()
+a.v = 1
+var b = 2
+var c = new Item()
+c.v = 3
+var done = 0
+fire handover a taking b handover c { sync global { done = a.v + b + c.v } }
+print((a == undefined) + " " + b + " " + (c == undefined))
+while (done == 0) { Sleep(5ms) }
+print(done)
+//# modes: Release
+//# name: syntax 45: #import "time"

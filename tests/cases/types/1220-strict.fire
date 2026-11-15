@@ -1,0 +1,11 @@
+#strict
+class U {
+    static string F(int x) { return "int" }
+    static string F(string s) { return "string" }
+}
+any v = "x"
+print(U.F(v))
+v = 3
+print(U.F(v))
+//# modes: Release
+//# name: types 122: #strict

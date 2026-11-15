@@ -1,0 +1,7 @@
+class K { static defined int T(defined int x) { return x * 2 } static defined int G(int y) { return K.T(trust y) } }
+int s = 0
+for (int i = 0; i < 3; i++) { s = s + i }
+var w = s * 2
+print(K.T(s) + K.T(w) + K.T(4) + K.T(s + 1) + K.G(5))
+//# modes: Release
+//# name: types 46: class K { static defined int T(defined int x) { return x * 2 } static 

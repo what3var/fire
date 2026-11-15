@@ -1,0 +1,2 @@
+error TC001: Cannot assign a value of type 'string' to 'q' of type 'int' (line 2)
+error TC001: Cannot assign a value of type 'int' to 'b' of type 'bool' (line 3)

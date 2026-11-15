@@ -1,0 +1,3 @@
+print(unknownName)
+//# modes: Release
+//# name: diag 11: print(unknownName)

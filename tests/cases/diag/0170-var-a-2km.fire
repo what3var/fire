@@ -1,0 +1,6 @@
+var a = 2km
+class U { static string S(any v) { return "" + v } }
+print(U.S(a:m))
+print(U.S(v: a))
+//# modes: Release
+//# name: diag 17: var a = 2km

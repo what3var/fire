@@ -1,0 +1,8 @@
+foreach (a in [1, 2, 3]) {
+    foreach (b in [10, 20]) {
+        try { if (a == 2) continue 2; if (a == 3 && b == 20) break 2; print(a * b) } catch (Exception e) { }
+    }
+}
+print("end")
+//# modes: Release
+//# name: syntax 13: foreach (a in [1, 2, 3]) {

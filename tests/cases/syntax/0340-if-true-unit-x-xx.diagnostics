@@ -1,0 +1,1 @@
+0340-if-true-unit-x-xx.fire(1): error E3000: A unit is declared at the top level of a file, not inside a block, a class or a namespace

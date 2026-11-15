@@ -1,0 +1,4 @@
+class A { M() { return 1 } }
+print(1)
+//# modes: Release
+//# name: types 82: class A { M() { return 1 } }

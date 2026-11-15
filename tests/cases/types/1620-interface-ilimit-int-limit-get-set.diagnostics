@@ -1,0 +1,1 @@
+error E4066: Property 'Delay' of class 'Lim' is 'float : s', interface 'ILimit' declares it as 'float : ms' (line 6)

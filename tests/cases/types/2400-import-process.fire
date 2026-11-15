@@ -1,0 +1,5 @@
+#import "process"
+print(1)
+//# types: strict
+//# modes: Release
+//# name: types 240: #import "process"

@@ -1,0 +1,10 @@
+class A {
+    int n
+    int Count { get { return this.n } set { this.n = value } }
+    float:m Len { get { return 1m } set { } }
+    undefined Set() { Count = "text"; n = "x"; Len = 3s }
+}
+class B : A { undefined Go() { Count = true } }
+print(1)
+//# modes: Release
+//# name: types 112: class A {

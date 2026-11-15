@@ -1,0 +1,5 @@
+int x : any = 3m
+x = 5s
+print(x)
+//# modes: Release
+//# name: types 95: int x : any = 3m

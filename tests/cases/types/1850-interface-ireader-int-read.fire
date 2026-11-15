@@ -1,0 +1,7 @@
+interface IReader { int Read() }
+interface IWriter { undefined Write(int v) }
+interface IStream : IReader, IWriter { int Size { get; } }
+class Holder<T> where T is of IStream { T item }
+var a = new Holder<IReader>()
+//# modes: Release
+//# name: types 185: interface IReader { int Read() }

@@ -1,0 +1,7 @@
+class P { int age
+ construct(int a) { this.age = a } }
+class Probe { string Show(lambda expression<P> e) { return e.ToString() } }
+var pr = new Probe()
+print(pr.Show(p => p.age++))
+//# modes: Release
+//# name: types 10: class P { int age

@@ -1,0 +1,6 @@
+class K { static defined int T(defined int x) { return x } static defined int R(int y) { return y } }
+int u
+try { K.T(u) } catch (ArgumentException e) { print(e.message) }
+print(K.R(3))
+//# modes: Release
+//# name: types 47: class K { static defined int T(defined int x) { return x } static defi

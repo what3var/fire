@@ -1,0 +1,5 @@
+class Dog { }
+defined Dog d = new Dog()
+d = undefined
+//# modes: Release
+//# name: types 63: class Dog { }

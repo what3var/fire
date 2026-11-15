@@ -268,7 +268,9 @@ def record(forge, folder):
             if l.startswith('//# modes: '): args += ['-m', l[len('//# modes: '):].split(' ')[0].upper()]
         try: r = subprocess.run(args, capture_output=True, cwd=folder, timeout=120)
         except subprocess.TimeoutExpired: print('timeout: ' + f); continue
-        for ext, data in (('.expected', r.stdout), ('.diagnostics', r.stderr)):
+        # (what forge says about its own work - a library it builds on first use - is not about the program)
+        stderr = b''.join(l for l in r.stderr.splitlines(True) if not l.startswith((b'Building the native part of ', b'Installing the standard package ')))
+        for ext, data in (('.expected', r.stdout), ('.diagnostics', stderr)):
             path = os.path.join(folder, f[:-5] + ext)
             if not os.path.exists(path) or open(path, 'rb').read() != data: open(path, 'wb').write(data); n += 1
     print(f'{folder}: {n} files written')

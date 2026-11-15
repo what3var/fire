@@ -1,0 +1,1 @@
+warning TC021: An int[64] goes into 'small', a plain int of 32 bits in this program: it is cut - declare int[64], or cut it on purpose (!int) (line 5)

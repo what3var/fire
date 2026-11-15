@@ -1,0 +1,3 @@
+try { int big : nm = 900000000000km } catch (OverflowException e) { print("overflow") }
+//# modes: Release
+//# name: types 111: try { int big : nm = 900000000000km } catch (OverflowException e) { pr
