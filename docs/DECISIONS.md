@@ -31,15 +31,17 @@ Die VM wirft eine DestroyedException, wenn die Klasse ein `ToString()` hat, und 
 schon freigegeben - seine Klasse ist nicht mehr bekannt -, dort steht `<object>` (vorher las `print` dort freigegebenen Speicher; behoben).
 Vorschlag: beide werfen immer die DestroyedException, wie jede andere Verwendung eines zerstörten Objekts.
 
-### D10. Prüft eine Deklaration `Bag<int> b` die Typargumente?
-
-Ein Parameter, ein Feld oder eine Variable `Bag<int> b` nimmt zur Laufzeit jedes Objekt der Klasse `Bag` - auch ein `Bag<string>` (über `any`
-hineingereicht; der Typprüfer meldet es sonst). Die VM rechnet dann mit dem falschen Wert weiter; nativ meldet der Generator es erst am Ergebnis
-(`The result of 'Get' of a Bag<int> is an int, not String.`), weil er sich auf die Typargumente verlässt - VM und nativ weichen dort ab.
-Vorschlag: die Deklaration prüft die Typargumente mit (`Parameter 'b' is a Bag<int>, not Bag<string>.`), in VM und nativ; ein Objekt ohne bekannte
-Typargumente geht weiter durch.
-
 ## Entschieden
+
+### D10. Eine Deklaration `Bag<int> b` prüft die Typargumente
+
+Ein Parameter, ein Feld, eine Rückgabe oder eine Variable, die mit einer generischen Klasse und Typargumenten deklariert ist, nimmt nur ein Objekt
+mit diesen Typargumenten: `Parameter 'b' is a Bag<int>, not Bag<string>.` (eine ArgumentException, in VM und nativ gleich). Vorher prüfte die
+Deklaration nur die Klasse; die VM rechnete mit dem falschen Wert weiter, nativ kam die Meldung erst am Ergebnis. Durch gehen weiterhin: ein Objekt
+ohne bekannte Typargumente (`new Bag()`), eine abgeleitete Klasse, die der Basisklasse diese Typargumente gibt (`class IntBag : Bag<int>`), und
+Stellen, an denen das Typargument der Deklaration nicht bekannt ist (`Bag<any>`). In generischem Code zählt das Typargument des Objekts
+(`Bag<T> other` in `Bag<int>`: ein `Bag<int>`). Kovarianz gibt es nicht: ein `List<Dog>` geht nicht in ein `List<Animal>`, wie bei den Arrays.
+Entscheidung des Benutzers. DeclaredType.WithTypeArgs / TypeArgsFit, nativ ClassGuard mit `guardTypeArgsFailed`.
 
 ### D8. Eine Deklaration `Color c` prüft zur Laufzeit
 

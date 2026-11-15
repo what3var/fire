@@ -29573,6 +29573,58 @@ else
             }
             try { B.Sum(l, 1) } catch (Exception e) { print("E7 " + e.message) }
             """),
+        ("Eine Deklaration mit einer generischen Klasse prueft die Typargumente (DECISIONS D10): Bag<int> b nimmt kein Bag<string> - Parameter, Feld, Rueckgabe, Variable, Reflection, Bag<T> in generischem Code; ohne bekannte Typargumente und abgeleitete Klassen gehen durch", """
+            #import "reflection"
+            class Cat { }
+            class Bag<T> {
+                T item
+                construct() { }
+                undefined Take(Bag<T> other) { this.item = other.item }
+            }
+            class IntBag : Bag<int> { construct() : base() { } }
+            class Pair<K, V> { construct() { } }
+            class Holder {
+                Bag<int> ints
+                List<string> names
+                construct() { }
+                Bag<int> Bad() { any s = new Bag<string>(); return s }
+            }
+            class U {
+                static string Ints(Bag<int> b) { return "ok" }
+                static string Lists(List<int> l) { return "ok " + l.Count }
+                static string Pairs(Pair<string, int> p) { return "ok" }
+                static string Half(Pair<string, any> p) { return "ok" }
+                static string Dicts(Dictionary<string, int> d) { return "ok " + d.Count }
+            }
+            any bi = new Bag<int>()
+            any bs = new Bag<string>()
+            any plain = new Bag()
+            any ib = new IntBag()
+            any li = new List<int>()
+            any lf = new List<float>()
+            any psi = new Pair<string, int>()
+            any pss = new Pair<string, string>()
+            any dsi = new Dictionary<string, int>()
+            any dis = new Dictionary<int, string>()
+            any cat = new Cat()
+            print(U.Ints(bi) + U.Ints(plain) + U.Ints(ib) + U.Ints(undefined) + U.Lists(li) + U.Pairs(psi) + U.Half(pss) + U.Dicts(dsi))
+            try { U.Ints(bs) } catch (ArgumentException e) { print("E1 " + e.message) }
+            try { U.Lists(lf) } catch (ArgumentException e) { print("E2 " + e.message) }
+            try { U.Pairs(pss) } catch (ArgumentException e) { print("E3 " + e.message) }
+            try { U.Dicts(dis) } catch (ArgumentException e) { print("E4 " + e.message) }
+            try { U.Ints(cat) } catch (ArgumentException e) { print("E5 " + e.message) }
+            var h = new Holder()
+            h.ints = bi
+            try { h.ints = bs } catch (ArgumentException e) { print("E6 " + e.message) }
+            try { h.names = li } catch (ArgumentException e) { print("E7 " + e.message) }
+            try { h.Bad() } catch (ArgumentException e) { print("E8 " + e.message) }
+            try { Bag<int> loc = bs; print("no error") } catch (ArgumentException e) { print("E9 " + e.message) }
+            try { Reflect.Set(h, "ints", bs) } catch (ArgumentException e) { print("E10 " + e.message) }
+            var target = new Bag<int>()
+            target.Take(bi)
+            try { target.Take(bs) } catch (ArgumentException e) { print("E11 " + e.message) }
+            print("end")
+            """),
         ("defined fuer strings, Enums und Objekte (SPEC 8.10b): ein string beginnt bei \"\", ein Enum beim ersten Wert, ein Objekt braucht seinen Wert (Feld: jeder Konstruktor setzt es); undefined ist eine ArgumentException an Feld, Parameter, Rueckgabe, Variable, Reflection und in JSON (fehlend oder null)", """
             #import "json"
             #import "reflection"

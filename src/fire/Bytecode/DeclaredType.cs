@@ -26,7 +26,14 @@ namespace fire.Bytecode
         public static bool IsNonNull(string? text) => text is { Length: > 0 } && text[0] == NonNullMark;
 
         public sealed record Condition(bool IsUnit, string Name, Unit? Unit);
-        public sealed record Spec(string Display, Condition[][] Alternatives, int TypeParamIndex = -1, string? TypeParamClass = null, bool NonNull = false)
+        /// <summary>At the end of the text: the type arguments of a declaration with a generic class (`Bag&lt;int&gt; b`, DECISIONS D10), separated by
+        /// TypeArgSep - as the run time keeps them (`int`, a class, `$k@Class` for a type parameter of the code around, "" for what is not known).</summary>
+        private const char TypeArgsMark = '\u0005';
+        private const char TypeArgSep = '\u0006';
+        public static string WithTypeArgs(string text, System.Collections.Generic.IEnumerable<string> typeArgs) => text + TypeArgsMark + string.Join(TypeArgSep, typeArgs);
+        public static string WithoutTypeArgs(string text) => text.IndexOf(TypeArgsMark) is var at and >= 0 ? text.Substring(0, at) : text;
+
+        public sealed record Spec(string Display, Condition[][] Alternatives, int TypeParamIndex = -1, string? TypeParamClass = null, bool NonNull = false, string[]? TypeArgs = null)
         {
             /// <summary>A single `is of` a class name (not a basic type, not an interface): what the native generator types as "an object of it".</summary>
             public string? SingleName => Alternatives is [[{ IsUnit: false, Name: var n }]] ? n : null;
@@ -92,6 +99,8 @@ namespace fire.Bytecode
         {
             bool nonNull = t.Length > 0 && t[0] == NonNullMark;
             if (nonNull) t = t.Substring(1);
+            string[]? typeArgs = null;
+            if (t.IndexOf(TypeArgsMark) is var argsAt and >= 0) { typeArgs = t.Substring(argsAt + 1).Split(TypeArgSep); t = t.Substring(0, argsAt); }
             int end = t.IndexOf(DisplayEnd);
             string rest = t.Substring(end + 1);
             int index = -1;
@@ -106,7 +115,7 @@ namespace fire.Bytecode
             }
             var alternatives = rest.Length == 0 ? Array.Empty<Condition[]>()
                 : rest.Split('|').Select(alt => alt.Split('&').Select(ConditionOf).ToArray()).ToArray();
-            return new Spec(t.Substring(0, end), alternatives, index, owner, nonNull);
+            return new Spec(t.Substring(0, end), alternatives, index, owner, nonNull, typeArgs);
         }
 
         /// <summary>A condition from its text (`Animal`, `int`, `in:cm`) - also a type argument of an object (`int:cm`: the kind, its unit is NumberDemand's).</summary>
@@ -178,10 +187,34 @@ namespace fire.Bytecode
                 bool all = true;
                 foreach (var condition in alternative)
                     if (!Holds(value, condition)) { all = false; break; }
-                if (all) return true;
+                if (all) return spec.TypeArgs == null || TypeArgsFit(value, spec, owner, callTypeArgs);
             }
             return false;
         }
+
+        /// <summary>The type argument a declaration `Bag&lt;int&gt; b` asks for at place k as the object must have it (a `$k@Class` of the code around
+        /// resolved); null when it is not known - nothing to check.</summary>
+        private static string? WantedTypeArg(string wanted, ObjectInstance? owner, string[]? callTypeArgs)
+        {
+            if (wanted.Length == 0) return null;
+            if (wanted[0] != '$') return wanted;
+            int at = wanted.IndexOf('@');
+            int k = int.Parse(wanted.AsSpan(1, at - 1));
+            if (at == wanted.Length - 1) return callTypeArgs != null && k < callTypeArgs.Length && callTypeArgs[k].Length > 0 ? callTypeArgs[k] : null;
+            return TypeArgOf(owner, wanted.Substring(at + 1), k);
+        }
+
+        /// <summary>`Bag&lt;int&gt; b` (DECISIONS D10): an object of the class whose type arguments are known has those the declaration names.</summary>
+        private static bool TypeArgsFit(in Value value, Spec spec, ObjectInstance? owner, string[]? callTypeArgs)
+        {
+            if (value.Kind != ValueKind.Class || value.AsObjectRef() is not ObjectInstance obj || spec.SingleName is not { } declaredClass) return true;
+            for (int k = 0; k < spec.TypeArgs!.Length; k++)
+                if (WantedTypeArg(spec.TypeArgs[k], owner, callTypeArgs) is { } wanted && TypeArgOf(obj, declaredClass, k) is { } has && has != wanted) return false;
+            return true;
+        }
+
+        /// <summary>`Bag&lt;int&gt;` for messages: the class with the type arguments (`any` for one that is not known).</summary>
+        private static string WithArgsDisplay(string cls, System.Collections.Generic.IEnumerable<string?> args) => cls + "<" + string.Join(", ", args.Select(a => a == null ? "any" : DisplayOf(a))) + ">";
 
         /// <summary>A number that is in the unit a type argument demands already (Fits; anything else goes through FitsOrConvert).</summary>
         private static bool UnitFits(in Value value, string demand)
@@ -207,6 +240,8 @@ namespace fire.Bytecode
             }
             return false;
         }
+
+        private static string WithoutTypeArgsOf(string text) => (IsNonNull(text) ? NonNullMark.ToString() : "") + WithoutTypeArgs(IsNonNull(text) ? text.Substring(1) : text);
 
         private static bool Holds(in Value value, Condition condition)
         {
@@ -241,6 +276,15 @@ namespace fire.Bytecode
             if (spec.TypeParamIndex >= 0 && TypeArgFor(spec, owner, callTypeArgs) is { } typeArg)
                 display = spec.Display.Split(' ')[0] + " (" + DisplayOf(typeArg) + ")";
             string have = value.Kind == ValueKind.Class && value.AsObjectRef() is ObjectInstance obj ? GenericClassNames.PlainName(obj.ClassName) : value.IsEnum ? value.Enum!.Name : value.Kind.ToString();
+            if (spec.TypeArgs != null && spec.SingleName is { } declaredClass)
+            {
+                // (`Bag<int> b` given a Bag<string>: both with their type arguments, the object's as the declared class sees them)
+                var given = value.Kind == ValueKind.Class && value.AsObjectRef() is ObjectInstance { RtClass: not null } o && Fits(value, WithoutTypeArgsOf(required), owner, callTypeArgs) ? o : null;
+                string wantedDisplay = WithArgsDisplay(display, spec.TypeArgs.Select(a => WantedTypeArg(a, owner, callTypeArgs)));
+                if (given != null) have = WithArgsDisplay(display, Enumerable.Range(0, spec.TypeArgs.Length).Select(k => TypeArgOf(given, declaredClass, k)));
+                else wantedDisplay = display;   // (another class altogether: "is a Bag, not Cat.", like natively)
+                display = wantedDisplay;
+            }
             string article = "AEIOUaeiou".Contains(display[0]) ? "an" : "a";
             if (value.Kind == ValueKind.Undefined) return $"{what} is {article} {display} and never undefined.";   // (`defined Dog d`)
             return $"{what} is {article} {display}, not {have}.";

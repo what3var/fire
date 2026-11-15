@@ -480,7 +480,7 @@ namespace fire.Compiler
             }
             else if (type.BaseName == "string") text = DeclaredType.OfName("string");
             else if (_refParams.EnumNames.Contains(type.BaseName) && EnumTypeNamed(type.BaseName) is { } enumType) text = DeclaredType.OfName(enumType.Name) + "\u0002" + enumType.Key;
-            else if (type.BaseName is not ("any" or "class" or "var" or "undefined") && DeclaredTypeOf(type with { NonNull = false }, owner) is { } declared && DeclaredType.Parse(declared).TypeParamIndex < 0) text = declared;
+            else if (type.BaseName is not ("any" or "class" or "var" or "undefined") && DeclaredTypeOf(type with { NonNull = false }, owner) is { } declared && DeclaredType.Parse(declared).TypeParamIndex < 0) text = DeclaredType.WithoutTypeArgs(declared);   // (the elements of `List<int> ls[]`: lists, their type arguments are not checked)
             if (text == null) return 0;
             return 0x10000 | (rank << 8) | ArrayElem.Class | (type.NonNull ? ArrayElem.DefinedFlag : 0);
         }
@@ -496,7 +496,14 @@ namespace fire.Compiler
                 return DeclaredType.OfTypeParam(ownParams[k], k, owner.Name, Resolve);
             if (_refParams.IsTypeParam(type.BaseName)) return null;
             string name = type.TypeArgs is { Count: > 0 } args ? GenericClassNames.ResolveNewTarget(type, args.Count, Known) : type.ResolveBaseName(Known);
-            return Known(name) ? DeclaredType.OfName(name) : null;
+            if (!Known(name)) return null;
+            // `Bag<int> b` (DECISIONS D10): the type arguments an object of the class must have, where the run time knows them
+            if (type.TypeArgs is { Count: > 0 } declaredArgs && _knownClassNames.Contains(name))
+            {
+                var texts = declaredArgs.Select((a, k) => MapTypeRef(TypeArgText(a, owner, null, k))).ToList();
+                if (texts.Any(t => t.Length > 0)) return DeclaredType.WithTypeArgs(DeclaredType.OfName(name), texts);
+            }
+            return DeclaredType.OfName(name);
         }
 
         /// <summary>A type argument as the run time keeps it (DeclaredType text): `int`, a class or an interface, `in:cm` for a unit (when the type parameter

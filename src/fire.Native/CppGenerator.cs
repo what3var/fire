@@ -1198,6 +1198,20 @@ namespace fire.Native
                 altCheck = $"if (FIRE_UNLIKELY({value}.kind != K_Undefined && ({value}.kind != K_Class || leafAlive({value})) && !({fits}))) guardClassFailed({value}, {CString(parsed.Display)}, {CString(what)});";
             }
             altCheck = undefCheck + altCheck;
+            // `Bag<int> b` (DECISIONS D10): an object of the class whose type arguments are known has those the declaration names (the TArgs are interned:
+            // one address per type argument)
+            if (parsed.TypeParamIndex < 0 && parsed.TypeArgs is { } wantedArgs && DeclaredClass(spec) is { } genericRc)
+            {
+                var wanted = wantedArgs.Select(a => a.Length == 0 ? "NULL"
+                    : a[0] != '$' ? TArgRef(a)
+                    : a.EndsWith('@') ? (callTArgs != null ? $"({callTArgs} ? {callTArgs}[{int.Parse(a.AsSpan(1, a.Length - 2), CultureInfo.InvariantCulture)}] : NULL)" : "NULL")
+                    : ownerObj != "NULL" ? TArgOfExpr(a.Substring(a.IndexOf('@') + 1), int.Parse(a.AsSpan(1, a.IndexOf('@') - 1), CultureInfo.InvariantCulture), ownerObj) : "NULL").ToList();
+                if (wanted.Any(w => w != "NULL"))
+                {
+                    string has = string.Join(", ", Enumerable.Range(0, wanted.Count).Select(k => TArgOfExpr(genericRc.Name, k, $"objAt({value})")));
+                    altCheck += $" if ({value}.kind == K_Class && leafAlive({value})) {{ const TArg* tw_[] = {{{string.Join(", ", wanted)}}}; const TArg* th_[] = {{{has}}}; int ti_; for (ti_ = 0; ti_ < {wanted.Count}; ti_++) if (FIRE_UNLIKELY(tw_[ti_] && th_[ti_] && tw_[ti_] != th_[ti_])) {{ guardTypeArgsFailed({CString(parsed.Display)}, tw_, th_, {wanted.Count}, {CString(what)}); break; }} }}";
+                }
+            }
             if (parsed.TypeParamIndex < 0) return altCheck;
             // a type parameter: the type argument of the object (class) or of the call (method) decides when it is known, its `where` otherwise
             int k = parsed.TypeParamIndex;
@@ -1402,7 +1416,8 @@ namespace fire.Native
         private bool FitsClassType(int type, string spec) =>
             DeclaredType.Parse(spec).NonNull ? !IsNullable(type) && type != TypeUndefined && FitsClassTypeCore(type, spec) : FitsClassTypeCore(type, spec);
         private bool FitsClassTypeCore(int type, string spec) =>
-            type == TypeUndefined || DeclaredType.Parse(spec).TypeParamIndex < 0 && BaseKindOfType(type) == KindObj && (type & TypeNone) == 0
+            // (`Bag<int> b`: the static type says the class, not its type arguments - the guard looks at them)
+            type == TypeUndefined || DeclaredType.Parse(spec).TypeParamIndex < 0 && DeclaredType.Parse(spec).TypeArgs == null && BaseKindOfType(type) == KindObj && (type & TypeNone) == 0
                 && (InterfaceOfType(type) is { } iface ? DeclaredType.Parse(spec).SingleName == iface : DeclaredClass(spec) is { } rc && ClassIs(ObjClass(type), rc.Name));
 
         /// <summary>The static return type of a generated function (joined by its `return` instructions; constructors return the object).</summary>

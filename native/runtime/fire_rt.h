@@ -5042,6 +5042,23 @@ FIRE_COLD FIRE_FN void guardClassFailed(Value v, const char* cls, const char* wh
     fireError("ArgumentException", text);
 }
 
+/* `Bag<int> b` given a Bag<string> (DECISIONS D10): "... is a Bag<int>, not Bag<string>." - `want` the type arguments of the declaration, `has` those of
+ * the object (null: not known, written `any`). */
+FIRE_COLD FIRE_FN void guardTypeArgsFailed(const char* cls, const TArg* const* want, const TArg* const* has, int n, const char* what) {
+    char text[400], w[120], h[120];
+    int i;
+    size_t wn = 0, hn = 0;
+    w[0] = h[0] = 0;
+    for (i = 0; i < n; i++) {
+        wn += (size_t)snprintf(w + wn, wn < sizeof w ? sizeof w - wn : 0, "%s%s", i ? ", " : "", want[i] ? want[i]->display : "any");
+        hn += (size_t)snprintf(h + hn, hn < sizeof h ? sizeof h - hn : 0, "%s%s", i ? ", " : "", has[i] ? has[i]->display : "any");
+        if (wn >= sizeof w) wn = sizeof w - 1;
+        if (hn >= sizeof h) hn = sizeof h - 1;
+    }
+    snprintf(text, sizeof text, "%s is %s %s<%s>, not %s<%s>.", what, strchr("AEIOUaeiou", cls[0]) ? "an" : "a", cls, w, cls, h);
+    fireError("ArgumentException", text);
+}
+
 /* A declaration with a type parameter (`T value`) whose type argument is known was given something else: "is a T (int), not String." */
 FIRE_COLD FIRE_FN void guardTArgFailed(Value v, const char* param, const TArg* ta, const char* what) {
     char display[160];
