@@ -308,6 +308,7 @@ class Light {
 class Object {
     defined int h
     Texture texture
+    Texture emissiveTexture
     Material material
     string Key
 
@@ -444,6 +445,22 @@ class Object {
             __S3DObjTexture(this.h, t)
         }
     }
+
+    // An emission map: a texture on the same texture coordinates as Texture (its mapping: TextureWidth, TextureX, ...) whose colours the surface gives off by
+    // itself - added to the lit colour (also at night, also in the shadow), times its alpha and EmissiveStrength; black adds nothing. Lit windows in a house:
+    // the windows of the night picture bright, the rest black. undefined: none.
+    Texture EmissiveTexture {
+        get { return this.emissiveTexture }
+        set {
+            if (value != undefined) { try value.TakeTo(this) }
+            this.emissiveTexture = value
+            var t = 0
+            if (value != undefined) { t = value.handle }
+            __S3DObjEmissiveTexture(this.h, t)
+        }
+    }
+    // How strongly the emission map shines (default 1; 0: not at all - lights on at night, off by day; above 1: brighter).
+    defined float EmissiveStrength { get { return __S3DGetF(this.h, 24) } set { __S3DSetF(this.h, 24, value) } }
 
     Material Material {
         get { return this.material }

@@ -267,13 +267,13 @@ static Value fire_s3d_TexSetFilter(Value h, Value v) {
  * An item lives while someone uses it: its fire object (until its destructor: FIRE_S3D_ITEM_ALIVE is cleared, a scene skips it), the scenes it is in, the objects that use a
  * material. A mesh and a texture are counted the same way (an object that shows them is a user). */
 enum { FIRE_S3D_OBJECT = 1, FIRE_S3D_LIGHT = 2, FIRE_S3D_CAMERA = 3, FIRE_S3D_SCENE = 4, FIRE_S3D_MATERIAL = 5 };
-#define FIRE_S3D_FLOATS 24
+#define FIRE_S3D_FLOATS 28
 #define FIRE_S3D_INTS 9
 
 /* object: f = x, y, z, rotation x, y, z, scale x, y, z, anchor x, y, z, texture x, y, width, height, rotation, opacity, alpha cutoff, spin x, y, z (rad/s),
- *             texture scroll x, y (m/s: Advance moves them on);
+ *             texture scroll x, y (m/s: Advance moves them on), the strength of the emission map, reflectivity;
  *         n = colour, visible, two sided, lit, casts shadows, receives shadows, layers, billboard, keep the mesh coordinates (the pivot is the origin of the mesh) */
-enum { OF_PX = 0, OF_RX = 3, OF_SX = 6, OF_AX = 9, OF_TX = 12, OF_TY, OF_TW, OF_TH, OF_TROT, OF_OPACITY, OF_CUTOFF, OF_SPIN, OF_SCROLL = OF_SPIN + 3 };
+enum { OF_PX = 0, OF_RX = 3, OF_SX = 6, OF_AX = 9, OF_TX = 12, OF_TY, OF_TW, OF_TH, OF_TROT, OF_OPACITY, OF_CUTOFF, OF_SPIN, OF_SCROLL = OF_SPIN + 3, OF_GLOW = OF_SCROLL + 2, OF_REFLECT };
 enum { ON_COLOR = 0, ON_VISIBLE, ON_TWOSIDED, ON_LIT, ON_CAST, ON_RECEIVE, ON_LAYERS, ON_BILLBOARD, ON_KEEPCOORDS };
 /* light: f = intensity, x, y, z, direction x, y, z, range, cutoff (a point light lights nothing beyond it; 0: no end); n = kind, colour, enabled, casts shadows, layers */
 enum { LF_INTENSITY = 0, LF_X, LF_Y, LF_Z, LF_DX, LF_DY, LF_DZ, LF_RANGE, LF_CUTOFF };
@@ -293,6 +293,7 @@ typedef struct FireS3dItem {
     Real f[FIRE_S3D_FLOATS];
     int64_t n[FIRE_S3D_INTS];
     int64_t mesh, tex, mat;          /* object: the handles it uses (it is one of their users) */
+    int64_t glow;                    /* object: its emission map (Object.EmissiveTexture), a texture it is one of the users of */
     S3dMesh* tris; int trisDirty;    /* object: the triangles of AddTriangle (made into its mesh when it is needed) */
     S3dFrame* frame; int directOn;   /* camera: its depth buffer and queue; whether it draws straight into the windows */
     S3dLean* lean;                   /* camera: the lean renderer (RenderMode.Fast) */
@@ -337,6 +338,7 @@ static void fire_s3d_itemDestroy(int64_t h, FireS3dItem* it) {
     g_s3dItems.items[h] = NULL;
     fire_s3d_meshRelease(it->mesh);
     fire_s3d_texRelease(it->tex);
+    fire_s3d_texRelease(it->glow);
     if (it->mat) fire_s3d_itemRelease(it->mat);
     if (it->tris) s3d_meshFree(it->tris);
 #ifndef FIRE_S3D_LEAN_ONLY
@@ -369,7 +371,7 @@ static Value fire_s3d_New(Value kind) {
         case FIRE_S3D_OBJECT:
             it->f[OF_SX] = it->f[OF_SX + 1] = it->f[OF_SX + 2] = 1;
             it->f[OF_AX] = it->f[OF_AX + 1] = it->f[OF_AX + 2] = (Real)0.5;
-            it->f[OF_OPACITY] = 1;
+            it->f[OF_OPACITY] = 1; it->f[OF_GLOW] = 1;
             it->n[ON_COLOR] = 4291611852LL; it->n[ON_VISIBLE] = 1; it->n[ON_LIT] = 1; it->n[ON_CAST] = 1; it->n[ON_RECEIVE] = 1; it->n[ON_LAYERS] = 16777215;
             break;
         case FIRE_S3D_LIGHT:
@@ -454,6 +456,16 @@ static Value fire_s3d_ObjTexture(Value h, Value tex) {
     if (t) t->refs++;
     fire_s3d_texRelease(it->tex);
     it->tex = t ? tex.i : 0;
+    return Bool(true);
+}
+/* The emission map of an object (0: none): it becomes one of the texture's users. */
+static Value fire_s3d_ObjEmissiveTexture(Value h, Value tex) {
+    FireS3dItem* it = fire_s3d_itemAt(h.i, FIRE_S3D_OBJECT);
+    S3dTexture* t = tex.i > 0 ? (S3dTexture*)fire_s3d_find(&g_s3dTextures, tex) : NULL;
+    if (!it) return Bool(false);
+    if (t) t->refs++;
+    fire_s3d_texRelease(it->glow);
+    it->glow = t ? tex.i : 0;
     return Bool(true);
 }
 static Value fire_s3d_ObjMaterial(Value h, Value mat) {
@@ -1029,6 +1041,8 @@ static int fire_s3d_objectOf(FireS3dItem* o, S3dMesh** mesh, S3dTexture** textur
     s.layers = (int)(float)N[ON_LAYERS];
     s.bump = tex && tex->bump ? tex->strength : 0.0f;
     s.billboard = (int)N[ON_BILLBOARD];
+    s.emissiveTex = o->glow > 0 ? (S3dTexture*)g_s3dTextures.items[o->glow] : NULL;
+    s.emissiveStrength = (float)F[OF_GLOW];
     *mesh = m; *texture = tex; *opOut = op; *sOut = s;
     return 1;
 }

@@ -7,6 +7,7 @@
 layout(set = 0, binding = 1) uniform sampler2DArray shadowMaps;   // the atlas of the shadow maps: the distance to the light (R32F), read texel by texel
 layout(set = 1, binding = 0) uniform sampler2D tex;                // the colours (repeat, bilinear)
 layout(set = 1, binding = 1) uniform sampler2D bumpMap;            // the heights
+layout(set = 2, binding = 0) uniform sampler2D glowMap;            // the emission map (Object.EmissiveTexture; the white texture when there is none)
 
 layout(location = 0) in vec3 vWorld;
 layout(location = 1) in vec3 vNormal;
@@ -59,6 +60,20 @@ float shadowFactor(int mi, vec3 lightPos, bool directional, vec3 p, vec3 n) {
     return (s00 * (1.0 - tx) + s10 * tx) * (1.0 - ty) + (s01 * (1.0 - tx) + s11 * tx) * ty;
 }
 
+// Where a texture of `size` texels is read at uv with its filter (mode): 0 bilinear (the sampler), 1 the nearest texel (the middle of the texel, read bilinear, is the texel),
+// 2 sharp bilinear (within a texel its value, only the last screen pixel before its edge blends into the next).
+vec2 filtered(vec2 uv, vec2 size, float mode, vec2 dux, vec2 duy) {
+    if (mode < 0.5) return uv;
+    vec2 t = uv * size;
+    if (mode < 1.5) t = floor(t) + 0.5;
+    else {
+        vec2 seam = floor(t + 0.5);
+        vec2 d = max((abs(dux) + abs(duy)) * size, vec2(1e-6));
+        t = seam + clamp((t - seam) / min(d, vec2(1.0)), -0.5, 0.5);
+    }
+    return t / size;
+}
+
 void main() {
     vec3 p = vWorld;
     vec3 eye = fr.eye.xyz;
@@ -78,21 +93,8 @@ void main() {
     vec3 base = ob.color.rgb;
     float alpha = ob.color.a;
     if (ob.flags2.y != 0) {
-        // the filter of the texture (ob.bump.w): 0 bilinear (the sampler), 1 the nearest texel (the middle of the texel, read bilinear, is the texel), 2 sharp bilinear (within a texel its value,
-        // only the last screen pixel before its edge blends into the next)
-        vec2 uv = vUv;
-        if (ob.bump.w > 0.5) {
-            vec2 size = vec2(textureSize(tex, 0));
-            vec2 t = vUv * size;
-            if (ob.bump.w < 1.5) t = floor(t) + 0.5;
-            else {
-                vec2 seam = floor(t + 0.5);
-                vec2 d = max((abs(dux) + abs(duy)) * size, vec2(1e-6));
-                t = seam + clamp((t - seam) / min(d, vec2(1.0)), -0.5, 0.5);
-            }
-            uv = t / size;
-        }
-        vec4 tc = textureLod(tex, uv, 0.0);
+        // the filter of the texture (ob.bump.w)
+        vec4 tc = textureLod(tex, filtered(vUv, vec2(textureSize(tex, 0)), ob.bump.w, dux, duy), 0.0);
         if (ob.emissive.w > 0.0 && tc.a < ob.emissive.w) discard;
         base *= tc.rgb;
         alpha *= tc.a;
@@ -147,6 +149,11 @@ void main() {
             }
         }
         col = base * diffuse + spec + ob.emissive.rgb;
+    }
+    if (ob.glow.x != 0.0) {
+        // the emission map: its colour times its alpha and the strength, added (at the texture coordinates of the texture, with its own filter)
+        vec4 gc = textureLod(glowMap, filtered(vUv, vec2(textureSize(glowMap, 0)), ob.glow.y, dux, duy), 0.0);
+        col += gc.rgb * (gc.a * ob.glow.x);
     }
     // (an opaque object writes alpha 1, a transparent one is mixed by its alpha and leaves the alpha of the picture as it is)
     outColor = vec4(col, ob.flags2.w != 0 ? alpha : 1.0);

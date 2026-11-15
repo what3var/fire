@@ -337,6 +337,67 @@ static class Scene3DTests
         }
         print("cutoff hardware " + (cOff * 50 < cHard.length))
 
+        // an emission map (Object.EmissiveTexture): its colours are added to the lit colour, black adds nothing, strength 0 nothing at all
+        var eFrame = new Framebuffer(64, 48)
+        var eScene = new Scene()
+        eScene.AmbientIntensity = 0.1
+        var eWall = new Object(Template.Quad, 0m, 0m, 0m, 4m, 3m, 0m)
+        eWall.Texture = Texture.Checker(16, 4, S3D.Rgb(200, 180, 160), S3D.Rgb(120, 110, 100))
+        eScene.Add(eWall)
+        eScene.Add(Light.Directional(0.2, -0.3, -1.0, S3D.Rgb(255, 255, 255), 0.4))
+        var eCam = new Camera(eFrame)
+        eCam.Z = 3m
+        eScene.Add(eCam)
+        eCam.Render()
+        var eLit = eFrame.ReadBytes()
+        var eSum = H.Sum(eFrame)
+        // the windows: the upper left quarter of the texture glows yellow, the rest is black
+        var eBytes = new byte[16 * 16 * 4]
+        for (var y = 0; y < 16; y++) {
+            for (var x = 0; x < 16; x++) {
+                var at = (y * 16 + x) * 4
+                eBytes[at + 3] = 255
+                if (x < 8 && y < 8) { eBytes[at] = 255; eBytes[at + 1] = 200; eBytes[at + 2] = 80 }
+            }
+        }
+        eWall.EmissiveTexture = new Texture(16, 16, eBytes)
+        eWall.EmissiveTexture.Filter = TextureFilter.Nearest
+        eCam.Render()
+        var eGlow = eFrame.ReadBytes()
+        var brighter = 0
+        var changedDark = 0
+        for (var y = 0; y < 48; y++) {
+            for (var x = 0; x < 64; x++) {
+                var at = (y * 64 + x) * 4
+                if (eGlow[at] != eLit[at] || eGlow[at + 1] != eLit[at + 1] || eGlow[at + 2] != eLit[at + 2]) {
+                    if (x < 32 && y < 24 && eGlow[at] >= eLit[at] && eGlow[at + 2] >= eLit[at + 2]) { brighter++ } else { changedDark++ }
+                }
+            }
+        }
+        print("emission " + eWall.EmissiveStrength + " " + (brighter > 200) + " " + changedDark + " " + H.Sum(eFrame))
+        eWall.EmissiveStrength = 0.0
+        eCam.Render()
+        print("emission off " + (H.Sum(eFrame) == eSum))
+        eWall.EmissiveStrength = 1.0
+        eScene.Lights[0].Enabled = false
+        eScene.AmbientIntensity = 0.0
+        eCam.Render()
+        var eNight = eFrame.ReadBytes()
+        print("emission night " + eNight[(5 * 64 + 10) * 4] + "," + eNight[(5 * 64 + 10) * 4 + 1] + "," + eNight[(5 * 64 + 10) * 4 + 2] + " " + eNight[(40 * 64 + 50) * 4] + "," + eNight[(40 * 64 + 50) * 4 + 1])
+        eScene.Renderer = RenderMode.Hardware
+        eCam.Render()
+        var eHard = eFrame.ReadBytes()
+        var eOff = 0
+        for (var i = 0; i < eHard.length; i++) {
+            var d = eHard[i] - eNight[i]
+            if (d > 24 || d < -24) { eOff++ }
+        }
+        print("emission hardware " + (eOff * 50 < eHard.length))
+        eScene.Renderer = RenderMode.Software
+        eWall.EmissiveTexture = undefined
+        eCam.Render()
+        print("emission none " + eFrame.ReadBytes()[(5 * 64 + 10) * 4] + " " + (eWall.EmissiveTexture == undefined))
+
         // the hardware renderer: where there is a GPU it draws, and its picture is close to the software one; where there is none the software renderer draws the same picture
         var software = frame.ReadBytes()
         print("renderer " + scene.Renderer + " " + cam.LastRenderer)

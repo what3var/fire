@@ -435,6 +435,8 @@ typedef struct S3dSurface {
     int layers;
     float bump;           /* the strength of the bump map of the texture (0: none) */
     int billboard;        /* 0 none, 1 faces the camera, 2 turns around the vertical axis only */
+    const S3dTexture* emissiveTex;   /* an emission map (NULL: none): its colour (times its alpha) times emissiveStrength is added to the lit colour, at the texture coordinates of the texture */
+    float emissiveStrength;
 } S3dSurface;
 
 static S3dSurface s3d_surfaceDefault(void) {
@@ -757,6 +759,7 @@ static void s3d_rasterTri(uint8_t* rgba, S3dFrame* f, const S3dContext* ctx, con
     const S3dBatch* b = &f->batches[t->batch];
     const S3dSurface* s = &b->s;
     const S3dTexture* tex = b->tex;
+    const S3dTexture* glow = s->emissiveTex;
     int texOn = s->useTexture && tex && tex->w > 0 && tex->h > 0;
     int bumpOn = t->bump && texOn && tex->bump != NULL;
     float alphaScale = s->opacity;
@@ -792,7 +795,7 @@ static void s3d_rasterTri(uint8_t* rgba, S3dFrame* f, const S3dContext* ctx, con
             if (visible) {
                 float kk = 1.0f / cur[1];
                 S3dVec3 p = s3d_v3(cur[7] * kk, cur[8] * kk, cur[9] * kk);
-                S3dVec3 n = t->fn, base;
+                S3dVec3 n = t->fn, base, glowAdd = s3d_v3(0, 0, 0);
                 float alpha, u = 0, v = 0;
                 if (s->smooth && !t->constNormal) {
                     float nx = cur[4] * kk, ny = cur[5] * kk, nz = cur[6] * kk;
@@ -825,6 +828,20 @@ static void s3d_rasterTri(uint8_t* rgba, S3dFrame* f, const S3dContext* ctx, con
                         S3dVec3 tilted = s3d_sub(s3d_sub(n, s3d_scale(t->tangent, hu)), s3d_scale(t->bitangent, hv));
                         n = s3d_normalize(tilted);
                     }
+                }
+                if (visible && glow) {
+                    /* the emission map: at the same texture coordinates (with its own filter) */
+                    float ga;
+                    S3dVec3 gc;
+                    if (!texOn) { u = cur[2] * kk; v = cur[3] * kk; }
+                    if (glow->filter == S3D_FILTER_SHARP) {
+                        float uxd = (t->gx[2] - u * t->gx[1]) * kk, uyd = (t->gy[2] - u * t->gy[1]) * kk;
+                        float vxd = (t->gx[3] - v * t->gx[1]) * kk, vyd = (t->gy[3] - v * t->gy[1]) * kk;
+                        gc = s3d_sampleFiltered(glow, u, v, (fabsf(uxd) + fabsf(uyd)) * (float)glow->w, (fabsf(vxd) + fabsf(vyd)) * (float)glow->h, &ga);
+                    }
+                    else gc = s3d_sampleFiltered(glow, u, v, 1, 1, &ga);
+                    ga *= s->emissiveStrength;
+                    glowAdd = s3d_v3(gc.x * ga, gc.y * ga, gc.z * ga);
                 }
                 if (visible) {
                     S3dVec3 col;
@@ -875,6 +892,7 @@ static void s3d_rasterTri(uint8_t* rgba, S3dFrame* f, const S3dContext* ctx, con
                         }
                         col = s3d_v3(base.x * diffuse.x + spec.x + s->emissive.x, base.y * diffuse.y + spec.y + s->emissive.y, base.z * diffuse.z + spec.z + s->emissive.z);
                     }
+                    if (glow) col = s3d_add(col, glowAdd);
                     px = rgba + di * 4;
                     if (blendedPass && alpha < 1.0f && s->cutoff <= 0) {
                         if (alpha > 0) {
@@ -1001,6 +1019,7 @@ static void s3d_queueMesh(S3dFrame* f, const S3dCamera* cam, const S3dMesh* mesh
     f->batchN++;
     batch->s = *surf;
     batch->tex = (surf->useTexture && tex && tex->w > 0 && tex->h > 0) ? tex : NULL;
+    if (surf->emissiveTex && (surf->emissiveTex->w <= 0 || surf->emissiveTex->h <= 0 || surf->emissiveStrength == 0)) batch->s.emissiveTex = NULL;
     batch->mesh = mesh;
     batch->cam = *cam;
     batch->model = model;
