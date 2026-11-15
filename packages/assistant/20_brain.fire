@@ -17,6 +17,21 @@ namespace Assistant {
     // What the assistant is doing.
     enum Phase { Idle, Offer, Downloading, Loading, Thinking, Answering, Failed }
 
+    // A spark that is open (its file in spark-mcp/: the pid, the project and its folder) and the connection to its MCP server.
+    class SparkLink {
+        string Id = ""
+        string Project = ""
+        string Folder = ""
+        Mcp.HttpTransport Transport = undefined
+        Mcp.Client Client = undefined
+
+        undefined Close() {
+            if (this.Client != undefined) {
+                try { this.Client.Close() } catch (Exception e) { }
+            }
+        }
+    }
+
     class Brain {
         Assistant.Character Character
         Assistant.Phase Phase = Assistant.Phase.Idle
@@ -41,6 +56,11 @@ namespace Assistant {
         Mcp.HttpTransport sparkTransport = undefined
         string sparkFile = ""
         defined int sparkRetry = 0
+        // every open spark (one assistant serves all of them); `spark` is the client of the current one, `SparkId` its id
+        List links = new List()
+        string SparkId = ""
+        bool sparkToolsAdded = false
+        defined int scanTicks = 0
         // the documentation, when spark does not offer it
         Assistant.Docs docs = undefined
         string pendingQuestion = ""
@@ -140,10 +160,12 @@ namespace Assistant {
                 this.agent.Close()
                 this.agent = undefined
             }
-            if (this.spark != undefined) {
-                try { this.spark.Close() } catch (Exception e) { }
-                this.spark = undefined
+            this.spark = undefined
+            foreach (x in this.links) {
+                Assistant.SparkLink l = x
+                l.Close()
             }
+            this.links.Clear()
         }
 
         // ---- the bubble ----
@@ -342,14 +364,30 @@ namespace Assistant {
                 this.LocalTools()
                 return
             }
+            this.SparkTools()
+        }
+
+        // The tools of spark (once; they go to the spark that is current when they are called - all sparks offer the same).
+        undefined SparkTools() {
+            if (this.agent == undefined || this.spark == undefined || this.sparkToolsAdded) { return }
+            this.sparkToolsAdded = true
             Mcp.Client client = this.spark
             foreach (t in client.Tools()) {
                 Mcp.Tool tool = t
                 string name = tool.Name
                 if (Assistant.Brain.Allowed(name)) {
-                    this.agent.ToolWithSchema(name, tool.Description, tool.Schema, func (JsonObject args) on client => CallTool((taking name), args).Text)
+                    this.agent.ToolWithSchema(name, tool.Description, tool.Schema, func (JsonObject args) on this => CallSpark((taking name), args))
                 }
             }
+        }
+
+        string CallSpark(string name, JsonObject args) {
+            if (this.spark == undefined) { return "Error: spark is not open." }
+            try {
+                Mcp.Client c = this.spark
+                return c.CallTool(name, args).Text
+            }
+            catch (Exception e) { return "Error: " + e.message }
         }
 
         // Without spark: the documentation of fire from its folder (Assistant.Docs.Find) - the same two tools spark offers.
@@ -667,47 +705,175 @@ namespace Assistant {
 
         bool Connected { get { return this.spark != undefined } }
 
-        // What spark reported (a build, a run): a tip when something went wrong.
-        undefined SparkEvents() {
-            if (this.spark == undefined) { return }
-            List notes = undefined
-            try { notes = this.spark.Notifications() }
-            catch (Exception e) {
-                // spark went away
-                this.spark = undefined
-                if (this.ExitWithSpark) { this.Quit = true }
-                return
-            }
-            foreach (n in notes) {
-                Mcp.Notification note = n
-                if (note.Method == "notifications/message") {
-                    any p = Json.Parse(note.Params)
-                    any data = p.Get("data")
-                    if (data != undefined && data is of JsonObject) { this.OnSparkEvent(data) }
+        static string SparkFolder() { return IO.Path.Combine(AI.Models.DataFolder(), "fire", "spark-mcp") }
+
+        // Looks for sparks that opened or closed (their files in spark-mcp/): a new one is connected, one whose file is gone is let go.
+        undefined ScanSparks() {
+            string dir = Assistant.Brain.SparkFolder()
+            var seen = new List()
+            if (IO.Directory.Exists(dir)) {
+                foreach (f in IO.Directory.GetFiles(dir, "*.json")) {
+                    string file = f
+                    string id = IO.Path.GetFileNameWithoutExtension(file)
+                    seen.Add(id)
+                    any known = this.LinkOf(id)
+                    if (known != undefined) {
+                        // (the project of a spark changes: its file is written again)
+                        Assistant.SparkLink k = known
+                        try {
+                            any j = Json.Parse(IO.File.ReadAllText(file))
+                            k.Project = "" + j.Get("project")
+                            k.Folder = "" + j.Get("folder")
+                        }
+                        catch (Exception e) { }
+                        continue
+                    }
+                    try {
+                        any conn = Json.Parse(IO.File.ReadAllText(file))
+                        var link = new Assistant.SparkLink()
+                        link.Id = id
+                        any pr = conn.Get("project")
+                        any fo = conn.Get("folder")
+                        link.Project = pr == undefined ? "spark" : "" + pr
+                        link.Folder = fo == undefined ? "" : "" + fo
+                        link.Transport = new Mcp.HttpTransport(conn.Get("url"))
+                        link.Transport.Headers.Set("Authorization", "Bearer " + conn.Get("token"))
+                        link.Client = new Mcp.Client(link.Transport)
+                        link.Client.Initialize("fire-assistant", "1.0")
+                        link.Client.Subscribe("spark://state")
+                        link.Transport.Listen()
+                        this.links.Add(take link)
+                        // the first spark is the current one
+                        if (this.spark == undefined) { this.UseSpark(id, false) }
+                    }
+                    catch (Exception e) { this.lastError = e.message }
                 }
             }
+            // gone: its file removed - or it does not answer (it ended without removing its file)
+            var gone = new List()
+            foreach (x in this.links) {
+                Assistant.SparkLink l = x
+                if (seen.IndexOf(l.Id) < 0) {
+                    gone.Add(l.Id)
+                    continue
+                }
+                try { l.Client.Ping() } catch (Exception e) { gone.Add(l.Id) }
+            }
+            foreach (g in gone) { this.DropSpark(g) }
         }
 
-        undefined OnSparkEvent(JsonObject data) {
+        any LinkOf(string id) {
+            foreach (x in this.links) {
+                Assistant.SparkLink l = x
+                if (l.Id == id) { return l }
+            }
+            return undefined
+        }
+
+        // The spark `id` becomes the current one: its tools answer the model; with `folder` the session works in its folder.
+        undefined UseSpark(string id, bool folder) {
+            any found = this.LinkOf(id)
+            if (found == undefined) { return }
+            Assistant.SparkLink l = found
+            this.spark = l.Client
+            this.SparkId = id
+            this.SparkTools()
+            if (folder && l.Folder != "" && l.Folder != this.Current.Folder) { this.SetFolder(l.Folder) }
+        }
+
+        // A spark is gone (closed, or its file is gone): without any left the assistant ends when spark started it.
+        undefined DropSpark(string id) {
+            for (int i = 0; i < this.links.Count; i++) {
+                Assistant.SparkLink l = this.links[i]
+                if (l.Id == id) {
+                    if (this.SparkId == id) {
+                        this.spark = undefined
+                        this.SparkId = ""
+                    }
+                    l.Close()
+                    this.links.RemoveAt(i)
+                    break
+                }
+            }
+            if (this.spark == undefined && this.links.Count > 0) {
+                Assistant.SparkLink first = this.links[0]
+                this.UseSpark(first.Id, false)
+            }
+            if (this.links.Count == 0 && this.ExitWithSpark) { this.Quit = true }
+        }
+
+        // The open sparks for the menu: id, project (and the current one).
+        List SparkIds() {
+            var ids = new List()
+            foreach (x in this.links) {
+                Assistant.SparkLink l = x
+                ids.Add(l.Id)
+            }
+            return ids
+        }
+
+        string SparkTitle(string id) {
+            any found = this.LinkOf(id)
+            if (found == undefined) { return id }
+            Assistant.SparkLink l = found
+            return l.Project
+        }
+
+        // What spark reported (a build, a run): a tip when something went wrong.
+        undefined SparkEvents() {
+            // (now and then: sparks that opened or closed)
+            this.scanTicks++
+            if (this.scanTicks >= 120 || this.scanTicks == 1) {
+                this.scanTicks = 1
+                this.ScanSparks()
+            }
+            var gone = new List()
+            foreach (x in this.links) {
+                Assistant.SparkLink l = x
+                List notes = undefined
+                try { notes = l.Client.Notifications() }
+                catch (Exception e) {
+                    // the spark went away
+                    gone.Add(l.Id)
+                    continue
+                }
+                foreach (n in notes) {
+                    Mcp.Notification note = n
+                    if (note.Method == "notifications/message") {
+                        any p = Json.Parse(note.Params)
+                        any data = p.Get("data")
+                        if (data != undefined && data is of JsonObject) {
+                            if (this.OnSparkEvent(l.Id, data)) { gone.Add(l.Id) }
+                        }
+                    }
+                }
+            }
+            foreach (g in gone) { this.DropSpark(g) }
+        }
+
+        // An event of the spark `id`; true when that spark closes.
+        bool OnSparkEvent(string id, JsonObject data) {
             any ev = data.Get("event")
             if (ev == "poke") {
+                // Ctrl+^ in a spark: the assistant works with that spark (and its folder) from now on
+                if (id != this.SparkId) { this.UseSpark(id, true) }
                 this.Poke()
-                return
+                return false
             }
-            if (ev == "closing" && this.ExitWithSpark) {
-                this.Quit = true
-                return
-            }
+            if (ev == "closing") { return true }
+            // (the events of another spark than the current one are not the user's concern now)
+            if (id != this.SparkId) { return false }
             if (ev == "build") {
                 any ok = data.Get("ok")
                 any errors = data.Get("errors")
                 if (ok == false && errors != undefined && errors > 0) {
-                    if (this.Phase == Assistant.Phase.Thinking || this.Phase == Assistant.Phase.Answering) { return }
+                    if (this.Phase == Assistant.Phase.Thinking || this.Phase == Assistant.Phase.Answering) { return false }
                     this.Say(errors == 1 ? "The build has an error." : "The build has " + errors + " errors.")
                     if (this.agent != undefined) { this.Offer("Explain it", "explain") }
                     this.Offer("Not now", "close")
                 }
             }
+            return false
         }
 
         // The model explains the errors of the build (it reads them with get_diagnostics).

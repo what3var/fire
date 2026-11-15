@@ -86,6 +86,23 @@ namespace fire.Projects.Mcp
             Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "fire", name + "-mcp.json");
         public string ConnectionFile => ConnectionFileOf(Name);
 
+        /// <summary>One file per running server (&lt;name&gt;-mcp/&lt;pid&gt;.json, with the project and folder of <see cref="Describe"/>): with several editors open, a
+        /// client finds all of them (the assistant connects to each); <see cref="ConnectionFile"/> names the one started last.</summary>
+        public static string InstanceFolderOf(string name) =>
+            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "fire", name + "-mcp");
+        public string InstanceFile => Path.Combine(InstanceFolderOf(Name), Environment.ProcessId + ".json");
+
+        private string _project = "", _folder = "";
+
+        /// <summary>What this server works on (the solution's name and folder): written into its instance file, again when it changes.</summary>
+        public void Describe(string project, string folder)
+        {
+            if (project == _project && folder == _folder) return;
+            _project = project;
+            _folder = folder;
+            if (Url != null) WriteConnectionFile();
+        }
+
         // ---- what the server offers ----
 
         /// <summary>A tool: `schema` the JSON schema of its arguments ("" for none).</summary>
@@ -298,6 +315,7 @@ namespace fire.Projects.Mcp
             _listener = null;
             Url = null;
             if (_connectionFile != null) { try { File.Delete(_connectionFile); } catch (Exception) { } _connectionFile = null; }
+            try { File.Delete(InstanceFile); } catch (Exception) { }
         }
 
         public void Dispose() => Stop();
@@ -308,10 +326,15 @@ namespace fire.Projects.Mcp
             {
                 string path = ConnectionFile;
                 Directory.CreateDirectory(Path.GetDirectoryName(path)!);
-                var o = new JsonObject { ["url"] = Url, ["token"] = Token, ["pid"] = Environment.ProcessId, ["server"] = Name };
+                var o = new JsonObject { ["url"] = Url, ["token"] = Token, ["pid"] = Environment.ProcessId, ["server"] = Name, ["project"] = _project, ["folder"] = _folder };
                 File.WriteAllText(path, o.ToJsonString());
                 if (!OperatingSystem.IsWindows()) File.SetUnixFileMode(path, UnixFileMode.UserRead | UnixFileMode.UserWrite);
                 _connectionFile = path;
+                // (the file of this instance beside those of the others)
+                string own = InstanceFile;
+                Directory.CreateDirectory(Path.GetDirectoryName(own)!);
+                File.WriteAllText(own, o.ToJsonString());
+                if (!OperatingSystem.IsWindows()) File.SetUnixFileMode(own, UnixFileMode.UserRead | UnixFileMode.UserWrite);
             }
             catch (Exception) { }
         }

@@ -406,6 +406,18 @@ namespace Assistant {
         undefined ShowContextMenu(defined int x, defined int y) {
             var items = new List()
             items.Add(new UI.MenuItem("Change folder...", func () on this => ChooseMenu("folder")))
+            // the open sparks: the assistant works with one of them (its tools, its folder)
+            List sparks = this.Brain.SparkIds()
+            if (sparks.Count > 0) {
+                var sparkMenu = new UI.MenuItem("spark")
+                foreach (x in sparks) {
+                    string id = x
+                    var row = new UI.MenuItem(this.Brain.SparkTitle(id), func () on this => ChooseMenu("spark:" + (taking id)))
+                    row.IsChecked = id == this.Brain.SparkId
+                    sparkMenu.Add(take row)
+                }
+                items.Add(take sparkMenu)
+            }
             items.Add(new UI.MenuItem("History", func () on this => ChooseMenu("history")))
             var git = new UI.MenuItem("Git")
             git.Add(new UI.MenuItem("Status", func () on this => ChooseMenu("git:status")))
@@ -456,6 +468,12 @@ namespace Assistant {
                 this.Brain.GitMenu(what.Substring(4))
             }
             else if (what.StartsWith("character:")) { this.SetCharacter(what.Substring(10)) }
+            else if (what.StartsWith("spark:")) {
+                string id = what.Substring(6)
+                this.Brain.UseSpark(id, true)
+                this.Brain.Say("Now with " + this.Brain.SparkTitle(id) + ".")
+                this.Brain.Asking = true
+            }
             else if (what == "quit") {
                 this.Brain.KeepSession()
                 this.Brain.Quit = true

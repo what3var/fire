@@ -21,6 +21,23 @@ builds the packages it uses for this machine (a minute or two); spark's status b
 small, without a frame, above the other windows and transparent where the desktop allows it: only the character and its bubble are seen, at the
 bottom right of the desktop. Dragging the character moves it; a click pokes it.
 
+## Several sparks
+
+One assistant serves every open spark: the spark that starts it writes its process id (`assistant.pid`), and the others do not start a second one. It
+connects to each spark (their files in `spark-mcp/`, looked at every two seconds; a spark that does not answer is let go). Ctrl+^ in a spark calls it to
+that spark - its tools and its folder; the right click on the character has the open sparks under *spark*. It ends when the last spark has closed.
+
+## Sessions, the folder, the tools
+
+* **Sessions** (`sessions/<id>.json` beside the settings): the conversation and the folder; the assistant goes on with the last one. The arrows at the top of
+  the bubble open the list - a new session, or another one (its conversation comes back).
+* **The folder** it works in is in the header (in a git repository its name and the branch, in bold). The right click on the character changes it.
+* **Tools** without spark too: `list_files`, `read_file` at once; `write_file`, `run_command`, `git` (what changes the repository - reading like `status`,
+  `log`, `diff` runs at once) and `change_folder` only after the user's *Allow* in the bubble. Without git it says how to install it (on Windows: with winget,
+  after asking).
+* **The right click** on the character: change the folder, the spark, the history, git (status, log, pull, commit all, push - the last three after asking),
+  another character, quit.
+
 ## Principles
 
 * **Off by default.** The setup has its own, unchecked task "The assistant" (spark takes it over once, at its first start). In spark it can be switched

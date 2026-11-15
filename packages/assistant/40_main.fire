@@ -6,7 +6,9 @@ namespace Assistant {
         static undefined Run(string character = "", bool withSpark = false) {
             var brain = new Assistant.Brain(character)
             brain.ExitWithSpark = withSpark
-            brain.ConnectSpark()
+            // every open spark (spark-mcp/); an older spark only has its one connection file
+            brain.ScanSparks()
+            if (!brain.Connected) { brain.ConnectSpark() }
             brain.Start()
             var view = new Assistant.View(brain)
             view.Run()

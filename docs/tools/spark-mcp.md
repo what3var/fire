@@ -17,6 +17,9 @@ request needs a token. spark writes both into a file only the user can read, and
 | Linux | `~/.config/fire/spark-mcp.json` |
 | macOS | `~/Library/Application Support/fire/spark-mcp.json` (the ApplicationData folder of .NET) |
 
+With several sparks open, `spark-mcp.json` is the one started last; each spark also writes its own file beside it, `spark-mcp/<pid>.json`, with `project`
+(the solution's name) and `folder` (its folder) as well - a client that serves all of them (the assistant) reads that folder.
+
 ```json
 {"url": "http://127.0.0.1:40155/mcp", "token": "abcd...", "pid": 8405, "server": "spark"}
 ```
