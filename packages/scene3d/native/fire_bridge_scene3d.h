@@ -1043,6 +1043,7 @@ static int fire_s3d_objectOf(FireS3dItem* o, S3dMesh** mesh, S3dTexture** textur
     s.billboard = (int)N[ON_BILLBOARD];
     s.emissiveTex = o->glow > 0 ? (S3dTexture*)g_s3dTextures.items[o->glow] : NULL;
     s.emissiveStrength = (float)F[OF_GLOW];
+    s.reflect = F[OF_REFLECT] <= 0 ? 0.0f : F[OF_REFLECT] >= 1 ? 1.0f : (float)F[OF_REFLECT];
     *mesh = m; *texture = tex; *opOut = op; *sOut = s;
     return 1;
 }
@@ -1671,6 +1672,7 @@ static Value fire_s3d_Render(Value camera, Value scene, Value buffer, Value widt
     fs.threads = (int)(float)s->n[SN_THREADS];
     fs.backend = s->n[SN_RENDERER] == S3D_BACKEND_HARDWARE ? S3D_BACKEND_HARDWARE : S3D_BACKEND_SOFTWARE;
     fs.noLightCulling = s->n[SN_CULLING] == 0;
+    fs.sky = (uint32_t)(s->f[SF_FOGEND] > s->f[SF_FOGSTART] ? s->n[SN_FOGCOLOR] : c->n[CN_BACKGROUND]);   /* (what a reflection shows where it finds nothing) */
     s3d_flush(b->data, f, &cam, ls, n, &fs);
     S3D_FREE(ls);
     c->n[CN_LAST] = f->lastBackend;

@@ -398,6 +398,52 @@ static class Scene3DTests
         eCam.Render()
         print("emission none " + eFrame.ReadBytes()[(5 * 64 + 10) * 4] + " " + (eWall.EmissiveTexture == undefined))
 
+        // reflections (Object.Reflectivity): 0 is the same picture as without; a wet floor mirrors the box (its red appears below it); the same with every number of threads
+        var rFrame = new Framebuffer(64, 48)
+        var rScene = new Scene()
+        var rFloor = new Object(Template.Plane, 0m, 0m, 0m, 30m, 0m, 30m)
+        rFloor.Color = S3D.Rgb(60, 60, 70)
+        rScene.Add(rFloor)
+        var rBox = new Object(Template.Box, 0m, 1m, -4m, 2m, 2m, 2m)
+        rBox.Color = S3D.Rgb(255, 40, 40)
+        rScene.Add(rBox)
+        rScene.Add(Light.Directional(-0.3, -1.0, -0.5))
+        var rCam = new Camera(rFrame)
+        rCam.SetPosition(0m, 1.2m, 4m)
+        rCam.LookAt(0m, 0.5m, -4m)
+        rCam.Background = S3D.Rgb(30, 40, 80)
+        rScene.Add(rCam)
+        rCam.Render()
+        var dry = rFrame.ReadBytes()
+        var drySum = H.Sum(rFrame)
+        rFloor.Reflectivity = 0.0
+        rCam.Render()
+        print("reflect 0 " + (H.Sum(rFrame) == drySum))
+        rFloor.Reflectivity = 0.8
+        rCam.Render()
+        var wet = rFrame.ReadBytes()
+        var wetSum = H.Sum(rFrame)
+        var redder = 0
+        var skyward = 0
+        for (var i = 0; i < wet.length; i += 4) {
+            if (wet[i] > dry[i] + 10) { redder++ }
+            if (wet[i + 1] + 5 < dry[i + 1] && wet[i + 2] + 5 >= dry[i + 2]) { skyward++ }
+        }
+        print("reflect " + rFloor.Reflectivity + " " + (wetSum != drySum) + " " + (redder > 20) + " " + (skyward > 200) + " " + wetSum)
+        rScene.Threads = 1
+        rCam.Render()
+        var wet1 = H.Sum(rFrame)
+        rScene.Threads = 3
+        rCam.Render()
+        print("reflect threads " + (wet1 == wetSum) + " " + (H.Sum(rFrame) == wetSum))
+        rScene.Fog(S3D.Rgb(150, 150, 160), 5m, 20m)
+        rCam.Render()
+        print("reflect fog " + H.Sum(rFrame))
+        rScene.NoFog()
+        rFloor.Reflectivity = 0.0
+        rCam.Render()
+        print("reflect off " + (H.Sum(rFrame) == drySum))
+
         // the hardware renderer: where there is a GPU it draws, and its picture is close to the software one; where there is none the software renderer draws the same picture
         var software = frame.ReadBytes()
         print("renderer " + scene.Renderer + " " + cam.LastRenderer)

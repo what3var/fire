@@ -461,6 +461,10 @@ class Object {
     }
     // How strongly the emission map shines (default 1; 0: not at all - lights on at night, off by day; above 1: brighter).
     defined float EmissiveStrength { get { return __S3DGetF(this.h, 24) } set { __S3DSetF(this.h, 24, value) } }
+    // How much the surface mirrors what is above it (0 default: nothing .. 1): wet streets, puddles, water, a polished floor. A reflection in the picture itself
+    // (screen space: what the camera does not see is not mirrored - there it shows the background or the fog), on the parts that face up, stronger at a grazing
+    // view (fresnel). Only the software renderer draws it; 0 costs nothing.
+    defined float Reflectivity { get { return __S3DGetF(this.h, 25) } set { __S3DSetF(this.h, 25, value) } }
 
     Material Material {
         get { return this.material }
