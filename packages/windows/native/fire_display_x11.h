@@ -1226,6 +1226,16 @@ static int fire_dx11_beginMove(FireDx11Window* w) {
     return 1;
 }
 
+/* The top left corner of the window on the screen (of its content: a frameless window has nothing around it). */
+static int fire_dx11_position(FireDx11Window* w, int* r) {
+    FireXId child = 0;
+    int x0 = 0, y0 = 0;
+    if (w->d == NULL || w->x->TranslateCoordinates == NULL) return 0;
+    if (!w->x->TranslateCoordinates(w->d, w->win, w->root, 0, 0, &x0, &y0, &child)) return 0;
+    r[0] = x0; r[1] = y0;
+    return 1;
+}
+
 /* _NET_WORKAREA of the current desktop (the screen without the panels); else the whole screen. */
 static int fire_dx11_workArea(FireDx11Window* w, int* r) {
     FireXlib* x = w->x;

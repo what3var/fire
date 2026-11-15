@@ -1414,6 +1414,8 @@ static int fire_dwl_beginMove(FireDwlWindow* w) {
     pthread_mutex_unlock(&w->lock);
     return 1;
 }
+/* (Wayland does not tell a window where it is) */
+static int fire_dwl_position(FireDwlWindow* w, int* r) { (void)w; (void)r; return 0; }
 static int fire_dwl_workArea(FireDwlWindow* w, int* r) { (void)w; (void)r; return 0; }
 
 static void fire_dwl_draw(FireDwlWindow* w);

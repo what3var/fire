@@ -255,6 +255,13 @@ static int fire_display_beginMove(FireDisplayWindow* w) {
 #undef FIRE_DD_B
     return 0;
 }
+/* Where the window is: its top left corner in screen pixels; 0 when the display does not say (Wayland). */
+static int fire_display_position(FireDisplayWindow* w, int* r) {
+#define FIRE_DD_B(m, p) return fire_##p##_position(&w->u.m, r);
+    FIRE_DD_SWITCH(w->kind, FIRE_DD_B)
+#undef FIRE_DD_B
+    return 0;
+}
 /* The desktop without its panels (x, y, w, h in screen pixels of the screen of the window); 0 when the display does not say. */
 static int fire_display_workArea(FireDisplayWindow* w, int* r) {
 #define FIRE_DD_B(m, p) return fire_##p##_workArea(&w->u.m, r);

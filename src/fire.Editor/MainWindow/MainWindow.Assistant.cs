@@ -73,6 +73,7 @@ namespace fire.Editor
             try
             {
                 var info = new ProcessStartInfo(forge) { UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true, RedirectStandardError = true };
+                info.Environment[fire.Native.BackgroundWork.LinesVariable] = "1";   // (its packages are built at the first start: the status bar shows it)
                 info.ArgumentList.Add("run");
                 info.ArgumentList.Add(script);
                 var p = Process.Start(info);
@@ -81,16 +82,22 @@ namespace fire.Editor
                 // what it writes goes into the log of the status bar only when it fails
                 var output = new System.Text.StringBuilder();
                 p.OutputDataReceived += (_, a) => { if (a.Data != null) lock (output) output.AppendLine(a.Data); };
-                p.ErrorDataReceived += (_, a) => { if (a.Data != null) lock (output) output.AppendLine(a.Data); };
+                p.ErrorDataReceived += (_, a) => { if (a.Data != null && !ChildWorkLine(a.Data)) lock (output) output.AppendLine(a.Data); };
                 p.BeginOutputReadLine();
                 p.BeginErrorReadLine();
                 p.Exited += (_, _) => Dispatcher.UIThread.Post(() =>
                 {
+                    ChildWorkEnded();
                     if (_assistant != p) return;
                     _assistant = null;
                     string text;
                     lock (output) text = output.ToString().Trim();
-                    if (p.ExitCode != 0 && text.Length > 0) UpdateStatus("The assistant ended: " + text.Split('\n')[^1]);
+                    if (p.ExitCode != 0 && text.Length > 0)
+                    {
+                        // (all of it into the Output: the last line alone rarely says why)
+                        _output.Append($"The assistant ended (exit code {p.ExitCode}):{Environment.NewLine}{text}{Environment.NewLine}");
+                        UpdateStatus("The assistant ended: " + text.Split('\n')[^1].Trim() + " (see the Output)");
+                    }
                 });
                 _assistant = p;
                 UpdateStatus("The assistant starts...");

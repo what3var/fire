@@ -20,6 +20,7 @@
 #include <string.h>
 #include <stdio.h>
 #include <math.h>
+#include <time.h>
 
 #if !defined(FIRE_AI_NO_THREADS) && !defined(__EMSCRIPTEN__) && !defined(ESP_PLATFORM) && (defined(_WIN32) || defined(__unix__) || defined(__APPLE__))
 #define FAI_THREADS 1
@@ -454,7 +455,6 @@ typedef struct FaiPool {
 } FaiPool;
 
 typedef struct FaiWorker { FaiPool* pool; int index; } FaiWorker;
-static FaiWorker g_faiWorkers[FAI_MAX_THREADS];
 
 static void fai_part(FaiPool* p, int index, int parts, int64_t* from, int64_t* to) {
     int64_t step = p->total / parts, rest = p->total % parts;

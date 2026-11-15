@@ -139,7 +139,7 @@ namespace Assistant {
             any strong = AI.Models.Stronger()
             if (strong != undefined) {
                 AI.ModelInfo s = strong
-                this.Offer("Stronger: " + s.Name + " (" + s.SizeText() + ")", "license:" + s.Id)
+                this.Offer("Larger: " + s.Name + " (" + s.SizeText() + ")", "license:" + s.Id)
             }
             this.Offer("Not now", "later")
         }

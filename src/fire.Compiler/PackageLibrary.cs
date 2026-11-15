@@ -104,6 +104,7 @@ namespace fire.Compiler
             string owner = import.Package.Name.StartsWith("project:", StringComparison.Ordinal) ? "project " + import.Package.Name.Substring(8) : "package " + import.Package.Name;
             string phaseText = $"Building natives of {owner}" + (import.Name != import.Package.Name && "project " + import.Name != owner ? $" (import {import.Name})" : "") + (steps > 1 ? $" ({step}/{steps})" : "");
             BuildMonitor.Step(BuildPhase.PackageNatives, phaseText, step - 1, steps);
+            using var background = BackgroundWork.Begin(phaseText, step - 1, steps);   // (spark's status bar)
             log?.Invoke($"Building the native part of the package '{import.Package.Name}' (import '{import.Name}') for {Rid}...");
 
             var config = new NativeConfig();
@@ -268,6 +269,7 @@ namespace fire.Compiler
                 if (File.Exists(path) && File.GetLastWriteTimeUtc(path) >= newest) return path;
             }
             log?.Invoke($"Building the native part of graphics and windows for {Rid}...");
+            using var background = BackgroundWork.Begin("Building the windows and graphics of fire for this machine");
             var target = TargetProfile.Host;
             ToolchainDef? toolchain = ToolchainProvider.Require(new NativeConfig().ResolveToolchain(target), "The windows and the graphics of fire are C that has to be compiled on this machine, for the virtual machine.");
             if (toolchain == null)

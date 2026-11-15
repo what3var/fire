@@ -323,6 +323,8 @@ namespace fire.Editor
             if (!fromCommandLine && _settings.ShowWelcome) _ = ShowWelcomeAfterSplash();
             // the MCP server for AI tools, when the user switched it (or the assistant) on
             StartMcpServerIfWanted();
+            fire.Native.BackgroundWork.Changed += () => Dispatcher.UIThread.Post(UpdateWorkStatus);   // (packages built while nothing else shows it)
+            UpdateWorkStatus();
             StartAssistantIfWanted();
         }
 

@@ -64,6 +64,7 @@ typedef struct FireWinShared {
     int moveReq, moveX, moveY;    /* Window.SetPosition for the thread (screen pixels) */
     int beginMoveReq;             /* Window.BeginMove: the user moves the window with the held button */
     int workReq, work[4], workKnown;   /* Window.WorkArea: asked for, and the answer (x, y, w, h of the desktop without its panels) */
+    int posWatch, pos[2], posKnown;    /* Window.Position: asked for once (then followed every cycle), and where the window is */
     double scale;                 /* pixels of the screen per logical pixel (the display's answer, 0: not known yet) */
     int dragReq, dragDone, dragResult;   /* Window.StartDrag for the thread: what is dragged (UTF-8; the paths one per line), and its answer */
     char* dragText;
@@ -431,6 +432,10 @@ static void fire_winb_applyRequests(FireWinShared* s) {
 #ifdef FIRE_DISPLAY_TEXT_INPUT_RECT
     if (s->textRectReq) { fire_display_setTextInputRect(&s->display, s->textRect[0], s->textRect[1], s->textRect[2], s->textRect[3]); s->textRectReq = 0; }
 #endif
+#ifdef FIRE_DISPLAY_PLACEMENT
+    /* (the style first: a frame that goes or comes changes what the desktop composes - the backdrop is asked for the window as it will be) */
+    if (s->styleReq >= 0) { s->style = fire_display_setStyle(&s->display, s->styleReq); s->styleReq = -1; }
+#endif
 #ifdef FIRE_DISPLAY_BACKDROP
     if (s->backdropReq >= 0) { s->backdrop = fire_display_setBackdrop(&s->display, s->backdropReq); s->backdropReq = -1; }
 #else
@@ -440,10 +445,10 @@ static void fire_winb_applyRequests(FireWinShared* s) {
     s->scale = fire_display_scale(&s->display);
 #endif
 #ifdef FIRE_DISPLAY_PLACEMENT
-    if (s->styleReq >= 0) { s->style = fire_display_setStyle(&s->display, s->styleReq); s->styleReq = -1; }
     if (s->moveReq) { fire_display_move(&s->display, s->moveX, s->moveY); s->moveReq = 0; }
     if (s->beginMoveReq) { fire_display_beginMove(&s->display); s->beginMoveReq = 0; }
     if (s->workReq) { s->workKnown = fire_display_workArea(&s->display, s->work); s->workReq = 0; }
+    if (s->posWatch) s->posKnown = fire_display_position(&s->display, s->pos);
 #else
     s->styleReq = -1; s->moveReq = 0; s->beginMoveReq = 0; s->workReq = 0;
 #endif
@@ -1470,6 +1475,24 @@ static Value fire_win_WinWorkArea(Value id, Value i) {
         if (!threaded && s->opened && !s->failed) fire_winb_applyRequests(s);
     }
     if (s->workKnown && k >= 0 && k < 4) v = s->work[k];
+    if (threaded) fire_winb_unlock(&s->m);
+    return Int(v);
+}
+/* Window.Position(): part `i` (0 x, 1 y) of the top left corner of the window on the screen; -1 while it is not known (from the first call on, a managed window
+ * says it with every cycle; Wayland never). */
+static Value fire_win_WinPosition(Value id, Value i) {
+    FireWinState* w = fire_winb_windowOf(id);
+    FireWinShared* s = w->sh;
+    int threaded = fire_winb_threaded(w), v = -1, k = (int)i.i;
+    if (threaded) fire_winb_lock(&s->m);
+    if (!s->posWatch) {
+        s->posWatch = 1;
+        if (!threaded && s->opened && !s->failed) fire_winb_applyRequests(s);
+    }
+#ifdef FIRE_DISPLAY_PLACEMENT
+    else if (!threaded && s->opened && !s->failed) s->posKnown = fire_display_position(&s->display, s->pos);
+#endif
+    if (s->posKnown && k >= 0 && k < 2) v = s->pos[k];
     if (threaded) fire_winb_unlock(&s->m);
     return Int(v);
 }

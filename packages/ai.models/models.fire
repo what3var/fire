@@ -53,7 +53,12 @@ namespace AI {
         // Whether it is there (in full: the download leaves a ".part" file until it is done).
         bool Installed() { return IO.File.Exists(this.Path()) && IO.File.Size(this.Path()) == this.Size }
         // The size to show ("507 MB").
-        string SizeText() { return (this.Size / 1000000) + " MB" }
+        // "507 MB", "1.0 GB"
+        string SizeText() {
+            if (this.Size < 1000000000) { return (this.Size / 1000000) + " MB" }
+            int tenths = this.Size / 100000000
+            return (tenths / 10) + "." + (tenths % 10) + " GB"
+        }
     }
 
     // The catalog, the choice and the folder.

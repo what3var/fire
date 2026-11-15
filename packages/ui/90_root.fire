@@ -285,6 +285,19 @@ namespace UI {
             this.Invalidate()
         }
 
+        // Brings the interface to a new size (logical pixels) - the framebuffer and the window with it (times the scale): for a window that is as big as what it
+        // shows. Everything is arranged anew; onResize is called.
+        undefined SetSize(defined int width, defined int height) {
+            if (width <= 0 || height <= 0) { return }
+            var pw = Math.Round(width * this.scaling)!int
+            var ph = Math.Round(height * this.scaling)!int
+            if (pw != this.framebuffer.Width() || ph != this.framebuffer.Height()) {
+                this.framebuffer.Resize(pw, ph)
+                if (this.window != undefined) { this.window.SetSize(pw, ph) }
+            }
+            this.CheckSize()
+        }
+
         // A position of the window (pixels of the screen) in logical pixels.
         defined int ToLogical(defined int v) {
             if (this.scaling == 1.0) { return v }
