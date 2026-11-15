@@ -37,6 +37,8 @@ namespace UI {
         List clips
         // Floating elements above the interface (menus, suggestion lists): the last one is on top (see ShowPopup)
         List popups
+        // Closed floating elements that go with the next cycle - not at once: a menu closes in its own click, and the row that was chosen runs after that
+        List dropped = new List()
         // Further roots (windows) that this one processes along with it (see Attach)
         List attached
         // A lambda without parameters that every cycle of this root calls at the end (the markup classes use it for OnTick)
@@ -395,6 +397,7 @@ namespace UI {
         // Brings the interface up to date: polls, arranges anew and paints - but only if something has changed, and only the changed area, as long as no element
         // has changed its position or size. Returns true if painting took place.
         bool Update() {
+            this.DropClosed()
             this.CheckSize()
             this.Poll()
             // what the desktop gives behind the window can come later (when it opens, with a manager's thread after its cycle): the background follows it
@@ -697,9 +700,18 @@ namespace UI {
                     this.InvalidatePopup(popup, popup.ax, popup.ay)
                     this.ForgetSurface(popup)
                     this.Forget(popup)
-                    if (popup.transient) { delete popup }
+                    if (popup.transient) { this.dropped.Add(popup) }
                     return
                 }
+            }
+        }
+
+        // The closed floating elements are destroyed (ClosePopup only noted them).
+        undefined DropClosed() {
+            while (this.dropped.Count > 0) {
+                any gone = this.dropped[0]
+                this.dropped.RemoveAt(0)
+                delete gone
             }
         }
 
@@ -708,7 +720,8 @@ namespace UI {
             while (this.popups.Count > 0) { this.ClosePopup(this.popups[this.popups.Count - 1]) }
         }
 
-        // Shows a menu (list of MenuItem) with its top left corner at (x, y); a chosen row or a click next to it closes it.
+        // Shows a menu (list of MenuItem) with its top left corner at (x, y); a chosen row or a click next to it closes it. The list stays its caller's: it has to
+        // live as long as the menu is open - a list made in a method goes into a field of the caller (`this.menuRows = take items`), not a local.
         UI.MenuPopup ShowMenu(List items, defined int x, defined int y, Element owner = undefined) {
             var menu = new MenuPopup(items)
             this.ShowPopup(menu, x, y, true, owner)

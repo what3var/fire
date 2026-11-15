@@ -503,6 +503,15 @@ namespace AI {
         string HistoryRole(int i) { return this.roles[i] }
         string HistoryText(int i) { return this.texts[i] }
 
+        // Takes a message into the conversation without an answer of the model - a conversation that was saved goes on ("user" or "assistant").
+        undefined Remember(string role, string text) {
+            if (this.running) { this.Cancel() }
+            if (role == "assistant") { this.turns.Add(this.AssistantStart() + text + "<|im_end|>\n") }
+            else { this.turns.Add("<|im_start|>user\n" + text + "<|im_end|>\n") }
+            this.roles.Add(role == "assistant" ? "assistant" : "user")
+            this.texts.Add(text)
+        }
+
         // A new topic: the conversation is forgotten (the instructions and tools stay).
         undefined Forget() {
             if (this.running) { this.Cancel() }

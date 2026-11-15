@@ -192,6 +192,8 @@ namespace Dialogs {
         UI.Button typeButton
         UI.ListBox places
         List placePaths
+        // the rows of the file type menu while it is open (the menu does not own them)
+        List typeRows
         List filterNames
         List filterPatterns
         defined int filterAt = 0
@@ -479,7 +481,8 @@ namespace Dialogs {
                 items.Add(new Dialogs.TypeItem(this, i))
             }
             var b = this.typeButton
-            this.dialog.root.ShowMenu(items, b.ax, b.ay + b.actualHeight, b)
+            this.typeRows = take items
+            this.dialog.root.ShowMenu(this.typeRows, b.ax, b.ay + b.actualHeight, b)
         }
 
         undefined SetType(defined int index) {
