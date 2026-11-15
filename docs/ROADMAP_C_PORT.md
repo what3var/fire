@@ -170,8 +170,8 @@ Noch kein C; alles hier ist für sich nützlich und macht den Rest prüfbar.
    benutzen es, **MemoryPack ist entfernt**. `forge bytecode` schreibt eine Datei, `forge dump` gibt ein Programm als Text aus (`ProgramDump`).
    Tests: `FIRE_TESTS_ONLY=programfile`.
 2. **Tests als Daten** (L5): Export, das C#-Testprogramm liest die Dateien.
-3. **Determinismus**: zweimal bauen ergibt byte-gleiche `.fbc` und `fire_program.c`. Für `.fbc` umgesetzt und geprüft (dieselben Tests: jedes
-   Beispiel von spark zweimal übersetzt gibt dieselben Bytes - es war nichts zu beseitigen). **Offen:** dasselbe für `fire_program.c`.
+3. ~~**Determinismus**~~ (geprüft, es war nichts zu beseitigen): zweimal übersetzt ergibt byte-gleiche `.fbc` und denselben Text von
+   `fire_program.c` - für ein Skript mit einem Stück von allem und für jedes Beispiel von spark (dieselben Tests), von Hand auch über zwei Prozesse.
 4. **Referenzstände**: ein Skript erzeugt für den Korpus `.fbc`, AST-Ausgabe, Diagnosen und `fire_program.c` (je Ziel/Option) als Vergleichsbasis;
    dazu Größen und Benchmarks der Referenzprogramme ([Prüfungen für den nativen Build](#prüfungen-für-den-nativen-build)).
 5. **spark baut nur noch über die Befehlszeile von forge** (statt `NativeBuilder`/`ProjectBuilder` im eigenen Prozess) - der erste Teil von L4, noch ganz in C#.
