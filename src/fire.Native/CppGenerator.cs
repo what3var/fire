@@ -442,7 +442,10 @@ namespace fire.Native
             // (Reflect.Set types it like any store - sf_, FieldArrayCheck; what JSON reads for it is an array the accesses check - packed, of that element - before
             // they read it in place)
             if (owner == null || args == null || LibraryRole || HasProperty(field) || _fieldAddressTaken.Contains(field)) return null;
-            if (ArrayOfParamParts(rc, field) is not { } ofParam || ofParam.Cls != owner || ofParam.K >= args.Length) return null;
+            // (the field may be one of a base class - `vals` of the __HashTable in `GetIndex<int, int>` of a Dictionary: its type arguments as that class sees them)
+            if (ArrayOfParamParts(rc, field) is not { } ofParam) return null;
+            if (ofParam.Cls != owner) args = KnownSelfTypeArgs(f, ofParam.Cls);
+            if (args == null || ofParam.K >= args.Length) return null;
             if (DeclaredType.TypedElementOf(args[ofParam.K]) is not int code) return null;
             return TypeOf(KindArr, code & 0xFF) | NullableBit;
         }
@@ -643,7 +646,12 @@ namespace fire.Native
                 if (code[i - 1].Op != OpCode.GuardTop) return null;
                 byte d = (byte)(code[i - 1].A[0] + 1);
                 // (`int F()`: a CheckUnit "unitless" in front - the number is one without a unit after it)
-                if (i >= 2 && code[i - 2].Op == OpCode.CheckUnit && proto.Chunk.Constants[code[i - 2].A[0]].AsString() == "unitless") d |= DeclaredKind.UnitlessBit;
+                // (`defined int F()` has two guards - the type checker's for a value it cannot prove and the one of `defined`: the CheckUnit stands before both)
+                int before = i - 2;
+                while (before >= 0 && code[before].Op == OpCode.GuardTop) before--;
+                // (the end of a `defined` function: `undefined` in front of its guard - it throws there, no result)
+                if (before >= 0 && code[before].Op == OpCode.LoadConst && proto.Chunk.Constants[code[before].A[0]].Kind == ValueKind.Undefined) continue;
+                if (before >= 0 && code[before].Op == OpCode.CheckUnit && proto.Chunk.Constants[code[before].A[0]].AsString().TrimStart('#') == "unitless") d |= DeclaredKind.UnitlessBit;
                 if (declared != null && declared != d) return null;
                 declared = d;
             }
@@ -1192,6 +1200,20 @@ namespace fire.Native
                 altCheck = $"if (FIRE_UNLIKELY({value}.kind != K_Undefined && ({value}.kind != K_Class || leafAlive({value})) && !({fits}))) guardClassFailed({value}, {CString(parsed.Display)}, {CString(what)});";
             }
             altCheck = undefCheck + altCheck;
+            // `Bag<int> b` (DECISIONS D10): an object of the class whose type arguments are known has those the declaration names (the TArgs are interned:
+            // one address per type argument)
+            if (parsed.TypeParamIndex < 0 && parsed.TypeArgs is { } wantedArgs && DeclaredClass(spec) is { } genericRc)
+            {
+                var wanted = wantedArgs.Select(a => a.Length == 0 ? "NULL"
+                    : a[0] != '$' ? TArgRef(a)
+                    : a.EndsWith('@') ? (callTArgs != null ? $"({callTArgs} ? {callTArgs}[{int.Parse(a.AsSpan(1, a.Length - 2), CultureInfo.InvariantCulture)}] : NULL)" : "NULL")
+                    : ownerObj != "NULL" ? TArgOfExpr(a.Substring(a.IndexOf('@') + 1), int.Parse(a.AsSpan(1, a.IndexOf('@') - 1), CultureInfo.InvariantCulture), ownerObj) : "NULL").ToList();
+                if (wanted.Any(w => w != "NULL"))
+                {
+                    string has = string.Join(", ", Enumerable.Range(0, wanted.Count).Select(k => TArgOfExpr(genericRc.Name, k, $"objAt({value})")));
+                    altCheck += $" if ({value}.kind == K_Class && leafAlive({value})) {{ const TArg* tw_[] = {{{string.Join(", ", wanted)}}}; const TArg* th_[] = {{{has}}}; int ti_; for (ti_ = 0; ti_ < {wanted.Count}; ti_++) if (FIRE_UNLIKELY(tw_[ti_] && th_[ti_] && tw_[ti_] != th_[ti_] && !(th_[ti_]->isA && typeNameIn(tw_[ti_]->display, th_[ti_]->isA)))) {{ guardTypeArgsFailed({CString(parsed.Display)}, tw_, th_, {wanted.Count}, {CString(what)}); break; }} }}";
+                }
+            }
             if (parsed.TypeParamIndex < 0) return altCheck;
             // a type parameter: the type argument of the object (class) or of the call (method) decides when it is known, its `where` otherwise
             int k = parsed.TypeParamIndex;
@@ -1232,7 +1254,7 @@ namespace fire.Native
             {
                 _targIds[text] = id = _targIds.Count;
                 HoldsExpr("v", DeclaredType.ConditionOf(text));   // (registers the `isof_` it needs)
-                if (DeclaredType.ArrayOfTypeArg(text) is (_, { } elemText)) ArrClassId(elemText);   // (and its entry in g_arrClasses: TArg.arrClass)
+                if (DeclaredType.ArrayOfTypeArg(text, ProgramEnum) is (_, { } elemText)) ArrClassId(elemText);   // (and its entry in g_arrClasses: TArg.arrClass)
             }
             return $"&{Px}ta_{id}";
         }
@@ -1358,8 +1380,9 @@ namespace fire.Native
                 }
                 sb.AppendLine($"static bool {Px}tah_{id}(Value v) {{ return {holds}; }}");
                 // (`T items[]`, `new T[n]`: how this type argument types an array - a class or `string` by its entry in g_arrClasses, ROADMAP 19)
-                var (arrElem, arrClass) = DeclaredType.ArrayOfTypeArg(text) is var (elemOfArg, elemText) ? (elemOfArg + 1, elemText != null ? ArrClassId(elemText) : 0) : (0, 0);
-                sb.AppendLine($"static const TArg {Px}ta_{id} = {{{CString(DeclaredType.DisplayOf(text))}, {Px}tah_{id}, {(text.StartsWith("float", StringComparison.Ordinal) && DeclaredType.NumberDemand(text) != null ? "true" : "false")}, {kind}, {adapt}, {arrElem}, {arrClass}}};");
+                var (arrElem, arrClass) = DeclaredType.ArrayOfTypeArg(text, ProgramEnum) is var (elemOfArg, elemText) ? (elemOfArg + 1, elemText != null ? ArrClassId(elemText) : 0) : (0, 0);
+                string isA = IsANames(text, $"{Px}tai_{id}", sb);   // (the table of names first: the TArg points to it)
+                sb.AppendLine($"static const TArg {Px}ta_{id} = {{{CString(DeclaredType.DisplayOf(text))}, {Px}tah_{id}, {(text.StartsWith("float", StringComparison.Ordinal) && DeclaredType.NumberDemand(text) != null ? "true" : "false")}, {kind}, {adapt}, {arrElem}, {arrClass}, {isA}}};");
             }
             foreach (var (text, id) in _targListIds.OrderBy(kv => kv.Value))
                 sb.AppendLine($"static const TArg* const {Px}tl_{id}[] = {{{string.Join(", ", text.Split('|').Select(TArgRef))}}};");
@@ -1396,7 +1419,8 @@ namespace fire.Native
         private bool FitsClassType(int type, string spec) =>
             DeclaredType.Parse(spec).NonNull ? !IsNullable(type) && type != TypeUndefined && FitsClassTypeCore(type, spec) : FitsClassTypeCore(type, spec);
         private bool FitsClassTypeCore(int type, string spec) =>
-            type == TypeUndefined || DeclaredType.Parse(spec).TypeParamIndex < 0 && BaseKindOfType(type) == KindObj && (type & TypeNone) == 0
+            // (`Bag<int> b`: the static type says the class, not its type arguments - the guard looks at them)
+            type == TypeUndefined || DeclaredType.Parse(spec).TypeParamIndex < 0 && DeclaredType.Parse(spec).TypeArgs == null && BaseKindOfType(type) == KindObj && (type & TypeNone) == 0
                 && (InterfaceOfType(type) is { } iface ? DeclaredType.Parse(spec).SingleName == iface : DeclaredClass(spec) is { } rc && ClassIs(ObjClass(type), rc.Name));
 
         /// <summary>The static return type of a generated function (joined by its `return` instructions; constructors return the object).</summary>
@@ -1805,6 +1829,22 @@ namespace fire.Native
             return id;
         }
 
+        /// <summary>The names of the types a class is (itself, its base classes, the interfaces they implement) as a NULL-terminated table `name` written
+        /// to `sb` - what an object or an array of it may stand for (covariance: a `List&lt;Dog&gt;` where a `List&lt;Animal&gt;` is declared, a Dog array
+        /// where an Animal array is; fire_rt.h typeNameIn); "NULL" for what is no class of the program.</summary>
+        private string IsANames(string cls, string name, StringBuilder sb)
+        {
+            if (!_program.Program.Classes.TryGetValue(cls, out var rc)) return "NULL";
+            var names = new SortedSet<string>(StringComparer.Ordinal);
+            for (var r = rc; r != null; r = r.Base)
+            {
+                names.Add(GenericClassNames.PlainName(r.Name));
+                foreach (var i in r.Interfaces) names.Add(GenericClassNames.PlainName(i));
+            }
+            sb.AppendLine($"static const char* const {name}[] = {{{string.Join(", ", names.Select(CString))}, NULL}};");
+            return name;
+        }
+
         /// <summary>g_arrClasses: for each array of a class what fits (the conditions of its declaration), its name and what a defined one starts with.</summary>
         private string ArrClassTable()
         {
@@ -1817,7 +1857,8 @@ namespace fire.Native
                 sb.AppendLine($"static bool {Px}acf_{id}(Value v) {{ return {fits}; }}");
                 sb.AppendLine($"static Value {Px}acz_{id}(void) {{ return {Constant(ArrayElem.Zero(ArrayElem.Class, text))}; }}");
             }
-            sb.AppendLine($"static const ArrClass {Px}kArrClasses[] = {{{string.Join(", ", _arrClasses.OrderBy(kv => kv.Value).Select(kv => $"{{{Px}acf_{kv.Value}, {CString(ArrayElem.Name(ArrayElem.Class, kv.Key))}, {Px}acz_{kv.Value}}}"))}}};");
+            var isA = _arrClasses.OrderBy(kv => kv.Value).Select(kv => IsANames(DeclaredType.Parse(ArrayElem.ClassText(kv.Key)).SingleName ?? "", $"{Px}aci_{kv.Value}", sb)).ToList();
+            sb.AppendLine($"static const ArrClass {Px}kArrClasses[] = {{{string.Join(", ", _arrClasses.OrderBy(kv => kv.Value).Select((kv, n) => $"{{{Px}acf_{kv.Value}, {CString(ArrayElem.Name(ArrayElem.Class, kv.Key))}, {Px}acz_{kv.Value}, {isA[n]}}}"))}}};");
             return sb.ToString();
         }
 
@@ -4231,9 +4272,10 @@ namespace fire.Native
             for (int k = Math.Max(0, before - 3); k < Math.Min(before, 64); k++) fromNone |= st.Types[k] == TypeNone;
             bool selfAliveBefore = st.SelfAlive;
             _selfAliveAfter = null;
+            bool neutralHere = selfAliveBefore && SelfNeutralHere(ins.Op, st.Types, before);   // (by the types of the operands, before the step changes them)
             var result = StepCore(f, chunk, ins, st, sb, locals);
             // (`self` stays checked across what runs no code of its own and destroys nothing; a field access of `self` says itself)
-            st.SelfAlive = _selfAliveAfter ?? (selfAliveBefore && SelfNeutral(ins.Op));
+            st.SelfAlive = _selfAliveAfter ?? (selfAliveBefore && (SelfNeutral(ins.Op) || neutralHere));
             // (slots that were popped are no scalars; a fall into a jump target makes the scalars Values - the target expects them there)
             st.Scalar &= st.Depth >= 64 ? ~0UL : (1UL << Math.Max(st.Depth, 0)) - 1;
             for (int k = Math.Max(st.Depth, 0); k < 64; k++) st.Alias[k] = null;
@@ -4322,6 +4364,31 @@ namespace fire.Native
         private static bool SelfNeutral(OpCode op) => op is OpCode.LoadConst or OpCode.LoadLocal or OpCode.LoadThis or OpCode.LoadGlobal or OpCode.Pop or OpCode.Dup
             or OpCode.StoreLocal or OpCode.StoreLocalPop or OpCode.DeclareLocal or OpCode.ClaimToScope or OpCode.CopyArgs or OpCode.GuardTop
             or OpCode.GuardLocal or OpCode.GuardLocalType;   // (the checks of the parameters run no code of the program: they convert or throw)
+        /// <summary>An instruction that runs no code of the program and destroys nothing because of what its operands are (ROADMAP 21: the hash table's
+        /// `Find` walks its chains without checking `self` again): a jump; arithmetic, a comparison or a condition on numbers and bools (an operator
+        /// overload needs an object); an element or the length of a typed array or a buffer (an array has no code of its own - a wrong index throws).</summary>
+        private static bool SelfNeutralHere(OpCode op, int[] types, int depth)
+        {
+            bool Plain(int k) => k >= 0 && k < 64 && types[k] != TypeUnknown && IsPlainType(types[k]);
+            bool ArrayAt(int k) => k >= 0 && k < 64 && (types[k] & TypeNone) == 0 && BaseKindOfType(types[k]) is KindArr or KindBuf;
+            switch (op)
+            {
+                case OpCode.Jump: case OpCode.EnterScope:
+                    return true;
+                case OpCode.JumpIfFalse: case OpCode.JumpIfFalsePeek: case OpCode.JumpIfTruePeek: case OpCode.Neg: case OpCode.LogicalNot:
+                    return Plain(depth - 1);
+                case OpCode.Add: case OpCode.Sub: case OpCode.Mul: case OpCode.Div: case OpCode.Mod: case OpCode.BitAnd:
+                case OpCode.Eq: case OpCode.NotEq: case OpCode.Lt: case OpCode.LtEq: case OpCode.Gt: case OpCode.GtEq:
+                case OpCode.JumpIfNotLt: case OpCode.JumpIfNotLtEq: case OpCode.JumpIfNotGt: case OpCode.JumpIfNotGtEq: case OpCode.JumpIfNotEq: case OpCode.JumpIfNotNotEq:
+                    return Plain(depth - 1) && Plain(depth - 2);
+                case OpCode.ArrayGet:
+                    return ArrayAt(depth - 2) && Plain(depth - 1);
+                case OpCode.GetField:
+                    return ArrayAt(depth - 1);
+                default:
+                    return false;
+            }
+        }
         private static bool AnyAlias(Flow st) { foreach (var a in st.Alias) if (a != null) return true; return false; }
         /// <summary>A load of a variable may leave the slot an alias of it (Flow.Alias): not in a debug build, not in a function with `try` (its catch blocks see
         /// the slots), not in one that takes the address of a local (a write through the pointer would not be seen).</summary>
@@ -6329,6 +6396,9 @@ namespace fire.Native
                         var target = GetFunc(directProto, FuncKind.Method);
                         var (callee, specCondition) = directProto.Specializations != null ? (target, null) : Specialize(f, ins, target, d - argc, argc, S, Ty);
                         long mask = ArgMask();
+                        // (an unclaimed argument that is certainly a number - `this.Find(key, this.HashOf(key))`: nothing to own, the C bodies take it)
+                        for (int i = 0; i < Math.Min(argc, 16); i++)
+                            if ((mask >> (4 * i) & 15) == 4 && K(d - argc + i) is KindInt or KindFloat or KindBool or KindWord) mask &= ~(15L << (4 * i));
                         if (directProto.Specializations is { } handSpecs && argc == directProto.ParamCount && HandSpecCalls(handSpecs, SR(slot)) is { Count: > 0 } specCalls)
                         {
                             // a typed specialization written in the class (`Add<int>`, SPEC 5.8.1): chosen here by the type arguments of the object, not in the
@@ -6366,6 +6436,36 @@ namespace fire.Native
                             string chain = string.Concat(specCalls.Select((sc, n) => $"({sc.Condition}{definedTests[n]}) ? {SpecCall(n)} : ")) + $"{target.Name}({hargs})";
                             string hslot = T(slot);
                             string hnotObject = IsNullable(Ty(slot)) ? $"if (FIRE_UNLIKELY({hrecv}.kind != K_Class)) {hslot} = missingMethod({hrecv}, {CString(method)}, {argc}); else " : "";
+                            // the type checker knows the type arguments of the receiver (`Bag<int> b; b.Get(i)`, Chunk.ReceiverTypeArgs): the result is what
+                            // that specialization gives, like for `l[i]` - a C number when it has a C result; the generic method (an object whose type
+                            // arguments differ after all, an argument that is undefined) is checked to give the same
+                            if (mask == 0 && f.Chunk.ReceiverTypeArgs is { } callArgsKnown && callArgsKnown.TryGetValue(ins.Addr, out var callReceiverArgs)
+                                && specCalls.FindIndex(sc => sc.Callee.Proto?.SpecArgs is { } sa && SpecArgsFit(sa, callReceiverArgs)) is var hinted and >= 0
+                                && DeclaredReturn(specCalls[hinted].Callee.Proto!) is { } hintedReturn
+                                && (DeclaredResultType(hintedReturn) != TypeUnknown || cSpecArgs[hinted] != null && CAbiOf(specCalls[hinted].Callee) is { RetType: not 0 }))
+                            {
+                                int hintedType = DeclaredResultType(hintedReturn);
+                                var hc = specCalls[hinted];
+                                string what = $"The result of '{method}' of a {GenericClassNames.PlainName(directProto.Chunk.OwnerClass?.Name ?? "")}<{callReceiverArgs.Replace("|", ", ")}>";
+                                string checkedGeneric = GuardKindCall($"{target.Name}({hargs})", hintedReturn, what);
+                                if (cSpecArgs[hinted] is { } hintedCArgs && CAbiOf(hc.Callee) is { RetType: not 0 } hintedAbi)
+                                {
+                                    E($"{hnotObject}if (FIRE_UNLIKELY(!leafAlive({hrecv}))) {hslot} = destroyedError({hrecv});");
+                                    Check();
+                                    SetScalar(slot, hintedAbi.RetType, $"({hc.Condition}{definedTests[hinted]}) ? {CName(hc.Callee)}({hrecv}{hintedCArgs}) : {CNumberOf(hintedAbi.RetType, $"({checkedGeneric})")}");
+                                    ArgsAfter(argc, mask, S(slot));
+                                    Check();
+                                    d = slot + 1; return Next();
+                                }
+                                if (hintedType != TypeUnknown)
+                                {
+                                    E($"{{ {hnotObject}if (FIRE_UNLIKELY(!leafAlive({hrecv}))) {hslot} = destroyedError({hrecv}); else {hslot} = ({hc.Condition}{definedTests[hinted]}) ? {SpecCall(hinted)} : {checkedGeneric}; }}");
+                                    ArgsAfter(argc, mask, S(slot));
+                                    Check();
+                                    AdoptResult(slot, hintedType);
+                                    d = slot + 1; return Next();
+                                }
+                            }
                             E($"{{ {hnotObject}if (FIRE_UNLIKELY(!leafAlive({hrecv}))) {hslot} = destroyedError({hrecv}); else {hslot} = {chain}; }}");
                             ArgsAfter(argc, mask, S(slot));
                             Check();
@@ -7169,7 +7269,7 @@ namespace fire.Native
                     E($"{a} = {v};");
                     d -= 2; SetR(d - 1, false); SetT(d - 1, storedType); _kindsKept = true; return Next();
                 }
-                case OpCode.ArrayGet when ObjSlot(d - 2) && !IsNullable(Ty(d - 2)) && (Ty(d - 2) & TypeNone) == 0 && !(_usesReflection && ReflectionMethodNames.Contains("GetIndex"))
+                case OpCode.ArrayGet when ObjSlot(d - 2) && (Ty(d - 2) & TypeNone) == 0 && !(_usesReflection && ReflectionMethodNames.Contains("GetIndex"))
                     && DirectMethod(ObjClass(Ty(d - 2)), "GetIndex", 1, f) is { Specializations: { } getSpecs, ParamCount: 1 } getIndex:
                 {
                     // `list[i]` on an object of a known class whose `operator[]` has typed specializations (`operator[]<int>`, SPEC 5.8.1): the one for the
@@ -7177,6 +7277,8 @@ namespace fire.Native
                     // through the dispatcher)
                     Need(2);
                     string grecv = S(d - 2), gidx = S(d - 1);
+                    // (a receiver that may be undefined - a parameter `List<int> l`: the generic access throws for it, what follows has an object)
+                    if (IsNullable(Ty(d - 2))) { E($"if (FIRE_UNLIKELY({grecv}.kind != K_Class)) {grecv} = {Px}aget_g({grecv}, {gidx}, NULL);"); Check(); }   // (it throws: no list to adopt a result into)
                     var getCalls = HandSpecCalls(getSpecs, grecv);
                     var generic = GetFunc(getIndex, FuncKind.Method);
                     var arms = new StringBuilder();
@@ -7238,7 +7340,7 @@ namespace fire.Native
                     if (elemType is { } ofElem) { SetT(d - 1, ofElem); _kindsKept = true; }
                     return Next();
                 }
-                case OpCode.ArraySet when ObjSlot(d - 3) && !IsNullable(Ty(d - 3)) && (Ty(d - 3) & TypeNone) == 0 && !(_usesReflection && ReflectionMethodNames.Contains("SetIndex"))
+                case OpCode.ArraySet when ObjSlot(d - 3) && (Ty(d - 3) & TypeNone) == 0 && !(_usesReflection && ReflectionMethodNames.Contains("SetIndex"))
                     && IsPlainType(Ty(d - 1)) && (Ty(d - 1) & TypeNone) == 0   // (a number, a bool or undefined: nothing to claim for the object)
                     && DirectMethod(ObjClass(Ty(d - 3)), "SetIndex", 2, f) is { Specializations: { } setSpecs, ParamCount: 2 }:
                 {
@@ -7247,6 +7349,7 @@ namespace fire.Native
                     // value for the object and calls the operator through the dispatcher)
                     Need(3);
                     string srecv = S(d - 3), sidx = S(d - 2), sval = S(d - 1);
+                    if (IsNullable(Ty(d - 3))) { E($"if (FIRE_UNLIKELY({srecv}.kind != K_Class)) (void){Px}aset_g({srecv}, {sidx}, {sval}, NULL);"); Check(); }
                     var setCalls = HandSpecCalls(setSpecs, srecv);
                     var sarms = new StringBuilder();
                     foreach (var sc in setCalls)
@@ -7312,6 +7415,8 @@ namespace fire.Native
                     Check();
                     d--; SetR(d - 1, R(d)); return Next();
                 case OpCode.CopyArgs:
+                    // (a prefix of the call that follows: it touches no slot - their kinds stay, `this.Find(key, this.HashOf(key))` keeps the hash an int)
+                    _kindsKept = true;
                     return Next();
                 case OpCode.AddressOfLocal:
                 {

@@ -25,13 +25,45 @@ Vorschlag des Benutzers: `try delete x` versucht, den Inhalt des Bezeichners zu 
 sonst `true`. Für die Container wurde es nicht gebraucht (`x is from this` genügt, D3). Offen ist, ob es trotzdem kommt - und ob es nur löscht,
 was dem Aufrufer gehört, oder jedes Objekt wie `delete`.
 
-### D4. Ein Enum als Typargument typisiert kein Array
-
-`T items[]` in `Bag<Color>`: das Typargument eines Enums ist zur Laufzeit nicht bekannt (der Typprüfer prüft es), das Array bleibt untypisiert.
-Für Klassen, Interfaces, `string` und Zahlen typisiert das Typargument das Array (ROADMAP 19). Offen, ob Enums als Typargument zur Laufzeit
-bekannt werden sollen.
-
 ## Entschieden
+
+### D9. `print` eines zerstörten Objekts ist die DestroyedException
+
+`print(x)`, `"" + x` und `$"{x}"` mit einem zerstörten Objekt werfen die DestroyedException, wie jede andere Verwendung - in VM und nativ, mit und
+ohne `ToString()`. Vorher schrieb die VM für eine Klasse ohne `ToString()` `<object P>`, und nativ las `print` freigegebenen Speicher (dann
+`<object>`). Ein lebendes Objekt ohne `ToString()` zeigt weiter `<object P>`. VM.StringifyForText, fire_rt.h pieceOf.
+
+### D10. Eine Deklaration `Bag<int> b` prüft die Typargumente
+
+Ein Parameter, ein Feld, eine Rückgabe oder eine Variable, die mit einer generischen Klasse und Typargumenten deklariert ist, nimmt nur ein Objekt
+mit diesen Typargumenten: `Parameter 'b' is a Bag<int>, not Bag<string>.` (eine ArgumentException, in VM und nativ gleich). Vorher prüfte die
+Deklaration nur die Klasse; die VM rechnete mit dem falschen Wert weiter, nativ kam die Meldung erst am Ergebnis. Durch gehen weiterhin: ein Objekt
+ohne bekannte Typargumente (`new Bag()`), eine abgeleitete Klasse, die der Basisklasse diese Typargumente gibt (`class IntBag : Bag<int>`), und
+Stellen, an denen das Typargument der Deklaration nicht bekannt ist (`Bag<any>`). In generischem Code zählt das Typargument des Objekts
+(`Bag<T> other` in `Bag<int>`: ein `Bag<int>`).
+**Kovarianz** (Entscheidung des Benutzers: was von Animal abstammt, ist als Animal zuweisbar und nutzbar): ein `List<Dog>` geht dorthin, wo
+`List<Animal>` oder `List<INamed>` deklariert ist, ein Dog-Array dorthin, wo `Animal a[]` steht. Das Objekt bzw. das Array **behält seinen Typ** und
+prüft weiter, was hineinkommt: `animals.Add(cat)` auf einem `List<Dog>` und `all[0] = cat` auf einem Dog-Array sind die ArgumentException
+(`Parameter 'value' is a T (Dog), not Cat.`). Die Gegenrichtung (`List<Animal>` in `List<Dog>`) und fremde Klassen gehen nicht. Das ersetzt die
+frühere Regel, dass ein Array einer abgeleiteten Klasse nicht in die Deklaration der Basisklasse geht.
+DeclaredType.WithTypeArgs / TypeArgsFit, VM.ClassArrayIsOf, nativ ClassGuard mit `guardTypeArgsFailed`, `TArg.isA` / `ArrClass.isA` mit `typeNameIn`.
+
+### D8. Eine Deklaration `Color c` prüft zur Laufzeit
+
+Ein Parameter, ein Feld, eine Property, eine Rückgabe oder eine Variable, die mit einem Enum deklariert ist, nimmt einen Wert dieses Enums oder
+undefined - alles andere ist eine ArgumentException (`Parameter 'c' is a Color, not Int.`), wie bei `Dog d` für Klassen. Vorher prüfte das nur
+der Typprüfer (und zur Laufzeit `defined Color c`, `Color cs[]` und ein `T` mit dem Typargument `Color`). Eine Zahl geht mit einem Cast hinein
+(`5!Color`); ein Enum-Wert geht weiter ohne Cast in ein `int`. Entscheidung des Benutzers. Compiler.DeclaredTypeOf, TypeChecker.GuardLocalValue /
+GuardValue (SPEC 8.10b).
+
+### D4. Ein Enum als Typargument ist zur Laufzeit bekannt
+
+`Bag<Color>`: bisher ließ der Compiler das Typargument eines Enums zur Laufzeit leer - mit der Begründung, dass auch eine einzelne Deklaration
+`Color c` zur Laufzeit nimmt, was kommt (der Typprüfer prüft sie). Dadurch typisierte `T items[]` für ein Enum nichts, `T is of Color` war falsch
+und `T item` nahm jeden Wert. Jetzt (Wunsch des Benutzers) trägt das Typargument den vollen Namen des Enums: `T item` nimmt nur Werte dieses
+Enums oder undefined, `T items[]`/`new T[n]` ist ein Array davon (wie `Color cs[]`), `T is of Color` stimmt; `List<Color>`,
+`Dictionary<Color, V>`, `HashSet<Color>` prüfen so ihre Elemente. Compiler.TypeArgText, DeclaredType.ArrayOfTypeArg (ROADMAP 19).
+Die Folgefrage ist D8.
 
 ### D3. Container zerstören, was ihnen gehört, wenn es herausfällt
 

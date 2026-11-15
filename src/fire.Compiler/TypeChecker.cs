@@ -941,7 +941,9 @@ namespace fire.Compiler
                 // `List<int>` is not a `List<string>`: the type arguments of the same class must agree (a raw form or an `any` agrees with everything)
                 if (target.Args == null) return true;
                 var view = value.Class == target.Class ? value : AsBase(value, target.Class!);
-                return view?.Args == null || view.Args.Zip(target.Args).All(p => p.First.IsDynamic || p.Second.IsDynamic || p.First == p.Second);
+                // (a `List<Dog>` is a `List<Animal>`: the object keeps its type argument and checks what goes in - DECISIONS D10)
+                return view?.Args == null || view.Args.Zip(target.Args).All(p => p.First.IsDynamic || p.Second.IsDynamic || p.First == p.Second
+                    || p.First.Kind == StaticKind.Class && p.Second.Kind == StaticKind.Class && p.First.Args == null && p.Second.Args == null && DerivesFrom(p.First.Class!, p.Second.Class!));
             }
             // an enum is not an int (and an int not an enum): `Color c = 5`, `int i = c` want a `!` (`5!Color`, `c!int`)
             if (value.Kind == StaticKind.Enum || target.Kind == StaticKind.Enum) return value.Kind == target.Kind && value.Class == target.Class;
@@ -1341,6 +1343,7 @@ namespace fire.Compiler
             StaticKind.Bool => new TypeRef("bool", null, 0),
             StaticKind.Class when type.Args == null && type.Class is { } name && (_classes.TryGetValue(name, out var decl) ? decl.TypeParams is not { Count: > 0 } : _interfaces.TryGetValue(name, out var iface) && iface.TypeParams is not { Count: > 0 })
                 => new TypeRef(name, null, 0),
+            StaticKind.Enum when type.Class is { } enumName => new TypeRef(enumName, null, 0),
             _ => null,
         };
 
@@ -1367,6 +1370,8 @@ namespace fire.Compiler
                 StaticKind.Float => value.Kind is not (StaticKind.Float or StaticKind.Int),
                 StaticKind.Bool => value.Kind != StaticKind.Bool,
                 StaticKind.Class => value.Kind != StaticKind.Class || !DerivesFrom(value.Class!, target.Class!),
+                // (`Color c`: a value of that enum - a number goes in with a cast, DECISIONS D8)
+                StaticKind.Enum => value.Kind != StaticKind.Enum || value.Class != target.Class,
                 StaticKind.Dynamic => target.TypeParam != null && value.TypeParam != target.TypeParam,
                 _ => false,
             };
@@ -1383,6 +1388,8 @@ namespace fire.Compiler
                 StaticKind.Float => value.Kind is not (StaticKind.Float or StaticKind.Int),
                 StaticKind.Bool => value.Kind != StaticKind.Bool,
                 StaticKind.Class => value.Kind != StaticKind.Class || !DerivesFrom(value.Class!, target.Class!),
+                // (`Color c`: a value of that enum - a number goes in with a cast, DECISIONS D8)
+                StaticKind.Enum => value.Kind != StaticKind.Enum || value.Class != target.Class,
                 StaticKind.Dynamic => target.TypeParam != null && value.TypeParam != target.TypeParam,
                 _ => false,
             };

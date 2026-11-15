@@ -126,7 +126,9 @@ namespace fire.Native
             if (f.HasSelf) ps.Add("Value self");
             for (int i = 0; i < f.ParamCount; i++)
                 ps.Add(abi.ParamType[i] != 0 ? $"{CTypeOf(abi.ParamType[i])} {CParamName(f, i)}" : $"Value P{i}");
-            return $"static {(abi.RetType != 0 ? CTypeOf(abi.RetType) : "Value")} {CName(f)}({(ps.Count == 0 ? "void" : string.Join(", ", ps))})";
+            // (the C body of a small typed specialization - `operator[]<int>`, SPEC 5.8.1: embedded at its call sites, where the receiver was tested already)
+            string inline = f.Proto?.SpecOwner != null && f.Chunk.Code.Count <= 40 && !DebugBuild ? "FIRE_ALWAYS_INLINE static inline" : "static";
+            return $"{inline} {(abi.RetType != 0 ? CTypeOf(abi.RetType) : "Value")} {CName(f)}({(ps.Count == 0 ? "void" : string.Join(", ", ps))})";
         }
 
         /// <summary>What a function returns when it is left by an exception (the caller looks at the unwinding flag).</summary>

@@ -1387,7 +1387,9 @@ typedef struct Str {
 /* `arrElem`: the element type + 1 of a typed array for this type argument (`int`, `float`, `bool`, `char` without a unit: `new T[n]` of `List<int>` is
  * raw, OpCode.TypeArrayOfParam); 0 for any other. */
 /* `arrClass`: for a class, an interface or `string` (arrElem is E_CLASS + 1 then) the 1-based index of the entry in g_arrClasses (ROADMAP 19). */
-typedef struct TArg { const char* display; bool (*holds)(Value); bool isFloat; uint8_t kind; Value (*adapt)(Value); uint8_t arrElem; uint32_t arrClass; } TArg;
+/* `isA`: for a class the names of the types it is (itself, its bases, their interfaces; NULL-terminated) - a `List<Dog>` goes where a `List<Animal>` is
+ * declared (typeNameIn); NULL for anything else. */
+typedef struct TArg { const char* display; bool (*holds)(Value); bool isFloat; uint8_t kind; Value (*adapt)(Value); uint8_t arrElem; uint32_t arrClass; const char* const* isA; } TArg;
 /* The type arguments of an object or a call, one per type parameter (null: not known); interned, never freed. */
 typedef const TArg* const* TArgs;
 
@@ -1491,7 +1493,8 @@ enum { E_None, E_I8, E_I16, E_I32, E_I64, E_F8, E_F16, E_F32, E_F64, E_Bool, E_C
 /* An array of a class, an interface, a record, a string or an enum (`Dog pets[]`, ROADMAP 19; Values.ArrayElem.Class): the elements stay Values; with TU_CLASS
  * the `unit` of its ArrTyped is the 1-based index of its entry in g_arrClasses (what fits, the name, what a defined one starts with). */
 enum { E_CLASS = 13 };
-typedef struct ArrClass { bool (*fits)(Value v); const char* display; Value (*zero)(void); } ArrClass;
+/* (`isA`: like TArg.isA - a Dog array goes where an Animal array is declared and keeps its element type) */
+typedef struct ArrClass { bool (*fits)(Value v); const char* display; Value (*zero)(void); const char* const* isA; } ArrClass;
 extern FIRE_RT_DATA const ArrClass* g_arrClasses;
 
 /* What a typed array has more than an untyped one. Its elements are usually packed: one C number per element (int8_t ... int64_t, float, Real, bool as
@@ -4015,7 +4018,7 @@ FIRE_FN void pieceOf(Value v, Piece* out, OwnList* list) {
                 if (FIRE_UNLIKELY(g_unwind.active || text.kind != K_String)) { out->p = out->buf; out->n = 0; return; }   /* ToString() threw */
                 out->p = strOf(text)->data; out->n = strOf(text)->length;
             }
-            else if (!leafAlive(v)) setPiece(out, "<object>");   /* (dead: its class is not known any more) */
+            else if (!leafAlive(v)) { destroyedError(v); out->p = out->buf; out->n = 0; return; }   /* (a destroyed object: the DestroyedException, like every other use of it) */
             else {
                 char t[80];
                 int n = snprintf(t, sizeof t, "<object %s>", className(asObj(v)->cls));
@@ -5038,7 +5041,24 @@ FIRE_COLD FIRE_FN void guardClassFailed(Value v, const char* cls, const char* wh
     if (v.kind == K_Undefined)   /* (`defined Dog d`: never undefined) */
         snprintf(text, sizeof text, "%s is %s %s and never undefined.", what, vowel ? "an" : "a", cls);
     else
-        snprintf(text, sizeof text, "%s is %s %s, not %s.", what, vowel ? "an" : "a", cls, v.kind == K_Class ? className(asObj(v)->cls) : kindName(v));
+        snprintf(text, sizeof text, "%s is %s %s, not %s.", what, vowel ? "an" : "a", cls, v.kind == K_Class ? className(asObj(v)->cls) : enumOf(v) ? enumOf(v)->name : kindName(v));
+    fireError("ArgumentException", text);
+}
+
+/* `Bag<int> b` given a Bag<string> (DECISIONS D10): "... is a Bag<int>, not Bag<string>." - `want` the type arguments of the declaration, `has` those of
+ * the object (null: not known, written `any`). */
+FIRE_COLD FIRE_FN void guardTypeArgsFailed(const char* cls, const TArg* const* want, const TArg* const* has, int n, const char* what) {
+    char text[400], w[120], h[120];
+    int i;
+    size_t wn = 0, hn = 0;
+    w[0] = h[0] = 0;
+    for (i = 0; i < n; i++) {
+        wn += (size_t)snprintf(w + wn, wn < sizeof w ? sizeof w - wn : 0, "%s%s", i ? ", " : "", want[i] ? want[i]->display : "any");
+        hn += (size_t)snprintf(h + hn, hn < sizeof h ? sizeof h - hn : 0, "%s%s", i ? ", " : "", has[i] ? has[i]->display : "any");
+        if (wn >= sizeof w) wn = sizeof w - 1;
+        if (hn >= sizeof h) hn = sizeof h - 1;
+    }
+    snprintf(text, sizeof text, "%s is %s %s<%s>, not %s<%s>.", what, strchr("AEIOUaeiou", cls[0]) ? "an" : "a", cls, w, cls, h);
     fireError("ArgumentException", text);
 }
 
@@ -6120,6 +6140,12 @@ FIRE_FN bool typeArraySlow(Value v, uint8_t elem, int rank, uint32_t unit, uint8
     if (a->typed) {
         /* (a defined array goes where one of its elements is declared; a declaration of a defined one makes an array defined) */
         if (a->typed->elem == elem && (a->typed->flags & ~TU_DEFINED) == (flags & ~TU_DEFINED) && (!(flags & (TU_UNIT | TU_CLASS)) || a->typed->unit == unit)) {
+            if (flags & TU_DEFINED) return arrMakeDefined(a);
+            return true;
+        }
+        /* (an array of a derived class where one of its base class or interface is declared: it stays what it is and checks what is stored) */
+        if ((flags & TU_CLASS) && (a->typed->flags & TU_CLASS) && unit && a->typed->unit && g_arrClasses[a->typed->unit - 1].isA
+            && typeNameIn(g_arrClasses[unit - 1].display, g_arrClasses[a->typed->unit - 1].isA)) {
             if (flags & TU_DEFINED) return arrMakeDefined(a);
             return true;
         }
@@ -12859,7 +12885,9 @@ bool timeObjTicks(Value v, int64_t* ticks) {
 }
 
 bool userToString(Value object, OwnList* list, Value* result) {
-    const FireClassDesc* d = classDescOf(asObj(object)->cls);
+    const FireClassDesc* d;
+    if (FIRE_UNLIKELY(!leafAlive(object))) return false;   /* (a destroyed object: its memory may be gone - the text is "<object>") */
+    d = classDescOf(asObj(object)->cls);
     if (!d || !d->toString) return false;
 #ifdef FIRE_DEBUG
     FIRE_DBG_NESTED(*result = d->toString(object));

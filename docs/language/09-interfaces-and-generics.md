@@ -159,6 +159,31 @@ print(s.Get())
 - Without arguments a generic class is its **raw form**: `new List()` takes values of every type.
 - A generic class can have the same name as a non-generic one (`Box` and `Box<T>`); the number of type arguments at `new` selects the class.
 
+### Declarations with type arguments are checked
+
+A parameter, a field, a return value or a variable declared with a generic class and type arguments takes only an object with those type
+arguments - anything else is an `ArgumentException` at run time:
+
+```fire
+class U { static int Count(List<int> l) { return l.Count } }
+any floats = new List<float>()
+U.Count(floats)         // ArgumentException: Parameter 'l' is a List<int>, not List<float>.
+```
+
+An object whose type arguments are not known (`new Bag()`) passes, and so does an object of a class derived from the generic one with these type
+arguments (`class IntBag : Bag<int>`).
+
+A type argument may be a derived class: a `List<Dog>` goes where a `List<Animal>` (or a `List<INamed>`) is declared, like a Dog array goes where
+`Animal a[]` is. The list stays a `List<Dog>` - it still checks what is put in:
+
+```fire
+List<Dog> dogs = new List<Dog>()
+List<Animal> animals = dogs          // fine: every Dog is an Animal
+animals.Add(new Cat("Tom"))          // ArgumentException: Parameter 'value' is a T (Dog), not Cat.
+```
+
+The other direction (`List<Animal>` where `List<Dog>` is declared) is refused.
+
 ### Conditions: `where`
 
 `where` restricts the type arguments. Conditions joined with `:` must all hold, groups separated by `,` are alternatives:

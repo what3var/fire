@@ -11,6 +11,8 @@ namespace fire.Runtime
         {
             if (v.Kind != fire.Values.ValueKind.Class) return v.ToString();
             var obj = (ObjectInstance)v.AsObjectRef();
+            // (a destroyed object: the DestroyedException, like every other use of it - DECISIONS D9)
+            if (IsDeadObject(obj)) { ThrowDestroyedObject(obj); return null; }
             if (ResolveClass(obj.ClassName).FindMethod("ToString", 0) == null) return v.ToString();
             var result = CallMethodNested(obj, "ToString", Array.Empty<fire.Values.Value>());
             if (result == null) return null;

@@ -26809,7 +26809,7 @@ else
                 }
             }
             // a 1 kHz tone through an RC low pass (1k, 1uF: 159 Hz) - about 0.157 of the input is left
-            var tone = Audio.Sound.Tone(1000, 100, 0, 100, 22050)
+            var tone = Audio.Sound.Tone(1000, 100, Audio.Wave.Sine, 100, 22050)
             print("tone " + tone.Frames + " frames, rms " + H.R(H.Rms(tone.Data, tone.Offset, tone.Frames)))
             var c = new Circuits.Circuit()
             var input = c.Add(new Circuits.AudioInput(1V))
@@ -26915,7 +26915,7 @@ else
             var n = probe.ReadPcm(back, 0, 20, 2V)
             print("pcm back " + n + " frames, first " + (back[0] + (back[1] << 8)))
             // Audio.Input on the simulated device: what was fed comes back
-            var tone = Audio.Sound.Tone(1000, 50, 0, 50, 8000)
+            var tone = Audio.Sound.Tone(1000, 50, Audio.Wave.Sine, 50, 8000)
             Audio.Sim.Reset()
             Audio.Sim.FeedSound(tone)
             var mic = new Audio.Input("sim", 8000, 1)
@@ -29421,6 +29421,360 @@ else
             for (int k = 0; k < 1000; k++) { total = total + loc[k % 3 == 1 ? 0 : k % 3].legs }
             print(total)
             """),
+        ("Ein Enum als Typargument ist zur Laufzeit bekannt (DECISIONS D4): T item nimmt nur Werte des Enums, T items[] ist ein Array davon, T is of Color, List/Dictionary/HashSet/JSON mit Enums", """
+            #import "json"
+            enum Color { Red, Green, Blue }
+            enum Size { S, M }
+            class Bag<T> {
+                T items[]
+                int n
+                construct() { this.items = new T[4]; this.n = 0 }
+                undefined Put(T item) { this.items[this.n] = item; this.n = this.n + 1 }
+                undefined Raw(any x) { any a[] = this.items; a[this.n] = x; this.n = this.n + 1 }
+                undefined Take(any arr) { this.items = arr }
+                T At(int i) { return this.items[i] }
+                bool IsColor() { return T is of Color }
+            }
+            class Palette { List<Color> colors; construct() { this.colors = new List<Color>() } }
+            any five = 5
+            any m = Size.M
+            var b = new Bag<Color>()
+            b.Put(Color.Green)
+            print(b.At(0) + " " + b.At(1) + " " + b.IsColor())
+            try { b.Put(five) } catch (ArgumentException e) { print("E1 " + e.message) }
+            try { b.Put(m) } catch (ArgumentException e) { print("E2 " + e.message) }
+            try { b.Raw(five) } catch (ArgumentException e) { print("E3 " + e.message) }
+            try { b.Raw(m) } catch (ArgumentException e) { print("E4 " + e.message) }
+            Color cs[] = [Color.Blue, undefined]
+            b.Take(cs)
+            print(b.At(0))
+            Size ss[] = [Size.S]
+            try { b.Take(ss) } catch (ArgumentException e) { print("E5 " + e.message) }
+            var l = new List<Color>()
+            l.Add(Color.Red); l.Add(Color.Blue)
+            print(l[1] + " " + l.Count + " " + l.Contains(Color.Blue))
+            var d = new Dictionary<Color, string>()
+            d[Color.Green] = "g"
+            print(d[Color.Green] + " " + d.ContainsKey(Color.Red))
+            var hs = new HashSet<Color>(); hs.Add(Color.Red); print(hs.Contains(Color.Red))
+            var p = new Palette(); p.colors.Add(Color.Green)
+            string text = Json.Serialize(p)
+            print(text)
+            var back = Json.Deserialize<Palette>(text)
+            print(back.colors[0] + " " + back.colors.Count)
+            """),
+        ("Eine Enum-Deklaration prueft zur Laufzeit (DECISIONS D8): Color c nimmt einen Wert des Enums oder undefined - Parameter, Feld, Property, statisches Feld, Rueckgabe, Variable, var, Reflection; eine Zahl geht mit einem Cast hinein", """
+            #import "reflection"
+            #import "json"
+            enum Color { Red, Green, Blue }
+            enum Size { S, M }
+            flag enum Access { Read = 1, Write = 2, Exec = 4 }
+            class Box {
+                Color c
+                Access a = Access.Read
+                static Color last
+                Color Tint { get { return this.c } set { this.c = value } }
+                construct() { }
+                undefined Paint(Color c) { this.c = c }
+                Color Bad() { any five = 5; return five }
+                Color Good() { return this.c }
+                static string Name(Color c = Color.Blue) { return "" + c }
+            }
+            any five = 5
+            any m = Size.M
+            any none = undefined
+            var b = new Box()
+            print(b.c + " " + b.a + " " + Box.last + " " + Box.Name())
+            b.Paint(Color.Green); b.Paint(none); b.c = Color.Blue; b.Tint = Color.Red
+            b.a = Access.Read | Access.Write
+            print(b.c + " " + b.a + " " + b.Good() + " " + (b.a & Access.Write))
+            try { b.Paint(five) } catch (ArgumentException e) { print("E1 " + e.message) }
+            try { b.Paint(m) } catch (ArgumentException e) { print("E2 " + e.message) }
+            try { b.c = five } catch (ArgumentException e) { print("E3 " + e.message) }
+            try { b.Tint = five } catch (ArgumentException e) { print("E4 " + e.message) }
+            try { b.Bad() } catch (ArgumentException e) { print("E5 " + e.message) }
+            try { Box.last = five } catch (ArgumentException e) { print("E6 " + e.message) }
+            try { Color loc = five; print("no error " + loc) } catch (ArgumentException e) { print("E7 " + e.message) }
+            Color g = Color.Green
+            try { g = five } catch (ArgumentException e) { print("E8 " + e.message) }
+            try { g = "Blue" } catch (ArgumentException e) { print("E9 " + e.message) }
+            try { Reflect.Set(b, "c", five) } catch (ArgumentException e) { print("E10 " + e.message) }
+            try { b.a = five } catch (ArgumentException e) { print("E11 " + e.message) }
+            g = five!Color
+            b.c = 1!Color
+            b.Paint(2!Color)
+            Color viaCast = 0!Color
+            print(g + " " + b.c + " " + viaCast)
+            int n = Color.Blue
+            print(n + 1)
+            var back = Json.Deserialize<Box>("{\"c\":\"Green\",\"a\":3}")
+            print(back.c + " " + back.a)
+            var v = Color.Red
+            try { v = five; print("var unchecked") } catch (ArgumentException e) { print("E12 " + e.message) }
+            """),
+        ("Arrays von Baeumen (ROADMAP 19): lambda expression<T> es[] ist ein Array von LambdaExpression - ein Lambda oder eine Zahl als Element ist eine ArgumentException", """
+            class P { int a; construct(int a) { this.a = a } }
+            class Q {
+                lambda expression<P, bool> kept[]
+                construct() { this.kept = new LambdaExpression[2] }
+                undefined Keep(lambda expression<P, bool> e) { this.kept[0] = try take e }
+                undefined Raw(any x) { this.kept[1] = x }
+            }
+            var q = new Q()
+            q.Keep(func (P p) => p.a > 1)
+            print(q.kept[0])
+            try { q.Raw(5) } catch (ArgumentException e) { print("E1 " + e.message) }
+            try { q.Raw(func (P p) => p.a > 1) } catch (ArgumentException e) { print("E2 " + e.message) }
+            """),
+        ("Spezialisierungen (ROADMAP 21): Methoden mit Ergebnis und l[i] / l[i] = v auf einem Parameter List<int> l, Bag<int> b - auch undefined als Empfaenger, ein zu grosser Index, ein fehlender Schluessel", """
+            class Bag<T> {
+                T items[]
+                int n
+                construct() { this.items = new T[8]; this.n = 0 }
+                undefined Put(T v) { this.items[this.n] = v; this.n = this.n + 1 }
+                T Get(int i) { return this.items[i] }
+                defined int Get<int>(defined int i) { return this.items[i] }
+                float Get<float>(defined int i) { return this.items[i] }
+                T Twice(T v) { return v }
+                defined int Twice<int>(defined int v) { return v * 2 }
+            }
+            class U {
+                static int Sum(Bag<int> b, int n) { int s = 0; for (int i = 0; i < n; i++) { s = s + b.Get(i) } return s }
+                static float FSum(Bag<float> b, int n) { float s = 0.0; for (int i = 0; i < n; i++) { s = s + b.Get(i) } return s }
+                static int Tw(Bag<int> b, int v) { return b.Twice(v) + 1 }
+                static string Any(Bag<string> b) { return b.Get(0) + b.Twice("x") }
+            }
+            var b = new Bag<int>(); b.Put(3); b.Put(4)
+            print(U.Sum(b, 2) + " " + U.Tw(b, 5))
+            var f = new Bag<float>(); f.Put(1.5); f.Put(2.5); print(U.FSum(f, 2))
+            var s = new Bag<string>(); s.Put("a"); print(U.Any(s))
+            any none = undefined
+            try { U.Sum(none, 1) } catch (Exception e) { print("E1 " + e.message) }
+            try { U.Sum(b, 5) } catch (Exception e) { print("E3 " + e.message) }
+            try { U.Tw(b, none) } catch (Exception e) { print("E4 " + e.message) }
+            """),
+        ("Spezialisierungen (ROADMAP 21): Indexzugriffe auf Parameter, die undefined sein koennen - List<int>, List<float>, List<string>, Dictionary<int, int>", """
+            class B {
+                static int Sum(List<int> l, int n) { int s = 0; for (int i = 0; i < n; i++) { s = s + l[i] } return s }
+                static undefined Fill(List<int> l, int n) { for (int i = 0; i < n; i++) { l[i] = i * 2 } }
+                static float FSum(List<float> l) { float s = 0.0; for (int i = 0; i < l.Count; i++) { s = s + l[i] } return s }
+                static string First(List<string> l) { return l[0] }
+                static int Get(Dictionary<int, int> d, int k) { return d[k] }
+                static undefined Put(Dictionary<int, int> d, int k, int v) { d[k] = v }
+            }
+            List<int> l = new List<int>()
+            for (int i = 0; i < 10; i++) { l.Add(i) }
+            print(B.Sum(l, 10))
+            B.Fill(l, 10); print(B.Sum(l, 10))
+            List<float> f = new List<float>(); f.Add(1.5); f.Add(2.5); print(B.FSum(f))
+            List<string> ss = new List<string>(); ss.Add("a"); print(B.First(ss))
+            Dictionary<int, int> d = new Dictionary<int, int>(); B.Put(d, 3, 4); print(B.Get(d, 3))
+            any none = undefined
+            try { B.Sum(none, 1) } catch (Exception e) { print("E1 " + e.message) }
+            try { B.Fill(none, 1) } catch (Exception e) { print("E2 " + e.message) }
+            try { B.Get(none, 1) } catch (Exception e) { print("E3 " + e.message) }
+            try { B.Put(none, 1, 2) } catch (Exception e) { print("E4 " + e.message) }
+            try { B.Sum(l, 99) } catch (Exception e) { print("E5 " + e.message) }
+            try { B.Get(d, 99) } catch (Exception e) { print("E6 " + e.message) }
+            {
+                List<int> tmp = new List<int>(); tmp.Add(1)
+                l = tmp
+            }
+            try { B.Sum(l, 1) } catch (Exception e) { print("E7 " + e.message) }
+            """),
+        ("Eine Deklaration mit einer generischen Klasse prueft die Typargumente (DECISIONS D10): Bag<int> b nimmt kein Bag<string> - Parameter, Feld, Rueckgabe, Variable, Reflection, Bag<T> in generischem Code; ohne bekannte Typargumente und abgeleitete Klassen gehen durch", """
+            #import "reflection"
+            class Cat { }
+            class Bag<T> {
+                T item
+                construct() { }
+                undefined Take(Bag<T> other) { this.item = other.item }
+            }
+            class IntBag : Bag<int> { construct() : base() { } }
+            class Pair<K, V> { construct() { } }
+            class Holder {
+                Bag<int> ints
+                List<string> names
+                construct() { }
+                Bag<int> Bad() { any s = new Bag<string>(); return s }
+            }
+            class U {
+                static string Ints(Bag<int> b) { return "ok" }
+                static string Lists(List<int> l) { return "ok " + l.Count }
+                static string Pairs(Pair<string, int> p) { return "ok" }
+                static string Half(Pair<string, any> p) { return "ok" }
+                static string Dicts(Dictionary<string, int> d) { return "ok " + d.Count }
+            }
+            any bi = new Bag<int>()
+            any bs = new Bag<string>()
+            any plain = new Bag()
+            any ib = new IntBag()
+            any li = new List<int>()
+            any lf = new List<float>()
+            any psi = new Pair<string, int>()
+            any pss = new Pair<string, string>()
+            any dsi = new Dictionary<string, int>()
+            any dis = new Dictionary<int, string>()
+            any cat = new Cat()
+            print(U.Ints(bi) + U.Ints(plain) + U.Ints(ib) + U.Ints(undefined) + U.Lists(li) + U.Pairs(psi) + U.Half(pss) + U.Dicts(dsi))
+            try { U.Ints(bs) } catch (ArgumentException e) { print("E1 " + e.message) }
+            try { U.Lists(lf) } catch (ArgumentException e) { print("E2 " + e.message) }
+            try { U.Pairs(pss) } catch (ArgumentException e) { print("E3 " + e.message) }
+            try { U.Dicts(dis) } catch (ArgumentException e) { print("E4 " + e.message) }
+            try { U.Ints(cat) } catch (ArgumentException e) { print("E5 " + e.message) }
+            var h = new Holder()
+            h.ints = bi
+            try { h.ints = bs } catch (ArgumentException e) { print("E6 " + e.message) }
+            try { h.names = li } catch (ArgumentException e) { print("E7 " + e.message) }
+            try { h.Bad() } catch (ArgumentException e) { print("E8 " + e.message) }
+            try { Bag<int> loc = bs; print("no error") } catch (ArgumentException e) { print("E9 " + e.message) }
+            try { Reflect.Set(h, "ints", bs) } catch (ArgumentException e) { print("E10 " + e.message) }
+            var target = new Bag<int>()
+            target.Take(bi)
+            try { target.Take(bs) } catch (ArgumentException e) { print("E11 " + e.message) }
+            print("end")
+            """),
+        ("Spezialisierungen (ROADMAP 21): Dictionary<int, int>, <int, float>, <string, Node> und HashSet<int> ueber Parameter - setzen, lesen, entfernen, wachsen, fehlender Schluessel, Keys, foreach", """
+            class Node { string n; construct(string n) { this.n = n } }
+            class U {
+                static int Run(Dictionary<int, int> d, int n) {
+                    for (int i = 0; i < n; i++) { d[i * 7] = i }
+                    int s = 0
+                    for (int i = 0; i < n; i++) { s = s + d[i * 7] }
+                    for (int i = 0; i < n; i = i + 2) { d.Remove(i * 7) }
+                    for (int i = n; i < n * 3; i++) { d[i] = i }
+                    return s + d.Count
+                }
+                static float F(Dictionary<int, float> d) { d[1] = 1.5; d[2] = 2.5; return d[1] + d[2] }
+                static string S(Dictionary<string, Node> d) { var a = new Node("a"); d["a"] = a; return d["a"].n + d.ContainsKey("b") }
+                static bool H(HashSet<int> h) { h.Add(3); h.Add(3); h.Remove(4); return h.Contains(3) && !h.Contains(4) && h.Count == 1 }
+            }
+            print(U.Run(new Dictionary<int, int>(), 300))
+            print(U.F(new Dictionary<int, float>()))
+            print(U.S(new Dictionary<string, Node>()))
+            print(U.H(new HashSet<int>()))
+            var d = new Dictionary<int, int>()
+            d[5] = 6
+            try { print(d[7]) } catch (ArgumentException e) { print("E1 " + e.message) }
+            var keys = d.Keys
+            print(keys.Count + " " + keys[0])
+            foreach (var kv in d) { print(kv.Key + "=" + kv.Value) }
+            """),
+        ("byte und word als Locals und Parameter, ein Bytepuffer als Parameter und aus einem Feld (ROADMAP 13): Pruefsummen mit Schieben, # und Wort-Arithmetik", """
+            class C {
+                byte data[]
+                construct(int n) { this.data = new byte[n]; for (int i = 0; i < n; i++) { this.data[i] = i } }
+                static word Sum(byte buf[], int n) {
+                    word acc = 0
+                    byte last = 0
+                    for (int i = 0; i < n; i++) {
+                        byte b = buf[i]
+                        acc = (acc << 1) # b
+                        last = b
+                    }
+                    return acc + last
+                }
+                word Own() {
+                    word acc = 7
+                    for (int i = 0; i < this.data.length; i++) { acc = acc * 31 + this.data[i] }
+                    return acc
+                }
+                static word Mix(word a, word b, byte c) { return (a # b) + c }
+            }
+            var c = new C(1000)
+            print(C.Sum(c.data, 1000) + " " + c.Own() + " " + C.Mix(5!word, 9!word, 200))
+            """),
+        ("Kovarianz (DECISIONS D10): ein List<Dog>, ein Bag<Dog> und ein Dog-Array gehen dorthin, wo Animal oder ein Interface deklariert ist - das Objekt behaelt seinen Typ und prueft, was hineinkommt; die Gegenrichtung und fremde Klassen sind die ArgumentException", """
+            interface INamed { string Name() }
+            class Animal : INamed { string n; construct(string n) { this.n = n } string Name() { return this.n } }
+            class Dog : Animal { construct(string n) : base(n) { } }
+            class Cat : Animal { construct(string n) : base(n) { } }
+            class Rock { }
+            class Bag<T> {
+                T item
+                construct() { }
+                undefined Put(T v) { this.item = v }
+                T Get() { return this.item }
+                undefined CopyFrom(Bag<T> other) { this.item = other.item }
+            }
+            class Zoo {
+                List<Animal> all
+                Animal pen[]
+                construct() { }
+            }
+            class U {
+                static string First(List<Animal> l) { return l[0].Name() + l.Count }
+                static string Names(List<INamed> l) { return l[0].Name() }
+                static string Arr(Animal a[]) { return a[0].Name() + a.length }
+                static string INs(INamed a[]) { return a[0].Name() }
+                static string InBag(Bag<Animal> b) { return b.Get().Name() }
+                static undefined AddCat(List<Animal> l, Animal c) { l.Add(c) }
+                static undefined SetCat(Animal a[], Animal c) { a[0] = c }
+                static string Dogs(List<Dog> l) { return "dogs " + l.Count }
+            }
+            var rex = new Dog("Rex")
+            var tom = new Cat("Tom")
+            var dogs = new List<Dog>(); dogs.Add(rex)
+            Dog pack[] = [rex]
+            var bag = new Bag<Dog>(); bag.Put(rex)
+            print(U.First(dogs) + " " + U.Names(dogs) + " " + U.Arr(pack) + " " + U.INs(pack) + " " + U.InBag(bag))
+            List<Animal> la = dogs
+            Animal aa[] = pack
+            print(la.Count + " " + aa.length + " " + la[0].Name() + " " + aa[0].Name())
+            try { U.AddCat(dogs, tom) } catch (ArgumentException e) { print("E1 " + e.message) }
+            try { U.SetCat(pack, tom) } catch (ArgumentException e) { print("E2 " + e.message) }
+            try { la.Add(tom) } catch (ArgumentException e) { print("E3 " + e.message) }
+            try { aa[0] = tom } catch (ArgumentException e) { print("E4 " + e.message) }
+            var z = new Zoo()
+            z.all = dogs
+            z.pen = pack
+            print(z.all[0].Name() + z.pen[0].Name())
+            any animals = new List<Animal>()
+            any rocks = new List<Rock>()
+            Rock stones[] = [new Rock()]
+            any anyStones = stones
+            try { U.Dogs(animals) } catch (ArgumentException e) { print("E5 " + e.message) }
+            try { U.First(rocks) } catch (ArgumentException e) { print("E6 " + e.message) }
+            try { U.Arr(anyStones) } catch (ArgumentException e) { print("E7 " + e.message) }
+            var ab = new Bag<Animal>()
+            ab.CopyFrom(bag)
+            print(ab.Get().Name())
+            defined Animal must[] = pack
+            print(must.length)
+            print("end")
+            """),
+        ("print, + und $\"...\" mit einem zerstoerten Objekt (DECISIONS D9): die DestroyedException, mit und ohne ToString()", """
+            class P { int a; construct(int a) { this.a = a } string ToString() { return "P" + this.a } }
+            class Q {
+                P kept[]
+                any loose[]
+                construct() { this.kept = new P[2]; this.loose = new any[2] }
+                undefined Keep(P e) { this.kept[0] = e; this.loose[0] = e }
+            }
+            var q = new Q()
+            q.Keep(new P(1))
+            try { print(q.loose[0]) } catch (Exception e) { print("E0 " + e.message) }
+            try { print(q.kept[0]) } catch (Exception e) { print("E1 " + e.message) }
+            try { print("" + q.kept[0]) } catch (Exception e) { print("E2 " + e.message) }
+            """),
+        ("print eines zerstoerten Objekts ohne ToString() (DECISIONS D9): die DestroyedException; ein lebendes zeigt <object P>", """
+            class P { int a; construct(int a) { this.a = a } }
+            class Q {
+                P kept[]
+                any loose[]
+                construct() { this.kept = new P[2]; this.loose = new any[2] }
+                undefined Keep(P e) { this.kept[0] = e; this.loose[0] = e }
+            }
+            var q = new Q()
+            q.Keep(new P(1))
+            try { print(q.loose[0]) } catch (Exception e) { print("E0 " + e.message) }
+            try { print(q.kept[0]) } catch (Exception e) { print("E1 " + e.message) }
+            try { print("" + q.kept[0]) } catch (Exception e) { print("E2 " + e.message) }
+            try { string s = "x" + q.kept[0]; print(s) } catch (Exception e) { print("E3 " + e.message) }
+            try { print($"v={q.kept[0]}") } catch (Exception e) { print("E4 " + e.message) }
+            var live = new P(5)
+            print(live)
+            """),
         ("defined fuer strings, Enums und Objekte (SPEC 8.10b): ein string beginnt bei \"\", ein Enum beim ersten Wert, ein Objekt braucht seinen Wert (Feld: jeder Konstruktor setzt es); undefined ist eine ArgumentException an Feld, Parameter, Rueckgabe, Variable, Reflection und in JSON (fehlend oder null)", """
             #import "json"
             #import "reflection"
@@ -30095,7 +30449,7 @@ else
             print(b.color + " " + (b.color is of Color) + " " + (b.color == Color.Green))
             var c = Json.Deserialize<Box>("{\"color\":2}")
             print(c.color + " " + (c.color is of Color) + " " + (c.color == Color.Blue))
-            Color d = 2
+            Color d = 2!Color
             print(d + " " + (d is of Color))
             flag enum Perm { Read = 1, Write = 2, Exec = 4 }
             class Acl { Perm perm; Color colors[]; construct() { } }

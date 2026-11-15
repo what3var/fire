@@ -1957,21 +1957,22 @@ type argument and pointers declare no element type - such an array takes any val
 (variable, field, parameter, global) type the array the same way: an element takes an object of that class (or of a class derived from it), of a
 class that implements the interface, the record, a string, a value of the enum - or `undefined`; any other value is an `ArgumentException`
 (`An element of an array of Dog must be a Dog (or undefined), not Cat.`), through any reference. The elements stay values (no packing). An array
-typed with another class does not go into such a declaration (`An array of Dog cannot be stored where an array of Cat is declared.`), even when one
-class derives from the other: the array keeps the element type it was given, so `Animal all[] = pets` is refused as well. `new Dog[n]` starts with
+typed with another class does not go into such a declaration (`An array of Dog cannot be stored where an array of Cat is declared.`). An array of a
+derived class does go where one of its base class or of an interface it implements is declared (`Animal all[] = pets`): it keeps the element type
+it was given, so `all[0] = cat` is still the `ArgumentException` of the Dog array. The other direction (an Animal array into `Dog d[]`) is refused. `new Dog[n]` starts with
 n `undefined` elements. `defined` works for them too: `defined string s[] = new string[n]` starts with `""`, `defined Color c[] = new Color[n]`
 with the first value of the enum; `defined Dog d[]` has no zero, so it only takes an array whose elements are all given (`[new Dog("a")]`) -
 `new Dog[2]` there is an `ArgumentException` (`An element of a defined array of Dog cannot be undefined.`). VM and native backend behave the
 same (ArrayElem.Class, natively E_CLASS/TU_CLASS with a table of checks, g_arrClasses). JSON types what it reads for such a field like any other
 assignment. Generic code does the same by the type argument: `T items[]` and `new T[n]` in `class Bag<T>` are an array of Dog for a `Bag<Dog>`, of
-strings for a `Bag<string>` (so `List<Dog>`, `Dictionary<string, Dog>` hold typed arrays; an enum type argument is not known at run time and types
-nothing).
+strings for a `Bag<string>`, of the enum for a `Bag<Color>` (so `List<Dog>`, `Dictionary<string, Dog>`, `List<Color>` hold typed arrays; with an
+enum as the type argument a `T item` takes only a value of that enum or `undefined`).
 
 **Arrays of lambdas.** `lambda<int, int> fs[]` (and `int lambda<int> fs[]`) types the array, too: an element is a lambda with that many parameters or
 `undefined` - what a single `lambda<...>` declaration checks (the types of a signature are hints for the type checker). Anything else is an
 `ArgumentException` (`An element of an array of lambda with 2 parameter(s) must be a lambda with 2 parameter(s) (or undefined), not a lambda with 1
-parameter(s).`). `defined lambda<int> fs[]` only takes an array whose elements are all given. Selectors and trees (`lambda member<T>`,
-`lambda expression<T>`) are not typed this way.
+parameter(s).`). `defined lambda<int> fs[]` only takes an array whose elements are all given. An array of trees
+(`lambda expression<T> es[]`) is an array of `LambdaExpression`; an array of selectors (`lambda member<T> xs[]`) stays untyped.
 
 **Defined arrays.** `defined` in front of the element type (`defined int a[]`, `defined float[32] v[]`, `defined bool f[8]`) makes the elements
 never `undefined`: the array keeps that as part of its type (ArrayElem.DefinedFlag in TypeArray and FieldInfo.RequiredArray, natively TU_DEFINED).

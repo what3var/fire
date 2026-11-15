@@ -57,6 +57,22 @@ try { Color.Parse("Pink") } catch (ArgumentException e) { print(e.message) }
   declaration.
 - A member called `Name`, `Parse`, `IsDefined` or `Values` hides the helper of the same name.
 
+### Declarations with an enum are checked
+
+A parameter, a field, a property, a return value or a variable declared with an enum (`Color c`) takes a value of that enum or `undefined`.
+Anything else is an `ArgumentException` at run time (`Parameter 'c' is a Color, not Int.`) - also a value of another enum. A number goes in with a
+cast; an enum value still goes into an `int` without one:
+
+```fire
+Color c = Color.Green
+c = 2!Color             // a number: with a cast
+int n = c               // 2
+any five = 5
+c = five                // ArgumentException: Variable 'c' is a Color, not Int.
+```
+
+The same holds for `T` in generic code when the type argument is an enum (`List<Color>`), and for the elements of `Color cs[]`.
+
 ### `switch` over an enum
 
 A `switch` over an enum value without `case default` that does not name every member gets the warning `TC010` (also in strict mode - a forgotten
