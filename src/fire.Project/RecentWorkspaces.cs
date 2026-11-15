@@ -116,6 +116,9 @@ namespace fire.Projects
         /// <summary>The assistant (docs/ai/assistant.md) is switched on. Off unless the user (or the setup) switches it on.</summary>
         public bool Assistant { get; set; }
 
+        /// <summary>The choice of the setup (its task "The assistant") was taken over once; afterwards only the user switches it.</summary>
+        public bool AssistantSetupSeen { get; set; }
+
         public static string DefaultPath => System.IO.Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "fire", "spark-settings.json");
 
         private static readonly JsonSerializerOptions Options = new() { PropertyNamingPolicy = JsonNamingPolicy.CamelCase, WriteIndented = true };

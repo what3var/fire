@@ -101,6 +101,8 @@ Name: "assoc_xmd";     Description: "canvases (.xmd)";                    GroupD
 Name: "assoc_blocks";  Description: "block models (.fblocks)";           GroupDescription: "Open these file types with {#MyAppName}:"
 Name: "assoc_mesh";    Description: "mesh models (.fmesh)";               GroupDescription: "Open these file types with {#MyAppName}:"
 Name: "assoc_md";      Description: "Markdown (.md), in ""Open with"" only"; GroupDescription: "Open these file types with {#MyAppName}:"; Flags: unchecked
+; The assistant (docs/ai/assistant.md): off unless ticked here or switched on later (Tools > Assistant). It asks before it downloads its model.
+Name: "assistant";     Description: "The assistant: a small helper with a local AI model (asks before it downloads the model, about 500 MB)"; GroupDescription: "Extras:"; Flags: unchecked
 
 [Dirs]
 Name: "{app}\Packages"; Permissions: users-modify
@@ -161,6 +163,8 @@ Root: HKA; Subkey: "Software\Classes\{#MyAppAssoc7Ext}\OpenWithProgids"; ValueTy
 Root: HKA; Subkey: "Software\Classes\{#MyAppAssoc7Key}"; ValueType: string; ValueName: ""; ValueData: "{#MyAppAssoc7Name}"; Flags: uninsdeletekey; Tasks: assoc_md
 Root: HKA; Subkey: "Software\Classes\{#MyAppAssoc7Key}\DefaultIcon"; ValueType: string; ValueName: ""; ValueData: "{#IconMarkdown}"; Tasks: assoc_md
 Root: HKA; Subkey: "Software\Classes\{#MyAppAssoc7Key}\shell\open\command"; ValueType: string; ValueName: ""; ValueData: """{app}\{#MyAppExeName}"" ""%1"""; Tasks: assoc_md
+; the assistant: spark takes this over once at its first start (and only the user switches it afterwards)
+Root: HKA; Subkey: "Software\fire\spark"; ValueType: dword; ValueName: "Assistant"; ValueData: 1; Flags: uninsdeletekey; Tasks: assistant
 
 [Icons]
 Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"

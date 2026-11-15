@@ -1,0 +1,8 @@
+// The assistant of spark (docs/ai/assistant.md): spark starts it with `forge run` when it is switched on (Tools > Assistant).
+// It connects to spark's MCP server and shows its own small window; it ends with spark. An argument is the character: sparky, flint or wick
+// (none: the last one).
+#import "assistant"
+
+string character = ""
+if (Environment.Args.length > 0) { character = Environment.Args[0] }
+Assistant.App.Run(character, true)

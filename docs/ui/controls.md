@@ -101,6 +101,7 @@ One line of text.
 | `Text`, `SetText(text)` | the text (setting it clears the undo history) |
 | `MaxLength` | 0: no limit; typed text that does not fit is refused, pasted text is cut |
 | `ReadOnly` | can be selected and copied, not changed; Enter still reports |
+| `Hint` | a grey hint while the box is empty ("Search...") - not part of the text |
 | `OnChange` / `TakeChanged()` | the text changed by the user |
 | `OnEnter` / `TakeEntered()` | Enter was pressed |
 | `SelectionStart`, `SelectionLength`, `SelectedText`, `Select(start, length)`, `SelectAll()`, `ReplaceSelection(text)` | the selection |

@@ -25,6 +25,12 @@ namespace Assistant {
         List Choices = new List()
         List actions = new List()
         bool Visible = true
+        // The question line is shown (after a poke: a click on the character, or Ctrl+^ in spark).
+        bool Asking = false
+        // The program should end (spark, which started it, is gone).
+        bool Quit = false
+        // End with spark (it started the assistant).
+        bool ExitWithSpark = false
         Assistant.Settings Settings
         AI.ModelInstaller installer = undefined
         AI.Agent agent = undefined
@@ -60,6 +66,7 @@ namespace Assistant {
         // ---- the bubble ----
 
         undefined Say(string text) {
+            this.Asking = false
             this.Text = text
             this.Choices.Clear()
             this.actions.Clear()
@@ -86,13 +93,39 @@ namespace Assistant {
 
         // Says hello; without a model it offers the one that fits this machine (nothing is downloaded before the user says so).
         undefined Start() {
+            bool first = !this.Settings.Existed
+            if (first) { this.Settings.Save() }
             string path = AI.Models.Pick(this.Settings.Model)
-            if (path != "") {
-                this.Say(this.Character.Hello)
-                this.Load(path)
+            if (path != "") { this.Load(path) }
+            if (first) { this.Say(this.Character.Hello + "\n\nJust poke me when you have a question: a click on me, or Ctrl+^ in spark.") }
+            else {
+                // quiet: only the character, until it is poked
+                this.Say("")
+                this.Visible = false
+            }
+        }
+
+        // The user poked the character (a click, Ctrl+^): the question line opens - or, without a model, the offer of one. A second poke hides the bubble.
+        undefined Poke() {
+            if (this.Visible && this.Asking) {
+                this.Visible = false
+                this.Asking = false
                 return
             }
-            this.OfferModel()
+            if (this.Phase == Assistant.Phase.Downloading || this.Phase == Assistant.Phase.Thinking || this.Phase == Assistant.Phase.Answering) {
+                this.Visible = true
+                return
+            }
+            if (this.agent == undefined && this.Phase != Assistant.Phase.Loading) {
+                this.OfferModel()
+                this.Asking = true
+                return
+            }
+            if (this.Text == "" || this.Choices.Count > 0) { this.Say(this.Character.Name + " here - what would you like to know?") }
+            this.Choices.Clear()
+            this.actions.Clear()
+            this.Visible = true
+            this.Asking = true
         }
 
         undefined OfferModel() {
@@ -104,7 +137,7 @@ namespace Assistant {
             any strong = AI.Models.Stronger()
             if (strong != undefined) {
                 AI.ModelInfo s = strong
-                this.Offer("The stronger one (" + s.Name + ", " + s.SizeText() + ")", "license:" + s.Id)
+                this.Offer("Stronger: " + s.Name + " (" + s.SizeText() + ")", "license:" + s.Id)
             }
             this.Offer("Not now", "later")
         }
@@ -130,7 +163,7 @@ namespace Assistant {
             else if (verb == "license") {
                 AI.ModelInfo m = AI.Models.Find(arg)
                 this.Say(m.Name + " is under the " + m.License + ". Details: " + m.LicenseUrl)
-                this.Offer("Agree and download (" + m.SizeText() + ")", "download:" + m.Id)
+                this.Offer("Agree, download", "download:" + m.Id)
                 this.Offer("Back", "offer")
             }
             else if (verb == "offer") { this.OfferModel() }
@@ -304,6 +337,7 @@ namespace Assistant {
             catch (Exception e) {
                 // spark went away
                 this.spark = undefined
+                if (this.ExitWithSpark) { this.Quit = true }
                 return
             }
             foreach (n in notes) {
@@ -318,6 +352,14 @@ namespace Assistant {
 
         undefined OnSparkEvent(JsonObject data) {
             any ev = data.Get("event")
+            if (ev == "poke") {
+                this.Poke()
+                return
+            }
+            if (ev == "closing" && this.ExitWithSpark) {
+                this.Quit = true
+                return
+            }
             if (ev == "build") {
                 any ok = data.Get("ok")
                 any errors = data.Get("errors")
@@ -384,6 +426,8 @@ namespace Assistant {
                         this.Choices.Clear()
                         this.actions.Clear()
                         if (this.Text.Trim() == "") { this.Text = "Hmm, I have no answer to that." }
+                        // a follow-up question can come right away
+                        this.Asking = true
                     }
                 }
                 catch (Exception e) {

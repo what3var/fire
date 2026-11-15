@@ -12,6 +12,8 @@ namespace Assistant {
         // Tips the user switched off (their keys, separated by commas).
         string Muted = ""
         string file = ""
+        // Whether the file was there (false at the very first start: the assistant introduces itself).
+        bool Existed = false
 
         static string File() { return IO.Path.Combine(AI.Models.DataFolder(), "fire", "assistant.json") }
 
@@ -20,6 +22,7 @@ namespace Assistant {
             if (file == "") { file = Assistant.Settings.File() }
             s.file = file
             if (IO.File.Exists(file)) {
+                s.Existed = true
                 try {
                     any j = Json.Parse(IO.File.ReadAllText(file))
                     any c = j.Get("character")

@@ -48,6 +48,8 @@
     <!-- The language reference (docs/language): copied to Help\Language\, its contents page fills Help > The fire Language (see MainWindow.BuildLanguageHelpMenu). -->
     <None Include="..\..\docs\language\*.md" Link="Help\Language\%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
     <!-- The whole documentation (docs, without the roadmaps): Help\Docs\, for the tools search_docs and read_doc of the MCP server (docs/tools/spark-mcp.md). -->
+    <!-- The assistant (docs/ai/assistant.md): a fire program spark starts with forge when it is switched on (Tools > Assistant). -->
+    <None Include="Assistant\assistant.fire" Link="Assistant\assistant.fire" CopyToOutputDirectory="PreserveNewest" />
     <None Include="..\..\docs\**\*.md" Exclude="..\..\docs\ROADMAP*.md" Link="Help\Docs\%(RecursiveDir)%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
     <AvaloniaResource Include="Assets\icons\*.png" />
     <AvaloniaResource Include="Assets\treeicons\*.png" />
