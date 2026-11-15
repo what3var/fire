@@ -162,17 +162,24 @@ namespace UI {
 
         // The material of the window itself, drawn by the desktop behind the interface: Backdrop.Mica (Windows 11), Acrylic, Blur (Windows 10/11, macOS, KDE),
         // Transparent; None (the default): an opaque window. The desktop gives what it can (Window.Backdrop); where it gives something, the background of the
-        // interface becomes translucent so that it shows - panels and controls stay as they are. Without transparency (Root.Transparency) the window stays opaque.
+        // interface becomes translucent so that it shows - panels and controls stay as they are. Without transparency (Root.Transparency, or the system's
+        // "transparency effects" switched off) the window stays opaque - except for Transparent: that is the shape of the window (only what is drawn is seen,
+        // a character on the desktop), not an effect, and stays.
         Backdrop WindowBackdrop {
             get { return this.windowBackdrop }
             set {
                 this.windowBackdrop = value
                 if (this.window != undefined) {
-                    if (this.theme.transparency) { this.window.Backdrop = value }
+                    if (this.BackdropWanted()) { this.window.Backdrop = value }
                     else { this.window.Backdrop = Backdrop.None }
                 }
                 this.Invalidate()
             }
+        }
+
+        // Is the backdrop asked for given to the window? (Transparent always; the materials only with transparency.)
+        bool BackdropWanted() {
+            return this.windowBackdrop != Backdrop.None && (this.theme.transparency || this.windowBackdrop == Backdrop.Transparent)
         }
 
         // Translucent surfaces and shadows at all. Starts with UI.Effects.Transparency and the system; setting it overrides that. Off: everything opaque, no shadows
@@ -182,7 +189,7 @@ namespace UI {
             set {
                 this.theme.transparency = value
                 if (this.windowBackdrop != Backdrop.None && this.window != undefined) {
-                    if (value) { this.window.Backdrop = this.windowBackdrop } else { this.window.Backdrop = Backdrop.None }
+                    if (this.BackdropWanted()) { this.window.Backdrop = this.windowBackdrop } else { this.window.Backdrop = Backdrop.None }
                 }
                 this.Invalidate()
             }
@@ -481,7 +488,7 @@ namespace UI {
         // it shows (copied with its alpha, not mixed).
         undefined FillBack(defined int x, defined int y, defined int w, defined int h) {
             var given = Backdrop.None
-            if (this.windowBackdrop != Backdrop.None && this.theme.transparency && this.window != undefined) { given = this.window.Backdrop }
+            if (this.BackdropWanted() && this.window != undefined) { given = this.window.Backdrop }
             if (given == Backdrop.None) {
                 this.renderer.FillRect(x, y, w, h, this.theme.back)
                 return
