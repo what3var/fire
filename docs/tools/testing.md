@@ -200,7 +200,12 @@ FIRE_TESTS_ONLY=native FIRE_TESTS_UPDATE=1 dotnet fire.Testing.dll     # writes 
 FIRE_TESTS_ONLY=native FIRE_TESTS_FILTER="<title>" dotnet fire.Testing.dll
 ```
 
-A case without an expected output is a failed check that says so. Cases whose source is made at run time (a certificate, a folder of the run, a database
+A case without an expected output is a failed check that says so, and so is a case the compiler refuses (`WIRD NICHT UEBERSETZT: <errors>`).
+
+**Cases that master adds.** As long as master holds these cases as text in `Program.cs`, `tests/tools/merge-master.sh` merges it: the cases master added
+or changed go into the files (`tests/tools/cases.py`: a new case gets a number between its neighbours, a changed one loses its expected output, a case
+keeps its file as long as it keeps its title), the rest of `Program.cs` is merged as usual. Then build, record with `FIRE_TESTS_UPDATE=1`, look, commit.
+ Cases whose source is made at run time (a certificate, a folder of the run, a database
 server of the machine) stay in `Program.cs` (`natCases`), next to the place that makes what they need. `FIRE_TESTS_LISTING=<file>` (with
 `FIRE_TESTS_ONLY=native`) writes the titles and sources of all cases as one text and runs nothing - to compare the set of cases before and after moving some.
 

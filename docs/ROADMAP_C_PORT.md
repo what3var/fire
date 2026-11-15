@@ -174,14 +174,19 @@ Noch kein C; alles hier ist für sich nützlich und macht den Rest prüfbar.
      einem Abbruch `.unhandled`; [testing.md](tools/testing.md#the-cases-as-files-testscases)), `Program.cs` ist dadurch von 38 000 auf 21 000 Zeilen
      geschrumpft. Das Testprogramm liest sie (`TestCases.cs`) und prüft zusätzlich die VM gegen die festgehaltene Ausgabe; `FIRE_TESTS_UPDATE=1`
      schreibt sie neu. Die 12 übrigen Fälle entstehen zur Laufzeit (Zertifikat, Ordner des Laufs, Datenbankserver) und bleiben im Code.
+   * **Was auf `master` dazukommt**, solange dort noch Text in `Program.cs` steht: `tests/tools/merge-master.sh` holt neue und geänderte Fälle beim
+     Merge in die Dateien (zuerst gebraucht für den Merge bis PR 49: ein neuer Fall).
    * **Offen:** die Familien mit Skript und erwarteten Zeilen, die nur in der VM laufen (`CheckPerf`, `CheckLq`, `CheckRf`, `CheckSc`, `CheckGl`,
      `CheckCb`, `CheckLife`, `CheckExt`, `CheckArr`, `CheckClone`, `CheckIo`, `CheckUi`, ...), jede mit eigenem Aufbau (Modi, Regeln, Fake-Renderer);
      Diagnosen (`DiagnosticTests`, `TypeTests`, `SyntaxTests`) als Fälle mit erwarteten Meldungen; Completion (`CheckCompletion`) mit `forge serve`.
      Was am Editor, an Fenstern oder an Toolchains hängt, bleibt Code.
 3. ~~**Determinismus**~~ (geprüft, es war nichts zu beseitigen): zweimal übersetzt ergibt byte-gleiche `.fbc` und denselben Text von
    `fire_program.c` - für ein Skript mit einem Stück von allem und für jedes Beispiel von spark (dieselben Tests), von Hand auch über zwei Prozesse.
-4. **Referenzstände**: ein Skript erzeugt für den Korpus `.fbc`, AST-Ausgabe, Diagnosen und `fire_program.c` (je Ziel/Option) als Vergleichsbasis;
-   dazu Größen und Benchmarks der Referenzprogramme ([Prüfungen für den nativen Build](#prüfungen-für-den-nativen-build)).
+4. ~~**Referenzstände**~~ (umgesetzt): `tests/reference.sh <forge> <ordner>` schreibt für jeden Fall aus `tests/cases` und jedes Beispiel von spark
+   den Text des Programms (`forge dump`), die Programmdatei, das C des nativen Backends und das Protokoll von forge, dazu `manifest.sha256`; zwei
+   Stände vergleicht `diff -r`. Der Stand des C#-Compilers: 460 Programme ohne Fehler, rund 1 GB, auf 4 Kernen eine halbe Stunde (nicht eingecheckt -
+   er ändert sich mit jedem Commit am Compiler). **Offen:** Größen und Benchmarks der Referenzprogramme
+   ([Prüfungen für den nativen Build](#prüfungen-für-den-nativen-build)); AST und Diagnosen einzeln (kommen mit den Diagnose-Fällen aus Schritt 2).
 5. **spark baut nur noch über die Befehlszeile von forge** (statt `NativeBuilder`/`ProjectBuilder` im eigenen Prozess) - der erste Teil von L4, noch ganz in C#.
 6. Tabellen, die beide Seiten brauchen, aus **einer** Quelle: Opcodes mit Operandengrößen, Fehlerkatalog, Methodentabellen des Preludes
    (`StringMethods` usw.) als Datendateien, aus denen C# und C erzeugt werden; das Prelude selbst als `.fire`-Dateien statt C#-Strings.
