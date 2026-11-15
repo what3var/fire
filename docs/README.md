@@ -64,3 +64,4 @@ the code is right.
 * [Native backend (fire -> C)](spec/NATIVE_BACKEND.md), [debug protocol of native programs](spec/NATIVE_DEBUG_PROTOCOL.md)
 * [Graphics layer](spec/GRAPHICS_LAYER.md), [own display layer and effects](spec/UI_PLATFORM.md)
 * [Roadmap](ROADMAP.md) - what is planned and in which order
+* [Decisions](DECISIONS.md) - open and settled questions about the language and the runtime

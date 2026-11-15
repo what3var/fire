@@ -3587,11 +3587,18 @@ namespace fire.Compiler
         }
 
         /// <summary>The field the constructor assigns the parameter `name` to plainly (`this.f = name`, `f = name`), when it does nothing else with its ownership; null otherwise.</summary>
-        private static string? PlainlyStoredField(ConstructorDecl ctor, string name)
+        private string? PlainlyStoredField(ConstructorDecl ctor, string name)
         {
             string? field = null;
+            // (`if (initial is of Owns) { this.owns = initial }`: inside, the parameter is a value without an owner - an enum, a number, a string - so
+            // what is stored there is no temporary object; List's constructor takes an array or an Owns this way)
+            var notOwned = new HashSet<object>(ReferenceEqualityComparer.Instance);
+            foreach (var node in AstNodes(ctor.Body))
+                if (node is IfStmt { Condition: IsOfExpr { Operand: IdentifierExpr tested, TypeRef: var testedType }, Then: var then } && tested.Name == name && !HoldsOwned(testedType, 0))
+                    foreach (var inner in AstNodes(then)) notOwned.Add(inner);
             foreach (var node in AstNodes(ctor.Body))
             {
+                if (notOwned.Contains(node)) continue;
                 switch (node)
                 {
                     case UnaryExpr { Op: UnaryOp.Take or UnaryOp.TryTake, Operand: IdentifierExpr id } when id.Name == name: return null;
