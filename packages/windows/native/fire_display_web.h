@@ -249,6 +249,7 @@ static void fire_dweb_setTextInputRect(FireDwebWindow* w, int x, int y, int widt
 static int fire_dweb_setStyle(FireDwebWindow* w, int flags) { (void)w; return flags & FIRE_STYLE_FRAMELESS; }
 static void fire_dweb_move(FireDwebWindow* w, int x, int y) { (void)w; (void)x; (void)y; }
 static int fire_dweb_beginMove(FireDwebWindow* w) { (void)w; return 0; }
+static int fire_dweb_position(FireDwebWindow* w, int* r) { (void)w; (void)r; return 0; }
 static int fire_dweb_workArea(FireDwebWindow* w, int* r) { (void)w; (void)r; return 0; }
 static int fire_dweb_setBackdrop(FireDwebWindow* w, int kind) { return w->open ? fire_dwebjs_setBackdrop(w->id, kind) : FIRE_BACKDROP_NONE; }
 static double fire_dweb_scale(FireDwebWindow* w) { (void)w; return fire_dwebjs_scale(); }

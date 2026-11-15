@@ -150,6 +150,15 @@ class Window {
         return area
     }
 
+    // Where the window is: the top left corner on the screen [x, y], in screen pixels (also after the user moved it); [-1, -1] while it is not known (a window
+    // on a manager's thread answers after its next cycle and from then on with every one). Wayland does not say.
+    int[] Position() {
+        int at[] = new int[2]
+        at[0] = __GRPHWinPosition(this.id, 0)
+        at[1] = __GRPHWinPosition(this.id, 1)
+        return at
+    }
+
     // How the window showed its last frame (docs/spec/UI_PLATFORM.md, part 4.4): "gpu+directcomposition" (Windows: the frame from the GPU into DirectComposition's
     // swap chain), "gpu" (into a swap chain of Vulkan; or a package's presenter, scene3d DirectDrawing), "directcomposition" (Windows: the pixels into
     // DirectComposition), "pixels" (the pixels, the display's usual way). With a manager's thread: after its next cycle.

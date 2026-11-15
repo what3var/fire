@@ -764,6 +764,13 @@ namespace UI {
             }
         }
 
+        // The height the text needs in an area `width` wide (with WordWrap its rows at that width; borders and padding included) - for an area that grows
+        // with its text. The next layout arranges it at its real size again.
+        defined int ContentHeight(Root root, defined int width) {
+            this.ArrangeCore(root, width, 1000000)
+            return this.RowCount() * this.lineH + 2 * this.padding + 2
+        }
+
         // Scrolls so that the caret can be seen.
         undefined ScrollToCaret(Root root) {
             var pad = this.padding

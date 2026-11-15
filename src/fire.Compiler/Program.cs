@@ -94,6 +94,7 @@ if (args.Length >= 2 && (args[0] == "ui" || args[0] == "biscuit" || args[0] == "
 }
 
 // The standard packages are packed and installed from the projects in Source next to the program when they are missing or changed - quick when nothing changed.
+fire.Native.BackgroundWork.WriteLines(Console.Error);   // (spark shows it in its status bar)
 StandardSources.EnsureInstalled(message => Console.Error.WriteLine(message));
 fire.Compiler.ConsoleToolchainPrompt.Install();
 return CommandLineRunner.Run(args, Console.Out, Console.Error);

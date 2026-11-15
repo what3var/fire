@@ -16,7 +16,8 @@ can use spark the same way.
 ```
 
 spark starts the assistant (`forge run Assistant/assistant.fire`, the package `assistant`) when it is switched on, and the assistant connects to spark's
-MCP server (HTTP on localhost, with the token of the connection file, [spark as an MCP server](../tools/spark-mcp.md)). It ends with spark. Its window is
+MCP server (HTTP on localhost, with the token of the connection file, [spark as an MCP server](../tools/spark-mcp.md)). It ends with spark. Its first start
+builds the packages it uses for this machine (a minute or two); spark's status bar shows that with a small bar. Its window is
 small, without a frame, above the other windows and transparent where the desktop allows it: only the character and its bubble are seen, at the
 bottom right of the desktop. Dragging the character moves it; a click pokes it.
 
@@ -50,8 +51,10 @@ its own way of speaking (a line in the system prompt). They are not, and do not 
 ## The bubble
 
 * small buttons at its top right: the history, a new topic, another character, close;
+* as high as what it shows - from a small bubble up to Min(screen height - 120, 480) pixels; beyond that the text scrolls (and fades at the bottom edge). It grows
+  upwards: the character stays where it is. Closed, the window is only the character;
 * a text that grows while the model writes - as high as the bubble when there are no choices and no question line;
-* up to four **choices** as buttons ("Download", "Explain it", "Not now");
+* up to four **choices** as buttons ("Download", "Explain it", "Not now"); a long one breaks into lines;
 * after a poke, the question line ("Ask me..."; Enter asks).
 
 ## What it knows

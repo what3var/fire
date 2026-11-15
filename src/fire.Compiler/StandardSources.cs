@@ -110,10 +110,18 @@ namespace fire.Compiler
                 PackageStore.Default = store;   // packing compiles the project: its imports are the packages installed just before
                 try
                 {
+                    // (the ones that are missing or changed first: their count goes into the progress)
+                    var due = new List<(LoadedProject Project, string Hash)>();
                     foreach (var project in Projects(workspace))
                     {
                         string hash = HashOf(project);
                         if (store.Find(project.Name) != null && stamps.TryGetValue(project.Name, out var known) && known == hash) continue;
+                        due.Add((project, hash));
+                    }
+                    for (int i = 0; i < due.Count; i++)
+                    {
+                        var (project, hash) = due[i];
+                        using var background = fire.Native.BackgroundWork.Begin($"Installing the package {project.Name} ({i + 1}/{due.Count})", i, due.Count);
                         try
                         {
                             Install(workspace, project, store, prebuiltFolder, log);

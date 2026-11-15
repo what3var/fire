@@ -69,6 +69,7 @@ A line of text. `Text`, `Color` (the brush of the text; else `Foreground`, else 
 | `Icon` | a vector symbol in front of the text: a name of `UI.Icons` (`Up`, `Down`, `Back`, `Forward`, `Home`, `Folder`, `File`, `Close`, `Check`, `Add`) or path data (`M 8 1 L 15 8 L 1 8 Z`, see [shapes](shapes.md#geometry)); drawn in the text colour, greyed when disabled |
 | `Image` | a picture in front of the text - in markup a file (it is embedded as a [resource](../stdlib/resources.md)), in code a `Framebuffer` |
 | `IconSize` | size of icon and image in pixels (16) |
+| `WordWrap` | false; true: a text wider than the button breaks at spaces into lines, and a button without a fixed height grows with them. Text that does not fit is cut off at the button's edge |
 | `OnClick` / `TakeClicked()` | the click (mouse, Space or Enter while focused, a finger, joystick button 0) |
 | `Click()` | clicks it from code |
 
@@ -141,6 +142,7 @@ Everything of the `TextBox` (selection, clipboard, undo, drag & drop, `MaxLength
 | `FadeBottom` | 0; pixels at the bottom edge in which the text fades into the background while more text follows below (not scrolled to the end) |
 | `LineCount`, `GetLine(i)`, `CaretLine`, `CaretColumn` | the lines (`Text` separates them with `"\n"`; `"\r\n"` and `"\r"` become `"\n"`) |
 | `SetText(text)` | sets the text, the caret to the start |
+| `ContentHeight(root, width)` | the height the text needs in an area that wide (wrapped rows, padding and border) - for an area that grows with its text |
 | `AppendText(text)` | appends and scrolls to the end - for a log |
 | `vbar`, `hbar` | the scroll bars (`UI.Scroller`) |
 

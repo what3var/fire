@@ -581,6 +581,15 @@ static int fire_dns_beginMove(FireDnsWindow* w) {
 }
 
 /* The visible frame of the screen of the window (without the menu bar and the Dock), from the top left. */
+/* The top left corner of the window on the screen (y downwards from the top of the primary screen, as SetPosition takes it). */
+static int fire_dns_position(FireDnsWindow* w, int* r) {
+    FireNSRect f;
+    if (w->window == NULL) return 0;
+    f = fire_dns_rect(w->window, "frame");
+    r[0] = (int)f.origin.x; r[1] = (int)(fire_dns_primaryHeight() - (f.origin.y + f.size.height));
+    return 1;
+}
+
 static int fire_dns_workArea(FireDnsWindow* w, int* r) {
     FireId screen = w->window != NULL ? FIRE_NS0(FireId, w->window, "screen") : NULL;
     FireNSRect v;

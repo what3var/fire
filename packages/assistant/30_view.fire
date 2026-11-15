@@ -29,11 +29,13 @@ namespace Assistant {
         bool placed = false
         bool showHistory = false
         string shown = ""
-        // the window, the bubble in it, the character below it
+        // the window, the bubble in it (as high as what it shows, between MinBH and MaxBH; 0 while it is closed), the character below it
         defined int W = 240
         defined int BH = 250
         defined int FH = 120
         defined int H = 370
+        defined int MinBH = 110
+        defined int MaxBH = 480
 
         construct(Assistant.Brain brain) {
             this.Brain = take brain
@@ -82,7 +84,7 @@ namespace Assistant {
             this.ui.Add(this.text)
             this.choices = new UI.StackPanel(14, 140, this.W - 28, -1, false, 4, 0)
             this.ui.Add(this.choices)
-            this.question = new UI.TextBox("", 14, this.BH - 46, this.W - 28, 26)
+            this.question = new UI.TextBox("", 14, this.BH - 52, this.W - 28, 26)
             this.question.Hint = "Ask me..."
             this.question.OnEnter = func () on this => AskTyped()
             this.ui.Add(this.question)
@@ -148,9 +150,26 @@ namespace Assistant {
         // At the start: the bottom right corner of the desktop (the work area comes with a cycle of the window).
         undefined Place() {
             int area[] = this.win.WorkArea()
+            this.win.Position()   // (from now on the window says where it is: the bubble grows upwards from there)
             if (area[2] <= 0) { return }
             this.placed = true
-            this.win.SetPosition(area[0] + area[2] - this.W - 16, area[1] + area[3] - this.H - 8)
+            // the bubble at most as high as the screen leaves room for: Min(screen - 120, 480) (logical pixels)
+            this.MaxBH = UI.M.Max(this.MinBH, UI.M.Min(this.ui.ToLogical(area[3]) - this.FH, 480))
+            this.win.SetPosition(area[0] + area[2] - this.fb.Width() - 16, area[1] + area[3] - this.fb.Height() - 8)
+            this.Show()
+        }
+
+        // The bubble gets the height `bh`: the window grows or shrinks upwards - its bottom (the character) stays where it is.
+        undefined Resize(defined int bh) {
+            if (bh == this.BH) { return }
+            int at[] = this.win.Position()
+            defined int before = this.fb.Height()
+            this.BH = bh
+            this.H = bh + this.FH
+            this.ui.SetSize(this.W, this.H)
+            if (at[0] >= 0) { this.win.SetPosition(at[0], at[1] + before - this.fb.Height()) }
+            this.bubble.Height = this.H
+            this.figure.Top = this.BH
         }
 
         // Every frame: the brain works a little, the bubble follows it.
@@ -183,10 +202,15 @@ namespace Assistant {
             }
             this.choices.Clear()
             defined int count = 0
+            defined int choicesHeight = 0
             if (shownNow && !this.showHistory) {
                 for (int i = 0; i < this.Brain.Choices.Count && i < 4; i++) {
-                    var b = new UI.Button(this.Brain.Choices[i], 0, 0, this.W - 28, 24)
+                    // (a long choice breaks into lines)
+                    var b = new UI.Button(this.Brain.Choices[i], 0, 0, this.W - 28, -1)
+                    b.WordWrap = true
                     b.OnClick = func () on this => Pick((taking i))
+                    b.Measure(this.ui, this.W - 28, -1)
+                    choicesHeight = choicesHeight + UI.M.Max(24, b.dh) + 4
                     this.choices.Add(b)
                     count++
                 }
@@ -194,11 +218,17 @@ namespace Assistant {
             bool asking = shownNow && (this.Brain.Asking || this.showHistory) && this.Brain.Choices.Count == 0
             this.question.Visible = asking
             this.choices.Visible = shownNow && count > 0
+            // the bubble as high as the text, the choices and the question line need (the text scrolls beyond MaxBH); closed: only the character
+            defined int below = 22 + choicesHeight
+            if (asking) { below = below + 30 }
+            defined int bh = 0
+            if (shownNow) { bh = UI.M.Clamp(36 + this.text.ContentHeight(this.ui, this.W - 24) + below, this.MinBH, this.MaxBH) }
+            this.Resize(bh)
             defined int bottom = this.BH - 22
             if (asking) { bottom = this.BH - 52 }
-            defined int choicesHeight = count * 28
+            this.question.Top = this.BH - 46
             this.choices.Top = bottom - choicesHeight + 4
-            this.text.Height = bottom - choicesHeight - 36
+            this.text.Height = UI.M.Max(20, bottom - choicesHeight - 36)
             if (asking) { this.ui.SetFocus(this.question) }
             this.bubble.Invalidate()
             this.ui.Invalidate()

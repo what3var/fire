@@ -700,6 +700,8 @@ static int fire_dw32_setStyle(FireDw32Window* w, int flags) {
     SetWindowLongPtrW(w->hwnd, GWL_STYLE, (LONG_PTR)(fire_dw32_styleBits(w) | visible));
     fire_dw32_outer(w, w->winW, w->winH, &ow, &oh);
     SetWindowPos(w->hwnd, (flags & FIRE_STYLE_TOPMOST) ? HWND_TOPMOST : HWND_NOTOPMOST, 0, 0, ow, oh, SWP_NOMOVE | SWP_FRAMECHANGED | SWP_NOACTIVATE);
+    /* (DWM forgets what it composed behind a window whose frame changed: asked again) */
+    if (w->askedBackdrop > FIRE_BACKDROP_NONE) fire_dw32_setBackdrop(w, w->askedBackdrop);
     return flags;
 }
 
@@ -719,6 +721,14 @@ static int fire_dw32_beginMove(FireDw32Window* w) {
 }
 
 /* The work area of the monitor of the window (without the task bar). */
+/* The top left corner of the window on the screen. */
+static int fire_dw32_position(FireDw32Window* w, int* r) {
+    RECT rc;
+    if (w->hwnd == NULL || !GetWindowRect(w->hwnd, &rc)) return 0;
+    r[0] = rc.left; r[1] = rc.top;
+    return 1;
+}
+
 static int fire_dw32_workArea(FireDw32Window* w, int* r) {
     MONITORINFO mi;
     HMONITOR m = MonitorFromWindow(w->hwnd, MONITOR_DEFAULTTONEAREST);

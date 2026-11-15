@@ -35,6 +35,9 @@ namespace UI {
         UI.Geometry Icon
         Framebuffer Image
         defined int IconSize = 16
+        // true: a text wider than the button breaks at spaces into several lines (the button grows in height when its height is not fixed);
+        // false: one line. Whatever does not fit is cut off at the edge of the button.
+        bool WordWrap = false
 
         construct(string text, defined int x = 0, defined int y = 0, defined int width = 90, defined int height = 26) : base(x, y, width, height) {
             this.Text = text
@@ -47,10 +50,50 @@ namespace UI {
         // Without a fixed size (width/height = -1) as big as the symbol and the text plus margin
         override undefined MeasureCore(Root root, defined int aw, defined int ah) {
             this.cw = this.ContentWidth(root) + 24
-            this.ch = UI.M.Max(this.TextHeight(root), this.HasSymbol() ? this.IconSize : 0) + 12
+            defined int lines = 1
+            if (this.WordWrap && aw > 0) {
+                this.cw = UI.M.Min(this.cw, aw)
+                lines = this.Lines(root, this.TextRoom(root, aw)).Count
+            }
+            this.ch = UI.M.Max(lines * this.TextHeight(root), this.HasSymbol() ? this.IconSize : 0) + 12
         }
 
         bool HasSymbol() { return this.Icon != undefined || this.Image != undefined }
+
+        // The room of the text in a button `width` wide (the symbol and the margins taken off).
+        defined int TextRoom(Root root, defined int width) {
+            defined int room = width - 24
+            if (this.HasSymbol()) { room = room - this.IconSize - 6 }
+            return UI.M.Max(1, room)
+        }
+
+        // The lines of the text: with WordWrap broken at spaces to fit `room` (a word that is too long alone keeps its line), else the text itself.
+        List<string> Lines(Root root, defined int room) {
+            var lines = new List<string>()
+            string text = this.Text
+            if (text == undefined) { text = "" }
+            if (!this.WordWrap || this.TextWidth(root, text) <= room) {
+                lines.Add(text)
+                return lines
+            }
+            string line = ""
+            defined int at = 0
+            while (at < text.Length) {
+                defined int space = text.IndexOf(" ", at)
+                if (space < 0) { space = text.Length }
+                string part = text.Substring(at, space - at)
+                string tried = line == "" ? part : line + " " + part
+                if (line != "" && this.TextWidth(root, tried) > room) {
+                    lines.Add(line)
+                    line = part
+                } else {
+                    line = tried
+                }
+                at = space + 1
+            }
+            lines.Add(line)
+            return lines
+        }
 
         // symbol, gap, text
         defined int ContentWidth(Root root) {
@@ -129,15 +172,30 @@ namespace UI {
             var color = theme.text
             if (this.Foreground != undefined) { color = this.Foreground }
             if (!this.Enabled) { color = theme.textDisabled }
-            var tx = ax + (this.actualWidth - this.ContentWidth(root)) / 2
+            // (what does not fit is cut off at the edge, inside the border)
+            root.PushClip(ax + 1, ay + 1, UI.M.Max(0, this.actualWidth - 2), UI.M.Max(0, this.actualHeight - 2))
+            var lines = this.Lines(root, this.TextRoom(root, this.actualWidth))
+            var widest = 0
+            for (var i = 0; i < lines.Count; i = i + 1) { widest = UI.M.Max(widest, this.TextWidth(root, lines[i])) }
+            var content = widest
+            if (this.HasSymbol()) { content = widest > 0 ? this.IconSize + 6 + widest : this.IconSize }
+            // (centred while it fits; wider: from a small margin at the left, cut at the right)
+            var tx = ax + (this.actualWidth - content) / 2
+            if (content > this.actualWidth) { tx = ax + 6 }
             if (this.HasSymbol()) {
                 this.DrawSymbol(root, tx, ay + (this.actualHeight - this.IconSize) / 2, color)
                 tx = tx + this.IconSize + 6
             }
             if (this.Text != undefined && this.Text != "") {
-                var ty = ay + (this.actualHeight - this.TextHeight(root)) / 2
-                this.DrawString(root, tx, ty, this.Text, color)
+                var lh = this.TextHeight(root)
+                var ty = ay + (this.actualHeight - lines.Count * lh) / 2
+                for (var i = 0; i < lines.Count; i = i + 1) {
+                    // (each line centred in the room of the text)
+                    var lx = tx + (widest - this.TextWidth(root, lines[i])) / 2
+                    this.DrawString(root, lx, ty + i * lh, lines[i], color)
+                }
             }
+            root.PopClip()
         }
 
         override undefined MouseDown(Root root, defined int button, defined int px, defined int py) {

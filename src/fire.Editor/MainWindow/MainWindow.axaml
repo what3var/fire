@@ -465,6 +465,11 @@
 				<ExperimentalAcrylicBorder IsHitTestVisible="False" Material="{StaticResource BarAcrylic}" MinHeight="24"/>
 				<DockPanel Margin="10,3">
 					<TextBlock x:Name="CaretText" DockPanel.Dock="Right" Text="Line 1" Margin="16,0,0,0"/>
+					<!-- work without a build window: packages installed, their natives built (also for the assistant, a child process) -->
+					<StackPanel x:Name="WorkStatus" DockPanel.Dock="Right" Orientation="Horizontal" Spacing="8" Margin="16,0,0,0" IsVisible="False">
+						<TextBlock x:Name="WorkStatusText" Text="" VerticalAlignment="Center" Foreground="#A094A8"/>
+						<ProgressBar x:Name="WorkStatusBar" Width="80" Height="6" MinHeight="6" MinWidth="80" IsIndeterminate="False" VerticalAlignment="Center"/>
+					</StackPanel>
 					<!-- a build that runs while its window is hidden: its progress; a click brings the window back -->
 					<Button x:Name="BuildStatusButton" DockPanel.Dock="Right" IsVisible="False" Click="BuildStatus_Click" Margin="16,-3,0,-3" Padding="6,0"
 					        Background="Transparent" BorderThickness="0" VerticalAlignment="Center">

@@ -112,7 +112,8 @@
       { "name": "__GRPHWinSetStyle", "arguments": 2, "c": "fire_win_WinSetStyle" },
       { "name": "__GRPHWinMove", "arguments": 3, "c": "fire_win_WinMove" },
       { "name": "__GRPHWinBeginMove", "arguments": 1, "c": "fire_win_WinBeginMove" },
-      { "name": "__GRPHWinWorkArea", "arguments": 2, "c": "fire_win_WinWorkArea" }
+      { "name": "__GRPHWinWorkArea", "arguments": 2, "c": "fire_win_WinWorkArea" },
+      { "name": "__GRPHWinPosition", "arguments": 2, "c": "fire_win_WinPosition" }
     ]
   }
 }
