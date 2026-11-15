@@ -20,10 +20,14 @@ print(k)
 
 class Mixed {
     static string Go(int x) { return "static int" }
-    string Go(string s) { return "instance string" }
+    static string Go(string s) { return "static string" }
+    string Run(int x) { return "instance int" }
+    string Run(string s) { return "instance string" }
 }
 print(Mixed.Go(1))
-print(new Mixed().Go("s"))
+print(Mixed.Go("s"))
+print(new Mixed().Run(1))
+print(new Mixed().Run("s"))
 
 class extends string {
     string Tag(int n) { return this + "#" + n }
@@ -44,4 +48,4 @@ class Prio {
 print(Prio.P(new Thing()))
 print(Prio.Q(new Thing()))
 print(Prio.Q(3))
-//# name: Ueberladung nach Typ: ref-Parameter, statisch und Instanz gemischt, Basistyp-Erweiterung, generic vor class vor any
+//# name: Ueberladung nach Typ: ref-Parameter, gleiche Parameterzahl statisch und fuer Instanzen (nicht gemischt: E4076), Basistyp-Erweiterung, generic vor class vor any

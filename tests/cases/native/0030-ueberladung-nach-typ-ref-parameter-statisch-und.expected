@@ -4,6 +4,8 @@ ref float 3
 int
 15
 static int
+static string
+instance int
 instance string
 a#1
 b/c
