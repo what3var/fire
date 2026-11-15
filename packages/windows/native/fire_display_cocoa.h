@@ -566,6 +566,8 @@ static int fire_dns_setStyle(FireDnsWindow* w, int flags) {
     return flags;
 }
 
+/* (macOS: clicks on the transparent pixels of a window that is not opaque go through to what lies below by themselves) */
+static void fire_dns_setInputShape(FireDnsWindow* w, const int* rects, int count, int fbW, int fbH) { (void)w; (void)rects; (void)count; (void)fbW; (void)fbH; }
 /* (macOS: a window has no picture of its own - the Dock shows the program's, that of its bundle) */
 static void fire_dns_setIcon(FireDnsWindow* w, const uint32_t* rgba, int width, int height) { (void)w; (void)rgba; (void)width; (void)height; }
 

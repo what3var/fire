@@ -66,6 +66,8 @@ typedef struct FireWinShared {
     int workReq, work[4], workKnown;   /* Window.WorkArea: asked for, and the answer (x, y, w, h of the desktop without its panels) */
     int posWatch, pos[2], posKnown;    /* Window.Position: asked for once (then followed every cycle), and where the window is */
     uint32_t* iconReq; int iconW, iconH, iconSet;   /* Window.SetIcon: the picture asked for (RGBA, a copy; NULL with iconSet: none) */
+    int clickThrough, shapeReset;   /* Window.ClickThrough: clicks go through the transparent pixels (the shape follows every frame); switched off: the whole window again */
+    int* shape; int shapeCount, shapeCap, shapeW, shapeH;   /* the shape the window has now: rectangles x, y, w, h of the pixels that are not transparent */
     double scale;                 /* pixels of the screen per logical pixel (the display's answer, 0: not known yet) */
     int dragReq, dragDone, dragResult;   /* Window.StartDrag for the thread: what is dragged (UTF-8; the paths one per line), and its answer */
     char* dragText;
@@ -106,6 +108,54 @@ static FireWinShared* fire_winb_sharedNew(const char* title, int width, int heig
 /* Shows a frame in the window (on the thread that owns it): through the presenter of the framebuffer (`fn`; it draws into the window itself and lays the frame over its picture),
  * or - without one, or when it cannot - as the display shows framebuffers. */
 static void fire_winb_showArea(FireWinShared* s, fire_present_fn fn, void* ctx, const uint32_t* pixels, int width, int height, const int* area);
+#ifdef FIRE_DISPLAY_PLACEMENT
+/* Window.ClickThrough: the pixels that are not transparent as rectangles (the runs of a row; rows with the same runs one rectangle) - handed to the display only when
+ * they changed (a character that blinks changes nothing of it). */
+static void fire_winb_shapeAdd(int** list, int* count, int* cap, int x, int y, int w, int h) {
+    if (*count + 4 > *cap) {
+        int grown = *cap ? *cap * 2 : 256;
+        int* bigger;
+        while (grown < *count + 4) grown *= 2;
+        bigger = (int*)realloc(*list, sizeof(int) * (size_t)grown);
+        if (bigger == NULL) fatal("Out of memory.");
+        *list = bigger; *cap = grown;
+    }
+    (*list)[*count] = x; (*list)[*count + 1] = y; (*list)[*count + 2] = w; (*list)[*count + 3] = h;
+    *count += 4;
+}
+static void fire_winb_shapeFrom(FireWinShared* s, const uint32_t* pixels, int width, int height) {
+    int* rects = NULL; int count = 0, cap = 0;
+    int* open = NULL; int openCount = 0, openCap = 0;   /* the runs of the rows above (x, y0, w, h) that the next row may make longer */
+    int* runs = NULL; int runCount = 0, runCap = 0;
+    int row, col, i, same;
+    for (row = 0; row < height; row++) {
+        const uint32_t* line = pixels + (size_t)row * (size_t)width;
+        runCount = 0;
+        col = 0;
+        while (col < width) {
+            int start;
+            while (col < width && (line[col] >> 24) == 0) col++;
+            if (col >= width) break;
+            start = col;
+            while (col < width && (line[col] >> 24) != 0) col++;
+            fire_winb_shapeAdd(&runs, &runCount, &runCap, start, row, col - start, 1);
+        }
+        same = runCount == openCount;
+        for (i = 0; same && i < runCount; i += 4) same = runs[i] == open[i] && runs[i + 2] == open[i + 2];
+        if (same) { for (i = 0; i < openCount; i += 4) open[i + 3]++; continue; }
+        for (i = 0; i < openCount; i += 4) fire_winb_shapeAdd(&rects, &count, &cap, open[i], open[i + 1], open[i + 2], open[i + 3]);
+        openCount = 0;
+        for (i = 0; i < runCount; i += 4) fire_winb_shapeAdd(&open, &openCount, &openCap, runs[i], runs[i + 1], runs[i + 2], 1);
+    }
+    for (i = 0; i < openCount; i += 4) fire_winb_shapeAdd(&rects, &count, &cap, open[i], open[i + 1], open[i + 2], open[i + 3]);
+    free(open); free(runs);
+    if (count != s->shapeCount || width != s->shapeW || height != s->shapeH || (count > 0 && memcmp(rects, s->shape, sizeof(int) * (size_t)count) != 0)) {
+        fire_display_setInputShape(&s->display, rects, count / 4, width, height);
+        free(s->shape);
+        s->shape = rects; s->shapeCount = count; s->shapeCap = cap; s->shapeW = width; s->shapeH = height;
+    } else free(rects);
+}
+#endif
 static void fire_winb_show(FireWinShared* s, fire_present_fn fn, void* ctx, const uint32_t* pixels, int width, int height) { fire_winb_showArea(s, fn, ctx, pixels, width, height, NULL); }
 /* (`area`: only it changed since the last frame - x, y, w, h; NULL: all of it) */
 static void fire_winb_showArea(FireWinShared* s, fire_present_fn fn, void* ctx, const uint32_t* pixels, int width, int height, const int* area) {
@@ -129,6 +179,9 @@ static void fire_winb_showArea(FireWinShared* s, fire_present_fn fn, void* ctx, 
         s->failedFn = fn; s->failedCtx = ctx;
     }
     if (pixels == NULL) return;   /* (a frame only for the presenter, which could not show it: the next one comes with its pixels) */
+#ifdef FIRE_DISPLAY_PLACEMENT
+    if (s->clickThrough) fire_winb_shapeFrom(s, pixels, width, height);
+#endif
 #ifdef FIRE_DISPLAY_PRESENT_AREA
     if (area != NULL && fn == NULL) { fire_display_presentArea(&s->display, pixels, width, height, area[0], area[1], area[2], area[3]); return; }
 #else
@@ -156,6 +209,7 @@ static void fire_winb_sharedDelete(FireWinShared* s) {
     free(s->shown);
     free(s->title);
     free(s->iconReq);
+    free(s->shape);
     free(s);
 }
 
@@ -451,13 +505,17 @@ static void fire_winb_applyRequests(FireWinShared* s) {
     if (s->beginMoveReq) { fire_display_beginMove(&s->display); s->beginMoveReq = 0; }
     if (s->workReq) { s->workKnown = fire_display_workArea(&s->display, s->work); s->workReq = 0; }
     if (s->posWatch) s->posKnown = fire_display_position(&s->display, s->pos);
+    if (s->shapeReset) {
+        fire_display_setInputShape(&s->display, NULL, -1, 0, 0);
+        s->shapeReset = 0; s->shapeCount = -1;
+    }
     if (s->iconSet) {
         fire_display_setIcon(&s->display, s->iconReq, s->iconW, s->iconH);
         free(s->iconReq); s->iconReq = NULL; s->iconSet = 0;
     }
 #else
     s->styleReq = -1; s->moveReq = 0; s->beginMoveReq = 0; s->workReq = 0;
-    free(s->iconReq); s->iconReq = NULL; s->iconSet = 0;
+    free(s->iconReq); s->iconReq = NULL; s->iconSet = 0; s->shapeReset = 0;
 #endif
 }
 /* A window that cannot be opened is never silent: it counts as closed, and the error output says so - in the VM the host's (spark: the Output panel). */
@@ -1444,6 +1502,19 @@ static Value fire_win_WinSetStyle(Value id, Value flags) {
     int threaded = fire_winb_threaded(w);
     if (threaded) fire_winb_lock(&s->m);
     s->styleReq = (int)flags.i & 7;
+    if (!threaded && s->opened && !s->failed) fire_winb_applyRequests(s);
+    if (threaded) fire_winb_unlock(&s->m);
+    return Undef();
+}
+/* Window.ClickThrough: clicks (and the pointer) go through the transparent pixels of the window to what lies below - the shape follows every frame. Off: the whole
+ * window takes them again. */
+static Value fire_win_WinSetClickThrough(Value id, Value on) {
+    FireWinState* w = fire_winb_windowOf(id);
+    FireWinShared* s = w->sh;
+    int threaded = fire_winb_threaded(w);
+    if (threaded) fire_winb_lock(&s->m);
+    if (on.i && !s->clickThrough) { s->clickThrough = 1; s->shapeCount = -1; }
+    else if (!on.i && s->clickThrough) { s->clickThrough = 0; s->shapeReset = 1; }
     if (!threaded && s->opened && !s->failed) fire_winb_applyRequests(s);
     if (threaded) fire_winb_unlock(&s->m);
     return Undef();

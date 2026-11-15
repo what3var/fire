@@ -48,6 +48,7 @@ namespace Assistant {
             this.win.Frameless = true
             this.win.TopMost = true
             this.win.ShowInTaskbar = false   // (a helper, not a program of its own)
+            this.win.ClickThrough = true     // (clicks next to the bubble and the character reach the windows below)
             this.PaintIcon()
             this.ui = new UI.Root(this.fb, this.win)
             this.ui.WindowBackdrop = Backdrop.Transparent
@@ -132,6 +133,17 @@ namespace Assistant {
             defined int h = this.BH - 12
             defined int fill = this.Fill()
             defined int edge = this.ui.Dark ? UI.Color.Rgb(90, 90, 96) : UI.Color.Rgb(214, 204, 160)
+            if (this.Brain.Phase == Assistant.Phase.Thinking) {
+                // a thought bubble: rounder, and small circles that rise from the character instead of the tail
+                r.DrawShadow(4, 4, w - 8, h - 4, 24, 6, 0x30000000, 2)
+                r.FillRoundRect(4, 4, w - 8, h - 4, 24, new SolidBrush(fill))
+                r.DrawRoundRect(4, 4, w - 8, h - 4, 24, new Pen(edge, 1))
+                r.FillCircle(52, h + 3, 6, new SolidBrush(fill))
+                r.DrawCircle(52, h + 3, 6, new Pen(edge, 1))
+                r.FillCircle(44, h + 14, 3, new SolidBrush(fill))
+                r.DrawCircle(44, h + 14, 3, new Pen(edge, 1))
+                return
+            }
             r.DrawShadow(4, 4, w - 8, h - 4, 12, 6, 0x30000000, 2)
             r.FillRoundRect(4, 4, w - 8, h - 4, 12, new SolidBrush(fill))
             r.DrawRoundRect(4, 4, w - 8, h - 4, 12, new Pen(edge, 1))

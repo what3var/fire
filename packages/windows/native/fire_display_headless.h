@@ -105,6 +105,7 @@ static void fire_dhl_setTextInputRect(FireDhlWindow* w, int x, int y, int width,
 static int fire_dhl_setStyle(FireDhlWindow* w, int flags) { (void)w; return flags; }
 static void fire_dhl_move(FireDhlWindow* w, int x, int y) { (void)w; (void)x; (void)y; }
 static int fire_dhl_beginMove(FireDhlWindow* w) { (void)w; return 0; }
+static void fire_dhl_setInputShape(FireDhlWindow* w, const int* rects, int count, int fbW, int fbH) { (void)w; (void)rects; (void)count; (void)fbW; (void)fbH; }
 static void fire_dhl_setIcon(FireDhlWindow* w, const uint32_t* rgba, int width, int height) { (void)w; (void)rgba; (void)width; (void)height; }
 static int fire_dhl_position(FireDhlWindow* w, int* r) { (void)w; (void)r; return 0; }
 static int fire_dhl_workArea(FireDhlWindow* w, int* r) { (void)w; r[0] = 0; r[1] = 0; r[2] = 1920; r[3] = 1080; return 1; }

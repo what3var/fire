@@ -143,6 +143,17 @@ class Window {
     }
     undefined ApplyStyle() { __GRPHWinSetStyle(this.id, (this.frameless ? 1 : 0) + (this.topMost ? 2 : 0) + (this.showInTaskbar ? 0 : 4)) }
 
+    // false (default): the whole window takes the mouse; true: clicks and the pointer go through its transparent pixels (alpha 0) to the windows below - a
+    // character on the desktop with Backdrop.Transparent. The shape follows every frame. (macOS does it by itself for a window that is not opaque.)
+    bool clickThrough = false
+    bool ClickThrough {
+        get { return this.clickThrough }
+        set {
+            this.clickThrough = value
+            __GRPHWinSetClickThrough(this.id, value)
+        }
+    }
+
     // The picture of the window in the task bar, the title bar and Alt+Tab: a copy of the framebuffer's pixels (with their alpha; 32 x 32 or 64 x 64 suit,
     // the desktop scales it). undefined: the program's own picture again. macOS shows the program's (its bundle), Wayland the one of its .desktop file.
     undefined SetIcon(Framebuffer icon) {
