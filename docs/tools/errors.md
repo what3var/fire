@@ -322,6 +322,7 @@ configuration of the native build, a toolchain that is missing).
 | `E4073` | The initialiser of the static field '…' reads the field itself - it is still undefined there |
 | `E4074` | The initialiser of the static field '…' reads '…', whose initialiser only runs later (static fields are initialised once at program start: class by class in the order of the program, in a class from the top down) - declare '…' first |
 | `E4075` | '…' is in several imported libraries (…) - write the full name |
+| `E4076` | '…' of class '…' is both a static method and an instance method (the other one: line …) - give one of them another name (also over base classes; in a package the package is not built) |
 
 ### E5xxx - Bytecode compiler
 

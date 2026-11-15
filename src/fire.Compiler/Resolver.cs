@@ -555,6 +555,10 @@ namespace fire.Compiler
                     AddError(new ResolverException($"Interface '{id.Name}' extends itself ({string.Join(" -> ", cycle)})", id.Line));
             }
 
+            // a method name is static or instance in a class and its bases - not both: `R.Inside(a, b)` and `r.Inside(a, b)` would have to choose
+            // between them by how they are called, and a call inside the class (`Inside(a, b)`) could mean either (E4076)
+            foreach (var cd in _classes.Values) Guard(() => ValidateStaticAndInstance(cd));
+
             foreach (var cd in _classes.Values)
             {
                 // (the interfaces it names and every interface they extend - each once)
@@ -629,6 +633,28 @@ namespace fire.Compiler
         /// instead of passing it on (see
         /// ResolverException) - for checks after which it makes sense
         /// to carry on.</summary>
+        /// <summary>E4076: a class declares a method name both `static` and for instances, itself or together with a base class.</summary>
+        private void ValidateStaticAndInstance(ClassDecl cd)
+        {
+            static string BaseName(string n) => n.IndexOf('<') is var lt and > 0 ? n.Substring(0, lt) : n;
+            var own = cd.Members.OfType<MethodDecl>().ToList();
+            foreach (var md in own)
+            {
+                var other = own.FirstOrDefault(o => o.IsStatic != md.IsStatic && BaseName(o.Name) == BaseName(md.Name));
+                if (other != null && md.IsStatic)
+                    throw StaticAndInstance(cd.Name, BaseName(md.Name), md.Line, other.Line, cd.Name);
+            }
+            var seen = new HashSet<ClassDecl> { cd };
+            for (var b = GetBaseClassDecl(cd); b != null && seen.Add(b); b = GetBaseClassDecl(b))
+                foreach (var md in own)
+                    if (b.Members.OfType<MethodDecl>().FirstOrDefault(o => o.IsStatic != md.IsStatic && BaseName(o.Name) == BaseName(md.Name)) is { } inherited)
+                        throw StaticAndInstance(cd.Name, BaseName(md.Name), md.Line, inherited.Line, b.Name);
+        }
+
+        private static ResolverException StaticAndInstance(string cls, string name, int line, int otherLine, string otherClass) =>
+            new($"'{name}' of class '{cls}' is both a static method and an instance method (the other one: line {otherLine}{(otherClass != cls ? $" in '{otherClass}'" : "")}) - " +
+                "a call through the class name and one through an object would mean different methods; give one of them another name", line);
+
         private void Guard(Action check)
         {
             try { check(); }
