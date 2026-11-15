@@ -11,6 +11,8 @@
 | `forge run <project.fireproj \| solution.firesln> [-p name]` | runs a project (of a solution: the startup project, or `-p`) |
 | `forge build <file \| project \| solution> [-o out]` | a program: a self-contained VM program, or with `--engine native` a native one; a library project: a package (`.fpk`) |
 | `forge native <file>... [-o out.c]` | only translates to C (next to the runtime header), without building |
+| `forge bytecode <file>... [-o out.fbc]` | compiles the files into one program and writes it as a program file (`.fbc`, the bytecode with everything a VM needs: [the format](../spec/BYTECODE.md#48-das-dateiformat-fbc)) |
+| `forge dump <file>... \| <program.fbc> [-o file]` | a program as text - everything a program file holds, one thing per line, made to be compared (two builds, two compilers) |
 | `forge test [file \| project \| solution] [--filter A.B]` | runs the `[Test]` methods ([testing](testing.md)); exit code 0 when all passed |
 | `forge ui <file.fxml> [-o file]` | the script generated from a [markup](../ui/markup.md) file (to look at it; `#include` does it on the fly) |
 | `forge biscuit <file.biscuit> [-o file]` | the script generated from a [schematic](../circuits/README.md) |

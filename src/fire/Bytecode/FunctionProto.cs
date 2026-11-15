@@ -1,5 +1,4 @@
 using fire.Ast;
-using MemoryPack;
 using System;
 using System.Collections.Generic;
 
@@ -19,7 +18,6 @@ namespace fire.Bytecode
     /// FillDefaultArgs when a call supplies fewer arguments
     /// than ParamCount (see Ast.LambdaParam.DefaultValue docs).
     /// </summary>
-    [MemoryPackable]
     public sealed partial class FunctionProto
     {
         public Chunk Chunk { get; }
@@ -82,7 +80,6 @@ namespace fire.Bytecode
 
         /// <summary>If the method is a pure forwarding to a native function (see NativeForwarder), otherwise null.
         /// Determined from the bytecode on first need (not serialised).</summary>
-        [MemoryPackIgnore]
         public NativeForwarder? Forwarder
         {
             get

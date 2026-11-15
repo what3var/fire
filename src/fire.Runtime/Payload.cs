@@ -45,8 +45,8 @@ namespace fire.Runtime
     /// The entries are individually Brotli-packed (only if it helps), so that the file becomes as small as possible
     /// and yet every DLL is unpacked individually and only when needed.
     ///
-    /// This class (and everything the runtime touches before installing the loader) must NOT access fire.dll or
-    /// MemoryPack - after all, those themselves only come from this payload.
+    /// This class (and everything the runtime touches before installing the loader) must NOT access fire.dll -
+    /// after all, it itself only comes from this payload.
     /// </summary>
     public static class PayloadFile
     {

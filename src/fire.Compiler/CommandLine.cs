@@ -9,7 +9,7 @@ using System.Linq;
 namespace fire.Compiler
 {
     /// <summary>The kind of invocation on the command line.</summary>
-    public enum CommandKind { Run, Build, Native, Test, Help }
+    public enum CommandKind { Run, Build, Native, Test, Help, Bytecode, Dump }
 
     /// <summary>Result of evaluating the command line (see <see cref="CommandLineParser.Parse"/>).</summary>
     public sealed class CommandLineOptions
@@ -86,6 +86,7 @@ namespace fire.Compiler
     {
         public const string DefaultOutputFile = "out.exe";
         public const string DefaultNativeOutputFile = "out.c";
+        public const string DefaultBytecodeOutputFile = "out.fbc";
 
         public static string Usage =>
             """
@@ -93,6 +94,8 @@ namespace fire.Compiler
               fire.Compiler run   <file>... [-m DEBUG|RELEASE|PERFORMANCE] [-f 32|64] [-i 32|64] [--global-jobs safepoints|sleep|sync] [-- <arguments of the program>...]
               fire.Compiler build <file>... [-o <target.exe>] [-m DEBUG|RELEASE|PERFORMANCE] [-f 32|64] [-i 32|64] [--engine vm|native] [-t <target>] [--toolchain <name>] [--config <file>] [--keep] [--stripping 0-3] [--keep-all] [--optimize speed|size] [--linkage source|static|shared|plugin] [--host <program>] [--global-jobs safepoints|sleep|sync]
               fire.Compiler native <file>... [-o <target.cpp>] [-t <target>] [-f 32|64] [-i 32|64] [--config <file>] [--stripping 0-3] [--keep-all] [--optimize speed|size] [--global-jobs safepoints|sleep|sync]
+              fire.Compiler bytecode <file>... [-o <out.fbc>] [-m ...] [-f 32|64] [-i 32|64] [-D name]...
+              fire.Compiler dump  <file>... | <program.fbc> [-o <file>] [-m ...] [-f 32|64] [-i 32|64] [-D name]...
               fire.Compiler ui    <file.fxml> [-o <file>]
               fire.Compiler biscuit <file.biscuit> [-o <file>]
               fire.Compiler falstad <circuit.txt> [-o <file.biscuit>]
@@ -139,6 +142,9 @@ namespace fire.Compiler
                     fire.native.json (docs/spec/THREADING_DESIGN.md section 7). The VM and a native build behave the same.
             -D name Defines the symbol "name" for #if (repeatable, also --define name or -Dname).
             -o      Name of the file produced by build or native.
+            bytecode  compiles the files into one program and writes it as a program file (default: out.fbc; the format: docs/spec/BYTECODE.md, "Das Dateiformat .fbc").
+            dump    writes a program as text, everything a program file holds, made to be compared: the files compiled into one program, or a program file (.fbc);
+                    without -o to the output.
             test    runs the tests: the methods with [Test] (docs/tools/testing.md), in the VM or with --engine native as a native program for this machine. Without a file: the solution or the
                     project in the current folder (all projects of a solution, or -p <name>). The files in testing/ of a project belong to its tests; the top level of a program does not run.
                     --filter A.B,C runs only these tests (Class.Method, or a class for all its tests; * for any text). Exit code 0 when every test passed, 1 otherwise.
@@ -165,8 +171,10 @@ namespace fire.Compiler
                 case "build": command = CommandKind.Build; break;
                 case "native": command = CommandKind.Native; break;
                 case "test": command = CommandKind.Test; break;
+                case "bytecode": command = CommandKind.Bytecode; break;
+                case "dump": command = CommandKind.Dump; break;
                 default:
-                    return Fail(CommandKind.Help, $"Unknown command '{args[0]}' (expected: run, build, native, test or data).");
+                    return Fail(CommandKind.Help, $"Unknown command '{args[0]}' (expected: run, build, native, test, bytecode, dump or data).");
             }
 
             var files = new List<string>();
@@ -329,7 +337,7 @@ namespace fire.Compiler
                 }
                 else if (TryOption(arg, "-o", "--out", out var outInline))
                 {
-                    if (command is not (CommandKind.Build or CommandKind.Native)) return Fail(command, "-o is only available with build and native.");
+                    if (command is not (CommandKind.Build or CommandKind.Native or CommandKind.Bytecode or CommandKind.Dump)) return Fail(command, "-o is only available with build, native, bytecode and dump.");
                     string? value = outInline ?? (i + 1 < args.Count ? args[++i] : null);
                     if (string.IsNullOrWhiteSpace(value)) return Fail(command, "-o must be followed by the file name.");
                     output = Unquote(value);
@@ -374,7 +382,7 @@ namespace fire.Compiler
                 Host = host,
                 ProjectName = projectName,
                 OutputGiven = output != null,
-                OutputFile = output ?? (command == CommandKind.Native ? DefaultNativeOutputFile : DefaultOutputFile),
+                OutputFile = output ?? (command == CommandKind.Native ? DefaultNativeOutputFile : command == CommandKind.Bytecode ? DefaultBytecodeOutputFile : DefaultOutputFile),
             };
         }
 
@@ -457,6 +465,7 @@ namespace fire.Compiler
             using var collecting = collector.Begin();
 
             if (options.Command == CommandKind.Test) return Test(options, stdout, stderr);
+            if (options.Command is CommandKind.Bytecode or CommandKind.Dump) return Bytecode(options, stdout, stderr);
             if (options.Files.Count == 1 && IsProjectFile(options.Files[0])) return RunProject(options, stdout, stderr);
 
             var sources = new List<string>();
@@ -556,6 +565,52 @@ namespace fire.Compiler
             catch (fire.Native.NativeConfigException ex) { stderr.WriteLine(ex.Message); return ExitUsage; }
             catch (Exception ex) when (IsCompileError(ex)) { stderr.WriteLine(DescribeErrors(ex)); return ExitScriptError; }
             catch (fire.Native.NativeNotSupportedException ex) { stderr.WriteLine($"error {ErrorCatalog.NativeUnsupported}: Not supported by the native backend yet: " + ex.Message); return ExitScriptError; }
+        }
+
+        /// <summary>`bytecode`: the files as a program file (.fbc, ProgramFile); `dump`: a program - the files, or a program file - as text (ProgramDump).</summary>
+        private static int Bytecode(CommandLineOptions options, TextWriter stdout, TextWriter stderr)
+        {
+            foreach (var file in options.Files)
+                if (!File.Exists(file)) { stderr.WriteLine($"File not found: {file}"); return ExitUsage; }
+            if (options.Files.Any(IsProjectFile)) { stderr.WriteLine($"{options.Command.ToString().ToLowerInvariant()} takes source files, not a project or a solution."); return ExitUsage; }
+            fire.Runtime.LinkedProgram program;
+            try
+            {
+                if (options.Command == CommandKind.Dump && options.Files.Count == 1 && fire.Bytecode.ProgramFile.IsProgram(ReadHead(options.Files[0])))
+                    program = fire.Bytecode.ProgramFile.Read(File.ReadAllBytes(options.Files[0]));
+                else
+                    program = new Linker { Defines = options.Defines, BasePath = BaseDirectory(options), SourcePaths = SourceFiles(options) }
+                        .CompileAndLink(options.Files.Select(File.ReadAllText).ToList(), null, null, options.Mode, options.FloatWidth);
+            }
+            catch (fire.Bytecode.ProgramFileException ex)
+            {
+                stderr.WriteLine($"{options.Files[0]}: {ex.Message}");
+                return ExitScriptError;
+            }
+            catch (Exception ex) when (IsCompileError(ex))
+            {
+                stderr.WriteLine(DescribeErrors(ex));
+                return ExitScriptError;
+            }
+            if (options.Command == CommandKind.Dump)
+            {
+                string text = fire.Bytecode.ProgramDump.Text(program);
+                if (options.OutputGiven) File.WriteAllText(options.OutputFile, text);
+                else stdout.Write(text);
+                return ExitOk;
+            }
+            byte[] bytes = fire.Bytecode.ProgramFile.Write(program);
+            File.WriteAllBytes(options.OutputFile, bytes);
+            stdout.WriteLine($"{Path.GetFullPath(options.OutputFile)} ({bytes.Length} bytes)");
+            return ExitOk;
+        }
+
+        private static byte[] ReadHead(string file)
+        {
+            using var fs = File.OpenRead(file);
+            var head = new byte[8];
+            int n = fs.Read(head, 0, head.Length);
+            return head.AsSpan(0, n).ToArray();
         }
 
         private static int Native(CommandLineOptions options, List<string> sources, TextWriter stdout, TextWriter stderr)

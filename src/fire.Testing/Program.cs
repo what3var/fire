@@ -47,6 +47,8 @@ if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "aimodels") { AiMod
 if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "blocks") { BlockModelTests.Run(); return; }
 if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "mesh") { MeshModelTests.Run(); return; }
 if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "diagnostics") { DiagnosticTests.Run(); return; }
+// FIRE_TESTS_ONLY=programfile: the program file .fbc and `forge dump` (docs/ROADMAP_C_PORT.md, phase A)
+if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "programfile") { ProgramFileTests.Run(); return; }
 if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "syntax") { SyntaxTests.Run(); return; }
 if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "types") { TypeTests.Run(); return; }
 if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "testing") { TestingTests.Run(); return; }
@@ -7520,7 +7522,7 @@ packerTests:
     // 1) Pack plan: per import only the necessary DLLs, nothing unresolved.
     PackagePlan Plan(params string[] imports) => PackagePlan.Create(imports, baseDir);
     var planPrint = Plan(NativeImports.Print);
-    PackCheck(planPrint.Assemblies.ContainsKey("fire") && planPrint.Assemblies.ContainsKey("MemoryPack.Core"), "Plan: Kern (fire, MemoryPack) ist immer dabei");
+    PackCheck(planPrint.Assemblies.ContainsKey("fire"), "Plan: Kern (fire) ist immer dabei");
     PackCheck(!planPrint.Assemblies.Keys.Any(n => n.StartsWith("fire.Terminal") || n.StartsWith("fire.Device") || n.StartsWith("fire.IO") || n == "System.IO.Ports") && planPrint.Natives.Count == 0,
         "Plan: ohne Import keine Bridge, keine nativen Bibliotheken");
     var planIo = Plan(NativeImports.Print, "pkg:io");
@@ -7740,7 +7742,7 @@ packerTests:
         // the packer with only runtime.exe next to the compiler: the payload goes behind the finished bundle
         var baseDir2 = Path.Combine(sfDir, "compiler");
         Directory.CreateDirectory(baseDir2);
-        foreach (var dll in new[] { "fire.dll" }.Concat(Directory.GetFiles(AppContext.BaseDirectory, "MemoryPack*.dll").Select(Path.GetFileName)!))
+        foreach (var dll in new[] { "fire.dll" })
             if (File.Exists(Path.Combine(AppContext.BaseDirectory, dll!))) File.Copy(Path.Combine(AppContext.BaseDirectory, dll!), Path.Combine(baseDir2, dll!));
         string stub = OperatingSystem.IsWindows() ? "runtime.exe" : "runtime";
         File.Copy(bundled, Path.Combine(baseDir2, stub));
@@ -14620,7 +14622,7 @@ DebuggerTests.Run();
     {
         var lines = new List<string>();
         var linked = new fire.Compiler.Linker().CompileAndLink(new[] { script }, null, null, mode);
-        var restored = Packer.Deserialize(MemoryPack.MemoryPackSerializer.Serialize(linked))!;
+        var restored = Packer.Deserialize(fire.Bytecode.ProgramFile.Write(linked, lineTables: false))!;
         VM.ResetTerminateForTests();
         var session = fire.Runtime.Session.Build(restored, mode, args => { lock (lines) lines.Add(args[0].ToString()); return Value.MakeUndefined(); });
         session.Run();
@@ -16129,6 +16131,7 @@ NotesTests.Run();
 McpServerTests.Run();
 AiModelsTests.Run();
 DiagnosticTests.Run();
+ProgramFileTests.Run();
 SyntaxTests.Run();
 TypeTests.Run();
 TestingTests.Run();
@@ -34070,7 +34073,7 @@ else
         // the program carries the bytes: a packed file (serialized program) and a program without the file at run time
         {
             var linked = new Linker().CompileAndLink(new[] { resScript });
-            var back = MemoryPack.MemoryPackSerializer.Deserialize<LinkedProgram>(MemoryPack.MemoryPackSerializer.Serialize(linked))!;
+            var back = fire.Bytecode.ProgramFile.Read(fire.Bytecode.ProgramFile.Write(linked));
             CheckNat("Ressourcen: das serialisierte Programm traegt die Dateien (2 Ressourcen, Bytes gleich)",
                 back.Program.Resources.Count == 2 && back.Program.Resources[1].Data.SequenceEqual(new byte[] { 0, 1, 2, 250, 255 }) && back.Program.Resources[0].Name.EndsWith("hello.txt"), "");
         }
