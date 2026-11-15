@@ -214,10 +214,7 @@ namespace fire.Compiler
                         string dir = Path.Combine(prebuiltFolder, import.Package.Name, PackageLibrary.Rid);
                         Directory.CreateDirectory(dir);
                         string lib = Path.Combine(dir, PackageLibrary.FileNameFor(import));
-                        File.Copy(built, lib, overwrite: true);
-                        File.WriteAllText(lib + ".hash", NativeHashOf(import));
-                        File.WriteAllText(PackageLibrary.KeyFile(lib), PackageLibrary.RuntimeKey(import));
-                        result.Add(lib);
+                        if (StorePrebuilt(built, lib, NativeHashOf(import), PackageLibrary.RuntimeKey(import), import.Package.Name, log)) result.Add(lib);
                     }
                     catch (PackageException ex) { log?.Invoke($"{import.Package.Name}: no prebuilt library for {PackageLibrary.Rid} ({string.Join('\n', ex.Message.Split('\n').Take(20))})"); }
                 }
@@ -232,10 +229,7 @@ namespace fire.Compiler
                         string dir = Path.Combine(prebuiltFolder, PackageLibrary.GraphicsPrebuiltFolder, PackageLibrary.Rid);
                         Directory.CreateDirectory(dir);
                         string lib = Path.Combine(dir, PackageLibrary.GraphicsFileName);
-                        File.Copy(built, lib, overwrite: true);
-                        File.WriteAllText(lib + ".hash", PackageLibrary.GraphicsSourceHash(graphics, windows));
-                        File.WriteAllText(PackageLibrary.KeyFile(lib), PackageLibrary.GraphicsRuntimeKey(graphics, windows));
-                        result.Add(lib);
+                        if (StorePrebuilt(built, lib, PackageLibrary.GraphicsSourceHash(graphics, windows), PackageLibrary.GraphicsRuntimeKey(graphics, windows), "graphics and windows", log)) result.Add(lib);
                     }
                     catch (PackageException ex) { log?.Invoke($"graphics and windows: no prebuilt library for {PackageLibrary.Rid} ({string.Join('\n', ex.Message.Split('\n').Take(20))})"); }
                 }
@@ -246,6 +240,28 @@ namespace fire.Compiler
                 try { Directory.Delete(storeDir, true); } catch (IOException) { }
             }
             return result;
+        }
+
+        /// <summary>Puts a built library into Prebuilt/ with its fingerprints (.hash: the C of the package, .runtime: PackageLibrary.RuntimeKey). Nothing to do when it is that file already
+        /// (PackageLibrary takes a fitting library from Prebuilt/ directly) or when the one there has the same fingerprints. A library that a running program has loaded (spark,
+        /// on Windows) cannot be replaced: that is said, and the old one stays with its own fingerprints - the build goes on.</summary>
+        private static bool StorePrebuilt(string built, string lib, string hash, string key, string what, Action<string>? log)
+        {
+            static string? Read(string file) { try { return File.Exists(file) ? File.ReadAllText(file).Trim() : null; } catch (IOException) { return null; } }
+            bool same = string.Equals(Path.GetFullPath(built), Path.GetFullPath(lib), OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal);
+            if (!same && File.Exists(lib) && Read(lib + ".hash") == hash && Read(PackageLibrary.KeyFile(lib)) == key) return true;   // (already there)
+            try
+            {
+                if (!same) File.Copy(built, lib, overwrite: true);
+                File.WriteAllText(lib + ".hash", hash);
+                File.WriteAllText(PackageLibrary.KeyFile(lib), key);
+                return true;
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                log?.Invoke($"{what}: the prebuilt library '{lib}' is in use and stays as it was ({ex.Message.Split('\n')[0]}) - close the programs that use it and build again");
+                return false;
+            }
         }
 
         private static IEnumerable<InstalledImport> AllImports(PackageStore store) =>
