@@ -1141,9 +1141,12 @@ namespace fire.Native
                 if (declared == 0 && cls.Rc.FindFieldRequiredArray(name) is var requiredArray and not 0)
                 {
                     // a field declared as a typed array without a unit: an array of that element or undefined (every assignment types it, FieldInfo.RequiredArray)
-                    // (an array of a class keeps its Values: no packed element type - ArrayElem.Class)
-                    if ((requiredArray >> 8) != 1 || cls.Rc.FindFieldRequiredUnit(name) != null || ArrayElem.TypeOf(requiredArray) == ArrayElem.Class) return TypeUnknown;
-                    int arrType = TypeOf(KindArr, requiredArray & 0xFF) | NullableBit;
+                    // (an array of a class keeps its Values: no packed element type - but what an element is, ClassArrType)
+                    if ((requiredArray >> 8) != 1 || cls.Rc.FindFieldRequiredUnit(name) != null) return TypeUnknown;
+                    int arrType;
+                    if (ArrayElem.TypeOf(requiredArray) != ArrayElem.Class) arrType = TypeOf(KindArr, requiredArray & 0xFF) | NullableBit;
+                    else if (cls.Rc.FindFieldRequiredArrayType(name) is { } elemText && ClassArrType(elemText) is { } classArr) arrType = classArr;
+                    else return TypeUnknown;
                     if (result is { } knownArr && knownArr != arrType) return TypeUnknown;
                     result = arrType;
                     continue;
@@ -1216,6 +1219,7 @@ namespace fire.Native
                 case "string": return $"{value}.kind == K_String";
                 case "class": case "Exception": return $"{value}.kind == K_Class";
             }
+            if (DeclaredType.LambdaParamsOf(c.Name) is var lambdaParams and >= 0) return $"({value}.kind == K_Lambda && lamOf({value})->nparams == {lambdaParams}u)";
             _isOfTypes.Add(c.Name);
             string enumerable = GenericClassNames.PlainName(c.Name) == "IEnumerable" ? $"{value}.kind == K_Array || {value}.kind == K_Buffer || {value}.kind == K_String || " : "";
             return $"({enumerable}{IsOfFn(c.Name)}({value}))";
@@ -1229,6 +1233,7 @@ namespace fire.Native
             {
                 _targIds[text] = id = _targIds.Count;
                 HoldsExpr("v", DeclaredType.ConditionOf(text));   // (registers the `isof_` it needs)
+                if (DeclaredType.ArrayOfTypeArg(text) is (_, { } elemText)) ArrClassId(elemText);   // (and its entry in g_arrClasses: TArg.arrClass)
             }
             return $"&{Px}ta_{id}";
         }
@@ -1353,8 +1358,9 @@ namespace fire.Native
                     }
                 }
                 sb.AppendLine($"static bool {Px}tah_{id}(Value v) {{ return {holds}; }}");
-                int arrElem = DeclaredType.TypedElementOf(text) is int code ? (code & 0xFF) + 1 : 0;
-                sb.AppendLine($"static const TArg {Px}ta_{id} = {{{CString(DeclaredType.DisplayOf(text))}, {Px}tah_{id}, {(text.StartsWith("float", StringComparison.Ordinal) && DeclaredType.NumberDemand(text) != null ? "true" : "false")}, {kind}, {adapt}, {arrElem}}};");
+                // (`T items[]`, `new T[n]`: how this type argument types an array - a class or `string` by its entry in g_arrClasses, ROADMAP 19)
+                var (arrElem, arrClass) = DeclaredType.ArrayOfTypeArg(text) is var (elemOfArg, elemText) ? (elemOfArg + 1, elemText != null ? ArrClassId(elemText) : 0) : (0, 0);
+                sb.AppendLine($"static const TArg {Px}ta_{id} = {{{CString(DeclaredType.DisplayOf(text))}, {Px}tah_{id}, {(text.StartsWith("float", StringComparison.Ordinal) && DeclaredType.NumberDemand(text) != null ? "true" : "false")}, {kind}, {adapt}, {arrElem}, {arrClass}}};");
             }
             foreach (var (text, id) in _targListIds.OrderBy(kv => kv.Value))
                 sb.AppendLine($"static const TArg* const {Px}tl_{id}[] = {{{string.Join(", ", text.Split('|').Select(TArgRef))}}};");
@@ -1365,6 +1371,21 @@ namespace fire.Native
         }
 
         /// <summary>The class a declaration (DeclaredType, encoded) certainly holds an object of (or undefined): a single `is of` a class of the program.</summary>
+        /// <summary>The type of an array of a class or an interface (`Dog pets[]`, ArrayElem.Class with the DeclaredType text of its elements; ROADMAP 19):
+        /// KindArr whose "unit" is ArrayElem.Class and, from bit 8 on, the object type of the elements + 1 - the elements stay Values (every access is the
+        /// generic one, like for a char array), but one that is read is an object of that class or undefined (ClassArrElemType): its methods are called
+        /// directly. Null for an array of strings, of an enum, of lambdas or of a type the generator has no object type for.</summary>
+        private int? ClassArrType(string text)
+        {
+            string spec = ArrayElem.ClassText(text);
+            int? elem = DeclaredClass(spec) is { } rc ? ObjType(rc) : InterfaceType(spec) is { } ofInterface ? ofInterface & ~NullableBit : null;
+            return elem is { } e ? TypeOf(KindArr, ArrayElem.Class | (UnitOfType(e) + 1) << 8) | NullableBit : null;
+        }
+        /// <summary>What an element read from an array of this type is (ClassArrType): an object of the class or undefined; null for any other type.</summary>
+        private static int? ClassArrElemType(int arrType) =>
+            BaseKindOfType(arrType) == KindArr && (arrType & TypeNone) == 0 && (UnitOfType(arrType) & 0xFF) == ArrayElem.Class && UnitOfType(arrType) >> 8 is var index and > 0
+                ? TypeOf(KindObj, index - 1) | NullableBit : null;
+
         private RuntimeClass? DeclaredClass(string spec) =>
             DeclaredType.Parse(spec).SingleName is { } name && _program.Program.Classes.TryGetValue(name, out var rc) ? rc : null;
 
@@ -2938,7 +2959,7 @@ namespace fire.Native
             ? $"typeArray(x, {ArrayElem.TypeOf(arr)}, {arr >> 8}, {TypeArrayUnitArgsOf(rc.FindFieldArrayUnit(name), arr)}, 1);"
             // (`T items[]`: typed by the type argument of the object, like `new T[n]` - TArg.arrElem)
             : obj != null && ArrayOfParamParts(rc, name) is { } ofParam
-                ? $"{{ const TArg* fta_ = {TArgOfExpr(ofParam.Cls, ofParam.K, obj)}; if (fta_ && fta_->arrElem) typeArray(x, fta_->arrElem - 1, 1, {TypeArrayUnitArgsOf(null)}, 1); }}"
+                ? $"{{ const TArg* fta_ = {TArgOfExpr(ofParam.Cls, ofParam.K, obj)}; if (fta_ && fta_->arrElem) typeArrayOfArg(x, fta_); }}"
                 : "";
 
         /// <summary>The class and index of the type parameter of a field `T items[]` (FieldInfo.ArrayOfParam), null for any other field.</summary>
@@ -6794,7 +6815,7 @@ namespace fire.Native
                     }
                     else if (at < f.Decoded.Count && f.Decoded[at] is { Op: OpCode.TypeArrayOfParam } ofParam)
                         // `new T[n]` (TypeArrayOfParam right after): packed at once when the type argument that runs has an element type (`List<int>`)
-                        E($"{{ TArgs ta_ = {TArgsExpr(f, Str(ofParam.A[0]))}; {S(d - 1)} = ta_ && ta_[0] && ta_[0]->arrElem ? newTypedArray({S(d - 1)}, (uint8_t)(ta_[0]->arrElem - 1), {TypeArrayUnitArgs(chunk, 0xFFFF)}, &{OwnerList()}) : newArray({S(d - 1)}, &{OwnerList()}); }}");
+                        E($"{{ TArgs ta_ = {TArgsExpr(f, Str(ofParam.A[0]))}; {S(d - 1)} = ta_ && ta_[0] && ta_[0]->arrElem && !ta_[0]->arrClass ? newTypedArray({S(d - 1)}, (uint8_t)(ta_[0]->arrElem - 1), {TypeArrayUnitArgs(chunk, 0xFFFF)}, &{OwnerList()}) : newArray({S(d - 1)}, &{OwnerList()}); }}");
                     else
                         E($"{S(d - 1)} = newArray({S(d - 1)}, &{OwnerList()});");
                     SetR(d - 1, true); return Next();
@@ -6817,12 +6838,16 @@ namespace fire.Native
                 {
                     Need(1);
                     bool known = ins.A[1] == 1 && ins.A[2] == 0xFFFF;
+                    // (`Dog pets[]`: an array of a class - the generator then knows what an element is, ClassArrType)
+                    int? classArr = ins.A[1] == 1 && ins.A[2] != 0xFFFF && ArrayElem.TypeOf(ins.A[0]) == ArrayElem.Class ? ClassArrType(chunk.Constants[ins.A[2]].AsString()) : null;
                     // (an array typed so already - newTypedArray right before, a variable of that type: nothing to do)
                     if (known && Ty(d - 1) is var had && BK(d - 1) == KindArr && U(d - 1) == ins.A[0] && (had & TypeNone) == 0) { _kindsKept = true; return Next(); }
+                    if (classArr is { } sameArr && !ArrayElem.IsDefined(ins.A[0]) && (Ty(d - 1) | NullableBit) == sameArr) { _kindsKept = true; return Next(); }
                     E($"typeArray({S(d - 1)}, {ArrayElem.TypeOf(ins.A[0])}, {ins.A[1]}, {TypeArrayUnitArgs(chunk, ins.A[2], ins.A[0])}, 1);");
                     Check();
                     // what TypeArray lets through: an array of this element, or undefined
                     if (known) { SetT(d - 1, TypeOf(KindArr, ins.A[0]) | NullableBit); _kindsKept = true; }
+                    else if (classArr is { } typedArr) { SetT(d - 1, typedArr); _kindsKept = true; }
                     return Next();
                 }
                 case OpCode.TookResult:
@@ -6843,7 +6868,7 @@ namespace fire.Native
                 {
                     // `new T[n]`: typed by the type argument that runs (TArg.arrElem; `List<int>`: raw ints)
                     Need(1);
-                    E($"{{ TArgs ta_ = {TArgsExpr(f, Str(ins.A[0]))}; if (ta_ && ta_[0] && ta_[0]->arrElem) typeArray({S(d - 1)}, ta_[0]->arrElem - 1, 1, {TypeArrayUnitArgs(chunk, 0xFFFF)}, 1); }}");
+                    E($"{{ TArgs ta_ = {TArgsExpr(f, Str(ins.A[0]))}; if (ta_ && ta_[0] && ta_[0]->arrElem) typeArrayOfArg({S(d - 1)}, ta_[0]); }}");
                     Check();
                     return Next();
                 }
@@ -7206,7 +7231,14 @@ namespace fire.Native
                     return Next();
                 }
                 case OpCode.ArrayGet:
-                    Need(2); E($"{S(d - 2)} = {Px}aget_g({S(d - 2)}, {S(d - 1)}, &{OwnerList()});"); Check(); d--; SetR(d - 1, true); return Next();
+                {
+                    Need(2);
+                    // (an element of `Dog pets[]`: a Dog or undefined - what is called on it goes to the method directly)
+                    int? elemType = ClassArrElemType(Ty(d - 2));
+                    E($"{S(d - 2)} = {Px}aget_g({S(d - 2)}, {S(d - 1)}, &{OwnerList()});"); Check(); d--; SetR(d - 1, true);
+                    if (elemType is { } ofElem) { SetT(d - 1, ofElem); _kindsKept = true; }
+                    return Next();
+                }
                 case OpCode.ArraySet when ObjSlot(d - 3) && !IsNullable(Ty(d - 3)) && (Ty(d - 3) & TypeNone) == 0 && !(_usesReflection && ReflectionMethodNames.Contains("SetIndex"))
                     && IsPlainType(Ty(d - 1)) && (Ty(d - 1) & TypeNone) == 0   // (a number, a bool or undefined: nothing to claim for the object)
                     && DirectMethod(ObjClass(Ty(d - 3)), "SetIndex", 2, f) is { Specializations: { } setSpecs, ParamCount: 2 }:

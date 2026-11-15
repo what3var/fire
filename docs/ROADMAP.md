@@ -136,6 +136,9 @@ kein Parameter hat, oder ein doppelt gesetzter ist ein Fehler beim Übersetzen. 
   * `Owns.Keys`, `Owns.Values`, `Owns.All`: der Container übernimmt jeden Schlüssel bzw. Wert, der hineinkommt, und zerstört ihn, wenn er herausfällt (`Remove`,
     Überschreiben, `Clear`) - außer er wird vorher herausgenommen (`var n = take dict.Take(key)`).
   * Bei `List` und `HashSet` gelten `Owns.Values`/`Owns.All` für die Elemente.
+  * **Geändert** (Wunsch des Benutzers, ein Nachbau wuchs von 142 auf 846 MB): was dem Container gehört (`x is from this` - im Aufruf erzeugt, mit `take`
+    oder `x.TakeTo(dict)` übergeben), wird bei `Remove`, `RemoveAt`, Überschreiben und `Clear` **immer** zerstört, auch mit `Owns.Explicit`; die Flags
+    entscheiden nur noch, was der Container übernimmt. Fremde Objekte fallen nur heraus; `Take`/`TakeAt` geben ein eigenes dem Aufrufer.
 
 Stand: umgesetzt (VM und nativ), dokumentiert in [Arrays und Listen](language/07-arrays-and-lists.md#dictionaries-and-sets-dictionaryk-v-hashsett). Abweichungen
 vom Entwurf: Schlüssel mit eigener Gleichheit implementieren das Interface `IEquatable` (`Equals`, `GetHashCode`); die Anzahl ist wie bei `List` die
@@ -1163,18 +1166,25 @@ keinen Nullwert und nimmt nur Arrays, in denen jedes Element gegeben ist (`new D
 Wert), `defined Dog pet`, `defined IShape s`: an Parameter, Feld, Property, Rückgabe, Variable, über Reflection und in JSON nie undefined (das Merkmal
 steht vorn im DeclaredType-Text, DeclaredType.NonNullOf; nativ prüft ClassGuard es mit, JSON mit JsonFieldInfo.defined 0x41-0x43). Ein Objekt hat keinen
 Nullwert (Entscheidung des Benutzers): eine Variable braucht ihren Initialisierer, ein Feld ohne einen setzt jeder Konstruktor als eine seiner Anweisungen,
-sonst ein Übersetzungsfehler. Offen: nativ liest der Generator ein solches Feld noch als „vielleicht undefined“ (die Prüfung danach bleibt).
+sonst ein Übersetzungsfehler. Nativ liest der Generator ein solches Feld weiter als „vielleicht undefined“ - mit Absicht: bevor der Konstruktor es
+setzt (Feld-Initialisierer, ein Basiskonstruktor, der eine überschriebene Methode ruft), ist es noch undefined, und die gesparte Prüfung wäre ein
+Vergleich neben der ohnehin nötigen Prüfung „lebt das Objekt“.
+
+**Umgesetzt:** **Lambdas mit Signatur** (`lambda<int, int> fs[]`, auch `defined`): die Elemente sind Lambdas mit dieser Parameterzahl oder `undefined`
+(was auch eine einzelne `lambda<...>`-Deklaration prüft; die Typen der Signatur sind nur Hinweise - DeclaredType.OfLambda, Bedingung `lambda/n`).
+Selektoren und Bäume (`lambda member<T>`, `lambda expression<T>`) bleiben ohne Elementtyp.
 
 Offen:
 
-* **Lambdas mit Signatur** (`lambda<int, int> fs[]`): noch ohne Elementtyp.
-* Der Typprüfer kennt den Elementtyp beim Lesen und Schreiben (TC001); nativ ruft der Generator Methoden der Elemente noch über den Verteiler statt
-  direkt.
+* Der Typprüfer kennt den Elementtyp beim Lesen und Schreiben (TC001). **Umgesetzt:** nativ kennt der Generator ihn auch (CppGenerator.ClassArrType:
+  KindArr mit ArrayElem.Class und dem Objekttyp der Elemente) - ein gelesenes Element von `Dog pets[]` (Variable, Parameter, Feld) ist ein Dog oder
+  undefined: Felder liest er direkt am Platz, Methoden ruft er wie bei einem Feld `Dog d` (eingebettet oder direkt, eine überschriebene über den Verteiler).
 * **Typparameter** (`T items[]` in generischem Code): als Feld **umgesetzt** für Zahlen-Typargumente (FieldInfo.ArrayOfParam: jede Zuweisung typisiert
-  nach dem Typargument des Objekts, wie `new T[n]`; `List<T>` deklariert so `T items[]`). Offen: ein Klassen-/string-Typargument prüft die Elemente
-  noch nicht; `Dictionary<K, V>`/`HashSet<T>` haben ihre Arrays noch als `any`.
-* JSON liest und schreibt Klassen-Arrays noch wie `any`-Arrays (ohne Prüfung der Elemente). Mehrdimensional (`Dog grid[][]`) typisiert wie bei den
-  Zahl-Arrays die inneren Arrays.
+  nach dem Typargument des Objekts, wie `new T[n]`; `List<T>` deklariert so `T items[]`). **Umgesetzt:** auch ein Klassen-, Interface- oder
+  string-Typargument typisiert das Array (`List<Dog>`: ein Array von Dog; DeclaredType.ArrayOfTypeArg, nativ TArg.arrClass); `Dictionary<K, V>`/`HashSet<T>`
+  deklarieren `K keys[]`/`V vals[]` ebenso. Ein Enum-Typargument ist zur Laufzeit nicht bekannt und typisiert nichts.
+* **Umgesetzt:** JSON typisiert, was es für ein Feld `Dog pets[]`/`string names[]`/`Color cs[]` liest, wie jede andere Zuweisung (JsonFieldInfo.arrClass;
+  `defined Dog must[]` mit einem `null`: die ArgumentException). Mehrdimensional (`Dog grid[][]`) typisiert wie bei den Zahl-Arrays die inneren Arrays.
 
 ## 20. `defined` für Felder herleiten: Basisklassen
 

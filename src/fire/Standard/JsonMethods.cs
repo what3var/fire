@@ -752,16 +752,20 @@ namespace fire.Standard
             }
 
             /// <summary>The array `value` (at depth `rank` its inner arrays) becomes typed (VM.TypeArrayValue without a unit).</summary>
-            private static void TypeArrayDeep(Value value, byte elem, int rank, int depth, string path)
+            /// <summary>`classText`: the DeclaredType text of the elements of an array of a class, `string` or an enum (ArrayElem.Class, ROADMAP 19).</summary>
+            private void TypeArrayDeep(Value value, byte elem, int rank, int depth, string path, string? classText = null)
             {
                 if (value.Kind != ValueKind.Array || depth > 64) return;
                 var array = value.AsArray();
-                if (depth < rank) { foreach (var inner in array.Items) TypeArrayDeep(inner, elem, rank, depth + 1, path); return; }
+                if (depth < rank) { foreach (var inner in array.Items) TypeArrayDeep(inner, elem, rank, depth + 1, path, classText); return; }
                 // (`defined int a[]`: an element that is null in the JSON becomes 0, like when any array goes into such a declaration - natively the same)
                 bool defined = ArrayElem.IsDefined(elem);
                 elem = ArrayElem.TypeOf(elem);
-                if (array.ElemType == ArrayElem.None && !array.MakeTyped(elem, null, out _, out var message, out _)) throw new JsonError($"{path}: {message}");
-                if (defined) array.MakeDefined();
+                if (array.ElemType == ArrayElem.None && !array.MakeTyped(elem, classText, out _, out var message, out _))
+                    throw classText != null ? _host.Error("ArgumentException", message!) : new JsonError($"{path}: {message}");
+                // (`defined Dog pets[]`: an object has no zero - a null among the elements is the ArgumentException of any such array)
+                if (defined && !array.MakeDefined(ArrayElem.Zero(elem, classText)))
+                    throw _host.Error("ArgumentException", $"An element of a defined array of {ArrayElem.Name(elem, classText)} cannot be undefined.");
             }
 
             private Value BuildArray(ArrayNode a, string type, IOwner owner, string path, long? id)
@@ -913,8 +917,9 @@ namespace fire.Standard
                     if (field == null) continue;   // (a member the class does not have: left out)
                     var built = Build(child, Substitute(field.Type, obj), obj, path + "." + key, field.Unit, (obj, field.Name));
                     // a field declared as a typed array without a unit (FieldInfo.RequiredArray) holds a typed array, like after any other assignment
-                    if (rc.FindFieldRequiredArray(field.Name) is var requiredArray and not 0 && rc.FindFieldRequiredUnit(field.Name) == null && rc.FindFieldRequiredArrayType(field.Name) == null)
-                        TypeArrayDeep(built, (byte)(requiredArray & 0xFF), requiredArray >> 8, 1, path + "." + key);
+                    // (`Dog pets[]`, `string names[]`: an array of that class - its DeclaredType text, FieldInfo.RequiredArrayType)
+                    if (rc.FindFieldRequiredArray(field.Name) is var requiredArray and not 0 && rc.FindFieldRequiredUnit(field.Name) == null)
+                        TypeArrayDeep(built, (byte)(requiredArray & 0xFF), requiredArray >> 8, 1, path + "." + key, rc.FindFieldRequiredArrayType(field.Name));
                     if (built.Kind == ValueKind.Undefined && rc.FindFieldRequiredKind(field.Name) is var declared and not 0 && DeclaredKind.IsNonNull(declared))
                         throw _host.Error("ArgumentException", $"{path}.{key} is {(DeclaredKind.ValueKindOf(declared) switch { ValueKind.Int => "an int", ValueKind.Float => "a float", ValueKind.Word => "a word", ValueKind.Char => "a char", _ => "a bool" })} and never undefined{(rc.FieldWhat(field.Name).Length > field.Name.Length + 8 ? DerivedNote : "")}.");
                     if (built.Kind == ValueKind.Undefined && DeclaredType.IsNonNull(rc.FindFieldRequiredType(field.Name)))

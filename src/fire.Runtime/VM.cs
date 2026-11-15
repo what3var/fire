@@ -4960,7 +4960,7 @@ namespace fire.Runtime
                 case OpCode.TypeArrayOfParam:
                 {
                     string paramText = _constants[ReadU16()].AsString();
-                    if (DeclaredType.TypedElementOf(TypeArgOfParam(paramText)) is int code) TypeArrayValue(Peek(), (byte)(code & 0xFF), 1, null, 1);
+                    if (DeclaredType.ArrayOfTypeArg(TypeArgOfParam(paramText)) is var (elem, elemText)) TypeArrayValue(Peek(), elem, 1, elemText, 1);
                     break;
                 }
                 case OpCode.ConvertWidth:
@@ -7623,7 +7623,7 @@ namespace fire.Runtime
         {
             int at = arrayOfParam.IndexOf('@');
             string? typeArg = DeclaredType.TypeArgOf(obj, arrayOfParam.Substring(at + 1), int.Parse(arrayOfParam.AsSpan(1, at - 1)));
-            return typeArg == null || DeclaredType.TypedElementOf(typeArg) is not int code || TypeArrayValue(value, (byte)(code & 0xFF), 1, null, 1);
+            return DeclaredType.ArrayOfTypeArg(typeArg) is not var (elem, elemText) || TypeArrayValue(value, elem, 1, elemText, 1);
         }
 
         /// <summary>GuardLocal: the end of the prologue - a parameter declared int/float/bool holds that kind or undefined (DeclaredKind).</summary>

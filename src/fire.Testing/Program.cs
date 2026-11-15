@@ -29247,6 +29247,171 @@ else
             pets = new Dog[1]
             try { pets[0] = cat } catch (ArgumentException e) { print("E11 " + e.message) }
             """),
+        ("Arrays von Typparametern mit Klasse/string als Typargument und Arrays von Lambdas (ROADMAP 19): T items[] prueft die Elemente nach dem Typargument, lambda<int> fs[] nach der Parameterzahl, auch defined", """
+            class Animal { string name; construct(string n) { this.name = n } string Say() { return this.name + "?" } }
+            class Dog : Animal { construct(string n) : base(n) { } override string Say() { return this.name + " wuff" } }
+            class Cat { }
+            class Bag<T> {
+                T items[]
+                int n
+                construct() { this.items = new T[4]; this.n = 0 }
+                undefined Put(T item) { this.items[this.n] = item; this.n = this.n + 1 }
+                undefined Raw(any x) { any a[] = this.items; a[this.n] = x; this.n = this.n + 1 }
+                undefined Take(any arr) { this.items = arr }
+                T At(int i) { return this.items[i] }
+            }
+            any cat = new Cat()
+            var dogs = new Bag<Dog>()
+            var rex = new Dog("Rex")
+            dogs.Put(rex)
+            print(dogs.At(0).Say())
+            try { dogs.Raw(cat) } catch (ArgumentException e) { print("E1 " + e.message) }
+            try { dogs.Raw("text") } catch (ArgumentException e) { print("E2 " + e.message) }
+            Animal zoo[] = [new Animal("Tier")]
+            try { dogs.Take(zoo) } catch (ArgumentException e) { print("E3 " + e.message) }
+            try { dogs.Take([1, 2]) } catch (ArgumentException e) { print("E4 " + e.message) }
+            var bello = new Dog("Bello")
+            any pack[] = [bello, undefined]
+            dogs.Take(pack)
+            print(dogs.At(0).Say() + " " + dogs.At(1))
+            var names = new Bag<string>()
+            names.Put("a")
+            try { names.Raw(5) } catch (ArgumentException e) { print("E5 " + e.message) }
+            var anything = new Bag<any>()
+            anything.Raw(5); anything.Raw("x"); print(anything.At(0) + " " + anything.At(1))
+            var l = new List<Dog>()
+            l.Add(new Dog("L1")); l.Add(new Dog("L2"))
+            print(l.Count + " " + l[1].Say())
+            var ls = new List<string>(); ls.Add("x"); ls.Add("y")
+            print(ls[1])
+            var d = new Dictionary<string, Dog>()
+            d["a"] = new Dog("DA"); d["b"] = new Dog("DB")
+            print(d["a"].Say() + " " + d.Count)
+            var la = new List<Animal>(); la.Add(new Dog("sub")); la.Add(new Animal("base")); print(la[0].Say() + " " + la[1].Say())
+            // Lambdas
+            lambda<int, int> fs[] = [func (int a, int b) => a + b, undefined]
+            print(fs[0](1, 2) + " " + fs[1])
+            try { fs[1] = func (int a) => a } catch (ArgumentException e) { print("E8 " + e.message) }
+            try { fs[1] = 5 } catch (ArgumentException e) { print("E9 " + e.message) }
+            fs[1] = func (int a, int b) => a * b
+            print(fs[1](3, 4))
+            lambda<int> one[2]
+            try { fs = one } catch (ArgumentException e) { print("E10 " + e.message) }
+            class Ops {
+                lambda<int> steps[]
+                construct() { this.steps = [func (int x) => x + 1] }
+                int Run(int v) {
+                    foreach (var s in this.steps) { v = s(v) }
+                    return v
+                }
+            }
+            var ops = new Ops(); print(ops.Run(4))
+            try { ops.steps = [func () => 1] } catch (ArgumentException e) { print("E11 " + e.message) }
+            class U { static int Apply(lambda<int> gs[], int v) { return gs[0](v) } }
+            print(U.Apply([func (int x) => x * 2], 21))
+            try { U.Apply([func (int x, int y) => x], 1) } catch (ArgumentException e) { print("E12 " + e.message) }
+            try { any two[2]; defined lambda<int> ds[] = two } catch (ArgumentException e) { print("E13 " + e.message) }
+            defined lambda<int> ok[] = [func (int x) => x]
+            try { ok[0] = undefined } catch (ArgumentException e) { print("E14 " + e.message) }
+            """),
+        ("List/Dictionary/HashSet zerstoeren, was ihnen gehoert, wenn es herausfaellt (Remove, RemoveAt, Ueberschreiben, Clear) - auch ohne Owns.Values: mit TakeTo uebergeben oder im Aufruf erzeugt; fremde Objekte bleiben, Take/TakeAt geben heraus", """
+            class Node {
+                string n
+                construct(string n) { this.n = n }
+                destruct() { print("~" + this.n) }
+            }
+            var d = new Dictionary<string, Node>()
+            var a = new Node("a")
+            a.TakeTo(d)
+            d["a"] = a
+            d["b"] = new Node("b")
+            var mine = new Node("mine")
+            d["m"] = mine
+            print("remove a")
+            d.Remove("a")
+            print("overwrite b")
+            d["b"] = new Node("b2")
+            print("clear")
+            d.Clear()
+            print("cleared " + d.Count + " " + mine.n)
+            var l = new List<Node>()
+            l.Add(new Node("l1")); l.Add(mine); l.Add(new Node("l3"))
+            var l2 = new Node("l2"); l2.TakeTo(l); l.Add(l2)
+            print("removeAt 0"); l.RemoveAt(0)
+            print("remove mine " + l.Remove(mine))
+            var kept = l.TakeAt(0)
+            print("taken " + kept.n)
+            print("set"); l[0] = new Node("l4")
+            print("clear"); l.Clear()
+            var hs = new HashSet<Node>()
+            hs.Add(new Node("h1")); hs.Add(mine)
+            print("hs remove"); hs.Clear()
+            print("end " + mine.n + " " + kept.n)
+            """),
+        ("JSON typisiert Arrays von Klassen, strings und Enums (ROADMAP 19): Dog pets[], defined Dog must[] (null ist eine ArgumentException), Dog grid[][]", """
+            #import "json"
+            enum Color { Red, Green, Blue }
+            class Dog { string name; construct() { this.name = "" } }
+            class Cat { }
+            class Kennel {
+                Dog pets[]
+                string names[]
+                Color cs[]
+                defined Dog must[]
+                defined string tags[]
+                Dog grid[][]
+            }
+            any cat = new Cat()
+            var k = Json.Deserialize<Kennel>("{\"pets\":[{\"name\":\"a\"},null],\"names\":[\"x\",null],\"cs\":[\"Green\"],\"must\":[{\"name\":\"m\"}],\"tags\":[\"t\",null],\"grid\":[[{\"name\":\"g\"}]]}")
+            print(k.pets[0].name + " " + k.pets[1] + " " + k.names[0] + " " + k.names[1] + " " + k.cs[0] + " " + k.must[0].name + " [" + k.tags[1] + "] " + k.grid[0][0].name)
+            try { k.pets[1] = cat } catch (ArgumentException e) { print("E1 " + e.message) }
+            try { k.names[1] = 5 } catch (ArgumentException e) { print("E2 " + e.message) }
+            try { k.cs[0] = 1 } catch (ArgumentException e) { print("E3 " + e.message) }
+            try { k.must[0] = undefined } catch (ArgumentException e) { print("E4 " + e.message) }
+            try { k.grid[0][0] = cat } catch (ArgumentException e) { print("E5 " + e.message) }
+            try { var k2 = Json.Deserialize<Kennel>("{\"must\":[null]}"); print("no error " + k2.must[0]) } catch (ArgumentException e) { print("E6 " + e.message) }
+            print(Json.Serialize(k))
+            """),
+        ("Elemente von Arrays einer Klasse oder eines Interface nativ mit bekanntem Typ (ROADMAP 19): Felder und Methoden direkt, undefined, zerstoerte und fehlende Elemente wie in der VM", """
+            interface IShape { float Area() }
+            class Sq : IShape { float s; construct(float s) { this.s = s } float Area() { return this.s * this.s } }
+            class Animal { string name; int legs = 4; construct(string n) { this.name = n } string Say() { return this.name + "?" } }
+            class Dog : Animal { construct(string n) : base(n) { } override string Say() { return this.name + " wuff" } }
+            class Zoo {
+                Animal pets[]
+                IShape shapes[]
+                construct() { this.pets = new Animal[3]; this.shapes = [new Sq(2.0), new Sq(3.0)] }
+                string All() {
+                    string r = ""
+                    for (int i = 0; i < this.pets.length; i++) { if (this.pets[i] != undefined) { r = r + this.pets[i].Say() + this.pets[i].legs + ";" } }
+                    return r
+                }
+                float Sum() { float t = 0.0; for (int i = 0; i < this.shapes.length; i++) { t = t + this.shapes[i].Area() } return t }
+                static string First(Animal list[]) { return list[0].Say() + " " + list[0].name }
+            }
+            var z = new Zoo()
+            var rex = new Dog("Rex")
+            var tier = new Animal("Tier")
+            z.pets[0] = rex
+            z.pets[2] = tier
+            print(z.All() + " " + z.Sum())
+            Animal loc[] = [rex, undefined, tier]
+            print(loc[0].Say() + " " + loc[2].Say() + " " + loc[0].legs + " " + Zoo.First(loc))
+            try { print(loc[1].Say()) } catch (Exception e) { print("E1 " + e.message) }
+            try { print(loc[1].name) } catch (Exception e) { print("E2 " + e.message) }
+            try { print(loc[5].Say()) } catch (Exception e) { print("E3 " + e.message) }
+            {
+                var tmp = new Dog("Tmp")
+                loc[1] = tmp
+                print(loc[1].Say())
+            }
+            try { print(loc[1].Say()) } catch (Exception e) { print("E4 " + e.message) }
+            Animal none[]
+            try { print(none[0].Say()) } catch (Exception e) { print("E5 " + e.message) }
+            int total = 0
+            for (int k = 0; k < 1000; k++) { total = total + loc[k % 3 == 1 ? 0 : k % 3].legs }
+            print(total)
+            """),
         ("defined fuer strings, Enums und Objekte (SPEC 8.10b): ein string beginnt bei \"\", ein Enum beim ersten Wert, ein Objekt braucht seinen Wert (Feld: jeder Konstruktor setzt es); undefined ist eine ArgumentException an Feld, Parameter, Rueckgabe, Variable, Reflection und in JSON (fehlend oder null)", """
             #import "json"
             #import "reflection"

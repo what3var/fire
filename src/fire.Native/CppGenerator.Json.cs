@@ -190,7 +190,7 @@ namespace fire.Native
             if (rows.Count > 0)
             {
                 sb.AppendLine($"static {(unitFixups != null ? "" : "const ")}JsonFieldInfo {fieldTable}[] = {{" + string.Join(", ", rows.Select(f =>
-                    $"{{{CString(f.JsonName)}, {Math.Max(0, FieldPlace(rc, rc.FieldIndex[f.Name]).Slot)}, {CString(f.Type)}, {(unitFixups != null ? 0 : UnitId(f.Unit))}, {(rc.FindFieldRequiredUnit(f.Name) == null && rc.FindFieldRequiredArrayType(f.Name) == null ? rc.FindFieldRequiredArray(f.Name) : 0)}, {DefinedTypeOf(rc, f.Name) ?? DefinedKindOf(rc.FindFieldRequiredKind(f.Name), DerivedFieldNames.Contains(f.Name) && rc.FieldWhat(f.Name) != $"Field '{f.Name}'")}, {RawPlaceOf(rc, rc.FieldIndex[f.Name])}, {FieldPlace(rc, rc.FieldIndex[f.Name]).Half}}}")) + ", {NULL, 0, NULL, 0, 0, 0, 0, 0, -1}};");
+                    $"{{{CString(f.JsonName)}, {Math.Max(0, FieldPlace(rc, rc.FieldIndex[f.Name]).Slot)}, {CString(f.Type)}, {(unitFixups != null ? 0 : UnitId(f.Unit))}, {(rc.FindFieldRequiredUnit(f.Name) == null ? rc.FindFieldRequiredArray(f.Name) : 0)}, {DefinedTypeOf(rc, f.Name) ?? DefinedKindOf(rc.FindFieldRequiredKind(f.Name), DerivedFieldNames.Contains(f.Name) && rc.FieldWhat(f.Name) != $"Field '{f.Name}'")}, {RawPlaceOf(rc, rc.FieldIndex[f.Name])}, {FieldPlace(rc, rc.FieldIndex[f.Name]).Half}, {(rc.FindFieldRequiredUnit(f.Name) == null && rc.FindFieldRequiredArrayType(f.Name) is { } arrClassText ? ArrClassId(arrClassText) : 0)}}}")) + ", {NULL, 0, NULL, 0, 0, 0, 0, 0, -1, 0}};");
                 if (unitFixups != null)
                     for (int j = 0; j < rows.Count; j++)
                         if (UnitId(rows[j].Unit) is var u and not 0) unitFixups.Add($"{fieldTable}[{j}].unit = {UnitC(u)};");

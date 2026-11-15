@@ -90,7 +90,8 @@ namespace fire.Values
                 error = Error.Type;
                 string display = fire.Bytecode.DeclaredType.Parse(ClassText(unit)).Display;
                 string have = value.Kind == ValueKind.Class && value.AsObjectRef() is fire.Runtime.ObjectInstance obj ? fire.Ast.GenericClassNames.PlainName(obj.ClassName)
-                    : value.IsEnum ? value.Enum!.Name : value.Kind.ToString();
+                    : value.IsEnum ? value.Enum!.Name
+                    : value.Kind == ValueKind.Lambda && value.AsLambda() is fire.Runtime.LambdaValue lambda ? $"a lambda with {lambda.Proto.ParamCount} parameter(s)" : value.Kind.ToString();
                 message = $"An element of an array of {display} must be {("AEIOUaeiou".Contains(display[0]) ? "an" : "a")} {display} (or undefined), not {have}.";
                 return false;
             }

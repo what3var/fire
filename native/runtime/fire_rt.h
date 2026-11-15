@@ -1386,7 +1386,8 @@ typedef struct Str {
  * `int : cm`: into cm; null for `int : any`). */
 /* `arrElem`: the element type + 1 of a typed array for this type argument (`int`, `float`, `bool`, `char` without a unit: `new T[n]` of `List<int>` is
  * raw, OpCode.TypeArrayOfParam); 0 for any other. */
-typedef struct TArg { const char* display; bool (*holds)(Value); bool isFloat; uint8_t kind; Value (*adapt)(Value); uint8_t arrElem; } TArg;
+/* `arrClass`: for a class, an interface or `string` (arrElem is E_CLASS + 1 then) the 1-based index of the entry in g_arrClasses (ROADMAP 19). */
+typedef struct TArg { const char* display; bool (*holds)(Value); bool isFloat; uint8_t kind; Value (*adapt)(Value); uint8_t arrElem; uint32_t arrClass; } TArg;
 /* The type arguments of an object or a call, one per type parameter (null: not known); interned, never freed. */
 typedef const TArg* const* TArgs;
 
@@ -5845,8 +5846,10 @@ FIRE_COLD FIRE_FN Value arrClassWrong(const ArrTyped* t, Value v, bool* ok) {
     char text[300];
     const char* display = arrTypeName(t->elem, t->unit, t->flags);
     const FireEnum* en = enumOf(v);
+    char lam[60];
+    if (v.kind == K_Lambda) snprintf(lam, sizeof lam, "a lambda with %u parameter(s)", (unsigned)lamOf(v)->nparams);
     snprintf(text, sizeof text, "An element of an array of %s must be %s %s (or undefined), not %s.", display, strchr("AEIOUaeiou", display[0]) ? "an" : "a", display,
-             v.kind == K_Class ? className(asObj(v)->cls) : en ? en->name : kindName(v));
+             v.kind == K_Class ? className(asObj(v)->cls) : en ? en->name : v.kind == K_Lambda ? lam : kindName(v));
     fireError("ArgumentException", text);
     *ok = false;
     return Undef();
@@ -6094,6 +6097,10 @@ FIRE_ALWAYS_INLINE FIRE_FN bool typeArray(Value v, uint8_t elem, int rank, uint3
     if (FIRE_LIKELY(rank == 1 && v.kind == K_Array && leafAlive(v) && arrOf(v)->typed && arrOf(v)->typed->elem == elem && arrOf(v)->typed->flags == flags
                     && (!(flags & (TU_UNIT | TU_CLASS)) || arrOf(v)->typed->unit == unit))) return true;
     return typeArraySlow(v, elem, rank, unit, flags, unitText, depth);
+}
+/* `T items[]`, `new T[n]` (OpCode.TypeArrayOfParam): the array typed by a type argument that types arrays (TArg.arrElem; a class by TArg.arrClass). */
+FIRE_FN bool typeArrayOfArg(Value v, const TArg* ta) {
+    return typeArray(v, (uint8_t)(ta->arrElem - 1), 1, ta->arrClass, ta->arrClass ? TU_CLASS : 0, Undef(), 1);
 }
 FIRE_FN bool typeArraySlow(Value v, uint8_t elem, int rank, uint32_t unit, uint8_t flags, Value unitText, int depth) {
     Arr* a;

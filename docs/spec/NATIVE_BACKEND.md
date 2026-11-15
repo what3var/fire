@@ -209,7 +209,12 @@ Skript -> Lexer -> Parser -> Resolver -> Compiler -> Bytecode (LinkedProgram)
   Elementart E_CLASS mit TU_CLASS und im Feld `unit` den Index (ab 1) in eine Tabelle `g_arrClasses` (`kArrClasses`, neben den Enums erzeugt), die je
   Typ eine Prüfung (`acf_N`, der Ausdruck von `is` für den Typ), den Anzeigenamen der Meldungen und den Nullwert eines `defined`-Arrays (`acz_N`:
   `""`, der erste Wert des Enums, sonst undefined - dann nimmt es nur Arrays ohne undefined) hält. Zwei Arrays gelten als gleich typisiert, wenn der
-  Index gleich ist. `new Dog[n]` mit TypeArray dahinter wird nicht zu `newTypedArray` zusammengefasst.
+  Index gleich ist. `new Dog[n]` mit TypeArray dahinter wird nicht zu `newTypedArray` zusammengefasst. Ein Typargument, das eine Klasse, ein
+  Interface oder `string` ist, trägt seinen Index in `TArg.arrClass` (`T items[]`, `new T[n]`: `typeArrayOfArg`), ein JSON-Feld in
+  `JsonFieldInfo.arrClass`; die Elemente von `lambda<int> fs[]` prüft `acf_N` mit `v.kind == K_Lambda && lamOf(v)->nparams == n`. Der Generator
+  kennt für ein Array einer Klasse oder eines Interface den Typ seiner Elemente (`ClassArrType`: KindArr, in der „Einheit“ ArrayElem.Class und ab
+  Bit 8 der Objekttyp + 1): die Zugriffe bleiben die allgemeinen (`aget_g`), aber ein gelesenes Element ist „ein Objekt der Klasse oder undefined“ -
+  Felder liest er am Platz, Methoden ruft er wie bei einem so deklarierten Feld.
 * **Parameter und Rückgaben als C-Typen (Ebene 2, Stufe 2b).** Grundlage ist `defined` (SPEC 8.10b): ein `defined int`-Parameter ist nie `undefined` und
   kein Enum-Wert, eine `defined`-Rückgabe ebenso - das macht den Rumpf einer Methode skalar, ohne dass der Generator die Aufrufer kennen muss
   (`CppGenerator.CAbi.cs`). Eine Methode mit `defined int`-, `defined float`- oder `defined word`-Parametern oder mit einer `defined`-Rückgabe

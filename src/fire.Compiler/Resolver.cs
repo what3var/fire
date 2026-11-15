@@ -1181,7 +1181,8 @@ namespace fire.Compiler
             if (type is not { NonNull: true }) return;
             // (`defined int a[]`: an array whose elements are never undefined - of a value type, written with the brackets after the name)
             // (`defined string names[]`, `defined Dog pets[]`: an array of strings, of a class or of an enum - ROADMAP 19; not of `any` or a lambda)
-            bool classArray = arrayRanks > 0 && type is { PointerDepth: 0, LambdaSignature: null } && type.BaseName is not ("any" or "class" or "var" or "undefined" or "lambda");
+            bool classArray = arrayRanks > 0 && type is { PointerDepth: 0 } && (type.LambdaSignature is { IsSelector: false, IsExpression: false }
+                || type.LambdaSignature == null && type.BaseName is not ("any" or "class" or "var" or "undefined" or "lambda"));
             if (type.ArrayRank > 0 || arrayRanks > 0 && fire.Values.ArrayElem.Of(type) == 0 && !classArray)
                 throw new ResolverException($"'defined {type.BaseName}' is a value that is never undefined - an array of them is written 'defined {type.BaseName} name[]' (int, float, bool, char, byte, word)", line);
             // (`defined string s`, `defined Dog d`, `defined Color c`: never undefined - not `any`, `var` or a lambda, which name no type to hold)
