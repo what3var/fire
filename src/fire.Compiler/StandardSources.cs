@@ -235,7 +235,10 @@ namespace fire.Compiler
             string root = Path.GetFullPath(store.Root).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
             if (OperatingSystem.IsWindows()) root = root.ToLowerInvariant();
             string name = "fire-packages-" + Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(root)), 0, 12);
-            var mutex = new Mutex(false, name);
+            Mutex mutex;
+            // (where the system has no named mutex for this process - seen once on Linux - the lock file as before)
+            try { mutex = new Mutex(false, name); }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or WaitHandleCannotBeOpenedException or PlatformNotSupportedException) { return FileLock(store); }
             bool owned;
             try { owned = mutex.WaitOne(TimeSpan.Zero); }
             catch (AbandonedMutexException) { owned = true; }   // (the other one ended without letting go: its half done work is checked again)
@@ -251,6 +254,17 @@ namespace fire.Compiler
                 throw new IOException("Another program has been installing the standard packages for 15 minutes.");
             }
             return new MutexScope(mutex);
+        }
+
+        private static IDisposable FileLock(PackageStore store)
+        {
+            string file = Path.Combine(store.Root, ".source-lock");
+            var deadline = DateTime.UtcNow.AddMinutes(15);
+            while (true)
+            {
+                try { return new FileStream(file, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None, 1, FileOptions.DeleteOnClose); }
+                catch (IOException) when (DateTime.UtcNow < deadline) { Thread.Sleep(500); }
+            }
         }
 
         private sealed class MutexScope(Mutex mutex) : IDisposable

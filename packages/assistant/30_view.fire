@@ -47,6 +47,7 @@ namespace Assistant {
             this.win.TopMost = true
             this.ui = new UI.Root(this.fb, this.win)
             this.ui.WindowBackdrop = Backdrop.Transparent
+            this.ui.WindowBackground = new SolidBrush(UI.Color.Transparent())   // (nothing behind the bubble and the character)
             this.Build()
         }
 
@@ -104,7 +105,7 @@ namespace Assistant {
 
         undefined PaintBubble(UI.DrawingCanvas c) {
             var r = c.renderer
-            r.ClearTo(0x00000000)
+            r.ClearTo(UI.Color.Transparent())
             if (!this.Brain.Visible) { return }
             defined int w = this.W
             defined int h = this.BH - 12
@@ -122,7 +123,7 @@ namespace Assistant {
 
         undefined PaintFigure(UI.DrawingCanvas c) {
             var r = c.renderer
-            r.ClearTo(0x00000000)
+            r.ClearTo(UI.Color.Transparent())
             this.Brain.Character.Paint(r, 0.0, 0.0, c.framebuffer.Width() * 1.0, c.framebuffer.Height() * 1.0, this.frame, this.Brain.Mood())
         }
 

@@ -136,6 +136,9 @@ ui.Run()
 Both follow the system (`SystemTheme.transparency`: Windows "transparency effects", macOS "reduce transparency", the browser
 `prefers-reduced-transparency`); on a board they are off. Without them the interface is complete, only flatter and cheaper to draw.
 `WindowBackdrop = Backdrop.Transparent` stays even then: it is the shape of the window (only what is drawn is seen), not an effect.
+The interface fills the window with the background of the theme (translucent where the desktop draws behind it); `ui.WindowBackground` replaces that with a
+brush of its own, copied with its alpha. A figure on the desktop takes `Backdrop.Transparent` and `new SolidBrush(UI.Color.Transparent())` - only what it
+draws is seen. (A colour from 0 to 255 is an index of the palette: `0` is black, not transparent - `UI.Color.Transparent()` is the transparent one.)
 
 **The window itself** can get a material of the desktop: `ui.WindowBackdrop = Backdrop.Mica` (Windows 11), `Backdrop.Acrylic`, `Backdrop.Blur`
 (Windows, macOS, KDE) or `Backdrop.Transparent`. The desktop gives what it can (`window.Backdrop` tells what it gave); where it gives something, the
