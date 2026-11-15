@@ -1,6 +1,6 @@
 /* fire native platform package "std": the frames of a Windows window through DirectComposition (Windows 8 and later) - a bridge to the compositor, not a scene: one
- * visual per window, its content a swap chain of DXGI "for composition" (R8G8B8A8; alpha ignored for an opaque window, premultiplied for one that shows what lies
- * behind it: DWM mixes it - also with Mica and acrylic). What the window shows is drawn already (by the CPU: the framebuffer's pixels; by the GPU: Vulkan, see below);
+ * visual per window, its content a swap chain of DXGI "for composition" (R8G8B8A8 with the alpha ignored for an opaque window; B8G8R8A8
+ * premultiplied for one that shows what lies behind it: DWM mixes it - also with Mica and acrylic). What the window shows is drawn already (by the CPU: the framebuffer's pixels; by the GPU: Vulkan, see below);
  * this only hands it to DWM. docs/spec/UI_PLATFORM.md, part 4.4.
  *
  * When it is there (fire_dcomp_available: d3d11.dll, dxgi.dll and dcomp.dll load, a D3D11 device and a DirectComposition device can be made; FIRE_DCOMP=0 switches
@@ -29,7 +29,7 @@ typedef struct FireDcSwapDesc { UINT width, height; int format; BOOL stereo; Fir
 typedef struct FireDcBox { UINT left, top, front, right, bottom, back; } FireDcBox;   /* D3D11_BOX */
 typedef struct FireDcQueryDesc { int query; UINT miscFlags; } FireDcQueryDesc;   /* D3D11_QUERY_DESC */
 typedef struct FireDcMatrix { float m11, m12, m21, m22, dx, dy; } FireDcMatrix;   /* D2D_MATRIX_3X2_F */
-enum { FIRE_DC_RGBA = 28, FIRE_DC_ALPHA_PREMULTIPLIED = 1, FIRE_DC_ALPHA_IGNORE = 3, FIRE_DC_FLIP_SEQUENTIAL = 3, FIRE_DC_RENDER_TARGET_OUTPUT = 0x20 };
+enum { FIRE_DC_RGBA = 28, FIRE_DC_BGRA = 87, FIRE_DC_ALPHA_PREMULTIPLIED = 1, FIRE_DC_ALPHA_IGNORE = 3, FIRE_DC_FLIP_SEQUENTIAL = 3, FIRE_DC_RENDER_TARGET_OUTPUT = 0x20 };
 #define FIRE_DC_DEVICE_REMOVED ((HRESULT)0x887A0005L)
 #define FIRE_DC_DEVICE_RESET ((HRESULT)0x887A0007L)
 #define FIRE_DC_DESC_LUID 296   /* (where DXGI_ADAPTER_DESC keeps AdapterLuid; the structure is 304 bytes) */
@@ -130,8 +130,9 @@ typedef struct FireDcompWindow {
     void* chain;                /* IDXGISwapChain1 */
     void* content;              /* ID3D11Texture2D: the window's picture (shared) */
     HANDLE shared;
-    int chainW, chainH, alpha;
-    int contentW, contentH, full;   /* `full`: the picture is not the last frame (made anew, or a presenter drew into it): the next pixels go in whole */
+    int chainW, chainH, alpha, format;   /* `format`: R8G8B8A8 (opaque, a presenter's picture) or B8G8R8A8 (premultiplied: what mixes with the desktop) */
+    int bridged;                         /* a presenter draws into the picture (its format stays R8G8B8A8) */
+    int contentW, contentH, contentFormat, full;   /* `full`: the picture is not the last frame (made anew, or a presenter drew into it): the next pixels go in whole */
     int viewW, viewH, viewMadeW, viewMadeH;   /* the size of the window, and the one the visual's transform was made for */
     int premultiplied, vsync;
     uint32_t* row; int rowCap;  /* a row premultiplied */
@@ -191,14 +192,16 @@ static int fire_dcomp_failed(FireDcompWindow* d, HRESULT hr) {
 static int fire_dcomp_ensure(FireDcompWindow* d, int width, int height) {
     FireDcomp* c = &g_fireDcomp;
     int alpha = d->premultiplied ? FIRE_DC_ALPHA_PREMULTIPLIED : FIRE_DC_ALPHA_IGNORE;
+    /* (premultiplied alpha: B8G8R8A8, the format DirectComposition mixes with the desktop - with R8G8B8A8 a window stayed black where it is transparent) */
+    int format = d->premultiplied && !d->bridged ? FIRE_DC_BGRA : FIRE_DC_RGBA;
     HRESULT hr;
     if (width <= 0 || height <= 0 || d->lost || c->broken) return 0;
-    if (d->chain != NULL && d->alpha != alpha) FIRE_DC_RELEASE(d->chain);   /* (the alpha of a swap chain cannot change) */
+    if (d->chain != NULL && (d->alpha != alpha || d->format != format)) FIRE_DC_RELEASE(d->chain);   /* (the alpha and format of a swap chain cannot change) */
     if (d->chain == NULL) {
         FireDcSwapDesc sd;
         memset(&sd, 0, sizeof sd);
         sd.width = (UINT)width; sd.height = (UINT)height;
-        sd.format = FIRE_DC_RGBA;
+        sd.format = format;
         sd.sample.count = 1;
         sd.bufferUsage = FIRE_DC_RENDER_TARGET_OUTPUT;
         sd.bufferCount = 2;
@@ -206,9 +209,15 @@ static int fire_dcomp_ensure(FireDcompWindow* d, int width, int height) {
         sd.swapEffect = FIRE_DC_FLIP_SEQUENTIAL;
         sd.alphaMode = alpha;
         hr = FIRE_DC_METHOD(c->factory, FIRE_DC_FACTORY2_FOR_COMPOSITION, HRESULT (STDMETHODCALLTYPE*)(void*, void*, const FireDcSwapDesc*, void*, void**))(c->factory, c->device, &sd, NULL, &d->chain);
-        if (hr != S_OK) { d->chain = NULL; return fire_dcomp_failed(d, hr); }
+        if (hr != S_OK) {
+            /* (a swap chain that cannot be made would leave the last picture standing: the window goes back to GDI, which shows it) */
+            d->chain = NULL;
+            fire_dcomp_failed(d, hr);
+            d->lost = 1;
+            return 0;
+        }
         if (FIRE_DC_METHOD(d->visual, FIRE_DC_VISUAL_SET_CONTENT, HRESULT (STDMETHODCALLTYPE*)(void*, void*))(d->visual, d->chain) != S_OK) { FIRE_DC_RELEASE(d->chain); return 0; }
-        d->chainW = width; d->chainH = height; d->alpha = alpha;
+        d->chainW = width; d->chainH = height; d->alpha = alpha; d->format = format;
         d->viewMadeW = d->viewMadeH = -1;   /* (committed below) */
     } else if (d->chainW != width || d->chainH != height) {
         hr = FIRE_DC_METHOD(d->chain, FIRE_DC_CHAIN_RESIZE_BUFFERS, HRESULT (STDMETHODCALLTYPE*)(void*, UINT, UINT, UINT, int, UINT))(d->chain, 0, (UINT)width, (UINT)height, 0, 0);
@@ -216,14 +225,14 @@ static int fire_dcomp_ensure(FireDcompWindow* d, int width, int height) {
         d->chainW = width; d->chainH = height;
         d->viewMadeW = d->viewMadeH = -1;
     }
-    if (d->content == NULL || d->contentW != width || d->contentH != height) {
+    if (d->content == NULL || d->contentW != width || d->contentH != height || d->contentFormat != format) {
         FireDcTexDesc td;
         void* res = NULL;
         FIRE_DC_RELEASE(d->content);
         d->shared = NULL;
         memset(&td, 0, sizeof td);
         td.width = (UINT)width; td.height = (UINT)height; td.mipLevels = 1; td.arraySize = 1;
-        td.format = FIRE_DC_RGBA;
+        td.format = format;   /* (the same as the swap chain's: it is copied into it) */
         td.sample.count = 1;
         td.usage = 0;   /* D3D11_USAGE_DEFAULT */
         td.bindFlags = 0x8 | 0x20;   /* SHADER_RESOURCE | RENDER_TARGET (what a shared texture needs) */
@@ -234,7 +243,7 @@ static int fire_dcomp_ensure(FireDcompWindow* d, int width, int height) {
             if (FIRE_DC_METHOD(res, FIRE_DC_RES_GET_SHARED_HANDLE, HRESULT (STDMETHODCALLTYPE*)(void*, HANDLE*))(res, &d->shared) != S_OK) d->shared = NULL;
             FIRE_DC_RELEASE(res);
         }
-        d->contentW = width; d->contentH = height;
+        d->contentW = width; d->contentH = height; d->contentFormat = format;
         d->full = 1;
     }
     if (d->viewMadeW != d->viewW || d->viewMadeH != d->viewH) {
@@ -303,7 +312,8 @@ static int fire_dcomp_presentPixels(FireDcompWindow* d, const uint32_t* rgba, in
                         FireDcBox box = { (UINT)c0, (UINT)row, 0, (UINT)c1, (UINT)row + 1u, 1 };
                         for (col = c0; col < c1; col++) {
                             uint32_t v = src[col], a = v >> 24;
-                            d->row[col - c0] = (a << 24) | (((v >> 16) & 0xFFu) * a / 255u) << 16 | (((v >> 8) & 0xFFu) * a / 255u) << 8 | ((v & 0xFFu) * a / 255u);
+                            /* (B, G, R, A in memory: the format of a premultiplied picture) */
+                            d->row[col - c0] = (a << 24) | ((v & 0xFFu) * a / 255u) << 16 | (((v >> 8) & 0xFFu) * a / 255u) << 8 | (((v >> 16) & 0xFFu) * a / 255u);
                         }
                         FIRE_DC_METHOD(c->context, FIRE_DC_CTX_UPDATE_SUBRESOURCE, void (STDMETHODCALLTYPE*)(void*, void*, UINT, const FireDcBox*, const void*, UINT, UINT))(
                             c->context, d->content, 0, &box, d->row, (UINT)(c1 - c0) * 4u, 0);
@@ -323,6 +333,7 @@ static void* fire_dcomp_bridgeTexture(fire_dcomp_bridge* b, int32_t width, int32
     void* handle = NULL;
     if (!d->on) return NULL;
     EnterCriticalSection(&c->lock);
+    d->bridged = 1;
     if (fire_dcomp_ensure(d, width, height)) handle = d->shared;
     d->full = 1;   /* (the presenter draws into it: pixels that come later go in whole) */
     LeaveCriticalSection(&c->lock);
