@@ -135,6 +135,7 @@ ui.Run()
 
 Both follow the system (`SystemTheme.transparency`: Windows "transparency effects", macOS "reduce transparency", the browser
 `prefers-reduced-transparency`); on a board they are off. Without them the interface is complete, only flatter and cheaper to draw.
+`WindowBackdrop = Backdrop.Transparent` stays even then: it is the shape of the window (only what is drawn is seen), not an effect.
 
 **The window itself** can get a material of the desktop: `ui.WindowBackdrop = Backdrop.Mica` (Windows 11), `Backdrop.Acrylic`, `Backdrop.Blur`
 (Windows, macOS, KDE) or `Backdrop.Transparent`. The desktop gives what it can (`window.Backdrop` tells what it gave); where it gives something, the
