@@ -1,3 +1,4 @@
+#import "reflection"
 class Shape {
     string name
     construct(string name) { this.name = name }
@@ -28,4 +29,5 @@ class Deeper : Thing, IMore { Base() { } More() { } }
 var d = Type.Of("Deeper")
 print(",".Join(d.Interfaces) + " | " + ",".Join(d.DeclaredInterfaces))
 //# modes: Debug Release
+//# note: the reflection library was added by the test program; now the case imports it itself, so it is a program for forge run too
 //# name: Type: Find/Has/Fields/Properties/Methods/Interfaces, Named und IsSubclassOf

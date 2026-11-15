@@ -1,3 +1,4 @@
+#import "reflection"
 class Shape {
     string name
     construct(string name) { this.name = name }
@@ -29,4 +30,5 @@ print(c2.radius + " " + c2.Describe())
 var m = Type.Of(c).Find("radius")
 m.Set(c, 1.5)
 print(m.Get(c))
+//# note: the reflection library was added by the test program; now the case imports it itself, so it is a program for forge run too
 //# name: Get/Set/Call/New: Felder, Properties, geerbte Methoden, Konstruktion

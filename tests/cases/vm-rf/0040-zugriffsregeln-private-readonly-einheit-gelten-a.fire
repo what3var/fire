@@ -1,3 +1,4 @@
+#import "reflection"
 class Shape {
     string name
     construct(string name) { this.name = name }
@@ -22,4 +23,5 @@ try { Reflect.Set(c, "id", 9) } catch (e) { print("3 " + e.message) }
 try { Reflect.Set(c, "w", 5.0) } catch (e) { print("4 Einheit") }
 print(c.PeekSecret())
 //# modes: Debug Release
+//# note: the reflection library was added by the test program; now the case imports it itself, so it is a program for forge run too
 //# name: Zugriffsregeln: private/readonly/Einheit gelten auch fuer die Reflection (aus der Klasse selbst ist private erlaubt)

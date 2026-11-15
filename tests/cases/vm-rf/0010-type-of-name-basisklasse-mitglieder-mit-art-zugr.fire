@@ -1,3 +1,4 @@
+#import "reflection"
 class Shape {
     string name
     construct(string name) { this.name = name }
@@ -18,4 +19,5 @@ class Circle : Shape {
 var t = Type.Of(new Circle(5.0))
 print(t.Name + " : " + t.Base.Name)
 foreach (m in t.All) { print(m.Kind + " " + m.Access + " " + m.TypeName + " " + m.Name + " " + m.ParamCount() + " " + m.DeclaredIn + " " + m.IsReadonly + " " + m.Unit) }
+//# note: the reflection library was added by the test program; now the case imports it itself, so it is a program for forge run too
 //# name: Type.Of: Name, Basisklasse, Mitglieder mit Art, Zugriff, Typ, Einheit, readonly, Herkunft

@@ -1,5 +1,7 @@
+#import "reflection"
 class P { string name }
 class W { static Show(lambda member<P> sel, P p) { print(sel.Name) } }
 try { W.Show(q => q.name + "x", new P()) } catch (e) { print("1 " + e.message) }
 try { W.Show(5, new P()) } catch (e) { print("2 " + e.message) }
+//# note: the reflection library was added by the test program; now the case imports it itself, so it is a program for forge run too
 //# name: Selektor: eine Lambda, die keine reine Mitgliedskette ist, wird abgelehnt

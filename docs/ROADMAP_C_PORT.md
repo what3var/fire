@@ -179,10 +179,17 @@ Noch kein C; alles hier ist für sich nützlich und macht den Rest prüfbar.
    * ~~Die Familien, die nur in der VM laufen~~ (umgesetzt): 193 der 197 Prüfungen von `CheckPerf`, `CheckLife`, `CheckShutdown`, `CheckGl`, `CheckLq`,
      `CheckRf`, `CheckSc`, `CheckScChecked`, `CheckExt`, `CheckArr`, `CheckClone` und ihren Fehler-Varianten sind Dateien in `tests/cases/vm-*`
      (mit Modi, `packed`, `.error`); das Testprogramm ruft je Ordner dieselbe Prüfung auf wie vorher. `Program.cs`: noch 18 700 Zeilen.
-   * **Offen:** diese Fälle laufen in C# über von Hand gebaute Abläufe (Prelude + Skript, eigene Natives); ob jeder mit `forge run` dieselbe Ausgabe
-     gibt - so wird ihn der Läufer in C ausführen -, ist zu prüfen. Die rund 100 Einzeltests am Anfang von `Program.cs` (je ein Skript mit eigenen
-     Prüfungen); Diagnosen (`DiagnosticTests`, `TypeTests`, `SyntaxTests`) als Fälle mit erwarteten Meldungen; Completion (`CheckCompletion`) mit
-     `forge serve`. Was am Wirt hängt (`CheckUi`, `CheckDev`, `CheckCb`, `CheckIo`, `CheckNet`, `CheckGf`), an Fenstern oder an Toolchains, bleibt Code.
+   * ~~Der Läufer ohne das Testprogramm~~ (umgesetzt): `tests/run-cases.sh <forge>` führt jeden Fall mit `forge run` aus und vergleicht - das Maß für
+     forge und die VM in C. Stand mit dem C#-forge: 625 von 630 richtig. Neun Reflection-Fälle bekamen dafür ihr `#import "reflection"` (das
+     Testprogramm hatte die Bibliothek stillschweigend dazugelegt), ein Fall ist als nur im Testprogramm sinnvoll markiert (`//# skip: forge run`).
+   * **Offen - vier Fälle weichen unter `forge run` ab** (im Testprogramm, das die VM im eigenen Prozess startet, laufen sie):
+     `native/0030` (wird seit E4076 nicht mehr übersetzt: `Go` statisch und als Instanzmethode - der Fall ist anzupassen),
+     `native/2340` (Threads mit Actors: `forge run` bleibt in `while (!done)` hängen - das im Thread gesetzte Global kommt im Hauptprogramm nicht an),
+     `native/4180` und `native/4190` (http.pages: richtige Ausgabe, danach `fire runtime error: Index was outside the bounds of the array.`, Exitcode 1).
+     Ursachen klären, bevor diese Fälle als Maß für die C-VM gelten.
+   * **Offen:** die rund 100 Einzeltests am Anfang von `Program.cs` (je ein Skript mit eigenen Prüfungen); Diagnosen (`DiagnosticTests`, `TypeTests`,
+     `SyntaxTests`) als Fälle mit erwarteten Meldungen; Completion (`CheckCompletion`) mit `forge serve`. Was am Wirt hängt (`CheckUi`, `CheckDev`,
+     `CheckCb`, `CheckIo`, `CheckNet`, `CheckGf`), an Fenstern oder an Toolchains, bleibt Code.
 3. ~~**Determinismus**~~ (geprüft, es war nichts zu beseitigen): zweimal übersetzt ergibt byte-gleiche `.fbc` und denselben Text von
    `fire_program.c` - für ein Skript mit einem Stück von allem und für jedes Beispiel von spark (dieselben Tests), von Hand auch über zwei Prozesse.
 4. ~~**Referenzstände**~~ (umgesetzt): `tests/reference.sh <forge> <ordner>` schreibt für jeden Fall aus `tests/cases` und jedes Beispiel von spark

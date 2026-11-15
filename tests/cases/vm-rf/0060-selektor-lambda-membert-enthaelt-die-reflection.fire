@@ -1,3 +1,4 @@
+#import "reflection"
 class Address { string city; construct(string c) { this.city = c } }
 class Person { string name; Address address; construct(string n, Address a) { this.name = n; this.address = a; try a.TakeTo(this) } }
 class W {
@@ -12,4 +13,5 @@ W.Show(q => q.name, p)
 W.Show(q => q.address.city, p)
 W.Pass(q => q.address.city, p)
 print(p.name + " " + p.address.city)
+//# note: the reflection library was added by the test program; now the case imports it itself, so it is a program for forge run too
 //# name: Selektor: lambda member<T> enthaelt die Reflection des gewaehlten Mitglieds (Get/Set/Describe, verschachtelt, durchgereicht)

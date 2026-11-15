@@ -212,6 +212,11 @@ expected outputs are written by hand, as they were in the code; `FIRE_TESTS_UPDA
 renderer, the device manager, host callbacks, the rules for files and the network - stays code. `FIRE_TESTS_COLLECT=<file>` writes what every such check
 checks (title, source, expected lines) as one JSON object per line: the list before and after moving cases must be the same.
 
+**Without the test program:** `tests/run-cases.sh <forge> [<group>...]` runs every case with `forge run` and compares what it prints - the check a forge
+and a VM in C will be measured with, and a quick one for the ones in C# (all 630 cases: a few minutes). A case that only makes sense inside the test
+program says so: `//# skip: forge run - <why>`. `tests/reference.sh <forge> <folder>` writes what the compiler makes of every case (the program as
+text, the program file, the C) to compare two compilers.
+
 **Cases that master adds.** As long as master holds these cases as text in `Program.cs`, `tests/tools/merge-master.sh` merges it: the cases master added
 or changed go into the files (`tests/tools/cases.py`: a new case gets a number between its neighbours, a changed one loses its expected output, a case
 keeps its file as long as it keeps its title), the rest of `Program.cs` is merged as usual. Then build, record with `FIRE_TESTS_UPDATE=1`, look, commit.

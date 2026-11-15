@@ -1,3 +1,4 @@
+#import "reflection"
 class Exception { string message; construct(string message = "") { this.message = message } }
 class C {
     int v
@@ -21,4 +22,5 @@ try { Reflect.Probe(c, "nope", "changed", () => 1) } catch (e) { print(e.message
 try { Reflect.Probe(c, "v", "gestern", () => 1) } catch (e) { print(e.message) }
 try { Reflect.Probe(c, "v", "changed", (a, b, c, d, e) => 1) } catch (e) { print(e.message) }
 //# modes: Debug Release
+//# note: the reflection library was added by the test program; now the case imports it itself, so it is a program for forge run too
 //# name: Reflect.Probe/Silence, Selector.Probe, Handle und Fehler
