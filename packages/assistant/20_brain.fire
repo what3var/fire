@@ -38,6 +38,8 @@ namespace Assistant {
         Mcp.HttpTransport sparkTransport = undefined
         string sparkFile = ""
         defined int sparkRetry = 0
+        // the documentation, when spark does not offer it
+        Assistant.Docs docs = undefined
         string pendingQuestion = ""
         string lastError = ""
         // Tips already given (by their key: one is not given twice).
@@ -247,7 +249,11 @@ namespace Assistant {
 
         // The tools of spark the model may use (reading and looking up; it changes nothing by itself).
         undefined ConnectTools() {
-            if (this.agent == undefined || this.spark == undefined) { return }
+            if (this.agent == undefined) { return }
+            if (this.spark == undefined) {
+                this.LocalTools()
+                return
+            }
             Mcp.Client client = this.spark
             foreach (t in client.Tools()) {
                 Mcp.Tool tool = t
@@ -256,6 +262,28 @@ namespace Assistant {
                     this.agent.ToolWithSchema(name, tool.Description, tool.Schema, func (JsonObject args) on client => CallTool((taking name), args).Text)
                 }
             }
+        }
+
+        // Without spark: the documentation of fire from its folder (Assistant.Docs.Find) - the same two tools spark offers.
+        undefined LocalTools() {
+            if (this.docs == undefined) { this.docs = new Assistant.Docs(Assistant.Docs.Find()) }
+            if (this.docs.Root == "") { return }
+            Assistant.Docs d = this.docs
+            this.agent.ToolWithSchema("search_docs", "Searches the documentation of fire (the language, the libraries, the tools) for the words of a question; " +
+                "the sections that fit best, each with its file and heading - read one with read_doc.",
+                "{\"type\":\"object\",\"properties\":{\"query\":{\"type\":\"string\",\"description\":\"the words to look for, e.g. 'list sort'\"}},\"required\":[\"query\"]}",
+                func (JsonObject args) on d => Search(Assistant.Brain.Arg(args, "query")))
+            this.agent.ToolWithSchema("read_doc", "Reads one section of a page of the documentation (the path and heading that search_docs named). " +
+                "Without a heading: the headings of the page.",
+                "{\"type\":\"object\",\"properties\":{\"path\":{\"type\":\"string\",\"description\":\"the file, e.g. 'language/07-arrays-and-lists.md'\"}," +
+                "\"heading\":{\"type\":\"string\",\"description\":\"a heading of the file\"}},\"required\":[\"path\"]}",
+                func (JsonObject args) on d => Read(Assistant.Brain.Arg(args, "path"), Assistant.Brain.Arg(args, "heading")))
+        }
+
+        static string Arg(JsonObject args, string name) {
+            any v = args.Get(name)
+            if (v == undefined) { return "" }
+            return "" + v
         }
 
         static bool Allowed(string name) {

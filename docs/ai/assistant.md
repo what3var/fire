@@ -59,7 +59,8 @@ its own way of speaking (a line in the system prompt). They are not, and do not 
   the error codes (docs/tools/errors.md), the file kinds and the first steps of the help.
 * **The context** spark hands in: the kind of file, the word at the caret, the selected text, the last error and build result. The prompt gets only
   what the question needs.
-* **The documentation**: the pages of the help as small pieces; the piece that fits the question best (words in common) goes into the prompt, so
+* **The documentation**: search_docs and read_doc - spark's tools when it is connected, else its own (the package's `Assistant.Docs`: the pages of
+  `Help/Docs` beside spark, `FIRE_DOCS`, or the `docs` of a checkout; loaded in about a second, a search takes some 60 ms in the VM). The pages of the help as small pieces; the piece that fits the question best (words in common) goes into the prompt, so
   the small model answers about fire and not about a language it guesses.
 
 ## Later

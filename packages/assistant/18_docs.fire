@@ -1,0 +1,241 @@
+#import "filesystem"
+
+// The documentation of fire for the assistant when it is not connected to spark (spark offers the same tools, docs/tools/spark-mcp.md): the Markdown
+// pages split into sections at their headings, searched by the words of a question (BM25), read one section at a time - a small model has a small
+// context.
+namespace Assistant {
+    class DocSection {
+        string File
+        string Heading
+        string Text
+        // the heading, the file and the text in lower case (searched with IndexOf: the VM is quick with that, slow letter by letter)
+        string lower = ""
+        string head = ""
+        defined int length = 1
+    }
+
+    class Docs {
+        string Root = ""
+        List sections = new List()
+        defined float average = 1.0
+        bool loaded = false
+
+        construct(string root) { this.Root = root }
+
+        // The folder of the documentation: FIRE_DOCS, else "Help/Docs" beside the program (spark's folder: forge runs the assistant from there), else a
+        // "docs" folder above the current one (a checkout of fire). "" when there is none.
+        static string Find() {
+            any env = Environment.Get("FIRE_DOCS")
+            if (env != undefined && env != "" && IO.Directory.Exists(env)) { return env }
+            List starts = new List()
+            starts.Add(IO.Path.GetDirectoryName(Environment.ProgramPath))
+            starts.Add(IO.Path.GetFullPath("."))
+            foreach (s in starts) {
+                string dir = s
+                for (int up = 0; up < 6 && dir != ""; up++) {
+                    string help = IO.Path.Combine(dir, "Help", "Docs")
+                    if (IO.Directory.Exists(help)) { return help }
+                    string docs = IO.Path.Combine(dir, "docs")
+                    if (IO.Directory.Exists(IO.Path.Combine(docs, "language"))) { return docs }
+                    string parent = IO.Path.GetDirectoryName(dir)
+                    if (parent == dir) { break }
+                    dir = parent
+                }
+            }
+            return ""
+        }
+
+        // The words of a text: letters, digits, _ and dots, lower case, at least two; a dotted name also gives its parts, a camelCase name its parts.
+        static List Words(string text) {
+            var words = new List()
+            defined int n = text.Length
+            defined int i = 0
+            while (i < n) {
+                // skip to a word
+                while (i < n && !Assistant.Docs.InWord(text[i])) { i++ }
+                defined int start = i
+                while (i < n && Assistant.Docs.InWord(text[i])) { i++ }
+                if (i - start < 2) { continue }
+                string t = Assistant.Docs.Ends(text.Substring(start, i - start), ".")
+                if (t.Length < 2) { continue }
+                words.Add(t.ToLower())
+                if (t.IndexOf(".") >= 0) {
+                    foreach (p in t.Split(".")) {
+                        string part = p
+                        if (part.Length >= 2) { words.Add(part.ToLower()) }
+                    }
+                }
+                defined int begin = 0
+                for (int k = 1; k < t.Length; k++) {
+                    if (t[k].IsUpper() && t[k - 1].IsLower()) {
+                        if (k - begin >= 2) { words.Add(t.Substring(begin, k - begin).ToLower()) }
+                        begin = k
+                    }
+                }
+                if (begin > 0 && t.Length - begin >= 2) { words.Add(t.Substring(begin).ToLower()) }
+            }
+            return words
+        }
+
+        static bool InWord(char c) { return c.IsLetterOrDigit() || c == '_' || c == '.' }
+
+        static bool Stop(string w) {
+            return (" the a an of in on to is are and or for with how what do does can it this that be by as at from my me use used using der die das und wie ein eine ist mit von zu den im ich ").IndexOf(" " + w + " ") >= 0
+        }
+
+        undefined Load() {
+            if (this.loaded) { return }
+            this.loaded = true
+            if (this.Root == "" || !IO.Directory.Exists(this.Root)) { return }
+            List files = IO.Directory.GetFiles(this.Root, "*.md", IO.SearchOption.AllDirectories)
+            defined float total = 0.0
+            foreach (f in files) {
+                string file = f
+                string rel = Assistant.Docs.Lead(file.Substring(this.Root.Length).Replace("\\", "/"), "/")
+                if (rel.StartsWith("ROADMAP")) { continue }
+                string heading = IO.Path.GetFileNameWithoutExtension(file)
+                string text = ""
+                bool code = false
+                foreach (l in IO.File.ReadAllLines(file)) {
+                    string line = l
+                    if (line.TrimStart().StartsWith("```")) { code = !code }
+                    if (!code && line.StartsWith("#")) {
+                        total += this.Add(rel, heading, text)
+                        heading = Assistant.Docs.Lead(line, "#").Trim()
+                        text = ""
+                        continue
+                    }
+                    text += line + "\n"
+                }
+                total += this.Add(rel, heading, text)
+            }
+            if (this.sections.Count > 0) { this.average = total / this.sections.Count }
+        }
+
+        defined int Add(string file, string heading, string text) {
+            if (text.Trim() == "" && heading == "") { return 0 }
+            var s = new Assistant.DocSection()
+            s.File = file
+            s.Heading = heading
+            s.Text = text
+            s.lower = text.ToLower()
+            s.head = (heading + " " + file.Replace("/", " ").Replace(".md", "")).ToLower()
+            // about six letters a word
+            defined int length = text.Length / 6 + 1
+            s.length = length
+            this.sections.Add(take s)
+            return length
+        }
+
+        // How often `w` is in `text` (as a part of words too: "list" counts "lists").
+        static defined int Count(string text, string w) {
+            defined int n = 0
+            defined int at = text.IndexOf(w)
+            while (at >= 0) {
+                n++
+                at = text.IndexOf(w, at + w.Length)
+            }
+            return n
+        }
+
+        // The sections that fit the words of `query` best: "path: ... heading: ... - the start of the text" per line.
+        string Search(string query, defined int max = 3) {
+            this.Load()
+            List words = new List()
+            foreach (x in Assistant.Docs.Words(query)) {
+                string w = x
+                if (!Assistant.Docs.Stop(w) && !words.Contains(w)) { words.Add(w) }
+            }
+            if (words.Count == 0 || this.sections.Count == 0) { return "Nothing found for: " + query }
+            defined int n = this.sections.Count
+            // how many sections have each word
+            List dfs = new List()
+            foreach (x in words) {
+                string w = x
+                defined int df = 0
+                for (int i = 0; i < n; i++) {
+                    Assistant.DocSection s = this.sections[i]
+                    if (s.lower.IndexOf(w) >= 0 || s.head.IndexOf(w) >= 0) { df++ }
+                }
+                dfs.Add(df)
+            }
+            List best = new List()
+            List scores = new List()
+            for (int i = 0; i < n; i++) {
+                Assistant.DocSection s = this.sections[i]
+                defined float score = 0.0
+                for (int j = 0; j < words.Count; j++) {
+                    string w = words[j]
+                    defined int tf = Assistant.Docs.Count(s.lower, w) + 2 * Assistant.Docs.Count(s.head, w)
+                    if (tf == 0) { continue }
+                    defined int df = dfs[j]
+                    defined float idf = Math.Log(1.0 + (n - df + 0.5) / (df + 0.5))
+                    score += idf * tf * 2.2 / (tf + 1.2 * (0.25 + 0.75 * s.length / this.average))
+                }
+                if (score <= 0) { continue }
+                // keep the best `max`, best first
+                int at = 0
+                while (at < scores.Count && scores[at] >= score) { at++ }
+                if (at < max) {
+                    best.Insert(at, i)
+                    scores.Insert(at, score)
+                    if (best.Count > max) {
+                        best.RemoveAt(max)
+                        scores.RemoveAt(max)
+                    }
+                }
+            }
+            if (best.Count == 0) { return "Nothing found for: " + query }
+            string result = ""
+            foreach (x in best) {
+                Assistant.DocSection s = this.sections[x]
+                string snippet = s.Text.Replace("\n", " ").Replace("  ", " ").Trim()
+                if (snippet.Length > 160) { snippet = snippet.Substring(0, 160) + " ..." }
+                result += "path: " + s.File + " heading: " + s.Heading + " - " + snippet + "\n"
+            }
+            return result
+        }
+
+        // One section of a page (the path and heading search_docs named); without a heading, the headings of the page.
+        string Read(string path, string heading = "") {
+            this.Load()
+            path = Assistant.Docs.Lead(path.Replace("\\", "/"), "/")
+            string h = Assistant.Docs.Lead(heading, "#").Trim().ToLower()
+            string headings = ""
+            any near = undefined
+            foreach (x in this.sections) {
+                Assistant.DocSection s = x
+                if (s.File.ToLower() != path.ToLower()) { continue }
+                if (h != "" && s.Heading.ToLower() == h) { return Assistant.Docs.Cap("## " + s.Heading + "\n" + s.Text) }
+                if (h != "" && near == undefined && s.Heading.ToLower().IndexOf(h) >= 0) { near = s }
+                headings += "- " + s.Heading + "\n"
+            }
+            if (near != undefined) {
+                Assistant.DocSection s = near
+                return Assistant.Docs.Cap("## " + s.Heading + "\n" + s.Text)
+            }
+            if (headings == "") { return "There is no page " + path + " (search_docs names the pages)." }
+            return "The headings of " + path + " (read one with read_doc and its heading):\n" + headings
+        }
+
+        // The text without the character `c` at its start.
+        static string Lead(string text, string c) {
+            int i = 0
+            while (i < text.Length && text.Substring(i, 1) == c) { i++ }
+            return text.Substring(i)
+        }
+
+        // The text without `c` at either end.
+        static string Ends(string text, string c) {
+            string t = Assistant.Docs.Lead(text, c)
+            int end = t.Length
+            while (end > 0 && t.Substring(end - 1, 1) == c) { end-- }
+            return t.Substring(0, end)
+        }
+
+        static string Cap(string text) {
+            if (text.Length <= 4000) { return text }
+            return text.Substring(0, 4000) + "\n... (cut)"
+        }
+    }
+}
