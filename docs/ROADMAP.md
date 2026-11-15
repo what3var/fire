@@ -78,7 +78,7 @@ Stand (Branch `native-c`): **umgesetzt**. Der Generator erzeugt C11 (`fire_progr
 Geprüft: die Testsuite unter Linux (gcc 13, AddressSanitizer/UBSan) - native Fälle wie vor dem Umbau, gcc und clang ohne Warnungen (`-Wall -Wextra`, clang
 auch `-pedantic`), FreeRTOS-Fälle auf dem Simulator. Benchmarks vorher/nachher ([Natives Backend (AOT): fire -> C](spec/NATIVE_BACKEND.md), "Benchmarks vor und nach dem C-Port"): der Programmstart
 ist als C gut 0,5 ms kürzer, die Rechenzeit gleich oder bis 20 % besser ; `method` war durch den Zugriffsschutz knapp 4x langsamer (`this.count`
-über `gf_count`/`sf_count`) - behoben: ein privates Feld wird direkt gelesen und geschrieben, wenn der Zugriff schon beim Übersetzen erlaubt ist; ebenso private/geschützte Methoden und Properties. Die Zugriffsregeln entscheidet der Typprüfer, wo die Klasse des Objekts bekannt ist (`TC012`, auch lax ein Fehler); zur Laufzeit geprüft werden nur noch `any` und die Reflection. Aufrufe über ein Interface brauchen keine Prüfung: die Implementierung eines Interface-Mitglieds muss öffentlich sein (`E4063`), nativ gehen sie an einen eigenen Verteiler ohne Aufruferklasse. Interfaces haben Properties (`int ReadTimeout { get; set; }`, implementiert von einer öffentlichen Property, `E4064`/`E4065`/`E4066`, `TC016`) und erweitern andere Interfaces (`interface IConnection : IO.IStream`, Zyklen `E4068`) - VM und nativ gleich, auch über Module und Plugins (SPEC 8.5); `Net.IConnection` nutzt beides. Ein Mitglied, das ein Interface-Typ (samt seinen Basis-Interfaces) nicht deklariert, ist `TC008` wie bei einer bekannten Klasse (lax Warnung, strikt Fehler; die Besitz-Methoden `TakeTo`/`TakeLocal`/... gehen immer, der Cast `x!Klasse` erreicht den Rest); `Type.Interfaces` der Reflection listet alle Interfaces, die die Klasse erreicht (auch über Basisklassen und Interface-Vererbung, volle Namen), `Type.DeclaredInterfaces` nur die genannten - VM und nativ gleich, auch Module und Plugins. Offen dabei: der Typ einer implementierenden Property wird nur bei Werttypen und Einheiten mit dem des Interfaces verglichen. Emscripten (6.0): ein Programm unter node und ein Fenster im Browser (Testgruppe `packer`). Offen: MSVC und
+über `gf_count`/`sf_count`) - behoben: ein privates Feld wird direkt gelesen und geschrieben, wenn der Zugriff schon beim Übersetzen erlaubt ist; ebenso private/geschützte Methoden und Properties. Die Zugriffsregeln entscheidet der Typprüfer, wo die Klasse des Objekts bekannt ist (`TC012`, auch lax ein Fehler); zur Laufzeit geprüft werden nur noch `any` und die Reflection. Aufrufe über ein Interface brauchen keine Prüfung: die Implementierung eines Interface-Mitglieds muss öffentlich sein (`E4063`), nativ gehen sie an einen eigenen Verteiler ohne Aufruferklasse. Interfaces haben Properties (`int ReadTimeout { get; set; }`, implementiert von einer öffentlichen Property, `E4064`/`E4065`/`E4066`, `TC016`) und erweitern andere Interfaces (`interface IConnection : IO.IStream`, Zyklen `E4068`) - VM und nativ gleich, auch über Module und Plugins (SPEC 8.5); `Net.IConnection` nutzt beides. Ein Mitglied, das ein Interface-Typ (samt seinen Basis-Interfaces) nicht deklariert, ist `TC008` wie bei einer bekannten Klasse (lax Warnung, strikt Fehler; die Besitz-Methoden `TakeTo`/`TakeLocal`/... gehen immer, der Cast `x!Klasse` erreicht den Rest); `Type.Interfaces` der Reflection listet alle Interfaces, die die Klasse erreicht (auch über Basisklassen und Interface-Vererbung, volle Namen), `Type.DeclaredInterfaces` nur die genannten - VM und nativ gleich, auch Module und Plugins. Der Typ einer implementierenden Property wird voll mit dem des Interfaces verglichen (`E4066`: Klassen, Interfaces, Enums, Arrays, Typargumente, Lambdas, `defined` - der Getter darf Spezielleres geben, der Setter Allgemeineres nehmen; SPEC 8.5). Emscripten (6.0): ein Programm unter node und ein Fenster im Browser (Testgruppe `packer`). Offen: MSVC und
 macOS sind hier nicht installiert. ESP32: mit ESP-IDF 5.5 gebaut (ohne Warnung) und im Emulator von Espressif (QEMU) ausgeführt - Ausgabe wie in der VM;
 auf echter Hardware noch nicht.
 
@@ -811,7 +811,7 @@ Tests ohne Fenster über den seriellen Port bzw. die Konsole: DOSBox-X / dosemu2
   Faktor der Einheitentabelle als `Real`); AVR: `nearbyint`, `localtime_r` ohne Rückgabe.
 * **Ziele:** ESP32-C3/C6 als Varianten von `esp32`; ein generisches Ziel Cortex-M/RISC-V mit FreeRTOS (Vorgaben für STM32F4/H7, RP2040, SAMD51, PIC32);
   AVR und PIC24 später mit einem eigenen kleinen Profil (Konstanten im Flash).
-* **Strikte Arrays für Strings und Klassen** (`string a[]`, `Dog a[]`): die Art beim Schreiben prüfen (ohne zu packen).
+* ~~**Strikte Arrays für Strings und Klassen**~~ (`string a[]`, `Dog a[]`): umgesetzt mit [Arrays mit jedem Typ](#19-arrays-mit-jedem-typ).
 
 ## 14. UI-Markup: fehlende Eigenschaften
 
@@ -1091,8 +1091,7 @@ scene3d-Preludes daran höchstens 3,5 KB).
   still: falsche Werte, Hänger, "Invalid Opcode" - je nach Code. Jetzt `option stack=32768` für den Linker (TargetProfile.Pc). Damit laufen in DOSBox-X:
   zwei Objekte aus Vorlagen (vorher Hänger), Körper und Schritte der Physik, die Effekte (Nebel ins Palettenbild), 60 Bilder mit Physik im schlanken
   Renderer.
-* dos16-Programme stürzen seit 8ab2aa2 in DOSBox-X mit "Invalid Opcode" (INT 6) ab, je nach Code; mit 02e959e laufen sie. Damit ist scene3d (auch der
-  schlanke Renderer und die Terrains) unter DOS bisher nicht ausgeführt, nur gebaut.
+* ~~dos16-Programme stürzen in DOSBox-X mit "Invalid Opcode" ab~~ - behoben (02e959e und der Stapel oben); scene3d läuft unter DOS.
 * Der Generator erzeugt für `sync`/`try` ein `switch` über `int64_t` (`EndFinally`), das Watcom auf 16 Bit ablehnt (E1078).
 
 Reihenfolge: 1 -> 2 -> 3 (Format, Import, Animation) -> 3.1 Blöcke -> 4 -> 5 -> 3.1 CAD (alle umgesetzt); A (kompakte Meshes) vor oder mit 3, B/C/D nach Bedarf dazwischen.
@@ -1251,3 +1250,14 @@ Offen:
   typisierte Arrays hinweg als lebend bekannt (SelfNeutralHere). Gemessen mit callgrind (`Dictionary<int, int>` über einen Parameter, 50 000 setzen,
   250 000 lesen): 210 → 124 Mio. Instruktionen. Es bleibt: `Find` prüft je Kettenglied jedes seiner Arrays (lebt es, ist es gepackt, der Index) -
   etwa 125 Instruktionen je Aufruf; `Resize` nach einem Entfernen verdichtet Eintrag für Eintrag (das ist seine Aufgabe, kein Blockkopieren möglich).
+  **Umgesetzt** (danach): (1) `self` bleibt über Bedingungen (`JumpIfFalse` nach `&&`: `truthy` führt keinen Code aus), über ein `ExitScope` ohne
+  Listen und über `CheckUnit` einer Zahl hinweg als lebend bekannt - `Find` prüft `self` nicht mehr je Kettenglied; (2) die Prüfung „läuft eine
+  Ausnahme ab“ nach einem Elementzugriff steht nur noch im langsamen Zweig (der schnelle kann nicht werfen): 127,6 → 121,2 Mio. Instruktionen.
+  (3) **Arrays in Variablen** (Flow.Arrays): ein typisiertes Array, das in eine lokale Variable gespeichert wird, wird einmal geprüft (lebt es, ist
+  es typisiert und gepackt, Länge und Daten in C-Hilfsvariablen); solange nur Befehle folgen, die keinen Code ausführen und nichts entpacken
+  (Rechnen und Vergleichen mit Zahlen, Sprünge, Feldzugriffe über den Index, Zahlen in typisierte Arrays schreiben, `i++` einer C-Zahl), ist ein
+  Element ein Vergleich mit der Länge und ein Laden; nach einem `leave` der Temporären oder einem `TypeArray` werden die bekannten Arrays neu
+  geprüft. Eine Schleife `s = s + a[i]` über ein lokales `defined int a[]` (100 x 10 000): 18,5 → 7,5 Mio. Instruktionen. Ausprobiert und
+  verworfen: `Find` mit den Arrays in Variablen - die drei Variablen bringen Besitzlisten und `leave` mit, bei Ketten der Länge 1 teurer
+  (121 → 195 Mio.). Offen: dasselbe für Arrays aus Feldern von `self` und für Parameter (ihr Typ ist dem Generator oft unbekannt: ein Vergleich
+  mit einem unbekannten Wert könnte einen Operator aufrufen).

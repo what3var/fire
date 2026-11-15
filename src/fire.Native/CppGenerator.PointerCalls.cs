@@ -113,7 +113,7 @@ namespace fire.Native
                 ours[i] = !inPackage;
             }
             var needsValues = new HashSet<string>(StringComparer.Ordinal);
-            var protoLine = new Regex(@"^((?:FIRE_MAYBE_UNUSED )?static [A-Za-z_]\w* )([A-Za-z_]\w*)\((.*)\);$");
+            var protoLine = new Regex(@"^((?:FIRE_MAYBE_UNUSED )?(?:FIRE_ALWAYS_INLINE )?static (?:inline )?[A-Za-z_]\w* )([A-Za-z_]\w*)\((.*)\);$");
             var name = new Regex(@"(?<![\w.>])([A-Za-z_]\w*)(?!\w)");
             for (int i = 0; i < lines.Length; i++)
             {
