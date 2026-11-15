@@ -1180,12 +1180,15 @@ namespace fire.Native
         {
             var parsed = DeclaredType.Parse(spec);
             string altCheck = "";
+            // (`defined Dog d`, `defined string s`: undefined does not fit - "... is a Dog and never undefined.")
+            string undefCheck = parsed.NonNull ? $"if (FIRE_UNLIKELY({value}.kind == K_Undefined)) guardClassFailed({value}, {CString(parsed.Display)}, {CString(what)}); " : "";
             if (parsed.Alternatives.Length > 0)
             {
                 string fits = string.Join(" || ", parsed.Alternatives.Select(alt => "(" + string.Join(" && ", alt.Select(c => HoldsExpr(value, c))) + ")"));
                 // (a destroyed object first: its memory is gone, `is of` must not read its class)
                 altCheck = $"if (FIRE_UNLIKELY({value}.kind != K_Undefined && ({value}.kind != K_Class || leafAlive({value})) && !({fits}))) guardClassFailed({value}, {CString(parsed.Display)}, {CString(what)});";
             }
+            altCheck = undefCheck + altCheck;
             if (parsed.TypeParamIndex < 0) return altCheck;
             // a type parameter: the type argument of the object (class) or of the call (method) decides when it is known, its `where` otherwise
             int k = parsed.TypeParamIndex;
@@ -1370,6 +1373,8 @@ namespace fire.Native
 
         /// <summary>Does a value of this static type pass the check of a declaration (DeclaredType, encoded) as it is?</summary>
         private bool FitsClassType(int type, string spec) =>
+            DeclaredType.Parse(spec).NonNull ? !IsNullable(type) && type != TypeUndefined && FitsClassTypeCore(type, spec) : FitsClassTypeCore(type, spec);
+        private bool FitsClassTypeCore(int type, string spec) =>
             type == TypeUndefined || DeclaredType.Parse(spec).TypeParamIndex < 0 && BaseKindOfType(type) == KindObj && (type & TypeNone) == 0
                 && (InterfaceOfType(type) is { } iface ? DeclaredType.Parse(spec).SingleName == iface : DeclaredClass(spec) is { } rc && ClassIs(ObjClass(type), rc.Name));
 
@@ -6715,7 +6720,8 @@ namespace fire.Native
                     }
                     E(ClassGuard(v, spec, Str(ins.A[2]), SelfObj(f), f.HasCallTArgs ? "ctargs" : null));
                     Check();
-                    JoinVarType(VarKey(f, v), DeclaredClass(spec) is { } guardedRc ? ObjType(guardedRc) | NullableBit : InterfaceType(spec) ?? TypeUnknown);
+                    // (`defined Dog p`: never undefined after the guard)
+                    JoinVarType(VarKey(f, v), DeclaredClass(spec) is { } guardedRc ? ObjType(guardedRc) | (DeclaredType.Parse(spec).NonNull ? 0 : NullableBit) : InterfaceType(spec) ?? TypeUnknown);
                     _kindsKept = true;
                     return Next();
                 }

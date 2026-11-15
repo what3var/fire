@@ -29256,6 +29256,59 @@ else
             pets = new Dog[1]
             try { pets[0] = cat } catch (ArgumentException e) { print("E11 " + e.message) }
             """),
+        ("defined fuer strings, Enums und Objekte (SPEC 8.10b): ein string beginnt bei \"\", ein Enum beim ersten Wert, ein Objekt braucht seinen Wert (Feld: jeder Konstruktor setzt es); undefined ist eine ArgumentException an Feld, Parameter, Rueckgabe, Variable, Reflection und in JSON (fehlend oder null)", """
+            #import "json"
+            #import "reflection"
+            enum Color { Red, Green, Blue }
+            interface IShape { float Area() }
+            class Sq : IShape { float s; construct(float s) { this.s = s } float Area() { return this.s * this.s } }
+            class Dog { string name; construct(string n) { this.name = n } construct() { this.name = "" } }
+            class Cat { }
+            class Owner {
+                defined string title
+                defined Color fav
+                defined Dog pet
+                defined IShape shape = new Sq(2.0)
+                construct(Dog d) { this.pet = try take d }
+                construct() { pet = new Dog("Standard") }
+                defined Dog Pet() { return this.pet }
+                defined string Bad() { any none = undefined; return none }
+                static string Greet(defined string who) { return "Hallo " + who }
+                static string Name(defined Dog d) { return d.name }
+            }
+            class Pal { defined Color c
+                defined string n
+                int k }
+            any none = undefined
+            any cat = new Cat()
+            defined string s
+            defined Color c
+            print("[" + s + "] " + c)
+            var o = new Owner(new Dog("Rex"))
+            print("[" + o.title + "] " + o.fav + " " + o.pet.name + " " + o.shape.Area() + " " + o.Pet().name + " " + new Owner().pet.name)
+            try { o.pet = none } catch (ArgumentException e) { print("E1 " + e.message) }
+            try { o.title = none } catch (ArgumentException e) { print("E2 " + e.message) }
+            try { o.pet = cat } catch (ArgumentException e) { print("E3 " + e.message) }
+            try { Owner.Greet(none) } catch (ArgumentException e) { print("E4 " + e.message) }
+            try { Owner.Name(none) } catch (ArgumentException e) { print("E5 " + e.message) }
+            try { o.Bad() } catch (ArgumentException e) { print("E6 " + e.message) }
+            try { s = none } catch (ArgumentException e) { print("E7 " + e.message) }
+            try { defined Dog d = none } catch (ArgumentException e) { print("E8 " + e.message) }
+            try { c = none } catch (ArgumentException e) { print("E9 " + e.message) }
+            try { new Owner(none) } catch (ArgumentException e) { print("E10 " + e.message) }
+            try { Reflect.Set(o, "pet", none) } catch (ArgumentException e) { print("E11 " + e.message) }
+            defined Dog d2 = new Dog("Bello")
+            print(Owner.Greet("Welt") + " " + Owner.Name(d2) + " " + s.length)
+            string text = Json.Serialize(o)
+            print(text)
+            var back = Json.Deserialize<Owner>(text)
+            print(back.pet.name + "[" + back.title + "]")
+            try { var b2 = Json.Deserialize<Owner>("{\"title\":\"t\"}"); print("ohne pet: " + b2.pet) } catch (ArgumentException e) { print("J1 " + e.message) }
+            try { var b3 = Json.Deserialize<Owner>("{\"pet\":null}"); print("pet null: " + b3.pet) } catch (ArgumentException e) { print("J2 " + e.message) }
+            try { var b4 = Json.Deserialize<Owner>("{\"title\":null,\"pet\":{\"name\":\"a\"}}"); print("title null: [" + b4.title + "]") } catch (ArgumentException e) { print("J3 " + e.message) }
+            var p = Json.Deserialize<Pal>("{\"k\":1}")
+            print(p.c + "[" + p.n + "]" + p.k)
+            """),
         ("Bits: die Breite jedes Werttyps am Typ (int.Bits, int[16].Bits, float[32].Bits, byte/char/bool/word) und am Wert (x.Bits nach dem deklarierten Typ), eine Konstante", """
             int[8] small = 3
             float[32] f = 1.5

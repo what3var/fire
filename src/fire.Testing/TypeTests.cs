@@ -165,10 +165,22 @@ static class TypeTests
         }
         Check("defined (SPEC 8.10b): ein Feld, eine lokale defined starten bei 0; ein Enum wird zur Zahl; trust bleibt ein Name, wo kein Operand folgt",
             Run("enum C { A, B }\nclass K { defined int n\ndefined float f\ndefined bool b\nstatic string S(defined int v) { return \"\" + v } }\nvar k = new K()\ndefined int d\nvar trust = 3\nprint(k.n + \" \" + k.f + \" \" + k.b + \" \" + d + \" \" + K.S(C.B!int) + \" \" + (trust + 1))") is var zero && zero == "|0 0 False 0 1 4", zero);
-        Check("defined (SPEC 8.10b): 'int!' sagt, wie es heisst; defined an einem string oder als Typargument ist ein Fehler, ein Array aus Werten (defined int a[]) oder aus strings (defined string s[], ROADMAP 19) nicht",
+        Check("defined (SPEC 8.10b): 'int!' sagt, wie es heisst; defined als Typargument ist ein Fehler, ein string (beginnt bei \"\"), ein Array aus Werten (defined int a[]) oder aus strings (defined string s[], ROADMAP 19) nicht",
             Run("class K { int! n }") is var bang && bang.StartsWith("|ERROR E3000")
-            && Run("class K { defined string s[2] }\nprint(\"[\" + new K().s[1] + \"]\")") == "|[]" && Run("class K { defined string s }").StartsWith("|ERROR") && Run("var l = new List<defined int>()").StartsWith("|ERROR")
+            && Run("class K { defined string s[2] }\nprint(\"[\" + new K().s[1] + \"]\")") == "|[]" && Run("class K { defined string s }\nprint(\"[\" + new K().s + \"]\")") == "|[]" && Run("var l = new List<defined int>()").StartsWith("|ERROR")
             && Run("class K { defined int a[3] }\nprint(new K().a[2])") == "|0", bang + " / " + Run("class K { defined int a[3] }\nprint(new K().a[2])"));
+        string maybeObj = Run("class Dog { }\nDog x\ndefined Dog d = x");
+        Check("defined fuer Objekte (SPEC 8.10b): ohne Initialisierer ein Fehler (lokal, statisch, Feld ohne Konstruktor, ein Konstruktor, der es nicht setzt); jeder Konstruktor setzt es: still; defined any ist ein Fehler; ein Wert, der undefined sein kann, ist TC022",
+            Run("class Dog { }\ndefined Dog d") is var noValue && noValue.StartsWith("|ERROR E4000")
+            && Run("class Dog { }\nclass K { static defined Dog d }").StartsWith("|ERROR E4000")
+            && Run("class Dog { }\nclass K { defined Dog d }").StartsWith("|ERROR E4000")
+            && Run("class Dog { }\nclass K { defined Dog d\n construct(Dog x) { if (x != undefined) { this.d = x } } }").StartsWith("|ERROR E4000")
+            && Run("class Dog { }\nclass K { defined Dog d\n construct() { this.d = new Dog() }\n construct(Dog x) { d = x } }\nprint(new K().d != undefined)") == "|True"
+            && Run("defined any a = 1").StartsWith("|ERROR E4000")
+            && maybeObj.StartsWith("TC022|")
+            && Run("string s\ndefined string t = s") .StartsWith("TC022|")
+            && Run("class Dog { }\ndefined Dog d = new Dog()\nd = undefined").StartsWith("TC022|")
+            && Run("class Dog { }\nDog x\nx = new Dog()\ndefined Dog d = x\nprint(1)") == "|1", noValue + " / " + maybeObj);
         Check("var a = [] hat keine Elementtypen: TC020 (any[]), int a[] = [] ist still",
             Run("var a = []\nprint(a.length)", TypeCheckMode.Strict) == "TC020|0" && Run("int a[] = []\nprint(a.length)", TypeCheckMode.Strict) == "|0");
         Check("Namen im eigenen Namespace: Parameter, Felder und Aufrufe (UI.M.Max) haben ihren Typ", Run("""

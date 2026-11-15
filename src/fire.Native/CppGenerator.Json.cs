@@ -165,6 +165,17 @@ namespace fire.Native
         /// <summary>The kind of a `defined` field for JsonFieldInfo.defined (SPEC 8.10b), "0" for any other.</summary>
         private static string DefinedKindOf(byte declared, bool derived = false) => declared != 0 && DeclaredKind.IsNonNull(declared) ? KindConstant(declared) + (derived ? " | 0x80" : "") : "0";
 
+        /// <summary>JsonFieldInfo.defined of a field `defined string`/`defined Color`/`defined Dog` (SPEC 8.10b): 0x40 | 1 a string (starts at ""), 2 an enum
+        /// (its first value), 3 an object (the text must give it); null for any other.</summary>
+        private string? DefinedTypeOf(RuntimeClass rc, string field)
+        {
+            if (rc.FindFieldRequiredType(field) is not { } text || !DeclaredType.IsNonNull(text)) return null;
+            string? name = DeclaredType.Parse(text).SingleName;
+            if (name == "string") return "0x41";
+            if (name != null && ProgramEnum(name) is { } enumType) { EnumIndex(enumType); return "0x42"; }   // (its table holds the first value)
+            return "0x43";
+        }
+
         /// <summary>The JSON row of a class (a JsonClassInfo) and the table of its fields (written to <paramref name="sb"/> as <paramref name="fieldTable"/>). A plugin
         /// (<paramref name="unitFixups"/>): the table is not const and the units of its fields are set when the plugin is registered (the program's numbers).</summary>
         private string JsonRow(ClassInfo ci, string fieldTable, int flags, StringBuilder sb, List<string>? unitFixups)
@@ -172,13 +183,14 @@ namespace fire.Native
             var rc = ci.Rc;
             var fields = JsonMethods.JsonFieldsOf(rc).Where(f => rc.FieldIndex.ContainsKey(f.Name)).ToList();
             // (behind them the `defined` fields that do not go to JSON: a read object holds their zeros too)
-            var extra = rc.FieldIndex.Keys.Where(n => fields.All(f => f.Name != n) && rc.FindFieldRequiredKind(n) is var k and not 0 && DeclaredKind.IsNonNull(k))
-                .Select(n => new JsonMethods.JsonField(n, n, "", rc.FindFieldRequiredUnit(n)?.TrimStart('#') is { Length: > 0 } demand && !demand.StartsWith("any", StringComparison.Ordinal) ? fire.Values.Unit.Parse(demand) : null)).ToList();
+            var extra = rc.FieldIndex.Keys.Where(n => fields.All(f => f.Name != n) && (rc.FindFieldRequiredKind(n) is var k and not 0 && DeclaredKind.IsNonNull(k) || DefinedTypeOf(rc, n) != null))
+                .Select(n => new JsonMethods.JsonField(n, n, DefinedTypeOf(rc, n) != null ? DeclaredType.Parse(rc.FindFieldRequiredType(n)!).SingleName ?? "" : "",
+                    rc.FindFieldRequiredUnit(n)?.TrimStart('#') is { Length: > 0 } demand && !demand.StartsWith("any", StringComparison.Ordinal) ? fire.Values.Unit.Parse(demand) : null)).ToList();
             var rows = fields.Concat(extra).ToList();
             if (rows.Count > 0)
             {
                 sb.AppendLine($"static {(unitFixups != null ? "" : "const ")}JsonFieldInfo {fieldTable}[] = {{" + string.Join(", ", rows.Select(f =>
-                    $"{{{CString(f.JsonName)}, {Math.Max(0, FieldPlace(rc, rc.FieldIndex[f.Name]).Slot)}, {CString(f.Type)}, {(unitFixups != null ? 0 : UnitId(f.Unit))}, {(rc.FindFieldRequiredUnit(f.Name) == null && rc.FindFieldRequiredArrayType(f.Name) == null ? rc.FindFieldRequiredArray(f.Name) : 0)}, {DefinedKindOf(rc.FindFieldRequiredKind(f.Name), DerivedFieldNames.Contains(f.Name) && rc.FieldWhat(f.Name) != $"Field '{f.Name}'")}, {RawPlaceOf(rc, rc.FieldIndex[f.Name])}, {FieldPlace(rc, rc.FieldIndex[f.Name]).Half}}}")) + ", {NULL, 0, NULL, 0, 0, 0, 0, 0, -1}};");
+                    $"{{{CString(f.JsonName)}, {Math.Max(0, FieldPlace(rc, rc.FieldIndex[f.Name]).Slot)}, {CString(f.Type)}, {(unitFixups != null ? 0 : UnitId(f.Unit))}, {(rc.FindFieldRequiredUnit(f.Name) == null && rc.FindFieldRequiredArrayType(f.Name) == null ? rc.FindFieldRequiredArray(f.Name) : 0)}, {DefinedTypeOf(rc, f.Name) ?? DefinedKindOf(rc.FindFieldRequiredKind(f.Name), DerivedFieldNames.Contains(f.Name) && rc.FieldWhat(f.Name) != $"Field '{f.Name}'")}, {RawPlaceOf(rc, rc.FieldIndex[f.Name])}, {FieldPlace(rc, rc.FieldIndex[f.Name]).Half}}}")) + ", {NULL, 0, NULL, 0, 0, 0, 0, 0, -1}};");
                 if (unitFixups != null)
                     for (int j = 0; j < rows.Count; j++)
                         if (UnitId(rows[j].Unit) is var u and not 0) unitFixups.Add($"{fieldTable}[{j}].unit = {UnitC(u)};");

@@ -128,7 +128,7 @@ static void s3d_gpu_unlock(void) { pthread_mutex_unlock(&g_s3dGpuLock); }
 
 /* What the shaders read (matrices row major, as the engine keeps them). Keep in step with shaders/s3d_common.glsl. The frame is a uniform block (std140); the lights and the
  * shadow maps are storage buffers (std430) of any length - there is no limit on their number but the memory of the GPU. */
-typedef struct S3dGpuLightU { int32_t info[4]; float color[4]; float pos[4]; float toLight[4]; } S3dGpuLightU;   /* info: kind, mask, first shadow map (-1: none) */
+typedef struct S3dGpuLightU { int32_t info[4]; float color[4]; float pos[4]; float toLight[4]; } S3dGpuLightU;   /* info: kind, mask, first shadow map (-1: none); toLight.w: 1/cutoff^2 */
 typedef struct S3dGpuMapU { float view[16]; float p[4]; float q[4]; float r[4]; int32_t t[4]; } S3dGpuMapU;     /* p: sx sy ox oy; q: f res ortho; r: dmin 1/range far; t: x y layer */
 typedef struct S3dGpuFrameU {
     float vp[16];
@@ -144,6 +144,7 @@ typedef struct S3dGpuObjectU {
     int32_t flags[4];   /* smooth, two sided, lit, receive shadows */
     int32_t flags2[4];  /* layers, texture, bump map, blended */
     float bump[4];      /* strength, 1/width, 1/height, filter (S3D_FILTER_*) */
+    float glow[4];      /* the emission map (set 2): strength (0: none), filter */
 } S3dGpuObjectU;
 typedef struct S3dGpuShadowPush { float model[16]; int32_t map; } S3dGpuShadowPush;
 
@@ -785,7 +786,7 @@ static int s3d_gpu_layouts(void) {
     VkDescriptorSetLayoutBinding b[5];
     VkDescriptorSetLayoutCreateInfo li;
     VkPipelineLayoutCreateInfo pi;
-    VkDescriptorSetLayout sets[2];
+    VkDescriptorSetLayout sets[3];
     VkPushConstantRange pc;
     VkDescriptorPoolSize sizes[4];
     VkDescriptorPoolCreateInfo dp;
@@ -808,10 +809,11 @@ static int s3d_gpu_layouts(void) {
     b[1].binding = 1; b[1].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER; b[1].descriptorCount = 1; b[1].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
     li.bindingCount = 2;
     if (!s3d_gpu_check(g_s3dVk.vkCreateDescriptorSetLayout(g_s3dVk.device, &li, NULL, &g_s3dVk.setTex), "vkCreateDescriptorSetLayout")) return 0;
-    sets[0] = g_s3dVk.setFrame; sets[1] = g_s3dVk.setTex;
+    /* set 2, the emission map: a texture's set as set 1 (its colours; the bump map is not read) */
+    sets[0] = g_s3dVk.setFrame; sets[1] = g_s3dVk.setTex; sets[2] = g_s3dVk.setTex;
     memset(&pi, 0, sizeof pi);
     pi.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
-    pi.setLayoutCount = 2;
+    pi.setLayoutCount = 3;
     pi.pSetLayouts = sets;
     if (!s3d_gpu_check(g_s3dVk.vkCreatePipelineLayout(g_s3dVk.device, &pi, NULL, &g_s3dVk.layoutMain), "vkCreatePipelineLayout")) return 0;
     /* the shadow maps: set 0 and the model matrix and the map as push constants */
@@ -1245,13 +1247,14 @@ static void s3d_gpu_draw(const S3dBatch* b, size_t objectIndex, int cull, int bl
     VkPipeline pipe = s3d_gpu_pipeline(0, cull, blend, depthWrite);
     const S3dGpuMesh* m = (const S3dGpuMesh*)b->mesh->gpu;
     const S3dGpuTex* t = b->tex ? (const S3dGpuTex*)b->tex->gpu : &g_s3dVk.dummy;
-    VkDescriptorSet sets[2];
+    const S3dGpuTex* g = b->s.emissiveTex ? (const S3dGpuTex*)b->s.emissiveTex->gpu : &g_s3dVk.dummy;
+    VkDescriptorSet sets[3];
     uint32_t offset = (uint32_t)(objectIndex * g_s3dVk.objectStride);
     VkDeviceSize zero = 0;
-    if (!pipe || !m || !t) return;
-    sets[0] = g_s3dVk.frameSet; sets[1] = t->set;
+    if (!pipe || !m || !t || !g) return;
+    sets[0] = g_s3dVk.frameSet; sets[1] = t->set; sets[2] = g->set;
     g_s3dVk.vkCmdBindPipeline(g_s3dVk.cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipe);
-    g_s3dVk.vkCmdBindDescriptorSets(g_s3dVk.cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, g_s3dVk.layoutMain, 0, 2, sets, 1, &offset);
+    g_s3dVk.vkCmdBindDescriptorSets(g_s3dVk.cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, g_s3dVk.layoutMain, 0, 3, sets, 1, &offset);
     g_s3dVk.vkCmdBindVertexBuffers(g_s3dVk.cmd, 0, 1, &m->vb.buf, &zero);
     g_s3dVk.vkCmdBindIndexBuffer(g_s3dVk.cmd, m->ib.buf, 0, VK_INDEX_TYPE_UINT32);
     g_s3dVk.vkCmdDrawIndexed(g_s3dVk.cmd, m->indexCount, 1, 0, 0, 0);
@@ -1380,7 +1383,7 @@ static int s3d_gpu_frameUniforms(S3dFrame* f, const S3dCamera* cam, S3dVec3 lo, 
         g->info[2] = L->shadow >= 0 && L->shadow < ctx->shadowN && g_s3dVk.tiles[firstMap[L->shadow]].layer >= 0 ? firstMap[L->shadow] : -1;
         g->color[0] = L->color.x; g->color[1] = L->color.y; g->color[2] = L->color.z;
         g->pos[0] = L->pos.x; g->pos[1] = L->pos.y; g->pos[2] = L->pos.z; g->pos[3] = L->invRange;
-        g->toLight[0] = L->toLight.x; g->toLight[1] = L->toLight.y; g->toLight[2] = L->toLight.z;
+        g->toLight[0] = L->toLight.x; g->toLight[1] = L->toLight.y; g->toLight[2] = L->toLight.z; g->toLight[3] = L->invCutoff2;
     }
     free(firstMap);
     u->counts[0] = (int32_t)n;
@@ -1404,6 +1407,7 @@ static void s3d_gpu_objectUniforms(const S3dBatch* b, S3dGpuObjectU* o) {
     o->flags2[0] = s->layers; o->flags2[1] = b->tex != NULL; o->flags2[2] = b->bumpWanted; o->flags2[3] = b->blended;
     o->bump[0] = s->bump;
     if (b->tex) { o->bump[1] = 1.0f / (float)b->tex->w; o->bump[2] = 1.0f / (float)b->tex->h; o->bump[3] = (float)b->tex->filter; }
+    if (s->emissiveTex) { o->glow[0] = s->emissiveStrength; o->glow[1] = (float)s->emissiveTex->filter; }
 }
 
 /* Draws the queue: 1 when the picture is in `rgba`, 2 when it stays on the GPU for the windows of the camera (DirectDrawing), 0 when the GPU cannot draw it. */
@@ -1428,6 +1432,7 @@ static int s3d_gpu_flushLocked(uint8_t* rgba, S3dFrame* f, const S3dCamera* cam,
         S3dBatch* b = &f->batches[i];
         if (!s3d_gpu_meshFor((S3dMesh*)b->mesh)) return 0;
         if (b->tex && !s3d_gpu_texFor((S3dTexture*)b->tex)) return 0;
+        if (b->s.emissiveTex && !s3d_gpu_texFor((S3dTexture*)b->s.emissiveTex)) return 0;
         if (st->shadows && b->s.castShadows && !b->blended && b->mesh->posN >= 3) { s3d_gpu_bounds(b, &lo, &hi); anyCaster = 1; }
     }
     /* the shadow maps (planned as the software renderer plans them) and the lights */

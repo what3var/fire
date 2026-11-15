@@ -3,8 +3,8 @@
  * Particles: an emitter has a pool of a fixed size (no memory per particle and picture). It makes particles at its place (in a box around it, `area`), sends them
  * in a cone around a direction, and moves them on with gravity and drag; a particle lives for its lifetime and goes from its first colour and size to its last.
  * Its chance comes from its own generator (seed): the same steps give the same particles in the VM and in a native build.
- * They are drawn after the triangles, into the finished pixels, as soft discs that face the camera - tested against the depth of the picture, not written
- * into it - added (fire, sparks: they light up) or blended (smoke, rain, snow). The lean renderer does it band by band, also into a palette picture
+ * They are drawn after the triangles, into the finished pixels, as soft discs that face the camera - or, with a stretch, as soft streaks along the way they fly
+ * (rain) - tested against the depth of the picture, not written into it - added (fire, sparks: they light up) or blended (smoke, rain, snow). The lean renderer does it band by band, also into a palette picture
  * (the colour that comes out is looked up in the palette).
  *
  * Effects on the whole picture: fog (from a distance on, the picture goes into the fog colour; what no object covers is fog) and a tint (the whole picture
@@ -20,7 +20,7 @@
 enum {
     S3D_EM_RATE = 0, S3D_EM_LIFE, S3D_EM_LIFEVAR, S3D_EM_SPEED, S3D_EM_SPEEDVAR, S3D_EM_SPREAD, S3D_EM_DIRX, S3D_EM_DIRY, S3D_EM_DIRZ,
     S3D_EM_GRAVX, S3D_EM_GRAVY, S3D_EM_GRAVZ, S3D_EM_DRAG, S3D_EM_SIZE0, S3D_EM_SIZE1, S3D_EM_AREAX, S3D_EM_AREAY, S3D_EM_AREAZ,
-    S3D_EM_MAX, S3D_EM_ADDITIVE, S3D_EM_RUNNING, S3D_EM_COUNT_SETTINGS
+    S3D_EM_MAX, S3D_EM_ADDITIVE, S3D_EM_RUNNING, S3D_EM_STRETCH, S3D_EM_COUNT_SETTINGS
 };
 
 typedef struct S3dParticle { float x, y, z, vx, vy, vz, age, life; } S3dParticle;
@@ -81,14 +81,15 @@ static void s3d_emitterSpawn(S3dEmitter* e, S3dVec3 origin) {
 }
 
 /* The ready emitters of scene3d.effects (kind 0 fire, 1 smoke, 2 sparks, 3 rain, 4 snow, 5 an explosion; `size`: the square of rain and snow, the particles of an
- * explosion): rate, life, its variation, speed, its variation, spread, direction, gravity, drag, sizes, area, max, additive, running - and the two colours. */
+ * explosion): rate, life, its variation, speed, its variation, spread, direction, gravity, drag, sizes, area, max, additive, running, stretch - and the two colours.
+ * (Rain is drawn as streaks: 8 m/s for 0.04 s are 32 cm.) */
 static const float s3d_presetSettings[6][S3D_EM_COUNT_SETTINGS] = {
-    { 60, 0.8f, 0.3f, 1.2f, 0.3f, 0.35f, 0, 1, 0, 0, 0, 0, 0.5f, 0.35f, 0.05f, 0.15f, 0, 0.15f, 200, 1, 1 },
-    { 12, 3, 0.3f, 0.6f, 0.3f, 0.26f, 0, 1, 0, 0, 0, 0, 0.3f, 0.3f, 1.2f, 0.1f, 0, 0.1f, 200, 0, 1 },
-    { 40, 0.7f, 0.3f, 4, 0.3f, 0.61f, 0, 1, 0, 0, -9.81f, 0, 0, 0.06f, 0.02f, 0, 0, 0, 200, 1, 1 },
-    { 300, 1.5f, 0.1f, 8, 0.1f, 0.017f, 0, -1, 0, 0, 0, 0, 0, 0.04f, 0.04f, 5, 0, 5, 600, 0, 1 },
-    { 60, 6, 0.3f, 0.8f, 0.3f, 0.44f, 0, -1, 0, 0, 0, 0, 0, 0.08f, 0.08f, 5, 0, 5, 500, 0, 1 },
-    { 0, 1, 0.3f, 5, 0.5f, 3.1415927f, 0, 1, 0, 0, 0, 0, 2, 0.5f, 0.1f, 0, 0, 0, 150, 1, 0 }
+    { 60, 0.8f, 0.3f, 1.2f, 0.3f, 0.35f, 0, 1, 0, 0, 0, 0, 0.5f, 0.35f, 0.05f, 0.15f, 0, 0.15f, 200, 1, 1, 0 },
+    { 12, 3, 0.3f, 0.6f, 0.3f, 0.26f, 0, 1, 0, 0, 0, 0, 0.3f, 0.3f, 1.2f, 0.1f, 0, 0.1f, 200, 0, 1, 0 },
+    { 40, 0.7f, 0.3f, 4, 0.3f, 0.61f, 0, 1, 0, 0, -9.81f, 0, 0, 0.06f, 0.02f, 0, 0, 0, 200, 1, 1, 0 },
+    { 300, 1.5f, 0.1f, 8, 0.1f, 0.017f, 0, -1, 0, 0, 0, 0, 0, 0.02f, 0.02f, 5, 0, 5, 600, 0, 1, 0.04f },
+    { 60, 6, 0.3f, 0.8f, 0.3f, 0.44f, 0, -1, 0, 0, 0, 0, 0, 0.08f, 0.08f, 5, 0, 5, 500, 0, 1, 0 },
+    { 0, 1, 0.3f, 5, 0.5f, 3.1415927f, 0, 1, 0, 0, 0, 0, 2, 0.5f, 0.1f, 0, 0, 0, 150, 1, 0, 0 }
 };
 static const uint32_t s3d_presetColors[6][2] = {
     { 0xE63CC8FFu, 0x000A1EC8u }, { 0x966E6E6Eu, 0x00969696u }, { 0xFFA0F0FFu, 0x001478FFu },
@@ -162,15 +163,16 @@ static void s3d_fxPut(const S3dFxTarget* t, uint8_t* p, const float* c) {
 }
 static uint8_t* s3d_fxAt(const S3dFxTarget* t, int x, int y) { return t->px + ((s3d_size)(y - t->y0) * (s3d_size)t->w + (s3d_size)x) * (s3d_size)t->bpp; }
 
-/* A particle on the screen: where, how big, its colour (RGB 0..255 and alpha 0..1), how far (w). */
-typedef struct S3dSplat { float sx, sy, radius, w, r, g, b, a; int additive; } S3dSplat;
+/* A particle on the screen: where, how big, its colour (RGB 0..255 and alpha 0..1), how far (w); a streak also has its other end (ex, ey, ew: where the particle was
+ * `stretch` seconds before) - else ex, ey is where it is. y0..y1: the rows it can touch. */
+typedef struct S3dSplat { float sx, sy, radius, w, r, g, b, a; int additive; int streak; float ex, ey, ew, y0, y1; } S3dSplat;
 
 /* 0: behind the camera, too small, transparent. vp: the camera's view and projection, tf = 1 / tan(fov / 2). */
 static int s3d_splatOf(const S3dEmitter* e, const S3dParticle* p, const S3dMat4* vp, float tf, int w, int h, float nearPlane, S3dSplat* out) {
     float cx = S3D_AT(*vp, 0, 0) * p->x + S3D_AT(*vp, 0, 1) * p->y + S3D_AT(*vp, 0, 2) * p->z + S3D_AT(*vp, 0, 3);
     float cy = S3D_AT(*vp, 1, 0) * p->x + S3D_AT(*vp, 1, 1) * p->y + S3D_AT(*vp, 1, 2) * p->z + S3D_AT(*vp, 1, 3);
     float cw = S3D_AT(*vp, 3, 0) * p->x + S3D_AT(*vp, 3, 1) * p->y + S3D_AT(*vp, 3, 2) * p->z + S3D_AT(*vp, 3, 3);
-    float t = p->age / p->life, size;
+    float t = p->age / p->life, size, stretch = e->st[S3D_EM_STRETCH], xa, xb;
     uint32_t c0 = e->color0, c1 = e->color1;
     if (cw <= nearPlane) return 0;
     size = e->st[S3D_EM_SIZE0] + (e->st[S3D_EM_SIZE1] - e->st[S3D_EM_SIZE0]) * t;
@@ -178,12 +180,35 @@ static int s3d_splatOf(const S3dEmitter* e, const S3dParticle* p, const S3dMat4*
     out->sy = (1.0f - (cy / cw * 0.5f + 0.5f)) * (float)h;
     out->radius = size * 0.5f * tf * (float)h * 0.5f / cw;
     out->w = cw;
+    out->streak = 0;
+    out->ex = out->sx; out->ey = out->sy; out->ew = cw;
+    if (stretch > 0 && (p->vx != 0 || p->vy != 0 || p->vz != 0)) {
+        /* a streak: from where the particle is back to where it was `stretch` seconds ago (cut where that end comes too near to the camera) */
+        float tx = p->x - p->vx * stretch, ty = p->y - p->vy * stretch, tz = p->z - p->vz * stretch;
+        float ux = S3D_AT(*vp, 0, 0) * tx + S3D_AT(*vp, 0, 1) * ty + S3D_AT(*vp, 0, 2) * tz + S3D_AT(*vp, 0, 3);
+        float uy = S3D_AT(*vp, 1, 0) * tx + S3D_AT(*vp, 1, 1) * ty + S3D_AT(*vp, 1, 2) * tz + S3D_AT(*vp, 1, 3);
+        float uw = S3D_AT(*vp, 3, 0) * tx + S3D_AT(*vp, 3, 1) * ty + S3D_AT(*vp, 3, 2) * tz + S3D_AT(*vp, 3, 3);
+        float limit = nearPlane * 1.01f;
+        if (uw < limit) {
+            float k = (cw - limit) / (cw - uw);
+            ux = cx + (ux - cx) * k; uy = cy + (uy - cy) * k; uw = limit;
+        }
+        out->ex = (ux / uw * 0.5f + 0.5f) * (float)w;
+        out->ey = (1.0f - (uy / uw * 0.5f + 0.5f)) * (float)h;
+        out->ew = uw;
+        if ((out->ex - out->sx) * (out->ex - out->sx) + (out->ey - out->sy) * (out->ey - out->sy) >= 0.25f) out->streak = 1;
+        else { out->ex = out->sx; out->ey = out->sy; out->ew = cw; }   /* (shorter than half a pixel: a disc) */
+    }
     out->r = (float)(c0 & 255) + ((float)(c1 & 255) - (float)(c0 & 255)) * t;
     out->g = (float)((c0 >> 8) & 255) + ((float)((c1 >> 8) & 255) - (float)((c0 >> 8) & 255)) * t;
     out->b = (float)((c0 >> 16) & 255) + ((float)((c1 >> 16) & 255) - (float)((c0 >> 16) & 255)) * t;
     out->a = ((float)((c0 >> 24) & 255) + ((float)((c1 >> 24) & 255) - (float)((c0 >> 24) & 255)) * t) / 255.0f;
     out->additive = e->st[S3D_EM_ADDITIVE] != 0;
-    return out->radius > 0.05f && out->a > 0.002f && out->sx + out->radius >= 0 && out->sx - out->radius <= (float)w && out->sy + out->radius >= 0 && out->sy - out->radius <= (float)h;
+    /* a thin streak stays a pixel wide and gets fainter instead (a line thinner than a pixel would fall between the pixel centres) */
+    if (out->streak && out->radius < 0.75f) { out->a *= out->radius / 0.75f; out->radius = 0.75f; }
+    xa = s3d_minf(out->sx, out->ex) - out->radius; xb = s3d_maxf(out->sx, out->ex) + out->radius;
+    out->y0 = s3d_minf(out->sy, out->ey) - out->radius; out->y1 = s3d_maxf(out->sy, out->ey) + out->radius;
+    return out->radius > 0.05f && out->a > 0.002f && xb >= 0 && xa <= (float)w && out->y1 >= 0 && out->y0 <= (float)h;
 }
 
 /* The fog over a distance: 0 none .. 1 all fog. */
@@ -229,14 +254,48 @@ static void s3d_fogPrepare(const S3dFxTarget* t, S3dFx* fx) {
     }
 }
 
-/* One splat into the rows of the target, behind what is nearer: a soft disc (full in the middle, nothing at the edge), added (it lights up) or blended; the fog
- * is applied to the particle itself. */
+/* A streak: a soft line from (sx, sy) to (ex, ey), `radius` wide on both sides with round ends (full on the line, nothing at the edge), fainter towards its old end;
+ * its depth goes from w to ew along it. */
+static void s3d_streakDraw(const S3dFxTarget* t, const S3dSplat* s, const float* q) {
+    int xa = s3d_maxi(0, (int)floorf(s3d_minf(s->sx, s->ex) - s->radius)), xb = s3d_mini(t->w - 1, (int)ceilf(s3d_maxf(s->sx, s->ex) + s->radius));
+    int ya = s3d_maxi(t->y0, (int)floorf(s->y0)), yb = s3d_mini(t->y1, (int)ceilf(s->y1)), x, y;
+    float lx = s->ex - s->sx, ly = s->ey - s->sy, inv = 1.0f / (s->radius * s->radius), invLen2 = 1.0f / (lx * lx + ly * ly), c[3];
+    for (y = ya; y <= yb; y++) {
+        float dy = (float)y + 0.5f - s->sy;
+        for (x = xa; x <= xb; x++) {
+            float dx = (float)x + 0.5f - s->sx, along = (dx * lx + dy * ly) * invLen2, ox, oy, d, k, behind;
+            uint8_t* p;
+            if (along < 0) along = 0;
+            if (along > 1) along = 1;
+            ox = dx - lx * along; oy = dy - ly * along;
+            d = (ox * ox + oy * oy) * inv;
+            if (d >= 1) continue;
+            behind = s3d_fxDistance(t, x, y);
+            if (behind > 0 && behind <= s->w + (s->ew - s->w) * along) continue;
+            k = q[3] * (1 - d) * (1 - 0.5f * along);
+            p = s3d_fxAt(t, x, y);
+            s3d_fxGet(t, p, c);
+            if (s->additive) { c[0] += q[0] * k; c[1] += q[1] * k; c[2] += q[2] * k; }
+            else { c[0] += (q[0] - c[0]) * k; c[1] += (q[1] - c[1]) * k; c[2] += (q[2] - c[2]) * k; }
+            s3d_fxPut(t, p, c);
+        }
+    }
+}
+
+/* One splat into the rows of the target, behind what is nearer: a soft disc (full in the middle, nothing at the edge) or a streak, added (it lights up) or blended;
+ * the fog is applied to the particle itself. */
 static void s3d_splatDraw(const S3dFxTarget* t, const S3dSplat* s, const S3dFx* fx) {
     int xa = s3d_maxi(0, (int)floorf(s->sx - s->radius)), xb = s3d_mini(t->w - 1, (int)ceilf(s->sx + s->radius));
     int ya = s3d_maxi(t->y0, (int)floorf(s->sy - s->radius)), yb = s3d_mini(t->y1, (int)ceilf(s->sy + s->radius)), x, y;
     float inv = 1.0f / (s->radius * s->radius), fog = s3d_fogFactor(s->w, fx->fogStart, fx->fogEnd), c[3], q[3];
     uint32_t fc = fx->fogColor;
     q[0] = s->r + ((float)(fc & 255) - s->r) * fog; q[1] = s->g + ((float)((fc >> 8) & 255) - s->g) * fog; q[2] = s->b + ((float)((fc >> 16) & 255) - s->b) * fog;
+    if (s->streak) {
+        float qa[4];
+        qa[0] = q[0]; qa[1] = q[1]; qa[2] = q[2]; qa[3] = s->additive ? s->a * (1 - fog) : s->a;
+        s3d_streakDraw(t, s, qa);
+        return;
+    }
     for (y = ya; y <= yb; y++) {
         float dy = (float)y + 0.5f - s->sy;
         for (x = xa; x <= xb; x++) {
@@ -291,7 +350,7 @@ static void s3d_fxApply(const S3dFxTarget* t, S3dFx* fx) {
     }
     for (i = 0; i < fx->splatN; i++) {
         const S3dSplat* s = &fx->splats[i];
-        if (s->sy + s->radius >= (float)t->y0 && s->sy - s->radius <= (float)t->y1 + 1) s3d_splatDraw(t, s, fx);
+        if (s->y1 >= (float)t->y0 && s->y0 <= (float)t->y1 + 1) s3d_splatDraw(t, s, fx);
     }
     if (fx->tint > 0) {
         float k = fx->tint > 1 ? 1 : fx->tint;

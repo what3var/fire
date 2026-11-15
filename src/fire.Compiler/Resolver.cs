@@ -1184,7 +1184,32 @@ namespace fire.Compiler
             bool classArray = arrayRanks > 0 && type is { PointerDepth: 0, LambdaSignature: null } && type.BaseName is not ("any" or "class" or "var" or "undefined" or "lambda");
             if (type.ArrayRank > 0 || arrayRanks > 0 && fire.Values.ArrayElem.Of(type) == 0 && !classArray)
                 throw new ResolverException($"'defined {type.BaseName}' is a value that is never undefined - an array of them is written 'defined {type.BaseName} name[]' (int, float, bool, char, byte, word)", line);
+            // (`defined string s`, `defined Dog d`, `defined Color c`: never undefined - not `any`, `var` or a lambda, which name no type to hold)
+            if (arrayRanks == 0 && (type.LambdaSignature != null || type.BaseName is "any" or "class" or "var" or "undefined" or "lambda" || type.IsInferred))
+                throw new ResolverException($"'defined' needs a type that says what the value is - '{type.BaseName}' takes anything (write 'defined int', 'defined string', a class, an interface or an enum)", line);
         }
+
+        /// <summary>A field `defined Dog d` without an initializer (SPEC 8.10b): every constructor of the class sets it - as one of its statements (not inside
+        /// a branch or a loop: `this.d = x`, `d = x`, `if (this.d = try take x)`); a static one, or a class without a constructor, needs the initializer.</summary>
+        private static void CheckDefinedObjectField(ClassDecl cd, FieldDecl fd)
+        {
+            string written = $"'defined {fd.Type!.BaseName} {fd.Name}'";
+            if (fd.IsStatic) throw new ResolverException($"{written} needs a value: an object has no zero to start with (write 'static defined {fd.Type.BaseName} {fd.Name} = ...')", fd.Line);
+            var ctors = cd.Members.OfType<ConstructorDecl>().ToList();
+            if (ctors.Count == 0)
+                throw new ResolverException($"{written} needs a value: an object has no zero to start with - give it an initializer or set it in a constructor", fd.Line);
+            bool Sets(Expr e) => e is AssignExpr { Target: IdentifierExpr { Name: var n } } && n == fd.Name
+                || e is AssignExpr { Target: MemberExpr { Target: ThisExpr, Name: var m } } && m == fd.Name;
+            foreach (var ctor in ctors)
+                if (!ctor.Body.Statements.Any(st => st is ExprStmt { Expression: var e } && Sets(e) || st is IfStmt { Condition: var c } && Sets(c)))
+                    throw new ResolverException($"{written} has no zero to start with: the constructor in line {ctor.Line} must set it (this.{fd.Name} = ...), or the field needs an initializer", ctor.Line);
+        }
+
+        /// <summary>`defined Dog d` (SPEC 8.10b): an object has no zero to start with - a declaration of a class, an interface or a record needs its value;
+        /// `defined string` starts at "", a defined enum at its first value, a number at 0.</summary>
+        private bool HasNoZero(TypeRef? type, int arrayRanks) =>
+            type is { NonNull: true, PointerDepth: 0, ArrayRank: 0, LambdaSignature: null } && arrayRanks == 0 && fire.Bytecode.DeclaredKind.Of(type) == 0
+            && type.BaseName != "string" && !IsEnumTypeName(type.BaseName);
 
         /// <summary>Validates a complete TypeRef: base name like
         /// ValidateTypeName, plus - if present - that a bit width only stands with
@@ -1471,6 +1496,8 @@ namespace fire.Compiler
                     if (vd.Initializer != null) ResolveExprAllowTake(vd.Initializer);
                     if (vd.Type != null) ValidateTypeRef(vd.Type, vd.Line);
                     ValidateNonNull(vd.Type, vd.ArrayRanks.Count, vd.Line);
+                    if (vd.Initializer == null && HasNoZero(vd.Type, vd.ArrayRanks.Count))
+                        throw new ResolverException($"'defined {vd.Type!.BaseName} {vd.Name}' needs a value: an object has no zero to start with (write 'defined {vd.Type.BaseName} {vd.Name} = ...')", vd.Line);
                     ResolveArrayRanks(vd.ArrayRanks);
                     if (vd.Initializer == null && vd.ArrayRanks.Count == 0 && (vd.Type == null || vd.Type.IsInferred))
                         throw new ResolverException($"'var {vd.Name}' needs an initializer: the type of a 'var' comes from its value (or declare it with a type: 'int {vd.Name}')", vd.Line);
@@ -1793,6 +1820,8 @@ namespace fire.Compiler
                                 AddError(new ResolverException($"Field '{fd.Name}' of class '{cd.Name}' needs a type: a field is not declared with 'var' (use the type it holds, or 'any' if every type is allowed)", fd.Line));
                             else Guard(() => ValidateTypeRef(fd.Type, fd.Line));
                             Guard(() => ValidateNonNull(fd.Type, fd.ArrayRanks.Count, fd.Line));
+                            if (fd.Initializer == null && HasNoZero(fd.Type, fd.ArrayRanks.Count))
+                                Guard(() => CheckDefinedObjectField(cd, fd));
                             ResolveArrayRanks(fd.ArrayRanks);
                             ResolveFieldInitializer(fd);
                             break;

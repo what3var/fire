@@ -1097,6 +1097,9 @@ namespace fire.Compiler
 
         /// <summary>A declaration of the code being checked: a value type declared without `defined` may hold undefined (a parameter that is not passed, a field
         /// or a variable that was never given a value).</summary>
+        /// <summary>An object, a string or a value of an enum (not a number): `defined Dog d` takes none that may be undefined (SPEC 8.10b).</summary>
+        private static bool HoldsUndefinedAsObject(StaticType type) => type.Kind is StaticKind.Class or StaticKind.Object or StaticKind.String or StaticKind.Enum;
+
         private static StaticType MayBeUndefined(StaticType type) =>
             type.IsValueKind && type.Null == Nullness.Unknown ? type.WithNull(Nullness.MayBeUndefined) : type;
 
@@ -1864,6 +1867,9 @@ namespace fire.Compiler
                 // (a local is as defined as what it was given - SPEC 8.10b: `int s = 0` holds a number until something that may be undefined goes in)
                 if (target.IsValueKind && target.Null != Nullness.Defined && v.ArrayRanks.Count == 0)
                     target = target.WithNull(v.Initializer == null ? Nullness.MayBeUndefined : init.Null is Nullness.Defined or Nullness.Inferred ? Nullness.Inferred : init.Null);
+                // (an object or a string declared without a value is undefined - TC022 where it goes into a `defined` one; with a value it is as known as that)
+                else if (HoldsUndefinedAsObject(target) && target.Null != Nullness.Defined && v.ArrayRanks.Count == 0)
+                    target = target.WithNull(v.Initializer == null ? Nullness.MayBeUndefined : init.Null is Nullness.Defined or Nullness.Inferred ? Nullness.Inferred : init.Null);
                 Declare(v.Name, target);
                 if (v.ArrayRanks.Count == 0 && v.Type is { ArrayRank: 0, PointerDepth: 0 } localType) DeclareLocalType(v.Name, localType);
             }
@@ -2513,6 +2519,10 @@ namespace fire.Compiler
             if (a.Target is IdentifierExpr assigned && target.IsValueKind && target.Null != Nullness.Defined)
                 for (int i = _scopes.Count - 1; i >= 0; i--)
                     if (_scopes[i].TryGetValue(assigned.Name, out var current)) { _scopes[i][assigned.Name] = current.WithNull(value.Null is Nullness.Defined or Nullness.Inferred ? Nullness.Inferred : Nullness.MayBeUndefined); break; }
+            // (an object or a string: as known as its last value - an object made with `new` says nothing, `undefined` that it may be)
+            if (a.Target is IdentifierExpr assignedObj && HoldsUndefinedAsObject(target) && target.Null != Nullness.Defined)
+                for (int i = _scopes.Count - 1; i >= 0; i--)
+                    if (_scopes[i].TryGetValue(assignedObj.Name, out var current)) { _scopes[i][assignedObj.Name] = current.WithNull(value.Null is Nullness.Defined or Nullness.Inferred ? Nullness.Inferred : value.Null); break; }
             // (`a = try take x` gives whether the ownership moved - `if (this.a = try take x)`, SPEC 2.2)
             if (a.Value is UnaryExpr { Op: UnaryOp.TryTake }) return StaticType.Bool.WithNull(Nullness.Defined);
             return target.IsDynamic ? value : target;

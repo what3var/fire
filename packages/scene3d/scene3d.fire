@@ -293,6 +293,9 @@ class Light {
     defined float Z : m { get { return __S3DGetF(this.h, 3) * 1m } set { __S3DSetF(this.h, 3, S3D.Length(value)) } }
     // The distance at which a point light has half of its strength.
     defined float Range : m { get { return __S3DGetF(this.h, 7) * 1m } set { __S3DSetF(this.h, 7, S3D.Length(value)) } }
+    // The end of a point light: from this distance on it lights nothing (its light fades smoothly to 0 there). 0m (default): no end - it reaches everything, weaker and
+    // weaker. With an end, only the parts of the picture that it can reach look at it: hundreds of small lights (street lamps) cost little more than a few.
+    defined float Cutoff : m { get { return __S3DGetF(this.h, 8) * 1m } set { __S3DSetF(this.h, 8, S3D.Length(value)) } }
     // false: the light is off (it lights nothing and casts no shadow).
     defined bool Enabled { get { return __S3DGetB(this.h, 2) } set { __S3DSetI(this.h, 2, value) } }
     // Whether what the light hits throws shadows (the scene's Shadows has to be on, too).
@@ -305,6 +308,7 @@ class Light {
 class Object {
     defined int h
     Texture texture
+    Texture emissiveTexture
     Material material
     string Key
 
@@ -441,6 +445,26 @@ class Object {
             __S3DObjTexture(this.h, t)
         }
     }
+
+    // An emission map: a texture on the same texture coordinates as Texture (its mapping: TextureWidth, TextureX, ...) whose colours the surface gives off by
+    // itself - added to the lit colour (also at night, also in the shadow), times its alpha and EmissiveStrength; black adds nothing. Lit windows in a house:
+    // the windows of the night picture bright, the rest black. undefined: none.
+    Texture EmissiveTexture {
+        get { return this.emissiveTexture }
+        set {
+            if (value != undefined) { try value.TakeTo(this) }
+            this.emissiveTexture = value
+            var t = 0
+            if (value != undefined) { t = value.handle }
+            __S3DObjEmissiveTexture(this.h, t)
+        }
+    }
+    // How strongly the emission map shines (default 1; 0: not at all - lights on at night, off by day; above 1: brighter).
+    defined float EmissiveStrength { get { return __S3DGetF(this.h, 24) } set { __S3DSetF(this.h, 24, value) } }
+    // How much the surface mirrors what is above it (0 default: nothing .. 1): wet streets, puddles, water, a polished floor. A reflection in the picture itself
+    // (screen space: what the camera does not see is not mirrored - there it shows the background or the fog), on the parts that face up, stronger at a grazing
+    // view (fresnel). Only the software renderer draws it; 0 costs nothing.
+    defined float Reflectivity { get { return __S3DGetF(this.h, 25) } set { __S3DSetF(this.h, 25, value) } }
 
     Material Material {
         get { return this.material }
@@ -619,6 +643,9 @@ class Scene {
     defined int Threads { get { return __S3DGetI(this.h, 3) } set { __S3DSetI(this.h, 3, value) } }
     // RenderMode.Software (default) or RenderMode.Hardware: the GPU draws (Vulkan), where there is one; else the software renderer.
     RenderMode Renderer { get { return __S3DGetI(this.h, 4)!RenderMode } set { __S3DSetI(this.h, 4, value!int) } }
+    // true (default): each part of the picture looks only at the point lights that can reach it (the ones with a Light.Cutoff); false: every pixel looks at every light -
+    // the same picture, only slower (for comparisons).
+    defined bool LightCulling { get { return __S3DGetB(this.h, 7) } set { __S3DSetI(this.h, 7, value) } }
 
     // ---- the effects on the whole picture ----
     // Fog: from `start` on, the picture goes into the colour, from `end` on it is all fog - also where no object is (the background). It hides the end of the
