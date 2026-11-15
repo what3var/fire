@@ -29190,6 +29190,63 @@ else
             z[0] = nanv
             print(z[0])
             """),
+        ("Arrays mit jedem Typ (SPEC 8.4.2): Klassen (auch Unterklassen), Interfaces, Records, string, Enums, als Feld und Parameter; falsche Elemente und Arrays einer anderen Klasse sind eine ArgumentException, defined string beginnt bei \"\", ein defined Enum beim ersten Wert, ein defined Klassen-Array nur mit allen Elementen", """
+            interface IShape { float Area() }
+            class Animal { string name; construct(string n) { this.name = n } }
+            class Dog : Animal { construct(string n) : base(n) { } }
+            class Cat : Animal { construct(string n) : base(n) { } }
+            class Sq : IShape { float s; construct(float s) { this.s = s } float Area() { return this.s * this.s } }
+            record Pt { int x; int y; construct(int x, int y) { this.x = x; this.y = y } }
+            enum Color { Red, Green, Blue }
+            class Zoo {
+                Dog dogs[]
+                defined string tags[]
+                construct() { this.dogs = new Dog[2]; this.tags = new string[2] }
+                static int Count(Dog ds[]) { int n = 0; foreach (d in ds) { if (d != undefined) { n++ } } return n }
+            }
+            any cat = new Cat("Tom")
+            any dog = new Dog("x")
+            any text = "nein"
+            any three = 3
+            any none = undefined
+            Dog pets[] = new Dog[3]
+            pets[0] = new Dog("Rex")
+            try { pets[1] = cat } catch (ArgumentException e) { print("E1 " + e.message) }
+            try { pets[2] = text } catch (ArgumentException e) { print("E2 " + e.message) }
+            print(pets[0].name + " " + pets[1] + " " + pets.length + " " + Zoo.Count(pets))
+            Animal all[] = [new Dog("a"), new Cat("b")]
+            print(all[1].name)
+            IShape shapes[] = [new Sq(2.0)]
+            try { shapes[0] = dog } catch (ArgumentException e) { print("E3 " + e.message) }
+            print(shapes[0].Area())
+            string names[] = ["x", "y"]
+            try { names[0] = three } catch (ArgumentException e) { print("E4 " + e.message) }
+            defined string ds[] = new string[2]
+            print("[" + ds[0] + "]" + ds.length)
+            try { ds[1] = none } catch (ArgumentException e) { print("E5 " + e.message) }
+            Color cs[] = [Color.Red, Color.Blue]
+            try { cs[0] = three } catch (ArgumentException e) { print("E6 " + e.message) }
+            defined Color dc[] = new Color[2]
+            print(dc[0] + " " + dc[1])
+            Pt ps[] = new Pt[1]
+            try { ps[0] = dog } catch (ArgumentException e) { print("E7 " + e.message) }
+            ps[0] = new Pt(1, 2)
+            print(ps[0].x + ps[0].y)
+            try { defined Dog dd[] = new Dog[2] } catch (ArgumentException e) { print("E8 " + e.message) }
+            defined Dog full[] = [new Dog("f1"), new Dog("f2")]
+            print(full[1].name)
+            class Tagged { defined string names[3]
+                defined Color colors[2] }
+            var tg = new Tagged()
+            print("[" + tg.names[2] + "]" + tg.names.length + " " + tg.colors[1])
+            var z = new Zoo()
+            try { z.dogs[0] = cat } catch (ArgumentException e) { print("E9 " + e.message) }
+            print("[" + z.tags[1] + "]")
+            any petsAny = pets
+            try { Cat cats[] = petsAny } catch (ArgumentException e) { print("E10 " + e.message) }
+            pets = new Dog[1]
+            try { pets[0] = cat } catch (ArgumentException e) { print("E11 " + e.message) }
+            """),
         ("Bits: die Breite jedes Werttyps am Typ (int.Bits, int[16].Bits, float[32].Bits, byte/char/bool/word) und am Wert (x.Bits nach dem deklarierten Typ), eine Konstante", """
             int[8] small = 3
             float[32] f = 1.5

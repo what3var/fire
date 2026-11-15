@@ -1151,18 +1151,24 @@ durch jede Referenz, wie heute die typisierten Arrays aus Zahlen (SPEC 8.4.2).
 etwa so schnell wie bei einem Puffer), `byte`/`word` als Puffer, und **`defined`** für sie (`defined int a[]`: die Elemente sind nie undefined,
 beginnen bei 0, undefined zu speichern ist eine ArgumentException; ArrayElem.DefinedFlag, nativ TU_DEFINED).
 
+**Umgesetzt** (SPEC 8.4.2): **Klassen, Interfaces, Records, `string` und Enums** (`Dog pets[]`, `IShape shapes[]`, `Pt ps[]`, `string names[]`,
+`Color cs[]`) als Variable, Feld, Parameter und Global: ein Element nimmt nur Werte dieses Typs (Unterklassen, implementierende Klassen) oder
+`undefined`, sonst eine ArgumentException mit derselben Meldung in VM und nativ; ein Array einer anderen Klasse geht nicht in die Deklaration
+(auch nicht in die einer Basisklasse - das Array behält seinen Elementtyp). Die Elemente bleiben Values (ArrayElem.Class mit dem Typnamen als Text,
+ein Enum mit seinem Schlüssel; nativ E_CLASS/TU_CLASS und eine Tabelle g_arrClasses mit Prüfung, Anzeigename und Nullwert je Typ).
+**`defined`** dafür (Entscheidung des Benutzers): `defined string` beginnt bei `""`, ein `defined` Enum beim ersten Wert; `defined Dog pets[]` hat
+keinen Nullwert und nimmt nur Arrays, in denen jedes Element gegeben ist (`new Dog[2]` dort ist eine ArgumentException).
+
 Offen:
 
-* **Klassen, Interfaces und Records** (`Dog pets[]`, `IShape shapes[]`): nur Objekte dieser Klasse (oder abgeleiteter), dieses Interfaces, oder
-  `undefined`; ein anderes Objekt ist eine ArgumentException wie bei einem Feld mit dieser Klasse. Der Typprüfer kennt den Elementtyp (heute `any`
-  nach dem Lesen); nativ ruft der Generator Methoden der Elemente direkt (Klasse bekannt) statt über den Verteiler.
-* **`string`, Enums, Lambdas mit Signatur** (`string names[]`, `Color c[]`, `lambda<int, int> fs[]`) ebenso.
-* **`defined` für sie**: `defined Dog pets[]` - kein Element ist undefined. Offen ist, womit ein neues Array beginnt (kein Nullwert für Objekte:
-  nur mit Initialisierer oder `new Dog[n]` mit einem Erzeuger, `""` für string, der erste Wert eines Enums).
+* **Lambdas mit Signatur** (`lambda<int, int> fs[]`): noch ohne Elementtyp.
+* Der Typprüfer kennt den Elementtyp beim Lesen und Schreiben (TC001); nativ ruft der Generator Methoden der Elemente noch über den Verteiler statt
+  direkt.
 * **Typparameter** (`T items[]` in generischem Code): als Feld **umgesetzt** für Zahlen-Typargumente (FieldInfo.ArrayOfParam: jede Zuweisung typisiert
   nach dem Typargument des Objekts, wie `new T[n]`; `List<T>` deklariert so `T items[]`). Offen: ein Klassen-/string-Typargument prüft die Elemente
   noch nicht; `Dictionary<K, V>`/`HashSet<T>` haben ihre Arrays noch als `any`.
-* Mehrdimensional (`Dog grid[][]`), JSON, Reflection, `copy`/`taking` wie bei den Zahlen-Arrays; Meldungen in VM und nativ gleich.
+* JSON liest und schreibt Klassen-Arrays noch wie `any`-Arrays (ohne Prüfung der Elemente). Mehrdimensional (`Dog grid[][]`) typisiert wie bei den
+  Zahl-Arrays die inneren Arrays.
 
 ## 20. `defined` für Felder herleiten: Basisklassen
 

@@ -9,6 +9,10 @@ namespace fire.Values
         public const byte None = 0, I8 = 1, I16 = 2, I32 = 3, I64 = 4, F8 = 5, F16 = 6, F32 = 7, F64 = 8, Bool = 9, Char = 10, U8 = 11;
         /// <summary>`word a[]` (SPEC 8.10): like `byte a[]` a declaration of a buffer - of machine words (the native runtime: E_WORD).</summary>
         public const byte Word = 12;
+        /// <summary>An array of a class, an interface, a record, `string` or an enum (`Dog pets[]`, `string names[]`, ROADMAP 19): the elements are Values
+        /// (never packed) that fit the declaration - its DeclaredType text stands where the unit of a number array is (OpCode.TypeArray, ElemUnit,
+        /// FieldInfo.RequiredArrayType); `undefined` too, unless the array is defined.</summary>
+        public const byte Class = 13;
         /// <summary>`defined int a[]` (SPEC 8.4.2): a mark beside the element type in the code of a declaration (TypeRef.ArrayWidthCode, OpCode.TypeArray,
         /// FieldInfo.RequiredArray) - the elements are never `undefined`: they start at 0 (false, '\0'), storing `undefined` is an ArgumentException.</summary>
         public const byte DefinedFlag = 0x40;
@@ -20,6 +24,14 @@ namespace fire.Values
         /// <summary>The zero of an element type - what an element of a defined array starts with (in the unit of the elements, where it can take it).</summary>
         public static Value Zero(byte type, string? unit)
         {
+            // (an array of strings starts at ""; of an enum at its first value - its declaration after '\u0002' in the text; of objects at nothing: undefined)
+            if (type == Class)
+            {
+                if (unit == null) return Value.MakeUndefined();
+                if (unit.IndexOf('\u0002') is var at and >= 0 && EnumType.FromKey(unit.Substring(at + 1)) is { Members.Count: > 0 } enumType)
+                    return Value.MakeEnum(enumType.Members[0].Value, enumType);
+                return fire.Bytecode.DeclaredType.Parse(ClassText(unit)).SingleName == "string" ? Value.MakeString("") : Value.MakeUndefined();
+            }
             Value zero = type switch { Bool => Value.MakeBool(false), Char => Value.MakeChar('\0'), _ when IsFloat(type) => Value.MakeFloat(0.0), _ => Value.MakeInt(0) };
             return unit != null && TryConvert(type, unit, zero, out var withUnit, out _, out _) ? withUnit : zero;
         }
@@ -48,6 +60,12 @@ namespace fire.Values
 
         public static int Bits(byte type) => type switch { I8 or F8 or U8 => 8, I16 or F16 => 16, I32 or F32 => 32, Word => Value.WordBits, _ => 64 };
 
+        /// <summary>The type as it is written (`int[8]`, `float`, `bool`, the class) - for messages.</summary>
+        public static string Name(byte type, string? unit) => type == Class && unit != null ? fire.Bytecode.DeclaredType.Parse(ClassText(unit)).Display : Name(type);
+
+        /// <summary>The DeclaredType text of an array of a class (ArrayElem.Class) without an enum's declaration after it.</summary>
+        public static string ClassText(string unit) => unit.IndexOf('\u0002') is var at and >= 0 ? unit.Substring(0, at) : unit;
+
         /// <summary>The type as it is written (`int[8]`, `float`, `bool`) - for messages.</summary>
         public static string Name(byte type) => type switch
         {
@@ -65,6 +83,17 @@ namespace fire.Values
             error = Error.None;
             message = null;
             if (type == None) return true;
+            if (type == Class)
+            {
+                // (the declaration: an object of that class or of one derived from it, of that interface, a string, a value of that enum - or undefined)
+                if (value.Kind == ValueKind.Undefined || unit == null || fire.Bytecode.DeclaredType.Fits(value, ClassText(unit))) return true;
+                error = Error.Type;
+                string display = fire.Bytecode.DeclaredType.Parse(ClassText(unit)).Display;
+                string have = value.Kind == ValueKind.Class && value.AsObjectRef() is fire.Runtime.ObjectInstance obj ? fire.Ast.GenericClassNames.PlainName(obj.ClassName)
+                    : value.IsEnum ? value.Enum!.Name : value.Kind.ToString();
+                message = $"An element of an array of {display} must be {("AEIOUaeiou".Contains(display[0]) ? "an" : "a")} {display} (or undefined), not {have}.";
+                return false;
+            }
             // (the common case - an int of the program without a unit into `int a[]`: stored as it is)
             if (type == I64 && unit == null && value.Kind == ValueKind.Int && value.Wide == 0 && value.Unit is null or { IsUnitless: true }) return true;
             switch (type)
@@ -110,7 +139,7 @@ namespace fire.Values
             {
                 stored = value;
                 error = Error.Type;
-                message = $"An element of a defined array of {Name(type)} cannot be undefined.";
+                message = $"An element of a defined array of {Name(type, unit)} cannot be undefined.";
                 return false;
             }
             return TryConvert(type, unit, value, out stored, out error, out message);

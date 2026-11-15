@@ -431,6 +431,28 @@ namespace fire.Compiler
         /// parameter (or one of a method), an array, a lambda, `any`...</summary>
         private string? DeclaredTypeOf(TypeRef? type, RuntimeClass? owner) => MapSpec(DeclaredTypeOfCore(type, owner));
 
+        /// <summary>An array of a class, an interface, a record, `string` or an enum (`Dog pets[]`, `defined string names[]`, ROADMAP 19): the code of
+        /// OpCode.TypeArray (ArrayElem.Class, the rank, `defined`) and the DeclaredType text of its elements - for an enum with its declaration after
+        /// '\u0002' (the first value a defined array starts with). 0 for any other declaration (a number array has its own code: TypeRef.ArrayWidthCode).</summary>
+        /// <summary>What a store into a variable types or cuts (EmitWidthIfNeeded): an array of a class, `string` or an enum by its DeclaredType text
+        /// (ClassArrayCode), anything else by its width code and unit.</summary>
+        private void EmitVariableTyping(int width, string? unit, TypeRef? arrayElem, int arrayRank)
+        {
+            if (arrayElem != null && ClassArrayCode(arrayElem, arrayRank, _enclosingClass, out var text) is var code and not 0) EmitWidthIfNeeded(this, code, text);
+            else EmitWidthIfNeeded(this, width, unit);
+        }
+
+        private int ClassArrayCode(TypeRef? type, int rank, RuntimeClass? owner, out string? text)
+        {
+            text = null;
+            if (rank <= 0 || rank >= 256 || type is not { PointerDepth: 0, ArrayRank: 0, LambdaSignature: null, IsInferred: false } || type.ArrayWidthCode(rank) != 0) return 0;
+            if (type.BaseName == "string") text = DeclaredType.OfName("string");
+            else if (_refParams.EnumNames.Contains(type.BaseName) && EnumTypeNamed(type.BaseName) is { } enumType) text = DeclaredType.OfName(enumType.Name) + "\u0002" + enumType.Key;
+            else if (type.BaseName is not ("any" or "class" or "var" or "undefined") && DeclaredTypeOf(type, owner) is { } declared && DeclaredType.Parse(declared).TypeParamIndex < 0) text = declared;
+            if (text == null) return 0;
+            return 0x10000 | (rank << 8) | ArrayElem.Class | (type.NonNull ? ArrayElem.DefinedFlag : 0);
+        }
+
         private string? DeclaredTypeOfCore(TypeRef? type, RuntimeClass? owner)
         {
             if (type is not { PointerDepth: 0, ArrayRank: 0, LambdaSignature: null, IsInferred: false } || _knownClassNames == null) return null;
@@ -1031,7 +1053,9 @@ namespace fire.Compiler
                                 RequiredKind = fd.ArrayRanks.Count == 0 ? DeclaredKind.Of(fd.Type, fd.Initializer) : (byte)0,
                                 RequiredType = fd.ArrayRanks.Count == 0 ? DeclaredTypeOf(fd.Type, rc) : null,
                                 RequiredArray = fd.Type?.ArrayWidthCode(fd.ArrayRanks.Count) is var arrayCode and not 0 && (arrayCode & 0xFF) is not (fire.Values.ArrayElem.U8 or fire.Values.ArrayElem.Word)
-                                    ? (ushort)(arrayCode & 0xFFFF) : (ushort)0,
+                                    ? (ushort)(arrayCode & 0xFFFF) : ClassArrayCode(fd.Type, fd.ArrayRanks.Count, rc, out _) is var classArray and not 0 ? (ushort)(classArray & 0xFFFF) : (ushort)0,
+                                // (`Dog pets[]`: the DeclaredType text of the elements, ROADMAP 19)
+                                RequiredArrayType = ClassArrayCode(fd.Type, fd.ArrayRanks.Count, rc, out var classArrayText) != 0 ? classArrayText : null,
                                 DerivedDefined = !ReferenceEquals(fd, declaredField),
                                 ArrayOfParam = !fd.IsStatic && fd.ArrayRanks.Count == 1 && fd.Type is { ArrayRank: 0, PointerDepth: 0, TypeArgs: null, Unit: null } elemType
                                     && TypeArgText(elemType, rc, null, 0) is ['$', ..] arrayParam && !arrayParam.EndsWith('@') ? arrayParam : null,
@@ -1285,17 +1309,24 @@ namespace fire.Compiler
             // anything else but undefined is the exception (SPEC 8.4.2); the native generator then knows what it holds
             for (int i = 0; i < parms.Count; i++)
                 // (one with a unit, `float v[] : m`: its unit check below converts the elements, as before)
-                if (!parms[i].ByRef && parms[i].ArrayRanks.Count > 0 && parms[i].Type?.UnitDemand == null && parms[i].Type?.ArrayWidthCode(parms[i].ArrayRanks.Count) is { } arrayCode and not 0)
+            {
+                if (parms[i].ByRef || parms[i].ArrayRanks.Count == 0 || parms[i].Type?.UnitDemand != null) continue;
+                int arrayCode = parms[i].Type?.ArrayWidthCode(parms[i].ArrayRanks.Count) ?? 0;
+                int paramClassArray = inner.ClassArrayCode(parms[i].Type, parms[i].ArrayRanks.Count, inner._enclosingClass, out var paramClassText);
+                if (arrayCode != 0 || paramClassArray != 0)
                 {
+                    // (`Dog pets[]`: an array of a class, `string` or an enum - its DeclaredType text where the unit stands, ROADMAP 19)
                     inner._chunk.EmitOp(OpCode.LoadLocal);
                     inner._chunk.EmitU16(0);
                     inner._chunk.EmitU16((ushort)i);
-                    EmitWidthIfNeeded(inner, arrayCode);
+                    if (paramClassArray != 0) EmitWidthIfNeeded(inner, paramClassArray, paramClassText);
+                    else EmitWidthIfNeeded(inner, arrayCode);
                     inner._chunk.EmitOp(OpCode.StoreLocal);
                     inner._chunk.EmitU16(0);
                     inner._chunk.EmitU16((ushort)i);
                     inner._chunk.EmitOp(OpCode.Pop);
                 }
+            }
 
             for (int i = 0; i < parms.Count; i++)
                 if (parms[i].ByRef)
@@ -1817,7 +1848,9 @@ namespace fire.Compiler
                     // CompileAssign, otherwise one could bypass the check through an
                     // "unsuitable" first assignment).
                     EmitCheckUnitIfNeeded(this, vd.Type?.UnitDemand);
-                    EmitWidthIfNeeded(this, vd.ArrayRanks.Count == 0 ? vd.Type?.WidthCode ?? 0 : vd.Type?.ArrayWidthCode(vd.ArrayRanks.Count) ?? 0, vd.Type?.UnitDemand);
+                    // (an array of a class, `string` or an enum: typed like a number array - its DeclaredType text where the unit stands)
+                    if (ClassArrayCode(vd.Type, vd.ArrayRanks.Count, _enclosingClass, out var classArrayText) is var classArrayCode and not 0) EmitWidthIfNeeded(this, classArrayCode, classArrayText);
+                    else EmitWidthIfNeeded(this, vd.ArrayRanks.Count == 0 ? vd.Type?.WidthCode ?? 0 : vd.Type?.ArrayWidthCode(vd.ArrayRanks.Count) ?? 0, vd.Type?.UnitDemand);
 
                     // `var v = E`: an unclaimed value belongs to the scope that declares v (SPEC 2.1); `int a[10]` is made for it
                     if (vd.Initializer != null ? MayBeUnclaimed(vd.Initializer) : autoArrayAlloc) EmitClaimToScope(0, unclaimed: true, hoist: false);
@@ -3792,14 +3825,14 @@ namespace fire.Compiler
                     // initial check simply through a later, "wrong"
                     // assignment.
                     EmitCheckUnitIfNeeded(this, local.RequiredUnit);
-                    EmitWidthIfNeeded(this, local.Width, local.RequiredUnit);
+                    EmitVariableTyping(local.Width, local.RequiredUnit, local.ArrayElem, local.ArrayRank);
                     // `v = E`: an unclaimed value belongs to the scope that declares v; a value of an inner block moves up to it (SPEC 2.1)
                     if (!local.ByRef) EmitClaimToScope(local.Depth, unclaimed: MayBeUnclaimed(a.Value), hoist: local.Depth > 0);
                     EmitStoreVariable(local);
                     break;
                 case ResolvedRef.Global global:
                     EmitCheckUnitIfNeeded(this, global.RequiredUnit);
-                    EmitWidthIfNeeded(this, global.Width, global.RequiredUnit);
+                    EmitVariableTyping(global.Width, global.RequiredUnit, global.ArrayElem, global.ArrayRank);
                     // a global variable: an unclaimed value belongs to the global scope; a value of a block of the top-level code moves up to it (SPEC 2.1)
                     EmitClaimToScope(0xFFFF, unclaimed: MayBeUnclaimed(a.Value), hoist: _currentScopeDepth > 0 && IsTopLevelCode);
                     _chunk.EmitOp(OpCode.StoreGlobal);
@@ -3855,13 +3888,13 @@ namespace fire.Compiler
             {
                 case ResolvedRef.Local local:
                     EmitCheckUnitIfNeeded(this, local.RequiredUnit);
-                    EmitWidthIfNeeded(this, local.Width, local.RequiredUnit);
+                    EmitVariableTyping(local.Width, local.RequiredUnit, local.ArrayElem, local.ArrayRank);
                     EmitTakeToScope(local.ByRef ? 0 : local.Depth, take.Op == UnaryOp.TryTake);
                     EmitStoreVariable(local);
                     break;
                 case ResolvedRef.Global global:
                     EmitCheckUnitIfNeeded(this, global.RequiredUnit);
-                    EmitWidthIfNeeded(this, global.Width, global.RequiredUnit);
+                    EmitVariableTyping(global.Width, global.RequiredUnit, global.ArrayElem, global.ArrayRank);
                     EmitTakeToScope(0xFFFF, take.Op == UnaryOp.TryTake);
                     _chunk.EmitOp(OpCode.StoreGlobal);
                     _chunk.EmitU16(global.Slot);
@@ -4041,12 +4074,12 @@ namespace fire.Compiler
                         // `++`/`--` is after all only an (more compactly written)
                         // assignment.
                         EmitCheckUnitIfNeeded(this, local.RequiredUnit);
-                    EmitWidthIfNeeded(this, local.Width, local.RequiredUnit);
+                    EmitVariableTyping(local.Width, local.RequiredUnit, local.ArrayElem, local.ArrayRank);
                         EmitStoreVariable(local);
                         break;
                     case ResolvedRef.Global global:
                         EmitCheckUnitIfNeeded(this, global.RequiredUnit);
-                    EmitWidthIfNeeded(this, global.Width, global.RequiredUnit);
+                    EmitVariableTyping(global.Width, global.RequiredUnit, global.ArrayElem, global.ArrayRank);
                         _chunk.EmitOp(OpCode.StoreGlobal);
                         _chunk.EmitU16(global.Slot);
                         break;

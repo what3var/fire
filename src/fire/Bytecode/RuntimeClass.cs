@@ -42,6 +42,10 @@ namespace fire.Bytecode
         /// (OpCode.TypeArray: an array of that element or `undefined`, RequiredUnit is the unit of its elements); 0: none. Not for `byte`/`word` (buffers).</summary>
         public ushort RequiredArray { get; set; }
 
+        /// <summary>A field declared as an array of a class, an interface, a record, `string` or an enum (`Dog pets[]`, ArrayElem.Class in RequiredArray): the
+        /// DeclaredType text of its elements (for an enum with its definition after '\u0002': the first value of a defined one); null: none.</summary>
+        public string? RequiredArrayType { get; set; }
+
         /// <summary>A field declared as an array of a type parameter of its class (`T items[]`): `$k@Class` - every assignment types the array by the type
         /// argument of the object (`List&lt;int&gt;`: an array of raw ints, like `new T[n]`; another type argument: nothing to do); null: none.</summary>
         public string? ArrayOfParam { get; set; }
@@ -270,6 +274,25 @@ namespace fire.Bytecode
             for (var rc = this; rc != null; rc = rc.Base)
                 if (rc.OwnFieldInfo.TryGetValue(name, out var field))
                     return field.ArrayOfParam;
+            return null;
+        }
+
+        /// <summary>What stands where the unit of a typed array's elements is (OpCode.TypeArray): the DeclaredType text of an array of a class
+        /// (FieldInfo.RequiredArrayType), else the unit of the elements.</summary>
+        public string? FindFieldArrayUnit(string name)
+        {
+            for (var rc = this; rc != null; rc = rc.Base)
+                if (rc.OwnFieldInfo.TryGetValue(name, out var field))
+                    return field.RequiredArrayType ?? field.RequiredUnit;
+            return null;
+        }
+
+        /// <summary>The DeclaredType text of the elements of a field declared as an array of a class (FieldInfo.RequiredArrayType); null: none.</summary>
+        public string? FindFieldRequiredArrayType(string name)
+        {
+            for (var rc = this; rc != null; rc = rc.Base)
+                if (rc.OwnFieldInfo.TryGetValue(name, out var field))
+                    return field.RequiredArrayType;
             return null;
         }
 

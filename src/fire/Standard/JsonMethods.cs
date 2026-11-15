@@ -907,7 +907,7 @@ namespace fire.Standard
                     if (field == null) continue;   // (a member the class does not have: left out)
                     var built = Build(child, Substitute(field.Type, obj), obj, path + "." + key, field.Unit, (obj, field.Name));
                     // a field declared as a typed array without a unit (FieldInfo.RequiredArray) holds a typed array, like after any other assignment
-                    if (rc.FindFieldRequiredArray(field.Name) is var requiredArray and not 0 && rc.FindFieldRequiredUnit(field.Name) == null)
+                    if (rc.FindFieldRequiredArray(field.Name) is var requiredArray and not 0 && rc.FindFieldRequiredUnit(field.Name) == null && rc.FindFieldRequiredArrayType(field.Name) == null)
                         TypeArrayDeep(built, (byte)(requiredArray & 0xFF), requiredArray >> 8, 1, path + "." + key);
                     if (built.Kind == ValueKind.Undefined && rc.FindFieldRequiredKind(field.Name) is var declared and not 0 && DeclaredKind.IsNonNull(declared))
                         throw _host.Error("ArgumentException", $"{path}.{key} is {(DeclaredKind.ValueKindOf(declared) switch { ValueKind.Int => "an int", ValueKind.Float => "a float", ValueKind.Word => "a word", ValueKind.Char => "a char", _ => "a bool" })} and never undefined{(rc.FieldWhat(field.Name).Length > field.Name.Length + 8 ? DerivedNote : "")}.");

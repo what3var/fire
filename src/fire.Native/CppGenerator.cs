@@ -1141,7 +1141,8 @@ namespace fire.Native
                 if (declared == 0 && cls.Rc.FindFieldRequiredArray(name) is var requiredArray and not 0)
                 {
                     // a field declared as a typed array without a unit: an array of that element or undefined (every assignment types it, FieldInfo.RequiredArray)
-                    if ((requiredArray >> 8) != 1 || cls.Rc.FindFieldRequiredUnit(name) != null) return TypeUnknown;
+                    // (an array of a class keeps its Values: no packed element type - ArrayElem.Class)
+                    if ((requiredArray >> 8) != 1 || cls.Rc.FindFieldRequiredUnit(name) != null || ArrayElem.TypeOf(requiredArray) == ArrayElem.Class) return TypeUnknown;
                     int arrType = TypeOf(KindArr, requiredArray & 0xFF) | NullableBit;
                     if (result is { } knownArr && knownArr != arrType) return TypeUnknown;
                     result = arrType;
@@ -1755,11 +1756,44 @@ namespace fire.Native
         private string TypeArrayUnitArgsOf(string? demand, int elemCode = 0)
         {
             int defined = ArrayElem.IsDefined(elemCode) ? 8 : 0;
+            // (an array of a class, a string or an enum: its entry in g_arrClasses - TU_CLASS, ROADMAP 19)
+            if (ArrayElem.TypeOf(elemCode) == ArrayElem.Class && demand != null)
+                return $"{ArrClassId(demand)}, {16 | defined}, {Constant(Value.MakeString(ArrayElem.Name(ArrayElem.Class, demand)))}";
             if (demand == null) return $"0, {defined}, {Constant(Value.MakeString("(no unit)"))}";
             string unit = demand.TrimStart('#');
             if (unit == "any") return $"0, {4 | defined}, {Constant(Value.MakeString("any"))}";
             bool dimensionOnly = unit.StartsWith("any ", StringComparison.Ordinal);
             return $"{UnitC(UnitId(DemandUnit(unit)))}, {(dimensionOnly ? 3 : 1) | defined}, {Constant(Value.MakeString(Unit.DemandDisplay(unit)))}";
+        }
+
+        /// <summary>The arrays of a class, a string or an enum (ArrayElem.Class) by their DeclaredType text: the 1-based index of each in g_arrClasses.</summary>
+        private readonly Dictionary<string, int> _arrClasses = new(StringComparer.Ordinal);
+        private int ArrClassId(string text)
+        {
+            if (!_arrClasses.TryGetValue(text, out int id))
+            {
+                _arrClasses[text] = id = _arrClasses.Count + 1;
+                foreach (var alt in DeclaredType.Parse(ArrayElem.ClassText(text)).Alternatives) foreach (var c in alt) HoldsExpr("v", c);   // (registers the `isof_` it needs)
+                Constant(ArrayElem.Zero(ArrayElem.Class, text));   // (and the constant a defined one starts with: `""`, before the constants are written)
+                _version++;
+            }
+            return id;
+        }
+
+        /// <summary>g_arrClasses: for each array of a class what fits (the conditions of its declaration), its name and what a defined one starts with.</summary>
+        private string ArrClassTable()
+        {
+            if (_arrClasses.Count == 0) return "";
+            var sb = new StringBuilder();
+            foreach (var (text, id) in _arrClasses.OrderBy(kv => kv.Value))
+            {
+                var spec = DeclaredType.Parse(ArrayElem.ClassText(text));
+                string fits = spec.Alternatives.Length == 0 ? "true" : string.Join(" || ", spec.Alternatives.Select(alt => "(" + string.Join(" && ", alt.Select(c => HoldsExpr("v", c))) + ")"));
+                sb.AppendLine($"static bool {Px}acf_{id}(Value v) {{ return {fits}; }}");
+                sb.AppendLine($"static Value {Px}acz_{id}(void) {{ return {Constant(ArrayElem.Zero(ArrayElem.Class, text))}; }}");
+            }
+            sb.AppendLine($"static const ArrClass {Px}kArrClasses[] = {{{string.Join(", ", _arrClasses.OrderBy(kv => kv.Value).Select(kv => $"{{{Px}acf_{kv.Value}, {CString(ArrayElem.Name(ArrayElem.Class, kv.Key))}, {Px}acz_{kv.Value}}}"))}}};");
+            return sb.ToString();
         }
 
         /// <summary>CheckUnit on a Value variable as a statement: adaptSlot in place (no copy of the Value in and out), leaving for `exit` when it threw (null: no
@@ -2143,6 +2177,12 @@ namespace fire.Native
                     sb.AppendLine($"static const FireEnumMember kEnumM{i}[] = {{{string.Join(", ", _enumList[i].Members.Select(m => $"{{{CString(m.Name)}, {(m.Value == long.MinValue ? "INT64_MIN" : m.Value.ToString(CultureInfo.InvariantCulture) + "LL")}}}").DefaultIfEmpty("{\"\", 0}"))}}};");
                 sb.AppendLine($"static const FireEnum kEnums[] = {{{string.Join(", ", _enumList.Select((e, i) => $"{{{CString(e.Name)}, {(e.IsFlags ? 1 : 0)}, kEnumM{i}, {e.Members.Count}}}"))}}};");
                 _initCode.AppendLine($"    g_enums = kEnums; g_enumCount = {_enumList.Count};");
+            }
+            // the arrays of a class, a string or an enum (ROADMAP 19): what their elements must be
+            if (_arrClasses.Count > 0)
+            {
+                sb.Append(ArrClassTable());
+                _initCode.AppendLine($"    g_arrClasses = {Px}kArrClasses;");
             }
             if (DebugBuild) sb.Append(DebugProgramTables());
             sb.Append(SharedLibraryChecks());
@@ -2890,7 +2930,7 @@ namespace fire.Native
             .SelectMany(rc => rc.OwnFieldInfo.Where(kv => kv.Value.DerivedDefined).Select(kv => kv.Key)).ToHashSet(StringComparer.Ordinal);
         /// <summary>A field declared as a typed array (FieldInfo.RequiredArray): what is assigned is typed like by OpCode.TypeArray ("" for any other field).</summary>
         private string FieldArrayCheck(RuntimeClass rc, string name, string? obj = null) => rc.FindFieldRequiredArray(name) is var arr and not 0
-            ? $"typeArray(x, {ArrayElem.TypeOf(arr)}, {arr >> 8}, {TypeArrayUnitArgsOf(rc.FindFieldRequiredUnit(name), arr)}, 1);"
+            ? $"typeArray(x, {ArrayElem.TypeOf(arr)}, {arr >> 8}, {TypeArrayUnitArgsOf(rc.FindFieldArrayUnit(name), arr)}, 1);"
             // (`T items[]`: typed by the type argument of the object, like `new T[n]` - TArg.arrElem)
             : obj != null && ArrayOfParamParts(rc, name) is { } ofParam
                 ? $"{{ const TArg* fta_ = {TArgOfExpr(ofParam.Cls, ofParam.K, obj)}; if (fta_ && fta_->arrElem) typeArray(x, fta_->arrElem - 1, 1, {TypeArrayUnitArgsOf(null)}, 1); }}"
@@ -6738,7 +6778,8 @@ namespace fire.Native
                         E($"{S(d - 1)} = newWordBuffer({S(d - 1)}, &{OwnerList()});");
                         SetR(d - 1, true); SetT(d - 1, TypeOf(KindBuf, BufWords)); _kindsKept = true; return Next();
                     }
-                    else if (at < f.Decoded.Count && f.Decoded[at] is { Op: OpCode.TypeArray } typed && typed.A[1] == 1)
+                    else if (at < f.Decoded.Count && f.Decoded[at] is { Op: OpCode.TypeArray } typed && typed.A[1] == 1 && ArrayElem.TypeOf(typed.A[0]) != ArrayElem.Class)
+                        // (an array of a class keeps Values: made plain, its TypeArray checks it - a defined one throws there, once)
                     {
                         E($"{S(d - 1)} = newTypedArray({S(d - 1)}, {ArrayElem.TypeOf(typed.A[0])}, {TypeArrayUnitArgs(chunk, typed.A[2], typed.A[0])}, &{OwnerList()});");
                         SetR(d - 1, true);

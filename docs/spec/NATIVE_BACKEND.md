@@ -205,6 +205,11 @@ Skript -> Lexer -> Parser -> Resolver -> Compiler -> Bytecode (LinkedProgram)
   zerstörtes, zu kurzes oder ausgepacktes Array gehen in `aset_g`; `ClaimToArray` einer Zahl entfällt (keine Liste je Runde mehr). Ein Value, der
   vielleicht undefined ist, wird auf seine Art geprüft und sonst ebenso gepackt gespeichert (float-Arrays auch). Gemessen (gcc `-O2`, je Element,
   1 Mio. Elemente): Füllen 26-31 -> 2-3 ns, über ein Feld 24-34 -> 2-4 ns, Kopie 25-29 -> 6 ns (defined: 3 ns), ein Bytepuffer 1 ns.
+  **Arrays von Klassen, Interfaces, Records, `string` und Enums** (SPEC 8.4.2) bleiben Values (nicht gepackt): `typeArray` bekommt die
+  Elementart E_CLASS mit TU_CLASS und im Feld `unit` den Index (ab 1) in eine Tabelle `g_arrClasses` (`kArrClasses`, neben den Enums erzeugt), die je
+  Typ eine Prüfung (`acf_N`, der Ausdruck von `is` für den Typ), den Anzeigenamen der Meldungen und den Nullwert eines `defined`-Arrays (`acz_N`:
+  `""`, der erste Wert des Enums, sonst undefined - dann nimmt es nur Arrays ohne undefined) hält. Zwei Arrays gelten als gleich typisiert, wenn der
+  Index gleich ist. `new Dog[n]` mit TypeArray dahinter wird nicht zu `newTypedArray` zusammengefasst.
 * **Parameter und Rückgaben als C-Typen (Ebene 2, Stufe 2b).** Grundlage ist `defined` (SPEC 8.10b): ein `defined int`-Parameter ist nie `undefined` und
   kein Enum-Wert, eine `defined`-Rückgabe ebenso - das macht den Rumpf einer Methode skalar, ohne dass der Generator die Aufrufer kennen muss
   (`CppGenerator.CAbi.cs`). Eine Methode mit `defined int`-, `defined float`- oder `defined word`-Parametern oder mit einer `defined`-Rückgabe

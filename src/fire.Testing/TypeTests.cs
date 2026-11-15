@@ -165,9 +165,9 @@ static class TypeTests
         }
         Check("defined (SPEC 8.10b): ein Feld, eine lokale defined starten bei 0; ein Enum wird zur Zahl; trust bleibt ein Name, wo kein Operand folgt",
             Run("enum C { A, B }\nclass K { defined int n\ndefined float f\ndefined bool b\nstatic string S(defined int v) { return \"\" + v } }\nvar k = new K()\ndefined int d\nvar trust = 3\nprint(k.n + \" \" + k.f + \" \" + k.b + \" \" + d + \" \" + K.S(C.B!int) + \" \" + (trust + 1))") is var zero && zero == "|0 0 False 0 1 4", zero);
-        Check("defined (SPEC 8.10b): 'int!' sagt, wie es heisst; defined an einem string (auch einem Array davon) oder als Typargument ist ein Fehler, ein Array aus Werten (defined int a[]) nicht",
+        Check("defined (SPEC 8.10b): 'int!' sagt, wie es heisst; defined an einem string oder als Typargument ist ein Fehler, ein Array aus Werten (defined int a[]) oder aus strings (defined string s[], ROADMAP 19) nicht",
             Run("class K { int! n }") is var bang && bang.StartsWith("|ERROR E3000")
-            && Run("class K { defined string s[] }").StartsWith("|ERROR") && Run("class K { defined string s }").StartsWith("|ERROR") && Run("var l = new List<defined int>()").StartsWith("|ERROR")
+            && Run("class K { defined string s[2] }\nprint(\"[\" + new K().s[1] + \"]\")") == "|[]" && Run("class K { defined string s }").StartsWith("|ERROR") && Run("var l = new List<defined int>()").StartsWith("|ERROR")
             && Run("class K { defined int a[3] }\nprint(new K().a[2])") == "|0", bang + " / " + Run("class K { defined int a[3] }\nprint(new K().a[2])"));
         Check("var a = [] hat keine Elementtypen: TC020 (any[]), int a[] = [] ist still",
             Run("var a = []\nprint(a.length)", TypeCheckMode.Strict) == "TC020|0" && Run("int a[] = []\nprint(a.length)", TypeCheckMode.Strict) == "|0");
