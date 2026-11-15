@@ -714,6 +714,32 @@ static class TypeTests
                 && CompileText(iface + "class Lim : ILimit { int Limit { get; set; }\n protected string Name { get; }\n float Delay : ms { get; } }").Contains("Property 'Name' of class 'Lim' implements interface 'ILimit' and must be public, not protected"), hidden);
             Check("Interface-Property: ein anderer Werttyp oder eine andere Einheit ist E4066", Run(iface + "class Lim : ILimit { string Limit { get; set; }\n string Name { get; }\n float Delay : ms { get; } }\nprint(1)") is var otherType && otherType == "|ERROR E4066"
                 && Run(iface + "class Lim : ILimit { int Limit { get; set; }\n string Name { get; }\n float Delay : s { get; } }\nprint(1)") == "|ERROR E4066", otherType);
+            {
+                const string animals = "class Animal { }\nclass Dog : Animal { }\ninterface INamed { string Name { get; } }\nclass Bird : Animal, INamed { string Name { get { return \"b\" } } }\n";
+                string Prop(string ifaceProp, string classProp) => Run(animals + "interface I { " + ifaceProp + " }\nclass C : I { " + classProp + " }\nprint(\"ok\")");
+                var cases = new (string Iface, string Class, string Want)[]
+                {
+                    ("Animal A { get; }", "Dog A { get; set; }", "|ok"),                 // a getter may give a derived class
+                    ("INamed A { get; }", "Bird A { get; set; }", "|ok"),                // ... or a class of the interface
+                    ("List<Animal> A { get; }", "List<Dog> A { get; set; }", "|ok"),     // ... or derived type arguments (D10)
+                    ("int A { get; }", "defined int A { get; set; }", "|ok"),            // ... or a defined value
+                    ("Dog A { set; }", "Animal A { get; set; }", "|ok"),                 // a setter may take more
+                    ("any A { get; }", "Dog A { get; set; }", "|ok"),
+                    ("Animal A { get; set; }", "Dog A { get; set; }", "|ERROR E4066"),   // get and set: the same type
+                    ("Dog A { get; }", "Animal A { get; set; }", "|ERROR E4066"),
+                    ("Dog A { get; }", "string A { get; set; }", "|ERROR E4066"),
+                    ("List<Animal> A { get; set; }", "List<Dog> A { get; set; }", "|ERROR E4066"),
+                    ("defined int A { get; }", "int A { get; set; }", "|ERROR E4066"),
+                    ("int A { get; set; }", "defined int A { get; set; }", "|ERROR E4066"),
+                    ("Dog A { get; }", "any A { get; set; }", "|ERROR E4066"),
+                    ("lambda<int> A { get; }", "lambda<int, int> A { get; set; }", "|ERROR E4066"),
+                };
+                var wrong = cases.Select(c => (c, got: Prop(c.Iface, c.Class))).Where(r => r.got != r.c.Want).Select(r => $"{r.c.Iface} / {r.c.Class}: {r.got}").ToList();
+                Check("Interface-Property: Klassen, Interfaces, Typargumente, defined und Lambdas - der Getter darf Spezielleres geben, der Setter Allgemeineres nehmen (ROADMAP 0)",
+                    wrong.Count == 0, string.Join("; ", wrong));
+                Check("Interface-Property: die Meldung nennt beide Typen", CompileText(animals + "interface I { Animal A { get; set; } }\nclass C : I { Dog A { get; set; } }")
+                    .Contains("Property 'A' of class 'C' is 'Dog', interface 'I' declares it as 'Animal'"), "");
+            }
             Check("Interface-Property: Zuweisung an eine get-only Property ueber das Interface ist TC016 (auch lax ein Fehler)", Run(iface + """
                 class Lim : ILimit { int Limit { get; set; }
                  string Name { get; set; }

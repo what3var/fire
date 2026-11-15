@@ -275,5 +275,5 @@ normal tests (VM == native), MySQL and SQL Server against a server when one is c
 - The connection is a class (`new Data.Connection(url)`), not a function `Data.Open(url)`: a namespace has no functions of its own.
 
 - ~~TLS inside TDS (SQL Server): can `tls` run over a stream that is not a socket?~~ - `Tls.Engine` (TLS over buffers) on OpenSSL, mbedTLS and SChannel.
-- `with` for records (`copy r with { age = 37 }`) - a language question, helpful for writing records.
+- ~~`with` for records~~ - built (ROADMAP_TASKS.md step 9: `with` for records and objects).
 - Change notifications (SQLite update hook, SQL Server query notifications) for live UI lists - later, with the bindings of the UI library.

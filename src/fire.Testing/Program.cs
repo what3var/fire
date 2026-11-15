@@ -29766,6 +29766,57 @@ else
             var live = new P(5)
             print(live)
             """),
+        ("Arrays in Variablen (ROADMAP 21): einmal geprueft, dann je Element nur der Index - ausserhalb, delete, neu zugewiesen, undefined-Elemente, float", """
+            class P {
+                static int Sum(int extra) {
+                    defined int a[] = new int[10]
+                    for (int i = 0; i < 10; i++) { a[i] = i * 3 }
+                    int s = 0
+                    for (int i = 0; i < 10 + extra; i++) { s = s + a[i] }
+                    return s
+                }
+                static int Swap() {
+                    defined int a[] = new int[6]
+                    defined int b[] = new int[7]
+                    for (int i = 0; i < 6; i++) { a[i] = i; b[i] = 100 + i }
+                    int s = 0
+                    for (int i = 0; i < 6; i++) {
+                        s = s + a[i]
+                        if (i == 2) { a = b }
+                    }
+                    return s
+                }
+                static int Del() {
+                    defined int a[] = new int[4]
+                    int s = 0
+                    for (int i = 0; i < 4; i++) {
+                        s = s + a[i]
+                        if (i == 1) { delete a }
+                    }
+                    return s
+                }
+                static string Holes() {
+                    int a[] = new int[4]
+                    a[1] = 5
+                    string t = ""
+                    for (int i = 0; i < 4; i++) { t = t + a[i] + "," }
+                    return t
+                }
+                static float Floats() {
+                    defined float a[] = new float[8]
+                    for (int i = 0; i < 8; i++) { a[i] = i * 0.5 }
+                    float s = 0.0
+                    for (int i = 0; i < 8; i++) { s = s + a[i] }
+                    return s
+                }
+            }
+            print(P.Sum(0))
+            try { print(P.Sum(1)) } catch (Exception e) { print("E1 " + e.message) }
+            print(P.Swap())
+            try { print(P.Del()) } catch (Exception e) { print("E2 " + e.message) }
+            print(P.Holes())
+            print(P.Floats())
+            """),
         ("defined fuer strings, Enums und Objekte (SPEC 8.10b): ein string beginnt bei \"\", ein Enum beim ersten Wert, ein Objekt braucht seinen Wert (Feld: jeder Konstruktor setzt es); undefined ist eine ArgumentException an Feld, Parameter, Rueckgabe, Variable, Reflection und in JSON (fehlend oder null)", """
             #import "json"
             #import "reflection"

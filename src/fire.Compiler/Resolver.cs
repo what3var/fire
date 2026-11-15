@@ -750,7 +750,7 @@ namespace fire.Compiler
                     throw new ResolverException(
                         $"Class '{cd.Name}' does not implement interface '{iface.Name}' completely (missing property '{p.Name}' with '{wanted}')", own.Line);
                 if (own.Access != AccessModifier.Public) throw PropertyNotPublic(cd, iface, own);
-                if (PropertyTypeConflict(p.Type, own.Type) is { } conflict)
+                if (PropertyTypeConflict(cd, iface, p, own.Type) is { } conflict)
                     throw new ResolverException(
                         $"Property '{p.Name}' of class '{cd.Name}' is {conflict.Have}, interface '{iface.Name}' declares it as {conflict.Want}", own.Line);
             }
@@ -788,17 +788,75 @@ namespace fire.Compiler
 
         private static readonly HashSet<string> ValueTypeNames = new() { "int", "float", "string", "bool", "char", "byte", "word" };
 
-        /// <summary>The type of an implementing property against the one of the interface: only what is surely different is a conflict - two different value
-        /// types (`string` for an `int`), or two units of a different text (`int : s` for `int : ms`; a unit against none). Class types, `any`, type
-        /// parameters and untyped ones pass (the type checker looks at the values).</summary>
-        private static (string Have, string Want)? PropertyTypeConflict(TypeRef? want, TypeRef? have)
+        /// <summary>The type of an implementing property against the one of the interface (SPEC 8.5): value types and units must be the same; for
+        /// classes, interfaces, enums, arrays, type arguments, lambdas and `defined` the direction counts - what the getter gives must fit the type
+        /// of the interface (a `Dog` for an `Animal`, `defined int` for `int`), what the interface lets a caller set must fit the property (a property
+        /// with `get; set;` therefore has the same type). A type of the interface that is `any`, a type parameter of the interface or the class and
+        /// untyped ones pass (the type checker looks at the values).</summary>
+        private (string Have, string Want)? PropertyTypeConflict(ClassDecl cd, InterfaceDecl iface, InterfacePropertySig p, TypeRef? have)
         {
+            var want = p.Type;
             if (want == null || have == null || want.IsInferred || have.IsInferred) return null;
-            string Text(TypeRef t) => "'" + t.BaseName + (t.ArrayRank > 0 ? string.Concat(Enumerable.Repeat("[]", t.ArrayRank)) : "") + (t.Unit != null ? " : " + t.Unit : "") + "'";
-            bool valueTypes = ValueTypeNames.Contains(want.BaseName) && ValueTypeNames.Contains(have.BaseName);
-            if (valueTypes && (want.BaseName != have.BaseName || want.ArrayRank != have.ArrayRank)) return (Text(have), Text(want));
-            if (valueTypes && want.BaseName is "int" or "float" && (want.Unit ?? "") != (have.Unit ?? "")) return (Text(have), Text(want));
+            bool IfaceParam(TypeRef t) => iface.TypeParams?.Any(tp => tp.Name == t.BaseName) == true;
+            bool ClassParam(TypeRef t) => cd.TypeParams?.Any(tp => tp.Name == t.BaseName) == true;
+            if (IfaceParam(want) || ClassParam(have)) return null;
+            (string, string) Conflict() => (Text(have), Text(want));
+            if (want.BaseName == "any" && want.ArrayRank == 0) return null;
+            if (have.BaseName == "any" && have.ArrayRank == 0) return p.HasGet ? Conflict() : null;
+            if (want.ArrayRank != have.ArrayRank) return Conflict();
+            // `defined`: the getter of a `defined` property never gives undefined; a setter that takes no undefined cannot stand for one that does
+            if (p.HasGet && want.NonNull && !have.NonNull || p.HasSet && have.NonNull && !want.NonNull) return Conflict();
+            bool wantValue = ValueTypeNames.Contains(want.BaseName), haveValue = ValueTypeNames.Contains(have.BaseName);
+            if (wantValue || haveValue)
+            {
+                if (want.BaseName != have.BaseName) return Conflict();
+                if (want.BaseName is "int" or "float" && (want.Unit ?? "") != (have.Unit ?? "")) return Conflict();
+                return null;
+            }
+            bool wantLambda = want.LambdaSignature != null || want.BaseName == "lambda", haveLambda = have.LambdaSignature != null || have.BaseName == "lambda";
+            if (wantLambda || haveLambda)
+            {
+                if (wantLambda != haveLambda) return Conflict();
+                if (want.LambdaSignature is { } ws && have.LambdaSignature is { } hs
+                    && (ws.IsExpression != hs.IsExpression || ws.ParamTypeNames.Count != hs.ParamTypeNames.Count)) return Conflict();
+                return null;
+            }
+            string w = ResolvedName(want), h = ResolvedName(have);
+            bool Fits(string from, string to) => from == to || TypeNameSatisfiesIsOf(from, to);
+            bool ok = (!p.HasGet || Fits(h, w)) && (!p.HasSet || Fits(w, h));
+            if (!ok) return Conflict();
+            // type arguments: the same, or (only read) one that derives from the wanted one - like an assignment (covariance, DECISIONS D10)
+            var wArgs = want.TypeArgs ?? Array.Empty<TypeRef>();
+            var hArgs = have.TypeArgs ?? Array.Empty<TypeRef>();
+            if (wArgs.Count == 0 || hArgs.Count == 0 || h != w) return null;
+            if (wArgs.Count != hArgs.Count) return Conflict();
+            for (int i = 0; i < wArgs.Count; i++)
+            {
+                if (IfaceParam(wArgs[i]) || ClassParam(hArgs[i]) || wArgs[i].BaseName == "any") continue;
+                string wa = ArgText(wArgs[i]), ha = ArgText(hArgs[i]);
+                if (wa == ha) continue;
+                bool argFits = !p.HasSet && wArgs[i].ArrayRank == 0 && hArgs[i].ArrayRank == 0
+                    && !ValueTypeNames.Contains(wArgs[i].BaseName) && Fits(ResolvedName(hArgs[i]), ResolvedName(wArgs[i]));
+                if (!argFits) return Conflict();
+            }
             return null;
+
+            string ResolvedName(TypeRef t) => t.TypeArgCount > 0 || t.TypeArgs is { Count: > 0 } ? ResolveTypeRefOrInterface(t) : t.ResolveBaseName(KnownTypeName);
+            string ArgText(TypeRef t) => (t.NonNull ? "defined " : "") + (ValueTypeNames.Contains(t.BaseName) ? t.BaseName : ResolvedName(t))
+                + (t.Unit != null ? ":" + t.Unit : "") + string.Concat(Enumerable.Repeat("[]", t.ArrayRank))
+                + (t.TypeArgs is { Count: > 0 } a ? "<" + string.Join(",", a.Select(ArgText)) + ">" : "");
+            static string Plain(TypeRef t) => (t.NonNull ? "defined " : "") + (t.LambdaSignature != null ? t.ToString() : t.BaseName)
+                + (t.TypeArgs is { Count: > 0 } a ? "<" + string.Join(", ", a.Select(Plain)) + ">" : "")
+                + string.Concat(Enumerable.Repeat("[]", t.ArrayRank)) + (t.Unit != null ? " : " + t.Unit : "");
+            static string Text(TypeRef t) => "'" + Plain(t) + "'";
+        }
+
+        private bool KnownTypeName(string n) => n == "Exception" || _classes.ContainsKey(n) || _interfaces.ContainsKey(n) || _enums.ContainsKey(n);
+
+        private string ResolveTypeRefOrInterface(TypeRef t)
+        {
+            int count = t.TypeArgs?.Count ?? t.TypeArgCount;
+            return GenericClassNames.ResolveNewTarget(t, count, KnownTypeName);
         }
 
         private static ResolverException NotPublic(ClassDecl cd, InterfaceDecl iface, MethodDecl md) =>
