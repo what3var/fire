@@ -54,10 +54,13 @@ namespace Assistant {
         defined int H = 370
         defined int MinBH = 110
         defined int MaxBH = 480
+        // where the bubble starts (the window is as high as the largest bubble and the character: the bubble moves, the window stays)
+        defined int O = 0
 
         construct(Assistant.Brain brain) {
             this.Brain = take brain
-            this.H = this.BH + this.FH
+            this.H = this.MaxBH + this.FH
+            this.O = this.MaxBH - this.BH
             this.fb = new Framebuffer(this.W, this.H)
             this.win = new Window(this.fb, this.Brain.Character.Name)
             // no frame, above the other windows: only the character and its bubble are seen
@@ -97,11 +100,11 @@ namespace Assistant {
             // the header: folder and branch, the small buttons at the right (history, sessions, close)
             this.folderLabel = new UI.Label("", 34, 15)
             this.folderLabel.Color = new SolidBrush(UI.Color.Rgb(255, 255, 255))
-            this.folderLabel.FontSize = 14
+            this.folderLabel.FontSize = 13
             this.ui.Add(this.folderLabel)
             this.branchLabel = new UI.Label("", 34, 35)
             this.branchLabel.Color = new SolidBrush(UI.Color.Rgb(255, 255, 255))
-            this.branchLabel.FontSize = 14
+            this.branchLabel.FontSize = 13
             // the branch in bold (the bold file of the theme's font, where there is one)
             string bold = this.ui.theme.font + " Bold"
             if (this.ui.theme.font != "" && Fonts.Has(bold)) { this.branchLabel.Font = bold }
@@ -144,7 +147,7 @@ namespace Assistant {
             this.flame.Visible = false
             this.flame.OnPaint = func (UI.DrawingCanvas c) on this => PaintFlame(c)
             this.ui.Add(this.flame)
-            this.figure = new UI.DrawingCanvas(4, this.BH, 100, this.FH)
+            this.figure = new UI.DrawingCanvas(4, this.MaxBH, 100, this.FH)
             this.figure.Continuous = true
             this.figure.blendMode = 2
             this.figure.OnPaint = func (UI.DrawingCanvas c) on this => PaintFigure(c)
@@ -177,10 +180,11 @@ namespace Assistant {
         // The header band at the top of the bubble (its top corners round, `radius`), with a folder and - in a repository - a branch drawn in white.
         undefined PaintHeader(Renderer r, defined int w, defined int radius) {
             var band = new SolidBrush(this.HeaderFill())
-            r.FillRoundRect(4, 4, w - 8, this.headerH, radius, band)
-            r.FillRect(4, 4 + this.headerH - radius, w - 8, radius, band)
-            r.Blit(this.folderIcon, 13, 15, 2)
-            if (this.Brain.Branch != "") { r.Blit(this.branchIcon, 13, 35, 2) }
+            defined int o = this.O
+            r.FillRoundRect(4, o + 4, w - 8, this.headerH, radius, band)
+            r.FillRect(4, o + 4 + this.headerH - radius, w - 8, radius, band)
+            r.Blit(this.folderIcon, 13, o + 15, 2)
+            if (this.Brain.Branch != "") { r.Blit(this.branchIcon, 13, o + 35, 2) }
         }
 
         undefined PaintBubble(UI.DrawingCanvas c) {
@@ -188,25 +192,27 @@ namespace Assistant {
             r.ClearTo(UI.Color.Transparent())
             if (!this.Brain.Visible) { return }
             defined int w = this.W
-            defined int h = this.BH - 12
+            // (the bubble from o down to the tail; the window above it is transparent)
+            defined int o = this.O
+            defined int h = o + this.BH - 12
             defined int fill = this.Fill()
             defined int edge = this.ui.Dark ? UI.Color.Rgb(90, 90, 96) : UI.Color.Rgb(214, 204, 160)
             if (this.Brain.Phase == Assistant.Phase.Thinking) {
                 // a thought bubble: rounder, and small circles that rise from the character instead of the tail
-                r.DrawShadow(4, 4, w - 8, h - 4, 24, 6, 0x30000000, 2)
-                r.FillRoundRect(4, 4, w - 8, h - 4, 24, new SolidBrush(fill))
+                r.DrawShadow(4, o + 4, w - 8, this.BH - 16, 24, 6, 0x30000000, 2)
+                r.FillRoundRect(4, o + 4, w - 8, this.BH - 16, 24, new SolidBrush(fill))
                 this.PaintHeader(r, w, 24)
-                r.DrawRoundRect(4, 4, w - 8, h - 4, 24, new Pen(edge, 1))
+                r.DrawRoundRect(4, o + 4, w - 8, this.BH - 16, 24, new Pen(edge, 1))
                 r.FillCircle(52, h + 3, 6, new SolidBrush(fill))
                 r.DrawCircle(52, h + 3, 6, new Pen(edge, 1))
                 r.FillCircle(44, h + 14, 3, new SolidBrush(fill))
                 r.DrawCircle(44, h + 14, 3, new Pen(edge, 1))
                 return
             }
-            r.DrawShadow(4, 4, w - 8, h - 4, 12, 6, 0x30000000, 2)
-            r.FillRoundRect(4, 4, w - 8, h - 4, 12, new SolidBrush(fill))
+            r.DrawShadow(4, o + 4, w - 8, this.BH - 16, 12, 6, 0x30000000, 2)
+            r.FillRoundRect(4, o + 4, w - 8, this.BH - 16, 12, new SolidBrush(fill))
             this.PaintHeader(r, w, 12)
-            r.DrawRoundRect(4, 4, w - 8, h - 4, 12, new Pen(edge, 1))
+            r.DrawRoundRect(4, o + 4, w - 8, this.BH - 16, 12, new Pen(edge, 1))
             // the tail towards the character
             float tail[] = [38.0, (h - 1) * 1.0, 66.0, (h - 1) * 1.0, 44.0, (h + 12) * 1.0]
             r.FillPolygon(tail, new SolidBrush(fill))
@@ -269,21 +275,21 @@ namespace Assistant {
             this.placed = true
             // the bubble at most as high as the screen leaves room for: Min(screen - 120, 480) (logical pixels)
             this.MaxBH = UI.M.Max(this.MinBH, UI.M.Min(this.ui.ToLogical(area[3]) - this.FH, 480))
+            // the window once at its full height (the largest bubble and the character)
+            if (this.MaxBH + this.FH != this.H) {
+                this.H = this.MaxBH + this.FH
+                this.ui.SetSize(this.W, this.H)
+                this.bubble.Height = this.H
+                this.figure.Top = this.MaxBH
+            }
             this.win.SetPosition(area[0] + area[2] - this.fb.Width() - 16, area[1] + area[3] - this.fb.Height() - 8)
             this.Show()
         }
 
-        // The bubble gets the height `bh`: the window grows or shrinks upwards - its bottom (the character) stays where it is.
+        // The bubble gets the height `bh`: it starts lower or higher above the character (the window stays as it is).
         undefined Resize(defined int bh) {
-            if (bh == this.BH) { return }
-            int at[] = this.win.Position()
-            defined int before = this.fb.Height()
             this.BH = bh
-            this.H = bh + this.FH
-            this.ui.SetSize(this.W, this.H)
-            if (at[0] >= 0) { this.win.SetPosition(at[0], at[1] + before - this.fb.Height()) }
-            this.bubble.Height = this.H
-            this.figure.Top = this.BH
+            this.O = this.MaxBH - bh
         }
 
         // Every frame: the brain works a little, the bubble follows it.
@@ -293,7 +299,7 @@ namespace Assistant {
             if (this.picked >= 0) { this.TakePicked() }
             if (this.pickedSession != "") { this.TakeSession() }
             if (this.pickedMenu != "") { this.TakeMenu() }
-            // the menu closed: the window goes back to the size of the bubble
+            // the menu closed
             if (this.menuOpen && this.ui.popups.Count == 0) {
                 this.menuOpen = false
                 this.Show()
@@ -324,7 +330,7 @@ namespace Assistant {
             if (branch.Length > 26) { branch = branch.Substring(0, 23) + "..." }
             this.branchLabel.Text = branch
             this.branchLabel.Visible = shownNow && branch != ""
-            defined int top = 4 + this.headerH + 8
+            defined int top = 4 + this.headerH + 8   // (from the top of the bubble)
             string t = this.showHistory ? this.Brain.History() : this.Brain.Text
             if (t != this.shown) {
                 this.text.Text = t
@@ -352,15 +358,21 @@ namespace Assistant {
             if (asking) { below = below + 30 }
             defined int bh = 0
             if (shownNow) { bh = UI.M.Clamp(top + this.text.ContentHeight(this.ui, this.W - 24) + below, this.MinBH, this.MaxBH) }
-            if (this.menuOpen) { bh = UI.M.Max(bh, UI.M.Min(220, this.MaxBH)) }
             this.Resize(bh)
+            // everything of the bubble at its place below O
+            defined int o = this.O
+            this.folderLabel.Top = o + 15
+            this.branchLabel.Top = o + 35
+            this.historyButton.Top = o + 11
+            this.sessionsButton.Top = o + 11
+            this.closeButton.Top = o + 11
             defined int bottom = this.BH - 22
             if (asking) { bottom = this.BH - 52 }
-            this.question.Top = this.BH - 46
-            this.choices.Top = bottom - choicesHeight + 4
-            this.text.Top = top
+            this.question.Top = o + this.BH - 46
+            this.choices.Top = o + bottom - choicesHeight + 4
+            this.text.Top = o + top
             this.text.Height = UI.M.Max(20, bottom - choicesHeight - top)
-            this.flame.Top = top + 2
+            this.flame.Top = o + top + 2
             // thinking: the flame left of the text, the text a little to the right
             bool thinking = shownNow && this.Brain.Phase == Assistant.Phase.Thinking
             this.flame.Visible = thinking
@@ -439,10 +451,9 @@ namespace Assistant {
             items.Add(UI.MenuItem.Separator())
             items.Add(new UI.MenuItem("Quit", func () on this => ChooseMenu("quit")))
             this.menuRows = take items   // (the menu does not own its rows: they live in the view while it is open)
-            // room above the character for the menu and its submenus
+            // above the character (the window has room for it)
             this.menuOpen = true
-            this.Show()
-            this.ui.ShowMenu(this.menuRows, 4, UI.M.Max(4, this.BH - 150))
+            this.ui.ShowMenu(this.menuRows, 4, UI.M.Max(4, this.MaxBH - 150))
         }
 
         undefined ChooseMenu(string what) { this.pickedMenu = what }
