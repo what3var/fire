@@ -7170,7 +7170,7 @@ namespace fire.Native
                     E($"{a} = {v};");
                     d -= 2; SetR(d - 1, false); SetT(d - 1, storedType); _kindsKept = true; return Next();
                 }
-                case OpCode.ArrayGet when ObjSlot(d - 2) && !IsNullable(Ty(d - 2)) && (Ty(d - 2) & TypeNone) == 0 && !(_usesReflection && ReflectionMethodNames.Contains("GetIndex"))
+                case OpCode.ArrayGet when ObjSlot(d - 2) && (Ty(d - 2) & TypeNone) == 0 && !(_usesReflection && ReflectionMethodNames.Contains("GetIndex"))
                     && DirectMethod(ObjClass(Ty(d - 2)), "GetIndex", 1, f) is { Specializations: { } getSpecs, ParamCount: 1 } getIndex:
                 {
                     // `list[i]` on an object of a known class whose `operator[]` has typed specializations (`operator[]<int>`, SPEC 5.8.1): the one for the
@@ -7178,6 +7178,8 @@ namespace fire.Native
                     // through the dispatcher)
                     Need(2);
                     string grecv = S(d - 2), gidx = S(d - 1);
+                    // (a receiver that may be undefined - a parameter `List<int> l`: the generic access throws for it, what follows has an object)
+                    if (IsNullable(Ty(d - 2))) { E($"if (FIRE_UNLIKELY({grecv}.kind != K_Class)) {grecv} = {Px}aget_g({grecv}, {gidx}, NULL);"); Check(); }   // (it throws: no list to adopt a result into)
                     var getCalls = HandSpecCalls(getSpecs, grecv);
                     var generic = GetFunc(getIndex, FuncKind.Method);
                     var arms = new StringBuilder();
@@ -7239,7 +7241,7 @@ namespace fire.Native
                     if (elemType is { } ofElem) { SetT(d - 1, ofElem); _kindsKept = true; }
                     return Next();
                 }
-                case OpCode.ArraySet when ObjSlot(d - 3) && !IsNullable(Ty(d - 3)) && (Ty(d - 3) & TypeNone) == 0 && !(_usesReflection && ReflectionMethodNames.Contains("SetIndex"))
+                case OpCode.ArraySet when ObjSlot(d - 3) && (Ty(d - 3) & TypeNone) == 0 && !(_usesReflection && ReflectionMethodNames.Contains("SetIndex"))
                     && IsPlainType(Ty(d - 1)) && (Ty(d - 1) & TypeNone) == 0   // (a number, a bool or undefined: nothing to claim for the object)
                     && DirectMethod(ObjClass(Ty(d - 3)), "SetIndex", 2, f) is { Specializations: { } setSpecs, ParamCount: 2 }:
                 {
@@ -7248,6 +7250,7 @@ namespace fire.Native
                     // value for the object and calls the operator through the dispatcher)
                     Need(3);
                     string srecv = S(d - 3), sidx = S(d - 2), sval = S(d - 1);
+                    if (IsNullable(Ty(d - 3))) { E($"if (FIRE_UNLIKELY({srecv}.kind != K_Class)) (void){Px}aset_g({srecv}, {sidx}, {sval}, NULL);"); Check(); }
                     var setCalls = HandSpecCalls(setSpecs, srecv);
                     var sarms = new StringBuilder();
                     foreach (var sc in setCalls)

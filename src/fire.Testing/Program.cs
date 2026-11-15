@@ -26804,7 +26804,7 @@ else
                 }
             }
             // a 1 kHz tone through an RC low pass (1k, 1uF: 159 Hz) - about 0.157 of the input is left
-            var tone = Audio.Sound.Tone(1000, 100, 0, 100, 22050)
+            var tone = Audio.Sound.Tone(1000, 100, Audio.Wave.Sine, 100, 22050)
             print("tone " + tone.Frames + " frames, rms " + H.R(H.Rms(tone.Data, tone.Offset, tone.Frames)))
             var c = new Circuits.Circuit()
             var input = c.Add(new Circuits.AudioInput(1V))
@@ -26910,7 +26910,7 @@ else
             var n = probe.ReadPcm(back, 0, 20, 2V)
             print("pcm back " + n + " frames, first " + (back[0] + (back[1] << 8)))
             // Audio.Input on the simulated device: what was fed comes back
-            var tone = Audio.Sound.Tone(1000, 50, 0, 50, 8000)
+            var tone = Audio.Sound.Tone(1000, 50, Audio.Wave.Sine, 50, 8000)
             Audio.Sim.Reset()
             Audio.Sim.FeedSound(tone)
             var mic = new Audio.Input("sim", 8000, 1)

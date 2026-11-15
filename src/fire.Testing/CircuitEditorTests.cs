@@ -572,7 +572,7 @@ static class CircuitEditorTests
             Circuits.AudioInput mic = s.Find("mic").part!Circuits.AudioInput
             Circuits.AudioOutput bad = s.Find("bad").part!Circuits.AudioOutput
             print("streams " + (mic.Stream != undefined) + " " + (spk.Stream != undefined) + " " + (bad.Stream == undefined) + " " + (bad.DeviceError != ""))
-            var tone = Audio.Sound.Tone(1000, 50, 0, 50, 44100)
+            var tone = Audio.Sound.Tone(1000, 50, Audio.Wave.Sine, 50, 44100)
             mic.Stream.SimInput(tone.Data)
             Circuits.SignalStream.Pump()
             c.Run(60ms)

@@ -1219,7 +1219,12 @@ Gemessen (nativ, Release, 1 Mio., die Maschine war belastet - Instruktionen mit 
 
 Offen:
 
-* `l[i]` noch näher an 3 ns: der Test der Typargumente ist eingebettet (`static inline`); es bleibt der Aufruf des Rumpfs mit einem `Value` als Ergebnis.
+* `l[i]` noch näher an 3 ns: der Test der Typargumente ist eingebettet (`static inline`). **Umgesetzt:** (1) ein Empfänger, der undefined sein kann -
+  ein Parameter `List<int> l` -, nimmt denselben Weg wie ein sicher vorhandener (vorher ging `l[i]` und `l[i] = v` dort über `aget_g`/`aset_g`: der
+  allgemeine Zugriff nur noch, wenn er wirklich kein Objekt ist); (2) der C-Rumpf einer kleinen Spezialisierung (`operator[]<int>`, bis 40 Byte
+  Bytecode) wird an der Aufrufstelle eingebettet (FIRE_ALWAYS_INLINE). Gemessen mit callgrind, `s = s + l[i]` in einer Methode mit Parameter
+  `List<int> l`, je Durchlauf: 225 → 77 Instruktionen. Es bleibt: das Ergebnis ist ein `Value` (int oder undefined - ein Element der Liste kann
+  undefined sein), die Prüfungen „lebt die Liste“ und „lebt das Array“ je Zugriff.
 * `Grow` kopiert Element für Element (etwa 60 Instruktionen je Element): ein Kopieren der gepackten Daten am Stück. **Umgesetzt:** `__array_copy(src, dst, n)`
   (nativ fire_arrayCopy: ein Block bei gleich gepackten Arrays, sonst wie `dst[i] = src[i]`; VM ArrayCopyMethods) in `Grow<int>`/`Grow<float>` und in
   `__HashTable.Resize`, wenn nichts entfernt wurde - `List<int>.Add` 19 → 15 ns.
