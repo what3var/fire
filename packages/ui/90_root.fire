@@ -145,6 +145,10 @@ namespace UI {
         // the materials of the floating elements, kept while nothing behind them is repainted (see PopupSurface)
         List surfaces
         Backdrop windowBackdrop = Backdrop.None
+        // What fills the window behind the interface: undefined - the background of the theme (translucent where the desktop draws behind the window, see
+        // WindowBackdrop); a brush of its own - copied with its alpha: with Backdrop.Transparent and UI.Color.Transparent() only what is drawn is seen (a figure
+        // on the desktop).
+        Brush WindowBackground
         // After repainting only a part, the window hands over only that part (Window.PresentArea). A program that also draws into the framebuffer of the root
         // itself (outside the elements) switches it off - then every frame goes whole.
         bool PartialPresent = true
@@ -487,6 +491,14 @@ namespace UI {
         // The background of the interface: the colour of the theme - translucent where the desktop draws a material behind the window (WindowBackdrop), so that
         // it shows (copied with its alpha, not mixed).
         undefined FillBack(defined int x, defined int y, defined int w, defined int h) {
+            var own = this.WindowBackground
+            if (own != undefined) {
+                var was = this.renderer.AlphaBlending
+                this.renderer.AlphaBlending = false
+                this.renderer.FillRect(x, y, w, h, own)
+                this.renderer.AlphaBlending = was
+                return
+            }
             var given = Backdrop.None
             if (this.BackdropWanted() && this.window != undefined) { given = this.window.Backdrop }
             if (given == Backdrop.None) {
