@@ -1,0 +1,29 @@
+#import "time"
+class Job {
+    string n
+    construct(string n) { this.n = n }
+    destruct() { print("destroy " + this.n) }
+}
+actor Log {
+    int count = 0
+    undefined Put(Job j) { print("log " + j.n); this.count++ }
+}
+class Runner {
+    undefined Work(Job j) { print("work " + j.n) }
+    undefined Start() {
+        fire Work(new Job("handed"))
+        Sleep(200ms)
+        var mine = new Job("mine")
+        print("still mine: " + mine.n)
+    }
+}
+new Runner().Start()
+var log = new Log()
+log.Put(new Job("msg"))
+var keep = new Job("ref")
+log.Put(keep)
+process log
+process log
+print("count " + log.count)
+print("end")
+//# name: Ziel-Regel (SPEC 2.1): fire M(new X()) uebergibt, Nachricht an einen Actor besitzt ihr frisches Argument

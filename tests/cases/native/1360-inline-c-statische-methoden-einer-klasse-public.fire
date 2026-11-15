@@ -1,0 +1,18 @@
+class M {
+  inline c int Add(int a, int b) { return a + b; }
+  public static inline c float Half(float x) { return x / 2; }
+  private static inline c int Secret(int x) { return x * 7; }
+  static int UseSecret(int x) { return M.Secret(x) }
+  inline c undefined Nothing(byte data[]) { data[0] = (uint8_t)data_length; }
+  static string Hi() { return "hi" }
+}
+print(M.Hi())
+#if native
+var b = new byte[3]
+M.Nothing(b)
+print(M.Add(2, 3) + " " + M.Half(5.0) + " " + M.UseSecret(6) + " " + b[0])
+#else
+print("5 2.5 42 3")
+#endif
+//# note: inline c as static methods of a class (C name fire_inl_<Class>_<Name>)
+//# name: inline c: statische Methoden einer Klasse (public/private/static, byte[], undefined), Aufruf aus einer fire-Methode

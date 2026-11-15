@@ -1,0 +1,21 @@
+var x = 12345.678
+print($"{x:E}")
+print($"{x:E2}")
+print($"{x:e3}")
+print($"{x:E0}")
+var small = 0.000123
+print($"{small:E3}")
+var n = 42
+print($"{n:E}")
+print($"{n:E1}")
+var z = 0.0
+print($"{z:E2}")
+print($"{x:F}")
+print($"{x:F1}")
+print($"{n:X4}")
+print($"{n:B8}")
+var big = 1500000000000.0 * 1000000000000.0
+print($"{big:E2}")
+var neg = -0.5
+print($"{neg:E1}")
+//# name: Zahlenformat E und F, X, B im Zusammenspiel

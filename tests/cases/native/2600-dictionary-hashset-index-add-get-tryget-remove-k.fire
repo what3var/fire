@@ -1,0 +1,31 @@
+var d = new Dictionary<string, int>()
+d["a"] = 1
+d["b"] = 2
+d.Add("c", 3)
+d["a"] = 10
+print(d["a"] + " " + d.Count)
+print(d.ContainsKey("b") + " " + d.ContainsKey("x"))
+print(d.Get("x", -1))
+int v = 0
+print(d.TryGet("c", v) + " " + v)
+foreach (p in d) { print(p.Key + "=" + p.Value) }
+print(d.Remove("b") + " " + d.Remove("b") + " " + d.Count)
+foreach (k in d.Keys) { print(k) }
+for (var i = 0; i < 100; i++) { d["k" + i] = i }
+print(d.Count + " " + d["k57"])
+for (var i = 0; i < 100; i += 2) { d.Remove("k" + i) }
+print(d.Count + " " + d["k57"] + " " + d.ContainsKey("k56"))
+try { d.Add("a", 5) } catch (ArgumentException e) { print(e.message) }
+try { print(d["zz"]) } catch (ArgumentException e) { print(e.message) }
+var u = new Dictionary<any, string>()
+u[1km] = "dist"
+print(u[1000m] + " " + u.ContainsKey(1) + " " + u.ContainsKey(1000m))
+u[2] = "two"
+print(u[2.0])
+var s = new HashSet<string>()
+print(s.Add("x") + " " + s.Add("y") + " " + s.Add("x") + " " + s.Count)
+foreach (x in s) { print(x) }
+print(s.Contains("y") + " " + s.Remove("y") + " " + s.Contains("y"))
+d.Clear()
+print(d.Count)
+//# name: Dictionary/HashSet: Index, Add, Get, TryGet, Remove, Keys, foreach in Einfuegereihenfolge, Wachsen, Einheiten und Zahlen als Schluessel

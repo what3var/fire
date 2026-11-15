@@ -1,0 +1,12 @@
+<buffer 3 bytes> 3 44 True
+<buffer 4 bytes> 9 0
+1 5
+<buffer 2 bytes> 10 11
+A: An element of a byte buffer must be an int, not String.
+A: An element of a byte buffer must be an int, not Undefined.
+A: An element of a byte buffer must be an int, not String.
+0 7
+<buffer 3 bytes> 255 5 2
+<buffer 3 bytes> 6 2
+True
+Hi

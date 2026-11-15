@@ -1,0 +1,10 @@
+21
+693
+15
+30
+250 253
+undefined
+buffer 3
+error: A byte buffer is declared here, not String.
+undefined: Index access ('[]') on a value of type Undefined is not possible (neither an array nor a class with a 'GetIndex' method).
+ints: An element of an array of int must be an int (or undefined), not String.

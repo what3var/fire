@@ -1,0 +1,40 @@
+#import "io"
+#import "filesystem"
+var dir = IO.Path.Combine(IO.Path.GetTempPath(), "fire_io_test_i1")
+if (IO.Directory.Exists(dir)) { IO.Directory.Delete(dir, true) }
+IO.Directory.CreateDirectory(IO.Path.Combine(dir, "sub/deeper"))
+print(IO.Directory.Exists(dir))
+var f = IO.Path.Combine(dir, "a.txt")
+IO.File.WriteAllText(f, "Hallo Welt\nZeile 2 äöü €\r\nZeile 3 é 😀\n\nletzte")
+print(IO.File.Exists(f) + " " + IO.File.Size(f))
+print(IO.File.ReadAllText(f))
+foreach (line in IO.File.ReadAllLines(f)) { print("[" + line + "]") }
+IO.File.AppendAllText(f, "\nangehaengt")
+print(IO.File.ReadAllLines(f).Count)
+var reader = IO.File.OpenText(f)
+print(reader.ReadLine())
+print(reader.ReadLine())
+reader.Close()
+var w = IO.File.CreateText(IO.Path.Combine(dir, "b.txt"))
+w.WriteLine("eins")
+w.WriteLine("zwei")
+w.Close()
+print(IO.File.ReadAllText(IO.Path.Combine(dir, "b.txt")))
+IO.File.Copy(f, IO.Path.Combine(dir, "sub/c.txt"))
+IO.File.Move(IO.Path.Combine(dir, "b.txt"), IO.Path.Combine(dir, "sub/deeper/d.txt"))
+foreach (p in IO.Directory.GetFiles(dir, "*", true)) { print(IO.Path.GetFileName(p)) }
+foreach (p in IO.Directory.GetFiles(dir, "*.txt")) { print("top " + IO.Path.GetFileName(p)) }
+foreach (p in IO.Directory.GetDirectories(dir, "*", true)) { print("dir " + IO.Path.GetFileName(p)) }
+try { IO.File.Copy(f, IO.Path.Combine(dir, "sub/c.txt")) } catch (IO.FileExistsException e) { print("exists") }
+IO.File.Copy(f, IO.Path.Combine(dir, "sub/c.txt"), true)
+try { IO.File.ReadAllText(IO.Path.Combine(dir, "nope.txt")) } catch (IO.FileNotFoundException e) { print("not found") }
+try { IO.File.WriteAllText(IO.Path.Combine(dir, "nodir/x.txt"), "x") } catch (IO.DirectoryNotFoundException e) { print("no dir") }
+try { IO.Directory.Delete(dir) } catch (IO.IOException e) { print("not empty") }
+var t = IO.File.GetLastWriteTime(f)
+print(t.Year >= 2001)
+IO.File.Delete(f)
+IO.File.Delete(f)
+print(IO.File.Exists(f))
+IO.Directory.Delete(dir, true)
+print(IO.Directory.Exists(dir))
+//# name: IO: Dateien, Verzeichnisse, Text, Fehler (FileNotFound, DirectoryNotFound, FileExists)

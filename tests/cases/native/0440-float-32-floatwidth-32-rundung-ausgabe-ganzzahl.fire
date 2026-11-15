@@ -1,0 +1,17 @@
+#floatwidth 32
+print(0.1 + 0.2)
+print(1.0 / 3)
+print(16777216.0 + 1.0)
+print(16777217 + 0.0)
+print(123456789.0)
+print(1000.0 * 1000000.0)
+print(1000.0 * 100000.0)
+print(0.00001)
+print(0.0001 * 1)
+print(7.5 % 2)
+print(2.5 < 2.75)
+var s = 0.0
+for (var i = 0; i < 1000; i = i + 1) { s = s + 0.1 }
+print(s)
+print(-1.5 * 3)
+//# name: float 32 (#floatwidth 32): Rundung, Ausgabe, Ganzzahl-nach-float

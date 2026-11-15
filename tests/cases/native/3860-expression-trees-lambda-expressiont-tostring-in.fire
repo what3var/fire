@@ -1,0 +1,21 @@
+class Order { int total; construct(int t) { this.total = t } }
+class Person {
+    int age
+    string name
+    List<Order> orders = new List<Order>()
+    construct(int a, string n) { this.age = a; this.name = n }
+    bool IsAdult { get { return this.age >= 18 } }
+}
+class Probe<T> {
+    string Show(lambda expression<T> e) { return e.ToString() }
+    any Run(lambda expression<T> e, T x) { return e.Invoke(x) }
+}
+var pr = new Probe<Person>()
+var min = 18
+var prefix = "A"
+print(pr.Show(p => p.age >= min && !(p.name == undefined)))
+print(pr.Show(p => p.orders.Any(o => o.total > 10)))
+print(pr.Show(p => p.name.StartsWith(prefix) || p.age * 2 > 40 - min))
+print(pr.Run(p => p.age >= min && p.name.StartsWith(prefix), new Person(20, "Anna")))
+print(pr.Run(p => p.age >= min, new Person(10, "Bo")))
+//# name: Expression trees: lambda expression<T> - ToString in fire-Syntax, Captured-Werte, verschachtelte Lambdas, Invoke

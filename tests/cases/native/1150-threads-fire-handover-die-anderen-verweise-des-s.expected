@@ -1,0 +1,21 @@
+thread: 1 2 3 6 3
+thread same: True True 2
+undefined: True True
+field: Access to an object that was handed over to a thread ('fire handover').
+set: Access to an object that was handed over to a thread ('fire handover').
+call: Access to an object that was handed over to a thread ('fire handover').
+reached: Access to an object that was handed over to a thread ('fire handover').
+element: Access to an array that was handed over to a thread ('fire handover').
+element set: Access to an array that was handed over to a thread ('fire handover').
+length: Access to an array that was handed over to a thread ('fire handover').
+is of: Access to an object that was handed over to a thread ('fire handover').
+is of class: True, compare: True False True
+a stays: 5, the same object: True True False, the thread's reference works: 30
+release 1
+release 6
+after the thread: Access to a destroyed object.
+in a thread: Access to an object that was handed over to a thread ('fire handover').
+inner 8
+release 8
+end
+release 5

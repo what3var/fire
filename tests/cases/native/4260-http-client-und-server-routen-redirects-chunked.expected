@@ -1,0 +1,27 @@
+http Example.org 8080 /a/b?x=1
+/ 443 ::1
+http://Example.org:8080/c | http://Example.org:8080/a/d | http://other/z
+bad scheme 1
+bad url 1
+a%20b%2F%C3%BC%3F%26%3D a b/xü+%zz%4 a b
+text/x 1 3 False
+2 3
+/p q Anna M b&c [] dflt
+200 OK [hello Anna M] text/plain; charset=utf-8 ok=True len=12
+201 [GRÜß DICH 11]
+200 [hello redirect] True
+loop 3
+404 Not Found ok=False
+server error: boom
+500
+200 [PATCH /any/x/y]
+head 200 11 body=0
+size 200000
+204 No Content 0
+302 /hello?name=redirect 0
+200
+200 [hello, chunked world] t
+203 Odd Reason Phrase [until close]
+silent 4
+https refused 3
+ftp 1

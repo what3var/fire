@@ -1,0 +1,28 @@
+class Counter { int n = 0 }
+class Box { int v = 2 }
+class Demo {
+    static undefined Run() {
+        var c = new Counter()
+        var inc = func (int k) on c => { n = n + k; return n }
+        var b = new Box()
+        var plain = (int k) => k * (taking b).v
+        var got = await taking inc taking plain {
+            print("thread plain " + plain(10))
+            int a = inc(5)
+            int z = inc(2)
+            return a * 100 + z
+        }
+        print("result " + got + " main n " + c.n)
+        var h = func (int k) on c => { n = n * k; return n }
+        var m = await handover h { return h(3) }
+        print("moved " + m + " main n " + c.n + " h " + (h == undefined))
+        var lst = new List<lambda>()
+        lst.Add(take func () on c => { n = n + 1; return n })
+        var r = await taking lst { return lst[0]() + lst[0]() }
+        print("list " + r + " main n " + c.n)
+        var bad = await taking plain { return plain(1) }
+        print("plain " + bad)
+    }
+}
+Demo.Run()
+//# name: Threads: Lambdas gehen in Threads - taking kopiert den Store, ein mit on gebundenes laeuft im Hauptprogramm auf dem Original (await, handover, in einer Liste)

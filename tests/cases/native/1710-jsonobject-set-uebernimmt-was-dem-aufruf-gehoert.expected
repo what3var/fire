@@ -1,0 +1,2 @@
+{"inner":{"a":1},"la":{"c":3},"list":[{},5],"taken":{"b":2},"made":{}}
+DestroyedException: A value to write to JSON is destroyed: an object, array or buffer that belonged to a block that has ended (give it with `take` to what keeps it) or that was deleted.

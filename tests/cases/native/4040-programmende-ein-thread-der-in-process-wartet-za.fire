@@ -1,0 +1,23 @@
+#import "time"
+#endwait 20s
+actor Home {
+    int n = 0
+    undefined Add(int v) { this.n = this.n + v }
+}
+var ch = new Channel<int>()
+fire with ch {
+    var h = new Home()
+    fire with h {
+        Sleep(50ms)
+        h.Add(5)
+        h.Add(6)
+    }
+    try { while (true) { process h } } finally { print("home ends " + h.n) }
+}
+fire with ch {
+    int sum = 0
+    foreach (v in ch) { sum = sum + v }
+}
+ch.Send(1)
+print("main end")
+//# name: Programmende: ein Thread, der in process wartet, zaehlt als Stillstand - er endet wie mit leave (finally laeuft), ohne das Zeitlimit

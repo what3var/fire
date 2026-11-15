@@ -1,0 +1,28 @@
+class B {
+    static int Sum(List<int> l, int n) { int s = 0; for (int i = 0; i < n; i++) { s = s + l[i] } return s }
+    static undefined Fill(List<int> l, int n) { for (int i = 0; i < n; i++) { l[i] = i * 2 } }
+    static float FSum(List<float> l) { float s = 0.0; for (int i = 0; i < l.Count; i++) { s = s + l[i] } return s }
+    static string First(List<string> l) { return l[0] }
+    static int Get(Dictionary<int, int> d, int k) { return d[k] }
+    static undefined Put(Dictionary<int, int> d, int k, int v) { d[k] = v }
+}
+List<int> l = new List<int>()
+for (int i = 0; i < 10; i++) { l.Add(i) }
+print(B.Sum(l, 10))
+B.Fill(l, 10); print(B.Sum(l, 10))
+List<float> f = new List<float>(); f.Add(1.5); f.Add(2.5); print(B.FSum(f))
+List<string> ss = new List<string>(); ss.Add("a"); print(B.First(ss))
+Dictionary<int, int> d = new Dictionary<int, int>(); B.Put(d, 3, 4); print(B.Get(d, 3))
+any none = undefined
+try { B.Sum(none, 1) } catch (Exception e) { print("E1 " + e.message) }
+try { B.Fill(none, 1) } catch (Exception e) { print("E2 " + e.message) }
+try { B.Get(none, 1) } catch (Exception e) { print("E3 " + e.message) }
+try { B.Put(none, 1, 2) } catch (Exception e) { print("E4 " + e.message) }
+try { B.Sum(l, 99) } catch (Exception e) { print("E5 " + e.message) }
+try { B.Get(d, 99) } catch (Exception e) { print("E6 " + e.message) }
+{
+    List<int> tmp = new List<int>(); tmp.Add(1)
+    l = tmp
+}
+try { B.Sum(l, 1) } catch (Exception e) { print("E7 " + e.message) }
+//# name: Spezialisierungen (ROADMAP 21): Indexzugriffe auf Parameter, die undefined sein koennen - List<int>, List<float>, List<string>, Dictionary<int, int>

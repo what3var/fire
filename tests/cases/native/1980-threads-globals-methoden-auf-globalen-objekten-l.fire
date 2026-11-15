@@ -1,0 +1,14 @@
+class Counter {
+    int n
+    construct() { this.n = 0 }
+    Inc() { var old = this.n; this.n = old + 1 }
+}
+var c = new Counter()
+var done = 0
+fire { for (var i = 0; i < 100; i = i + 1) { c.Inc() } sync global { done = done + 1 } }
+fire { for (var i = 0; i < 100; i = i + 1) { c.Inc() } sync global { done = done + 1 } }
+fire { for (var i = 0; i < 100; i = i + 1) { c.Inc() } sync global { done = done + 1 } }
+fire { for (var i = 0; i < 100; i = i + 1) { c.Inc() } sync global { done = done + 1 } }
+while (done < 4) { sync globals }
+print("n " + c.n)
+//# name: Threads: Globals: Methoden auf globalen Objekten laufen atomar

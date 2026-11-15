@@ -1,0 +1,5 @@
+p => ((p.age >= min) && !(p.name == undefined))
+p => p.orders.Any(o => (o.total > 10))
+p => (p.name.StartsWith(prefix) || ((p.age * 2) > (40 - min)))
+True
+False

@@ -173,6 +173,37 @@ far from those of `-a`), a test program gets its variables (`FIRE_DISPLAY`, `LSA
 the sanitizers 20-30 % less compile time than `-O2` (a case of 1.3 MB C: 33 s instead of 48 s) and the same memory errors; a few warnings of gcc appear only with
 `-O2` (`FIRE_TEST_OPT=-O2` looks for them), the checks that are about `-O2` itself name it.
 
+### The cases as files (`tests/cases`)
+
+The cases "native == VM" - a program that must print the same in the VM and as a native program - are files, not text in the test program
+(`TestCases.cs`; [ROADMAP_C_PORT.md](../ROADMAP_C_PORT.md), L5: the same files will check the VM and the compiler in C):
+
+```
+tests/cases/native/0420-records-gleichheit-nach-inhalt.fire        the source, exactly; then lines about the case
+tests/cases/native/0420-records-gleichheit-nach-inhalt.expected    what the program prints (every line of print, ended by a line feed)
+tests/cases/native/0420-records-gleichheit-nach-inhalt.unhandled   only if the program ends with an exception nothing catches: the line of the command line
+```
+
+A `.fire` file ends with its **title** - `//# name: Records: Gleichheit nach Inhalt` (the name `FIRE_TESTS_FILTER` looks at; a title that starts with
+`Abbruch:`, `Threads:`, ... is treated as before) - and may have `//# note: ...` lines before it (a remark) and `//# output: varies` (what the program
+prints differs from run to run or from machine to machine: no expected output, the VM and the native program are only compared with each other). These
+lines are not part of the program: the source is everything before them, so the lines of the program keep their numbers. The files are UTF-8 with line
+feeds and git never converts them (`.gitattributes`: an output may hold a carriage return on purpose). The cases run in the order of their file names; the numbers leave room to put a case between two others.
+
+The native group checks every such case three ways: the VM prints the expected output (`OK: VM: <title>: die erwartete Ausgabe`), the native program
+prints what the VM printed, and - as before - the special runs (sanitizers, FreeRTOS, tcc, ...) pick their cases by title.
+
+**A new case:** write `<number>-<name>.fire` with its title line, then record what the VM prints and look at it before you check it in:
+
+```
+FIRE_TESTS_ONLY=native FIRE_TESTS_UPDATE=1 dotnet fire.Testing.dll     # writes the .expected (and .unhandled) of new and changed cases, runs nothing else
+FIRE_TESTS_ONLY=native FIRE_TESTS_FILTER="<title>" dotnet fire.Testing.dll
+```
+
+A case without an expected output is a failed check that says so. Cases whose source is made at run time (a certificate, a folder of the run, a database
+server of the machine) stay in `Program.cs` (`natCases`), next to the place that makes what they need. `FIRE_TESTS_LISTING=<file>` (with
+`FIRE_TESTS_ONLY=native`) writes the titles and sources of all cases as one text and runs nothing - to compare the set of cases before and after moving some.
+
 **Progress.** Every check line carries its number and the number of checks of the last run with the same `FIRE_TESTS_ONLY` and `FIRE_TESTS_FILTER`:
 `OK: [123/530] Native == VM: ...`, `FEHLER: [124/530] ...` (`?` on the first run; the counts are kept in `~/.cache/fire-tests/totals.json`). The status word stays first,
 so `grep '^OK:'`, `grep -c FEHLER` and the like keep working. Every line is written at once (a log of a run in the background grows line by line), and while a long

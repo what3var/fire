@@ -1,0 +1,5 @@
+A: A word takes an int or a word, not Float (convert with '!word').
+A: A word takes an int or a word, not String (convert with '!word').
+word 3 word undefined
+A2: A word takes an int or a word, not Float (convert with '!word').
+1

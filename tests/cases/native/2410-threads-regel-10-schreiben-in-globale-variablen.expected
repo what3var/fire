@@ -1,0 +1,7 @@
+moved: Access to an object that was handed over to a thread ('fire handover').
+global: A global variable belongs to the main program: an object of this thread goes there only with a word - 'copy x' (a copy) or 'take x' (moved).
+field: The field 'last' of an object of the globals belongs to the main program: an object of this thread goes there only with a word - 'copy x' (a copy) or 'take x' (moved).
+element: An element of an array of the globals belongs to the main program: an object of this thread goes there only with a word - 'copy x' (a copy) or 'take x' (moved).
+add: 'Add' runs in the main program (an object of its globals): an object of this thread goes there only with a word - 'copy x' (a copy) or 'take x' (moved).
+thread 5 7 8 9 1 7 4 44
+main 5 7 8 40 9 1 7 1 4

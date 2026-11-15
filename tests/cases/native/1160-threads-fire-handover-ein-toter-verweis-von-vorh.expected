@@ -1,0 +1,7 @@
+copy other: An already destroyed object cannot be copied.
+flat other: An already destroyed object cannot be copied.
+throw: Access to an object that was handed over to a thread ('fire handover').
+take: Access to an object that was handed over to a thread ('fire handover').
+foreach: Access to an array that was handed over to a thread ('fire handover').
+cast: Access to an object that was handed over to a thread ('fire handover').
+end

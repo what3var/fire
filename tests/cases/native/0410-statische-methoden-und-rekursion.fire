@@ -1,0 +1,15 @@
+class MathX {
+    static int Gcd(int a, int b) {
+        if (b == 0) { return a }
+        return MathX.Gcd(b, a % b)
+    }
+    static float Half(float x) { return x / 2 }
+    static int Fact(int n) {
+        if (n <= 1) { return 1 }
+        return n * MathX.Fact(n - 1)
+    }
+}
+print(MathX.Gcd(48, 18))
+print(MathX.Half(5.0))
+print(MathX.Fact(15))
+//# name: Statische Methoden und Rekursion

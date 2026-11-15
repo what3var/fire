@@ -1,0 +1,27 @@
+#intwidth 32
+var a = 2147483647
+a = a + 1
+print(a)
+print(65536 * 65536)
+var m = -2147483647 - 1
+print(m / -1)
+print(m % -1)
+print(1 << 31)
+print(1 << 32)
+print(3000000000)
+var big = 100000
+print(big * big)
+int u[3]
+u[0] = 2147483647
+u[0]++
+print(u[0])
+class P { int x }
+var p = new P()
+p.x = 70000 * 70000
+print(p.x)
+var s = 0
+for (var i = 0; i < 100000; i++) { s += i * i }
+print(s)
+print(5cm + 3mm)
+print(0.5 + 1)
+//# name: #intwidth 32: Ueberlauf, Division, Schieben, Konstanten, typisierte Arrays, Felder, Schleifen, Einheiten

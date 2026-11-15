@@ -1,0 +1,9 @@
+#import "reflection"
+class Person { int age; string name }
+class Repo<T> { string Kind() { return Type.Of<T>().Name } }
+class Q { static string Of<T>(int n) { return Type.Of<T>().Name + " " + n } }
+print(Type.Of<Person>().Name)
+print(Q.Of<Person>(3))
+print(new Repo<Person>().Kind())
+print(Type.Of(new Person()).Name)
+//# name: Reflection: Type.Of<T>() in generischer Klasse und Methode

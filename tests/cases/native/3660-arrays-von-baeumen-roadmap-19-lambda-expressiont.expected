@@ -1,0 +1,3 @@
+p => (p.a > 1)
+E1 An element of an array of LambdaExpression must be a LambdaExpression (or undefined), not Int.
+E2 An element of an array of LambdaExpression must be a LambdaExpression (or undefined), not a lambda with 1 parameter(s).

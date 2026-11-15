@@ -1,0 +1,10 @@
+p => ((p.age >= filter.minAge) && p.IsAdult)
+p => ((p.Twice(n) + Util.Limit()) > p.scores[1])
+p => ((p.age > 20) ? p.name : p.tag.name)
+p => new Tag(p.name)
+p => (p.age!float / 2)
+p => (((p.tag is of Tag) && (-p.age < 0)) && (("x" + p.name) != "y"))
+False t20
+filter.minAge=18 n=3 Util.Limit()=30 | False
+members 1 captured 3 kind Binary bool Person
+Member age True Parameter

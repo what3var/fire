@@ -1,0 +1,18 @@
+class H {
+    static int Sum(int n) {
+        int s = 0
+        for (int i = 0; i < n; i++) { s = (s * 31 + i) % 1000003 }
+        return s
+    }
+    static float Area(int n) {
+        float a = 0.0
+        float x = 0.5
+        for (int i = 0; i < n; i++) { a = a + x * x; x = x + 0.25 }
+        return a
+    }
+}
+var t = 0
+for (int r = 0; r < 20; r++) { t = t + H.Sum(50000) }
+print(t)
+print(H.Area(1000))
+//# name: Skalare (Ebene 2): Schleife mit Rest und Vergleich gegen einen int-Parameter

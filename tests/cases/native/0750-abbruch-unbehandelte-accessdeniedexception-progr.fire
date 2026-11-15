@@ -1,0 +1,5 @@
+class P { private int x
+    construct() { x = 1 } }
+any p = new P()
+print(p.x)
+//# name: Abbruch: unbehandelte AccessDeniedException (Programm ohne Ausnahmen)

@@ -1,0 +1,23 @@
+44 127 undefined
+-24
+-128
+-12
+A: An element of an array of int[8] must be an int (or undefined), not String.
+A: An element of an array of int[8] must be an int (or undefined), not Float.
+U: Expected unit '(no unit)', got: cm.
+undefined
+-128 127
+undefined 5 4
+-9223372036854775808 undefined
+x undefined
+44 255 0
+1 2.0999999046325684 undefined
+0.0999755859375
+NaN undefined
+A: An element of an array of bool must be a bool (or undefined), not Int.
+True undefined
+200cm
+U: Expected unit 'cm', got: s.
+A: An element of an array of int must be an int (or undefined), not String.
+4464
+A: An array of int[16] cannot be stored where an array of int[8] is declared.

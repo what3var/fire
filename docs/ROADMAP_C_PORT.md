@@ -169,7 +169,15 @@ Noch kein C; alles hier ist für sich nützlich und macht den Rest prüfbar.
    ([BYTECODE.md, Abschnitt 48](spec/BYTECODE.md#48-das-dateiformat-fbc)); Packer, Payload, Plugins (`FIREPLG2`) und die Schnittstellen der Module
    benutzen es, **MemoryPack ist entfernt**. `forge bytecode` schreibt eine Datei, `forge dump` gibt ein Programm als Text aus (`ProgramDump`).
    Tests: `FIRE_TESTS_ONLY=programfile`.
-2. **Tests als Daten** (L5): Export, das C#-Testprogramm liest die Dateien.
+2. **Tests als Daten** (L5), in Schritten nach Familien:
+   * ~~Die Fälle "nativ == VM"~~ (umgesetzt): 436 der 448 Fälle sind Dateien in `tests/cases/native` (`.fire` mit Titelzeile, `.expected`, bei
+     einem Abbruch `.unhandled`; [testing.md](tools/testing.md#the-cases-as-files-testscases)), `Program.cs` ist dadurch von 38 000 auf 21 000 Zeilen
+     geschrumpft. Das Testprogramm liest sie (`TestCases.cs`) und prüft zusätzlich die VM gegen die festgehaltene Ausgabe; `FIRE_TESTS_UPDATE=1`
+     schreibt sie neu. Die 12 übrigen Fälle entstehen zur Laufzeit (Zertifikat, Ordner des Laufs, Datenbankserver) und bleiben im Code.
+   * **Offen:** die Familien mit Skript und erwarteten Zeilen, die nur in der VM laufen (`CheckPerf`, `CheckLq`, `CheckRf`, `CheckSc`, `CheckGl`,
+     `CheckCb`, `CheckLife`, `CheckExt`, `CheckArr`, `CheckClone`, `CheckIo`, `CheckUi`, ...), jede mit eigenem Aufbau (Modi, Regeln, Fake-Renderer);
+     Diagnosen (`DiagnosticTests`, `TypeTests`, `SyntaxTests`) als Fälle mit erwarteten Meldungen; Completion (`CheckCompletion`) mit `forge serve`.
+     Was am Editor, an Fenstern oder an Toolchains hängt, bleibt Code.
 3. ~~**Determinismus**~~ (geprüft, es war nichts zu beseitigen): zweimal übersetzt ergibt byte-gleiche `.fbc` und denselben Text von
    `fire_program.c` - für ein Skript mit einem Stück von allem und für jedes Beispiel von spark (dieselben Tests), von Hand auch über zwei Prozesse.
 4. **Referenzstände**: ein Skript erzeugt für den Korpus `.fbc`, AST-Ausgabe, Diagnosen und `fire_program.c` (je Ziel/Option) als Vergleichsbasis;

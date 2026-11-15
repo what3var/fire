@@ -1,0 +1,35 @@
+#intwidth 32
+#floatwidth 32
+class P { int x
+    float y
+    bool ok
+    int len : mm
+    string name
+    int[64] big
+    construct(int x) { this.x = x; this.y = x * 0.5; this.ok = x > 1; this.len = 5cm; this.name = "p" + x; this.big = 864000000000 }
+    int Sum() { return this.x + this.len / 1mm }
+}
+class Q : P { int z
+    float w
+    construct(int x) : base(x) { this.z = x * 3; this.w = 0.25 }
+}
+var p = new P(2)
+print(p.x + " " + p.y + " " + p.ok + " " + p.len + " " + p.name + " " + p.big + " " + p.Sum())
+var q = new Q(3)
+print(q.x + " " + q.y + " " + q.ok + " " + q.z + " " + q.w + " " + q.big * 2)
+P any1 = q
+any1.x = 2147483647
+any1.x = any1.x + 1
+print(any1.x + " " + q.x)
+var e = new P(1)
+e.ok = undefined
+e.y = undefined
+print(e.ok == undefined)
+print(e.y == undefined)
+var c = copy q
+c.z = 7
+print(c.z + " " + q.z + " " + c.w)
+any d = q
+d.y = 4
+print(d.y + " " + d.z)
+//# name: Schmale Felder (#intwidth 32, #floatwidth 32): int/float/bool teilen sich einen Wert, Vererbung mit freier Haelfte, undefined, Einheiten, int[64] bleibt breit, Kopie, Schneiden

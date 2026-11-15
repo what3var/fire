@@ -1,0 +1,13 @@
+catch terminate(v)
+{
+    print("Main-Thread: catch terminate(v) -> " + v)
+}
+var i = 0
+while (i < 2000000) {
+    i = i + 1
+    if (i == 5) {
+        terminate(77)
+    }
+}
+print("NIE ERREICHT")
+//# name: Threads: catch terminate(v) laeuft im Hauptprogramm

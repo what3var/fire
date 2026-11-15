@@ -1,0 +1,39 @@
+class Item { string n
+  construct(string n) { this.n = n }
+  destruct() { print("~" + this.n) } }
+class Box { string n
+  any held
+  any items = [undefined, undefined]
+  construct(string n) { this.n = n }
+  destruct() { print("~box " + this.n) }
+  undefined Keep(Item i) { this.held = try take i }
+  undefined KeepAt(Item i, int k) { this.items[k] = try take i }
+  undefined Own() { var mine = new Item("own"); this.held = try take mine; print("own kept") }
+  undefined Swap(Item i) { var local = try take i; print("local " + local.n) }
+}
+class T {
+  static undefined Store(Item i) { print("store " + i.n) }
+  static undefined Forward(Item i, Box b) { b.Keep(try take i) }
+}
+var b = new Box("b")
+b.Keep(new Item("fresh"))
+var mine = new Item("mine")
+b.Keep(mine)
+print("mine stays " + mine.n)
+b.KeepAt(new Item("at"), 0)
+b.KeepAt(mine, 1)
+b.Own()
+b.Swap(new Item("swap"))
+print("after swap")
+T.Store(try take new Item("arg"))
+var top = new Item("top")
+T.Store(try take top)
+print("after top")
+var other = new Box("other")
+T.Forward(new Item("fwd"), other)
+var keepMe = new Item("keep")
+T.Forward(keepMe, other)
+print("keep stays " + keepMe.n)
+delete other
+print("end")
+//# name: Besitz: try take als Argument und in Zuweisungen - nur was der laufende Aufruf besitzt (Scope, Argument, this), sonst bleibt der Besitz

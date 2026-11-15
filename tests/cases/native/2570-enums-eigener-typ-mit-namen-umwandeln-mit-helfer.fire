@@ -1,0 +1,40 @@
+enum Color { Red, Green = 5, Blue }
+flag enum Test { a = 1, b = 2, c = 4 }
+var c = Color.Blue
+print(c)
+print("Farbe: " + c)
+print(c is of Color)
+print(c is of int)
+print(c + 1)
+print(c == Color.Blue)
+print(c == 6)
+print(c.ToString())
+print(5!Color)
+print(Color.Blue!int)
+print(7!Color)
+print(Color.Parse("Green"))
+print(Color.IsDefined(Color.Red))
+print(Color.IsDefined(1))
+print(Color.Name(42))
+foreach (x in Color.Values()) { print(x) }
+print(Color.Values().Length)
+switch (c) {
+    case Color.Red:
+        print("rot")
+    case Color.Blue:
+        print("blau")
+    case default:
+        print("anders")
+}
+var t = Test.a | Test.c
+print(t)
+print(t is of Test)
+print(t.HasFlag(Test.c))
+print(t.HasFlag(Test.b))
+print(t & Test.a)
+print(t # Test.a)
+print(~Test.a)
+print(Test.a | 8)
+class Box { Color color = Color.Green; Color Get() { return this.color } }
+print(new Box().Get())
+//# name: Enums: eigener Typ mit Namen, Umwandeln mit !, Helfer, Flag-Enums

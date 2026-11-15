@@ -1,0 +1,33 @@
+class Node {
+    string n
+    construct(string n) { this.n = n }
+    destruct() { print("~" + this.n) }
+}
+var d = new Dictionary<string, Node>()
+var a = new Node("a")
+a.TakeTo(d)
+d["a"] = a
+d["b"] = new Node("b")
+var mine = new Node("mine")
+d["m"] = mine
+print("remove a")
+d.Remove("a")
+print("overwrite b")
+d["b"] = new Node("b2")
+print("clear")
+d.Clear()
+print("cleared " + d.Count + " " + mine.n)
+var l = new List<Node>()
+l.Add(new Node("l1")); l.Add(mine); l.Add(new Node("l3"))
+var l2 = new Node("l2"); l2.TakeTo(l); l.Add(l2)
+print("removeAt 0"); l.RemoveAt(0)
+print("remove mine " + l.Remove(mine))
+var kept = l.TakeAt(0)
+print("taken " + kept.n)
+print("set"); l[0] = new Node("l4")
+print("clear"); l.Clear()
+var hs = new HashSet<Node>()
+hs.Add(new Node("h1")); hs.Add(mine)
+print("hs remove"); hs.Clear()
+print("end " + mine.n + " " + kept.n)
+//# name: List/Dictionary/HashSet zerstoeren, was ihnen gehoert, wenn es herausfaellt (Remove, RemoveAt, Ueberschreiben, Clear) - auch ohne Owns.Values: mit TakeTo uebergeben oder im Aufruf erzeugt; fremde Objekte bleiben, Take/TakeAt geben heraus

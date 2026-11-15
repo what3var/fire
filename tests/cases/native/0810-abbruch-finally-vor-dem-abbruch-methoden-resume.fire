@@ -1,0 +1,67 @@
+class Oops : Exception {
+    string message
+    construct(string m) { this.message = m }
+}
+class Node {
+    string name
+    Node child
+    construct(string n) { this.name = n; print("new " + n) }
+    destruct() { print("del " + name) }
+}
+class Svc {
+    int tries
+    string log
+    construct() { this.tries = 0; this.log = "" }
+    string Run(int n) {
+        var tmp = "run" + n
+        try {
+            this.tries = this.tries + 1
+            var node = new Node("n" + n)
+            if (n % 2 == 1) { throw new Oops("odd " + tmp) }
+            this.log = this.log + tmp + ","
+            return "ok " + tmp
+        } catch (Oops o) {
+            this.log = this.log + "!" + o.message + ","
+            return "failed " + o.message
+        } finally {
+            this.log = this.log + "f" + n + ","
+        }
+    }
+    int Parse(string text) {
+        // resume with a default value
+        var v = throw new Oops("parse " + text)
+        return v
+    }
+}
+var s = new Svc()
+for (var i = 0; i < 4; i = i + 1) { print(s.Run(i)) }
+print(s.log + " tries=" + s.tries)
+var total = 0
+try {
+    total = s.Parse("a") + s.Parse("b") + 1
+} catch (Oops o) {
+    print("fix " + o.message)
+    o.resume(100)
+}
+print("total " + total)
+
+// deep resume from a nested call
+class Handler2 {
+    static Fix(Oops o) { o.resume(5) }
+}
+try {
+    var q = throw new Oops("q")
+    print("q=" + q)
+} catch (Oops o) {
+    Handler2.Fix(o)
+}
+
+// uncaught through finally: finally runs, then the program ends
+try {
+    print("before")
+    throw new Oops("final")
+} finally {
+    print("cleanup")
+}
+print("unreachable")
+//# name: Abbruch: finally vor dem Abbruch, Methoden, resume aus verschachtelten Aufrufen

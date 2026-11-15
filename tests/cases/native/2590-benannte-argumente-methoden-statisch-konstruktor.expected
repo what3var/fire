@@ -1,0 +1,19 @@
+a 10x20
+b 10x5
+c 3x20 filled
+d 10x20
+<e 1x2!1
+(e 1x2>3
+{e 1x2>4
+60
+20
+101
+207
+sq [square 4x4)1
+sq #square 5x5]1
+6
+312
+held 10x1
+err There is no parameter 'nope'.
+bc
+err Named arguments are not possible for the built-in method 'ToUnicode'.

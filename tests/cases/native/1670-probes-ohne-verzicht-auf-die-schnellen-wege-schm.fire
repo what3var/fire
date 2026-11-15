@@ -1,0 +1,56 @@
+#intwidth 32
+#floatwidth 32
+class Cfg {
+    defined int volume = 10
+    defined float gain = 0.5
+    int plain = 1
+    bool lit = false
+    int vol2 = 0
+    int Level { get { return this.vol2 } set { this.vol2 = value * 2 } }
+    construct() { }
+    undefined Bump() { this.volume = this.volume + 1 }
+    undefined Set(defined int v) { this.volume = v; print("after " + this.volume) }
+}
+var a = new Cfg()
+var b = new Cfg()
+int h = probe a.volume changed { print(name + ": " + old + " -> " + value) }
+probe a.volume changing (int old, int nv) => nv <= 100
+probe a.gain changed (o, n) => print("gain " + o + " -> " + n)
+probe a.Level changed (o, n) => print("Level " + o + " -> " + n)
+probe a.lit changed (o, n) => print("lit " + o + " -> " + n)
+a.volume = 20
+a.volume = 500
+b.volume = 500
+a.Bump()
+b.Bump()
+a.gain = 1.5
+a.Level = 4
+b.Level = 7
+a.lit = true
+a.plain = 5
+print(a.volume + " " + b.volume + " " + a.gain + " " + a.Level + " " + b.Level + " " + a.lit)
+silence h
+a.volume = 30
+silence a
+a.volume = 31
+print(a.volume)
+for (int i = 0; i < 3; i++) { b.volume = b.volume + i; b.gain = b.gain * 2 }
+print(b.volume + " " + b.gain)
+var c = new Cfg()
+probe c.volume changing (int old, int nv) => nv < 50 ? true : throw new ArgumentException("zu gross " + nv)
+try { c.Set(5); c.Set(60); print("nicht hier") } catch (ArgumentException e) { print("E " + e.message) }
+try { c.volume = 99 } catch (ArgumentException e) { print("E2 " + e.message) }
+print(c.volume)
+class Calc {
+    defined int v = 1
+    int other = 0
+    int Twice { get { return this.v * 2 } }
+    construct() { }
+    undefined Step() { this.other = this.other + 1; this.v = this.v + this.other; this.other = this.other + this.v }
+}
+var k = new Calc()
+probe k.Twice changed (o, n) => print("Twice " + o + " -> " + n)
+k.Step()
+k.Step()
+print(k.v + " " + k.other + " " + k.Twice)
+//# name: Probes ohne Verzicht auf die schnellen Wege: schmale/gepackte Felder, typisierte C-Felder und direkte Setter pruefen das Probe-Flag des Objekts - ein Objekt ohne Probes schreibt direkt; changing, changed, Abbruch, Ausnahme im Handler, silence

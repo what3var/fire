@@ -1,0 +1,6 @@
+none False False
+a20: The processor's mode can only be switched by a program in the real mode of DOS (target dos16).
+run
+long
+read
+7 0

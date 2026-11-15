@@ -1,0 +1,26 @@
+class IntList {
+    defined int items[]
+    defined int count
+    construct() { items = new int[2] }
+    undefined Add(defined int item) {
+        if (count >= items.length) { Grow() }
+        items[count] = item
+        count++
+    }
+    defined int Get(defined int index) { return items[index] }
+    undefined Grow() {
+        defined int bigger[] = new int[items.length * 2]
+        for (defined int i = 0; i < count; i++) { bigger[i] = items[i] }
+        items = take bigger
+    }
+}
+class Other { any items }
+var o = new Other()
+o.items = "text"
+var l = new IntList()
+for (defined int i = 0; i < 100; i++) { l.Add(i * 3) }
+defined int s = 0
+for (defined int i = 0; i < l.count; i++) { s = s + l.Get(i) }
+print(s + " " + l.count + " " + l.items.length + " " + o.items)
+try { print(l.Get(500)) } catch (Exception e) { print("out of range") }
+//# name: Typisierte Array-Felder ueber this (Klasse bekannt, auch wenn eine andere Klasse ein Feld gleichen Namens anders deklariert); Methoden, die nichts besitzen, ohne Rahmen

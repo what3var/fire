@@ -1,0 +1,28 @@
+#import "time"
+actor Clock {
+    int n = 0
+    int Tick() { this.n = this.n + 1; return this.n }
+}
+class Holder {
+    Clock clock
+    construct(Clock c) { this.clock = c }
+}
+var clock = new Clock()
+var list = new List()
+list.Add(clock)
+int done = 0
+fire with clock {
+    var h = new Holder(clock)
+    var c = h.clock
+    int t = await c.Tick()
+    sync global { done = t }
+}
+while (done < 1) {
+    sync globals
+    while (try process clock) { }
+    Sleep(1ms)
+}
+var stray = 0
+while (try process clock) { stray = stray + 1 }
+print("tick " + done + " list " + list.Count + " stray messages " + stray)
+//# name: Actors: list.Add(actor) und die Zuweisung eines Actors in ein Feld (auch in einem Thread) sind keine Nachrichten (tryTakeTo) - der Actor bleibt bei seinem Zuhause

@@ -1,0 +1,13 @@
+var s = "Größe ÀÉÎõ αβγ жя"
+print(s.Length)
+print(s.ToUpper())
+print(s.ToLower())
+var emoji = "a😀b"
+print(emoji.Length)
+print(emoji)
+print(emoji.IndexOf("b"))
+print("é".Length)
+print("ÄÖÜ".ToLower() + "äöü".ToUpper())
+print('é'.IsLetter())
+print("x" + 'ä' + 'ö')
+//# name: Strings: Unicode (Umlaute, Griechisch, Kyrillisch, Surrogatpaare)

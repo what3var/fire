@@ -1,0 +1,35 @@
+    #import "time"
+    class Box { int v = 0; construct(int v) { this.v = v } }
+    class Store {
+        List<Box> items = new List<Box>()
+        any cb
+        int Count() { return this.items.Count }
+        undefined Put(Box b) { this.items.Add(take b) }
+        int Sum() { int s = 0; foreach (b in this.items) { s = s + b.v }; return s }
+        Box First() { return this.items[0] }
+        undefined Fail() { throw new ArgumentException("from main") }
+        undefined SetCb(any g) { this.cb = take g }
+        int Slow(int x) { Sleep(5ms); return x * 2 }
+    }
+    var store = new Store()
+    var shared = new Box(11)
+    var g0 = () => 5
+    var step = 0
+    fire {
+        var mine = new Box(7)
+        store.Put(new Box(1))
+        store.Put(copy mine)
+        store.Put(take mine)
+        store.Put(shared)
+        try { print(mine.v) } catch (DestroyedException e) { print("moved: " + e.message) }
+        try { var other = new Box(3); store.Put(other) } catch (ArgumentException e) { print("word: " + e.message) }
+        print("in thread " + store.Count() + " " + store.Sum() + " first " + store.First().v + " slow " + store.Slow(21))
+        try { store.Fail() } catch (ArgumentException e) { print("caught " + e.message) }
+        store.SetCb(() => 8)
+        print("cb " + store.cb())
+        store.SetCb(g0)
+        step = 1
+    }
+    while (step < 1) { Sleep(1ms) }
+    print("main " + store.Count() + " " + store.Sum() + " " + store.cb() + " " + shared.v)
+//# name: Threads: Regel 10 - Methoden globaler Objekte laufen im Hauptprogramm; ein Objekt des Threads geht nur frisch, mit copy oder take hin (sonst ArgumentException)

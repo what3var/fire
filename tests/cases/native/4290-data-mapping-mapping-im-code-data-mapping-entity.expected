@@ -1,0 +1,30 @@
+---- sqlite::memory:
+CREATE TABLE "authors" ("id" INTEGER PRIMARY KEY, "full_name" VARCHAR(80) NOT NULL);
+CREATE TABLE "books" ("number" INTEGER PRIMARY KEY, "authorId" INTEGER, "title" TEXT CHECK (length(title) > 0));
+CREATE INDEX "ix_books_authorId" ON "books" ("authorId");
+
+saved 1 id 1
+row {id: 1, full_name: "Ursula K."}
+reload True Ursula K.
+found Ursula K. 1 Earthsea
+check CHECK constraint failed: length(title) > 0
+deleted 1 left 0
+---- memory:
+CREATE TABLE "authors" ("id" INTEGER PRIMARY KEY, "full_name" VARCHAR(80) NOT NULL);
+CREATE TABLE "books" ("number" INTEGER PRIMARY KEY, "authorId" INTEGER, "title" TEXT CHECK (length(title) > 0));
+CREATE INDEX "ix_books_authorId" ON "books" ("authorId");
+
+saved 1 id 1
+row {id: 1, full_name: "Ursula K."}
+reload True Ursula K.
+found Ursula K. 1 Earthsea
+check CHECK constraint failed: length(title) > 0
+deleted 1 left 0
+b sees 1 other 0
+a sees 2
+busy 5
+busy begin
+b reads 3
+after rollback a 2 b 2
+after b's transaction a 3
+a closed in a transaction: b 3

@@ -1,0 +1,11 @@
+6 3.5 150cm 9 0
+1.5 75cm 1 150cm 2.5
+2kg 1kg 500g 1.5kg 2
+2 1km -2.5
+Math.Min of an empty array or List.
+Math.Average of an empty array or List.
+Math.Max of an empty array or List.
+Math.Sum expects an array or a List, or two numbers.
+Math.Sum expects an array or a List, or two numbers.
+Math.Sum expects numbers, not 'a'.
+Incompatible units: 'm' cannot be converted to 's'.

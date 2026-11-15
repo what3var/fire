@@ -1,0 +1,13 @@
+#import "json"
+class Q {
+    defined int n
+    [NonSerialized] defined int hidden
+    [NonSerialized] defined float : m dist
+    int plain
+    Bump() { this.hidden = this.hidden + 2; this.dist = this.dist + 1m; this.n = this.n + 1 }
+}
+var q = Json.Deserialize<Q>("{\"n\": 4}")
+q.Bump()
+print(q.n + " " + q.hidden + " " + q.dist + " " + q.plain)
+print(Json.Serialize(q))
+//# name: Felder als C-Typen: JSON - auch ein [NonSerialized] defined-Feld haelt seine Null, danach direkt geschrieben

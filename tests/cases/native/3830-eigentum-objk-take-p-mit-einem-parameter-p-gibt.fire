@@ -1,0 +1,24 @@
+class P { int n; construct(int n) { this.n = n } }
+class Reg {
+    Dictionary<string, P> d = new Dictionary<string, P>()
+    undefined Put(string k, P p) { this.d[k] = take p }
+    undefined Add(string k, P p) { this.d.Add(k, take p) }
+}
+var r = new Reg()
+r.Put("a", new P(1))
+r.Add("b", new P(2))
+try { print(r.d["a"].n) } catch (DestroyedException e) { print("a destroyed") }
+print(r.d["b"].n)
+var p3 = new P(3)
+r.d["c"] = take p3
+print(r.d["c"].n)
+class Cb {
+    static undefined Run(int x, lambda<any> callback = undefined) {
+        if (callback == undefined) { print("no callback " + x) } else { callback(x) }
+    }
+    undefined Go(lambda<any> cb = undefined) { print("go " + (cb == undefined)) }
+}
+Cb.Run(1)
+Cb.Run(2, (v) => print("cb " + v))
+new Cb().Go()
+//# name: Eigentum: obj[k] = take p mit einem Parameter p gibt den Wert dem Objekt mit dem Indexer (Dictionary), wie Add(k, take p); ein Parameter lambda<any> mit der Vorgabe undefined darf fehlen

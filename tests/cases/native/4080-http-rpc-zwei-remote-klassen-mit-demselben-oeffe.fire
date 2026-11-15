@@ -1,0 +1,16 @@
+#import "http.rpc"
+namespace A {
+    [Remote]
+    [Nickname "same"]
+    class One { [Remote] int X() { return 1 } }
+}
+namespace B {
+    [Remote]
+    [Nickname "same"]
+    class Two { [Remote] int X() { return 2 } }
+}
+try {
+    var rpc = new Http.Rpc()
+    print("no")
+} catch (ArgumentException e) { print(e.message) }
+//# name: Http.Rpc: zwei [Remote]-Klassen mit demselben oeffentlichen Namen sind eine ArgumentException

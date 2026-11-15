@@ -1,0 +1,10 @@
+var total = 0
+var done = 0
+fire {
+    var step = 7
+    sync global { total = total + step }
+    done = 1
+}
+while (done == 0) { sync globals }
+print("total " + total)
+//# name: Threads: Globals: Block sieht Locals des Threads

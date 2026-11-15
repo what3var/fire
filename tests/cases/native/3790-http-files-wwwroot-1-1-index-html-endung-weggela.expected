@@ -1,0 +1,14 @@
+root 200 text/html; charset=utf-8 <h1>home</h1>
+omit 200 about page
+json 200 application/json 8
+etag 304 0
+range 206 56789 bytes 5-9/20
+suffix 206 hij
+outside 416 bytes */20
+source 404 fallback /secret.fire
+dot 404
+up 404
+encoded up 404
+head 200 20 0
+post 404
+

@@ -1,0 +1,12 @@
+output 20 samples, at 1 ms 3.151 V, at 2 ms 4.32 V, rate 10000Hz
+took 5
+input drives 2 3 4 then holds 4, missing True
+pcm frames 2
+pcm back 10 frames, first 32767
+input available 800 inputs sim
+recorded 800 bytes, same True, left 0, handed over 800
+playing True recording True
+played 560 (560), recorded 400, peak 0.397 V, missing 161
+unknown device: an exception
+thread True, plays on True
+closed

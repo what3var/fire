@@ -1,0 +1,78 @@
+#import "io"
+#import "filesystem"
+var dir = IO.Path.Combine(IO.Path.GetTempPath(), "fire_io_test_i4")
+if (IO.Directory.Exists(dir)) { IO.Directory.Delete(dir, true) }
+IO.Directory.CreateDirectory(dir)
+var p = IO.Path.Combine(dir, "data.bin")
+var s = new IO.FileStream(p, IO.FileMode.Create)
+print(s.CanRead + " " + s.CanWrite + " " + s.CanSeek)
+var data = new byte[10]
+for (var i = 0; i < 10; i++) { data[i] = i * 3 }
+print(s.Write(data, 0, 10))
+print(s.Length + " " + s.Position)
+s.Position = 2
+var chunk = new byte[4]
+print(s.Read(chunk, 0, 4) + " " + chunk[0] + " " + chunk[3])
+s.Seek(-3, IO.SeekOrigin.End)
+print(s.ReadByte() + " " + s.ReadByte() + " " + s.ReadByte() + " " + s.ReadByte())
+s.Position = 5
+s.WriteByte(200)
+s.Position = 5
+print(s.ReadByte())
+s.Length = 4
+print(s.Length + " " + s.Position)
+s.Length = 12
+s.Position = 0
+var all = s.ReadAll()
+print(all.length + " " + all[3] + " " + all[11])
+s.Flush()
+s.Close()
+try { s.Position } catch (IO.StreamClosedException e) { print("closed " + e.code) }
+var r = new IO.FileStream(p)
+print(r.CanRead + " " + r.CanWrite)
+try { r.Write(data, 0, 1) } catch (IO.IOException e) { print("read only " + e.code) }
+try { r.Seek(-5, IO.SeekOrigin.Begin) } catch (IO.IOException e) { print("before start " + e.code) }
+try { r.Read(chunk, 2, 4) } catch (IO.IOException e) { print("range " + e.code) }
+r.Close()
+var a = new IO.FileStream(p, IO.FileMode.Append)
+print(a.CanRead + " " + a.CanWrite + " " + a.Position)
+a.Write(data, 0, 3)
+print(a.Length)
+a.Close()
+try { var n = new IO.FileStream(p, IO.FileMode.CreateNew) } catch (IO.FileExistsException e) { print("exists " + e.code) }
+try { var n = new IO.FileStream(IO.Path.Combine(dir, "missing")) } catch (IO.FileNotFoundException e) { print("missing " + e.code) }
+try { var n = new IO.FileStream(IO.Path.Combine(dir, "nodir/x"), IO.FileMode.Create) } catch (IO.DirectoryNotFoundException e) { print("nodir " + e.code) }
+try { var n = new IO.FileStream(dir) } catch (IO.IOException e) { print("dir " + e.code) }
+try { var n = new IO.FileStream("  ") } catch (IO.IOException e) { print("blank " + e.code) }
+var oc = new IO.FileStream(IO.Path.Combine(dir, "oc.bin"), IO.FileMode.OpenOrCreate)
+oc.Write(data, 0, 2)
+oc.Close()
+var oc2 = new IO.FileStream(IO.Path.Combine(dir, "oc.bin"), IO.FileMode.OpenOrCreate, IO.FileAccess.ReadWrite)
+print(oc2.Length)
+oc2.Close()
+var w = new IO.FileStream(p, IO.FileMode.Open, IO.FileAccess.ReadWrite)
+w.Seek(0, IO.SeekOrigin.End)
+w.Write(data, 0, 1)
+w.Position = 0
+print(w.ReadByte())
+w.Close()
+print(IO.File.Size(p))
+IO.File.WriteAllLines(IO.Path.Combine(dir, "lines.txt"), ["alpha", "beta", "", "gamma"])
+var rd = IO.File.OpenText(IO.Path.Combine(dir, "lines.txt"))
+print(rd.EndOfStream)
+var count = 0
+foreach (l in rd) { count = count + 1 }
+print(count + " " + rd.EndOfStream)
+rd.Close()
+var lines = IO.File.ReadAllLines(IO.Path.Combine(dir, "lines.txt"))
+print(lines.Count + " [" + lines[2] + "] " + lines[3])
+var open = IO.File.OpenText(IO.Path.Combine(dir, "lines.txt"))
+print(open.ReadLine() + "|" + open.ReadAll().length)
+open.Close()
+try { open.ReadLine() } catch (IO.StreamClosedException e) { print("reader closed") }
+IO.File.AppendAllText(IO.Path.Combine(dir, "lines.txt"), "tail")
+print(IO.File.ReadAllText(IO.Path.Combine(dir, "lines.txt")).length)
+print(IO.Directory.GetFiles(dir).Count)
+IO.Directory.Delete(dir, true)
+print(IO.Directory.Exists(dir))
+//# name: IO: FileStream (Modi, Zugriff, Position, Laenge, Fehlercodes), TextReader/TextWriter

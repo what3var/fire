@@ -1,0 +1,14 @@
+#globaljobs sleep
+#import "time"
+var n = 0
+fire { fire global { n = n + 1 } }
+var spins = 0
+for (var i = 0; i < 100000; i++) { spins = spins + 1 }
+print("after loop " + n)
+while (n == 0) { Sleep(1ms) }
+print("after sleep " + n)
+print("synced " + (sync globals))
+fire { sync global { n = n + 10 } }
+while (n < 11) { Sleep(1ms) }
+print("section " + n)
+//# name: Threads: #globaljobs sleep - Auftrag und Sektion eines Threads: eine Schleife ohne Sleep laesst sie liegen, Sleep arbeitet sie ab

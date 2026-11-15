@@ -1,0 +1,56 @@
+#import "spi"
+
+print("devices " + Spi.Board.Devices()[0] + " " + Spi.Board.Devices().Count + " " + Spi.Board.Available())
+var chip = new Spi.Device("sim", 0, 2000000)
+print("name " + chip.Name + " " + chip.Mode + " " + chip.Speed + " " + chip.LsbFirst)
+print("sim setup " + Spi.Sim.Mode() + " " + Spi.Sim.Speed() + " " + Spi.Sim.LsbFirst())
+var cmd = new byte[4]
+cmd[0] = 0x9F
+cmd[1] = 1
+cmd[2] = 2
+cmd[3] = 255
+var echo = chip.Transfer(cmd)
+print("loopback " + echo.length + " " + echo[0] + " " + echo[1] + " " + echo[2] + " " + echo[3])
+chip.Write(cmd, 1, 2)
+print("sent " + Spi.Sim.SentCount() + " " + Spi.Sim.Transfers())
+var sent = Spi.Sim.Sent()
+print("log " + sent[0] + " " + sent[3] + " " + sent[4] + " " + sent[5])
+var zeros = chip.Read(3)
+print("read echoes zeros " + zeros[0] + zeros[1] + zeros[2])
+var reply = new byte[4]
+reply[0] = 0
+reply[1] = 0xEF
+reply[2] = 0x40
+reply[3] = 0x18
+Spi.Sim.Reply(reply)
+var one = new byte[1]
+one[0] = 0x9F
+var id = chip.WriteRead(one, 3)
+print("id " + id[0] + " " + id[1] + " " + id[2])
+var after = chip.Read(2)
+print("empty queue " + after[0] + after[1])
+Spi.Sim.Loopback()
+var back = chip.Transfer(one)
+print("loop again " + back[0])
+var src = new byte[3]
+src[0] = 7
+src[1] = 8
+src[2] = 9
+var dst = new byte[5]
+chip.TransferInto(src, 0, dst, 2, 3)
+print("into " + dst[0] + dst[1] + dst[2] + dst[3] + dst[4])
+chip.Mode = 3
+chip.Speed = 500000
+chip.LsbFirst = true
+print("changed " + Spi.Sim.Mode() + " " + Spi.Sim.Speed() + " " + Spi.Sim.LsbFirst() + " " + chip.Mode)
+chip.Configure(1, 1000)
+print("configure " + Spi.Sim.Mode() + " " + chip.LsbFirst)
+Spi.Sim.Clear()
+print("cleared " + Spi.Sim.SentCount() + " " + Spi.Sim.Transfers())
+try { chip.Mode = 5 } catch (Spi.SpiException e) { print("mode " + e.code) }
+try { chip.Write(cmd, 3, 5) } catch (Spi.SpiException e) { print("range " + e.code) }
+try { new Spi.Device("sim", 0, 0) } catch (Spi.SpiException e) { print("speed " + e.code) }
+try { new Spi.Device("9.9") } catch (Spi.NotFoundException e) { print("nodev " + e.code) }
+chip.Close()
+try { chip.Transfer(cmd) } catch (Spi.SpiException e) { print("closed " + e.code) }
+//# name: Spi: simuliertes Geraet - Loopback, Antworten, Protokoll, Einstellungen, Fehler

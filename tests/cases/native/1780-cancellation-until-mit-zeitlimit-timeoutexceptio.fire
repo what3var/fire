@@ -1,0 +1,30 @@
+#import "time"
+class W {
+    static int Slow(int ms) { Sleep(ms * 1ms); return ms }
+    static int Check() { CancellationToken.Current().ThrowIfCancelled(); return 1 }
+    static int Inner() {
+        try { Sleep(1s) } catch (TimeoutException e) { return 7 }
+        return 0
+    }
+}
+try { int r = await W.Slow(500) until 50ms; print("no " + r) } catch (TimeoutException e) { print("timeout: " + e.message) }
+print("fast " + await W.Slow(10) until 2s)
+var source = new CancellationSource()
+int done = 0
+fire until source.Token {
+    try { Sleep(5s); print("slept") } catch (CancelledException e) { print("thread cancelled") }
+    sync global { done = 1 }
+}
+Sleep(50ms)
+source.Cancel()
+while (done < 1) { sync globals; Sleep(5ms) }
+var s2 = new CancellationSource()
+s2.Cancel()
+try { int c = await W.Check() until s2.Token; print("no") } catch (CancelledException e) { print("checked " + e.message) }
+print("inner " + await W.Inner() until 30ms)
+print(source.IsCancelled + " " + s2.Token.IsCancelled + " " + (new CancellationSource()).IsCancelled)
+var outer = new CancellationSource()
+var parts = await [W.Slow(20), W.Slow(30)] until outer.Token, 1s
+print("all " + parts[0] + " " + parts[1])
+try { Sleep(1ms); print("no limit outside") } catch (CancelledException e) { print("wrong") }
+//# name: Cancellation: until mit Zeitlimit (TimeoutException), fertig vor dem Limit, fire until source.Token (Cancel weckt den Sleep sofort), ThrowIfCancelled, catch innerhalb, await [ ... ] until

@@ -1,0 +1,33 @@
+ok 1
+free r1
+fin 1
+tail 1
+ok 2
+free r2
+fin 2
+tail 2
+caught k=3
+free r3
+fin 3
+ok 4
+free r4
+fin 4
+tail 4
+ok 5
+free r5
+fin 5
+tail 5
+caught k=6
+free r6
+fin 6
+sum 12 count 6
+inner second
+after inner
+outer first
+A fin
+1
+B fin
+2
+C fin 1
+C fin 2
+two

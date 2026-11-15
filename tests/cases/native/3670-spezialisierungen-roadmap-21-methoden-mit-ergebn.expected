@@ -1,0 +1,6 @@
+7 11
+4
+ax
+E1 'Get' (1 argument(s)) is not a known built-in method on a value of type Undefined.
+E3 Return value of 'Get<int>' is an int and never undefined.
+E4 Type Undefined is not numeric.

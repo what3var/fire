@@ -1,0 +1,9 @@
+formula diode 0.693 V 4.307 mA
+formula resistor 5 mA
+after Set 20 mA
+vccs out 8 V, ix 2 mA
+tunnel at 0.1V 5 mA, at 0.3V 2.03 mA
+square-law 18 mA
+')' expected after the arguments of exp (at 19 of 'Is*(exp(V/(n*Vt)-1')
+Unknown function 'foo' (at 5 of 'foo(V)')
+Unknown name 'R2' (the voltage is V) (at 5 of 'V/R2')

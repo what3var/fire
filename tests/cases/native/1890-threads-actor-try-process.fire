@@ -1,0 +1,18 @@
+actor Counter {
+    int value
+    construct() {
+        this.value = 0
+    }
+    increment() {
+        this.value = this.value + 1
+    }
+}
+var counter = new Counter()
+var before = try process counter
+print("try process VOR jeder Nachricht (erwartet false): " + before)
+fire with counter {
+    counter.increment()
+}
+process counter
+print("Hauptprogramm: counter.value = " + counter.value)
+//# name: Threads: Actor: try process

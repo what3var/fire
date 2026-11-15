@@ -1,0 +1,50 @@
+int big = 9223372036854775807
+big = big + 1
+int m = -9223372036854775807 - 1
+print(big + " " + m / -1 + " " + m % -1 + " " + -7 % 3 + " " + 7 % -3 + " " + -7 / 2)
+float nan = 0.0 / 0.0
+print((nan < 1.0) + " " + (nan < 1) + " " + (1 < nan) + " " + (nan == nan) + " " + (nan != nan) + " " + (nan >= 1) + " " + (nan <= nan) + " " + (1 == 1.0))
+bool t = true
+bool u = false
+print((t == u) + " " + (t != u) + " " + !t)
+var x = 5
+for (int i = 0; i < 3; i++) { x = x * 2 }
+any y = 1
+y = y + 0.5
+any z = 3
+for (int k = 0; k < 3; k++) { if (k == 1) { z = "s" } else { z = z + 1 } }
+float f = 1
+f += 2
+int q = 10
+q -= 3
+q += 1
+print(x + " " + y + " " + z + " " + f + " " + q + " " + -q + " " + -f + " " + 7 / 2.0 + " " + 7.5 % 2)
+print((2 <= 2.0) + " " + (3 > 2.5) + " " + (3 >= 3.5))
+int cnt = 0
+while (cnt < 5 && !(cnt == 3)) { cnt++ }
+print(cnt)
+try {
+    int zero = 0
+    print(5 / zero)
+} catch (Exception e) { print(e.message) }
+try {
+    int zero2 = 0
+    print(5 % zero2)
+} catch (Exception e) { print(e.message) }
+float sum = 0
+for (int j = 1; j <= 4; j++) { sum = sum + 1.0 / j }
+print(sum)
+print(Shape.Total(3) + " " + new Sq(2).Area() + " " + new Ci(1).Area() + " " + new Sq(3).Name())
+class Shape { static float Total(int n) { float s = 0
+                                          for (int i = 0; i < n; i++) { s += i * 0.5 }
+                                          return s }
+              float Area() { return 0.0 }
+              string Name() { return "shape" } }
+class Sq : Shape { float a = 0.0
+                         construct(float x) { this.a = x }
+                         override float Area() { return this.a * this.a }
+                         override int Name() { return 4 } }
+class Ci : Shape { float r = 0.0
+                         construct(float x) { this.r = x }
+                         override float Area() { return 3.0 * this.r * this.r } }
+//# name: Typ-Analyse nativ: Ganzzahl-Ueberlauf, / und % durch -1 und 0, NaN-Vergleiche, gemischte int/float, Variablen mit wechselndem Typ

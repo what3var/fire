@@ -1,0 +1,12 @@
+class P { int x
+  construct() { this.x = 3 } }
+class Q { int y
+  construct() { this.y = 4 }
+  ToString() { return "Q(" + this.y + ")" } }
+var p = new P()
+var q = new Q()
+print(p)
+print(q)
+print("" + p)
+print("v " + q)
+//# name: print eines Objekts ohne ToString zeigt die Klasse

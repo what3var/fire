@@ -1,0 +1,51 @@
+class Person {
+    string name
+    construct(string name) { this.name = name }
+    destruct() { print("bye " + this.name) }
+    string Greet() { return "hi " + this.name }
+    Rename(string n) { this.name = n + "!" }
+}
+class Maker {
+    static string Join(string a, string b) {
+        var r = a + "-" + b
+        return r
+    }
+    static string Pick(int i) {
+        if (i > 0) { return "positive" }
+        var inner = "non" + "-" + "positive"
+        return inner
+    }
+}
+var outer = "start"
+{
+    var inner = "in" + "ner"
+    outer = outer + ":" + inner
+}
+print(outer)
+var p = new Person("Ada")
+print(p.Greet())
+p.Rename("Grace")
+print(p.Greet())
+var kept = p.name
+p.Rename("Linus")
+print(kept)
+print(p.name)
+var joined = Maker.Join("a", "b")
+print(Maker.Join(joined, "c"))
+print(Maker.Pick(1) + " " + Maker.Pick(0))
+var words = ["one", "two"]
+words[1] = words[0] + words[1]
+print(words[1])
+var all = ""
+foreach (w in words) { all = all + w + ";" }
+print(all)
+{
+    var q = new Person("Temp")
+    var local = q.Greet()
+    print(local)
+}
+var alias = outer
+outer = "changed"
+print(alias)
+print(outer)
+//# name: Strings: Lebensdauer (Rueckgabe, Felder, innere Bloecke, Aliase, Objekte mit Zeichenketten)

@@ -1,0 +1,62 @@
+class D {
+    string n
+    D next
+    construct(string n) { this.n = n }
+    destruct() { print("~" + this.n) }
+}
+class W {
+    D target
+    construct(D target) { this.target = target }
+    destruct() { print("~W sees " + this.target.n) }
+}
+class T {
+    static Dead() {
+        var a = new D("a")
+        return a.n
+    }
+    // the destructor of w uses d, which was destroyed before it in the same scope: allowed until the scope is gone
+    static Batch() {
+        var d = new D("d")
+        var w = new W(d)
+    }
+    // a returned list takes its elements along
+    static Items() {
+        var list = new List()
+        for (var i = 0; i < 3; i = i + 1) { var x = new D("i" + i); x.TakeTo(list); list.Add(x) }
+        return list
+    }
+    // by reference only: everything local travels with the returned object
+    static Ring() {
+        var a = new D("ra")
+        var b = new D("rb")
+        a.next = b
+        b.next = a
+        return a
+    }
+    // not returned: gone
+    static Lost() {
+        var keep = new D("lost")
+        return 1
+    }
+    // taken out of an owner that dies with the scope
+    static Inner() {
+        var outer = new D("outer")
+        outer.next = new D("inner")
+        outer.next.TakeTo(outer)
+        return outer.next
+    }
+}
+var x = new D("x")
+delete x
+try { print(x.n) } catch (DestroyedException e) { print("dead: " + e.message) }
+try { x.next = x } catch (DestroyedException e) { print("dead set") }
+T.Batch()
+print("batch done")
+var items = T.Items()
+print(items.Count + " " + items[2].n)
+var ring = T.Ring()
+print(ring.next.next.n)
+T.Lost()
+print(T.Inner().n)
+print("end")
+//# name: Besitz: zerstoerte Objekte sind tot, im Zerstoerungsstapel noch benutzbar, return nimmt den Baum der Locals mit

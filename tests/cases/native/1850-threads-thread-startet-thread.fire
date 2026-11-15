@@ -1,0 +1,15 @@
+var innerDone = 0
+var outerDone = 0
+fire {
+    print("outer")
+    fire {
+        print("inner")
+        sync global { innerDone = 1 }
+    }
+    while (innerDone == 0) { sync globals }
+    print("outer end")
+    sync global { outerDone = 1 }
+}
+while (outerDone == 0) { sync globals }
+print("fertig")
+//# name: Threads: Thread startet Thread

@@ -1,0 +1,11 @@
+True True False True False
+True SQL A False
+p => (((p.age > min) && (p.name != undefined)) && p.orders.Any(q => (q.total > 5)))
+True False False
+p => ((p.age < 10) || (p.name == "Ada")) True True False
+p => !(p.age >= min) True False
+p => ((p.orders.Count > min) && (p.name != undefined)) False p => ((p.age > min) && (p.name != undefined))
+This lambda of an expression tree has no compiled code: a nested lambda (invoke the tree around it), or a tree made by Expression.Replace or an ExpressionRewriter.
+(p, o) => ((p.age > o.total) && (o.total < 100)) True False
+Expression.And: the conditions take 1 and 2 parameter(s)
+18 30

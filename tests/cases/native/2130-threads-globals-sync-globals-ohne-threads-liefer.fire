@@ -1,0 +1,2 @@
+print("n " + (sync globals))
+//# name: Threads: Globals: sync globals ohne Threads liefert 0

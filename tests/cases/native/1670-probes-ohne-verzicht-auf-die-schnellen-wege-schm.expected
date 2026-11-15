@@ -1,0 +1,15 @@
+volume: 10 -> 20
+volume: 20 -> 21
+gain 0.5 -> 1.5
+Level 0 -> 4
+lit False -> True
+21 501 1.5 8 14 True
+31
+504 4
+after 5
+E zu gross 60
+E2 zu gross 99
+5
+Twice 2 -> 4
+Twice 4 -> 12
+6 10 12

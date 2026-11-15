@@ -1,0 +1,16 @@
+copy: 'Res' cannot be copied ([NoCopy]) - an instance of it exists only once; share the reference or pass it on with 'take'.
+flat: 'Res' cannot be copied ([NoCopy]) - an instance of it exists only once; share the reference or pass it on with 'take'.
+sub: 'SubRes' cannot be copied ([NoCopy]) - an instance of it exists only once; share the reference or pass it on with 'take'.
+flat holder shares: True
+deep: 'Res' cannot be copied ([NoCopy]) - 'copy' reaches an instance of it (a field or an element of the copied value); it exists only once, share the reference instead.
+flat array shares: True
+array: 'Res' cannot be copied ([NoCopy]) - 'copy' reaches an instance of it (a field or an element of the copied value); it exists only once, share the reference instead.
+arg: 'Res' cannot be copied ([NoCopy]) - an instance of it exists only once; share the reference or pass it on with 'take'.
+flat arg: 'SubRes' cannot be copied ([NoCopy]) - an instance of it exists only once; share the reference or pass it on with 'take'.
+field: 'Res' cannot be copied ([NoCopy]) - an instance of it exists only once; share the reference or pass it on with 'take'.
+True
+5
+end
+release 1
+release 2
+release 3

@@ -1,0 +1,20 @@
+[] Red
+[] Red Rex 4 Rex Standard
+E1 Field 'pet' is a Dog and never undefined.
+E2 Field 'title' is a string and never undefined.
+E3 Field 'pet' is a Dog, not Cat.
+E4 Parameter 'who' is a string and never undefined.
+E5 Parameter 'd' is a Dog and never undefined.
+E6 The return value of 'Bad' is a string and never undefined.
+E7 Variable 's' is a string and never undefined.
+E8 Variable 'd' is a Dog and never undefined.
+E9 Variable 'c' is a Color and never undefined.
+E10 Field 'pet' is a Dog and never undefined.
+E11 Field 'pet' is a Dog and never undefined.
+Hallo Welt Bello 0
+{"$type":"Owner","title":"","fav":0,"pet":{"name":"Rex"},"shape":{"$type":"Sq","s":2.0}}
+Rex[]
+J1 $.pet is a Dog and never undefined.
+J2 $.pet is a Dog and never undefined.
+J3 $.title is a string and never undefined.
+Red[]1

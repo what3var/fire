@@ -1,0 +1,19 @@
+new n0
+del n0
+ok run0
+new n1
+del n1
+failed odd run1
+new n2
+del n2
+ok run2
+new n3
+del n3
+failed odd run3
+run0,f0,!odd run1,f1,run2,f2,!odd run3,f3, tries=4
+fix parse a
+fix parse b
+total 201
+q=5
+before
+cleanup

@@ -1,0 +1,16 @@
+var total = 0
+var i = 0
+while (i < 20) {
+    i++
+    if (i % 2 == 0) { continue }
+    if (i > 15) { break }
+    total = total + i
+}
+print(total)
+for (var a = 0; a < 4; a++) {
+    for (var b = 0; b < 4; b++) {
+        var p = a * b
+        if (p == 2 || p == 6) { print(p) }
+    }
+}
+//# name: Schleifen, break, continue und verschachtelte Bloecke

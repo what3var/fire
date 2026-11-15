@@ -1,0 +1,5 @@
+class Foo { construct() { } }
+var f = new Foo()
+delete f
+print(f.ToString())
+//# name: Abbruch: unbehandelte DestroyedException beim Methodenaufruf

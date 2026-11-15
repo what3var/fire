@@ -1,0 +1,7 @@
+caught x
+~thrower-local
+~in-try
+~in-catch
+after catch
+~outer-local
+end

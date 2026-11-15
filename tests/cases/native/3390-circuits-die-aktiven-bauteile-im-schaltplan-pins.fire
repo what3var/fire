@@ -1,0 +1,34 @@
+#import "circuits"
+class H { static float R(float v) { return Math.Round(v * 1000) / 1000 } }
+// a thyristor on the schematic: 12 V through 100 Ohm, the gate from 5 V through 300 Ohm
+var c = new Circuits.Circuit()
+c.TimeStep = 10us
+var sm = c.Schematic
+sm.Add("Rail", 0, -8, 0, -12, "voltage=12")
+sm.Add("Resistor", 0, -8, 0, 0, "resistance=100")
+var scr = sm.Add("Thyristor", 0, 0, 0, 8, "", "SCR1")
+sm.Add("Ground", 0, 8, 0, 12)
+sm.Add("Rail", 10, 8, 14, 8, "voltage=5")
+var gate = sm.Add("Resistor", 4, 8, 10, 8, "resistance=300")
+c.Run(1ms)
+Circuits.Thyristor th = sm.PartOf("SCR1")!Circuits.Thyristor
+print("scr on " + th.IsOn + " anode " + H.R(scr.PinVoltage(0)))
+// every new kind: where its pins are
+var l = new Circuits.Circuit()
+var s2 = l.Schematic
+var kinds = ["Jfet", "Darlington", "Thyristor", "Triac", "Diac", "Varactor", "TunnelDiode", "Triode", "VCVS", "VCCS", "CCCS", "CCVS", "CurrentConveyor", "Ota", "Optocoupler", "Unijunction"]
+var x = 0
+foreach (k in kinds) {
+    s2.Add(k, x, 0, x + 8, 0)
+    x = x + 20
+}
+s2.Add("Thyristor", 0, 20, 7, 20, "smallGrid=true")
+s2.Add("Thyristor", 0, 40, 2, 56, "legacy=true")
+s2.Add("Triac", 20, 20, 20, 30)
+s2.Add("Triode", 40, 20, 40, 28)
+foreach (e in s2.Elements()) {
+    var pins = ""
+    for (int i = 0; i < e.PinCount; i++) { pins = pins + " " + e.PinX(i) + "," + e.PinY(i) }
+    print(e.Type + pins + " '" + e.Error + "'")
+}
+//# name: Circuits: die aktiven Bauteile im Schaltplan (Pins wie bei Falstad, Gate auf Falstads Raster)

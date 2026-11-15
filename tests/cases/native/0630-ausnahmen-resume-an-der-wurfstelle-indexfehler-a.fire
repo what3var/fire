@@ -1,0 +1,36 @@
+class Ask : Exception {
+    string what
+    construct(string w) { this.what = w }
+}
+class T {
+    static int Value(string k) {
+        var v = throw new Ask(k)
+        return v
+    }
+}
+try {
+    var x = T.Value("a") + T.Value("b")
+    print("x = " + x)
+} catch (Ask e) {
+    print("asked " + e.what)
+    e.resume(10)
+}
+print("done")
+var arr = new int[3]
+try {
+    arr[1] = 5
+    print(arr[1])
+    print(arr[7])
+    print("after read")
+    arr[9] = 1
+    print("after write")
+} catch (IndexOutOfBoundsException e) {
+    print("index " + e.index + " of " + e.length)
+    e.resume(0)
+}
+try {
+    print("abc".Substring(5))
+} catch (e) {
+    print("sub: " + e.message)
+}
+//# name: Ausnahmen: resume an der Wurfstelle, Indexfehler als Ausnahme

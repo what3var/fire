@@ -1,0 +1,6 @@
+var k = 7
+print(k:s)
+print(5mm:kg)
+foreach (c in "ab") { print(c) }
+try { lambda<int> f = (any x, any y) => x } catch (ArgumentException e) { print("caught: " + e.message) }
+//# name: ':' erzwingt Einheiten, foreach ueber string, ArgumentException

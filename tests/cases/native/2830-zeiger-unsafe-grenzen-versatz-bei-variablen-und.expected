@@ -1,0 +1,18 @@
+5
+oob: Array index 3 out of range (length 3).
+2
+True
+before: Array index -1 out of range (length 3).
+321
+13
+oob buf: Array index 3 out of range (length 3).
+0 0
+var: Pointer offset 1 out of range (length 1).
+var write: Pointer offset 1 out of range (length 1).
+20
+False
+True
+10
+field: Pointer offset 1 out of range (length 1).
+True
+end

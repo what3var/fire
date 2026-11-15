@@ -1,0 +1,11 @@
+#intwidth 32
+class Key : IEquatable { int a
+    construct(int a) { this.a = a }
+    bool Equals(any o) { return o is of Key && o.a % 10 == this.a % 10 }
+    int[64] GetHashCode() { return this.a % 10 + 4000000000 } }
+var d = new Dictionary<int, int>()
+for (int i = 0; i < 300; i++) { d[i * 1000003] = i }
+var ks = new HashSet<Key>()
+ks.Add(new Key(3))
+print(d.Count + " " + d[299 * 1000003] + " " + d.ContainsKey(5) + " " + ks.Add(new Key(13)) + " " + ks.Contains(new Key(23)))
+//# name: Tabellen mit #intwidth 32: Hashes passen ins int-Array (30 Bit), auch der eines GetHashCode ueber 32 Bit

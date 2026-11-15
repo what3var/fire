@@ -1,0 +1,40 @@
+class Item { string n
+  construct(string n) { this.n = n }
+  destruct() { print("~" + this.n) } }
+class Box { Item slot
+  any items = [new Item("x0")]
+  Put(x) { x.TakeTo(this); print("put " + x.n) }
+  destruct() { print("~box") } }
+class T {
+  static Eat(x) { var mine = new Item("mine"); print("eat " + x.n) }
+  static Keep(x, b) { x.TakeTo(b); print("kept") }
+  static Drop(x, b) { print(try x.TakeTo(b)) }
+}
+var a = new Item("a")
+T.Eat(take a)
+print("1")
+var box = new Box()
+var b = new Item("b")
+T.Keep(take b, box)
+print("2")
+var c = new Item("c")
+box.slot = take c
+var d = new Item("d")
+T.Drop(d, box)
+T.Drop(take d, box)
+print("3")
+{
+  var inner = new Item("inner")
+  var out = new Item("out")
+  var x = undefined
+  x = take out
+  box.items[0] = take inner
+}
+print("4")
+var e = new Item("e")
+var f = take e
+print("5")
+try { print(a.n) } catch (DestroyedException ex) { print("dead a") }
+try { T.Eat(take a) } catch (DestroyedException ex) { print("dead take") }
+print("end")
+//# name: Besitz: take als Argument und in Zuweisungen

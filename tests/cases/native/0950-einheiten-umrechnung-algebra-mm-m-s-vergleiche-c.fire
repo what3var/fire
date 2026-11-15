@@ -1,0 +1,33 @@
+var a = 500mm
+print(a + 2m)
+print(2m + a)
+print(a * 2m)
+print(2m * 3m)
+print(1m / 1mm)
+print(3km / 2h)
+print(2m < 300cm)
+print(5kg:g)
+print(1.5 * 2m)
+print((2m * 3m * 4m))
+print(7mm % 2m)
+print(2m ^ 2m)
+print(a == 500mm)
+print(a == 0.5m)
+print(1.5m + 100cm)
+var x = 10m
+var y = 3s
+var v = x / y
+print(v)
+print(v * 6s)
+print(5mm is in m)
+print(5mm is in kg)
+print(5 is of int)
+var q = 7m
+print(q:mm)
+print(q:cm!)
+var w = 5mm
+print(w:cm)
+var z = 5
+print(z!float)
+print(1.5km!int)
+//# name: Einheiten: Umrechnung, Algebra (m*m, m/s), Vergleiche, Coercing mit : und !

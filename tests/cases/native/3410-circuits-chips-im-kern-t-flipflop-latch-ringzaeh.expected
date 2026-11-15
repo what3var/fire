@@ -1,0 +1,14 @@
+tff flips 8 of 8, with T low it stays: True, /Q 5 V
+latch 0 -> 10, D changes while loaded high: still 10
+ring counter after 7 clocks: Q2
+mux I3 5 V, I2 0 V
+demux outputs 0 5 0 0
+half adder 1+1: S 0 C 5; full adder 9+7+1 = 17
+sipo value 11
+piso out 10100101
+adc 3.3 V -> 168, dac back 3.29 V
+7-segment shows 0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 
+monostable high after 0.5 ms True, after 1.2 ms False
+tri-state enabled 4.99 V, disabled 0 V
+vco at 2.5 V: 36920 Hz (Falstad's formula 37500 Hz)
+phase comparator, I2 a quarter period late: filter at 4.97 V

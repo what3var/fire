@@ -1,0 +1,42 @@
+class Boom : Exception {
+    string message
+    construct(string m) { this.message = m }
+}
+class Bad {
+    string ToString() { throw new Boom("tostring") }
+}
+var f = (int x) => {
+    if (x > 2) { throw new Boom("big " + x) }
+    return x * 2
+}
+for (var i = 1; i < 5; i = i + 1) {
+    try {
+        print(f(i))
+    } catch (Boom b) {
+        print("lambda threw: " + b.message)
+    }
+}
+try {
+    var b = new Bad()
+    print("v: " + b)
+} catch (Boom e) {
+    print("ts: " + e.message)
+}
+try {
+    print(new Bad())
+} catch (Boom e) {
+    print("print: " + e.message)
+}
+class C {
+    construct(int x) {
+        if (x < 0) { throw new Boom("ctor") }
+    }
+}
+try { var c = new C(-1) } catch (e) { print("ctor failed " + e.message) }
+var u = 3
+{
+    catch (e) { print("implicit " + e.message) }
+    throw new Boom("blocky")
+}
+print("end " + u)
+//# name: Ausnahmen: Lambdas, ToString, Konstruktor, catch ohne try

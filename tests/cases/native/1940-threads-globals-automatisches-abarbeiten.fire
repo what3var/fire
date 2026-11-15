@@ -1,0 +1,6 @@
+var counter = 0
+fire { counter = 5 }
+var spins = 0
+while (counter == 0 && spins < 100000000) { spins = spins + 1 }
+print("counter " + counter)
+//# name: Threads: Globals: automatisches Abarbeiten
