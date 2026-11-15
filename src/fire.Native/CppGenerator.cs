@@ -1211,8 +1211,9 @@ namespace fire.Native
                     : ownerObj != "NULL" ? TArgOfExpr(a.Substring(a.IndexOf('@') + 1), int.Parse(a.AsSpan(1, a.IndexOf('@') - 1), CultureInfo.InvariantCulture), ownerObj) : "NULL").ToList();
                 if (wanted.Any(w => w != "NULL"))
                 {
-                    string has = string.Join(", ", Enumerable.Range(0, wanted.Count).Select(k => TArgOfExpr(genericRc.Name, k, $"objAt({value})")));
-                    altCheck += $" if ({value}.kind == K_Class && leafAlive({value})) {{ const TArg* tw_[] = {{{string.Join(", ", wanted)}}}; const TArg* th_[] = {{{has}}}; int ti_; for (ti_ = 0; ti_ < {wanted.Count}; ti_++) if (FIRE_UNLIKELY(tw_[ti_] && th_[ti_] && tw_[ti_] != th_[ti_] && !(th_[ti_]->isA && typeNameIn(tw_[ti_]->display, th_[ti_]->isA)))) {{ guardTypeArgsFailed({CString(parsed.Display)}, tw_, th_, {wanted.Count}, {CString(what)}); break; }} }}";
+                    // (element by element: an initializer of an automatic array must be constant in C89 - Open Watcom)
+                    string fill = string.Concat(Enumerable.Range(0, wanted.Count).Select(k => $" tw_[{k}] = {wanted[k]}; th_[{k}] = {TArgOfExpr(genericRc.Name, k, $"objAt({value})")};"));
+                    altCheck += $" if ({value}.kind == K_Class && leafAlive({value})) {{ const TArg* tw_[{wanted.Count}]; const TArg* th_[{wanted.Count}]; int ti_;{fill} for (ti_ = 0; ti_ < {wanted.Count}; ti_++) if (FIRE_UNLIKELY(tw_[ti_] && th_[ti_] && tw_[ti_] != th_[ti_] && !(th_[ti_]->isA && typeNameIn(tw_[ti_]->display, th_[ti_]->isA)))) {{ guardTypeArgsFailed({CString(parsed.Display)}, tw_, th_, {wanted.Count}, {CString(what)}); break; }} }}";
                 }
             }
             if (parsed.TypeParamIndex < 0) return altCheck;
