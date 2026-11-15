@@ -170,7 +170,9 @@ namespace fire.Bytecode
 
         /// <summary>Does the value fit the declaration (null: nothing is declared)? `owner`: the object whose type parameter a `T` is (the object of the
         /// method for a parameter, the object written to for a field).</summary>
-        public static bool Fits(in Value value, string? required, ObjectInstance? owner = null, string[]? callTypeArgs = null)
+        /// <summary>`isOf(name, target)`: is the class `name` the class `target`, derived from it or an implementation of it - for the type arguments of
+        /// `List&lt;Animal&gt; l` given a `List&lt;Dog&gt;` (covariance, DECISIONS D10); without it the type arguments must be the same.</summary>
+        public static bool Fits(in Value value, string? required, ObjectInstance? owner = null, string[]? callTypeArgs = null, Func<string, string, bool>? isOf = null)
         {
             if (required == null) return true;
             if (value.Kind == ValueKind.Undefined) return !IsNonNull(required);
@@ -187,7 +189,7 @@ namespace fire.Bytecode
                 bool all = true;
                 foreach (var condition in alternative)
                     if (!Holds(value, condition)) { all = false; break; }
-                if (all) return spec.TypeArgs == null || TypeArgsFit(value, spec, owner, callTypeArgs);
+                if (all) return spec.TypeArgs == null || TypeArgsFit(value, spec, owner, callTypeArgs, isOf);
             }
             return false;
         }
@@ -205,11 +207,12 @@ namespace fire.Bytecode
         }
 
         /// <summary>`Bag&lt;int&gt; b` (DECISIONS D10): an object of the class whose type arguments are known has those the declaration names.</summary>
-        private static bool TypeArgsFit(in Value value, Spec spec, ObjectInstance? owner, string[]? callTypeArgs)
+        private static bool TypeArgsFit(in Value value, Spec spec, ObjectInstance? owner, string[]? callTypeArgs, Func<string, string, bool>? isOf)
         {
             if (value.Kind != ValueKind.Class || value.AsObjectRef() is not ObjectInstance obj || spec.SingleName is not { } declaredClass) return true;
             for (int k = 0; k < spec.TypeArgs!.Length; k++)
-                if (WantedTypeArg(spec.TypeArgs[k], owner, callTypeArgs) is { } wanted && TypeArgOf(obj, declaredClass, k) is { } has && has != wanted) return false;
+                if (WantedTypeArg(spec.TypeArgs[k], owner, callTypeArgs) is { } wanted && TypeArgOf(obj, declaredClass, k) is { } has && has != wanted
+                    && !(isOf != null && isOf(has, wanted))) return false;   // (a `List<Dog>` is a `List<Animal>`: the list keeps checking what goes in)
             return true;
         }
 
@@ -228,10 +231,10 @@ namespace fire.Bytecode
 
         /// <summary>Like Fits, but a number of the kind of a number type argument (or a whole number for a `float`) is taken too: <paramref name="unitDemand"/>
         /// then says what the caller converts it into (Value.AdaptToUnit - a mismatch of the dimension is a UnitMismatchException there).</summary>
-        public static bool FitsOrConvert(ref Value value, string? required, ObjectInstance? owner, string[]? callTypeArgs, out string? unitDemand)
+        public static bool FitsOrConvert(ref Value value, string? required, ObjectInstance? owner, string[]? callTypeArgs, out string? unitDemand, Func<string, string, bool>? isOf = null)
         {
             unitDemand = null;
-            if (Fits(value, required, owner, callTypeArgs)) return true;
+            if (Fits(value, required, owner, callTypeArgs, isOf)) return true;
             if (value.Kind is ValueKind.Int or ValueKind.Float && Parse(required!) is { TypeParamIndex: >= 0 } spec && TypeArgFor(spec, owner, callTypeArgs) is { } typeArg
                 && NumberDemand(typeArg) is { } number && (number.Kind == "float" || value.Kind == ValueKind.Int))
             {

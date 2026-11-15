@@ -171,7 +171,18 @@ U.Count(floats)         // ArgumentException: Parameter 'l' is a List<int>, not 
 ```
 
 An object whose type arguments are not known (`new Bag()`) passes, and so does an object of a class derived from the generic one with these type
-arguments (`class IntBag : Bag<int>`). There is no covariance: a `List<Dog>` does not go where a `List<Animal>` is declared.
+arguments (`class IntBag : Bag<int>`).
+
+A type argument may be a derived class: a `List<Dog>` goes where a `List<Animal>` (or a `List<INamed>`) is declared, like a Dog array goes where
+`Animal a[]` is. The list stays a `List<Dog>` - it still checks what is put in:
+
+```fire
+List<Dog> dogs = new List<Dog>()
+List<Animal> animals = dogs          // fine: every Dog is an Animal
+animals.Add(new Cat("Tom"))          // ArgumentException: Parameter 'value' is a T (Dog), not Cat.
+```
+
+The other direction (`List<Animal>` where `List<Dog>` is declared) is refused.
 
 ### Conditions: `where`
 

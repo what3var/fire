@@ -1160,8 +1160,8 @@ beginnen bei 0, undefined zu speichern ist eine ArgumentException; ArrayElem.Def
 
 **Umgesetzt** (SPEC 8.4.2): **Klassen, Interfaces, Records, `string` und Enums** (`Dog pets[]`, `IShape shapes[]`, `Pt ps[]`, `string names[]`,
 `Color cs[]`) als Variable, Feld, Parameter und Global: ein Element nimmt nur Werte dieses Typs (Unterklassen, implementierende Klassen) oder
-`undefined`, sonst eine ArgumentException mit derselben Meldung in VM und nativ; ein Array einer anderen Klasse geht nicht in die Deklaration
-(auch nicht in die einer Basisklasse - das Array behält seinen Elementtyp). Die Elemente bleiben Values (ArrayElem.Class mit dem Typnamen als Text,
+`undefined`, sonst eine ArgumentException mit derselben Meldung in VM und nativ; ein Array einer anderen Klasse geht nicht in die Deklaration;
+eines einer abgeleiteten Klasse schon (Kovarianz, DECISIONS D10) - es behält seinen Elementtyp und prüft weiter, was gespeichert wird. Die Elemente bleiben Values (ArrayElem.Class mit dem Typnamen als Text,
 ein Enum mit seinem Schlüssel; nativ E_CLASS/TU_CLASS und eine Tabelle g_arrClasses mit Prüfung, Anzeigename und Nullwert je Typ).
 **`defined`** dafür (Entscheidung des Benutzers): `defined string` beginnt bei `""`, ein `defined` Enum beim ersten Wert; `defined Dog pets[]` hat
 keinen Nullwert und nimmt nur Arrays, in denen jedes Element gegeben ist (`new Dog[2]` dort ist eine ArgumentException).

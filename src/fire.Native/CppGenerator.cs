@@ -1212,7 +1212,7 @@ namespace fire.Native
                 if (wanted.Any(w => w != "NULL"))
                 {
                     string has = string.Join(", ", Enumerable.Range(0, wanted.Count).Select(k => TArgOfExpr(genericRc.Name, k, $"objAt({value})")));
-                    altCheck += $" if ({value}.kind == K_Class && leafAlive({value})) {{ const TArg* tw_[] = {{{string.Join(", ", wanted)}}}; const TArg* th_[] = {{{has}}}; int ti_; for (ti_ = 0; ti_ < {wanted.Count}; ti_++) if (FIRE_UNLIKELY(tw_[ti_] && th_[ti_] && tw_[ti_] != th_[ti_])) {{ guardTypeArgsFailed({CString(parsed.Display)}, tw_, th_, {wanted.Count}, {CString(what)}); break; }} }}";
+                    altCheck += $" if ({value}.kind == K_Class && leafAlive({value})) {{ const TArg* tw_[] = {{{string.Join(", ", wanted)}}}; const TArg* th_[] = {{{has}}}; int ti_; for (ti_ = 0; ti_ < {wanted.Count}; ti_++) if (FIRE_UNLIKELY(tw_[ti_] && th_[ti_] && tw_[ti_] != th_[ti_] && !(th_[ti_]->isA && typeNameIn(tw_[ti_]->display, th_[ti_]->isA)))) {{ guardTypeArgsFailed({CString(parsed.Display)}, tw_, th_, {wanted.Count}, {CString(what)}); break; }} }}";
                 }
             }
             if (parsed.TypeParamIndex < 0) return altCheck;
@@ -1382,7 +1382,8 @@ namespace fire.Native
                 sb.AppendLine($"static bool {Px}tah_{id}(Value v) {{ return {holds}; }}");
                 // (`T items[]`, `new T[n]`: how this type argument types an array - a class or `string` by its entry in g_arrClasses, ROADMAP 19)
                 var (arrElem, arrClass) = DeclaredType.ArrayOfTypeArg(text, ProgramEnum) is var (elemOfArg, elemText) ? (elemOfArg + 1, elemText != null ? ArrClassId(elemText) : 0) : (0, 0);
-                sb.AppendLine($"static const TArg {Px}ta_{id} = {{{CString(DeclaredType.DisplayOf(text))}, {Px}tah_{id}, {(text.StartsWith("float", StringComparison.Ordinal) && DeclaredType.NumberDemand(text) != null ? "true" : "false")}, {kind}, {adapt}, {arrElem}, {arrClass}}};");
+                string isA = IsANames(text, $"{Px}tai_{id}", sb);   // (the table of names first: the TArg points to it)
+                sb.AppendLine($"static const TArg {Px}ta_{id} = {{{CString(DeclaredType.DisplayOf(text))}, {Px}tah_{id}, {(text.StartsWith("float", StringComparison.Ordinal) && DeclaredType.NumberDemand(text) != null ? "true" : "false")}, {kind}, {adapt}, {arrElem}, {arrClass}, {isA}}};");
             }
             foreach (var (text, id) in _targListIds.OrderBy(kv => kv.Value))
                 sb.AppendLine($"static const TArg* const {Px}tl_{id}[] = {{{string.Join(", ", text.Split('|').Select(TArgRef))}}};");
@@ -1829,6 +1830,22 @@ namespace fire.Native
             return id;
         }
 
+        /// <summary>The names of the types a class is (itself, its base classes, the interfaces they implement) as a NULL-terminated table `name` written
+        /// to `sb` - what an object or an array of it may stand for (covariance: a `List&lt;Dog&gt;` where a `List&lt;Animal&gt;` is declared, a Dog array
+        /// where an Animal array is; fire_rt.h typeNameIn); "NULL" for what is no class of the program.</summary>
+        private string IsANames(string cls, string name, StringBuilder sb)
+        {
+            if (!_program.Program.Classes.TryGetValue(cls, out var rc)) return "NULL";
+            var names = new SortedSet<string>(StringComparer.Ordinal);
+            for (var r = rc; r != null; r = r.Base)
+            {
+                names.Add(GenericClassNames.PlainName(r.Name));
+                foreach (var i in r.Interfaces) names.Add(GenericClassNames.PlainName(i));
+            }
+            sb.AppendLine($"static const char* const {name}[] = {{{string.Join(", ", names.Select(CString))}, NULL}};");
+            return name;
+        }
+
         /// <summary>g_arrClasses: for each array of a class what fits (the conditions of its declaration), its name and what a defined one starts with.</summary>
         private string ArrClassTable()
         {
@@ -1841,7 +1858,8 @@ namespace fire.Native
                 sb.AppendLine($"static bool {Px}acf_{id}(Value v) {{ return {fits}; }}");
                 sb.AppendLine($"static Value {Px}acz_{id}(void) {{ return {Constant(ArrayElem.Zero(ArrayElem.Class, text))}; }}");
             }
-            sb.AppendLine($"static const ArrClass {Px}kArrClasses[] = {{{string.Join(", ", _arrClasses.OrderBy(kv => kv.Value).Select(kv => $"{{{Px}acf_{kv.Value}, {CString(ArrayElem.Name(ArrayElem.Class, kv.Key))}, {Px}acz_{kv.Value}}}"))}}};");
+            var isA = _arrClasses.OrderBy(kv => kv.Value).Select(kv => IsANames(DeclaredType.Parse(ArrayElem.ClassText(kv.Key)).SingleName ?? "", $"{Px}aci_{kv.Value}", sb)).ToList();
+            sb.AppendLine($"static const ArrClass {Px}kArrClasses[] = {{{string.Join(", ", _arrClasses.OrderBy(kv => kv.Value).Select((kv, n) => $"{{{Px}acf_{kv.Value}, {CString(ArrayElem.Name(ArrayElem.Class, kv.Key))}, {Px}acz_{kv.Value}, {isA[n]}}}"))}}};");
             return sb.ToString();
         }
 

@@ -25,13 +25,13 @@ Vorschlag des Benutzers: `try delete x` versucht, den Inhalt des Bezeichners zu 
 sonst `true`. Für die Container wurde es nicht gebraucht (`x is from this` genügt, D3). Offen ist, ob es trotzdem kommt - und ob es nur löscht,
 was dem Aufrufer gehört, oder jedes Objekt wie `delete`.
 
-### D9. Was gibt `print` für ein zerstörtes Objekt aus?
-
-Die VM wirft eine DestroyedException, wenn die Klasse ein `ToString()` hat, und schreibt sonst `<object P>`. Nativ ist der Speicher des Objekts
-schon freigegeben - seine Klasse ist nicht mehr bekannt -, dort steht `<object>` (vorher las `print` dort freigegebenen Speicher; behoben).
-Vorschlag: beide werfen immer die DestroyedException, wie jede andere Verwendung eines zerstörten Objekts.
-
 ## Entschieden
+
+### D9. `print` eines zerstörten Objekts ist die DestroyedException
+
+`print(x)`, `"" + x` und `$"{x}"` mit einem zerstörten Objekt werfen die DestroyedException, wie jede andere Verwendung - in VM und nativ, mit und
+ohne `ToString()`. Vorher schrieb die VM für eine Klasse ohne `ToString()` `<object P>`, und nativ las `print` freigegebenen Speicher (dann
+`<object>`). Ein lebendes Objekt ohne `ToString()` zeigt weiter `<object P>`. VM.StringifyForText, fire_rt.h pieceOf.
 
 ### D10. Eine Deklaration `Bag<int> b` prüft die Typargumente
 
@@ -40,8 +40,13 @@ mit diesen Typargumenten: `Parameter 'b' is a Bag<int>, not Bag<string>.` (eine 
 Deklaration nur die Klasse; die VM rechnete mit dem falschen Wert weiter, nativ kam die Meldung erst am Ergebnis. Durch gehen weiterhin: ein Objekt
 ohne bekannte Typargumente (`new Bag()`), eine abgeleitete Klasse, die der Basisklasse diese Typargumente gibt (`class IntBag : Bag<int>`), und
 Stellen, an denen das Typargument der Deklaration nicht bekannt ist (`Bag<any>`). In generischem Code zählt das Typargument des Objekts
-(`Bag<T> other` in `Bag<int>`: ein `Bag<int>`). Kovarianz gibt es nicht: ein `List<Dog>` geht nicht in ein `List<Animal>`, wie bei den Arrays.
-Entscheidung des Benutzers. DeclaredType.WithTypeArgs / TypeArgsFit, nativ ClassGuard mit `guardTypeArgsFailed`.
+(`Bag<T> other` in `Bag<int>`: ein `Bag<int>`).
+**Kovarianz** (Entscheidung des Benutzers: was von Animal abstammt, ist als Animal zuweisbar und nutzbar): ein `List<Dog>` geht dorthin, wo
+`List<Animal>` oder `List<INamed>` deklariert ist, ein Dog-Array dorthin, wo `Animal a[]` steht. Das Objekt bzw. das Array **behält seinen Typ** und
+prüft weiter, was hineinkommt: `animals.Add(cat)` auf einem `List<Dog>` und `all[0] = cat` auf einem Dog-Array sind die ArgumentException
+(`Parameter 'value' is a T (Dog), not Cat.`). Die Gegenrichtung (`List<Animal>` in `List<Dog>`) und fremde Klassen gehen nicht. Das ersetzt die
+frühere Regel, dass ein Array einer abgeleiteten Klasse nicht in die Deklaration der Basisklasse geht.
+DeclaredType.WithTypeArgs / TypeArgsFit, VM.ClassArrayIsOf, nativ ClassGuard mit `guardTypeArgsFailed`, `TArg.isA` / `ArrClass.isA` mit `typeNameIn`.
 
 ### D8. Eine Deklaration `Color c` prüft zur Laufzeit
 

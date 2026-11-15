@@ -941,7 +941,9 @@ namespace fire.Compiler
                 // `List<int>` is not a `List<string>`: the type arguments of the same class must agree (a raw form or an `any` agrees with everything)
                 if (target.Args == null) return true;
                 var view = value.Class == target.Class ? value : AsBase(value, target.Class!);
-                return view?.Args == null || view.Args.Zip(target.Args).All(p => p.First.IsDynamic || p.Second.IsDynamic || p.First == p.Second);
+                // (a `List<Dog>` is a `List<Animal>`: the object keeps its type argument and checks what goes in - DECISIONS D10)
+                return view?.Args == null || view.Args.Zip(target.Args).All(p => p.First.IsDynamic || p.Second.IsDynamic || p.First == p.Second
+                    || p.First.Kind == StaticKind.Class && p.Second.Kind == StaticKind.Class && p.First.Args == null && p.Second.Args == null && DerivesFrom(p.First.Class!, p.Second.Class!));
             }
             // an enum is not an int (and an int not an enum): `Color c = 5`, `int i = c` want a `!` (`5!Color`, `c!int`)
             if (value.Kind == StaticKind.Enum || target.Kind == StaticKind.Enum) return value.Kind == target.Kind && value.Class == target.Class;
