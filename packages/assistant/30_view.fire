@@ -26,6 +26,9 @@ namespace Assistant {
         UI.Label folderLabel
         UI.Label branchLabel
         defined int headerH = 30
+        // the pictures of the header (16 x 16, white): folder and branch
+        Framebuffer folderIcon
+        Framebuffer branchIcon
         // a session chosen in the popup ("new": a new one), taken in the next cycle
         string pickedSession = ""
         // a row of the context menu that was chosen ("history", "folder", "git:status", "character:flint", "quit"), taken in the next cycle
@@ -94,11 +97,16 @@ namespace Assistant {
             // the header: folder and branch, the small buttons at the right (history, sessions, close)
             this.folderLabel = new UI.Label("", 34, 15)
             this.folderLabel.Color = new SolidBrush(UI.Color.Rgb(255, 255, 255))
-            this.folderLabel.FontSize = 13
+            this.folderLabel.FontSize = 14
             this.ui.Add(this.folderLabel)
             this.branchLabel = new UI.Label("", 34, 35)
             this.branchLabel.Color = new SolidBrush(UI.Color.Rgb(255, 255, 255))
-            this.branchLabel.FontSize = 13
+            this.branchLabel.FontSize = 14
+            // the branch in bold (the bold file of the theme's font, where there is one)
+            string bold = this.ui.theme.font + " Bold"
+            if (this.ui.theme.font != "" && Fonts.Has(bold)) { this.branchLabel.Font = bold }
+            this.folderIcon = Framebuffer.FromResource(new Resource("icons/folder16.png"))
+            this.branchIcon = Framebuffer.FromResource(new Resource("icons/branch16.png"))
             this.ui.Add(this.branchLabel)
             defined int bx = this.W - 14 - 3 * 24
             this.historyButton = Assistant.View.Small(UI.Geometry.Parse("M 2 4 L 14 4 M 2 8 L 14 8 M 2 12 L 14 12"), bx, 11)
@@ -148,7 +156,11 @@ namespace Assistant {
         }
 
         defined int Fill() { return this.ui.Dark ? UI.Color.Rgb(52, 52, 56) : UI.Color.Rgb(255, 253, 240) }
-        defined int HeaderFill() { return UI.Color.Rgb(0, 110, 112) }
+        // the header in the accent colour of the system (ui.Accent: 0xRRGGBB)
+        defined int HeaderFill() {
+            defined int a = this.ui.Accent
+            return UI.Color.Rgb((a >> 16) & 255, (a >> 8) & 255, a & 255)
+        }
 
         // The folder as the header shows it: in a repository its name and the path below it ("/RuhrpottRaser/src"), else the path - cut at the front
         // when it is longer than `room` characters.
@@ -167,19 +179,8 @@ namespace Assistant {
             var band = new SolidBrush(this.HeaderFill())
             r.FillRoundRect(4, 4, w - 8, this.headerH, radius, band)
             r.FillRect(4, 4 + this.headerH - radius, w - 8, radius, band)
-            var white = new Pen(UI.Color.Rgb(255, 255, 255), 1)
-            // a folder
-            r.DrawRect(15, 18, 12, 9, white)
-            r.DrawLine(15, 18, 18, 15, white)
-            r.DrawLine(18, 15, 22, 15, white)
-            r.DrawLine(22, 15, 23, 18, white)
-            if (this.Brain.Branch != "") {
-                // a branch: a line with two commits and a side branch
-                r.DrawLine(18, 36, 18, 47, white)
-                r.DrawCircle(18, 48, 2, white)
-                r.DrawCircle(24, 38, 2, white)
-                r.DrawLine(24, 40, 18, 45, white)
-            }
+            r.Blit(this.folderIcon, 13, 15, 2)
+            if (this.Brain.Branch != "") { r.Blit(this.branchIcon, 13, 35, 2) }
         }
 
         undefined PaintBubble(UI.DrawingCanvas c) {
