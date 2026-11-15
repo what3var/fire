@@ -1414,6 +1414,8 @@ static int fire_dwl_beginMove(FireDwlWindow* w) {
     pthread_mutex_unlock(&w->lock);
     return 1;
 }
+/* (the picture of a window comes from its .desktop file: xdg-toplevel-icon is not common yet; a task bar entry is the compositor's choice) */
+static void fire_dwl_setIcon(FireDwlWindow* w, const uint32_t* rgba, int width, int height) { (void)w; (void)rgba; (void)width; (void)height; }
 /* (Wayland does not tell a window where it is) */
 static int fire_dwl_position(FireDwlWindow* w, int* r) { (void)w; (void)r; return 0; }
 static int fire_dwl_workArea(FireDwlWindow* w, int* r) { (void)w; (void)r; return 0; }

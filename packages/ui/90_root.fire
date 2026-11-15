@@ -661,15 +661,42 @@ namespace UI {
             return false
         }
 
+        // An element leaves the interface - taken out of its panel or destroyed (Panel.Remove, Panel.Clear, the rows of a list made anew, a closed popup): what
+        // the root remembers of it or of an element inside it (under the pointer, pressed, focused, dragged, its tool tip) is forgotten - else the next mouse
+        // event would reach a destroyed element (a choice that makes its buttons anew in its own click).
+        undefined Forget(Element gone) {
+            if (gone == undefined) { return }
+            if (UI.Root.Inside(this.hoverElement, gone)) { this.hoverElement = undefined }
+            if (UI.Root.Inside(this.pressedElement, gone)) { this.pressedElement = undefined }
+            if (UI.Root.Inside(this.focusElement, gone)) { this.focusElement = undefined }
+            if (UI.Root.Inside(this.dragFrom, gone)) { this.dragFrom = undefined }
+            if (UI.Root.Inside(this.dragSource, gone)) { this.dragSource = undefined }
+            if (UI.Root.Inside(this.dragTarget, gone)) { this.dragTarget = undefined }
+            if (UI.Root.Inside(this.hoverTarget, gone)) { this.hoverTarget = undefined }
+            if (UI.Root.Inside(this.touchPanner, gone)) { this.touchPanner = undefined }
+            if (UI.Root.Inside(this.tipElement, gone)) {
+                this.tipElement = undefined
+                this.HideToolTip()
+            }
+        }
+
+        // Is `e` the element `outer` or inside it?
+        static bool Inside(Element e, Element outer) {
+            var x = e
+            while (x != undefined) {
+                if (x == outer) { return true }
+                x = x.parent
+            }
+            return false
+        }
+
         undefined ClosePopup(Element popup) {
             for (var i = 0; i < this.popups.Count; i = i + 1) {
                 if (this.popups[i] == popup) {
                     this.popups.RemoveAt(i)
                     this.InvalidatePopup(popup, popup.ax, popup.ay)
                     this.ForgetSurface(popup)
-                    if (this.hoverElement == popup) { this.hoverElement = undefined }
-                    if (this.pressedElement == popup) { this.pressedElement = undefined }
-                    if (this.focusElement == popup) { this.focusElement = undefined }
+                    this.Forget(popup)
                     if (popup.transient) { delete popup }
                     return
                 }

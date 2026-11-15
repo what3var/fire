@@ -47,10 +47,21 @@ namespace Assistant {
             // no frame, above the other windows: only the character and its bubble are seen
             this.win.Frameless = true
             this.win.TopMost = true
+            this.win.ShowInTaskbar = false   // (a helper, not a program of its own)
+            this.PaintIcon()
             this.ui = new UI.Root(this.fb, this.win)
             this.ui.WindowBackdrop = Backdrop.Transparent
             this.ui.WindowBackground = new SolidBrush(UI.Color.Transparent())   // (nothing behind the bubble and the character)
             this.Build()
+        }
+
+        // The character as the window's picture (Alt+Tab, where the desktop shows one).
+        undefined PaintIcon() {
+            var fb = new Framebuffer(64, 64)
+            var r = new Renderer(fb)
+            r.ClearTo(UI.Color.Transparent())
+            this.Brain.Character.Paint(r, 0.0, 0.0, 64.0, 64.0, 0, Assistant.Mood.Idle)
+            this.win.SetIcon(fb)
         }
 
         static UI.Button Small(UI.Geometry icon, defined int x, defined int y) {
@@ -299,6 +310,7 @@ namespace Assistant {
             }
             Assistant.Character next = all[(at + 1) % all.Count]
             this.Brain.Character = next
+            this.PaintIcon()
             this.Brain.Settings.Character = next.Id
             this.Brain.Settings.Save()
             this.Brain.Say(next.Hello)

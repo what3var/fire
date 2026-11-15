@@ -139,6 +139,8 @@ while (win.Tick()) {                       // shows the frame, fetches the event
 | `Cursor` | the mouse pointer (0 arrow, 1 text, 2 wait, 3 cross, 4 progress, 5-9 sizes and move, 10 not allowed, 11 hand) |
 | `Backdrop` | what the desktop shows behind the window: `Backdrop.None`, `Transparent`, `Blur`, `Acrylic`, `Mica` (what was given) |
 | `Frameless`, `TopMost` | without the frame and title bar of the desktop; above the other windows (Wayland: no frame, but the compositor decides what is on top) |
+| `ShowInTaskbar` | true; false: no button in the task bar and not in Alt+Tab (Windows: a tool window; X11: skip taskbar and pager; macOS: the program becomes an accessory without a Dock icon; Wayland: the compositor decides) |
+| `SetIcon(framebuffer)` | the picture of the window in the task bar, the title bar and Alt+Tab - a copy of the pixels with their alpha (32 x 32 or 64 x 64; `undefined`: the program's own again). macOS shows the bundle's, Wayland the one of the .desktop file |
 | `Position()` | where the window is: its top left corner `[x, y]` on the screen, also after the user moved it (`-1` while not known; from the first call on a managed window says it with every cycle). Wayland does not say |
 | `SetPosition(x, y)`, `WorkArea()` | the top left corner on the screen; the desktop without its panels and task bars, `[x, y, width, height]` (`-1` while not known: a window on a manager's thread answers after a cycle). Screen pixels (macOS: points). Wayland places windows itself and says nothing |
 | `BeginMove()` | in a MouseDown: the desktop moves the window with the mouse until the button is let go - the title bar of a frameless window |

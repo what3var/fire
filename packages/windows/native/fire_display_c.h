@@ -88,8 +88,8 @@ enum { FIRE_EV_UNKNOWN = 0, FIRE_EV_CLOSE = 1, FIRE_EV_CLOSE_REQUEST = 2, FIRE_E
  * alpha (TRANSPARENT), or the desktop also blurs what lies behind it (BLUR), as acrylic (ACRYLIC: blurred, tinted, with grain) or as Mica (MICA, Windows 11: the wallpaper,
  * blurred). A display that cannot give what is asked gives the next thing it can (MICA -> ACRYLIC -> BLUR -> TRANSPARENT -> NONE) and says which. */
 enum { FIRE_BACKDROP_NONE = 0, FIRE_BACKDROP_TRANSPARENT = 1, FIRE_BACKDROP_BLUR = 2, FIRE_BACKDROP_ACRYLIC = 3, FIRE_BACKDROP_MICA = 4 };
-/* Window.Frameless, Window.TopMost (fire_display_setStyle) */
-enum { FIRE_STYLE_FRAMELESS = 1, FIRE_STYLE_TOPMOST = 2 };
+/* Window.Frameless, Window.TopMost, not Window.ShowInTaskbar (fire_display_setStyle) */
+enum { FIRE_STYLE_FRAMELESS = 1, FIRE_STYLE_TOPMOST = 2, FIRE_STYLE_NOTASKBAR = 4 };
 
 /* One event; which fields count depends on `type` (positions are in framebuffer pixels: the window may be scaled). */
 typedef struct FireDisplayEvent {

@@ -65,6 +65,7 @@ typedef struct FireWinShared {
     int beginMoveReq;             /* Window.BeginMove: the user moves the window with the held button */
     int workReq, work[4], workKnown;   /* Window.WorkArea: asked for, and the answer (x, y, w, h of the desktop without its panels) */
     int posWatch, pos[2], posKnown;    /* Window.Position: asked for once (then followed every cycle), and where the window is */
+    uint32_t* iconReq; int iconW, iconH, iconSet;   /* Window.SetIcon: the picture asked for (RGBA, a copy; NULL with iconSet: none) */
     double scale;                 /* pixels of the screen per logical pixel (the display's answer, 0: not known yet) */
     int dragReq, dragDone, dragResult;   /* Window.StartDrag for the thread: what is dragged (UTF-8; the paths one per line), and its answer */
     char* dragText;
@@ -154,6 +155,7 @@ static void fire_winb_sharedDelete(FireWinShared* s) {
     free(s->front);
     free(s->shown);
     free(s->title);
+    free(s->iconReq);
     free(s);
 }
 
@@ -449,8 +451,13 @@ static void fire_winb_applyRequests(FireWinShared* s) {
     if (s->beginMoveReq) { fire_display_beginMove(&s->display); s->beginMoveReq = 0; }
     if (s->workReq) { s->workKnown = fire_display_workArea(&s->display, s->work); s->workReq = 0; }
     if (s->posWatch) s->posKnown = fire_display_position(&s->display, s->pos);
+    if (s->iconSet) {
+        fire_display_setIcon(&s->display, s->iconReq, s->iconW, s->iconH);
+        free(s->iconReq); s->iconReq = NULL; s->iconSet = 0;
+    }
 #else
     s->styleReq = -1; s->moveReq = 0; s->beginMoveReq = 0; s->workReq = 0;
+    free(s->iconReq); s->iconReq = NULL; s->iconSet = 0;
 #endif
 }
 /* A window that cannot be opened is never silent: it counts as closed, and the error output says so - in the VM the host's (spark: the Output panel). */
@@ -1428,14 +1435,35 @@ static Value fire_win_WinSetBackdrop(Value id, Value kind) {
     if (threaded) fire_winb_unlock(&s->m);
     return Undef();
 }
-/* Window.Frameless / Window.TopMost (`flags`: FIRE_STYLE_FRAMELESS 1, FIRE_STYLE_TOPMOST 2): without the frame and title bar of the desktop, above the other
- * windows. Wayland draws no frame then but cannot keep a window on top. */
+/* Window.Frameless / Window.TopMost / Window.ShowInTaskbar (`flags`: FIRE_STYLE_FRAMELESS 1, FIRE_STYLE_TOPMOST 2, FIRE_STYLE_NOTASKBAR 4): without the frame
+ * and title bar of the desktop, above the other windows, without a button in the task bar. Wayland draws no frame then but cannot keep a window on top or out of
+ * the task bar. */
 static Value fire_win_WinSetStyle(Value id, Value flags) {
     FireWinState* w = fire_winb_windowOf(id);
     FireWinShared* s = w->sh;
     int threaded = fire_winb_threaded(w);
     if (threaded) fire_winb_lock(&s->m);
-    s->styleReq = (int)flags.i & 3;
+    s->styleReq = (int)flags.i & 7;
+    if (!threaded && s->opened && !s->failed) fire_winb_applyRequests(s);
+    if (threaded) fire_winb_unlock(&s->m);
+    return Undef();
+}
+/* Window.SetIcon(framebuffer): the picture of the window in the task bar, the title bar and Alt+Tab - a copy of the framebuffer's pixels (a negative id: the
+ * program's own picture again). macOS shows the bundle's, Wayland the one of the .desktop file. */
+static Value fire_win_WinSetIcon(Value id, Value fbId) {
+    FireWinState* w = fire_winb_windowOf(id);
+    FireWinShared* s = w->sh;
+    int threaded = fire_winb_threaded(w);
+    uint32_t* pixels = NULL;
+    int width = 0, height = 0;
+    if (fbId.i >= 0) {
+        FireGfxFramebuffer* fb = fire_gfxb_fbOf(fbId);
+        pixels = fire_winb_resolve(fb);
+        width = fb->width; height = fb->height;
+    }
+    if (threaded) fire_winb_lock(&s->m);
+    free(s->iconReq);
+    s->iconReq = pixels; s->iconW = width; s->iconH = height; s->iconSet = 1;
     if (!threaded && s->opened && !s->failed) fire_winb_applyRequests(s);
     if (threaded) fire_winb_unlock(&s->m);
     return Undef();

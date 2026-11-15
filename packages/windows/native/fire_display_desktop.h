@@ -255,6 +255,12 @@ static int fire_display_beginMove(FireDisplayWindow* w) {
 #undef FIRE_DD_B
     return 0;
 }
+/* The picture of the window (RGBA, width x height; NULL: the program's own). */
+static void fire_display_setIcon(FireDisplayWindow* w, const uint32_t* rgba, int width, int height) {
+#define FIRE_DD_B(m, p) fire_##p##_setIcon(&w->u.m, rgba, width, height); return;
+    FIRE_DD_SWITCH(w->kind, FIRE_DD_B)
+#undef FIRE_DD_B
+}
 /* Where the window is: its top left corner in screen pixels; 0 when the display does not say (Wayland). */
 static int fire_display_position(FireDisplayWindow* w, int* r) {
 #define FIRE_DD_B(m, p) return fire_##p##_position(&w->u.m, r);
