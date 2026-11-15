@@ -268,6 +268,75 @@ static class Scene3DTests
         print("filters " + (mixed[1] == 0) + " " + (mixed[2] > 0) + " " + (mixed[2] * 3 < mixed[0]) + " " + sums[0] + " " + sums[1] + " " + sums[2])
         fQuad.Texture.Filter = TextureFilter.Bilinear
 
+        // point lights with an end (Light.Cutoff): nothing beyond it, the same picture with and without culling, lights out of reach change nothing
+        var cFrame = new Framebuffer(64, 48)
+        var cScene = new Scene()
+        cScene.AmbientIntensity = 0.0
+        var cGround = new Object(Template.Plane, 0m, 0m, 0m, 40m, 0m, 40m)
+        cScene.Add(cGround)
+        var cBox = new Object(Template.Box, 1.5m, 0.5m, -1m, 1m, 1m, 1m)
+        cScene.Add(cBox)
+        var lamp = Light.Point(0m, 1m, 0m, S3D.Rgb(255, 255, 255), 2.0)
+        lamp.CastShadows = false
+        cScene.Add(lamp)
+        var cCam = new Camera(cFrame)
+        cCam.SetPosition(0m, 6m, 6m)
+        cCam.LookAt(0m, 0m, 0m)
+        cScene.Add(cCam)
+        cCam.Render()
+        var endless = H.Sum(cFrame)
+        lamp.Cutoff = 3m
+        cCam.Render()
+        var ended = H.Sum(cFrame)
+        var cPx = cFrame.ReadBytes()
+        print("cutoff " + lamp.Cutoff + " " + (ended != endless) + " " + (cPx[(30 * 64 + 32) * 4] > 0) + " " + cPx[(47 * 64) * 4] + " " + cPx[(47 * 64 + 63) * 4] + " " + ended)
+        lamp.Cutoff = 0.5m
+        cCam.Render()
+        var cDark = cFrame.ReadBytes()
+        var cLit = 0
+        for (var i = 0; i < cDark.length; i += 4) { if (cDark[i] > 0) { cLit++ } }
+        print("beyond " + cLit)
+        lamp.Cutoff = 3m
+        for (var i = 0; i < 40; i++) {
+            var far = Light.Point((i % 8) * 4m - 14m, 1m, (i / 8) * 4m - 60m, S3D.Rgb(255, 200, 120), 1.0)
+            far.Cutoff = 3m
+            far.CastShadows = false
+            cScene.Add(far)
+        }
+        cCam.Render()
+        print("out of reach " + (H.Sum(cFrame) == ended))
+        for (var i = 0; i < 24; i++) {
+            var near = Light.Point((i % 6) * 1.6m - 4m, 0.6m, (i / 6) * 1.7m - 3m, S3D.Rgb(120 + i * 5, 255 - i * 6, 90), 0.8)
+            near.Cutoff = 1.5m + (i % 3) * 0.5m
+            near.CastShadows = false
+            cScene.Add(near)
+        }
+        cScene.Add(Light.Directional(-0.3, -1.0, -0.2, S3D.Rgb(40, 40, 80), 0.5))
+        cCam.Render()
+        var culled = H.Sum(cFrame)
+        cScene.LightCulling = false
+        cCam.Render()
+        print("culling " + (culled == H.Sum(cFrame)) + " " + (culled != ended) + " " + cScene.LightCulling + " " + culled)
+        cScene.LightCulling = true
+        cScene.Threads = 1
+        cCam.Render()
+        print("culling threads " + (culled == H.Sum(cFrame)))
+        cScene.Renderer = RenderMode.Fast
+        cCam.Render()
+        print("cutoff fast " + H.Sum(cFrame))
+        cScene.Renderer = RenderMode.Hardware
+        cCam.Render()
+        var cHard = cFrame.ReadBytes()
+        cScene.Renderer = RenderMode.Software
+        cCam.Render()
+        var cSoft = cFrame.ReadBytes()
+        var cOff = 0
+        for (var i = 0; i < cHard.length; i++) {
+            var d = cHard[i] - cSoft[i]
+            if (d > 24 || d < -24) { cOff++ }
+        }
+        print("cutoff hardware " + (cOff * 50 < cHard.length))
+
         // the hardware renderer: where there is a GPU it draws, and its picture is close to the software one; where there is none the software renderer draws the same picture
         var software = frame.ReadBytes()
         print("renderer " + scene.Renderer + " " + cam.LastRenderer)

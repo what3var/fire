@@ -124,10 +124,13 @@ void main() {
             if (L.info.x == 1) toLight = L.toLight.xyz;
             else {
                 vec3 d = L.pos.xyz - p;
-                float dist = sqrt(dot(d, d));
+                float d2 = dot(d, d), r2 = 0.0;
+                if (L.toLight.w > 0.0) { r2 = d2 * L.toLight.w; if (r2 >= 1.0) continue; }   // beyond its end (Light.Cutoff)
+                float dist = sqrt(d2);
                 toLight = dist > 1e-12 ? d * (1.0 / dist) : vec3(0.0, 1.0, 0.0);
                 float q = dist * L.pos.w;
                 atten = 1.0 / (1.0 + q * q);
+                if (L.toLight.w > 0.0) { float wc = 1.0 - r2 * r2; atten *= wc * wc; }
             }
             float nl = dot(n, toLight);
             if (nl <= 0.0) continue;

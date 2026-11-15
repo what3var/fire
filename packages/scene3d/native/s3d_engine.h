@@ -408,6 +408,7 @@ typedef struct S3dLight {
     S3dVec3 pos;          /* point */
     S3dVec3 dir;          /* directional: the direction the light travels */
     float range;          /* point: the distance at which it has half its strength */
+    float cutoff;         /* point: from this distance on it lights nothing (the light fades to 0 there, smoothly); 0: no end */
     int castShadows;
     int mask;             /* the layers of objects that it lights (an object has its layers, too: they have to share one) */
 } S3dLight;
@@ -540,9 +541,20 @@ typedef struct S3dPreparedLight {
     S3dVec3 pos;
     S3dVec3 toLight;     /* directional: the unit direction towards the light */
     float invRange;
+    float invCutoff2;    /* point: 1 / cutoff^2 (0: the light has no end) */
     int mask;
     int shadow;          /* index into the shadow sets, -1: casts none */
 } S3dPreparedLight;
+
+/* The end of a point light (Light.Cutoff): `r2` is (distance / cutoff)^2 (below 1). The attenuation is multiplied by (1 - (d/c)^4)^2: 1 at the light, falling
+ * smoothly to exactly 0 at the cutoff (no edge, also not in its slope). */
+static inline float s3d_cutoffWindow(float r2) { float w = 1.0f - r2 * r2; return w * w; }
+
+/* The point lights with an end are culled per tile of the picture (S3D_TILE x S3D_TILE pixels): a tile lists the lights that can reach one of its pixels - every
+ * light without an end, and the point lights whose sphere (pos, cutoff) covers part of the tile on the screen - in the order of the lights, so a pixel sums the
+ * same lights in the same order as without culling (the same picture). */
+#define S3D_TILE_SHIFT 4
+#define S3D_TILE (1 << S3D_TILE_SHIFT)
 
 typedef struct S3dContext {
     S3dVec3 eye;
@@ -550,6 +562,10 @@ typedef struct S3dContext {
     S3dPreparedLight* lights; s3d_size lightN, lightCap;
     S3dShadowSet* shadows; s3d_size shadowCap, shadowInit;   /* the depth buffers are kept from frame to frame (shadowInit: the sets that were ever used) */
     int shadowN;
+    int culled;                                              /* the lights are culled per tile: a pixel looks at the lights of its tile only */
+    int tilesX, tilesY;
+    int* tileStart; s3d_size tileStartCap;                   /* tile t: its lights are tileLights[tileStart[t] .. tileStart[t + 1] - 1] (indices into `lights`) */
+    int* tileLights; s3d_size tileLightCap;
 } S3dContext;
 
 typedef struct S3dFlushSettings {
@@ -557,6 +573,7 @@ typedef struct S3dFlushSettings {
     int shadowResolution;
     int threads;               /* 0: as many as the machine has (up to 8), 1: none */
     int backend;               /* S3D_BACKEND_*: who draws */
+    int noLightCulling;        /* 1: every pixel looks at every light (the same picture, slower: for comparisons) */
 } S3dFlushSettings;
 enum { S3D_BACKEND_SOFTWARE = 0, S3D_BACKEND_HARDWARE = 1, S3D_BACKEND_DIRECT = 2 };   /* (DIRECT: who drew - the GPU, into the windows of the camera; never asked for) */
 
@@ -607,7 +624,7 @@ static void s3d_frameFree(S3dFrame* f) {
     s3d_gpu_releaseFrame(f);
     for (i = 0; i < f->batchInit; i++) S3D_FREE(f->batches[i].cv);
     S3D_FREE(f->batches); S3D_FREE(f->opaque); S3D_FREE(f->blended); S3D_FREE(f->order); S3D_FREE(f->orderTmp); S3D_FREE(f->depth);
-    S3D_FREE(f->ctx.lights);
+    S3D_FREE(f->ctx.lights); S3D_FREE(f->ctx.tileStart); S3D_FREE(f->ctx.tileLights);
     for (k = 0; k < (int)f->ctx.shadowInit; k++) for (j = 0; j < 6; j++) S3D_FREE(f->ctx.shadows[k].maps[j].depth);
     S3D_FREE(f->ctx.shadows);
     S3D_FREE(f);
@@ -816,9 +833,15 @@ static void s3d_rasterTri(uint8_t* rgba, S3dFrame* f, const S3dContext* ctx, con
                     else {
                         S3dVec3 diffuse = ctx->ambient, spec = s3d_v3(0, 0, 0), viewDir = s3d_v3(0, 0, 0);
                         int haveView = 0;
-                        s3d_size li;
-                        for (li = 0; li < ctx->lightN; li++) {
-                            const S3dPreparedLight* L = &ctx->lights[li];
+                        s3d_size li, lightCount = ctx->lightN;
+                        const int* tileList = NULL;
+                        if (ctx->culled) {   /* only the lights that can reach the tile of the pixel */
+                            int ti = (y >> S3D_TILE_SHIFT) * ctx->tilesX + (x >> S3D_TILE_SHIFT);
+                            tileList = ctx->tileLights + ctx->tileStart[ti];
+                            lightCount = (s3d_size)(ctx->tileStart[ti + 1] - ctx->tileStart[ti]);
+                        }
+                        for (li = 0; li < lightCount; li++) {
+                            const S3dPreparedLight* L = &ctx->lights[tileList ? (s3d_size)tileList[li] : li];
                             S3dVec3 toLight;
                             float atten = 1.0f, nl, shadow, w;
                             if (!(L->mask & s->layers)) continue;
@@ -826,11 +849,13 @@ static void s3d_rasterTri(uint8_t* rgba, S3dFrame* f, const S3dContext* ctx, con
                             else {
                                 S3dVec3 d = s3d_sub(L->pos, p);
                                 float d2 = d.x * d.x + d.y * d.y + d.z * d.z;
-                                float dist = sqrtf(d2);
-                                float q;
+                                float dist, q, r2 = 0;
+                                if (L->invCutoff2 > 0) { r2 = d2 * L->invCutoff2; if (r2 >= 1.0f) continue; }   /* beyond its end */
+                                dist = sqrtf(d2);
                                 toLight = dist > 1e-12f ? s3d_scale(d, 1.0f / dist) : s3d_v3(0, 1, 0);
                                 q = dist * L->invRange;
                                 atten = 1.0f / (1.0f + q * q);
+                                if (L->invCutoff2 > 0) atten *= s3d_cutoffWindow(r2);
                             }
                             nl = s3d_dot(n, toLight);
                             if (nl <= 0) continue;
@@ -907,11 +932,15 @@ static int s3d_setupTri(S3dTri* t, const S3dScreenVertex* a, const S3dScreenVert
 
 #endif /* FIRE_S3D_LEAN_ONLY */
 
+/* The view of a camera: world -> camera space (the camera at the origin, looking along -Z). view = inverse(T(cam) * R) = R^-1 * T(-cam) */
+static S3dMat4 s3d_viewMatrix(const S3dCamera* cam) {
+    S3dMat4 rinv = s3d_mul(s3d_rotationZ(-cam->rz), s3d_mul(s3d_rotationX(-cam->rx), s3d_rotationY(-cam->ry)));
+    return s3d_mul(rinv, s3d_translation(s3d_scale(cam->pos, -1.0f)));
+}
+
 /* The view and projection of a camera for a picture of w x h (OpenGL style clip space: -w <= z <= w). */
 static S3dMat4 s3d_viewProjection(const S3dCamera* cam, int w, int h) {
-    /* view = inverse(T(cam) * R) = R^-1 * T(-cam) */
-    S3dMat4 rinv = s3d_mul(s3d_rotationZ(-cam->rz), s3d_mul(s3d_rotationX(-cam->rx), s3d_rotationY(-cam->ry)));
-    S3dMat4 view = s3d_mul(rinv, s3d_translation(s3d_scale(cam->pos, -1.0f)));
+    S3dMat4 view = s3d_viewMatrix(cam);
     float aspect = (float)w / (float)h;
     float tf = 1.0f / tanf(cam->fovY * 0.5f);
     float nearP = cam->nearPlane, farP = cam->farPlane;
@@ -1399,12 +1428,83 @@ static void s3d_prepareLights(S3dContext* ctx, const S3dCamera* cam, const S3dLi
         p.pos = l->pos;
         p.toLight = s3d_normalize(s3d_scale(l->dir, -1.0f));
         p.invRange = 1.0f / (l->range > 1e-6f ? l->range : 1e-6f);
+        p.invCutoff2 = l->kind == S3D_LIGHT_POINT && l->cutoff > 0 ? 1.0f / (l->cutoff * l->cutoff) : 0.0f;
         p.mask = l->mask;
         p.shadow = -1;
         if (l->castShadows && st->shadows && shadowIndex < ctx->shadowN) p.shadow = shadowIndex++;
         if (!S3D_GROW(ctx->lights, ctx->lightCap, ctx->lightN + 1)) continue;
         ctx->lights[ctx->lightN++] = p;
     }
+}
+
+/* The rectangle of tiles (inclusive) that the sphere (centre, radius) of a light can reach on the screen; 0 when it reaches no visible pixel (behind the camera, beyond
+ * its far plane). The box around the sphere in camera space is cut at the near plane and its corners are projected (x / -z is largest and smallest at the corners), with a
+ * pixel to spare for the rounding. */
+static int s3d_lightTiles(const S3dMat4* view, float tfx, float tfy, int w, int h, float nearP, float farP, S3dVec3 centre, float radius, int* tx0, int* ty0, int* tx1, int* ty1) {
+    S3dVec3 c = s3d_transformPoint(view, centre);
+    float zlo, zhi, x0 = 1e30f, y0 = 1e30f, x1 = -1e30f, y1 = -1e30f;
+    int k;
+    /* (the position of a pixel is interpolated in floats: on a face seen almost edge-on it can be off by a little of its distance - the sphere is made larger by that much) */
+    radius += 0.01f * s3d_length(c);
+    zlo = c.z - radius; zhi = c.z + radius;
+    if (zlo > -nearP || zhi < -farP) return 0;   /* (in front of the camera is z <= -near) */
+    if (zhi > -nearP) zhi = -nearP;
+    for (k = 0; k < 8; k++) {
+        float z = (k & 4) ? zhi : zlo, px = (k & 1) ? c.x + radius : c.x - radius, py = (k & 2) ? c.y + radius : c.y - radius;
+        float sx = (px * tfx / -z * 0.5f + 0.5f) * (float)w, sy = (1.0f - (py * tfy / -z * 0.5f + 0.5f)) * (float)h;
+        x0 = s3d_minf(x0, sx); x1 = s3d_maxf(x1, sx); y0 = s3d_minf(y0, sy); y1 = s3d_maxf(y1, sy);
+    }
+    x0 -= 1; y0 -= 1; x1 += 1; y1 += 1;
+    if (x1 < 0 || y1 < 0 || x0 >= (float)w || y0 >= (float)h) return 0;
+    *tx0 = x0 <= 0 ? 0 : (int)x0 >> S3D_TILE_SHIFT; *ty0 = y0 <= 0 ? 0 : (int)y0 >> S3D_TILE_SHIFT;
+    *tx1 = x1 >= (float)(w - 1) ? (w - 1) >> S3D_TILE_SHIFT : (int)x1 >> S3D_TILE_SHIFT;
+    *ty1 = y1 >= (float)(h - 1) ? (h - 1) >> S3D_TILE_SHIFT : (int)y1 >> S3D_TILE_SHIFT;
+    return 1;
+}
+
+/* The lights of each tile of the picture (S3dContext.tileLights), when some point light has an end (Light.Cutoff): every light without an end is in every tile, a
+ * point light with one only in the tiles its sphere reaches. Without such a light (or culling switched off, or no memory) every pixel looks at every light. */
+static void s3d_cullLights(S3dContext* ctx, const S3dCamera* cam, int w, int h, const S3dFlushSettings* st) {
+    S3dMat4 view;
+    float tf, tfx, tfy;
+    s3d_size li;
+    int tiles, t, pass, any = 0, tx0, ty0, tx1, ty1, x, y;
+    ctx->culled = 0;
+    if (st->noLightCulling || w <= 0 || h <= 0) return;
+    for (li = 0; li < ctx->lightN; li++) if (ctx->lights[li].invCutoff2 > 0) { any = 1; break; }
+    if (!any) return;
+    ctx->tilesX = (w + S3D_TILE - 1) >> S3D_TILE_SHIFT; ctx->tilesY = (h + S3D_TILE - 1) >> S3D_TILE_SHIFT;
+    tiles = ctx->tilesX * ctx->tilesY;
+    if (!S3D_GROW(ctx->tileStart, ctx->tileStartCap, (s3d_size)tiles + 1)) return;
+    view = s3d_viewMatrix(cam);
+    tf = 1.0f / tanf(cam->fovY * 0.5f);
+    tfx = tf / ((float)w / (float)h); tfy = tf;
+    /* pass 0 counts the lights of each tile, pass 1 lists them (in the order of the lights) */
+    for (pass = 0; pass < 2; pass++) {
+        int* at = ctx->tileStart;
+        if (pass == 0) for (t = 0; t <= tiles; t++) at[t] = 0;
+        for (li = 0; li < ctx->lightN; li++) {
+            const S3dPreparedLight* L = &ctx->lights[li];
+            if (L->invCutoff2 > 0) {
+                if (!s3d_lightTiles(&view, tfx, tfy, w, h, cam->nearPlane, cam->farPlane, L->pos, 1.0f / sqrtf(L->invCutoff2), &tx0, &ty0, &tx1, &ty1)) continue;
+            } else { tx0 = 0; ty0 = 0; tx1 = ctx->tilesX - 1; ty1 = ctx->tilesY - 1; }
+            for (y = ty0; y <= ty1; y++)
+                for (x = tx0; x <= tx1; x++) {
+                    t = y * ctx->tilesX + x;
+                    if (pass == 0) at[t + 1]++;
+                    else ctx->tileLights[at[t]++] = (int)li;
+                }
+        }
+        if (pass == 0) {
+            for (t = 0; t < tiles; t++) at[t + 1] += at[t];
+            if (!S3D_GROW(ctx->tileLights, ctx->tileLightCap, (s3d_size)at[tiles] + 1)) return;
+        } else {
+            /* (each start moved on to the start of the next tile: move them back) */
+            for (t = tiles; t > 0; t--) at[t] = at[t - 1];
+            at[0] = 0;
+        }
+    }
+    ctx->culled = 1;
 }
 
 /* ---------------------------------------------------------------------------------------------------------------------------------------------
@@ -1459,6 +1559,7 @@ static void s3d_flushSoftware(uint8_t* rgba, S3dFrame* f, const S3dCamera* cam, 
     if (f->opaqueN == 0 && f->blendedN == 0) return;
     s3d_buildShadows(&f->ctx, f, lights, lightCount, st);
     s3d_prepareLights(&f->ctx, cam, lights, lightCount, st);
+    s3d_cullLights(&f->ctx, cam, f->w, f->h, st);
     if (!s3d_sortBlended(f)) f->blendedN = 0;
     job.rgba = rgba; job.f = f; job.ctx = &f->ctx; job.band = 16;
     bands = (f->h + job.band - 1) / job.band;

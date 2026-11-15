@@ -128,7 +128,7 @@ static void s3d_gpu_unlock(void) { pthread_mutex_unlock(&g_s3dGpuLock); }
 
 /* What the shaders read (matrices row major, as the engine keeps them). Keep in step with shaders/s3d_common.glsl. The frame is a uniform block (std140); the lights and the
  * shadow maps are storage buffers (std430) of any length - there is no limit on their number but the memory of the GPU. */
-typedef struct S3dGpuLightU { int32_t info[4]; float color[4]; float pos[4]; float toLight[4]; } S3dGpuLightU;   /* info: kind, mask, first shadow map (-1: none) */
+typedef struct S3dGpuLightU { int32_t info[4]; float color[4]; float pos[4]; float toLight[4]; } S3dGpuLightU;   /* info: kind, mask, first shadow map (-1: none); toLight.w: 1/cutoff^2 */
 typedef struct S3dGpuMapU { float view[16]; float p[4]; float q[4]; float r[4]; int32_t t[4]; } S3dGpuMapU;     /* p: sx sy ox oy; q: f res ortho; r: dmin 1/range far; t: x y layer */
 typedef struct S3dGpuFrameU {
     float vp[16];
@@ -1380,7 +1380,7 @@ static int s3d_gpu_frameUniforms(S3dFrame* f, const S3dCamera* cam, S3dVec3 lo, 
         g->info[2] = L->shadow >= 0 && L->shadow < ctx->shadowN && g_s3dVk.tiles[firstMap[L->shadow]].layer >= 0 ? firstMap[L->shadow] : -1;
         g->color[0] = L->color.x; g->color[1] = L->color.y; g->color[2] = L->color.z;
         g->pos[0] = L->pos.x; g->pos[1] = L->pos.y; g->pos[2] = L->pos.z; g->pos[3] = L->invRange;
-        g->toLight[0] = L->toLight.x; g->toLight[1] = L->toLight.y; g->toLight[2] = L->toLight.z;
+        g->toLight[0] = L->toLight.x; g->toLight[1] = L->toLight.y; g->toLight[2] = L->toLight.z; g->toLight[3] = L->invCutoff2;
     }
     free(firstMap);
     u->counts[0] = (int32_t)n;

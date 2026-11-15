@@ -185,6 +185,7 @@ static int s3d_leanBegin(S3dLean* L, int w, int h, int bpp, const uint32_t* pale
         p.pos = l->pos;
         p.toLight = s3d_normalize(s3d_scale(l->dir, -1.0f));
         p.invRange = 1.0f / (l->range > 1e-6f ? l->range : 1e-6f);
+        p.invCutoff2 = l->kind == S3D_LIGHT_POINT && l->cutoff > 0 ? 1.0f / (l->cutoff * l->cutoff) : 0.0f;
         p.mask = l->mask;
         p.shadow = -1;
         if (!S3D_GROW(L->lights, L->lightCap, L->lightN + 1)) return 0;
@@ -354,10 +355,12 @@ static void s3d_leanObject(S3dLean* L, const S3dMesh* mesh, const S3dObjectParam
                 if (P->kind == S3D_LIGHT_DIRECTIONAL) toLight = P->toLight;
                 else {
                     S3dVec3 d = s3d_sub(P->pos, wp);
-                    float dist = s3d_length(d), q;
+                    float dist = s3d_length(d), q, r2 = 0;
+                    if (P->invCutoff2 > 0) { r2 = s3d_dot(d, d) * P->invCutoff2; if (r2 >= 1.0f) continue; }   /* beyond its end (Light.Cutoff) */
                     toLight = dist > 1e-12f ? s3d_scale(d, 1.0f / dist) : s3d_v3(0, 1, 0);
                     q = dist * P->invRange;
                     atten = 1.0f / (1.0f + q * q);
+                    if (P->invCutoff2 > 0) atten *= s3d_cutoffWindow(r2);
                 }
                 nl = s3d_dot(wn, toLight);
                 if (nl <= 0) continue;

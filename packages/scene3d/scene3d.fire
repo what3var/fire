@@ -293,6 +293,9 @@ class Light {
     defined float Z : m { get { return __S3DGetF(this.h, 3) * 1m } set { __S3DSetF(this.h, 3, S3D.Length(value)) } }
     // The distance at which a point light has half of its strength.
     defined float Range : m { get { return __S3DGetF(this.h, 7) * 1m } set { __S3DSetF(this.h, 7, S3D.Length(value)) } }
+    // The end of a point light: from this distance on it lights nothing (its light fades smoothly to 0 there). 0m (default): no end - it reaches everything, weaker and
+    // weaker. With an end, only the parts of the picture that it can reach look at it: hundreds of small lights (street lamps) cost little more than a few.
+    defined float Cutoff : m { get { return __S3DGetF(this.h, 8) * 1m } set { __S3DSetF(this.h, 8, S3D.Length(value)) } }
     // false: the light is off (it lights nothing and casts no shadow).
     defined bool Enabled { get { return __S3DGetB(this.h, 2) } set { __S3DSetI(this.h, 2, value) } }
     // Whether what the light hits throws shadows (the scene's Shadows has to be on, too).
@@ -619,6 +622,9 @@ class Scene {
     defined int Threads { get { return __S3DGetI(this.h, 3) } set { __S3DSetI(this.h, 3, value) } }
     // RenderMode.Software (default) or RenderMode.Hardware: the GPU draws (Vulkan), where there is one; else the software renderer.
     RenderMode Renderer { get { return __S3DGetI(this.h, 4)!RenderMode } set { __S3DSetI(this.h, 4, value!int) } }
+    // true (default): each part of the picture looks only at the point lights that can reach it (the ones with a Light.Cutoff); false: every pixel looks at every light -
+    // the same picture, only slower (for comparisons).
+    defined bool LightCulling { get { return __S3DGetB(this.h, 7) } set { __S3DSetI(this.h, 7, value) } }
 
     // ---- the effects on the whole picture ----
     // Fog: from `start` on, the picture goes into the colour, from `end` on it is all fog - also where no object is (the background). It hides the end of the
