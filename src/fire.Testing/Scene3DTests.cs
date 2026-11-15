@@ -268,6 +268,182 @@ static class Scene3DTests
         print("filters " + (mixed[1] == 0) + " " + (mixed[2] > 0) + " " + (mixed[2] * 3 < mixed[0]) + " " + sums[0] + " " + sums[1] + " " + sums[2])
         fQuad.Texture.Filter = TextureFilter.Bilinear
 
+        // point lights with an end (Light.Cutoff): nothing beyond it, the same picture with and without culling, lights out of reach change nothing
+        var cFrame = new Framebuffer(64, 48)
+        var cScene = new Scene()
+        cScene.AmbientIntensity = 0.0
+        var cGround = new Object(Template.Plane, 0m, 0m, 0m, 40m, 0m, 40m)
+        cScene.Add(cGround)
+        var cBox = new Object(Template.Box, 1.5m, 0.5m, -1m, 1m, 1m, 1m)
+        cScene.Add(cBox)
+        var lamp = Light.Point(0m, 1m, 0m, S3D.Rgb(255, 255, 255), 2.0)
+        lamp.CastShadows = false
+        cScene.Add(lamp)
+        var cCam = new Camera(cFrame)
+        cCam.SetPosition(0m, 6m, 6m)
+        cCam.LookAt(0m, 0m, 0m)
+        cScene.Add(cCam)
+        cCam.Render()
+        var endless = H.Sum(cFrame)
+        lamp.Cutoff = 3m
+        cCam.Render()
+        var ended = H.Sum(cFrame)
+        var cPx = cFrame.ReadBytes()
+        print("cutoff " + lamp.Cutoff + " " + (ended != endless) + " " + (cPx[(30 * 64 + 32) * 4] > 0) + " " + cPx[(47 * 64) * 4] + " " + cPx[(47 * 64 + 63) * 4] + " " + ended)
+        lamp.Cutoff = 0.5m
+        cCam.Render()
+        var cDark = cFrame.ReadBytes()
+        var cLit = 0
+        for (var i = 0; i < cDark.length; i += 4) { if (cDark[i] > 0) { cLit++ } }
+        print("beyond " + cLit)
+        lamp.Cutoff = 3m
+        for (var i = 0; i < 40; i++) {
+            var far = Light.Point((i % 8) * 4m - 14m, 1m, (i / 8) * 4m - 60m, S3D.Rgb(255, 200, 120), 1.0)
+            far.Cutoff = 3m
+            far.CastShadows = false
+            cScene.Add(far)
+        }
+        cCam.Render()
+        print("out of reach " + (H.Sum(cFrame) == ended))
+        for (var i = 0; i < 24; i++) {
+            var near = Light.Point((i % 6) * 1.6m - 4m, 0.6m, (i / 6) * 1.7m - 3m, S3D.Rgb(120 + i * 5, 255 - i * 6, 90), 0.8)
+            near.Cutoff = 1.5m + (i % 3) * 0.5m
+            near.CastShadows = false
+            cScene.Add(near)
+        }
+        cScene.Add(Light.Directional(-0.3, -1.0, -0.2, S3D.Rgb(40, 40, 80), 0.5))
+        cCam.Render()
+        var culled = H.Sum(cFrame)
+        cScene.LightCulling = false
+        cCam.Render()
+        print("culling " + (culled == H.Sum(cFrame)) + " " + (culled != ended) + " " + cScene.LightCulling + " " + culled)
+        cScene.LightCulling = true
+        cScene.Threads = 1
+        cCam.Render()
+        print("culling threads " + (culled == H.Sum(cFrame)))
+        cScene.Renderer = RenderMode.Fast
+        cCam.Render()
+        print("cutoff fast " + H.Sum(cFrame))
+        cScene.Renderer = RenderMode.Hardware
+        cCam.Render()
+        var cHard = cFrame.ReadBytes()
+        cScene.Renderer = RenderMode.Software
+        cCam.Render()
+        var cSoft = cFrame.ReadBytes()
+        var cOff = 0
+        for (var i = 0; i < cHard.length; i++) {
+            var d = cHard[i] - cSoft[i]
+            if (d > 24 || d < -24) { cOff++ }
+        }
+        print("cutoff hardware " + (cOff * 50 < cHard.length))
+
+        // an emission map (Object.EmissiveTexture): its colours are added to the lit colour, black adds nothing, strength 0 nothing at all
+        var eFrame = new Framebuffer(64, 48)
+        var eScene = new Scene()
+        eScene.AmbientIntensity = 0.1
+        var eWall = new Object(Template.Quad, 0m, 0m, 0m, 4m, 3m, 0m)
+        eWall.Texture = Texture.Checker(16, 4, S3D.Rgb(200, 180, 160), S3D.Rgb(120, 110, 100))
+        eScene.Add(eWall)
+        eScene.Add(Light.Directional(0.2, -0.3, -1.0, S3D.Rgb(255, 255, 255), 0.4))
+        var eCam = new Camera(eFrame)
+        eCam.Z = 3m
+        eScene.Add(eCam)
+        eCam.Render()
+        var eLit = eFrame.ReadBytes()
+        var eSum = H.Sum(eFrame)
+        // the windows: the upper left quarter of the texture glows yellow, the rest is black
+        var eBytes = new byte[16 * 16 * 4]
+        for (var y = 0; y < 16; y++) {
+            for (var x = 0; x < 16; x++) {
+                var at = (y * 16 + x) * 4
+                eBytes[at + 3] = 255
+                if (x < 8 && y < 8) { eBytes[at] = 255; eBytes[at + 1] = 200; eBytes[at + 2] = 80 }
+            }
+        }
+        eWall.EmissiveTexture = new Texture(16, 16, eBytes)
+        eWall.EmissiveTexture.Filter = TextureFilter.Nearest
+        eCam.Render()
+        var eGlow = eFrame.ReadBytes()
+        var brighter = 0
+        var changedDark = 0
+        for (var y = 0; y < 48; y++) {
+            for (var x = 0; x < 64; x++) {
+                var at = (y * 64 + x) * 4
+                if (eGlow[at] != eLit[at] || eGlow[at + 1] != eLit[at + 1] || eGlow[at + 2] != eLit[at + 2]) {
+                    if (x < 32 && y < 24 && eGlow[at] >= eLit[at] && eGlow[at + 2] >= eLit[at + 2]) { brighter++ } else { changedDark++ }
+                }
+            }
+        }
+        print("emission " + eWall.EmissiveStrength + " " + (brighter > 200) + " " + changedDark + " " + H.Sum(eFrame))
+        eWall.EmissiveStrength = 0.0
+        eCam.Render()
+        print("emission off " + (H.Sum(eFrame) == eSum))
+        eWall.EmissiveStrength = 1.0
+        eScene.Lights[0].Enabled = false
+        eScene.AmbientIntensity = 0.0
+        eCam.Render()
+        var eNight = eFrame.ReadBytes()
+        print("emission night " + eNight[(5 * 64 + 10) * 4] + "," + eNight[(5 * 64 + 10) * 4 + 1] + "," + eNight[(5 * 64 + 10) * 4 + 2] + " " + eNight[(40 * 64 + 50) * 4] + "," + eNight[(40 * 64 + 50) * 4 + 1])
+        eScene.Renderer = RenderMode.Hardware
+        eCam.Render()
+        var eHard = eFrame.ReadBytes()
+        var eOff = 0
+        for (var i = 0; i < eHard.length; i++) {
+            var d = eHard[i] - eNight[i]
+            if (d > 24 || d < -24) { eOff++ }
+        }
+        print("emission hardware " + (eOff * 50 < eHard.length))
+        eScene.Renderer = RenderMode.Software
+        eWall.EmissiveTexture = undefined
+        eCam.Render()
+        print("emission none " + eFrame.ReadBytes()[(5 * 64 + 10) * 4] + " " + (eWall.EmissiveTexture == undefined))
+
+        // reflections (Object.Reflectivity): 0 is the same picture as without; a wet floor mirrors the box (its red appears below it); the same with every number of threads
+        var rFrame = new Framebuffer(64, 48)
+        var rScene = new Scene()
+        var rFloor = new Object(Template.Plane, 0m, 0m, 0m, 30m, 0m, 30m)
+        rFloor.Color = S3D.Rgb(60, 60, 70)
+        rScene.Add(rFloor)
+        var rBox = new Object(Template.Box, 0m, 1m, -4m, 2m, 2m, 2m)
+        rBox.Color = S3D.Rgb(255, 40, 40)
+        rScene.Add(rBox)
+        rScene.Add(Light.Directional(-0.3, -1.0, -0.5))
+        var rCam = new Camera(rFrame)
+        rCam.SetPosition(0m, 1.2m, 4m)
+        rCam.LookAt(0m, 0.5m, -4m)
+        rCam.Background = S3D.Rgb(30, 40, 80)
+        rScene.Add(rCam)
+        rCam.Render()
+        var dry = rFrame.ReadBytes()
+        var drySum = H.Sum(rFrame)
+        rFloor.Reflectivity = 0.0
+        rCam.Render()
+        print("reflect 0 " + (H.Sum(rFrame) == drySum))
+        rFloor.Reflectivity = 0.8
+        rCam.Render()
+        var wet = rFrame.ReadBytes()
+        var wetSum = H.Sum(rFrame)
+        var redder = 0
+        var skyward = 0
+        for (var i = 0; i < wet.length; i += 4) {
+            if (wet[i] > dry[i] + 10) { redder++ }
+            if (wet[i + 1] + 5 < dry[i + 1] && wet[i + 2] + 5 >= dry[i + 2]) { skyward++ }
+        }
+        print("reflect " + rFloor.Reflectivity + " " + (wetSum != drySum) + " " + (redder > 20) + " " + (skyward > 200) + " " + wetSum)
+        rScene.Threads = 1
+        rCam.Render()
+        var wet1 = H.Sum(rFrame)
+        rScene.Threads = 3
+        rCam.Render()
+        print("reflect threads " + (wet1 == wetSum) + " " + (H.Sum(rFrame) == wetSum))
+        rScene.Fog(S3D.Rgb(150, 150, 160), 5m, 20m)
+        rCam.Render()
+        print("reflect fog " + H.Sum(rFrame))
+        rScene.NoFog()
+        rFloor.Reflectivity = 0.0
+        rCam.Render()
+        print("reflect off " + (H.Sum(rFrame) == drySum))
+
         // the hardware renderer: where there is a GPU it draws, and its picture is close to the software one; where there is none the software renderer draws the same picture
         var software = frame.ReadBytes()
         print("renderer " + scene.Renderer + " " + cam.LastRenderer)
@@ -463,6 +639,46 @@ static class Scene3DTests
         scene.Remove(flames)
         scene.Remove(smoke)
         scene.Remove(boom)
+        // streaks (Emitter.Stretch): rain falls in streaks; the same seed and steps give the same particles and the same picture, streaks or not
+        var rainFrame = new Framebuffer(64, 48)
+        var rainScene = new Scene()
+        rainScene.Add(new Object(Template.Plane, 0m, 0m, 0m, 20m, 0m, 20m))
+        rainScene.Add(Light.Directional(-0.4, -1.0, -0.3))
+        var rainCam = new Camera(rainFrame)
+        rainCam.SetPosition(0m, 1.7m, 6m)
+        rainCam.LookAt(0m, 2m, -4m)
+        rainScene.Add(rainCam)
+        var rain1 = Emitter.Rain(0m, 8m, -2m, 12m)
+        rain1.Seed = 42
+        rainScene.Add(rain1)
+        for (var i = 0; i < 30; i++) { rainScene.Advance(33ms) }
+        rainCam.Render()
+        var streaks1 = H.Sum(rainFrame)
+        var rainCount = rain1.Count
+        rainScene.Remove(rain1)
+        var rain2 = Emitter.Rain(0m, 8m, -2m, 12m)
+        rain2.Seed = 42
+        rainScene.Add(rain2)
+        for (var i = 0; i < 30; i++) { rainScene.Advance(33ms) }
+        rainCam.Render()
+        print("streaks " + (rain2.Stretch > 39ms && rain2.Stretch < 41ms) + " " + (H.Sum(rainFrame) == streaks1) + " " + (rain2.Count == rainCount) + " " + rainCount + " " + streaks1)
+        rain2.Stretch = 0s
+        rainCam.Render()
+        var discs = H.Sum(rainFrame)
+        rain2.Stretch = 0.2s
+        rainCam.Render()
+        print("stretch " + (discs != streaks1) + " " + (H.Sum(rainFrame) != streaks1) + " " + (rain2.Count == rainCount) + " " + discs)
+        rainScene.Renderer = RenderMode.Fast
+        rainCam.Render()
+        print("streaks fast " + H.Sum(rainFrame))
+        var sparks = Emitter.Sparks(0m, 1m, 0m)
+        sparks.Stretch = 30ms
+        sparks.Seed = 5
+        rainScene.Add(sparks)
+        rainScene.Renderer = RenderMode.Software
+        for (var i = 0; i < 10; i++) { rainScene.Advance(33ms) }
+        rainCam.Render()
+        print("sparks " + H.Sum(rainFrame) + " " + sparks.Count)
         try { flames.Speed = 3 } catch (UnitMismatchException e) { print("unit " + e.message) }
 
         // physics (scene3d.physics): a ball bounces, crates stack, a character walks up a step, stops at a wall, jumps; a trigger, rays, a terrain, a lift

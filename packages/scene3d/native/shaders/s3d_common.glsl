@@ -5,7 +5,7 @@ struct Light {
     ivec4 info;      // kind (1 directional, 2 point), layer mask, the first shadow map (-1: none; a point light has six from there)
     vec4 color;      // colour times intensity
     vec4 pos;        // position, 1/range
-    vec4 toLight;    // directional: the unit direction towards the light
+    vec4 toLight;    // directional: the unit direction towards the light; w (a point light): 1 / cutoff^2, 0: no end
 };
 struct Map {
     mat4 view;       // world -> the view of the light (looking down -z)

@@ -408,6 +408,7 @@ typedef struct S3dLight {
     S3dVec3 pos;          /* point */
     S3dVec3 dir;          /* directional: the direction the light travels */
     float range;          /* point: the distance at which it has half its strength */
+    float cutoff;         /* point: from this distance on it lights nothing (the light fades to 0 there, smoothly); 0: no end */
     int castShadows;
     int mask;             /* the layers of objects that it lights (an object has its layers, too: they have to share one) */
 } S3dLight;
@@ -434,6 +435,9 @@ typedef struct S3dSurface {
     int layers;
     float bump;           /* the strength of the bump map of the texture (0: none) */
     int billboard;        /* 0 none, 1 faces the camera, 2 turns around the vertical axis only */
+    const S3dTexture* emissiveTex;   /* an emission map (NULL: none): its colour (times its alpha) times emissiveStrength is added to the lit colour, at the texture coordinates of the texture */
+    float emissiveStrength;
+    float reflect;        /* 0..1: how much the surface mirrors what is above it (a screen space reflection of the software renderer; opaque surfaces that face up) */
 } S3dSurface;
 
 static S3dSurface s3d_surfaceDefault(void) {
@@ -540,9 +544,20 @@ typedef struct S3dPreparedLight {
     S3dVec3 pos;
     S3dVec3 toLight;     /* directional: the unit direction towards the light */
     float invRange;
+    float invCutoff2;    /* point: 1 / cutoff^2 (0: the light has no end) */
     int mask;
     int shadow;          /* index into the shadow sets, -1: casts none */
 } S3dPreparedLight;
+
+/* The end of a point light (Light.Cutoff): `r2` is (distance / cutoff)^2 (below 1). The attenuation is multiplied by (1 - (d/c)^4)^2: 1 at the light, falling
+ * smoothly to exactly 0 at the cutoff (no edge, also not in its slope). */
+static inline float s3d_cutoffWindow(float r2) { float w = 1.0f - r2 * r2; return w * w; }
+
+/* The point lights with an end are culled per tile of the picture (S3D_TILE x S3D_TILE pixels): a tile lists the lights that can reach one of its pixels - every
+ * light without an end, and the point lights whose sphere (pos, cutoff) covers part of the tile on the screen - in the order of the lights, so a pixel sums the
+ * same lights in the same order as without culling (the same picture). */
+#define S3D_TILE_SHIFT 4
+#define S3D_TILE (1 << S3D_TILE_SHIFT)
 
 typedef struct S3dContext {
     S3dVec3 eye;
@@ -550,6 +565,10 @@ typedef struct S3dContext {
     S3dPreparedLight* lights; s3d_size lightN, lightCap;
     S3dShadowSet* shadows; s3d_size shadowCap, shadowInit;   /* the depth buffers are kept from frame to frame (shadowInit: the sets that were ever used) */
     int shadowN;
+    int culled;                                              /* the lights are culled per tile: a pixel looks at the lights of its tile only */
+    int tilesX, tilesY;
+    int* tileStart; s3d_size tileStartCap;                   /* tile t: its lights are tileLights[tileStart[t] .. tileStart[t + 1] - 1] (indices into `lights`) */
+    int* tileLights; s3d_size tileLightCap;
 } S3dContext;
 
 typedef struct S3dFlushSettings {
@@ -557,6 +576,8 @@ typedef struct S3dFlushSettings {
     int shadowResolution;
     int threads;               /* 0: as many as the machine has (up to 8), 1: none */
     int backend;               /* S3D_BACKEND_*: who draws */
+    int noLightCulling;        /* 1: every pixel looks at every light (the same picture, slower: for comparisons) */
+    uint32_t sky;              /* 0xAABBGGRR: what a reflection shows where it finds nothing on the screen (the background, or the fog) */
 } S3dFlushSettings;
 enum { S3D_BACKEND_SOFTWARE = 0, S3D_BACKEND_HARDWARE = 1, S3D_BACKEND_DIRECT = 2 };   /* (DIRECT: who drew - the GPU, into the windows of the camera; never asked for) */
 
@@ -572,6 +593,12 @@ typedef struct S3dFrame {
     int lastBackend;           /* who drew the last picture (S3D_BACKEND_*) */
     void* gpu;                 /* the targets of the hardware backend, or NULL */
     void* direct;              /* DirectDrawing: the windows the camera draws into (s3d_gpu_attach), or NULL */
+    /* reflections (only while a surface of the picture reflects): per pixel how much it reflects (0: not) and its normal (octahedral), and a copy of the picture before them */
+    int reflectOn;
+    float* reflect; s3d_size reflectCap;
+    int8_t* reflectN; s3d_size reflectNCap;
+    uint8_t* reflectSrc; s3d_size reflectSrcCap;
+    int* skyline; s3d_size skylineCap; int skyLevels;   /* the first row with something drawn in each column, and the smallest of 2^k columns from each (level k) */
 } S3dFrame;
 
 #ifndef FIRE_S3D_LEAN_ONLY   /* (a build with the lean renderer only, s3d_lean.h: the frames, shadows and rows of the full renderer are not in it) */
@@ -607,7 +634,8 @@ static void s3d_frameFree(S3dFrame* f) {
     s3d_gpu_releaseFrame(f);
     for (i = 0; i < f->batchInit; i++) S3D_FREE(f->batches[i].cv);
     S3D_FREE(f->batches); S3D_FREE(f->opaque); S3D_FREE(f->blended); S3D_FREE(f->order); S3D_FREE(f->orderTmp); S3D_FREE(f->depth);
-    S3D_FREE(f->ctx.lights);
+    S3D_FREE(f->ctx.lights); S3D_FREE(f->ctx.tileStart); S3D_FREE(f->ctx.tileLights);
+    S3D_FREE(f->reflect); S3D_FREE(f->reflectN); S3D_FREE(f->reflectSrc); S3D_FREE(f->skyline);
     for (k = 0; k < (int)f->ctx.shadowInit; k++) for (j = 0; j < 6; j++) S3D_FREE(f->ctx.shadows[k].maps[j].depth);
     S3D_FREE(f->ctx.shadows);
     S3D_FREE(f);
@@ -740,6 +768,7 @@ static void s3d_rasterTri(uint8_t* rgba, S3dFrame* f, const S3dContext* ctx, con
     const S3dBatch* b = &f->batches[t->batch];
     const S3dSurface* s = &b->s;
     const S3dTexture* tex = b->tex;
+    const S3dTexture* glow = s->emissiveTex;
     int texOn = s->useTexture && tex && tex->w > 0 && tex->h > 0;
     int bumpOn = t->bump && texOn && tex->bump != NULL;
     float alphaScale = s->opacity;
@@ -775,7 +804,7 @@ static void s3d_rasterTri(uint8_t* rgba, S3dFrame* f, const S3dContext* ctx, con
             if (visible) {
                 float kk = 1.0f / cur[1];
                 S3dVec3 p = s3d_v3(cur[7] * kk, cur[8] * kk, cur[9] * kk);
-                S3dVec3 n = t->fn, base;
+                S3dVec3 n = t->fn, base, glowAdd = s3d_v3(0, 0, 0);
                 float alpha, u = 0, v = 0;
                 if (s->smooth && !t->constNormal) {
                     float nx = cur[4] * kk, ny = cur[5] * kk, nz = cur[6] * kk;
@@ -809,6 +838,20 @@ static void s3d_rasterTri(uint8_t* rgba, S3dFrame* f, const S3dContext* ctx, con
                         n = s3d_normalize(tilted);
                     }
                 }
+                if (visible && glow) {
+                    /* the emission map: at the same texture coordinates (with its own filter) */
+                    float ga;
+                    S3dVec3 gc;
+                    if (!texOn) { u = cur[2] * kk; v = cur[3] * kk; }
+                    if (glow->filter == S3D_FILTER_SHARP) {
+                        float uxd = (t->gx[2] - u * t->gx[1]) * kk, uyd = (t->gy[2] - u * t->gy[1]) * kk;
+                        float vxd = (t->gx[3] - v * t->gx[1]) * kk, vyd = (t->gy[3] - v * t->gy[1]) * kk;
+                        gc = s3d_sampleFiltered(glow, u, v, (fabsf(uxd) + fabsf(uyd)) * (float)glow->w, (fabsf(vxd) + fabsf(vyd)) * (float)glow->h, &ga);
+                    }
+                    else gc = s3d_sampleFiltered(glow, u, v, 1, 1, &ga);
+                    ga *= s->emissiveStrength;
+                    glowAdd = s3d_v3(gc.x * ga, gc.y * ga, gc.z * ga);
+                }
                 if (visible) {
                     S3dVec3 col;
                     uint8_t* px;
@@ -816,9 +859,15 @@ static void s3d_rasterTri(uint8_t* rgba, S3dFrame* f, const S3dContext* ctx, con
                     else {
                         S3dVec3 diffuse = ctx->ambient, spec = s3d_v3(0, 0, 0), viewDir = s3d_v3(0, 0, 0);
                         int haveView = 0;
-                        s3d_size li;
-                        for (li = 0; li < ctx->lightN; li++) {
-                            const S3dPreparedLight* L = &ctx->lights[li];
+                        s3d_size li, lightCount = ctx->lightN;
+                        const int* tileList = NULL;
+                        if (ctx->culled) {   /* only the lights that can reach the tile of the pixel */
+                            int ti = (y >> S3D_TILE_SHIFT) * ctx->tilesX + (x >> S3D_TILE_SHIFT);
+                            tileList = ctx->tileLights + ctx->tileStart[ti];
+                            lightCount = (s3d_size)(ctx->tileStart[ti + 1] - ctx->tileStart[ti]);
+                        }
+                        for (li = 0; li < lightCount; li++) {
+                            const S3dPreparedLight* L = &ctx->lights[tileList ? (s3d_size)tileList[li] : li];
                             S3dVec3 toLight;
                             float atten = 1.0f, nl, shadow, w;
                             if (!(L->mask & s->layers)) continue;
@@ -826,11 +875,13 @@ static void s3d_rasterTri(uint8_t* rgba, S3dFrame* f, const S3dContext* ctx, con
                             else {
                                 S3dVec3 d = s3d_sub(L->pos, p);
                                 float d2 = d.x * d.x + d.y * d.y + d.z * d.z;
-                                float dist = sqrtf(d2);
-                                float q;
+                                float dist, q, r2 = 0;
+                                if (L->invCutoff2 > 0) { r2 = d2 * L->invCutoff2; if (r2 >= 1.0f) continue; }   /* beyond its end */
+                                dist = sqrtf(d2);
                                 toLight = dist > 1e-12f ? s3d_scale(d, 1.0f / dist) : s3d_v3(0, 1, 0);
                                 q = dist * L->invRange;
                                 atten = 1.0f / (1.0f + q * q);
+                                if (L->invCutoff2 > 0) atten *= s3d_cutoffWindow(r2);
                             }
                             nl = s3d_dot(n, toLight);
                             if (nl <= 0) continue;
@@ -850,6 +901,7 @@ static void s3d_rasterTri(uint8_t* rgba, S3dFrame* f, const S3dContext* ctx, con
                         }
                         col = s3d_v3(base.x * diffuse.x + spec.x + s->emissive.x, base.y * diffuse.y + spec.y + s->emissive.y, base.z * diffuse.z + spec.z + s->emissive.z);
                     }
+                    if (glow) col = s3d_add(col, glowAdd);
                     px = rgba + di * 4;
                     if (blendedPass && alpha < 1.0f && s->cutoff <= 0) {
                         if (alpha > 0) {
@@ -861,6 +913,10 @@ static void s3d_rasterTri(uint8_t* rgba, S3dFrame* f, const S3dContext* ctx, con
                     } else {
                         px[0] = s3d_toByte(col.x); px[1] = s3d_toByte(col.y); px[2] = s3d_toByte(col.z); px[3] = 255;
                         f->depth[di] = z;
+                        if (f->reflectOn) {   /* what the reflection pass needs: how much the pixel reflects, its normal */
+                            f->reflect[di] = s->reflect;
+                            if (s->reflect > 0) s3d_octEncode(n, f->reflectN + di * 2);
+                        }
                     }
                 }
             }
@@ -907,11 +963,15 @@ static int s3d_setupTri(S3dTri* t, const S3dScreenVertex* a, const S3dScreenVert
 
 #endif /* FIRE_S3D_LEAN_ONLY */
 
+/* The view of a camera: world -> camera space (the camera at the origin, looking along -Z). view = inverse(T(cam) * R) = R^-1 * T(-cam) */
+static S3dMat4 s3d_viewMatrix(const S3dCamera* cam) {
+    S3dMat4 rinv = s3d_mul(s3d_rotationZ(-cam->rz), s3d_mul(s3d_rotationX(-cam->rx), s3d_rotationY(-cam->ry)));
+    return s3d_mul(rinv, s3d_translation(s3d_scale(cam->pos, -1.0f)));
+}
+
 /* The view and projection of a camera for a picture of w x h (OpenGL style clip space: -w <= z <= w). */
 static S3dMat4 s3d_viewProjection(const S3dCamera* cam, int w, int h) {
-    /* view = inverse(T(cam) * R) = R^-1 * T(-cam) */
-    S3dMat4 rinv = s3d_mul(s3d_rotationZ(-cam->rz), s3d_mul(s3d_rotationX(-cam->rx), s3d_rotationY(-cam->ry)));
-    S3dMat4 view = s3d_mul(rinv, s3d_translation(s3d_scale(cam->pos, -1.0f)));
+    S3dMat4 view = s3d_viewMatrix(cam);
     float aspect = (float)w / (float)h;
     float tf = 1.0f / tanf(cam->fovY * 0.5f);
     float nearP = cam->nearPlane, farP = cam->farPlane;
@@ -972,6 +1032,7 @@ static void s3d_queueMesh(S3dFrame* f, const S3dCamera* cam, const S3dMesh* mesh
     f->batchN++;
     batch->s = *surf;
     batch->tex = (surf->useTexture && tex && tex->w > 0 && tex->h > 0) ? tex : NULL;
+    if (surf->emissiveTex && (surf->emissiveTex->w <= 0 || surf->emissiveTex->h <= 0 || surf->emissiveStrength == 0)) batch->s.emissiveTex = NULL;
     batch->mesh = mesh;
     batch->cam = *cam;
     batch->model = model;
@@ -1399,12 +1460,83 @@ static void s3d_prepareLights(S3dContext* ctx, const S3dCamera* cam, const S3dLi
         p.pos = l->pos;
         p.toLight = s3d_normalize(s3d_scale(l->dir, -1.0f));
         p.invRange = 1.0f / (l->range > 1e-6f ? l->range : 1e-6f);
+        p.invCutoff2 = l->kind == S3D_LIGHT_POINT && l->cutoff > 0 ? 1.0f / (l->cutoff * l->cutoff) : 0.0f;
         p.mask = l->mask;
         p.shadow = -1;
         if (l->castShadows && st->shadows && shadowIndex < ctx->shadowN) p.shadow = shadowIndex++;
         if (!S3D_GROW(ctx->lights, ctx->lightCap, ctx->lightN + 1)) continue;
         ctx->lights[ctx->lightN++] = p;
     }
+}
+
+/* The rectangle of tiles (inclusive) that the sphere (centre, radius) of a light can reach on the screen; 0 when it reaches no visible pixel (behind the camera, beyond
+ * its far plane). The box around the sphere in camera space is cut at the near plane and its corners are projected (x / -z is largest and smallest at the corners), with a
+ * pixel to spare for the rounding. */
+static int s3d_lightTiles(const S3dMat4* view, float tfx, float tfy, int w, int h, float nearP, float farP, S3dVec3 centre, float radius, int* tx0, int* ty0, int* tx1, int* ty1) {
+    S3dVec3 c = s3d_transformPoint(view, centre);
+    float zlo, zhi, x0 = 1e30f, y0 = 1e30f, x1 = -1e30f, y1 = -1e30f;
+    int k;
+    /* (the position of a pixel is interpolated in floats: on a face seen almost edge-on it can be off by a little of its distance - the sphere is made larger by that much) */
+    radius += 0.01f * s3d_length(c);
+    zlo = c.z - radius; zhi = c.z + radius;
+    if (zlo > -nearP || zhi < -farP) return 0;   /* (in front of the camera is z <= -near) */
+    if (zhi > -nearP) zhi = -nearP;
+    for (k = 0; k < 8; k++) {
+        float z = (k & 4) ? zhi : zlo, px = (k & 1) ? c.x + radius : c.x - radius, py = (k & 2) ? c.y + radius : c.y - radius;
+        float sx = (px * tfx / -z * 0.5f + 0.5f) * (float)w, sy = (1.0f - (py * tfy / -z * 0.5f + 0.5f)) * (float)h;
+        x0 = s3d_minf(x0, sx); x1 = s3d_maxf(x1, sx); y0 = s3d_minf(y0, sy); y1 = s3d_maxf(y1, sy);
+    }
+    x0 -= 1; y0 -= 1; x1 += 1; y1 += 1;
+    if (x1 < 0 || y1 < 0 || x0 >= (float)w || y0 >= (float)h) return 0;
+    *tx0 = x0 <= 0 ? 0 : (int)x0 >> S3D_TILE_SHIFT; *ty0 = y0 <= 0 ? 0 : (int)y0 >> S3D_TILE_SHIFT;
+    *tx1 = x1 >= (float)(w - 1) ? (w - 1) >> S3D_TILE_SHIFT : (int)x1 >> S3D_TILE_SHIFT;
+    *ty1 = y1 >= (float)(h - 1) ? (h - 1) >> S3D_TILE_SHIFT : (int)y1 >> S3D_TILE_SHIFT;
+    return 1;
+}
+
+/* The lights of each tile of the picture (S3dContext.tileLights), when some point light has an end (Light.Cutoff): every light without an end is in every tile, a
+ * point light with one only in the tiles its sphere reaches. Without such a light (or culling switched off, or no memory) every pixel looks at every light. */
+static void s3d_cullLights(S3dContext* ctx, const S3dCamera* cam, int w, int h, const S3dFlushSettings* st) {
+    S3dMat4 view;
+    float tf, tfx, tfy;
+    s3d_size li;
+    int tiles, t, pass, any = 0, tx0, ty0, tx1, ty1, x, y;
+    ctx->culled = 0;
+    if (st->noLightCulling || w <= 0 || h <= 0) return;
+    for (li = 0; li < ctx->lightN; li++) if (ctx->lights[li].invCutoff2 > 0) { any = 1; break; }
+    if (!any) return;
+    ctx->tilesX = (w + S3D_TILE - 1) >> S3D_TILE_SHIFT; ctx->tilesY = (h + S3D_TILE - 1) >> S3D_TILE_SHIFT;
+    tiles = ctx->tilesX * ctx->tilesY;
+    if (!S3D_GROW(ctx->tileStart, ctx->tileStartCap, (s3d_size)tiles + 1)) return;
+    view = s3d_viewMatrix(cam);
+    tf = 1.0f / tanf(cam->fovY * 0.5f);
+    tfx = tf / ((float)w / (float)h); tfy = tf;
+    /* pass 0 counts the lights of each tile, pass 1 lists them (in the order of the lights) */
+    for (pass = 0; pass < 2; pass++) {
+        int* at = ctx->tileStart;
+        if (pass == 0) for (t = 0; t <= tiles; t++) at[t] = 0;
+        for (li = 0; li < ctx->lightN; li++) {
+            const S3dPreparedLight* L = &ctx->lights[li];
+            if (L->invCutoff2 > 0) {
+                if (!s3d_lightTiles(&view, tfx, tfy, w, h, cam->nearPlane, cam->farPlane, L->pos, 1.0f / sqrtf(L->invCutoff2), &tx0, &ty0, &tx1, &ty1)) continue;
+            } else { tx0 = 0; ty0 = 0; tx1 = ctx->tilesX - 1; ty1 = ctx->tilesY - 1; }
+            for (y = ty0; y <= ty1; y++)
+                for (x = tx0; x <= tx1; x++) {
+                    t = y * ctx->tilesX + x;
+                    if (pass == 0) at[t + 1]++;
+                    else ctx->tileLights[at[t]++] = (int)li;
+                }
+        }
+        if (pass == 0) {
+            for (t = 0; t < tiles; t++) at[t + 1] += at[t];
+            if (!S3D_GROW(ctx->tileLights, ctx->tileLightCap, (s3d_size)at[tiles] + 1)) return;
+        } else {
+            /* (each start moved on to the start of the next tile: move them back) */
+            for (t = tiles; t > 0; t--) at[t] = at[t - 1];
+            at[0] = 0;
+        }
+    }
+    ctx->culled = 1;
 }
 
 /* ---------------------------------------------------------------------------------------------------------------------------------------------
@@ -1435,14 +1567,163 @@ static int s3d_sortBlended(S3dFrame* f) {
     return 1;
 }
 
-typedef struct S3dBandJob { uint8_t* rgba; S3dFrame* f; const S3dContext* ctx; int band; } S3dBandJob;
+typedef struct S3dBandJob { uint8_t* rgba; S3dFrame* f; const S3dContext* ctx; int band; int passes; const S3dCamera* cam; uint32_t sky; } S3dBandJob;
+/* `passes`: 1 the opaque triangles, 2 the blended ones, 3 both */
 static void s3d_bandTask(void* arg, int bi) {
     S3dBandJob* j = (S3dBandJob*)arg;
     S3dFrame* f = j->f;
     int y0 = bi * j->band, y1 = s3d_mini(f->h - 1, y0 + j->band - 1);
     s3d_size i;
-    for (i = 0; i < f->opaqueN; i++) { const S3dTri* t = &f->opaque[i]; if (t->maxY >= y0 && t->minY <= y1) s3d_rasterTri(j->rgba, f, j->ctx, t, y0, y1, 0); }
-    for (i = 0; i < f->blendedN; i++) { const S3dTri* t = &f->blended[f->order[i]]; if (t->maxY >= y0 && t->minY <= y1) s3d_rasterTri(j->rgba, f, j->ctx, t, y0, y1, 1); }
+    if (j->passes & 1) for (i = 0; i < f->opaqueN; i++) { const S3dTri* t = &f->opaque[i]; if (t->maxY >= y0 && t->minY <= y1) s3d_rasterTri(j->rgba, f, j->ctx, t, y0, y1, 0); }
+    if (j->passes & 2) for (i = 0; i < f->blendedN; i++) { const S3dTri* t = &f->blended[f->order[i]]; if (t->maxY >= y0 && t->minY <= y1) s3d_rasterTri(j->rgba, f, j->ctx, t, y0, y1, 1); }
+}
+
+/* ---- reflections (Object.Reflectivity): screen space, after the opaque triangles and before the blended ones ----
+ * For a pixel of a surface that reflects and faces up, the ray from the eye is mirrored at its normal and followed through the depth buffer (in camera space, in up to
+ * S3D_REFLECT_STEPS steps along its way on the screen, then halved a few times where it went behind what was drawn); what it meets there - in the picture as it was before
+ * the reflections - is mixed in by the reflectivity times a fresnel (a grazing view sees the whole reflectivity, a view straight down a fifth). A ray that leaves the
+ * picture, meets nothing or the background shows the sky colour (the background, or the fog); near the edges of the picture the found colour fades into it. */
+#define S3D_REFLECT_STEPS 16
+#define S3D_REFLECT_REFINE 5
+#define S3D_REFLECT_DISTANCE 80.0f
+
+/* The skyline of the picture: for each column the first row where something is drawn (h: none), and for each level k the smallest of the columns x .. x + 2^k - 1, so that
+ * the smallest of any columns a .. b is two looks. A ray that goes up and is above the skyline of all the columns it can still reach meets nothing more. 0: no memory. */
+static int s3d_buildSkyline(S3dFrame* f) {
+    int w = f->w, h = f->h, x, y, k, left = w, levels = 1;
+    int* top;
+    while ((1 << levels) <= w) levels++;
+    if (!S3D_GROW(f->skyline, f->skylineCap, (s3d_size)w * (s3d_size)levels)) return 0;
+    top = f->skyline;
+    for (x = 0; x < w; x++) top[x] = h;
+    for (y = 0; y < h && left > 0; y++) {
+        const float* row = f->depth + (s3d_size)y * (s3d_size)w;
+        for (x = 0; x < w; x++) if (top[x] == h && row[x] < 1e29f) { top[x] = y; left--; }
+    }
+    for (k = 1; k < levels; k++) {
+        int* lo = f->skyline + (s3d_size)(k - 1) * (s3d_size)w, *hi = f->skyline + (s3d_size)k * (s3d_size)w, half = 1 << (k - 1);
+        for (x = 0; x < w; x++) hi[x] = x + half < w ? s3d_mini(lo[x], lo[x + half]) : lo[x];
+    }
+    f->skyLevels = levels;
+    return 1;
+}
+static inline int s3d_skylineMin(const S3dFrame* f, int a, int b) {
+    int k = 0;
+    if (a > b) { int t = a; a = b; b = t; }
+    while ((2 << k) <= b - a + 1) k++;
+    return s3d_mini(f->skyline[(s3d_size)k * (s3d_size)f->w + (s3d_size)a], f->skyline[(s3d_size)k * (s3d_size)f->w + (s3d_size)(b - (1 << k) + 1)]);
+}
+
+/* The distance (in front of the camera) of what is drawn at a pixel: 0 nothing there. */
+static inline float s3d_depthDistance(const S3dFrame* f, s3d_size i, float zA, float zB, float zC) { float z = f->depth[i]; return z >= 1e29f ? 0 : zC / (z * zA + zB); }
+
+static void s3d_reflectTask(void* arg, int bi) {
+    S3dBandJob* j = (S3dBandJob*)arg;
+    S3dFrame* f = j->f;
+    const S3dCamera* cam = j->cam;
+    int y0 = bi * j->band, y1 = s3d_mini(f->h - 1, y0 + j->band - 1), x, y, w = f->w, h = f->h;
+    float nearP = cam->nearPlane, farP = cam->farPlane, zA = nearP - farP, zB = farP + nearP, zC = 2 * farP * nearP, kA = zA / zC, kB = zB / zC;   /* 1 / distance = z * kA + kB */
+    float tf = 1.0f / tanf(cam->fovY * 0.5f), tfx = tf / ((float)w / (float)h), tfy = tf;
+    float sky[3], ptx = 2.0f / ((float)w * tfx), pty = 2.0f / ((float)h * tfy), hw = 0.5f * (float)w * tfx, hh = 0.5f * (float)h * tfy;
+    S3dMat4 view = s3d_viewMatrix(cam);
+    int8_t lastN[2];
+    int haveN = 0;
+    S3dVec3 n = s3d_v3(0, 1, 0), nv = s3d_v3(0, 1, 0);
+    lastN[0] = 0; lastN[1] = 0;
+    sky[0] = (float)(j->sky & 255); sky[1] = (float)((j->sky >> 8) & 255); sky[2] = (float)((j->sky >> 16) & 255);
+    for (y = y0; y <= y1; y++)
+        for (x = 0; x < w; x++) {
+            s3d_size di = (s3d_size)y * (s3d_size)w + (s3d_size)x;
+            float k = f->reflect[di], d, vl, vn, cosv, fres, amount, len, tEnd, tOut, dt, behind = -1, sxA, syA, sxB, syB, izA, izB, dxs, dys, sPrev = 0, hit = -1, fade = 1, col[3], iq;
+            S3dVec3 P, R, Q;
+            int steps, s, found = 0, xEnd;
+            uint8_t* px;
+            const int8_t* on;
+            if (k <= 0) continue;
+            on = f->reflectN + di * 2;
+            if (!haveN || on[0] != lastN[0] || on[1] != lastN[1]) {   /* (a flat surface: the same normal as the pixel before) */
+                n = s3d_octDecode(on[0], on[1]);
+                nv = s3d_normalize(s3d_transformDir(&view, n));
+                lastN[0] = on[0]; lastN[1] = on[1]; haveN = 1;
+            }
+            if (n.y < 0.5f) continue;   /* (only surfaces that face up: more than 30 degrees) */
+            d = s3d_depthDistance(f, di, zA, zB, zC);
+            if (d <= 0) continue;
+            /* the point in camera space (at the middle of its pixel), the view ray and its mirror image */
+            P = s3d_v3(((float)x + 0.5f - 0.5f * (float)w) * ptx * d, (0.5f * (float)h - (float)y - 0.5f) * pty * d, -d);
+            vl = s3d_length(P);
+            vn = s3d_dot(P, nv) / vl;
+            cosv = -vn;
+            if (cosv <= 0) continue;
+            R = s3d_sub(s3d_scale(P, 1.0f / vl), s3d_scale(nv, 2 * vn));
+            { float c = 1 - cosv, c2 = c * c; fres = 0.2f + 0.8f * c2 * c2 * c; }
+            amount = k * fres;
+            /* the end of the ray: S3D_REFLECT_DISTANCE on, not behind the near plane */
+            tEnd = S3D_REFLECT_DISTANCE;
+            if (R.z > 1e-6f) { float t = (-nearP * 1.01f - P.z) / R.z; if (t < tEnd) tEnd = t; }
+            if (tEnd <= 0) continue;
+            Q = s3d_add(P, s3d_scale(R, tEnd));
+            iq = 1.0f / -Q.z;
+            sxA = (float)x + 0.5f; syA = (float)y + 0.5f;
+            sxB = Q.x * iq * hw + 0.5f * (float)w; syB = 0.5f * (float)h - Q.y * iq * hh;
+            izA = 1.0f / d; izB = iq;   /* 1 / distance goes evenly over the screen */
+            /* (the start a little off the surface: it does not find itself) */
+            izA *= 1.0f - 0.002f * cosv;
+            dxs = sxB - sxA; dys = syB - syA;
+            /* only the part on the screen is followed: where the ray leaves it, the steps end (the shorter, the finer they are) */
+            tOut = 1;
+            if (dxs > 1e-6f) tOut = s3d_minf(tOut, ((float)w - sxA) / dxs); else if (dxs < -1e-6f) tOut = s3d_minf(tOut, -sxA / dxs);
+            if (dys > 1e-6f) tOut = s3d_minf(tOut, ((float)h - syA) / dys); else if (dys < -1e-6f) tOut = s3d_minf(tOut, -syA / dys);
+            len = sqrtf(dxs * dxs + dys * dys) * tOut;
+            steps = (int)(len / 3.0f) + 1;
+            if (steps > S3D_REFLECT_STEPS) steps = S3D_REFLECT_STEPS;
+            /* (compared as 1 / distance, which goes evenly along the steps and from the depth buffer: no division a step) */
+            dt = tOut / (float)steps;
+            xEnd = s3d_maxi(0, s3d_mini(w - 1, (int)(sxA + dxs * tOut)));
+            for (s = 1; s <= steps && !found; s++) {
+                float t = (float)s * dt, sx = sxA + dxs * t, sy = syA + dys * t, iray, iscene, z;
+                int ix = (int)sx, iy = (int)sy;
+                if (sx < 0 || sy < 0 || ix >= w || iy >= h) break;
+                if (dys < 0 && (s & 3) == 1 && iy < s3d_skylineMin(f, ix, xEnd)) break;   /* above everything it can still reach: only sky from here on */
+                z = f->depth[(s3d_size)iy * (s3d_size)w + (s3d_size)ix];
+                iray = izA + (izB - izA) * t;
+                if (z < 1e29f && iray <= (iscene = z * kA + kB)) {
+                    float ray = 1.0f / iray, scene = 1.0f / iscene, prevRay = 1.0f / (izA + (izB - izA) * sPrev);
+                    if (ray - scene <= s3d_maxf(ray - prevRay, 0.0f) + 0.05f + 0.02f * scene) {
+                        /* behind what is drawn there: halve the last step a few times */
+                        float lo = sPrev, hi = t;
+                        int r;
+                        for (r = 0; r < S3D_REFLECT_REFINE; r++) {
+                            float m = (lo + hi) * 0.5f, mx = sxA + dxs * m, my = syA + dys * m, mz;
+                            int jx = (int)mx, jy = (int)my;
+                            if (mx < 0 || my < 0 || jx >= w || jy >= h) { lo = m; continue; }
+                            mz = f->depth[(s3d_size)jy * (s3d_size)w + (s3d_size)jx];
+                            if (mz < 1e29f && izA + (izB - izA) * m <= mz * kA + kB) hi = m; else lo = m;
+                        }
+                        hit = hi;
+                        found = 1;
+                    }
+                    else if (behind < 0) behind = t;
+                }
+                sPrev = t;
+            }
+            /* it only went behind something thicker than the step (what is hidden behind it is not on the screen): that thing, rather than a hole */
+            if (!found && behind >= 0) { hit = behind; found = 1; }
+            px = j->rgba + di * 4;
+            col[0] = sky[0]; col[1] = sky[1]; col[2] = sky[2];
+            if (found) {
+                float hx = sxA + dxs * hit, hy = syA + dys * hit, ex, ey;
+                int ix = s3d_maxi(0, s3d_mini(w - 1, (int)floorf(hx))), iy = s3d_maxi(0, s3d_mini(h - 1, (int)floorf(hy)));
+                const uint8_t* q = f->reflectSrc + ((s3d_size)iy * (s3d_size)w + (s3d_size)ix) * 4;
+                /* near the edges of the picture the found colour goes over into the sky (what lies beyond the edge is not known) */
+                ex = s3d_minf(hx, (float)w - hx) / (0.08f * (float)w); ey = s3d_minf(hy, (float)h - hy) / (0.08f * (float)h);
+                fade = s3d_maxf(0.0f, s3d_minf(1.0f, s3d_minf(ex, ey)));
+                col[0] = sky[0] + ((float)q[0] - sky[0]) * fade; col[1] = sky[1] + ((float)q[1] - sky[1]) * fade; col[2] = sky[2] + ((float)q[2] - sky[2]) * fade;
+            }
+            px[0] = s3d_toByte(((float)px[0] + (col[0] - (float)px[0]) * amount) / 255.0f);
+            px[1] = s3d_toByte(((float)px[1] + (col[1] - (float)px[1]) * amount) / 255.0f);
+            px[2] = s3d_toByte(((float)px[2] + (col[2] - (float)px[2]) * amount) / 255.0f);
+        }
 }
 
 /* Software: draws the queue into `rgba` (the camera's picture, already cleared). Opaque objects first (in the order they were queued), then the transparent ones from the far to the near.
@@ -1459,11 +1740,27 @@ static void s3d_flushSoftware(uint8_t* rgba, S3dFrame* f, const S3dCamera* cam, 
     if (f->opaqueN == 0 && f->blendedN == 0) return;
     s3d_buildShadows(&f->ctx, f, lights, lightCount, st);
     s3d_prepareLights(&f->ctx, cam, lights, lightCount, st);
+    s3d_cullLights(&f->ctx, cam, f->w, f->h, st);
     if (!s3d_sortBlended(f)) f->blendedN = 0;
-    job.rgba = rgba; job.f = f; job.ctx = &f->ctx; job.band = 16;
+    job.rgba = rgba; job.f = f; job.ctx = &f->ctx; job.band = 16; job.passes = 3; job.cam = cam; job.sky = st->sky;
     bands = (f->h + job.band - 1) / job.band;
     workers = (s3d_size)f->w * (s3d_size)f->h < 20000 ? 1 : s3d_workerCount(st, (s3d_size)bands);
+    /* reflections: only when an opaque surface of the picture reflects (else nothing of them is done) */
+    f->reflectOn = 0;
+    for (bi = 0; bi < f->batchN; bi++) if (f->batches[bi].s.reflect > 0 && !f->batches[bi].blended) { f->reflectOn = 1; break; }
+    if (f->reflectOn) {
+        s3d_size n = (s3d_size)f->w * (s3d_size)f->h;
+        if (!S3D_GROW(f->reflect, f->reflectCap, n) || !S3D_GROW(f->reflectN, f->reflectNCap, n * 2) || !S3D_GROW(f->reflectSrc, f->reflectSrcCap, n * 4)) f->reflectOn = 0;
+        else S3D_ZERO(f->reflect, n * sizeof(float));
+    }
+    if (!f->reflectOn) { s3d_parallelFor(bands, workers, s3d_bandTask, &job); return; }
+    job.passes = 1;
     s3d_parallelFor(bands, workers, s3d_bandTask, &job);
+    S3D_COPY(f->reflectSrc, rgba, (s3d_size)f->w * (s3d_size)f->h * 4);
+    if (s3d_buildSkyline(f)) s3d_parallelFor(bands, workers, s3d_reflectTask, &job);
+    job.passes = 2;
+    s3d_parallelFor(bands, workers, s3d_bandTask, &job);
+    f->reflectOn = 0;
 }
 
 /* The hardware backend (s3d_gpu_vk.h): 1 when it drew the queue into `rgba`, 2 when it drew it for the windows of the camera only (DirectDrawing), 0 when it cannot (no Vulkan,

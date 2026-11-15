@@ -217,6 +217,12 @@
         "c": "fire_s3d_ObjTexture"
       },
       {
+        "name": "__S3DObjEmissiveTexture",
+        "returns": "bool",
+        "arguments": 2,
+        "c": "fire_s3d_ObjEmissiveTexture"
+      },
+      {
         "name": "__S3DObjMaterial",
         "returns": "bool",
         "arguments": 2,
