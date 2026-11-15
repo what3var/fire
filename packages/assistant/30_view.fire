@@ -1,4 +1,5 @@
 #import "ui"
+#import "dialogs"
 
 // The window of the assistant: the character at the bottom, the bubble above it. The bubble has small buttons at its top right (history, new topic,
 // another character, close), the text (as high as there is room), up to four choices, and - after a poke - the question line. The window is transparent
@@ -20,8 +21,18 @@ namespace Assistant {
         UI.StackPanel choices
         UI.TextBox question
         UI.Button historyButton
-        UI.Button newButton
-        UI.Button characterButton
+        UI.Button sessionsButton
+        // the header: the folder the assistant works in, and the branch when it is a git repository
+        UI.Label folderLabel
+        UI.Label branchLabel
+        defined int headerH = 30
+        // a session chosen in the popup ("new": a new one), taken in the next cycle
+        string pickedSession = ""
+        // a row of the context menu that was chosen ("history", "folder", "git:status", "character:flint", "quit"), taken in the next cycle
+        string pickedMenu = ""
+        List menuRows
+        // a menu is open: the window has room for it above the character (and is laid out again when it closes)
+        bool menuOpen = false
         UI.Button closeButton
         defined int frame = 0
         // a press on the character: a click pokes it, a drag moves the window
@@ -80,18 +91,23 @@ namespace Assistant {
             this.bubble.blendMode = 2
             this.bubble.OnPaint = func (UI.DrawingCanvas c) on this => PaintBubble(c)
             this.ui.Add(this.bubble)
-            // the small buttons at the top right
-            defined int bx = this.W - 12 - 4 * 24
-            this.historyButton = Assistant.View.Small(UI.Geometry.Parse("M 2 4 L 14 4 M 2 8 L 14 8 M 2 12 L 10 12"), bx, 10)
+            // the header: folder and branch, the small buttons at the right (history, sessions, close)
+            this.folderLabel = new UI.Label("", 34, 15)
+            this.folderLabel.Color = new SolidBrush(UI.Color.Rgb(255, 255, 255))
+            this.folderLabel.FontSize = 13
+            this.ui.Add(this.folderLabel)
+            this.branchLabel = new UI.Label("", 34, 35)
+            this.branchLabel.Color = new SolidBrush(UI.Color.Rgb(255, 255, 255))
+            this.branchLabel.FontSize = 13
+            this.ui.Add(this.branchLabel)
+            defined int bx = this.W - 14 - 3 * 24
+            this.historyButton = Assistant.View.Small(UI.Geometry.Parse("M 2 4 L 14 4 M 2 8 L 14 8 M 2 12 L 14 12"), bx, 11)
             this.historyButton.OnClick = func () on this => ToggleHistory()
             this.ui.Add(this.historyButton)
-            this.newButton = Assistant.View.Small(UI.Icons.Add(), bx + 24, 10)
-            this.newButton.OnClick = func () on this => NewTopic()
-            this.ui.Add(this.newButton)
-            this.characterButton = Assistant.View.Small(UI.Geometry.Parse("M 2 5 L 12 5 M 9 2 L 12 5 L 9 8 M 14 11 L 4 11 M 7 8 L 4 11 L 7 14"), bx + 48, 10)
-            this.characterButton.OnClick = func () on this => NextCharacter()
-            this.ui.Add(this.characterButton)
-            this.closeButton = Assistant.View.Small(UI.Icons.Close(), bx + 72, 10)
+            this.sessionsButton = Assistant.View.Small(UI.Geometry.Parse("M 2 5 L 12 5 M 9 2 L 12 5 L 9 8 M 14 11 L 4 11 M 7 8 L 4 11 L 7 14"), bx + 24, 11)
+            this.sessionsButton.OnClick = func () on this => ShowSessions()
+            this.ui.Add(this.sessionsButton)
+            this.closeButton = Assistant.View.Small(UI.Icons.Close(), bx + 48, 11)
             this.closeButton.OnClick = func () on this => HideBubble()
             this.ui.Add(this.closeButton)
             this.text = new UI.TextArea("", 12, 36, this.W - 24, 100)
@@ -124,7 +140,7 @@ namespace Assistant {
             this.figure.Continuous = true
             this.figure.blendMode = 2
             this.figure.OnPaint = func (UI.DrawingCanvas c) on this => PaintFigure(c)
-            this.figure.OnMouseDown = func (int x, int y, int b) on this => Press(x, y)
+            this.figure.OnMouseDown = func (int x, int y, int b) on this => Press(x, y, b)
             this.figure.OnMouseMove = func (int x, int y) on this => Drag(x, y)
             this.figure.OnMouseUp = func (int x, int y, int b) on this => Release()
             this.ui.Add(this.figure)
@@ -132,6 +148,39 @@ namespace Assistant {
         }
 
         defined int Fill() { return this.ui.Dark ? UI.Color.Rgb(52, 52, 56) : UI.Color.Rgb(255, 253, 240) }
+        defined int HeaderFill() { return UI.Color.Rgb(0, 110, 112) }
+
+        // The folder as the header shows it: in a repository its name and the path below it ("/RuhrpottRaser/src"), else the path - cut at the front
+        // when it is longer than `room` characters.
+        string FolderText(defined int room) {
+            string folder = this.Brain.Folder
+            string text = folder
+            if (this.Brain.Repo != "") {
+                text = "/" + IO.Path.GetFileName(this.Brain.Repo) + folder.Substring(this.Brain.Repo.Length).Replace("\\", "/")
+            }
+            if (text.Length > room) { text = "..." + text.Substring(text.Length - room + 3) }
+            return text
+        }
+
+        // The header band at the top of the bubble (its top corners round, `radius`), with a folder and - in a repository - a branch drawn in white.
+        undefined PaintHeader(Renderer r, defined int w, defined int radius) {
+            var band = new SolidBrush(this.HeaderFill())
+            r.FillRoundRect(4, 4, w - 8, this.headerH, radius, band)
+            r.FillRect(4, 4 + this.headerH - radius, w - 8, radius, band)
+            var white = new Pen(UI.Color.Rgb(255, 255, 255), 1)
+            // a folder
+            r.DrawRect(15, 18, 12, 9, white)
+            r.DrawLine(15, 18, 18, 15, white)
+            r.DrawLine(18, 15, 22, 15, white)
+            r.DrawLine(22, 15, 23, 18, white)
+            if (this.Brain.Branch != "") {
+                // a branch: a line with two commits and a side branch
+                r.DrawLine(18, 36, 18, 47, white)
+                r.DrawCircle(18, 48, 2, white)
+                r.DrawCircle(24, 38, 2, white)
+                r.DrawLine(24, 40, 18, 45, white)
+            }
+        }
 
         undefined PaintBubble(UI.DrawingCanvas c) {
             var r = c.renderer
@@ -145,6 +194,7 @@ namespace Assistant {
                 // a thought bubble: rounder, and small circles that rise from the character instead of the tail
                 r.DrawShadow(4, 4, w - 8, h - 4, 24, 6, 0x30000000, 2)
                 r.FillRoundRect(4, 4, w - 8, h - 4, 24, new SolidBrush(fill))
+                this.PaintHeader(r, w, 24)
                 r.DrawRoundRect(4, 4, w - 8, h - 4, 24, new Pen(edge, 1))
                 r.FillCircle(52, h + 3, 6, new SolidBrush(fill))
                 r.DrawCircle(52, h + 3, 6, new Pen(edge, 1))
@@ -154,6 +204,7 @@ namespace Assistant {
             }
             r.DrawShadow(4, 4, w - 8, h - 4, 12, 6, 0x30000000, 2)
             r.FillRoundRect(4, 4, w - 8, h - 4, 12, new SolidBrush(fill))
+            this.PaintHeader(r, w, 12)
             r.DrawRoundRect(4, 4, w - 8, h - 4, 12, new Pen(edge, 1))
             // the tail towards the character
             float tail[] = [38.0, (h - 1) * 1.0, 66.0, (h - 1) * 1.0, 44.0, (h + 12) * 1.0]
@@ -184,7 +235,11 @@ namespace Assistant {
             this.Brain.Character.Paint(r, 0.0, 0.0, c.framebuffer.Width() * 1.0, c.framebuffer.Height() * 1.0, this.frame, this.Brain.Mood())
         }
 
-        undefined Press(defined int x, defined int y) {
+        undefined Press(defined int x, defined int y, defined int button) {
+            if (button == 3) {
+                this.ShowContextMenu(this.figure.Left + x, this.figure.Top + y)
+                return
+            }
             this.pressed = true
             this.pressX = x
             this.pressY = y
@@ -235,6 +290,13 @@ namespace Assistant {
             this.frame++
             if (!this.placed && this.frame < 120) { this.Place() }
             if (this.picked >= 0) { this.TakePicked() }
+            if (this.pickedSession != "") { this.TakeSession() }
+            if (this.pickedMenu != "") { this.TakeMenu() }
+            // the menu closed: the window goes back to the size of the bubble
+            if (this.menuOpen && this.ui.popups.Count == 0) {
+                this.menuOpen = false
+                this.Show()
+            }
             bool changed = this.Brain.Tick()
             if (this.Brain.Quit) {
                 this.win.Close()
@@ -251,9 +313,17 @@ namespace Assistant {
             this.text.Pen = new Pen(fill, 1)
             this.text.Visible = shownNow
             this.historyButton.Visible = shownNow
-            this.newButton.Visible = shownNow
-            this.characterButton.Visible = shownNow
+            this.sessionsButton.Visible = shownNow
             this.closeButton.Visible = shownNow
+            // the header: one line for the folder, a second one for the branch
+            this.headerH = this.Brain.Branch != "" ? 54 : 36
+            this.folderLabel.Text = this.FolderText(19)
+            this.folderLabel.Visible = shownNow
+            string branch = this.Brain.Branch
+            if (branch.Length > 26) { branch = branch.Substring(0, 23) + "..." }
+            this.branchLabel.Text = branch
+            this.branchLabel.Visible = shownNow && branch != ""
+            defined int top = 4 + this.headerH + 8
             string t = this.showHistory ? this.Brain.History() : this.Brain.Text
             if (t != this.shown) {
                 this.text.Text = t
@@ -280,13 +350,16 @@ namespace Assistant {
             defined int below = 22 + choicesHeight
             if (asking) { below = below + 30 }
             defined int bh = 0
-            if (shownNow) { bh = UI.M.Clamp(36 + this.text.ContentHeight(this.ui, this.W - 24) + below, this.MinBH, this.MaxBH) }
+            if (shownNow) { bh = UI.M.Clamp(top + this.text.ContentHeight(this.ui, this.W - 24) + below, this.MinBH, this.MaxBH) }
+            if (this.menuOpen) { bh = UI.M.Max(bh, UI.M.Min(220, this.MaxBH)) }
             this.Resize(bh)
             defined int bottom = this.BH - 22
             if (asking) { bottom = this.BH - 52 }
             this.question.Top = this.BH - 46
             this.choices.Top = bottom - choicesHeight + 4
-            this.text.Height = UI.M.Max(20, bottom - choicesHeight - 36)
+            this.text.Top = top
+            this.text.Height = UI.M.Max(20, bottom - choicesHeight - top)
+            this.flame.Top = top + 2
             // thinking: the flame left of the text, the text a little to the right
             bool thinking = shownNow && this.Brain.Phase == Assistant.Phase.Thinking
             this.flame.Visible = thinking
@@ -298,6 +371,106 @@ namespace Assistant {
         }
 
         undefined Pick(defined int i) { this.picked = i }
+
+        // The sessions as a menu at the sessions button: a new one, then the sessions (the current one checked), the one used last first.
+        undefined ShowSessions() {
+            var items = new List()
+            items.Add(new UI.MenuItem("New session", func () on this => ChooseSession("new")))
+            items.Add(UI.MenuItem.Separator())
+            List ids = Assistant.Session.All()
+            defined int shownCount = 0
+            foreach (x in ids) {
+                string id = x
+                any s = Assistant.Session.Load(id)
+                if (s == undefined) { continue }
+                Assistant.Session session = s
+                string title = session.Title
+                if (title.Length > 26) { title = title.Substring(0, 23) + "..." }
+                var item = new UI.MenuItem(title, func () on this => ChooseSession((taking id)))
+                item.Checkable = false
+                item.IsChecked = id == this.Brain.Current.Id
+                item.Shortcut = IO.Path.GetFileName(session.Folder)
+                items.Add(take item)
+                shownCount++
+                if (shownCount >= 12) { break }
+            }
+            this.menuRows = take items   // (the menu does not own its rows: they live in the view while it is open)
+            this.menuOpen = true
+            this.ui.ShowMenu(this.menuRows, this.sessionsButton.Left - 120, this.sessionsButton.Top + 24)
+        }
+
+        undefined ChooseSession(string id) { this.pickedSession = id }
+
+        // The menu of a right click on the character: folder, history, git, another character, quit.
+        undefined ShowContextMenu(defined int x, defined int y) {
+            var items = new List()
+            items.Add(new UI.MenuItem("Change folder...", func () on this => ChooseMenu("folder")))
+            items.Add(new UI.MenuItem("History", func () on this => ChooseMenu("history")))
+            var git = new UI.MenuItem("Git")
+            git.Add(new UI.MenuItem("Status", func () on this => ChooseMenu("git:status")))
+            git.Add(new UI.MenuItem("Log", func () on this => ChooseMenu("git:log")))
+            git.Add(UI.MenuItem.Separator())
+            git.Add(new UI.MenuItem("Pull...", func () on this => ChooseMenu("git:pull")))
+            git.Add(new UI.MenuItem("Commit all...", func () on this => ChooseMenu("git:commit")))
+            git.Add(new UI.MenuItem("Push...", func () on this => ChooseMenu("git:push")))
+            items.Add(take git)
+            var who = new UI.MenuItem("Assistant")
+            foreach (c in Assistant.Character.All()) {
+                Assistant.Character ch = c
+                string id = ch.Id
+                var row = new UI.MenuItem(ch.Name, func () on this => ChooseMenu("character:" + (taking id)))
+                row.IsChecked = id == this.Brain.Character.Id
+                who.Add(take row)
+            }
+            items.Add(take who)
+            items.Add(UI.MenuItem.Separator())
+            items.Add(new UI.MenuItem("Quit", func () on this => ChooseMenu("quit")))
+            this.menuRows = take items   // (the menu does not own its rows: they live in the view while it is open)
+            // room above the character for the menu and its submenus
+            this.menuOpen = true
+            this.Show()
+            this.ui.ShowMenu(this.menuRows, 4, UI.M.Max(4, this.BH - 150))
+        }
+
+        undefined ChooseMenu(string what) { this.pickedMenu = what }
+
+        undefined TakeMenu() {
+            string what = this.pickedMenu
+            this.pickedMenu = ""
+            if (what == "history") {
+                this.Brain.Visible = true
+                this.showHistory = true
+                this.shown = ""
+            }
+            else if (what == "folder") {
+                any chosen = Dialogs.FolderBrowserDialog.Show("The folder the assistant works in", this.Brain.Folder)
+                if (chosen != undefined) {
+                    this.Brain.SetFolder(chosen)
+                    this.Brain.Say("Now working in " + chosen + ".")
+                    this.Brain.Asking = true
+                }
+            }
+            else if (what.StartsWith("git:")) {
+                this.showHistory = false
+                this.Brain.GitMenu(what.Substring(4))
+            }
+            else if (what.StartsWith("character:")) { this.SetCharacter(what.Substring(10)) }
+            else if (what == "quit") {
+                this.Brain.KeepSession()
+                this.Brain.Quit = true
+                return
+            }
+            this.Show()
+        }
+
+        undefined TakeSession() {
+            string id = this.pickedSession
+            this.pickedSession = ""
+            this.showHistory = false
+            if (id == "new") { this.Brain.NewSession() }
+            else { this.Brain.SwitchSession(id) }
+            this.Show()
+        }
 
         undefined TakePicked() {
             defined int i = this.picked
@@ -342,14 +515,10 @@ namespace Assistant {
             this.Show()
         }
 
-        undefined NextCharacter() {
-            List all = Assistant.Character.All()
-            defined int at = 0
-            for (int i = 0; i < all.Count; i++) {
-                Assistant.Character c = all[i]
-                if (c.Id == this.Brain.Character.Id) { at = i }
-            }
-            Assistant.Character next = all[(at + 1) % all.Count]
+        // Another character (its id); the session stays.
+        undefined SetCharacter(string id) {
+            if (id == this.Brain.Character.Id) { return }
+            Assistant.Character next = Assistant.Character.Find(id)
             this.Brain.Character = next
             this.PaintIcon()
             this.Brain.Settings.Character = next.Id

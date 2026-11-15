@@ -11,6 +11,8 @@ namespace Assistant {
         string Model = ""
         // Tips the user switched off (their keys, separated by commas).
         string Muted = ""
+        // The session the assistant was in (its id; "" none yet): it goes on with it.
+        string Session = ""
         string file = ""
         // Whether the file was there (false at the very first start: the assistant introduces itself).
         bool Existed = false
@@ -31,6 +33,8 @@ namespace Assistant {
                     if (m != undefined) { s.Model = m }
                     any mu = j.Get("muted")
                     if (mu != undefined) { s.Muted = mu }
+                    any se = j.Get("session")
+                    if (se != undefined) { s.Session = se }
                 }
                 catch (Exception e) { }
             }
@@ -42,6 +46,7 @@ namespace Assistant {
             j.Set("character", this.Character)
             j.Set("model", this.Model)
             j.Set("muted", this.Muted)
+            j.Set("session", this.Session)
             try {
                 string dir = IO.Path.GetDirectoryName(this.file)
                 if (!IO.Directory.Exists(dir)) { IO.Directory.CreateDirectory(dir) }
