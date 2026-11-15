@@ -52,14 +52,26 @@ namespace fire.Compiler
             yield return Path.Combine(Path.GetTempPath(), "fire-packages", Safe(import.Package.Name) + "-" + Safe(import.Package.Version), Rid);
         }
 
-        /// <summary>When the runtime that libraries are built against last changed (the fire.Native assembly; MinValue in a single-file build without a location).</summary>
-        private static DateTime RuntimeStamp() => typeof(NativeRuntimeFiles).Assembly.Location is { Length: > 0 } location && File.Exists(location) ? File.GetLastWriteTimeUtc(location) : DateTime.MinValue;
-
         private static DateTime NewestSource(InstalledImport import) =>
             import.Import.Native!.SourcesFor(HostPlatformKeys).Concat(import.Import.Native.Headers).Select(s => File.GetLastWriteTimeUtc(import.FullPath(s)))
                 .Concat(import.Package.DescriptionFile is { } d && File.Exists(d) ? new[] { File.GetLastWriteTimeUtc(d) } : Array.Empty<DateTime>())
-                // the runtime the library is built against (fire_rt.h, the ABI wrapper - inside fire.Native): a new runtime rebuilds the library like a new source
-                .Append(RuntimeStamp()).DefaultIfEmpty(DateTime.MinValue).Max();
+                .DefaultIfEmpty(DateTime.MinValue).Max();
+
+        /// <summary>What a library is built against besides the sources of its packages: the runtime files (fire_rt.h, the ABI, the platform package - by their contents) and the
+        /// wrapper generated for it. Kept next to the library (`.runtime`): a new runtime or wrapper builds it again, a new build of fire with the same runtime does not (it used
+        /// to - the stamp of the fire.Native assembly: every build of the generator rebuilt the libraries of all packages, which needs a C compiler).</summary>
+        private static string RuntimeKey(string wrapper) =>
+            Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(NativeRuntimeFiles.Fingerprint(TargetProfile.Host.Native.Platform) + "\n" + wrapper)));
+
+        public static string RuntimeKey(InstalledImport import) => RuntimeKey(import.Import.Native!.IsC ? GenerateCWrapper(import) : GenerateWrapper(import));
+
+        public static string KeyFile(string library) => library + ".runtime";
+
+        private static bool SameRuntime(string library, Func<string> key)
+        {
+            try { return File.Exists(KeyFile(library)) && File.ReadAllText(KeyFile(library)).Trim() == key(); }
+            catch (IOException) { return false; }
+        }
 
         /// <summary>The library of an import on this machine if there is one (prebuilt, or built earlier and not older than the sources); otherwise null.</summary>
         public static string? Locate(InstalledImport import)
@@ -70,8 +82,17 @@ namespace fire.Compiler
             foreach (string dir in BuiltDirectories(import))
             {
                 string path = Path.Combine(dir, FileNameFor(import));
-                if (File.Exists(path) && File.GetLastWriteTimeUtc(path) >= newest) return path;
+                if (File.Exists(path) && File.GetLastWriteTimeUtc(path) >= newest && SameRuntime(path, () => RuntimeKey(import))) return path;
             }
+            // the library built with the programs (Prebuilt/ next to them, forge prebuild-standard): taken where it is, when it belongs to the package's C and to this runtime -
+            // also when the package was installed earlier (StandardSources.UsePrebuilt copies it only when a package is installed)
+            string prebuiltLib = Path.Combine(StandardSources.DefaultPrebuiltFolder, import.Package.Name, Rid, FileNameFor(import));
+            try
+            {
+                if (File.Exists(prebuiltLib) && File.Exists(prebuiltLib + ".hash") && File.ReadAllText(prebuiltLib + ".hash").Trim() == StandardSources.NativeHashOf(import)
+                    && SameRuntime(prebuiltLib, () => RuntimeKey(import))) return prebuiltLib;
+            }
+            catch (IOException) { }
             return null;
         }
 
@@ -148,6 +169,7 @@ namespace fire.Compiler
                             File.Copy(outFile, partial, overwrite: true);
                             BuildMonitor.Checkpoint();
                             File.Move(partial, dest, overwrite: true);
+                            File.WriteAllText(KeyFile(dest), RuntimeKey(import));
                         }
                         finally { try { if (File.Exists(partial)) File.Delete(partial); } catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { } }
                         try { File.Delete(FailureFile(import, dir)); } catch (IOException) { }
@@ -255,6 +277,16 @@ namespace fire.Compiler
             return sb.ToString();
         }
 
+        /// <summary>The folder of the library of graphics and windows under Prebuilt/.</summary>
+        public const string GraphicsPrebuiltFolder = "fire-gfx";
+
+        /// <summary>The C of graphics and windows the library is built from (StandardSources.NativeHashOf of both).</summary>
+        public static string GraphicsSourceHash(InstalledImport graphics, InstalledImport windows) =>
+            StandardSources.NativeHashOf(graphics) + StandardSources.NativeHashOf(windows);
+
+        /// <summary>The key of the runtime and wrapper the library of graphics and windows is built against (see RuntimeKey).</summary>
+        public static string GraphicsRuntimeKey(InstalledImport graphics, InstalledImport windows) => RuntimeKey(GenerateGraphicsWrapper(graphics, windows));
+
         /// <summary>The file name of the library of graphics and windows for the VM (one library: the windows show the framebuffers of the graphics).</summary>
         public static string GraphicsFileName => $"{Prefix}fire_gfx{Extension}";
 
@@ -262,12 +294,21 @@ namespace fire.Compiler
         /// kept with the graphics package. A failure is a <see cref="PackageException"/> with what the compiler said.</summary>
         public static string EnsureGraphics(InstalledImport graphics, InstalledImport windows, Action<string>? log = null)
         {
-            DateTime newest = new[] { NewestSource(graphics), NewestSource(windows), File.GetLastWriteTimeUtc(typeof(NativeRuntimeFiles).Assembly.Location) }.Max();
+            DateTime newest = new[] { NewestSource(graphics), NewestSource(windows) }.Max();
+            string GraphicsKey() => GraphicsRuntimeKey(graphics, windows);
             foreach (string dir in BuiltDirectories(graphics))
             {
                 string path = Path.Combine(dir, GraphicsFileName);
-                if (File.Exists(path) && File.GetLastWriteTimeUtc(path) >= newest) return path;
+                if (File.Exists(path) && File.GetLastWriteTimeUtc(path) >= newest && SameRuntime(path, GraphicsKey)) return path;
             }
+            // (built with the programs - Prebuilt/fire-gfx/, forge prebuild-standard: when it belongs to the C of the two packages and to this runtime)
+            string prebuilt = Path.Combine(StandardSources.DefaultPrebuiltFolder, GraphicsPrebuiltFolder, Rid, GraphicsFileName);
+            try
+            {
+                if (File.Exists(prebuilt) && File.Exists(prebuilt + ".hash") && File.ReadAllText(prebuilt + ".hash").Trim() == GraphicsSourceHash(graphics, windows)
+                    && SameRuntime(prebuilt, GraphicsKey)) return prebuilt;
+            }
+            catch (IOException) { }
             log?.Invoke($"Building the native part of graphics and windows for {Rid}...");
             using var background = BackgroundWork.Begin("Building the windows and graphics of fire for this machine");
             var target = TargetProfile.Host;
@@ -291,6 +332,7 @@ namespace fire.Compiler
                         Directory.CreateDirectory(dir);
                         string dest = Path.Combine(dir, GraphicsFileName);
                         File.Copy(outFile, dest, overwrite: true);
+                        File.WriteAllText(KeyFile(dest), GraphicsKey());
                         return dest;
                     }
                     catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { /* not writable: the next place */ }

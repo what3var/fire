@@ -79,7 +79,13 @@ The build copies the folder next to the programs as **`Source/`** (`src/Standard
 machine into `Prebuilt/` (`forge prebuild-standard Source Prebuilt`). When **spark** or **forge** start (ember asks forge: `forge install-standard`), every project of `Source/Packages.firesln` that
 is not installed yet, or whose folder changed since it was installed, is packed (without its tests) and installed - the ones it imports first. A fingerprint of every project folder in
 `Packages/.source-stamps.json` keeps the check quick. A prebuilt library goes along when it was built from the same C++, so that the virtual machine needs no C++ compiler for the libraries
-as shipped; after a change of the C++ the library is built on first use like that of any package.
+as shipped; after a change of the C++ the library is built on first use like that of any package. The VM also takes a library from `Prebuilt/` directly when the one next to the installed
+package is missing or outdated (a package that did not change is not installed again after a new build of fire). The library of `graphics` and `windows` for the VM (`fire_gfx`) is
+prebuilt the same way (`Prebuilt/fire-gfx/`).
+
+A library is built against the runtime (`fire_rt.h`, the ABI, the platform package) and a generated wrapper: a hash of both is kept next to it (`<library>.runtime`). Only when that
+changes is the library built again - not with every new build of fire whose runtime stayed the same (before, the time stamp of the fire.Native assembly decided, and every change of
+the generator needed a C compiler on the next start).
 
 **Changing a standard library**: *Tools > Open the Standard Libraries (Source)* opens the solution in spark. Change a file, run its tests (`forge test`, or the tests of the project), then
 *Install* the project (context menu of the project, or *Project > Install Library*): it is packed and installed at once; an installed package of the same version is replaced after a question.
