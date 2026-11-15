@@ -666,22 +666,22 @@ namespace UI {
         // event would reach a destroyed element (a choice that makes its buttons anew in its own click).
         undefined Forget(Element gone) {
             if (gone == undefined) { return }
-            if (UI.Root.Inside(this.hoverElement, gone)) { this.hoverElement = undefined }
-            if (UI.Root.Inside(this.pressedElement, gone)) { this.pressedElement = undefined }
-            if (UI.Root.Inside(this.focusElement, gone)) { this.focusElement = undefined }
-            if (UI.Root.Inside(this.dragFrom, gone)) { this.dragFrom = undefined }
-            if (UI.Root.Inside(this.dragSource, gone)) { this.dragSource = undefined }
-            if (UI.Root.Inside(this.dragTarget, gone)) { this.dragTarget = undefined }
-            if (UI.Root.Inside(this.hoverTarget, gone)) { this.hoverTarget = undefined }
-            if (UI.Root.Inside(this.touchPanner, gone)) { this.touchPanner = undefined }
-            if (UI.Root.Inside(this.tipElement, gone)) {
+            if (this.Holds(this.hoverElement, gone)) { this.hoverElement = undefined }
+            if (this.Holds(this.pressedElement, gone)) { this.pressedElement = undefined }
+            if (this.Holds(this.focusElement, gone)) { this.focusElement = undefined }
+            if (this.Holds(this.dragFrom, gone)) { this.dragFrom = undefined }
+            if (this.Holds(this.dragSource, gone)) { this.dragSource = undefined }
+            if (this.Holds(this.dragTarget, gone)) { this.dragTarget = undefined }
+            if (this.Holds(this.hoverTarget, gone)) { this.hoverTarget = undefined }
+            if (this.Holds(this.touchPanner, gone)) { this.touchPanner = undefined }
+            if (this.Holds(this.tipElement, gone)) {
                 this.tipElement = undefined
                 this.HideToolTip()
             }
         }
 
-        // Is `e` the element `outer` or inside it?
-        static bool Inside(Element e, Element outer) {
+        // Is `e` the element `outer` or inside it? (not "Inside": that is the point test of the root)
+        bool Holds(Element e, Element outer) {
             var x = e
             while (x != undefined) {
                 if (x == outer) { return true }
