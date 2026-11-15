@@ -1279,7 +1279,7 @@ namespace fire.Compiler
             return type with { NonNull = true };
         }
 
-        /// <summary>`defined` (a word of its own only here) followed by a value type: int, float, bool, word, char, byte.</summary>
+        /// <summary>`defined` (a word of its own only here) followed by a type: int, float, bool, word, char, byte, string, a class, an interface, an enum.</summary>
         private bool DefinedAhead(int offset)
         {
             if (PeekAt(offset).Type != TokenType.Identifier || PeekAt(offset).Lexeme != "defined") return false;
@@ -1293,7 +1293,8 @@ namespace fire.Compiler
                 while (PeekAt(at).Type == TokenType.Dot && PeekAt(at + 1).Type == TokenType.Identifier) at += 2;
             }
             else return false;
-            return PeekAt(at).Type == TokenType.Identifier && PeekAt(at + 1).Type == TokenType.LBracket;
+            // (`defined string s`, `defined Dog d`, `defined Color c`, `defined List<int> l`, `defined Dog Get()`: a name or type arguments follow - SPEC 8.10b)
+            return PeekAt(at).Type is TokenType.Identifier or TokenType.Lt;
         }
 
         private TypeRef ParseTypeRefCore(bool allowArray)

@@ -1159,6 +1159,12 @@ ein Enum mit seinem Schlüssel; nativ E_CLASS/TU_CLASS und eine Tabelle g_arrCla
 **`defined`** dafür (Entscheidung des Benutzers): `defined string` beginnt bei `""`, ein `defined` Enum beim ersten Wert; `defined Dog pets[]` hat
 keinen Nullwert und nimmt nur Arrays, in denen jedes Element gegeben ist (`new Dog[2]` dort ist eine ArgumentException).
 
+**Umgesetzt** (Wunsch des Benutzers, SPEC 8.10b): ebenso **einzelne Werte** - `defined string name` (beginnt bei `""`), `defined Color c` (beim ersten
+Wert), `defined Dog pet`, `defined IShape s`: an Parameter, Feld, Property, Rückgabe, Variable, über Reflection und in JSON nie undefined (das Merkmal
+steht vorn im DeclaredType-Text, DeclaredType.NonNullOf; nativ prüft ClassGuard es mit, JSON mit JsonFieldInfo.defined 0x41-0x43). Ein Objekt hat keinen
+Nullwert (Entscheidung des Benutzers): eine Variable braucht ihren Initialisierer, ein Feld ohne einen setzt jeder Konstruktor als eine seiner Anweisungen,
+sonst ein Übersetzungsfehler. Offen: nativ liest der Generator ein solches Feld noch als „vielleicht undefined“ (die Prüfung danach bleibt).
+
 Offen:
 
 * **Lambdas mit Signatur** (`lambda<int, int> fs[]`): noch ohne Elementtyp.

@@ -2464,6 +2464,14 @@ front of the type it **never holds `undefined`**: a parameter, a field, a proper
   converted into the field's unit and checked like an assignment (undefined is the `ArgumentException`).
 * **JSON and reflection** keep the promise: `Json.Deserialize` leaves a `defined` field that is not in the text at zero (reading JSON runs no
   initializers) and a `null` for it is an `ArgumentException` (`$.n is an int and never undefined.`); `Reflect.Set` checks like an assignment.
+* **Strings, enums and objects** (`defined string name`, `defined Color c`, `defined Dog pet`, `defined IShape s`, a record) are never undefined
+  the same way, with the same messages ("Field 'pet' is a Dog and never undefined."): at a parameter, a field, a property, a return value, a
+  variable, through reflection and in JSON. A string without an initializer starts at `""`, an enum at its first value. An object has no zero:
+  a variable or a static field needs its initializer (`defined Dog d` alone is an error), and a field without one is set by **every
+  constructor** of its class as one of its statements (`this.pet = d`, `pet = d`, `if (this.pet = try take d)`; not inside a branch or a
+  loop) - otherwise it is an error, as for a class without a constructor. `Json.Deserialize` has no constructor to run: a `defined Dog` field
+  the text does not give, or gives as `null`, is an `ArgumentException` (`$.pet is a Dog and never undefined.`). `defined any`, `defined var`
+  and a lambda are errors (they name no type). A string or an object that may be undefined going into one is TC022, like a number.
 * `defined` stands in front of the type and its width (`defined int[16] x`, `defined byte b`, `defined float : m len`); it is
   a word of its own only there (a variable may still be called `defined`). Of an array (`defined int a[]`) it says that
   the elements are never undefined (8.4.2); not for a pointer or a type argument (`List<defined int>` is an error). `int!` is an error

@@ -4154,7 +4154,7 @@ FIRE_FN int64_t findFrom(const fire_char16* s, uint32_t len, const fire_char16* 
 
 FIRE_FN Value newStrFrom(const fire_char16* p, uint32_t n, OwnList* list) {
     Str* r = allocStr(n, list);
-    memcpy(strChars(r), p, n * sizeof(fire_char16));
+    if (n > 0) memcpy(strChars(r), p, n * sizeof(fire_char16));   /* (an empty one may come without characters: p NULL - JSON's "") */
     return StrV(r);
 }
 
@@ -5034,7 +5034,10 @@ FIRE_FN Value enumHasFlag(Value v, Value flag) { return Bool(v.kind == K_Int && 
 FIRE_COLD FIRE_FN void guardClassFailed(Value v, const char* cls, const char* what) {
     char text[300];
     bool vowel = strchr("AEIOUaeiou", cls[0]) != NULL;
-    snprintf(text, sizeof text, "%s is %s %s, not %s.", what, vowel ? "an" : "a", cls, v.kind == K_Class ? className(asObj(v)->cls) : kindName(v));
+    if (v.kind == K_Undefined)   /* (`defined Dog d`: never undefined) */
+        snprintf(text, sizeof text, "%s is %s %s and never undefined.", what, vowel ? "an" : "a", cls);
+    else
+        snprintf(text, sizeof text, "%s is %s %s, not %s.", what, vowel ? "an" : "a", cls, v.kind == K_Class ? className(asObj(v)->cls) : kindName(v));
     fireError("ArgumentException", text);
 }
 
