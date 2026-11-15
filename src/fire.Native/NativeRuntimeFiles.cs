@@ -36,6 +36,38 @@ namespace fire.Native
                     WriteResource(name, directory);
         }
 
+        private static readonly Dictionary<string, string> FingerprintCache = new(StringComparer.Ordinal);
+
+        /// <summary>A hash of what <see cref="WriteTo"/> writes from this assembly for <paramref name="platform"/> (the runtime, the compiler dialects, the ABI, the platform
+        /// package): something built against these files has to be built again only when it changes - not with every new build of this assembly.</summary>
+        public static string Fingerprint(string? platform = null)
+        {
+            string key = platform ?? "";
+            lock (FingerprintCache)
+            {
+                if (FingerprintCache.TryGetValue(key, out var known)) return known;
+                var names = new List<string> { "fire_rt.h", "fire_rt_cpp.hpp", "fire_json.h", "fire_debug.h" };
+                names.AddRange(Names().Where(n => n.StartsWith("cc/", StringComparison.Ordinal) || n.StartsWith("abi/", StringComparison.Ordinal)));
+                var wanted = platform == null ? AllPackages() : PackageClosure(platform);
+                foreach (string package in wanted) names.AddRange(Names().Where(n => n.StartsWith($"platform/{package}/", StringComparison.Ordinal)));
+                using var sha = System.Security.Cryptography.SHA256.Create();
+                foreach (string name in names.Distinct().OrderBy(n => n, StringComparer.Ordinal))
+                {
+                    if (!Resources.ContainsKey(name)) continue;
+                    byte[] title = System.Text.Encoding.UTF8.GetBytes(name + "\n");
+                    sha.TransformBlock(title, 0, title.Length, null, 0);
+                    using var stream = Open(name);
+                    byte[] body;
+                    using (var ms = new MemoryStream()) { stream.CopyTo(ms); body = ms.ToArray(); }
+                    sha.TransformBlock(body, 0, body.Length, null, 0);
+                }
+                sha.TransformFinalBlock(Array.Empty<byte>(), 0, 0);
+                string hash = Convert.ToHexString(sha.Hash!);
+                FingerprintCache[key] = hash;
+                return hash;
+            }
+        }
+
         /// <summary>Writes the FreeRTOS simulator (<c>FreeRTOS.h</c>, <c>task.h</c>, <c>semphr.h</c>, also under <c>freertos/</c>) into <paramref name="directory"/>: tasks and semaphores on
         /// top of pthreads, so that a FreeRTOS build can be tried on a PC.</summary>
         public static void WriteSimulatorTo(string directory)
