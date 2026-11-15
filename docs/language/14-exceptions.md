@@ -127,12 +127,13 @@ The runtime reports its errors as exceptions of the standard library:
 |---|---|
 | `IndexOutOfBoundsException` | an index outside an array, list, buffer or string |
 | `DivideByZeroException` | `int` division or `%` by zero (floats give infinity/NaN) |
-| `ArgumentException` | wrong number of arguments, a value that cannot be converted (`"42"!int`), a condition that is not a `bool`, comparing two strings with `<` |
+| `ArgumentException` | wrong number of arguments, a value that cannot be converted (`"42"!int`), a condition that is not a `bool`, a value that does not fit its declaration (`Parameter 'a' is an int, not String.`, `undefined` where `defined` is declared) |
 | `MissingMemberException` | a method or field that the object does not have |
 | `AccessDeniedException` | a `private`/`protected` member used from outside |
-| `DestroyedException` | using an object, array or buffer that was destroyed |
+| `DestroyedException` | using (also printing) an object, array, buffer or lambda that was destroyed, or one that was handed over to a thread |
 | `UnitMismatchException` | units of different dimensions (`5mm + 2kg`) |
 | `OverflowException` | a converted number does not fit into its declared unit |
+| `CancelledException`, `TimeoutException` | a cancelled task at its next wait; a time limit ran out (`until 2s`, `Wait(limit)`; a `TimeoutException` is a `CancelledException`) - see [Threads and actors](15-threads-and-actors.md#cancellation-until) |
 | `Assertion` | a check of a test did not hold (`Testing.Assert`, Testing: forge test (`docs/tools/testing.md`)) - thrown by tests, never by the runtime |
 
 All derive from `Exception` and can be caught:

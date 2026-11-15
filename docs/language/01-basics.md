@@ -141,7 +141,8 @@ the number wins over a unit: `1e3` is the float `1000` (not `1` with the unit `e
 ## Output: `print`
 
 `print(value)` writes one value and a line break. Everything can be printed: numbers (with their unit), texts, `True`/`False`, `undefined`,
-objects (their `ToString()` method if they have one, otherwise `<object Name>`), arrays (`<array>`).
+objects (their `ToString()` method if they have one, otherwise `<object Name>`), arrays (`<array>`). A destroyed object cannot be printed: `print(x)`,
+`"" + x` and `$"{x}"` throw the `DestroyedException` like any other use of it (see [Ownership](13-ownership.md#delete)).
 
 ```fire
 print(3)

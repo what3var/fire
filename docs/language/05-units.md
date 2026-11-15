@@ -277,7 +277,7 @@ is unitless:
 ```fire
 float b = 2km
 int a = 500m
-var c = b + a:!         // b decides: 2.5km (a is converted, and to float with !)
+float c = b + a:!       // b decides: 2.5km (a is converted, and to float with !)
 print(c)
 ```
 

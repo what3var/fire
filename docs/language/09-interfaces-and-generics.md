@@ -323,6 +323,8 @@ print(Util.Describe<string>("x"))   // something
 | Type | Meaning |
 |---|---|
 | `List<T>` | a growing list (see [Arrays and lists](07-arrays-and-lists.md#lists-listt)) |
+| `Dictionary<K, V>`, `HashSet<T>` | keys and values, a set (see [Arrays and lists](07-arrays-and-lists.md#dictionaries-and-sets-dictionaryk-v-hashsett)) |
+| `Channel<T>`, `IChannel<T>`, `IChannelEnd<A, B>` | a queue between threads (see [Threads and actors](15-threads-and-actors.md#channels)) |
 | `IEnumerable<T>`, `IEnumerator<T>` | something that `foreach` can walk through |
 | `ICommand<T>`, `Command<T>` | a command as an object: `Execute(T context)` calls a lambda |
 | `Query<T>` | a query of `#import "linq"` |
@@ -331,6 +333,6 @@ print(Util.Describe<string>("x"))   // something
 
 1. Add a third shape `Triangle` to `IShape` and print the total area of an array of shapes.
 2. Write a generic class `Pair<A, B>` with `First` and `Second` and a method `Pair<B, A> Swap()`.
-3. Write `class Range : IEnumerable<int>` that counts from `from` to `to` in steps of `step`.
+3. Write `class Range : IEnumerable<int>` that counts from `first` to `last` in steps of `step` (`from` and `to` are keywords, not names).
 4. Restrict a generic class `Measure<T>` to lengths with `where T is in "m"` and try it with `"cm"` and `"kg"`.
 5. Write `static T Largest<T>(T values[])` and call it with an `int` array and a `float` array.

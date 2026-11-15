@@ -121,6 +121,37 @@ try { Stats.Mix(missing, 1) } catch (ArgumentException e) { print(e.message) }  
   `defined`, the result of a method that returns `int` (not `defined int`), the literal `undefined`. A local variable counts as defined while it was only given numbers (`int total = 0` above), so ordinary code
   stays quiet. When you know better, say so with **`trust`**: `Stats.Mix(trust missing, 1)` - no warning (the VM still checks).
 
+**Strings, enums and objects** can be `defined` too - `defined string name`, `defined Color c`, `defined Dog pet`, `defined IShape s`, a record - at a
+parameter, a field, a property, a return value and a variable, with the same check and the same messages:
+
+```fire
+enum Color { Red, Green, Blue }
+class Dog {
+    string name
+    construct(string n) { this.name = n }
+}
+class Owner {
+    defined string label                   // starts at ""
+    defined Color favourite                // starts at the first value: Red
+    defined Dog pet                        // no zero: every constructor sets it
+    construct(Dog d) { this.pet = take d }
+}
+var o = new Owner(new Dog("Rex"))
+print("[" + o.label + "] " + o.favourite + " " + o.pet.name)              // [] Red Rex
+any nothing = undefined
+try { o.pet = nothing } catch (ArgumentException e) { print(e.message) }   // Field 'pet' is a Dog and never undefined.
+```
+
+- A `defined string` starts at `""`, a `defined` enum at its first value.
+- An object has no zero: a variable (and a static field) needs its initializer (`defined Dog d` alone is an error), and a field without one is set by
+  **every constructor** of its class as one of its statements (`this.pet = d`, `if (this.pet = try take d)`) - not inside a branch or a loop. Otherwise
+  the program does not compile.
+- `defined any`, `defined var` and a lambda are errors (they name no type); so is `defined` at a type argument (`List<defined int>`). Overloads do not
+  differ by `defined` alone. Of an array, `defined int a[]` says that its **elements** are never `undefined` (see
+  [Arrays](07-arrays-and-lists.md#typed-arrays)).
+- `Json.Deserialize` and `Reflect.Set` keep the promise: a `defined` field that the JSON text does not give stays at zero (an object field: the
+  `ArgumentException`), a `null` for it is the `ArgumentException`.
+
 Natively `defined` pays off: such parameters and return values are passed as plain C numbers, without packing them into values - on a 16-bit
 target the code of a small arithmetic method shrinks to a fraction.
 
@@ -129,14 +160,38 @@ constructors. A parameter declared `int` or `float` that every call gives a numb
 parameter or a return that is derived itself, a default that is a number) is checked and passed like a `defined` one; so is a return value when
 every `return` gives a number and the method cannot run off its end. Nothing is derived for a method that something may call unseen: a call
 through a value of an unknown type (`any`), the method used as a value or named in a string, an override of a method of a package or the prelude,
-the constructors of a base class - and not at all in a program that imports `reflection`, in a plugin or module, or in a debug build.
+the constructors of a base class - and not at all in a plugin or module, or in a debug build. A program that uses reflection derives no parameter (a
+method can be called by its name), one that reads JSON into objects (`Json.Deserialize`) or uses reflection derives no field - unless the class says
+otherwise (below).
 The same holds for **fields** of your classes declared `int`, `float` or `bool`: a field whose every write gives a number (`count++`, `step = step + 1`,
 the result of a method or a parameter that is derived itself) is a `defined` one. One with a number literal as initializer keeps it; one **without an
 initializer** only when nobody can see its `undefined`: every constructor of its class sets it first (among its first plain statements - before any call,
-before `x++` or any other read), the class has no base class, and the program never asks (`if (cache == undefined) ...`, `is of`, `?.`). It starts at 0
-then (a release build). A field nothing writes, or one that `with`, a pointer, a `ref` argument or `Json.Deserialize` may set, is left alone. `FIRE_INFER_UNINITIALIZED_DEFINED=0` keeps the fields without an initializer out of it.
+before `x++` or any other read), the program never asks (`if (cache == undefined) ...`, `is of`, `?.`), and nothing reaches it before - the constructors
+and field initializers of the base classes run first, so they must not use a member that the class (or a class derived from it) declares, nor hand out
+`this`. It starts at 0 then (a release build). A field nothing writes, or one that `with`, a pointer, a `ref` argument or `Json.Deserialize` may set, is left alone. `FIRE_INFER_UNINITIALIZED_DEFINED=0` keeps the fields without an initializer out of it.
 Natively such a field is a C number in the object.
 `FIRE_DERIVE_LOG=1` shows what was decided, `FIRE_NO_DERIVE=1` switches it off.
+
+**`[InferDefined]`** before a class (also a class of a package) derives its fields and parameters as above although the program uses reflection or
+JSON. What comes from outside is checked then: `Reflect.Set` and `Reflect.Call` refuse `undefined` with a message that names the derivation, and
+`Json.Deserialize` leaves a derived field that the text does not give at 0:
+
+```fire
+#import "reflection"
+[InferDefined]
+class Counter {
+    int count = 0
+    undefined Add(int n) { this.count = this.count + n }
+}
+var c = new Counter()
+c.Add(2)
+try { Reflect.Set(c, "count", undefined) } catch (ArgumentException e) { print(e.message) }
+// Field 'count' (derived as never undefined: nothing in the program stores undefined in it) is an int and never undefined.
+print(c.count)                             // 2
+```
+
+Without the attribute the field stays as declared, and `Reflect.Set` stores the `undefined` - so does a debug build (the default in spark, `forge run -m
+debug`), which derives nothing.
 
 ## The type checker: lax and strict
 
@@ -153,8 +208,27 @@ The checker runs after every compile and in the editor while you type. Its findi
 | `TC007` | a whole number loses its fraction when it is converted into a coarser unit (always a warning) |
 | `TC008` | a member that the (fully known) class does not have |
 | `TC009` | an assignment as a condition (`if (a = b)`, probably meant `==`; always a warning) |
+| `TC010` | a `switch` over an enum misses members and has no `case default` (always a warning) |
+| `TC011` | a named argument that the method does not have, or a parameter without value (always an error) |
+| `TC012` | a `private`/`protected` member used where it is not allowed (always an error) |
+| `TC013` | a cast `x!Dog` that can never succeed |
+| `TC014` / `TC015` | a member replaces an inherited one without `override` / `override` replaces nothing (`TC015` always an error) |
+| `TC016` | an interface property written without `set` or read without `get` (always an error) |
+| `TC017` | a unit at a `byte` or `word` (always an error) |
+| `TC018` | a setter passes its new `value` on only on some paths (always a warning) |
+| `TC019` / `TC020` | a `var` whose type is not known / was found late or is `any` (see [Basics](01-basics.md#variables)) |
+| `TC021` | an `int[64]` value cut into a narrower program `int` (`#intwidth 32`) |
+| `TC022` | a value that may be `undefined` goes where `defined` is declared |
+| `TC023` / `TC024` | a lambda or a `fire` block copies a local without `taking`/`handover` / `take` into such a copy (see [Lambdas](12-lambdas.md#captured-values)) |
+| `TC025` | `x??.name` where the type proves the member is never there (an error) |
+| `TC026` / `TC027` / `TC028` | a write to a field of a record / a record field that can change / `x with { }` on a class without `copy`/`flat` (errors) |
+| `TC029` | `ch.Send(x)` of an object without `copy`/`take` (an error) |
+| `TC030` | an expression tree that is not a lambda with an expression body, or that changes something (an error) |
+| `TC031` | a temporary goes into a field without being taken: it dies at the end of the statement (see [Ownership](13-ownership.md#temporaries-die-at-the-end-of-the-statement)) |
+| `TC032` | an array given to a `byte`/`word` parameter becomes a new buffer: what the method writes does not reach it |
 
-In **lax** mode (the default) these are warnings; in **strict** mode they are errors. Choose the mode with `#strict` or `#lax` at the top of a file, the project
+In **lax** mode (the default) these are warnings; in **strict** mode they are errors - except where the table says "always". The full texts are in
+Errors and warnings (`docs/tools/errors.md`). Choose the mode with `#strict` or `#lax` at the top of a file, the project
 setting `typeChecking`, or the compiler switch `--types strict`.
 
 A method in strict mode needs its types:
@@ -350,7 +424,8 @@ Use `word` for raw data the size of the machine - checksums, hash values, regist
 ### The width of the whole program
 
 A whole program can use 32-bit floats with `#floatwidth 32` and 32-bit ints with `#intwidth 32` (see [Preprocessor](17-preprocessor.md)) - useful for
-small targets like a microcontroller; the VM then computes exactly like a 32-bit CPU. Without a directive `int` has 64 bits on every target.
+small targets like a microcontroller; the VM then computes exactly like a 32-bit CPU. `#intwidth 16` does the same with 16 bits (the native width of the
+8086, for `dos16`: `32767 + 1` is `-32768`, `70000` is `4464`). Without a directive `int` has 64 bits on every target.
 
 ```fire
 #intwidth 32
@@ -362,8 +437,8 @@ print(3000000000)       // -1294967296 - constants are cut, too
 
 - Every operation computes as before and its result is cut to 32 bits; explicit widths (`int[8]`, `int[64]`) keep their meaning - an `int[64]`
   holds 64 bits (`int[64] big = 3000000000` is `3000000000`), and so does what is computed from it (`big * 2`).
-- Overrides: `-i 32|64` on the command line (wins), the project setting `intWidth`, a target's `intWidth` in `fire.native.json`.
-- `#if int32` sees the width that the command line or the target gives, not the directive (it is read after the symbols).
+- Overrides: `-i 16|32|64` on the command line (wins), the project setting `intWidth`, a target's `intWidth` in `fire.native.json`.
+- `#if int32` (`#if int16`) sees the width that the command line or the target gives, not the directive (it is read after the symbols).
 - A plain `int` holds the program's int: an `int[64]` value stored into an `int` field, parameter or variable is cut (warning `TC021`; declare
   `int[64]`, or cut on purpose with `!int`). A `var` takes the width of its initializer.
 - Natively a value takes 16 bytes (it holds an `int[64]` too); with `#intwidth 32` and `#floatwidth 32` two fields declared `int`, `float` or

@@ -61,15 +61,18 @@ try { Color.Parse("Pink") } catch (ArgumentException e) { print(e.message) }
 
 A parameter, a field, a property, a return value or a variable declared with an enum (`Color c`) takes a value of that enum or `undefined`.
 Anything else is an `ArgumentException` at run time (`Parameter 'c' is a Color, not Int.`) - also a value of another enum. A number goes in with a
-cast; an enum value still goes into an `int` without one:
+cast, and the number of an enum value comes out with one:
 
 ```fire
 Color c = Color.Green
 c = 2!Color             // a number: with a cast
-int n = c               // 2
+int n = c!int           // 2
 any five = 5
 c = five                // ArgumentException: Variable 'c' is a Color, not Int.
 ```
+
+Without the cast an enum value still goes into an `int` (the type checker warns, `TC001`), but it stays the enum value: `int n = c` prints `Blue`.
+A `defined int` takes its number.
 
 The same holds for `T` in generic code when the type argument is an enum (`List<Color>`), and for the elements of `Color cs[]`.
 
@@ -141,8 +144,8 @@ namespace Geo {
     enum Kind { Square, Circle }
 
     class Shape {
-        int kind
-        construct(int k) { this.kind = k }
+        Kind kind
+        construct(Kind k) { this.kind = k }
         static string Describe() { return "shape" }
     }
 
@@ -152,7 +155,7 @@ namespace Geo {
 }
 
 var s = new Geo.Shape(Geo.Kind.Circle)
-print(s.kind)                       // 1
+print(s.kind)                       // Circle
 print(Geo.Shape.Describe())
 print(new Geo.Deep.Inner() is of Geo.Deep.Inner)
 ```
@@ -188,7 +191,8 @@ print(Geo.Shape.Describe())         // static members and enum values keep the f
 - If two `#using` namespaces contain the same name, the short name is ambiguous (`E4062`); write the full name.
 - `#using` applies to the file in which it stands.
 - `#import` of a library of a project or of a package makes its names available like a `#using` - in expressions too (`Parser.Name()`); what a library declares
-  outside of every namespace is in a namespace with its import name (`LibA.Parser`, see [Projects](../tools/projects.md#references-libraries-without-an-entry-point)).
+  outside of every namespace is in a namespace with its import name (`LibA.Parser`, see Projects (`docs/tools/projects.md`), "Names of libraries"). The
+  standard packages keep their global names (`DateTime`, `Framebuffer`).
 
 ## Exercises
 

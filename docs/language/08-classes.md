@@ -34,7 +34,8 @@ print(Animal.created)       // 1
   `any` (the type checker says so, `TC005`).
 - Inside a method `this` is the object. A field can also be written without `this.` (`name` instead of `this.name`) when no local variable has the
   same name.
-- `static` fields and methods belong to the class: `Animal.created`, `Calc.Twice(2)`. A static method has no `this`.
+- `static` fields and methods belong to the class: `Animal.created`, `Calc.Twice(2)`. A static method has no `this`. A class must not declare a
+  static and an instance method of the same name (see [Parameters](#parameters)).
 - **Order of the static initial values**: they are set once at program start, before the first statement of the program runs - class by class in
   the order of the program (the standard library and the imported libraries first, then the files of the project in their order, each from the
   top down), in a class from the top down. An initial value may read a static field whose initial value came before; one that only comes later is
@@ -69,6 +70,9 @@ print(c.Greet("World", "Hi"))   // Hi, World
 
 - **Overloads**: several methods (and constructors) with the same name are allowed when they have a different **number** of parameters or different
   parameter **types**. The overload closest to the given values runs (see [Overloading by type](#overloading-by-type)).
+- **Static and instance methods are never overloads of each other**: all methods of one name in a class are either `static` or not. Mixing them
+  is forbidden - `static int Get(int a)` next to `int Get()` is not allowed, even with other parameters; give one of them another name. (The compiler does
+  not report it yet.)
 - **Default values**: `Type name = value` makes a parameter optional. Optional parameters stand at the end.
 - A parameter without a type is `any` (`TC004`).
 - **Passing**: numbers, `bool`, `char` and strings are copied; objects, arrays and lambdas are passed by reference.
@@ -300,7 +304,7 @@ print(Show.Of<int>(1))          // generic - written type arguments mean the gen
 
 ## Operator overloading
 
-A class can define the operators `+ - * / % ^ & | # << >> == != < <= > >=` and the index `[]`. `this` is the left operand; the right one is the
+A class can define the operators `+ - * / % ^ & | # << >> >>> == != < <= > >=` and the index `[]`. `this` is the left operand; the right one is the
 parameter. Only the left operand decides: `5 + point` does not call the operator of `Point`.
 
 ```fire
@@ -331,7 +335,7 @@ Without `operator==`, `==` compares objects by reference (the same instance).
 ## `ToString()`
 
 `print`, `+` with a string and format strings use the method `string ToString()` of the class if it has one; otherwise an object prints as
-`<object Name>`.
+`<object Name>`. A destroyed object is no text at all: printing it throws the `DestroyedException`.
 
 ## Attributes
 
@@ -377,13 +381,15 @@ class Account {
 }
 ```
 
-Two attributes before a class change what happens to it:
+These attributes change what happens to a class:
 
 - **`[Keep]`** (before a class, method, field or property): a native build keeps it even when the program never reaches it - for a class only made by its name
   (`Reflect.New("Plugin", [])`, `Type.Named("Plugin")`) or read from JSON. Before a class it keeps the class with all its members; before a member that member
   and its class. It is not inherited. A name given as a literal to reflection (`Reflect.New("Plugin", [])`) is kept the same way without it; the VM keeps everything
   anyway (see [Probes and reflection](16-probes-and-reflection.md#reflection-in-native-builds), the stripping levels).
 - **`[NotSerializable]`** (before a class): `#import "json"` neither writes nor reads objects of the class or of a class derived from it (an `ArgumentException`).
+- **`[InferDefined]`** (before a class, also one of a package): the compiler derives `defined` for its fields and parameters even in a program that
+  uses reflection or JSON, and checks what these bring in (see [Types](02-types.md#defined-never-undefined)).
 - **`[NoCopy]`** (before a class): `flat` and `copy` never duplicate an instance of the class or of a class derived from it (an `ArgumentException`, see
   [Ownership](13-ownership.md#copying-flat-and-copy)) - for classes that stand for a resource, like `NativeHandle`.
 
