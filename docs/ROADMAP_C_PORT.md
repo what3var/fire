@@ -1,14 +1,18 @@
 # Roadmap: VM und Compiler von .NET nach C
 
-Status: **Entwurf zur Abstimmung** (Branch `claude/wizardly-clarke-28ot2e`). Noch nichts umgesetzt; die Punkte unter
-[Offene Entscheidungen](#offene-entscheidungen) bestimmen den Zuschnitt und sind vor Phase A zu klären.
+Status: **Plan, mit dem Benutzer abgestimmt** (siehe [Entscheidungen](#entscheidungen)); noch nichts umgesetzt. Offen ist nur der Zuschnitt von ember.
 
-Ziel: **forge** (Compiler, Generator, Linker, Projekt- und Paketwerkzeuge samt **ember**) und die **VM** laufen ohne .NET - geschrieben in C11,
-gebaut mit dem C-Compiler, den fire ohnehin voraussetzt. .NET bleibt danach nur noch in **spark**, bis die IDE nach fire portiert ist
-([Phase F](#phase-f---die-ide-nach-fire-ausblick)).
+Ziel: **forge** (Compiler, Generator, Linker, Projektwerkzeuge) und die **VM** laufen ohne .NET - geschrieben in C11, gebaut mit dem
+C-Compiler, den fire ohnehin voraussetzt. Beide sind **Bibliotheken**, die sich auch als Package in ein fire-Programm einbinden lassen
+(fire als Skriptsprache in eigenen fire-Programmen, [L6](#l6-compiler-und-vm-sind-bibliotheken-und-packages)). .NET bleibt danach nur noch in
+**spark**, bis die IDE nach fire portiert ist ([Phase F](#phase-f---die-ide-und-ember-nach-fire-ausblick)).
 
-Das ändert das Ziel aus [ROADMAP.md](ROADMAP.md) ("ember, forge und spark in fire neu schreiben"): forge, ember und die VM werden C, nur spark wird fire.
+Das ändert das Ziel aus [ROADMAP.md](ROADMAP.md) ("ember, forge und spark in fire neu schreiben"): der Compiler braucht ohnehin ein Frontend
+in C (Henne und Ei), also entsteht er gleich ganz dort; die VM ebenso. spark wird fire, ember voraussichtlich auch.
 Die Leitlinien von dort gelten weiter (Packages bleiben Code-only; neuer nativer Code in C gegen `fire_rt.h`; VM und nativ verhalten sich gleich).
+
+**Harte Bedingung: der native Build wird nicht langsamer und nicht größer.** Was die VM von der Runtime braucht, darf ein natives Programm
+nichts kosten ([L1](#l1-eine-runtime-die-vm-ist-ein-interpreter-auf-fire_rth), [Prüfungen](#prüfungen-für-den-nativen-build)).
 
 ## Bestand
 
@@ -22,8 +26,8 @@ Zeilen C# (ohne Leerdateien, gerundet), und was aus jedem Projekt wird:
 | `fire.Runtime` | 13 800 | VM (154 Opcodes, 225 Fälle mit den verschmolzenen), Threads, Tasks, Plugins, Packer, Host der Paket-Natives | -> C (VM), auf `fire_rt.h` |
 | `fire.UI.Markup` | 5 000 | `.fxml`, `.biscuit`, `.fdata`, Falstad -> fire-Quelltext; Completion des Markups | -> C (forge) |
 | `fire.Project` | 3 400 | Projekt, Solution, Bauplan, Vorlagen, Beispiele, Notizen, MCP-Server | Projekt/Bauplan/Vorlagen -> C (forge); Notizen und MCP gehören zur IDE (Phase F) |
-| `fire.Package.Manager`, `fire.Ember` | 1 700 | Manifest, Store, `.fpk`, Quellen | -> C (forge/ember) |
-| `fire.Terminal*`, `*.Bridge`, `fire.Device.Manager` | 9 500 | Grafik, Fenster und Geräte der VM in C# | **entfallen**: die C-VM benutzt die C-Natives der Packages wie ein natives Programm (Geräte-Manager von spark: Phase E/F) |
+| `fire.Package.Manager`, `fire.Ember` | 1 700 | Manifest, Store, `.fpk`, Quellen | was forge zum Bauen braucht (Manifest, Store lesen, `.fpk` packen/entpacken) -> C; ember selbst (Quellen, Installieren, Befehlszeile) voraussichtlich -> fire, mit der IDE |
+| `fire.Terminal*`, `*.Bridge`, `fire.Device.Manager` | 9 500 | Grafik, Fenster und Geräte der VM in C# | **entfallen**: die C-VM benutzt die C-Natives der Packages wie ein natives Programm (Geräte-Manager von spark: Phase B Schritt 9, dann Phase F) |
 | `fire.Testing` | 51 900 | Testprogramm (beide Engines, Editor, Debugger) | Fälle werden Daten, der Läufer C; Editor-Tests bleiben bis Phase F |
 | `fire.Editor`, `fire.Git` | 34 100 | spark | bleibt C# bis Phase F |
 
@@ -31,7 +35,7 @@ Zu portieren sind damit rund **75 000 Zeilen** C#; rund 20 000 fallen weg, weil 
 wiederverwendbar: `native/runtime` (17 000 Zeilen: Werte, Objekte, Besitz, Strings, Arrays, JSON, Reflection, Threads/GIL, Tasks, Aktoren,
 Globals, Probes, Module/Plugins, Debug-Agent), die Plattformschicht, Deflate/Zip (`packages/compression`), SHA-256 (`packages/hash`), Prozesse (`packages/process`).
 
-## Leitentscheidungen (Vorschlag)
+## Leitentscheidungen
 
 ### L1. Eine Runtime: die VM ist ein Interpreter auf `fire_rt.h`
 
@@ -46,8 +50,16 @@ gemeinsame Domäne der Globals.
 * Das Threadmodell wechselt: heute eine C#-VM je fire-Thread mit `GlobalsBroker`, künftig das Modell der Runtime (GIL, Sektionen).
   Programme sehen keinen Unterschied (dafür gibt es die Tests beider Engines), `FireRuntime`/`GlobalsBroker`/`SyncEngine` entfallen.
 
+**Der native Build zahlt nichts dafür.** Regeln:
+
+* Was nur die VM braucht (Aufruf nach Namen, Tabellen zur Laufzeit, dynamische Scopes, Laden und Entladen eines Programms), steht in `native/vm`
+  oder in der Runtime hinter `FIRE_VM` - ohne den Schalter ist `fire_rt.h` für den Präprozessor dasselbe wie vorher.
+* Keine neuen Felder in `Value`, im Objektkopf, in Klassen-Deskriptoren oder Frames, keine neuen Prüfungen auf den schnellen Pfaden. Braucht die
+  VM mehr Daten je Objekt oder Klasse, liegen sie in Seitentabellen der VM.
+* Wo das nicht reicht, verliert die VM: sie nimmt den langsameren Weg oder eine eigene Fassung der Funktion, die Runtime bleibt.
+
 Risiko: `fire_rt.h` ist auf erzeugten Code zugeschnitten (statische Tabellen, `fatal` beendet den Prozess). Darum beginnt Phase B mit einem
-Spike, der genau das prüft, bevor irgendetwas anderes portiert wird.
+Spike, der genau das - unter diesen Regeln - prüft, bevor irgendetwas anderes portiert wird.
 
 ### L2. Die Naht ist das Bytecode-Format, die Reihenfolge VM -> Frontend -> Backend
 
@@ -80,9 +92,13 @@ Künftig spricht jede IDE - das C#-spark der Übergangszeit und das spätere spa
 * **Sprachdienste** (Symbole, Completion, Diagnosen, Markup-Completion, Doku): `forge serve`, eine JSON-Nachricht pro Zeile über stdio.
   Die Logik von `ScriptSymbolIndex` und der Completion zieht dabei von spark nach forge und wird von der fire-IDE weiterbenutzt.
 * **Programme im Fenster der IDE** (`LiveSession`: Schaltplan-Editor; `UiPreview`: Entwurfsansicht): das Programm läuft als Kindprozess, Bilder
-  und Eingaben über einen gemeinsamen Speicherbereich bzw. das Protokoll. Das ist der heikelste Teil des Umschaltens (Phase E).
+  und Eingaben über einen gemeinsamen Speicherbereich bzw. das Protokoll. Das ist der heikelste Teil des Umschaltens (Phase B Schritt 9).
 
-Ein abgestürztes Programm reißt die IDE dann nicht mehr mit, und `fire_rt.h` muss nicht lernen, mehrere Programme nacheinander in einem Prozess zu überleben.
+Ein abgestürztes Programm reißt die IDE dann nicht mehr mit.
+
+Der Umbau von spark soll kurz sein und früh kommen, damit in der Zwischenzeit wenig doppelt zu pflegen ist. Er ist deshalb keine eigene Phase am
+Ende, sondern hängt an den Meilensteinen: mit M1 gehen Ausführen, Debuggen und die eingebetteten Ansichten auf die C-VM, mit M2 die Sprachdienste
+auf `forge serve`. Bauen läuft von Anfang an über die Befehlszeile von forge - ob dahinter C# oder C steckt, sieht spark nicht.
 
 ### L5. Tests werden Daten
 
@@ -91,14 +107,39 @@ exportiert nach `tests/cases/<gruppe>/<name>.fire` mit `.expected` und einer kle
 liest sie von dort, solange es lebt, der Läufer in C (`forge conformance`) später dieselben Dateien. Tests in fire selbst (`[Test]`,
 `packages/*/testing`) laufen unverändert über `forge test`.
 
+### L6. Compiler und VM sind Bibliotheken und Packages
+
+`forge` und `fire` (die VM) sind dünne Programme um zwei C-Bibliotheken, `libforge` und `libfirevm`, mit einer **C-Schnittstelle**
+(`fire_embed.h`: Quelltexte zu einem Programm übersetzen, Diagnosen, ausführen, Ausgabe umleiten, Regeln für Dateien und Netz, eigene Funktionen
+des Wirts, anhalten). Diese Schnittstelle ersetzt das Einbetten in .NET (`Help/Embedding.md`); ein dünner **.NET-Wrapper** darüber steht auf der
+Roadmap, nach M3.
+
+Dieselben Bibliotheken kommen als **Packages** (`#import "forge"`, `#import "script"` - Namen offen): ihre Natives sind die C-Quellen von
+`native/forge` und `native/vm`, wie bei jedem Package im Build des Programms mitübersetzt. Ein fire-Programm kann damit fire-Quelltext zur
+Laufzeit übersetzen und ausführen - und spark (in fire) bekommt seine Sprachdienste notfalls auch ohne Prozess.
+
+Das stellt Anforderungen an den C-Code, die von Anfang an gelten:
+
+* **Kein globaler Zustand** in Compiler und VM: alles hängt an einem Kontext, mehrere Übersetzungen und Programme nebeneinander.
+* **Kein `exit`, kein `fatal`**: Fehler kommen als Ergebnis bzw. als Ausnahme beim Wirt an; ein Skript endet, der Wirt läuft weiter und räumt ab
+  (alles, was dem Skript gehörte, wird zerstört - Klassen, Globals, Threads).
+* **Im nativen Wirt teilt das Skript dessen Runtime** (L1): Werte gehen ohne Kopie hinüber. Was Objekte des Wirts im Skript dürfen (Besitz,
+  Klassen des Wirts sichtbar machen, was das Weglassen ungenutzten Codes dafür behalten muss), ist ein eigener Entwurf vor dem Package - der Port
+  muss es nur nicht verbauen.
+* Der Compiler braucht nichts vom Wirt außer Speicher und Dateien (über Rückrufe), damit er auch auf kleinen Zielen übersetzbar bleibt.
+
+Der Spike in Phase B prüft deshalb auch: zwei Skripte nacheinander in einem Prozess, das erste mit einer unbehandelten Ausnahme beendet.
+
 ## Aufbau im Repository (Vorschlag)
 
 ```
 native/runtime/    (wie heute) die Runtime, gemeinsam für native Programme und die VM
 native/base/       Arena, Strings, geordnete Maps, Pfade/Dateien, Prozesse, JSON-Leser, Zip, SHA-256 für die Werkzeuge
-native/vm/         Lader (.fbc), Interpreter, Natives-Tabelle, Host der Paket-Natives, Debug-Agent der VM; Programm `fire`
-native/forge/      lexer, preprocessor, parser, resolver, typecheck, compiler, linker, markup/, gen/ (Generator), build/ (Toolchains),
-                   project/, pkg/, serve/, cli; Programme `forge`, `ember`
+native/vm/         libfirevm: Lader (.fbc), Interpreter, Natives-Tabelle, Host der Paket-Natives, Debug-Agent der VM; Programm `fire`
+native/forge/      libforge: lexer, preprocessor, parser, resolver, typecheck, compiler, linker, markup/, gen/ (Generator), build/ (Toolchains),
+                   project/, pkg/, serve/; Programm `forge` (cli)
+native/embed/      fire_embed.h: die C-Schnittstelle über beiden
+packages/forge, packages/script   die Packages dazu (Preludes; ihre Natives sind die Quellen oben)
 tests/cases/       die Testfälle als Dateien
 ```
 
@@ -107,8 +148,18 @@ Gebaut wird ohne Build-System: je Programm eine Datei, die alles einbindet (`cc 
 
 ## Phasen
 
-Jede Phase endet mit einem Stand, der auf `master` gehen kann; das C#-Gegenstück wird erst entfernt, wenn der Vergleich über den ganzen Korpus grün ist.
+Gearbeitet wird **phasenweise nach `master`**: jeder Schritt einer Phase ist ein eigener, kleiner Merge, der `master` lauffähig lässt (neuer
+C-Code liegt daneben, bis er umgeschaltet wird). Das C#-Gegenstück wird erst entfernt, wenn der Vergleich über den ganzen Korpus grün ist.
 Der **Korpus**: alle Testfälle, `packages/**/*.fire` mit ihren Tests, die Beispiele und Vorlagen aus `fire.Project`.
+
+### Prüfungen für den nativen Build
+
+Gelten für jeden Merge, der `native/runtime` oder den Generator berührt, und sind ab Phase A Teil der Tests:
+
+* `fire_program.c` über den Korpus **byte-gleich** zum Stand davor (der Port ändert den erzeugten Code nicht);
+* **Größe**: `forge build --stats` der Referenzprogramme (Hello World, minimales `ui`-Programm, ein DOS-Ziel) - Code und Daten nicht größer;
+* **Geschwindigkeit**: die Benchmarks aus NATIVE_BACKEND ("Messwerte") nicht langsamer, über die Messschwankung hinaus;
+* **Bauzeit**: nicht länger (forge in C sollte sie verkürzen).
 
 ### Phase A - Vorbereitung im C#-Bestand
 
@@ -118,14 +169,17 @@ Noch kein C; alles hier ist für sich nützlich und macht den Rest prüfbar.
    Modulschnittstellen); Packer, Payload und Plugin-Cache steigen von MemoryPack um. `forge dump` gibt ein Programm als Text aus (zum Vergleichen).
 2. **Tests als Daten** (L5): Export, das C#-Testprogramm liest die Dateien.
 3. **Determinismus**: zweimal bauen ergibt byte-gleiche `.fbc` und `fire_program.c`; Stellen mit zufälliger Reihenfolge (Hash-Iteration, Zeitstempel, GUIDs) beseitigen.
-4. **Referenzstände**: ein Skript erzeugt für den Korpus `.fbc`, AST-Ausgabe, Diagnosen und `fire_program.c` (je Ziel/Option) als Vergleichsbasis.
-5. Tabellen, die beide Seiten brauchen, aus **einer** Quelle: Opcodes mit Operandengrößen, Fehlerkatalog, Methodentabellen des Preludes
+4. **Referenzstände**: ein Skript erzeugt für den Korpus `.fbc`, AST-Ausgabe, Diagnosen und `fire_program.c` (je Ziel/Option) als Vergleichsbasis;
+   dazu Größen und Benchmarks der Referenzprogramme ([Prüfungen für den nativen Build](#prüfungen-für-den-nativen-build)).
+5. **spark baut nur noch über die Befehlszeile von forge** (statt `NativeBuilder`/`ProjectBuilder` im eigenen Prozess) - der erste Teil von L4, noch ganz in C#.
+6. Tabellen, die beide Seiten brauchen, aus **einer** Quelle: Opcodes mit Operandengrößen, Fehlerkatalog, Methodentabellen des Preludes
    (`StringMethods` usw.) als Datendateien, aus denen C# und C erzeugt werden; das Prelude selbst als `.fire`-Dateien statt C#-Strings.
 
 ### Phase B - die VM in C
 
 0. **Spike** (entscheidet L1): Interpreter für rund 30 Opcodes auf `fire_rt.h` - Rechnen, Locals/Scopes, Aufrufe, eine Klasse mit Feldern und
-   Destruktor, `try`/`catch`/`resume`, eine Klasse zur Laufzeit registriert. Ergebnis: geht es ohne Eingriffe in die Runtime, mit kleinen, oder gar nicht.
+   Destruktor, `try`/`catch`/`resume`, eine Klasse zur Laufzeit registriert, zwei Skripte nacheinander in einem Prozess (L6). Ergebnis: geht es
+   ohne Eingriffe in die Runtime, mit Eingriffen hinter `FIRE_VM`, oder gar nicht - gemessen an den Prüfungen für den nativen Build.
 1. `native/base` und der Lader.
 2. Interpreter vollständig: alle Opcodes, die drei Modi (Debug/Release/Performance), Lambdas und Captures, Properties, Überladungen, Generics,
    typisierte Arrays, Zeiger, Records, Besitz (`take`, `TakeTo`, Kopien), Shutdown an sicheren Punkten.
@@ -135,9 +189,12 @@ Noch kein C; alles hier ist für sich nützlich und macht den Rest prüfbar.
 5. Reflection, JSON, Probes, Module und Plugins in der VM.
 6. Debug-Agent (L4): Haltepunkte, Schritte, Variablen über die Scope-Ebenen, `set`, Pause, Zeilenprofil.
 7. Programm `fire` (`fire run x.fbc`); der Korpus, vom C#-Compiler übersetzt, läuft mit den erwarteten Ausgaben; Benchmarks gegen die C#-VM.
+8. `forge build --engine vm` bleibt: die C-VM mit angehängtem `.fbc` (und den Bibliotheken der Packages) statt der .NET-Einzeldatei.
+9. **spark auf die C-VM** (L4): Ausführen als Kindprozess, Debuggen über `NativeDebugTarget`, `LiveSession` und `UiPreview` über Kindprozess und
+   gemeinsamen Speicher, Treiber-Agent und Geräte.
 
-**M1:** `forge run`/`forge test` (noch C#) starten die C-VM; die C#-VM bleibt bis M2 als Schalter. `fire.Terminal*`, die Bridges und die
-C#-Natives sind danach tot.
+**M1:** forge (noch C#) und spark benutzen nur noch die C-VM. `fire.Runtime`, `fire.Terminal*`, die Bridges, die C#-Natives und `VmDebugTarget`
+werden entfernt.
 
 Später, nicht Teil des Ports: ABI v2 für Paket-Natives (die Bibliothek benutzt die `Value` der VM direkt, keine Kopien, Objekte dürfen hinüber).
 
@@ -149,30 +206,27 @@ Später, nicht Teil des Ports: ABI v2 für Paket-Natives (die Bibliothek benutzt
 4. Compiler, Linker, Importe und Preludes. Prüfung: `.fbc` byte-gleich über den Korpus.
 5. Markup-Generatoren (`.fxml`, `.biscuit`, `.fdata`, Falstad). Prüfung: erzeugter fire-Text gleich.
 
-**M2:** `forge run`, `forge test`, `forge ui|biscuit|fdata|falstad` für die VM laufen ganz ohne .NET.
+6. `forge serve` (L4) auf dem C-Frontend; spark stellt `Language/` (4 300 Zeilen) darauf um, die Completion-Tests wandern auf Protokollebene.
+
+**M2:** `forge run`, `forge test`, `forge ui|biscuit|fdata|falstad` für die VM laufen ganz ohne .NET; spark enthält keinen Compiler mehr.
 
 ### Phase D - Backend und Werkzeuge in C
 
 1. Generator (`CppGenerator*`, 15 600 Zeilen - der größte Einzelposten). Prüfung: `fire_program.c`/`fire_natives.cpp` byte-gleich über den
    Korpus und die Optionen (Ziele, `linkage`, `stripping`, `#intwidth`, Debug, `optimize`).
 2. NativeBuilder, Toolchains (gcc, clang, MSVC, tcc, Emscripten, ESP-IDF, Open Watcom), Linkage, `PackageLibrary`, Stats, Boot-Images, PE-Ressourcen.
-3. Projekt, Solution, Bauplan, Vorlagen, Beispiele; Paketverwaltung und `ember`.
+3. Projekt, Solution, Bauplan, Vorlagen, Beispiele; von der Paketverwaltung, was forge braucht (Manifest, Store, `.fpk`). ember bleibt bis Phase F das C#-Programm.
 4. Rest der Befehlszeile: Testläufer, `forge data`, Modellwandler (`.fmesh`, `.fblocks`, glTF), Packer.
 5. `ToolchainSetup` (lädt unter Windows einen Compiler): braucht HTTPS und Entpacken im Werkzeug - über das System (WinHTTP) statt eigener TLS.
 6. `forge conformance` ersetzt den Kern von `fire.Testing`; Installer (`setup.iss`) und Paketierung ohne .NET-Werkzeuge.
+7. `fire_embed.h` und die Packages `forge`/`script` (L6), mit Tests in fire (ein Programm übersetzt und startet ein Skript, VM und nativ).
 
-**M3:** forge, ember und die VM sind C-Programme; wer nur sie braucht, braucht kein .NET. Der Bau von fire selbst braucht nur einen C-Compiler.
+**M3:** forge und die VM sind C-Programme und C-Bibliotheken; wer nur sie braucht, braucht kein .NET. Der Bau von fire selbst braucht nur einen
+C-Compiler. `fire`, `fire.Compiler`, `fire.Native` und der Kern von `fire.Testing` verlassen die Solution; .NET steckt nur noch in spark und ember.
 
-### Phase E - spark (C#) auf die C-Werkzeuge umstellen
+Danach: der **.NET-Wrapper** über `fire_embed.h` (NuGet-Paket mit P/Invoke, ersetzt `RuntimeSession` für Einbetter) und ABI v2 der Paket-Natives.
 
-1. `forge serve` (L4) und in spark `Language/` (4 300 Zeilen) darauf; die Completion-Tests wandern auf Protokollebene.
-2. Debuggen der VM über `NativeDebugTarget`; Bauen/Ausführen nur noch über Prozesse; Treiber-Agent (`PackageDriverAgent`) und Geräte-Manager auf die C-VM.
-3. `LiveSession` und `UiPreview` über Kindprozess und gemeinsamen Speicher.
-4. `fire`, `fire.Compiler`, `fire.Runtime`, `fire.Native`, die Bridges und der Kern von `fire.Testing` verlassen die Solution.
-
-**M4:** .NET steckt nur noch in spark.
-
-### Phase F - die IDE nach fire (Ausblick)
+### Phase F - die IDE und ember nach fire (Ausblick)
 
 Eigener Plan, sobald M3 steht. Was dafür in den Packages fehlt bzw. zu prüfen ist:
 
@@ -180,29 +234,45 @@ Eigener Plan, sobald M3 steht. Was dafür in den Packages fehlt bzw. zu prüfen 
 * Docking (`ui.docking` gibt es), Dialoge, Menüs, Baum, Markdown-Ansicht;
 * Git über den `git`-Prozess statt libgit2; MCP-Server über `packages/mcp`; der Assistent ist schon ein Package.
 
-Reihenfolge: Rahmen mit Projektmappe und Texteditor -> Bauen/Ausgabe -> Debugger -> Designer (fxml, Schaltplan, Datenmodell, Pixel, Hex,
-Mesh, Blöcke) -> Notizen, Git, Pakete, Geräte -> Installer. Die Protokolle aus L4 sind dann schon da und erprobt.
+**ember** ist der erste Härtetest (wie in ROADMAP.md vorgesehen): klein, Befehlszeile, braucht Prozesse, SHA-256, Zip und HTTP - alles als
+Package vorhanden. Den Teil, den auch forge braucht, bekommt es über das Package `forge`. Ob ember wirklich fire wird oder doch mit nach C geht, ist noch offen.
+
+Reihenfolge der IDE: Rahmen mit Projektmappe und Texteditor -> Bauen/Ausgabe -> Debugger -> Designer (fxml, Schaltplan, Datenmodell, Pixel, Hex,
+Mesh, Blöcke) -> Notizen, Git, Pakete, Geräte -> Installer. Die Protokolle aus L4 sind dann schon da und erprobt; wo ein Prozess zu schwer
+ist, nimmt die IDE die Packages aus L6.
 
 ## Risiken
 
 * **`master` bewegt sich schnell.** Jeder Commit am C#-Compiler oder an der VM muss in den Port nachgezogen werden. Gegenmittel: L3, kurze Phasen,
   und während eine Komponente portiert wird, möglichst keine neuen Features in genau dieser Komponente.
-* **L1 trägt nicht** (Runtime zu sehr auf erzeugten Code gebaut): dann eine eigenständige VM mit eigenem Wertmodell - deutlich mehr Arbeit und
-  wieder zwei Implementierungen. Der Spike klärt das vor allem anderen.
+* **L1 trägt nicht** (Runtime zu sehr auf erzeugten Code gebaut, oder nur um den Preis eines größeren/langsameren nativen Builds): dann eine
+  eigenständige VM mit eigenem Wertmodell - deutlich mehr Arbeit, wieder zwei Implementierungen, und ein eingebettetes Skript teilt keine Werte
+  mit seinem Wirt. Der Spike klärt das vor allem anderen.
+* **Skripte im nativen Wirt** (L6): Entladen eines Programms aus einer Runtime, die dafür nicht gebaut ist; das Weglassen ungenutzten Codes
+  gegen ein Skript, das alles erreichen könnte.
 * **Geschwindigkeit der VM** auf einer Runtime, deren schnelle Pfade für den C-Compiler gedacht sind (Inlining mit bekannten Arten). Messen in B7.
-* **`LiveSession`/`UiPreview`** über Prozessgrenzen (Bildrate, Fokus, Eingaben) - notfalls bleiben diese beiden Ansichten bis Phase F eingeschränkt.
+* **`LiveSession`/`UiPreview`** über Prozessgrenzen (Bildrate, Fokus, Eingaben) - der Teil, an dem "der Umbau soll kurz sein" hängen kann;
+  notfalls bleiben diese beiden Ansichten bis Phase F eingeschränkt.
 * **Geräte in der VM**: heute nutzt sie den Geräte-Manager und die Treiber von spark (`fire_host.dev_*`); die C-VM nimmt die C-Treiber des Packages.
   Das geteilte Gerät zwischen IDE und laufendem Skript braucht einen neuen Weg (Protokoll) oder entfällt in der Übergangszeit.
 * **MSVC und macOS** sind für Teile der Runtime ausdrücklich ungeprüft (NATIVE_BACKEND, "Natives von Packages in der VM").
 * **Umfang der Tests**: der Export von 38 000 Zeilen `Program.cs` ist Handarbeit an vielen Sonderfällen (Fake-Renderer, Xvfb, QEMU, DOSBox).
 
-## Offene Entscheidungen
+## Entscheidungen
 
-1. **forge in C statt in fire** - so verstanden und geplant; ROADMAP.md nennt bisher fire. Gilt das auch für **ember**? (Vorschlag: ja, es hängt an denselben Bibliotheken.)
-2. **Einbetten in .NET** (`Help/Embedding.md`: fire als Bibliothek in eigenen C#-Programmen) fällt mit dem Port weg. Ersatz: eine C-Schnittstelle
-   (`libfire`: bauen, ausführen, Ausgabe, Regeln, eigene Funktionen); ein dünner .NET-Wrapper darüber nur bei Bedarf. (Vorschlag: C-Schnittstelle, Wrapper nicht.)
-3. **L1**: VM auf `fire_rt.h` (Vorschlag) oder eigenständig.
-4. **L4**: spark in der Übergangszeit über Prozesse und Protokolle umstellen (Vorschlag), oder das C#-spark bis Phase F auf dem eingefrorenen
-   C#-Compiler lassen (weniger Arbeit jetzt, dafür zwei Compiler, die auseinanderlaufen).
-5. **`forge build --engine vm`** (eigenständiges VM-Programm): als C-VM mit angehängtem `.fbc` behalten (Vorschlag) oder streichen, weil es nativ gibt.
-6. **Wo weitergearbeitet wird**: alles auf einem langen Branch, oder phasenweise nach `master` (Vorschlag: phasenweise, Phase A sofort).
+Vom Benutzer entschieden (15.11.2026):
+
+1. **Compiler und VM in C**, nicht in fire: ein Frontend in C braucht es ohnehin (Henne und Ei). Beide müssen sich **per Package einbinden**
+   lassen - fire als Skriptsprache in eigenen fire-Programmen (L6).
+2. **Einbetten: C-Schnittstelle.** Ein .NET-Wrapper kommt auf die Roadmap (nach M3).
+3. **Der native Build darf nicht langsamer oder größer werden** - das ist wichtig und geht vor (L1, Prüfungen für den nativen Build).
+4. **spark wird auf Prozesse und Protokolle umgestellt**, nicht auf einem eingefrorenen C#-Compiler gelassen: je weniger in der Zwischenzeit
+   zu pflegen ist, desto besser. Der Umbau soll nicht lange dauern (darum an M1/M2 gehängt statt als eigene Phase).
+5. **`forge build --engine vm` bleibt** (C-VM mit angehängtem `.fbc`).
+6. **Phasenweise nach `master`**, damit der Port nicht unmergebar wird.
+
+Offen:
+
+* **ember**: in C mit forge, oder wie die IDE in fire (Tendenz des Benutzers: fire). Der Plan nimmt fire an und hält nur den Teil in C, den
+  forge selbst zum Bauen braucht; die Entscheidung muss erst vor Phase D Schritt 3 fallen.
+* **L1** (VM auf `fire_rt.h`): vom Spike abhängig, unter Bedingung 3.
