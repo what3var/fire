@@ -1962,7 +1962,16 @@ class derives from the other: the array keeps the element type it was given, so 
 n `undefined` elements. `defined` works for them too: `defined string s[] = new string[n]` starts with `""`, `defined Color c[] = new Color[n]`
 with the first value of the enum; `defined Dog d[]` has no zero, so it only takes an array whose elements are all given (`[new Dog("a")]`) -
 `new Dog[2]` there is an `ArgumentException` (`An element of a defined array of Dog cannot be undefined.`). VM and native backend behave the
-same (ArrayElem.Class, natively E_CLASS/TU_CLASS with a table of checks, g_arrClasses). JSON and generic code do not check these elements yet (ROADMAP 19).
+same (ArrayElem.Class, natively E_CLASS/TU_CLASS with a table of checks, g_arrClasses). JSON types what it reads for such a field like any other
+assignment. Generic code does the same by the type argument: `T items[]` and `new T[n]` in `class Bag<T>` are an array of Dog for a `Bag<Dog>`, of
+strings for a `Bag<string>` (so `List<Dog>`, `Dictionary<string, Dog>` hold typed arrays; an enum type argument is not known at run time and types
+nothing).
+
+**Arrays of lambdas.** `lambda<int, int> fs[]` (and `int lambda<int> fs[]`) types the array, too: an element is a lambda with that many parameters or
+`undefined` - what a single `lambda<...>` declaration checks (the types of a signature are hints for the type checker). Anything else is an
+`ArgumentException` (`An element of an array of lambda with 2 parameter(s) must be a lambda with 2 parameter(s) (or undefined), not a lambda with 1
+parameter(s).`). `defined lambda<int> fs[]` only takes an array whose elements are all given. Selectors and trees (`lambda member<T>`,
+`lambda expression<T>`) are not typed this way.
 
 **Defined arrays.** `defined` in front of the element type (`defined int a[]`, `defined float[32] v[]`, `defined bool f[8]`) makes the elements
 never `undefined`: the array keeps that as part of its type (ArrayElem.DefinedFlag in TypeArray and FieldInfo.RequiredArray, natively TU_DEFINED).

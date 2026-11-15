@@ -383,6 +383,9 @@ static class DiagnosticTests
                 string.Join("\n", temp.Select(d => d.ToLogLine())));
             var (kept, keptOut) = Compile(classes + "var k = new Keeper(new Sample())\nvar mine = new Sample()\nvar h = new Holder(mine)\nprint(k.s.v + h.s.v)");
             Check("TC031: kein Hinweis, wenn der Konstruktor nimmt oder das Argument eine Variable ist", kept.Count == 0 && keptOut == "14", string.Join("\n", kept.Select(d => d.ToLogLine())) + keptOut);
+            // (`construct(any initial) { if (initial is of Owns) { this.owns = initial; return } ... }`: unter der Typpruefung ist der Parameter kein Objekt)
+            var (listed, listedOut) = Compile("class Bag { any kind\n    any items\n    construct(any initial) {\n        if (initial is of int) { this.kind = initial; return }\n        this.items = try take initial\n    }\n}\nvar l = new List<int>([1, 2])\nvar b = new Bag([3, 4])\nprint(l.Count + b.items.length)");
+            Check("TC031: kein Hinweis fuer eine Zuweisung unter `if (p is of <Wert ohne Besitzer>)` (new List<int>([1, 2]) und List.owns)", listed.Count == 0 && listedOut == "4", string.Join("\n", listed.Select(d => d.ToLogLine())) + listedOut);
             var (lines, linesOut) = Compile("var list = new List<int>([5, 3, 8, 1])\nlist.\n    Sort()\nvar n = list\n    .Count\nvar m = list?.Count\n    + 1\n    - 2\nbool big = n\n    > 3\n    && n < 10\n    || false\nint x = 1\nx++\nprint(n + \" \" + m + \" \" + big + \" \" + x + \" \" + list[0])");
             // JSON reads an enum of the running program, not the last one of that name in the process (two programs, each with its own `enum Mode`)
             const string first = "#import \"json\"\nenum Mode { Slow, Fast }\nclass Car { Mode mode = Mode.Slow }\nCar c = Json.Deserialize<Car>(\"{\\\"mode\\\": \\\"Fast\\\"}\")\nprint(c.mode)";

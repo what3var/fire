@@ -44,6 +44,24 @@ namespace fire.Bytecode
         public static int? TypedElementOf(string typeArg) =>
             typeArg is "int" or "float" or "bool" or "char" && new fire.Ast.TypeRef(typeArg, null, 0).ArrayWidthCode(1) is var code and not 0 ? code : null;
 
+        /// <summary>How an array is typed for a type argument (`T items[]`, `new T[n]`; ROADMAP 19): the element type and - for a class, an interface or
+        /// `string` (ArrayElem.Class) - the DeclaredType text of the elements; null for what types nothing (a number with a unit, `in cm`, unknown).</summary>
+        public static (byte Elem, string? Text)? ArrayOfTypeArg(string? typeArg)
+        {
+            if (string.IsNullOrEmpty(typeArg) || typeArg[0] == '$' || typeArg.StartsWith("in:", StringComparison.Ordinal)) return null;
+            if (TypedElementOf(typeArg) is int code) return ((byte)(code & 0xFF), null);
+            if (NumberDemand(typeArg) != null || typeArg is "bool" or "char" or "word") return null;
+            return (fire.Values.ArrayElem.Class, OfName(typeArg));
+        }
+
+        /// <summary>The elements of `lambda&lt;P1, ..., Pn&gt; fs[]` (ROADMAP 19): lambdas with n parameters - what a declaration of one lambda checks too
+        /// (OpCode.CheckLambdaSignature; the types of a signature are informational, so the text only has the count).</summary>
+        public static string OfLambda(int paramCount) => $"lambda with {paramCount} parameter(s)" + DisplayEnd + LambdaPrefix + paramCount;
+        public const string LambdaPrefix = "lambda/";
+        /// <summary>The parameter count of a lambda condition (`lambda/2`), -1 for any other.</summary>
+        public static int LambdaParamsOf(string conditionName) =>
+            conditionName.StartsWith(LambdaPrefix, StringComparison.Ordinal) ? int.Parse(conditionName.AsSpan(LambdaPrefix.Length)) : -1;
+
         public static string OfTypeParam(TypeParam tp, int index, string owner, Func<string, string> resolveName)
         {
             string Text(TypeConstraint c) => c.Kind == TypeConstraintKind.IsOf ? "is of " + c.Name : "is in " + c.Name;
@@ -201,6 +219,8 @@ namespace fire.Bytecode
                 case "string": return value.Kind == ValueKind.String;
                 case "class": case "Exception": return value.Kind == ValueKind.Class;
             }
+            if (LambdaParamsOf(condition.Name) is var lambdaParams and >= 0)
+                return value.Kind == ValueKind.Lambda && value.AsLambda() is LambdaValue lambda && lambda.Proto.ParamCount == lambdaParams;
             // arrays, buffers and strings are enumerable (foreach): they fulfil IEnumerable of the prelude
             if (GenericClassNames.PlainName(condition.Name) == "IEnumerable" && value.Kind is ValueKind.Array or ValueKind.Buffer or ValueKind.String) return true;
             if (value.IsEnum) return value.Enum!.Matches(condition.Name);
