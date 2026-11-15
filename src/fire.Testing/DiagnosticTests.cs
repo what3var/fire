@@ -17,6 +17,7 @@ static class DiagnosticTests
     /// <summary>Compiles and runs <paramref name="source"/>; the warnings and what the program printed. An error of the compile is returned as its diagnostics.</summary>
     private static (IReadOnlyList<Diagnostic> Diagnostics, string Output) Compile(string source)
     {
+        TestCases.CollectSource("diag", source);
         var collector = new DiagnosticCollector();
         using var collecting = collector.Begin();
         var lines = new List<string>();

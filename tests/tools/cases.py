@@ -254,7 +254,51 @@ def write_vm_cases(cases, root):
         print(f'{folder}: {len(items)} cases')
     print(f'{total} cases as files')
 
+def record(forge, folder):
+    """What forge says about the cases of a folder, written next to them: the output (.expected) and everything on the error output - warnings, errors, an
+    exception nothing catches - (.diagnostics). For the groups whose cases are about the messages of the compiler; look at the files before you check them in."""
+    import subprocess
+    n = 0
+    for f in sorted(os.listdir(folder)):
+        if not f.endswith('.fire'): continue
+        tail = open(os.path.join(folder, f), encoding='utf-8', newline='').read().split('\n')[-12:]
+        args = [forge, 'run', f]
+        for l in tail:
+            if l.startswith('//# types: '): args += ['--types', l[len('//# types: '):]]
+            if l.startswith('//# modes: '): args += ['-m', l[len('//# modes: '):].split(' ')[0].upper()]
+        try: r = subprocess.run(args, capture_output=True, cwd=folder, timeout=120)
+        except subprocess.TimeoutExpired: print('timeout: ' + f); continue
+        for ext, data in (('.expected', r.stdout), ('.diagnostics', r.stderr)):
+            path = os.path.join(folder, f[:-5] + ext)
+            if not os.path.exists(path) or open(path, 'rb').read() != data: open(path, 'wb').write(data); n += 1
+    print(f'{folder}: {n} files written')
+
+def write_sources(collected, root, forge):
+    """The sources that the checks of diagnostics, types and syntax compile (FIRE_TESTS_COLLECT: family `source:<group>`) as cases, each once."""
+    groups = {}
+    for e in collected:
+        if not e['family'].startswith('source:'): continue
+        g = groups.setdefault(e['family'][7:], {})
+        g.setdefault((e['script'], e.get('types')), None)
+    for group, items in sorted(groups.items()):
+        d = os.path.join(root, group); os.makedirs(d, exist_ok=True)
+        for idx, (script, types) in enumerate(items):
+            if '\r' in script: continue
+            first = next((l.strip() for l in script.split('\n') if l.strip() and not l.strip().startswith('//')), 'empty')
+            title = f'{group} {idx + 1}: {first[:70]}'
+            text = script + '\n' + ('//# types: ' + types + '\n' if types else '') + '//# modes: Release\n//# name: ' + title + '\n'
+            open(os.path.join(d, '%04d-%s.fire' % ((idx + 1) * 10, slug(first)[:40].strip('-') or 'case')), 'w', encoding='utf-8', newline='').write(text)
+        print(f'{group}: {len(items)} cases')
+        record(forge, d)
+
 if __name__ == '__main__':
+    if len(sys.argv) == 4 and sys.argv[1] == 'record':
+        # cases.py record <forge> <folder of a group>: writes .expected and .diagnostics as this forge gives them
+        record(os.path.abspath(sys.argv[2]), sys.argv[3]); sys.exit(0)
+    if len(sys.argv) == 5 and sys.argv[1] == 'sources':
+        # cases.py sources <collected.jsonl> <tests/cases> <forge>: the sources of the diagnostic checks as cases (done once)
+        import json
+        write_sources([json.loads(l) for l in open(sys.argv[2], encoding='utf-8') if l.strip()], sys.argv[3], os.path.abspath(sys.argv[4])); sys.exit(0)
     if len(sys.argv) == 6 and sys.argv[1] == 'calls':
         # cases.py calls <Program.cs> <collected.jsonl of FIRE_TESTS_COLLECT> <output.cs> <tests/cases>: the checks of the VM families as files (done once)
         import json

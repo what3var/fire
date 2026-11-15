@@ -107,6 +107,14 @@ static class TestCases
         var o = new Dictionary<string, object?> { ["family"] = family, ["title"] = title, ["script"] = script, ["expected"] = expected, ["modes"] = modes?.Select(m => m.ToString()).ToArray(), ["packed"] = packed, ["error"] = error };
         lock (CollectLock) System.IO.File.AppendAllText(CollectFile, System.Text.Json.JsonSerializer.Serialize(o) + "\n");
     }
+    /// <summary>The same for a check that only compiles (and runs) a source and looks at the diagnostics itself: the source and how strict the types are checked.</summary>
+    public static void CollectSource(string family, string source, string? types = null)
+    {
+        if (CollectFile == null) return;
+        var o = new Dictionary<string, object?> { ["family"] = "source:" + family, ["script"] = source, ["types"] = types?.ToLowerInvariant() };
+        lock (CollectLock) System.IO.File.AppendAllText(CollectFile, System.Text.Json.JsonSerializer.Serialize(o) + "\n");
+    }
+
     private static readonly string? CollectFile = Environment.GetEnvironmentVariable("FIRE_TESTS_COLLECT") is { Length: > 0 } f ? f : null;
     private static readonly object CollectLock = new();
 
