@@ -600,6 +600,29 @@ namespace fire.Native
             return calls;
         }
 
+        /// <summary>The type arguments of `this` as the class `owner` (the class of the running method or one of its bases) sees them, when the running code is
+        /// a specialization or a copy for known type arguments (`GetIndex&lt;int, int&gt;` of a Dictionary: `int, int` for its __HashTable); null otherwise.</summary>
+        private static string[]? KnownSelfTypeArgs(Func f, string owner)
+        {
+            var args = f.Proto?.SpecArgs ?? f.SpecClassArgs;
+            var rc = f.Chunk.OwnerClass;
+            if (args == null || rc == null || (f.Proto?.SpecOwner ?? f.SpecClassOwner) != rc.Name) return null;
+            while (rc != null && rc.Name != owner)
+            {
+                var given = rc.BaseTypeArgs ?? Array.Empty<string>();
+                var outer = args;
+                args = given.Select(t => !t.StartsWith('$') ? t
+                    : int.TryParse(t.AsSpan(1), NumberStyles.Integer, CultureInfo.InvariantCulture, out int j) && j < outer.Length ? outer[j] : "any").ToArray();
+                rc = rc.Base;
+            }
+            return rc == null ? null : args;
+        }
+
+        /// <summary>Is the specialization certainly the one for `self` (KnownSelfTypeArgs fit its type arguments, `any` none of them)?</summary>
+        private static bool SpecKnownForSelf(Func f, FunctionProto spec) =>
+            spec.SpecOwner is { } owner && spec.SpecArgs is { } specArgs && KnownSelfTypeArgs(f, owner) is { } known && known.Length == specArgs.Length
+            && specArgs.Select((t, k) => t == "any" || t == known[k] && known[k] != "any").All(b => b);
+
         /// <summary>Do the type arguments of a specialization (`any`: every one) take those the type checker knows of a receiver ("int|string")?</summary>
         private static bool SpecArgsFit(string[] specArgs, string known)
         {
@@ -4171,6 +4194,16 @@ namespace fire.Native
         /// <summary>The scalar shadow of slot k (after its type: a bool `_b`, an int `_n`); it is declared with the function.</summary>
         /// <summary>A CallNative of a typed native in C whose every argument is a C number (NativeCTypes), called directly: it reads the scalar shadows
         /// itself - the slots need not become Values first.</summary>
+        /// <summary>`__MathCall(15, key)` (the hash of HashOf&lt;int, any&gt;) of an int without a unit that is a C number: computed as one (fire_mixHash, like
+        /// keyHash) - the arguments stay C numbers.</summary>
+        private bool IntKeyHash(Func f, Flow st, Instr ins)
+        {
+            if (ins.Op != OpCode.CallNative || ins.A[1] != 2 || ins.A[0] >= _natives.Count || _natives[ins.A[0]] != MathMethods.NativeName) return false;
+            int at = f.IndexOf[ins.Addr], key = st.Depth - 1;
+            if (at < 2 || f.Decoded[at - 2] is not { Op: OpCode.LoadConst } code || f.Chunk.Constants[code.A[0]] is not { Kind: ValueKind.Int } c || c.AsInt() != (long)MathMethod.Hash) return false;
+            return key >= 0 && key < 64 && (st.Scalar >> key & 1) != 0 && KindOfType(st.Types[key]) == KindInt && UnitOfType(st.Types[key]) == 0;
+        }
+
         private bool TypedNativeCall(Instr ins)
         {
             if (ins.Op != OpCode.CallNative || ins.A[0] >= _natives.Count || !_packageNatives.TryGetValue(_natives[ins.A[0]], out var pn) || pn.Argc != ins.A[1]) return false;
@@ -4296,7 +4329,7 @@ namespace fire.Native
             string VR(int k) => k >= 0 && k < 64 && st.Alias[k] is { } aliasedV ? aliasedV : SlotName(st.Region, k);
             if (AnyAlias(st) && !AliasAware(ins.Op)) MaterializeAliases(st, E);
             // (`Math.Abs(x)` ...: MathIntrinsic takes C numbers - the call of the prelude's function makes them Values first, below)
-            if (st.Scalar != 0 && !ScalarAware(ins.Op) && !TypedNativeCall(ins) && !(ins.Op == OpCode.CallStaticMethod && (CAbiStaticCallee(f, ins) != null || Str(ins.A[0]) == "Math"))
+            if (st.Scalar != 0 && !ScalarAware(ins.Op) && !TypedNativeCall(ins) && !IntKeyHash(f, st, ins) && !(ins.Op == OpCode.CallStaticMethod && (CAbiStaticCallee(f, ins) != null || Str(ins.A[0]) == "Math"))
                 && !(ins.Op == OpCode.GetStaticField && ConstantStatic(Str(ins.A[0]), Str(ins.A[1])) != null)   // (`Math.PI`: a constant) && !(ins.Op == OpCode.CallMethod && CAbiMethodCallee(f, st, ins) != null)
                 && !(ins.Op == OpCode.GetField && CAbiGetterCallee(f, st, ins) != null)
                 && !GuardTopProven(st, ins)
@@ -5414,6 +5447,12 @@ namespace fire.Native
                     if (native == MathMethods.NativeName && argc is 2 or 3)
                     {
                         int first = d - argc;
+                        // (the hash of an int key without a unit - `__MathCall(15, key)` in HashOf<int, any>: a C number, like keyHash does it)
+                        if (IntKeyHash(f, st, ins))
+                        {
+                            SetScalar(first, TypeOf(KindInt, 0), $"(FireInt)fire_mixHash((uint64_t){SN(first + 1)})");
+                            d = first + 1; return Next();
+                        }
                         E($"{S(first)} = mathCall({S(first)}.i, {S(first + 1)}, {(argc == 3 ? S(first + 2) : "Undef()")});");
                         Check();
                         d = first + 1; SetR(first, false); return Next();
@@ -5444,6 +5483,15 @@ namespace fire.Native
                         int first = d - 1;
                         string moved = SR(first);
                         E($"{T(first)} = fire_lambdaHandover({moved}, &{OwnerList()});");
+                        Check();
+                        d = first + 1; SetR(first, false); return Next();
+                    }
+                    if (native == ArrayCopyMethods.NativeName && argc == 3)
+                    {
+                        // `__array_copy(src, dst, count)` (the prelude's Grow): the packed numbers in one block (fire_rt.h fire_arrayCopy)
+                        int first = d - 3;
+                        string copyArgs = string.Join(", ", Enumerable.Range(first, 3).Select(SR));
+                        E($"{T(first)} = fire_arrayCopy({copyArgs});");
                         Check();
                         d = first + 1; SetR(first, false); return Next();
                     }
@@ -6235,6 +6283,20 @@ namespace fire.Native
                                 if (cSpecArgs[n] is not { } cargs || CAbiOf(sc.Callee) is not { } sabi) return $"{sc.Callee.Name}({hargs})";
                                 string ccall = $"{CName(sc.Callee)}({hrecv}{cargs})";
                                 return sabi.RetType == 0 ? ccall : ScalarValueOf(BaseKindOfType(sabi.RetType), UnitOfType(sabi.RetType), ccall);
+                            }
+                            // (in a specialization, on `self`: the first one whose type arguments are those of `self` is certain - without a test; its C body
+                            // keeps a C result, `this.Find(key, this.HashOf(key))` in GetIndex<int, int> calls both C bodies with C numbers)
+                            int known = SlotScalars() && hrecv == "self" && f.HasSelf ? specCalls.FindIndex(sc => SpecKnownForSelf(f, sc.Spec)) : -1;
+                            if (known >= 0 && cSpecArgs[known] is { } kargs && definedTests[known].Length == 0 && specCalls.Take(known).All(sc => !SpecKnownForSelf(f, sc.Spec))
+                                && CAbiOf(specCalls[known].Callee) is { } kabi)
+                            {
+                                E($"if (FIRE_UNLIKELY(!leafAlive(self))) {Thrower("destroyedError(self);")}");
+                                string kcall = $"{CName(specCalls[known].Callee)}(self{kargs})";
+                                if (kabi.RetType != 0) SetScalar(slot, kabi.RetType, kcall);
+                                else { E($"{T(slot)} = {kcall};"); SetR(slot, false); SetT(slot, ReturnType(specCalls[known].Callee)); }
+                                ArgsAfter(argc, mask, S(slot));
+                                Check();
+                                d = slot + 1; return Next();
                             }
                             string chain = string.Concat(specCalls.Select((sc, n) => $"({sc.Condition}{definedTests[n]}) ? {SpecCall(n)} : ")) + $"{target.Name}({hargs})";
                             string hslot = T(slot);

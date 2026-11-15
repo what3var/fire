@@ -2461,8 +2461,10 @@ front of the type it **never holds `undefined`**: a parameter, a field, a proper
   class of the program declared `int`, `float` or `bool` without `defined` is compiled as a `defined` one when every write the type checker sees
   gives a number (or the result of a method, a parameter or another field that is derived itself) and none can write it unseen (`&`, a `ref`
   argument, `with`, `Json.Deserialize` in the program). With a number literal as initializer it keeps it; one without an initializer only when its `undefined` cannot
-  be seen: every constructor of its class (no base class) sets it among its first plain statements - before any call, `this` handed out or read of
-  it - and the program does not ask for it (`== undefined`, `is of`, `?.` on the name); it starts at 0 then. `FIRE_INFER_UNINITIALIZED_DEFINED=0` leaves out the fields without an initializer; `FIRE_DERIVE_LOG=1` shows the decisions.
+  be seen: every constructor of its class sets it among its first plain statements - before any call, `this` handed out or read of
+  it - and the program does not ask for it (`== undefined`, `is of`, `?.` on the name), and nothing reaches it before: the constructors of the base classes
+  (which run first, also without `: base(...)`) and what they call of their own use no member that the class or a class derived from it declares (an
+  override could read the field) and do not hand out `this`; the field initializers of the derived classes call nothing and do not read it; it starts at 0 then. `FIRE_INFER_UNINITIALIZED_DEFINED=0` leaves out the fields without an initializer; `FIRE_DERIVE_LOG=1` shows the decisions.
   **JSON and reflection** can write a field or call a method past what the checker sees: a program that reads JSON into objects
   (`Json.Deserialize`, also in a package it uses) derives no field, one that uses reflection (`reflection`, also through `ui`, `data`, ...) no field
   and no parameter, and a method whose name is in a string keeps its parameters as declared - unless the class says otherwise with

@@ -1127,7 +1127,10 @@ namespace fire.Compiler
                 for (int i = 0; i < md.Params.Count && i < 64; i++)
                     if (md.Params[i].Type is { NonNull: true }) specProto.SpecDefinedMask |= 1L << i;
                 specProto.SpecParamKinds = md.Params.Select(p => p.ByRef || p.ArrayRanks.Count > 0 ? (byte)0 : DeclaredKind.Of(p.Type, p.DefaultValue)).ToArray();
-                target!.Specializations = (target.Specializations ?? Array.Empty<FunctionProto>()).Append(specProto).ToArray();
+                // (the more specific first - fewer `any` among the type arguments: `Insert<int, int>` before `Insert<int, any>`; the VM, the trampoline and a
+                // call site take the first that fits)
+                target!.Specializations = (target.Specializations ?? Array.Empty<FunctionProto>()).Append(specProto)
+                    .OrderBy(p => p.SpecArgs?.Count(a => a == "any") ?? 0).ToArray();
             }
 
             // No declaration of its own -> exactly ONE synthesised 0-arg public

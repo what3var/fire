@@ -21429,6 +21429,52 @@ else
             g = take new Item("global")
             print(g.name)
             """),
+        ("Feld-Herleitung mit Basisklasse: ein Feld ohne Initialisierer wird defined, wenn die Konstruktion der Basisklassen es nicht ueber eine Ueberschreibung lesen kann (sonst sieht der Basiskonstruktor undefined); Methoden der Basis werden verfolgt", """
+            class B {
+                int b = 1
+                construct() { this.b = 2 }
+                int Peek() { return -1 }
+            }
+            class D : B {
+                int n
+                construct() { this.n = 5 }
+                override int Peek() { return this.n }
+            }
+            class B2 {
+                construct() { print("B2 sieht " + this.Peek()) }
+                int Peek() { return -1 }
+            }
+            class D2 : B2 {
+                int n
+                construct() { this.n = 5 }
+                override int Peek() { return this.n }
+            }
+            class B3 {
+                int s
+                construct() { this.Setup() }
+                undefined Setup() { this.s = this.Helper() }
+                int Helper() { return 3 }
+            }
+            class D3 : B3 {
+                int n
+                construct() { this.n = 4 }
+                int Helper2() { return this.n }
+            }
+            class B4 {
+                construct(int x) { print("B4 " + x + " " + this.Look()) }
+                int Look() { return 0 }
+            }
+            class D4 : B4 {
+                int n
+                construct() : base(7) { this.n = 1 }
+                override int Look() { return this.n }
+            }
+            var d = new D()
+            var d2 = new D2()
+            var d3 = new D3()
+            var d4 = new D4()
+            print(d.n + d.Peek() + " " + d2.n + " " + d3.n + d3.Helper2() + " " + d3.s + " " + d4.n)
+            """),
         ("JsonObject.Set uebernimmt, was dem Aufruf gehoert (take, neu erzeugt), auch aus einem inneren Block und ueber vier Eintraege hinaus; ein zerstoertes Objekt beim Schreiben ist eine DestroyedException, kein stilles null", """
             #import "json"
             var root = new JsonObject()

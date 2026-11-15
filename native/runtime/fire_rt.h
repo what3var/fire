@@ -6244,6 +6244,28 @@ FIRE_FN bool arrCopyTyped(Arr* dst, const Arr* src) {
     return true;
 }
 
+/* `__array_copy(src, dst, count)` (the prelude: List.Grow<int>/<float>): the first `count` elements of src into dst - the packed numbers in one block when
+ * both are packed of the same element and unit (with the marks of real hint values), else one by one like `dst[i] = src[i]`. */
+FIRE_FN Value arrayGet(Value a, Value i);
+FIRE_FN Value arraySet(Value a, Value i, Value v);
+FIRE_FN Value fire_arrayCopy(Value src, Value dst, Value count) {
+    Arr *s, *d;
+    uint32_t n, i;
+    if (src.kind != K_Array || dst.kind != K_Array || count.kind != K_Int) return fireError("ArgumentException", "__array_copy needs two arrays and a count.");
+    if (!leafAlive(src) || !leafAlive(dst)) return fireError("DestroyedException", "Access to a destroyed array.");
+    s = arrOf(src); d = arrOf(dst);
+    if (count.i < 0 || (uint64_t)count.i > s->length || (uint64_t)count.i > d->length) return fireError("IndexOutOfBoundsException", "__array_copy: the count is outside the arrays.");
+    n = (uint32_t)count.i;
+    if (s->typed && d->typed && s->typed->packed && d->typed->packed && s->typed->elem == d->typed->elem && s->typed->unit == d->typed->unit
+        && (s->typed->flags & ~TU_DEFINED) == (d->typed->flags & ~TU_DEFINED) && (!(d->typed->flags & TU_DEFINED) || (s->typed->flags & TU_DEFINED))) {
+        dataCopy(d->typed->data, s->typed->data, (uint32_t)((uint64_t)n * arrElemSize(s->typed->elem)));
+        if (s->typed->real || d->typed->real) for (i = 0; i < n; i++) arrSetReal(d->typed, i, d->length, arrIsReal(s->typed, i));
+        return Undef();
+    }
+    for (i = 0; i < n; i++) { arraySet(dst, Int((FireInt)i), arrayGet(src, Int((FireInt)i))); if (FIRE_UNLIKELY(g_unwind.active)) break; }
+    return Undef();
+}
+
 FIRE_FN Value arrayGet(Value a, Value i) {
     char text[160];
     if (FIRE_LIKELY(a.kind == K_Array && i.kind == K_Int)) {

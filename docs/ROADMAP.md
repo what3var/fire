@@ -1173,8 +1173,11 @@ Mit JSON und Reflection (Wunsch des Benutzers): ohne Zutun bleibt eine Klasse da
 kann jede Klasse nennen; Reflection erreicht jedes Mitglied per Name); `[InferDefined]` vor der Klasse - auch in einem Paket - schaltet die Herleitung
 für sie ein, und was von außen kommt, wird geprüft (Meldung nennt die Herleitung, JSON: fehlend 0, `null` ein Fehler). SPEC 8.10b, TYPES.md.
 
-Offen (Wunsch des Benutzers, später): auch Klassen mit Basisklasse zulassen - dafür prüfen, ob der Konstruktor der Basisklasse (und was er aufruft,
-auch eine überschriebene Methode der abgeleiteten Klasse) über Umwege auf das Feld zugreift, bevor der eigene Konstruktor es gesetzt hat.
+**Umgesetzt** (Wunsch des Benutzers): auch Klassen mit Basisklasse (TypeChecker.BaseConstructionSafe). Die Konstruktoren und Feld-Initialisierer der
+Basisklassen laufen zuerst (auch ohne `: base(...)` der parameterlose); was sie von `this` benutzen - und die Methoden und Properties der Basisklassen,
+die sie so erreichen, verfolgt - darf kein Mitglied sein, das die Klasse selbst oder eine von ihr abgeleitete deklariert (eine Überschreibung könnte das
+Feld lesen), und `this` geht nicht hinaus. Die Feld-Initialisierer der abgeleiteten Klassen rufen nichts und lesen das Feld nicht. Eine unbekannte
+Basisklasse: nicht hergeleitet.
 
 ## 21. Typisierte Spezialisierungen generischer Methoden
 
@@ -1193,10 +1196,16 @@ Gemessen (nativ, Release, 1 Mio., die Maschine war belastet - Instruktionen mit 
 Offen:
 
 * `l[i]` noch näher an 3 ns: der Test der Typargumente ist eingebettet (`static inline`); es bleibt der Aufruf des Rumpfs mit einem `Value` als Ergebnis.
-* `Grow` kopiert Element für Element (etwa 60 Instruktionen je Element): ein Kopieren der gepackten Daten am Stück.
+* `Grow` kopiert Element für Element (etwa 60 Instruktionen je Element): ein Kopieren der gepackten Daten am Stück. **Umgesetzt:** `__array_copy(src, dst, n)`
+  (nativ fire_arrayCopy: ein Block bei gleich gepackten Arrays, sonst wie `dst[i] = src[i]`; VM ArrayCopyMethods) in `Grow<int>`/`Grow<float>` und in
+  `__HashTable.Resize`, wenn nichts entfernt wurde - `List<int>.Add` 19 → 15 ns.
 * Methoden mit Ergebnis (`l.Get(i)`-artig) an der Aufrufstelle wie `l[i]` typisieren (der Hinweis steht schon in der Tabelle).
 * `Dictionary<K, V>`/`HashSet<T>`: **umgesetzt** `K keys[]`/`V vals[]` (nach den Typargumenten typisiert), die Hilfsarrays `defined int`/`defined bool`,
   `HashOf<int, any>`/`Find<int, any>`/`Insert<int, any>` im `__HashTable` (der Platzhalter `any` in Spezialisierungen ist dafür neu), `arraySet`
   schreibt eine Zahl ohne Einheit direkt in ein gepacktes int-/float-Array, `adaptSlot`/`adaptUnit` lassen eine Zahl in ihrer Einheit ohne Aufruf durch.
   `Dictionary<int, int>` mit 200 000 Einträgen (setzen, lesen) und `HashSet<int>` (Add, Contains): 1959 → 1237 Mio. Instruktionen. Offen: der Wert
-  geht noch als `any` in die Tabelle (`Insert<int, int>` usw. für die häufigen Paare), `Resize` kopiert Element für Element.
+  geht noch als `any` in die Tabelle (`Insert<int, int>` usw. für die häufigen Paare), `Resize` kopiert Element für Element. **Umgesetzt:**
+  `operator[]<int, int>`/`<int, float>` (lesen und schreiben) und `Insert<int, int>`/`<int, float>`; die Spezialisierungen stehen nach Genauigkeit sortiert
+  (weniger `any` zuerst); in einer Spezialisierung ist die für `self` gewisse ohne Test der C-Rumpf mit C-Ergebnis (KnownSelfTypeArgs); der Hash eines
+  int-Schlüssels ist nativ eine C-Zahl (IntKeyHash). `Dictionary<int, int>` mit 200 000 Einträgen: setzen 355 → 150 ns, lesen 95-140 → 56 ns.
+  Offen: `Find` prüft je Kettenglied `self` und die Arrays (Lebendigkeit über Schleifen hinweg in der Flussanalyse).

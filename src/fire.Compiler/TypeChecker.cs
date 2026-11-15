@@ -504,11 +504,13 @@ namespace fire.Compiler
 
         /// <summary>A field without an initializer whose undefined nobody can see: every constructor of its class sets it first - among its leading simple
         /// statements (assignments and local declarations whose values call nothing, hand out no `this` and do not read the field), so no method, no `x++`
-        /// and no other read comes before. Not for a static field, a class with a base class (its constructor may call an override) or one without a
-        /// constructor, nor when the initializer of another field reads it.</summary>
+        /// and no other read comes before. Not for a static field or a class without a constructor, nor when the initializer of another field reads it, nor
+        /// when a base class's construction may reach it (BaseConstructionSafe).</summary>
         private bool SetBeforeRead(ClassDecl decl, FieldDecl fd)
         {
-            if (fd.IsStatic || decl.BaseRefs?.Any(b => _classes.ContainsKey(NameOf(b))) == true) return false;
+            if (fd.IsStatic) return false;
+            // (a base class: its constructor runs first - also without `: base(...)` - and may read the field through an override; ROADMAP 20)
+            if (!BaseConstructionSafe(decl, fd)) return false;
             var ctors = decl.Members.OfType<ConstructorDecl>().ToList();
             if (ctors.Count == 0) return false;
             bool Mentions(object? node)
@@ -542,6 +544,83 @@ namespace fire.Compiler
             }
             return true;
         }
+        /// <summary>Can nothing read `fd` (of `decl`) before a constructor of `decl` set it - from the classes around `decl`? The constructors and field
+        /// initializers of its base classes run first: what they use of `this` (and the methods of the base classes that this reaches, followed) is no member
+        /// declared in `decl` or a class derived from it (which could override it and read the field) and `this` is not handed out. The field initializers
+        /// of the classes derived from `decl` call nothing and do not read the field. A base class that is not known: not safe.</summary>
+        private bool BaseConstructionSafe(ClassDecl decl, FieldDecl fd)
+        {
+            var below = new HashSet<string>(StringComparer.Ordinal);   // (the members of decl and of the classes derived from it)
+            var derived = _classes.Values.Where(c => !ReferenceEquals(c, decl) && DerivesFrom(c, decl)).ToList();
+            foreach (var c in derived.Prepend(decl))
+                foreach (var m in c.Members)
+                    switch (m) { case MethodDecl md: below.Add(md.Name); break; case PropertyDecl pd: below.Add(pd.Name); break; case FieldDecl f2: below.Add(f2.Name); break; }
+            // the initializers of the derived classes: nothing that calls or hands out `this`, no read of the field
+            foreach (var c in derived)
+                foreach (var other in c.Members.OfType<FieldDecl>())
+                    if (other.Initializer != null && AstNodes(other.Initializer).Any(n => n is CallExpr or NewExpr or ThisExpr or BaseExpr or LambdaExpr
+                        || n is IdentifierExpr id && id.Name == fd.Name || n is MemberExpr mm && mm.Name == fd.Name)) return false;
+            // the base classes: their construction (and what it reaches of their own methods) does not use a member that a derived class may give
+            var pending = new Queue<object>();
+            var seen = new HashSet<string>(StringComparer.Ordinal);
+            var chain = new List<ClassDecl>();
+            for (var cur = decl; ;)
+            {
+                var baseRef = cur.BaseRefs?.FirstOrDefault(b => !_interfaces.ContainsKey(NameOf(b) ?? "") && !_interfaces.ContainsKey(PlainName(b.BaseName)));
+                if (baseRef == null) break;
+                if (!_classes.TryGetValue(NameOf(baseRef) ?? "", out var bc) && !_classes.TryGetValue(PlainName(baseRef.BaseName), out bc)) return false;
+                if (chain.Contains(bc)) break;
+                chain.Add(bc);
+                cur = bc;
+            }
+            if (chain.Count == 0) return true;
+            foreach (var bc in chain)
+            {
+                foreach (var ctor in bc.Members.OfType<ConstructorDecl>()) { pending.Enqueue(ctor.Body); foreach (var a in ctor.BaseArgs ?? Array.Empty<Expr>()) pending.Enqueue(a); }
+                foreach (var f2 in bc.Members.OfType<FieldDecl>()) if (f2.Initializer != null) pending.Enqueue(f2.Initializer);
+            }
+            while (pending.Count > 0)
+            {
+                var nodes = AstNodes(pending.Dequeue()).ToList();
+                int thisTargets = nodes.Count(n => n is MemberExpr { Target: ThisExpr });
+                if (nodes.Count(n => n is ThisExpr) > thisTargets) return false;   // (`this` handed out: anything may happen to it)
+                foreach (var n in nodes)
+                {
+                    // (a bare name: only one that means a member of `this` - a local or a parameter of the same name is none)
+                    string? used = n switch
+                    {
+                        MemberExpr { Target: ThisExpr } m => m.Name,
+                        IdentifierExpr id => _refs.TryGetValue(id, out var r) && r is not ResolvedRef.ImplicitThisMember ? null : id.Name,
+                        _ => null,
+                    };
+                    if (used == null) continue;
+                    if (below.Contains(used)) return false;
+                    // (a method or property of a base class that it calls on `this`: what it uses counts too)
+                    if (!seen.Add(used)) continue;
+                    foreach (var bc in chain)
+                        foreach (var m in bc.Members)
+                            if (m is MethodDecl md && md.Name == used) pending.Enqueue(md.Body);
+                            else if (m is PropertyDecl pd && pd.Name == used) { if (pd.Getter != null) pending.Enqueue(pd.Getter); if (pd.Setter != null) pending.Enqueue(pd.Setter); }
+                }
+            }
+            return true;
+        }
+
+        private bool DerivesFrom(ClassDecl c, ClassDecl ancestor)
+        {
+            var seen = new HashSet<ClassDecl>(ReferenceEqualityComparer.Instance);
+            for (var cur = c; cur != null && seen.Add(cur);)
+            {
+                ClassDecl? next = null;
+                foreach (var b in cur.BaseRefs ?? Array.Empty<TypeRef>())
+                    if (_classes.TryGetValue(NameOf(b) ?? "", out var bc) || _classes.TryGetValue(PlainName(b.BaseName), out bc)) { next = bc; break; }
+                if (next == null) return false;
+                if (ReferenceEquals(next, ancestor)) return true;
+                cur = next;
+            }
+            return false;
+        }
+
         /// <summary>A bare name that is a field of `this` or a static field of the class (ResolvedRef).</summary>
         private bool IsFieldRef(IdentifierExpr id) => _refs.TryGetValue(id, out var r) && r is ResolvedRef.ImplicitThisMember or ResolvedRef.StaticMember && !IsLocal(id.Name);
 
