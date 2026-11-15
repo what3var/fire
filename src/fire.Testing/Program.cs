@@ -29651,6 +29651,30 @@ else
             print(keys.Count + " " + keys[0])
             foreach (var kv in d) { print(kv.Key + "=" + kv.Value) }
             """),
+        ("byte und word als Locals und Parameter, ein Bytepuffer als Parameter und aus einem Feld (ROADMAP 13): Pruefsummen mit Schieben, # und Wort-Arithmetik", """
+            class C {
+                byte data[]
+                construct(int n) { this.data = new byte[n]; for (int i = 0; i < n; i++) { this.data[i] = i } }
+                static word Sum(byte buf[], int n) {
+                    word acc = 0
+                    byte last = 0
+                    for (int i = 0; i < n; i++) {
+                        byte b = buf[i]
+                        acc = (acc << 1) # b
+                        last = b
+                    }
+                    return acc + last
+                }
+                word Own() {
+                    word acc = 7
+                    for (int i = 0; i < this.data.length; i++) { acc = acc * 31 + this.data[i] }
+                    return acc
+                }
+                static word Mix(word a, word b, byte c) { return (a # b) + c }
+            }
+            var c = new C(1000)
+            print(C.Sum(c.data, 1000) + " " + c.Own() + " " + C.Mix(5!word, 9!word, 200))
+            """),
         ("defined fuer strings, Enums und Objekte (SPEC 8.10b): ein string beginnt bei \"\", ein Enum beim ersten Wert, ein Objekt braucht seinen Wert (Feld: jeder Konstruktor setzt es); undefined ist eine ArgumentException an Feld, Parameter, Rueckgabe, Variable, Reflection und in JSON (fehlend oder null)", """
             #import "json"
             #import "reflection"

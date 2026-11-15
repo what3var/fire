@@ -517,8 +517,12 @@ Daten-Stack bei XC8), AVR nur mit einem eigenen kleinen Profil.
      Ein Wortpuffer der VM mit 16/32-Bit-Wörtern (ein Bau der VM für ein fremdes Ziel) geht an eine Paket-Bibliothek als Kopie in 64-Bit-Wörtern und kommt
      auf seine Breite gekürzt zurück.
      Überladung nach `word` (`f(int)`/`f(word)`/`f(float)`): ein Wort passt genau, ein int besser in `word` als in `float`, ein float nie (Typprüfer, VM, nativ).
-     **Offen:** echte `uint8_t`/`uintN_t`-C-Variablen für `byte`/`word`-Locals und -Parameter (die Locals bleiben 16-Byte-Werte); ein Puffer als Parameter oder aus einem
-     Feld ist dem Generator nicht bekannt (allgemeiner Zugriff);
+     **Umgesetzt** (nachgeprüft am erzeugten C): `byte`/`word`-Locals sind C-Variablen (`FireWord` für ein Wort, `FireInt` für ein Byte - ein Register, kein
+     16-Byte-Wert; ein eigener `uint8_t`-Typ brächte nichts), `defined word`-Parameter und -Rückgaben gehen als `FireWord` durch die C-Schnittstelle (ohne
+     `defined` kann ein Wort undefined sein und bleibt ein Value), und ein Puffer als Parameter (`byte buf[]`) oder aus einem Feld ist dem Generator bekannt:
+     der Zugriff steht am Platz (`bufOf(s)->data[i]`). Prüfsummen-Schleife über einen Parameter und über ein Feld, 2 x 200 x 10 000: etwa 20 Instruktionen
+     je Durchlauf (callgrind).
+     Offen:
      16 Bit über ein Ziel mit
      `wordWidth` 16 getestet (VM und nativ auf dem Rechner, kein echtes 16-Bit-Ziel); ein Wort an einen `int`-Parameter (auch der Methoden eines Preludes) will `w!int` (TC001, so gewollt).
      (Umgesetzt: ein Wort an `extern`-Funktionen und `Library.Get` geht als seine Bits, VM und nativ.)
