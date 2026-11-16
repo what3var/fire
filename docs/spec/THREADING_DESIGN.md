@@ -395,14 +395,24 @@ keinen Snapshot und keine Kopie mehr:
   es bei der Rückkehr.
 - **Ein Thread in einem Native:** ruft ein Fire-Thread eine native Funktion eines Pakets auf, hält er die Sperre der Globals dafür nur, wenn ein
   Argument zum geteilten Bereich gehört oder hineinführen kann (ein Objekt, ein Array von etwas anderem als Zahlen, ein Zeiger, ein Puffer oder Array,
-  das dem globalen Scope gehört, ein String oder Lambda der Globals; nativ `fire_natArg`). Sonst - Zahlen, eigene Strings, eigene Puffer und
-  Zahlen-Arrays - läuft das Native ohne die Leseseite: der Thread nimmt sie nicht, und hat er seit dem Nehmen nur Zahlen aus Globals und statischen
-  Feldern gelesen, gibt er sie vor dem Aufruf ab (nativ `fire_natBegin`, `FIRE_DOM_LOAD`). Ein langes Native (Komprimieren, Hashen, Rechnen) hält so
+  das dem globalen Scope gehört; nativ `fire_natArg`). Sonst - Zahlen, Strings und Lambdas (auch die aus dem geteilten Bereich gelesenen: sie
+  gehören dem Thread, siehe unten), eigene Puffer und Zahlen-Arrays - läuft das Native ohne die Leseseite: der Thread nimmt sie nicht, und hält er
+  sie, gibt er sie vor dem Aufruf ab (nativ `fire_natBegin`). Ein langes Native (Komprimieren, Hashen, Rechnen) hält so
   weder das Hauptprogramm noch die Threads auf, die das Paket nicht benutzen; nur wer dasselbe Paket ohne `"threadSafe"` aufruft, wartet auf dessen
-  Sperre. Wartet das Hauptprogramm (oder eine Sektion) auf die Leser, geben sie die Leseseite am nächsten Rücksprung einer Schleife ab, nicht erst nach
-  4096 sicheren Punkten. Reihenfolge der Sperren: erst die der Globals, dann die eines Pakets; wer die eines Pakets ohne die der Globals hält, gibt sie
+  Sperre. Wartet das Hauptprogramm (oder eine Sektion) auf die Leser, geben sie die Leseseite am nächsten sicheren Punkt ab (Rücksprung einer
+  Schleife, Eintritt einer Funktion), nicht erst nach 4096 sicheren Punkten. Reihenfolge der Sperren: erst die der Globals, dann die eines Pakets; wer die eines Pakets ohne die der Globals hält, gibt sie
   zurück, bevor er auf die der Globals wartet (ein Callback des Natives in fire-Code). In einem Debug-Build (mit der GIL) wartet das Hauptprogramm für
   die Dauer eines Natives, kommt danach aber sofort dran. Die VM serialisiert die Aufrufe je Paketbibliothek (ein Mutex je Bibliothek).
+- **Was ein Thread aus dem geteilten Bereich liest, nimmt er** (nativ; wie `taking`, nur ohne Kopie): eine Zahl ist ohnehin eine Kopie; ein String
+  oder ein Lambda aus einer globalen Variablen, einem statischen Feld, einem Feld eines geteilten Objekts oder einem Element eines geteilten Arrays
+  bekommt beim Lesen - unter der Leseseite - einen eigenen Zähler des Threads (`FIRE_DOM_LOAD`, `FIRE_DOM_TAKE` in `fire_rt.h`), den sein
+  Temporär-Pool bis zum Ende des Scopes hält. Der Text eines Strings ändert sich nie, geteilt ist nur der Zähler, und der ist für alles, was im
+  geteilten Bereich steht, atomar (`R_SHARED`, gesetzt von dem, der es dort ablegt). Gibt der Thread danach die Leseseite ab (sicherer Punkt, Native)
+  und ersetzt das Hauptprogramm oder eine Sektion den Wert, bleibt der gelesene gültig - vorher war er nur geliehen und konnte unter dem Thread
+  freigegeben werden (`U.Pair(G.name, U.Slow())`). Ein Objekt oder Array bleibt ein Handle, das jeder Zugriff unter der Leseseite neu prüft. Das
+  Hauptprogramm zahlt dafür einen Test auf die Art des Werts und auf „bin ich ein Thread“, nur bei Strings und Lambdas, nur in Programmen mit Threads.
+  Mit der GIL gilt dasselbe (der Zähler ist dann der einfache). Nicht abgedeckt: das Hauptprogramm selbst leiht weiter (auch ohne Threads:
+  `U.Pair(G.name, U.Change())`, wenn `Change` `G.name` ersetzt), Zeiger auf Felder, Puffer des globalen Scopes (kein Flag des geteilten Bereichs).
 - **`sync globals`** ist ein Ausdruck (liefert die Anzahl der bearbeiteten Einträge - auch der `fire global`-Aufträge, die es selbst ausführt) und gilt
   im Hauptprogramm; in einem Fire-Thread liefert es 0. Ein Auftrag läuft immer für sich: an den sicheren Punkten eines laufenden Auftrags wird die
   Warteschlange nicht abgearbeitet (sonst liefe der nächste Auftrag vor dem Ende des vorigen).

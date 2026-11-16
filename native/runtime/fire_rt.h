@@ -364,8 +364,8 @@ extern FIRE_RT_DATA volatile int g_dbgArmed;     /* a debugger is attached */
 typedef struct SlotCache { uint32_t n; uint32_t slot[FIRE_SLOT_CACHE]; } SlotCache;
 #define FIRE_SLOT_THREAD_VARS(X) X(SlotCache, g_slotCache, FIRE_ZERO_INIT) \
     X(uint8_t, g_domReader, 0)   /* 1: a fire thread that does not hold the read side of the globals' lock (see DomLock): its next touch of the shared domain \
-                                  * takes it. 2: it holds it and has read only numbers out of globals and static fields so far (FIRE_DOM_LOAD) - nothing a \
-                                  * temporary of its code could still refer to: the call of a native may let go of it (fire_natBegin) */ \
+                                  * takes it. 2: a fire thread that holds it (or the write side, in a section). 0: the main program - one test of this \
+                                  * byte tells it from a thread that takes what it reads (FIRE_DOM_TAKE) */ \
     X(uint8_t, g_domHeld, 0)     /* ... it holds it (until its next safe point) */ \
     X(fire_mutex*, g_pkgHeld, NULL)   /* the lock of the package whose native runs on this thread (see FIRE_PKG_ENTER) */ \
     X(uint8_t, g_natDom, 0)      /* a fire thread in a native that got something of the shared domain: it keeps the read side for it (fire_natBegin) */ \
@@ -1370,8 +1370,12 @@ struct Ref {
 };
 /* Strings without the GIL (docs/ROADMAP_TASKS.md step 1b): a string belongs to one thread, its counts are plain. Where it would cross to another thread
  * (`taking`, `sync`, `handover`, the arguments of `fire global` and of actor messages, the value of `terminate`) it is copied (strCross). Only the global
- * scope is shared: a string a thread reads there gets R_SHARED (while the main program is held by the lock of the globals) and is counted atomically from
- * then on. With the GIL nothing of this is needed: FIRE_STR_CROSS is off. */
+ * scope is shared: a string (or lambda) that goes into it gets R_SHARED from whoever stores it (refShare) and is counted atomically from then on.
+ * A fire thread that reads one out of the shared domain - a global, a static field, a field or an element of its objects and arrays - does not borrow
+ * it: it takes a count of its own at the read, under the read side of the globals' lock (FIRE_DOM_TAKE, FIRE_DOM_LOAD), held by its temporary pool
+ * until the scope ends. Like `taking`, without the copy: the text never changes, only the count is shared. So the main program (or a section) may
+ * replace the value in the domain as soon as the thread lets go of the read side - at a safe point, in a native - and the thread's temporary stays.
+ * With the GIL nothing of this is needed: FIRE_STR_CROSS is off. */
 #if defined(FIRE_THREADS) && defined(FIRE_NO_GIL)
 #define FIRE_STR_CROSS 1
 #endif
@@ -1767,7 +1771,6 @@ FIRE_FN void leafSet(Value* r, const Owned* h) {
 /* (docs/ROADMAP_TASKS.md 1e) A fire thread that touches an object, array or buffer of the shared domain (flag 64, the global scope of the main program) takes the
  * read side of the globals' lock first; it keeps it until its next safe point. The main program and a thread that holds it pay one test of a flag. */
 FIRE_FN void domReadEnter(void);
-FIRE_FN void domReadEnterClean(void);
 /* (the flags are read atomically: a record lent to this thread may be destroyed by its owner meanwhile - see the lent records) */
 #if defined(__GNUC__) || defined(__clang__)
 #define FIRE_FLAGS_READ(h) __atomic_load_n(&((Owned*)(h))->flags, __ATOMIC_RELAXED)
@@ -1776,24 +1779,36 @@ FIRE_FN void domReadEnterClean(void);
 #define FIRE_FLAGS_READ(h) (((const volatile Owned*)(h))->flags)
 #define FIRE_FLAGS_OR(h, bits) ((void)(((Owned*)(h))->flags |= (uint8_t)(bits)))
 #endif
-#define FIRE_DOM_TOUCH(h) do { if (FIRE_UNLIKELY(FIRE_FLAGS_READ(h) & 64) && g_domReader) domReadEnter(); } while (0)
+#define FIRE_DOM_TOUCH(h) do { if (FIRE_UNLIKELY(FIRE_FLAGS_READ(h) & 64) && g_domReader == 1) domReadEnter(); } while (0)
 /* A read of a global variable or a static field of the main program (the generator puts it before the read in code that may run on a fire thread). */
-#define FIRE_DOM_READ() do { if (FIRE_UNLIKELY(g_domReader)) domReadEnter(); } while (0)
-/* ... the read itself, `dst = src`: a thread that has read nothing but numbers this way since it took the read side holds no string or lambda of the
- * globals in a temporary and has touched no object of theirs (g_domReader 2) - see fire_natBegin. */
-#define FIRE_DOM_LOAD(dst, src) do { \
-    if (FIRE_UNLIKELY(g_domReader)) { \
-        if (g_domReader == 1) domReadEnterClean(); \
-        (dst) = (src); \
-        if (((0x50u >> (dst).kind) & 1u) != 0) g_domReader = 0;   /* (isRef: a string, a lambda) */ \
-    } else (dst) = (src); \
-} while (0)
+#define FIRE_DOM_READ() do { if (FIRE_UNLIKELY(g_domReader == 1)) domReadEnter(); } while (0)
+#define FIRE_DOM_THREAD FIRE_UNLIKELY(g_domReader)   /* (is this a fire thread: the byte the reads look at anyway) */
 #else
-#define FIRE_DOM_LOAD(dst, src) ((dst) = (src))
 #define FIRE_DOM_TOUCH(h) ((void)0)
 #define FIRE_FLAGS_READ(h) (((const Owned*)(h))->flags)
 #define FIRE_FLAGS_OR(h, bits) ((void)(((Owned*)(h))->flags |= (uint8_t)(bits)))
 #define FIRE_DOM_READ() ((void)0)
+#define FIRE_DOM_THREAD FIRE_UNLIKELY(g_isThread)
+#endif
+/* What a fire thread reads out of the shared domain it *takes* (the rule of the loads, see "Strings without the GIL" at struct Ref): a string or a lambda
+ * gets a count of the thread's own while the thread holds the read side (or the GIL) - on its temporary pool, let go of when the scope ends, like any
+ * temporary the thread made itself. The value stays valid when the thread lets go of the read side (a safe point, a native) and the main program or a
+ * section replaces it in the domain. No copy: what the domain holds is counted atomically (R_SHARED, set by whoever stored it) or immortal; with the GIL
+ * the plain count is the GIL's. The main program pays one test of a byte per read (FIRE_DOM_THREAD) - for a global or static field the one it paid before. */
+#ifdef FIRE_THREADS
+FIRE_FN void domTake(Value v);
+#define FIRE_DOM_TAKE(h, v) do { if (FIRE_DOM_THREAD && ((0x50u >> (v).kind) & 1u) != 0 && (FIRE_FLAGS_READ(h) & 64)) domTake(v); } while (0)
+/* ... the read of a global or a static field itself, `dst = src` (of a number: FIRE_DOM_READ and the plain move). */
+#define FIRE_DOM_LOAD(dst, src) do { \
+    if (FIRE_DOM_THREAD) { \
+        FIRE_DOM_READ(); \
+        (dst) = (src); \
+        if (((0x50u >> (dst).kind) & 1u) != 0) domTake(dst);   /* (isRef: a string, a lambda) */ \
+    } else (dst) = (src); \
+} while (0)
+#else
+#define FIRE_DOM_LOAD(dst, src) ((dst) = (src))
+#define FIRE_DOM_TAKE(h, v) ((void)0)
 #endif
 /* A lock for a table of a package that says it is thread safe (`"threadSafe": true`: its natives run side by side on fire threads), held for a few
  * instructions only (it spins; a static one starts free). Where natives never run side by side - no threads, the GIL, the library of a package for the
@@ -1938,6 +1953,18 @@ FIRE_FN void poolRelease(uint32_t mark) {
         else if (--r->rc == 0) freeRef(r);
     }
 }
+#ifdef FIRE_THREADS
+/* (FIRE_DOM_TAKE: a count of this thread's own of a string or lambda it read out of the shared domain, with the read side in the hand. Without the GIL
+ * a value that is not counted atomically is a constant or not the domain's - nothing to take; with the GIL every count is the GIL's.) */
+FIRE_COLD FIRE_FN void domTake(Value v) {
+    Ref* r = refOf(v);
+#ifdef FIRE_STR_CROSS
+    if (r->type & R_SHARED) { FIRE_RC_INC(r); poolPush(r); }
+#else
+    if (r->rc != IMMORTAL) { r->rc++; poolPush(r); }
+#endif
+}
+#endif
 
 /* ---- Pointers into arrays and buffers (K_PtrByte, K_PtrElem; see "`ref` parameters"): the address of the element in the payload, the slot and the
  * generation of the array or buffer in the head - nothing counted, nothing on the heap. */
@@ -6498,7 +6525,11 @@ FIRE_FN Value arrayGet(Value a, Value i) {
         if (FIRE_UNLIKELY(!leafAlive(a))) return destroyedError(a);
         arr = arrOf(a);
         if (FIRE_UNLIKELY((uint64_t)i.i >= arr->length)) return indexError("Array index", i.i, arr->length);
-        return arrElemGet(arr, (uint32_t)i.i);
+        {   /* (a fire thread takes a string or lambda of an array of the shared domain - FIRE_DOM_TAKE) */
+            Value e = arrElemGet(arr, (uint32_t)i.i);
+            FIRE_DOM_TAKE(&arr->h, e);
+            return e;
+        }
     }
     if (i.kind == K_Word && (a.kind == K_Array || a.kind == K_Buffer || a.kind == K_String)) return arrayGet(a, Int((int64_t)(uint64_t)i.w));   /* (a word as an index: its bits as an int) */
     if (i.kind != K_Int) fatal("An index must be an int.");
@@ -8809,10 +8840,12 @@ extern FIRE_RT_DATA fire_atomic32 g_gilWaiting;
  *     blocking natives); at its safe points (gilYield) it lets the threads that wait to read in, and goes on when they have let go;
  *   - a fire thread takes the read side when it first touches the shared domain (FIRE_DOM_TOUCH, FIRE_DOM_READ) and lets go of it at its next safe point or
  *     wait - threads read side by side, and a thread that never touches the domain never waits for it. A safe point lets go of it now and then (g_tick) -
- *     a loop's jump back at once when someone waits for the readers to leave (ATTN_DOM: the main program at a safe point or back from a wait or a
+ *     the next one at once when someone waits for the readers to leave (ATTN_DOM: the main program at a safe point or back from a wait or a
  *     native, a section);
- *     the call of a native that gets nothing of the shared domain lets go of it too when the thread has read only numbers out of globals and static
- *     fields since it took it (fire_natBegin, FIRE_DOM_LOAD): a long native holds nobody up;
+ *     the call of a native that gets nothing of the shared domain lets go of it too (fire_natBegin): a long native holds nobody up.
+ *     What a thread reads out of the domain is its own from then on, with or without the read side: a number is a copy, a string or a lambda gets a
+ *     count of the thread's (FIRE_DOM_TAKE, FIRE_DOM_LOAD - in a global, a static field, a field or an element of the domain's objects and arrays),
+ *     an object or array is a handle that every access checks again under the read side;
  *   - a section (a change of the domain by a thread, granted by the waiting main program) holds the write side alone.
  * The order of the locks: the lock of the globals before the lock of a package (FIRE_PKG_ENTER). A strand may hold a package's lock without the globals'
  * (a native that got nothing of the shared domain) - then it gives the package's lock back before it waits for the globals' (domReadEnter in a callback of
@@ -8837,7 +8870,7 @@ static inline bool domLendMain(void) {
     g_dom.mainIn = false;
     return true;
 }
-/* (someone waits for the readers to leave: they do at their next jump back of a loop - pollSlow - instead of when their tick runs out. Under g_dom.m.) */
+/* (someone waits for the readers to leave: they do at their next safe point - pollSlow - instead of when their tick runs out. Under g_dom.m.) */
 extern FIRE_RT_DATA fire_atomic32 g_attn;
 #define FIRE_ATTN_DOM 16u   /* (ATTN_DOM) */
 static inline void domReadersAsk(void) { if (g_dom.readers > 0) fire_atomic_or(&g_attn, FIRE_ATTN_DOM); }
@@ -8857,13 +8890,11 @@ FIRE_FN void domReadTake(fire_mutex* held) {
     g_dom.readers++;
     fire_cond_notifyAll(&g_dom.cv);
     fire_mutex_unlock(&g_dom.m);
-    g_domReader = 0;
+    g_domReader = 2;
     g_domHeld = 1;
     if (dropped) fire_mutex_lock(held);
 }
-/* (g_domReader 2: the thread holds the read side already - from now on it may hold something of the domain in a temporary) */
-FIRE_COLD FIRE_FN void domReadEnter(void) { if (g_domHeld) g_domReader = 0; else domReadTake(g_pkgHeld); }
-FIRE_COLD FIRE_FN void domReadEnterClean(void) { domReadTake(g_pkgHeld); g_domReader = 2; }
+FIRE_COLD FIRE_FN void domReadEnter(void) { if (g_domHeld) g_domReader = 2; else domReadTake(g_pkgHeld); }
 FIRE_FN void domReadLeave(void) {
     if (!g_domHeld) return;
     fire_mutex_lock(&g_dom.m);
@@ -8920,7 +8951,7 @@ FIRE_FN void domWriterEnter(void) {
     g_dom.writersWaiting--;
     g_dom.writer = true;
     fire_mutex_unlock(&g_dom.m);
-    g_domReader = 0;
+    g_domReader = 2;
     if (dropped) fire_mutex_lock(held);
 }
 FIRE_FN void domWriterLeave(void) {
@@ -8935,14 +8966,14 @@ FIRE_FN void domWriterLeave(void) {
  * safe (`"threadSafe": true` in its manifest) has no lock.
  * The lock of the globals and a native (fire_natBegin ... fire_natEnd around the call, outside the package's lock): a thread whose native gets something
  * that is of the shared domain or may lead into it - fire_natArg says no for an argument - holds the read side while the native runs (it reads without
- * asking); a thread whose native gets nothing of the kind does not take the read side for it, and lets go of it when it has read only numbers of the
- * globals so far - the main program and the sections do not wait for the native, and the threads that do not use the package wait for nothing.
+ * asking); a thread whose native gets nothing of the kind does not take the read side for it, and lets go of it - the main program and the sections do not wait for the native, and the threads that do not use the package wait for nothing.
  * The main program goes away for a native that gets nothing of the shared domain (fire_awayBegin). The order of the locks is the globals' first (see DomLock); a strand that waits for a package's lock with the globals'
  * in the hand waits for a native of another strand that has no need of them. */
 FIRE_FN void fire_awayBegin(void);
 FIRE_FN void fire_awayEnd(void);
 /* (may a thread's native run without the read side with this argument: nothing that is of the shared domain or may refer into it - a number, a string
- * or a lambda of the thread's own (the call of a lambda is fire code: that takes the read side itself), a buffer or an array of numbers of the thread's
+ * or a lambda (the thread's own, or one it read from the domain and took - FIRE_DOM_TAKE; the call of a lambda is fire code: that takes the read
+ * side itself), a buffer or an array of numbers of the thread's
  * own; not an object or an array of anything else, whose fields and elements the native may follow, and no pointer) */
 extern FIRE_RT_DATA OwnList* g_domainRoot;
 FIRE_FN bool fire_natArg(Value v) {
@@ -8953,8 +8984,8 @@ FIRE_FN bool fire_natArg(Value v) {
         if (o->owner && (o->owner == g_domainRoot || (o->owner->holder && (FIRE_FLAGS_READ(o->owner->holder) & 64)))) return false;
         return v.kind == K_Buffer || (((Arr*)o)->typed != NULL && ((Arr*)o)->typed->elem >= E_I8 && ((Arr*)o)->typed->elem <= E_U8);
     }
-    /* (a string or lambda that is counted atomically may be the one of a global: the main program may let go of it while the native reads it) */
-    if (v.kind == K_String || v.kind == K_Lambda) return !(refOf(v)->type & R_SHARED);
+    /* (a string or lambda, also one of the shared domain: the thread took a count of its own when it read it - FIRE_DOM_TAKE; the call of a lambda
+     * is fire code, which takes the read side itself) */
     return v.kind != K_Class && v.kind != K_PtrVar && v.kind != K_PtrByte && v.kind != K_PtrElem && v.kind != K_PtrField;
 }
 /* Before a native of a package; `freeOfDomain`: for the main program no argument is of the shared domain (fire_awayArg), for a thread none may lead into
@@ -8962,13 +8993,13 @@ FIRE_FN bool fire_natArg(Value v) {
 FIRE_FN int fire_natBegin(bool freeOfDomain) {
     if (!g_isThread) { if (!freeOfDomain) return 0; fire_awayBegin(); return 1; }
     if (freeOfDomain) {
-        /* (not in a callback of a native that reads the domain: that one goes on after this. And only while nothing the thread read from the domain
-         * can be in a temporary of its code - g_domReader 2: a string of a global that is an argument of a call around this one would be the main
-         * program's to free. A thread that read more lets go at its next jump back of a loop, when someone waits - ATTN_DOM) */
-        if (!g_natDom && g_domHeld && g_domReader == 2) domReadLeave();
+        /* (not in a callback of a native that reads the domain: that one goes on after this. What the thread read from the domain before and still has
+         * in a temporary stays valid without the read side: a string or lambda is its own by a count - FIRE_DOM_TAKE - and an object or array is
+         * looked at again, with the read side, by whatever touches it next - as after any safe point) */
+        if (!g_natDom && g_domHeld) domReadLeave();
         return 0;
     }
-    if (g_domReader) domReadEnter();
+    if (g_domReader == 1) domReadEnter();
     if (g_natDom) return 0;
     g_natDom = 1;
     return 2;
@@ -9004,7 +9035,7 @@ FIRE_FN bool fire_taskSliced(void);
 /* (what a strand lets go of while it waits, and takes again - without the counting of a native that waits, see gilRelease) */
 FIRE_FN void strandAcquire(void) {
     if (!g_isThread) domMainEnter();
-    else if (g_natDom && g_domReader) domReadTake(NULL);   /* (the native that waited reads the domain: the read side first, then its package's lock) */
+    else if (g_natDom && g_domReader == 1) domReadTake(NULL);   /* (the native that waited reads the domain: the read side first, then its package's lock) */
     if (g_pkgHeld) fire_mutex_lock(g_pkgHeld);
     FIRE_LENT_SAFE();
 }
@@ -9708,7 +9739,7 @@ FIRE_FN void notifyEventAll(void) {
 /* Signals. Bit 0 is for every thread (terminate), bit 1 for the main program only (thread exceptions), bit 2 for the main program too (sections and jobs that
  * wait for it; looked at only at a loop's jump back, and only in the mode `safepoints` - see g_globalJobs). */
 enum { ATTN_ALL = 1, ATTN_MAIN = 2, ATTN_SECT = 4, ATTN_PEER = 8,   /* (ATTN_PEER: a fire thread is asked for a section of its own, see ThreadRec) */
-       ATTN_DOM = 16 };   /* (the fire threads that hold the read side of the globals' lock are asked to let go at their next jump back of a loop, see domReadersAsk) */
+       ATTN_DOM = 16 };   /* (the fire threads that hold the read side of the globals' lock are asked to let go at their next safe point, see domReadersAsk) */
 extern FIRE_RT_DATA fire_atomic32 g_attn;
 #ifdef FIRE_NO_GIL
 /* The main program in a native of a package whose arguments are not of the shared domain (docs/spec/THREADING_DESIGN.md section 7): it does not touch the
@@ -12716,9 +12747,9 @@ FIRE_FN void mainPoll(bool waiting) {
 
 FIRE_COLD FIRE_FN bool pollSlow(bool loop) {
 #ifdef FIRE_NO_GIL
-    /* (someone waits for the readers of the globals' lock to leave: this thread does at a loop's jump back - where its function holds nothing it read
-     * from the globals in a temporary - and not only when its tick runs out) */
-    if (loop && (g_attnMask & ATTN_DOM) && g_domHeld && (fire_atomic_load(&g_attn) & ATTN_DOM)) { g_tick = 4096; gilYield(); }
+    /* (someone waits for the readers of the globals' lock to leave: this thread does at this safe point - a loop's jump back or the entry of a
+     * function - and not only when its tick runs out. What it read from the globals and holds in a temporary is its own - FIRE_DOM_TAKE.) */
+    if ((g_attnMask & ATTN_DOM) && g_domHeld && (fire_atomic_load(&g_attn) & ATTN_DOM)) { g_tick = 4096; gilYield(); }
 #endif
     if (g_leaving) return false;
     if (terminateRequested()) { startLeave(); return true; }
