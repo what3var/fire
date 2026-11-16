@@ -1976,6 +1976,13 @@ FIRE_FN Value leafPtrMove(Value p, intptr_t bytes) {
  * that is not inlined makes the local "escape", and the compiler then keeps it - and, since the generated code reuses its stack temporaries s0..sN, all of
  * them - in memory for the whole function instead of in registers. That alone made generated loops ~10x slower. */
 FIRE_FN const char* coerceKindName(uint8_t kind);
+/* The VM's catchable ArgumentException for a value of the wrong kind (a call of something that is no lambda, `throw 5`, `delete 5`, ...): `format` holds one
+ * %s, the kind as the VM names it. Returns undefined - the exception unwinds (the generated code checks after the call). */
+FIRE_COLD FIRE_FN Value kindError(const char* format, uint8_t kind) {
+    char text[200];
+    snprintf(text, sizeof text, format, coerceKindName(kind));
+    return fireError("ArgumentException", text);
+}
 /* An operand of an arithmetic operator that is no number (`undefined * 2`, `-"a"`): the ArgumentException of the VM (Value.RequireNumeric) - the first operand
  * that is no number is named. */
 FIRE_COLD FIRE_FN Value opFailed(Value a, Value b) {
@@ -2359,7 +2366,7 @@ FIRE_FN Value stepOf(Value target, Value one) { uint32_t u = unitOf(target); if 
  * fails: the number in its base unit gets the target unit (`5mm:kg` is `0.005kg`, `7:s` is `7s`). */
 FIRE_FN Value coerceUnit(Value v, uint32_t target) {
     double factor;
-    if (FIRE_UNLIKELY(!(v.kind == K_Int || v.kind == K_Float || v.kind == K_Undefined))) fatal("A value of this type carries no unit and cannot be converted.");
+    if (FIRE_UNLIKELY(!(v.kind == K_Int || v.kind == K_Float || v.kind == K_Undefined))) return kindError("Type %s carries no unit and cannot be converted.", v.kind);
     if (unitEq(v.unit, target)) { if (unitSameLabel(v.unit, target)) return v; v.unit = target; return v; }   /* (`1dm^3:l` is `1l`) */
     /* `a:unitless`, and `a:unit` of another dimension: the number in the base unit (the dimension is taken out), labelled with the target unit */
     if (v.kind != K_Undefined && ((unitIsUnitless(target) && !unitIsUnitless(v.unit)) || !unitCompatible(v.unit, target))) {
@@ -2381,7 +2388,7 @@ FIRE_FN Value coerceUnit(Value v, uint32_t target) {
 }
 /* `value::unit` - the same number with another unit (Value.RelabelUnit). */
 FIRE_FN Value relabelUnit(Value v, uint32_t target) {
-    if (FIRE_UNLIKELY(!(v.kind == K_Int || v.kind == K_Float || v.kind == K_Undefined))) fatal("A value of this type carries no unit and cannot be relabelled.");
+    if (FIRE_UNLIKELY(!(v.kind == K_Int || v.kind == K_Float || v.kind == K_Undefined))) return kindError("Type %s carries no unit and cannot be relabelled.", v.kind);
     v.unit = target;
     return v;
 }
@@ -3654,7 +3661,7 @@ FIRE_FN Value rebindLam(Value lam, Value on, OwnList* list) {
 /* `callee(args...)` of the generated code. */
 FIRE_FN Value callLamV(Value callee, int argc, const Value* args, OwnList* list) {
     Lam* l;
-    if (FIRE_UNLIKELY(callee.kind != K_Lambda)) fatal("Call of a value that is not a lambda.");
+    if (FIRE_UNLIKELY(callee.kind != K_Lambda)) return kindError("Call of a value of type %s which is not a lambda.", callee.kind);   /* (the VM's catchable ArgumentException - OpCallSlow) */
     l = lamOf(callee);
     if (FIRE_UNLIKELY(l->nparams != (uint32_t)argc)) return callLamDefaults(callee, argc, args, list);
     return l->fn(callee, args);
@@ -4763,6 +4770,13 @@ FIRE_FN Value resourceCall(int64_t op, Value id, OwnList* list) {
 }
 
 /* ---- Number formats of `$"{x:F2}"` (Value.Format): X/x, D, B, F, E ------------------------------------------------------ */
+/* (a value of the wrong kind for the letter: the VM's catchable ArgumentException, Value.RequireFormatKind) */
+FIRE_COLD FIRE_FN Value formatKindError(Value specV, const char* allowed, uint8_t kind) {
+    char name[64], text[220];
+    strToUtf8(specV, name, sizeof name);
+    snprintf(text, sizeof text, "Format specifier '%s' expects %s, not %s.", name, allowed, coerceKindName(kind));
+    return fireError("ArgumentException", text);
+}
 FIRE_FN Value formatValue(Value v, Value specV, OwnList* list) {
     const Str* spec = strOf(specV);
     char text[400];
@@ -4792,7 +4806,7 @@ FIRE_FN Value formatValue(Value v, Value specV, OwnList* list) {
         bool negative = false;
         fire_char16 wide[400];
         uint32_t wn;
-        if (v.kind != K_Int && v.kind != K_Word) fatal("The format specifier expects an int.");
+        if (v.kind != K_Int && v.kind != K_Word) return formatKindError(specV, "Int/Word", v.kind);
         u = v.kind == K_Word ? (uint64_t)v.w : (uint64_t)v.i;
         if (letter == 'X') {
             const char* hex = first == 'X' ? "0123456789ABCDEF" : "0123456789abcdef";
@@ -4816,7 +4830,7 @@ FIRE_FN Value formatValue(Value v, Value specV, OwnList* list) {
         int prec;
         fire_char16 wide[400];
         uint32_t wn;
-        if (v.kind != K_Int && v.kind != K_Float && v.kind != K_Word) fatal("The format specifier expects a number.");
+        if (v.kind != K_Int && v.kind != K_Float && v.kind != K_Word) return formatKindError(specV, "Int/Float/Word", v.kind);
         d = v.kind == K_Word ? (double)wordReal(v) : (double)toR(v);
         prec = hasNumber ? (int)number : (spec->length == 1 ? 2 : -1);
         if (prec < 0) fatal("Unknown format specifier.");
@@ -4833,8 +4847,8 @@ FIRE_FN Value formatValue(Value v, Value specV, OwnList* list) {
         int prec;
         fire_char16 wide[400];
         uint32_t wn;
-        if (v.kind != K_Int && v.kind != K_Float) fatal("The format specifier expects a number.");
-        d = (double)toR(v);
+        if (v.kind != K_Int && v.kind != K_Float && v.kind != K_Word) return formatKindError(specV, "Int/Float/Word", v.kind);
+        d = v.kind == K_Word ? (double)wordReal(v) : (double)toR(v);
         prec = hasNumber ? (int)number : (spec->length == 1 ? 6 : -1);
         if (prec < 0) fatal("Unknown format specifier.");
         if (isnan(d)) n = snprintf(text, sizeof text, "NaN");
@@ -4858,7 +4872,12 @@ FIRE_FN Value formatValue(Value v, Value specV, OwnList* list) {
         wn = widenAscii(text, (uint32_t)n, wide);
         return newStrFrom(wide, wn, list);
     }
-    fatal("Unknown format specifier.");
+    {
+        char name[64], text[220];
+        strToUtf8(specV, name, sizeof name);
+        snprintf(text, sizeof text, "Unknown format specifier '%s' (known: X/x, B, D, F, E, each with an optional decimals/width suffix like 'F2'/'X4'/'D5').", name);
+        return fireError("ArgumentException", text);
+    }
 }
 
 #ifdef FIRE_REFLECTION
@@ -5363,7 +5382,7 @@ FIRE_FN void fire_untilCaught(Handler* h);
 #endif
 FIRE_FN Value throwValueR(Value exception, bool resumable) {
     Handler* h;
-    if (FIRE_UNLIKELY(exception.kind != K_Class)) fatal("throw expects an exception object.");
+    if (FIRE_UNLIKELY(exception.kind != K_Class)) return kindError("throw on a value of type %s which is not an object.", exception.kind);   /* (the VM's ArgumentException) */
     if (FIRE_UNLIKELY(!leafAlive(exception))) return destroyedError(exception);   /* (a destroyed object: what is thrown is the DestroyedException, like in the VM) */
     takeGlobal(asObj(exception));
 #ifdef FIRE_DEBUG
@@ -5437,7 +5456,8 @@ FIRE_FN void resumeThrow(Value exception, Value value) {
             g_unwind.active = 1; g_unwind.kind = UW_RESUME; g_unwind.target = NULL; g_unwind.value = value; g_unwind.token = p->token;
             return;
         }
-    fatal("resume() was called, but this exception is not being handled right now.");
+    /* (the VM's catchable ArgumentException; the generated code goes to the unwinding exit after the call when the flag is set) */
+    fireError("ArgumentException", "resume() was called, but this exception is not being handled right now (either it was already resumed, or there is no active catch for it).");
 }
 
 /* The end of a catch block that did not resume: the throw site is given up. */
@@ -6334,8 +6354,16 @@ FIRE_FN Value typeWordBuffer(Value v, int rank, OwnList* list) {
     if (!bufFromArray(v, rank, 1, list, &r, true)) return v;
     return r;
 }
+/* A negative size of `new int[n]` / `new byte[n]`: the VM's catchable ArgumentException (OpNewArray, MakeBuffer); undefined - the exception unwinds. */
+FIRE_COLD FIRE_FN Value sizeError(int64_t n, bool buffer) {
+    char text[96];
+    if (buffer) snprintf(text, sizeof text, "Invalid byte buffer size %lld (must be >= 0).", (long long)n);
+    else snprintf(text, sizeof text, "Invalid array size %lld.", (long long)n);
+    return fireError("ArgumentException", text);
+}
 /* `word a[] = new int[n]`, `new word[n]`, `word a[n]` (NewArray right before TypeArray): n zero words at once. */
 FIRE_FN Value newWordBuffer(Value size, OwnList* list) {
+    if (FIRE_UNLIKELY(size.kind == K_Int && size.i < 0)) return sizeError(size.i, false);
     if (size.kind != K_Int || size.i < 0 || size.i > 0x7FFFFFFF) fatal("A buffer size must be a non-negative int.");
     return BufV(allocBufOf((uint32_t)size.i, (uint8_t)sizeof(FireWord), list));
 }
@@ -6346,6 +6374,7 @@ FIRE_FN Value newTypedArray(Value size, uint8_t elem, uint32_t unit, uint8_t fla
     uint32_t length, i;
     Arr* a;
     ArrTyped* t;
+    if (FIRE_UNLIKELY(size.kind == K_Int && size.i < 0)) return sizeError(size.i, false);
     if (size.kind != K_Int || size.i < 0 || size.i > 0x7FFFFFFF) fatal("An array size must be a non-negative int.");
     if (flags & (TU_DIMONLY | TU_ANY)) {   /* (keeps Values, see arrMakeTyped) */
         Value r = ArrV(allocArr((uint32_t)size.i, list));
@@ -6851,6 +6880,7 @@ FIRE_FN bool wordsArg(Value v, const char* what, FireWords* out) {
 }
 
 FIRE_FN Value newArray(Value size, OwnList* list) {
+    if (FIRE_UNLIKELY(size.kind == K_Int && size.i < 0)) return sizeError(size.i, false);
     if (size.kind != K_Int || size.i < 0 || size.i > 0x7FFFFFFF) fatal("An array size must be a non-negative int.");
     return ArrV(allocArr((uint32_t)size.i, list));
 }
@@ -7146,6 +7176,7 @@ FIRE_FN bool fire_bufMethodName(const char* name) {
 }
 
 FIRE_FN Value newBuffer(Value size, OwnList* list) {
+    if (FIRE_UNLIKELY(size.kind == K_Int && size.i < 0)) return sizeError(size.i, true);
     if (size.kind != K_Int || size.i < 0 || size.i > 0x7FFFFFFF) fatal("A buffer size must be a non-negative int.");
     return BufV(allocBuf((uint32_t)size.i, list));
 }
@@ -7179,7 +7210,9 @@ FIRE_FN Value newJagged(const int64_t* sizes, int ranks, OwnList* list) {
     Arr* outer;
     int i;
     for (i = 0; i < ranks; i++)
-        if (sizes[i] < 0 || sizes[i] > 0x7FFFFFFF) fatal("An array size must be a non-negative int.");
+        if (FIRE_UNLIKELY(sizes[i] < 0)) return sizeError(sizes[i], false);
+    for (i = 0; i < ranks; i++)
+        if (sizes[i] > 0x7FFFFFFF) fatal("An array size must be a non-negative int.");
     outer = allocArr((uint32_t)sizes[0], list);
     if (ranks > 1 && outer->length > 0) {
         outer->parts = newPartsList(&outer->h);
@@ -7226,7 +7259,7 @@ FIRE_FN bool isFrom(Value operand, Value owner, bool transitive) {
     Owned* target;
     Owned* self;
     OwnList* l;
-    if (FIRE_UNLIKELY(owner.kind != K_Class)) fatal("'is from'/'is under' expects an object as the owner.");
+    if (FIRE_UNLIKELY(owner.kind != K_Class)) { kindError("'is from'/'is under' (owner expression) on a value of type %s which is not an object.", owner.kind); return false; }
     if (FIRE_UNLIKELY(!leafAlive(owner))) return false;
     self = ownedOf(operand);   /* (an object, an array, a buffer, a lambda; a value type belongs to nothing) */
     if (FIRE_UNLIKELY(!self)) return false;   /* (a destroyed object owns nothing and belongs to nothing, like in the VM) */
@@ -8150,7 +8183,7 @@ FIRE_FN void deleteValue(Value v) {
     } else if (v.kind == K_Array || v.kind == K_Buffer || v.kind == K_Lambda) {
         Owned* o = ownedOf(v);
         if (o) destroyLeaf(o);
-    } else fatal("'delete' expects an object, an array, a buffer or a lambda.");
+    } else kindError("'delete' expects an object, an array, a buffer or a lambda, not %s.", v.kind);
 }
 
 /* ---------------------------------------------------------------------------------------------------------------------
@@ -10877,7 +10910,13 @@ FIRE_FN int processMsg(Value v, bool blocking, OwnList* list) {
     Msg m;
     Value r;
     uint32_t i;
-    if (v.kind != K_Class || !(asObj(v)->h.flags & 8)) fatal("'process' on something that is not an actor.");
+    if (v.kind != K_Class) { kindError(blocking ? "process on a value of type %s which is not an object." : "try process on a value of type %s which is not an object.", v.kind); return 0; }
+    if (!(asObj(v)->h.flags & 8)) {
+        char text[200];
+        snprintf(text, sizeof text, "'process'/'try process' on an instance of '%s', which is not an actor.", className(asObj(v)->cls));
+        fireError("ArgumentException", text);
+        return 0;
+    }
     a = asObj(v);
     if (!fire_actorReady(a)) {
         if (!blocking) return 0;
@@ -12475,7 +12514,7 @@ FIRE_FN Value syncValue(Value v, bool flat) {
     Obj* original;
     void** slot;
     bool known, ss;
-    if (v.kind != K_Class) fatal("'sync' expects an object.");
+    if (v.kind != K_Class) return kindError("sync on a value of type %s which is not an object.", v.kind);
     copy = asObj(v);
     /* (the original is written while the main program is held: a section - also when it is not in the shared domain, which costs only a short wait.
      * An original of another fire thread is not held by it: docs/ROADMAP_TASKS.md 1e, open.) */
