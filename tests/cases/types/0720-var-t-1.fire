@@ -1,0 +1,5 @@
+var t = 1
+float g = t
+print(g)
+//# modes: Release
+//# name: types 72: var t = 1

@@ -1,0 +1,7 @@
+class Precise<T> where T is of float : is of float {
+}
+
+var p = new Precise<float>()
+print("und ok")
+//# note: what the test program said to expect (for a reader, it was not checked): und ok
+//# name: Bytecode-Test: generische Klasse, UND-Constraint (':')

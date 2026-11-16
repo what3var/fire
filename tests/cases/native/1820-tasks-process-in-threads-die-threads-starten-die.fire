@@ -1,0 +1,23 @@
+#import "time"
+actor Box {
+    int n
+    construct() { this.n = 0 }
+    undefined Add(int k) { this.n += k }
+}
+actor Done {
+    int count
+    construct() { this.count = 0 }
+    undefined One() { this.count++ }
+}
+var done = new Done()
+for (var t = 0; t < 50; t++) {
+    fire with done {
+        var box = new Box()
+        fire with box { for (var i = 0; i < 10; i++) { Sleep(1ms); box.Add(i) } }
+        for (var i = 0; i < 10; i++) process box
+        if (box.n == 45) done.One()
+    }
+}
+for (var m = 0; m < 50; m++) process done
+print("all " + done.count)
+//# name: Tasks: process in Threads, die Threads starten (die Nachrichten kommen, waehrend der Task wartet)

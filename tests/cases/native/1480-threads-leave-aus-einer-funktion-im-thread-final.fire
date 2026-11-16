@@ -1,0 +1,27 @@
+class Item {
+    int n
+    construct(int n) { this.n = n }
+    destruct() { print("~I" + this.n) }
+}
+class Box {
+    string name
+    Item item
+    Item extra
+    construct(string name) { this.name = name }
+    destruct() { print("~B" + this.name) }
+}
+var Work = func (n) => {
+    var it = new Item(n)
+    if (n == 2) { leave }
+    print("work " + n)
+}
+fire {
+    var a = new Item(100)
+    Work(1)
+    try { Work(2) } catch (e) { print("nie") } finally { print("fin") }
+    print("nie")
+}
+var i = 0
+while (i < 3000000) { i = i + 1 }
+print("fertig")
+//# name: Threads: leave aus einer Funktion im Thread, finally laeuft

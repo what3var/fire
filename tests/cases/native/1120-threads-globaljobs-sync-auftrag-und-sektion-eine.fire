@@ -1,0 +1,16 @@
+#globaljobs sync
+#import "time"
+var n = 0
+fire { fire global { n = n + 1 } }
+Sleep(50ms)
+for (var i = 0; i < 1000; i++) { }
+print("after sleep " + n)
+var got = 0
+while (got == 0) { got = sync globals; Sleep(1ms) }
+print("synced " + got + " n " + n)
+fire { sync global { n = n + 10 } }
+Sleep(50ms)
+print("before section " + n)
+while (n < 11) { sync globals }
+print("section " + n)
+//# name: Threads: #globaljobs sync - Auftrag und Sektion eines Threads: Sleep laesst sie liegen, erst sync globals

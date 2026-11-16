@@ -1,0 +1,1 @@
+error E4065: 'Limit' of class 'Lim' is a field - interface 'ILimit' wants a property 'Limit' with 'get; set;' (line 4)

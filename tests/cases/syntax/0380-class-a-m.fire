@@ -1,0 +1,4 @@
+class A { M() { } }
+class B : A { override public M() { } }
+//# modes: Release
+//# name: syntax 38: class A { M() { } }

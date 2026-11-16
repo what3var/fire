@@ -1,0 +1,12 @@
+class Circle {
+    readonly float radius
+
+    construct(float radius) {
+        this.radius = radius
+    }
+}
+
+var c = new Circle(5.0)
+print(c.radius)
+//# note: what the test program said to expect (for a reader, it was not checked): 5
+//# name: Bytecode-Test: readonly Felder (gültig: nur im eigenen Konstruktor)

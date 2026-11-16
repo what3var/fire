@@ -1,0 +1,16 @@
+class A {
+    int a = 3
+    string s = "q"
+    bool b = true
+    float f = 1.5
+    int none
+    int c = 2 + 3
+    int d = this.a * 2
+    string t
+    int neg = -4
+}
+var o = new A()
+print(o.a + " " + o.s + " " + o.b + " " + o.f + " " + o.c + " " + o.d + " " + o.neg)
+print(o.none == undefined)
+print(o.t == undefined)
+//# name: Feld-Vorbelegung: Konstanten, fehlende Initialisierer (undefined), Ausdruecke und Initialisierer mit this

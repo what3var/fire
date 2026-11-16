@@ -41,7 +41,6 @@ namespace fire.Editor
             new Credit("Inter", "the font of the user interface", "Rasmus Andersson", "SIL Open Font License 1.1", "https://rsms.me/inter"),
             new Credit("LibGit2Sharp", "the Git integration", "LibGit2Sharp contributors", "MIT", "https://github.com/libgit2/libgit2sharp"),
             new Credit("libgit2", "the Git integration (native)", "libgit2 contributors", "GPL 2.0 with linking exception", "https://libgit2.org"),
-            new Credit("MemoryPack", "binary serialization of compiled programs", "Cysharp, Inc.", "MIT", "https://github.com/Cysharp/MemoryPack"),
             new Credit("PropertyChanged.Fody", "property change notification", "Simon Cropp and contributors", "MIT", "https://github.com/Fody/PropertyChanged"),
             new Credit("System.IO.Ports", "serial ports of the device simulation", ".NET Foundation and contributors", "MIT", "https://dot.net"),
             new Credit("libschrift", "TrueType rendering (ported to C# and C++)", "Thomas Oltmann and contributors", "ISC", "https://github.com/tomolt/libschrift"),

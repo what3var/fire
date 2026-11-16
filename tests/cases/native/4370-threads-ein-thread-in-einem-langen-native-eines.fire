@@ -1,0 +1,49 @@
+#import "time"
+#import "compression"
+// A fire thread in a long native of a package (one Compress of megabytes of noise) does not hold the main program up: the main program reads
+// the clock meanwhile, and the longest time between two reads stays below half of the time the native took (it was all of it: the thread held
+// the read side of the globals' lock for the native, the main program waited for it at its next safe point or back from its own native).
+// The second thread reads a static field of the main program right before its call (it holds the read side when it calls the native).
+class G { static bool go = true }
+var done = 0
+int[64] took = 0
+byte noise[] = new byte[5000000]
+int seed = 12345
+for (int i = 0; i < noise.length; i++) { seed = (seed * 1103515245 + 12345) % 2147483648; noise[i] = (seed / 65536) % 7 + (i % 5) * 3 }
+fire taking noise {
+    sync global { done = 1 }
+    int[64] t0 = DateTime.UtcNow.Ticks
+    byte packed[] = Compression.Deflate.Compress(noise, 9)
+    int[64] t1 = DateTime.UtcNow.Ticks
+    sync global { took = t1 - t0; done = 2 }
+}
+while (done < 1) { }
+int[64] last = DateTime.UtcNow.Ticks
+int[64] worst = 0
+while (done < 2) {
+    int[64] now = DateTime.UtcNow.Ticks
+    if (now - last > worst) { worst = now - last }
+    last = now
+}
+if (worst * 2 < took) { print("no globals: the main program kept its pace") }
+else { print("no globals: the main program stalled " + (worst / 10000) + " ms, the native took " + (took / 10000) + " ms") }
+fire taking noise {
+    sync global { done = 3 }
+    int[64] t0 = DateTime.UtcNow.Ticks
+    if (G.go) {
+        byte packed[] = Compression.Deflate.Compress(noise, 9)
+    }
+    int[64] t1 = DateTime.UtcNow.Ticks
+    sync global { took = t1 - t0; done = 4 }
+}
+while (done < 3) { }
+last = DateTime.UtcNow.Ticks
+worst = 0
+while (done < 4) {
+    int[64] now = DateTime.UtcNow.Ticks
+    if (now - last > worst) { worst = now - last }
+    last = now
+}
+if (worst * 2 < took) { print("static field read: the main program kept its pace") }
+else { print("static field read: the main program stalled " + (worst / 10000) + " ms, the native took " + (took / 10000) + " ms") }
+//# name: Threads: ein Thread in einem langen Native eines Pakets (Compress) haelt das Hauptprogramm nicht auf - ohne Globals und nach dem Lesen eines statischen Feldes

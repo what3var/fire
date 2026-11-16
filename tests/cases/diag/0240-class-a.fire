@@ -1,0 +1,5 @@
+class A {
+    static int F(int from) { return from }
+}
+//# modes: Release
+//# name: diag 24: class A {

@@ -1,0 +1,4 @@
+page 200 rows True image True
+select {"patches": [{"e": 2, "t": "", "v": true, "n": true, "rows": ["Anna","Ben"], "sel": 1, "fg": "", "bg": ""}, {"e": 3, "t": "picked 1", "v": true, "n": true, "fg": "", "bg": ""}]}
+activate {"patches": [{"e": 2, "t": "", "v": true, "n": true, "rows": ["Anna","Ben","Carl"], "sel": 0, "fg": "", "bg": ""}, {"e": 3, "t": "picked 0", "v": true, "n": true, "fg": "", "bg": ""}]}
+

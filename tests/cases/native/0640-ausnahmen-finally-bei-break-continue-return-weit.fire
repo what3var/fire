@@ -1,0 +1,52 @@
+class E1 : Exception { construct() { } }
+var i = 0
+while (i < 6) {
+    try {
+        i = i + 1
+        if (i == 2) { continue }
+        if (i == 4) { break }
+        print("body " + i)
+    } finally {
+        print("fin " + i)
+    }
+}
+print("after loop " + i)
+class F {
+    static int G(int n) {
+        for (var k = 0; k < 10; k = k + 1) {
+            try {
+                if (k == n) { return k * 10 }
+            } finally {
+                print("G fin " + k)
+            }
+        }
+        return -1
+    }
+    static int H() {
+        try {
+            try {
+                throw new E1()
+            } finally {
+                print("inner fin")
+            }
+        } catch (E1 e) {
+            print("H caught")
+            return 7
+        } finally {
+            print("H outer fin")
+        }
+    }
+}
+print(F.G(2))
+print(F.H())
+try {
+    try {
+        throw new E1()
+    } catch (E1 e) {
+        print("rethrow")
+        throw e
+    }
+} catch (e) {
+    print("outer caught")
+}
+//# name: Ausnahmen: finally bei break, continue, return, Weiterwerfen

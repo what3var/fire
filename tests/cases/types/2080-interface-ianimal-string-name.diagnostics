@@ -1,0 +1,3 @@
+warning TC013: A value of type 'Car' can never be a 'IAnimal': the cast '!IAnimal' always fails at run time (only undefined passes) (line 10)
+warning TC013: A value of type 'IAnimal' can never be a 'Cat': the cast '!Cat' always fails at run time (only undefined passes) (line 12)
+warning TC013: A value of type 'IAnimal' can never be a 'Car': the cast '!Car' always fails at run time (only undefined passes) (line 13)

@@ -1,0 +1,97 @@
+yyyy => 2024
+yy => 24
+y => 2024 December
+yyy => 2024
+M => December 05
+MM => 12
+MMM => Dec
+MMMM => December
+d => 12/05/2024
+dd => 05
+ddd => Thu
+dddd => Thursday
+H => error: Invalid time format 'H'.
+HH => 00
+h => error: Invalid time format 'h'.
+hh => 12
+m => December 05
+mm => 07
+s => 2024-12-05T00:07:09
+ss => 09
+t => 00:07
+tt => AM
+f => Thursday, 05 December 2024 00:07
+ff => 05
+fff => 050
+ffffff => 050000
+F => Thursday, 05 December 2024 00:07:09
+FF => 05
+ss.FFF => 09.05
+ss.FFFFFF => 09.05
+'quoted' yyyy => quoted 2024
+"dq" MM => dq 12
+yyyy\MM => 2024M12
+%d => 5
+%y => 24
+d/M/yyyy => 5/12/2024
+HH:mm:ss => 00:07:09
+g => 12/05/2024 00:07
+m => December 05
+u => 2024-12-05 00:07:09Z
+s => 2024-12-05T00:07:09
+r => Thu, 05 Dec 2024 00:07:09 GMT
+t => 00:07
+T => 00:07:09
+y => 2024 December
+M => December 05
+f => Thursday, 05 December 2024 00:07
+F => Thursday, 05 December 2024 00:07:09
+O => 2024-12-05T00:07:09.0500000
+dddd dd MMMM yyyy 'at' H:mm => Thursday 05 December 2024 at 0:07
+x yy z => x 24 +0
+[] => 12/05/2024 00:07:09
+[yyyyyyyy] => 00002024
+error: Invalid time format 'fffffffff'.
+error: Invalid time format 'Z'.
+error: Invalid time format 'q'.
+error: Invalid time format '%'.
+error: Invalid time format '\'.
+error: Invalid time format ''abc'.
+[hhh] => 12
+error: Invalid date/time: 2023-2-29 0:0:0.0
+error: Invalid date/time: 2023-13-1 0:0:0.0
+error: Invalid date/time: 2023-1-1 24:0:0.0
+error: Invalid month 2023-13.
+error: Sleep expects a TimeSpan, a time value or milliseconds, got: String.
+error: 'm' is not a unit of time.
+error: Sleep expects a TimeSpan, got: Thing.
+error: Sleep expects a TimeSpan, a time value or milliseconds, got: Bool.
+error: Sleep expects a TimeSpan, a time value or milliseconds, got: Undefined.
+error: Point in time out of range (3155379840000000000 ticks).
+error: The result is outside the valid time range.
+error: The result is outside the valid time range.
+error: Not a valid date: 'nonsense'
+error
+00:00:01.5000000
+250
+00:00:00.0020000
+00:00:00.0010000
+-00:00:00.0000005
+10.00:00:00
+2
+2
+2
+Monday Friday 60 366
+0
+3155378975999990000
+2000-01-01 00:00:00
+1999-12-31 00:00:00
+2030-01-02 00:00:00
+0001-01-01 14:30:00
+0001-01-01 14:30:15
+0001-01-01 00:00:00
+2020-03-05 00:00:00
+2020-03-05 08:15:00
+2024-03-15 09:00:00
+2024-03-15 00:00:00
+True

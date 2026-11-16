@@ -1,0 +1,18 @@
+class Point {
+    int x
+    int y
+}
+
+var p = new Point()
+with p {
+    .x = 10
+    .y = 20
+}
+print(p.x)
+print(p.y)
+
+with p {
+    print(.x + .y)
+}
+//# note: what the test program said to expect (for a reader, it was not checked): 10 / 20 / 30
+//# name: Bytecode-Test: with-Statement (BASIC-artig)

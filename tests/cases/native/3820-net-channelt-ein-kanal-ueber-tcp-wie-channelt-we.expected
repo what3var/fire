@@ -1,0 +1,8 @@
+word: Net.Channel.Send: an object goes into a channel only with a word - 'copy x' (a copy) or 'take x' (moved) - or fresh ('new', the result of a call).
+thread 5 21 hello take denied
+main answer 42
+thread go: the note ended with its owner
+main bye
+main end True
+thread rest True
+done

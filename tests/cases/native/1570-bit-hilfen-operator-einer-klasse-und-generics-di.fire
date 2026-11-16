@@ -1,0 +1,16 @@
+class Reg {
+    int v
+    construct(int v) { this.v = v }
+    Reg operator>>>(int n) { return new Reg(this.v * 100 + n) }
+}
+class Box<T> { T item }
+Reg r = new Reg(3) >>> 2
+print(r.v)
+var bb = new Box<Box<Box<int>>>()
+print(bb is of Box)
+var deep = new List<List<List<int>>>()
+print(deep.Count)
+var x = 0x80
+x >>>= 4
+print(x)
+//# name: Bit-Hilfen: operator>>> einer Klasse, >>>= und Generics, die mit >>> enden (Box<Box<Box<int>>>)

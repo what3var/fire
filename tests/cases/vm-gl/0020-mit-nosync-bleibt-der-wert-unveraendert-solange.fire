@@ -1,0 +1,7 @@
+#nosync
+var counter = 0
+var seen = 0
+fire { counter = 5 }
+for (var i = 0; i < 200000; i = i + 1) { seen = seen + counter }
+print("gesehen " + seen)
+//# name: Mit #nosync bleibt der Wert unveraendert, solange das Hauptprogramm nicht `sync globals` ruft

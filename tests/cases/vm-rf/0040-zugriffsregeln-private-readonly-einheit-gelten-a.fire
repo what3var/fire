@@ -1,0 +1,27 @@
+#import "reflection"
+class Shape {
+    string name
+    construct(string name) { this.name = name }
+    string Describe() { return "shape " + this.name }
+}
+class Circle : Shape {
+    float radius
+    private int secret
+    readonly int id
+    float w : mm = 5mm
+    construct(float radius) : base("circle") { this.radius = radius; this.secret = 42; this.id = 7 }
+    float Diameter { get { return this.radius * 2 } set { this.radius = value / 2 } }
+    float Area() { return this.radius * this.radius * 3 }
+    Scale(float f, int times) { this.radius = this.radius * f }
+    private Hidden() { return "hidden" }
+    int PeekSecret() { return Reflect.Get(this, "secret") }
+}
+var c = new Circle(5.0)
+try { Reflect.Get(c, "secret") } catch (e) { print("1 " + e.message) }
+try { Reflect.Call(c, "Hidden", []) } catch (e) { print("2 " + e.message) }
+try { Reflect.Set(c, "id", 9) } catch (e) { print("3 " + e.message) }
+try { Reflect.Set(c, "w", 5.0) } catch (e) { print("4 Einheit") }
+print(c.PeekSecret())
+//# modes: Debug Release
+//# note: the reflection library was added by the test program; now the case imports it itself, so it is a program for forge run too
+//# name: Zugriffsregeln: private/readonly/Einheit gelten auch fuer die Reflection (aus der Klasse selbst ist private erlaubt)

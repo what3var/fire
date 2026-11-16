@@ -1,0 +1,7 @@
+error TC017: A value in 'm' cannot be stored in 'c' of type 'byte': 'byte' and 'word' are raw data without a unit (take the number with '::unitless') (line 1)
+error TC017: 'd' is a 'byte': raw data without a unit - it cannot be declared in 'm' (use an int or a float for a quantity) (line 2)
+error TC017: A value in 'm' cannot be stored in an element of 'e' of type 'byte': 'byte' and 'word' are raw data without a unit (take the number with '::unitless') (line 3)
+error TC017: 'f' is a 'byte': raw data without a unit - it cannot be declared in 's' (use an int or a float for a quantity) (line 4)
+error TC017: A value in 's' cannot be stored in field 'g' of type 'byte': 'byte' and 'word' are raw data without a unit (take the number with '::unitless') (line 5)
+error TC017: 'v' is a 'byte': raw data without a unit - it cannot be declared in 'mm' (use an int or a float for a quantity) (line 6)
+error TC017: A value in 's' cannot be stored in 'h' of type 'byte': 'byte' and 'word' are raw data without a unit (take the number with '::unitless') (line 8)

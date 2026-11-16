@@ -1,0 +1,10 @@
+#import "time"
+class Exception { string message; construct(string message = "") { this.message = message } }
+var t0 = DateTime.UtcNow
+Sleep(TimeSpan.FromMilliseconds(120))
+Sleep(60ms)
+Sleep(30)
+var ms = (DateTime.UtcNow - t0).TotalMilliseconds
+print((ms >= 190) + " " + (ms < 2000))
+try { Sleep("x") } catch (e) { print(e.message) }
+//# name: Sleep: Zeitspanne, Zeitwert und Millisekunden; Dauer stimmt

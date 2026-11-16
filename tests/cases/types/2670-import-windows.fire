@@ -1,0 +1,5 @@
+#import "windows"
+print(1)
+//# types: strict
+//# modes: Release
+//# name: types 267: #import "windows"

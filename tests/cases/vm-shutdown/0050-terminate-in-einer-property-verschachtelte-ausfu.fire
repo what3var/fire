@@ -1,0 +1,32 @@
+class Item {
+    int n
+    construct(int n) { this.n = n }
+    destruct() { print("~I" + this.n) }
+}
+class Box {
+    string name
+    Item item
+    Item extra
+    construct(string name) { this.name = name }
+    destruct() { print("~B" + this.name) }
+}
+class P {
+    int v {
+        get {
+            print("im getter")
+            terminate(1)
+            print("nie getter")
+            return 5
+        }
+    }
+}
+var g = new Item(1)
+var p = new P()
+try {
+    var x = p.v
+    print("nie x")
+} finally {
+    print("finally")
+}
+print("nie")
+//# name: terminate in einer Property (verschachtelte Ausfuehrung) haelt sofort an, danach geordnet (finally, Globals)

@@ -1,0 +1,40 @@
+#import "time"
+actor Store {
+    List items
+    bool stopped
+    construct() { this.items = new List(); this.stopped = false }
+    int Add(string s) { this.items.Add(s); return this.items.Count }
+    int Count() { return this.items.Count }
+    undefined Stop() { this.stopped = true }
+}
+class Service {
+    Store store
+    string name
+    construct(Store s, string name) { this.store = s; this.name = name }
+}
+var ready = new Completion()
+var back = ready.Share()
+fire handover back {
+    var home = new Store()
+    back.Set(home)
+    while (!home.stopped) { process home }
+}
+Store st = ready.Wait(5s)
+int first = await st.Add("main")
+var services = new List()
+services.Add(new Service(st, "svc"))
+int done = 0
+fire taking services {
+    Service svc = services[0]
+    var s = svc.store
+    int before = await s.Count() until 2s
+    int after = await s.Add("thread")
+    print("thread " + before + " " + after + " " + svc.name)
+    sync global { done = 1 }
+}
+var t0 = 0
+while (done < 1 && t0 < 300) { sync globals; Sleep(10ms); t0 = t0 + 1 }
+int n = await st.Count()
+print("main " + first + " " + n)
+st.Stop()
+//# name: Threads: ein Actor in einem Feld dessen, was ein Thread mit taking bekommt, bleibt der Actor selbst (keine Kopie) - Completion bringt seine Referenz aus seinem Thread

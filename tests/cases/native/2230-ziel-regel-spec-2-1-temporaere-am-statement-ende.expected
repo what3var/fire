@@ -1,0 +1,23 @@
+1 temp:
+temp
+destroy temp
+2 var:
+3 field:
+True
+4 array:
+overwritten
+destroy e0
+destroy e1
+5 builder:
+5
+6 outer var:
+inner left: keep
+7 hoist:
+destroy loop 0
+kept loop 1
+end
+destroy a
+destroy boxed
+destroy builder
+destroy keep
+destroy loop 1

@@ -1,0 +1,101 @@
+#import "ui"
+var fb = new Framebuffer(320, 200)
+var win = new Window(fb, "t")
+var ui = new UI.Root(fb, win)
+var ta = new UI.TextArea("eins zwei\r\ndrei\n\tvier fuenf", 10, 10, 200, 100)
+ui.Add(ta)
+ui.Draw()
+print(ta.LineCount + " [" + ta.GetLine(1) + "] " + ta.Text.Length)
+ui.SetFocus(ta)
+ui.KeyDown(UI.Keys.End(), 0)
+ui.TextInput("!")
+ui.KeyDown(UI.Keys.Down(), 0)
+ui.KeyDown(UI.Keys.Enter(), 0)
+ui.TextInput("neu")
+ui.KeyDown(UI.Keys.Home(), 64)
+ui.KeyDown(UI.Keys.Down(), 1)
+ui.KeyDown(UI.Keys.End(), 1)
+ui.Draw()
+print(ta.LineCount + " " + ta.CaretLine + ":" + ta.CaretColumn + " [" + ta.Text.Replace("\n", "|").Replace("\t", "~") + "] " + ta.SelectionLength)
+var x = ta.ax + 4 + 6 * ui.cw + 2
+var y = ta.ay + 6
+ui.MouseDown(1, x, y)
+ui.MouseUp(1, x, y)
+ui.MouseDown(1, x, y)
+ui.MouseUp(1, x, y)
+print(ui.clickCount + " [" + ta.SelectedText + "]")
+ui.MouseDown(1, x, y)
+ui.MouseUp(1, x, y)
+print(ui.clickCount + " " + ta.SelectionLength)
+var big = ""
+for (var i = 0; i < 300; i++) { big = big + "Zeile " + i + " mit ein paar Woertern zum Umbrechen\n" }
+ta.SetText(big)
+ta.WordWrap = true
+ui.Draw()
+ta.Select(big.Length / 2, 0)
+ui.TextInput("x y z ")
+ui.KeyDown(UI.Keys.Enter(), 0)
+ui.KeyDown(UI.Keys.PageDown(), 0)
+ui.Draw()
+print(ta.LineCount + " " + ta.RowCount() + " " + ta.CaretLine + " " + ta.showV + " " + ta.showH + " " + ta.vbar.offset)
+var tb = new UI.TextBox("abc_d, ef", 10, 150, 150, 24)
+ui.Add(tb)
+ui.Draw()
+var bx = tb.ax + 4 + 2 * ui.cw + 2
+ui.MouseDown(1, bx, 160)
+ui.MouseUp(1, bx, 160)
+ui.MouseDown(1, bx, 160)
+ui.MouseUp(1, bx, 160)
+print("[" + tb.SelectedText + "]")
+ui.TextInput("x")
+ui.TextInput("y")
+ui.KeyDown(UI.Keys.Backspace(), 0)
+ui.Draw()
+print(tb.Text)
+print(ui.DragImageText(new UI.DragData("Ein sehr langer gezogener Text, der gekuerzt wird")) + " | " + ui.DragImageText(new UI.DragData("", 1, "kind")))
+// Undo/Redo
+ui.SetFocus(tb)
+ui.KeyDown(UI.Keys.Z(), 64)
+print("undo [" + tb.Text + "] " + tb.CanRedo)
+ui.KeyDown(UI.Keys.Y(), 64)
+print("redo [" + tb.Text + "] " + tb.CanRedo)
+// dragging the selection to the end of the field (moved), undone
+tb.Select(0, 3)
+ui.cycles = ui.cycles + 100
+ui.MouseDown(1, tb.ax + 4 + ui.cw + 2, 160)
+ui.MouseMove(tb.ax + 4 + 5 * ui.cw, 160)
+print("drag " + ui.IsDragging + " " + tb.dropPos + " " + ui.dragEffect!int)
+ui.MouseUp(1, tb.ax + 4 + 5 * ui.cw, 160)
+print("moved [" + tb.Text + "] [" + tb.SelectedText + "]")
+ui.KeyDown(UI.Keys.Z(), 64)
+print("back [" + tb.Text + "] [" + tb.SelectedText + "]")
+var can = win.CanStartDrag()
+// a see-through snapshot of a button follows the pointer
+var bt = new UI.Button("Knopf", 200, 150, 80, 24)
+bt.OnDragStart = func (int px, int py) => { return new UI.DragData("k") }
+ui.Add(bt)
+ui.Draw()
+ui.cycles = ui.cycles + 100
+ui.MouseDown(1, 210, 160)
+ui.MouseMove(230, 120)
+print("snapshot " + (ui.dragSnapshot != undefined) + " " + ui.dragImageX + " " + ui.dragImageY + " " + ui.dragImageW + " " + ui.dragImageH)
+ui.Draw()
+ui.KeyDown(UI.Keys.Escape(), 0)
+ui.MouseUp(1, 230, 120)
+print("ended " + ui.IsDragging + " " + (ui.dragSnapshot == undefined))
+// a double click in a tree opens the node and activates it
+var tv = new UI.TreeView(220, 10, 90, 60)
+var node = tv.AddNode(new UI.TreeNode("A"))
+node.Add(new UI.TreeNode("A1"))
+var acts = 0
+tv.OnActivate = func () => { acts = acts + 1 }
+ui.Add(tv)
+ui.Draw()
+ui.cycles = ui.cycles + 100
+var ty = tv.ay + 1 + tv.RowHeight(ui) / 2
+ui.MouseDown(1, 280, ty)
+ui.MouseUp(1, 280, ty)
+ui.MouseDown(1, 280, ty)
+ui.MouseUp(1, 280, ty)
+print("tree " + node.Expanded + " " + acts + " " + tv.TakeActivated())
+//# name: UI: TextArea (Zeilenindex, Tippen, Auf/Ab, WordWrap, Auswahl), Doppel-/Dreifachklick, Text des Drag-Bilds, Undo/Redo, Markierung ziehen, Schnappschuss, Doppelklick im Baum

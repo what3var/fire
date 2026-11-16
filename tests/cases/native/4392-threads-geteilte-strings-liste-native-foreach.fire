@@ -1,0 +1,46 @@
+// The same rule where the thread lets go of the read side for a native (a string of the globals as an argument does not hold it) and where a
+// reading method of an object of the globals returns the string (list[i], the enumerator of the list).
+#import "io"
+#import "compression"
+class G { static string name = "start" }
+class U {
+    static int Pair(string a, any b) { return a.length + b.length }
+    static int Slow() {
+        int s = 0
+        for (int i = 0; i < 2000; i++) { s = s + i % 3 }
+        return s
+    }
+    static int Walk(string all[]) {
+        int s = 0
+        foreach (var t in all) { s = s + t.length + U.Slow() % 2 }
+        return s
+    }
+}
+var done = 0
+var total = 0
+var list = new List<string>()
+list.Add("a")
+list.Add("b")
+var names = ["one", "two", "three"]
+fire {
+    byte data[] = new byte[3000]
+    for (int i = 0; i < data.length; i++) { data[i] = (i * 7 + i / 13) % 251 }
+    int local = 0
+    for (int i = 0; i < 300; i++) {
+        local = local + U.Pair(list[1], Compression.Deflate.Compress(data)) % 2
+        local = local + U.Pair(G.name, IO.Utf8.GetBytes(G.name)) % 2
+        local = local + U.Pair(names[i % 3], IO.Utf8.GetBytes(names[2] + list[0])) % 2
+        foreach (var t in list) { local = local + t.length % 2 + U.Slow() % 2 }
+    }
+    sync global { done = 1; total = local }
+}
+int n = 0
+while (done < 1) {
+    string tail = " number " + n + " of the main program"
+    G.name = "static" + tail
+    list[n % 2] = "item" + tail
+    names[n % 3] = "name" + tail
+    n++
+}
+print(total >= 0)
+//# name: Threads: Strings aus einer Liste, einem Array und einem statischen Feld der Globals als Argument neben einem Native und in foreach, waehrend das Hauptprogramm sie ersetzt

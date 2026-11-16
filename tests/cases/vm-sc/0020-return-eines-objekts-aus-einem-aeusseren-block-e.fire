@@ -1,0 +1,21 @@
+class D {
+    string n
+    construct(string n) { this.n = n }
+    destruct() { print("~" + this.n) }
+}class T {
+    static Make() {
+        var keep = new D("k")
+        if (true) {
+            var tmp = new D("t")
+            if (true) { return keep }
+        }
+        return keep
+    }
+    static Run() {
+        var x = T.Make()
+        print("got " + x.n)
+    }
+}
+T.Run()
+print("ende")
+//# name: return eines Objekts aus einem aeusseren Block: es geht an den Aufrufer, die uebrigen werden zerstoert

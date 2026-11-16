@@ -1,0 +1,38 @@
+class Exception { string message; construct(string message = "") { this.message = message } }
+class Box {
+    int v
+    construct(int v) { this.v = v }
+}
+actor Counter {
+    int n
+    Box box
+    construct() { this.n = 0; this.box = new Box(7) }
+    undefined Add(int k) { this.n += k }
+    int Get() { return this.n }
+    Box Fresh() { return new Box(this.n * 10) }
+    Box Mine() { return this.box }
+    string Text() { return "n=" + this.n }
+    int[] Arr() { return [1, 2, this.n] }
+    int Fail() { throw new Exception("kaputt " + this.n) }
+    int Take(Box b) { return b.v + this.n }
+}
+var c = new Counter()
+fire with c {
+    c.Add(5)
+    print("Get: " + await c.Get())
+    var f = await c.Fresh()
+    print("Fresh: " + f.v)
+    var m = await c.Mine()
+    m.v = 100
+    print("Mine: " + m.v)
+    print("Text: " + await c.Text())
+    var a = await c.Arr()
+    print("Arr: " + a[2] + " " + a.Length)
+    try { await c.Fail() } catch (Exception e) { print("caught: " + e.message) }
+    print("Take: " + await c.Take(new Box(3)))
+    c.Add(1)
+}
+for (var i = 0; i < 9; i++) process c
+print("main: " + c.n + " box " + c.box.v)
+print("home: " + await c.Get())
+//# name: Await: await actor.Methode() - Ergebnis, neues Objekt (übergeben), Feld (Kopie), String, Array, Ausnahme zurück zum Aufrufer, am eigenen Home sofort

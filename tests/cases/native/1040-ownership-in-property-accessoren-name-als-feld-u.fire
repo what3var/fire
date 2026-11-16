@@ -1,0 +1,51 @@
+class Item {
+    string n
+    construct(string n) { this.n = n }
+    destruct() { print("destroy " + this.n) }
+}
+class A { Item v }
+class B { Item v { get; set; } }
+class Sink { static undefined Look(Item i) { print("look " + i.n) } }
+class Holder {
+    Item cache
+    Item v
+    A a
+    B b
+    construct() { this.a = new A(); this.b = new B() }
+    // a name that is a field of one class and a property of another, the target's class unknown
+    int Mixed { get {
+        any t = this.a
+        any u = this.b
+        any me = this
+        var x = new Item("mixed field")
+        var y = new Item("mixed prop")
+        var z = new Item("mixed self")
+        t.v = x
+        u.v = y
+        me.v = z
+        print("in getter: " + (x is from this) + " " + (y is from this.b) + " " + (z is from this))
+        return 1 } }
+    // an inner getter keeps an object and throws; the outer one returns it from the field: it stays with `this`
+    Item Inner { get { var it = new Item("inner"); this.cache = it; throw new ArgumentException("x") } }
+    Item Outer { get { try { var y = this.Inner } catch (ArgumentException e) { print("inner threw") } return this.cache } }
+    // a setter that hands its value only to a method: it dies with the setter call
+    Item Passing { get { return undefined } set { Sink.Look(value) } }
+    int ToPassing { get { var it = new Item("passing"); this.Passing = it; try { print(it.n) } catch (DestroyedException e) { print("passing destroyed") } return 2 } }
+    // a setter that keeps the value only after an exception
+    Item Strict { get { return this.cache } set { this.cache = value; if (value.n == "bad") { throw new ArgumentException("bad value") } } }
+    int ToStrict { get { var it = new Item("bad"); try { this.Strict = it } catch (ArgumentException e) { print("strict threw: " + (this.cache is from this)) } return 3 } }
+    // `is from` right after the assignment, inside the getter
+    bool Check { get { var it = new Item("check"); bool before = it is from this; this.cache = it; return !before && (it is from this) } }
+}
+var h = new Holder()
+print("mixed: " + h.Mixed)
+try { print(h.a.v.n) } catch (DestroyedException e) { print("a.v destroyed (a field of another object)") }
+print("b.v from b: " + (h.b.v is from h.b))
+print("self: " + (h.v is from h))
+var o = h.Outer
+print("outer: " + (o is from h) + " " + o.n)
+print("to passing: " + h.ToPassing)
+print("to strict: " + h.ToStrict + " " + h.cache.n)
+print("check: " + h.Check)
+print("end")
+//# name: Ownership in Property-Accessoren: Name als Feld und Property, Ausnahme im inneren Getter, Setter gibt nur weiter, Setter wirft, is from (unter ASan)

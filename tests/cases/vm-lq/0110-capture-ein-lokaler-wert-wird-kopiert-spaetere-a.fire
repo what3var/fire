@@ -1,0 +1,10 @@
+class T {
+    static Run() {
+        var local = 3
+        var f = x => x > local
+        local = 10
+        print(f(5) + " " + f(2))
+    }
+}
+T.Run()
+//# name: Capture: ein lokaler Wert wird kopiert (spaetere Aenderungen sind unsichtbar)

@@ -1,0 +1,3 @@
+warning TC014: The method 'Speak' of 'Dog' replaces the one of its base class 'Animal' - mark it 'override' (override string Speak()) (line 11)
+warning TC014: The property 'Legs' of 'Dog' replaces the one of its base class 'Animal' - mark it 'override' (override int Legs { ... }) (line 12)
+warning TC014: The operator '==' of 'Dog' replaces the one of its base class 'Animal' - mark it 'override' (override bool operator==(any o)) (line 13)

@@ -1,0 +1,2 @@
+error TC027: The field 'b' of the record 'Q' is a 'B': a record holds only what does not change - numbers, texts, enums, records, lambdas (line 2)
+error TC027: The field 'a' of the record 'Q' is a 'int[]': a record holds only what does not change - numbers, texts, enums, records, lambdas (line 2)

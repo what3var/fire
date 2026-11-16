@@ -1,0 +1,11 @@
+#import "time"
+int done = 0
+for (var i = 0; i < 600; i++) {
+    fire taking i {
+        Sleep(50ms)
+        sync global { done = done + 1 }
+    }
+}
+while (done < 600) { sync globals; Sleep(5ms) }
+print("done " + done)
+//# name: Tasks: 600 fire-Threads schlafen und schreiben in Sektionen (die VM als Tasks eines Pools, docs/ROADMAP_TASKS.md Schritt 7)

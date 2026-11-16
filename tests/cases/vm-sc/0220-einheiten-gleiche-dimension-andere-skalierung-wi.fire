@@ -1,0 +1,11 @@
+print(500mm + 2m)
+print(2m + 500mm)
+print(2m - 500mm)
+print(1m > 500mm)
+print(5mm < 1m)
+print(1500mm % 1m)
+var x = 3m
+x = x + 250cm
+print(x)
+print((2m + 500mm) / 3)
+//# name: Einheiten: gleiche Dimension, andere Skalierung wird implizit umgerechnet (ohne ':'), ints bleiben ints

@@ -1,0 +1,17 @@
+undefined Read undefined Blue
+Red Read, Write Red Write
+E1 Parameter 'c' is a Color, not Int.
+E2 Parameter 'c' is a Color, not Size.
+E3 Field 'c' is a Color, not Int.
+E4 Parameter 'value' is a Color, not Int.
+E5 Return value of 'Bad' is a Color, not Int.
+E6 Field 'last' is a Color, not Int.
+E7 Variable 'loc' is a Color, not Int.
+E8 Variable 'g' is a Color, not Int.
+E9 Variable 'g' is a Color, not String.
+E10 Field 'c' is a Color, not Int.
+E11 Field 'a' is an Access, not Int.
+5 Blue Red
+3
+Green Read, Write
+E12 Variable 'v' is a Color, not Int.

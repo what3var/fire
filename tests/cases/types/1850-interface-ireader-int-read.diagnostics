@@ -1,0 +1,1 @@
+error E4013: Type argument 'IReader' for type parameter 'T' of 'Holder' does not satisfy any of the 'where' conditions (line 5)

@@ -1,0 +1,3 @@
+var override = 1
+//# modes: Release
+//# name: syntax 44: var override = 1

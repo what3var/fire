@@ -1,0 +1,4 @@
+#import "time"
+var t = DateTime.Nowx
+//# modes: Release
+//# name: diag 19: #import "time"

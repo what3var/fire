@@ -1,0 +1,11 @@
+var a = 12mm
+var b = 3m
+print(a:: + b)
+print(a: + b)
+print(a:: + b::)
+print((a::) is in mm)
+print((a::) + 1)
+var e = 0
+try { e = 5cm + 1 } catch (UnitMismatchException x) { e = -1 }
+print(e)
+//# name: Einheiten: a:: ohne Einheit nimmt die Einheit des anderen Operanden (nur umbenennen), ohne Gegenstueck ist es einheitenlos

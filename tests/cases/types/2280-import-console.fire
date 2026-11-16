@@ -1,0 +1,5 @@
+#import "console"
+print(1)
+//# types: strict
+//# modes: Release
+//# name: types 228: #import "console"

@@ -1,0 +1,17 @@
+var list = new List<int>([5, 3, 8, 1])
+list.
+    Sort()
+var n = list
+    .Count
+var m = list?.Count
+    + 1
+    - 2
+bool big = n
+    > 3
+    && n < 10
+    || false
+int x = 1
+x++
+print(n + " " + m + " " + big + " " + x + " " + list[0])
+//# modes: Release
+//# name: diag 33: var list = new List<int>([5, 3, 8, 1])

@@ -1,0 +1,5 @@
+var d = 2m
+d += 50cm
+print(d)
+//# modes: Release
+//# name: syntax 7: var d = 2m

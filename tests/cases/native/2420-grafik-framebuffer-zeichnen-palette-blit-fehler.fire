@@ -1,0 +1,105 @@
+#import "graphics"
+// a checksum of the pixels, order dependent
+class Util {
+    static Hash(Framebuffer fb) {
+        var bytes = fb.ReadBytes()
+        var h = 17
+        for (var i = 0; i < bytes.length; i++) { h = (h * 31 + bytes[i]) % 1000000007 }
+        return h
+    }
+}
+var fb = new Framebuffer(64, 48)
+var con = new Renderer(fb)
+print(fb.Width() + "x" + fb.Height() + " mode " + fb.Mode() + " bytes " + fb.ByteCount())
+con.Clear()
+print("clear " + Util.Hash(fb))
+con.FillRect(2, 3, 10, 7, new SolidBrush(4))
+con.DrawRect(1, 1, 20, 15, new Pen(14))
+con.DrawLine(0, 0, 63, 47, new Pen(0xFF00FF00))
+con.DrawLine(0, 47, 63, 0, new Pen(12))
+con.DrawLine(5, 20, 50, 20, new Pen(0xFFFF8000))
+print("basic " + Util.Hash(fb))
+con.DrawCircle(30, 24, 10, new Pen(15))
+con.FillCircle(10, 35, 6, new SolidBrush(9))
+con.DrawEllipse(40, 30, 12, 5, new Pen(11))
+con.FillEllipse(45, 10, 8, 4, new SolidBrush(13))
+con.DrawCircle(0, 0, 0, new Pen(7))
+con.FillCircle(5, 5, 1, new SolidBrush(7))
+print("round " + Util.Hash(fb))
+con.DrawTriangle(2, 40, 14, 30, 22, 46, new Pen(10))
+con.FillTriangle(50, 40, 60, 30, 62, 46, new SolidBrush(3))
+con.DrawPolygon([5, 5, 25, 8, 20, 25, 8, 20], new Pen(2), true)
+con.DrawPolygon([30, 5, 40, 5, 35, 12], new Pen(5), false)
+con.FillPolygon([0, 0, 12, 4, 6, 12, 10, 20, 0, 14], new SolidBrush(6))
+print("poly " + Util.Hash(fb))
+con.FloodFill(20, 40, new SolidBrush(200))
+con.FloodFillBorder(60, 2, new SolidBrush(100), 14)
+print("flood " + Util.Hash(fb))
+con.SetColor(15, 1)
+con.Locate(0, 0)
+con.Print("Hello, fire!\nSecond line äöü ÿ")
+con.DrawText(3, 30, "Text", new SolidBrush(0xFF0000FF))
+con.DrawText(3, 38, "Bg", new SolidBrush(0xFFFFFFFF), new SolidBrush(0xFF800000))
+print("text " + Util.Hash(fb) + " " + con.CellWidth() + "x" + con.CellHeight())
+print(con.GetPixel(2, 3) + " " + con.GetPixel(200, 3) + " " + con.GetPixelIndex(2, 3))
+for (var i = 0; i < 8; i++) { con.Print("scroll " + i + "\n") }
+print("scroll " + Util.Hash(fb))
+
+// palette mode
+var pal = new Framebuffer(32, 24, ColorMode.Palette)
+var pcon = new Renderer(pal)
+pcon.Clear()
+pcon.FillRect(2, 2, 12, 9, new SolidBrush(4))
+pcon.DrawCircle(20, 12, 8, new Pen(0xFF3366FF))
+pcon.DrawLine(0, 23, 31, 0, new Pen(40))
+pcon.FillTriangle(3, 20, 10, 14, 14, 22, new SolidBrush(200))
+pcon.Print("Pal")
+pal.SetPaletteRgb(4, 10, 200, 30)
+print("pal " + Util.Hash(pal) + " " + pal.GetPaletteColor(4) + " " + pal.ReadPalette().length + " " + pal.ReadPalette(true).length)
+pal.TransparentIndex = 0
+print(pal.TransparentIndex)
+// blit between modes and with scaling / flipping
+con.Blit(pal, 40, 2)
+con.BlitScaled(pal, 0, 0, 32, 24, 0, 24, -48, 20, BlitMode.Transparent)
+con.BlitRegion(pal, 4, 4, 10, 8, 20, 36, BlitMode.Blend)
+pcon.Blit(fb, 0, 0, 0, 0)
+con.Blit(fb, 5, 5)
+print("blit " + Util.Hash(fb) + " " + Util.Hash(pal))
+var raw = new byte[16]
+for (var i = 0; i < 16; i++) { raw[i] = (i * 37) % 256 }
+raw[3] = 255
+raw[7] = 128
+raw[11] = 0
+raw[15] = 255
+var small = Framebuffer.FromPixels(2, 2, raw, ColorMode.Rgba)
+print(small.ReadByte(5) + " " + small.ReadBytes().length)
+small.WriteByte(0, 99)
+print(small.ReadByte(0))
+var sc = new Renderer(small)
+print(sc.GetPixel(0, 0) + " " + sc.GetPixel(1, 0) + " " + sc.GetPixel(0, 1))
+var idx = Framebuffer.FromPixels(2, 2, new byte[4], ColorMode.Palette)
+print(idx.Mode() + " " + idx.ByteCount())
+var mask = fb.ToMask(100, true, 128)
+print(mask.Mode() + " " + Util.Hash(mask) + " " + mask.TransparentIndex)
+try { Framebuffer.FromPixels(2, 2, new byte[3], ColorMode.Rgba) } catch (ImageException e) { print(e.message) }
+try { small.WriteBytes(new byte[3]) } catch (GraphicsException e) { print(e.message) }
+try { small.GetPaletteColor(300) } catch (GraphicsException e) { print(e.message) }
+try { small.WritePalette(new byte[10]) } catch (GraphicsException e) { print(e.message) }
+try { var bad = new Framebuffer(0, 5) } catch (HandleUnavailableException e) { print("bad size") }
+try { var bad = new Framebuffer(5, 5, 7) } catch (HandleUnavailableException e) { print("bad mode") }
+try { Framebuffer.FromImage(new byte[4]) } catch (ImageException e) { print(e.message) }
+try { Framebuffer.FromImage(new byte[0]) } catch (ImageException e) { print(e.message) }
+// the slicer
+var slicer = new Slicer(2.0, 1.0)
+var paths = slicer.Slice(mask)
+print(paths.Count)
+var total = 0
+foreach (p in paths) { total = total + p.Count() }
+print(total)
+if (paths.Count > 0) { print(paths[0].kind + " " + paths[0].closed + " " + paths[0].Count() + " " + paths[0].X(0) + " " + paths[0].Y(0)) }
+var zz = new Slicer(1.5, 1.0)
+zz.strategy = FillStrategy.ZigZag
+zz.flipY = false
+var zp = zz.Slice(mask)
+print(zp.Count)
+//# name: Grafik: Framebuffer, Zeichnen, Palette, Blit, Fehler, Slicer (Konsole)

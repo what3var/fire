@@ -1,0 +1,11 @@
+Parameter 'x' is an int and never undefined.
+Parameter 'x' is an int and never undefined.
+Parameter 'x' is an int, not String.
+caught too big
+2 4
+The return value of 'NoReturn' is an int and never undefined.
+Variable 'a' is an int and never undefined.
+Field 'count' is an int and never undefined.
+Parameter 'value' is an int and never undefined.
+Parameter 'x' is an int and never undefined.
+42 21

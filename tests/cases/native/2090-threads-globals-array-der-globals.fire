@@ -1,0 +1,11 @@
+var arr = new int[5]
+var done = 0
+fire {
+    for (var i = 0; i < 5; i = i + 1) { arr[i] = i * 2 }
+    sync global { done = 1 }
+}
+while (done == 0) { sync globals }
+var sum = 0
+for (var i = 0; i < 5; i = i + 1) { sum = sum + arr[i] }
+print("sum " + sum)
+//# name: Threads: Globals: Array der Globals

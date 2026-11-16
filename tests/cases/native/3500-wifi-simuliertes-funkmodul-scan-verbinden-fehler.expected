@@ -1,0 +1,27 @@
+ifaces sim 1 False
+name sim state 0 ip [] mac 02:00:00:00:00:01 rssi 0
+empty scan 0
+scan 3
+home -55 ch6 auth3 secure True 02:00:00:00:10:00
+cafe -70 ch1 auth0 secure False 02:00:00:00:10:01
+far -85 ch11 auth3 secure True 02:00:00:00:10:02
+connected True ssid home ip 192.168.1.50 rssi -55
+scan while connected 3
+after disconnect 0 []
+auth 8 The network refused the login (wrong password?).
+notfound 3
+open cafe -70
+dropped 0 []
+timeout 9
+state change 2
+polled True
+network gone 0
+ap running False clients 
+ap True 192.168.4.1 02:00:00:00:00:02 0
+join 1 2 clients 2
+full 1
+short password 1
+channel 1
+stopped False
+no interface 3
+closed 2

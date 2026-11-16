@@ -1,0 +1,5 @@
+#import "scene3d.physics"
+print(1)
+//# types: strict
+//# modes: Release
+//# name: types 265: #import "scene3d.physics"

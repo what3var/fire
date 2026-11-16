@@ -1,0 +1,10 @@
+#intwidth 32
+print(-1 >>> 28)
+print(-1 >>> 0)
+print(-8 >>> 1)
+print(Bits.PopCount(-1) + " " + Bits.LeadingZeros(1) + " " + Bits.RotateLeft(-2, 1) + " " + Bits.RotateRight(1, 1))
+print(Bits.FromFloat32(-1.0) + " " + Bits.FromFloat64(1.0))
+var b = new byte[8]
+b.WriteUInt32(0, 4000000000)
+print(b.ReadUInt32(0) + " " + b.ReadInt32(0))
+//# name: Bit-Hilfen mit #intwidth 32: >>> in 32 Bit, die Breite der Bit-Funktionen, Float-Bits als int[64], ReadUInt32 behaelt seine 64 Bit

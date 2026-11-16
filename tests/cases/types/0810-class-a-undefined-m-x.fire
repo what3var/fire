@@ -1,0 +1,4 @@
+class A { undefined M(x) { } }
+//# types: strict
+//# modes: Release
+//# name: types 81: class A { undefined M(x) { } }

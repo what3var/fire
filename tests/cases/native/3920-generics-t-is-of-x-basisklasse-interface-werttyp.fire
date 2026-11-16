@@ -1,0 +1,16 @@
+interface IShape { float Area() }
+class Animal { }
+class Dog : Animal { }
+class Square : IShape { float Area() { return 4.0 } }
+class Box<T> {
+    string What() {
+        if (T is of Animal) { return "animal" }
+        if (T is of IShape) { return "shape" }
+        if (T is of int) { return "int" }
+        return "other"
+    }
+}
+class Q { static string Kind<T>() { return (T is of Animal) + " " + (T is of Dog) + " " + (T is of IShape) } }
+print(new Box<Dog>().What() + " " + new Box<Animal>().What() + " " + new Box<Square>().What() + " " + new Box<int>().What() + " " + new Box<string>().What())
+print(Q.Kind<Dog>() + " | " + Q.Kind<Animal>() + " | " + Q.Kind<Square>() + " | " + Q.Kind<List<int>>())
+//# name: Generics: T is of X - Basisklasse, Interface, Werttyp, generische Methode

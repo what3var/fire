@@ -1,0 +1,22 @@
+class Item {
+    int n
+    construct(int n) { this.n = n }
+    destruct() { print("~I" + this.n) }
+}
+class Box {
+    string name
+    Item item
+    Item extra
+    construct(string name) { this.name = name }
+    destruct() { print("~B" + this.name) }
+}
+fire {
+    try {
+        try { print("a"); leave; print("nie") } catch (e) { print("nie catch") } finally { print("fin1") }
+    } finally { print("fin2") }
+    print("nie")
+}
+var i = 0
+while (i < 3000000) { i = i + 1 }
+print("fertig")
+//# name: Threads: leave laeuft durch finally, kein catch faengt es

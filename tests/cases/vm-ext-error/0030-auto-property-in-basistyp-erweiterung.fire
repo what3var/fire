@@ -1,0 +1,2 @@
+class extends int { int Size { get; set; } }
+//# name: Auto-Property in Basistyp-Erweiterung

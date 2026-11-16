@@ -2,7 +2,6 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using fire.Values;
-using MemoryPack;
 
 namespace fire.Bytecode
 {
@@ -11,7 +10,6 @@ namespace fire.Bytecode
     /// debug information (line-number table, local variable names) for
     /// tools such as the step debugger in the editor sub-project - the actual
     /// VM needs none of it, it is purely for external inspection.</summary>
-    [MemoryPackable]
     public sealed partial class Chunk
     {
         public List<byte> Code { get; }
@@ -41,15 +39,10 @@ namespace fire.Bytecode
         /// the class of the EXECUTING CODE (Base) counts, not the
         /// concrete instance class (Derived).
         ///
-        /// SERIALIZATION: creates a real cycle (RuntimeClass ->
-        /// method/field initialiser/constructor -> this chunk ->
-        /// OwnerClass -> the same RuntimeClass) - MemoryPack does not track
-        /// object identity/cycles (see the CompiledProgram.
-        /// RelinkAfterDeserialize docs for the same reasoning for
-        /// RuntimeClass.Base), so it would recurse endlessly ("reached depth
-        /// limit"). Therefore excluded and restored after deserialisation via
-        /// RelinkAfterDeserialize.</summary>
-        [MemoryPackIgnore]
+        /// SERIALIZATION: a cycle (RuntimeClass -> method/field initialiser/
+        /// constructor -> this chunk -> OwnerClass -> the same RuntimeClass).
+        /// A program file (ProgramFile) does not write it; it is restored after
+        /// reading by CompiledProgram.RelinkAfterDeserialize.</summary>
         public RuntimeClass? OwnerClass { get; set; }
 
         // Line-number table: instead of storing one line PER instruction
@@ -70,12 +63,20 @@ namespace fire.Bytecode
         private readonly List<(int Offset, int SourceIndex, int Line)> _lineTable = new();
 
         /// <summary>The source of the first line of the chunk (null: it has no line information) - the module its code belongs to (ROADMAP 9).</summary>
-        [MemoryPackIgnore]
         public int? FirstSourceIndex => _lineTable.Count > 0 ? _lineTable[0].SourceIndex : null;
 
         /// <summary>The source lines this chunk has code for (the profiler's lines that can run, LineProfile.ExecutableLines).</summary>
-        [MemoryPackIgnore]
         public IEnumerable<(int SourceIndex, int Line)> Lines => _lineTable.Where(e => e.Line > 0).Select(e => (e.SourceIndex, e.Line));
+        /// <summary>The line table as it stands (the program file writes it, ProgramFile).</summary>
+        internal IReadOnlyList<(int Offset, int SourceIndex, int Line)> LineTable => _lineTable;
+
+        /// <summary>The line table of a chunk that was read from a program file.</summary>
+        internal void LoadLineTable(IEnumerable<(int Offset, int SourceIndex, int Line)> entries)
+        {
+            _lineTable.Clear();
+            _lineTable.AddRange(entries);
+        }
+
         private int _lastMarkedSourceIndex = -1;
         private int _lastMarkedLine = -1;
 
@@ -143,17 +144,7 @@ namespace fire.Bytecode
             DebugLocalNames = new();
         }
 
-        /// <summary>For MemoryPack (see class docs "SERIALIZATION") - WITHOUT a
-        /// constructor of its own with these parameters the generated
-        /// deserialiser would have no way to put the values read from the stream
-        /// anywhere (the properties deliberately have NO
-        /// setter, see above) - it would simply DISCARD them and
-        /// instead create `new Chunk()` with only empty collections,
-        /// without any error message. Parameter names must (ignoring
-        /// case) match the property names, which is
-        /// the convention by which MemoryPack maps constructor parameters to
-        /// properties.</summary>
-        [MemoryPackConstructor]
+        /// <summary>A chunk with everything it holds, as a program file is read (ProgramFile): the properties deliberately have no setter.</summary>
         public Chunk(List<byte> code, List<Value> constants, List<Unit> units, List<FunctionProto> functions,
             List<HandlerTemplate> handlers, Dictionary<(int Depth, int Slot), string> debugLocalNames)
         {
@@ -166,28 +157,6 @@ namespace fire.Bytecode
         }
 
         public void MarkLocalName(int depth, int slot, string name) => DebugLocalNames[(depth, slot)] = name;
-
-        // The line table is not part of the serialised chunk (a packed program needs none); a fire plugin carries it for the debugger in DebugLocalNames under
-        // the key (-2, 0) as text "offset,source,line;..." (PluginBytecode.Write/Read), so the serialised form of a chunk does not change.
-        private const int LineTableDepth = -2;
-
-        /// <summary>Puts the line table into the serialised part of the chunk (a plugin's bytecode, for the debugger).</summary>
-        public void KeepLineTable()
-        {
-            if (_lineTable.Count == 0) return;
-            DebugLocalNames[(LineTableDepth, 0)] = string.Join(";", _lineTable.Select(e => $"{e.Offset},{e.SourceIndex},{e.Line}"));
-        }
-
-        /// <summary>After deserialising: the line table <see cref="KeepLineTable"/> kept (if any).</summary>
-        public void RestoreLineTable()
-        {
-            if (!DebugLocalNames.Remove((LineTableDepth, 0), out var text) || _lineTable.Count > 0) return;
-            foreach (var entry in text.Split(';', StringSplitOptions.RemoveEmptyEntries))
-            {
-                var p = entry.Split(',');
-                if (p.Length == 3 && int.TryParse(p[0], out int offset) && int.TryParse(p[1], out int source) && int.TryParse(p[2], out int line)) _lineTable.Add((offset, source, line));
-            }
-        }
 
         /// <summary>The source indexes of the line table mapped (a plugin's sources get the next indexes of the program that loads it).</summary>
         public void RemapSources(Func<int, int> map)
@@ -206,24 +175,20 @@ namespace fire.Bytecode
         // considerably cheaper than the indexer of a List<T>, and the code is read 1-3 times per instruction.
         // On building (Emit*/Patch*/AddConstant) the copy is discarded and recreated on the next read;
         // after compiling nothing changes any more. Two threads may create it at the same time (same content).
-        [MemoryPackIgnore] private byte[]? _codeArray;
-        [MemoryPackIgnore] private Value[]? _constantsArray;
+        private byte[]? _codeArray;
+        private Value[]? _constantsArray;
 
-        [MemoryPackIgnore]
         public byte[] CodeArray => _codeArray ??= Code.ToArray();
 
         /// <summary>Inline caches of the call sites of this chunk, indexed by the byte offset of the opcode
         /// (see SiteCache). Created only on first need (after compiling the code length is fixed).</summary>
-        [MemoryPackIgnore]
         public SiteCache?[]? SiteCaches;
 
         public SiteCache?[] EnsureSiteCaches() => SiteCaches ??= new SiteCache?[Code.Count + 1];
 
         /// <summary>The OverloadHints of the constants (parsed once, by constant index; see OpCode.OverloadHint).</summary>
-        [MemoryPackIgnore]
         public OverloadHint?[]? ParsedHints;
 
-        [MemoryPackIgnore]
         public Value[] ConstantsArray => _constantsArray ??= Constants.ToArray();
 
         /// <summary>Replaces a constant in place (used when float constants are narrowed to 32 bits, see FloatNarrowing).</summary>
@@ -271,8 +236,8 @@ namespace fire.Bytecode
 
         // For merging instructions during translation (see EndsWithOp): where the most recently emitted opcode begins
         // and at which position a jump target/patch point was most recently queried (every mark arises via `Here`).
-        [MemoryPackIgnore] private int _lastOpStart = -1;
-        [MemoryPackIgnore] private int _lastHere = -1;
+        private int _lastOpStart = -1;
+        private int _lastHere = -1;
 
         /// <summary>Is `op` (with `operandBytes` operand bytes) the most recently emitted instruction, and does NO jump target point behind it?
         /// Only then may the compiler merge it with the next one into a fused instruction: a mark behind it
@@ -306,7 +271,6 @@ namespace fire.Bytecode
 
         /// <summary>Current write position - useful as a jump target or as a starting point
         /// for a later PatchU16.</summary>
-        [MemoryPackIgnore]
         public int Here
         {
             get

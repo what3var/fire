@@ -1,0 +1,17 @@
+class Exception { string message; construct(string message = "") { this.message = message } }
+class T {
+    static Deep(int n) { var a = n * 2; if (n == 0) { throw new Exception("bottom") } var r = T.Deep(n - 1); return r + a }
+    static Run() {
+        var total = 0
+        for (var i = 0; i < 4; i = i + 1) {
+            var local = i + 100
+            try { T.Deep(3) } catch (e) { total = total + local }
+        }
+        print(total)
+        var sum = 0
+        for (var j = 0; j < 3; j = j + 1) { var w = j; if (w > 0) { var z = w * 2; sum = sum + z } }
+        print(sum)
+    }
+}
+T.Run()
+//# name: Exceptions durch viele Aufrufe/Bloecke: danach arbeiten die wiederverwendeten Scopes unveraendert weiter

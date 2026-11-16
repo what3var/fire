@@ -1,0 +1,35 @@
+float:m len = 0m
+for (int i = 0; i < 10; i++) { len = len + 0.5m }
+int:mm a = 5mm
+a++
+a += 3mm
+print(len + " " + a + " " + (a + 2cm) + " " + (len + 30cm) + " " + (30cm + len))
+float:cm c = len
+print(c + " " + len * 2 + " " + 2 * len + " " + len / 4 + " " + len * len + " " + len / 2m + " " + -len + " " + -a)
+print((len < 6m) + " " + (len < 600cm) + " " + (len == 5m) + " " + (len == 500cm) + " " + len % 2m + " " + a % 4mm)
+print(len:cm + " " + len::s + " " + a:unitless + " " + 5:mm)
+int:mm b = 1m
+float g = 3
+float:km k = 1500m
+float : any m dist = 250cm
+print(b + " " + g + " " + k + " " + dist)
+float:m s = 0m
+for (int j = 0; j < 5; j++) { s += 0.25m * 2 }
+float:m x1 = 1m
+float:m y1 = 2m
+print(s + " " + (x1 < y1 && y1 > x1) + " " + (x1 + y1 > 2.5m))
+float:C t = 20C
+for (int n = 0; n < 3; n++) { t = t + 1C }
+float:F tf = t
+float:K tk = t
+int:C ic = 20C
+ic++
+print(t + " " + t:F + " " + tf + " " + (t + 9F) + " " + (t < 25C) + " " + (t == 23C) + " " + tk + " " + ic + " " + ic:K)
+float:m d = 1m
+for (int r = 0; r < 4; r++) { d = d * 2 }
+float:s tm = 2s
+print(d + " " + (d + 10cm) + " " + d / 2 + " " + d / tm)
+unit Kelvin: K
+unit Celsius: C { coerce K => value + 273.15 }
+unit Fahrenheit: F { coerce C => (value - 32) / 1.8 }
+//# name: Typ-Analyse nativ: Zahlen mit Einheiten (gleiche Einheit, Faktor, Skalar, Umrechnung, Deklarationen, Offset-Einheiten)

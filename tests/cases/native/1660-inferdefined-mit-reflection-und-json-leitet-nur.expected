@@ -1,0 +1,12 @@
+8 14
+T1 Parameter 'by' (derived as never undefined: every call in the program gives a value) is an int, not String.
+T2 Parameter 'by' (derived as never undefined: every call in the program gives a value) is an int, not Float.
+T3 Parameter 'by' (derived as never undefined: every call in the program gives a value) is an int and never undefined.
+T4 Field 'count' (derived as never undefined: nothing in the program stores undefined in it) is an int, not String.
+T5 Field 'count' (derived as never undefined: nothing in the program stores undefined in it) is an int and never undefined.
+10 10
+undefined
+P1 Field 'n' is an int, not String.
+0 2
+J1 $.count is an int and never undefined (derived: nothing in the program stores undefined in it).
+undefined

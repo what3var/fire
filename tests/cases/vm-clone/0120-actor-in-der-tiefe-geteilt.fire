@@ -1,0 +1,8 @@
+actor Counter { int n; construct() { this.n = 0 } Inc() { this.n = this.n + 1 } }
+class Holder { Counter c; construct() { this.c = new Counter() } }
+var h = new Holder()
+var d = copy h
+var f = flat h
+print(d.c == h.c)
+print(f.c == h.c)
+//# name: Actor: in der Tiefe geteilt

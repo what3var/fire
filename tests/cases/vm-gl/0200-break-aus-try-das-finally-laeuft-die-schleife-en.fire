@@ -1,0 +1,8 @@
+var log = ""
+for (var i = 0; i < 5; i = i + 1) {
+    try { if (i == 2) { break } log = log + i }
+    finally { log = log + "f" }
+}
+print(log)
+//# note: ---- break/continue out of try/catch (the compiler unregisters handlers and executes the finally inline)
+//# name: break aus try: das finally laeuft, die Schleife endet

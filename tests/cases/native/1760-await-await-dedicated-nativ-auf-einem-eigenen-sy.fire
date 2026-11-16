@@ -1,0 +1,31 @@
+#import "time"
+class Item { int v = 0
+    construct(int v) { this.v = v } }
+class Work {
+    static int Sum(Item list[]) { Sleep(2ms); var s = 0; foreach (var i in list) { s = s + i.v }; return s }
+    static int Fail(int k) { Sleep(1ms); throw new ArgumentException("fail " + k) }
+    static int Inner(int k) { try { return Work.Fail(k) } catch (ArgumentException e) { return k * 2 } }
+    static int Nested(int k) { return await dedicated Work.Inner(k) + 1 }
+    static undefined Run(string who) {
+        var list = [new Item(1), new Item(2), new Item(3)]
+        print(who + " sum " + await dedicated Work.Sum(list))
+        try { await dedicated Work.Fail(7) } catch (ArgumentException e) { print(who + " caught " + e.message) }
+        print(who + " inner " + await dedicated Work.Inner(4))
+        print(who + " nested " + await dedicated Work.Nested(5))
+        int b = await dedicated taking list { list[0].v = 50; return list[0].v + list.Length }
+        print(who + " block " + b + " " + list[0].v)
+        var all = await [dedicated Work.Sum(list), Work.Inner(1), dedicated Work.Inner(2)]
+        print(who + " all " + all[0] + " " + all[1] + " " + all[2])
+        print(who + " again " + await Work.Sum(list))
+    }
+}
+int done = 0
+fire { Work.Run("thread"); sync global { done = done + 1 } }
+while (done < 1) { sync globals }
+Work.Run("main")
+int k = 4
+fire dedicated taking k { print("dedicated thread " + k); sync global { done = done + 1 } }
+while (done < 2) { sync globals }
+var dedicated = 3
+print("name " + dedicated)
+//# name: Await: await dedicated (nativ auf einem eigenen Systemthread), Ausnahme drinnen und draussen gefangen, verschachtelt, Blockform, in await [ ... ], fire dedicated, dedicated als Name

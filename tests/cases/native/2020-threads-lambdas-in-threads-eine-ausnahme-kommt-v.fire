@@ -1,0 +1,28 @@
+class Counter { int n = 0 }
+class Holder { lambda f; int k = 1 }
+class Demo {
+    static undefined Run() {
+        var c = new Counter()
+        var boom = func () on c => { n = 99; throw new ArgumentException("from home") }
+        var r1 = await taking boom {
+            try { boom() } catch (ArgumentException e) { return "caught " + e.message }
+            return "none"
+        }
+        print(r1 + " n " + c.n)
+        var h = new Holder()
+        h.f = take func (int k) on c => { n = n + k; return n }
+        var r2 = await taking h { return h.f(h.k) + h.f(10) }
+        print("field " + r2 + " n " + c.n)
+        var r3 = await taking c {
+            var mine = func () on c => { return n }
+            var inner = await taking mine { try { return mine() } catch (ArgumentException e) { return -1 } }
+            return inner
+        }
+        print("other thread " + r3)
+        var pure = (int a, int b) => a * b
+        var r4 = await taking pure { return pure(6, 7) }
+        print("pure " + r4)
+    }
+}
+Demo.Run()
+//# name: Threads: Lambdas in Threads - eine Ausnahme kommt vom Hauptprogramm zurueck, ein Lambda im Feld, ein ungebundenes rechnet im Thread

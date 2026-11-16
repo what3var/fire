@@ -1,0 +1,3 @@
+int z = 0
+print(5 / z)
+//# name: Abbruch: unbehandelte DivideByZeroException (Programm ohne Ausnahmen)

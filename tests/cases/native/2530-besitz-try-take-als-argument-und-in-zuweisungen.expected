@@ -1,0 +1,20 @@
+mine stays mine
+own kept
+local swap
+~swap
+after swap
+store arg
+~arg
+store top
+~top
+after top
+keep stays keep
+~box other
+~fwd
+end
+~box b
+~fresh
+~own
+~at
+~mine
+~keep

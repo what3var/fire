@@ -1,0 +1,3 @@
+defined any a = 1
+//# modes: Release
+//# name: types 61: defined any a = 1

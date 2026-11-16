@@ -1,0 +1,16 @@
+var list = new List()
+list.Add(10)
+list.Add(20)
+list.Add(30)
+
+var sum = 0
+foreach (x in list) {
+    sum = sum + x
+}
+print(sum)
+print(list[1])
+list[1] = 99
+print(list[1])
+print(list[1])
+//# note: what the test program said to expect (for a reader, it was not checked): 60 / 20 / 99 / 99
+//# name: Bytecode-Test: Interfaces + List (Prelude) + foreach

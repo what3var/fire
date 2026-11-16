@@ -1,0 +1,6 @@
+readonly var PI = 3
+
+print(PI)
+print(PI * 2)
+//# note: what the test program said to expect (for a reader, it was not checked): 3 / 6
+//# name: Bytecode-Test: readonly Variablen (Konstanten)

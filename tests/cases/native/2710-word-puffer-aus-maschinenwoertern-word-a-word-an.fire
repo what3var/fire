@@ -1,0 +1,58 @@
+#import "hash"
+#import "json"
+#import "io"
+word a[] = [1, 2, -1, 18446744073709551615]
+print(a + " " + a.length + " " + a[2] + " " + a[0] + " " + (a[3] is of word))
+word z[4]
+z[1] = 9
+z[2] = -1
+z[3]++
+++z[3]
+var sum = 0!word
+foreach (x in z) { sum += x }
+print(z + " " + sum + " " + z[0] + " " + z[3])
+var c = copy a
+c[0] = 5
+print(a[0] + " " + c[0] + " " + c.length)
+var n = new word[3]
+n[0] = 7
+print(n + " " + n[0] + " " + n.length)
+var plain = [10, 20]
+a = plain
+a[0] = 11
+print(a + " " + plain[0] + " " + a[0])
+try { a[0] = "s" } catch (ArgumentException e) { print("A: " + e.message) }
+try { a[0] = 2.5 } catch (ArgumentException e) { print("A: " + e.message) }
+try { word bad[] = [1, "z"] } catch (ArgumentException e) { print("A: " + e.message) }
+try { WRef.Set(a[0], 5) } catch (ArgumentException e) { print("A: " + e.message) }
+try { print(a[5]) } catch (IndexOutOfBoundsException e) { print("I: " + e.message) }
+word u[] = [undefined, 7]
+print(u[0] + " " + u[1])
+class WRef { static undefined Set(ref int x, int v) { x = v } }
+class Holder {
+    word data[3]
+    word more[]
+    static word table[2]
+}
+var h = new Holder()
+h.more = [4, 5]
+h.data[2] = 255
+print(h.data + " " + h.data[2] + " " + h.more[1] + " " + Holder.table.length)
+word m[2][3]
+m[1][2] = 6
+print(m[1] + " " + m[1][2] + " " + m.length)
+try { Hash.Crc32.HexOf(h.more) } catch (ArgumentException e) { print("A: " + e.message) }
+print(Json.Serialize(h))
+var back = Json.Deserialize<Holder>("{\"data\":[1,18446744073709551615,3],\"more\":[9]}")
+print(back.data + " " + back.data[1] + " " + back.more[0])
+byte b[] = [1, 2]
+b[0] = 513!word
+print(b[0])
+var tot = 0!word
+for (word k = 0; k < 4; k++) { tot = tot + z[k] }
+var arr = [5, 6]
+arr[1!word] = 7
+print(tot + " " + z[1!word] + " " + arr[1!word] + " " + "abc"[2!word])
+var ms = new IO.MemoryStream([1, 2])
+try { ms.Read(n, 0, 1) } catch (ArgumentException e) { print("A: " + e.message) }
+//# name: Word: Puffer aus Maschinenwoertern (word a[] = [..], word a[n], new word[n], Felder, static, mehrdimensional, Index, length, foreach, copy, ++, Json, an Natives abgelehnt)

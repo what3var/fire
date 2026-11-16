@@ -1,0 +1,46 @@
+    record Tag {
+        string name
+        construct(string n) { this.name = n }
+    }
+    record Note {
+        string text
+        Tag tag
+        construct(string t, string n) { this.text = t; this.tag = new Tag(n) }
+        string Describe() { return this.text + "/" + this.tag.name }
+    }
+    var notes = new Channel<Note>()
+    var back = new Channel<string>()
+    var go = new Channel<int>()
+    fire with notes, back, go {
+        var n = notes.Receive()
+        var c = copy n
+        back.Send("got " + n.Describe() + " " + (n == c))
+        try { var mine = take n } catch (AccessDeniedException e) { back.Send("take: " + e.message) }
+        go.Receive()
+        try { back.Send("after " + n.text) } catch (DestroyedException e) { back.Send("dead after its owner") }
+        back.Send("copy " + c.Describe())
+        var m = notes.Receive()
+        back.Send("second " + m.text)
+        go.Receive()
+        try { back.Send("moved " + m.text) } catch (DestroyedException e) { back.Send("handed on: dead") }
+        back.Close()
+    }
+    if (true) {
+        var keep = new Note("hello", "a")
+        notes.Send(keep)
+        print(back.Receive())
+        print(back.Receive())
+        print("owner " + keep.text)
+    }
+    go.Send(1)
+    print(back.Receive())
+    print(back.Receive())
+    var other = new Channel<Note>()
+    var second = new Note("again", "b")
+    notes.Send(second)
+    print(back.Receive())
+    other.Send(take second)
+    go.Send(2)
+    foreach (s in back) { print(s) }
+    print("other " + other.Receive().text)
+//# name: Channel<T>: ein Record ohne Wort wird geliehen - der Besitzer behaelt ihn, der Empfaenger liest (Methoden, ==, copy), take ist ihm verwehrt (AccessDeniedException); stirbt er beim Besitzer, ist der naechste Zugriff die DestroyedException, gibt der Besitzer ihn weiter (take), enden die Leihen

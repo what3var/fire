@@ -1,0 +1,5 @@
+agreed True
+echo(True): hi
+long 5013 True
+bytes 3000 3
+plain False 5014

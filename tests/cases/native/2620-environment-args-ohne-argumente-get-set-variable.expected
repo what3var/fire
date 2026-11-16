@@ -1,0 +1,11 @@
+0
+True
+True
+a b ä
+a b ä
+True
+False
+True
+True
+Environment.Get: '' is not a name of an environment variable.
+Environment.Set: the value must be a string (or undefined to remove the variable).

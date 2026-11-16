@@ -1,0 +1,5 @@
+record P { int x }
+class C : P { }
+print(1)
+//# modes: Release
+//# name: types 13: record P { int x }

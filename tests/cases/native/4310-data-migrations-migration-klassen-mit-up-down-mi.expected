@@ -1,0 +1,86 @@
+== memory:
+to 2: 2 applied [1, 2]
+  people: id* name! years email | ix_people_email(email)u ix_people_name(name)
+rows 1 36
+failed: Data: the migration 3 'broken' (M3.Up) failed: no such table: nowhere
+after the failure [1, 2] columns 4
+down to 1: 1 applied [1]
+  people: id* name! age | ix_people_name(name)
+down to 0: 1 tables 0
+// Made by forge data diff: what the database lacks of the mapping of the [Table] classes.
+[Migration 4, "the rest"]
+class Migration4 {
+    undefined Up(Data.Migrator m) {
+        m.AddColumn("people", m.Column("city", "string"))
+        m.AddColumn("people", m.Column("active", "bool"))
+        m.CreateIndex("ix_people_city", "people", "city")
+        m.CreateTable("pets", [m.Key("id"), m.Column("name", "string"), m.Column("personId", "int")])
+    }
+    undefined Down(Data.Migrator m) {
+        m.DropTable("pets")
+        m.DropIndex("ix_people_city", "people")
+        m.DropColumn("people", "active")
+        m.DropColumn("people", "city")
+    }
+}
+
+// Made by forge data import from the tables of the database.
+#import "data"
+
+namespace Shop {
+    [Table "people"]
+    class People {
+        [Key] int id
+        [Required] [Length 100] [Index] string name
+        int years
+        [Length 200] [Unique] string email
+        construct() { }
+    }
+}
+
+notes 1.5 steps 2
+kind: Data.Migrator: the kind of a column is int, float, bool, string, bytes, time, enum or json, not 'money'.
+found 3 first 1 people M1
+== sqlite::memory:
+to 2: 2 applied [1, 2]
+  people: id* name! years email | ix_people_email(email)u ix_people_name(name)
+rows 1 36
+failed: Data: the migration 3 'broken' (M3.Up) failed: no such table: nowhere
+after the failure [1, 2] columns 4
+down to 1: 1 applied [1]
+  people: id* name! age | ix_people_name(name)
+down to 0: 1 tables 0
+// Made by forge data diff: what the database lacks of the mapping of the [Table] classes.
+[Migration 4, "the rest"]
+class Migration4 {
+    undefined Up(Data.Migrator m) {
+        m.AddColumn("people", m.Column("city", "string"))
+        m.AddColumn("people", m.Column("active", "bool"))
+        m.CreateIndex("ix_people_city", "people", "city")
+        m.CreateTable("pets", [m.Key("id"), m.Column("name", "string"), m.Column("personId", "int")])
+    }
+    undefined Down(Data.Migrator m) {
+        m.DropTable("pets")
+        m.DropIndex("ix_people_city", "people")
+        m.DropColumn("people", "active")
+        m.DropColumn("people", "city")
+    }
+}
+
+// Made by forge data import from the tables of the database.
+#import "data"
+
+namespace Shop {
+    [Table "people"]
+    class People {
+        [Key] int id
+        [Required] [Length 100] [Index] string name
+        int years
+        [Length 200] [Unique] string email
+        construct() { }
+    }
+}
+
+notes 1.5 steps 2
+kind: Data.Migrator: the kind of a column is int, float, bool, string, bytes, time, enum or json, not 'money'.
+found 3 first 1 people M1

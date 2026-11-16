@@ -1,0 +1,7 @@
+#import "io"
+var e = __IOLastError()
+int x = e + 1
+print(x > -100)
+//# types: strict
+//# modes: Release
+//# name: types 44: #import "io"

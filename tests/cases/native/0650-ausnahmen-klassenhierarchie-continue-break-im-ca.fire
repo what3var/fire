@@ -1,0 +1,90 @@
+class Base : Exception {
+    string message
+    construct(string m) { this.message = m }
+}
+class Derived : Base {
+    construct(string m) : base(m) { }
+}
+class Res {
+    string n
+    construct(string n) { this.n = n }
+    destruct() { print("free " + n) }
+}
+class W {
+    int count
+    construct() { this.count = 0 }
+    int Step(int k) {
+        this.count = this.count + 1
+        if (k % 3 == 0) { throw new Derived("k=" + k) }
+        return k
+    }
+}
+var w = new W()
+var sum = 0
+for (var i = 1; i <= 8; i = i + 1) {
+    try {
+        var r = new Res("r" + i)
+        sum = sum + w.Step(i)
+        if (i == 7) { continue }
+        print("ok " + i)
+    } catch (Base e) {
+        print("caught " + e.message)
+        if (i == 6) { break }
+        continue
+    } finally {
+        print("fin " + i)
+    }
+    print("tail " + i)
+}
+print("sum " + sum + " count " + w.count)
+// nested try in catch, rethrow from nested
+try {
+    try {
+        throw new Derived("first")
+    } catch (Base e) {
+        try {
+            throw new Derived("second")
+        } catch (Derived d) {
+            print("inner " + d.message)
+        }
+        print("after inner")
+        throw e
+    }
+} catch (e) {
+    print("outer " + e.message)
+}
+// return in catch with finally, finally return replaces
+class R {
+    static int A() {
+        try {
+            throw new Derived("x")
+        } catch (e) {
+            return 1
+        } finally {
+            print("A fin")
+        }
+    }
+    static int B() {
+        try {
+            return 1
+        } finally {
+            print("B fin")
+            return 2
+        }
+    }
+    static string C() {
+        var arr = [1, 2, 3]
+        foreach (v in arr) {
+            try {
+                if (v == 2) { return "two" }
+            } finally {
+                print("C fin " + v)
+            }
+        }
+        return "none"
+    }
+}
+print(R.A())
+print(R.B())
+print(R.C())
+//# name: Ausnahmen: Klassenhierarchie, continue/break im catch, return durch finally

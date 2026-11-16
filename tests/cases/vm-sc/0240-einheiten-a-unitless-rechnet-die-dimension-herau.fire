@@ -1,0 +1,13 @@
+var a = 12mm
+var b = a:unitless
+print(b)
+print(b is in mm)
+var c = a::unitless
+print(c)
+print(a::m)
+var k = 2km
+print(k:unitless)
+print((3.5cm):unitless)
+var t = 4
+print(t:unitless)
+//# name: Einheiten: a:unitless rechnet die Dimension heraus (12mm -> 0.012), a::unitless laesst die Zahl (12), a::m benennt nur um

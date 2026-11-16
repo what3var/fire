@@ -1,0 +1,6 @@
+var warn = 5
+print(warn + 1)
+warn = warn * 2
+print(warn)
+//# modes: Release
+//# name: diag 6: var warn = 5

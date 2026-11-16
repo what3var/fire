@@ -1,0 +1,43 @@
+var add = func (a, b) => { return a + b }
+print(add(2, 3))
+var twice = x => x * 2
+print(twice(21))
+var limit = 3
+var f = x => x > limit
+limit = 10
+print(f(5))
+class T {
+    int n
+    construct(int n) { this.n = n }
+    static Run() {
+        var k = 7
+        var g = (a) => a + k
+        k = 100
+        return g(1)
+    }
+    Make() {
+        var inc = func (x) on this => { this.n = this.n + x; return this.n }
+        return inc
+    }
+}
+print(T.Run())
+var t = new T(10)
+var inc = t.Make()
+print(inc(5))
+print(inc(5))
+var fs = new List()
+for (var i = 0; i < 3; i = i + 1) { fs.Add(() => i * 10) }
+foreach (h in fs) { print(h()) }
+var greet = (name) => "hi " + name
+print(greet("Ada"))
+var compose = (f1, f2) => (x) => f2(f1(x))
+var both = compose(twice, x => x + 1)
+print(both(5))
+var acc = 0
+for (var j = 0; j < 100; j = j + 1) { acc = add(acc, j) }
+print(acc)
+lambda w = func () => { print("zero") }
+w()
+int lambda<int> sq = x => x * x
+print(sq(9))
+//# name: Lambdas: Captures als Kopie, on-Ziel, Verschachtelung, Signaturpruefung, Lambdas in Listen

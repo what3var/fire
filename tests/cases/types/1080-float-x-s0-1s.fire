@@ -1,0 +1,3 @@
+float x : s0 = 1s
+//# modes: Release
+//# name: types 108: float x : s0 = 1s

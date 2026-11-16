@@ -1,0 +1,4 @@
+warn 5
+print(1)
+//# modes: Release
+//# name: diag 7: warn 5

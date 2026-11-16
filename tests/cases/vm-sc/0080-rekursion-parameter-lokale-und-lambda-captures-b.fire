@@ -1,0 +1,18 @@
+class T {
+    static Fib(int n) { if (n < 2) { return n } var a = T.Fib(n - 1); var b = T.Fib(n - 2); return a + b }
+    static Even(int n) { if (n == 0) { return true } return T.Odd(n - 1) }
+    static Odd(int n) { if (n == 0) { return false } return T.Even(n - 1) }
+    static MakeAdder(int n) { var k = n * 2; return x => x + k }
+    static Sum(int n) { var local = [n]; if (n == 0) { return 0 } return local[0] + T.Sum(n - 1) }
+    static Locals() { var a = undefined; var b = undefined; var c = 3; return "" + a + "," + b + "," + c }
+}
+print(T.Fib(15))
+print(T.Even(10) + " " + T.Odd(10))
+var f = T.MakeAdder(1)
+var g = T.MakeAdder(10)
+print(T.Fib(10))
+print(f(1) + " " + g(1))
+print(T.Sum(100))
+print(T.Locals())
+print(T.Locals())
+//# name: Rekursion, Parameter, Lokale und Lambda-Captures bleiben je Aufruf unabhaengig (wiederverwendete Scopes sind sauber)

@@ -1,0 +1,6 @@
+moved: Access to an object that was handed over to a thread ('fire handover').
+word: 'Put' runs in the main program (an object of its globals): an object of this thread goes there only with a word - 'copy x' (a copy) or 'take x' (moved).
+in thread 4 26 first 1 slow 42
+caught from main
+cb 8
+main 4 26 5 11

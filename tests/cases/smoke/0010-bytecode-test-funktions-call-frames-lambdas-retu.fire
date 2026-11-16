@@ -1,0 +1,20 @@
+var square = func (x) => { return x * x }
+var addOne = func (x) => { return x + 1 }
+var compute = func (x) => { return addOne(square(x)) }
+print(compute(5))
+
+var factorial = func (n) => {
+    var result = 1
+    var i = 2
+    while (i <= n) {
+        result = result * i
+        i = i + 1
+    }
+    return result
+}
+print(factorial(5))
+
+var noReturn = func () => { var x = 1 }
+print(noReturn())
+//# note: what the test program said to expect (for a reader, it was not checked): 26 / 120 / undefined
+//# name: Bytecode-Test: Funktions-/Call-Frames (Lambdas, return)

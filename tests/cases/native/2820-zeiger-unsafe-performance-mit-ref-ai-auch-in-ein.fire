@@ -1,0 +1,26 @@
+#performance
+class F {
+  static Zero(ref int first, int n) {
+    unsafe { int* p = &first
+      for (var i = 0; i < n; i++) { *p = 0; p = p + 1 } }
+  }
+  static Put(ref float x) { unsafe { float* p = &x
+    *p = 3 } }
+  static Sum(ref byte first, int n) {
+    var t = 0
+    unsafe { byte* p = &first
+      for (var i = 0; i < n; i++) { t = t + *p; p = p + 1 } }
+    return t
+  }
+}
+int a[] = new int[4]
+a[0] = 1; a[1] = 2; a[2] = 3; a[3] = 4
+F.Zero(a[1], 2)
+print(a[0] + " " + a[1] + " " + a[2] + " " + a[3])
+float f[] = new float[2]
+F.Put(f[1])
+print(f[1])
+var b = new byte[3]
+b[0] = 5; b[1] = 6; b[2] = 7
+print(F.Sum(b[0], 3))
+//# name: Zeiger (unsafe): #performance mit ref a[i] - auch in ein typisiertes Array und einen Puffer (die Slot-Tabelle bleibt fuer die Zeiger)

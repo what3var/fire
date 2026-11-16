@@ -1,0 +1,14 @@
+class Base {
+    destruct() { print("Base.destruct") }
+}
+class Middle : Base { }
+class Leaf : Middle {
+    destruct() { print("Leaf.destruct") }
+}
+{
+    var a = new Leaf()
+    var b = new Middle()
+}
+print("danach")
+//# note: what the test program said to expect (for a reader, it was not checked): Leaf.destruct / Base.destruct / Base.destruct - je Objekt, Reihenfolge der Objekte egal - dann danach
+//# name: Destruktoren: die ganze Klassenkette wird aufgeraeumt (abgeleitet zuerst)

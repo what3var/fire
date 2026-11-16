@@ -1,0 +1,33 @@
+after post
+loop 0
+loop 1
+call
+before sleep
+after sleep
+get 0
+get 1
+count 2
+op 0
+op 1
+destruct 2 0
+destruct 2 1
+sum 3
+block 5
+destruct 5 0
+destruct 5 1
+after block
+where 3
+where 1
+small 1
+job1
+job2
+job3
+job4
+job5
+synced 5
+end
+job6
+destruct 1 0
+destruct 1 1
+destruct 3 0
+destruct 3 1

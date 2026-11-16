@@ -1,0 +1,41 @@
+class Log { static string Seen = ""
+  static int Note(int v) { Log.Seen = Log.Seen + v; return v } }
+class Shape {
+    string name
+    construct(string name, int width = 10, int height = 20, bool filled = false) {
+        this.name = name + " " + width + "x" + height + (filled ? " filled" : "")
+    }
+    string Describe(string prefix = "<", string suffix = ">", int times = 1) { return prefix + this.name + suffix + times }
+    static int Area(int w, int h = 2, int scale = 1) { return w * h * scale }
+    int Scaled(int factor = 1, int offset = this.width()) { return factor * 100 + offset }
+    int width() { return 7 }
+}
+class Square : Shape {
+    construct(int side) : base("square", side, side) { }
+    override string Describe(string prefix = "[", string suffix = "]", int times = 2) { return "sq " + base.Describe(suffix: suffix, prefix: prefix) }
+}
+print(new Shape("a").name)
+print(new Shape("b", height: 5).name)
+print(new Shape("c", filled: true, width: 3).name)
+print(new Shape(name: "d").name)
+var s = new Shape("e", 1, 2)
+print(s.Describe(suffix: "!"))
+print(s.Describe(times: 3, prefix: "("))
+print(s.Describe("{", times: 4))
+print(Shape.Area(3, scale: 10))
+print(Shape.Area(h: 4, w: 5))
+print(s.Scaled(offset: 1))
+print(s.Scaled(factor: 2))
+Shape q = new Square(4)
+print(q.Describe(suffix: ")"))
+any dyn = new Square(5)
+print(dyn.Describe(times: 9, prefix: "#"))
+print(Shape.Area(scale: Log.Note(3), w: Log.Note(1), h: Log.Note(2)))
+print(Log.Seen)
+class Holder { Shape kept
+  construct() { this.kept = new Shape("held", height: 1) } }
+print(new Holder().kept.name)
+try { dyn.Describe(nope: 1) } catch (ArgumentException e) { print("err " + e.message) }
+print("abcdef".Substring(count: 2, start: 1))
+try { print('a'.ToUnicode(x: 1)) } catch (ArgumentException e) { print("err " + e.message) }
+//# name: Benannte Argumente: Methoden, statisch, Konstruktoren, base, Standardwerte in der Mitte, Reihenfolge der Auswertung

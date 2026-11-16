@@ -1,0 +1,8 @@
+var f = 5kg * (2m / 1s / 1s)
+print(f + " " + 2km / 1h + " " + 1m * 1mm + " " + 500mm * 2m + " " + 2kg * 3g + " " + 3m * 2m * 4m + " " + 10m / 2s * 3s)
+float:kg*m/s^2 g = f
+float:N n = f
+print(g + " " + 1m / (1mm * 1s) + " " + "1m/mm*s".ToFloat() + " " + "2 m*m/s/s".ToFloat() + " " + "3 km/m*h".ToFloat() + " " + 1.0dm3:l + " " + 2 / 4s + " " + n)
+unit Newton: N { coerce kg*m/s^2 => 1 }
+//# modes: Release
+//# name: types 105: var f = 5kg * (2m / 1s / 1s)

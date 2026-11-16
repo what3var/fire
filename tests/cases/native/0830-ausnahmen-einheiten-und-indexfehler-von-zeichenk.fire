@@ -1,0 +1,37 @@
+class M {
+    int len : mm = 0mm
+    construct() { this.len = 1mm }
+}
+var m = new M()
+print(m.len)
+try {
+    m.len = 7
+    print("no error")
+} catch (UnitMismatchException e) {
+    print("unit: " + e.message)
+}
+float w : mm = 5mm
+try {
+    w = 3
+} catch (e) {
+    print("w: " + e.message + " | " + e.expectedUnit + " | " + e.actualUnit)
+}
+print(w)
+var s = "hello"
+try {
+    print(s.CharAt(10))
+} catch (IndexOutOfBoundsException e) {
+    print(e.message + " " + e.index + " " + e.length)
+}
+try {
+    print(s[9])
+} catch (IndexOutOfBoundsException e) {
+    print(e.message)
+}
+try {
+    var b = new byte[2]
+    b[5] = 1
+} catch (IndexOutOfBoundsException e) {
+    print(e.message)
+}
+//# name: Ausnahmen: Einheiten und Indexfehler von Zeichenketten/Puffern

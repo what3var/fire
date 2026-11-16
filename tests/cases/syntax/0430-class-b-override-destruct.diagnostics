@@ -1,0 +1,1 @@
+0430-class-b-override-destruct.fire(1): error E3000: A destructor does not replace the one of the base class (both run) - it cannot be 'override'

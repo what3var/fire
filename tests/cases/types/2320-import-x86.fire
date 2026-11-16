@@ -1,0 +1,5 @@
+#import "x86"
+print(1)
+//# types: strict
+//# modes: Release
+//# name: types 232: #import "x86"

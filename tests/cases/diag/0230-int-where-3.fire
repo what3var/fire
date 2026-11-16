@@ -1,0 +1,4 @@
+int where = 3
+print(where)
+//# modes: Release
+//# name: diag 23: int where = 3

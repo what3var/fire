@@ -1,0 +1,52 @@
+int[8] a[] = new int[4]
+a[0] = 300
+a[1] = -129
+print(a[0] + " " + a[1] + " " + a[2])
+var d = a
+d[2] = 1000
+print(d[2])
+a[3] = 127
+a[3]++
+print(a[3])
+print(a[0] = 500)
+try { a[0] = "x" } catch (ArgumentException e) { print("A: " + e.message) }
+try { a[0] = 2.5 } catch (ArgumentException e) { print("A: " + e.message) }
+try { a[0] = 5cm } catch (UnitMismatchException e) { print("U: " + e.message) }
+a[0] = undefined
+print(a[0])
+a[0] = -128
+print(a[0] + " " + a[1])
+a[0] = undefined
+a[2] = -128
+a[2] = 5
+print(a[0] + " " + a[2] + " " + a.length)
+int big[3]
+big[0] = -9223372036854775807 - 1
+print(big[0] + " " + big[1])
+char c[2]
+c[0] = 'x'
+print(c[0] + " " + c[1])
+byte by[3]
+by[0] = 300
+by[1] = 255
+print(by[0] + " " + by[1] + " " + by[2])
+float[32] f[] = [1, 2.1, undefined]
+print(f[0] + " " + f[1] + " " + f[2])
+float[16] h[2]
+h[0] = 0.1
+print(h[0])
+float n[2]
+n[0] = 0.0 / 0.0
+print(n[0] + " " + n[1])
+bool b[3]
+b[0] = true
+try { b[1] = 1 } catch (ArgumentException e) { print("A: " + e.message) }
+print(b[0] + " " + b[1])
+float:cm w[] = [1cm, 2m]
+print(w[1])
+try { w[0] = 3s } catch (UnitMismatchException e) { print("U: " + e.message) }
+try { int bad[] = [1, "z"] } catch (ArgumentException e) { print("A: " + e.message) }
+int[16] wide[] = [1, 2, 70000]
+print(wide[2])
+try { int[8] q[] = wide } catch (ArgumentException e) { print("A: " + e.message) }
+//# name: Typisierte Arrays: Breiten, undefined und der Merker (-128, NaN, 0xFF, 0xFFFF), strikte Typen, Einheiten, ++, Zuweisung liefert den gespeicherten Wert

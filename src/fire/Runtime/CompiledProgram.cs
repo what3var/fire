@@ -1,5 +1,4 @@
 ﻿using fire.Bytecode;
-using MemoryPack;
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -13,7 +12,6 @@ namespace fire.Runtime
     /// method calls, plus the signatures of all `extern`
     /// declarations (for dynamic linking against a native library named by an `#extern
     /// "libName"`, see VM.CallExtern).</summary>
-    [MemoryPackable]
     public sealed partial class CompiledProgram
     {
         public required Chunk TopLevel { get; init; }
@@ -25,7 +23,6 @@ namespace fire.Runtime
 
         /// <summary>The enums the program declares, by their full name: what JSON reads into a field of an enum (ProgramEnums, the VM's IJsonHost.FindEnum),
         /// and the enum of a field for the C++ generator - always this program's, never another one's of the same name in the process.</summary>
-        [MemoryPack.MemoryPackIgnore]
         public IReadOnlyDictionary<string, fire.Values.EnumType>? Enums
         {
             get => _enums;
@@ -41,7 +38,6 @@ namespace fire.Runtime
         /// <summary>The enums as data (what a program cache keeps; RelinkAfterDeserialize makes Enums from it).</summary>
         public List<EnumDecl> EnumDecls { get; set; } = new();
 
-        [MemoryPackable]
         public sealed partial class EnumDecl
         {
             public string Name { get; set; } = "";
@@ -53,29 +49,11 @@ namespace fire.Runtime
         /// <summary>The units the program declares (`unit Inch: in { ... }`); the VM makes them known before it runs the program (Unit.UseCustomUnits).</summary>
         public List<fire.Values.CustomUnit> CustomUnits { get; set; } = new();
 
-        /// <summary>MUST be called ONCE after every deserialisation,
-        /// before the program is executed (see SPEC "Program
-        /// serialisation") - unlike e.g. BinaryFormatter, MemoryPack does NOT track
-        /// object identity across multiple occurrences:
-        /// `RuntimeClass.Base` of a derived class and the
-        /// corresponding entry in `Classes` would, after deserialisation,
-        /// otherwise become TWO SEPARATE, independent object instances (with
-        /// identical content, but different identity).
-        ///
-        /// That is harmless for most uses (base-class chain for method/
-        /// field resolution - FindMethod/FindFieldAccess work only on
-        /// NAMES+DATA, not object identity), but breaks the
-        /// SHARED storage location of static fields (RuntimeClass.
-        /// StaticFieldValues, see FindStaticFieldOwner docs): `Derived.X`
-        /// and `Base.X` would have to be the same dictionary INSTANCE, but would be
-        /// two independent (both empty) copies after deserialisation
-        /// without this step.
-        ///
-        /// Instead sets, for every class with a (now possibly
-        /// orphaned) Base reference, the CANONICAL instance from
-        /// `Classes` (by name) - exactly the same linking the
-        /// compiler does on the FIRST compile (see Compiler.
-        /// CompileClasses).</summary>
+        /// <summary>Called once after a program was read from a program file (ProgramFile.Read does it), before the program runs: what the file does not
+        /// hold is made again. The enums of the program from their data (the same types as before, known to its VMs); the base of every class is the
+        /// class of that name in `Classes` (ONE object: `Derived.X` and `Base.X` share the storage of a static field, RuntimeClass.StaticFieldValues -
+        /// the file keeps that already, this is the safety net for a program built by hand); and every chunk of a class gets its
+        /// Chunk.OwnerClass back (a cycle the file does not write).</summary>
         public void RelinkAfterDeserialize()
         {
             // (the enums of the program again, from their data: the same types as before - EnumType.Intern - and known to its VMs)

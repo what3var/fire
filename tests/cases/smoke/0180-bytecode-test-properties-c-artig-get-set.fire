@@ -1,0 +1,24 @@
+class Circle {
+    float radius
+
+    construct(float radius) {
+        this.radius = radius
+    }
+
+    float Diameter {
+        get { return this.radius * 2 }
+        set { this.radius = value / 2 }
+    }
+
+    float Area {
+        get { return this.radius * this.radius * 3 }
+    }
+}
+
+var c = new Circle(5.0)
+print(c.Diameter)
+c.Diameter = 20.0
+print(c.radius)
+print(c.Area)
+//# note: what the test program said to expect (for a reader, it was not checked): 10 / 10 / 300
+//# name: Bytecode-Test: Properties (C#-artig, get/set)

@@ -1,0 +1,7 @@
+#nosync
+var counter = 0
+fire { counter = 5 }
+var handled = 0
+while (handled == 0) { handled = sync globals }
+print("counter " + counter + " bearbeitet " + handled)
+//# name: Threads: Globals: Schreiben erst bei sync globals (#nosync)

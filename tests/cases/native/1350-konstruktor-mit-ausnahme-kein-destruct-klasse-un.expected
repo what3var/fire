@@ -1,0 +1,15 @@
+a
+caught: base 2
+b
+caught: thing 3
+~Part p3
+c
+resume: thing 3
+~Thing 3
+~Base 3
+~Part p3
+d
+e
+~Thing 1
+~Base 1
+~Part p1

@@ -1,0 +1,4 @@
+var probe = 5
+var silence = probe + 1
+print(probe + " " + silence)
+//# name: probe/silence bleiben als Variablennamen nutzbar

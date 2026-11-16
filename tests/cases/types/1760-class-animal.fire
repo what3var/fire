@@ -1,0 +1,9 @@
+class Animal { }
+class Dog : Animal { }
+interface INamed { string Name { get; } }
+class Bird : Animal, INamed { string Name { get { return "b" } } }
+interface I { lambda<int> A { get; } }
+class C : I { lambda<int, int> A { get; set; } }
+print("ok")
+//# modes: Release
+//# name: types 176: class Animal { }

@@ -1,0 +1,48 @@
+#import "io"
+#import "filesystem"
+var m = new IO.MemoryStream()
+m.Write(IO.Utf8.GetBytes("0123456789"))
+print(m.Length + " " + m.Position)
+m.Position = 3
+var b = new byte[4]
+print(m.Read(b, 0, 4))
+print(IO.Utf8.GetString(b))
+print(m.Position)
+m.Seek(-2, IO.SeekOrigin.End)
+print(IO.Utf8.GetString(m.ReadAll()))
+m.Length = 5
+print(m.Length + " " + m.Position)
+m.Length = 8
+print(m.ToBuffer().length)
+var buf = m.ToBuffer()
+print(buf[0] + " " + buf[4] + " " + buf[5] + " " + buf[7])
+print(m.ReadByte())
+m.Position = 0
+print(m.ReadByte() + " " + m.ReadByte())
+m.Close()
+try { m.ReadByte() } catch (IO.IOException e) { print("closed") }
+print(IO.Utf8.GetString(IO.Utf8.GetBytes("äöü€😀")) == "äöü€😀")
+print(IO.Utf8.GetBytes("äöü€😀").length)
+var bad = new byte[5]
+bad[0] = 65
+bad[1] = 255
+bad[2] = 195
+bad[3] = 66
+bad[4] = 226
+print(IO.Utf8.GetString(bad).length)
+var bom = new byte[4]
+bom[0] = 239
+bom[1] = 187
+bom[2] = 191
+bom[3] = 65
+print(IO.Utf8.GetString(bom))
+print(IO.Path.Combine("a", "b") + " " + IO.Path.Combine("a/", "b") + " " + IO.Path.Combine("a", "/b") + " [" + IO.Path.Combine("", "b") + "]")
+print(IO.Path.GetFileName("/x/y/z.tar.gz") + " " + IO.Path.GetFileNameWithoutExtension("/x/y/z.tar.gz") + " " + IO.Path.GetExtension("/x/y/z.tar.gz"))
+print("[" + IO.Path.GetExtension(".gitignore") + "] [" + IO.Path.GetFileNameWithoutExtension(".gitignore") + "] [" + IO.Path.GetExtension("noext") + "] [" + IO.Path.GetExtension("dot.") + "] [" + IO.Path.GetFileName("dir/") + "]")
+print(IO.Path.GetDirectoryName("/x/y/z") + "|" + IO.Path.GetDirectoryName("/x") + "|" + IO.Path.GetDirectoryName("x") + "|" + IO.Path.GetDirectoryName("a/b/") + "|" + IO.Path.GetDirectoryName("a//b") + "|" + IO.Path.GetDirectoryName("/"))
+print(IO.Path.IsPathRooted("/x") + " " + IO.Path.IsPathRooted("x") + " " + IO.Path.DirectorySeparatorChar)
+print(IO.Path.GetFullPath("/a/b/../c/./d//e") )
+print(IO.Path.GetFullPath("x/../y") == IO.Path.Combine(IO.Directory.GetCurrentDirectory(), "y"))
+print(IO.Path.GetTempPath().length > 1)
+print("done")
+//# name: IO: MemoryStream, UTF-8, Pfade

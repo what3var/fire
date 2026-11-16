@@ -1,0 +1,11 @@
+class Exception { string message; construct(string message = "") { this.message = message } }
+class T {
+    static A() { try { return 1 } catch (e) { return 2 } }
+    static Run() {
+        print(1 + T.A())
+        try { T.A(); throw new Exception("spaeter") } catch (e) { print("gefangen " + e.message) }
+        print(7 + T.A())
+    }
+}
+T.Run()
+//# name: return mitten in einem try meldet seinen Handler ab (keine fremde Exception landet in der beendeten Funktion)

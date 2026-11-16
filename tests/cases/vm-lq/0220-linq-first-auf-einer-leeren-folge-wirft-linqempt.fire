@@ -1,0 +1,4 @@
+#import "linq"
+class P { string name; int price; construct(string n, int p) { this.name = n; this.price = p } }
+try { Linq.From([]).First() } catch (e) { print("leer: " + e.message) }
+//# name: LINQ: First auf einer leeren Folge wirft LinqEmptyException

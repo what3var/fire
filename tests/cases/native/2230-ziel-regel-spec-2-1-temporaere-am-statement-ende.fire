@@ -1,0 +1,48 @@
+class Item {
+    string n
+    construct(string n) { this.n = n }
+    destruct() { print("destroy " + this.n) }
+    string Name() { return this.n }
+}
+class Factory { static Item Make(string n) { return new Item(n) } }
+class Box { Item content }
+class Builder {
+    int size = 0
+    Builder With(int n) { this.size = this.size + n; return this }
+    destruct() { print("destroy builder") }
+}
+print("1 temp:")
+print(new Item("temp").Name())
+print("2 var:")
+var a = new Item("a")
+print("3 field:")
+var box = new Box()
+box.content = Factory.Make("boxed")
+print(box.content is from box)
+print("4 array:")
+{
+    Item items[2]
+    items[0] = new Item("e0")
+    items[0] = new Item("e1")
+    print("overwritten")
+}
+print("5 builder:")
+var b = new Builder().With(2).With(3)
+print(b.size)
+print("6 outer var:")
+Item keep = undefined
+{
+    {
+        keep = new Item("keep")
+    }
+    print("inner left: " + keep.n)
+}
+print("7 hoist:")
+Item last = undefined
+for (int i = 0; i < 2; i++) {
+    var it = new Item("loop " + i)
+    if (i == 1) { last = it }
+}
+print("kept " + last.n)
+print("end")
+//# name: Ziel-Regel (SPEC 2.1): Temporaere am Statement-Ende, var, Feld, Element (das Array besitzt), Builder, aeussere Variable, Hochziehen

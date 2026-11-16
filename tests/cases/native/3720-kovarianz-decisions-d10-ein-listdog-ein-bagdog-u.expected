@@ -1,0 +1,13 @@
+Rex1 Rex Rex1 Rex Rex
+1 1 Rex Rex
+E1 Parameter 'value' is a T (Dog), not Cat.
+E2 An element of an array of Dog must be a Dog (or undefined), not Cat.
+E3 Parameter 'value' is a T (Dog), not Cat.
+E4 An element of an array of Dog must be a Dog (or undefined), not Cat.
+RexRex
+E5 Parameter 'l' is a List<Dog>, not List<Animal>.
+E6 Parameter 'l' is a List<Animal>, not List<Rock>.
+E7 An array of Rock cannot be stored where an array of Animal is declared.
+Rex
+1
+end

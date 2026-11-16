@@ -1,0 +1,25 @@
+class M {
+    defined int count
+    int plain
+    defined int Count { get { return this.count } set { this.count = value } }
+    static defined int Twice(defined int x) { return x * 2 }
+    static defined int Fail(defined int n) { if (n > 3) { throw new ArgumentException("too big") } return n }
+    static defined int NoReturn(int x) { if (x > 0) { return x } }
+    static defined int Store(defined int a, int b) { a = b; return a }
+}
+var m = new M()
+int u
+any text = "x"
+try { print(M.Twice(u)) } catch (ArgumentException e) { print(e.message) }
+try { print(M.Twice(trust u)) } catch (ArgumentException e) { print(e.message) }
+try { print(M.Twice(text)) } catch (ArgumentException e) { print(e.message) }
+try { print(M.Fail(5)) } catch (ArgumentException e) { print("caught " + e.message) }
+print(M.Fail(2) + " " + M.NoReturn(4))
+try { print(M.NoReturn(-1)) } catch (ArgumentException e) { print(e.message) }
+try { print(M.Store(1, u)) } catch (ArgumentException e) { print(e.message) }
+try { m.count = u } catch (ArgumentException e) { print(e.message) }
+try { m.Count = u } catch (ArgumentException e) { print(e.message) }
+try { print(M.Twice(m.plain)) } catch (ArgumentException e) { print(e.message) }
+m.Count = 21
+print(M.Twice(m.Count) + " " + m.count)
+//# name: defined (SPEC 8.10b): undefined, ein falscher Typ und Exceptions - an der Aufrufstelle, im Rumpf, bei Rueckgabe, Feld und Property wie in der VM

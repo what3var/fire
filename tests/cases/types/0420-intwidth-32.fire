@@ -1,0 +1,16 @@
+#intwidth 32
+int[64] t = 864000000000
+int x = t + 0
+var y = t + 1
+int z = (t + 2)!int
+class B { int v
+  static int Id(int p) { return p } }
+var b = new B()
+b.v = t
+print(x)
+print(y)
+print(z)
+print(b.v)
+print(B.Id(t))
+//# modes: Release
+//# name: types 42: #intwidth 32

@@ -1,0 +1,8 @@
+1 'P' has no readable member 'nope'.
+2 The property 'Age' of 'P' has no setter (only 'get').
+3 'P' has no method 'Nope' with 0 parameter(s).
+4 Reflect.Get: expects an object, got: Int.
+5 Unknown class 'Gibts'.
+6 kein Alter
+7 boom
+weiter

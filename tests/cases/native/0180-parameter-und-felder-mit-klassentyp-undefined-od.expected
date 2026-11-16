@@ -1,0 +1,13 @@
+25 10 nothing (4, 6)
+Parameter 'b' is a Point, not Other.
+Parameter 'p' is a Point, not String.
+caught: 'Sum' (0 argument(s)) is not a known built-in method on a value of type Undefined.
+caught: Field access on a value of type Undefined which is not an object.
+60
+Field 'next' is a Node, not Other.
+2
+3 True
+Field 'origin' is a Point, not Other.
+2
+Field access on a value of type Undefined which is not an object.
+Field assignment on a value of type Undefined which is not an object.

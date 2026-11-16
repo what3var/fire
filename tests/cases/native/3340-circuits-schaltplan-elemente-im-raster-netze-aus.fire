@@ -1,0 +1,27 @@
+#import "circuits"
+class H { static float R(float v) { return Math.Round(v * 1000) / 1000 } }
+var c = new Circuits.Circuit("rc")
+var s = c.Schematic
+s.Add("Source", 0, 8, 0, 0, "voltage=5V")
+s.Add("Resistor", 0, 0, 8, 0, "resistance=1k", "r1")
+s.Add("Capacitor", 8, 0, 8, 8, "capacitance=1uF", "c1")
+s.Add("Wire", 0, 8, 8, 8)
+s.Add("Ground", 0, 8, 0, 12)
+s.Add("Scope", 12, 0, 28, 8, "probe=c1")
+c.TimeStep = 10us
+c.Run(1ms)
+var cap = s.Find("c1")
+print("Vc " + H.R(cap.PinVoltage(0)) + " parts " + c.Parts().Count + " scope " + s.Elements()[5].scope.Count)
+var text = s.ToText()
+print(text)
+var c2 = new Circuits.Circuit("copy")
+c2.LoadSchematic(text)
+c2.Run(1ms)
+print("copy Vc " + H.R(c2.Schematic.Find("c1").PinVoltage(0)))
+print(Circuits.Symbols.Number("4.7k") + " " + H.R(Circuits.Symbols.Number("10uF") * 1000000) + " " + Circuits.Symbols.Number("1meg") + " " + Circuits.Symbols.Number("5V") + " " + Circuits.Symbols.Number("1F") + " " + Circuits.Symbols.Number("x"))
+s.Move(cap, 20, 0, 20, 8)
+c.Run(1ms)
+print("moved: r1 carries " + H.R(s.Find("r1").part.Current / 1mA) + " mA, version " + s.Version)
+s.Remove(s.Find("r1"))
+print("removed: " + s.Elements().Count + " elements, " + c.Parts().Count + " parts")
+//# name: Circuits: Schaltplan (Elemente im Raster, Netze aus Punkten und Draehten, Speichern und Laden, Verschieben trennt, Zahlen mit Praefix)

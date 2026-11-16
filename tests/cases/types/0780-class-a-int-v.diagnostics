@@ -1,0 +1,1 @@
+error E4060: Property 'P' of class 'A' needs a type (use the type it holds, or 'any' if every type is allowed) (line 2)

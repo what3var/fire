@@ -1,0 +1,9 @@
+class T {
+    static Run() {
+        var local = 3
+        var f = x => { var local = 100; return local + x }
+        print(f(1))
+    }
+}
+T.Run()
+//# name: Capture: eine Deklaration im Lambda verdeckt den gleichnamigen aeusseren Wert

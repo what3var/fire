@@ -1,0 +1,9 @@
+var total = 0
+var done = 0
+fire {
+    sync global { total = total + 1 }
+    fire { sync global { total = total + 10; done = 1 } }
+}
+while (done == 0) { sync globals }
+print("total " + total)
+//# name: Ein Thread startet einen Thread; beide schreiben ueber Sektionen

@@ -1,0 +1,3 @@
+Geo.IPrintable,Geo.IShape,Geo.INamed | Geo.IPrintable
+Geo.IShape,Geo.INamed | Geo.IShape | Geo.IShape,Geo.INamed
+0 0

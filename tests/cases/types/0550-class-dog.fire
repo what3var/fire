@@ -1,0 +1,5 @@
+class Dog { }
+Dog x
+defined Dog d = x
+//# modes: Release
+//# name: types 55: class Dog { }

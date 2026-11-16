@@ -1,0 +1,2 @@
+p1 == p2 (keine Ueberladung, Referenzvergleich, erwartet false): False
+p1 == p1 (dasselbe Objekt, erwartet true): True

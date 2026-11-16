@@ -1,0 +1,7 @@
+float f = 2
+string s = 12
+int u = undefined
+print(f)
+print(s)
+//# modes: Release
+//# name: types 21: float f = 2

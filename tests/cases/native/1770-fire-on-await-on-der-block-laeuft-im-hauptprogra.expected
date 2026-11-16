@@ -1,0 +1,7 @@
+thread got: from thread 3/3
+thread box 99 fresh 6
+thread caught no panel
+main: from thread 3 3 box 5
+main await: 4
+before
+later on main

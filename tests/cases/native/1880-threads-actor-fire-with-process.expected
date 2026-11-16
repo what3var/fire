@@ -1,0 +1,2 @@
+Logger (Heimat-Thread): hallo vom fire-Thread
+Hauptprogramm: logger.lastMessage = hallo vom fire-Thread

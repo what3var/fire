@@ -1,0 +1,7 @@
+#import "json"
+enum Mode { Slow, Fast }
+class Car { Mode mode = Mode.Slow }
+Car c = Json.Deserialize<Car>("{\"mode\": \"Fast\"}")
+print(c.mode)
+//# modes: Release
+//# name: diag 34: #import "json"

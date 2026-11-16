@@ -1,0 +1,4 @@
+#globaljobs often
+print(1)
+//# modes: Release
+//# name: syntax 55: #globaljobs often

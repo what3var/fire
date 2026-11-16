@@ -1,0 +1,17 @@
+taking: 'Res' cannot be copied ([NoCopy]) - 'taking' would copy an instance of it, which exists only once.
+taking sub: 'SubRes' cannot be copied ([NoCopy]) - 'taking' would copy an instance of it, which exists only once.
+taking field: 'Res' cannot be copied ([NoCopy]) - 'taking' reaches an instance of it (a field or an element of the copied value), which exists only once.
+taking array: 'Res' cannot be copied ([NoCopy]) - 'taking' reaches an instance of it (a field or an element of the copied value), which exists only once.
+fire method: 'Res' cannot be copied ([NoCopy]) - 'taking' reaches an instance of it (a field or an element of the copied value), which exists only once.
+global: 'Res' cannot be copied ([NoCopy]) - 'fire global' would copy an instance of it, which exists only once.
+global field: 'Res' cannot be copied ([NoCopy]) - 'fire global' reaches an instance of it (a field or an element of the copied value), which exists only once.
+jobs: 1
+total: 7
+thread global: 'Res' cannot be copied ([NoCopy]) - 'fire global' reaches an instance of it (a field or an element of the copied value), which exists only once.
+release 3
+total: 17
+end
+release 1
+release 2
+release 3
+release 4

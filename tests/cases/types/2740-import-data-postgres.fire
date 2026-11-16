@@ -1,0 +1,5 @@
+#import "data.postgres"
+print(1)
+//# types: strict
+//# modes: Release
+//# name: types 274: #import "data.postgres"

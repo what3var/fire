@@ -1,0 +1,7 @@
+#floatwidth 32
+var total = 0.0mm
+for (var i = 0; i < 100; i = i + 1) { total = total + 0.3mm }
+print(total)
+class F { static float Mean(float a, float b) { return (a + b) / 2 } }
+print(F.Mean(0.1, 0.2))
+//# name: float 32: Einheiten und Kontrollfluss

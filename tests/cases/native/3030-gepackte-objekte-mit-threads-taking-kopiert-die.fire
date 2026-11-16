@@ -1,0 +1,17 @@
+#import "time"
+class C { defined int n; defined float : m d; string s = "c"; defined bool done }
+var shared = new C()
+shared.n = 5
+fire taking shared {
+    shared.n = shared.n * 10
+    shared.d = shared.d + 2m
+    shared.s = "from thread"
+    shared.done = true
+    sync shared
+}
+while (!shared.done) { Sleep(1) }
+print(shared.n + " " + shared.d + " " + shared.s + " " + shared.done)
+var copy2 = flat shared
+copy2.n = 1
+print(copy2.n + " " + shared.n + " " + copy2.d)
+//# name: Gepackte Objekte mit Threads: taking kopiert die C-Zahlen, sync schreibt sie zurueck, flat

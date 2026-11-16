@@ -1,0 +1,11 @@
+int a[] = [1, 2, 3]
+try { a[0] = "x" } catch (ArgumentException e) { print("A") }
+try { int whole = a } catch (ArgumentException e) { }
+var b = new float[3]
+bool flag = b[0]
+foreach (x in a) { try { bool q = x } catch (ArgumentException e) { } }
+int n = a.length + "abc".Length
+float f[] = [1, 2.5]
+print(n)
+//# modes: Release
+//# name: types 88: int a[] = [1, 2, 3]

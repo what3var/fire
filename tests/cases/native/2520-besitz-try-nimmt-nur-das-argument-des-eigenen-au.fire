@@ -1,0 +1,16 @@
+class Item { string n
+  construct(string n) { this.n = n }
+  destruct() { print("~" + this.n) } }
+class T {
+  static Make(n) { return new Item(n) }
+  static Deep(x, b) { print("deep " + (try x.TakeTo(b))) }
+  static Mid(x, b) { T.Deep(x, b); print("mid " + (try x.TakeTo(b))) }
+  static Pass(x, b) { T.Mid(T.Make("inner"), b); T.Deep(take x, b) }
+}
+var box = new Item("box")
+T.Mid(T.Make("a"), box)
+var c = new Item("c")
+T.Mid(take c, box)
+T.Pass(new Item("p"), box)
+print("end")
+//# name: Besitz: try nimmt nur das Argument des eigenen Aufrufs

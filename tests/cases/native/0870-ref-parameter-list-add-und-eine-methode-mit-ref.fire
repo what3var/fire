@@ -1,0 +1,14 @@
+class Counter {
+    int total
+    construct() { this.total = 0 }
+    Add(ref int v) { v = v + 1 }
+}
+var l = new List()
+var q = 3
+l.Add(q)
+l.Add(5)
+print(l.Count + " " + q)
+var c = new Counter()
+c.Add(q)
+print(q)
+//# name: ref-Parameter: List.Add und eine Methode mit ref gleichen Namens

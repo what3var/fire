@@ -1,0 +1,12 @@
+class Exception { string message; construct(string message = "") { this.message = message } }
+class C {
+    int v
+    string name
+    int Loud { get { return this.v * 2 } set { this.v = value / 2 } }
+    construct() { this.v = 1; this.name = "a" }
+}
+var c = new C()
+probe c.v changed { c.v = 0 }
+c.v = 3
+print(c.v)
+//# name: probe: ein Handler, der dasselbe Mitglied schreibt, loest sich nicht selbst aus

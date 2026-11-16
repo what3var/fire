@@ -1,0 +1,25 @@
+class Node { string n; construct(string n) { this.n = n } }
+class U {
+    static int Run(Dictionary<int, int> d, int n) {
+        for (int i = 0; i < n; i++) { d[i * 7] = i }
+        int s = 0
+        for (int i = 0; i < n; i++) { s = s + d[i * 7] }
+        for (int i = 0; i < n; i = i + 2) { d.Remove(i * 7) }
+        for (int i = n; i < n * 3; i++) { d[i] = i }
+        return s + d.Count
+    }
+    static float F(Dictionary<int, float> d) { d[1] = 1.5; d[2] = 2.5; return d[1] + d[2] }
+    static string S(Dictionary<string, Node> d) { var a = new Node("a"); d["a"] = a; return d["a"].n + d.ContainsKey("b") }
+    static bool H(HashSet<int> h) { h.Add(3); h.Add(3); h.Remove(4); return h.Contains(3) && !h.Contains(4) && h.Count == 1 }
+}
+print(U.Run(new Dictionary<int, int>(), 300))
+print(U.F(new Dictionary<int, float>()))
+print(U.S(new Dictionary<string, Node>()))
+print(U.H(new HashSet<int>()))
+var d = new Dictionary<int, int>()
+d[5] = 6
+try { print(d[7]) } catch (ArgumentException e) { print("E1 " + e.message) }
+var keys = d.Keys
+print(keys.Count + " " + keys[0])
+foreach (var kv in d) { print(kv.Key + "=" + kv.Value) }
+//# name: Spezialisierungen (ROADMAP 21): Dictionary<int, int>, <int, float>, <string, Node> und HashSet<int> ueber Parameter - setzen, lesen, entfernen, wachsen, fehlender Schluessel, Keys, foreach

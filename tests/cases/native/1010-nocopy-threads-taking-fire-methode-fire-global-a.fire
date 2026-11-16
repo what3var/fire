@@ -1,0 +1,44 @@
+#nosync
+[NoCopy]
+class Res { int id
+    construct(int i) { this.id = i }
+    destruct() { print("release " + this.id) } }
+class SubRes : Res { construct(int i) : base(i) { } }
+class Holder { string name; Res res
+    construct(string n) { this.name = n; this.res = new Res(3) } }
+class Plain { int v }
+class Worker { Res res; int n
+    Run(int k) { print("never run " + k) }
+    Start() { fire Run(1) } }
+var total = 0
+var done = 0
+var r = new Res(1)
+var s = new SubRes(2)
+var h = new Holder("h")
+var arr = [new Plain(), r]
+var p = new Plain()
+p.v = 5
+try { fire taking r { print("never r") } } catch (ArgumentException e) { print("taking: " + e.message) }
+try { fire taking s { print("never s") } } catch (ArgumentException e) { print("taking sub: " + e.message) }
+try { fire taking p taking h { print("never h") } } catch (ArgumentException e) { print("taking field: " + e.message) }
+try { fire taking arr { print("never arr") } } catch (ArgumentException e) { print("taking array: " + e.message) }
+var w = new Worker()
+w.res = new Res(4)
+try { w.Start() } catch (ArgumentException e) { print("fire method: " + e.message) }
+try { fire global taking p taking r { total = total + 100 } } catch (ArgumentException e) { print("global: " + e.message) }
+try { fire global taking h { total = total + 1000 } } catch (ArgumentException e) { print("global field: " + e.message) }
+fire global taking p taking arr { total = total + p.v + arr.Length }
+print("jobs: " + sync globals)
+print("total: " + total)
+fire taking p {
+    try { fire global taking p { total = total + 10 } } catch (ArgumentException e) { print("never: " + e.message) }
+    var own = new Holder("own")
+    try { fire global taking own { total = total + 1000 } } catch (ArgumentException e) { print("thread global: " + e.message) }
+    delete own
+    sync global { done = 1 }
+}
+while (done == 0) { sync globals }
+sync globals
+print("total: " + total)
+print("end")
+//# name: [NoCopy] Threads: taking, fire Methode(), fire global (auch aus einem Thread) kopieren keine Instanz - ArgumentException, bevor kopiert, gestartet oder eingereiht wird

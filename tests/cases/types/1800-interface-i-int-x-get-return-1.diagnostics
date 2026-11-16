@@ -1,0 +1,1 @@
+1800-interface-i-int-x-get-return-1.fire(1): error E3161: A property of an interface has no body: write 'get;' (the class that implements it has the code)

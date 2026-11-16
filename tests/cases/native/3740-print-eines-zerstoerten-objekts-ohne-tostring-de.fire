@@ -1,0 +1,17 @@
+class P { int a; construct(int a) { this.a = a } }
+class Q {
+    P kept[]
+    any loose[]
+    construct() { this.kept = new P[2]; this.loose = new any[2] }
+    undefined Keep(P e) { this.kept[0] = e; this.loose[0] = e }
+}
+var q = new Q()
+q.Keep(new P(1))
+try { print(q.loose[0]) } catch (Exception e) { print("E0 " + e.message) }
+try { print(q.kept[0]) } catch (Exception e) { print("E1 " + e.message) }
+try { print("" + q.kept[0]) } catch (Exception e) { print("E2 " + e.message) }
+try { string s = "x" + q.kept[0]; print(s) } catch (Exception e) { print("E3 " + e.message) }
+try { print($"v={q.kept[0]}") } catch (Exception e) { print("E4 " + e.message) }
+var live = new P(5)
+print(live)
+//# name: print eines zerstoerten Objekts ohne ToString() (DECISIONS D9): die DestroyedException; ein lebendes zeigt <object P>

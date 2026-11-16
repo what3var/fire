@@ -1,0 +1,5 @@
+#import "scene3d"
+print(1)
+//# types: strict
+//# modes: Release
+//# name: types 262: #import "scene3d"

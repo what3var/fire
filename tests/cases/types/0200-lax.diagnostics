@@ -1,0 +1,1 @@
+warning TC001: Cannot assign a value of type 'string' to 'x' of type 'int' (line 3)

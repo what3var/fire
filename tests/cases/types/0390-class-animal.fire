@@ -1,0 +1,15 @@
+class Animal { }
+class Dog : Animal { }
+class Cat : Animal { }
+bool yes = 1 > 0
+var m = yes ? 1 : 2.5
+print(m / 2)
+var a = yes ? new Dog() : new Cat()
+a = new Cat()
+Animal back = a
+var u = yes ? 1 : "one"
+var arr = [1, "one"]
+print(u)
+//# types: strict
+//# modes: Release
+//# name: types 39: class Animal { }

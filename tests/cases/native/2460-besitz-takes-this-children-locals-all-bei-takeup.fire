@@ -1,0 +1,82 @@
+class N {
+    string name
+    N next
+    N other
+    construct(string name) { this.name = name }
+    destruct() { print("~" + this.name) }
+}
+class F {
+    // This: the child stays behind and dies with the function
+    static UpThis(holder) {
+        var p = new N("p1")
+        var q = new N("q1")
+        p.next = q
+        p.TakeUpwards()
+        holder.next = p
+    }
+    // Locals: the child travels along (to the object that points to it)
+    static UpLocals(holder) {
+        var p = new N("p2")
+        var q = new N("q2")
+        p.next = q
+        p.TakeUpwards(Takes.Locals)
+        holder.next = p
+    }
+    // Children: what the fields point to directly, not what those point to
+    static UpChildren(holder) {
+        var p = new N("p3")
+        var q = new N("q3")
+        var r = new N("r3")
+        p.next = q
+        q.next = r
+        p.TakeUpwards(Takes.Children)
+        holder.next = p
+    }
+    // All: also what is owned by somebody else
+    static TakeAll(holder, foreign) {
+        var p = new N("p4")
+        p.other = foreign
+        p.TakeUpwards(Takes.All)
+        holder.next = p
+    }
+    // TakeTo with a mode, and TakeGlobal
+    static ToObject(holder) {
+        var p = new N("p5")
+        var q = new N("q5")
+        p.next = q
+        p.TakeTo(holder, Takes.Locals)
+    }
+    static Global() {
+        var p = new N("p6")
+        var q = new N("q6")
+        p.next = q
+        p.TakeGlobal(Takes.Children)
+        return 0
+    }
+    // an array travels with the objects it holds
+    static Arr() {
+        var a = [new N("a1"), new N("a2")]
+        a.TakeUpwards(Takes.Locals)
+        return a
+    }
+}
+var h = new N("h")
+var foreign = new N("foreign")
+F.UpThis(h)
+print("1 " + h.next.name)
+try { print(h.next.next.name) } catch (DestroyedException e) { print("q1 dead") }
+F.UpLocals(h)
+print("2 " + h.next.next.name)
+F.UpChildren(h)
+print("3 " + h.next.next.name)
+try { print(h.next.next.next.name) } catch (DestroyedException e) { print("r3 dead") }
+F.TakeAll(h, foreign)
+print("4 " + h.next.other.name)
+F.ToObject(h)
+print("5 " + h.next.name)
+F.Global()
+print("6")
+var arr = F.Arr()
+print("7 " + arr[0].name + arr[1].name)
+print("end")
+//# name: Besitz: Takes.This/Children/Locals/All bei TakeUpwards/TakeTo/TakeGlobal und fuer Arrays

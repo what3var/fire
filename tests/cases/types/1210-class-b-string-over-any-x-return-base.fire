@@ -1,0 +1,7 @@
+class B { string Over(any x) { return "base" } }
+class D : B { override string Over(int x) { return "derived" } }
+print(new D().Over(2))
+new D().Over("a")
+//# types: strict
+//# modes: Release
+//# name: types 121: class B { string Over(any x) { return "base" } }

@@ -1,0 +1,39 @@
+#import "reflection"
+[Keep]
+class Plugin {
+    int level = 7
+    construct() { }
+    construct(int l) { this.level = l }
+    string Hello(string who) { return "hello " + who + " " + this.level }
+    int Area { get { return this.level * this.level } }
+    static int Twice(int x) { return 2 * x }
+}
+class Base {
+    int id = 1
+    construct() { }
+}
+[Keep]
+class Derived : Base {
+    string tag = "d"
+    construct() { }
+}
+class Tool {
+    [Keep] static int Version() { return 4 }
+    int unused = 0
+}
+class Used {
+    int n = 3
+    int Plain() { return this.n }
+}
+any p = Reflect.New("Plugin", [5])
+print(Reflect.Call(p, "Hello", ["x"]))
+print(Reflect.Get(Reflect.New("Plugin", []), "level") + " " + Reflect.Get(p, "Area"))
+any d = Reflect.New("Derived", [])
+print(Type.Of(d).Base.Name + " " + Reflect.Get(d, "id") + " " + Reflect.Get(d, "tag"))
+any b = Reflect.New("Base", [])
+print(Type.Of(b).Name + " " + Reflect.Get(b, "id"))
+var u = new Used()
+print(u.Plain())
+print(Type.Named("Plugin").Methods().Count + " " + Type.Named("Tool").Methods().Count + " " + (Type.Named("Used") != undefined))
+print(Type.Named("Plugin").Find("Twice").IsStatic)
+//# name: Weglassen: [Keep] auf Klasse und Member - per Name gemacht, gelesen und gerufen wie in der VM (nicht vererbt, Basis bleibt)

@@ -1,0 +1,9 @@
+Rex wuff4;Tier?4; 13
+Rex wuff Tier? 4 Rex wuff Rex
+E1 'Say' (0 argument(s)) is not a known built-in method on a value of type Undefined.
+E2 Field access on a value of type Undefined which is not an object.
+E3 Array index 5 out of range (length 3).
+Tmp wuff
+E4 Access to a destroyed object.
+E5 Index access ('[]') on a value of type Undefined is not possible (neither an array nor a class with a 'GetIndex' method).
+4000

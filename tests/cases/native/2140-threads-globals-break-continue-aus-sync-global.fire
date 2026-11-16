@@ -1,0 +1,14 @@
+var total = 0
+var done = 0
+fire {
+    for (var i = 0; i < 10; i = i + 1) {
+        sync global { if (i == 3) { break } total = total + 1 }
+    }
+    for (var j = 0; j < 4; j = j + 1) {
+        sync global { if (j % 2 == 0) { continue } total = total + 10 }
+    }
+    sync global { done = 1 }
+}
+while (done == 0) { sync globals }
+print("total " + total)
+//# name: Threads: Globals: break/continue aus sync global

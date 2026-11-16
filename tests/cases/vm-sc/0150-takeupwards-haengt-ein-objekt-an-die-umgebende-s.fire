@@ -1,0 +1,17 @@
+class D {
+    string n
+    construct(string n) { this.n = n }
+    destruct() { print("~" + this.n) }
+}class T {
+    static Run() {
+        for (var i = 0; i < 3; i = i + 1) {
+            var a = new D("a" + i)
+            var b = new D("b" + i)
+            if (i == 1) { b.TakeUpwards() }
+        }
+        print("nach der Schleife")
+    }
+}
+T.Run()
+print("ende")
+//# name: TakeUpwards haengt ein Objekt an die umgebende Scope (hier die der Schleife): es ueberlebt den Block, nicht die Schleife

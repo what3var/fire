@@ -1,0 +1,25 @@
+class Item { int n
+  construct(int n) { this.n = n }
+  destruct() { print("~Item" + this.n) } }
+class F { static Make() {
+    var l = new List()
+    l.Add(new Item(1))
+    l.Add(new Item(2))
+    return l
+} }
+var l = F.Make()
+print("made " + l.Count)
+print(l[0].n + l[1].n)
+class G { static Gone() { var i = new Item(9); return i }
+  static Lost() { var a = new Item(7); return 1 } }
+var kept = G.Gone()
+print(kept.n)
+delete kept
+try { print(kept.n) } catch (DestroyedException e) { print("caught " + e.message) }
+class P { Item it
+  construct() { this.it = new Item(5) } }
+var p = new P()
+var ref = p.it
+delete p
+try { print(ref.n) } catch (DestroyedException e) { print("caught2") }
+//# name: Besitz: Liste mit Objekten aus einer Funktion, Zugriff auf ein geloeschtes Objekt

@@ -1,0 +1,4 @@
+warning TC001: Cannot assign a value of type 'string' to 'Count' of type 'int' (line 5)
+warning TC001: Cannot assign a value of type 'string' to 'n' of type 'int' (line 5)
+warning TC006: A value in 's' does not fit 'Len' in 'm' (line 5)
+warning TC001: Cannot assign a value of type 'bool' to 'Count' of type 'int' (line 7)

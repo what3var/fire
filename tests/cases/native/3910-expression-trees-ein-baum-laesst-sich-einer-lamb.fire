@@ -1,0 +1,11 @@
+class P { int age; construct(int a) { this.age = a } }
+class Probe<T> { LambdaExpression Keep(lambda expression<T> e) { return e } }
+class U {
+    static bool Call(bool lambda<P> f, P p) { return f(p) }
+    static bool lambda<P> Back(LambdaExpression t) { return t }
+}
+var t = new Probe<P>().Keep(p => p.age > 3)
+bool lambda<P> f = t
+print(f(new P(5)) + " " + f(new P(1)) + " " + t.ToString())
+print(U.Call(t, new P(5)) + " " + U.Back(t)(new P(1)))
+//# name: Expression trees: ein Baum laesst sich einer lambda zuweisen (uebersetzt), umgekehrt nicht noetig

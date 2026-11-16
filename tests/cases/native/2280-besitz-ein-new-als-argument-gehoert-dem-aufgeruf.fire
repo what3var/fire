@@ -1,0 +1,30 @@
+    class Person {
+        string name
+        construct(string name) { this.name = name }
+    }
+    class Keeper {
+        class items
+        int count
+        construct() { this.items = new class[4]; this.count = 0 }
+        Add(class value) {
+            try value.TakeTo(this)
+            this.items[this.count] = value
+            this.count = this.count + 1
+        }
+    }
+    class Holder {
+        Keeper k
+        List people
+        construct() {
+            this.k = new Keeper()
+            this.people = new List()
+            this.k.Add(new Person("A"))
+            this.people.Add(new Person("B"))
+            this.people.Add(new Person("C"))
+        }
+    }
+    var h = new Holder()
+    print(h.k.items[0].name)
+    print(h.people.Count)
+    print(h.people[0].name + h.people[1].name)
+//# name: Besitz: ein `new` als Argument gehoert dem aufgerufenen Scope (list.Add(new X()) behaelt es per try TakeTo)

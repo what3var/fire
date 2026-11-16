@@ -1,0 +1,14 @@
+class Order { int total; construct(int t) { this.total = t } }
+class Person { List<Order> orders = new List<Order>() }
+class Probe<T> { LambdaExpression Keep(lambda expression<T> e) { return e } }
+class Run {
+    static undefined Go(int min) {
+        var pr = new Probe<Person>()
+        var t = pr.Keep(p => p.orders.Contains(undefined) || p.orders.Count > min && p.orders.Count < (min + 5))
+        print(t.ToString())
+        var u = pr.Keep(p => p.orders.Count > 0 && p.orders[0].total > min)
+        print(u.ToString() + " " + u.Captures()[0].Value)
+    }
+}
+Run.Go(3)
+//# name: Expression trees: Captures aus einer Methode (Parameter), Index, Contains(undefined)

@@ -1,0 +1,9 @@
+class T {
+    static First(class l) { foreach (x in l) { return x } return 0 }
+    static Run() {
+        var l = [5, 3]
+        print(10 + T.First(l) + T.First(l))
+    }
+}
+T.Run()
+//# name: return mitten in einem foreach hinterlaesst nichts auf dem Stack

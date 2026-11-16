@@ -1,0 +1,8 @@
+{"$type":"Drawing","shapes":[{"$type":"Square","name":"s","side":2}]}
+2 2.5 4 undefined
+The class 'Secret' cannot be written to JSON: it is not serializable ([NotSerializable] on it or a base class, or "serializable": false in its package).
+The class 'MoreSecret' cannot be written to JSON: it is not serializable ([NotSerializable] on it or a base class, or "serializable": false in its package).
+The class 'UI.Thickness' cannot be written to JSON: it is not serializable ([NotSerializable] on it or a base class, or "serializable": false in its package).
+$.shapes[0]: the class 'Secret' cannot be read from JSON: it is not serializable ([NotSerializable] on it or a base class, or "serializable": false in its package).
+$.shapes[0]: the class 'MoreSecret' cannot be read from JSON: it is not serializable ([NotSerializable] on it or a base class, or "serializable": false in its package).
+$.shapes[0]: the class 'UI.Label' cannot be read from JSON: it is not serializable ([NotSerializable] on it or a base class, or "serializable": false in its package).

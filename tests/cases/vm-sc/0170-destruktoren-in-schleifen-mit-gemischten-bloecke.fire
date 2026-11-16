@@ -1,0 +1,18 @@
+class D {
+    string n
+    construct(string n) { this.n = n }
+    destruct() { print("~" + this.n) }
+}class T {
+    static Make(int i) { var d = new D("m" + i); return d }
+    static Run() {
+        var n = 0
+        for (var i = 0; i < 3; i = i + 1) {
+            var d = T.Make(i)
+            if (i == 1) { var e = new D("e" + i); n = n + 1 }
+            n = n + 10
+        }
+        print(n)
+    }
+}
+T.Run()
+//# name: Destruktoren in Schleifen mit gemischten Bloecken (mit/ohne Objekte) und verschachtelten Aufrufen

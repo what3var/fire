@@ -1,0 +1,5 @@
+class W { static undefined Go() { var a = [3]
+ fire { print(a[0]) } } }
+W.Go()
+//# modes: Release
+//# name: types 34: class W { static undefined Go() { var a = [3]

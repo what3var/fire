@@ -1,0 +1,47 @@
+Circle
+True
+3
+2
+field:radius field:secret field:label constructor:Circle property:Diameter property:Area method:Scale method:Grow 
+5
+10
+10
+20
+11
+True False True True
+Ring 1
+Circle
+True
+True
+'Circle' has no readable member 'zzz'.
+The property 'Area' of 'Circle' has no setter (only 'get').
+'Circle' has no method 'Nope' with 0 parameter(s).
+'Circle' has no constructor with 0 parameter(s).
+Reflect.Get: expects an object, got: Int.
+private: Field 'secret' of 'Circle' is private and cannot be accessed from here.
+True
+radius field
+11
+method 1 float
+33
+2 True False 0
+1 .. 3 = <array>
+[10, -2.5] = <array>
+true = True
+-4 = -4
+new List() = undefined
+3 -2.5 2 True the radius
+changed: 1 -> 5
+5
+name: n -> other
+7
+any volume 8
+name: other -> z
+any name z
+any volume 9
+any Level 90
+9
+reflect 9 10
+'Cfg' has no member 'nope' - no probe can be registered there.
+The kind of a probe is "changed" or "changing", got: "weird".
+c2 4

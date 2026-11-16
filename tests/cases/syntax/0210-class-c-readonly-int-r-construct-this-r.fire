@@ -1,0 +1,5 @@
+class C { readonly int r; construct() { this.r = 1 } }
+var c = new C()
+c.r = 5
+//# modes: Release
+//# name: syntax 21: class C { readonly int r; construct() { this.r = 1 } }

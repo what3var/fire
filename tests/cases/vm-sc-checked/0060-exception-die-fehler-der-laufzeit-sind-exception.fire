@@ -1,0 +1,8 @@
+class Box { int v }
+var a = [1]
+try { print(a[5]) } catch (Exception e) { print(e.message) }
+try { print(a[5]) } catch (IndexOutOfBoundsException e) { print(e.index + "/" + e.length) }
+var b = new Box()
+delete b
+try { print(b.v) } catch (DestroyedException e) { print("destroyed: " + e.message) }
+//# name: Exception: die Fehler der Laufzeit sind Exceptions (IndexOutOfBounds, Zugriff auf Zerstoertes)

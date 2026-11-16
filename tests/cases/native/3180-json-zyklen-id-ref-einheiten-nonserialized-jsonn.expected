@@ -1,0 +1,42 @@
+{"$type":"Person","$id":1,"name":"Ann \"A\"\n","age":41,"friend":{"name":"Bob","age":null,"friend":{"$ref":1},"path":null,"nick":null,"extra":null},"path":[{"x":1.5,"y":2.0},{"x":3.0,"y":0.4}],"nick":"annie","extra":[1,2.5,"x",{"$char":"c"},true,null,{"$value":5,"$unit":"m"}]}
+{
+  "$type": "Person",
+  "$id": 1,
+  "name": "Ann \"A\"\n",
+  "age": 41,
+  "friend": {
+    "name": "Bob",
+    "age": null,
+    "friend": {"$ref":1},
+    "path": null,
+    "nick": null,
+    "extra": null
+  },
+  "path": [
+    {
+      "x": 1.5,
+      "y": 2.0
+    },
+    {
+      "x": 3.0,
+      "y": 0.4
+    }
+  ],
+  "nick": "annie",
+  "extra": [
+    1,
+    2.5,
+    "x",
+    {"$char":"c"},
+    true,
+    null,
+    {"$value":5,"$unit":"m"}
+  ]
+}
+Ann "A"
+ 41 undefined annie Bob True
+2 0.4cm 1.5cm
+2.5 c 5m
+d 1 True
+{"a":[1,{"b":null}],"c":"d"}
+Unexpected character '}' (line 1, column 7).

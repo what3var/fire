@@ -1,0 +1,23 @@
+class Box {
+    int value
+
+    construct(int value) {
+        this.value = value
+    }
+}
+
+unsafe {
+    var x = 10
+    var p = &x
+    print(*p)
+    *p = 99
+    print(x)
+
+    var b = new Box(7)
+    var fp = &b.value
+    print(*fp)
+    *fp = 42
+    print(b.value)
+}
+//# note: what the test program said to expect (for a reader, it was not checked): 10 / 99 / 7 / 42
+//# name: Bytecode-Test: Pointer/unsafe (echtes Aliasing über Scope-Slots und Objekt-Felder)

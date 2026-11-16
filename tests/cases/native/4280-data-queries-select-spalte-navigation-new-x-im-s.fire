@@ -1,0 +1,83 @@
+#import "data.sqlite"
+#import "data.memory"
+enum Status { Open, Paid }
+[Table "customers"]
+class Customer {
+    [Key] int id
+    string name
+    string city
+    construct() { }
+}
+[Table "orders"]
+class Order {
+    [Key] int id
+    int customerId
+    float total
+    Status status
+    [BelongsTo "customerId"] Customer customer
+    construct() { }
+}
+record Line {
+    string name
+    float total
+    construct(string name, float total) { this.name = name; this.total = total }
+}
+record Total {
+    int customer
+    int count
+    float sum
+    construct(int customer, int count, float sum) { this.customer = customer; this.count = count; this.sum = sum }
+}
+foreach (url in ["sqlite::memory:", "memory:"]) {
+    var db = new Data.Connection(url)
+    print("---- " + url)
+    db.Ensure<Customer>()
+    db.Ensure<Order>()
+    foreach (n in [["Ada", "London"], ["Grace", "New York"], ["Linus", undefined]]) {
+        var c = new Customer()
+        c.name = n[0]
+        c.city = n[1]
+        db.Insert(c)
+    }
+    var who = [1, 1, 2, 1, 2]
+    var amounts = [10.5, 20.0, 5.25, 3.0, 7.0]
+    var paidOnes = [false, true, true, true, false]
+    for (var i = 0; i < 5; i++) {
+        var x = new Order()
+        x.customerId = who[i]
+        x.total = amounts[i]
+        if (paidOnes[i]) { x.status = Status.Paid } else { x.status = Status.Open }
+        db.Insert(x)
+    }
+    List<string> names = db.From<Customer>().OrderBy(c => c.name).Select(c => c.name)
+    print("names " + Json.Serialize(names))
+    float limit = 6.0
+    List<Line> lines = db.From<Order>().Where(o => o.total > taking limit).OrderBy(o => o.id).Select(o => new Line(o.customer.name, o.total * 2))
+    foreach (l in lines) { print("line " + l.name + " " + l.total) }
+    List<bool> paid = db.From<Order>().OrderBy(o => o.id).Select(o => o.status == Status.Paid)
+    print("paid " + Json.Serialize(paid))
+    List<Status> states = db.From<Order>().OrderBy(o => o.id).Select(o => o.status)
+    print("states " + Json.Serialize(states))
+    List<string> local = db.From<Customer>().OrderBy(c => c.id).Select(c => c.name.Substring(0, 2) + "!")
+    print("in the program " + Json.Serialize(local))
+    List<Total> totals = db.From<Order>().GroupBy(o => o.customerId).OrderBy(g => g.Key).Select(g => new Total(g.Key, g.Count(), g.Sum(o => o.total)))
+    foreach (t in totals) { print("total " + t.customer + " " + t.count + " " + t.sum) }
+    List<int> big = db.From<Order>().GroupBy(o => o.customerId).Having(g => g.Count(o => o.status == Status.Paid) >= 2).Select(g => g.Key)
+    print("big " + Json.Serialize(big))
+    var groups = db.From<Order>().Where(o => o.total > 4).GroupBy(o => o.status).ToList()
+    foreach (g in groups) { print("group " + g.Key + " " + g.Count() + " " + g.Max(o => o.total)) }
+    List<Line> joined = db.From<Order>().Join<Customer>((o, c) => o.customerId == c.id).Where((o, c) => c.city != undefined).OrderBy((o, c) => o.total).Select((o, c) => new Line(c.city, o.total))
+    foreach (l in joined) { print("join " + l.name + " " + l.total) }
+    var pairs = db.From<Customer>().LeftJoin<Order>((c, o) => o.customerId == c.id && o.total > 9).OrderBy((c, o) => c.id).ToList()
+    foreach (p in pairs) {
+        string t = "none"
+        if (p.Second != undefined) { t = "" + p.Second.total }
+        print("pair " + p.First.name + " " + t)
+    }
+    print("joined count " + db.From<Order>().Where(o => o.status == Status.Open).Join<Customer>((o, c) => o.customerId == c.id).Count())
+    db.Close()
+}
+//# note: Projections (Select of a column, a navigation, `new X(...)` - in the SELECT, else in the program), groups (GroupBy with Select of aggregates,
+//# note: Having, OrderBy; ToList of the groups), joins (Join and LeftJoin with Where, OrderBy, Select, ToList as pairs, Count) - as SQL on SQLite, in the
+//# note: program on the in-memory database (no GROUP BY and JOIN there): the same output
+//# name: Data/Queries: Select (Spalte, Navigation, new X(...) im SELECT, sonst im Programm), GroupBy (Select mit Count/Sum, Having mit Count(Bedingung), OrderBy, ToList der Gruppen), Join und LeftJoin (Where, OrderBy, Select, Paare, Count) - SQL auf SQLite, im Programm auf der In-Memory-Datenbank: dieselbe Ausgabe

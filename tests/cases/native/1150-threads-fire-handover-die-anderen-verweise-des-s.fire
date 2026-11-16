@@ -1,0 +1,60 @@
+#nosync
+#import "time"
+var step = 0
+var released = 0
+[NoCopy]
+class Res { int id
+    construct(int i) { this.id = i }
+    int Twice() { return this.id * 2 }
+    destruct() { print("release " + this.id)
+        sync global { released = released + 1 } } }
+class Item { int v
+    construct(int v) { this.v = v } }
+class Conn { Res res; Item items[]; Item other
+    construct(int i) { this.res = new Res(i) } }
+var c = new Conn(1)
+var keepRes = c.res
+var other = new Item(3)
+c.other = other
+c.items = [new Item(2)]
+var keepItems = c.items
+var keepC = c
+var b = new Conn(6)
+b.other = c.other
+var a = new Res(5)
+var back = new Item(0)
+fire handover c handover b {
+    print("thread: " + c.res.id + " " + c.items[0].v + " " + c.other.v + " " + b.res.id + " " + b.other.v)
+    print("thread same: " + (b.other == c.other) + " " + (c.res is from c) + " " + c.res.Twice())
+    c.other.v = 30
+    sync global { back = take c.other; step = 1 }   // (rule 10: an object of the thread goes into a global only with a word)
+    while (step < 2) { Sleep(1ms) }
+}
+while (step < 1) { sync globals }
+print("undefined: " + (c == undefined) + " " + (b == undefined))
+try { print(keepRes.id) } catch (DestroyedException e) { print("field: " + e.message) }
+try { keepRes.id = 3 } catch (DestroyedException e) { print("set: " + e.message) }
+try { print(keepRes.Twice()) } catch (DestroyedException e) { print("call: " + e.message) }
+try { print(other.v) } catch (DestroyedException e) { print("reached: " + e.message) }
+try { print(keepItems[0].v) } catch (DestroyedException e) { print("element: " + e.message) }
+try { keepItems[0] = undefined } catch (DestroyedException e) { print("element set: " + e.message) }
+try { print(keepItems.Length) } catch (DestroyedException e) { print("length: " + e.message) }
+try { print(keepC is of Conn) } catch (DestroyedException e) { print("is of: " + e.message) }
+print("is of class: " + (keepC is of class) + ", compare: " + (keepRes == keepRes) + " " + (keepRes == undefined) + " " + (keepC != undefined))
+print("a stays: " + a.id + ", the same object: " + (other == back) + " " + (back == other) + " " + (back != other) + ", the thread's reference works: " + back.v)
+step = 2
+while (released < 2) { sync globals }
+try { print(keepRes.id) } catch (DestroyedException e) { print("after the thread: " + e.message) }
+fire {
+    var own = new Res(8)
+    var alias = own
+    fire handover own {
+        while (step < 3) { Sleep(1ms) }
+        print("inner " + own.id)
+    }
+    try { print(alias.id) } catch (DestroyedException e) { print("in a thread: " + e.message) }
+    sync global { step = 3 }
+}
+while (released < 3) { sync globals }
+print("end")
+//# name: Threads: fire handover - die anderen Verweise des Senders auf die uebergebenen Objekte (auch Erreichbares, Arrays, im Thread) sind eine DestroyedException 'handed over to a thread'; == vergleicht das Objekt

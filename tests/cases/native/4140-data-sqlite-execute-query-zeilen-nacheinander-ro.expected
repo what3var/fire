@@ -1,0 +1,121 @@
+sqlite True
+insert 1
+last id 3
+row {id: 2, name: "Grace", age: 85}
+row {id: 3, name: "Linus Ünïcødé 🐧", age: null}
+rows 3 first Ada 36
+count 3
+person 1 Ada 36 True
+person 2 Grace 85 False
+person 3 Linus Ünïcødé 🐧 undefined True
+one Grace active False equal True
+item Box 9.5 blob 3 255
+constraint 1555 UNIQUE constraint failed: person.id
+error 1 near "nothing": syntax error
+args The statement has 1 parameter(s), 0 value(s) were given.
+after commit 37
+rolled back: stop
+after rollback 37
+nested 2
+memory 2 open 2
+driver Data.Connection: no driver for 'nosuch:' - import its package (#import "data.nosuch").
+open 14
+open after 0
+awaited 2 Grace
+both 2 2
+after threads 202
+handover 1 open 1
+file gone
+col id INTEGER pk 1 nn 0
+col full_name VARCHAR(100) pk 0 nn 1
+col age INTEGER pk 0 nn 0
+col email TEXT pk 0 nn 0
+col active INTEGER pk 0 nn 0
+col height REAL pk 0 nn 0
+col born TEXT pk 0 nn 0
+col level TEXT pk 0 nn 0
+col address TEXT pk 0 nn 0
+insert key 1 field 1
+saved 2
+save again 2 rows 2
+found Ada 36 True 1.65 1815-12-10 08:30:00 High London shown undefined
+raw {full_name: "Ada", born: "1815-12-10T08:30:00.0000000", level: "High", address: "{\"$type\":\"Address\",\"city\":\"London\",\"zip\":\"W1\"}"}
+unique UNIQUE constraint failed: people.email
+required NOT NULL constraint failed: people.full_name
+update 1 -> 37
+all 2
+delete 1 left 1 find undefined
+tag key fx
+tag fire
+no key insert undefined rows 1
+no key: Data: the class 'Revision' has no key ([Key] or a field 'id').
+column found 1
+adult Ada 36
+adult Alan 41
+adult Grace 85
+sql SELECT * FROM "residents" WHERE (("age" >= ?) AND ("city" IS NOT NULL)) ORDER BY "age" DESC LIMIT 2 OFFSET 1 [30]
+paged 2
+first Alan
+none undefined
+count 4 1 any False
+enum 2
+enum captured Grace
+since Grace
+text 2 1 1
+case 0
+in 2
+in list 1
+not 1
+math 2
+then Linus
+method 2
+not translatable: Data: 'p.name.Trim()' cannot run in the database (the method Trim (the database knows StartsWith, EndsWith, Contains, ToLower, ToUpper of a text and Contains of a list)).
+deleted 1 left 3
+fetched 2
+pending True count 2
+saved 2 key 1 version 1 changes False
+identity True
+changed True True
+saved 2 versions 2 2 sdb 90 2
+nothing 0
+query identity 1 True
+sall 2 True
+conflict: Data.Session.Save: the Ledger with the key 2 was changed or deleted by somebody else (version 2).
+rolled sback 90 1 sada version 2
+remove 2 left 1 notes 1 find undefined
+failed: UNIQUE constraint failed: Memo.text key reset undefined notes 1
+retry 2 key True notes 3
+detached 0 one
+attached 1 attached
+not mine: Data.Session.Remove: the object is not one of the session's.
+saved 7
+row {id: 1, clientId: 3, note: "for rcyd"}
+row {id: 2, clientId: 1, note: "big"}
+row {id: 3, clientId: 1, note: "small"}
+row {id: 4, clientId: 2, note: "mid"}
+client Ada: big small
+client Bob: mid
+client Cyd: for rcyd
+order for rcyd of Cyd
+order big of Ada
+order small of Ada
+order mid of Bob
+sql SELECT * FROM "Client" WHERE (EXISTS (SELECT 1 FROM "Purchase" AS t1 WHERE t1."clientId" = "Client"."id" AND (t1."total" > ?))) [100.0]
+big buyers 2
+with orders 3 all small 1
+named Bob
+identity True
+saved 2 rbob has 3
+rone owner True Bob
+loaded 3
+no session: rcopies 3 Bob own False
+rfirst with include 1
+saved 9 pairs 4 labels2 3
+article Databases in fire: fire data
+article Threads: fire tasks
+shared tag object True
+saved 2 pairs 4 nothing more 0
+about fire 2 about data Threads untagged 0
+not loaded, set 2 pairs of 1: 1 tag 3
+removed 1 pairs 3
+no session labels2 3 fire

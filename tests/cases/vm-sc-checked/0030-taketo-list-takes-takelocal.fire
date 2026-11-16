@@ -1,0 +1,32 @@
+class Item { string n
+  construct(string n) { this.n = n }
+  destruct() { print("~" + this.n) } }
+class F {
+  static Fill() {
+    var list = new List()
+    for (var i = 0; i < 3; i++) { var it = new Item("i" + i); it.TakeTo(list); list.Add(it) }
+    return list
+  }
+  static FillChildren() {
+    var list = new List()
+    var a = new Item("c1")
+    var b = new Item("c2")
+    list.Add(a)
+    list.Add(b)
+    a.TakeTo(list, Takes.Children)
+    return list
+  }
+  static Local(holder) {
+    var x = new Item("x")
+    x.TakeLocal()
+    print(try x.TakeLocal())
+    return 0
+  }
+}
+var l = F.Fill()
+print(l.Count + " " + l[2].n)
+var l2 = F.FillChildren()
+print(l2.Count)
+F.Local(0)
+print("end")
+//# name: TakeTo(list, Takes), TakeLocal

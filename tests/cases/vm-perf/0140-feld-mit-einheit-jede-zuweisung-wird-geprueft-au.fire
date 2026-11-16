@@ -1,0 +1,9 @@
+class M { int len : mm = 0mm; construct() { this.len = 1mm } }
+var m = new M()
+for (var i = 0; i < 3; i = i + 1) { m.len = 5mm }
+print(m.len)
+try { m.len = 7 } catch (UnitMismatchException e) { print("Einheit") }
+m.len = 6mm
+print(m.len)
+//# modes: Debug Release
+//# name: Feld mit Einheit: jede Zuweisung wird geprueft (auch nach dem ersten Erfolg)

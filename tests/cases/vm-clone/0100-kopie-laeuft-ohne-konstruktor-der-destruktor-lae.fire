@@ -1,0 +1,13 @@
+class K {
+    int v
+    construct(int v) { this.v = v; print("ctor") }
+    destruct() { print("dtor" + this.v) }
+}
+{
+    var k = new K(1)
+    var c = copy k
+    var f = flat k
+    c.v = 2
+    print("kopiert")
+}
+//# name: Kopie laeuft ohne Konstruktor, der Destruktor laeuft fuer die Kopie

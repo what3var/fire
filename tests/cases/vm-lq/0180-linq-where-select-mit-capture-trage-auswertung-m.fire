@@ -1,0 +1,13 @@
+#import "linq"
+class P { string name; int price; construct(string n, int p) { this.name = n; this.price = p } }
+class T {
+    static Run() {
+        var limit = 2
+        var nums = new List([5, 3, 8, 1, 9, 2, 8])
+        var q = nums.Where(x => x > limit).Select(x => x * 10)
+        print(q.Join(",") + " | " + q.Count())
+        print(Linq.From([1, 2, 3, 4, 5, 6]).Where(x => x % 2 == 0).Select(x => x * x).Join(" "))
+    }
+}
+T.Run()
+//# name: LINQ: Where/Select mit Capture, trage Auswertung, mehrfach durchlaufbar

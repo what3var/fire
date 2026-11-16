@@ -1,0 +1,4 @@
+op amp pins 8,0 8,4 out -4.999
+transistor pins 16,-2 16,2 led True 9
+and pins 0,4 0,0 y 5 555 pins 6 ''
+bad model: There is no model 'nosuch'.

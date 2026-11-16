@@ -1,0 +1,1 @@
+error TC019: The type of 'e' cannot be derived: the type of its initializer is not known here - give it a type ('int e = ...'), or 'any e = ...' if every kind of value is meant (line 2)

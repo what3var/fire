@@ -1,0 +1,19 @@
+class MyError {
+    string message
+    construct(msg) { this.message = msg }
+}
+
+var doWork = func () => {
+    var result = throw new MyError("wird nicht fortgesetzt")
+    print("SOLLTE NIE LAUFEN")
+    return result
+}
+
+try {
+    doWork()
+} catch (MyError e) {
+    print("gefangen ohne resume: " + e.message)
+}
+print("weiter nach try/catch")
+//# note: what the test program said to expect (for a reader, it was not checked): gefangen ohne resume: wird nicht fortgesetzt / weiter nach try/catch
+//# name: Bytecode-Test: nie fortgesetzte Exception (normaler catch-Durchlauf)

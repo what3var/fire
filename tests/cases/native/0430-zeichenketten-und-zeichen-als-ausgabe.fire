@@ -1,0 +1,6 @@
+print("Hello, wörld")
+print("tab\there")
+var s = "same"
+print(s == "same")
+print(s != "other")
+//# name: Zeichenketten und Zeichen als Ausgabe

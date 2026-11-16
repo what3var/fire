@@ -1,0 +1,41 @@
+#floatwidth 32
+class F {
+    static float Area(int n) {
+        float a = 0.0
+        float x = 0.5
+        for (int i = 0; i < n; i++) { a = a + x * x; x = x + 0.25 }
+        return a
+    }
+    static float Mixed(int n) {
+        float s = 1.0
+        for (int i = 1; i <= n; i++) { s = s * 1.5 - i / 4.0 + i % 3 }
+        return s
+    }
+    static string Cmp(float a, float b) {
+        float x = a
+        float y = b
+        string r = ""
+        if (x < y) { r = r + "<" }
+        if (x > y) { r = r + ">" }
+        if (x == y) { r = r + "=" }
+        if (x != y) { r = r + "!" }
+        if (x <= y) { r = r + "le" }
+        return r
+    }
+    static float Neg(float v) { float t = v * 2.0
+        float u = -t
+        t -= 0.5
+        return u + t }
+    static float Round32(float v) { float w = v * 3.0
+        float[32] q = w / 7.0
+        return q }
+}
+print(F.Area(1000))
+print(F.Mixed(40))
+float nan = 0.0 / 0.0
+float inf = 1.0 / 0.0
+print(F.Cmp(1.0, 2.0) + " " + F.Cmp(2.0, 2.0) + " " + F.Cmp(nan, 1.0) + " " + F.Cmp(1.0, nan) + " " + F.Cmp(nan, nan) + " " + F.Cmp(inf, 1.0))
+print(F.Neg(3.25) + " " + F.Round32(1.1) + " " + inf + " " + (-inf))
+float m = 7.5
+print(m % 2.0 + " " + (-m % 2.0) + " " + (m % 0.0))
+//# name: Skalare (Ebene 2), #floatwidth 32: dieselben Float-Rechnungen mit Real von 32 Bit

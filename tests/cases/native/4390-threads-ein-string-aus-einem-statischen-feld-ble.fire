@@ -1,0 +1,28 @@
+#import "time"
+#import "compression"
+// A string a thread read from a static field stays valid across the call of a native in the same expression, while the main program replaces it:
+// the thread lets go of the read side of the globals' lock for the native, the string it read is its own by a count (FIRE_DOM_LOAD).
+class G { static string name = "start" }
+class U { static int Pair(string a, any b) { return a.length + b.length } }
+var done = 0
+var total = 0
+fire {
+    byte data[] = new byte[20000]
+    for (int i = 0; i < data.length; i++) { data[i] = (i * 7 + i / 13) % 251 }
+    int local = 0
+    for (int i = 0; i < 1500; i++) {
+        local = local + U.Pair(G.name, Compression.Deflate.Compress(data)) % 2
+        string kept = G.name
+        byte z[] = Compression.Deflate.Compress(data)
+        local = local + kept.length % 2
+    }
+    sync global { done = 1; total = local }
+}
+int n = 0
+while (done < 1) {
+    G.name = "name number " + n + " of the main program"
+    int[64] now = DateTime.UtcNow.Ticks
+    n++
+}
+print(total >= 0)
+//# name: Threads: ein String aus einem statischen Feld bleibt ueber den Aufruf eines Natives im selben Ausdruck gueltig, waehrend das Hauptprogramm ihn ersetzt

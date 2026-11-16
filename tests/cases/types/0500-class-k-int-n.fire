@@ -1,0 +1,3 @@
+class K { int! n }
+//# modes: Release
+//# name: types 50: class K { int! n }

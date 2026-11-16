@@ -1,0 +1,4 @@
+print(1_000_000 + 0xFF_FF)
+foreach (x in [1]) { print(x) }; print("same line")
+//# modes: Release
+//# name: syntax 20: print(1_000_000 + 0xFF_FF)

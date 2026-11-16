@@ -1,0 +1,20 @@
+30mm
+1.5
+1500mm
+2000mm
+30mm
+mismatch: Expected unit 'mm', got: kg.
+1.5km
+10mm
+20mm
+500mm
+0.5m
+30mm
+3km
+dim: Expected unit 'any m', got: s.
+overflow
+2cm
+7
+5mm
+caught: Expected unit 'unitless', got: mm.
+caught2: Expected unit 'unitless', got: mm.

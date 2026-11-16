@@ -1,0 +1,10 @@
+any x = 5m
+byte c = x
+byte d = 7
+d = x
+int[8] i8 = x
+print(c + " " + d + " " + x!byte + " " + i8)
+byte ok = 5m::unitless
+print(ok)
+//# modes: Release
+//# name: types 221: any x = 5m

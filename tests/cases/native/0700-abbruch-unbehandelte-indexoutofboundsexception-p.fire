@@ -1,0 +1,3 @@
+int a[] = new int[3]
+print(a[5])
+//# name: Abbruch: unbehandelte IndexOutOfBoundsException (Programm ohne Ausnahmen)

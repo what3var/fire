@@ -1,0 +1,14 @@
+class Animal {
+}
+
+class Dog : Animal {
+}
+
+class Container<T> where T is of Animal {
+    T item
+}
+
+var c = new Container<Dog>()
+print("ok")
+//# note: what the test program said to expect (for a reader, it was not checked): ok
+//# name: Bytecode-Test: generische Klasse, gültige Instanziierung (Vererbung erfüllt 'is of')

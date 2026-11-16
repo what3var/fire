@@ -1,0 +1,2 @@
+class A { F(int[] p) { } }
+//# name: Parameter mit int[] Typ

@@ -1,0 +1,25 @@
+class D { string n
+  construct(string n) { this.n = n }
+  destruct() { print("~" + this.n) } }
+class Boom : Exception { string message
+  construct(string m) { this.message = m } }
+class F {
+  static Thrower() {
+    var t = new D("thrower-local")
+    throw new Boom("x")
+  }
+  static Run() {
+    var outer = new D("outer-local")
+    try {
+      var inTry = new D("in-try")
+      F.Thrower()
+    } catch (Boom e) {
+      var inCatch = new D("in-catch")
+      print("caught " + e.message)
+    }
+    print("after catch")
+  }
+}
+F.Run()
+print("end")
+//# name: Ausnahmen: Destruktor-Reihenfolge beim Verlassen eines catch (Wurfort zuerst, dann der catch)

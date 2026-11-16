@@ -1,0 +1,2 @@
+warning TC001: Cannot assign a value of type 'IReader' to 'o' of type 'IOther' (line 9)
+Unhandled exception of type 'ArgumentException': Variable 'o' is an IOther, not Mem.

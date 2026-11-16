@@ -1,0 +1,11 @@
+#import "testing"
+foreach (i in 1..3) { print(i) }
+var down = 4..2
+print(down.length + " " + down[0] + " " + down[2])
+var steps = 1cm..3cm
+print(steps[2])
+var n = 4
+print((1..n - 1).length)
+Testing.Assert.AreSequenceEqual([2, 3], 2..3)
+try { Testing.Assert.AreEqual(1, 2, "msg") } catch (Assertion e) { print(e.message) }
+//# name: Bereiche a..b: aufwaerts, abwaerts, mit Einheit, in foreach, Testing.Assert

@@ -1,0 +1,7 @@
+#import "linq"
+class P { string name; int price; construct(string n, int p) { this.name = n; this.price = p } }
+var arr = Linq.From([3, 1, 2]).OrderBy(x => x).ToArray()
+var s = ""
+foreach (x in Linq.From(arr).Select(x => x * 2)) { s = s + x + " " }
+print(arr.length + " " + s)
+//# name: LINQ: foreach ueber eine Abfrage, ToArray, Query auf einem Array

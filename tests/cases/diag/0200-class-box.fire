@@ -1,0 +1,7 @@
+class Box {
+ int size
+ Grow() { return 1 }
+}
+var x = Box.Grow()
+//# modes: Release
+//# name: diag 20: class Box {

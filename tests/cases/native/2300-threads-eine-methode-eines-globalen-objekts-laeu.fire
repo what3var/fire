@@ -1,0 +1,17 @@
+    #import "time"
+    class W {
+        int n = 0
+        Wait(int ms) {
+            var start = DateTime.UtcNow
+            while ((DateTime.UtcNow - start).TotalMilliseconds < ms) { Sleep(2) }
+            this.n = this.n + 1
+        }
+    }
+    var w = new W()
+    fire {
+        for (var i = 0; i < 20; i++) { w.Wait(40) }
+    }
+    Sleep(150ms)
+    print("main woke")
+    print("n>0: " + (w.n > 0))
+//# name: Threads: eine Methode eines globalen Objekts laeuft im Hauptprogramm (Regel 10) - ihr Sleep hungert das Hauptprogramm nicht aus

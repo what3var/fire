@@ -1,0 +1,9 @@
+class K { defined int c }
+var k = new K()
+int u
+defined int d = 1
+try { d = u } catch (ArgumentException e) { print(e.message) }
+try { k.c = undefined } catch (ArgumentException e) { print(e.message) }
+print(k.c + d)
+//# modes: Release
+//# name: types 48: class K { defined int c }

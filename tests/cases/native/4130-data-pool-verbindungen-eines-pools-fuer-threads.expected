@@ -1,0 +1,18 @@
+jobs 6 open 2 idle 2
+rows 6
+full: Data.Pool: no connection came back within the limit (all 2 are in use).
+rolled back on give 0
+broken one forgotten: open 1 idle 1
+use threw: no such table: nope idle 1
+closed: The pool is closed.
+count 0
+added 1
+added 2
+same True
+tx left open -> count 2
+boom 500 -> count 3
+no database used
+rpc add {"result": 4}
+rpc count {"result": 4}
+
+hpool open 1 idle 1

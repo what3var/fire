@@ -1,0 +1,5 @@
+int[64] t = 864000000000
+int x = t
+print(x)
+//# modes: Release
+//# name: types 43: int[64] t = 864000000000

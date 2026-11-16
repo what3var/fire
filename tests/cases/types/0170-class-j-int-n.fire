@@ -1,0 +1,11 @@
+class J { int n }
+var ch = new Channel<J>()
+var j = new J()
+ch.Send(copy j)
+ch.Send(take j)
+ch.Send(new J())
+var ci = new Channel<int>()
+ci.Send(3)
+print(ch.Count + ci.Count)
+//# modes: Release
+//# name: types 17: class J { int n }

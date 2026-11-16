@@ -1,0 +1,14 @@
+#intwidth 32
+#floatwidth 32
+class M {
+    static defined int Mix(defined int a, defined int b, defined int c) { return a * 31 + b * 7 + c }
+    static defined float Lerp(defined float a, defined float b, defined float t) { return a + (b - a) * t }
+    static defined int Wrap(defined int x) { return x * 65599 + 1 }
+}
+int acc = 0
+for (int i = 0; i < 20000; i++) { acc = M.Mix(acc, i, 3) % 1000003 }
+print(acc)
+print(M.Lerp(1.0, 3.0, 0.25) + " " + M.Wrap(2000000000) + " " + M.Wrap(-7))
+int[64] wide = 5000000000
+print(M.Wrap(wide))
+//# name: defined (SPEC 8.10b), #intwidth 32 / #floatwidth 32: dieselben C-Parameter

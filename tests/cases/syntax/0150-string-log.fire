@@ -1,0 +1,15 @@
+string log = ""
+for (int a = 0; a < 3; a++) {
+    try {
+        foreach (b in [1, 2, 3]) {
+            try {
+                if (a == 1 && b == 2) continue 2
+                if (a == 2 && b == 2) break 2
+                log = log + a + b + " "
+            } finally { log = log + "i" + a + b + " " }
+        }
+    } finally { log = log + "o" + a + " " }
+}
+print(log)
+//# modes: Release
+//# name: syntax 15: string log = ""

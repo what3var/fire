@@ -1,0 +1,2 @@
+warning TC022: 'u' may be undefined, but 'd' is 'defined int': it is checked at run time - give it a value that is defined, or write 'trust u' if it certainly is (line 5)
+warning TC022: undefined goes into 'c', which is 'defined int': that is an ArgumentException at run time (line 6)

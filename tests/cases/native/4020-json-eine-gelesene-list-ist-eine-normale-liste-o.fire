@@ -1,0 +1,13 @@
+#import "json"
+class Item { int n }
+class Box { List<Item> items = new List<Item>() }
+var b = Json.Deserialize<Box>("{\"items\":[{\"n\":1},{\"n\":2}]}")
+print(b.items.Count)
+var it = new Item()
+it.n = 3
+b.items.Add(it)
+print(b.items.Count + " " + b.items[2].n)
+var l = Json.Deserialize<List<Item>>("[{\"n\":4}]")
+l.Add(new Item())
+print(l.Count)
+//# name: JSON: eine gelesene List ist eine normale Liste (owns wie nach dem Feld-Initialisierer: Add geht), auch als Wurzel

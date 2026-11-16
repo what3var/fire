@@ -1,0 +1,12 @@
+class extends string {
+    string Shout() { return this.ToUpper() + "!" }
+    bool IsBlank() { return this.Trim().Length == 0 }
+    string Twice() { return this + this }
+}
+var s = "hallo"
+print(s.Shout())
+print("abc".Twice())
+print("  ".IsBlank())
+print(s.Shout().Shout())
+print(s)
+//# name: eigene Methoden auf string (this ist der Wert)

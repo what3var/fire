@@ -1,0 +1,3 @@
+error TC008: 'E2' has no field, property or method 'Message' (line 7)
+error TC008: 'P' has no method 'Nope' (line 8)
+error TC002: 'M' of 'P' takes 1 to 2 argument(s), not 0 (line 9)

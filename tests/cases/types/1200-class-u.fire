@@ -1,0 +1,9 @@
+class U {
+    int F(int x) { return 1 }
+    int F(float y) { return 2 }
+    construct(int a) { }
+    construct(string a) { }
+}
+print(new U(1).F(1.5))
+//# modes: Release
+//# name: types 120: class U {

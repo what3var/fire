@@ -1,0 +1,10 @@
+page 200
+focus list nothing True
+down {"patches": [{"e": 3, "t": "", "v": true, "n": true, "rows": ["one","two","three"], "sel": 0, "fg": "", "bg": ""}, {"e": 5, "t": "row 0", "v": true, "n": true, "fg": "", "bg": ""}]}
+end {"patches": [{"e": 3, "t": "", "v": true, "n": true, "rows": ["one","two","three"], "sel": 2, "fg": "", "bg": ""}, {"e": 5, "t": "row 2", "v": true, "n": true, "fg": "", "bg": ""}]}
+edit {"patches": [], "focus": 2}
+input {"patches": [{"e": 2, "t": "Ada", "v": true, "n": true, "fg": "", "bg": ""}]}
+enter {"patches": [{"e": 5, "t": "enter Ada", "v": true, "n": true, "fg": "", "bg": ""}]}
+blur nothing True
+ctrl+s {"patches": [{"e": 5, "t": "saved", "v": true, "n": true, "fg": "", "bg": ""}]}
+

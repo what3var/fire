@@ -1,0 +1,45 @@
+#nosync
+class Item { int v
+    construct(int v) { this.v = v } }
+class P { Item items[]; Item other; Item own
+    construct() { this.own = new Item(7) } }
+class L { any f }
+var done = 0
+var p = new P()
+p.items = [new Item(1), new Item(2)]
+var shared = new Item(10)
+p.other = shared
+var arr = [1, 2, 3]
+var objs = [new Item(4), shared]
+var nested = [[5, 6], [7]]
+var l = new L()
+l.f = func() => 1
+try { fire taking l { sync global { done = done + 1 } } } catch (ArgumentException e) { print("lambda: " + e.message) }
+try { fire taking p taking l { sync global { done = done + 1 } } } catch (ArgumentException e) { print("lambda 2: " + e.message) }
+while (done < 2) { sync globals }
+print("lambdas without captures go along: " + done)
+done = 0
+fire taking p taking arr taking objs taking nested {
+    print("sum " + (p.items[0].v + p.items[1].v + p.other.v + p.own.v))
+    print("own " + (p.own is from p) + " " + (p.items[0] is from p))
+    p.items[0].v = 100
+    p.other.v = 11
+    arr[0] = 99
+    objs[0].v = 77
+    nested[0][1] = 60
+    print("in thread " + arr[0] + " " + objs[0].v + " " + nested[0][1])
+    sync global { done = 1 }
+}
+while (done == 0) { sync globals }
+print(p.items[0].v + " " + shared.v + " " + arr[0] + " " + objs[0].v + " " + nested[0][1])
+done = 0
+fire taking p {
+    p.other.v = 12
+    p.items[1].v = 20
+    sync p
+    sync global { done = 1 }
+}
+while (done == 0) { sync globals }
+print("after sync " + shared.v + " " + p.items[1].v)
+print("end")
+//# name: Threads: taking kopiert alles Erreichbare (Array-Literal im Feld, fremde Objekte, Arrays, Puffer) - Besitzer der Kopien ist der Thread; ein Lambda ohne Captures im Feld geht mit

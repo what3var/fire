@@ -1,0 +1,23 @@
+class Runner {
+    float:m dist
+    float:s time
+    construct(float:km d, float t : min) { dist = d; time = t }
+    float:m/s Speed() { return dist / time }
+    float : km/h SpeedKmh() { return dist / time }
+    float:any m/s Raw() { return dist / time }
+    float:m/s^2 Acc(float:m/s v, float t : s) { return v / t }
+    float:km/h Fast { get { return dist / time * 2 } }
+    float Slow : km/h { get { return dist / time / 2 } }
+    float:m/s Bad() { any d = dist; return d }
+}
+var r = new Runner(10km, 48min)
+print(r.Speed())
+print(r.SpeedKmh())
+print(r.Raw())
+print(r.Acc(36km / 1h, 2s))
+print(r.Fast + " " + r.Slow)
+float:m/s v = 36km / 1h
+print(v)
+try { r.Bad() } catch (UnitMismatchException e) { print(e.message) }
+//# modes: Release
+//# name: syntax 17: class Runner {

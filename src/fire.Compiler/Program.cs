@@ -14,6 +14,15 @@ if (args.Length >= 1 && args[0] == "install-standard")
     return 0;
 }
 
+// `tables <folder>`: the tables the compiler and the VM in C share with the ones in C# (opcodes, error messages, natives, the prelude) as files - native/tables of the
+// repository is written this way (Tables, docs/ROADMAP_C_PORT.md).
+if (args.Length == 2 && args[0] == "tables")
+{
+    var changed = Tables.Write(args[1]);
+    Console.WriteLine(changed.Count == 0 ? "The tables are up to date." : "Written: " + string.Join(", ", changed));
+    return 0;
+}
+
 // `falstad <circuit.txt> [-o <file.biscuit>]`: a circuit of Falstad's simulator (File > Export As Text) as a schematic (docs/circuits/README.md); without -o to the output.
 if (args.Length >= 2 && args[0] == "falstad")
 {

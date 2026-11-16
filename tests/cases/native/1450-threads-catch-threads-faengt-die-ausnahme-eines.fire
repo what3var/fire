@@ -1,0 +1,16 @@
+var caught = 0
+catch threads()
+{
+    print("Main-Thread: catch threads() gefangen")
+    caught = 1
+}
+class MyError {
+    string message
+    construct(string message) { this.message = message }
+}
+fire {
+    throw new MyError("boom aus echter Sprachsyntax")
+}
+while (caught == 0) { sync globals }   // (until the handler ran: not a counting loop that a fast machine finishes first)
+print("Hauptprogramm fertig")
+//# name: Threads: catch threads() faengt die Ausnahme eines Threads

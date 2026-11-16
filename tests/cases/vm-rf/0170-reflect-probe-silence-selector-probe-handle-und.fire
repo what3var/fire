@@ -1,0 +1,26 @@
+#import "reflection"
+class Exception { string message; construct(string message = "") { this.message = message } }
+class C {
+    int v
+    string name
+    int Loud { get { return this.v * 2 } set { this.v = value / 2 } }
+    construct() { this.v = 1; this.name = "a" }
+}
+class W { static Watch(lambda member<C> s, C c) { return s.Probe(c, "changing", (o, n) => n < 10) } }
+var c = new C()
+var h = Reflect.Probe(c, "v", "changed", (o, n) => print("r " + o + " " + n))
+c.v = 4
+Reflect.SilenceHandle(h)
+c.v = 5
+W.Watch(x => x.v, c)
+c.v = 50
+print(c.v)
+Reflect.SilenceAll(c)
+c.v = 50
+print(c.v)
+try { Reflect.Probe(c, "nope", "changed", () => 1) } catch (e) { print(e.message) }
+try { Reflect.Probe(c, "v", "gestern", () => 1) } catch (e) { print(e.message) }
+try { Reflect.Probe(c, "v", "changed", (a, b, c, d, e) => 1) } catch (e) { print(e.message) }
+//# modes: Debug Release
+//# note: the reflection library was added by the test program; now the case imports it itself, so it is a program for forge run too
+//# name: Reflect.Probe/Silence, Selector.Probe, Handle und Fehler
