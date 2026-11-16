@@ -1195,7 +1195,7 @@ namespace fire.Runtime
                     if (!_stopExecutionRequested || _shutdownReleasePending) ReleaseGlobalScopeAtEnd();
                     return;
                 }
-                Step(op);
+                StepRun(op);
             }
         }
 
@@ -2002,28 +2002,37 @@ namespace fire.Runtime
         /// behaves exactly like its counterpart in Execute; where a case does not apply (e.g. an object as the
         /// left operand with operator overloading, a scope with ownership), it falls through to Execute.</summary>
         [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]
-        private void Step(OpCode op)
+        private void Step(OpCode op) => StepCore(op, false);
+
+        /// <summary>Runs instructions from `op` on until the next one is a Halt (which stays unread: the caller's loop reads it and decides).</summary>
+        private void StepRun(OpCode op) => StepCore(op, true);
+
+        // One instruction (`run` false: Step) or all of them up to the next Halt (`run` true: StepRun, the loop of a program that runs freely). The loop is
+        // INSIDE this method because its frame is expensive to set up: it holds every Value temporary of the cases below (more than a kilobyte, cleared in
+        // the prolog) - once per instruction that was a third of the time of a simple instruction.
+        private void StepCore(OpCode op, bool run)
         {
+        again:
             switch (op)
             {
                 // (every assignment of a value and every call with declared parameters: not through Execute, whose frame is expensive to set up)
                 case OpCode.HoistValue:
                     if (_stack[_sp - 1].Kind is ValueKind.Class or ValueKind.Array or ValueKind.Buffer or ValueKind.Lambda) HoistValue(_stack[_sp - 1]);
-                    return;
-                case OpCode.GuardLocal: OpGuardLocal(); return;
-                case OpCode.GuardLocalType: OpGuardLocalType(); return;
+                    goto next;
+                case OpCode.GuardLocal: OpGuardLocal(); goto next;
+                case OpCode.GuardLocalType: OpGuardLocalType(); goto next;
 
                 case OpCode.LoadConst:
                     Push(_constants[ReadU16()]);
-                    return;
+                    goto next;
 
                 case OpCode.Pop:
                     _sp--;
-                    return;
+                    goto next;
 
                 case OpCode.Dup:
                     Push(_stack[_sp - 1]);
-                    return;
+                    goto next;
 
                 case OpCode.LoadLocal:
                 {
@@ -2031,252 +2040,252 @@ namespace fire.Runtime
                     if (_sp == _stack.Length) Array.Resize(ref _stack, _stack.Length * 2);
                     _stack[_sp] = _currentScope.GetAncestor(depth).SlotRef(slot);
                     _sp++;
-                    return;
+                    goto next;
                 }
 
                 case OpCode.StoreLocal:
                 {
                     int depth = ReadU16(); int slot = ReadU16();
                     _currentScope.GetAncestor(depth).SlotRef(slot) = _stack[_sp - 1];
-                    return;
+                    goto next;
                 }
 
                 case OpCode.LoadGlobal:
                 {
                     int slot = ReadU16();
                     if (_sp == _stack.Length) Array.Resize(ref _stack, _stack.Length * 2);
-                    if (slot < _sharedCount) { _stack[_sp] = LoadSharedGlobal(slot); _sp++; return; } // Fire thread: the real globals
+                    if (slot < _sharedCount) { _stack[_sp] = LoadSharedGlobal(slot); _sp++; goto next; } // Fire thread: the real globals
                     _stack[_sp] = _globalScope.SlotRef(slot);
                     _sp++;
-                    return;
+                    goto next;
                 }
 
                 case OpCode.StoreGlobal:
                 {
                     int slot = ReadU16();
-                    if (slot < _sharedCount) { StoreSharedGlobal(slot, _stack[_sp - 1]); return; }
-                    if (_ownerBroker != null) { StoreOwnerGlobal(slot, _stack[_sp - 1]); return; }
+                    if (slot < _sharedCount) { StoreSharedGlobal(slot, _stack[_sp - 1]); goto next; }
+                    if (_ownerBroker != null) { StoreOwnerGlobal(slot, _stack[_sp - 1]); goto next; }
                     _globalScope.SlotRef(slot) = _stack[_sp - 1];
-                    return;
+                    goto next;
                 }
 
                 case OpCode.DeclareLocal:
-                    if (_ownerBroker != null && ReferenceEquals(_currentScope, _globalScope)) { DeclareOwnerGlobal(Pop()); return; }
+                    if (_ownerBroker != null && ReferenceEquals(_currentScope, _globalScope)) { DeclareOwnerGlobal(Pop()); goto next; }
                     {
                         int declared = _currentScope.DefineSlot(Pop());
                         if (ExecutionMode != VmExecutionMode.Performance) NameDeclaredSlot(declared);
                     }
-                    return;
+                    goto next;
 
                 // Binary operators: the left operand lies at _sp-2, the right at _sp-1; the result
                 // replaces both. An object on the left (operator overloading) falls through to Execute.
                 case OpCode.Add:
-                    if (Value.TryAddInPlace(ref _stack[_sp - 2], in _stack[_sp - 1])) { _sp--; return; }
-                    if (_stack[_sp - 2].Kind != ValueKind.Class && _stack[_sp - 1].Kind != ValueKind.Class) { ReplaceTwoGuarded(Value.Add); return; }
+                    if (Value.TryAddInPlace(ref _stack[_sp - 2], in _stack[_sp - 1])) { _sp--; goto next; }
+                    if (_stack[_sp - 2].Kind != ValueKind.Class && _stack[_sp - 1].Kind != ValueKind.Class) { ReplaceTwoGuarded(Value.Add); goto next; }
                     break;
                 case OpCode.StepAdd:
                 case OpCode.StepSub:
                     _stack[_sp - 1] = Value.StepOf(in _stack[_sp - 2], _stack[_sp - 1]);
                     Step(op == OpCode.StepAdd ? OpCode.Add : OpCode.Sub);
-                    return;
+                    goto next;
                 case OpCode.Sub:
-                    if (Value.TrySubtractInPlace(ref _stack[_sp - 2], in _stack[_sp - 1])) { _sp--; return; }
-                    if (_stack[_sp - 2].Kind != ValueKind.Class) { ReplaceTwoGuarded(Value.Subtract); return; }
+                    if (Value.TrySubtractInPlace(ref _stack[_sp - 2], in _stack[_sp - 1])) { _sp--; goto next; }
+                    if (_stack[_sp - 2].Kind != ValueKind.Class) { ReplaceTwoGuarded(Value.Subtract); goto next; }
                     break;
                 case OpCode.Mul:
-                    if (Value.TryMultiplyInPlace(ref _stack[_sp - 2], in _stack[_sp - 1])) { _sp--; return; }
-                    if (_stack[_sp - 2].Kind != ValueKind.Class) { ReplaceTwoGuarded(Value.Multiply); return; }
+                    if (Value.TryMultiplyInPlace(ref _stack[_sp - 2], in _stack[_sp - 1])) { _sp--; goto next; }
+                    if (_stack[_sp - 2].Kind != ValueKind.Class) { ReplaceTwoGuarded(Value.Multiply); goto next; }
                     break;
                 case OpCode.Div:
-                    if (_stack[_sp - 2].Kind != ValueKind.Class) { ReplaceTwoGuarded(Value.Divide); return; }
+                    if (_stack[_sp - 2].Kind != ValueKind.Class) { ReplaceTwoGuarded(Value.Divide); goto next; }
                     break;
                 case OpCode.Mod:
-                    if (Value.TryModuloInPlace(ref _stack[_sp - 2], in _stack[_sp - 1])) { _sp--; return; }
-                    if (_stack[_sp - 2].Kind != ValueKind.Class) { ReplaceTwoGuarded(Value.Modulo); return; }
+                    if (Value.TryModuloInPlace(ref _stack[_sp - 2], in _stack[_sp - 1])) { _sp--; goto next; }
+                    if (_stack[_sp - 2].Kind != ValueKind.Class) { ReplaceTwoGuarded(Value.Modulo); goto next; }
                     break;
                 case OpCode.Eq:
-                    if (_stack[_sp - 2].Kind != ValueKind.Class) { ReplaceTwoWith(Value.MakeBool(Value.OperatorEquals(_stack[_sp - 2], _stack[_sp - 1]))); return; }
+                    if (_stack[_sp - 2].Kind != ValueKind.Class) { ReplaceTwoWith(Value.MakeBool(Value.OperatorEquals(_stack[_sp - 2], _stack[_sp - 1]))); goto next; }
                     break;
                 case OpCode.NotEq:
-                    if (_stack[_sp - 2].Kind != ValueKind.Class) { ReplaceTwoWith(Value.MakeBool(!Value.OperatorEquals(_stack[_sp - 2], _stack[_sp - 1]))); return; }
+                    if (_stack[_sp - 2].Kind != ValueKind.Class) { ReplaceTwoWith(Value.MakeBool(!Value.OperatorEquals(_stack[_sp - 2], _stack[_sp - 1]))); goto next; }
                     break;
                 case OpCode.Lt:
-                    if (Value.TryCompareInPlace(ref _stack[_sp - 2], in _stack[_sp - 1], 0)) { _sp--; return; }
-                    if (_stack[_sp - 2].Kind != ValueKind.Class) { ReplaceTwoGuarded(static (a, b) => Value.MakeBool(Value.Compare(a, b) < 0)); return; }
+                    if (Value.TryCompareInPlace(ref _stack[_sp - 2], in _stack[_sp - 1], 0)) { _sp--; goto next; }
+                    if (_stack[_sp - 2].Kind != ValueKind.Class) { ReplaceTwoGuarded(static (a, b) => Value.MakeBool(Value.Compare(a, b) < 0)); goto next; }
                     break;
                 case OpCode.LtEq:
-                    if (Value.TryCompareInPlace(ref _stack[_sp - 2], in _stack[_sp - 1], 1)) { _sp--; return; }
-                    if (_stack[_sp - 2].Kind != ValueKind.Class) { ReplaceTwoGuarded(static (a, b) => Value.MakeBool(Value.Compare(a, b) <= 0)); return; }
+                    if (Value.TryCompareInPlace(ref _stack[_sp - 2], in _stack[_sp - 1], 1)) { _sp--; goto next; }
+                    if (_stack[_sp - 2].Kind != ValueKind.Class) { ReplaceTwoGuarded(static (a, b) => Value.MakeBool(Value.Compare(a, b) <= 0)); goto next; }
                     break;
                 case OpCode.Gt:
-                    if (Value.TryCompareInPlace(ref _stack[_sp - 2], in _stack[_sp - 1], 2)) { _sp--; return; }
-                    if (_stack[_sp - 2].Kind != ValueKind.Class) { ReplaceTwoGuarded(static (a, b) => Value.MakeBool(Value.Compare(a, b) > 0)); return; }
+                    if (Value.TryCompareInPlace(ref _stack[_sp - 2], in _stack[_sp - 1], 2)) { _sp--; goto next; }
+                    if (_stack[_sp - 2].Kind != ValueKind.Class) { ReplaceTwoGuarded(static (a, b) => Value.MakeBool(Value.Compare(a, b) > 0)); goto next; }
                     break;
                 case OpCode.GtEq:
-                    if (Value.TryCompareInPlace(ref _stack[_sp - 2], in _stack[_sp - 1], 3)) { _sp--; return; }
-                    if (_stack[_sp - 2].Kind != ValueKind.Class) { ReplaceTwoGuarded(static (a, b) => Value.MakeBool(Value.Compare(a, b) >= 0)); return; }
+                    if (Value.TryCompareInPlace(ref _stack[_sp - 2], in _stack[_sp - 1], 3)) { _sp--; goto next; }
+                    if (_stack[_sp - 2].Kind != ValueKind.Class) { ReplaceTwoGuarded(static (a, b) => Value.MakeBool(Value.Compare(a, b) >= 0)); goto next; }
                     break;
 
                 case OpCode.CallMethod:
                     OpCallMethod();
-                    return;
+                    goto next;
 
                 case OpCode.CallStaticMethod:
                     OpCallStaticMethod();
-                    return;
+                    goto next;
 
                 case OpCode.Call:
                     OpCall();
-                    return;
+                    goto next;
 
                 case OpCode.Return:
                     OpReturn();
-                    return;
+                    goto next;
 
                 case OpCode.GetField:
                     OpGetField();
-                    return;
+                    goto next;
 
                 case OpCode.SetField:
                     OpSetField();
-                    return;
+                    goto next;
 
                 case OpCode.LoadThis:
                     OpLoadThis();
-                    return;
+                    goto next;
 
                 case OpCode.SetFieldOnThis:
                     OpSetFieldOnThis();
-                    return;
+                    goto next;
 
                 case OpCode.NewObject:
                     OpNewObject();
-                    return;
+                    goto next;
 
                 case OpCode.GetStaticField:
                     OpGetStaticField();
-                    return;
+                    goto next;
 
                 case OpCode.SetStaticField:
                     OpSetStaticField();
-                    return;
+                    goto next;
 
                 case OpCode.ArrayGet:
                     OpArrayGet();
-                    return;
+                    goto next;
 
                 case OpCode.ArraySet:
                     OpArraySet();
-                    return;
+                    goto next;
 
                 case OpCode.IncDecIndex:
                     OpIncDecIndex();
-                    return;
+                    goto next;
 
                 case OpCode.NewArray:
                     OpNewArray();
-                    return;
+                    goto next;
 
                 case OpCode.MakeArrayLiteral:
                     OpMakeArrayLiteral();
-                    return;
+                    goto next;
 
                 case OpCode.CallNative:
                     OpCallNative();
-                    return;
+                    goto next;
 
                 case OpCode.MakeLambda:
                     OpMakeLambda();
-                    return;
+                    goto next;
 
                 case OpCode.MakeLambdaCapturing:
                     OpMakeLambdaCapturing();
-                    return;
+                    goto next;
 
                 case OpCode.Probe:
                     OpProbe();
-                    return;
+                    goto next;
 
                 case OpCode.SilenceMember:
                     OpSilenceMember();
-                    return;
+                    goto next;
 
                 case OpCode.SilenceValue:
                     OpSilenceValue();
-                    return;
+                    goto next;
 
                 case OpCode.CallBaseMethod:
                     OpCallBaseMethod();
-                    return;
+                    goto next;
 
                 case OpCode.NewObjectOwned:
                     OpNewObjectOwned();
-                    return;
+                    goto next;
 
                 case OpCode.ConstructBase:
                     OpConstructBase();
-                    return;
+                    goto next;
 
                 case OpCode.CallProtoWithThis:
                     OpCallProtoWithThis();
-                    return;
+                    goto next;
 
                 case OpCode.Neg:
                     if (_stack[_sp - 1].Kind is ValueKind.Int or ValueKind.Float) _stack[_sp - 1] = Value.Negate(_stack[_sp - 1]);
                     else ReplaceOneGuarded(Value.Negate);
-                    return;
+                    goto next;
                 case OpCode.LogicalNot:
                     if (_stack[_sp - 1].Kind == ValueKind.Bool) _stack[_sp - 1] = Value.LogicalNot(_stack[_sp - 1]);
                     else ReplaceOneGuarded(Value.LogicalNot);
-                    return;
+                    goto next;
 
                 case OpCode.Jump:
                 {
                     // A back jump (loop) is a safe point for shutdown signals (see PollSignals); `_ip` here still
                     // points to the operand, PollSignalsSlow calculates with the instruction boundary before it.
                     int target = _code[_ip] | (_code[_ip + 1] << 8);
-                    if (target <= _ip && (PollSignals() || PollQueueAtLoop() || (_homeInbox != null && ServeHomeInbox()))) return;
+                    if (target <= _ip && (PollSignals() || PollQueueAtLoop() || (_homeInbox != null && ServeHomeInbox()))) goto next;
                     _ip = target;
-                    return;
+                    goto next;
                 }
 
                 case OpCode.JumpIfFalse:
                 {
                     int addr = ReadU16();
                     var condition = Pop();
-                    if (condition.Kind != ValueKind.Bool) { ThrowConditionError(condition); return; }
+                    if (condition.Kind != ValueKind.Bool) { ThrowConditionError(condition); goto next; }
                     if (!condition.AsBool()) _ip = addr;
-                    return;
+                    goto next;
                 }
 
                 case OpCode.JumpIfFalsePeek:
                 {
                     int addr = ReadU16();
-                    if (_stack[_sp - 1].Kind != ValueKind.Bool) { ThrowConditionError(_stack[_sp - 1]); return; }
+                    if (_stack[_sp - 1].Kind != ValueKind.Bool) { ThrowConditionError(_stack[_sp - 1]); goto next; }
                     if (!_stack[_sp - 1].AsBool()) _ip = addr;
-                    return;
+                    goto next;
                 }
 
                 case OpCode.JumpIfTruePeek:
                 {
                     int addr = ReadU16();
-                    if (_stack[_sp - 1].Kind != ValueKind.Bool) { ThrowConditionError(_stack[_sp - 1]); return; }
+                    if (_stack[_sp - 1].Kind != ValueKind.Bool) { ThrowConditionError(_stack[_sp - 1]); goto next; }
                     if (_stack[_sp - 1].AsBool()) _ip = addr;
-                    return;
+                    goto next;
                 }
 
                 case OpCode.EnterScope:
                     _currentScope = RentScope(_currentScope);
-                    return;
+                    goto next;
 
                 case OpCode.ExitScope:
                 {
                     var scope = _currentScope;
-                    if (scope.HasOwned) { ExitScopeOwning(); return; } // Release can execute destructors - the detailed way
+                    if (scope.HasOwned) { ExitScopeOwning(); goto next; } // Release can execute destructors - the detailed way
                     _currentScope = scope.Parent
                         ?? throw new InvalidOperationException("ExitScope called on the global scope.");
                     if (scope.CanRecycle) ReturnScopeToPool(scope);
-                    return;
+                    goto next;
                 }
 
                 // ---- Verschmolzene Instruktionen (siehe OpCode.StoreLocalPop ff.) ----
@@ -2285,18 +2294,18 @@ namespace fire.Runtime
                 {
                     int depth = ReadU16(); int slot = ReadU16();
                     _currentScope.GetAncestor(depth).SlotRef(slot) = _stack[--_sp];
-                    return;
+                    goto next;
                 }
 
                 case OpCode.StoreGlobalPop:
                 {
                     int slot = ReadU16();
                     var value = _stack[_sp - 1];
-                    if (slot < _sharedCount) { if (!StoreSharedGlobal(slot, value)) return; }
+                    if (slot < _sharedCount) { if (!StoreSharedGlobal(slot, value)) goto next; }
                     else if (_ownerBroker != null) StoreOwnerGlobal(slot, value);
                     else _globalScope.SlotRef(slot) = value;
                     _sp--;
-                    return;
+                    goto next;
                 }
 
                 case OpCode.JumpIfNotLt:
@@ -2313,12 +2322,12 @@ namespace fire.Runtime
                         int ipAfter = _ip;
                         var chunkBefore = _currentChunk;
                         ExecuteCompareSlow(kind switch { 0 => OpCode.Lt, 1 => OpCode.LtEq, 2 => OpCode.Gt, _ => OpCode.GtEq });
-                        if (_ip != ipAfter || !ReferenceEquals(_currentChunk, chunkBefore)) return;   // it threw (`1m < 1s`): the handler already continues
+                        if (_ip != ipAfter || !ReferenceEquals(_currentChunk, chunkBefore)) goto next;   // it threw (`1m < 1s`): the handler already continues
                         result = _stack[--_sp].AsBool();
                     }
                     else _sp -= 2;
                     if (!result) _ip = addr;
-                    return;
+                    goto next;
                 }
 
                 case OpCode.JumpIfNotEq:
@@ -2339,7 +2348,7 @@ namespace fire.Runtime
                     }
                     // JumpIfNotEq jumps if a == b does NOT hold; JumpIfNotNotEq if a != b does NOT hold (i.e. a == b)
                     if (op == OpCode.JumpIfNotEq ? !equal : equal) _ip = addr;
-                    return;
+                    goto next;
                 }
 
                 case OpCode.ArithLocalConstPop:
@@ -2347,25 +2356,56 @@ namespace fire.Runtime
                     int depth = ReadU16(); int slot = ReadU16(); int constIdx = ReadU16(); int mode = ReadByte(); bool subtract = (mode & 1) != 0;
                     ref Value variable = ref _currentScope.GetAncestor(depth).SlotRef(slot);
                     if (subtract ? Value.TrySubtractInPlace(ref variable, in _constants[constIdx]) : Value.TryAddInPlace(ref variable, in _constants[constIdx]))
-                        return;
+                        goto next;
                     ArithSlow(depth, slot, constIdx, subtract, (mode & 2) != 0);
-                    return;
+                    goto next;
                 }
 
                 case OpCode.ArithGlobalConstPop:
                 {
                     int slot = ReadU16(); int constIdx = ReadU16(); int mode = ReadByte(); bool subtract = (mode & 1) != 0; bool step = (mode & 2) != 0;
                     // Fire threads and a main program with running threads read/write globals via the broker: ordinary way
-                    if (slot < _sharedCount || _ownerBroker != null) { ArithGlobalSlow(slot, constIdx, subtract, step); return; }
+                    if (slot < _sharedCount || _ownerBroker != null) { ArithGlobalSlow(slot, constIdx, subtract, step); goto next; }
                     ref Value variable = ref _globalScope.SlotRef(slot);
                     if (subtract ? Value.TrySubtractInPlace(ref variable, in _constants[constIdx]) : Value.TryAddInPlace(ref variable, in _constants[constIdx]))
-                        return;
+                        goto next;
                     ArithGlobalSlow(slot, constIdx, subtract, step);
-                    return;
+                    goto next;
                 }
+
+                // ---- small instructions that nearly every statement and call has: here, not through Execute (its frame is several times bigger still) ----
+                case OpCode.ReleaseTemps:
+                    _currentScope.ReleaseTemps(this);
+                    goto next;
+                case OpCode.ClaimToScope: OpClaimToScope(); goto next;
+                case OpCode.GuardTop: OpGuardTop(); goto next;
+                case OpCode.GuardTopType: OpGuardTopType(); goto next;
+                case OpCode.TakeCallTypeArgs: _currentScope.TypeArgs = _pendingCallTypeArgs; _pendingCallTypeArgs = null; goto next;
+                case OpCode.CopyArgs: OpCopyArgs(); goto next;
+                case OpCode.SetFieldClaim: OpSetFieldClaim(); goto next;
+                case OpCode.ClaimToArray: OpClaimToArray(); goto next;
+                case OpCode.ClaimToObject: OpClaimToObject(); goto next;
+                case OpCode.SetTypeArgs: OpSetTypeArgs(); goto next;
+                case OpCode.IsOfType: OpIsOfType(); goto next;
+                case OpCode.HasMember: OpHasMember(); goto next;
+                case OpCode.CheckUnit: OpCheckUnit(); goto next;
+                case OpCode.Power: BinaryNumericOrOperator(Value.Power, "operator^"); goto next;
+                case OpCode.PowerFloat: BinaryNumericOrOperator(Value.PowerFloat, "operator^"); goto next;
+                case OpCode.BitAnd: BinaryNumericOrOperator(Value.BitAnd, "operator&"); goto next;
+                case OpCode.BitOr: BinaryNumericOrOperator(Value.BitOr, "operator|"); goto next;
+                case OpCode.BitXor: BinaryNumericOrOperator(Value.BitXor, "operator#"); goto next;
+                case OpCode.ShiftLeft: BinaryNumericOrOperator(Value.ShiftLeft, "operator<<"); goto next;
+                case OpCode.ShiftRight: BinaryNumericOrOperator(Value.ShiftRight, "operator>>"); goto next;
+                case OpCode.ShiftRightLogical: BinaryNumericOrOperator(Value.ShiftRightLogical, "operator>>>"); goto next;
+                case OpCode.BitNot: ReplaceOneGuarded(Value.BitNot); goto next;
             }
 
             Execute(op);
+        next:
+            if (!run) return;
+            op = (OpCode)ReadByte();
+            if (op != OpCode.Halt) goto again;
+            _ip--;
         }
 
         /// <summary>Slow path of the fused comparison jumps: the comparison `op` over the two topmost stack values, exactly like
@@ -2990,12 +3030,15 @@ namespace fire.Runtime
             // by the immediately following Release() of its own scope.
             // This applies to EVERY scope of this call (innermost block up to function scope): a `return` in the middle of nested
             // blocks leaves them all at once.
-            if (_frames.Count > 0) MoveReturned(retVal, OwnsWithinCall);
+            // (only a value that has an owner can belong to a scope of the call - a number, a string never does: no walk, and the delegate is made once)
+            if (_frames.Count > 0 && retVal.Kind is ValueKind.Class or ValueKind.Array or ValueKind.Buffer or ValueKind.Lambda)
+                MoveReturned(retVal, _ownsWithinCall ??= OwnsWithinCall);
 
             // (a record at the end of its (outermost) constructor - before the scopes of the call let go of what they hold: it holds only what does not
             // change, step 9)
+            // (no lambda over `record` here: its closure would be allocated at every return of every call)
             if (_frames.Count > 0 && _frames.Peek().ConstructedInstance is { RtClass.IsRecord: true } record
-                && !_frames.Skip(1).Any(f => ReferenceEquals(f.ConstructedInstance, record)) && (_recordInit == null || !_recordInit.Contains(record))
+                && !ConstructedBelowTop(record) && (_recordInit == null || !_recordInit.Contains(record))
                 && RecordValues.FirstChangeableField(record) is { } changeable)
             {
                 ThrowArgumentError($"The field '{changeable}' of the record '{record.ClassName}' holds {DescribeKindOf(record.Fields[changeable])}: a record holds only what does not change - numbers, texts, enums, records, lambdas without captures.");
@@ -3015,6 +3058,20 @@ namespace fire.Runtime
                 : retVal);
             return;
         }
+        }
+
+        private Func<Scope, bool>? _ownsWithinCall;
+
+        /// <summary>Is `record` the object a call below the topmost one constructs (an outer constructor of it is still running)?</summary>
+        private bool ConstructedBelowTop(ObjectInstance record)
+        {
+            bool top = true;
+            foreach (var f in _frames)
+            {
+                if (top) { top = false; continue; }
+                if (ReferenceEquals(f.ConstructedInstance, record)) return true;
+            }
+            return false;
         }
 
         /// <summary>Is the record being constructed - a constructor of it on the stack of calls, or a copy / `with` that fills it (<see cref="_recordInit"/>)?</summary>
@@ -4448,6 +4505,86 @@ namespace fire.Runtime
         }
         }
 
+        private void OpClaimToScope()
+        {
+            int depth = ReadU16();
+            int flags = ReadByte();
+            // (a fresh value for a global of the main program: its store moves it there - rule 10)
+            if (depth == 0xFFFF && _threadBroker != null && IsUnclaimed(_stack[_sp - 1])) _pendingGlobalTake = IdentityOf(_stack[_sp - 1]);
+            ClaimToScope(_stack[_sp - 1], depth == 0xFFFF ? _globalScope : _currentScope.GetAncestor(depth), flags);
+        }
+
+        private void OpIsOfType()
+        {
+            string typeName = _constants[ReadU16()].AsString();
+            var v = Pop();
+            if (ReadsDeadClass(v, typeName, out var deadObj)) { Push(Value.MakeUndefined()); ThrowDestroyedObject(deadObj); return; }
+            Push(Value.MakeBool(IsOfType(v, typeName)));
+        }
+
+        private void OpHasMember()
+        {
+            // `x??.name`: is x there (not undefined, not destroyed) and has it the member - a field, property or method of its class, or a built-in one?
+            string memberName = _constants[ReadU16()].AsString();
+            var v = Pop();
+            bool has = v.Kind switch
+            {
+                ValueKind.Undefined => false,
+                ValueKind.Class => v.AsObjectRef() is ObjectInstance { IsDestroyed: false } o && !IsDeadObject(o)
+                    && (fire.Runtime.BuiltinMembers.IsOwnership(memberName) || ReflectHas(o, memberName)),
+                ValueKind.Array or ValueKind.Buffer or ValueKind.Lambda => !IsDestroyedLeaf(v) && fire.Runtime.BuiltinMembers.Has(v.Kind, false, memberName),
+                _ => fire.Runtime.BuiltinMembers.Has(v.Kind, v.IsEnum, memberName),
+            };
+            Push(Value.MakeBool(has));
+        }
+
+        private void OpCheckUnit()
+        {
+            // SPEC "Unit declarations": the value on top of the stack goes into a declaration with a unit - it is converted into that unit
+            // (the same dimension), another dimension is a catchable UnitMismatchException, a whole number that overflows an OverflowException.
+            // (Converting is part of what the value means, so it happens in every execution mode.)
+            string requiredUnitName = _constants[ReadU16()].AsString();
+            ref var adapted = ref _stack[_sp - 1];
+            switch (Value.AdaptToUnit(ref adapted, requiredUnitName, out var offending))
+            {
+                case Value.UnitAdaptation.Mismatch: ThrowUnitMismatch(Values.Unit.DemandDisplay(requiredUnitName), offending.Unit ?? Values.Unit.Unitless); break;
+                case Value.UnitAdaptation.Overflow: ThrowOverflow($"{adapted} does not fit into a whole number in '{Values.Unit.DemandDisplay(requiredUnitName)}'."); break;
+            }
+        }
+
+        private void OpClaimToArray()
+        {
+            var holder = _stack[_sp - 3];
+            if (holder.Kind == ValueKind.Array && !holder.AsArray().IsDestroyed)
+            {
+                // (for an array of the main program's globals: the store moves it there - rule 10)
+                if (_threadBroker != null && holder.AsArray().IsShared) { if (IsUnclaimed(_stack[_sp - 1])) _pendingGlobalTake = IdentityOf(_stack[_sp - 1]); }
+                else ClaimTree(_stack[_sp - 1], holder.AsArray());
+            }
+        }
+
+        private void OpClaimToObject()
+        {
+            var value = Pop();
+            var holderValue = Pop();
+            if (holderValue.Kind == ValueKind.Class && holderValue.AsObjectRef() is ObjectInstance holder && !holder.IsDestroyed)
+            {
+                // (for an object of the main program's globals: the store moves it there - rule 10)
+                if (_threadBroker != null && holder.InGlobalsDomain) { if (IsUnclaimed(value)) _pendingGlobalTake = IdentityOf(value); }
+                else ClaimTree(value, holder);
+            }
+            Push(value);
+        }
+
+        private void OpCopyArgs()
+        {
+            long mask = ReadU16();
+            mask |= (long)ReadU16() << 16;
+            mask |= (long)ReadU16() << 32;
+            mask |= (long)ReadU16() << 48;
+            _copyArgMask = mask;
+        }
+
         private void OpNewArray()
         {
         {
@@ -5189,15 +5326,7 @@ namespace fire.Runtime
                     break;
                 }
 
-                case OpCode.CopyArgs:
-                {
-                    long mask = ReadU16();
-                    mask |= (long)ReadU16() << 16;
-                    mask |= (long)ReadU16() << 32;
-                    mask |= (long)ReadU16() << 48;
-                    _copyArgMask = mask;
-                    break;
-                }
+                case OpCode.CopyArgs: OpCopyArgs(); break;
 
                 case OpCode.CopyValueOwned:
                 {
@@ -5409,27 +5538,11 @@ namespace fire.Runtime
                     _currentScope.ReleaseTemps(this);
                     break;
 
-                case OpCode.ClaimToScope:
-                {
-                    int depth = ReadU16();
-                    int flags = ReadByte();
-                    // (a fresh value for a global of the main program: its store moves it there - rule 10)
-                    if (depth == 0xFFFF && _threadBroker != null && IsUnclaimed(_stack[_sp - 1])) _pendingGlobalTake = IdentityOf(_stack[_sp - 1]);
-                    ClaimToScope(_stack[_sp - 1], depth == 0xFFFF ? _globalScope : _currentScope.GetAncestor(depth), flags);
-                    break;
-                }
+                case OpCode.ClaimToScope: OpClaimToScope(); break;
 
                 case OpCode.ClaimToObject:
                 {
-                    var value = Pop();
-                    var holderValue = Pop();
-                    if (holderValue.Kind == ValueKind.Class && holderValue.AsObjectRef() is ObjectInstance holder && !holder.IsDestroyed)
-                    {
-                        // (for an object of the main program's globals: the store moves it there - rule 10)
-                        if (_threadBroker != null && holder.InGlobalsDomain) { if (IsUnclaimed(value)) _pendingGlobalTake = IdentityOf(value); }
-                        else ClaimTree(value, holder);
-                    }
-                    Push(value);
+                    OpClaimToObject();
                     break;
                 }
 
@@ -5437,13 +5550,7 @@ namespace fire.Runtime
 
                 case OpCode.ClaimToArray:
                 {
-                    var holder = _stack[_sp - 3];
-                    if (holder.Kind == ValueKind.Array && !holder.AsArray().IsDestroyed)
-                    {
-                        // (for an array of the main program's globals: the store moves it there - rule 10)
-                        if (_threadBroker != null && holder.AsArray().IsShared) { if (IsUnclaimed(_stack[_sp - 1])) _pendingGlobalTake = IdentityOf(_stack[_sp - 1]); }
-                        else ClaimTree(_stack[_sp - 1], holder.AsArray());
-                    }
+                    OpClaimToArray();
                     break;
                 }
 
@@ -5642,14 +5749,7 @@ namespace fire.Runtime
                     break;
                 }
 
-                case OpCode.IsOfType:
-                {
-                    string typeName = _constants[ReadU16()].AsString();
-                    var v = Pop();
-                    if (ReadsDeadClass(v, typeName, out var deadObj)) { Push(Value.MakeUndefined()); ThrowDestroyedObject(deadObj); break; }
-                    Push(Value.MakeBool(IsOfType(v, typeName)));
-                    break;
-                }
+                case OpCode.IsOfType: OpIsOfType(); break;
 
                 case OpCode.InitNext:
                     // (`with`: the store that follows writes the copy - [copy, copy, value])
@@ -5677,18 +5777,7 @@ namespace fire.Runtime
 
                 case OpCode.HasMember:
                 {
-                    // `x??.name`: is x there (not undefined, not destroyed) and has it the member - a field, property or method of its class, or a built-in one?
-                    string memberName = _constants[ReadU16()].AsString();
-                    var v = Pop();
-                    bool has = v.Kind switch
-                    {
-                        ValueKind.Undefined => false,
-                        ValueKind.Class => v.AsObjectRef() is ObjectInstance { IsDestroyed: false } o && !IsDeadObject(o)
-                            && (fire.Runtime.BuiltinMembers.IsOwnership(memberName) || ReflectHas(o, memberName)),
-                        ValueKind.Array or ValueKind.Buffer or ValueKind.Lambda => !IsDestroyedLeaf(v) && fire.Runtime.BuiltinMembers.Has(v.Kind, false, memberName),
-                        _ => fire.Runtime.BuiltinMembers.Has(v.Kind, v.IsEnum, memberName),
-                    };
-                    Push(Value.MakeBool(has));
+                    OpHasMember();
                     break;
                 }
 
@@ -5803,20 +5892,7 @@ namespace fire.Runtime
                     break;
                 }
 
-                case OpCode.CheckUnit:
-                {
-                    // SPEC "Unit declarations": the value on top of the stack goes into a declaration with a unit - it is converted into that unit
-                    // (the same dimension), another dimension is a catchable UnitMismatchException, a whole number that overflows an OverflowException.
-                    // (Converting is part of what the value means, so it happens in every execution mode.)
-                    string requiredUnitName = _constants[ReadU16()].AsString();
-                    ref var adapted = ref _stack[_sp - 1];
-                    switch (Value.AdaptToUnit(ref adapted, requiredUnitName, out var offending))
-                    {
-                        case Value.UnitAdaptation.Mismatch: ThrowUnitMismatch(Values.Unit.DemandDisplay(requiredUnitName), offending.Unit ?? Values.Unit.Unitless); break;
-                        case Value.UnitAdaptation.Overflow: ThrowOverflow($"{adapted} does not fit into a whole number in '{Values.Unit.DemandDisplay(requiredUnitName)}'."); break;
-                    }
-                    break;
-                }
+                case OpCode.CheckUnit: OpCheckUnit(); break;
 
                 case OpCode.Fire:
                 {
