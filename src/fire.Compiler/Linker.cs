@@ -617,12 +617,13 @@ namespace fire.Compiler
             TypeChecker.ProgramWordWidth = target?.WordWidth ?? 64;
             TypeChecker.NativeReturns = PackageImports.NativeReturnTypes(nativeImports);
             // deriving `defined` for the parameters of the program (TypeChecker.Derive): not when a plugin (or the program that loads one) can call a
-            // method with anything, nor in a debug build (the debugger calls methods with what it is given)
+            // method with anything. A debug build derives exactly like a release build (decision of the owner: what one sees while developing - the
+            // checks, the messages, a field without an initializer that starts at 0 - is what the release build does); what the debugger stores or
+            // passes goes through the same checks as the code of the program.
             var deriveBefore = TypeChecker.DeriveDefinedOverride;
             // (reflection and JSON leave out the classes without [InferDefined] there, TypeChecker.ReflectionUsed; one with it goes through the checks its
             // derived fields and parameters are compiled with - undefined is the ArgumentException that names the derivation, RuntimeClass.DerivedFieldWhat)
-            if (ClassMeta || OwnImports is { Count: > 0 }
-                || (executionModeOverride ?? assemblyInfo.ExecutionMode) == VmExecutionMode.Debug) TypeChecker.DeriveDefinedOverride = false;
+            if (ClassMeta || OwnImports is { Count: > 0 }) TypeChecker.DeriveDefinedOverride = false;
             try { TypeChecker.Run(program, resolveResult, EffectiveTypeChecking, firstUserSource, TypeCheckLibraries ? 0 : firstUserSource); }
             finally { TypeChecker.DeriveDefinedOverride = deriveBefore; }
             fire.Native.BuildMonitor.Step(fire.Native.BuildPhase.CompileFire, "Compiling fire: generating bytecode", 3, 4);
