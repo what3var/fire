@@ -25,31 +25,45 @@ Vorschlag des Benutzers: `try delete x` versucht, den Inhalt des Bezeichners zu 
 sonst `true`. Für die Container wurde es nicht gebraucht (`x is from this` genügt, D3). Offen ist, ob es trotzdem kommt - und ob es nur löscht,
 was dem Aufrufer gehört, oder jedes Objekt wie `delete`.
 
-### D14. Eine Deklaration `string s` hält jeden Wert
-
-Gefunden bei `string k = Color.Blue`: `k is of string` ist False. Das gilt für jeden Wert und jede Stelle - `string j = 5`, ein `string`-Feld,
-ein `string`-Parameter, eine `string`-Rückgabe halten die Zahl 5, nicht den Text "5" (`j.Length` ist dann der Fehler
-`Field access on a value of type Int which is not an object.`). Der Typprüfer meldet nichts, denn die Regel der Doku lautet "alles wird implizit
-zu `string`" (02-types.md, SPEC 3.1.1, TYPES.md "Assignability"). Die Laufzeit wandelt aber nicht um und prüft eine `string`-Deklaration gar
-nicht (nur `defined string` und `string s[]`). Das ist dieselbe Art Lücke wie früher `int n = Color.Blue` (D8), aber die Abhilfe ist eine
-Entscheidung:
-
-* **Umwandeln, wie die Doku sagt**: jede Speicherung in eine `string`-Deklaration macht den Text (`"" + x`). Für Objekte heißt das ein Aufruf von
-  `ToString()` in der Prüfung der Deklaration (VM und nativ), und jede `string`-Stelle bekommt eine Prüfung zur Laufzeit (Kosten in jeder Bibliothek).
-  `string j = 5; j == 5` wird dann False.
-* **Ablehnen**: eine `string`-Deklaration nimmt einen String oder undefined, alles andere ist die ArgumentException (`Variable 'j' is a string, not
-  Int.`) und TC001 - dann stimmt die Doku nicht mehr ("alles wird zu string" gälte nur noch für `+` und `$"..."`), und Programme, die heute Zahlen
-  in `string`-Parameter geben, brechen.
-* Heute: nichts von beidem. Nicht geändert, weil beide Wege die Sprache für bestehende Programme ändern.
-
-### D15. `x!` zu einem String
-
-`a! + s` mit einem String-Anker und `5!string` werfen `Cannot coerce type Int to String`. SPEC 3.1 nennt `string` als Ziel von `!`, sagt aber
-nicht, was herauskommt; 02-types.md führt `string` in der Tabelle der Ziele nicht und verweist auf `value.ToString()`. Offen ist, ob `!` zum
-String den Text des Werts liefern soll (wie `"" + a`). Bis dahin bleibt das Verhalten; neu ist der Fehler zur Übersetzungszeit (`TC013`, auch lax - auch für `5!string`), wo die
-Typen bekannt sind, und der Hinweis in der Laufzeitmeldung (`write "" + x or x.ToString()`). Dasselbe gilt für einen `bool`-Anker.
-
 ## Entschieden
+
+### D15. `x!` zu einem String bleibt ein Fehler
+
+`a! + s` mit einem String-Anker, `5!string` und `x!` neben einem bool werfen weiter (`Cannot coerce type Int to String: '!' does not make the text of
+a value (write "" + x or x.ToString()).`), und wo die Typen bekannt sind, ist es zur Übersetzungszeit `TC013` (auch lax, auch für `5!string`).
+Entscheidung des Benutzers: `!` macht keinen Text; der Text eines Werts ist `"" + x` oder `x.ToString()` (D14). SPEC 3.1, 02-types.md
+"Converting", 05-units.md.
+
+### D14. Eine Deklaration `string` hält einen String: was hineingeht, wird sein Text (`x.ToString()`)
+
+Gefunden bei `string k = Color.Blue`: `k is of string` war False. Das galt für jeden Wert und jede Stelle - `string j = 5`, ein `string`-Feld,
+-Parameter, eine `string`-Rückgabe hielten die Zahl 5 (`j.Length` war `Field access on a value of type Int which is not an object.`), weil die
+Laufzeit eine `string`-Deklaration nicht umwandelte und nicht prüfte (nur `defined string` und `string s[]`, dort mit einer ArgumentException).
+Entscheidung des Benutzers: **umwandeln, wie die Doku sagt.**
+
+* Ein Wert, der dorthin geht, wo `string` deklariert ist - Variable, Feld, statisches Feld, Parameter, Rückgabe, Property, Element von `string a[]`,
+  ein `T` mit dem Typargument `string` (`List<string>`) - wird `x.ToString()`, in VM und nativ, Debug und Release. `undefined` bleibt undefined
+  (`defined string`: die ArgumentException wie bisher; erst wird umgewandelt, dann undefined geprüft).
+* **Jede Klasse hat `ToString()`** und darf es überschreiben; ohne eigenes gibt es `<object Name>` (auch ein Record). Jeder Wert außer undefined
+  hat `ToString()` - vorher fehlte es für int, float, bool, Arrays, Objekte ohne eigenes (`MissingMemberException`; der Typprüfer meldete TC008).
+  `x.ToString()` und `"" + x` geben denselben Text: Zahl mit Einheit (`5m`), `True`/`False`, das Zeichen, der Name des Enum-Members, `<array>`,
+  `<object Name>`. Ausnahme: ein Byte-Puffer - `buffer.ToString()` dekodiert seine Bytes (so war es schon), `"" + buffer` ist `<buffer n bytes>`;
+  eine `string`-Deklaration nimmt den Text von `ToString()` (offen, ob `"" + buffer` folgen soll).
+* Ein Objekt mit eigenem `ToString()`: es läuft an der Stelle der Deklaration (VM: `StringifyForText`, verschachtelt; nativ: `toStringValue` ->
+  `userToString`). Wirft es, läuft die Ausnahme von dort weiter, die Deklaration behält, was sie hatte. Ein `ToString()`, das selbst in
+  `string`-Deklarationen speichert, geht (getestet).
+* **Kosten:** wo der Typprüfer weiß, dass ein String hineingeht, wird nichts übersetzt (lokale Variablen, globale, Rückgaben: GuardTop nur für
+  Werte, die nicht sicher ein String sind). Ein `string`-Parameter, dem jeder Aufruf des Programms einen String gibt, bekommt keine Prüfung im
+  Prolog (TypeChecker: DerivedStrings, hergeleitet wie `defined`, mit denselben Bedingungen - nicht für Pakete, Module, Reflection, Namen in
+  Strings). Sonst bleibt eine Prüfung der Art (`kind == String || kind == Undefined`, ein Vergleich) am Parameter und am Feld, wie bei
+  `int`-Feldern und -Parametern; umgewandelt wird nur, was kein String ist. Nativ bleibt ein `string`-Parameter eine gezählte Variable (wie zuvor).
+* **Typprüfer:** die Deklaration hält danach einen String (der statische Typ ist `string`). Ein Wert, der sicher kein String ist (Zahl, bool, Enum,
+  Objekt), in eine `string`-Deklaration ist im **strict**-Modus die Warnung **`TC033`** (nie ein Fehler; lax nichts). Begründung: die Umwandlung
+  ist Regel der Sprache und vorhandener Code gibt Zahlen in `string`-Parameter; TC001/TC002/TC003 wären im strict-Modus Fehler und würden ihn
+  brechen. `string j = 5; j == 5` ist jetzt False.
+* Umgesetzt: DeclaredKind.StringKind / OfStore (die Art einer `string`-Deklaration, nie mit NonNullBit), VM.GuardDeclared, VM.DeclaredText,
+  ArrayElem.IsStringText, DeclaredType.WantsString, Compiler.EmitLocalGuard, TypeChecker.GuardLocalValue/GuardValue/NoteCall (DerivedStrings),
+  fire_rt.h guardStr/guardStrSlot, CppGenerator.GuardStmt/GuardKindCall/ClassGuard. Tests: TypeTests (VM Debug/Release, TC033), nativer Fall 1656.
 
 ### D13. `x!`, `x:`, `x:!` haben einen statischen Typ, die Umwandlung steht zur Übersetzungszeit fest
 
@@ -72,7 +86,9 @@ Entscheidung des Benutzers:
 * Geändert im Fehlerfall: `a! + u` mit undefiniertem `u` meldet jetzt den undefinierten Operanden der Rechnung (`Type Undefined is not numeric.`)
   statt des undefinierten Ankers; `a! == u` meldet weiter den Anker.
 * Parser: `F(a:)`, `F(a:!)`, `F(a:, b)`, `F(a:!int)`, `F(a:! + b)` sind Umwandlungen; `F(size: 2)`, `F(flag: !x)` und `F(a: -b)` bleiben benannte
-  Argumente (nach dem Doppelpunkt steht dort ein Wert).
+  Argumente (nach dem Doppelpunkt steht dort ein Wert). Entscheidung des Benutzers zu `F(a: -b)`: benannt ist `name:` nur **am Anfang eines
+  Arguments** (`F(a: -b)`, `F(x, a: - b)`); sonst gilt das übliche Parsen - `F(1 + a: - b)`, `F(g(a:) - b)`, `F((a: - b))` sind Ausdrücke mit der
+  Umwandlung `a:` (TypeTests "Parser: nur am Anfang eines Arguments", 03-operators.md, 05-units.md).
 
 ### D12. `defined` wird im Debug-Build hergeleitet wie im Release-Build
 

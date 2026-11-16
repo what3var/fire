@@ -339,6 +339,22 @@ Without `operator==`, `==` compares objects by reference (the same instance).
 `print`, `+` with a string and format strings use the method `string ToString()` of the class if it has one; otherwise an object prints as
 `<object Name>`. A destroyed object is no text at all: printing it throws the `DestroyedException`.
 
+**Every class has `ToString()`** and may override it: without one of its own (or of a base class) `obj.ToString()` gives `<object Name>`, the
+text `print` shows. The same text is what an object becomes when it goes into a `string` declaration - a variable, a field, a parameter, a return
+value, an element of `string a[]` (see [Types](02-types.md#string-holds-a-text)):
+
+```fire
+class Point {
+    int x = 1
+    string ToString() { return $"Point {x}" }
+}
+string s = new Point()      // "Point 1": ToString() runs here
+print(s.Length)             // 7
+```
+
+`ToString()` runs right where the value goes in, in the VM and natively; an exception it throws goes on from there (the declaration keeps what it
+held before).
+
 ## Attributes
 
 An attribute is a name in square brackets on the line before a class, a method, a field or a property, with arguments after the name and no parentheses (as in C#, `[Name 1, "text", {1, 2},
