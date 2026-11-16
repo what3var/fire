@@ -2987,7 +2987,7 @@ namespace fire.Native
             // (a value that is not an object, or an object without the field: a MissingMemberException, like the VM)
             string valueIndex = indexCode.Replace("FIELD_MISSING_RETURN", "return Undef();"), voidIndex = indexCode.Replace("FIELD_MISSING_RETURN", "return;");
             string notObject = $"    if (FIRE_UNLIKELY(v.kind != K_Class)) return missingField(v, {CString(name)});\n";
-            return $"static inline Value gf_{m}(Value v) {{\n{lengthCode}{notObject}    if (FIRE_UNLIKELY(!leafAlive(v))) return destroyedError(v);\n    Obj* o = asObj(v);\n{valueIndex}\n    return {(narrow ? "nvGet(&objFields(o)[idx >> 1], (int)(idx & 1u))" : "objFields(o)[idx]")};\n}}\n"
+            return $"static inline Value gf_{m}(Value v) {{\n{lengthCode}{notObject}    if (FIRE_UNLIKELY(!leafAlive(v))) return destroyedError(v);\n    Obj* o = asObj(v);\n{valueIndex}\n    {(narrow ? "return nvGet(&objFields(o)[idx >> 1], (int)(idx & 1u));" : _usesThreads ? "{ Value r_ = objFields(o)[idx]; FIRE_DOM_TAKE(&o->h, r_); return r_; }" : "return objFields(o)[idx];")}\n}}\n"   // (a fire thread takes a string or lambda of an object of the shared domain - fire_rt.h FIRE_DOM_TAKE)
                  + (_usesThreads ? $"static inline void sfb_{m}(Value v, Value x);\nstatic inline void sf_{m}(Value v, Value x) {{ bool ss_ = sectionScopeEnterV(v); if (FIRE_LIKELY(!g_isThread || !sharedValue(v) || toMainHolder(v, &x, {CString($"The field '{name}' of an object of the globals")}))) sfb_{m}(v, x); sectionScopeExit(ss_); }}\n" : "")   // (a change of an object of the shared domain is one section)
                  + $"static inline void {(_usesThreads ? "sfb_" : "sf_")}{m}(Value v, Value x) {{\n    if (FIRE_UNLIKELY(v.kind != K_Class)) {{ notObjectAssign(v); return; }}\n    if (FIRE_UNLIKELY(!leafAlive(v))) {{ destroyedError(v); return; }}\n    Obj* o = asObj(v);\n{voidIndex}\n{unitCode}" + (narrow ? "    nvSet(&objFields(o)[idx >> 1], (int)(idx & 1u), x);\n}\n" : "    Value old = objFields(o)[idx];\n    objFields(o)[idx] = x;\n    FIRE_DOM_STORE(&o->h, x);\n    retain(x);\n    release(old);\n}\n")
                  + (!_fieldAddressTaken.Contains(name) ? "" : $"static inline Value fp_{m}(Value v) {{\n    if (FIRE_UNLIKELY(!leafAlive(v))) return destroyedError(v);\n    Obj* o = asObj(v);\n{valueIndex}\n    return PtrV(&objFields(o)[idx]);\n}}\n");
@@ -3101,7 +3101,8 @@ namespace fire.Native
                         fieldGuard = $"if (!{cond}) return accessDenied({text}); ";
                         fieldGuardSet = $"if (!{cond}) {{ accessDenied({text}); return; }} ";
                     }
-                    getArms.Add((label, $"{{ {fieldGuard}return {FieldRead(cls.Rc, index, "o")}; }}"));
+                    // (a fire thread takes a string or lambda of an object of the shared domain - fire_rt.h FIRE_DOM_TAKE)
+                    getArms.Add((label, _usesThreads ? $"{{ {fieldGuard}Value r_ = {FieldRead(cls.Rc, index, "o")}; FIRE_DOM_TAKE(&o->h, r_); return r_; }}" : $"{{ {fieldGuard}return {FieldRead(cls.Rc, index, "o")}; }}"));
                     string unit = cls.Rc.FindFieldRequiredUnit(name) is { } requiredUnit
                         ? $"x = {AdaptUnitCall("x", requiredUnit)}; " + (_usesExceptions ? "if (FIRE_UNLIKELY(g_unwind.active)) return; " : "")
                         : "";
@@ -5118,7 +5119,8 @@ namespace fire.Native
                 case OpCode.LoadGlobal:
                 {
                     string gv = GlobalVar(ins.A[0], locals);
-                    // (a fire thread reads a global of the main program under the read side of the globals' lock - fire_rt.h DomLock, without the GIL)
+                    // (a fire thread reads a global of the main program under the read side of the globals' lock - fire_rt.h DomLock, without the GIL - and
+                    // takes a string or lambda it reads there: a count of its own, FIRE_DOM_LOAD)
                     E(_usesThreads && f.Kind == FuncKind.FireBody && gv[0] == 'G' ? $"FIRE_DOM_LOAD({S(d)}, {gv});" : $"{S(d)} = {gv};"); SetR(d, VarRef(VarKey(f, gv))); SetT(d, LoadType(gv)); _kindsKept = true; d++; return Next();
                 }
                 case OpCode.StoreGlobal:
