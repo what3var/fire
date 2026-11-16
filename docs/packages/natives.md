@@ -199,7 +199,13 @@ class SensorKit {
 * `threadSafe` (in `native`, optional, default `false`): your natives may be called by several fire threads at the same time. Without it a native build calls the
   natives of one package one at a time - a lock per package, taken around each call; a native that waits (`gilRelease()` ... `gilAcquire()`, see below) and a
   callback into fire code that reaches a safe point let go of it meanwhile, so other threads can call the package then, just as with the old global lock. Set it
-  only when your natives keep no state of their own, or protect it themselves.
+  only when your natives keep no state of their own, or protect it themselves: every native must be safe beside every other one, also two calls with the same
+  handle (a table of handles needs a lock of its own - `fire_spin`, `fire_spinLock`/`fire_spinUnlock`, held for a few instructions - and an entry must work for
+  one caller at a time, see `packages/compression/native/fire_bridge_compression.h`), and the last error must be per thread (`g_ioError` is). The lock of a
+  package holds up only the threads that call the same package: a long native does not hold up the main program or other threads as long as its arguments are
+  numbers, strings, buffers or arrays of numbers of the calling thread (for an object, any other array or something of the globals the thread keeps the read
+  side of the globals' lock while the native runs, and the main program waits for it at its next safe point). In a debug build (the GIL) and in the VM (one
+  lock per package library) natives run one at a time, with or without `threadSafe`.
 * A thread of your own (`fire_thread_start`, `pthread_create`, ...) that calls into the runtime - makes strings or arrays, throws, calls fire code - calls
   `fire_strandAttach()` before and `fire_strandDetach()` at its end (a native build without the GIL keeps the state of a strand in a structure the thread
   has to have, docs/ROADMAP_TASKS.md step 2). A thread that only computes, waits or talks to the system needs neither.

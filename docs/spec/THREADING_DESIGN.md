@@ -393,6 +393,16 @@ keinen Snapshot und keine Kopie mehr:
   statt als Auftrag. Zurück wartet das Hauptprogramm auf eine laufende Sektion wie nach einem Warten. Ein Callback des Natives in fire-Code
   (`callLam`, `call_lambda` der Bibliotheken) holt es vorher zurück. Das Losgehen kostet ein Speichern; nur wenn ein Thread seinen Platz nahm, wartet
   es bei der Rückkehr.
+- **Ein Thread in einem Native:** ruft ein Fire-Thread eine native Funktion eines Pakets auf, hält er die Sperre der Globals dafür nur, wenn ein
+  Argument zum geteilten Bereich gehört oder hineinführen kann (ein Objekt, ein Array von etwas anderem als Zahlen, ein Zeiger, ein Puffer oder Array,
+  das dem globalen Scope gehört, ein String oder Lambda der Globals; nativ `fire_natArg`). Sonst - Zahlen, eigene Strings, eigene Puffer und
+  Zahlen-Arrays - läuft das Native ohne die Leseseite: der Thread nimmt sie nicht, und hat er seit dem Nehmen nur Zahlen aus Globals und statischen
+  Feldern gelesen, gibt er sie vor dem Aufruf ab (nativ `fire_natBegin`, `FIRE_DOM_LOAD`). Ein langes Native (Komprimieren, Hashen, Rechnen) hält so
+  weder das Hauptprogramm noch die Threads auf, die das Paket nicht benutzen; nur wer dasselbe Paket ohne `"threadSafe"` aufruft, wartet auf dessen
+  Sperre. Wartet das Hauptprogramm (oder eine Sektion) auf die Leser, geben sie die Leseseite am nächsten Rücksprung einer Schleife ab, nicht erst nach
+  4096 sicheren Punkten. Reihenfolge der Sperren: erst die der Globals, dann die eines Pakets; wer die eines Pakets ohne die der Globals hält, gibt sie
+  zurück, bevor er auf die der Globals wartet (ein Callback des Natives in fire-Code). In einem Debug-Build (mit der GIL) wartet das Hauptprogramm für
+  die Dauer eines Natives, kommt danach aber sofort dran. Die VM serialisiert die Aufrufe je Paketbibliothek (ein Mutex je Bibliothek).
 - **`sync globals`** ist ein Ausdruck (liefert die Anzahl der bearbeiteten Einträge - auch der `fire global`-Aufträge, die es selbst ausführt) und gilt
   im Hauptprogramm; in einem Fire-Thread liefert es 0. Ein Auftrag läuft immer für sich: an den sicheren Punkten eines laufenden Auftrags wird die
   Warteschlange nicht abgearbeitet (sonst liefe der nächste Auftrag vor dem Ende des vorigen).
