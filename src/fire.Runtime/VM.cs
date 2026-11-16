@@ -3936,6 +3936,12 @@ namespace fire.Runtime
                     Push(ownershipValue);
                     return;
                 }
+                // every object has ToString() (DECISIONS D14): without one of its class the text `"" + obj` gives, `<object Name>`
+                if (methodName == "ToString" && args.Length == 0)
+                {
+                    Push(Value.MakeString(target.ToString()));
+                    return;
+                }
                 throw MethodNotFound(rc, methodName, args.Length);
             }
             if (ExecutionMode != VmExecutionMode.Performance && !IsMemberAccessAllowed(declaringRcCall!, accessCall))
@@ -4247,6 +4253,11 @@ namespace fire.Runtime
 
             var rc = ResolveClass(baseClassName);
             var (proto, declaringRcBase, accessBase) = FindOverload(rc, methodName, args, _currentThis as ObjectInstance);
+            if (proto == null && methodName == "ToString" && args.Length == 0 && _currentThis is ObjectInstance baseOf)
+            {
+                Push(Value.MakeString(Value.MakeClassRef(baseOf).ToString()));   // (`base.ToString()` of a base without one: `<object Name>`, DECISIONS D14)
+                return;
+            }
             if (proto == null)
                 throw MethodNotFound(rc, methodName, args.Length);
             if (ExecutionMode != VmExecutionMode.Performance && !IsMemberAccessAllowed(declaringRcBase!, accessBase))
@@ -7534,6 +7545,13 @@ namespace fire.Runtime
         private static bool TryCallBuiltinMethod(Value target, string methodName, Value[] args, out Value result)
         {
             result = default;
+            // `x.ToString()` (DECISIONS D14): every value has it - the text `"" + x` gives (a number with its unit, an enum's name, `<array>`); a buffer
+            // decodes its bytes (below), undefined has no methods
+            if (methodName == "ToString" && args.Length == 0 && target.Kind is not (ValueKind.Buffer or ValueKind.Undefined or ValueKind.Class))
+            {
+                result = target.Kind == ValueKind.String ? target : Value.MakeString(target.ToString());
+                return true;
+            }
             switch (target.Kind)
             {
                 case ValueKind.String:
@@ -7963,6 +7981,13 @@ namespace fire.Runtime
         /// UnitMismatchException), then the kind is checked (or an ArgumentException). false: an exception is thrown.</summary>
         private bool GuardDeclared(ref Value value, byte required, string what)
         {
+            // a declaration `string` (DECISIONS D14): an object goes in as the text of its ToString() (fire code, nested; its exception propagates)
+            if (DeclaredKind.IsString(required) && value.Kind == ValueKind.Class)
+            {
+                if (StringifyForText(value) is not { } text) return false;
+                value = Value.MakeString(text);
+                return true;
+            }
             if (DeclaredKind.NeedsUnitless(value, required) && !AdaptFieldUnit(ref value, "unitless")) return false;
             if (DeclaredKind.Accept(ref value, required, what) is not { } message) return true;
             ThrowArgumentError(message);

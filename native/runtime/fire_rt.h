@@ -4142,6 +4142,25 @@ FIRE_FN Value toStringValue(Value v, OwnList* list) {
     return StrV(r);
 }
 
+/* A declaration `string` (DECISIONS D14, DeclaredKind.StringKind): what goes in becomes its text - `x.ToString()`: an object's own ToString() (fire code, its
+ * exception propagates: the unwinding flag), `"" + x` for the other values, the bytes of a buffer; undefined stays. The new string is a temporary of the pool
+ * (the store that follows counts it). The test of what needs nothing (a string, undefined) is inline in the generated code. */
+FIRE_FN Value bufToString(Value v, OwnList* list);
+FIRE_COLD FIRE_FN Value guardStr(Value v) {
+    if (v.kind == K_String || v.kind == K_Undefined) return v;
+    if (v.kind == K_Buffer) return bufToString(v, NULL);
+    return toStringValue(v, NULL);
+}
+/* ... in place; true when ToString() threw. */
+FIRE_COLD FIRE_FN bool guardStrSlot(Value* v) {
+    *v = guardStr(*v);
+#ifdef FIRE_EXCEPTIONS
+    return g_unwind.active;
+#else
+    return false;
+#endif
+}
+
 FIRE_COLD FIRE_FN Value addSlow(Value a, Value b, OwnList* list) {
     if (isPtr(a) && b.kind == K_Int) return ptrOffset(a, b.i);
     if (a.kind == K_String || b.kind == K_String) return concat(a, b, list);
@@ -7777,6 +7796,8 @@ FIRE_FN bool tryTakeOwned(Value v, OwnList* const* lists, int n, Value thisValue
 FIRE_FN bool fire_builtinHas(Value v, const char* name) {
     bool own = !strcmp(name, "TakeTo") || !strcmp(name, "TakeLocal") || !strcmp(name, "TakeUpwards") || !strcmp(name, "TakeGlobal");
     bool length = !strcmp(name, "Length") || !strcmp(name, "length");
+    /* (every value but undefined has ToString(): the text `"" + v` gives - DECISIONS D14; a buffer decodes its bytes) */
+    if (!strcmp(name, "ToString") && v.kind != K_Undefined && v.kind != K_Class) return true;
     switch (v.kind) {
         case K_String: return length || !strcmp(name, "ToBytes") || !strcmp(name, "ToUnicode");
         case K_Char: return !strcmp(name, "ToByte") || !strcmp(name, "ToUnicode");

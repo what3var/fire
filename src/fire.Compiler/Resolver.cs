@@ -100,6 +100,8 @@ namespace fire.Compiler
         /// <summary>Parameters of the program declared `int`/`float` without `defined` that every call gives a number (ROADMAP 13.9, the derivation): the
         /// compiler checks them like `defined` ones - natively they are C numbers. Filled by TypeChecker (TypeChecker.DeriveDefined).</summary>
         public HashSet<LambdaParam> DerivedDefined { get; } = new(ReferenceEqualityComparer.Instance);
+        /// <summary>The parameters declared `string` that every call the type checker sees gives a string (DECISIONS D14): their prologue does not convert.</summary>
+        public HashSet<LambdaParam> DerivedStrings { get; } = new(ReferenceEqualityComparer.Instance);
         /// <summary>The bodies of the methods of the program declared `int`/`float` whose returns are certainly numbers (the derivation): checked like a
         /// `defined` return type.</summary>
         public HashSet<Stmt.BlockStmt> DerivedReturns { get; } = new(ReferenceEqualityComparer.Instance);

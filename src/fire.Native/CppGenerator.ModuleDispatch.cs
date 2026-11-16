@@ -281,7 +281,12 @@ namespace fire.Native
                 else sb.AppendLine($"    ownMethodT({ownId}, self, {target}, a{baseArgs}, list, g_scopeLists, g_scopeCount);");
                 sb.AppendLine("    return Undef();");
             }
-            else sb.AppendLine($"    return fireNoMethod(self, {CString(name)}, {argc});");
+            else
+            {
+                // (every object has ToString(), DECISIONS D14: `<object Name>` for one whose class has none)
+                if (name == "ToString" && argc == 0) sb.AppendLine("    if (self.kind == K_Class) return retainedV(toStringValue(self, list));");
+                sb.AppendLine($"    return fireNoMethod(self, {CString(name)}, {argc});");
+            }
             sb.AppendLine("}");
 
             // disp_: the served classes by their number

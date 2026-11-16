@@ -11,7 +11,7 @@ namespace fire.Runtime
         public static bool IsOwnership(string name) => name is "TakeTo" or "TakeLocal" or "TakeUpwards" or "TakeGlobal";
 
         /// <summary>Does a value of this kind have the member (without a class of the program)? <paramref name="isEnum"/>: an int that is a value of an enum.</summary>
-        public static bool Has(ValueKind kind, bool isEnum, string name) => kind switch
+        public static bool Has(ValueKind kind, bool isEnum, string name) => name == "ToString" && kind is not (ValueKind.Undefined or ValueKind.Class) || kind switch
         {
             ValueKind.String => name is "Length" or "length" or "ToBytes" or "ToUnicode",
             ValueKind.Char => name is "ToByte" or "ToUnicode",

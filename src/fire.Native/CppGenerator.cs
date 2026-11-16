@@ -973,7 +973,7 @@ namespace fire.Native
             // (a field declared with a kind - int, float, bool, `defined ...` - holds nothing but numbers and undefined: no count to keep, the store is the C store)
             string put = RawRef(rc, index, $"objAt({obj})") is { } rawPut ? $"{rawPut} = {RawFromValue(RawTypeAt(LayoutClass(rc, index), index), "x")};"
                 : fieldHalf >= 0 ? $"nvSet(&objFields(objAt({obj}))[{fieldSlot}], {fieldHalf}, x);"
-                : declaredKind != 0 ? $"objFields(objAt({obj}))[{fieldSlot}] = x;" : $"setFieldAt({obj}, {fieldSlot}, x);";
+                : declaredKind != 0 && !DeclaredKind.IsString(declaredKind) ? $"objFields(objAt({obj}))[{fieldSlot}] = x;" : $"setFieldAt({obj}, {fieldSlot}, x);";
             bool checksThrow = unit != null || kind != 0 || requiredType != null || requiredArray != 0 && !arrayKnown;
             string store = checksThrow && _usesExceptions ? $"if (FIRE_LIKELY(!g_unwind.active)) {put}" : put;
             // an object with probes (flag 2) takes the setter, which tells them; every other one is written by the index
@@ -2550,7 +2550,12 @@ namespace fire.Native
                 case ("ToByte", 0): yield return ("K_Char", "charToByte(self)"); break;
                 case ("ToChar", 0): yield return ("K_Int", "byteToChar(self)"); break;
                 // (a string made in the pool goes to the caller with a count of its own: retainedV; an enum value gives its name)
-                case ("ToString", 0): yield return ("K_Buffer", "retainedV(bufToString(self, list))"); yield return ("K_Int", "retainedV(toStringValue(self, list))"); break;
+                // (every value has ToString(), DECISIONS D14: the text `"" + x` gives - an object without one of its class: the fallback of Dispatcher)
+                case ("ToString", 0):
+                    yield return ("K_Buffer", "retainedV(bufToString(self, list))");
+                    foreach (var kind in new[] { "K_Int", "K_Float", "K_Bool", "K_Char", "K_Word", "K_String", "K_Array", "K_Lambda", "K_PtrVar", "K_PtrByte", "K_PtrElem", "K_PtrField" })
+                        yield return (kind, "retainedV(toStringValue(self, list))");
+                    break;
                 case ("HasFlag", 1): yield return ("K_Int", "enumHasFlag(self, a0)"); break;
                 case ("ToUnicodeChar", 0): yield return ("K_Buffer", "bufToUnicodeChar(self, Int(2))"); break;
                 case ("ToUnicodeChar", 1): yield return ("K_Buffer", "bufToUnicodeChar(self, a0)"); break;
@@ -2873,6 +2878,8 @@ namespace fire.Native
                     sb.AppendLine("        default: break;");
                     sb.AppendLine("    }");
                 }
+                // (every object has ToString(), DECISIONS D14: one whose class has none gives `<object Name>` - a destroyed one the DestroyedException)
+                if (name == "ToString" && argc == 0) sb.AppendLine("    if (self.kind == K_Class) return retainedV(toStringValue(self, list));");
                 sb.AppendLine($"    return missingMethod(self, {CString(name)}, {argc});");
             }
             sb.AppendLine("}");
@@ -3016,13 +3023,17 @@ namespace fire.Native
         }
         private static string KindConstant(byte declaredKind) => DeclaredKind.TagOf(declaredKind) switch
         {
-            TypeTag.Int => "K_Int", TypeTag.Float => "K_Float", TypeTag.Word => "K_Word", TypeTag.Char => "K_Char", _ => "K_Bool",
+            TypeTag.Int => "K_Int", TypeTag.Float => "K_Float", TypeTag.Word => "K_Word", TypeTag.Char => "K_Char", TypeTag.String => "K_String", _ => "K_Bool",
         };
         /// <summary>The check of a declared kind as a statement on a Value variable: the test of what needs no change is inline (guardKind's fast path: the kind,
         /// no unit when it demands none, no value of an enum for an int, the program's width), the rest is guardSlot - with `exit`, the label it leaves for when it threw
         /// (null: a program without exceptions).</summary>
         private string GuardStmt(string v, byte declared, string what, string? exit)
         {
+            // (a declaration `string`, DECISIONS D14: a string or undefined passes, anything else becomes its text)
+            if (DeclaredKind.IsString(declared))
+                return exit != null ? $"if (FIRE_UNLIKELY({v}.kind != K_String && {v}.kind != K_Undefined) && guardStrSlot(&{v})) goto {exit};"
+                    : $"if (FIRE_UNLIKELY({v}.kind != K_String && {v}.kind != K_Undefined)) (void)guardStrSlot(&{v});";
             bool cut = DeclaredKind.TagOf(declared) == TypeTag.Int && !DeclaredKind.KeepsWidth(declared) && _program.IntWidth < 64;
             bool nn = DeclaredKind.IsNonNull(declared), unitless = DeclaredKind.IsUnitless(declared);
             string kind = KindConstant(declared);
@@ -3035,6 +3046,7 @@ namespace fire.Native
 
         private string GuardKindCall(string value, byte declared, string what)
         {
+            if (DeclaredKind.IsString(declared)) return $"({value}.kind == K_String || {value}.kind == K_Undefined ? {value} : guardStr({value}))";
             string call = $"guardKind{(DeclaredKind.IsNonNull(declared) ? "NN" : "")}({value}, {KindConstant(declared)}, {(DeclaredKind.IsUnitless(declared) ? "true" : "false")}, {CString(what)}, {Constant(Value.MakeString(Unit.DemandDisplay("unitless")))})";
             // (a plain `int` holds the program's int: a wider one is cut, DeclaredKind.CutsWide)
             return DeclaredKind.TagOf(declared) == TypeTag.Int && !DeclaredKind.KeepsWidth(declared) && _program.IntWidth < 64 ? $"intProgram({call})" : call;
@@ -3055,7 +3067,7 @@ namespace fire.Native
         }
         private static byte KindOfDeclared(byte declared) => DeclaredKind.TagOf(declared) switch
         {
-            TypeTag.Int => KindInt, TypeTag.Float => KindFloat, TypeTag.Word => KindWord, TypeTag.Char => KindUnknown, _ => KindBool,
+            TypeTag.Int => KindInt, TypeTag.Float => KindFloat, TypeTag.Word => KindWord, TypeTag.Char or TypeTag.String => KindUnknown, _ => KindBool,
         };
 
         private HashSet<FunctionProto>? _setterProtos;
@@ -6723,6 +6735,7 @@ namespace fire.Native
                     if (FindClass(Str(ins.A[0])).FindStaticFieldOwner(Str(ins.A[1]))?.FindFieldRequiredKind(Str(ins.A[1])) is { } staticKind and not 0)
                     {
                         E(GuardStmt(S(d - 1), staticKind, $"Field '{Str(ins.A[1])}'", CheckExit()));
+                        if (DeclaredKind.IsString(staticKind)) SetR(d - 1, true);   // (maybe a new string of the pool: the static field counts it, D14)
                     }
                     if (FindClass(Str(ins.A[0])).FindStaticFieldOwner(Str(ins.A[1]))?.FindFieldRequiredType(Str(ins.A[1])) is { } staticClass && !FitsClassType(Ty(d - 1), staticClass))
                     {
@@ -6805,7 +6818,15 @@ namespace fire.Native
                     byte declared = (byte)((ins.A[1] & 0x7F) + 1 | ins.A[1] & DeclaredKind.UnitlessBit);
                     // (a C parameter: the caller - or the function with Values in front of the C body - checked it)
                     bool cParam = f.CAbi is { } guardAbi && ins.A[0] < guardAbi.ParamType.Length && guardAbi.ParamType[ins.A[0]] != 0;
-                    if (!cParam) E(GuardStmt(v, declared, Str(ins.A[2]), CheckExit()));
+                    if (!cParam && DeclaredKind.IsString(declared))
+                    {
+                        // (`string p`, D14: the text made of the argument is a temporary of the pool above the call's own list - it belongs to the caller's
+                        // scope like a temporary argument does: the list of the call starts above it, its end does not let go of it)
+                        f.NeedsList.Add(FunctionScope);
+                        string exit = CheckExit() is { } guardExit ? $" if (guardStrSlot(&{v})) goto {guardExit};" : $" (void)guardStrSlot(&{v});";
+                        E($"if (FIRE_UNLIKELY({v}.kind != K_String && {v}.kind != K_Undefined)) {{{exit} OP.mark = poolMark(); }}");
+                    }
+                    else if (!cParam) E(GuardStmt(v, declared, Str(ins.A[2]), CheckExit()));
                     // (the unit that was checked before it: GuardLocal names its demand, or 0xFFFF for an open one)
                     JoinVarType(VarKey(f, v), KindOfDeclared(declared) is KindBool or KindWord ? DeclaredValueType(declared, null)
                         : ins.A[3] == 0xFFFF ? TypeUnknown : DeclaredValueType((byte)(declared & ~DeclaredKind.UnitlessBit), Str(ins.A[3])));
@@ -6895,6 +6916,8 @@ namespace fire.Native
                     byte kind = KindOfDeclared(declared);
                     // (a number, a bool, a word or undefined from now on - no reference: a variable it goes into counts nothing)
                     if (kind is KindInt or KindFloat or KindBool or KindWord) SetR(d - 1, false);
+                    // (`string`: maybe a new string of the pool now - the variable it goes into counts it, D14)
+                    if (DeclaredKind.IsString(declared)) { SetR(d - 1, true); SetT(d - 1, TypeUnknown); _kindsKept = true; return Next(); }
                     // (`defined int` - a return value, SPEC 8.10b: the number of the kind, in the unit the value had; a plain declaration only keeps a known kind)
                     if (DeclaredKind.IsNonNull(declared) && kind is KindInt or KindFloat && KindOfType(Ty(d - 1)) == kind) SetT(d - 1, Ty(d - 1) & ~(NullableBit | TypeNone | CutBit) | (kind == KindInt && !DeclaredKind.KeepsWidth(declared) ? NarrowBit : 0));
                     else if (DeclaredKind.IsNonNull(declared) && kind is KindBool or KindWord) SetT(d - 1, TypeOf(kind, 0));
