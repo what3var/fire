@@ -8814,8 +8814,8 @@ FIRE_FN void domWriterLeave(void) {
  * The lock of the globals and a native (fire_natBegin ... fire_natEnd around the call, outside the package's lock): a thread whose native gets something
  * that is of the shared domain or may lead into it - fire_natArg says no for an argument - holds the read side while the native runs (it reads without
  * asking); a thread whose native gets nothing of the kind does not take the read side for it, and lets go of it when it has read only numbers of the
- * globals so far - the main program and the sections do not wait for the native, and the threads that do not use the package wait for nothing. The main program goes away for a native that gets nothing of the
- * shared domain (fire_awayBegin). The order of the locks is the globals' first (see DomLock); a strand that waits for a package's lock with the globals'
+ * globals so far - the main program and the sections do not wait for the native, and the threads that do not use the package wait for nothing.
+ * The main program goes away for a native that gets nothing of the shared domain (fire_awayBegin). The order of the locks is the globals' first (see DomLock); a strand that waits for a package's lock with the globals'
  * in the hand waits for a native of another strand that has no need of them. */
 FIRE_FN void fire_awayBegin(void);
 FIRE_FN void fire_awayEnd(void);
