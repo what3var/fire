@@ -145,6 +145,7 @@
       }
     ],
     "reset": "fire_compression_reset",
+    "threadSafe": true,
     "language": "c"
   }
 }

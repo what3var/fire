@@ -3,6 +3,9 @@
  * Deflate, no library: the same bytes on every target).
  *
  * An (de)compressor is an integer handle in a table of this bridge (index 0 unused, handles not used again); what a program leaves open is freed when it ends.
+ * The package is thread safe (`"threadSafe": true`): the functions that work in one go (Compress, Decompress, the byte work) have no state, the table has a
+ * lock of its own (g_cmpLock, held for a few instructions), and a (de)compressor works for one caller at a time (`busy`: a second thread waits for the
+ * call of the first to end) - fire threads compress side by side, and a long call holds nobody up.
  * Every function reports an error the same way: -1/false/undefined and the code and message of this thread (`__CmpLastError`, `__CmpLastErrorMessage`, the
  * slot of the io bridge): 1 broken data, 2 an invalid handle, 3 an invalid argument, 4 out of memory. */
 #ifndef FIRE_BRIDGE_COMPRESSION_H
@@ -20,9 +23,10 @@ static int64_t fire_cmpb_fail(int code, const char* message) {
 static void fire_cmpb_ok(void) { g_ioError.code = 0; g_ioError.message[0] = 0; }
 
 /* ---- the table of (de)compressors ---- */
-typedef struct FireCmpEntry { int inflate; void* z; } FireCmpEntry;
+typedef struct FireCmpEntry { int inflate; int busy; void* z; } FireCmpEntry;   /* (busy: a native works with it now) */
 static FireCmpEntry* g_cmpItems = NULL;
 static size_t g_cmpCount = 1, g_cmpCap = 0;
+static fire_spin g_cmpLock;   /* (the table: its memory moves when it grows) */
 
 static void fire_cmpb_release(FireCmpEntry* e) {
     if (e->z == NULL) return;
@@ -32,14 +36,19 @@ static void fire_cmpb_release(FireCmpEntry* e) {
 /* The program has ended (the library for the VM stays loaded for the next one): frees what it left open. */
 static void fire_compression_reset(void) {
     size_t i;
-    for (i = 1; i < g_cmpCount; i++) fire_cmpb_release(&g_cmpItems[i]);
+    fire_spinLock(&g_cmpLock);
+    for (i = 1; i < g_cmpCount; i++) { fire_cmpb_release(&g_cmpItems[i]); g_cmpItems[i].busy = 0; }
+    fire_spinUnlock(&g_cmpLock);
 }
 static int64_t fire_cmpb_add(int inflate, void* z) {
+    int64_t handle;
     if (z == NULL) return fire_cmpb_fail(FIRE_CMPB_MEMORY, "Out of memory.");
+    fire_spinLock(&g_cmpLock);
     if (g_cmpCount >= g_cmpCap) {
         size_t cap = g_cmpCap ? g_cmpCap * 2 : 16;
         FireCmpEntry* grown = (FireCmpEntry*)realloc(g_cmpItems, sizeof(FireCmpEntry) * cap);
         if (grown == NULL) {
+            fire_spinUnlock(&g_cmpLock);
             if (inflate) fire_inf_free((FireInflate*)z); else fire_def_free((FireDeflate*)z);
             return fire_cmpb_fail(FIRE_CMPB_MEMORY, "Out of memory.");
         }
@@ -47,19 +56,45 @@ static int64_t fire_cmpb_add(int inflate, void* z) {
         g_cmpCap = cap;
     }
     g_cmpItems[g_cmpCount].inflate = inflate;
+    g_cmpItems[g_cmpCount].busy = 0;
     g_cmpItems[g_cmpCount].z = z;
+    handle = (int64_t)g_cmpCount++;
+    fire_spinUnlock(&g_cmpLock);
     fire_cmpb_ok();
-    return (int64_t)g_cmpCount++;
+    return handle;
 }
-static void* fire_cmpb_find(Value h, int inflate) {
+/* The (de)compressor of a handle, for this caller alone until fire_cmpb_done (`take`: out of the table for good - Close); NULL: the error is set. While
+ * another thread works with it this one waits (the calls on one stream come one after the other, as under the lock of a package). */
+static void* fire_cmpb_get(Value h, int inflate, int take) {
     int64_t i = h.i;
-    if (i > 0 && (size_t)i < g_cmpCount && g_cmpItems[i].z != NULL) {
-        if (g_cmpItems[i].inflate == inflate) return g_cmpItems[i].z;
-        fire_cmpb_fail(FIRE_CMPB_ARGUMENT, inflate ? "This stream compresses, it cannot decompress." : "This stream decompresses, it cannot compress.");
-        return NULL;
+    for (;;) {
+        FireCmpEntry* e;
+        void* z;
+        fire_spinLock(&g_cmpLock);
+        e = h.kind == K_Int && i > 0 && (size_t)i < g_cmpCount ? &g_cmpItems[i] : NULL;
+        if (e == NULL || e->z == NULL) {
+            fire_spinUnlock(&g_cmpLock);
+            fire_cmpb_fail(FIRE_CMPB_HANDLE, "Invalid or already closed compression stream.");
+            return NULL;
+        }
+        if (e->busy) { fire_spinUnlock(&g_cmpLock); fire_plat_sleepMs(1); continue; }
+        if (!take && e->inflate != inflate) {
+            fire_spinUnlock(&g_cmpLock);
+            fire_cmpb_fail(FIRE_CMPB_ARGUMENT, inflate ? "This stream compresses, it cannot decompress." : "This stream decompresses, it cannot compress.");
+            return NULL;
+        }
+        z = e->z;
+        if (take) e->z = NULL; else e->busy = 1;
+        fire_spinUnlock(&g_cmpLock);
+        return z;
     }
-    fire_cmpb_fail(FIRE_CMPB_HANDLE, "Invalid or already closed compression stream.");
-    return NULL;
+}
+static void* fire_cmpb_find(Value h, int inflate) { return fire_cmpb_get(h, inflate, 0); }
+/* The call that found the (de)compressor of `h` is over. */
+static void fire_cmpb_done(Value h) {
+    fire_spinLock(&g_cmpLock);
+    g_cmpItems[h.i].busy = 0;
+    fire_spinUnlock(&g_cmpLock);
 }
 /* Is `offset`..`offset + count` inside `length` bytes? Otherwise the error is set. */
 static int fire_cmpb_inside(int64_t length, int64_t offset, int64_t count) {
@@ -101,7 +136,9 @@ static Value fire_compression_LastErrorMessage(OwnList* list) {
 static Value fire_compression_OpenCount(void) {
     int64_t n = 0;
     size_t i;
+    fire_spinLock(&g_cmpLock);
     for (i = 1; i < g_cmpCount; i++) if (g_cmpItems[i].z != NULL) n++;
+    fire_spinUnlock(&g_cmpLock);
     return Int(n);
 }
 
@@ -117,8 +154,9 @@ static Value fire_compression_InflateFeed(Value h, Value buffer, Value offset, V
     const uint8_t* p;
     if (z == NULL) return Bool(false);
     p = fire_cmpb_in(buffer, "Compression.DeflateStream", offset.i, count.i, NULL);
-    if (p == NULL) return Bool(false);
-    if (!fire_inf_feed(z, p, (size_t)count.i)) { fire_cmpb_fail(FIRE_CMPB_MEMORY, "Out of memory."); return Bool(false); }
+    if (p == NULL) { fire_cmpb_done(h); return Bool(false); }
+    if (!fire_inf_feed(z, p, (size_t)count.i)) { fire_cmpb_done(h); fire_cmpb_fail(FIRE_CMPB_MEMORY, "Out of memory."); return Bool(false); }
+    fire_cmpb_done(h);
     fire_cmpb_ok();
     return Bool(true);
 }
@@ -127,6 +165,7 @@ static Value fire_compression_InflateEnd(Value h) {
     FireInflate* z = (FireInflate*)fire_cmpb_find(h, 1);
     if (z == NULL) return Bool(false);
     z->ended = 1;
+    fire_cmpb_done(h);
     fire_cmpb_ok();
     return Bool(true);
 }
@@ -137,19 +176,22 @@ static Value fire_compression_InflateRead(Value h, Value buffer, Value offset, V
     long n;
     if (z == NULL) return Int(-1);
     p = fire_cmpb_out(buffer, "Compression.DeflateStream.Read", offset.i, count.i);
-    if (p == NULL) return Int(-1);
-    if (z->state == FIRE_INF_ERROR) return Int(fire_cmpb_fail(FIRE_CMPB_BROKEN, z->error));
-    n = fire_inf_run(z, p, (size_t)count.i);
-    if (n < 0) return Int(fire_cmpb_fail(FIRE_CMPB_BROKEN, z->error));
+    if (p == NULL) { fire_cmpb_done(h); return Int(-1); }
+    n = z->state == FIRE_INF_ERROR ? -1 : fire_inf_run(z, p, (size_t)count.i);
+    if (n < 0) { fire_cmpb_fail(FIRE_CMPB_BROKEN, z->error); fire_cmpb_done(h); return Int(-1); }   /* (the text is the stream's: read before it is let go) */
+    fire_cmpb_done(h);
     fire_cmpb_ok();
     return Int(n);
 }
 /* Whether the end of the compressed data was reached. */
 static Value fire_compression_InflateDone(Value h) {
     FireInflate* z = (FireInflate*)fire_cmpb_find(h, 1);
+    int done;
     if (z == NULL) return Bool(false);
+    done = z->state == FIRE_INF_DONE;
+    fire_cmpb_done(h);
     fire_cmpb_ok();
-    return Bool(z->state == FIRE_INF_DONE);
+    return Bool(done);
 }
 
 /* A compressor for `format` with `level` (0 stored .. 9 smallest): its handle, -1 on an error. */
@@ -163,21 +205,27 @@ static Value fire_compression_DeflateNew(Value format, Value level) {
 static Value fire_compression_DeflateWrite(Value h, Value buffer, Value offset, Value count) {
     FireDeflate* z = (FireDeflate*)fire_cmpb_find(h, 0);
     const uint8_t* p;
+    int failed;
     if (z == NULL) return Bool(false);
-    if (z->finished) { fire_cmpb_fail(FIRE_CMPB_ARGUMENT, "The compressed stream is already finished."); return Bool(false); }
+    if (z->finished) { fire_cmpb_done(h); fire_cmpb_fail(FIRE_CMPB_ARGUMENT, "The compressed stream is already finished."); return Bool(false); }
     p = fire_cmpb_in(buffer, "Compression.DeflateStream.Write", offset.i, count.i, NULL);
-    if (p == NULL) return Bool(false);
+    if (p == NULL) { fire_cmpb_done(h); return Bool(false); }
     fire_def_write(z, p, (size_t)count.i);
-    if (z->outOfMemory) { fire_cmpb_fail(FIRE_CMPB_MEMORY, "Out of memory."); return Bool(false); }
+    failed = z->outOfMemory;
+    fire_cmpb_done(h);
+    if (failed) { fire_cmpb_fail(FIRE_CMPB_MEMORY, "Out of memory."); return Bool(false); }
     fire_cmpb_ok();
     return Bool(true);
 }
 /* Everything written so far goes out: `final` ends the compressed data, otherwise a sync flush. */
 static Value fire_compression_DeflateFlush(Value h, Value final) {
     FireDeflate* z = (FireDeflate*)fire_cmpb_find(h, 0);
+    int failed;
     if (z == NULL) return Bool(false);
     fire_def_flush(z, final.kind == K_Bool ? final.i != 0 : final.i != 0);
-    if (z->outOfMemory) { fire_cmpb_fail(FIRE_CMPB_MEMORY, "Out of memory."); return Bool(false); }
+    failed = z->outOfMemory;
+    fire_cmpb_done(h);
+    if (failed) { fire_cmpb_fail(FIRE_CMPB_MEMORY, "Out of memory."); return Bool(false); }
     fire_cmpb_ok();
     return Bool(true);
 }
@@ -185,17 +233,26 @@ static Value fire_compression_DeflateFlush(Value h, Value final) {
 static Value fire_compression_DeflateRead(Value h, Value buffer, Value offset, Value count) {
     FireDeflate* z = (FireDeflate*)fire_cmpb_find(h, 0);
     uint8_t* p;
+    int64_t n;
     if (z == NULL) return Int(-1);
     p = fire_cmpb_out(buffer, "Compression.DeflateStream", offset.i, count.i);
-    if (p == NULL) return Int(-1);
+    if (p == NULL) { fire_cmpb_done(h); return Int(-1); }
+    n = (int64_t)fire_def_read(z, p, (size_t)count.i);
+    fire_cmpb_done(h);
     fire_cmpb_ok();
-    return Int((int64_t)fire_def_read(z, p, (size_t)count.i));
+    return Int(n);
 }
 
 static Value fire_compression_Close(Value h) {
-    int64_t i = h.i;
-    if (i <= 0 || (size_t)i >= g_cmpCount || g_cmpItems[i].z == NULL) { fire_cmpb_fail(FIRE_CMPB_HANDLE, "Invalid or already closed compression stream."); return Bool(false); }
-    fire_cmpb_release(&g_cmpItems[i]);
+    /* (out of the table first, when no other thread works with it; freed outside the table's lock. The kind of the entry does not change after it was made) */
+    FireCmpEntry e;
+    e.z = fire_cmpb_get(h, 0, 1);
+    if (e.z == NULL) return Bool(false);
+    fire_spinLock(&g_cmpLock);
+    e.inflate = g_cmpItems[h.i].inflate;
+    fire_spinUnlock(&g_cmpLock);
+    e.busy = 0;
+    fire_cmpb_release(&e);
     fire_cmpb_ok();
     return Bool(true);
 }
