@@ -45,7 +45,7 @@ namespace fire.Projects
             if (n == null) return null;
             string dir = project.Directory;
             var found = new List<string>();
-            var native = new PackageNative { Reset = n.Reset, Language = n.Language };
+            var native = new PackageNative { Reset = n.Reset, Language = n.Language, ThreadSafe = n.ThreadSafe == true };
             native.Sources = ExpandOrdered(dir, n.Sources ?? new NativeSourceList(ProjectNative.DefaultSources), found, n.Sources == null ? Rank : null);
             var sources = native.Sources;
             if (n.PlatformSources != null)
