@@ -3737,7 +3737,8 @@ FIRE_FN void setFieldAt(Value v, uint32_t index, Value x) {
     release(old);
 }
 
-/* A parameter or field declared int/float/bool (DeclaredKind): a value of that kind or undefined; a whole number for a float becomes one, anything else is an
+/* A parameter or field declared int/float/bool (DeclaredKind): a value of that kind or undefined; a whole number for a float becomes one, a value of an enum
+ * its number (`int n = Color.Blue` is 2), anything else is an
  * ArgumentException (the generated code then looks at the unwinding flag). `unitless`: declared without a unit - a number with one is converted like
  * adaptUnit(v, unitless) first (another dimension is a UnitMismatchException). */
 FIRE_FN Value adaptUnit(Value v, uint32_t unit, bool dimensionOnly, bool toFloat, Value expectedText);
@@ -3749,6 +3750,7 @@ FIRE_COLD FIRE_FN Value guardKindSlow(Value v, uint8_t kind, bool unitless, cons
         if (!unitEq(v.unit, 0)) return Undef();   /* (thrown) */
         v.unit = 0;
     }
+    if (v.kind == K_Int) v.reserved = 0;   /* (an `int` takes the number of a value of an enum: DeclaredKind.Accept of the VM) */
     if (v.kind == kind) return v;
     if (kind == K_Float && v.kind == K_Int) return Float((Real)v.i, v.unit);
     if (kind == K_Float && v.kind == K_Word) return Float(wordReal(v));   /* (a word as its unsigned value) */
@@ -3757,7 +3759,7 @@ FIRE_COLD FIRE_FN Value guardKindSlow(Value v, uint8_t kind, bool unitless, cons
     return Undef();
 }
 FIRE_FN Value guardKind(Value v, uint8_t kind, bool unitless, const char* what, Value unitlessText) {
-    if (FIRE_LIKELY(v.kind == kind) && (!unitless || v.unit == 0)) return v;
+    if (FIRE_LIKELY(v.kind == kind) && (!unitless || v.unit == 0) && (kind != K_Int || v.reserved == 0)) return v;
     return guardKindSlow(v, kind, unitless, what, unitlessText);
 }
 
