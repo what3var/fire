@@ -29,6 +29,14 @@ namespace fire.Runtime
         }
     }
 
+    /// <summary>A nested run that the VM started in the middle of an instruction (the default value of a parameter, see VM.EvaluateDefaultNested) was
+    /// left by an exception that a handler outside it took: the VM already stands at that handler. The instruction is abandoned - the loop that runs
+    /// it goes on where the VM stands now. Not an InvalidOperationException: it must not become a script exception of its own.</summary>
+    internal sealed class ExecutionRedirectedException : Exception
+    {
+        public ExecutionRedirectedException() : base("The execution continues at an exception handler.") { }
+    }
+
     internal readonly struct CallFrame
     {
         public readonly Chunk ReturnChunk;
@@ -1940,6 +1948,7 @@ namespace fire.Runtime
                 try { RunNestedLoopCore(targetFrameDepth); return; }
                 catch (ScriptErrorException error) { RaiseScriptError(error); if (_stopExecutionRequested) return; }
                 catch (InvalidOperationException error) when (IsCatchableRuntimeError(error)) { RaiseScriptError(new ScriptErrorException("ArgumentException", error.Message)); if (_stopExecutionRequested) return; }
+                catch (ExecutionRedirectedException) { if (_stopExecutionRequested) return; }
             }
         }
 
@@ -7098,7 +7107,16 @@ namespace fire.Runtime
         /// return) - in that (very rare) case there is no finished instance,
         /// this is treated as a hard internal error instead of trying
         /// to recursively build yet ANOTHER exception for it.</summary>
-        private ObjectInstance ConstructNested(RuntimeClass rc, Value[] args)
+        private ObjectInstance ConstructNested(RuntimeClass rc, Value[] args) =>
+            TryConstructNested(rc, args)
+            ?? throw new InvalidOperationException(
+                $"Internal error: construction of '{rc.Name}' was interrupted by an exception " +
+                "(exception while building a VM-internal exception instance).");
+
+        /// <summary>Like <see cref="ConstructNested"/>, for a construction the PROGRAM asked for (`Reflect.New`, `Type.New`): an exception in the
+        /// constructor runs to the handlers of the caller like one of a plain `new` (the half-built object is released with the scope of the call,
+        /// without its destruct(), see UnwindTo) - then null: the execution already continues at the handler, the caller pushes nothing.</summary>
+        private ObjectInstance? TryConstructNested(RuntimeClass rc, Value[] args)
         {
             _pendingArgNames = null;   // (a call the VM makes itself has no named arguments - the names of a call that threw stay unused)
             var ctorProto = FindConstructorFor(rc, args)
@@ -7127,10 +7145,7 @@ namespace fire.Runtime
 
             bool completedNormally =
                 ReferenceEquals(_currentChunk, savedChunk) && _ip == savedIp && ReferenceEquals(_currentScope, savedScope);
-            if (!completedNormally)
-                throw new InvalidOperationException(
-                    $"Internal error: construction of '{rc.Name}' was interrupted by an exception " +
-                    "(exception while building a VM-internal exception instance).");
+            if (!completedNormally) return null;
 
             Pop(); // Return at the end of the constructor pushes 'instance' itself (see BeginConstruction/frame.ConstructedInstance) - we already have it directly, discard here
             return instance;
@@ -8327,9 +8342,8 @@ namespace fire.Runtime
 
             bool completedNormally =
                 ReferenceEquals(_currentChunk, savedChunk) && _ip == savedIp && ReferenceEquals(_currentScope, savedScope);
-            if (!completedNormally)
-                throw new InvalidOperationException(
-                    "Internal error: evaluating a default value was interrupted by an exception.");
+            // (the default value threw, and a handler outside took the exception: the instruction that wanted the value does not go on)
+            if (!completedNormally) throw new ExecutionRedirectedException();
 
             _currentThis = savedThis;
             return Pop();

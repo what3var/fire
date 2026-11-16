@@ -308,10 +308,9 @@ server.Run()
   The phases: `"event"` - what is described above. `"start"` - the constructor of the page threw: there is no circuit, the request that asked for the
   page gets the exception (a 500, like every exception of a router) and OnError hears of it. `"html"` - the first HTML could not be made: the circuit
   ends, the request gets the 500. A **runtime error** in the code of a page (`x.y` on undefined, an index out of range, a division by zero, a
-  wrong type) is an exception of the runtime (`ArgumentException`, `IndexOutOfBoundsException`, ...) and is treated the same, in the VM and in a
-  native build. Two things are not caught yet: in the VM an exception out of the *constructor* of a page ends the program (a constructor called
-  through reflection - `Type.New` - cannot be caught there; a native build gives the 500), and a native build ends with `fire runtime error: ...` for
-  the few errors that are not exceptions there (calling a value that is not a lambda).
+  wrong type, calling a value that is not a lambda) is an exception of the runtime (`ArgumentException`, `IndexOutOfBoundsException`, ...) and is
+  treated the same, in the VM and in a native build - an exception out of the *constructor* of a page too (the page is made through reflection,
+  `Type.New`: its exception reaches the request, which answers 500).
 * **Lists and pictures:** a `ListBox`/`ListView` shows the texts of its rows (`DisplayMember`) - a click selects a row (`Select`, `OnSelect`), a double click
   activates it (`OnActivate`); changed rows or a changed selection go out as a patch. (Item templates and the columns of a ListView are not shown yet.) An
   `Image` is its `Source` as a PNG (`Stretch` as `object-fit`); a new picture is sent when another framebuffer is set.

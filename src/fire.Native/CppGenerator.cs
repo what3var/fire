@@ -5282,6 +5282,7 @@ namespace fire.Native
                     int from = U(d - 1);
                     if (IsNum(kind) && from == target) { _kindsKept = true; return Next(); }   // already in that unit
                     E($"{S(d - 1)} = coerceUnit({S(d - 1)}, {UnitC(target)});");
+                    if (!IsNum(kind)) Check();   // (a value that is no number: the VM's ArgumentException)
                     // a float stays a float; an int converted within its dimension stays an int (into the base unit it may become a float)
                     Unit fromUnit = UnitById(from), toUnit = UnitById(target);
                     bool sameDimension = fromUnit.IsCompatibleWith(toUnit) && !(target == 0 && from != 0);
@@ -5289,7 +5290,7 @@ namespace fire.Native
                     return Next();
                 }
                 case OpCode.RelabelUnitDynamic:
-                    Need(2); E($"{S(d - 1)} = relabelUnit({S(d - 1)}, unitOf({S(d - 2)}));"); Check(); return Next();
+                    Need(2); E($"{S(d - 1)} = relabelUnit({S(d - 1)}, unitOf({S(d - 2)}));"); if (!IsNum(K(d - 1))) Check(); return Next();
                 case OpCode.RelabelUnit:
                 {
                     Need(1);
@@ -5302,10 +5303,11 @@ namespace fire.Native
                         return Next();
                     }
                     E($"{S(d - 1)} = relabelUnit({S(d - 1)}, {UnitC(target)});");
+                    Check();   // (a value that is no number: the VM's ArgumentException)
                     return Next();
                 }
                 case OpCode.CoerceUnitDynamic:
-                    Need(2); E($"{S(d - 1)} = coerceUnit({S(d - 1)}, unitOf({S(d - 2)}));"); Check(); return Next();
+                    Need(2); E($"{S(d - 1)} = coerceUnit({S(d - 1)}, unitOf({S(d - 2)}));"); if (!IsNum(K(d - 1))) Check(); return Next();
                 case OpCode.CoerceType:
                     Need(1);
                     if (SlotScalars() && (TypeTag)ins.A[0] is TypeTag.Int or TypeTag.Float && (K(d - 1) == KindFloat || NarrowInt(d - 1)))
@@ -5491,7 +5493,11 @@ namespace fire.Native
                         if (!_usesGlobalOwn) { _usesGlobalOwn = true; _version++; }
                         E($"{S(d - 2)} = Bool(isFromGlobal({S(d - 2)}));");
                     }
-                    else E($"{S(d - 2)} = Bool(isFrom({S(d - 2)}, {S(d - 1)}, {(ins.A[0] != 0 ? "true" : "false")}));");
+                    else
+                    {
+                        E($"{S(d - 2)} = Bool(isFrom({S(d - 2)}, {S(d - 1)}, {(ins.A[0] != 0 ? "true" : "false")}));");
+                        Check();   // (an owner that is no object: the VM's ArgumentException)
+                    }
                     d--; SetR(d - 1, false); return Next();
                 case OpCode.Neg:
                     Need(1);
@@ -6987,19 +6993,23 @@ namespace fire.Native
                     if (at < f.Decoded.Count && f.Decoded[at] is { Op: OpCode.TypeArray } bytes && bytes.A[1] == 1 && bytes.A[0] == ArrayElem.U8)
                         // `byte a[] = new int[n]`: a `byte` declaration holds a buffer (SPEC 8.4.2) - of n zeros, as the conversion of n undefined elements gives
                     {
-                        E($"{S(d - 1)} = newBuffer({S(d - 1)}, &{OwnerList()});");
+                        // (a negative size is the VM's "Invalid array size": it is a NewArray there)
+                        E($"{S(d - 1)} = FIRE_UNLIKELY({S(d - 1)}.kind == K_Int && {S(d - 1)}.i < 0) ? sizeError({S(d - 1)}.i, false) : newBuffer({S(d - 1)}, &{OwnerList()});");
+                        Check();
                         SetR(d - 1, true); SetT(d - 1, TypeOf(KindBuf, BufBytes)); _kindsKept = true; return Next();
                     }
                     else if (at < f.Decoded.Count && f.Decoded[at] is { Op: OpCode.TypeArray } words && words.A[1] == 1 && words.A[0] == ArrayElem.Word)
                     {
                         // `word a[n]`, `new word[n]`: a buffer of n zero words (SPEC 8.10)
                         E($"{S(d - 1)} = newWordBuffer({S(d - 1)}, &{OwnerList()});");
+                        Check();   // (a negative size: the VM's ArgumentException)
                         SetR(d - 1, true); SetT(d - 1, TypeOf(KindBuf, BufWords)); _kindsKept = true; return Next();
                     }
                     else if (at < f.Decoded.Count && f.Decoded[at] is { Op: OpCode.TypeArray } typed && typed.A[1] == 1 && ArrayElem.TypeOf(typed.A[0]) != ArrayElem.Class)
                         // (an array of a class keeps Values: made plain, its TypeArray checks it - a defined one throws there, once)
                     {
                         E($"{S(d - 1)} = newTypedArray({S(d - 1)}, {ArrayElem.TypeOf(typed.A[0])}, {TypeArrayUnitArgs(chunk, typed.A[2], typed.A[0])}, &{OwnerList()});");
+                        Check();   // (a negative size: the VM's ArgumentException)
                         SetR(d - 1, true);
                         if (typed.A[2] == 0xFFFF) { SetT(d - 1, TypeOf(KindArr, typed.A[0])); _kindsKept = true; }
                         return Next();
@@ -7009,6 +7019,7 @@ namespace fire.Native
                         E($"{{ TArgs ta_ = {TArgsExpr(f, Str(ofParam.A[0]))}; {S(d - 1)} = ta_ && ta_[0] && ta_[0]->arrElem && !ta_[0]->arrClass ? newTypedArray({S(d - 1)}, (uint8_t)(ta_[0]->arrElem - 1), {TypeArrayUnitArgs(chunk, 0xFFFF)}, &{OwnerList()}) : newArray({S(d - 1)}, &{OwnerList()}); }}");
                     else
                         E($"{S(d - 1)} = newArray({S(d - 1)}, &{OwnerList()});");
+                    Check();   // (a negative size: the VM's ArgumentException)
                     SetR(d - 1, true); return Next();
                 }
                 case OpCode.TypeArray when (ins.A[0] & ArrayElem.OpenFlag) != 0:
@@ -7069,7 +7080,7 @@ namespace fire.Native
                     return Next();
                 }
                 case OpCode.MakeBuffer:
-                    Need(1); E($"{S(d - 1)} = newBuffer({S(d - 1)}, &{OwnerList()});"); SetR(d - 1, true); SetT(d - 1, TypeOf(KindBuf, BufBytes)); _kindsKept = true; return Next();
+                    Need(1); E($"{S(d - 1)} = newBuffer({S(d - 1)}, &{OwnerList()});"); Check(); SetR(d - 1, true); SetT(d - 1, TypeOf(KindBuf, BufBytes)); _kindsKept = true; return Next();
                 case OpCode.MakeArrayLiteral:
                 {
                     int count = ins.A[0];
@@ -7102,6 +7113,7 @@ namespace fire.Native
                     int first = d - ranks;
                     var sizeItems = Enumerable.Range(first, ranks).Select(i => $"sizeArg({S(i)})").ToList();
                     E($"{{ {CArray("int64_t", "sz", sizeItems)}{S(first)} = newJagged(sz, {ranks}, &{OwnerList()}); }}");
+                    Check();   // (a negative size: the VM's ArgumentException)
                     d = first + 1; SetR(first, true); return Next();
                 }
                 case OpCode.HoistValue:
@@ -7232,6 +7244,7 @@ namespace fire.Native
                 case OpCode.Delete:
                     Need(1);
                     E($"deleteValue({S(d - 1)});");
+                    Check();   // (a value that cannot be deleted - `delete 5`: the VM's ArgumentException)
                     d--; return Next();
                 case OpCode.ArrayGet when BK(d - 2) == KindBuf && (Ty(d - 2) & TypeNone) == 0 && U(d - 2) is BufBytes or BufWords && K(d - 1) == KindInt:
                 {
@@ -7628,7 +7641,8 @@ namespace fire.Native
                 case OpCode.ResumeException:
                     UseExceptions(); Need(2);
                     E($"resumeThrow({S(d - 2)}, {S(d - 1)});");
-                    if (sb != null) E($"goto {ExitLabel(f, st, locals)};");
+                    // (resumed: the unwinding to the throw site; not handled right now: the ArgumentException - unless a catch resumed that one, then it goes on here)
+                    if (sb != null) E($"if (FIRE_LIKELY(g_unwind.active)) goto {ExitLabel(f, st, locals)};");
                     E($"{S(d - 2)} = Undef();");
                     d--; SetR(d - 1, false); return Next();
                 case OpCode.ClearPendingResume:

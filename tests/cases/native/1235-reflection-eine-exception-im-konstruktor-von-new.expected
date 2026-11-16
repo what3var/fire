@@ -1,0 +1,21 @@
+new: from P
+part freed p
+Type.New: from P
+part freed p
+Reflect.New: from P True
+part freed p
+Reflect.New(-1): negative
+ok 6
+Call: too big
+Set: neg set
+Get: zero
+part freed p
+part freed p
+part freed p
+count 3
+default: default
+ctor default: default
+Reflect.New default: default
+lambda default: default
+end
+P destructed 0

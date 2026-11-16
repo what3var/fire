@@ -169,6 +169,7 @@ namespace fire.Runtime
                 try { RunLoopCore(); return; }
                 catch (ScriptErrorException error) { RaiseScriptError(error); }
                 catch (InvalidOperationException error) when (IsCatchableRuntimeError(error)) { RaiseScriptError(new ScriptErrorException("ArgumentException", error.Message)); }
+                catch (ExecutionRedirectedException) { }   // (the VM stands at the handler that took the exception, or it stopped)
             }
         }
     }
