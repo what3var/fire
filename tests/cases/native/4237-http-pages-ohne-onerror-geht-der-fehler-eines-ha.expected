@@ -1,0 +1,10 @@
+script knows 4500 True
+ok {"patches": [{"e": 2, "t": "n 1", "v": true, "n": true, "fg": "", "bg": ""}]}
+exception undefined open False code 4500
+runtime error undefined open False code 4500
+other circuit {"patches": [{"e": 2, "t": "n 1", "v": true, "n": true, "fg": "", "bg": ""}]}
+forgotten True 4404
+new page 200 same session True
+still {"patches": [{"e": 2, "t": "n 2", "v": true, "n": true, "fg": "", "bg": ""}]}
+
+end
