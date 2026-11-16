@@ -4682,7 +4682,8 @@ namespace fire.Native
                 d = slot + 1; return Next();
             }
             string Args(int first, int count) => string.Concat(Enumerable.Range(first, count).Select(i => ", " + SR(i)));
-            // `ref` arguments (SPEC 5.4.2): the prefix CopyArgs in front of the call marks the arguments that carry an address (bits 3); `flat`/`copy` are not translated yet.
+            // The prefix CopyArgs in front of the call: per argument 4 bits - `flat x`/`copy x` (1/2: ArgsBefore copies into the argument list, a lambda call into the
+            // temporaries), an address for a `ref` parameter (3, SPEC 5.4.2), a fresh value (4/7), `take x` (5), a claim site of a setter (6), `try take x` (8).
             long ArgMask()
             {
                 int at = f.IndexOf[ins.Addr];
