@@ -602,6 +602,7 @@ namespace fire.Compiler
             s_trees = resolveResult.Trees;
             s_classDecls = resolveResult.Classes;
             s_localGuards = resolveResult.LocalGuards;
+            s_fixedCoercions = resolveResult.FixedCoercions;
             s_overloadHints = resolveResult.OverloadHints;
             s_receiverTypeArgs = resolveResult.ReceiverTypeArgs;
             s_derivedDefined = resolveResult.DerivedDefined;
@@ -1650,6 +1651,7 @@ namespace fire.Compiler
             inner._methodTypeParams = typeParams;
             inner._chunk.OwnerClass = rc;
             inner._returnUnit = returnUnit;
+            if (returnType is { ArrayRank: > 0, PointerDepth: 0, IsInferred: false }) (inner._returnArray, inner._returnArrayRank) = (returnType with { ArrayRank = 0 }, returnType.ArrayRank);
             // `defined int Count()` (SPEC 8.10b): every value it returns is checked - undefined (also the end of the body) is an ArgumentException
             // (a return the type checker found is always a number - ResolveResult.DerivedReturns - is checked like a `defined` one)
             if (returnType is { NonNull: false } && s_derivedReturns != null && s_derivedReturns.Contains(body)) returnType = returnType with { NonNull = true };
@@ -1928,6 +1930,13 @@ namespace fire.Compiler
                     {
                         CompileExpr(rs.Value);
                         if (_returnUnit != null) EmitCheckUnitIfNeeded(this, _returnUnit);
+                        // `Cat[] Find()`, `int[] Sizes()`: the array that goes back is typed and checked like one stored in a variable declared
+                        // `Cat c[]` (OpCode.TypeArray: an array of another class, a value that is no array is the ArgumentException)
+                        if (_returnArray is { } arrayType)
+                        {
+                            if (ClassArrayCode(arrayType, _returnArrayRank, _enclosingClass, out var returnArrayText) is var returnArrayCode and not 0) EmitWidthIfNeeded(this, returnArrayCode, returnArrayText);
+                            else EmitWidthIfNeeded(this, arrayType.ArrayWidthCode(_returnArrayRank), arrayType.UnitDemand);
+                        }
                     }
                     else EmitLoadConst(Value.MakeUndefined());
                     EmitReturnGuard();
@@ -2578,6 +2587,8 @@ namespace fire.Compiler
         [ThreadStatic] private static Dictionary<Expr, string>? s_unitChecks;
         [ThreadStatic] private static Dictionary<Expr, string[]>? s_methodTypeArgs;
         [ThreadStatic] private static Dictionary<Expr, (TypeRef Type, string What)>? s_localGuards;
+        /// <summary>The conversions from the context the type checker fixed (ResolveResult.FixedCoercions) of the program being compiled.</summary>
+        [ThreadStatic] private static Dictionary<Expr, FixedCoercion>? s_fixedCoercions;
         [ThreadStatic] private static Dictionary<Expr, string>? s_overloadHints;
         [ThreadStatic] private static Dictionary<Expr, string>? s_receiverTypeArgs;
 
@@ -2648,6 +2659,9 @@ namespace fire.Compiler
         /// <summary>`defined Dog Get()`: the DeclaredType (with `defined`) its return values are checked against (GuardTopType), null: none.</summary>
         private string? _returnSpec;
         private string _returnWhat = "";
+        /// <summary>`Cat[] Find()`: the element type and the rank of the array a method (or getter) declares to return, null: no array.</summary>
+        private TypeRef? _returnArray;
+        private int _returnArrayRank;
 
         /// <summary>The value on top of the stack goes back from a method declared `defined int` (`defined float`, ...): it is checked like a parameter (GuardTop).</summary>
         private void EmitReturnGuard()
@@ -2946,6 +2960,15 @@ namespace fire.Compiler
                     // stays open until a declaration gives it its width and unit (`int[8] a[] = new int[4]`, `float:m f[] = new float[2]`).
                     else if (ClassArrayCode(na.ElementType, na.SizeExprs.Count, _enclosingClass, out var newText) is var newCode and not 0)
                         EmitWidthIfNeeded(this, newCode, newText);
+                    // `new int[n]`, `new float[n]`, `new bool[n]`, `new char[n]`: the array remembers its kind (ArrayElem.OpenFlag) - width and unit stay
+                    // open, but it goes only where that kind is declared (`any d = new int[2]; Cat c[] = d` is the ArgumentException)
+                    else if (na.SizeExprs.Count is > 0 and < 256 && na.ElementType is { ArrayRank: 0, PointerDepth: 0 } && fire.Values.ArrayElem.OpenKindOf(na.ElementType) is var openKind and not 0)
+                    {
+                        _chunk.EmitOp(OpCode.TypeArray);
+                        _chunk.EmitByte((byte)(openKind | fire.Values.ArrayElem.OpenFlag));
+                        _chunk.EmitByte((byte)na.SizeExprs.Count);
+                        _chunk.EmitU16(0xFFFF);
+                    }
                     break;
 
                 case NewBufferExpr { Words: true } nw:
@@ -3650,7 +3673,9 @@ namespace fire.Compiler
 
             if (info.ExplicitUnit != null)
                 EmitCoerceUnitStatic(fire.Values.Unit.Parse(info.ExplicitUnit));
-            else if (info.UnitIsAuto)
+            // (a value that goes to a declaration takes its type and unit from there: `int i = 2.6!`, `float:km d = a:!`)
+            if (info.RequestsAnyAuto && EmitFixedCoercion(expr, info)) return;
+            if (info.ExplicitUnit == null && info.UnitIsAuto)
                 EmitUnitStatic(fire.Values.Unit.Unitless, info.RelabelAuto);
         }
 
@@ -4301,13 +4326,18 @@ namespace fire.Compiler
             var left = AnalyzeCoercion(leftExpr);
             var right = AnalyzeCoercion(rightExpr);
 
+            // (the type checker knew the anchor's type and unit: the conversion is fixed, nothing looks at the anchor at run time - it records one only
+            // for the single operand that asks, so the other one is the anchor and needs nothing)
             CompileExpr(left.Inner);
             if (left.ExplicitType != null) EmitCoerceTypeStatic(TokenTypeToTag(left.ExplicitType.Value));
             if (left.ExplicitUnit != null) EmitCoerceUnitStatic(fire.Values.Unit.Parse(left.ExplicitUnit));
+            bool leftFixed = !AnchorAtRunTime && left.RequestsAnyAuto && !right.RequestsAnyAuto && EmitFixedCoercion(leftExpr, left);
 
             CompileExpr(right.Inner);
             if (right.ExplicitType != null) EmitCoerceTypeStatic(TokenTypeToTag(right.ExplicitType.Value));
             if (right.ExplicitUnit != null) EmitCoerceUnitStatic(fire.Values.Unit.Parse(right.ExplicitUnit));
+            bool rightFixed = !AnchorAtRunTime && right.RequestsAnyAuto && !left.RequestsAnyAuto && EmitFixedCoercion(rightExpr, right);
+            if (leftFixed || rightFixed) return;
 
             // Stack now: [..., left', right']
             bool leftAuto = left.RequestsAnyAuto;
@@ -4346,7 +4376,27 @@ namespace fire.Compiler
             // arithmetic operation itself checks compatibility at runtime.
         }
 
-        private readonly record struct CoercionInfo(
+        /// <summary>A switch for tests (FIRE_ANCHOR_AT_RUNTIME=1): the operand of a binary operation that asks for a conversion from the context always
+        /// looks at the anchor at run time, also where the type checker fixed the conversion - both ways must give the same result.</summary>
+        [ThreadStatic] public static bool? AnchorAtRunTimeOverride;
+        private static bool AnchorAtRunTime => AnchorAtRunTimeOverride ?? Environment.GetEnvironmentVariable("FIRE_ANCHOR_AT_RUNTIME") == "1";
+
+        /// <summary>The conversion from the context that the type checker fixed for `outer` (ResolveResult.FixedCoercions), applied to the value on top
+        /// of the stack - type before unit, like the conversion at run time; false when it fixed none.</summary>
+        private bool EmitFixedCoercion(Expr outer, CoercionInfo info)
+        {
+            if (s_fixedCoercions == null || !s_fixedCoercions.TryGetValue(outer, out var plan)) return false;
+            if (info.UnitIsAuto && plan.Unit == null) return false;
+            if (info.TypeIsAuto)
+            {
+                if (plan.ToWord) { _chunk.EmitOp(OpCode.ConvertWidth); _chunk.EmitByte(0); _chunk.EmitByte(8); }
+                else if (plan.Type is { } tag) EmitCoerceTypeStatic(tag);
+            }
+            if (info.UnitIsAuto) EmitUnitStatic(plan.Unit!, info.RelabelAuto);
+            return true;
+        }
+
+        internal readonly record struct CoercionInfo(
             Expr Inner, bool WantsUnit, string? ExplicitUnit, bool WantsType, TokenType? ExplicitType, bool RelabelAuto = false)
         {
             public bool UnitIsAuto => WantsUnit && ExplicitUnit == null;
@@ -4357,7 +4407,7 @@ namespace fire.Compiler
         /// <summary>Peels ':'/'!' postfix wrappers (in any order, also
         /// both) off an expression and classifies what was requested
         /// in each case.</summary>
-        private static CoercionInfo AnalyzeCoercion(Expr expr)
+        internal static CoercionInfo AnalyzeCoercion(Expr expr)
         {
             bool wantsUnit = false; string? explicitUnit = null;
             bool wantsType = false; TokenType? explicitType = null;

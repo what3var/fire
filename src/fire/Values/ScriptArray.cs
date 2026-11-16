@@ -161,6 +161,10 @@ namespace fire.Values
         /// stores such an array packed (one C number per element instead of a Value).</summary>
         public byte ElemType { get; private set; }
 
+        /// <summary>`new int[n]` before a declaration typed it: the kind it was made for (ArrayElem.OpenKindOf - I64, F64, Bool or Char; 0: none, a literal).
+        /// Nothing is checked against it but the declaration the array goes to (ArrayElem.OpenFits).</summary>
+        public byte OpenKind { get; set; }
+
         /// <summary>The unit demand of the elements of a typed array (`int:cm a[]`: "cm"; null: the elements have no unit).</summary>
         public string? ElemUnit { get; private set; }
 
@@ -258,6 +262,7 @@ namespace fire.Values
             ElemType = other.ElemType;
             ElemUnit = other.ElemUnit;
             ElemDefined = other.ElemDefined;
+            OpenKind = other.OpenKind;
             Special = _shared || IsDestroyed || ElemType != 0;
         }
 

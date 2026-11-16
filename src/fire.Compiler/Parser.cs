@@ -3708,13 +3708,25 @@ namespace fire.Compiler
             var after = PeekAt(2);
             if (after.Type is TokenType.Colon or TokenType.RParen or TokenType.Comma or TokenType.Eof) return false;
             // `print(a: + b)`: no expression starts there - `a:` converts into the unit of the other operand
-            if (after.Type is TokenType.Plus or TokenType.Star or TokenType.Slash or TokenType.Percent or TokenType.Caret or TokenType.Pipe or TokenType.Hash
-                or TokenType.And or TokenType.Or or TokenType.Eq or TokenType.NotEq or TokenType.Lt or TokenType.LtEq or TokenType.Gt or TokenType.GtEq
-                or TokenType.Assign or TokenType.Question or TokenType.Dot or TokenType.DotDot or TokenType.Arrow or TokenType.Is
-                or TokenType.RBracket or TokenType.RBrace or TokenType.Semicolon) return false;
+            if (NoExpressionStart(after.Type)) return false;
+            // `F(a:!)`, `F(a:!, b)`, `F(a:! + b)`, `F(a:!int)`: the `!` is the conversion of `a:` - nothing it could negate follows (`F(a: !flag)` and
+            // `F(a: !(x))` stay a named argument with a logical not, however they are spaced)
+            if (after.Type == TokenType.Bang)
+            {
+                var negated = PeekAt(3);
+                if (negated.Type is TokenType.RParen or TokenType.Comma or TokenType.Eof or TokenType.Colon or TokenType.Minus || NoExpressionStart(negated.Type)
+                    || TypeKeywords.Contains(negated.Type)) return false;
+            }
             bool adjacent = after.Line == colon.Line && after.Column == colon.Column + 1 && !after.NewlineBefore;
             return !(adjacent && (after.Type == TokenType.Identifier || IsCustomUnitWordAt(2)));
         }
+
+        /// <summary>A token no expression starts with (a binary operator, a closing bracket): after `name:` it says the colon is the unit conversion.</summary>
+        private static bool NoExpressionStart(TokenType type) =>
+            type is TokenType.Plus or TokenType.Star or TokenType.Slash or TokenType.Percent or TokenType.Caret or TokenType.Pipe or TokenType.Hash
+                or TokenType.And or TokenType.Or or TokenType.Eq or TokenType.NotEq or TokenType.Lt or TokenType.LtEq or TokenType.Gt or TokenType.GtEq
+                or TokenType.Assign or TokenType.Question or TokenType.Dot or TokenType.DotDot or TokenType.Arrow or TokenType.Is
+                or TokenType.RBracket or TokenType.RBrace or TokenType.Semicolon;
 
         private List<Expr> ParseArgList(out List<string?>? names, bool allowNames = true)
         {

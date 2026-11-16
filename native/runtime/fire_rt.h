@@ -1526,6 +1526,7 @@ FIRE_FN Value* arrItems(struct Arr* a);
 typedef struct Arr {
     Owned h;
     uint32_t length;
+    uint8_t open;      /* `new int[n]` before a declaration typed it: the kind it was made for (E_I64, E_F64, E_Bool, E_Char; 0: none) - arrOpenFits */
     OwnList* parts;
     ArrTyped* typed;
 #ifdef __cplusplus
@@ -2396,8 +2397,10 @@ FIRE_FN const char* coerceKindName(uint8_t kind) {
 }
 /* `value!type` - int and float into each other, `undefined` into a number (Value.CoerceType); anything else is an ArgumentException. */
 FIRE_COLD FIRE_FN Value coerceWrong(uint8_t kind, uint8_t target) {
-    char text[96];
-    snprintf(text, sizeof text, "Cannot coerce type %s to %s.", coerceKindName(kind), coerceKindName(target));
+    char text[160];
+    if (target == K_String) snprintf(text, sizeof text, "Cannot coerce type %s to String: '!' does not make the text of a value (write \"\" + x or x.ToString()).", coerceKindName(kind));
+    else if (target == K_Undefined) snprintf(text, sizeof text, "Cannot coerce type %s to Undefined: the operand that gives '!' its type is undefined.", coerceKindName(kind));
+    else snprintf(text, sizeof text, "Cannot coerce type %s to %s.", coerceKindName(kind), coerceKindName(target));
     return fireError("ArgumentException", text);
 }
 /* `x!int` of a float: the nearest int (ties to even), saturated like the VM's (long)Math.Round - NaN is 0, beyond the range the largest or smallest int
@@ -2524,6 +2527,8 @@ FIRE_FN Value wordOf(Value v, bool implicit) {
     snprintf(text, sizeof text, "Cannot coerce type %s to Word.", coerceKindName(v.kind));
     return fireError("ArgumentException", text);
 }
+/* `x! + anchor` (OpCode.CoerceTypeDynamic): the value as the kind of the anchor - Value.CoerceType, which makes a word too. */
+FIRE_FN Value coerceTypeTo(Value v, uint8_t target) { return target == K_Word ? wordOf(v, false) : coerceType(v, target); }
 
 FIRE_FN Value negate(Value v) {
     if (v.kind == K_Int) return IntOp1((int64_t)(0 - (uint64_t)v.i), v.unit, v);
@@ -3513,6 +3518,7 @@ FIRE_FN Arr* allocArr(uint32_t length, OwnList* list) {
     a->h.okind = O_Array;
     a->h.flags = 0;
     a->length = length;
+    a->open = 0;
     a->parts = NULL;
     a->typed = NULL;
     items = arrItems(a);
@@ -5941,6 +5947,11 @@ FIRE_FN const char* arrElemName(uint8_t e) {
     }
 }
 FIRE_FN bool arrElemIsFloat(uint8_t e) { return e >= E_F8 && e <= E_F64; }
+/* Does an array made as `new K[n]` (Arr.open) go where an array of the element `declared` is declared? The same kind, or ints where floats are declared. */
+FIRE_FN bool arrOpenFits(uint8_t open, uint8_t declared) {
+    uint8_t kind = declared >= E_I8 && declared <= E_I64 ? (uint8_t)E_I64 : declared >= E_F8 && declared <= E_F64 ? (uint8_t)E_F64 : declared;
+    return kind == open || (open == E_I64 && kind == E_F64);
+}
 FIRE_FN int arrElemBits(uint8_t e) { return e == E_I8 || e == E_F8 || e == E_U8 ? 8 : e == E_I16 || e == E_F16 ? 16 : e == E_I32 || e == E_F32 ? 32 : 64; }
 /* The bytes of one packed element. */
 FIRE_FN size_t arrElemSize(uint8_t e) {
@@ -6273,7 +6284,27 @@ FIRE_FN bool typeArraySlow(Value v, uint8_t elem, int rank, uint32_t unit, uint8
         fireError("ArgumentException", text);
         return false;
     }
+    /* (`new int[n]` goes where ints are declared - of any width and unit - or floats, not where a class, a string or bools are; the VM: ArrayElem.OpenFits) */
+    if (a->open && !arrOpenFits(a->open, elem)) {
+        snprintf(text, sizeof text, "An array of %s cannot be stored where an array of %s is declared.", arrElemName(a->open), arrTypeName(elem, unit, flags));
+        fireError("ArgumentException", text);
+        return false;
+    }
     return arrMakeTyped(a, elem, unit, flags, unitText);
+}
+/* OpCode.TypeArray with the open flag (`new int[n]`, `new float[2][3]`): the arrays at depth `rank` remember their kind (the VM: MarkOpenArray). */
+FIRE_FN void arrMarkOpen(Value v, uint8_t kind, int rank, int depth) {
+    Arr* a;
+    if (v.kind != K_Array || !leafAlive(v) || depth > 64) return;
+    a = arrOf(v);
+    if (depth < rank) {
+        uint32_t i;
+        Value* items = arrValues(a);
+        if (!items) return;
+        for (i = 0; i < a->length; i++) arrMarkOpen(items[i], kind, rank, depth + 1);
+        return;
+    }
+    if (!a->typed) a->open = kind;
 }
 
 /* A `byte` declaration holds a byte buffer (SPEC 8.4.2; the VM: BufferFromArrayValue): the array `v` stored there is replaced by a buffer with its elements -
@@ -6358,6 +6389,7 @@ FIRE_FN Value newTypedArray(Value size, uint8_t elem, uint32_t unit, uint8_t fla
     a->h.okind = O_Array;
     a->h.flags = 0;
     a->length = length;
+    a->open = 0;
     a->parts = NULL;
     t = (ArrTyped*)((char*)a + FIRE_HDR(Arr));
     memset(t, 0, sizeof *t);
@@ -6395,6 +6427,7 @@ FIRE_FN Arr* packedCopy(const Arr* src, OwnList* list) {
     a->h.okind = O_Array;
     a->h.flags = 0;
     a->length = src->length;
+    a->open = 0;
     a->parts = NULL;
     t = (ArrTyped*)((char*)a + FIRE_HDR(Arr));
     memset(t, 0, sizeof *t);

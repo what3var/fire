@@ -17,6 +17,31 @@ namespace fire.Values
         /// FieldInfo.RequiredArray) - the elements are never `undefined`: they start at 0 (false, '\0'), storing `undefined` is an ArgumentException.</summary>
         public const byte DefinedFlag = 0x40;
 
+        /// <summary>`new int[n]` (DECISIONS D10): a mark beside the element kind in the code of OpCode.TypeArray - the array is not typed yet (its width
+        /// and unit come with the first declaration it is stored in), but it remembers that it was made as an array of ints (I64), floats (F64), bools or
+        /// chars: ScriptArray.OpenKind / fire_rt.h Arr.open. A declaration of another kind refuses it (OpenFits).</summary>
+        public const byte OpenFlag = 0x80;
+
+        /// <summary>The kind `new T[n]` remembers for a number type (I64 for every int, F64 for every float, Bool, Char); 0 for any other element.</summary>
+        public static byte OpenKindOf(TypeRef? type) => Of(type) switch
+        {
+            >= I8 and <= I64 => I64,
+            >= F8 and <= F64 => F64,
+            Bool => Bool,
+            Char => Char,
+            _ => None,
+        };
+
+        /// <summary>Does an array made as `new K[n]` (OpenKindOf) go where an array of the element `declared` is declared? The same kind - whatever
+        /// width and unit - and an int array where floats are declared (a whole number goes into a float, like a value).</summary>
+        public static bool OpenFits(byte open, byte declared)
+        {
+            declared = TypeOf(declared);
+            if (open == None) return true;
+            byte kind = declared switch { >= I8 and <= I64 => I64, >= F8 and <= F64 => F64, _ => declared };
+            return kind == open || open == I64 && kind == F64;
+        }
+
         /// <summary>The element type of such a code (without DefinedFlag).</summary>
         public static byte TypeOf(int code) => (byte)(code & 0x3F);
         public static bool IsDefined(int code) => (code & DefinedFlag) != 0;

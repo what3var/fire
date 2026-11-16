@@ -5110,6 +5110,12 @@ namespace fire.Runtime
                     byte elemType = ReadByte();
                     int rank = ReadByte();
                     int unitIdx = ReadU16();
+                    if ((elemType & ArrayElem.OpenFlag) != 0)
+                    {
+                        // `new int[n]`: the array (at depth `rank` its inner arrays) remembers the kind it was made for
+                        MarkOpenArray(Peek(), (byte)(elemType & ~ArrayElem.OpenFlag), rank, 1);
+                        break;
+                    }
                     if (elemType is ArrayElem.U8 or ArrayElem.Word)
                     {
                         // `byte a[]` holds a byte buffer (SPEC 8.4.2), `word a[]` a buffer of machine words (SPEC 8.10): an array stored there becomes one
@@ -8045,9 +8051,30 @@ namespace fire.Runtime
                 ThrowArgumentError($"An array of {ArrayElem.Name(array.ElemType, array.ElemUnit)} cannot be stored where an array of {ArrayElem.Name(elemType, unit)} is declared.");   // (the same text natively)
                 return false;
             }
+            // (`new int[n]` goes where ints are declared - of any width and unit - or floats, not where a class, a string or bools are: DECISIONS D10)
+            if (!ArrayElem.OpenFits(array.OpenKind, elemType))
+            {
+                ThrowArgumentError($"An array of {ArrayElem.Name(array.OpenKind)} cannot be stored where an array of {ArrayElem.Name(elemType, unit)} is declared.");   // (the same text natively)
+                return false;
+            }
             if (array.MakeTyped(elemType, unit, out var error, out var message, out var offending)) return !defined || MakeArrayDefined(array);
             ThrowArrayElementError(unit, offending, error, message!);
             return false;
+        }
+
+        /// <summary>OpCode.TypeArray with ArrayElem.OpenFlag (`new int[n]`, `new float[2][3]`): the arrays at depth `rank` remember their kind.</summary>
+        private static void MarkOpenArray(Value value, byte kind, int rank, int depth)
+        {
+            if (value.Kind != ValueKind.Array || depth > 64) return;
+            var array = value.AsArray();
+            if (array.IsDestroyed) return;
+            if (depth < rank)
+            {
+                if (array.IsPacked) return;
+                foreach (var inner in array.Items) MarkOpenArray(inner, kind, rank, depth + 1);
+                return;
+            }
+            if (array.ElemType == ArrayElem.None) array.OpenKind = kind;
         }
 
         /// <summary>Makes a typed array a defined one (its zero: ArrayElem.Zero - an enum's first value, "" for strings); an array of objects with an element that

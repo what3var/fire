@@ -424,8 +424,13 @@ namespace fire.Values
                 case (ValueKind.Undefined, ValueKind.Char):
                     return MakeChar('\0');
                 default:
-                    throw new InvalidOperationException(
-                        $"Cannot coerce type {Kind} to {targetKind}.");
+                    // (the same texts natively: fire_rt.h coerceWrong)
+                    throw new InvalidOperationException(targetKind switch
+                    {
+                        ValueKind.String => $"Cannot coerce type {Kind} to String: '!' does not make the text of a value (write \"\" + x or x.ToString()).",
+                        ValueKind.Undefined => $"Cannot coerce type {Kind} to Undefined: the operand that gives '!' its type is undefined.",
+                        _ => $"Cannot coerce type {Kind} to {targetKind}.",
+                    });
             }
         }
 

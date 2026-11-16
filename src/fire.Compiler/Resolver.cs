@@ -58,6 +58,10 @@ namespace fire.Compiler
         }
     }
 
+    /// <summary>A conversion from the context that is known at compile time (ResolveResult.FixedCoercions): for `!` the type (`Type`: like `x!int`,
+    /// `ToWord`: like `x!word`, neither: the value has the type already), for `:` the unit (converted into, for `::` relabelled).</summary>
+    public readonly record struct FixedCoercion(fire.Bytecode.TypeTag? Type, bool ToWord, fire.Values.Unit? Unit);
+
     /// <summary>Result of a resolver run: everything the evaluator (and later
     /// the bytecode compiler) needs in order not to have to search by name any more.</summary>
     public sealed class ResolveResult
@@ -78,6 +82,11 @@ namespace fire.Compiler
         /// <summary>Values going into a local variable (declaration or assignment) whose type the type checker could not prove for its declaration
         /// (`int x = someAny`, `Dog d = animal`, `T item = v`): the compiler checks them at runtime (GuardTop/GuardTopType). Filled by TypeChecker.</summary>
         public Dictionary<Expr, (TypeRef Type, string What)> LocalGuards { get; } = new(ReferenceEqualityComparer.Instance);
+
+        /// <summary>The operands and values that ask for a conversion from the context (`x!`, `x:`, `x:!`, SPEC 3.2) where the type checker knows the
+        /// context - the anchor operand of the operation, or the declaration the value goes to: the compiler emits this conversion instead of the one
+        /// that looks at the anchor at run time. The key is the outermost `!`/`:` of the operand. Filled by TypeChecker.</summary>
+        public Dictionary<Expr, FixedCoercion> FixedCoercions { get; } = new(ReferenceEqualityComparer.Instance);
 
         /// <summary>Calls of a method or constructor overloaded by type whose overload the type checker could tell from the static types of the
         /// arguments: the overload and what it assumed of each argument (Bytecode.OverloadHint text). The compiler puts it in front of the call
@@ -633,27 +642,56 @@ namespace fire.Compiler
         /// instead of passing it on (see
         /// ResolverException) - for checks after which it makes sense
         /// to carry on.</summary>
-        /// <summary>E4076: a class declares a method name both `static` and for instances, itself or together with a base class.</summary>
+        /// <summary>E4076: a class declares a name both `static` and for instances - methods, fields and properties alike -, itself or together with a base
+        /// class (DECISIONS D11). E4077: a field or a property declared twice in one class.</summary>
         private void ValidateStaticAndInstance(ClassDecl cd)
         {
             static string BaseName(string n) => n.IndexOf('<') is var lt and > 0 ? n.Substring(0, lt) : n;
-            var own = cd.Members.OfType<MethodDecl>().ToList();
-            foreach (var md in own)
+            // (name, static, what it is, line) of every member with a name; the backing field of an auto-property is not a member of its own
+            static List<(string Name, bool IsStatic, string Kind, int Line)> Named(ClassDecl c)
             {
-                var other = own.FirstOrDefault(o => o.IsStatic != md.IsStatic && BaseName(o.Name) == BaseName(md.Name));
-                if (other != null && md.IsStatic)
-                    throw StaticAndInstance(cd.Name, BaseName(md.Name), md.Line, other.Line, cd.Name);
+                var result = new List<(string, bool, string, int)>();
+                var properties = c.Members.OfType<PropertyDecl>().Select(p => p.Name).ToHashSet();
+                foreach (var m in c.Members)
+                    switch (m)
+                    {
+                        case MethodDecl md: result.Add((BaseName(md.Name), md.IsStatic, "method", md.Line)); break;
+                        case PropertyDecl pd: result.Add((pd.Name, pd.IsStatic, "property", pd.Line)); break;
+                        case FieldDecl fd when !(fd.Name.StartsWith("_Auto", StringComparison.Ordinal) && properties.Contains(fd.Name.Substring(5))):
+                            result.Add((fd.Name, fd.IsStatic, "field", fd.Line)); break;
+                    }
+                return result;
             }
+            var own = Named(cd);
+            for (int i = 0; i < own.Count; i++)
+                for (int k = 0; k < i; k++)
+                {
+                    if (own[i].Name != own[k].Name) continue;
+                    if (own[i].IsStatic != own[k].IsStatic)
+                    {
+                        var (stat, inst) = own[i].IsStatic ? (own[i], own[k]) : (own[k], own[i]);
+                        throw StaticAndInstance(cd.Name, stat.Name, stat.Kind, inst.Kind, stat.Line, inst.Line, cd.Name);
+                    }
+                    if (own[i].Kind != "method" && own[k].Kind != "method")
+                        throw new ResolverException($"'{own[i].Name}' is declared twice in class '{cd.Name}' (the other one: line {own[k].Line}) - " +
+                            "a field or a property has one declaration; remove one or give it another name", own[i].Line);
+                }
             var seen = new HashSet<ClassDecl> { cd };
             for (var b = GetBaseClassDecl(cd); b != null && seen.Add(b); b = GetBaseClassDecl(b))
-                foreach (var md in own)
-                    if (b.Members.OfType<MethodDecl>().FirstOrDefault(o => o.IsStatic != md.IsStatic && BaseName(o.Name) == BaseName(md.Name)) is { } inherited)
-                        throw StaticAndInstance(cd.Name, BaseName(md.Name), md.Line, inherited.Line, b.Name);
+            {
+                var inherited = Named(b);
+                foreach (var member in own)
+                    foreach (var other in inherited)
+                        if (other.Name == member.Name && other.IsStatic != member.IsStatic)
+                            throw member.IsStatic
+                                ? StaticAndInstance(cd.Name, member.Name, member.Kind, other.Kind, member.Line, other.Line, b.Name)
+                                : StaticAndInstance(cd.Name, member.Name, other.Kind, member.Kind, member.Line, other.Line, b.Name);
+            }
         }
 
-        private static ResolverException StaticAndInstance(string cls, string name, int line, int otherLine, string otherClass) =>
-            new($"'{name}' of class '{cls}' is both a static method and an instance method (the other one: line {otherLine}{(otherClass != cls ? $" in '{otherClass}'" : "")}) - " +
-                "a call through the class name and one through an object would mean different methods; give one of them another name", line);
+        private static ResolverException StaticAndInstance(string cls, string name, string staticKind, string instanceKind, int line, int otherLine, string otherClass) =>
+            new($"'{name}' of class '{cls}' is both a static {staticKind} and an instance {instanceKind} (the other one: line {otherLine}{(otherClass != cls ? $" in '{otherClass}'" : "")}) - " +
+                "a use through the class name and one through an object would mean different members; give one of them another name", line);
 
         private void Guard(Action check)
         {

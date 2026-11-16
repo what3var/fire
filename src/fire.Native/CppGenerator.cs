@@ -5287,7 +5287,7 @@ namespace fire.Native
                     return Next();
                 }
                 case OpCode.RelabelUnitDynamic:
-                    Need(2); E($"{S(d - 1)} = relabelUnit({S(d - 1)}, unitOf({S(d - 2)}));"); return Next();
+                    Need(2); E($"{S(d - 1)} = relabelUnit({S(d - 1)}, unitOf({S(d - 2)}));"); Check(); return Next();
                 case OpCode.RelabelUnit:
                 {
                     Need(1);
@@ -5303,7 +5303,7 @@ namespace fire.Native
                     return Next();
                 }
                 case OpCode.CoerceUnitDynamic:
-                    Need(2); E($"{S(d - 1)} = coerceUnit({S(d - 1)}, unitOf({S(d - 2)}));"); return Next();
+                    Need(2); E($"{S(d - 1)} = coerceUnit({S(d - 1)}, unitOf({S(d - 2)}));"); Check(); return Next();
                 case OpCode.CoerceType:
                     Need(1);
                     if (SlotScalars() && (TypeTag)ins.A[0] is TypeTag.Int or TypeTag.Float && (K(d - 1) == KindFloat || NarrowInt(d - 1)))
@@ -5414,7 +5414,8 @@ namespace fire.Native
                     Check();
                     return Next();
                 case OpCode.CoerceTypeDynamic:
-                    Need(2); E($"{S(d - 1)} = coerceType({S(d - 1)}, {S(d - 2)}.kind);"); return Next();
+                    // (`x! + anchor`: the kind of the anchor - a word too; what cannot be converted is the ArgumentException)
+                    Need(2); E($"{S(d - 1)} = coerceTypeTo({S(d - 1)}, {S(d - 2)}.kind);"); Check(); return Next();
                 case OpCode.IsInUnit:
                     Need(1); E($"{S(d - 1)} = Bool(unitCompatible(unitOf({S(d - 1)}), {UnitC(UnitId(chunk.Units[ins.A[0]]))}));"); SetR(d - 1, false); return Next();
                 case OpCode.ToEnum:
@@ -6972,6 +6973,15 @@ namespace fire.Native
                     Need(1);
                     // `int[8] a[] = new int[n]` (TypeArray right after): the packed array is made at once (its TypeArray then finds it typed already)
                     int at = f.IndexOf[ins.Addr] + 1;
+                    // (`new int[n]`: the mark of its kind stands between - ArrayElem.OpenFlag; a declaration of a kind it does not go to is left to its
+                    // TypeArray, which refuses it)
+                    if (at + 1 < f.Decoded.Count && f.Decoded[at] is { Op: OpCode.TypeArray } openMark && (openMark.A[0] & ArrayElem.OpenFlag) != 0 && openMark.A[1] == 1
+                        && f.Decoded[at + 1] is { Op: OpCode.TypeArray } declaredNext && declaredNext.A[1] == 1
+                        && (declaredNext.A[0] is ArrayElem.U8 or ArrayElem.Word || ArrayElem.OpenFits((byte)(openMark.A[0] & ~ArrayElem.OpenFlag), (byte)declaredNext.A[0])))
+                        at++;
+                    // (the mark alone - `any d = new int[2]`, an argument: a plain array)
+                    else if (at < f.Decoded.Count && f.Decoded[at] is { Op: OpCode.TypeArray } onlyMark && (onlyMark.A[0] & ArrayElem.OpenFlag) != 0)
+                        at = f.Decoded.Count;
                     if (at < f.Decoded.Count && f.Decoded[at] is { Op: OpCode.TypeArray } bytes && bytes.A[1] == 1 && bytes.A[0] == ArrayElem.U8)
                         // `byte a[] = new int[n]`: a `byte` declaration holds a buffer (SPEC 8.4.2) - of n zeros, as the conversion of n undefined elements gives
                     {
@@ -6999,6 +7009,11 @@ namespace fire.Native
                         E($"{S(d - 1)} = newArray({S(d - 1)}, &{OwnerList()});");
                     SetR(d - 1, true); return Next();
                 }
+                case OpCode.TypeArray when (ins.A[0] & ArrayElem.OpenFlag) != 0:
+                    // `new int[n]`: the array remembers the kind it was made for (nothing when a declaration right after typed it at once - a buffer or a typed array)
+                    Need(1);
+                    if (!(K(d - 1) == KindBuf || BK(d - 1) == KindArr)) E($"arrMarkOpen({S(d - 1)}, {ins.A[0] & ~ArrayElem.OpenFlag}, {ins.A[1]}, 1);");
+                    _kindsKept = true; return Next();
                 case OpCode.TypeArray when ins.A[0] is ArrayElem.U8 or ArrayElem.Word && ins.A[1] == 1 && K(d - 1) == KindBuf && U(d - 1) == (ins.A[0] == ArrayElem.U8 ? BufBytes : BufWords):
                     // (a buffer of that element made right before: nothing to convert)
                     Need(1); _kindsKept = true; return Next();
