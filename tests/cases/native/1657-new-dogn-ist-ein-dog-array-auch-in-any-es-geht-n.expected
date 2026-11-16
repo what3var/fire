@@ -1,0 +1,19 @@
+1 An array of Dog cannot be stored where an array of Cat is declared.
+2 An array of Dog cannot be stored where an array of Stone is declared.
+3 accepted
+4 An element of an array of Dog must be a Dog (or undefined), not Cat.
+5 accepted
+6 An array of Dog cannot be stored where an array of Cat is declared.
+7 An array of Dog cannot be stored where an array of Cat is declared.
+8 An array of Dog cannot be stored where an array of Cat is declared.
+9 An array of Animal cannot be stored where an array of Dog is declared.
+10 An array of Dog cannot be stored where an array of int is declared.
+11 accepted
+12 An array of Dog cannot be stored where an array of INamed is declared.
+13 An array of Dog cannot be stored where an array of Cat is declared.
+14 An array of string cannot be stored where an array of Cat is declared.
+15 An element of an array of string must be a string (or undefined), not Int.
+16 An array of Dog cannot be stored where an array of Cat is declared.
+17 accepted
+18 An element of an array of Dog must be a Dog (or undefined), not Cat.
+44 0.5m []

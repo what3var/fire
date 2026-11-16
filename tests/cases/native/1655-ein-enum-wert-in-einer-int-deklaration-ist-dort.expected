@@ -1,0 +1,16 @@
+2
+True
+3
+local 2 True
+assigned 2 True
+any 2 True True
+float 2 True
+element 2 True
+own field 1 True
+field 2 True
+field through any 0 True
+static 1 True
+parameter 2 True
+return 1 True
+Blue True False 2
+Variable 'c' is a Color, not Int.
