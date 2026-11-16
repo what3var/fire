@@ -27,6 +27,14 @@ was dem Aufrufer gehört, oder jedes Objekt wie `delete`.
 
 ## Entschieden
 
+### D12. `defined` wird im Debug-Build hergeleitet wie im Release-Build
+
+Bisher leitete ein Debug-Build nichts her (die Begründung: der Debugger ruft Methoden mit dem auf, was man ihm gibt). Dadurch hatte
+`[InferDefined]` dort keine Wirkung, `Reflect.Set(c, "count", undefined)` speicherte im Debug-Build das undefined und warf im Release-Build,
+und ein Feld ohne Initialisierer begann einmal bei undefined und einmal bei 0. Entscheidung des Benutzers: beim Entwickeln sieht man dasselbe
+Verhalten wie im Release-Build - dieselben Prüfungen, Meldungen und Anfangswerte, in VM und nativ. Der Debugger schreibt mit `set` nur Werte der
+Art, die die Variable hält (nie undefined). Ausgenommen bleiben Plugins und Module. Linker.CompileAndLink (TypeChecker.DeriveDefinedOverride).
+
 ### D11. Ein Methodenname ist statisch oder für Instanzen, nicht beides
 
 Gefunden von einem Agenten: `static bool Inside(R a, R b)` neben `bool Inside(int x, int y)` in einer Klasse. Als Programm meldete der Compiler
@@ -53,6 +61,10 @@ Stellen, an denen das Typargument der Deklaration nicht bekannt ist (`Bag<any>`)
 prüft weiter, was hineinkommt: `animals.Add(cat)` auf einem `List<Dog>` und `all[0] = cat` auf einem Dog-Array sind die ArgumentException
 (`Parameter 'value' is a T (Dog), not Cat.`). Die Gegenrichtung (`List<Animal>` in `List<Dog>`) und fremde Klassen gehen nicht. Das ersetzt die
 frühere Regel, dass ein Array einer abgeleiteten Klasse nicht in die Deklaration der Basisklasse geht.
+**`new Dog[n]` ist von Anfang an ein Dog-Array** (Klasse, Interface, Record, `string`, Enum; Compiler: TypeArray nach NewArray): vorher war es
+untypisiert, bis eine Deklaration es typisierte - `any d = new Dog[2]; Cat c[] = d` ging durch und machte es zum Cat-Array. Ein Zahlen-Array
+(`new int[n]`) bleibt offen, bis eine Deklaration ihm Breite und Einheit gibt. Der Typprüfer meldet ein Array der Basisklasse in der Deklaration
+der abgeleiteten (`Dog d[] = animals`) als TC001 (ein einzelnes Objekt darf weiter die abgeleitete Klasse sein).
 DeclaredType.WithTypeArgs / TypeArgsFit, VM.ClassArrayIsOf, nativ ClassGuard mit `guardTypeArgsFailed`, `TArg.isA` / `ArrClass.isA` mit `typeNameIn`.
 
 ### D8. Eine Deklaration `Color c` prüft zur Laufzeit
@@ -60,7 +72,9 @@ DeclaredType.WithTypeArgs / TypeArgsFit, VM.ClassArrayIsOf, nativ ClassGuard mit
 Ein Parameter, ein Feld, eine Property, eine Rückgabe oder eine Variable, die mit einem Enum deklariert ist, nimmt einen Wert dieses Enums oder
 undefined - alles andere ist eine ArgumentException (`Parameter 'c' is a Color, not Int.`), wie bei `Dog d` für Klassen. Vorher prüfte das nur
 der Typprüfer (und zur Laufzeit `defined Color c`, `Color cs[]` und ein `T` mit dem Typargument `Color`). Eine Zahl geht mit einem Cast hinein
-(`5!Color`); ein Enum-Wert geht weiter ohne Cast in ein `int`. Entscheidung des Benutzers. Compiler.DeclaredTypeOf, TypeChecker.GuardLocalValue /
+(`5!Color`); ein Enum-Wert geht weiter ohne Cast in ein `int` - und ist dort seine Zahl (`int n = Color.Blue`: `print(n)` gibt `2`, `n is of int`
+stimmt; vorher blieb der Wert in einer `int`-Deklaration ohne `defined` ein Enum-Wert, in VM und nativ, und in `int a[]` nur in der VM;
+DeclaredKind.Accept, fire_rt.h guardKind). Entscheidung des Benutzers. Compiler.DeclaredTypeOf, TypeChecker.GuardLocalValue /
 GuardValue (SPEC 8.10b).
 
 ### D4. Ein Enum als Typargument ist zur Laufzeit bekannt

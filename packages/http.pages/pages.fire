@@ -685,9 +685,12 @@ namespace Http {
                 // (the answer of a browser.Call: its callback gets the result)
                 int call = o.Get("id")
                 if (call >= 0 && call < this.callbacks.Count) {
+                    // (the list owns the lambda - Call took it -, and a list destroys what it owns when the place is overwritten: called first, then dropped)
                     any callback = this.callbacks[call]
-                    this.callbacks[call] = undefined
-                    if (callback != undefined) { callback(o.Get("v")) }
+                    if (callback != undefined) {
+                        callback(o.Get("v"))
+                        this.callbacks[call] = undefined
+                    }
                 }
                 return this.Changes()
             }
@@ -1111,12 +1114,17 @@ namespace Http {
             var start = new Http.PageStart(typeName, id, session)
             // (the directory - an actor - goes with `with`: its reference, not the actor)
             fire handover back handover start with directory {
+                bool started = false
                 try {
                     var c = new Http.PageCircuit(start.typeName, start.id, start.session, directory)
                     back.Set(c)
+                    started = true
                     Http.PageCircuit.Serve(c)
                 } catch (e) {
-                    back.Fail(e)
+                    // (the page could not be made: the request that waits gets the exception. Later - a handler of the page threw - nobody waits any
+                    // more and the completion is gone: the exception stays what it is, an unhandled one of this thread)
+                    if (!started) { back.Fail(e) }
+                    else { throw e }
                 }
             }
         }

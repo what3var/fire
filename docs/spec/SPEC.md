@@ -1968,8 +1968,9 @@ class that implements the interface, the record, a string, a value of the enum -
 (`An element of an array of Dog must be a Dog (or undefined), not Cat.`), through any reference. The elements stay values (no packing). An array
 typed with another class does not go into such a declaration (`An array of Dog cannot be stored where an array of Cat is declared.`). An array of a
 derived class does go where one of its base class or of an interface it implements is declared (`Animal all[] = pets`): it keeps the element type
-it was given, so `all[0] = cat` is still the `ArgumentException` of the Dog array. The other direction (an Animal array into `Dog d[]`) is refused. `new Dog[n]` starts with
-n `undefined` elements. `defined` works for them too: `defined string s[] = new string[n]` starts with `""`, `defined Color c[] = new Color[n]`
+it was given, so `all[0] = cat` is still the `ArgumentException` of the Dog array. The other direction (an Animal array into `Dog d[]`) is refused (TC001 where the checker knows both types). `new Dog[n]` starts with
+n `undefined` elements and is an array of Dog from the start, also where no declaration types it (`any d = new Dog[2]`: `Cat c[] = d` is that
+`ArgumentException`); an array of numbers (`new int[n]`) takes its width and unit from the first declaration it is stored in. `defined` works for them too: `defined string s[] = new string[n]` starts with `""`, `defined Color c[] = new Color[n]`
 with the first value of the enum; `defined Dog d[]` has no zero, so it only takes an array whose elements are all given (`[new Dog("a")]`) -
 `new Dog[2]` there is an `ArgumentException` (`An element of a defined array of Dog cannot be undefined.`). VM and native backend behave the
 same (ArrayElem.Class, natively E_CLASS/TU_CLASS with a table of checks, g_arrClasses). JSON types what it reads for such a field like any other
@@ -2455,7 +2456,8 @@ front of the type it **never holds `undefined`**: a parameter, a field, a proper
 
 * **What goes in is checked**, like any declared kind (an `int` into a `float` becomes a float, another kind is an
   `ArgumentException`) - and `undefined` is an `ArgumentException` too ("Parameter 'a' is an int and never undefined.").
-  A value of an **enum** becomes its number (`defined int` holds only the number).
+  A value of an **enum** becomes its number - in a plain `int` declaration as well (`int n = Color.Blue` holds 2, `n is of int`; TC001 says that
+  a cast `Color.Blue!int` is meant).
 * **A field, a property's field and a variable without an initializer start at zero** in the unit they demand (`0`, `0.0`,
   `False`, the word 0, the char 0).
 * **A return value**: every `return` is checked, and the end of the body (which returns `undefined`) is the exception.
@@ -2475,7 +2477,7 @@ front of the type it **never holds `undefined`**: a parameter, a field, a proper
   a word of its own only there (a variable may still be called `defined`). Of an array (`defined int a[]`) it says that
   the elements are never undefined (8.4.2); not for a pointer or a type argument (`List<defined int>` is an error). `int!` is an error
   that names `defined int`. Overloads do not differ by `defined` alone.
-* **Derived for fields** (not in a debug build; `FIRE_NO_DERIVE=1` switches all derivation off): a field of a
+* **Derived for fields** (in a debug build exactly as in a release build; `FIRE_NO_DERIVE=1` switches all derivation off): a field of a
   class of the program declared `int`, `float` or `bool` without `defined` is compiled as a `defined` one when every write the type checker sees
   gives a number (or the result of a method, a parameter or another field that is derived itself) and none can write it unseen (`&`, a `ref`
   argument, `with`, `Json.Deserialize` in the program). With a number literal as initializer it keeps it; one without an initializer only when its `undefined` cannot

@@ -292,7 +292,7 @@ namespace fire.Compiler
         // as a lambda) or appears as a string (reflection, callbacks by name), when a package or the prelude has a method of that name and arity (the run
         // time or a package may call it), for the methods the language calls itself (indexers, CompareTo, ...), nor for the constructors of a class that
         // is a base class, nor - without [InferDefined] on the class (InferDefinedClass) - when the program uses reflection. The Linker switches it off for a
-        // module or plugin and in a debug build.
+        // module or plugin; a debug build derives like a release build.
 
         /// <summary>Whether the check derives `defined` for the parameters of the program (FIRE_NO_DERIVE=1 switches it off).</summary>
         [ThreadStatic] public static bool? DeriveDefinedOverride;
@@ -920,7 +920,14 @@ namespace fire.Compiler
             if (value.Kind == StaticKind.Array && target is { Kind: StaticKind.Class, Class: "IEnumerable" })
                 return target.Args is not [var wanted] || Assignable(value.Element!, wanted);
             if (value.Kind == StaticKind.Array || target.Kind == StaticKind.Array)
-                return value.Kind == target.Kind && Assignable(value.Element!, target.Element!);
+            {
+                if (value.Kind != target.Kind) return false;
+                // an array keeps its element type (DECISIONS D10): a Dog array goes where `Animal a[]` is declared, an Animal array never where `Dog d[]`
+                // is (at run time the ArgumentException) - other than a single object, which may be the derived class the code expects
+                if (value.Element is { Kind: StaticKind.Class, Class: { } have } && target.Element is { Kind: StaticKind.Class, Class: { } want } && have != want
+                    && (_classes.ContainsKey(have) || IsInterface(have)) && (_classes.ContainsKey(want) || IsInterface(want)) && !DerivesFrom(have, want)) return false;
+                return Assignable(value.Element!, target.Element!);
+            }
             if (value.Kind == StaticKind.Lambda && target.Kind == StaticKind.Lambda)
             {
                 if (value.ParamCount >= 0 && target.ParamCount >= 0 && value.ParamCount != target.ParamCount) return false;

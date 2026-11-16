@@ -114,7 +114,7 @@ int missing
 try { Stats.Mix(missing, 1) } catch (ArgumentException e) { print(e.message) }   // Parameter 'a' is an int and never undefined.
 ```
 
-- `undefined` going in is an `ArgumentException`, a value of an enum becomes its number, everything else is checked as above.
+- `undefined` going in is an `ArgumentException`, everything else is checked as above (a value of an enum becomes its number, as in every `int`).
 - A field or variable declared `defined` without an initializer starts at zero (in its unit), `false`, the word 0 or the char 0.
 - A method declared `defined int` must return a number on every path: the end of its body (which would return `undefined`) is the exception.
 - The type checker warns (`TC022`) where something that may be `undefined` goes in - a parameter, field or uninitialized variable declared without
@@ -160,7 +160,8 @@ constructors. A parameter declared `int` or `float` that every call gives a numb
 parameter or a return that is derived itself, a default that is a number) is checked and passed like a `defined` one; so is a return value when
 every `return` gives a number and the method cannot run off its end. Nothing is derived for a method that something may call unseen: a call
 through a value of an unknown type (`any`), the method used as a value or named in a string, an override of a method of a package or the prelude,
-the constructors of a base class - and not at all in a plugin or module, or in a debug build. A program that uses reflection derives no parameter (a
+the constructors of a base class - and not at all in a plugin or module. A debug build derives exactly like a release build: the same checks, the
+same messages, the same values while you develop. A program that uses reflection derives no parameter (a
 method can be called by its name), one that reads JSON into objects (`Json.Deserialize`) or uses reflection derives no field - unless the class says
 otherwise (below).
 The same holds for **fields** of your classes declared `int`, `float` or `bool`: a field whose every write gives a number (`count++`, `step = step + 1`,
@@ -168,7 +169,7 @@ the result of a method or a parameter that is derived itself) is a `defined` one
 initializer** only when nobody can see its `undefined`: every constructor of its class sets it first (among its first plain statements - before any call,
 before `x++` or any other read), the program never asks (`if (cache == undefined) ...`, `is of`, `?.`), and nothing reaches it before - the constructors
 and field initializers of the base classes run first, so they must not use a member that the class (or a class derived from it) declares, nor hand out
-`this`. It starts at 0 then (a release build). A field nothing writes, or one that `with`, a pointer, a `ref` argument or `Json.Deserialize` may set, is left alone. `FIRE_INFER_UNINITIALIZED_DEFINED=0` keeps the fields without an initializer out of it.
+`this`. It starts at 0 then (in a debug build as well). A field nothing writes, or one that `with`, a pointer, a `ref` argument or `Json.Deserialize` may set, is left alone. `FIRE_INFER_UNINITIALIZED_DEFINED=0` keeps the fields without an initializer out of it.
 Natively such a field is a C number in the object.
 `FIRE_DERIVE_LOG=1` shows what was decided, `FIRE_NO_DERIVE=1` switches it off.
 
@@ -190,8 +191,8 @@ try { Reflect.Set(c, "count", undefined) } catch (ArgumentException e) { print(e
 print(c.count)                             // 2
 ```
 
-Without the attribute the field stays as declared, and `Reflect.Set` stores the `undefined` - so does a debug build (the default in spark, `forge run -m
-debug`), which derives nothing.
+Without the attribute the field stays as declared, and `Reflect.Set` stores the `undefined`. A debug build (the default in spark, `forge run -m
+debug`) behaves the same as a release build here: it derives the same fields and parameters and gives the same messages.
 
 ## The type checker: lax and strict
 

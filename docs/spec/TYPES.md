@@ -207,7 +207,8 @@ instructions (more fused ones, or registers instead of the stack) - a step of it
   value or written as a string (not in a class with `[InferDefined]`); every method and constructor of a class without `[InferDefined]` when the
   program uses reflection (TypeChecker.ReflectionUsed: the class `Reflect` of the package is part of it); a method that overrides or implements one of a package or the prelude; the methods the language calls itself
   (`GetIndex`, `CompareTo`, ...); the constructors of base classes and of classes a `new` was not resolved for. The Linker switches the derivation
-  off for a program that writes class metadata (a plugin), has imports of its own or is a debug build. Fields: DisqualifyFields leaves out every
+  off for a program that writes class metadata (a plugin) or has imports of its own; a debug build derives exactly like a release build (the debugger's
+  `set` writes a value of the kind the variable holds, never `undefined`). Fields: DisqualifyFields leaves out every
   field of a class without `[InferDefined]` when the program (a package included) calls `Json.Deserialize` - `$type` in the text may name any class -
   and FieldCandidates every one when it uses reflection; `[InferDefined]` makes a class of a package a candidate too. What reaches a derived member of
   such a class from outside goes through the checks it is compiled with: `Reflect.Set`/`Reflect.Call` check the declared kind and `undefined`, and the

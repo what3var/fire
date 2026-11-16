@@ -2940,6 +2940,12 @@ namespace fire.Compiler
                         _chunk.EmitOp(OpCode.TypeArrayOfParam);
                         _chunk.EmitU16(_chunk.AddConstant(Value.MakeString(paramText)));
                     }
+                    // `new Dog[n]`, `new string[n]`, `new Color[n]` (a class, an interface, a record, a string, an enum, lambdas): the array is one of that
+                    // element from the start - also where no declaration types it (`any d = new Dog[2]`, `var x = new Dog[2]`, an argument): what is stored
+                    // into it is checked, and it goes only where an array of that class or of a base class is declared (DECISIONS D10). An array of numbers
+                    // stays open until a declaration gives it its width and unit (`int[8] a[] = new int[4]`, `float:m f[] = new float[2]`).
+                    else if (ClassArrayCode(na.ElementType, na.SizeExprs.Count, _enclosingClass, out var newText) is var newCode and not 0)
+                        EmitWidthIfNeeded(this, newCode, newText);
                     break;
 
                 case NewBufferExpr { Words: true } nw:

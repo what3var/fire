@@ -584,9 +584,9 @@ namespace fire.Native
             bool nonNull = DeclaredKind.IsNonNull(declared), unitless = DeclaredKind.IsUnitless(declared);
             // (proven by the static type: a number of that kind without a unit - never undefined when the parameter is `defined`)
             if ((type & TypeNone) == 0 && type != TypeUnknown && BaseKindOfType(type) == kind && (!unitless || kind is KindBool or KindWord || UnitOfType(type) == 0)
-                && (!nonNull || !IsNullable(type)) && (kind != KindInt || (type & CutBit) == 0)) return "";
+                && (!nonNull || !IsNullable(type)) && (kind != KindInt || (type & NarrowBit) != 0)) return "";   // (NarrowBit: not wide and no value of an enum - DeclaredKind.Fits)
             string kc = kind switch { KindInt => "K_Int", KindFloat => "K_Float", KindBool => "K_Bool", KindWord => "K_Word", _ => "K_Char" };
-            string fits = $"{v}.kind == {kc}" + (unitless && kind is KindInt or KindFloat ? $" && {v}.unit == 0" : "") + (kind == KindInt ? $" && {v}.wide == 0" + (nonNull ? $" && {v}.reserved == 0" : "") : "");
+            string fits = $"{v}.kind == {kc}" + (unitless && kind is KindInt or KindFloat ? $" && {v}.unit == 0" : "") + (kind == KindInt ? $" && {v}.wide == 0 && {v}.reserved == 0" : "");
             return nonNull ? $" && ({fits})" : $" && ({v}.kind == K_Undefined || ({fits}))";
         }
 
@@ -784,7 +784,8 @@ namespace fire.Native
         // (reserved 0) - so it may live as a C number. Set only where that is proven: a constant of the program's width, arithmetic on narrow operands (its
         // result is a new number), an element of a typed int array or of a byte buffer, `length`, a cut to a width (ConvertWidth). A type without it is maybe
         // wide or an enum value.
-        // CutBit (on an int): of the program's width but maybe a value of an enum - a plain `int` parameter or field (every way in cuts to the program's int):
+        // CutBit (on an int): of the program's width, what came out of a plain `int` parameter or field (every way in cuts to the program's int and makes a
+        // value of an enum its number - guardKind; the bit was introduced when such a declaration still kept the enum value, and stays the weaker claim):
         // a comparison may read its number (ScalarIntCondition), a variable does not become a C number from it.
         private const int NarrowBit = 0x40, CutBit = 0x80;
         private static int TypeOf(byte kind, int unit) => kind == KindUnknown ? TypeUnknown : kind | (kind == KindBool ? 0 : unit) << 8;
@@ -949,7 +950,10 @@ namespace fire.Native
             string? requiredType = rc.FindFieldRequiredType(name);
             if (requiredType != null && FitsClassType(valueType, requiredType)) requiredType = null;
             // a value whose type already is what the declaration demands needs no check (a number of the declared kind in its unit, or a bool)
-            if (kind != 0 && !IsNullable(valueType) && KindOfType(valueType) == KindOfDeclared(kind) && valueType != TypeNone)
+            // (an int: only one that is certainly no value of an enum - NarrowBit, or CutBit: what came out of an `int` declaration -; the check makes
+            // an enum's value its number, DeclaredKind.Accept)
+            if (kind != 0 && !IsNullable(valueType) && KindOfType(valueType) == KindOfDeclared(kind) && valueType != TypeNone
+                && (KindOfDeclared(kind) != KindInt || (valueType & (NarrowBit | CutBit)) != 0))
             {
                 int demanded = unit != null ? DemandedUnitId(unit) : DeclaredKind.IsUnitless(kind) ? 0 : -1;
                 if (KindOfDeclared(kind) == KindBool || demanded >= 0 && UnitOfType(valueType) == demanded) { unit = null; kind = 0; }
@@ -3015,14 +3019,14 @@ namespace fire.Native
             TypeTag.Int => "K_Int", TypeTag.Float => "K_Float", TypeTag.Word => "K_Word", TypeTag.Char => "K_Char", _ => "K_Bool",
         };
         /// <summary>The check of a declared kind as a statement on a Value variable: the test of what needs no change is inline (guardKind's fast path: the kind,
-        /// no unit when it demands none, no enum for `defined int`, the program's width), the rest is guardSlot - with `exit`, the label it leaves for when it threw
+        /// no unit when it demands none, no value of an enum for an int, the program's width), the rest is guardSlot - with `exit`, the label it leaves for when it threw
         /// (null: a program without exceptions).</summary>
         private string GuardStmt(string v, byte declared, string what, string? exit)
         {
             bool cut = DeclaredKind.TagOf(declared) == TypeTag.Int && !DeclaredKind.KeepsWidth(declared) && _program.IntWidth < 64;
             bool nn = DeclaredKind.IsNonNull(declared), unitless = DeclaredKind.IsUnitless(declared);
             string kind = KindConstant(declared);
-            string fast = $"{v}.kind == {kind}" + (unitless ? $" && {v}.unit == 0" : "") + (nn && kind == "K_Int" ? $" && {v}.reserved == 0" : "") + (cut ? $" && {v}.wide == 0" : "");
+            string fast = $"{v}.kind == {kind}" + (unitless ? $" && {v}.unit == 0" : "") + (kind == "K_Int" ? $" && {v}.reserved == 0" : "") + (cut ? $" && {v}.wide == 0" : "");
             int flags = (unitless ? 1 : 0) | (nn ? 2 : 0) | (cut ? 4 : 0);
             string text = Constant(Value.MakeString(Unit.DemandDisplay("unitless")));   // StrV(&K..)
             string slow = $"guardSlot(&{v}, {kind}, {flags}, {CString(what)}, {text.Substring(5, text.Length - 6)})";

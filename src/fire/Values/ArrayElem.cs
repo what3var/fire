@@ -95,6 +95,8 @@ namespace fire.Values
                 message = $"An element of an array of {display} must be {("AEIOUaeiou".Contains(display[0]) ? "an" : "a")} {display} (or undefined), not {have}.";
                 return false;
             }
+            // (an element of `int a[]` is an int: a value of an enum is stored as its number, like in an `int` variable - the native runtime does the same)
+            if (value.IsEnum) stored = value = value.WithoutEnum();
             // (the common case - an int of the program without a unit into `int a[]`: stored as it is)
             if (type == I64 && unit == null && value.Kind == ValueKind.Int && value.Wide == 0 && value.Unit is null or { IsUnitless: true }) return true;
             switch (type)

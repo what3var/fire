@@ -21,7 +21,12 @@ static class TypeTests
     private static string Run(string source, TypeCheckMode? mode = null) => Run(source, mode, false);
 
     /// <param name="verbose">the findings with their messages (where the standard library has one)</param>
-    private static string Run(string source, TypeCheckMode? mode, bool verbose)
+    private static string Run(string source, TypeCheckMode? mode, bool verbose) => Run(source, mode, verbose, VmExecutionMode.Release);
+
+    /// <summary>Run in a debug build of the VM (`forge run -m debug`, the default of the editor).</summary>
+    private static string RunDebug(string source) => Run(source, null, false, VmExecutionMode.Debug);
+
+    private static string Run(string source, TypeCheckMode? mode, bool verbose, VmExecutionMode execution)
     {
         var warnings = new DiagnosticCollector();
         var lines = new List<string>();
@@ -31,7 +36,7 @@ static class TypeTests
         {
             using (warnings.Begin())
             {
-                var session = RuntimeSession.Build(new[] { source }, VmExecutionMode.Release, a => { lines.Add(a[0].ToString()!); return Value.MakeUndefined(); });
+                var session = RuntimeSession.Build(new[] { source }, execution, a => { lines.Add(a[0].ToString()!); return Value.MakeUndefined(); });
                 session.Run();
             }
         }
@@ -810,6 +815,206 @@ static class TypeTests
                 Run("class R {\n bool Inside(int a, int b) { return true }\n static bool Inside(R a, R b) { return false }\n}\nprint(1)") is var mixed && mixed.StartsWith("|ERROR E4076")
                 && Run("class B { static int F(int a) { return 1 } }\nclass C : B { int F() { return 2 } }\nprint(1)").StartsWith("|ERROR E4076")
                 && Run("class R { int G() { return 1 } static int H() { return 2 } }\nprint(R.H() + new R().G())") == "|3", mixed);
+            Check("E4076 auch, wenn die abgeleitete Klasse die statische Methode hat und die Basis die fuer Instanzen",
+                Run("class A { int Get() { return 1 } }\nclass B : A { static int Get(int a) { return a } }\nprint(1)") is var mixedUp && mixedUp.StartsWith("|ERROR E4076"), mixedUp);
+            // An `int` holds an int: a value of an enum that goes into one (TC001 says a cast is meant) is its number there - a variable, a global, a
+            // field, a static field, a parameter, a return value, an element of `int a[]`, also through `any` - in a debug build as in a release build
+            const string enumIntoInt = """
+                enum Color { Red, Green, Blue }
+                class H {
+                    int f = 1
+                    static int s = 1
+                    int Take(int p) { return p }
+                    int Ret() { any c = Color.Green; return c }
+                    undefined Local() {
+                        int k = Color.Blue
+                        print("local " + k + " " + (k is of int))
+                        int j = 1
+                        j = Color.Blue
+                        print("assigned " + j + " " + (j is of int))
+                        any a = Color.Blue
+                        int viaAny = a
+                        print("any " + viaAny + " " + (viaAny is of int) + " " + (a is of Color))
+                        float fl = Color.Blue
+                        print("float " + fl + " " + (fl is of float))
+                        int arr[] = new int[2]
+                        arr[0] = Color.Blue
+                        print("element " + arr[0] + " " + (arr[0] is of int))
+                    }
+                }
+                int n = Color.Blue
+                print(n)
+                print(n is of int)
+                print(n + 1)
+                var h = new H()
+                h.Local()
+                h.f = Color.Blue
+                print("field " + h.f + " " + (h.f is of int))
+                H.s = Color.Green
+                print("static " + H.s + " " + (H.s is of int))
+                var r = h.Take(Color.Blue)
+                print("parameter " + r + " " + (r is of int))
+                var q = h.Ret()
+                print("return " + q + " " + (q is of int))
+                Color c = Color.Blue
+                print(c + " " + (c is of Color) + " " + (c is of int) + " " + c!int)
+                try { c = 2; print("an int went into a Color") } catch (ArgumentException e) { print(e.message) }
+                """;
+            const string enumIntoIntOut = "2\nTrue\n3\nlocal 2 True\nassigned 2 True\nany 2 True True\nfloat 2 True\nelement 2 True\nfield 2 True\nstatic 1 True\nparameter 2 True\nreturn 1 True\n"
+                + "Blue True False 2\nVariable 'c' is a Color, not Int.";
+            Check("Ein Enum-Wert in einer int-Deklaration ist dort seine Zahl (TC001 bleibt): Variable, Feld, statisches Feld, Parameter, Rueckgabe, Element, ueber any",
+                Run(enumIntoInt) is var enumInt && enumInt.EndsWith("|" + enumIntoIntOut) && enumInt.StartsWith("TC001") && !enumInt.Contains("ERROR"), enumInt);
+            Check("Ein Enum-Wert in einer int-Deklaration: im Debug-Build dasselbe", RunDebug(enumIntoInt) is var enumIntDebug && enumIntDebug == enumInt, enumIntDebug);
+            // `new Dog[n]` is a Dog array from the start (DECISIONS D10): held in `any` it goes only where an array of Dog or of a base class is declared,
+            // and it checks what is stored through every reference
+            const string arraysFromAny = """
+                class Animal { }
+                class Dog : Animal { }
+                class Cat : Animal { }
+                class Stone { }
+                interface INamed { }
+                class Bird : Animal, INamed { }
+                class Box { Cat cats[]
+                    undefined Set(any a) { this.cats = a } }
+                class U { static undefined TakeCats(Cat c[]) { print("took " + c.length) } }
+                any d = new Dog[2]
+                try { Cat c[] = d; print("1 accepted") } catch (ArgumentException e) { print("1 " + e.message) }
+                try { Stone s[] = d; print("2 accepted") } catch (ArgumentException e) { print("2 " + e.message) }
+                try { Animal a[] = d; print("3 accepted") } catch (ArgumentException e) { print("3 " + e.message) }
+                try { Animal a[] = d; a[0] = new Cat(); print("4 accepted") } catch (ArgumentException e) { print("4 " + e.message) }
+                try { Animal a[] = d; a[0] = new Dog(); print("5 accepted") } catch (ArgumentException e) { print("5 " + e.message) }
+                try { Cat c[]; c = d; print("6 accepted") } catch (ArgumentException e) { print("6 " + e.message) }
+                try { var b = new Box(); b.Set(d); print("7 accepted") } catch (ArgumentException e) { print("7 " + e.message) }
+                try { U.TakeCats(d); print("8 accepted") } catch (ArgumentException e) { print("8 " + e.message) }
+                any an = new Animal[2]
+                try { Dog dd[] = an; print("9 accepted") } catch (ArgumentException e) { print("9 " + e.message) }
+                try { int n[] = d; print("10 accepted") } catch (ArgumentException e) { print("10 " + e.message) }
+                any birds = new Bird[1]
+                try { INamed n[] = birds; print("11 accepted") } catch (ArgumentException e) { print("11 " + e.message) }
+                try { INamed n[] = d; print("12 accepted") } catch (ArgumentException e) { print("12 " + e.message) }
+                any nested = new Dog[2][2]
+                try { Cat c[][] = nested; print("13 accepted") } catch (ArgumentException e) { print("13 " + e.message) }
+                any strs = new string[2]
+                try { Cat c[] = strs; print("14 accepted") } catch (ArgumentException e) { print("14 " + e.message) }
+                try { strs[0] = 5; print("15 accepted") } catch (ArgumentException e) { print("15 " + e.message) }
+                var x = new Dog[2]
+                any viaVar = x
+                try { Cat c[] = viaVar; print("16 accepted") } catch (ArgumentException e) { print("16 " + e.message) }
+                any empty = []
+                try { Cat c[] = empty; print("17 accepted") } catch (ArgumentException e) { print("17 " + e.message) }
+                int[8] small[] = new int[4]
+                small[0] = 300
+                float:m lens[] = new float[2]
+                lens[0] = 50cm
+                defined string names[] = new string[2]
+                print(small[0] + " " + lens[0] + " [" + names[1] + "]")
+                """;
+            const string arraysFromAnyOut = "1 An array of Dog cannot be stored where an array of Cat is declared.\n2 An array of Dog cannot be stored where an array of Stone is declared.\n3 accepted\n"
+                + "4 An element of an array of Dog must be a Dog (or undefined), not Cat.\n5 accepted\n6 An array of Dog cannot be stored where an array of Cat is declared.\n"
+                + "7 An array of Dog cannot be stored where an array of Cat is declared.\n8 An array of Dog cannot be stored where an array of Cat is declared.\n"
+                + "9 An array of Animal cannot be stored where an array of Dog is declared.\n10 An array of Dog cannot be stored where an array of int is declared.\n11 accepted\n"
+                + "12 An array of Dog cannot be stored where an array of INamed is declared.\n13 An array of Dog cannot be stored where an array of Cat is declared.\n"
+                + "14 An array of string cannot be stored where an array of Cat is declared.\n15 An element of an array of string must be a string (or undefined), not Int.\n"
+                + "16 An array of Dog cannot be stored where an array of Cat is declared.\n17 accepted\n44 0.5m []";
+            Check("new Dog[n] ist ein Dog-Array, auch in any: nur in die Deklaration von Dog oder einer Basis (Kovarianz), das Array prueft weiter, was hineinkommt; Zahlen-Arrays nehmen Breite und Einheit der Deklaration",
+                Run(arraysFromAny) is var fromAny && fromAny == "|" + arraysFromAnyOut && RunDebug(arraysFromAny) == fromAny, fromAny);
+            Check("Arrays zur Uebersetzungszeit: ein fremdes Array und ein Array der Basisklasse in der Deklaration der abgeleiteten sind TC001 (strict: ein Fehler), die Basis-Deklaration nimmt das abgeleitete",
+                Run("class Animal { }\nclass Dog : Animal { }\nclass Cat : Animal { }\nDog dogs[] = new Dog[1]\nAnimal all[] = dogs\nAnimal fresh[] = new Dog[1]\nprint(all.length + fresh.length)") is var covariant && covariant == "|2"
+                && Run("class Animal { }\nclass Dog : Animal { }\nclass Cat : Animal { }\nDog dogs[] = new Dog[1]\ntry { Cat c[] = dogs } catch (ArgumentException e) { print(e.message) }") == "TC001|An array of Dog cannot be stored where an array of Cat is declared."
+                && Run("class Animal { }\nclass Dog : Animal { }\nAnimal all[] = new Animal[1]\ntry { Dog d[] = all } catch (ArgumentException e) { print(e.message) }") == "TC001|An array of Animal cannot be stored where an array of Dog is declared."
+                && Run("class Animal { }\nclass Dog : Animal { }\ntry { Dog d[] = new Animal[1] } catch (ArgumentException e) { print(e.message) }") == "TC001|An array of Animal cannot be stored where an array of Dog is declared."
+                && Run("class Animal { }\nclass Dog : Animal { }\nDog d[] = new Animal[1]", TypeCheckMode.Strict) == "|ERROR TC001", covariant);
+            // DECISIONS D12: a debug build derives `defined` exactly like a release build - [InferDefined] with reflection and JSON, the fields and
+            // parameters of a plain program, a field without an initializer that starts at 0
+            const string inferDefined = """
+                #import "reflection"
+                #import "json"
+                [InferDefined]
+                class Counter {
+                    int count = 0
+                    int late
+                    construct() { this.late = 5 }
+                    undefined Add(int n) { this.count = this.count + n }
+                }
+                class Plain {
+                    int n = 3
+                    construct() { }
+                    undefined Add(int by) { this.n = this.n + by }
+                }
+                var c = new Counter()
+                c.Add(2)
+                try { Reflect.Set(c, "count", undefined); print("stored undefined: " + c.count) } catch (ArgumentException e) { print(e.message) }
+                print(c.count)
+                var j = Json.Deserialize<Counter>("{}")
+                print("json missing: " + j.count + " " + j.late)
+                try { var k = Json.Deserialize<Counter>("{\"count\": null}"); print("json null: " + k.count) } catch (ArgumentException e) { print(e.message) }
+                var p = new Plain()
+                p.Add(1)
+                Reflect.Set(p, "n", undefined)
+                print("plain: " + p.n)
+                """;
+            const string inferDefinedOut = "|Field 'count' (derived as never undefined: nothing in the program stores undefined in it) is an int and never undefined.\n2\njson missing: 0 0\n"
+                + "$.count is an int and never undefined (derived: nothing in the program stores undefined in it).\nplain: undefined";
+            Check("[InferDefined] im Debug-Build wie im Release-Build (DECISIONS D12): Reflect.Set und JSON gehen durch die hergeleitete Pruefung, ohne Attribut bleibt das Feld wie deklariert",
+                Run(inferDefined) is var inferRelease && inferRelease == inferDefinedOut && RunDebug(inferDefined) is var inferDebug && inferDebug == inferDefinedOut, _lastRun);
+            {
+                // (without the attribute: what is derived shows in the declared kind the classes are compiled with)
+                const string derivedPlain = "class C {\n    int count\n    int step = 2\n    int maybe = 1\n    construct() { count = 0 }\n    undefined Add(int x) { count++; step = step + x }\n"
+                    + "    undefined Set(any v) { maybe = v }\n}\nvar c = new C()\nc.Add(3)\nc.Set(4)\nprint(c.count + c.step + c.maybe)";
+                string States(VmExecutionMode execution)
+                {
+                    var rc = new Linker().CompileAndLink(new[] { derivedPlain }, null, null, execution).Program.Classes["C"];
+                    return string.Join(" ", new[] { "count", "step", "maybe" }.Select(f => f + "=" + fire.Bytecode.DeclaredKind.IsNonNull(rc.FindFieldRequiredKind(f))));
+                }
+                string releaseStates = States(VmExecutionMode.Release), debugStates = States(VmExecutionMode.Debug);
+                Check("Hergeleitetes defined ohne Attribut: ein Debug-Build leitet dieselben Felder her wie ein Release-Build (count ohne Initialisierer, step; maybe nicht) und laeuft gleich",
+                    releaseStates == "count=True step=True maybe=False" && debugStates == releaseStates && Run(derivedPlain) == "|10" && RunDebug(derivedPlain) == "|10", releaseStates + " / " + debugStates);
+            }
+            // An exception of the method of a message that a `catch` around the `process` takes (in a fire thread - a task of the pool - and in the main
+            // program): the VM popped a result the method never returned ("Index was outside the bounds of the array", the end of the thread)
+            const string processCatch = """
+                class Oops : Exception { construct(string m) : base(m) { } }
+                actor Worker {
+                    int handled = 0
+                    undefined Fail(string why) { throw new Oops(why) }
+                    undefined Ok() { this.handled = this.handled + 1 }
+                }
+                string log = ""
+                int done = 0
+                fire {
+                    var w = new Worker()
+                    string out = ""
+                    w.Fail("first")
+                    try { process w; out = out + "not reached\n" } catch (Oops e) { out = out + "process: " + e.message + "\n" }
+                    w.Fail("second")
+                    try { while (try process w) { out = out + "not reached\n" } } catch (Oops e) { out = out + "try process: " + e.message + "\n" }
+                    w.Ok()
+                    w.Fail("third")
+                    w.Ok()
+                    try {
+                        int n = 0
+                        while (try process w) { n = n + 1 }
+                        out = out + "not reached " + n + "\n"
+                    } catch (Exception e) { out = out + "outer: " + e.message + "\n" }
+                    int rest = 0
+                    while (try process w) { rest = rest + 1 }
+                    out = out + "rest " + rest + " handled " + w.handled
+                    sync global { log = out; done = 1 }
+                }
+                while (done < 1) { sync globals }
+                print(log)
+                actor Main2 { undefined Boom() { throw new Oops("main") } }
+                var m = new Main2()
+                m.Boom()
+                try { process m; print("not reached") } catch (Oops e) { print("main process: " + e.message) }
+                m.Boom()
+                int k = 5
+                try { if (try process m) { print("not reached") } } catch (Oops e) { print("main try process: " + e.message + " " + k) }
+                print("end")
+                """;
+            Check("process: eine Ausnahme der Nachricht, die ein catch um das process faengt (fire-Thread und Hauptprogramm) - kein Laufzeitfehler der VM, der Stack bleibt",
+                Run(processCatch) is var processed && processed == "|process: first\ntry process: second\nouter: third\nrest 1 handled 2\nmain process: main\nmain try process: main 5\nend"
+                && RunDebug(processCatch) == processed, processed);
             Check("Interface-Vererbung: ein Zyklus ist E4068, eine Klasse als Basis E4067", Run("interface IA : IB { }\ninterface IB : IC { }\ninterface IC : IA { }\nprint(1)") is var cycle && cycle.StartsWith("|ERROR E4068")
                 && Run("class K { }\ninterface IA : K { }\nprint(1)") == "|ERROR E4067"
                 && CompileText("interface IA : IB { }\ninterface IB : IA { }").Contains("Interface 'IA' extends itself (IA -> IB -> IA)"), cycle);

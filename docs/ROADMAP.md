@@ -725,7 +725,7 @@ Daten-Stack bei XC8), AVR nur mit einem eigenen kleinen Profil.
    Code des Programms** (TypeChecker.Derive, docs/spec/TYPES.md): Parameter und Rückgaben der eigenen Methoden und Konstruktoren, denen jeder Aufruf
    eine Zahl gibt, werden wie `defined` geprüft und nativ als C-Zahlen übergeben - ein größter Fixpunkt über Argumente, die Rückgaben anderer Methoden
    oder unveränderte Parameter sind; ausgenommen, was ungesehen aufgerufen werden kann (Aufrufe über `any`, Methoden als Werte oder in Zeichenketten,
-   Überschreibungen von Paketmethoden, Konstruktoren von Basisklassen), Programme mit Reflection, Plugins und Debug-Builds. `FIRE_DERIVE_LOG=1`
+   Überschreibungen von Paketmethoden, Konstruktoren von Basisklassen), Programme mit Reflection und Plugins (ein Debug-Build leitet seit DECISIONS D12 her wie ein Release-Build). `FIRE_DERIVE_LOG=1`
    zeigt die Entscheidungen, `FIRE_NO_DERIVE=1` schaltet es ab.
    **Aus der Arbeitsliste (Punkt 2 der Reihenfolge):** *Besitz ohne Aufruftiefe* war schon umgesetzt (der Besitz-Stack `g_argIn`/`MYARGS`: eine
    Methode mit `try TakeTo` hat eine C-Schnittstelle, VM und nativ gleich). *Schlankere Konstruktoren:* im Konstruktor gilt `self` von Anfang an als

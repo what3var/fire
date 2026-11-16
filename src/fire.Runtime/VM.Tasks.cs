@@ -142,7 +142,7 @@ namespace fire.Runtime
                     if (counts && FireRuntime.Standstill) { RequestLeave(); ShutdownSelfNow(); }
                     else SuspendForProcess(actor);
                 }
-                else ProcessOneMessage(actor, blocking: true);
+                else { ProcessOneMessage(actor, blocking: true); ProcessCaught = false; }
             });
         }
 

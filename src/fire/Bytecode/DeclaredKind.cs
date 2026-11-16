@@ -13,8 +13,8 @@ namespace fire.Bytecode
         /// <summary>An int declared with an explicit width beyond the program's (`int[64]`, `int[32]`): a value keeps the width it has (Value.Wide). A plain `int`
         /// holds the program's int - with `#intwidth 32`/`16` a wider value is cut when it goes in (like a store into `int[32]`; natively a narrow field).</summary>
         public const byte KeepsWidthBit = 0x40;
-        /// <summary>`defined int`, `defined float`, `defined bool`, `defined word`, `defined char` (SPEC 8.10b): undefined does not fit (an ArgumentException), a value of an enum becomes its
-        /// number. `word!`/`char!` are the only declarations of a word or a char that are checked here (their stores convert or check the rest).</summary>
+        /// <summary>`defined int`, `defined float`, `defined bool`, `defined word`, `defined char` (SPEC 8.10b): undefined does not fit (an ArgumentException). (A value of an enum
+        /// becomes its number in every such declaration, `defined` or not: an `int` holds an int.) `word!`/`char!` are the only declarations of a word or a char that are checked here (their stores convert or check the rest).</summary>
         public const byte NonNullBit = 0x20;
 
         /// <summary>`initializer`: the initializer of a field or the default value of a parameter. A declaration without a unit takes the unit of its
@@ -57,11 +57,11 @@ namespace fire.Bytecode
             TypeTag.Int => ValueKind.Int, TypeTag.Float => ValueKind.Float, TypeTag.Word => ValueKind.Word, TypeTag.Char => ValueKind.Char, _ => ValueKind.Bool,
         };
 
-        /// <summary>Does the value fit as it is?</summary>
+        /// <summary>Does the value fit as it is? (A value of an enum never does: Accept makes it its number - `int n = Color.Blue` is 2.)</summary>
         public static bool Fits(in Value value, byte required) =>
             required == 0 || value.Kind == ValueKind.Undefined && !IsNonNull(required)
             || value.Kind == ValueKindOf(required) && (!IsUnitless(required) || value.Unit is null || ReferenceEquals(value.Unit, Unit.Unitless)) && !CutsWide(value, required)
-               && !(value.IsEnum && IsNonNull(required));
+               && !value.IsEnum;
 
         /// <summary>A number that has to be unitless but carries a unit (the caller converts it: AdaptToUnit "unitless").</summary>
         public static bool NeedsUnitless(in Value value, byte required) =>
@@ -71,11 +71,8 @@ namespace fire.Bytecode
         public static string? Accept(ref Value value, byte required, string what)
         {
             if (CutsWide(value, required)) value = value.WithWide(0);   // (the program's int: cut to its width)
-            if (IsNonNull(required))
-            {
-                if (value.Kind == ValueKind.Undefined) return $"{what} is {Expected(required)} and never undefined.";
-                if (value.IsEnum) value = value.WithoutEnum();   // (`defined int` takes the number of a value of an enum)
-            }
+            if (IsNonNull(required) && value.Kind == ValueKind.Undefined) return $"{what} is {Expected(required)} and never undefined.";
+            if (value.IsEnum) value = value.WithoutEnum();   // (an `int` takes the number of a value of an enum - the declaration says what the variable holds)
             if (value.Kind == ValueKind.Undefined || value.Kind == ValueKindOf(required)) return null;
             if (ValueKindOf(required) == ValueKind.Float && value.Kind == ValueKind.Int)
             {
