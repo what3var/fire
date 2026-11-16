@@ -8822,11 +8822,14 @@ FIRE_FN void fire_awayEnd(void);
 /* (may a thread's native run without the read side with this argument: nothing that is of the shared domain or may refer into it - a number, a string
  * or a lambda of the thread's own (the call of a lambda is fire code: that takes the read side itself), a buffer or an array of numbers of the thread's
  * own; not an object or an array of anything else, whose fields and elements the native may follow, and no pointer) */
+extern FIRE_RT_DATA OwnList* g_domainRoot;
 FIRE_FN bool fire_natArg(Value v) {
-    if (v.kind == K_Buffer) { Owned* o = ownedOf(v); return o != NULL && !(FIRE_FLAGS_READ(o) & 64); }   /* (64: F_SHARED, the shared domain) */
-    if (v.kind == K_Array) {
+    if (v.kind == K_Buffer || v.kind == K_Array) {
         Owned* o = ownedOf(v);
-        return o != NULL && !(FIRE_FLAGS_READ(o) & 64) && ((Arr*)o)->typed != NULL && ((Arr*)o)->typed->elem >= E_I8 && ((Arr*)o)->typed->elem <= E_U8;
+        if (o == NULL || (FIRE_FLAGS_READ(o) & 64)) return false;   /* (64: F_SHARED, the shared domain) */
+        /* (a buffer of the globals carries no flag: what the global scope or an object of the domain owns is of the domain) */
+        if (o->owner && (o->owner == g_domainRoot || (o->owner->holder && (FIRE_FLAGS_READ(o->owner->holder) & 64)))) return false;
+        return v.kind == K_Buffer || (((Arr*)o)->typed != NULL && ((Arr*)o)->typed->elem >= E_I8 && ((Arr*)o)->typed->elem <= E_U8);
     }
     /* (a string or lambda that is counted atomically may be the one of a global: the main program may let go of it while the native reads it) */
     if (v.kind == K_String || v.kind == K_Lambda) return !(refOf(v)->type & R_SHARED);
