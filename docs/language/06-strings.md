@@ -45,6 +45,10 @@ print(sb.Length)                    // 10
 
 `StringBuilder`: `Append(value)`, `AppendLine(value)`, `Length`, `Clear()`, `ToString()`.
 
+A `StringBuilder` keeps its text in one growing buffer of characters (it doubles when it is full): `Append` copies the characters of the value
+into it - a number is written there digit by digit, without a string of its own - and `ToString()` makes the text once. `Clear()` empties it and
+keeps the buffer. Use it wherever a text is built from many pieces; `"" + a + b` is fine for a few.
+
 ## Format strings: `$"..."`
 
 A string with a leading `$` may contain `{expression}` and `{expression:format}`:

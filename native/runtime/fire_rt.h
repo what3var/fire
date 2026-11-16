@@ -4239,7 +4239,7 @@ FIRE_FN Value sbCall(int64_t op, Value data, Value value, OwnList* list) {
             Buf* old = sbBuf(value, &oldCap, &oldLen);
             if (FIRE_UNLIKELY(!old)) return Undef();
             if (FIRE_UNLIKELY((uint64_t)FIRE_SB_HEAD + (uint64_t)oldLen * sizeof(fire_char16) > cap)) return sbBad();
-            if (old != b) memcpy(b->data, old->data, FIRE_SB_HEAD + (size_t)oldLen * sizeof(fire_char16));
+            if (old != b) dataCopy(b->data, old->data, (uint32_t)(FIRE_SB_HEAD + (uint64_t)oldLen * sizeof(fire_char16)));   /* (dataCopy: a block beyond a 16-bit size_t) */
             return Undef();
         }
         case FIRE_SB_LENGTH: return Int((FireInt)len, 0);

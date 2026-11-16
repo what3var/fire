@@ -1878,7 +1878,9 @@ collision reason) – a specific element width is instead set via the
 declared variable type (`int[16] a = new int[10]`).
 
 **Implemented**: run-time representation (`Values.ScriptArray`, a fixed-size
-allocated `Value[]`, elements initialized to `undefined`), index access
+`Value[]`, elements initialized to `undefined`; a new array allocates it with its first use, and a
+`bool a[]` is stored packed - one byte per element, 0 `false`, 1 `true`, 2 `undefined` - until code asks
+for its `Items`, which turns it into values with the same elements), index access
 reading/writing (`arr[i]`/`arr[i] = value`, opcodes `ArrayGet`/`ArraySet`),
 array literals (`[1, 2, 3]`, opcode `MakeArrayLiteral`), bounds checking
 (an index outside `0..Length-1` yields a catchable

@@ -1408,6 +1408,16 @@ Alle Ergebnisse (und die komplette Testsuite) sind unverändert. Was den Untersc
    `Execute()`. Die schweren Fälle (Aufrufe, Feldzugriffe, `new`, Arrays, ...) sind eigene Methoden `Op<Name>()` (Schnellpfad)
    und `Op<Name>Slow(...)` (der bisherige Code, unverändert). **Regel für Änderungen:** häufige Opcodes gehören in `Step`
    bzw. eine `Op*`-Methode, nicht als neuer `case` mit vielen Locals in `Execute`.
+   **Nachtrag:** `Step` ist inzwischen selbst so gross geworden, dass der JIT es nicht mehr einbettet - sein Frame (ueber 1 KB
+   `Value`-Temporaere) wurde wieder bei JEDER Instruktion genullt. Die Schleife des frei laufenden Programms steckt deshalb
+   jetzt IN der Methode (`StepCore(op, run: true)` = `StepRun`, aufgerufen aus `RunLoopCore`): sie fuehrt Instruktionen aus,
+   bis die naechste ein `Halt` ist, der Frame entsteht einmal. `Step(op)` (eine Instruktion: Debugger-Schleifen,
+   verschachtelte Ausfuehrung) ist dieselbe Methode mit `run: false`. Kleine Instruktionen, die fast jede Anweisung und jeder
+   Aufruf hat (`ReleaseTemps`, `ClaimToScope`, `ClaimToArray`/`ClaimToObject`, `SetFieldClaim`, `GuardTop`, `CopyArgs`,
+   `IsOfType`, `HasMember`, `CheckUnit`, die Bit-Operatoren), ruft `StepCore` direkt als `Op*`-Methode auf statt ueber
+   `Execute`. `DoReturn` legt bei einer Rueckkehr nichts mehr an (frueher: ein Delegat und ein Closure-Objekt je Aufruf).
+   `Value` hat drei Felder (`_meta` fuer Kind/Width/Wide/Enum, `_bits`, `_ref`), damit der JIT lokale Values zerlegen kann.
+   Gemessen (`forge run -m PERFORMANCE`): fib(40) 228 s -> 73 s, Sieb (20 Mio.) 206 s -> 42 s, Mandelbrot 172 s -> 48 s.
 2. **`Value` von 64 auf 24 Byte** (`Kind`, `Width`, ein `long` für Int/Float-Bits/Bool/Char und EINE Referenz für
    String/Objekt/`Unit`). Ein Value wird bei jedem Stack-Zugriff kopiert.
 3. **Arrays statt `List<T>`** für Werte-Stack (`_stack`/`_sp`), Code und Konstanten (`Chunk.CodeArray`/`ConstantsArray`, beim

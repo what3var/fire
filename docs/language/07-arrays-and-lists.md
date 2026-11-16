@@ -90,6 +90,8 @@ try {
   (`class Box { int data[3] }`: `new Box().data.length` is 3). Without a size (`int arr[]`) the variable or field stays `undefined` until an array is assigned.
 - Natively a typed array is **packed**: one C number per element (`int8_t` for `int[8]`, `float` for `float[32]`, one byte for `bool`) instead of a
   16-byte value - `int[8] a[100000]` needs 100 KB instead of 1.6 MB. Its elements are read and written in place, about as fast as a buffer's.
+- In the VM a `bool` array is packed too: one byte per element (`false`, `true` or `undefined`) instead of a 24-byte value - `bool seen[20000000]`
+  needs 20 MB. Arrays of the other element types hold one value per element there. A new array (`new int[n]`) takes its memory with its first use.
 
 **`defined` arrays.** `defined int a[]` (any value type: `int`, `int[N]`, `float`, `float[N]`, `bool`, `char`) holds elements that are never `undefined`:
 
