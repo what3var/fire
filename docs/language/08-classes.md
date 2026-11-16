@@ -34,8 +34,9 @@ print(Animal.created)       // 1
   `any` (the type checker says so, `TC005`).
 - Inside a method `this` is the object. A field can also be written without `this.` (`name` instead of `this.name`) when no local variable has the
   same name.
-- `static` fields and methods belong to the class: `Animal.created`, `Calc.Twice(2)`. A static method has no `this`. A class must not declare a
-  static and an instance method of the same name (see [Parameters](#parameters)).
+- `static` fields and methods belong to the class: `Animal.created`, `Calc.Twice(2)`. A static method has no `this`. A name is static or for instances, never both: a class must not declare a
+  static and an instance member of the same name - methods, fields and properties alike, also over its base classes (`E4076`, see
+  [Parameters](#parameters)). A field or a property is declared once in a class (`E4077`).
 - **Order of the static initial values**: they are set once at program start, before the first statement of the program runs - class by class in
   the order of the program (the standard library and the imported libraries first, then the files of the project in their order, each from the
   top down), in a class from the top down. An initial value may read a static field whose initial value came before; one that only comes later is
@@ -71,8 +72,8 @@ print(c.Greet("World", "Hi"))   // Hi, World
 - **Overloads**: several methods (and constructors) with the same name are allowed when they have a different **number** of parameters or different
   parameter **types**. The overload closest to the given values runs (see [Overloading by type](#overloading-by-type)).
 - **Static and instance methods are never overloads of each other**: all methods of one name in a class are either `static` or not. Mixing them
-  is forbidden - `static int Get(int a)` next to `int Get()` is not allowed, even with other parameters; give one of them another name. (The compiler does
-  not report it yet.)
+  is forbidden - `static int Get(int a)` next to `int Get()` is not allowed, even with other parameters; give one of them another name (`E4076`). The
+  same holds for fields and properties: `static int n` next to `int n`, a static property next to an instance method of its name.
 - **Default values**: `Type name = value` makes a parameter optional. Optional parameters stand at the end.
 - A parameter without a type is `any` (`TC004`).
 - **Passing**: numbers, `bool`, `char` and strings are copied; objects, arrays and lambdas are passed by reference.
@@ -109,7 +110,8 @@ print(Window.Line("item", bullet: "*"))                     // 0* item
 ```
 
 - Methods (also static ones, `base.` and extensions in the VM) and constructors take named arguments; lambdas, native and `extern` functions do not.
-- Write a space after the colon: `size: 2`. `x:m` without a space is a [unit conversion](05-units.md) (`print(distance:m)`), also as an argument, and so is `x:` before an operator (`print(a: + b)`).
+- Write a space after the colon: `size: 2`. `x:m` without a space is a [unit conversion](05-units.md) (`print(distance:m)`), also as an argument, and so is `x:` when no value follows: before an operator, a comma or the closing parenthesis, and `x:!`
+  (`print(a: + b)`, `F(a:)`, `F(a:!, b)`). `F(flag: !x)` and `F(a: -b)` have a value after the colon and are named arguments.
 - A name that the parameters do not have, and a parameter without argument and without default value, are compile errors (`TC011`) when the
   method is known when compiling (otherwise an `ArgumentException` at run time). A name given twice and a positional argument after a named one are
   syntax errors.

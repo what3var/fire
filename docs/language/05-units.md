@@ -271,15 +271,34 @@ print(board.Thickness())        // 2cm
 
 ## The target unit of an operation (advanced)
 
-When one operand asks for automatic conversion with `:` (no unit after it), the **other** operand decides the unit; when all operands ask for it, the result
-is unitless:
+When one operand asks for automatic conversion with `:` (no unit after it), the **other** operand decides the unit; when both operands ask for it, the
+result is unitless. `!` asks for the type the same way, `:!` for both:
 
 ```fire
 float b = 2km
 int a = 500m
-float c = b + a:!       // b decides: 2.5km (a is converted, and to float with !)
+var c = b + a:!         // b decides: 2.5km (a is converted, and to float with !) - c is a float in km
 print(c)
+print(a: + b)           // 2km - a stays an int: 500m is 0km, rounded (the compiler warns: TC007)
+print(b: + a:)          // 2500 - both ask: no unit
+float:km d = a:!        // the declaration decides: 0.5km
+print(d)
+int i = 2.6!            // 3 - like 2.6!int
+print(i)
 ```
+
+- The operand that asks for nothing is the **anchor**. Where the compiler knows its type and unit, the conversion is fixed when compiling and the
+  result has a type (`var c = b + a:!` needs no declared type); next to an `any` it is decided at run time, with the same result.
+- A value that goes to a **declaration** - a typed variable, field, parameter, return value - takes the declared type (`int`, `float`, `char`,
+  `word`) and the declared unit: `float:km d = a:!`, `area.Resize(w:!)`, `return x:!`. A declaration without a unit, a `string`, a class or `any` is
+  no context.
+- Without a context (`var x = a:!`) the type stays and the unit is removed (`a:unitless`).
+- `:` never fails: a value of another dimension gets its number in the base unit (`500m: + 2kg` is `502kg`). `!` next to a string or a bool converts
+  nothing and throws (`TC013` where the compiler sees it).
+- A whole number that leaves its dimension is the number in the base unit - whole or not (`5mm:unitless` is `0.005`, `2km:unitless` is `2000`): the
+  compiler does not know which, so `int n = a:unitless` is checked at run time (`Variable 'n' is an int, not Float.` for 5mm). Convert a float, or
+  round on purpose: `(a:unitless)!int`.
+- As an argument write `F(a:)`, `F(a:!)`, `F(a:!, b)`; `F(size: 2)` with a value after the colon is a [named argument](08-classes.md#parameters).
 
 A chain `a + b + c` is calculated from left to right: `(a + b) + c`, and the rule applies at every step.
 

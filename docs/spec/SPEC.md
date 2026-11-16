@@ -390,16 +390,18 @@ the copy) - belongs to the owner of the root copy. This way every copy is destro
 
 - Directly on a number literal without a separator: `5mm`, `2mm`, `1km`.
 - `:` operator for **unit** annotation/coercion on a value: `undefined : km`.
-  - `value:` (without an argument) → the unit is derived automatically from the context of the operation (see 3.4).
+  - `value:` (without an argument) → the unit is derived automatically from the context: the other operand of the operation (the anchor, see 3.2) or the declaration the value goes to; without a context it becomes `unitless`.
   - `value:unit` → the unit is explicitly forced/converted to `unit`. `:` never fails: a value of the same dimension is converted (`2km:m` is `2000m`), one of another dimension (or a unitless one) gets its number in the base unit with the target unit (`5mm:kg` is `0.005kg`, `7:s` is `7s`).
   - To `unitless` the **dimension is calculated out**: the number in the base unit, `12mm:unitless` is `0.012` (an int stays an int when the result is whole: `2km:unitless` is `2000`).
 - `::` operator (**relabel**): `value::unit` gives the same number the other unit and calculates nothing - `12mm::unitless` is `12`, `12mm::m` is `12m`. The unit after `::` is always written out.
 - `!` operator for **type** coercion: `value!`, `value!int`.
-  - `value!` (without an argument) → the type is derived from the context.
+  - `value!` (without an argument) → the type is derived from the context: the other operand of the operation (the anchor, see 3.2) or the declaration the value goes to (`int i = 2.6!` is `2.6!int`: 3); without a context the value stays as it is.
   - `value!type` → the type is explicitly forced.
   - Targets: `int`, `float`, `bool`, `string`, `char` (from/to the character code; a float is rounded), a bit width `int[8|16|32|64]` (signed two's complement), `byte` (unsigned 8 bits), `float[32|64]` (`float[32]` rounds to single precision).
   - `value!ClassName` (a class or an interface) is a checked **cast**: the static type becomes `ClassName`; at run time an object of another class throws an `ArgumentException` (`Cannot convert a value of type 'Cat' to 'Dog'.`), `undefined` passes unchanged. A class of a namespace is named with it (`value!Shop.Item`, relative names as everywhere): after `!` a dot goes on with the type name while the name so far is a namespace of the program (all files are scanned for `namespace` declarations before parsing); otherwise the dot is a member of the result (`value!Dog.Bark()`).
-- `:` (unit) and `!` (type) are independent operators and can be combined freely: `a:km!`, `a:!`.
+- `:` (unit) and `!` (type) are independent operators and can be combined freely: `a:km!`, `a:!`. However they are written, the type is converted before the unit (`500m:!` next to a float in km is `0.5km`, not a rounded `1km`).
+- `value!` to a `string` or a `bool` converts nothing: next to a string or bool anchor only a value of that type passes, anything else is an `ArgumentException` (`Cannot coerce type Int to String: '!' does not make the text of a value (write "" + x or x.ToString()).`) - and `TC013` at compile time where the types are known. The text of a value is `"" + x` or `x.ToString()`.
+- As an argument: `F(a:)`, `F(a:!)`, `F(a:, b)`, `F(a:!int)`, `F(a:! + b)` are the conversion of `a`; `F(size: 2)` and `F(flag: !x)` are named arguments (after `name:` a named argument has a value; a `!` there is a logical not when a value follows it). `F(a: -b)` is a named argument too - write `F((a:) - b)` for the subtraction.
 
 ### 3.1.1 `!` depends on the context by position (prefix vs. suffix)
 
@@ -436,8 +438,12 @@ The **type** of a variable is given BEFORE the name (`int x`, `float y = 2.5`, `
 
 For a binary operation between operands with units:
 
-- If **exactly one** operand does not request `:` coercion, its unit is the target unit of the whole operation; all other (compatible) operands are converted to it.
-- If **several/all** operands request `:` auto-coercion (without any of them naming an explicit target unit), the target unit is `unitless`.
+- If **exactly one** operand does not request a coercion from the context (`:`, `!` or `:!` without an argument), it is the **anchor**: the other operand takes its unit (`:`), its type (`!`) or both (`:!`).
+- If **both** operands request one, there is no anchor: their units become `unitless`, their types stay as they are.
+- `:` to the anchor never fails, like `value:unit`: a value of another dimension gets its number in the base unit with the anchor's unit (`500m: + 2kg` is `502kg`). A whole number converted into a coarser unit is rounded (`500m: + 2km` is `2km`; `TC007`) - ask for the type too next to a float (`500m:! + 2.0km` is `2.5km`).
+- `!` to the anchor is `value!type` with the type of the anchor: `int`, `float`, `char`, `word` (an enum value counts as its number, an `int`); `undefined` becomes `0`. An anchor that is `undefined` at run time is an `ArgumentException` for `==`/`!=` (`Cannot coerce type Int to Undefined: the operand that gives '!' its type is undefined.`) and the error of the operation itself otherwise.
+- **The conversion is fixed at compile time** where the type checker knows the type and the unit of the anchor (TYPES.md): the compiler emits `value!float`, `value:km` instead of looking at the anchor at run time, and the result has a static type (`var c = b + a:!` is a `float` in km). Where the anchor is not known (`any`), the conversion looks at it at run time - with the same result.
+- **The context of a declaration**: a value that goes to a typed variable, field, parameter or return value takes the declared type for `!` (`int`, `float`, `char`, `word`) and the declared unit for `:` - `int i = 2.6!` (3, rounded like `!int`), `float:km d = a:!`, `F(x!)` for a parameter `int x`, `return x:!` in a `float:km` method. A declaration of another type (`string`, `bool`, a class, `any`) and one without a unit are no context: the type stays, the unit becomes `unitless`.
 - If **no** operand requests a coercion and the units have the **same dimension but a different scale** (`500mm + 2m`), the operands are converted **implicitly** - no `:` needed. The type never changes: two `int`s stay `int`, and the **finer** unit is the target as long as the converted value does not overflow (`2m + 500mm` and `500mm + 2m` are both `2500mm`). If it would overflow, the **coarser** unit is the target and the fraction is cut off (`1500mm + 900000000000000000m` is `900000000000000001m`). With a `float` operand the result is a `float` in the unit of the left operand (`1.5mm + 1m` is `1001.5mm`, `2.5m + 250mm` is `2.75m`). This applies to `+`, `-`, `%` and the comparisons.
 - Incompatible dimensions (`5mm + 2kg`, `5mm + 2`) are a run-time error, unless a suitable coercion is requested.
 - **Chains with more than two operands** (`a + b + c`) are evaluated in the classic left-associative way: `(a + b) + c`. The anchor rule is applied again at every partial step, with the intermediate result (including its already determined unit) counting as the left operand of the next step – so there is no global "all operands at once" view across the whole chain.
@@ -447,9 +453,9 @@ int a = 5mm
 float b = undefined:km
 
 var c = b + a:!     // a is auto-coerced (unit+type), b is the anchor -> c : float:km
-var d = b: + a:!    // both request auto-coercion -> no anchor -> d : float:unitless
+var d = b: + a:!    // both request auto-coercion -> no anchor -> d is unitless (a float here; an int that leaves its dimension is a whole number or not)
 
-b = a:km!            // a explicitly to km (unit) and automatically to float (type)
+b = a:km!            // a explicitly to km (unit: an int, rounded) and to float (type) by the declaration of b
 ```
 
 ### 3.3 Prefix system
@@ -726,7 +732,10 @@ A name is either **static or for instances**, not both: a class may not declare
 `static bool Inside(R a, R b)` next to `bool Inside(int x, int y)`, and a
 derived class may not add an instance method named like a static method of a
 base class (or the other way round) - `E4076`, also in packages, where it stops
-the package from being built. (Otherwise `R.Inside(a, b)`, `r.Inside(a, b)` and
+the package from being built. The rule holds for every member with a name -
+methods, fields and properties, also one of each kind (`static int n` next to
+`int n`, a static property next to an instance method). A field or a property is
+declared once in a class (`E4077`). (Otherwise `R.Inside(a, b)`, `r.Inside(a, b)` and
 `Inside(a, b)` inside the class would choose between them by how they are
 written.)
 
@@ -1927,8 +1936,10 @@ interface IHolder { int[] Items() }
 A method, an interface entry or a property may return an array: `Type[] Name(...)`, with **empty**
 brackets after the type. Only there - wherever an identifier exists, the brackets stay after it
 (`int values[]`); `int[] values` as a field, parameter or variable is an error with exactly this hint, and so is
-an array return type on `extern` (the native interface knows no script arrays). Like every return type it
-is not enforced at run time, the resolver only checks that the type name exists; the editor uses it for
+an array return type on `extern` (the native interface knows no script arrays). The array that goes back is
+typed and checked like one stored in a variable of that type (8.4.2): `Cat[] Find(any a) { return a }` with an
+array of Dog, and `int[] Sizes(any a) { return a }` with a text, are the `ArgumentException` of `Cat c[] = a` and
+`int n[] = a` (`TC003` where the type checker knows the value); `undefined` passes. The editor uses the type for
 type inference (`k.Dogs()[0].` suggests the members of `Dog`, `k.Numbers().` suggests `Length`).
 
 ### 8.4.2 Typed arrays
@@ -1972,7 +1983,7 @@ typed with another class does not go into such a declaration (`An array of Dog c
 derived class does go where one of its base class or of an interface it implements is declared (`Animal all[] = pets`): it keeps the element type
 it was given, so `all[0] = cat` is still the `ArgumentException` of the Dog array. The other direction (an Animal array into `Dog d[]`) is refused (TC001 where the checker knows both types). `new Dog[n]` starts with
 n `undefined` elements and is an array of Dog from the start, also where no declaration types it (`any d = new Dog[2]`: `Cat c[] = d` is that
-`ArgumentException`); an array of numbers (`new int[n]`) takes its width and unit from the first declaration it is stored in. `defined` works for them too: `defined string s[] = new string[n]` starts with `""`, `defined Color c[] = new Color[n]`
+`ArgumentException`); an array of numbers (`new int[n]`, `new float[n]`, `new bool[n]`, `new char[n]`) takes its width and unit from the first declaration it is stored in, but it remembers its kind: `new int[n]` goes where ints of any width and unit are declared (`int[8] a[]`, `int:cm a[]`) or floats (a whole number goes into a float), not where a class, a string, bools or chars are (`any d = new int[2]; Cat c[] = d` is `An array of int cannot be stored where an array of Cat is declared.`), and `new float[n]` not where ints are - `TC001` where the type checker knows both. `defined` works for them too: `defined string s[] = new string[n]` starts with `""`, `defined Color c[] = new Color[n]`
 with the first value of the enum; `defined Dog d[]` has no zero, so it only takes an array whose elements are all given (`[new Dog("a")]`) -
 `new Dog[2]` there is an `ArgumentException` (`An element of a defined array of Dog cannot be undefined.`). VM and native backend behave the
 same (ArrayElem.Class, natively E_CLASS/TU_CLASS with a table of checks, g_arrClasses). JSON types what it reads for such a field like any other

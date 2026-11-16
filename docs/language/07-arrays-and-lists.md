@@ -138,7 +138,11 @@ print(ops[1](6, 7))                 // 42
 - `new Dog[n]` (a class, an interface, a record, `string`, an enum) **is** an array of Dog from the start, also where no declaration says so:
   `any d = new Dog[2]`, `var x = new Dog[2]`, an argument. `Cat c[] = d` is the `ArgumentException` above, `Animal a[] = d` is fine and `a[0] = new
   Cat()` is refused by the Dog array. An array of numbers (`new int[n]`) and a literal (`[a, b]`) take their element type from the first declaration
-  they are stored in (`int[8] small[] = new int[4]`, `float:m lens[] = new float[3]`).
+  they are stored in (`int[8] small[] = new int[4]`, `float:m lens[] = new float[3]`). `new int[n]` remembers that it was made for ints all the same:
+  it goes where ints (of any width and unit) or floats are declared, and nowhere else - `any d = new int[2]; Cat c[] = d` is the
+  `ArgumentException` (`An array of int cannot be stored where an array of Cat is declared.`); a `new float[n]` does not go into `int a[]`.
+- A method that returns an array (`Cat[] Find()`, `int[] Sizes()`) checks what it returns like a variable of that type: an array of another
+  class or a value that is no array is the same `ArgumentException`.
 - `defined` works for them too: `defined string s[] = new string[n]` starts with `""`, a `defined` enum array with the first value; `defined Dog d[]` has
   no zero, so it only takes an array whose elements are all given (`new Dog[2]` there is an `ArgumentException`).
 - `lambda<int, int> fs[]` holds lambdas with two parameters (or `undefined`); the types of the signature are hints for the type checker.

@@ -216,6 +216,11 @@ print(x??.Length)               // undefined: a number has no Length
 - `value!type` converts between numbers and `char`, cuts to a bit width (`300!int[8]`, `x!byte`) and casts objects to a derived class or an
   interface (`animal!Dog`) - see [Types](02-types.md#converting-).
 - `value:unit` converts a number into another unit of the same dimension (`2km:m` is `2000m`); `value::unit` only relabels it (`12mm::m` is `12m`). See [Units](05-units.md).
+- `value!` and `value:` without a type or unit take them **from the context**: in an operation from the other operand (`b + a:!` converts `a` into
+  the unit and the type of `b`), in a declaration from its type (`int i = 2.6!`, `float:km d = a:!`, an argument `F(x!)` for a typed parameter, a
+  `return x!`). The compiler fixes the conversion when it knows the type of the context, and the result is typed (`var c = b + a:!`); next to an
+  `any` it is decided at run time. Without a context `value!` changes nothing and `value:` gives the number without its unit. Postfix `!` binds
+  tighter than a sign: `-9.5!` is `-(9.5!)`.
 
 ## Bit functions
 

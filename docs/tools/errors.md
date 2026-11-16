@@ -322,7 +322,8 @@ configuration of the native build, a toolchain that is missing).
 | `E4073` | The initialiser of the static field '…' reads the field itself - it is still undefined there |
 | `E4074` | The initialiser of the static field '…' reads '…', whose initialiser only runs later (static fields are initialised once at program start: class by class in the order of the program, in a class from the top down) - declare '…' first |
 | `E4075` | '…' is in several imported libraries (…) - write the full name |
-| `E4076` | '…' of class '…' is both a static method and an instance method (the other one: line …) - give one of them another name (also over base classes; in a package the package is not built) |
+| `E4076` | '…' of class '…' is both a static method/field/property and an instance method/field/property (the other one: line …) - give one of them another name (a name is static or for instances, for every kind of member; also over base classes; in a package the package is not built) |
+| `E4077` | '…' is declared twice in class '…' (the other one: line …) - a field or a property has one declaration (two fields, two properties, or a field and a property of one name, both static or both for instances) |
 
 ### E5xxx - Bytecode compiler
 
@@ -381,13 +382,13 @@ A warning in lax mode, an error in strict mode (`--types`, the project setting `
 | `TC004` | Parameter '…' of '…' has no type and is assumed to be 'any'. Please add a type (use 'any' if every type is allowed). |
 | `TC005` | Method '…' has no return type and is assumed to return 'any'. Please add one (use 'undefined' if it returns nothing). |
 | `TC006` | A value in '…' does not fit '…' in '…' / '…' and '…' cannot be combined with '…' (another dimension) (units of another dimension, a unit where none is declared, or none where one is) |
-| `TC007` | A whole number in '…' converted into '…' may lose its fraction (a warning also in strict mode) |
+| `TC007` | A whole number in '…' converted into '…' may lose its fraction (a warning also in strict mode; also `a:` that takes a coarser unit from its anchor or its declaration) |
 | `TC008` | '…' has no field, property or method '…' / '…' has no method '…' (a member that a fully known class does not have - or that an interface type does not declare, itself or over the interfaces it extends: `s.radius` with `IShape s`; a cast `(s!Circle).radius` reaches it; the ownership methods `TakeTo`/`TakeLocal`/`TakeUpwards`/`TakeGlobal` every object has are always allowed) |
 | `TC009` | An assignment as a condition - did you mean '=='? (`if (a = b)`; `if ((a = b))` says the assignment is meant; a warning also in strict mode) |
 | `TC010` | The switch over '…' has no case for … (add the cases or a 'case default') (a `switch` over an enum value; a warning also in strict mode) |
 | `TC011` | '…' has no parameter '…' / The parameter '…' of '…' gets no value (it has no default value) (named arguments, `f(size: 2)`; an error also in lax mode) |
 | `TC012` | Field '…' of '…' is private and cannot be accessed from here. / Method '…' of '…' is protected and cannot be called from here. / Constructor of '…' is … (a `private`/`protected` member used where the class of the object is known; the text of the `AccessDeniedException` at run time; an error also in lax mode) |
-| `TC013` | A value of type '…' can never be a '…': the cast '!…' always fails at run time (only undefined passes) (`x!Dog` where the static type of `x` and `Dog` are unrelated classes, or a class and an interface that no class of the program joins) |
+| `TC013` | A value of type '…' can never be a '…': the cast '!…' always fails at run time (only undefined passes) (`x!Dog` where the static type of `x` and `Dog` are unrelated classes, or a class and an interface that no class of the program joins) / A value of type '…' is never converted to '…' by '!': the conversion always fails at run time (`x!` whose anchor is a string or a bool, or a bool, string or object next to a number anchor) |
 | `TC014` | The method/property/operator '…' of '…' replaces the one of its base class '…' - mark it 'override' (…) (a member that replaces an inherited one without `override`, SPEC 5.1) |
 | `TC015` | The method '…' of '…' is marked 'override', but no base class of '…' has a method '…' [with these parameters] - nothing is overridden (`override` on a member that replaces nothing: a mistyped name, other parameter types, an interface method; an error also in lax mode) |
 | `TC016` | The property '…' of interface '…' has no 'set' - it cannot be assigned through '…' / … has no 'get' - it cannot be read through '…' (through a value of an interface type; an error also in lax mode) |

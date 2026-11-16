@@ -212,7 +212,7 @@ The checker runs after every compile and in the editor while you type. Its findi
 | `TC010` | a `switch` over an enum misses members and has no `case default` (always a warning) |
 | `TC011` | a named argument that the method does not have, or a parameter without value (always an error) |
 | `TC012` | a `private`/`protected` member used where it is not allowed (always an error) |
-| `TC013` | a cast `x!Dog` that can never succeed |
+| `TC013` | a cast `x!Dog` that can never succeed, a `x!` next to a string or a bool that converts nothing |
 | `TC014` / `TC015` | a member replaces an inherited one without `override` / `override` replaces nothing (`TC015` always an error) |
 | `TC016` | an interface property written without `set` or read without `get` (always an error) |
 | `TC017` | a unit at a `byte` or `word` (always an error) |
@@ -244,7 +244,9 @@ print(Calc.Twice(21))
 
 ## Converting: `!`
 
-`value!type` converts a value to another type; `value!` without a type takes the type from the other side of the operation.
+`value!type` converts a value to another type; `value!` without a type takes the type from its context - the other side of the operation
+(`a! + b`: the type of `b`) or the declaration the value goes to (`int i = 2.6!` is 3, like `2.6!int`). Without a context (`var c = a!`) the value
+stays as it is. See [Units](05-units.md#the-target-unit-of-an-operation-advanced).
 
 ```fire
 print(3.7!int)          // 4 (rounded)
@@ -296,7 +298,8 @@ if (c is of Dog) { print("never") }     // test first with `is of` when unsure
 ```
 
 Other conversions are methods: `'A'.ToInt()` (65), `65.ToChar()` (`'A'`), `"x".ToBytes()`, `value.ToString()`. A conversion that `!` cannot do
-(`"42"!int`) throws an `ArgumentException`.
+(`"42"!int`) throws an `ArgumentException`. `!` makes no text: `5!string`, and `a! + "x"` next to a string, are that exception (`TC013` at compile
+time where the types are known) - write `"" + a` or `a.ToString()`.
 
 ## Testing a type: `is of`
 

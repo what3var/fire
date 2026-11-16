@@ -1266,6 +1266,173 @@ static class TypeTests
             Check("word: 'word' mit Breite ist ein Syntaxfehler", CompileText("word[16] w = 1") is var wordWidth && wordWidth.Contains("'word' has the width of the target's machine word"), wordWidth);
         }
 
+        // `x!`, `x:`, `x:!` (SPEC 3.1, 3.2): the type checker knows what they give - next to an anchor, for a declaration, without a context - and the
+        // compiler emits the conversion it found instead of looking at the anchor at run time. Both ways give the same (AnchorAtRunTimeOverride), in a
+        // release and in a debug build.
+        {
+            string RunAnchor(string source, bool atRunTime, VmExecutionMode mode)
+            {
+                fire.Compiler.Compiler.AnchorAtRunTimeOverride = atRunTime;
+                try { return Run(source, null, false, mode); }
+                finally { fire.Compiler.Compiler.AnchorAtRunTimeOverride = null; }
+            }
+            // every case: the output of the fixed conversion; it must be the output of the conversion at run time, in both builds
+            var anchorCases = new (string Name, string Source, string Expected)[]
+            {
+                ("das Beispiel der Doku: b + a:! ist float km, b: + a:! ohne Anker unitless",
+                    "float b = 2km\nint a = 500m\nvar c = b + a:!\nprint(c)\nprint(c is of float)\nfloat d = b: + a:!\nprint(d)",
+                    "|2.5km\nTrue\n2500"),
+                ("int und int", "int a = 5\nint b = 7\nprint(a! + b)\nprint(a + b!)\nprint(a! + b!)\nprint((a! + b) is of int)", "|12\n12\n12\nTrue"),
+                ("float und float", "float a = 5.5\nfloat b = 7\nprint(a! + b)\nprint(a + b!)\nprint(a! * b!)", "|12.5\n12.5\n38.5"),
+                ("int und float in beiden Richtungen (ein float zum int wird gerundet, .5 zur geraden Zahl)",
+                    "int a = 5\nfloat b = 2.5\nprint(a! + b)\nprint((a! + b) is of float)\nprint(b! + a)\nprint((b! + a) is of int)\nprint(a + b!)\nprint(b + a!)\nprint(a! / b)\nprint(b! / a)\nfloat c = 3.5\nprint(c! + a)",
+                    "|7.5\nTrue\n7\nTrue\n7\n7.5\n2\n0\n9"),
+                ("Einheiten einer Dimension: der Anker gibt die Einheit, mit ! auch den Typ",
+                    "int a = 500m\nfloat b = 2km\nint c = 3km\nprint(c: + a)\nprint(c:! + a)\nprint(b:! + a)\nprint(a + b:!)\nprint(a:! + b)\nprint(b + a:!)\nprint(a: + c:)\nprint(a:! + b:!)\nprint(a: == c:)",
+                    "|3500m\n3500m\n2500m\n2500m\n2.5km\n2.5km\n3500\n2500\nFalse"),
+                ("eine ganze Zahl in die groebere Einheit des Ankers wird gerundet (TC007)",
+                    "int a = 500m\nfloat b = 2km\nint c = 3km\nprint(a: + b)\nprint(c + a:)\nprint(a: < b)", "TC007 TC007 TC007|2km\n3km\nTrue"),
+                ("::  uebernimmt nur die Einheit des Ankers", "int a = 500m\nfloat b = 2km\nint c = 3km\nprint(a:: + b)\nprint(b + a::)\nprint(a:: + c::)", "|502km\n502km\n503"),
+                ("eine andere Dimension: ':' rechnet in die Basiseinheit und scheitert nie",
+                    "int a = 500m\nint k = 2kg\nfloat f = 1.5s\nint n = 4\nprint(a: + k)\nprint(k + a:)\nprint(a: + f)\nprint(a: + n)\nprint(n: + a)\nprint(a:! + f)",
+                    "|502kg\n502kg\n501.5s\n504\n504m\n501.5s"),
+                ("* und / mit Einheiten", "int a = 1500m\nfloat b = 2km\nprint(a:! * b)\nprint(b / a:!)", "|3km^2\n1.3333333333333333"),
+                ("Enum-Operanden: der Anker ist die Zahl des Enum-Werts",
+                    "enum Color { Red, Green, Blue }\nint a = 5\nfloat f = 1.5\nColor c = Color.Blue\nprint(c! + a)\nprint(a + c!)\nprint(a! + c)\nprint((a! + c) is of int)\nprint(c! + f)\nprint(f! + c)\nprint(c! + c)",
+                    "|7\n7\n7\nTrue\n3.5\n4\n4"),
+                ("byte und word",
+                    "byte b = 200\nword w = 7\nint a = 5\nfloat f = 2.5\nprint(a! + w)\nprint((a! + w) is of word)\nprint(w! + a)\nprint((w! + a) is of int)\nprint(w! + f)\nprint(f! + w)\nprint(b! + f)\nprint(f! + b)\nprint(a! + b)",
+                    "|12\nTrue\n12\nTrue\n9.5\n9\n202.5\n202\n205"),
+                ("int[64]", "int[64] big = 5000000000\nint a = 3\nfloat f = 1.5\nprint(a! + big)\nprint(big! + a)\nprint(big! + f)\nprint(f! + big)", "|5000000003\n5000000003\n5000000001.5\n5000000002"),
+                ("char als Anker und als Operand", "char ch = 'A'\nint a = 66\nfloat f = 66.4\nprint((a + 0)! == ch)\nprint(ch! + a)\nprint(ch! + f)", "|False\n131\n131.4"),
+                ("ein undefinierter Operand wird 0 (wie undefined!int)", "int u\nfloat v\nint a = 5\nfloat f = 1.5\nprint(u! + a)\nprint(u! + f)\nprint(v! + a)\nprint(undefined! + a)\nprint(undefined:! + 2km)", "|5\n1.5\n5\n5\n2km"),
+                ("in groesseren Ausdruecken: an jedem Teilschritt neu",
+                    "int a = 500m\nfloat b = 2km\nint n = 3\nfloat c = (b + a:!) * n\nprint(c)\nfloat d = b + a:! + a:!\nprint(d)\nprint(n * (a:! + b) > 1km)\nprint(-(a:! + b))\nprint([a:! + b, b][0])\nprint(b + (a + a):!)",
+                    "|7.5km\n3km\nTrue\n-2.5km\n2.5km\n3km"),
+                ("als Argument, als Rueckgabe, als Initialisierer einer typisierten Deklaration",
+                    "class K {\n static any F(any x) { return x }\n static float:km G(int a : any, float b : any) { return b + a:! }\n static int H(float x, int y) { return x! + y }\n}\nint a = 500m\nfloat b = 2km\n"
+                    + "print(K.F(b + a:!))\nprint(K.G(a, b))\nprint(K.H(2.6, 3))\nfloat x = b + a:!\nprint(x)\nfloat:m y = b + a:!\nprint(y)\nint z = 2.6! + 1\nprint(z)",
+                    "|2.5km\n2.5km\n6\n2.5km\n2500m\n4"),
+                ("ein Anker vom Typ any: die Umwandlung bleibt die der Laufzeit", "any a = 5\nany f = 2.5\nint i = 7\nfloat g = 1.5\nprint(i! + f)\nprint(g! + a)\nprint(a! + g)\nprint(f! + i)", "|9.5\n7\n6.5\n9"),
+            };
+            foreach (var c in anchorCases)
+            {
+                string fixedRelease = RunAnchor(c.Source, false, VmExecutionMode.Release), fixedDebug = RunAnchor(c.Source, false, VmExecutionMode.Debug);
+                string runRelease = RunAnchor(c.Source, true, VmExecutionMode.Release), runDebug = RunAnchor(c.Source, true, VmExecutionMode.Debug);
+                Check($"x! / x: am Anker: {c.Name} - fest uebersetzt wie zur Laufzeit, Debug wie Release",
+                    fixedRelease == c.Expected && fixedDebug == fixedRelease && runRelease == fixedRelease && runDebug == fixedRelease,
+                    $"erwartet: {c.Expected}\nfest (Release): {fixedRelease}\nfest (Debug): {fixedDebug}\nLaufzeit (Release): {runRelease}\nLaufzeit (Debug): {runDebug}");
+            }
+            // the static type: strict mode takes `var c = b + a:!` (it was TC019), and what is computed with it is checked
+            Check("x:! am Anker hat einen statischen Typ: var c = b + a:! ist strikt in Ordnung, eine falsche Zuweisung danach TC001",
+                Run("float b = 2km\nint a = 500m\nvar c = b + a:!\nprint(c)", TypeCheckMode.Strict) is var typedAnchor && typedAnchor == "|2.5km"
+                && Run("float b = 2km\nint a = 500m\nvar c = b + a:!\nc = \"x\"", TypeCheckMode.Strict) == "|ERROR TC001"
+                && Run("int a = 5\nfloat b = 2.5\nvar c = b! + a\nint d = c\nprint(d)", TypeCheckMode.Strict) == "|7", typedAnchor);
+            // never more than the run time can give: an anchor declared `any`, a whole number that leaves its dimension (an int or a float)
+            Check("x! neben any und x: aus der Dimension heraus: der Typ ist nicht bekannt (strikt TC019), der int-Deklaration bleibt ihre Pruefung",
+                Run("any f = 2.5\nint i = 7\nvar c = i! + f\nprint(c)", TypeCheckMode.Strict) is var anyAnchor && anyAnchor == "|ERROR TC019"
+                && Run("int a = 5mm\nvar d = a:\nprint(d)") == "TC019|0.005"
+                && Run("int a = 5mm\ntry { int e = a:\nprint(e) } catch (ArgumentException x) { print(x.message) }") == "|Variable 'e' is an int, not Float."
+                && Run("int a = 5mm\ntry { int e = a:unitless\nprint(e) } catch (ArgumentException x) { print(x.message) }") == "|Variable 'e' is an int, not Float."
+                && Run("int a = 2km\nint e = a:m\nprint(e)\nfloat f = 5mm\nfloat g = f:\nprint(g)") == "|2000m\n0.005", anyAnchor);
+            // without a context: the type stays, the unit becomes unitless
+            Check("ohne Kontext: var c = a! behaelt Typ und Einheit (kein TC019 mehr), a: wird unitless",
+                Run("int a = 500m\nvar c = a!\nprint(c)\nprint(c is of int)\nfloat f = 2.5km\nvar g = f:!\nprint(g)\nvar h = f:\nprint(h)", TypeCheckMode.Strict) is var noContext && noContext == "|500m\nTrue\n2500\n2500", noContext);
+            // the context of a declaration: `!` is exactly `!int` / `!float` / `!char` / `!word` there, `:` converts into the declared unit
+            Check("Kontext aus der Deklaration: int i = 2.6! rundet wie !int, float:km d = a:!, char, word; string und any sind kein Kontext",
+                Run("int a = 500m\nfloat f = 2.6\nint i = 2.6!\nprint(i)\nint j = f!\nprint(j)\nint j2 = 2.5!\nprint(j2)\nint j3 = -9.5!\nprint(j3)\nfloat:km d = a:!\nprint(d)\nfloat e = a:!\nprint(e)\nfloat e2 = a!\nprint(e2)\n"
+                    + "char c = 65!\nprint(c)\nword w = 7!\nprint(w is of word)\nany x = f!\nprint(x)\nint[8] small = 300.4!\nprint(small)\nint u\nint k = u!\nprint(k)", TypeCheckMode.Strict) is var declared
+                && declared == "|3\n3\n2\n-10\n0.5km\n500\n500m\nA\nTrue\n2.6\n44\n0"
+                && RunDebug("int i = 2.6!\nprint(i)\nint a = 500m\nfloat:km d = a:!\nprint(d)") == "|3\n0.5km"
+                && Run("float f = 2.6\nstring s = f!\nprint(s)") == "|2.6", declared);
+            Check("Kontext aus der Deklaration: eine ganze Zahl in die groebere deklarierte Einheit wird gerundet (TC007)",
+                Run("int a = 500m\nfloat:km d2 = a:\nprint(d2)\nint:km d3 = a:\nprint(d3)") is var declaredLoss && declaredLoss == "TC007 TC007|0km\n0km", declaredLoss);
+            Check("Kontext aus der Deklaration: Zuweisung an ein Feld, an eine Variable (auch var), Parameter, benanntes Argument, Rueckgabe",
+                Run("class P {\n int n\n float:m len\n undefined Set(float v, int mm : mm) { this.n = v!\n this.len = mm:! }\n}\nclass K {\n static int I(int x) { return x }\n static float:km D(float d : km) { return d }\n"
+                    + " static int R(float x) { return x! }\n static float:km RU(int a : any) { return a:! }\n int Inst(int x, float y) { return x }\n}\nvar p = new P()\np.Set(2.6, 1500mm)\nprint(p.n)\nprint(p.len)\nint q = 1\nq = 7.7!\nprint(q)\n"
+                    + "var v = 1\nv = 2.4!\nprint(v)\nfloat:km dist = 1km\nint steps = 250m\ndist = steps:!\nprint(dist)\nint a = 500m\nprint(K.I(2.6!))\nprint(K.D(a:!))\nprint(K.R(3.5))\nprint(K.RU(a))\nprint(new K().Inst(2.6!, 1))\nprint(K.I(x: 2.6!))",
+                    TypeCheckMode.Strict) is var targets && targets == "|3\n1.5m\n8\n2\n0.25km\n3\n0.5km\n4\n0.5km\n3\n3", targets);
+            // what always fails is said at compile time (TC013), the run time keeps its message; an undefined anchor
+            Check("x! neben einem string oder bool scheitert immer: TC013 (strikt ein Fehler), zur Laufzeit die ArgumentException mit dem Hinweis",
+                Run("int a = 5\nstring s = \"x\"\ntry { print(a! + s) } catch (ArgumentException e) { print(e.message) }") is var toText
+                && toText == "TC013|Cannot coerce type Int to String: '!' does not make the text of a value (write \"\" + x or x.ToString())."
+                && Run("int a = 5\nstring s = \"x\"\nprint(s + a!)", TypeCheckMode.Strict) == "|ERROR TC013"
+                && Run("int a = 5\nbool t = true\ntry { print(a! == t) } catch (ArgumentException e) { print(e.message) }") == "TC013|Cannot coerce type Int to Bool."
+                && Run("any s = \"x\"\nint a = 5\ntry { print(a! + s) } catch (ArgumentException e) { print(e.message) }").StartsWith("|Cannot coerce type Int to String:"), toText);
+            Check("x! neben einem undefinierten Anker: == und != melden den undefinierten Anker, die Rechnung den undefinierten Operanden",
+                Run("int a = 5\nint u\ntry { print(a! == u) } catch (ArgumentException e) { print(e.message) }\ntry { print(a! + u) } catch (Exception e) { print(e.message) }") is var undefAnchor
+                && undefAnchor == "|Cannot coerce type Int to Undefined: the operand that gives '!' its type is undefined.\nType Undefined is not numeric.", undefAnchor);
+            // the parser: `name:` at the start of an argument is the unit conversion when nothing follows that could be a value
+            Check("Parser: F(a:!), F(a:), F(a:, b), F(a:!int), F(a:! + b) sind Argumente mit Umwandlung; F(size: 2) und F(flag: !x) bleiben benannt",
+                Run("class K {\n static any F(any a) { return a }\n static any G(any a, any b) { return \"\" + a + \"|\" + b }\n static any N(any size, bool flag = false) { return \"\" + size + \"|\" + flag }\n}\nint a = 500m\nbool flag = true\n"
+                    + "print(K.F(a:!))\nprint(K.F(a:))\nprint(K.G(a:, 2))\nprint(K.G(a:!, 2))\nprint(K.G(1, a:!))\nprint(K.F(a:!int))\nprint(K.F(a:! + 2km))\nprint(K.F(a:! * 2))\nprint(K.N(size: 2))\nprint(K.N(size: 2, flag: !flag))\n"
+                    + "print(K.N(1, flag:!flag))\nprint(K.F(a::))\nvar arr = [1, 2, 3]\nint ix = 1\nprint(arr[ix!])\nprint(arr[ix:])\nvar lam = (any v) => v\nprint(lam(a:!))\nprint(lam(a:))\nvar lam2 = (int v : any) => v:!\nprint(lam2(a))") is var argForms
+                && argForms == "TC007|500\n500\n500|2\n500|2\n1|500\n500\n2km\n1000\n2|False\n2|False\n1|False\n500\n2\n2\n500\n500\n500", argForms);
+        }
+
+        // members of one name (DECISIONS D11): static and instance are not mixed - methods, fields and properties alike, also over base classes (E4076);
+        // a field or a property is declared once (E4077)
+        {
+            Check("E4077: zwei Properties, zwei Felder, Feld und Property mit demselben Namen in einer Klasse (vorher E5000 oder still das letzte)",
+                Run("class A { int Size { get { return 1 } }\n int Size { get { return 2 } } }\nprint(1)") is var twice && twice == "|ERROR E4077"
+                && Run("class A { int Count { get; set; } = 5\n int Count { get; set; } = 6 }\nprint(1)") == "|ERROR E4077"
+                && Run("class A { int n = 1\n int n = 2 }\nprint(1)") == "|ERROR E4077"
+                && Run("class A { static int n = 1\n static int n = 2 }\nprint(1)") == "|ERROR E4077"
+                && Run("class A { int n = 1\n int n { get { return 2 } } }\nprint(1)") == "|ERROR E4077", twice);
+            Check("E4076: statisch und Instanz gemischt - Feld/Feld, Property/Property, Property/Methode, Methode/Feld",
+                Run("class A { static int n = 1\n int n = 2 }\nprint(1)") is var mixedMembers && mixedMembers == "|ERROR E4076"
+                && Run("class A { static int Size { get { return 1 } }\n int Size { get { return 2 } } }\nprint(1)") == "|ERROR E4076"
+                && Run("class A { static int N { get { return 1 } }\n int N() { return 2 } }\nprint(1)") == "|ERROR E4076"
+                && Run("class A { static int N() { return 1 }\n int N = 2 }\nprint(1)") == "|ERROR E4076", mixedMembers);
+            Check("E4076 auch ueber die Basisklasse, fuer Felder und Properties",
+                Run("class B { static int n = 1 }\nclass A : B { int n = 2 }\nprint(1)") is var mixedBase && mixedBase == "|ERROR E4076"
+                && Run("class B { int N { get { return 1 } } }\nclass A : B { static int N { get { return 2 } } }\nprint(1)") == "|ERROR E4076", mixedBase);
+            Check("erlaubt bleibt: ein Feld der Basisklasse in der abgeleiteten noch einmal, Methode und Feld bzw. Property desselben Namens, eine Auto-Property",
+                Run("class B { int n = 1 }\nclass A : B { int n = 2 }\nclass C { int n = 1\n int n() { return 2 } }\nclass D { int N { get { return 1 } }\n int N() { return 2 } }\nclass E { int Count { get; set; } = 5\n static int Total { get; set; } = 1 }\n"
+                    + "print(new A().n)\nprint(new C().n + new C().n())\nprint(new D().N + new D().N())\nprint(new E().Count + E.Total)") is var allowedMembers && allowedMembers == "|2\n3\n3\n6", allowedMembers);
+        }
+
+        // an array as a return type is checked like an array stored in a variable of that type (it was not checked at all)
+        {
+            string arrays = "class Animal { }\nclass Cat : Animal { }\nclass Dog : Animal { }\nclass K {\n static Cat[] F(any a) { return a }\n static Animal[] G(any a) { return a }\n static Cat[] H() { return new Cat[2] }\n"
+                + " static int[] I(any a) { return a }\n static string[] S(any a) { return a }\n static float[] FL(any a) { return a }\n static int[] Lit() { return [1, 2] }\n static float:m[] M(any a) { return a }\n int[] Prop { get { return \"no\" } }\n}\n"
+                + "class U { static undefined T(lambda f) { try { print(f()) } catch (ArgumentException e) { print(e.message) } } }\nany d = new Dog[2]\n";
+            const string arraysOut = "An array of Dog cannot be stored where an array of Cat is declared.\n2\n2\nAn array of int is declared here, not String.\n"
+                + "An element of an array of int must be an int (or undefined), not Float.\nAn element of an array of string must be a string (or undefined), not Int.\n1\n2\n0.01m\nAn array of int is declared here, not Int.\nundefined\n"
+                + "An array of int is declared here, not String.";
+            string arrayCalls = "U.T(() => K.F(d).length)\nU.T(() => K.G(d).length)\nU.T(() => K.H().length)\nU.T(() => K.I(\"text\"))\nU.T(() => K.I([1.5, 2.5])[0])\nU.T(() => K.S([1, 2])[0])\nU.T(() => K.FL([1, 2])[0])\nU.T(() => K.Lit()[1])\n"
+                + "U.T(() => K.M([1cm, 2cm])[0])\nU.T(() => K.I(5))\nU.T(() => K.I(undefined))\nU.T(() => new K().Prop)";
+            Check("Array als Rueckgabetyp: geprueft wie die Zuweisung an eine Array-Variable des Typs (Klasse, int, string, float, Einheit, Property), undefined geht",
+                Run(arrays + arrayCalls) is var arrayReturn && arrayReturn.EndsWith("|" + arraysOut) && RunDebug(arrays + arrayCalls).EndsWith("|" + arraysOut), arrayReturn);
+            Check("Array als Rueckgabetyp: wo der Typ bekannt ist TC003",
+                Run("class Cat { }\nclass Dog { }\nclass K {\n static Cat[] F() { Dog d[] = new Dog[1]\n return d }\n static int[] G() { return \"s\" }\n}\nprint(1)") is var arrayStatic && arrayStatic == "TC003 TC003|1", arrayStatic);
+        }
+
+        // `new int[n]` remembers its kind (DECISIONS D10): width and unit stay open for the first declaration, another kind is refused
+        {
+            string open = "class Cat { }\nclass U { static undefined T(lambda f) { try { print(f()) } catch (ArgumentException e) { print(e.message) } } }\n"
+                + "U.T(() => { any d = new int[2]\n Cat c[] = d\n return \"Cat\" })\n"
+                + "U.T(() => { any f = new float[2]\n int c[] = f\n return \"int\" })\n"
+                + "U.T(() => { any d = new int[2]\n float c[] = d\n c[0] = 1\n return c[0] is of float })\n"
+                + "U.T(() => { any d = new int[4]\n int[8] a[] = d\n a[0] = 300\n return a[0] })\n"
+                + "U.T(() => { any d = new float[2]\n float:m g[] = d\n g[0] = 5cm\n return g[0] })\n"
+                + "U.T(() => { any d = new int[2]\n string s[] = d\n return \"string\" })\n"
+                + "U.T(() => { any b = new bool[2]\n int c[] = b\n return \"int\" })\n"
+                + "U.T(() => { any b = new int[2]\n bool c[] = b\n return \"bool\" })\n"
+                + "U.T(() => { any b = new char[2]\n char c[] = b\n c[0] = 'x'\n return c[0] })\n"
+                + "U.T(() => { any g = new int[2][3]\n float c[][] = g\n any h = new int[2][3]\n Cat cc[][] = h\n return \"Cat\" })\n"
+                + "U.T(() => { any d = new int[2]\n d[0] = 7\n int c[] = copy d\n return c[0] })\n"
+                + "U.T(() => { any d = new int[3]\n byte b[] = d\n return b.length })\n";
+            const string openOut = "An array of int cannot be stored where an array of Cat is declared.\nAn array of float cannot be stored where an array of int is declared.\nTrue\n44\n0.05m\n"
+                + "An array of int cannot be stored where an array of string is declared.\nAn array of bool cannot be stored where an array of int is declared.\n"
+                + "An array of int cannot be stored where an array of bool is declared.\nx\nAn array of int cannot be stored where an array of Cat is declared.\n7\n3";
+            Check("new int[n] merkt sich seine Art: geht in int (jede Breite, jede Einheit) und float, nicht in eine Klasse, string, bool; float nicht in int",
+                Run(open) is var openKind && openKind.EndsWith("|" + openOut) && RunDebug(open).EndsWith("|" + openOut), openKind);
+            Check("new int[n]: die Deklarationen der Doku gehen weiter (int[8] a[] = new int[4], float:m f[] = new float[2], float f[] = new int[2]); wo der Typ bekannt ist TC001",
+                Run("int[8] a[] = new int[4]\na[0] = 300\nfloat:m f[] = new float[2]\nf[0] = 5cm\nfloat g[] = new int[2]\ng[0] = 1\nint grid[][] = new int[2][2]\ngrid[1][1] = 4\nprint(a[0] + \" \" + f[0] + \" \" + g[0] + \" \" + grid[1][1])", TypeCheckMode.Strict) is var openDocs
+                && openDocs == "|44 0.05m 1 4" && Run("class Cat { }\nCat c[] = new int[2]", TypeCheckMode.Strict) == "|ERROR TC001" && Run("int c[] = new float[2]", TypeCheckMode.Strict) == "|ERROR TC001", openDocs);
+        }
+
         // the standard library keeps its declared types honest: every import compiles without a single type conflict or untyped parameter, in strict mode
         foreach (var import in new[] { "io", "console", "machine", "dos", "xms", "x86", "filesystem", "dialogs", "ui.docking", "json", "circuits", "circuits.ui", "net", "process", "hash", "compression", "ai", "ai.agent", "ai.models", "assistant", "mcp", "http", "tls", "audio", "usb", "tracker", "wifi", "gpio", "i2c", "spi", "random", "time", "linq", "reflection", "ui", "scene3d", "scene3d.terrain", "scene3d.effects", "scene3d.physics", "graphics", "windows", "devices", "data", "data.sqlite", "data.memory", "data.mysql", "data.sqlserver", "data.postgres", "http.data" })
         {

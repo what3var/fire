@@ -23033,6 +23033,263 @@ else
             try { print("42"!int) } catch (ArgumentException e) { print("caught: " + e.message) }
             """),
     }).ToArray();
+    // `x!`, `x:`, `x:!` (SPEC 3.2): the conversion the type checker fixed, the one that looks at the anchor at run time (an anchor declared `any`), the
+    // context of a declaration; array return types; `new int[n]` remembers its kind (DECISIONS D10)
+    natCases = natCases.Concat(new (string Name, string Source)[]
+    {
+        ("Kontext-Umwandlung: x!, x:, x:! am Anker mit bekanntem Typ (int/float, Einheiten, Enum, byte, word, int[64], char)", """
+            enum Color { Red, Green, Blue }
+            float b = 2km
+            int a = 500m
+            int c = 3km
+            var s1 = b + a:!
+            print(s1)
+            print(s1 is of float)
+            print(b: + a:!)
+            print(c: + a)
+            print(c:! + a)
+            print(b:! + a)
+            print(a + b:!)
+            print(a: + c:)
+            print(a: == c:)
+            print(a:: + b)
+            print(a:: + c::)
+            print(a: + b)
+            print(a: < b)
+            int k = 2kg
+            float t = 1.5s
+            print(a: + k)
+            print(a:! + t)
+            print(a:! * b)
+            print(b / a:!)
+            int i = 5
+            float f = 2.5
+            print(i! + f)
+            print(f! + i)
+            print((f! + i) is of int)
+            print(i! / f)
+            print(f! / i)
+            float h = 3.5
+            print(h! + i)
+            Color col = Color.Blue
+            print(col! + i)
+            print(i! + col)
+            print(col! + f)
+            print(f! + col)
+            byte by = 200
+            word w = 7
+            print(i! + w)
+            print((i! + w) is of word)
+            print(w! + i)
+            print((w! + i) is of int)
+            print(w! + f)
+            print(f! + w)
+            print(by! + f)
+            print(f! + by)
+            int[64] big = 5000000000
+            print(i! + big)
+            print(big! + f)
+            print(f! + big)
+            char ch = 'A'
+            print(ch! + i)
+            print(ch! + f)
+            int u
+            print(u! + i)
+            print(u! + f)
+            print(undefined:! + 2km)
+            float e = (b + a:!) * i
+            print(e)
+            print(-(a:! + b))
+            print([a:! + b, b][0])
+            print(b + (a + a):!)
+            """),
+        ("Kontext-Umwandlung: der Anker ist any (zur Laufzeit), dieselben Ergebnisse; ein string, bool oder undefinierter Anker ist die ArgumentException", """
+            any b = 2.0km
+            any a = 500m
+            any i = 5
+            any f = 2.5
+            any w = 7!word
+            int ai = 500m
+            int ii = 5
+            float ff = 2.5
+            print(b + ai:!)
+            print(ai:! + b)
+            print(ai: + b)
+            print(ai:: + b)
+            print(ff! + i)
+            print(ii! + f)
+            print(ii! + w)
+            print((ii! + w) is of word)
+            print(a:! + 2.0km)
+            print(i! + 2.5)
+            print(f! + 5)
+            any s = "x"
+            any t = true
+            any n = undefined
+            try { print(ii! + s) } catch (ArgumentException x) { print(x.message) }
+            try { print(ii! == t) } catch (ArgumentException x) { print(x.message) }
+            try { print(ii! == n) } catch (ArgumentException x) { print(x.message) }
+            try { print(t! + ii) } catch (ArgumentException x) { print(x.message) }
+            string text = "y"
+            try { print(ii! + text) } catch (ArgumentException x) { print(x.message) }
+            int un
+            try { print(ii! == un) } catch (ArgumentException x) { print(x.message) }
+            try { print(ii! + un) } catch (Exception x) { print(x.message) }
+            print("end")
+            """),
+        ("Kontext-Umwandlung: der Kontext der Deklaration (Variable, Feld, Parameter, Rueckgabe), ohne Kontext", """
+            class P {
+                int n
+                float:m len
+                undefined Set(float v, int mm : mm) { this.n = v!
+                    this.len = mm:! }
+            }
+            class K {
+                static int I(int x) { return x }
+                static float:km D(float d : km) { return d }
+                static int R(float x) { return x! }
+                static float:km RU(int a : any) { return a:! }
+                static any F(any x) { return x }
+                static any G(any x, any y) { return "" + x + "|" + y }
+            }
+            int a = 500m
+            float f = 2.6
+            int i = 2.6!
+            print(i)
+            int j = f!
+            print(j)
+            int j2 = 2.5!
+            print(j2)
+            int j3 = -9.5!
+            print(j3)
+            float:km d = a:!
+            print(d)
+            float:km d2 = a:
+            print(d2)
+            float e = a:!
+            print(e)
+            float e2 = a!
+            print(e2)
+            char c = 65!
+            print(c)
+            word w = 7!
+            print(w is of word)
+            any x = f!
+            print(x)
+            int[8] small = 300.4!
+            print(small)
+            int u
+            int k = u!
+            print(k)
+            var p = new P()
+            p.Set(2.6, 1500mm)
+            print(p.n)
+            print(p.len)
+            int q = 1
+            q = 7.7!
+            print(q)
+            print(K.I(2.6!))
+            print(K.D(a:!))
+            print(K.R(3.5))
+            print(K.RU(a))
+            print(K.I(x: 2.6!))
+            var c1 = a!
+            print(c1)
+            var c2 = f:!
+            print(c2)
+            print(K.F(a:!))
+            print(K.F(a:))
+            print(K.G(a:, 2))
+            print(K.G(1, a:!))
+            print(K.F(a:!int))
+            print(K.F(a:! + 2km))
+            int mm = 5mm
+            try { int bad = mm:
+                print(bad) } catch (ArgumentException ex) { print(ex.message) }
+            """),
+        ("Kontext-Umwandlung: Array-Rueckgabetypen werden geprueft wie eine Array-Variable; new int[n] merkt sich seine Art", """
+            class Animal { }
+            class Cat : Animal { }
+            class Dog : Animal { }
+            class K {
+                static Cat[] F(any a) { return a }
+                static Animal[] G(any a) { return a }
+                static Cat[] H() { return new Cat[2] }
+                static int[] I(any a) { return a }
+                static string[] S(any a) { return a }
+                static float[] FL(any a) { return a }
+                static int[] Lit() { return [1, 2] }
+                static float:m[] M(any a) { return a }
+                int[] Prop { get { return "no" } }
+            }
+            class U { static undefined T(lambda f) { try { print(f()) } catch (ArgumentException e) { print(e.message) } } }
+            any d = new Dog[2]
+            U.T(() => K.F(d).length)
+            U.T(() => K.G(d).length)
+            U.T(() => K.H().length)
+            U.T(() => K.I("text"))
+            U.T(() => K.I([1.5, 2.5])[0])
+            U.T(() => K.S([1, 2])[0])
+            U.T(() => K.FL([1, 2])[0])
+            U.T(() => K.Lit()[1])
+            U.T(() => K.M([1cm, 2cm])[0])
+            U.T(() => K.I(5))
+            U.T(() => K.I(undefined))
+            U.T(() => new K().Prop)
+            U.T(() => { any o = new int[2]
+                Cat c[] = o
+                return "Cat" })
+            U.T(() => { any o = new float[2]
+                int c[] = o
+                return "int" })
+            U.T(() => { any o = new int[2]
+                float c[] = o
+                c[0] = 1
+                return c[0] is of float })
+            U.T(() => { any o = new int[4]
+                int[8] c[] = o
+                c[0] = 300
+                return c[0] })
+            U.T(() => { any o = new float[2]
+                float:m c[] = o
+                c[0] = 5cm
+                return c[0] })
+            U.T(() => { any o = new int[2]
+                string c[] = o
+                return "string" })
+            U.T(() => { any o = new bool[2]
+                int c[] = o
+                return "int" })
+            U.T(() => { any o = new int[2]
+                bool c[] = o
+                return "bool" })
+            U.T(() => { any o = new char[2]
+                char c[] = o
+                c[0] = 'x'
+                return c[0] })
+            U.T(() => { any o = new int[2][3]
+                float c[][] = o
+                any o2 = new int[2][3]
+                Cat cc[][] = o2
+                return "Cat" })
+            U.T(() => { any o = new int[2]
+                o[0] = 7
+                int c[] = copy o
+                return c[0] })
+            U.T(() => { any o = new int[3]
+                byte c[] = o
+                return c.length })
+            int[8] a8[] = new int[4]
+            a8[0] = 300
+            float:m fm[] = new float[2]
+            fm[0] = 5cm
+            float fi[] = new int[2]
+            fi[0] = 1
+            int grid[][] = new int[2][2]
+            grid[1][1] = 4
+            print(a8[0] + " " + fm[0] + " " + fi[0] + " " + grid[1][1])
+            """),
+    }).ToArray();
     natCases = natCases.Concat(new (string Name, string Source)[]
     {
         ("Ziel-Regel (SPEC 2.1): Temporaere am Statement-Ende, var, Feld, Element (das Array besitzt), Builder, aeussere Variable, Hochziehen", """

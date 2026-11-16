@@ -2227,10 +2227,13 @@ namespace fire.Compiler
             if (expected is { Kind: StaticKind.Float }) MarkFloatTarget(expr);
             if (expr is LambdaExpr lam) return InferLambda(lam, expected);
             // `int i = 2.6!`, `float:km d = a:!`: a value that asks for its type or unit from the context takes them from the declaration it goes to
-            if (expected != null && expr is UnitCoerceExpr or TypeCoerceExpr)
+            // (`int i = -9.5!` is `-(9.5!)`: the sign stands outside, the value under it is the one that asks)
+            var asking = expr;
+            while (asking is UnaryExpr { Op: UnaryOp.Negate } signed) asking = signed.Operand;
+            if (expected != null && asking is UnitCoerceExpr or TypeCoerceExpr)
             {
                 var (previousExpr, previousTarget) = (_declaredFor, _declaredTarget);
-                (_declaredFor, _declaredTarget) = (expr, expected);
+                (_declaredFor, _declaredTarget) = (asking, expected);
                 try { return Infer(expr); }
                 finally { (_declaredFor, _declaredTarget) = (previousExpr, previousTarget); }
             }
@@ -2380,6 +2383,10 @@ namespace fire.Compiler
                 }
                 else
                 {
+                    // (a whole number into a coarser unit is rounded, like `x:km`: TC007 - next to a float `x:!` converts it as a float)
+                    if (!info.RelabelAuto && type.Kind == StaticKind.Int && type.Unit is { } from && !type.UnitIsDimension && !from.Equals(unit) && from.IsCompatibleWith(unit)
+                        && from.IsLinear && unit.IsLinear && !unit.IsUnitless && from.ConversionFactorTo(unit) < 1)
+                        Report(UnitLossCode, $"A whole number in '{UnitText(from)}' converted into '{UnitText(unit)}' may lose its fraction (convert it as a float: 'x:!' next to a float, or 'x!float:')", expr.Line);
                     type = UnitResult(type, unit, info.RelabelAuto);
                     plan = plan with { Unit = unit };
                 }
