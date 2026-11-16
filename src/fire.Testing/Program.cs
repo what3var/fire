@@ -21284,6 +21284,136 @@ else
             try { Reflect.Set(r, "data", "text"); print(r.data) } catch (Exception e) { print("E " + e.message) }
             print(Json.Serialize(a))
             """),
+        ("Ein Enum-Wert in einer int-Deklaration ist dort seine Zahl: Variable, Feld (auch an einem Objekt bekannter Klasse), statisches Feld, Parameter, Rueckgabe, Element, ueber any, in einer generischen Klasse", """
+            enum Color { Red, Green, Blue }
+            class H {
+                int f = 1
+                static int s = 1
+                int Take(int p) { return p }
+                int Ret() { any c = Color.Green; return c }
+                undefined Local() {
+                    int k = Color.Blue
+                    print("local " + k + " " + (k is of int))
+                    int j = 1
+                    j = Color.Blue
+                    print("assigned " + j + " " + (j is of int))
+                    any a = Color.Blue
+                    int viaAny = a
+                    print("any " + viaAny + " " + (viaAny is of int) + " " + (a is of Color))
+                    float fl = Color.Blue
+                    print("float " + fl + " " + (fl is of float))
+                    int arr[] = new int[2]
+                    arr[0] = Color.Blue
+                    print("element " + arr[0] + " " + (arr[0] is of int))
+                    this.f = Color.Green
+                    print("own field " + this.f + " " + (this.f is of int))
+                }
+            }
+            int n = Color.Blue
+            print(n)
+            print(n is of int)
+            print(n + 1)
+            var h = new H()
+            h.Local()
+            h.f = Color.Blue
+            print("field " + h.f + " " + (h.f is of int))
+            any ah = h
+            ah.f = Color.Red
+            print("field through any " + h.f + " " + (h.f is of int))
+            H.s = Color.Green
+            print("static " + H.s + " " + (H.s is of int))
+            var r = h.Take(Color.Blue)
+            print("parameter " + r + " " + (r is of int))
+            var q = h.Ret()
+            print("return " + q + " " + (q is of int))
+            Color c = Color.Blue
+            print(c + " " + (c is of Color) + " " + (c is of int) + " " + c!int)
+            try { c = 2; print("an int went into a Color") } catch (ArgumentException e) { print(e.message) }
+            """),
+        ("new Dog[n] ist ein Dog-Array, auch in any: es geht nur in die Deklaration von Dog oder einer Basis (Kovarianz) und prueft weiter, was hineinkommt; Zahlen-Arrays nehmen Breite und Einheit der Deklaration", """
+            class Animal { }
+            class Dog : Animal { }
+            class Cat : Animal { }
+            class Stone { }
+            interface INamed { }
+            class Bird : Animal, INamed { }
+            class Box { Cat cats[]
+                undefined Set(any a) { this.cats = a } }
+            class U { static undefined TakeCats(Cat c[]) { print("took " + c.length) } }
+            any d = new Dog[2]
+            try { Cat c[] = d; print("1 accepted") } catch (ArgumentException e) { print("1 " + e.message) }
+            try { Stone s[] = d; print("2 accepted") } catch (ArgumentException e) { print("2 " + e.message) }
+            try { Animal a[] = d; print("3 accepted") } catch (ArgumentException e) { print("3 " + e.message) }
+            try { Animal a[] = d; a[0] = new Cat(); print("4 accepted") } catch (ArgumentException e) { print("4 " + e.message) }
+            try { Animal a[] = d; a[0] = new Dog(); print("5 accepted") } catch (ArgumentException e) { print("5 " + e.message) }
+            try { Cat c[]; c = d; print("6 accepted") } catch (ArgumentException e) { print("6 " + e.message) }
+            try { var b = new Box(); b.Set(d); print("7 accepted") } catch (ArgumentException e) { print("7 " + e.message) }
+            try { U.TakeCats(d); print("8 accepted") } catch (ArgumentException e) { print("8 " + e.message) }
+            any an = new Animal[2]
+            try { Dog dd[] = an; print("9 accepted") } catch (ArgumentException e) { print("9 " + e.message) }
+            try { int n[] = d; print("10 accepted") } catch (ArgumentException e) { print("10 " + e.message) }
+            any birds = new Bird[1]
+            try { INamed n[] = birds; print("11 accepted") } catch (ArgumentException e) { print("11 " + e.message) }
+            try { INamed n[] = d; print("12 accepted") } catch (ArgumentException e) { print("12 " + e.message) }
+            any nested = new Dog[2][2]
+            try { Cat c[][] = nested; print("13 accepted") } catch (ArgumentException e) { print("13 " + e.message) }
+            any strs = new string[2]
+            try { Cat c[] = strs; print("14 accepted") } catch (ArgumentException e) { print("14 " + e.message) }
+            try { strs[0] = 5; print("15 accepted") } catch (ArgumentException e) { print("15 " + e.message) }
+            var x = new Dog[2]
+            any viaVar = x
+            try { Cat c[] = viaVar; print("16 accepted") } catch (ArgumentException e) { print("16 " + e.message) }
+            any empty = []
+            try { Cat c[] = empty; print("17 accepted") } catch (ArgumentException e) { print("17 " + e.message) }
+            Animal fresh[] = new Dog[2]
+            try { fresh[1] = new Cat(); print("18 accepted") } catch (ArgumentException e) { print("18 " + e.message) }
+            int[8] small[] = new int[4]
+            small[0] = 300
+            float:m lens[] = new float[2]
+            lens[0] = 50cm
+            defined string names[] = new string[2]
+            print(small[0] + " " + lens[0] + " [" + names[1] + "]")
+            """),
+        ("process: eine Ausnahme der Nachricht, die ein catch um das process faengt (fire-Thread und Hauptprogramm, process und try process, catch weiter aussen)", """
+            class Oops : Exception { construct(string m) : base(m) { } }
+            actor Worker {
+                int handled = 0
+                undefined Fail(string why) { throw new Oops(why) }
+                undefined Ok() { this.handled = this.handled + 1 }
+            }
+            string log = ""
+            int done = 0
+            fire {
+                var w = new Worker()
+                string out = ""
+                w.Fail("first")
+                try { process w; out = out + "not reached\n" } catch (Oops e) { out = out + "process: " + e.message + "\n" }
+                w.Fail("second")
+                try { while (try process w) { out = out + "not reached\n" } } catch (Oops e) { out = out + "try process: " + e.message + "\n" }
+                w.Ok()
+                w.Fail("third")
+                w.Ok()
+                try {
+                    int n = 0
+                    while (try process w) { n = n + 1 }
+                    out = out + "not reached " + n + "\n"
+                } catch (Exception e) { out = out + "outer: " + e.message + "\n" }
+                int rest = 0
+                while (try process w) { rest = rest + 1 }
+                out = out + "rest " + rest + " handled " + w.handled
+                sync global { log = out; done = 1 }
+            }
+            while (done < 1) { sync globals }
+            print(log)
+            actor Main2 { undefined Boom() { throw new Oops("main") } }
+            var m = new Main2()
+            m.Boom()
+            try { process m; print("not reached") } catch (Oops e) { print("main process: " + e.message) }
+            m.Boom()
+            int k = 5
+            try { if (try process m) { print("not reached") } } catch (Oops e) { print("main try process: " + e.message + " " + k) }
+            print("end")
+            """),
         ("[InferDefined]: mit Reflection und JSON leitet nur eine Klasse mit dem Attribut defined her - Reflect.Call/Reflect.Set gehen durch die Pruefung, der Typ bleibt strikt, undefined wird mit der Herleitung gemeldet; JSON laesst ein fehlendes Feld auf 0, null ist ein Fehler. Ohne Attribut bleibt alles wie deklariert", """
             #import "reflection"
             #import "json"
@@ -34545,8 +34675,8 @@ else
                     finally { Environment.SetEnvironmentVariable("FIRE_INFER_UNINITIALIZED_DEFINED", before.Length == 0 ? null : before); }
                     var debugRc = new Linker().CompileAndLink(new[] { fieldSrc }, null, null, VmExecutionMode.Debug).Program.Classes["C"];
                     string fieldStates = string.Join(" ", new[] { "count", "step", "lazy", "maybe", "never", "late" }.Select(f => f + "=" + Defined(fieldRc, f) + "/" + Defined(strictRc, f) + "/" + Defined(debugRc, f)));
-                    CheckNat("defined fuer Felder herleiten: count (ohne Initialisierer, der Konstruktor setzt es zuerst) und step sind defined, lazy (== undefined), maybe (any), never (nie geschrieben) und late (erst nach einem Aufruf gesetzt) nicht; FIRE_INFER_UNINITIALIZED_DEFINED=0 laesst count aus, ein Debug-Build leitet nichts her",
-                        fieldStates == "count=True/False/False step=True/True/False lazy=False/False/False maybe=False/False/False never=False/False/False late=False/False/False", fieldStates);
+                    CheckNat("defined fuer Felder herleiten: count (ohne Initialisierer, der Konstruktor setzt es zuerst) und step sind defined, lazy (== undefined), maybe (any), never (nie geschrieben) und late (erst nach einem Aufruf gesetzt) nicht; FIRE_INFER_UNINITIALIZED_DEFINED=0 laesst count aus, ein Debug-Build leitet her wie ein Release-Build (DECISIONS D12)",
+                        fieldStates == "count=True/False/True step=True/True/True lazy=False/False/False maybe=False/False/False never=False/False/False late=False/False/False", fieldStates);
                 }
                 // elements of typed arrays (ROADMAP: as direct as a buffer): a defined array is read with one load into a C number, a C number is stored in place
                 {

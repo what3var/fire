@@ -132,7 +132,11 @@ print(ops[1](6, 7))                 // 42
 ```
 
 - The other direction (an `Animal` array where `Dog d[]` is declared) and an array of an unrelated class are refused (`An array of Dog cannot be
-  stored where an array of Cat is declared.`).
+  stored where an array of Cat is declared.`) - by the type checker where it knows both types (`TC001`), at run time in any case.
+- `new Dog[n]` (a class, an interface, a record, `string`, an enum) **is** an array of Dog from the start, also where no declaration says so:
+  `any d = new Dog[2]`, `var x = new Dog[2]`, an argument. `Cat c[] = d` is the `ArgumentException` above, `Animal a[] = d` is fine and `a[0] = new
+  Cat()` is refused by the Dog array. An array of numbers (`new int[n]`) and a literal (`[a, b]`) take their element type from the first declaration
+  they are stored in (`int[8] small[] = new int[4]`, `float:m lens[] = new float[3]`).
 - `defined` works for them too: `defined string s[] = new string[n]` starts with `""`, a `defined` enum array with the first value; `defined Dog d[]` has
   no zero, so it only takes an array whose elements are all given (`new Dog[2]` there is an `ArgumentException`).
 - `lambda<int, int> fs[]` holds lambdas with two parameters (or `undefined`); the types of the signature are hints for the type checker.

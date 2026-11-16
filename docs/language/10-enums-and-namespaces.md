@@ -71,8 +71,9 @@ any five = 5
 c = five                // ArgumentException: Variable 'c' is a Color, not Int.
 ```
 
-Without the cast an enum value still goes into an `int` (the type checker warns, `TC001`), but it stays the enum value: `int n = c` prints `Blue`.
-A `defined int` takes its number.
+Without the cast an enum value still goes into an `int` (the type checker warns, `TC001`) and becomes its number there, as with `c!int`: after
+`int n = Color.Blue`, `print(n)` gives `2` and `n is of int` is `True`. The same holds for a parameter, a field, a return value and an element of
+`int a[]`; a `float` takes the number as a float.
 
 The same holds for `T` in generic code when the type argument is an enum (`List<Color>`), and for the elements of `Color cs[]`.
 
