@@ -148,7 +148,8 @@ namespace fire.Runtime
                 _nativeRedirected = true;
                 return default;
             }
-            return Value.MakeClassRef(ConstructNested(rc, args));
+            // (an exception in the constructor goes to the handlers of the caller, like one of `new`: no result)
+            return TryConstructNested(rc, args) is { } instance ? Value.MakeClassRef(instance) : NativeRedirected();
         }
     }
 }
