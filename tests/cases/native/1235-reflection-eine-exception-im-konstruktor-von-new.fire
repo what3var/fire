@@ -1,0 +1,56 @@
+#import "reflection"
+class Boom : Exception {
+    construct(string m) { this.message = m }
+}
+class Part {
+    string name
+    construct(string n) { this.name = n }
+    destruct() { print("part freed " + this.name) }
+}
+class P {
+    Part part
+    int n
+    construct() {
+        this.part = new Part("p")
+        throw new Boom("from P")
+    }
+    construct(int n) {
+        this.n = n
+        if (n < 0) { throw new Exception("negative") }
+    }
+    destruct() { print("P destructed " + this.n) }
+    int Twice() { if (this.n > 5) { throw new Boom("too big") } return this.n * 2 }
+    int Half { get { if (this.n == 0) { throw new Boom("zero") } return this.n / 2 } set { if (value < 0) { throw new Boom("neg set") } this.n = value * 2 } }
+}
+class U {
+    static int Fail() { throw new Boom("default") }
+    static int F(int x = U.Fail()) { return x }
+}
+class Q {
+    int n
+    construct(int x = U.Fail()) { this.n = x }
+}
+// a plain `new`: the half-built object is gone, its destruct() does not run, what it owned is freed
+try { var p = new P() } catch (e) { print("new: " + e.message) }
+// the same through reflection: the exception itself reaches the catch around the call
+try { any p = Type.Named("P").New(new any[0]) } catch (Boom b) { print("Type.New: " + b.message) }
+try { any p = Reflect.New("P", new any[0]) } catch (e) { print("Reflect.New: " + e.message + " " + (e is of Boom)) }
+try { any p = Reflect.New("P", [-1]) } catch (Boom b) { print("wrong") } catch (e) { print("Reflect.New(-1): " + e.message) }
+any ok = Reflect.New("P", [3])
+print("ok " + Reflect.Call(ok, "Twice", new any[0]))
+try { Reflect.Set(ok, "n", 9); print(Reflect.Call(ok, "Twice", new any[0])) } catch (Boom b) { print("Call: " + b.message) }
+try { Reflect.Set(ok, "Half", -1) } catch (Boom b) { print("Set: " + b.message) }
+try { Reflect.Set(ok, "n", 0); print(Reflect.Get(ok, "Half")) } catch (Boom b) { print("Get: " + b.message) }
+var count = 0
+for (var i = 0; i < 3; i++) {
+    try { any p = Type.Named("P").New(new any[0]) } catch (e) { count++ }
+}
+print("count " + count)
+// a default value of a parameter that throws: the exception of the call, in the caller's catch
+try { print(U.F()) } catch (Boom b) { print("default: " + b.message) }
+try { var q = new Q() } catch (Boom b) { print("ctor default: " + b.message) }
+try { any q = Reflect.New("Q", new any[0]) } catch (Boom b) { print("Reflect.New default: " + b.message) }
+var l = (int x = U.Fail()) => x
+try { print(l()) } catch (Boom b) { print("lambda default: " + b.message) }
+print("end")
+//# name: Reflection: eine Exception im Konstruktor von New und in einem Standardwert erreicht das catch des Aufrufers

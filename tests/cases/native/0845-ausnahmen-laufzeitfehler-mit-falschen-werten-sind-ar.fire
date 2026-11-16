@@ -1,0 +1,38 @@
+class B { int x }
+unit Inch: in
+var tries = [
+    () => { any f = undefined; f(1) },
+    () => { any f = 5; f() },
+    () => { any e = 5; throw e },
+    () => { any x = 5; delete x },
+    () => { any x = "abc"; delete x },
+    () => { any s = "a"; print($"{s:X}") },
+    () => { any s = "a"; print($"{s:F2}") },
+    () => { any o = 5; any x = new int[2]; print(x is from o) },
+    () => { any o = "x"; any x = new int[2]; print(x is under o) },
+    () => { any s = "a"; print(s::in) },
+    () => { any s = "a"; print(s:in) },
+    () => { int n = -1; int a[] = new int[n]; print(a.Length) },
+    () => { int n = -2; byte a[] = new byte[n]; print(a.Length) },
+    () => { int n = -3; word w[] = new word[n]; print(w.Length) },
+    () => { int n = -4; int j[][] = new int[2][n]; print(j.Length) },
+    () => { any n = -5; any a = new any[n]; print(a.Length) },
+    () => { any e = new B(); e.resume() }
+]
+for (var i = 0; i < tries.Length; i++) {
+    try {
+        tries[i]()
+        print(i + ": no exception")
+    } catch (ArgumentException e) {
+        print(i + ": " + e.message)
+    }
+}
+// resumed: the call that failed gives the value of resume()
+try {
+    any f = 3
+    print("r " + f(1))
+} catch (e) { e.resume(7) }
+word w = 5
+print($"{w:E2}")
+print("end")
+//# name: Ausnahmen: Laufzeitfehler mit Werten der falschen Art sind ArgumentExceptions wie in der VM (Aufruf, throw, delete, Formate, is from, Einheiten, Groessen, resume)

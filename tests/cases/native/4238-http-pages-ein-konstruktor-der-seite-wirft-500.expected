@@ -1,0 +1,9 @@
+broken 500
+fine 200 True
+call of undefined undefined open False code 4500
+broken again 500
+
+start BrokenPage /broken Boom: no page today
+event FinePage /fine ArgumentException: Call of a value of type Undefined which is not a lambda.
+start BrokenPage /broken Boom: no page today
+end
