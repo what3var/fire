@@ -1520,10 +1520,22 @@ namespace fire.Runtime
                 return true;
             }
 
+            // An exception of the method that a `catch` around the `process` took (in this method or further out) left the nested run as well: the
+            // frames and the stack are the handler's now (ThrowException: the `catch` begins at the stack height of its `try`) - the method returned
+            // nothing, and the statement that ran `process` does not go on (ProcessCaught). Popping here took a value of the handler's level, or ran
+            // below the stack ("Index was outside the bounds of the array", the end of a fire thread whose loop catches what its messages throw).
+            // (recognised like in CallMethodNested: only a real return puts chunk, ip and scope of the pushed frame back)
+            var returnTo = _frames.Peek();
             RunNestedUntil(targetDepth);
-            PopNestedResult(); // Return value unused, see documentation above.
+            if (ReferenceEquals(_currentChunk, returnTo.ReturnChunk) && _ip == returnTo.ReturnIp && ReferenceEquals(_currentScope, returnTo.ReturnScope))
+                PopNestedResult(); // Return value unused, see documentation above.
+            else if (!_stopExecutionRequested) ProcessCaught = true;
             return true;
         }
+
+        /// <summary>Set by ProcessOneMessage when the method of the message threw and a `catch` outside it took the exception: the VM stands at that
+        /// `catch` - `try process` pushes no result. The instruction that ran the `process` clears it.</summary>
+        private bool ProcessCaught;
 
         // -----------------------------------------------------------
         // Stepping/inspection API for external tools (step debugger in the
@@ -6031,6 +6043,7 @@ namespace fire.Runtime
                             break;
                         }
                         ProcessOneMessage(actorTarget, blocking: true);
+                        ProcessCaught = false;
                     }
                     finally { if (waits) VmScheduler.BlockLeave(); }
                     break;
@@ -6040,7 +6053,9 @@ namespace fire.Runtime
                 {
                     var actorTarget = RequireObjectInstance(Pop(), "try process");
                     bool processed = ProcessOneMessage(actorTarget, blocking: false);
-                    Push(Value.MakeBool(processed));
+                    // (the method threw into a `catch` around the `try process`: the VM stands there - no result on its stack)
+                    if (ProcessCaught) ProcessCaught = false;
+                    else Push(Value.MakeBool(processed));
                     break;
                 }
 
