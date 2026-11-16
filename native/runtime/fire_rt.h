@@ -3431,6 +3431,18 @@ FIRE_FN void adopt(Value v, OwnList* list) {
     }
 }
 
+/* A string or lambda in a slot that waits while fire code runs (`f(G.name, g())`, `this.name + this.Change()`), read without a count from a place that code may
+ * write (a global, a static field, a field, an element): the temporaries of `list`'s statement take a count of their own - replacing the place no longer
+ * frees what the slot holds (CppGenerator Flow.Borrowed). The callee holds its own arguments (the retain of its parameters). */
+FIRE_FN void holdTemp(Value v, OwnList* list) {
+    (void)list;   /* (the pool of the temporaries is the thread's; `list` names the statement whose `leave` lets go of it) */
+    if (isRef(v)) {
+        Ref* r = refOf(v);
+        if (FIRE_REF_SHARED(r)) { retainShared(r); poolPush(r); }
+        else if (r->rc != IMMORTAL) { r->rc++; poolPush(r); }
+    }
+}
+
 /* A value that came out of a function (a default argument), taken over by `list` like the result of a call. */
 FIRE_FN Value adoptV(Value v, OwnList* list) {
     adopt(v, list);
