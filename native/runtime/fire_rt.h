@@ -366,6 +366,7 @@ typedef struct SlotCache { uint32_t n; uint32_t slot[FIRE_SLOT_CACHE]; } SlotCac
     X(uint8_t, g_domReader, 0)   /* a fire thread that does not hold the read side of the globals' lock (see DomLock): its next touch of the shared domain takes it */ \
     X(uint8_t, g_domHeld, 0)     /* ... it holds it (until its next safe point) */ \
     X(fire_mutex*, g_pkgHeld, NULL)   /* the lock of the package whose native runs on this thread (see FIRE_PKG_ENTER) */ \
+    X(uint8_t, g_natDom, 0)      /* a fire thread in a native that got something of the shared domain: it keeps the read side for it (fire_natBegin) */ \
     X(struct ThreadRec*, g_self, NULL)  /* this fire thread as an owner of originals that other threads `sync` into (see ThreadRec) */ \
     X(struct LentReader*, g_lentRd, NULL)  /* this strand reads records lent to it (see the lent records): its epoch */
 #else
@@ -532,6 +533,7 @@ FIRE_FN ThreadLocals* fire_tl(void) {
 #define g_domReader FIRE_TLV(g_domReader)
 #define g_domHeld FIRE_TLV(g_domHeld)
 #define g_pkgHeld FIRE_TLV(g_pkgHeld)
+#define g_natDom FIRE_TLV(g_natDom)
 #define g_self FIRE_TLV(g_self)
 #define g_lentRd FIRE_TLV(g_lentRd)
 #endif
@@ -1778,6 +1780,18 @@ FIRE_FN void domReadEnter(void);
 #define FIRE_FLAGS_READ(h) (((const Owned*)(h))->flags)
 #define FIRE_FLAGS_OR(h, bits) ((void)(((Owned*)(h))->flags |= (uint8_t)(bits)))
 #define FIRE_DOM_READ() ((void)0)
+#endif
+/* A lock for a table of a package that says it is thread safe (`"threadSafe": true`: its natives run side by side on fire threads), held for a few
+ * instructions only (it spins; a static one starts free). Where natives never run side by side - no threads, the GIL, the library of a package for the
+ * VM - it is nothing. */
+#if defined(FIRE_THREADS) && defined(FIRE_NO_GIL)
+typedef fire_atomic32 fire_spin;
+static inline void fire_spinLock(fire_spin* l) { while (fire_atomic_addAcqRel(l, 1) != 0) fire_atomic_addAcqRel(l, (uint32_t)-1); }
+static inline void fire_spinUnlock(fire_spin* l) { fire_atomic_addAcqRel(l, (uint32_t)-1); }
+#else
+typedef int fire_spin;
+#define fire_spinLock(l) ((void)(l))
+#define fire_spinUnlock(l) ((void)(l))
 #endif
 FIRE_FN Owned* leafOf(Value v) {
     FIRE_DOM_TOUCH(v.p);
@@ -8659,8 +8673,14 @@ extern FIRE_RT_DATA fire_atomic32 g_gilWaiting;
  *   - the main program holds the write side while it runs: from its start (gilAcquire) to every wait (gilRelease ... gilAcquire around blockUntil and the
  *     blocking natives); at its safe points (gilYield) it lets the threads that wait to read in, and goes on when they have let go;
  *   - a fire thread takes the read side when it first touches the shared domain (FIRE_DOM_TOUCH, FIRE_DOM_READ) and lets go of it at its next safe point or
- *     wait - threads read side by side, and a thread that never touches the domain never waits for it;
- *   - a section (a change of the domain by a thread, granted by the waiting main program) holds the write side alone. */
+ *     wait - threads read side by side, and a thread that never touches the domain never waits for it. A safe point lets go of it now and then (g_tick) -
+ *     and at once when someone waits for the readers to leave (ATTN_DOM: the main program at a safe point or back from a wait or a native, a section);
+ *     the call of a native that gets nothing of the shared domain lets go of it too (fire_natBegin): a long native holds nobody up;
+ *   - a section (a change of the domain by a thread, granted by the waiting main program) holds the write side alone.
+ * The order of the locks: the lock of the globals before the lock of a package (FIRE_PKG_ENTER). A strand may hold a package's lock without the globals'
+ * (a native that got nothing of the shared domain) - then it gives the package's lock back before it waits for the globals' (domReadEnter in a callback of
+ * the native, domWriterEnter, gilYield, strandAcquire, the main program in gilYield/fire_awayEnd): nobody waits for the globals with a package's lock in
+ * the hand, so whoever waits for a package's lock with the globals' in the hand waits for a native that ends (or lets go) without them. */
 typedef struct DomLock { fire_mutex m; fire_cond cv; int32_t readers, writersWaiting; fire_atomic32 readersWaiting, away; bool mainIn, mainWaiting, writer; } DomLock;
 extern FIRE_RT_DATA DomLock g_dom;
 /* (a compare-and-swap of a word - only here, without the GIL, where the compiler has atomics) */
@@ -8680,17 +8700,31 @@ static inline bool domLendMain(void) {
     g_dom.mainIn = false;
     return true;
 }
-FIRE_COLD FIRE_FN void domReadEnter(void) {
+/* (someone waits for the readers to leave: they do at their next safe point - pollSlow - instead of when their tick runs out. Under g_dom.m.) */
+extern FIRE_RT_DATA fire_atomic32 g_attn;
+#define FIRE_ATTN_DOM 16u   /* (ATTN_DOM) */
+static inline void domReadersAsk(void) { if (g_dom.readers > 0) fire_atomic_or(&g_attn, FIRE_ATTN_DOM); }
+static inline void domReadersAsked(void) { if (fire_atomic_load(&g_attn) & FIRE_ATTN_DOM) fire_atomic_and(&g_attn, ~FIRE_ATTN_DOM); }
+/* Takes the read side. `held`: the lock of a package this thread holds (not null: it runs a callback of a native that got nothing of the shared domain) -
+ * given back before the thread waits here and taken again with the read side in the hand (the order of the locks, see DomLock). */
+FIRE_FN void domReadTake(fire_mutex* held) {
+    bool dropped = false;
     fire_mutex_lock(&g_dom.m);
     fire_atomic_add(&g_dom.readersWaiting, 1);
-    while (g_dom.mainIn || g_dom.mainWaiting || g_dom.writer) { if (!domLendMain()) fire_cond_wait(&g_dom.cv, &g_dom.m); }
+    while (g_dom.mainIn || g_dom.mainWaiting || g_dom.writer) {
+        if (domLendMain()) continue;
+        if (held && !dropped) { fire_mutex_unlock(held); dropped = true; }
+        fire_cond_wait(&g_dom.cv, &g_dom.m);
+    }
     fire_atomic_add(&g_dom.readersWaiting, (uint32_t)-1);
     g_dom.readers++;
     fire_cond_notifyAll(&g_dom.cv);
     fire_mutex_unlock(&g_dom.m);
     g_domReader = 0;
     g_domHeld = 1;
+    if (dropped) fire_mutex_lock(held);
 }
+FIRE_COLD FIRE_FN void domReadEnter(void) { domReadTake(g_pkgHeld); }
 FIRE_FN void domReadLeave(void) {
     if (!g_domHeld) return;
     fire_mutex_lock(&g_dom.m);
@@ -8702,7 +8736,9 @@ FIRE_FN void domReadLeave(void) {
 FIRE_FN void domMainEnter(void) {
     fire_mutex_lock(&g_dom.m);
     g_dom.mainWaiting = true;
+    domReadersAsk();
     while (g_dom.readers > 0 || g_dom.writer || g_dom.writersWaiting > 0) fire_cond_wait(&g_dom.cv, &g_dom.m);
+    domReadersAsked();
     g_dom.mainWaiting = false;
     g_dom.mainIn = true;
     fire_mutex_unlock(&g_dom.m);
@@ -8720,21 +8756,33 @@ FIRE_COLD FIRE_FN void domMainYield(void) {
     fire_cond_notifyAll(&g_dom.cv);
     while (fire_atomic_load(&g_dom.readersWaiting) > 0 && !g_dom.writer) fire_cond_wait(&g_dom.cv, &g_dom.m);
     g_dom.mainWaiting = true;
+    domReadersAsk();
     while (g_dom.readers > 0 || g_dom.writer) fire_cond_wait(&g_dom.cv, &g_dom.m);
+    domReadersAsked();
     g_dom.mainWaiting = false;
     g_dom.mainIn = true;
     fire_mutex_unlock(&g_dom.m);
 }
-/* A section: the thread holds the write side alone (the main program waits for the section, the other threads have let go). */
+/* A section: the thread holds the write side alone (the main program waits for the section, the other threads have let go). In a callback of a native
+ * the package's lock goes back while the thread waits for the others to let go (the order of the locks, see DomLock). */
 FIRE_FN void domWriterEnter(void) {
+    fire_mutex* held = g_pkgHeld;
+    bool dropped = false;
     domReadLeave();
     fire_mutex_lock(&g_dom.m);
     g_dom.writersWaiting++;
-    while (g_dom.mainIn || g_dom.readers > 0 || g_dom.writer) { if (!domLendMain()) fire_cond_wait(&g_dom.cv, &g_dom.m); }
+    while (g_dom.mainIn || g_dom.readers > 0 || g_dom.writer) {
+        if (domLendMain()) continue;
+        if (held && !dropped) { fire_mutex_unlock(held); dropped = true; }
+        domReadersAsk();
+        fire_cond_wait(&g_dom.cv, &g_dom.m);
+    }
+    domReadersAsked();
     g_dom.writersWaiting--;
     g_dom.writer = true;
     fire_mutex_unlock(&g_dom.m);
     g_domReader = 0;
+    if (dropped) fire_mutex_lock(held);
 }
 FIRE_FN void domWriterLeave(void) {
     fire_mutex_lock(&g_dom.m);
@@ -8744,13 +8792,48 @@ FIRE_FN void domWriterLeave(void) {
     g_domReader = 1;
 }
 /* The natives of a package (step 1f): one thread at a time per package - its lock, held while one of its natives runs, given back with the GIL's points
- * (a native that waits, a callback into fire code that reaches a safe point). The order is always: the read side of the globals first, then the package's
- * lock - so while the main program holds the write side no thread holds a package's lock, and the main program cannot wait for one forever. A package that
- * says it is thread safe (`"threadSafe": true` in its manifest) has no lock. */
+ * (a native that waits, a callback into fire code that reaches a safe point or has to wait for the lock of the globals). A package that says it is thread
+ * safe (`"threadSafe": true` in its manifest) has no lock.
+ * The lock of the globals and a native (fire_natBegin ... fire_natEnd around the call, outside the package's lock): a thread whose native gets something
+ * that is of the shared domain or may lead into it - fire_natArg says no for an argument - holds the read side while the native runs (it reads without
+ * asking); a thread whose native gets nothing of the kind lets go of the read side for it, as at a safe point - the main program and the sections do not
+ * wait for the native, and the threads that do not use the package wait for nothing. The main program goes away for a native that gets nothing of the
+ * shared domain (fire_awayBegin). The order of the locks is the globals' first (see DomLock); a strand that waits for a package's lock with the globals'
+ * in the hand waits for a native of another strand that has no need of them. */
+FIRE_FN void fire_awayBegin(void);
+FIRE_FN void fire_awayEnd(void);
+/* (may a thread's native run without the read side with this argument: nothing that is of the shared domain or may refer into it - a number, a string,
+ * a lambda (its call is fire code: that takes the read side itself), a buffer or an array of numbers of the thread's own; not an object or an array of
+ * anything else, whose fields and elements the native may follow, and no pointer) */
+FIRE_FN bool fire_natArg(Value v) {
+    if (v.kind == K_Buffer) { Owned* o = ownedOf(v); return o != NULL && !(FIRE_FLAGS_READ(o) & 64); }   /* (64: F_SHARED, the shared domain) */
+    if (v.kind == K_Array) {
+        Owned* o = ownedOf(v);
+        return o != NULL && !(FIRE_FLAGS_READ(o) & 64) && ((Arr*)o)->typed != NULL && ((Arr*)o)->typed->elem >= E_I8 && ((Arr*)o)->typed->elem <= E_U8;
+    }
+    return v.kind != K_Class && v.kind != K_PtrVar && v.kind != K_PtrByte && v.kind != K_PtrElem && v.kind != K_PtrField;
+}
+/* Before a native of a package; `freeOfDomain`: for the main program no argument is of the shared domain (fire_awayArg), for a thread none may lead into
+ * it (fire_natArg). What fire_natEnd gets: 1 the main program went away, 2 this thread's native keeps the read side. */
+FIRE_FN int fire_natBegin(bool freeOfDomain) {
+    if (!g_isThread) { if (!freeOfDomain) return 0; fire_awayBegin(); return 1; }
+    if (freeOfDomain) {
+        /* (not in a callback of a native that reads the domain: that one goes on after this) */
+        if (!g_natDom && g_domHeld) domReadLeave();
+        return 0;
+    }
+    if (g_domReader) domReadEnter();
+    if (g_natDom) return 0;
+    g_natDom = 1;
+    return 2;
+}
+FIRE_FN void fire_natEnd(int state) {
+    if (state == 1) fire_awayEnd();
+    else if (state == 2) g_natDom = 0;
+}
 FIRE_FN fire_mutex* pkgEnter(fire_mutex* m) {
     fire_mutex* prev = g_pkgHeld;
     if (prev == m) return prev;
-    if (g_domReader) domReadEnter();
     fire_mutex_lock(m);
     g_pkgHeld = m;
     return prev;
@@ -8775,7 +8858,7 @@ FIRE_FN bool fire_taskSliced(void);
 /* (what a strand lets go of while it waits, and takes again - without the counting of a native that waits, see gilRelease) */
 FIRE_FN void strandAcquire(void) {
     if (!g_isThread) domMainEnter();
-    else if (g_pkgHeld && g_domReader) domReadEnter();
+    else if (g_natDom && g_domReader) domReadTake(NULL);   /* (the native that waited reads the domain: the read side first, then its package's lock) */
     if (g_pkgHeld) fire_mutex_lock(g_pkgHeld);
     FIRE_LENT_SAFE();
 }
@@ -8816,13 +8899,14 @@ FIRE_FN void gilYield(void) {
             if (g_pkgHeld) fire_mutex_lock(g_pkgHeld);
         }
     } else if (g_pkgHeld) {
-        /* (inside a native's callback: the others get the package and the main program its turn, then this thread takes both again, in the order) */
+        /* (inside a native's callback: the others get the package and the main program its turn, then this thread takes again what it had, in the
+         * order - the read side only for a native that reads the domain) */
         fire_mutex_unlock(g_pkgHeld);
         domReadLeave();
 #ifdef FIRE_TASKS
         if ((fire_atomic_load(&g_schedReady) || schedSleeperDue() || fire_homeWanted()) && fire_taskSliced()) taskYield();
 #endif
-        domReadEnter();
+        if (g_natDom) domReadTake(NULL);
         fire_mutex_lock(g_pkgHeld);
     } else {
         domReadLeave();
@@ -8853,6 +8937,9 @@ FIRE_FN void gilRelease(void) {
 }
 #define FIRE_PKG_ENTER(m)
 #define FIRE_PKG_LEAVE(m)
+#define fire_natArg(v) false
+#define fire_natBegin(freeOfDomain) 0
+#define fire_natEnd(state) ((void)(state))
 /* Lets a thread that waits for the lock run (the ticket lock is fair: this thread queues up again behind it). */
 FIRE_FN void gilYield(void) {
     FIRE_PLAT_YIELD();   /* (a scheduler of fire itself: the others get their turn - a thread that has not started yet waits for nothing) */
@@ -9465,7 +9552,8 @@ FIRE_FN void notifyEventAll(void) {
 
 /* Signals. Bit 0 is for every thread (terminate), bit 1 for the main program only (thread exceptions), bit 2 for the main program too (sections and jobs that
  * wait for it; looked at only at a loop's jump back, and only in the mode `safepoints` - see g_globalJobs). */
-enum { ATTN_ALL = 1, ATTN_MAIN = 2, ATTN_SECT = 4, ATTN_PEER = 8 };   /* (ATTN_PEER: a fire thread is asked for a section of its own, see ThreadRec) */
+enum { ATTN_ALL = 1, ATTN_MAIN = 2, ATTN_SECT = 4, ATTN_PEER = 8,   /* (ATTN_PEER: a fire thread is asked for a section of its own, see ThreadRec) */
+       ATTN_DOM = 16 };   /* (the fire threads that hold the read side of the globals' lock are asked to let go at their next safe point, see domReadersAsk) */
 extern FIRE_RT_DATA fire_atomic32 g_attn;
 #ifdef FIRE_NO_GIL
 /* The main program in a native of a package whose arguments are not of the shared domain (docs/spec/THREADING_DESIGN.md section 7): it does not touch the
@@ -9832,7 +9920,7 @@ FIRE_FN void threadEntry(ThreadStart st) {
 #endif
     g_attnMask = ATTN_ALL;
 #ifdef FIRE_NO_GIL
-    g_attnMask |= ATTN_PEER;
+    g_attnMask |= ATTN_PEER | ATTN_DOM;
     threadRecBegin();
 #endif
     g_tick = 4096;
@@ -11023,7 +11111,7 @@ FIRE_FN void awaitItemMain(void* p) {
     Value args[3];
     g_isThread = 1;
     g_domReader = 1;
-    g_attnMask = ATTN_ALL | ATTN_PEER;
+    g_attnMask = ATTN_ALL | ATTN_PEER | ATTN_DOM;
     g_tick = 4096;
     threadRecBegin();
     if (fire_atomic_loadAcquire(&g_lentCount)) lentJoin();   /* (the caller may lend it a record that was lent to it) */
@@ -12472,6 +12560,10 @@ FIRE_FN void mainPoll(bool waiting) {
 }
 
 FIRE_COLD FIRE_FN bool pollSlow(bool loop) {
+#ifdef FIRE_NO_GIL
+    /* (someone waits for the readers of the globals' lock to leave: this thread does now, not when its tick runs out) */
+    if ((g_attnMask & ATTN_DOM) && g_domHeld && (fire_atomic_load(&g_attn) & ATTN_DOM)) { g_tick = 4096; gilYield(); }
+#endif
     if (g_leaving) return false;
     if (terminateRequested()) { startLeave(); return true; }
     if (g_attnMask & ATTN_MAIN) { if (loop) mainPoll(false); else deliverThreadExceptions(); }
