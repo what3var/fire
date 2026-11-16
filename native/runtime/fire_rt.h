@@ -364,7 +364,8 @@ extern FIRE_RT_DATA volatile int g_dbgArmed;     /* a debugger is attached */
 typedef struct SlotCache { uint32_t n; uint32_t slot[FIRE_SLOT_CACHE]; } SlotCache;
 #define FIRE_SLOT_THREAD_VARS(X) X(SlotCache, g_slotCache, FIRE_ZERO_INIT) \
     X(uint8_t, g_domReader, 0)   /* 1: a fire thread that does not hold the read side of the globals' lock (see DomLock): its next touch of the shared domain \
-                                  * takes it */ \
+                                  * takes it. 2: a fire thread that holds it (or the write side, in a section). 0: the main program - one test of this \
+                                  * byte tells it from a thread that takes what it reads (FIRE_DOM_TAKE) */ \
     X(uint8_t, g_domHeld, 0)     /* ... it holds it (until its next safe point) */ \
     X(fire_mutex*, g_pkgHeld, NULL)   /* the lock of the package whose native runs on this thread (see FIRE_PKG_ENTER) */ \
     X(uint8_t, g_natDom, 0)      /* a fire thread in a native that got something of the shared domain: it keeps the read side for it (fire_natBegin) */ \
@@ -1777,28 +1778,32 @@ FIRE_FN void domReadEnter(void);
 #define FIRE_FLAGS_READ(h) (((const volatile Owned*)(h))->flags)
 #define FIRE_FLAGS_OR(h, bits) ((void)(((Owned*)(h))->flags |= (uint8_t)(bits)))
 #endif
-#define FIRE_DOM_TOUCH(h) do { if (FIRE_UNLIKELY(FIRE_FLAGS_READ(h) & 64) && g_domReader) domReadEnter(); } while (0)
+#define FIRE_DOM_TOUCH(h) do { if (FIRE_UNLIKELY(FIRE_FLAGS_READ(h) & 64) && g_domReader == 1) domReadEnter(); } while (0)
 /* A read of a global variable or a static field of the main program (the generator puts it before the read in code that may run on a fire thread). */
-#define FIRE_DOM_READ() do { if (FIRE_UNLIKELY(g_domReader)) domReadEnter(); } while (0)
+#define FIRE_DOM_READ() do { if (FIRE_UNLIKELY(g_domReader == 1)) domReadEnter(); } while (0)
+#define FIRE_DOM_THREAD FIRE_UNLIKELY(g_domReader)   /* (is this a fire thread: the byte the reads look at anyway) */
 #else
 #define FIRE_DOM_TOUCH(h) ((void)0)
 #define FIRE_FLAGS_READ(h) (((const Owned*)(h))->flags)
 #define FIRE_FLAGS_OR(h, bits) ((void)(((Owned*)(h))->flags |= (uint8_t)(bits)))
 #define FIRE_DOM_READ() ((void)0)
+#define FIRE_DOM_THREAD FIRE_UNLIKELY(g_isThread)
 #endif
 /* What a fire thread reads out of the shared domain it *takes* (the rule of the loads, see "Strings without the GIL" at struct Ref): a string or a lambda
  * gets a count of the thread's own while the thread holds the read side (or the GIL) - on its temporary pool, let go of when the scope ends, like any
  * temporary the thread made itself. The value stays valid when the thread lets go of the read side (a safe point, a native) and the main program or a
  * section replaces it in the domain. No copy: what the domain holds is counted atomically (R_SHARED, set by whoever stored it) or immortal; with the GIL
- * the plain count is the GIL's. The main program pays the test of the kind and of g_isThread, and only for a string or lambda. */
+ * the plain count is the GIL's. The main program pays one test of a byte per read (FIRE_DOM_THREAD) - for a global or static field the one it paid before. */
 #ifdef FIRE_THREADS
 FIRE_FN void domTake(Value v);
-#define FIRE_DOM_TAKE(h, v) do { if (((0x50u >> (v).kind) & 1u) != 0 && FIRE_UNLIKELY(FIRE_FLAGS_READ(h) & 64) && g_isThread) domTake(v); } while (0)
+#define FIRE_DOM_TAKE(h, v) do { if (FIRE_DOM_THREAD && ((0x50u >> (v).kind) & 1u) != 0 && (FIRE_FLAGS_READ(h) & 64)) domTake(v); } while (0)
 /* ... the read of a global or a static field itself, `dst = src` (of a number: FIRE_DOM_READ and the plain move). */
 #define FIRE_DOM_LOAD(dst, src) do { \
-    FIRE_DOM_READ(); \
-    (dst) = (src); \
-    if (((0x50u >> (dst).kind) & 1u) != 0 && FIRE_UNLIKELY(g_isThread)) domTake(dst);   /* (isRef: a string, a lambda) */ \
+    if (FIRE_DOM_THREAD) { \
+        FIRE_DOM_READ(); \
+        (dst) = (src); \
+        if (((0x50u >> (dst).kind) & 1u) != 0) domTake(dst);   /* (isRef: a string, a lambda) */ \
+    } else (dst) = (src); \
 } while (0)
 #else
 #define FIRE_DOM_LOAD(dst, src) ((dst) = (src))
@@ -8852,11 +8857,11 @@ FIRE_FN void domReadTake(fire_mutex* held) {
     g_dom.readers++;
     fire_cond_notifyAll(&g_dom.cv);
     fire_mutex_unlock(&g_dom.m);
-    g_domReader = 0;
+    g_domReader = 2;
     g_domHeld = 1;
     if (dropped) fire_mutex_lock(held);
 }
-FIRE_COLD FIRE_FN void domReadEnter(void) { if (g_domHeld) g_domReader = 0; else domReadTake(g_pkgHeld); }
+FIRE_COLD FIRE_FN void domReadEnter(void) { if (g_domHeld) g_domReader = 2; else domReadTake(g_pkgHeld); }
 FIRE_FN void domReadLeave(void) {
     if (!g_domHeld) return;
     fire_mutex_lock(&g_dom.m);
@@ -8913,7 +8918,7 @@ FIRE_FN void domWriterEnter(void) {
     g_dom.writersWaiting--;
     g_dom.writer = true;
     fire_mutex_unlock(&g_dom.m);
-    g_domReader = 0;
+    g_domReader = 2;
     if (dropped) fire_mutex_lock(held);
 }
 FIRE_FN void domWriterLeave(void) {
@@ -8961,7 +8966,7 @@ FIRE_FN int fire_natBegin(bool freeOfDomain) {
         if (!g_natDom && g_domHeld) domReadLeave();
         return 0;
     }
-    if (g_domReader) domReadEnter();
+    if (g_domReader == 1) domReadEnter();
     if (g_natDom) return 0;
     g_natDom = 1;
     return 2;
@@ -8997,7 +9002,7 @@ FIRE_FN bool fire_taskSliced(void);
 /* (what a strand lets go of while it waits, and takes again - without the counting of a native that waits, see gilRelease) */
 FIRE_FN void strandAcquire(void) {
     if (!g_isThread) domMainEnter();
-    else if (g_natDom && g_domReader) domReadTake(NULL);   /* (the native that waited reads the domain: the read side first, then its package's lock) */
+    else if (g_natDom && g_domReader == 1) domReadTake(NULL);   /* (the native that waited reads the domain: the read side first, then its package's lock) */
     if (g_pkgHeld) fire_mutex_lock(g_pkgHeld);
     FIRE_LENT_SAFE();
 }

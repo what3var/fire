@@ -34623,7 +34623,7 @@ else
             #import "time"
             #import "compression"
             // A string a thread read from a static field stays valid across the call of a native in the same expression, while the main program replaces it:
-            // the thread lets go of the read side of the globals' lock for a native only when it has read nothing but numbers of the globals.
+            // the thread lets go of the read side of the globals' lock for the native, the string it read is its own by a count (FIRE_DOM_LOAD).
             class G { static string name = "start" }
             class U { static int Pair(string a, any b) { return a.length + b.length } }
             var done = 0
@@ -34644,6 +34644,107 @@ else
             while (done < 1) {
                 G.name = "name number " + n + " of the main program"
                 int[64] now = DateTime.UtcNow.Ticks
+                n++
+            }
+            print(total >= 0)
+            """),
+        ("Threads: ein String oder Lambda, das ein Thread aus dem geteilten Bereich liest (Global, statisches Feld, Feld, Element), gehoert ihm - gueltig ueber einen Aufruf, waehrend das Hauptprogramm es ersetzt", """
+            // What a thread reads out of the shared domain it takes (fire_rt.h FIRE_DOM_TAKE): the string or lambda in the temporary has a count of the thread's own.
+            // Before, it was borrowed: the safe point at the entry of U.Slow let go of the read side, the main program replaced and freed the value, and U.Pair
+            // read freed memory (AddressSanitizer: heap-use-after-free in retain).
+            class Box {
+                string name = "x"
+                string items[] = new string[4]
+                any f = undefined
+            }
+            class G { static string name = "start" }
+            class U {
+                static int Pair(string a, int b) { return a.length + b }
+                static int Call(any f, int b) { return f(b) + b }
+                static int Slow() {
+                    int s = 0
+                    for (int i = 0; i < 2000; i++) { s = s + i % 3 }
+                    return s
+                }
+            }
+            var done = 0
+            var total = 0
+            var gname = "global"
+            var glam = x => x + 1
+            var box = new Box()
+            var names = new string[3]
+            box.f = x => x + 2
+            fire {
+                int local = 0
+                for (int i = 0; i < 300; i++) {
+                    local = local + U.Pair(G.name, U.Slow()) % 2
+                    local = local + U.Pair(gname, U.Slow()) % 2
+                    local = local + U.Pair(box.name, U.Slow()) % 2
+                    local = local + U.Pair(box.items[1], U.Slow()) % 2
+                    local = local + U.Pair(names[2], U.Slow()) % 2
+                    local = local + U.Call(glam, U.Slow()) % 2
+                    local = local + U.Call(box.f, U.Slow()) % 2
+                }
+                sync global { done = 1; total = local }
+            }
+            int n = 0
+            while (done < 1) {
+                string tail = " number " + n + " of the main program"
+                G.name = "static" + tail
+                gname = "global" + tail
+                box.name = "field" + tail
+                box.items[1] = "element" + tail
+                names[2] = "name" + tail
+                int k = n
+                glam = x => x + k
+                box.f = x => x + k + 1
+                n++
+            }
+            print(total >= 0)
+            """),
+        ("Threads: Strings aus einer Liste, einem Array und einem statischen Feld der Globals als Argument neben einem Native und in foreach, waehrend das Hauptprogramm sie ersetzt", """
+            // The same rule where the thread lets go of the read side for a native (a string of the globals as an argument does not hold it) and where a
+            // reading method of an object of the globals returns the string (list[i], the enumerator of the list).
+            #import "io"
+            #import "compression"
+            class G { static string name = "start" }
+            class U {
+                static int Pair(string a, any b) { return a.length + b.length }
+                static int Slow() {
+                    int s = 0
+                    for (int i = 0; i < 2000; i++) { s = s + i % 3 }
+                    return s
+                }
+                static int Walk(string all[]) {
+                    int s = 0
+                    foreach (var t in all) { s = s + t.length + U.Slow() % 2 }
+                    return s
+                }
+            }
+            var done = 0
+            var total = 0
+            var list = new List<string>()
+            list.Add("a")
+            list.Add("b")
+            var names = ["one", "two", "three"]
+            fire {
+                byte data[] = new byte[3000]
+                for (int i = 0; i < data.length; i++) { data[i] = (i * 7 + i / 13) % 251 }
+                int local = 0
+                for (int i = 0; i < 300; i++) {
+                    local = local + U.Pair(list[1], Compression.Deflate.Compress(data)) % 2
+                    local = local + U.Pair(G.name, IO.Utf8.GetBytes(G.name)) % 2
+                    local = local + U.Pair(names[i % 3], IO.Utf8.GetBytes(names[2] + list[0])) % 2
+                    foreach (var t in list) { local = local + t.length % 2 + U.Slow() % 2 }
+                }
+                sync global { done = 1; total = local }
+            }
+            int n = 0
+            while (done < 1) {
+                string tail = " number " + n + " of the main program"
+                G.name = "static" + tail
+                list[n % 2] = "item" + tail
+                names[n % 3] = "name" + tail
                 n++
             }
             print(total >= 0)
