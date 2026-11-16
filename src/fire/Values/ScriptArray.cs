@@ -19,7 +19,42 @@ namespace fire.Values
     /// </summary>
     public sealed class ScriptArray : fire.Runtime.IOwnedLeaf, fire.Runtime.IOwner
     {
-        public Value[] Items { get; }
+        // The elements. Three states (docs/spec: the VM's storage of arrays):
+        //   - Values (_items): one 24-byte Value per element - every array that is not one of the two below.
+        //   - fresh (_items and _bools null): `new T[n]` before anything was stored - every element is `undefined`, nothing is allocated yet.
+        //   - packed bools (_bools): a `bool a[]` (ElemType Bool) - ONE BYTE per element: 0 false, 1 true, 2 undefined.
+        // Code that knows the states reads and writes through TryGet/TrySet/GetUnchecked/SetUnchecked (and the VM's fast paths through PackedBools);
+        // everything else takes Items, which turns the array into Values for good (Unpack) - the same elements, so nothing but the memory changes.
+        private Value[]? _items;
+        private byte[]? _bools;
+        private readonly int _length;
+
+        /// <summary>The byte of an undefined element of a packed bool array (0: false, 1: true).</summary>
+        public const byte UndefinedBool = 2;
+        private static readonly Value[] BoolValues = { Value.MakeBool(false), Value.MakeBool(true), Value.MakeUndefined() };
+
+        /// <summary>The elements as Values. A fresh or packed array (<see cref="IsPacked"/>) becomes an array of Values by this - read single elements with
+        /// <see cref="GetUnchecked"/> or <see cref="TryGet"/> instead where the array may be big.</summary>
+        public Value[] Items => _items ?? Unpack();
+
+        /// <summary>The elements are not stored as Values (a fresh array, packed bools): they are bools and `undefined` only - nothing in them refers to
+        /// an object, an array, a buffer or a lambda.</summary>
+        public bool IsPacked => _items == null;
+
+        /// <summary>The bytes of a packed bool array that the VM may read and write in place (0 false, 1 true, <see cref="UndefinedBool"/>); null for
+        /// every other array and for a shared or destroyed one (their accesses take the slow path).</summary>
+        public byte[]? PackedBools => _shared || IsDestroyed ? null : _bools;
+
+        private Value[] Unpack()
+        {
+            var items = new Value[_length];
+            var bools = _bools;
+            if (bools == null) System.Array.Fill(items, Value.MakeUndefined());
+            else for (int i = 0; i < items.Length; i++) items[i] = BoolValues[bools[i]];
+            _items = items;
+            _bools = null;
+            return items;
+        }
 
         /// <summary>The owner (SPEC 2): a scope or an object; null for an array created outside the VM that is never destroyed.</summary>
         public fire.Runtime.IOwner? LeafOwner { get; set; }
@@ -57,15 +92,20 @@ namespace fire.Values
 
         /// <summary>Shared or destroyed: the VM's fast paths (element access) then take the slow path, which respects both.</summary>
         public bool Special { get; private set; }
-        public int Length => Items.Length;
+        public int Length => _length;
 
         /// <summary>`fire handover` (see ObjectInstance.HandedOverTo): the array that took this one's place; this one is dead (destroyed) from then on.</summary>
         public ScriptArray? HandedOverTo { get; private set; }
 
-        private ScriptArray(Value[] items) { Items = items; }
+        private ScriptArray(ScriptArray storage) { _items = storage._items; _bools = storage._bools; _length = storage._length; }
 
         /// <summary>The new array for a handover: the same elements, owner, owned objects and parts (not registered anywhere yet).</summary>
-        internal ScriptArray Relocate() => new(Items) { LeafOwner = LeafOwner, Parts = Parts, _ownedObjects = _ownedObjects, _hash = GetHashCode() };
+        internal ScriptArray Relocate()
+        {
+            // (a fresh array has no storage to share yet: it gets its Values first)
+            if (_items == null && _bools == null) Unpack();
+            return new(this) { LeafOwner = LeafOwner, Parts = Parts, _ownedObjects = _ownedObjects, _hash = GetHashCode() };
+        }
 
         // `==` compares the array, not the instance (see ObjectInstance.Equals).
         private int _hash;
@@ -108,11 +148,11 @@ namespace fire.Values
             }
         }
 
+        /// <summary>A fresh array: every element is `undefined`. Its storage comes with the first use (Values) or with its type (`bool a[]`: bytes).</summary>
         public ScriptArray(int length)
         {
-            Items = new Value[length];
-            for (int i = 0; i < length; i++)
-                Items[i] = Value.MakeUndefined();
+            if (length < 0) throw new System.OverflowException();
+            _length = length;
         }
 
         /// <summary>The element type of a typed array (<see cref="ArrayElem"/>; 0: untyped, any value). A typed array (`int a[]`, `int[8] a[]`, `float a[]`,
@@ -136,11 +176,20 @@ namespace fire.Values
         public bool MakeDefined(Value zero)
         {
             if (ElemDefined || ElemType == ArrayElem.None) return true;
+            if (_bools is { } bools && zero.Kind == ValueKind.Bool)
+            {
+                // (packed bools: the undefined ones become the zero)
+                byte zeroByte = zero.AsBool() ? (byte)1 : (byte)0;
+                System.MemoryExtensions.Replace(System.MemoryExtensions.AsSpan(bools), UndefinedBool, zeroByte);
+                ElemDefined = true;
+                return true;
+            }
+            var items = Items;
             if (zero.Kind == ValueKind.Undefined)
-                for (int i = 0; i < Items.Length; i++)
-                    if (Items[i].Kind == ValueKind.Undefined) return false;
-            for (int i = 0; i < Items.Length; i++)
-                if (Items[i].Kind == ValueKind.Undefined) Items[i] = zero;
+                for (int i = 0; i < items.Length; i++)
+                    if (items[i].Kind == ValueKind.Undefined) return false;
+            for (int i = 0; i < items.Length; i++)
+                if (items[i].Kind == ValueKind.Undefined) items[i] = zero;
             ElemDefined = true;
             return true;
         }
@@ -149,13 +198,46 @@ namespace fire.Values
         /// in `offending`) and the array stays untyped.</summary>
         public bool MakeTyped(byte elemType, string? elemUnit, out ArrayElem.Error error, out string? message, out Value offending)
         {
-            var converted = new Value[Items.Length];
-            for (int i = 0; i < Items.Length; i++)
+            if (_items == null && _bools == null)
             {
-                offending = Items[i];
-                if (!ArrayElem.TryConvert(elemType, elemUnit, Items[i], out converted[i], out error, out message)) return false;
+                // a fresh array (`new bool[n]`, `new int[n]`): every element is the same `undefined` - converted once; bools get their bytes, every other
+                // type its Values (no second array of them)
+                offending = Value.MakeUndefined();
+                if (!ArrayElem.TryConvert(elemType, elemUnit, offending, out var fresh, out error, out message)) return false;
+                if (elemType == ArrayElem.Bool && elemUnit == null && fresh.Kind == ValueKind.Undefined)
+                {
+                    var bytes = new byte[_length];
+                    System.Array.Fill(bytes, UndefinedBool);
+                    _bools = bytes;
+                }
+                else
+                {
+                    var values = new Value[_length];
+                    System.Array.Fill(values, fresh);
+                    _items = values;
+                }
             }
-            System.Array.Copy(converted, Items, Items.Length);
+            else
+            {
+                var items = Items;
+                var converted = new Value[items.Length];
+                bool packable = elemType == ArrayElem.Bool && elemUnit == null;
+                for (int i = 0; i < items.Length; i++)
+                {
+                    offending = items[i];
+                    if (!ArrayElem.TryConvert(elemType, elemUnit, items[i], out converted[i], out error, out message)) return false;
+                    packable = packable && IsPackableBool(converted[i]);
+                }
+                if (packable)
+                {
+                    // (`bool a[] = [true, false]`: the literal becomes bytes)
+                    var bytes = new byte[converted.Length];
+                    for (int i = 0; i < bytes.Length; i++) bytes[i] = BoolByte(converted[i]);
+                    _bools = bytes;
+                    _items = null;
+                }
+                else System.Array.Copy(converted, items, items.Length);
+            }
             ElemType = elemType;
             ElemUnit = elemUnit;
             Special = _shared || IsDestroyed || elemType != 0;
@@ -179,25 +261,63 @@ namespace fire.Values
             Special = _shared || IsDestroyed || ElemType != 0;
         }
 
+        /// <summary>Is `value` what a byte of a packed bool array can hold - a bool or a plain `undefined`?</summary>
+        [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]
+        private static bool IsPackableBool(in Value value) =>
+            value.Kind == ValueKind.Bool || value.Kind == ValueKind.Undefined && value.Unit is null or { IsUnitless: true };
+
+        [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]
+        private static byte BoolByte(in Value value) => value.Kind == ValueKind.Bool ? (value.AsBool() ? (byte)1 : (byte)0) : UndefinedBool;
+
+        /// <summary>The first `count` elements of `source` into this array as they are (no conversion: the caller knows they fit) - packed bools as bytes
+        /// when this array can take them so (a fresh one becomes packed like the source), else element by element.</summary>
+        public void CopyElementsFrom(ScriptArray source, int count)
+        {
+            if (count <= 0) return;
+            if (source._bools is { } from)
+            {
+                if (_items == null && _bools == null && count == _length && ElemType == ArrayElem.Bool && ElemUnit == null)
+                {
+                    _bools = System.MemoryExtensions.AsSpan(from, 0, count).ToArray();
+                    return;
+                }
+                if (_bools is { } to) { System.Array.Copy(from, to, count); return; }
+                var items = Items;
+                for (int i = 0; i < count; i++) items[i] = BoolValues[from[i]];
+                return;
+            }
+            if (source._items == null) { for (int i = 0; i < count; i++) SetUnchecked(i, BoolValues[UndefinedBool]); return; }
+            if (_bools != null) { for (int i = 0; i < count; i++) SetUnchecked(i, source._items[i]); return; }
+            System.Array.Copy(source._items, Items, count);
+        }
+
+        /// <summary>All elements as Values into `destination` (as long as this array) - without turning a packed array into Values.</summary>
+        public void ReadItems(Value[] destination)
+        {
+            if (_items is { } items) { System.Array.Copy(items, destination, items.Length); return; }
+            if (_bools is { } bools) { for (int i = 0; i < bools.Length; i++) destination[i] = BoolValues[bools[i]]; return; }
+            System.Array.Fill(destination, Value.MakeUndefined(), 0, _length);
+        }
+
         /// <summary>Returns `false` for an invalid index (`value` then
         /// `default`) instead of throwing - the caller decides itself what
         /// that means (see VM.ArrayGet: a catchable script exception).</summary>
         public bool TryGet(long index, out Value value)
         {
-            if (index < 0 || index >= Items.Length)
+            if (index < 0 || index >= _length)
             {
                 value = default;
                 return false;
             }
-            value = Items[index];
+            value = GetUnchecked(index);
             return true;
         }
 
         /// <summary>Returns `false` for an invalid index, WITHOUT writing.</summary>
         public bool TrySet(long index, Value value)
         {
-            if (index < 0 || index >= Items.Length) return false;
-            Items[index] = value;
+            if (index < 0 || index >= _length) return false;
+            SetUnchecked(index, value);
             return true;
         }
 
@@ -207,8 +327,20 @@ namespace fire.Values
         /// a controlled `false`. Called only by VM opcode handlers in
         /// performance mode, never selectable directly from script
         /// code.</summary>
-        public Value GetUnchecked(long index) => Items[(int)index];
+        public Value GetUnchecked(long index)
+        {
+            if (_items is { } items) return items[(int)index];
+            if (_bools is { } bools) return BoolValues[bools[(int)index]];
+            if ((ulong)index >= (ulong)_length) throw new System.IndexOutOfRangeException();
+            return BoolValues[UndefinedBool];   // (a fresh array)
+        }
 
-        public void SetUnchecked(long index, Value value) => Items[(int)index] = value;
+        public void SetUnchecked(long index, Value value)
+        {
+            if (_items is { } items) { items[(int)index] = value; return; }
+            // (packed bools take a bool or a plain undefined in place; anything else - a caller that did not convert - makes the array Values, as before)
+            if (_bools is { } bools && IsPackableBool(value)) { bools[(int)index] = BoolByte(value); return; }
+            Items[(int)index] = value;
+        }
     }
 }

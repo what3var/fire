@@ -5684,6 +5684,15 @@ namespace fire.Native
                         Check();
                         d = first + 1; SetR(first, false); return Next();
                     }
+                    if (native == StringBuilderMethods.NativeName && argc is 2 or 3)
+                    {
+                        // the prelude's StringBuilder (fire_rt.h sbCall): its text in one byte buffer
+                        if (!_errorClasses.Contains("ArgumentException")) _errorClasses.Add("ArgumentException");
+                        int first = d - argc;
+                        E($"{S(first)} = sbCall({S(first)}.i, {S(first + 1)}, {(argc == 3 ? S(first + 2) : "Undef()")}, &{OwnerList()});");
+                        Check();
+                        d = first + 1; SetR(first, true); return Next();
+                    }
                     if (native == ArrayCopyMethods.NativeName && argc == 3)
                     {
                         // `__array_copy(src, dst, count)` (the prelude's Grow): the packed numbers in one block (fire_rt.h fire_arrayCopy)

@@ -56,7 +56,7 @@ namespace fire.Runtime
                     var array = source.AsArray();
                     if (deep) return new DeepCopier(owner, null).RunOnContainer(source);
                     var items = new ScriptArray(array.Length);
-                    Array.Copy(array.Items, items.Items, array.Length);
+                    array.ReadItems(items.Items);
                     LeafOwnership.Adopt(items, owner);
                     return Value.MakeArray(items);
                 }
@@ -206,6 +206,7 @@ namespace fire.Runtime
                         {
                             var array = v.AsArray();
                             if (!_containersSeen.Add(array)) break;
+                            if (array.IsPacked) break;   // (bools and undefined only: nothing to copy along)
                             foreach (var item in array.Items) pending.Push(item);
                             break;
                         }
@@ -278,6 +279,7 @@ namespace fire.Runtime
                         // copied object's scope otherwise, while the object lives on: `new Holder(copy bag)`)
                         if (array.LeafOwner != null || !IsPart(array)) LeafOwnership.Adopt(copy, OwnerOfCopy(array));
                         _arrayCopies[array] = copy; // register before filling: an array may contain itself
+                        if (array.IsPacked) { copy.CopyElementsFrom(array, array.Length); return Value.MakeArray(copy); }   // (packed bools: their bytes)
                         for (int i = 0; i < array.Length; i++)
                         {
                             copy.Items[i] = MapValue(array.Items[i]);

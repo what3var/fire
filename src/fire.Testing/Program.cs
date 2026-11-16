@@ -6825,6 +6825,160 @@ Console.WriteLine("=== VM-Optimierungen: Value, Stack, Inline-Caches (Regression
         print("hey"[1])
         """, new[] { "30", "aussen", "aussen2", "200", "e" }, new[] { VmExecutionMode.Debug, VmExecutionMode.Release });
 
+
+    // StringBuilder (one growing buffer of characters behind __SbCall): the text is that of `"" + value` for every kind of value; growing, Clear, copies.
+    CheckPerf("StringBuilder: Text wie \"\" + value, Wachsen, Clear, Kopie", """
+        class P { int x = 3; string ToString() { return "P(" + this.x + ")" } }
+        class Q { }
+        enum Color { Red, Green }
+        var sb = new StringBuilder()
+        for (int i = -3; i < 5; i++) { sb.Append(i) }
+        sb.AppendLine("!")
+        sb.Append(2.5m)
+        sb.Append(7cm)
+        sb.Append('c')
+        sb.Append(true)
+        sb.Append(undefined)
+        sb.Append(new P())
+        sb.Append(new Q())
+        sb.Append(Color.Green)
+        sb.Append([1, 2])
+        sb.Append(-9223372036854775807 - 1)
+        sb.Append(1.0 / 4)
+        sb.Append("ä€")
+        print(sb.ToString())
+        print(sb.Length)
+        sb.Clear()
+        print(sb.Length + sb.ToString() + "|")
+        for (int i = 0; i < 1000; i++) { sb.Append("abcdefghij") }
+        print(sb.Length)
+        print(sb.ToString().Substring(9990))
+        var second = copy sb
+        second.Append("X")
+        print(second.Length + " " + sb.Length)
+        var big = new StringBuilder()
+        for (int i = 0; i < 30000; i++) { big.Append(i) }
+        print(big.Length + " " + big.ToString().Substring(big.Length - 10))
+        sb.Clear()
+        sb.Append("")
+        sb.AppendLine(1)
+        print(sb.Length)
+        """, new[] { "-3-2-101234!\n2.5m7cmcTrueundefinedP(3)<object Q>Green<array>-92233720368547758080.25ä€", "86", "0|", "10000", "abcdefghij", "10001 10000", "138890 2999829999", "2" });
+
+    // `bool a[]` is packed in the VM (one byte per element, ScriptArray): what the language sees is unchanged.
+    CheckPerf("Gepackte bool-Arrays: undefined, defined, Literal, any, Kopie, Feld, mehrdimensional, List<bool>", """
+        class Box { bool flags[]; construct() { this.flags = new bool[4] } }
+        class T {
+            static string All(bool xs[]) {
+                string s = ""
+                foreach (x in xs) { s = s + x + " " }
+                return s
+            }
+        }
+        bool a[] = new bool[5]
+        print(a[0] + " " + a.length)
+        a[1] = true
+        a[2] = false
+        print(T.All(a))
+        any wrong = 5
+        try { a[3] = wrong } catch (ArgumentException e) { print(e.message) }
+        a[1] = undefined
+        print(a[1] == undefined)
+        defined bool d[] = new bool[3]
+        d[1] = true
+        print(T.All(d))
+        any nothing = undefined
+        try { d[2] = nothing } catch (ArgumentException e) { print(e.message) }
+        bool lit[] = [true, false, true]
+        lit[0] = !lit[0]
+        print(T.All(lit) + (lit[1] || lit[2]) + " " + (lit[0] && lit[2]))
+        any x = new bool[2]
+        x[0] = true
+        print(x[0] + " " + x[1])
+        any y = lit
+        y[1] = true
+        print(T.All(lit))
+        var c = copy lit
+        c[0] = true
+        print(lit[0] + " " + c[0] + " " + c.length)
+        any text = "no"
+        try { c[1] = text } catch (ArgumentException e) { print(e.message) }
+        var b = new Box()
+        b.flags[2] = true
+        var b2 = copy b
+        b2.flags[0] = true
+        print(T.All(b.flags) + "/ " + T.All(b2.flags))
+        bool grid[][] = new bool[2][3]
+        grid[1][2] = true
+        print(grid[1][2] + " " + grid[0][0] + " " + grid.length + " " + grid[1].length)
+        var list = new List<bool>()
+        for (int i = 0; i < 20; i++) { list.Add(i % 3 == 0) }
+        int n = 0
+        foreach (v in list) { if (v) { n++ } }
+        print(n + " " + list.Count + " " + list[3] + " " + list[4])
+        int count = 0
+        bool big[] = new bool[100000]
+        for (int i = 0; i < big.length; i++) { big[i] = i % 7 == 0 }
+        for (int i = 0; i < big.length; i++) { if (big[i]) { count++ } }
+        print(count)
+        bool p[] = [true, undefined]
+        print(p[1])
+        defined bool same[] = p
+        print(p[1])
+        int nums[] = new int[3]
+        nums[1] = 7
+        print(nums[0] + " " + nums[1] + " " + nums.length)
+        int:cm lens[] = new int[2]
+        lens[0] = 1m
+        print(lens[0] + " " + lens[1])
+        """, new[] { "undefined 5", "undefined True False undefined undefined ", "An element of an array of bool must be a bool (or undefined), not Int.", "True", "False True False ", "An element of a defined array of bool cannot be undefined.", "False False True True False", "True undefined", "False True True ", "False True 3", "An element of an array of bool must be a bool (or undefined), not String.", "undefined undefined True undefined / True undefined True undefined ", "True undefined 2 3", "7 20 True False", "14286", "undefined", "False", "undefined 7 3", "100cm undefined:cm" }, new[] { VmExecutionMode.Debug, VmExecutionMode.Release });
+    {
+        // the storage itself: a fresh array holds nothing, `bool a[]` bytes; reading single elements keeps it packed, Items makes it Values (the same elements)
+        void PackCheck(bool ok, string what) { if (!ok) perfFailures++; Console.WriteLine(ok ? $"OK: {what}" : $"FEHLER: {what}"); }
+        var fresh = new ScriptArray(1000);
+        PackCheck(fresh.IsPacked && fresh.Length == 1000 && fresh.TryGet(999, out var freshLast) && freshLast.Kind == ValueKind.Undefined && !fresh.TryGet(1000, out _) && fresh.IsPacked,
+            "ScriptArray: ein frisches Array ist undefined ohne Speicher");
+        var bools = new ScriptArray(1000);
+        PackCheck(bools.MakeTyped(ArrayElem.Bool, null, out _, out _, out _) && bools.IsPacked && bools.PackedBools is { Length: 1000 } && bools.GetUnchecked(5).Kind == ValueKind.Undefined,
+            "ScriptArray: bool a[] = new bool[n] ist gepackt (ein Byte je Element)");
+        bools.SetUnchecked(5, Value.MakeBool(true));
+        bools.TrySet(6, Value.MakeBool(false));
+        PackCheck(bools.IsPacked && bools.GetUnchecked(5).AsBool() && bools.GetUnchecked(6).Kind == ValueKind.Bool && !bools.GetUnchecked(6).AsBool() && bools.PackedBools![5] == 1,
+            "ScriptArray: Schreiben und Lesen einzelner bools bleibt gepackt");
+        bools.MakeDefined();
+        PackCheck(bools.IsPacked && bools.ElemDefined && bools.GetUnchecked(7).Kind == ValueKind.Bool && !bools.GetUnchecked(7).AsBool() && bools.GetUnchecked(5).AsBool(),
+            "ScriptArray: defined macht aus undefined false, gepackt");
+        var twin = new ScriptArray(1000);
+        twin.CopyTypeOf(bools);
+        twin.CopyElementsFrom(bools, 1000);
+        PackCheck(twin.IsPacked && twin.GetUnchecked(5).AsBool() && !ReferenceEquals(twin.PackedBools, bools.PackedBools), "ScriptArray: die Kopie eines gepackten Arrays ist gepackt");
+        var values = new Value[1000];
+        bools.ReadItems(values);
+        PackCheck(bools.IsPacked && values[5].AsBool() && values[6].Kind == ValueKind.Bool, "ScriptArray: ReadItems entpackt nicht");
+        var items = bools.Items;
+        PackCheck(!bools.IsPacked && bools.PackedBools == null && items.Length == 1000 && items[5].AsBool() && items[7].Kind == ValueKind.Bool && bools.ElemType == ArrayElem.Bool
+            && bools.GetUnchecked(5).AsBool(), "ScriptArray: Items macht Values daraus - dieselben Elemente, derselbe Typ");
+        var literal = new ScriptArray(3);
+        literal.Items[0] = Value.MakeBool(true); literal.Items[1] = Value.MakeUndefined(); literal.Items[2] = Value.MakeBool(false);
+        PackCheck(literal.MakeTyped(ArrayElem.Bool, null, out _, out _, out _) && literal.IsPacked && literal.PackedBools!.SequenceEqual(new byte[] { 1, ScriptArray.UndefinedBool, 0 }),
+            "ScriptArray: ein Literal wird beim Typisieren gepackt");
+        var notBool = new ScriptArray(2);
+        notBool.Items[0] = Value.MakeInt(1);
+        PackCheck(!notBool.MakeTyped(ArrayElem.Bool, null, out var packError, out _, out _) && packError == ArrayElem.Error.Type && !notBool.IsPacked && notBool.ElemType == ArrayElem.None,
+            "ScriptArray: ein Element, das kein bool ist, bleibt der Fehler (das Array bleibt, wie es war)");
+        var ints = new ScriptArray(4);
+        PackCheck(ints.MakeTyped(ArrayElem.I64, "cm", out _, out _, out _) && !ints.IsPacked && ints.Items[3].Kind == ValueKind.Undefined && ints.Items[3].Unit is { IsUnitless: false },
+            "ScriptArray: new int[n] mit Einheit - jedes Element undefined in der Einheit");
+        // 20 million bools: a few megabytes, not hundreds (24 bytes per Value before)
+        long before = GC.GetTotalMemory(true);
+        var many = new ScriptArray(20_000_000);
+        many.MakeTyped(ArrayElem.Bool, null, out _, out _, out _);
+        many.MakeDefined();
+        long used = GC.GetTotalMemory(true) - before;
+        PackCheck(many.IsPacked && used < 40_000_000, $"ScriptArray: 20 Millionen bools belegen {used / 1_000_000} MB (unter 40)");
+        GC.KeepAlive(many);
+    }
+
     Console.WriteLine(perfFailures == 0 ? "Alle VM-Optimierungs-Pruefungen bestanden." : $"FEHLER: {perfFailures} Pruefung(en) fehlgeschlagen.");
 }
 
@@ -17164,6 +17318,119 @@ else
             try { Math.Sum("12") } catch (ArgumentException e) { print(e.message) }
             try { Math.Sum([1, "a"]) } catch (ArgumentException e) { print(e.message) }
             try { Math.Sum([1m, 1s]) } catch (UnitMismatchException e) { print(e.message) }
+            """),
+        ("StringBuilder: Text wie \"\" + value, Wachsen, Clear, Kopie (ein Zeichenpuffer hinter __SbCall)", """
+            class P { int x = 3; string ToString() { return "P(" + this.x + ")" } }
+            class Q { }
+            enum Color { Red, Green }
+            var sb = new StringBuilder()
+            for (int i = -3; i < 5; i++) { sb.Append(i) }
+            sb.AppendLine("!")
+            sb.Append(2.5m)
+            sb.Append(7cm)
+            sb.Append('c')
+            sb.Append(true)
+            sb.Append(undefined)
+            sb.Append(new P())
+            sb.Append(new Q())
+            sb.Append(Color.Green)
+            sb.Append([1, 2])
+            sb.Append(-9223372036854775807 - 1)
+            sb.Append(1.0 / 4)
+            sb.Append("ä€")
+            print(sb.ToString())
+            print(sb.Length)
+            sb.Clear()
+            print(sb.Length + sb.ToString() + "|")
+            for (int i = 0; i < 1000; i++) { sb.Append("abcdefghij") }
+            print(sb.Length)
+            print(sb.ToString().Substring(9990))
+            var second = copy sb
+            second.Append("X")
+            print(second.Length + " " + sb.Length)
+            var big = new StringBuilder()
+            for (int i = 0; i < 30000; i++) { big.Append(i) }
+            print(big.Length + " " + big.ToString().Substring(big.Length - 10))
+            sb.Clear()
+            sb.Append("")
+            sb.AppendLine(1)
+            print(sb.Length)
+            """),
+        ("bool-Arrays (in der VM gepackt): undefined, defined, Literal, any, Kopie, Feld, mehrdimensional, List<bool>", """
+            class Box { bool flags[]; construct() { this.flags = new bool[4] } }
+            class T {
+                static string All(bool xs[]) {
+                    string s = ""
+                    foreach (x in xs) { s = s + x + " " }
+                    return s
+                }
+            }
+            bool a[] = new bool[5]
+            print(a[0] + " " + a.length)
+            a[1] = true
+            a[2] = false
+            print(T.All(a))
+            any wrong = 5
+            try { a[3] = wrong } catch (ArgumentException e) { print(e.message) }
+            a[1] = undefined
+            print(a[1] == undefined)
+            defined bool d[] = new bool[3]
+            d[1] = true
+            print(T.All(d))
+            any nothing = undefined
+            try { d[2] = nothing } catch (ArgumentException e) { print(e.message) }
+            bool lit[] = [true, false, true]
+            lit[0] = !lit[0]
+            print(T.All(lit) + (lit[1] || lit[2]) + " " + (lit[0] && lit[2]))
+            any x = new bool[2]
+            x[0] = true
+            print(x[0] + " " + x[1])
+            any y = lit
+            y[1] = true
+            print(T.All(lit))
+            var c = copy lit
+            c[0] = true
+            print(lit[0] + " " + c[0] + " " + c.length)
+            any text = "no"
+            try { c[1] = text } catch (ArgumentException e) { print(e.message) }
+            var b = new Box()
+            b.flags[2] = true
+            var b2 = copy b
+            b2.flags[0] = true
+            print(T.All(b.flags) + "/ " + T.All(b2.flags))
+            bool grid[][] = new bool[2][3]
+            grid[1][2] = true
+            print(grid[1][2] + " " + grid[0][0] + " " + grid.length + " " + grid[1].length)
+            var list = new List<bool>()
+            for (int i = 0; i < 20; i++) { list.Add(i % 3 == 0) }
+            int n = 0
+            foreach (v in list) { if (v) { n++ } }
+            print(n + " " + list.Count + " " + list[3] + " " + list[4])
+            int count = 0
+            bool big[] = new bool[100000]
+            for (int i = 0; i < big.length; i++) { big[i] = i % 7 == 0 }
+            for (int i = 0; i < big.length; i++) { if (big[i]) { count++ } }
+            print(count)
+            bool p[] = [true, undefined]
+            print(p[1])
+            defined bool same[] = p
+            print(p[1])
+            int nums[] = new int[3]
+            nums[1] = 7
+            print(nums[0] + " " + nums[1] + " " + nums.length)
+            int:cm lens[] = new int[2]
+            lens[0] = 1m
+            print(lens[0] + " " + lens[1])
+            """),
+        ("Ganze Zahlen als Text (int64ToChars): Grenzen, Vorzeichen, Einheiten, Enum, in Verkettung und Format", """
+            enum Level { Low, High }
+            print("" + 0 + " " + -1 + " " + 9223372036854775807 + " " + (-9223372036854775807 - 1) + " " + 1000000 + " " + -42)
+            print(5m + " " + -3cm + " " + Level.High + " " + 10 + "x" + 7)
+            int[8] small = 127
+            print("v=" + small + $" {small} {-128} {1234567890123}")
+            var parts = new List<string>()
+            for (int i = 95; i < 105; i++) { parts.Add("" + i) }
+            print(",".Join(parts))
             """),
         ("Bibliothek: Math (mit Einheiten), Zahlen aus Text, Stringvergleich, Join, StringBuilder", """
             print(Math.Sqrt(16) + " " + Math.Sqrt(9m * 1m) + " " + Math.Sqrt(4cm * 1cm))

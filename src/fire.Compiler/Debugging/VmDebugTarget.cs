@@ -224,7 +224,7 @@ namespace fire.Debugging
                 case ValueKind.Array:
                     var arr = value.AsArray();
                     return new DebugValue(name, $"Array[{arr.Length}]", DebugValueKind.Array, value.Kind.ToString(), IdOf(arr),
-                        arr.Length > 0 ? () => Enumerable.Range(0, arr.Length).Select(i => Describe($"[{i}]", arr.Items[i], new ElementRef(arr, i))).ToList() : null, reference);
+                        arr.Length > 0 ? () => Enumerable.Range(0, arr.Length).Select(i => Describe($"[{i}]", arr.GetUnchecked(i), new ElementRef(arr, i))).ToList() : null, reference);
                 default:
                     return new DebugValue(name, value.ToString(), KindOf(value.Kind), value.Kind.ToString(), 0, null, reference);
             }
@@ -328,7 +328,7 @@ namespace fire.Debugging
             {
                 case VmDebugTarget.SlotRef s when s.Slot < s.Scope.SlotCount: old = s.Scope.GetSlot(s.Slot); break;
                 case VmDebugTarget.FieldRef f when f.Object.TryGetFieldLocked(f.Field, out var fv): old = fv; break;
-                case VmDebugTarget.ElementRef a when a.Index < a.Array.Length: old = a.Array.Items[a.Index]; break;
+                case VmDebugTarget.ElementRef a when a.Index < a.Array.Length: old = a.Array.GetUnchecked(a.Index); break;
                 default: error = $"{target.Name} cannot be set."; return false;
             }
             if (!VmDebugTarget.TryParseLike(old, text, out var value, out error)) return false;

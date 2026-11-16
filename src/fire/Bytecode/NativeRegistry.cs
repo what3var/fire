@@ -169,6 +169,8 @@ namespace fire.Bytecode
                 string bound = channelName;
                 Register(bound, args => fire.Standard.ChannelMethods.Call(bound, args));
             }
+            // (appended at the end: the natives before it keep their index)
+            Register(fire.Standard.StringBuilderMethods.NativeName, fire.Standard.StringBuilderMethods.Call);
         }
     }
 }

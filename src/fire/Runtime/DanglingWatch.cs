@@ -67,7 +67,7 @@ namespace fire.Runtime
         {
             if (holder is ObjectInstance o)
                 return field != null && o.Fields.TryGetValue(field, out var v) && v.Kind == ValueKind.Class && ReferenceEquals(v.AsObjectRef(), target);
-            if (holder is ScriptArray a)
+            if (holder is ScriptArray { IsPacked: false } a)
             {
                 foreach (var item in a.Items)
                     if (item.Kind == ValueKind.Class && ReferenceEquals(item.AsObjectRef(), target)) return true;

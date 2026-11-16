@@ -3997,6 +3997,18 @@ FIRE_FN size_t enumFormat(Value v, char* out, size_t cap) {
     return n < cap ? n : cap - 1;
 }
 
+/* A whole number as decimal UTF-16 text (what "%lld" writes), without the detour through snprintf and a widening copy: `out` takes up to 20 characters.
+ * Returns the number of characters. */
+FIRE_FN uint32_t int64ToChars(int64_t value, fire_char16* out) {
+    fire_char16 rev[20];
+    uint64_t u = value < 0 ? (uint64_t)0 - (uint64_t)value : (uint64_t)value;
+    uint32_t n = 0, k = 0;
+    do { rev[n++] = (fire_char16)('0' + (unsigned)(u % 10u)); u /= 10u; } while (u != 0);
+    if (value < 0) out[k++] = (fire_char16)'-';
+    while (n > 0) out[k++] = rev[--n];
+    return k;
+}
+
 FIRE_FN void pieceOf(Value v, Piece* out, OwnList* list) {
     char tmp[64];
     switch (v.kind) {
@@ -4006,8 +4018,8 @@ FIRE_FN void pieceOf(Value v, Piece* out, OwnList* list) {
         case K_Int: {
             int n;
             if (FIRE_UNLIKELY(v.reserved != 0) && enumOf(v)) { char text[64]; n = (int)enumFormat(v, text, sizeof text); out->n = widenAscii(text, (uint32_t)n, out->buf); break; }
-            n = snprintf(tmp, sizeof tmp, "%lld", (long long)v.i);
-            out->n = widenAscii(tmp, (uint32_t)n, out->buf);
+            (void)n;
+            out->n = int64ToChars(v.i, out->buf);
             break;
         }
         case K_Float: out->n = widenAscii(tmp, (uint32_t)formatReal(v.f, tmp), out->buf); break;
@@ -4162,6 +4174,81 @@ FIRE_FN Value newStrFrom(const fire_char16* p, uint32_t n, OwnList* list) {
     Str* r = allocStr(n, list);
     if (n > 0) memcpy(strChars(r), p, n * sizeof(fire_char16));   /* (an empty one may come without characters: p NULL - JSON's "") */
     return StrV(r);
+}
+
+/* ---- `StringBuilder` of the prelude (StringMethods.cs: StringBuilderSource, the VM: StringBuilderMethods) ------------------------------------------------
+ * `__SbCall(op, data, value)`: the text of a StringBuilder lives in ONE byte buffer `data` of the object - FIRE_SB_HEAD bytes (the number of characters as a
+ * uint32, the rest reserved), then the characters (UTF-16, the byte order of the machine). The buffer is an ordinary one (copies, handover, the debugger
+ * see bytes); it never grows in place: when a text does not fit, FIRE_SB_APPEND says how big the next one must be and the prelude replaces it.
+ *   FIRE_SB_APPEND: 0 - appended; > 0 - nothing appended: the bytes a buffer needs that takes it (at least twice the current one); -1 - nothing
+ *                   appended: an object (its text is its ToString(), a call of the program) - the prelude passes `"" + value`.
+ *   FIRE_SB_MOVE:   `value` is the old buffer: its text into `data` (a new, bigger one).
+ *   FIRE_SB_LENGTH, FIRE_SB_CLEAR, FIRE_SB_TEXT (the text as a string). */
+enum { FIRE_SB_APPEND = 1, FIRE_SB_MOVE = 2, FIRE_SB_LENGTH = 3, FIRE_SB_CLEAR = 4, FIRE_SB_TEXT = 5 };
+enum { FIRE_SB_HEAD = 8 };
+FIRE_COLD FIRE_FN Value sbBad(void) { return fireError("ArgumentException", "__SbCall expects the buffer of a StringBuilder."); }
+/* The buffer of a StringBuilder (NULL after the error: not one), its size in bytes and the number of characters in it. */
+FIRE_FN Buf* sbBuf(Value data, uint32_t* cap, uint32_t* len) {
+    Buf* b;
+    if (FIRE_UNLIKELY(data.kind != K_Buffer)) { sbBad(); return NULL; }
+    if (FIRE_UNLIKELY(!leafAlive(data))) { destroyedError(data); return NULL; }
+    b = bufOf(data);
+    *cap = bufSize(b);
+    if (FIRE_UNLIKELY(b->elem != 1 || *cap < FIRE_SB_HEAD)) { sbBad(); return NULL; }
+    memcpy(len, b->data, sizeof(uint32_t));
+    if (FIRE_UNLIKELY(*len > (*cap - FIRE_SB_HEAD) / sizeof(fire_char16))) { sbBad(); return NULL; }
+    return b;
+}
+FIRE_FN Value sbCall(int64_t op, Value data, Value value, OwnList* list) {
+    uint32_t cap = 0, len = 0, n;
+    Buf* b = sbBuf(data, &cap, &len);
+    fire_char16* chars;
+    if (FIRE_UNLIKELY(!b)) return Undef();
+    chars = (fire_char16*)(void*)(b->data + FIRE_SB_HEAD);
+    switch (op) {
+        case FIRE_SB_APPEND: {
+            Piece piece;
+            const fire_char16* p;
+            uint64_t need;
+            if (value.kind == K_Int && value.reserved == 0 && value.unit == 0) {
+                /* (a plain whole number - the common case: its digits straight into the buffer) */
+                if (FIRE_LIKELY((cap - FIRE_SB_HEAD) / sizeof(fire_char16) - len >= 20)) {
+                    len += int64ToChars(value.i, chars + len);
+                    memcpy(b->data, &len, sizeof(uint32_t));
+                    return Int(0, 0);
+                }
+                n = int64ToChars(value.i, piece.buf); p = piece.buf;
+            }
+            else if (value.kind == K_String) { p = strOf(value)->data; n = strOf(value)->length; }
+            else if (value.kind == K_Char || value.kind == K_Bool || value.kind == K_Int || value.kind == K_Float || value.kind == K_Word || value.kind == K_Undefined) {
+                pieceOf(value, &piece, list); p = piece.p; n = piece.n;
+            }
+            else return Int(-1, 0);
+            need = (uint64_t)FIRE_SB_HEAD + ((uint64_t)len + n) * sizeof(fire_char16);
+            if (FIRE_UNLIKELY(need > cap)) {
+                uint64_t twice = (uint64_t)cap * 2u;
+                if (need > 0x7FFFFFF0u) return fireError("ArgumentException", "The text of a StringBuilder is too long.");
+                if (twice > 0x7FFFFFF0u) twice = 0x7FFFFFF0u;
+                return Int((FireInt)(need > twice ? need : twice), 0);
+            }
+            if (n > 0) memcpy(chars + len, p, n * sizeof(fire_char16));
+            len += n;
+            memcpy(b->data, &len, sizeof(uint32_t));
+            return Int(0, 0);
+        }
+        case FIRE_SB_MOVE: {
+            uint32_t oldCap = 0, oldLen = 0;
+            Buf* old = sbBuf(value, &oldCap, &oldLen);
+            if (FIRE_UNLIKELY(!old)) return Undef();
+            if (FIRE_UNLIKELY((uint64_t)FIRE_SB_HEAD + (uint64_t)oldLen * sizeof(fire_char16) > cap)) return sbBad();
+            if (old != b) dataCopy(b->data, old->data, (uint32_t)(FIRE_SB_HEAD + (uint64_t)oldLen * sizeof(fire_char16)));   /* (dataCopy: a block beyond a 16-bit size_t) */
+            return Undef();
+        }
+        case FIRE_SB_LENGTH: return Int((FireInt)len, 0);
+        case FIRE_SB_CLEAR: len = 0; memcpy(b->data, &len, sizeof(uint32_t)); return Undef();
+        case FIRE_SB_TEXT: return newStrFrom(chars, len, list);
+        default: return sbBad();
+    }
 }
 
 /* Numbers from text (StringMethods.ParseInt/ParseFloat - the same rules): spaces at both ends, a sign, then for an int digits (also `0x`/`0b`) with `_` only
