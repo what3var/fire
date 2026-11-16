@@ -111,7 +111,8 @@ def sync(moved, folder):
     titles = [m[0] for m in moved]
     if len(set(titles)) != len(titles): sys.exit('two cases have the same title: ' + ', '.join(sorted({t for t in titles if titles.count(t) > 1})))
     ids, last = {}, 0
-    used = {int(i.split('-')[0]) for i in existing.values()}
+    # (the number of a case that is gone is free again: a case that got a new title takes the place it had)
+    used = {int(i.split('-')[0]) for t, i in existing.items() if t in titles}
     for idx, (name, _, _) in enumerate(moved):
         if name in existing: ids[name] = existing[name]; last = max(last, int(existing[name].split('-')[0])); continue
         # a number between the case before and the next case that has a file
