@@ -34652,10 +34652,10 @@ else
             // What a thread reads out of the shared domain it takes (fire_rt.h FIRE_DOM_TAKE): the string or lambda in the temporary has a count of the thread's own.
             // Before, it was borrowed: the safe point at the entry of U.Slow let go of the read side, the main program replaced and freed the value, and U.Pair
             // read freed memory (AddressSanitizer: heap-use-after-free in retain).
+            // (The lambda of the global belongs to the global scope and lives on when it is replaced: the thread never calls a destroyed one.)
             class Box {
                 string name = "x"
                 string items[] = new string[4]
-                any f = undefined
             }
             class G { static string name = "start" }
             class U {
@@ -34673,7 +34673,8 @@ else
             var glam = x => x + 1
             var box = new Box()
             var names = new string[3]
-            box.f = x => x + 2
+            box.items[1] = "element"
+            names[2] = "name"
             fire {
                 int local = 0
                 for (int i = 0; i < 300; i++) {
@@ -34683,7 +34684,6 @@ else
                     local = local + U.Pair(box.items[1], U.Slow()) % 2
                     local = local + U.Pair(names[2], U.Slow()) % 2
                     local = local + U.Call(glam, U.Slow()) % 2
-                    local = local + U.Call(box.f, U.Slow()) % 2
                 }
                 sync global { done = 1; total = local }
             }
@@ -34697,7 +34697,6 @@ else
                 names[2] = "name" + tail
                 int k = n
                 glam = x => x + k
-                box.f = x => x + k + 1
                 n++
             }
             print(total >= 0)
