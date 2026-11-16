@@ -12924,6 +12924,10 @@ else
                 // (the end of the program ended a thread: the line on stderr is checked on its own - the VM writes it to the console, not to the output)
                 else if (c.Name.Contains("(Meldung auf stderr)"))
                     actual = exit == 0 && stderr.Contains("ended like with terminate") ? stdout : $"Exitcode {exit}: {stdout}stderr: {stderr}";
+                // (Http.Pages without OnError: the errors of the pages are lines on stderr - checked on their own, the VM writes them to the console)
+                else if (c.Name.Contains("(Http.Pages-Zeile auf stderr)"))
+                    actual = exit == 0 && stderr.Contains("Http.Pages: page 'BadPage' (/bad), circuit ") && stderr.Contains(": a handler of the page threw Boom: bang 1") && stderr.Contains(": a handler of the page threw ArgumentException: ") && stderr.Split('\n', StringSplitOptions.RemoveEmptyEntries).Length == 2
+                        ? stdout : $"Exitcode {exit}: {stdout}stderr: {stderr}";
                 // `terminate(n)` with a whole number is the exit code of the process (like the command line runner)
                 else actual = exit == 0 || (c.Name.StartsWith("Threads:") && c.Source.Contains("terminate(")) ? stdout + stderr : $"Exitcode {exit}: {stdout}{stderr}";
                 CheckNat($"Native == VM: {c.Name}", expected == actual, $"  erwartet (VM):\n{expected}\n  erhalten (C++):\n{actual}");
