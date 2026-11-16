@@ -16221,7 +16221,7 @@ else
             fire.Package.Manager.PackageStore.Default.Install(demoFpk);
             string vmPkg = vmOutput("#import \"pkgdemo\"\nprint(PkgDemo.Twice(21))");
             string unknown;
-            try { vmOutput("#import \"nosuchpackage\"\nprint(1)"); unknown = ""; } catch (Exception ex) { unknown = ex.Message; }
+            try { string res = vmOutput("#import \"nosuchpackage\"\nprint(1)"); unknown = res.StartsWith(NotCompiled) ? res : ""; } catch (Exception ex) { unknown = ex.Message; }   // (vmOutput gives the errors of the compiler as its result)
             CheckNat("Paket: #import \"name\" bringt die Prelude eines installierten Pakets (VM); ein unbekannter Import verweist auf ember", vmPkg == "42\n" && unknown.Contains("not a known extension") && unknown.Contains("ember"), vmPkg + unknown);
             var onEsp = new Linker().CompileAndLink(new[] { "#import \"pkgdemo\"\nprint(PkgDemo.Twice(2))" }, null, null, VmExecutionMode.Release, null, TargetProfile.Esp32);
             CheckNat("Paket: ein Import eines Pakets ist auf jedem Ziel erlaubt (die Plattformen nennt der native Teil)", onEsp.NativeImports.Contains("pkg:pkgdemo"));
