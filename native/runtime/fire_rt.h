@@ -8699,10 +8699,15 @@ FIRE_FN void lentReclaim(bool all) {
             uint32_t e = lentLoadSC(&r->seen);
             if (e && (!oldest || (int32_t)(e - oldest) < 0)) oldest = e;
         }
-    for (p = &g_lentGraves; *p;) {
-        LentGrave* g = *p;
-        if (!oldest || (int32_t)(oldest - g->epoch) >= 0) { *p = g->next; g->next = free_; free_ = g; fire_atomic_add(&g_lentGraveN, (uint32_t)-1); }
-        else p = &g->next;
+    /* (the list is ordered: a grave gets its epoch and goes in front under g_lentM - the first one that may go and all behind it may go) */
+    for (p = &g_lentGraves; *p && oldest && (int32_t)(oldest - (*p)->epoch) < 0;) p = &(*p)->next;
+    free_ = *p;
+    *p = NULL;
+    {
+        LentGrave* g;
+        uint32_t n = 0;
+        for (g = free_; g; g = g->next) n++;
+        if (n) fire_atomic_add(&g_lentGraveN, (uint32_t)0 - n);
     }
     fire_mutex_unlock(&g_lentM);
     while (free_) { LentGrave* next = free_->next; lentFree(free_->o); free(free_); free_ = next; }
@@ -8884,6 +8889,7 @@ FIRE_FN bool lentRetire(Obj* o) {
 #ifdef FIRE_NO_GIL
 FIRE_FN bool bufRetire(Owned* o) {
     LentGrave* g;
+    uint32_t n;
     if (!fire_atomic_loadAcquire(&g_lentReaderN)) return false;   /* (no fire strand runs: nobody can be in an access) */
     if (g_isThread && !(o->flags & 64) && !fire_atomic_loadAcquire(&g_lentCount)) return false;   /* (64: F_SHARED. A thread's own buffer is no other thread's - but a lent record may hold one) */
     g = (LentGrave*)malloc(sizeof(LentGrave));
@@ -8900,9 +8906,11 @@ FIRE_FN bool bufRetire(Owned* o) {
     g->epoch = lentAddSC(&g_lentEpoch, 1) + 1;
     g->next = g_lentGraves;
     g_lentGraves = g;
-    fire_atomic_add(&g_lentGraveN, 1);
+    n = fire_atomic_add(&g_lentGraveN, 1) + 1;
     fire_mutex_unlock(&g_lentM);
-    lentReclaim(false);
+    /* (the readers reclaim at their announcements; the destroyer only now and then - a main program that replaces a buffer in a loop must not walk the
+     * graves of a thread that is slow to announce every time) */
+    if ((n & 31u) == 0) lentReclaim(false);
     return true;
 }
 #endif
