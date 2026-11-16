@@ -89,7 +89,7 @@ namespace fire.Runtime
                     for (int i = 0; i < movedCaptures.Captures.Length; i++) movedCaptures.Captures[i] = Map(movedCaptures.Captures[i]);
                 if (n is ScriptArray array)
                 {
-                    for (int i = 0; i < array.Items.Length; i++) array.Items[i] = Map(array.Items[i]);
+                    if (!array.IsPacked) for (int i = 0; i < array.Items.Length; i++) array.Items[i] = Map(array.Items[i]);
                     if (array.Parts != null)
                         for (int i = 0; i < array.Parts.Count; i++)
                             if (fresh.TryGetValue(array.Parts[i], out var p)) array.Parts[i] = (IOwnedLeaf)p;
@@ -161,7 +161,7 @@ namespace fire.Runtime
                         if (array.IsDestroyed || !parts.Seen.Add(array)) break;
                         if (fromFireThread && array.IsShared) throw NotOwned();
                         parts.Leaves.Add(array);
-                        foreach (var item in array.Items) pending.Push(item);
+                        if (!array.IsPacked) foreach (var item in array.Items) pending.Push(item);
                         break;
                     }
                     case ValueKind.Buffer:

@@ -551,7 +551,7 @@ namespace fire.Runtime
                 var array = value.AsArray();
                 if (!seen.Add(array)) return;
                 array.IsShared = true;
-                foreach (var item in array.Items) ShareValue(item, treeLock, seen);
+                if (!array.IsPacked) foreach (var item in array.Items) ShareValue(item, treeLock, seen);
             }
         }
 
@@ -562,7 +562,7 @@ namespace fire.Runtime
             var array = value.AsArray();
             if (array.IsShared) return;
             array.IsShared = true;
-            foreach (var item in array.Items) MarkShared(item);
+            if (!array.IsPacked) foreach (var item in array.Items) MarkShared(item);
         }
 
         /// <summary>Registers the thread for a section (or only counts up if it already holds one). Only when the main program grants the section at
@@ -4483,11 +4483,22 @@ namespace fire.Runtime
             if (fastTarget.Kind == ValueKind.Array && fastIndex.Kind == ValueKind.Int)
             {
                 var fastArray = fastTarget.AsArray();
-                var items = fastArray.Items;
                 long i = fastIndex.AsInt();
-                if ((ulong)i < (ulong)items.Length && !fastArray.Special)
+                if (!fastArray.Special)
                 {
-                    fastTarget = items[i];
+                    var items = fastArray.Items;
+                    if ((ulong)i < (ulong)items.Length)
+                    {
+                        fastTarget = items[i];
+                        _sp--;
+                        return;
+                    }
+                }
+                else if (fastArray.PackedBools is { } bools && (ulong)i < (ulong)bools.Length)
+                {
+                    // a packed `bool a[]` (ScriptArray: one byte per element)
+                    byte b = bools[i];
+                    fastTarget = b == ScriptArray.UndefinedBool ? Value.MakeUndefined() : Value.MakeBool(b != 0);
                     _sp--;
                     return;
                 }
@@ -4608,13 +4619,25 @@ namespace fire.Runtime
             if (fastTarget.Kind == ValueKind.Array && fastIndex.Kind == ValueKind.Int)
             {
                 var fastArray = fastTarget.AsArray();
-                var items = fastArray.Items;
                 long i = fastIndex.AsInt();
-                if ((ulong)i < (ulong)items.Length && !fastArray.Special)
+                if (!fastArray.Special)
                 {
+                    var items = fastArray.Items;
+                    if ((ulong)i < (ulong)items.Length)
+                    {
+                        var assigned = _stack[_sp - 1];
+                        items[i] = assigned;
+                        if (_watchDangling && assigned.Kind == ValueKind.Class) NoteStore(assigned, fastArray, null);
+                        _sp -= 2;
+                        _stack[_sp - 1] = assigned;
+                        return;
+                    }
+                }
+                else if (_stack[_sp - 1].Kind == ValueKind.Bool && fastArray.PackedBools is { } bools && (ulong)i < (ulong)bools.Length)
+                {
+                    // a bool into a packed `bool a[]`: its byte (anything else - undefined, a value that does not fit - takes the slow path)
                     var assigned = _stack[_sp - 1];
-                    items[i] = assigned;
-                    if (_watchDangling && assigned.Kind == ValueKind.Class) NoteStore(assigned, fastArray, null);
+                    bools[i] = assigned.AsBool() ? (byte)1 : (byte)0;
                     _sp -= 2;
                     _stack[_sp - 1] = assigned;
                     return;
@@ -7161,7 +7184,7 @@ namespace fire.Runtime
         private void ClaimElements(ScriptArray arr)
         {
             var temp = _currentScope.Temp;
-            if (!temp.HasOwned) return;
+            if (!temp.HasOwned || arr.IsPacked) return;
             for (int i = 0; i < arr.Items.Length; i++)
                 if (arr.Items[i].Kind is ValueKind.Class or ValueKind.Array or ValueKind.Buffer or ValueKind.Lambda) ClaimTree(arr.Items[i], arr);
         }
@@ -7919,6 +7942,7 @@ namespace fire.Runtime
             if (array.IsDestroyed || depth > 64) return true;   // (a destroyed array is reported where it is used)
             if (depth < rank)
             {
+                if (array.IsPacked) return true;   // (no inner arrays: bools and undefined only)
                 foreach (var inner in array.Items)
                     if (!TypeArrayValue(inner, (byte)(elemType | (defined ? ArrayElem.DefinedFlag : 0)), rank, unit, depth + 1)) return false;
                 return true;

@@ -271,7 +271,7 @@ namespace fire.Runtime
                 {
                     var arr = v.AsArray();
                     sb.Append("a:").Append(arr.Length);
-                    for (int i = 0; i < arr.Length; i++) TraceValue(sb, arr.Items[i]);
+                    for (int i = 0; i < arr.Length; i++) TraceValue(sb, arr.GetUnchecked(i));
                     break;
                 }
                 default: sb.Append("u:"); break;
@@ -302,7 +302,7 @@ namespace fire.Runtime
                     var arr = v.AsArray();
                     IntPtr items = Marshal.AllocHGlobal(Math.Max(1, arr.Length) * ValSize);
                     (allocs ??= new List<IntPtr>()).Add(items);
-                    for (int i = 0; i < arr.Length; i++) ToNative(arr.Items[i], items + i * ValSize, ref allocs, ref pins, ref after, function);
+                    for (int i = 0; i < arr.Length; i++) ToNative(arr.GetUnchecked(i), items + i * ValSize, ref allocs, ref pins, ref after, function);
                     fv.Kind = KindArray; fv.Length = arr.Length; fv.Bits = items.ToInt64();
                     break;
                 }
