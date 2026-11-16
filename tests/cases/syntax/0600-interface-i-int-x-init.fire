@@ -1,0 +1,3 @@
+interface I { int X { init; } }
+//# modes: Release
+//# name: syntax 60: interface I { int X { init; } }

@@ -1,0 +1,47 @@
+#performance
+class Base {
+    private int secret
+    protected int shared
+    int open
+    construct() { this.secret = 1; this.shared = 2; this.open = 3 }
+    private int Hidden() { return this.secret * 10 }
+    protected int Guarded() { return this.shared * 10 }
+    int Reveal() { return this.Hidden() + this.Guarded() }
+    private static int Counter() { return 7 }
+    static int PublicCounter() { return Base.Counter() }
+    int Total { get { return this.secret + this.shared } set { this.secret = value } }
+    private int Hush { get { return this.secret } set { this.secret = value } }
+    Reset() { this.Total = 100; this.Hush = 3 }
+}
+class Child : Base {
+    int Peek() { return this.shared + this.Guarded() }
+    int PeekSecret() { any me = this; return me.secret }
+}
+class Locked {
+    private construct() { }
+    static Locked Make() { return new Locked() }
+}
+var b = new Base()
+var c = new Child()
+any ab = b
+any ac = c
+print(b.open)
+print(b.Reveal())
+print(c.Peek())
+print(Base.PublicCounter())
+try { print(ab.secret) } catch (AccessDeniedException e) { print("denied 1: " + e.message) }
+try { ab.secret = 5 } catch (AccessDeniedException e) { print("denied 2: " + e.message) }
+try { print(ab.shared) } catch (AccessDeniedException e) { print("denied 3: " + e.message) }
+try { print(ab.Hidden()) } catch (AccessDeniedException e) { print("denied 4: " + e.message) }
+try { print(ab.Guarded()) } catch (AccessDeniedException e) { print("denied 5: " + e.message) }
+try { print(ac.Guarded()) } catch (AccessDeniedException e) { print("denied 6: " + e.message) }
+try { print(c.PeekSecret()) } catch (AccessDeniedException e) { print("denied 7: " + e.message) }
+try { ab.Hush = 5 } catch (AccessDeniedException e) { print("denied 8: " + e.message) }
+try { print(ab.Hush) } catch (AccessDeniedException e) { print("denied 8b: " + e.message) }
+print(Locked.Make() is of Locked)
+print(b.Total)
+b.Reset()
+print(b.Total)
+var lam = func () => { return b.open }
+print(lam())
+//# name: Zugriffsmodifikatoren: #performance prueft nicht

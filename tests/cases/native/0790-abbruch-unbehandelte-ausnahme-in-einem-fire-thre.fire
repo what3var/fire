@@ -1,0 +1,5 @@
+#import "time"
+fire { throw new Exception("in thread") }
+Sleep(500ms)
+print("after")
+//# name: Abbruch: unbehandelte Ausnahme in einem fire-Thread

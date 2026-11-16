@@ -1,0 +1,7 @@
+class U {
+    static int F(int x) { return x }
+    static string F(string s) { return s }
+}
+int c = U.F("s")
+//# modes: Release
+//# name: types 117: class U {

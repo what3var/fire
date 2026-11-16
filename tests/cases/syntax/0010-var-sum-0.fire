@@ -1,0 +1,6 @@
+var sum = 0
+for (int i = 0; i < 4; i++) { sum += i }
+for (int i = 10; i < 12; i++) { sum += i }
+print(sum)
+//# modes: Release
+//# name: syntax 1: var sum = 0

@@ -1,0 +1,12 @@
+HTTP/1.1 200 OK
+X-Chain: seen 1
+Connection: keep-alive
+hello anna 1HTTP/1.1 200 OK
+X-Chain: seen 2
+Connection: keep-alive
+hello anna 2HTTP/1.1 404 Not Found
+X-Chain: seen 3
+Connection: close
+Not Found
+CLIENT 200 ping | 500 | 200 streamed body of some length chunked seen 1
+connections 4

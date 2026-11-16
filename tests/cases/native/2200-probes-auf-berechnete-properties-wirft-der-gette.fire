@@ -1,0 +1,14 @@
+#import "reflection"
+class Rod {
+    int length = 2
+    int Inv { get { return 10 / (this.length - 2) } }
+}
+var r = new Rod()
+try { var h = probe r.Inv changed (any o, any n) => { print("inv " + n) } } catch (e) { print("probe: " + e.message) }
+try { Reflect.Probe(r, "Inv", "changed", (any o, any n) => { print("reflect " + n) }) } catch (e) { print("reflect: " + e.message) }
+r.length = 7
+var h2 = probe r.Inv changed (any o, any n) => { print("inv " + n) }
+r.length = 12
+try { r.length = 2 } catch (e) { print("write: " + e.message) }
+print("end " + r.length)
+//# name: Probes auf berechnete Properties: wirft der Getter beim Registrieren, ist das abfangbar und es bleibt keine Probe zurueck (probe und Reflect.Probe)

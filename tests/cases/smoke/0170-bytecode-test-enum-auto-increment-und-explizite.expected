@@ -1,0 +1,8 @@
+Red
+Green
+Blue
+Active
+Inactive
+Paused
+Done
+Color.Green ist (wie erwartet) ein Color, kein int

@@ -1,0 +1,1 @@
+error E4000: 'defined' needs a type that says what the value is - 'any' takes anything (write 'defined int', 'defined string', a class, an interface or an enum) (line 1)

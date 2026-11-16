@@ -1,0 +1,19 @@
+class Item {
+    int n
+    construct(int n) { this.n = n }
+    destruct() { print("~I" + this.n) }
+}
+class Box {
+    string name
+    Item item
+    Item extra
+    construct(string name) { this.name = name }
+    destruct() { print("~B" + this.name) }
+}
+var a = new Box("a")
+a.item = new Item(1)
+var c = copy a
+c.name = "c"
+leave
+print("nie")
+//# name: leave: Kopien und verschachtelte Besitzer werden mit zerstoert

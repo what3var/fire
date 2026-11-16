@@ -1,0 +1,2 @@
+warning TC022: 'y' may be undefined, but the return value is 'defined int': it is checked at run time - give it a value that is defined, or write 'trust y' if it certainly is (line 1)
+warning TC022: 'u' may be undefined, but parameter 'x' of 'T' is 'defined int': it is checked at run time - give it a value that is defined, or write 'trust u' if it certainly is (line 3)

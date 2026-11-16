@@ -1,0 +1,35 @@
+#nosync
+class Thing { int id
+    construct(int i) { this.id = i } }
+[NoCopy]
+class Res : Thing { construct(int i) : base(i) { } }
+class Plain { int v; Plain next; Thing thing; Thing list[] }
+var done = 0
+var p = new Plain()
+p.v = 5
+p.thing = new Thing(1)
+var orig = p
+fire taking p {
+    p.v = 7
+    p.next = new Plain()
+    p.next.thing = new Res(10)
+    try { sync p } catch (ArgumentException e) { print("sync A: " + e.message) }
+    print("original after refused: " + orig.v + " " + (orig.next == undefined))
+    try { sync flat p } catch (ArgumentException e) { print("sync flat A: " + e.message) }
+    p.next = undefined
+    p.list = [new Thing(3), new Res(12)]
+    try { sync p } catch (ArgumentException e) { print("sync array: " + e.message) }
+    print("original list: " + (orig.list == undefined))
+    p.list = [new Thing(4)]
+    p.thing = new Res(11)
+    try { sync p } catch (ArgumentException e) { print("sync C: " + e.message) }
+    print("original after C: " + orig.v + " " + orig.thing.id)
+    print("sync flat C: " + (sync flat p))
+    print("original after flat: " + orig.v + " " + orig.thing.id + " " + (orig.thing is of Res) + " " + (orig.list == undefined))
+    p.thing = new Thing(5)
+    print("sync: " + (sync p))
+    sync global { done = 1 }
+}
+while (done == 0) { sync globals }
+print("main: " + p.v + " " + p.thing.id + " " + (p.thing is of Res) + " " + p.list.Length + " " + p.list[0].id)
+//# name: [NoCopy] Threads: sync/sync flat schreiben keine Instanz zurueck (Fall A, Fall C, Array) - ArgumentException, das Original bleibt; sync flat im Fall C teilt nur

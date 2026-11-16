@@ -1,0 +1,37 @@
+class Box {
+    int v
+    construct(int v) { this.v = v }
+    Describe() { return "Box(" + this.v + ")" }
+}
+
+class Box<T> {
+    T item
+    construct(T item) { this.item = item }
+    Describe() { return "Box<T>(" + this.item + ")" }
+}
+
+class Pair<A, B> {
+    A first
+    B second
+    construct(A a, B b) { this.first = a; this.second = b }
+}
+
+class Pair {
+    string s
+    construct() { this.s = "plain" }
+}
+
+class extends Box {
+    Extra() { return "extra" }
+}
+
+var plain = new Box(1)
+var generic = new Box<int>(2)
+print(plain.Describe())
+print(generic.Describe())
+print(plain.Extra())
+print(new Pair().s)
+var pair = new Pair<int, int>(3, 4)
+print(pair.first + pair.second)
+//# note: what the test program said to expect (for a reader, it was not checked): Box(1) / Box<T>(2) / extra / plain / 7
+//# name: Generics: generische Klasse mit demselben Namen wie eine nicht-generische

@@ -1,0 +1,6 @@
+class Cfg { static int hits = 0 }
+var done = 0
+fire { Cfg.hits = 3; sync global { done = 1 } }
+while (done == 0) { sync globals }
+print("hits " + Cfg.hits)
+//# name: Statisches Feld: Thread schreibt, Hauptprogramm liest nach `sync globals`

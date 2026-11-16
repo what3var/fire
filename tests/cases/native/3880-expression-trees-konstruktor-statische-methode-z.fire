@@ -1,0 +1,16 @@
+class P { int age; int id; construct(int a) { this.age = a; this.id = a } }
+class O { int personId; construct(int p) { this.personId = p } }
+class Q {
+    string text
+    construct(lambda expression<P> e) { this.text = e.ToString() }
+    static string S(lambda expression<P> e) { return e.ToString() }
+    static string J(lambda expression<P, O> e) { return e.ToString() + " " + e.Invoke(new P(3), new O(3)) }
+}
+class Base { string B(lambda expression<P> e) { return "base " + e.ToString() } }
+class Derived : Base { }
+int lim = 5
+print(new Q(p => p.age > lim).text)
+print(Q.S(p => p.age < 3))
+print(Q.J((p, o) => p.id == o.personId))
+print(new Derived().B(p => p.age == lim))
+//# name: Expression trees: Konstruktor, statische Methode, zwei Parameter, geerbte Methode

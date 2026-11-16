@@ -1,0 +1,5 @@
+#import "machine"
+print(1)
+//# types: strict
+//# modes: Release
+//# name: types 229: #import "machine"

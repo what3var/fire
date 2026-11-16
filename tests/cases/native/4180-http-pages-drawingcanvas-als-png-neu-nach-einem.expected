@@ -1,0 +1,6 @@
+page 200 img True png True
+click {"patches": [ js True
+result {"patches": [{"e": 2, "t": "sum 5", "v": true, "n": true, "fg": "", "bg": ""}]}
+mouse True
+move nothing True
+

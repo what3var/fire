@@ -1,0 +1,40 @@
+#strict
+class E {
+    static readonly int Lim = 3
+    static readonly defined float Half = 0.5
+    static defined float F(defined float a, defined float b) { return Math.Max(a, b) + Math.Min(a, b) * 2.0 }
+    static string Fs(defined float x) {
+        return Math.Abs(x) + " " + Math.Sign(x) + " " + Math.Round(x) + " " + Math.Floor(x) + " " + Math.Ceiling(x) + " " + Math.Clamp(x, -1.0, 1.0) + " " + (x!int)
+    }
+    static string Is(defined int x, defined int y) {
+        string r = Math.Abs(x) + " " + Math.Sign(x) + " " + Math.Max(x, y) + " " + Math.Min(x, y) + " " + Math.Clamp(x, -E.Lim, E.Lim) + " " + Math.Round(x) + " " + (x!float)
+        return r + " " + (x / y) + " " + (x % y) + " " + (x ^ 2) + " " + (y ^ 3) + " " + (~x) + " " + ((x << 3) # (y >> 1) | (x & 255))
+    }
+    static string Div(defined int x, defined int y) { try { return "" + (x / y) } catch (DivideByZeroException e) { return "div0" } }
+    static string Pw(defined int x, defined int y) { try { return "" + (x ^ y) } catch (DivideByZeroException e) { return "pow0" } }
+    static string Tr(defined float x) {
+        return Math.Sqrt(x) + " " + Math.Sin(x) + " " + Math.Cos(x) + " " + Math.Tan(x) + " " + Math.Atan(x) + " " + Math.Atan2(x, 2.0) + " " + Math.Exp(x) + " " + Math.Log(x) + " " + Math.Log10(x) + " " + (x ^ E.Half) + " " + (x ^ 2) + " " + Math.PI * x
+    }
+    static string Ti(defined int x) {
+        float p = 2 ^ x
+        return Math.Sqrt(x) + " " + Math.Sin(x) + " " + Math.Atan2(x, 3) + " " + p
+    }
+    static defined int Twice(defined int x) { return x * 2 }
+}
+defined float nan = 0.0 / 0.0
+defined float inf = 1.0 / 0.0
+print(E.F(1.5, -2.5) + " " + E.F(nan, 1.0) + " " + E.F(1.0, nan))
+foreach (x in [2.5, -2.5, 0.5, -0.0, 3.7, -3.7, 1.5e300]) { print(E.Fs(x)) }
+print(E.Fs(nan))
+print(E.Fs(inf))
+print(E.Fs(-inf))
+print(E.Is(7, 2))
+print(E.Is(-7, 2))
+print(E.Is(-7, -2))
+print(E.Is(-9223372036854775807 - 1, -1))
+print(E.Div(5, 0) + " " + E.Div(-9223372036854775807 - 1, -1))
+print(E.Pw(0, -1) + " " + E.Pw(2, -1) + " " + E.Pw(-1, -3) + " " + E.Pw(1, -3) + " " + E.Pw(3, 41))
+foreach (x in [0.25, 2.0, -1.0, 0.0, 10.0]) { print(E.Tr(x)) }
+foreach (x in [0, 3, -2, 16]) { print(E.Ti(x)) }
+print(E.Twice(E.Lim) + E.Twice(Word.Bits))
+//# name: Rechnen auf defined Zahlen nativ in C: Math.Abs/Sign/Min/Max/Clamp/Round/Floor/Ceiling/Sqrt/Sin/.../Atan2, int-Division, ^, !int/!float, ~ - auch NaN, Unendlich, -0, Grenzwerte, Division durch 0

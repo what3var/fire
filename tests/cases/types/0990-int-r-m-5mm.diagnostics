@@ -1,0 +1,2 @@
+warning TC007: A whole number in 'mm' converted into 'm' may lose its fraction (declare a float or a finer unit) (line 1)
+warning TC007: A whole number in 'mm' converted into 'm' may lose its fraction (convert a float: 'x!float:m') (line 2)

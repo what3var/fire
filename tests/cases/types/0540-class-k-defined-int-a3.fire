@@ -1,0 +1,4 @@
+class K { defined int a[3] }
+print(new K().a[2])
+//# modes: Release
+//# name: types 54: class K { defined int a[3] }

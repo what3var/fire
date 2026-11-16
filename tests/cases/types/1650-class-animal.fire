@@ -1,0 +1,9 @@
+class Animal { }
+class Dog : Animal { }
+interface INamed { string Name { get; } }
+class Bird : Animal, INamed { string Name { get { return "b" } } }
+interface I { List<Animal> A { get; } }
+class C : I { List<Dog> A { get; set; } }
+print("ok")
+//# modes: Release
+//# name: types 165: class Animal { }

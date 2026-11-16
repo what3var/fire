@@ -1,0 +1,16 @@
+class Exception { string message; construct(string message = "") { this.message = message } }
+class C {
+    int v
+    string name
+    int Loud { get { return this.v * 2 } set { this.v = value / 2 } }
+    construct() { this.v = 1; this.name = "a" }
+}
+var c = new C()
+var h = probe c.v changed { print(name + " " + old + "->" + value + " " + sender.name) }
+c.v = 5
+c.v = 5
+c.v++
+silence h
+c.v = 9
+print(c.v)
+//# name: probe changed: implizite Namen, nur bei geaendertem Wert, silence mit Handle

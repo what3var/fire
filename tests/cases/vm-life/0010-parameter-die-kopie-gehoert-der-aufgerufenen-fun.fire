@@ -1,0 +1,33 @@
+class Item {
+    int n
+    construct(int n) { this.n = n }
+    destruct() { print("~I" + this.n) }
+}
+class Box {
+    string name
+    Item item
+    Item extra
+    construct(string name) { this.name = name }
+    destruct() { print("~B" + this.name) }
+}
+class F {
+    static Use(b) { b.name = "s"; print("in") }
+    static Keep(b) { return b }
+    Inst(b) { b.name = "m"; print("inst") }
+}
+var lam = func (b) => { b.name = "l"; print("lam") }
+{
+    var a = new Box("a")
+    a.item = new Item(1)
+    F.Use(copy a)
+    print("|")
+    new F().Inst(flat a)
+    print("|")
+    lam(copy a)
+    print("|")
+    var k = F.Keep(copy a)
+    print("k")
+}
+print("ende")
+//# note: ---- Copies as parameters: scope of the called function
+//# name: Parameter: die Kopie gehoert der aufgerufenen Funktion (auch static/Methode/Lambda)

@@ -1,0 +1,9 @@
+AB
+CDE
+4 70 255
+4
+A: An element of a byte buffer must be an int, not Float.
+A: A byte buffer is declared here, not String.
+3
+1 0
+Hi

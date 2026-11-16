@@ -1,0 +1,13 @@
+class P { int a; construct(int a) { this.a = a } string ToString() { return "P" + this.a } }
+class Q {
+    P kept[]
+    any loose[]
+    construct() { this.kept = new P[2]; this.loose = new any[2] }
+    undefined Keep(P e) { this.kept[0] = e; this.loose[0] = e }
+}
+var q = new Q()
+q.Keep(new P(1))
+try { print(q.loose[0]) } catch (Exception e) { print("E0 " + e.message) }
+try { print(q.kept[0]) } catch (Exception e) { print("E1 " + e.message) }
+try { print("" + q.kept[0]) } catch (Exception e) { print("E2 " + e.message) }
+//# name: print, + und $"..." mit einem zerstoerten Objekt (DECISIONS D9): die DestroyedException, mit und ohne ToString()

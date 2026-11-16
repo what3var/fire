@@ -1,0 +1,1 @@
+warning TC001: Cannot assign a value of type 'int' to 'b' of type 'bool' (line 4)

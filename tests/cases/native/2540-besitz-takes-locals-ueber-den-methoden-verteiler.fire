@@ -1,0 +1,22 @@
+class Item { string n
+  any child
+  construct(string n) { this.n = n }
+  destruct() { print("~" + this.n) } }
+class Fake { TakeTo(a, b) { print("fake") } }
+class T {
+  static F(box) {
+    var a = new Item("a")
+    var b = new Item("b")
+    a.child = b
+    a.TakeTo(box, Takes.Locals)
+    var c = new Item("c")
+    print("F end")
+  }
+}
+var box = new Item("box")
+T.F(box)
+print("after F")
+var f = new Fake()
+f.TakeTo(1, 2)
+print("end")
+//# name: Besitz: Takes.Locals ueber den Methoden-Verteiler

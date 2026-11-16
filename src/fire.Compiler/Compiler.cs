@@ -8,7 +8,6 @@ using fire.Lexing;
 using fire.Resolving;
 using fire.Runtime;
 using fire.Values;
-using MemoryPack;
 
 namespace fire.Compiler
 {
@@ -967,7 +966,7 @@ namespace fire.Compiler
 
             // RuntimeClass.IsActor is now a real field instead of a
             // computed property (see the documentation there - because of Decl.
-            // [MemoryPackIgnore] for the planned serialisation), computed here
+            // for the planned serialisation), computed here
             // ONCE after the base-class linking above -
             // the same logic as the former property, only as an explicit
             // chain walk instead of recursive property access (independent of

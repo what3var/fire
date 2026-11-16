@@ -1,0 +1,8 @@
+int z = 0
+try { print(7 / z) } catch (DivideByZeroException e) { print("div: " + e.message) }
+try { print(7 % z) } catch (DivideByZeroException e) { print("mod: " + e.message) }
+float f = 0.0
+print(1.0 / f)
+print(7 / 2)
+//# modes: Release
+//# name: syntax 4: int z = 0

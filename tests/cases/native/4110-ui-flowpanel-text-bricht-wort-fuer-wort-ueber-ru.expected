@@ -1,0 +1,12 @@
+size 120x96
+[Hello ][world, ]
+[please ]
+<button@56,14>
+[ ]
+[click ][it ][when ]
+[you ][are ][done.]
+[Second ]
+[paragraph]
+button 56,14 40x26
+Hello world, please  click it when you are done.
+Second paragraph

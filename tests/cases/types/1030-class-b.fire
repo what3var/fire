@@ -1,0 +1,14 @@
+class B {
+    float w = 25cm
+    float:m Len() { return this.w }
+    static float : mm Half(float:m x) { return x / 2 }
+    float:any m Raw() { return this.w }
+    float:m Bad() { return 3s }
+}
+var b = new B()
+print(b.Len())
+print(B.Half(3m))
+print(b.Raw())
+float:m x = b.Len()
+//# modes: Release
+//# name: types 103: class B {

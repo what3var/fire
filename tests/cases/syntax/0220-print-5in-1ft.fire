@@ -1,0 +1,10 @@
+print(5in + 1ft)
+float d : in = 2.54cm
+print(d + " " + 2Inch + " " + (5in is in m) + " " + 3mV)
+var unit = 5
+print(unit)
+unit Inch: in { coerce m => 0.0254 }
+unit Foot: ft { coerce to in => value * 12 }
+prefixed unit Volt: V
+//# modes: Release
+//# name: syntax 22: print(5in + 1ft)

@@ -1,0 +1,6 @@
+129.6km/h 10km/h
+133.2km/h 18km/h 20mm undefined:mm 100cm 2cm
+1000.2m 1000m 0.003m 200cm
+3000m 3000mm undefined:m
+Expected unit 'km/h', got: kg.
+Expected unit 'm', got: s.

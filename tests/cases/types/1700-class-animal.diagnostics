@@ -1,0 +1,1 @@
+error E4066: Property 'A' of class 'C' is 'Animal', interface 'I' declares it as 'Dog' (line 6)

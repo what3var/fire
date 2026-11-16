@@ -1,0 +1,69 @@
+class P {
+    int n
+    float:m len
+    undefined Set(float v, int mm : mm) { this.n = v!
+        this.len = mm:! }
+}
+class K {
+    static int I(int x) { return x }
+    static float:km D(float d : km) { return d }
+    static int R(float x) { return x! }
+    static float:km RU(int a : any) { return a:! }
+    static any F(any x) { return x }
+    static any G(any x, any y) { return "" + x + "|" + y }
+}
+int a = 500m
+float f = 2.6
+int i = 2.6!
+print(i)
+int j = f!
+print(j)
+int j2 = 2.5!
+print(j2)
+int j3 = -9.5!
+print(j3)
+float:km d = a:!
+print(d)
+float:km d2 = a:
+print(d2)
+float e = a:!
+print(e)
+float e2 = a!
+print(e2)
+char c = 65!
+print(c)
+word w = 7!
+print(w is of word)
+any x = f!
+print(x)
+int[8] small = 300.4!
+print(small)
+int u
+int k = u!
+print(k)
+var p = new P()
+p.Set(2.6, 1500mm)
+print(p.n)
+print(p.len)
+int q = 1
+q = 7.7!
+print(q)
+print(K.I(2.6!))
+print(K.D(a:!))
+print(K.R(3.5))
+print(K.RU(a))
+print(K.I(x: 2.6!))
+var c1 = a!
+print(c1)
+var c2 = f:!
+print(c2)
+print(K.F(a:!))
+print(K.F(a:))
+print(K.G(a:, 2))
+print(K.G(1, a:!))
+print(K.F(a:!int))
+print(K.F(a:! + 2km))
+int mm = 5mm
+try { int bad = mm:
+    print(bad) } catch (ArgumentException ex) { print(ex.message) }
+//# name: Kontext-Umwandlung: der Kontext der Deklaration (Variable, Feld, Parameter, Rueckgabe), ohne Kontext

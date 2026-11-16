@@ -1,0 +1,15 @@
+var list = new List()
+list.Add(10)
+list.Add(20)
+list.Add(30)
+list.Add(40)
+
+foreach (x in list) {
+    if (x == 30) {
+        break
+    }
+    print(x)
+}
+print("foreach done")
+//# note: what the test program said to expect (for a reader, it was not checked): 10 / 20 / foreach done
+//# name: Bytecode-Test: break in foreach (mit Prelude-List)

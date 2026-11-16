@@ -1,0 +1,13 @@
+class A { int v; construct() { this.v = 1 } Who() { return "A" + this.v } }
+class B : A { construct() : base() { this.v = 2 } override Who() { return "B" + this.v } }
+class C { int v; construct() { this.v = 3 } Who() { return "C" + this.v } }
+var items = [new A(), new B(), new C(), new A(), new C(), new B()]
+var text = ""
+foreach (o in items) { text = text + o.Who() + "," + o.v + ";" }
+print(text)
+for (var i = 0; i < 6; i = i + 1) { items[i].v = i * 10 }
+var sum = 0
+foreach (o in items) { sum = sum + o.v }
+print(sum)
+//# note: --- Inline caches: one call site, several classes
+//# name: polymorphe Aufrufstelle: Klasse wechselt, Override, Feldzugriff

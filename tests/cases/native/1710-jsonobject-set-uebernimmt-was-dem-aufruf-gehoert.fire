@@ -1,0 +1,24 @@
+#import "json"
+var root = new JsonObject()
+bool flag = true
+if (flag) {
+    var inner = new JsonObject()
+    inner.Set("a", 1)
+    root.Set("inner", take inner)
+    var la = new JsonObject()
+    la.Set("c", 3)
+    root.Set("la", take la)
+    root.Set("list", [new JsonObject(), 5])
+}
+var other = new JsonObject()
+other.Set("b", 2)
+root.Set("taken", take other)
+root.Set("made", new JsonObject())
+print(Json.Serialize(root))
+var lost = new JsonObject()
+if (flag) {
+    var gone = new JsonObject()
+    lost.Set("gone", gone)
+}
+try { print(Json.Serialize(lost)) } catch (DestroyedException e) { print("DestroyedException: " + e.message) }
+//# name: JsonObject.Set uebernimmt, was dem Aufruf gehoert (take, neu erzeugt), auch aus einem inneren Block und ueber vier Eintraege hinaus; ein zerstoertes Objekt beim Schreiben ist eine DestroyedException, kein stilles null

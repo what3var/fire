@@ -1,0 +1,11 @@
+v=1 P=7 v=1 P=7
+v:field P:property Twice:method 42
+1 'P' is a property, expected (lambda field<...>): a field
+2 'v' is a field, expected (lambda property<...>): a property
+3 'Twice' is a method, expected (lambda member<...>): a field or a property
+4 'nope' is not a member
+5 'Twice' is a method - Call(obj, args) calls it
+6 'v' is not a method
+Twice->8
+7 'v' is a field, expected (lambda method<...>): a method
+8 'P' is a property, expected (lambda method<...>): a method

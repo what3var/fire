@@ -1,0 +1,36 @@
+    #import "time"
+    class Box { int v = 0; construct(int v) { this.v = v } }
+    class Holder { Box last; List<Box> list = new List<Box>() }
+    var h = new Holder()
+    Box a = undefined
+    Box b = undefined
+    Box c = undefined
+    Box d = undefined
+    var arr = [new Box(0), new Box(0)]
+    var shared = new Box(40)
+    var step = 0
+    fire {
+        var mine = new Box(7)
+        var other = new Box(8)
+        a = new Box(5)
+        b = copy mine
+        c = take other
+        d = shared
+        h.last = new Box(9)
+        arr[0] = new Box(1)
+        arr[1] = take mine
+        try { print(mine.v) } catch (DestroyedException e) { print("moved: " + e.message) }
+        var k = new Box(4)
+        try { a = k } catch (ArgumentException e) { print("global: " + e.message) }
+        try { h.last = k } catch (ArgumentException e) { print("field: " + e.message) }
+        try { arr[0] = k } catch (ArgumentException e) { print("element: " + e.message) }
+        try { h.list.Add(k) } catch (ArgumentException e) { print("add: " + e.message) }
+        h.list.Add(copy k)
+        k.v = 44
+        print("thread " + a.v + " " + b.v + " " + c.v + " " + h.last.v + " " + arr[0].v + " " + arr[1].v + " " + h.list[0].v + " " + k.v)
+        step = 1
+    }
+    while (step < 1) { Sleep(1ms) }
+    Sleep(20ms)
+    print("main " + a.v + " " + b.v + " " + c.v + " " + d.v + " " + h.last.v + " " + arr[0].v + " " + arr[1].v + " " + h.list.Count + " " + h.list[0].v)
+//# name: Threads: Regel 10 - Schreiben in globale Variablen, Felder und Elemente der Globals: frisch, copy und take bewegen das Objekt ins Hauptprogramm, ohne Wort ArgumentException

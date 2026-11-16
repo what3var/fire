@@ -1,0 +1,12 @@
+class Exception { string message; construct(string message = "") { this.message = message } }
+class T {
+    static Get() { return 10 + (throw new Exception("fehlt")) }
+    static Run() {
+        try { print(1 + T.Get()) } catch (e) { e.resume(5) }
+        var s = 0
+        try { foreach (x in [1, 2, 3]) { s = s + x + (throw new Exception("n")) } } catch (e) { e.resume(100) }
+        print(s)
+    }
+}
+T.Run()
+//# name: resume() setzt mit den Operanden der Wurfstelle fort (Stack wird beim catch beiseitegelegt und zurueckgespielt)

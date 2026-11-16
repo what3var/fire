@@ -1,11 +1,9 @@
 using System.Collections.Generic;
-using MemoryPack;
 
 namespace fire.Bytecode
 {
     /// <summary>A declared member of a class for reflection (docs/spec/DESIGN_LAMBDA_REFLECTION_PROBE.md): what is otherwise lost at runtime
     /// - the declared type names and parameter names. Names and access are known to the runtime even without it.</summary>
-    [MemoryPackable]
     public sealed partial class MemberMeta
     {
         public string Name { get; set; } = "";
@@ -35,7 +33,6 @@ namespace fire.Bytecode
     }
 
     /// <summary>An attribute of a method for reflection: its name, its arguments as source text and - where the compiler can tell - their values.</summary>
-    [MemoryPackable]
     public sealed partial class AttributeMeta
     {
         public string Name { get; set; } = "";
@@ -47,7 +44,6 @@ namespace fire.Bytecode
     }
 
     /// <summary>The members declared in a class ITSELF (inheritance goes via <see cref="RuntimeClass.Base"/>) and their base names.</summary>
-    [MemoryPackable]
     public sealed partial class ClassMeta
     {
         public List<MemberMeta> Members { get; set; } = new();

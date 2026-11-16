@@ -1,0 +1,9 @@
+#import "time"
+class Exception { string message; construct(string message = "") { this.message = message } }
+var counter = 0
+var jobs = 0
+fire { sync global { counter = counter + 1 } }
+fire { fire global { jobs = jobs + 10 } }
+Sleep(400ms)
+print("counter " + counter + " jobs " + jobs)
+//# name: Sleep arbeitet die Warteschlange ab (automatischer Globals-Sync); mit #nosync nicht; fire global-Auftraege auch

@@ -1,0 +1,1 @@
+error E4000: 'defined Dog d' needs a value: an object has no zero to start with (write 'defined Dog d = ...') (line 2)

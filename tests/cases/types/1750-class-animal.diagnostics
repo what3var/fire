@@ -1,0 +1,1 @@
+error E4066: Property 'A' of class 'C' is 'any', interface 'I' declares it as 'Dog' (line 6)

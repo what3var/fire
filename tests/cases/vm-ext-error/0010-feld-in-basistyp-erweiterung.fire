@@ -1,0 +1,2 @@
+class extends string { int count }
+//# name: Feld in Basistyp-Erweiterung

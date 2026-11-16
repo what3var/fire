@@ -1,0 +1,24 @@
+var a = 10
+a += 5
+a -= 3
+a *= 4
+a /= 6
+a %= 5
+print(a)
+var p = 2
+p ^= 10
+print(p)
+var b = 12
+b &= 10
+b |= 1
+b #= 3
+print(b)
+var s = 1
+s <<= 4
+s >>= 2
+print(s)
+var t = "ab"
+t += "cd"
+print(t)
+//# modes: Release
+//# name: syntax 5: var a = 10

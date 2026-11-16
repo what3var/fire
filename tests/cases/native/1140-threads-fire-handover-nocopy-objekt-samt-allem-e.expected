@@ -1,0 +1,20 @@
+lambda in a field: 1
+taking: 'Res' cannot be copied ([NoCopy]) - 'taking' would copy an instance of it, which exists only once.
+after fire: True True True
+thread: 1 2 3 5 9
+owned: True False
+release 1
+release 5
+p stays: 9
+use after handover: Field access on a value of type Undefined which is not an object.
+arr after: True n after: True
+arr 67 n 4
+thread: 'handover' rejected: it reaches an object of the main program's global variables, which this thread does not own.
+own after: True
+inner 8
+release 8
+release 6
+release 7
+run 12 11
+release 12
+end

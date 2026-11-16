@@ -1,0 +1,2 @@
+1
+UNBEHANDELT: Unhandled exception of type 'MissingMemberException': 'Foo' (0 argument(s)) is not a known built-in method on a value of type Int.

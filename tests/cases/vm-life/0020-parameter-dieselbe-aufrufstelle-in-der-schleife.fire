@@ -1,0 +1,20 @@
+class Item {
+    int n
+    construct(int n) { this.n = n }
+    destruct() { print("~I" + this.n) }
+}
+class Box {
+    string name
+    Item item
+    Item extra
+    construct(string name) { this.name = name }
+    destruct() { print("~B" + this.name) }
+}
+class F { static int Bump(b) { b.item.n = b.item.n + 1; return b.item.n } }
+var a = new Box("a")
+a.item = new Item(1)
+var total = 0
+for (var i = 0; i < 3; i = i + 1) { total = total + F.Bump(copy a) }
+print(total)
+print(a.item.n)
+//# name: Parameter: dieselbe Aufrufstelle in der Schleife, Kopie jedes Mal neu

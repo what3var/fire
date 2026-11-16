@@ -1,0 +1,23 @@
+#import "linq"
+class Filter { int minTotal; construct(int m) { this.minTotal = m } }
+class Order { int total; construct(int t) { this.total = t } }
+class Person {
+    List<Order> orders = new List<Order>()
+    int bonus
+    construct(int b) { this.bonus = b }
+}
+class Probe<T> {
+    LambdaExpression Keep(lambda expression<T> e) { return e }
+}
+var pr = new Probe<Person>()
+int min = 10
+var filter = new Filter(50)
+var t = pr.Keep(p => p.orders.Any((Order o) => o.total > min && o.total < filter.minTotal + p.bonus))
+print(t.ToString())
+string caps = ""
+foreach (c in t.Captures()) { caps = caps + c.Name + "=" + c.Value + " " }
+print(caps)
+var x = new Person(5)
+x.orders.Add(new Order(52))
+print(t.Invoke(x))
+//# name: Expression trees: Captures in einem verschachtelten Lambda (lokal, global, Member eines Objekts) - ueber die Ladebefehle des inneren Lambdas

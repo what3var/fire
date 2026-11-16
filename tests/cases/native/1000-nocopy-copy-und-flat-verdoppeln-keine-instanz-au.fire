@@ -1,0 +1,34 @@
+[NoCopy]
+class Res { int id
+    construct(int i) { this.id = i }
+    destruct() { print("release " + this.id) } }
+class SubRes : Res { construct(int i) : base(i) { } }
+class Holder { string name; Res res; int nums[]
+    construct(string n) { this.name = n; this.res = new Res(3); this.nums = [1, 2] } }
+class Plain { int v }
+class Eat { static int Id(Res x) { return x.id } }
+class Keeper { Res kept }
+var r = new Res(1)
+try { var c = copy r } catch (ArgumentException e) { print("copy: " + e.message) }
+try { var f = flat r } catch (ArgumentException e) { print("flat: " + e.message) }
+var s = new SubRes(2)
+try { var c = copy s } catch (ArgumentException e) { print("sub: " + e.message) }
+var h = new Holder("h")
+var hf = flat h
+print("flat holder shares: " + (hf.res == h.res))
+try { var hc = copy h } catch (ArgumentException e) { print("deep: " + e.message) }
+var arr = [new Plain(), r]
+var af = flat arr
+print("flat array shares: " + (af[1] == r))
+try { var ac = copy arr } catch (ArgumentException e) { print("array: " + e.message) }
+try { print(Eat.Id(copy r)) } catch (ArgumentException e) { print("arg: " + e.message) }
+try { print(Eat.Id(flat s)) } catch (ArgumentException e) { print("flat arg: " + e.message) }
+var k = new Keeper()
+try { k.kept = copy r } catch (ArgumentException e) { print("field: " + e.message) }
+print(k.kept == undefined)
+var p = new Plain()
+p.v = 5
+var pc = copy p
+print(pc.v)
+print("end")
+//# name: [NoCopy]: copy und flat verdoppeln keine Instanz (auch abgeleitet, als Feld, Element, Argument, Feldzuweisung) - ArgumentException; flat teilt Referenzen

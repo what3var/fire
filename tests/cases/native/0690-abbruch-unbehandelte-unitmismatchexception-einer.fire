@@ -1,0 +1,3 @@
+any w = 3kg
+float:km/h v = w
+//# name: Abbruch: unbehandelte UnitMismatchException einer Deklaration (Programm ohne Ausnahmen)

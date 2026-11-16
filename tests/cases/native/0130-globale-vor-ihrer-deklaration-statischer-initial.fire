@@ -1,0 +1,11 @@
+int g2 = 4
+class H { static int Get() { return g2 }
+  static undefined Set(int v) { g2 = v }
+  static any s = H.Get()
+  static any t = H.Twice()
+  static int Twice() { H.Set(7)
+    return H.Get() * 2 } }
+print(H.s)
+print(H.t)
+print(H.Get())
+//# name: Globale vor ihrer Deklaration (statischer Initialisierer): undefined, Schreiben gilt bis zur Deklaration

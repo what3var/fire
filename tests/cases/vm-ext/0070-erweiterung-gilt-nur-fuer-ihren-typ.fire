@@ -1,0 +1,6 @@
+class extends string { int Foo() { return 1 } }
+print("s".Foo())
+int i = 5
+print(i.Foo())
+//# note: An extension of string only applies to string - an int does not know `Foo` (a MissingMemberException).
+//# name: Erweiterung gilt nur fuer ihren Typ

@@ -1,0 +1,9 @@
+#noshadow
+
+var counter = 10
+
+fire taking counter {
+    print("Fire-Thread (taking trotz #noshadow): counter = " + counter)
+}
+//# note: what the test program said to expect (for a reader, it was not checked): 'Fire-Thread (taking trotz #noshadow): counter = 10'
+//# name: Multithreading: '#noshadow' + taking funktioniert weiterhin normal

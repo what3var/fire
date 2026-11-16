@@ -1,0 +1,8 @@
+#intwidth 32
+#import "time"
+var now = __time_now()
+int[64] t = now
+int small = now
+print(t > 0)
+//# modes: Release
+//# name: types 45: #intwidth 32

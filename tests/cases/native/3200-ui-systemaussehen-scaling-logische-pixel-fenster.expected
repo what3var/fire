@@ -1,0 +1,8 @@
+system False 1 False 30935 '' 0
+start 1 False 30935 200x100
+light 200x100 -986896
+dark -14671840 -13158601
+scaled 2 fb 400x200 logical 200x100 button 90x26
+pixels 400 -14671840 -13158601
+pressed True
+back 200x100

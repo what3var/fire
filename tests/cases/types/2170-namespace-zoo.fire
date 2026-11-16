@@ -1,0 +1,13 @@
+namespace Zoo {
+    class Animal {
+        string Speak() { return "..." }
+        int Legs { get { return 4 } }
+    }
+}
+namespace Farm {
+    class Beast { string Speak() { return "beast" } }
+}
+namespace Zoo { class Dog : Animal { override string Speek() { return "typo" } } }
+print(1)
+//# modes: Release
+//# name: types 217: namespace Zoo {

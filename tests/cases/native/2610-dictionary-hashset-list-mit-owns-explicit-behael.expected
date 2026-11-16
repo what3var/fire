@@ -1,0 +1,21 @@
+plain 2
+~given
+after plain
+~a
+replaced
+~b
+removed
+took a2 0
+~c
+cleared
+p12 False
+True 2
+~s2
+set removed
+~l1
+list 1 l3
+~outside
+end
+~a2
+~s1
+~l3

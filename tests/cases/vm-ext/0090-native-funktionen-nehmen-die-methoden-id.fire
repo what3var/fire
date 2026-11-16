@@ -1,0 +1,7 @@
+print(__StringCall(3, "hello", 1, 3))
+print(__StringCall(8, "hello"))
+print(__CharCall(1, '5'))
+try { print(__StringCall(3, "hello", 9)) }
+catch (IndexOutOfBoundsException e) { print("Index " + e.index + " Laenge " + e.length) }
+//# note: The method is chosen via its ID, not via the name: the native function can be called directly.
+//# name: native Funktionen nehmen die Methoden-ID

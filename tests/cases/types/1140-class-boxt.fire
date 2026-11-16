@@ -1,0 +1,18 @@
+class Box<T> {
+    T item
+    construct(T item) { this.item = item }
+    Box<R> Map<R>(R lambda<T> fn) { return new Box<R>(fn(this.item)) }
+    static Box<U> Of<U>(U value) { return new Box<U>(value) }
+}
+class Util { static T Id<T>(T x) { return x } static T FirstOf<T>(IEnumerable<T> items) { foreach (x in items) { return x } return undefined } }
+var b = Box.Of(3)
+var c = b.Map(x => x * 2.5)
+try { bool w1 = c.item } catch (ArgumentException e) { }
+try { bool w2 = Util.Id("hi") } catch (ArgumentException e) { }
+try { bool w3 = Util.FirstOf([1, 2]) } catch (ArgumentException e) { }
+var l = new List<string>()
+l.Add("a")
+try { bool w4 = Util.FirstOf(l) } catch (ArgumentException e) { }
+print(c.item)
+//# modes: Release
+//# name: types 114: class Box<T> {

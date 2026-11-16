@@ -1,0 +1,12 @@
+interface ILimit { int Limit { get; set; }
+ string Name { get; }
+ float Delay : ms { get; } }
+class Lim : ILimit { int Limit { get; set; }
+ string Name { get; set; }
+ float Delay : ms { get; set; } }
+var x = new Lim()
+x.Name = "n"
+ILimit l = x
+print(l.Name)
+//# modes: Release
+//# name: types 154: interface ILimit { int Limit { get; set; }

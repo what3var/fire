@@ -1,0 +1,6 @@
+0010-warn-7-the-top-level.fire(1): warning W7: the top level
+0010-warn-7-the-top-level.fire(14): warning W10: in a loop
+0010-warn-7-the-top-level.fire(17): warning W11: as the body of an if
+warning W8: Box is obsolete (Box) (line 12)
+warning W9: Grow is obsolete: use Resize (Box.Grow) (line 15)
+warning TC005: Method 'Grow' has no return type and is assumed to return 'any'. Please add one (use 'undefined' if it returns nothing). (line 6)

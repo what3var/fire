@@ -1,0 +1,17 @@
+body 1
+fin 1
+fin 2
+body 3
+fin 3
+fin 4
+after loop 4
+G fin 0
+G fin 1
+G fin 2
+20
+inner fin
+H caught
+H outer fin
+7
+rethrow
+outer caught

@@ -1,0 +1,5 @@
+int x = 3
+x = "hello"
+//# types: strict
+//# modes: Release
+//# name: types 3: int x = 3

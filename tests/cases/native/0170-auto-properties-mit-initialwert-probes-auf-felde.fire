@@ -1,0 +1,23 @@
+class Counter {
+    int Count { get; set; } = 5
+    string Label { get; } = "c" + 1
+    float:m Len { get; set; } = 2m
+    static int Total { get; set; } = 100
+    int plain = 1
+}
+var c = new Counter()
+print(c.Count + " " + c.Label + " " + c.Len + " " + Counter.Total)
+c.Count++
+c.Len = 30cm
+print(c.Count + " " + c.Len)
+var h = probe c.plain changed { print("plain: " + old + " -> " + value) }
+var h2 = probe c.Count changed { print("Count: " + old + " -> " + value) }
+c.plain = 2
+c.Count = 9
+var d = new Counter()
+d.plain = 7
+print(d.plain)
+silence c
+c.plain = 3
+print(c.plain)
+//# name: Auto-Properties mit Initialwert; Probes auf Feldern bleiben (nur ein beobachtetes Objekt nimmt den Setter, die anderen schreiben per Index)

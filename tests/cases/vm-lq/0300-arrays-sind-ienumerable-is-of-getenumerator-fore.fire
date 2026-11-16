@@ -1,0 +1,20 @@
+#import "linq"
+class P { string name; int price; construct(string n, int p) { this.name = n; this.price = p } }
+class Bag : IEnumerable { GetEnumerator() { var items = [1, 2]; var e = new ListEnumerator(items, 2); items.TakeTo(e); return e } }
+class T {
+    static Count(class src) { var n = 0; foreach (x in src) { n = n + 1 } return n }
+    static Run() {
+        var arr = [5, 3, 8, 1]
+        print(arr is of IEnumerable)
+        print(new Bag() is of IEnumerable)
+        print(5 is of IEnumerable)
+        var e = arr.GetEnumerator()
+        e.MoveNext()
+        print(e.GetCurrent() + " " + T.Count(arr))
+        print(arr.Where(x => x > 2).Select(x => x * 10).Join(","))
+        print(arr.OrderBy(x => x).ToList().Count + " " + arr.Sum() + " " + arr.Count(x => x > 2) + " " + arr.First() + " " + arr.Any(x => x > 7))
+        print(Linq.From(new Bag()).Select(x => x + 1).Join(","))
+    }
+}
+T.Run()
+//# name: Arrays sind IEnumerable: is of, GetEnumerator, foreach, fluent LINQ direkt auf dem Array (class extends array)

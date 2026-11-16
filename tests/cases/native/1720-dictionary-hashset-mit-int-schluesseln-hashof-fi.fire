@@ -1,0 +1,36 @@
+var d = new Dictionary<string, int>()
+d["a"] = 1; d["b"] = 2; d.Add("c", 3)
+d.Remove("b")
+d["d"] = 4
+foreach (p in d) { print(p.Key + "=" + p.Value) }
+var di = new Dictionary<int, float>()
+for (int i = 0; i < 40; i++) { di[i * 7] = i * 0.5 }
+di.Remove(14)
+print(di[7] + " " + di.Count + " " + di.ContainsKey(14) + " " + di.Get(15, -1.0))
+var hs = new HashSet<int>()
+for (int i = 0; i < 30; i++) { hs.Add(i % 10) }
+hs.Remove(3)
+print(hs.Count + " " + hs.Contains(3) + " " + hs.Contains(4))
+var hsS = new HashSet<string>()
+hsS.Add("x"); hsS.Add("y"); hsS.Add("x")
+print(hsS.Count)
+class Node { int v; construct(int v) { this.v = v } }
+var owned = new Dictionary<int, Node>(Owns.Values)
+owned[1] = new Node(5)
+owned[1] = new Node(6)
+print(owned[1].v + " " + owned.Keys.Count + " " + owned.Values[0].v)
+var dc = new Dictionary<int : cm, int>()
+dc[1m] = 3
+print(dc[100cm])
+int nothing
+var du = new Dictionary<int, int>()
+du[nothing] = 9
+du[2] = nothing
+print(du[nothing] + " " + du[2] + " " + du.Count)
+class Table<K, V> {
+    string Kind(K key) { return "generic" }
+    string Kind<int, any>(defined int key) { return "int key" }
+}
+print(new Table<int, string>().Kind(1) + " " + new Table<int, float>().Kind(1) + " " + new Table<string, int>().Kind("a") + " " + new Table<int, int>().Kind(nothing))
+
+//# name: Dictionary/HashSet mit int-Schluesseln (HashOf/Find/Insert<int, any>), Platzhalter any in Spezialisierungen, undefined als Schluessel und Wert, Einheiten-Schluessel, Owns.Values

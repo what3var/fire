@@ -1,0 +1,11 @@
+var arr = new int[5]
+arr[0] = 10
+arr[1] = 20
+print(arr[0] + arr[1])
+print(arr.length)
+
+int fixedArr[3]
+fixedArr[0] = 99
+print(fixedArr[0])
+//# note: what the test program said to expect (for a reader, it was not checked): 30 / 5 / 99
+//# name: Bytecode-Test: Arrays (new, Index-Zugriff, length, Deklarator-Sugar)

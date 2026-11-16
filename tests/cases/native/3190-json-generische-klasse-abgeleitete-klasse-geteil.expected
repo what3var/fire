@@ -1,0 +1,23 @@
+{"$type":"Box<int>","value":42}
+42
+{"$type":"Pair","left":{"$type":"Circle","$id":1,"name":"c1","radius":2.5},"right":[{"$ref":1},{"$ref":1}]}
+c1 2.5cm True True
+{"$type":"Node","label":"one","next":{"label":"two","next":null,"shared":null,"other":null,"data":null,"mark":null,"ratio":1E+30},"shared":{"$id":1,"$values":[1,2,3]},"other":{"$ref":1},"data":"AcgD","mark":"x","ratio":"NaN"}
+hook two
+hook one
+one two 3 True 200 x 1E+30
+{"label":"two","next":null,"shared":null,"other":null,"data":null,"mark":null,"ratio":1E+30}
+hook q
+hook p
+p q 6 3
+{"$type":"Box<int>","value":7}
+{"$type":"List<List>","$values":[{"$type":"List<int>","$values":[1,2]}]}
+[0.1,1.0,-2.5E-07,123456789012,3]
+[1,2.5,-300.0,"aA\n",true,false,null,{}]
+$: unknown class 'Nope'.
+$.ratio: expected 'float', found a string.
+$.value: expected a whole number, found 1.5.
+Expected ',' or ']' in an array (line 1, column 6).
+Unterminated string (line 1, column 1).
+Unexpected text after the JSON value (line 1, column 9).
+'$ref': 9 names no object of the JSON text.

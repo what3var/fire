@@ -1,0 +1,8 @@
+record P { int x
+ construct(int x) { this.x = x }
+ undefined M() { this.x = 2 } }
+var p = new P(1)
+p.x = 3
+p.x++
+//# modes: Release
+//# name: types 11: record P { int x

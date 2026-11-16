@@ -1,0 +1,6 @@
+class B { int v }
+record Q { B b; int a[] }
+record R { int i; string s; Q q; lambda f; any x }
+print(1)
+//# modes: Release
+//# name: types 12: class B { int v }

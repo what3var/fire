@@ -1,0 +1,1 @@
+error E4000: 'r' is 'readonly' and can only be assigned inside a constructor of its class (as 'this.r = ...') (line 3)

@@ -1,0 +1,61 @@
+#import "net"
+var l = new Net.TcpListener("127.0.0.1", 0)
+print("port " + (l.Port > 0) + " " + l.Host)
+var c = new Net.TcpClient("127.0.0.1", l.Port)
+var s = l.Accept(2000)
+print("pending " + l.Pending(0))
+c.WriteString("hello")
+var buf = new byte[16]
+var n = s.Read(buf, 0, 16)
+print("got " + n + " " + IO.Utf8.GetString(buf, 0, n))
+print("remote " + s.RemoteHost + " " + (s.RemotePort == c.LocalPort) + " " + (c.RemotePort == l.Port))
+Net.IConnection ic = s
+ic.ReadTimeout = 700
+ic.WriteTimeout = 2s
+IO.IStream plain = ic
+print("iconnection " + (s is of Net.IConnection) + " " + ic.RemoteHost + " " + (ic.RemotePort == c.LocalPort) + " " + (ic.LocalPort == l.Port) + " " + ic.LocalHost + " " + ic.ReadTimeout + " " + s.ReadTimeout + " " + ic.WriteTimeout + " " + (plain is of IO.IStream))
+s.WriteString("pong!")
+c.ReadTimeout = 500
+var m = c.Read(buf, 0, 16)
+print("reply " + IO.Utf8.GetString(buf, 0, m))
+try { c.Read(buf, 0, 16) } catch (Net.TimeoutException e) { print("timeout " + e.code) }
+var big = new byte[40000]
+for (var i = 0; i < big.length; i++) { big[i] = i % 251 }
+s.Write(big, 0, big.length)
+var total = 0
+var ok = true
+var chunk = new byte[4096]
+c.ReadTimeout = 5000
+while (total < big.length) {
+    var got = c.Read(chunk, 0, 4096)
+    if (got <= 0) { break }
+    for (var i = 0; i < got; i++) { if (chunk[i] != (total + i) % 251) { ok = false } }
+    total = total + got
+}
+print("big " + total + " " + ok)
+s.Shutdown(1)
+print("eof " + c.Read(buf, 0, 16))
+print("waitReadable " + c.WaitReadable(0))
+c.Close()
+s.Close()
+print("closed " + c.IsClosed)
+try { c.Read(buf, 0, 1) } catch (Net.ClosedException e) { print("closed " + e.code) }
+print("accept timeout " + (l.TryAccept(50) == undefined))
+l.Close()
+try { var x = new Net.TcpClient("127.0.0.1", 1, 1000) } catch (Net.RefusedException e) { print("refused " + e.code) }
+var u1 = new Net.UdpSocket("127.0.0.1", 0)
+var u2 = new Net.UdpSocket()
+print("udp avail " + u1.Available)
+u2.SendString("datagram", "127.0.0.1", u1.Port)
+var got2 = u1.ReceiveFrom(buf, 0, 16, 2000)
+print("udp " + got2 + " " + IO.Utf8.GetString(buf, 0, got2) + " from " + u1.FromHost + " " + (u1.FromPort == u2.Port))
+u1.SendTo(buf, 0, 3, "127.0.0.1", u2.Port)
+print("udp back " + u2.ReceiveFrom(buf, 0, 16, 2000))
+try { u1.ReceiveFrom(buf, 0, 16, 100) } catch (Net.TimeoutException e) { print("udp timeout") }
+var addresses = Net.Dns.Resolve("127.0.0.1")
+print("dns " + addresses.Count + " " + addresses[0] + " " + (Net.Dns.Resolve("localhost").Count > 0))
+try { Net.Dns.Resolve("no-such-host.invalid") } catch (Net.ResolveException e) { print("resolve " + e.code) }
+try { var bad = new Net.TcpListener("127.0.0.1", 70000) } catch (Net.NetException e) { print("port " + e.code) }
+var l2 = new Net.TcpListener("127.0.0.1", 0)
+try { var l3 = new Net.TcpListener("127.0.0.1", l2.Port) } catch (Net.NetException e) { print("in use " + e.code) }
+//# name: Net: TCP, UDP, DNS ueber Loopback, Zeitlimits, Fehler

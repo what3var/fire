@@ -1,0 +1,13 @@
+#import "json"
+#import "reflection"
+class Bx { byte data[]; word w[]; int n }
+var a = Json.Deserialize("{\"data\": [1, 2, 30], \"w\": [5, 6], \"n\": 1}", "Bx")
+print(a.data.length + " " + a.data[2] + " " + a.w[1])
+var c = Json.Deserialize("{\"data\": \"AQID\"}", "Bx")
+print(c.data.length + " " + c.data[2])
+var r = new Bx()
+Reflect.Set(r, "data", [7, 8, 9])
+print(r.data[1] + " " + r.data.length)
+try { Reflect.Set(r, "data", "text"); print(r.data) } catch (Exception e) { print("E " + e.message) }
+print(Json.Serialize(a))
+//# name: byte/word-Felder mit JSON und Reflection: JSON liest Puffer (Bytes geprueft), Reflect.Set macht aus einem Array einen Puffer des Objekts und meldet anderes - das Typwissen ueber das Feld bleibt

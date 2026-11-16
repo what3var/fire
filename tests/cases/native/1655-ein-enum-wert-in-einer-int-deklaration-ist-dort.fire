@@ -1,0 +1,45 @@
+enum Color { Red, Green, Blue }
+class H {
+    int f = 1
+    static int s = 1
+    int Take(int p) { return p }
+    int Ret() { any c = Color.Green; return c }
+    undefined Local() {
+        int k = Color.Blue
+        print("local " + k + " " + (k is of int))
+        int j = 1
+        j = Color.Blue
+        print("assigned " + j + " " + (j is of int))
+        any a = Color.Blue
+        int viaAny = a
+        print("any " + viaAny + " " + (viaAny is of int) + " " + (a is of Color))
+        float fl = Color.Blue
+        print("float " + fl + " " + (fl is of float))
+        int arr[] = new int[2]
+        arr[0] = Color.Blue
+        print("element " + arr[0] + " " + (arr[0] is of int))
+        this.f = Color.Green
+        print("own field " + this.f + " " + (this.f is of int))
+    }
+}
+int n = Color.Blue
+print(n)
+print(n is of int)
+print(n + 1)
+var h = new H()
+h.Local()
+h.f = Color.Blue
+print("field " + h.f + " " + (h.f is of int))
+any ah = h
+ah.f = Color.Red
+print("field through any " + h.f + " " + (h.f is of int))
+H.s = Color.Green
+print("static " + H.s + " " + (H.s is of int))
+var r = h.Take(Color.Blue)
+print("parameter " + r + " " + (r is of int))
+var q = h.Ret()
+print("return " + q + " " + (q is of int))
+Color c = Color.Blue
+print(c + " " + (c is of Color) + " " + (c is of int) + " " + c!int)
+try { c = 2; print("an int went into a Color") } catch (ArgumentException e) { print(e.message) }
+//# name: Ein Enum-Wert in einer int-Deklaration ist dort seine Zahl: Variable, Feld (auch an einem Objekt bekannter Klasse), statisches Feld, Parameter, Rueckgabe, Element, ueber any, in einer generischen Klasse

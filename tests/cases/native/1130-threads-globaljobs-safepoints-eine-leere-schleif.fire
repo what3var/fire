@@ -1,0 +1,13 @@
+var n = 0
+fire { fire global { n = n + 1 } }
+while (n == 0) { }
+print("after loop " + n)
+print("synced " + (sync globals))
+fire { sync global { n = n + 10 } }
+while (n < 11) { }
+print("section " + n)
+fire {
+    fire global { print("job a") }
+    fire global { print("job b") }
+}
+//# name: Threads: #globaljobs safepoints - eine leere Schleife arbeitet Auftrag und Sektion eines Threads ab; Auftraege am Programmende in ihrer Reihenfolge

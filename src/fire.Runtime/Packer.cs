@@ -12,8 +12,8 @@ namespace fire.Runtime
     ///
     ///   1. Start piece: the apphost (runtime.exe) together with fire.Runtime.dll and runtimeconfig.json as a .NET bundle
     ///      (see BundleWriter). That is all the .NET host needs to start, and deliberately tiny.
-    ///   2. Payload behind it (see PayloadFile, individually Brotli-packed): the program itself, the core (fire.dll,
-    ///      MemoryPack) and - only if the program needs them via `#import` - the respective bridge DLLs together with
+    ///   2. Payload behind it (see PayloadFile, individually Brotli-packed): the program itself (a program file, fire.Bytecode.ProgramFile), the core
+    ///      (fire.dll) and - only if the program needs them via `#import` - the respective bridge DLLs together with
     ///      dependencies and native libraries (see PackagePlan).
     ///
     /// At start the runtime reads its NativeImports and loads the DLLs as needed from its own file (see
@@ -87,7 +87,7 @@ namespace fire.Runtime
 
             var items = new List<(PayloadKind, string, byte[])>
             {
-                (PayloadKind.Program, "program", MemoryPack.MemoryPackSerializer.Serialize(program)),
+                (PayloadKind.Program, "program", fire.Bytecode.ProgramFile.Write(program, lineTables: false)),
             };
             foreach (var (name, path) in plan.Assemblies)
                 items.Add((PayloadKind.Assembly, name, File.ReadAllBytes(path)));
@@ -151,7 +151,7 @@ namespace fire.Runtime
         }
 
         /// <summary>Reads the program from a packed file (for tests/tools; the runtime itself uses the
-        /// PayloadLoader). Requires that fire.dll and MemoryPack can be loaded.</summary>
+        /// PayloadLoader). Requires that fire.dll can be loaded.</summary>
         public static LinkedProgram? UnpackProgram(string fileName)
         {
             var reader = PayloadFile.Open(fileName);
@@ -160,15 +160,13 @@ namespace fire.Runtime
             return bin == null ? null : Deserialize(bin);
         }
 
-        /// <summary>Converts the program bytes from the payload back (a separate method, so that fire.dll/MemoryPack are only
+        /// <summary>Converts the program bytes from the payload back (a separate method, so that fire.dll is only
         /// loaded on the call, not already when the packer is loaded).</summary>
         [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
         public static LinkedProgram? Deserialize(byte[] bin)
         {
-            var program = MemoryPack.MemoryPackSerializer.Deserialize<LinkedProgram>(bin);
-            if (program == null) return null;
-            program.Program.RelinkAfterDeserialize();
-            return program;
+            try { return fire.Bytecode.ProgramFile.Read(bin); }
+            catch (fire.Bytecode.ProgramFileException) { return null; }
         }
     }
 }

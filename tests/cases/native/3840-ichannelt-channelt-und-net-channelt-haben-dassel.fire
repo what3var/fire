@@ -1,0 +1,29 @@
+#import "net.channel"
+class Use {
+    static int Sum(IChannel<int> ch) {
+        int s = 0
+        foreach (x in ch) { s = s + x }
+        return s
+    }
+    static undefined Fill(IChannel<int> ch, int n) {
+        for (int i = 1; i <= n; i++) { ch.Send(i) }
+        ch.Close()
+    }
+}
+var local = new Channel<int>()
+fire with local { Use.Fill(local, 4) }
+print("local " + Use.Sum(local))
+var listener = new Net.ChannelListener<int>("127.0.0.1", 0)
+int port = listener.Port
+fire taking port {
+    var ch = new Net.Channel<int>("127.0.0.1", port)
+    Use.Fill(ch, 5)
+}
+if (true) {
+    var net = listener.Accept()
+    IChannel<int> any1 = net
+    print("net " + Use.Sum(net) + " " + (net is of IChannel) + " " + any1.IsClosed)
+    net.Close()
+}
+listener.Close()
+//# name: IChannel<T>: Channel<T> und Net.Channel<T> haben dasselbe Interface - eine Methode mit IChannel<int> arbeitet mit beiden

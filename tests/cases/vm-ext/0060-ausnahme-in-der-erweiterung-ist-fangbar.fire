@@ -1,0 +1,6 @@
+class extends string {
+    string First() { return this.Substring(0, 1) }
+}
+print("abc".First())
+try { print("".First()) } catch (IndexOutOfBoundsException e) { print("leer " + e.index) }
+//# name: Ausnahme in der Erweiterung ist fangbar

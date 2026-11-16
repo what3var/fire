@@ -1,0 +1,10 @@
+#nosync
+class Box { int n; construct() { this.n = 0 } Add(int d) { this.n = this.n + d } }
+var box = new Box()
+var finished = 0
+fire { box.Add(4) }
+for (var i = 0; i < 300000; i = i + 1) { finished = finished + box.n }
+print("vorher " + finished)
+while (box.n == 0) { sync globals }
+print("nachher " + box.n)
+//# name: Mit #nosync bearbeitet nur `sync globals` die Warteschlange (Methodenaufruf wartet)

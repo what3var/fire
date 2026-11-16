@@ -53,7 +53,7 @@ namespace fire.Runtime
             PluginBytecode? plugin = null;
             string? error = null;
             try { plugin = PluginBytecode.Read(file); if (plugin == null) error = "The file '" + path + "' is not a fire plugin."; }
-            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or MemoryPack.MemoryPackSerializationException or System.Text.Json.JsonException or ArgumentException)
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.Text.Json.JsonException or ArgumentException)
             {
                 error = $"The plugin '{path}' cannot be read: {ex.Message}";
             }

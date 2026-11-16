@@ -1,0 +1,15 @@
+actor Greeter {
+    string name
+    construct(string name) {
+        this.name = name
+    }
+    greet() {
+        print("greet() ist jetzt gelaufen")
+    }
+}
+var greeter = new Greeter("Welt")
+greeter.greet()
+print("Vor process: greet() ist noch NICHT gelaufen")
+process greeter
+print("Nach process: siehe oben")
+//# name: Threads: Actor: Aufruf ist immer eine Nachricht

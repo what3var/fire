@@ -1,0 +1,10 @@
+class A { int f() { return 1 } }
+int k = 5
+var a = k
+var b = new A().f()
+var c = undefined!int
+a = "x"
+b = "x"
+c = "x"
+//# modes: Release
+//# name: types 68: class A { int f() { return 1 } }

@@ -1,0 +1,8 @@
+var log = ""
+while (true) {
+    try {
+        try { break } finally { log = log + "a" }
+    } finally { log = log + "b" }
+}
+print(log)
+//# name: break aus zwei verschachtelten try: die finally laufen von innen nach aussen

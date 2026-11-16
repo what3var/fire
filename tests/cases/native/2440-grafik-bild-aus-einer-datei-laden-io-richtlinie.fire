@@ -1,0 +1,21 @@
+#import "graphics"
+#import "io"
+#import "filesystem"
+class Img {
+    static Bytes(a) { var b = new byte[a.length]; for (var i = 0; i < a.length; i++) { b[i] = a[i] } return b }
+}
+var bmp = Img.Bytes([66,77,78,0,0,0,0,0,0,0,54,0,0,0,40,0,0,0,3,0,0,0,2,0,0,0,1,0,24,0,0,0,0,0,24,0,0,0,19,11,0,0,19,11,0,0,0,0,0,0,0,0,0,0,30,20,10,60,50,40,90,80,70,0,0,0,0,0,255,0,255,0,255,0,0,0,0,0])
+var dir = IO.Path.Combine(IO.Path.GetTempPath(), "fire_gfx_test_g3")
+IO.Directory.CreateDirectory(dir)
+var path = IO.Path.Combine(dir, "t.bmp")
+IO.File.WriteAllBytes(path, bmp)
+var fb = Framebuffer.FromFile(path)
+print(fb.Width() + "x" + fb.Height() + " " + fb.ByteCount())
+var raw = fb.ReadBytes()
+var line = ""
+for (var i = 0; i < raw.length; i++) { line = line + raw[i] + " " }
+print(line)
+try { Framebuffer.FromFile(IO.Path.Combine(dir, "missing.png")) } catch (ImageException e) { print("missing " + (e.message.Length > 0)) }
+IO.File.Delete(path)
+IO.Directory.Delete(dir)
+//# name: Grafik: Bild aus einer Datei laden (IO-Richtlinie)

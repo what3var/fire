@@ -1,0 +1,17 @@
+class Exception { string message; construct(string message = "") { this.message = message } }
+class C {
+    int v
+    string name
+    int Loud { get { return this.v * 2 } set { this.v = value / 2 } }
+    construct() { this.v = 1; this.name = "a" }
+}
+var c = new C()
+probe c.v changing (o, n) => { throw new Exception("nein") }
+try { c.v = 5 } catch (e) { print("1 " + e.message) }
+print(c.v)
+silence c
+probe c.v changed (o, n) => { throw new Exception("danach") }
+try { c.v = 6 } catch (e) { print("2 " + e.message) }
+print(c.v)
+print("weiter")
+//# name: probe: Exceptions im Handler laufen zum Schreiber (changing bricht das Schreiben ab, changed kommt nach dem Schreiben)

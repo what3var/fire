@@ -1,0 +1,9 @@
+interface IPet { }
+interface ILoud { string Bark() }
+class Dog { }
+class Puppy : Dog, IPet, ILoud { string Bark() { return "Wuff" } }
+Dog d = new Puppy()
+print(d is of IPet)
+print(d!ILoud.Bark())
+print(new Dog() is of IPet)
+//# name: Interfaces hinter der Basisklasse (class Puppy : Dog, IPet) zaehlen fuer is of und !

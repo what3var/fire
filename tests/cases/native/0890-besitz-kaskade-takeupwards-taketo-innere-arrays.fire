@@ -1,0 +1,77 @@
+class Node {
+    string name
+    int items[]
+    construct(string n) { this.name = n; this.items = new int[2]; print("new " + n) }
+    destruct() { print("free " + this.name) }
+}
+class Keeper {
+    int store[]
+    Node kid
+    construct() { this.store = [1, 2, 3]; this.kid = new Node("kid") }
+}
+class Util {
+    static int[] Up() {
+        var a = [7, 8]
+        {
+            var inner = new int[3]
+            inner.TakeUpwards()
+            inner[0] = 5
+            a[0] = inner[0]
+        }
+        return a
+    }
+    static int Sum(int xs[]) { var t = 0; foreach (x in xs) { t = t + x } return t }
+}
+var k = new Keeper()
+print(k.store[2])
+var kept = k.store
+delete k
+try { print(kept[0]) } catch (DestroyedException e) { print("store died with its owner") }
+var up = Util.Up()
+print(up[0])
+var big = new int[3][2]
+big[2][1] = 4
+print(big[2][1] + " " + big.length + " " + big[0].length)
+var g = [[1, 2], [3, 4, 5]]
+print(Util.Sum(g[1]))
+var buf = new byte[3]
+var holder = new Node("holder")
+buf.TakeTo(holder)
+holder.items.TakeGlobal()
+print(buf.length)
+delete holder
+try { print(buf.length) } catch (e) { print("buffer died with holder") }
+class Pool {
+    static int[] Make(int n) {
+        var tmp = new int[n]
+        for (var i = 0; i < n; i = i + 1) { tmp[i] = i * i }
+        return tmp
+    }
+}
+var total = 0
+for (var round = 0; round < 50; round = round + 1) {
+    var a = Pool.Make(20)
+    total = total + a[19]
+    var s = [a[1], a[2]]
+    total = total + s[1]
+}
+print(total)
+var l = new List()
+for (var i = 0; i < 40; i = i + 1) { l.Add(i) }
+var sum = 0
+foreach (v in l) { sum = sum + v }
+print(sum + " " + l.Count)
+try {
+    var local = new int[4]
+    local[9] = 1
+} catch (e) {
+    print("oob")
+}
+var cur = 0
+{
+    var scratch = [1, 2]
+    scratch.TakeLocal()
+    cur = scratch[1]
+}
+print(cur)
+//# name: Besitz: Kaskade, TakeUpwards, TakeTo, innere Arrays, List-Wachstum, Ausnahmen

@@ -1,0 +1,14 @@
+class E2 { string message }
+class P { int x
+    undefined M(int a, int b = 2) { }
+}
+var p = new P()
+var e = new E2()
+print(e.Message)
+p.Nope()
+p.M()
+p.M(1)
+p.TakeTo(e)
+//# types: strict
+//# modes: Release
+//# name: types 113: class E2 { string message }

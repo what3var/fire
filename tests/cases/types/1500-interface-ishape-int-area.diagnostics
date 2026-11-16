@@ -1,0 +1,1 @@
+error E4063: Method 'Area' of class 'Sub' implements interface 'IShape' and must be public, not protected (a member of an interface is public) (line 3)

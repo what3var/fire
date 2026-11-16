@@ -1,0 +1,4 @@
+#import "time"
+print((DateTime.Now.Year > 2000) + " " + DateTime.UtcNow.Kind + " " + DateTime.Now.Kind + " " + (DateTime.Today.Hour == 0))
+//# modes: Release
+//# name: diag 22: #import "time"

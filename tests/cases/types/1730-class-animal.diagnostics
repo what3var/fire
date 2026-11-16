@@ -1,0 +1,1 @@
+error E4066: Property 'A' of class 'C' is 'int', interface 'I' declares it as 'defined int' (line 6)

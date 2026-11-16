@@ -1,0 +1,77 @@
+#import "data.sqlite"
+#import "data.memory"
+class Author : Data.Entity {
+    int id
+    string fullName
+    string secret
+    List<Book> books
+    construct() { }
+}
+class Book : Data.Entity {
+    int number
+    int authorId
+    string title
+    Author author
+    construct() { }
+}
+Data.Mapping.Entity<Author>().Table("authors").Key(a => a.id).Column(a => a.fullName, "full_name").Required(a => a.fullName).Length(a => a.fullName, 80).Ignore(a => a.secret).HasMany(a => a.books, "authorId")
+Data.Mapping.Entity<Book>().Table("books").Key(b => b.number).Index(b => b.authorId).Check(b => b.title, "length(title) > 0").BelongsTo(b => b.author, "authorId")
+foreach (url in ["sqlite::memory:", "memory:"]) {
+    print("---- " + url)
+    var db = new Data.Connection(url)
+    print(db.CreateScriptOf(["Author", "Book"]))
+    db.Ensure<Author>()
+    db.Ensure<Book>()
+    var a = new Author()
+    a.fullName = "Ursula"
+    a.secret = "not stored"
+    print("saved " + a.Save(db) + " id " + a.id)
+    var b = new Book()
+    b.authorId = a.id
+    b.title = "Earthsea"
+    b.Save(db)
+    a.fullName = "Ursula K."
+    a.Save(db)
+    print("row " + db.Rows("select * from authors")[0])
+    a.fullName = "changed here"
+    print("reload " + a.Reload(db) + " " + a.fullName)
+    List<Author> all = db.From<Author>().Include(x => x.books).Where(x => x.books.Any(k => k.title.StartsWith("Earth"))).ToList()
+    print("found " + all[0].fullName + " " + all[0].books.Count + " " + all[0].books[0].title)
+    try { db.Execute("insert into books(authorId, title) values (1, '')") } catch (Data.ConstraintException e) { print("check " + e.message) }
+    print("deleted " + b.Delete(db) + " left " + db.From<Book>().Count())
+    db.Close()
+}
+#import "data.memory"
+var a = new Data.Connection("memory:shop")
+var b = new Data.Connection("memory:Shop")
+var other = new Data.Connection("memory:other")
+a.Execute("create table t(id integer primary key, v text)")
+a.Execute("insert into t(v) values (?)", ["one"])
+print("b sees " + b.Scalar("select count(*) from t") + " other " + other.Scalar("select count(*) from _columns where table_name = 't'"))
+b.Execute("insert into t(v) values (?)", ["two"])
+print("a sees " + a.Scalar("select count(*) from t"))
+a.Begin()
+a.Execute("insert into t(v) values (?)", ["three"])
+try { b.Execute("insert into t(v) values (?)", ["four"]) } catch (Data.BusyException e) { print("busy " + e.Code) }
+try { b.Begin() } catch (Data.BusyException e) { print("busy begin") }
+print("b reads " + b.Scalar("select count(*) from t"))
+a.Rollback()
+print("after rollback a " + a.Scalar("select count(*) from t") + " b " + b.Scalar("select count(*) from t"))
+b.Transaction(t => { t.Execute("insert into t(v) values (?)", ["five"]) })
+print("after b's transaction a " + a.Scalar("select count(*) from t"))
+a.Begin()
+a.Execute("delete from t")
+a.Close()
+print("a closed in a transaction: b " + b.Scalar("select count(*) from t"))
+b.Execute("insert into t(v) values (?)", ["six"])
+Data.MemoryDriver.Forget("shop")
+var c = new Data.Connection("memory:shop")
+print("forgotten: c " + c.Scalar("select count(*) from _columns where table_name = 't'") + " b still " + b.Scalar("select count(*) from t"))
+try { new Data.Connection("memory:no space") } catch (ArgumentException e) { print(e.message) }
+var own = new Data.Connection("memory:")
+own.Execute("create table t(x int)")
+print("own " + own.Scalar("select count(*) from t"))
+//# note: The mapping in code (Data.Mapping.Entity<T>(): table, key, column, required, length, ignore, index, check, relations) and objects that write
+//# note: themselves (Data.Entity: Save, Reload, Delete); a database in memory shared by name (memory:shop): two connections, the lock of a transaction,
+//# note: the rollback when a connection closes in one, Forget
+//# name: Data/Mapping: Mapping im Code (Data.Mapping.Entity<T>(): Tabelle, Schluessel, Spalte, Required, Length, Ignore, Index, Check, HasMany/BelongsTo) und Data.Entity (Save, Reload, Delete) - SQLite und In-Memory; eine geteilte In-Memory-Datenbank (memory:name: zwei Verbindungen, Sperre einer Transaktion als BusyException, Rollback beim Schliessen, Forget)

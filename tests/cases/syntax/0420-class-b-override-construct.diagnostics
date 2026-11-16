@@ -1,0 +1,1 @@
+0420-class-b-override-construct.fire(1): error E3000: A constructor is not inherited - it cannot be 'override'

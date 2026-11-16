@@ -1,0 +1,25 @@
+interface IAnimal { string Name() }
+class Dog : IAnimal {
+    string Name() { return "Rex" }
+    string Bark() { return "Woof" }
+}
+class Cat : IAnimal { string Name() { return "Tom" } }
+IAnimal a = new Dog()
+print(a!Dog.Bark())
+IAnimal c = new Cat()
+try { print(c!Dog.Bark()) } catch (ArgumentException e) { print(e.message) }
+IAnimal u = undefined
+print(u!Dog)
+print(65!char)
+print('b'!int)
+print(66.4!char)
+print(300!int[8])
+print(200!int[8])
+print(300!byte)
+print((-1)!byte)
+print(70000!int[16])
+print(5000000000!int[32])
+print(0.1!float[32])
+try { print("42"!int) } catch (ArgumentException e) { print("caught") }
+try { print(5!Dog) } catch (ArgumentException e) { print(e.message) }
+//# name: ! wandelt nach char und Bitbreiten und castet Objekte

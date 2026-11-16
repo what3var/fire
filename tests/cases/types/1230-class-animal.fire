@@ -1,0 +1,27 @@
+class Animal { }
+class Dog : Animal { }
+class Show {
+    static string Of(int x) { return "int" }
+    static string Of(string s) { return "string" }
+    static string Of(Animal a) { return "animal" }
+    static string Of<T>(T x) { return "generic" }
+    string Me(int x) { return "me int" }
+    string Me(float f) { return "me float" }
+    construct() { }
+    construct(int a) { }
+    construct(string s) { }
+}
+class SubShow : Show {
+    override string Me(int x) { return "sub int" }
+}
+print(Show.Of(1) + " " + Show.Of("s") + " " + Show.Of(new Dog()) + " " + Show.Of(2.5))
+var s = new Show(3)
+var t = new Show("x")
+print(s.Me(1) + " " + s.Me(1.5))
+Show sub = new SubShow()
+print(sub.Me(1) + " " + sub.Me(1.5))
+any v = "dyn"
+print(Show.Of(v))
+//# types: strict
+//# modes: Release
+//# name: types 123: class Animal { }

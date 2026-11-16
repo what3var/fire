@@ -1,0 +1,1 @@
+warning TC019: 'w' has no type: 'var w = undefined' says nothing about its type, and no assignment gives it one. It becomes 'any' - nothing about it is checked, every use is looked up at run time and it takes the wide values of the native backend. Give it a type ('int w = ...'), or write 'any w = ...' if that is really meant (line 1)

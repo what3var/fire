@@ -1,0 +1,3 @@
+if (true) { unit X: xx }
+//# modes: Release
+//# name: syntax 34: if (true) { unit X: xx }

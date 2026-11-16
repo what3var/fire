@@ -1,0 +1,23 @@
+Rex wuff
+E1 An element of an array of Dog must be a Dog (or undefined), not Cat.
+E2 An element of an array of Dog must be a Dog (or undefined), not String.
+E3 An array of Animal cannot be stored where an array of Dog is declared.
+E4 An element of an array of Dog must be a Dog (or undefined), not Int.
+Bello wuff undefined
+E5 An element of an array of string must be a string (or undefined), not Int.
+5 x
+2 L2 wuff
+y
+DA wuff 2
+sub wuff base?
+3 undefined
+E8 An element of an array of lambda with 2 parameter(s) must be a lambda with 2 parameter(s) (or undefined), not a lambda with 1 parameter(s).
+E9 An element of an array of lambda with 2 parameter(s) must be a lambda with 2 parameter(s) (or undefined), not Int.
+12
+E10 An array of lambda with 1 parameter(s) cannot be stored where an array of lambda with 2 parameter(s) is declared.
+5
+E11 An element of an array of lambda with 1 parameter(s) must be a lambda with 1 parameter(s) (or undefined), not a lambda with 0 parameter(s).
+42
+E12 An element of an array of lambda with 1 parameter(s) must be a lambda with 1 parameter(s) (or undefined), not a lambda with 2 parameter(s).
+E13 An element of a defined array of lambda with 1 parameter(s) cannot be undefined.
+E14 An element of a defined array of lambda with 1 parameter(s) cannot be undefined.

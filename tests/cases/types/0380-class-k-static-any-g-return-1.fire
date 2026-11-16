@@ -1,0 +1,6 @@
+class K { static any G() { return 1 } }
+var v = K.G()
+print(v)
+//# types: strict
+//# modes: Release
+//# name: types 38: class K { static any G() { return 1 } }

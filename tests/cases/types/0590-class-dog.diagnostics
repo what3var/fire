@@ -1,0 +1,1 @@
+error E4000: 'defined Dog d' has no zero to start with: the constructor in line 3 must set it (this.d = ...), or the field needs an initializer (line 3)

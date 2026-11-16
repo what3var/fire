@@ -1,0 +1,17 @@
+#import "hash"
+#import "compression"
+#import "spi"
+print(Hash.Sha256.HexOf([97, 98, 99]) == Hash.Sha256.HexOf("abc"))
+byte d[] = [97, 98, 99]
+print(Hash.Crc32.HexOf(d) + " " + Hash.Hex.Encode([1, 171]) + " " + Hash.Bytes.Equal([97, 98, 99], d))
+try { Hash.Md5.Of([1, 300]) } catch (ArgumentException e) { print("A: " + e.message) }
+var z = Compression.GZip.Compress([1, 2, 3, 3, 3, 3, 3, 3])
+print(Compression.GZip.Decompress(z).length)
+try { Compression.GZip.Decompress([1, "x"]) } catch (ArgumentException e) { print("A: " + e.message) }
+Spi.Sim.Reply([7, 8, 9])
+var dev = new Spi.Device("sim")
+var got = dev.Transfer([1, 2, 3])
+print(got[0] + " " + got[1] + " " + got[2])
+try { Spi.Sim.Reply([1, 999]) } catch (ArgumentException e) { print("A: " + e.message) }
+dev.Close()
+//# name: Bytes: Hash, Compression und Spi.Sim.Reply mit Arrays

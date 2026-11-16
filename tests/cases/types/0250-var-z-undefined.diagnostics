@@ -1,0 +1,2 @@
+warning TC020: The type of 'z' (int) comes from its first assignment, not from its declaration (line 1): declare it with the type ('int z') (line 2)
+warning TC001: Cannot assign a value of type 'string' to 'z' of type 'int' (line 3)

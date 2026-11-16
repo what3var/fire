@@ -1,0 +1,12 @@
+class A { int v
+    construct(int v) { this.v = v }
+    bool operator==(any o) { return this.v == o.v }
+    A operator+(A o) { return new A(this.v + o.v) }
+}
+var a = new A(1)
+var b = new A(1)
+print(a == b)
+print((a + b).v)
+//# types: strict
+//# modes: Release
+//# name: types 87: class A { int v

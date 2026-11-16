@@ -1,0 +1,4 @@
+class U { static int F() { any v = "s"; return v } }
+try { int z = U.F() } catch (ArgumentException e) { print(e.message) }
+//# modes: Release
+//# name: types 125: class U { static int F() { any v = "s"; return v } }

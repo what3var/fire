@@ -1,0 +1,6 @@
+class A {
+    static int x = x + 1
+}
+print(A.x)
+//# modes: Release
+//# name: diag 28: class A {

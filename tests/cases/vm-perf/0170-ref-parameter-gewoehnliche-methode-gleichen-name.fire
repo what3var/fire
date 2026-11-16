@@ -1,0 +1,11 @@
+class Counter { int total; construct() { this.total = 0 } Add(ref int v) { v = v + 1 } }
+var l = new List()
+var q = 3
+l.Add(q)
+l.Add(5)
+print(l.Count + " " + q)
+var c = new Counter()
+c.Add(q)
+print(q)
+//# modes: Release
+//# name: ref-Parameter: gewoehnliche Methode gleichen Namens (List.Add) bekommt den Wert, ein Wert fuer ein ref ist ein Fehler

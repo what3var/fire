@@ -1,0 +1,13 @@
+class extends List {
+    Peek() {
+        return this[this.count - 1]
+    }
+}
+
+var list = new List()
+list.Add(1)
+list.Add(2)
+list.Add(3)
+print(list.Peek())
+//# note: what the test program said to expect (for a reader, it was not checked): 3
+//# name: Bytecode-Test: Extension-Klasse für Prelude-Klasse 'List' (nur mit Prelude)

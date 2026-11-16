@@ -1,0 +1,6 @@
+var inc = x => x + 1
+var add = (a, b) => a + b
+var five = () => 5
+var blk = x => { var t = x * 2; return t + 1 }
+print(inc(1) + " " + add(2, 3) + " " + five() + " " + blk(4))
+//# name: Kurzsyntax: x => ..., (a, b) => ..., () => ..., mit Block

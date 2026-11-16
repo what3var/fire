@@ -1,0 +1,7 @@
+#import "json"
+enum Mode { Off, On, Auto }
+class Lamp { Mode mode = Mode.Off }
+Lamp l = Json.Deserialize<Lamp>("{\"mode\": \"Auto\"}")
+print(l.mode)
+//# modes: Release
+//# name: diag 35: #import "json"

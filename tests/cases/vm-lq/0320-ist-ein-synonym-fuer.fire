@@ -1,0 +1,3 @@
+var x = 5
+print((1 ## 2) + " " + (2 ## 2) + " " + (true ## false) + " " + ("a" ## "a") + " " + (x ## 5 || x ## 4) + " " + (6 # 3))
+//# name: ## ist ein Synonym fuer !=

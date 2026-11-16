@@ -1,0 +1,7 @@
+#lax
+int x = 1
+try { x = "a" } catch (ArgumentException e) { print("guard") }
+print(x)
+//# types: strict
+//# modes: Release
+//# name: types 20: #lax

@@ -1,0 +1,5 @@
+var a = []
+print(a.length)
+//# types: strict
+//# modes: Release
+//# name: types 65: var a = []

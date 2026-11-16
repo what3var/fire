@@ -1,0 +1,2 @@
+warning TC009: An assignment as a condition - did you mean '=='? (write '((a = b))' if the assignment is meant) (line 3)
+warning TC009: An assignment as a condition - did you mean '=='? (write '((a = b))' if the assignment is meant) (line 6)

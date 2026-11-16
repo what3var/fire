@@ -1,0 +1,19 @@
+class Greeter {
+    string Greet(string name, string greeting = "Hallo") {
+        return greeting + ", " + name
+    }
+}
+
+var g = new Greeter()
+print(g.Greet("Welt"))
+print(g.Greet("Welt", "Servus"))
+
+var f = func (x, y = 10) => { return x + y }
+print(f(5))
+print(f(5, 20))
+
+var h = func (int x = 42) => { return x }
+print(h())
+print(h(7))
+//# note: what the test program said to expect (for a reader, it was not checked): Hallo, Welt / Servus, Welt / 15 / 25 / 42 / 7
+//# name: Bytecode-Test: optionale Parameter (Methode, Lambda, Standardwert mit und ohne Typ)

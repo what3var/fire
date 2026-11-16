@@ -1,0 +1,48 @@
+#globaljobs sync
+#import "time"
+#import "linq"
+class P {
+    int v
+    construct(int v) { this.v = v }
+    int Count {
+        get {
+            var s = 0
+            for (var i = 0; i < 2; i++) { print("get " + i); s = s + 1 }
+            return s
+        }
+    }
+    P operator+(P o) {
+        for (var i = 0; i < 2; i++) { print("op " + i) }
+        return new P(this.v + o.v)
+    }
+    destruct() { for (var i = 0; i < 2; i++) { print("destruct " + this.v + " " + i) } }
+    static undefined Call() { print("call") }
+}
+fire global { print("job1") }
+print("after post")
+for (var i = 0; i < 2; i++) { print("loop " + i) }
+fire global { print("job2") }
+P.Call()
+print("before sleep")
+Sleep(0)
+print("after sleep")
+var p = new P(1)
+fire global { print("job3") }
+print("count " + p.Count)
+fire global { print("job4") }
+var q = p + new P(2)
+print("sum " + q.v)
+fire global { print("job5") }
+if (true) {
+    var t = new P(5)
+    print("block " + t.v)
+}
+print("after block")
+var nums = new List<int>()
+nums.Add(3)
+nums.Add(1)
+print("small " + nums.Where((int n) => { for (var i = 0; i < 1; i++) { print("where " + n) }; return n < 2 }).Count())
+print("synced " + (sync globals))
+fire global { print("job6") }
+print("end")
+//# name: Threads: #globaljobs sync - Auftraege nur bei sync globals (und am Programmende)

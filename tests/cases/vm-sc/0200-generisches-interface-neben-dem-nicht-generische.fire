@@ -1,0 +1,9 @@
+interface IBox { Open() }
+interface IBox<T> { Open(T key) }
+class Plain : IBox { Open() { return "auf" } }
+class Locked<T> : IBox<T> { Open(T key) { return "mit " + key } }
+class Tagged : Locked<int> { }
+print(new Plain().Open())
+print(new Locked<int>().Open(7))
+print(new Tagged().Open(8))
+//# name: Generisches Interface neben dem nicht-generischen gleichen Namens, Implementierung wird geprueft

@@ -1,0 +1,4 @@
+#strict
+int x = "a"
+//# modes: Release
+//# name: types 4: #strict

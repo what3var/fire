@@ -1,0 +1,10 @@
+class Item { int v = 0
+    construct(int v) { this.v = v } }
+var list = [new Item(1), new Item(2)]
+var f = (any l) => { l[0].v = 50; return 1 }
+var r = f(copy list)
+print("copy " + list[0].v)
+var g = (any l) => { l[1] = new Item(9); return 1 }
+r = g(flat list)
+print("flat " + list[1].v)
+//# name: copy/flat als Argument eines Lambda-Aufrufs: die Kopie, nicht das Original

@@ -1,0 +1,57 @@
+class Item {
+    string n
+    construct(string n) { this.n = n }
+    destruct() { print("destroy " + this.n) }
+}
+class Holder {
+    Item held
+    undefined Keep(Item i) { this.held = i; try i.TakeTo(this) }
+    undefined Look(Item i) { print("look " + i.n) }
+}
+class T {
+    static Item Make(string n) { return new Item(n) }
+    static undefined Hoist() {
+        print("hoist: start")
+        {
+            Item mid = undefined
+            for (int i = 0; i < 2; i++) {
+                var it = new Item("h" + i)
+                if (i == 1) { mid = it }
+            }
+            print("hoist: loop done, mid=" + mid.n)
+        }
+        print("hoist: block of mid left")
+    }
+    static undefined Chain() {
+        Item a = undefined
+        Item b = undefined
+        {
+            a = b = new Item("chain")
+        }
+        print("chain: " + a.n + " " + b.n)
+    }
+    static undefined Ternary(bool c) {
+        Item x = new Item("x")
+        var t = c ? new Item("fresh") : x
+        print("ternary: " + t.n)
+    }
+}
+T.Hoist()
+print("--")
+T.Chain()
+print("--")
+T.Ternary(true)
+print("--")
+var h = new Holder()
+h.Keep(new Item("kept"))
+h.Look(new Item("looked"))
+print("after look")
+print(h.held.n)
+print("--")
+var arr = [undefined, undefined]
+arr[0] = T.Make("returned into array")
+print("--")
+var c = copy h.held
+print("copy " + c.n)
+print("end")
+//# name: Ziel-Regel (SPEC 2.1): bis zum deklarierenden Block, Kette, Ternary, Argument, Rueckgabe in ein Element, copy

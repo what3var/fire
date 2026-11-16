@@ -1,0 +1,12 @@
+var nums = [10, 20, 30]
+print(nums.length)
+print(nums[0])
+print(nums[2])
+
+var grid = [[1, 2], [3, 4, 5]]
+print(grid.length)
+print(grid[0].length)
+print(grid[1].length)
+print(grid[1][2])
+//# note: what the test program said to expect (for a reader, it was not checked): 3 / 10 / 30 / 2 / 2 / 3 / 5
+//# name: Bytecode-Test: Array-Literale (auch verschachtelt)

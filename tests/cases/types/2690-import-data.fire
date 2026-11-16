@@ -1,0 +1,5 @@
+#import "data"
+print(1)
+//# types: strict
+//# modes: Release
+//# name: types 269: #import "data"

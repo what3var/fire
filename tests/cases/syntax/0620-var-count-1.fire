@@ -1,0 +1,10 @@
+var count = 1
+class C {
+    int count = 2
+    int Get() { return count }
+    int Local() { var count = 3; return count }
+}
+var c = new C()
+print(c.Get() + " " + c.Local() + " " + count)
+//# modes: Release
+//# name: syntax 62: var count = 1

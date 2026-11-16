@@ -1,0 +1,1 @@
+error TC012: Method 'Guarded' of 'Base' is protected and cannot be called from here. (line 19)

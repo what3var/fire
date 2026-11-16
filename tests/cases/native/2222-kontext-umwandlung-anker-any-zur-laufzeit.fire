@@ -1,0 +1,33 @@
+any b = 2.0km
+any a = 500m
+any i = 5
+any f = 2.5
+any w = 7!word
+int ai = 500m
+int ii = 5
+float ff = 2.5
+print(b + ai:!)
+print(ai:! + b)
+print(ai: + b)
+print(ai:: + b)
+print(ff! + i)
+print(ii! + f)
+print(ii! + w)
+print((ii! + w) is of word)
+print(a:! + 2.0km)
+print(i! + 2.5)
+print(f! + 5)
+any s = "x"
+any t = true
+any n = undefined
+try { print(ii! + s) } catch (ArgumentException x) { print(x.message) }
+try { print(ii! == t) } catch (ArgumentException x) { print(x.message) }
+try { print(ii! == n) } catch (ArgumentException x) { print(x.message) }
+try { print(t! + ii) } catch (ArgumentException x) { print(x.message) }
+any v5 = 5
+try { print(v5!string) } catch (ArgumentException x) { print(x.message) }
+int un
+try { print(ii! == un) } catch (ArgumentException x) { print(x.message) }
+try { print(ii! + un) } catch (Exception x) { print(x.message) }
+print("end")
+//# name: Kontext-Umwandlung: der Anker ist any (zur Laufzeit), dieselben Ergebnisse; ein string, bool oder undefinierter Anker ist die ArgumentException

@@ -1,0 +1,4 @@
+actor Counter { int n; construct() { this.n = 0 } }
+var c = new Counter()
+var d = copy c
+//# name: Actor als Operand

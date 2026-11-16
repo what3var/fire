@@ -1,0 +1,2 @@
+class extends Gibtsnicht { F() { } }
+//# name: unbekannte Klasse bleibt ein Fehler

@@ -1,0 +1,4 @@
+class C { static int F(int a, int b = 2) { return a * 10 + b } }
+print(C.F(a: 1, a: 2))
+//# modes: Release
+//# name: diag 15: class C { static int F(int a, int b = 2) { return a * 10 + b } }

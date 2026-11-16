@@ -1,0 +1,30 @@
+---- sqlite::memory:
+CREATE TABLE "users" ("id" INTEGER PRIMARY KEY, "name" VARCHAR(50) NOT NULL, "age" INTEGER CHECK (age >= 0), "note" NUMERIC);
+CREATE TABLE "profiles" ("id" INTEGER PRIMARY KEY, "userId" INTEGER, "bio" TEXT, CHECK (length(bio) < 100));
+CREATE UNIQUE INDEX "ix_profiles_userId" ON "profiles" ("userId");
+CREATE VIEW "adults" AS SELECT id, name FROM users WHERE age >= 18;
+
+profile user 1
+Ada maths
+Kid none
+profiles 2
+SELECT * FROM "users" WHERE ((SELECT t1."bio" FROM "profiles" AS t1 WHERE t1."userId" = "users"."id") = ?) ["toys"]
+with toys Kid
+adults 1 Ada
+check CHECK constraint failed: age >= 0
+table check CHECK constraint failed: length(bio) < 100
+---- memory:
+CREATE TABLE "users" ("id" INTEGER PRIMARY KEY, "name" VARCHAR(50) NOT NULL, "age" INTEGER CHECK (age >= 0), "note" NUMBER);
+CREATE TABLE "profiles" ("id" INTEGER PRIMARY KEY, "userId" INTEGER, "bio" TEXT, CHECK (length(bio) < 100));
+CREATE UNIQUE INDEX "ix_profiles_userId" ON "profiles" ("userId");
+CREATE VIEW "adults" AS SELECT id, name FROM users WHERE age >= 18;
+
+profile user 1
+Ada maths
+Kid none
+profiles 2
+SELECT * FROM "users" WHERE ((SELECT t1."bio" FROM "profiles" AS t1 WHERE t1."userId" = "users"."id") = ?) ["toys"]
+with toys Kid
+adults 1 Ada
+check CHECK constraint failed: age >= 0
+table check CHECK constraint failed: length(bio) < 100

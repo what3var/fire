@@ -1,0 +1,6 @@
+interface IList<T> : IEnumerable<T> { }
+class Nums : IList<int> { IEnumerator<int> GetEnumerator() { return new List<int>().GetEnumerator() } }
+IList<int> n = new Nums()
+foreach (x in n) { bool b = x }
+//# modes: Release
+//# name: types 197: interface IList<T> : IEnumerable<T> { }

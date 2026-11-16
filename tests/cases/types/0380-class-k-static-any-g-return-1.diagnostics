@@ -1,0 +1,1 @@
+warning TC020: 'v' becomes 'any' (its initializer is declared 'any'): nothing about it is checked and it takes the wide values of the native backend - write 'any v = ...' if that is meant, or give it its type (line 2)

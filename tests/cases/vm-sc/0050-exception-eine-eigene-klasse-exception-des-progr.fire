@@ -1,0 +1,9 @@
+class Exception {
+    string message
+    construct(string message) { this.message = message + "!" }
+}
+class MyErr : Exception {
+    construct(string m) : base(m) { }
+}
+try { throw new MyErr("x") } catch (MyErr e) { print(e.message) }
+//# name: Exception: eine eigene Klasse Exception des Programms ersetzt die des Prelude (die Ableitungen bekommen ihre Basis)

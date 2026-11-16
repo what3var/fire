@@ -1,0 +1,8 @@
+class B { private int M() { return 1 } }
+class D : B { override int M() { return 2 } }
+B b = new D()
+print(b.M())
+B b2 = new B()
+try { print(b2.M()) } catch (AccessDeniedException e) { print("verweigert") }
+//# modes: Release
+//# name: types 146: class B { private int M() { return 1 } }

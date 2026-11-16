@@ -1,0 +1,5 @@
+int i = 0
+do { i++; if (i == 2) continue; print(i) } while (i < 3)
+do print("once") while (false)
+//# modes: Release
+//# name: syntax 12: int i = 0

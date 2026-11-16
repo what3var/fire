@@ -1,0 +1,16 @@
+#import "time"
+class Exception { string message; construct(string message = "") { this.message = message } }
+var d = new DateTime(2024, 3, 15, 14, 30, 5)
+var a = TimeSpan.FromSeconds(90)
+print(d.ToString() + " " + d.Year + " " + d.Month + " " + d.Day + " " + d.DayOfWeek + " " + d.DayName() + " " + d.DayOfYear)
+print(d.AddDays(20).ToString() + " | " + d.AddMonths(11).ToString("dd.MM.yyyy") + " | " + (d + a).ToString("HH:mm:ss") + " | " + d.AddYears(-1).Year)
+var e = new DateTime(2024, 3, 17)
+print((e - d).ToString() + " " + (e > d) + " " + (d - TimeSpan.FromHours(15)).ToString() + " " + (d ## e))
+print(DateTime.Parse("2024-12-24 18:00").ToString() + " " + DateTime.IsLeapYear(2024) + " " + DateTime.DaysInMonth(2023, 2) + " " + (DateTime.TryParse("quatsch") == undefined))
+print(d.Date().ToString() + " " + d.TimeOfDay().ToString())
+print(DateTime.FromUnixSeconds(86400).ToString() + " " + DateTime.FromUnixSeconds(86400).ToUnixSeconds())
+try { new DateTime(2024, 13, 1) } catch (x) { print("1 " + x.message) }
+try { DateTime.Parse("quatsch") } catch (x) { print("2 " + x.message) }
+print(DateTime.Now.Year >= 2024)
+print(DateTime.UtcNow.Kind + " " + DateTime.Now.Kind)
+//# name: DateTime: Komponenten, Rechnen, Format, Parse, Differenz, Vergleiche, Unix

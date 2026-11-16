@@ -1,0 +1,4 @@
+var v = 1
+v = "t"
+//# modes: Release
+//# name: types 23: var v = 1

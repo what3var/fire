@@ -1,0 +1,4 @@
+try { print(1) } catch (Exception e) { }
+int a[] = new int[3]
+print(a[-1])
+//# name: Abbruch: unbehandelte IndexOutOfBoundsException

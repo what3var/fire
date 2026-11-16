@@ -1,0 +1,7 @@
+var a = [1, 2]
+int x = a[0]
+var f = (any n) => n
+int y = f(1)
+print(x)
+//# modes: Release
+//# name: types 71: var a = [1, 2]

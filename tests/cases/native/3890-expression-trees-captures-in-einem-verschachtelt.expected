@@ -1,0 +1,3 @@
+p => p.orders.Any(o => ((o.total > min) && (o.total < (filter.minTotal + p.bonus))))
+min=10 filter.minTotal=50 
+True

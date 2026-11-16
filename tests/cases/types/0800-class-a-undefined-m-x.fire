@@ -1,0 +1,4 @@
+class A { undefined M(x) { } }
+print(1)
+//# modes: Release
+//# name: types 80: class A { undefined M(x) { } }

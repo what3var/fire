@@ -1,0 +1,20 @@
+class Boom : Exception {
+    construct() { }
+}
+class Res {
+    string n
+    construct(string n) { this.n = n }
+    destruct() { print("free " + n) }
+}
+class T {
+    static F(int n) {
+        var r = new Res("f" + n)
+        if (n == 0) { throw new Boom() }
+        T.F(n - 1)
+    }
+}
+var g = new Res("global")
+print("start")
+T.F(2)
+print("never")
+//# name: Abbruch: nicht gefangene Ausnahme beendet das Programm

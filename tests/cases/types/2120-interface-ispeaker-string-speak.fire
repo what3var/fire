@@ -1,0 +1,24 @@
+interface ISpeaker { string Speak() }
+class Animal {
+    string Speak() { return "..." }
+    string Hello(string s) { return s }
+    int Legs { get { return 4 } }
+    bool operator==(any o) { return false }
+    static string Kind() { return "animal" }
+}
+class Box<T> { string Put(T x) { return "box" } }
+class Dog : Animal, ISpeaker {
+    override string Speak() { return "Woof" }
+    override int Legs { get { return 3 } }
+    override bool operator==(any o) { return true }
+    string Hello(int i) { return "int" }
+    static string Kind() { return "dog" }
+}
+class Puppy : Dog { override string Speak() { return "Yip" } }
+class IntBox : Box<int> { override string Put(int x) { return "int box" } }
+class Robot : ISpeaker { string Speak() { return "beep" } }
+Animal a = new Puppy()
+print(a.Speak() + " " + a.Legs + " " + new IntBox().Put(1) + " " + new Robot().Speak() + " " + new Dog().Hello(1) + " " + new Dog().Hello("s"))
+//# types: strict
+//# modes: Release
+//# name: types 212: interface ISpeaker { string Speak() }

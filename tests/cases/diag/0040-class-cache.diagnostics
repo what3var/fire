@@ -1,0 +1,7 @@
+warning TC005: Method 'Flush' has no return type and is assumed to return 'any'. Please add one (use 'undefined' if it returns nothing). (line 9)
+warning TC005: Method 'Clear' has no return type and is assumed to return 'any'. Please add one (use 'undefined' if it returns nothing). (line 10)
+warning TC005: Method 'Make' has no return type and is assumed to return 'any'. Please add one (use 'undefined' if it returns nothing). (line 12)
+warning TC005: Method 'Plain' has no return type and is assumed to return 'any'. Please add one (use 'undefined' if it returns nothing). (line 13)
+warning TC005: Method 'Other' has no return type and is assumed to return 'any'. Please add one (use 'undefined' if it returns nothing). (line 14)
+warning TC005: Method 'Flush' has no return type and is assumed to return 'any'. Please add one (use 'undefined' if it returns nothing). (line 17)
+warning TC005: Method 'Other' has no return type and is assumed to return 'any'. Please add one (use 'undefined' if it returns nothing). (line 18)

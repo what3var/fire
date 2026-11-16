@@ -1,0 +1,13 @@
+class Box { int n; construct() { this.n = 0 } }
+class T {
+    static undefined Run() {
+        var b = new Box()
+        var copied = () => { b.n = b.n + 1 }
+        copied(); copied()
+        var bound = func () on b => { n = n + 1 }
+        bound(); bound()
+        print(b.n)
+    }
+}
+T.Run()
+//# name: Capture: ein Objekt ohne Wort wird kopiert, mit on gebunden geteilt

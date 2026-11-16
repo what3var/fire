@@ -1,0 +1,6 @@
+any total = Environment.TotalMemory
+any free = Environment.FreeMemory
+any own = Environment.ProcessMemory
+print((total == undefined || total > 1000000) + " " + (free == undefined || total == undefined || (free >= 0 && free <= total)) + " " + (own == undefined || own > 100000))
+print((total != undefined) + " " + (own != undefined))
+//# name: Environment.TotalMemory / FreeMemory / ProcessMemory: der Speicher der Maschine, der freie und der eigene (Bytes; undefined, wo das System es nicht sagt)

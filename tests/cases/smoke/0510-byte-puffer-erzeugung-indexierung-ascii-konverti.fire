@@ -1,0 +1,20 @@
+var buf = new byte[4]
+buf[0] = 0x41
+buf[1] = 0x42
+buf[2] = 0x43
+buf[3] = 0x44
+print("buf.length = " + buf.length)
+print("buf[0] = " + buf[0])
+print("buf.ToString() (ASCII) = " + buf.ToString())
+
+var s = "Hello"
+var bytes = s.ToBytes()
+print("bytes.length = " + bytes.length)
+print("bytes.ToString() = " + bytes.ToString())
+
+var c = 'A'
+var b = c.ToByte()
+print("c.ToByte() = " + b)
+print("b.ToChar() = " + b.ToChar())
+//# note: what the test program said to expect (for a reader, it was not checked): 4 / 65 / ABCD / 5 / Hello / 65 / A
+//# name: Byte-Puffer: Erzeugung, Indexierung, ASCII-Konvertierung

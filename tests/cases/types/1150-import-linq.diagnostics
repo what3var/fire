@@ -1,0 +1,2 @@
+warning TC001: Cannot assign a value of type 'string' to 'w1' of type 'bool' (line 6)
+warning TC001: Cannot assign a value of type 'float' to 'w2' of type 'bool' (line 7)

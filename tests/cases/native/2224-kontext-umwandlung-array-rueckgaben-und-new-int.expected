@@ -1,0 +1,25 @@
+An array of Dog cannot be stored where an array of Cat is declared.
+2
+2
+An array of int is declared here, not String.
+An element of an array of int must be an int (or undefined), not Float.
+An element of an array of string must be a string (or undefined), not Int.
+1
+2
+0.01m
+An array of int is declared here, not Int.
+undefined
+An array of int is declared here, not String.
+An array of int cannot be stored where an array of Cat is declared.
+An array of float cannot be stored where an array of int is declared.
+True
+44
+0.05m
+An array of int cannot be stored where an array of string is declared.
+An array of bool cannot be stored where an array of int is declared.
+An array of int cannot be stored where an array of bool is declared.
+x
+An array of int cannot be stored where an array of Cat is declared.
+7
+3
+44 0.05m 1 4

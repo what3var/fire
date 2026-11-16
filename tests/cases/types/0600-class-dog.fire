@@ -1,0 +1,7 @@
+class Dog { }
+class K { defined Dog d
+ construct() { this.d = new Dog() }
+ construct(Dog x) { d = x } }
+print(new K().d != undefined)
+//# modes: Release
+//# name: types 60: class Dog { }

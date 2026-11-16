@@ -1,0 +1,10 @@
+#nosync
+var x = 0
+fire global { print("job1"); x = x + 5 }
+print("between")
+fire global { print("job2"); x = x * 2 }
+print("before sync")
+var n = sync globals
+print(n + " " + x)
+print(sync globals)
+//# name: Threads: #nosync - fire-global-Auftraege laufen erst bei sync globals, nacheinander (keiner in einem anderen)

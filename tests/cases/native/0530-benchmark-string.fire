@@ -1,0 +1,9 @@
+var s = "Hello, World, again"
+var n = 0
+for (var i = 0; i < 40000; i = i + 1) {
+    n = n + s.IndexOf("o") + s.Substring(3, 4).Length + s.Length
+}
+var text = ""
+for (var i = 0; i < 2000; i = i + 1) { text = text + "ab" }
+print(n + text.Length)
+//# name: Benchmark string

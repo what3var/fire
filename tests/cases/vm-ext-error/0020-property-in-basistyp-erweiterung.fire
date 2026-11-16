@@ -1,0 +1,2 @@
+class extends string { int Size { get { return 1 } } }
+//# name: Property in Basistyp-Erweiterung

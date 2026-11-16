@@ -1,0 +1,2 @@
+class A { Gibtsnicht[] F() { return [] } }
+//# name: unbekannte Klasse im Array-Rueckgabetyp

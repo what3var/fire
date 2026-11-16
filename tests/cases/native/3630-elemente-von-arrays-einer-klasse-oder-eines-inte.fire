@@ -1,0 +1,39 @@
+interface IShape { float Area() }
+class Sq : IShape { float s; construct(float s) { this.s = s } float Area() { return this.s * this.s } }
+class Animal { string name; int legs = 4; construct(string n) { this.name = n } string Say() { return this.name + "?" } }
+class Dog : Animal { construct(string n) : base(n) { } override string Say() { return this.name + " wuff" } }
+class Zoo {
+    Animal pets[]
+    IShape shapes[]
+    construct() { this.pets = new Animal[3]; this.shapes = [new Sq(2.0), new Sq(3.0)] }
+    string All() {
+        string r = ""
+        for (int i = 0; i < this.pets.length; i++) { if (this.pets[i] != undefined) { r = r + this.pets[i].Say() + this.pets[i].legs + ";" } }
+        return r
+    }
+    float Sum() { float t = 0.0; for (int i = 0; i < this.shapes.length; i++) { t = t + this.shapes[i].Area() } return t }
+    static string First(Animal list[]) { return list[0].Say() + " " + list[0].name }
+}
+var z = new Zoo()
+var rex = new Dog("Rex")
+var tier = new Animal("Tier")
+z.pets[0] = rex
+z.pets[2] = tier
+print(z.All() + " " + z.Sum())
+Animal loc[] = [rex, undefined, tier]
+print(loc[0].Say() + " " + loc[2].Say() + " " + loc[0].legs + " " + Zoo.First(loc))
+try { print(loc[1].Say()) } catch (Exception e) { print("E1 " + e.message) }
+try { print(loc[1].name) } catch (Exception e) { print("E2 " + e.message) }
+try { print(loc[5].Say()) } catch (Exception e) { print("E3 " + e.message) }
+{
+    var tmp = new Dog("Tmp")
+    loc[1] = tmp
+    print(loc[1].Say())
+}
+try { print(loc[1].Say()) } catch (Exception e) { print("E4 " + e.message) }
+Animal none[]
+try { print(none[0].Say()) } catch (Exception e) { print("E5 " + e.message) }
+int total = 0
+for (int k = 0; k < 1000; k++) { total = total + loc[k % 3 == 1 ? 0 : k % 3].legs }
+print(total)
+//# name: Elemente von Arrays einer Klasse oder eines Interface nativ mit bekanntem Typ (ROADMAP 19): Felder und Methoden direkt, undefined, zerstoerte und fehlende Elemente wie in der VM

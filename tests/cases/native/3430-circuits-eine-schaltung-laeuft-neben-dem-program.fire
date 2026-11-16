@@ -1,0 +1,44 @@
+#import "circuits"
+class Counting : Simulation {
+    int n = 0
+    construct() : base() { }
+    override undefined Advance() { this.n = this.n + 1 }
+}
+var counting = new Counting()
+Simulation.Start(counting)
+var p = new Gpio.Pin("sim", 9)
+p.Output(true)
+p.Write(false)
+var r = p.Read()
+print("touched " + counting.n + " times")
+Simulation.Stop()
+p.Write(true)
+print("after stop " + counting.n)
+// an RC low pass behind line 5, read back at line 6: the circuit runs in real time while the program waits
+var c = new Circuits.Circuit()
+c.TimeStep = 100us
+var out = c.Add(new Circuits.GpioLine(5))
+var back = c.Add(new Circuits.GpioLine(6))
+var res = c.Add(new Circuits.Resistor(10kOhm))
+var cap = c.Add(new Circuits.Capacitor(1uF))
+out.P.Connect(res.A)
+res.B.Connect(cap.A)
+cap.B.Connect(c.Ground)
+cap.A.Connect(back.P)
+c.RunAlongside(0.25)   // a quarter of real time: also a slow VM keeps up, so maxLag never skips
+print("alongside " + c.IsAlongside)
+var o = new Gpio.Pin("sim", 5)
+var i = new Gpio.Pin("sim", 6)
+o.Output(false)
+i.Input()
+Sleep(5)
+print("low at first " + !i.Read())
+o.Write(true)
+var start = c.TimeRaw()
+var t0 = DateTime.UtcNow.Ticks
+while (!i.Read() && DateTime.UtcNow.Ticks - t0 < 20000000) { Sleep(1) }
+var took = c.TimeRaw() - start
+print("rose " + i.Read() + ", after RC*ln2 or a little more: " + (took > 0.004 && took < 0.05))
+c.StopAlongside()
+print("alongside " + c.IsAlongside)
+//# name: Circuits: eine Schaltung laeuft neben dem Programm her (Simulation.Touch bei jedem Zugriff auf ein simuliertes Geraet)

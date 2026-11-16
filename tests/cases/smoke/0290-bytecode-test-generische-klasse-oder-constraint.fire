@@ -1,0 +1,14 @@
+class Animal {
+}
+
+class Dog : Animal {
+}
+
+class Box<T> where T is of float, is of Dog {
+}
+
+var b1 = new Box<float>()
+var b2 = new Box<Dog>()
+print("beide ok")
+//# note: what the test program said to expect (for a reader, it was not checked): beide ok
+//# name: Bytecode-Test: generische Klasse, ODER-Constraint (',') mit zwei Alternativen

@@ -1,0 +1,19 @@
+class M {
+    static any Both(any fa, any fb) {
+        any ca = copy fa
+        any cb = copy fb
+        return (any x) => (handover ca)(x) && (handover cb)(x)
+    }
+    static any Both2(any fa, any fb) {
+        any ca = copy fa
+        any cb = copy fb
+        any r = (any x) => Run.Two((handover ca), (handover cb), x)
+        return r
+    }
+}
+class Run { static bool Two(any a, any b, any x) { return a(x) && b(x) } }
+any f = M.Both((any x) => x > 1, (any x) => x < 5)
+print(f(3) + " " + f(7) + " " + f(0))
+any g = M.Both2((any x) => x > 1, (any x) => x < 5)
+print(g(3) + " " + g(7) + " " + g(0))
+//# name: Lambdas: handover einer Lambda in eine Lambda (VM wie nativ: sie zieht um und bleibt aufrufbar)

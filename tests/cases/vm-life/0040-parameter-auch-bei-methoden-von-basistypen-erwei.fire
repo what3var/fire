@@ -1,0 +1,7 @@
+class extends string { bool Has(x) { return this.Contains(x) } }
+var Id = func (x) => { return x }
+var Two = func (a, b) => { return a.n + b.n }
+class N { int n; construct(int n) { this.n = n } }
+print("abc".Has(copy "b"))
+print(Two(copy new N(1), Id(copy new N(2))))
+//# name: Parameter: auch bei Methoden von Basistypen (Erweiterung) und verschachtelten Aufrufen

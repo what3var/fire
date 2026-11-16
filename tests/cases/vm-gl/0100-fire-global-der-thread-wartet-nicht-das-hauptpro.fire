@@ -1,0 +1,11 @@
+var total = 0
+var started = 0
+fire {
+    var x = 7
+    fire global taking x { total = total + x }
+    fire global taking x { total = total + x * 10 }
+}
+while (total == 0) { sync globals }
+while (total < 77) { sync globals }
+print("total " + total)
+//# name: `fire global { }`: der Thread wartet nicht, das Hauptprogramm fuehrt den Auftrag bei `sync globals` aus (taking als Wert)

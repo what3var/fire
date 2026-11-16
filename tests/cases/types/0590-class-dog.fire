@@ -1,0 +1,5 @@
+class Dog { }
+class K { defined Dog d
+ construct(Dog x) { if (x != undefined) { this.d = x } } }
+//# modes: Release
+//# name: types 59: class Dog { }

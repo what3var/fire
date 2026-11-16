@@ -1,0 +1,7 @@
+Green True True
+Blue True True
+Blue True
+Read, Exec True Red Blue True
+undefined
+Green Blue
+$.color: 'Pink' is no member of 'Color'.

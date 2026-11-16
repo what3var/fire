@@ -1,0 +1,1 @@
+error TC023: The thread uses the local 'a' of the code around it: it gets a copy of it - a change does not reach the variable outside. Write 'taking a' where it is used (a copy) or 'handover a' (moved to the thread). (line 2)

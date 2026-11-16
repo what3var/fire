@@ -1,0 +1,5 @@
+#import "ai.models"
+print(1)
+//# types: strict
+//# modes: Release
+//# name: types 245: #import "ai.models"

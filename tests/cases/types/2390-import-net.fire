@@ -1,0 +1,5 @@
+#import "net"
+print(1)
+//# types: strict
+//# modes: Release
+//# name: types 239: #import "net"

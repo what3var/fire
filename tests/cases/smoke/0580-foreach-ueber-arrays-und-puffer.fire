@@ -1,0 +1,14 @@
+var arr = [10, 20, 30]
+var sum = 0
+foreach (x in arr) { sum = sum + x }
+print(sum)
+foreach (b in "AB".ToBytes()) { print(b) }
+var names = new string[2]
+names[0] = "a"
+names[1] = "b"
+foreach (n in names) { print(n) }
+foreach (x in arr) { if (x == 20) { break } print("v" + x) }
+foreach (e in new int[0]) { print("nie") }
+print("ok")
+//# note: what the test program said to expect (for a reader, it was not checked): 60 / 65 / 66 / a / b / v10 / ok
+//# name: foreach ueber Arrays und Puffer

@@ -1,0 +1,10 @@
+class NotFound : Exception {
+    construct(string what) : base(what + " not found") { }
+}
+class Quiet : Exception { }
+try { throw new NotFound("key") } catch (NotFound e) { print(e.message) }
+try { throw new Exception("plain") } catch (Exception e) { print(e.message) }
+try { throw new Quiet() } catch (Quiet e) { print("[" + e.message + "]") }
+var q = new Quiet()
+print(q is of Exception)
+//# name: Exception: die Basisklasse des Prelude (message, eigene Ableitungen mit und ohne base(...), Standardmeldung leer)

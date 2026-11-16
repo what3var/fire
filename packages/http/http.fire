@@ -2347,7 +2347,8 @@ namespace Http {
         }
 
         // The next message, undefined when the connection is closed (or `timeout` ms ran out: then IsOpen is still true). While it waits it sends what
-        // comes into the Outbox, and what `sendFrom` (a Channel or a ChannelEnd of texts) receives - one wait for the socket and the channel.
+        // comes into the Outbox, and what `sendFrom` (a Channel or a ChannelEnd of texts) receives - one wait for the socket and the channel. A `sendFrom`
+        // that is closed and empty ends the wait as well: undefined with IsOpen still true (who sent through it has ended - ask `sendFrom.IsClosed`).
         Http.WebSocketMessage Receive(int timeout = -1, any sendFrom = undefined) {
             if (!this.open) { return undefined }
             any source = sendFrom
@@ -2371,9 +2372,11 @@ namespace Http {
                     var ready = this.connection.WaitReadableOr(left, node)
                     if (ready == 1) { break }
                     if (ready == 0 && deadline >= 0 && Net.Clock.Now() >= deadline) { return undefined }
-                    // (4: the channel - what it has goes out above; a closed and empty one is waited for no more)
+                    // (4: the channel - what it has goes out above; a closed and empty one is waited for no more: the Outbox leaves the wait to the
+                    // socket alone, the end of `sendFrom` - its other side closed it - ends the wait like a timeout: undefined, IsOpen still true)
                     if (source.IsClosed && source.Count == 0) {
                         this.SendWaiting(source)
+                        if (sendFrom != undefined) { return undefined }
                         break
                     }
                 }

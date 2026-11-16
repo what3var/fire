@@ -1,0 +1,5 @@
+#import "assistant"
+print(1)
+//# types: strict
+//# modes: Release
+//# name: types 246: #import "assistant"

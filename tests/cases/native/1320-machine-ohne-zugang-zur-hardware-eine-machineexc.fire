@@ -1,0 +1,11 @@
+#import "machine"
+try { Machine.Port.In8(96) } catch (Machine.MachineException e) { print("port: " + e.message) }
+try { Machine.Memory.Peek8(0) } catch (Machine.MachineException e) { print("memory") }
+try { Machine.Cpu.Level() } catch (Machine.MachineException e) { print("cpu") }
+try { new Machine.Irq(1) } catch (Machine.MachineException e) { print("irq") }
+try { Machine.Cmos.Clock() } catch (Machine.MachineException e) { print("cmos") }
+print(Machine.Pci.Address(0, 1, 2, 7))
+try { Machine.Pci.Address(0, 32, 0, 0) } catch (ArgumentException e) { print("pci: " + e.message) }
+//# note: the hardware of the PC (#import "machine"): where a program does not own the machine (the VM, Linux) every access is a MachineException - the same in
+//# note: the VM and natively; what is only arithmetic (the address of a PCI register) works everywhere (on DOS: the dos16 checks)
+//# name: machine: ohne Zugang zur Hardware eine MachineException (Ports, Speicher, CPU, IRQ), Argumente zuerst geprueft

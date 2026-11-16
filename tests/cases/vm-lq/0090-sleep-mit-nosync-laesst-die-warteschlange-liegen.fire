@@ -1,0 +1,11 @@
+#nosync
+#import "time"
+class Exception { string message; construct(string message = "") { this.message = message } }
+var counter = 0
+fire { sync global { counter = counter + 1 } }
+Sleep(300ms)
+print("vorher " + counter)
+var n = 0
+while (counter == 0) { n = sync globals }
+print("nachher " + counter)
+//# name: Sleep mit #nosync laesst die Warteschlange liegen, bis `sync globals` kommt

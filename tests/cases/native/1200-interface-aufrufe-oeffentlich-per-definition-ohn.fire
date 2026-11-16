@@ -1,0 +1,43 @@
+interface IShape {
+    int Area(int scale)
+    string Name()
+}
+class Square : IShape {
+    int side
+    construct(int s) { this.side = s }
+    int Area(int scale) { return this.side * this.side * scale }
+    string Name() { return "square" }
+}
+class BigSquare : Square {
+    construct(int s) : base(s) { }
+    override string Name() { return "big " + base.Name() }
+}
+class Disc : IShape {
+    int Area(int scale) { return 3 * scale }
+    string Name() { return "disc" }
+}
+class Vault {
+    private int Area(int scale) { return 1000 }
+    private string Name() { return "vault" }
+    int Open() { return this.Area(1) }
+}
+class Report {
+    static int Sum(IShape s, int n) {
+        int acc = 0
+        for (int i = 0; i < n; i++) { acc = acc + s.Area(i) }
+        return acc
+    }
+    static string Describe(IShape s) { return s.Name() + " " + s.Area(1) }
+}
+print(Report.Sum(new Square(2), 10))
+print(Report.Sum(new Disc(), 4))
+print(Report.Describe(new BigSquare(3)))
+print(Report.Describe(new Disc()))
+print(new Vault().Open())
+any v = new Vault()
+try { print(v.Name()) } catch (AccessDeniedException e) { print("denied: " + e.message) }
+try { print(Report.Describe(undefined)) } catch (Exception e) { print("undefined: " + e.message) }
+var gone = new Square(1)
+delete gone
+try { print(Report.Describe(gone)) } catch (Exception e) { print("destroyed: " + e.message) }
+//# name: Interface-Aufrufe: oeffentlich per Definition - ohne Zugriffspruefung, auch wenn eine fremde Klasse den Namen privat hat

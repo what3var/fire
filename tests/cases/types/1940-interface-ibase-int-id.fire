@@ -1,0 +1,16 @@
+interface IBase { int Id() }
+interface ILeft : IBase { int L() }
+interface IRight : IBase { int R() }
+interface IBoth : ILeft, IRight { }
+class Both : IBoth { int Id() { return 1 }
+ int L() { return 2 }
+ int R() { return 3 } }
+IBoth b = new Both()
+ILeft l = b
+IBase x = l
+IRight r = b
+print(x.Id() + l.L() + r.R() + b.Id())
+print(b is of IBase)
+//# types: strict
+//# modes: Release
+//# name: types 194: interface IBase { int Id() }

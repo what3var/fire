@@ -1,0 +1,3 @@
+List<int, int> a = new List()
+//# modes: Release
+//# name: types 93: List<int, int> a = new List()

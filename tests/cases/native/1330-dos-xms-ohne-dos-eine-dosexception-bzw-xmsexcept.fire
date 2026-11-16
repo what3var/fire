@@ -1,0 +1,11 @@
+#import "dos"
+#import "xms"
+try { Dos.Version() } catch (DosException e) { print("dos: " + e.message) }
+try { Dos.Interrupt(33, new DosRegisters(12288)) } catch (DosException e) { print("int") }
+print(Xms.Available())
+try { new XmsBlock(16) } catch (XmsException e) { print("xms: " + e.message) }
+var r = new DosRegisters(4660)
+r.flags = 1
+print(r.Ah + " " + r.Al + " " + r.Carry)
+//# note: the services of DOS (#import "dos") and its extended memory (#import "xms"): without DOS a DosException / XmsException - the same in the VM and natively
+//# name: dos/xms: ohne DOS eine DosException bzw. XmsException, Xms.Available() false, Register-Hilfen

@@ -1,0 +1,7 @@
+summary: Ada Lovelace (36) -> Augusta Lovelace (36)
+name: Ada Lovelace -> Augusta Lovelace
+summary: Augusta Lovelace (36) -> Augusta Lovelace (37)
+err: 'Name' of 'Person' is a computed property (a getter without a setter): it can only be probed with 'changed'.
+missing: 'Person' has no member 'Nope' - no probe can be registered there.
+name: Augusta Lovelace -> Ada Lovelace
+Ada Lovelace

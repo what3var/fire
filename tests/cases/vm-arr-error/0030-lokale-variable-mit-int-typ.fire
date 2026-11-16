@@ -1,0 +1,2 @@
+int[] v = [1, 2]
+//# name: lokale Variable mit int[] Typ

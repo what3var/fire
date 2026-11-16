@@ -1,0 +1,47 @@
+interface Shape { }
+class Animal { }
+class Dog : Animal { }
+class Sq : Shape { }
+class Holder { Animal pet; Holder2 inner
+    construct() { this.pet = new Dog(); this.inner = new Holder2() } }
+class Holder2 { Animal pet
+    construct() { this.pet = new Animal() } }
+var d = new Dog()
+var s = new Sq()
+print(d is of Animal)
+print(d is of Dog)
+print(s is of Animal)
+print(s is of Shape)
+print(d is of class)
+print(5 is of int)
+print(5 is of float)
+print(2.5 is of float)
+print("x" is of string)
+print([1, 2] is of IEnumerable)
+print(undefined is of undefined)
+print(5mm is in m)
+print(5mm is in kg)
+print(5 is in m)
+print(3kg is in g)
+var h = new Holder()
+print(h.pet is from h)
+print(h.inner is from h)
+print(h.inner.pet is from h)
+print(h.inner.pet is under h)
+print(h.inner.pet is from h.inner)
+print(h is from h.inner)
+print(2 ^ 10)
+print(2.0 ^ 0.5)
+print(2 ^ -1)
+print(3m ^ 2m)
+float pwf = 2 ^ -1
+print(pwf)
+print(3 ^ 4 + 1)
+var i = 7
+print(i!float / 2)
+print(i / 2)
+var f = 7.5
+print(f!int)
+print(2.5!int)
+print(3.5!int)
+//# name: is of / is in / is from / is under, Potenz, Typ-Coercing

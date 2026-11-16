@@ -1,0 +1,5 @@
+#import "compression"
+print(1)
+//# types: strict
+//# modes: Release
+//# name: types 242: #import "compression"

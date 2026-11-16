@@ -1,0 +1,13 @@
+class Inventory {
+    int gold
+    construct() { this.gold = 0 }
+}
+
+var inv = new Inventory()
+fire taking inv {
+    inv.gold = 42
+    var result = try sync flat inv
+    print("Fire-Thread: try sync flat Ergebnis = " + result)
+}
+//# note: what the test program said to expect (for a reader, it was not checked): 'Fire-Thread: try sync flat Ergebnis = true'
+//# name: Multithreading-SPRACHSYNTAX: 'try sync flat' als Ausdruck (nicht-blockierend, flach)

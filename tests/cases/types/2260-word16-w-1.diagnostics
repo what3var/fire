@@ -1,0 +1,1 @@
+2260-word16-w-1.fire(1): error E3000: 'word' has the width of the target's machine word - no '[...]' may follow (use int[16], int[32] or int for a fixed width)

@@ -1,0 +1,5 @@
+3 30 6
+3 3
+8 3
+E A byte buffer is declared here, not String.
+{"$type":"Bx","data":"AQIe","w":[5,6],"n":1}

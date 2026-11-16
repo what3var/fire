@@ -1,0 +1,1 @@
+error E4066: Property 'Limit' of class 'Lim' is 'string', interface 'ILimit' declares it as 'int' (line 4)

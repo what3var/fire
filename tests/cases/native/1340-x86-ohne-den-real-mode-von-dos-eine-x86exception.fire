@@ -1,0 +1,12 @@
+#import "x86"
+print(X86.Mode() + " " + X86.CanSwitch() + " " + X86.CanLongMode())
+try { X86.EnableA20() } catch (X86Exception e) { print("a20: " + e.message) }
+byte code[] = new byte[1]
+code[0] = 195
+try { X86.RunProtected(code, new X86Registers(1)) } catch (X86Exception e) { print("run") }
+try { X86.RunLong(code, new X86Registers(1)) } catch (X86Exception e) { print("long") }
+try { X86.ReadLinear(1048576, 4) } catch (X86Exception e) { print("read") }
+var r = new X86Registers(7)
+print(r.eax + " " + r.ebx)
+//# note: the modes of the processor (#import "x86"): not on this target - an X86Exception in the VM and natively, Mode() "none"
+//# name: x86: ohne den Real Mode von DOS eine X86Exception, Mode() none, CanSwitch() false

@@ -1,0 +1,9 @@
+arg: Method 'M' on 'P' has no overload with 0 argument(s) (available: 2 argument(s)).
+arg3: Method 'M' on 'P' has no overload with 3 argument(s) (available: 2 argument(s)).
+missing: Method 'Nope' not found on 'P'.
+field: Field 'y' does not exist on an instance of 'P' (and there is no 'get_y' property either).
+lambda: Wrong number of arguments: expected 2 (the missing parameters have no default value), got 1.
+ctor: Class 'P' has no constructor with 0 argument(s) (available: 1 argument(s)).
+str: Strings have no field 'Foo' (only 'Length').
+nested: Method 'Nope' not found on 'P'.
+7

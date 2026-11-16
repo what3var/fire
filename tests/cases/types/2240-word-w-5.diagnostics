@@ -1,0 +1,2 @@
+warning TC001: Cannot assign a value of type 'word' to 'i' of type 'int' (line 2)
+warning TC001: Cannot assign a value of type 'float' to 'v' of type 'word' (line 5)

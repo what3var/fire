@@ -1,0 +1,5 @@
+class U { static int F(int x) { return x } }
+print(U.F<string>(1))
+//# types: strict
+//# modes: Release
+//# name: types 118: class U { static int F(int x) { return x } }

@@ -1,0 +1,15 @@
+class Exception { string message; construct(string message = "") { this.message = message } }
+class C {
+    int v
+    string name
+    int Loud { get { return this.v * 2 } set { this.v = value / 2 } }
+    construct() { this.v = 1; this.name = "a" }
+}
+var c = new C()
+probe c.v changed () => print("0")
+probe c.v changed x => print("1 " + x)
+probe c.v changed (a, b) => print("2 " + a + " " + b)
+probe c.v changed (s, a, b) => print("3 " + s.v + " " + a + " " + b)
+probe c.v changed (s, n, a, b) => print("4 " + n + " " + a + " " + b)
+c.v = 2
+//# name: probe: Handler-Argumente nach Parameterzahl (0, 1, 2, 3, 4)

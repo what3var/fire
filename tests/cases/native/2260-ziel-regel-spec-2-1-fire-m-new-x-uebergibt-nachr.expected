@@ -1,0 +1,10 @@
+work handed
+destroy handed
+still mine: mine
+destroy mine
+log msg
+destroy msg
+log ref
+count 2
+end
+destroy ref

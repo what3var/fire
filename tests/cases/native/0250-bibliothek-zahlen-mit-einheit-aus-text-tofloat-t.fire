@@ -1,0 +1,20 @@
+print("5mm".ToFloat() + " " + "5mm".ToInt() + " " + " -2.5 km/h ".ToFloat() + " " + "3 l".ToInt() + " " + "1e3m".ToFloat() + " " + "2kg*m/s^2".ToFloat())
+print("5apples".TryToFloat() + " " + "5 m s".TryToFloat() + " " + "5ml".ToFloat():l + " " + "5.5m".TryToInt() + " " + "0x1Fm".ToInt() + " " + "5µs".ToFloat() + " " + "5us".ToInt())
+try { "5xyz".ToFloat() } catch (ArgumentException e) { print(e.message) }
+try { "2.5 kg".ToInt() } catch (ArgumentException e) { print(e.message) }
+print("5in".ToFloat() + " " + "2 Inch".ToFloat() + " " + "3mV".ToInt() + " " + "1013 hPa".ToFloat() + " " + "1013hPa".ToFloat():Pa + " " + "20C".ToFloat():K)
+print("6dB".ToFloat() + " " + ("6dB".ToFloat() is in dB) + " " + 6dB + " " + (6dB is in B) + " " + ("3dB".ToFloat() + 3dB) + " " + "1dl".ToFloat():l + " " + "2hl".ToInt():l)
+print("20C/s".TryToFloat() + " " + "5V/m".ToFloat() + " " + "2 V*A".ToFloat() + " " + "1kV".ToFloat():V + " " + "4 m^-1".ToFloat() + " " + "1m^".TryToFloat() + " " + "1 m*".TryToFloat())
+float speed : m/s = "36 km/h".ToFloat()
+print(speed + " " + ("1.5 kg".ToFloat() + "500 g".ToFloat()) + " " + "12 min".ToInt():s)
+prefixed unit Volt: V
+prefixed unit Ampere: A
+prefixed unit Pascal: Pa
+unit Inch: in { coerce m => 0.0254 }
+unit Kelvin: K
+unit Celsius: C { coerce K => value + 273.15 }
+unit Decibel: dB {
+    coerce to unitless => 10 ^ (value / 20)
+    coerce from unitless => 20 * Math.Log10(value)
+}
+//# name: Bibliothek: Zahlen mit Einheit aus Text (ToFloat, ToInt, TryTo*), eigene Einheiten, kombinierte, dB gewinnt gegen Dezi-Byte

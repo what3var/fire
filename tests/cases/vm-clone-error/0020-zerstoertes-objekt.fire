@@ -1,0 +1,23 @@
+class Item {
+    int n
+    construct(int n) { this.n = n }
+    destruct() { print("~I" + this.n) }
+}
+class Box {
+    string name
+    int size
+    Item item
+    Box other
+    Item list[]
+    int Extra { get; set; }
+    construct(string name) { this.name = name; this.size = 1 }
+    destruct() { print("~B" + this.name) }
+}
+var leaked = new Box("x")
+{
+    var t = new Box("t")
+    leaked = t
+    delete t
+}
+var d = copy leaked
+//# name: zerstoertes Objekt

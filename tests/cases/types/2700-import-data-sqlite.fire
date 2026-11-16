@@ -1,0 +1,5 @@
+#import "data.sqlite"
+print(1)
+//# types: strict
+//# modes: Release
+//# name: types 270: #import "data.sqlite"

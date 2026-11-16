@@ -1,0 +1,1 @@
+error TC012: Field 'shared' of 'Base' is protected and cannot be accessed from here. (line 19)

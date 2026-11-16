@@ -1,0 +1,4 @@
+class R { static int Sum(int n) { if (n == 0) { return 0 } return n + R.Sum(n - 1) } }
+print(R.Sum(1500))
+//# note: --- Stack and scope slots grow
+//# name: tiefe Rekursion (Stack und Frames wachsen)

@@ -1,0 +1,63 @@
+#import "http.pages"
+#import "ui"
+[Page "/menu"]
+class MenuPage {
+    UI.Panel view
+    UI.Label status
+    UI.Button go
+    construct() {
+        this.view = new UI.Panel(0, 0, 300, 200)
+        var stack = new UI.StackPanel(0, 0, -1, -1)
+        var label = new UI.Label("ready", 0, 0)
+        var menu = new List()
+        menu.Add(new UI.MenuItem("Copy", func () on this => { this.status.Text = "copied" }))
+        var more = new UI.MenuItem("More")
+        more.items.Add(new UI.MenuItem("Deep", func () on this => { this.status.Text = "deep" }))
+        menu.Add(take more)
+        label.contextMenu = take menu
+        stack.Add(label)
+        this.status = label
+        var button = new UI.Button("Go", 0, 0)
+        var style = new UI.Style("Button")
+        var hover = new UI.Trigger("Hover", true)
+        hover.Set("Background", new SolidBrush(UI.Color.Rgb(255, 0, 0)))
+        style.AddTrigger(take hover)
+        button.Style = take style
+        stack.Add(button)
+        this.go = button
+        this.view.Add(stack)
+    }
+}
+var server = new Http.AppServer("127.0.0.1", 0)
+server.PushTo(new Http.Sessions()).PushTo(new Http.Pages("Menu"))
+int port = server.Port
+int done = 0
+string log = ""
+fire taking port {
+    var c = new Http.Client()
+    var r = c.Get("http://127.0.0.1:" + port + "/menu")
+    var html = r.Text()
+    var cookie = r.Header("Set-Cookie").Substring(0, 45)
+    var at = html.IndexOf("data-circuit=\"") + 14
+    var circuit = html.Substring(at, 32)
+    var out = "marks " + (html.IndexOf("data-cm=\"1\"") >= 0) + " " + (html.IndexOf("data-hv=\"1\"") >= 0) + "\n"
+    var h = new Http.Headers()
+    h.Set("Cookie", cookie)
+    var ws = Http.WebSocket.Connect("ws://127.0.0.1:" + port + "/_fire/ws?c=" + circuit, 5000, h)
+    ws.Send("{\"e\": 3, \"k\": \"hover\", \"v\": true}")
+    out = out + "enter " + ws.ReceiveText(5000) + "\n"
+    ws.Send("{\"e\": 3, \"k\": \"hover\", \"v\": false}")
+    out = out + "leave " + ws.ReceiveText(5000) + "\n"
+    ws.Send("{\"e\": 2, \"k\": \"ctx\", \"x\": 10, \"y\": 20}")
+    out = out + "menu " + ws.ReceiveText(5000) + "\n"
+    ws.Send("{\"e\": 2, \"k\": \"cmenu\", \"v\": \"c/1/0\"}")
+    out = out + "deep " + ws.ReceiveText(5000) + "\n"
+    ws.Send("{\"e\": 2, \"k\": \"cmenu\", \"v\": \"c/0\"}")
+    out = out + "after the menu closed " + ws.ReceiveText(300) + "\n"
+    ws.Close()
+    sync global { log = out; done = 1 }
+}
+while (done < 1) { server.AcceptOne(20ms); sync globals }
+print(log)
+server.Close()
+//# name: Http.Pages: Hover (ein Trigger auf Hover - der Browser meldet Kommen und Gehen, die Farbe geht hin und zurueck) und Kontextmenue (Rechtsklick: das Menue des Elements oder seiner Vorfahren, Untermenue, die Aktion; danach geschlossen)

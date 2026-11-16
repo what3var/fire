@@ -1,0 +1,22 @@
+class Item {
+    int n
+    construct(int n) { this.n = n }
+    destruct() { print("~I" + this.n) }
+}
+class Box {
+    string name
+    Item item
+    Item extra
+    construct(string name) { this.name = name }
+    destruct() { print("~B" + this.name) }
+}
+var g = new Item(1)
+fire {
+    var k = 0
+    while (k < 1000) { k = k + 1 }
+    terminate(3)
+    print("nie im thread")
+}
+try { while (true) { } } finally { print("main finally") }
+print("nie")
+//# name: Threads: terminate in einem Fire-Thread stoppt auch das Hauptprogramm
