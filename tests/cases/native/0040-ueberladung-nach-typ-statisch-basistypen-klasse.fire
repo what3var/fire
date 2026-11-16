@@ -1,0 +1,41 @@
+interface IShape { float Area() }
+class Animal {
+    string name
+    construct(string n) { this.name = n }
+}
+class Dog : Animal {
+    construct(string n) : base(n) { }
+}
+class Puppy : Dog {
+    construct(string n) : base(n) { }
+}
+class Square : IShape {
+    float Area() { return 4.0 }
+}
+class Show {
+    static string Of(int x) { return "int " + x }
+    static string Of(float x) { return "float " + x }
+    static string Of(string x) { return "string " + x }
+    static string Of(bool x) { return "bool " + x }
+    static string Of(Animal a) { return "animal " + a.name }
+    static string Of(Dog d) { return "dog " + d.name }
+    static string Of(IShape s) { return "shape " + s.Area() }
+    static string Of<T>(T x) { return "generic" }
+
+    static string Num(float x) { return "float" }
+    static string Num(any x) { return "any" }
+}
+print(Show.Of(1))
+print(Show.Of(1.5))
+print(Show.Of("a"))
+print(Show.Of(true))
+print(Show.Of(new Animal("rex")))
+print(Show.Of(new Dog("bello")))
+print(Show.Of(new Puppy("tiny")))
+print(Show.Of(new Square()))
+print(Show.Of('c'))
+print(Show.Num(3))
+print(Show.Num("x"))
+any v = 7
+print(Show.Of(v))
+//# name: Ueberladung nach Typ: statisch - Basistypen, Klasse vor Basisklasse vor Interface vor generic vor any, int nach float

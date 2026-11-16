@@ -1,0 +1,16 @@
+thread sum 6
+thread caught fail 7
+thread inner 8
+thread nested 11
+thread block 53 1
+thread all 6 2 4
+thread again 6
+main sum 6
+main caught fail 7
+main inner 8
+main nested 11
+main block 53 1
+main all 6 2 4
+main again 6
+dedicated thread 4
+name 3

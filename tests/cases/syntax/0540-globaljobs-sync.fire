@@ -1,0 +1,13 @@
+#globaljobs sync
+#globaljobs safepoints
+#import "time"
+fire global { print("job1") }
+for (var i = 0; i < 2; i++) { print("loop " + i) }
+fire global { print("job2") }
+H.f()
+Sleep(1ms)
+print("n " + (sync globals))
+class H { static undefined f() { print("call") } }
+
+//# modes: Release
+//# name: syntax 54: #globaljobs sync

@@ -1,0 +1,2 @@
+error TC008: 'IReader' has no property or method 'Size' (an interface type reaches only what the interface and the ones it extends declare - cast to the class to use others: 'x!ClassName') (line 13)
+error TC008: 'IStream' has no method 'Extra' (an interface type reaches only what the interface and the ones it extends declare - cast to the class to use others: 'x!ClassName') (line 14)

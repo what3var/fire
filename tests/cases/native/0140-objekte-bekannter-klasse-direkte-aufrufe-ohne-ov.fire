@@ -1,0 +1,49 @@
+class Animal { string name
+  int legs = 4
+  construct(string n) { this.name = n }
+  string Speak() { return "..." }
+  string Describe(string prefix = ">") { return prefix + this.name + " " + this.Speak() + " " + this.legs }
+  int Legs() { return this.legs } }
+class Dog : Animal { construct(string n) : base(n) { }
+  override string Speak() { return "Woof" } }
+class Bird : Animal { construct(string n) : base(n) { this.legs = 2 } }
+Animal a = new Animal("generic")
+Dog d = new Dog("Rex")
+Bird b = new Bird("Tweety")
+print(a.Describe())
+print(d.Describe("* "))
+print(b.Describe())
+print(a.Legs() + d.Legs() + b.Legs())
+var x = new Dog("Max")
+print(x.Speak() + " " + x.name + " " + x.legs)
+x.legs = 3
+print(x.Legs())
+class Box { int v = 1
+  int Get() { return this.v }
+  undefined Set(int n) { this.v = n } }
+Box bx = new Box()
+bx.Set(41)
+print(bx.Get() + 1)
+try { bx.v = "s" } catch (ArgumentException e) { print(e.message) }
+class Counter { int count = 0
+  undefined Tick() { this.count = this.count + 1 } }
+Counter c = new Counter()
+for (int i = 0; i < 1000; i++) { c.Tick() }
+print(c.count)
+class Holder { Box inner
+  construct() { this.inner = new Box() } }
+Holder h = new Holder()
+h.inner.Set(7)
+print(h.inner.Get())
+class Temp { int t = 5 }
+Temp tmp = new Temp()
+delete tmp
+try { print(tmp.t) } catch (Exception e) { print("destroyed: " + e.message) }
+try { tmp.t = 3 } catch (Exception e) { print("destroyed2: " + e.message) }
+class Keep { Box b
+  undefined Fill() { { Box local = new Box()
+      this.b = local }
+    print(this.b.Get()) } }
+Keep k = new Keep()
+try { k.Fill() } catch (Exception e) { print("gone: " + e.message) }
+//# name: Objekte bekannter Klasse: direkte Aufrufe (ohne Override), Felder per Index (auch geerbt), zerstoerte Objekte werfen weiter

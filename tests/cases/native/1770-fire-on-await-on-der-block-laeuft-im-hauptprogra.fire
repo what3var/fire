@@ -1,0 +1,31 @@
+class Box {
+    int v
+    construct(int v) { this.v = v }
+}
+class Panel {
+    string status = ""
+    int count = 0
+    Box box
+    construct() { this.box = new Box(5) }
+}
+var panel = new Panel()
+int done = 0
+fire {
+    int k = 3
+    fire on panel taking k { panel.status = "from thread " + k; panel.count = panel.count + k }
+    var text = await on panel { return panel.status + "/" + panel.count }
+    print("thread got: " + text)
+    var b = await on panel { return panel.box }
+    b.v = 99
+    var fresh = await on panel { return new Box(panel.count * 2) }
+    print("thread box " + b.v + " fresh " + fresh.v)
+    try { any x = await on panel { throw new ArgumentException("no panel") } } catch (ArgumentException e) { print("thread caught " + e.message) }
+    sync global { done = 1 }
+}
+while (done < 1) { sync globals }
+print("main: " + panel.status + " " + panel.count + " box " + panel.box.v)
+print("main await: " + await on panel { return panel.count + 1 })
+fire on panel { print("later on main") }
+print("before")
+sync globals
+//# name: fire on / await on: der Block laeuft im Hauptprogramm mit dem Objekt selbst (Kopien sonst), das Ergebnis kommt zurueck (neu: uebergeben, Feld: Kopie), Ausnahme am await, im Hauptprogramm sofort

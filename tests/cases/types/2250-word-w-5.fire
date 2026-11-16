@@ -1,0 +1,6 @@
+word w = 5
+int i = w
+print(1)
+//# types: strict
+//# modes: Release
+//# name: types 225: word w = 5

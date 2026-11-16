@@ -1,0 +1,2 @@
+class extends string { static int F() { return 1 } }
+//# name: statische Methode in Basistyp-Erweiterung

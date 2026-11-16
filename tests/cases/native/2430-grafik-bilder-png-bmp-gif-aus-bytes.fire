@@ -1,0 +1,22 @@
+#import "graphics"
+class Img {
+    static Bytes(a) { var b = new byte[a.length]; for (var i = 0; i < a.length; i++) { b[i] = a[i] } return b }
+    static Show(string name, data) {
+        var fb = Framebuffer.FromImage(data)
+        print(name + " " + fb.Width() + "x" + fb.Height() + " mode " + fb.Mode() + " transparent " + fb.TransparentIndex)
+        var bytes = fb.ReadBytes()
+        var line = ""
+        for (var i = 0; i < bytes.length; i++) { line = line + bytes[i] + " " }
+        print(line)
+        if (fb.Mode() == 1) { print("palette0 " + fb.GetPaletteColor(0) + " palette1 " + fb.GetPaletteColor(1)) }
+    }
+}
+var png1 = Img.Bytes([137,80,78,71,13,10,26,10,0,0,0,13,73,72,68,82,0,0,0,1,0,0,0,1,8,6,0,0,0,31,21,196,137,0,0,0,13,73,68,65,84,120,218,99,252,207,192,80,15,0,4,133,1,128,132,169,140,33,0,0,0,0,73,69,78,68,174,66,96,130])
+Img.Show("png1", png1)
+var gif = Img.Bytes([71,73,70,56,57,97,1,0,1,0,128,0,0,255,255,255,0,0,0,33,249,4,1,0,0,0,0,44,0,0,0,0,1,0,1,0,0,2,2,68,1,0,59])
+Img.Show("gif", gif)
+var bmp = Img.Bytes([66,77,78,0,0,0,0,0,0,0,54,0,0,0,40,0,0,0,3,0,0,0,2,0,0,0,1,0,24,0,0,0,0,0,24,0,0,0,19,11,0,0,19,11,0,0,0,0,0,0,0,0,0,0,30,20,10,60,50,40,90,80,70,0,0,0,0,0,255,0,255,0,255,0,0,0,0,0])
+Img.Show("bmp", bmp)
+var png2 = Img.Bytes([137,80,78,71,13,10,26,10,0,0,0,13,73,72,68,82,0,0,0,4,0,0,0,3,8,2,0,0,0,59,150,57,145,0,0,0,41,73,68,65,84,120,156,13,197,49,1,0,32,0,195,176,42,65,201,148,84,201,148,160,100,2,33,79,0,194,41,25,130,39,166,58,11,75,254,235,118,31,169,95,11,245,222,135,168,195,0,0,0,0,73,69,78,68,174,66,96,130])
+Img.Show("png2", png2)
+//# name: Grafik: Bilder PNG/BMP/GIF aus Bytes

@@ -1,0 +1,11 @@
+word w = 5
+int i = 3
+w = i
+float f = w
+byte b = w
+int j = w!int
+var x = w + i
+word y = x * 2
+print(w + " " + f + " " + b + " " + j + " " + y + " " + (x is of word) + " " + (-x is of word) + " " + (~x is of word) + " " + ((x + 0.5) is of float))
+//# modes: Release
+//# name: types 223: word w = 5

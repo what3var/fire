@@ -1,0 +1,4 @@
+any s = 1s
+print("a")
+print(1m + s)
+//# name: Abbruch: unbehandelte UnitMismatchException (Programm ohne Ausnahmen) - Text und Exitcode wie die VM

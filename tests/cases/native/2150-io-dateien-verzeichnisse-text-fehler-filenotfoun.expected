@@ -1,0 +1,31 @@
+True
+True 54
+Hallo Welt
+Zeile 2 äöü €
+Zeile 3 é 😀
+
+letzte
+[Hallo Welt]
+[Zeile 2 äöü €]
+[Zeile 3 é 😀]
+[]
+[letzte]
+6
+Hallo Welt
+Zeile 2 äöü €
+eins
+zwei
+
+a.txt
+c.txt
+d.txt
+top a.txt
+dir sub
+dir deeper
+exists
+not found
+no dir
+not empty
+True
+False
+False

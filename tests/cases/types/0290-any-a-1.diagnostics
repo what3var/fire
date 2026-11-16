@@ -1,0 +1,1 @@
+warning TC019: 'e' has no type: the type of its initializer is not known here. It becomes 'any' - nothing about it is checked, every use is looked up at run time and it takes the wide values of the native backend. Give it a type ('int e = ...'), or write 'any e = ...' if that is really meant (line 2)

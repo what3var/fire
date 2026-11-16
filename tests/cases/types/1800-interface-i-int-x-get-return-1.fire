@@ -1,0 +1,4 @@
+interface I { int X { get { return 1 } } }
+print(1)
+//# modes: Release
+//# name: types 180: interface I { int X { get { return 1 } } }

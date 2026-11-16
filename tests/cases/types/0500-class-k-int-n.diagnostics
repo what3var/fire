@@ -1,0 +1,1 @@
+0500-class-k-int-n.fire(1): error E3000: A value that is never undefined is declared 'defined int', not 'int!'

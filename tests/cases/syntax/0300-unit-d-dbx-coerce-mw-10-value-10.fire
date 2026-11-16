@@ -1,0 +1,3 @@
+unit D: dBx { coerce mW => 10 ^ (value / 10) }
+//# modes: Release
+//# name: syntax 30: unit D: dBx { coerce mW => 10 ^ (value / 10) }

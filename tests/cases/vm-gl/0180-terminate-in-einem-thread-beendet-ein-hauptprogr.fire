@@ -1,0 +1,3 @@
+fire { terminate(1) }
+while (true) { sync globals }
+//# name: terminate in einem Thread beendet ein Hauptprogramm, das nur `sync globals` ausfuehrt

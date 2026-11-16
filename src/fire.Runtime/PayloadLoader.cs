@@ -13,7 +13,7 @@ namespace fire.Runtime
     /// the program needs (see Packer/PackagePlan); everything except the tiny start piece (runtime.dll)
     /// lies as a payload behind the .NET bundle (see PayloadFile).
     ///
-    /// - Managed DLLs (fire.dll, MemoryPack, the required bridges): <see cref="AssemblyLoadContext.Resolving"/>
+    /// - Managed DLLs (fire.dll, the required bridges): <see cref="AssemblyLoadContext.Resolving"/>
     ///   is only raised when the default context does not find an assembly - that is, exactly when code
     ///   really needs it for the first time. A bridge that is not included is thus never touched.
     /// - Native libraries (e.g. libSystem.IO.Ports.Native): Windows cannot load a DLL from memory, so on first
@@ -44,7 +44,7 @@ namespace fire.Runtime
             return true;
         }
 
-        /// <summary>The serialised program (MemoryPack) from the payload; null if there is none or it is damaged.</summary>
+        /// <summary>The program (a program file, fire.Bytecode.ProgramFile) from the payload; null if there is none or it is damaged.</summary>
         public static byte[]? ReadProgram()
         {
             var entry = _reader?.Find(PayloadKind.Program, "program");

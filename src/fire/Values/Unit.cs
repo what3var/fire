@@ -2,7 +2,6 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
-using MemoryPack;
 
 namespace fire.Values
 {
@@ -17,7 +16,6 @@ namespace fire.Values
     /// (after removing exponent-0 entries) are identical. Conversion
     /// between compatible units is done via the ratio of the scale factors.
     /// </summary>
-    [MemoryPackable]
     public sealed partial class Unit : IEquatable<Unit>
     {
         // Base symbol -> exponent. Base symbols are either one of the
@@ -33,11 +31,7 @@ namespace fire.Values
         // (e.g. "mm" instead of just the dimension "m"). Null for composite
         // / derived units (e.g. the result of a multiplication).
         //
-        // Private, but serialised nevertheless via [MemoryPackInclude] (see
-        // MemoryPack docs: private members NOT included by default,
-        // explicitly necessary) - needs `partial` on the class for that, otherwise
-        // the generated formatter code would have no access to it.
-        [MemoryPackInclude]
+        // Part of the unit in a program file (ProgramFile, through DisplaySymbol and Restore).
         private readonly string? _displaySymbol;
 
         public static readonly Unit Unitless = new Unit(new Dictionary<string, int>(), 1.0, null);
@@ -57,7 +51,6 @@ namespace fire.Values
         /// every other unit.</summary>
         public string? UnitlessConverter { get; }
 
-        [MemoryPackConstructor]
         private Unit(IReadOnlyDictionary<string, int> dimensions, double scale, string? displaySymbol, double offset, string? converter, string? unitlessConverter)
         {
             Dimensions = dimensions;
@@ -67,6 +60,10 @@ namespace fire.Values
             Converter = converter;
             UnitlessConverter = unitlessConverter;
         }
+
+        /// <summary>A unit as a program file holds it (ProgramFile): exactly the unit that was written.</summary>
+        internal static Unit Restore(IReadOnlyDictionary<string, int> dimensions, double scale, string? displaySymbol, double offset, string? converter, string? unitlessConverter) =>
+            new Unit(dimensions, scale, displaySymbol, offset, converter, unitlessConverter);
 
         private Unit(IReadOnlyDictionary<string, int> dimensions, double scale, string? displaySymbol, double offset, string? converter)
             : this(dimensions, scale, displaySymbol, offset, converter, null) { }
@@ -81,13 +78,11 @@ namespace fire.Values
 
         /// <summary>A unit that is only a factor of its base unit (all units of fire, `unit Inch: in { coerce m => 0.0254 }`) - not one with an offset or
         /// conversion functions.</summary>
-        [MemoryPackIgnore]
         public bool IsLinear => Offset == 0 && Converter == null;
 
         public bool IsUnitless => Dimensions.Count == 0;
 
         /// <summary>The symbol of a named unit (`mm`), null for a derived one (the native backend writes it into its unit table).</summary>
-        [MemoryPackIgnore]
         public string? DisplaySymbol => _displaySymbol;
 
         // ---------------------------------------------------------------
@@ -444,9 +439,8 @@ namespace fire.Values
 
         /// <summary>The unit that the product with another unit has (`20C * 2s`, `10dB / 1m`): a unit with an offset or conversion functions counts as its
         /// reference unit there (a difference: the offset and the functions do not take part).</summary>
-        [MemoryPackIgnore]
         public Unit LinearPart => IsLinear ? this : new Unit(Dimensions, Scale, null);
-        [MemoryPackIgnore] private FactorCache? _factorCache;
+        private FactorCache? _factorCache;
 
         /// <summary>The factor between two units without the rounding error of the scales: they are binary approximations of decimal numbers, so `0.3048 /
         /// 0.0254` is 12.000000000000002 and `0.001 / 0.01` 0.09999999999999999. A factor a few units in the last place away from a number with 12
@@ -499,8 +493,8 @@ namespace fire.Values
         // parts of one unit of fire with different prefixes cancel (`m/mm*s`), their factor goes into the prefix of another part if one fits
         // (`1m / 1mm / 1s` is `1ms^-1`); otherwise the name stays as it is. fire_rt.h (unitTerms...) does the same.
         // ---------------------------------------------------------------
-        [MemoryPackIgnore] private (string Sym, int Exp)[]? _terms;
-        [MemoryPackIgnore] private bool _termsKnown;
+        private (string Sym, int Exp)[]? _terms;
+        private bool _termsKnown;
 
         /// <summary>The symbols and powers of the name of the unit: its display text, or - without one - its base symbols when the scale is 1 (`m/s` of
         /// `10m / 2s`); null when the unit has no such name (a derived unit with a factor).</summary>
@@ -794,11 +788,9 @@ namespace fire.Values
 
     /// <summary>A unit the program declares: `prefixed unit Volt: V` (a new dimension `V`, `mV`, `kV`, ...) or `unit Inch: in { coerce m => 0.0254 }`
     /// (the dimension of `m`, 1in = 0.0254m). <see cref="Dimensions"/> and <see cref="Scale"/> are those of a parsed unit (value_in_base = value * Scale).</summary>
-    [MemoryPackable]
     public sealed partial record CustomUnit(string Name, string Symbol, bool Prefixed, Dictionary<string, int> Dimensions, double Scale, double Offset = 0, string? Converter = null,
         string? UnitlessConverter = null)
     {
-        [MemoryPackIgnore]
         internal IReadOnlyDictionary<string, int> DimensionTable => Dimensions;
 
         public bool Equals(CustomUnit? other) =>

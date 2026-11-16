@@ -1,0 +1,2 @@
+class extends string { operator+(other) { return this } }
+//# name: Operator in Basistyp-Erweiterung

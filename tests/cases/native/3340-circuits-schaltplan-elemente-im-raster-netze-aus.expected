@@ -1,0 +1,18 @@
+Vc 3.151 parts 4 scope 100
+{
+  "biscuit": 1,
+  "timeStep": "10us",
+  "elements": [
+    {"type": "Source", "from": [0, 8], "to": [0, 0], "voltage": "5V"},
+    {"type": "Resistor", "name": "r1", "from": [0, 0], "to": [8, 0]},
+    {"type": "Capacitor", "name": "c1", "from": [8, 0], "to": [8, 8], "capacitance": "1uF"},
+    {"type": "Wire", "from": [0, 8], "to": [8, 8]},
+    {"type": "Ground", "from": [0, 8], "to": [0, 12]},
+    {"type": "Scope", "from": [12, 0], "to": [28, 8], "probe": "c1"}
+  ]
+}
+
+copy Vc 3.151
+4700 10 1000000 5 1 undefined
+moved: r1 carries 0 mA, version 7
+removed: 5 elements, 3 parts

@@ -1,0 +1,9 @@
+foreach (n in [5, 6, 7, -1]) {
+    switch (n) {
+        case 5, 6: print("five-six")
+        case < 0, > 100: print("out")
+        case default: print("other")
+    }
+}
+//# modes: Release
+//# name: syntax 19: foreach (n in [5, 6, 7, -1]) {

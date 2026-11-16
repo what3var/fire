@@ -1,0 +1,5 @@
+class A {
+    int under
+}
+//# modes: Release
+//# name: diag 26: class A {

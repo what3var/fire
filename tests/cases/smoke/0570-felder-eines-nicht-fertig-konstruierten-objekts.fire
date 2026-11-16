@@ -1,0 +1,15 @@
+class Base {
+    int handle
+    bool closed
+    construct(int h) { this.handle = h; this.closed = false }
+    destruct() { print("destruct: handle=" + this.handle + " undefined=" + (this.handle == undefined)) }
+}
+class Boom : Exception { }
+class Child : Base {
+    construct(int m) : base(Fail(m)) { }
+    static int Fail(int m) { throw new Boom() }
+}
+try { var x = new Child(1) } catch (Boom e) { print("gefangen") }
+print("ende")
+//# note: what the test program said to expect (for a reader, it was not checked): gefangen / destruct: handle=undefined undefined=True / ende
+//# name: Felder eines nicht fertig konstruierten Objekts sind undefined (nicht false)

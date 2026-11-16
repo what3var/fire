@@ -1,0 +1,62 @@
+interface IShape { float Area() }
+class Animal {
+    string name
+    construct(string n) { this.name = n }
+}
+class Dog : Animal { construct(string n) : base(n) { } }
+class Puppy : Dog { construct(string n) : base(n) { } }
+class Square : IShape { float Area() { return 4.0 } }
+
+class Vec {
+    float x
+    construct(float x) { this.x = x }
+    Vec operator*(float f) { return new Vec(this.x * f) }
+    Vec operator*(Vec o) { return new Vec(this.x * o.x) }
+}
+
+class Pick {
+    string Of<T>(T x) { return "generic" }
+    string Of(IShape s) { return "interface" }
+    string Of(Animal a) { return "base " + a.name }
+    string Of(Dog d) { return "derived " + d.name }
+    string Num(int i) { return "int" }
+    string Num(float f) { return "float" }
+}
+class SubPick : Pick {
+    override string Num(int i) { return "sub int / " + base.Num(i) + " / " + base.Num(1.5) }
+}
+
+class Box<T> {
+    string Put(T x) { return "T" }
+    string Put(string s) { return "string" }
+}
+
+class Basis {
+    string made
+    construct(int x) { this.made = "int" }
+    construct(string s) { this.made = "string" }
+}
+class Child : Basis {
+    construct(any v) : base(v) { }
+}
+
+var p = new Pick()
+print(p.Of(new Puppy("tiny")))
+print(p.Of(new Dog("rex")))
+print(p.Of(new Animal("cat")))
+print(p.Of(new Square()))
+print(p.Of(42))
+print(p.Of<int>(42))
+print(p.Num(1) + " " + p.Num(1.0))
+var sp = new SubPick()
+print(sp.Num(3))
+print(sp.Num(3.5))
+var v = new Vec(2.0)
+print((v * 3.0).x)
+print((v * new Vec(5.0)).x)
+var b = new Box<int>()
+print(b.Put(1) + " " + b.Put("a"))
+print(new Child(1).made + " " + new Child("x").made)
+any items = [1, "a", 2.5, new Dog("d"), new Square()]
+foreach (it in items) { print(p.Of(it)) }
+//# name: Ueberladung nach Typ: Dispatcher, base-Aufruf, Operatoren, Klassen-Typparameter, Basis-Konstruktor mit any

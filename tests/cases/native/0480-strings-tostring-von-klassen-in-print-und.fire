@@ -1,0 +1,11 @@
+class Money {
+    int cents
+    construct(int cents) { this.cents = cents }
+    string ToString() { return "$" + this.cents / 100 + "." + this.cents % 100 }
+}
+var m = new Money(1999)
+print(m)
+print("price: " + m)
+print(m + " total")
+print($"[{m}]")
+//# name: Strings: ToString() von Klassen, in print, + und $""

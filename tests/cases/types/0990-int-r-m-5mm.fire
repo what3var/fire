@@ -1,0 +1,6 @@
+int r : m = 5mm
+var q = 5mm:m
+print(r)
+//# types: strict
+//# modes: Release
+//# name: types 99: int r : m = 5mm

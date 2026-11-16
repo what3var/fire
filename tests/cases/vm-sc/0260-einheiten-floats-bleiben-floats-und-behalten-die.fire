@@ -1,0 +1,4 @@
+print(1.5mm + 1m)
+print(2.5m + 250mm)
+print((1.5mm + 1m) / 2)
+//# name: Einheiten: Floats bleiben Floats und behalten die Einheit des linken Operanden

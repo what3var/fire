@@ -1,0 +1,5 @@
+#import "http.data"
+print(1)
+//# types: strict
+//# modes: Release
+//# name: types 275: #import "http.data"

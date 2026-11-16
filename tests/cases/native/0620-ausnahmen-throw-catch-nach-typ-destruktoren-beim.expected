@@ -1,0 +1,13 @@
+open A
+open deep2
+open deep1
+open deep0
+close deep0
+close deep1
+close deep2
+finally in Safe 2
+caught bottom 42
+close A
+outer finally
+next
+catch-all

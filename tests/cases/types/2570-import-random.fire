@@ -1,0 +1,5 @@
+#import "random"
+print(1)
+//# types: strict
+//# modes: Release
+//# name: types 257: #import "random"

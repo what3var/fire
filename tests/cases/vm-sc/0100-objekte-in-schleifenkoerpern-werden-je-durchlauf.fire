@@ -1,0 +1,15 @@
+class D {
+    string n
+    construct(string n) { this.n = n }
+    destruct() { print("~" + this.n) }
+}class T {
+    static Run() {
+        var n = 0
+        for (var i = 0; i < 3; i = i + 1) {
+            if (i % 2 == 0) { var o = new D("o" + i); n = n + 1 } else { var k = i * 10; n = n + k }
+        }
+        print(n)
+    }
+}
+T.Run()
+//# name: Objekte in Schleifenkoerpern werden je Durchlauf zerstoert, Bloecke ohne Objekte daneben bleiben unberuehrt

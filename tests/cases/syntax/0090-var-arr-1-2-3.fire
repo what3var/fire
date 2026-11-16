@@ -1,0 +1,5 @@
+var arr = [1, 2, 3]
+var i = 0
+arr[i++] += 1
+//# modes: Release
+//# name: syntax 9: var arr = [1, 2, 3]

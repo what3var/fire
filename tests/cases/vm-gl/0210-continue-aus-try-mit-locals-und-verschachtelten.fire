@@ -1,0 +1,7 @@
+var sum = 0
+for (var i = 0; i < 6; i = i + 1) {
+    try { var x = i * 2; if (i % 2 == 0) { var y = 1; continue } sum = sum + x }
+    catch (e) { }
+}
+print(sum)
+//# name: continue aus try mit Locals und verschachtelten Bloecken

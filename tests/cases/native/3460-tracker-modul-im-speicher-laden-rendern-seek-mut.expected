@@ -1,0 +1,25 @@
+song fire 4 1 1 44100 1080
+state 0 0 6 125 False False 50 True 100
+sample s 64 64 0 True False
+cells C-2 01 ... | E-2 01 C20 | --- .. D00 | --- .. ...
+note names C-2 B-3 --- E-2
+rendered 47628 True 0 8
+first 0.3 s: peak L 9600 peak R 3200 zero crossings 77
+checksum 24321673
+after end 0
+restart 0 0 False
+seek True 0 5
+channels True True 64 32 1
+mute True False
+muted silent True
+separation 100: right 0
+separation 0: equal True
+gain 50: 4800
+interpolate False
+sound 44100 2 1080
+player 190512 True True
+bad 8
+short 8
+truncated 8
+flt8 6
+closed 2

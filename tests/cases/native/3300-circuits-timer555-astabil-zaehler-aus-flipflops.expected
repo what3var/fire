@@ -1,0 +1,7 @@
+555 rises 14 f 666 Hz
+cap between 1.66 and 3.339
+counter 11 q0 5 q1 5 q3 5
+cutoff 159 Hz
+cutoff 80 Hz 4000 True False
+6000 3
+The circuit 'lowpass' has no parameter 'nope'.

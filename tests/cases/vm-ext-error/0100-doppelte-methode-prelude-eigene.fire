@@ -1,0 +1,2 @@
+class extends string { int IndexOf(value) { return 0 } }
+//# name: doppelte Methode (Prelude + eigene)

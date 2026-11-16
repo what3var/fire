@@ -1,0 +1,8 @@
+thread copy 100 k 5 node 7
+caller 1 node undefined
+implicit 2 5
+lambda copy 30 caller 3
+lambda shared 4 caller 3
+lambda moved 9
+in thread 42
+await in thread 82 4

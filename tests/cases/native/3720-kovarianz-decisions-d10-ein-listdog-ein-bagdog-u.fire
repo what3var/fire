@@ -1,0 +1,58 @@
+interface INamed { string Name() }
+class Animal : INamed { string n; construct(string n) { this.n = n } string Name() { return this.n } }
+class Dog : Animal { construct(string n) : base(n) { } }
+class Cat : Animal { construct(string n) : base(n) { } }
+class Rock { }
+class Bag<T> {
+    T item
+    construct() { }
+    undefined Put(T v) { this.item = v }
+    T Get() { return this.item }
+    undefined CopyFrom(Bag<T> other) { this.item = other.item }
+}
+class Zoo {
+    List<Animal> all
+    Animal pen[]
+    construct() { }
+}
+class U {
+    static string First(List<Animal> l) { return l[0].Name() + l.Count }
+    static string Names(List<INamed> l) { return l[0].Name() }
+    static string Arr(Animal a[]) { return a[0].Name() + a.length }
+    static string INs(INamed a[]) { return a[0].Name() }
+    static string InBag(Bag<Animal> b) { return b.Get().Name() }
+    static undefined AddCat(List<Animal> l, Animal c) { l.Add(c) }
+    static undefined SetCat(Animal a[], Animal c) { a[0] = c }
+    static string Dogs(List<Dog> l) { return "dogs " + l.Count }
+}
+var rex = new Dog("Rex")
+var tom = new Cat("Tom")
+var dogs = new List<Dog>(); dogs.Add(rex)
+Dog pack[] = [rex]
+var bag = new Bag<Dog>(); bag.Put(rex)
+print(U.First(dogs) + " " + U.Names(dogs) + " " + U.Arr(pack) + " " + U.INs(pack) + " " + U.InBag(bag))
+List<Animal> la = dogs
+Animal aa[] = pack
+print(la.Count + " " + aa.length + " " + la[0].Name() + " " + aa[0].Name())
+try { U.AddCat(dogs, tom) } catch (ArgumentException e) { print("E1 " + e.message) }
+try { U.SetCat(pack, tom) } catch (ArgumentException e) { print("E2 " + e.message) }
+try { la.Add(tom) } catch (ArgumentException e) { print("E3 " + e.message) }
+try { aa[0] = tom } catch (ArgumentException e) { print("E4 " + e.message) }
+var z = new Zoo()
+z.all = dogs
+z.pen = pack
+print(z.all[0].Name() + z.pen[0].Name())
+any animals = new List<Animal>()
+any rocks = new List<Rock>()
+Rock stones[] = [new Rock()]
+any anyStones = stones
+try { U.Dogs(animals) } catch (ArgumentException e) { print("E5 " + e.message) }
+try { U.First(rocks) } catch (ArgumentException e) { print("E6 " + e.message) }
+try { U.Arr(anyStones) } catch (ArgumentException e) { print("E7 " + e.message) }
+var ab = new Bag<Animal>()
+ab.CopyFrom(bag)
+print(ab.Get().Name())
+defined Animal must[] = pack
+print(must.length)
+print("end")
+//# name: Kovarianz (DECISIONS D10): ein List<Dog>, ein Bag<Dog> und ein Dog-Array gehen dorthin, wo Animal oder ein Interface deklariert ist - das Objekt behaelt seinen Typ und prueft, was hineinkommt; die Gegenrichtung und fremde Klassen sind die ArgumentException

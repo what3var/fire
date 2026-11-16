@@ -1,0 +1,21 @@
+class D {
+    string n
+    construct(string n) { this.n = n }
+    destruct() { print("~" + this.n) }
+}class P {
+    D k1 = new D("k1")
+    D k2 = new D("k2")
+    D k3 = new D("k3")
+    destruct() { print("~P") }
+}
+class T {
+    static Run() {
+        var x = new D("1")
+        var y = new D("2")
+        var p = new P()
+        var z = new D("3")
+        print("ende")
+    }
+}
+T.Run()
+//# name: Objekte einer Scope werden in der Reihenfolge ihrer Erzeugung zerstoert; ein Objekt mit eigenen Kindern erst selbst, dann die Kinder

@@ -1,0 +1,5 @@
+class A { int v
+    P { get { return this.v } }
+}
+//# modes: Release
+//# name: types 78: class A { int v

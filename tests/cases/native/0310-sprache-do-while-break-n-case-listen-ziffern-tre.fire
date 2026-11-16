@@ -1,0 +1,47 @@
+int a = 5
+print(a > 3 ? "big" : "small")
+print((a > 3 ? 2m : 3m) + 1cm)
+int i = 0
+do { i++; if (i == 2) continue; print("do " + i) } while (i < 4)
+for (int x = 0; x < 3; x++) { for (int y = 0; y < 3; y++) { if (y == 1) continue 2; if (x == 2) break 2; print(x + "," + y) } }
+int w = 0
+while (true) { foreach (k in [1, 2, 3]) { w += k; if (k == 2) { break 2 } } }
+print(w)
+foreach (n in [5, 9, -3]) { switch (n) { case 5, 6: print("five-six"); case < 0, > 100: print("out"); case default: print("other") } }
+print(1_000_000)
+class Button { lambda onClick; construct(lambda f) { this.onClick = take f } undefined Click() { this.onClick(); onClick() } }
+var b = new Button(() => print("clicked"))
+b.Click()
+b.onClick()
+class Counter { int n = 0; string label; construct(string l) { label = l } }
+var c1 = new Counter("one")
+var c2 = new Counter("two")
+var inc = func () on c1 => { n++; print(label + " " + n) }
+inc()
+var inc2 = inc on c2
+inc2()
+inc()
+try { var bad = 5 on c1 } catch (ArgumentException e) { print(e.message) }
+enum Color { Red, Green = 5, Blue }
+print(Color.Name(Color.Green) + " " + Color.Name(6) + " " + Color.Name(42) + " " + Color.Parse("Blue") + " " + Color.IsDefined(1))
+try { print(Color.Parse("Pink")) } catch (ArgumentException e) { print(e.message) }
+float speed : m/s = 36km / 1h
+print(speed)
+float acc : m/s^2 = 9.81m / 1s / 1s
+print(acc)
+int[8] small = 300
+print(small)
+small = 200
+small++
+print(small)
+byte bt = 300
+print(bt)
+class Reg { int[8] v = 0; undefined Set(int x) { v = x } }
+var r = new Reg()
+r.Set(511)
+print(r.v)
+class Calc { static int Narrow(int[16] x) { return x } }
+print(Calc.Narrow(70000))
+float[32] f = 0.1
+print(f)
+//# name: Sprache: ?:, do-while, break N, case-Listen, Ziffern-Trenner, Lambda-Felder, on, Enum-Namen, m/s, Bitbreiten

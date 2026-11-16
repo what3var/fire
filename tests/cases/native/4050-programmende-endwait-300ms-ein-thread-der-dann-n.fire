@@ -1,0 +1,8 @@
+#import "time"
+#endwait 300ms
+fire {
+    int n = 0
+    while (true) { Sleep(10ms); n = n + 1 }
+}
+print("main end")
+//# name: Programmende: #endwait 300ms - ein Thread, der dann noch laeuft, wird beendet wie mit terminate (Meldung auf stderr)

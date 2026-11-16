@@ -1,0 +1,5 @@
+#import "spi"
+print(1)
+//# types: strict
+//# modes: Release
+//# name: types 256: #import "spi"

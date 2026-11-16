@@ -1,0 +1,21 @@
+class D {
+    string n
+    construct(string n) { this.n = n }
+    destruct() { print("~" + this.n) }
+}class T {
+    static F() {
+        var a = new D("a")
+        if (true) {
+            var b = new D("b")
+            if (true) {
+                var c = new D("c")
+                return 1
+            }
+        }
+        return 0
+    }
+}
+print("vor")
+T.F()
+print("nach")
+//# name: return aus verschachtelten Bloecken zerstoert die Objekte ALLER verlassenen Scopes (innerster zuerst)

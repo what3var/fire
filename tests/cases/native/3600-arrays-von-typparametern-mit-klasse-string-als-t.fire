@@ -1,0 +1,66 @@
+class Animal { string name; construct(string n) { this.name = n } string Say() { return this.name + "?" } }
+class Dog : Animal { construct(string n) : base(n) { } override string Say() { return this.name + " wuff" } }
+class Cat { }
+class Bag<T> {
+    T items[]
+    int n
+    construct() { this.items = new T[4]; this.n = 0 }
+    undefined Put(T item) { this.items[this.n] = item; this.n = this.n + 1 }
+    undefined Raw(any x) { any a[] = this.items; a[this.n] = x; this.n = this.n + 1 }
+    undefined Take(any arr) { this.items = arr }
+    T At(int i) { return this.items[i] }
+}
+any cat = new Cat()
+var dogs = new Bag<Dog>()
+var rex = new Dog("Rex")
+dogs.Put(rex)
+print(dogs.At(0).Say())
+try { dogs.Raw(cat) } catch (ArgumentException e) { print("E1 " + e.message) }
+try { dogs.Raw("text") } catch (ArgumentException e) { print("E2 " + e.message) }
+Animal zoo[] = [new Animal("Tier")]
+try { dogs.Take(zoo) } catch (ArgumentException e) { print("E3 " + e.message) }
+try { dogs.Take([1, 2]) } catch (ArgumentException e) { print("E4 " + e.message) }
+var bello = new Dog("Bello")
+any pack[] = [bello, undefined]
+dogs.Take(pack)
+print(dogs.At(0).Say() + " " + dogs.At(1))
+var names = new Bag<string>()
+names.Put("a")
+try { names.Raw(5) } catch (ArgumentException e) { print("E5 " + e.message) }
+var anything = new Bag<any>()
+anything.Raw(5); anything.Raw("x"); print(anything.At(0) + " " + anything.At(1))
+var l = new List<Dog>()
+l.Add(new Dog("L1")); l.Add(new Dog("L2"))
+print(l.Count + " " + l[1].Say())
+var ls = new List<string>(); ls.Add("x"); ls.Add("y")
+print(ls[1])
+var d = new Dictionary<string, Dog>()
+d["a"] = new Dog("DA"); d["b"] = new Dog("DB")
+print(d["a"].Say() + " " + d.Count)
+var la = new List<Animal>(); la.Add(new Dog("sub")); la.Add(new Animal("base")); print(la[0].Say() + " " + la[1].Say())
+// Lambdas
+lambda<int, int> fs[] = [func (int a, int b) => a + b, undefined]
+print(fs[0](1, 2) + " " + fs[1])
+try { fs[1] = func (int a) => a } catch (ArgumentException e) { print("E8 " + e.message) }
+try { fs[1] = 5 } catch (ArgumentException e) { print("E9 " + e.message) }
+fs[1] = func (int a, int b) => a * b
+print(fs[1](3, 4))
+lambda<int> one[2]
+try { fs = one } catch (ArgumentException e) { print("E10 " + e.message) }
+class Ops {
+    lambda<int> steps[]
+    construct() { this.steps = [func (int x) => x + 1] }
+    int Run(int v) {
+        foreach (var s in this.steps) { v = s(v) }
+        return v
+    }
+}
+var ops = new Ops(); print(ops.Run(4))
+try { ops.steps = [func () => 1] } catch (ArgumentException e) { print("E11 " + e.message) }
+class U { static int Apply(lambda<int> gs[], int v) { return gs[0](v) } }
+print(U.Apply([func (int x) => x * 2], 21))
+try { U.Apply([func (int x, int y) => x], 1) } catch (ArgumentException e) { print("E12 " + e.message) }
+try { any two[2]; defined lambda<int> ds[] = two } catch (ArgumentException e) { print("E13 " + e.message) }
+defined lambda<int> ok[] = [func (int x) => x]
+try { ok[0] = undefined } catch (ArgumentException e) { print("E14 " + e.message) }
+//# name: Arrays von Typparametern mit Klasse/string als Typargument und Arrays von Lambdas (ROADMAP 19): T items[] prueft die Elemente nach dem Typargument, lambda<int> fs[] nach der Parameterzahl, auch defined

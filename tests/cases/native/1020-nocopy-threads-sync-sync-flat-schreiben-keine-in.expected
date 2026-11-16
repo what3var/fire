@@ -1,0 +1,11 @@
+sync A: 'Res' cannot be copied ([NoCopy]) - 'sync' reaches an instance of it (a field or an element of the copied value), which exists only once.
+original after refused: 5 True
+sync flat A: 'Res' cannot be copied ([NoCopy]) - 'sync' reaches an instance of it (a field or an element of the copied value), which exists only once.
+sync array: 'Res' cannot be copied ([NoCopy]) - 'sync' reaches an instance of it (a field or an element of the copied value), which exists only once.
+original list: True
+sync C: 'Res' cannot be copied ([NoCopy]) - 'sync' reaches an instance of it (a field or an element of the copied value), which exists only once.
+original after C: 5 1
+sync flat C: True
+original after flat: 7 1 False False
+sync: True
+main: 7 5 False 1 4

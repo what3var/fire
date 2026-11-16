@@ -1,0 +1,6 @@
+any a = [1]
+any e = a[0]
+print(e)
+//# types: strict
+//# modes: Release
+//# name: types 31: any a = [1]

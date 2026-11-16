@@ -1,0 +1,17 @@
+actor Logger {
+    string lastMessage
+    construct() {
+        this.lastMessage = ""
+    }
+    log(string msg) {
+        this.lastMessage = msg
+        print("Logger (Heimat-Thread): " + msg)
+    }
+}
+var logger = new Logger()
+fire with logger {
+    logger.log("hallo vom fire-Thread")
+}
+process logger
+print("Hauptprogramm: logger.lastMessage = " + logger.lastMessage)
+//# name: Threads: Actor: fire with + process

@@ -1,0 +1,9 @@
+p => (p.age > 3) True
+p => (p.age > 9) False
+True False
+p => (wanted.IndexOf(p.name) >= 0)
+2
+Ada
+True
+2 Ada
+True

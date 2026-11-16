@@ -1,0 +1,17 @@
+3
+30
+22
+7
+denied 1: Field 'secret' of 'Base' is private and cannot be accessed from here.
+denied 2: Field 'secret' of 'Base' is private and cannot be accessed from here.
+denied 3: Field 'shared' of 'Base' is protected and cannot be accessed from here.
+denied 4: Method 'Hidden' of 'Base' is private and cannot be called from here.
+denied 5: Method 'Guarded' of 'Base' is protected and cannot be called from here.
+denied 6: Method 'Guarded' of 'Base' is protected and cannot be called from here.
+denied 7: Field 'secret' of 'Base' is private and cannot be accessed from here.
+denied 8: 'set_Hush' of 'Base' is private and cannot be accessed from here.
+denied 8b: 'get_Hush' of 'Base' is private and cannot be accessed from here.
+True
+3
+5
+3

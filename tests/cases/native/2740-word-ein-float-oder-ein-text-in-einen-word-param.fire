@@ -1,0 +1,14 @@
+#lax
+class G {
+  string K(word x) { return "word " + x }
+}
+var g = new G()
+any f = 2.5
+any s = "x"
+try { print(g.K(f)) } catch (ArgumentException e) { print("A: " + e.message) }
+try { print(g.K(s)) } catch (ArgumentException e) { print("A: " + e.message) }
+print(g.K(3) + " " + g.K(undefined))
+word w = 1
+try { w = f } catch (ArgumentException e) { print("A2: " + e.message) }
+print(w)
+//# name: Word: ein float (oder ein Text) in einen word-Parameter oder eine word-Variable ist eine ArgumentException (lax, zur Laufzeit); int und undefined gehen

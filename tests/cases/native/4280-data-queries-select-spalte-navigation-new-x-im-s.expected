@@ -1,0 +1,46 @@
+---- sqlite::memory:
+names {"$type":"List","$values":["Ada","Grace","Linus"]}
+line Ada 21
+line Ada 40
+line Grace 14
+paid {"$type":"List","$values":[false,true,true,true,false]}
+states {"$type":"List","$values":[0,1,1,1,0]}
+in the program {"$type":"List","$values":["Ad!","Gr!","Li!"]}
+total 1 3 33.5
+total 2 2 12.25
+big {"$type":"List","$values":[1]}
+group Open 2 10.5
+group Paid 2 20
+join London 3
+join New York 5.25
+join New York 7
+join London 10.5
+join London 20
+pair Ada 10.5
+pair Ada 20
+pair Grace none
+pair Linus none
+joined count 2
+---- memory:
+names {"$type":"List","$values":["Ada","Grace","Linus"]}
+line Ada 21
+line Ada 40
+line Grace 14
+paid {"$type":"List","$values":[false,true,true,true,false]}
+states {"$type":"List","$values":[0,1,1,1,0]}
+in the program {"$type":"List","$values":["Ad!","Gr!","Li!"]}
+total 1 3 33.5
+total 2 2 12.25
+big {"$type":"List","$values":[1]}
+group Open 2 10.5
+group Paid 2 20
+join London 3
+join New York 5.25
+join New York 7
+join London 10.5
+join London 20
+pair Ada 10.5
+pair Ada 20
+pair Grace none
+pair Linus none
+joined count 2

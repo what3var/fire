@@ -1,0 +1,4 @@
+class Dog { }
+class K { defined Dog d }
+//# modes: Release
+//# name: types 58: class Dog { }

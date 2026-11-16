@@ -1,0 +1,17 @@
+0: 30023 30011 30005 True
+3: 1527 1515 1509 True
+6: 1048 1036 1030 True
+9: 1047 1035 1029 True
+zlib stream 1710
+lines 800
+zip 2383
+a.txt 5 5 Stored 2025004757 False
+bin/data.bin 30000 1030 Deflated 4241662929 False
+leer/ 0 0 Stored 0 True
+strom.txt 20000 944 Deflated 3357955489 False
+2024-02-29 23:59:58 Hallo
+30000 True
+kaputt: This is not a Zip archive (the end of the central directory is missing).
+The entry '../raus.txt' would land outside of the target folder: it is not extracted.
+This is not gzip data (the magic number is missing).
+end

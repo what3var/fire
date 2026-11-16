@@ -1,0 +1,1 @@
+error TC004: Parameter 'x' of 'M' has no type and is assumed to be 'any'. Please add a type (use 'any' if every type is allowed). (line 1)

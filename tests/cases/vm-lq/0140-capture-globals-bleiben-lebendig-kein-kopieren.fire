@@ -1,0 +1,5 @@
+var g = 1
+var f = () => g
+g = 7
+print(f())
+//# name: Capture: Globals bleiben lebendig (kein Kopieren)

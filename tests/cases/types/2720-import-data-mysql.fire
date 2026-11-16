@@ -1,0 +1,5 @@
+#import "data.mysql"
+print(1)
+//# types: strict
+//# modes: Release
+//# name: types 272: #import "data.mysql"

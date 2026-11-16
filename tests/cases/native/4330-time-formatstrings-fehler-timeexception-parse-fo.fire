@@ -1,0 +1,47 @@
+#import "time"
+class Thing { int x
+  construct() { this.x = 1 } }
+var d = new DateTime(2024, 12, 5, 0, 7, 9, 50)
+var f = ["yyyy", "yy", "y", "yyy", "M", "MM", "MMM", "MMMM", "d", "dd", "ddd", "dddd", "H", "HH", "h", "hh", "m", "mm", "s", "ss", "t", "tt", "f", "ff", "fff", "ffffff", "F", "FF", "ss.FFF", "ss.FFFFFF", "'quoted' yyyy", "\"dq\" MM", "yyyy\\MM", "%d", "%y", "d/M/yyyy", "HH:mm:ss", "g", "m", "u", "s", "r", "t", "T", "y", "M", "f", "F", "O", "dddd dd MMMM yyyy 'at' H:mm", "x yy z"]
+foreach (x in f) {
+    try { print(x + " => " + d.ToString(x)) } catch (TimeException e) { print(x + " => error: " + e.message) }
+}
+foreach (bad in ["", "yyyyyyyy", "fffffffff", "Z", "q", "%", "\\", "'abc", "hhh"]) {
+    try { print("[" + bad + "] => " + d.ToString(bad)) } catch (TimeException e) { print("error: " + e.message) }
+}
+try { var x = new DateTime(2023, 2, 29) } catch (TimeException e) { print("error: " + e.message) }
+try { var x = new DateTime(2023, 13, 1) } catch (TimeException e) { print("error: " + e.message) }
+try { var x = new DateTime(2023, 1, 1, 24, 0, 0) } catch (TimeException e) { print("error: " + e.message) }
+try { print(DateTime.DaysInMonth(2023, 13)) } catch (TimeException e) { print("error: " + e.message) }
+try { Sleep("x") } catch (TimeException e) { print("error: " + e.message) }
+try { Sleep(3m) } catch (TimeException e) { print("error: " + e.message) }
+try { Sleep(new Thing()) } catch (TimeException e) { print("error: " + e.message) }
+try { Sleep(true) } catch (TimeException e) { print("error: " + e.message) }
+try { Sleep(undefined) } catch (TimeException e) { print("error: " + e.message) }
+try { print(new DateTime(9999, 12, 31).AddDays(2)) } catch (TimeException e) { print("error: " + e.message) }
+try { print(new DateTime(9999, 12, 31).AddMonths(1)) } catch (TimeException e) { print("error: " + e.message) }
+try { print(new DateTime(1, 1, 1).AddYears(-1)) } catch (TimeException e) { print("error: " + e.message) }
+try { print(DateTime.Parse("nonsense")) } catch (TimeException e) { print("error: " + e.message) }
+try { print(TimeSpan.FromSeconds(2m)) } catch (Exception e) { print("error") }
+print(TimeSpan.Of(1.5s))
+print(TimeSpan.Of(250ms).TotalMilliseconds)
+print(TimeSpan.Of(2))
+print(new TimeSpan(0, 0, 0, 0, 1).ToString())
+print(new TimeSpan(-5).ToString())
+print(new TimeSpan(10, 0, 0, 0))
+for (var y = 1; y <= 3; y++) { print(new DateTime(2000 + y * 400, 2, 29).DayOfWeek) }
+print(new DateTime(1, 1, 1).DayName() + " " + new DateTime(9999, 12, 31).DayName() + " " + new DateTime(1900, 3, 1).DayOfYear + " " + new DateTime(2000, 12, 31).DayOfYear)
+print(new DateTime(1, 1, 1).Ticks)
+print(new DateTime(9999, 12, 31, 23, 59, 59, 999).Ticks)
+print(DateTime.Parse("1999-12-31 23:59:59").AddSeconds(1))
+print(DateTime.Parse("12/31/99"))
+print(DateTime.Parse("1/2/30"))
+print(DateTime.Parse("14:30"))
+print(DateTime.Parse("2:30:15 PM"))
+print(DateTime.Parse("12:00 AM"))
+print(DateTime.Parse("Mar 5 2020"))
+print(DateTime.Parse("5 March 2020 08:15"))
+print(DateTime.Parse("2024-03-15 14:30:00 +0530"))
+print(DateTime.Parse("2024/03/15"))
+print(DateTime.TryParse("2024-02-30") == undefined)
+//# name: Time: Formatstrings, Fehler (TimeException), Parse-Formen, Sleep mit falschen Angaben

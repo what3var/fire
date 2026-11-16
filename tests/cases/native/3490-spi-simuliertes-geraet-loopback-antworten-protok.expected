@@ -1,0 +1,19 @@
+devices sim 1 False
+name sim 0 2000000 False
+sim setup 0 2000000 False
+loopback 4 159 1 2 255
+sent 6 2
+log 159 255 1 2
+read echoes zeros 000
+id 239 64 24
+empty queue 00
+loop again 159
+into 00789
+changed 3 500000 True 3
+configure 1 False
+cleared 0 0
+mode 1
+range 1
+speed 1
+nodev 3
+closed 2

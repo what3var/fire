@@ -1,0 +1,12 @@
+var x = 99
+switch (x) {
+    case 1:
+        print("eins")
+        break
+    case 2:
+        print("zwei")
+        break
+}
+print("danach")
+//# note: what the test program said to expect (for a reader, it was not checked): nur 'danach'
+//# name: Bytecode-Test: switch ohne default, kein Treffer -> tut nichts

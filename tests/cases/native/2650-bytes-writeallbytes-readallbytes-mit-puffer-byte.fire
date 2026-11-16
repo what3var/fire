@@ -1,0 +1,29 @@
+#import "io"
+#import "filesystem"
+var p = IO.Path.Combine(IO.Path.GetTempPath(), "fire_bytes_args_1.bin")
+var b = new byte[2]
+b[0] = 65
+b[1] = 66
+IO.File.WriteAllBytes(p, b)
+print(IO.File.ReadAllText(p))
+byte r[] = [67, 68, 69]
+IO.File.WriteAllBytes(p, r)
+print(IO.File.ReadAllText(p))
+IO.File.WriteAllBytes(p, [70, 71, 0, 255])
+var back = IO.File.ReadAllBytes(p)
+print(back.length + " " + back[0] + " " + back[3])
+IO.File.AppendAllBytes(p, [])
+print(IO.File.Size(p))
+try { IO.File.WriteAllBytes(p, [1, 256]) } catch (ArgumentException e) { print("A: " + e.message) }
+try { IO.File.WriteAllBytes(p, [1, -1]) } catch (ArgumentException e) { print("A: " + e.message) }
+try { IO.File.WriteAllBytes(p, [1, undefined]) } catch (ArgumentException e) { print("A: " + e.message) }
+try { IO.File.WriteAllBytes(p, [1, 2.5]) } catch (ArgumentException e) { print("A: " + e.message) }
+try { IO.File.WriteAllBytes(p, "abc") } catch (ArgumentException e) { print("A: " + e.message) }
+var m = new IO.MemoryStream([1, 2, 3])
+print(m.Length)
+try { m.Read([0, 0], 0, 2) } catch (ArgumentException e) { print("A: " + e.message) }
+var into = new byte[3]
+print(m.Read(into, 0, 3) + " " + into[2])
+print(IO.Utf8.GetString([72, 105]))
+IO.File.Delete(p)
+//# name: Bytes: WriteAllBytes/ReadAllBytes mit Puffer, byte-Deklaration und Array; falsches Element, String, Fuell-Native mit Array

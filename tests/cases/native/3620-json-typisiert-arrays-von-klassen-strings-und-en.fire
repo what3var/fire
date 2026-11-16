@@ -1,0 +1,23 @@
+#import "json"
+enum Color { Red, Green, Blue }
+class Dog { string name; construct() { this.name = "" } }
+class Cat { }
+class Kennel {
+    Dog pets[]
+    string names[]
+    Color cs[]
+    defined Dog must[]
+    defined string tags[]
+    Dog grid[][]
+}
+any cat = new Cat()
+var k = Json.Deserialize<Kennel>("{\"pets\":[{\"name\":\"a\"},null],\"names\":[\"x\",null],\"cs\":[\"Green\"],\"must\":[{\"name\":\"m\"}],\"tags\":[\"t\",null],\"grid\":[[{\"name\":\"g\"}]]}")
+print(k.pets[0].name + " " + k.pets[1] + " " + k.names[0] + " " + k.names[1] + " " + k.cs[0] + " " + k.must[0].name + " [" + k.tags[1] + "] " + k.grid[0][0].name)
+try { k.pets[1] = cat } catch (ArgumentException e) { print("E1 " + e.message) }
+try { k.names[1] = 5 } catch (ArgumentException e) { print("E2 " + e.message) }
+try { k.cs[0] = 1 } catch (ArgumentException e) { print("E3 " + e.message) }
+try { k.must[0] = undefined } catch (ArgumentException e) { print("E4 " + e.message) }
+try { k.grid[0][0] = cat } catch (ArgumentException e) { print("E5 " + e.message) }
+try { var k2 = Json.Deserialize<Kennel>("{\"must\":[null]}"); print("no error " + k2.must[0]) } catch (ArgumentException e) { print("E6 " + e.message) }
+print(Json.Serialize(k))
+//# name: JSON typisiert Arrays von Klassen, strings und Enums (ROADMAP 19): Dog pets[], defined Dog must[] (null ist eine ArgumentException), Dog grid[][]

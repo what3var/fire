@@ -1,0 +1,21 @@
+class Item {
+    int n
+    construct(int n) { this.n = n }
+    destruct() { print("~I" + this.n) }
+}
+class Box {
+    string name
+    Item item
+    Item extra
+    construct(string name) { this.name = name }
+    destruct() { print("~B" + this.name) }
+}
+var g = new Item(1)
+fire {
+    var i = 0
+    while (i < 300000) { i = i + 1 }
+    print("thread fertig")
+}
+leave
+print("nie")
+//# name: Threads: leave im Hauptprogramm wartet auf Fire-Threads, dann werden die Globals zerstoert

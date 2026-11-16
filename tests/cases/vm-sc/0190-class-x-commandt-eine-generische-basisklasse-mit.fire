@@ -1,0 +1,11 @@
+class Twice : Command<int> {
+    override Execute(int context) { return context * 2 }
+}
+class Plus : Command<int> {
+    construct(int n) { this.Command = x => x + n }
+}
+print(new Twice().Execute(4))
+print(new Plus(10).Execute(4))
+var c = new Command<int>()
+print(c is of Command)
+//# name: class X : Command<T> - eine generische Basisklasse mit Typ-Argumenten, Execute ueberschreiben, Lambda erben

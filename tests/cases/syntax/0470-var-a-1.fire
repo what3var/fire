@@ -1,0 +1,4 @@
+var a = 1
+fire taking a handover a { }
+//# modes: Release
+//# name: syntax 47: var a = 1

@@ -1,0 +1,21 @@
+class Exception { string message; construct(string message = "") { this.message = message } }
+class C {
+    int v
+    string name
+    int Loud { get { return this.v * 2 } set { this.v = value / 2 } }
+    construct() { this.v = 1; this.name = "a" }
+}
+class T {
+    static Run() {
+        var c = new C()
+        var limit = 100
+        probe c.v changing (o, n) => n <= limit
+        c.v = 50
+        c.v = 500
+        print(c.v)
+        var r = (c.v = 700)
+        print(r + " " + c.v)
+    }
+}
+T.Run()
+//# name: probe changing: ein Handler mit false bricht das Schreiben ab (Ausdrucksform mit Capture)

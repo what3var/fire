@@ -1,0 +1,13 @@
+#import "time"
+// terminate cuts a sleep short and runs the handler; a thread that sleeps ends too
+fire {
+    Sleep(5s)
+    print("never")
+}
+catch terminate(v) { print("handler " + v) }
+Sleep(50ms)
+print("before terminate")
+terminate(7)
+Sleep(10s)
+print("never either")
+//# name: Threads: terminate beendet Sleep sofort

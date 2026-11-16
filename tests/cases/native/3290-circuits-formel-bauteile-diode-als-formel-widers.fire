@@ -1,0 +1,57 @@
+#import "circuits"
+class H {
+    static float R(float v) { return Math.Round(v * 1000) / 1000 }
+}
+// a diode written as a formula against the built-in one: the same operating point
+var c = new Circuits.Circuit()
+var v = c.Add(new Circuits.VoltageSource(5V))
+var r = c.Add(new Circuits.Resistor(1kOhm))
+var d = c.Add(new Circuits.Formula("Is*(exp(V/(n*Vt))-1)", "Is=1e-14 n=1"))
+v.A.Connect(r.A)
+r.B.Connect(d.A)
+d.B.Connect(c.Ground)
+v.B.Connect(c.Ground)
+c.Step()
+print("formula diode " + H.R(d.VoltageRaw()) + " V " + H.R(d.CurrentRaw() * 1000) + " mA")
+// a resistor as a formula: 1k
+var c2 = new Circuits.Circuit()
+var v2 = c2.Add(new Circuits.VoltageSource(10V))
+var f = c2.Add(new Circuits.Formula("V/R", "R=2k"))
+v2.A.Connect(f.A)
+v2.B.Connect(c2.Ground)
+f.B.Connect(c2.Ground)
+c2.Step()
+print("formula resistor " + H.R(f.CurrentRaw() * 1000) + " mA")
+f.Set("R=500")
+c2.Step()
+print("after Set " + H.R(f.CurrentRaw() * 1000) + " mA")
+// a voltage-controlled current source with three terminals: I(x) = gm * V2 (V2 is Y against Ref)
+var c3 = new Circuits.Circuit()
+var vin = c3.Add(new Circuits.VoltageSource(2V))
+var vcc = c3.Add(new Circuits.VoltageSource(10V))
+var rl = c3.Add(new Circuits.Resistor(1kOhm))
+var g = c3.Add(new Circuits.Formula3("gm*V2", "", "gm=1m"))
+vcc.A.Connect(rl.A)
+rl.B.Connect(g.X)
+vin.A.Connect(g.Y)
+g.Ref.Connect(c3.Ground)
+vin.B.Connect(c3.Ground)
+vcc.B.Connect(c3.Ground)
+c3.Step()
+print("vccs out " + H.R(g.X.Raw()) + " V, ix " + H.R(g.CurrentX / 1mA) + " mA")
+// models with formulas: the tunnel diode of the library, a model of one's own
+var tm = Circuits.Models.Get("tunnel")
+print("tunnel at 0.1V " + H.R(tm.Evaluate(0.1) * 1000) + " mA, at 0.3V " + H.R(tm.Evaluate(0.3) * 1000) + " mA")
+Circuits.Models.Add(Circuits.Model.Formula("square-law", "k*V*abs(V)", "k=1m"))
+var c4 = new Circuits.Circuit()
+var v4 = c4.Add(new Circuits.VoltageSource(3V))
+var sq = c4.Add(new Circuits.Formula("square-law", "k=2m"))
+v4.A.Connect(sq.A)
+v4.B.Connect(c4.Ground)
+sq.B.Connect(c4.Ground)
+c4.Step()
+print("square-law " + H.R(sq.CurrentRaw() * 1000) + " mA")
+try { new Circuits.Formula("Is*(exp(V/(n*Vt)-1", "Is=1e-14 n=1") } catch (ArgumentException e) { print(e.message) }
+try { new Circuits.Formula("foo(V)") } catch (ArgumentException e) { print(e.message) }
+try { new Circuits.Formula("V/R2", "R=1k") } catch (ArgumentException e) { print(e.message) }
+//# name: Circuits: Formel-Bauteile (Diode als Formel, Widerstand, Set, VCCS mit drei Anschluessen, Formel-Modelle, Fehlertexte)

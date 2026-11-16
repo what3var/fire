@@ -1,0 +1,18 @@
+#import "reflection"
+class Exception { string message; construct(string message = "") { this.message = message } }
+class P {
+    int n
+    int Age { get { throw new Exception("kein Alter") } }
+    Boom() { throw new Exception("boom") }
+}
+var p = new P()
+try { Reflect.Get(p, "nope") } catch (e) { print("1 " + e.message) }
+try { Reflect.Set(p, "Age", 1) } catch (e) { print("2 " + e.message) }
+try { Reflect.Call(p, "Nope", []) } catch (e) { print("3 " + e.message) }
+try { Reflect.Get(5, "x") } catch (e) { print("4 " + e.message) }
+try { Reflect.New("Gibts", []) } catch (e) { print("5 " + e.message) }
+try { Reflect.Get(p, "Age") } catch (e) { print("6 " + e.message) }
+try { Reflect.Call(p, "Boom", []) } catch (e) { print("7 " + e.message) }
+print("weiter")
+//# note: the reflection library was added by the test program; now the case imports it itself, so it is a program for forge run too
+//# name: Fehler sind fangbare ReflectionExceptions; Exceptions aus Getter/Methode laufen zum aeusseren catch

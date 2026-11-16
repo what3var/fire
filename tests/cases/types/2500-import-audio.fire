@@ -1,0 +1,5 @@
+#import "audio"
+print(1)
+//# types: strict
+//# modes: Release
+//# name: types 250: #import "audio"

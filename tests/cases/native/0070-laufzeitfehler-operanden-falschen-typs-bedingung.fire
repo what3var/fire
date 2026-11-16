@@ -1,0 +1,25 @@
+try { print(undefined * 2) } catch (ArgumentException e) { print("1 " + e.message) }
+try { print(-"a") } catch (ArgumentException e) { print("2 " + e.message) }
+try { var x = 5; if (x) { print("y") } } catch (ArgumentException e) { print("3 " + e.message) }
+try { print(!5) } catch (ArgumentException e) { print("4 " + e.message) }
+try { print("a" - 1) } catch (ArgumentException e) { print("5 " + e.message) }
+try { print(true + 1) } catch (ArgumentException e) { print("6 " + e.message) }
+try { print(2 ^ "x") } catch (ArgumentException e) { print("7 " + e.message) }
+try { var u = undefined; u++ } catch (ArgumentException e) { print("8 " + e.message) }
+try { var n = 5; print(n[0]) } catch (ArgumentException e) { print("9 " + e.message) }
+try { print(1 < "a") } catch (ArgumentException e) { print("10 " + e.message) }
+try { print(~2.5) } catch (ArgumentException e) { print("11 " + e.message) }
+try { print(true && 5) } catch (ArgumentException e) { print("12 " + e.message) }
+print("end")
+int loops = 0
+while (loops < 3) { loops++; try { var q = undefined; q = q * 2 } catch (ArgumentException e) { print("loop " + loops) } }
+try { var w2 = 1; while (w2) { w2 = 0 } } catch (ArgumentException e) { print(e.message) }
+try { var s = "abc"; s[0] = 'x' } catch (ArgumentException e) { print(e.message) }
+try { print(1m + 1s) } catch (UnitMismatchException e) { print(e.message + " | " + e.expectedUnit + " | " + e.actualUnit) }
+try { print(2m < 3kg) } catch (UnitMismatchException e) { print(e.message) }
+print("end")
+try { print(2m ^ 2s) } catch (UnitMismatchException e) { print(e.message) }
+try { var big = 3m; if (big > 2kg) { print("no") } } catch (UnitMismatchException e) { print("gt " + e.message) }
+try { print(1m >= 1s) } catch (UnitMismatchException e) { print("ge " + e.message) }
+print(1m < 200cm)
+//# name: Laufzeitfehler: Operanden falschen Typs, Bedingungen, Index und Einheitenkonflikte sind abfangbar (gleiche Texte)

@@ -1,0 +1,6 @@
+var z = undefined
+z = 4
+print(z)
+//# types: strict
+//# modes: Release
+//# name: types 26: var z = undefined

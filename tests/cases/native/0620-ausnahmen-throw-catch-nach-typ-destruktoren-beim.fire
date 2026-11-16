@@ -1,0 +1,45 @@
+class Err : Exception {
+    string message
+    int code
+    construct(string m, int c) { this.message = m; this.code = c }
+}
+class Other : Exception {
+    construct() { }
+}
+class Res {
+    string name
+    construct(string n) { this.name = n; print("open " + n) }
+    destruct() { print("close " + name) }
+}
+class T {
+    static int Deep(int n) {
+        var r = new Res("deep" + n)
+        if (n == 0) { throw new Err("bottom", 42) }
+        return T.Deep(n - 1) + 1
+    }
+    static int Safe(int x) {
+        try {
+            return T.Deep(x)
+        } catch (Other o) {
+            print("wrong handler")
+            return -1
+        } finally {
+            print("finally in Safe " + x)
+        }
+    }
+}
+try {
+    var a = new Res("A")
+    print(T.Safe(2))
+} catch (Err e) {
+    print("caught " + e.message + " " + e.code)
+} finally {
+    print("outer finally")
+}
+print("next")
+try {
+    throw new Other()
+} catch (e) {
+    print("catch-all")
+}
+//# name: Ausnahmen: throw, catch nach Typ, Destruktoren beim Abwickeln, finally

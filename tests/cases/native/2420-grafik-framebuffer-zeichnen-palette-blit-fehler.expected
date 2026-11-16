@@ -1,0 +1,29 @@
+64x48 mode 0 bytes 12288
+clear 956353022
+basic 348241429
+round 609473887
+poly 528071140
+flood 656646216
+text 959776953 8x14
+-5636096 256 1
+scroll 103640633
+pal 461485260 4280207370 768 1024
+0
+blit 177869042 351028130
+185 16
+99
+-11917981 -2132887148 7490856
+1 4
+1 885759090 0
+Expected exactly 16 bytes (2x2, 4 bytes per pixel), got 3. (Parameter 'pixels')
+Expected exactly 16 bytes, got 3.
+Palette index 300 outside of 0-255.
+A palette has 768 (RGB) or 1024 (RGBA) bytes, got 10.
+bad size
+bad mode
+Unknown image format (expected: PNG, BMP or GIF).
+The image data is empty.
+33
+758
+0 True 9 29.310532454755688 23.5
+193

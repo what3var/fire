@@ -1,0 +1,20 @@
+remove a
+~a
+overwrite b
+~b
+clear
+~b2
+cleared 0 mine
+removeAt 0
+~l1
+remove mine True
+taken l3
+set
+~l2
+clear
+~l4
+hs remove
+~h1
+end mine l3
+~mine
+~l3

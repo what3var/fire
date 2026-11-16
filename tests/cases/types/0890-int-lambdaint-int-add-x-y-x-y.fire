@@ -1,0 +1,6 @@
+int lambda<int, int> add = (x, y) => x + y
+lambda<int> three = (x, y) => x
+add(1)
+//# types: strict
+//# modes: Release
+//# name: types 89: int lambda<int, int> add = (x, y) => x + y

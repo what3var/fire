@@ -1,0 +1,4 @@
+error TC015: The method 'Speek' of 'Dog' is marked 'override', but no base class of 'Dog' has a method 'Speek' - nothing is overridden (line 11)
+error TC015: The method 'Hello' of 'Dog' is marked 'override', but no base class of 'Dog' has a method 'Hello' with these parameters - nothing is overridden (line 12)
+error TC015: The property 'Tail' of 'Dog' is marked 'override', but no base class of 'Dog' has a property 'Tail' - nothing is overridden (line 13)
+error TC015: The method 'Speak' of 'Robot' is marked 'override', but no base class of 'Robot' has a method 'Speak' (a method of an interface is implemented without 'override') - nothing is overridden (line 15)

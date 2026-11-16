@@ -1,0 +1,4 @@
+warning TC001: Cannot assign a value of type 'string' to an element of type 'int' (line 2)
+warning TC001: Cannot assign a value of type 'int[]' to 'whole' of type 'int' (line 3)
+warning TC001: Cannot assign a value of type 'float' to 'flag' of type 'bool' (line 5)
+warning TC001: Cannot assign a value of type 'int' to 'q' of type 'bool' (line 6)

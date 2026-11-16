@@ -1,0 +1,7 @@
+class W { string n; int c; construct(string n) { this.n = n; this.c = 0 } Hello(string s) { return "hello " + s + " " + this.n } Run(class f) { f(1, 2, 3) } }
+var win = new W("w")
+win.Run(func (x, y, b) on win => { c = c + x; c++; print($"x: {x} y: {y} b: {b} n: {n} c: {c}"); print(Hello("a")) })
+print(win.c)
+var plain = func (x) => x + 1
+print(plain(1))
+//# name: func (...) on ziel => ...: Mitglieder des Ziels sind unqualifiziert sichtbar (lesen, schreiben, ++, Methoden)

@@ -1507,7 +1507,7 @@ Objekte nach dem Lauf noch verwenden (die Thread-Tests tun das); im Einzelschrit
 1. dem **Start-Stück**: `fire.Runtime.exe` (apphost) + `fire.Runtime.dll` + `fire.Runtime.runtimeconfig.json` als .NET-Single-File-Bundle (Format v6, `BundleWriter`; dasselbe Layout wie
    `dotnet publish -p:PublishSingleFile=true` für framework-abhängige Apps, selbst geschrieben, damit der Compiler kein SDK braucht). Mehr braucht der .NET-Host nicht; der Host liest nur ab dem im apphost
    eingetragenen Header-Offset, Daten dahinter stören nicht. Es läuft weiterhin eine installierte .NET-8-Runtime vor (framework-abhängig).
-2. dem **Payload** dahinter (`PayloadFile`): Programm (MemoryPack), Kern (`fire.dll`, `MemoryPack.Core`) und - NUR bei entsprechendem `#import` - die Bridge-DLLs samt Abhängigkeiten und nativen Bibliotheken. Jeder
+2. dem **Payload** dahinter (`PayloadFile`): Programm (eine Programmdatei, Abschnitt 48), Kern (`fire.dll`) und - NUR bei entsprechendem `#import` - die Bridge-DLLs samt Abhängigkeiten und nativen Bibliotheken. Jeder
    Eintrag ist einzeln Brotli-gepackt (nur wenn es etwas bringt) und trägt eine SHA-256-Prüfsumme. Stufe: das Programm mit `Optimal` (Millisekunden), die DLLs mit `SmallestSize`
    (Qualität 11, für eine große DLL ~3 s) - aber nur einmal: das Ergebnis liegt im Cache `%TEMP%/fire-pack-cache/<SHA-256 der DLL>.br`, jeder weitere Build liest es nur (Build ~0,3 s statt 1,6-5 s). Ohne Schreibrecht
    auf den Cache wird schnell (`Optimal`) gepackt. Layout: `[Einträge][Index][Fuß: int64 Index-Offset, int32 Index-Länge, "FIREPAK1"]` - gelesen wird über den
@@ -1870,3 +1870,123 @@ diesen Zuständen in lokalen Variablen (nur für die häufigen Instruktionen, al
   wandert in der Argumentliste `AL` des Aufrufers (`takeArg`), `g_acc.handOff` zeigt auf sie, jeder Setter übernimmt sie beim Eintritt (`MYAL = accTakeHandOff()`) und zählt sie zu seinen Scopes; nach dem Aufruf
   `finishArgs` (was der Setter nicht behielt, stirbt). Ein Name, der in einer Klasse Feld und in einer anderen Property ist: hat kein Setter die Übergabe genommen, geht der Wert zurück (`accHandEnd(..., giveBack)`).
   Ein Getter mit Übernahmen merkt sie in `g_acc.items` ab `ACCB` (Stand beim Eintritt); `ReturnSeq` ruft `accReturn` (zurück in die Funktions-Scope), Rückkehr und Ausnahme-Ausgang setzen `g_acc.top = ACCB`.
+
+## 48. Das Dateiformat `.fbc`
+
+Ein gelinktes Programm (`LinkedProgram`) als Bytes: `ProgramFile.Write`/`ProgramFile.Read` (`src/fire/Bytecode/ProgramFile.cs`). Es ist, was ein
+gepacktes Programm in seinem Payload trägt, was ein Plugin für die VM hinter seinem Kopf trägt (`.fireplugin`, Magic `FIREPLG2`), und die Naht
+zwischen dem Compiler und allem, was seinen Bytecode ausführt oder übersetzt ([ROADMAP_C_PORT.md](../ROADMAP_C_PORT.md), L2): die VM in C liest
+dieses Format. Es löst MemoryPack ab, dessen Bytes nur .NET lesen konnte und das private Felder und Nur-Lese-Eigenschaften still wegließ.
+
+`forge bytecode a.fire b.fire -o x.fbc` schreibt eine Datei, `forge dump x.fbc` (oder `forge dump a.fire b.fire`) gibt ein Programm als Text aus
+(`ProgramDump`): alles, was die Datei hält, in ihrer Reihenfolge, eine Sache pro Zeile - zum Vergleichen gemacht.
+
+**Regeln.**
+
+* Schlichte Daten, Little Endian, nichts von .NET darin.
+* **Dieselben Quellen, dieselben Bytes.** Alles steht in der Reihenfolge, in der der Compiler es gemacht hat (Tabellen in der Reihenfolge ihrer
+  Einträge); nichts hängt am Lauf, der die Datei geschrieben hat.
+* **Was das Programm doppelt hält, steht einmal da.** Eine Funktion oder ein Chunk, auf den zwei Stellen zeigen, und eine Klasse unter zwei Namen
+  werden beim ersten Vorkommen geschrieben und danach über ihre Nummer genannt; die Basisklasse ist ein Verweis in die Klassentabelle. Das gelesene
+  Programm hat die Gestalt des geschriebenen. Eine Funktion, die sich selbst enthält, gibt es nicht (der Schreiber lehnt sie ab).
+* Nicht in der Datei: was nur beim Linken bekannt ist (die in `LinkedProgram` als "not serialized" beschriebenen Felder: Quelldateien, Module, Namen der Natives, Icon, ...),
+  `Chunk.OwnerClass` (ein Kreis; nach dem Lesen wiederhergestellt) und alles, was die VM beim Laufen anlegt (Caches).
+* Eine Datei einer anderen Version wird abgelehnt (`ProgramFileException`), ebenso jede beschädigte - nie mit einer anderen Ausnahme.
+
+**Bausteine.**
+
+| Baustein | Bytes |
+|---|---|
+| `u8` | ein Byte |
+| `uint` | vorzeichenlos, LEB128 (7 Bit je Byte, das höchste Bit: es folgt noch eines) |
+| `int` | mit Vorzeichen, Zickzack (`(v << 1) ^ (v >> 63)`), dann wie `uint` |
+| `f64` | 8 Bytes, IEEE 754 |
+| `bytes` | `uint` Länge, dann die Bytes |
+| `str` | `uint`: 0 = kein Name (`null`), sonst Index + 1 in die Tabelle der Namen |
+| `list<X>` | `uint` Anzahl, dann die Einträge |
+| `opt list<X>` | `uint`: 0 = keine Liste, sonst Anzahl + 1, dann die Einträge |
+| `unit` | `uint`: 0 = keine, sonst Index + 1 in die Tabelle der Einheiten |
+| `enum` | `uint`: 0 = keins, sonst Index + 1 in die Tabelle der Enums |
+| `flags` | `u8`, Bit 0 zuerst in der genannten Reihenfolge |
+
+**Aufbau.**
+
+```
+Datei     := 'F' 'B' 'C' 0x1A   version:u8 (= 1)   flags:u8 (Bit 0: mit Zeilentabellen)
+             Namen Einheiten Enums Programm
+Namen     := list< bytes (UTF-8) >
+Einheiten := list< Einheit >
+Einheit   := dims:list< symbol:str exponent:int >  scale:f64  symbol:str  offset:f64  converter:str  unitlessConverter:str
+Enums     := list< name:str flags:u8 (1 = Flag-Enum)  list< name:str value:int > >
+
+Programm  := mode:u8 (0 Debug, 1 Release, 2 Performance)  floatWidth:u8  intWidth:u8  wordWidth:u8  firstUserSource:int
+             nativeImports:list<str>
+             packageNatives:opt list<str>   packageNativeLibraries:opt list<str>   graphicsNatives:opt list<str>
+             customUnits:list< name:str symbol:str prefixed:u8 dims scale:f64 offset:f64 converter:str unitlessConverter:str >
+             enumDecls:list< name:str flags:u8 list< name:str value:int > >
+             resources:list< name:str data:bytes >
+             externs:list< name:str Extern >
+             classes:list< Klasse >                         -- jedes Klassenobjekt einmal
+             classNames:list< name:str klasse:uint >        -- die Tabelle des Programms: Name -> Index in classes
+             topLevel:Chunk
+
+Klasse    := name:str  base:uint (0 = keine, sonst Index + 1 in classes)
+             flags (actor, record, reflectionHelper, keep, notSerializable, noCopy)
+             meta:u8 (0 = keine) [ members:list< Member >  baseNames:list<str>  Attribute  declaredInterfaces:list<str> ]
+             interfaces:list<str>  baseTypeArgs:opt list<str>  keptMembers:opt list<str>
+             fields:list< name:str init:Funktion >
+             fieldInfo:list< name:str  requiredUnit:str requiredKind:u8 requiredType:str requiredArray:uint requiredArrayType:str arrayOfParam:str
+                             flags (derivedDefined, static)  access:u8 (0 public, 1 private, 2 protected)  typeText:str
+                             attrs:u8 (0 = keine) [ Attribute ] >
+             staticValues:list< name:str Konstante >
+             staticFields:list< name:str init:Funktion >
+             readonlyStatics:opt list<str>
+             methods:list< name:str list< Funktion > >
+             constructors:list< arity:int Funktion >   extraConstructors:list< Funktion >   destructor:Funktion
+             thisReads:opt list< name:str list<str> >
+Member    := name:str kind:str typeName:str access:str  flags (static, readonly, canRead, canWrite)  unit:str
+             paramNames:list<str> paramTypes:list<str> Attribute
+Attribute := list< name:str argTexts:list<str> argsJson:str >
+
+Funktion  := uint: 0 = keine; 1 = hier steht sie (und bekommt die nächste Nummer, ab 0); n >= 2 = die Funktion mit der Nummer n - 2
+             [ Chunk  paramCount:int  paramDefaults:list< Funktion >  access:u8 (0 = keiner, sonst 1 + wie oben)  flags (static, readsOnly)
+               refMask:uint captureCopyMask:uint captureMovedMask:uint
+               selectorPath:opt list<str>  paramTypes:opt list<str>  fieldGetterOf:str  paramNames:opt list<str>  typeParamCount:int
+               specializations:opt list< Funktion >  specOwner:str  specArgs:opt list<str>  specDefinedMask:int
+               specParamKinds:uint (0 = keine, sonst Länge + 1) und die Bytes ]
+Chunk     := uint: 1 = hier steht er (nächste Nummer); n >= 2 = der Chunk mit der Nummer n - 2
+             [ code:bytes  constants:list< Konstante >  units:list< unit >  functions:list< Funktion >
+               receiverTypeArgs:opt list< offset:int text:str >
+               handlers:list< catches:list< type:str addr:int >  finally:int (0 = keins, sonst Adresse + 1) >
+               lines:list< offset:int source:int line:int >            -- nur mit Bit 0 der flags der Datei
+               names:list< depth:int slot:int name:str > ]             -- DebugLocalNames; depth -1: der Name, den ein DeclareLocal an dieser Adresse anlegt
+
+Konstante := tag:u8, dann
+             0 undefined   unit
+             1 bool        u8
+             2 int         value:int  width:u8 (8, 16, 32, 64)  wide:u8 (0, 32, 64)  unit  enum
+             3 float       f64  width:u8  unit
+             4 char        uint (eine UTF-16-Einheit)
+             5 string      uint Anzahl, dann so viele UTF-16-Einheiten zu je 2 Bytes
+             6 word        8 Bytes
+
+Extern    := libName:str  paramTypes:list< Typ >  returnType:Typ  inlineC:str  paramNames:opt list<str>  inlineSource:int  inlineLine:int  displayName:str
+Typ       := u8 (0 = keiner) [ baseName:str  bitWidth:int (0 = keine, sonst Breite + 1)  pointerDepth:int
+               lambda:u8 (0 = keine) [ returnTypeName:str paramTypeNames:list<str> isSelector:u8 selectorKind:str isExpression:u8 ]
+               namespaces:opt list<str>  unit:str  arrayRank:int  typeArgCount:int  typeArgs:opt list< Typ >  flags (unsigned, defined) ]
+```
+
+Die Namen stehen als UTF-8 in einer Tabelle (ein Name, der kein gültiger Unicode-Text ist, wird nicht geschrieben); nur der Text einer
+String-Konstanten steht als UTF-16, genau so, wie die Runtime einen String hält. Die Tags der Konstanten 0 bis 5 sind die Arten der C-ABI der
+Packages (`fire_pkg_abi.h`).
+
+**Zeilentabellen.** Sie stehen in der Datei, wenn der Schreiber es will: ein Plugin und `forge bytecode` schreiben sie, ein gepacktes Programm
+(`forge build --engine vm`) wie bisher nicht. (Vorher wanderten sie beim Plugin als Text durch `DebugLocalNames`, Tiefe -2; das gibt es nicht mehr.)
+
+**Eine Einheit allein** (`ProgramFile.WriteUnit`/`ReadUnit`): `Namen Einheit` - so merkt sich die Schnittstelle eines Moduls (`StaticLinkage`,
+Format 2) die Einheiten, die es braucht.
+
+**Tests:** `FIRE_TESTS_ONLY=programfile` (`ProgramFileTests.cs`) - für ein Skript mit einem Stück von allem und für jedes Beispiel von spark: der
+Text des gelesenen Programms ist der des geschriebenen, noch einmal geschrieben sind es dieselben Bytes, zweimal übersetzt sind es dieselben Bytes,
+das Programm aus der Datei läuft wie das übersetzte; eine abgeschnittene, verlängerte oder an hunderten Stellen veränderte Datei gibt nur die
+Ausnahme der Programmdatei.

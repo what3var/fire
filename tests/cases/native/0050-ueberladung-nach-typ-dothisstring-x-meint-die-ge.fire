@@ -1,0 +1,42 @@
+#strict
+class Util {
+    static string DoThis(string s) { return "string" }
+    static string DoThis<T>(T x) { return "generic" }
+    static T Echo<T>(T x) { return x }
+}
+print(Util.DoThis("x"))
+print(Util.DoThis<string>("x"))
+print(Util.DoThis(5))
+int e = Util.Echo<int>(4)
+print(e + 1)
+
+class Base {
+    string Hello(int x) { return "base int" }
+    string Hello(string x) { return "base string" }
+    string Over(any x) { return "base any" }
+}
+class Derived : Base {
+    override string Hello(int x) { return "derived int" }
+    override string Over(int x) { return "derived int" }
+}
+var d = new Derived()
+print(d.Hello(1))
+print(d.Hello("a"))
+
+print(d.Over(2))
+
+class Point {
+    string made
+    construct(int x) { this.made = "int" }
+    construct(string s) { this.made = "string" }
+    construct(float f) { this.made = "float" }
+}
+print(new Point(1).made + " " + new Point("a").made + " " + new Point(2.5).made)
+string r = Util.DoThis("y")
+print(r)
+for (int i = 0; i < 3; i++) {
+    any v = i
+    if (i == 1) { v = "s" }
+    print(Util.DoThis(v))
+}
+//# name: Ueberladung nach Typ: DoThis<string>(x) meint die generische, Basis-/abgeleitete Klasse, Konstruktoren, any-Werte zur Laufzeit

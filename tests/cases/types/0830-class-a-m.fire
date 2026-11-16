@@ -1,0 +1,4 @@
+class A { M() { } }
+//# types: strict
+//# modes: Release
+//# name: types 83: class A { M() { } }

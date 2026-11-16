@@ -1,0 +1,5 @@
+any a = [1]
+var e = a[0]
+print(e)
+//# modes: Release
+//# name: types 29: any a = [1]

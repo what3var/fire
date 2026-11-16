@@ -1,0 +1,3 @@
+warn 123456: "x"
+//# modes: Release
+//# name: diag 9: warn 123456: "x"

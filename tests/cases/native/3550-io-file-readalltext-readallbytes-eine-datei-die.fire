@@ -1,0 +1,11 @@
+#import "filesystem"
+var meminfo = !IO.File.Exists("/proc/meminfo") || IO.File.ReadAllText("/proc/meminfo").StartsWith("MemTotal")
+var status = !IO.File.Exists("/proc/self/status") || IO.File.ReadAllBytes("/proc/self/status").length > 20
+print(meminfo + " " + status)
+var dir = IO.Path.Combine(IO.Path.GetTempPath(), "fire-readall-" + DateTime.UtcNow.Ticks)
+IO.Directory.CreateDirectory(dir)
+IO.File.WriteAllText(IO.Path.Combine(dir, "empty.txt"), "")
+IO.File.WriteAllText(IO.Path.Combine(dir, "text.txt"), "hello")
+print(IO.File.ReadAllText(IO.Path.Combine(dir, "empty.txt")).Length + " " + IO.File.ReadAllText(IO.Path.Combine(dir, "text.txt")))
+IO.Directory.Delete(dir, true)
+//# name: IO.File.ReadAllText/ReadAllBytes: eine Datei, die die Groesse 0 meldet (/proc), wird bis zum Ende gelesen; leere und gewoehnliche Dateien wie vorher

@@ -1,0 +1,7 @@
+print(copy 5)
+print(flat "text")
+print(copy 2.5)
+print(flat true)
+var u = copy undefined
+print(u == undefined)
+//# name: Werte: nichts zu kopieren

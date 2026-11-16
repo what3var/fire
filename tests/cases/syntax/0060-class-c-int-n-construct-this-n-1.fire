@@ -1,0 +1,12 @@
+class C { int n; construct() { this.n = 1 } }
+var c = new C()
+c.n += 41
+c.n *= 2
+var arr = [1, 2, 3]
+var i = 1
+arr[i] += 10
+arr[i + 1] *= 5
+print(c.n)
+print(arr[0] + "," + arr[1] + "," + arr[2])
+//# modes: Release
+//# name: syntax 6: class C { int n; construct() { this.n = 1 } }

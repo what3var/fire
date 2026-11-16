@@ -1,0 +1,16 @@
+#import "time"
+class Counter { int n = 0 }
+class Demo {
+    static undefined Run() {
+        fire {
+            var o = new Counter()
+            var f = func () on o => { n = n + 1; return n }
+            fire taking f {
+                Sleep(100ms)
+                try { print(f()) } catch (ArgumentException e) { print("ended: " + e.message) }
+            }
+        }
+    }
+}
+Demo.Run()
+//# name: Threads: Lambdas - ist der Thread ihres Ziels zu Ende, ist der Aufruf eine ArgumentException

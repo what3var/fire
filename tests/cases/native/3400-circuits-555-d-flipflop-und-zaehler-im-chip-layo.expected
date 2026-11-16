@@ -1,0 +1,4 @@
+Timer555 0,4 0,12 0,16 8,-4 8,20 16,8 16,4 12,20 ''
+DFlipFlop 30,0 42,0 42,8 30,4 30,8 ''
+Counter 50,0 56,4 56,2 56,0 50,4 ''
+555 at 9 V: 32 periods in 50 ms (about 34: a period is 0.693 * 21k * 100n), output up to 8.991 V

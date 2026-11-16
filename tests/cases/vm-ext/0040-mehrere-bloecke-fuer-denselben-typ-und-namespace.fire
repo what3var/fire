@@ -1,0 +1,7 @@
+class extends string { string A() { return "a" + this } }
+namespace Util {
+    class extends string { string B() { return this + "b" } }
+}
+class extends string { string C() { return this.A().B() } }
+print("x".C())
+//# name: mehrere Bloecke fuer denselben Typ und Namespaces werden zusammengefuehrt

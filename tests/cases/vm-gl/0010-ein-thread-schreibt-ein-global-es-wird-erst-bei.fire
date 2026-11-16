@@ -1,0 +1,8 @@
+#nosync
+var counter = 0
+fire { counter = 5 }
+var handled = 0
+while (handled == 0) { handled = sync globals }
+print("counter " + counter + " bearbeitet " + handled)
+//# note: With #nosync: otherwise the automatic processing could take care of the thread's registration before the first `sync globals`, whose return value would stay 0
+//# name: Ein Thread schreibt ein Global: es wird erst bei `sync globals` des Hauptprogramms wirksam

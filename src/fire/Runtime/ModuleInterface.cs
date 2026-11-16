@@ -6,7 +6,6 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using fire.Bytecode;
-using MemoryPack;
 
 namespace fire.Runtime
 {
@@ -69,10 +68,10 @@ namespace fire.Runtime
     }
 
     /// <summary>The bytecode of a fire plugin for the VM (`<name>.fireplugin`, next to its native library; ROADMAP 9.8): a header (its module, the interfaces of the modules
-    /// it needs) and the linked program it was compiled as (MemoryPack). The VM links its classes into the running program (VM.Plugins.cs).</summary>
+    /// it needs) and the linked program it was compiled as (a program file, ProgramFile). The VM links its classes into the running program (VM.Plugins.cs).</summary>
     public sealed class PluginBytecode
     {
-        private static readonly byte[] Magic = Encoding.ASCII.GetBytes("FIREPLG1");
+        private static readonly byte[] Magic = Encoding.ASCII.GetBytes("FIREPLG2");   // (2: the program behind the header is a program file, ProgramFile)
 
         public string Name { get; set; } = "";
         public int Format { get; set; } = ModuleInterface.Format;
@@ -122,9 +121,8 @@ namespace fire.Runtime
                         header.Sources.Add(new[] { i.ToString(System.Globalization.CultureInfo.InvariantCulture),
                             program.SourceFiles is { } f && i < f.Count ? f[i] : null, program.SourceHashes is { } h && i < h.Count ? h[i] : null });
             byte[] json = JsonSerializer.SerializeToUtf8Bytes(header);
-            // (the line tables go along: the debugger shows the plugin's lines - Chunk.KeepLineTable)
-            foreach (var chunk in Chunks(program.Program)) chunk.KeepLineTable();
-            byte[] body = MemoryPackSerializer.Serialize(program);
+            // (the line tables go along: the debugger shows the plugin's lines)
+            byte[] body = fire.Bytecode.ProgramFile.Write(program, lineTables: true);
             using var fs = new FileStream(path, FileMode.Create, FileAccess.Write);
             fs.Write(Magic);
             fs.Write(BitConverter.GetBytes(json.Length));
@@ -140,10 +138,9 @@ namespace fire.Runtime
             int length = BitConverter.ToInt32(all, Magic.Length);
             var header = JsonSerializer.Deserialize<PluginBytecode>(all.AsSpan(Magic.Length + 4, length));
             if (header == null) return null;
-            var program = MemoryPackSerializer.Deserialize<LinkedProgram>(all.AsSpan(Magic.Length + 4 + length));
-            if (program == null) return null;
-            program.Program.RelinkAfterDeserialize();
-            foreach (var chunk in Chunks(program.Program)) chunk.RestoreLineTable();
+            LinkedProgram program;
+            try { program = fire.Bytecode.ProgramFile.Read(all.AsSpan(Magic.Length + 4 + length)); }
+            catch (fire.Bytecode.ProgramFileException ex) { throw new ArgumentException(ex.Message, ex); }   // (an older plugin, a damaged file: VM.Plugins reports it)
             header.Program = program;
             header.Directory = Path.GetDirectoryName(Path.GetFullPath(path)) ?? "";
             return header;

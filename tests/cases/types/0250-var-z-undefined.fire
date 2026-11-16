@@ -1,0 +1,6 @@
+var z = undefined
+z = 4
+try { z = "s" } catch (ArgumentException e) { print("kept") }
+print(z)
+//# modes: Release
+//# name: types 25: var z = undefined

@@ -1,0 +1,5 @@
+var total = 0
+foreach (var x in [1, 2, 3]) { total += x }
+print(total)
+//# modes: Release
+//# name: syntax 3: var total = 0

@@ -1,0 +1,22 @@
+class Animal {
+    string name
+
+    construct(string name) {
+        this.name = name
+    }
+}
+
+class extends Animal {
+    int age
+
+    string Describe() {
+        return this.name
+    }
+}
+
+var a = new Animal("Rex")
+a.age = 5
+print(a.Describe())
+print(a.age)
+//# note: what the test program said to expect (for a reader, it was not checked): Rex / 5
+//# name: Bytecode-Test: Extension-Klassen (class extends)

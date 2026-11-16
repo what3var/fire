@@ -1,0 +1,13 @@
+class Box<T> {
+    T value
+    construct(T value) { this.value = value }
+}
+
+var inner = new Box<int>(21)
+var outer = new Box<Box<int>>(inner)
+print("outer.value.value = " + outer.value.value)
+
+var tripleNested = new Box<Box<Box<int>>>(outer)
+print("tripleNested.value.value.value = " + tripleNested.value.value.value)
+//# note: what the test program said to expect (for a reader, it was not checked): 21 / 21
+//# name: Generics: verschachtelte Typ-Argumente 'new Box<Box<int>>()'

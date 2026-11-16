@@ -1,0 +1,9 @@
+206 True
+--B|Content-Type: text/plain; charset=utf-8|Content-Range: bytes 2-4/20||234|--B|Content-Type: text/plain; charset=utf-8|Content-Range: bytes 10-12/20||abc|--B|Content-Type: text/plain; charset=utf-8|Content-Range: bytes 17-19/20||hij|--B--|
+206 bytes 5-19/20 [56789abcdefghij]
+outside 416
+if-range 200
+mapped 200 [v1 zip]
+mapped missing 404
+sneaky 404 hidden 404
+plain 0123456789abcdefghij

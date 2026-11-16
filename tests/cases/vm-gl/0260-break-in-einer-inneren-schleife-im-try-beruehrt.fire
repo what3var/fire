@@ -1,0 +1,7 @@
+var log = ""
+try {
+    for (var i = 0; i < 3; i = i + 1) { try { break } finally { log = log + "i" } }
+    log = log + "x"
+} finally { log = log + "o" }
+print(log)
+//# name: break in einer inneren Schleife im try beruehrt das aeussere try nicht

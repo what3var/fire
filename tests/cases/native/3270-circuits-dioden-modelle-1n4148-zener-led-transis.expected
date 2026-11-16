@@ -1,0 +1,14 @@
+diode 0.693 V 4.307 mA it 10 bad 0
+led 1.861 V 9.511 mA 0.476 True
+zener 5.15 V
+npn vce 0.076 vbe 0.71 ic 4.924 ib 429.027 ie -5.353
+active ic 4.737 beta 1103
+nmos vds 0.064 id 49.363
+nmos off vds 5
+opamp out 4.999
+opamp clipped 14.999
+nand(1,0) True 4.995
+nand(1,1) False 0
+toggle changes 10
+4 1N4148
+The model '1N4148' is a D, not a NPN,PNP.

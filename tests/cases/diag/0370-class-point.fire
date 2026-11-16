@@ -1,0 +1,14 @@
+class Point {
+    int x
+    int y
+}
+var p = new Point()
+with p {
+    .x = 10
+    .y = 20
+}
+with p {
+    print(.x + .y)
+}
+//# modes: Release
+//# name: diag 37: class Point {

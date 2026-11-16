@@ -1,0 +1,21 @@
+class Probe {
+    static undefined Try(string what, any lambda f) {
+        try { print(what + " " + f()) } catch (ArgumentException e) { print(what + " caught") }
+    }
+}
+any u = undefined
+any s = "a"
+any n = 5
+Probe.Try("mul", () => u * 2)
+Probe.Try("neg", () => -s)
+Probe.Try("not", () => !n)
+Probe.Try("lt", () => s < 1)
+Probe.Try("inc", () => { any x = undefined; x++; return x })
+Probe.Try("idx", () => { any x = 5; return x[0] })
+Probe.Try("cond", () => { if (n) { return 1 } return 0 })
+Probe.Try("conv", () => "42"!int)
+any g = undefined
+try { g++ } catch (ArgumentException e) { print("global caught") }
+print("end")
+//# modes: Debug Release
+//# name: Falsche Operanden sind abfangbare ArgumentExceptions (kein Absturz der VM)

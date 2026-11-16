@@ -1,0 +1,1 @@
+error TC012: Static field 'sv' of 'Base' is private and cannot be accessed from here. (line 18)

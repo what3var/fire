@@ -1,0 +1,7 @@
+class J { int n }
+var ch = new Channel<J>()
+var j = new J()
+ch.Send(j)
+print(1)
+//# modes: Release
+//# name: types 16: class J { int n }

@@ -1,0 +1,3 @@
+any q = "q"
+print(q * 2)
+//# name: Abbruch: unbehandelte ArgumentException (Programm ohne Ausnahmen)

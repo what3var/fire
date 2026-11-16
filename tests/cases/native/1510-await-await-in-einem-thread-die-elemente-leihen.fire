@@ -1,0 +1,30 @@
+#import "time"
+class Box { int v = 3 }
+actor Hub {
+    Completion c
+    int got = 0
+    undefined Register(Completion w) { this.c = take w }
+    undefined Give(int v) { this.got = v; this.c.Set(v) }
+    undefined Report(string text) { print(text) }
+}
+class Work {
+    static int N(Box b) { b.v = b.v + 1; return b.v }
+    static int A(Hub h) { Sleep(30ms); h.Give(7); return 1 }
+    static int B(Completion w) { any v = w.Wait(5s); return v }
+}
+var h = new Hub()
+var c = new Completion()
+h.Register(c.Share())
+process h
+var w = c.Share()
+fire with h handover w {
+    var b = new Box()
+    var n = await [Work.N(b), Work.N(b)]
+    print("box " + b.v)
+    var r = await [Work.A(h), Work.B(w)]
+    h.Report("done " + r[0] + " " + r[1])
+}
+process h
+process h
+print("got " + h.got)
+//# name: Await: await [ ... ] in einem Thread - die Elemente leihen die Locals (keine Kopie), ein Actor als Argument, Completion: eine Aufgabe wartet, die andere schlaeft und gibt

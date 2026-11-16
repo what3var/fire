@@ -1,0 +1,12 @@
+class Point {
+    int x
+    int y
+    construct(int x, int y) { this.x = x; this.y = y }
+}
+var sum = 0
+for (var i = 0; i < 60000; i = i + 1) {
+    var p = new Point(i, i + 1)
+    sum = sum + p.x + p.y
+}
+print(sum)
+//# name: Benchmark alloc

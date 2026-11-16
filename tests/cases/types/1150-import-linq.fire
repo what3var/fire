@@ -1,0 +1,14 @@
+#import "linq"
+var nums = new List<int>()
+nums.Add(3)
+nums.Add(4)
+var q = nums.Where(x => x > 3).Select(x => "n" + x)
+try { bool w1 = q.First() } catch (ArgumentException e) { }
+try { bool w2 = Linq.From([1.5, 2.5]).Sum() } catch (ArgumentException e) { }
+int total = nums.Aggregate(0, (acc, x) => acc + x)
+List<string> names = q.ToList()
+any raw = nums
+int anything = Linq.From(raw).First()
+print(total + " " + names[0] + " " + anything)
+//# modes: Release
+//# name: types 115: #import "linq"

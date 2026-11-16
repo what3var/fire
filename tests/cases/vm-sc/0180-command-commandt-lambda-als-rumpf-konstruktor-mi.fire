@@ -1,0 +1,10 @@
+var a = new Command(() => 5)
+print(a.Execute())
+var b = new Command<int>(x => x + 1)
+print(b.Execute(9))
+var e = new Command<string>()
+e.Command = s => s + "!"
+print(e.Execute("hi"))
+print(new Command().Execute())
+print(new Command<int>().Execute(1))
+//# name: Command, Command<T>: Lambda als Rumpf, Konstruktor mit Lambda, ohne Lambda geschieht nichts

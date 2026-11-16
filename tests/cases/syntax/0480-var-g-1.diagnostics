@@ -1,0 +1,1 @@
+error E4000: 'handover' needs a variable of this thread: 'g' is a global variable of the main program (line 4)

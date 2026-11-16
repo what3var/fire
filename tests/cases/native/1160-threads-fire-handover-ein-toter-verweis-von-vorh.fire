@@ -1,0 +1,26 @@
+#nosync
+#import "time"
+
+class Item { int v; Item next }
+var step = 0
+var it = new Item()
+it.v = 4
+var keep = it
+var ex = new Exception("x")
+var keepEx = ex
+var arr = [1, 2]
+var keepArr = arr
+fire handover it handover ex handover arr {
+    sync global { step = 1 }
+    while (step < 2) { Sleep(1ms) }
+}
+while (step < 1) { sync globals }
+try { var c = copy keep } catch (DestroyedException e) { print("copy: " + e.message) } catch (Exception e) { print("copy other: " + e.message) }
+try { var f = flat keep } catch (DestroyedException e) { print("flat: " + e.message) } catch (Exception e) { print("flat other: " + e.message) }
+try { throw keepEx } catch (DestroyedException e) { print("throw: " + e.message) } catch (Exception e) { print("throw other: " + e.message) }
+try { var tk = take keep } catch (DestroyedException e) { print("take: " + e.message) } catch (Exception e) { print("take other: " + e.message) }
+try { foreach (var x in keepArr) { print(x) } } catch (DestroyedException e) { print("foreach: " + e.message) }
+try { print(keep!Item) } catch (DestroyedException e) { print("cast: " + e.message) }
+step = 2
+print("end")
+//# name: Threads: fire handover - ein toter Verweis von vorher bei copy/flat (ArgumentException), throw, take, foreach, x!Klasse

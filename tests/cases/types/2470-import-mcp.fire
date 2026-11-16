@@ -1,0 +1,5 @@
+#import "mcp"
+print(1)
+//# types: strict
+//# modes: Release
+//# name: types 247: #import "mcp"

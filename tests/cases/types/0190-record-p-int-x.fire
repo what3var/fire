@@ -1,0 +1,7 @@
+record P { int x
+ construct(int x) { this.x = x } }
+any p = new P(1)
+try { p.x = 2 } catch (AccessDeniedException e) { print("denied") }
+print((p == new P(1)) + " " + p.x)
+//# modes: Release
+//# name: types 19: record P { int x

@@ -1,0 +1,15 @@
+class Calculator {
+    int Add(int a, int b) {
+        return a + b
+    }
+
+    int Add(int a, int b, int c) {
+        return a + b + c
+    }
+}
+
+var calc = new Calculator()
+print(calc.Add(1, 2))
+print(calc.Add(1, 2, 3))
+//# note: what the test program said to expect (for a reader, it was not checked): 3 / 6
+//# name: Bytecode-Test: Methodenüberladung (unterschiedliche Argumentzahl)

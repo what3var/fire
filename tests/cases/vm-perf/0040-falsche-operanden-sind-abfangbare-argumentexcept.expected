@@ -1,0 +1,10 @@
+mul caught
+neg caught
+not caught
+lt caught
+inc caught
+idx caught
+cond caught
+conv caught
+global caught
+end

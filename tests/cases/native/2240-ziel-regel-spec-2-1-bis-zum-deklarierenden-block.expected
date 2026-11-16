@@ -1,0 +1,24 @@
+hoist: start
+destroy h0
+hoist: loop done, mid=h1
+destroy h1
+hoist: block of mid left
+--
+chain: chain chain
+destroy chain
+--
+ternary: fresh
+destroy x
+destroy fresh
+--
+look looked
+destroy looked
+after look
+kept
+--
+--
+copy kept
+end
+destroy kept
+destroy kept
+destroy returned into array

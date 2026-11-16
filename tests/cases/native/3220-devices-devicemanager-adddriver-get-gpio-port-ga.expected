@@ -1,0 +1,14 @@
+gpio:gpiosim
+i2c:sim
+spi:sim
+thermo:thermo0
+4
+port gpio:gpiosim 32
+pin8 True
+i2c i2c:sim/0x48 42 True
+read 42
+spi 98
+thermo 21 True False
+No device with identifier 'nope'
+The device 'i2c:sim' cannot be read.
+default False

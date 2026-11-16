@@ -1,0 +1,32 @@
+class Item {
+    int n
+    construct(int n) { this.n = n }
+    destruct() { print("~I" + this.n) }
+}
+class Box {
+    string name
+    Item item
+    Item extra
+    construct(string name) { this.name = name }
+    destruct() { print("~B" + this.name) }
+}
+var template = new Item(9)
+class H {
+    Item init = new Item(1)
+    Item cp = copy template
+    Item later
+    Item bare
+    Setup() { bare = new Item(5) }
+    SetupCopy() { later = copy template }
+    destruct() { print("~H") }
+}
+{
+    var h = new H()
+    print("nach ctor")
+    h.Setup()
+    h.SetupCopy()
+    print("nach setup")
+}
+print("ende")
+//# note: ---- Copy assigned to an object: the object becomes the owner (like TakeTo)
+//# name: Zuweisung an ein Objekt: Feld, Feld-Initialisierer, bloßer Feldname

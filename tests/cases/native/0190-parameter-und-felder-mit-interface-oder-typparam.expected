@@ -1,0 +1,10 @@
+13
+Parameter 'b' is an IShape, not Blob.
+3
+1
+Parameter 'xs' is an IEnumerable, not Int.
+animal
+Parameter 'a' is a T (Dog), not String.
+Field 'inside' is a T (Dog), not String.
+5cm
+Field 'value' is a T (in cm), not Int.

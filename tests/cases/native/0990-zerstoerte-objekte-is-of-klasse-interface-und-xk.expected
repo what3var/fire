@@ -1,0 +1,21 @@
+True
+True
+False
+False
+isof: Access to a destroyed object.
+base: Access to a destroyed object.
+iface: Access to a destroyed object.
+enum: Access to a destroyed object.
+cast: Access to a destroyed object.
+cast iface: Access to a destroyed object.
+still class
+False
+False
+throw: Access to a destroyed object.
+True
+True
+copy dead: An already destroyed object cannot be copied.
+flat dead: An already destroyed object cannot be copied.
+True
+False
+end

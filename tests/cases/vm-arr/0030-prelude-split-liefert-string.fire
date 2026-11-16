@@ -1,0 +1,3 @@
+var parts = "a,b,c".Split(",")
+print(parts.Length)
+//# name: Prelude: Split liefert string[]

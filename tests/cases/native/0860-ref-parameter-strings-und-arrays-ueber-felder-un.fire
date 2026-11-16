@@ -1,0 +1,31 @@
+class Holder { string name; construct(string n) { this.name = n } }
+class U {
+    static Swap(ref a, ref b) { var t = a; a = b; b = t }
+    static Grow(ref string s, int n) {
+        for (var i = 0; i < n; i = i + 1) { s = s + i }
+    }
+    static Pick(ref string s, string alt) { if (s == "") { s = alt } return s }
+    static Fill(ref arr) { var made = [1, 2, 3]; made.TakeGlobal(); arr = made }
+    static int Step(ref int n) { n = n - 1; return n }
+}
+var words = ["x", "y", "z"]
+U.Swap(words[0], words[2])
+print(words[0] + words[1] + words[2])
+var h = new Holder("h")
+var s = "start"
+U.Swap(h.name, s)
+print(h.name + " " + s)
+U.Grow(h.name, 5)
+print(h.name)
+var e = ""
+print(U.Pick(e, "alt") + e)
+var arr = 0
+U.Fill(arr)
+print(arr[1])
+var n = 5
+var total = 0
+while (U.Step(n) > 0) { total = total + n }
+print(total)
+for (var i = 0; i < 100; i = i + 1) { var t = "q" + i; U.Grow(t, 3); U.Swap(t, s) }
+print(s)
+//# name: ref-Parameter: Strings und Arrays ueber Felder und Elemente, Schleifen

@@ -1,0 +1,9 @@
+interface IHolder { int[] Items() }
+class Holder : IHolder {
+    int[] Items() { return [5, 6] }
+    string[] Names { get { return ["x", "y", "z"] } }
+}
+var h = new Holder()
+print(h.Items()[1])
+print(new Holder().Names.Length)
+//# name: Interface und Property mit Array-Typ

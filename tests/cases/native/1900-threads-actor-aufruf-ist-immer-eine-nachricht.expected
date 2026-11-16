@@ -1,0 +1,3 @@
+Vor process: greet() ist noch NICHT gelaufen
+greet() ist jetzt gelaufen
+Nach process: siehe oben

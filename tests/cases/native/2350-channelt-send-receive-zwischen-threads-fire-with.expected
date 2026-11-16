@@ -1,0 +1,12 @@
+word: Channel.Send: an object goes into a channel only with a word - 'copy x' (a copy) or 'take x' (moved) - or fresh ('new', the result of a call).
+closed True send False
+seen hello
+sum 245
+the note died with its receiver
+moved: Access to an object that was handed over to a thread ('fire handover').
+try 1 True count 0
+part 1 gone
+timeout
+taking: 'Channel' cannot be copied ([NoCopy]) - 'taking' would copy an instance of it, which exists only once.
+end 1
+part 2 gone

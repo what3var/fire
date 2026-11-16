@@ -1,0 +1,17 @@
+interface IReader { int Read() }
+interface IWriter { undefined Write(int v) }
+interface IStream : IReader, IWriter { int Size { get; } }
+class Mem : IStream {
+    int last = 5
+    int Read() { return this.last }
+    undefined Write(int v) { this.last = v }
+    int Size { get { return 1 } }
+    int Extra() { return 9 }
+}
+IStream s = new Mem()
+IReader r = s
+print(r.Size)
+print(s.Extra())
+//# types: strict
+//# modes: Release
+//# name: types 199: interface IReader { int Read() }

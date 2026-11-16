@@ -4,7 +4,6 @@ using System.Linq;
 using fire.Ast;
 using fire.Runtime;
 using fire.Values;
-using MemoryPack;
 
 namespace fire.Bytecode
 {
@@ -26,7 +25,6 @@ namespace fire.Bytecode
     /// </summary>
     /// 
 
-    [MemoryPackable]
     public sealed partial class FieldInfo
     {
         public string? RequiredUnit { get; set; }
@@ -70,7 +68,6 @@ namespace fire.Bytecode
         public List<AttributeMeta>? Attributes { get; set; }
     }
 
-    [MemoryPackable]
     public sealed partial class RuntimeClass
     {
         public string Name { get; }
@@ -83,7 +80,6 @@ namespace fire.Bytecode
         /// program serialisation - a program loaded from the cache
         /// is already fully compiled, needs the source AST
         /// no more.</summary>
-        [MemoryPackIgnore]
         public ClassDecl Decl { get; }
         public RuntimeClass? Base { get; set; }
 
@@ -97,7 +93,7 @@ namespace fire.Bytecode
         /// - not checked separately at this stage).
         ///
         /// Used to be derived via Decl.IsActor - but Decl is now
-        /// [MemoryPackIgnore] (see there), so it would no longer be available
+        /// (see there), so it would no longer be available
         /// after deserialisation. A real field of its own instead of a
         /// computed property, so that the value survives the leap over
         /// serialisation - set once by the compiler when creating the
@@ -345,7 +341,6 @@ namespace fire.Bytecode
 
         // RE MESSAGEPACK: IGNORE FOR NOW, IT WILL BE REBUILT ANYWAY IF IN DOUBT
 
-        [MemoryPackIgnore]
         public IReadOnlyList<string> FlattenedFieldNames => _flattenedFieldNames ??= ComputeFlattenedFieldNames();
         
         private List<string>? _flattenedFieldNames;
@@ -370,7 +365,6 @@ namespace fire.Bytecode
 
         // RE MESSAGEPACK: IGNORE FOR NOW!
 
-        [MemoryPackIgnore]
         public IReadOnlyDictionary<string, int> FieldIndex => _fieldIndex ??= ComputeFieldIndex();
         private Dictionary<string, int>? _fieldIndex;
 
@@ -417,7 +411,6 @@ namespace fire.Bytecode
         public List<FunctionProto> ExtraConstructors { get; set; } = new();
 
         /// <summary>All constructors (Constructors and ExtraConstructors).</summary>
-        [MemoryPackIgnore]
         public IEnumerable<FunctionProto> AllConstructors => Constructors.Values.Concat(ExtraConstructors);
 
         public FunctionProto? Destructor { get; set; }
@@ -480,17 +473,8 @@ namespace fire.Bytecode
             Constructors = new();
         }
 
-        /// <summary>For MemoryPack (see Decl docs and Chunk.Chunk(List&lt;byte&gt;,...)
-        /// docs for the detailed reasoning) - Decl stays `null!`
-        /// (not needed, never read after compiling). The six
-        /// collection parameters are mandatory because Fields/OwnFieldInfo/
-        /// StaticFieldValues/StaticFields/Methods/Constructors have NO setter
-        /// (deliberately, see their docs) - without a constructor that
-        /// accepts them, the generated deserialiser would have no
-        /// way to put the values read from the stream anywhere,
-        /// and would silently discard them (Base/
-        /// IsActor/Destructor are NOT affected, they have normal setters).</summary>
-        [MemoryPackConstructor]
+        /// <summary>A class as a program file is read (ProgramFile): Decl stays `null!` (not needed, never read after compiling); the six collections
+        /// have no setter (deliberately, see their docs), so they come in here.</summary>
         public RuntimeClass(string name, List<(string Name, FunctionProto Init)> fields,
             Dictionary<string, FieldInfo> ownFieldInfo, Dictionary<string, Value> staticFieldValues,
             List<(string Name, FunctionProto Init)> staticFields, Dictionary<string, List<FunctionProto>> methods,

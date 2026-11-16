@@ -1,0 +1,21 @@
+class Item {
+    int n
+    construct(int n) { this.n = n }
+    destruct() { print("~I" + this.n) }
+}
+class Box {
+    string name
+    Item item
+    Item extra
+    construct(string name) { this.name = name }
+    destruct() { print("~B" + this.name) }
+}
+var g = new Item(1)
+fire {
+    try { while (true) { } } finally { print("thread finally") }
+}
+var j = 0
+while (j < 1000) { j = j + 1 }
+terminate(5)
+print("nie")
+//# name: Threads: terminate im Hauptprogramm stoppt Fire-Threads (finally laeuft), Globals zuletzt

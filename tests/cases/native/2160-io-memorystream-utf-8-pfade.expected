@@ -1,0 +1,24 @@
+10 10
+4
+3456
+7
+89
+5 5
+8
+48 52 0 0
+0
+48 49
+closed
+True
+13
+5
+A
+a/b a/b /b [b]
+z.tar.gz z.tar .gz
+[.gitignore] [] [] [] []
+/x/y|/||a/b|a|
+True False /
+/a/c/d/e
+True
+True
+done

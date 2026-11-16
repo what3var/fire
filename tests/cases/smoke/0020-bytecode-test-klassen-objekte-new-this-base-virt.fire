@@ -1,0 +1,31 @@
+class Animal {
+    string name
+
+    construct(string name) {
+        this.name = name
+    }
+
+    Speak() {
+        print(this.name)
+        return 0
+    }
+}
+
+class Dog : Animal {
+    construct(string name) : base(name) {
+    }
+
+    override Speak() {
+        base.Speak()
+        print(42)
+        return 1
+    }
+}
+
+var a = new Animal("Generic")
+a.Speak()
+
+var d = new Dog("Rex")
+d.Speak()
+//# note: what the test program said to expect (for a reader, it was not checked): Generic / Rex / 42
+//# name: Bytecode-Test: Klassen/Objekte (new, this, base, virtuelle Methoden)

@@ -1,0 +1,2 @@
+class extends string { construct() { } }
+//# name: Konstruktor in Basistyp-Erweiterung

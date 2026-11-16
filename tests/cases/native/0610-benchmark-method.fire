@@ -1,0 +1,13 @@
+class Counter {
+    int count
+    int step
+    construct() { this.count = 0; this.step = 2 }
+    Inc() { this.count = this.count + this.step }
+    int Get() { return this.count }
+}
+var c = new Counter()
+for (var i = 0; i < 250000; i = i + 1) {
+    c.Inc()
+}
+print(c.Get())
+//# name: Benchmark method

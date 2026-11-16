@@ -1,0 +1,5 @@
+#import "io"
+print(1)
+//# types: strict
+//# modes: Release
+//# name: types 227: #import "io"

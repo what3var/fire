@@ -1,0 +1,5 @@
+class K { }
+interface IA : K { }
+print(1)
+//# modes: Release
+//# name: types 192: class K { }

@@ -1,0 +1,22 @@
+class Point {
+    int x
+    int y
+
+    construct() {
+        this.x = 0
+        this.y = 0
+    }
+
+    construct(int x, int y) {
+        this.x = x
+        this.y = y
+    }
+}
+
+var p1 = new Point()
+var p2 = new Point(3, 4)
+print(p1.x)
+print(p2.x)
+print(p2.y)
+//# note: what the test program said to expect (for a reader, it was not checked): 0 / 3 / 4
+//# name: Bytecode-Test: Konstruktor-Überladung

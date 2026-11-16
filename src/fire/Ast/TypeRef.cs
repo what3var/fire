@@ -1,6 +1,5 @@
 using System;
 using System.Collections.Generic;
-using MemoryPack;
 
 namespace fire.Ast
 {
@@ -20,7 +19,6 @@ namespace fire.Ast
     /// CheckLambdaSignature) - the individual type names are purely informational,
     /// since a dynamically typed lambda cannot reliably disclose its parameter TYPES
     /// up front.</summary>
-    [MemoryPackable]
     /// `IsExpression`: `lambda expression&lt;T&gt;` (docs/ROADMAP_EXPRESSIONS.md) - the lambda written at the call becomes an expression tree: in the method
     /// the parameter is a LambdaExpression (Parameters, Body, Invoke).
     public sealed partial record LambdaSignature(string? ReturnTypeName, IReadOnlyList<string> ParamTypeNames, bool IsSelector = false, string SelectorKind = "member", bool IsExpression = false);
@@ -50,7 +48,6 @@ namespace fire.Ast
     /// (`BaseName == "lambda"`) - `[ReturnType] lambda[&lt;Param1,...,ParamN&gt;]`,
     /// see LambdaSignature docs and SPEC "Lambda types with signature".
     /// </summary>
-    [MemoryPackable]
     public sealed partial record TypeRef(string BaseName, int? BitWidth, int PointerDepth, LambdaSignature? LambdaSignature = null, IReadOnlyList<string>? Namespaces = null, string? Unit = null, int ArrayRank = 0, int TypeArgCount = 0, IReadOnlyList<TypeRef>? TypeArgs = null, bool Unsigned = false, bool NonNull = false)
     {
         /// <summary>`defined int`, `defined float[32]`, `defined bool`, `defined word`, `defined char` (SPEC 8.10b): a value type that never holds `undefined` - a parameter, field, property or
@@ -88,11 +85,10 @@ namespace fire.Ast
         /// <summary>`true` if this TypeRef fixes ONLY a unit,
         /// but has the actual type (like normal `var`) inferred from the context
         /// (see InferredMarker docs).</summary>
-        [MemoryPackIgnore]
         public bool IsInferred => BaseName == InferredMarker;
 
         /// <summary>The unit a declaration demands (`: mm`); null when it demands none. `: any` says explicitly that every unit is accepted (checked where the value is used), which demands nothing.</summary>
-        [MemoryPack.MemoryPackIgnore] public string? RequiredUnit => Unit is null or "any" ? null : Unit;
+        public string? RequiredUnit => Unit is null or "any" ? null : Unit;
 
         /// <summary>What a declaration demands of the unit of a value (Value.AdaptToUnit): its RequiredUnit, with a leading `#` when the declared type is
         /// `float` (a whole number is taken as a float before it is converted: `float b : km = 1500m` is 1.5km); null when nothing is demanded.</summary>
@@ -103,9 +99,8 @@ namespace fire.Ast
             rank > 0 && rank < 256 && PointerDepth == 0 && ArrayRank == 0 && fire.Values.ArrayElem.Of(this) is var elem and not 0
                 ? 0x10000 | (rank << 8) | elem | (NonNull && elem is not (fire.Values.ArrayElem.U8 or fire.Values.ArrayElem.Word) ? fire.Values.ArrayElem.DefinedFlag : 0) : 0;
 
-        [MemoryPack.MemoryPackIgnore] public string? UnitDemand => RequiredUnit is { } required && fire.Values.Unit.DemandText(required) is var unit ? (BaseName == "float" ? "#" + unit : unit) : null;
+        public string? UnitDemand => RequiredUnit is { } required && fire.Values.Unit.DemandText(required) is var unit ? (BaseName == "float" ? "#" + unit : unit) : null;
 
-        [MemoryPackIgnore]
         public bool IsPointer => PointerDepth > 0;
 
         /// <summary>Resolves BaseName to its actual, fully qualified

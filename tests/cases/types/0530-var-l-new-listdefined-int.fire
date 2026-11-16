@@ -1,0 +1,3 @@
+var l = new List<defined int>()
+//# modes: Release
+//# name: types 53: var l = new List<defined int>()

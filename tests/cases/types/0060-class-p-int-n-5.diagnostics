@@ -1,0 +1,1 @@
+error E4000: 'n' is an instance member - a 'fire' block runs without 'this': give the thread what it needs with 'taking' or 'with' (line 2)

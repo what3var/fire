@@ -1,0 +1,43 @@
+interface IAnimal { string Name() }
+class Animal : IAnimal { string Name() { return "animal" } }
+class Dog : Animal { }
+class Box { any item }
+enum Color { Red, Green }
+var d = new Dog()
+print(d is of Dog)
+delete d
+print(d is of class)
+print(d is of int)
+print(d is of string)
+try { print(d is of Dog) } catch (DestroyedException e) { print("isof: " + e.message) }
+try { print(d is of Animal) } catch (DestroyedException e) { print("base: " + e.message) }
+try { print(d is of IAnimal) } catch (DestroyedException e) { print("iface: " + e.message) }
+try { print(d is of Color) } catch (DestroyedException e) { print("enum: " + e.message) }
+try { var x = d!Animal; print("cast ok") } catch (DestroyedException e) { print("cast: " + e.message) }
+try { var x = d!IAnimal; print("cast ok") } catch (DestroyedException e) { print("cast iface: " + e.message) }
+any a = d
+if (a is of class) { print("still class") }
+var u = undefined
+print(u is of Dog)
+print(u is of IAnimal)
+var ex = new ArgumentException("boom")
+delete ex
+try { throw ex } catch (ArgumentException e) { print("wrong") } catch (DestroyedException e) { print("throw: " + e.message) }
+var b = new Box()
+b.item = new Dog()
+var inner = b.item
+delete inner
+var c = copy b
+print(c.item == inner)
+var fb = flat b
+print(fb.item == inner)
+try { var z = copy inner } catch (ArgumentException e) { print("copy dead: " + e.message) }
+try { var z = flat inner } catch (ArgumentException e) { print("flat dead: " + e.message) }
+var owner = new Box()
+owner.item = new Dog()
+var child = owner.item
+print(child is from owner)
+delete child
+print(child is from owner)
+print("end")
+//# name: Zerstoerte Objekte: is of Klasse/Interface und x!Klasse sind eine DestroyedException, is of class/int nicht; throw, copy/flat, is from (unter ASan)

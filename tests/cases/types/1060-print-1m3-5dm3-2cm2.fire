@@ -1,0 +1,10 @@
+print(1m3 + " " + 5dm3 + " " + 2cm2)
+float v : m3 = 5l
+float:m/s2 a = 9.81m / 1s / 1s
+float:kg*m2/s2 e = 2kg * 3m2 / 1s / 1s
+float w : m^3 = 1m3
+print(v + " " + a + " " + e + " " + w + " " + (1m3 == 1000l) + " " + 1m3:l + " " + 5:m3)
+print("5 m3".ToFloat() + " " + "2 m/s2".ToFloat() + " " + "1e3".ToFloat() + " " + "1e3m".ToFloat() + " " + "3dm3".ToFloat():l)
+print(1e3 + " " + 2.5e-3 + " " + 1e3m + " " + 0x1F + " " + 2E+2)
+//# modes: Release
+//# name: types 106: print(1m3 + " " + 5dm3 + " " + 2cm2)

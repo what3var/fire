@@ -1,0 +1,11 @@
+n=1 cookie True True
+n=2 again True
+n=3
+other n=1
+welcome anna new id True
+old id after login n=1
+renewed keeps n=4
+bad id n=1
+after the time n=1
+bye fire-session=; Path=/; Max-Age=0
+

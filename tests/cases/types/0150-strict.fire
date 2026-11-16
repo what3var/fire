@@ -1,0 +1,5 @@
+#strict
+record R { int x }
+var e = new R() with { .y = 2 }
+//# modes: Release
+//# name: types 15: #strict

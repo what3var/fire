@@ -1,0 +1,40 @@
+namespace Shop {
+    class Item {
+        string n
+        construct(string n) { this.n = n }
+    }
+    class Box {
+        static Shop.Item Take(any x) {
+            Shop.Item i = x!Shop.Item
+            return i
+        }
+    }
+}
+any a = new Shop.Item("apple")
+Shop.Item b = a!Shop.Item
+print(b.n)
+print(Shop.Box.Take(a).n)
+print((a!Shop.Item).n)
+class Dog {
+    string name = "rex"
+    string Bark() { return "wuff " + this.name }
+}
+any d = new Dog()
+print(d!Dog.Bark())
+print(d!Dog.name)
+try { var bad = a!Dog } catch (Exception e) { print("cast failed") }
+namespace Shop {
+    namespace Deep {
+        class Thing {
+            int n = 7
+        }
+    }
+    class User {
+        static int Get(any x) { return (x!Deep.Thing).n }
+    }
+}
+any th = new Shop.Deep.Thing()
+print(Shop.User.Get(th))
+print((th!Shop.Deep.Thing).n)
+print(th!Shop.Deep.Thing.n)
+//# name: Casts mit Namespace: x!Shop.Item, relativ im Namespace (x!Deep.Thing), verschachtelt; x!Dog.Bark() bleibt Aufruf auf dem Ergebnis

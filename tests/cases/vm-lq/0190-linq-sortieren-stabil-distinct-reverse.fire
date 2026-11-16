@@ -1,0 +1,8 @@
+#import "linq"
+class P { string name; int price; construct(string n, int p) { this.name = n; this.price = p } }
+var nums = new List([5, 3, 8, 1, 9, 2, 8])
+print(nums.OrderBy(x => x).Join(",") + " | " + nums.OrderByDescending(x => x).Join(",") + " | " + nums.Distinct().Count() + " | " + nums.Reverse().Join(","))
+var ps = new List()
+ps.Add(new P("a", 20)); ps.Add(new P("b", 10)); ps.Add(new P("c", 20)); ps.Add(new P("d", 10))
+print(ps.OrderBy(p => p.price).Select(p => p.name).Join(""))
+//# name: LINQ: Sortieren (stabil), Distinct, Reverse

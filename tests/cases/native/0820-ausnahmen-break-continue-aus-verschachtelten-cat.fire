@@ -1,0 +1,86 @@
+class A : Exception { string message; construct(string m) { this.message = m } }
+class B : Exception { construct() { } }
+var items = [1, 2, 3, 4, 5, 6]
+// break/continue from catch and try bodies inside a foreach
+foreach (v in items) {
+    try {
+        if (v == 1) { continue }
+        if (v == 3) { throw new A("three") }
+        if (v == 5) { throw new B() }
+        print("v" + v)
+    } catch (A a) {
+        print("A " + a.message)
+        continue
+    } catch (B b) {
+        print("B stops")
+        break
+    } finally {
+        print("fin " + v)
+    }
+    print("end " + v)
+}
+// two levels of catch: break from the inner catch leaves the outer catch too
+for (var i = 0; i < 3; i = i + 1) {
+    try {
+        throw new A("outer" + i)
+    } catch (A a) {
+        try {
+            throw new B()
+        } catch (B b) {
+            print("inner at " + i)
+            if (i == 1) { break }
+            continue
+        }
+        print("not here")
+    }
+}
+// return in nested catches through finally blocks
+class X {
+    static int F(int n) {
+        try {
+            try {
+                throw new A("a")
+            } catch (A a) {
+                try {
+                    throw new B()
+                } catch (B b) {
+                    return n + 1
+                } finally {
+                    print("f1")
+                }
+            } finally {
+                print("f2")
+            }
+        } finally {
+            print("f3")
+        }
+    }
+    static int G(int n) {
+        foreach (v in [1, 2, 3]) {
+            try {
+                if (v == n) { throw new A("g") }
+            } catch (A a) {
+                return v * 100
+            } finally {
+                print("G" + v)
+            }
+        }
+        return 0
+    }
+}
+print(X.F(1))
+print(X.G(2))
+print(X.G(9))
+// a try that is left with an exception thrown in the catch and caught outside
+try {
+    try {
+        throw new A("1")
+    } catch (A a) {
+        throw new B()
+    } finally {
+        print("mid finally")
+    }
+} catch (B b) {
+    print("got B")
+}
+//# name: Ausnahmen: break/continue aus verschachtelten catch-Bloecken, foreach

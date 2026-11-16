@@ -1,0 +1,1 @@
+error TC014: The method 'Speak' of 'Dog' replaces the one of its base class 'Animal' - mark it 'override' (override string Speak()) (line 10)

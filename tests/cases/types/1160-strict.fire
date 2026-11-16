@@ -1,0 +1,12 @@
+#strict
+class U {
+    static int F(int x) { return x + 1 }
+    static string F(string s) { return s + "!" }
+    static string F<T>(T x) { return "g" }
+}
+int a = U.F(1)
+string b = U.F("s")
+string c = U.F<int>(2)
+print(a + " " + b + " " + c)
+//# modes: Release
+//# name: types 116: #strict

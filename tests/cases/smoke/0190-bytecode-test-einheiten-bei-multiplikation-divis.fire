@@ -1,0 +1,24 @@
+class Circle {
+    float radius : any
+
+    construct(float radius : any) {
+        this.radius = radius
+    }
+
+    float Diameter : any {
+        get { return this.radius * 2 }
+        set { this.radius = value / 2 }
+    }
+
+    float Area : any {
+        get { return this.radius * this.radius * 3 }
+    }
+}
+
+var c = new Circle(5.0)
+print(c.Diameter)
+c.Diameter = 20.0mm
+print(c.radius)
+print(c.Area)
+//# note: what the test program said to expect (for a reader, it was not checked): 10 / 10mm / 300mm^2
+//# name: Bytecode-Test: Einheiten bei Multiplikation/Division mit unitless (Bugfix)

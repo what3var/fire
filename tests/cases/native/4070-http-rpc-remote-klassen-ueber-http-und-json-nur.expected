@@ -1,0 +1,19 @@
+no session 401 {"error": "A call needs a session that the client already has.", "type": ""}
+unknown session 401
+add 200 {"result": 5}
+object 200 {"result": "pen x3"}
+service 200 {"result": 42}
+request lifetime {"result": 0}
+throws 500 {"error": "broken", "type": "ArgumentException"}
+hidden 404
+not remote 404
+wrong count 400
+bad json 400
+session {"result": 2}
+items {"result": ["apple","pear"]}
+other session {"result": []}
+nickname {"result": "shop"}
+other nickname {"result": "admin"}
+class name hidden 404
+single {"result": 2}
+

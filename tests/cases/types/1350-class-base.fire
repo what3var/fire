@@ -1,0 +1,21 @@
+class Base {
+    private int secret = 1
+    protected int shared = 2
+    private static int sv = 4
+    private int Hidden() { return 10 }
+    protected int Guarded() { return 20 }
+    private static int Counter() { return 7 }
+    private int Hush { get { return this.secret } set { this.secret = value } }
+    int Same(Base other) { return other.secret + other.Hidden() + Base.sv + Base.Counter() + other.Hush }
+    int InLambda() { var me = this; var f = func () => (taking me).secret + me.Hidden(); return f() }
+}
+class Child : Base {
+    int Peek() { return this.shared + this.Guarded() + shared + Guarded() }
+}
+class Locked { private construct() { } static Locked Make() { return new Locked() } }
+class Guarded2 { protected construct() { } }
+class Sub2 : Guarded2 { }
+var b = new Base()
+b.Hush = 3
+//# modes: Release
+//# name: types 135: class Base {

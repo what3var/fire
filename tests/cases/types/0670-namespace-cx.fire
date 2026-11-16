@@ -1,0 +1,13 @@
+namespace Cx {
+    class Port { string n
+        construct(string n) { this.n = n } }
+    class Circuit { Port AddPort(string name) { return new Port(name) } }
+    class M { static int Max(int a, int b) { if (a > b) { return a } return b } }
+    class Sw : Circuit {
+        construct() : base() { var com = this.AddPort("com"); print(com.n + Cx.M.Max(1, 2)) }
+    }
+}
+new Cx.Sw()
+//# types: strict
+//# modes: Release
+//# name: types 67: namespace Cx {

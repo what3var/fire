@@ -15,6 +15,7 @@ static class SyntaxTests
 
     private static string Output(string source)
     {
+        TestCases.CollectSource("syntax", source);
         var lines = new List<string>();
         try
         {

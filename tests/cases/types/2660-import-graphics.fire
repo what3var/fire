@@ -1,0 +1,5 @@
+#import "graphics"
+print(1)
+//# types: strict
+//# modes: Release
+//# name: types 266: #import "graphics"

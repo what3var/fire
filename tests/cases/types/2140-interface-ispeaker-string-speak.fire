@@ -1,0 +1,13 @@
+interface ISpeaker { string Speak() }
+class Animal {
+    string Speak() { return "..." }
+    string Hello(string s) { return s }
+    int Legs { get { return 4 } }
+    bool operator==(any o) { return false }
+    static string Kind() { return "animal" }
+}
+class Box<T> { string Put(T x) { return "box" } }
+class Dog : Animal { string Hello(string name) { return name } }
+//# types: strict
+//# modes: Release
+//# name: types 214: interface ISpeaker { string Speak() }

@@ -1,0 +1,7 @@
+class extends string {
+    private string Quote() { return "'" + this + "'" }
+    string Quoted() { return this.Quote() }
+}
+print("q".Quoted())
+try { print("q".Quote()) } catch (AccessDeniedException e) { print("verweigert") }
+//# name: private Hilfsmethode der Erweiterung

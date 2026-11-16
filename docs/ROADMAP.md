@@ -3,6 +3,8 @@
 Ziel: ember, forge und spark in fire neu schreiben und nativ bauen. Diese Liste sammelt, was dafür in der Sprache, der Standardbibliothek und
 dem nativen Backend fehlt, und legt die Reihenfolge fest. Die kleineren Punkte der Sprache stehen weiter in [language/roadmap.md](language/roadmap.md).
 
+**Geändert (Entscheidung des Benutzers):** forge und die VM werden C statt fire und sind als Package einbindbar; spark (und voraussichtlich ember) werden fire - [ROADMAP_C_PORT.md](ROADMAP_C_PORT.md).
+
 Leitlinien:
 
 * **Packages bleiben Code-only.** Binäres entsteht nur beim Bau auf dem eigenen Rechner (Cache), nie im Package.

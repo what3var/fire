@@ -1,0 +1,5 @@
+class A { any x
+}
+print(1)
+//# modes: Release
+//# name: types 77: class A { any x

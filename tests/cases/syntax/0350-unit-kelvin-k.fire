@@ -1,0 +1,16 @@
+unit Kelvin: K
+unit Celsius: C { coerce K => value + 273.15 }
+unit Fahrenheit: F { coerce to C => (value - 32) * 5 / 9
+                     coerce from C => value * 9 / 5 + 32 }
+prefixed unit Watt: W
+unit DecibelMilliwatt: dBm
+{
+    coerce to mW => 10 ^ (value / 10)
+    coerce from mW => 10 * Math.Log10(value)
+}
+print(100.0C:F + " " + 32.0F:C + " " + 0.0C:K + " " + (20C + 9F) + " " + (100C > 200F))
+print(30.0dBm:W + " " + 1.0W:dBm + " " + (20.0dBm + 1.0mW) + " " + 20.0C * 2s)
+float t : C = 300.0K
+print(t)
+//# modes: Release
+//# name: syntax 35: unit Kelvin: K

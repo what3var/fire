@@ -1,0 +1,13 @@
+>generic ... 4
+* Rex Woof 4
+>Tweety ... 2
+10
+Woof Max 4
+3
+42
+Field 'v' is an int, not String.
+1000
+7
+destroyed: Access to a destroyed object.
+destroyed2: Access to a destroyed object.
+gone: Access to a destroyed object.

@@ -1,0 +1,4 @@
+var a = 1
+fire global handover a { }
+//# modes: Release
+//# name: syntax 46: var a = 1

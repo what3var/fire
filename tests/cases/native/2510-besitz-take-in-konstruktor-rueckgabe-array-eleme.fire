@@ -1,0 +1,39 @@
+class Item { string n
+  construct(string n) { this.n = n }
+  destruct() { print("~" + this.n) } }
+class Holder { Item kept
+  construct(it) { this.kept = take it; print("holder " + this.kept.n) } 
+  destruct() { print("~holder") } }
+class Cell { int v }
+class T {
+  static Make(tag) { var t = new Item(tag); var u = take t; return u }
+  static Num(x) { return x + 1 }
+  static Fill(arr, a, b) {
+    arr[0] = take a
+    arr[1] = take b
+    print("filled")
+  }
+}
+var h = undefined
+{
+  var it = new Item("i1")
+  h = new Holder(take it)
+}
+print("1")
+var m = T.Make("m")
+print(m.n)
+print(T.Num(take 5))
+var arr = new Item[2]
+{
+  var p = new Item("p")
+  var q = new Item("q")
+  T.Fill(arr, p, q)
+  print("block end")
+}
+print("2")
+var data = new int[3]
+var holder2 = new Holder(new Item("fresh"))
+var ar2 = [new Item("z")]
+print(ar2[0].n)
+print("end")
+//# name: Besitz: take in Konstruktor, Rueckgabe, Array-Element

@@ -1,0 +1,1 @@
+error E4063: Property 'Limit' of class 'Lim' implements interface 'ILimit' and must be public, not private (a member of an interface is public) (line 4)

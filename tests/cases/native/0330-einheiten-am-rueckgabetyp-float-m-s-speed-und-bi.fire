@@ -1,0 +1,37 @@
+class Runner {
+    float:m dist
+    float:s time
+    construct(float:km d, float t : min) { dist = d; time = t }
+    float:m/s Speed() { return dist / time }
+    float : km/h SpeedKmh() { return dist / time }
+    float:m/s^2 Acc(float:m/s v, float t : s) { return v / t }
+    float:km/h Fast { get { return dist / time * 2 } }
+    float:m/s Bad() { any d = dist; return d }
+}
+var r = new Runner(10km, 48min)
+print(r.Speed() + " " + r.SpeedKmh() + " " + r.Acc(36km / 1h, 2s) + " " + r.Fast)
+try { r.Bad() } catch (UnitMismatchException e) { print(e.message) }
+float[16] h = 0.1
+print(h)
+h = 65519.0
+print(h)
+h = 65520.0
+print(h + " " + (-70000.0)!float[16])
+h = 2049.0
+print(h + " " + 2051.0!float[16] + " " + 0.0000001!float[16] + " " + 0.00000001!float[16] + " " + (1.0 / 3)!float[16])
+float[8] q = 0.1
+print(q)
+q = -1000.0
+print(q + " " + 17.0!float[8] + " " + 19.0!float[8] + " " + 0.001!float[8] + " " + 0.0009!float[8] + " " + 300.7!float[8])
+class Reg { float[16] v = 0; undefined Set(float x) { v = x } }
+var g = new Reg()
+g.Set(1.0001)
+print(g.v)
+class Calc { static float Narrow(float[8] x) { return x } }
+print(Calc.Narrow(3.3))
+float[16] mm : mm = 1.0001m
+print(mm)
+float[16] acc = 0.0
+for (int i = 0; i < 3000; i++) { acc = acc + 1.0 }
+print(acc)
+//# name: Einheiten am Rueckgabetyp (float:m/s Speed()) und Bitbreiten float[16]/float[8]

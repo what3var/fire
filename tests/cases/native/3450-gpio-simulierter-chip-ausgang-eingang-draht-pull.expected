@@ -1,0 +1,24 @@
+chips sim True
+props sim 1 True True False
+low False 0 False
+high True edge 1
+none 0
+toggle False False edge 2 True
+pull up True
+driven False False edge 2
+rising is not watched: 0 True
+released True
+timeout 0
+poll 6 3 3
+queue 16
+fight False False False
+agree True
+busy 4
+reclaimed True
+no line 3
+no chip 3
+output edge 1
+input write 1
+unset 1
+wire 3
+closed 2

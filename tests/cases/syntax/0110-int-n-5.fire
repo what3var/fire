@@ -1,0 +1,6 @@
+int n = 5
+print(n > 3 ? "big" : "small")
+print(n > 9 ? "a" : n > 4 ? "b" : "c")
+print(true ? 1 : 1 / 0)
+//# modes: Release
+//# name: syntax 11: int n = 5

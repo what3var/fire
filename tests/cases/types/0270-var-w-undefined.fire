@@ -1,0 +1,4 @@
+var w = undefined
+print(1)
+//# modes: Release
+//# name: types 27: var w = undefined

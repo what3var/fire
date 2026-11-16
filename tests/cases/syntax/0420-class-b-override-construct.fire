@@ -1,0 +1,3 @@
+class B { override construct() { } }
+//# modes: Release
+//# name: syntax 42: class B { override construct() { } }

@@ -1,0 +1,5 @@
+#import "hash"
+class Box { int v }
+var b = new Box()
+try { print(__HashToHex(b)) } catch (ArgumentException e) { print("ArgumentException") }
+//# name: Bytes: ein Objekt an eine Native ist in der VM und nativ eine ArgumentException (die Grenze der Paket-Bibliothek wie bytesArg)

@@ -1,0 +1,1 @@
+warning TC001: Cannot assign a value of type 'float' to 'x' of type 'int' (line 2)

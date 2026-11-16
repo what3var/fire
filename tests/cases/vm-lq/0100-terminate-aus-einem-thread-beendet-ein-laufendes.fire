@@ -1,0 +1,6 @@
+#import "time"
+class Exception { string message; construct(string message = "") { this.message = message } }
+fire { Sleep(100ms); terminate(3) }
+Sleep(20s)
+print("nie")
+//# name: terminate aus einem Thread beendet ein laufendes Sleep sofort

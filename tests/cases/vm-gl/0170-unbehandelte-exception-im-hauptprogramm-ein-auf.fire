@@ -1,0 +1,7 @@
+class Exception { string message; construct(string message = "") { this.message = message } }
+class G { int v; construct() { this.v = 1 } }
+var g = new G()
+fire { g.v = 2 }
+for (var i = 0; i < 100000; i = i + 1) { }
+throw new Exception("kaputt")
+//# name: Unbehandelte Exception im Hauptprogramm: ein auf eine Sektion wartender Thread haengt nicht

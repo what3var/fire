@@ -1,0 +1,5 @@
+probe: Division by zero.
+reflect: Division by zero.
+inv 1
+write: Division by zero.
+end 2

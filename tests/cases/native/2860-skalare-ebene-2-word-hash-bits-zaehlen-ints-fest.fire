@@ -1,0 +1,39 @@
+class W {
+    static word Hash(byte data[]) {
+        word h = 5381
+        for (int i = 0; i < data.length; i++) { h = h * 33 + data[i]; h = h # (h >> 7) }
+        return h
+    }
+    static int Bits(int n) {
+        int c = 0
+        int x = n
+        while (x != 0 && c < 70) { c = c + (x & 1); x = x >> 1 }
+        return c
+    }
+    static int Small(int n) {
+        int[8] b = 0
+        int[16] s = 0
+        for (int i = 0; i < n; i++) { b = b + 7; s = s * 3 + i }
+        int[8] neg = 200
+        return b + s + neg + (i8(300) << 2)
+    }
+    static int i8(int v) { int[8] r = v
+        return r }
+    static word Mix(word a, word b) { word r = a
+        r = (r << 13) | (r >> 51)
+        r = r - b * 3
+        if (r > a) { r = r / 2 }
+        return r }
+}
+byte bytes[] = new byte[64]
+for (int i = 0; i < 64; i++) { bytes[i] = i * 37 }
+print(W.Hash(bytes))
+print(W.Bits(1023) + " " + W.Bits(-1) + " " + W.Bits(12345))
+print(W.Small(1000))
+print(W.Mix(123456789, 987654321))
+word wz = 0
+wz = wz - 1
+print(wz + " " + (wz > 5) + " " + (wz >> 60))
+int sh = 1
+print((sh << 31) + " " + (sh << 63) + " " + (-8 >> 1) + " " + (-8 >> 70))
+//# name: Skalare (Ebene 2): word-Hash, Bits zaehlen, Ints fester Breite, Schieben ueber die Breite, word ueber 0 - in C gerechnet wie in der VM

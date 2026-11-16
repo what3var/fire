@@ -1,0 +1,39 @@
+    record Tag {
+        string label
+        construct(string l) { this.label = l }
+    }
+    record Item {
+        string name
+        int n
+        Tag tag
+        construct(string s, int n) { this.name = s; this.n = n; this.tag = new Tag("t" + n) }
+        int Sum() {
+            int r = 0
+            for (int k = 0; k < 20; k++) { r = r + this.name.Length + this.tag.label.Length }
+            return r
+        }
+    }
+    var ch = new Channel<Item>(64)
+    var done = new Channel<int>()
+    fire with ch, done {
+        int seen = 0
+        int reads = 0
+        foreach (it in ch) {
+            seen = seen + 1
+            try {
+                for (int k = 0; k < 50; k++) { reads = reads + it.name.Length + it.n + it.Sum() }
+                string both = it.name + it.tag.label
+                reads = reads + both.Length
+            } catch (DestroyedException e) { reads = reads - 1 }
+        }
+        done.Send(seen)
+    }
+    for (int i = 0; i < 1500; i++) {
+        if (true) {
+            var it = new Item("item" + i, i)
+            ch.Send(it)
+        }
+    }
+    ch.Close()
+    print("seen " + done.Receive())
+//# name: Channel<T>: geliehene Records unter Last - der Leser liest in Schleifen, waehrend der Besitzer sie zerstoert: der laufende Zugriff endet, der naechste ist die DestroyedException (nativ: der Speicher geht erst, wenn kein Leser mehr hinsehen kann)

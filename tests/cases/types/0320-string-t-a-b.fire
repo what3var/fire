@@ -1,0 +1,11 @@
+string t = "a,b"
+var at = t.IndexOf(",")
+var part = t.Substring(2)
+var parts = t.Split(",")
+var has = t.Contains("a")
+var up = t.ToUpper()
+print(at + 1)
+print(part + parts.length + has + up)
+//# types: strict
+//# modes: Release
+//# name: types 32: string t = "a,b"

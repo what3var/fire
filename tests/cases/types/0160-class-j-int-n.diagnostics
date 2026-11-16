@@ -1,0 +1,1 @@
+error TC029: An object goes into a channel only with a word: 'Send(copy x)' (a copy) or 'Send(take x)' (moved) - or fresh ('new', the result of a call) (line 4)

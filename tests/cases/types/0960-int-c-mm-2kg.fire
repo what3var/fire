@@ -1,0 +1,13 @@
+int c : mm = 2kg
+int n = 5
+n = 5mm
+var y = 5mm + 2kg
+float bad : any m = 3s
+class Box { float w : mm
+    undefined Set(float v : mm) { this.w = v }
+    float Len() { return this.w }
+}
+var bx = new Box()
+bx.Set(3)
+//# modes: Release
+//# name: types 96: int c : mm = 2kg

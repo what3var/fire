@@ -1,0 +1,5 @@
+True True True
+0.005m^3 1000l 10l 3500ml True
+1000ml 100l 10cl 2dm 100m 0.1g 1000l 10ml 100ms 0.1kg
+1d 60min 48h True False 5dB False
+Incompatible units: 'l' cannot be converted to 'm'.

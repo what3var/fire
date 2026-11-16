@@ -3,6 +3,11 @@
 ###############################################################################
 * text=auto
 
+# The test cases (tests/cases): the source of a program and what it prints, byte for byte the same on every system - never converted (an output may hold a CR on purpose).
+tests/cases/** -text
+# The tables shared with the compiler and the VM in C (native/tables): written by `forge tables` with line feeds, compared byte for byte by the tests.
+native/tables/** text eol=lf
+
 ###############################################################################
 # Set default behavior for command prompt diff.
 #

@@ -1,0 +1,1 @@
+error TC012: Field 'secret' of 'Base' is private and cannot be accessed from here. (line 18)

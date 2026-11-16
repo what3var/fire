@@ -1,0 +1,5 @@
+dos: DOS and its services are only there on dos16 (and later dos32), not on this target.
+int
+False
+xms: DOS and its extended memory are only there on dos16 (and later dos32), not on this target.
+18 52 True

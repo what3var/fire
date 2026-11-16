@@ -1,0 +1,18 @@
+derived tiny
+derived rex
+base cat
+interface
+generic
+generic
+int float
+sub int / int / float
+float
+6
+10
+T string
+int string
+generic
+generic
+generic
+derived d
+interface

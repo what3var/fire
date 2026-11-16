@@ -1,0 +1,6 @@
+var l = new List()
+for (var i = 0; i < 40000; i = i + 1) { l.Add(i) }
+var total = 0
+foreach (v in l) { total = total + v }
+print(total)
+//# name: Benchmark list

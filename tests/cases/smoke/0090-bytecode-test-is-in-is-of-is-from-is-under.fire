@@ -1,0 +1,35 @@
+int x = 5mm
+print(x is in mm)
+print(x is in kg)
+print(x is of int)
+print(x is of float)
+
+class Animal {
+    construct() { }
+}
+
+class Dog : Animal {
+    construct() : base() { }
+}
+
+class Cat {
+    construct() { }
+}
+
+class Box {
+    class content
+    construct() { }
+}
+
+var d = new Dog()
+print(d is of Dog)
+print(d is of Animal)
+print(d is of Cat)
+
+var box = new Box()
+box.content = new Dog()
+print(box.content is from box)
+print(box.content is under box)
+print(d is from box)
+//# note: what the test program said to expect (for a reader, it was not checked): True/False/True/False / True/True/False / True/True/False
+//# name: Bytecode-Test: is in / is of / is from / is under

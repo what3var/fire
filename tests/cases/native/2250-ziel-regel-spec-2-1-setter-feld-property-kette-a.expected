@@ -1,0 +1,17 @@
+1
+2
+3
+peek peek
+destroy peek
+4
+5
+destroy maybe
+6
+destroy amb
+7
+False
+end
+destroy stored
+destroy top
+destroy via
+destroy mine

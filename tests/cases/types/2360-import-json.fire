@@ -1,0 +1,5 @@
+#import "json"
+print(1)
+//# types: strict
+//# modes: Release
+//# name: types 236: #import "json"

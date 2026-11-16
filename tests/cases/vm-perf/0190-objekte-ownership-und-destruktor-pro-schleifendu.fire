@@ -1,0 +1,4 @@
+class D { int id; construct(int id) { this.id = id } destruct() { print("d" + this.id) } }
+for (var i = 0; i < 3; i = i + 1) { var d = new D(i) }
+print("ende")
+//# name: Objekte: Ownership und Destruktor pro Schleifendurchlauf

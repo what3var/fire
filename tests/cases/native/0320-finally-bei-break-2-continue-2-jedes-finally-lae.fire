@@ -1,0 +1,69 @@
+class E1 : Exception { construct() { } }
+string log = ""
+for (int a = 0; a < 3; a++) {
+    try {
+        foreach (b in [1, 2, 3]) {
+            try {
+                if (a == 1 && b == 2) continue 2
+                if (a == 2 && b == 2) break 2
+                log = log + a + b + " "
+            } finally { log = log + "i" + a + b + " " }
+        }
+    } finally { log = log + "o" + a + " " }
+}
+print(log)
+class F {
+    static string C() {
+        string log = ""
+        foreach (x in [1, 2]) {
+            try {
+                while (true) {
+                    try { throw new E1() }
+                    catch (E1 e) { log = log + "c "; break 2 }
+                    finally { log = log + "f1 " }
+                }
+            } finally { log = log + "f2 " }
+            log = log + "never "
+        }
+        return log
+    }
+    static string K() {
+        string log = ""
+        foreach (x in [1, 2]) {
+            foreach (y in [1, 2]) {
+                try { throw new E1() } catch (E1 e) { log = log + x + y + " "; continue 2 } finally { log = log + "f "; }
+            }
+        }
+        return log
+    }
+    static string T() {
+        string log = ""
+        try {
+            foreach (x in [1, 2]) {
+                foreach (y in [1, 2]) {
+                    try { try { break 2 } finally { log = log + "f1 "; throw new E1() } } finally { log = log + "f2 " }
+                }
+            }
+        } catch (E1 e) { log = log + "caught" }
+        return log
+    }
+    static int G() {
+        int n = 0
+        foreach (x in [1, 2, 3]) {
+            foreach (y in [1, 2, 3]) {
+                try { try { n = n + 1; if (y == 2) continue 2 } finally { n = n + 10 } } finally { n = n + 100 }
+            }
+        }
+        return n
+    }
+    static int R() {
+        foreach (x in [1, 2, 3]) { while (true) { try { return x * 7 } finally { print("R fin") } } }
+        return 0
+    }
+}
+print(F.C())
+print(F.K())
+print(F.T())
+print(F.G())
+print(F.R() + 1)
+//# name: finally bei break 2 / continue 2: jedes finally laeuft, auch aus catch, throw im finally, in Methoden

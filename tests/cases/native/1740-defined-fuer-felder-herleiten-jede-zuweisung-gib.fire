@@ -1,0 +1,29 @@
+class Counter {
+    int count
+    int step = 2
+    float total
+    int lazy
+    int maybe = 1
+    int never
+    int late
+    construct() { this.count = 0; total = 0.0; Counter.Twice(1); late = 1 }
+    undefined Add(int x) {
+        count++
+        late++
+        this.total = this.total + x * 0.5
+        step = step + Counter.Twice(x)
+    }
+    static int Twice(int v) { return v * 2 }
+    int Lazy() {
+        if (lazy == undefined) { lazy = 42 }
+        return lazy
+    }
+    undefined Forget(any v) { maybe = v }
+}
+var c = new Counter()
+c.Add(3)
+c.Add(4)
+print(c.count + " " + c.step + " " + c.total + " " + c.Lazy() + " " + c.never + " " + c.late)
+c.Forget(undefined)
+print(c.maybe)
+//# name: defined fuer Felder herleiten: jede Zuweisung gibt eine Zahl (ohne Initialisierer: jeder Konstruktor setzt es zuerst); == undefined, ein Wert, der undefined sein kann, und nie geschriebene Felder halten es auf

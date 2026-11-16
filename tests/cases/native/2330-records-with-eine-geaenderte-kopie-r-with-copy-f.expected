@@ -1,0 +1,9 @@
+1 2 | 5 2 | 3 7 True
+1 m l
+3 box 1 | 10 copy 2 8 True | 9 box True
+word: 'with' without 'copy' or 'flat' is for records: write 'copy x with { ... }' (a deep copy) or 'flat x with { ... }'.
+kind: The field 'v' of the record 'Holder' holds an object of the class 'Box': a record holds only what does not change - numbers, texts, enums, records, lambdas without captures.
+text
+held: The field 'v' of the record 'Holder' holds an array: a record holds only what does not change - numbers, texts, enums, records, lambdas without captures.
+9 1 True
+the original stays: 1

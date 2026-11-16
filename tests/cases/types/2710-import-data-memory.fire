@@ -1,0 +1,5 @@
+#import "data.memory"
+print(1)
+//# types: strict
+//# modes: Release
+//# name: types 271: #import "data.memory"

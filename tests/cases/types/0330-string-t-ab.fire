@@ -1,0 +1,6 @@
+string t = "ab"
+int q = t.Substring(1)
+bool b = t.IndexOf("b")
+//# types: strict
+//# modes: Release
+//# name: types 33: string t = "ab"

@@ -1,0 +1,60 @@
+class Holder {
+    int data[]
+    construct() { this.data = [1, 2, 3] }
+    Fill() { var tmp = new int[2]; tmp[0] = 7; this.data = tmp; tmp.TakeTo(this) }
+    Bad() { var tmp = new int[2]; this.data = tmp }
+}
+class Res { string n; construct(string n) { this.n = n } destruct() { print("free " + this.n) } }
+class Make {
+    static int[] Create() { var a = [4, 5, 6]; return a }
+    static int[] Pair() { var a = new int[2]; { var b = new int[1]; b.TakeUpwards(); a[0] = b[0] } return a }
+}
+var h = new Holder()
+print(h.data[1])
+h.Fill()
+print(h.data[0])
+var r = Make.Create()
+print(r[2])
+var p = Make.Pair()
+print(p.length)
+h.Bad()
+try { print(h.data[0]) } catch (DestroyedException e) { print("destroyed: " + e.message) }
+var x = [1, 2]
+delete x
+try { print(x[0]) } catch (e) { print("after delete: " + e.message) }
+try { print(x.length) } catch (e) { print("len: " + e.message) }
+var m = new int[2][3]
+m[1][2] = 9
+print(m[1][2])
+delete m
+try { print(m[0]) } catch (e) { print("matrix gone") }
+var b = new byte[4]
+b[1] = 5
+b.TakeGlobal()
+print(b[1])
+{
+    var inner = [9, 9]
+    inner.TakeLocal()
+    var r2 = new Res("r2")
+    r2.TakeLocal()
+}
+print("end")
+var rr = new Res("kept")
+delete rr
+print("last")
+{
+    var tmp = [1]
+    tmp.TakeGlobal()
+    var g = tmp
+}
+print("done")
+class Cell { int vals[]; construct() { this.vals = new int[3]; this.vals[0] = 5 } }
+var c = new Cell()
+print(c.vals[0])
+var grid = [[1, 2], [3, 4]]
+print(grid[1][0])
+class Fn { static int[][] Make() { return [[7, 8], [9]] } }
+print(Fn.Make()[0][1])
+var words = "a,b,c".Split(",")
+print(words.length)
+//# name: Besitz: Arrays und Puffer (Scope, Feld, return, Take-Methoden, delete, zerstoerte Benutzung)

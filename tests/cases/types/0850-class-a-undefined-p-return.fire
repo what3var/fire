@@ -1,0 +1,7 @@
+class A { undefined P() { return }
+    int Q(bool b) { if (b) { return 1 } return undefined }
+    int R() { return "x" }
+}
+print(1)
+//# modes: Release
+//# name: types 85: class A { undefined P() { return }

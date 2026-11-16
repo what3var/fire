@@ -1,0 +1,28 @@
+class Box { int v = 1
+  string s = "a" }
+class F {
+  static Inc(int* p) { unsafe { *p = *p + 1 } }
+  static Swap(int* a, int* b) { unsafe { var t = *a; *a = *b; *b = t } }
+}
+var x = 5
+unsafe {
+    int* p = &x
+    *p = *p + 10
+    print(x)
+    F.Inc(p)
+    print(x)
+    var y = 7
+    F.Swap(&x, &y)
+    print(x + " " + y)
+    var b = new Box()
+    int* pv = &b.v
+    *pv = 42
+    print(b.v)
+    string* ps = &b.s
+    *ps = *ps + "z"
+    print(b.s)
+    int* r = &x
+    r = r + 0
+    print(*r)
+}
+//# name: Zeiger (unsafe): Variablen, Felder, ref-Parameter, Parameter vom Typ int*, Tausch

@@ -1,0 +1,1 @@
+error E4063: Method 'Area' of class 'Sq' implements interface 'IShape' and must be public, not private (a member of an interface is public) (line 2)

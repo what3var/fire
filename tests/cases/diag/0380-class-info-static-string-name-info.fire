@@ -1,0 +1,8 @@
+class Info { static string Name = "info" }
+class T {
+    undefined Info() { }
+    static string Of() { return Info.Name }
+}
+print(T.Of())
+//# modes: Release
+//# name: diag 38: class Info { static string Name = "info" }

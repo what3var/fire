@@ -1,0 +1,34 @@
+class Item { string n
+  construct(string n) { this.n = n }
+  destruct() { print("~" + this.n) } }
+class Holder { any kept
+  construct() { }
+  // x is the result of a call passed straight on: it belongs to this method's scope, so the Holder may take it
+  Adopt(x) { return try x.TakeTo(this) }
+  AdoptNew(x) { return try x.TakeTo(this) }
+  // the thing is owned by this object: only the owner moves it
+  Release() { return try this.kept.TakeLocal() }
+}
+class F { static Make(string n) { return new Item(n) } }
+var h = new Holder()
+print(h.Adopt(F.Make("fresh")))
+var mine = new Item("mine")
+print(h.AdoptNew(mine))
+print(h.AdoptNew(new Item("tmp")))
+// children of a list: the items go to the list
+class Bag { any list
+  construct() { this.list = new List() } }
+var items = new List()
+var a = new Item("la")
+var b = new Item("lb")
+items.Add(a)
+items.Add(b)
+var arr = [new Item("a1"), new Item("a2")]
+class T { static Run(items, arr) {
+    items.TakeLocal(Takes.Children)
+    arr.TakeLocal(Takes.Children)
+    return 0
+} }
+T.Run(items, arr)
+print("end")
+//# name: Besitz: try x.Take... und Takes.Children (Array, IEnumerable)

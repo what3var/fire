@@ -1,0 +1,2 @@
+error E4068: Interface 'IA' extends itself (IA -> IB -> IA) (line 1)
+error E4068: Interface 'IB' extends itself (IB -> IA -> IB) (line 2)

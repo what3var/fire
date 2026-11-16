@@ -1,0 +1,8 @@
+class Box { int n; construct() { this.n = 0 } Add(int d) { this.n = this.n + d } }
+var box = new Box()
+var done = 0
+fire { box.Add(2); box.Add(3); fire global { done = done + 1 } }
+var spins = 0
+while (done == 0 && spins < 100000000) { spins = spins + 1 }
+print("n " + box.n + " done " + done)
+//# name: Threads: Globals: fire global und Methodenaufrufe ohne sync globals

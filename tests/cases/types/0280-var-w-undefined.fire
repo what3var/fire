@@ -1,0 +1,5 @@
+var w = undefined
+print(1)
+//# types: strict
+//# modes: Release
+//# name: types 28: var w = undefined

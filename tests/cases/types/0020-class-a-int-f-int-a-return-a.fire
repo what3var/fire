@@ -1,0 +1,6 @@
+class A { int f(int a) { return a } }
+int y = 2.5
+var o = new A()
+o.f("s")
+//# modes: Release
+//# name: types 2: class A { int f(int a) { return a } }

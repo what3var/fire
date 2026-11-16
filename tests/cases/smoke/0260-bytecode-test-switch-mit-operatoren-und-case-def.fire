@@ -1,0 +1,21 @@
+class Runner {
+    Classify(int x) {
+        switch (x) {
+            case <= 1:
+                print("klein")
+                break
+            case 2:
+                print("zwei")
+                break
+            case default:
+                print("gross")
+        }
+    }
+}
+
+var r = new Runner()
+r.Classify(5)
+r.Classify(1)
+r.Classify(2)
+//# note: what the test program said to expect (for a reader, it was not checked): gross / klein / zwei
+//# name: Bytecode-Test: switch mit Operatoren und case default

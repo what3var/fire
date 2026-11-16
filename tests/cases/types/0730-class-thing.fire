@@ -1,0 +1,11 @@
+class Thing { }
+class H { class o
+    any a }
+var h = new H()
+h.a = 5
+h.a = "s"
+h.o = new Thing()
+h.o = 5
+h.o = "text"
+//# modes: Release
+//# name: types 73: class Thing { }

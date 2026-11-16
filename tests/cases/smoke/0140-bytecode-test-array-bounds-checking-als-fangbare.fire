@@ -1,0 +1,25 @@
+var arr = [1, 2, 3]
+
+try {
+    print(arr[10])
+    print("SOLLTE NIE LAUFEN")
+} catch (IndexOutOfBoundsException e) {
+    print("gefangen: " + e.message)
+    print(e.index)
+    print(e.length)
+}
+
+print("weiter nach try/catch")
+
+var list = new List()
+list.Add(1)
+try {
+    // List physically allocates 8 slots internally (see Prelude, doubles
+    // only when needed) - only an index beyond THIS physical capacity
+    // (not just beyond the .Add() count) triggers the bounds check.
+    list[20] = 99
+} catch (IndexOutOfBoundsException e) {
+    print("auch ueber List[] gefangen: " + e.index)
+}
+//# note: what the test program said to expect (for a reader, it was not checked): gefangen: .../ 10 / 3 / weiter nach try/catch / auch ueber List[] gefangen: 20
+//# name: Bytecode-Test: Array-Bounds-Checking als fangbare Skript-Exception

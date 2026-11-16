@@ -1,0 +1,9 @@
+class A { int v
+    construct() { this.v = 1 }
+    operator+(any o) { return 1 }
+    destruct() { }
+}
+print(1)
+//# types: strict
+//# modes: Release
+//# name: types 84: class A { int v

@@ -1,0 +1,43 @@
+#import "json"
+class Point {
+    float x : cm
+    float y : cm
+    construct(float x : cm, float y : cm) { this.x = x; this.y = y }
+}
+class Person {
+    string name
+    int age
+    Person friend
+    List<Point> path
+    [NonSerialized]
+    int secret
+    [JsonName "nick"]
+    string nickname
+    any extra
+    construct() { }
+}
+var a = new Person()
+a.name = "Ann \"A\"\n"
+a.age = 41
+a.secret = 7
+a.nickname = "annie"
+a.path = new List<Point>()
+a.path.Add(new Point(1.5cm, 2cm))
+a.path.Add(new Point(3cm, 4mm))
+a.extra = [1, 2.5, "x", 'c', true, undefined, 5m]
+var b = new Person()
+b.name = "Bob"
+b.friend = a
+a.friend = b
+string text = Json.Serialize(a)
+print(text)
+print(Json.Serialize(a, new JsonOptions(true)))
+Person c = Json.Deserialize<Person>(text)
+print(c.name + " " + c.age + " " + c.secret + " " + c.nickname + " " + c.friend.name + " " + (c.friend.friend == c))
+print(c.path.Count + " " + c.path[1].y + " " + c.path[0].x)
+print(c.extra[1] + " " + c.extra[3] + " " + c.extra[6])
+var tree = Json.Parse("{\"a\": [1, {\"b\": null}], \"c\": \"d\"}")
+print(tree.Get("c") + " " + tree.Get("a")[0] + " " + tree.Get("a")[1].Has("b"))
+print(Json.Serialize(tree))
+try { Json.Parse("{\"a\": }") } catch (JsonException e) { print(e.message) }
+//# name: Json: Zyklen ($id/$ref), Einheiten, NonSerialized/JsonName, List, any-Werte, eingerueckt, Lesen, Parse, Fehler

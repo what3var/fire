@@ -1,0 +1,7 @@
+class R {
+ bool Inside(int a, int b) { return true }
+ static bool Inside(R a, R b) { return false }
+}
+print(1)
+//# modes: Release
+//# name: types 188: class R {

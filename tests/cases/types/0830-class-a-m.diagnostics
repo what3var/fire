@@ -1,0 +1,1 @@
+error TC005: Method 'M' has no return type and is assumed to return 'any'. Please add one (use 'undefined' if it returns nothing). (line 1)
