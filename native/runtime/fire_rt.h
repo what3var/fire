@@ -8849,10 +8849,14 @@ FIRE_FN bool lentRetire(Obj* o) {
 #ifdef FIRE_NO_GIL
     {
         LentGrave* g = (LentGrave*)malloc(sizeof(LentGrave));
-        FireGen gen = (FireGen)((slotGenGet(o->h.slot) + 1) & FIRE_GEN_MASK);
         if (!g) { fire_mutex_unlock(&g_lentM); allocFailed(); }
-        slotGenSet(o->h.slot, gen);   /* (dead: every reader that looks from now on sees it) */
-        slotBornSet(o->h.slot, gen);
+#ifdef FIRE_SLOTS   /* (#performance: no handles - nothing is checked) */
+        {
+            FireGen gen = (FireGen)((slotGenGet(o->h.slot) + 1) & FIRE_GEN_MASK);
+            slotGenSet(o->h.slot, gen);   /* (dead: every reader that looks from now on sees it) */
+            slotBornSet(o->h.slot, gen);
+        }
+#endif
         fire_atomic_addAcqRel(&g_lentCount, (uint32_t)-1);   /* (after the generation: a strand that sees the count drop sees it dead) */
         g->o = &o->h;
         g->epoch = lentAddSC(&g_lentEpoch, 1) + 1;

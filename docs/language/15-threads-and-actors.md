@@ -275,7 +275,7 @@ while (ready < 1) { Sleep(1ms) }
 print(frame[0] + frame[1])                      // 30
 ```
 
-What is **guaranteed** (in the VM and in a native build, with or without the GIL):
+What is **guaranteed** (in the VM and in a native build, with or without the GIL; not in `#performance`, which checks nothing):
 
 - **Memory safety.** An access never reads or writes memory that is not the buffer's: the bounds are checked as always (`IndexOutOfBoundsException`),
   and the memory of a buffer is never freed or reused while a thread may still be in the middle of an access to it - also not when the main program
