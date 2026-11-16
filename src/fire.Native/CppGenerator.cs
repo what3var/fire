@@ -1191,7 +1191,7 @@ namespace fire.Native
         /// <summary>The check of a declaration with a class, an interface or a constrained type parameter (a parameter, a field; DeclaredType, `spec` its
         /// encoded form): `undefined` or a value that fits one alternative passes (and a destroyed object: every use of it reports that), anything else
         /// is an ArgumentException.</summary>
-        private string ClassGuard(string value, string spec, string what, string ownerObj = "NULL", string? callTArgs = null)
+        private string ClassGuard(string value, string spec, string what, string ownerObj = "NULL", string? callTArgs = null, string afterText = "")
         {
             var parsed = DeclaredType.Parse(spec);
             string altCheck = "";
@@ -1227,7 +1227,8 @@ namespace fire.Native
                 : (callTArgs != null ? $"({callTArgs} ? {callTArgs}[{k}] : NULL)" : null);
             if (typeArg == null) return altCheck;
             string param = parsed.Display.Split(' ')[0];
-            return $"{{ const TArg* tga = {typeArg}; if (tga) {{ if (FIRE_UNLIKELY(!fitsTArg(&{value}, tga))) guardTArgFailed({value}, {CString(param)}, tga, {CString(what)}); }}"
+            // (a `T` that stands for `string` - `List<string>`, D14: what does not fit becomes its text, a new string of the pool)
+            return $"{{ const TArg* tga = {typeArg}; if (tga) {{ if (FIRE_UNLIKELY(!fitsTArg(&{value}, tga))) {{ if (!strcmp(tga->display, \"string\") && {value}.kind != K_Undefined) {{ Value o_ = {value}; {value} = guardStr({value});{afterText} (void)o_; }} else guardTArgFailed({value}, {CString(param)}, tga, {CString(what)}); }} }}"
                 + (altCheck.Length > 0 ? $" else {{ {altCheck} }}" : "") + " }";
         }
 
@@ -3644,7 +3645,8 @@ namespace fire.Native
                     f.GuardAddr[code[k].A[1]] = code[k + 2].Addr;
             // (a parameter declared int/float/bool - GuardLocal - holds no reference after its check: it is only counted when the function stores one in it;
             // then its retain at the entry comes back too, so a guard that fails before it still leaves the counts right)
-            var scalarParams = code.Where(c => c.Op == OpCode.GuardLocal && c.A[0] < f.ParamLike).Select(c => c.A[0]).ToHashSet();
+            // (a `string` parameter - D14 - stays a counted variable: its check may give it a new string)
+            var scalarParams = code.Where(c => c.Op == OpCode.GuardLocal && c.A[0] < f.ParamLike && (c.A[1] & 0x1F) != (int)TypeTag.String).Select(c => c.A[0]).ToHashSet();
             for (int i = 0; i < f.ParamLike; i++)
             {
                 if (!scalarParams.Contains(i)) MarkVarRef(VarKey(f, $"P{i}"));
@@ -6820,11 +6822,9 @@ namespace fire.Native
                     bool cParam = f.CAbi is { } guardAbi && ins.A[0] < guardAbi.ParamType.Length && guardAbi.ParamType[ins.A[0]] != 0;
                     if (!cParam && DeclaredKind.IsString(declared))
                     {
-                        // (`string p`, D14: the text made of the argument is a temporary of the pool above the call's own list - it belongs to the caller's
-                        // scope like a temporary argument does: the list of the call starts above it, its end does not let go of it)
-                        f.NeedsList.Add(FunctionScope);
-                        string exit = CheckExit() is { } guardExit ? $" if (guardStrSlot(&{v})) goto {guardExit};" : $" (void)guardStrSlot(&{v});";
-                        E($"if (FIRE_UNLIKELY({v}.kind != K_String && {v}.kind != K_Undefined)) {{{exit} OP.mark = poolMark(); }}");
+                        // (`string p`, D14: the parameter is a counted variable - it counts the text made of the argument and lets go of the argument)
+                        string exit = CheckExit() is { } guardExit ? $" if (FIRE_UNLIKELY(g_unwind.active)) goto {guardExit};" : "";
+                        E($"if (FIRE_UNLIKELY({v}.kind != K_String && {v}.kind != K_Undefined)) {{ Value o_ = {v}; {v} = guardStr({v}); retain({v}); release(o_);{exit} }}");
                     }
                     else if (!cParam) E(GuardStmt(v, declared, Str(ins.A[2]), CheckExit()));
                     // (the unit that was checked before it: GuardLocal names its demand, or 0xFFFF for an open one)
@@ -6930,6 +6930,7 @@ namespace fire.Native
                     Need(1);
                     E(ClassGuard(S(d - 1), Str(ins.A[0]), Str(ins.A[1]), SelfObj(f), f.HasCallTArgs ? "ctargs" : null));
                     Check();
+                    if (DeclaredType.Parse(Str(ins.A[0])).TypeParamIndex >= 0) SetR(d - 1, true);   // (maybe the text of a `T` that is a string now, D14)
                     _kindsKept = true;
                     return Next();
                 }
@@ -6945,7 +6946,8 @@ namespace fire.Native
                         _kindsKept = true;
                         return Next();
                     }
-                    E(ClassGuard(v, spec, Str(ins.A[2]), SelfObj(f), f.HasCallTArgs ? "ctargs" : null));
+                    // (a `T` of `List<string>`: the parameter - a counted variable - counts the text made of the argument, like `string p` - GuardLocal)
+                    E(ClassGuard(v, spec, Str(ins.A[2]), SelfObj(f), f.HasCallTArgs ? "ctargs" : null, DeclaredType.Parse(spec).TypeParamIndex >= 0 ? $" retain({v}); release(o_);" : ""));
                     Check();
                     // (`defined Dog p`: never undefined after the guard)
                     JoinVarType(VarKey(f, v), DeclaredClass(spec) is { } guardedRc ? ObjType(guardedRc) | (DeclaredType.Parse(spec).NonNull ? 0 : NullableBit) : InterfaceType(spec) ?? TypeUnknown);
