@@ -658,7 +658,9 @@ min-Verhältnis `alloc` 1,00, `exceptions` 1,03, `fib` 1,03, `list` 1,01, `metho
   bewegen (freie Slots je Thread), die Tabellen der Threads haben je einen Mutex, Strings werden an der Thread-Grenze kopiert (`strCross`; was in den geteilten Bereich geht,
   zählt atomar, `R_SHARED`), die Globals schützt eine Lese-/Schreibsperre (`DomLock`: das Hauptprogramm hält die Schreibseite, solange es läuft; ein Thread nimmt die Leseseite
   bei der ersten Berührung des geteilten Bereichs und gibt sie am nächsten sicheren Punkt zurück; eine Sektion schreibt allein), und die Natives eines Pakets laufen unter einem
-  Lock je Paket (`"threadSafe": true` im Manifest: ohne). **Mit der GIL** - auf den Zielen mit eigenem Scheduler (dos, win16, wasm), FreeRTOS, in Debug-Builds, mit Modulen
+  Lock je Paket (`"threadSafe": true` im Manifest: ohne). Für ein Native hält ein Thread die Leseseite nur, wenn ein Argument in den geteilten Bereich führen kann
+  (`fire_natBegin`/`fire_natArg`; sonst gibt er sie vor dem Aufruf ab, wenn er nur Zahlen der Globals gelesen hat) - ein langes Native hält das Hauptprogramm nicht auf;
+  die Reihenfolge ist Sperre der Globals vor Sperre eines Pakets (THREADING_DESIGN 7, ROADMAP_TASKS 1f). **Mit der GIL** - auf den Zielen mit eigenem Scheduler (dos, win16, wasm), FreeRTOS, in Debug-Builds, mit Modulen
   und mit `FIRE_GIL` - läuft aller fire-Code unter **einer globalen Sperre**, einem fairen Ticket-Lock: ein Thread gibt sie nur beim Warten (`sync`, `process`, Sektionen) und
   an sicheren Punkten ab (Schleifen-Rücksprung, Funktionsanfang, alle 4096 Stationen ein `gilYield`). Die Abgabepunkte der GIL sind ohne sie die Stellen, an denen das
   Hauptprogramm und die Pakete ihre Sperren abgeben. Zustand eines Ausführungsstrangs (`g_unwind`, `g_handlers`, `g_pending`, Temporärpool, `g_globalOwn`, `g_reflCaller`)

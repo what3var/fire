@@ -34529,6 +34529,125 @@ else
             print("main woke up")
             print((DateTime.UtcNow - start) >= TimeSpan.FromMilliseconds(100))
             """),
+        ("Threads: ein Thread in einem langen Native eines Pakets (Compress) haelt das Hauptprogramm nicht auf - ohne Globals und nach dem Lesen eines statischen Feldes", """
+            #import "time"
+            #import "compression"
+            // A fire thread in a long native of a package (one Compress of megabytes of noise) does not hold the main program up: the main program reads
+            // the clock meanwhile, and the longest time between two reads stays below half of the time the native took (it was all of it: the thread held
+            // the read side of the globals' lock for the native, the main program waited for it at its next safe point or back from its own native).
+            // The second thread reads a static field of the main program right before its call (it holds the read side when it calls the native).
+            class G { static bool go = true }
+            var done = 0
+            int[64] took = 0
+            byte noise[] = new byte[5000000]
+            int seed = 12345
+            for (int i = 0; i < noise.length; i++) { seed = (seed * 1103515245 + 12345) % 2147483648; noise[i] = (seed / 65536) % 7 + (i % 5) * 3 }
+            fire taking noise {
+                sync global { done = 1 }
+                int[64] t0 = DateTime.UtcNow.Ticks
+                byte packed[] = Compression.Deflate.Compress(noise, 9)
+                int[64] t1 = DateTime.UtcNow.Ticks
+                sync global { took = t1 - t0; done = 2 }
+            }
+            while (done < 1) { }
+            int[64] last = DateTime.UtcNow.Ticks
+            int[64] worst = 0
+            while (done < 2) {
+                int[64] now = DateTime.UtcNow.Ticks
+                if (now - last > worst) { worst = now - last }
+                last = now
+            }
+            if (worst * 2 < took) { print("no globals: the main program kept its pace") }
+            else { print("no globals: the main program stalled " + (worst / 10000) + " ms, the native took " + (took / 10000) + " ms") }
+            fire taking noise {
+                sync global { done = 3 }
+                int[64] t0 = DateTime.UtcNow.Ticks
+                if (G.go) {
+                    byte packed[] = Compression.Deflate.Compress(noise, 9)
+                }
+                int[64] t1 = DateTime.UtcNow.Ticks
+                sync global { took = t1 - t0; done = 4 }
+            }
+            while (done < 3) { }
+            last = DateTime.UtcNow.Ticks
+            worst = 0
+            while (done < 4) {
+                int[64] now = DateTime.UtcNow.Ticks
+                if (now - last > worst) { worst = now - last }
+                last = now
+            }
+            if (worst * 2 < took) { print("static field read: the main program kept its pace") }
+            else { print("static field read: the main program stalled " + (worst / 10000) + " ms, the native took " + (took / 10000) + " ms") }
+            """),
+        ("Threads: Natives von Paketen mit Sperre (io) und ohne (compression, hash, time) aus Threads und dem Hauptprogramm, mit eigenen Argumenten und einem Puffer der Globals, Sektionen dazwischen", """
+            #import "time"
+            #import "io"
+            #import "compression"
+            #import "hash"
+            // Threads and the main program in the natives of packages with a lock (io) and without (compression, hash, time), with arguments of their own and of
+            // the shared domain (a global buffer the main program changes meanwhile), reads of globals and sections in between: nothing deadlocks, nothing races.
+            class G { static int rounds = 300
+              static string name = "hello" }
+            byte shared[] = new byte[4096]
+            for (int i = 0; i < shared.length; i++) { shared[i] = 65 + i % 26 }
+            var done = 0
+            var sum = 0
+            var lengths = 0
+            for (int t = 0; t < 3; t++) {
+                fire {
+                    int local = 0
+                    for (int i = 0; i < G.rounds; i++) {
+                        byte b[] = IO.Utf8.GetBytes(G.name + i)
+                        string s = IO.Utf8.GetString(shared, 0, 16)
+                        byte z[] = Compression.Deflate.Compress(shared)
+                        byte back[] = Compression.Deflate.Decompress(Compression.Deflate.Compress(b))
+                        string h = Hash.Md5.HexOf(b)
+                        local = local + s.length + back.length - b.length + h.length
+                        if (i % 50 == 0) { sync global { sum = sum + 1 } }
+                    }
+                    sync global { done = done + 1; lengths = lengths + local }
+                }
+            }
+            int spins = 0
+            while (done < 3) {
+                byte m[] = IO.Utf8.GetBytes("main")
+                string text = IO.Utf8.GetString(shared, 0, 8)
+                shared[3] = 65 + spins % 26
+                int[64] now = DateTime.UtcNow.Ticks
+                string h = Hash.Md5.HexOf(shared)
+                spins++
+            }
+            print("sections " + sum + ", lengths " + lengths)
+            """),
+        ("Threads: ein String aus einem statischen Feld bleibt ueber den Aufruf eines Natives im selben Ausdruck gueltig, waehrend das Hauptprogramm ihn ersetzt", """
+            #import "time"
+            #import "compression"
+            // A string a thread read from a static field stays valid across the call of a native in the same expression, while the main program replaces it:
+            // the thread lets go of the read side of the globals' lock for a native only when it has read nothing but numbers of the globals.
+            class G { static string name = "start" }
+            class U { static int Pair(string a, any b) { return a.length + b.length } }
+            var done = 0
+            var total = 0
+            fire {
+                byte data[] = new byte[20000]
+                for (int i = 0; i < data.length; i++) { data[i] = (i * 7 + i / 13) % 251 }
+                int local = 0
+                for (int i = 0; i < 1500; i++) {
+                    local = local + U.Pair(G.name, Compression.Deflate.Compress(data)) % 2
+                    string kept = G.name
+                    byte z[] = Compression.Deflate.Compress(data)
+                    local = local + kept.length % 2
+                }
+                sync global { done = 1; total = local }
+            }
+            int n = 0
+            while (done < 1) {
+                G.name = "name number " + n + " of the main program"
+                int[64] now = DateTime.UtcNow.Ticks
+                n++
+            }
+            print(total >= 0)
+            """),
     }).ToArray();
 
     // Resources: `new Resource("path")` is read when the program is compiled and travels with it (VM, packed file, native binary)

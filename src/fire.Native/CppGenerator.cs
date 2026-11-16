@@ -5119,7 +5119,7 @@ namespace fire.Native
                 {
                     string gv = GlobalVar(ins.A[0], locals);
                     // (a fire thread reads a global of the main program under the read side of the globals' lock - fire_rt.h DomLock, without the GIL)
-                    E($"{(_usesThreads && f.Kind == FuncKind.FireBody && gv[0] == 'G' ? "FIRE_DOM_READ(); " : "")}{S(d)} = {gv};"); SetR(d, VarRef(VarKey(f, gv))); SetT(d, LoadType(gv)); _kindsKept = true; d++; return Next();
+                    E(_usesThreads && f.Kind == FuncKind.FireBody && gv[0] == 'G' ? $"FIRE_DOM_LOAD({S(d)}, {gv});" : $"{S(d)} = {gv};"); SetR(d, VarRef(VarKey(f, gv))); SetT(d, LoadType(gv)); _kindsKept = true; d++; return Next();
                 }
                 case OpCode.StoreGlobal:
                 case OpCode.StoreGlobalPop:
@@ -5858,14 +5858,18 @@ namespace fire.Native
                         int pkgLock = PkgLock(native);
                         bool awayWrapped = false;
                         string pkgEnter = pkgLock >= 0 ? $"{{ FIRE_PKG_ENTER(fire_pkgM[{pkgLock}]) " : "", pkgLeave = pkgLock >= 0 ? $" FIRE_PKG_LEAVE(fire_pkgM[{pkgLock}]) }}" : "";
-                        // (the main program goes away for the native when no argument is of the shared domain: the threads need not wait for it meanwhile -
-                        // fire_rt.h fire_awayBegin; a C number of a typed parameter is no object)
-                        if (_usesThreads && !packageNative.Host)
+                        // (the lock of the globals and the native - fire_rt.h fire_natBegin: the main program goes away for the native when no argument is of the
+                        // shared domain, so the threads need not wait for it meanwhile; a thread lets go of the read side for a native whose arguments cannot lead
+                        // into the shared domain, so a long native holds nobody up, and holds it for any other one. A C number of a typed parameter is no object.
+                        // A function of the host (`Sleep`) waits by itself: the main program is not away in it, a thread keeps the read side for its package's lock)
+                        if (_usesThreads && (!packageNative.Host || pkgLock >= 0))
                         {
-                            var awayArgs = Enumerable.Range(first, argc).Where(k => !(typed && NativeCTypes.ParamCType(packageNative.Fn, k - first) is not null)).Select(k => $"fire_awayArg({SR(k)})").ToList();
-                            string awayIf = awayArgs.Count == 0 ? "!g_isThread" : string.Join(" && ", awayArgs);
-                            pkgEnter = $"{{ bool aw_ = {awayIf}; if (aw_) fire_awayBegin(); " + (pkgEnter.Length > 0 ? pkgEnter : "{ ");
-                            pkgLeave = (pkgLeave.Length > 0 ? pkgLeave : " }") + " if (aw_) fire_awayEnd(); }";
+                            var objectArgs = Enumerable.Range(first, argc).Where(k => !(typed && NativeCTypes.ParamCType(packageNative.Fn, k - first) is not null)).ToList();
+                            string awayIf = string.Join(" && ", objectArgs.Select(k => $"fire_awayArg({SR(k)})"));
+                            string natIf = string.Join(" && ", objectArgs.Select(k => $"fire_natArg({SR(k)})"));
+                            string freeIf = packageNative.Host ? "false" : objectArgs.Count == 0 ? "true" : $"g_isThread ? ({natIf}) : ({awayIf})";
+                            pkgEnter = $"{{ int nt_ = fire_natBegin({freeIf}); " + (pkgEnter.Length > 0 ? pkgEnter : "{ ");
+                            pkgLeave = (pkgLeave.Length > 0 ? pkgLeave : " }") + " fire_natEnd(nt_); }";
                             awayWrapped = true;
                         }
                         // (an int[64] result in a program with 32-bit ints, or no scalars here: the Value of the C number)
@@ -6692,7 +6696,7 @@ namespace fire.Native
                     // (a `readonly` static field whose initializer is a constant - `Word.Bits`: that constant, a C number like a literal)
                     if (ConstantStatic(Str(ins.A[0]), Str(ins.A[1])) is { } constant) { PushConstant(constant); d++; return Next(); }
                     string sfVar = StaticFieldVar(Str(ins.A[0]), Str(ins.A[1]));
-                    E($"{(_usesThreads ? "FIRE_DOM_READ(); " : "")}{S(d)} = {sfVar};");   // (any code may run on a fire thread: see LoadGlobal)
+                    E(_usesThreads ? $"FIRE_DOM_LOAD({S(d)}, {sfVar});" : $"{S(d)} = {sfVar};");   // (any code may run on a fire thread: see LoadGlobal)
                     SetR(d, VarRef(sfVar));
                     d++; return Next();
                 }

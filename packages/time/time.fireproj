@@ -99,6 +99,7 @@
     "exceptions": [
       "TimeException"
     ],
+    "threadSafe": true,
     "language": "c"
   }
 }

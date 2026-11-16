@@ -84,9 +84,23 @@ Order, each step with the GIL still on (no change of behaviour, the suite stays 
    or wait; threads read side by side, a thread that never touches the domain never waits. A section holds the write side alone. A program with two
    threads reading global strings and fields of a global object while the main program rewrites them is clean under ThreadSanitizer without the GIL.
 6. **1f** a lock per package instead of the GIL around natives. *Done:* in a program with fire threads every call of a package's native is between
-   `FIRE_PKG_ENTER`/`FIRE_PKG_LEAVE` of that package's lock (`fire_pkgM`, nothing with the GIL; a typed native in C then goes through its Value). A thread
-   takes the read side of the globals before a package's lock, so the main program, holding the write side, never waits for a package's lock; the lock is
-   given back where the GIL was (`gilRelease` in a native that waits, the safe points of a callback). `"threadSafe": true` in the manifest: no lock.
+   `FIRE_PKG_ENTER`/`FIRE_PKG_LEAVE` of that package's lock (`fire_pkgM`, nothing with the GIL; a typed native in C then goes through its Value). The lock is
+   given back where the GIL was (`gilRelease` in a native that waits, the safe points of a callback). `"threadSafe": true` in the manifest: no lock
+   (`time`, `compression`, `hash` of the standard packages).
+   *A thread in a long native holds nobody up* (`fire_natBegin`/`fire_natEnd` around every call of a package's native, outside the package's lock): a
+   thread holds the read side of the globals for a native only when an argument is of the shared domain or may lead into it (`fire_natArg`: an object, an
+   array of anything but numbers, a pointer, a buffer or array the global scope owns, a string or lambda counted atomically); for any other native it does
+   not take the read side, and lets go of it when it has read only numbers out of globals and static fields since it took it (`FIRE_DOM_LOAD`,
+   `g_domReader` 2 - a string of a global in a temporary of its code stays valid). Before, every native of a package without `threadSafe` took the read
+   side for the order of the locks and held it for the whole native, and a thread kept the read side for the 4096 safe points of its tick - the main
+   program stood at its next safe point or back from its own native. A reader is now also asked to let go at its next jump back of a loop when someone
+   waits for the readers (`ATTN_DOM`). The order of the locks stays the globals' first, then a package's: a strand that holds a package's lock without
+   the globals' gives it back before it waits for the globals' (`domReadTake` in a callback of the native, `domWriterEnter`, `gilYield`,
+   `strandAcquire`), so the main program, waiting for a package's lock with the write side in the hand, waits for a native that ends without the
+   globals. With the GIL on real threads (a debug build) the threads that wait get the GIL right after a native that took long; during the native they
+   wait. Open: two packages whose natives call back into fire code that calls the other one (the locks of packages have no order among themselves);
+   a string read from a field or element of the shared domain that a thread keeps in a temporary across a call that reaches a safe point (the main
+   program may free it - before this step too; globals and static fields are covered for the natives only).
 7. **1g** `FIRE_NO_GIL` by default: `gilAcquire`/`gilRelease` only mark safe points; ThreadSanitizer clean on the thread tests. *Done:* the default where
    the platform's threads are real (`FIRE_PLAT_PARALLEL` from the posix and windows layers) and the compiler has atomics; the targets with a scheduler of
    fire itself (dos, win16, wasm), FreeRTOS and TinyCC (`FIRE_TLS_STRUCT`), the modules (`FIRE_MODULES`, `FIRE_DLL` - no package locks and no
