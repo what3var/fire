@@ -364,8 +364,8 @@ try {
 }
 ```
 
-A destroyed object has no class any more: `x is of Item`, `x!Item` and `throw x` throw the `DestroyedException` as well. Only the kind of the value is
-still known - `x is of class` is `True`.
+A destroyed object has no class any more: `x is of Item`, `x!Item`, `throw x` and printing it (`print(x)`, `"" + x`, `$"{x}"`) throw the
+`DestroyedException` as well. Only the kind of the value is still known - `x is of class` is `True`.
 
 ## Testing the owner
 

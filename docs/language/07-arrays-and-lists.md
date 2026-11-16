@@ -20,7 +20,8 @@ print(b[2])                 // undefined
 - The size never changes; for a collection that grows, use `List<T>` (below).
 - **The brackets stand after the name**: `int values[]`, `string names[10]`. Brackets after the type are a bit width (`int[8] small`, see
   [Types](02-types.md#bit-widths)).
-- An array literal may hold different types (`[1, "two", 3.0]`); a typed declaration (`int values[]`) makes a **typed array** (below).
+- An array literal may hold different types (`[1, "two", 3.0]`); a typed declaration (`int values[]`, `Dog pets[]`, `string names[]`) makes a
+  **typed array** (below).
 - A unit at the declaration (`float:km/h speeds[]`, `int sizes[3] : mm`) converts every element stored into the array (see
   [Units in declarations](05-units.md#units-in-declarations)).
 
@@ -83,7 +84,8 @@ try {
   a field is set - an assignment, `Reflect.Set`, `Json.Deserialize` (which reads the array typed).
 - A parameter `int a[]` types what it receives like a variable (in place: the caller's array becomes typed; an element that does not fit is the
   exception). Copies (`copy`, `flat`, [`taking`](15-threads-and-actors.md)) of a typed array are typed.
-- `int m[3][4]` types the inner arrays. `var`, `any`, strings, classes and pointers declare no element type: such an array takes any value.
+- `int m[3][4]` types the inner arrays. `var`, `any` and pointers declare no element type: such an array takes any value. Classes, interfaces,
+  records, strings, enums and lambdas type it too (below).
 - **A declaration with a size makes the array** - a local or global where it is declared, a field together with its object
   (`class Box { int data[3] }`: `new Box().data.length` is 3). Without a size (`int arr[]`) the variable or field stays `undefined` until an array is assigned.
 - Natively a typed array is **packed**: one C number per element (`int8_t` for `int[8]`, `float` for `float[32]`, one byte for `bool`) instead of a
@@ -106,6 +108,36 @@ try { sure[0] = nothing } catch (ArgumentException e) { print(e.message) }   // 
   defined array is read with one load into a C number - use it for the numbers of a hot loop.
 - The array stays defined through every reference: an `int b[] = sure` may not store `undefined` either. The variable or field itself may still be
   `undefined` (no array yet). `byte`/`word` declarations are buffers - never undefined anyway.
+
+**Arrays of classes, strings, enums and lambdas.** `Dog pets[]`, `IShape shapes[]`, `string names[]`, `Color cs[]` (a variable, a field, a parameter, a
+global) type the array the same way: an element takes a value of that type - an object of the class or of a class derived from it, of a class that
+implements the interface, a string, a value of the enum - or `undefined`; anything else is an `ArgumentException`, through any reference. An array of
+a derived class goes where one of its base class (or of an interface it implements) is declared, and **keeps its own element type**:
+
+```fire
+enum Color { Red, Green }
+class Animal { }
+class Dog : Animal { }
+class Cat : Animal { }
+Dog dogs[] = new Dog[2]
+dogs[0] = new Dog()
+any other = new Cat()
+try { dogs[1] = other } catch (ArgumentException e) { print(e.message) }   // An element of an array of Dog must be a Dog (or undefined), not Cat.
+Animal all[] = dogs                 // fine: every Dog is an Animal
+try { all[1] = other } catch (ArgumentException e) { print(e.message) }    // the same: it is still the Dog array
+defined Color colors[] = new Color[2]
+print(colors[1])                    // Red - a defined enum array starts at the first value
+int lambda<int, int> ops[] = [(int a, int b) => a + b, (int a, int b) => a * b]
+print(ops[1](6, 7))                 // 42
+```
+
+- The other direction (an `Animal` array where `Dog d[]` is declared) and an array of an unrelated class are refused (`An array of Dog cannot be
+  stored where an array of Cat is declared.`).
+- `defined` works for them too: `defined string s[] = new string[n]` starts with `""`, a `defined` enum array with the first value; `defined Dog d[]` has
+  no zero, so it only takes an array whose elements are all given (`new Dog[2]` there is an `ArgumentException`).
+- `lambda<int, int> fs[]` holds lambdas with two parameters (or `undefined`); the types of the signature are hints for the type checker.
+- Generic code does the same by its type argument: `T items[]` and `new T[n]` in a `Bag<Dog>` are an array of Dog - so `List<Dog>`,
+  `Dictionary<string, Dog>` and `List<Color>` check their elements.
 
 ## Arrays as parameters and return values
 

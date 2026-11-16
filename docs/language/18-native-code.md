@@ -30,9 +30,9 @@ name the system finds - and `Get(name, signature)` gives one of its functions as
 ```fire
 #if linux
 var libm = Library.Load("libm.so.6")
-var cos = libm.Get("cos", "float(float)")
+lambda<float> cos = libm.Get("cos", "float(float)")
 print(cos(0.0))                                     // 1
-var add = Library.Load("./libmine.so").Get("add", "int[32](int[32], int[32])")
+lambda<int, int> add = Library.Load("./libmine.so").Get("add", "int[32](int[32], int[32])")
 print(add(40, 2))                                   // 42
 #endif
 ```
@@ -41,6 +41,7 @@ print(add(40, 2))                                   // 42
   The types are those of `extern`: `bool` (a C `bool`), `int` (64 bits) and `int[8]`/`int[16]`/`int[32]`/`int[64]`, `float` (a C `double`) and `float[32]`
   (a C `float`), `char` (a UTF-16 unit), `string` (UTF-8 both ways: passed as `const char*`, a returned `const char*` is copied and not freed - see `release:`
   below), pointers with `*` (a pointer of `unsafe`, an address as `int` or a `NativeHandle`; `void*` too) and `void` as the result. At most 8 parameters.
+- `Get` gives the function as `any`: declare it (`lambda<float> cos`, or `any`) - a `var` would be `any` with the warning `TC020`.
 - `lib.Path` is what it was loaded from. A library is not unloaded.
 - Errors are a `LibraryException`: the library cannot be loaded, it has no function of that name, the signature is not one.
 
@@ -53,15 +54,15 @@ function, looked up in the same library (a `void(void*)`; each Windows DLL may h
 ```fire
 #if linux
 var libc = Library.Load("libc.so.6")
-var fopen = libc.Get("fopen", "void*(string, string)", release: "fclose")
-var fputs = libc.Get("fputs", "int[32](string, void*)")
+any fopen = libc.Get("fopen", "void*(string, string)", release: "fclose")
+any fputs = libc.Get("fputs", "int[32](string, void*)")
 {
-    var f = fopen("notes.txt", "w")
+    any f = fopen("notes.txt", "w")
     if (f == undefined) { print("cannot open") }
     else { fputs("hello\n", f) }
 }                                                  // the block ends: fclose(f)
 
-var strdup = libc.Get("strdup", "string(string)", release: "free")
+any strdup = libc.Get("strdup", "string(string)", release: "free")
 print(strdup("copied"))                            // copied - the C copy is already freed
 #endif
 ```
@@ -215,8 +216,8 @@ print(arr[1])       // 4
 ## Natives in packages
 
 A package (installed with `ember`) can bring native functions written in C++ together with a fire prelude that declares them. A native build compiles
-the C++ into the program; the VM uses a shared library that is built from the same source for the machine. See the documentation of packages
-(`PACKAGES.md`, `PACKAGE_NATIVES.md`) in the repository.
+the C++ into the program; the VM uses a shared library that is built from the same source for the machine. See Packages (`docs/packages/README.md`)
+and Natives of packages (`docs/packages/natives.md`) in the repository.
 
 ## Native programs
 

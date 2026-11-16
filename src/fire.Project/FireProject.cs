@@ -48,6 +48,8 @@ namespace fire.Projects
         /// <summary>The natives of the display (graphics, windows): see <see cref="fire.Package.Manager.PackageNative.Bridge"/>.</summary>
         public List<fire.Package.Manager.PackageNativeFunction>? Bridge { get; set; }
         public List<string>? Exceptions { get; set; }
+        /// <summary>The natives may be called by several fire threads at once: a native build takes no lock of the package around them (PackageNative.ThreadSafe).</summary>
+        public bool? ThreadSafe { get; set; }
         public string? Reset { get; set; }
         /// <summary>Imports whose platform layer the natives build on (ROADMAP 13.3b; see PackageNative.Uses).</summary>
         public List<fire.Package.Manager.NativeUse>? Uses { get; set; }

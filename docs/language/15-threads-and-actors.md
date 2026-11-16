@@ -165,7 +165,7 @@ class Demo {
     static undefined Run() {
         var c = new Counter()
         var add = func (int k) on c => { n = n + k; return n }
-        var sum = await taking add {
+        int sum = await taking add {
             return add(5) + add(2)          // both run in the main program, on c itself
         }
         print(sum + " " + c.n)              // 12 7

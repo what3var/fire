@@ -21,6 +21,7 @@
         print("thread " + (await c.Get()) + " " + (await l.Text()))
         done = true
     }
-    while (!done) { process c; process l; Sleep(1ms) }
+    // (try process: a `process` that waits would wait for ever when the thread ends between the check of `done` and the next message)
+    while (!done) { try process c; try process l; Sleep(1ms) }
     print("main " + c.n + " " + l.text)
 //# name: Threads: fire with a, b - mehrere Actors fuer einen Thread, zusammen mit taking

@@ -9,9 +9,12 @@ package `fire-time` is small and works the same in the VM and natively - on a bo
 
 var start = DateTime.Now
 Sleep(20ms)
-var took = DateTime.Now - start            // a DateTime minus a DateTime is a TimeSpan
+TimeSpan took = DateTime.Now - start       // a DateTime minus a DateTime is a TimeSpan
 print(took.TotalMilliseconds >= 20)        // True
 ```
+
+`-` and `+` of a `DateTime` give a `TimeSpan` or a `DateTime` depending on the other side, so the type checker does not know the result: declare it
+(`TimeSpan took`, `DateTime deadline`) - a `var` there is `any` with the warning `TC019`.
 
 ## Waiting: `Sleep`
 
@@ -116,7 +119,7 @@ Names of days and months are English.
 var start = DateTime.Now
 var sum = 0
 for (var i = 0; i < 100000; i++) { sum += i }
-var took = DateTime.Now - start
+TimeSpan took = DateTime.Now - start
 print(sum)                                   // 4999950000
 print(took.TotalMilliseconds < 10000)        // True
 ```
@@ -126,7 +129,7 @@ For a timeout, compare against a point in time:
 ```fire
 #import "time"
 
-var deadline = DateTime.Now + TimeSpan.FromMilliseconds(50)
+DateTime deadline = DateTime.Now + TimeSpan.FromMilliseconds(50)
 var rounds = 0
 while (DateTime.Now < deadline) {
     rounds++

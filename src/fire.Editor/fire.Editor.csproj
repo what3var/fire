@@ -72,4 +72,16 @@
 
   <Import Project="..\StandardSources.targets" />
 
+  <!--
+    The publish profile FolderProfile (Properties/PublishProfiles) sets PublishTools: after spark, forge and ember are published into the same folder - spark starts
+    forge from its own folder (the assistant, runs, builds), and setup.iss packs that folder as it is.
+  -->
+  <Target Name="PublishTools" AfterTargets="Publish" Condition="'$(PublishTools)' == 'true'">
+    <PropertyGroup>
+      <_ToolsPublishDir>$([System.IO.Path]::GetFullPath('$(PublishDir)'))</_ToolsPublishDir>
+    </PropertyGroup>
+    <MSBuild Projects="..\fire.Compiler\fire.Compiler.csproj;..\fire.Ember\fire.Ember.csproj" Targets="Restore;Publish"
+             Properties="Configuration=$(Configuration);RuntimeIdentifier=$(RuntimeIdentifier);SelfContained=$(SelfContained);PublishSingleFile=$(PublishSingleFile);PublishDir=$(_ToolsPublishDir);StandardSourcesPublish=false;PrebuildStandard=false" />
+  </Target>
+
 </Project>

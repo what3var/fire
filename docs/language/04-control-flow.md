@@ -17,7 +17,8 @@ if (n < 2) {
 
 - Braces are optional for a single statement: `if (n == 3) print("three")`.
 - `else` may stand on the line after the closing `}`.
-- There is no `?:` operator; use `if`/`else` or a small method.
+- For a value that depends on a condition there is the conditional operator: `var size = n > 2 ? "big" : "small"` (see
+  [Operators](03-operators.md#precedence)).
 
 ## `while`
 
@@ -172,6 +173,9 @@ class Point { int x; int y }
 ```
 
 The expression after `with` is evaluated once. `with` blocks can be nested; a `.` always means the innermost one.
+
+`with` after a value (`r with { .x = 1 }`, `copy obj with { .size = 40 }`) is something else: an expression that makes a changed copy of a record or
+an object - see [Classes](08-classes.md#a-changed-copy-with).
 
 ## Blocks and scopes
 
