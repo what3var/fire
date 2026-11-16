@@ -1,0 +1,15 @@
+#import "time"
+class G { static string name = "start" }
+class U {
+  static int Wait() {
+      Sleep(20ms)
+      return 1
+  }
+}
+int k = 5
+var done = false
+if (k > 2) { G.name = "start " + k }
+fire { fire global { G.name = "job " + G.name.length; done = true } }
+while (!done) { var s = G.name + U.Wait() }
+print(G.name)
+//# name: Besitz: geliehener String wartet im Ausdruck, ein Job des Hauptprogramms ersetzt das statische Feld am sicheren Punkt

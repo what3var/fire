@@ -1,0 +1,31 @@
+class G { static string name = "start"
+}
+class O { string name = "o"
+    construct(int k) { this.name = "o " + k }
+    int Change() { this.name = "changed " + this.name.length; return 1 }
+    int Pair(string a, int b) { return a.length + b }
+    int Run() { return this.Pair(this.name, this.Change()) }
+    string Cat() { return this.name + this.Change() }
+}
+class U {
+  static int Pair(string a, int b) { return a.length + b }
+  static int Inside(string a) { G.name = "replaced " + G.name.length; return a.length }
+  static int Change() {
+      G.name = "other " + G.name.length
+      return 1
+  }
+  static int ChangeArr(string a[]) { a[0] = "arr " + a[0].length; return 1 }
+}
+int k = 5
+if (k > 2) { G.name = "start " + k }
+print(U.Pair(G.name, U.Change()))
+print(G.name + U.Change())
+print(U.Inside(G.name))
+var o = new O(k)
+print(o.Run())
+print(o.Cat())
+print(U.Pair(o.name, o.Change()))
+var arr = ["a" + k, "b"]
+print(U.Pair(arr[0], U.ChangeArr(arr)))
+print([G.name, U.Change()].length)
+//# name: Besitz: geliehener String als Argument - die Quelle (statisches Feld, Feld, Element) wird von einem spaeteren Argument oder vom Aufgerufenen ersetzt
