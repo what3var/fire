@@ -334,10 +334,11 @@ namespace UI {
             for (var i = 0; i < this.data.figures.Count; i = i + 1) {
                 any f = this.data.figures[i]
                 if (f.Count() < 2) { continue }
-                any pts = f.ToArray()
-                for (var k = 0; k < pts.length; k = k + 2) {
-                    pts[k] = pts[k] + ax
-                    pts[k + 1] = pts[k + 1] + ay
+                // (the renderer takes floats: `ToArray()` gives an int array, which stays one)
+                var pts = new float[f.points.Count]
+                for (var k = 0; k < f.points.Count; k = k + 2) {
+                    pts[k] = f.points[k] + ax
+                    pts[k + 1] = f.points[k + 1] + ay
                 }
                 if (f.closed && this.Fill != undefined && f.Count() >= 3) { root.renderer.FillPolygon(pts, this.Fill) }
                 if (this.Stroke != undefined) { root.renderer.DrawPath(pts, this.Stroke, f.closed) }

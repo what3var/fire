@@ -296,8 +296,8 @@ print(i)
 - `:` never fails: a value of another dimension gets its number in the base unit (`500m: + 2kg` is `502kg`). `!` next to a string or a bool converts
   nothing and throws (`TC013` where the compiler sees it).
 - A whole number that leaves its dimension is the number in the base unit - whole or not (`5mm:unitless` is `0.005`, `2km:unitless` is `2000`): the
-  compiler does not know which, so `int n = a:unitless` is checked at run time (`Variable 'n' is an int, not Float.` for 5mm). Convert a float, or
-  round on purpose: `(a:unitless)!int`.
+  compiler does not know which, so `int n = a:unitless` is checked at run time (`Variable 'n' is an int, not Float.` for 5mm). Declare a float for it
+  (`float n = a:unitless`). The order in which `:` and `!` are written does not matter - the type is always converted first, also with parentheses.
 - As an argument write `F(a:)`, `F(a:!)`, `F(a:!, b)`; `F(size: 2)` with a value after the colon is a [named argument](08-classes.md#parameters).
 
 A chain `a + b + c` is calculated from left to right: `(a + b) + c`, and the rule applies at every step.
