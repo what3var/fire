@@ -5115,7 +5115,7 @@ namespace fire.Native
                 {
                     string gv = GlobalVar(ins.A[0], locals);
                     // (a fire thread reads a global of the main program under the read side of the globals' lock - fire_rt.h DomLock, without the GIL)
-                    E($"{(_usesThreads && f.Kind == FuncKind.FireBody && gv[0] == 'G' ? "FIRE_DOM_READ(); " : "")}{S(d)} = {gv};"); SetR(d, VarRef(VarKey(f, gv))); SetT(d, LoadType(gv)); _kindsKept = true; d++; return Next();
+                    E(_usesThreads && f.Kind == FuncKind.FireBody && gv[0] == 'G' ? $"FIRE_DOM_LOAD({S(d)}, {gv});" : $"{S(d)} = {gv};"); SetR(d, VarRef(VarKey(f, gv))); SetT(d, LoadType(gv)); _kindsKept = true; d++; return Next();
                 }
                 case OpCode.StoreGlobal:
                 case OpCode.StoreGlobalPop:
@@ -6683,7 +6683,7 @@ namespace fire.Native
                     // (a `readonly` static field whose initializer is a constant - `Word.Bits`: that constant, a C number like a literal)
                     if (ConstantStatic(Str(ins.A[0]), Str(ins.A[1])) is { } constant) { PushConstant(constant); d++; return Next(); }
                     string sfVar = StaticFieldVar(Str(ins.A[0]), Str(ins.A[1]));
-                    E($"{(_usesThreads ? "FIRE_DOM_READ(); " : "")}{S(d)} = {sfVar};");   // (any code may run on a fire thread: see LoadGlobal)
+                    E(_usesThreads ? $"FIRE_DOM_LOAD({S(d)}, {sfVar});" : $"{S(d)} = {sfVar};");   // (any code may run on a fire thread: see LoadGlobal)
                     SetR(d, VarRef(sfVar));
                     d++; return Next();
                 }
