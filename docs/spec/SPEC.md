@@ -604,7 +604,8 @@ class T {
 
 - The **value** is copied, not the variable: later changes outside are invisible inside and vice versa (there are no shared, mutable variables - and also
   no loop-variable trap: `for (...) { fs.Add(() => i) }` captures the current value on each iteration).
-- An **assignment to a capture** in the lambda is an error ("... is a COPY ..." inside the lambda); a declaration of its own with the same name (`var limit = 100`) hides it.
+- A declaration of its own with the same name (`var limit = 100`) hides a capture. (The rule that an assignment to a capture is an error was removed:
+  see [Lambdas - captured values](../language/12-lambdas.md#captured-values) for `taking`, `handover` and the warning `TC023`.)
 - **Objects** are copied as a reference (the value is the reference): the lambda sees and modifies the same object. It stays owned by its original owner - if the lambda
   outlives it, the object is destroyed afterwards. A copy of its own is forced with `copy x`/`flat x` in a local variable beforehand.
 - **Global** variables are not copied, they stay alive (`g = 7` is visible in the lambda). This also applies to top-level variables.
@@ -2145,31 +2146,8 @@ target (`obj.field = ...`) is not detected yet, neither by the compiler nor at r
 
 ### 8.7 `enum`
 
-```
-enum Color { Red, Green, Blue }
-enum Status {
-    Active = 10,
-    Inactive,   // 11 - auto-increment from the predecessor
-    Paused = 20,
-    Done        // 21
-}
-
-print(Color.Red)     // 0
-print(Status.Paused)  // 20
-```
-
-An `enum` is a pure compile-time constant list – the compiler resolves `Name.Member`
-directly to an int literal, there is **no run-time representation of its own** (no value type of its own, no instances). Without an
-explicit value a member gets the value of its predecessor + 1 (0 for the
-first member) – classic C-style auto-increment. An explicit value
-must be an int literal (no arbitrary expressions, since this language has
-no general compile-time constant evaluation).
-
-Since an enum value is simply an `int`, it also behaves like one:
-`Color.Red is of int` is true, comparisons/arithmetic work normally,
-but there is no separate `is of Color` check (no type `Color` at
-run time) and no automatic name representation on output
-(`print(Color.Red)` shows `0`, not `"Red"`).
+(Removed: this section described enums as plain int constants without a type of their own. That no longer holds - an enum is a type of its own,
+its values print their names, and `c!int` / `n!Color` convert. See [Enums](../language/10-enums-and-namespaces.md#enums).)
 
 ### 8.8 Properties
 
