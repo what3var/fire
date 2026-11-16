@@ -1872,7 +1872,25 @@ FIRE_FN bool isRef(Value v) { return ((0x50u >> v.kind) & 1u) != 0; }  /* String
 FIRE_FN Ref* refOf(Value v) { return (Ref*)v.p; }
 FIRE_FN const Str* strOf(Value v) { return (const Str*)v.p; }
 FIRE_FN Arr* arrOf(Value v) { return (Arr*)leafOf(v); }
-FIRE_FN Buf* bufOf(Value v) { return (Buf*)leafOf(v); }
+/* An element of a buffer, read or written in place (the generated code, arrayGet/arraySet, ptrRead/ptrWrite). Plain C - a buffer of the shared domain is
+ * shared memory without any guarantee between threads (docs/language/15-threads-and-actors.md "Global buffers: shared memory"). Under ThreadSanitizer
+ * without the GIL they are relaxed atomic operations: they compile to the same loads and stores, and they tell the sanitizer that such a race is
+ * intended - its reports stay for the races that are bugs. */
+#if defined(__clang__) && defined(__has_feature)
+#if __has_feature(thread_sanitizer) && !defined(FIRE_TSAN)
+#define FIRE_TSAN 1
+#endif
+#endif
+#if defined(FIRE_NO_GIL) && (defined(__SANITIZE_THREAD__) || defined(FIRE_TSAN))
+#define FIRE_BUF_LD(p) __atomic_load_n((p), __ATOMIC_RELAXED)
+#define FIRE_BUF_ST(p, x) __atomic_store_n((p), (x), __ATOMIC_RELAXED)
+#else
+#define FIRE_BUF_LD(p) (*(p))
+#define FIRE_BUF_ST(p, x) ((void)(*(p) = (x)))
+#endif
+/* (no FIRE_DOM_TOUCH: a buffer of the shared domain is shared memory - its elements are read and written without the lock of the globals, by any thread;
+ * its memory lives on until no thread can be in an access any more - see "Global buffers" at bufRetire) */
+FIRE_FN Buf* bufOf(Value v) { return (Buf*)v.p; }
 FIRE_FN Lam* lamOf(Value v) { return (Lam*)v.p; }
 FIRE_FN Value LamV(Lam* l) { Value r; r.kind = K_Lambda; FIRE_PAD0(r) r.reserved = 0; r.unit = 0; r.p = l; return r; }
 
@@ -3266,6 +3284,10 @@ FIRE_FN void originFree(Obj* o);   /* flags 4 (has `taking` copies) and 32 (is o
 #ifdef FIRE_THREADS
 extern FIRE_RT_DATA fire_atomic32 g_lentCount;   /* (the lent records that live: see the lent records) */
 FIRE_FN bool lentRetire(Obj* o);
+#ifdef FIRE_NO_GIL
+extern FIRE_RT_DATA fire_atomic32 g_lentReaderN;   /* (the fire strands that announce epochs: every one, see "Global buffers") */
+FIRE_FN bool bufRetire(Owned* o);   /* (a buffer that another thread may be reading: see "Global buffers") */
+#endif
 #endif
 /* What was destroyed during a batch is freed - and dead - when the outermost batch ends: a destructor sees every object of its scope in the state it was in when
  * it was destroyed (fields and strings intact), like in the VM (SPEC 2.3). After that its handle has expired: using it throws a DestroyedException. */
@@ -3379,6 +3401,10 @@ FIRE_FN void destroyLeaf(Owned* o) {
             if (t->own & AT_SELF) free(t);
         }
     }
+#if defined(FIRE_THREADS) && defined(FIRE_NO_GIL)
+    /* (a buffer of the main program or of the shared domain while fire threads run: dead now, its memory waits until no thread can be in an access) */
+    if (o->okind == O_Buffer && FIRE_UNLIKELY(fire_atomic_load(&g_lentReaderN) != 0) && bufRetire(o)) return;
+#endif
     slotRelease(o);
     dataFree(o);
 }
@@ -6538,8 +6564,8 @@ FIRE_FN Value arrayGet(Value a, Value i) {
         if (FIRE_UNLIKELY(!leafAlive(a))) return destroyedError(a);
         b = bufOf(a);
         if ((uint64_t)i.i >= b->length) return indexError("Array index", i.i, b->length);
-        if (FIRE_UNLIKELY(b->elem != 1)) return WordV((uint64_t)bufWords(b)[i.i]);   /* (a buffer of machine words) */
-        return Int(b->data[i.i]);
+        if (FIRE_UNLIKELY(b->elem != 1)) return WordV((uint64_t)FIRE_BUF_LD(&bufWords(b)[i.i]));   /* (a buffer of machine words) */
+        return Int(FIRE_BUF_LD(&b->data[i.i]));
     }
     if (a.kind == K_String) {
         const Str* s = strOf(a);
@@ -6600,7 +6626,7 @@ FIRE_FN Value arraySet(Value a, Value i, Value v) {
             }
             if ((uint64_t)i.i >= b->length) { indexError("Array index", i.i, b->length); return v; }
             stored = wordOf(v, true);
-            bufWords(b)[i.i] = (FireWord)stored.w;
+            FIRE_BUF_ST(&bufWords(b)[i.i], (FireWord)stored.w);
             return stored;
         }
         if (v.kind == K_Word) v = Int((int64_t)(uint64_t)v.w);   /* (a word into a byte buffer: cut like an int) */
@@ -6610,7 +6636,7 @@ FIRE_FN Value arraySet(Value a, Value i, Value v) {
             return v;
         }
         if ((uint64_t)i.i >= b->length) { indexError("Array index", i.i, b->length); return v; }
-        b->data[i.i] = (uint8_t)v.i;
+        FIRE_BUF_ST(&b->data[i.i], (uint8_t)v.i);
         return v;
     }
     if (a.kind == K_String) { fireError("ArgumentException", "Strings are immutable - 's[i] = ...' is not possible (Replace/Substring return a new string)."); return v; }
@@ -6674,7 +6700,7 @@ FIRE_FN Value ptrRead(Value p) {
     if (FIRE_UNLIKELY(!ptrValid(p, &err))) return err;
     if (p.kind == K_PtrVar) return *(const Value*)p.p;
     if (p.kind == K_PtrField) { const FireFieldPtr* d = fieldPtrOf(p); return d->raw ? rawGetAt((const char*)p.p, d->raw, d->unit) : *(const Value*)p.p; }
-    return p.kind == K_PtrByte ? Int(*(const uint8_t*)ptrAddr(p)) : *(const Value*)ptrAddr(p);
+    return p.kind == K_PtrByte ? Int(FIRE_BUF_LD((const uint8_t*)ptrAddr(p))) : *(const Value*)ptrAddr(p);
 }
 
 /* `p - q` for two pointers into the same array, buffer, variable or field: the number of elements between them. */
@@ -6692,7 +6718,7 @@ FIRE_FN void ptrWrite(Value p, Value v) {
     Value* target;
     if (FIRE_UNLIKELY(!isPtr(p))) fatal("Assignment through a value that is not a pointer.");
     if (FIRE_UNLIKELY(!ptrValid(p, &err))) return;
-    if (p.kind == K_PtrByte) { *(uint8_t*)ptrAddr(p) = (uint8_t)v.i; return; }
+    if (p.kind == K_PtrByte) { FIRE_BUF_ST((uint8_t*)ptrAddr(p), (uint8_t)v.i); return; }
     if (p.kind == K_PtrField) {
         /* a field declared `defined`: checked like an assignment to it (undefined, another kind: the ArgumentException) */
         const FireFieldPtr* d = fieldPtrOf(p);
@@ -8636,20 +8662,29 @@ FIRE_FN void lentWatchFire(LentWatch* w);
 #define lentAddSC(a, x) fire_atomic_addAcqRel(a, (uint32_t)(x))
 #endif
 typedef struct LentReader { fire_atomic32 seen; struct LentReader* next; } LentReader;   /* seen: the epoch it announced last, 0 while it waits */
-typedef struct LentGrave { Obj* o; uint32_t epoch; struct LentGrave* next; } LentGrave;
-extern FIRE_RT_DATA fire_atomic32 g_lentEpoch, g_lentGraveN;
+/* (a grave: a lent record, or a buffer - see "Global buffers" at bufRetire) */
+typedef struct LentGrave { Owned* o; uint32_t epoch; struct LentGrave* next; } LentGrave;
+extern FIRE_RT_DATA fire_atomic32 g_lentEpoch, g_lentGraveN, g_lentReaderN;
 extern FIRE_RT_DATA LentReader* g_lentReaders;
 extern FIRE_RT_DATA LentGrave* g_lentGraves;
-/* (its memory: like batchEnd) */
-FIRE_FN void lentFree(Obj* o) {
-    Value* f = objFields(o);
-    uint32_t i;
-    for (i = 0; i < o->nfields; i++) release(f[i]);   /* (its strings are counted atomically: lentMark) */
-    slotRelease(&o->h);
+/* (its memory: like batchEnd - of a buffer: like destroyLeaf) */
+FIRE_FN void lentFree(Owned* h) {
+    if (h->okind == O_Buffer) {
+        slotRelease(h);
+        dataFree(h);
+        return;
+    }
+    {
+        Obj* o = (Obj*)h;
+        Value* f = objFields(o);
+        uint32_t i;
+        for (i = 0; i < o->nfields; i++) release(f[i]);   /* (its strings are counted atomically: lentMark) */
+        slotRelease(&o->h);
 #ifndef FIRE_KEEP_DESTROYED
-    free(o->ext);
-    free(o);
+        free(o->ext);
+        free(o);
 #endif
+    }
 }
 /* Frees the graves no reader can still be looking at (any strand; `all`: the readers are gone - the end of the program). */
 FIRE_FN void lentReclaim(bool all) {
@@ -8672,10 +8707,13 @@ FIRE_FN void lentReclaim(bool all) {
     fire_mutex_unlock(&g_lentM);
     while (free_) { LentGrave* next = free_->next; lentFree(free_->o); free(free_); free_ = next; }
 }
-/* A reader at a safe point (and when it joins, and after a wait): from now on it sees every record destroyed before - it holds none of the older ones. */
+/* A reader at a safe point (and when it joins, and after a wait): from now on it sees every record destroyed before - it holds none of the older ones.
+ * Not while a native of a package that got something of the shared domain runs below (g_natDom: a callback of it, a wait in it): the native may still
+ * hold the address of a buffer of the domain - its memory has to wait for the native. */
 FIRE_FN void lentAnnounce(void) {
     LentReader* r = g_lentRd;
     uint32_t e;
+    if (g_natDom && lentLoadSC(&r->seen) != 0) return;
     do {
         e = lentLoadSC(&g_lentEpoch);
         lentStoreSC(&r->seen, e);
@@ -8683,7 +8721,7 @@ FIRE_FN void lentAnnounce(void) {
     if (fire_atomic_load(&g_lentGraveN)) lentReclaim(false);
 }
 /* (a reader that waits reads nothing meanwhile) */
-FIRE_FN void lentQuiet(void) { lentStoreSC(&g_lentRd->seen, 0); }
+FIRE_FN void lentQuiet(void) { if (!g_natDom) lentStoreSC(&g_lentRd->seen, 0); }
 #define FIRE_LENT_SAFE() do { if (FIRE_UNLIKELY(g_lentRd != NULL)) lentAnnounce(); } while (0)
 #define FIRE_LENT_QUIET() do { if (FIRE_UNLIKELY(g_lentRd != NULL)) lentQuiet(); } while (0)
 /* This strand reads lent records from now on (before it looks at the first one). */
@@ -8695,6 +8733,7 @@ FIRE_FN void lentJoin(void) {
     fire_mutex_lock(&g_lentM);
     r->next = g_lentReaders;
     g_lentReaders = r;
+    fire_atomic_add(&g_lentReaderN, 1);
     fire_mutex_unlock(&g_lentM);
     g_lentRd = r;
     lentAnnounce();
@@ -8703,10 +8742,11 @@ FIRE_FN void lentJoin(void) {
 FIRE_FN void lentLeave(void) {
     LentReader* r = g_lentRd;
     LentReader** p;
-    if (!r) return;
+    if (!r) { lentReclaim(false); return; }   /* (the main program at the end: the threads are gone, so are their readers) */
     g_lentRd = NULL;
     fire_mutex_lock(&g_lentM);
     for (p = &g_lentReaders; *p; p = &(*p)->next) if (*p == r) { *p = r->next; break; }
+    fire_atomic_add(&g_lentReaderN, (uint32_t)-1);
     fire_mutex_unlock(&g_lentM);
     free(r);
     lentReclaim(false);
@@ -8809,7 +8849,7 @@ FIRE_FN bool lentRetire(Obj* o) {
         slotGenSet(o->h.slot, gen);   /* (dead: every reader that looks from now on sees it) */
         slotBornSet(o->h.slot, gen);
         fire_atomic_addAcqRel(&g_lentCount, (uint32_t)-1);   /* (after the generation: a strand that sees the count drop sees it dead) */
-        g->o = o;
+        g->o = &o->h;
         g->epoch = lentAddSC(&g_lentEpoch, 1) + 1;
         g->next = g_lentGraves;
         g_lentGraves = g;
@@ -8824,6 +8864,48 @@ FIRE_FN bool lentRetire(Obj* o) {
     return false;
 #endif
 }
+
+/* ---- Global buffers: shared memory (docs/language/15-threads-and-actors.md "Global buffers: shared memory", THREADING_DESIGN 7.1).
+ * A buffer of the shared domain - a global one, one in a field of an object of the globals or in an array of them, and any buffer the main program
+ * destroys - is read and written by every thread without the lock of the globals and without sections: an access is the check of its generation
+ * (leafAlive), the bounds and the byte(s) right after it, with no safe point in between (the generated code, arrayGet/arraySet, ptrRead/ptrWrite, the
+ * copies). The elements are not protected - a race gives old or mixed bytes, as in C - but the memory is: when such a buffer is destroyed (`delete`,
+ * a reassignment that destroys the old value, the end of its owner) while fire threads run, it is dead at once for everybody (the generation: the next
+ * access anywhere is the DestroyedException), but its memory is a grave of the epochs of the lent records - freed when every fire strand (they are all
+ * readers, lentJoin in threadRecBegin) has passed a safe point or waits since. What holds the address of the bytes longer than one access is covered too:
+ *   - a native of a package that gets a buffer of the domain runs with the read side of the lock (fire_natArg: the flag) - the main program, which
+ *     destroys, holds the write side meanwhile; a callback or a wait in the native does not announce an epoch (g_natDom), so the memory waits for it;
+ *   - `inline c` and extern functions, the runtime's own loops over a buffer (copies, conversions, Utf8, ...) have no safe point inside: the epoch;
+ *   - a `ref b[i]` pointer is checked (generation, bounds) at each use, like an element.
+ * The cheapest correct choice: an element access costs nothing more (no lock, no count, no fence); a fire thread pays its announcement every 4096
+ * safe points and at its waits (3 atomic operations), the destroyer one grave (a malloc and the lock of the graves) - only while fire threads run, and
+ * only the main program's buffers and those of the domain (a thread's own buffers are no other thread's: they go at once). With the GIL nobody reads
+ * while the destroyer runs: freed at once. */
+#ifdef FIRE_NO_GIL
+FIRE_FN bool bufRetire(Owned* o) {
+    LentGrave* g;
+    if (!fire_atomic_loadAcquire(&g_lentReaderN)) return false;   /* (no fire strand runs: nobody can be in an access) */
+    if (g_isThread && !(o->flags & 64) && !fire_atomic_loadAcquire(&g_lentCount)) return false;   /* (64: F_SHARED. A thread's own buffer is no other thread's - but a lent record may hold one) */
+    g = (LentGrave*)malloc(sizeof(LentGrave));
+    if (!g) allocFailed();
+#ifdef FIRE_SLOTS
+    {
+        FireGen gen = (FireGen)((slotGenGet(o->slot) + 1) & FIRE_GEN_MASK);
+        slotGenSet(o->slot, gen);   /* (dead: every access that looks from now on sees it; the slot is free with the memory - lentFree) */
+        slotBornSet(o->slot, gen);
+    }
+#endif
+    g->o = o;
+    fire_mutex_lock(&g_lentM);
+    g->epoch = lentAddSC(&g_lentEpoch, 1) + 1;
+    g->next = g_lentGraves;
+    g_lentGraves = g;
+    fire_atomic_add(&g_lentGraveN, 1);
+    fire_mutex_unlock(&g_lentM);
+    lentReclaim(false);
+    return true;
+}
+#endif
 
 /* ---- the GIL ---- */
 typedef struct Gil { fire_mutex m; fire_cond cv; uint64_t next, serving; } Gil;
@@ -8980,7 +9062,7 @@ FIRE_FN bool fire_natArg(Value v) {
     if (v.kind == K_Buffer || v.kind == K_Array) {
         Owned* o = ownedOf(v);
         if (o == NULL || (FIRE_FLAGS_READ(o) & 64)) return false;   /* (64: F_SHARED, the shared domain) */
-        /* (a buffer of the globals carries no flag: what the global scope or an object of the domain owns is of the domain) */
+        /* (a buffer of the globals carries the flag since the domain marks it; what the global scope or an object of the domain owns is of the domain anyway) */
         if (o->owner && (o->owner == g_domainRoot || (o->owner->holder && (FIRE_FLAGS_READ(o->owner->holder) & 64)))) return false;
         return v.kind == K_Buffer || (((Arr*)o)->typed != NULL && ((Arr*)o)->typed->elem >= E_I8 && ((Arr*)o)->typed->elem <= E_U8);
     }
@@ -10977,6 +11059,10 @@ FIRE_FN int processMsg(Value v, bool blocking, OwnList* list) {
 #define F_SHARED ((uint8_t)64)
 extern FIRE_RT_DATA OwnList* g_domainRoot;   /* the global scope of the main program */
 FIRE_FN void markOwnedShared(Owned* c);
+/* A buffer of the domain carries the flag too (docs/language/15-threads-and-actors.md "Global buffers: shared memory"): not for its elements - a thread
+ * reads and writes them without the lock (bufOf does not look at the flag) - but for what the domain means otherwise: a native that gets it holds the read
+ * side (fire_natArg), a thread cannot hand it over, and its memory outlives an access of another thread when it is destroyed (bufRetire). */
+FIRE_FN void markBufShared(Value v) { if (v.kind == K_Buffer && leafAlive(v)) ((Buf*)v.p)->h.flags |= F_SHARED; }
 FIRE_FN void markArrayShared(Arr* a) {
     uint32_t i;
     if (a->h.flags & F_SHARED) return;
@@ -10985,6 +11071,7 @@ FIRE_FN void markArrayShared(Arr* a) {
     for (i = 0; i < a->length; i++) {
         refShare(arrItems(a)[i]);
         if (arrItems(a)[i].kind == K_Array && ownedOf(arrItems(a)[i])) markArrayShared(arrOf(arrItems(a)[i]));
+        markBufShared(arrItems(a)[i]);
     }
 }
 FIRE_FN void markOwnedShared(Owned* c) {
@@ -10998,8 +11085,10 @@ FIRE_FN void markOwnedShared(Owned* c) {
         for (i = 0; i < o->nfields; i++) {
             refShare(objFields(o)[i]);
             if (objFields(o)[i].kind == K_Array && ownedOf(objFields(o)[i])) markArrayShared(arrOf(objFields(o)[i]));
+            markBufShared(objFields(o)[i]);
         }
     } else if (c->okind == O_Array) markArrayShared((Arr*)c);
+    else if (c->okind == O_Buffer) c->flags |= F_SHARED;
 }
 FIRE_FN void domainLink(OwnList* list, Owned* o) {
     if (list == g_domainRoot || (list->holder && (list->holder->flags & F_SHARED))) markOwnedShared(o);
@@ -11177,6 +11266,7 @@ FIRE_FN void threadRecBegin(void) {
     r->task = taskRunning() ? workerSelf()->cur : NULL;
 #endif
     g_self = r;
+    lentJoin();   /* (every fire strand announces epochs: it may read a buffer of the shared domain - see "Global buffers" at bufRetire) */
 }
 /* Grants what other threads asked of this one, one after the other (each: until its sync is done). */
 FIRE_FN void threadServe(void) {
@@ -12050,7 +12140,7 @@ FIRE_FN int mainGlobalsKind(Value v, bool fresh) {
     o = ownedOf(v);
     if (!o || (o->flags & F_SHARED)) return 0;
     if (o->okind == O_Object && (o->flags & 8)) return 0;   /* (an actor) */
-    if (o->owner && (o->owner == g_domainRoot || (o->owner->holder && (o->owner->holder->flags & F_SHARED)))) return 0;   /* (a lambda or buffer of the globals: they carry no flag) */
+    if (o->owner && (o->owner == g_domainRoot || (o->owner->holder && (o->owner->holder->flags & F_SHARED)))) return 0;   /* (a lambda of the globals carries no flag) */
     return fresh || o == (const Owned*)g_pendingTake ? 1 : 2;
 }
 /* (it moves to `target`; false - the exception is set - when it cannot: a raw pointer in it) */
@@ -13043,7 +13133,7 @@ fire_mutex g_thrM, g_reqM, g_mailboxM, g_cancelM;
 #ifdef FIRE_NO_GIL
 DomLock g_dom;
 int32_t g_awayDepth;
-fire_atomic32 g_lentEpoch = {1}, g_lentGraveN;
+fire_atomic32 g_lentEpoch = {1}, g_lentGraveN, g_lentReaderN;
 LentReader* g_lentReaders = NULL;
 LentGrave* g_lentGraves = NULL;
 #endif

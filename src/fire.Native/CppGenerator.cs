@@ -7245,7 +7245,7 @@ namespace fire.Native
                     {
                         // into the shadow of the slot: a byte is a narrow int, a word a word (the generic access - an index out of range, a destroyed buffer - throws)
                         string ab = S(d - 2), ib = NarrowInt(d - 1) ? SN(d - 1) : $"(FireInt){S(d - 1)}.i";
-                        string elem = wordsGet ? $"(FireWord)bufWords(bufOf({ab}))[{ib}]" : $"(FireInt)bufOf({ab})->data[{ib}]";
+                        string elem = wordsGet ? $"(FireWord)FIRE_BUF_LD(&bufWords(bufOf({ab}))[{ib}])" : $"(FireInt)FIRE_BUF_LD(&bufOf({ab})->data[{ib}])";
                         int elemType = wordsGet ? TypeOf(KindWord, 0) : TypeOf(KindInt, 0) | NarrowBit;
                         string idxValue = NarrowInt(d - 1) ? $"Int({ib})" : S(d - 1);
                         SetT(d - 2, elemType); SetR(d - 2, false); _kindsKept = true;
@@ -7255,7 +7255,7 @@ namespace fire.Native
                         d--; return Next();
                     }
                     string a = S(d - 2), i = S(d - 1);
-                    E($"if (FIRE_LIKELY({isBuf}leafAlive({a}) && (uint64_t){i}.i < bufOf({a})->length)) {a} = {(wordsGet ? $"WordV((uint64_t)bufWords(bufOf({a}))[{i}.i])" : $"Int(bufOf({a})->data[{i}.i])")}; else {{ {a} = {Px}aget_g({a}, {i}, NULL);{CheckIn()} }}");
+                    E($"if (FIRE_LIKELY({isBuf}leafAlive({a}) && (uint64_t){i}.i < bufOf({a})->length)) {a} = {(wordsGet ? $"WordV((uint64_t)FIRE_BUF_LD(&bufWords(bufOf({a}))[{i}.i]))" : $"Int(FIRE_BUF_LD(&bufOf({a})->data[{i}.i]))")}; else {{ {a} = {Px}aget_g({a}, {i}, NULL);{CheckIn()} }}");
                     d--; SetR(d - 1, false); SetT(d - 1, TypeOf(wordsGet ? KindWord : KindInt, 0) | (wordsGet ? 0 : NarrowBit)); _kindsKept = true; return Next();
                 }
                 case OpCode.ArraySet when BK(d - 3) == KindBuf && (Ty(d - 3) & TypeNone) == 0 && U(d - 3) is BufBytes or BufWords && K(d - 2) == KindInt && (K(d - 1) == KindWord && U(d - 3) == BufWords || K(d - 1) == KindInt && (U(d - 3) == BufBytes || U(d - 1) == 0)):
@@ -7268,9 +7268,9 @@ namespace fire.Native
                     string a = S(d - 3), i = S(d - 2), v = S(d - 1);
                     string bits = K(d - 1) == KindWord ? $"{v}.w" : $"(uint64_t)(int64_t){v}.i";
                     if (wordsSet)
-                        E($"if (FIRE_LIKELY({isSetBuf}leafAlive({a}) && (uint64_t){i}.i < bufOf({a})->length)) {{ {v} = WordV({bits}); bufWords(bufOf({a}))[{i}.i] = (FireWord){v}.w; }} else {v} = {Px}aset_g({a}, {i}, {v}, NULL);");
+                        E($"if (FIRE_LIKELY({isSetBuf}leafAlive({a}) && (uint64_t){i}.i < bufOf({a})->length)) {{ {v} = WordV({bits}); FIRE_BUF_ST(&bufWords(bufOf({a}))[{i}.i], (FireWord){v}.w); }} else {v} = {Px}aset_g({a}, {i}, {v}, NULL);");
                     else
-                        E($"if (FIRE_LIKELY({isSetBuf}leafAlive({a}) && (uint64_t){i}.i < bufOf({a})->length)) bufOf({a})->data[{i}.i] = (uint8_t)({bits}); else {v} = {Px}aset_g({a}, {i}, {v}, NULL);");
+                        E($"if (FIRE_LIKELY({isSetBuf}leafAlive({a}) && (uint64_t){i}.i < bufOf({a})->length)) FIRE_BUF_ST(&bufOf({a})->data[{i}.i], (uint8_t)({bits})); else {v} = {Px}aset_g({a}, {i}, {v}, NULL);");
                     Check();
                     int storedType = wordsSet ? TypeOf(KindWord, 0) : Ty(d - 1);
                     E($"{a} = {v};");
