@@ -1,0 +1,20 @@
+int a = 5mm
+a = 3cm
+print(a)
+float w = 1cm
+w = 2m
+print(w)
+int n = 5
+try { n = 2mm } catch (UnitMismatchException e) { print("unitless") }
+class P { any v
+    construct(any v) { this.v = v }
+}
+int d = new P(5mm).v
+d = 7s
+print(d)
+class B { float len = 1cm }
+var b = new B()
+b.len = 2m
+print(b.len)
+//# modes: Release
+//# name: types 102: int a = 5mm

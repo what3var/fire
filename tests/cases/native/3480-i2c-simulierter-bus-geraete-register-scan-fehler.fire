@@ -1,0 +1,48 @@
+#import "i2c"
+
+print("buses " + I2c.Board.Buses()[0] + " " + I2c.Board.Buses().Count)
+var bus = new I2c.Bus("sim")
+print("name " + bus.Name)
+print("scan empty " + bus.Scan().Count)
+I2c.Sim.Add(0x50)
+I2c.Sim.Add(0x76)
+I2c.Sim.SetRegister(0x76, 0xD0, 0x58)
+print("probe " + bus.Probe(0x50) + " " + bus.Probe(0x51))
+var found = bus.Scan()
+print("scan " + found.Count + " " + found[0] + " " + found[1])
+print("id " + bus.ReadRegister(0x76, 0xD0))
+bus.WriteRegister(0x76, 0xF4, 0x27)
+print("wrote " + I2c.Sim.GetRegister(0x76, 0xF4) + " " + bus.ReadRegister(0x76, 0xF4))
+var data = new byte[4]
+data[0] = 1
+data[1] = 2
+data[2] = 3
+data[3] = 4
+bus.WriteRegisters(0x50, 0x10, data)
+var back = bus.ReadRegisters(0x50, 0x10, 4)
+print("block " + back[0] + back[1] + back[2] + back[3])
+var raw = new byte[3]
+raw[0] = 0x12
+raw[1] = 99
+raw[2] = 100
+bus.Write(0x50, raw)
+bus.Write(0x50, raw, 0, 1)
+var two = bus.Read(0x50, 2)
+print("seq " + two[0] + " " + two[1])
+var viaWr = bus.WriteRead(0x50, raw, 2, 1)
+print("wr " + viaWr[0] + " " + viaWr[1])
+bus.Speed = 400000
+print("speed " + bus.Speed)
+bus.WriteByte(0x50, 0x20)
+try { bus.Write(0x60, raw) } catch (I2c.NoAckException e) { print("noack " + e.code + " " + e.message) }
+try { bus.Read(0x60, 1) } catch (I2c.I2cException e) { print("noack2 " + e.code) }
+try { bus.Probe(200) } catch (I2c.I2cException e) { print("addr " + e.code) }
+try { bus.Write(0x50, raw, 2, 5) } catch (I2c.I2cException e) { print("range " + e.code) }
+try { new I2c.Bus(7) } catch (I2c.NotFoundException e) { print("nobus " + e.code) }
+try { I2c.Sim.SetRegister(0x33, 1, 1) } catch (I2c.NoAckException e) { print("simdev " + e.code) }
+I2c.Sim.Remove(0x50)
+print("removed " + bus.Probe(0x50))
+bus.Close()
+try { bus.Probe(1) } catch (I2c.I2cException e) { print("closed " + e.code) }
+print("avail " + I2c.Board.Available())
+//# name: I2c: simulierter Bus - Geraete, Register, Scan, Fehler

@@ -1,0 +1,13 @@
+okokokokok 0okokok 0
+E1 Parameter 'b' is a Bag<int>, not Bag<string>.
+E2 Parameter 'l' is a List<int>, not List<float>.
+E3 Parameter 'p' is a Pair<string, int>, not Pair<string, string>.
+E4 Parameter 'd' is a Dictionary<string, int>, not Dictionary<int, string>.
+E5 Parameter 'b' is a Bag, not Cat.
+E6 Field 'ints' is a Bag<int>, not Bag<string>.
+E7 Field 'names' is a List<string>, not List<int>.
+E8 Return value of 'Bad' is a Bag<int>, not Bag<string>.
+E9 Variable 'loc' is a Bag<int>, not Bag<string>.
+E10 Field 'ints' is a Bag<int>, not Bag<string>.
+E11 Parameter 'other' is a Bag<int>, not Bag<string>.
+end

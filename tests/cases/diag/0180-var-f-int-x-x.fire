@@ -1,0 +1,4 @@
+var f = (int x) => x
+print(f(x: 1))
+//# modes: Release
+//# name: diag 18: var f = (int x) => x

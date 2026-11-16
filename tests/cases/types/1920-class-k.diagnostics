@@ -1,0 +1,1 @@
+error E4067: 'K' of interface 'IA' is not a known interface (an interface can only extend interfaces) (line 2)

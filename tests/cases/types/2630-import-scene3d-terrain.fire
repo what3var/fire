@@ -1,0 +1,5 @@
+#import "scene3d.terrain"
+print(1)
+//# types: strict
+//# modes: Release
+//# name: types 263: #import "scene3d.terrain"

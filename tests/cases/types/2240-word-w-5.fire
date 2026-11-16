@@ -1,0 +1,8 @@
+word w = 5
+try { int i = w
+print(0) } catch (ArgumentException e) { print(1) }
+word v = 1
+try { v = 2.5
+print(0) } catch (ArgumentException e) { print(1) }
+//# modes: Release
+//# name: types 224: word w = 5

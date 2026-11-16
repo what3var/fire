@@ -1,0 +1,7 @@
+warning TC006: A value in 'kg' does not fit 'c' in 'mm' (line 1)
+warning TC006: A value in 'mm' does not fit 'n' in 'unitless' (line 3)
+warning TC006: 'mm' and 'kg' cannot be combined with '+' (another dimension) (line 4)
+warning TC006: A value in 's' does not fit 'bad' in 'any m' (line 5)
+warning TC006: A value in 'mm' does not fit the return value in 'unitless' (line 8)
+warning TC006: A value in 'unitless' does not fit parameter 'v' of 'Set' in 'mm' (line 11)
+Unhandled exception of type 'UnitMismatchException': Expected unit 'mm', got: kg.

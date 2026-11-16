@@ -1,0 +1,7 @@
+class K { undefined Take(any v) { } undefined Obj(class o) { } }
+var k = new K()
+k.Take(1)
+k.Obj(new K())
+k.Obj(7)
+//# modes: Release
+//# name: types 74: class K { undefined Take(any v) { } undefined Obj(class o) { } }

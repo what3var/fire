@@ -1,0 +1,3 @@
+print(1m0)
+//# modes: Release
+//# name: types 107: print(1m0)

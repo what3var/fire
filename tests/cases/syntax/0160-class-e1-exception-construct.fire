@@ -1,0 +1,47 @@
+class E1 : Exception { construct() { } }
+class F {
+    static string C() {
+        string log = ""
+        foreach (x in [1, 2]) {
+            try {
+                while (true) {
+                    try { throw new E1() }
+                    catch (E1 e) { log = log + "c "; break 2 }
+                    finally { log = log + "f1 " }
+                }
+            } finally { log = log + "f2 " }
+            log = log + "never "
+        }
+        return log
+    }
+    static string T() {
+        string log = ""
+        try {
+            foreach (x in [1, 2]) {
+                foreach (y in [1, 2]) {
+                    try { try { break 2 } finally { log = log + "f1 "; throw new E1() } } finally { log = log + "f2 " }
+                }
+            }
+        } catch (E1 e) { log = log + "caught" }
+        return log
+    }
+    static int G() {
+        int n = 0
+        foreach (x in [1, 2, 3]) {
+            foreach (y in [1, 2, 3]) {
+                try { try { n = n + 1; if (y == 2) continue 2 } finally { n = n + 10 } } finally { n = n + 100 }
+            }
+        }
+        return n
+    }
+    static int R() {
+        foreach (x in [1, 2, 3]) { while (true) { try { return x * 7 } finally { print("R fin") } } }
+        return 0
+    }
+}
+print(F.C())
+print(F.T())
+print(F.G())
+print(F.R() + 1)
+//# modes: Release
+//# name: syntax 16: class E1 : Exception { construct() { } }

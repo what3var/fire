@@ -1,0 +1,6 @@
+interface IA : IB { }
+interface IB : IC { }
+interface IC : IA { }
+print(1)
+//# modes: Release
+//# name: types 191: interface IA : IB { }

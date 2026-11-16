@@ -1,0 +1,40 @@
+class Res {
+    int id
+    construct(int id) { this.id = id; print(this.id) }
+    destruct() { print(0 - this.id) }
+}
+class F {
+    static Res Make(int id) {
+        var tmp = new Res(id + 1000)
+        if (id > 5) {
+            var inner = new Res(id + 2000)
+            return new Res(id)
+        }
+        var kept = new Res(id)
+        return kept
+    }
+    static int Early(int n) {
+        var guard = new Res(n + 500)
+        if (n > 0) { return n }
+        return 0 - 1
+    }
+}
+var a = F.Make(1)
+var b = F.Make(9)
+print(F.Early(3))
+print(F.Early(0))
+for (var i = 0; i < 4; i = i + 1) {
+    var loopRes = new Res(10 + i)
+    if (i == 1) { continue }
+    if (i == 3) { break }
+    print(loopRes.id)
+}
+{
+    var x = new Res(70)
+    {
+        var y = new Res(71)
+    }
+    print(1)
+}
+print(a.id + b.id)
+//# name: Objekte: Besitz - Rueckgabe, Bloecke, Schleifen, break/continue, fruehes return

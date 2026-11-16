@@ -1,0 +1,5 @@
+class B { static int F(int a) { return 1 } }
+class C : B { int F() { return 2 } }
+print(1)
+//# modes: Release
+//# name: types 189: class B { static int F(int a) { return 1 } }

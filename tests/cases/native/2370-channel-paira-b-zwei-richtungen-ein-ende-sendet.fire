@@ -1,0 +1,22 @@
+    #import "time"
+    class Job { int n; construct(int n) { this.n = n } }
+    var left = Channel.Pair<string, int>()
+    var right = left.Other()
+    fire with right {
+        foreach (s in right) { right.Send(s.Length) }
+        right.Close()
+    }
+    left.Send("abc")
+    left.Send("hello")
+    print(left.Receive() + " " + left.Receive())
+    left.Close()
+    print("rest " + (left.Receive() == undefined))
+    var jobs = Channel.Pair<Job, Job>()
+    var other = jobs.Other()
+    fire with other {
+        var j = other.Receive()
+        other.Send(new Job(j.n * 2))
+    }
+    jobs.Send(new Job(21))
+    print("job " + jobs.Receive().n)
+//# name: Channel.Pair<A, B>: zwei Richtungen - ein Ende sendet A und empfaengt B, Other() das Gegenstueck, fire with gibt ein eigenes Ende, Objekte frisch

@@ -1,0 +1,26 @@
+#import "json"
+#import "ui"
+class Shape { string name = "s" }
+class Square : Shape { int side = 2 }
+class Circle : Shape { float r = 1.5 }
+class Drawing {
+    List<Shape> shapes = new List<Shape>()
+    construct() { }
+}
+[NotSerializable]
+class Secret { int pin = 1234 }
+class MoreSecret : Secret { }
+var d = new Drawing()
+d.shapes.Add(new Square())
+print(Json.Serialize(d))
+var back = Json.Deserialize<Drawing>("{\"shapes\":[{\"$type\":\"Circle\",\"r\":2.5},{\"$type\":\"Square\",\"side\":4}]}")
+any first = back.shapes[0]
+any second = back.shapes[1]
+print(back.shapes.Count + " " + first.r + " " + second.side + " " + first.name)
+try { print(Json.Serialize(new Secret())) } catch (ArgumentException e) { print(e.message) }
+try { print(Json.Serialize(new MoreSecret())) } catch (ArgumentException e) { print(e.message) }
+try { print(Json.Serialize(new UI.Thickness(3))) } catch (ArgumentException e) { print(e.message) }
+try { Json.Deserialize<Drawing>("{\"shapes\":[{\"$type\":\"Secret\"}]}") } catch (ArgumentException e) { print(e.message) }
+try { Json.Deserialize<Drawing>("{\"shapes\":[{\"$type\":\"MoreSecret\"}]}") } catch (ArgumentException e) { print(e.message) }
+try { Json.Deserialize<Drawing>("{\"shapes\":[{\"$type\":\"UI.Label\"}]}") } catch (ArgumentException e) { print(e.message) }
+//# name: Weglassen: JSON - [NotSerializable] (geerbt) und ein Package mit "serializable": false sind eine ArgumentException; Deserialize<T> macht die Unterklassen aus $type

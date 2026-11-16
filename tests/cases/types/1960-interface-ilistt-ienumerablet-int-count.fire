@@ -1,0 +1,12 @@
+interface IList<T> : IEnumerable<T> { int Count { get; } }
+class Nums : IList<int> {
+    int Count { get { return 2 } }
+    IEnumerator<int> GetEnumerator() { var l = new List<int>(); l.Add(3); l.Add(4); return l.GetEnumerator() }
+}
+IList<int> n = new Nums()
+int sum = 0
+foreach (x in n) { sum = sum + x }
+print(sum + n.Count)
+//# types: strict
+//# modes: Release
+//# name: types 196: interface IList<T> : IEnumerable<T> { int Count { get; } }

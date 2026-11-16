@@ -1,0 +1,6 @@
+a,b 6,2 3,1 6,2
+ab ba
+1 'Double' is a property, expected (lambda field<...>): a field
+2 'price' is a field, expected (lambda property<...>): a property
+3 'nope' is not a member
+4 The lambda is not a selector: it needs exactly one parameter, and its body may only be a member chain on it (`c => c.radius`, `p => p.address.city`).

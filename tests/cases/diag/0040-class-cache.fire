@@ -1,0 +1,24 @@
+class Cache {
+    warn 300: "Cache is going away"
+    int value
+    construct() { this.value = 0 }
+    construct(int start) {
+        warn 301: "the constructor with a start value is obsolete"
+        this.value = start
+    }
+    Flush() { warn 302: "Flush is obsolete, use Clear()"; return this.value }
+    Clear() { return this.Flush() }
+    int Size { get { warn 303: "Size is obsolete"; return this.value } }
+    static Make() { warn 304: "Make is obsolete"; return 1 }
+    static Plain() { return 2 }
+    Other(int a) { warn 305: "Other with one argument"; return a }
+}
+class Unrelated {
+    Flush() { return 5 }
+    Other(int a, int b) { return a + b }
+}
+var u = new Unrelated()
+u.Flush()
+u.Other(1, 2)
+//# modes: Release
+//# name: diag 4: class Cache {

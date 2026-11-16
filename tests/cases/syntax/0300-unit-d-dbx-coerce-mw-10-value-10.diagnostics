@@ -1,0 +1,1 @@
+0300-unit-d-dbx-coerce-mw-10-value-10.fire(1): error E3000: 'coerce mW => ...' is a factor and an offset computed while compiling (numbers, 'value', + - * / ^, Math.PI, Math.E) - any other conversion is written 'coerce to mW => ...' and 'coerce from mW => ...'

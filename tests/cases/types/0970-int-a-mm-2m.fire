@@ -1,0 +1,10 @@
+int a : mm = 2m
+var x = 5mm
+x = 3s
+var z = 3m * 2s
+float sp : any m = 3km
+float v : m = 10m / 2s * 1s
+print(a)
+print(v)
+//# modes: Release
+//# name: types 97: int a : mm = 2m

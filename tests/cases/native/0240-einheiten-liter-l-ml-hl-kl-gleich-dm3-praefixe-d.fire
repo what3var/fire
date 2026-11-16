@@ -1,0 +1,10 @@
+print((1l == 1dm * 1dm * 1dm) + " " + (1000l == 1m * 1m * 1m) + " " + (1ml == 1cm * 1cm * 1cm))
+float vol : m^3 = 5l
+float back : l = 1m * 1m * 1m
+float box : l = 20cm * 10cm * 50cm
+print(vol + " " + back + " " + box + " " + (3l + 500ml) + " " + (2l > 1999ml))
+print(1l:ml + " " + 1hl:l + " " + 1dl:cl + " " + 2dm + " " + 1hm:m + " " + 1.0dg:g + " " + 1kl:l + " " + 1cl:ml + " " + 1ds:ms + " " + 1.0hg:kg)
+print(1d + " " + 1h:min + " " + 2d:h + " " + (1dm is in m) + " " + (5dB is in B) + " " + 5dB + " " + (1hPa is in Pa))
+any metre = 1m
+try { print(1l + metre) } catch (UnitMismatchException e) { print(e.message) }
+//# name: Einheiten: Liter (l, ml, hl, kl) gleich dm^3, Praefixe d und h (dm, dl, dg, hm, hPa, ds), d/h allein Tag/Stunde, dB ohne Deklaration kein Dezi-Byte

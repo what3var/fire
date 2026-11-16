@@ -1,0 +1,8 @@
+a undefined x undefined Green m [] g
+E1 An element of an array of Dog must be a Dog (or undefined), not Cat.
+E2 An element of an array of string must be a string (or undefined), not Int.
+E3 An element of an array of Color must be a Color (or undefined), not Int.
+E4 An element of a defined array of Dog cannot be undefined.
+E5 An element of an array of Dog must be a Dog (or undefined), not Cat.
+E6 An element of a defined array of Dog cannot be undefined.
+{"$type":"Kennel","pets":[{"name":"a"},null],"names":["x",null],"cs":[1],"must":[{"name":"m"}],"tags":["t",""],"grid":[[{"name":"g"}]]}

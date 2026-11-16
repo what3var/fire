@@ -1,0 +1,9 @@
+class B { float w
+    float Len : m { get { return this.w * 1m } set { this.w = value / 1m } }
+}
+var b = new B()
+b.Len = 250cm
+print(b.Len)
+print(b.w)
+//# modes: Release
+//# name: types 101: class B { float w

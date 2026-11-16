@@ -1,0 +1,43 @@
+class Animal { }
+class Dog : Animal { }
+class Cat : Animal { }
+class Stone { }
+interface INamed { }
+class Bird : Animal, INamed { }
+class Box { Cat cats[]
+    undefined Set(any a) { this.cats = a } }
+class U { static undefined TakeCats(Cat c[]) { print("took " + c.length) } }
+any d = new Dog[2]
+try { Cat c[] = d; print("1 accepted") } catch (ArgumentException e) { print("1 " + e.message) }
+try { Stone s[] = d; print("2 accepted") } catch (ArgumentException e) { print("2 " + e.message) }
+try { Animal a[] = d; print("3 accepted") } catch (ArgumentException e) { print("3 " + e.message) }
+try { Animal a[] = d; a[0] = new Cat(); print("4 accepted") } catch (ArgumentException e) { print("4 " + e.message) }
+try { Animal a[] = d; a[0] = new Dog(); print("5 accepted") } catch (ArgumentException e) { print("5 " + e.message) }
+try { Cat c[]; c = d; print("6 accepted") } catch (ArgumentException e) { print("6 " + e.message) }
+try { var b = new Box(); b.Set(d); print("7 accepted") } catch (ArgumentException e) { print("7 " + e.message) }
+try { U.TakeCats(d); print("8 accepted") } catch (ArgumentException e) { print("8 " + e.message) }
+any an = new Animal[2]
+try { Dog dd[] = an; print("9 accepted") } catch (ArgumentException e) { print("9 " + e.message) }
+try { int n[] = d; print("10 accepted") } catch (ArgumentException e) { print("10 " + e.message) }
+any birds = new Bird[1]
+try { INamed n[] = birds; print("11 accepted") } catch (ArgumentException e) { print("11 " + e.message) }
+try { INamed n[] = d; print("12 accepted") } catch (ArgumentException e) { print("12 " + e.message) }
+any nested = new Dog[2][2]
+try { Cat c[][] = nested; print("13 accepted") } catch (ArgumentException e) { print("13 " + e.message) }
+any strs = new string[2]
+try { Cat c[] = strs; print("14 accepted") } catch (ArgumentException e) { print("14 " + e.message) }
+try { strs[0] = 5; print("15 accepted") } catch (ArgumentException e) { print("15 " + e.message) }
+var x = new Dog[2]
+any viaVar = x
+try { Cat c[] = viaVar; print("16 accepted") } catch (ArgumentException e) { print("16 " + e.message) }
+any empty = []
+try { Cat c[] = empty; print("17 accepted") } catch (ArgumentException e) { print("17 " + e.message) }
+Animal fresh[] = new Dog[2]
+try { fresh[1] = new Cat(); print("18 accepted") } catch (ArgumentException e) { print("18 " + e.message) }
+int[8] small[] = new int[4]
+small[0] = 300
+float:m lens[] = new float[2]
+lens[0] = 50cm
+defined string names[] = new string[2]
+print(small[0] + " " + lens[0] + " [" + names[1] + "]")
+//# name: new Dog[n] ist ein Dog-Array, auch in any: es geht nur in die Deklaration von Dog oder einer Basis (Kovarianz) und prueft weiter, was hineinkommt; Zahlen-Arrays nehmen Breite und Einheit der Deklaration

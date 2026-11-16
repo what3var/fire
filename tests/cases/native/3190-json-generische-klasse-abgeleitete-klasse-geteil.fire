@@ -1,0 +1,105 @@
+#import "json"
+
+class Box<T> {
+    T value
+    construct() { }
+}
+
+class Shape {
+    string name
+    construct() { }
+}
+
+class Circle : Shape {
+    float : cm radius
+    construct() { }
+}
+
+class Node {
+    string label
+    Node next
+    int shared[]
+    int other[]
+    byte data[]
+    char mark
+    float ratio
+    construct() { }
+    undefined OnDeserialized() { print("hook " + this.label) }
+}
+
+class Pair {
+    any left
+    any right
+    construct() { }
+}
+
+// a generic class: the type argument travels in $type
+var box = new Box<int>()
+box.value = 42
+string boxText = Json.Serialize(box)
+print(boxText)
+Box<int> box2 = Json.Deserialize<Box<int>>(boxText)
+print(box2.value)
+
+// a derived class in a slot of the base class
+var c = new Circle()
+c.name = "c1"
+c.radius = 2.5cm
+Shape s = c
+var holder = new Pair()
+holder.left = s
+holder.right = [c, c]
+string pairText = Json.Serialize(holder)
+print(pairText)
+Pair back = Json.Deserialize<Pair>(pairText)
+print(back.left.name + " " + back.left.radius + " " + (back.right[0] == back.left) + " " + (back.right[1] == back.left))
+
+// shared arrays, buffers, chars, NaN, hooks
+var n1 = new Node()
+n1.label = "one"
+n1.shared = [1, 2, 3]
+n1.other = n1.shared
+n1.data = new byte[3]
+n1.data[0] = 1
+n1.data[1] = 200
+n1.data[2] = 3
+n1.mark = 'x'
+n1.ratio = 0.0 / 0.0
+var n2 = new Node()
+n2.label = "two"
+n2.ratio = 1000000000000000000000000000000.0
+n1.next = n2
+string nodeText = Json.Serialize(n1)
+print(nodeText)
+Node m = Json.Deserialize<Node>(nodeText)
+print(m.label + " " + m.next.label + " " + m.shared[2] + " " + (m.shared == m.other) + " " + m.data[1] + " " + m.mark + " " + m.next.ratio)
+
+// without type names: plain JSON for other programs
+var plain = new JsonOptions()
+plain.typeNames = false
+print(Json.Serialize(n2, plain))
+Node fromPlain = Json.Deserialize<Node>("{\"label\":\"p\",\"Next\":{\"label\":\"q\"},\"shared\":[5,6],\"data\":\"AQID\",\"unknown\":1}")
+print(fromPlain.label + " " + fromPlain.next.label + " " + fromPlain.shared[1] + " " + fromPlain.data[2])
+
+// by name, lists of lists, numbers
+any byName = Json.Deserialize("{\"value\": 7}", "Box<int>")
+print(Json.Serialize(byName))
+var nested = new List<List<int>>()
+var inner = new List<int>()
+inner.Add(1)
+inner.Add(2)
+nested.Add(inner)
+print(Json.Serialize(nested))
+print(Json.Serialize([0.1, 1.0, -0.00000025, 123456789012, 3]))
+any tree = Json.Parse("[1, 2.5, -3e2, \"a\\u0041\\n\", true, false, null, {}]")
+print(Json.Serialize(tree))
+
+// errors
+try { Json.Deserialize<Box<int>>("{\"$type\":\"Nope\"}") } catch (JsonException e) { print(e.message) }
+try { Json.Deserialize<Node>("{\"ratio\": \"x\"}") } catch (JsonException e) { print(e.message) }
+try { Json.Deserialize("{\"value\": 1.5}", "Box<int>") } catch (JsonException e) { print(e.message) }
+try { Json.Parse("[1, 2") } catch (JsonException e) { print(e.message) }
+try { Json.Parse("\"abc") } catch (JsonException e) { print(e.message) }
+try { Json.Parse("{\"a\":1} x") } catch (JsonException e) { print(e.message) }
+try { Json.Deserialize<Node>("{\"next\":{\"$ref\":9}}") } catch (JsonException e) { print(e.message) }
+//# name: Json: generische Klasse, abgeleitete Klasse, geteilte Arrays, Puffer, char, NaN, OnDeserialized, ohne Typnamen, Fehlertexte

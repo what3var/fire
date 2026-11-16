@@ -1,0 +1,4 @@
+class MyEx : Exception { construct(string m) : base(m) { } }
+print("vorher")
+throw new MyEx("mine")
+//# name: Abbruch: unbehandelte eigene Ausnahme mit Text

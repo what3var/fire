@@ -1,0 +1,8 @@
+warning TC002: Cannot assign a value of type 'string' to parameter 'value' of 'Add' of type 'int' (line 3)
+warning TC001: Cannot assign a value of type 'int' to 'wrong' of type 'bool' (line 4)
+warning TC001: Cannot assign a value of type 'int' to 'b' of type 'bool' (line 5)
+warning TC001: Cannot assign a value of type 'List<int>' to 'names' of type 'List<string>' (line 7)
+warning TC001: Cannot assign a value of type 'int' to 'bb' of type 'bool' (line 16)
+warning TC002: Cannot assign a value of type 'string' to parameter 'item' of 'new Box' of type 'int' (line 17)
+warning TC001: Cannot assign a value of type 'int' to 'deep' of type 'bool' (line 20)
+warning TC001: Cannot assign a value of type 'float' to 'fb' of type 'bool' (line 26)

@@ -1,0 +1,29 @@
+#import "reflection"
+flag enum Test { a = 1, b = 2, c = 4 }
+[Test a]
+[Test c]
+class Sensor {
+    [Test b]
+    int value
+    [Test a, b]
+    int Level { get { return 1 } }
+    [Retry 3]
+    undefined Read() { }
+    construct() { }
+}
+class Plain { construct() { } }
+var t = Type.Of(new Sensor())
+print(t.HasFlag(Test.a))
+print(t.HasFlag(Test.b))
+print(t.Flags(Test.a))
+print(t.Flags("Test"))
+print(t.Attributes.Count)
+var m = t.Find("value")
+print(m.HasFlag(Test.b))
+print(m.Flags(Test.a))
+print(t.Find("Level").Flags(Test.a))
+print(t.Find("Read").HasFlag(Test.a))
+print(t.Find("Read").FindAttribute("Retry").Args[0])
+print(Type.Of(new Plain()).HasFlag(Test.a))
+print(Type.Of(new Plain()).Flags(Test.a)!int)
+//# name: Enums: Flag-Enums als Attribute an Klassen, Feldern, Methoden; Reflection mit HasFlag/Flags

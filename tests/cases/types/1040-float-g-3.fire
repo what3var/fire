@@ -1,0 +1,7 @@
+float g = 3
+print(g / 2)
+class C { static float H(float x) { return x / 2 } static float One() { return 1 } }
+print(C.H(3))
+print(C.One() / 2)
+//# modes: Release
+//# name: types 104: float g = 3

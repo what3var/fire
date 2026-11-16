@@ -1,0 +1,3 @@
+var u = undefined
+print(u.foo)
+//# name: Abbruch: unbehandelter Zugriff auf undefined (Programm ohne Ausnahmen)

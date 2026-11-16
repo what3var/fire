@@ -1,0 +1,59 @@
+#import "http.pages"
+#import "ui"
+#import "time"
+[Page "/draw"]
+class DrawPage {
+    UI.Panel view
+    [Vector] UI.DrawingCanvas canvas
+    UI.DrawingCanvas picture
+    int clicks = 0
+    construct() {
+        this.view = new UI.Panel(0, 0, 400, 300)
+        var stack = new UI.StackPanel(0, 0, -1, -1)
+        var c = new UI.DrawingCanvas(0, 0, 120, 80)
+        c.OnPaint = func (UI.DrawingCanvas dc) on this => {
+            var r = dc.renderer
+            r.ClearTo(0xFFFFFFFF)
+            r.FillRect(10, 10, 40 + this.clicks * 10, 20, new SolidBrush(0xFF0000FF))
+            r.DrawLine(0, 79, 119, 0, new Pen(0xFF00AA00, 2))
+            r.FillCircle(90, 50, 15, new SolidBrush(0xFFFF0000))
+            r.DrawText(4, 60, "n=" + this.clicks, new SolidBrush(0xFF000000))
+        }
+        c.OnMouseDown = func (int x, int y, int b) on this => {
+            this.clicks = this.clicks + 1
+            this.canvas.Invalidate()
+        }
+        stack.Add(c)
+        this.canvas = c
+        var p = new UI.DrawingCanvas(0, 0, 40, 40)
+        p.OnPaint = func (UI.DrawingCanvas dc) => { dc.renderer.ClearTo(0xFF00FF00) }
+        stack.Add(p)
+        this.picture = p
+        this.view.Add(stack)
+    }
+}
+var server = new Http.AppServer("127.0.0.1", 0)
+server.PushTo(new Http.Sessions()).PushTo(new Http.Pages("Draw"))
+int port = server.Port
+int done = 0
+string log = ""
+fire taking port {
+    var cl = new Http.Client()
+    var r = cl.Get("http://127.0.0.1:" + port + "/draw")
+    string html = r.Text()
+    string cookie = r.Header("Set-Cookie").Substring(0, 45)
+    int at = html.IndexOf("data-circuit=\"") + 14
+    string circuit = html.Substring(at, 32)
+    var out = "canvas " + (html.IndexOf("<canvas data-k=\"draw\"") >= 0) + " png " + (html.IndexOf("<img data-k=\"draw\"") >= 0) + " ops " + (html.IndexOf("[[&quot;c&quot;,4294967295],[&quot;fr&quot;,10,10,40,20,4278190335]") >= 0) + "\n"
+    var h = new Http.Headers()
+    h.Set("Cookie", cookie)
+    var ws = Http.WebSocket.Connect("ws://127.0.0.1:" + port + "/_fire/ws?c=" + circuit, 5000, h)
+    ws.Send("{\"e\": 2, \"k\": \"mouse\", \"t\": \"down\", \"x\": 5, \"y\": 5, \"b\": 1}")
+    out = out + "click " + ws.ReceiveText(5000) + "\n"
+    ws.Close()
+    sync global { log = out; done = 1 }
+}
+while (done < 1) { server.AcceptOne(20ms); sync globals }
+print(log)
+server.Close()
+//# name: Http.Pages: [Vector] - ein DrawingCanvas geht als seine Zeichenbefehle (Rechteck, Linie, Kreis, Text) und wird im Browser auf einem canvas abgespielt; nach einem Klick die neuen Befehle; ein anderer Canvas bleibt PNG

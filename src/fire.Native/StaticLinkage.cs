@@ -5,7 +5,6 @@ using System.Text.Json;
 using fire.Bytecode;
 using fire.Runtime;
 using fire.Values;
-using MemoryPack;
 using fire.Package.Manager;
 
 namespace fire.Native
@@ -38,7 +37,7 @@ namespace fire.Native
         private const int SeparateDims = 16;
 
         /// <summary>The format of the interface files (ROADMAP 9.7): a changed format is a different key.</summary>
-        public const int InterfaceFormat = 1;
+        public const int InterfaceFormat = 2;   // (2: the units as ProgramFile writes them)
 
         /// <summary>The library module whose import the natives in C belong to (linkage "static": they live in its file, ROADMAP 9 B2) - null: the program has them (no module
         /// of that name, or one file).</summary>
@@ -308,7 +307,7 @@ namespace fire.Native
                 Operators = n.Operators.ToList(), OverloadClasses = n.OverloadClasses.ToList(), ErrorClasses = n.ErrorClasses.ToList(),
                 RefCallSites = n.RefCallSites.OrderBy(r => r.Name, StringComparer.Ordinal).ThenBy(r => r.Argc).Select(r => new[] { r.Name, r.Argc.ToString(CultureInfo.InvariantCulture) }).ToList(),
                 StaticFields = n.StaticFields.Select(f => new[] { f.Class, f.Field }).ToList(),
-                Units = n.Units.Select(u => Convert.ToBase64String(MemoryPackSerializer.Serialize(u))).ToList(),
+                Units = n.Units.Select(u => Convert.ToBase64String(fire.Bytecode.ProgramFile.WriteUnit(u))).ToList(),
                 Enums = n.Enums.Select(e => new EnumEntry { Name = e.Name, Flags = e.IsFlags, Members = e.Members.Select(m => m.Name).ToList(), Values = e.Members.Select(m => m.Value).ToList() }).ToList(),
                 ExcTypes = n.ExcTypes.ToList(), ReflectionNatives = n.ReflectionNatives.ToList(), Made = n.Classes.ToList(), MadeBy = n.MadeBy, NativeThunks = output.NativeThunks, JsonEngine = output.JsonEngine,
                 SharedNatives = n.SharedNatives.Select(x => new[] { x.Key, x.Value.Argc.ToString(CultureInfo.InvariantCulture), x.Value.NeedsList ? "1" : "0", x.Value.Import }).ToList(),
@@ -329,7 +328,7 @@ namespace fire.Native
             n.ErrorClasses.UnionWith(f.ErrorClasses);
             foreach (var r in f.RefCallSites) n.RefCallSites.Add((r[0], int.Parse(r[1], CultureInfo.InvariantCulture)));
             foreach (var s in f.StaticFields) n.StaticFields.Add((s[0], s[1]));
-            n.Units.AddRange(f.Units.Select(u => MemoryPackSerializer.Deserialize<Unit>(Convert.FromBase64String(u))!));
+            n.Units.AddRange(f.Units.Select(u => fire.Bytecode.ProgramFile.ReadUnit(Convert.FromBase64String(u))));
             n.Enums.AddRange(f.Enums.Select(e => EnumType.Intern(e.Name, e.Flags, e.Members.Zip(e.Values).Select(m => (m.First, m.Second)).ToList())));
             n.ExcTypes.AddRange(f.ExcTypes);
             n.ReflectionNatives.UnionWith(f.ReflectionNatives);
@@ -349,7 +348,7 @@ namespace fire.Native
                 var f = JsonSerializer.Deserialize<InterfaceFile>(File.ReadAllText(path));
                 return f != null && f.Format == InterfaceFormat && f.Key == key ? f : null;
             }
-            catch (Exception ex) when (ex is IOException or JsonException or UnauthorizedAccessException or MemoryPackSerializationException) { return null; }
+            catch (Exception ex) when (ex is IOException or JsonException or UnauthorizedAccessException) { return null; }
         }
 
         private static void WriteAtomically(string path, string text)

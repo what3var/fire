@@ -1,0 +1,13 @@
+var k = 0
+while (k < 100) {
+    k = k + 1
+    if (k > 0) {
+        if (k == 3) {
+            break
+        }
+    }
+    print(k)
+}
+print("if-nested done")
+//# note: what the test program said to expect (for a reader, it was not checked): 1 / 2 / if-nested done
+//# name: Bytecode-Test: break durch verschachtelte if-Blöcke hindurch (Scope-Unwind)

@@ -1,0 +1,1 @@
+error E4066: Property 'A' of class 'C' is 'List<Dog>', interface 'I' declares it as 'List<Animal>' (line 6)

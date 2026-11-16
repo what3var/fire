@@ -1,0 +1,16 @@
+class Exception { string message; construct(string message = "") { this.message = message } }
+class C {
+    int v
+    string name
+    int Loud { get { return this.v * 2 } set { this.v = value / 2 } }
+    construct() { this.v = 1; this.name = "a" }
+}
+var c = new C()
+probe c.* changed (s, n, a, b) => print(n + " " + a + "->" + b)
+c.name = "b"
+c.Loud = 20
+silence c.*
+c.name = "c"
+c.v = 77
+print("still")
+//# name: probe obj.*: alle Mitglieder; Properties feuern, die Writes im Setter ebenfalls; silence obj.* entfernt alle

@@ -1,0 +1,35 @@
+class Bag {
+    string items[] = ["x", "y"]
+    int grid[][] = [[1, 2], [3, 4]]
+    byte data[] = new byte[3]
+    List<string> names = new List<string>()
+    Bag inner
+}
+class Holder { any v; construct() { } construct(any x) { this.v = take x } undefined Set(any x) { this.v = take x } }
+class Run {
+    static Holder Make(Bag b) { return new Holder(copy b) }
+    static undefined Go() {
+        var b = new Bag()
+        b.names.Add("Ada")
+        b.data[1] = 7
+        b.inner = new Bag()
+        b.inner.names.Add("Linus")
+        var h = Run.Make(b)
+        var g = new Holder()
+        g.Set(copy b)
+        print(h.v.items[1] + " " + h.v.grid[1][0] + " " + h.v.data[1] + " " + h.v.names[0] + " " + h.v.inner.names[0] + " " + h.v.inner.grid[0][1])
+        print(g.v.items[0] + " " + g.v.grid[0][1] + " " + g.v.names.Count)
+        b.names.Add("x")
+        print(h.v.names.Count + " " + b.names.Count)
+    }
+}
+class Holder2 { }
+Run.Go()
+var wanted = new List<string>()
+wanted.Add("Ada")
+class P { string name; construct(string n) { this.name = n } }
+class Probe<T> { LambdaExpression Keep(lambda expression<T> e) { return e } }
+var t = new Probe<P>().Keep(p => wanted.IndexOf(p.name) >= 0)
+any c = t.Captures()[0].Value
+print(c.Count + " " + c[0] + " " + t.Invoke(new P("Ada")))
+//# name: Besitz: copy x als Argument (Konstruktor, Methode, in einer Funktion) - Arrays, 2D-Arrays, Puffer, Listen und innere Objekte der Kopie gehoeren der Kopie

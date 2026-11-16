@@ -1,0 +1,30 @@
+#import "time"
+class W {
+    static int Slow(int ms) { Sleep(ms * 1ms); return ms }
+    static undefined Watch() {
+        var inner = new CancellationSource()
+        try { int r = await W.Slow(5000) until inner.Token; print("watch no") } catch (CancelledException e) { print("watch: inner followed outer") }
+    }
+}
+actor Clock {
+    int Tick() { return 1 }
+}
+var outer = new CancellationSource()
+int done = 0
+fire until outer.Token { W.Watch(); sync global { done = done + 1 } }
+Sleep(30ms)
+outer.Cancel()
+while (done < 1) { sync globals; Sleep(5ms) }
+try { var both = await [W.Slow(1000), W.Slow(10)] until 40ms; print("no") } catch (TimeoutException e) { print("all: " + e.message) }
+var later = new CancellationSource()
+later.CancelAfter(30ms)
+try { int r = await W.Slow(2000) until later.Token; print("no") } catch (CancelledException e) { print("after: " + e.message) }
+var clock = new Clock()
+fire with clock {
+    try { int t = await clock.Tick() until 30ms; print("no tick " + t) } catch (TimeoutException e) { print("actor: " + e.message) }
+    sync global { done = done + 1 }
+}
+while (done < 2) { sync globals; Sleep(5ms) }
+var detached = CancellationSource.Detached()
+print(detached.IsCancelled)
+//# name: Cancellation: eine Quelle im Task folgt dessen Token, await [ ... ] mit Zeitlimit, CancelAfter, await actor.M() until, Detached

@@ -1,0 +1,10 @@
+class T {
+    static undefined Run() {
+        var n = 1
+        var f = () => { n = 2; return n }
+        print(f() + " " + n)
+    }
+}
+T.Run()
+//# note: (step 8 of docs/ROADMAP_TASKS.md: a lambda gets a copy of what it uses without a word - TC023 -, an object is shared only when it is bound with `on`)
+//# name: Capture: ohne Wort bekommt das Lambda eine Kopie - eine Zuweisung aendert nur sie, nicht die Variable draussen

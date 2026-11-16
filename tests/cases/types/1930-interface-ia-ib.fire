@@ -1,0 +1,4 @@
+interface IA : IB { }
+interface IB : IA { }
+//# modes: Release
+//# name: types 193: interface IA : IB { }

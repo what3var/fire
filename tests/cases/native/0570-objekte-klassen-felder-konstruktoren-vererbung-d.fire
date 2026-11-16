@@ -1,0 +1,34 @@
+class Animal {
+    int id
+    int legs = 4
+    static int count = 0
+    construct(int id) { this.id = id; Animal.count = Animal.count + 1 }
+    destruct() { print(0 - this.id) }
+    Speak() { print(this.id) }
+    int Legs() { return this.legs }
+}
+class Dog : Animal {
+    int tricks
+    construct(int id) : base(id) { this.tricks = 2 }
+    override Speak() { base.Speak(); print(100 + this.tricks) }
+}
+class Holder {
+    Dog pet
+    construct() { this.pet = new Dog(7) }
+}
+class Maker {
+    static Dog Make(int id) { var d = new Dog(id); return d }
+}
+var d = new Dog(1)
+d.Speak()
+print(d.Legs())
+var h = new Holder()
+h.pet.Speak()
+{
+    var inner = new Animal(5)
+    inner.Speak()
+}
+var m = Maker.Make(9)
+m.Speak()
+print(Animal.count)
+//# name: Objekte: Klassen, Felder, Konstruktoren, Vererbung, Destruktoren, statische Felder

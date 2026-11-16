@@ -1,0 +1,47 @@
+class Node { string n
+  construct(string n) { this.n = n }
+  destruct() { print("~" + this.n) } }
+class Pt : IEquatable { int x; int y
+  construct(int x, int y) { this.x = x; this.y = y }
+  bool Equals(any other) { return other is of Pt && other.x == this.x && other.y == this.y }
+  int GetHashCode() { return this.x * 31 + this.y } }
+var keep = new Node("outside")
+{
+    var plain = new Dictionary<string, Node>()
+    plain["ref"] = keep
+    plain.Add("given", new Node("given"))
+    print("plain " + plain.Count)
+}
+print("after plain")
+var owning = new Dictionary<string, Node>(Owns.Values)
+owning["a"] = new Node("a")
+owning["b"] = new Node("b")
+owning["a"] = new Node("a2")
+print("replaced")
+owning.Remove("b")
+print("removed")
+var t = owning.Take("a")
+print("took " + t.n + " " + owning.Count)
+owning["c"] = new Node("c")
+owning.Clear()
+print("cleared")
+var pts = new Dictionary<Pt, string>()
+pts[new Pt(1, 2)] = "p12"
+print(pts[new Pt(1, 2)] + " " + pts.ContainsKey(new Pt(2, 1)))
+var set = new HashSet<Node>(Owns.Values)
+set.Add(new Node("s1"))
+var s2 = new Node("s2")
+set.Add(s2)
+print(set.Contains(s2) + " " + set.Count)
+set.Remove(s2)
+print("set removed")
+var list = new List<Node>(Owns.Values)
+list.Add(new Node("l1"))
+list.Add(keep)
+list.Add(new Node("l3"))
+list.RemoveAt(0)
+var back = list.TakeAt(1)
+print("list " + list.Count + " " + back.n)
+list.Clear()
+print("end")
+//# name: Dictionary/HashSet/List mit Owns: Explicit behaelt nur Uebergebenes, Values zerstoert Herausfallendes, Take/TakeAt geben es heraus; IEquatable-Schluessel

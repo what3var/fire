@@ -1,0 +1,1 @@
+warning TC020: 'a' is an empty array literal: its elements have no type, it becomes an 'any[]' - every element is wide and checked at run time; declare the element type ('int a[] = []'), or write 'any a[] = []' if that is meant (line 1)

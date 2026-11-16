@@ -1,0 +1,4 @@
+unit X: xx { coerce m => 2
+ coerce cm => 300 }
+//# modes: Release
+//# name: syntax 29: unit X: xx { coerce m => 2

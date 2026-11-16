@@ -1,0 +1,2 @@
+class A { int[] values }
+//# name: Feld mit int[] Typ

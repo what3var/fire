@@ -1,0 +1,14 @@
+200cm
+Expected unit 'cm', got: kg.
+Expected unit 'unitless', got: cm.
+7kg
+Expected unit 'any m', got: s.
+3cm 1.5km
+Parameter 'v' is a T (int : cm), not String.
+5cm 3
+300cm
+1
+Variable 'kept' is a T (int), not String.
+3
+Parameter 'v' is a T (float), not String.
+3002 5994 24.5

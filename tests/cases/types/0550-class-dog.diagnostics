@@ -1,0 +1,2 @@
+warning TC022: 'x' may be undefined, but 'd' is 'defined Dog': it is checked at run time - give it a value that is defined, or write 'trust x' if it certainly is (line 3)
+Unhandled exception of type 'ArgumentException': Variable 'd' is a Dog and never undefined.

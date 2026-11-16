@@ -1,0 +1,22 @@
+#import "time"
+var done = 0
+var log = []
+class Counter { int n
+  construct() { this.n = 0 }
+  Add() { this.n = this.n + 1 }
+}
+var c = new Counter()
+fire {
+    for (var i = 0; i < 5; i++) { Sleep(10ms); c.Add() }
+    sync global { done = done + 1 }   // (both threads count: the update must not race)
+}
+fire {
+    for (var i = 0; i < 5; i++) { Sleep(7); c.Add() }
+    sync global { done = done + 1 }   // (both threads count: the update must not race)
+}
+// the main program sleeps and meanwhile serves the sections of the threads
+Sleep(600ms)
+while (done < 2) { Sleep(5ms) }
+print("after sleep: " + done + " " + c.n)   // (printed once both are done: under load 600 ms may not be enough)
+print("n = " + c.n)
+//# name: Threads: Sleep gibt den anderen Threads frei, das Hauptprogramm bedient dabei die Sektionen

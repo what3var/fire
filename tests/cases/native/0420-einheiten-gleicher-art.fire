@@ -1,0 +1,9 @@
+print(500mm + 250mm)
+print(5mm < 3mm)
+var l = 2.5m
+print(l - 1m)
+print(l)
+var n = 3mm
+n = n + 4mm
+print(n)
+//# name: Einheiten gleicher Art

@@ -1,0 +1,24 @@
+class Item {
+    int n
+    construct(int n) { this.n = n }
+    destruct() { print("~I" + this.n) }
+}
+class Box {
+    string name
+    Item item
+    Item extra
+    construct(string name) { this.name = name }
+    destruct() { print("~B" + this.name) }
+}
+var player = new Box("p")
+player.item = new Item(100)
+var done = 0
+fire taking player {
+    player.item.n = player.item.n - 10
+    var r = sync player
+    print("sync = " + r)
+    sync global { done = 1 }
+}
+while (done == 0) { sync globals }
+print("main item " + player.item.n)
+//# name: Threads: sync: die Kopie schreibt ins Original zurueck

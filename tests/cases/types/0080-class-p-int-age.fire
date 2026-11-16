@@ -1,0 +1,8 @@
+class P { int age
+ construct(int a) { this.age = a } }
+class Probe { string Show(lambda expression<P> e) { return e.ToString() } }
+var pr = new Probe()
+var f = (P p) => p.age > 1
+print(pr.Show(f))
+//# modes: Release
+//# name: types 8: class P { int age

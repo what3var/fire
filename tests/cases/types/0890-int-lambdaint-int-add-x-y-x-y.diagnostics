@@ -1,0 +1,2 @@
+error TC001: Cannot assign a value of type 'lambda<any, any>' to 'three' of type 'lambda<int>' (line 2)
+error TC002: 'add' (int lambda<int, int>) takes 2 argument(s), not 1 (line 3)

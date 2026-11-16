@@ -1,0 +1,24 @@
+scr before False 0
+scr gate True 0.112
+scr held True 0.112
+scr low False 0
+triac peaks 0.992 -0.992
+diac fires in 0.5 s 5
+jfet idss 10 mA
+jfet at -2 V 2.5 mA
+jfet at -5 V 0 mA
+darlington vbe 1.266 vce 0.759
+triode plate 88.351 V, 1.616 mA
+pentode 97.188 mA, screen 4.782 mA
+vacuum diode 86.532 V
+varactor ok 5
+vcvs 5 vccs 0.5 cccs 2 ccvs 1
+cc2 x 1 z 2 y current 1
+ota out 0.192 V, iabc 101.26 uA
+ota out -0.191 V
+opto led 11.599 mA, collector 4.839 mA
+opto led 1.621 mA, collector 1.624 mA
+ujt at 5 V: ie -0 uA, ib2 1505 uA
+ujt at 7 V: ie 5134 uA, ib2 3023 uA
+ujt oscillator fires 28 times in 20 ms, peak 6.378 V
+ujt oscillator at 1 us fires 28 times in 20 ms, steps done again: True

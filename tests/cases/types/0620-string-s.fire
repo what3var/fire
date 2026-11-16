@@ -1,0 +1,4 @@
+string s
+defined string t = s
+//# modes: Release
+//# name: types 62: string s

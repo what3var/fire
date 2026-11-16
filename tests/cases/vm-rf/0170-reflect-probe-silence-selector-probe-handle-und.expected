@@ -1,0 +1,6 @@
+r 1 4
+5
+50
+'C' has no member 'nope' - no probe can be registered there.
+The kind of a probe is "changed" or "changing", got: "gestern".
+The handler of a probe may have at most 4 parameters (object, name, old, new), it has 5.

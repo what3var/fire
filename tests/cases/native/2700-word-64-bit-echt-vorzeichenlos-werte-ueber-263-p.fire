@@ -1,0 +1,37 @@
+word m = -1
+word h = 9223372036854775808
+print(m + " " + h + " " + Word.Bits)
+print((m + 1) + " " + (h + h) + " " + (h * 2 + 3) + " " + (h - 1) + " " + (0!word - 1))
+print(m / 3 + " " + m % 10 + " " + h / 7 + " " + h % 1000 + " " + (m / h))
+print((m >> 60) + " " + (m >> 64) + " " + (h >> 63) + " " + (h << 1) + " " + (m << 63) + " " + (1 << (63!word)))
+print((m > h) + " " + (h > 5) + " " + (h < 1) + " " + (m == -1) + " " + (h != 0) + " " + (h >= h) + " " + (-1 < h) + " " + (h == 9223372036854775808))
+print((h & 12345) + " " + (h | 1) + " " + (h # m) + " " + ~h + " " + -h + " " + -(1!word))
+word p = 3
+print((p ^ 40) + " " + (p ^ 41) + " " + (p ^ -1))
+print(m!int + " " + h!int + " " + m!float + " " + h!float + " " + m!byte + " " + 300!word + " " + (-2)!word)
+print(2.5!word + " " + 3.5!word + " " + (-1.0)!word + " " + 1e30!word + " " + 'A'!word + " " + undefined!word)
+print((h + 0.5) + " " + (p * 1.5) + " " + (p < 3.5) + " " + (p == 3.0))
+var x = h - 1
+x++
+x += 5
+print(x + " " + (x is of word) + " " + (5 is of word))
+var n = 0
+for (word i = m - 2; i != 0; i++) { n++ }
+print(n)
+print($"{m:X} {h:x} {p:D4} {p:B4} {h:F1}")
+try { print(m / 0) } catch (DivideByZeroException e) { print("D: " + e.message) }
+try { print(m % (0!word)) } catch (DivideByZeroException e) { print("D: " + e.message) }
+try { any u = 5m
+ print(m + u) } catch (UnitMismatchException e) { print("U") }
+try { any s = true
+ print(m - s) } catch (ArgumentException e) { print("A: " + e.message) }
+try { any t = 2.5
+ print(m & t) } catch (ArgumentException e) { print("A: " + e.message) }
+try { any o = [1]
+ print(o!word) } catch (ArgumentException e) { print("A: " + e.message) }
+float f = h
+byte b = m
+int[16] s16 = m!int
+any dyn = m
+print(f + " " + b + " " + s16 + " " + (dyn + 1) + " " + ("w" + m))
+//# name: Word: 64 Bit echt vorzeichenlos (Werte ueber 2^63: print, Vergleich, Division, Modulo, Schieben), Wrap, gemischt mit int und float, Umwandlungen

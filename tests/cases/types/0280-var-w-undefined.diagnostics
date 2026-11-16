@@ -1,0 +1,1 @@
+error TC019: The type of 'w' cannot be derived: 'var w = undefined' says nothing about its type, and no assignment gives it one - give it a type ('int w = ...'), or 'any w = ...' if every kind of value is meant (line 1)

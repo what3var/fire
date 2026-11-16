@@ -1,0 +1,2 @@
+warning TC001: Cannot assign a value of type 'int' to 'o' of type 'class' (line 8)
+warning TC001: Cannot assign a value of type 'string' to 'o' of type 'class' (line 9)

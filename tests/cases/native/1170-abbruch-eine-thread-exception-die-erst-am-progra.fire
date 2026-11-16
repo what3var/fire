@@ -1,0 +1,7 @@
+class Item { int v }
+fire {
+    var it = new Item()
+    print(it.v + 1)
+}
+print("main done")
+//# name: Abbruch: eine Thread-Exception, die erst am Programmende ankommt, beendet das Programm (VM wie nativ, nicht verschluckt)

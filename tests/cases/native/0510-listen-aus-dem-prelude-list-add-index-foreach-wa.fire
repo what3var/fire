@@ -1,0 +1,14 @@
+var l = new List()
+for (var i = 0; i < 20; i = i + 1) { l.Add(i * i) }
+var sum = 0
+foreach (v in l) { sum = sum + v }
+print(sum)
+print(l[3])
+l[3] = 100
+print(l[3])
+print(l.Count)
+var names = new List(["x", "y", "z"])
+var joined = ""
+foreach (n in names) { joined = joined + n }
+print(joined)
+//# name: Listen aus dem Prelude (List, Add, Index, foreach, Wachstum)

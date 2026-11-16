@@ -31,6 +31,7 @@ static class TypeTests
         var warnings = new DiagnosticCollector();
         var lines = new List<string>();
         string errors = "";
+        TestCases.CollectSource("types", source, mode?.ToString());
         Linker.ProcessDefaultTypeChecking = mode;
         try
         {
@@ -59,6 +60,7 @@ static class TypeTests
     /// <summary>The messages of the errors of a build ("" when it compiles).</summary>
     private static string CompileText(string source)
     {
+        TestCases.CollectSource("types", source, Linker.ProcessDefaultTypeChecking?.ToString());
         try { RuntimeSession.Build(new[] { source }, VmExecutionMode.Release, a => Value.MakeUndefined()); return ""; }
         catch (Exception ex) { return string.Join("\n", CompileDiagnostics.Of(ex).Select(d => d.Message)); }
     }

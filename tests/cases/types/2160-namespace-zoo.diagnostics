@@ -1,0 +1,5 @@
+warning TC014: The method 'Speak' of 'Zoo.Dog' replaces the one of its base class 'Zoo.Animal' - mark it 'override' (override string Speak()) (line 11)
+warning TC014: The property 'Legs' of 'Zoo.Dog' replaces the one of its base class 'Zoo.Animal' - mark it 'override' (override int Legs { ... }) (line 11)
+warning TC014: The method 'Speak' of 'Zoo.Cat' replaces the one of its base class 'Zoo.Animal' - mark it 'override' (override string Speak()) (line 12)
+warning TC014: The method 'Speak' of 'Zoo.Puppy' replaces the one of its base class 'Zoo.Dog' - mark it 'override' (override string Speak()) (line 13)
+warning TC014: The method 'Speak' of 'Barn.Pig' replaces the one of its base class 'Farm.Beast' - mark it 'override' (override string Speak()) (line 16)

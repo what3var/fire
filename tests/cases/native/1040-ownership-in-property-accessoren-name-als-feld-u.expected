@@ -1,0 +1,21 @@
+in getter: False True True
+destroy mixed field
+mixed: 1
+a.v destroyed (a field of another object)
+b.v from b: True
+self: True
+inner threw
+outer: True inner
+look passing
+destroy passing
+passing destroyed
+to passing: 2
+strict threw: True
+to strict: 3 bad
+check: True
+end
+destroy mixed prop
+destroy mixed self
+destroy inner
+destroy bad
+destroy check

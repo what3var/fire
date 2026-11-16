@@ -1,0 +1,10 @@
+class Exception { string message; construct(string message = "") { this.message = message } }
+var total = 0
+var done = 0
+fire {
+    try { sync global { total = total + 1; throw new Exception("x") } } catch (e) { }
+    sync global { total = total + 10; done = 1 }
+}
+while (done == 0) { sync globals }
+print("total " + total)
+//# name: Threads: Globals: Ausnahme im Block beendet die Sektion

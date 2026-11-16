@@ -1,0 +1,16 @@
+class Show {
+    static string Of(int x) { return "int" }
+    static string Of(string s) { return "string" }
+    string Me(int x) { return "me int" }
+    string Me(string s) { return "me string" }
+    string made
+    construct(int a) { this.made = "ctor int" }
+    construct(string s) { this.made = "ctor string" }
+}
+var sh = new Show(1)
+for (int i = 0; i < 6; i++) {
+    any x = i
+    if (i % 2 == 1) { x = "odd" }
+    print(Show.Of(x) + " / " + sh.Me(x) + " / " + new Show(x).made)
+}
+//# name: Ueberladung vorab gewaehlt: wechselnder Argumenttyp an derselben Stelle (any) waehlt jedes Mal richtig

@@ -1,0 +1,81 @@
+#import "circuits"
+class H {
+    static float R(float v) { return Math.Round(v * 1000) / 1000 }
+}
+// 555 astable: RA 1k, RB 10k, C 100nF -> f = 1.44 / ((RA + 2 RB) C) = 686 Hz
+var c = new Circuits.Circuit()
+var t = c.Add(new Circuits.Timer555(5V))
+var ra = c.Add(new Circuits.Resistor(1kOhm))
+var rb = c.Add(new Circuits.Resistor(10kOhm))
+var cap = c.Add(new Circuits.Capacitor(100nF))
+var vcc = c.Add(new Circuits.VoltageSource(5V))
+vcc.B.Connect(c.Ground)
+vcc.A.Connect(ra.A)
+ra.B.Connect(t.Discharge)
+t.Discharge.Connect(rb.A)
+rb.B.Connect(t.Threshold)
+t.Threshold.Connect(t.Trigger)
+t.Trigger.Connect(cap.A)
+cap.B.Connect(c.Ground)
+c.TimeStep = 2us
+var sc = new Circuits.Scope(c)
+sc.Voltage("out", t.Output)
+sc.Voltage("cap", cap.A)
+c.Run(20ms)
+var out = sc.Samples("out")
+var rises = 0
+var first = -1
+var last = -1
+for (int i = 1; i < out.length; i++) {
+    if (out[i] > 2.5 && out[i - 1] <= 2.5) {
+        rises++
+        if (first < 0) { first = i }
+        last = i
+    }
+}
+var period = (last - first) * 2.0 / (rises - 1)
+print("555 rises " + rises + " f " + Math.Round(1000000.0 / period) + " Hz")
+var capv = sc.Samples("cap")
+var lo = 10.0
+var hi = 0.0
+for (int i = out.length / 2; i < out.length; i++) {
+    if (capv[i] < lo) { lo = capv[i] }
+    if (capv[i] > hi) { hi = capv[i] }
+}
+print("cap between " + H.R(lo) + " and " + H.R(hi))
+// counter on a 1 kHz clock: 10 rising edges in 10 ms
+var k = new Circuits.Circuit()
+var clk = k.Add(new Circuits.SquareSource(5V, 1kHz))
+var cnt = k.Add(new Circuits.Counter(4))
+clk.A.Connect(cnt.Clock)
+clk.B.Connect(k.Ground)
+k.TimeStep = 10us
+k.Run(10.5ms)
+print("counter " + cnt.Count + " q0 " + H.R(cnt.Q(0).Raw()) + " q1 " + H.R(cnt.Q(1).Raw()) + " q3 " + H.R(cnt.Q(3).Raw()))
+// parameters and bindings: an RC low pass whose R and C come from parameters
+class LowPass : Circuits.Circuit {
+    construct(float r : any, float cap : any) : base("lowpass") {
+        this.Parameter("R", r)
+        this.Parameter("C", cap)
+        var input = this.AddPort("in")
+        var output = this.AddPort("out")
+        var res = this.Add(new Circuits.Resistor(1))
+        var c = this.Add(new Circuits.Capacitor(1))
+        input.Connect(res.A)
+        res.B.Connect(c.A)
+        c.B.Connect(this.Ground)
+        output.Connect(res.B)
+        this.Bind(func (Circuits.Circuit p) on res => { Resistance = p.Get("R") })   // (bound to the part: a capture would be a copy)
+        this.Bind(func (Circuits.Circuit p) on c => { Capacitance = p.Get("C") })
+    }
+    float Cutoff() { return this.Value("1/(2*pi*R*C)") }
+}
+var top = new Circuits.Circuit()
+var lp = top.Add(new LowPass(1kOhm, 1uF))
+print("cutoff " + Math.Round(lp.Cutoff()) + " Hz")
+lp.Parameter("R", 2kOhm)
+print("cutoff " + Math.Round(lp.Cutoff()) + " Hz " + lp.Value("R*2") + " " + lp.HasParameter("C") + " " + top.HasParameter("R"))
+top.Parameter("scale", 3)
+print(lp.Value("scale*R") + " " + lp.Get("scale"))
+try { lp.Get("nope") } catch (ArgumentException e) { print(e.message) }
+//# name: Circuits: Timer555 astabil, Zaehler aus Flipflops, Parameter und Bindungen einer Teilschaltung (Value, Get, Vererbung)

@@ -1,0 +1,11 @@
+var ch = new Channel<int>()
+var out = new Channel<string>()
+fire with ch, out {
+    int sum = 0
+    foreach (x in ch) { sum = sum + x }
+    print("consumer done " + sum)
+}
+ch.Send(1)
+ch.Send(2)
+print("main end")
+//# name: Programmende: warten alle uebrigen Threads in Kanaelen, schliessen die Kanaele des Hauptprogramms (foreach endet)

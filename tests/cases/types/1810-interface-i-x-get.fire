@@ -1,0 +1,4 @@
+interface I { X { get; } }
+print(1)
+//# modes: Release
+//# name: types 181: interface I { X { get; } }

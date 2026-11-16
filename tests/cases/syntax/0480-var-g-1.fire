@@ -1,0 +1,6 @@
+var g = 1
+fire { var own = 2
+ fire handover own { }
+ fire handover g { } }
+//# modes: Release
+//# name: syntax 48: var g = 1

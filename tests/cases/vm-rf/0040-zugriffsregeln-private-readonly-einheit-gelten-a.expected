@@ -1,0 +1,5 @@
+1 Field 'secret' of 'Circle' is private and cannot be accessed from here.
+2 'Hidden' of 'Circle' is private and cannot be accessed from here.
+3 The field 'id' of 'Circle' is 'readonly' and cannot be assigned.
+4 Einheit
+42

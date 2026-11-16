@@ -1,0 +1,4 @@
+int lambda<int, int> adder = func (a, b) => { return a + b }
+print(adder(3, 4))
+//# note: what the test program said to expect (for a reader, it was not checked): 7
+//# name: Bytecode-Test: 'RückgabeTyp lambda<...>' bei var-Deklaration (Langform '=> { return ... }')

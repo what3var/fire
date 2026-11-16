@@ -1,0 +1,18 @@
+3 4 undefined 6
+Field 'n' is an int, not String.
+Field 'n' is an int, not Float.
+3.5
+undefined
+Parameter 'a' is a float, not String.
+Parameter 'k' is an int, not Float.
+undefined undefined
+42
+Parameter 'a' is an int, not String.
+Field 'F' is a float, not Bool.
+1.5
+2
+Parameter 'v' is an int, not String.
+Expected unit 'unitless', got: m.
+Expected unit 'unitless', got: m.
+2.5m 3s 200
+15

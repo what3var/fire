@@ -1,0 +1,8 @@
+var counter = 10
+
+fire taking counter {
+    counter = counter + 1
+    print("Fire-Thread (eigene, schreibbare Erfassung): counter = " + counter)
+}
+//# note: what the test program said to expect (for a reader, it was not checked): 'Fire-Thread (eigene, schreibbare Erfassung): counter = 11'
+//# name: Multithreading: 'taking' mit gleichem Namen wie ein Hauptprogramm-Global (Schattierung)

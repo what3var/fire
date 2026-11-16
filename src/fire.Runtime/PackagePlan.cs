@@ -8,8 +8,7 @@ using System.Runtime.InteropServices;
 namespace fire.Runtime
 {
     /// <summary>
-    /// Determines which DLLs a packed program gets: always the core (fire.dll together with dependencies like
-    /// MemoryPack), plus per `#import` only the associated bridge with everything it needs - bridges that the program
+    /// Determines which DLLs a packed program gets: always the core (fire.dll together with its dependencies), plus per `#import` only the associated bridge with everything it needs - bridges that the program
     /// does not include thus cost no space in the finished file.
     ///
     /// Dependencies are not maintained by hand, but determined from the assembly references of the DLLs (metadata):

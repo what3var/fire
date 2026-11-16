@@ -1,0 +1,22 @@
+#import "reflection"
+class Item { int n; construct(int n) { this.n = n } }
+class Box { List<Item> items; Item one; int nums[] }
+var b = new Box()
+Reflect.Set(b, "items", new List<Item>())
+b.items.Add(new Item(1))
+print(b.items.Count)
+Reflect.Set(b, "one", new Item(7))
+print(b.one.n)
+var src = new List<Item>()
+src.Add(new Item(3))
+Reflect.Set(b, "items", copy src)
+print(b.items.Count + " " + b.items[0].n)
+var mine = new Item(9)
+Reflect.Set(b, "one", take mine)
+print(b.one.n + " " + (mine == undefined))
+var shared = new Item(5)
+Reflect.Set(b, "one", shared)
+print(b.one.n + " " + shared.n)
+Reflect.Set(b, "nums", [1, 2, 3])
+print(b.nums.length)
+//# name: Reflection: Reflect.Set uebernimmt, was dem Aufruf gehoert (new, copy, take, ein Array-Literal) wie eine Feldzuweisung; ein fremdes Objekt bleibt dessen

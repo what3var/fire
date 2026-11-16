@@ -1,0 +1,4 @@
+unit A: aa { coerce cc => 2 }
+unit C: cc { coerce aa => 3 }
+//# modes: Release
+//# name: syntax 28: unit A: aa { coerce cc => 2 }

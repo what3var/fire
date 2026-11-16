@@ -1,0 +1,23 @@
+class P {
+    int half
+    float fhalf
+    defined int dhalf
+    construct(int v, float w) { this.half = v / 2; fhalf = w / 2; dhalf = v / 2 }
+    undefined Set(int v) { half = v / 2 }
+    undefined SetD(defined int v) { dhalf = v / 2; this.half = v / 2 }
+    static defined int H(defined int v) { return v / 2 }
+}
+var p = new P(10, 3.0)
+print(p.half + " " + p.fhalf + " " + p.dhalf)
+p.Set(8)
+print(p.half)
+p.SetD(6)
+print(p.dhalf + " " + p.half + " " + P.H(9))
+class Q {
+    int r
+    int m
+    construct(int v) { this.r = v % 3; m = v / 2 % 4 }
+}
+var q = new Q(11)
+print(q.r + " " + q.m)
+//# name: Ein Parameter geteilt (param / 2, param % 3) in ein Feld - auch im Konstruktor: das Ergebnis, nicht der Parameter (der Platz war ein Alias der Variable)

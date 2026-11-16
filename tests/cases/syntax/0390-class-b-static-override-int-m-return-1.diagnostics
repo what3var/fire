@@ -1,0 +1,1 @@
+0390-class-b-static-override-int-m-return-1.fire(1): error E3000: 'static' and 'override' do not go together: a static member belongs to its class and is not inherited

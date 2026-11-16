@@ -1,0 +1,12 @@
+prefixed unit Farad: F
+print(5us == 5µs)
+print(1uF is in F)
+print(3us + 2µs)
+print(5cm / 1mm)
+print(1s / 1ms)
+print(1ms / 1s)
+print(1.5ms / 1us)
+print(2km * 3 / 1m)
+print(0.5km / 1m)
+print(1 / 3s * 1ms)
+//# name: Einheiten: Praefix u neben µ (10uF, 5us), gekuerzte Einheiten mit Faktor (5cm / 1mm ist 50, 1s / 1ms ist 1000, int bleibt int)

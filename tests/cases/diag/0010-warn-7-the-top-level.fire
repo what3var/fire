@@ -1,0 +1,20 @@
+warn 7: "the top level"
+class Box {
+    warn 8: "Box is obsolete"
+    int size
+    construct() { this.size = 3 }
+    Grow() {
+        warn 9: "Grow is obsolete: use Resize"
+        this.size = this.size + 1
+        return this.size
+    }
+}
+var b = new Box()
+for (var i = 0; i < 3; i++) {
+    warn 10: "in a loop"
+    b.Grow()
+}
+if (b.size > 2) warn 11: "as the body of an if"
+print("size " + b.size)
+//# modes: Release
+//# name: diag 1: warn 7: "the top level"

@@ -1,0 +1,14 @@
+var q = 7 / 2
+var p = 2 ^ 3
+int both = q + p
+print(both)
+print(p / 16)
+print(2 ^ 3 is of int)
+print(2 ^ -1)
+float h = 2 ^ -1
+print(h)
+float g = 2 ^ 3 / 3
+print(g > 2.6)
+//# types: strict
+//# modes: Release
+//# name: types 40: var q = 7 / 2

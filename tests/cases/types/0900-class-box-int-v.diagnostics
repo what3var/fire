@@ -1,0 +1,2 @@
+warning TC001: Cannot assign a value of type 'char' to 'c' of type 'int' (line 6)
+warning TC001: Cannot assign a value of type 'int' to 'w' of type 'bool' (line 8)

@@ -1,0 +1,57 @@
+#import "circuits"
+class H {
+    static float R(float v) { return Math.Round(v * 1000) / 1000 }
+    // the most negative current after the source turns negative at 50 us, and how long it stays below -0.5 mA
+    static string Recovery(string model) {
+        var c = new Circuits.Circuit()
+        var src = c.Add(new Circuits.SquareSource(5V, 10kHz, -5V))
+        var r = c.Add(new Circuits.Resistor(1kOhm))
+        var d = c.Add(new Circuits.Diode(model))
+        src.A.Connect(r.A)
+        r.B.Connect(d.A)
+        d.B.Connect(c.Ground)
+        src.B.Connect(c.Ground)
+        c.TimeStep = 50ns
+        var sc = new Circuits.Scope(c)
+        sc.Current("i", d)
+        c.Run(100us)
+        var i = sc.Samples("i")
+        var lowest = 0.0
+        var below = 0
+        for (int k = 1000; k < i.length; k++) {
+            if (i[k] < lowest) { lowest = i[k] }
+            if (i[k] < -0.0005) { below++ }
+        }
+        return model + " peak " + H.R(lowest * 1000) + " mA for " + H.R(below * 0.05) + " us, it " + c.PlanInfo(7) + " bad " + c.PlanInfo(8)
+    }
+}
+print(H.Recovery("1N4001"))
+print(H.Recovery("1N4148"))
+print(H.Recovery("diode"))
+// NPN switch: input steps to 5V at t=0 through 10k; collector through 1k; the time until the collector falls below 1 V
+var q = new Circuits.Circuit()
+var vin = q.Add(new Circuits.SquareSource(5V, 50kHz))
+var vcc = q.Add(new Circuits.VoltageSource(5V))
+var rb = q.Add(new Circuits.Resistor(10kOhm))
+var rc = q.Add(new Circuits.Resistor(1kOhm))
+var t = q.Add(new Circuits.Transistor("2N3904"))
+vin.A.Connect(rb.A)
+rb.B.Connect(t.B)
+vcc.A.Connect(rc.A)
+rc.B.Connect(t.C)
+t.E.Connect(q.Ground)
+vin.B.Connect(q.Ground)
+vcc.B.Connect(q.Ground)
+q.TimeStep = 5ns
+var sc = new Circuits.Scope(q)
+sc.Voltage("c", t.C)
+q.Run(20us)
+var vc = sc.Samples("c")
+var tOn = -1
+var tOff = -1
+for (int k = 1; k < vc.length; k++) {
+    if (tOn < 0 && vc[k] < 1.0) { tOn = k }
+    if (tOn >= 0 && tOff < 0 && k * 5 > 10000 && vc[k] > 4.0) { tOff = k }
+}
+print("npn on after " + H.R(tOn * 0.005) + " us, off after " + H.R(tOff * 0.005 - 10) + " us")
+//# name: Circuits: Kapazitaeten der Halbleiter (Sperrverzug 1N4001/1N4148, Schaltzeiten 2N3904)

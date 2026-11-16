@@ -1,0 +1,22 @@
+class Person {
+    string first = "Ada"
+    string last = "Lovelace"
+    int age = 36
+    string Name { get { return first + " " + this.last } }
+    string Summary { get { return this.Name + " (" + this.Describe() + ")" } }
+    string Describe() { return "" + age }
+    int Age { get { return this.age } set { this.age = value } }
+}
+var p = new Person()
+probe p.Summary changed { print("summary: " + old + " -> " + value) }
+probe p.Name changed (o, n) => print("name: " + o + " -> " + n)
+p.first = "Augusta"
+p.last = "Lovelace"
+p.Age = 37
+p.age = 37
+try { probe p.Name changing (o, n) => true } catch (ArgumentException e) { print("err: " + e.message) }
+try { probe p.Nope changed (v) => 1 } catch (MissingMemberException e) { print("missing: " + e.message) }
+silence p.Summary
+p.first = "Ada"
+print(p.Name)
+//# name: Probes auf berechnete Properties: der Getter wird bei einer Aenderung seiner Quellen neu ausgewertet (auch ueber andere Getter und Methoden), changing ist ein Fehler

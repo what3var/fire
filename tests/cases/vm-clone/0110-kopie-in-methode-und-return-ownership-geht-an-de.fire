@@ -1,0 +1,24 @@
+class Item {
+    int n
+    construct(int n) { this.n = n }
+    destruct() { print("~I" + this.n) }
+}
+class Box {
+    string name
+    int size
+    Item item
+    Box other
+    Item list[]
+    int Extra { get; set; }
+    construct(string name) { this.name = name; this.size = 1 }
+    destruct() { print("~B" + this.name) }
+}
+class Maker { static Box Make(Box src) { var c = copy src; c.name = "made"; return c } }
+var s = new Box("s")
+s.item = new Item(4)
+{
+    var m = Maker.Make(s)
+    print(m.name + " " + m.item.n)
+}
+print("danach")
+//# name: Kopie in Methode und return: Ownership geht an den Aufrufer

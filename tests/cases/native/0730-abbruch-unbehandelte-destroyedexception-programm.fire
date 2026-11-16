@@ -1,0 +1,6 @@
+class Foo { int x
+    construct() { } }
+var f = new Foo()
+delete f
+print(f.x)
+//# name: Abbruch: unbehandelte DestroyedException (Programm ohne Ausnahmen)

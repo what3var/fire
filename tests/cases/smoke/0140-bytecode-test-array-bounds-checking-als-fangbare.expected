@@ -1,0 +1,5 @@
+gefangen: Array index 10 out of range (length 3).
+10
+3
+weiter nach try/catch
+auch ueber List[] gefangen: 20

@@ -1,0 +1,14 @@
+ctor finally 5
+ctor end 5
+ctor finally -1
+ok / recovered negative
+lambda fin 0
+-1
+lambda fin 4
+25
+a[b!]c
+seven seven x0x1x2x3x4x5x6|x7x8x9x10x11x12x13|x14x15x16x17x18x19
+dtor ok
+dtor fin
+dtor recovered negative
+dtor fin

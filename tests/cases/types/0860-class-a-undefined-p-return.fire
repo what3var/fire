@@ -1,0 +1,8 @@
+class A { undefined P() { return }
+    int Q(bool b) { if (b) { return 1 } return }
+}
+var a = new A()
+print(a.Q(false))
+//# types: strict
+//# modes: Release
+//# name: types 86: class A { undefined P() { return }

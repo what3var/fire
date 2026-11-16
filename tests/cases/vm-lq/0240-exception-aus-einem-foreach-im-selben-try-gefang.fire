@@ -1,0 +1,11 @@
+class Exception { string message; construct(string message = "") { this.message = message } }
+class T {
+    static C(class l) { try { foreach (x in l) { throw new Exception("x") } } catch (e) { return 7 } return 0 }
+    static D(class l) { foreach (x in l) { try { throw new Exception("y") } catch (e) { return 8 } } return 0 }
+    static Run() {
+        print(10 + T.C([1, 2]) + 1)
+        print(10 + T.D([1, 2]) + 1)
+    }
+}
+T.Run()
+//# name: Exception aus einem foreach, im selben try gefangen: keine Operanden-Leichen (catch mit return, Aufrufer mitten im Ausdruck)

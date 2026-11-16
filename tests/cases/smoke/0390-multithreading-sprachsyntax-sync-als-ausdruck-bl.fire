@@ -1,0 +1,13 @@
+class Player {
+    int health
+    construct() { this.health = 100 }
+}
+
+var player = new Player()
+fire taking player {
+    player.health = player.health - 10
+    var result = sync player
+    print("Fire-Thread: sync-Ergebnis = " + result)
+}
+//# note: what the test program said to expect (for a reader, it was not checked): 'Fire-Thread: sync-Ergebnis = true'
+//# name: Multithreading-SPRACHSYNTAX: 'sync' als Ausdruck (blockierend, voll)

@@ -1,0 +1,1 @@
+error TC013: A value of type 'Cat' can never be a 'Dog': the cast '!Dog' always fails at run time (only undefined passes) (line 10)

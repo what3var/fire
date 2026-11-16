@@ -1,0 +1,32 @@
+field: 1 True True inner
+ret: False True
+retfield: False retfield
+prop: 2 True prop
+peer: 3 True peer
+auto: 4 True auto
+destroy nested
+nested: 5
+nested destroyed
+caught boom True throws
+array: 3 42
+make: True made 7
+forward: True fwd 8
+finally: False
+fin: False fin
+outside: False
+destroy outside
+outside destroyed
+destroy method
+method destroyed
+end
+destroy peer
+destroy auto
+destroy fwd 8
+destroy field
+destroy inner
+destroy prop
+destroy throws
+destroy made 7
+destroy ret
+destroy retfield
+destroy fin

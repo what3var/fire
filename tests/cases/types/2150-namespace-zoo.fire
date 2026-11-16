@@ -1,0 +1,22 @@
+namespace Zoo {
+    class Animal {
+        string Speak() { return "..." }
+        int Legs { get { return 4 } }
+    }
+}
+namespace Farm {
+    class Beast { string Speak() { return "beast" } }
+}
+namespace Zoo {
+    class Dog : Animal { override string Speak() { return "Woof" } override int Legs { get { return 3 } } }
+    class Cat : Zoo.Animal { override string Speak() { return "Miau" } }
+    class Puppy : Dog { override string Speak() { return "Yip" } }
+    class Cow : Farm.Beast { override string Speak() { return "Muh" } }
+}
+#using Farm
+namespace Barn { class Pig : Beast { override string Speak() { return "Oink" } } }
+Zoo.Animal a = new Zoo.Puppy()
+print(new Zoo.Dog().Speak() + " " + new Zoo.Dog().Legs + " " + new Zoo.Cat().Speak() + " " + a.Speak() + " " + new Zoo.Cow().Speak() + " " + new Barn.Pig().Speak())
+//# types: strict
+//# modes: Release
+//# name: types 215: namespace Zoo {

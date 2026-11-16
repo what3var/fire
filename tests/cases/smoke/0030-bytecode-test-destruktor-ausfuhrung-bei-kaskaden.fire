@@ -1,0 +1,19 @@
+class Cleanup {
+    string label
+
+    construct(string label) {
+        this.label = label
+    }
+
+    destruct() {
+        print(this.label)
+    }
+}
+
+{
+    var r = new Cleanup("cleanup-ran")
+    print(1)
+}
+print(2)
+//# note: what the test program said to expect (for a reader, it was not checked): 1 / cleanup-ran / 2
+//# name: Bytecode-Test: Destruktor-Ausführung bei Kaskadenlöschung (SPEC 2.3)

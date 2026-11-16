@@ -1,0 +1,34 @@
+inline c int Add(int a, int b) { return a + b; }
+inline c float Half(float x) { return x / 2; }
+inline c bool IsOdd(int n) { return (n & 1) != 0; }
+inline c char Upper(char c) { return c >= 'a' && c <= 'z' ? c - 32 : c; }
+inline c int Sum(byte data[]) { FireInt s = 0; uint32_t i; for (i = 0; i < data_length; i++) s += data[i]; return s; }
+inline c Fill(byte data[], int v) { memset(data, (int)v, data_length); }
+inline c string Greet(string who) { static char buf[64]; snprintf(buf, sizeof buf, "hi %s {'}", who); return buf; }
+inline c any Twice(any a) { return a.kind == K_Int ? Int(a.i * 2) : a; }
+inline c undefined Nothing() { /* } in a comment */ const char* s = "}"; (void)s; }
+inline c int[16] Narrow(int[16] x) { return (int16_t)(x + 1); }
+inline c int Compiler() {
+#if defined(__GNUC__)
+    return 1;   // a C comment with a } brace
+#else
+    return 2;
+#endif
+}
+inline c int UsesAdd(int a) { return fire_inl_Add(a, 100); }
+var inline = 5
+print(inline)
+#if native
+var b = new byte[3]
+b[0] = 1; b[1] = 2; b[2] = 3
+print(Add(2, 3) + " " + Half(5.0) + " " + IsOdd(3) + " " + Upper('q') + " " + Sum(b))
+Fill(b, 9)
+print(b[0] + b[1] + b[2])
+print(Greet("bob") + " " + Twice(21) + " " + Twice("x") + " " + Nothing() + " " + Narrow(32767) + " " + Compiler() + " " + UsesAdd(1))
+#else
+print("5 2.5 True Q 6")
+print(27)
+print("hi bob {'} 42 x undefined -32768 1 101")
+#endif
+//# note: inline c (ROADMAP 13.2): functions with a C body - natively the C, in the VM the fire branch of `#if native` gives the same lines
+//# name: inline c: Zahlen, bool, char, string, byte[] (Bytes + Laenge), any, undefined, int[16], #if im C-Rumpf, Klammern in Strings und Kommentaren

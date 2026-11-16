@@ -1,0 +1,36 @@
+#import "reflection"
+#import "json"
+[InferDefined]
+class C {
+    int count = 0
+    float scale = 1.5
+    construct() { }
+    undefined Bump(int by) { this.count = this.count + by }
+    int Twice(int x) { return x * 2 }
+}
+class Plain {
+    int n = 3
+    construct() { }
+    undefined Add(int by) { this.n = this.n + by }
+}
+var c = new C()
+c.Bump(2)
+print(c.Twice(4) + " " + Reflect.Call(c, "Twice", [7]))
+try { Reflect.Call(c, "Bump", ["drei"]) } catch (ArgumentException e) { print("T1 " + e.message) }
+try { Reflect.Call(c, "Bump", [1.5]) } catch (ArgumentException e) { print("T2 " + e.message) }
+try { Reflect.Call(c, "Bump", [undefined]) } catch (ArgumentException e) { print("T3 " + e.message) }
+try { Reflect.Set(c, "count", "x") } catch (ArgumentException e) { print("T4 " + e.message) }
+try { Reflect.Set(c, "count", undefined) } catch (ArgumentException e) { print("T5 " + e.message) }
+Reflect.Set(c, "count", 10)
+print(c.count + " " + Reflect.Get(c, "count"))
+var p = new Plain()
+p.Add(1)
+Reflect.Set(p, "n", undefined)
+print(p.n)
+try { Reflect.Set(p, "n", "x") } catch (ArgumentException e) { print("P1 " + e.message) }
+var j = Json.Deserialize<C>("{\"scale\": 2}")
+print(j.count + " " + j.scale)
+try { var k = Json.Deserialize<C>("{\"count\": null}"); print(k.count) } catch (ArgumentException e) { print("J1 " + e.message) }
+var q = Json.Deserialize<Plain>("{}")
+print(q.n)
+//# name: [InferDefined]: mit Reflection und JSON leitet nur eine Klasse mit dem Attribut defined her - Reflect.Call/Reflect.Set gehen durch die Pruefung, der Typ bleibt strikt, undefined wird mit der Herleitung gemeldet; JSON laesst ein fehlendes Feld auf 0, null ist ein Fehler. Ohne Attribut bleibt alles wie deklariert

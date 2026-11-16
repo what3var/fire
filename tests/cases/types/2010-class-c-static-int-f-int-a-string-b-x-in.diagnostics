@@ -1,0 +1,2 @@
+warning TC002: Cannot assign a value of type 'string' to parameter 'c' of 'F' of type 'int' (line 3)
+Unhandled exception of type 'ArgumentException': Parameter 'c' is an int, not String.

@@ -1,0 +1,28 @@
+float:km/h arr[] = [36m / 1s, 10km / 1h]
+print(arr[0] + " " + arr[1])
+arr[1] = 5m / 1s
+arr[0] += 1m / 1s
+float b[3] : mm
+b[0] = 2cm
+int c[] : cm = [1m, 20mm]
+print(arr[0] + " " + arr[1] + " " + b[0] + " " + b[1] + " " + c[0] + " " + c[1])
+class K {
+    float:m lens[]
+    construct() { lens = [1km, 2cm] }
+    static float:m Sum(float v[] : m) { float s = 0m; foreach (x in v) { s += x } return s }
+    static float:cm[] Two() { return [1m, 2m] }
+}
+var k = new K()
+k.lens[1] = 3mm
+print(K.Sum([1km, 20cm]) + " " + k.lens[0] + " " + k.lens[1] + " " + K.Two()[1])
+float:m grid[][] = new float[2][2]
+grid[1][0] = 3km
+float:mm nested[][] = [[1m], [2cm, 3m]]
+print(grid[1][0] + " " + nested[1][1] + " " + grid[0][0])
+any w = 3kg
+try { arr[0] = w } catch (UnitMismatchException e) { print(e.message) }
+any bad = [1m, 2s]
+try { float:m xs[] = bad } catch (UnitMismatchException e) { print(e.message) }
+float:km/h wrong[] = [3kg]
+//# modes: Release
+//# name: types 109: float:km/h arr[] = [36m / 1s, 10km / 1h]

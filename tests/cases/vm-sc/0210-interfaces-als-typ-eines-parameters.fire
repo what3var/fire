@@ -1,0 +1,5 @@
+interface IShape { Area() }
+class Sq : IShape { Area() { return 4 } }
+class User { static Use(IShape s) { return s.Area() } }
+print(User.Use(new Sq()))
+//# name: Interfaces als Typ eines Parameters

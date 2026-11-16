@@ -1,0 +1,20 @@
+buses sim 1
+name sim
+scan empty 0
+probe True False
+scan 2 80 118
+id 88
+wrote 39 39
+block 1234
+seq 99 100
+wr 99 100
+speed 400000
+noack 8 No device answered at address 0x60.
+noack2 8
+addr 1
+range 1
+nobus 3
+simdev 8
+removed False
+closed 2
+avail False

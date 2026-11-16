@@ -1,0 +1,18 @@
+class Exception { string message; construct(string message = "") { this.message = message } }
+class Box { int n; construct(int n) { this.n = n } destruct() { print("~Box " + this.n) } }
+class T {
+    static Make() { try { var b = new Box(5); return b } finally { print("mk fin") } }
+    static Make2() { var keep = new Box(6); try { return keep } finally { print("mk2 fin") } }
+    static Resume() { try { return 1 + (throw new Exception("r")) } catch (e) { e.resume(10) } finally { print("res fin") } }
+    static Replace() { try { throw new Exception("first") } finally { throw new Exception("second") } }
+    static Run() {
+        var b = T.Make()
+        print(b.n)
+        var c = T.Make2()
+        print(c.n)
+        print(T.Resume())
+        try { T.Replace() } catch (e) { print(e.message) }
+    }
+}
+T.Run()
+//# name: finally: zurueckgegebene Objekte ueberleben, resume() durch ein finally, Exception im finally ersetzt die erste

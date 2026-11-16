@@ -1,0 +1,48 @@
+class Box<T> {
+    T items[]
+    construct() { this.items = new T[4] }
+    string Describe(T value) { return "something" }
+    string Describe<int>(defined int value) { return "the int " + value }
+    string Describe<float>(float value) { return "the float " + value }
+    T operator[](int i) { return this.items[i] }
+    int operator[]<int>(defined int i) { return this.items[i] * 10 }
+    undefined Put(int i, T v) { this.items[i] = v }
+    undefined Put<int>(int i, defined int v) { this.items[i] = v + 1 }
+}
+class Pair<K, V> {
+    string Tag<int, string>() { return "int,string" }
+    string Tag() { return "generic" }
+}
+var bi = new Box<int>()
+var bs = new Box<string>()
+var bc = new Box<int : cm>()
+print(bi.Describe(5) + " | " + bs.Describe("x") + " | " + new Box<float>().Describe(1.5) + " | " + bc.Describe(3cm))
+int nothing
+print(bi.Describe(nothing))
+any a = bi
+print(a.Describe(7))
+bi.Put(1, 4)
+bs.Put(1, "s")
+print(bi[1] + " " + bs[1] + " " + a[1])
+var boxes = [bi, bs, new Box<float>()]
+for (var i = 0; i < 2; i++) { print(boxes[0].Describe(i) + " " + boxes[1].Describe("t") + " " + boxes[2].Describe(i)) }
+print(new Pair<int, string>().Tag() + " " + new Pair<int, int>().Tag())
+var li = new List<int>()
+for (defined int i = 0; i < 100; i++) { li.Add(i) }
+li.Add(nothing)
+defined int sum = 0
+for (defined int i = 0; i < 100; i++) { sum = sum + li[i] }
+var lf = new List<float>()
+for (defined int i = 0; i < 20; i++) { lf.Add(i * 0.5) }
+lf.Add(3)
+var lc = new List<int : cm>()
+lc.Add(2m)
+print(sum + " " + li[100] + " " + li.Count + " " + lf[19] + " " + lf[20] + " " + lc[0])
+li[5] = 77
+li[6] = nothing
+lf[0] = 4
+lf[1] = 2.25
+List<int> typed = li
+defined int fromTyped = typed[5] + typed[7]
+print(li[5] + " " + li[6] + " " + lf[0] + " " + lf[1] + " " + fromTyped)
+//# name: Typisierte Spezialisierungen (Add<int>, operator[]<int>, Tag<int, string>): nach den Typargumenten des Objekts und den Argumenten gewaehlt - ueber any, im Verteiler, mit undefined; T items[] typisiert, List<int>/List<float>

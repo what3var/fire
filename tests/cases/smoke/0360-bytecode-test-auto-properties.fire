@@ -1,0 +1,17 @@
+class Person {
+    string Name { get; set; }
+    int Age { get; }
+
+    construct(string name, int age) {
+        this.Name = name
+        this._AutoAge = age
+    }
+}
+
+var p = new Person("Alice", 30)
+print(p.Name)
+print(p.Age)
+p.Name = "Bob"
+print(p.Name)
+//# note: what the test program said to expect (for a reader, it was not checked): Alice / 30 / Bob
+//# name: Bytecode-Test: Auto-Properties

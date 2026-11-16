@@ -1,0 +1,8 @@
+got hello/a True
+take: A lent record belongs to the thread that sent it: 'take' is for its owner - 'copy r' makes one of your own.
+owner hello
+dead after its owner
+copy hello/a
+second again
+handed on: dead
+other again

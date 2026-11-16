@@ -1,0 +1,5 @@
+0 0m 3
+7 2m
+$.n is an int and never undefined.
+Field 'n' is an int and never undefined.
+{"$type":"P","n":7,"len":2.0,"plain":null}

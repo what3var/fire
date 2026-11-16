@@ -1,0 +1,65 @@
+class Box { bool flags[]; construct() { this.flags = new bool[4] } }
+class T {
+    static string All(bool xs[]) {
+        string s = ""
+        foreach (x in xs) { s = s + x + " " }
+        return s
+    }
+}
+bool a[] = new bool[5]
+print(a[0] + " " + a.length)
+a[1] = true
+a[2] = false
+print(T.All(a))
+any wrong = 5
+try { a[3] = wrong } catch (ArgumentException e) { print(e.message) }
+a[1] = undefined
+print(a[1] == undefined)
+defined bool d[] = new bool[3]
+d[1] = true
+print(T.All(d))
+any nothing = undefined
+try { d[2] = nothing } catch (ArgumentException e) { print(e.message) }
+bool lit[] = [true, false, true]
+lit[0] = !lit[0]
+print(T.All(lit) + (lit[1] || lit[2]) + " " + (lit[0] && lit[2]))
+any x = new bool[2]
+x[0] = true
+print(x[0] + " " + x[1])
+any y = lit
+y[1] = true
+print(T.All(lit))
+var c = copy lit
+c[0] = true
+print(lit[0] + " " + c[0] + " " + c.length)
+any text = "no"
+try { c[1] = text } catch (ArgumentException e) { print(e.message) }
+var b = new Box()
+b.flags[2] = true
+var b2 = copy b
+b2.flags[0] = true
+print(T.All(b.flags) + "/ " + T.All(b2.flags))
+bool grid[][] = new bool[2][3]
+grid[1][2] = true
+print(grid[1][2] + " " + grid[0][0] + " " + grid.length + " " + grid[1].length)
+var list = new List<bool>()
+for (int i = 0; i < 20; i++) { list.Add(i % 3 == 0) }
+int n = 0
+foreach (v in list) { if (v) { n++ } }
+print(n + " " + list.Count + " " + list[3] + " " + list[4])
+int count = 0
+bool big[] = new bool[100000]
+for (int i = 0; i < big.length; i++) { big[i] = i % 7 == 0 }
+for (int i = 0; i < big.length; i++) { if (big[i]) { count++ } }
+print(count)
+bool p[] = [true, undefined]
+print(p[1])
+defined bool same[] = p
+print(p[1])
+int nums[] = new int[3]
+nums[1] = 7
+print(nums[0] + " " + nums[1] + " " + nums.length)
+int:cm lens[] = new int[2]
+lens[0] = 1m
+print(lens[0] + " " + lens[1])
+//# name: bool-Arrays (in der VM gepackt): undefined, defined, Literal, any, Kopie, Feld, mehrdimensional, List<bool>

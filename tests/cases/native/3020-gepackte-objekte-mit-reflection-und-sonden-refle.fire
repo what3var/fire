@@ -1,0 +1,14 @@
+#import "reflection"
+class P { defined int x; string name = "n"; defined float : cm w; int plain }
+var p = new P()
+p.x = 4
+Reflect.Set(p, "x", 9)
+Reflect.Set(p, "w", 2m)
+print(Reflect.Get(p, "x") + " " + Reflect.Get(p, "w") + " " + p.x + " " + p.w + " " + Reflect.Get(p, "name"))
+try { Reflect.Set(p, "x", undefined) } catch (ArgumentException e) { print(e.message) }
+var seen = 0
+probe p.x changed (int old, int nv) => { seen = seen + 1 }
+p.x = 11
+p.x = p.x + 1
+print(seen + " " + p.x)
+//# name: Gepackte Objekte mit Reflection und Sonden: Reflect.Get/Set (mit Einheit), undefined abgelehnt, probe changed

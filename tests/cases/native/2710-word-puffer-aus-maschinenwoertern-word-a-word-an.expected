@@ -1,0 +1,19 @@
+<buffer 4 words> 4 18446744073709551615 1 True
+<buffer 4 words> 10 0 2
+1 5 4
+<buffer 3 words> 7 3
+<buffer 2 words> 10 11
+A: An element of a word buffer must be an int or a word, not String.
+A: An element of a word buffer must be an int or a word, not Float.
+A: An element of a word buffer must be an int or a word, not String.
+A: A 'ref' argument 'x[i]' of a word buffer is not possible (only of an array or a byte buffer).
+I: Array index 5 out of range (length 2).
+0 7
+<buffer 3 words> 255 5 2
+<buffer 3 words> 6 2
+A: Hash.Hasher.Update expects bytes (a byte buffer or an array of ints from 0 to 255), not a word buffer.
+{"$type":"Holder","data":[0,0,255],"more":[4,5]}
+<buffer 3 words> 18446744073709551615 9
+1
+10 9 7 c
+A: IO.Stream.Read expects a byte buffer (new byte[n]), not a word buffer.

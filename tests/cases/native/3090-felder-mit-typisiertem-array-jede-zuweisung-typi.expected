@@ -1,0 +1,12 @@
+6 3
+typed: An element of an array of int must be an int (or undefined), not String.
+any: An array of int is declared here, not String.
+9
+reflect: An array of int is declared here, not Int.
+reflect typed: An element of an array of int must be an int (or undefined), not Float.
+60
+json typed: An element of an array of int must be an int (or undefined), not String.
+24 1
+static: An array of int is declared here, not Int.
+static typed: An element of an array of int must be an int (or undefined), not Bool.
+undefined: Field access on a value of type Undefined which is not an object.

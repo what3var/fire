@@ -1,0 +1,1 @@
+error E4073: The initialiser of the static field 'A.x' reads the field itself - it is still undefined there (line 2)

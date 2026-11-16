@@ -1,0 +1,22 @@
+lamp cold 16.667 A, 300 K
+lamp hot 0.833 A, 2892 K, power 100 W, brightness 1
+fuse blown at 0.079 s, current now 0
+spark gap fired 4 times in 3 s
+memristor between 100 and 16000 Ohm
+analog switch on True load 4.902
+analog switch on False load 0
+switch2 pos 0: 5 0
+switch2 pos 1: 0 5
+ldr at 10 lux 10000, at 1000 lux 398
+ntc at 25 C 10000, at 50 C 3588
+line at 0.5 us: in 1 end 0
+line at 1.5 us: in 1 end 2
+line at 2.5 us: in 2 end 2
+triangle max 1 sawtooth min -1 noise within 1 V True sweep periods in 10 ms 5
+crystal series resonance 10066 kHz
+Switch2 0,0 8,-2 8,0 8,2 ''
+AnalogSwitch 10,0 18,0 14,2 ''
+AnalogSwitch2 20,0 28,-2 28,2 24,-2 ''
+TransmissionLine 30,0 42,0 30,4 42,4 ''
+Lamp 44,0 52,0 ''
+Sweep 54,0 ''

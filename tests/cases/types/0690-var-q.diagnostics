@@ -1,0 +1,1 @@
+error E4058: 'var q' needs an initializer: the type of a 'var' comes from its value (or declare it with a type: 'int q') (line 1)

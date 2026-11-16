@@ -1,0 +1,7 @@
+port: The hardware of the machine (ports, physical memory, interrupts) is only reachable on dos16 (and later dos32 and bios-x86), not on this target.
+memory
+cpu
+irq
+cmos
+2147486212
+pci: PCI: bus 0..255, device 0..31, function 0..7, offset 0..255.

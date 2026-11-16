@@ -1,0 +1,5 @@
+#import "data.sqlserver"
+print(1)
+//# types: strict
+//# modes: Release
+//# name: types 273: #import "data.sqlserver"

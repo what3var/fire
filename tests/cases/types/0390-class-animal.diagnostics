@@ -1,0 +1,2 @@
+warning TC020: The values of 'u' have unrelated types (int, string): it becomes 'any' - nothing about it is checked and it takes the wide values of the native backend; give it one type, or write 'any u = ...' if that is meant (line 10)
+warning TC020: The elements of 'arr' have unrelated types (int, string): it becomes an 'any[]' - every element is wide and checked at run time; give them one type, or write 'any arr[] = ...' if that is meant (line 11)

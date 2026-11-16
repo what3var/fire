@@ -1,0 +1,11 @@
+blink 4.95 V, 4.95 mA
+blink 0 V
+led True at 3.014 V
+led False
+button False
+button True
+adc 0 128 12 bit 2048
+dac 1 V
+shift out 165, q0 5 V
+shift in 129
+drawn: led True, adc 128, pins 8, bad: '0x99' is no I2C address (0x08 to 0x77).

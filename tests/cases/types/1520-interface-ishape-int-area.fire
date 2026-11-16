@@ -1,0 +1,9 @@
+interface IShape { int Area() }
+class Base { int Area() { return 1 } }
+class Sq : Base, IShape { private int Area(int scale) { return 4 * scale } int Twice() { return this.Area(2) } }
+class Other { private int Area() { return 9 } int Mine() { return this.Area() } }
+IShape s = new Sq()
+print(s.Area())
+print(new Sq().Twice() + new Other().Mine())
+//# modes: Release
+//# name: types 152: interface IShape { int Area() }

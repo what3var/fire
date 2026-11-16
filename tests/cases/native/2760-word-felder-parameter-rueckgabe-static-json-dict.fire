@@ -1,0 +1,23 @@
+#import "json"
+class C { word w
+ static word count
+ static word Twice(word x) { return x * 2 }
+ static float Half(float v) { return v / 2 } }
+var c = new C()
+c.w = -1
+print(c.w + " " + C.Twice(9223372036854775809) + " " + C.Twice(3) + " " + C.Half(c.w))
+c.w = 7
+C.count = c.w + 1
+print(c.w + 1 + " " + C.count)
+any wm = 5m
+word u = wm
+c.w = wm
+print(u + " " + c.w + " " + (u + 1))
+print(Json.Serialize(c))
+var back = Json.Deserialize<C>("{\"w\":18446744073709551615}")
+print(back.w + " " + (back.w == -1) + " " + (back.w is of word))
+var d = new Dictionary<any, string>()
+d[5!word] = "five"
+d[18446744073709551615!word] = "max"
+print(d[5!word] + " " + d[-1!word] + " " + d.ContainsKey(6!word))
+//# name: Word: Felder, Parameter, Rueckgabe, static, Json, Dictionary-Schluessel; word w = 5m ist zur Laufzeit ohne Einheit

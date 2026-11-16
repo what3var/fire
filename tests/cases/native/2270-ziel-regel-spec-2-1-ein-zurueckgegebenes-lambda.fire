@@ -1,0 +1,36 @@
+class X {
+    int v
+    construct(int v) { this.v = v }
+    destruct() { print("~X" + this.v) }
+}
+class W {
+    X x
+    lambda f
+    construct(X x) { this.x = x }
+    destruct() { print("~W") }
+}
+class Box {
+    List all
+    construct() { this.all = new List(); this.all.Add(new X(1)); this.all.Add(new X(2)) }
+    X First() { return this.all[0] }
+    destruct() { print("~Box") }
+}
+class T {
+    static lambda Counter(int start[]) { return () => start.length }
+    static W Wrap(X o) { return new W(o) }
+    static W WithLambda(int o[]) { var w = new W(undefined); w.f = () => o.length * 10; return w }
+    static List Fresh() { var l = new List(); l.Add(new X(7)); return l }
+}
+var c = T.Counter([1, 2, 3])
+print("counter " + c())
+var w = T.Wrap(new X(4))
+print("wrapped " + w.x.v)
+var wl = T.WithLambda([1, 2])
+print("lambda in object " + wl.f())
+var first = new Box().First()
+print("first " + first.v)
+var seen = 0
+foreach (x in T.Fresh()) { seen = seen + x.v }
+print("seen " + seen)
+print("end")
+//# name: Ziel-Regel (SPEC 2.1): ein zurueckgegebenes Lambda nimmt seine Captures mit, Wert an einem Temporaeren, foreach-Quelle, Argument im Rueckgabewert

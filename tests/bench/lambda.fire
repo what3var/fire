@@ -1,0 +1,7 @@
+var add = func (a, b) => { return a + b }
+var acc = 0
+for (var i = 0; i < 200000; i = i + 1) {
+    acc = add(acc, i)
+}
+print(acc)
+//# name: Lambda-Aufrufe (Call, Closure-Scope)

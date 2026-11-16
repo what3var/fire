@@ -1,0 +1,22 @@
+class P { static any py = 0cm }
+var i = 5.0cm
+i--
+print(i)
+++i
+i++
+print(i)
+var n = 2m
+n++
+print(n)
+P.py++
+P.py++
+print(P.py)
+var arr = [1cm, 2cm]
+arr[1]++
+--arr[0]
+print(arr[0] + " " + arr[1])
+var plain = 4
+plain++
+print(plain)
+for (var h = 3.0cm; h > 0cm; h--) { print(h) }
+//# name: Einheiten: ++ und -- zaehlen in der Einheit der Variablen (5cm++ ist 6cm), auch bei Feldern und Elementen

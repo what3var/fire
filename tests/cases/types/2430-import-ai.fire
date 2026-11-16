@@ -1,0 +1,5 @@
+#import "ai"
+print(1)
+//# types: strict
+//# modes: Release
+//# name: types 243: #import "ai"

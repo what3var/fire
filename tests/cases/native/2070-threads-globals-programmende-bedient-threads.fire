@@ -1,0 +1,5 @@
+class G { int v; construct() { this.v = 1 } destruct() { print("~G " + this.v) } }
+var g = new G()
+fire { g.v = 9 }
+print("ende")
+//# name: Threads: Globals: Programmende bedient Threads

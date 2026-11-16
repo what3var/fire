@@ -1,0 +1,14 @@
+#import "time"
+class Boom { string message
+  construct() { this.message = "from thread" } }
+// a sleeping thread does not hold the others up; an exception of a thread reaches the main program during its Sleep
+fire {
+    Sleep(20ms)
+    throw new Boom()
+}
+catch threads(Boom e) { print("caught in main: " + e.message) }
+var start = DateTime.UtcNow
+Sleep(400ms)
+print("main woke up")
+print((DateTime.UtcNow - start) >= TimeSpan.FromMilliseconds(100))
+//# name: Threads: eine Ausnahme eines Threads erreicht das Hauptprogramm waehrend Sleep

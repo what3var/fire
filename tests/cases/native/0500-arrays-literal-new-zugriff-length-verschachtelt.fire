@@ -1,0 +1,36 @@
+var names = ["Ada", "Grace", "Linus"]
+var total = 0
+foreach (n in names) {
+    total = total + n.Length
+    print(n)
+}
+print(total)
+var a = new int[4]
+a[1] = 5
+a[1]++
+++a[1]
+a[2] = a[1] * 2
+print(a[1] + a.length)
+print(a[2])
+print(a[0])
+var m = [[1, 2], [3, 4]]
+print(m[1][0] + m[0][1])
+m[0][0] = 10
+print(m[0][0])
+var b = new byte[3]
+b[0] = 200
+b[2] = b[0] + 100
+print(b[0] + b.length)
+print(b[2])
+var cs = "xyz"
+print(cs[1])
+var parts = "a,b,,c".Split(",")
+print(parts.Length)
+foreach (p in parts) { print("[" + p + "]") }
+print("x".Split("").Length)
+var mixed = [1, "two", 3.5, true, 'c']
+foreach (e in mixed) { print(e) }
+var sum = 0
+for (var i = 1; i < 3; i = i + 1) { sum = sum + a[i] }
+print(sum)
+//# name: Arrays: Literal, new, Zugriff, ++, length, verschachtelt, foreach, Puffer, Zeichenkette indexieren

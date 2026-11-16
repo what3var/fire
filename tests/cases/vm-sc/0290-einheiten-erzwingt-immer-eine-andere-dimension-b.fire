@@ -1,0 +1,7 @@
+var k = 7
+print(k:s)
+print(5mm:kg)
+print(2km:m)
+var u = undefined
+print(u:s)
+//# name: Einheiten: ':' erzwingt immer - eine andere Dimension bekommt die Zahl in der Basiseinheit (7:s, 5mm:kg), undefined nimmt jede Einheit an

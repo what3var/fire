@@ -1,0 +1,32 @@
+class D {
+    string n
+    construct(string n) { this.n = n }
+    destruct() { print("~" + this.n) }
+}class Exception { string message; construct(string message = "") { this.message = message } }
+class T {
+    static F() {
+        var a = new D("a")
+        try {
+            var b = new D("b")
+            if (true) {
+                var c = new D("c")
+                return 1
+            }
+        } finally { print("fin") }
+        return 0
+    }
+    static G() {
+        var a = new D("ga")
+        try {
+            var b = new D("gb")
+            throw new Exception("x")
+        } catch (e) {
+            var c = new D("gc")
+            if (true) { return 2 }
+        }
+        return 0
+    }
+}
+print(T.F())
+print(T.G())
+//# name: return im try/catch/finally in verschachtelten Bloecken: jedes Objekt genau einmal zerstoert

@@ -1,0 +1,6 @@
+tree p => (p.age > 3)
+lambda
+lambda
+only p => (p.age > 3)
+lambda
+tree p => (p.age > 9)

@@ -1,0 +1,10 @@
+class Box { int v; construct(int v) { this.v = v } }
+var seen = 0
+fire {
+    var b = new Box(5)
+    fire global taking b { seen = seen + b.v }
+    b.v = 100
+}
+while (seen == 0) { sync globals }
+print("seen " + seen)
+//# name: `fire global` mit einem Objekt als taking: der Auftrag bekommt eine Kopie

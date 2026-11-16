@@ -1,0 +1,10 @@
+var x = 0
+fire global { x = x + 5 }
+fire global { x = x * 2 }
+var n = sync globals
+print(n + " " + x)
+print(sync globals)
+fire global taking n { x = x + n }
+print(sync globals)
+print(x)
+//# name: Threads: sync globals zaehlt die fire-global-Auftraege des Hauptprogramms (ohne #nosync), in ihrer Reihenfolge

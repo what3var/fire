@@ -1,0 +1,14 @@
+#import "net.channel"
+var listener = new Net.ChannelListener<any>("127.0.0.1", 0)
+int port = listener.Port
+fire taking port {
+    var ch = new Net.Channel<any>("127.0.0.1", port)
+    any v = ch.Receive()
+    ch.Send(v + 1)
+    foreach (x in ch) { print("thread got " + x) }
+    print("thread done")
+}
+var ch = listener.Accept()
+ch.Send(41)
+print(ch.Receive())
+//# name: Programmende: ein Net.Channel des Hauptprogramms ohne Close - seine Kanaele schliessen, die Verbindung endet, der Thread drueben auch

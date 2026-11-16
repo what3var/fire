@@ -1,0 +1,44 @@
+#import "http"
+#import "time"
+class Echo : Http.IWebSocketHandler {
+    construct() { }
+    undefined Serve(Http.WebSocket ws) {
+        while (true) {
+            var m = ws.Receive()
+            if (m == undefined) { break }
+            if (m.binary) { ws.SendBytes(m.data) } else { ws.Send("echo(" + ws.Compressed + "): " + m.Text()) }
+        }
+    }
+}
+var probe = new Net.TcpListener("127.0.0.1", 0)
+int port = trust probe.Port
+probe.Close()
+fire {
+    var server = new Http.AppServer("127.0.0.1", port)
+    server.PushTo(new Http.WebSockets("/ws", new Echo()))
+    server.PushTo((new Http.Routes()).Map("GET", "/", func (Http.Context ctx) => Http.Response.FromHtml("<html><body>ws</body></html>")))
+    while (server.Connections < 2) { server.AcceptOne(30000) }
+    Sleep(500)
+    server.Close()
+}
+Sleep(300)
+var ws = Http.WebSocket.Connect("ws://127.0.0.1:" + port + "/ws")
+print("agreed " + ws.Compressed)
+var long = "abc"
+while (long.Length < 5000) { long = long + " the same words again" }
+ws.Send("hi")
+print(ws.ReceiveText(5000))
+ws.Send(long)
+var back = ws.ReceiveText(5000)
+print("long " + back.Length + " " + back.EndsWith("again"))
+var bytes = new byte[3000]
+for (var i = 0; i < 3000; i++) { bytes[i] = i % 7 }
+ws.SendBytes(bytes)
+var b = ws.Receive(5000)
+print("bytes " + b.data.length + " " + b.data[2999])
+ws.Close()
+var plain = Http.WebSocket.Connect("ws://127.0.0.1:" + port + "/ws", 10000, undefined, false)
+plain.Send(long)
+print("plain " + plain.Compressed + " " + plain.ReceiveText(5000).Length)
+plain.Close()
+//# name: WebSocket permessage-deflate: ausgehandelt (Client bietet an, Server stimmt zu), Text und Bytes komprimiert hin und zurueck, kleine Nachrichten unkomprimiert, ohne Angebot unkomprimiert

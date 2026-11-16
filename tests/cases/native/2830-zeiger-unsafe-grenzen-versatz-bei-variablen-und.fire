@@ -1,0 +1,58 @@
+class Box { int v = 1
+  int w = 2 }
+class F {
+  static Read(ref int first, int n) {
+    var t = 0
+    unsafe { int* p = &first
+      for (var i = 0; i < n; i++) { t = t + *p; p = p + 1 } }
+    return t
+  }
+  static Back(ref int first) {
+    var t = 0
+    unsafe { int* p = &first
+      p = p + 2
+      t = *p; p = p - 1; t = t * 10 + *p; p = p - 1; t = t * 10 + *p
+      int* q = p + 2
+      print(q - p)
+      print(p == q - 2)
+      try { p = p - 1; print(*p) } catch (e) { print("before: " + e.message) }
+    }
+    return t
+  }
+  static Bytes(ref byte first, int n) {
+    var t = 0
+    unsafe { byte* p = &first
+      for (var i = 0; i < n; i++) { t = t + *p; *p = 0; p = p + 1 } }
+    return t
+  }
+  static Gone(ref int first) {
+    return first
+  }
+}
+var a = [1, 2, 3]
+print(F.Read(a[1], 2))
+try { print(F.Read(a[1], 3)) } catch (e) { print("oob: " + e.message) }
+print(F.Back(a[0]))
+var buf = new byte[3]
+buf[0] = 5; buf[1] = 6; buf[2] = 7
+print(F.Bytes(buf[1], 2))
+try { print(F.Bytes(buf[1], 3)) } catch (e) { print("oob buf: " + e.message) }
+print(buf[1] + " " + buf[2])
+var x = 10
+var y = 20
+unsafe {
+  int* p = &x
+  try { print(*(p + 1)) } catch (e) { print("var: " + e.message) }
+  int* q = p + 1
+  try { *q = 99 } catch (e) { print("var write: " + e.message) }
+  print(y)
+  print(q == p)
+  print(q - 1 == p)
+  print(*(q - 1))
+  var b = new Box()
+  int* pf = &b.v
+  try { int* pg = pf + 1; print(*pg) } catch (e) { print("field: " + e.message) }
+  print(pf == pf + 0)
+}
+print("end")
+//# name: Zeiger (unsafe): Grenzen, Versatz bei Variablen und Feldern, Differenz

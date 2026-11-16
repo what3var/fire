@@ -1,0 +1,26 @@
+class Node {
+    int value
+    Node next
+    construct(int value) { this.value = value }
+    destruct() { print(0 - this.value) }
+    Add(int v) {
+        if (this.next == undefined) { this.next = new Node(v) }
+        else { this.next.Add(v) }
+    }
+    int Sum() {
+        if (this.next == undefined) { return this.value }
+        return this.value + this.next.Sum()
+    }
+}
+var head = new Node(1)
+head.Add(2)
+head.Add(3)
+head.Add(4)
+print(head.Sum())
+{
+    var local = new Node(10)
+    local.Add(20)
+    print(local.Sum())
+}
+print(head.next.next.value)
+//# name: Objekte: Besitzer-Kaskade und verkettete Objekte

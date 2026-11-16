@@ -1,0 +1,24 @@
+class Item {
+    int n
+    construct(int n) { this.n = n }
+    destruct() { print("~I" + this.n) }
+}
+class Box {
+    string name
+    Item item
+    Item extra
+    construct(string name) { this.name = name }
+    destruct() { print("~B" + this.name) }
+}
+class Keep { Item held; construct(i) { this.held = i; i.TakeTo(this) } }
+class Base2 { construct(i) { print("base " + i.n) } }
+class Derived : Base2 { construct(i) : base(copy i) { print("derived") } }
+var t = new Item(4)
+{
+    var k = new Keep(copy t)
+    print(k.held.n)
+    var d = new Derived(t)
+    print("d")
+}
+print("ende")
+//# name: Parameter: Konstruktor (TakeTo behaelt die Kopie) und base(...)

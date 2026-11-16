@@ -1,0 +1,20 @@
+class Exception { string message; construct(string message = "") { this.message = message } }
+class C {
+    int v
+    string name
+    int Loud { get { return this.v * 2 } set { this.v = value / 2 } }
+    construct() { this.v = 1; this.name = "a" }
+}
+class Holder { C c; construct() { this.c = new C() } }
+class T { static Bump(C c) { c.v = c.v + 1 } }
+var a = new C()
+var b = new C()
+T.Bump(a); T.Bump(b); T.Bump(a)
+probe a.v changed (o, n) => print("a " + o + "->" + n)
+T.Bump(a); T.Bump(b); T.Bump(a)
+var h = new Holder()
+probe h.c.v changing (o, n) => n < 3
+h.c.v = 2
+h.c.v = 9
+print(h.c.v + " " + b.v)
+//# name: probe: Pfad (a.b.c), nur das Objekt mit Probe ist betroffen, eine schon gecachte Schreibstelle sieht die Probe

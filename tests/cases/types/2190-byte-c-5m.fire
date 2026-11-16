@@ -1,0 +1,10 @@
+byte c = 5m
+byte d : m = 5
+byte e[] = [1m, 2m]
+class K { byte f : s
+ byte g = 3s
+ undefined Set(byte v : mm) { } }
+byte h = 1
+h = 4s
+//# modes: Release
+//# name: types 219: byte c = 5m

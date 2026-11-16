@@ -1,0 +1,3 @@
+var x = new Nothing()
+//# modes: Release
+//# name: diag 14: var x = new Nothing()

@@ -1,0 +1,29 @@
+class Item {
+    int n
+    construct(int n) { this.n = n }
+    destruct() { print("~I" + this.n) }
+}
+class Box {
+    string name
+    Item item
+    Item extra
+    construct(string name) { this.name = name }
+    destruct() { print("~B" + this.name) }
+}
+var g = new Item(1)
+var f = func () => {
+    var local = new Item(2)
+    {
+        var inner = new Item(3)
+        leave
+    }
+    print("nie")
+}
+try {
+    f()
+} finally {
+    print("finally")
+}
+print("nicht erreicht")
+//# note: ---- leave: immediately, and everything is destroyed
+//# name: leave wirkt sofort und zerstoert auch die Objekte des globalen Scopes (finally laeuft)

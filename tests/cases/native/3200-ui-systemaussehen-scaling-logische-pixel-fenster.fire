@@ -1,0 +1,25 @@
+#import "ui"
+var sys = SystemTheme.Current()
+print("system " + sys.embedded + " " + sys.scale + " " + sys.dark + " " + sys.accent + " '" + sys.font + "' " + sys.fontSize)
+var fb = new Framebuffer(200, 100)
+var win = new Window(fb, "t")
+var root = new UI.Root(fb, win)
+print("start " + root.Scaling + " " + root.Dark + " " + root.Accent + " " + root.width + "x" + root.height)
+var b = new UI.Button("Hi", 10, 10)
+root.Add(b)
+root.Draw()
+print("light " + fb.Width() + "x" + fb.Height() + " " + root.renderer.GetPixel(150, 80))
+root.Dark = true
+root.Accent = 0xFF0000
+root.Draw()
+print("dark " + root.renderer.GetPixel(150, 80) + " " + root.renderer.GetPixel(12, 12))
+root.Scaling = 2.0
+root.Draw()
+print("scaled " + root.Scaling + " fb " + fb.Width() + "x" + fb.Height() + " logical " + root.width + "x" + root.height + " button " + b.actualWidth + "x" + b.actualHeight)
+print("pixels " + fb.Width() + " " + root.renderer.GetPixel(150, 80) + " " + root.renderer.GetPixel(12, 12))
+root.Dispatch([8, 1, 30, 30])
+print("pressed " + b.Pressed)
+root.Scaling = 1.0
+root.Draw()
+print("back " + fb.Width() + "x" + fb.Height())
+//# name: UI: Systemaussehen - Scaling (logische Pixel, Fenster/Framebuffer wachsen, Maus umgerechnet), Dark, Accent

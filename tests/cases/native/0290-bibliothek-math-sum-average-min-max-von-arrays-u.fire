@@ -1,0 +1,15 @@
+print(Math.Sum([1, 2, 3]) + " " + Math.Sum([1.5, 2]) + " " + Math.Sum([1m, 50cm]) + " " + Math.Sum(new List<int>([4, 5])) + " " + Math.Sum([]))
+print(Math.Average([1, 2]) + " " + Math.Average([1m, 50cm]) + " " + Math.Min([3, 1, 2]) + " " + Math.Max([1m, 150cm, 20cm]) + " " + Math.Min([2.5]))
+var list = new List()
+list.Add("1.5 kg".ToFloat())
+list.Add(500g)
+print(Math.Sum(list) + " " + Math.Average(list) + " " + Math.Min(list) + " " + Math.Max(list) + " " + list.Count)
+print(Math.Min(2, 3) + " " + Math.Max(2m, 1km) + " " + Math.Min(-1, -2.5))
+try { Math.Min([]) } catch (ArgumentException e) { print(e.message) }
+try { Math.Average(new List()) } catch (ArgumentException e) { print(e.message) }
+try { Math.Max([]) } catch (ArgumentException e) { print(e.message) }
+try { Math.Sum(5) } catch (ArgumentException e) { print(e.message) }
+try { Math.Sum("12") } catch (ArgumentException e) { print(e.message) }
+try { Math.Sum([1, "a"]) } catch (ArgumentException e) { print(e.message) }
+try { Math.Sum([1m, 1s]) } catch (UnitMismatchException e) { print(e.message) }
+//# name: Bibliothek: Math.Sum, Average, Min, Max von Arrays und Listen (mit Einheiten, leer, falsche Werte), Min/Max mit zwei Werten

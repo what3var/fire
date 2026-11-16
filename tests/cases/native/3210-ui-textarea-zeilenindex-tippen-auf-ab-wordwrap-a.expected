@@ -1,0 +1,16 @@
+3 [drei] 26
+4 1:4 [eins zwei!|drei|neu|~vier fuenf] 15
+2 [zwei]
+3 11
+302 602 155 True False 4248
+[abc_d]
+x, ef
+Ein sehr langer gezogener Tex... | kind
+undo [xy, ef] True
+redo [x, ef] False
+drag True 5 1
+moved [x, efx, ] [x, ]
+back [x, ef] [x, ]
+snapshot True 220 110 80 24
+ended False True
+tree True 1 True

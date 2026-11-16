@@ -1,0 +1,9 @@
+class Show {
+    static string Of(int x) { return "int" }
+    static string Of(string s) { return "string" }
+}
+int x = 3
+try { x = "text" } catch (ArgumentException e) { print("kept") }
+print(Show.Of(x))
+//# modes: Release
+//# name: types 124: class Show {

@@ -1,0 +1,4 @@
+p => (p.age > lim)
+p => (p.age < 3)
+(p, o) => (p.id == o.personId) True
+base p => (p.age == lim)

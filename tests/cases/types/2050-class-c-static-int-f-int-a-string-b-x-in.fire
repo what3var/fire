@@ -1,0 +1,5 @@
+class C { static int F(int a, string b = "x", int c = 3) { return a + c }
+ construct(int size, bool open = false) { } }
+var o = new C(open: true)
+//# modes: Release
+//# name: types 205: class C { static int F(int a, string b = "x", int c = 3) { return a + 

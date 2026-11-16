@@ -1,0 +1,1 @@
+1810-interface-i-x-get.fire(1): error E3162: Property 'X' of an interface needs a type (use 'any' if every type is allowed)

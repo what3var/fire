@@ -1,0 +1,28 @@
+class Item { string n
+  any arr
+  construct(string n) { this.n = n }
+  destruct() { print("~" + this.n) } }
+class F {
+  static Make() {
+    var a = [new Item("a1"), new Item("a2")]
+    return a
+  }
+  static Inner() {
+    var holder = new Item("holder")
+    var a = [new Item("b1")]
+    holder.arr = a
+    a.TakeTo(holder)
+    return a
+  }
+}
+var arr = F.Make()
+arr.TakeGlobal()
+class G { static Run() { var x = F.Make(); print(x.length); return 0 } }
+G.Run()
+print("after G")
+var inner = F.Inner()
+print(inner[0].n)
+delete arr
+print("deleted")
+print("end")
+//# name: Besitz: Ein Array besitzt, was return und Takes mitnehmen

@@ -1,0 +1,11 @@
+45
+90
+4
+a
+4
+E1 Index access ('[]') on a value of type Undefined is not possible (neither an array nor a class with a 'GetIndex' method).
+E2 Index assignment ('[]=') on a value of type Undefined is not possible (neither an array nor a class with a 'SetIndex' method).
+E3 Index access ('[]') on a value of type Undefined is not possible (neither an array nor a class with a 'GetIndex' method).
+E4 Index assignment ('[]=') on a value of type Undefined is not possible (neither an array nor a class with a 'SetIndex' method).
+E5 Type Undefined is not numeric.
+E6 The key '99' is not in the dictionary.

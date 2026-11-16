@@ -1,0 +1,12 @@
+class Node {
+    int v
+    construct(int v) { this.v = v }
+    destruct() { print("destroyed " + this.v) }
+}
+var l = new List<Node>(Owns.Values)
+l.Add(new Node(3)); l.Add(new Node(1)); l.Add(new Node(2))
+l.Sort((a, b) => a.v - b.v)
+print("sorted " + l[0].v + l[1].v + l[2].v)
+l.Clear()
+print("cleared " + l.Count)
+//# name: List.Sort einer Liste, die ihre Elemente besitzt (Owns.Values): sortiert wird nichts zerstoert, Clear zerstoert alle

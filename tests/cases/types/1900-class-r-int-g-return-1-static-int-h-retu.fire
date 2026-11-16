@@ -1,0 +1,4 @@
+class R { int G() { return 1 } static int H() { return 2 } }
+print(R.H() + new R().G())
+//# modes: Release
+//# name: types 190: class R { int G() { return 1 } static int H() { return 2 } }

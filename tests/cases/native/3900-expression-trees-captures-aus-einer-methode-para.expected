@@ -1,0 +1,2 @@
+p => (p.orders.Contains(undefined) || ((p.orders.Count > min) && (p.orders.Count < (min + 5))))
+p => ((p.orders.Count > 0) && (p.orders[0].total > min)) 3

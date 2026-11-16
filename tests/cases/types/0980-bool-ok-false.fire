@@ -1,0 +1,10 @@
+bool ok = false
+int a = 0
+if (ok = true) { print(1) }
+if ((ok = true)) { print(2) }
+while ((a += 1) < 3) { }
+while (ok = false) { }
+print(a)
+//# types: strict
+//# modes: Release
+//# name: types 98: bool ok = false

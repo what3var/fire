@@ -1,0 +1,5 @@
+tone 2205 frames, rms 0.707
+low pass ratio 0.156 clipped 0 time 100 ms
+clipper peak 0.623 V, iterations 17461
+in pieces the same: True
+wav 4454 bytes, 22050 Hz, 1 channel, 2205 frames

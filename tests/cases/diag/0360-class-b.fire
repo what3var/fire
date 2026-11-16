@@ -1,0 +1,11 @@
+class B {
+    static undefined Fill(byte b[]) { b[0] = 7 }
+}
+int ints[2] = [1, 2]
+B.Fill(ints)
+B.Fill([3, 4])
+byte buf[2]
+B.Fill(buf)
+print(ints[0] + " " + buf[0])
+//# modes: Release
+//# name: diag 36: class B {

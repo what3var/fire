@@ -1,0 +1,15 @@
+3 True False False
+True line False
+write: The record 'Point' is unchangeable: its field 'x' is written only while it is constructed - a changed copy is 'copy r with { .x = ... }'.
+reflect: The record 'Point' is unchangeable: its field 'y' is written only while it is constructed - a changed copy is 'copy r with { .y = ... }'.
+1 2
+first 1
+second 1 False
+bad: The field 'held' of the record 'Bad' holds an object of the class 'Box': a record holds only what does not change - numbers, texts, enums, records, lambdas without captures.
+text 5
+True 1
+{"$type":"Point","x":1,"y":2} True
+7
+3 True True
+thread 1 2
+main 1 True

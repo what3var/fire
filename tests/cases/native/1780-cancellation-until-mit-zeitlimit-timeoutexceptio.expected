@@ -1,0 +1,8 @@
+timeout: The time limit ran out.
+fast 10
+thread cancelled
+checked The task was cancelled.
+inner 7
+True True False
+all 20 30
+no limit outside

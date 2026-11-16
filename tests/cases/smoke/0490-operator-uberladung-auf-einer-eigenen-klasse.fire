@@ -1,0 +1,28 @@
+class Vector2 {
+    float x
+    float y
+
+    construct(float x, float y) {
+        this.x = x
+        this.y = y
+    }
+
+    operator+(class other) {
+        return new Vector2(this.x + other.x, this.y + other.y)
+    }
+
+    operator==(class other) {
+        return this.x == other.x && this.y == other.y
+    }
+}
+
+var a = new Vector2(1.0, 2.0)
+var b = new Vector2(3.0, 4.0)
+var c = a + b
+print("a + b = (" + c.x + ", " + c.y + ")")
+
+var d = new Vector2(4.0, 6.0)
+print("c == d: " + (c == d))
+print("a == b: " + (a == b))
+//# note: what the test program said to expect (for a reader, it was not checked): (4, 6) / true / false
+//# name: Operator-Überladung: '+', '==' auf einer eigenen Klasse

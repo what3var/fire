@@ -1,0 +1,14 @@
+print(1m == 100cm)
+print(1m == 1cm)
+print(1000mm != 1m)
+print(1 == 1.0)
+print(2.5 == 2)
+var a = 1m
+var b = 100cm
+if (a == b) { print("same length") }
+print('a' < 'b')
+print('z' <= 'a')
+print("abc" == "abc")
+try { print("a" < "b") } catch (ArgumentException e) { print("caught: " + e.message) }
+try { print("42"!int) } catch (ArgumentException e) { print("caught: " + e.message) }
+//# name: Vergleiche: == mit Einheiten und int/float, Zeichen mit <, Fehler als ArgumentException

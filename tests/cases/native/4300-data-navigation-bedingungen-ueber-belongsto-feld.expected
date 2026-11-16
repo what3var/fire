@@ -1,0 +1,20 @@
+== sqlite::memory:
+saved 3 countries 1 customers 1
+saved 2 countries 1 customers 2
+moved 1 purchases of ada 2 rows 2
+SELECT * FROM "purchases" WHERE ((SELECT t1."name" FROM "customers" AS t1 WHERE t1."id" = "purchases"."customerId") = ?) ["Ada"]
+by name 2 high 2 starts 0
+two hops 2 SELECT * FROM "purchases" WHERE ((SELECT t2."name" FROM "countries" AS t2 WHERE t2."code" = (SELECT t1."countryCode" FROM "customers" AS t1 WHERE t1."id" = "purchases"."customerId")) = ?) ["Germany"]
+ordered 10 99 none 0
+in any 1
+list: Data: 'p.customer.purchases' cannot run in the database ('purchases' is a navigation: name a column of it).
+== memory:
+saved 3 countries 1 customers 1
+saved 2 countries 1 customers 2
+moved 1 purchases of ada 2 rows 2
+SELECT * FROM "purchases" WHERE ((SELECT t1."name" FROM "customers" AS t1 WHERE t1."id" = "purchases"."customerId") = ?) ["Ada"]
+by name 2 high 2 starts 0
+two hops 2 SELECT * FROM "purchases" WHERE ((SELECT t2."name" FROM "countries" AS t2 WHERE t2."code" = (SELECT t1."countryCode" FROM "customers" AS t1 WHERE t1."id" = "purchases"."customerId")) = ?) ["Germany"]
+ordered 10 99 none 0
+in any 1
+list: Data: 'p.customer.purchases' cannot run in the database ('purchases' is a navigation: name a column of it).

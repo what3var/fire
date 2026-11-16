@@ -1,0 +1,5 @@
+#import "wifi"
+print(1)
+//# types: strict
+//# modes: Release
+//# name: types 253: #import "wifi"

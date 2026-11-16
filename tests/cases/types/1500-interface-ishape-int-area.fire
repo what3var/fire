@@ -1,0 +1,6 @@
+interface IShape { int Area() }
+class Sq : IShape { int Area() { return 4 } }
+class Sub : Sq { protected int Area() { return 5 } }
+print(1)
+//# modes: Release
+//# name: types 150: interface IShape { int Area() }

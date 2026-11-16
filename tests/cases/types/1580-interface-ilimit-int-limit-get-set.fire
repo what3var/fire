@@ -1,0 +1,10 @@
+interface ILimit { int Limit { get; set; }
+ string Name { get; }
+ float Delay : ms { get; } }
+class Lim : ILimit { int get_Limit() { return 1 }
+ undefined set_Limit(int v) { }
+ string Name { get; }
+ float Delay : ms { get; } }
+print(1)
+//# modes: Release
+//# name: types 158: interface ILimit { int Limit { get; set; }

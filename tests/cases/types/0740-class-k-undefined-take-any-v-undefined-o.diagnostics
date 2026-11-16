@@ -1,0 +1,1 @@
+warning TC002: Cannot assign a value of type 'int' to parameter 'o' of 'Obj' of type 'class' (line 5)

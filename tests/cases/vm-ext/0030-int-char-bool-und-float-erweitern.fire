@@ -1,0 +1,17 @@
+class extends int {
+    bool IsEven() { return this % 2 == 0 }
+    int Twice() { return this * 2 }
+}
+class extends char { bool IsVowel() { return "aeiou".Contains(this.ToLower()) } }
+class extends bool { string Word() { if (this) { return "ja" } return "nein" } }
+class extends float { float Half() { return this / 2.0 } }
+int n = 21
+print(n.IsEven())
+print((n + 1).IsEven())
+print(n.Twice())
+print('E'.IsVowel())
+print('x'.IsVowel())
+print((n > 5).Word())
+float f = 5.0
+print(f.Half())
+//# name: int, char, bool und float erweitern

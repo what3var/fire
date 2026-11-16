@@ -1,0 +1,1 @@
+error E4064: Class 'Lim' does not implement interface 'ILimit' completely (missing property 'Name' with 'get;') (line 4)

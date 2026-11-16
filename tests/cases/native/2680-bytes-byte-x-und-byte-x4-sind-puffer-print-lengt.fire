@@ -1,0 +1,36 @@
+#import "hash"
+byte a[] = [1, 2, 300]
+print(a + " " + a.length + " " + a[2] + " " + (a is of IEnumerable))
+byte z[4]
+z[1] = 9
+var sum = 0
+foreach (x in z) { sum += x }
+print(z + " " + sum + " " + z[0])
+var c = copy a
+c[0] = 5
+print(a[0] + " " + c[0])
+var plain = [10, 20]
+a = plain
+a[0] = 11
+print(a + " " + plain[0] + " " + a[0])
+try { a[0] = "s" } catch (ArgumentException e) { print("A: " + e.message) }
+try { a[0] = undefined } catch (ArgumentException e) { print("A: " + e.message) }
+try { byte bad[] = [1, "z"] } catch (ArgumentException e) { print("A: " + e.message) }
+byte n[] = [undefined, 7]
+print(n[0] + " " + n[1])
+class Holder {
+    byte data[3]
+    byte more[]
+    static byte table[2]
+}
+var h = new Holder()
+h.more = [4, 5]
+h.data[2] = 255
+print(h.data + " " + h.data[2] + " " + h.more[1] + " " + Holder.table.length)
+byte m[2][3]
+m[1][2] = 6
+print(m[1] + " " + m[1][2] + " " + m.length)
+print(Hash.Crc32.HexOf(h.more) == Hash.Crc32.HexOf([4, 5]))
+byte t[] = "Hi".ToBytes()
+print(t.ToString())
+//# name: Bytes: byte x[] = [..] und byte x[4] sind Puffer (print, length, Index, foreach, copy, Felder, mehrdimensional, Zuweisung, an Natives)

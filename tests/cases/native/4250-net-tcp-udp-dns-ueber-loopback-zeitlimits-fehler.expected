@@ -1,0 +1,22 @@
+port True 127.0.0.1
+pending False
+got 5 hello
+remote 127.0.0.1 True True
+iconnection True 127.0.0.1 True True 127.0.0.1 700 700 2000 True
+reply pong!
+timeout 4
+big 40000 True
+eof 0
+waitReadable True
+closed True
+closed 2
+accept timeout True
+refused 3
+udp avail 0
+udp 8 datagram from 127.0.0.1 True
+udp back 3
+udp timeout
+dns 1 127.0.0.1 True
+resolve 10
+port 1
+in use 6

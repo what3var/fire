@@ -1,0 +1,11 @@
+interface IReader { int Read() }
+interface IWriter { undefined Write(int v) }
+interface IStream : IReader, IWriter { int Size { get; } }
+class Mem : IStream { int Read() { return 1 }
+ undefined Write(int v) { }
+ int Size { get { return 1 } } }
+interface IOther { }
+IReader r = new Mem()
+IOther o = r
+//# modes: Release
+//# name: types 195: interface IReader { int Read() }

@@ -173,6 +173,66 @@ far from those of `-a`), a test program gets its variables (`FIRE_DISPLAY`, `LSA
 the sanitizers 20-30 % less compile time than `-O2` (a case of 1.3 MB C: 33 s instead of 48 s) and the same memory errors; a few warnings of gcc appear only with
 `-O2` (`FIRE_TEST_OPT=-O2` looks for them), the checks that are about `-O2` itself name it.
 
+### The cases as files (`tests/cases`)
+
+The cases "native == VM" - a program that must print the same in the VM and as a native program - are files, not text in the test program
+(`TestCases.cs`; [ROADMAP_C_PORT.md](../ROADMAP_C_PORT.md), L5: the same files will check the VM and the compiler in C):
+
+```
+tests/cases/native/0420-records-gleichheit-nach-inhalt.fire        the source, exactly; then lines about the case
+tests/cases/native/0420-records-gleichheit-nach-inhalt.expected    what the program prints (every line of print, ended by a line feed)
+tests/cases/native/0420-records-gleichheit-nach-inhalt.unhandled   only if the program ends with an exception nothing catches: the line of the command line
+```
+
+A `.fire` file ends with its **title** - `//# name: Records: Gleichheit nach Inhalt` (the name `FIRE_TESTS_FILTER` looks at; a title that starts with
+`Abbruch:`, `Threads:`, ... is treated as before) - and may have `//# note: ...` lines before it (a remark) and `//# output: varies` (what the program
+prints differs from run to run or from machine to machine: no expected output, the VM and the native program are only compared with each other). These
+lines are not part of the program: the source is everything before them, so the lines of the program keep their numbers. The files are UTF-8 with line
+feeds and git never converts them (`.gitattributes`: an output may hold a carriage return on purpose). The cases run in the order of their file names; the numbers leave room to put a case between two others.
+
+The native group checks every such case three ways: the VM prints the expected output (`OK: VM: <title>: die erwartete Ausgabe`), the native program
+prints what the VM printed, and - as before - the special runs (sanitizers, FreeRTOS, tcc, ...) pick their cases by title.
+
+**A new case:** write `<number>-<name>.fire` with its title line, then record what the VM prints and look at it before you check it in:
+
+```
+FIRE_TESTS_ONLY=native FIRE_TESTS_UPDATE=1 dotnet fire.Testing.dll     # writes the .expected (and .unhandled) of new and changed cases, runs nothing else
+FIRE_TESTS_ONLY=native FIRE_TESTS_FILTER="<title>" dotnet fire.Testing.dll
+```
+
+A case without an expected output is a failed check that says so, and so is a case the compiler refuses (`WIRD NICHT UEBERSETZT: <errors>`).
+
+**The cases that only run in the VM** are files too, one folder per check of the test program (`tests/cases/vm-perf`, `vm-life`, `vm-shutdown`, `vm-gl`,
+`vm-lq`, `vm-rf`, `vm-sc`, `vm-sc-checked`, `vm-ext`, `vm-arr`, `vm-clone` and `vm-ext-error`, `vm-arr-error`, `vm-clone-error`): the same `.fire` and
+`.expected` - an exception nothing catches is the last line there, `UNBEHANDELT: <message>` - and, for a case that is no program, `.error` instead of
+`.expected`: a part of the compiler's message. More lines about a case: `//# modes: Debug Release` (the execution modes of the VM it runs in; without the
+line those of its check, usually all three) and `//# packed` (it also runs as a packed program does: written as a program file and read back). The test
+program runs each folder with the check it came from (`foreach (var c in TestCases.Load("vm-perf")) CheckPerf(...)`), in the place the calls were. These
+expected outputs are written by hand, as they were in the code; `FIRE_TESTS_UPDATE` does not touch them. What hangs on the host - the UI with its fake
+renderer, the device manager, host callbacks, the rules for files and the network - stays code. `FIRE_TESTS_COLLECT=<file>` writes what every such check
+checks (title, source, expected lines) as one JSON object per line: the list before and after moving cases must be the same.
+
+`tests/cases/smoke` holds the oldest tests of the language - one small program per feature, run the way `forge run` runs it, compared with the output
+next to it (`//# note:` keeps the sentence the test program used to print for a reader instead of checking).
+
+`tests/cases/diag`, `types` and `syntax` hold every source the checks of `DiagnosticTests`, `TypeTests` and `SyntaxTests` compile, each with what forge
+says about it: `.diagnostics` is the error output (the warnings and errors with their codes and lines, an exception nothing catches), `.expected` what
+the program prints; `//# types: strict` runs the case with `--types strict`. These files are recorded, not written by hand
+(`tests/tools/cases.py record <forge> tests/cases/types`): they say what the compiler does today, the checks in C# say what is meant - a new message or
+a moved line shows up as a difference to look at.
+
+**Without the test program:** `tests/run-cases.sh <forge> [<group>...]` runs every case with `forge run` and compares what it prints - the check a forge
+and a VM in C will be measured with, and a quick one for the ones in C# (all 630 cases: a few minutes). A case that only makes sense inside the test
+program says so: `//# skip: forge run - <why>`. `tests/reference.sh <forge> <folder>` writes what the compiler makes of every case (the program as
+text, the program file, the C) to compare two compilers.
+
+**Cases that master adds.** As long as master holds these cases as text in `Program.cs`, `tests/tools/merge-master.sh` merges it: the cases master added
+or changed go into the files (`tests/tools/cases.py`: a new case gets a number between its neighbours, a changed one loses its expected output, a case
+keeps its file as long as it keeps its title), the rest of `Program.cs` is merged as usual. Then build, record with `FIRE_TESTS_UPDATE=1`, look, commit.
+ Cases whose source is made at run time (a certificate, a folder of the run, a database
+server of the machine) stay in `Program.cs` (`natCases`), next to the place that makes what they need. `FIRE_TESTS_LISTING=<file>` (with
+`FIRE_TESTS_ONLY=native`) writes the titles and sources of all cases as one text and runs nothing - to compare the set of cases before and after moving some.
+
 **Progress.** Every check line carries its number and the number of checks of the last run with the same `FIRE_TESTS_ONLY` and `FIRE_TESTS_FILTER`:
 `OK: [123/530] Native == VM: ...`, `FEHLER: [124/530] ...` (`?` on the first run; the counts are kept in `~/.cache/fire-tests/totals.json`). The status word stays first,
 so `grep '^OK:'`, `grep -c FEHLER` and the like keep working. Every line is written at once (a log of a run in the background grows line by line), and while a long

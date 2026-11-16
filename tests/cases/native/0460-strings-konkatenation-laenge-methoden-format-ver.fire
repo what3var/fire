@@ -1,0 +1,45 @@
+var name = "fire"
+print("Hello, " + name + "!")
+var n = 3
+print("n=" + n + " f=" + 2.5 + " b=" + true + " c=" + 'x' + " u=" + undefined)
+print("mm: " + 5mm + " " + 2.5mm)
+var s = "Hello, wörld"
+print(s.Length)
+print(s.ToUpper())
+print(s.ToLower())
+print(s.Substring(7, 3))
+print(s.Substring(7))
+print(s.IndexOf("w"))
+print(s.IndexOf("o", 5))
+print(s.IndexOf("zz"))
+print(s.LastIndexOf("o"))
+print(s.LastIndexOf("l", 5))
+print(s.LastIndexOf(""))
+print(s.Contains("lo"))
+print(s.StartsWith("Hell"))
+print(s.EndsWith("ld"))
+print(s.CharAt(4))
+print(s.Replace("l", "LL"))
+print("  padded\t ".Trim() + "|")
+print("  padded ".TrimStart() + "|")
+print("  padded ".TrimEnd() + "|")
+print("7".PadLeft(3) + "|" + "7".PadLeft(3, '0') + "|" + "ab".PadRight(5, '.') + "|")
+print($"{name}: {n} {2.5:F2} {255:X4} {255:x} {7:D3} {-7:D3} {5:B8} {1234.5678:F1}")
+print($"{0.5:F0} {1.5:F0} {2.5:F0} {0.125:F2} {1.005:F2}")
+var text = ""
+for (var i = 0; i < 5; i = i + 1) { text = text + "ab" }
+print(text)
+print(text.Length)
+var t = s
+s = "other"
+print(t)
+print(s == "other")
+print(s != t)
+print("a" + 1 + 2)
+print('q'.IsLetter())
+print('7'.IsDigit())
+print('a'.ToUpper())
+print('Z'.ToLower())
+print(' '.IsWhiteSpace())
+print('x'.ToInt())
+//# name: Strings: Konkatenation, Laenge, Methoden, Format, Vergleich

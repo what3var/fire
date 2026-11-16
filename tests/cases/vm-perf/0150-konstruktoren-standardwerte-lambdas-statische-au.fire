@@ -1,0 +1,13 @@
+class P { int x; int y; construct(int x, int y = 5) { this.x = x; this.y = y } }
+class Q { static int Twice(int a, int b = 2) { return a * b } }
+var total = 0
+for (var i = 0; i < 5; i = i + 1) {
+    var p = new P(i)
+    var q = new P(i, i)
+    total = total + p.x + p.y + q.y + Q.Twice(i) + Q.Twice(i, 3)
+}
+print(total)
+var add = func (a, b) => { return a + b }
+var inc = func (a) => { return a + 1 }
+print(add(2, 3) + inc(4))
+//# name: Konstruktoren, Standardwerte, Lambdas, statische Aufrufe an einer Stelle

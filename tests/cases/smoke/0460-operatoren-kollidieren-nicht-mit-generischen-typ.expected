@@ -1,0 +1,3 @@
+Einstufiges Generic 'Wrapper<int>' funktioniert weiterhin: 21
+Direkt danach, in derselben Zeile, als Ausdruck: 10
+Und unabhaengig davon ein '>>'-Shift: 16

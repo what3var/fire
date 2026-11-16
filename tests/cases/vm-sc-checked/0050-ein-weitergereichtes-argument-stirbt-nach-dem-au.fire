@@ -1,0 +1,14 @@
+class D { string n
+  construct(string n) { this.n = n }
+  destruct() { print("~" + this.n) } }
+class W { D d
+  construct(D d) { this.d = d } }
+class F { static Make() { return new D("arg") }
+  static Use(D x) { var local = new D("local"); print("in Use") }
+  static Pass(D x) { return x } }
+F.Use(F.Make())
+print("after Use")
+var kept = F.Pass(F.Make())
+print("kept " + kept.n)
+print("end")
+//# name: Ein weitergereichtes Argument stirbt nach dem Aufruf, nach den Locals des Aufgerufenen

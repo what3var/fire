@@ -1,0 +1,3 @@
+var base = 1
+//# modes: Release
+//# name: diag 25: var base = 1

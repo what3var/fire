@@ -1,0 +1,9 @@
+echo: hello
+bytes 70000 last 221
+mid 306
+echo: after ping
+nothing yet True open True
+closed True code 1000 open False
+plain get 426
+evil origin refused
+

@@ -1,0 +1,12 @@
+Green undefined True
+E1 Parameter 'item' is a T (Color), not Int.
+E2 Parameter 'item' is a T (Color), not Size.
+E3 An element of an array of Color must be a Color (or undefined), not Int.
+E4 An element of an array of Color must be a Color (or undefined), not Size.
+Blue
+E5 An array of Size cannot be stored where an array of Color is declared.
+Blue 2 True
+g False
+True
+{"$type":"Palette","colors":[1]}
+Green 1

@@ -1,0 +1,7 @@
+marks True True
+enter {"patches": [{"e": 3, "t": "Go", "v": true, "n": true, "fg": "", "bg": "#ff0000"}]}
+leave {"patches": [{"e": 3, "t": "Go", "v": true, "n": true, "fg": "", "bg": ""}]}
+menu {"patches": [], "menu": {"e": 2, "x": 10, "y": 20, "html": "<div class=\"f-mi\" data-p=\"c/0\"><span>Copy</span></div><div class=\"f-mi f-sub\" data-p=\"c/1\"><span>More</span><span class=\"f-key\">&#9656;</span><div class=\"f-pop\"><div class=\"f-mi\" data-p=\"c/1/0\"><span>Deep</span></div></div></div>"}}
+deep {"patches": [{"e": 2, "t": "deep", "v": true, "n": true, "fg": "", "bg": ""}]}
+after the menu closed undefined
+

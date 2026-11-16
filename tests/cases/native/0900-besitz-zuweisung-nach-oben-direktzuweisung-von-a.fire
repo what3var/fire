@@ -1,0 +1,46 @@
+class Box { int items[]; string name; construct(string n) { this.name = n } destruct() { print("free " + this.name) } }
+class Util {
+    static int[] Make(int n) { var a = new int[n]; a[0] = n; return a }
+    static Box MakeBox(string n) { return new Box(n) }
+    static int Len(int xs[]) { return xs.length }
+    static int[] Pass(int xs[]) { return xs }
+    static int Probe(int xs[]) { return xs[0] }
+    static int Loop() {
+        var last = [0]
+        for (var i = 1; i <= 3; i = i + 1) {
+            last = Make(i)
+            if (i == 2) { var x = Make(9); last = x }
+        }
+        return last[0]
+    }
+    static Box BoxLoop() {
+        var b = new Box("b0")
+        for (var i = 1; i <= 2; i = i + 1) { b = MakeBox("b" + i) }
+        return b
+    }
+}
+print(Util.Loop())
+var kept = Util.BoxLoop()
+print(kept.name)
+// loop at top level, variable global
+var g = [0]
+for (var i = 1; i <= 3; i = i + 1) { g = Util.Make(i + 10) }
+print(g[0])
+if (true) { g = Util.Make(42) }
+print(g[0])
+// direct assignment of a call result to a field
+class Holder {
+    int data[]
+    Box child
+    construct() { this.data = Util.Make(5); this.child = Util.MakeBox("child") }
+}
+var h = new Holder()
+print(h.data[0] + " " + h.child.name)
+// return value directly into a parameter: it belongs to the called function
+var survivor = Util.Make(3)
+print(Util.Len(Util.Make(4)))
+print(Util.Probe(Util.Pass(Util.Make(6))))
+try { print(Util.Pass(Util.Make(8))[0]) } catch (e) { print("died with the callee") }
+delete h
+print("end")
+//# name: Besitz: Zuweisung nach oben, Direktzuweisung von Aufrufergebnissen, Rueckgabe direkt in einen Parameter

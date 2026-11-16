@@ -1,0 +1,25 @@
+1 Type Undefined is not numeric.
+2 Type String is not numeric.
+3 A condition must be a bool, not Int.
+4 '!' (negation) expects bool, not Int.
+5 Type String is not numeric.
+6 Type Bool is not numeric.
+7 Type String is not numeric.
+8 Type Undefined is not numeric.
+9 Index access ('[]') on a value of type Int is not possible (neither an array nor a class with a 'GetIndex' method).
+10 Type String is not numeric.
+11 '~' expects int, not Float.
+5
+end
+loop 1
+loop 2
+loop 3
+A condition must be a bool, not Int.
+Strings are immutable - 's[i] = ...' is not possible (Replace/Substring return a new string).
+Incompatible units: 'm' cannot be converted to 's'. | s | m
+Incompatible units: 'm' cannot be converted to 'kg'.
+end
+Incompatible units: 'm' cannot be converted to 's'.
+gt Incompatible units: 'm' cannot be converted to 'kg'.
+ge Incompatible units: 'm' cannot be converted to 's'.
+True

@@ -1,0 +1,5 @@
+float:km/h arr[] = [1m / 1s]
+arr[0] = 2s
+//# types: strict
+//# modes: Release
+//# name: types 110: float:km/h arr[] = [1m / 1s]

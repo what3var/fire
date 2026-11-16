@@ -1,0 +1,7 @@
+class Dog { }
+Dog x
+x = new Dog()
+defined Dog d = x
+print(1)
+//# modes: Release
+//# name: types 64: class Dog { }

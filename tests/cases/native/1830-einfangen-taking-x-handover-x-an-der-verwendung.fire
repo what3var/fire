@@ -1,0 +1,42 @@
+class Item {
+    int v
+    construct(int v) { this.v = v }
+}
+class Work {
+    static undefined Run() {
+        var list = [new Item(1), new Item(2)]
+        var node = new Item(7)
+        int k = 5
+        int done = 0
+        fire {
+            (taking list)[0].v = 100
+            print("thread copy " + list[0].v + " k " + (taking k) + " node " + (handover node).v)
+        }
+        Sleep(50ms)
+        print("caller " + list[0].v + " node " + node)
+        fire { print("implicit " + list.Length + " " + k) }
+        Sleep(50ms)
+        // lambdas: taking - a copy made when the lambda is made; plain - the variable's value as before
+        var item = new Item(3)
+        var copyIt = () => { (taking item).v = 30; return item.v }
+        var shareIt = () => { item.v = item.v + 1; return item.v }
+        print("lambda copy " + copyIt() + " caller " + item.v)
+        print("lambda shared " + shareIt() + " caller " + item.v)
+        var moved = new Item(9)
+        var keep = () => (handover moved).v
+        print("lambda moved " + keep())
+        // a lambda in a fire body sees the body's variables
+        fire {
+            var mine = 41
+            var f = () => mine + 1
+            print("in thread " + f())
+            var parts = await [Work.Twice(mine), Work.Twice(2)]
+            print("await in thread " + parts[0] + " " + parts[1])
+        }
+        Sleep(50ms)
+    }
+    static int Twice(int x) { return x * 2 }
+}
+#import "time"
+Work.Run()
+//# name: Einfangen: taking x / handover x an der Verwendung im fire-Block und im Lambda, ein Local ohne Wort wird kopiert (TC023), ein Lambda im fire-Koerper sieht dessen Variablen

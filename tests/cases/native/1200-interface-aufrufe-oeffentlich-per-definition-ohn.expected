@@ -1,0 +1,8 @@
+180
+18
+big square 9
+disc 3
+1000
+denied: Method 'Name' of 'Vault' is private and cannot be called from here.
+undefined: 'Name' (0 argument(s)) is not a known built-in method on a value of type Undefined.
+destroyed: Access to a destroyed object.

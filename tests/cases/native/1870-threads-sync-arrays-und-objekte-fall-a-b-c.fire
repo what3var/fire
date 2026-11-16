@@ -1,0 +1,31 @@
+class Item {
+    int n
+    construct(int n) { this.n = n }
+    destruct() { print("~I" + this.n) }
+}
+class Box {
+    string name
+    Item item
+    Item extra
+    construct(string name) { this.name = name }
+    destruct() { print("~B" + this.name) }
+}
+class Inv {
+    int gold
+    any items
+    Item best
+    construct() { this.gold = 0; this.items = [1, 2]; this.best = new Item(1) }
+}
+var inv = new Inv()
+var done = 0
+fire taking inv {
+    inv.gold = 5
+    inv.items = [10, 20, 30]
+    inv.best.n = 99
+    sync inv
+    sync global { done = 1 }
+}
+while (done == 0) { sync globals }
+print(inv.gold + " " + inv.items.length + " " + inv.best.n)
+for (var i = 0; i < inv.items.length; i = i + 1) { print(inv.items[i]) }
+//# name: Threads: sync: Arrays und Objekte (Fall A/B/C)

@@ -1,0 +1,21 @@
+class D {
+    string n
+    construct(string n) { this.n = n }
+    destruct() { print("~" + this.n) }
+}class T {
+    static Run() {
+        var keep = undefined
+        for (var i = 0; i < 3; i = i + 1) {
+            var a = new D("a" + i)
+            var b = new D("b" + i)
+            if (i == 1) { keep = b }
+        }
+        print("nach der Schleife " + keep.n)
+        var u = 0
+        for (var j = 0; j < 3; j = j + 1) { var w = j; u = u + w }
+        print(u + " " + keep.n)
+    }
+}
+T.Run()
+print("ende")
+//# name: Zuweisung an eine aeussere Variable schiebt den Besitz bis in die Funktions-Scope (nicht aus der Funktion hinaus)

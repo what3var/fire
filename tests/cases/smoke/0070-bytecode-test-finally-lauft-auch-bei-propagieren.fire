@@ -1,0 +1,16 @@
+class ErrB {
+    string message
+    construct(string message) { this.message = message }
+}
+
+try {
+    try {
+        throw new ErrB("inner")
+    } finally {
+        print(1)
+    }
+} catch (ErrB e) {
+    print(e.message)
+}
+//# note: what the test program said to expect (for a reader, it was not checked): 1 / inner
+//# name: Bytecode-Test: finally läuft auch bei propagierender Exception (kein Match im inneren try)

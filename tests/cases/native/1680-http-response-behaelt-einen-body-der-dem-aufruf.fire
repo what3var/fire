@@ -1,0 +1,16 @@
+#import "http"
+class F {
+    static Http.Response Make() { return new Http.Response(202, new byte[0]) }
+    static Http.Response Text() { return new Http.Response(200, "hallo") }
+}
+var r = new Http.Response(202, new byte[3])
+print(r.status + " " + r.body.length)
+var m = F.Make()
+print(m.status + " " + m.body.length)
+var t = F.Text()
+print(t.body.length)
+byte mine[] = new byte[4]
+var o = new Http.Response(200, mine)
+mine[0] = 9
+print(o.body.length + " " + mine.length + " " + o.body[0])
+//# name: Http.Response behaelt einen Body, der dem Aufruf gehoert (new byte[0], ein Text, ein Puffer aus einer Methode) - try this.body.TakeTo(this); ein Puffer des Aufrufers bleibt dessen

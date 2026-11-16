@@ -1,0 +1,35 @@
+class Item {
+    string n
+    construct(string n) { this.n = n }
+    destruct() { print("destroy " + this.n) }
+}
+class Store {
+    List items = new List()
+    undefined Keep(Item i) { this.items.Add(i); try i.TakeTo(this) }
+}
+class Shelf {
+    Item top
+    Item other
+    Store store = new Store()
+    Item Top { get { return this.top } set { this.top = value } }
+    Item Via { get { return this.other } set { this.Top2 = value } }
+    Item Top2 { get { return this.other } set { this.other = value } }
+    Item Peek { get { return this.top } set { print("peek " + value.n) } }
+    Item Stored { get { return this.top } set { this.store.Keep(value) } }
+    bool cond = false
+    Item Maybe { get { return this.top } set { if (this.cond) { this.top = value } } }
+    Item Amb { get { return this.top } set { this.store.Keep(value); if (this.cond) { this.other = value } } }
+}
+var s = new Shelf()
+print("1"); s.Top = new Item("top")
+print("2"); s.Via = new Item("via")
+print("3"); s.Peek = new Item("peek")
+print("4"); s.Stored = new Item("stored")
+print("5"); s.Maybe = new Item("maybe")
+print("6"); s.Amb = new Item("amb")
+print("7")
+var mine = new Item("mine")
+s.Top = mine
+print(s.top is from s)
+print("end")
+//# name: Ziel-Regel (SPEC 2.1): Setter - Feld, Property-Kette, Aufruf, nicht genommener Zweig, mehrdeutig, kein neuer Wert

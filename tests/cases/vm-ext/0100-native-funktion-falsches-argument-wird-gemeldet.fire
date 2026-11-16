@@ -1,0 +1,2 @@
+try { print(__StringCall(1, 5, "x")) } catch (ArgumentException e) { print("caught: " + e.message) }
+//# name: native Funktion: falsches Argument wird gemeldet (als abfangbare ArgumentException)

@@ -1,0 +1,8 @@
+page 200 True flex True
+input {"patches": [{"e": 3, "t": "fire", "v": true, "n": true, "fg": "", "bg": ""}]}
+click {"patches": [{"e": 2, "t": "Hello fire", "v": true, "n": true, "fg": "", "bg": ""}]}
+loud {"patches": [{"e": 2, "t": "HELLO FIRE!", "v": true, "n": true, "fg": "", "bg": ""}]}
+flow {"patches": [{"e": 10, "t": "1", "v": true, "n": true, "fg": "", "bg": ""}]}
+other session True 4401
+no such page True 4404
+

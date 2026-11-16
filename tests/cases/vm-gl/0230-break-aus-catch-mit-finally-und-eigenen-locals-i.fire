@@ -1,0 +1,11 @@
+class Exception { string message; construct(string message = "") { this.message = message } }
+var log = ""
+var i = 0
+while (i < 5) {
+    i = i + 1
+    try { if (i == 3) { throw new Exception("drei") } log = log + i }
+    catch (e) { var m = e.message; log = log + m; break }
+    finally { log = log + "f" }
+}
+print(log + " " + i)
+//# name: break aus catch (mit finally und eigenen Locals im catch)

@@ -1,0 +1,6 @@
+class Exception { string message; construct(string message = "") { this.message = message } }
+try {
+    while (true) { try { break } catch (e) { print("innen") } }
+    throw new Exception("aussen")
+} catch (e) { print("gefangen " + e.message) }
+//# name: break aus try meldet den Handler ab: eine spaetere Exception faengt der aeussere catch

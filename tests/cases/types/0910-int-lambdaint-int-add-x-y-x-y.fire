@@ -1,0 +1,14 @@
+int lambda<int, int> add = (x, y) => x + y
+try { bool r = add(1, 2) } catch (ArgumentException e) { }
+lambda<string> wrong = (int z) => z
+int lambda<int> sq = x => "s"
+var u = (p) => p
+var f = (int k, string m) => k
+try { bool g = f(1, "a") } catch (ArgumentException e) { }
+class Box { int v
+    construct(int v) { this.v = v }
+    int Twice(int lambda<int> fn) { return fn(this.v) }
+}
+print(new Box(3).Twice(v => v * 2))
+//# modes: Release
+//# name: types 91: int lambda<int, int> add = (x, y) => x + y
