@@ -298,7 +298,7 @@ if (c is of Dog) { print("never") }     // test first with `is of` when unsure
 ```
 
 Other conversions are methods: `'A'.ToInt()` (65), `65.ToChar()` (`'A'`), `"x".ToBytes()`, `value.ToString()`. A conversion that `!` cannot do
-(`"42"!int`) throws an `ArgumentException`. `!` makes no text: `5!string`, and `a! + "x"` next to a string, are that exception (`TC013` at compile
+(`"42"!int`) throws an `ArgumentException`. `!` makes no text: `5!string`, and `a! + "x"` next to a string, are that exception (the error `TC013` at compile
 time where the types are known) - write `"" + a` or `a.ToString()`.
 
 ## Testing a type: `is of`

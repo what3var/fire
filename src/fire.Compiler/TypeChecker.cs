@@ -2208,7 +2208,13 @@ namespace fire.Compiler
             Push();
             foreach (var p in parameters)
             {
-                Declare(p.Name, MayBeUndefined(DeclaredOrDynamic(p.Type, p.ArrayRanks.Count)));
+                var declaredParam = DeclaredOrDynamic(p.Type, p.ArrayRanks.Count);
+                // (a number parameter without a unit whose default value has one - `float d = 1cm` - is not certainly unitless: DeclaredKind.Of checks
+                // it only without a default or with a plain number; what it holds has the unit of the default or of the argument)
+                if (p.DefaultValue != null && declaredParam.IsNumber && !declaredParam.Raw && p.ArrayRanks.Count == 0 && p.Type is { Unit: null }
+                    && LiteralType(p.DefaultValue) is not { IsNumber: true, Unit.IsUnitless: true })
+                    declaredParam = declaredParam.WithUnit(null);
+                Declare(p.Name, MayBeUndefined(declaredParam));
                 // (a `defined int` parameter checks what the body stores into it, like a variable: SPEC 8.10b)
                 if (p.Type is { NonNull: true, ArrayRank: 0, PointerDepth: 0 } && p.ArrayRanks.Count == 0 && !p.ByRef) DeclareLocalType(p.Name, p.Type);
             }
@@ -2275,6 +2281,9 @@ namespace fire.Compiler
             var target = Unit.Parse(targetName);
             if (!relabel && operand.Kind == StaticKind.Int && operand.Unit is { } from && !from.Equals(target) && from.IsCompatibleWith(target) && from.IsLinear && target.IsLinear && from.ConversionFactorTo(target) < 1)
                 Report(UnitLossCode, $"A whole number in '{UnitText(from)}' converted into '{UnitText(target)}' may lose its fraction (convert a float: 'x!float:{targetName}')", line);
+            // (a whole number whose unit is not known here - a `var`, a parameter `: any` - converted into a unit: taken to be of that dimension, as
+            // always; only `:unitless` and a unit known to be of another dimension say "an int or a float")
+            if (!relabel && operand.Kind == StaticKind.Int && (operand.Unit == null || operand.UnitIsDimension) && !target.IsUnitless) return operand.WithUnit(target);
             return UnitResult(operand, target, relabel);
         }
 
@@ -2294,6 +2303,12 @@ namespace fire.Compiler
                 _ => StaticType.Dynamic,
             };
         }
+
+        /// <summary>TC013 (an error in lax mode too): `!` to a string or a bool - written out (`x!string`) or taken from an anchor of that type - converts
+        /// nothing; a value of another type is the ArgumentException in every run.</summary>
+        private void NoConversion(StaticType operand, string to, int line) =>
+            ReportError(ImpossibleCastCode, $"A value of type '{operand}' is never converted to '{to}' by '!': the conversion always fails at run time"
+                + (to == "string" ? " - the text of a value is '\"\" + x' or 'x.ToString()'" : ""), line);
 
         /// <summary>The operand of a conversion from the context with what it names itself applied (`a:km!`: in km) - in the order of the compiler:
         /// the type before the unit.</summary>
@@ -2338,13 +2353,12 @@ namespace fire.Compiler
                     if (neverNumber && operand.Null == Nullness.Defined) Impossible("char");
                     return (StaticType.Char, new FixedCoercion(TypeTag.Char, false, null), true);
                 case StaticKind.Bool when !declared:
-                    // (nothing becomes a bool: only a bool passes)
-                    if (!operand.IsDynamic && operand.Kind != StaticKind.Bool) Impossible("bool");
+                    // (nothing becomes a bool: only a bool passes - an error in lax mode too, the conversion certainly throws)
+                    if (!operand.IsDynamic && operand.Kind != StaticKind.Bool) NoConversion(operand, "bool", line);
                     return (StaticType.Bool, new FixedCoercion(TypeTag.Bool, false, null), true);
                 case StaticKind.String when !declared:
                     // (nothing becomes a string by `!`: only a string passes - the text of a value is `"" + x` or `x.ToString()`)
-                    if (!operand.IsDynamic && operand.Kind != StaticKind.String)
-                        Report(ImpossibleCastCode, $"A value of type '{operand}' is never converted to 'string' by '!': the conversion always fails at run time - the text of a value is '\"\" + x' or 'x.ToString()'", line);
+                    if (!operand.IsDynamic && operand.Kind != StaticKind.String) NoConversion(operand, "string", line);
                     return (StaticType.String, new FixedCoercion(TypeTag.String, false, null), true);
                 default:
                     // an anchor whose kind is not known here (`any`), an object, an array: decided at run time; a declaration of such a type is no context
@@ -2541,6 +2555,9 @@ namespace fire.Compiler
                             CheckCast(operand, castTarget, tc.Line);
                             return castTarget;
                         }
+                        // (`x!string`, `x!bool` of a value that is none: always the ArgumentException)
+                        if (tc.TargetTypeKeyword == TokenType.KwString && !operand.IsDynamic && operand.Kind != StaticKind.String) NoConversion(operand, "string", tc.Line);
+                        if (tc.TargetTypeKeyword == TokenType.KwBool && !operand.IsDynamic && operand.Kind != StaticKind.Bool) NoConversion(operand, "bool", tc.Line);
                         // (`a!int!`: the type written inside counts)
                         return tc.TargetTypeKeyword == null ? operand : ExplicitTypeResult(operand, tc.TargetTypeKeyword, tc.Unsigned);
                     }

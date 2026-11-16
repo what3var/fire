@@ -46,7 +46,7 @@ Entscheidung:
 
 `a! + s` mit einem String-Anker und `5!string` werfen `Cannot coerce type Int to String`. SPEC 3.1 nennt `string` als Ziel von `!`, sagt aber
 nicht, was herauskommt; 02-types.md führt `string` in der Tabelle der Ziele nicht und verweist auf `value.ToString()`. Offen ist, ob `!` zum
-String den Text des Werts liefern soll (wie `"" + a`). Bis dahin bleibt das Verhalten; neu ist die Meldung zur Übersetzungszeit (`TC013`), wo die
+String den Text des Werts liefern soll (wie `"" + a`). Bis dahin bleibt das Verhalten; neu ist der Fehler zur Übersetzungszeit (`TC013`, auch lax - auch für `5!string`), wo die
 Typen bekannt sind, und der Hinweis in der Laufzeitmeldung (`write "" + x or x.ToString()`). Dasselbe gilt für einen `bool`-Anker.
 
 ## Entschieden

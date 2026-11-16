@@ -23130,8 +23130,8 @@ else
             try { print(ii! == t) } catch (ArgumentException x) { print(x.message) }
             try { print(ii! == n) } catch (ArgumentException x) { print(x.message) }
             try { print(t! + ii) } catch (ArgumentException x) { print(x.message) }
-            string text = "y"
-            try { print(ii! + text) } catch (ArgumentException x) { print(x.message) }
+            any v5 = 5
+            try { print(v5!string) } catch (ArgumentException x) { print(x.message) }
             int un
             try { print(ii! == un) } catch (ArgumentException x) { print(x.message) }
             try { print(ii! + un) } catch (Exception x) { print(x.message) }

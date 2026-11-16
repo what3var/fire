@@ -58,7 +58,9 @@ type (`any`), an int of a wider width next to an int anchor (`!int` would cut it
 static type is never more than the run time gives: an anchor declared `any` gives `any`, and a whole number that `:` takes out of its dimension (`5mm:unitless` is `0.005`,
 `2km:unitless` is `2000`) is "an int or a float" - `any` for a declaration (so `int n = a:unitless` keeps its run-time check), a float when it is computed with a float.
 `FIRE_ANCHOR_AT_RUNTIME=1` (tests: `Compiler.AnchorAtRunTimeOverride`) makes the compiler ignore the recorded conversions of binary operations; the tests run every case
-both ways. What always fails is `TC013` (`x!` next to a string or a bool), a whole number rounded into a coarser unit `TC007`.
+both ways. What always fails is `TC013` (`x!` next to a string or a bool), a whole number rounded into a coarser unit `TC007`. Because the fixed conversion relies on
+the static unit of the anchor, a number parameter without a declared unit whose default value is not a plain number (`float d = 1cm`, `int n = undefined`) has no static
+unit in its body: the run time checks such a parameter for no unit either (`DeclaredKind.Of`), so it holds the unit of the default or of the argument.
 
 Step 3e: generic methods (`R Select<R>(R lambda<T> fn)`, `static Box<U> Of<U>(U value)`) take their type parameters from the arguments, one after the other
 (`IEnumerable<T>` from a `List<int>` or an `int[]`, `R` from the result of a lambda argument; what is not found is `any`). Linq is typed: `Linq.From(xs)` is a `Query<T>`,

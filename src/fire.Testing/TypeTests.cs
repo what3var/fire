@@ -1313,6 +1313,9 @@ static class TypeTests
                     "class K {\n static any F(any x) { return x }\n static float:km G(int a : any, float b : any) { return b + a:! }\n static int H(float x, int y) { return x! + y }\n}\nint a = 500m\nfloat b = 2km\n"
                     + "print(K.F(b + a:!))\nprint(K.G(a, b))\nprint(K.H(2.6, 3))\nfloat x = b + a:!\nprint(x)\nfloat:m y = b + a:!\nprint(y)\nint z = 2.6! + 1\nprint(z)",
                     "|2.5km\n2.5km\n6\n2.5km\n2500m\n4"),
+                ("Anker jeder Herkunft: Feld (auch mit Einheit des Initialisierers), statisches Feld, Property, Rueckgabe, Parameter mit Vorgabewert, var, Array-Element, Schleifenvariable, ?:, +=",
+                    "class P {\n    float len = 1cm\n    int n = 3\n    float:m w\n    static float sl = 2km\n    float any : any\n    float Prop : mm { get { return 4mm } }\n    float Get() { return 7 }\n    float:km GetKm() { return 1500m }\n    any GetAny() { return 2km }\n    undefined Par(float d = 1cm, int e : any = 2m, float g : any m = 1m) {\n        int a = 5mm\n        print(d + a:!)\n        print(e + a:)\n        print(g + a:!)\n        print(a:! + d)\n    }\n}\nvar p = new P()\nint a = 5mm\nint u = 4\nprint(p.len + a:!)\nprint(a:! + p.len)\nprint(p.n + a:!)\np.w = 3m\nprint(p.w + a:!)\nprint(P.sl + a:!)\np.any = 2dm\nprint(p.any + a:!)\nprint(p.Prop + a:!)\nprint(p.Get() + u!)\nprint(p.GetKm() + a:!)\nprint(p.GetAny() + a:!)\np.Par()\np.Par(5, 3km, 4mm)\nvar v = 5cm\nprint(v + a:!)\nv = 2m\nprint(v + a:!)\nfloat arr[] = [1.5, 2.5]\nprint(arr[0] + u!)\nfloat:km arrk[] = [1.5km]\nprint(arrk[0] + a:!)\nint loc = 2m\nloc = 50cm\nprint(loc + a:)\nfor (int i = 0; i < 2; i++) { print(i + 2.6!) }\nforeach (var x in [1.5, 2.5]) { print(x + u!) }\nprint((u > 2 ? 1.5 : 2) + u!)\nprint(Math.Sqrt(16) + u!)\nprint(\"abc\".Length + 2.6!)\nfloat f = 2.5\nf += u!\nprint(f)\nint cnt = 2\ncnt += 2.6!\nprint(cnt)\nprint((cnt++) + 2.6!)\nprint(u! + (f = 4.5))\n",
+                    "TC007 TC007|1.5cm\n1.5cm\n3.005\n3.005m\n2.000005km\n2.05dm\n9mm\n11\n1.500005km\n2km\n1.5cm\n2m\n1.005m\n1.5cm\n5.005\n3km\n9mm\n5.005\n5cm\n2m\n5.5\n1.500005km\n0m\n3\n4\n5.5\n6.5\n5.5\n8\n6\n6.5\n5\n8\n8.5"),
                 ("ein Anker vom Typ any: die Umwandlung bleibt die der Laufzeit", "any a = 5\nany f = 2.5\nint i = 7\nfloat g = 1.5\nprint(i! + f)\nprint(g! + a)\nprint(a! + g)\nprint(f! + i)", "|9.5\n7\n6.5\n9"),
             };
             foreach (var c in anchorCases)
@@ -1353,12 +1356,16 @@ static class TypeTests
                     + "var v = 1\nv = 2.4!\nprint(v)\nfloat:km dist = 1km\nint steps = 250m\ndist = steps:!\nprint(dist)\nint a = 500m\nprint(K.I(2.6!))\nprint(K.D(a:!))\nprint(K.R(3.5))\nprint(K.RU(a))\nprint(new K().Inst(2.6!, 1))\nprint(K.I(x: 2.6!))",
                     TypeCheckMode.Strict) is var targets && targets == "|3\n1.5m\n8\n2\n0.25km\n3\n0.5km\n4\n0.5km\n3\n3", targets);
             // what always fails is said at compile time (TC013), the run time keeps its message; an undefined anchor
-            Check("x! neben einem string oder bool scheitert immer: TC013 (strikt ein Fehler), zur Laufzeit die ArgumentException mit dem Hinweis",
-                Run("int a = 5\nstring s = \"x\"\ntry { print(a! + s) } catch (ArgumentException e) { print(e.message) }") is var toText
-                && toText == "TC013|Cannot coerce type Int to String: '!' does not make the text of a value (write \"\" + x or x.ToString())."
+            Check("x! neben einem string oder bool und x!string / x!bool wandeln nichts um: TC013, ein Fehler auch lax; neben any die ArgumentException mit dem Hinweis",
+                Run("int a = 5\nstring s = \"x\"\ntry { print(a! + s) } catch (ArgumentException e) { print(e.message) }") is var toText && toText == "|ERROR TC013"
                 && Run("int a = 5\nstring s = \"x\"\nprint(s + a!)", TypeCheckMode.Strict) == "|ERROR TC013"
-                && Run("int a = 5\nbool t = true\ntry { print(a! == t) } catch (ArgumentException e) { print(e.message) }") == "TC013|Cannot coerce type Int to Bool."
-                && Run("any s = \"x\"\nint a = 5\ntry { print(a! + s) } catch (ArgumentException e) { print(e.message) }").StartsWith("|Cannot coerce type Int to String:"), toText);
+                && Run("int a = 5\nbool t = true\nprint(a! == t)") == "|ERROR TC013"
+                && Run("print(5!string)") == "|ERROR TC013" && Run("print(1!bool)") == "|ERROR TC013"
+                && Run("string s = \"x\"\nbool t = true\nprint(s! + \"y\")\nprint(s!string)\nprint(t!bool)\nprint(t! == true)", TypeCheckMode.Strict) == "|xy\nx\nTrue\nTrue"
+                && Run("any s = \"x\"\nint a = 5\ntry { print(a! + s) } catch (ArgumentException e) { print(e.message) }")
+                    == "|Cannot coerce type Int to String: '!' does not make the text of a value (write \"\" + x or x.ToString())."
+                && Run("any v = 5\ntry { print(v!string) } catch (ArgumentException e) { print(e.message) }").StartsWith("|Cannot coerce type Int to String:")
+                && Run("any t = true\nint a = 5\ntry { print(a! == t) } catch (ArgumentException e) { print(e.message) }") == "|Cannot coerce type Int to Bool.", toText);
             Check("x! neben einem undefinierten Anker: == und != melden den undefinierten Anker, die Rechnung den undefinierten Operanden",
                 Run("int a = 5\nint u\ntry { print(a! == u) } catch (ArgumentException e) { print(e.message) }\ntry { print(a! + u) } catch (Exception e) { print(e.message) }") is var undefAnchor
                 && undefAnchor == "|Cannot coerce type Int to Undefined: the operand that gives '!' its type is undefined.\nType Undefined is not numeric.", undefAnchor);
