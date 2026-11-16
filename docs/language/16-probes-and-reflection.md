@@ -12,7 +12,7 @@ class Config {
 }
 var cfg = new Config()
 
-var h = probe cfg.volume changed { print(name + ": " + old + " -> " + value) }
+int h = probe cfg.volume changed { print(name + ": " + old + " -> " + value) }
 probe cfg.volume changing (int old, int nv) => nv <= 100     // false stops the write
 
 cfg.volume = 20             // volume: 10 -> 20
@@ -80,7 +80,7 @@ print(Reflect.Get(c, "radius"))                 // 5
 Reflect.Set(c, "Diameter", 20.0)
 print(c.radius)                                 // 10
 print(Reflect.Call(c, "Scale", [2.0]))          // 20
-var c2 = Reflect.New("Circle", [1.5])
+Circle c2 = Reflect.New("Circle", [1.5])                 // Reflect gives `any`: the declaration checks it
 print(Reflect.Has(c, "Area"))                   // False
 try {
     Reflect.Get(c, "nope")
@@ -88,6 +88,9 @@ try {
     print(e.message)
 }
 ```
+
+A program that uses reflection (or reads JSON into objects) gets no derived `defined` fields and parameters, because a member can be reached by its
+name past what the compiler sees - except in a class marked `[InferDefined]` (see [Types](02-types.md#defined-never-undefined)).
 
 `Reflect.Set(obj, name, value)` owns like `obj.name = value`: what belongs to the call - a fresh value (`new List<Item>()`, an array literal),
 `copy x`, `take x` - belongs to `obj` from then on; an object of someone else stays theirs (the field refers to it). The same in the VM and natively.
@@ -177,8 +180,8 @@ method that was left out. The JSON `"$type"` is data of the run as well: at leve
 #import "reflection"
 [Keep]
 class Plugin { construct() { } }          // made only by a name that comes at run time
-var p = Reflect.New(Environment.Args[0], [])  // works natively because of [Keep]
-var q = Reflect.New("Plugin", [])           // a literal: works without [Keep] as well
+any p = Reflect.New(Environment.Args[0], [])  // works natively because of [Keep]
+Plugin q = Reflect.New("Plugin", [])          // a literal: works without [Keep] as well
 ```
 
 ### Selectors

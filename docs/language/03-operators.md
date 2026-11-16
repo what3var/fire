@@ -109,7 +109,8 @@ print(++i)          // 3
 ## Comparisons
 
 `==` and `!=` compare numbers by value (units are converted: `1m == 100cm`), texts by their characters, `bool` and `char` by value, and objects, arrays and
-lambdas **by reference** - unless the class defines `operator==` ([Classes](08-classes.md#operator-overloading)). `<`, `<=`, `>`, `>=` compare numbers (with
+lambdas **by reference** - unless the class defines `operator==` ([Classes](08-classes.md#operator-overloading)). Two
+[records](08-classes.md#records) are equal when they are of the same record and their fields are equal. `<`, `<=`, `>`, `>=` compare numbers (with
 units), characters and texts (ordinal, see [Strings](06-strings.md#comparing)).
 
 ```fire
@@ -216,13 +217,6 @@ print(x??.Length)               // undefined: a number has no Length
   interface (`animal!Dog`) - see [Types](02-types.md#converting-).
 - `value:unit` converts a number into another unit of the same dimension (`2km:m` is `2000m`); `value::unit` only relabels it (`12mm::m` is `12m`). See [Units](05-units.md).
 
-## Exercises
-
-1. Compute `2^0.5` and `(-8)^(1/3)` - why does the second one not give `-2`? (Hint: `1/3` is an `int` division.)
-2. Write `if (a ## b)` with `!=` and with `!(a == b)` - which do you find clearer?
-3. Use `+=` to build the text `"1,2,3,4,5"` in a loop.
-4. Swap two `int`s without a third variable using `#`.
-
 ## Bit functions
 
 The class `Bits` (always there, like `Math`) counts, rotates and reverses the bits of an `int` or a `word`, and turns a `float` into its IEEE bits
@@ -263,3 +257,9 @@ print(Bits.ToFloat16(0x3C00))            // 1
 - Together with the [typed reads and writes of a byte buffer](07-arrays-and-lists.md#reading-and-writing-numbers) this is what binary formats need:
   headers, float data of a GPU, half-precision weights, checksums.
 
+## Exercises
+
+1. Compute `2^0.5` and `(-8)^(1/3)` - why does the second one not give `-2`? (Hint: `1/3` is an `int` division.)
+2. Write `if (a ## b)` with `!=` and with `!(a == b)` - which do you find clearer?
+3. Use `+=` to build the text `"1,2,3,4,5"` in a loop.
+4. Swap two `int`s without a third variable using `#`.

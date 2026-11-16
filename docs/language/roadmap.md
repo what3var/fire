@@ -18,7 +18,9 @@ Nothing open at the moment (2.1, captures only with `taking`/`handover`, is buil
 
 ## 3. Type checker
 
-Nothing open at the moment.
+| # | Task | Why |
+|---|---|---|
+| 3.1 | Report a class that declares a static and an instance method of the same name, in every case | decided: mixing static and instance overloads is forbidden (see [Classes](08-classes.md#parameters)); today the compiler still accepts it |
 
 ## 4. Runtime and native backend
 

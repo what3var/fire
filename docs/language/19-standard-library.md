@@ -16,6 +16,9 @@ Every program has, without an import:
 | `IEnumerable<T>`, `IEnumerator<T>` | the interfaces of `foreach` - see [Interfaces and generics](09-interfaces-and-generics.md#ienumerable) |
 | `Exception` and the runtime exceptions | see [Exceptions](14-exceptions.md#errors-of-the-runtime) |
 | `Takes` | what travels along with `TakeTo` & co. - see [Ownership](13-ownership.md) |
+| `Channel<T>`, `Channel.Pair<A, B>()`, `Completion`, `CancellationSource`, `CancellationToken` | queues between threads, a value another task delivers, cancellation - see [Threads and actors](15-threads-and-actors.md#channels) |
+| `Expression`, `LambdaExpression`, `ExpressionVisitor`, `ExpressionRewriter` | expression trees (`lambda expression<T>`) - see [Lambdas](12-lambdas.md#expression-trees-lambda-expressiont) |
+| `Word` | `Word.Bits`, the width of the machine word - see [Types](02-types.md#the-machine-word-word) |
 | `ICommand`, `Command`, `ICommand<T>`, `Command<T>` | a command as an object: a lambda with `Execute()` |
 | methods of `string`, `char`, `int` | `ToUpper`, `Split`, `ToInt`, `ToFloat`, `Join`, `ToChar`, ... - see [Strings](06-strings.md) |
 | `Resource` | `new Resource("file.png")` embeds a file of the project into the program at compile time |
@@ -126,7 +129,7 @@ More in [Time](20-time.md).
 #import "time"
 var start = DateTime.Now
 Sleep(50ms)                         // a duration with a unit: ms, s, min, h
-var span = DateTime.Now - start
+TimeSpan span = DateTime.Now - start
 print(span.TotalMilliseconds >= 50) // True
 ```
 
@@ -174,8 +177,9 @@ Streams are closed by their destructor when their owner ends (see [Ownership](13
 
 ## More documentation
 
-The libraries for graphics, UI, network, devices, sound and 3D have their own documents in the `docs` folder of the repository (`UI.md`,
-`UI_MARKUP.md`, `NETWORK.md`, `AUDIO.md`, `USB.md`, `SCENE3D.md`, `TRACKER.md`, `FONTS.md`, `RESOURCES.md`). The editor completes the members of every
+The libraries for graphics, UI, network, devices, sound and 3D have their own documents in the `docs` folder of the repository, one folder per topic
+(`docs/ui`, `docs/graphics` - with fonts and 3D scenes -, `docs/networking`, `docs/audio` - with the tracker -, `docs/devices` - with USB -,
+`docs/stdlib` - with resources); `docs/README.md` lists them. The editor completes the members of every
 imported library while you type and shows their documentation comments.
 
 ## Exercises
