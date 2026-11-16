@@ -186,13 +186,11 @@ Noch kein C; alles hier ist für sich nützlich und macht den Rest prüfbar.
      `CheckRf`, `CheckSc`, `CheckScChecked`, `CheckExt`, `CheckArr`, `CheckClone` und ihren Fehler-Varianten sind Dateien in `tests/cases/vm-*`
      (mit Modi, `packed`, `.error`); das Testprogramm ruft je Ordner dieselbe Prüfung auf wie vorher. `Program.cs`: noch 18 700 Zeilen.
    * ~~Der Läufer ohne das Testprogramm~~ (umgesetzt): `tests/run-cases.sh <forge>` führt jeden Fall mit `forge run` aus und vergleicht - das Maß für
-     forge und die VM in C. Stand mit dem C#-forge (nach dem Merge bis PR 51): 1059 von 1064 richtig. Neun Reflection-Fälle bekamen dafür ihr `#import "reflection"` (das
+     forge und die VM in C. Stand mit dem C#-forge (nach dem Merge bis PR 56): 1061 von 1064 richtig. Neun Reflection-Fälle bekamen dafür ihr `#import "reflection"` (das
      Testprogramm hatte die Bibliothek stillschweigend dazugelegt), ein Fall ist als nur im Testprogramm sinnvoll markiert (`//# skip: forge run`).
-   * **Offen - vier Fälle weichen unter `forge run` ab** (im Testprogramm, das die VM im eigenen Prozess startet, laufen sie):
-     `native/0030` (wird seit E4076 nicht mehr übersetzt: `Go` statisch und als Instanzmethode - der Fall ist anzupassen),
-     `native/2340` (Threads mit Actors: `forge run` bleibt in `while (!done)` hängen - das im Thread gesetzte Global kommt im Hauptprogramm nicht an),
-     `native/4180` und `native/4190` (http.pages: richtige Ausgabe, danach `fire runtime error: Index was outside the bounds of the array.`, Exitcode 1).
-     Ursachen klären, bevor diese Fälle als Maß für die C-VM gelten.
+   * **Offen - zwei Fälle weichen unter `forge run` ab** (im Testprogramm, das die VM im eigenen Prozess startet, laufen sie): `native/4180` und
+     `native/4190` (http.pages: richtige Ausgabe, danach `fire runtime error: Index was outside the bounds of the array.`, Exitcode 1). Ursache
+     klären, bevor diese Fälle als Maß für die C-VM gelten. (`native/0030` und `native/2340` sind auf `master` angepasst, PR 54.)
    * ~~Die Einzeltests am Anfang von `Program.cs`~~ (zum Teil umgesetzt): die rund 130 Abschnitte dort druckten Ausgabe und einen Satz, was zu erwarten
      sei - **geprüft wurde nichts**. 58 davon (ein Skript, läuft mit `forge run` sauber durch) sind jetzt Fälle in `tests/cases/smoke` mit
      festgehaltener Ausgabe; der alte Satz steht als `//# note:` im Fall. Zwei dieser Sätze waren überholt (Enums in Namespaces drucken Namen statt
