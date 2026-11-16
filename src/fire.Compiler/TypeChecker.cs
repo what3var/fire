@@ -170,6 +170,9 @@ namespace fire.Compiler
         /// <summary>An array (not a fresh one) given to a `byte`/`word` parameter: it is converted into a new buffer - what the method writes does not reach
         /// the array (a warning in strict mode too).</summary>
         public const string ArrayToBufferCode = "TC032";
+        /// <summary>A value that is certainly no string goes into a declaration `string` (DECISIONS D14): it becomes its text (`x.ToString()`). Reported in
+        /// strict mode only, and there as a warning - the conversion is the language's rule, the warning asks to write it where it is meant.</summary>
+        public const string TextConversionCode = "TC033";
         private ExpressionTrees _trees = new();
         private Dictionary<Expr, string>? _treeTypes;
 
@@ -849,7 +852,7 @@ namespace fire.Compiler
         private void Report(string code, string message, int line)
         {
             if (_source < _reportFrom) return;
-            _diagnostics.Add(new Diagnostic(line, message, Strict && code is not (UnitLossCode or AssignInConditionCode or SwitchMissingCode or SetterClaimCode or LateVarTypeCode or TakeIntoCopyCode or StoredTemporaryCode or ArrayToBufferCode) ? DiagnosticSeverity.Error : DiagnosticSeverity.Warning, code));
+            _diagnostics.Add(new Diagnostic(line, message, Strict && code is not (UnitLossCode or AssignInConditionCode or SwitchMissingCode or SetterClaimCode or LateVarTypeCode or TakeIntoCopyCode or StoredTemporaryCode or ArrayToBufferCode or TextConversionCode) ? DiagnosticSeverity.Error : DiagnosticSeverity.Warning, code));
         }
 
         /// <summary>The condition of `if`, `while` and `for` must be a bool: a number is no condition (`if (n)`), the VM throws an ArgumentException for it.</summary>
@@ -882,6 +885,9 @@ namespace fire.Compiler
             // an expression tree where a lambda is expected: its compiled lambda (the other way round there is no tree - TC030)
             if (value is { Kind: StaticKind.Class, Class: "LambdaExpression" } && target.Kind == StaticKind.Lambda && valueExpr != null) { _trees.ToCompiled.Add(valueExpr); return; }
             if (!Assignable(value, target)) { Report(code, $"Cannot assign a value of type '{value}' to {what} of type '{target}'", line); return; }
+            // (a value that is certainly no string into `string` - DECISIONS D14: it becomes its text; strict mode says so)
+            if (Strict && target.Kind == StaticKind.String && !value.IsDynamic && value.Kind is not (StaticKind.String or StaticKind.Undefined))
+                Report(TextConversionCode, $"A value of type '{value}' goes into {what}, which is a 'string': it becomes its text (ToString()) - write '.ToString()' or '\"\" + ...' where that is meant", line);
             if (CutsWide(value, target))
                 Report(WideIntCode, $"An int[{value.Wide}] goes into {what}, a plain int of {ProgramIntWidth} bits in this program: it is cut - declare int[{value.Wide}], or cut it on purpose (!int)", line);
             CheckUnitAssignable(value, target, line, what, valueExpr);

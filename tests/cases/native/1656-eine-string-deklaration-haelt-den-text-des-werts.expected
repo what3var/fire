@@ -1,0 +1,27 @@
+5|5|5|5|5|5/1|5|5|5|5|True|5
+2.5|2.5|2.5|2.5|2.5|2.5/3|2.5|2.5|2.5|2.5|True|2.5
+True|True|True|True|True|True/4|True|True|True|True|True|True
+c|c|c|c|c|c/1|c|c|c|c|True|c
+Blue|Blue|Blue|Blue|Blue|Blue/4|Blue|Blue|Blue|Blue|True|Blue
+5m|5m|5m|5m|5m|5m/2|5m|5m|5m|5m|True|5m
+2.5km|2.5km|2.5km|2.5km|2.5km|2.5km/5|2.5km|2.5km|2.5km|2.5km|True|2.5km
+<object R>|<object R>|<object R>|<object R>|<object R>|<object R>/10|<object R>|<object R>|<object R>|<object R>|True|<object R>
+<array>|<array>|<array>|<array>|<array>|<array>/7|<array>|<array>|<array>|<array>|True|<array>
+P(3)|P(3)|P(3)|P(3)|P(3)|P(3)/4|P(3)|P(3)|P(3)|P(3)|True|P(3)
+<object Q>|<object Q>|<object Q>|<object Q>|<object Q>|<object Q>/10|<object Q>|<object Q>|<object Q>|<object Q>|True|<object Q>
+undefined|undefined|undefined|undefined|undefined|undefined/-1|undefined|undefined|undefined|undefined|False|-
+1
+False
+True
+P(3)
+N422
+variable: no text
+field: no text
+parameter: no text
+return: no text
+element: no text
+Field 'd' is a string and never undefined.
+7 True
+True
+1P(3)Red True
+<object Q> 4 Red 3m True z s
