@@ -33094,6 +33094,153 @@ else
             print(log)
             server.Close()
             """),
+        ("Http.Pages: ein Handler der Seite wirft (Exception, Laufzeitfehler) - nur dieser Circuit endet (Socket 4500, vergessen), OnError bekommt Seite, Pfad, Klasse und Meldung; ein anderer Circuit, die Sitzung und der Server laufen weiter", """
+            #import "http.pages"
+            #import "ui"
+            class Boom : Exception { construct(string m) : base(m) { } }
+            [Page "/bad"]
+            class BadPage {
+                UI.Panel view
+                UI.Label title
+                int n = 0
+                construct() {
+                    this.view = new UI.Panel(0, 0, 400, 300)
+                    var s = new UI.StackPanel(0, 0, -1, -1)
+                    var l = new UI.Label("zero", 0, 0)
+                    s.Add(l)
+                    this.title = l
+                    var ok = new UI.Button("ok", 0, 0)
+                    ok.OnClick = func () on this => { this.n = this.n + 1; this.title.Text = "n " + this.n }
+                    s.Add(ok)
+                    var bad = new UI.Button("bad", 0, 0)
+                    bad.OnClick = func () on this => { throw new Boom("bang " + this.n) }
+                    s.Add(bad)
+                    var worse = new UI.Button("worse", 0, 0)
+                    worse.OnClick = func () on this => { any nothing = undefined; this.title.Text = nothing.name }
+                    s.Add(worse)
+                    this.view.Add(s)
+                }
+            }
+            class Seen { List lines = new List() }
+            var seen = new Seen()
+            var server = new Http.AppServer("127.0.0.1", 0)
+            var pages = new Http.Pages("Bad")
+            pages.OnError(func (any e) on seen => { lines.Add(e.phase + " " + e.page + " " + e.path + " " + e.type + ": " + e.message + " ids " + e.circuit.Length + " " + e.session.Length) })
+            server.PushTo(new Http.Sessions()).PushTo(pages)
+            int port = server.Port
+            int done = 0
+            string log = ""
+            fire taking port {
+                var c = new Http.Client()
+                var r = c.Get("http://127.0.0.1:" + port + "/bad")
+                var html = r.Text()
+                var cookie = r.Header("Set-Cookie").Substring(0, 45)
+                var h = new Http.Headers()
+                h.Set("Cookie", cookie)
+                var circuit = html.Substring(html.IndexOf("data-circuit=\"") + 14, 32)
+                var html2 = c.Get("http://127.0.0.1:" + port + "/bad", h).Text()
+                var circuit2 = html2.Substring(html2.IndexOf("data-circuit=\"") + 14, 32)
+                var html3 = c.Get("http://127.0.0.1:" + port + "/bad", h).Text()
+                var circuit3 = html3.Substring(html3.IndexOf("data-circuit=\"") + 14, 32)
+                var ws = Http.WebSocket.Connect("ws://127.0.0.1:" + port + "/_fire/ws?c=" + circuit, 5000, h)
+                var ws2 = Http.WebSocket.Connect("ws://127.0.0.1:" + port + "/_fire/ws?c=" + circuit2, 5000, h)
+                var ws3 = Http.WebSocket.Connect("ws://127.0.0.1:" + port + "/_fire/ws?c=" + circuit3, 5000, h)
+                var out = "script knows 4500 " + (html.IndexOf("ev.code!=4500") > 0) + "\n"
+                ws.Send("{\"e\": 3, \"k\": \"click\"}")
+                out = out + "ok " + ws.ReceiveText(5000) + "\n"
+                ws.Send("{\"e\": 4, \"k\": \"click\"}")
+                out = out + "exception " + ws.ReceiveText(5000) + " open " + ws.IsOpen + " code " + ws.CloseCode + "\n"
+                ws3.Send("{\"e\": 5, \"k\": \"click\"}")
+                out = out + "runtime error " + ws3.ReceiveText(5000) + " open " + ws3.IsOpen + " code " + ws3.CloseCode + "\n"
+                ws2.Send("{\"e\": 3, \"k\": \"click\"}")
+                out = out + "other circuit " + ws2.ReceiveText(5000) + "\n"
+                var again = Http.WebSocket.Connect("ws://127.0.0.1:" + port + "/_fire/ws?c=" + circuit, 5000, h)
+                out = out + "forgotten " + (again.ReceiveText(5000) == undefined) + " " + again.CloseCode + "\n"
+                var r4 = c.Get("http://127.0.0.1:" + port + "/bad", h)
+                out = out + "new page " + r4.status + " same session " + (r4.Header("Set-Cookie") == undefined) + "\n"
+                ws2.Send("{\"e\": 3, \"k\": \"click\"}")
+                out = out + "still " + ws2.ReceiveText(5000) + "\n"
+                ws2.Close()
+                sync global { log = out; done = 1 }
+            }
+            while (done < 1) { server.AcceptOne(20ms); sync globals }
+            print(log)
+            for (var i = 0; i < 200 && seen.lines.Count < 2; i++) { Sleep(20ms) }
+            for (var i = 0; i < seen.lines.Count; i++) { print(seen.lines[i]) }
+            print("open " + pages.Open())
+            server.Close()
+            print("end")
+            """),
+        ("Http.Pages: ohne OnError geht der Fehler eines Handlers als Zeile auf die Fehlerausgabe, das Programm laeuft weiter und endet mit 0 (Http.Pages-Zeile auf stderr)", """
+            #import "http.pages"
+            #import "ui"
+            class Boom : Exception { construct(string m) : base(m) { } }
+            [Page "/bad"]
+            class BadPage {
+                UI.Panel view
+                UI.Label title
+                int n = 0
+                construct() {
+                    this.view = new UI.Panel(0, 0, 400, 300)
+                    var s = new UI.StackPanel(0, 0, -1, -1)
+                    var l = new UI.Label("zero", 0, 0)
+                    s.Add(l)
+                    this.title = l
+                    var ok = new UI.Button("ok", 0, 0)
+                    ok.OnClick = func () on this => { this.n = this.n + 1; this.title.Text = "n " + this.n }
+                    s.Add(ok)
+                    var bad = new UI.Button("bad", 0, 0)
+                    bad.OnClick = func () on this => { throw new Boom("bang " + this.n) }
+                    s.Add(bad)
+                    var worse = new UI.Button("worse", 0, 0)
+                    worse.OnClick = func () on this => { any nothing = undefined; this.title.Text = nothing.name }
+                    s.Add(worse)
+                    this.view.Add(s)
+                }
+            }
+            var server = new Http.AppServer("127.0.0.1", 0)
+            server.PushTo(new Http.Sessions()).PushTo(new Http.Pages("Bad"))
+            int port = server.Port
+            int done = 0
+            string log = ""
+            fire taking port {
+                var c = new Http.Client()
+                var r = c.Get("http://127.0.0.1:" + port + "/bad")
+                var html = r.Text()
+                var cookie = r.Header("Set-Cookie").Substring(0, 45)
+                var h = new Http.Headers()
+                h.Set("Cookie", cookie)
+                var circuit = html.Substring(html.IndexOf("data-circuit=\"") + 14, 32)
+                var html2 = c.Get("http://127.0.0.1:" + port + "/bad", h).Text()
+                var circuit2 = html2.Substring(html2.IndexOf("data-circuit=\"") + 14, 32)
+                var html3 = c.Get("http://127.0.0.1:" + port + "/bad", h).Text()
+                var circuit3 = html3.Substring(html3.IndexOf("data-circuit=\"") + 14, 32)
+                var ws = Http.WebSocket.Connect("ws://127.0.0.1:" + port + "/_fire/ws?c=" + circuit, 5000, h)
+                var ws2 = Http.WebSocket.Connect("ws://127.0.0.1:" + port + "/_fire/ws?c=" + circuit2, 5000, h)
+                var ws3 = Http.WebSocket.Connect("ws://127.0.0.1:" + port + "/_fire/ws?c=" + circuit3, 5000, h)
+                var out = "script knows 4500 " + (html.IndexOf("ev.code!=4500") > 0) + "\n"
+                ws.Send("{\"e\": 3, \"k\": \"click\"}")
+                out = out + "ok " + ws.ReceiveText(5000) + "\n"
+                ws.Send("{\"e\": 4, \"k\": \"click\"}")
+                out = out + "exception " + ws.ReceiveText(5000) + " open " + ws.IsOpen + " code " + ws.CloseCode + "\n"
+                ws3.Send("{\"e\": 5, \"k\": \"click\"}")
+                out = out + "runtime error " + ws3.ReceiveText(5000) + " open " + ws3.IsOpen + " code " + ws3.CloseCode + "\n"
+                ws2.Send("{\"e\": 3, \"k\": \"click\"}")
+                out = out + "other circuit " + ws2.ReceiveText(5000) + "\n"
+                var again = Http.WebSocket.Connect("ws://127.0.0.1:" + port + "/_fire/ws?c=" + circuit, 5000, h)
+                out = out + "forgotten " + (again.ReceiveText(5000) == undefined) + " " + again.CloseCode + "\n"
+                var r4 = c.Get("http://127.0.0.1:" + port + "/bad", h)
+                out = out + "new page " + r4.status + " same session " + (r4.Header("Set-Cookie") == undefined) + "\n"
+                ws2.Send("{\"e\": 3, \"k\": \"click\"}")
+                out = out + "still " + ws2.ReceiveText(5000) + "\n"
+                ws2.Close()
+                sync global { log = out; done = 1 }
+            }
+            while (done < 1) { server.AcceptOne(20ms); sync globals }
+            print(log)
+            server.Close()
+            print("end")
+            """),
         ("Net: der Poller weckt wartende Threads (40 Verbindungen in fire-Threads, Daten kommen spaeter), Zeitlimit, Abbruch eines Read per until", """
             #import "net"
             #import "time"
@@ -34983,6 +35130,10 @@ else
                 // (the end of the program ended a thread: the line on stderr is checked on its own - the VM writes it to the console, not to the output)
                 else if (c.Name.Contains("(Meldung auf stderr)"))
                     actual = exit == 0 && stderr.Contains("ended like with terminate") ? stdout : $"Exitcode {exit}: {stdout}stderr: {stderr}";
+                // (Http.Pages without OnError: the errors of the pages are lines on stderr - checked on their own, the VM writes them to the console)
+                else if (c.Name.Contains("(Http.Pages-Zeile auf stderr)"))
+                    actual = exit == 0 && stderr.Contains("Http.Pages: page 'BadPage' (/bad), circuit ") && stderr.Contains(": a handler of the page threw Boom: bang 1") && stderr.Contains(": a handler of the page threw ArgumentException: ") && stderr.Split('\n', StringSplitOptions.RemoveEmptyEntries).Length == 2
+                        ? stdout : $"Exitcode {exit}: {stdout}stderr: {stderr}";
                 // `terminate(n)` with a whole number is the exit code of the process (like the command line runner)
                 else actual = exit == 0 || (c.Name.StartsWith("Threads:") && c.Source.Contains("terminate(")) ? stdout + stderr : $"Exitcode {exit}: {stdout}{stderr}";
                 CheckNat($"Native == VM: {c.Name}", expected == actual, $"  erwartet (VM):\n{expected}\n  erhalten (C++):\n{actual}");

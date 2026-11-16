@@ -125,6 +125,11 @@ ran out or its token is cancelled. **Built** (poll()/WSAPoll, not yet epoll/kque
    Built since: images, pushes without an event, lists with templates and the columns of a ListView (header, sorting), menus (MenuBar), trees.
    Focus and keys (to the focused element through the UI root, `browser.Focus`, `browser.OnKey`). Hover (the elements with a trigger
    on Hover) and context menus (a right click, the menu of the element or one around it) - built.
+   Errors (decided by the user: the framework catches them): an exception out of the code of a page - a runtime error is one - ends only its circuit
+   (WebSocket closed with 4500, forgotten by the directory, the browser offers a reload) and goes to `Http.Pages.OnError(handler)` (an `Http.PageError`;
+   the handler has a thread of its own), without a handler as a line to standard error - built. Open: in the VM an exception out of the constructor of
+   a page (called through `Type.New`) cannot be caught and still ends the program; a native build has runtime errors that are no exceptions (the call
+   of a value that is not a lambda).
 7. Canvas recording, JS calls - **first part built**: a `DrawingCanvas` paints on the server and goes as a PNG (exact, simpler than recording the calls;
    or - with `[Vector]` / `browser.Vector` - as its recorded drawing calls, replayed on a canvas 2D), its pointer events; pushes without an event (the circuit looks after a tenth of a second without one);
    `browser.Call(name, args, callback)` / `browser.Run(code)`; **the waiting form** `any v = browser.Call(name, args)` is built: the socket never waits for

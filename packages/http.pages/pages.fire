@@ -3,6 +3,7 @@
 #import "reflection"
 #import "json"
 #import "hash"
+#import "io"
 
 // http.pages (docs/networking/http.md, docs/ROADMAP_HTTP.md step 6): FXML views as web pages. A class with [Page "/path"] - the code-behind of an FXML View -
 // is a page: a GET of its path makes a circuit (the page lives in a task of its own, with its elements, bindings and handlers) and answers with HTML; the
@@ -920,17 +921,78 @@ namespace Http {
             // (the socket ended: the directory ends the circuit - Remove, Stop -; until then it is still there for its messages)
             while (!c.stopped) { process c }
         }
+
+        // (the end after an error, on the circuit's thread: its direction of the link closes - the socket stops waiting)
+        static undefined End(Http.PageCircuit c) {
+            c.stopped = true
+            if (c.state.link != undefined) { c.state.link.Close() }
+        }
     }
 
     // (what the thread of a new circuit gets)
     class PageStart {
         string typeName
+        string path
         string id
         string session
-        construct(string typeName, string id, string session) {
+        construct(string typeName, string path, string id, string session) {
             this.typeName = typeName
+            this.path = path
             this.id = id
             this.session = session
+        }
+    }
+
+    // What the handler of Http.Pages.OnError gets: an exception that the code of a page did not catch.
+    class PageError {
+        string page       // the class of the page
+        string path       // its path ([Page "/path"])
+        string circuit    // the id of the circuit (the page view) that ended
+        string session    // the id of its session
+        string phase      // "start": while the page was made (its constructor), "html": while its first HTML was made, "event": later - a handler of the page
+        string type       // the class of the exception
+        string message    // its message
+        construct(string page, string path, string circuit, string session, string phase, string type, string message) {
+            this.page = page
+            this.path = path
+            this.circuit = circuit
+            this.session = session
+            this.phase = phase
+            this.type = type
+            this.message = message
+        }
+    }
+
+    // The home of the handler of Http.Pages.OnError: an actor on a thread of its own (the handler was handed over to it). The directory sends it the
+    // errors of the pages - the handler never runs on the thread of a page, a connection or the directory.
+    actor PageErrors {
+        lambda<any> handler
+        bool stopped
+
+        construct(lambda<any> handler) {
+            this.handler = take handler
+            this.stopped = false
+        }
+
+        undefined Report(string page, string path, string circuit, string session, string phase, string type, string message) {
+            var report = this.handler
+            try {
+                report(new Http.PageError(page, path, circuit, session, phase, type, message))
+            } catch (e) {
+                // (the handler itself threw: its home goes on - the error it was called for and its own, on standard error)
+                IO.Stdio.ErrorLine(Http.PageErrors.Line(page, path, circuit, phase, type, message) + " - and the OnError handler threw " + Type.Of(e).Name + ": " + e.message)
+            }
+        }
+
+        undefined Stop() { this.stopped = true }
+
+        // The line of an error for the log (without the session id: it is the key to the session).
+        static string Line(string page, string path, string circuit, string phase, string type, string message) {
+            var what = "a handler of the page threw"
+            if (phase == "start") { what = "the page could not be made," }
+            else if (phase == "html") { what = "the HTML of the page could not be made," }
+            // (one line: a message of several lines is joined)
+            return "Http.Pages: page '" + page + "' (" + path + "), circuit " + circuit + ": " + what + " " + type + ": " + message.Replace("\r", "").Replace("\n", " ")
         }
     }
 
@@ -941,6 +1003,8 @@ namespace Http {
         Dictionary<string, Completion> waiting
         // answers that came before their Expect (the call goes out on the page's channel, the Expect through this mailbox)
         Dictionary<string, string> early
+        // the home of the OnError handler (undefined: the errors of the pages go to standard error, a line each)
+        Http.PageErrors errors
         bool stopped
 
         construct() {
@@ -1003,6 +1067,28 @@ namespace Http {
 
         defined int Count() { return this.circuits.Count }
 
+        // (Http.Pages.OnError: the home of the handler; the one before it ends)
+        undefined Reporter(Http.PageErrors errors) {
+            if (this.errors != undefined) {
+                var old = this.errors
+                old.Stop()
+            }
+            this.errors = errors
+        }
+
+        // The code of a page threw and nothing caught it: the error goes to the OnError handler (without one: a line on standard error). After an
+        // "event" the circuit is forgotten - its thread ends by itself (no Stop: nobody would run that message), its socket closes with 4500 when
+        // it finds the circuit gone.
+        undefined Failed(string id, string page, string path, string session, string phase, string type, string message) {
+            if (phase == "event" && this.circuits.ContainsKey(id)) { this.circuits.Remove(id) }
+            if (this.errors == undefined) {
+                IO.Stdio.ErrorLine(Http.PageErrors.Line(page, path, id, phase, type, message))
+                return
+            }
+            var e = this.errors
+            e.Report(page, path, id, session, phase, type, message)
+        }
+
         // (circuits whose browser never connected within a minute end)
         static undefined Sweep(Dictionary<string, Http.PageCircuit> circuits) {
             var now = DateTime.UtcNow.Ticks
@@ -1022,6 +1108,10 @@ namespace Http {
             foreach (var pair in this.circuits) {
                 Http.PageCircuit c = pair.Value
                 c.Stop()
+            }
+            if (this.errors != undefined) {
+                var e = this.errors
+                e.Stop()
             }
             this.stopped = true
         }
@@ -1053,6 +1143,23 @@ namespace Http {
                 var text = ws.ReceiveText(-1, link)
                 if (text == undefined) {
                     if (!ws.IsOpen) { break }
+                    if (link.IsClosed) {
+                        // (the circuit ended by itself. A handler of the page threw: the directory has forgotten the circuit - 4500, and the browser
+                        // says so; the text of the exception stays on the server. Else the server is closing: 1001)
+                        var code = 1001
+                        var reason = "page closed"
+                        try {
+                            Http.PageCircuit still = await d.Find(id)
+                            if (still == undefined) {
+                                code = 4500
+                                reason = "page error"
+                            }
+                        } catch (e) {
+                            // (the directory has ended: the server is closing)
+                        }
+                        ws.Close(code, reason)
+                        break
+                    }
                 } else {
                     if (text.IndexOf("\"k\":\"js\"") >= 0 || text.IndexOf("\"k\": \"js\"") >= 0) {
                         // (an answer to browser.Call: a waiting call gets it from the directory - its circuit is busy -, a callback from the circuit)
@@ -1110,21 +1217,27 @@ namespace Http {
         }
 
         // (a circuit on a thread of its own: it makes the page there and serves its messages until Stop)
-        static undefined StartCircuit(string typeName, string id, string session, Http.PageDirectory directory, Completion back) {
-            var start = new Http.PageStart(typeName, id, session)
+        static undefined StartCircuit(string typeName, string path, string id, string session, Http.PageDirectory directory, Completion back) {
+            var start = new Http.PageStart(typeName, path, id, session)
             // (the directory - an actor - goes with `with`: its reference, not the actor)
             fire handover back handover start with directory {
                 bool started = false
+                Http.PageCircuit c = undefined   // (out here: the circuit - and its end of the link - lives until the directory knows of an error)
                 try {
-                    var c = new Http.PageCircuit(start.typeName, start.id, start.session, directory)
+                    c = new Http.PageCircuit(start.typeName, start.id, start.session, directory)
                     back.Set(c)
                     started = true
                     Http.PageCircuit.Serve(c)
                 } catch (e) {
-                    // (the page could not be made: the request that waits gets the exception. Later - a handler of the page threw - nobody waits any
-                    // more and the completion is gone: the exception stays what it is, an unhandled one of this thread)
+                    // (an exception that the code of the page did not catch - a runtime error is one too - ends this circuit and nothing else: the
+                    // directory hears of it first (it tells the OnError handler and forgets the circuit), then the link closes - the socket finds the
+                    // circuit gone and closes with 4500 -, then this thread ends and with it the page, its root, window and framebuffer. While the page
+                    // was being made the request still waits: it gets the exception)
+                    var phase = "event"
+                    if (!started) { phase = "start" }
+                    directory.Failed(start.id, start.typeName, start.path, start.session, phase, Type.Of(e).Name, "" + e.message)
                     if (!started) { back.Fail(e) }
-                    else { throw e }
+                    else { Http.PageCircuit.End(c) }
                 }
             }
         }
@@ -1139,11 +1252,21 @@ namespace Http {
             var id = Net.SecureRandom.Hex(16)
             var ready = new Completion()
             var back = ready.Share()
-            Http.Pages.StartCircuit(this.paths[request.path], id, session.Id, this.directory, take back)
+            var typeName = this.paths[request.path]
+            Http.Pages.StartCircuit(typeName, request.path, id, session.Id, this.directory, take back)
+            // (the page could not be made - its constructor threw: the exception of the wait is the request's, a 500; OnError has it from the circuit)
             Http.PageCircuit c = ready.Wait(30s)
             var d = this.directory
             d.Add(id, c)
-            string body = await c.Html()
+            string body = ""
+            try {
+                body = await c.Html()
+            } catch (e) {
+                // (the first HTML could not be made - a binding, a template threw: the circuit ends, the request gets the exception)
+                d.Failed(id, typeName, request.path, session.Id, "html", Type.Of(e).Name, "" + e.message)
+                d.Remove(id)
+                throw e
+            }
             return Http.Response.FromHtml(Http.Pages.Document(this.title, body, id))
         }
 
@@ -1166,6 +1289,8 @@ namespace Http {
             return "(function(){var me=document.currentScript.dataset.circuit;var ws=new WebSocket((location.protocol=='https:'?'wss://':'ws://')+location.host+'/_fire/ws?c='+me);var q=[];" +
                 "function send(m){var t=JSON.stringify(m);if(ws.readyState==1){ws.send(t)}else{q.push(t)}}" +
                 "ws.onopen=function(){q.forEach(function(t){ws.send(t)});q=[]};" +
+                // (4500: a handler of the page threw and its circuit ended - the page says so and offers to load it anew; there is nothing to reconnect to)
+                "ws.onclose=function(ev){if(ev.code!=4500||document.getElementById('fire-ended')){return}var b=document.createElement('div');b.id='fire-ended';b.setAttribute('role','alert');b.style.cssText='position:fixed;left:0;right:0;top:0;z-index:99;padding:8px 12px;background:#b00020;color:#fff;font:14px system-ui,sans-serif';b.textContent='This page ended with an error. ';var a=document.createElement('a');a.href=location.href;a.textContent='Reload';a.style.color='#fff';b.appendChild(a);document.body.appendChild(b)};" +
                 "function idOf(el){while(el&&!(el.id&&el.id.charAt(0)=='f')){el=el.parentElement}return el?+el.id.substring(1):-1}" +
                 "document.addEventListener('click',function(ev){var t=ev.target.closest('[data-k=click]');if(t){send({e:idOf(t),k:'click'})}});" +
                 "document.addEventListener('click',function(ev){var r=ev.target.closest('.f-row');if(r){var g=ev.target.closest('.f-tree .f-tog');send({e:idOf(r.parentElement),k:g?'toggle':'select',v:+r.dataset.i})}});" +
@@ -1219,6 +1344,27 @@ namespace Http {
                 "if(d.menu!==undefined){var cm=document.createElement('div');cm.className='f-ctx';cm.dataset.e=d.menu.e;cm.innerHTML='<div class=\\'f-pop\\'>'+d.menu.html+'</div>';cm.style.left=d.menu.x+'px';cm.style.top=d.menu.y+'px';document.body.appendChild(cm)}" +
                 "if(d.focus!==undefined){var f=document.getElementById('f'+d.focus);if(f){lastFocus=d.focus;var c=f.matches('input,button,textarea,[tabindex]')?f:f.querySelector('input,button,textarea,[tabindex]');(c||f).focus()}}runJs(d.js)};" +
                 "})();"
+        }
+
+        // The exceptions that the code of a page did not catch: `handler(error)` gets an Http.PageError (the page class and path, the ids of the circuit
+        // and the session, the phase, the class and the message of the exception). The handler is handed over to a thread of its own and runs there,
+        // one error after the other (bound with `on` to an object it runs where the object lives). Without a handler every error is a line on standard
+        // error. Either way only the circuit of that page ends (its WebSocket closes with 4500). Set it before the server runs.
+        undefined OnError(lambda<any> handler) {
+            var ready = new Completion()
+            var back = ready.Share()
+            Http.Pages.StartErrors(take handler, take back)
+            Http.PageErrors errors = ready.Wait(10s)
+            var d = this.directory
+            d.Reporter(errors)
+        }
+
+        static undefined StartErrors(lambda<any> handler, Completion back) {
+            fire handover back handover handler {
+                var errors = new Http.PageErrors(take handler)
+                back.Set(errors)
+                while (!errors.stopped) { process errors }
+            }
         }
 
         // The number of open pages.
