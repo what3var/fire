@@ -721,6 +721,14 @@ overloads without hiding the inherited overloads of the base class – the call
 searches across the whole inheritance chain for the overload that matches the
 arguments.
 
+A name is either **static or for instances**, not both: a class may not declare
+`static bool Inside(R a, R b)` next to `bool Inside(int x, int y)`, and a
+derived class may not add an instance method named like a static method of a
+base class (or the other way round) - `E4076`, also in packages, where it stops
+the package from being built. (Otherwise `R.Inside(a, b)`, `r.Inside(a, b)` and
+`Inside(a, b)` inside the class would choose between them by how they are
+written.)
+
 **Constructors** work the same way – several `construct(...)` with
 different numbers or types of parameters in the same class:
 

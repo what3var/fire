@@ -171,8 +171,7 @@ namespace fire.Runtime
             if (lib.Idle != null) TaskHooks.IdlePump ??= IdleAction;   // (the waits of this thread give the library a turn: its windows of this thread)
             if (VM.CurrentThreadVm is { IsFireThreadVm: false } caller) lib.MainVm = caller;
             if (lib.Failure != null)
-                throw new InvalidOperationException($"The native function '{name}' of a package cannot run in the virtual machine: its library '{file}' could not be loaded ({lib.Failure}). " +
-                    "The compiler builds it from the C++ source of the package with a C++ compiler (g++, clang++ or cl): install one, or use a native build.");
+                throw new InvalidOperationException($"The native function '{name}' of a package cannot run in the virtual machine: its library '{file}' could not be loaded ({lib.Failure}).");
             if (!lib.Functions.TryGetValue(name, out var fn))
                 throw new InvalidOperationException($"The library '{file}' does not export the native function '{name}'.");
             if (fn.Arity != args.Length)

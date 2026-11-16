@@ -806,6 +806,10 @@ static class TypeTests
                 && Run(ifaces + "class Holder<T> where T is of IStream { T item }\nvar a = new Holder<IReader>()") == "|ERROR E4013", where);
             Check("Interface-Vererbung: ein geerbtes Mitglied fehlt (E4010)", Run(ifaces + "class Mem : IStream { int Read() { return 1 }\n int Size { get { return 1 } } }\nprint(1)") is var missing && missing == "|ERROR E4010", missing);
             Check("Interface-Vererbung: ein geerbtes Mitglied privat (E4063)", Run(ifaces + "class Mem : IStream { int Read() { return 1 }\n private undefined Write(int v) { }\n int Size { get { return 1 } } }\nprint(1)") is var priv && priv == "|ERROR E4063", priv);
+            Check("Statisch und Instanz mit demselben Namen ist E4076 (DECISIONS D11), auch ueber die Basisklasse; getrennte Namen gehen",
+                Run("class R {\n bool Inside(int a, int b) { return true }\n static bool Inside(R a, R b) { return false }\n}\nprint(1)") is var mixed && mixed.StartsWith("|ERROR E4076")
+                && Run("class B { static int F(int a) { return 1 } }\nclass C : B { int F() { return 2 } }\nprint(1)").StartsWith("|ERROR E4076")
+                && Run("class R { int G() { return 1 } static int H() { return 2 } }\nprint(R.H() + new R().G())") == "|3", mixed);
             Check("Interface-Vererbung: ein Zyklus ist E4068, eine Klasse als Basis E4067", Run("interface IA : IB { }\ninterface IB : IC { }\ninterface IC : IA { }\nprint(1)") is var cycle && cycle.StartsWith("|ERROR E4068")
                 && Run("class K { }\ninterface IA : K { }\nprint(1)") == "|ERROR E4067"
                 && CompileText("interface IA : IB { }\ninterface IB : IA { }").Contains("Interface 'IA' extends itself (IA -> IB -> IA)"), cycle);
