@@ -412,7 +412,7 @@ keinen Snapshot und keine Kopie mehr:
   freigegeben werden (`U.Pair(G.name, U.Slow())`). Ein Objekt oder Array bleibt ein Handle, das jeder Zugriff unter der Leseseite neu prüft. Das
   Hauptprogramm zahlt dafür einen Test auf die Art des Werts und auf „bin ich ein Thread“, nur bei Strings und Lambdas, nur in Programmen mit Threads.
   Mit der GIL gilt dasselbe (der Zähler ist dann der einfache). Nicht abgedeckt: das Hauptprogramm selbst leiht weiter (auch ohne Threads:
-  `U.Pair(G.name, U.Change())`, wenn `Change` `G.name` ersetzt), Zeiger auf Felder, Puffer des globalen Scopes (kein Flag des geteilten Bereichs).
+  `U.Pair(G.name, U.Change())`, wenn `Change` `G.name` ersetzt), Zeiger auf Felder. Puffer sind kein Fall dafür: siehe 7.1.
 - **`sync globals`** ist ein Ausdruck (liefert die Anzahl der bearbeiteten Einträge - auch der `fire global`-Aufträge, die es selbst ausführt) und gilt
   im Hauptprogramm; in einem Fire-Thread liefert es 0. Ein Auftrag läuft immer für sich: an den sicheren Punkten eines laufenden Auftrags wird die
   Warteschlange nicht abgearbeitet (sonst liefe der nächste Auftrag vor dem Ende des vorigen).
@@ -462,6 +462,46 @@ keinen Snapshot und keine Kopie mehr:
   ([NoCopy]) - 'host callback' would copy an instance of it, which exists only once."); ebenso ein Lambda/Pointer in einem Feld. Nativ gibt es diesen Weg
   nicht: ein Host-Dienst (`hostRequest`) läuft nur im Hauptprogramm, nach seinem Ende keiner mehr - kopiert wird also nie. Callbacks, die beim
   Programmende noch eingereiht sind, verfallen.
+
+### 7.1 Globale Puffer: geteilter Speicher
+
+**Implementierungsstand: umgesetzt** (nativ `bufRetire`, `FIRE_BUF_LD`/`FIRE_BUF_ST` in fire_rt.h; Sprachdoku: 15-threads-and-actors.md „Global
+buffers: shared memory“).
+
+Ein **Puffer** (`byte[]`, `word[]`) des geteilten Bereichs - in einer globalen Variablen oder einem statischen Feld, in einem Feld eines Objekts der
+Globals, als Element eines ihrer Arrays oder Listen - ist **geteilter Speicher** wie ein Speicherblock mehrerer Threads in C. Für seine **Elemente**
+gilt die Regel der Sektionen nicht:
+
+- **Elemente ohne Sperre und ohne Sektion.** Jeder Thread liest und schreibt sie direkt: keine Leseseite der Sperre der Globals, keine Sektion, kein
+  Auftrag, keine Ausnahme, weil der Thread ihn nicht besitzt (nativ liest `bufOf` das Flag nicht; `sharedValue` ist für Puffer immer falsch, die
+  Schreibpfade `aset`/`arraySet` nehmen für Puffer keine Sektion). In der VM ebenso (das Element wird direkt geschrieben).
+- **Garantiert: Speichersicherheit.** Grenzen werden geprüft wie immer; der Speicher eines Puffers wird nie freigegeben oder wiederverwendet, solange
+  ein Thread noch mitten in einem Zugriff darauf sein kann. Nativ ohne GIL: zerstört das Hauptprogramm (oder eine Sektion) einen solchen Puffer,
+  während Fire-Threads laufen, ist er sofort tot (neue Generation des Handles: der nächste Zugriff überall ist die `DestroyedException`), sein
+  Speicher aber ein **Grab** der Epochen der verliehenen Records (`g_lentGraves`, `lentReclaim`): freigegeben, wenn jeder Fire-Strang (alle sind
+  Leser, `lentJoin` in `threadRecBegin`) seitdem einen sicheren Punkt passiert hat oder wartet. Ein Zugriff ist Prüfung der Generation und Zugriff
+  ohne sicheren Punkt dazwischen; ein Strang meldet seine Epoche alle 4096 sicheren Punkte und bei jedem Warten (drei atomare Operationen). Ein
+  Elementzugriff kostet nichts zusätzlich. Betroffen sind nur Puffer, die das Hauptprogramm zerstört, und solche mit dem Flag des geteilten
+  Bereichs (oder solange verliehene Records leben); die eigenen Puffer eines Threads gehen sofort. Mit der GIL liest niemand, während der Zerstörer
+  läuft: sofort frei. In der VM verwaltet der Speicher sich selbst.
+- **Was die Adresse länger als einen Zugriff hält:** ein Native eines Pakets, das einen Puffer des Bereichs bekommt, läuft mit der Leseseite
+  (`fire_natArg`: das Flag `F_SHARED`, das Puffer des Bereichs jetzt tragen) - das Hauptprogramm hält die Schreibseite, solange es läuft, zerstört
+  also nicht währenddessen; ein Callback oder Warten im Native meldet keine Epoche (`g_natDom`), der Speicher wartet also auf das Native. Natives, die
+  warten, kopieren die Bytes vorher (Konvention, z.B. `Device.WaitFor`). `inline c`/`extern`, die Schleifen der Runtime über einen Puffer (Kopien,
+  Umwandlungen) haben keinen sicheren Punkt: die Epoche deckt sie. Ein `ref b[i]` wird bei jeder Benutzung geprüft wie ein Element.
+- **Garantiert: Zerstören sieht jeder.** Nach `delete`, einer Zuweisung, die den alten Puffer zerstört, oder dem Ende des Besitzers wirft der nächste
+  Zugriff jedes Threads die `DestroyedException`; ein Zugriff, der schon lief, endet normal (auf den alten Bytes).
+- **Nicht garantiert:** Reihenfolge und Atomarität zwischen Threads. Ein Wettlauf liefert den alten oder neuen Wert, bei einem `word` ggf. eine
+  Mischung (die Runtime verspricht keinen Schreibvorgang in einem Schritt; auf den 64-Bit-Desktopzielen ist es praktisch ein ausgerichteter Store,
+  auf 16 Bit nicht); ein `byte` ist alt oder neu. **Sichtbarkeit** ist erst nach einer synchronisierenden Operation sicher: Sektion (`sync global`,
+  eine Änderung eines Globals durch den Thread) und das Lesen danach, `sync globals`, Senden und Empfangen über einen Kanal, Nachricht an einen
+  Aktor und ihre Bearbeitung/Antwort, Erfüllen einer `Completion` und das `Wait()`, das es sieht, Start eines Threads (für das vorher Geschriebene)
+  und sein Ende (`await`).
+- **ThreadSanitizer:** die Elementzugriffe sind unter TSan ohne GIL relaxed atomics (`FIRE_BUF_LD`/`FIRE_BUF_ST`; sonst einfaches C, dieselben
+  Lade-/Speicherbefehle): der beabsichtigte Wettlauf wird nicht gemeldet, die Thread-Fälle bleiben ohne Data Race. Natives und Kopien der
+  Runtime über einen Puffer, den ein anderer Thread gleichzeitig schreibt, meldet TSan weiterhin (beabsichtigt, aber nicht markiert).
+- Puffer, die ein Thread selbst besitzt, mit `taking` (Kopie) oder `handover` bekam: unverändert seine. Ein Puffer des Bereichs kann ein Thread nicht
+  per `handover` weitergeben (er besitzt ihn nicht).
 
 ## 8. Offene Implementierungspunkte (bewusst hier vermerkt, nicht vergessen)
 

@@ -255,6 +255,54 @@ print(sync globals)                                  // 0: nothing left
 - Inside a destructor, a running job and `catch threads` the queue waits; the next job never starts inside another one.
 - The project setting `globalJobs` and `--global-jobs` on the command line go before the directive (Projects and solutions (`docs/tools/projects.md`)).
 
+## Global buffers: shared memory
+
+A **buffer** of the globals - `byte[]` or `word[]` in a global variable or static field, in a field of an object of the globals, or an element of one
+of their arrays and lists - is the exception to the rule above: it is **shared memory**, like a block of memory that several threads of a C program
+use. Every thread reads and writes its **elements** directly - no section, no job, no waiting for the main program, and no exception because the
+thread does not own it:
+
+```fire
+#import "time"
+byte frame[] = new byte[4]
+var ready = 0
+fire {
+    frame[0] = 10                               // no section: written in place
+    frame[1] = 20
+    sync global { ready = 1 }                   // a synchronising operation: what was written before is seen after it
+}
+while (ready < 1) { Sleep(1ms) }
+print(frame[0] + frame[1])                      // 30
+```
+
+What is **guaranteed** (in the VM and in a native build, with or without the GIL):
+
+- **Memory safety.** An access never reads or writes memory that is not the buffer's: the bounds are checked as always (`IndexOutOfBoundsException`),
+  and the memory of a buffer is never freed or reused while a thread may still be in the middle of an access to it - also not when the main program
+  destroys it at that moment.
+- **Destroying is seen by everybody.** `delete buf`, an assignment that destroys the old buffer (`h.data = new byte[64]`) or the end of its owner
+  destroys it for every thread at once: the next access anywhere is the `DestroyedException` ("Access to a destroyed buffer."). An access that was
+  already under way ends normally (it reads or writes the old bytes, which nobody sees any more).
+- A buffer that is not of the globals - the thread's own, one it got with `taking` (a copy) or `handover` (moved) - is the thread's alone, as before.
+
+What is **not** guaranteed - the program synchronises itself where it needs it:
+
+- **No ordering and no atomicity** between threads. When two threads write the same element, or one writes while another reads, the result is the old
+  or the new value - for a `word` element it may even be a mixture of both (a torn value): the runtime does not promise that a `word` is written in
+  one step (on the 64-bit desktop targets it is a single aligned store in practice, on a 16-bit target it is not). A `byte` element is one byte:
+  it is either old or new. A sequence of writes (a whole frame, a header and its length) may be seen in any order and partly.
+- **Visibility only after a synchronising operation.** What a thread wrote is certain to be seen by another one only after an operation that
+  synchronises the two: a section (`sync global { ... }`) or a change of a global by the thread (it is a section) and the main program reading it
+  afterwards, `sync globals`, a send and the receive of the same value on a channel, a message to an actor and its handling (and its reply), the
+  completion of a `Completion` and the `Wait()` that sees it, the start of a thread (for what was written before `fire`) and its end (for `await`,
+  the result of a task). Without one, a thread may go on seeing old bytes for a while.
+- Natives of packages that get the buffer (`Compression.Deflate.Compress(frame)`, `IO.Utf8.GetString(frame, ...)`) read or write it while other threads
+  may change it - they see the bytes as they are at that moment, like any other access.
+
+So a buffer of the globals suits data that one side produces and the other picks up after a signal (a frame, samples of a device), or data where an
+old value does no harm. For anything that has to be consistent, change it inside `sync global { ... }` (every thread that writes it must do so - the
+section does not stop accesses outside of one), or send copies through a channel or to an actor.
+
 ## Waiting for a result: `await`
 
 `fire` starts something and goes on; `await` waits for it and gets its result:
