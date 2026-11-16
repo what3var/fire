@@ -1,0 +1,36 @@
+// A global byte buffer and a global word buffer are shared memory: a fire thread reads them in a loop while the main program replaces them again
+// and again - the old one is destroyed (`delete`) while the thread may be in the middle of an access. The thread either reads the buffer whole or gets
+// the DestroyedException; the memory of the old buffer lives until no thread can be in an access any more (no use-after-free).
+class U {
+    static int Sum(byte b[]) {
+        int s = 0
+        for (int k = 0; k < 20; k++) { for (int i = 0; i < b.length; i++) { s = s + b[i] } }
+        return s
+    }
+}
+var done = 0
+var reads = 0
+var buf = new byte[256]
+var words = new word[64]
+fire {
+    int whole = 0
+    int gone = 0
+    for (int i = 0; i < 200; i++) {
+        try { int s = U.Sum(buf); whole = whole + 1 } catch (DestroyedException e) { gone = gone + 1 }
+        try { int nz = 0; for (int k = 0; k < words.length; k++) { if (words[k] != 0w) { nz++ } } } catch (DestroyedException e) { gone = gone + 0 }
+    }
+    sync global { done = 1; reads = whole + gone }
+}
+int n = 0
+while (done < 1) {
+    var old = buf
+    buf = new byte[256 + n % 64]
+    buf[n % 256] = n % 200
+    delete old
+    var oldWords = words
+    words = new word[64]
+    delete oldWords
+    n++
+}
+print("reads " + reads)
+//# name: Threads: Globaler Puffer - das Hauptprogramm ersetzt und loescht ihn, waehrend ein Thread ihn liest (kein use-after-free)

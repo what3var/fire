@@ -1,0 +1,4 @@
+main sees 42
+thread: destroyed
+thread: write destroyed
+end

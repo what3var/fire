@@ -1,0 +1,19 @@
+// After `delete` of a global buffer it is destroyed for every thread: the thread's next access is the DestroyedException. A write of a thread into a
+// global buffer is no section and throws nothing; the main program sees it after a synchronising operation (the section that sets `phase`).
+var phase = 0
+byte buf[] = new byte[8]
+fire {
+    buf[1] = 42
+    sync global { phase = 1 }
+    while (phase < 2) { sync globals }
+    try { print("read " + buf[1]) } catch (DestroyedException e) { print("thread: destroyed") }
+    try { buf[2] = 7 } catch (DestroyedException e) { print("thread: write destroyed") }
+    sync global { phase = 3 }
+}
+while (phase < 1) { sync globals }
+print("main sees " + buf[1])
+delete buf
+phase = 2
+while (phase < 3) { sync globals }
+print("end")
+//# name: Threads: Globaler Puffer nach delete fuer jeden Thread zerstoert, Schreiben eines Threads ohne Sektion
