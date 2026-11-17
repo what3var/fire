@@ -2750,7 +2750,7 @@ t.Find("radius").Get(circle)            // Member.Get/Set/Call(obj, ...)
   run as normal methods (an exception in them runs to the outer `catch`); for objects of the globals the section rules apply (THREADING_DESIGN.md section 7).
 - **Errors** are catchable **`ReflectionException`**s (`message`): unknown or unreadable/unwritable member, wrong number of arguments, not an object, unknown class.
 - **Limits:** Static members appear in the description, but cannot be read/written/called via `Reflect`. `Reflect.New` builds via a nested execution: if a constructor throws an exception, that is an
-  internal error instead of a catchable exception. Dynamically created fields (without a declaration) do not appear in `Type`, `Reflect.Has` knows them.
+  internal error instead of a catchable exception. An object has only the fields its class declares (writing another one through `any` is a `MissingMemberException`, `Reflect.Set` of it a `ReflectionException`).
 
 #### Selectors: `lambda member<T> name` (and `field`, `property`, `method`, `selector`)
 

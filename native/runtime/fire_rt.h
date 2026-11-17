@@ -4262,7 +4262,7 @@ FIRE_FN Chars charsOf(Value v) {
     c.sp = NULL; c.one = 0; c.isChar = false; c.n = 0;
     if (v.kind == K_Char) { c.one = (fire_char16)v.i; c.isChar = true; c.n = 1; }
     else if (v.kind == K_String) { c.sp = strOf(v)->data; c.n = strOf(v)->length; }
-    else fatal("A string or char was expected.");
+    else { kindError("A string or char was expected, not %s.", v.kind); c.isChar = true; }   /* (the VM's ArgumentException; no characters - the method's result is not used, the exception unwinds) */
     return c;
 }
 
@@ -5643,6 +5643,7 @@ FIRE_COLD FIRE_FN Value missingMethod(Value self, const char* name, int argc) {
 /* A field that the value does not have: a MissingMemberException (the texts of the VM). */
 FIRE_COLD FIRE_FN Value missingField(Value v, const char* name) {
     char text[400];
+    if (v.kind == K_Class && !leafAlive(v)) return destroyedError(v);   /* (the VM looks at a destroyed object first) */
     if (v.kind == K_Class) snprintf(text, sizeof text, "Field '%s' does not exist on an instance of '%s' (and there is no 'get_%s' property either).", name, className(asObj(v)->cls), name);
     else if (v.kind == K_String) snprintf(text, sizeof text, "Strings have no field '%s' (only 'Length').", name);
     else if (v.kind == K_Array) snprintf(text, sizeof text, "Arrays have no field '%s' (only 'Length').", name);
@@ -5659,6 +5660,21 @@ FIRE_COLD FIRE_FN Value missingField(Value v, const char* name) {
 FIRE_COLD FIRE_FN void notObjectAssign(Value v) {
     char text[200];
     snprintf(text, sizeof text, "Field assignment on a value of type %s which is not an object.", valueKindText(v));
+    fireError("ArgumentException", text);
+}
+/* An assignment to a field the class does not declare (through `any`: classes have fixed fields) and that is no property: the MissingMemberException of
+ * the VM (SetField), like reading it. */
+FIRE_COLD FIRE_FN void missingFieldSet(Value v, const char* name) {
+    char text[400];
+    if (v.kind != K_Class) { notObjectAssign(v); return; }
+    if (!leafAlive(v)) { destroyedError(v); return; }
+    snprintf(text, sizeof text, "Field '%s' does not exist on an instance of '%s' (and there is no 'set_%s' property either).", name, className(asObj(v)->cls), name);
+    fireError("MissingMemberException", text);
+}
+/* An assignment to a property that only has `get`: the VM's ArgumentException. */
+FIRE_COLD FIRE_FN void noSetterError(Value v, const char* name) {
+    char text[400];
+    snprintf(text, sizeof text, "Property '%s' on '%s' has no setter (only 'get').", name, className(asObj(v)->cls));
     fireError("ArgumentException", text);
 }
 
@@ -6459,8 +6475,10 @@ FIRE_COLD FIRE_FN Value sizeError(int64_t n, bool buffer) {
 }
 /* `word a[] = new int[n]`, `new word[n]`, `word a[n]` (NewArray right before TypeArray): n zero words at once. */
 FIRE_FN Value newWordBuffer(Value size, OwnList* list) {
+    if (size.kind == K_Word) size = Int((int64_t)size.w);   /* (a word as a size: its bits as an int, like the VM) */
     if (FIRE_UNLIKELY(size.kind == K_Int && size.i < 0)) return sizeError(size.i, false);
-    if (size.kind != K_Int || size.i < 0 || size.i > 0x7FFFFFFF) fatal("A buffer size must be a non-negative int.");
+    if (FIRE_UNLIKELY(size.kind != K_Int)) return kindError("An array size must be an int, not %s.", size.kind);   /* (the VM's ArgumentException, OpNewArray) */
+    if (size.i > 0x7FFFFFFF) fatal("A buffer size must be a non-negative int.");
     return BufV(allocBufOf((uint32_t)size.i, (uint8_t)sizeof(FireWord), list));
 }
 
@@ -6470,8 +6488,10 @@ FIRE_FN Value newTypedArray(Value size, uint8_t elem, uint32_t unit, uint8_t fla
     uint32_t length, i;
     Arr* a;
     ArrTyped* t;
+    if (size.kind == K_Word) size = Int((int64_t)size.w);   /* (a word as a size: its bits as an int, like the VM) */
     if (FIRE_UNLIKELY(size.kind == K_Int && size.i < 0)) return sizeError(size.i, false);
-    if (size.kind != K_Int || size.i < 0 || size.i > 0x7FFFFFFF) fatal("An array size must be a non-negative int.");
+    if (FIRE_UNLIKELY(size.kind != K_Int)) return kindError("An array size must be an int, not %s.", size.kind);   /* (the VM's ArgumentException, OpNewArray) */
+    if (size.i > 0x7FFFFFFF) fatal("An array size must be a non-negative int.");
     if (flags & (TU_DIMONLY | TU_ANY)) {   /* (keeps Values, see arrMakeTyped) */
         Value r = ArrV(allocArr((uint32_t)size.i, list));
         typeArray(r, elem, 1, unit, flags, unitText, 1);
@@ -6585,6 +6605,13 @@ FIRE_FN Value fire_arrayCopy(Value src, Value dst, Value count) {
     return Undef();
 }
 
+/* An index that is no int (from `any`: `a["x"]`) of an array, a buffer or a string (FIRE_INDEXABLE): the VM's catchable ArgumentException (a destroyed array
+ * or buffer is the DestroyedException first, as there). Of anything else the error of the target comes. */
+FIRE_COLD FIRE_FN Value indexKindError(Value a, Value i) {
+    if (a.kind != K_String && !leafAlive(a)) return destroyedError(a);
+    return kindError("An index must be an int, not %s.", i.kind);
+}
+#define FIRE_INDEXABLE(a) ((a).kind == K_Array || (a).kind == K_Buffer || (a).kind == K_String)
 FIRE_FN Value arrayGet(Value a, Value i) {
     char text[160];
     if (FIRE_LIKELY(a.kind == K_Array && i.kind == K_Int)) {
@@ -6599,7 +6626,7 @@ FIRE_FN Value arrayGet(Value a, Value i) {
         }
     }
     if (i.kind == K_Word && (a.kind == K_Array || a.kind == K_Buffer || a.kind == K_String)) return arrayGet(a, Int((int64_t)(uint64_t)i.w));   /* (a word as an index: its bits as an int) */
-    if (i.kind != K_Int) fatal("An index must be an int.");
+    if (FIRE_UNLIKELY(i.kind != K_Int) && FIRE_INDEXABLE(a)) return indexKindError(a, i);   /* (the value of resume() when it is resumed) */
     if (a.kind == K_Buffer) {
         Buf* b;
         if (FIRE_UNLIKELY(!leafAlive(a))) return destroyedError(a);
@@ -6652,7 +6679,7 @@ FIRE_FN Value arraySet(Value a, Value i, Value v) {
         return v;
     }
     if (i.kind == K_Word && (a.kind == K_Array || a.kind == K_Buffer || a.kind == K_String)) return arraySet(a, Int((int64_t)(uint64_t)i.w), v);   /* (a word as an index: its bits as an int) */
-    if (i.kind != K_Int) fatal("An index must be an int.");
+    if (FIRE_UNLIKELY(i.kind != K_Int) && FIRE_INDEXABLE(a)) { indexKindError(a, i); return v; }
     if (a.kind == K_Buffer) {
         Buf* b;
         if (FIRE_UNLIKELY(!leafAlive(a))) { destroyedError(a); return v; }
@@ -6737,7 +6764,7 @@ FIRE_FN bool ptrValid(Value p, Value* err) {
 
 FIRE_FN Value ptrRead(Value p) {
     Value err = Undef();   /* (gcc -O2 cannot see that ptrValid sets it when it says false) */
-    if (FIRE_UNLIKELY(!isPtr(p))) fatal("Dereference of a value that is not a pointer.");
+    if (FIRE_UNLIKELY(!isPtr(p))) return kindError("Dereference of a value of type %s which is not a pointer.", p.kind);   /* (the VM's ArgumentException) */
     if (FIRE_UNLIKELY(!ptrValid(p, &err))) return err;
     if (p.kind == K_PtrVar) return *(const Value*)p.p;
     if (p.kind == K_PtrField) { const FireFieldPtr* d = fieldPtrOf(p); return d->raw ? rawGetAt((const char*)p.p, d->raw, d->unit) : *(const Value*)p.p; }
@@ -6757,7 +6784,7 @@ FIRE_FN Value ptrDiff(Value a, Value b) {
 FIRE_FN void ptrWrite(Value p, Value v) {
     Value err = Undef(), old;   /* (see ptrRead) */
     Value* target;
-    if (FIRE_UNLIKELY(!isPtr(p))) fatal("Assignment through a value that is not a pointer.");
+    if (FIRE_UNLIKELY(!isPtr(p))) { kindError("Assignment through a value of type %s which is not a pointer.", p.kind); return; }
     if (FIRE_UNLIKELY(!ptrValid(p, &err))) return;
     if (p.kind == K_PtrByte) { FIRE_BUF_ST((uint8_t*)ptrAddr(p), (uint8_t)v.i); return; }
     if (p.kind == K_PtrField) {
@@ -6808,7 +6835,7 @@ FIRE_FN void requireRef(Value v, const char* name) {
 /* `x[i]` as a `ref` argument. */
 FIRE_FN Value addressOfIndex(Value a, Value i) {
     if (i.kind == K_Word && (a.kind == K_Array || a.kind == K_Buffer || a.kind == K_String)) i = Int((int64_t)(uint64_t)i.w);   /* (a word as an index: its bits as an int) */
-    if (i.kind != K_Int) fatal("An index must be an int.");
+    if (FIRE_UNLIKELY(i.kind != K_Int) && (a.kind == K_Array || a.kind == K_Buffer)) return indexKindError(a, i);
     if (a.kind == K_Array) {
         Arr* arr;
         if (FIRE_UNLIKELY(!leafAlive(a))) return destroyedError(a);
@@ -6824,7 +6851,7 @@ FIRE_FN Value addressOfIndex(Value a, Value i) {
         if ((uint64_t)i.i >= b->length) return indexError("Array index", i.i, b->length);
         return BytePtrV(&b->data[i.i], &b->h);
     }
-    fatal("A 'ref' argument 'x[i]' expects an array or a byte buffer.");
+    return kindError("A 'ref' argument 'x[i]' expects an array or a byte buffer, not %s.", a.kind);   /* (the VM's ArgumentException) */
 }
 
 FIRE_FN Value lengthOf(Value v, bool* ok) {
@@ -6982,8 +7009,10 @@ FIRE_FN bool wordsArg(Value v, const char* what, FireWords* out) {
 }
 
 FIRE_FN Value newArray(Value size, OwnList* list) {
+    if (size.kind == K_Word) size = Int((int64_t)size.w);   /* (a word as a size: its bits as an int, like the VM) */
     if (FIRE_UNLIKELY(size.kind == K_Int && size.i < 0)) return sizeError(size.i, false);
-    if (size.kind != K_Int || size.i < 0 || size.i > 0x7FFFFFFF) fatal("An array size must be a non-negative int.");
+    if (FIRE_UNLIKELY(size.kind != K_Int)) return kindError("An array size must be an int, not %s.", size.kind);   /* (the VM's ArgumentException, OpNewArray) */
+    if (size.i > 0x7FFFFFFF) fatal("An array size must be a non-negative int.");
     return ArrV(allocArr((uint32_t)size.i, list));
 }
 
@@ -7278,18 +7307,16 @@ FIRE_FN bool fire_bufMethodName(const char* name) {
 }
 
 FIRE_FN Value newBuffer(Value size, OwnList* list) {
+    if (size.kind == K_Word) size = Int((int64_t)size.w);   /* (a word as a size: its bits as an int, like the VM) */
     if (FIRE_UNLIKELY(size.kind == K_Int && size.i < 0)) return sizeError(size.i, true);
-    if (size.kind != K_Int || size.i < 0 || size.i > 0x7FFFFFFF) fatal("A buffer size must be a non-negative int.");
+    if (FIRE_UNLIKELY(size.kind != K_Int)) return kindError("A byte buffer size must be an int, not %s.", size.kind);   /* (the VM's ArgumentException, MakeBuffer) */
+    if (size.i > 0x7FFFFFFF) fatal("A buffer size must be a non-negative int.");
     return BufV(allocBuf((uint32_t)size.i, list));
 }
 
 /* ---------------------------------------------------------------------------------------------------------------------
  * Ownership of arrays and buffers (SPEC 2.5): inner arrays, Take..., delete
  * --------------------------------------------------------------------------------------------------------------------- */
-FIRE_FN int64_t sizeArg(Value v) {
-    if (FIRE_UNLIKELY(v.kind != K_Int)) fatal("An array size must be an int.");
-    return v.i;
-}
 
 FIRE_FN OwnList* newPartsList(Owned* holder) {
     OwnList* parts = (OwnList*)malloc(sizeof(OwnList));
@@ -7321,6 +7348,18 @@ FIRE_FN Value newJagged(const int64_t* sizes, int ranks, OwnList* list) {
         fillJagged(outer, sizes, ranks, 1, outer->parts);
     }
     return ArrV(outer);
+}
+
+/* `new T[a][b]...` with the sizes as values: one that is no int (from `any`) is the VM's catchable ArgumentException - the last one first, as the VM takes
+ * them off its stack. */
+FIRE_FN Value newJaggedV(const Value* sizes, int ranks, OwnList* list) {
+    int64_t n[16] = { 0 };
+    int i;
+    for (i = ranks - 1; i >= 0; i--)
+        if (FIRE_UNLIKELY(sizes[i].kind != K_Int && sizes[i].kind != K_Word)) return kindError("An array size must be an int, not %s.", sizes[i].kind);
+    if (ranks > 16) fatal("An array with more than 16 dimensions.");
+    for (i = 0; i < ranks; i++) n[i] = sizes[i].kind == K_Word ? (int64_t)sizes[i].w : sizes[i].i;   /* (a word: its bits as an int, like the VM) */
+    return newJagged(n, ranks, list);
 }
 
 /* An array that was made inside the expression of its outer array (`[[1, 2], [3]]`) belongs to it now. */
@@ -7431,11 +7470,13 @@ FIRE_FN void takeToList(Value v, OwnList* list) {
 }
 
 /* `holder.field = take x` and `array[i] = take x`: the object (or the array) owns the value from now on. */
+/* `o.f = take x` (TakeToObject) where `o` is no object (through `any`): the VM's ArgumentException, before anything else of the take. */
+FIRE_COLD FIRE_FN void takeHolderError(Value holder) { kindError("take on a value of type %s which is not an object.", holder.kind); }
 FIRE_FN void takeToHolder(Value holder, Value v) {
     Owned* o = ownedOf(v);
     Owned* h = ownedOf(holder);
     Arr* a;
-    if (!h || h->okind == O_Buffer || h->okind == O_Lambda) { if (!h && holder.kind != K_Buffer && holder.kind != K_Lambda) fatal("take: the holder of the value has to be an object or an array."); return; }
+    if (!h || h->okind == O_Buffer || h->okind == O_Lambda) return;   /* (no holder - `n[0] = take x` of a number: the store that follows is the VM's error) */
     if (!o) return;
 #ifdef FIRE_THREADS
     /* (a fire thread takes it for an object or array of the main program's globals: the store moves it there - rule 10, toMainHolder) */
@@ -7761,9 +7802,21 @@ FIRE_FN void takeGlobalMain(Owned* o);
 FIRE_FN bool takeGlobalSafe(Owned* o);
 #endif
 
+/* `5.TakeTo(b)`, `try s.TakeLocal()` (through `any`): a value type has no Take... - the VM's MissingMemberException of a method it does not know (`argc`:
+ * the arguments of the call). True when it was thrown. */
+FIRE_COLD FIRE_FN bool ownValueType(int method, Value self, int argc, bool isTry) {
+    static const char* const names[] = { "Local", "Upwards", "Global", "To" };
+    char name[24];
+    if (self.kind == K_Class || self.kind == K_Array || self.kind == K_Buffer || self.kind == K_Lambda) return false;
+    snprintf(name, sizeof name, "%s%s", isTry ? "tryTake" : "Take", names[method & 3]);
+    missingMethod(self, name, argc);
+    return true;
+}
+
 /* `x.TakeLocal()`, `x.TakeUpwards()`, `x.TakeGlobal()`, `x.TakeTo(obj)` on an object, an array or a buffer (SPEC 2.2). */
 FIRE_FN void ownMethod(int method, Value self, Value arg, OwnList* here) {
     Owned* o = ownedOf(self);
+    if (!o && ownValueType(method, self, method == OM_TakeTo || (method == OM_TakeGlobal && arg.kind == K_Bool) ? 1 : 0, false)) return;
     if (!o) fatal("Take... is only possible for an object, an array or a buffer that is not destroyed.");
     if (o->flags & 1) fatal("A destroyed value cannot change its owner.");
     switch ((int)method) {
@@ -7790,6 +7843,7 @@ FIRE_FN void ownMethod(int method, Value self, Value arg, OwnList* here) {
             ownLink(g_globalOwn, o);
             break;
         default:
+            if (FIRE_UNLIKELY(arg.kind != K_Class)) { kindError("TakeTo on a value of type %s which is not an object.", arg.kind); return; }   /* (the VM's ArgumentException) */
             takeToObject(o, asObj(arg));
             break;
     }
@@ -7798,6 +7852,7 @@ FIRE_FN void ownMethod(int method, Value self, Value arg, OwnList* here) {
 /* The same with a `Takes` mode: what hangs on the value goes along (SPEC 2.2); `lists` are the scopes of the running call. */
 FIRE_FN void ownMethodT(int method, Value self, Value arg, Value mode, OwnList* here, OwnList* const* lists, int n) {
     Owned* o;
+    if (!ownedOf(self) && ownValueType(method, self, (method == OM_TakeTo ? 2 : 1) + (method == OM_TakeGlobal && arg.kind == K_Bool ? 1 : 0), false)) return;
     if (method == OM_TakeGlobal && mode.kind == K_Bool) { arg = mode; mode = Int(TK_THIS); }   /* (`x.TakeGlobal(true)`: no mode, the flag) */
     if (mode.kind != K_Int || mode.i < TK_THIS || mode.i > TK_ALL) fatal("The mode of Take... must be one of Takes.This, Takes.Children, Takes.Locals, Takes.All.");
 #ifdef FIRE_THREADS
@@ -7899,8 +7954,8 @@ FIRE_FN bool isFromGlobal(Value v) {
 FIRE_FN bool ownMethodTry(int method, Value self, Value arg, Value mode, OwnList* here, OwnList* const* lists, int n, Value thisValue, OwnList* myArgs) {
     Owned* o = ownedOf(self);
     if (!o) {
-        if (self.kind != K_Class && self.kind != K_Array && self.kind != K_Buffer && self.kind != K_Lambda)
-            fireError("MissingMemberException", "'try x.Take...' is only possible for an object, an array, a buffer or a lambda - a value type has no Take... ('try x??.TakeTo(...)' skips it).");
+        /* (a value type: the VM's MissingMemberException; the count of the arguments without a `Takes` mode - natively a missing mode is Takes.This) */
+        ownValueType(method, self, method == OM_TakeTo || (method == OM_TakeGlobal && arg.kind == K_Bool) ? 1 : 0, true);
         return false;   /* (destroyed: it belongs to nothing - `try` is false, as in the VM) */
     }
     if (!ownedByCall(o, lists, n, thisValue, myArgs)) return false;
@@ -13456,13 +13511,7 @@ Value fireGetField(Value v, const char* name, OwnList* list, uint32_t caller) {
     snprintf(accessor, sizeof accessor, "get_%s", name);
     m = fireFindMethod(asObj(v)->cls, accessor, 0, &k);
     if (m) { Value r = m->fn(k, v, NULL, list, caller); adopt(r, list); return r; }
-    accessor[0] = 's';
-    if (fireFindMethod(asObj(v)->cls, accessor, 1, &k)) {
-        char text[400];
-        snprintf(text, sizeof text, "Property '%s' of '%s' has no getter (only 'set').", name, className(asObj(v)->cls));
-        fatal(text);
-    }
-    return missingField(v, name);
+    return missingField(v, name);   /* (a property with only `set` too, as in the VM) */
 }
 
 void fireSetField(Value v, Value x, const char* name, OwnList* list, uint32_t caller) {
@@ -13478,12 +13527,8 @@ void fireSetField(Value v, Value x, const char* name, OwnList* list, uint32_t ca
     m = fireFindMethod(asObj(v)->cls, accessor, 1, &k);
     if (m) { Value r = m->fn(k, v, &x, list, caller); adopt(r, list); return; }
     accessor[0] = 'g';
-    if (fireFindMethod(asObj(v)->cls, accessor, 0, &k)) {
-        char text[400];
-        snprintf(text, sizeof text, "Property '%s' on '%s' has no setter (only 'get').", name, className(asObj(v)->cls));
-        fatal(text);
-    }
-    missingField(v, name);
+    if (fireFindMethod(asObj(v)->cls, accessor, 0, &k)) { noSetterError(v, name); return; }
+    missingFieldSet(v, name);
 }
 
 Value fireFieldPtr(Value v, const char* name) {

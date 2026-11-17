@@ -1,0 +1,43 @@
+class B {
+    int x = 1
+    int Ro { get { return 4 } }
+    int Wo { set { x = value } }
+}
+class D : B { string name = "d" }
+record P { int a }
+var tries = [
+    () => { any b = new B(); print(b.y) },
+    () => { any b = new B(); b.y = 3; print(b.y) },
+    () => { any b = new B(); b.y += 1 },
+    () => { any b = new B(); b.y++ },
+    () => { any b = new B(); b.Ro = 3 },
+    () => { any b = new B(); print(b.Wo) },
+    () => { any d = new D(); d.x = 5; d.name = "e"; print(d.x + " " + d.name) },
+    () => { any d = new D(); d.other = 1 },
+    () => { any b = new B(); b.Wo = 9; print(b.x) },
+    () => { any b = new B(); delete b; b.y = 1 },
+    () => { any p = new P(); p.b = 2 },
+    () => { any p = new P(); p.a = 2 },
+    () => { any s = "text"; s.y = 1 },
+    () => { any a = new int[2]; a.y = 1 }
+]
+for (var i = 0; i < tries.Length; i++) {
+    try {
+        tries[i]()
+        print(i + ": no exception")
+    } catch (MissingMemberException e) {
+        print(i + ": MissingMemberException: " + e.message)
+    } catch (ArgumentException e) {
+        print(i + ": ArgumentException: " + e.message)
+    } catch (e) {
+        print(i + ": Exception: " + e.message)
+    }
+}
+// resumed: the assignment that failed is skipped
+try {
+    any b = new B()
+    b.z = 5
+    print("after the assignment")
+} catch (MissingMemberException e) { e.resume() }
+print("end")
+//# name: Ausnahmen: Die Felder einer Klasse sind fest, auch ueber any (ein nicht deklariertes Feld schreiben ist die MissingMemberException wie das Lesen)

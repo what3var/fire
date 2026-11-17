@@ -3572,7 +3572,9 @@ namespace fire.Runtime
             var value = Pop();
             var obj = RequireObjectInstance(Pop(), "Field assignment");
             if (IsDeadObject(obj)) { ThrowDestroyedObject(obj); return false; }
-            if (obj.RtClass is { IsRecord: true } && !InConstruction(obj)) { ThrowRecordWrite(obj, fieldName); return false; }
+            // (a name the record does not have - no field, no setter - is the MissingMemberException below, as natively)
+            if (obj.RtClass is { IsRecord: true } && !InConstruction(obj) && (obj.HasFieldLocked(fieldName) || ResolveClass(obj.ClassName).FindMethod("set_" + fieldName, 1) != null))
+            { ThrowRecordWrite(obj, fieldName); return false; }
 
             if (obj.HasFieldLocked(fieldName))
             {
@@ -3652,9 +3654,12 @@ namespace fire.Runtime
                 throw new InvalidOperationException(
                     $"Property '{fieldName}' on '{obj.ClassName}' has no setter (only 'get').");
 
-            // Neither existing field nor property - as before:
-            // simply create a new field (dynamic language, no
-            // up-front declaration obligation for fields).
+            // Neither a declared field nor a property: classes have fixed fields, also through `any` (where the type is known it is TC008) - the same
+            // MissingMemberException as reading a missing field (fire_rt.h missingFieldSet: the same text natively). (An object the host made without a
+            // class keeps its fields by name.)
+            if (obj.RtClass != null)
+                throw new ScriptErrorException("MissingMemberException",
+                    $"Field '{fieldName}' does not exist on an instance of '{obj.ClassName}' (and there is no 'set_{fieldName}' property either).");
             obj.SetFieldLocked(fieldName, value);
             if (_watchDangling && value.Kind == ValueKind.Class) NoteStore(value, obj, fieldName);
             Push(value);
@@ -4609,7 +4614,7 @@ namespace fire.Runtime
         private void OpNewArray()
         {
         {
-            long size = Pop().AsInt();
+            long size = SizeInt(Pop(), false);
             if (size < 0)
                 throw new InvalidOperationException($"Invalid array size {size}.");
             var created = new ScriptArray((int)size);
@@ -4671,6 +4676,7 @@ namespace fire.Runtime
             var target = Pop();
             if (indexVal.Kind == ValueKind.Word && target.Kind is ValueKind.Array or ValueKind.Buffer or ValueKind.String) indexVal = indexVal.CoerceType(ValueKind.Int);   // (a word as an index: its bits as an int)
             if (IsDestroyedLeaf(target)) { ThrowDestroyed(target); return; }
+            if (indexVal.Kind != ValueKind.Int && target.Kind is ValueKind.Array or ValueKind.Buffer or ValueKind.String) throw IndexKindError(indexVal);
 
             if (target.Kind == ValueKind.Array && target.AsArray().IsShared)
             {
@@ -4812,6 +4818,7 @@ namespace fire.Runtime
             var target = Pop();
             if (indexVal.Kind == ValueKind.Word && target.Kind is ValueKind.Array or ValueKind.Buffer or ValueKind.String) indexVal = indexVal.CoerceType(ValueKind.Int);   // (a word as an index: its bits as an int)
             if (IsDestroyedLeaf(target)) { ThrowDestroyed(target); return; }
+            if (indexVal.Kind != ValueKind.Int && target.Kind is ValueKind.Array or ValueKind.Buffer or ValueKind.String) throw IndexKindError(indexVal);
             // a typed array (`int[8] a[]`): the value is converted (the assignment yields the stored value), or it is the exception - before the index is checked, as natively
             if (target.Kind == ValueKind.Array && !ConvertArrayElement(target.AsArray(), ref value)) return;
 
@@ -5484,7 +5491,7 @@ namespace fire.Runtime
                 {
                     int ranks = ReadByte();
                     var sizes = new long[ranks];
-                    for (int i = ranks - 1; i >= 0; i--) sizes[i] = Pop().AsInt();
+                    for (int i = ranks - 1; i >= 0; i--) sizes[i] = SizeInt(Pop(), false);
                     foreach (long size in sizes)
                         if (size < 0) throw new InvalidOperationException($"Invalid array size {size}.");
                     var parts = new List<IOwnedLeaf>();
@@ -5645,9 +5652,11 @@ namespace fire.Runtime
                 case OpCode.AddressOfIndex:
                 {
                     var refIndex = Pop();
-                    long idx = (refIndex.Kind == ValueKind.Word ? refIndex.CoerceType(ValueKind.Int) : refIndex).AsInt();
+                    if (refIndex.Kind == ValueKind.Word) refIndex = refIndex.CoerceType(ValueKind.Int);
                     var target = Pop();
                     if (IsDestroyedLeaf(target)) { ThrowDestroyed(target); break; }
+                    if (refIndex.Kind != ValueKind.Int && target.Kind is ValueKind.Array or ValueKind.Buffer) throw IndexKindError(refIndex);
+                    long idx = refIndex.Kind == ValueKind.Int ? refIndex.AsInt() : 0;
                     if (target.Kind == ValueKind.Array)
                     {
                         var arr = target.AsArray();
@@ -5690,7 +5699,7 @@ namespace fire.Runtime
 
                 case OpCode.MakeBuffer:
                 {
-                    long size = Pop().AsInt();
+                    long size = SizeInt(Pop(), true);
                     if (size < 0)
                         throw new InvalidOperationException($"Invalid byte buffer size {size} (must be >= 0).");
                     var createdBuffer = new ByteBuffer((int)size, ByteConversions.HostByteOrder);
@@ -7396,12 +7405,14 @@ namespace fire.Runtime
         /// <summary>`*p` (SPEC 8.3): outside the range (element beyond the bounds, offset on a variable, destroyed array) the catchable exception is thrown - false.</summary>
         private bool TryReadPointer(Value ptr, out Value value)
         {
+            if (ptr.Kind != ValueKind.Pointer) throw new InvalidOperationException($"Dereference of a value of type {ptr.Kind} which is not a pointer.");
             try { value = ptr.AsPointer().Read(); return true; }
             catch (PointerRangeException ex) { value = Value.MakeUndefined(); ThrowPointerRange(ex); return false; }
         }
 
         private bool TryWritePointer(Value ptr, Value value)
         {
+            if (ptr.Kind != ValueKind.Pointer) throw new InvalidOperationException($"Assignment through a value of type {ptr.Kind} which is not a pointer.");
             // a field declared `defined` (SPEC 8.10b): what goes through the pointer is checked like an assignment to the field - its unit, its kind, never undefined
             if (ptr.AsPointer() is FieldPointerTarget { Offset: 0 } field && field.Instance.RtClass is { } rc
                 && rc.FindFieldRequiredKind(field.FieldName) is var kind and not 0 && DeclaredKind.IsNonNull(kind))
@@ -8224,6 +8235,15 @@ namespace fire.Runtime
             _classes.TryGetValue(name, out var rc)
                 ? rc
                 : throw new InvalidOperationException($"Unknown class '{name}' at run time.");
+
+        /// <summary>The size of `new int[n]` / `new byte[n]` (n from `any`): an int, else the catchable ArgumentException (fire_rt.h newArray, newBuffer, newJaggedV: the same text).</summary>
+        private static long SizeInt(Value v, bool buffer) =>
+            v.Kind == ValueKind.Int ? v.AsInt()
+            : v.Kind == ValueKind.Word ? v.CoerceType(ValueKind.Int).AsInt()   // (a word: its bits as an int, as an index)
+                : throw new InvalidOperationException(buffer ? $"A byte buffer size must be an int, not {v.Kind}." : $"An array size must be an int, not {v.Kind}.");
+
+        /// <summary>An index of an array, a buffer or a string that is no int (from `any`): the catchable ArgumentException (the same text natively).</summary>
+        private static InvalidOperationException IndexKindError(Value index) => new($"An index must be an int, not {index.Kind}.");
 
         private static ObjectInstance RequireObjectInstance(Value v, string context)
         {

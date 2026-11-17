@@ -2951,7 +2951,7 @@ namespace fire.Native
             {
                 // no object of the program has such a field: only a built-in member (or dead code) can get here
                 sb.AppendLine($"static inline Value gf_{m}(Value v) {{\n{lengthCode}    return missingField(v, {CString(name)});\n}}");
-                sb.AppendLine($"static inline void sf_{m}(Value v, Value x) {{ (void)x; if (v.kind != K_Class) {{ notObjectAssign(v); return; }} fatal(\"Field '{name}' cannot be assigned.\"); }}");
+                sb.AppendLine($"static inline void sf_{m}(Value v, Value x) {{ (void)x; if (v.kind != K_Class) {{ notObjectAssign(v); return; }} if (!leafAlive(v)) {{ destroyedError(v); return; }} missingFieldSet(v, {CString(name)}); }}");
                 if (_fieldAddressTaken.Contains(name)) sb.AppendLine($"static inline Value fp_{m}(Value v) {{ (void)v; fatal(\"Field '{name}' not found on this object.\"); }}");
                 return sb.ToString();
             }
@@ -3138,9 +3138,9 @@ namespace fire.Native
                 if (getter != null) GetFunc(getter, FuncKind.Method);
                 if (setter != null) GetFunc(setter, FuncKind.Method);
                 if (getter != null) getArms.Add((label, $"{{ {AccessorGuard("get_" + name, getterDecl!, getterAccess, false)}Value r = {_funcByProto[getter].Name}(v); adopt(r, list); return r; }}"));
-                else if (setter != null) getArms.Add((label, $"fatal(\"Property '{name}' of '{cls.Rc.Name}' has no getter (only 'set').\");"));
+                else if (setter != null) getArms.Add((label, $"return missingField(v, {CString(name)});"));   // (only `set`: the VM's MissingMemberException)
                 if (setter != null) setArms.Add((label, $"{{ {AccessorGuard("set_" + name, setterDecl!, setterAccess, true)}Value r = {_funcByProto[setter].Name}(v, x); adopt(r, list); return; }}"));
-                else if (getter != null) setArms.Add((label, $"fatal(\"Property '{name}' on '{cls.Rc.Name}' has no setter (only 'get').\");"));
+                else if (getter != null) setArms.Add((label, $"{{ noSetterError(v, {CString(name)}); return; }}"));
             }
             return (getArms, setArms, ptrArms);
         }
@@ -3156,10 +3156,9 @@ namespace fire.Native
             var sb = new StringBuilder();
             string lp = (FieldHasList(name) ? ", OwnList* list" : "") + (FieldHasCaller(name) ? ", uint32_t caller" : "");
             string unusedLp = (FieldHasList(name) ? "(void)list; " : "") + (FieldHasCaller(name) ? "(void)caller; " : "");
-            // (modules: a value of a class that has no such field, or no class at all, is a MissingMemberException - the program's list of classes is complete, but the name may come from a library)
-            string getMissing = Modular ? $"return missingField(v, {CString(name)});" : $"fatal(\"Field '{name}' not found on this object.\");";
-            string setMissing = !Modular ? $"fatal(\"Field '{name}' not found on this object.\");"
-                : setArms.Count == 0 ? $"fatal(\"Field '{name}' cannot be assigned.\");" : $"missingField(v, {CString(name)}); return;";
+            // (a value of a class that has no such field - through `any`, or of a library in modules: the VM's MissingMemberException; classes have fixed fields)
+            string getMissing = $"return missingField(v, {CString(name)});";
+            string setMissing = $"missingFieldSet(v, {CString(name)}); return;";
             sb.AppendLine($"{HelperInline}Value gf_{m}(Value v{lp}) {{\n{lengthCode}    {unusedLp}\n    if (FIRE_UNLIKELY(v.kind != K_Class)) return missingField(v, {CString(name)});\n    if (FIRE_UNLIKELY(!leafAlive(v))) return destroyedError(v);\n    Obj* o = asObj(v);\n    switch (o->cls) {{\n{get}        default: {getMissing}\n    }}\n}}");
             string lpArgs = (FieldHasList(name) ? ", list" : "") + (FieldHasCaller(name) ? ", caller" : "");
             if (_usesThreads)   // (a change of an object of the shared domain is one section)
@@ -6520,10 +6519,10 @@ namespace fire.Native
                                 ? $"{S(slot)} = Bool(ownMethodTry({ownMethodId}, {S(slot)}, {targetArg}, {modeArg}, &{owner}, {(scopeLists.Count == 0 ? "NULL" : "L_")}, {scopeLists.Count}, {(f.HasSelf ? "self" : "Undef()")}, MYARGS));"
                                 : $"ownMethodT({ownMethodId}, {S(slot)}, {targetArg}, {modeArg}, &{owner}, {(scopeLists.Count == 0 ? "NULL" : "L_")}, {scopeLists.Count});";
                             E($"{{ {localsDecl}{call} }}");
-                            if (_usesThreads && ownMethodId == "OM_TakeGlobal") Check();   // (to the main program from a thread: the ArgumentException when it is not safe)
+                            if (ownMethodId == "OM_TakeTo" || isTry || _usesThreads && ownMethodId == "OM_TakeGlobal") Check();   // (a target that is no object, a value type with `try`; to the main program from a thread: the ArgumentException when it is not safe)
                             if (isTry) { SetR(slot, false); d = slot + 1; return Next(); }
                         }
-                        if (_usesThreads && ownMethodId == "OM_TakeGlobal" && argc == baseArgs && !isTry) Check();
+                        if ((ownMethodId == "OM_TakeTo" || _usesThreads && ownMethodId == "OM_TakeGlobal") && argc == baseArgs && !isTry) Check();   // (TakeTo: a target that is no object is the VM's ArgumentException)
                         E($"{S(slot)} = Undef();");
                         SetR(slot, false);
                         d = slot + 1; return Next();
@@ -7162,9 +7161,9 @@ namespace fire.Native
                     int ranks = ins.A[0];
                     Need(ranks);
                     int first = d - ranks;
-                    var sizeItems = Enumerable.Range(first, ranks).Select(i => $"sizeArg({S(i)})").ToList();
-                    E($"{{ {CArray("int64_t", "sz", sizeItems)}{S(first)} = newJagged(sz, {ranks}, &{OwnerList()}); }}");
-                    Check();   // (a negative size: the VM's ArgumentException)
+                    var sizeItems = Enumerable.Range(first, ranks).Select(i => S(i)).ToList();
+                    E($"{{ {CArray("Value", "sz", sizeItems)}{S(first)} = newJaggedV(sz, {ranks}, &{OwnerList()}); }}");
+                    Check();   // (a negative size or one that is no int: the VM's ArgumentException)
                     d = first + 1; SetR(first, true); return Next();
                 }
                 case OpCode.HoistValue:
@@ -7267,12 +7266,13 @@ namespace fire.Native
                     return Next();
                 case OpCode.TakeToObject:
                     Need(2);
-                    E($"if (takeAlive({S(d - 1)})) takeToHolder({S(d - 2)}, {S(d - 1)});");
+                    // (a holder that is no object - through `any` - is the VM's ArgumentException, before the value is looked at)
+                    E($"if (FIRE_UNLIKELY({S(d - 2)}.kind != K_Class)) takeHolderError({S(d - 2)}); else if (takeAlive({S(d - 1)})) takeToHolder({S(d - 2)}, {S(d - 1)});");
                     Check();
                     return Next();
                 case OpCode.TryTakeToObject:
                     Need(2);
-                    E(TryTakeStmt(S(d - 1), $"takeToHolder({S(d - 2)}, {S(d - 1)});"));
+                    E($"if (FIRE_UNLIKELY({S(d - 2)}.kind != K_Class)) takeHolderError({S(d - 2)}); else {{ {TryTakeStmt(S(d - 1), $"takeToHolder({S(d - 2)}, {S(d - 1)});")} }}");
                     Check();
                     return Next();
                 case OpCode.TakeToArray:

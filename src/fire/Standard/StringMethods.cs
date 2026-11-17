@@ -405,7 +405,8 @@ namespace fire.Standard
         }
 
         /// <summary>String or character as a string.</summary>
-        private static string Text(Value v) => v.Kind == ValueKind.Char ? v.AsChar().ToString() : v.AsString();
+        private static string Text(Value v) => v.Kind == ValueKind.Char ? v.AsChar().ToString() : v.Kind == ValueKind.String ? v.AsString()
+            : throw new InvalidOperationException($"A string or char was expected, not {v.Kind}.");   // (through `any`: the catchable ArgumentException, fire_rt.h charsOf the same)
 
         private static NativeIndexOutOfRangeException Out(long index, int length) => new(index, length, "String index");
 

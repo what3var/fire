@@ -30,6 +30,11 @@ print(Animal.created)       // 1
 - A **field** is declared like a variable: `Type name` or `Type name = value`. A field always has a type (`var` is only for local variables).
   The initial values are set before the constructor runs.
 - `construct(...)` is the **constructor**; `new Animal("Tom")` calls it. A class without a constructor gets an empty one.
+- **The fields of a class are fixed**: an object has exactly the fields its class (and its base classes) declare. Writing a field the class does not
+  declare is an error when the type is known (`cat.age = 3`: `TC008`); through `any` it is the catchable `MissingMemberException` at run time - the same
+  as reading one (`Field 'age' does not exist on an instance of 'Animal' (and there is no 'set_age' property either).`). Nothing adds a field to an
+  object afterwards, neither in the VM nor natively (`Reflect.Set` of an unknown name is a `ReflectionException`). A property with only `get` cannot
+  be assigned (`ArgumentException`), one with only `set` cannot be read (`MissingMemberException`).
 - A **method** is `ReturnType Name(parameters) { ... }`. A method that returns nothing is declared `undefined`. A method without a return type returns
   `any` (the type checker says so, `TC005`).
 - Inside a method `this` is the object. A field can also be written without `this.` (`name` instead of `this.name`) when no local variable has the
