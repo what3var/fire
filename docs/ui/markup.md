@@ -44,8 +44,9 @@ window.SetDataContext(new Person())
 window.Run()
 ```
 
-`SetDataContext` keeps an object that is handed to it (`new Person()` or `take model`); an object that belongs to someone else stays theirs and
-the window only points to it.
+`SetDataContext` keeps an object that is handed to it (`new Person()` or `take model`); an object that belongs to someone else (`SetDataContext(model)`
+with a variable of the caller) stays theirs and the window only points to it. Inside, it is `try context??.TakeTo(this)` ([Ownership](../language/13-ownership.md)),
+so neither form gets a warning.
 
 In a project the `#include` is not needed: the `.fxml` files of a project are compiled with it ([Projects and solutions](../tools/projects.md)), and the code-behind is simply the `.fire` file of the
 same name next to it. The editor makes both when you add an **FXML Window** or **FXML View** (Add > New), and the solution explorer shows the markup as a node that opens: its
@@ -83,19 +84,39 @@ For `<Window Class="Greeter">` the script defines `class GreeterBase` (`Base="..
 | member | |
 |---|---|
 | a field per element with `name="..."` | typed with the class of the element: `UI.TextBox nameBox` |
-| `framebuffer`, `window`, `ui` | a `Window`: the framebuffer, the window and the `UI.Root` that is created for it (`Title`, `Width`, `Height` from the attributes) |
+| `framebuffer`, `window`, `UIRoot` | a `Window`: the framebuffer, the window and the `UI.Root` that is created for it (`Title`, `Width`, `Height` and the `UIRoot.` attributes from the root element, below) |
 | `view` | a `View` (below) instead of the three above: a `UI.Panel` |
 | one method per handler name | `undefined Ok(any sender) { }` - empty; the derived class overrides it. `sender` is the element |
 | `Run(other = undefined)`, `OnTick()` | a window: `Run()` is the start of the program - it runs the window's manager ([fire.Terminal – Framebuffer, Zeichnen und Fenster](../spec/GRAPHICS_LAYER.md), *Window managers*) on this thread until the windows are closed (if it already runs, the window is only shown there) and calls `OnTick()` once per cycle (override it for a loop of your own); `Run(other)` opens another window first (below) |
 | `Show(modal = false)` | a window: shows it and goes on - a window manager that nobody runs yet gets a thread of its own, the program handles the events at its safe points and waits at its end until the window is closed. `Show(true)`: modal - returns when the window is closed, the other windows of the manager take no input meanwhile |
 | `Open(other)` | a window: another window of the markup (an object of another generated class) or a `UI.Root` is attached to this one: this window's `Run`/`Tick` works it off as well, its own `OnTick()` is called in each cycle, until it is closed. Keep the other window alive as long as it is open (the call moves it under this window) |
-| `Attach(container)` | a view: adds the panel to a container (`ui` itself, a `Panel` or a `Stack`) |
+| `Attach(container)` | a view: adds the panel to a container (the `UIRoot` of a window itself, a `Panel` or a `Stack`) |
 | `dataContext`, `SetDataContext(obj)` | only with bindings, see below |
 
-The names of the generated members start with `fx`, plus `framebuffer window ui view dataContext SetDataContext Run Show OnTick Attach Open`: a named element or a handler must not use them.
+The names of the generated members start with `fx`, plus `framebuffer window UIRoot view dataContext SetDataContext Run Show OnTick Attach Open`: a named element or a handler must not use them.
 
 `<View Class="Settings" Width="300" Height="200">` is the root of a part of an interface: no window of its own, but a panel that a window adds with `Attach` - the same markup language, so
 that a window can be composed of views.
+
+## The UI root of a window
+
+The attributes `UIRoot.Name` of `<Window>` set a property of its `UI.Root` (the field `UIRoot`) right after it is made - the look of the whole window, without code
+(the markup editor offers them with the other attributes of `<Window>`):
+
+```xml
+<Window Class="Main" Title="People" Width="520" Height="320" UIRoot.WindowBackdrop="Acrylic" UIRoot.Accent="0x8854D0">
+```
+
+| attribute | value | the same in code |
+|---|---|---|
+| `UIRoot.WindowBackdrop` | `None`, `Mica`, `Acrylic`, `Blur`, `Transparent` - the material of the desktop behind the window ([windows](windows.md)) | `window.UIRoot.WindowBackdrop = Backdrop.Acrylic` |
+| `UIRoot.WindowBackground` | a colour (`#RRGGBB`, `{Expr ...}` for a brush): what fills the window behind the interface | `window.UIRoot.WindowBackground = new SolidBrush(...)` |
+| `UIRoot.Dark` | `true`/`false`: the dark look, whatever the system says | `window.UIRoot.Dark = true` |
+| `UIRoot.Accent` | the accent colour as a number (`0x8854D0`) | `window.UIRoot.Accent = 0x8854D0` |
+| `UIRoot.Glass`, `UIRoot.Transparency` | `true`/`false`: glass behind menus, translucent surfaces and shadows | `window.UIRoot.Glass = false` |
+
+The field is called `UIRoot`, not `UI`: `UI` is the namespace of the library, and a field of that name would hide it in the code of the class and of the code-behind
+(`UI.Color.Rgb(...)` would mean the field).
 
 ## Elements and properties
 
@@ -145,7 +166,8 @@ Not yet in markup (set them in the code-behind): `ToolTip`, `Cursor`, `AllowDrop
 `Width` and `Height` ([filling the window](containers.md#filling-the-window)).
 
 `<Button>OK</Button>` is `<Button Text="OK"/>`, `<Item>Alice</Item>` is `<Item Text="Alice"/>`. A `Stack`/`StackPanel`/`DockPanel`/`Grid`/`WrapPanel` lays out its children itself (their `Left`/`Top` are ignored), in a `Panel` or
-`Canvas` they are positioned. A handler of an event with parameters gets them after `sender`: `OnMouseDown="Down"` calls `Down(sender, x, y, button)`.
+`Canvas` they are positioned. A handler of an event with parameters gets them after `sender`: `OnMouseDown="Down"` calls `Down(sender, x, y, button)` - the generated method is
+`undefined Down(any sender, int x, int y, int button)` (`OnPaint`: `UI.DrawingCanvas canvas`); an override may take them as `any` as well.
 
 **Values** are read by the type of the property: a whole number (`12`, `-3`, `0x1F`), `true`/`false`, a text, a colour (`#RRGGBB`, `#RGB` or the raw value, see `UI.Color`; colour properties are **brushes** - the generator wraps the value in `new SolidBrush(...)`),
 `Horizontal`/`Vertical`, one of the names of an enum (`Left`), a margin, a pen. A value that does not fit is an error. In braces a value can be

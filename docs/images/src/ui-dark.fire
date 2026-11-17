@@ -4,10 +4,10 @@
 
 class DarkWindow : DarkBase {
     construct() {
-        this.ui.Dark = true              // whatever the system says
-        this.ui.Accent = 0x8854D0
+        this.UIRoot.Dark = true              // whatever the system says
+        this.UIRoot.Accent = 0x8854D0
     }
 }
 
 var window = new DarkWindow()
-Shot.Save(window.ui, "ui-dark.png")
+Shot.Save(window.UIRoot, "ui-dark.png")

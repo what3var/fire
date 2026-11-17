@@ -26,7 +26,7 @@ Vector shapes are elements like any other: they take part in the layout, can be 
 #include "Shapes.fxml"
 
 class ShapesWindow : ShapesBase {
-    override undefined PaintWave(any sender, any canvas) {
+    override undefined PaintWave(any sender, UI.DrawingCanvas canvas) {
         var r = canvas.renderer
         r.ClearTo(UI.Color.Rgb(250, 250, 250))
         var pen = new Pen(UI.Color.Rgb(200, 40, 40), 2)
