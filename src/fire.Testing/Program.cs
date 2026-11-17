@@ -10249,13 +10249,29 @@ callbackTests:
         print("hits " + hits + " other " + (h.other == undefined))
         """, new[] { "hits 1 other True" });
 
-    CheckCb("Unbehandelte Exception im Callback: gemeldet, Programm laeuft weiter, try/catch des Aufrufers sieht sie nicht", cbHead + """
-        win.RegisterMouseDown(func (int b, float x, float y) => { throw new Exception("boom") })
+    // SPEC 8.1.4: the exception of a callback that runs during a native (Window.Tick) is thrown at the call of the native once it has returned - the same object;
+    // the native's further callbacks do not run
+    CheckCb("Unbehandelte Exception im Callback: nach dem Ende von Tick wirft dessen Aufruf sie (dasselbe Objekt), weitere Callbacks laufen nicht", cbHead + """
+        var thrown = new Exception("boom")
+        var calls = 0
+        win.RegisterMouseDown(func (int b, float x, float y) => { calls = calls + 1; throw thrown })
+        win.RegisterMouseDown(func (int b, float x, float y) => { calls = calls + 10 })
         __TestEvent(8, 1, 1.0, 1.0)
-        try { win.Tick() } catch (e) { print("aeusserer catch") }
+        __TestEvent(8, 1, 1.0, 1.0)
+        try { win.Tick(); print("nie") } catch (e) { print("aeusserer catch " + e.message + " " + (e == thrown) + " calls " + calls) }
         print("weiter " + (1 + 2))
         try { throw new Exception("m") } catch (e) { print("catch " + e.message) }
-        """, new[] { "CB: Unhandled exception of type 'Exception': boom", "weiter 3", "catch m" });
+        win.RegisterMouseDown(func (int b, float x, float y) => { calls = calls + 100 })
+        __TestEvent(8, 1, 1.0, 1.0)
+        try { win.Tick(); print("Tick ohne Fehler? calls " + calls) } catch (e) { print("wieder gefangen, calls " + calls) }
+        """, new[] { "aeusserer catch boom True calls 1", "weiter 3", "catch m", "wieder gefangen, calls 2" });
+
+    CheckCb("Unbehandelte Exception im Callback ohne try: das Programm endet mit ihr (wie jede unbehandelte Exception)", cbHead + """
+        win.RegisterMouseDown(func (int b, float x, float y) => { throw new Exception("boom") })
+        __TestEvent(8, 1, 1.0, 1.0)
+        win.Tick()
+        print("nie")
+        """, new[] { "UNBEHANDELT: Unhandled exception of type 'Exception': boom" });
 
     CheckCb("Ein try/catch im Callback selbst faengt", cbHead + """
         var caught = 0
@@ -10267,7 +10283,7 @@ callbackTests:
         print("caught " + caught)
         """, new[] { "caught 1" });
 
-    CheckCb("Callback in einer Funktion mit offenem try: der Fehler bricht nur den Callback ab", cbHead + """
+    CheckCb("Callback in einer Funktion mit offenem try: das try um Tick faengt die Exception, finally laeuft", cbHead + """
         win.RegisterMouseDown(func (int b, float x, float y) => { throw new Exception("boom") })
         __TestEvent(8, 1, 1.0, 1.0)
         class T {
@@ -10276,14 +10292,28 @@ callbackTests:
                     w.Tick()
                     print("nach Tick")
                 } catch (e) {
-                    print("falsch gefangen")
+                    print("gefangen " + e.message)
                 } finally {
                     print("finally")
                 }
             }
         }
         T.Step(win)
-        """, new[] { "CB: Unhandled exception of type 'Exception': boom", "nach Tick", "finally" });
+        """, new[] { "gefangen boom", "finally" });
+
+    CheckCb("Ein werfender Handler unter WindowManager.Run: Run gibt die Exception weiter und ist danach wieder bereit (ein zweites Run laeuft)", cbHead + """
+        var hits = 0
+        win.RegisterMouseDown(func (int b, float x, float y) => {
+            hits = hits + 1
+            if (hits == 1) { throw new Exception("boom") }
+            win.Close()
+        })
+        __TestEvent(8, 1, 1.0, 1.0)
+        try { win.Run() } catch (e) { print("gefangen " + e.message + " laeuft " + win.Manager.IsRunning) }
+        __TestEvent(8, 1, 1.0, 1.0)
+        win.Run()
+        print("zweites Run zu Ende, hits " + hits)
+        """, new[] { "gefangen boom laeuft False", "zweites Run zu Ende, hits 2" });
 
     // Performance mode checks nothing: an access outside the array is a raw C# exception. The state of the VM must be right afterwards.
     CheckCb("Rohe C#-Ausnahme im Callback (Performance): Zustand wiederhergestellt, Programm laeuft weiter", cbHead + """
@@ -14783,6 +14813,52 @@ else
                 win.Show()
                 print("goes on, started " + win.Manager.IsStarted + ", default " + (win.Manager == WindowManager.Default))
                 """, new[] { "goes on, started True, default True", "key 97 in cycle True", "down 1 32 24" }, "-DFIRE_DISPLAY_SELFTEST "),
+                    // SPEC 8.1.4: the exception of an event handler goes to the call of Tick once Tick has returned (the same object); the other handlers of the
+                    // cycle do not run
+                    ("Fenster: ein Handler wirft - das try um Tick faengt die Exception, nachdem Tick fertig ist; die weiteren Handler laufen nicht", """
+                #import "windows"
+                class Boom : Exception { construct(string m) : base(m) { } }
+                var fb = new Framebuffer(64, 48)
+                var win = new Window(fb, "throw")
+                win.VSync = false
+                var thrown = new Boom("keydown")
+                var downs = 0
+                var ups = 0
+                var clicks = 0
+                win.RegisterKeyDown(func(int k, int s, int m, bool r) => { downs = downs + 1; throw thrown })
+                win.RegisterKeyDown(func(int k, int s, int m, bool r) => { downs = downs + 10 })
+                win.RegisterKeyUp(func(int k, int s, int m, bool r) => { ups = ups + 1 })
+                win.RegisterMouseDown(func(int b, float x, float y) => { clicks = clicks + 1 })
+                for (var i = 0; i < 2; i++) {
+                    try {
+                        var o = win.Tick()
+                        print("tick " + i + " downs=" + downs + " ups=" + ups + " clicks=" + clicks)
+                    } catch (Boom b) {
+                        print("caught " + b.message + " same " + (b == thrown) + " downs=" + downs + " ups=" + ups + " clicks=" + clicks)
+                    }
+                }
+                print("end")
+                """, new[] { "caught keydown same True downs=1 ups=0 clicks=0", "tick 1 downs=1 ups=0 clicks=0", "end" }, "-DFIRE_DISPLAY_SELFTEST "),
+                    ("Fenster: ein Handler wirft unter WindowManager.Run - Run gibt die Exception weiter, der Manager ist danach wieder bereit", """
+                #import "windows"
+                var fb = new Framebuffer(64, 48)
+                var mine = new WindowManager()
+                var win = new Window(fb, "run", mine)
+                var keys = 0
+                win.RegisterKeyDown(func(int k, int s, int m, bool r) => { keys = keys + 1; throw new Exception("key " + k) })
+                try { win.Run() } catch (e) { print("caught " + e.message + ", running " + mine.IsRunning + ", closed " + win.IsClosed) }
+                win.Close()
+                win.Run()
+                print("second run done: left " + mine.Count + ", keys " + keys)
+                """, new[] { "caught key 97, running False, closed False", "second run done: left 0, keys 1" }, "-DFIRE_DISPLAY_SELFTEST "),
+                    ("Fenster: ein Handler wirft im Zyklus des gestarteten Managers (sicherer Punkt) - gemeldet, das Programm geht weiter", """
+                #import "windows"
+                var fb = new Framebuffer(64, 48)
+                var win = new Window(fb, "shown")
+                win.RegisterKeyDown(func(int k, int s, int m, bool r) => { print("key " + k); win.Close(); throw new Exception("async key") })
+                win.Show()
+                print("goes on")
+                """, new[] { "goes on", "key 97", "(unhandled exception in the callback: Unhandled exception of type 'Exception': async key)" }, "-DFIRE_DISPLAY_SELFTEST "),
                 };
                 string? FindProgram(string name) => (Environment.GetEnvironmentVariable("PATH") ?? "").Split(Path.PathSeparator).Select(d => Path.Combine(d, name)).FirstOrDefault(File.Exists);
                 string? xvfbRun = FindProgram("xvfb-run");
