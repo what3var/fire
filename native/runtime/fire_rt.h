@@ -1588,6 +1588,10 @@ FIRE_FN FireWord* bufWords(Buf* b) { return (FireWord*)(void*)b->data; }
  * (a cache of up to FIRE_SLOT_CACHE, exchanged half by half with the shared stack under g_slotM), and a generation is read and written atomically (a stale
  * Value of an object another thread destroys or got handed over reads it while that thread writes it). */
 #define FIRE_SLOT_SEGMENTS 1
+#ifndef FIRE_UNCHECKED
+/* (the slot knows whether its object or array is of the shared domain - see "The domain in the slot" at slotDomGet) */
+#define FIRE_SLOT_DOM 1
+#endif
 #endif
 /* One slot: its generation and - when the table knows it - the header of the value in it, side by side (one load for `arrOf` and the check). */
 typedef struct SlotEntry {
@@ -1597,6 +1601,12 @@ typedef struct SlotEntry {
     FireGen gen;
 #ifdef FIRE_SLOT_SEGMENTS
     FireGen born;   /* (see SlotTable.born) */
+#endif
+#ifdef FIRE_SLOT_DOM
+    uint8_t dom;    /* (1: an object or array of the shared domain - see slotDomGet) */
+#ifndef FIRE_SLOT_HDR
+    uint8_t pad_[3];   /* (8 bytes: an entry is found with a shift) */
+#endif
 #endif
 } SlotEntry;
 #ifdef FIRE_SLOT_SEGMENTS
@@ -1629,6 +1639,27 @@ extern FIRE_RT_DATA fire_mutex g_slotM;
 #define slotInTable(slot) ((uint32_t)(slot) < fire_atomic_load(&g_slots.count))
 #ifdef FIRE_SLOT_HDR
 #define slotHdr(slot) (slotEntry(slot).hdr)
+#endif
+#ifdef FIRE_SLOT_DOM
+/* The domain in the slot (docs/spec/THREADING_DESIGN.md 7.1, ROADMAP 1f). An object or array of the shared domain (flag 64) has the mark in its slot too:
+ * the slot table is never freed, so a fire thread that does not hold the read side of the globals' lock learns from it - without touching the memory of
+ * the value, which the main program (or a section) may free at this very moment - that it has to take the read side first. leafAlive does that *before*
+ * it compares the generation (FIRE_SLOT_TOUCH): a thread that sees the value alive holds the read side, and nobody frees what is of the domain while a
+ * thread holds it (the main program and the sections destroy with the write side) - until the thread's next safe point. Set with the flag (the main
+ * program or a section: before any thread can get the Value - through the lock), sticky while the value lives (a value that leaves the domain keeps it:
+ * one wait too many at most), cleared when the slot gets a new value (slotAcquire) or its value moves into a thread (slotBump) - after the generation
+ * changed: release here, acquire in the thread, so a thread that reads it cleared reads the new generation too. A buffer never has it (its elements are
+ * shared memory without the lock - see "Global buffers" at bufRetire). */
+#if defined(__GNUC__) || defined(__clang__)
+#define slotEntryDomGet(e) __atomic_load_n(&(e)->dom, __ATOMIC_ACQUIRE)
+#define slotEntryGenGet(e) __atomic_load_n(&(e)->gen, __ATOMIC_RELAXED)
+#define slotDomSet(slot, x) __atomic_store_n(&slotEntry(slot).dom, (uint8_t)(x), __ATOMIC_RELEASE)
+#else
+#define slotEntryDomGet(e) (*(volatile uint8_t*)&(e)->dom)
+#define slotEntryGenGet(e) (*(volatile FireGen*)&(e)->gen)
+#define slotDomSet(slot, x) (*(volatile uint8_t*)&slotEntry(slot).dom = (uint8_t)(x))
+#endif
+#define slotDomGet(slot) slotEntryDomGet(&slotEntry(slot))
 #endif
 /* Takes up to `want` slots for this thread's cache (under g_slotM): freed ones first, then new ones - a new segment is made before its slots are handed out. */
 FIRE_COLD FIRE_FN void slotRefill(uint32_t want) {
@@ -1669,6 +1700,9 @@ FIRE_FN void slotAcquire(Owned* o) {
     slot = g_slotCache.slot[--g_slotCache.n];
     o->slot = slot;
     o->gen = slotGenGet(slot);
+#ifdef FIRE_SLOT_DOM
+    if (FIRE_UNLIKELY(slotDomGet(slot))) slotDomSet(slot, 0);
+#endif
 #ifdef FIRE_SLOT_HDR
     slotHdr(slot) = o;
 #endif
@@ -1752,6 +1786,9 @@ FIRE_FN void slotRelease(Owned* o) {
 FIRE_FN void slotBump(Owned* o) {
     slotGenSet(o->slot, (slotGenGet(o->slot) + 1) & FIRE_GEN_MASK);
     o->gen = slotGenGet(o->slot);
+#ifdef FIRE_SLOT_DOM
+    if (slotDomGet(o->slot)) slotDomSet(o->slot, 0);   /* (it is the thread's now - after the generation, see slotDomGet) */
+#endif
 }
 #else
 FIRE_FN void slotAcquire(Owned* o) { o->slot = 0; o->gen = 0; }
@@ -1780,6 +1817,10 @@ FIRE_FN void domReadEnter(void);
 #define FIRE_FLAGS_OR(h, bits) ((void)(((Owned*)(h))->flags |= (uint8_t)(bits)))
 #endif
 #define FIRE_DOM_TOUCH(h) do { if (FIRE_UNLIKELY(FIRE_FLAGS_READ(h) & 64) && g_domReader == 1) domReadEnter(); } while (0)
+#ifdef FIRE_SLOT_DOM
+/* ... the same from the slot of a Value (see slotDomGet): the memory of the value is not touched before the thread holds the read side */
+#define FIRE_SLOT_TOUCH(slot) do { if (FIRE_UNLIKELY(slotDomGet(slot)) && g_domReader == 1) domReadEnter(); } while (0)
+#endif
 /* A read of a global variable or a static field of the main program (the generator puts it before the read in code that may run on a fire thread). */
 #define FIRE_DOM_READ() do { if (FIRE_UNLIKELY(g_domReader == 1)) domReadEnter(); } while (0)
 #define FIRE_DOM_THREAD FIRE_UNLIKELY(g_domReader)   /* (is this a fire thread: the byte the reads look at anyway) */
@@ -1822,6 +1863,8 @@ typedef int fire_spin;
 #define fire_spinLock(l) ((void)(l))
 #define fire_spinUnlock(l) ((void)(l))
 #endif
+/* (Its caller knows the value alive: it checked it with leafAlive, which took the read side for a value of the shared domain - see slotDomGet - and no
+ * safe point came since. So the flag may be read here; mostly the thread holds the read side already, and this is one test.) */
 FIRE_FN Owned* leafOf(Value v) {
     FIRE_DOM_TOUCH(v.p);
     return (Owned*)v.p;
@@ -1841,13 +1884,30 @@ FIRE_FN uintptr_t leafKey(Value v) {
     return (uintptr_t)v.p;
 }
 
-/* Is the array or buffer behind this value still alive? */
+/* Is the array or buffer behind this value still alive? (On a fire thread, for an object or array of the shared domain: it takes the read side of the
+ * globals' lock first - a value it sees alive stays so, and its memory with it, until the thread's next safe point: see slotDomGet.) */
+#ifdef FIRE_SLOT_DOM
+/* (a value of the domain: out of line - leafAlive stays a leaf of a few instructions) */
+FIRE_COLD FIRE_FN bool leafAliveDom(Value v) {
+    if (g_domReader == 1) domReadEnter();
+    return slotGenGet(FIRE_VSLOT(v)) == FIRE_VGEN(v);
+}
+#endif
 FIRE_FN bool leafAlive(Value v) {
 #ifdef FIRE_UNCHECKED
     (void)v;
     return true;
 #else
+#ifdef FIRE_SLOT_DOM
+    {
+        /* (the entry once: its mark and its generation are then two loads side by side - the generation after the mark, see slotDomGet) */
+        SlotEntry* e = &slotEntry(FIRE_VSLOT(v));
+        if (FIRE_UNLIKELY(slotEntryDomGet(e))) return leafAliveDom(v);
+        return FIRE_LIKELY(slotEntryGenGet(e) == FIRE_VGEN(v));
+    }
+#else
     return FIRE_LIKELY(slotGenGet(FIRE_VSLOT(v)) == FIRE_VGEN(v));
+#endif
 #endif
 }
 /* A dead Value of an object, array or buffer that still lives - in a fire thread it was handed over to (`fire handover`, handOverAll): the sender's reference
@@ -6778,6 +6838,9 @@ FIRE_FN bool ptrValid(Value p, Value* err) {
         int64_t index, length;
         uint32_t slot = ptrSlot(p);
         intptr_t addr = (intptr_t)ptrAddr(p);
+#ifdef FIRE_SLOT_DOM
+        if (p.kind == K_PtrElem) FIRE_SLOT_TOUCH(slot);   /* (into an array of the shared domain: the read side first, like leafAlive) */
+#endif
         if (FIRE_UNLIKELY(slotGenGet(slot) != FIRE_VGEN(p))) {
             Value leaf = Undef();
             leaf.kind = p.kind == K_PtrByte ? K_Buffer : K_Array;
@@ -9184,7 +9247,9 @@ FIRE_FN void domWriterEnter(void) {
     g_domReader = 2;
     if (dropped) fire_mutex_lock(held);
 }
+extern FIRE_RT_DATA fire_atomic32 g_domChanges;   /* (see FIRE_DOM_STALE) */
 FIRE_FN void domWriterLeave(void) {
+    fire_atomic_add(&g_domChanges, 1);   /* (a section may have changed or destroyed what the main program knows - FIRE_DOM_STALE) */
     fire_mutex_lock(&g_dom.m);
     g_dom.writer = false;
     fire_cond_notifyAll(&g_dom.cv);
@@ -11217,10 +11282,16 @@ FIRE_FN void markOwnedShared(Owned* c);
  * reads and writes them without the lock (bufOf does not look at the flag) - but for what the domain means otherwise: a native that gets it holds the read
  * side (fire_natArg), a thread cannot hand it over, and its memory outlives an access of another thread when it is destroyed (bufRetire). */
 FIRE_FN void markBufShared(Value v) { if (v.kind == K_Buffer && leafAlive(v)) ((Buf*)v.p)->h.flags |= F_SHARED; }
+/* (the flag of an object or array of the domain, in its slot too - see slotDomGet) */
+#ifdef FIRE_SLOT_DOM
+#define FIRE_MARK_SHARED(h) do { (h)->flags |= F_SHARED; slotDomSet((h)->slot, 1); } while (0)
+#else
+#define FIRE_MARK_SHARED(h) ((h)->flags |= F_SHARED)
+#endif
 FIRE_FN void markArrayShared(Arr* a) {
     uint32_t i;
     if (a->h.flags & F_SHARED) return;
-    a->h.flags |= F_SHARED;
+    FIRE_MARK_SHARED(&a->h);
     if (!arrValues(a)) return;   /* (a packed array holds numbers only) */
     for (i = 0; i < a->length; i++) {
         refShare(arrItems(a)[i]);
@@ -11234,7 +11305,7 @@ FIRE_FN void markOwnedShared(Owned* c) {
         Owned* k;
         uint32_t i;
         if (o->h.flags & F_SHARED) return;
-        o->h.flags |= F_SHARED;
+        FIRE_MARK_SHARED(&o->h);
         for (k = objOwnedHead(o); k; k = k->next) markOwnedShared(k);
         for (i = 0; i < o->nfields; i++) {
             refShare(objFields(o)[i]);
@@ -11261,7 +11332,7 @@ FIRE_FN void ensureDomain(void) {
     if (g_domainRoot) for (c = g_domainRoot->head; c; c = c->next) markOwnedShared(c);
 }
 FIRE_FN bool sharedValue(Value v) {
-    if (v.kind == K_Class) return (FIRE_FLAGS_READ(&asObj(v)->h) & F_SHARED) != 0;
+    if (v.kind == K_Class) return leafAlive(v) && (FIRE_FLAGS_READ(&asObj(v)->h) & F_SHARED) != 0;   /* (a destroyed one: its memory may be gone - the access says so) */
     if (v.kind == K_Array && ownedOf(v)) return (FIRE_FLAGS_READ(&arrOf(v)->h) & F_SHARED) != 0;
     return false;
 }
@@ -12997,7 +13068,12 @@ FIRE_COLD FIRE_FN bool pollSlow(bool loop) {
 #endif
     if (g_leaving) return false;
     if (terminateRequested()) { startLeave(); return true; }
-    if (g_attnMask & ATTN_MAIN) { if (loop) mainPoll(false); else deliverThreadExceptions(); }
+    if (g_attnMask & ATTN_MAIN) {
+#ifdef FIRE_NO_GIL
+        fire_atomic_add(&g_domChanges, 1);   /* (the main program runs what the threads left for it: jobs, sections, handlers - FIRE_DOM_STALE) */
+#endif
+        if (loop) mainPoll(false); else deliverThreadExceptions();
+    }
 #ifdef FIRE_NO_GIL
     if (g_attnMask & ATTN_PEER) { threadServe(); if (loop) threadServeCalls(); }
 #endif
@@ -13011,6 +13087,28 @@ FIRE_FN bool pollSignals(void) {
     if (FIRE_LIKELY(!(fire_atomic_load(&g_attn) & g_attnMask & ~(uint32_t)ATTN_SECT))) return false;
     return pollSlow(false);
 }
+
+/* A method on a fire thread, after the safe point of its entry (pollSignals): there the thread may have let go of the read side of the globals' lock
+ * (with the GIL: of the GIL) - the main program may have destroyed `self` meanwhile, if it is an object of the shared domain. Its caller checked it before
+ * the safe point; it is checked again (leafAlive takes the read side anew for it). The main program needs no check: a thread changes the domain only in a
+ * section, and pollSignals grants none. */
+/* The state of a typed array the generated code keeps in C helpers across a loop (CppGenerator Flow.Arrays: its data, its length) - of an array of the
+ * shared domain: after a safe point of the loop it may be stale. A fire thread that let go of the read side there (g_domReader 1): the main program may
+ * have changed or destroyed the array meanwhile; the main program: a section or what it ran for the threads may have (g_domChanges, counted by them). Then
+ * the helpers are checked again - leafAlive takes the read side anew. A thread that still holds the read side, a main program that ran nobody: nothing
+ * changed. With the GIL: always. */
+#if defined(FIRE_NO_GIL)
+#define fire_domSeen() fire_atomic_load(&g_domChanges)
+#define FIRE_DOM_STALE(seen) (g_domReader == 1 || (g_domReader == 0 && fire_atomic_load(&g_domChanges) != (seen)))
+#else
+#define fire_domSeen() 0u
+#define FIRE_DOM_STALE(seen) ((void)(seen), 1)
+#endif
+#if defined(FIRE_NO_GIL)
+#define FIRE_SELF_LOST(s) (FIRE_UNLIKELY(g_domReader == 1) && (s).kind == K_Class && !leafAlive(s))
+#else
+#define FIRE_SELF_LOST(s) (FIRE_UNLIKELY(g_isThread) && (s).kind == K_Class && !leafAlive(s))
+#endif
 
 /* A loop's jump back: like pollSignals, and the main program serves its queue there (ATTN_SECT is in its mask only in the mode `safepoints`). */
 FIRE_FN bool pollLoop(void) {
@@ -13287,7 +13385,7 @@ fire_mutex g_thrM, g_reqM, g_mailboxM, g_cancelM;
 #ifdef FIRE_NO_GIL
 DomLock g_dom;
 int32_t g_awayDepth;
-fire_atomic32 g_lentEpoch = {1}, g_lentGraveN, g_lentReaderN;
+fire_atomic32 g_lentEpoch = {1}, g_lentGraveN, g_lentReaderN, g_domChanges;
 LentReader* g_lentReaders = NULL;
 LentGrave* g_lentGraves = NULL;
 #endif
