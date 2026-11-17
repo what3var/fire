@@ -30,6 +30,12 @@ compiler (`fire run|build x.fireproj`), by the editor (spark) and by the tests.
 { "name": "All", "projects": ["Core/Core.fireproj", "App/App.fireproj"], "startup": "App", "settings": { "author": "me" } }
 ```
 
+The solution format is read and written by `FireSolution` (`src/fire.Project/FireSolution.cs`): `format`, `name`, `projects` (the project files relative to the solution file, in
+the order they are shown), `folders` (empty folders of the solution), `startup`, `settings` and `notes`; what is empty is not written. **`startup`** is the name of the **start
+project** - what Start in spark, `fire run All.firesln` and `fire build All.firesln` take. It is optional: a solution without it (also every file written before spark could choose
+it) starts its first program, and a name that is no project of the solution any more does the same; spark writes it when the start project is chosen (the box of the *Run* tool
+strip, *Set as Start Project*) and takes it out when that project is removed from the solution. The name is matched without regard to case.
+
 **Files.** `files` are paths and patterns relative to the project file (`*` any characters but `/`, `**` any folders, `?`, `{a,b}`); a pattern matches in name order, a path
 keeps its place. Without `files` the project takes every fire file (`*.fire`, `*.script`, `*.fi`, `*.fic`) every UI markup file (`*.fxml`) and every schematic of a circuit (`*.biscuit`, [Circuits](../circuits/README.md)) below its folder - except `bin`, `obj`, hidden
 folders, the folder `templates/` (what the project offers as templates), the folder `testing/` (its tests: only `forge test` and the Test Explorer of spark compile them, see [Testing: forge test](testing.md)) and the
@@ -76,15 +82,27 @@ The editor keeps asking *which project does the active document belong to?* (`Wo
   unsaved text of the open documents, the project's settings, its libraries;
 * a file that two projects hold counts for the startup project;
 * a file that no project holds (opened next to the solution, like in Visual Studio) is compiled alone, as always;
-* a solution-wide command (Build solution, Run startup project) works regardless of the active document.
+* a solution-wide command (Build Solution, Clean Solution) works regardless of the active document.
 
-The status bar and the title say what will be built (`App (project)` or `file.fire (single file)`).
+**Start** (F5) is different: from every file that belongs to the solution - a file of any of its projects, a project file, the solution file, notes - it runs the **start
+project** (`startup`, see above; without a solution the project itself), as in Visual Studio (`Workspace.StartProjectFor`). Only a script that belongs to no project runs alone.
 
-**Where a build goes.** *Build* (a program that carries the virtual machine) and *Build Native* of a **project** do not ask (in spark; `forge build` does the same): the program lands in the project folder
+The status bar and the title say what will be built (`App (project)` or `file.fire (single file)`) and, when it is another project, what Start runs (`Start: Tool`).
+
+### Where a build goes, and Clean
+
+*Build virtual* (a program that carries the virtual machine), *Build* (native) and *Build Solution* of a **project** do not ask (in spark; `forge build` does the same): the program lands in the project folder
 under `bin/<target>-<mode>/` - `<target>` is the target of the native build (`linux`, `windows`, `macos`, `esp32`, `wasm`, ...) or `vm` for a program with the virtual
 machine, `<mode>` the mode of the run (`dbg`, `rel`, `perf`); the program has the name of the project (`App/bin/linux-rel/App`, `App/bin/vm-dbg/App.exe`). A toolchain
 that only writes files (ESP-IDF) writes them into that folder. The setting `output` of the project goes before it. A **single file** (no project) asks where to put
 the program, as before.
+
+The build folders of a project are `bin/` (the programs above, the C sources a native build keeps next to a program in `<program>.src/`, the packages of a library) and `obj/` (the
+C++ natives of the project built for the virtual machine); the file lists of a project never take files from them. **Clean** (spark: *Run > Clean*, *Clean Solution*, the context menus)
+removes exactly these two folders of each project (`ProjectOutput.Clean`) - not the place an `output` setting names elsewhere, and not a build folder that holds a fire source, a
+test or a project or solution file (builds write none of them; it is kept and reported). A build folder that is a link loses the link, not its target.
+*Build Solution* builds the projects natively in the order of their references (`Workspace.BuildOrder`: a library before whoever references it, otherwise the order of the solution
+file); a library is compiled for the target (its code goes into the programs that import it), a project whose library failed is skipped.
 
 ## References: libraries without an entry point
 
@@ -182,7 +200,7 @@ proposed as the solution folder; a folder of the solution (*New Folder* on the s
   also empty folders - and references, each row with the icon of its file type. Double-click opens a file in the editor that fits: scripts, markup (with the design view), C++ and other text (a text editor; C++ with colours),
   pictures (a viewer), other data files (the hex editor). A double click on a row that folds opens it instead of folding it (the arrow still folds): the solution and a project
   open their properties, a `.fxml` or `.biscuit` its designer, the notes folder (always shown, pale until it exists; [Notes: todo lists and project overviews](notes.md)) the overview. The context menus add a new file, an existing file, a resource (the file is *copied* into a folder of the project), a folder, native
-  code (C++), a reference, set the startup project, build/run/pack, reveal in the file manager, remove, and open the project's properties; a file can also be opened *as text*, *as hex* or - a
+  code (C++), a reference, set the start project, *Start Debugging*, *Build* and *Clean* of a project (*Build Solution* and *Clean Solution* of the solution), pack, reveal in the file manager, remove, and open the project's properties; a file can also be opened *as text*, *as hex* or - a
   picture - in the *pixel editor*. The markup of an interface (`Name.fxml`) opens like a folder: its first row **Designer** opens the markup editor (as a double click on the
   file does), below it is the code-behind `Name.fire` of the same folder.
 * **Properties of a file**: selecting a file in the Solution Explorer shows it in the tool window **Properties** (until another document becomes active): name, folder, project, what the
@@ -205,7 +223,7 @@ proposed as the solution folder; a folder of the solution (*New Folder* on the s
   again), **Project properties**: a window with pages chosen at the left - *General* (name, version, author, description, icon, program or library, entry file or import name, Desktop/Console, lax/strict, VM/native, startup project), *Version & Info* (product name, internal name, file version, license, comments), *Build* (configuration, float precision, symbols for `#if`, output folder), *Native & Toolchain* (target, toolchain, a button to the native build settings, the serial port and baud rate of a board with the state of ESP-IDF), *Run & Debug* (the program arguments), *References*, *Notes* (the notes folder) and, when a solution is open, a page for the solution (startup project, notes folder and the settings that every project without its own value gets). A value the project does not set shows the one it inherits (from the solution or the default) greyed out; *reset* removes the project's own value again.
 * The documents stay documents: files of the project open in tabs like any other file, files outside open next to them, and every command that builds looks at the active tab. The status bar
   and the Build/Run commands say what they act on (`Build: App (project)`, `Build: single.fire (single file)`). Unsaved buffers of the project's files go into the build.
-* **F5 on a library file** runs the *startup project* (a library has no entry point); **Build** on a library packs it (`Core-1.2.0.fpk`).
+* **F5 on any file of the solution** runs the *start project* (bold in the Solution Explorer); **Build** on a library packs it (`Core-1.2.0.fpk`).
 * Breakpoints belong to a file of the project (not to "the" script), also in library files; the debugger shows the file it is in. Live diagnostics of a file are made in the context of its project
   (the libraries, the project's symbols for `#if`): the other files of the project are compiled along - their classes, namespaces, members and `#import`s are known -
   and only the errors of the open file are shown (each error of the compiler knows the file it is in). A library that is a standard import (the solution

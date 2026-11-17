@@ -30,5 +30,55 @@ namespace fire.Projects
             foreach (char c in Path.GetInvalidFileNameChars()) projectName = projectName.Replace(c, '_');
             return Path.Combine(Folder(projectDirectory, target, mode), projectName + extension);
         }
+
+        /// <summary>The folders below a project folder that builds write into and Clean removes (docs/tools/projects.md, "Clean"): <c>bin/</c> - the programs of Build, Build virtual
+        /// and the native runs (<c>bin/&lt;target&gt;-&lt;mode&gt;/</c>), the C sources a native build keeps next to a program (<c>*.src/</c>), the packages of a library
+        /// (<c>.fpk</c>) - and <c>obj/</c>, where the C++ natives of the project are built for the virtual machine. The file lists of a project never take files from them.</summary>
+        public static readonly IReadOnlyList<string> BuildFolders = new[] { "bin", "obj" };
+
+        /// <summary>
+        /// Clean: removes the build folders of a project (<see cref="BuildFolders"/>), nothing else - an `output` setting that points somewhere else is left alone, and so is a build folder
+        /// that holds a file the project compiles, a test of it, any fire source or a project or solution file (builds write none of them: it is no build folder then; it is reported in
+        /// <see cref="CleanResult.Kept"/>). A build folder that is a link: the link is removed, not what it points to.
+        /// </summary>
+        public static CleanResult Clean(LoadedProject project)
+        {
+            var removed = new List<string>();
+            var kept = new List<string>();
+            foreach (string name in BuildFolders)
+            {
+                string folder = Path.Combine(project.Directory, name);
+                var info = new DirectoryInfo(folder);
+                if (!info.Exists) continue;
+                if (info.LinkTarget != null)
+                {
+                    try { info.Delete(); removed.Add(folder); }
+                    catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { kept.Add($"{folder}: {ex.Message}"); }
+                    continue;
+                }
+                string prefix = Path.GetFullPath(folder).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar) + Path.DirectorySeparatorChar;
+                bool Inside(string file) => Path.GetFullPath(file).StartsWith(prefix, ProjectFiles.PathComparison);
+                string? source = project.Files.Concat(project.TestFiles).FirstOrDefault(Inside);
+                // (builds write no fire sources and no project files there: one that is there was put there by someone)
+                source ??= SafeFiles(folder, "*").FirstOrDefault(f => FireProject.IsSourceFile(f) || f.EndsWith(FireProject.Extension, StringComparison.OrdinalIgnoreCase) || f.EndsWith(FireSolution.Extension, StringComparison.OrdinalIgnoreCase));
+                if (source != null)
+                {
+                    kept.Add($"{folder}: it holds {ProjectFiles.Relative(project.Directory, source)}, which is no build output - delete it yourself if it is one.");
+                    continue;
+                }
+                try { Directory.Delete(folder, recursive: true); removed.Add(folder); }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { kept.Add($"{folder}: {ex.Message}"); }
+            }
+            return new CleanResult(removed, kept);
+        }
+
+        private static IEnumerable<string> SafeFiles(string folder, string pattern)
+        {
+            try { return Directory.EnumerateFiles(folder, pattern, new EnumerationOptions { RecurseSubdirectories = true, IgnoreInaccessible = true, AttributesToSkip = FileAttributes.ReparsePoint }).ToList(); }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { return Array.Empty<string>(); }
+        }
     }
+
+    /// <summary>What <see cref="ProjectOutput.Clean"/> did: the folders it removed, and those it left (with the reason).</summary>
+    public sealed record CleanResult(IReadOnlyList<string> Removed, IReadOnlyList<string> Kept);
 }

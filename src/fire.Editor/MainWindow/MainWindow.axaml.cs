@@ -312,7 +312,7 @@ namespace fire.Editor
             RefreshCircuitUi();
             _nativeTargetChoice = _settings.NativeTarget;
             RefreshTargetCombo();
-            RefreshEngineCombo();
+            RefreshEngineMenu();
 
             // Files passed on the command line; without any the editor starts empty (new files come from the welcome window or File > New).
             foreach (var arg in (Environment.GetCommandLineArgs()).Skip(1))
@@ -902,8 +902,7 @@ namespace fire.Editor
             UpdateErrorPanel();
             UpdateSaveCommands();
             RefreshProjectUi();
-            RefreshTargetCombo();
-            RefreshEngineCombo();
+            RefreshTargetCombo();   // (RefreshProjectUi shows the start project and its engine)
             _debugger.Refresh(BreakpointDescriptions());
             if (!ReferenceEquals(doc, _testsActiveDocument)) { _testsActiveDocument = doc; ScheduleTestDiscovery(activeDocumentChanged: true); }
             RefreshTodo();
@@ -1098,8 +1097,12 @@ namespace fire.Editor
                     NavigateHistory(mdDoc, -1); e.Handled = true; break;
                 case Key.Right when alt && ActiveDocument is { Markdown.IsReadOnly: true } mdDoc:
                     NavigateHistory(mdDoc, +1); e.Handled = true; break;
-                case Key.F5 when ctrl:
+                case Key.F5 when ctrl && shift:
                     Restart_Click(this, e); e.Handled = true; break;
+                case Key.F5 when ctrl:
+                    StartWithoutDebugging_Click(this, e); e.Handled = true; break;
+                case Key.B when ctrl && shift:
+                    BuildSolution_Click(this, e); e.Handled = true; break;
                 case Key.F5 when shift:
                     Stop_Click(this, e); e.Handled = true; break;
                 case Key.F5:
