@@ -210,6 +210,25 @@ namespace fire.Projects
             RaiseChanged();
         }
 
+        /// <summary>Loads the solution (or the single project) again from its file - it was changed outside of the editor (a git pull, a switch of the branch). Nothing open: nothing happens.</summary>
+        public void Reload()
+        {
+            if (FilePath is { } path) Load(path);
+        }
+
+        /// <summary>Loads one project again from its file (it was changed outside of the editor); the others stay as they are. false: the project is not loaded here.</summary>
+        public bool ReloadProject(string path)
+        {
+            string full = Path.GetFullPath(path);
+            if (!_byPath.TryGetValue(full, out var old)) return false;
+            var fresh = new LoadedProject(FireProject.Load(full), old.InSolution);
+            _byPath[full] = fresh;
+            int index = _members.IndexOf(old);
+            if (index >= 0) _members[index] = fresh;
+            RaiseChanged();
+            return true;
+        }
+
         // -------------------------------------------------------------------------------------------------------------
         // Changes (written to the files)
         // -------------------------------------------------------------------------------------------------------------

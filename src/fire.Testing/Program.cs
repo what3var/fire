@@ -71,6 +71,8 @@ if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "types") { TypeTest
 if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "completion") { CompletionTests.Run(); return; }
 if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "testing") { TestingTests.Run(); return; }
 if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "notes") { NotesTests.Run(); return; }
+// FIRE_TESTS_ONLY=git: git (GitTests) and the files that change under the editor, the Git panel (GitSyncTests); FIRE_TESTS_FILTER narrows the GitSync checks by title
+if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "git") { GitTests.Run(); GitSyncTests.Run(); return; }
 if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "windows") { WindowManagerTests.Run(); return; }
 if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "dialogs") { DialogTests.Run(); return; }
 if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "docking") { DockingTests.Run(); return; }
@@ -11671,6 +11673,7 @@ DockingTests.Run();
 CircuitEditorTests.Run();
 ImageTests.Run();
 GitTests.Run();
+GitSyncTests.Run();
 
 // ---------------------------------------------------------------------------------------------------------------------------
 // Native backend (fire.Native): the same source runs in the VM and as generated C++ - the output must be identical

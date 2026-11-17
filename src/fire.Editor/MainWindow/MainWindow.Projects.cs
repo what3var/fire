@@ -278,6 +278,8 @@ namespace fire.Editor
             {
                 if (_factory.IsDockablePinned(tool, RootDock)) _factory.UnpinDockable(tool);
                 else if (!IsToolVisible(tool)) _factory.RestoreDockable(tool);
+                // the Git panel comes out with it, as the tab beside it (docs/tools/git.md)
+                if (_tools.TryGetValue("git", out var git) && _factory.IsDockablePinned(git, RootDock)) _factory.UnpinDockable(git);
                 _factory.SetActiveDockable(tool);
             }
             catch (Exception ex) { System.Diagnostics.Debug.WriteLine(ex); }
