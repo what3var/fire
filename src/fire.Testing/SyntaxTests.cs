@@ -394,6 +394,21 @@ static class SyntaxTests
         Check("fire handover: im Thread nur eigene Variablen, kein Global des Hauptprogramms", handoverMain.Contains("'handover' needs a variable of this thread: 'g' is a global variable of the main program"), handoverMain);
         string handoverWord = Output("var handover = 1");
         Check("fire handover: 'handover' ist ein Schluesselwort", handoverWord.StartsWith("ERROR"), handoverWord);
+        // replace (DECISIONS D16): ein Schluesselwort, nur vor einer Zuweisung mit '=' an ein Feld
+        string replaceWord = Output("var replace = 1");
+        Check("replace: ein Schluesselwort, kein Name", replaceWord.StartsWith("ERROR E3055") && replaceWord.Contains("'replace' is a keyword and cannot be a name"), replaceWord);
+        string replaceParam = Output("class A {\n    static int F(int replace) { return replace }\n}");
+        Check("replace: auch kein Parametername", replaceParam.StartsWith("ERROR") && replaceParam.Contains("'replace' is a keyword"), replaceParam);
+        string replaceCompound = Output("class A {\n    int n\n    undefined F() { replace this.n += 1 }\n}");
+        Check("replace: nur mit '=' (E3165)", replaceCompound.StartsWith("ERROR E3165"), replaceCompound);
+        string replaceNoAssign = Output("class A {\n    undefined F() { replace this.F() }\n}");
+        Check("replace: ohne Zuweisung ist E3165", replaceNoAssign.StartsWith("ERROR E3165"), replaceNoAssign);
+        string replaceElement = Output("var a = [1, 2]\nreplace a[0] = 3");
+        Check("replace: ein Element ist E3166", replaceElement.StartsWith("ERROR E3166"), replaceElement);
+        string replaceLocal = Output("var x = new List<int>()\nreplace x = new List<int>()");
+        Check("replace: eine Variable ist E4080 (ihre Werte gehoeren ihrem Scope)", replaceLocal.StartsWith("ERROR E4080") && replaceLocal.Contains("'x' is a variable"), replaceLocal);
+        string replaceString = Output("var s = \"a-b\".Replace(\"-\", \"+\")\nprint(s)");
+        Check("replace: die Methode Replace der Strings bleibt", replaceString == "a+b", replaceString);
 
         // ---- `#globaljobs safepoints|sleep|sync` (docs/spec/THREADING_DESIGN.md section 7): when the main program runs its `fire global` jobs ----
         const string jobsBody = "#import \"time\"\nfire global { print(\"job1\") }\nfor (var i = 0; i < 2; i++) { print(\"loop \" + i) }\nfire global { print(\"job2\") }\nH.f()\nSleep(1ms)\nprint(\"n \" + (sync globals))\nclass H { static undefined f() { print(\"call\") } }\n";
