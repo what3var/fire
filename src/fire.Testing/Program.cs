@@ -62,6 +62,7 @@ if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "programfile") { Pr
 if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "tables") { TablesTests.Run(); return; }
 if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "syntax") { SyntaxTests.Run(); return; }
 if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "types") { TypeTests.Run(); return; }
+if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "completion") { CompletionTests.Run(); return; }
 if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "testing") { TestingTests.Run(); return; }
 if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "notes") { NotesTests.Run(); return; }
 if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "windows") { WindowManagerTests.Run(); return; }
@@ -11544,6 +11545,7 @@ TablesTests.Run();
 ProgramFileTests.Run();
 SyntaxTests.Run();
 TypeTests.Run();
+CompletionTests.Run();
 TestingTests.Run();
 WindowManagerTests.Run();
 DialogTests.Run();

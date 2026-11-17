@@ -174,6 +174,10 @@ namespace fire.Editor
         /// instantiable with `new`).</summary>
         public bool IsInterface { get; set; }
 
+        /// <summary>true for a class of a script that a generator wrote (the class of an `.fxml` markup, a circuit of a `.biscuit`: the text starts with
+        /// `// Generated from`) - its helpers (`fxBindAll`, `fxConv_Upper`, ...) are no API of the class (see CompletionEngine).</summary>
+        public bool IsGenerated { get; set; }
+
         public ClassInfo(string name, int declLine = 0)
         {
             Name = name;
@@ -313,6 +317,9 @@ namespace fire.Editor
         /// <summary>The file of an enum that is declared in another file of the project (key as in <see cref="EnumDeclLines"/>).</summary>
         public Dictionary<string, string> EnumFiles { get; } = new();
 
+        /// <summary>The first line of a script a generator wrote (FireUiGenerator, BiscuitGenerator).</summary>
+        private const string GeneratedHeader = "// Generated from ";
+
         private static readonly Dictionary<string, (string Text, ScriptSymbolIndex Index)> ProjectFileIndexes = new(StringComparer.OrdinalIgnoreCase);
 
         /// <summary>The index of another file of the project, kept as long as its text does not change.</summary>
@@ -345,18 +352,24 @@ namespace fire.Editor
             var index = new ScriptSymbolIndex(source, tokens);
             index.UsingNamespaces.AddRange(FindUsings(source));
             index.Harvest();
+            if (source.StartsWith(GeneratedHeader, StringComparison.Ordinal))
+                foreach (var cls in index.Classes.Values) cls.IsGenerated = true;
             index.HarvestIncludes(source);
+            var importNames = ImportedPreludes.FindImportNames(source).Concat(extraImports).ToList();
             foreach (var (path, text) in projectFiles)
             {
                 try { index.MergeInPrelude(IndexOfProjectFile(path, text), ownDeclarationsOnly: true); }
                 catch (Exception) { /* a file that cannot be scanned adds nothing */ }
+                // an `#import` in any file of the program counts for all of it (the script of an `.fxml` imports `ui` - the code-behind needs no `#import` of its own)
+                try { importNames.AddRange(ImportedPreludes.FindImportNames(text)); }
+                catch (Exception) { }
             }
             index.MergeInPrelude(PreludeIndex.Value);
             // Preludes of the extensions switched on via '#import' (see
             // ImportedPreludes) - `Framebuffer`/`Device`/... should be completed
             // just like the standard library.
             var merged = new HashSet<string>();
-            foreach (var name in ImportedPreludes.FindImportNames(source).Concat(extraImports))
+            foreach (var name in importNames)
             {
                 // `#import "ui"` brings `graphics` along, `linq` brings `reflection` along (see ImportedPreludes.WithDependencies).
                 IEnumerable<string> keys;
@@ -764,6 +777,16 @@ namespace fire.Editor
                 if (type == TokenType.Public) { access = MemberAccess.Public; i++; continue; }
                 if (type == TokenType.Private) { access = MemberAccess.Private; i++; continue; }
                 if (type == TokenType.Protected) { access = MemberAccess.Protected; i++; continue; }
+                // `[Test "Title"]` before a member (attributes come before the modifiers): no member of its own
+                if (type == TokenType.LBracket) { i = SkipBrackets(i, bodyEnd); continue; }
+                // `inline c int Add(...)`: a static method written in C (docs/language/18-native-code.md)
+                if (type == TokenType.Identifier && _tokens[i].Lexeme == "inline" && i + 1 < bodyEnd
+                    && _tokens[i + 1].Type == TokenType.Identifier && _tokens[i + 1].Lexeme == "c" && !_tokens[i + 1].NewlineBefore)
+                {
+                    isStatic = true;
+                    i += 2;
+                    continue;
+                }
 
                 if (type == TokenType.Construct)
                 {
@@ -805,6 +828,79 @@ namespace fire.Editor
             }
 
             return bodyEnd + 1;
+        }
+
+        /// <summary>Index behind the `]` that closes the `[` at `openIdx` (nested brackets counted along), at most `end`.</summary>
+        private int SkipBrackets(int openIdx, int end)
+        {
+            int depth = 0;
+            for (int j = openIdx; j < end; j++)
+            {
+                if (_tokens[j].Type == TokenType.LBracket) depth++;
+                else if (_tokens[j].Type == TokenType.RBracket && --depth == 0) return j + 1;
+            }
+            return end;
+        }
+
+        /// <summary>Reads a type at `i` that is followed by a name on the same line (`int`, `defined int`, `Geometry.Circle`, `List&lt;string&gt;`, `int[]`,
+        /// `lambda`, `int lambda&lt;int&gt;`, `lambda expression&lt;T&gt;`, see Parser.ParseTypeRef) and returns the index of that name - -1 if there is no type
+        /// followed by a name (then the identifier at `i` is the name itself). `typeName`: the base name (`List` for `List&lt;string&gt;`, `lambda` for a
+        /// lambda type), `isArray`: empty brackets behind the type.</summary>
+        private int ReadTypeThenName(int i, int end, out string? typeName, out bool isArray)
+        {
+            typeName = null;
+            isArray = false;
+            int j = i;
+            // `defined int n` (a value that never holds undefined): the word stands in front of the type
+            if (j + 1 < end && _tokens[j].Type == TokenType.Identifier && _tokens[j].Lexeme == "defined"
+                && (IsTypeKeyword(_tokens[j + 1].Type) || _tokens[j + 1].Type == TokenType.Identifier) && !_tokens[j + 1].NewlineBefore)
+                j++;
+            if (j >= end) return -1;
+            string baseName;
+            if (IsTypeKeyword(_tokens[j].Type))
+            {
+                baseName = _tokens[j].Lexeme;
+                j = SkipTypeSuffix(j + 1, end);
+            }
+            else if (_tokens[j].Type == TokenType.Identifier)
+            {
+                int typeEnd = j;
+                while (typeEnd + 2 < end && _tokens[typeEnd + 1].Type == TokenType.Dot && _tokens[typeEnd + 2].Type == TokenType.Identifier)
+                    typeEnd += 2;
+                baseName = string.Concat(_tokens.Skip(j).Take(typeEnd - j + 1).Select(t => t.Lexeme));
+                j = typeEnd + 1;
+            }
+            else return -1;
+
+            if (j < end && _tokens[j].Type == TokenType.Lt)
+            {
+                int after = SkipAngleBrackets(j);
+                if (after == j + 1) return -1;   // no type arguments, a comparison or so
+                j = after;
+            }
+            // `int lambda<int> f`: the type in front of `lambda` is its result
+            if (baseName != "lambda" && j + 1 < end && _tokens[j].Type == TokenType.Identifier && _tokens[j].Lexeme == "lambda" && !_tokens[j].NewlineBefore
+                && _tokens[j + 1].Type is TokenType.Identifier or TokenType.Lt)
+            {
+                baseName = "lambda";
+                j++;
+            }
+            if (baseName == "lambda")
+            {
+                // `lambda expression<T>`, `lambda field<T>`, ... and the parameter types
+                if (j + 1 < end && _tokens[j].Type == TokenType.Identifier && _tokens[j + 1].Type == TokenType.Lt
+                    && _tokens[j].Lexeme is "expression" or "field" or "property" or "member" or "method" or "selector")
+                    j++;
+                if (j < end && _tokens[j].Type == TokenType.Lt) j = SkipAngleBrackets(j);
+            }
+            j = SkipEmptyBrackets(j, end, ref isArray);
+            if (j < end && _tokens[j].Type == TokenType.Identifier && !_tokens[j].NewlineBefore)
+            {
+                typeName = baseName;
+                return j;
+            }
+            isArray = false;
+            return -1;
         }
 
         private static string FormatSignature(List<(string Name, string? TypeName)> parms) =>
@@ -868,32 +964,10 @@ namespace fire.Editor
             // Remember/skip the optional type (type keyword, or two
             // identifiers in a row = "class name field name").
             // `int[] Name()` - empty brackets behind the type = array RETURN TYPE (method/property).
-            string? typeName = null;
-            bool returnsArray = false;
-            if (IsTypeKeyword(_tokens[i].Type))
-            {
-                typeName = _tokens[i].Lexeme;
-                i = SkipTypeSuffix(i + 1, bodyEnd);
-                i = SkipEmptyBrackets(i, bodyEnd, ref returnsArray);
-            }
-            else if (_tokens[i].Type == TokenType.Identifier)
-            {
-                // Class name, also qualified ('Geometry.Circle'), followed
-                // by the name on the same line.
-                int typeEnd = i;
-                while (typeEnd + 2 < bodyEnd && _tokens[typeEnd + 1].Type == TokenType.Dot
-                       && _tokens[typeEnd + 2].Type == TokenType.Identifier)
-                    typeEnd += 2;
-                bool identifierArray = false;
-                int afterType = SkipEmptyBrackets(typeEnd + 1, bodyEnd, ref identifierArray);
-                if (afterType < bodyEnd && _tokens[afterType].Type == TokenType.Identifier
-                    && !_tokens[afterType].NewlineBefore)
-                {
-                    typeName = string.Concat(_tokens.Skip(i).Take(typeEnd - i + 1).Select(t => t.Lexeme));
-                    returnsArray = identifierArray;
-                    i = afterType;
-                }
-            }
+            // (a type keyword, `defined`, generic arguments, a lambda type - see ReadTypeThenName)
+            int nameAt = ReadTypeThenName(i, bodyEnd, out string? typeName, out bool returnsArray);
+            if (nameAt >= 0) i = nameAt;
+            else if (IsTypeKeyword(_tokens[i].Type)) return start + 1;   // a type without a name - nothing to collect
 
             if (i >= bodyEnd || _tokens[i].Type != TokenType.Identifier)
                 return start + 1; // no recognisable member - move on by only one token, do not get stuck
@@ -991,6 +1065,22 @@ namespace fire.Editor
                 IsStatic = isStatic,
                 Access = access,
             });
+
+            // `private int a, b = 2`: every name of the list is a field with the same type and modifiers
+            while (afterName + 1 < bodyEnd && _tokens[afterName].Type == TokenType.Comma && _tokens[afterName + 1].Type == TokenType.Identifier)
+            {
+                int more = afterName + 1;
+                AddMember(info, new MemberInfo(_tokens[more].Lexeme, MemberKind.Field, 0, DeclLineOf(_tokens[more]))
+                {
+                    TypeName = typeName,
+                    TypeIsArray = isArray,
+                    IsStatic = isStatic,
+                    Access = access,
+                });
+                afterName = more + 1;
+                while (afterName < bodyEnd && _tokens[afterName].Type == TokenType.LBracket) afterName = SkipBrackets(afterName, bodyEnd);
+                if (afterName < bodyEnd && _tokens[afterName].Type == TokenType.Assign) afterName = ExpressionEnd(afterName + 1, bodyEnd);
+            }
             return afterName;
         }
 
