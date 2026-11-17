@@ -14,6 +14,10 @@ namespace UI {
         lambda OnChange
         bool changed = false
         defined int hotIndex = -1
+        // the selected element the watchers of `selectedItem` were told last; `holding`/`selecting` while SelectedChanged tells them
+        any seenItem
+        bool holding = false
+        defined int selecting = -1
 
         construct(defined int x = 0, defined int y = 0) : base(x, y, -1, -1) {
             this.items = new List()
@@ -32,12 +36,38 @@ namespace UI {
 
         string ItemText(any item) { return UI.M.Text(UI.M.Member(item, this.DisplayMember)) }
 
+        // A probe on it (a binding with ElementName) fires whenever the selection changes - by Select, a click, a key or SelectedIndex (SelectedChanged).
         any selectedItem {
             get {
-                if (this.SelectedIndex < 0 || this.SelectedIndex >= this.items.Count) { return undefined }
-                return this.items[this.SelectedIndex]
+                if (this.holding) { return this.seenItem }
+                return this.SelectedRow()
             }
-            set { this.Select(this.items.IndexOf(value)) }
+            set {
+                if (this.holding) {
+                    // (SelectedChanged: the selection is already made)
+                    this.holding = false
+                    this.SelectedIndex = this.selecting
+                    return
+                }
+                this.Select(this.items.IndexOf(value))
+            }
+        }
+
+        any SelectedRow() {
+            if (this.SelectedIndex < 0 || this.SelectedIndex >= this.items.Count) { return undefined }
+            return this.items[this.SelectedIndex]
+        }
+
+        // Tells the watchers of `selectedItem` that it is another element now: a write through its setter (the getter gives the element they saw
+        // before until then). Nothing when it is the same.
+        undefined SelectedChanged() {
+            any now = this.SelectedRow()
+            if (now == this.seenItem) { return }
+            this.selecting = this.SelectedIndex
+            this.holding = true
+            this.selectedItem = now
+            this.holding = false
+            this.seenItem = now
         }
 
         undefined Select(int index) {
@@ -45,6 +75,7 @@ namespace UI {
             if (index < -1) { index = -1 }
             if (index == this.SelectedIndex) { return }
             this.SelectedIndex = index
+            this.SelectedChanged()
             this.changed = true
             var callback = this.OnChange
             if (callback != undefined) { callback() }
@@ -54,6 +85,12 @@ namespace UI {
             var was = this.changed
             this.changed = false
             return was
+        }
+
+        // (SelectedIndex set from outside, an element replaced: the watchers of selectedItem hear of it)
+        override undefined Poll(Root root) {
+            base.Poll(root)
+            this.SelectedChanged()
         }
 
         defined int OptionHeight(Root root) { return UI.M.Max(this.TextHeight(root), 14) }
@@ -375,6 +412,10 @@ namespace UI {
         // at most that many rows are visible at once, more scroll
         defined int MaxDropDownItems = 8
         ComboList popupList
+        // the selected element the watchers of `selectedItem` were told last; `holding`/`selecting` while SelectedChanged tells them
+        any seenItem
+        bool holding = false
+        defined int selecting = -1
 
         construct(defined int x = 0, defined int y = 0, defined int width = 140, defined int height = 24) : base(x, y, width, height) {
             this.items = new List()
@@ -421,6 +462,7 @@ namespace UI {
             this.items = list
             this.SelectedIndex = -1
             this.seenSelected = -1
+            this.SelectedChanged()
             this.Invalidate()
         }
 
@@ -431,12 +473,38 @@ namespace UI {
 
         string ItemText(any item) { return UI.M.Text(UI.M.Member(item, this.DisplayMember)) }
 
+        // A probe on it (a binding with ElementName) fires whenever the selection changes - by Select, a click, a key or SelectedIndex (SelectedChanged).
         any selectedItem {
             get {
-                if (this.SelectedIndex < 0 || this.SelectedIndex >= this.items.Count) { return undefined }
-                return this.items[this.SelectedIndex]
+                if (this.holding) { return this.seenItem }
+                return this.SelectedRow()
             }
-            set { this.Select(this.items.IndexOf(value)) }
+            set {
+                if (this.holding) {
+                    // (SelectedChanged: the selection is already made)
+                    this.holding = false
+                    this.SelectedIndex = this.selecting
+                    return
+                }
+                this.Select(this.items.IndexOf(value))
+            }
+        }
+
+        any SelectedRow() {
+            if (this.SelectedIndex < 0 || this.SelectedIndex >= this.items.Count) { return undefined }
+            return this.items[this.SelectedIndex]
+        }
+
+        // Tells the watchers of `selectedItem` that it is another element now: a write through its setter (the getter gives the element they saw
+        // before until then). Nothing when it is the same.
+        undefined SelectedChanged() {
+            any now = this.SelectedRow()
+            if (now == this.seenItem) { return }
+            this.selecting = this.SelectedIndex
+            this.holding = true
+            this.selectedItem = now
+            this.holding = false
+            this.seenItem = now
         }
 
         // The text of the selected element ("" without a selection).
@@ -455,6 +523,7 @@ namespace UI {
             if (index == this.SelectedIndex) { return }
             this.SelectedIndex = index
             this.seenSelected = index
+            this.SelectedChanged()
             this.changed = true
             this.Invalidate()
             var callback = this.OnSelect
@@ -530,6 +599,7 @@ namespace UI {
                 this.SelectedIndex = this.seenSelected
                 this.Select(want)
             }
+            this.SelectedChanged()
         }
 
         override undefined Draw(Root root, defined int ax, defined int ay) {
