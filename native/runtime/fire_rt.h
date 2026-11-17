@@ -302,7 +302,8 @@ FIRE_FN const FireEnum* enumOf(Value v) { return v.kind == K_Int && v.reserved !
  * The state of an exception that is unwinding the stack (see the exceptions section): every generated function checks the flag after a call that can throw
  * and, if it is set, leaves its scopes and returns.
  * --------------------------------------------------------------------------------------------------------------------- */
-enum { UW_NONE, UW_JUMP, UW_RETURN, UW_RETHROW, UW_RESUME, UW_LEAVE };
+/* (UW_DEFER: an exception of a callback that a native of a package called, kept until the native returns - fire_cbCall; SPEC 8.1.4) */
+enum { UW_NONE, UW_JUMP, UW_RETURN, UW_RETHROW, UW_RESUME, UW_LEAVE, UW_DEFER };
 typedef struct Handler Handler;
 typedef struct UnwindState {
     uint8_t active;
@@ -5425,7 +5426,7 @@ FIRE_FN void takeGlobal(Obj* o) {
 /* The index of the field `message` of an object of the class, -1 when the class has none (the descriptor of the class). */
 FIRE_RT_FN int32_t excMessageIndex(uint32_t cls);
 /* An exception that nothing catches: the text of the VM (UncaughtScriptException) - the class and the text of the field `message`. */
-FIRE_COLD FIRE_FN void reportUnhandled(Value exception) {
+FIRE_COLD FIRE_FN void reportUnhandledIn(Value exception, const char* before, const char* after) {
     Obj* o = asObj(exception);
     int32_t index = excMessageIndex(o->cls);
     char text[1024];
@@ -5440,8 +5441,9 @@ FIRE_COLD FIRE_FN void reportUnhandled(Value exception) {
         strToUtf8(m, text, sizeof text);
     }
     fflush(stdout);
-    fprintf(stderr, "Unhandled exception of type '%s': %s\n", className(o->cls), text);
+    fprintf(stderr, "%sUnhandled exception of type '%s': %s%s\n", before, className(o->cls), text, after);
 }
+FIRE_COLD FIRE_FN void reportUnhandled(Value exception) { reportUnhandledIn(exception, "", ""); }
 
 #ifdef FIRE_THREADS
 FIRE_FN Value threadUnhandled(Value exception);
@@ -5555,6 +5557,76 @@ FIRE_FN void clearPending(Value exception) {
     Pending* p;
     for (p = g_pending; p; p = p->prev)
         if (!p->cleared && sameRef(p->exception, exception)) { p->cleared = 1; return; }
+}
+
+/* ---- Callbacks of natives (SPEC 8.1.4): a lambda that a native of a package calls (`callLam` in the C of a package is this function - CppGenerator
+ * PackageNativeText - and the windows' event handlers). An exception that leaves the lambda does not run the catch blocks around the native while the native
+ * is still running: it is caught at the lambda (a catch for every exception) and kept in g_unwind as UW_DEFER. The native sees g_unwind.active, its further
+ * callbacks do nothing, it cleans up and returns as usual; then the call site of the native throws it (fire_cbRethrow, generated after every call of a native of a
+ * package) - the same object, as the VM does. Where nobody waits for the callback (a host service at a safe point, a handler that went on after a wait), the
+ * exception is reported (fire_cbReport) and the program goes on. In a package library for the VM the host runs the lambda and keeps its exception
+ * (fire_pkg_wrapper.h: call_lambda gives 2); here only the guard. */
+#ifdef FIRE_EXCEPTIONS
+typedef struct CbCatch { Handler h; Value exc; uint8_t caught; } CbCatch;
+static const int32_t fire_cbCatchTypes[1] = { -1 };
+static const HandlerInfo fire_cbCatchInfo = { 1, fire_cbCatchTypes, 0, NULL };
+FIRE_FN void fire_cbCatch(void* ctx, uint32_t index, Value exception) {
+    CbCatch* c = (CbCatch*)ctx;
+    (void)index;
+    c->exc = exception;
+    c->caught = 1;
+    clearPending(exception);
+    exitJump(&c->h, 0);
+}
+#endif
+/* The exception of a callback is kept for the caller of the native. */
+FIRE_FN void fire_cbDefer(Value exception) {
+    g_unwind.active = 1; g_unwind.kind = UW_DEFER; g_unwind.target = NULL; g_unwind.value = exception; g_unwind.label = 0;
+}
+FIRE_FN Value fire_cbCall(Value lam, int argc, const Value* args, OwnList* list) {
+#ifdef FIRE_EXCEPTIONS
+    CbCatch c;
+    Value r;
+#endif
+    if (g_unwind.active) return Undef();   /* (an earlier callback of this native threw, or the program is leaving: no more callbacks) */
+#ifdef FIRE_EXCEPTIONS
+    c.caught = 0;
+    c.exc = Undef();
+    c.h.info = &fire_cbCatchInfo;
+    c.h.fn = fire_cbCatch;
+    c.h.ctx = &c;
+    pushHandler(&c.h);
+    r = callLam(lam, argc, args, list);
+    if (g_handlers == &c.h) popHandler();
+    if (c.caught) {
+        if (g_unwind.active && g_unwind.kind == UW_JUMP && g_unwind.target == &c.h) clearUnwind();
+        if (!g_unwind.active) fire_cbDefer(c.exc);
+        return Undef();
+    }
+    return r;
+#else
+    return callLam(lam, argc, args, list);
+#endif
+}
+/* At the call site of a native (generated, when g_unwind.active after it): the exception of its callback is thrown here. */
+FIRE_FN void fire_cbRethrow(void) {
+    if (g_unwind.active && g_unwind.kind == UW_DEFER) {
+        Value x = g_unwind.value;
+        clearUnwind();
+        throwValueR(x, false);
+    }
+}
+/* Where nobody waits for the callback: the exception is reported, the program goes on. */
+FIRE_FN void fire_cbReport(void) {
+    if (g_unwind.active && g_unwind.kind == UW_DEFER) {
+        Value x = g_unwind.value;
+        clearUnwind();
+#if defined(FIRE_EXCEPTIONS) && !defined(FIRE_LIBRARY)
+        if (x.kind == K_Class) reportUnhandledIn(x, "(unhandled exception in the callback: ", ")");
+#else
+        (void)x;
+#endif
+    }
 }
 
 /* Run-time errors the language reports as exceptions (index out of range). */
@@ -10394,7 +10466,8 @@ FIRE_FN void threadMain(void* boxed) {
  * a loop of its own - a modal window - calls its callbacks itself). false: not here - the caller calls it itself. */
 #ifdef FIRE_TASKS
 #define FIRE_RT_GROUP_CALL 1
-typedef struct GroupCall { Value lam; Value args[8]; int argc; OwnList* globalOwn; uint32_t attn; } GroupCall;
+/* (sync: the caller - fire_groupCall - still waits for the member; done/exc: it ended, with the exception of the handler, which goes to the caller - SPEC 8.1.4) */
+typedef struct GroupCall { Value lam; Value args[8]; int argc; OwnList* globalOwn; uint32_t attn; uint8_t sync, done, failed; Value exc; } GroupCall;
 FIRE_FN void groupCallMain(void* p) {
     GroupCall* c = (GroupCall*)p;
     OwnList scratch;
@@ -10407,15 +10480,19 @@ FIRE_FN void groupCallMain(void* p) {
     ownListInit(&scratch, poolMark(), NULL);
     for (i = 0; i < c->argc; i++) adopt(c->args[i], &scratch);   /* (what came with it: its own now) */
     g_handlers = NULL;
-    callLam(c->lam, c->argc, c->args, &scratch);
-    if (g_unwind.active) {
-        Value ex = g_unwind.value;
+    fire_cbCall(c->lam, c->argc, c->args, &scratch);
+    if (g_unwind.active && g_unwind.kind == UW_DEFER && c->sync) {
+        /* (the handler ended before it waited: its exception goes to the native that called it, like a callback that is no member) */
+        c->exc = g_unwind.value;
+        c->failed = 1;
         clearUnwind();
-        fprintf(stderr, "(unhandled exception in the callback: %s)\n", ex.kind == K_Class ? className(asObj(ex)->cls) : "exception");
     }
+    fire_cbReport();
+    if (g_unwind.active) clearUnwind();
     leave(&scratch);
     release(c->lam);
-    free(c);
+    if (c->sync) c->done = 1;   /* (fire_groupCall frees it) */
+    else free(c);
     strandRelease();
     free(g_pool.items);
     g_pool.items = NULL; g_pool.top = 0; g_pool.cap = 0;
@@ -10455,8 +10532,14 @@ FIRE_FN bool fire_groupCall(Value lam, int argc, const Value* args) {
     homeInit();
     fire_atomic_add(&g_groupLive, 1);
     strandRelease();   /* (the member has the main program's role while it runs; the package lock goes with it) */
+    c->sync = 1;
     homeRun(t);
     strandAcquire();
+    c->sync = 0;
+    if (c->done) {
+        if (c->failed) fire_cbDefer(c->exc);
+        free(c);
+    }
     return true;
 }
 /* The UI loop's switch point (every Tick): the members of the group that are ready run until they end or wait again. */
@@ -12955,7 +13038,10 @@ FIRE_FN void hostServe(void) {
     uint32_t i;
     if (fire_atomic_exchange(&g_hostPending, 0) == 0) return;
     g_noSyncDepth++;   /* (what a service runs - a window's event handler - runs for itself: its own safe points do not serve the queue) */
-    for (i = 0; i < g_hostServiceCount; i++) g_hostServices[i]();
+    for (i = 0; i < g_hostServiceCount; i++) {
+        g_hostServices[i]();
+        fire_cbReport();   /* (an exception of a callback in it: nobody waits for it here - SPEC 8.1.4) */
+    }
     g_noSyncDepth--;
 }
 

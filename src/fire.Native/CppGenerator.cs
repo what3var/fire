@@ -4611,6 +4611,13 @@ namespace fire.Native
                 if (!_usesExceptions || sb == null) return;
                 E($"if (FIRE_UNLIKELY(g_unwind.active)) goto {ExitLabel(f, st, locals)};");
             }
+            // After the call of a native of a package (or of the graphics and windows bridges): the exception of a lambda it called back is thrown here,
+            // now that the native has returned (fire_rt.h fire_cbCall, SPEC 8.1.4)
+            void CheckNative()
+            {
+                if (!_usesExceptions || sb == null) return;
+                E($"if (FIRE_UNLIKELY(g_unwind.active)) {{ fire_cbRethrow(); goto {ExitLabel(f, st, locals)}; }}");
+            }
             // The check of Check() as text, for the slow branch of an access whose fast branch cannot throw (ROADMAP 21: one test less per element)
             // A typed array stored in a variable: its state into C helpers (Flow.Arrays) - one test here instead of one per element later
             void ForgetArray(string v) { if (Array.IndexOf(st.Arrays, v) >= 0) st.Arrays = st.Arrays.Where(a => a != v).ToArray(); }
@@ -5899,7 +5906,7 @@ namespace fire.Native
                         }
                         string args = string.Join(", ", Enumerable.Range(first, argc).Select(SR).Concat(WindowsNeedsList.Contains(name) ? new[] { "&" + OwnerList() } : Array.Empty<string>()));
                         E($"{T(first)} = {SharedNative($"fire_win_{name}", argc, args.EndsWith("&" + OwnerList(), StringComparison.Ordinal), NativeImports.Windows)}({args});");   // (fire_bridge_windows.h, part of this file)
-                        Check();
+                        CheckNative();
                         d = first + 1; SetR(first, winNative.Reference); return Next();
                     }
                     if (native.StartsWith("__GRPH", StringComparison.Ordinal) && GraphicsBridgeNatives.TryGetValue(native.Substring(6), out var grphNative) && grphNative.Argc == argc)
@@ -5909,7 +5916,7 @@ namespace fire.Native
                         int first = d - argc;
                         string args = string.Join(", ", Enumerable.Range(first, argc).Select(SR).Concat(GraphicsNeedsList.Contains(name) ? new[] { "&" + OwnerList() } : Array.Empty<string>()));
                         E($"{T(first)} = {SharedNative($"fire_gfx_{name}", argc, GraphicsNeedsList.Contains(name), NativeImports.Graphics)}({args});");   // (fire_bridge_graphics.h, part of this file)
-                        Check();
+                        CheckNative();
                         d = first + 1; SetR(first, grphNative.Reference); return Next();
                     }
                     if (_packageNatives.TryGetValue(native, out var packageNative) && packageNative.Argc == argc)
@@ -5950,7 +5957,7 @@ namespace fire.Native
                         {
                             E($"{pkgEnter}{T(first)} = {NativeCTypes.ToValue(typedRet, $"{packageNative.Function}({args})")};{pkgLeave}");
                             typedRet = "";
-                            Check();
+                            CheckNative();
                             if (packageNative.Host && _usesThreads && sb != null) E($"if (FIRE_UNLIKELY(pollSignals())) goto {ExitLabel(f, st, locals)};");
                             d = first + 1; SetR(first, false);
                             int vtype = packageNative.Returns switch { "float" => TypeOf(KindFloat, 0), "bool" => TypeOf(KindBool, 0), _ => TypeOf(KindInt, 0) };
@@ -5962,13 +5969,13 @@ namespace fire.Native
                             // (the C result is the slot's C number: int, float or bool - "returns" types it below)
                             int rtype = typedRet switch { "Real" => TypeOf(KindFloat, 0), "bool" => TypeOf(KindBool, 0), _ => TypeOf(KindInt, 0) };
                             SetScalar(first, rtype, typedRet is "Real" or "bool" ? $"{packageNative.Function}({args})" : $"(FireInt){packageNative.Function}({args})");
-                            Check();
+                            CheckNative();
                             if (packageNative.Host && _usesThreads && sb != null) E($"if (FIRE_UNLIKELY(pollSignals())) goto {ExitLabel(f, st, locals)};");
                             d = first + 1; SetR(first, false); _kindsKept = true;
                             return Next();
                         }
                         E($"{pkgEnter}{T(first)} = {(packageNative.IsC ? cFunction : NativeThunk(packageNative.Function, argc, packageNative.NeedsList))}({args});{pkgLeave}");   // (pkgEnter/pkgLeave: also the main program's going away)
-                        Check();
+                        CheckNative();
                         // a function of the host (`Sleep`) ends at terminate: leave now, not at the next loop
                         if (packageNative.Host && _usesThreads && sb != null) E($"if (FIRE_UNLIKELY(pollSignals())) goto {ExitLabel(f, st, locals)};");
                         d = first + 1; SetR(first, packageNative.ReturnsReference);
@@ -8383,10 +8390,11 @@ namespace fire.Native
         }
 
         /// <summary>The C of a package as the generated file holds it: its ints are native ones (fire_rt.h FIRE_INT_U: one that does not fit the program's
-        /// int keeps its 64 bits, as the VM does with what a native of a package returns - the ticks of a clock, the size of a file).</summary>
+        /// int keeps its 64 bits, as the VM does with what a native of a package returns - the ticks of a clock, the size of a file). Its `callLam` is
+        /// fire_cbCall: the exception of a callback is kept until the native returns, its call site throws it (SPEC 8.1.4, CheckNative in Step).</summary>
         internal static string PackageNativeText(string text) =>
-            "#undef FIRE_INT_U\n#undef FIRE_INT_1\n#define FIRE_INT_U IntNativeU\n#define FIRE_INT_1 IntNative\n" + text
-            + "\n#undef FIRE_INT_U\n#undef FIRE_INT_1\n#define FIRE_INT_U fire_IntU\n#define FIRE_INT_1 fire_Int1";
+            "#undef FIRE_INT_U\n#undef FIRE_INT_1\n#define FIRE_INT_U IntNativeU\n#define FIRE_INT_1 IntNative\n#define callLam fire_cbCall\n" + text
+            + "\n#undef callLam\n#undef FIRE_INT_U\n#undef FIRE_INT_1\n#define FIRE_INT_U fire_IntU\n#define FIRE_INT_1 fire_Int1";
 
         private string Constant(Value v)
         {

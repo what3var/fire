@@ -8,7 +8,9 @@
  * (return the changed array instead). Byte buffers are passed BY REFERENCE: the caller keeps them in place for the call (the VM pins them), the native reads and writes the bytes
  * directly - no copy, so a framebuffer can be handed over at any size; the length is fixed. Objects and pointers cannot cross. Units are not carried.
  * A LAMBDA crosses as a handle of the host (FIRE_LAMBDA): the library may keep it and call it back through fire_host.call_lambda - during a call on the VM's thread it
- * runs at once (nested, with the real globals), from another thread it runs at the VM's next safe point. A handle stays valid until the program ends.
+ * runs at once (nested, with the real globals), from another thread it runs at the VM's next safe point. A handle stays valid until the program ends. An exception
+ * of a lambda that runs during a call of the library goes to the caller of that call once the native has returned (call_lambda gives 2).
+ * (The C++ wrapper - fire_pkg_wrapper.hpp - takes no lambdas: callbacks are for packages in C.)
  * Calls are serialized per library, but a native that calls a lambda back may be called again by it (on the same thread): the library is re-entrant there.
  */
 #ifndef FIRE_PKG_ABI_H
@@ -107,8 +109,10 @@ typedef struct fire_host {
      * instead of showing it (1: the framebuffer exists); win_detach ends that (only for the same ctx). Called on the thread of the VM; `present` is called on the window's. */
     int32_t (*win_attach)(int32_t framebuffer, fire_present_fn present, void* ctx);
     void (*win_detach)(int32_t framebuffer, void* ctx);
-    /* Lambdas (FIRE_LAMBDA): calls the lambda `handle` with `argc` arguments - on the VM's thread at once (0: it ran; 1: it threw, the VM reported it), from another thread at
-     * the VM's next safe point (0: queued). The arguments are copied before it returns. */
+    /* Lambdas (FIRE_LAMBDA): calls the lambda `handle` with `argc` arguments - on the VM's thread at once, from another thread at the VM's next safe point (0: queued).
+     * On the VM's thread: 0: it ran; 2: it threw during a call of this library that the program waits for (SPEC 8.1.4) - the VM keeps the exception and throws it
+     * at that call when the native has returned: the native should stop calling lambdas (the VM does not run them any more: 2 again), clean up and return as
+     * usual; 1: it did not run, or it threw where nobody waits for it (a service, an idle turn) - the VM reported it. The arguments are copied before it returns. */
     int32_t (*call_lambda)(int64_t handle, const fire_val* args, int32_t argc);
     /* From any thread: the VM calls fire_pkg_service of the library at its next safe point, on its thread (a package with a thread of its own: the windows' managers). */
     void (*request_service)(void);
