@@ -299,6 +299,8 @@ print(i)
   compiler does not know which, so `int n = a:unitless` is checked at run time (`Variable 'n' is an int, not Float.` for 5mm). Declare a float for it
   (`float n = a:unitless`). The order in which `:` and `!` are written does not matter - the type is always converted first, also with parentheses.
 - As an argument write `F(a:)`, `F(a:!)`, `F(a:!, b)`; `F(size: 2)` with a value after the colon is a [named argument](08-classes.md#parameters).
+  That holds only at the **start** of an argument: `F(a: -b)` and `F(x, a: - b)` name the parameter `a`, while `F(1 + a: - b)`, `F(g(a:) - b)` and
+  `F((a: - b))` are expressions with the conversion `a:` (see [Operators](03-operators.md)).
 
 A chain `a + b + c` is calculated from left to right: `(a + b) + c`, and the rule applies at every step.
 

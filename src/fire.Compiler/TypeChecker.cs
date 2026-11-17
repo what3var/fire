@@ -174,6 +174,9 @@ namespace fire.Compiler
         /// no int (a string, a float, ...), `*x` of a value that is no pointer - always the ArgumentException at run time (an error in lax mode too; through
         /// `any` it is that exception).</summary>
         public const string KindCode = "TC033";
+        /// <summary>A value that is certainly no string goes into a declaration `string` (DECISIONS D14): it becomes its text (`x.ToString()`). Reported in
+        /// strict mode only, and there as a warning - the conversion is the language's rule, the warning asks to write it where it is meant.</summary>
+        public const string TextConversionCode = "TC034";
         private ExpressionTrees _trees = new();
         private Dictionary<Expr, string>? _treeTypes;
 
@@ -309,6 +312,8 @@ namespace fire.Compiler
         [ThreadStatic] public static bool? DeriveDefinedOverride;
         public static bool DeriveDefined => DeriveDefinedOverride ?? Environment.GetEnvironmentVariable("FIRE_NO_DERIVE") != "1";
         private readonly Dictionary<string, (bool[] Defined, int Calls, List<string>?[] Needs)> _calls = new();
+        /// <summary>Per method key: which parameters got a string (or undefined) from every call seen (NoteCall; DerivedStrings).</summary>
+        private readonly Dictionary<string, bool[]> _stringCalls = new();
         // what a call resolved to (an argument that is the result of a call is defined when that method's returns are), and the returns of each method
         private readonly Dictionary<Expr, MethodDecl> _callTargets = new(ReferenceEqualityComparer.Instance);
         private readonly Dictionary<MethodDecl, (List<(bool Ok, string? Needs)> Returns, bool Ends)> _returns = new(ReferenceEqualityComparer.Instance);
@@ -372,6 +377,18 @@ namespace fire.Compiler
                     or UnaryExpr { Op: UnaryOp.Negate, Operand: LiteralExpr { Value.Kind: ValueKind.Int or ValueKind.Float } };
                 if (needs != null) (entry.Needs[j] ??= new List<string>()).Add(needs);
                 else if (!ok) entry.Defined[j] = false;
+            }
+            // (a `string` parameter that every call gives a string - or undefined, or nothing with a string literal as its default - needs no conversion in
+            // its prologue, DECISIONS D14: DerivedStrings)
+            if (!_stringCalls.TryGetValue(key, out var strings) || strings.Length != parameters.Count)
+                _stringCalls[key] = strings = Enumerable.Repeat(true, parameters.Count).ToArray();
+            for (int j = 0; j < parameters.Count; j++)
+            {
+                bool given = false, isString = true;
+                for (int i = 0; i < argParams.Count && i < args.Count; i++)
+                    if (ReferenceEquals(argParams[i], parameters[j])) { given = true; isString &= args[i].Kind is StaticKind.String or StaticKind.Undefined; }
+                if (!given) isString = parameters[j].DefaultValue is null or LiteralExpr { Value.Kind: ValueKind.String or ValueKind.Undefined };
+                if (!isString) strings[j] = false;
             }
             _calls[key] = (entry.Defined, entry.Calls + 1, entry.Needs);
         }
@@ -794,12 +811,21 @@ namespace fire.Compiler
                         DeriveLog?.Invoke($"{name}.{m.Name}: returns a number");
                     }
                 foreach (var (key, parameters) in DerivationCandidates(name, decl, Foreign(decl)))
+                {
+                    if (_calls.TryGetValue(key, out var seenCalls) && seenCalls.Calls > 0 && _stringCalls.TryGetValue(key, out var strings) && strings.Length == parameters.Count)
+                        for (int j = 0; j < parameters.Count; j++)
+                            if (strings[j] && parameters[j] is { ByRef: false, ArrayRanks.Count: 0, Type: { PointerDepth: 0, ArrayRank: 0, LambdaSignature: null, BaseName: "string" } })
+                            {
+                                resolved.DerivedStrings.Add(parameters[j]);
+                                DeriveLog?.Invoke($"{name} {key} {parameters[j].Name}: every call gives a string");
+                            }
                     foreach (var p in parameters)
                     {
                         bool derived = _paramIds.ContainsKey(p) && ok.Contains(ParamId(p));
                         if (derived) resolved.DerivedDefined.Add(p);
                         DeriveLog?.Invoke($"{name} {key} {p.Name}: {(derived ? "defined" : !Derivable(p) ? "not a number parameter" : "a call may give undefined")}");
                     }
+                }
             }
         }
 
@@ -830,7 +856,7 @@ namespace fire.Compiler
         private void Report(string code, string message, int line)
         {
             if (_source < _reportFrom) return;
-            _diagnostics.Add(new Diagnostic(line, message, Strict && code is not (UnitLossCode or AssignInConditionCode or SwitchMissingCode or SetterClaimCode or LateVarTypeCode or TakeIntoCopyCode or StoredTemporaryCode or ArrayToBufferCode) ? DiagnosticSeverity.Error : DiagnosticSeverity.Warning, code));
+            _diagnostics.Add(new Diagnostic(line, message, Strict && code is not (UnitLossCode or AssignInConditionCode or SwitchMissingCode or SetterClaimCode or LateVarTypeCode or TakeIntoCopyCode or StoredTemporaryCode or ArrayToBufferCode or TextConversionCode) ? DiagnosticSeverity.Error : DiagnosticSeverity.Warning, code));
         }
 
         /// <summary>The condition of `if`, `while` and `for` must be a bool: a number is no condition (`if (n)`), the VM throws an ArgumentException for it.</summary>
@@ -863,6 +889,9 @@ namespace fire.Compiler
             // an expression tree where a lambda is expected: its compiled lambda (the other way round there is no tree - TC030)
             if (value is { Kind: StaticKind.Class, Class: "LambdaExpression" } && target.Kind == StaticKind.Lambda && valueExpr != null) { _trees.ToCompiled.Add(valueExpr); return; }
             if (!Assignable(value, target)) { Report(code, $"Cannot assign a value of type '{value}' to {what} of type '{target}'", line); return; }
+            // (a value that is certainly no string into `string` - DECISIONS D14: it becomes its text; strict mode says so)
+            if (Strict && target.Kind == StaticKind.String && !value.IsDynamic && value.Kind is not (StaticKind.String or StaticKind.Undefined))
+                Report(TextConversionCode, $"A value of type '{value}' goes into {what}, which is a 'string': it becomes its text (ToString()) - write '.ToString()' or '\"\" + ...' where that is meant", line);
             if (CutsWide(value, target))
                 Report(WideIntCode, $"An int[{value.Wide}] goes into {what}, a plain int of {ProgramIntWidth} bits in this program: it is cut - declare int[{value.Wide}], or cut it on purpose (!int)", line);
             CheckUnitAssignable(value, target, line, what, valueExpr);
@@ -1391,6 +1420,8 @@ namespace fire.Compiler
                 // (`Color c`: a value of that enum - a number goes in with a cast, DECISIONS D8)
                 StaticKind.Enum => value.Kind != StaticKind.Enum || value.Class != target.Class,
                 StaticKind.Dynamic => target.TypeParam != null && value.TypeParam != target.TypeParam,
+                // (`string s`: what is not certainly a string is converted into its text, DECISIONS D14 - a string costs nothing)
+                StaticKind.String => value.Kind != StaticKind.String,
                 _ => false,
             };
             if (needed) _localGuards[valueExpr] = (type, $"Variable '{name}'");
@@ -1409,9 +1440,12 @@ namespace fire.Compiler
                 // (`Color c`: a value of that enum - a number goes in with a cast, DECISIONS D8)
                 StaticKind.Enum => value.Kind != StaticKind.Enum || value.Class != target.Class,
                 StaticKind.Dynamic => target.TypeParam != null && value.TypeParam != target.TypeParam,
+                // (`string s`: what is not certainly a string is converted into its text, DECISIONS D14 - a string costs nothing)
+                StaticKind.String => value.Kind != StaticKind.String,
                 _ => false,
             };
-            if (needed) _localGuards[valueExpr] = (type, what);
+            // (`defined string F()`: only the conversion here - undefined is the return guard's, with its message)
+            if (needed) _localGuards[valueExpr] = (target.Kind == StaticKind.String && type.NonNull ? type with { NonNull = false } : type, what);
         }
         private void Declare(string name, StaticType type)
         {
@@ -2220,7 +2254,9 @@ namespace fire.Compiler
                     declaredParam = declaredParam.WithUnit(null);
                 Declare(p.Name, MayBeUndefined(declaredParam));
                 // (a `defined int` parameter checks what the body stores into it, like a variable: SPEC 8.10b)
-                if (p.Type is { NonNull: true, ArrayRank: 0, PointerDepth: 0 } && p.ArrayRanks.Count == 0 && !p.ByRef) DeclareLocalType(p.Name, p.Type);
+                // (and a `string` parameter converts it into its text, DECISIONS D14)
+                if ((p.Type is { NonNull: true, ArrayRank: 0, PointerDepth: 0 } || p.Type is { BaseName: "string", ArrayRank: 0, PointerDepth: 0, LambdaSignature: null }) && p.ArrayRanks.Count == 0 && !p.ByRef)
+                    DeclareLocalType(p.Name, p.Type);
             }
             foreach (var s in body.Statements) Check(s);
             Pop();
@@ -2974,7 +3010,7 @@ namespace fire.Compiler
         /// <summary>`obj.Name(...)` that finds no method: none of that name at all (TC008), or none that takes that many arguments (TC002).</summary>
         private void ReportMissingMethod(MemberExpr callee, StaticType target, int argc)
         {
-            if (target.Kind != StaticKind.Class || IsUniversalMember(callee.Name)) return;
+            if (target.Kind != StaticKind.Class || IsUniversalMember(callee.Name) || callee.Name == "ToString" && argc == 0) return;   // (every object has ToString(), D14)
             if (!FullyKnown(target))
             {
                 // through an interface type: only what the interface (and the ones it extends) declares - other members need a cast (`x!Circle`)
@@ -3374,6 +3410,9 @@ namespace fire.Compiler
         private static StaticType? BuiltinCallType(StaticType target, string name, int argc)
         {
             var bytes = StaticType.ArrayOf(StaticType.Int with { Unit = Unit.Unitless, Raw = true });
+            // `x.ToString()` of every value that is no object (DECISIONS D14): its text, like `"" + x` (a byte buffer: its bytes decoded)
+            if (name == "ToString" && argc == 0 && target.Kind is StaticKind.String or StaticKind.Int or StaticKind.Float or StaticKind.Bool or StaticKind.Char
+                or StaticKind.Word or StaticKind.Enum or StaticKind.Array or StaticKind.Lambda) return StaticType.String;
             if (target.Kind == StaticKind.String) return name == "ToBytes" && argc == 0 ? bytes : null;
             if (target.Kind != StaticKind.Array || target.Element is not { Kind: StaticKind.Int, Raw: true }) return null;
             var number = (name.StartsWith("ReadFloat", StringComparison.Ordinal) ? StaticType.Float : StaticType.Int).WithUnit(Unit.Unitless).WithNull(Nullness.Defined);
@@ -3453,6 +3492,9 @@ namespace fire.Compiler
                 {
                     candidates = FindMethods(target, m.Name, c.Args.Count);
                     if (candidates.Count == 0 && FindMember(target, m.Name) is { Kind: StaticKind.Lambda } field) { lambda = field; name = m.Name; }
+                    // (every object has ToString(), DECISIONS D14: without one of its class (or of a class derived from it) the text `<object Name>`)
+                    if (candidates.Count == 0 && m.Name == "ToString" && c.Args.Count == 0 && FullyKnown(target) && !_classes.Keys.Any(k => DerivesFrom(k, target.Class!) && HasMethodNamed(StaticType.ClassOf(k), "ToString")))
+                    { foreach (var a in c.Args) Infer(a); return StaticType.String; }
                 }
             }
             else if (c.Callee is IdentifierExpr nativeId && _refs.TryGetValue(nativeId, out var nativeRef) && nativeRef is ResolvedRef.Native

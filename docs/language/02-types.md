@@ -43,6 +43,8 @@ print(v)
 - `undefined` fits every type: `Circle c = undefined` is fine. `undefined!Circle` is a typed `undefined` (useful for `var`: `var c = undefined!Circle`).
 - `int` converts to `float` implicitly, every value converts to `string`, an object converts to every class it derives from and every interface its class
   implements. Everything else between two known types is a conflict.
+- A **`string` declaration holds a string** (or `undefined`): what goes into it is converted into its text, `x.ToString()` - see
+  [`string` holds a text](#string-holds-a-text).
 - A **field and a property always have a type** (`var` is for local variables). A **parameter** without a type is `any` (reported as `TC004`), a **method**
   without a return type returns `any` (`TC005`). A method that returns nothing is declared `undefined`.
 
@@ -228,6 +230,7 @@ The checker runs after every compile and in the editor while you type. Its findi
 | `TC031` | a temporary goes into a field without being taken: it dies at the end of the statement (see [Ownership](13-ownership.md#temporaries-die-at-the-end-of-the-statement)) |
 | `TC032` | an array given to a `byte`/`word` parameter becomes a new buffer: what the method writes does not reach it |
 | `TC033` | an index or an array size that is certainly no int, `*x` of a value that is certainly no pointer (always an error) |
+| `TC034` | a value that is certainly no string goes into a `string` declaration: it becomes its text (strict mode only, always a warning) |
 
 In **lax** mode (the default) these are warnings; in **strict** mode they are errors - except where the table says "always". The full texts are in
 Errors and warnings (`docs/tools/errors.md`). Choose the mode with `#strict` or `#lax` at the top of a file, the project
@@ -300,7 +303,35 @@ if (c is of Dog) { print("never") }     // test first with `is of` when unsure
 
 Other conversions are methods: `'A'.ToInt()` (65), `65.ToChar()` (`'A'`), `"x".ToBytes()`, `value.ToString()`. A conversion that `!` cannot do
 (`"42"!int`) throws an `ArgumentException`. `!` makes no text: `5!string`, and `a! + "x"` next to a string, are that exception (the error `TC013` at compile
-time where the types are known) - write `"" + a` or `a.ToString()`.
+time where the types are known) - write `"" + a` or `a.ToString()`. (A decision: `x!` next to a string stays an error, DECISIONS D15.)
+
+### `string` holds a text
+
+A variable, a field, a static field, a property, a parameter, a return value or an element of a `string` array (`string names[]`, the `T` of a
+`List<string>`) declared `string` holds a string or `undefined`. Whatever else goes in becomes **its text** - `x.ToString()`, the same text as `"" + x`:
+
+| Value | Text |
+|---|---|
+| a number, a number with a unit | `5`, `2.5`, `5m`, `2.5km` |
+| `true` / `false`, a `char` | `True` / `False`, the character |
+| a value of an enum | the name of its member (`Blue`) |
+| an object | its `ToString()` (see [Classes](08-classes.md#tostring)); without one `<object Name>` - a record too |
+| an array | `<array>` |
+| a byte buffer | its bytes as characters (`buffer.ToString()`) |
+| `undefined` | stays `undefined` (`defined string` makes it the `ArgumentException`) |
+
+```fire
+string j = 5
+print(j.Length)          // 1 - j is the text "5"
+print(j == 5)            // False: a string is not a number
+class P { string ToString() { return "a P" } }
+string t = new P()       // "a P" - the object's own ToString() runs; what it throws goes on
+```
+
+A value whose type the compiler knows to be a string costs nothing: no check is compiled. The conversion runs only for what may be something else
+(an `any`, a number, an object); a parameter that every call of the program gives a string is not checked at all. In **strict** mode a value that
+is certainly no string (`string j = 5`, a number for a `string` parameter) is the warning `TC034` - write `5.ToString()` or `"" + 5` where the text is
+meant; lax mode says nothing (the conversion is the rule of the language).
 
 ## Testing a type: `is of`
 

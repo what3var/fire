@@ -221,6 +221,10 @@ print(x??.Length)               // undefined: a number has no Length
   `return x!`). The compiler fixes the conversion when it knows the type of the context, and the result is typed (`var c = b + a:!`); next to an
   `any` it is decided at run time. Without a context `value!` changes nothing and `value:` gives the number without its unit. Postfix `!` binds
   tighter than a sign: `-9.5!` is `-(9.5!)`.
+- In an argument list **only the start of an argument** is special: `name:` followed by a value there is a named argument - `F(a: -b)` and
+  `F(x, a: - b)` give the parameter `a` the value `-b`. Anywhere else in an argument the usual parsing applies and `a:` is the conversion:
+  `F(1 + a: - b)` is `1 + a: - b`, `F(g(a:) - b)` and `F((a: - b))` are expressions too. `F(a:)`, `F(a:!)`, `F(a:! + b)` (nothing that could be a
+  value follows the colon) are conversions as well.
 
 ## Bit functions
 

@@ -874,6 +874,57 @@ static class TypeTests
             Check("Ein Enum-Wert in einer int-Deklaration ist dort seine Zahl (TC001 bleibt): Variable, Feld, statisches Feld, Parameter, Rueckgabe, Element, ueber any",
                 Run(enumIntoInt) is var enumInt && enumInt.EndsWith("|" + enumIntoIntOut) && enumInt.StartsWith("TC001") && !enumInt.Contains("ERROR"), enumInt);
             Check("Ein Enum-Wert in einer int-Deklaration: im Debug-Build dasselbe", RunDebug(enumIntoInt) is var enumIntDebug && enumIntDebug == enumInt, enumIntDebug);
+            // A `string` holds a string (DECISIONS D14): what goes in becomes its text, `x.ToString()` - a variable, an assignment, a field, a static field, a
+            // property, a parameter, a return value, an element of `string a[]`, a `T` of List<string>; an object's own ToString() runs, its exception propagates
+            const string intoString = """
+                enum Color { Red, Green, Blue }
+                class P { int x = 3
+                    string ToString() { return "P(" + this.x + ")" } }
+                class Q { int y = 1 }
+                class Bad { string ToString() { throw new ArgumentException("no text") } }
+                class H {
+                    string f
+                    static string s
+                    defined string d = "x"
+                    string Prop { get; set; }
+                    string Take(string p) { return p + "/" + (p == undefined ? -1 : p.Length) }
+                    string Ret(any v) { return v }
+                }
+                any vals[] = [5, 2.5, true, 'c', Color.Blue, 5m, [1], new P(), new Q(), undefined]
+                var h = new H()
+                foreach (v in vals) {
+                    string j = v
+                    h.f = v
+                    H.s = v
+                    h.Prop = v
+                    string arr[] = new string[1]
+                    arr[0] = v
+                    any l = new List<string>()
+                    l.Add(v)
+                    print(j + "|" + h.f + "|" + H.s + "|" + h.Prop + "|" + h.Take(v) + "|" + h.Ret(v) + "|" + arr[0] + "|" + l[0] + "|" + (j is of string))
+                }
+                string n = 5
+                print("" + n.Length + " " + (n == 5) + " " + (n == "5"))
+                try { h.f = new Bad(); print("no exception") } catch (ArgumentException e) { print("field: " + e.message) }
+                try { print(h.Take(new Bad())) } catch (ArgumentException e) { print("parameter: " + e.message) }
+                try { h.d = undefined; print("undefined went in") } catch (ArgumentException e) { print(e.message) }
+                h.d = 7
+                print(h.d + " " + (h.d is of string))
+                print(new Q().ToString() + " " + 4.ToString() + " " + Color.Red.ToString() + " " + 3m.ToString() + " " + [1].ToString())
+                """;
+            const string intoStringOut = "5|5|5|5|5/1|5|5|5|True\n2.5|2.5|2.5|2.5|2.5/3|2.5|2.5|2.5|True\nTrue|True|True|True|True/4|True|True|True|True\nc|c|c|c|c/1|c|c|c|True\n"
+                + "Blue|Blue|Blue|Blue|Blue/4|Blue|Blue|Blue|True\n5m|5m|5m|5m|5m/2|5m|5m|5m|True\n<array>|<array>|<array>|<array>|<array>/7|<array>|<array>|<array>|True\n"
+                + "P(3)|P(3)|P(3)|P(3)|P(3)/4|P(3)|P(3)|P(3)|True\n<object Q>|<object Q>|<object Q>|<object Q>|<object Q>/10|<object Q>|<object Q>|<object Q>|True\n"
+                + "undefined|undefined|undefined|undefined|undefined/-1|undefined|undefined|undefined|False\n1 False True\nfield: no text\nparameter: no text\n"
+                + "Field 'd' is a string and never undefined.\n7 True\n<object Q> 4 Red 3m <array>";
+            Check("Eine string-Deklaration haelt den Text des Werts (D14): Variable, Feld, statisches Feld, Property, Parameter, Rueckgabe, Element, List<string>; ToString wirft",
+                Run(intoString) is var intoStr && intoStr.EndsWith("|" + intoStringOut) && !intoStr.Contains("ERROR"), intoStr);
+            Check("Eine string-Deklaration haelt den Text des Werts: im Debug-Build dasselbe", RunDebug(intoString) is var intoStrDebug && intoStrDebug == intoStr, intoStrDebug);
+            // the type checker: a value that is certainly no string into `string` - TC034 in strict mode, a warning (the conversion is the rule); lax says nothing
+            Check("TC034: eine Zahl, ein Enum-Wert, ein Objekt in eine string-Deklaration - strict eine Warnung, lax nichts; ein String und any nie",
+                Run("class P { }\nclass K { static string T(string s) { return s } }\nany x = 1\nstring a = 5\nstring b = new P()\nstring c = \"c\"\nstring d = x\nprint(K.T(2) + a + c + d)", TypeCheckMode.Strict) is var strictText
+                && strictText.Split('|')[0].Split(' ').Count(c => c == "TC034") == 3 && strictText.EndsWith("|25c1")
+                && Run("class P { }\nclass K { static string T(string s) { return s } }\nany x = 1\nstring a = 5\nstring b = new P()\nstring c = \"c\"\nstring d = x\nprint(K.T(2) + a + c + d)", TypeCheckMode.Lax) == "|25c1", strictText);
             // `new Dog[n]` is a Dog array from the start (DECISIONS D10): held in `any` it goes only where an array of Dog or of a base class is declared,
             // and it checks what is stored through every reference
             const string arraysFromAny = """
@@ -923,7 +974,7 @@ static class TypeTests
                 + "7 An array of Dog cannot be stored where an array of Cat is declared.\n8 An array of Dog cannot be stored where an array of Cat is declared.\n"
                 + "9 An array of Animal cannot be stored where an array of Dog is declared.\n10 An array of Dog cannot be stored where an array of int is declared.\n11 accepted\n"
                 + "12 An array of Dog cannot be stored where an array of INamed is declared.\n13 An array of Dog cannot be stored where an array of Cat is declared.\n"
-                + "14 An array of string cannot be stored where an array of Cat is declared.\n15 An element of an array of string must be a string (or undefined), not Int.\n"
+                + "14 An array of string cannot be stored where an array of Cat is declared.\n15 accepted\n"
                 + "16 An array of Dog cannot be stored where an array of Cat is declared.\n17 accepted\n44 0.5m []";
             Check("new Dog[n] ist ein Dog-Array, auch in any: nur in die Deklaration von Dog oder einer Basis (Kovarianz), das Array prueft weiter, was hineinkommt; Zahlen-Arrays nehmen Breite und Einheit der Deklaration",
                 Run(arraysFromAny) is var fromAny && fromAny == "|" + arraysFromAnyOut && RunDebug(arraysFromAny) == fromAny, fromAny);
@@ -1384,6 +1435,12 @@ static class TypeTests
                     + "print(K.F(a:!))\nprint(K.F(a:))\nprint(K.G(a:, 2))\nprint(K.G(a:!, 2))\nprint(K.G(1, a:!))\nprint(K.F(a:!int))\nprint(K.F(a:! + 2km))\nprint(K.F(a:! * 2))\nprint(K.N(size: 2))\nprint(K.N(size: 2, flag: !flag))\n"
                     + "print(K.N(1, flag:!flag))\nprint(K.F(a::))\nvar arr = [1, 2, 3]\nint ix = 1\nprint(arr[ix!])\nprint(arr[ix:])\nvar lam = (any v) => v\nprint(lam(a:!))\nprint(lam(a:))\nvar lam2 = (int v : any) => v:!\nprint(lam2(a))") is var argForms
                 && argForms == "TC007|500\n500\n500|2\n500|2\n1|500\n500\n2km\n1000\n2|False\n2|False\n1|False\n500\n2\n2\n500\n500\n500", argForms);
+            // (decision of the owner: `name:` is a named argument only at the START of an argument - `F(a: -b)`, `F(x, a: - b)`; anywhere else in an argument
+            // the usual parsing applies - `F(1 + a: - b)`, `F(G(a:) - b)`, `F((a: - b))` are expressions with the conversion `a:`)
+            Check("Parser: nur am Anfang eines Arguments ist `name:` benannt - F(a: -b), F(x, a: - b); F(1 + a: - b), F(G(a:) - b), F((a: - b)) sind Ausdruecke",
+                Run("class K {\n static string F(int first = 0, int a = 100) { return \"first=\" + first + \" a=\" + a }\n static int G(int v) { return v * 10 }\n}\nint a = 5\nint b = 2\n"
+                    + "print(K.F(a: -b))\nprint(K.F(a: - b))\nprint(K.F(a, a: - b))\nprint(K.F(1 + a: - b))\nprint(K.F(K.G(a:) - b))\nprint(K.F((a: - b)))") is var startOnly
+                && startOnly == "|first=0 a=-2\nfirst=0 a=-2\nfirst=5 a=-2\nfirst=4 a=100\nfirst=48 a=100\nfirst=3 a=100", startOnly);
         }
 
         // members of one name (DECISIONS D11): static and instance are not mixed - methods, fields and properties alike, also over base classes (E4076);
@@ -1414,7 +1471,7 @@ static class TypeTests
                 + " static int[] I(any a) { return a }\n static string[] S(any a) { return a }\n static float[] FL(any a) { return a }\n static int[] Lit() { return [1, 2] }\n static float:m[] M(any a) { return a }\n int[] Prop { get { return \"no\" } }\n}\n"
                 + "class U { static undefined T(lambda f) { try { print(f()) } catch (ArgumentException e) { print(e.message) } } }\nany d = new Dog[2]\n";
             const string arraysOut = "An array of Dog cannot be stored where an array of Cat is declared.\n2\n2\nAn array of int is declared here, not String.\n"
-                + "An element of an array of int must be an int (or undefined), not Float.\nAn element of an array of string must be a string (or undefined), not Int.\n1\n2\n0.01m\nAn array of int is declared here, not Int.\nundefined\n"
+                + "An element of an array of int must be an int (or undefined), not Float.\n1\n1\n2\n0.01m\nAn array of int is declared here, not Int.\nundefined\n"
                 + "An array of int is declared here, not String.";
             string arrayCalls = "U.T(() => K.F(d).length)\nU.T(() => K.G(d).length)\nU.T(() => K.H().length)\nU.T(() => K.I(\"text\"))\nU.T(() => K.I([1.5, 2.5])[0])\nU.T(() => K.S([1, 2])[0])\nU.T(() => K.FL([1, 2])[0])\nU.T(() => K.Lit()[1])\n"
                 + "U.T(() => K.M([1cm, 2cm])[0])\nU.T(() => K.I(5))\nU.T(() => K.I(undefined))\nU.T(() => new K().Prop)";

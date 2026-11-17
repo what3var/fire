@@ -1,0 +1,62 @@
+enum Color { Red, Green, Blue }
+record R {
+    int a
+    construct(int a) { this.a = a }
+}
+class P {
+    int x = 3
+    string ToString() { return "P(" + this.x + ")" }
+}
+class Q { int y = 1 }
+class Bad { string ToString() { throw new ArgumentException("no text") } }
+class Nested {
+    string inner
+    string ToString() { string t = 42; this.inner = t; return "N" + t + this.inner.Length }
+}
+class H {
+    string f
+    static string s
+    defined string d = "x"
+    string Prop { get; set; }
+    string Take(string p) { return p + "/" + (p == undefined ? -1 : p.Length) }
+    string Ret(any v) { return v }
+    string TakeAssign(string p, any v) { p = v; return p }
+}
+any vals[] = [5, 2.5, true, 'c', Color.Blue, 5m, 2.5km, new R(1), [1, 2], new P(), new Q(), undefined]
+var h = new H()
+foreach (v in vals) {
+    string j = v
+    string k = "a"
+    k = v
+    h.f = v
+    H.s = v
+    h.Prop = v
+    string arr[] = new string[1]
+    arr[0] = v
+    any l = new List<string>()
+    l.Add(v)
+    print(j + "|" + k + "|" + h.f + "|" + H.s + "|" + h.Prop + "|" + h.Take(v) + "|" + h.Ret(v) + "|" + h.TakeAssign("", v) + "|" + arr[0] + "|" + l[0] + "|" + (j is of string) + "|" + (v == undefined ? "-" : v.ToString()))
+}
+string n = 5
+print(n.Length)
+print(n == 5)
+print(n == "5")
+string viaTyped = new P()
+print(viaTyped)
+string viaNested = new Nested()
+print(viaNested)
+try { string b = new Bad(); print("no exception " + b) } catch (ArgumentException e) { print("variable: " + e.message) }
+try { h.f = new Bad(); print("no exception") } catch (ArgumentException e) { print("field: " + e.message) }
+try { print(h.Take(new Bad())) } catch (ArgumentException e) { print("parameter: " + e.message) }
+try { print(h.Ret(new Bad())) } catch (ArgumentException e) { print("return: " + e.message) }
+try { string ba[] = new string[1]; ba[0] = new Bad(); print("no exception") } catch (ArgumentException e) { print("element: " + e.message) }
+try { h.d = undefined; print("undefined went in") } catch (ArgumentException e) { print(e.message) }
+h.d = 7
+print(h.d + " " + (h.d is of string))
+string u = undefined
+print(u == undefined)
+any literal = [1, new P(), Color.Red]
+string typed[] = literal
+print(typed[0] + typed[1] + typed[2] + " " + (typed[1] is of string))
+print(new Q().ToString() + " " + 4.ToString() + " " + Color.Red.ToString() + " " + 3m.ToString() + " " + true.ToString() + " " + 'z'.ToString() + " " + "s".ToString())
+//# name: Eine string-Deklaration haelt den Text des Werts (DECISIONS D14): Variable, Zuweisung, Feld, statisches Feld, Property, Parameter, Rueckgabe, Element eines string-Arrays, List<string>; Zahl, Einheit, Enum, Record, Array, Objekt mit und ohne ToString, undefined, defined string, ToString wirft

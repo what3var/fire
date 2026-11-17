@@ -4187,6 +4187,25 @@ FIRE_FN Value toStringValue(Value v, OwnList* list) {
     return StrV(r);
 }
 
+/* A declaration `string` (DECISIONS D14, DeclaredKind.StringKind): what goes in becomes its text - `x.ToString()`: an object's own ToString() (fire code, its
+ * exception propagates: the unwinding flag), `"" + x` for the other values, the bytes of a buffer; undefined stays. The new string is a temporary of the pool
+ * (the store that follows counts it). The test of what needs nothing (a string, undefined) is inline in the generated code. */
+FIRE_FN Value bufToString(Value v, OwnList* list);
+FIRE_COLD FIRE_FN Value guardStr(Value v) {
+    if (v.kind == K_String || v.kind == K_Undefined) return v;
+    if (v.kind == K_Buffer) return bufToString(v, NULL);
+    return toStringValue(v, NULL);
+}
+/* ... in place; true when ToString() threw. */
+FIRE_COLD FIRE_FN bool guardStrSlot(Value* v) {
+    *v = guardStr(*v);
+#ifdef FIRE_EXCEPTIONS
+    return g_unwind.active;
+#else
+    return false;
+#endif
+}
+
 FIRE_COLD FIRE_FN Value addSlow(Value a, Value b, OwnList* list) {
     if (isPtr(a) && b.kind == K_Int) return ptrOffset(a, b.i);
     if (a.kind == K_String || b.kind == K_String) return concat(a, b, list);
@@ -6115,6 +6134,14 @@ FIRE_FN Value arrElemConvert(const ArrTyped* t, Value v, bool* ok) {
     /* (an array of a class, a string or an enum: what fits stays as it is - a destroyed object too, every use of it reports that) */
     if (t->flags & TU_CLASS) {
         if (v.kind == K_Undefined || (v.kind == K_Class && !leafAlive(v)) || g_arrClasses[t->unit - 1].fits(v)) return v;
+        /* (`string names[]`, DECISIONS D14: any other value becomes its text - x.ToString(), a new string of the pool; its exception propagates) */
+        if (!strcmp(g_arrClasses[t->unit - 1].display, "string")) {
+            v = guardStr(v);
+#ifdef FIRE_EXCEPTIONS
+            if (g_unwind.active) *ok = false;
+#endif
+            return v;
+        }
         return arrClassWrong(t, v, ok);
     }
     if (t->elem == E_Bool || t->elem == E_Char) {
@@ -6271,12 +6298,19 @@ FIRE_FN bool arrMakeTyped(Arr* a, uint8_t elem, uint32_t unit, uint8_t flags, Va
     probe.elem = elem; probe.unit = unit; probe.flags = flags; probe.unitText = unitText;
     /* (`undefined` without a unit - a new array is full of it - fits every typed array without a unit demand as it is) */
 #define FIRE_ARR_PLAIN_UNDEF(x) ((x).kind == K_Undefined && (x).unit == 0 && !(flags & TU_UNIT))
-    for (i = 0; i < a->length; i++) { if (FIRE_ARR_PLAIN_UNDEF(items[i])) continue; arrElemConvert(&probe, items[i], &ok); if (!ok) return false; }
+    /* (`string a[]` takes every value - as its text: converted once, below) */
+    if (!((flags & TU_CLASS) && !strcmp(g_arrClasses[unit - 1].display, "string")))
+        for (i = 0; i < a->length; i++) { if (FIRE_ARR_PLAIN_UNDEF(items[i])) continue; arrElemConvert(&probe, items[i], &ok); if (!ok) return false; }
     t = arrTypedNew(elem, unit, flags, unitText);
     t->own |= AT_INLINE;
     a->typed = t;
     if (flags & (TU_DIMONLY | TU_ANY | TU_CLASS)) {
-        for (i = 0; i < a->length; i++) items[i] = arrElemConvert(t, items[i], &ok);   /* (numbers, or objects that stay: nothing to count) */
+        for (i = 0; i < a->length; i++) {
+            Value nv = arrElemConvert(t, items[i], &ok);   /* (numbers, or objects that stay: nothing to count - but the text of `string a[]`, D14) */
+            if (FIRE_UNLIKELY(!ok)) return false;
+            if (FIRE_UNLIKELY(nv.kind == K_String && items[i].kind != K_String)) { retain(nv); release(items[i]); }
+            items[i] = nv;
+        }
         t->data = items;
         return true;
     }
@@ -7903,6 +7937,8 @@ FIRE_FN bool tryTakeOwned(Value v, OwnList* const* lists, int n, Value thisValue
 FIRE_FN bool fire_builtinHas(Value v, const char* name) {
     bool own = !strcmp(name, "TakeTo") || !strcmp(name, "TakeLocal") || !strcmp(name, "TakeUpwards") || !strcmp(name, "TakeGlobal");
     bool length = !strcmp(name, "Length") || !strcmp(name, "length");
+    /* (every value but undefined has ToString(): the text `"" + v` gives - DECISIONS D14; a buffer decodes its bytes) */
+    if (!strcmp(name, "ToString") && v.kind != K_Undefined && v.kind != K_Class) return true;
     switch (v.kind) {
         case K_String: return length || !strcmp(name, "ToBytes") || !strcmp(name, "ToUnicode");
         case K_Char: return !strcmp(name, "ToByte") || !strcmp(name, "ToUnicode");

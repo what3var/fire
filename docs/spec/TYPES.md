@@ -229,7 +229,8 @@ instructions (more fused ones, or registers instead of the stack) - a step of it
   RuntimeClass.DerivedParameterWhat/DerivedFieldWhat); JSON reads a derived field like a `defined` one (0 when missing, `null` an error; the flag 0x80
   of the field's row adds the note). A value that may be undefined going into a `defined` parameter,
   field, property, variable or return value is `TC022` (a warning in lax mode, an error in strict mode); it is checked at run time either way.
-* **Assignability.** `int` -> `float` is implicit (coerced). Everything converts implicitly to `string` (a `ToString` like in C#). Anything else between known types is a conflict.
+* **Assignability.** `int` -> `float` is implicit (coerced). Everything converts implicitly to `string` (a `ToString` like in C#): a declaration `string` holds the text of what goes in, converted at run time
+where the static type is not a string (DECISIONS D14; strict mode: the warning `TC034` for a value that is certainly no string). Anything else between known types is a conflict.
 * **Units** (step 4): if both types are known and only the unit is not, the site is a *unit adaptation* `b = AdaptUnit(a, targetUnit)` with three outcomes: same unit -> `a` unchanged;
   same dimension -> `a * factor`; otherwise `UnitMismatchException`. The factor is cached per (source unit, target unit) at the site; where the source unit is also static the whole thing
   folds at compile time (no-op or a constant multiply). A variable whose unit is statically known does not need a unit field in its unboxed representation at all.

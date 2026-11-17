@@ -244,6 +244,15 @@ namespace fire.Bytecode
             return false;
         }
 
+        /// <summary>Does the declaration ask for a string - `string` itself, or a type parameter whose type argument is `string` (`T value` of a
+        /// `List&lt;string&gt;`)? Then what does not fit becomes its text (DECISIONS D14; the VM converts).</summary>
+        public static bool WantsString(string required, ObjectInstance? owner, string[]? callTypeArgs)
+        {
+            var spec = Parse(required);
+            if (spec.TypeParamIndex >= 0) return TypeArgFor(spec, owner, callTypeArgs) == "string";
+            return spec.SingleName == "string";
+        }
+
         private static string WithoutTypeArgsOf(string text) => (IsNonNull(text) ? NonNullMark.ToString() : "") + WithoutTypeArgs(IsNonNull(text) ? text.Substring(1) : text);
 
         private static bool Holds(in Value value, Condition condition)

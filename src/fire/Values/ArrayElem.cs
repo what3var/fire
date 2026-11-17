@@ -88,6 +88,9 @@ namespace fire.Values
         /// <summary>The type as it is written (`int[8]`, `float`, `bool`, the class) - for messages.</summary>
         public static string Name(byte type, string? unit) => type == Class && unit != null ? fire.Bytecode.DeclaredType.Parse(ClassText(unit)).Display : Name(type);
 
+        /// <summary>Is it the text of an array `string a[]` (ArrayElem.Class with the DeclaredType of `string`)?</summary>
+        public static bool IsStringText(string? unit) => unit != null && fire.Bytecode.DeclaredType.Parse(ClassText(unit)).SingleName == "string";
+
         /// <summary>The DeclaredType text of an array of a class (ArrayElem.Class) without an enum's declaration after it.</summary>
         public static string ClassText(string unit) => unit.IndexOf('\u0002') is var at and >= 0 ? unit.Substring(0, at) : unit;
 
@@ -112,6 +115,12 @@ namespace fire.Values
             {
                 // (the declaration: an object of that class or of one derived from it, of that interface, a string, a value of that enum - or undefined)
                 if (value.Kind == ValueKind.Undefined || unit == null || fire.Bytecode.DeclaredType.Fits(value, ClassText(unit))) return true;
+                // (`string names[]`, DECISIONS D14: any other value becomes its text - an object's ToString() is run by the VM before it gets here)
+                if (IsStringText(unit) && value.Kind != ValueKind.Class)
+                {
+                    stored = Value.MakeString(value.Kind == ValueKind.Buffer ? ByteConversions.AsciiDecode(value.AsBuffer()) : value.ToString());
+                    return true;
+                }
                 error = Error.Type;
                 string display = fire.Bytecode.DeclaredType.Parse(ClassText(unit)).Display;
                 string have = value.Kind == ValueKind.Class && value.AsObjectRef() is fire.Runtime.ObjectInstance obj ? fire.Ast.GenericClassNames.PlainName(obj.ClassName)

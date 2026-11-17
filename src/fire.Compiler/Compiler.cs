@@ -605,6 +605,7 @@ namespace fire.Compiler
             s_overloadHints = resolveResult.OverloadHints;
             s_receiverTypeArgs = resolveResult.ReceiverTypeArgs;
             s_derivedDefined = resolveResult.DerivedDefined;
+            s_derivedStrings = resolveResult.DerivedStrings;
             s_derivedReturns = resolveResult.DerivedReturns;
             s_derivedFields = resolveResult.DerivedDefinedFields;
             var compiler = new Compiler(resolveResult, natives) { _classMeta = classMeta };
@@ -1090,7 +1091,7 @@ namespace fire.Compiler
                             {
                                 AccessModifier = fd.Access,
                                 RequiredUnit = fd.Type?.UnitDemand,
-                                RequiredKind = fd.ArrayRanks.Count == 0 ? DeclaredKind.Of(fd.Type, fd.Initializer) : (byte)0,
+                                RequiredKind = fd.ArrayRanks.Count == 0 ? DeclaredKind.OfStore(fd.Type, fd.Initializer) : (byte)0,   // (`string name`: converted into its text, D14)
                                 RequiredType = fd.ArrayRanks.Count == 0 ? DeclaredTypeOf(fd.Type, rc) : null,
                                 RequiredArray = fd.Type?.ArrayWidthCode(fd.ArrayRanks.Count) is var arrayCode and not 0 && (arrayCode & 0xFF) is not (fire.Values.ArrayElem.U8 or fire.Values.ArrayElem.Word)
                                     ? (ushort)(arrayCode & 0xFFFF) : ClassArrayCode(fd.Type, fd.ArrayRanks.Count, rc, out _) is var classArray and not 0 ? (ushort)(classArray & 0xFFFF) : (ushort)0,
@@ -1447,7 +1448,8 @@ namespace fire.Compiler
             {
                 // (a parameter the type checker found every call gives a number - ResolveResult.DerivedDefined - is checked like a `defined` one)
                 var declared = s_derivedDefined != null && s_derivedDefined.Contains(parms[i]) ? parms[i].Type! with { NonNull = true } : parms[i].Type;
-                if (parms[i].ByRef || parms[i].ArrayRanks.Count > 0 || DeclaredKind.Of(declared, parms[i].DefaultValue) is not (var kind and not 0)) continue;
+                if (parms[i].ByRef || parms[i].ArrayRanks.Count > 0 || DeclaredKind.OfStore(declared, parms[i].DefaultValue) is not (var kind and not 0)) continue;
+                if (DeclaredKind.IsString(kind) && s_derivedStrings != null && s_derivedStrings.Contains(parms[i])) continue;   // (every call gives a string: TypeChecker.DerivedStrings)
                 // the unit the parameter certainly has afterwards: the checked one, none (the guard converts into no unit), or open (`: any`)
                 string? unit = parms[i].Type?.UnitDemand ?? (DeclaredKind.IsUnitless(kind) ? "unitless" : null);
                 inner._chunk.EmitOp(OpCode.GuardLocal);
@@ -2599,6 +2601,8 @@ namespace fire.Compiler
                 (_chunk.ReceiverTypeArgs ??= new Dictionary<int, string>())[_chunk.Code.Count] = text;
         }
         [ThreadStatic] private static HashSet<LambdaParam>? s_derivedDefined;
+        /// <summary>The `string` parameters every call of which gives a string (ResolveResult.DerivedStrings): no check in their prologue.</summary>
+        [ThreadStatic] private static HashSet<LambdaParam>? s_derivedStrings;
         [ThreadStatic] private static HashSet<FieldDecl>? s_derivedFields;
         [ThreadStatic] private static HashSet<Stmt.BlockStmt>? s_derivedReturns;
         /// <summary>`FIRE_NO_OVERLOAD_HINTS=1`: no OverloadHint is emitted (every call scores its candidates) - to compare and to find a wrong hint.</summary>
@@ -2616,13 +2620,16 @@ namespace fire.Compiler
         /// <summary>A value going into a local whose declaration the type checker could not prove: checked on the stack (GuardTop/GuardTopType).</summary>
         private void EmitLocalGuard(TypeRef type, string what)
         {
-            if (DeclaredKind.Of(type) is var kind and not 0)
+            byte kind = DeclaredKind.OfStore(type);
+            if (kind != 0)
             {
                 _chunk.EmitOp(OpCode.GuardTop);
                 _chunk.EmitByte((byte)((kind & 0x7F) - 1));   // (no unit demand: a local takes the unit of its value)
                 _chunk.EmitU16(_chunk.AddConstant(Value.MakeString(what)));
             }
-            else if (DeclaredTypeOf(type, _enclosingClass) is { } spec)
+            // (`defined string s`: converted into its text above, then undefined is checked - DECISIONS D14)
+            if (kind != 0 && !DeclaredKind.IsString(kind)) return;
+            if (DeclaredTypeOf(type, _enclosingClass) is { } spec)
             {
                 _chunk.EmitOp(OpCode.GuardTopType);
                 _chunk.EmitU16(_chunk.AddConstant(Value.MakeString(spec)));

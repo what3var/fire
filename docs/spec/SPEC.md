@@ -51,6 +51,15 @@ var e = 1 var f = 2    // ERROR: neither ';' nor a line break
   in any unit. A type argument found for a generic method from a value carries that value's unit (`Max(5cm, 3cm)`: `int : cm`; unknown: `int : any`). Without a known
   type argument (the raw form `new Box()`) a type parameter is checked by its `where` conditions (`is of`, `is in`) and not at all without them;
   `any` and `class` are not checked.
+- A **declaration `string`** (a variable, a field, a static field, a property, a parameter, a return value, an element of `string a[]`, a type parameter
+  whose type argument is `string`) holds a string or `undefined`: any other value is converted into its text, `x.ToString()` - the text `"" + x`
+  gives (a number with its unit, `True`/`False`, the name of an enum's member, `<array>`; an object its own `ToString()`, run at that place in VM and
+  native code - an exception it throws propagates -, otherwise `<object Name>`; a byte buffer its bytes as characters). `undefined` stays undefined
+  (`defined string`: the `ArgumentException`). A value the type checker knows to be a string is not checked (no instruction); a parameter that every
+  call of the program gives a string is not checked either (derived like `defined`, 8.10b). Strict mode reports a value that is certainly no string
+  as the warning `TC034`. DECISIONS D14.
+- **Every value but `undefined` has `ToString()`**, and every object (a class without one gives `<object Name>`); it is the text of `"" + x`, except
+  for a byte buffer (`ToString()` decodes it, `"" + buffer` is `<buffer n bytes>`).
 - A **local variable** declared with int/float/bool, a class, an interface or a type parameter holds the same: a value the type checker cannot
   prove for it (from `any`, a downcast; a conflict it reports is a warning in lax mode and stays unchecked) is checked when it is assigned (`ArgumentException`: `Variable 'x' is an int, not String.`). Unlike a
   parameter or a field, a local takes the unit of its value (SPEC 3.5).
@@ -2850,7 +2859,8 @@ Sleep(500ms)                                      // or Sleep(duration), Sleep(2
   `Sleep(0)` is such a point too. A new entry in the queue wakes the sleep up earlier. In a destructor, a job, a host callback or a `catch threads`/`catch terminate` handler the sleep does not process the queue.
 
 **`ToString()` on output and concatenation.** If an object has a parameterless method `ToString()`, it is used by `print(object)`, `"text" + object`, `object + "text"` (if the class has an `operator+`, that applies, `DateTime`/`TimeSpan` handle a string there themselves) and `$"{object}"`. An
-exception in `ToString()` runs to the enclosing `catch`. Without `ToString()` the old representation (`<object ...>`) remains.
+exception in `ToString()` runs to the enclosing `catch`. Without `ToString()` the old representation (`<object ...>`) remains - also as the result of
+`obj.ToString()`, which every object has. A value stored where `string` is declared becomes this text too (section 1, DECISIONS D14).
 
 ### 8.16 Devices (`#import "devices"`)
 

@@ -3950,6 +3950,12 @@ namespace fire.Runtime
                     Push(ownershipValue);
                     return;
                 }
+                // every object has ToString() (DECISIONS D14): without one of its class the text `"" + obj` gives, `<object Name>`
+                if (methodName == "ToString" && args.Length == 0)
+                {
+                    Push(Value.MakeString(target.ToString()));
+                    return;
+                }
                 throw MethodNotFound(rc, methodName, args.Length);
             }
             if (ExecutionMode != VmExecutionMode.Performance && !IsMemberAccessAllowed(declaringRcCall!, accessCall))
@@ -4261,6 +4267,11 @@ namespace fire.Runtime
 
             var rc = ResolveClass(baseClassName);
             var (proto, declaringRcBase, accessBase) = FindOverload(rc, methodName, args, _currentThis as ObjectInstance);
+            if (proto == null && methodName == "ToString" && args.Length == 0 && _currentThis is ObjectInstance baseOf)
+            {
+                Push(Value.MakeString(Value.MakeClassRef(baseOf).ToString()));   // (`base.ToString()` of a base without one: `<object Name>`, DECISIONS D14)
+                return;
+            }
             if (proto == null)
                 throw MethodNotFound(rc, methodName, args.Length);
             if (ExecutionMode != VmExecutionMode.Performance && !IsMemberAccessAllowed(declaringRcBase!, accessBase))
@@ -7560,6 +7571,13 @@ namespace fire.Runtime
         private static bool TryCallBuiltinMethod(Value target, string methodName, Value[] args, out Value result)
         {
             result = default;
+            // `x.ToString()` (DECISIONS D14): every value has it - the text `"" + x` gives (a number with its unit, an enum's name, `<array>`); a buffer
+            // decodes its bytes (below), undefined has no methods
+            if (methodName == "ToString" && args.Length == 0 && target.Kind is not (ValueKind.Buffer or ValueKind.Undefined or ValueKind.Class))
+            {
+                result = target.Kind == ValueKind.String ? target : Value.MakeString(target.ToString());
+                return true;
+            }
             switch (target.Kind)
             {
                 case ValueKind.String:
@@ -7806,6 +7824,7 @@ namespace fire.Runtime
                 if (unitDemand == null || AdaptFieldUnit(ref checkedValue, unitDemand)) guarded = checkedValue;
                 return;
             }
+            if (DeclaredText(ref checkedValue, requiredType, owner, callTypeArgs) is var text and not 0) { if (text > 0) guarded = checkedValue; return; }
             ThrowArgumentError(DeclaredType.Mismatch(guarded, requiredType, _constants[whatIdx].AsString(), owner, callTypeArgs));
         }
 
@@ -7835,7 +7854,23 @@ namespace fire.Runtime
                 if (unitDemand == null || AdaptFieldUnit(ref checkedValue, unitDemand)) top = checkedValue;
                 return;
             }
+            if (DeclaredText(ref checkedValue, requiredType, owner, callTypeArgs) is var text and not 0) { if (text > 0) top = checkedValue; return; }
             ThrowArgumentError(DeclaredType.Mismatch(top, requiredType, _constants[whatIdx].AsString(), owner, callTypeArgs));
+        }
+
+        /// <summary>A `T` that stands for `string` (`List&lt;string&gt;`, DECISIONS D14): the value becomes its text, like in a declaration `string` - an object's
+        /// ToString(). 0: the declaration wants no string (the caller reports the mismatch), 1: converted, -1: ToString() threw (already raised).</summary>
+        private int DeclaredText(ref Value value, string requiredType, ObjectInstance? owner, string[]? callTypeArgs)
+        {
+            if (value.Kind is ValueKind.String or ValueKind.Undefined || !DeclaredType.WantsString(requiredType, owner, callTypeArgs)) return 0;
+            if (value.Kind == ValueKind.Class)
+            {
+                if (StringifyForText(value) is not { } text) return -1;
+                value = Value.MakeString(text);
+                return 1;
+            }
+            value = Value.MakeString(value.Kind == ValueKind.Buffer ? ByteConversions.AsciiDecode(value.AsBuffer()) : value.ToString());
+            return 1;
         }
 
         /// <summary>The type arguments of the call of the generic method that runs (kept in the scope of the call; blocks inside it are its children).</summary>
@@ -7851,6 +7886,7 @@ namespace fire.Runtime
         {
             // (a number type argument with a unit: converted into it, a UnitMismatchException for another dimension)
             if (DeclaredType.FitsOrConvert(ref value, requiredType, owner, null, out var unitDemand, TypeIsOf)) return unitDemand == null || AdaptFieldUnit(ref value, unitDemand);
+            if (DeclaredText(ref value, requiredType!, owner, null) is var text and not 0) return text > 0;
             ThrowArgumentError(DeclaredType.Mismatch(value, requiredType!, $"Field '{fieldName}'", owner));
             return false;
         }
@@ -7989,6 +8025,13 @@ namespace fire.Runtime
         /// UnitMismatchException), then the kind is checked (or an ArgumentException). false: an exception is thrown.</summary>
         private bool GuardDeclared(ref Value value, byte required, string what)
         {
+            // a declaration `string` (DECISIONS D14): an object goes in as the text of its ToString() (fire code, nested; its exception propagates)
+            if (DeclaredKind.IsString(required) && value.Kind == ValueKind.Class)
+            {
+                if (StringifyForText(value) is not { } text) return false;
+                value = Value.MakeString(text);
+                return true;
+            }
             if (DeclaredKind.NeedsUnitless(value, required) && !AdaptFieldUnit(ref value, "unitless")) return false;
             if (DeclaredKind.Accept(ref value, required, what) is not { } message) return true;
             ThrowArgumentError(message);
@@ -8083,6 +8126,14 @@ namespace fire.Runtime
                 ThrowArgumentError($"An array of {ArrayElem.Name(array.OpenKind)} cannot be stored where an array of {ArrayElem.Name(elemType, unit)} is declared.");   // (the same text natively)
                 return false;
             }
+            // (an array that becomes `string a[]`, DECISIONS D14: its objects become the text of their ToString() first - the other values MakeTyped converts)
+            if (elemType == ArrayElem.Class && ArrayElem.IsStringText(unit) && !array.IsPacked)
+                for (int i = 0; i < array.Length; i++)
+                    if (array.TryGet(i, out var item) && item.Kind == ValueKind.Class)
+                    {
+                        if (StringifyForText(item) is not { } text) return false;
+                        array.TrySet(i, Value.MakeString(text));
+                    }
             if (array.MakeTyped(elemType, unit, out var error, out var message, out var offending)) return !defined || MakeArrayDefined(array);
             ThrowArrayElementError(unit, offending, error, message!);
             return false;
@@ -8187,6 +8238,13 @@ namespace fire.Runtime
         private bool ConvertArrayElement(ScriptArray array, ref Value value)
         {
             if (array.ElemType == ArrayElem.None) return true;
+            // (`string names[]`, DECISIONS D14: an object goes in as the text of its ToString() - fire code, its exception propagates)
+            if (value.Kind == ValueKind.Class && array.ElemType == ArrayElem.Class && ArrayElem.IsStringText(array.ElemUnit))
+            {
+                if (StringifyForText(value) is not { } text) return false;
+                value = Value.MakeString(text);
+                return true;
+            }
             if (array.TryConvertElement(value, out var stored, out var error, out var message)) { value = stored; return true; }
             ThrowArrayElementError(array.ElemUnit, value, error, message!);
             return false;

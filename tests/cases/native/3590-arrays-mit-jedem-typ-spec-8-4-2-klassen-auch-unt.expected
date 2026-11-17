@@ -4,7 +4,6 @@ Rex undefined 3 1
 b
 E3 An element of an array of IShape must be an IShape (or undefined), not Dog.
 4
-E4 An element of an array of string must be a string (or undefined), not Int.
 []2
 E5 An element of a defined array of string cannot be undefined.
 E6 An element of an array of Color must be a Color (or undefined), not Int.
