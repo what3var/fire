@@ -1,0 +1,7 @@
+fog True True True
+fog all True True
+fog off True
+culling True True True True
+reflect True True True
+reflect fog True True
+reflect off True
