@@ -1,0 +1,30 @@
+// `Take...` of a destroyed object, array or buffer is the DestroyedException (with every method and with a mode); `try` says False. A value
+// type has no Take... at all: the MissingMemberException counts every argument of the call, the mode too.
+class C {
+    int v
+    construct(int v) { this.v = v }
+}
+var o = new C(1)
+var p = o
+delete o
+var b = new C(2)
+try { p.TakeTo(b) } catch (DestroyedException e) { print("a " + e.message) }
+try { p.TakeUpwards() } catch (DestroyedException e) { print("b " + e.message) }
+try { p.TakeGlobal() } catch (DestroyedException e) { print("c " + e.message) }
+try { p.TakeLocal(Takes.All) } catch (DestroyedException e) { print("d " + e.message) }
+print(try p.TakeLocal())
+var arr = [1, 2]
+var q = arr
+delete arr
+try { q.TakeLocal() } catch (DestroyedException e) { print("e " + e.message) }
+try { q.TakeTo(b) } catch (DestroyedException e) { print("f " + e.message) }
+var buf = new byte[4]
+var r = buf
+delete buf
+try { r.TakeGlobal() } catch (DestroyedException e) { print("g " + e.message) }
+print(b.v)
+any n = 5
+try { print(try n.TakeTo(b)) } catch (MissingMemberException e) { print("h " + e.message) }
+try { print(try n.TakeTo(b, Takes.This)) } catch (MissingMemberException e) { print("i " + e.message) }
+try { print(try n.TakeLocal(Takes.All)) } catch (MissingMemberException e) { print("j " + e.message) }
+//# name: Besitz: Take... eines zerstoerten Objekts, Arrays oder Puffers ist eine DestroyedException, try eines Werttyps zaehlt den Modus mit

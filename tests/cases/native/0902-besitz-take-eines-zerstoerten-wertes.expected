@@ -1,0 +1,12 @@
+a A destroyed object cannot change its owner.
+b A destroyed object cannot change its owner.
+c A destroyed object cannot change its owner.
+d A destroyed object cannot change its owner.
+False
+e A destroyed array cannot change its owner.
+f A destroyed array cannot change its owner.
+g A destroyed buffer cannot change its owner.
+2
+h 'tryTakeTo' (1 argument(s)) is not a known built-in method on a value of type Int.
+i 'tryTakeTo' (2 argument(s)) is not a known built-in method on a value of type Int.
+j 'tryTakeLocal' (1 argument(s)) is not a known built-in method on a value of type Int.

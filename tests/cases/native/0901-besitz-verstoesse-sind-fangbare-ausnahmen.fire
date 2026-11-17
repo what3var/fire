@@ -1,0 +1,50 @@
+// What the ownership rules forbid and only the run time finds is a catchable exception - the same class and text in the VM and natively -
+// and nothing has moved when it is caught.
+class C {
+    int v
+    C child
+    construct(int v) { this.v = v }
+}
+class U {
+    static undefined Up(C c) { c.TakeUpwards() }
+    static undefined Fine() {
+        var l = new C(3)
+        l.TakeUpwards()
+        print("up from a block: " + (l is from global))
+    }
+}
+// TakeUpwards: the global scope has nothing above it; an object as owner is no scope
+var g = new C(1)
+try { g.TakeUpwards() } catch (ArgumentException e) { print("A " + e.message) }
+try { U.Up(g) } catch (ArgumentException e) { print("B " + e.message) }
+print(g is from global)
+var parent = new C(2)
+var kid = new C(3)
+kid.TakeTo(parent)
+try { kid.TakeUpwards() } catch (ArgumentException e) { print("C " + e.message) }
+print(kid is from parent)
+U.Fine()
+// TakeTo: an object never becomes an owner of itself or of its owners - also with a mode
+var a = new C(4)
+var b = new C(5)
+b.TakeTo(a)
+try { a.TakeTo(b) } catch (ArgumentException e) { print("D " + e.message) }
+try { a.TakeTo(b, Takes.All) } catch (ArgumentException e) { print("E " + e.message) }
+try { a.TakeTo(a) } catch (ArgumentException e) { print("F " + e.message) }
+print((b is from a) + " " + (a is from b) + " " + (a is from global))
+// ... nor an array of what it owns
+var arr = [new C(6)]
+var inner = arr[0]
+try { arr.TakeTo(inner) } catch (ArgumentException e) { print("G " + e.message) }
+print(inner.v)
+// `take` into a holder that the value owns
+try { b.child = take a } catch (ArgumentException e) { print("H " + e.message) }
+print((b.child == undefined) + " " + (b is from a))
+// a mode that is no Takes value - nothing moves
+any mode = 7
+var c = new C(7)
+try { c.TakeTo(a, mode) } catch (ArgumentException e) { print("I " + e.message) }
+print(c is from a)
+any text = "all"
+try { print(try c.TakeLocal(text)) } catch (ArgumentException e) { print("J " + e.message) }
+//# name: Besitz: Verstoesse gegen die Besitzregeln (TakeUpwards ganz oben, Zyklus bei TakeTo und take, Modus ohne Takes) sind fangbare ArgumentExceptions
