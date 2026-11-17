@@ -409,4 +409,6 @@ A warning in lax mode, an error in strict mode (`--types`, the project setting `
 | `TC031` | '…' is a temporary of this statement: the constructor of '…' keeps it in the field '…' without taking it, so it is destroyed at the end of the statement and the field refers to a destroyed object (`new Holder(new Part())` where the constructor only stores its parameter; keep it in a variable or let the constructor `take` it; a warning also in strict mode) |
 | `TC032` | The parameter '…' of '…' is a byte/word buffer, the argument an array: the method gets a new buffer with its elements, and what it writes does not reach the array (an array of a variable or a field given to a `byte`/`word` parameter; pass a buffer; a warning also in strict mode) |
 
+| `TC033` | An index must be an int, not a value of type '…': the access always fails at run time / The size of an array (a byte buffer) must be an int, not a value of type '…': 'new' always fails at run time / '*' needs a pointer, not a value of type '…': the dereference always fails at run time (an error also in lax mode; through `any` it is the ArgumentException at run time) |
+
 `…` stands for a part of the message that varies (a name, a number).

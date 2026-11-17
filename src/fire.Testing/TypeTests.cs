@@ -89,6 +89,13 @@ static class TypeTests
             && Run("class P { int age\n construct(int a) { this.age = a } }\nclass Probe { string Show(lambda expression<P> e) { return e.ToString() } }\nvar pr = new Probe()\nvar f = (P p) => p.age > 1\nprint(pr.Show(f))") == "|ERROR TC030"
             && Run("class P { int age\n construct(int a) { this.age = a } }\nclass Probe { string Show(lambda expression<P> e) { return e.ToString() } }\nvar pr = new Probe()\nint k = 0\nprint(pr.Show(p => k == p.age))") == "|p => (k == p.age)"
             && Run("class P { int age\n construct(int a) { this.age = a } }\nclass Probe { string Show(lambda expression<P> e) { return e.ToString() } }\nvar pr = new Probe()\nprint(pr.Show(p => p.age++))") == "|ERROR TC030", _lastRun);
+        // TC033: an index or a size that is certainly no int, `*x` of a value that is certainly no pointer - errors in lax mode too (through any: the ArgumentException)
+        Check("TC033: Index (lesen, schreiben, String), Groesse (Array, Puffer, mehrere Dimensionen) und Dereferenzierung der falschen Art sind Fehler (auch lax)",
+            Run("int a[] = new int[3]\nstring s = \"abc\"\nfloat f = 1.5\nint x = 5\nprint(a[\"x\"])\na[f] = 1\nprint(s[true])\nint b[] = new int[s]\nbyte c[] = new byte[f]\nint j[][] = new int[2][\"x\"]\nunsafe { print(*x) }\nunsafe { *s = 1 }") is var kindBad
+                && kindBad == "|ERROR TC033 TC033 TC033 TC033 TC033 TC033 TC033 TC033", kindBad);
+        Check("TC033: int, word, Enum und any als Index und Groesse sowie Zeiger sind erlaubt",
+            Run("enum E { A, B }\nint a[] = new int[3]\nword w = 1\nany i = 1\nint x = 5\na[w] = 4\na[E.B] = 5\nprint(a[i] + a[1])\nint b[] = new int[w]\nprint(b.Length)\nunsafe { int* p = &x\n print(*p) }") is var kindOk
+                && kindOk == "|10\n1\n5", kindOk);
         // Records (step 9): a write outside the construction (TC026) and a field that can change (TC027) are errors in lax mode too; a record derives only from a record
         Check("Records: Schreiben ausserhalb der Konstruktion ist TC026 (auch lax), im Konstruktor erlaubt",
             Run("record P { int x\n construct(int x) { this.x = x }\n undefined M() { this.x = 2 } }\nvar p = new P(1)\np.x = 3\np.x++") is var recW && recW == "|ERROR TC026 TC026 TC026", recW);

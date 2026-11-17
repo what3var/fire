@@ -170,6 +170,10 @@ namespace fire.Compiler
         /// <summary>An array (not a fresh one) given to a `byte`/`word` parameter: it is converted into a new buffer - what the method writes does not reach
         /// the array (a warning in strict mode too).</summary>
         public const string ArrayToBufferCode = "TC032";
+        /// <summary>A value of a known type that is never what the place takes: the index of an array or a string, the size of `new int[n]`/`new byte[n]` that is
+        /// no int (a string, a float, ...), `*x` of a value that is no pointer - always the ArgumentException at run time (an error in lax mode too; through
+        /// `any` it is that exception).</summary>
+        public const string KindCode = "TC033";
         private ExpressionTrees _trees = new();
         private Dictionary<Expr, string>? _treeTypes;
 
@@ -2564,14 +2568,14 @@ namespace fire.Compiler
                 case ArrayLiteralExpr arr: return StaticType.ArrayOf(Join(arr.Elements.Select(Infer).ToList(), arr));
                 case NewArrayExpr na:
                     {
-                        foreach (var size in na.SizeExprs) if (size != null) Infer(size);
+                        foreach (var size in na.SizeExprs) if (size != null) CheckSizeKind(Infer(size), "an array", na.Line);
                         var element = DeclaredOrDynamic(na.ElementType);
                         // (the elements are undefined: they take the unit of a declaration with a unit, `float:m grid[][] = new float[2][2]`)
                         if (element.IsNumber && na.ElementType?.Unit == null) element = element.WithUnit(null);
                         for (int i = 0; i < na.SizeExprs.Count; i++) element = StaticType.ArrayOf(element);
                         return element;
                     }
-                case NewBufferExpr nb: Infer(nb.SizeExpr); return StaticType.ArrayOf(nb.Words ? StaticType.Word : StaticType.Int with { Unit = Unit.Unitless, Raw = true });   // (`new byte[n]`: a byte[], like a declared one)
+                case NewBufferExpr nb: CheckSizeKind(Infer(nb.SizeExpr), nb.Words ? "an array" : "a byte buffer", nb.Line); return StaticType.ArrayOf(nb.Words ? StaticType.Word : StaticType.Int with { Unit = Unit.Unitless, Raw = true });   // (`new byte[n]`: a byte[], like a declared one)
                 case ThrowExpr th: Infer(th.Value); return StaticType.Dynamic;
                 case SyncExpr sy: Infer(sy.Target); return StaticType.Bool;   // (`sync x`: True, or undefined when the original is gone)
                 case SyncGlobalsExpr: return StaticType.Int;   // (the number of entries processed)
@@ -2592,6 +2596,8 @@ namespace fire.Compiler
         private StaticType InferUnary(UnaryExpr u)
         {
             var operand = Infer(u.Operand);
+            if (u.Op == UnaryOp.Dereference && NeverKind(operand, pointer: true))
+                ReportError(KindCode, $"'*' needs a pointer, not a value of type '{operand}': the dereference always fails at run time", u.Line);
             if (u.Op == UnaryOp.LogicalNot) CheckLogicalOperand(operand, "!", u.Line);
             return u.Op switch
             {
@@ -2747,6 +2753,7 @@ namespace fire.Compiler
                 IdentifierExpr id => CheckImplicitThisAccess(id, MemberUse.Write) ?? Lookup(id.Name, id.Line),
                 MemberExpr m => InferMemberTarget(m),
                 IndexExpr ix => InferIndexTarget(ix),
+                UnaryExpr { Op: UnaryOp.Dereference } deref => InferUnary(deref),   // (`*x = v`: x must be a pointer, TC033)
                 _ => StaticType.Dynamic,
             };
             var value = Infer(a.Value, target);
@@ -2775,18 +2782,38 @@ namespace fire.Compiler
         private StaticType InferIndexTarget(IndexExpr ix)
         {
             var target = Infer(ix.Target);
-            Infer(ix.Index);
+            CheckIndexKind(target, Infer(ix.Index), ix.Line);
             NoteReceiverTypeArgs(ix, target);
             if (target.Kind == StaticKind.Array) return target.Element!;
             if (target.Kind == StaticKind.Class && FindMethod(target, "SetIndex", 2, out var map) is { } setter) return DeclaredOrDynamic(setter.Params[1].Type, setter.Params[1].ArrayRanks.Count, map);
             return StaticType.Dynamic;
         }
 
+        /// <summary>A known type that is certainly not an int (an index, a size: an enum and a word are numbers there) - or, with `pointer`, certainly no pointer
+        /// (a pointer is `Dynamic` to the checker).</summary>
+        private static bool NeverKind(StaticType t, bool pointer) =>
+            t.Kind is StaticKind.String or StaticKind.Float or StaticKind.Bool or StaticKind.Char or StaticKind.Class or StaticKind.Object or StaticKind.Array or StaticKind.Lambda
+            || pointer && t.Kind is StaticKind.Int or StaticKind.Word or StaticKind.Enum;
+
+        /// <summary>`a[i]` of an array or a string with an index that is certainly no int: TC033 (an error).</summary>
+        private void CheckIndexKind(StaticType target, StaticType index, int line)
+        {
+            if (target.Kind is StaticKind.Array or StaticKind.String && NeverKind(index, pointer: false))
+                ReportError(KindCode, $"An index must be an int, not a value of type '{index}': the access always fails at run time", line);
+        }
+
+        /// <summary>`new int[n]`, `new byte[n]` with a size that is certainly no int: TC033 (an error).</summary>
+        private void CheckSizeKind(StaticType size, string what, int line)
+        {
+            if (NeverKind(size, pointer: false))
+                ReportError(KindCode, $"The size of {what} must be an int, not a value of type '{size}': 'new' always fails at run time", line);
+        }
+
         /// <summary>`a[i]`: the element of an array, the char of a string, what the `operator[]` of a class returns.</summary>
         private StaticType InferIndex(IndexExpr ix)
         {
             var target = Infer(ix.Target);
-            Infer(ix.Index);
+            CheckIndexKind(target, Infer(ix.Index), ix.Line);
             NoteReceiverTypeArgs(ix, target);
             Dictionary<string, StaticType>? map = null;
             return target.Kind switch

@@ -227,6 +227,7 @@ The checker runs after every compile and in the editor while you type. Its findi
 | `TC030` | an expression tree that is not a lambda with an expression body, or that changes something (an error) |
 | `TC031` | a temporary goes into a field without being taken: it dies at the end of the statement (see [Ownership](13-ownership.md#temporaries-die-at-the-end-of-the-statement)) |
 | `TC032` | an array given to a `byte`/`word` parameter becomes a new buffer: what the method writes does not reach it |
+| `TC033` | an index or an array size that is certainly no int, `*x` of a value that is certainly no pointer (always an error) |
 
 In **lax** mode (the default) these are warnings; in **strict** mode they are errors - except where the table says "always". The full texts are in
 Errors and warnings (`docs/tools/errors.md`). Choose the mode with `#strict` or `#lax` at the top of a file, the project
