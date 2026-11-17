@@ -3604,6 +3604,7 @@ namespace fire.Compiler
             }
             CheckArguments(argParams!, args, c.Args, method.Name, map);
             NoteCall(c, MethodKey(method.Name, method.Params.Count), method.Params, argParams!, args, c.Args, method);
+            CheckStoredArguments(method, argParams!, c.Args);
             return ResultOf(method, map);
         }
 
@@ -3659,6 +3660,7 @@ namespace fire.Compiler
             }
             CheckArguments(method.Params, args, c.Args, method.Name, map);
             NoteCall(c, MethodKey(method.Name, method.Params.Count), method.Params, method.Params.Take(args.Count).Cast<LambdaParam?>().ToList(), args, c.Args, method);
+            CheckStoredArguments(method, method.Params.Take(args.Count).Cast<LambdaParam?>().ToList(), c.Args);
             return ResultOf(method, map);
         }
 
@@ -3839,58 +3841,123 @@ namespace fire.Compiler
         }
 
         // -------------------------------------------------------------------------------------------------------------
-        // TC031: a temporary that a constructor keeps without taking it
+        // TC031: what the call owns (a temporary, `take x`) that a constructor or method keeps without taking it
         // -------------------------------------------------------------------------------------------------------------
 
         /// <summary>`new Voxelizer(Sample.Make())` where the constructor does `this.sample = sample`: the new object belongs to the statement (its temporaries),
         /// the field only refers to it - at the end of the statement it is destroyed. Said for an argument that is surely such a temporary (`new X(...)`, the
         /// call of a method whose every `return` gives a new object or a local), when the constructor assigns the parameter to a field plainly and does
-        /// nothing with its ownership (`take`, `try take`, `TakeTo`, ...).</summary>
+        /// nothing with its ownership (`take`, `try take`, `TakeTo`, ...). The same for `new Holder(take a)` and `h.Set(take a)`: what `take` hands over
+        /// belongs to the call, and dies when it ends, when the callee keeps only a reference - in a field, a static field, an element of a field's array
+        /// or list.</summary>
         private void CheckStoredTemporaries(ConstructorDecl ctor, IReadOnlyList<LambdaParam?> argParams, IReadOnlyList<Expr> args, string className) =>
-            _pendingTemporaries.Add((_source, ctor, argParams, args, className));
+            _pendingTemporaries.Add((_source, ctor.Params, ctor.Body, ctor.BaseArgs, argParams, args, className, null));
 
-        /// <summary>The `new` calls TC031 looks at - at the end of the check, when every body is checked: whether a method gives a new object can depend on
+        /// <summary>A call of a method (TC031): the class is found at the end (MethodClass).</summary>
+        private void CheckStoredArguments(MethodDecl method, IReadOnlyList<LambdaParam?> argParams, IReadOnlyList<Expr> args)
+        {
+            if (args.Any(a => a is UnaryExpr { Op: UnaryOp.Take }) || args.Any(IsSurelyNew))
+                _pendingTemporaries.Add((_source, method.Params, method.Body, null, argParams, args, null, method));
+        }
+
+        /// <summary>Cheap pre-filter for a method call: an argument that may be a temporary (decided at the end, IsStatementTemporary).</summary>
+        private static bool IsSurelyNew(Expr e) => e is NewExpr or NewArrayExpr or NewBufferExpr or ArrayLiteralExpr or CallExpr or ConditionalExpr;
+
+        /// <summary>The calls TC031 looks at - at the end of the check, when every body is checked: whether a method gives a new object can depend on
         /// the calls in its body (`return Sample.Make()`), and those are known only once its body was checked.</summary>
-        private readonly List<(int Source, ConstructorDecl Ctor, IReadOnlyList<LambdaParam?> ArgParams, IReadOnlyList<Expr> Args, string ClassName)> _pendingTemporaries = new();
+        private readonly List<(int Source, IReadOnlyList<LambdaParam> Params, Stmt.BlockStmt Body, IReadOnlyList<Expr>? BaseArgs, IReadOnlyList<LambdaParam?> ArgParams,
+            IReadOnlyList<Expr> Args, string? ClassName, MethodDecl? Method)> _pendingTemporaries = new();
+
+        /// <summary>Where a callee keeps its parameter without taking it: `Where` for the message ("the field 'vals'"), `Store` the same store with a word
+        /// ("this.vals = {0} v": {0} is `take` or `try take`), `Holder` what refers to it then ("the field").</summary>
+        private sealed record KeptAt(string Where, string Store, string Holder);
+
+        private Dictionary<MethodDecl, string>? _methodClasses;
+        private readonly Dictionary<Stmt.BlockStmt, Dictionary<string, KeptAt?>> _storedFields = new(ReferenceEqualityComparer.Instance);
+
+        private string? MethodClass(MethodDecl m)
+        {
+            if (_methodClasses == null)
+            {
+                _methodClasses = new Dictionary<MethodDecl, string>(ReferenceEqualityComparer.Instance);
+                foreach (var (key, decl) in _classes)
+                    foreach (var member in decl.Members.OfType<MethodDecl>()) _methodClasses.TryAdd(member, key);
+            }
+            return _methodClasses.TryGetValue(m, out var cls) ? cls : null;
+        }
 
         private void ReportStoredTemporaries()
         {
             int savedSource = _source;
-            foreach (var (source, ctor, argParams, args, className) in _pendingTemporaries)
+            foreach (var (source, parameters, body, baseArgs, argParams, args, knownClass, method) in _pendingTemporaries)
             {
                 _source = source;
+                if ((knownClass ?? (method != null ? MethodClass(method) : null)) is not { } className) continue;
+                string plain = PlainName(className);
+                string who = method == null ? $"the constructor of '{plain}'" : $"'{plain}.{method.Name}'";
                 for (int i = 0; i < args.Count && i < argParams.Count; i++)
                 {
-                    // (only what has an owner: an object of a class or an array - a string or a number is copied)
-                    if (argParams[i] is not { ByRef: false } p || !HoldsOwned(p.Type, p.ArrayRanks.Count) || !IsStatementTemporary(args[i])) continue;
-                    if (StoredField(PlainName(className), ctor, p.Name, 0) is not { } field) continue;
-                    Report(StoredTemporaryCode,
-                        $"'{ShortText(args[i])}' is a temporary of this statement: the constructor of '{PlainName(className)}' keeps it in the field '{field.Name}' without taking it, so it is destroyed at the end of the statement and the field refers to a destroyed object. Keep it in a variable that lives long enough, or let the constructor take it ('this.{field.Name} = try take {field.Param}')",
-                        args[i].Line);
+                    if (argParams[i] is not { ByRef: false } p) continue;
+                    bool taken = args[i] is UnaryExpr { Op: UnaryOp.Take };
+                    // (only what has an owner: an object of a class or an array - a string or a number is copied; with `take` also a type parameter of the class)
+                    if (!HoldsOwned(p.Type, p.ArrayRanks.Count) && !(taken && IsTypeParamOf(className, p))) continue;
+                    if (!taken && !IsStatementTemporary(args[i])) continue;
+                    if (StoredField(className, parameters, body, baseArgs, p.Name, method == null, 0) is not { } kept) continue;
+                    if (taken)
+                        Report(StoredTemporaryCode,
+                            $"'{TakenText(args[i])}' hands its value over to the call, but {who} keeps only a reference to it in {kept.Where} without taking it: what the call owns is destroyed when the call ends, and {kept.Holder} refers to a destroyed {KindOf(p)}. Let {(method == null ? "the constructor" : "the method")} take it ('{string.Format(kept.Store, "take")}')",
+                            args[i].Line);
+                    else
+                        Report(StoredTemporaryCode,
+                            $"'{ShortText(args[i])}' is a temporary of this statement: {who} keeps it in {kept.Where} without taking it, so it is destroyed at the end of the statement and {kept.Holder} refers to a destroyed object. Keep it in a variable that lives long enough, or let {(method == null ? "the constructor" : "the method")} take it ('{string.Format(kept.Store, kept.Store.Contains("= {0}") ? "try take" : "take")}')",
+                            args[i].Line);
                 }
             }
             _pendingTemporaries.Clear();
             _source = savedSource;
         }
 
-        /// <summary>The field the constructor keeps its parameter `name` in without taking it: assigned plainly in its body (`this.f = name`, `f = name`), or
-        /// passed on plainly to the constructor of the base class (`construct(Sample s) : base(s)`) that does so. Null when it is not kept that way, or when the
-        /// constructor (or the base one) does something with its ownership.</summary>
-        private (string Name, string Param)? StoredField(string className, ConstructorDecl ctor, string name, int depth)
+        private static string TakenText(Expr e) => e is UnaryExpr { Operand: var o } ? "take " + o switch
         {
-            if (PlainlyStoredField(className, ctor, name) is not { } field) return null;
-            if (field.Length > 0) return (field, name);
+            IdentifierExpr id => id.Name,
+            MemberExpr { Target: ThisExpr, Name: var n } => "this." + n,
+            MemberExpr { Target: IdentifierExpr t, Name: var n } => t.Name + "." + n,
+            _ => "...",
+        } : "take ...";
+
+        private static string KindOf(LambdaParam p) =>
+            p.ArrayRanks.Count > 0 || p.Type?.ArrayRank > 0 ? (p.Type is { BaseName: "word" or "byte" } or { BaseName: "int", BitWidth: 8 } ? "buffer" : "array") : p.Type?.BaseName is "List" ? "list" : "object";
+
+        private bool IsTypeParamOf(string className, LambdaParam p) =>
+            p.Type is { PointerDepth: 0, ArrayRank: 0, TypeArgs: null } t && p.ArrayRanks.Count == 0 && _classes.TryGetValue(className, out var decl) && decl.TypeParams?.Any(tp => tp.Name == t.BaseName) == true;
+
+        /// <summary>Where the callee keeps its parameter `name` without taking it: assigned plainly in its body (`this.f = name`, `f = name`, `Cls.f = name`,
+        /// `this.f[i] = name`, `this.f.Add(name)`), or - a constructor - passed on plainly to the constructor of the base class (`construct(Sample s) :
+        /// base(s)`) that does so. Null when it is not kept that way, or when the callee (or the base constructor) does something with its ownership.</summary>
+        private KeptAt? StoredField(string className, IReadOnlyList<LambdaParam> parameters, Stmt.BlockStmt body, IReadOnlyList<Expr>? baseArgs, string name, bool isCtor, int depth)
+        {
+            if (body == null) return null;
+            if (depth == 0)
+            {
+                if (!_storedFields.TryGetValue(body, out var byName)) _storedFields[body] = byName = new Dictionary<string, KeptAt?>();
+                if (byName.TryGetValue(name, out var known)) return known;
+                return byName[name] = StoredField(className, parameters, body, baseArgs, name, isCtor, 1);
+            }
+            if (PlainlyStoredField(className, parameters, body, name) is not { } field) return null;
+            if (field.Where.Length > 0) return field;
             // (`: base(s)`: the base constructor with as many parameters - the parameter at the same place)
-            if (depth > 8 || ctor.BaseArgs is not { } baseArgs || !_classes.TryGetValue(className, out var decl)) return null;
+            if (!isCtor || depth > 8 || baseArgs == null || !_classes.TryGetValue(className, out var decl)) return null;
             int at = -1;
-            for (int k = 0; k < baseArgs.Count; k++) if (baseArgs[k] is IdentifierExpr id && id.Name == name) { at = k; break; }
+            // (`base(take s)` too: the base constructor's call owns it either way)
+            for (int k = 0; k < baseArgs.Count; k++) if (baseArgs[k] is IdentifierExpr id && id.Name == name || baseArgs[k] is UnaryExpr { Op: UnaryOp.Take, Operand: IdentifierExpr tid } && tid.Name == name) { at = k; break; }
             if (at < 0) return null;
             var baseName = decl.BaseRefs?.Select(b => PlainName(b.BaseName)).FirstOrDefault(n => _classes.ContainsKey(n));
             if (baseName == null) return null;
             var baseCtors = _classes[baseName].Members.OfType<ConstructorDecl>().Where(c => c.Params.Count >= baseArgs.Count && c.Params.Take(baseArgs.Count).All(q => !q.ByRef)
                 && c.Params.Skip(baseArgs.Count).All(q => q.DefaultValue != null)).ToList();
             if (baseCtors.Count != 1) return null;
-            return StoredField(baseName, baseCtors[0], baseCtors[0].Params[at].Name, depth + 1) is { } inBase ? (inBase.Name, name) : null;
+            // (the fix is written in the base constructor, with its parameter's name)
+            return StoredField(baseName, baseCtors[0].Params, baseCtors[0].Body, baseCtors[0].BaseArgs, baseCtors[0].Params[at].Name, true, depth + 1);
         }
 
         private static string ShortText(Expr e) => e switch
@@ -3948,36 +4015,107 @@ namespace fire.Compiler
             return _returnsFresh[m] = fresh;
         }
 
-        /// <summary>The field the constructor assigns the parameter `name` to plainly (`this.f = name`, `f = name`), when it does nothing else with its ownership; null
-        /// otherwise. "" when it does nothing with it in its body (it may pass it on to the base constructor - StoredField).</summary>
-        private string? PlainlyStoredField(string className, ConstructorDecl ctor, string name)
+        /// <summary>The standard containers whose `Add`, `Insert`, ... keep what they are given only by reference unless the call they run in owns it
+        /// (`try value.TakeTo(this)`): a value handed to them plainly from a call that owns it stays that call's.</summary>
+        private static readonly HashSet<string> ReferenceContainers = new() { "List", "Dictionary", "HashSet", "__HashTable" };
+        private static readonly HashSet<string> ContainerStores = new() { "Add", "Insert", "Set", "Push", "Enqueue", "TryAdd", "AddRange" };
+
+        /// <summary>Where the callee stores the parameter `name` plainly (`this.f = name`, `f = name`, `Cls.f = name`, `this.f[i] = name`, `this.f.Add(name)`),
+        /// when it does nothing else with its ownership; null otherwise. Where "" when it does nothing with it in its body (a constructor may pass it on to
+        /// the base constructor - StoredField).</summary>
+        private KeptAt? PlainlyStoredField(string className, IReadOnlyList<LambdaParam> parameters, Stmt.BlockStmt body, string name, int depth = 0)
         {
             // (the names of the body that are no field: its locals and parameters - `f = name` is a field only when f is none of them)
-            var locals = new HashSet<string>(ctor.Params.Select(q => q.Name));
-            foreach (var node in AstNodes(ctor.Body)) if (node is VarDeclStmt v) locals.Add(v.Name);
-            string? field = null;
+            var locals = new HashSet<string>(parameters.Select(q => q.Name));
+            foreach (var node in AstNodes(body)) if (node is VarDeclStmt v) locals.Add(v.Name);
+            KeptAt? field = null;
             // (`if (initial is of Owns) { this.owns = initial }`: inside, the parameter is a value without an owner - an enum, a number, a string - so
             // what is stored there is no temporary object; List's constructor takes an array or an Owns this way)
             var notOwned = new HashSet<object>(ReferenceEqualityComparer.Instance);
-            foreach (var node in AstNodes(ctor.Body))
+            foreach (var node in AstNodes(body))
                 if (node is IfStmt { Condition: IsOfExpr { Operand: IdentifierExpr tested, TypeRef: var testedType }, Then: var then } && tested.Name == name && !HoldsOwned(testedType, 0))
                     foreach (var inner in AstNodes(then)) notOwned.Add(inner);
-            foreach (var node in AstNodes(ctor.Body))
+            bool IsName(Expr e) => e is IdentifierExpr id && id.Name == name;
+            foreach (var node in AstNodes(body))
             {
                 if (notOwned.Contains(node)) continue;
                 switch (node)
                 {
-                    case UnaryExpr { Op: UnaryOp.Take or UnaryOp.TryTake, Operand: IdentifierExpr id } when id.Name == name: return null;
+                    // (`this.other.Keep(take name)`: passed on with its ownership - kept only by reference when that method does so in turn)
+                    case CallExpr { ArgNames: null } call when depth < 4 && call.Args.Select((a, k) => (a, k)).FirstOrDefault(x => x.a is UnaryExpr { Op: UnaryOp.Take, Operand: var o } && IsName(o)) is { a: not null } passed:
+                        if (_callTargets.TryGetValue(call, out var next) && passed.k < next.Params.Count && !next.Params[passed.k].ByRef && MethodClass(next) is { } nextClass
+                            && PlainlyStoredField(nextClass, next.Params, next.Body, next.Params[passed.k].Name, depth + 1) is { Where.Length: > 0 } onward)
+                        { field ??= onward; break; }
+                        return null;
+                    case UnaryExpr { Op: UnaryOp.Take, Operand: IdentifierExpr id } when id.Name == name:
+                        // (an argument of a call: the case above)
+                        if (depth < 4 && AstNodes(body).OfType<CallExpr>().Any(c => c.ArgNames == null && c.Args.Any(a => ReferenceEquals(a, node)))) break;
+                        return null;
+                    case UnaryExpr { Op: UnaryOp.TryTake, Operand: IdentifierExpr id } when id.Name == name: return null;
                     case CallExpr { Callee: MemberExpr { Target: IdentifierExpr id } m } when id.Name == name && m.Name.Contains("Take", StringComparison.Ordinal): return null;
-                    case CallExpr { Callee: MemberExpr m } call when m.Name.Contains("Take", StringComparison.Ordinal) && call.Args.Any(a => a is IdentifierExpr id && id.Name == name): return null;
+                    case CallExpr { Callee: MemberExpr m } call when m.Name.Contains("Take", StringComparison.Ordinal) && call.Args.Any(IsName): return null;
                     case VarDeclStmt v when v.Name == name: return null;   // (shadowed)
                     case AssignExpr { Target: IdentifierExpr id } when id.Name == name: return null;   // (the parameter is given something else)
-                    case AssignExpr { Value: IdentifierExpr v, Target: MemberExpr { Target: ThisExpr } t } when v.Name == name: field ??= t.Name; break;
-                    // (`sample = s` without `this.`: a field of the class or of a base class)
-                    case AssignExpr { Value: IdentifierExpr v, Target: IdentifierExpr t } when v.Name == name && !locals.Contains(t.Name) && IsInstanceField(className, t.Name): field ??= t.Name; break;
+                    case ReturnStmt { Value: IdentifierExpr id } when id.Name == name: return null;   // (it goes back to the caller with the result)
+                    case AssignExpr { Value: IdentifierExpr v, Target: var target } when v.Name == name:
+                        if (target is IndexExpr { Target: var indexed } && FieldRef(className, indexed, locals) is { } element && !OwnsWhatComesIn(element.Class, element.Name))
+                            field ??= new KeptAt($"an element of the {element.Kind} '{element.Name}'", element.Text + "[...] = {0} " + name, "the element");
+                        else if (FieldRef(className, target, locals) is { } f)
+                            field ??= new KeptAt($"the {f.Kind} '{f.Name}'", f.Text + " = {0} " + name, "the " + f.Kind);
+                        break;
+                    // (`this.items.Add(name)`: the list's Add takes only what its own call owns - the reference stays one)
+                    case CallExpr { Callee: MemberExpr { Target: var holder, Name: var store } } call when ContainerStores.Contains(store) && call.Args.Any(IsName)
+                        && _callTargets.TryGetValue(call, out var add) && MethodClass(add) is { } container && ReferenceContainers.Contains(PlainName(container))
+                        && FieldRef(className, holder, locals) is { } list && !OwnsWhatComesIn(list.Class, list.Name):
+                        field ??= new KeptAt($"the {PlainName(container)} in the {list.Kind} '{list.Name}'", $"{list.Text}.{store}({string.Join(", ", call.Args.Select(a => IsName(a) ? "{0} " + name : "..."))})", "the " + PlainName(container).ToLowerInvariant());
+                        break;
                 }
             }
-            return field ?? "";
+            return field ?? new KeptAt("", "", "");
+        }
+
+        /// <summary>A field the expression names in the body of a method of `className`: `this.f`, `f` (an instance or a static field, not a local),
+        /// `Cls.f` (a static field). Text is how the fix writes it.</summary>
+        private (string Name, string Class, string Kind, string Text)? FieldRef(string className, Expr e, HashSet<string> locals)
+        {
+            switch (e)
+            {
+                case MemberExpr { Target: ThisExpr, Name: var f } when IsInstanceField(className, f): return (f, className, "field", "this." + f);
+                case IdentifierExpr { Name: var f } when !locals.Contains(f) && IsInstanceField(className, f): return (f, className, "field", "this." + f);
+                case IdentifierExpr { Name: var f } when !locals.Contains(f) && StaticFieldClass(className, f) is { } owner: return (f, owner, "static field", PlainName(owner) + "." + f);
+                case MemberExpr { Target: IdentifierExpr { Name: var c }, Name: var f } when !locals.Contains(c) && _classes.ContainsKey(c) && StaticFieldClass(c, f) is { } owner:
+                    return (f, owner, "static field", PlainName(owner) + "." + f);
+                default: return null;
+            }
+        }
+
+        /// <summary>The class (this one or a base class) that declares the static field `name`.</summary>
+        private string? StaticFieldClass(string className, string name)
+        {
+            for (int guard = 0; guard < 64 && _classes.TryGetValue(className, out var decl); guard++)
+            {
+                if (decl.Members.Any(m => m is FieldDecl { IsStatic: true } f && f.Name == name)) return className;
+                if (decl.BaseRefs?.Select(b => PlainName(b.BaseName)).FirstOrDefault(n => _classes.ContainsKey(n)) is not { } next) return null;
+                className = next;
+            }
+            return null;
+        }
+
+        /// <summary>Does the container in the field own everything that comes in - `new List<Node>(Owns.Values)` (or Keys, All) anywhere it is given a
+        /// value in the class? Then a plain `Add` keeps it.</summary>
+        private bool OwnsWhatComesIn(string className, string field)
+        {
+            if (!_classes.TryGetValue(className, out var decl)) return false;
+            static bool Owning(Expr? e) => e != null && AstNodes(e).OfType<MemberExpr>().Any(m => m.Target is IdentifierExpr { Name: "Owns" } && m.Name != "Explicit");
+            foreach (var member in decl.Members)
+            {
+                if (member is FieldDecl f && f.Name == field && Owning(f.Initializer)) return true;
+                if (member is MethodDecl or ConstructorDecl or PropertyDecl)
+                    foreach (var node in AstNodes(member))
+                        if (node is AssignExpr { Target: var t, Value: var v } && (t is MemberExpr { Target: ThisExpr } tm && tm.Name == field || t is IdentifierExpr ti && ti.Name == field) && Owning(v))
+                            return true;
+            }
+            return false;
         }
 
         private bool IsInstanceField(string className, string name)

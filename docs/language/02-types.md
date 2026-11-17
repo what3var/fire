@@ -227,7 +227,7 @@ The checker runs after every compile and in the editor while you type. Its findi
 | `TC026` / `TC027` / `TC028` | a write to a field of a record / a record field that can change / `x with { }` on a class without `copy`/`flat` (errors) |
 | `TC029` | `ch.Send(x)` of an object without `copy`/`take` (an error) |
 | `TC030` | an expression tree that is not a lambda with an expression body, or that changes something (an error) |
-| `TC031` | a temporary goes into a field without being taken: it dies at the end of the statement (see [Ownership](13-ownership.md#temporaries-die-at-the-end-of-the-statement)) |
+| `TC031` | a temporary goes into a field without being taken: it dies at the end of the statement; the same for `take x` into a constructor or method that keeps only a reference (a field, a static field, an element, a list): it dies when the call ends (see [Ownership](13-ownership.md#temporaries-die-at-the-end-of-the-statement)) |
 | `TC032` | an array given to a `byte`/`word` parameter becomes a new buffer: what the method writes does not reach it |
 | `TC033` | an index or an array size that is certainly no int, `*x` of a value that is certainly no pointer (always an error) |
 | `TC034` | a value that is certainly no string goes into a `string` declaration: it becomes its text (strict mode only, always a warning) |

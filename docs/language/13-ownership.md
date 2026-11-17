@@ -85,7 +85,8 @@ return found                          // the devices in found go along with the 
 The same for a constructor that keeps an argument in a field: `new Voxelizer(Sample.Make())` with `this.sample = sample` in the constructor leaves the
 field with a destroyed object after the statement - the field only refers to the temporary. The type checker says so (warning `TC031`) when the argument
 is surely a temporary (`new ...`, an array or a buffer made in the argument - `new byte[0]`, `[1, 2]` -, or a call of a method whose every `return` gives a
-new object, array or local of its own) and the constructor stores the parameter (also one declared `any`) plainly. Let the constructor take it - it then
+new object, array or local of its own) and the constructor stores the parameter (also one declared `any`) plainly; the same for a method
+(`h.Set(new Sample())`) and for a static field, an element of a field's array or a field's list as the place it is kept in. Let the constructor take it - it then
 keeps what it is given, and leaves a variable of the caller alone:
 
 ```fire
@@ -270,7 +271,8 @@ print(h.held.n)                     // kept - the holder owns it now
 Without `take`, `temp` would still belong to the block and die at its end; `try` would not move it, because `Keep` is not its owner.
 
 What a method gets with `take` belongs to that call - like a local of it. If the method does not keep it (`try i.TakeTo(this)`) or hand it on with `take`
-again, it dies when the method ends, even when a field or a list still points to it:
+again, it dies when the method ends, even when a field or a list still points to it (the same for a constructor: `new Holder(take a)` with
+`this.vals = v` leaves `h.vals` destroyed - write `this.vals = take v`):
 
 ```fire
 class Item {
@@ -293,6 +295,11 @@ try {
     print("lost: destroyed")
 }
 ```
+
+The type checker says so before the run (warning `TC031`) when the argument is `take x` or surely a temporary and the method or constructor it goes
+to stores the parameter plainly - in a field, a static field, an element of a field's array, a field's List, Dictionary or HashSet without `Owns.Values`
+(`shelf.Look(new Item("lost"))` above), or hands it on with `take` to one that does so; it names the store with `take` as the fix
+(`this.items.Add(take i)`, `this.vals = take v`). Taking it in any way (`take`, `TakeTo`, `try ... TakeTo(this)`, returning it) silences it.
 
 In Debug mode (the default in spark, `forge run -m debug`) the VM warns about this when it happens - at the end of the call, not only at the
 next use:
