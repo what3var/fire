@@ -506,7 +506,7 @@ static class DockingTests
                     Picked(sender) { print("picked " + sender.Text) }
                 }
                 var app = new PickApp()
-                app.ui.Draw()
+                app.UIRoot.Draw()
                 print(app.choice.Count + " " + app.choice.Text)
                 app.choice.Select(2)
                 """, new[] { "picked Two", "3 Two", "picked Three" }, docking: false);

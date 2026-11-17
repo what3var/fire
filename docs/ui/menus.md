@@ -51,7 +51,7 @@ class EditorWindow : EditorBase {
 var window = new EditorWindow()
 window.Run()
 ```
-<!-- shot: window.ui.Tick();; window.menu.Open(window.ui, 0) -->
+<!-- shot: window.UIRoot.Tick();; window.menu.Open(window.UIRoot, 0) -->
 
 ## Menu bar and menus
 

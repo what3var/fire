@@ -1,28 +1,31 @@
 <!-- The interface. The compiler turns it into a base class; main.fire (the code-behind) inherits from it. docs/ui/markup.md -->
-<Window Class="Main" Title="People" Width="520" Height="320">
+<!-- UIRoot.WindowBackdrop: the material of the desktop behind the window (the field UIRoot of the window is its UI.Root) -->
+<Window Class="Main" Title="People" Width="520" Height="320" UIRoot.WindowBackdrop="Acrylic">
   <Resources>
     <Converter Key="Upper" Type="UpperConverter"/>
     <!-- how one person looks in the list -->
     <DataTemplate Key="Person">
-      <Label Text="{Binding name}"/>
+      <Label Text="{Binding name}" Margin="8,4"/>
     </DataTemplate>
     <!-- the people, sorted by name -->
     <CollectionView Key="ByName" Source="{Binding people}" SortBy="name"/>
   </Resources>
 
-  <Panel Left="10" Top="10" Width="500" Height="300">
-    <Label Left="10" Top="10" Text="People" FontSize="18"/>
-    <ListBox Name="peopleList" Left="10" Top="40" Width="200" Height="200" View="ByName" ItemTemplate="Person"/>
+  <!-- a grid: the list on the left, the details of the selected person on the right; 16 pixels around, 8 between the rows -->
+  <Grid Width="488" Height="288" Margin="16" Columns="200, auto, *" Rows="auto, auto, auto, auto, auto, *, auto">
+    <Label Grid.ColumnSpan="3" Text="People" FontSize="18" Margin="0,0,0,8"/>
+    <ListBox Name="peopleList" Grid.Row="1" Grid.RowSpan="5" Width="-1" Height="-1" Margin="0,0,16,0" View="ByName" ItemTemplate="Person"/>
 
-    <Label Left="230" Top="44" Text="Name:"/>
+    <Label Grid.Row="1" Grid.Column="1" Text="Name:" VerticalAlign="Center" Margin="0,0,8,8"/>
     <!-- ElementName: the property of another element - here the selected person of the list. TwoWay: typing changes the data, a change of the data shows here -->
-    <TextBox Left="290" Top="40" Width="200" Text="{Binding selectedItem.name, ElementName=peopleList, Mode=TwoWay}"/>
-    <CheckBox Left="230" Top="76" Text="Member" IsChecked="{Binding selectedItem.member, ElementName=peopleList, Mode=TwoWay}"/>
+    <TextBox Grid.Row="1" Grid.Column="2" Width="-1" Margin="0,0,0,8" Text="{Binding selectedItem.name, ElementName=peopleList, Mode=TwoWay}"/>
+    <CheckBox Grid.Row="2" Grid.Column="2" Text="Member" Margin="0,0,0,8" IsChecked="{Binding selectedItem.member, ElementName=peopleList, Mode=TwoWay}"/>
 
-    <Label Left="230" Top="116" Text="Shown as:"/>
+    <Label Grid.Row="3" Grid.Column="1" Text="Shown as:" Margin="0,0,8,8"/>
     <!-- a converter changes the value on its way to the screen -->
-    <Label Left="310" Top="116" Text="{Binding selectedItem.name, ElementName=peopleList, Converter=Upper}" Font="8x8"/>
-    <Button Left="230" Top="150" Width="120" Height="26" Text="Add person" OnClick="AddPerson"/>
-    <Label Left="10" Top="260" Text="{Binding summary}"/>
-  </Panel>
+    <Label Grid.Row="3" Grid.Column="2" Margin="0,0,0,8" Text="{Binding selectedItem.name, ElementName=peopleList, Converter=Upper}"/>
+    <Button Grid.Row="4" Grid.Column="2" Width="120" Text="Add person" OnClick="AddPerson"/>
+
+    <Label Grid.Row="6" Grid.ColumnSpan="3" Margin="0,8,0,0" Text="{Binding summary}"/>
+  </Grid>
 </Window>

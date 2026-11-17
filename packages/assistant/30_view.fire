@@ -12,7 +12,7 @@ namespace Assistant {
         Assistant.Brain Brain
         Framebuffer fb
         Window win
-        UI.Root ui
+        UI.Root UIRoot
         UI.DrawingCanvas figure
         // while the model thinks: a small flickering flame (black and white) left of "Thinking"
         UI.DrawingCanvas flame
@@ -69,9 +69,9 @@ namespace Assistant {
             this.win.ShowInTaskbar = false   // (a helper, not a program of its own)
             this.win.ClickThrough = true     // (clicks next to the bubble and the character reach the windows below)
             this.PaintIcon()
-            this.ui = new UI.Root(this.fb, this.win)
-            this.ui.WindowBackdrop = Backdrop.Transparent
-            this.ui.WindowBackground = new SolidBrush(UI.Color.Transparent())   // (nothing behind the bubble and the character)
+            this.UIRoot = new UI.Root(this.fb, this.win)
+            this.UIRoot.WindowBackdrop = Backdrop.Transparent
+            this.UIRoot.WindowBackground = new SolidBrush(UI.Color.Transparent())   // (nothing behind the bubble and the character)
             this.Build()
         }
 
@@ -96,36 +96,36 @@ namespace Assistant {
             this.bubble = new UI.DrawingCanvas(0, 0, this.W, this.H)
             this.bubble.blendMode = 2
             this.bubble.OnPaint = func (UI.DrawingCanvas c) on this => PaintBubble(c)
-            this.ui.Add(this.bubble)
+            this.UIRoot.Add(this.bubble)
             // the header: folder and branch, the small buttons at the right (history, sessions, close)
             this.folderLabel = new UI.Label("", 34, 15)
             this.folderLabel.Color = new SolidBrush(UI.Color.Rgb(255, 255, 255))
             this.folderLabel.FontSize = 13
-            this.ui.Add(this.folderLabel)
+            this.UIRoot.Add(this.folderLabel)
             this.branchLabel = new UI.Label("", 34, 35)
             this.branchLabel.Color = new SolidBrush(UI.Color.Rgb(255, 255, 255))
             this.branchLabel.FontSize = 13
             // the branch in bold (the bold file of the theme's font, where there is one)
-            string bold = this.ui.theme.font + " Bold"
-            if (this.ui.theme.font != "" && Fonts.Has(bold)) { this.branchLabel.Font = bold }
+            string bold = this.UIRoot.theme.font + " Bold"
+            if (this.UIRoot.theme.font != "" && Fonts.Has(bold)) { this.branchLabel.Font = bold }
             this.folderIcon = Framebuffer.FromResource(new Resource("icons/folder16.png"))
             this.branchIcon = Framebuffer.FromResource(new Resource("icons/branch16.png"))
-            this.ui.Add(this.branchLabel)
+            this.UIRoot.Add(this.branchLabel)
             defined int bx = this.W - 14 - 3 * 24
             this.historyButton = Assistant.View.Small(UI.Geometry.Parse("M 2 4 L 14 4 M 2 8 L 14 8 M 2 12 L 14 12"), bx, 11)
             this.historyButton.OnClick = func () on this => ToggleHistory()
-            this.ui.Add(this.historyButton)
+            this.UIRoot.Add(this.historyButton)
             this.sessionsButton = Assistant.View.Small(UI.Geometry.Parse("M 2 5 L 12 5 M 9 2 L 12 5 L 9 8 M 14 11 L 4 11 M 7 8 L 4 11 L 7 14"), bx + 24, 11)
             this.sessionsButton.OnClick = func () on this => ShowSessions()
-            this.ui.Add(this.sessionsButton)
+            this.UIRoot.Add(this.sessionsButton)
             this.closeButton = Assistant.View.Small(UI.Icons.Close(), bx + 48, 11)
             this.closeButton.OnClick = func () on this => HideBubble()
-            this.ui.Add(this.closeButton)
+            this.UIRoot.Add(this.closeButton)
             this.text = new UI.TextArea("", 12, 36, this.W - 24, 100)
             this.text.ReadOnly = true
             this.text.WordWrap = true
             this.text.FadeBottom = 28
-            this.ui.Add(this.text)
+            this.UIRoot.Add(this.text)
             this.choices = new UI.StackPanel(14, 140, this.W - 28, -1, false, 4, 0)
             // four buttons made once: a choice changes their text (a button made anew would destroy the one the pointer is on - the interface still knows it)
             for (int i = 0; i < 4; i++) {
@@ -135,18 +135,18 @@ namespace Assistant {
                 b.OnClick = func () on this => Pick((taking i))
                 this.choices.Add(b)
             }
-            this.ui.Add(this.choices)
+            this.UIRoot.Add(this.choices)
             this.question = new UI.TextBox("", 14, this.BH - 52, this.W - 28, 26)
             this.question.Hint = "Ask me..."
             this.question.OnEnter = func () on this => AskTyped()
-            this.ui.Add(this.question)
+            this.UIRoot.Add(this.question)
             // the character (it moves: painted every frame); a click pokes it
             this.flame = new UI.DrawingCanvas(14, 38, 14, 18)
             this.flame.Continuous = true
             this.flame.blendMode = 2
             this.flame.Visible = false
             this.flame.OnPaint = func (UI.DrawingCanvas c) on this => PaintFlame(c)
-            this.ui.Add(this.flame)
+            this.UIRoot.Add(this.flame)
             this.figure = new UI.DrawingCanvas(4, this.MaxBH, 100, this.FH)
             this.figure.Continuous = true
             this.figure.blendMode = 2
@@ -154,14 +154,14 @@ namespace Assistant {
             this.figure.OnMouseDown = func (int x, int y, int b) on this => Press(x, y, b)
             this.figure.OnMouseMove = func (int x, int y) on this => Drag(x, y)
             this.figure.OnMouseUp = func (int x, int y, int b) on this => Release()
-            this.ui.Add(this.figure)
-            this.ui.onTick = func () on this => Cycle()
+            this.UIRoot.Add(this.figure)
+            this.UIRoot.onTick = func () on this => Cycle()
         }
 
-        defined int Fill() { return this.ui.Dark ? UI.Color.Rgb(52, 52, 56) : UI.Color.Rgb(255, 253, 240) }
-        // the header in the accent colour of the system (ui.Accent: 0xRRGGBB)
+        defined int Fill() { return this.UIRoot.Dark ? UI.Color.Rgb(52, 52, 56) : UI.Color.Rgb(255, 253, 240) }
+        // the header in the accent colour of the system (UIRoot.Accent: 0xRRGGBB)
         defined int HeaderFill() {
-            defined int a = this.ui.Accent
+            defined int a = this.UIRoot.Accent
             return UI.Color.Rgb((a >> 16) & 255, (a >> 8) & 255, a & 255)
         }
 
@@ -196,7 +196,7 @@ namespace Assistant {
             defined int o = this.O
             defined int h = o + this.BH - 12
             defined int fill = this.Fill()
-            defined int edge = this.ui.Dark ? UI.Color.Rgb(90, 90, 96) : UI.Color.Rgb(214, 204, 160)
+            defined int edge = this.UIRoot.Dark ? UI.Color.Rgb(90, 90, 96) : UI.Color.Rgb(214, 204, 160)
             if (this.Brain.Phase == Assistant.Phase.Thinking) {
                 // a thought bubble: rounder, and small circles that rise from the character instead of the tail
                 r.DrawShadow(4, o + 4, w - 8, this.BH - 16, 24, 6, 0x30000000, 2)
@@ -274,11 +274,11 @@ namespace Assistant {
             if (area[2] <= 0) { return }
             this.placed = true
             // the bubble at most as high as the screen leaves room for: Min(screen - 120, 480) (logical pixels)
-            this.MaxBH = UI.M.Max(this.MinBH, UI.M.Min(this.ui.ToLogical(area[3]) - this.FH, 480))
+            this.MaxBH = UI.M.Max(this.MinBH, UI.M.Min(this.UIRoot.ToLogical(area[3]) - this.FH, 480))
             // the window once at its full height (the largest bubble and the character)
             if (this.MaxBH + this.FH != this.H) {
                 this.H = this.MaxBH + this.FH
-                this.ui.SetSize(this.W, this.H)
+                this.UIRoot.SetSize(this.W, this.H)
                 this.bubble.Height = this.H
                 this.figure.Top = this.MaxBH
             }
@@ -300,7 +300,7 @@ namespace Assistant {
             if (this.pickedSession != "") { this.TakeSession() }
             if (this.pickedMenu != "") { this.TakeMenu() }
             // the menu closed
-            if (this.menuOpen && this.ui.popups.Count == 0) {
+            if (this.menuOpen && this.UIRoot.popups.Count == 0) {
                 this.menuOpen = false
                 this.Show()
             }
@@ -345,7 +345,7 @@ namespace Assistant {
                 if (used) {
                     // (a long choice breaks into lines)
                     b.Text = this.Brain.Choices[i]
-                    b.Measure(this.ui, this.W - 28, -1)
+                    b.Measure(this.UIRoot, this.W - 28, -1)
                     choicesHeight = choicesHeight + UI.M.Max(24, b.dh) + 4
                     count++
                 }
@@ -357,7 +357,7 @@ namespace Assistant {
             defined int below = 22 + choicesHeight
             if (asking) { below = below + 30 }
             defined int bh = 0
-            if (shownNow) { bh = UI.M.Clamp(top + this.text.ContentHeight(this.ui, this.W - 24) + below, this.MinBH, this.MaxBH) }
+            if (shownNow) { bh = UI.M.Clamp(top + this.text.ContentHeight(this.UIRoot, this.W - 24) + below, this.MinBH, this.MaxBH) }
             this.Resize(bh)
             // everything of the bubble at its place below O
             defined int o = this.O
@@ -378,9 +378,9 @@ namespace Assistant {
             this.flame.Visible = thinking
             this.text.Left = thinking ? 30 : 12
             this.text.Width = thinking ? this.W - 42 : this.W - 24
-            if (asking) { this.ui.SetFocus(this.question) }
+            if (asking) { this.UIRoot.SetFocus(this.question) }
             this.bubble.Invalidate()
-            this.ui.Invalidate()
+            this.UIRoot.Invalidate()
         }
 
         undefined Pick(defined int i) { this.picked = i }
@@ -409,7 +409,7 @@ namespace Assistant {
             }
             this.menuRows = take items   // (the menu does not own its rows: they live in the view while it is open)
             this.menuOpen = true
-            this.ui.ShowMenu(this.menuRows, this.sessionsButton.Left - 120, this.sessionsButton.Top + 24)
+            this.UIRoot.ShowMenu(this.menuRows, this.sessionsButton.Left - 120, this.sessionsButton.Top + 24)
         }
 
         undefined ChooseSession(string id) { this.pickedSession = id }
@@ -453,7 +453,7 @@ namespace Assistant {
             this.menuRows = take items   // (the menu does not own its rows: they live in the view while it is open)
             // above the character (the window has room for it)
             this.menuOpen = true
-            this.ui.ShowMenu(this.menuRows, 4, UI.M.Max(4, this.MaxBH - 150))
+            this.UIRoot.ShowMenu(this.menuRows, 4, UI.M.Max(4, this.MaxBH - 150))
         }
 
         undefined ChooseMenu(string what) { this.pickedMenu = what }
@@ -560,7 +560,7 @@ namespace Assistant {
 
         // Shows the window until it is closed.
         undefined Run() {
-            this.ui.Run()
+            this.UIRoot.Run()
             this.Brain.Close()
         }
     }

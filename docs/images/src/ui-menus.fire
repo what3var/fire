@@ -10,6 +10,6 @@ class EditorWindow : EditorBase {
 }
 
 var window = new EditorWindow()
-window.ui.Tick()
-window.menu.Open(window.ui, 0)
-Shot.Save(window.ui, "ui-menus.png")
+window.UIRoot.Tick()
+window.menu.Open(window.UIRoot, 0)
+Shot.Save(window.UIRoot, "ui-menus.png")

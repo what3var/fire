@@ -22,14 +22,17 @@
 
 class DarkWindow : DarkBase {
     construct() {
-        this.ui.Dark = true              // whatever the system says
-        this.ui.Accent = 0x8854D0
+        this.UIRoot.Dark = true              // whatever the system says
+        this.UIRoot.Accent = 0x8854D0
     }
 }
 
 var window = new DarkWindow()
 window.Run()
 ```
+
+The markup can say the same on its root element - `<Window ... UIRoot.Dark="true" UIRoot.Accent="0x8854D0">` - without a constructor in the code-behind
+([markup](markup.md#the-ui-root-of-a-window)).
 
 ## Run, Show and Tick
 
@@ -150,7 +153,8 @@ draws is seen. (A colour from 0 to 255 is an index of the palette: `0` is black,
 
 **The window itself** can get a material of the desktop: `ui.WindowBackdrop = Backdrop.Mica` (Windows 11), `Backdrop.Acrylic`, `Backdrop.Blur`
 (Windows, macOS, KDE) or `Backdrop.Transparent`. The desktop gives what it can (`window.Backdrop` tells what it gave); where it gives something, the
-background of the interface becomes see-through while panels and controls stay as they are.
+background of the interface becomes see-through while panels and controls stay as they are. A window from markup sets it on its root element:
+`<Window ... UIRoot.WindowBackdrop="Acrylic">` (in code `window.UIRoot.WindowBackdrop = Backdrop.Acrylic`).
 
 The effects are drawn by the C library of `graphics` (`Renderer.FillRoundRect`, `DrawRoundRect`, `DrawShadow`, `Blur`, `DrawMaterial` - usable by
 any program, see [graphics](../graphics/README.md#rounded-shapes-shadows-and-materials)); with a GPU they run there.

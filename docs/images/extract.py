@@ -37,7 +37,7 @@ for folder, _, files in os.walk(docs):
             fbvar = re.search(r"var (\w+) = new Framebuffer\(", code)
             if run:
                 before = "".join(run.group(1) + line.strip() + "\n" for line in extra.split(";;") if line.strip())
-                code = code[:run.start()] + before + f'{run.group(1)}Shot.Save({run.group(2)}{".ui" if fxml_name else ""}, "{name}.png")' + code[run.end():]
+                code = code[:run.start()] + before + f'{run.group(1)}Shot.Save({run.group(2)}{".UIRoot" if fxml_name else ""}, "{name}.png")' + code[run.end():]
             elif loop and fbvar:
                 # a plain window: draw, then save the framebuffer instead of waiting for the window to close
                 before = "".join(loop.group(1) + line.strip() + "\n" for line in extra.split(";;") if line.strip())

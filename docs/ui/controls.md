@@ -48,7 +48,7 @@ class ControlsWindow : ControlsBase { }
 var window = new ControlsWindow()
 window.Run()
 ```
-<!-- shot: window.ui.Tick();; window.size.OpenDropDown() -->
+<!-- shot: window.UIRoot.Tick();; window.size.OpenDropDown() -->
 
 All controls have the properties of every element ([layout](containers.md#what-every-element-has), [appearance](styling.md)), a `Name` in markup
 (a field of the generated class) and `ToolTip` (a short text shown when the pointer rests on the element; in code only for now).

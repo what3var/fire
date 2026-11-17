@@ -1,0 +1,195 @@
+// Generated from Pick.fxml - do not edit, change the markup. Derive from the class and override the methods named in on...="...":
+//     class Pick : PickBase { override undefined Save(any sender) { ... } }
+#import "ui"
+
+class PickBase {
+    Framebuffer framebuffer
+    Window window
+    UI.Root UIRoot
+    UI.ListBox list
+    UI.Label shown
+    UI.CollectionView fxView_ByName
+    // the data context of the bindings: set it with SetDataContext(object)
+    class dataContext
+    List fxHandles0
+    bool fxBusy0 = false
+    List fxHandles1
+    bool fxBusy1 = false
+
+    construct() {
+        this.framebuffer = new Framebuffer(200, 150)
+        this.window = new Window(this.framebuffer, "Pick")
+        this.UIRoot = new UI.Root(this.framebuffer, this.window)
+        this.fxHandles0 = new List()
+        this.fxHandles1 = new List()
+        var vw0 = new UI.CollectionView(undefined)
+        vw0.SortBy("name", false)
+        this.UIRoot.resources.Set("ByName", vw0)
+        this.fxView_ByName = vw0
+        var e0 = new UI.StackPanel(0, 0, -1, -1)
+        e0.Width = 200
+        e0.Height = 150
+        var e1 = new UI.ListBox(0, 0, 160, 120)
+        e1.Width = 180
+        e1.Height = 100
+        e1.SetView(this.fxView_ByName, false)
+        e1.DisplayMember = "name"
+        e0.Add(e1)
+        this.list = e1
+        var e2 = new UI.Label("", 0, 0)
+        e0.Add(e2)
+        this.shown = e2
+        this.UIRoot.Add(e0)
+        this.fxBindAll()
+        this.UIRoot.onTick = func () on this => { this.OnTick() }
+    }
+
+    // called once per cycle of this window (in Run(), also when it is attached to another window) - override it for a loop of your own
+    undefined OnTick() { }
+
+    // the start of the program: shows the window and runs its window manager on this thread until the windows are closed (if nobody runs it yet, else it is only shown); with `other` (another window of the markup, or a UI.Root) that window is opened as well
+    undefined Run(any other = undefined) {
+        if (other != undefined) { this.Open(other) }
+        this.UIRoot.Run()
+    }
+
+    // shows the window on its window manager (started with a thread of its own if nobody runs it yet), the events are handled at the program's safe points (and at its end); `modal`: returns when the window is closed, the other windows take no input meanwhile
+    undefined Show(bool modal = false) { this.UIRoot.Show(modal) }
+
+    // opens another window (another object of a window of the markup, or a UI.Root): this window's Run/Tick works it off from now on until its window is closed
+    undefined Open(any other) {
+        any root = other
+        if (!(other is of UI.Root)) {
+            root = other.UIRoot
+            other.TakeTo(this)
+        }
+        this.UIRoot.Attach(root)
+    }
+
+    // ---- data binding: the properties follow the data context (probes, SPEC 8.14) ----
+    // sets the object the bindings read from (and write to) and connects them; null disconnects
+    undefined SetDataContext(any context) {
+        this.fxUnbindAll()
+        this.dataContext = context
+        // a context handed over (`SetDataContext(new Model())`, `SetDataContext(take model)`) belongs to this object from now on; a variable of the
+        // caller (`SetDataContext(model)`) stays the caller's - this object only refers to it
+        try context??.TakeTo(this)
+        this.fxBindAll()
+    }
+
+    undefined fxBindAll() {
+        this.fxBind0()
+        this.fxBind1()
+    }
+
+    undefined fxUnbindAll() {
+        this.fxUnbind0()
+        this.fxUnbind1()
+    }
+
+    // Label.Text <- list.selectedItem.name (OneWay)
+    undefined fxUnbind0() {
+        for (var i = 0; i < this.fxHandles0.Count; i = i + 1) {
+            any h = this.fxHandles0[i]
+            silence h
+        }
+        this.fxHandles0 = new List()
+    }
+
+    undefined fxBind0() {
+        this.fxUnbind0()
+        any o0 = this.list
+        if (o0 != undefined) {
+            var f0 = func (any o, any v) on this => { fxBind0() }
+            any p0 = probe o0.selectedItem changed f0
+            this.fxHandles0.Add(p0)
+            any o1 = o0.selectedItem
+            if (o1 != undefined) {
+                var f1 = func (any o, any v) on this => { fxUpdate0() }
+                any p1 = probe o1.name changed f1
+                this.fxHandles0.Add(p1)
+            }
+        }
+        this.fxUpdate0()
+    }
+
+    undefined fxUpdate0() {
+        if (this.fxBusy0) { return }
+        any v = this.list
+        if (v == undefined) { return }
+        v = v.selectedItem
+        if (v == undefined) { return }
+        v = v.name
+        this.fxBusy0 = true
+        this.shown.Text = v
+        this.fxBusy0 = false
+    }
+
+    // CollectionView.Source <- people (OneWay)
+    undefined fxUnbind1() {
+        for (var i = 0; i < this.fxHandles1.Count; i = i + 1) {
+            any h = this.fxHandles1[i]
+            silence h
+        }
+        this.fxHandles1 = new List()
+    }
+
+    undefined fxBind1() {
+        this.fxUnbind1()
+        any o0 = this.dataContext
+        if (o0 != undefined) {
+            var f0 = func (any o, any v) on this => { fxUpdate1() }
+            any p0 = probe o0.people changed f0
+            this.fxHandles1.Add(p0)
+        }
+        this.fxUpdate1()
+    }
+
+    undefined fxUpdate1() {
+        if (this.fxBusy1) { return }
+        any v = this.dataContext
+        if (v == undefined) { return }
+        v = v.people
+        this.fxBusy1 = true
+        this.fxView_ByName.Source = v
+        this.fxBusy1 = false
+    }
+}
+
+// The code-behind: a label bound to the selected element of the list (ElementName) follows the selection - Select before the first drawing
+// (the view is built at the first use), Select again, SelectedIndex from outside, a click, rows that change under the selection.
+class Person {
+    string name
+    construct(string name) { this.name = name }
+}
+class Model {
+    List people = new List()
+    construct() {
+        this.people.Add(new Person("Carol"))
+        this.people.Add(new Person("Alice"))
+        this.people.Add(new Person("Bob"))
+    }
+}
+class PickWindow : PickBase { }
+
+var window = new PickWindow()
+var model = new Model()
+window.SetDataContext(model)
+window.list.Select(0)
+print("Select(0): " + window.list.SelectedIndex + " " + window.shown.Text)
+window.list.Select(2)
+print("Select(2): " + window.shown.Text)
+window.UIRoot.Draw()
+window.list.SelectedIndex = 1
+window.UIRoot.Draw()
+print("SelectedIndex = 1: " + window.shown.Text)
+var lb = window.list
+window.UIRoot.Dispatch([9, lb.ax + 20, lb.ay + 6])
+window.UIRoot.Dispatch([8, 1, lb.ax + 20, lb.ay + 6])
+window.UIRoot.Dispatch([11, 1, lb.ax + 20, lb.ay + 6])
+window.UIRoot.Draw()
+print("click on the first row: " + window.list.SelectedIndex + " " + window.shown.Text)
+model.people.Add(new Person("Aaron"))      // sorts before Alice: the selection follows its element
+window.UIRoot.Draw()
+print("after Add: " + window.list.SelectedIndex + " " + window.shown.Text)
+//# name: UI: eine Bindung mit ElementName auf selectedItem folgt der Auswahl (Select vor dem ersten Zeichnen, SelectedIndex, Klick, neue Zeilen)
