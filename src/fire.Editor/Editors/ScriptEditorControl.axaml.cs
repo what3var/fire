@@ -277,19 +277,7 @@ namespace fire.Editor
             {
                 foreach (var (_, text) in ProjectFilesProvider?.Invoke() ?? Array.Empty<(string, string)>()) ColorizeAttributes.Collect(text, colors);
                 // #include "Amp.biscuit" (or a .fire file) next to this one
-                foreach (System.Text.RegularExpressions.Match m in System.Text.RegularExpressions.Regex.Matches(Editor.Text, "^\\s*#include\\s+\"([^\"]+)\"", System.Text.RegularExpressions.RegexOptions.Multiline))
-                {
-                    string dir = BaseDirectory ?? "";
-                    string path = Path.GetFullPath(Path.Combine(dir, m.Groups[1].Value));
-                    if (!File.Exists(path)) continue;
-                    string included = File.ReadAllText(path);
-                    if (fire.UI.Markup.MarkupFiles.IsGenerated(path))
-                    {
-                        try { included = fire.UI.Markup.MarkupFiles.GenerateScript(path, included); }
-                        catch (fire.UI.Markup.MarkupException) { continue; }
-                    }
-                    ColorizeAttributes.Collect(included, colors);
-                }
+                foreach (var (_, included) in IncludedScripts(Editor.Text)) ColorizeAttributes.Collect(included, colors);
             }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException) { }
             _memberColors = colors;
@@ -297,12 +285,45 @@ namespace fire.Editor
             return colors;
         }
 
-        /// <summary>The symbol index of `source`, reused as long as the text (and the project) does not change.</summary>
+        private static readonly Dictionary<string, (DateTime Written, string Text)> IncludedScriptCache = new(StringComparer.Ordinal);
+
+        /// <summary>The files that `source` takes in with `#include "..."` (next to this one), as script: a markup file (`.fxml`, `.biscuit`) as the script
+        /// generated from it, as the build sees it. A file that is missing, unreadable or broken markup is left out. Read again when it was written.</summary>
+        private List<(string Path, string Text)> IncludedScripts(string source)
+        {
+            var result = new List<(string, string)>();
+            foreach (System.Text.RegularExpressions.Match m in System.Text.RegularExpressions.Regex.Matches(source, "^\\s*#include\\s+\"([^\"]+)\"", System.Text.RegularExpressions.RegexOptions.Multiline))
+            {
+                try
+                {
+                    string path = Path.GetFullPath(Path.Combine(BaseDirectory ?? "", m.Groups[1].Value));
+                    if (!File.Exists(path)) continue;
+                    var written = File.GetLastWriteTimeUtc(path);
+                    string text;
+                    lock (IncludedScriptCache)
+                        if (IncludedScriptCache.TryGetValue(path, out var known) && known.Written == written) { result.Add((path, known.Text)); continue; }
+                    text = File.ReadAllText(path);
+                    if (fire.UI.Markup.MarkupFiles.IsGenerated(path))
+                    {
+                        try { text = fire.UI.Markup.MarkupFiles.GenerateScript(path, text); }
+                        catch (fire.UI.Markup.MarkupException) { continue; }
+                    }
+                    lock (IncludedScriptCache) IncludedScriptCache[path] = (written, text);
+                    result.Add((path, text));
+                }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException) { }
+            }
+            return result;
+        }
+
+        /// <summary>The symbol index of `source`, reused as long as the text (and the project) does not change. What the files of the project and the
+        /// `#include`d files declare (the class generated from an `.fxml`, and the libraries they import) is known in it.</summary>
         private ScriptSymbolIndex IndexFor(string source)
         {
             if (_index == null || _indexedVersion != TextVersion || !string.Equals(_indexedSource, source, StringComparison.Ordinal))
             {
-                _index = ScriptSymbolIndex.Build(source, Array.Empty<string>(), ProjectFilesProvider?.Invoke() ?? Array.Empty<(string, string)>());
+                var others = (ProjectFilesProvider?.Invoke() ?? Array.Empty<(string, string)>()).Concat(IncludedScripts(source)).ToList();
+                _index = ScriptSymbolIndex.Build(source, Array.Empty<string>(), others);
                 _indexedSource = source;
                 _indexedVersion = TextVersion;
             }

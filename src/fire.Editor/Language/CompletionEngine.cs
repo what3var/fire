@@ -76,7 +76,9 @@ namespace fire.Editor
             else if (!candidate.Contains(current, StringComparison.OrdinalIgnoreCase))
                 return 0f;
 
-            return baseScore + matchOffset + ((1.0f - matchOffset - baseScore) * (float)current.Length / (float)candidate.Length);
+            // what was typed with exactly this case (`Te` -> `Text` before `template`) comes first
+            float exactCase = current.Length > 0 && candidate.StartsWith(current, StringComparison.Ordinal) ? 0.05f : 0f;
+            return baseScore + matchOffset + exactCase + ((1.0f - matchOffset - baseScore) * (float)current.Length / (float)candidate.Length);
         }
 
         /// <summary>Suggestions for the cursor position `offset` in `source`.
@@ -166,6 +168,8 @@ namespace fire.Editor
                 if (cls == null) return;
                 members = index.MembersOfWithDepth(cls).Where(x => x.Member.Kind == MemberKind.Method && x.Member.Name == method).Select(x => x.Member);
             }
+            string? fromClass = index.EnclosingClassAt(open);
+            members = members.Where(m => IsVisible(m, fromClass, index));
             foreach (var name in members.SelectMany(m => m.ParamNames).Distinct())
                 if (!given.Contains(name) && MatchesPrefix(name, prefix))
                     results.Add(new CompletionItem(name + ": ", CompletionKind.Parameter, CompareKeywords(prefix, name, 0.4f), "named argument"));
@@ -245,12 +249,13 @@ namespace fire.Editor
             var context = index.ContextAt(offset);
             foreach (var cls in index.Classes.Values)
             {
-                // `$string` & co.: the collective classes of the base-type extensions are not types to write down.
-                if (cls.Name.StartsWith('$')) continue;
+                // `$string` & co.: the collective classes of the base-type extensions are not types to write down; `__Await` & co.: helpers of the runtime.
+                if (cls.Name.StartsWith('$') || cls.SimpleName.StartsWith("__", StringComparison.Ordinal)) continue;
                 if ((cls.IsInterface && !includeInterfaces) || !MatchesPrefix(cls.SimpleName, prefix)) continue;
                 if (index.ResolveClassKey(cls.SimpleName, context, lenient: false) != cls.Name) continue;
                 string detail = cls.Namespace.Length > 0 ? $"{(cls.IsInterface ? "Interface" : "Class")} in {cls.Namespace}" : (cls.IsInterface ? "Interface" : "Class");
-                results.Add(new CompletionItem(cls.SimpleName, CompletionKind.ClassName, CompareKeywords(prefix, cls.SimpleName), detail) { Documentation = cls.Documentation });
+                // the classes of the program itself before those of the libraries
+                results.Add(new CompletionItem(cls.SimpleName, CompletionKind.ClassName, CompareKeywords(prefix, cls.SimpleName, cls.IsFromPrelude ? 0f : OwnTypeScore), detail) { Documentation = cls.Documentation });
             }
 
             if (!includeEnums) return;
@@ -258,7 +263,7 @@ namespace fire.Editor
             {
                 string simple = key.Substring(key.LastIndexOf('.') + 1);
                 if (!MatchesPrefix(simple, prefix) || index.ResolveEnumKey(simple, context) != key) continue;
-                results.Add(new CompletionItem(simple, CompletionKind.EnumName, CompareKeywords(prefix, simple),
+                results.Add(new CompletionItem(simple, CompletionKind.EnumName, CompareKeywords(prefix, simple, index.EnumPreludes.ContainsKey(key) ? 0f : OwnTypeScore),
                     key.Contains('.') ? $"Enum in {key.Substring(0, key.LastIndexOf('.'))}" : "Enum"));
             }
         }
@@ -280,9 +285,33 @@ namespace fire.Editor
             _ => true,
         };
 
-        private static bool IsListable(MemberInfo m) =>
+        private static bool IsListable(MemberInfo m, ScriptSymbolIndex index) =>
             m.Kind != MemberKind.Constructor && !m.Name.StartsWith("operator", StringComparison.Ordinal)
-            && !m.Name.StartsWith("__", StringComparison.Ordinal);   // (internals of the prelude: `__NextEntry` of the hash tables)
+            && !m.Name.StartsWith("__", StringComparison.Ordinal)   // (internals of the prelude: `__NextEntry` of the hash tables)
+            && !(IsGeneratorHelper(m.Name) && index.Classes.TryGetValue(m.Owner, out var owner) && owner.IsGenerated);
+
+        /// <summary>The names the markup generator gives its own helpers (FireUiGenerator: `fxBindAll`, `fxConv_Upper`, `fxEl_3`, `fxHandles0`, ...) - in
+        /// a generated class they are no API: the code-behind knows only the names it chose itself (docs/ui/markup.md).</summary>
+        private static bool IsGeneratorHelper(string name) =>
+            name.Length > 2 && name.StartsWith("fx", StringComparison.Ordinal) && (char.IsUpper(name[2]) || name[2] == '_');
+
+        /// <summary>A member of a library class (prelude, package) whose name starts with a small letter or `_`: the libraries mark their public
+        /// API with capitals (`Text`, `Width`, `Add`) and keep their state and helpers in small ones (`cw`, `styled`, `dirtyX0`). The language does
+        /// not hide them (everything without `private`/`protected` is public), so they stay in the list - behind the API.</summary>
+        private static bool IsLibraryInternal(MemberInfo m, ScriptSymbolIndex index) =>
+            m.Name.Length > 0 && (char.IsLower(m.Name[0]) || m.Name[0] == '_')
+            && index.Classes.TryGetValue(m.Owner, out var owner) && owner.IsFromPrelude;
+
+        /// <summary>The base score of a member: the class itself before its bases (the nearer one first), the API of a library before its
+        /// internals.</summary>
+        private static float MemberBaseScore(MemberInfo m, int depth, ScriptSymbolIndex index)
+        {
+            float score = Math.Max(0.1f, 0.3f - 0.05f * depth);
+            return IsLibraryInternal(m, index) ? score - 0.1f : score;
+        }
+
+        /// <summary>The base score of the classes and enums of the program itself (before those of the libraries, `0`).</summary>
+        private const float OwnTypeScore = 0.1f;
 
         /// <summary>Suggestions after `expression.` - the type of the expression is
         /// derived (see ScriptSymbolIndex.ResolveReceiver) and then ONLY
@@ -333,12 +362,11 @@ namespace fire.Editor
                 case TypeKind.Static:
                     foreach (var (m, depth) in index.MembersOfWithDepth(receiver.Name!))
                     {
-                        if (!IsListable(m) || !MatchesPrefix(m.Name, prefix) || !IsVisible(m, fromClass, index)) continue;
+                        if (!IsListable(m, index) || !MatchesPrefix(m.Name, prefix) || !IsVisible(m, fromClass, index)) continue;
                         bool staticOk = receiver.Kind == TypeKind.Static ? m.IsStatic : (!m.IsStatic || receiver.ViaThis);
                         if (!staticOk) continue;
-                        // Own members before inherited ones, nearer base before more distant.
-                        float baseScore = Math.Max(0.1f, 0.3f - 0.05f * depth);
-                        results.Add(ToItem(m, prefix, baseScore, showOwner: depth > 0));
+                        // Own members before inherited ones, nearer base before more distant, the API of a library before its internals.
+                        results.Add(ToItem(m, prefix, MemberBaseScore(m, depth, index), showOwner: depth > 0));
                     }
                     return Dedupe(results);
 
@@ -361,20 +389,31 @@ namespace fire.Editor
                     // Methods from `class extends string { ... }` (prelude and own extensions).
                     if (BuiltinMembers.ExtensionClassOf(receiver) is { } extensionKey && index.Classes.ContainsKey(extensionKey))
                         foreach (var (m, _) in index.MembersOfWithDepth(extensionKey))
-                            if (m.Kind == MemberKind.Method && IsListable(m) && MatchesPrefix(m.Name, prefix) && IsVisible(m, fromClass, index))
+                            if (m.Kind == MemberKind.Method && IsListable(m, index) && MatchesPrefix(m.Name, prefix) && IsVisible(m, fromClass, index))
                                 results.Add(ToItem(m, prefix, 0.3f, showOwner: false));
                     return Dedupe(results);
 
                 default:
-                    // Type not determinable - as the best possible fallback offer accessible
-                    // members of ALL known classes (with the class name
-                    // behind it, so that you can see where a suggestion comes from),
-                    // instead of suggesting nothing at all.
-                    foreach (var cls in index.Classes.Values)
-                        foreach (var m in cls.Members)
-                            if (IsListable(m) && MatchesPrefix(m.Name, prefix) && IsVisible(m, fromClass, index))
-                                results.Add(ToItem(m, prefix, cls.IsFromPrelude ? 0f : 0.05f, showOwner: true));
+                    // Type not determinable (a value of type `any`, a call of something unknown) - as the best possible
+                    // fallback offer the accessible instance members of the classes of the PROGRAM (with the class name behind
+                    // it, so that you can see where a suggestion comes from) instead of suggesting nothing at all. Those of all
+                    // the libraries would be a thousand names (`#import "ui"`): they come only when the program has none that
+                    // fit what was typed, and only their API.
+                    AddFallbackMembers(results, index, prefix, fromClass, fromLibraries: false);
+                    if (results.Count == 0 && prefix.Length > 0)
+                        AddFallbackMembers(results, index, prefix, fromClass, fromLibraries: true);
                     return Dedupe(results);
+            }
+        }
+
+        private static void AddFallbackMembers(List<CompletionItem> results, ScriptSymbolIndex index, string prefix, string? fromClass, bool fromLibraries)
+        {
+            foreach (var cls in index.Classes.Values)
+            {
+                if (cls.IsFromPrelude != fromLibraries || cls.Name.StartsWith('$') || cls.SimpleName.StartsWith("__", StringComparison.Ordinal)) continue;
+                foreach (var m in cls.Members)
+                    if (IsListable(m, index) && !m.IsStatic && MatchesPrefix(m.Name, prefix) && IsVisible(m, fromClass, index) && !IsLibraryInternal(m, index))
+                        results.Add(ToItem(m, prefix, 0f, showOwner: true));
             }
         }
 
@@ -382,10 +421,12 @@ namespace fire.Editor
         {
             var results = new List<CompletionItem>();
 
+            // Order (by the base score): parameters and variables, the members of the class, the types of the program and the
+            // keywords, the types of the libraries.
             foreach (var kw in Keywords)
-                if (MatchesPrefix(kw, prefix)) results.Add(new CompletionItem(kw, CompletionKind.Keyword, CompareKeywords(prefix, kw)));
+                if (MatchesPrefix(kw, prefix)) results.Add(new CompletionItem(kw, CompletionKind.Keyword, CompareKeywords(prefix, kw, 0.05f)));
             foreach (var kw in TypeKeywords)
-                if (MatchesPrefix(kw, prefix)) results.Add(new CompletionItem(kw, CompletionKind.TypeKeyword, CompareKeywords(prefix, kw)));
+                if (MatchesPrefix(kw, prefix)) results.Add(new CompletionItem(kw, CompletionKind.TypeKeyword, CompareKeywords(prefix, kw, 0.05f)));
 
             // Types that are addressable here without qualification, and the
             // top-level namespaces (for 'Namespace.Class').
@@ -393,16 +434,20 @@ namespace fire.Editor
             AddTopLevelNamespaces(results, index, prefix);
 
             foreach (var (name, _) in index.EnclosingFunctionParams(offset))
-                if (MatchesPrefix(name, prefix)) results.Add(new CompletionItem(name, CompletionKind.Parameter, CompareKeywords(prefix, name)));
+                if (MatchesPrefix(name, prefix)) results.Add(new CompletionItem(name, CompletionKind.Parameter, CompareKeywords(prefix, name, 0.25f)));
 
             foreach (var name in index.LocalVarsBeforeCursor(string.IsNullOrEmpty(prefix) ? offset : offset - prefix.Length))
-                if (MatchesPrefix(name, prefix)) results.Add(new CompletionItem(name, CompletionKind.Variable, CompareKeywords(prefix, name)));
+                if (MatchesPrefix(name, prefix)) results.Add(new CompletionItem(name, CompletionKind.Variable, CompareKeywords(prefix, name, 0.25f)));
 
             string? enclosingClass = index.EnclosingClassAt(offset);
             if (enclosingClass != null)
+            {
+                // in a static method there is no `this`: only the static members are reachable without a qualifier
+                bool staticOnly = index.IsInStaticMethod(offset);
                 foreach (var (m, depth) in index.MembersOfWithDepth(enclosingClass))
-                    if (IsListable(m) && MatchesPrefix(m.Name, prefix) && IsVisible(m, enclosingClass, index))
-                        results.Add(ToItem(m, prefix, Math.Max(0.05f, 0.15f - 0.03f * depth), showOwner: depth > 0));
+                    if (IsListable(m, index) && MatchesPrefix(m.Name, prefix) && IsVisible(m, enclosingClass, index) && (!staticOnly || m.IsStatic))
+                        results.Add(ToItem(m, prefix, Math.Max(0.1f, 0.2f - 0.03f * depth) - (IsLibraryInternal(m, index) ? 0.1f : 0f), showOwner: depth > 0));
+            }
 
             //foreach (var name in index.AllDeclaredNames)
             //    if (MatchesPrefix(name, prefix)) results.Add(new CompletionItem(name, CompletionKind.Variable, CompareKeywords(prefix, name)));

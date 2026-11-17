@@ -9,6 +9,13 @@ spark is the IDE of fire (C#, Avalonia - Windows, Linux, macOS). **First Steps**
   ([error codes](errors.md)). In a lambda with an expression body (`q.Where(p => p.`) the parameter has the type the called method gives it
   (`bool lambda<T>`, `lambda expression<T>`, with `T` of the receiver); the mouse over the parameter shows its type, and for a parameter
   `lambda expression<T>` that the lambda becomes an [expression tree](../language/12-lambdas.md#expression-trees-lambda-expressiont).
+  Completion offers only what the code at the cursor may use: `private` members inside their class, `protected` ones also in derived classes,
+  nothing of either outside ([access](../language/08-classes.md#access-public-private-protected)); `Class.` shows the static members, an object the
+  others. The type of `x.` comes from declarations, `var x = ...`, fields, return types, global variables (also in methods and lambdas) and the
+  variables of the method around a lambda; the class of an `.fxml` (in the project or `#include`d) and the libraries it imports are known in the
+  code-behind. The class's own members come first, then the inherited ones, the names that start with what was typed in the same case before the
+  others, and the lower-case state of a library (`cw`, `styled` of `UI.Element`) last. When the type is unknown, the members of the program's own
+  classes are offered (those of the libraries only after a first letter).
 - **Run and debug:** `F5` starts, `F9` sets a breakpoint, `F10`/`F11` step; the panels *Threads*, *Scope* and *Stack* show the paused program. The
   engine box chooses the VM or a native build - native programs are debugged the same way, an ESP32 over its serial port ([targets](../targets/README.md)).
 - **Build tool strip:** mode (Debug/Release/Performance), engine (VM/Native), target, *Build*, and the *Statistics* switch: when it is on, *Build*
