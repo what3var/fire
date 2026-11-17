@@ -463,6 +463,29 @@ keinen Snapshot und keine Kopie mehr:
   nicht: ein Host-Dienst (`hostRequest`) läuft nur im Hauptprogramm, nach seinem Ende keiner mehr - kopiert wird also nie. Callbacks, die beim
   Programmende noch eingereiht sind, verfallen.
 
+### 7.0 Objekte und Arrays des Bereichs: Lebensdauer
+
+**Implementierungsstand: umgesetzt** (nativ `SlotEntry.dom`, `leafAlive`, `FIRE_DOM_STALE`, `FIRE_SELF_LOST` in fire_rt.h; ROADMAP_TASKS 1f).
+
+Ein Objekt oder Array des geteilten Bereichs (auch die Arrays von Listen und Dictionaries der Globals, Arrays von Zahlen wie von Werten) liest ein
+Fire-Thread unter der Leseseite der Sperre der Globals. **Garantiert:** sein Speicher wird nie freigegeben, solange ein Thread zwischen der Prüfung
+und dem Zugriff ist; zerstört das Hauptprogramm (oder eine Sektion) es, wirft der nächste Zugriff jedes Threads die `DestroyedException`, ein
+Zugriff, der schon lief, endet auf dem alten Wert. Ein String oder Lambda, den der Thread vorher daraus gelesen hat, gehört ihm (eigener Zähler).
+
+- **Die Markierung im Slot.** Die Slot-Tabelle wird nie freigegeben; jeder Eintrag trägt neben der Generation die Markierung des Bereichs (gesetzt
+  mit dem Flag 64, gelöscht, wenn der Slot einen neuen Wert bekommt oder der Wert in einen Thread wandert). `leafAlive` nimmt für einen markierten
+  Slot **zuerst** die Leseseite und vergleicht **dann** die Generation - vorher war es umgekehrt, und dazwischen gab das Hauptprogramm frei.
+- **Warum das reicht:** Was zum Bereich gehört, gibt nur frei, wer die Schreibseite hält - das Hauptprogramm, solange es läuft, eine Sektion allein.
+  Ein Thread, der die Leseseite hält, sieht also lebendig, was lebendig bleibt, bis zu seinem nächsten sicheren Punkt (dort gibt er sie ab). Keine
+  Gräber wie bei den Puffern: deren Elemente liest ein Thread ohne Sperre.
+- **Was über einen sicheren Punkt hinaus als lebendig galt, wird neu geprüft:** die C-Helfer eines typisierten Arrays in einer Schleife nach dem
+  Rücksprung, wenn sich der Bereich geändert haben kann (`FIRE_DOM_STALE`: ein Thread, der die Leseseite abgegeben hat; das Hauptprogramm nach einer
+  Sektion oder einem Auftrag, `g_domChanges`); `self` einer Methode nach dem sicheren Punkt ihres Eintritts (`FIRE_SELF_LOST`); `self` nach einem
+  Rücksprung (Flow.SelfAlive).
+- **Kosten:** ein Programm ohne Threads ist Befehl für Befehl dasselbe. Mit Threads lädt `leafAlive` ein Byte mehr aus demselben Eintrag.
+- **Offen:** Schleifen der Runtime, die fire-Code rufen, während sie ein Array halten (ein Callback von `Sort`, ein Native, das zurückruft); Zeiger
+  auf Felder (`ref o.f`) eines Objekts des Bereichs; mit `#performance` wird nichts geprüft.
+
 ### 7.1 Globale Puffer: geteilter Speicher
 
 **Implementierungsstand: umgesetzt** (nativ `bufRetire`, `FIRE_BUF_LD`/`FIRE_BUF_ST` in fire_rt.h; Sprachdoku: 15-threads-and-actors.md „Global

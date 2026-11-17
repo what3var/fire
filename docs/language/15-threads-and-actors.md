@@ -227,6 +227,10 @@ print(last.v + " " + store.items.Count)        // 1 2 - they outlive the thread
 - Reading stays direct: a thread sees the globals as they are, without a job. So does a method that only reads - its own body assigns nothing but its
   own locals and takes nothing (`table.Get(i)`, `list[i]`, `list.Count`, `dict.ContainsKey(k)`): it runs in the thread like the reads of the fields it
   makes. What it changes on the way (a method that writes, called from it) is a job or a section again.
+- When the main program (or a section) destroys an object, an array, a list or a dictionary of the globals - `delete`, a reassignment that destroys
+  the old value - while a thread reads it, the thread's next access is the `DestroyedException`; an access that already ran ends on the old value,
+  and a string the thread read from it stays its own. Its memory is never freed under a thread that is between the check and the access (natively:
+  a thread checks such a value under the read side of the lock of the globals, see THREADING_DESIGN 7.0).
 - While the main program is in a native function of a package (a long `cam.Render()`, a compression) and gives it no object or array of the globals,
   it does not wait for the threads: a write of a thread gets its section at once, and a method call runs in the thread inside a section (as in
   `sync global`), one at a time. Back from the native, the main program waits for a section that runs - as after `Sleep`. A callback of the native
