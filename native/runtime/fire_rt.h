@@ -9328,6 +9328,9 @@ static inline bool domLendMain(void) {
 /* (someone waits for the readers to leave: they do at their next safe point - pollSlow - instead of when their tick runs out. Under g_dom.m.) */
 extern FIRE_RT_DATA fire_atomic32 g_attn;
 #define FIRE_ATTN_DOM 16u   /* (ATTN_DOM) */
+/* (a task runs on the main program's thread while the main program waits - homeRun: that task, and only it, has the bit in its mask and looks at every safe
+ * point whether the main program wants its thread back - fire_homePoll) */
+#define FIRE_ATTN_HOME 32u   /* (ATTN_HOME) */
 static inline void domReadersAsk(void) { if (g_dom.readers > 0) fire_atomic_or(&g_attn, FIRE_ATTN_DOM); }
 static inline void domReadersAsked(void) { if (fire_atomic_load(&g_attn) & FIRE_ATTN_DOM) fire_atomic_and(&g_attn, ~FIRE_ATTN_DOM); }
 /* Takes the read side. `held`: the lock of a package this thread holds (not null: it runs a callback of a native that got nothing of the shared domain) -
@@ -9461,9 +9464,16 @@ FIRE_FN int fire_natBegin(bool freeOfDomain) {
     g_natDom = 1;
     return 2;
 }
+#ifdef FIRE_TASKS
+FIRE_FN void fire_homeNatEnd(void);
+#endif
 FIRE_FN void fire_natEnd(int state) {
     if (state == 1) fire_awayEnd();
     else if (state == 2) g_natDom = 0;
+#ifdef FIRE_TASKS
+    /* (a task on the main program's thread after a native - which may have taken long: the main program's time may have come) */
+    if (FIRE_UNLIKELY(fire_atomic_load(&g_attn) & FIRE_ATTN_HOME) && (g_attnMask & FIRE_ATTN_HOME)) fire_homeNatEnd();
+#endif
 }
 FIRE_FN fire_mutex* pkgEnter(fire_mutex* m) {
     fire_mutex* prev = g_pkgHeld;
@@ -9671,6 +9681,7 @@ typedef struct FireWorker {
     FireTask* qt;
     uint8_t dedicated;          /* a system thread of one task (`await dedicated`): the task waits like a thread there - it never parks or yields */
     uint8_t home;               /* the main program's own thread (step 5a): it runs tasks only while the main program waits */
+    uint32_t polls;             /* (home: the safe points of the task it runs - fire_homePoll reads the clock at every 32nd) */
 } FireWorker;
 extern FIRE_RT_DATA FireWorker g_homeWorker;
 extern FIRE_RT_DATA ThreadLocals* g_homeState;   /* the main program's strand */
@@ -9688,7 +9699,45 @@ __attribute__((noinline))
 static FireWorker* workerSelf(void) { return g_worker; }   /* (not inlined: the compiler must not keep the address of the thread-local across a switch) */
 FIRE_FN bool taskRunning(void) { FireWorker* w = workerSelf(); return w && w->cur && !w->dedicated; }
 /* (a task on the main program's thread: an event came since the main program lent it - perhaps what it waits for; the task yields at its next safe point) */
-FIRE_FN bool fire_homeWanted(void) { FireWorker* w = workerSelf(); return w && w->home && fire_atomic_load(&g_evTick) != fire_atomic_load(&g_homeSeen); }
+extern FIRE_RT_DATA int64_t g_homeUntil;   /* ... and the time it wants its thread back by (its deadline, at the latest a few ms on: blockUntil) */
+#if defined(__GNUC__) || defined(__clang__)
+#define homeUntilGet() __atomic_load_n(&g_homeUntil, __ATOMIC_RELAXED)
+#define homeUntilSet(v) __atomic_store_n(&g_homeUntil, (v), __ATOMIC_RELAXED)
+#else
+#define homeUntilGet() (*(volatile int64_t*)&g_homeUntil)
+#define homeUntilSet(v) (*(volatile int64_t*)&g_homeUntil = (v))
+#endif
+#ifndef FIRE_HOME_LEND_MS
+#define FIRE_HOME_LEND_MS 10   /* the longest a task borrows the waiting main program's thread at a time (then it goes back to the pool's queue) */
+#endif
+/* (a task on the main program's thread: an event came since the main program lent it - perhaps what it waits for - or the main program's time has come;
+ * the task yields at its next safe point) */
+FIRE_FN bool fire_homeWanted(void) {
+    FireWorker* w = workerSelf();
+    int64_t until;
+    if (!w || !w->home) return false;
+    if (fire_atomic_load(&g_evTick) != fire_atomic_load(&g_homeSeen)) return true;
+    until = homeUntilGet();
+    return until != 0 && fire_plat_nowMs() >= until;
+}
+/* (the safe point of a task with FIRE_ATTN_HOME - every jump back of a loop, every entry of a function: the events at each, the clock at every 32nd) */
+FIRE_FN bool fire_homePoll(void) {
+    FireWorker* w = workerSelf();
+    int64_t until;
+    if (!w || !w->home || !w->cur || w->cur->group) return false;
+    if (fire_atomic_load(&g_evTick) != fire_atomic_load(&g_homeSeen)) return true;
+    if (++w->polls & 31u) return false;
+    until = homeUntilGet();
+    return until != 0 && fire_plat_nowMs() >= until;
+}
+/* (after a native, which may have taken long: the clock now) */
+FIRE_FN void fire_homeNatEnd(void) { if (fire_homeWanted()) g_tick = 0; }
+/* (the task that runs now - after its start or a switch, perhaps on another thread: the bit of its mask says whether it borrows the main program's thread) */
+FIRE_FN void taskHomeMask(void) {
+    FireWorker* w = workerSelf();
+    if (w && w->home && w->cur && !w->cur->group) g_attnMask |= FIRE_ATTN_HOME;
+    else g_attnMask &= ~FIRE_ATTN_HOME;
+}
 FIRE_FN bool fire_onHome(void) { FireWorker* w = workerSelf(); return w && w->home; }
 /* (a task that ends its time slice at a safe point: not a member of the main program's group - it gives way only where it waits) */
 FIRE_FN bool fire_taskSliced(void) { FireWorker* w = workerSelf(); return w && w->cur && !w->dedicated && !w->cur->group; }
@@ -9816,6 +9865,7 @@ FIRE_FN void taskSwitchOut(int action) {
     FireTask* t = w->cur;
     w->action = action;
     fire_coro_switch(t->coro, w->self);
+    taskHomeMask();
 }
 /* (the end of a time slice) */
 FIRE_FN void taskYield(void) { taskSwitchOut(TA_REQUEUE); }
@@ -10036,11 +10086,16 @@ FIRE_FN FireTask* groupPopLocked(void) {
 FIRE_FN bool homeHelp(void) {
     FireWorker* w = &g_homeWorker;
     FireTask* t;
+    bool spare;
     if (!fire_atomic_load(&g_schedOn)) return false;
     homeInit();
     fire_mutex_lock(&g_sched.m);
     t = groupPopLocked();   /* (the group first: its members run nowhere else) */
+    /* (another task only when it waits for a worker: none is idle and the pool cannot grow - else a worker of the pool takes it, and the main program
+     * keeps its thread: a task that computes there would hold it until its next safe point) */
+    spare = g_sched.idle > 0 || g_sched.workers - (int32_t)fire_atomic_load(&g_sched.blocked) < g_sched.cores;
     fire_mutex_unlock(&g_sched.m);
+    if (!t && spare) return false;
     if (!t) t = schedPopLocal(w);
     if (!t) {
         uint32_t i;
@@ -10067,9 +10122,12 @@ FIRE_FN void homeRun(FireTask* t) {
     g_worker = w;
     w->cur = t;
     w->action = TA_NONE;
+    w->polls = 0;
     fire_atomic_store(&t->st, TS_RUNNING);
     fire_curTask = t->state;
+    if (!t->group) fire_atomic_or(&g_attn, FIRE_ATTN_HOME);   /* (the task looks at its safe points whether the main program wants its thread back) */
     fire_coro_switch(w->self, t->coro);
+    fire_atomic_and(&g_attn, ~(uint32_t)FIRE_ATTN_HOME);
     fire_curTask = mine;
     w->cur = NULL;
     g_worker = NULL;   /* (the main program is no task) */
@@ -10098,6 +10156,7 @@ FIRE_FN void taskEntry(void* p) {
     FireTask* t = (FireTask*)p;
     fire_strandAttach();
     t->state = fire_curTask;
+    taskHomeMask();
     t->fn(t->arg);
     t->state = NULL;   /* (the strand was let go of at the end of the function) */
     taskSwitchOut(TA_DONE);
@@ -10196,7 +10255,7 @@ FIRE_FN void notifyEventAll(void) {
 /* Signals. Bit 0 is for every thread (terminate), bit 1 for the main program only (thread exceptions), bit 2 for the main program too (sections and jobs that
  * wait for it; looked at only at a loop's jump back, and only in the mode `safepoints` - see g_globalJobs). */
 enum { ATTN_ALL = 1, ATTN_MAIN = 2, ATTN_SECT = 4, ATTN_PEER = 8,   /* (ATTN_PEER: a fire thread is asked for a section of its own, see ThreadRec) */
-       ATTN_DOM = 16 };   /* (the fire threads that hold the read side of the globals' lock are asked to let go at their next safe point, see domReadersAsk) */
+       ATTN_DOM = 16, ATTN_HOME = 32 };   /* (ATTN_HOME: FIRE_ATTN_HOME) */   /* (the fire threads that hold the read side of the globals' lock are asked to let go at their next safe point, see domReadersAsk) */
 extern FIRE_RT_DATA fire_atomic32 g_attn;
 #ifdef FIRE_NO_GIL
 /* The main program in a native of a package whose arguments are not of the shared domain (docs/spec/THREADING_DESIGN.md section 7): it does not touch the
@@ -10467,6 +10526,8 @@ FIRE_FN bool blockUntil(bool (*pred)(void*), void* ctx, bool stopOnTerminate, in
         if (!g_isThread) {
             /* the main program waits: its thread runs a task that waits for a worker meanwhile (step 5a), then it looks again */
             fire_atomic_store(&g_homeSeen, fire_atomic_load(&g_evTick));
+            /* (the task it lends its thread to gives it back at the deadline, and at the latest after FIRE_HOME_LEND_MS: fire_homeWanted) */
+            homeUntilSet(deadlineMs && deadlineMs - now < FIRE_HOME_LEND_MS ? deadlineMs : now + FIRE_HOME_LEND_MS);
             if (homeHelp()) { strandAcquire(); continue; }
         }
 #endif
@@ -13239,6 +13300,10 @@ FIRE_FN void mainPoll(bool waiting) {
 }
 
 FIRE_COLD FIRE_FN bool pollSlow(bool loop) {
+#ifdef FIRE_TASKS
+    /* (a task on the waiting main program's thread: it gives the thread back when the main program's time or an event has come) */
+    if ((g_attnMask & ATTN_HOME) && (fire_atomic_load(&g_attn) & ATTN_HOME) && fire_homePoll()) { g_tick = 4096; gilYield(); }
+#endif
 #ifdef FIRE_NO_GIL
     /* (someone waits for the readers of the globals' lock to leave: this thread does at this safe point - a loop's jump back or the entry of a
      * function - and not only when its tick runs out. What it read from the globals and holds in a temporary is its own - FIRE_DOM_TAKE.) */
@@ -13555,6 +13620,7 @@ uint64_t g_evCount = 0;
 #ifdef FIRE_TASKS
 FireWorker g_homeWorker;
 fire_atomic32 g_evTick, g_homeSeen, g_groupLive;
+int64_t g_homeUntil;
 ThreadLocals* g_homeState;
 #endif
 fire_atomic32 g_attn;
