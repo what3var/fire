@@ -118,6 +118,9 @@ namespace Assistant {
             this.UIRoot.Add(this.branchLabel)
             this.TintHeader()
             defined int bx = this.W - 14 - 3 * 24
+            // the folder ends before the small buttons, the branch (below them) before the edge of the band; what is longer is cut with "..."
+            this.folderLabel.Width = bx - 4 - 34
+            this.branchLabel.Width = this.W - 12 - 34
             this.historyButton = Assistant.View.Small(UI.Geometry.Parse("M 2 4 L 14 4 M 2 8 L 14 8 M 2 12 L 14 12"), bx, 11)
             this.historyButton.OnClick = func () on this => ToggleHistory()
             this.UIRoot.Add(this.historyButton)
@@ -198,16 +201,27 @@ namespace Assistant {
             this.Show()
         }
 
-        // The folder as the header shows it: in a repository its name and the path below it ("/RuhrpottRaser/src"), else the path - cut at the front
-        // when it is longer than `room` characters.
-        string FolderText(defined int room) {
+        // The folder as the header shows it: in a repository its name and the path below it ("/RuhrpottRaser/src"), else the path.
+        string FolderText() {
             string folder = this.Brain.Folder
             string text = folder
             if (this.Brain.Repo != "") {
                 text = "/" + IO.Path.GetFileName(this.Brain.Repo) + folder.Substring(this.Brain.Repo.Length).Replace("\\", "/")
             }
-            if (text.Length > room) { text = "..." + text.Substring(text.Length - room + 3) }
             return text
+        }
+
+        // `text` as `label` shows it in `room` pixels (in its font): whole, or cut with "..." - at the front (`front`: the end of a path is what
+        // tells) or at the end.
+        string Fit(UI.Label label, string text, defined int room, bool front) {
+            if (label.TextWidth(this.UIRoot, text) <= room) { return text }
+            string rest = text
+            while (rest.Length > 0) {
+                rest = front ? rest.Substring(1) : rest.Substring(0, rest.Length - 1)
+                string shown = front ? "..." + rest : rest + "..."
+                if (label.TextWidth(this.UIRoot, shown) <= room) { return shown }
+            }
+            return "..."
         }
 
         // The header band at the top of the bubble (its top corners round, `radius`), with a folder and - in a repository - a branch drawn in the
@@ -359,10 +373,10 @@ namespace Assistant {
             this.closeButton.Visible = shownNow
             // the header: one line for the folder, a second one for the branch
             this.headerH = this.Brain.Branch != "" ? 54 : 36
-            this.folderLabel.Text = this.FolderText(19)
+            this.folderLabel.Text = this.Fit(this.folderLabel, this.FolderText(), this.folderLabel.Width, true)
             this.folderLabel.Visible = shownNow
             string branch = this.Brain.Branch
-            if (branch.Length > 26) { branch = branch.Substring(0, 23) + "..." }
+            if (branch != "") { branch = this.Fit(this.branchLabel, branch, this.branchLabel.Width, false) }
             this.branchLabel.Text = branch
             this.branchLabel.Visible = shownNow && branch != ""
             defined int top = 4 + this.headerH + 8   // (from the top of the bubble)

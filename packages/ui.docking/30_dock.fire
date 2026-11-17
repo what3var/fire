@@ -141,7 +141,7 @@ namespace UI.Docking {
             var c = this.content
             if (c != undefined && c.Visible) {
                 root.PushClip(ax, ay, this.actualWidth, this.actualHeight)
-                c.Draw(root, ax + c.rx, ay + c.ry)
+                root.DrawChild(c, ax + c.rx, ay + c.ry)
                 root.PopClip()
             }
         }
@@ -421,7 +421,7 @@ namespace UI.Docking {
                 }
                 r.DrawRect(ax, ay, w, h, theme.border)
             }
-            if (win != undefined && win.Visible) { win.Draw(root, ax + win.rx, ay + win.ry) }
+            if (win != undefined && win.Visible) { root.DrawChild(win, ax + win.rx, ay + win.ry) }
         }
 
         override UI.Element HitTest(defined int px, defined int py) {
@@ -622,7 +622,7 @@ namespace UI.Docking {
                 r.DrawRect(ax, ay, this.actualWidth, this.actualHeight, theme.border)
             }
             var b = this.body
-            if (b != undefined && b.Visible) { b.Draw(root, ax + b.rx, ay + b.ry) }
+            if (b != undefined && b.Visible) { root.DrawChild(b, ax + b.rx, ay + b.ry) }
         }
 
         override UI.Element HitTest(defined int px, defined int py) {
@@ -1434,7 +1434,7 @@ namespace UI.Docking {
                 var c = this.content
                 if (c.Visible) {
                     root.PushClip(ax + this.centerX, ay + this.centerY, this.centerW, this.centerH)
-                    c.Draw(root, ax + c.rx, ay + c.ry)
+                    root.DrawChild(c, ax + c.rx, ay + c.ry)
                     root.PopClip()
                 }
             }
@@ -1443,7 +1443,7 @@ namespace UI.Docking {
         }
 
         undefined DrawChild(UI.Root root, UI.Element e) {
-            if (e.Visible) { e.Draw(root, this.ax + e.rx, this.ay + e.ry) }
+            if (e.Visible) { root.DrawChild(e, this.ax + e.rx, this.ay + e.ry) }
         }
 
         override UI.Element HitTest(defined int px, defined int py) {

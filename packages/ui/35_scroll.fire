@@ -208,7 +208,7 @@ namespace UI {
             if (this.Background != undefined) { root.renderer.FillRect(ax, ay, this.actualWidth, this.actualHeight, this.Background) }
             if (c != undefined && c.Visible) {
                 root.PushClip(ax, ay, this.viewW, this.viewH)
-                c.Draw(root, ax + c.rx, ay + c.ry)
+                root.DrawChild(c, ax + c.rx, ay + c.ry)
                 root.PopClip()
             }
             if (this.showV) { this.vbar.Draw(root, ax + this.viewW, ay, this.viewH) }
