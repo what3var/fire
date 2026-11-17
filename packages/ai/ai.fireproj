@@ -122,6 +122,12 @@
         "c": "fire_ai_Forget"
       },
       {
+        "name": "__AiKeep",
+        "returns": "bool",
+        "arguments": 2,
+        "c": "fire_ai_Keep"
+      },
+      {
         "name": "__AiOpenCount",
         "returns": "int",
         "arguments": 0,
