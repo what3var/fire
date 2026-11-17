@@ -25,13 +25,16 @@ namespace fire.Runtime
         {
             if (!VmScheduler.Enabled || home.IsFireThreadVm || home.IsGroupMember || _running) return false;
             var vm = home.MakeGroupMember(lambda, args);
+            bool starting = true;
             var task = new VmScheduler.VmTask(vm, error =>
             {
                 if (error != null) onUnhandled?.Invoke(error.Message);
-                else if (vm.UnhandledException != null) onUnhandled?.Invoke(new UncaughtScriptException(vm.UnhandledException).Message);
+                // (it ended before it waited: its exception goes to the native that called it, like any callback - SPEC 8.1.4; after a wait nobody waits for it)
+                else if (vm.UnhandledException != null && !(starting && home.DeferCallbackFailure(vm.UnhandledException))) onUnhandled?.Invoke(new UncaughtScriptException(vm.UnhandledException).Message);
             }) { IsGroup = true };
             vm.PoolTask = task;
             RunOne(task);
+            starting = false;
             return true;
         }
 

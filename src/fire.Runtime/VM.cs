@@ -893,12 +893,15 @@ namespace fire.Runtime
                 handled++;
                 if (callback.HostAction != null)
                 {
+                    int barrier = EnterCallbackBarrier();   // (a service at a safe point: what its callbacks throw is reported - SPEC 8.1.4)
                     try { callback.HostAction(); }
                     catch (Exception ex) { Console.Error.WriteLine("(host: " + ex.Message + ")"); }
+                    finally { ExitCallbackBarrier(barrier); }
                     if (_stopExecutionRequested) break;
                     continue;
                 }
                 _noAutoSyncDepth++;   // (a callback runs for itself: its own safe points do not run the next one)
+                int cbBarrier = EnterCallbackBarrier();   // (nobody waits for it: its exception is reported - SPEC 8.1.4)
                 try
                 {
                     var error = CallLambdaInline(callback.Lambda!, callback.Args);
@@ -908,7 +911,7 @@ namespace fire.Runtime
                 {
                     callback.OnUnhandled?.Invoke(ex.Message);
                 }
-                finally { _noAutoSyncDepth--; }
+                finally { _noAutoSyncDepth--; ExitCallbackBarrier(cbBarrier); }
                 if (_stopExecutionRequested) break;
             }
             return handled;
@@ -7178,6 +7181,7 @@ namespace fire.Runtime
         /// Execute, so that its register allocation stays untouched.</summary>
         private bool CallNativeGuarded(int nativeIdx, Value[] args, out Value result)
         {
+            int depth = ++_nativeDepth;
             try
             {
                 result = _natives[nativeIdx](args);
@@ -7185,6 +7189,17 @@ namespace fire.Runtime
                 {
                     // The native function (reflection) raised an exception that has already been redirected to a handler
                     _nativeRedirected = false;
+                    return false;
+                }
+                if (_callbackFailure != null && _callbackFailureDepth == depth)
+                {
+                    // a lambda it called back threw (SPEC 8.1.4): now that the native has returned, its call throws that exception
+                    var failure = _callbackFailure;
+                    _callbackFailure = null;
+                    _nativeDepth--;
+                    depth = -1;
+                    result = default;
+                    ThrowException(Value.MakeClassRef(failure));
                     return false;
                 }
                 AdoptFresh(result);
@@ -7195,6 +7210,14 @@ namespace fire.Runtime
                 result = default;
                 ThrowIndexOutOfBounds(ex.Index, ex.Length, ex.What);
                 return false;
+            }
+            finally
+            {
+                if (depth >= 0)
+                {
+                    _nativeDepth--;
+                    if (_callbackFailure != null && _callbackFailureDepth == depth) _callbackFailure = null;   // (the native threw itself: its exception goes)
+                }
             }
         }
 

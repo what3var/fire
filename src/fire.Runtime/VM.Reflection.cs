@@ -18,6 +18,32 @@ namespace fire.Runtime
         /// result (see CallNativeGuarded).</summary>
         private bool _nativeRedirected;
 
+        // ---- callbacks of natives (SPEC 8.1.4): a lambda that a native calls back while the program waits for that native (Window.Tick, a native of a
+        // package). Its exception does not go to the handlers around the native while the native still runs: it is kept, the native's further callbacks do not
+        // run, and when the native has returned its call throws it (CallNativeGuarded) - the same object. Where nobody waits for the callback (a host service
+        // at a safe point, an idle turn, a callback of another thread) the host reports it and the program goes on (EnterCallbackBarrier).
+        private int _nativeDepth;              // the natives running on this VM (nested through callbacks)
+        private int _callbackBarrier;          // natives up to this depth wait for no callback (a service or an idle turn runs inside them)
+        private ObjectInstance? _callbackFailure;
+        private int _callbackFailureDepth;     // the native that throws it when it returns
+
+        /// <summary>The exception of a callback that ran during a native of this VM: kept for the native's call (true), or false - nobody waits for it, the
+        /// caller reports it.</summary>
+        internal bool DeferCallbackFailure(ObjectInstance error)
+        {
+            if (_nativeDepth <= _callbackBarrier) return false;
+            if (_callbackFailure == null) { _callbackFailure = error; _callbackFailureDepth = _nativeDepth; }
+            return true;
+        }
+
+        /// <summary>A callback of the running native threw already: the others do not run (as natively).</summary>
+        internal bool CallbacksSkipped => _callbackFailure != null && _nativeDepth > _callbackBarrier;
+
+        /// <summary>From here (a host service, an idle turn of a wait) callbacks have no native that waits for them: their exceptions are reported. Give the
+        /// result to <see cref="ExitCallbackBarrier"/>.</summary>
+        internal int EnterCallbackBarrier() { int old = _callbackBarrier; _callbackBarrier = _nativeDepth; return old; }
+        internal void ExitCallbackBarrier(int old) => _callbackBarrier = old;
+
         /// <summary>The class of the code that called the reflection library (null: code outside any class).</summary>
         private RuntimeClass? ReflectionCallerClass()
         {

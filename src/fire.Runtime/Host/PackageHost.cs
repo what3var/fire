@@ -133,7 +133,8 @@ namespace fire.Runtime
         }
 
         /// <summary>`call_lambda`: on the VM's own thread the lambda runs nested at once (with the real globals); from another thread it is queued to its VM, which runs it at a
-        /// safe point. An exception in it is reported, it does not go back into the library.</summary>
+        /// safe point. An exception in it does not go back into the library: during a call of the library that the program waits for, the VM keeps it and throws it
+        /// at that call when the native has returned (2, SPEC 8.1.4); elsewhere it is reported (<see cref="ReportCallback"/>) and the program goes on.</summary>
         private static int CallLambda(long handle, IntPtr args, int argc)
         {
             (LambdaValue Lambda, VM? Owner) entry;
@@ -141,24 +142,36 @@ namespace fire.Runtime
             {
                 if (!Lambdas.TryGetValue(handle, out entry)) return 1;
             }
+            var vm = VM.CurrentThreadVm;
+            if (vm != null && !vm.IsHalted && vm.CallbacksSkipped) return 2;   // (an earlier callback of this native threw: no more)
             var values = new Value[argc];
             for (int i = 0; i < argc; i++) values[i] = PackageNativeBinding.FromNative(args + i * PackageNativeBinding.ValSize);
-            var vm = VM.CurrentThreadVm;
-            void Report(string message) => Console.WriteLine($"(unbehandelte Exception im Callback: {message})");
             if (vm != null && !vm.IsHalted)
             {
                 int away = vm.NativeAwayPause();   // (the main program away in the native: back for the callback)
                 try
                 {
                     var error = vm.CallLambdaInline(entry.Lambda, values);
-                    if (error != null) { Report(new UncaughtScriptException(error).Message); return 1; }
+                    if (error != null)
+                    {
+                        if (vm.DeferCallbackFailure(error)) return 2;
+                        ReportCallback(new UncaughtScriptException(error).Message);
+                        return 1;
+                    }
                 }
-                catch (Exception ex) { Report(ex.Message); return 1; }
+                catch (Exception ex) { ReportCallback(ex.Message); return 1; }
                 finally { vm.NativeAwayResume(away); }
                 return 0;
             }
             var owner = entry.Owner ?? _mainVm;
-            return owner != null && owner.PostCallback(entry.Lambda, values, Report) ? 0 : 1;
+            return owner != null && owner.PostCallback(entry.Lambda, values, ReportCallback) ? 0 : 1;
+        }
+
+        /// <summary>An exception of a callback that nobody waits for (SPEC 8.1.4): one line on the error output - the same as a native build writes - and the program goes on.</summary>
+        public static void ReportCallback(string message)
+        {
+            Console.Out.Flush();
+            Console.Error.WriteLine($"(unhandled exception in the callback: {message})");
         }
 
         /// <summary>`request_service` of a library without services of its own: at the next safe point of the main program.</summary>
