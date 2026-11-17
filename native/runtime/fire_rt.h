@@ -5605,6 +5605,7 @@ FIRE_COLD FIRE_FN Value missingMethod(Value self, const char* name, int argc) {
 /* A field that the value does not have: a MissingMemberException (the texts of the VM). */
 FIRE_COLD FIRE_FN Value missingField(Value v, const char* name) {
     char text[400];
+    if (v.kind == K_Class && !leafAlive(v)) return destroyedError(v);   /* (the VM looks at a destroyed object first) */
     if (v.kind == K_Class) snprintf(text, sizeof text, "Field '%s' does not exist on an instance of '%s' (and there is no 'get_%s' property either).", name, className(asObj(v)->cls), name);
     else if (v.kind == K_String) snprintf(text, sizeof text, "Strings have no field '%s' (only 'Length').", name);
     else if (v.kind == K_Array) snprintf(text, sizeof text, "Arrays have no field '%s' (only 'Length').", name);
@@ -5621,6 +5622,21 @@ FIRE_COLD FIRE_FN Value missingField(Value v, const char* name) {
 FIRE_COLD FIRE_FN void notObjectAssign(Value v) {
     char text[200];
     snprintf(text, sizeof text, "Field assignment on a value of type %s which is not an object.", valueKindText(v));
+    fireError("ArgumentException", text);
+}
+/* An assignment to a field the class does not declare (through `any`: classes have fixed fields) and that is no property: the MissingMemberException of
+ * the VM (SetField), like reading it. */
+FIRE_COLD FIRE_FN void missingFieldSet(Value v, const char* name) {
+    char text[400];
+    if (v.kind != K_Class) { notObjectAssign(v); return; }
+    if (!leafAlive(v)) { destroyedError(v); return; }
+    snprintf(text, sizeof text, "Field '%s' does not exist on an instance of '%s' (and there is no 'set_%s' property either).", name, className(asObj(v)->cls), name);
+    fireError("MissingMemberException", text);
+}
+/* An assignment to a property that only has `get`: the VM's ArgumentException. */
+FIRE_COLD FIRE_FN void noSetterError(Value v, const char* name) {
+    char text[400];
+    snprintf(text, sizeof text, "Property '%s' on '%s' has no setter (only 'get').", name, className(asObj(v)->cls));
     fireError("ArgumentException", text);
 }
 
@@ -13356,13 +13372,7 @@ Value fireGetField(Value v, const char* name, OwnList* list, uint32_t caller) {
     snprintf(accessor, sizeof accessor, "get_%s", name);
     m = fireFindMethod(asObj(v)->cls, accessor, 0, &k);
     if (m) { Value r = m->fn(k, v, NULL, list, caller); adopt(r, list); return r; }
-    accessor[0] = 's';
-    if (fireFindMethod(asObj(v)->cls, accessor, 1, &k)) {
-        char text[400];
-        snprintf(text, sizeof text, "Property '%s' of '%s' has no getter (only 'set').", name, className(asObj(v)->cls));
-        fatal(text);
-    }
-    return missingField(v, name);
+    return missingField(v, name);   /* (a property with only `set` too, as in the VM) */
 }
 
 void fireSetField(Value v, Value x, const char* name, OwnList* list, uint32_t caller) {
@@ -13378,12 +13388,8 @@ void fireSetField(Value v, Value x, const char* name, OwnList* list, uint32_t ca
     m = fireFindMethod(asObj(v)->cls, accessor, 1, &k);
     if (m) { Value r = m->fn(k, v, &x, list, caller); adopt(r, list); return; }
     accessor[0] = 'g';
-    if (fireFindMethod(asObj(v)->cls, accessor, 0, &k)) {
-        char text[400];
-        snprintf(text, sizeof text, "Property '%s' on '%s' has no setter (only 'get').", name, className(asObj(v)->cls));
-        fatal(text);
-    }
-    missingField(v, name);
+    if (fireFindMethod(asObj(v)->cls, accessor, 0, &k)) { noSetterError(v, name); return; }
+    missingFieldSet(v, name);
 }
 
 Value fireFieldPtr(Value v, const char* name) {

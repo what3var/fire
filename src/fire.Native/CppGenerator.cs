@@ -2951,7 +2951,7 @@ namespace fire.Native
             {
                 // no object of the program has such a field: only a built-in member (or dead code) can get here
                 sb.AppendLine($"static inline Value gf_{m}(Value v) {{\n{lengthCode}    return missingField(v, {CString(name)});\n}}");
-                sb.AppendLine($"static inline void sf_{m}(Value v, Value x) {{ (void)x; if (v.kind != K_Class) {{ notObjectAssign(v); return; }} fatal(\"Field '{name}' cannot be assigned.\"); }}");
+                sb.AppendLine($"static inline void sf_{m}(Value v, Value x) {{ (void)x; if (v.kind != K_Class) {{ notObjectAssign(v); return; }} if (!leafAlive(v)) {{ destroyedError(v); return; }} missingFieldSet(v, {CString(name)}); }}");
                 if (_fieldAddressTaken.Contains(name)) sb.AppendLine($"static inline Value fp_{m}(Value v) {{ (void)v; fatal(\"Field '{name}' not found on this object.\"); }}");
                 return sb.ToString();
             }
@@ -3138,9 +3138,9 @@ namespace fire.Native
                 if (getter != null) GetFunc(getter, FuncKind.Method);
                 if (setter != null) GetFunc(setter, FuncKind.Method);
                 if (getter != null) getArms.Add((label, $"{{ {AccessorGuard("get_" + name, getterDecl!, getterAccess, false)}Value r = {_funcByProto[getter].Name}(v); adopt(r, list); return r; }}"));
-                else if (setter != null) getArms.Add((label, $"fatal(\"Property '{name}' of '{cls.Rc.Name}' has no getter (only 'set').\");"));
+                else if (setter != null) getArms.Add((label, $"return missingField(v, {CString(name)});"));   // (only `set`: the VM's MissingMemberException)
                 if (setter != null) setArms.Add((label, $"{{ {AccessorGuard("set_" + name, setterDecl!, setterAccess, true)}Value r = {_funcByProto[setter].Name}(v, x); adopt(r, list); return; }}"));
-                else if (getter != null) setArms.Add((label, $"fatal(\"Property '{name}' on '{cls.Rc.Name}' has no setter (only 'get').\");"));
+                else if (getter != null) setArms.Add((label, $"{{ noSetterError(v, {CString(name)}); return; }}"));
             }
             return (getArms, setArms, ptrArms);
         }
@@ -3156,10 +3156,9 @@ namespace fire.Native
             var sb = new StringBuilder();
             string lp = (FieldHasList(name) ? ", OwnList* list" : "") + (FieldHasCaller(name) ? ", uint32_t caller" : "");
             string unusedLp = (FieldHasList(name) ? "(void)list; " : "") + (FieldHasCaller(name) ? "(void)caller; " : "");
-            // (modules: a value of a class that has no such field, or no class at all, is a MissingMemberException - the program's list of classes is complete, but the name may come from a library)
-            string getMissing = Modular ? $"return missingField(v, {CString(name)});" : $"fatal(\"Field '{name}' not found on this object.\");";
-            string setMissing = !Modular ? $"fatal(\"Field '{name}' not found on this object.\");"
-                : setArms.Count == 0 ? $"fatal(\"Field '{name}' cannot be assigned.\");" : $"missingField(v, {CString(name)}); return;";
+            // (a value of a class that has no such field - through `any`, or of a library in modules: the VM's MissingMemberException; classes have fixed fields)
+            string getMissing = $"return missingField(v, {CString(name)});";
+            string setMissing = $"missingFieldSet(v, {CString(name)}); return;";
             sb.AppendLine($"{HelperInline}Value gf_{m}(Value v{lp}) {{\n{lengthCode}    {unusedLp}\n    if (FIRE_UNLIKELY(v.kind != K_Class)) return missingField(v, {CString(name)});\n    if (FIRE_UNLIKELY(!leafAlive(v))) return destroyedError(v);\n    Obj* o = asObj(v);\n    switch (o->cls) {{\n{get}        default: {getMissing}\n    }}\n}}");
             string lpArgs = (FieldHasList(name) ? ", list" : "") + (FieldHasCaller(name) ? ", caller" : "");
             if (_usesThreads)   // (a change of an object of the shared domain is one section)

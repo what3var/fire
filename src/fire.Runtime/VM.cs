@@ -3572,7 +3572,9 @@ namespace fire.Runtime
             var value = Pop();
             var obj = RequireObjectInstance(Pop(), "Field assignment");
             if (IsDeadObject(obj)) { ThrowDestroyedObject(obj); return false; }
-            if (obj.RtClass is { IsRecord: true } && !InConstruction(obj)) { ThrowRecordWrite(obj, fieldName); return false; }
+            // (a name the record does not have - no field, no setter - is the MissingMemberException below, as natively)
+            if (obj.RtClass is { IsRecord: true } && !InConstruction(obj) && (obj.HasFieldLocked(fieldName) || ResolveClass(obj.ClassName).FindMethod("set_" + fieldName, 1) != null))
+            { ThrowRecordWrite(obj, fieldName); return false; }
 
             if (obj.HasFieldLocked(fieldName))
             {
@@ -3652,9 +3654,12 @@ namespace fire.Runtime
                 throw new InvalidOperationException(
                     $"Property '{fieldName}' on '{obj.ClassName}' has no setter (only 'get').");
 
-            // Neither existing field nor property - as before:
-            // simply create a new field (dynamic language, no
-            // up-front declaration obligation for fields).
+            // Neither a declared field nor a property: classes have fixed fields, also through `any` (where the type is known it is TC008) - the same
+            // MissingMemberException as reading a missing field (fire_rt.h missingFieldSet: the same text natively). (An object the host made without a
+            // class keeps its fields by name.)
+            if (obj.RtClass != null)
+                throw new ScriptErrorException("MissingMemberException",
+                    $"Field '{fieldName}' does not exist on an instance of '{obj.ClassName}' (and there is no 'set_{fieldName}' property either).");
             obj.SetFieldLocked(fieldName, value);
             if (_watchDangling && value.Kind == ValueKind.Class) NoteStore(value, obj, fieldName);
             Push(value);
