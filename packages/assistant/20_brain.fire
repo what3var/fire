@@ -149,7 +149,10 @@ namespace Assistant {
             this.Current.Folder = folder
             this.Current.Save()
             this.LookAtFolder()
-            if (this.agent != undefined) { this.agent.Instructions = this.Instructions() }
+            if (this.agent != undefined) {
+                this.agent.Instructions = this.Instructions()
+                this.agent.Prepare()
+            }
         }
 
         destruct() { this.Close() }
@@ -319,6 +322,8 @@ namespace Assistant {
                 this.agent.Settings.Temperature = 0.3
                 this.ConnectTools()
                 this.ReplaySession()
+                // (the instructions and tools are read now, before the first question)
+                this.agent.Prepare()
                 this.Phase = Assistant.Phase.Idle
                 if (this.pendingQuestion != "") {
                     string q = this.pendingQuestion
@@ -623,7 +628,12 @@ namespace Assistant {
                 this.OfferModel()
                 return
             }
-            this.agent.Start(question)
+            try { this.agent.Start(question) }
+            catch (Exception e) {
+                this.Phase = Assistant.Phase.Failed
+                this.Say("Something went wrong: " + e.message)
+                return
+            }
             this.Phase = Assistant.Phase.Thinking
             this.Activity.Clear()
             this.thinkingTicks = 0
@@ -651,15 +661,38 @@ namespace Assistant {
             this.Activity.Add(detail == "" ? what : what + ": " + detail)
         }
 
-        // The text of the thought bubble: thinking (with dots that move) and what the model did so far.
+        // The text of the thought bubble: thinking (with dots that move), how far the model is (reading the prompt, the tokens it wrote) and what it did
+        // so far.
         string ThinkingText() {
             string dots = "."
             defined int n = (this.thinkingTicks / 20) % 3
             if (n >= 1) { dots = ".." }
             if (n >= 2) { dots = "..." }
             string text = "Thinking" + dots
+            string progress = this.ProgressText()
+            if (progress != "") { text += "\n" + progress }
             defined int first = this.Activity.Count > 6 ? this.Activity.Count - 6 : 0
             for (int i = first; i < this.Activity.Count; i++) { text += "\n- " + this.Activity[i] }
+            return text
+        }
+
+        // How far the model is: "Reading: 812 of 3120 tokens (26%)" while it reads its prompt (on a slow or busy machine that takes long), then
+        // "Writing: 154 tokens, 3.9 per second" (also what it thinks and the calls of tools, which are not shown).
+        string ProgressText() {
+            if (this.agent == undefined || !this.agent.Running) { return "" }
+            if (this.agent.Reading) {
+                int total = this.agent.ReadTotal
+                int done = this.agent.ReadDone
+                if (total <= 0) { return "Reading..." }
+                if (done < 0) { done = 0 }
+                return "Reading: " + done + " of " + total + " tokens (" + (done * 100 / total) + "%)"
+            }
+            int written = this.agent.Written
+            if (written <= 0) { return "" }
+            string text = "Writing: " + written + " tokens"
+            int tenths = (this.agent.Session.TokensPerSecond * 10)!int
+            if (tenths > 0) { text += ", " + (tenths / 10) + "." + (tenths % 10) + " per second" }
+            if (this.agent.InThought) { text += " (thinking)" }
             return text
         }
 
@@ -779,6 +812,7 @@ namespace Assistant {
             this.SparkId = id
             this.SparkTools()
             if (folder && l.Folder != "" && l.Folder != this.Current.Folder) { this.SetFolder(l.Folder) }
+            else if (this.agent != undefined) { this.agent.Prepare() }
         }
 
         // A spark is gone (closed, or its file is gone): without any left the assistant ends when spark started it.
@@ -946,7 +980,12 @@ namespace Assistant {
                         this.Phase = Assistant.Phase.Idle
                         this.Choices.Clear()
                         this.actions.Clear()
-                        if (this.Text.Trim() == "" && this.Pending == undefined) { this.Text = "Hmm, I have no answer to that." }
+                        if (this.Text.Trim() == "" && this.Pending == undefined) {
+                            if (this.agent.LastEnd == AI.End.MaxTokens) { this.Text = "Hmm, I wrote " + this.agent.Written + " tokens without coming to an answer. Ask me again, maybe simpler." }
+                            else { this.Text = "Hmm, I have no answer to that." }
+                        }
+                        else if (this.agent.LastEnd == AI.End.MaxTokens) { this.Text = this.Text.TrimEnd() + " ... (cut off: the answer got too long)" }
+                        else if (this.agent.LastEnd == AI.End.Context) { this.Text = this.Text.TrimEnd() + " ... (cut off: the conversation is full - start a new topic)" }
                         this.KeepSession()
                         if (this.Pending != undefined) { this.ShowPending(this.Text) }
                         // a follow-up question can come right away

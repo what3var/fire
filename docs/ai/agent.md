@@ -28,6 +28,11 @@ print(agent.Choose("The user wrote: 'it crashes when I press Save'. What is it?"
 | `Ask(text)` | the answer (waits); the model may call tools first |
 | `Start(text)`, `Update()`, `Running`, `Cancel()` | the same for a user interface: `Update()` in its timer gives the new text of the answer, runs the tools when the model asks for them and goes on |
 | `OnToolCall` | `(string name, JsonObject arguments) => ...` before a tool runs (to show "reading notes.txt ...") |
+| `ThinkingBudget` | the tokens it may think per round (384): then its thinking is closed and it answers (`ThinkingCut`) - a small model may think on and on otherwise |
+| `MaxResultLength` | a tool's answer longer than this (3000 characters) is cut, so a long file does not fill the context |
+| `Reading`, `ReadDone`, `ReadTotal`, `Written`, `InThought`, `Session` | how far it is, for a user interface while no answer comes: reading its prompt (`ReadDone` of `ReadTotal` tokens - on a busy machine that takes long), the tokens written for the question (also the thinking and the calls of tools, all rounds), whether it thinks now; `Session.TokensPerSecond` |
+| `Prepare()` | reads the instructions and tools now, in the background, so the first question does not wait for them (a question that comes earlier goes on from there) |
+| `LastEnd` | how the last answer ended: `AI.End.Model` (complete), `MaxTokens` (cut at `Settings.MaxTokens`), `Context`, `Cancelled` |
 | `Calls` | the calls of the last question (`AI.AgentCall`: `Name`, `Arguments`, `Result`) |
 | `Choose(question, options)` | the index of the most likely option: the model reads the question with the options and weighs each (it does not write); the conversation is not changed |
 | `Once(question)` | an answer outside the conversation (nothing remembered, no tools) |
@@ -36,7 +41,9 @@ print(agent.Choose("The user wrote: 'it crashes when I press Save'. What is it?"
 | `Close()` | frees the session (and the model when the agent loaded it) |
 
 The conversation is kept as the model has read it, so the cache of the session holds it: the next question only computes what is new. When it
-grows beyond the context, the oldest turns go.
+grows beyond the context, the oldest turns go - never the question that is answered and what the tools said about it; the instructions and tools stay
+computed (`Session.Keep`), also on models with recurrent layers. A call of a tool with the same arguments as before in the same question gets no new answer
+(the model is told to use the one it has), and no answer is longer than the context still holds.
 
 ## Tools and models
 

@@ -505,6 +505,16 @@ static class AiTests
         var fresh2{NAME} = new AI.Session(m{NAME}, 256, 2)
         print("{NAME} chat " + (fresh2{NAME}.Complete(chat{NAME}.Prompt(), AI.Settings.Exact(8)) == r2{NAME}))
         fresh2{NAME}.Close()
+        // the kept start (Session.Keep): another question after the same instructions does not compute them again, and answers as a fresh session does
+        var sys{NAME} = "<|im_start|>system\nBe brief.<|im_end|>\n"
+        s{NAME}.Keep(sys{NAME})
+        s{NAME}.Complete(AI.Chat.Question("Be brief.", "hello", "", m{NAME}), AI.Settings.Exact(4))
+        var q{NAME} = AI.Chat.Question("Be brief.", "world, world", "", m{NAME})
+        var k{NAME} = s{NAME}.Complete(q{NAME}, AI.Settings.Exact(6))
+        var reused{NAME} = s{NAME}.PromptReused
+        var fresh3{NAME} = new AI.Session(m{NAME}, 256, 2)
+        print("{NAME} kept " + (reused{NAME} >= m{NAME}.CountTokens(sys{NAME})) + " " + (reused{NAME} < s{NAME}.PromptTokens) + " " + (fresh3{NAME}.Complete(q{NAME}, AI.Settings.Exact(6)) == k{NAME}) + " " + s{NAME}.EndReason + " " + (s{NAME}.PromptDone == s{NAME}.PromptTokens))
+        fresh3{NAME}.Close()
         s{NAME}.Close()
         m{NAME}.Close()
         """;
