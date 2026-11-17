@@ -184,7 +184,8 @@ namespace fire.Compiler
         private static bool IsFreshOrWorded(Expr e) => e switch
         {
             UnaryExpr { Op: UnaryOp.DeepCopy or UnaryOp.FlatCopy or UnaryOp.Take or UnaryOp.TryTake } => true,
-            NewExpr or CallExpr or WithExpr or ArrayLiteralExpr or BinaryExpr or LambdaExpr => true,
+            // (`new float[n]`, `new byte[n]`: a fresh array or buffer, like a fresh object)
+            NewExpr or NewArrayExpr or NewBufferExpr or CallExpr or WithExpr or ArrayLiteralExpr or BinaryExpr or LambdaExpr => true,
             _ => false,
         };
         /// <summary>The width of the program's `int` (16, 32, 64): set by the linker before the check.</summary>
@@ -295,6 +296,7 @@ namespace fire.Compiler
                 checker.Check(stmt);
             }
             checker.ReportPendingVars(checker._scopes[0]);
+            checker.ReportStoredTemporaries();
             if (DeriveDefined) checker.Derive(resolved);
             return checker._diagnostics;
         }
@@ -3581,7 +3583,7 @@ namespace fire.Compiler
                 if (i == 0 && c.Callee is MemberExpr { Name: "Send" } && calleeTarget is { Kind: StaticKind.Class, Class: "Channel" } && c.Args.Count == 1
                     && arg.Kind is StaticKind.Class or StaticKind.Object or StaticKind.Array && !IsFreshOrWorded(c.Args[0])
                     && !(arg.Kind == StaticKind.Class && arg.Class != null && Chain(arg).FirstOrDefault().Decl is { IsRecord: true }))   // (a record without a word: lent)
-                    ReportError(ChannelWordCode, $"An object goes into a channel only with a word: 'Send(copy x)' (a copy) or 'Send(take x)' (moved) - or fresh ('new', the result of a call)", c.Line);
+                    ReportError(ChannelWordCode, $"An object goes into a channel only with a word: 'Send(copy x)' (a copy) or 'Send(take x)' (moved) - or fresh ('new', 'new T[n]', an array literal, the result of a call)", c.Line);
             }
             if (open != null)
             {
@@ -3844,17 +3846,51 @@ namespace fire.Compiler
         /// the field only refers to it - at the end of the statement it is destroyed. Said for an argument that is surely such a temporary (`new X(...)`, the
         /// call of a method whose every `return` gives a new object or a local), when the constructor assigns the parameter to a field plainly and does
         /// nothing with its ownership (`take`, `try take`, `TakeTo`, ...).</summary>
-        private void CheckStoredTemporaries(ConstructorDecl ctor, IReadOnlyList<LambdaParam?> argParams, IReadOnlyList<Expr> args, string className)
+        private void CheckStoredTemporaries(ConstructorDecl ctor, IReadOnlyList<LambdaParam?> argParams, IReadOnlyList<Expr> args, string className) =>
+            _pendingTemporaries.Add((_source, ctor, argParams, args, className));
+
+        /// <summary>The `new` calls TC031 looks at - at the end of the check, when every body is checked: whether a method gives a new object can depend on
+        /// the calls in its body (`return Sample.Make()`), and those are known only once its body was checked.</summary>
+        private readonly List<(int Source, ConstructorDecl Ctor, IReadOnlyList<LambdaParam?> ArgParams, IReadOnlyList<Expr> Args, string ClassName)> _pendingTemporaries = new();
+
+        private void ReportStoredTemporaries()
         {
-            for (int i = 0; i < args.Count && i < argParams.Count; i++)
+            int savedSource = _source;
+            foreach (var (source, ctor, argParams, args, className) in _pendingTemporaries)
             {
-                // (only what has an owner: an object of a class or an array - a string or a number is copied)
-                if (argParams[i] is not { ByRef: false } p || !HoldsOwned(p.Type, p.ArrayRanks.Count) || !IsStatementTemporary(args[i])) continue;
-                if (PlainlyStoredField(ctor, p.Name) is not { } field) continue;
-                Report(StoredTemporaryCode,
-                    $"'{ShortText(args[i])}' is a temporary of this statement: the constructor of '{PlainName(className)}' keeps it in the field '{field}' without taking it, so it is destroyed at the end of the statement and the field refers to a destroyed object. Keep it in a variable that lives long enough, or let the constructor take it ('this.{field} = try take {p.Name}')",
-                    args[i].Line);
+                _source = source;
+                for (int i = 0; i < args.Count && i < argParams.Count; i++)
+                {
+                    // (only what has an owner: an object of a class or an array - a string or a number is copied)
+                    if (argParams[i] is not { ByRef: false } p || !HoldsOwned(p.Type, p.ArrayRanks.Count) || !IsStatementTemporary(args[i])) continue;
+                    if (StoredField(PlainName(className), ctor, p.Name, 0) is not { } field) continue;
+                    Report(StoredTemporaryCode,
+                        $"'{ShortText(args[i])}' is a temporary of this statement: the constructor of '{PlainName(className)}' keeps it in the field '{field.Name}' without taking it, so it is destroyed at the end of the statement and the field refers to a destroyed object. Keep it in a variable that lives long enough, or let the constructor take it ('this.{field.Name} = try take {field.Param}')",
+                        args[i].Line);
+                }
             }
+            _pendingTemporaries.Clear();
+            _source = savedSource;
+        }
+
+        /// <summary>The field the constructor keeps its parameter `name` in without taking it: assigned plainly in its body (`this.f = name`, `f = name`), or
+        /// passed on plainly to the constructor of the base class (`construct(Sample s) : base(s)`) that does so. Null when it is not kept that way, or when the
+        /// constructor (or the base one) does something with its ownership.</summary>
+        private (string Name, string Param)? StoredField(string className, ConstructorDecl ctor, string name, int depth)
+        {
+            if (PlainlyStoredField(className, ctor, name) is not { } field) return null;
+            if (field.Length > 0) return (field, name);
+            // (`: base(s)`: the base constructor with as many parameters - the parameter at the same place)
+            if (depth > 8 || ctor.BaseArgs is not { } baseArgs || !_classes.TryGetValue(className, out var decl)) return null;
+            int at = -1;
+            for (int k = 0; k < baseArgs.Count; k++) if (baseArgs[k] is IdentifierExpr id && id.Name == name) { at = k; break; }
+            if (at < 0) return null;
+            var baseName = decl.BaseRefs?.Select(b => PlainName(b.BaseName)).FirstOrDefault(n => _classes.ContainsKey(n));
+            if (baseName == null) return null;
+            var baseCtors = _classes[baseName].Members.OfType<ConstructorDecl>().Where(c => c.Params.Count >= baseArgs.Count && c.Params.Take(baseArgs.Count).All(q => !q.ByRef)
+                && c.Params.Skip(baseArgs.Count).All(q => q.DefaultValue != null)).ToList();
+            if (baseCtors.Count != 1) return null;
+            return StoredField(baseName, baseCtors[0], baseCtors[0].Params[at].Name, depth + 1) is { } inBase ? (inBase.Name, name) : null;
         }
 
         private static string ShortText(Expr e) => e switch
@@ -3865,6 +3901,7 @@ namespace fire.Compiler
             NewArrayExpr a => $"new {a.ElementType.BaseName}[...]",
             NewBufferExpr b => b.Words ? "new word[...]" : "new byte[...]",
             ArrayLiteralExpr => "[...]",
+            ConditionalExpr => "the result of '?:'",
             _ => "the argument",
         };
 
@@ -3875,12 +3912,16 @@ namespace fire.Compiler
             // (`new byte[0]`, `[1, 2]`: an array or a buffer of this statement, like an object)
             NewArrayExpr or NewBufferExpr or ArrayLiteralExpr => true,
             CallExpr c => _callTargets.TryGetValue(c, out var target) && ReturnsFresh(target),
+            // (`ok ? new A() : Make()`: both a temporary)
+            ConditionalExpr k => IsStatementTemporary(k.Then) && IsStatementTemporary(k.Else),
             _ => false,
         };
 
         /// <summary>Is a value of the declared type an object or an array (something with an owner)?</summary>
         private bool HoldsOwned(TypeRef? type, int arrayRanks) =>
             type != null && (arrayRanks > 0 || type.ArrayRank > 0 || type is { BaseName: "any", PointerDepth: 0 } || type.TypeArgs is not { Count: > 0 } && _classes.ContainsKey(PlainName(type.BaseName))
+                // (an interface: what implements it is an object - `construct(ISampler s)`)
+                || type.PointerDepth == 0 && IsInterface(PlainName(type.BaseName))
                 || type.TypeArgs is { Count: > 0 } && _classes.ContainsKey(GenericName(PlainName(type.BaseName), type.TypeArgs.Count)));
 
         private readonly Dictionary<MethodDecl, bool> _returnsFresh = new(ReferenceEqualityComparer.Instance);
@@ -3893,13 +3934,27 @@ namespace fire.Compiler
             var reassigned = new HashSet<string>(nodes.OfType<AssignExpr>().Select(a => a.Target).OfType<IdentifierExpr>().Select(t => t.Name));
             var locals = new HashSet<string>(nodes.OfType<VarDeclStmt>().Where(v => v.Initializer is NewExpr or NewArrayExpr or NewBufferExpr or ArrayLiteralExpr && !reassigned.Contains(v.Name)).Select(v => v.Name));
             var returns = nodes.OfType<ReturnStmt>().ToList();
-            bool fresh = returns.Count > 0 && returns.All(r => r.Value is NewExpr or NewArrayExpr or NewBufferExpr or ArrayLiteralExpr || r.Value is IdentifierExpr id && locals.Contains(id.Name) && m.Params.All(p => p.Name != id.Name));
+            _returnsFresh[m] = false;   // (a method that calls itself: not fresh through that call)
+            bool Fresh(Expr? value) => value switch
+            {
+                NewExpr or NewArrayExpr or NewBufferExpr or ArrayLiteralExpr => true,
+                IdentifierExpr id => locals.Contains(id.Name) && m.Params.All(p => p.Name != id.Name),
+                // (`return Sample.Make()`, `return n > 3 ? Make() : new Sample()`: a method that gives a new object, again)
+                CallExpr c => _callTargets.TryGetValue(c, out var target) && ReturnsFresh(target),
+                ConditionalExpr k => Fresh(k.Then) && Fresh(k.Else),
+                _ => false,
+            };
+            bool fresh = returns.Count > 0 && returns.All(r => Fresh(r.Value));
             return _returnsFresh[m] = fresh;
         }
 
-        /// <summary>The field the constructor assigns the parameter `name` to plainly (`this.f = name`, `f = name`), when it does nothing else with its ownership; null otherwise.</summary>
-        private string? PlainlyStoredField(ConstructorDecl ctor, string name)
+        /// <summary>The field the constructor assigns the parameter `name` to plainly (`this.f = name`, `f = name`), when it does nothing else with its ownership; null
+        /// otherwise. "" when it does nothing with it in its body (it may pass it on to the base constructor - StoredField).</summary>
+        private string? PlainlyStoredField(string className, ConstructorDecl ctor, string name)
         {
+            // (the names of the body that are no field: its locals and parameters - `f = name` is a field only when f is none of them)
+            var locals = new HashSet<string>(ctor.Params.Select(q => q.Name));
+            foreach (var node in AstNodes(ctor.Body)) if (node is VarDeclStmt v) locals.Add(v.Name);
             string? field = null;
             // (`if (initial is of Owns) { this.owns = initial }`: inside, the parameter is a value without an owner - an enum, a number, a string - so
             // what is stored there is no temporary object; List's constructor takes an array or an Owns this way)
@@ -3918,9 +3973,22 @@ namespace fire.Compiler
                     case VarDeclStmt v when v.Name == name: return null;   // (shadowed)
                     case AssignExpr { Target: IdentifierExpr id } when id.Name == name: return null;   // (the parameter is given something else)
                     case AssignExpr { Value: IdentifierExpr v, Target: MemberExpr { Target: ThisExpr } t } when v.Name == name: field ??= t.Name; break;
+                    // (`sample = s` without `this.`: a field of the class or of a base class)
+                    case AssignExpr { Value: IdentifierExpr v, Target: IdentifierExpr t } when v.Name == name && !locals.Contains(t.Name) && IsInstanceField(className, t.Name): field ??= t.Name; break;
                 }
             }
-            return field;
+            return field ?? "";
+        }
+
+        private bool IsInstanceField(string className, string name)
+        {
+            for (int guard = 0; guard < 64 && _classes.TryGetValue(className, out var decl); guard++)
+            {
+                if (decl.Members.Any(m => m is FieldDecl { IsStatic: false } f && f.Name == name || m is PropertyDecl { IsStatic: false } p && p.Name == name)) return true;
+                if (decl.BaseRefs?.Select(b => PlainName(b.BaseName)).FirstOrDefault(n => _classes.ContainsKey(n)) is not { } next) return false;
+                className = next;
+            }
+            return false;
         }
 
         /// <summary>Every node (expression and statement) below `root`, in source order - by the properties of the records, so that no kind of node is missed.</summary>

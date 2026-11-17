@@ -416,7 +416,7 @@ foreach (r in results) { sum = sum + r }
 print(sum)                          // 14
 ```
 
-- A value (a number, a text, a bool) goes as it is. An object or an array goes only fresh (`new`, the result of a call) or with a word:
+- A value (a number, a text, a bool) goes as it is. An object or an array goes only fresh (`new Job(1)`, `new float[n]`, an array literal `[1, 2]`, the result of a call) or with a word:
   `Send(copy x)` (a copy) or `Send(take x)` (moved - like `handover`, every other reference to it is dead; a record keeps its identity, because
   nobody can change it). Without one it is TC029 (an error, also in lax mode) where the type is known, else the ArgumentException.
 - A record without a word is **lent**: `Send(r)` - the sender stays its owner, the receiver gets a reference and reads it in its own thread (fields,
