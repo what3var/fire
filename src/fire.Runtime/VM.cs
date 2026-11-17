@@ -29,6 +29,14 @@ namespace fire.Runtime
         }
     }
 
+    /// <summary>A nested run that the VM started in the middle of an instruction (the default value of a parameter, see VM.EvaluateDefaultNested) was
+    /// left by an exception that a handler outside it took: the VM already stands at that handler. The instruction is abandoned - the loop that runs
+    /// it goes on where the VM stands now. Not an InvalidOperationException: it must not become a script exception of its own.</summary>
+    internal sealed class ExecutionRedirectedException : Exception
+    {
+        public ExecutionRedirectedException() : base("The execution continues at an exception handler.") { }
+    }
+
     internal readonly struct CallFrame
     {
         public readonly Chunk ReturnChunk;
@@ -551,7 +559,7 @@ namespace fire.Runtime
                 var array = value.AsArray();
                 if (!seen.Add(array)) return;
                 array.IsShared = true;
-                foreach (var item in array.Items) ShareValue(item, treeLock, seen);
+                if (!array.IsPacked) foreach (var item in array.Items) ShareValue(item, treeLock, seen);
             }
         }
 
@@ -562,7 +570,7 @@ namespace fire.Runtime
             var array = value.AsArray();
             if (array.IsShared) return;
             array.IsShared = true;
-            foreach (var item in array.Items) MarkShared(item);
+            if (!array.IsPacked) foreach (var item in array.Items) MarkShared(item);
         }
 
         /// <summary>Registers the thread for a section (or only counts up if it already holds one). Only when the main program grants the section at
@@ -885,12 +893,15 @@ namespace fire.Runtime
                 handled++;
                 if (callback.HostAction != null)
                 {
+                    int barrier = EnterCallbackBarrier();   // (a service at a safe point: what its callbacks throw is reported - SPEC 8.1.4)
                     try { callback.HostAction(); }
                     catch (Exception ex) { Console.Error.WriteLine("(host: " + ex.Message + ")"); }
+                    finally { ExitCallbackBarrier(barrier); }
                     if (_stopExecutionRequested) break;
                     continue;
                 }
                 _noAutoSyncDepth++;   // (a callback runs for itself: its own safe points do not run the next one)
+                int cbBarrier = EnterCallbackBarrier();   // (nobody waits for it: its exception is reported - SPEC 8.1.4)
                 try
                 {
                     var error = CallLambdaInline(callback.Lambda!, callback.Args);
@@ -900,7 +911,7 @@ namespace fire.Runtime
                 {
                     callback.OnUnhandled?.Invoke(ex.Message);
                 }
-                finally { _noAutoSyncDepth--; }
+                finally { _noAutoSyncDepth--; ExitCallbackBarrier(cbBarrier); }
                 if (_stopExecutionRequested) break;
             }
             return handled;
@@ -1195,7 +1206,7 @@ namespace fire.Runtime
                     if (!_stopExecutionRequested || _shutdownReleasePending) ReleaseGlobalScopeAtEnd();
                     return;
                 }
-                Step(op);
+                StepRun(op);
             }
         }
 
@@ -1520,10 +1531,22 @@ namespace fire.Runtime
                 return true;
             }
 
+            // An exception of the method that a `catch` around the `process` took (in this method or further out) left the nested run as well: the
+            // frames and the stack are the handler's now (ThrowException: the `catch` begins at the stack height of its `try`) - the method returned
+            // nothing, and the statement that ran `process` does not go on (ProcessCaught). Popping here took a value of the handler's level, or ran
+            // below the stack ("Index was outside the bounds of the array", the end of a fire thread whose loop catches what its messages throw).
+            // (recognised like in CallMethodNested: only a real return puts chunk, ip and scope of the pushed frame back)
+            var returnTo = _frames.Peek();
             RunNestedUntil(targetDepth);
-            PopNestedResult(); // Return value unused, see documentation above.
+            if (ReferenceEquals(_currentChunk, returnTo.ReturnChunk) && _ip == returnTo.ReturnIp && ReferenceEquals(_currentScope, returnTo.ReturnScope))
+                PopNestedResult(); // Return value unused, see documentation above.
+            else if (!_stopExecutionRequested) ProcessCaught = true;
             return true;
         }
+
+        /// <summary>Set by ProcessOneMessage when the method of the message threw and a `catch` outside it took the exception: the VM stands at that
+        /// `catch` - `try process` pushes no result. The instruction that ran the `process` clears it.</summary>
+        private bool ProcessCaught;
 
         // -----------------------------------------------------------
         // Stepping/inspection API for external tools (step debugger in the
@@ -1927,7 +1950,9 @@ namespace fire.Runtime
             {
                 try { RunNestedLoopCore(targetFrameDepth); return; }
                 catch (ScriptErrorException error) { RaiseScriptError(error); if (_stopExecutionRequested) return; }
+                catch (OwnershipException error) when (!_stopExecutionRequested) { RaiseScriptError(new ScriptErrorException(error.FireClass, error.Message)); if (_stopExecutionRequested) return; }
                 catch (InvalidOperationException error) when (IsCatchableRuntimeError(error)) { RaiseScriptError(new ScriptErrorException("ArgumentException", error.Message)); if (_stopExecutionRequested) return; }
+                catch (ExecutionRedirectedException) { if (_stopExecutionRequested) return; }
             }
         }
 
@@ -2002,28 +2027,37 @@ namespace fire.Runtime
         /// behaves exactly like its counterpart in Execute; where a case does not apply (e.g. an object as the
         /// left operand with operator overloading, a scope with ownership), it falls through to Execute.</summary>
         [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]
-        private void Step(OpCode op)
+        private void Step(OpCode op) => StepCore(op, false);
+
+        /// <summary>Runs instructions from `op` on until the next one is a Halt (which stays unread: the caller's loop reads it and decides).</summary>
+        private void StepRun(OpCode op) => StepCore(op, true);
+
+        // One instruction (`run` false: Step) or all of them up to the next Halt (`run` true: StepRun, the loop of a program that runs freely). The loop is
+        // INSIDE this method because its frame is expensive to set up: it holds every Value temporary of the cases below (more than a kilobyte, cleared in
+        // the prolog) - once per instruction that was a third of the time of a simple instruction.
+        private void StepCore(OpCode op, bool run)
         {
+        again:
             switch (op)
             {
                 // (every assignment of a value and every call with declared parameters: not through Execute, whose frame is expensive to set up)
                 case OpCode.HoistValue:
                     if (_stack[_sp - 1].Kind is ValueKind.Class or ValueKind.Array or ValueKind.Buffer or ValueKind.Lambda) HoistValue(_stack[_sp - 1]);
-                    return;
-                case OpCode.GuardLocal: OpGuardLocal(); return;
-                case OpCode.GuardLocalType: OpGuardLocalType(); return;
+                    goto next;
+                case OpCode.GuardLocal: OpGuardLocal(); goto next;
+                case OpCode.GuardLocalType: OpGuardLocalType(); goto next;
 
                 case OpCode.LoadConst:
                     Push(_constants[ReadU16()]);
-                    return;
+                    goto next;
 
                 case OpCode.Pop:
                     _sp--;
-                    return;
+                    goto next;
 
                 case OpCode.Dup:
                     Push(_stack[_sp - 1]);
-                    return;
+                    goto next;
 
                 case OpCode.LoadLocal:
                 {
@@ -2031,252 +2065,252 @@ namespace fire.Runtime
                     if (_sp == _stack.Length) Array.Resize(ref _stack, _stack.Length * 2);
                     _stack[_sp] = _currentScope.GetAncestor(depth).SlotRef(slot);
                     _sp++;
-                    return;
+                    goto next;
                 }
 
                 case OpCode.StoreLocal:
                 {
                     int depth = ReadU16(); int slot = ReadU16();
                     _currentScope.GetAncestor(depth).SlotRef(slot) = _stack[_sp - 1];
-                    return;
+                    goto next;
                 }
 
                 case OpCode.LoadGlobal:
                 {
                     int slot = ReadU16();
                     if (_sp == _stack.Length) Array.Resize(ref _stack, _stack.Length * 2);
-                    if (slot < _sharedCount) { _stack[_sp] = LoadSharedGlobal(slot); _sp++; return; } // Fire thread: the real globals
+                    if (slot < _sharedCount) { _stack[_sp] = LoadSharedGlobal(slot); _sp++; goto next; } // Fire thread: the real globals
                     _stack[_sp] = _globalScope.SlotRef(slot);
                     _sp++;
-                    return;
+                    goto next;
                 }
 
                 case OpCode.StoreGlobal:
                 {
                     int slot = ReadU16();
-                    if (slot < _sharedCount) { StoreSharedGlobal(slot, _stack[_sp - 1]); return; }
-                    if (_ownerBroker != null) { StoreOwnerGlobal(slot, _stack[_sp - 1]); return; }
+                    if (slot < _sharedCount) { StoreSharedGlobal(slot, _stack[_sp - 1]); goto next; }
+                    if (_ownerBroker != null) { StoreOwnerGlobal(slot, _stack[_sp - 1]); goto next; }
                     _globalScope.SlotRef(slot) = _stack[_sp - 1];
-                    return;
+                    goto next;
                 }
 
                 case OpCode.DeclareLocal:
-                    if (_ownerBroker != null && ReferenceEquals(_currentScope, _globalScope)) { DeclareOwnerGlobal(Pop()); return; }
+                    if (_ownerBroker != null && ReferenceEquals(_currentScope, _globalScope)) { DeclareOwnerGlobal(Pop()); goto next; }
                     {
                         int declared = _currentScope.DefineSlot(Pop());
                         if (ExecutionMode != VmExecutionMode.Performance) NameDeclaredSlot(declared);
                     }
-                    return;
+                    goto next;
 
                 // Binary operators: the left operand lies at _sp-2, the right at _sp-1; the result
                 // replaces both. An object on the left (operator overloading) falls through to Execute.
                 case OpCode.Add:
-                    if (Value.TryAddInPlace(ref _stack[_sp - 2], in _stack[_sp - 1])) { _sp--; return; }
-                    if (_stack[_sp - 2].Kind != ValueKind.Class && _stack[_sp - 1].Kind != ValueKind.Class) { ReplaceTwoGuarded(Value.Add); return; }
+                    if (Value.TryAddInPlace(ref _stack[_sp - 2], in _stack[_sp - 1])) { _sp--; goto next; }
+                    if (_stack[_sp - 2].Kind != ValueKind.Class && _stack[_sp - 1].Kind != ValueKind.Class) { ReplaceTwoGuarded(Value.Add); goto next; }
                     break;
                 case OpCode.StepAdd:
                 case OpCode.StepSub:
                     _stack[_sp - 1] = Value.StepOf(in _stack[_sp - 2], _stack[_sp - 1]);
                     Step(op == OpCode.StepAdd ? OpCode.Add : OpCode.Sub);
-                    return;
+                    goto next;
                 case OpCode.Sub:
-                    if (Value.TrySubtractInPlace(ref _stack[_sp - 2], in _stack[_sp - 1])) { _sp--; return; }
-                    if (_stack[_sp - 2].Kind != ValueKind.Class) { ReplaceTwoGuarded(Value.Subtract); return; }
+                    if (Value.TrySubtractInPlace(ref _stack[_sp - 2], in _stack[_sp - 1])) { _sp--; goto next; }
+                    if (_stack[_sp - 2].Kind != ValueKind.Class) { ReplaceTwoGuarded(Value.Subtract); goto next; }
                     break;
                 case OpCode.Mul:
-                    if (Value.TryMultiplyInPlace(ref _stack[_sp - 2], in _stack[_sp - 1])) { _sp--; return; }
-                    if (_stack[_sp - 2].Kind != ValueKind.Class) { ReplaceTwoGuarded(Value.Multiply); return; }
+                    if (Value.TryMultiplyInPlace(ref _stack[_sp - 2], in _stack[_sp - 1])) { _sp--; goto next; }
+                    if (_stack[_sp - 2].Kind != ValueKind.Class) { ReplaceTwoGuarded(Value.Multiply); goto next; }
                     break;
                 case OpCode.Div:
-                    if (_stack[_sp - 2].Kind != ValueKind.Class) { ReplaceTwoGuarded(Value.Divide); return; }
+                    if (_stack[_sp - 2].Kind != ValueKind.Class) { ReplaceTwoGuarded(Value.Divide); goto next; }
                     break;
                 case OpCode.Mod:
-                    if (Value.TryModuloInPlace(ref _stack[_sp - 2], in _stack[_sp - 1])) { _sp--; return; }
-                    if (_stack[_sp - 2].Kind != ValueKind.Class) { ReplaceTwoGuarded(Value.Modulo); return; }
+                    if (Value.TryModuloInPlace(ref _stack[_sp - 2], in _stack[_sp - 1])) { _sp--; goto next; }
+                    if (_stack[_sp - 2].Kind != ValueKind.Class) { ReplaceTwoGuarded(Value.Modulo); goto next; }
                     break;
                 case OpCode.Eq:
-                    if (_stack[_sp - 2].Kind != ValueKind.Class) { ReplaceTwoWith(Value.MakeBool(Value.OperatorEquals(_stack[_sp - 2], _stack[_sp - 1]))); return; }
+                    if (_stack[_sp - 2].Kind != ValueKind.Class) { ReplaceTwoWith(Value.MakeBool(Value.OperatorEquals(_stack[_sp - 2], _stack[_sp - 1]))); goto next; }
                     break;
                 case OpCode.NotEq:
-                    if (_stack[_sp - 2].Kind != ValueKind.Class) { ReplaceTwoWith(Value.MakeBool(!Value.OperatorEquals(_stack[_sp - 2], _stack[_sp - 1]))); return; }
+                    if (_stack[_sp - 2].Kind != ValueKind.Class) { ReplaceTwoWith(Value.MakeBool(!Value.OperatorEquals(_stack[_sp - 2], _stack[_sp - 1]))); goto next; }
                     break;
                 case OpCode.Lt:
-                    if (Value.TryCompareInPlace(ref _stack[_sp - 2], in _stack[_sp - 1], 0)) { _sp--; return; }
-                    if (_stack[_sp - 2].Kind != ValueKind.Class) { ReplaceTwoGuarded(static (a, b) => Value.MakeBool(Value.Compare(a, b) < 0)); return; }
+                    if (Value.TryCompareInPlace(ref _stack[_sp - 2], in _stack[_sp - 1], 0)) { _sp--; goto next; }
+                    if (_stack[_sp - 2].Kind != ValueKind.Class) { ReplaceTwoGuarded(static (a, b) => Value.MakeBool(Value.Compare(a, b) < 0)); goto next; }
                     break;
                 case OpCode.LtEq:
-                    if (Value.TryCompareInPlace(ref _stack[_sp - 2], in _stack[_sp - 1], 1)) { _sp--; return; }
-                    if (_stack[_sp - 2].Kind != ValueKind.Class) { ReplaceTwoGuarded(static (a, b) => Value.MakeBool(Value.Compare(a, b) <= 0)); return; }
+                    if (Value.TryCompareInPlace(ref _stack[_sp - 2], in _stack[_sp - 1], 1)) { _sp--; goto next; }
+                    if (_stack[_sp - 2].Kind != ValueKind.Class) { ReplaceTwoGuarded(static (a, b) => Value.MakeBool(Value.Compare(a, b) <= 0)); goto next; }
                     break;
                 case OpCode.Gt:
-                    if (Value.TryCompareInPlace(ref _stack[_sp - 2], in _stack[_sp - 1], 2)) { _sp--; return; }
-                    if (_stack[_sp - 2].Kind != ValueKind.Class) { ReplaceTwoGuarded(static (a, b) => Value.MakeBool(Value.Compare(a, b) > 0)); return; }
+                    if (Value.TryCompareInPlace(ref _stack[_sp - 2], in _stack[_sp - 1], 2)) { _sp--; goto next; }
+                    if (_stack[_sp - 2].Kind != ValueKind.Class) { ReplaceTwoGuarded(static (a, b) => Value.MakeBool(Value.Compare(a, b) > 0)); goto next; }
                     break;
                 case OpCode.GtEq:
-                    if (Value.TryCompareInPlace(ref _stack[_sp - 2], in _stack[_sp - 1], 3)) { _sp--; return; }
-                    if (_stack[_sp - 2].Kind != ValueKind.Class) { ReplaceTwoGuarded(static (a, b) => Value.MakeBool(Value.Compare(a, b) >= 0)); return; }
+                    if (Value.TryCompareInPlace(ref _stack[_sp - 2], in _stack[_sp - 1], 3)) { _sp--; goto next; }
+                    if (_stack[_sp - 2].Kind != ValueKind.Class) { ReplaceTwoGuarded(static (a, b) => Value.MakeBool(Value.Compare(a, b) >= 0)); goto next; }
                     break;
 
                 case OpCode.CallMethod:
                     OpCallMethod();
-                    return;
+                    goto next;
 
                 case OpCode.CallStaticMethod:
                     OpCallStaticMethod();
-                    return;
+                    goto next;
 
                 case OpCode.Call:
                     OpCall();
-                    return;
+                    goto next;
 
                 case OpCode.Return:
                     OpReturn();
-                    return;
+                    goto next;
 
                 case OpCode.GetField:
                     OpGetField();
-                    return;
+                    goto next;
 
                 case OpCode.SetField:
                     OpSetField();
-                    return;
+                    goto next;
 
                 case OpCode.LoadThis:
                     OpLoadThis();
-                    return;
+                    goto next;
 
                 case OpCode.SetFieldOnThis:
                     OpSetFieldOnThis();
-                    return;
+                    goto next;
 
                 case OpCode.NewObject:
                     OpNewObject();
-                    return;
+                    goto next;
 
                 case OpCode.GetStaticField:
                     OpGetStaticField();
-                    return;
+                    goto next;
 
                 case OpCode.SetStaticField:
                     OpSetStaticField();
-                    return;
+                    goto next;
 
                 case OpCode.ArrayGet:
                     OpArrayGet();
-                    return;
+                    goto next;
 
                 case OpCode.ArraySet:
                     OpArraySet();
-                    return;
+                    goto next;
 
                 case OpCode.IncDecIndex:
                     OpIncDecIndex();
-                    return;
+                    goto next;
 
                 case OpCode.NewArray:
                     OpNewArray();
-                    return;
+                    goto next;
 
                 case OpCode.MakeArrayLiteral:
                     OpMakeArrayLiteral();
-                    return;
+                    goto next;
 
                 case OpCode.CallNative:
                     OpCallNative();
-                    return;
+                    goto next;
 
                 case OpCode.MakeLambda:
                     OpMakeLambda();
-                    return;
+                    goto next;
 
                 case OpCode.MakeLambdaCapturing:
                     OpMakeLambdaCapturing();
-                    return;
+                    goto next;
 
                 case OpCode.Probe:
                     OpProbe();
-                    return;
+                    goto next;
 
                 case OpCode.SilenceMember:
                     OpSilenceMember();
-                    return;
+                    goto next;
 
                 case OpCode.SilenceValue:
                     OpSilenceValue();
-                    return;
+                    goto next;
 
                 case OpCode.CallBaseMethod:
                     OpCallBaseMethod();
-                    return;
+                    goto next;
 
                 case OpCode.NewObjectOwned:
                     OpNewObjectOwned();
-                    return;
+                    goto next;
 
                 case OpCode.ConstructBase:
                     OpConstructBase();
-                    return;
+                    goto next;
 
                 case OpCode.CallProtoWithThis:
                     OpCallProtoWithThis();
-                    return;
+                    goto next;
 
                 case OpCode.Neg:
                     if (_stack[_sp - 1].Kind is ValueKind.Int or ValueKind.Float) _stack[_sp - 1] = Value.Negate(_stack[_sp - 1]);
                     else ReplaceOneGuarded(Value.Negate);
-                    return;
+                    goto next;
                 case OpCode.LogicalNot:
                     if (_stack[_sp - 1].Kind == ValueKind.Bool) _stack[_sp - 1] = Value.LogicalNot(_stack[_sp - 1]);
                     else ReplaceOneGuarded(Value.LogicalNot);
-                    return;
+                    goto next;
 
                 case OpCode.Jump:
                 {
                     // A back jump (loop) is a safe point for shutdown signals (see PollSignals); `_ip` here still
                     // points to the operand, PollSignalsSlow calculates with the instruction boundary before it.
                     int target = _code[_ip] | (_code[_ip + 1] << 8);
-                    if (target <= _ip && (PollSignals() || PollQueueAtLoop() || (_homeInbox != null && ServeHomeInbox()))) return;
+                    if (target <= _ip && (PollSignals() || PollQueueAtLoop() || (_homeInbox != null && ServeHomeInbox()))) goto next;
                     _ip = target;
-                    return;
+                    goto next;
                 }
 
                 case OpCode.JumpIfFalse:
                 {
                     int addr = ReadU16();
                     var condition = Pop();
-                    if (condition.Kind != ValueKind.Bool) { ThrowConditionError(condition); return; }
+                    if (condition.Kind != ValueKind.Bool) { ThrowConditionError(condition); goto next; }
                     if (!condition.AsBool()) _ip = addr;
-                    return;
+                    goto next;
                 }
 
                 case OpCode.JumpIfFalsePeek:
                 {
                     int addr = ReadU16();
-                    if (_stack[_sp - 1].Kind != ValueKind.Bool) { ThrowConditionError(_stack[_sp - 1]); return; }
+                    if (_stack[_sp - 1].Kind != ValueKind.Bool) { ThrowConditionError(_stack[_sp - 1]); goto next; }
                     if (!_stack[_sp - 1].AsBool()) _ip = addr;
-                    return;
+                    goto next;
                 }
 
                 case OpCode.JumpIfTruePeek:
                 {
                     int addr = ReadU16();
-                    if (_stack[_sp - 1].Kind != ValueKind.Bool) { ThrowConditionError(_stack[_sp - 1]); return; }
+                    if (_stack[_sp - 1].Kind != ValueKind.Bool) { ThrowConditionError(_stack[_sp - 1]); goto next; }
                     if (_stack[_sp - 1].AsBool()) _ip = addr;
-                    return;
+                    goto next;
                 }
 
                 case OpCode.EnterScope:
                     _currentScope = RentScope(_currentScope);
-                    return;
+                    goto next;
 
                 case OpCode.ExitScope:
                 {
                     var scope = _currentScope;
-                    if (scope.HasOwned) { ExitScopeOwning(); return; } // Release can execute destructors - the detailed way
+                    if (scope.HasOwned) { ExitScopeOwning(); goto next; } // Release can execute destructors - the detailed way
                     _currentScope = scope.Parent
                         ?? throw new InvalidOperationException("ExitScope called on the global scope.");
                     if (scope.CanRecycle) ReturnScopeToPool(scope);
-                    return;
+                    goto next;
                 }
 
                 // ---- Verschmolzene Instruktionen (siehe OpCode.StoreLocalPop ff.) ----
@@ -2285,18 +2319,18 @@ namespace fire.Runtime
                 {
                     int depth = ReadU16(); int slot = ReadU16();
                     _currentScope.GetAncestor(depth).SlotRef(slot) = _stack[--_sp];
-                    return;
+                    goto next;
                 }
 
                 case OpCode.StoreGlobalPop:
                 {
                     int slot = ReadU16();
                     var value = _stack[_sp - 1];
-                    if (slot < _sharedCount) { if (!StoreSharedGlobal(slot, value)) return; }
+                    if (slot < _sharedCount) { if (!StoreSharedGlobal(slot, value)) goto next; }
                     else if (_ownerBroker != null) StoreOwnerGlobal(slot, value);
                     else _globalScope.SlotRef(slot) = value;
                     _sp--;
-                    return;
+                    goto next;
                 }
 
                 case OpCode.JumpIfNotLt:
@@ -2313,12 +2347,12 @@ namespace fire.Runtime
                         int ipAfter = _ip;
                         var chunkBefore = _currentChunk;
                         ExecuteCompareSlow(kind switch { 0 => OpCode.Lt, 1 => OpCode.LtEq, 2 => OpCode.Gt, _ => OpCode.GtEq });
-                        if (_ip != ipAfter || !ReferenceEquals(_currentChunk, chunkBefore)) return;   // it threw (`1m < 1s`): the handler already continues
+                        if (_ip != ipAfter || !ReferenceEquals(_currentChunk, chunkBefore)) goto next;   // it threw (`1m < 1s`): the handler already continues
                         result = _stack[--_sp].AsBool();
                     }
                     else _sp -= 2;
                     if (!result) _ip = addr;
-                    return;
+                    goto next;
                 }
 
                 case OpCode.JumpIfNotEq:
@@ -2339,7 +2373,7 @@ namespace fire.Runtime
                     }
                     // JumpIfNotEq jumps if a == b does NOT hold; JumpIfNotNotEq if a != b does NOT hold (i.e. a == b)
                     if (op == OpCode.JumpIfNotEq ? !equal : equal) _ip = addr;
-                    return;
+                    goto next;
                 }
 
                 case OpCode.ArithLocalConstPop:
@@ -2347,25 +2381,56 @@ namespace fire.Runtime
                     int depth = ReadU16(); int slot = ReadU16(); int constIdx = ReadU16(); int mode = ReadByte(); bool subtract = (mode & 1) != 0;
                     ref Value variable = ref _currentScope.GetAncestor(depth).SlotRef(slot);
                     if (subtract ? Value.TrySubtractInPlace(ref variable, in _constants[constIdx]) : Value.TryAddInPlace(ref variable, in _constants[constIdx]))
-                        return;
+                        goto next;
                     ArithSlow(depth, slot, constIdx, subtract, (mode & 2) != 0);
-                    return;
+                    goto next;
                 }
 
                 case OpCode.ArithGlobalConstPop:
                 {
                     int slot = ReadU16(); int constIdx = ReadU16(); int mode = ReadByte(); bool subtract = (mode & 1) != 0; bool step = (mode & 2) != 0;
                     // Fire threads and a main program with running threads read/write globals via the broker: ordinary way
-                    if (slot < _sharedCount || _ownerBroker != null) { ArithGlobalSlow(slot, constIdx, subtract, step); return; }
+                    if (slot < _sharedCount || _ownerBroker != null) { ArithGlobalSlow(slot, constIdx, subtract, step); goto next; }
                     ref Value variable = ref _globalScope.SlotRef(slot);
                     if (subtract ? Value.TrySubtractInPlace(ref variable, in _constants[constIdx]) : Value.TryAddInPlace(ref variable, in _constants[constIdx]))
-                        return;
+                        goto next;
                     ArithGlobalSlow(slot, constIdx, subtract, step);
-                    return;
+                    goto next;
                 }
+
+                // ---- small instructions that nearly every statement and call has: here, not through Execute (its frame is several times bigger still) ----
+                case OpCode.ReleaseTemps:
+                    _currentScope.ReleaseTemps(this);
+                    goto next;
+                case OpCode.ClaimToScope: OpClaimToScope(); goto next;
+                case OpCode.GuardTop: OpGuardTop(); goto next;
+                case OpCode.GuardTopType: OpGuardTopType(); goto next;
+                case OpCode.TakeCallTypeArgs: _currentScope.TypeArgs = _pendingCallTypeArgs; _pendingCallTypeArgs = null; goto next;
+                case OpCode.CopyArgs: OpCopyArgs(); goto next;
+                case OpCode.SetFieldClaim: OpSetFieldClaim(); goto next;
+                case OpCode.ClaimToArray: OpClaimToArray(); goto next;
+                case OpCode.ClaimToObject: OpClaimToObject(); goto next;
+                case OpCode.SetTypeArgs: OpSetTypeArgs(); goto next;
+                case OpCode.IsOfType: OpIsOfType(); goto next;
+                case OpCode.HasMember: OpHasMember(); goto next;
+                case OpCode.CheckUnit: OpCheckUnit(); goto next;
+                case OpCode.Power: BinaryNumericOrOperator(Value.Power, "operator^"); goto next;
+                case OpCode.PowerFloat: BinaryNumericOrOperator(Value.PowerFloat, "operator^"); goto next;
+                case OpCode.BitAnd: BinaryNumericOrOperator(Value.BitAnd, "operator&"); goto next;
+                case OpCode.BitOr: BinaryNumericOrOperator(Value.BitOr, "operator|"); goto next;
+                case OpCode.BitXor: BinaryNumericOrOperator(Value.BitXor, "operator#"); goto next;
+                case OpCode.ShiftLeft: BinaryNumericOrOperator(Value.ShiftLeft, "operator<<"); goto next;
+                case OpCode.ShiftRight: BinaryNumericOrOperator(Value.ShiftRight, "operator>>"); goto next;
+                case OpCode.ShiftRightLogical: BinaryNumericOrOperator(Value.ShiftRightLogical, "operator>>>"); goto next;
+                case OpCode.BitNot: ReplaceOneGuarded(Value.BitNot); goto next;
             }
 
             Execute(op);
+        next:
+            if (!run) return;
+            op = (OpCode)ReadByte();
+            if (op != OpCode.Halt) goto again;
+            _ip--;
         }
 
         /// <summary>Slow path of the fused comparison jumps: the comparison `op` over the two topmost stack values, exactly like
@@ -2990,12 +3055,15 @@ namespace fire.Runtime
             // by the immediately following Release() of its own scope.
             // This applies to EVERY scope of this call (innermost block up to function scope): a `return` in the middle of nested
             // blocks leaves them all at once.
-            if (_frames.Count > 0) MoveReturned(retVal, OwnsWithinCall);
+            // (only a value that has an owner can belong to a scope of the call - a number, a string never does: no walk, and the delegate is made once)
+            if (_frames.Count > 0 && retVal.Kind is ValueKind.Class or ValueKind.Array or ValueKind.Buffer or ValueKind.Lambda)
+                MoveReturned(retVal, _ownsWithinCall ??= OwnsWithinCall);
 
             // (a record at the end of its (outermost) constructor - before the scopes of the call let go of what they hold: it holds only what does not
             // change, step 9)
+            // (no lambda over `record` here: its closure would be allocated at every return of every call)
             if (_frames.Count > 0 && _frames.Peek().ConstructedInstance is { RtClass.IsRecord: true } record
-                && !_frames.Skip(1).Any(f => ReferenceEquals(f.ConstructedInstance, record)) && (_recordInit == null || !_recordInit.Contains(record))
+                && !ConstructedBelowTop(record) && (_recordInit == null || !_recordInit.Contains(record))
                 && RecordValues.FirstChangeableField(record) is { } changeable)
             {
                 ThrowArgumentError($"The field '{changeable}' of the record '{record.ClassName}' holds {DescribeKindOf(record.Fields[changeable])}: a record holds only what does not change - numbers, texts, enums, records, lambdas without captures.");
@@ -3015,6 +3083,20 @@ namespace fire.Runtime
                 : retVal);
             return;
         }
+        }
+
+        private Func<Scope, bool>? _ownsWithinCall;
+
+        /// <summary>Is `record` the object a call below the topmost one constructs (an outer constructor of it is still running)?</summary>
+        private bool ConstructedBelowTop(ObjectInstance record)
+        {
+            bool top = true;
+            foreach (var f in _frames)
+            {
+                if (top) { top = false; continue; }
+                if (ReferenceEquals(f.ConstructedInstance, record)) return true;
+            }
+            return false;
         }
 
         /// <summary>Is the record being constructed - a constructor of it on the stack of calls, or a copy / `with` that fills it (<see cref="_recordInit"/>)?</summary>
@@ -3494,7 +3576,9 @@ namespace fire.Runtime
             var value = Pop();
             var obj = RequireObjectInstance(Pop(), "Field assignment");
             if (IsDeadObject(obj)) { ThrowDestroyedObject(obj); return false; }
-            if (obj.RtClass is { IsRecord: true } && !InConstruction(obj)) { ThrowRecordWrite(obj, fieldName); return false; }
+            // (a name the record does not have - no field, no setter - is the MissingMemberException below, as natively)
+            if (obj.RtClass is { IsRecord: true } && !InConstruction(obj) && (obj.HasFieldLocked(fieldName) || ResolveClass(obj.ClassName).FindMethod("set_" + fieldName, 1) != null))
+            { ThrowRecordWrite(obj, fieldName); return false; }
 
             if (obj.HasFieldLocked(fieldName))
             {
@@ -3574,9 +3658,12 @@ namespace fire.Runtime
                 throw new InvalidOperationException(
                     $"Property '{fieldName}' on '{obj.ClassName}' has no setter (only 'get').");
 
-            // Neither existing field nor property - as before:
-            // simply create a new field (dynamic language, no
-            // up-front declaration obligation for fields).
+            // Neither a declared field nor a property: classes have fixed fields, also through `any` (where the type is known it is TC008) - the same
+            // MissingMemberException as reading a missing field (fire_rt.h missingFieldSet: the same text natively). (An object the host made without a
+            // class keeps its fields by name.)
+            if (obj.RtClass != null)
+                throw new ScriptErrorException("MissingMemberException",
+                    $"Field '{fieldName}' does not exist on an instance of '{obj.ClassName}' (and there is no 'set_{fieldName}' property either).");
             obj.SetFieldLocked(fieldName, value);
             if (_watchDangling && value.Kind == ValueKind.Class) NoteStore(value, obj, fieldName);
             Push(value);
@@ -3867,6 +3954,12 @@ namespace fire.Runtime
                     Push(ownershipValue);
                     return;
                 }
+                // every object has ToString() (DECISIONS D14): without one of its class the text `"" + obj` gives, `<object Name>`
+                if (methodName == "ToString" && args.Length == 0)
+                {
+                    Push(Value.MakeString(target.ToString()));
+                    return;
+                }
                 throw MethodNotFound(rc, methodName, args.Length);
             }
             if (ExecutionMode != VmExecutionMode.Performance && !IsMemberAccessAllowed(declaringRcCall!, accessCall))
@@ -3923,6 +4016,8 @@ namespace fire.Runtime
                 result = Value.MakeBool(owned);
                 if (!owned) return true;
             }
+            // (a destroyed object stays where it is: the DestroyedException before anything moves - also natively, fire_rt.h ownMethod)
+            if (obj.IsDestroyed) throw OwnershipException.Destroyed("object");
             Scope? target;
             switch (method)
             {
@@ -3950,7 +4045,6 @@ namespace fire.Runtime
                 }
                 default:   // TakeLocal
                     // pull into the current scope (the scope in which the call stands)
-                    if (obj.IsDestroyed) throw new OwnershipException("A destroyed object cannot change its owner.");
                     obj.ReparentTo(_currentScope);
                     target = _currentScope;
                     break;
@@ -4117,6 +4211,7 @@ namespace fire.Runtime
                 result = Value.MakeBool(owned);
                 if (!owned) return true;
             }
+            if (leaf.IsDestroyed) throw OwnershipException.Destroyed(LeafOwnership.KindName(leaf));
             IOwner target;
             switch (method)
             {
@@ -4178,6 +4273,11 @@ namespace fire.Runtime
 
             var rc = ResolveClass(baseClassName);
             var (proto, declaringRcBase, accessBase) = FindOverload(rc, methodName, args, _currentThis as ObjectInstance);
+            if (proto == null && methodName == "ToString" && args.Length == 0 && _currentThis is ObjectInstance baseOf)
+            {
+                Push(Value.MakeString(Value.MakeClassRef(baseOf).ToString()));   // (`base.ToString()` of a base without one: `<object Name>`, DECISIONS D14)
+                return;
+            }
             if (proto == null)
                 throw MethodNotFound(rc, methodName, args.Length);
             if (ExecutionMode != VmExecutionMode.Performance && !IsMemberAccessAllowed(declaringRcBase!, accessBase))
@@ -4448,10 +4548,90 @@ namespace fire.Runtime
         }
         }
 
+        private void OpClaimToScope()
+        {
+            int depth = ReadU16();
+            int flags = ReadByte();
+            // (a fresh value for a global of the main program: its store moves it there - rule 10)
+            if (depth == 0xFFFF && _threadBroker != null && IsUnclaimed(_stack[_sp - 1])) _pendingGlobalTake = IdentityOf(_stack[_sp - 1]);
+            ClaimToScope(_stack[_sp - 1], depth == 0xFFFF ? _globalScope : _currentScope.GetAncestor(depth), flags);
+        }
+
+        private void OpIsOfType()
+        {
+            string typeName = _constants[ReadU16()].AsString();
+            var v = Pop();
+            if (ReadsDeadClass(v, typeName, out var deadObj)) { Push(Value.MakeUndefined()); ThrowDestroyedObject(deadObj); return; }
+            Push(Value.MakeBool(IsOfType(v, typeName)));
+        }
+
+        private void OpHasMember()
+        {
+            // `x??.name`: is x there (not undefined, not destroyed) and has it the member - a field, property or method of its class, or a built-in one?
+            string memberName = _constants[ReadU16()].AsString();
+            var v = Pop();
+            bool has = v.Kind switch
+            {
+                ValueKind.Undefined => false,
+                ValueKind.Class => v.AsObjectRef() is ObjectInstance { IsDestroyed: false } o && !IsDeadObject(o)
+                    && (fire.Runtime.BuiltinMembers.IsOwnership(memberName) || ReflectHas(o, memberName)),
+                ValueKind.Array or ValueKind.Buffer or ValueKind.Lambda => !IsDestroyedLeaf(v) && fire.Runtime.BuiltinMembers.Has(v.Kind, false, memberName),
+                _ => fire.Runtime.BuiltinMembers.Has(v.Kind, v.IsEnum, memberName),
+            };
+            Push(Value.MakeBool(has));
+        }
+
+        private void OpCheckUnit()
+        {
+            // SPEC "Unit declarations": the value on top of the stack goes into a declaration with a unit - it is converted into that unit
+            // (the same dimension), another dimension is a catchable UnitMismatchException, a whole number that overflows an OverflowException.
+            // (Converting is part of what the value means, so it happens in every execution mode.)
+            string requiredUnitName = _constants[ReadU16()].AsString();
+            ref var adapted = ref _stack[_sp - 1];
+            switch (Value.AdaptToUnit(ref adapted, requiredUnitName, out var offending))
+            {
+                case Value.UnitAdaptation.Mismatch: ThrowUnitMismatch(Values.Unit.DemandDisplay(requiredUnitName), offending.Unit ?? Values.Unit.Unitless); break;
+                case Value.UnitAdaptation.Overflow: ThrowOverflow($"{adapted} does not fit into a whole number in '{Values.Unit.DemandDisplay(requiredUnitName)}'."); break;
+            }
+        }
+
+        private void OpClaimToArray()
+        {
+            var holder = _stack[_sp - 3];
+            if (holder.Kind == ValueKind.Array && !holder.AsArray().IsDestroyed)
+            {
+                // (for an array of the main program's globals: the store moves it there - rule 10)
+                if (_threadBroker != null && holder.AsArray().IsShared) { if (IsUnclaimed(_stack[_sp - 1])) _pendingGlobalTake = IdentityOf(_stack[_sp - 1]); }
+                else ClaimTree(_stack[_sp - 1], holder.AsArray());
+            }
+        }
+
+        private void OpClaimToObject()
+        {
+            var value = Pop();
+            var holderValue = Pop();
+            if (holderValue.Kind == ValueKind.Class && holderValue.AsObjectRef() is ObjectInstance holder && !holder.IsDestroyed)
+            {
+                // (for an object of the main program's globals: the store moves it there - rule 10)
+                if (_threadBroker != null && holder.InGlobalsDomain) { if (IsUnclaimed(value)) _pendingGlobalTake = IdentityOf(value); }
+                else ClaimTree(value, holder);
+            }
+            Push(value);
+        }
+
+        private void OpCopyArgs()
+        {
+            long mask = ReadU16();
+            mask |= (long)ReadU16() << 16;
+            mask |= (long)ReadU16() << 32;
+            mask |= (long)ReadU16() << 48;
+            _copyArgMask = mask;
+        }
+
         private void OpNewArray()
         {
         {
-            long size = Pop().AsInt();
+            long size = SizeInt(Pop(), false);
             if (size < 0)
                 throw new InvalidOperationException($"Invalid array size {size}.");
             var created = new ScriptArray((int)size);
@@ -4483,11 +4663,22 @@ namespace fire.Runtime
             if (fastTarget.Kind == ValueKind.Array && fastIndex.Kind == ValueKind.Int)
             {
                 var fastArray = fastTarget.AsArray();
-                var items = fastArray.Items;
                 long i = fastIndex.AsInt();
-                if ((ulong)i < (ulong)items.Length && !fastArray.Special)
+                if (!fastArray.Special)
                 {
-                    fastTarget = items[i];
+                    var items = fastArray.Items;
+                    if ((ulong)i < (ulong)items.Length)
+                    {
+                        fastTarget = items[i];
+                        _sp--;
+                        return;
+                    }
+                }
+                else if (fastArray.PackedBools is { } bools && (ulong)i < (ulong)bools.Length)
+                {
+                    // a packed `bool a[]` (ScriptArray: one byte per element)
+                    byte b = bools[i];
+                    fastTarget = b == ScriptArray.UndefinedBool ? Value.MakeUndefined() : Value.MakeBool(b != 0);
                     _sp--;
                     return;
                 }
@@ -4502,6 +4693,7 @@ namespace fire.Runtime
             var target = Pop();
             if (indexVal.Kind == ValueKind.Word && target.Kind is ValueKind.Array or ValueKind.Buffer or ValueKind.String) indexVal = indexVal.CoerceType(ValueKind.Int);   // (a word as an index: its bits as an int)
             if (IsDestroyedLeaf(target)) { ThrowDestroyed(target); return; }
+            if (indexVal.Kind != ValueKind.Int && target.Kind is ValueKind.Array or ValueKind.Buffer or ValueKind.String) throw IndexKindError(indexVal);
 
             if (target.Kind == ValueKind.Array && target.AsArray().IsShared)
             {
@@ -4608,13 +4800,25 @@ namespace fire.Runtime
             if (fastTarget.Kind == ValueKind.Array && fastIndex.Kind == ValueKind.Int)
             {
                 var fastArray = fastTarget.AsArray();
-                var items = fastArray.Items;
                 long i = fastIndex.AsInt();
-                if ((ulong)i < (ulong)items.Length && !fastArray.Special)
+                if (!fastArray.Special)
                 {
+                    var items = fastArray.Items;
+                    if ((ulong)i < (ulong)items.Length)
+                    {
+                        var assigned = _stack[_sp - 1];
+                        items[i] = assigned;
+                        if (_watchDangling && assigned.Kind == ValueKind.Class) NoteStore(assigned, fastArray, null);
+                        _sp -= 2;
+                        _stack[_sp - 1] = assigned;
+                        return;
+                    }
+                }
+                else if (_stack[_sp - 1].Kind == ValueKind.Bool && fastArray.PackedBools is { } bools && (ulong)i < (ulong)bools.Length)
+                {
+                    // a bool into a packed `bool a[]`: its byte (anything else - undefined, a value that does not fit - takes the slow path)
                     var assigned = _stack[_sp - 1];
-                    items[i] = assigned;
-                    if (_watchDangling && assigned.Kind == ValueKind.Class) NoteStore(assigned, fastArray, null);
+                    bools[i] = assigned.AsBool() ? (byte)1 : (byte)0;
                     _sp -= 2;
                     _stack[_sp - 1] = assigned;
                     return;
@@ -4631,6 +4835,7 @@ namespace fire.Runtime
             var target = Pop();
             if (indexVal.Kind == ValueKind.Word && target.Kind is ValueKind.Array or ValueKind.Buffer or ValueKind.String) indexVal = indexVal.CoerceType(ValueKind.Int);   // (a word as an index: its bits as an int)
             if (IsDestroyedLeaf(target)) { ThrowDestroyed(target); return; }
+            if (indexVal.Kind != ValueKind.Int && target.Kind is ValueKind.Array or ValueKind.Buffer or ValueKind.String) throw IndexKindError(indexVal);
             // a typed array (`int[8] a[]`): the value is converted (the assignment yields the stored value), or it is the exception - before the index is checked, as natively
             if (target.Kind == ValueKind.Array && !ConvertArrayElement(target.AsArray(), ref value)) return;
 
@@ -4938,6 +5143,12 @@ namespace fire.Runtime
                     byte elemType = ReadByte();
                     int rank = ReadByte();
                     int unitIdx = ReadU16();
+                    if ((elemType & ArrayElem.OpenFlag) != 0)
+                    {
+                        // `new int[n]`: the array (at depth `rank` its inner arrays) remembers the kind it was made for
+                        MarkOpenArray(Peek(), (byte)(elemType & ~ArrayElem.OpenFlag), rank, 1);
+                        break;
+                    }
                     if (elemType is ArrayElem.U8 or ArrayElem.Word)
                     {
                         // `byte a[]` holds a byte buffer (SPEC 8.4.2), `word a[]` a buffer of machine words (SPEC 8.10): an array stored there becomes one
@@ -5166,15 +5377,7 @@ namespace fire.Runtime
                     break;
                 }
 
-                case OpCode.CopyArgs:
-                {
-                    long mask = ReadU16();
-                    mask |= (long)ReadU16() << 16;
-                    mask |= (long)ReadU16() << 32;
-                    mask |= (long)ReadU16() << 48;
-                    _copyArgMask = mask;
-                    break;
-                }
+                case OpCode.CopyArgs: OpCopyArgs(); break;
 
                 case OpCode.CopyValueOwned:
                 {
@@ -5305,7 +5508,7 @@ namespace fire.Runtime
                 {
                     int ranks = ReadByte();
                     var sizes = new long[ranks];
-                    for (int i = ranks - 1; i >= 0; i--) sizes[i] = Pop().AsInt();
+                    for (int i = ranks - 1; i >= 0; i--) sizes[i] = SizeInt(Pop(), false);
                     foreach (long size in sizes)
                         if (size < 0) throw new InvalidOperationException($"Invalid array size {size}.");
                     var parts = new List<IOwnedLeaf>();
@@ -5386,27 +5589,11 @@ namespace fire.Runtime
                     _currentScope.ReleaseTemps(this);
                     break;
 
-                case OpCode.ClaimToScope:
-                {
-                    int depth = ReadU16();
-                    int flags = ReadByte();
-                    // (a fresh value for a global of the main program: its store moves it there - rule 10)
-                    if (depth == 0xFFFF && _threadBroker != null && IsUnclaimed(_stack[_sp - 1])) _pendingGlobalTake = IdentityOf(_stack[_sp - 1]);
-                    ClaimToScope(_stack[_sp - 1], depth == 0xFFFF ? _globalScope : _currentScope.GetAncestor(depth), flags);
-                    break;
-                }
+                case OpCode.ClaimToScope: OpClaimToScope(); break;
 
                 case OpCode.ClaimToObject:
                 {
-                    var value = Pop();
-                    var holderValue = Pop();
-                    if (holderValue.Kind == ValueKind.Class && holderValue.AsObjectRef() is ObjectInstance holder && !holder.IsDestroyed)
-                    {
-                        // (for an object of the main program's globals: the store moves it there - rule 10)
-                        if (_threadBroker != null && holder.InGlobalsDomain) { if (IsUnclaimed(value)) _pendingGlobalTake = IdentityOf(value); }
-                        else ClaimTree(value, holder);
-                    }
-                    Push(value);
+                    OpClaimToObject();
                     break;
                 }
 
@@ -5414,13 +5601,7 @@ namespace fire.Runtime
 
                 case OpCode.ClaimToArray:
                 {
-                    var holder = _stack[_sp - 3];
-                    if (holder.Kind == ValueKind.Array && !holder.AsArray().IsDestroyed)
-                    {
-                        // (for an array of the main program's globals: the store moves it there - rule 10)
-                        if (_threadBroker != null && holder.AsArray().IsShared) { if (IsUnclaimed(_stack[_sp - 1])) _pendingGlobalTake = IdentityOf(_stack[_sp - 1]); }
-                        else ClaimTree(_stack[_sp - 1], holder.AsArray());
-                    }
+                    OpClaimToArray();
                     break;
                 }
 
@@ -5488,9 +5669,11 @@ namespace fire.Runtime
                 case OpCode.AddressOfIndex:
                 {
                     var refIndex = Pop();
-                    long idx = (refIndex.Kind == ValueKind.Word ? refIndex.CoerceType(ValueKind.Int) : refIndex).AsInt();
+                    if (refIndex.Kind == ValueKind.Word) refIndex = refIndex.CoerceType(ValueKind.Int);
                     var target = Pop();
                     if (IsDestroyedLeaf(target)) { ThrowDestroyed(target); break; }
+                    if (refIndex.Kind != ValueKind.Int && target.Kind is ValueKind.Array or ValueKind.Buffer) throw IndexKindError(refIndex);
+                    long idx = refIndex.Kind == ValueKind.Int ? refIndex.AsInt() : 0;
                     if (target.Kind == ValueKind.Array)
                     {
                         var arr = target.AsArray();
@@ -5533,7 +5716,7 @@ namespace fire.Runtime
 
                 case OpCode.MakeBuffer:
                 {
-                    long size = Pop().AsInt();
+                    long size = SizeInt(Pop(), true);
                     if (size < 0)
                         throw new InvalidOperationException($"Invalid byte buffer size {size} (must be >= 0).");
                     var createdBuffer = new ByteBuffer((int)size, ByteConversions.HostByteOrder);
@@ -5619,14 +5802,7 @@ namespace fire.Runtime
                     break;
                 }
 
-                case OpCode.IsOfType:
-                {
-                    string typeName = _constants[ReadU16()].AsString();
-                    var v = Pop();
-                    if (ReadsDeadClass(v, typeName, out var deadObj)) { Push(Value.MakeUndefined()); ThrowDestroyedObject(deadObj); break; }
-                    Push(Value.MakeBool(IsOfType(v, typeName)));
-                    break;
-                }
+                case OpCode.IsOfType: OpIsOfType(); break;
 
                 case OpCode.InitNext:
                     // (`with`: the store that follows writes the copy - [copy, copy, value])
@@ -5654,18 +5830,7 @@ namespace fire.Runtime
 
                 case OpCode.HasMember:
                 {
-                    // `x??.name`: is x there (not undefined, not destroyed) and has it the member - a field, property or method of its class, or a built-in one?
-                    string memberName = _constants[ReadU16()].AsString();
-                    var v = Pop();
-                    bool has = v.Kind switch
-                    {
-                        ValueKind.Undefined => false,
-                        ValueKind.Class => v.AsObjectRef() is ObjectInstance { IsDestroyed: false } o && !IsDeadObject(o)
-                            && (fire.Runtime.BuiltinMembers.IsOwnership(memberName) || ReflectHas(o, memberName)),
-                        ValueKind.Array or ValueKind.Buffer or ValueKind.Lambda => !IsDestroyedLeaf(v) && fire.Runtime.BuiltinMembers.Has(v.Kind, false, memberName),
-                        _ => fire.Runtime.BuiltinMembers.Has(v.Kind, v.IsEnum, memberName),
-                    };
-                    Push(Value.MakeBool(has));
+                    OpHasMember();
                     break;
                 }
 
@@ -5780,20 +5945,7 @@ namespace fire.Runtime
                     break;
                 }
 
-                case OpCode.CheckUnit:
-                {
-                    // SPEC "Unit declarations": the value on top of the stack goes into a declaration with a unit - it is converted into that unit
-                    // (the same dimension), another dimension is a catchable UnitMismatchException, a whole number that overflows an OverflowException.
-                    // (Converting is part of what the value means, so it happens in every execution mode.)
-                    string requiredUnitName = _constants[ReadU16()].AsString();
-                    ref var adapted = ref _stack[_sp - 1];
-                    switch (Value.AdaptToUnit(ref adapted, requiredUnitName, out var offending))
-                    {
-                        case Value.UnitAdaptation.Mismatch: ThrowUnitMismatch(Values.Unit.DemandDisplay(requiredUnitName), offending.Unit ?? Values.Unit.Unitless); break;
-                        case Value.UnitAdaptation.Overflow: ThrowOverflow($"{adapted} does not fit into a whole number in '{Values.Unit.DemandDisplay(requiredUnitName)}'."); break;
-                    }
-                    break;
-                }
+                case OpCode.CheckUnit: OpCheckUnit(); break;
 
                 case OpCode.Fire:
                 {
@@ -6031,6 +6183,7 @@ namespace fire.Runtime
                             break;
                         }
                         ProcessOneMessage(actorTarget, blocking: true);
+                        ProcessCaught = false;
                     }
                     finally { if (waits) VmScheduler.BlockLeave(); }
                     break;
@@ -6040,7 +6193,9 @@ namespace fire.Runtime
                 {
                     var actorTarget = RequireObjectInstance(Pop(), "try process");
                     bool processed = ProcessOneMessage(actorTarget, blocking: false);
-                    Push(Value.MakeBool(processed));
+                    // (the method threw into a `catch` around the `try process`: the VM stands there - no result on its stack)
+                    if (ProcessCaught) ProcessCaught = false;
+                    else Push(Value.MakeBool(processed));
                     break;
                 }
 
@@ -6978,7 +7133,16 @@ namespace fire.Runtime
         /// return) - in that (very rare) case there is no finished instance,
         /// this is treated as a hard internal error instead of trying
         /// to recursively build yet ANOTHER exception for it.</summary>
-        private ObjectInstance ConstructNested(RuntimeClass rc, Value[] args)
+        private ObjectInstance ConstructNested(RuntimeClass rc, Value[] args) =>
+            TryConstructNested(rc, args)
+            ?? throw new InvalidOperationException(
+                $"Internal error: construction of '{rc.Name}' was interrupted by an exception " +
+                "(exception while building a VM-internal exception instance).");
+
+        /// <summary>Like <see cref="ConstructNested"/>, for a construction the PROGRAM asked for (`Reflect.New`, `Type.New`): an exception in the
+        /// constructor runs to the handlers of the caller like one of a plain `new` (the half-built object is released with the scope of the call,
+        /// without its destruct(), see UnwindTo) - then null: the execution already continues at the handler, the caller pushes nothing.</summary>
+        private ObjectInstance? TryConstructNested(RuntimeClass rc, Value[] args)
         {
             _pendingArgNames = null;   // (a call the VM makes itself has no named arguments - the names of a call that threw stay unused)
             var ctorProto = FindConstructorFor(rc, args)
@@ -7007,10 +7171,7 @@ namespace fire.Runtime
 
             bool completedNormally =
                 ReferenceEquals(_currentChunk, savedChunk) && _ip == savedIp && ReferenceEquals(_currentScope, savedScope);
-            if (!completedNormally)
-                throw new InvalidOperationException(
-                    $"Internal error: construction of '{rc.Name}' was interrupted by an exception " +
-                    "(exception while building a VM-internal exception instance).");
+            if (!completedNormally) return null;
 
             Pop(); // Return at the end of the constructor pushes 'instance' itself (see BeginConstruction/frame.ConstructedInstance) - we already have it directly, discard here
             return instance;
@@ -7023,6 +7184,7 @@ namespace fire.Runtime
         /// Execute, so that its register allocation stays untouched.</summary>
         private bool CallNativeGuarded(int nativeIdx, Value[] args, out Value result)
         {
+            int depth = ++_nativeDepth;
             try
             {
                 result = _natives[nativeIdx](args);
@@ -7030,6 +7192,17 @@ namespace fire.Runtime
                 {
                     // The native function (reflection) raised an exception that has already been redirected to a handler
                     _nativeRedirected = false;
+                    return false;
+                }
+                if (_callbackFailure != null && _callbackFailureDepth == depth)
+                {
+                    // a lambda it called back threw (SPEC 8.1.4): now that the native has returned, its call throws that exception
+                    var failure = _callbackFailure;
+                    _callbackFailure = null;
+                    _nativeDepth--;
+                    depth = -1;
+                    result = default;
+                    ThrowException(Value.MakeClassRef(failure));
                     return false;
                 }
                 AdoptFresh(result);
@@ -7040,6 +7213,14 @@ namespace fire.Runtime
                 result = default;
                 ThrowIndexOutOfBounds(ex.Index, ex.Length, ex.What);
                 return false;
+            }
+            finally
+            {
+                if (depth >= 0)
+                {
+                    _nativeDepth--;
+                    if (_callbackFailure != null && _callbackFailureDepth == depth) _callbackFailure = null;   // (the native threw itself: its exception goes)
+                }
             }
         }
 
@@ -7161,7 +7342,7 @@ namespace fire.Runtime
         private void ClaimElements(ScriptArray arr)
         {
             var temp = _currentScope.Temp;
-            if (!temp.HasOwned) return;
+            if (!temp.HasOwned || arr.IsPacked) return;
             for (int i = 0; i < arr.Items.Length; i++)
                 if (arr.Items[i].Kind is ValueKind.Class or ValueKind.Array or ValueKind.Buffer or ValueKind.Lambda) ClaimTree(arr.Items[i], arr);
         }
@@ -7261,12 +7442,14 @@ namespace fire.Runtime
         /// <summary>`*p` (SPEC 8.3): outside the range (element beyond the bounds, offset on a variable, destroyed array) the catchable exception is thrown - false.</summary>
         private bool TryReadPointer(Value ptr, out Value value)
         {
+            if (ptr.Kind != ValueKind.Pointer) throw new InvalidOperationException($"Dereference of a value of type {ptr.Kind} which is not a pointer.");
             try { value = ptr.AsPointer().Read(); return true; }
             catch (PointerRangeException ex) { value = Value.MakeUndefined(); ThrowPointerRange(ex); return false; }
         }
 
         private bool TryWritePointer(Value ptr, Value value)
         {
+            if (ptr.Kind != ValueKind.Pointer) throw new InvalidOperationException($"Assignment through a value of type {ptr.Kind} which is not a pointer.");
             // a field declared `defined` (SPEC 8.10b): what goes through the pointer is checked like an assignment to the field - its unit, its kind, never undefined
             if (ptr.AsPointer() is FieldPointerTarget { Offset: 0 } field && field.Instance.RtClass is { } rc
                 && rc.FindFieldRequiredKind(field.FieldName) is var kind and not 0 && DeclaredKind.IsNonNull(kind))
@@ -7414,6 +7597,13 @@ namespace fire.Runtime
         private static bool TryCallBuiltinMethod(Value target, string methodName, Value[] args, out Value result)
         {
             result = default;
+            // `x.ToString()` (DECISIONS D14): every value has it - the text `"" + x` gives (a number with its unit, an enum's name, `<array>`); a buffer
+            // decodes its bytes (below), undefined has no methods
+            if (methodName == "ToString" && args.Length == 0 && target.Kind is not (ValueKind.Buffer or ValueKind.Undefined or ValueKind.Class))
+            {
+                result = target.Kind == ValueKind.String ? target : Value.MakeString(target.ToString());
+                return true;
+            }
             switch (target.Kind)
             {
                 case ValueKind.String:
@@ -7660,6 +7850,7 @@ namespace fire.Runtime
                 if (unitDemand == null || AdaptFieldUnit(ref checkedValue, unitDemand)) guarded = checkedValue;
                 return;
             }
+            if (DeclaredText(ref checkedValue, requiredType, owner, callTypeArgs) is var text and not 0) { if (text > 0) guarded = checkedValue; return; }
             ThrowArgumentError(DeclaredType.Mismatch(guarded, requiredType, _constants[whatIdx].AsString(), owner, callTypeArgs));
         }
 
@@ -7689,7 +7880,23 @@ namespace fire.Runtime
                 if (unitDemand == null || AdaptFieldUnit(ref checkedValue, unitDemand)) top = checkedValue;
                 return;
             }
+            if (DeclaredText(ref checkedValue, requiredType, owner, callTypeArgs) is var text and not 0) { if (text > 0) top = checkedValue; return; }
             ThrowArgumentError(DeclaredType.Mismatch(top, requiredType, _constants[whatIdx].AsString(), owner, callTypeArgs));
+        }
+
+        /// <summary>A `T` that stands for `string` (`List&lt;string&gt;`, DECISIONS D14): the value becomes its text, like in a declaration `string` - an object's
+        /// ToString(). 0: the declaration wants no string (the caller reports the mismatch), 1: converted, -1: ToString() threw (already raised).</summary>
+        private int DeclaredText(ref Value value, string requiredType, ObjectInstance? owner, string[]? callTypeArgs)
+        {
+            if (value.Kind is ValueKind.String or ValueKind.Undefined || !DeclaredType.WantsString(requiredType, owner, callTypeArgs)) return 0;
+            if (value.Kind == ValueKind.Class)
+            {
+                if (StringifyForText(value) is not { } text) return -1;
+                value = Value.MakeString(text);
+                return 1;
+            }
+            value = Value.MakeString(value.Kind == ValueKind.Buffer ? ByteConversions.AsciiDecode(value.AsBuffer()) : value.ToString());
+            return 1;
         }
 
         /// <summary>The type arguments of the call of the generic method that runs (kept in the scope of the call; blocks inside it are its children).</summary>
@@ -7705,6 +7912,7 @@ namespace fire.Runtime
         {
             // (a number type argument with a unit: converted into it, a UnitMismatchException for another dimension)
             if (DeclaredType.FitsOrConvert(ref value, requiredType, owner, null, out var unitDemand, TypeIsOf)) return unitDemand == null || AdaptFieldUnit(ref value, unitDemand);
+            if (DeclaredText(ref value, requiredType!, owner, null) is var text and not 0) return text > 0;
             ThrowArgumentError(DeclaredType.Mismatch(value, requiredType!, $"Field '{fieldName}'", owner));
             return false;
         }
@@ -7843,6 +8051,13 @@ namespace fire.Runtime
         /// UnitMismatchException), then the kind is checked (or an ArgumentException). false: an exception is thrown.</summary>
         private bool GuardDeclared(ref Value value, byte required, string what)
         {
+            // a declaration `string` (DECISIONS D14): an object goes in as the text of its ToString() (fire code, nested; its exception propagates)
+            if (DeclaredKind.IsString(required) && value.Kind == ValueKind.Class)
+            {
+                if (StringifyForText(value) is not { } text) return false;
+                value = Value.MakeString(text);
+                return true;
+            }
             if (DeclaredKind.NeedsUnitless(value, required) && !AdaptFieldUnit(ref value, "unitless")) return false;
             if (DeclaredKind.Accept(ref value, required, what) is not { } message) return true;
             ThrowArgumentError(message);
@@ -7919,6 +8134,7 @@ namespace fire.Runtime
             if (array.IsDestroyed || depth > 64) return true;   // (a destroyed array is reported where it is used)
             if (depth < rank)
             {
+                if (array.IsPacked) return true;   // (no inner arrays: bools and undefined only)
                 foreach (var inner in array.Items)
                     if (!TypeArrayValue(inner, (byte)(elemType | (defined ? ArrayElem.DefinedFlag : 0)), rank, unit, depth + 1)) return false;
                 return true;
@@ -7930,9 +8146,38 @@ namespace fire.Runtime
                 ThrowArgumentError($"An array of {ArrayElem.Name(array.ElemType, array.ElemUnit)} cannot be stored where an array of {ArrayElem.Name(elemType, unit)} is declared.");   // (the same text natively)
                 return false;
             }
+            // (`new int[n]` goes where ints are declared - of any width and unit - or floats, not where a class, a string or bools are: DECISIONS D10)
+            if (!ArrayElem.OpenFits(array.OpenKind, elemType))
+            {
+                ThrowArgumentError($"An array of {ArrayElem.Name(array.OpenKind)} cannot be stored where an array of {ArrayElem.Name(elemType, unit)} is declared.");   // (the same text natively)
+                return false;
+            }
+            // (an array that becomes `string a[]`, DECISIONS D14: its objects become the text of their ToString() first - the other values MakeTyped converts)
+            if (elemType == ArrayElem.Class && ArrayElem.IsStringText(unit) && !array.IsPacked)
+                for (int i = 0; i < array.Length; i++)
+                    if (array.TryGet(i, out var item) && item.Kind == ValueKind.Class)
+                    {
+                        if (StringifyForText(item) is not { } text) return false;
+                        array.TrySet(i, Value.MakeString(text));
+                    }
             if (array.MakeTyped(elemType, unit, out var error, out var message, out var offending)) return !defined || MakeArrayDefined(array);
             ThrowArrayElementError(unit, offending, error, message!);
             return false;
+        }
+
+        /// <summary>OpCode.TypeArray with ArrayElem.OpenFlag (`new int[n]`, `new float[2][3]`): the arrays at depth `rank` remember their kind.</summary>
+        private static void MarkOpenArray(Value value, byte kind, int rank, int depth)
+        {
+            if (value.Kind != ValueKind.Array || depth > 64) return;
+            var array = value.AsArray();
+            if (array.IsDestroyed) return;
+            if (depth < rank)
+            {
+                if (array.IsPacked) return;
+                foreach (var inner in array.Items) MarkOpenArray(inner, kind, rank, depth + 1);
+                return;
+            }
+            if (array.ElemType == ArrayElem.None) array.OpenKind = kind;
         }
 
         /// <summary>Makes a typed array a defined one (its zero: ArrayElem.Zero - an enum's first value, "" for strings); an array of objects with an element that
@@ -8019,6 +8264,13 @@ namespace fire.Runtime
         private bool ConvertArrayElement(ScriptArray array, ref Value value)
         {
             if (array.ElemType == ArrayElem.None) return true;
+            // (`string names[]`, DECISIONS D14: an object goes in as the text of its ToString() - fire code, its exception propagates)
+            if (value.Kind == ValueKind.Class && array.ElemType == ArrayElem.Class && ArrayElem.IsStringText(array.ElemUnit))
+            {
+                if (StringifyForText(value) is not { } text) return false;
+                value = Value.MakeString(text);
+                return true;
+            }
             if (array.TryConvertElement(value, out var stored, out var error, out var message)) { value = stored; return true; }
             ThrowArrayElementError(array.ElemUnit, value, error, message!);
             return false;
@@ -8067,6 +8319,15 @@ namespace fire.Runtime
             _classes.TryGetValue(name, out var rc)
                 ? rc
                 : throw new InvalidOperationException($"Unknown class '{name}' at run time.");
+
+        /// <summary>The size of `new int[n]` / `new byte[n]` (n from `any`): an int, else the catchable ArgumentException (fire_rt.h newArray, newBuffer, newJaggedV: the same text).</summary>
+        private static long SizeInt(Value v, bool buffer) =>
+            v.Kind == ValueKind.Int ? v.AsInt()
+            : v.Kind == ValueKind.Word ? v.CoerceType(ValueKind.Int).AsInt()   // (a word: its bits as an int, as an index)
+                : throw new InvalidOperationException(buffer ? $"A byte buffer size must be an int, not {v.Kind}." : $"An array size must be an int, not {v.Kind}.");
+
+        /// <summary>An index of an array, a buffer or a string that is no int (from `any`): the catchable ArgumentException (the same text natively).</summary>
+        private static InvalidOperationException IndexKindError(Value index) => new($"An index must be an int, not {index.Kind}.");
 
         private static ObjectInstance RequireObjectInstance(Value v, string context)
         {
@@ -8185,9 +8446,8 @@ namespace fire.Runtime
 
             bool completedNormally =
                 ReferenceEquals(_currentChunk, savedChunk) && _ip == savedIp && ReferenceEquals(_currentScope, savedScope);
-            if (!completedNormally)
-                throw new InvalidOperationException(
-                    "Internal error: evaluating a default value was interrupted by an exception.");
+            // (the default value threw, and a handler outside took the exception: the instruction that wanted the value does not go on)
+            if (!completedNormally) throw new ExecutionRedirectedException();
 
             _currentThis = savedThis;
             return Pop();

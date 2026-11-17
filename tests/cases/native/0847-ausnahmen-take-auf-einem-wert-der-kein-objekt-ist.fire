@@ -1,0 +1,51 @@
+class B { int x }
+class Holder {
+    B kept
+    undefined Keep(any b, any target) { try b.TakeTo(target) }
+}
+var tries = [
+    () => { any b = new B(); b.TakeTo(5) },
+    () => { any b = new B(); b.TakeTo("s") },
+    () => { any a = new int[2]; a.TakeTo(5) },
+    () => { any f = () => 1; f.TakeTo(undefined) },
+    () => { any b = new B(); b.TakeTo(new int[1], Takes.All) },
+    () => { any b = new B(); print(try b.TakeTo(5)) },
+    () => { var h = new Holder(); h.Keep(new B(), 7) },
+    () => { any n = 5; n.TakeTo(new B()) },
+    () => { any n = 5; n.TakeLocal() },
+    () => { any n = 5; n.TakeUpwards() },
+    () => { any n = 5; n.TakeGlobal() },
+    () => { any n = 5; n.TakeGlobal(true) },
+    () => { any s = "s"; s.TakeLocal(Takes.All) },
+    () => { any n = 5; n.TakeTo(new B(), Takes.All) },
+    () => { any n = 5; print(try n.TakeTo(new B())) },
+    () => { any n = 2.5; print(try n.TakeLocal()) },
+    () => { any o = new int[1]; var b = new B(); o.kept = take b },
+    () => { any o = 5; var b = new B(); o.kept = take b },
+    () => { any n = 5; var b = new B(); n[0] = take b },
+    () => { any n = 5; print(n.x) },
+    () => { any n = 5; n.x = 1 }
+]
+for (var i = 0; i < tries.Length; i++) {
+    try {
+        tries[i]()
+        print(i + ": no exception")
+    } catch (ArgumentException e) {
+        print(i + ": ArgumentException: " + e.message)
+    } catch (MissingMemberException e) {
+        print(i + ": MissingMemberException: " + e.message)
+    }
+}
+// resumed: the TakeTo that failed is skipped, the program goes on
+try {
+    any b = new B()
+    b.TakeTo(3)
+    print("after TakeTo")
+} catch (ArgumentException e) { e.resume() }
+// a correct TakeTo still works
+var owner = new B()
+any c = new B()
+c.TakeTo(owner)
+print(c is from owner)
+print("end")
+//# name: Ausnahmen: Take... auf einem Wert, der kein Objekt ist (TakeTo-Ziel, Werttypen, try, Takes-Modus, take in ein Feld) wie in der VM

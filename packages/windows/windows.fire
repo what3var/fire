@@ -57,13 +57,18 @@ class Window {
     bool IsBlocked { get { return this.blockedBy > 0 } }
 
     // One cycle of the manager for this window: events in (callbacks, queue), onCycle, frame out. false once the window is closed.
+    // (an event handler or onCycle that throws: the frame is still shown, the exception goes on to the caller - SPEC 8.1.4)
     bool Cycle() {
         if (this.IsClosed) { return false }
-        any open = __GRPHWinPump(this.id)
-        var hook = this.onCycle
-        if (hook != undefined) { hook() }
-        __GRPHWinPresent(this.id)
-        if (!open) { this.IsClosed = true }
+        any open = true
+        try {
+            open = __GRPHWinPump(this.id)
+            var hook = this.onCycle
+            if (hook != undefined) { hook() }
+        } finally {
+            __GRPHWinPresent(this.id)
+            if (!open) { this.IsClosed = true }
+        }
         return !this.IsClosed
     }
 
@@ -482,19 +487,23 @@ class WindowManager {
 
     // One cycle of all windows on the calling thread: each gets its events, runs its onCycle and shows its frame. Closed windows are taken out.
     // false when no window is left.
+    // (a window's event handler or onCycle that throws: the exception goes on to the caller, the manager is ready for the next cycle - SPEC 8.1.4)
     bool Tick() {
         if (this.ticking) { return this.windows.Count > 0 }
         this.ticking = true
-        var i = 0
-        while (i < this.windows.Count) {
-            any window = this.windows[i]
-            if (!window.Cycle()) {
-                this.Detach(window)
-                continue
+        try {
+            var i = 0
+            while (i < this.windows.Count) {
+                any window = this.windows[i]
+                if (!window.Cycle()) {
+                    this.Detach(window)
+                    continue
+                }
+                i = i + 1
             }
-            i = i + 1
+        } finally {
+            this.ticking = false
         }
-        this.ticking = false
         return this.windows.Count > 0
     }
 
@@ -514,9 +523,12 @@ class WindowManager {
         }
         this.runs = this.runs + 1
         WindowManager.loops = WindowManager.loops + 1
-        while (this.Tick()) { }
-        WindowManager.loops = WindowManager.loops - 1
-        this.runs = this.runs - 1
+        try {
+            while (this.Tick()) { }
+        } finally {
+            WindowManager.loops = WindowManager.loops - 1
+            this.runs = this.runs - 1
+        }
     }
 
     // Window.Show(true): cycles until `modal` is closed, here on the calling thread. Meanwhile the other windows take no input (IsBlocked) and only get half
@@ -533,29 +545,34 @@ class WindowManager {
         }
         var wasTicking = this.ticking
         this.ticking = true   // (the cycles the manager's thread asks for run here meanwhile)
-        while (!modal.IsClosed && modal.Manager == this) {
-            var i = 0
-            while (i < this.windows.Count) {
-                any window = this.windows[i]
-                any open = window.blockedBy > 0 ? window.Idle() : window.Cycle()
-                if (!open) {
-                    this.Detach(window)
-                    continue
+        // (an event handler that throws ends the modal loop: the other windows take input again, the exception goes on - SPEC 8.1.4; the modal window stays
+        // open as an ordinary window of the manager)
+        try {
+            while (!modal.IsClosed && modal.Manager == this) {
+                var i = 0
+                while (i < this.windows.Count) {
+                    any window = this.windows[i]
+                    any open = window.blockedBy > 0 ? window.Idle() : window.Cycle()
+                    if (!open) {
+                        this.Detach(window)
+                        continue
+                    }
+                    i = i + 1
                 }
-                i = i + 1
+                if (this.started) { __GRPHWinMgrWait(this.id, 20) }
             }
-            if (this.started) { __GRPHWinMgrWait(this.id, 20) }
-        }
-        if (modal.Manager == this) { this.Detach(modal) }
-        this.ticking = wasTicking
-        for (var i = 0; i < this.windows.Count; i = i + 1) {
-            any other = this.windows[i]
-            if (other.blockedBy == depth) {
-                other.blockedBy = 0
-                __GRPHWinSetBlocked(other.id, false)
+            if (modal.Manager == this) { this.Detach(modal) }
+        } finally {
+            this.ticking = wasTicking
+            for (var i = 0; i < this.windows.Count; i = i + 1) {
+                any other = this.windows[i]
+                if (other.blockedBy == depth) {
+                    other.blockedBy = 0
+                    __GRPHWinSetBlocked(other.id, false)
+                }
             }
+            this.modals = this.modals - 1
         }
-        this.modals = this.modals - 1
     }
 }
 

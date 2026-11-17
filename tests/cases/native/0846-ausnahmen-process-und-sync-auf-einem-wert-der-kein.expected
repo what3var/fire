@@ -1,0 +1,5 @@
+0: process on a value of type Int which is not an object.
+1: try process on a value of type Int which is not an object.
+2: 'process'/'try process' on an instance of 'B', which is not an actor.
+3: sync on a value of type Int which is not an object.
+end

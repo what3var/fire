@@ -30,12 +30,18 @@ print(Animal.created)       // 1
 - A **field** is declared like a variable: `Type name` or `Type name = value`. A field always has a type (`var` is only for local variables).
   The initial values are set before the constructor runs.
 - `construct(...)` is the **constructor**; `new Animal("Tom")` calls it. A class without a constructor gets an empty one.
+- **The fields of a class are fixed**: an object has exactly the fields its class (and its base classes) declare. Writing a field the class does not
+  declare is an error when the type is known (`cat.age = 3`: `TC008`); through `any` it is the catchable `MissingMemberException` at run time - the same
+  as reading one (`Field 'age' does not exist on an instance of 'Animal' (and there is no 'set_age' property either).`). Nothing adds a field to an
+  object afterwards, neither in the VM nor natively (`Reflect.Set` of an unknown name is a `ReflectionException`). A property with only `get` cannot
+  be assigned (`ArgumentException`), one with only `set` cannot be read (`MissingMemberException`).
 - A **method** is `ReturnType Name(parameters) { ... }`. A method that returns nothing is declared `undefined`. A method without a return type returns
   `any` (the type checker says so, `TC005`).
 - Inside a method `this` is the object. A field can also be written without `this.` (`name` instead of `this.name`) when no local variable has the
   same name.
-- `static` fields and methods belong to the class: `Animal.created`, `Calc.Twice(2)`. A static method has no `this`. A class must not declare a
-  static and an instance method of the same name (see [Parameters](#parameters)).
+- `static` fields and methods belong to the class: `Animal.created`, `Calc.Twice(2)`. A static method has no `this`. A name is static or for instances, never both: a class must not declare a
+  static and an instance member of the same name - methods, fields and properties alike, also over its base classes (`E4076`, see
+  [Parameters](#parameters)). A field or a property is declared once in a class (`E4077`).
 - **Order of the static initial values**: they are set once at program start, before the first statement of the program runs - class by class in
   the order of the program (the standard library and the imported libraries first, then the files of the project in their order, each from the
   top down), in a class from the top down. An initial value may read a static field whose initial value came before; one that only comes later is
@@ -71,8 +77,8 @@ print(c.Greet("World", "Hi"))   // Hi, World
 - **Overloads**: several methods (and constructors) with the same name are allowed when they have a different **number** of parameters or different
   parameter **types**. The overload closest to the given values runs (see [Overloading by type](#overloading-by-type)).
 - **Static and instance methods are never overloads of each other**: all methods of one name in a class are either `static` or not. Mixing them
-  is forbidden - `static int Get(int a)` next to `int Get()` is not allowed, even with other parameters; give one of them another name. (The compiler does
-  not report it yet.)
+  is forbidden - `static int Get(int a)` next to `int Get()` is not allowed, even with other parameters; give one of them another name (`E4076`). The
+  same holds for fields and properties: `static int n` next to `int n`, a static property next to an instance method of its name.
 - **Default values**: `Type name = value` makes a parameter optional. Optional parameters stand at the end.
 - A parameter without a type is `any` (`TC004`).
 - **Passing**: numbers, `bool`, `char` and strings are copied; objects, arrays and lambdas are passed by reference.
@@ -109,7 +115,8 @@ print(Window.Line("item", bullet: "*"))                     // 0* item
 ```
 
 - Methods (also static ones, `base.` and extensions in the VM) and constructors take named arguments; lambdas, native and `extern` functions do not.
-- Write a space after the colon: `size: 2`. `x:m` without a space is a [unit conversion](05-units.md) (`print(distance:m)`), also as an argument, and so is `x:` before an operator (`print(a: + b)`).
+- Write a space after the colon: `size: 2`. `x:m` without a space is a [unit conversion](05-units.md) (`print(distance:m)`), also as an argument, and so is `x:` when no value follows: before an operator, a comma or the closing parenthesis, and `x:!`
+  (`print(a: + b)`, `F(a:)`, `F(a:!, b)`). `F(flag: !x)` and `F(a: -b)` have a value after the colon and are named arguments.
 - A name that the parameters do not have, and a parameter without argument and without default value, are compile errors (`TC011`) when the
   method is known when compiling (otherwise an `ArgumentException` at run time). A name given twice and a positional argument after a named one are
   syntax errors.
@@ -336,6 +343,22 @@ Without `operator==`, `==` compares objects by reference (the same instance).
 
 `print`, `+` with a string and format strings use the method `string ToString()` of the class if it has one; otherwise an object prints as
 `<object Name>`. A destroyed object is no text at all: printing it throws the `DestroyedException`.
+
+**Every class has `ToString()`** and may override it: without one of its own (or of a base class) `obj.ToString()` gives `<object Name>`, the
+text `print` shows. The same text is what an object becomes when it goes into a `string` declaration - a variable, a field, a parameter, a return
+value, an element of `string a[]` (see [Types](02-types.md#string-holds-a-text)):
+
+```fire
+class Point {
+    int x = 1
+    string ToString() { return $"Point {x}" }
+}
+string s = new Point()      // "Point 1": ToString() runs here
+print(s.Length)             // 7
+```
+
+`ToString()` runs right where the value goes in, in the VM and natively; an exception it throws goes on from there (the declaration keeps what it
+held before).
 
 ## Attributes
 

@@ -142,7 +142,7 @@ namespace fire.Runtime
                     if (counts && FireRuntime.Standstill) { RequestLeave(); ShutdownSelfNow(); }
                     else SuspendForProcess(actor);
                 }
-                else ProcessOneMessage(actor, blocking: true);
+                else { ProcessOneMessage(actor, blocking: true); ProcessCaught = false; }
             });
         }
 
@@ -168,7 +168,9 @@ namespace fire.Runtime
             {
                 try { RunLoopCore(); return; }
                 catch (ScriptErrorException error) { RaiseScriptError(error); }
+                catch (OwnershipException error) { RaiseScriptError(new ScriptErrorException(error.FireClass, error.Message)); }
                 catch (InvalidOperationException error) when (IsCatchableRuntimeError(error)) { RaiseScriptError(new ScriptErrorException("ArgumentException", error.Message)); }
+                catch (ExecutionRedirectedException) { }   // (the VM stands at the handler that took the exception, or it stopped)
             }
         }
     }

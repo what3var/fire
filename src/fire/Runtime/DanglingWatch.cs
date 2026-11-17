@@ -51,7 +51,7 @@ namespace fire.Runtime
         {
             for (object? n = holder; n != null; n = Up(n))
             {
-                if (n is ObjectInstance { IsDestroyed: true } || n is ScriptArray { IsDestroyed: true }) return true;
+                if (n is ObjectInstance { IsDestroyed: true } || n is ScriptArray { IsDestroyed: true } || n is ScriptArray { IsDying: true }) return true;   // (a dying array: its batch is running)
                 if (n is Scope s)
                 {
                     for (Scope? p = s; p != null; p = p.Parent)
@@ -67,7 +67,7 @@ namespace fire.Runtime
         {
             if (holder is ObjectInstance o)
                 return field != null && o.Fields.TryGetValue(field, out var v) && v.Kind == ValueKind.Class && ReferenceEquals(v.AsObjectRef(), target);
-            if (holder is ScriptArray a)
+            if (holder is ScriptArray { IsPacked: false } a)
             {
                 foreach (var item in a.Items)
                     if (item.Kind == ValueKind.Class && ReferenceEquals(item.AsObjectRef(), target)) return true;

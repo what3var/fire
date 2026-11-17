@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using fire.Ast;
+using fire.Bytecode;
 using fire.Lexing;
 using fire.Resolving;
 using fire.Values;
@@ -30,8 +31,12 @@ namespace fire.Compiler
     /// <summary>A static type: `Element` is the element type of an array, `ParamCount`/`Return` the signature of a lambda (-1 / null: not known).</summary>
     internal sealed record StaticType(StaticKind Kind, string? Class = null, StaticType? Element = null, int ParamCount = -1, StaticType? Return = null, IReadOnlyList<StaticType>? Params = null,
         IReadOnlyList<StaticType>? Args = null, Unit? Unit = null, bool UnitIsDimension = false, string? TypeParam = null, bool Raw = false, bool DeclaredAny = false, byte Wide = 0,
-        Nullness Null = Nullness.Unknown, byte Bits = 0)
+        Nullness Null = Nullness.Unknown, byte Bits = 0, bool EitherNumber = false)
     {
+        // (EitherNumber: a `Dynamic` that is a number - an int or a float, which of them the value decides: `5mm:unitless` is 0.005, `2km:unitless` 2000;
+        // with a float it computes a float. Not part of the type.)
+        /// <summary>A number whose kind the checker does not know.</summary>
+        public static readonly StaticType Number = new(StaticKind.Dynamic, EitherNumber: true);
         // (Null: whether a value of a value type certainly is not undefined - a literal, what an operator computes, `defined int` - or may be undefined
         // as far as the code declares it: a parameter, field or uninitialized variable declared `int`, the literal `undefined` (SPEC 8.10b); not part of the type)
         /// <summary>Is this a value type that `defined` can mark (int, float, bool, word, char)?</summary>
@@ -165,6 +170,13 @@ namespace fire.Compiler
         /// <summary>An array (not a fresh one) given to a `byte`/`word` parameter: it is converted into a new buffer - what the method writes does not reach
         /// the array (a warning in strict mode too).</summary>
         public const string ArrayToBufferCode = "TC032";
+        /// <summary>A value of a known type that is never what the place takes: the index of an array or a string, the size of `new int[n]`/`new byte[n]` that is
+        /// no int (a string, a float, ...), `*x` of a value that is no pointer - always the ArgumentException at run time (an error in lax mode too; through
+        /// `any` it is that exception).</summary>
+        public const string KindCode = "TC033";
+        /// <summary>A value that is certainly no string goes into a declaration `string` (DECISIONS D14): it becomes its text (`x.ToString()`). Reported in
+        /// strict mode only, and there as a warning - the conversion is the language's rule, the warning asks to write it where it is meant.</summary>
+        public const string TextConversionCode = "TC034";
         private ExpressionTrees _trees = new();
         private Dictionary<Expr, string>? _treeTypes;
 
@@ -271,6 +283,8 @@ namespace fire.Compiler
                 if (stmt is TypeCheckDirective d) checker._strictBySource[d.Source] = d.Strict;
             checker.CollectInterfaces(program);
             checker._refs = resolved.References;
+            checker._fixedCoercions = resolved.FixedCoercions;
+            resolved.FixedCoercions.Clear();   // (a check before this one - a log run - decided for itself)
             checker._receiverTypeArgs = resolved.ReceiverTypeArgs;
             checker._trees = resolved.Trees;
             checker._scopes.Add(new Dictionary<string, StaticType>());
@@ -292,12 +306,14 @@ namespace fire.Compiler
         // as a lambda) or appears as a string (reflection, callbacks by name), when a package or the prelude has a method of that name and arity (the run
         // time or a package may call it), for the methods the language calls itself (indexers, CompareTo, ...), nor for the constructors of a class that
         // is a base class, nor - without [InferDefined] on the class (InferDefinedClass) - when the program uses reflection. The Linker switches it off for a
-        // module or plugin and in a debug build.
+        // module or plugin; a debug build derives like a release build.
 
         /// <summary>Whether the check derives `defined` for the parameters of the program (FIRE_NO_DERIVE=1 switches it off).</summary>
         [ThreadStatic] public static bool? DeriveDefinedOverride;
         public static bool DeriveDefined => DeriveDefinedOverride ?? Environment.GetEnvironmentVariable("FIRE_NO_DERIVE") != "1";
         private readonly Dictionary<string, (bool[] Defined, int Calls, List<string>?[] Needs)> _calls = new();
+        /// <summary>Per method key: which parameters got a string (or undefined) from every call seen (NoteCall; DerivedStrings).</summary>
+        private readonly Dictionary<string, bool[]> _stringCalls = new();
         // what a call resolved to (an argument that is the result of a call is defined when that method's returns are), and the returns of each method
         private readonly Dictionary<Expr, MethodDecl> _callTargets = new(ReferenceEqualityComparer.Instance);
         private readonly Dictionary<MethodDecl, (List<(bool Ok, string? Needs)> Returns, bool Ends)> _returns = new(ReferenceEqualityComparer.Instance);
@@ -361,6 +377,18 @@ namespace fire.Compiler
                     or UnaryExpr { Op: UnaryOp.Negate, Operand: LiteralExpr { Value.Kind: ValueKind.Int or ValueKind.Float } };
                 if (needs != null) (entry.Needs[j] ??= new List<string>()).Add(needs);
                 else if (!ok) entry.Defined[j] = false;
+            }
+            // (a `string` parameter that every call gives a string - or undefined, or nothing with a string literal as its default - needs no conversion in
+            // its prologue, DECISIONS D14: DerivedStrings)
+            if (!_stringCalls.TryGetValue(key, out var strings) || strings.Length != parameters.Count)
+                _stringCalls[key] = strings = Enumerable.Repeat(true, parameters.Count).ToArray();
+            for (int j = 0; j < parameters.Count; j++)
+            {
+                bool given = false, isString = true;
+                for (int i = 0; i < argParams.Count && i < args.Count; i++)
+                    if (ReferenceEquals(argParams[i], parameters[j])) { given = true; isString &= args[i].Kind is StaticKind.String or StaticKind.Undefined; }
+                if (!given) isString = parameters[j].DefaultValue is null or LiteralExpr { Value.Kind: ValueKind.String or ValueKind.Undefined };
+                if (!isString) strings[j] = false;
             }
             _calls[key] = (entry.Defined, entry.Calls + 1, entry.Needs);
         }
@@ -783,12 +811,21 @@ namespace fire.Compiler
                         DeriveLog?.Invoke($"{name}.{m.Name}: returns a number");
                     }
                 foreach (var (key, parameters) in DerivationCandidates(name, decl, Foreign(decl)))
+                {
+                    if (_calls.TryGetValue(key, out var seenCalls) && seenCalls.Calls > 0 && _stringCalls.TryGetValue(key, out var strings) && strings.Length == parameters.Count)
+                        for (int j = 0; j < parameters.Count; j++)
+                            if (strings[j] && parameters[j] is { ByRef: false, ArrayRanks.Count: 0, Type: { PointerDepth: 0, ArrayRank: 0, LambdaSignature: null, BaseName: "string" } })
+                            {
+                                resolved.DerivedStrings.Add(parameters[j]);
+                                DeriveLog?.Invoke($"{name} {key} {parameters[j].Name}: every call gives a string");
+                            }
                     foreach (var p in parameters)
                     {
                         bool derived = _paramIds.ContainsKey(p) && ok.Contains(ParamId(p));
                         if (derived) resolved.DerivedDefined.Add(p);
                         DeriveLog?.Invoke($"{name} {key} {p.Name}: {(derived ? "defined" : !Derivable(p) ? "not a number parameter" : "a call may give undefined")}");
                     }
+                }
             }
         }
 
@@ -819,7 +856,7 @@ namespace fire.Compiler
         private void Report(string code, string message, int line)
         {
             if (_source < _reportFrom) return;
-            _diagnostics.Add(new Diagnostic(line, message, Strict && code is not (UnitLossCode or AssignInConditionCode or SwitchMissingCode or SetterClaimCode or LateVarTypeCode or TakeIntoCopyCode or StoredTemporaryCode or ArrayToBufferCode) ? DiagnosticSeverity.Error : DiagnosticSeverity.Warning, code));
+            _diagnostics.Add(new Diagnostic(line, message, Strict && code is not (UnitLossCode or AssignInConditionCode or SwitchMissingCode or SetterClaimCode or LateVarTypeCode or TakeIntoCopyCode or StoredTemporaryCode or ArrayToBufferCode or TextConversionCode) ? DiagnosticSeverity.Error : DiagnosticSeverity.Warning, code));
         }
 
         /// <summary>The condition of `if`, `while` and `for` must be a bool: a number is no condition (`if (n)`), the VM throws an ArgumentException for it.</summary>
@@ -852,6 +889,9 @@ namespace fire.Compiler
             // an expression tree where a lambda is expected: its compiled lambda (the other way round there is no tree - TC030)
             if (value is { Kind: StaticKind.Class, Class: "LambdaExpression" } && target.Kind == StaticKind.Lambda && valueExpr != null) { _trees.ToCompiled.Add(valueExpr); return; }
             if (!Assignable(value, target)) { Report(code, $"Cannot assign a value of type '{value}' to {what} of type '{target}'", line); return; }
+            // (a value that is certainly no string into `string` - DECISIONS D14: it becomes its text; strict mode says so)
+            if (Strict && target.Kind == StaticKind.String && !value.IsDynamic && value.Kind is not (StaticKind.String or StaticKind.Undefined))
+                Report(TextConversionCode, $"A value of type '{value}' goes into {what}, which is a 'string': it becomes its text (ToString()) - write '.ToString()' or '\"\" + ...' where that is meant", line);
             if (CutsWide(value, target))
                 Report(WideIntCode, $"An int[{value.Wide}] goes into {what}, a plain int of {ProgramIntWidth} bits in this program: it is cut - declare int[{value.Wide}], or cut it on purpose (!int)", line);
             CheckUnitAssignable(value, target, line, what, valueExpr);
@@ -920,7 +960,14 @@ namespace fire.Compiler
             if (value.Kind == StaticKind.Array && target is { Kind: StaticKind.Class, Class: "IEnumerable" })
                 return target.Args is not [var wanted] || Assignable(value.Element!, wanted);
             if (value.Kind == StaticKind.Array || target.Kind == StaticKind.Array)
-                return value.Kind == target.Kind && Assignable(value.Element!, target.Element!);
+            {
+                if (value.Kind != target.Kind) return false;
+                // an array keeps its element type (DECISIONS D10): a Dog array goes where `Animal a[]` is declared, an Animal array never where `Dog d[]`
+                // is (at run time the ArgumentException) - other than a single object, which may be the derived class the code expects
+                if (value.Element is { Kind: StaticKind.Class, Class: { } have } && target.Element is { Kind: StaticKind.Class, Class: { } want } && have != want
+                    && (_classes.ContainsKey(have) || IsInterface(have)) && (_classes.ContainsKey(want) || IsInterface(want)) && !DerivesFrom(have, want)) return false;
+                return Assignable(value.Element!, target.Element!);
+            }
             if (value.Kind == StaticKind.Lambda && target.Kind == StaticKind.Lambda)
             {
                 if (value.ParamCount >= 0 && target.ParamCount >= 0 && value.ParamCount != target.ParamCount) return false;
@@ -1373,6 +1420,8 @@ namespace fire.Compiler
                 // (`Color c`: a value of that enum - a number goes in with a cast, DECISIONS D8)
                 StaticKind.Enum => value.Kind != StaticKind.Enum || value.Class != target.Class,
                 StaticKind.Dynamic => target.TypeParam != null && value.TypeParam != target.TypeParam,
+                // (`string s`: what is not certainly a string is converted into its text, DECISIONS D14 - a string costs nothing)
+                StaticKind.String => value.Kind != StaticKind.String,
                 _ => false,
             };
             if (needed) _localGuards[valueExpr] = (type, $"Variable '{name}'");
@@ -1391,9 +1440,12 @@ namespace fire.Compiler
                 // (`Color c`: a value of that enum - a number goes in with a cast, DECISIONS D8)
                 StaticKind.Enum => value.Kind != StaticKind.Enum || value.Class != target.Class,
                 StaticKind.Dynamic => target.TypeParam != null && value.TypeParam != target.TypeParam,
+                // (`string s`: what is not certainly a string is converted into its text, DECISIONS D14 - a string costs nothing)
+                StaticKind.String => value.Kind != StaticKind.String,
                 _ => false,
             };
-            if (needed) _localGuards[valueExpr] = (type, what);
+            // (`defined string F()`: only the conversion here - undefined is the return guard's, with its message)
+            if (needed) _localGuards[valueExpr] = (target.Kind == StaticKind.String && type.NonNull ? type with { NonNull = false } : type, what);
         }
         private void Declare(string name, StaticType type)
         {
@@ -2194,9 +2246,17 @@ namespace fire.Compiler
             Push();
             foreach (var p in parameters)
             {
-                Declare(p.Name, MayBeUndefined(DeclaredOrDynamic(p.Type, p.ArrayRanks.Count)));
+                var declaredParam = DeclaredOrDynamic(p.Type, p.ArrayRanks.Count);
+                // (a number parameter without a unit whose default value has one - `float d = 1cm` - is not certainly unitless: DeclaredKind.Of checks
+                // it only without a default or with a plain number; what it holds has the unit of the default or of the argument)
+                if (p.DefaultValue != null && declaredParam.IsNumber && !declaredParam.Raw && p.ArrayRanks.Count == 0 && p.Type is { Unit: null }
+                    && LiteralType(p.DefaultValue) is not { IsNumber: true, Unit.IsUnitless: true })
+                    declaredParam = declaredParam.WithUnit(null);
+                Declare(p.Name, MayBeUndefined(declaredParam));
                 // (a `defined int` parameter checks what the body stores into it, like a variable: SPEC 8.10b)
-                if (p.Type is { NonNull: true, ArrayRank: 0, PointerDepth: 0 } && p.ArrayRanks.Count == 0 && !p.ByRef) DeclareLocalType(p.Name, p.Type);
+                // (and a `string` parameter converts it into its text, DECISIONS D14)
+                if ((p.Type is { NonNull: true, ArrayRank: 0, PointerDepth: 0 } || p.Type is { BaseName: "string", ArrayRank: 0, PointerDepth: 0, LambdaSignature: null }) && p.ArrayRanks.Count == 0 && !p.ByRef)
+                    DeclareLocalType(p.Name, p.Type);
             }
             foreach (var s in body.Statements) Check(s);
             Pop();
@@ -2211,7 +2271,197 @@ namespace fire.Compiler
         private StaticType Infer(Expr expr, StaticType? expected)
         {
             if (expected is { Kind: StaticKind.Float }) MarkFloatTarget(expr);
-            return expr is LambdaExpr lam ? InferLambda(lam, expected) : Infer(expr);
+            if (expr is LambdaExpr lam) return InferLambda(lam, expected);
+            // `int i = 2.6!`, `float:km d = a:!`: a value that asks for its type or unit from the context takes them from the declaration it goes to
+            // (`int i = -9.5!` is `-(9.5!)`: the sign stands outside, the value under it is the one that asks)
+            var asking = expr;
+            while (asking is UnaryExpr { Op: UnaryOp.Negate } signed) asking = signed.Operand;
+            if (expected != null && asking is UnitCoerceExpr or TypeCoerceExpr)
+            {
+                var (previousExpr, previousTarget) = (_declaredFor, _declaredTarget);
+                (_declaredFor, _declaredTarget) = (asking, expected);
+                try { return Infer(expr); }
+                finally { (_declaredFor, _declaredTarget) = (previousExpr, previousTarget); }
+            }
+            return Infer(expr);
+        }
+
+        // -------------------------------------------------------------------------------------------------------------
+        // Conversions from the context: `x!`, `x:`, `x:!` (SPEC 3.1, 3.2)
+        // -------------------------------------------------------------------------------------------------------------
+        /// <summary>The value that goes to a declaration (Infer with an expected type) and the type of that declaration.</summary>
+        private Expr? _declaredFor;
+        private StaticType? _declaredTarget;
+        /// <summary>The conversions from the context that are known here (ResolveResult.FixedCoercions).</summary>
+        private Dictionary<Expr, FixedCoercion> _fixedCoercions = new(ReferenceEqualityComparer.Instance);
+
+        /// <summary>The conversion the compiler emits for `expr` (null: it looks at the anchor at run time, or - without one - does what a value without
+        /// a context gets). An expression can be inferred again (a lambda with another target): what was found last counts, like the types.</summary>
+        private void FixCoercion(Expr expr, FixedCoercion? plan)
+        {
+            if (plan is { } fixedPlan) _fixedCoercions[expr] = fixedPlan;
+            else _fixedCoercions.Remove(expr);
+        }
+
+        /// <summary>The type of `x:unit` / `x::unit`: Value.CoerceUnit. A float stays a float; a whole number stays one within its dimension (rounded), but
+        /// into `unitless` or another dimension it is the number in the base unit - whole or not (`5mm:unitless` is 0.005): not known here.</summary>
+        private static StaticType UnitResult(StaticType operand, Unit target, bool relabel)
+        {
+            if (!operand.IsNumber) return StaticType.Dynamic;
+            if (relabel || operand.Kind == StaticKind.Float) return operand.WithUnit(target);
+            if (operand.Unit is { } from && !operand.UnitIsDimension && (from.Equals(target) || from.IsCompatibleWith(target) && !(target.IsUnitless && !from.IsUnitless)))
+                return operand.WithUnit(target);
+            return StaticType.Number;
+        }
+
+        /// <summary>The type of `x:unit` and `x::unit` with the unit written out (a whole number into a coarser unit may lose its fraction: TC007).</summary>
+        private StaticType ExplicitUnitResult(StaticType operand, string targetName, bool relabel, int line)
+        {
+            if (!operand.IsNumber) return StaticType.Dynamic;
+            var target = Unit.Parse(targetName);
+            if (!relabel && operand.Kind == StaticKind.Int && operand.Unit is { } from && !from.Equals(target) && from.IsCompatibleWith(target) && from.IsLinear && target.IsLinear && from.ConversionFactorTo(target) < 1)
+                Report(UnitLossCode, $"A whole number in '{UnitText(from)}' converted into '{UnitText(target)}' may lose its fraction (convert a float: 'x!float:{targetName}')", line);
+            // (a whole number whose unit is not known here - a `var`, a parameter `: any` - converted into a unit: taken to be of that dimension, as
+            // always; only `:unitless` and a unit known to be of another dimension say "an int or a float")
+            if (!relabel && operand.Kind == StaticKind.Int && (operand.Unit == null || operand.UnitIsDimension) && !target.IsUnitless) return operand.WithUnit(target);
+            return UnitResult(operand, target, relabel);
+        }
+
+        /// <summary>The type of `x!int`, `x!float`, `x!bool`, `x!char`, `x!string` (not a width, a class or `word`).</summary>
+        private static StaticType ExplicitTypeResult(StaticType operand, TokenType? keyword, bool unsigned)
+        {
+            var operandUnit = operand.IsNumber ? operand.Unit : null;
+            return keyword switch
+            {
+                TokenType.KwWord => StaticType.Word,
+                TokenType.KwInt when unsigned => StaticType.Int.WithUnit(Unit.Unitless),   // (`!byte`: raw data, the unit is dropped)
+                TokenType.KwInt => StaticType.Int.WithUnit(operandUnit),
+                TokenType.KwFloat => StaticType.Float.WithUnit(operandUnit),
+                TokenType.KwBool => StaticType.Bool,
+                TokenType.KwChar => StaticType.Char,
+                TokenType.KwString => StaticType.String,
+                _ => StaticType.Dynamic,
+            };
+        }
+
+        /// <summary>TC013 (an error in lax mode too): `!` to a string or a bool - written out (`x!string`) or taken from an anchor of that type - converts
+        /// nothing; a value of another type is the ArgumentException in every run.</summary>
+        private void NoConversion(StaticType operand, string to, int line) =>
+            ReportError(ImpossibleCastCode, $"A value of type '{operand}' is never converted to '{to}' by '!': the conversion always fails at run time"
+                + (to == "string" ? " - the text of a value is '\"\" + x' or 'x.ToString()'" : ""), line);
+
+        /// <summary>The operand of a conversion from the context with what it names itself applied (`a:km!`: in km) - in the order of the compiler:
+        /// the type before the unit.</summary>
+        private StaticType InferCoercionOperand(Compiler.CoercionInfo info, int line)
+        {
+            var type = Infer(info.Inner);
+            if (info.ExplicitType != null) type = ExplicitTypeResult(type, info.ExplicitType, false);
+            if (info.ExplicitUnit != null) type = ExplicitUnitResult(type, info.ExplicitUnit, false, line);
+            return type;
+        }
+
+        /// <summary>What `!` without a type gives for a value of the type `operand` next to an anchor of the type `target` (Value.CoerceType with the kind
+        /// of the anchor), or for a value that goes to a declaration of that type (`declared`: exactly `x!int` / `x!float` / `x!char` / `x!word`; another
+        /// declaration is no context). `Known`: the compiler can emit it without looking at the anchor.</summary>
+        private (StaticType Type, FixedCoercion Plan, bool Known) AutoTypeResult(StaticType operand, StaticType target, bool declared, int line)
+        {
+            // (the number of an enum value, a character and a word carry no unit)
+            Unit? unit = operand.IsNumber ? operand.Unit : operand.Kind is StaticKind.Enum or StaticKind.Char or StaticKind.Word ? Unit.Unitless : null;
+            bool dimensionOnly = operand.IsNumber && operand.UnitIsDimension;
+            // a value of this kind is never converted: only undefined passes (as 0) - and nothing when the value certainly is defined
+            bool neverNumber = operand.Kind is StaticKind.Bool or StaticKind.String or StaticKind.Class or StaticKind.Object or StaticKind.Array or StaticKind.Lambda;
+            void Impossible(string to) =>
+                Report(ImpossibleCastCode, $"A value of type '{operand}' is never converted to '{to}' by '!': the conversion always fails at run time", line);
+            switch (target.Kind)
+            {
+                case StaticKind.Float:
+                    if (neverNumber && operand.Null == Nullness.Defined) Impossible("float");
+                    return (StaticType.Float.WithUnit(unit, dimensionOnly), new FixedCoercion(TypeTag.Float, false, null), true);
+                case StaticKind.Int:
+                case StaticKind.Enum when !declared:   // (an enum value is its number: the anchor is an int)
+                {
+                    if (neverNumber && operand.Null == Nullness.Defined) Impossible("int");
+                    var result = (StaticType.Int with { Wide = operand.Kind == StaticKind.Int ? operand.Wide : (byte)0 }).WithUnit(unit, dimensionOnly);
+                    // (`x!int` cuts an int of a wider width to the program's, the conversion to the anchor does not: such a value keeps the run-time way)
+                    bool known = declared || operand.Kind is StaticKind.Float or StaticKind.Char or StaticKind.Enum or StaticKind.Word or StaticKind.Undefined
+                        || operand.Kind == StaticKind.Int && operand.Wide == 0 || neverNumber;
+                    return (result, new FixedCoercion(TypeTag.Int, false, null), known);
+                }
+                case StaticKind.Word:
+                    return (StaticType.Word, new FixedCoercion(null, true, null), true);
+                case StaticKind.Char:
+                    if (neverNumber && operand.Null == Nullness.Defined) Impossible("char");
+                    return (StaticType.Char, new FixedCoercion(TypeTag.Char, false, null), true);
+                case StaticKind.Bool when !declared:
+                    // (nothing becomes a bool: only a bool passes - an error in lax mode too, the conversion certainly throws)
+                    if (!operand.IsDynamic && operand.Kind != StaticKind.Bool) NoConversion(operand, "bool", line);
+                    return (StaticType.Bool, new FixedCoercion(TypeTag.Bool, false, null), true);
+                case StaticKind.String when !declared:
+                    // (nothing becomes a string by `!`: only a string passes - the text of a value is `"" + x` or `x.ToString()`)
+                    if (!operand.IsDynamic && operand.Kind != StaticKind.String) NoConversion(operand, "string", line);
+                    return (StaticType.String, new FixedCoercion(TypeTag.String, false, null), true);
+                default:
+                    // an anchor whose kind is not known here (`any`), an object, an array: decided at run time; a declaration of such a type is no context
+                    return (declared ? operand : StaticType.Dynamic, default, false);
+            }
+        }
+
+        /// <summary>The type of an operand that asks for a conversion from the context, after `operand` (InferCoercionOperand). `target` null: no
+        /// context (`var c = a:!`, or both operands of an operation ask) - the type stays, the unit becomes unitless. Otherwise `target` is the anchor of
+        /// a binary operation - the operand takes its kind and unit (OpCode.CoerceTypeDynamic / CoerceUnitDynamic) - or, with `declared`, the type of the
+        /// declaration the value goes to. `fix`: the compiler may emit the conversion without looking at the anchor (FixCoercion).</summary>
+        private StaticType AutoCoercionResult(Expr expr, Compiler.CoercionInfo info, StaticType operand, StaticType? target, bool declared, bool fix)
+        {
+            var type = operand;
+            var plan = default(FixedCoercion);
+            bool known = target != null && fix;
+            if (info.TypeIsAuto && target != null)
+            {
+                var (converted, typePlan, typeKnown) = AutoTypeResult(type, target, declared, expr.Line);
+                // (a declaration that is no context for the type - `string s = a!`, `any x = a!` - leaves the value as it is)
+                if (declared && !typeKnown) typePlan = default;
+                else known &= typeKnown;
+                (type, plan) = (converted, typePlan);
+            }
+            if (info.UnitIsAuto)
+            {
+                // the unit of the anchor as the run time reads it (Value.Unit, unitless for a value that carries none); a declaration without a known
+                // unit is no context: unitless, like a value without one
+                Unit? unit = target == null ? Unit.Unitless
+                    : target.IsNumber ? (target.Unit != null && !target.UnitIsDimension ? target.Unit : declared ? Unit.Unitless : null)
+                    : declared || target.Kind is StaticKind.Enum or StaticKind.Bool or StaticKind.Char or StaticKind.String or StaticKind.Word ? Unit.Unitless : null;
+                if (unit == null)
+                {
+                    known = false;
+                    type = type.Kind == StaticKind.Float || info.RelabelAuto && type.IsNumber ? type.WithUnit(null) : StaticType.Dynamic;
+                }
+                else
+                {
+                    // (a whole number into a coarser unit is rounded, like `x:km`: TC007 - next to a float `x:!` converts it as a float)
+                    if (!info.RelabelAuto && type.Kind == StaticKind.Int && type.Unit is { } from && !type.UnitIsDimension && !from.Equals(unit) && from.IsCompatibleWith(unit)
+                        && from.IsLinear && unit.IsLinear && !unit.IsUnitless && from.ConversionFactorTo(unit) < 1)
+                        Report(UnitLossCode, $"A whole number in '{UnitText(from)}' converted into '{UnitText(unit)}' may lose its fraction (convert it as a float: 'x:!' next to a float, or 'x!float:')", expr.Line);
+                    type = UnitResult(type, unit, info.RelabelAuto);
+                    plan = plan with { Unit = unit };
+                }
+            }
+            FixCoercion(expr, known ? plan : null);
+            return type;
+        }
+
+        /// <summary>`x!`, `x:`, `x:!` that is not an operand of a binary operation: a value that goes to a declaration (Infer with the expected type), or
+        /// one without a context.</summary>
+        private StaticType InferAutoCoercion(Expr expr, Compiler.CoercionInfo info)
+        {
+            var operand = InferCoercionOperand(info, expr.Line);
+            if (ReferenceEquals(expr, _declaredFor) && _declaredTarget is { } target)
+            {
+                // (the type parameter of generic code, `any`, a class: no context)
+                bool typeContext = info.TypeIsAuto && target.Kind is StaticKind.Int or StaticKind.Float or StaticKind.Char or StaticKind.Word;
+                bool unitContext = info.UnitIsAuto && target.IsNumber && target.Unit != null && !target.UnitIsDimension;
+                if (typeContext || unitContext) return AutoCoercionResult(expr, info, operand, target, declared: true, fix: true);
+            }
+            return AutoCoercionResult(expr, info, operand, null, declared: false, fix: false);
         }
 
         /// <summary>The powers of an expression whose target is a float (SPEC 1.1): `float f = 2 ^ -1` and `x = 2 ^ n * 3` with a float `x` take the float power
@@ -2318,58 +2568,50 @@ namespace fire.Compiler
                 case RangeExpr range:
                     {
                         // `1..5`: whole numbers in the unit of the start
-                        var from = Infer(range.From, StaticType.Int);
-                        var to = Infer(range.To, StaticType.Int);
+                        var from = Infer(range.From);
+                        var to = Infer(range.To);
                         foreach (var (bound, boundExpr) in new[] { (from, range.From), (to, range.To) })
                             if (!bound.IsDynamic && bound.Kind != StaticKind.Int)
                                 Report(AssignCode, $"A range goes from a whole number to a whole number, not '{bound}'", boundExpr.Line);
                         return StaticType.ArrayOf(StaticType.Int.WithUnit(from.Kind == StaticKind.Int ? from.Unit : null));
                     }
                 case IsFromExpr ifr: Infer(ifr.Operand); Infer(ifr.OwnerExpr); return StaticType.Bool;
+                // `x!`, `x:`, `x:!` (also `x:km!`): the type or the unit of the context - the declaration the value goes to, or none
+                case UnitCoerceExpr or TypeCoerceExpr when Compiler.AnalyzeCoercion(expr) is { RequestsAnyAuto: true } auto:
+                    return InferAutoCoercion(expr, auto);
                 case UnitCoerceExpr uc:
                     {
-                        // `x:mm` converts (a whole number into a coarser unit may lose its fraction: TC007), `x::mm` relabels, `x:` takes the unit of the operation (not known here)
+                        // `x:mm` converts (a whole number into a coarser unit may lose its fraction: TC007), `x::mm` relabels
                         var operand = Infer(uc.Operand);
-                        if (!operand.IsNumber) return StaticType.Dynamic;
-                        if (uc.TargetUnitName is not { } targetName) return operand.WithUnit(null);
-                        var target = Unit.Parse(targetName);
-                        if (!uc.Relabel && operand.Kind == StaticKind.Int && operand.Unit is { } from && !from.Equals(target) && from.IsCompatibleWith(target) && from.IsLinear && target.IsLinear && from.ConversionFactorTo(target) < 1)
-                            Report(UnitLossCode, $"A whole number in '{UnitText(from)}' converted into '{UnitText(target)}' may lose its fraction (convert a float: 'x!float:{targetName}')", uc.Line);
-                        return operand.WithUnit(target);
+                        // (`a:km:`: the unit written inside counts, Compiler.AnalyzeCoercion)
+                        return uc.TargetUnitName is { } unitName ? ExplicitUnitResult(operand, unitName, uc.Relabel, uc.Line) : operand;
                     }
                 case TypeCoerceExpr tc:
                     {
                         var operand = Infer(tc.Operand);
-                        var operandUnit = operand.IsNumber ? operand.Unit : null;
                         if (tc.TargetClass is { } castType)
                         {
                             var castTarget = Declared(castType, 0) ?? StaticType.Dynamic;
                             CheckCast(operand, castTarget, tc.Line);
                             return castTarget;
                         }
-                        return tc.TargetTypeKeyword switch
-                        {
-                            TokenType.KwWord => StaticType.Word,
-                            TokenType.KwInt when tc.Unsigned => StaticType.Int.WithUnit(Unit.Unitless),   // (`!byte`: raw data, the unit is dropped)
-                            TokenType.KwInt => StaticType.Int.WithUnit(operandUnit),
-                            TokenType.KwFloat => StaticType.Float.WithUnit(operandUnit),
-                            TokenType.KwBool => StaticType.Bool,
-                            TokenType.KwChar => StaticType.Char,
-                            TokenType.KwString => StaticType.String,
-                            _ => StaticType.Dynamic,
-                        };
+                        // (`x!string`, `x!bool` of a value that is none: always the ArgumentException)
+                        if (tc.TargetTypeKeyword == TokenType.KwString && !operand.IsDynamic && operand.Kind != StaticKind.String) NoConversion(operand, "string", tc.Line);
+                        if (tc.TargetTypeKeyword == TokenType.KwBool && !operand.IsDynamic && operand.Kind != StaticKind.Bool) NoConversion(operand, "bool", tc.Line);
+                        // (`a!int!`: the type written inside counts)
+                        return tc.TargetTypeKeyword == null ? operand : ExplicitTypeResult(operand, tc.TargetTypeKeyword, tc.Unsigned);
                     }
                 case ArrayLiteralExpr arr: return StaticType.ArrayOf(Join(arr.Elements.Select(Infer).ToList(), arr));
                 case NewArrayExpr na:
                     {
-                        foreach (var size in na.SizeExprs) if (size != null) Infer(size);
+                        foreach (var size in na.SizeExprs) if (size != null) CheckSizeKind(Infer(size), "an array", na.Line);
                         var element = DeclaredOrDynamic(na.ElementType);
                         // (the elements are undefined: they take the unit of a declaration with a unit, `float:m grid[][] = new float[2][2]`)
                         if (element.IsNumber && na.ElementType?.Unit == null) element = element.WithUnit(null);
                         for (int i = 0; i < na.SizeExprs.Count; i++) element = StaticType.ArrayOf(element);
                         return element;
                     }
-                case NewBufferExpr nb: Infer(nb.SizeExpr); return StaticType.ArrayOf(nb.Words ? StaticType.Word : StaticType.Int with { Unit = Unit.Unitless, Raw = true });   // (`new byte[n]`: a byte[], like a declared one)
+                case NewBufferExpr nb: CheckSizeKind(Infer(nb.SizeExpr), nb.Words ? "an array" : "a byte buffer", nb.Line); return StaticType.ArrayOf(nb.Words ? StaticType.Word : StaticType.Int with { Unit = Unit.Unitless, Raw = true });   // (`new byte[n]`: a byte[], like a declared one)
                 case ThrowExpr th: Infer(th.Value); return StaticType.Dynamic;
                 case SyncExpr sy: Infer(sy.Target); return StaticType.Bool;   // (`sync x`: True, or undefined when the original is gone)
                 case SyncGlobalsExpr: return StaticType.Int;   // (the number of entries processed)
@@ -2390,6 +2632,8 @@ namespace fire.Compiler
         private StaticType InferUnary(UnaryExpr u)
         {
             var operand = Infer(u.Operand);
+            if (u.Op == UnaryOp.Dereference && NeverKind(operand, pointer: true))
+                ReportError(KindCode, $"'*' needs a pointer, not a value of type '{operand}': the dereference always fails at run time", u.Line);
             if (u.Op == UnaryOp.LogicalNot) CheckLogicalOperand(operand, "!", u.Line);
             return u.Op switch
             {
@@ -2403,8 +2647,7 @@ namespace fire.Compiler
 
         private StaticType InferBinary(BinaryExpr b)
         {
-            var left = Infer(b.Left);
-            var right = Infer(b.Right);
+            var (left, right) = InferOperands(b);
             if (b.Op is BinaryOp.And or BinaryOp.Or)
             {
                 string op = b.Op == BinaryOp.And ? "&&" : "||";
@@ -2417,6 +2660,36 @@ namespace fire.Compiler
             return type.IsNumber ? type.WithUnit(unit) : type;
         }
 
+        /// <summary>The operands of a binary operation under the anchor rule (SPEC 3.2; Compiler.EmitCoercedOperands): the one operand that asks for a
+        /// conversion from the context (`x!`, `x:`, `x:!`) takes the kind and the unit of the other one, the anchor. When both ask there is no anchor: their
+        /// units become unitless, their types stay. The operands are inferred from left to right.</summary>
+        private (StaticType Left, StaticType Right) InferOperands(BinaryExpr b)
+        {
+            if (b.Op is BinaryOp.And or BinaryOp.Or) return (Infer(b.Left), Infer(b.Right));
+            var leftInfo = Compiler.AnalyzeCoercion(b.Left);
+            var rightInfo = Compiler.AnalyzeCoercion(b.Right);
+            if (!leftInfo.RequestsAnyAuto && !rightInfo.RequestsAnyAuto) return (Infer(b.Left), Infer(b.Right));
+            if (leftInfo.RequestsAnyAuto && rightInfo.RequestsAnyAuto)
+            {
+                var bothLeft = InferCoercionOperand(leftInfo, b.Left.Line);
+                var bothRight = InferCoercionOperand(rightInfo, b.Right.Line);
+                return (AutoCoercionResult(b.Left, leftInfo, bothLeft, null, false, false), AutoCoercionResult(b.Right, rightInfo, bothRight, null, false, false));
+            }
+            // (`==` and `!=` take an undefined anchor without an error of their own: there the conversion to it stays the run time's, which refuses it)
+            bool Fix(StaticType anchor) => b.Op is not (BinaryOp.Eq or BinaryOp.NotEq) || anchor.Null == Nullness.Defined;
+            if (rightInfo.RequestsAnyAuto)
+            {
+                var anchor = Infer(b.Left);
+                var operand = InferCoercionOperand(rightInfo, b.Right.Line);
+                return (anchor, AutoCoercionResult(b.Right, rightInfo, operand, anchor, false, Fix(anchor)));
+            }
+            else
+            {
+                var operand = InferCoercionOperand(leftInfo, b.Left.Line);
+                var anchor = Infer(b.Right);
+                return (AutoCoercionResult(b.Left, leftInfo, operand, anchor, false, Fix(anchor)), anchor);
+            }
+        }
         /// <summary>The unit of the result of a binary operation (SPEC 3.2, 3.4): `+ - %` and comparisons need the same dimension (another one is TC006) and give
         /// the finer unit of two whole numbers, otherwise the unit of the left operand; `* /` combine the units; `&amp; | #` keep it, a shift the left one.
         /// Not known when an operand's unit is not known.</summary>
@@ -2475,6 +2748,10 @@ namespace fire.Compiler
                     // a string on the left joins whatever comes (its ToString); on the right only a value that cannot overload `+` is sure to
                     if (left.Kind == StaticKind.String) return StaticType.String;
                     return left.IsDynamic || left.Kind == StaticKind.Class ? StaticType.Dynamic : StaticType.String;
+                // (a float with a number that is an int or a float: a float)
+                case BinaryOp.Add or BinaryOp.Sub or BinaryOp.Mul or BinaryOp.Mod or BinaryOp.Div or BinaryOp.Power
+                    when left.Kind == StaticKind.Float && right.EitherNumber || right.Kind == StaticKind.Float && left.EitherNumber:
+                    return StaticType.Float;
                 case BinaryOp.Add or BinaryOp.Sub or BinaryOp.Mul or BinaryOp.Mod:
                     if (left.Kind == StaticKind.Int && right.Kind == StaticKind.Int) return StaticType.Int;
                     if (left.Kind is StaticKind.Int or StaticKind.Float && right.Kind is StaticKind.Int or StaticKind.Float) return StaticType.Float;
@@ -2512,6 +2789,7 @@ namespace fire.Compiler
                 IdentifierExpr id => CheckImplicitThisAccess(id, MemberUse.Write) ?? Lookup(id.Name, id.Line),
                 MemberExpr m => InferMemberTarget(m),
                 IndexExpr ix => InferIndexTarget(ix),
+                UnaryExpr { Op: UnaryOp.Dereference } deref => InferUnary(deref),   // (`*x = v`: x must be a pointer, TC033)
                 _ => StaticType.Dynamic,
             };
             var value = Infer(a.Value, target);
@@ -2540,18 +2818,38 @@ namespace fire.Compiler
         private StaticType InferIndexTarget(IndexExpr ix)
         {
             var target = Infer(ix.Target);
-            Infer(ix.Index);
+            CheckIndexKind(target, Infer(ix.Index), ix.Line);
             NoteReceiverTypeArgs(ix, target);
             if (target.Kind == StaticKind.Array) return target.Element!;
             if (target.Kind == StaticKind.Class && FindMethod(target, "SetIndex", 2, out var map) is { } setter) return DeclaredOrDynamic(setter.Params[1].Type, setter.Params[1].ArrayRanks.Count, map);
             return StaticType.Dynamic;
         }
 
+        /// <summary>A known type that is certainly not an int (an index, a size: an enum and a word are numbers there) - or, with `pointer`, certainly no pointer
+        /// (a pointer is `Dynamic` to the checker).</summary>
+        private static bool NeverKind(StaticType t, bool pointer) =>
+            t.Kind is StaticKind.String or StaticKind.Float or StaticKind.Bool or StaticKind.Char or StaticKind.Class or StaticKind.Object or StaticKind.Array or StaticKind.Lambda
+            || pointer && t.Kind is StaticKind.Int or StaticKind.Word or StaticKind.Enum;
+
+        /// <summary>`a[i]` of an array or a string with an index that is certainly no int: TC033 (an error).</summary>
+        private void CheckIndexKind(StaticType target, StaticType index, int line)
+        {
+            if (target.Kind is StaticKind.Array or StaticKind.String && NeverKind(index, pointer: false))
+                ReportError(KindCode, $"An index must be an int, not a value of type '{index}': the access always fails at run time", line);
+        }
+
+        /// <summary>`new int[n]`, `new byte[n]` with a size that is certainly no int: TC033 (an error).</summary>
+        private void CheckSizeKind(StaticType size, string what, int line)
+        {
+            if (NeverKind(size, pointer: false))
+                ReportError(KindCode, $"The size of {what} must be an int, not a value of type '{size}': 'new' always fails at run time", line);
+        }
+
         /// <summary>`a[i]`: the element of an array, the char of a string, what the `operator[]` of a class returns.</summary>
         private StaticType InferIndex(IndexExpr ix)
         {
             var target = Infer(ix.Target);
-            Infer(ix.Index);
+            CheckIndexKind(target, Infer(ix.Index), ix.Line);
             NoteReceiverTypeArgs(ix, target);
             Dictionary<string, StaticType>? map = null;
             return target.Kind switch
@@ -2712,7 +3010,7 @@ namespace fire.Compiler
         /// <summary>`obj.Name(...)` that finds no method: none of that name at all (TC008), or none that takes that many arguments (TC002).</summary>
         private void ReportMissingMethod(MemberExpr callee, StaticType target, int argc)
         {
-            if (target.Kind != StaticKind.Class || IsUniversalMember(callee.Name)) return;
+            if (target.Kind != StaticKind.Class || IsUniversalMember(callee.Name) || callee.Name == "ToString" && argc == 0) return;   // (every object has ToString(), D14)
             if (!FullyKnown(target))
             {
                 // through an interface type: only what the interface (and the ones it extends) declares - other members need a cast (`x!Circle`)
@@ -3112,6 +3410,9 @@ namespace fire.Compiler
         private static StaticType? BuiltinCallType(StaticType target, string name, int argc)
         {
             var bytes = StaticType.ArrayOf(StaticType.Int with { Unit = Unit.Unitless, Raw = true });
+            // `x.ToString()` of every value that is no object (DECISIONS D14): its text, like `"" + x` (a byte buffer: its bytes decoded)
+            if (name == "ToString" && argc == 0 && target.Kind is StaticKind.String or StaticKind.Int or StaticKind.Float or StaticKind.Bool or StaticKind.Char
+                or StaticKind.Word or StaticKind.Enum or StaticKind.Array or StaticKind.Lambda) return StaticType.String;
             if (target.Kind == StaticKind.String) return name == "ToBytes" && argc == 0 ? bytes : null;
             if (target.Kind != StaticKind.Array || target.Element is not { Kind: StaticKind.Int, Raw: true }) return null;
             var number = (name.StartsWith("ReadFloat", StringComparison.Ordinal) ? StaticType.Float : StaticType.Int).WithUnit(Unit.Unitless).WithNull(Nullness.Defined);
@@ -3191,6 +3492,9 @@ namespace fire.Compiler
                 {
                     candidates = FindMethods(target, m.Name, c.Args.Count);
                     if (candidates.Count == 0 && FindMember(target, m.Name) is { Kind: StaticKind.Lambda } field) { lambda = field; name = m.Name; }
+                    // (every object has ToString(), DECISIONS D14: without one of its class (or of a class derived from it) the text `<object Name>`)
+                    if (candidates.Count == 0 && m.Name == "ToString" && c.Args.Count == 0 && FullyKnown(target) && !_classes.Keys.Any(k => DerivesFrom(k, target.Class!) && HasMethodNamed(StaticType.ClassOf(k), "ToString")))
+                    { foreach (var a in c.Args) Infer(a); return StaticType.String; }
                 }
             }
             else if (c.Callee is IdentifierExpr nativeId && _refs.TryGetValue(nativeId, out var nativeRef) && nativeRef is ResolvedRef.Native

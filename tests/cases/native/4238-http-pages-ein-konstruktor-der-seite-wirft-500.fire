@@ -1,0 +1,60 @@
+#import "http.pages"
+#import "ui"
+class Boom : Exception { construct(string m) : base(m) { } }
+[Page "/broken"]
+class BrokenPage {
+    UI.Panel view
+    construct() {
+        this.view = new UI.Panel(0, 0, 400, 300)
+        throw new Boom("no page today")
+    }
+}
+[Page "/fine"]
+class FinePage {
+    UI.Panel view
+    UI.Label title
+    construct() {
+        this.view = new UI.Panel(0, 0, 400, 300)
+        var s = new UI.StackPanel(0, 0, -1, -1)
+        var l = new UI.Label("fine", 0, 0)
+        s.Add(l)
+        this.title = l
+        var odd = new UI.Button("odd", 0, 0)
+        odd.OnClick = func () on this => { any f = undefined; f(1) }
+        s.Add(odd)
+        this.view.Add(s)
+    }
+}
+class Seen { List lines = new List() }
+var seen = new Seen()
+var server = new Http.AppServer("127.0.0.1", 0)
+var pages = new Http.Pages("Broken")
+pages.OnError(func (any e) on seen => { lines.Add(e.phase + " " + e.page + " " + e.path + " " + e.type + ": " + e.message) })
+server.PushTo(new Http.Sessions()).PushTo(pages)
+int port = server.Port
+int done = 0
+string log = ""
+fire taking port {
+    var c = new Http.Client()
+    var r = c.Get("http://127.0.0.1:" + port + "/broken")
+    var out = "broken " + r.status + "\n"
+    var r2 = c.Get("http://127.0.0.1:" + port + "/fine")
+    var html = r2.Text()
+    out = out + "fine " + r2.status + " " + (html.IndexOf("fine") > 0) + "\n"
+    var h = new Http.Headers()
+    h.Set("Cookie", r2.Header("Set-Cookie").Substring(0, 45))
+    var circuit = html.Substring(html.IndexOf("data-circuit=\"") + 14, 32)
+    var ws = Http.WebSocket.Connect("ws://127.0.0.1:" + port + "/_fire/ws?c=" + circuit, 5000, h)
+    ws.Send("{\"e\": 3, \"k\": \"click\"}")
+    out = out + "call of undefined " + ws.ReceiveText(5000) + " open " + ws.IsOpen + " code " + ws.CloseCode + "\n"
+    var r3 = c.Get("http://127.0.0.1:" + port + "/broken")
+    out = out + "broken again " + r3.status + "\n"
+    sync global { log = out; done = 1 }
+}
+while (done < 1) { server.AcceptOne(20ms); sync globals }
+print(log)
+for (var i = 0; i < 200 && seen.lines.Count < 3; i++) { Sleep(20ms) }
+for (var i = 0; i < seen.lines.Count; i++) { print(seen.lines[i]) }
+server.Close()
+print("end")
+//# name: Http.Pages: ein Konstruktor der Seite wirft - nur diese Anfrage endet mit 500 und OnError hoert davon (phase start), auch in der VM; der Aufruf eines Werts, der kein Lambda ist, beendet nur den Circuit

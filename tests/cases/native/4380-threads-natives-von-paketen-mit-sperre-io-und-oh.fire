@@ -1,0 +1,39 @@
+#import "time"
+#import "io"
+#import "compression"
+#import "hash"
+// Threads and the main program in the natives of packages with a lock (io) and without (compression, hash, time), with arguments of their own and of
+// the shared domain (a global buffer the main program changes meanwhile), reads of globals and sections in between: nothing deadlocks, nothing races.
+class G { static int rounds = 300
+  static string name = "hello" }
+byte shared[] = new byte[4096]
+for (int i = 0; i < shared.length; i++) { shared[i] = 65 + i % 26 }
+var done = 0
+var sum = 0
+var lengths = 0
+for (int t = 0; t < 3; t++) {
+    fire {
+        int local = 0
+        for (int i = 0; i < G.rounds; i++) {
+            byte b[] = IO.Utf8.GetBytes(G.name + i)
+            string s = IO.Utf8.GetString(shared, 0, 16)
+            byte z[] = Compression.Deflate.Compress(shared)
+            byte back[] = Compression.Deflate.Decompress(Compression.Deflate.Compress(b))
+            string h = Hash.Md5.HexOf(b)
+            local = local + s.length + back.length - b.length + h.length
+            if (i % 50 == 0) { sync global { sum = sum + 1 } }
+        }
+        sync global { done = done + 1; lengths = lengths + local }
+    }
+}
+int spins = 0
+while (done < 3) {
+    byte m[] = IO.Utf8.GetBytes("main")
+    string text = IO.Utf8.GetString(shared, 0, 8)
+    shared[3] = 65 + spins % 26
+    int[64] now = DateTime.UtcNow.Ticks
+    string h = Hash.Md5.HexOf(shared)
+    spins++
+}
+print("sections " + sum + ", lengths " + lengths)
+//# name: Threads: Natives von Paketen mit Sperre (io) und ohne (compression, hash, time) aus Threads und dem Hauptprogramm, mit eigenen Argumenten und einem Puffer der Globals, Sektionen dazwischen

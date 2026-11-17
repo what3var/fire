@@ -199,7 +199,13 @@ class SensorKit {
 * `threadSafe` (in `native`, optional, default `false`): your natives may be called by several fire threads at the same time. Without it a native build calls the
   natives of one package one at a time - a lock per package, taken around each call; a native that waits (`gilRelease()` ... `gilAcquire()`, see below) and a
   callback into fire code that reaches a safe point let go of it meanwhile, so other threads can call the package then, just as with the old global lock. Set it
-  only when your natives keep no state of their own, or protect it themselves.
+  only when your natives keep no state of their own, or protect it themselves: every native must be safe beside every other one, also two calls with the same
+  handle (a table of handles needs a lock of its own - `fire_spin`, `fire_spinLock`/`fire_spinUnlock`, held for a few instructions - and an entry must work for
+  one caller at a time, see `packages/compression/native/fire_bridge_compression.h`), and the last error must be per thread (`g_ioError` is). The lock of a
+  package holds up only the threads that call the same package: a long native does not hold up the main program or other threads as long as its arguments are
+  numbers, strings, buffers or arrays of numbers of the calling thread (for an object, any other array or something of the globals the thread keeps the read
+  side of the globals' lock while the native runs, and the main program waits for it at its next safe point). In a debug build (the GIL) and in the VM (one
+  lock per package library) natives run one at a time, with or without `threadSafe`.
 * A thread of your own (`fire_thread_start`, `pthread_create`, ...) that calls into the runtime - makes strings or arrays, throws, calls fire code - calls
   `fire_strandAttach()` before and `fire_strandDetach()` at its end (a native build without the GIL keeps the state of a strand in a structure the thread
   has to have, docs/ROADMAP_TASKS.md step 2). A thread that only computes, waits or talks to the system needs neither.
@@ -376,7 +382,14 @@ In the VM your functions run in a shared library, so values are **copied** at th
 * a **byte buffer you receive is the caller's own memory** (no copy): the VM pins it for the call, you read and write the bytes in place (`b->bytes()`), exactly like in a native build, where a buffer
   never moves either. So a native can fill a read buffer (`Read(handle, buffer, ...)`) or draw into a framebuffer of any size without a copy; the length is fixed. Buffers of 16 KiB and more live on the
   pinned heap of .NET, so they keep their address for their whole life. A buffer you *return* is copied;
-* objects, lambdas and pointers cannot cross (an error says so); units are not carried;
+* objects and pointers cannot cross (an error says so); units are not carried;
+* **a lambda** crosses into a package in **C** as a handle of the host (`FIRE_LAMBDA`): the native gets a `Value` of kind `K_Lambda` and calls it with `callLam(lam, argc, args, &list)`
+  (keep it with `retain(lamKeep(lam))` to call it later). During a call of the program on the VM's thread it runs at once, nested, with the real globals; from another thread it runs
+  at the VM's next safe point. The C++ wrapper (`fire_pkg_wrapper.hpp`) takes no lambdas;
+* **an exception that leaves the lambda** (SPEC 8.1.4) does not jump through your native. While the program waits for your native (the lambda runs during its call), `callLam` returns
+  `undefined` and `g_unwind.active` is set: stop calling lambdas (further `callLam` calls do nothing anyway), free what you hold and return as usual - then the program's call of
+  your native throws the exception, and a `try` around it catches it. The same holds in a native build (there `callLam` keeps the exception and the call site throws it). Do not clear `g_unwind` to swallow it: in the VM the host keeps the exception anyway. A lambda
+  that runs where nobody waits for it (a service of your package at a safe point, another thread) gets its exception reported on the error output; the program goes on;
 * an error inside your function (`fatal`, `indexError`, ...) is reported to the VM with its text (it ends the program there, like an error of a built-in native); `fireError("Class", "text")` is reported
   with the class (ABI result 2: `error` holds the class name, a line feed and the message) and the VM throws that exception, so a script can `catch` it;
 * **the host's decisions** reach a library through callbacks (`fire_host`, `fire_pkg_set_host` in `native/abi/fire_pkg_abi.h`): which paths a script may touch (`io_allow`, the `IoPolicy` of the host) and where the

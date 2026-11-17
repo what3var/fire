@@ -1,0 +1,27 @@
+class Reg {
+    static List items = new List()
+    static int nums[] = new int[2]
+}
+class Other {
+    construct() { }
+    destruct() { print("other destruct") }
+}
+Other later = undefined
+int gone[] = new int[1]
+delete gone
+// destructors at the end of the program: an exception thrown and caught there belongs to the global scope, which is being destroyed - it is freed all the same
+// (natively under AddressSanitizer: no leak); an object that a destructor gives to the global scope then is dropped without its destructor, like in the VM
+class Holder {
+    construct() { }
+    destruct() {
+        try { any first = Reg.items[0]; print("first " + first) } catch (DestroyedException e) { print("caught destroyed") }
+        try { throw new Exception("late") } catch (Exception e) { print("caught " + e.message) }
+        try { print(gone[0]) } catch (DestroyedException e) { print("caught destroyed: " + e.message) }
+        try { int n = Reg.nums[5] } catch (IndexOutOfBoundsException e) { print("caught index") }
+        later = new Other()
+    }
+}
+var h = new Holder()
+Reg.items.Add(5)
+print("end")
+//# name: Programmende: eine Ausnahme, die ein Destruktor wirft und faengt, wird freigegeben

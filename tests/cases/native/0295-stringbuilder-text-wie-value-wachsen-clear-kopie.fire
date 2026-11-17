@@ -1,0 +1,36 @@
+class P { int x = 3; string ToString() { return "P(" + this.x + ")" } }
+class Q { }
+enum Color { Red, Green }
+var sb = new StringBuilder()
+for (int i = -3; i < 5; i++) { sb.Append(i) }
+sb.AppendLine("!")
+sb.Append(2.5m)
+sb.Append(7cm)
+sb.Append('c')
+sb.Append(true)
+sb.Append(undefined)
+sb.Append(new P())
+sb.Append(new Q())
+sb.Append(Color.Green)
+sb.Append([1, 2])
+sb.Append(-9223372036854775807 - 1)
+sb.Append(1.0 / 4)
+sb.Append("ä€")
+print(sb.ToString())
+print(sb.Length)
+sb.Clear()
+print(sb.Length + sb.ToString() + "|")
+for (int i = 0; i < 1000; i++) { sb.Append("abcdefghij") }
+print(sb.Length)
+print(sb.ToString().Substring(9990))
+var second = copy sb
+second.Append("X")
+print(second.Length + " " + sb.Length)
+var big = new StringBuilder()
+for (int i = 0; i < 30000; i++) { big.Append(i) }
+print(big.Length + " " + big.ToString().Substring(big.Length - 10))
+sb.Clear()
+sb.Append("")
+sb.AppendLine(1)
+print(sb.Length)
+//# name: StringBuilder: Text wie "" + value, Wachsen, Clear, Kopie (ein Zeichenpuffer hinter __SbCall)

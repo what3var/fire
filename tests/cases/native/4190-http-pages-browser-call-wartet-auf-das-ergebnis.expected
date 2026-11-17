@@ -1,0 +1,7 @@
+page 200
+call 1 {"patches": [], "js": [{"id": 0, "fn": "add", "args": [4,5]}]}
+call 2 {"patches": [], "js": [{"id": 1, "fn": "add", "args": [9,1]}]}
+done {"patches": [{"e": 2, "t": "await 9 10", "v": true, "n": true, "fg": "", "bg": ""}]}
+later {"patches": [], "js": [{"id": 2, "fn": "add", "args": [1,1]}]}
+callback {"patches": [{"e": 2, "t": "callback 2", "v": true, "n": true, "fg": "", "bg": ""}]}
+

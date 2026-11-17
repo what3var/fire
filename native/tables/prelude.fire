@@ -1564,16 +1564,32 @@ class extends string {
     }
 }
 
-/// Collects pieces of text and joins them at the end: `Append` is cheap, `ToString()` builds the text once.
+/// Collects pieces of text in one growing buffer: `Append` is cheap, `ToString()` builds the text once.
 class StringBuilder {
-    List<string> parts
-    int size = 0
-    construct() { this.parts = new List<string>() }
+    private any data
+    construct() { this.data = new byte[64] }
     /// Appends a value as text (like `"" + value`).
     undefined Append(any value) {
-        string t = "" + value
-        this.parts.Add(t)
-        this.size = this.size + t.Length
+        if (__SbCall(1, this.data, value) != 0) { this.Put(value) }
+    }
+    // what did not go in at once: the text of an object, and a buffer that is full (the next one is at least twice as big)
+    private undefined Put(any value) {
+        any text = value
+        int need = __SbCall(1, this.data, text)
+        if (need < 0) {
+            text = "" + value
+            need = __SbCall(1, this.data, text)
+        }
+        if (need > 0) {
+            var fresh = new byte[need]
+            __SbCall(2, fresh, this.data)
+            // the new buffer belongs to the builder (a local one dies with this method), the old one is released
+            any old = this.data
+            this.data = fresh
+            fresh.TakeTo(this)
+            delete old
+            __SbCall(1, this.data, text)
+        }
     }
     /// Appends a value as text and a line break.
     undefined AppendLine(any value) {
@@ -1581,14 +1597,11 @@ class StringBuilder {
         this.Append("\n")
     }
     /// The number of characters collected so far.
-    int Length { get { return this.size } }
+    int Length { get { return __SbCall(3, this.data) } }
     /// Removes everything collected.
-    undefined Clear() {
-        this.parts.Clear()
-        this.size = 0
-    }
+    undefined Clear() { __SbCall(4, this.data) }
     /// The collected text.
-    string ToString() { return "".Join(this.parts) }
+    string ToString() { return __SbCall(5, this.data) }
 }
 
 // char als Basistyp erweitert (SPEC 5.5.1, 8.12): eine native Funktion __CharCall(id, char).

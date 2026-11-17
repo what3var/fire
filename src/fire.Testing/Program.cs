@@ -4111,6 +4111,160 @@ Console.WriteLine("=== VM-Optimierungen: Value, Stack, Inline-Caches (Regression
         accessorDeadReads.Aggregate(accessorOwnership, (text, read) => text.Replace(read, "")),
         accessorExpected.Where(l => !l.EndsWith(" destroyed")).ToArray(), new[] { VmExecutionMode.Performance });
 
+
+    // StringBuilder (one growing buffer of characters behind __SbCall): the text is that of `"" + value` for every kind of value; growing, Clear, copies.
+    CheckPerf("StringBuilder: Text wie \"\" + value, Wachsen, Clear, Kopie", """
+        class P { int x = 3; string ToString() { return "P(" + this.x + ")" } }
+        class Q { }
+        enum Color { Red, Green }
+        var sb = new StringBuilder()
+        for (int i = -3; i < 5; i++) { sb.Append(i) }
+        sb.AppendLine("!")
+        sb.Append(2.5m)
+        sb.Append(7cm)
+        sb.Append('c')
+        sb.Append(true)
+        sb.Append(undefined)
+        sb.Append(new P())
+        sb.Append(new Q())
+        sb.Append(Color.Green)
+        sb.Append([1, 2])
+        sb.Append(-9223372036854775807 - 1)
+        sb.Append(1.0 / 4)
+        sb.Append("ä€")
+        print(sb.ToString())
+        print(sb.Length)
+        sb.Clear()
+        print(sb.Length + sb.ToString() + "|")
+        for (int i = 0; i < 1000; i++) { sb.Append("abcdefghij") }
+        print(sb.Length)
+        print(sb.ToString().Substring(9990))
+        var second = copy sb
+        second.Append("X")
+        print(second.Length + " " + sb.Length)
+        var big = new StringBuilder()
+        for (int i = 0; i < 30000; i++) { big.Append(i) }
+        print(big.Length + " " + big.ToString().Substring(big.Length - 10))
+        sb.Clear()
+        sb.Append("")
+        sb.AppendLine(1)
+        print(sb.Length)
+        """, new[] { "-3-2-101234!\n2.5m7cmcTrueundefinedP(3)<object Q>Green<array>-92233720368547758080.25ä€", "86", "0|", "10000", "abcdefghij", "10001 10000", "138890 2999829999", "2" });
+
+    // `bool a[]` is packed in the VM (one byte per element, ScriptArray): what the language sees is unchanged.
+    CheckPerf("Gepackte bool-Arrays: undefined, defined, Literal, any, Kopie, Feld, mehrdimensional, List<bool>", """
+        class Box { bool flags[]; construct() { this.flags = new bool[4] } }
+        class T {
+            static string All(bool xs[]) {
+                string s = ""
+                foreach (x in xs) { s = s + x + " " }
+                return s
+            }
+        }
+        bool a[] = new bool[5]
+        print(a[0] + " " + a.length)
+        a[1] = true
+        a[2] = false
+        print(T.All(a))
+        any wrong = 5
+        try { a[3] = wrong } catch (ArgumentException e) { print(e.message) }
+        a[1] = undefined
+        print(a[1] == undefined)
+        defined bool d[] = new bool[3]
+        d[1] = true
+        print(T.All(d))
+        any nothing = undefined
+        try { d[2] = nothing } catch (ArgumentException e) { print(e.message) }
+        bool lit[] = [true, false, true]
+        lit[0] = !lit[0]
+        print(T.All(lit) + (lit[1] || lit[2]) + " " + (lit[0] && lit[2]))
+        any x = new bool[2]
+        x[0] = true
+        print(x[0] + " " + x[1])
+        any y = lit
+        y[1] = true
+        print(T.All(lit))
+        var c = copy lit
+        c[0] = true
+        print(lit[0] + " " + c[0] + " " + c.length)
+        any text = "no"
+        try { c[1] = text } catch (ArgumentException e) { print(e.message) }
+        var b = new Box()
+        b.flags[2] = true
+        var b2 = copy b
+        b2.flags[0] = true
+        print(T.All(b.flags) + "/ " + T.All(b2.flags))
+        bool grid[][] = new bool[2][3]
+        grid[1][2] = true
+        print(grid[1][2] + " " + grid[0][0] + " " + grid.length + " " + grid[1].length)
+        var list = new List<bool>()
+        for (int i = 0; i < 20; i++) { list.Add(i % 3 == 0) }
+        int n = 0
+        foreach (v in list) { if (v) { n++ } }
+        print(n + " " + list.Count + " " + list[3] + " " + list[4])
+        int count = 0
+        bool big[] = new bool[100000]
+        for (int i = 0; i < big.length; i++) { big[i] = i % 7 == 0 }
+        for (int i = 0; i < big.length; i++) { if (big[i]) { count++ } }
+        print(count)
+        bool p[] = [true, undefined]
+        print(p[1])
+        defined bool same[] = p
+        print(p[1])
+        int nums[] = new int[3]
+        nums[1] = 7
+        print(nums[0] + " " + nums[1] + " " + nums.length)
+        int:cm lens[] = new int[2]
+        lens[0] = 1m
+        print(lens[0] + " " + lens[1])
+        """, new[] { "undefined 5", "undefined True False undefined undefined ", "An element of an array of bool must be a bool (or undefined), not Int.", "True", "False True False ", "An element of a defined array of bool cannot be undefined.", "False False True True False", "True undefined", "False True True ", "False True 3", "An element of an array of bool must be a bool (or undefined), not String.", "undefined undefined True undefined / True undefined True undefined ", "True undefined 2 3", "7 20 True False", "14286", "undefined", "False", "undefined 7 3", "100cm undefined:cm" }, new[] { VmExecutionMode.Debug, VmExecutionMode.Release });
+    {
+        // the storage itself: a fresh array holds nothing, `bool a[]` bytes; reading single elements keeps it packed, Items makes it Values (the same elements)
+        void PackCheck(bool ok, string what) { if (!ok) perfFailures++; Console.WriteLine(ok ? $"OK: {what}" : $"FEHLER: {what}"); }
+        var fresh = new ScriptArray(1000);
+        PackCheck(fresh.IsPacked && fresh.Length == 1000 && fresh.TryGet(999, out var freshLast) && freshLast.Kind == ValueKind.Undefined && !fresh.TryGet(1000, out _) && fresh.IsPacked,
+            "ScriptArray: ein frisches Array ist undefined ohne Speicher");
+        var bools = new ScriptArray(1000);
+        PackCheck(bools.MakeTyped(ArrayElem.Bool, null, out _, out _, out _) && bools.IsPacked && bools.PackedBools is { Length: 1000 } && bools.GetUnchecked(5).Kind == ValueKind.Undefined,
+            "ScriptArray: bool a[] = new bool[n] ist gepackt (ein Byte je Element)");
+        bools.SetUnchecked(5, Value.MakeBool(true));
+        bools.TrySet(6, Value.MakeBool(false));
+        PackCheck(bools.IsPacked && bools.GetUnchecked(5).AsBool() && bools.GetUnchecked(6).Kind == ValueKind.Bool && !bools.GetUnchecked(6).AsBool() && bools.PackedBools![5] == 1,
+            "ScriptArray: Schreiben und Lesen einzelner bools bleibt gepackt");
+        bools.MakeDefined();
+        PackCheck(bools.IsPacked && bools.ElemDefined && bools.GetUnchecked(7).Kind == ValueKind.Bool && !bools.GetUnchecked(7).AsBool() && bools.GetUnchecked(5).AsBool(),
+            "ScriptArray: defined macht aus undefined false, gepackt");
+        var twin = new ScriptArray(1000);
+        twin.CopyTypeOf(bools);
+        twin.CopyElementsFrom(bools, 1000);
+        PackCheck(twin.IsPacked && twin.GetUnchecked(5).AsBool() && !ReferenceEquals(twin.PackedBools, bools.PackedBools), "ScriptArray: die Kopie eines gepackten Arrays ist gepackt");
+        var values = new Value[1000];
+        bools.ReadItems(values);
+        PackCheck(bools.IsPacked && values[5].AsBool() && values[6].Kind == ValueKind.Bool, "ScriptArray: ReadItems entpackt nicht");
+        var items = bools.Items;
+        PackCheck(!bools.IsPacked && bools.PackedBools == null && items.Length == 1000 && items[5].AsBool() && items[7].Kind == ValueKind.Bool && bools.ElemType == ArrayElem.Bool
+            && bools.GetUnchecked(5).AsBool(), "ScriptArray: Items macht Values daraus - dieselben Elemente, derselbe Typ");
+        var literal = new ScriptArray(3);
+        literal.Items[0] = Value.MakeBool(true); literal.Items[1] = Value.MakeUndefined(); literal.Items[2] = Value.MakeBool(false);
+        PackCheck(literal.MakeTyped(ArrayElem.Bool, null, out _, out _, out _) && literal.IsPacked && literal.PackedBools!.SequenceEqual(new byte[] { 1, ScriptArray.UndefinedBool, 0 }),
+            "ScriptArray: ein Literal wird beim Typisieren gepackt");
+        var notBool = new ScriptArray(2);
+        notBool.Items[0] = Value.MakeInt(1);
+        PackCheck(!notBool.MakeTyped(ArrayElem.Bool, null, out var packError, out _, out _) && packError == ArrayElem.Error.Type && !notBool.IsPacked && notBool.ElemType == ArrayElem.None,
+            "ScriptArray: ein Element, das kein bool ist, bleibt der Fehler (das Array bleibt, wie es war)");
+        var ints = new ScriptArray(4);
+        PackCheck(ints.MakeTyped(ArrayElem.I64, "cm", out _, out _, out _) && !ints.IsPacked && ints.Items[3].Kind == ValueKind.Undefined && ints.Items[3].Unit is { IsUnitless: false },
+            "ScriptArray: new int[n] mit Einheit - jedes Element undefined in der Einheit");
+        // 20 million bools: a few megabytes, not hundreds (24 bytes per Value before)
+        long before = GC.GetTotalMemory(true);
+        var many = new ScriptArray(20_000_000);
+        many.MakeTyped(ArrayElem.Bool, null, out _, out _, out _);
+        many.MakeDefined();
+        long used = GC.GetTotalMemory(true) - before;
+        PackCheck(many.IsPacked && used < 40_000_000, $"ScriptArray: 20 Millionen bools belegen {used / 1_000_000} MB (unter 40)");
+        GC.KeepAlive(many);
+    }
+
     Console.WriteLine(perfFailures == 0 ? "Alle VM-Optimierungs-Pruefungen bestanden." : $"FEHLER: {perfFailures} Pruefung(en) fehlgeschlagen.");
 }
 
@@ -10095,13 +10249,29 @@ callbackTests:
         print("hits " + hits + " other " + (h.other == undefined))
         """, new[] { "hits 1 other True" });
 
-    CheckCb("Unbehandelte Exception im Callback: gemeldet, Programm laeuft weiter, try/catch des Aufrufers sieht sie nicht", cbHead + """
-        win.RegisterMouseDown(func (int b, float x, float y) => { throw new Exception("boom") })
+    // SPEC 8.1.4: the exception of a callback that runs during a native (Window.Tick) is thrown at the call of the native once it has returned - the same object;
+    // the native's further callbacks do not run
+    CheckCb("Unbehandelte Exception im Callback: nach dem Ende von Tick wirft dessen Aufruf sie (dasselbe Objekt), weitere Callbacks laufen nicht", cbHead + """
+        var thrown = new Exception("boom")
+        var calls = 0
+        win.RegisterMouseDown(func (int b, float x, float y) => { calls = calls + 1; throw thrown })
+        win.RegisterMouseDown(func (int b, float x, float y) => { calls = calls + 10 })
         __TestEvent(8, 1, 1.0, 1.0)
-        try { win.Tick() } catch (e) { print("aeusserer catch") }
+        __TestEvent(8, 1, 1.0, 1.0)
+        try { win.Tick(); print("nie") } catch (e) { print("aeusserer catch " + e.message + " " + (e == thrown) + " calls " + calls) }
         print("weiter " + (1 + 2))
         try { throw new Exception("m") } catch (e) { print("catch " + e.message) }
-        """, new[] { "CB: Unhandled exception of type 'Exception': boom", "weiter 3", "catch m" });
+        win.RegisterMouseDown(func (int b, float x, float y) => { calls = calls + 100 })
+        __TestEvent(8, 1, 1.0, 1.0)
+        try { win.Tick(); print("Tick ohne Fehler? calls " + calls) } catch (e) { print("wieder gefangen, calls " + calls) }
+        """, new[] { "aeusserer catch boom True calls 1", "weiter 3", "catch m", "wieder gefangen, calls 2" });
+
+    CheckCb("Unbehandelte Exception im Callback ohne try: das Programm endet mit ihr (wie jede unbehandelte Exception)", cbHead + """
+        win.RegisterMouseDown(func (int b, float x, float y) => { throw new Exception("boom") })
+        __TestEvent(8, 1, 1.0, 1.0)
+        win.Tick()
+        print("nie")
+        """, new[] { "UNBEHANDELT: Unhandled exception of type 'Exception': boom" });
 
     CheckCb("Ein try/catch im Callback selbst faengt", cbHead + """
         var caught = 0
@@ -10113,7 +10283,7 @@ callbackTests:
         print("caught " + caught)
         """, new[] { "caught 1" });
 
-    CheckCb("Callback in einer Funktion mit offenem try: der Fehler bricht nur den Callback ab", cbHead + """
+    CheckCb("Callback in einer Funktion mit offenem try: das try um Tick faengt die Exception, finally laeuft", cbHead + """
         win.RegisterMouseDown(func (int b, float x, float y) => { throw new Exception("boom") })
         __TestEvent(8, 1, 1.0, 1.0)
         class T {
@@ -10122,14 +10292,28 @@ callbackTests:
                     w.Tick()
                     print("nach Tick")
                 } catch (e) {
-                    print("falsch gefangen")
+                    print("gefangen " + e.message)
                 } finally {
                     print("finally")
                 }
             }
         }
         T.Step(win)
-        """, new[] { "CB: Unhandled exception of type 'Exception': boom", "nach Tick", "finally" });
+        """, new[] { "gefangen boom", "finally" });
+
+    CheckCb("Ein werfender Handler unter WindowManager.Run: Run gibt die Exception weiter und ist danach wieder bereit (ein zweites Run laeuft)", cbHead + """
+        var hits = 0
+        win.RegisterMouseDown(func (int b, float x, float y) => {
+            hits = hits + 1
+            if (hits == 1) { throw new Exception("boom") }
+            win.Close()
+        })
+        __TestEvent(8, 1, 1.0, 1.0)
+        try { win.Run() } catch (e) { print("gefangen " + e.message + " laeuft " + win.Manager.IsRunning) }
+        __TestEvent(8, 1, 1.0, 1.0)
+        win.Run()
+        print("zweites Run zu Ende, hits " + hits)
+        """, new[] { "gefangen boom laeuft False", "zweites Run zu Ende, hits 2" });
 
     // Performance mode checks nothing: an access outside the array is a raw C# exception. The state of the VM must be right afterwards.
     CheckCb("Rohe C#-Ausnahme im Callback (Performance): Zustand wiederhergestellt, Programm laeuft weiter", cbHead + """
@@ -12770,6 +12954,10 @@ else
                 // (the end of the program ended a thread: the line on stderr is checked on its own - the VM writes it to the console, not to the output)
                 else if (c.Name.Contains("(Meldung auf stderr)"))
                     actual = exit == 0 && stderr.Contains("ended like with terminate") ? stdout : $"Exitcode {exit}: {stdout}stderr: {stderr}";
+                // (Http.Pages without OnError: the errors of the pages are lines on stderr - checked on their own, the VM writes them to the console)
+                else if (c.Name.Contains("(Http.Pages-Zeile auf stderr)"))
+                    actual = exit == 0 && stderr.Contains("Http.Pages: page 'BadPage' (/bad), circuit ") && stderr.Contains(": a handler of the page threw Boom: bang 1") && stderr.Contains(": a handler of the page threw ArgumentException: ") && stderr.Split('\n', StringSplitOptions.RemoveEmptyEntries).Length == 2
+                        ? stdout : $"Exitcode {exit}: {stdout}stderr: {stderr}";
                 // `terminate(n)` with a whole number is the exit code of the process (like the command line runner)
                 else actual = exit == 0 || (c.Name.StartsWith("Threads:") && c.Source.Contains("terminate(")) ? stdout + stderr : $"Exitcode {exit}: {stdout}{stderr}";
                 CheckNat($"Native == VM: {c.Name}", expected == actual, $"  erwartet (VM):\n{expected}\n  erhalten (C++):\n{actual}");
@@ -12848,8 +13036,8 @@ else
                     finally { Environment.SetEnvironmentVariable("FIRE_INFER_UNINITIALIZED_DEFINED", before.Length == 0 ? null : before); }
                     var debugRc = new Linker().CompileAndLink(new[] { fieldSrc }, null, null, VmExecutionMode.Debug).Program.Classes["C"];
                     string fieldStates = string.Join(" ", new[] { "count", "step", "lazy", "maybe", "never", "late" }.Select(f => f + "=" + Defined(fieldRc, f) + "/" + Defined(strictRc, f) + "/" + Defined(debugRc, f)));
-                    CheckNat("defined fuer Felder herleiten: count (ohne Initialisierer, der Konstruktor setzt es zuerst) und step sind defined, lazy (== undefined), maybe (any), never (nie geschrieben) und late (erst nach einem Aufruf gesetzt) nicht; FIRE_INFER_UNINITIALIZED_DEFINED=0 laesst count aus, ein Debug-Build leitet nichts her",
-                        fieldStates == "count=True/False/False step=True/True/False lazy=False/False/False maybe=False/False/False never=False/False/False late=False/False/False", fieldStates);
+                    CheckNat("defined fuer Felder herleiten: count (ohne Initialisierer, der Konstruktor setzt es zuerst) und step sind defined, lazy (== undefined), maybe (any), never (nie geschrieben) und late (erst nach einem Aufruf gesetzt) nicht; FIRE_INFER_UNINITIALIZED_DEFINED=0 laesst count aus, ein Debug-Build leitet her wie ein Release-Build (DECISIONS D12)",
+                        fieldStates == "count=True/False/True step=True/True/True lazy=False/False/False maybe=False/False/False never=False/False/False late=False/False/False", fieldStates);
                 }
                 // elements of typed arrays (ROADMAP: as direct as a buffer): a defined array is read with one load into a C number, a C number is stored in place
                 {
@@ -14625,6 +14813,52 @@ else
                 win.Show()
                 print("goes on, started " + win.Manager.IsStarted + ", default " + (win.Manager == WindowManager.Default))
                 """, new[] { "goes on, started True, default True", "key 97 in cycle True", "down 1 32 24" }, "-DFIRE_DISPLAY_SELFTEST "),
+                    // SPEC 8.1.4: the exception of an event handler goes to the call of Tick once Tick has returned (the same object); the other handlers of the
+                    // cycle do not run
+                    ("Fenster: ein Handler wirft - das try um Tick faengt die Exception, nachdem Tick fertig ist; die weiteren Handler laufen nicht", """
+                #import "windows"
+                class Boom : Exception { construct(string m) : base(m) { } }
+                var fb = new Framebuffer(64, 48)
+                var win = new Window(fb, "throw")
+                win.VSync = false
+                var thrown = new Boom("keydown")
+                var downs = 0
+                var ups = 0
+                var clicks = 0
+                win.RegisterKeyDown(func(int k, int s, int m, bool r) => { downs = downs + 1; throw thrown })
+                win.RegisterKeyDown(func(int k, int s, int m, bool r) => { downs = downs + 10 })
+                win.RegisterKeyUp(func(int k, int s, int m, bool r) => { ups = ups + 1 })
+                win.RegisterMouseDown(func(int b, float x, float y) => { clicks = clicks + 1 })
+                for (var i = 0; i < 2; i++) {
+                    try {
+                        var o = win.Tick()
+                        print("tick " + i + " downs=" + downs + " ups=" + ups + " clicks=" + clicks)
+                    } catch (Boom b) {
+                        print("caught " + b.message + " same " + (b == thrown) + " downs=" + downs + " ups=" + ups + " clicks=" + clicks)
+                    }
+                }
+                print("end")
+                """, new[] { "caught keydown same True downs=1 ups=0 clicks=0", "tick 1 downs=1 ups=0 clicks=0", "end" }, "-DFIRE_DISPLAY_SELFTEST "),
+                    ("Fenster: ein Handler wirft unter WindowManager.Run - Run gibt die Exception weiter, der Manager ist danach wieder bereit", """
+                #import "windows"
+                var fb = new Framebuffer(64, 48)
+                var mine = new WindowManager()
+                var win = new Window(fb, "run", mine)
+                var keys = 0
+                win.RegisterKeyDown(func(int k, int s, int m, bool r) => { keys = keys + 1; throw new Exception("key " + k) })
+                try { win.Run() } catch (e) { print("caught " + e.message + ", running " + mine.IsRunning + ", closed " + win.IsClosed) }
+                win.Close()
+                win.Run()
+                print("second run done: left " + mine.Count + ", keys " + keys)
+                """, new[] { "caught key 97, running False, closed False", "second run done: left 0, keys 1" }, "-DFIRE_DISPLAY_SELFTEST "),
+                    ("Fenster: ein Handler wirft im Zyklus des gestarteten Managers (sicherer Punkt) - gemeldet, das Programm geht weiter", """
+                #import "windows"
+                var fb = new Framebuffer(64, 48)
+                var win = new Window(fb, "shown")
+                win.RegisterKeyDown(func(int k, int s, int m, bool r) => { print("key " + k); win.Close(); throw new Exception("async key") })
+                win.Show()
+                print("goes on")
+                """, new[] { "goes on", "key 97", "(unhandled exception in the callback: Unhandled exception of type 'Exception': async key)" }, "-DFIRE_DISPLAY_SELFTEST "),
                 };
                 string? FindProgram(string name) => (Environment.GetEnvironmentVariable("PATH") ?? "").Split(Path.PathSeparator).Select(d => Path.Combine(d, name)).FirstOrDefault(File.Exists);
                 string? xvfbRun = FindProgram("xvfb-run");
@@ -16063,7 +16297,7 @@ else
             fire.Package.Manager.PackageStore.Default.Install(demoFpk);
             string vmPkg = vmOutput("#import \"pkgdemo\"\nprint(PkgDemo.Twice(21))");
             string unknown;
-            try { vmOutput("#import \"nosuchpackage\"\nprint(1)"); unknown = ""; } catch (Exception ex) { unknown = ex.Message; }
+            try { string res = vmOutput("#import \"nosuchpackage\"\nprint(1)"); unknown = res.StartsWith(NotCompiled) ? res : ""; } catch (Exception ex) { unknown = ex.Message; }   // (vmOutput gives the errors of the compiler as its result)
             CheckNat("Paket: #import \"name\" bringt die Prelude eines installierten Pakets (VM); ein unbekannter Import verweist auf ember", vmPkg == "42\n" && unknown.Contains("not a known extension") && unknown.Contains("ember"), vmPkg + unknown);
             var onEsp = new Linker().CompileAndLink(new[] { "#import \"pkgdemo\"\nprint(PkgDemo.Twice(2))" }, null, null, VmExecutionMode.Release, null, TargetProfile.Esp32);
             CheckNat("Paket: ein Import eines Pakets ist auf jedem Ziel erlaubt (die Plattformen nennt der native Teil)", onEsp.NativeImports.Contains("pkg:pkgdemo"));

@@ -12,27 +12,32 @@ namespace fire.Values
     /// </summary>
     public readonly struct Value : IEquatable<Value>
     {
-        // Memory layout: 24 bytes (kind 1 + width 1 + enum 2 + padding 4 + bits 8 + reference 8) - a Value is copied on EVERY
+        // Memory layout: 24 bytes (meta 8 + bits 8 + reference 8) - a Value is copied on EVERY
         // stack access, the earlier version with a separate field per kind of value (long, double,
         // bool, char, string, object + Unit) was 64 bytes big.
+        //   _meta: kind (bits 0-7), width (8-15), wide (16-23), the enum id (32-47) - ONE field: with three fields in all the JIT keeps the
+        //          parts of a local Value in registers (it does that for a struct of at most four fields); with kind, width, enum and wide as
+        //          fields of their own (six) every Value local and temporary lived in the stack frame, which the hot loop of the VM (VM.Step)
+        //          then had to clear on every instruction.
         //   _bits: Int = the value, Float = the IEEE-754 bits of the double, Bool = 0/1, Char = the character code.
         //   _ref:  String = the string, Class/Lambda/Pointer/Array/Buffer = the object,
         //          Int/Float/Undefined = the Unit (never both at once - a number has no object
         //          reference and an object has no unit).
-        public ValueKind Kind { get; }
+        public ValueKind Kind { [MethodImpl(MethodImplOptions.AggressiveInlining)] get => (ValueKind)(byte)_meta; }
 
         /// <summary>Relevant only for Int/Float (SPEC "APIs & bit widths"). Default
         /// is always the highest precision (W64).</summary>
-        public NumericWidth Width { get; }
+        public NumericWidth Width { [MethodImpl(MethodImplOptions.AggressiveInlining)] get => (NumericWidth)(byte)(_meta >> 8); }
 
+        private readonly ulong _meta;
         private readonly long _bits;
         private readonly object? _ref;
         /// <summary>Int: the id of its enum type (EnumType.Id), 0 for a plain whole number.</summary>
-        private readonly ushort _enum;
+        private ushort _enum { [MethodImpl(MethodImplOptions.AggressiveInlining)] get => (ushort)(_meta >> 32); }
         /// <summary>Int: the width a value of an explicit width keeps beyond the program's `int` (SPEC 8.2.1: `int[64]` with `#intwidth 32`) - 64 or 32;
         /// 0 for an int of the program's width. Set by a store into such a declaration (OpCode.ConvertWidth) and by a literal written for one; an operation
         /// with such an operand computes in its width and passes it on. Without `#intwidth` (Ints32 false) it changes nothing.</summary>
-        private readonly byte _wide;
+        private byte _wide { [MethodImpl(MethodImplOptions.AggressiveInlining)] get => (byte)(_meta >> 16); }
 
         /// <summary>See <see cref="_wide"/>: 64, 32 or 0.</summary>
         public byte Wide => _wide;
@@ -56,12 +61,9 @@ namespace fire.Values
 
         private Value(ValueKind kind, long bits, object? reference, NumericWidth width = NumericWidth.W64, ushort enumId = 0, byte wide = 0)
         {
-            Kind = kind;
-            Width = width;
+            _meta = (byte)kind | (ulong)(byte)width << 8 | (kind == ValueKind.Int ? (ulong)wide << 16 : 0UL) | (ulong)enumId << 32;
             _bits = kind == ValueKind.Int && Ints32 ? CutInt(bits, wide) : bits;
             _ref = reference;
-            _enum = enumId;
-            _wide = kind == ValueKind.Int ? wide : (byte)0;
         }
 
         /// <summary>An int of a narrow program (Ints32) cut to its width: the program's, or the wider one it keeps (<see cref="Wide"/>).</summary>
@@ -422,8 +424,13 @@ namespace fire.Values
                 case (ValueKind.Undefined, ValueKind.Char):
                     return MakeChar('\0');
                 default:
-                    throw new InvalidOperationException(
-                        $"Cannot coerce type {Kind} to {targetKind}.");
+                    // (the same texts natively: fire_rt.h coerceWrong)
+                    throw new InvalidOperationException(targetKind switch
+                    {
+                        ValueKind.String => $"Cannot coerce type {Kind} to String: '!' does not make the text of a value (write \"\" + x or x.ToString()).",
+                        ValueKind.Undefined => $"Cannot coerce type {Kind} to Undefined: the operand that gives '!' its type is undefined.",
+                        _ => $"Cannot coerce type {Kind} to {targetKind}.",
+                    });
             }
         }
 

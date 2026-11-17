@@ -100,7 +100,9 @@ static void* fire_pkgAlloc(FirePkgArena* a, size_t bytes) {
 /* ---- fire_val <-> Value ---- */
 static void fire_pkgFromRt(FirePkgArena* arena, Value v, fire_val* out);
 /* The body of a lambda of the VM (FIRE_LAMBDA): the arguments go to the host, which runs it - at once on the VM's thread, else at its next safe point.
- * (From any thread: the memory of the arguments is an arena of its own, freed when the host has copied them.) */
+ * (From any thread: the memory of the arguments is an arena of its own, freed when the host has copied them.) When the lambda threw during the native that
+ * called it (call_lambda gives 2), the VM keeps the exception and throws it when the native returns: g_unwind is set like a callback's exception of a native
+ * build (fire_rt.h fire_cbCall, UW_DEFER), so the native sees it and its further callbacks do nothing; fire_pkgCallEntry clears it. */
 static Value fire_pkgHostLambda(Value lam, const Value* args) {
     FirePkgArena own;
     fire_val vals[16];
@@ -109,7 +111,7 @@ static Value fire_pkgHostLambda(Value lam, const Value* args) {
     memset(&own, 0, sizeof own);
     if (n > 16) n = 16;
     for (i = 0; i < n; i++) fire_pkgFromRt(&own, args[i], &vals[i]);
-    g_libraryHost->call_lambda(lamCaps(lamOf(lam))[0].i, vals, (int32_t)n);
+    if (g_libraryHost->call_lambda(lamCaps(lamOf(lam))[0].i, vals, (int32_t)n) == 2) fire_cbDefer(Undef());
     for (i = 0; i < own.count; i++) free(own.blocks[i]);
     free(own.blocks);
     return Undef();
@@ -240,6 +242,7 @@ static int fire_pkgCallEntry(const FirePkgFn* entries, int count, int index, con
         status = g_libraryError.kind == 2 ? 2 : 1;
     }
     g_libraryJump = outerJump;
+    if (g_unwind.active) clearUnwind();   /* (a callback's exception: the VM has it - see fire_pkgHostLambda) */
     leave(&list);
     if (!nested) {
         arena->io = g_ioError;
@@ -259,6 +262,7 @@ FIRE_MAYBE_UNUSED static void fire_pkgService(void) {   /* (only the library of 
     g_libraryJump = &jump;
     if (setjmp(jump) == 0) hostServe();
     else fprintf(stderr, "(fire package library: %s)\n", g_libraryError.text);
+    if (g_unwind.active) clearUnwind();
     g_libraryJump = outerJump;
     fire_pkgUnlock();
 }
@@ -274,6 +278,7 @@ FIRE_MAYBE_UNUSED static void fire_pkgIdle(void) {   /* (only the library of gra
     g_libraryJump = &jump;
     if (setjmp(jump) == 0) g_idlePump();
     else fprintf(stderr, "(fire package library: %s)\n", g_libraryError.text);
+    if (g_unwind.active) clearUnwind();
     g_libraryJump = outerJump;
     fire_pkgUnlock();
 }

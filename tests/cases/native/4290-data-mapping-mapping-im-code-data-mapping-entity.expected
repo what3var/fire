@@ -28,3 +28,6 @@ b reads 3
 after rollback a 2 b 2
 after b's transaction a 3
 a closed in a transaction: b 3
+forgotten: c 0 b still 4
+data.memory: the name of a shared database is letters, digits, _ - . ('memory:shop'), not 'no space'.
+own 0

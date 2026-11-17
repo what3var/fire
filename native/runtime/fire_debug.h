@@ -856,9 +856,11 @@ static void dbgPutValue(DbgBuf* b, const char* name, Value v, const char* ref) {
         if (!dbgAlive(v)) dbgPut(b, ",\"display\":\"<destroyed>\"");
         else {
             Obj* o = objAt(v);
+            /* (an object whose fields are all C numbers - `defined` ones, declared or derived - has no Value slots: its fields are its class's places) */
+            const DbgClass* dc = dbgClassOf(o->cls);
             dbgPut(b, ",\"class\":"); dbgPutS(b, className(o->cls));
             dbgPut(b, ",\"display\":"); dbgPutS(b, className(o->cls));
-            if (o->nfields > 0) dbgPut(b, ",\"expandable\":true");
+            if ((dc && dc->places ? dc->nfields : o->nfields) > 0) dbgPut(b, ",\"expandable\":true");
         }
     }
     else if (v.kind == K_Array) {

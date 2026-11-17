@@ -249,7 +249,8 @@ ws.Close()
   outbox (`Channel<string>`) - another task gets it with `fire with` and sends texts there; the owning task writes them while it waits in `Receive` /
   `ReceiveText`, at once: the wait is one wait for the socket and the channel (poll on the socket, woken by the channel), no turns.
   `Receive(timeout, sendFrom)` / `ReceiveText(timeout, sendFrom)` does the same for a channel of your own (a `Channel<string>`, an end of a
-  `Channel.Pair<string, string>`, a `Net.Channel<string>`): what it receives goes out as text messages.
+  `Channel.Pair<string, string>`, a `Net.Channel<string>`): what it receives goes out as text messages. A `sendFrom` that is closed and empty ends
+  the wait like a timeout (undefined, `IsOpen` still true; `sendFrom.IsClosed` tells them apart): the task that sent through it has ended.
   ```fire
   var out = ws.Outbox
   fire with out { out.Send("tick") }      // another task
@@ -290,6 +291,26 @@ server.Run()
   browser has (text, checked, visible, enabled, colours); a changed tree (elements added or removed) sends the HTML anew.
 * A circuit ends when its WebSocket closes, one whose browser never connected after a minute, all with `Http.AppServer.Close()`. `[Page]` keeps the class
   in a native build.
+* **Errors of a page:** an exception that the code of a page does not catch - in an event handler, a timer or binding the circuit runs, a callback of
+  `browser.Call`, a `TimeoutException` of a waiting `browser.Call` - ends **that circuit only**: its WebSocket is closed with **4500** ("page error" -
+  the text of the exception stays on the server), the directory forgets it (a new socket for its id gets 4404), its thread ends and with it the page,
+  its UI root, window and framebuffer. The other pages, the session and the server go on; the script of the page shows a bar "This page ended with an
+  error. Reload" (nothing reconnects). `pages.OnError(func (any error) => ...)` gets every such error as an `Http.PageError`: `page` (the class),
+  `path`, `circuit` and `session` (their ids), `phase`, `type` (the class of the exception) and `message` - texts, the exception object stays in the
+  thread that ended. The handler is handed over to a thread of its own and runs there, one error after the other, never on the thread of a page or a
+  connection (bound with `on` to an object it runs where the object lives; set it before the server runs; a handler that throws is a line on standard
+  error). **Without a handler** every error is one line on standard error (`IO.Stdio.ErrorLine`):
+  `Http.Pages: page 'HelloPage' (/hello), circuit <id>: a handler of the page threw Boom: bang`.
+  ```fire
+  var pages = new Http.Pages("My site")
+  pages.OnError(func (any error) => { print(error.phase + " " + error.page + " " + error.type + ": " + error.message) })
+  ```
+  The phases: `"event"` - what is described above. `"start"` - the constructor of the page threw: there is no circuit, the request that asked for the
+  page gets the exception (a 500, like every exception of a router) and OnError hears of it. `"html"` - the first HTML could not be made: the circuit
+  ends, the request gets the 500. A **runtime error** in the code of a page (`x.y` on undefined, an index out of range, a division by zero, a
+  wrong type, calling a value that is not a lambda) is an exception of the runtime (`ArgumentException`, `IndexOutOfBoundsException`, ...) and is
+  treated the same, in the VM and in a native build - an exception out of the *constructor* of a page too (the page is made through reflection,
+  `Type.New`: its exception reaches the request, which answers 500).
 * **Lists and pictures:** a `ListBox`/`ListView` shows the texts of its rows (`DisplayMember`) - a click selects a row (`Select`, `OnSelect`), a double click
   activates it (`OnActivate`); changed rows or a changed selection go out as a patch. (Item templates and the columns of a ListView are not shown yet.) An
   `Image` is its `Source` as a PNG (`Stretch` as `object-fit`); a new picture is sent when another framebuffer is set.

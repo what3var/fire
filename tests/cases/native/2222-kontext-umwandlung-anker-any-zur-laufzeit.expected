@@ -1,0 +1,19 @@
+2.5km
+2.5km
+2km
+502km
+7
+7.5
+12
+True
+2.5km
+7.5
+7
+Cannot coerce type Int to String: '!' does not make the text of a value (write "" + x or x.ToString()).
+Cannot coerce type Int to Bool.
+Cannot coerce type Int to Undefined: the operand that gives '!' its type is undefined.
+Cannot coerce type Bool to Int.
+Cannot coerce type Int to String: '!' does not make the text of a value (write "" + x or x.ToString()).
+Cannot coerce type Int to Undefined: the operand that gives '!' its type is undefined.
+Type Undefined is not numeric.
+end

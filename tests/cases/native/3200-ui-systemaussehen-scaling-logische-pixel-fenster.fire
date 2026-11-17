@@ -1,10 +1,11 @@
 #import "ui"
 var sys = SystemTheme.Current()
-print("system " + sys.embedded + " " + sys.scale + " " + sys.dark + " " + sys.accent + " '" + sys.font + "' " + sys.fontSize)
+// (accent, font and size are those of the machine: only whether they are there)
+print("system " + sys.embedded + " " + sys.scale + " " + sys.dark + " " + (sys.accent >= 0) + " " + (sys.font != undefined) + " " + (sys.fontSize >= 0))
 var fb = new Framebuffer(200, 100)
 var win = new Window(fb, "t")
 var root = new UI.Root(fb, win)
-print("start " + root.Scaling + " " + root.Dark + " " + root.Accent + " " + root.width + "x" + root.height)
+print("start " + root.Scaling + " " + root.Dark + " " + (root.Accent == sys.accent) + " " + root.width + "x" + root.height)
 var b = new UI.Button("Hi", 10, 10)
 root.Add(b)
 root.Draw()

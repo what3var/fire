@@ -1,0 +1,65 @@
+enum Color { Red, Green, Blue }
+float b = 2km
+int a = 500m
+int c = 3km
+var s1 = b + a:!
+print(s1)
+print(s1 is of float)
+print(b: + a:!)
+print(c: + a)
+print(c:! + a)
+print(b:! + a)
+print(a + b:!)
+print(a: + c:)
+print(a: == c:)
+print(a:: + b)
+print(a:: + c::)
+print(a: + b)
+print(a: < b)
+int k = 2kg
+float t = 1.5s
+print(a: + k)
+print(a:! + t)
+print(a:! * b)
+print(b / a:!)
+int i = 5
+float f = 2.5
+print(i! + f)
+print(f! + i)
+print((f! + i) is of int)
+print(i! / f)
+print(f! / i)
+float h = 3.5
+print(h! + i)
+Color col = Color.Blue
+print(col! + i)
+print(i! + col)
+print(col! + f)
+print(f! + col)
+byte by = 200
+word w = 7
+print(i! + w)
+print((i! + w) is of word)
+print(w! + i)
+print((w! + i) is of int)
+print(w! + f)
+print(f! + w)
+print(by! + f)
+print(f! + by)
+int[64] big = 5000000000
+print(i! + big)
+print(big! + f)
+print(f! + big)
+char ch = 'A'
+print(ch! + i)
+print(ch! + f)
+int u
+print(u! + i)
+print(u! + f)
+print(undefined:! + 2km)
+float e = (b + a:!) * i
+print(e)
+print(-(a:! + b))
+print([a:! + b, b][0])
+print(b + (a + a):!)
+//# name: Kontext-Umwandlung: x!, x:, x:! am Anker mit bekanntem Typ (int/float, Einheiten, Enum, byte, word, int[64], char)

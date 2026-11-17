@@ -127,10 +127,10 @@ The runtime reports its errors as exceptions of the standard library:
 |---|---|
 | `IndexOutOfBoundsException` | an index outside an array, list, buffer or string |
 | `DivideByZeroException` | `int` division or `%` by zero (floats give infinity/NaN) |
-| `ArgumentException` | wrong number of arguments, a value that cannot be converted (`"42"!int`), a condition that is not a `bool`, a value that does not fit its declaration (`Parameter 'a' is an int, not String.`, `undefined` where `defined` is declared) |
-| `MissingMemberException` | a method or field that the object does not have |
+| `ArgumentException` | wrong number of arguments, a value that cannot be converted (`"42"!int`), a condition that is not a `bool`, a value that does not fit its declaration (`Parameter 'a' is an int, not String.`, `undefined` where `defined` is declared); through `any` a value of the wrong kind: an index or an array size that is not an int, `*p` of something that is no pointer, the target of `TakeTo` that is no object, a member of something that is no object; a violation of the ownership rules: `TakeUpwards` with no scope above, a `TakeTo` or `take` that would make a value an owner of itself, a mode that is no `Takes` value (see [Ownership](13-ownership.md#a-reference-does-not-keep-anything-alive)) |
+| `MissingMemberException` | a method or field that the object does not have - reading or writing it (the fields of a class are fixed) |
 | `AccessDeniedException` | a `private`/`protected` member used from outside |
-| `DestroyedException` | using (also printing) an object, array, buffer or lambda that was destroyed, or one that was handed over to a thread |
+| `DestroyedException` | using (also printing) an object, array, buffer or lambda that was destroyed, or one that was handed over to a thread; `Take...` of a destroyed one |
 | `UnitMismatchException` | units of different dimensions (`5mm + 2kg`) |
 | `OverflowException` | a converted number does not fit into its declared unit |
 | `CancelledException`, `TimeoutException` | a cancelled task at its next wait; a time limit ran out (`until 2s`, `Wait(limit)`; a `TimeoutException` is a `CancelledException`) - see [Threads and actors](15-threads-and-actors.md#cancellation-until) |
@@ -161,6 +161,13 @@ With `resume` nothing is left, so nothing is destroyed. See [Ownership](13-owner
 
 An exception that is not caught in a `fire` thread ends that thread and is delivered to the main program. There, `catch threads(Type e) { ... }`
 catches it; without such a handler the program stops. See [Threads and actors](15-threads-and-actors.md#errors-in-threads).
+
+## Exceptions in callbacks
+
+A lambda that a native function calls back - an event handler of a window during `win.Tick()`, a lambda handed to a package - may throw. The exception
+does not jump through the native function: the native finishes, its other callbacks do not run, and then **the call of the native throws the
+exception** (the same object). So `try { win.Tick() } catch (e) { ... }` catches what a handler threw. A callback that runs where nobody waits for it (at a
+safe point, from another thread) has its exception printed on the error output, and the program goes on. Details: SPEC 8.1.4 (docs/spec/SPEC.md).
 
 ## Exercises
 

@@ -1,0 +1,71 @@
+class Reg {
+    static List items = new List()
+    static int arr[] = new int[3]
+    static string names[] = new string[2]
+}
+// a global object: its destructor runs at the end of the program, after the static List (created before it) was destroyed - its elements are still there
+class Holder {
+    construct() { }
+    destruct() {
+        print("count " + Reg.items.Count)
+        any first = Reg.items[0]
+        print("first " + first)
+        print("arr " + Reg.arr.length + " " + Reg.arr[1])
+        print("names " + Reg.names[0] + Reg.names[1])
+        foreach (var x in Reg.items) print("item " + x)
+    }
+}
+// an ordinary block: the list, the array and the buffer of the block are destroyed with it, the destructor of the object created after them still reads them
+class Reader {
+    List list
+    int nums[]
+    byte bytes[]
+    construct(List list, int nums[], byte bytes[]) { this.list = list; this.nums = nums; this.bytes = bytes }
+    destruct() {
+        print("reader " + this.list.Count + " " + this.list[1] + " " + this.nums[2] + " " + this.bytes[0])
+    }
+}
+// an object whose array dies with it: a later object of the same batch reads it
+class Box {
+    int data[]
+    construct() { this.data = new int[2]; this.data[0] = 7 }
+    destruct() { print("~box") }
+}
+class Peek {
+    Box box
+    construct(Box box) { this.box = box }
+    destruct() { print("peek " + this.box.data[0]) }
+}
+var h = new Holder()
+Reg.items.Add(5)
+Reg.items.Add("six")
+Reg.arr[1] = 42
+Reg.names[0] = "a" + Reg.arr[1]
+Reg.names[1] = "b"
+class Ref { any list; any nums }
+var ref = new Ref()
+{
+    var list = new List()
+    list.Add(1)
+    list.Add("two")
+    int nums[] = new int[3]
+    nums[2] = 3
+    byte bytes[] = new byte[1]
+    bytes[0] = 255
+    var r = new Reader(list, nums, bytes)
+    ref.list = list
+    ref.nums = nums
+}
+// after the block: dead
+try { print(ref.list.Count) } catch (DestroyedException e) { print("list dead") }
+try { print(ref.nums[0]) } catch (DestroyedException e) { print("array dead: " + e.message) }
+{
+    var b = new Box()
+    var p = new Peek(b)
+}
+// delete of a lone array: dead at once
+int lone[] = new int[2]
+delete lone
+try { print(lone[0]) } catch (DestroyedException e) { print("lone dead") }
+print("end")
+//# name: Besitz: Arrays, Puffer und Listen im Zerstoerungsstapel noch lesbar (Block, Programmende)

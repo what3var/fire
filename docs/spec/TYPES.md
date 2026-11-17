@@ -49,6 +49,19 @@ a declaration without a unit takes the unit of its initializer (`int a = 5mm`), 
 that goes to a unitless declaration, it emits a run-time check. A whole number converted into a coarser unit is `TC007` (always a warning). Properties carry a unit
 (`float X : m { get ... set ... }`: the setter's `value` and the getter's result are converted); Scene3D declares its lengths (`: m`, parameters `: any m`) and angles (`: any`).
 
+Conversions from the context (SPEC 3.1, 3.2): `x!`, `x:` and `x:!` have a static type. In a binary operation the checker mirrors the compiler's anchor rule
+(`TypeChecker.InferOperands`, `Compiler.EmitCoercedOperands`): the one operand that asks takes the kind and the unit of the anchor, two that ask become unitless and keep
+their kinds. A value that goes to a declaration (`Infer` with an expected type: an initializer, an assignment, an argument, a `return`) takes the declared `int`/`float`/
+`char`/`word` and the declared unit. Where the anchor's kind and unit are known the checker records the conversion (`ResolveResult.FixedCoercions`) and the compiler emits
+`CoerceType`/`CoerceUnit`/`RelabelUnit`/`ConvertWidth` with that fixed target instead of `CoerceTypeDynamic`/`CoerceUnitDynamic`/`RelabelUnitDynamic`; an anchor of unknown
+type (`any`), an int of a wider width next to an int anchor (`!int` would cut it) and `==`/`!=` with an anchor that may be undefined keep the run-time instructions. The
+static type is never more than the run time gives: an anchor declared `any` gives `any`, and a whole number that `:` takes out of its dimension (`5mm:unitless` is `0.005`,
+`2km:unitless` is `2000`) is "an int or a float" - `any` for a declaration (so `int n = a:unitless` keeps its run-time check), a float when it is computed with a float.
+`FIRE_ANCHOR_AT_RUNTIME=1` (tests: `Compiler.AnchorAtRunTimeOverride`) makes the compiler ignore the recorded conversions of binary operations; the tests run every case
+both ways. What always fails is `TC013` (`x!` next to a string or a bool), a whole number rounded into a coarser unit `TC007`. Because the fixed conversion relies on
+the static unit of the anchor, a number parameter without a declared unit whose default value is not a plain number (`float d = 1cm`, `int n = undefined`) has no static
+unit in its body: the run time checks such a parameter for no unit either (`DeclaredKind.Of`), so it holds the unit of the default or of the argument.
+
 Step 3e: generic methods (`R Select<R>(R lambda<T> fn)`, `static Box<U> Of<U>(U value)`) take their type parameters from the arguments, one after the other
 (`IEnumerable<T>` from a `List<int>` or an `int[]`, `R` from the result of a lambda argument; what is not found is `any`). Linq is typed: `Linq.From(xs)` is a `Query<T>`,
 `Where`/`OrderBy`/`Take`/... keep `T`, `Select<R>`/`Zip<U, R>`/`Aggregate<A>`/`Sum<R>` take their result types from the lambdas, `First`/`Last`/`Min`/`Max` return `T`,
@@ -207,7 +220,8 @@ instructions (more fused ones, or registers instead of the stack) - a step of it
   value or written as a string (not in a class with `[InferDefined]`); every method and constructor of a class without `[InferDefined]` when the
   program uses reflection (TypeChecker.ReflectionUsed: the class `Reflect` of the package is part of it); a method that overrides or implements one of a package or the prelude; the methods the language calls itself
   (`GetIndex`, `CompareTo`, ...); the constructors of base classes and of classes a `new` was not resolved for. The Linker switches the derivation
-  off for a program that writes class metadata (a plugin), has imports of its own or is a debug build. Fields: DisqualifyFields leaves out every
+  off for a program that writes class metadata (a plugin) or has imports of its own; a debug build derives exactly like a release build (the debugger's
+  `set` writes a value of the kind the variable holds, never `undefined`). Fields: DisqualifyFields leaves out every
   field of a class without `[InferDefined]` when the program (a package included) calls `Json.Deserialize` - `$type` in the text may name any class -
   and FieldCandidates every one when it uses reflection; `[InferDefined]` makes a class of a package a candidate too. What reaches a derived member of
   such a class from outside goes through the checks it is compiled with: `Reflect.Set`/`Reflect.Call` check the declared kind and `undefined`, and the
@@ -215,7 +229,8 @@ instructions (more fused ones, or registers instead of the stack) - a step of it
   RuntimeClass.DerivedParameterWhat/DerivedFieldWhat); JSON reads a derived field like a `defined` one (0 when missing, `null` an error; the flag 0x80
   of the field's row adds the note). A value that may be undefined going into a `defined` parameter,
   field, property, variable or return value is `TC022` (a warning in lax mode, an error in strict mode); it is checked at run time either way.
-* **Assignability.** `int` -> `float` is implicit (coerced). Everything converts implicitly to `string` (a `ToString` like in C#). Anything else between known types is a conflict.
+* **Assignability.** `int` -> `float` is implicit (coerced). Everything converts implicitly to `string` (a `ToString` like in C#): a declaration `string` holds the text of what goes in, converted at run time
+where the static type is not a string (DECISIONS D14; strict mode: the warning `TC034` for a value that is certainly no string). Anything else between known types is a conflict.
 * **Units** (step 4): if both types are known and only the unit is not, the site is a *unit adaptation* `b = AdaptUnit(a, targetUnit)` with three outcomes: same unit -> `a` unchanged;
   same dimension -> `a * factor`; otherwise `UnitMismatchException`. The factor is cached per (source unit, target unit) at the site; where the source unit is also static the whole thing
   folds at compile time (no-op or a constant multiply). A variable whose unit is statically known does not need a unit field in its unboxed representation at all.

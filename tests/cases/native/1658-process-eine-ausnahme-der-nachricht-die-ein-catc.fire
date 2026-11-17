@@ -1,0 +1,39 @@
+class Oops : Exception { construct(string m) : base(m) { } }
+actor Worker {
+    int handled = 0
+    undefined Fail(string why) { throw new Oops(why) }
+    undefined Ok() { this.handled = this.handled + 1 }
+}
+string log = ""
+int done = 0
+fire {
+    var w = new Worker()
+    string out = ""
+    w.Fail("first")
+    try { process w; out = out + "not reached\n" } catch (Oops e) { out = out + "process: " + e.message + "\n" }
+    w.Fail("second")
+    try { while (try process w) { out = out + "not reached\n" } } catch (Oops e) { out = out + "try process: " + e.message + "\n" }
+    w.Ok()
+    w.Fail("third")
+    w.Ok()
+    try {
+        int n = 0
+        while (try process w) { n = n + 1 }
+        out = out + "not reached " + n + "\n"
+    } catch (Exception e) { out = out + "outer: " + e.message + "\n" }
+    int rest = 0
+    while (try process w) { rest = rest + 1 }
+    out = out + "rest " + rest + " handled " + w.handled
+    sync global { log = out; done = 1 }
+}
+while (done < 1) { sync globals }
+print(log)
+actor Main2 { undefined Boom() { throw new Oops("main") } }
+var m = new Main2()
+m.Boom()
+try { process m; print("not reached") } catch (Oops e) { print("main process: " + e.message) }
+m.Boom()
+int k = 5
+try { if (try process m) { print("not reached") } } catch (Oops e) { print("main try process: " + e.message + " " + k) }
+print("end")
+//# name: process: eine Ausnahme der Nachricht, die ein catch um das process faengt (fire-Thread und Hauptprogramm, process und try process, catch weiter aussen)

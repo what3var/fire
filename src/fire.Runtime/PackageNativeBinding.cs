@@ -87,7 +87,11 @@ namespace fire.Runtime
         {
             Library[] loaded;
             lock (Lock) loaded = Libraries.Values.Where(l => l.Idle != null).ToArray();
-            foreach (var lib in loaded) lib.Idle!();
+            if (loaded.Length == 0) return;
+            var vm = VM.CurrentThreadVm;   // (what its callbacks throw: nobody waits for it - reported, SPEC 8.1.4)
+            int barrier = vm?.EnterCallbackBarrier() ?? 0;
+            try { foreach (var lib in loaded) lib.Idle!(); }
+            finally { vm?.ExitCallbackBarrier(barrier); }
         }
 
         /// <summary>The libraries asked for their services (fire_host.request_service): every loaded library that has `fire_pkg_service` runs them - on the VM's thread, at a safe point.</summary>
@@ -95,7 +99,11 @@ namespace fire.Runtime
         {
             Library[] loaded;
             lock (Lock) loaded = Libraries.Values.Where(l => l.Service != null).ToArray();
-            foreach (var lib in loaded) lib.Service!();
+            if (loaded.Length == 0) return;
+            var vm = VM.CurrentThreadVm;   // (what its callbacks throw: nobody waits for it - reported, SPEC 8.1.4)
+            int barrier = vm?.EnterCallbackBarrier() ?? 0;
+            try { foreach (var lib in loaded) lib.Service!(); }
+            finally { vm?.ExitCallbackBarrier(barrier); }
         }
 
         /// <summary>An export of the library `file` beyond the ABI (the host's own functions of a library: the framebuffers of the graphics library), loading it if needed; IntPtr.Zero: none.</summary>
@@ -271,7 +279,7 @@ namespace fire.Runtime
                 {
                     var arr = v.AsArray();
                     sb.Append("a:").Append(arr.Length);
-                    for (int i = 0; i < arr.Length; i++) TraceValue(sb, arr.Items[i]);
+                    for (int i = 0; i < arr.Length; i++) TraceValue(sb, arr.GetUnchecked(i));
                     break;
                 }
                 default: sb.Append("u:"); break;
@@ -302,7 +310,7 @@ namespace fire.Runtime
                     var arr = v.AsArray();
                     IntPtr items = Marshal.AllocHGlobal(Math.Max(1, arr.Length) * ValSize);
                     (allocs ??= new List<IntPtr>()).Add(items);
-                    for (int i = 0; i < arr.Length; i++) ToNative(arr.Items[i], items + i * ValSize, ref allocs, ref pins, ref after, function);
+                    for (int i = 0; i < arr.Length; i++) ToNative(arr.GetUnchecked(i), items + i * ValSize, ref allocs, ref pins, ref after, function);
                     fv.Kind = KindArray; fv.Length = arr.Length; fv.Bits = items.ToInt64();
                     break;
                 }

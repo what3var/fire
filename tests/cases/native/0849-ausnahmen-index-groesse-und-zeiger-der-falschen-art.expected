@@ -1,0 +1,28 @@
+0: ArgumentException: An index must be an int, not String.
+1: ArgumentException: An index must be an int, not String.
+2: ArgumentException: An index must be an int, not Float.
+3: ArgumentException: An index must be an int, not Bool.
+4: ArgumentException: An index must be an int, not Char.
+5: ArgumentException: An index must be an int, not String.
+6: ArgumentException: An index must be an int, not String.
+7: Exception: Access to a destroyed array.
+8: ArgumentException: An index must be an int, not String.
+7
+9: no exception
+10: ArgumentException: An array size must be an int, not String.
+11: ArgumentException: A byte buffer size must be an int, not Float.
+12: ArgumentException: An array size must be an int, not String.
+13: ArgumentException: An array size must be an int, not String.
+14: ArgumentException: An array size must be an int, not String.
+15: ArgumentException: An array size must be an int, not Float.
+3
+16: no exception
+17: ArgumentException: Invalid array size -1.
+18: ArgumentException: Dereference of a value of type Int which is not a pointer.
+19: ArgumentException: Assignment through a value of type String which is not a pointer.
+6 6
+20: no exception
+21: ArgumentException: A string or char was expected, not Int.
+22: ArgumentException: A string or char was expected, not Bool.
+r 42
+end

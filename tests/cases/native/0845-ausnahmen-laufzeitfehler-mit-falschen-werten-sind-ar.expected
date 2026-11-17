@@ -1,0 +1,20 @@
+0: Call of a value of type Undefined which is not a lambda.
+1: Call of a value of type Int which is not a lambda.
+2: throw on a value of type Int which is not an object.
+3: 'delete' expects an object, an array, a buffer or a lambda, not Int.
+4: 'delete' expects an object, an array, a buffer or a lambda, not String.
+5: Format specifier 'X' expects Int/Word, not String.
+6: Format specifier 'F2' expects Int/Float/Word, not String.
+7: 'is from'/'is under' (owner expression) on a value of type Int which is not an object.
+8: 'is from'/'is under' (owner expression) on a value of type String which is not an object.
+9: Type String carries no unit and cannot be relabelled.
+10: Type String carries no unit and cannot be converted.
+11: Invalid array size -1.
+12: Invalid byte buffer size -2 (must be >= 0).
+13: Invalid array size -3.
+14: Invalid array size -4.
+15: Invalid array size -5.
+16: resume() was called, but this exception is not being handled right now (either it was already resumed, or there is no active catch for it).
+r 7
+5.00E+000
+end

@@ -19,7 +19,7 @@ namespace fire.Standard
             if (n < 0 || n > src.Length || n > dst.Length) throw new InvalidOperationException("__array_copy: the count is outside the arrays.");
             if (src.ElemType == dst.ElemType && src.ElemUnit == dst.ElemUnit && (src.ElemDefined || !dst.ElemDefined))
             {
-                Array.Copy(src.Items, dst.Items, n);
+                dst.CopyElementsFrom(src, (int)n);
                 return Value.MakeUndefined();
             }
             for (long i = 0; i < n; i++)

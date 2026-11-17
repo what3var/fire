@@ -17,6 +17,31 @@ namespace fire.Values
         /// FieldInfo.RequiredArray) - the elements are never `undefined`: they start at 0 (false, '\0'), storing `undefined` is an ArgumentException.</summary>
         public const byte DefinedFlag = 0x40;
 
+        /// <summary>`new int[n]` (DECISIONS D10): a mark beside the element kind in the code of OpCode.TypeArray - the array is not typed yet (its width
+        /// and unit come with the first declaration it is stored in), but it remembers that it was made as an array of ints (I64), floats (F64), bools or
+        /// chars: ScriptArray.OpenKind / fire_rt.h Arr.open. A declaration of another kind refuses it (OpenFits).</summary>
+        public const byte OpenFlag = 0x80;
+
+        /// <summary>The kind `new T[n]` remembers for a number type (I64 for every int, F64 for every float, Bool, Char); 0 for any other element.</summary>
+        public static byte OpenKindOf(TypeRef? type) => Of(type) switch
+        {
+            >= I8 and <= I64 => I64,
+            >= F8 and <= F64 => F64,
+            Bool => Bool,
+            Char => Char,
+            _ => None,
+        };
+
+        /// <summary>Does an array made as `new K[n]` (OpenKindOf) go where an array of the element `declared` is declared? The same kind - whatever
+        /// width and unit - and an int array where floats are declared (a whole number goes into a float, like a value).</summary>
+        public static bool OpenFits(byte open, byte declared)
+        {
+            declared = TypeOf(declared);
+            if (open == None) return true;
+            byte kind = declared switch { >= I8 and <= I64 => I64, >= F8 and <= F64 => F64, _ => declared };
+            return kind == open || open == I64 && kind == F64;
+        }
+
         /// <summary>The element type of such a code (without DefinedFlag).</summary>
         public static byte TypeOf(int code) => (byte)(code & 0x3F);
         public static bool IsDefined(int code) => (code & DefinedFlag) != 0;
@@ -63,6 +88,9 @@ namespace fire.Values
         /// <summary>The type as it is written (`int[8]`, `float`, `bool`, the class) - for messages.</summary>
         public static string Name(byte type, string? unit) => type == Class && unit != null ? fire.Bytecode.DeclaredType.Parse(ClassText(unit)).Display : Name(type);
 
+        /// <summary>Is it the text of an array `string a[]` (ArrayElem.Class with the DeclaredType of `string`)?</summary>
+        public static bool IsStringText(string? unit) => unit != null && fire.Bytecode.DeclaredType.Parse(ClassText(unit)).SingleName == "string";
+
         /// <summary>The DeclaredType text of an array of a class (ArrayElem.Class) without an enum's declaration after it.</summary>
         public static string ClassText(string unit) => unit.IndexOf('\u0002') is var at and >= 0 ? unit.Substring(0, at) : unit;
 
@@ -87,6 +115,12 @@ namespace fire.Values
             {
                 // (the declaration: an object of that class or of one derived from it, of that interface, a string, a value of that enum - or undefined)
                 if (value.Kind == ValueKind.Undefined || unit == null || fire.Bytecode.DeclaredType.Fits(value, ClassText(unit))) return true;
+                // (`string names[]`, DECISIONS D14: any other value becomes its text - an object's ToString() is run by the VM before it gets here)
+                if (IsStringText(unit) && value.Kind != ValueKind.Class)
+                {
+                    stored = Value.MakeString(value.Kind == ValueKind.Buffer ? ByteConversions.AsciiDecode(value.AsBuffer()) : value.ToString());
+                    return true;
+                }
                 error = Error.Type;
                 string display = fire.Bytecode.DeclaredType.Parse(ClassText(unit)).Display;
                 string have = value.Kind == ValueKind.Class && value.AsObjectRef() is fire.Runtime.ObjectInstance obj ? fire.Ast.GenericClassNames.PlainName(obj.ClassName)
@@ -95,6 +129,8 @@ namespace fire.Values
                 message = $"An element of an array of {display} must be {("AEIOUaeiou".Contains(display[0]) ? "an" : "a")} {display} (or undefined), not {have}.";
                 return false;
             }
+            // (an element of `int a[]` is an int: a value of an enum is stored as its number, like in an `int` variable - the native runtime does the same)
+            if (value.IsEnum) stored = value = value.WithoutEnum();
             // (the common case - an int of the program without a unit into `int a[]`: stored as it is)
             if (type == I64 && unit == null && value.Kind == ValueKind.Int && value.Wide == 0 && value.Unit is null or { IsUnitless: true }) return true;
             switch (type)

@@ -33,7 +33,7 @@ namespace fire.Runtime
 
         public static void Reparent(IOwnedLeaf leaf, IOwner newOwner)
         {
-            if (leaf.IsDestroyed) throw new OwnershipException("A destroyed array or buffer cannot change its owner.");
+            if (Gone(leaf)) throw OwnershipException.Destroyed(KindName(leaf));
             leaf.LeafOwner?.RemoveLeaf(leaf);
             leaf.LeafOwner = newOwner;
             newOwner.AddLeaf(leaf);
@@ -42,6 +42,7 @@ namespace fire.Runtime
         /// <summary>`x.TakeUpwards()`: the owner becomes the parent scope of the previous owner scope.</summary>
         public static void TakeUpwards(IOwnedLeaf leaf)
         {
+            if (Gone(leaf)) throw OwnershipException.Destroyed(KindName(leaf));
             if (leaf.LeafOwner is not Scope scope)
                 throw new OwnershipException("TakeUpwards is only valid if the current owner is a scope.");
             if (scope.Parent == null)
@@ -49,12 +50,26 @@ namespace fire.Runtime
             Reparent(leaf, scope.Parent);
         }
 
-        /// <summary>`x.TakeTo(object)`: if the target is already in cascade deletion, the leaf is destroyed immediately as well (as with objects, SPEC 2.2).</summary>
+        /// <summary>`x.TakeTo(object)`: if the target is already in cascade deletion, the leaf is destroyed immediately as well (as with objects, SPEC 2.2).
+        /// An array must not become an owner of its own owners (the target is owned by it, directly or transitively): nothing moves then.</summary>
         public static void TakeTo(IOwnedLeaf leaf, ObjectInstance target, IDestructRunner runner)
         {
+            if (Gone(leaf)) throw OwnershipException.Destroyed(KindName(leaf));
             if (target.IsDestroyed) { Destroy(leaf, runner); return; }
+            if (leaf is fire.Values.ScriptArray)
+                for (IOwner? o = target; o != null; o = o is ObjectInstance oi ? oi.Owner : (o as IOwnedLeaf)?.LeafOwner)
+                    if (ReferenceEquals(o, leaf))
+                        throw new OwnershipException("TakeTo: cycle detected - the target object is already owned (directly or transitively) by this array.");
             Reparent(leaf, target);
         }
+
+        /// <summary>Destroyed, or its destruction has begun (an array or buffer whose batch is still running: still readable, but it no longer changes its owner -
+        /// like an object, natively `flags & 1`).</summary>
+        public static bool Gone(IOwnedLeaf leaf) =>
+            leaf.IsDestroyed || leaf is fire.Values.ScriptArray { IsDying: true } || leaf is fire.Values.ByteBuffer { IsDying: true };
+
+        /// <summary>The word for the kind of a leaf in a message ("array", "buffer", "lambda").</summary>
+        public static string KindName(IOwnedLeaf leaf) => leaf switch { fire.Values.ScriptArray => "array", LambdaValue => "lambda", _ => "buffer" };
 
         /// <summary>An inner array created in the same expression belongs to the outer one: it leaves its scope and is destroyed together with the outer one.</summary>
         public static void AttachPart(fire.Values.ScriptArray outer, IOwnedLeaf part)

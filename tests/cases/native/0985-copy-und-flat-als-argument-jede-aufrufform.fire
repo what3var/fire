@@ -1,0 +1,25 @@
+class Item { int v = 0
+    construct(int v) { this.v = v } }
+class Calc {
+    int k = 1
+    static int Bump(Item list[]) { list[1].v = list[1].v + 10; return list[1].v }
+    static int BumpO(Item o) { o.v = o.v + 10; return o.v }
+    int IBump(Item list[]) { list[1].v = list[1].v + 10; return list[1].v }
+    construct() { }
+    construct(Item list[]) { list[1].v = list[1].v + 100 }
+}
+var list = [new Item(1), new Item(2), new Item(3)]
+print("a " + Calc.Bump(copy list) + " " + list[1].v)
+print("b " + Calc.Bump(flat list) + " " + list[1].v)
+print("c " + Calc.BumpO(copy list[0]) + " " + list[0].v)
+print("d " + Calc.BumpO(flat list[0]) + " " + list[0].v)
+var c = new Calc()
+print("e " + c.IBump(copy list) + " " + list[1].v)
+var c2 = new Calc(copy list)
+print("f " + list[1].v)
+var lam = (Item l[]) => { l[1].v = l[1].v + 1000; return l[1].v }
+print("g " + lam(copy list) + " " + list[1].v)
+print("h " + (await Calc.Bump(copy list)) + " " + list[1].v)
+print("i " + (await Calc.Bump(list) taking list) + " " + list[1].v)
+print("j " + (await c.IBump(list) taking list) + " " + list[1].v)
+//# name: Copy und flat als Argument: statisch (auch mit C-Rumpf), Instanz, Konstruktor, Lambda, await und await taking

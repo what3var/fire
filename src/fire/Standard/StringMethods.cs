@@ -85,7 +85,8 @@ namespace fire.Standard
 
         /// <summary>The fire source `class extends string { ... }` for the prelude, generated from
         /// <see cref="Signatures"/> - so the IDs appear in only ONE place.</summary>
-        public static string PreludeSource { get; } = BuildPreludeSource();
+        public static string PreludeSource => _preludeSource ??= BuildPreludeSource();
+        private static string? _preludeSource;
 
         private static string BuildPreludeSource()
         {
@@ -113,19 +114,37 @@ namespace fire.Standard
             return sb.ToString();
         }
 
-        /// <summary>`StringBuilder`: collects pieces of text and joins them once at the end (`+=` in a loop copies the whole text every time).</summary>
-        private const string StringBuilderSource = """
+        /// <summary>`StringBuilder`: collects text in ONE growing buffer of characters (`+=` in a loop copies the whole text every time). The buffer is a byte
+        /// buffer of the object, filled by the native function <see cref="StringBuilderMethods.NativeName"/> (see there for its layout) - no string and no
+        /// list entry per piece. Only an object is turned into its text here (`"" + value`: its ToString() is a call of the program).</summary>
+        private static string StringBuilderSource { get; } = """
 
-            /// Collects pieces of text and joins them at the end: `Append` is cheap, `ToString()` builds the text once.
+            /// Collects pieces of text in one growing buffer: `Append` is cheap, `ToString()` builds the text once.
             class StringBuilder {
-                List<string> parts
-                int size = 0
-                construct() { this.parts = new List<string>() }
+                private any data
+                construct() { this.data = new byte[64] }
                 /// Appends a value as text (like `"" + value`).
                 undefined Append(any value) {
-                    string t = "" + value
-                    this.parts.Add(t)
-                    this.size = this.size + t.Length
+                    if (__SbCall(1, this.data, value) != 0) { this.Put(value) }
+                }
+                // what did not go in at once: the text of an object, and a buffer that is full (the next one is at least twice as big)
+                private undefined Put(any value) {
+                    any text = value
+                    int need = __SbCall(1, this.data, text)
+                    if (need < 0) {
+                        text = "" + value
+                        need = __SbCall(1, this.data, text)
+                    }
+                    if (need > 0) {
+                        var fresh = new byte[need]
+                        __SbCall(2, fresh, this.data)
+                        // the new buffer belongs to the builder (a local one dies with this method), the old one is released
+                        any old = this.data
+                        this.data = fresh
+                        fresh.TakeTo(this)
+                        delete old
+                        __SbCall(1, this.data, text)
+                    }
                 }
                 /// Appends a value as text and a line break.
                 undefined AppendLine(any value) {
@@ -133,16 +152,13 @@ namespace fire.Standard
                     this.Append("\n")
                 }
                 /// The number of characters collected so far.
-                int Length { get { return this.size } }
+                int Length { get { return __SbCall(3, this.data) } }
                 /// Removes everything collected.
-                undefined Clear() {
-                    this.parts.Clear()
-                    this.size = 0
-                }
+                undefined Clear() { __SbCall(4, this.data) }
                 /// The collected text.
-                string ToString() { return "".Join(this.parts) }
+                string ToString() { return __SbCall(5, this.data) }
             }
-            """;
+            """.Replace("__SbCall", StringBuilderMethods.NativeName);
 
         /// <summary>The native function `__StringCall(id, text, arguments...)`.</summary>
         public static Value Call(Value[] args) => Call(args, null);
@@ -389,7 +405,8 @@ namespace fire.Standard
         }
 
         /// <summary>String or character as a string.</summary>
-        private static string Text(Value v) => v.Kind == ValueKind.Char ? v.AsChar().ToString() : v.AsString();
+        private static string Text(Value v) => v.Kind == ValueKind.Char ? v.AsChar().ToString() : v.Kind == ValueKind.String ? v.AsString()
+            : throw new InvalidOperationException($"A string or char was expected, not {v.Kind}.");   // (through `any`: the catchable ArgumentException, fire_rt.h charsOf the same)
 
         private static NativeIndexOutOfRangeException Out(long index, int length) => new(index, length, "String index");
 

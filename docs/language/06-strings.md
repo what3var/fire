@@ -30,6 +30,12 @@ print(msg)
 Every value can be converted: numbers (with their unit: `"" + 5mm` is `"5mm"`), `bool` (`True`/`False`), `char`, `undefined`, objects (their
 `ToString()` if the class has one).
 
+**`ToString()`** gives that text as a method: every value has it - `5.ToString()` is `"5"`, `5m.ToString()` `"5m"`, `Color.Blue.ToString()`
+`"Blue"`, `true.ToString()` `"True"`, `[1, 2].ToString()` `"<array>"`, `"x".ToString()` the string itself - and every object (its class's own
+`ToString()`, otherwise `"<object Name>"`, a record too). `x.ToString()` and `"" + x` give the same text; only a byte buffer differs:
+`buffer.ToString()` is its bytes as characters, `"" + buffer` is `<buffer n bytes>`. `undefined` has no methods (`"" + undefined` is `"undefined"`).
+A value that goes into a `string` declaration becomes this text (see [Types](02-types.md#string-holds-a-text)): `string s = 5` holds `"5"`.
+
 `+=` in a loop copies the whole text every time. For many pieces, collect them and join them once: `separator.Join(items)` joins the elements of
 a `List` or an array (each converted like `"" + x`), and a `StringBuilder` collects pieces with `Append`:
 
@@ -44,6 +50,10 @@ print(sb.Length)                    // 10
 ```
 
 `StringBuilder`: `Append(value)`, `AppendLine(value)`, `Length`, `Clear()`, `ToString()`.
+
+A `StringBuilder` keeps its text in one growing buffer of characters (it doubles when it is full): `Append` copies the characters of the value
+into it - a number is written there digit by digit, without a string of its own - and `ToString()` makes the text once. `Clear()` empties it and
+keeps the buffer. Use it wherever a text is built from many pieces; `"" + a + b` is fine for a few.
 
 ## Format strings: `$"..."`
 

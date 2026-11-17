@@ -51,6 +51,15 @@ var e = 1 var f = 2    // ERROR: neither ';' nor a line break
   in any unit. A type argument found for a generic method from a value carries that value's unit (`Max(5cm, 3cm)`: `int : cm`; unknown: `int : any`). Without a known
   type argument (the raw form `new Box()`) a type parameter is checked by its `where` conditions (`is of`, `is in`) and not at all without them;
   `any` and `class` are not checked.
+- A **declaration `string`** (a variable, a field, a static field, a property, a parameter, a return value, an element of `string a[]`, a type parameter
+  whose type argument is `string`) holds a string or `undefined`: any other value is converted into its text, `x.ToString()` - the text `"" + x`
+  gives (a number with its unit, `True`/`False`, the name of an enum's member, `<array>`; an object its own `ToString()`, run at that place in VM and
+  native code - an exception it throws propagates -, otherwise `<object Name>`; a byte buffer its bytes as characters). `undefined` stays undefined
+  (`defined string`: the `ArgumentException`). A value the type checker knows to be a string is not checked (no instruction); a parameter that every
+  call of the program gives a string is not checked either (derived like `defined`, 8.10b). Strict mode reports a value that is certainly no string
+  as the warning `TC034`. DECISIONS D14.
+- **Every value but `undefined` has `ToString()`**, and every object (a class without one gives `<object Name>`); it is the text of `"" + x`, except
+  for a byte buffer (`ToString()` decodes it, `"" + buffer` is `<buffer n bytes>`).
 - A **local variable** declared with int/float/bool, a class, an interface or a type parameter holds the same: a value the type checker cannot
   prove for it (from `any`, a downcast; a conflict it reports is a warning in lax mode and stays unchecked) is checked when it is assigned (`ArgumentException`: `Variable 'x' is an int, not String.`). Unlike a
   parameter or a field, a local takes the unit of its value (SPEC 3.5).
@@ -284,11 +293,14 @@ does not pass on there (`TC018`: the value dies with the setter on that path). A
   and is not unclaimed at the caller.
 - **Destroyed objects.** A destroyed object is **dead** when the destruction that destroyed it is over (the scope is left, `delete` returned): using it - a field, a method, a property - throws a catchable
   `DestroyedException`, like an array (2.5). While the destruction is still running (the destructors of one scope), the objects of that scope can still be used, also those that were destroyed before - the destructor of a
-  writer can flush a stream that was destroyed before it. A reference does not keep anything alive: what a function wants to hand out has to be returned, taken (`Take...`) or stored in an owner that lives on.
+  writer can flush a stream that was destroyed before it. The same holds for the arrays and buffers destroyed in it (those of the scope and those of its objects, e.g. the elements of a `List`):
+  they die when the destruction is over, so a destructor at the end of the program can still read a static `List`. What reaches the scope while it is destroyed (an exception a destructor throws and
+  catches - it belongs to the global scope -, an object a destructor stores in a global variable at the end of the program) is released with it, without its destructor. A reference does not keep anything alive: what a function wants to hand out has to be returned, taken (`Take...`) or stored in an owner that lives on.
 
 ### 2.5 Arrays and buffers in the ownership model, `delete`
 
-- An **array or buffer is destroyed** when its owner is destroyed or left (a scope is left, an object is deleted) and when `delete` is applied to it. Destroying it releases its memory; nothing runs
+- An **array or buffer is destroyed** when its owner is destroyed or left (a scope is left, an object is deleted) and when `delete` is applied to it. Destroying it releases its memory (when the destruction
+  it belongs to is over, 2.3: until then the destructors of the same scope still read it); nothing runs
   (there is no destructor), what it owns is destroyed with it: the inner arrays made with it (2.1) and every unclaimed value stored into one of its
   elements (`arr[i] = new X()`, `arr[i] = Make()`, `arr[i] = [1, 2]`: the array claims it, 2.1) or taken (`arr[i] = take x`). Overwriting or clearing the
   element does not destroy what the array owns - it lives as long as the array.
@@ -301,6 +313,12 @@ does not pass on there (`TC018`: the value dies with the setter on that path). A
   `throw`, `take`, `foreach` (`copy`/`flat`: the `ArgumentException` of a destroyed object). `==`/`!=`, `== undefined` and `is of class` are no use: they answer, and `==` compares the object (a dead reference
   equals the thread's). Only the thread's variable and the references among the moved values work. VM and native the same (the moved values get a new
   identity: a new instance in the VM, the next generation of the handle slot natively - no check is added anywhere else); not checked in `#performance`.
+- **Buffers of the globals and fire threads** (THREADING_DESIGN.md 7.1): a buffer owned by the global scope or by an object or array of the globals
+  is shared memory - every fire thread reads and writes its elements without a section. Bounds and destroyed-checks apply as above; destroying it is
+  seen by every thread (the next access throws `DestroyedException`), and its memory is never freed or reused while a thread may still be inside an
+  access (Debug and Release; natively without the GIL by deferring the free). Order, atomicity (a `word` may be torn) and visibility between
+  threads are not guaranteed; a synchronising operation (`sync global`, `sync globals`, a channel, an actor message, `Completion`, thread start and
+  end) makes earlier writes visible.
 - **Debug warning for references that outlive their object**: in Debug mode the VM notes when a field or an array element is given an object that belongs to a scope (a local, an
   argument passed with `take`, or something they own). When that object is destroyed while a holder that lives on still points to it, a warning is printed (once per place):
   `warning (line N): an Item is destroyed at the end of the call it belonged to, but the field 'last' of a Shelf still points to it (...)`. Release, Performance and native programs do not check.
@@ -390,16 +408,18 @@ the copy) - belongs to the owner of the root copy. This way every copy is destro
 
 - Directly on a number literal without a separator: `5mm`, `2mm`, `1km`.
 - `:` operator for **unit** annotation/coercion on a value: `undefined : km`.
-  - `value:` (without an argument) → the unit is derived automatically from the context of the operation (see 3.4).
+  - `value:` (without an argument) → the unit is derived automatically from the context: the other operand of the operation (the anchor, see 3.2) or the declaration the value goes to; without a context it becomes `unitless`.
   - `value:unit` → the unit is explicitly forced/converted to `unit`. `:` never fails: a value of the same dimension is converted (`2km:m` is `2000m`), one of another dimension (or a unitless one) gets its number in the base unit with the target unit (`5mm:kg` is `0.005kg`, `7:s` is `7s`).
   - To `unitless` the **dimension is calculated out**: the number in the base unit, `12mm:unitless` is `0.012` (an int stays an int when the result is whole: `2km:unitless` is `2000`).
 - `::` operator (**relabel**): `value::unit` gives the same number the other unit and calculates nothing - `12mm::unitless` is `12`, `12mm::m` is `12m`. The unit after `::` is always written out.
 - `!` operator for **type** coercion: `value!`, `value!int`.
-  - `value!` (without an argument) → the type is derived from the context.
+  - `value!` (without an argument) → the type is derived from the context: the other operand of the operation (the anchor, see 3.2) or the declaration the value goes to (`int i = 2.6!` is `2.6!int`: 3); without a context the value stays as it is.
   - `value!type` → the type is explicitly forced.
   - Targets: `int`, `float`, `bool`, `string`, `char` (from/to the character code; a float is rounded), a bit width `int[8|16|32|64]` (signed two's complement), `byte` (unsigned 8 bits), `float[32|64]` (`float[32]` rounds to single precision).
   - `value!ClassName` (a class or an interface) is a checked **cast**: the static type becomes `ClassName`; at run time an object of another class throws an `ArgumentException` (`Cannot convert a value of type 'Cat' to 'Dog'.`), `undefined` passes unchanged. A class of a namespace is named with it (`value!Shop.Item`, relative names as everywhere): after `!` a dot goes on with the type name while the name so far is a namespace of the program (all files are scanned for `namespace` declarations before parsing); otherwise the dot is a member of the result (`value!Dog.Bark()`).
-- `:` (unit) and `!` (type) are independent operators and can be combined freely: `a:km!`, `a:!`.
+- `:` (unit) and `!` (type) are independent operators and can be combined freely: `a:km!`, `a:!`. However they are written, the type is converted before the unit (`500m:!` next to a float in km is `0.5km`, not a rounded `1km`).
+- `value!` to a `string` or a `bool` converts nothing: next to a string or bool anchor only a value of that type passes, anything else is an `ArgumentException` (`Cannot coerce type Int to String: '!' does not make the text of a value (write "" + x or x.ToString()).`) - and `TC013` at compile time where the types are known (an error in lax mode too; also for `5!string` and `1!bool`). The text of a value is `"" + x` or `x.ToString()`.
+- As an argument: `F(a:)`, `F(a:!)`, `F(a:, b)`, `F(a:!int)`, `F(a:! + b)` are the conversion of `a`; `F(size: 2)` and `F(flag: !x)` are named arguments (after `name:` a named argument has a value; a `!` there is a logical not when a value follows it). `F(a: -b)` is a named argument too - write `F((a:) - b)` for the subtraction.
 
 ### 3.1.1 `!` depends on the context by position (prefix vs. suffix)
 
@@ -436,8 +456,12 @@ The **type** of a variable is given BEFORE the name (`int x`, `float y = 2.5`, `
 
 For a binary operation between operands with units:
 
-- If **exactly one** operand does not request `:` coercion, its unit is the target unit of the whole operation; all other (compatible) operands are converted to it.
-- If **several/all** operands request `:` auto-coercion (without any of them naming an explicit target unit), the target unit is `unitless`.
+- If **exactly one** operand does not request a coercion from the context (`:`, `!` or `:!` without an argument), it is the **anchor**: the other operand takes its unit (`:`), its type (`!`) or both (`:!`).
+- If **both** operands request one, there is no anchor: their units become `unitless`, their types stay as they are.
+- `:` to the anchor never fails, like `value:unit`: a value of another dimension gets its number in the base unit with the anchor's unit (`500m: + 2kg` is `502kg`). A whole number converted into a coarser unit is rounded (`500m: + 2km` is `2km`; `TC007`) - ask for the type too next to a float (`500m:! + 2.0km` is `2.5km`).
+- `!` to the anchor is `value!type` with the type of the anchor: `int`, `float`, `char`, `word` (an enum value counts as its number, an `int`); `undefined` becomes `0`. An anchor that is `undefined` at run time is an `ArgumentException` for `==`/`!=` (`Cannot coerce type Int to Undefined: the operand that gives '!' its type is undefined.`) and the error of the operation itself otherwise.
+- **The conversion is fixed at compile time** where the type checker knows the type and the unit of the anchor (TYPES.md): the compiler emits `value!float`, `value:km` instead of looking at the anchor at run time, and the result has a static type (`var c = b + a:!` is a `float` in km). Where the anchor is not known (`any`), the conversion looks at it at run time - with the same result.
+- **The context of a declaration**: a value that goes to a typed variable, field, parameter or return value takes the declared type for `!` (`int`, `float`, `char`, `word`) and the declared unit for `:` - `int i = 2.6!` (3, rounded like `!int`), `float:km d = a:!`, `F(x!)` for a parameter `int x`, `return x:!` in a `float:km` method. A declaration of another type (`string`, `bool`, a class, `any`) and one without a unit are no context: the type stays, the unit becomes `unitless`.
 - If **no** operand requests a coercion and the units have the **same dimension but a different scale** (`500mm + 2m`), the operands are converted **implicitly** - no `:` needed. The type never changes: two `int`s stay `int`, and the **finer** unit is the target as long as the converted value does not overflow (`2m + 500mm` and `500mm + 2m` are both `2500mm`). If it would overflow, the **coarser** unit is the target and the fraction is cut off (`1500mm + 900000000000000000m` is `900000000000000001m`). With a `float` operand the result is a `float` in the unit of the left operand (`1.5mm + 1m` is `1001.5mm`, `2.5m + 250mm` is `2.75m`). This applies to `+`, `-`, `%` and the comparisons.
 - Incompatible dimensions (`5mm + 2kg`, `5mm + 2`) are a run-time error, unless a suitable coercion is requested.
 - **Chains with more than two operands** (`a + b + c`) are evaluated in the classic left-associative way: `(a + b) + c`. The anchor rule is applied again at every partial step, with the intermediate result (including its already determined unit) counting as the left operand of the next step – so there is no global "all operands at once" view across the whole chain.
@@ -447,9 +471,9 @@ int a = 5mm
 float b = undefined:km
 
 var c = b + a:!     // a is auto-coerced (unit+type), b is the anchor -> c : float:km
-var d = b: + a:!    // both request auto-coercion -> no anchor -> d : float:unitless
+var d = b: + a:!    // both request auto-coercion -> no anchor -> d is unitless (a float here; an int that leaves its dimension is a whole number or not)
 
-b = a:km!            // a explicitly to km (unit) and automatically to float (type)
+b = a:km!            // a explicitly to km (unit: an int, rounded) and to float (type) by the declaration of b
 ```
 
 ### 3.3 Prefix system
@@ -726,7 +750,10 @@ A name is either **static or for instances**, not both: a class may not declare
 `static bool Inside(R a, R b)` next to `bool Inside(int x, int y)`, and a
 derived class may not add an instance method named like a static method of a
 base class (or the other way round) - `E4076`, also in packages, where it stops
-the package from being built. (Otherwise `R.Inside(a, b)`, `r.Inside(a, b)` and
+the package from being built. The rule holds for every member with a name -
+methods, fields and properties, also one of each kind (`static int n` next to
+`int n`, a static property next to an instance method). A field or a property is
+declared once in a class (`E4077`). (Otherwise `R.Inside(a, b)`, `r.Inside(a, b)` and
 `Inside(a, b)` inside the class would choose between them by how they are
 written.)
 
@@ -1502,14 +1529,34 @@ by whether a `{` follows directly after `try` (block) or not (expression).
 
 - **On the thread of a running VM** (the normal case: the script itself calls e.g. `Window.Tick`, and the events fire during it) the lambda runs **nested on this VM**
   (`VM.CallLambdaInline`): with the **real global variables**, reading and writing, like any other lambda (4.2) - there is nothing to isolate because nothing is concurrent. Objects with
-  lambda fields or references to foreign objects are no problem as globals, and `leave`/`terminate` in the callback act on the program. An unhandled exception in the callback only aborts the
-  callback (a `try`/`catch` around the triggering call does not see it): it goes to `onUnhandled` as text, the program keeps running. As with destructors and properties, during a
-  nested callback `leave`/`terminate` of other threads is not checked (only afterwards).
+  lambda fields or references to foreign objects are no problem as globals, and `leave`/`terminate` in the callback act on the program. As with destructors and properties, during a
+  nested callback `leave`/`terminate` of other threads is not checked (only afterwards). For an unhandled exception in the callback see below.
 - **On a thread without a running VM** (a host thread, e.g. a serial event) access to the globals would be a data race: the callback is therefore **queued** to the main program
   (`VM.PostCallback`, via `RunCallback(..., owner)`) and executed there - automatically at a safe point or at `sync globals`, as `#globaljobs` says (with `sync`/`#nosync` only then) - with the real globals. If the
   main program is not (or no longer) running, the isolated copy applies as described below (`FireRuntime.CallCallback`).
 
-The rest of this section describes this isolated case.
+**An exception that leaves a callback.** It depends on whether the program waits for the native that runs the callback:
+
+- **Synchronous** - the callback runs during a native call of the program, on its thread (the events of `Window.Tick`, `Window.Cycle`, `WindowManager.Tick`/`Run`/`RunModal`; a
+  native of a package that calls a lambda it was given): the exception does **not** run the catch blocks around the call while the native is still running. It is kept; the
+  native's further callbacks do not run (the other handlers of the event, the rest of the events of that cycle); the native finishes as usual (it frees what it holds); then
+  **its call throws the exception** - the same object, with its fields and trace - and a `try` around the call catches it like any other. Without such a `try` it is an ordinary
+  unhandled exception: the program ends (`win.Run()` with a throwing handler ends the program, in the VM and natively). The catch block runs after the native has returned, so
+  `resume()` cannot go back into the callback. A window event handler that runs as a member of the main program's group (the program has tasks) counts as synchronous until it
+  first waits.
+- **Asynchronous** - nobody waits for it: a callback at a safe point (the cycle a started `WindowManager` asks for, a host service, a callback from another thread queued to the
+  main program, a group member that goes on after a wait), or an idle turn of a wait. The exception is **reported** - one line on the error output,
+  `(unhandled exception in the callback: Unhandled exception of type 'Class': message)`, the same in the VM and natively (a host gets the text through `onUnhandled`) - and
+  the program goes on.
+
+The windows' prelude restores its state when a handler throws (`try`/`finally` in `Window.Cycle`, `WindowManager.Tick`, `Run` and `RunModal`): the manager is ready for the next
+`Run`, a modal loop ends (the other windows take input again; the modal window stays open as an ordinary window).
+
+In a native build a package's `callLam` is `fire_cbCall` (fire_rt.h): a catch for every exception around the lambda that keeps it (UW_DEFER), a guard that runs no lambda
+while an exception or a `leave` unwinds, and `fire_cbRethrow` at the call site of every native of a package and of the graphics/windows bridges. In a package library for the VM
+the host keeps the exception (`fire_host.call_lambda` gives 2, native/abi/fire_pkg_abi.h) and `PackageNativeBinding` throws it when the call returns.
+
+The rest of this section describes the isolated case.
 
 ```csharp
 // Host-side C# registration (RegisterCallback is an ORDINARY
@@ -1879,7 +1926,9 @@ collision reason) – a specific element width is instead set via the
 declared variable type (`int[16] a = new int[10]`).
 
 **Implemented**: run-time representation (`Values.ScriptArray`, a fixed-size
-allocated `Value[]`, elements initialized to `undefined`), index access
+`Value[]`, elements initialized to `undefined`; a new array allocates it with its first use, and a
+`bool a[]` is stored packed - one byte per element, 0 `false`, 1 `true`, 2 `undefined` - until code asks
+for its `Items`, which turns it into values with the same elements), index access
 reading/writing (`arr[i]`/`arr[i] = value`, opcodes `ArrayGet`/`ArraySet`),
 array literals (`[1, 2, 3]`, opcode `MakeArrayLiteral`), bounds checking
 (an index outside `0..Length-1` yields a catchable
@@ -1925,8 +1974,10 @@ interface IHolder { int[] Items() }
 A method, an interface entry or a property may return an array: `Type[] Name(...)`, with **empty**
 brackets after the type. Only there - wherever an identifier exists, the brackets stay after it
 (`int values[]`); `int[] values` as a field, parameter or variable is an error with exactly this hint, and so is
-an array return type on `extern` (the native interface knows no script arrays). Like every return type it
-is not enforced at run time, the resolver only checks that the type name exists; the editor uses it for
+an array return type on `extern` (the native interface knows no script arrays). The array that goes back is
+typed and checked like one stored in a variable of that type (8.4.2): `Cat[] Find(any a) { return a }` with an
+array of Dog, and `int[] Sizes(any a) { return a }` with a text, are the `ArgumentException` of `Cat c[] = a` and
+`int n[] = a` (`TC003` where the type checker knows the value); `undefined` passes. The editor uses the type for
 type inference (`k.Dogs()[0].` suggests the members of `Dog`, `k.Numbers().` suggests `Length`).
 
 ### 8.4.2 Typed arrays
@@ -1968,8 +2019,9 @@ class that implements the interface, the record, a string, a value of the enum -
 (`An element of an array of Dog must be a Dog (or undefined), not Cat.`), through any reference. The elements stay values (no packing). An array
 typed with another class does not go into such a declaration (`An array of Dog cannot be stored where an array of Cat is declared.`). An array of a
 derived class does go where one of its base class or of an interface it implements is declared (`Animal all[] = pets`): it keeps the element type
-it was given, so `all[0] = cat` is still the `ArgumentException` of the Dog array. The other direction (an Animal array into `Dog d[]`) is refused. `new Dog[n]` starts with
-n `undefined` elements. `defined` works for them too: `defined string s[] = new string[n]` starts with `""`, `defined Color c[] = new Color[n]`
+it was given, so `all[0] = cat` is still the `ArgumentException` of the Dog array. The other direction (an Animal array into `Dog d[]`) is refused (TC001 where the checker knows both types). `new Dog[n]` starts with
+n `undefined` elements and is an array of Dog from the start, also where no declaration types it (`any d = new Dog[2]`: `Cat c[] = d` is that
+`ArgumentException`); an array of numbers (`new int[n]`, `new float[n]`, `new bool[n]`, `new char[n]`) takes its width and unit from the first declaration it is stored in, but it remembers its kind: `new int[n]` goes where ints of any width and unit are declared (`int[8] a[]`, `int:cm a[]`) or floats (a whole number goes into a float), not where a class, a string, bools or chars are (`any d = new int[2]; Cat c[] = d` is `An array of int cannot be stored where an array of Cat is declared.`), and `new float[n]` not where ints are - `TC001` where the type checker knows both. `defined` works for them too: `defined string s[] = new string[n]` starts with `""`, `defined Color c[] = new Color[n]`
 with the first value of the enum; `defined Dog d[]` has no zero, so it only takes an array whose elements are all given (`[new Dog("a")]`) -
 `new Dog[2]` there is an `ArgumentException` (`An element of a defined array of Dog cannot be undefined.`). VM and native backend behave the
 same (ArrayElem.Class, natively E_CLASS/TU_CLASS with a table of checks, g_arrClasses). JSON types what it reads for such a field like any other
@@ -2455,7 +2507,8 @@ front of the type it **never holds `undefined`**: a parameter, a field, a proper
 
 * **What goes in is checked**, like any declared kind (an `int` into a `float` becomes a float, another kind is an
   `ArgumentException`) - and `undefined` is an `ArgumentException` too ("Parameter 'a' is an int and never undefined.").
-  A value of an **enum** becomes its number (`defined int` holds only the number).
+  A value of an **enum** becomes its number - in a plain `int` declaration as well (`int n = Color.Blue` holds 2, `n is of int`; TC001 says that
+  a cast `Color.Blue!int` is meant).
 * **A field, a property's field and a variable without an initializer start at zero** in the unit they demand (`0`, `0.0`,
   `False`, the word 0, the char 0).
 * **A return value**: every `return` is checked, and the end of the body (which returns `undefined`) is the exception.
@@ -2475,7 +2528,7 @@ front of the type it **never holds `undefined`**: a parameter, a field, a proper
   a word of its own only there (a variable may still be called `defined`). Of an array (`defined int a[]`) it says that
   the elements are never undefined (8.4.2); not for a pointer or a type argument (`List<defined int>` is an error). `int!` is an error
   that names `defined int`. Overloads do not differ by `defined` alone.
-* **Derived for fields** (not in a debug build; `FIRE_NO_DERIVE=1` switches all derivation off): a field of a
+* **Derived for fields** (in a debug build exactly as in a release build; `FIRE_NO_DERIVE=1` switches all derivation off): a field of a
   class of the program declared `int`, `float` or `bool` without `defined` is compiled as a `defined` one when every write the type checker sees
   gives a number (or the result of a method, a parameter or another field that is derived itself) and none can write it unseen (`&`, a `ref`
   argument, `with`, `Json.Deserialize` in the program). With a number literal as initializer it keeps it; one without an initializer only when its `undefined` cannot
@@ -2729,7 +2782,7 @@ t.Find("radius").Get(circle)            // Member.Get/Set/Call(obj, ...)
   run as normal methods (an exception in them runs to the outer `catch`); for objects of the globals the section rules apply (THREADING_DESIGN.md section 7).
 - **Errors** are catchable **`ReflectionException`**s (`message`): unknown or unreadable/unwritable member, wrong number of arguments, not an object, unknown class.
 - **Limits:** Static members appear in the description, but cannot be read/written/called via `Reflect`. `Reflect.New` builds via a nested execution: if a constructor throws an exception, that is an
-  internal error instead of a catchable exception. Dynamically created fields (without a declaration) do not appear in `Type`, `Reflect.Has` knows them.
+  internal error instead of a catchable exception. An object has only the fields its class declares (writing another one through `any` is a `MissingMemberException`, `Reflect.Set` of it a `ReflectionException`).
 
 #### Selectors: `lambda member<T> name` (and `field`, `property`, `method`, `selector`)
 
@@ -2829,7 +2882,8 @@ Sleep(500ms)                                      // or Sleep(duration), Sleep(2
   `Sleep(0)` is such a point too. A new entry in the queue wakes the sleep up earlier. In a destructor, a job, a host callback or a `catch threads`/`catch terminate` handler the sleep does not process the queue.
 
 **`ToString()` on output and concatenation.** If an object has a parameterless method `ToString()`, it is used by `print(object)`, `"text" + object`, `object + "text"` (if the class has an `operator+`, that applies, `DateTime`/`TimeSpan` handle a string there themselves) and `$"{object}"`. An
-exception in `ToString()` runs to the enclosing `catch`. Without `ToString()` the old representation (`<object ...>`) remains.
+exception in `ToString()` runs to the enclosing `catch`. Without `ToString()` the old representation (`<object ...>`) remains - also as the result of
+`obj.ToString()`, which every object has. A value stored where `string` is declared becomes this text too (section 1, DECISIONS D14).
 
 ### 8.16 Devices (`#import "devices"`)
 

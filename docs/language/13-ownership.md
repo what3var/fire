@@ -207,6 +207,38 @@ using it then throws a `DestroyedException`. Whoever wants to keep an object tak
 | `obj.TakeGlobal(true)` | the global scope of the running thread (`currentThread`; in the main program the same as `TakeGlobal()`) |
 | `try obj.TakeTo(other)` | only if the caller owns `obj` now; returns `True`/`False` (a number or a text has no `TakeTo`: `try x??.TakeTo(other)` skips it, see [Conditional access](03-operators.md#conditional-access--and-)) |
 
+The target of `TakeTo` is an object. Anything else - through `any`: `b.TakeTo(5)` - is the catchable `ArgumentException`
+`TakeTo on a value of type Int which is not an object.`; a number or a text has no `Take...` methods at all (`any n = 5; n.TakeLocal()` is the
+`MissingMemberException` `'TakeLocal' (0 argument(s)) is not a known built-in method on a value of type Int.`; with `try` the name is `tryTakeLocal`
+and the count includes a `Takes` mode). Both are the same in the VM and natively.
+
+What the rules forbid and only the run time can see is a catchable exception - the same class and text in the VM and natively - and nothing has
+moved when it is caught:
+
+| Call | Exception |
+|---|---|
+| `x.Take...()` of a destroyed object, array, buffer or lambda | `DestroyedException` `A destroyed object cannot change its owner.` (`array`, `buffer`, `lambda`); `try x.Take...()` is `False` |
+| `x.TakeUpwards()` when x belongs to the global scope | `ArgumentException` `TakeUpwards: the current scope has no parent scope (already global).` |
+| `x.TakeUpwards()` when x belongs to an object | `ArgumentException` `TakeUpwards is only valid if the current owner is a scope.` |
+| `a.TakeTo(b)` when b belongs to a (directly or further down), or `a.TakeTo(a)` | `ArgumentException` `TakeTo: cycle detected - the target object is already owned (directly or transitively) by this object.` (an array: `by this array.`) |
+| `b.f = take a` / `arr[i] = take a` when the holder belongs to a | `ArgumentException` `take: cycle detected - the holder is already owned (directly or transitively) by this object.` |
+| a mode that is no `Takes` value (`any m = 7; x.TakeLocal(m)`) | `ArgumentException` `The mode of Take... must be one of Takes.This, Takes.Children, Takes.Locals, Takes.All.` (also with `try`) |
+
+```fire
+class Node {
+    Node child
+}
+var a = new Node()
+var b = new Node()
+b.TakeTo(a)                 // a owns b
+try {
+    a.TakeTo(b)             // a would own itself through b
+} catch (ArgumentException e) {
+    print(e.message)        // TakeTo: cycle detected - ...
+}
+print(b is from a)          // True - nothing moved
+```
+
 `TakeGlobal()` in a fire thread hands the object to the **main program**: it and everything it owns (its children, their children, ...) belong to the
 main program from then on and outlive the thread. The thread keeps its references, but uses the object like any global of the main program - reading
 directly, a write in a section, a method call as a job of the main program (see [Threads and actors](15-threads-and-actors.md#global-variables)).
@@ -460,6 +492,10 @@ instance of it ...` for a field or an element). A resource a thread needs is the
 `destruct()` runs once, when the object is destroyed - before the objects it owns are destroyed. For a derived class, the destructor of the derived
 class runs first, then those of the base classes. At the normal end of the program (and on `leave`/`terminate`) the global scope is released, so the
 destructors of global objects run too. A destructor should not throw.
+
+The things of one scope are destroyed together: the objects in the order they were created, then the arrays and buffers. Until all of them are destroyed, a
+destructor can still use the others - an object destroyed before it, an array of the scope, the elements of a `List` (a static `List` too, at the end of the
+program). Only afterwards are they dead, and using them throws a `DestroyedException`.
 
 ## Exercises
 

@@ -16,6 +16,10 @@ print(b[2])                 // undefined
 ```
 
 - Indexes start at `0`. An index outside `0 .. length - 1` throws an `IndexOutOfBoundsException`.
+- An index and a size (`new int[n]`, `new byte[n]`) are ints (a `word` counts by its bits). Any other type is an error when the program is compiled
+  (`a["x"]`, `new int[2.5]`: `TC033`); a value of another kind that comes through `any` is a catchable `ArgumentException` at run time
+  (`An index must be an int, not String.`, `An array size must be an int, not Float.`, `A byte buffer size must be an int, not String.`), in the VM
+  and natively. A negative size is the `ArgumentException` `Invalid array size -1.`.
 - New elements are `undefined` until something is assigned - also in an `int` array.
 - The size never changes; for a collection that grows, use `List<T>` (below).
 - **The brackets stand after the name**: `int values[]`, `string names[10]`. Brackets after the type are a bit width (`int[8] small`, see
@@ -90,6 +94,8 @@ try {
   (`class Box { int data[3] }`: `new Box().data.length` is 3). Without a size (`int arr[]`) the variable or field stays `undefined` until an array is assigned.
 - Natively a typed array is **packed**: one C number per element (`int8_t` for `int[8]`, `float` for `float[32]`, one byte for `bool`) instead of a
   16-byte value - `int[8] a[100000]` needs 100 KB instead of 1.6 MB. Its elements are read and written in place, about as fast as a buffer's.
+- In the VM a `bool` array is packed too: one byte per element (`false`, `true` or `undefined`) instead of a 24-byte value - `bool seen[20000000]`
+  needs 20 MB. Arrays of the other element types hold one value per element there. A new array (`new int[n]`) takes its memory with its first use.
 
 **`defined` arrays.** `defined int a[]` (any value type: `int`, `int[N]`, `float`, `float[N]`, `bool`, `char`) holds elements that are never `undefined`:
 
@@ -132,7 +138,15 @@ print(ops[1](6, 7))                 // 42
 ```
 
 - The other direction (an `Animal` array where `Dog d[]` is declared) and an array of an unrelated class are refused (`An array of Dog cannot be
-  stored where an array of Cat is declared.`).
+  stored where an array of Cat is declared.`) - by the type checker where it knows both types (`TC001`), at run time in any case.
+- `new Dog[n]` (a class, an interface, a record, `string`, an enum) **is** an array of Dog from the start, also where no declaration says so:
+  `any d = new Dog[2]`, `var x = new Dog[2]`, an argument. `Cat c[] = d` is the `ArgumentException` above, `Animal a[] = d` is fine and `a[0] = new
+  Cat()` is refused by the Dog array. An array of numbers (`new int[n]`) and a literal (`[a, b]`) take their element type from the first declaration
+  they are stored in (`int[8] small[] = new int[4]`, `float:m lens[] = new float[3]`). `new int[n]` remembers that it was made for ints all the same:
+  it goes where ints (of any width and unit) or floats are declared, and nowhere else - `any d = new int[2]; Cat c[] = d` is the
+  `ArgumentException` (`An array of int cannot be stored where an array of Cat is declared.`); a `new float[n]` does not go into `int a[]`.
+- A method that returns an array (`Cat[] Find()`, `int[] Sizes()`) checks what it returns like a variable of that type: an array of another
+  class or a value that is no array is the same `ArgumentException`.
 - `defined` works for them too: `defined string s[] = new string[n]` starts with `""`, a `defined` enum array with the first value; `defined Dog d[]` has
   no zero, so it only takes an array whose elements are all given (`new Dog[2]` there is an `ArgumentException`).
 - `lambda<int, int> fs[]` holds lambdas with two parameters (or `undefined`); the types of the signature are hints for the type checker.
@@ -493,6 +507,16 @@ IO.File.WriteAllBytes("out.bin", [0x46, 0x49, 0x52, 0x45])
 A function that **fills** the buffer you give it (`stream.Read(buffer, 0, n)`, receiving) needs a real buffer (`new byte[n]` or a `byte`
 declaration): an array there is an `ArgumentException` ("... expects a byte buffer (new byte[n]), not an array."), so is an element outside
 0 .. 255 or a value that is no bytes at all (a string, an object).
+
+### Buffers and threads
+
+A buffer of the global variables (in a global, a static field, a field of a global object or an array of them) is **shared memory** for the fire
+threads: every thread reads and writes its elements directly, without a section and without waiting for the main program. The bounds and the
+destroyed state are checked as always, and the memory stays valid while any thread may still be in an access - after `delete` (or a reassignment
+that destroys it) the next access of every thread is the `DestroyedException`. What is not guaranteed is the order and atomicity of the accesses of
+different threads: a race reads the old or the new byte (a `word` may be torn), and what another thread wrote is certain to be seen only after a
+synchronising operation (`sync global`, a channel, an actor message, `await`, ...). See Threads and actors, "Global buffers: shared memory"
+(`15-threads-and-actors.md`). A buffer a thread owns itself - its own, a `taking` copy, one it got with `handover` - is its alone.
 
 ## Exercises
 

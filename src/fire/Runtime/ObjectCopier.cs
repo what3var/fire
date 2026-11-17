@@ -147,6 +147,7 @@ namespace fire.Runtime
                         {
                             var array = v.AsArray();
                             if (array.IsDestroyed || !_containersSeen.Add(array)) break;
+                            if (array.IsPacked) break;   // (bools and undefined only)
                             foreach (var item in array.Items) pending.Push(item);
                             break;
                         }
@@ -184,7 +185,8 @@ namespace fire.Runtime
                         LeafOwnership.Adopt(arrayCopy, _owner);
                         arrayCopy.CopyTypeOf(array);   // (a copy of a typed array is typed)
                         _arrayCopies[array] = arrayCopy;   // (before filling: an array may contain itself)
-                        for (int i = 0; i < array.Length; i++) arrayCopy.Items[i] = Map(array.Items[i]);
+                        if (array.IsPacked) arrayCopy.CopyElementsFrom(array, array.Length);   // (packed bools: their bytes)
+                        else for (int i = 0; i < array.Length; i++) arrayCopy.Items[i] = Map(array.Items[i]);
                         return Value.MakeArray(arrayCopy);
                     }
                     case ValueKind.Buffer:
@@ -244,7 +246,7 @@ namespace fire.Runtime
                 else if (x.Kind == ValueKind.Array)
                 {
                     var arr = (ScriptArray)x.AsArray();
-                    if (arr.IsDestroyed || !seen.Add(arr)) continue;
+                    if (arr.IsDestroyed || !seen.Add(arr) || arr.IsPacked) continue;
                     for (int i = 0; i < arr.Length; i++) pending.Push(arr.Items[i]);
                 }
             }

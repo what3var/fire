@@ -1,0 +1,9 @@
+enum Level { Low, High }
+print("" + 0 + " " + -1 + " " + 9223372036854775807 + " " + (-9223372036854775807 - 1) + " " + 1000000 + " " + -42)
+print(5m + " " + -3cm + " " + Level.High + " " + 10 + "x" + 7)
+int[8] small = 127
+print("v=" + small + $" {small} {-128} {1234567890123}")
+var parts = new List<string>()
+for (int i = 95; i < 105; i++) { parts.Add("" + i) }
+print(",".Join(parts))
+//# name: Ganze Zahlen als Text (int64ToChars): Grenzen, Vorzeichen, Einheiten, Enum, in Verkettung und Format

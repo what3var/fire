@@ -1408,6 +1408,16 @@ Alle Ergebnisse (und die komplette Testsuite) sind unverändert. Was den Untersc
    `Execute()`. Die schweren Fälle (Aufrufe, Feldzugriffe, `new`, Arrays, ...) sind eigene Methoden `Op<Name>()` (Schnellpfad)
    und `Op<Name>Slow(...)` (der bisherige Code, unverändert). **Regel für Änderungen:** häufige Opcodes gehören in `Step`
    bzw. eine `Op*`-Methode, nicht als neuer `case` mit vielen Locals in `Execute`.
+   **Nachtrag:** `Step` ist inzwischen selbst so gross geworden, dass der JIT es nicht mehr einbettet - sein Frame (ueber 1 KB
+   `Value`-Temporaere) wurde wieder bei JEDER Instruktion genullt. Die Schleife des frei laufenden Programms steckt deshalb
+   jetzt IN der Methode (`StepCore(op, run: true)` = `StepRun`, aufgerufen aus `RunLoopCore`): sie fuehrt Instruktionen aus,
+   bis die naechste ein `Halt` ist, der Frame entsteht einmal. `Step(op)` (eine Instruktion: Debugger-Schleifen,
+   verschachtelte Ausfuehrung) ist dieselbe Methode mit `run: false`. Kleine Instruktionen, die fast jede Anweisung und jeder
+   Aufruf hat (`ReleaseTemps`, `ClaimToScope`, `ClaimToArray`/`ClaimToObject`, `SetFieldClaim`, `GuardTop`, `CopyArgs`,
+   `IsOfType`, `HasMember`, `CheckUnit`, die Bit-Operatoren), ruft `StepCore` direkt als `Op*`-Methode auf statt ueber
+   `Execute`. `DoReturn` legt bei einer Rueckkehr nichts mehr an (frueher: ein Delegat und ein Closure-Objekt je Aufruf).
+   `Value` hat drei Felder (`_meta` fuer Kind/Width/Wide/Enum, `_bits`, `_ref`), damit der JIT lokale Values zerlegen kann.
+   Gemessen (`forge run -m PERFORMANCE`): fib(40) 228 s -> 73 s, Sieb (20 Mio.) 206 s -> 42 s, Mandelbrot 172 s -> 48 s.
 2. **`Value` von 64 auf 24 Byte** (`Kind`, `Width`, ein `long` für Int/Float-Bits/Bool/Char und EINE Referenz für
    String/Objekt/`Unit`). Ein Value wird bei jedem Stack-Zugriff kopiert.
 3. **Arrays statt `List<T>`** für Werte-Stack (`_stack`/`_sp`), Code und Konstanten (`Chunk.CodeArray`/`ConstantsArray`, beim
@@ -1575,7 +1585,11 @@ Der Renderer hat ein Beschneidungsrechteck (`SetClip/ResetClip`, `Surface.Clip*`
 `VM.CallLambdaInline` das Lambda verschachtelt aus (`RunNestedUntil`): Frame auf den Aufrufer-Zustand, neuer Scope mit dem globalen Scope als Parent, `this` = `OnTarget`. Die Globals sind die echten, nichts wird kopiert,
 kein Thread-Sharing aktiviert. Für eine unbehandelte Exception im Callback gibt es eine `CallbackBoundary` (Frame-Tiefe, Scope, Handler-Untergrenze, Stackhöhe des Aufrufers): `ThrowException` sucht nur Handler über der
 Untergrenze (die try/catch des Aufrufers sind für den Callback unsichtbar); findet es keinen, wickelt es bis zur Grenze ab (`UnwindTo`), stellt die Stackhöhe wieder her und merkt sich die Exception in `_callbackError`,
-die `CallLambdaInline` an den Host zurückgibt (Text an `onUnhandled`, Programm läuft weiter). Eine rohe C#-Ausnahme (z.B. Performance-Modus ohne Prüfungen) stellt den Aufrufer-Zustand im `catch` wieder her und wird vom
+die `CallLambdaInline` an den Host zurückgibt. Läuft der Callback während eines nativen Aufrufs der VM (`CallNativeGuarded` zählt `_nativeDepth`), behält
+`VM.DeferCallbackFailure` sie (`_callbackFailure`, die Tiefe des Natives): weitere Callbacks dieses Natives laufen nicht (`CallbacksSkipped`; `fire_host.call_lambda` gibt 2), und wenn der
+Native zurückkehrt, wirft `CallNativeGuarded` dasselbe Objekt an seinem Aufruf (SPEC 8.1.4). Wo niemand auf den Callback wartet - ein Dienst der Bibliotheken (`ServiceLibraries`), eine
+Leerlaufrunde (`IdleLibraries`), `DrainInbound` - setzt `EnterCallbackBarrier` eine Grenze: dort geht die Exception als Text an `onUnhandled` (`PackageHost.ReportCallback`: eine Zeile auf
+stderr), das Programm läuft weiter. Ein Fenster-Handler als Mitglied der Gruppe (`VmGroup.TryStart`) gibt seine Exception an den Native, wenn er endet, ohne gewartet zu haben. Eine rohe C#-Ausnahme (z.B. Performance-Modus ohne Prüfungen) stellt den Aufrufer-Zustand im `catch` wieder her und wird vom
 Host gemeldet; `RunNestedUntil` gibt `_nestedDepth` jetzt auch dann wieder frei (`finally`). `leave`/`terminate` im Callback laufen über den bekannten Weg (`_shutdownDeferred`, `FinishDeferredShutdown`).
 `WindowManager.Tick` kopiert die Callback-Liste je Ereignis (`ToList`), ein Callback darf Ereignisse an-/abmelden. Ohne laufende VM auf dem Thread bleibt es beim isolierten `FireRuntime.CallCallback` mit Kopie.
 Tests: Suite-Block "Callbacks auf dem VM-Thread".

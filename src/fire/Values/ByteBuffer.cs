@@ -21,14 +21,24 @@ namespace fire.Values
     /// host architecture (see VM.HostByteOrder - determined at runtime
     /// via a bit trick, no compile flag).
     /// </summary>
-    public sealed class ByteBuffer : fire.Runtime.IOwnedLeaf
+    public sealed class ByteBuffer : fire.Runtime.IOwnedLeaf, fire.Runtime.IDyingLeaf
     {
         public byte[] Bytes { get; }
 
         /// <summary>The owner (SPEC 2), see <see cref="ScriptArray.LeafOwner"/>.</summary>
         public fire.Runtime.IOwner? LeafOwner { get; set; }
         public bool IsDestroyed { get; private set; }
-        public void MarkDestroyed(fire.Runtime.IDestructRunner runner) { IsDestroyed = true; LeafOwner = null; }
+        public void MarkDestroyed(fire.Runtime.IDestructRunner runner)
+        {
+            if (IsDestroyed || IsDying) return;
+            IsDying = true;
+            LeafOwner = null;
+            fire.Runtime.DestroyBatch.Enter();
+            fire.Runtime.DestroyBatch.ExitLeaf(this);   // (dead when the batch ends: the destructors of the batch still read it, SPEC 2.3)
+        }
+        /// <summary>See <see cref="ScriptArray.IsDying"/>.</summary>
+        public bool IsDying { get; private set; }
+        void fire.Runtime.IDyingLeaf.Die() { IsDestroyed = true; LeafOwner?.RemoveLeaf(this); LeafOwner = null; }
         public ByteOrder Order { get; set; }
         /// <summary>The number of bytes (what natives, files and the network see).</summary>
         public int Length => Bytes.Length;

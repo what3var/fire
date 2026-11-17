@@ -391,19 +391,12 @@ static uint32_t fire_winb_callbackParams(int type) {
     }
 }
 
-/* Runs one callback like a nested lambda: the real globals; an exception ends only the callback. */
+/* Runs one callback like a nested lambda: the real globals. An exception that leaves it is kept (fire_rt.h fire_cbCall, SPEC 8.1.4): g_unwind.active is set,
+ * the callers stop dispatching and return, and the call site of the native (Tick, Pump) throws it - or a host service reports it. */
 static void fire_winb_runCallback(Value lam, int argc, const Value* args) {
-    Handler* savedHandlers = g_handlers;
     OwnList scratch;
-    g_handlers = NULL;
     ownListInit(&scratch, poolMark(), NULL);
-    callLam(lam, argc, args, &scratch);
-    if (g_unwind.active) {
-        Value ex = g_unwind.value;
-        clearUnwind();
-        fprintf(stderr, "(unhandled exception in the callback: %s)\n", ex.kind == K_Class ? className(asObj(ex)->cls) : "exception");
-    }
-    g_handlers = savedHandlers;
+    fire_cbCall(lam, argc, args, &scratch);
     leave(&scratch);
 }
 
@@ -446,6 +439,11 @@ static void fire_winb_dispatch(FireWinState* w, const FireDisplayEvent* e) {
         fire_winb_runCallback(mine[i].lam, n, a);
         leave(&scratch);
         release(mine[i].lam);
+        if (g_unwind.active) {
+            /* (a callback threw - or the program leaves: the other callbacks of the event do not run) */
+            for (i = i + 1; i < count; i++) release(mine[i].lam);
+            break;
+        }
     }
     free(mine);
 }
@@ -841,7 +839,10 @@ static void fire_winb_serveManagers(void) {
 #endif
     for (i = 0; i < g_fireWinMgrCount; i++) {
         FireWinMgr* m = g_fireWinMgrs[i];
-        if (m && fire_winb_started(m) && fire_atomic_load(&m->pending) && m->service.kind == K_Lambda) fire_winb_runCallback(m->service, 0, NULL);
+        if (m && fire_winb_started(m) && fire_atomic_load(&m->pending) && m->service.kind == K_Lambda) {
+            fire_winb_runCallback(m->service, 0, NULL);
+            fire_cbReport();   /* (a cycle at a safe point: nobody waits for its exception - reported, the program goes on) */
+        }
     }
     busy = 0;
 }
@@ -1044,7 +1045,7 @@ static void fire_winb_deliver(Value id, FireWinState* w, FireDisplayEvents* even
     fire_winb_enqueue(w, events);
     for (k = 0; k < events->count; k++) {
         fire_winb_dispatch(w, &events->items[k]);
-        if (!g_fireWinList[(fire_gfx_size)i]) break;   /* a callback destroyed the window */
+        if (!g_fireWinList[(fire_gfx_size)i] || g_unwind.active) break;   /* a callback destroyed the window, or threw (the rest of the events is dropped) */
     }
 }
 
@@ -1179,7 +1180,7 @@ static Value fire_win_WinTick(Value id) {
     i = (int32_t)id.i;
     for (k = 0; k < events.count; k++) {
         fire_winb_dispatch(w, &events.items[k]);
-        if (!g_fireWinList[(fire_gfx_size)i]) break;   /* a callback destroyed the window */
+        if (!g_fireWinList[(fire_gfx_size)i] || g_unwind.active) break;   /* a callback destroyed the window, or threw (the rest of the events is dropped) */
     }
     fire_display_eventsFree(&events);
     if (!g_fireWinList[(fire_gfx_size)i]) return Bool(open != 0);   /* (a callback destroyed the window: its close request went with it, as in the VM) */

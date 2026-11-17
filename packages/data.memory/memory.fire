@@ -19,7 +19,11 @@ namespace Data {
         // (the databases with a name: shared by the connections that name them - `memory:shop`)
         static Dictionary<string, Data.MemStore> named = new Dictionary<string, Data.MemStore>()
         static int connections = 0
+        // (the shared databases that were forgotten while connections still had them open - Remove would destroy them at once, D3: kept until the
+        // next Open or Forget finds none of them open any more; Close only counts, it also runs at the end of the program, when these lists are gone)
+        static List forgotten = new List()
         Data.IDriverConnection Open(string target, Data.Credentials credentials) {
+            Data.MemoryDriver.DropForgotten()
             var c = new Data.MemoryConnection()
             Data.MemoryDriver.connections = Data.MemoryDriver.connections + 1
             c.id = Data.MemoryDriver.connections
@@ -30,14 +34,26 @@ namespace Data {
                 if (!((ch >= 'a' && ch <= 'z') || (ch >= '0' && ch <= '9') || ch == '_' || ch == '-' || ch == '.')) { throw new ArgumentException("data.memory: the name of a shared database is letters, digits, _ - . ('memory:shop'), not '" + target + "'.") }
             }
             if (!Data.MemoryDriver.named.ContainsKey(name)) { Data.MemoryDriver.named.Add(name, new Data.MemStore()) }
+            delete c.store
             c.store = Data.MemoryDriver.named[name]
+            c.store.users = c.store.users + 1
             c.shared = name
             return c
         }
         // Forgets a shared database (its tables are gone for the connections that open it next; those open keep what they have).
         static undefined Forget(string name) {
+            Data.MemoryDriver.DropForgotten()
             string key = name.ToLower()
-            if (Data.MemoryDriver.named.ContainsKey(key)) { Data.MemoryDriver.named.Remove(key) }
+            if (!Data.MemoryDriver.named.ContainsKey(key)) { return }
+            Data.MemStore store = Data.MemoryDriver.named.Take(key)
+            if (store.users > 0) { Data.MemoryDriver.forgotten.Add(take store) }
+        }
+        // (the forgotten databases whose connections have all closed are destroyed)
+        static undefined DropForgotten() {
+            for (var i = Data.MemoryDriver.forgotten.Count - 1; i >= 0; i--) {
+                Data.MemStore store = Data.MemoryDriver.forgotten[i]
+                if (store.users == 0) { Data.MemoryDriver.forgotten.RemoveAt(i) }
+            }
         }
         static undefined Fail(string message, int code = 1) {
             int primary = code % 256
@@ -170,11 +186,13 @@ namespace Data {
         List indexes         // Data.MemIndex
         List views           // Data.MemView
         int lockedBy         // the connection whose transaction is open (0: none) - the others wait for nobody: they are busy
+        int users            // the open connections of a shared database
         construct() {
             this.tables = new List()
             this.indexes = new List()
             this.views = new List()
             this.lockedBy = 0
+            this.users = 0
         }
         // (the state of another store, copied in - the store stays the one its connections share)
         undefined Restore(Data.MemStore state) {
@@ -267,6 +285,12 @@ namespace Data {
         // (a transaction left open is rolled back: the others may write again)
         undefined Close() {
             if (this.saved.Count > 0) { this.Rollback() }
+            if (this.shared != undefined) {
+                // (only the count: at the end of the program this runs while the static fields of the driver are destroyed)
+                this.store.users = this.store.users - 1
+                this.shared = undefined
+                this.store = undefined
+            }
         }
         // (a write while another connection of the shared database is in a transaction: busy)
         undefined CheckWrite() {

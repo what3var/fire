@@ -168,8 +168,22 @@ namespace fire.Bytecode
         // (see Scope.DebugNameOf), so the debugger shows every variable - globals and those of inner blocks too - with its name. Kept in the same
         // table (key depth -1, slot = offset), so the serialised form of a chunk does not change.
         private const int DeclaredNameDepth = -1;
-        public void MarkDeclaredName(int offset, string name) => DebugLocalNames[(DeclaredNameDepth, offset)] = name;
-        public string? DeclaredNameAt(int offset) => DebugLocalNames.TryGetValue((DeclaredNameDepth, offset), out var name) ? name : null;
+        public void MarkDeclaredName(int offset, string name) { DebugLocalNames[(DeclaredNameDepth, offset)] = name; _declaredNames = null; }
+        public string? DeclaredNameAt(int offset)
+        {
+            // (the VM asks at every `DeclareLocal` outside performance mode - a loop body that declares a variable: an array by offset instead of the dictionary)
+            var names = _declaredNames ??= DeclaredNamesByOffset();
+            return (uint)offset < (uint)names.Length ? names[offset] : null;
+        }
+        private string?[]? _declaredNames;
+        private string?[] DeclaredNamesByOffset()
+        {
+            int max = -1;
+            foreach (var key in DebugLocalNames.Keys) if (key.Depth == DeclaredNameDepth && key.Slot > max) max = key.Slot;
+            var names = new string?[max + 1];
+            foreach (var (key, name) in DebugLocalNames) if (key.Depth == DeclaredNameDepth && key.Slot >= 0) names[key.Slot] = name;
+            return names;
+        }
 
         // Array copies of code and constants for the VM (see VM.ReadByte/LoadConst): an array access is
         // considerably cheaper than the indexer of a List<T>, and the code is read 1-3 times per instruction.

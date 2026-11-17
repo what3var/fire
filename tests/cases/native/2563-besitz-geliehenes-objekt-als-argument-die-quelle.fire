@@ -1,0 +1,16 @@
+class X { int v = 0
+    construct(int v) { this.v = v } }
+class G { static X obj = new X(1)
+    static X items[] = [new X(1), new X(2)] }
+class U {
+  static int Use(X a, int b) { return a.v + b }
+  static int UseLater(X a) { G.obj = new X(9); return a.v }
+  static int Replace() { G.obj = new X(5); return 1 }
+  static int Shrink() { G.items = [new X(7)]; return 1 }
+  static int UseArr(X a[], int b) { return a.length + b }
+}
+try { print(U.Use(G.obj, U.Replace())) } catch (DestroyedException e) { print("1 " + e.message) }
+try { print(U.UseLater(G.obj)) } catch (DestroyedException e) { print("2 " + e.message) }
+try { print(U.UseArr(G.items, U.Shrink())) } catch (DestroyedException e) { print("3 " + e.message) }
+print(G.obj.v + " " + G.items.length)
+//# name: Besitz: geliehenes Objekt oder Array als Argument - die Quelle wird ersetzt

@@ -1,0 +1,19 @@
+undefined 5
+undefined True False undefined undefined 
+An element of an array of bool must be a bool (or undefined), not Int.
+True
+False True False 
+An element of a defined array of bool cannot be undefined.
+False False True True False
+True undefined
+False True True 
+False True 3
+An element of an array of bool must be a bool (or undefined), not String.
+undefined undefined True undefined / True undefined True undefined 
+True undefined 2 3
+7 20 True False
+14286
+undefined
+False
+undefined 7 3
+100cm undefined:cm

@@ -1,0 +1,18 @@
+0: MissingMemberException: Field 'y' does not exist on an instance of 'B' (and there is no 'get_y' property either).
+1: MissingMemberException: Field 'y' does not exist on an instance of 'B' (and there is no 'set_y' property either).
+2: MissingMemberException: Field 'y' does not exist on an instance of 'B' (and there is no 'get_y' property either).
+3: MissingMemberException: Field 'y' does not exist on an instance of 'B' (and there is no 'get_y' property either).
+4: ArgumentException: Property 'Ro' on 'B' has no setter (only 'get').
+5: MissingMemberException: Field 'Wo' does not exist on an instance of 'B' (and there is no 'get_Wo' property either).
+5 e
+6: no exception
+7: MissingMemberException: Field 'other' does not exist on an instance of 'D' (and there is no 'set_other' property either).
+9
+8: no exception
+9: Exception: Access to a destroyed object.
+10: MissingMemberException: Field 'b' does not exist on an instance of 'P' (and there is no 'set_b' property either).
+11: Exception: The record 'P' is unchangeable: its field 'a' is written only while it is constructed - a changed copy is 'copy r with { .a = ... }'.
+12: ArgumentException: Field assignment on a value of type String which is not an object.
+13: ArgumentException: Field assignment on a value of type Array which is not an object.
+after the assignment
+end

@@ -84,9 +84,57 @@ Order, each step with the GIL still on (no change of behaviour, the suite stays 
    or wait; threads read side by side, a thread that never touches the domain never waits. A section holds the write side alone. A program with two
    threads reading global strings and fields of a global object while the main program rewrites them is clean under ThreadSanitizer without the GIL.
 6. **1f** a lock per package instead of the GIL around natives. *Done:* in a program with fire threads every call of a package's native is between
-   `FIRE_PKG_ENTER`/`FIRE_PKG_LEAVE` of that package's lock (`fire_pkgM`, nothing with the GIL; a typed native in C then goes through its Value). A thread
-   takes the read side of the globals before a package's lock, so the main program, holding the write side, never waits for a package's lock; the lock is
-   given back where the GIL was (`gilRelease` in a native that waits, the safe points of a callback). `"threadSafe": true` in the manifest: no lock.
+   `FIRE_PKG_ENTER`/`FIRE_PKG_LEAVE` of that package's lock (`fire_pkgM`, nothing with the GIL; a typed native in C then goes through its Value). The lock is
+   given back where the GIL was (`gilRelease` in a native that waits, the safe points of a callback). `"threadSafe": true` in the manifest: no lock
+   (`time`, `compression`, `hash` of the standard packages).
+   *A thread in a long native holds nobody up* (`fire_natBegin`/`fire_natEnd` around every call of a package's native, outside the package's lock): a
+   thread holds the read side of the globals for a native only when an argument is of the shared domain or may lead into it (`fire_natArg`: an object, an
+   array of anything but numbers, a pointer, a buffer or array the global scope owns); for any other native it does
+   not take the read side, and lets go of it when it holds it (what it read from the domain is its own, see "a thread takes what it reads" below). Before, every native of a package without `threadSafe` took the read
+   side for the order of the locks and held it for the whole native, and a thread kept the read side for the 4096 safe points of its tick - the main
+   program stood at its next safe point or back from its own native. A reader is now also asked to let go at its next safe point (a jump back of a loop, the entry of a
+   function) when someone waits for the readers (`ATTN_DOM`). The order of the locks stays the globals' first, then a package's: a strand that holds a package's lock without
+   the globals' gives it back before it waits for the globals' (`domReadTake` in a callback of the native, `domWriterEnter`, `gilYield`,
+   `strandAcquire`), so the main program, waiting for a package's lock with the write side in the hand, waits for a native that ends without the
+   globals. With the GIL on real threads (a debug build) the threads that wait get the GIL right after a native that took long; during the native they
+   wait. Open: two packages whose natives call back into fire code that calls the other one (the locks of packages have no order among themselves).
+   *A thread takes what it reads* (the rule of the loads): a string or lambda that a fire thread reads out of the shared domain - a global, a static
+   field, a field of an object or an element of an array of the domain - gets a count of the thread's own at the read, under the read side
+   (`FIRE_DOM_LOAD`, `FIRE_DOM_TAKE`; atomic - everything the domain holds has `R_SHARED`; with the GIL the plain count), held by the thread's
+   temporary pool until its scope ends. Like `taking` without the copy: a string never changes. Before, the temporary only borrowed the value and the
+   main program could replace and free it as soon as the thread let go of the read side between the read and the use (`U.Pair(G.name, U.Slow())`: the
+   safe point at the entry of `Slow`, then `retain` of the parameter in `Pair` - a use after free, also with the GIL). With it the limits of the
+   natives went: a native lets go of the read side whatever the thread read before, a string or lambda of the domain as an argument does not hold it,
+   and `ATTN_DOM` is served at every safe point. Open: the main program still borrows (`U.Pair(G.name, U.Change())` where `Change` replaces
+   `G.name` - a use after free without any thread; the same when a section replaces the global at a safe point of the main program); pointers to
+   fields (`ptrRead`); the modules (`fget`).
+   *Global buffers are shared memory* (docs/language/15-threads-and-actors.md "Global buffers: shared memory", THREADING_DESIGN 7.1): the elements
+   of a buffer of the shared domain - a global one, one in a field of an object or an element of an array of the globals - are read and written by
+   every thread without the read side and without sections (`bufOf` does not touch the flag; no aset path or `sharedValue` makes a section of
+   them); a race gives old, new or (a `word`) mixed bytes, visibility only after a synchronising operation. What is protected is their lifetime:
+   before, the main program freed a buffer (`delete`, a reassignment that destroys the old one) while a thread was between the check of the
+   generation and the access - a use after free under AddressSanitizer. Now such a buffer, destroyed while fire threads run, is dead at once and its
+   memory a grave of the epochs of the lent records (`bufRetire`, `lentReclaim`; every fire strand is a reader from `threadRecBegin` on), freed
+   when every strand has passed a safe point or waits; a native with such a buffer holds the read side (the buffers of the domain carry flag 64
+   now, `fire_natArg`), and a callback or wait in it announces no epoch (`g_natDom`). Under ThreadSanitizer the element accesses are relaxed
+   atomics (`FIRE_BUF_LD`/`FIRE_BUF_ST`), so the intended race is not reported.
+   *Arrays and objects of the domain: no memory is freed while a thread may use it* (THREADING_DESIGN 7 "Objekte und Arrays des Bereichs:
+   Lebensdauer"). Before, a thread checked the generation of an array or object of the domain (`leafAlive`), then `leafOf` waited for the read side
+   while the main program freed it (an `int[]` replaced and deleted in a loop while a thread sums it: heap-use-after-free in `typeArray` under ASan;
+   the same with the fields of an object, `list[i]`, `dict[key]`). No graves: the order is turned around. The slot table - never freed - carries the
+   mark of the domain (`SlotEntry.dom`, set with flag 64, cleared when the slot gets a new value or the value moves into a thread), and `leafAlive`
+   takes the read side for a marked slot *before* it compares the generation. Sound because nobody frees what is of the domain while a thread holds
+   the read side: the main program destroys with the write side in the hand (it holds it while it runs), a section holds it alone; a thread's own
+   values are its own. So a value a thread saw alive stays alive - memory and elements - until its next safe point; what it read before (a string, a
+   lambda of an array of Values) is counted by the thread (`FIRE_DOM_TAKE`). What the generated code knew alive across a safe point is checked again:
+   the C helpers of a typed array in a loop (`v_dom`, after `pollLoop` when the domain may have changed - `FIRE_DOM_STALE`: a thread that let go of the
+   read side, the main program after a section or jobs it ran, `g_domChanges`), `self` of a method after the safe point of its entry
+   (`FIRE_SELF_LOST`), `Flow.SelfAlive` after a jump back; `sharedValue` checks liveness before it reads the flags. Cost: programs without threads
+   compile to the same machine code (sieve, objects, hashmap with `-m PERFORMANCE` and RELEASE: identical assembly). With threads `leafAlive` loads one
+   more byte of the same entry (+7 % instructions in a loop that is nothing but generic array stores, about +10-15 % time there; a thread summing an
+   array of the domain in a known-array loop: 0.50 s -> 0.55-0.6 s). Open: the runtime's own loops that call fire code while they hold an array
+   (a callback of `Sort`, a native that calls back) - the read side goes at the safe points of the callback; pointers to fields (`ref o.f`) of an
+   object of the domain have no generation check; `#performance` (no slots) checks nothing anyway.
 7. **1g** `FIRE_NO_GIL` by default: `gilAcquire`/`gilRelease` only mark safe points; ThreadSanitizer clean on the thread tests. *Done:* the default where
    the platform's threads are real (`FIRE_PLAT_PARALLEL` from the posix and windows layers) and the compiler has atomics; the targets with a scheduler of
    fire itself (dos, win16, wasm), FreeRTOS and TinyCC (`FIRE_TLS_STRUCT`), the modules (`FIRE_MODULES`, `FIRE_DLL` - no package locks and no

@@ -1,0 +1,62 @@
+// An object, a list and a dictionary of the globals: a fire thread reads them (fields, an array in a field, list[i], d[key] - the reading
+// methods of the list and the dictionary run on the thread) while the main program replaces and deletes them. A method whose `self` the main
+// program destroys at the safe point of its entry throws the DestroyedException instead of reading freed memory.
+class P {
+    int x
+    string name
+    int vals[]
+    construct(int n) { x = n; name = "p" + n; vals = new int[64]; for (int i = 0; i < 64; i++) { vals[i] = 1 } }
+}
+class U {
+    static int ReadObj(P p) {
+        int s = 0
+        for (int k = 0; k < 400; k++) { s = s + p.x % 2 + p.name.length % 2 + p.vals[k % 64] }
+        return s
+    }
+    static int ReadList(List<string> l) {
+        int s = 0
+        for (int k = 0; k < 200; k++) { s = s + l[k % l.Count].length % 3 + l.Count % 2 }
+        return s
+    }
+    static int ReadDict(Dictionary<string, string> d) {
+        int s = 0
+        for (int k = 0; k < 200; k++) { s = s + d["k" + (k % 8)].length % 3 }
+        return s
+    }
+}
+var done = 0
+var reads = 0
+var obj = new P(1)
+var list = new List<string>()
+var dict = new Dictionary<string, string>()
+for (int i = 0; i < 16; i++) { list.Add("l" + i) }
+for (int i = 0; i < 8; i++) { dict["k" + i] = "v" + i }
+fire {
+    int ok = 0
+    int gone = 0
+    for (int i = 0; i < 200; i++) {
+        try { U.ReadObj(obj); ok++ } catch (DestroyedException e) { gone++ }
+        try { U.ReadList(list); ok++ } catch (DestroyedException e) { gone++ }
+        try { U.ReadDict(dict); ok++ } catch (DestroyedException e) { gone++ }
+    }
+    sync global { done = 1; reads = ok + gone }
+}
+int n = 0
+while (done < 1) {
+    var oldObj = obj
+    obj = new P(n)
+    delete oldObj
+    var nl = new List<string>()
+    for (int i = 0; i < 16; i++) { nl.Add("item " + n + " " + i) }
+    var oldList = list
+    list = nl
+    delete oldList
+    var nd = new Dictionary<string, string>()
+    for (int i = 0; i < 8; i++) { nd["k" + i] = "value " + n }
+    var oldDict = dict
+    dict = nd
+    delete oldDict
+    n++
+}
+print("reads " + reads)
+//# name: Threads: Objekt, Liste und Dictionary der Globals - das Hauptprogramm ersetzt und loescht sie, waehrend ein Thread liest (kein use-after-free)

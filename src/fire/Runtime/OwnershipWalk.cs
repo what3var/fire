@@ -103,7 +103,7 @@ namespace fire.Runtime
         private static void CollectValues(object node, List<Value> sink)
         {
             if (node is ObjectInstance oi) oi.Fields.AppendValues(sink);
-            else if (node is ScriptArray array) sink.AddRange(array.Items);
+            else if (node is ScriptArray array) { if (!array.IsPacked) sink.AddRange(array.Items); }   // (a packed array: bools and undefined only)
             else if (node is LambdaValue { Captures: { } captures }) sink.AddRange(captures);
         }
 

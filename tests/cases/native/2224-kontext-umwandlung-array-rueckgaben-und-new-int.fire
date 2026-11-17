@@ -1,0 +1,81 @@
+class Animal { }
+class Cat : Animal { }
+class Dog : Animal { }
+class K {
+    static Cat[] F(any a) { return a }
+    static Animal[] G(any a) { return a }
+    static Cat[] H() { return new Cat[2] }
+    static int[] I(any a) { return a }
+    static string[] S(any a) { return a }
+    static float[] FL(any a) { return a }
+    static int[] Lit() { return [1, 2] }
+    static float:m[] M(any a) { return a }
+    int[] Prop { get { return "no" } }
+}
+class U { static undefined T(lambda f) { try { print(f()) } catch (ArgumentException e) { print(e.message) } } }
+any d = new Dog[2]
+U.T(() => K.F(d).length)
+U.T(() => K.G(d).length)
+U.T(() => K.H().length)
+U.T(() => K.I("text"))
+U.T(() => K.I([1.5, 2.5])[0])
+U.T(() => K.S([1, 2])[0])
+U.T(() => K.FL([1, 2])[0])
+U.T(() => K.Lit()[1])
+U.T(() => K.M([1cm, 2cm])[0])
+U.T(() => K.I(5))
+U.T(() => K.I(undefined))
+U.T(() => new K().Prop)
+U.T(() => { any o = new int[2]
+    Cat c[] = o
+    return "Cat" })
+U.T(() => { any o = new float[2]
+    int c[] = o
+    return "int" })
+U.T(() => { any o = new int[2]
+    float c[] = o
+    c[0] = 1
+    return c[0] is of float })
+U.T(() => { any o = new int[4]
+    int[8] c[] = o
+    c[0] = 300
+    return c[0] })
+U.T(() => { any o = new float[2]
+    float:m c[] = o
+    c[0] = 5cm
+    return c[0] })
+U.T(() => { any o = new int[2]
+    string c[] = o
+    return "string" })
+U.T(() => { any o = new bool[2]
+    int c[] = o
+    return "int" })
+U.T(() => { any o = new int[2]
+    bool c[] = o
+    return "bool" })
+U.T(() => { any o = new char[2]
+    char c[] = o
+    c[0] = 'x'
+    return c[0] })
+U.T(() => { any o = new int[2][3]
+    float c[][] = o
+    any o2 = new int[2][3]
+    Cat cc[][] = o2
+    return "Cat" })
+U.T(() => { any o = new int[2]
+    o[0] = 7
+    int c[] = copy o
+    return c[0] })
+U.T(() => { any o = new int[3]
+    byte c[] = o
+    return c.length })
+int[8] a8[] = new int[4]
+a8[0] = 300
+float:m fm[] = new float[2]
+fm[0] = 5cm
+float fi[] = new int[2]
+fi[0] = 1
+int grid[][] = new int[2][2]
+grid[1][1] = 4
+print(a8[0] + " " + fm[0] + " " + fi[0] + " " + grid[1][1])
+//# name: Kontext-Umwandlung: Array-Rueckgabetypen werden geprueft wie eine Array-Variable; new int[n] merkt sich seine Art

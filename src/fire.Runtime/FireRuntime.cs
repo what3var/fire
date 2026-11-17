@@ -433,7 +433,8 @@ namespace fire.Runtime
         ///   (`sync globals` or - as `#globaljobs` says - automatically, see <see cref="VM.PostCallback"/>). If the main program is no longer running
         ///   or there is no owner, it runs like <see cref="CallCallback"/> on an isolated copy (`snapshotGlobals` supplies it).
         ///
-        /// An unhandled exception in the callback never goes to the caller, but as text to `onUnhandled`.</summary>
+        /// An unhandled exception in the callback that runs during a native the program waits for (on the VM's thread: `Window.Tick`) is kept and thrown at
+        /// that native's call once it has returned (SPEC 8.1.4); the native's further callbacks do not run. Any other one goes as text to `onUnhandled`.</summary>
         public static void RunCallback(
             LambdaValue callback,
             Value[] args,
@@ -448,6 +449,7 @@ namespace fire.Runtime
             var vm = VM.CurrentThreadVm;
             if (vm != null && !vm.IsHalted)
             {
+                if (vm.CallbacksSkipped) return;   // (an earlier callback of the running native threw)
                 // an event handler of a window: a member of the main program's group (VmGroup) - when it waits, the window goes on (as natively)
                 if (asTask)
                 {
@@ -457,7 +459,7 @@ namespace fire.Runtime
                 try
                 {
                     var error = vm.CallLambdaInline(callback, args);
-                    if (error != null) onUnhandled?.Invoke(new UncaughtScriptException(error).Message);
+                    if (error != null && !vm.DeferCallbackFailure(error)) onUnhandled?.Invoke(new UncaughtScriptException(error).Message);
                 }
                 catch (Exception ex)
                 {

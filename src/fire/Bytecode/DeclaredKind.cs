@@ -13,8 +13,8 @@ namespace fire.Bytecode
         /// <summary>An int declared with an explicit width beyond the program's (`int[64]`, `int[32]`): a value keeps the width it has (Value.Wide). A plain `int`
         /// holds the program's int - with `#intwidth 32`/`16` a wider value is cut when it goes in (like a store into `int[32]`; natively a narrow field).</summary>
         public const byte KeepsWidthBit = 0x40;
-        /// <summary>`defined int`, `defined float`, `defined bool`, `defined word`, `defined char` (SPEC 8.10b): undefined does not fit (an ArgumentException), a value of an enum becomes its
-        /// number. `word!`/`char!` are the only declarations of a word or a char that are checked here (their stores convert or check the rest).</summary>
+        /// <summary>`defined int`, `defined float`, `defined bool`, `defined word`, `defined char` (SPEC 8.10b): undefined does not fit (an ArgumentException). (A value of an enum
+        /// becomes its number in every such declaration, `defined` or not: an `int` holds an int.) `word!`/`char!` are the only declarations of a word or a char that are checked here (their stores convert or check the rest).</summary>
         public const byte NonNullBit = 0x20;
 
         /// <summary>`initializer`: the initializer of a field or the default value of a parameter. A declaration without a unit takes the unit of its
@@ -36,6 +36,19 @@ namespace fire.Bytecode
             };
         }
 
+        /// <summary>The kind of a declaration `string` (DECISIONS D14): what goes in is converted into its text (`x.ToString()`), undefined stays undefined.
+        /// Never with NonNullBit - `defined string` keeps its check of undefined in its DeclaredType (the conversion comes first).</summary>
+        public const byte StringKind = (byte)TypeTag.String + 1;
+
+        /// <summary>Of, and for a declaration `string` (or `defined string`) StringKind: the kind a store checks (a parameter, a field, a local, a return value).
+        /// Of alone stays the kind of the numbers (what has a zero, what can be packed).</summary>
+        public static byte OfStore(TypeRef? type, Expr? initializer = null) =>
+            Of(type, initializer) is var kind and not 0 ? kind
+            : type is { PointerDepth: 0, ArrayRank: 0, LambdaSignature: null, BaseName: "string" } ? StringKind : (byte)0;
+
+        /// <summary>Is it the kind of a declaration `string`?</summary>
+        public static bool IsString(byte required) => (required & 0x1F) == StringKind;
+
         private static bool IsUnitlessLiteral(Expr? e) => e switch
         {
             null => true,
@@ -54,14 +67,14 @@ namespace fire.Bytecode
 
         public static ValueKind ValueKindOf(byte required) => TagOf(required) switch
         {
-            TypeTag.Int => ValueKind.Int, TypeTag.Float => ValueKind.Float, TypeTag.Word => ValueKind.Word, TypeTag.Char => ValueKind.Char, _ => ValueKind.Bool,
+            TypeTag.Int => ValueKind.Int, TypeTag.Float => ValueKind.Float, TypeTag.Word => ValueKind.Word, TypeTag.Char => ValueKind.Char, TypeTag.String => ValueKind.String, _ => ValueKind.Bool,
         };
 
-        /// <summary>Does the value fit as it is?</summary>
+        /// <summary>Does the value fit as it is? (A value of an enum never does: Accept makes it its number - `int n = Color.Blue` is 2.)</summary>
         public static bool Fits(in Value value, byte required) =>
             required == 0 || value.Kind == ValueKind.Undefined && !IsNonNull(required)
             || value.Kind == ValueKindOf(required) && (!IsUnitless(required) || value.Unit is null || ReferenceEquals(value.Unit, Unit.Unitless)) && !CutsWide(value, required)
-               && !(value.IsEnum && IsNonNull(required));
+               && !value.IsEnum;
 
         /// <summary>A number that has to be unitless but carries a unit (the caller converts it: AdaptToUnit "unitless").</summary>
         public static bool NeedsUnitless(in Value value, byte required) =>
@@ -71,11 +84,15 @@ namespace fire.Bytecode
         public static string? Accept(ref Value value, byte required, string what)
         {
             if (CutsWide(value, required)) value = value.WithWide(0);   // (the program's int: cut to its width)
-            if (IsNonNull(required))
+            if (IsNonNull(required) && value.Kind == ValueKind.Undefined) return $"{what} is {Expected(required)} and never undefined.";
+            if (IsString(required))
             {
-                if (value.Kind == ValueKind.Undefined) return $"{what} is {Expected(required)} and never undefined.";
-                if (value.IsEnum) value = value.WithoutEnum();   // (`defined int` takes the number of a value of an enum)
+                // (the text of the value - an object's ToString() is run by the VM before it gets here: GuardDeclared)
+                if (value.Kind is not (ValueKind.String or ValueKind.Undefined))
+                    value = Value.MakeString(value.Kind == ValueKind.Buffer ? ByteConversions.AsciiDecode(value.AsBuffer()) : value.ToString());
+                return null;
             }
+            if (value.IsEnum) value = value.WithoutEnum();   // (an `int` takes the number of a value of an enum - the declaration says what the variable holds)
             if (value.Kind == ValueKind.Undefined || value.Kind == ValueKindOf(required)) return null;
             if (ValueKindOf(required) == ValueKind.Float && value.Kind == ValueKind.Int)
             {
@@ -92,7 +109,7 @@ namespace fire.Bytecode
 
         private static string Expected(byte required) => ValueKindOf(required) switch
         {
-            ValueKind.Int => "an int", ValueKind.Float => "a float", ValueKind.Word => "a word", ValueKind.Char => "a char", _ => "a bool",
+            ValueKind.Int => "an int", ValueKind.Float => "a float", ValueKind.Word => "a word", ValueKind.Char => "a char", ValueKind.String => "a string", _ => "a bool",
         };
 
         /// <summary>The value a field declared `defined int` (`defined float`, `bool`, `word`, `char`) starts with: zero in the unit it demands.</summary>
@@ -102,6 +119,7 @@ namespace fire.Bytecode
             ValueKind.Float => Value.MakeFloat(0, unit),
             ValueKind.Word => Value.MakeWord(0),
             ValueKind.Char => Value.MakeChar((char)0),
+            ValueKind.String => Value.MakeString(""),
             _ => Value.MakeBool(false),
         };
     }

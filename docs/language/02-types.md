@@ -43,6 +43,8 @@ print(v)
 - `undefined` fits every type: `Circle c = undefined` is fine. `undefined!Circle` is a typed `undefined` (useful for `var`: `var c = undefined!Circle`).
 - `int` converts to `float` implicitly, every value converts to `string`, an object converts to every class it derives from and every interface its class
   implements. Everything else between two known types is a conflict.
+- A **`string` declaration holds a string** (or `undefined`): what goes into it is converted into its text, `x.ToString()` - see
+  [`string` holds a text](#string-holds-a-text).
 - A **field and a property always have a type** (`var` is for local variables). A **parameter** without a type is `any` (reported as `TC004`), a **method**
   without a return type returns `any` (`TC005`). A method that returns nothing is declared `undefined`.
 
@@ -114,7 +116,7 @@ int missing
 try { Stats.Mix(missing, 1) } catch (ArgumentException e) { print(e.message) }   // Parameter 'a' is an int and never undefined.
 ```
 
-- `undefined` going in is an `ArgumentException`, a value of an enum becomes its number, everything else is checked as above.
+- `undefined` going in is an `ArgumentException`, everything else is checked as above (a value of an enum becomes its number, as in every `int`).
 - A field or variable declared `defined` without an initializer starts at zero (in its unit), `false`, the word 0 or the char 0.
 - A method declared `defined int` must return a number on every path: the end of its body (which would return `undefined`) is the exception.
 - The type checker warns (`TC022`) where something that may be `undefined` goes in - a parameter, field or uninitialized variable declared without
@@ -160,7 +162,8 @@ constructors. A parameter declared `int` or `float` that every call gives a numb
 parameter or a return that is derived itself, a default that is a number) is checked and passed like a `defined` one; so is a return value when
 every `return` gives a number and the method cannot run off its end. Nothing is derived for a method that something may call unseen: a call
 through a value of an unknown type (`any`), the method used as a value or named in a string, an override of a method of a package or the prelude,
-the constructors of a base class - and not at all in a plugin or module, or in a debug build. A program that uses reflection derives no parameter (a
+the constructors of a base class - and not at all in a plugin or module. A debug build derives exactly like a release build: the same checks, the
+same messages, the same values while you develop. A program that uses reflection derives no parameter (a
 method can be called by its name), one that reads JSON into objects (`Json.Deserialize`) or uses reflection derives no field - unless the class says
 otherwise (below).
 The same holds for **fields** of your classes declared `int`, `float` or `bool`: a field whose every write gives a number (`count++`, `step = step + 1`,
@@ -168,7 +171,7 @@ the result of a method or a parameter that is derived itself) is a `defined` one
 initializer** only when nobody can see its `undefined`: every constructor of its class sets it first (among its first plain statements - before any call,
 before `x++` or any other read), the program never asks (`if (cache == undefined) ...`, `is of`, `?.`), and nothing reaches it before - the constructors
 and field initializers of the base classes run first, so they must not use a member that the class (or a class derived from it) declares, nor hand out
-`this`. It starts at 0 then (a release build). A field nothing writes, or one that `with`, a pointer, a `ref` argument or `Json.Deserialize` may set, is left alone. `FIRE_INFER_UNINITIALIZED_DEFINED=0` keeps the fields without an initializer out of it.
+`this`. It starts at 0 then (in a debug build as well). A field nothing writes, or one that `with`, a pointer, a `ref` argument or `Json.Deserialize` may set, is left alone. `FIRE_INFER_UNINITIALIZED_DEFINED=0` keeps the fields without an initializer out of it.
 Natively such a field is a C number in the object.
 `FIRE_DERIVE_LOG=1` shows what was decided, `FIRE_NO_DERIVE=1` switches it off.
 
@@ -190,8 +193,8 @@ try { Reflect.Set(c, "count", undefined) } catch (ArgumentException e) { print(e
 print(c.count)                             // 2
 ```
 
-Without the attribute the field stays as declared, and `Reflect.Set` stores the `undefined` - so does a debug build (the default in spark, `forge run -m
-debug`), which derives nothing.
+Without the attribute the field stays as declared, and `Reflect.Set` stores the `undefined`. A debug build (the default in spark, `forge run -m
+debug`) behaves the same as a release build here: it derives the same fields and parameters and gives the same messages.
 
 ## The type checker: lax and strict
 
@@ -211,7 +214,7 @@ The checker runs after every compile and in the editor while you type. Its findi
 | `TC010` | a `switch` over an enum misses members and has no `case default` (always a warning) |
 | `TC011` | a named argument that the method does not have, or a parameter without value (always an error) |
 | `TC012` | a `private`/`protected` member used where it is not allowed (always an error) |
-| `TC013` | a cast `x!Dog` that can never succeed |
+| `TC013` | a cast `x!Dog` that can never succeed, a `x!` next to a string or a bool that converts nothing |
 | `TC014` / `TC015` | a member replaces an inherited one without `override` / `override` replaces nothing (`TC015` always an error) |
 | `TC016` | an interface property written without `set` or read without `get` (always an error) |
 | `TC017` | a unit at a `byte` or `word` (always an error) |
@@ -226,6 +229,8 @@ The checker runs after every compile and in the editor while you type. Its findi
 | `TC030` | an expression tree that is not a lambda with an expression body, or that changes something (an error) |
 | `TC031` | a temporary goes into a field without being taken: it dies at the end of the statement (see [Ownership](13-ownership.md#temporaries-die-at-the-end-of-the-statement)) |
 | `TC032` | an array given to a `byte`/`word` parameter becomes a new buffer: what the method writes does not reach it |
+| `TC033` | an index or an array size that is certainly no int, `*x` of a value that is certainly no pointer (always an error) |
+| `TC034` | a value that is certainly no string goes into a `string` declaration: it becomes its text (strict mode only, always a warning) |
 
 In **lax** mode (the default) these are warnings; in **strict** mode they are errors - except where the table says "always". The full texts are in
 Errors and warnings (`docs/tools/errors.md`). Choose the mode with `#strict` or `#lax` at the top of a file, the project
@@ -243,7 +248,9 @@ print(Calc.Twice(21))
 
 ## Converting: `!`
 
-`value!type` converts a value to another type; `value!` without a type takes the type from the other side of the operation.
+`value!type` converts a value to another type; `value!` without a type takes the type from its context - the other side of the operation
+(`a! + b`: the type of `b`) or the declaration the value goes to (`int i = 2.6!` is 3, like `2.6!int`). Without a context (`var c = a!`) the value
+stays as it is. See [Units](05-units.md#the-target-unit-of-an-operation-advanced).
 
 ```fire
 print(3.7!int)          // 4 (rounded)
@@ -295,7 +302,36 @@ if (c is of Dog) { print("never") }     // test first with `is of` when unsure
 ```
 
 Other conversions are methods: `'A'.ToInt()` (65), `65.ToChar()` (`'A'`), `"x".ToBytes()`, `value.ToString()`. A conversion that `!` cannot do
-(`"42"!int`) throws an `ArgumentException`.
+(`"42"!int`) throws an `ArgumentException`. `!` makes no text: `5!string`, and `a! + "x"` next to a string, are that exception (the error `TC013` at compile
+time where the types are known) - write `"" + a` or `a.ToString()`. (A decision: `x!` next to a string stays an error, DECISIONS D15.)
+
+### `string` holds a text
+
+A variable, a field, a static field, a property, a parameter, a return value or an element of a `string` array (`string names[]`, the `T` of a
+`List<string>`) declared `string` holds a string or `undefined`. Whatever else goes in becomes **its text** - `x.ToString()`, the same text as `"" + x`:
+
+| Value | Text |
+|---|---|
+| a number, a number with a unit | `5`, `2.5`, `5m`, `2.5km` |
+| `true` / `false`, a `char` | `True` / `False`, the character |
+| a value of an enum | the name of its member (`Blue`) |
+| an object | its `ToString()` (see [Classes](08-classes.md#tostring)); without one `<object Name>` - a record too |
+| an array | `<array>` |
+| a byte buffer | its bytes as characters (`buffer.ToString()`) |
+| `undefined` | stays `undefined` (`defined string` makes it the `ArgumentException`) |
+
+```fire
+string j = 5
+print(j.Length)          // 1 - j is the text "5"
+print(j == 5)            // False: a string is not a number
+class P { string ToString() { return "a P" } }
+string t = new P()       // "a P" - the object's own ToString() runs; what it throws goes on
+```
+
+A value whose type the compiler knows to be a string costs nothing: no check is compiled. The conversion runs only for what may be something else
+(an `any`, a number, an object); a parameter that every call of the program gives a string is not checked at all. In **strict** mode a value that
+is certainly no string (`string j = 5`, a number for a `string` parameter) is the warning `TC034` - write `5.ToString()` or `"" + 5` where the text is
+meant; lax mode says nothing (the conversion is the rule of the language).
 
 ## Testing a type: `is of`
 

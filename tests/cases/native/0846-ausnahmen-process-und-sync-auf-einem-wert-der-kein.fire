@@ -1,0 +1,17 @@
+class B { int x }
+var tries = [
+    () => { any a = 5; process a },
+    () => { any a = 5; print(try process a) },
+    () => { any a = new B(); process a },
+    () => { any a = 5; sync a }
+]
+for (var i = 0; i < tries.Length; i++) {
+    try {
+        tries[i]()
+        print(i + ": no exception")
+    } catch (ArgumentException e) {
+        print(i + ": " + e.message)
+    }
+}
+print("end")
+//# name: Ausnahmen: process, try process und sync auf einem Wert, der kein Akteur oder Objekt ist, sind ArgumentExceptions wie in der VM
