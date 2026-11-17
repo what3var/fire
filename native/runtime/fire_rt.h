@@ -12384,9 +12384,10 @@ FIRE_FN bool handoverDiscover(Value v, CopyMap* seen, Owned*** parts, uint32_t* 
             }
         } else if (h->okind == O_Array) {
             Arr* a = (Arr*)h;
-            for (i = 0; i < a->length; i++) {
+            Value* items = arrValues(a);   /* (a packed array holds numbers only: it is not unpacked - its move costs nothing per element) */
+            for (i = 0; items && i < a->length; i++) {
                 pending = (Value*)fire_growPush(pending, &pn, &pcap, sizeof(Value));
-                pending[pn++] = arrItems(a)[i];
+                pending[pn++] = items[i];
             }
             for (k = a->parts ? a->parts->head : NULL; k; k = k->next) {
                 pending = (Value*)fire_growPush(pending, &pn, &pcap, sizeof(Value));
@@ -12497,7 +12498,8 @@ FIRE_FN void handOverAllEx(const Value* vs, Value* out, uint32_t n, OwnList* tra
             }
         } else if (h->okind == O_Array) {
             Arr* a = (Arr*)h;
-            for (k = 0; k < a->length; k++) handoverRehome(&arrItems(a)[k], &seen);
+            Value* items = arrValues(a);
+            for (k = 0; items && k < a->length; k++) handoverRehome(&items[k], &seen);
         } else if (h->okind == O_Lambda) {
             Lam* l = lamOfOwned(h);
             for (k = 0; k < l->ncaps; k++) handoverRehome(&lamCaps(l)[k], &seen);
