@@ -1589,6 +1589,10 @@ FIRE_FN FireWord* bufWords(Buf* b) { return (FireWord*)(void*)b->data; }
  * (a cache of up to FIRE_SLOT_CACHE, exchanged half by half with the shared stack under g_slotM), and a generation is read and written atomically (a stale
  * Value of an object another thread destroys or got handed over reads it while that thread writes it). */
 #define FIRE_SLOT_SEGMENTS 1
+#ifndef FIRE_UNCHECKED
+/* (the slot knows whether its object or array is of the shared domain - see "The domain in the slot" at slotDomGet) */
+#define FIRE_SLOT_DOM 1
+#endif
 #endif
 /* One slot: its generation and - when the table knows it - the header of the value in it, side by side (one load for `arrOf` and the check). */
 typedef struct SlotEntry {
@@ -1598,6 +1602,12 @@ typedef struct SlotEntry {
     FireGen gen;
 #ifdef FIRE_SLOT_SEGMENTS
     FireGen born;   /* (see SlotTable.born) */
+#endif
+#ifdef FIRE_SLOT_DOM
+    uint8_t dom;    /* (1: an object or array of the shared domain - see slotDomGet) */
+#ifndef FIRE_SLOT_HDR
+    uint8_t pad_[3];   /* (8 bytes: an entry is found with a shift) */
+#endif
 #endif
 } SlotEntry;
 #ifdef FIRE_SLOT_SEGMENTS
@@ -1630,6 +1640,27 @@ extern FIRE_RT_DATA fire_mutex g_slotM;
 #define slotInTable(slot) ((uint32_t)(slot) < fire_atomic_load(&g_slots.count))
 #ifdef FIRE_SLOT_HDR
 #define slotHdr(slot) (slotEntry(slot).hdr)
+#endif
+#ifdef FIRE_SLOT_DOM
+/* The domain in the slot (docs/spec/THREADING_DESIGN.md 7.1, ROADMAP 1f). An object or array of the shared domain (flag 64) has the mark in its slot too:
+ * the slot table is never freed, so a fire thread that does not hold the read side of the globals' lock learns from it - without touching the memory of
+ * the value, which the main program (or a section) may free at this very moment - that it has to take the read side first. leafAlive does that *before*
+ * it compares the generation (FIRE_SLOT_TOUCH): a thread that sees the value alive holds the read side, and nobody frees what is of the domain while a
+ * thread holds it (the main program and the sections destroy with the write side) - until the thread's next safe point. Set with the flag (the main
+ * program or a section: before any thread can get the Value - through the lock), sticky while the value lives (a value that leaves the domain keeps it:
+ * one wait too many at most), cleared when the slot gets a new value (slotAcquire) or its value moves into a thread (slotBump) - after the generation
+ * changed: release here, acquire in the thread, so a thread that reads it cleared reads the new generation too. A buffer never has it (its elements are
+ * shared memory without the lock - see "Global buffers" at bufRetire). */
+#if defined(__GNUC__) || defined(__clang__)
+#define slotEntryDomGet(e) __atomic_load_n(&(e)->dom, __ATOMIC_ACQUIRE)
+#define slotEntryGenGet(e) __atomic_load_n(&(e)->gen, __ATOMIC_RELAXED)
+#define slotDomSet(slot, x) __atomic_store_n(&slotEntry(slot).dom, (uint8_t)(x), __ATOMIC_RELEASE)
+#else
+#define slotEntryDomGet(e) (*(volatile uint8_t*)&(e)->dom)
+#define slotEntryGenGet(e) (*(volatile FireGen*)&(e)->gen)
+#define slotDomSet(slot, x) (*(volatile uint8_t*)&slotEntry(slot).dom = (uint8_t)(x))
+#endif
+#define slotDomGet(slot) slotEntryDomGet(&slotEntry(slot))
 #endif
 /* Takes up to `want` slots for this thread's cache (under g_slotM): freed ones first, then new ones - a new segment is made before its slots are handed out. */
 FIRE_COLD FIRE_FN void slotRefill(uint32_t want) {
@@ -1670,6 +1701,9 @@ FIRE_FN void slotAcquire(Owned* o) {
     slot = g_slotCache.slot[--g_slotCache.n];
     o->slot = slot;
     o->gen = slotGenGet(slot);
+#ifdef FIRE_SLOT_DOM
+    if (FIRE_UNLIKELY(slotDomGet(slot))) slotDomSet(slot, 0);
+#endif
 #ifdef FIRE_SLOT_HDR
     slotHdr(slot) = o;
 #endif
@@ -1753,6 +1787,9 @@ FIRE_FN void slotRelease(Owned* o) {
 FIRE_FN void slotBump(Owned* o) {
     slotGenSet(o->slot, (slotGenGet(o->slot) + 1) & FIRE_GEN_MASK);
     o->gen = slotGenGet(o->slot);
+#ifdef FIRE_SLOT_DOM
+    if (slotDomGet(o->slot)) slotDomSet(o->slot, 0);   /* (it is the thread's now - after the generation, see slotDomGet) */
+#endif
 }
 #else
 FIRE_FN void slotAcquire(Owned* o) { o->slot = 0; o->gen = 0; }
@@ -1781,6 +1818,10 @@ FIRE_FN void domReadEnter(void);
 #define FIRE_FLAGS_OR(h, bits) ((void)(((Owned*)(h))->flags |= (uint8_t)(bits)))
 #endif
 #define FIRE_DOM_TOUCH(h) do { if (FIRE_UNLIKELY(FIRE_FLAGS_READ(h) & 64) && g_domReader == 1) domReadEnter(); } while (0)
+#ifdef FIRE_SLOT_DOM
+/* ... the same from the slot of a Value (see slotDomGet): the memory of the value is not touched before the thread holds the read side */
+#define FIRE_SLOT_TOUCH(slot) do { if (FIRE_UNLIKELY(slotDomGet(slot)) && g_domReader == 1) domReadEnter(); } while (0)
+#endif
 /* A read of a global variable or a static field of the main program (the generator puts it before the read in code that may run on a fire thread). */
 #define FIRE_DOM_READ() do { if (FIRE_UNLIKELY(g_domReader == 1)) domReadEnter(); } while (0)
 #define FIRE_DOM_THREAD FIRE_UNLIKELY(g_domReader)   /* (is this a fire thread: the byte the reads look at anyway) */
@@ -1823,6 +1864,8 @@ typedef int fire_spin;
 #define fire_spinLock(l) ((void)(l))
 #define fire_spinUnlock(l) ((void)(l))
 #endif
+/* (Its caller knows the value alive: it checked it with leafAlive, which took the read side for a value of the shared domain - see slotDomGet - and no
+ * safe point came since. So the flag may be read here; mostly the thread holds the read side already, and this is one test.) */
 FIRE_FN Owned* leafOf(Value v) {
     FIRE_DOM_TOUCH(v.p);
     return (Owned*)v.p;
@@ -1842,13 +1885,30 @@ FIRE_FN uintptr_t leafKey(Value v) {
     return (uintptr_t)v.p;
 }
 
-/* Is the array or buffer behind this value still alive? */
+/* Is the array or buffer behind this value still alive? (On a fire thread, for an object or array of the shared domain: it takes the read side of the
+ * globals' lock first - a value it sees alive stays so, and its memory with it, until the thread's next safe point: see slotDomGet.) */
+#ifdef FIRE_SLOT_DOM
+/* (a value of the domain: out of line - leafAlive stays a leaf of a few instructions) */
+FIRE_COLD FIRE_FN bool leafAliveDom(Value v) {
+    if (g_domReader == 1) domReadEnter();
+    return slotGenGet(FIRE_VSLOT(v)) == FIRE_VGEN(v);
+}
+#endif
 FIRE_FN bool leafAlive(Value v) {
 #ifdef FIRE_UNCHECKED
     (void)v;
     return true;
 #else
+#ifdef FIRE_SLOT_DOM
+    {
+        /* (the entry once: its mark and its generation are then two loads side by side - the generation after the mark, see slotDomGet) */
+        SlotEntry* e = &slotEntry(FIRE_VSLOT(v));
+        if (FIRE_UNLIKELY(slotEntryDomGet(e))) return leafAliveDom(v);
+        return FIRE_LIKELY(slotEntryGenGet(e) == FIRE_VGEN(v));
+    }
+#else
     return FIRE_LIKELY(slotGenGet(FIRE_VSLOT(v)) == FIRE_VGEN(v));
+#endif
 #endif
 }
 /* A dead Value of an object, array or buffer that still lives - in a fire thread it was handed over to (`fire handover`, handOverAll): the sender's reference
@@ -6850,6 +6910,9 @@ FIRE_FN bool ptrValid(Value p, Value* err) {
         int64_t index, length;
         uint32_t slot = ptrSlot(p);
         intptr_t addr = (intptr_t)ptrAddr(p);
+#ifdef FIRE_SLOT_DOM
+        if (p.kind == K_PtrElem) FIRE_SLOT_TOUCH(slot);   /* (into an array of the shared domain: the read side first, like leafAlive) */
+#endif
         if (FIRE_UNLIKELY(slotGenGet(slot) != FIRE_VGEN(p))) {
             Value leaf = Undef();
             leaf.kind = p.kind == K_PtrByte ? K_Buffer : K_Array;
@@ -7479,27 +7542,53 @@ FIRE_FN void attachPart(Value outer, Value inner) {
     ownLink(arr->parts, o);
 }
 
+/* A violation of the ownership rules (SPEC 2.2) is a catchable exception of the standard library, the VM's (OwnershipException.FireClass): the
+ * DestroyedException for `Take...` of a destroyed value, else the ArgumentException - thrown before anything moves, so the tree of owners stays as it was. */
+FIRE_COLD FIRE_FN void ownError(const char* text) { fireError("ArgumentException", text); }
+/* (the word for the kind of an owned value in a text: "object", "array", "buffer", "lambda") */
+FIRE_FN const char* ownKindName(int okind) { return okind == O_Object ? "object" : okind == O_Array ? "array" : okind == O_Buffer ? "buffer" : "lambda"; }
+FIRE_COLD FIRE_FN void ownDestroyedError(const char* kind) {
+    char text[80];
+    snprintf(text, sizeof text, "A destroyed %s cannot change its owner.", kind);
+#ifdef FIRE_EXCEPTIONS
+    throwValue(makeDestroyedError(fire_asciiMessage(text)));   /* (like destroyedError: the class is there whenever there are exceptions) */
+#else
+    fatalException("DestroyedException", text);
+#endif
+}
+/* Is `o` the holder `x` or one of its owners up the chain - would `o` become an owner of itself? */
+FIRE_FN bool ownCycle(const Owned* o, const Owned* x) {
+    while (x) {
+        OwnList* l;
+        if (x == o) return true;
+        l = x->owner;
+        if (!l) break;
+        x = l->holder;
+    }
+    return false;
+}
+
 /* Gives an object, array or buffer to the object `target` (TakeTo, a direct field assignment): when the target is already being destroyed the value goes with
- * it at once (SPEC 2.2); an object must not become an owner of itself or of its owners. */
-FIRE_FN void takeToObject(Owned* o, Obj* target) {
+ * it at once (SPEC 2.2); an object or array must not become an owner of itself or of its owners (the ArgumentException - `take`: `takeText`, else the
+ * text of TakeTo; nothing moves). False then. */
+FIRE_FN bool takeToObjectT(Owned* o, Obj* target, bool take) {
     if (target->h.flags & 1) {
         if (o->owner) ownUnlink(o);
         if (o->okind == O_Object) destroy((Obj*)o); else destroyLeaf(o);
-        return;
+        return true;
     }
-    if (o->okind == O_Object) {
-        Owned* x = &target->h;
-        for (;;) {
-            OwnList* l;
-            if (x == o) fatal("TakeTo: cycle detected - the target object is already owned (directly or transitively) by this object.");
-            l = x->owner;
-            if (!l || !l->holder) break;
-            x = l->holder;
-        }
+    if ((o->okind == O_Object || o->okind == O_Array) && ownCycle(o, &target->h)) {
+        char text[160];
+        if (take) snprintf(text, sizeof text, "take: cycle detected - the holder is already owned (directly or transitively) by this %s.", ownKindName(o->okind));
+        else snprintf(text, sizeof text, "TakeTo: cycle detected - the target object is already owned (directly or transitively) by this %s.", ownKindName(o->okind));
+        ownError(text);
+        return false;
     }
     if (o->owner) ownUnlink(o);
     ownLink(objOwned(target), o);
+    return true;
 }
+FIRE_FN void takeToObject(Owned* o, Obj* target) { (void)takeToObjectT(o, target, false); }
 
 /* `object is from owner` / `object is under owner` (SPEC 6): the owner of the object is that object - directly, or anywhere up the chain. */
 FIRE_FN bool isFrom(Value operand, Value owner, bool transitive) {
@@ -7562,14 +7651,12 @@ FIRE_FN bool takeAlive(Value v) {
 /* `take x` into a scope or into the parts of an array (`list`): unconditional, whoever owned the value before; the ownership stays a tree. */
 FIRE_FN void takeToList(Value v, OwnList* list) {
     Owned* o = ownedOf(v);
-    Owned* x;
     if (!o || o->owner == list) return;
-    for (x = list->holder; x;) {
-        OwnList* l;
-        if (x == o) fatal("take: cycle detected - the holder is already owned (directly or transitively) by this value.");
-        l = x->owner;
-        if (!l) break;
-        x = l->holder;
+    if (ownCycle(o, list->holder)) {   /* (the VM's ArgumentException - nothing moves) */
+        char text[160];
+        snprintf(text, sizeof text, "take: cycle detected - the holder is already owned (directly or transitively) by this %s.", ownKindName(o->okind));
+        ownError(text);
+        return;
     }
     if (o->owner) ownUnlink(o);
     ownLink(list, o);
@@ -7588,7 +7675,7 @@ FIRE_FN void takeToHolder(Value holder, Value v) {
     /* (a fire thread takes it for an object or array of the main program's globals: the store moves it there - rule 10, toMainHolder) */
     if (FIRE_UNLIKELY(g_isThread) && (h->flags & 64)) { g_pendingTake = o; return; }   /* (64: F_SHARED) */
 #endif
-    if (h->okind == O_Object) { takeToObject(o, (Obj*)h); return; }
+    if (h->okind == O_Object) { (void)takeToObjectT(o, (Obj*)h, true); return; }
     a = (Arr*)h;
     if (!a->parts) a->parts = newPartsList(&a->h);
     takeToList(v, a->parts);
@@ -7920,11 +8007,17 @@ FIRE_COLD FIRE_FN bool ownValueType(int method, Value self, int argc, bool isTry
 }
 
 /* `x.TakeLocal()`, `x.TakeUpwards()`, `x.TakeGlobal()`, `x.TakeTo(obj)` on an object, an array or a buffer (SPEC 2.2). */
+/* (`Take...` of a value that is no longer this strand's to move: a destroyed one - the DestroyedException -, a record lent to it - access denied) */
+FIRE_COLD FIRE_FN void ownGoneError(Value self) {
+    if ((self.kind == K_Class || self.kind == K_Array || self.kind == K_Buffer) && leafAlive(self))
+        accessDenied("A lent record belongs to the thread that sent it: 'Take...' is for its owner - 'copy r' makes one of your own.");
+    else ownDestroyedError(self.kind == K_Class ? "object" : self.kind == K_Array ? "array" : self.kind == K_Buffer ? "buffer" : "lambda");
+}
 FIRE_FN void ownMethod(int method, Value self, Value arg, OwnList* here) {
     Owned* o = ownedOf(self);
     if (!o && ownValueType(method, self, method == OM_TakeTo || (method == OM_TakeGlobal && arg.kind == K_Bool) ? 1 : 0, false)) return;
-    if (!o) fatal("Take... is only possible for an object, an array or a buffer that is not destroyed.");
-    if (o->flags & 1) fatal("A destroyed value cannot change its owner.");
+    if (!o) { ownGoneError(self); return; }
+    if (o->flags & 1) { ownDestroyedError(ownKindName(o->okind)); return; }   /* (destroyed, its batch not over yet) */
     switch ((int)method) {
         case OM_TakeLocal:
             if (here->home) here = here->home;   /* (the scope itself, not its statement temporaries) */
@@ -7933,8 +8026,8 @@ FIRE_FN void ownMethod(int method, Value self, Value arg, OwnList* here) {
             break;
         case OM_TakeUpwards: {
             OwnList* current = o->owner;
-            if (!current || current->holder) fatal("TakeUpwards is only valid if the current owner is a scope.");
-            if (!current->parent) fatal("TakeUpwards: the current scope has no parent scope (already global).");
+            if (!current || current->holder) { ownError("TakeUpwards is only valid if the current owner is a scope."); return; }
+            if (!current->parent) { ownError("TakeUpwards: the current scope has no parent scope (already global)."); return; }
             ownUnlink(o);
             ownLink(current->parent, o);
             break;
@@ -7960,7 +8053,7 @@ FIRE_FN void ownMethodT(int method, Value self, Value arg, Value mode, OwnList* 
     Owned* o;
     if (!ownedOf(self) && ownValueType(method, self, (method == OM_TakeTo ? 2 : 1) + (method == OM_TakeGlobal && arg.kind == K_Bool ? 1 : 0), false)) return;
     if (method == OM_TakeGlobal && mode.kind == K_Bool) { arg = mode; mode = Int(TK_THIS); }   /* (`x.TakeGlobal(true)`: no mode, the flag) */
-    if (mode.kind != K_Int || mode.i < TK_THIS || mode.i > TK_ALL) fatal("The mode of Take... must be one of Takes.This, Takes.Children, Takes.Locals, Takes.All.");
+    if (mode.kind != K_Int || mode.i < TK_THIS || mode.i > TK_ALL) { ownError("The mode of Take... must be one of Takes.This, Takes.Children, Takes.Locals, Takes.All."); return; }
 #ifdef FIRE_THREADS
     if (method == OM_TakeGlobal && g_isThread && !(arg.kind == K_Bool && arg.i) && mode.i != TK_THIS) {
         /* (to the main program with a mode: what goes along comes below the value first - here, in the thread - then the check and the move) */
@@ -7976,7 +8069,7 @@ FIRE_FN void ownMethodT(int method, Value self, Value arg, Value mode, OwnList* 
     }
 #endif
     ownMethod(method, self, arg, here);
-    if (mode.i == TK_THIS) return;
+    if (mode.i == TK_THIS || g_unwind.active) return;   /* (it threw: nothing more moves) */
     o = ownedOf(self);
     if (o && !(o->flags & 1)) {
         LocalScopes scopes;
@@ -8059,16 +8152,22 @@ FIRE_FN bool isFromGlobal(Value v) {
     Owned* o = ownedOf(v);
     return o && o->owner && (o->owner == g_globalOwn || o->owner->home == g_globalOwn);
 }
+/* (`mode` undefined: the call has no `Takes` mode - the generator passes none) */
 FIRE_FN bool ownMethodTry(int method, Value self, Value arg, Value mode, OwnList* here, OwnList* const* lists, int n, Value thisValue, OwnList* myArgs) {
     Owned* o = ownedOf(self);
-    if (!o) {
-        /* (a value type: the VM's MissingMemberException; the count of the arguments without a `Takes` mode - natively a missing mode is Takes.This) */
-        ownValueType(method, self, method == OM_TakeTo || (method == OM_TakeGlobal && arg.kind == K_Bool) ? 1 : 0, true);
-        return false;   /* (destroyed: it belongs to nothing - `try` is false, as in the VM) */
+    bool hasMode = mode.kind != K_Undefined;
+    if (!hasMode) mode = Int(TK_THIS);
+    /* (a value type: the VM's MissingMemberException, with the count of the arguments of the call - the mode and the flag of TakeGlobal included) */
+    if (!o && ownValueType(method, self, (method == OM_TakeTo ? 1 : 0) + (arg.kind == K_Bool ? 1 : 0) + (hasMode ? 1 : 0), true)) return false;
+    /* (a mode that is no `Takes` value: the ArgumentException before the test of the owner, as in the VM - a TakeGlobal flag is no mode) */
+    if (hasMode && !(method == OM_TakeGlobal && mode.kind == K_Bool) && (mode.kind != K_Int || mode.i < TK_THIS || mode.i > TK_ALL)) {
+        ownError("The mode of Take... must be one of Takes.This, Takes.Children, Takes.Locals, Takes.All.");
+        return false;
     }
+    if (!o) return false;   /* (destroyed: it belongs to nothing - `try` is false, as in the VM) */
     if (!ownedByCall(o, lists, n, thisValue, myArgs)) return false;
     ownMethodT(method, self, arg, mode, here, lists, n);
-    return true;
+    return !g_unwind.active;
 }
 
 /* ---------------------------------------------------------------------------------------------------------------------
@@ -9256,7 +9355,9 @@ FIRE_FN void domWriterEnter(void) {
     g_domReader = 2;
     if (dropped) fire_mutex_lock(held);
 }
+extern FIRE_RT_DATA fire_atomic32 g_domChanges;   /* (see FIRE_DOM_STALE) */
 FIRE_FN void domWriterLeave(void) {
+    fire_atomic_add(&g_domChanges, 1);   /* (a section may have changed or destroyed what the main program knows - FIRE_DOM_STALE) */
     fire_mutex_lock(&g_dom.m);
     g_dom.writer = false;
     fire_cond_notifyAll(&g_dom.cv);
@@ -11300,10 +11401,16 @@ FIRE_FN void markOwnedShared(Owned* c);
  * reads and writes them without the lock (bufOf does not look at the flag) - but for what the domain means otherwise: a native that gets it holds the read
  * side (fire_natArg), a thread cannot hand it over, and its memory outlives an access of another thread when it is destroyed (bufRetire). */
 FIRE_FN void markBufShared(Value v) { if (v.kind == K_Buffer && leafAlive(v)) ((Buf*)v.p)->h.flags |= F_SHARED; }
+/* (the flag of an object or array of the domain, in its slot too - see slotDomGet) */
+#ifdef FIRE_SLOT_DOM
+#define FIRE_MARK_SHARED(h) do { (h)->flags |= F_SHARED; slotDomSet((h)->slot, 1); } while (0)
+#else
+#define FIRE_MARK_SHARED(h) ((h)->flags |= F_SHARED)
+#endif
 FIRE_FN void markArrayShared(Arr* a) {
     uint32_t i;
     if (a->h.flags & F_SHARED) return;
-    a->h.flags |= F_SHARED;
+    FIRE_MARK_SHARED(&a->h);
     if (!arrValues(a)) return;   /* (a packed array holds numbers only) */
     for (i = 0; i < a->length; i++) {
         refShare(arrItems(a)[i]);
@@ -11317,7 +11424,7 @@ FIRE_FN void markOwnedShared(Owned* c) {
         Owned* k;
         uint32_t i;
         if (o->h.flags & F_SHARED) return;
-        o->h.flags |= F_SHARED;
+        FIRE_MARK_SHARED(&o->h);
         for (k = objOwnedHead(o); k; k = k->next) markOwnedShared(k);
         for (i = 0; i < o->nfields; i++) {
             refShare(objFields(o)[i]);
@@ -11344,7 +11451,7 @@ FIRE_FN void ensureDomain(void) {
     if (g_domainRoot) for (c = g_domainRoot->head; c; c = c->next) markOwnedShared(c);
 }
 FIRE_FN bool sharedValue(Value v) {
-    if (v.kind == K_Class) return (FIRE_FLAGS_READ(&asObj(v)->h) & F_SHARED) != 0;
+    if (v.kind == K_Class) return leafAlive(v) && (FIRE_FLAGS_READ(&asObj(v)->h) & F_SHARED) != 0;   /* (a destroyed one: its memory may be gone - the access says so) */
     if (v.kind == K_Array && ownedOf(v)) return (FIRE_FLAGS_READ(&arrOf(v)->h) & F_SHARED) != 0;
     return false;
 }
@@ -13083,7 +13190,12 @@ FIRE_COLD FIRE_FN bool pollSlow(bool loop) {
 #endif
     if (g_leaving) return false;
     if (terminateRequested()) { startLeave(); return true; }
-    if (g_attnMask & ATTN_MAIN) { if (loop) mainPoll(false); else deliverThreadExceptions(); }
+    if (g_attnMask & ATTN_MAIN) {
+#ifdef FIRE_NO_GIL
+        fire_atomic_add(&g_domChanges, 1);   /* (the main program runs what the threads left for it: jobs, sections, handlers - FIRE_DOM_STALE) */
+#endif
+        if (loop) mainPoll(false); else deliverThreadExceptions();
+    }
 #ifdef FIRE_NO_GIL
     if (g_attnMask & ATTN_PEER) { threadServe(); if (loop) threadServeCalls(); }
 #endif
@@ -13097,6 +13209,28 @@ FIRE_FN bool pollSignals(void) {
     if (FIRE_LIKELY(!(fire_atomic_load(&g_attn) & g_attnMask & ~(uint32_t)ATTN_SECT))) return false;
     return pollSlow(false);
 }
+
+/* A method on a fire thread, after the safe point of its entry (pollSignals): there the thread may have let go of the read side of the globals' lock
+ * (with the GIL: of the GIL) - the main program may have destroyed `self` meanwhile, if it is an object of the shared domain. Its caller checked it before
+ * the safe point; it is checked again (leafAlive takes the read side anew for it). The main program needs no check: a thread changes the domain only in a
+ * section, and pollSignals grants none. */
+/* The state of a typed array the generated code keeps in C helpers across a loop (CppGenerator Flow.Arrays: its data, its length) - of an array of the
+ * shared domain: after a safe point of the loop it may be stale. A fire thread that let go of the read side there (g_domReader 1): the main program may
+ * have changed or destroyed the array meanwhile; the main program: a section or what it ran for the threads may have (g_domChanges, counted by them). Then
+ * the helpers are checked again - leafAlive takes the read side anew. A thread that still holds the read side, a main program that ran nobody: nothing
+ * changed. With the GIL: always. */
+#if defined(FIRE_NO_GIL)
+#define fire_domSeen() fire_atomic_load(&g_domChanges)
+#define FIRE_DOM_STALE(seen) (g_domReader == 1 || (g_domReader == 0 && fire_atomic_load(&g_domChanges) != (seen)))
+#else
+#define fire_domSeen() 0u
+#define FIRE_DOM_STALE(seen) ((void)(seen), 1)
+#endif
+#if defined(FIRE_NO_GIL)
+#define FIRE_SELF_LOST(s) (FIRE_UNLIKELY(g_domReader == 1) && (s).kind == K_Class && !leafAlive(s))
+#else
+#define FIRE_SELF_LOST(s) (FIRE_UNLIKELY(g_isThread) && (s).kind == K_Class && !leafAlive(s))
+#endif
 
 /* A loop's jump back: like pollSignals, and the main program serves its queue there (ATTN_SECT is in its mask only in the mode `safepoints`). */
 FIRE_FN bool pollLoop(void) {
@@ -13373,7 +13507,7 @@ fire_mutex g_thrM, g_reqM, g_mailboxM, g_cancelM;
 #ifdef FIRE_NO_GIL
 DomLock g_dom;
 int32_t g_awayDepth;
-fire_atomic32 g_lentEpoch = {1}, g_lentGraveN, g_lentReaderN;
+fire_atomic32 g_lentEpoch = {1}, g_lentGraveN, g_lentReaderN, g_domChanges;
 LentReader* g_lentReaders = NULL;
 LentGrave* g_lentGraves = NULL;
 #endif

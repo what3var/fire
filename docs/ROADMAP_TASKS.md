@@ -117,10 +117,24 @@ Order, each step with the GIL still on (no change of behaviour, the suite stays 
    memory a grave of the epochs of the lent records (`bufRetire`, `lentReclaim`; every fire strand is a reader from `threadRecBegin` on), freed
    when every strand has passed a safe point or waits; a native with such a buffer holds the read side (the buffers of the domain carry flag 64
    now, `fire_natArg`), and a callback or wait in it announces no epoch (`g_natDom`). Under ThreadSanitizer the element accesses are relaxed
-   atomics (`FIRE_BUF_LD`/`FIRE_BUF_ST`), so the intended race is not reported. Open: arrays have the same window - the thread checks the
-   generation, `leafOf` then waits for the read side while the main program frees the array (`a3.fire`: `int[]` replaced and deleted in a loop
-   while a thread sums it: heap-use-after-free in `typeArray` under ASan); the frees of arrays could take the same graves (their elements are
-   released at once, so a stale read of a string element needs more).
+   atomics (`FIRE_BUF_LD`/`FIRE_BUF_ST`), so the intended race is not reported.
+   *Arrays and objects of the domain: no memory is freed while a thread may use it* (THREADING_DESIGN 7 "Objekte und Arrays des Bereichs:
+   Lebensdauer"). Before, a thread checked the generation of an array or object of the domain (`leafAlive`), then `leafOf` waited for the read side
+   while the main program freed it (an `int[]` replaced and deleted in a loop while a thread sums it: heap-use-after-free in `typeArray` under ASan;
+   the same with the fields of an object, `list[i]`, `dict[key]`). No graves: the order is turned around. The slot table - never freed - carries the
+   mark of the domain (`SlotEntry.dom`, set with flag 64, cleared when the slot gets a new value or the value moves into a thread), and `leafAlive`
+   takes the read side for a marked slot *before* it compares the generation. Sound because nobody frees what is of the domain while a thread holds
+   the read side: the main program destroys with the write side in the hand (it holds it while it runs), a section holds it alone; a thread's own
+   values are its own. So a value a thread saw alive stays alive - memory and elements - until its next safe point; what it read before (a string, a
+   lambda of an array of Values) is counted by the thread (`FIRE_DOM_TAKE`). What the generated code knew alive across a safe point is checked again:
+   the C helpers of a typed array in a loop (`v_dom`, after `pollLoop` when the domain may have changed - `FIRE_DOM_STALE`: a thread that let go of the
+   read side, the main program after a section or jobs it ran, `g_domChanges`), `self` of a method after the safe point of its entry
+   (`FIRE_SELF_LOST`), `Flow.SelfAlive` after a jump back; `sharedValue` checks liveness before it reads the flags. Cost: programs without threads
+   compile to the same machine code (sieve, objects, hashmap with `-m PERFORMANCE` and RELEASE: identical assembly). With threads `leafAlive` loads one
+   more byte of the same entry (+7 % instructions in a loop that is nothing but generic array stores, about +10-15 % time there; a thread summing an
+   array of the domain in a known-array loop: 0.50 s -> 0.55-0.6 s). Open: the runtime's own loops that call fire code while they hold an array
+   (a callback of `Sort`, a native that calls back) - the read side goes at the safe points of the callback; pointers to fields (`ref o.f`) of an
+   object of the domain have no generation check; `#performance` (no slots) checks nothing anyway.
 7. **1g** `FIRE_NO_GIL` by default: `gilAcquire`/`gilRelease` only mark safe points; ThreadSanitizer clean on the thread tests. *Done:* the default where
    the platform's threads are real (`FIRE_PLAT_PARALLEL` from the posix and windows layers) and the compiler has atomics; the targets with a scheduler of
    fire itself (dos, win16, wasm), FreeRTOS and TinyCC (`FIRE_TLS_STRUCT`), the modules (`FIRE_MODULES`, `FIRE_DLL` - no package locks and no

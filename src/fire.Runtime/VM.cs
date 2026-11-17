@@ -1950,6 +1950,7 @@ namespace fire.Runtime
             {
                 try { RunNestedLoopCore(targetFrameDepth); return; }
                 catch (ScriptErrorException error) { RaiseScriptError(error); if (_stopExecutionRequested) return; }
+                catch (OwnershipException error) when (!_stopExecutionRequested) { RaiseScriptError(new ScriptErrorException(error.FireClass, error.Message)); if (_stopExecutionRequested) return; }
                 catch (InvalidOperationException error) when (IsCatchableRuntimeError(error)) { RaiseScriptError(new ScriptErrorException("ArgumentException", error.Message)); if (_stopExecutionRequested) return; }
                 catch (ExecutionRedirectedException) { if (_stopExecutionRequested) return; }
             }
@@ -4015,6 +4016,8 @@ namespace fire.Runtime
                 result = Value.MakeBool(owned);
                 if (!owned) return true;
             }
+            // (a destroyed object stays where it is: the DestroyedException before anything moves - also natively, fire_rt.h ownMethod)
+            if (obj.IsDestroyed) throw OwnershipException.Destroyed("object");
             Scope? target;
             switch (method)
             {
@@ -4042,7 +4045,6 @@ namespace fire.Runtime
                 }
                 default:   // TakeLocal
                     // pull into the current scope (the scope in which the call stands)
-                    if (obj.IsDestroyed) throw new OwnershipException("A destroyed object cannot change its owner.");
                     obj.ReparentTo(_currentScope);
                     target = _currentScope;
                     break;
@@ -4209,6 +4211,7 @@ namespace fire.Runtime
                 result = Value.MakeBool(owned);
                 if (!owned) return true;
             }
+            if (leaf.IsDestroyed) throw OwnershipException.Destroyed(LeafOwnership.KindName(leaf));
             IOwner target;
             switch (method)
             {

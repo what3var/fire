@@ -1,0 +1,17 @@
+A TakeUpwards: the current scope has no parent scope (already global).
+B TakeUpwards: the current scope has no parent scope (already global).
+True
+C TakeUpwards is only valid if the current owner is a scope.
+True
+up from a block: True
+D TakeTo: cycle detected - the target object is already owned (directly or transitively) by this object.
+E TakeTo: cycle detected - the target object is already owned (directly or transitively) by this object.
+F TakeTo: cycle detected - the target object is already owned (directly or transitively) by this object.
+True False True
+G TakeTo: cycle detected - the target object is already owned (directly or transitively) by this array.
+6
+H take: cycle detected - the holder is already owned (directly or transitively) by this object.
+True True
+I The mode of Take... must be one of Takes.This, Takes.Children, Takes.Locals, Takes.All.
+False
+J The mode of Take... must be one of Takes.This, Takes.Children, Takes.Locals, Takes.All.

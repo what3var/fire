@@ -3780,6 +3780,8 @@ namespace fire.Native
             }
             if (f.Kind == FuncKind.FireBody) pre.AppendLine("    (void)args;");
             if (!f.IsTop && _usesThreads) pre.AppendLine($"    if (FIRE_UNLIKELY(pollSignals())) return {UndefReturnOf(f.CAbi)};");
+            // (a method on a fire thread: `self` of the shared domain may have been destroyed at that safe point - fire_rt.h FIRE_SELF_LOST)
+            if (!f.IsTop && _usesThreads && f.HasSelf && f.Kind == FuncKind.Method) pre.AppendLine($"    if (FIRE_SELF_LOST(self)) {{ destroyedError(self); return {UndefReturnOf(f.CAbi)}; }}");
             if (f.Kind == FuncKind.Lambda)
             {
                 if (framed) Var("Value", "self", "lamOn(lam)"); else decl.AppendLine("    Value self = lamOn(lam); (void)self;");
@@ -4326,6 +4328,8 @@ namespace fire.Native
             if (st.Arrays.Length > 0 && !(SelfNeutral(ins.Op) || neutralHere || arraysNeutralHere || _neutralAfter)) st.Arrays = Array.Empty<string>();
             // (`self` stays checked across what runs no code of its own and destroys nothing; a field access of `self` says itself)
             st.SelfAlive = _selfAliveAfter ?? (selfAliveBefore && (SelfNeutral(ins.Op) || neutralHere));
+            // (a jump back is a safe point with threads: the main program or a section may destroy an object of the shared domain there - `self` too)
+            if (_usesThreads && ins.A.Length > 0 && ins.A[0] <= ins.Addr && IsLoopJump(ins.Op)) st.SelfAlive = false;
             // (slots that were popped are no scalars; a fall into a jump target makes the scalars Values - the target expects them there)
             st.Scalar &= st.Depth >= 64 ? ~0UL : (1UL << Math.Max(st.Depth, 0)) - 1;
             for (int k = Math.Max(st.Depth, 0); k < 64; k++) st.Alias[k] = null;
@@ -4413,11 +4417,21 @@ namespace fire.Native
         private bool? _selfAliveAfter;
         /// <summary>Set by an instruction that ran no code of the program and destroyed nothing although its kind may (ReleaseTemps, ExitScope without lists).</summary>
         private bool _neutralAfter;
-        /// <summary>The C that sets the helpers of a variable in Flow.Arrays from its array (alive, typed, packed, of the element: `v_ok`).</summary>
-        private static string ArrayCheckText(string v, byte elem) =>
-            $"{{ Arr* ra_ = NULL; {v}_ok = {v}.kind == K_Array && leafAlive({v}) && (ra_ = arrOf({v}))->typed && ra_->typed->packed && ra_->typed->elem == {elem}; if ({v}_ok) {{ {v}_a = ra_; {v}_len = ra_->length; {v}_d = ra_->typed->data; }} }}";
+        /// <summary>The C that sets the helpers of a variable in Flow.Arrays from its array (alive, typed, packed, of the element: `v_ok`).
+        /// With threads `v_dom` says that the array is of the shared domain: at a safe point the main program or a section may destroy it - the helpers are
+        /// checked again after each safe point of a loop (ArrayRecheckText).</summary>
+        private string ArrayCheckText(string v, byte elem) => _usesThreads
+            ? $"{{ Arr* ra_ = NULL; {v}_ok = {v}.kind == K_Array && leafAlive({v}) && (ra_ = arrOf({v}))->typed && ra_->typed->packed && ra_->typed->elem == {elem}; {v}_dom = false; if ({v}_ok) {{ {v}_a = ra_; {v}_len = ra_->length; {v}_d = ra_->typed->data; {v}_dom = (FIRE_FLAGS_READ(&ra_->h) & 64) != 0; {v}_seen = fire_domSeen(); }} }}"
+            : $"{{ Arr* ra_ = NULL; {v}_ok = {v}.kind == K_Array && leafAlive({v}) && (ra_ = arrOf({v}))->typed && ra_->typed->packed && ra_->typed->elem == {elem}; if ({v}_ok) {{ {v}_a = ra_; {v}_len = ra_->length; {v}_d = ra_->typed->data; }} }}";
+        /// <summary>After a safe point: the helpers of an array of the shared domain are checked again when the domain may have changed there (fire_rt.h
+        /// FIRE_DOM_STALE - a fire thread takes the read side of the globals' lock for it again in leafAlive; a destroyed array is no longer `v_ok` - its
+        /// accesses take the generic path, which throws).</summary>
+        private string ArrayRecheckText(string v, byte elem) => $"if (FIRE_UNLIKELY({v}_dom) && FIRE_DOM_STALE({v}_seen)) {ArrayCheckText(v, elem)}";
         /// <summary>The element of each variable in Flow.Arrays (its C helpers are checked again for it).</summary>
         private readonly Dictionary<(Func, string), byte> _knownArrayElem = new();
+        /// <summary>A jump that is a safe point when it goes back (a loop): with threads pollLoop runs there.</summary>
+        private static bool IsLoopJump(OpCode op) => op is OpCode.Jump or OpCode.JumpIfFalse or OpCode.JumpIfFalsePeek or OpCode.JumpIfTruePeek
+            or OpCode.JumpIfNotLt or OpCode.JumpIfNotLtEq or OpCode.JumpIfNotGt or OpCode.JumpIfNotGtEq or OpCode.JumpIfNotEq or OpCode.JumpIfNotNotEq;
         private static bool SelfNeutral(OpCode op) => op is OpCode.LoadConst or OpCode.LoadLocal or OpCode.LoadThis or OpCode.LoadGlobal or OpCode.Pop or OpCode.Dup
             or OpCode.StoreLocal or OpCode.StoreLocalPop or OpCode.DeclareLocal or OpCode.ClaimToScope or OpCode.CopyArgs or OpCode.GuardTop
             or OpCode.GuardLocal or OpCode.GuardLocalType;   // (the checks of the parameters run no code of the program: they convert or throw)
@@ -4630,6 +4644,7 @@ namespace fire.Native
                 byte elem = ArrayElem.TypeOf(code);
                 if (ArrElemKind(elem) == KindUnknown) return;
                 f.Scalars[v + "_ok"] = "bool"; f.Scalars[v + "_a"] = "Arr*"; f.Scalars[v + "_len"] = "uint32_t"; f.Scalars[v + "_d"] = "void*";
+                if (_usesThreads) { f.Scalars[v + "_dom"] = "bool"; f.Scalars[v + "_seen"] = "uint32_t"; }
                 _knownArrayElem[(f, v)] = elem;
                 CheckArray(v, elem);
                 st.Arrays = st.Arrays.Append(v).ToArray();
@@ -5103,10 +5118,11 @@ namespace fire.Native
             }
 
             // a safe point: a jump back (a loop) lets the other threads run now and then, and looks at the signals (leave, terminate)
-            if (_usesThreads && sb != null && ins.A.Length > 0 && ins.A[0] <= ins.Addr
-                && ins.Op is OpCode.Jump or OpCode.JumpIfFalse or OpCode.JumpIfFalsePeek or OpCode.JumpIfTruePeek
-                    or OpCode.JumpIfNotLt or OpCode.JumpIfNotLtEq or OpCode.JumpIfNotGt or OpCode.JumpIfNotGtEq or OpCode.JumpIfNotEq or OpCode.JumpIfNotNotEq)
+            if (_usesThreads && sb != null && ins.A.Length > 0 && ins.A[0] <= ins.Addr && IsLoopJump(ins.Op))
+            {
                 E($"if (FIRE_UNLIKELY(pollLoop())) goto {ExitLabel(f, st, locals)};");   // (and the main program's queue: docs/spec/THREADING_DESIGN.md section 7)
+                foreach (var known in st.Arrays) E(ArrayRecheckText(known, _knownArrayElem[(f, known)]));   // (what the safe point may have destroyed)
+            }
 
             switch (ins.Op)
             {
@@ -6534,16 +6550,16 @@ namespace fire.Native
                             // with a `Takes` mode (the scopes of the running call tell what is "local") or with `try` (only the owner moves it)
                             var scopeLists = CallLists(f, st);
                             string localsDecl = scopeLists.Count == 0 ? "" : CArray("OwnList*", "L_", scopeLists.ToList());
-                            string modeArg = argc > baseArgs ? S(slot + 1 + baseArgs) : "Int(0)";
+                            string modeArg = argc > baseArgs ? S(slot + 1 + baseArgs) : "Undef()";   // (none: `try` without a mode - ownMethodTry counts the arguments of the call for a value type)
                             if (argc > baseArgs && !_usesTakeEnumerate) { _usesTakeEnumerate = true; _version++; }
                             string call = isTry
                                 ? $"{S(slot)} = Bool(ownMethodTry({ownMethodId}, {S(slot)}, {targetArg}, {modeArg}, &{owner}, {(scopeLists.Count == 0 ? "NULL" : "L_")}, {scopeLists.Count}, {(f.HasSelf ? "self" : "Undef()")}, MYARGS));"
                                 : $"ownMethodT({ownMethodId}, {S(slot)}, {targetArg}, {modeArg}, &{owner}, {(scopeLists.Count == 0 ? "NULL" : "L_")}, {scopeLists.Count});";
                             E($"{{ {localsDecl}{call} }}");
-                            if (ownMethodId == "OM_TakeTo" || isTry || _usesThreads && ownMethodId == "OM_TakeGlobal") Check();   // (a target that is no object, a value type with `try`; to the main program from a thread: the ArgumentException when it is not safe)
+                            Check();   // (a violation of the ownership rules is a catchable exception - fire_rt.h ownError; a value type with `try`)
                             if (isTry) { SetR(slot, false); d = slot + 1; return Next(); }
                         }
-                        if ((ownMethodId == "OM_TakeTo" || _usesThreads && ownMethodId == "OM_TakeGlobal") && argc == baseArgs && !isTry) Check();   // (TakeTo: a target that is no object is the VM's ArgumentException)
+                        if (argc == baseArgs && !isTry) Check();   // (a violation of the ownership rules - a destroyed value, TakeUpwards at the top, a cycle, a target that is no object - is a catchable exception: fire_rt.h ownError)
                         E($"{S(slot)} = Undef();");
                         SetR(slot, false);
                         d = slot + 1; return Next();
