@@ -39,7 +39,7 @@ ausdrücklich.
 * **Andere Referenzen** auf den alten Wert prüft `replace` nicht (wie `delete`): sie bekommen die DestroyedException.
 * `replace` ist ein Schlüsselwort (kein Name mehr; der Parameter `replace` in circuits.ui heißt jetzt `replacement`), im Editor hervorgehoben.
 * Umgesetzt: Lexer/TokenType.Replace, Parser.ParseReplace (AssignExpr.Replace), Resolver (E4080), Compiler.CompileReplace, OpCode.ReplaceOld
-  (VM.cs, CppGenerator.cs: `isFrom`/`isFromGlobal`, `sameRef`, `deleteValue`). Tests: SyntaxTests, TypeTests, native Fälle 4402-4404.
+  (VM.cs, CppGenerator.cs: `isFrom`/`isFromGlobal`, `sameRef`, `deleteValue`). Tests: SyntaxTests, TypeTests, native Fälle 4405-4407.
   Doku: 13-ownership "replace", 01-basics "Keywords", SPEC 2.5.
 
 ### D1. Zerstört eine Feldzuweisung den alten Wert, wenn er dem Objekt gehört?
