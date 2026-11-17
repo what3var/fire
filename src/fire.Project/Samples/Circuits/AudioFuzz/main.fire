@@ -4,7 +4,7 @@
 // what comes out. ProcessAudio runs the circuit for every sample (four steps per sample); the circuit keeps its state from one call to the next,
 // so a melody can go through tone by tone. Open Fuzz.biscuit to see the circuit (run it there to watch the scopes).
 
-int rate = 22050
+defined int rate = 22050
 Audio.Output out = undefined
 try {
     out = new Audio.Output("default", rate, 1)
@@ -18,7 +18,7 @@ var fuzz = new Fuzz()
 
 class Player {
     // plays the notes: clean (no circuit), or through the circuit
-    static undefined Arpeggio(Audio.Output output, int notes[], int rate, Fuzz circuit = undefined) {
+    static undefined Arpeggio(Audio.Output output, int notes[], defined int rate, Fuzz circuit = undefined) {
         foreach (f in notes) {
             var tone = Audio.Sound.Tone(f, 250, Audio.Wave.Sine, 90, rate)
             if (circuit == undefined) {

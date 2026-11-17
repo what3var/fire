@@ -92,20 +92,20 @@ namespace Tracker {
                 return __TrackerText(this.handle, 0, 0)
             }
         }
-        int Channels { get { return this.Get(0) } }
+        defined int Channels { get { return this.Get(0) } }
         // The length of the song in patterns (the order list).
-        int Orders { get { return this.Get(1) } }
-        int Patterns { get { return this.Get(2) } }
+        defined int Orders { get { return this.Get(1) } }
+        defined int Patterns { get { return this.Get(2) } }
         // Where the song is: the position in the order list and the row (0..63) of its pattern.
-        int Order { get { return this.Get(3) } }
-        int Row { get { return this.Get(4) } }
+        defined int Order { get { return this.Get(3) } }
+        defined int Row { get { return this.Get(4) } }
         // Ticks per row, and beats per minute (the speed of a tick).
-        int Speed { get { return this.Get(5) } }
-        int Tempo { get { return this.Get(6) } }
+        defined int Speed { get { return this.Get(5) } }
+        defined int Tempo { get { return this.Get(6) } }
         // true when the song has played to its end (a song with Loop never finishes).
         bool Finished { get { return this.Get(7) == 1 } }
         // How long the song plays, from the start to the end, in milliseconds (a dry run of the replayer).
-        int Milliseconds { get { return this.Get(8) } }
+        defined int Milliseconds { get { return this.Get(8) } }
         defined int Rate {
             get { return this.Get(9) }
             set { this.SetValue(5, value) }
