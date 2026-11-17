@@ -377,7 +377,7 @@ namespace UI.Docking {
                 var capText = theme.text
                 if (this.focusInside) {
                     capBack = theme.accent
-                    capText = theme.selectionText
+                    capText = theme.accentText
                 }
                 r.FillRect(ax, ay, w, caption, capBack)
                 var room = w - 8
@@ -612,10 +612,10 @@ namespace UI.Docking {
                     r.FillRect(ax + 1, ay + 1, this.actualWidth - 2, title, theme.accent)
                     var close = this.CloseLeft(root)
                     root.PushClip(ax, ay, close - ax, title + 1)
-                    this.DrawString(root, ax + 5, ay + 1 + (title - this.TextHeight(root)) / 2, strip.Text, theme.selectionText)
+                    this.DrawString(root, ax + 5, ay + 1 + (title - this.TextHeight(root)) / 2, strip.Text, theme.accentText)
                     root.PopClip()
                     if (this.closeHot) { r.FillRect(close, ay + 1, title, title, theme.faceHover) }
-                    var cross = theme.selectionText
+                    var cross = theme.accentText
                     if (this.closeHot) { cross = theme.text }
                     UI.Docking.Paint.Cross(root, close + title / 2, ay + 1 + title / 2, cross)
                 }
@@ -1953,7 +1953,7 @@ namespace UI.Docking {
             var mark = theme.accent
             if (guide == this.hotGuide) {
                 back = theme.accent
-                mark = theme.selectionText
+                mark = theme.accentText
             }
             root.Box(x, y, g, g, back, theme.borderFocus, UI.M.Min(theme.radius, 4))
             var cx = x + g / 2

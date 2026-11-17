@@ -142,6 +142,8 @@ namespace UI {
         defined float scaling = 1.0
         bool dark = false
         defined int accent = 0x0078D7
+        // the text on the accent as 0xRRGGBB; -1: chosen from the accent (see AccentForeground)
+        defined int accentForeground = -1
         // a board without a desktop: whole-number scaling, the fast built-in font
         bool embedded = false
         // the materials of the floating elements, kept while nothing behind them is repainted (see PopupSurface)
@@ -214,7 +216,7 @@ namespace UI {
             get { return this.dark }
             set {
                 this.dark = value
-                this.theme.SetColors(this.dark, this.accent)
+                this.theme.SetColors(this.dark, this.accent, this.accentForeground)
                 this.Invalidate()
             }
         }
@@ -224,7 +226,23 @@ namespace UI {
             get { return this.accent }
             set {
                 this.accent = value
-                this.theme.SetColors(this.dark, this.accent)
+                this.theme.SetColors(this.dark, this.accent, this.accentForeground)
+                this.Invalidate()
+            }
+        }
+
+        // The colour of text on the accent as 0xRRGGBB (selected rows, items and text, the caption of the active pane: theme.accentText, theme.selectionText).
+        // Chosen with every accent - the system's or Accent - by contrast: white, or black on a light accent (UI.Theme.ForegroundOn). Setting it overrides
+        // that (also for later accents); -1 lets it be chosen again.
+        defined int AccentForeground {
+            get {
+                if (this.accentForeground >= 0) { return this.accentForeground }
+                return UI.Theme.ForegroundOn(this.accent & 0xFFFFFF)
+            }
+            set {
+                this.accentForeground = value
+                if (value < 0) { this.accentForeground = -1 }
+                this.theme.SetColors(this.dark, this.accent, this.accentForeground)
                 this.Invalidate()
             }
         }
@@ -255,7 +273,7 @@ namespace UI {
                 this.theme.font = system.font
                 if (system.fontSize > 0) { this.theme.fontSize = system.fontSize }
             }
-            if (this.dark || this.accent != 0x0078D7) { this.theme.SetColors(this.dark, this.accent) }
+            if (this.dark || this.accent != 0x0078D7) { this.theme.SetColors(this.dark, this.accent, this.accentForeground) }
             this.theme.transparency = UI.Effects.Transparency && system.transparency && !this.embedded
             this.theme.glass = UI.Effects.Glass && this.theme.transparency
             defined float systemScale = system.scale   // (the scale of the system: always a number)

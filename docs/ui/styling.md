@@ -226,6 +226,7 @@ A `ResourceDictionary` owns its values and styles; `Merge(other)` takes over the
 | `face`, `faceHover`, `facePressed`, `faceDisabled` | buttons and other faces in their states |
 | `inputBack` | text fields, lists |
 | `accent` | focus, selection, check marks |
+| `accentText` | text on the accent (the caption of the active pane, the hot dock guide) |
 | `text`, `textDisabled` | text |
 | `selection`, `selectionText` | selected text and rows |
 | `scrollTrack`, `scrollThumb`, `scrollThumbHover` | scroll bars |
@@ -236,5 +237,7 @@ A `ResourceDictionary` owns its values and styles; `Merge(other)` takes over the
 | `glass`, `transparency` | effects (see [appearance](windows.md#corners-shadows-glass-and-acrylic)) |
 
 `theme.SetColors(dark, accent)` sets all colours at once for a light or dark look with an accent (`0xRRGGBB`); brushes of your own that are not a
-`SolidBrush` stay. A change of the theme repaints everything. Usually you do not touch it: the root follows the system
+`SolidBrush` stay. `accentText` and `selectionText` get the text colour that reads best on the accent: `UI.Theme.ForegroundOn(rgb)` takes white, or black
+where the accent is light (yellow, orange, light green) - by the WCAG contrast ratio (`UI.Theme.Contrast(a, b)`, `UI.Theme.Luminance(rgb)`); a third argument
+`theme.SetColors(dark, accent, 0x202020)` gives it yourself. A change of the theme repaints everything. Usually you do not touch it: the root follows the system
 ([dark mode, accent, font](windows.md#the-look-of-the-system)).
