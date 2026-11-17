@@ -20,6 +20,9 @@ var tries = [
     () => { any n = 5; n.TakeTo(new B(), Takes.All) },
     () => { any n = 5; print(try n.TakeTo(new B())) },
     () => { any n = 2.5; print(try n.TakeLocal()) },
+    () => { any o = new int[1]; var b = new B(); o.kept = take b },
+    () => { any o = 5; var b = new B(); o.kept = take b },
+    () => { any n = 5; var b = new B(); n[0] = take b },
     () => { any n = 5; print(n.x) },
     () => { any n = 5; n.x = 1 }
 ]
@@ -45,4 +48,4 @@ any c = new B()
 c.TakeTo(owner)
 print(c is from owner)
 print("end")
-//# name: Ausnahmen: Take... auf einem Wert, der kein Objekt ist (TakeTo-Ziel, Werttypen, try, Takes-Modus) wie in der VM
+//# name: Ausnahmen: Take... auf einem Wert, der kein Objekt ist (TakeTo-Ziel, Werttypen, try, Takes-Modus, take in ein Feld) wie in der VM

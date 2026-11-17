@@ -7215,12 +7215,13 @@ namespace fire.Native
                     return Next();
                 case OpCode.TakeToObject:
                     Need(2);
-                    E($"if (takeAlive({S(d - 1)})) takeToHolder({S(d - 2)}, {S(d - 1)});");
+                    // (a holder that is no object - through `any` - is the VM's ArgumentException, before the value is looked at)
+                    E($"if (FIRE_UNLIKELY({S(d - 2)}.kind != K_Class)) takeHolderError({S(d - 2)}); else if (takeAlive({S(d - 1)})) takeToHolder({S(d - 2)}, {S(d - 1)});");
                     Check();
                     return Next();
                 case OpCode.TryTakeToObject:
                     Need(2);
-                    E(TryTakeStmt(S(d - 1), $"takeToHolder({S(d - 2)}, {S(d - 1)});"));
+                    E($"if (FIRE_UNLIKELY({S(d - 2)}.kind != K_Class)) takeHolderError({S(d - 2)}); else {{ {TryTakeStmt(S(d - 1), $"takeToHolder({S(d - 2)}, {S(d - 1)});")} }}");
                     Check();
                     return Next();
                 case OpCode.TakeToArray:

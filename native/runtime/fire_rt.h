@@ -7432,11 +7432,13 @@ FIRE_FN void takeToList(Value v, OwnList* list) {
 }
 
 /* `holder.field = take x` and `array[i] = take x`: the object (or the array) owns the value from now on. */
+/* `o.f = take x` (TakeToObject) where `o` is no object (through `any`): the VM's ArgumentException, before anything else of the take. */
+FIRE_COLD FIRE_FN void takeHolderError(Value holder) { kindError("take on a value of type %s which is not an object.", holder.kind); }
 FIRE_FN void takeToHolder(Value holder, Value v) {
     Owned* o = ownedOf(v);
     Owned* h = ownedOf(holder);
     Arr* a;
-    if (!h || h->okind == O_Buffer || h->okind == O_Lambda) { if (!h && holder.kind != K_Buffer && holder.kind != K_Lambda) fatal("take: the holder of the value has to be an object or an array."); return; }
+    if (!h || h->okind == O_Buffer || h->okind == O_Lambda) return;   /* (no holder - `n[0] = take x` of a number: the store that follows is the VM's error) */
     if (!o) return;
 #ifdef FIRE_THREADS
     /* (a fire thread takes it for an object or array of the main program's globals: the store moves it there - rule 10, toMainHolder) */

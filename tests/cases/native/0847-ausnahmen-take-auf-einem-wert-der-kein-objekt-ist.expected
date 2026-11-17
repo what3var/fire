@@ -14,8 +14,11 @@
 13: MissingMemberException: 'TakeTo' (2 argument(s)) is not a known built-in method on a value of type Int.
 14: MissingMemberException: 'tryTakeTo' (1 argument(s)) is not a known built-in method on a value of type Int.
 15: MissingMemberException: 'tryTakeLocal' (0 argument(s)) is not a known built-in method on a value of type Float.
-16: ArgumentException: Field access on a value of type Int which is not an object.
-17: ArgumentException: Field assignment on a value of type Int which is not an object.
+16: ArgumentException: take on a value of type Array which is not an object.
+17: ArgumentException: take on a value of type Int which is not an object.
+18: ArgumentException: Index assignment ('[]=') on a value of type Int is not possible (neither an array nor a class with a 'SetIndex' method).
+19: ArgumentException: Field access on a value of type Int which is not an object.
+20: ArgumentException: Field assignment on a value of type Int which is not an object.
 after TakeTo
 True
 end
