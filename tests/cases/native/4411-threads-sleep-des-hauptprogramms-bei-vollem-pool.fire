@@ -1,0 +1,46 @@
+#import "time"
+#import "compression"
+class Probe {
+    static undefined Busy(Channel<int> stop, Channel<int> rounds) {
+        byte raw[] = new byte[200000]
+        for (int i = 0; i < raw.length; i++) { raw[i] = (i * 31 % 251) }
+        int n = 0
+        while (stop.TryReceive() == undefined) { byte packed[] = Compression.Deflate.Compress(raw); n++ }
+        rounds.Send(n)
+    }
+    static undefined Spin(Channel<int> stop, Channel<int> rounds) {
+        int n = 0
+        int x = 0
+        while (stop.TryReceive() == undefined) { for (int i = 0; i < 20000; i++) { x = (x * 31 + i) % 1000003 }; n++ }
+        rounds.Send(n)
+    }
+    static int Slow() { int x = 0; for (int i = 0; i < 200000; i++) { x = (x + i) % 7 }; return x }
+    static int Ms(int t0) { return (DateTime.Now.Ticks - t0) / 10000 }
+    static defined int Main() {
+        var stop = new Channel<int>(64)
+        var rounds = new Channel<int>(64)
+        int tasks = 12
+        for (int k = 0; k < tasks; k++) {
+            if (k % 4 == 0) { fire with stop, rounds { Probe.Busy(stop, rounds) } } else { fire with stop, rounds { Probe.Spin(stop, rounds) } }
+        }
+        int t0 = DateTime.Now.Ticks
+        Sleep(300ms)
+        int ms = Probe.Ms(t0)
+        print("Sleep(300ms) back on time: " + (ms >= 290 && ms < 3000))
+        t0 = DateTime.Now.Ticks
+        int r = await Probe.Slow()
+        print("await: " + r + " " + (Probe.Ms(t0) < 5000))
+        t0 = DateTime.Now.Ticks
+        Sleep(200ms)
+        ms = Probe.Ms(t0)
+        print("Sleep(200ms) back on time: " + (ms >= 190 && ms < 3000))
+        for (int k = 0; k < tasks; k++) { stop.Send(1) }
+        int ran = 0
+        for (int k = 0; k < tasks; k++) { if (rounds.Receive() > 0) { ran++ } }
+        print("tasks ran: " + (ran > 0))
+        return 0
+    }
+}
+Environment.Exit(Probe.Main())
+//# note: 12 computing tasks on the pool: the waiting main program's thread runs some of them, and they give it back at its time (the loops' jumps back, after a native, at the latest after FIRE_HOME_LEND_MS).
+//# name: Threads: Sleep des Hauptprogramms kommt zurueck, auch wenn sein Faden bei vollem Pool Tasks rechnet

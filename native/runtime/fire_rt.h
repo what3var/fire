@@ -1736,7 +1736,7 @@ extern FIRE_RT_DATA SlotTable g_slots;
 #define slotGenSet(slot, g) (g_slots.e[slot].gen = (FireGen)(g))
 #define slotBornGet(slot) (g_slots.born[slot])
 #define slotBornSet(slot, g) (g_slots.born[slot] = (FireGen)(g))
-#define slotInTable(slot) ((uint32_t)(slot) < g_slots.cap)
+#define slotInTable(slot) ((uint32_t)(slot) < g_slots.count)   /* (the entries above `count` were never handed out: not even written yet) */
 #ifdef FIRE_SLOT_HDR
 #define slotHdr(slot) (g_slots.e[slot].hdr)
 #endif
@@ -1746,11 +1746,9 @@ FIRE_COLD FIRE_FN uint32_t slotGrow(void) {
     SlotEntry* e = (SlotEntry*)realloc(g_slots.e, cap * sizeof(SlotEntry));
     FireGen* born;
     if (!e) outOfMemory();
-    memset(e + g_slots.cap, 0, (cap - g_slots.cap) * sizeof(SlotEntry));
-    g_slots.e = e;
+    g_slots.e = e;   /* (the new entries are written when they are handed out - slotAcquire: pages of the table that no slot reached yet stay untouched) */
     born = (FireGen*)realloc(g_slots.born, cap * sizeof(FireGen));
     if (!born) outOfMemory();
-    memset(born + g_slots.cap, 0, (cap - g_slots.cap) * sizeof(FireGen));
     g_slots.born = born;
     g_slots.cap = cap;
     return cap;
@@ -1762,6 +1760,8 @@ FIRE_FN void slotAcquire(Owned* o) {
         if (FIRE_UNLIKELY(g_slots.count >= g_slots.cap)) slotGrow();
         if (FIRE_UNLIKELY(g_slots.count >= FIRE_SLOT_MAX)) fatal("Too many objects, arrays and buffers at once.");
         slot = g_slots.count++;
+        memset(&g_slots.e[slot], 0, sizeof(SlotEntry));
+        g_slots.born[slot] = 0;
     }
     o->slot = slot;
     o->gen = slotGenGet(slot);
@@ -3301,6 +3301,19 @@ FIRE_FN void dataFree(void* p) {
 #endif
     free(p);
 }
+/* ... a block whose data starts as zeros (a buffer): calloc - a big block comes from the system already zero, so its pages are not touched (not part of
+ * the memory the program uses) until something is written there; a StringBuilder's buffer is used up to its text only. (The dialects of big blocks: zeroed
+ * by hand.) */
+FIRE_FN void dataZero(void* p, uint32_t bytes);
+FIRE_FN void* dataAllocZero(size_t head, uint32_t count, size_t elem) {
+#if defined(FIRE_CC_BIG_ALLOC) || defined(FIRE_CC_ZERO)
+    void* p = dataAlloc(head, count, elem);
+    if (p) dataZero((char*)p + head, (uint32_t)((uint64_t)count * elem));
+    return p;
+#else
+    return calloc(1, blockSize(head, count, elem));
+#endif
+}
 /* Fills / copies the data of an array or a buffer - also more than a size_t holds (the dialect of a compiler with huge blocks does it in steps: FIRE_CC_ZERO,
  * FIRE_CC_COPY; the C library's memset/memcpy of the 16-bit real mode wrap at the end of a segment). */
 FIRE_FN void dataZero(void* p, uint32_t bytes) {
@@ -3318,6 +3331,68 @@ FIRE_FN void dataCopy(void* to, const void* from, uint32_t bytes) {
 #endif
 }
 
+/* The memory of small objects (docs/spec/NATIVE_BACKEND.md "Der Objektkopf"): without fire threads, on the hosted targets, an object of up to
+ * FIRE_OBJ_POOL_MAX bytes comes from a pool - one free list per multiple of 8 bytes, refilled from blocks of the C library that grow from 16 KB to 1 MB
+ * and are never given back (a freed object goes to the list of its size and is the next one of that size). malloc would add its own 8 bytes and round up
+ * to 16: a Point of two packed ints (64 bytes) took 80. With fire threads (an object may be freed on another thread than the one that made it), under a
+ * sanitizer (it would not see a use after free) and on the small targets the C library's malloc stays; FIRE_NO_OBJ_POOL turns the pool off. */
+#if !defined(FIRE_THREADS) && !defined(FIRE_NO_OBJ_POOL) && !defined(__SANITIZE_ADDRESS__) && !defined(__SANITIZE_THREAD__) \
+    && (defined(__linux__) || defined(__APPLE__) || defined(_WIN32) || defined(__FreeBSD__)) && SIZE_MAX > 0xFFFFu
+#if defined(__clang__) && defined(__has_feature)
+#if !__has_feature(address_sanitizer) && !__has_feature(thread_sanitizer) && !__has_feature(memory_sanitizer)
+#define FIRE_OBJ_POOL 1
+#endif
+#else
+#define FIRE_OBJ_POOL 1
+#endif
+#endif
+#ifdef FIRE_OBJ_POOL
+#define FIRE_OBJ_POOL_MAX 256u
+typedef struct ObjPool { void* free[FIRE_OBJ_POOL_MAX / 8u + 1u]; char* bump; char* end; size_t next; } ObjPool;
+extern FIRE_RT_DATA ObjPool g_objPool;
+FIRE_COLD FIRE_FN void* objPoolRefill(size_t n) {
+    size_t size = g_objPool.next ? g_objPool.next : (size_t)16384u;
+    char* block = (char*)malloc(size);
+    if (FIRE_UNLIKELY(!block)) return NULL;
+    if (size < (size_t)1048576u) g_objPool.next = size * 2u; else g_objPool.next = size;
+    /* (the rest of the old block goes to the free lists - the bump pointer only moves on) */
+    while ((size_t)(g_objPool.end - g_objPool.bump) >= 8u) {
+        size_t rest = (size_t)(g_objPool.end - g_objPool.bump), c = rest > FIRE_OBJ_POOL_MAX ? FIRE_OBJ_POOL_MAX / 8u : rest / 8u;
+        *(void**)g_objPool.bump = g_objPool.free[c];
+        g_objPool.free[c] = g_objPool.bump;
+        g_objPool.bump += c * 8u;
+    }
+    g_objPool.bump = block + n;
+    g_objPool.end = block + size;
+    return block;
+}
+FIRE_FN void* objMemAlloc(size_t n) {
+    if (FIRE_LIKELY(n <= FIRE_OBJ_POOL_MAX)) {
+        size_t c = (n + 7u) >> 3;
+        void* p = g_objPool.free[c];
+        if (p) { g_objPool.free[c] = *(void**)p; return p; }
+        n = c << 3;
+        if (FIRE_LIKELY((size_t)(g_objPool.end - g_objPool.bump) >= n)) { p = g_objPool.bump; g_objPool.bump += n; return p; }
+        return objPoolRefill(n);
+    }
+    return malloc(n);
+}
+FIRE_FN void objMemFree(void* p, size_t n) {
+    if (FIRE_LIKELY(n <= FIRE_OBJ_POOL_MAX)) {
+        size_t c = (n + 7u) >> 3;
+        *(void**)p = g_objPool.free[c];
+        g_objPool.free[c] = p;
+        return;
+    }
+    free(p);
+}
+#else
+#define objMemAlloc(n) malloc(n)
+#define objMemFree(p, n) free(p)
+#endif
+/* The bytes of an object (what objMemAlloc got for it). */
+#define objMemSize(o) (FIRE_HDR(Obj) + (size_t)(o)->nraw + (size_t)(o)->nfields * sizeof(Value))
+
 /* An object of the class `cls` with `fieldCount` Value slots and `rawBytes` bytes of packed fields (zero: their numbers start at 0). */
 FIRE_FN Value newObjectR(uint32_t cls, uint32_t fieldCount, uint32_t rawBytes, OwnList* owner) {
     void* memory;
@@ -3325,7 +3400,7 @@ FIRE_FN Value newObjectR(uint32_t cls, uint32_t fieldCount, uint32_t rawBytes, O
     Value* f;
     uint32_t i;
     if (FIRE_UNLIKELY(fieldCount > 0xFFFFu || rawBytes > 0xFFFFu)) fatal("A class with too many fields.");
-    memory = malloc(blockSize(FIRE_HDR(Obj) + rawBytes, fieldCount, sizeof(Value)));
+    memory = objMemAlloc(blockSize(FIRE_HDR(Obj) + rawBytes, fieldCount, sizeof(Value)));
     if (FIRE_UNLIKELY(!memory)) allocFailed();
     o = (Obj*)memory;
     o->h.okind = O_Object;
@@ -3393,7 +3468,7 @@ FIRE_FN void batchEnd(void) {
         slotRelease(&obj->h);   /* from now on a Value of this object is dead: using it is a DestroyedException */
 #ifndef FIRE_KEEP_DESTROYED
         free(obj->ext);
-        free(obj);
+        objMemFree(obj, objMemSize(obj));
 #endif
         o = next;
     }
@@ -4108,7 +4183,7 @@ FIRE_FN bool hostLittle(void) { uint16_t one = 1; return *(uint8_t*)&one == 1; }
 /* A buffer of `length` elements of `elem` bytes (1: a byte buffer; sizeof(FireWord): a buffer of machine words), all 0. The data is aligned for a word. */
 FIRE_FN Buf* allocBufOf(uint32_t length, uint8_t elem, OwnList* list) {
     size_t head = (sizeof(Buf) + 7u) & ~(size_t)7u;
-    Buf* b = (Buf*)dataAlloc(head, length, elem);
+    Buf* b = (Buf*)dataAllocZero(head, length, elem);
     if (FIRE_UNLIKELY(!b)) allocFailed();
     b->h.okind = O_Buffer;
     b->h.flags = 0;
@@ -4116,7 +4191,6 @@ FIRE_FN Buf* allocBufOf(uint32_t length, uint8_t elem, OwnList* list) {
     b->little = hostLittle() ? 1 : 0;
     b->elem = elem;
     b->data = (uint8_t*)b + head;
-    dataZero(b->data, (uint32_t)((uint64_t)length * elem));
     slotAcquire(&b->h);
     ownLink(list, &b->h);
     return b;
@@ -6821,6 +6895,21 @@ FIRE_FN Value fire_arrayCopy(Value src, Value dst, Value count) {
         if (s->typed->real || d->typed->real) for (i = 0; i < n; i++) arrSetReal(d->typed, i, d->length, arrIsReal(s->typed, i));
         return Undef();
     }
+    /* (two arrays of Values that hold the same - an untyped target, or both typed alike (`Point a[]`): what arraySet would do for each, without its checks -
+     * the prelude's List.Grow of a List<Point>) */
+    if (!s->open && !d->open && arrValues(s) && arrValues(d) && s != d
+        && (!d->typed || (s->typed && s->typed->elem == d->typed->elem && s->typed->unit == d->typed->unit && s->typed->flags == d->typed->flags))) {
+        const Value* from = arrValues(s);
+        Value* to = arrValues(d);
+        for (i = 0; i < n; i++) {
+            Value v = from[i], old = to[i];
+            to[i] = v;
+            FIRE_DOM_STORE(&d->h, v);
+            retain(v);
+            release(old);
+        }
+        return Undef();
+    }
     for (i = 0; i < n; i++) { arraySet(dst, Int((FireInt)i), arrayGet(src, Int((FireInt)i))); if (FIRE_UNLIKELY(g_unwind.active)) break; }
     return Undef();
 }
@@ -9043,7 +9132,7 @@ FIRE_FN void lentFree(Owned* h) {
         slotRelease(&o->h);
 #ifndef FIRE_KEEP_DESTROYED
         free(o->ext);
-        free(o);
+        objMemFree(o, objMemSize(o));
 #endif
     }
 }
@@ -9328,6 +9417,9 @@ static inline bool domLendMain(void) {
 /* (someone waits for the readers to leave: they do at their next safe point - pollSlow - instead of when their tick runs out. Under g_dom.m.) */
 extern FIRE_RT_DATA fire_atomic32 g_attn;
 #define FIRE_ATTN_DOM 16u   /* (ATTN_DOM) */
+/* (a task runs on the main program's thread while the main program waits - homeRun: that task, and only it, has the bit in its mask and looks at every safe
+ * point whether the main program wants its thread back - fire_homePoll) */
+#define FIRE_ATTN_HOME 32u   /* (ATTN_HOME) */
 static inline void domReadersAsk(void) { if (g_dom.readers > 0) fire_atomic_or(&g_attn, FIRE_ATTN_DOM); }
 static inline void domReadersAsked(void) { if (fire_atomic_load(&g_attn) & FIRE_ATTN_DOM) fire_atomic_and(&g_attn, ~FIRE_ATTN_DOM); }
 /* Takes the read side. `held`: the lock of a package this thread holds (not null: it runs a callback of a native that got nothing of the shared domain) -
@@ -9461,9 +9553,16 @@ FIRE_FN int fire_natBegin(bool freeOfDomain) {
     g_natDom = 1;
     return 2;
 }
+#ifdef FIRE_TASKS
+FIRE_FN void fire_homeNatEnd(void);
+#endif
 FIRE_FN void fire_natEnd(int state) {
     if (state == 1) fire_awayEnd();
     else if (state == 2) g_natDom = 0;
+#ifdef FIRE_TASKS
+    /* (a task on the main program's thread after a native - which may have taken long: the main program's time may have come) */
+    if (FIRE_UNLIKELY(fire_atomic_load(&g_attn) & FIRE_ATTN_HOME) && (g_attnMask & FIRE_ATTN_HOME)) fire_homeNatEnd();
+#endif
 }
 FIRE_FN fire_mutex* pkgEnter(fire_mutex* m) {
     fire_mutex* prev = g_pkgHeld;
@@ -9671,6 +9770,7 @@ typedef struct FireWorker {
     FireTask* qt;
     uint8_t dedicated;          /* a system thread of one task (`await dedicated`): the task waits like a thread there - it never parks or yields */
     uint8_t home;               /* the main program's own thread (step 5a): it runs tasks only while the main program waits */
+    uint32_t polls;             /* (home: the safe points of the task it runs - fire_homePoll reads the clock at every 32nd) */
 } FireWorker;
 extern FIRE_RT_DATA FireWorker g_homeWorker;
 extern FIRE_RT_DATA ThreadLocals* g_homeState;   /* the main program's strand */
@@ -9688,7 +9788,45 @@ __attribute__((noinline))
 static FireWorker* workerSelf(void) { return g_worker; }   /* (not inlined: the compiler must not keep the address of the thread-local across a switch) */
 FIRE_FN bool taskRunning(void) { FireWorker* w = workerSelf(); return w && w->cur && !w->dedicated; }
 /* (a task on the main program's thread: an event came since the main program lent it - perhaps what it waits for; the task yields at its next safe point) */
-FIRE_FN bool fire_homeWanted(void) { FireWorker* w = workerSelf(); return w && w->home && fire_atomic_load(&g_evTick) != fire_atomic_load(&g_homeSeen); }
+extern FIRE_RT_DATA int64_t g_homeUntil;   /* ... and the time it wants its thread back by (its deadline, at the latest a few ms on: blockUntil) */
+#if defined(__GNUC__) || defined(__clang__)
+#define homeUntilGet() __atomic_load_n(&g_homeUntil, __ATOMIC_RELAXED)
+#define homeUntilSet(v) __atomic_store_n(&g_homeUntil, (v), __ATOMIC_RELAXED)
+#else
+#define homeUntilGet() (*(volatile int64_t*)&g_homeUntil)
+#define homeUntilSet(v) (*(volatile int64_t*)&g_homeUntil = (v))
+#endif
+#ifndef FIRE_HOME_LEND_MS
+#define FIRE_HOME_LEND_MS 10   /* the longest a task borrows the waiting main program's thread at a time (then it goes back to the pool's queue) */
+#endif
+/* (a task on the main program's thread: an event came since the main program lent it - perhaps what it waits for - or the main program's time has come;
+ * the task yields at its next safe point) */
+FIRE_FN bool fire_homeWanted(void) {
+    FireWorker* w = workerSelf();
+    int64_t until;
+    if (!w || !w->home) return false;
+    if (fire_atomic_load(&g_evTick) != fire_atomic_load(&g_homeSeen)) return true;
+    until = homeUntilGet();
+    return until != 0 && fire_plat_nowMs() >= until;
+}
+/* (the safe point of a task with FIRE_ATTN_HOME - every jump back of a loop, every entry of a function: the events at each, the clock at every 32nd) */
+FIRE_FN bool fire_homePoll(void) {
+    FireWorker* w = workerSelf();
+    int64_t until;
+    if (!w || !w->home || !w->cur || w->cur->group) return false;
+    if (fire_atomic_load(&g_evTick) != fire_atomic_load(&g_homeSeen)) return true;
+    if (++w->polls & 31u) return false;
+    until = homeUntilGet();
+    return until != 0 && fire_plat_nowMs() >= until;
+}
+/* (after a native, which may have taken long: the clock now) */
+FIRE_FN void fire_homeNatEnd(void) { if (fire_homeWanted()) g_tick = 0; }
+/* (the task that runs now - after its start or a switch, perhaps on another thread: the bit of its mask says whether it borrows the main program's thread) */
+FIRE_FN void taskHomeMask(void) {
+    FireWorker* w = workerSelf();
+    if (w && w->home && w->cur && !w->cur->group) g_attnMask |= FIRE_ATTN_HOME;
+    else g_attnMask &= ~FIRE_ATTN_HOME;
+}
 FIRE_FN bool fire_onHome(void) { FireWorker* w = workerSelf(); return w && w->home; }
 /* (a task that ends its time slice at a safe point: not a member of the main program's group - it gives way only where it waits) */
 FIRE_FN bool fire_taskSliced(void) { FireWorker* w = workerSelf(); return w && w->cur && !w->dedicated && !w->cur->group; }
@@ -9816,6 +9954,7 @@ FIRE_FN void taskSwitchOut(int action) {
     FireTask* t = w->cur;
     w->action = action;
     fire_coro_switch(t->coro, w->self);
+    taskHomeMask();
 }
 /* (the end of a time slice) */
 FIRE_FN void taskYield(void) { taskSwitchOut(TA_REQUEUE); }
@@ -10036,11 +10175,16 @@ FIRE_FN FireTask* groupPopLocked(void) {
 FIRE_FN bool homeHelp(void) {
     FireWorker* w = &g_homeWorker;
     FireTask* t;
+    bool spare;
     if (!fire_atomic_load(&g_schedOn)) return false;
     homeInit();
     fire_mutex_lock(&g_sched.m);
     t = groupPopLocked();   /* (the group first: its members run nowhere else) */
+    /* (another task only when it waits for a worker: none is idle and the pool cannot grow - else a worker of the pool takes it, and the main program
+     * keeps its thread: a task that computes there would hold it until its next safe point) */
+    spare = g_sched.idle > 0 || g_sched.workers - (int32_t)fire_atomic_load(&g_sched.blocked) < g_sched.cores;
     fire_mutex_unlock(&g_sched.m);
+    if (!t && spare) return false;
     if (!t) t = schedPopLocal(w);
     if (!t) {
         uint32_t i;
@@ -10067,9 +10211,12 @@ FIRE_FN void homeRun(FireTask* t) {
     g_worker = w;
     w->cur = t;
     w->action = TA_NONE;
+    w->polls = 0;
     fire_atomic_store(&t->st, TS_RUNNING);
     fire_curTask = t->state;
+    if (!t->group) fire_atomic_or(&g_attn, FIRE_ATTN_HOME);   /* (the task looks at its safe points whether the main program wants its thread back) */
     fire_coro_switch(w->self, t->coro);
+    fire_atomic_and(&g_attn, ~(uint32_t)FIRE_ATTN_HOME);
     fire_curTask = mine;
     w->cur = NULL;
     g_worker = NULL;   /* (the main program is no task) */
@@ -10098,6 +10245,7 @@ FIRE_FN void taskEntry(void* p) {
     FireTask* t = (FireTask*)p;
     fire_strandAttach();
     t->state = fire_curTask;
+    taskHomeMask();
     t->fn(t->arg);
     t->state = NULL;   /* (the strand was let go of at the end of the function) */
     taskSwitchOut(TA_DONE);
@@ -10196,7 +10344,7 @@ FIRE_FN void notifyEventAll(void) {
 /* Signals. Bit 0 is for every thread (terminate), bit 1 for the main program only (thread exceptions), bit 2 for the main program too (sections and jobs that
  * wait for it; looked at only at a loop's jump back, and only in the mode `safepoints` - see g_globalJobs). */
 enum { ATTN_ALL = 1, ATTN_MAIN = 2, ATTN_SECT = 4, ATTN_PEER = 8,   /* (ATTN_PEER: a fire thread is asked for a section of its own, see ThreadRec) */
-       ATTN_DOM = 16 };   /* (the fire threads that hold the read side of the globals' lock are asked to let go at their next safe point, see domReadersAsk) */
+       ATTN_DOM = 16, ATTN_HOME = 32 };   /* (ATTN_HOME: FIRE_ATTN_HOME) */   /* (the fire threads that hold the read side of the globals' lock are asked to let go at their next safe point, see domReadersAsk) */
 extern FIRE_RT_DATA fire_atomic32 g_attn;
 #ifdef FIRE_NO_GIL
 /* The main program in a native of a package whose arguments are not of the shared domain (docs/spec/THREADING_DESIGN.md section 7): it does not touch the
@@ -10467,6 +10615,8 @@ FIRE_FN bool blockUntil(bool (*pred)(void*), void* ctx, bool stopOnTerminate, in
         if (!g_isThread) {
             /* the main program waits: its thread runs a task that waits for a worker meanwhile (step 5a), then it looks again */
             fire_atomic_store(&g_homeSeen, fire_atomic_load(&g_evTick));
+            /* (the task it lends its thread to gives it back at the deadline, and at the latest after FIRE_HOME_LEND_MS: fire_homeWanted) */
+            homeUntilSet(deadlineMs && deadlineMs - now < FIRE_HOME_LEND_MS ? deadlineMs : now + FIRE_HOME_LEND_MS);
             if (homeHelp()) { strandAcquire(); continue; }
         }
 #endif
@@ -12384,9 +12534,10 @@ FIRE_FN bool handoverDiscover(Value v, CopyMap* seen, Owned*** parts, uint32_t* 
             }
         } else if (h->okind == O_Array) {
             Arr* a = (Arr*)h;
-            for (i = 0; i < a->length; i++) {
+            Value* items = arrValues(a);   /* (a packed array holds numbers only: it is not unpacked - its move costs nothing per element) */
+            for (i = 0; items && i < a->length; i++) {
                 pending = (Value*)fire_growPush(pending, &pn, &pcap, sizeof(Value));
-                pending[pn++] = arrItems(a)[i];
+                pending[pn++] = items[i];
             }
             for (k = a->parts ? a->parts->head : NULL; k; k = k->next) {
                 pending = (Value*)fire_growPush(pending, &pn, &pcap, sizeof(Value));
@@ -12497,7 +12648,8 @@ FIRE_FN void handOverAllEx(const Value* vs, Value* out, uint32_t n, OwnList* tra
             }
         } else if (h->okind == O_Array) {
             Arr* a = (Arr*)h;
-            for (k = 0; k < a->length; k++) handoverRehome(&arrItems(a)[k], &seen);
+            Value* items = arrValues(a);
+            for (k = 0; items && k < a->length; k++) handoverRehome(&items[k], &seen);
         } else if (h->okind == O_Lambda) {
             Lam* l = lamOfOwned(h);
             for (k = 0; k < l->ncaps; k++) handoverRehome(&lamCaps(l)[k], &seen);
@@ -13237,6 +13389,10 @@ FIRE_FN void mainPoll(bool waiting) {
 }
 
 FIRE_COLD FIRE_FN bool pollSlow(bool loop) {
+#ifdef FIRE_TASKS
+    /* (a task on the waiting main program's thread: it gives the thread back when the main program's time or an event has come) */
+    if ((g_attnMask & ATTN_HOME) && (fire_atomic_load(&g_attn) & ATTN_HOME) && fire_homePoll()) { g_tick = 4096; gilYield(); }
+#endif
 #ifdef FIRE_NO_GIL
     /* (someone waits for the readers of the globals' lock to leave: this thread does at this safe point - a loop's jump back or the entry of a
      * function - and not only when its tick runs out. What it read from the globals and holds in a temporary is its own - FIRE_DOM_TAKE.) */
@@ -13521,6 +13677,9 @@ uint32_t g_udCount = 0, g_udCap = 0;
 bool g_dimsAdded = false;
 const TextUnit* g_textUnits = NULL;
 uint32_t g_textUnitCount = 0;
+#ifdef FIRE_OBJ_POOL
+ObjPool g_objPool;
+#endif
 #ifdef FIRE_SLOTS
 SlotTable g_slots;
 #ifdef FIRE_SLOT_SEGMENTS
@@ -13553,6 +13712,7 @@ uint64_t g_evCount = 0;
 #ifdef FIRE_TASKS
 FireWorker g_homeWorker;
 fire_atomic32 g_evTick, g_homeSeen, g_groupLive;
+int64_t g_homeUntil;
 ThreadLocals* g_homeState;
 #endif
 fire_atomic32 g_attn;

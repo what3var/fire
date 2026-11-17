@@ -6,7 +6,45 @@ Neue Einträge kommen oben in ihren Abschnitt. Was nur noch Arbeit ist, steht in
 
 ## Offen
 
+### D2. `try delete x` als Sprachmittel
+
+Vorschlag des Benutzers: `try delete x` versucht, den Inhalt des Bezeichners zu löschen; ist er kein Objekt oder undefined, gibt es `false`,
+sonst `true`. Für die Container wurde es nicht gebraucht (`x is from this` genügt, D3). Offen ist, ob es trotzdem kommt - und ob es nur löscht,
+was dem Aufrufer gehört, oder jedes Objekt wie `delete`.
+
+## Entschieden
+
+### D16. `replace this.f = v`: der alte Wert geht, wenn er dem Objekt gehört (D1)
+
+Eine Zuweisung an ein Feld zerstört den alten Wert nicht (D1): sonst müsste fire bei jeder Zuweisung ausschließen, dass noch jemand auf den alten
+Wert oder seine Kinder zeigt, und Zerstören soll nie stillschweigend geschehen. Entwurf des Benutzers: das neue Schlüsselwort **`replace`** sagt es
+ausdrücklich.
+
+* **Form:** `replace <Feld> = <Wert>` als Anweisung. Ziel: ein Feld (`this.f`, `f` in einer Klasse, `obj.f`, eine Property) oder ein statisches
+  Feld (`Class.f`, Besitzer ist das Programm, der globale Scope). Nicht für Variablen (`E4080`): ihre Werte gehören ihrem Scope und gehen mit ihm;
+  wer früher aufräumen will, schreibt `delete x` und dann die Zuweisung. Nicht für Elemente, Zeiger, `+=` (Parserfehler `E3165`/`E3166`).
+* **Was geht:** der alte Wert, wenn er ein Objekt, Array, Puffer oder Lambda ist, das der Halter **direkt besitzt** (`alt is from obj`, beim
+  statischen Feld `is from global`) und das Feld ihn nicht wieder hält (`replace this.f = this.f`). Zerstört wie mit `delete` (Destruktor, was es
+  besitzt, geht mit - ein `Dictionary` samt Inhalt).
+* **Was bleibt:** ein Wert, der dem Halter nicht gehört - eine Referenz auf Fremdes, ein Wert, den der neue Ausdruck mit `take` herausgenommen
+  hat -, `undefined`, Werttypen: nur überschrieben, **kein Fehler**. Begründung: `delete` zerstört alles, was man ihm gibt (es prüft keinen
+  Besitz); `replace` ist dagegen das Aufräumen des Objekts in seinen eigenen Feldern. Ein Feld hält mal Eigenes, mal eine Referenz (ein Elternteil,
+  ein geteilter Cache) - ein Fehler bei der Referenz machte `replace` für solche Felder unbrauchbar, und Zerstören von Fremdem wäre genau das
+  stille Zerstören, das D1 vermeiden will.
+* **Reihenfolge:** alten Wert lesen, neuen Wert auswerten, speichern (mit dem Besitz von `=`: Frisches gehört dem Objekt, `take` verschiebt),
+  **dann** den alten zerstören. Abweichend vom ersten Vorschlag (erst löschen, dann speichern): so zeigt das Feld nie auf einen zerstörten Wert -
+  der Destruktor des alten sieht schon den neuen, eine Ausnahme im Destruktor lässt das Feld mit dem neuen Wert zurück, und die Debug-Warnung für
+  hängende Referenzen (DanglingWatch) sieht im Feld keinen toten Wert. `replace this.f = Make(this.f)` liest den alten Wert, weil der neue zuerst
+  ausgewertet wird; der Besitz wird erst nach der Auswertung geprüft, also bleibt ein mit `take this.f` herausgenommener Wert am Leben.
+* **Andere Referenzen** auf den alten Wert prüft `replace` nicht (wie `delete`): sie bekommen die DestroyedException.
+* `replace` ist ein Schlüsselwort (kein Name mehr; der Parameter `replace` in circuits.ui heißt jetzt `replacement`), im Editor hervorgehoben.
+* Umgesetzt: Lexer/TokenType.Replace, Parser.ParseReplace (AssignExpr.Replace), Resolver (E4080), Compiler.CompileReplace, OpCode.ReplaceOld
+  (VM.cs, CppGenerator.cs: `isFrom`/`isFromGlobal`, `sameRef`, `deleteValue`). Tests: SyntaxTests, TypeTests, native Fälle 4405-4407.
+  Doku: 13-ownership "replace", 01-basics "Keywords", SPEC 2.5.
+
 ### D1. Zerstört eine Feldzuweisung den alten Wert, wenn er dem Objekt gehört?
+
+**Entschieden (D16): nein - `=` zerstört nie; wer den alten Wert loswerden will, schreibt `replace`.**
 
 `this.d = new Dictionary<string, Node>()` ein zweites Mal: das alte Wörterbuch samt Inhalt lebt weiter, bis der Besitzer (das Objekt) endet.
 Das gilt für jedes Objekt in einem Feld, nicht nur für Wörterbücher. Gefunden in Raser: ein Nachbau wuchs in sechs Runden von 142 auf 846 MB.
@@ -18,14 +56,6 @@ Das gilt für jedes Objekt in einem Feld, nicht nur für Wörterbücher. Gefunde
   ausdrücklich mit Besitz übergeben wurde.
 * Heute: `delete this.d` vor der neuen Zuweisung. Möglich wäre stattdessen ein Hinweis des Typprüfers, wenn ein Feld, das ein eigenes Objekt hält,
   ohne `delete` neu belegt wird.
-
-### D2. `try delete x` als Sprachmittel
-
-Vorschlag des Benutzers: `try delete x` versucht, den Inhalt des Bezeichners zu löschen; ist er kein Objekt oder undefined, gibt es `false`,
-sonst `true`. Für die Container wurde es nicht gebraucht (`x is from this` genügt, D3). Offen ist, ob es trotzdem kommt - und ob es nur löscht,
-was dem Aufrufer gehört, oder jedes Objekt wie `delete`.
-
-## Entschieden
 
 ### D15. `x!` zu einem String bleibt ein Fehler
 

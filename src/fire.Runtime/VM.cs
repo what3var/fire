@@ -4239,6 +4239,10 @@ namespace fire.Runtime
         }
 
         /// <summary>`delete x`: destroys an object (destructor, cascade), an array or a buffer immediately and detaches it from its owner.</summary>
+        /// <summary>The same object, array, buffer or lambda (not: an equal one) - a lambda too.</summary>
+        private static bool SameOwnedValue(Value a, Value b) =>
+            a.Kind == b.Kind && (a.Kind == ValueKind.Class ? ReferenceEquals(a.AsObjectRef(), b.AsObjectRef()) : ReferenceEquals(LeafOf(a), LeafOf(b)));
+
         private void DeleteValue(Value v)
         {
             switch (v.Kind)
@@ -5635,6 +5639,25 @@ namespace fire.Runtime
                 case OpCode.Delete:
                     DeleteValue(Pop());
                     break;
+
+                case OpCode.ReplaceOld:
+                {
+                    // `replace this.f = v` (DECISIONS D16): the old value goes when the object (1: the program - a static field) owns it directly and the field
+                    // does not hold it again; a reference to something of another owner, a value type, undefined or a destroyed value stays as it is
+                    int replaceMode = ReadByte();
+                    var now = Pop();
+                    var holder = replaceMode == 0 ? Pop() : default;
+                    var old = Pop();
+                    if (old.Kind is ValueKind.Class or ValueKind.Array or ValueKind.Buffer or ValueKind.Lambda && !SameOwnedValue(old, now))
+                    {
+                        IOwner? owner = OwnerOfValue(old);
+                        bool owned = replaceMode == 0
+                            ? holder.Kind == ValueKind.Class && holder.AsObjectRef() is ObjectInstance holderObj && !holderObj.IsDestroyed && ReferenceEquals(owner, holderObj)
+                            : owner is Scope { Home.IsGlobal: true };
+                        if (owned) DeleteValue(old);
+                    }
+                    break;
+                }
 
                 case OpCode.GuardLocal: OpGuardLocal(); break;
                 case OpCode.SetTypeArgs: OpSetTypeArgs(); break;

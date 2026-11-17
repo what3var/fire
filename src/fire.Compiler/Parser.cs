@@ -873,6 +873,7 @@ namespace fire.Compiler
             if (Check(TokenType.Identifier) && Peek().Lexeme == "delete" && PeekAt(1) is { NewlineBefore: false, Type: TokenType.Identifier or TokenType.This or TokenType.Star })
                 return ParseDelete();
             if (IsUnitDeclStart()) throw Error("A unit is declared at the top level of a file, not inside a block, a class or a namespace", Peek());
+            if (Check(TokenType.Replace)) return ParseReplace();
             if (Check(TokenType.Var)) return ParseVarDecl();
             if (Check(TokenType.Readonly)) return ParseReadonlyDecl();
             if (Check(TokenType.Enum)) return ParseEnumDecl();
@@ -1700,6 +1701,21 @@ namespace fire.Compiler
                 value = ParseExpression();
             ExpectStatementTerminator();
             return new ReturnStmt(_sourceIndex, line, value);
+        }
+
+        /// <summary>`replace target = value` (DECISIONS D16): an assignment to a field (`this.f`, `obj.f`, `f`, `Class.f`) whose old value is destroyed when the
+        /// object owns it - the value first, then the store, then the old value.</summary>
+        private Stmt ParseReplace()
+        {
+            var keyword = Advance();   // replace
+            var expr = ParseExpression();
+            // (`a += b` is `a = a + b` with the target as the left operand: no new value to replace the old one with)
+            if (expr is not AssignExpr assign || assign.Value is BinaryExpr bin && ReferenceEquals(bin.Left, assign.Target))
+                throw Error("'replace' needs an assignment with '=': replace this.field = value", keyword);
+            if (assign.Target is not (MemberExpr or IdentifierExpr))
+                throw Error("'replace' assigns a field (replace this.field = value, replace Class.field = value) - not an element or a pointer", keyword);
+            ExpectStatementTerminator();
+            return new ExprStmt(_sourceIndex, keyword.Line, assign with { Replace = true });
         }
 
         private Stmt ParseDelete()

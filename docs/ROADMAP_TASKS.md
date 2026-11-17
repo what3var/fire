@@ -331,6 +331,12 @@ All of it is a small part of the C runtime: native programs use it directly, the
   waits for a worker, then looks again at what it waits for. A task that borrows the thread yields at its next safe point once an event came
   (`fire_homeWanted`: the count of the events `g_evTick` against what the main program had seen); one that enters a blocking native there
   (`gilRelease`) goes to a thread of its own for the wait (like `dedicated`) and back to the pool after it, so the main program never waits for it.
+  Later fix (a `Sleep(300ms)` that never came back while a task looped over `TryReceive` and a compressing native): the thread takes a task only
+  when it really waits for a worker - none is idle and the pool cannot grow (`homeHelp`); before, it took a fresh task the pool's new worker was about
+  to take, and kept it. A task on it has `ATTN_HOME` in its mask (`taskHomeMask`, only it): every safe point - a loop's jump back, a function's
+  entry - looks at the events, every 32nd at the clock too (`fire_homePoll`), and after every native (`fire_natEnd`) the clock; it gives the thread
+  back at the main program's deadline, at the latest after `FIRE_HOME_LEND_MS` (10 ms, `g_homeUntil`). What remains: a single native call that
+  runs long holds it until it returns. The green threads tried on a PC (ucontext) end their slice by the clock now, too (every 16th safe point, 10 ms).
   Found on the way: a task of `await [ ... ]` read its group after counting it down - the caller may have freed it by then (ThreadSanitizer, now that the
   main program finishes such waits sooner).
 * **5b done - the wait of the UI loop is a wait of the main program:** the pacing of the frames (VSync of X11, Win32, Cocoa) and the wait for a

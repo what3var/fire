@@ -1,0 +1,60 @@
+// objects of many sizes and field kinds (packed numbers, Values, strings, arrays, objects; small ones from the pool of the native runtime, a big one from
+// malloc): made, destroyed and made again - the memory of a destroyed object is the next one of its size, a stale reference still says "destroyed"
+class Tiny { defined bool flag }
+class Point { defined int x; defined int y; construct(defined int x, defined int y) { this.x = x; this.y = y } }
+class Mixed {
+    defined int n
+    defined float f
+    defined bool b
+    defined char c
+    string s
+    any a
+    int arr[]
+    Point p
+    construct(defined int i) {
+        this.n = i; this.f = i / 4.0; this.b = i % 2 == 0; this.c = 'a'; this.s = "m" + i; this.a = i % 3 == 0 ? "three" : i
+        this.arr = new int[3]; this.arr[1] = i; this.p = new Point(i, -i)
+    }
+    int Sum() { return this.n + this.arr[1] + this.p.x + this.p.y + this.s.Length }
+}
+class Wide {
+    any f0; any f1; any f2; any f3; any f4; any f5; any f6; any f7; any f8; any f9
+    any g0; any g1; any g2; any g3; any g4; any g5; any g6; any g7; any g8; any g9
+    construct(int i) { this.f0 = i; this.g9 = "w" + i }
+}
+class Derived : Point { defined int z; string tag; construct(defined int i) : base(i, i + 1) { this.z = i * 3; this.tag = "d" + i } }
+var keep = new List<Mixed>()
+int total = 0
+for (int round = 0; round < 3; round++) {
+    var tmp = new List<any>()
+    for (int i = 0; i < 300; i++) {
+        tmp.Add(new Tiny())
+        tmp.Add(new Point(i, round))
+        tmp.Add(new Mixed(i))
+        tmp.Add(new Wide(i))
+        tmp.Add(new Derived(i))
+    }
+    for (int i = 0; i < tmp.Count; i++) {
+        any o = tmp[i]
+        if (o is of Mixed) { total += o.Sum() }
+        else if (o is of Derived) { total += o.x + o.y + o.z + o.tag.Length }
+        else if (o is of Point) { total += o.x + o.y }
+        else if (o is of Wide) { total += o.f0 + o.g9.Length }
+    }
+    keep.Add(new Mixed(round))
+    delete tmp
+}
+print(total)
+var stale = new Point(1, 2)
+var alias = stale
+delete stale
+var fresh = new Point(7, 8)
+try { print(alias.x) } catch (DestroyedException e) { print("destroyed: " + e.message) }
+print(fresh.x + fresh.y)
+var m = new Mixed(5)
+var mAlias = m
+delete m
+var m2 = new Mixed(6)
+try { print(mAlias.s) } catch (DestroyedException e) { print("destroyed mixed") }
+print(m2.s + " " + m2.p.y + " " + m2.a + " " + keep[2].s + " " + keep.Count)
+//# name: Objekte: viele Feldarten und Groessen, freigegebener Speicher wiederverwendet, alte Referenz bleibt zerstoert

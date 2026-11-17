@@ -85,7 +85,8 @@ return found                          // the devices in found go along with the 
 The same for a constructor that keeps an argument in a field: `new Voxelizer(Sample.Make())` with `this.sample = sample` in the constructor leaves the
 field with a destroyed object after the statement - the field only refers to the temporary. The type checker says so (warning `TC031`) when the argument
 is surely a temporary (`new ...`, an array or a buffer made in the argument - `new byte[0]`, `[1, 2]` -, or a call of a method whose every `return` gives a
-new object, array or local of its own) and the constructor stores the parameter (also one declared `any`) plainly. Let the constructor take it - it then
+new object, array or local of its own) and the constructor stores the parameter (also one declared `any`) plainly; the same for a method
+(`h.Set(new Sample())`) and for a static field, an element of a field's array or a field's list as the place it is kept in. Let the constructor take it - it then
 keeps what it is given, and leaves a variable of the caller alone:
 
 ```fire
@@ -270,7 +271,8 @@ print(h.held.n)                     // kept - the holder owns it now
 Without `take`, `temp` would still belong to the block and die at its end; `try` would not move it, because `Keep` is not its owner.
 
 What a method gets with `take` belongs to that call - like a local of it. If the method does not keep it (`try i.TakeTo(this)`) or hand it on with `take`
-again, it dies when the method ends, even when a field or a list still points to it:
+again, it dies when the method ends, even when a field or a list still points to it (the same for a constructor: `new Holder(take a)` with
+`this.vals = v` leaves `h.vals` destroyed - write `this.vals = take v`):
 
 ```fire
 class Item {
@@ -293,6 +295,11 @@ try {
     print("lost: destroyed")
 }
 ```
+
+The type checker says so before the run (warning `TC031`) when the argument is `take x` or surely a temporary and the method or constructor it goes
+to stores the parameter plainly - in a field, a static field, an element of a field's array, a field's List, Dictionary or HashSet without `Owns.Values`
+(`shelf.Look(new Item("lost"))` above), or hands it on with `take` to one that does so; it names the store with `take` as the fix
+(`this.items.Add(take i)`, `this.vals = take v`). Taking it in any way (`take`, `TakeTo`, `try ... TakeTo(this)`, returning it) silences it.
 
 In Debug mode (the default in spark, `forge run -m debug`) the VM warns about this when it happens - at the end of the call, not only at the
 next use:
@@ -398,6 +405,54 @@ try {
 
 A destroyed object has no class any more: `x is of Item`, `x!Item`, `throw x` and printing it (`print(x)`, `"" + x`, `$"{x}"`) throw the
 `DestroyedException` as well. Only the kind of the value is still known - `x is of class` is `True`.
+
+## `replace`
+
+Assigning a field does **not** destroy its old value: `this.d = new Dictionary<string, Node>()` a second time leaves the first dictionary (and
+what it owns) alive until the object ends - fire would have to know that nothing else refers to it or to its parts, and destroying is never
+implicit. When the object is done with the old value, say so: **`replace`** in front of the assignment destroys the old value after the new one is
+stored.
+
+```fire
+class Item {
+    string n
+    construct(string n) { this.n = n }
+    destruct() { print("destroy " + this.n) }
+}
+class Shelf {
+    Item top
+    Item other
+    int sizes[]
+    static Item shared = new Item("static 1")
+    construct() { this.top = new Item("one"); this.sizes = [1, 2] }
+}
+var shelf = new Shelf()
+var mine = new Item("mine")
+shelf.other = mine                      // only a reference: mine belongs to the top level
+replace shelf.top = new Item("two")     // destroy one
+var old = shelf.sizes
+replace shelf.sizes = new int[4]        // the old array is destroyed (old.length: DestroyedException)
+replace shelf.other = new Item("own")   // mine is not the shelf's: nothing is destroyed
+print(mine.n)                           // mine
+replace Shelf.shared = new Item("static 2")   // destroy static 1
+```
+
+- **`replace target = value`** is a statement; the target is a field: `this.f`, `f` in a class, `obj.f`, `Class.f` (a static field) or a
+  property. A variable is the error `E4080` (its values belong to its scope and go with it - `delete x` and then the assignment); an element
+  (`a[i]`), a compound assignment (`+=`) and anything else are parse errors.
+- **What goes:** the old value, when it is an object, an array, a buffer or a lambda that the holder **owns directly** (`old is from obj`;
+  for a static field: `old is from global` - a static field belongs to the program) - and the field does not hold it again
+  (`replace this.f = this.f` keeps it). It is destroyed like with `delete`: its destructor runs, what it owns goes with it (a `List` or a
+  `Dictionary` with its contents).
+- **What stays:** a value the holder does not own - a reference to something of someone else (`shelf.other = mine`), a value that was taken
+  out of the field (`replace this.f = Wrap(take this.f)`: the call owns it now), `undefined`, a number, a text - is just overwritten, without an
+  error. `delete` destroys whatever it is given; `replace` is the object cleaning up after itself, so it touches only what is the object's.
+- **Order:** the old value is read, then the new value is computed (it may read the old one: `replace this.f = Grow(this.f)`), then stored with
+  the ownership of a plain `=` (`new` and other fresh values belong to the object, `take x` moves), and only then the old value is destroyed.
+  So the field never refers to a destroyed value, and the destructor of the old value already sees the new one in the field.
+- Like `delete`, `replace` does not look for other references to the old value: a variable, an element or a lambda that still points to it
+  gets the `DestroyedException` when it is used (the debug watch for such references sees them as it sees those after a `delete`).
+- `replace` is a keyword (it cannot be a name); `s.Replace(a, b)` of strings is a method and is unaffected.
 
 ## Testing the owner
 

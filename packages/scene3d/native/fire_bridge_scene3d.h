@@ -1673,6 +1673,7 @@ static Value fire_s3d_Render(Value camera, Value scene, Value buffer, Value widt
     fs.backend = s->n[SN_RENDERER] == S3D_BACKEND_HARDWARE ? S3D_BACKEND_HARDWARE : S3D_BACKEND_SOFTWARE;
     fs.noLightCulling = s->n[SN_CULLING] == 0;
     fs.sky = (uint32_t)(s->f[SF_FOGEND] > s->f[SF_FOGSTART] ? s->n[SN_FOGCOLOR] : c->n[CN_BACKGROUND]);   /* (what a reflection shows where it finds nothing) */
+    fs.fogStart = (float)s->f[SF_FOGSTART]; fs.fogEnd = (float)s->f[SF_FOGEND]; fs.fogColor = (uint32_t)s->n[SN_FOGCOLOR];
     s3d_flush(b->data, f, &cam, ls, n, &fs);
     S3D_FREE(ls);
     c->n[CN_LAST] = f->lastBackend;

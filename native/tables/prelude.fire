@@ -974,13 +974,11 @@ class List<T> : IEnumerable<T> {
         this.count = 0
     }
 
+    // (by half again: of a long list less stays unused than with twice the length - 1.5 times the elements at most, at the moment of the
+    // copy 2.5 times instead of 3 times)
     undefined Grow() {
-        var newItems = new T[this.items.length * 2]
-        var i = 0
-        while (i < this.count) {
-            newItems[i] = this.items[i]
-            i = i + 1
-        }
+        var newItems = new T[this.items.length + (this.items.length >> 1)]
+        __array_copy(this.items, newItems, this.count)   // (the Values in one go: the elements stay the list's)
         // the new array belongs to the list (a local array dies with this method), the old one is released
         any old = this.items
         this.items = newItems
@@ -988,7 +986,7 @@ class List<T> : IEnumerable<T> {
         delete old
     }
     undefined Grow<int>() {
-        int newItems[] = new int[this.items.length * 2]
+        int newItems[] = new int[this.items.length + (this.items.length >> 1)]
         __array_copy(this.items, newItems, this.count)   // (the packed numbers in one block)
         any old = this.items
         this.items = newItems
@@ -996,7 +994,7 @@ class List<T> : IEnumerable<T> {
         delete old
     }
     undefined Grow<float>() {
-        float newItems[] = new float[this.items.length * 2]
+        float newItems[] = new float[this.items.length + (this.items.length >> 1)]
         __array_copy(this.items, newItems, this.count)
         any old = this.items
         this.items = newItems

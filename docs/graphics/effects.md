@@ -1,7 +1,7 @@
 # Particles and effects (`#import "scene3d.effects"`, the package `fire-scene3d.effects`)
 
 Fire, smoke, sparks, rain, snow and explosions for a [3D scene](3d.md) - and effects on the whole picture: **fog** and a **tint**. Everything is drawn by the
-renderer itself, in C, by both software renderers (Software and Fast, also into a palette picture on DOS); fire only sets numbers.
+renderer itself, in C, by both software renderers (Software and Fast, also into a palette picture on DOS) - the fog also by the GPU (`RenderMode.Hardware`, in a shader); fire only sets numbers.
 
 ![A camp fire with smoke and sparks, snow, an explosion and fog - left the software renderer, right the lean one (Fast)](../images/effects.png)
 
@@ -100,8 +100,8 @@ scene.TintAmount = 0                         // no tint
 
 In the lean renderer (Fast) the fog goes in 16 steps and needs no division per pixel; on a palette picture each step is a table of 256 indices (the
 colour that comes out is looked up in the palette - a palette with the fog colour and some shades towards it looks best). The software renderer
-blends smoothly. The GPU renderer (`RenderMode.Hardware`) draws the particles and the tint over its picture, but no fog yet, and its particles are not
-hidden by objects.
+blends smoothly. The GPU renderer (`RenderMode.Hardware`) draws the fog itself (a last pass over its picture that reads the depth, as the software renderer's fog does);
+the particles and the tint are laid over its picture afterwards, and its particles are not hidden by objects.
 
 ## Cost
 

@@ -1,0 +1,47 @@
+class Holder { float vals[]; construct(int n) { this.vals = new float[n] } }
+class P {
+    static undefined Send(Channel<float[]> fc, Channel<int[]> ic, Channel<Holder> hc, Channel<string[]> sc) {
+        float f[] = new float[1000]
+        for (int i = 0; i < f.length; i++) { f[i] = i * 0.5 }
+        fc.Send(take f)
+        int a[] = new int[1000]
+        for (int i = 0; i < a.length; i++) { a[i] = i * 3 }
+        ic.Send(take a)
+        var h = new Holder(500)
+        for (int i = 0; i < h.vals.length; i++) { h.vals[i] = i }
+        hc.Send(take h)
+        string s[] = new string[100]
+        for (int i = 0; i < s.length; i++) { s[i] = "s" + i }
+        sc.Send(take s)
+    }
+    static defined int Main() {
+        var fc = new Channel<float[]>(1)
+        var ic = new Channel<int[]>(1)
+        var hc = new Channel<Holder>(1)
+        var sc = new Channel<string[]>(1)
+        fire with fc, ic, hc, sc { P.Send(fc, ic, hc, sc) }
+        float f[] = fc.Receive()
+        float fs = 0
+        for (int i = 0; i < f.length; i++) { fs = fs + f[i] }
+        print("float " + f.length + " " + fs + " " + f[999])
+        int a[] = ic.Receive()
+        int s = 0
+        for (int i = 0; i < a.length; i++) { s = s + a[i] }
+        print("int " + a.length + " " + s)
+        any v = 2.5
+        try { a[3] = v } catch (ArgumentException e) { print("still an int array") }
+        var h = hc.Receive()
+        float hs = 0
+        for (int i = 0; i < h.vals.length; i++) { hs = hs + h.vals[i] }
+        print("holder " + h.vals.length + " " + hs)
+        string t[] = sc.Receive()
+        print("strings " + t.length + " " + t[0] + " " + t[99])
+        float c[] = copy f
+        c[0] = 42
+        print("copy " + c.length + " " + c[1] + " " + c[0] + " " + f[0])
+        return 0
+    }
+}
+Environment.Exit(P.Main())
+//# note: A packed number array (float[], int[], also in an object) goes through a channel with `take` as it is - not unpacked into Values on the way (O(1) like a byte buffer); it stays typed and packed.
+//# name: Threads: Zahlen-Arrays gehen mit take durch einen Kanal, ohne entpackt zu werden

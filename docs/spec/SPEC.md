@@ -304,6 +304,13 @@ does not pass on there (`TC018`: the value dies with the setter on that path). A
   (there is no destructor), what it owns is destroyed with it: the inner arrays made with it (2.1) and every unclaimed value stored into one of its
   elements (`arr[i] = new X()`, `arr[i] = Make()`, `arr[i] = [1, 2]`: the array claims it, 2.1) or taken (`arr[i] = take x`). Overwriting or clearing the
   element does not destroy what the array owns - it lives as long as the array.
+- **`replace target = value`** (a statement; DECISIONS D16): an assignment to a field - `this.f`, `f` in a class, `obj.f`, `Class.f`, a property - after
+  which the old value is destroyed (like `delete`) when it is an object, array, buffer or lambda that the holder owns directly (`old is from obj`; a static
+  field: the global scope) and the field does not hold it again. Order: the old value is read, the value is evaluated and stored with the ownership of
+  `=`, then the old value is destroyed - the field never refers to a destroyed value. A value of another owner (a reference, a value taken out of the
+  field by the value expression), `undefined` or a value type is just overwritten, no error. A variable as the target is the resolver error `E4080`;
+  an element, a pointer and a compound assignment are parse errors (`E3165`, `E3166`). Bytecode: `GetField`/`GetStaticField` of the old value, the
+  assignment, the field again, `ReplaceOld mode` (0: [old, holder, now], 1: [old, now] for a static field).
 - **Using a destroyed array or buffer is an error**: reading, writing, `Length` and `foreach` throw a catchable `DestroyedException` in the execution modes Debug and Release. In `#performance` mode
   nothing is checked (the behaviour is undefined; natively that is a read of freed memory). A destroyed **object** is treated the same way (2.3): dead objects throw `DestroyedException` (a shallow copy, 2.4, may point to one).
 - **References from before a `fire handover`** (THREADING_DESIGN.md section 1) are dead the same way: the handed-over value and everything reachable from it
@@ -1763,10 +1770,18 @@ until the next build replaces them; the Error List has a filter for the warnings
 
 A reference `ClassName.Member` to a static member that the class (or a base class) does not have is an error when the program is compiled (`E4056`), not a failure at run time.
 
-The initialisers of static fields run once at program start, before the first top-level statement: class by class in the order of the program
-(prelude, imported libraries, then the files in their order), in a class from the top down. A static initialiser that reads (by name or as
-`Class.field`, also through a base class) a static field whose initialiser runs later - or the field itself - is a resolver error; reads in a lambda
-of the initialiser and in methods it calls are not checked.
+The initialisers of static fields run once at program start, before the first top-level statement, in **dependency order**: the resolver
+(`Resolver.StaticInits.cs`) finds for every static initialiser the static fields it reads - by name, as `Class.field` or `this.field`, also through
+a base class - directly and in the code it reaches: static methods and properties, instance methods called on `this` or on a receiver whose class
+the resolver knows (`this`, a variable declared with a class or initialised with `new`), constructors (with `base(...)`), the parameter defaults and
+the instance field initialisers of the classes it instantiates, transitively. A plain assignment `A.x = v` is a write, not a read. Not followed:
+lambda bodies (they run when called), receivers of an unknown class (`any`, interfaces), reflection, overrides in derived classes. The compiler
+(`Compiler.StaticInitOrder`) runs the initialisers in a topological order of these dependencies; ties - and everything without dependencies - keep
+the order of the declarations (class by class in the order of the program: prelude, imported libraries, then the files in their order; in a class
+from the top down). The order is the one of the top-level code, so the VM, the native program (and its modules) and plugins (which run the
+initialisers of their classes themselves, `CompiledProgram.StaticInitSequence`) agree. A cycle is a resolver error: `E4078`, naming the cycle (a
+field that reads itself in its own initialiser: `E4073`). A static initialiser that reads a top-level variable directly is the resolver error
+`E4079` - the top-level code runs only after the static initialisers (a read in a lambda or in a method called by it is not reported).
 
 ### 8.2 Bit widths for `int`/`float`
 

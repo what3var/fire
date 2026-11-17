@@ -1,0 +1,20 @@
+// StringBuilder: its buffer grows (natively a zeroed block: only the text is memory), ToString makes a string of its own - the builder goes on after it
+var sb = new StringBuilder()
+for (int i = 0; i < 20000; i++) { sb.Append(i) }
+string first = sb.ToString()
+sb.Append("|tail")
+string second = sb.ToString()
+print(first.Length + " " + second.Length + " " + first.Substring(first.Length - 5) + " " + second.Substring(second.Length - 9))
+sb.Clear()
+sb.Append("ä€x")
+string third = sb.ToString()
+print(third + " " + third.Length + " " + first.Substring(0, 12) + " " + second.Length)
+for (int i = 0; i < 5000; i++) { sb.Append('z') }
+print(sb.Length + " " + third + " " + sb.ToString().Substring(0, 6))
+var copied = copy sb
+sb.Clear()
+print(copied.Length + " " + sb.Length + "|" + sb.ToString() + "|")
+var bytes = new byte[100000]
+bytes[99999] = 7
+print(bytes[0] + bytes[50000] + bytes[99999])
+//# name: StringBuilder: nach ToString weiter benutzt, Clear, grosser Text, Kopie; ein grosser Puffer beginnt mit Nullen

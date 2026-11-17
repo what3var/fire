@@ -241,6 +241,8 @@ configuration of the native build, a toolchain that is missing).
 | `E3162` | Property '…' of an interface needs a type (use 'any' if every type is allowed) |
 | `E3163` | Expected a function name after 'inline c' |
 | `E3164` | Expected the C body '{ ... }' of the 'inline c' function |
+| `E3165` | 'replace' needs an assignment with '=': replace this.field = value (`replace x += 1`, `replace f()`) |
+| `E3166` | 'replace' assigns a field (replace this.field = value, replace Class.field = value) - not an element or a pointer (`replace a[i] = v`) |
 
 ### E4xxx - Resolver: names, types, declarations
 
@@ -320,10 +322,13 @@ configuration of the native build, a toolchain that is missing).
 | `E4071` | The parameter '…' of the inline C function '…' has a type C cannot take (int, float, bool, char, string, byte[], any or a pointer) |
 | `E4072` | The inline C function '…' has a result type C cannot give (int, float, bool, char, string, any, a pointer or undefined) |
 | `E4073` | The initialiser of the static field '…' reads the field itself - it is still undefined there |
-| `E4074` | The initialiser of the static field '…' reads '…', whose initialiser only runs later (static fields are initialised once at program start: class by class in the order of the program, in a class from the top down) - declare '…' first |
+| `E4074` | (no longer reported: static initialisers run in the order of their dependencies, a field may read one declared later - a cycle is `E4078`) The initialiser of the static field '…' reads '…', whose initialiser only runs later ... |
 | `E4075` | '…' is in several imported libraries (…) - write the full name |
 | `E4076` | '…' of class '…' is both a static method/field/property and an instance method/field/property (the other one: line …) - give one of them another name (a name is static or for instances, for every kind of member; also over base classes; in a package the package is not built) |
 | `E4077` | '…' is declared twice in class '…' (the other one: line …) - a field or a property has one declaration (two fields, two properties, or a field and a property of one name, both static or both for instances) |
+| `E4078` | The initialisers of static fields need each other in a cycle: … - each one needs the value of the next one first; break the cycle (set one of them later, e.g. in a static method) (`static int x = B.y` and `static int y = B.Get()` with `Get() { return A.x }`: `A.x -> B.y -> (through B.Get()) A.x`; [static fields](../language/08-classes.md)) |
+| `E4079` | The initialiser of the static field '…' reads the top-level variable '…' - static fields are initialised before the top-level code runs, so it is still undefined there (make it a static field, or set the static field in the top-level code) |
+| `E4080` | 'replace' assigns a field - '…' is a variable (its old value goes with its scope; to destroy it now: 'delete …' and then the assignment) |
 
 ### E5xxx - Bytecode compiler
 
@@ -404,9 +409,9 @@ A warning in lax mode, an error in strict mode (`--types`, the project setting `
 | `TC026` | '…' is a field of the record '…': a record is written only while it is constructed (in its constructor) - a changed copy is 'copy r with { .… = ... }' (an error also in lax mode; through `any` the same write is the InvalidOperationException at run time) |
 | `TC027` | The field '…' of the record '…' is a '…': a record holds only what does not change - numbers, texts, enums, records, lambdas (a record field that is an object of a class, an array or a list; an error also in lax mode) |
 | `TC028` | 'with' without 'copy' or 'flat' is for records - '…' is a class: write 'copy x with { ... }' (a deep copy) or 'flat x with { ... }' (an error) |
-| `TC029` | An object goes into a channel only with a word: 'Send(copy x)' (a copy) or 'Send(take x)' (moved) - or fresh ('new', the result of a call) (`ch.Send(x)` with an object, an array or a record; an error also in lax mode) |
+| `TC029` | An object goes into a channel only with a word: 'Send(copy x)' (a copy) or 'Send(take x)' (moved) - or fresh ('new', 'new T[n]', an array literal, the result of a call) (`ch.Send(x)` with an object, an array or a record; an error also in lax mode) |
 | `TC030` | '…' is an expression tree: it takes a lambda written here with an expression body ('x => ...') or a tree (LambdaExpression), not … / An expression tree cannot hold … (a parameter `lambda expression<T>` given a lambda from a variable or one with a block, or a body with an assignment, `++` or `take`; an error also in lax mode) |
-| `TC031` | '…' is a temporary of this statement: the constructor of '…' keeps it in the field '…' without taking it, so it is destroyed at the end of the statement and the field refers to a destroyed object (`new Holder(new Part())` where the constructor only stores its parameter; keep it in a variable or let the constructor `take` it; a warning also in strict mode) |
+| `TC031` | '…' is a temporary of this statement: the constructor of '…' (or '….…', a method) keeps it in the field '…' without taking it, so it is destroyed at the end of the statement and the field refers to a destroyed object / 'take …' hands its value over to the call, but … keeps only a reference to it in … without taking it: what the call owns is destroyed when the call ends, and … refers to a destroyed array (object, buffer, list) (`new Holder(new Part())` or `new Holder(take a)`, `h.Set(take a)`, where the constructor or method only stores its parameter - in a field (`this.f = p`, `f = p`), a static field (`Holder.cache = p`), an element of a field's array (`this.f[i] = p`) or a field's List/Dictionary/HashSet without `Owns.Values` (`this.items.Add(p)`), or passes it on with `take` to a method that does, or with `base(p)`/`base(take p)` to a base constructor that does; keep it in a variable or let the callee take it - `this.f = take p`, `p.TakeTo(this)`, `try p.TakeTo(this)`, `this.items.Add(take p)`, `return p`; a warning also in strict mode) |
 | `TC032` | The parameter '…' of '…' is a byte/word buffer, the argument an array: the method gets a new buffer with its elements, and what it writes does not reach the array (an array of a variable or a field given to a `byte`/`word` parameter; pass a buffer; a warning also in strict mode) |
 | `TC033` | An index must be an int, not a value of type '…': the access always fails at run time / The size of an array (a byte buffer) must be an int, not a value of type '…': 'new' always fails at run time / '*' needs a pointer, not a value of type '…': the dereference always fails at run time (an error also in lax mode; through `any` it is the ArgumentException at run time) |
 | `TC034` | A value of type '…' goes into …, which is a 'string': it becomes its text (ToString()) - write '.ToString()' or '"" + ...' where that is meant (a value that is certainly no string - a number, a bool, an enum value, an object - where `string` is declared: a variable, a field, a parameter, a return value; reported in strict mode only, and there as a warning - the conversion is the rule of the language, DECISIONS D14) |

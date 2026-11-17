@@ -1,0 +1,16 @@
+class Mk {
+    static float[] Make(int n) { return new float[n] }
+}
+var ch = new Channel<float[]>()
+ch.Send(new float[3])
+ch.Send([1.0, 2.0])
+ch.Send(Mk.Make(4))
+var bytes = new Channel<byte[]>()
+bytes.Send(new byte[6])
+var a = ch.Receive()
+a[0] = 5.5
+print(a.length + " " + a[0])
+print(ch.Receive().length + " " + ch.Receive().length)
+print(bytes.Receive().length)
+//# note: TC029: ein frisches Array (new T[n], ein Literal, das Ergebnis eines Aufrufs) geht ohne copy/take in einen Kanal, wie ein frisches Objekt.
+//# name: Channel: ein frisches Array geht ohne Wort in den Kanal

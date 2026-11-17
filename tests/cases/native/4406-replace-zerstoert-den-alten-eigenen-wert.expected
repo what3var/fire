@@ -1,0 +1,20 @@
+destroy one
+now two
+data 5
+old array destroyed
+destroy in map
+map 0
+destroy two
+grown two+
+kept
+two+
+destroy static 1
+static 2
+after undefined
+destroy after undefined
+True
+end
+destroy two+
+destroy fresh
+destroy kept
+destroy static 2

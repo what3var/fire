@@ -1,0 +1,28 @@
+// List.Grow (by half again, the Values copied in one go): objects, strings (counted), mixed values, a list that owns its elements, ints and floats
+class Node { int v; construct(int v) { this.v = v } destruct() { if (this.v % 500 == 0) { print("bye " + this.v) } } }
+var nodes = new List<Node>()
+for (int i = 0; i < 1001; i++) { nodes.Add(new Node(i)) }
+int s = 0
+foreach (n in nodes) { s += n.v }
+print(nodes.Count + " " + s + " " + nodes[1000].v)
+var texts = new List<string>()
+for (int i = 0; i < 100; i++) { texts.Add("t" + i) }
+string t50 = texts[50]
+texts[50] = "replaced"
+print(texts.Count + " " + texts[99] + " " + t50 + " " + texts[50])
+var mixed = new List()
+for (int i = 0; i < 40; i++) { mixed.Add(i % 4 == 0 ? "s" + i : i % 4 == 1 ? i * 1.5 : i % 4 == 2 ? new Node(i) : i) }
+print(mixed.Count + " " + mixed[0] + " " + mixed[1] + " " + mixed[2].v + " " + mixed[39])
+var owning = new List<Node>(Owns.Values)
+for (int i = 0; i < 30; i++) { owning.Add(new Node(i * 500)) }
+owning.RemoveAt(1)
+print(owning.Count + " " + owning[1].v)
+var ints = new List<int>()
+var floats = new List<float>()
+for (int i = 0; i < 100; i++) { ints.Add(i * i); floats.Add(i / 2.0) }
+print(ints[99] + " " + floats[99] + " " + ints.Count)
+nodes.Sort((a, b) => b.v - a.v)
+print(nodes[0].v + " " + nodes[1000].v)
+owning.Clear()
+print("end")
+//# name: Listen: wachsen um die Haelfte, die Elemente bleiben der Liste (Objekte, Strings, gemischt, Owns.Values, int, float)

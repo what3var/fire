@@ -1,0 +1,50 @@
+class Item {
+    string n
+    construct(string n) { this.n = n }
+    destruct() { print("destroy " + this.n) }
+}
+class Holder {
+    Item item
+    Item other
+    int data[]
+    Dictionary<string, Item> map
+    static Item shared = new Item("static 1")
+    construct() {
+        this.item = new Item("one")
+        this.data = [1, 2, 3]
+        this.map = new Dictionary<string, Item>()
+        this.map["a"] = new Item("in map")
+    }
+    static Item Grow(Item old) { return new Item(old.n + "+") }
+    undefined Swap() {
+        replace this.item = new Item("two")                 // destroy one
+        print("now " + this.item.n)
+        var before = this.data
+        replace data = new int[5]                           // the old array goes
+        print("data " + this.data.length)
+        try { print(before.length) } catch (DestroyedException e) { print("old array destroyed") }
+        replace this.map = new Dictionary<string, Item>()   // destroy in map
+        print("map " + this.map.Count)
+        replace this.item = Holder.Grow(this.item)          // reads the old one, then destroy two
+        print("grown " + this.item.n)
+    }
+}
+var h = new Holder()
+var keep = new Item("kept")
+h.other = keep
+h.Swap()
+replace h.other = new Item("fresh")                         // keep is not h's: stays
+print(keep.n)
+replace h.item = h.item                                     // the same value: stays
+print(h.item.n)
+replace Holder.shared = new Item("static 2")                // destroy static 1
+print(Holder.shared.n)
+h.other = undefined
+replace h.other = new Item("after undefined")               // nothing to destroy
+print(h.other.n)
+replace h.other = undefined                                 // destroy after undefined
+print(h.other == undefined)
+print("end")
+//# note: DECISIONS D16: replace zerstoert den alten Wert nach dem Speichern, wenn das Objekt (beim statischen Feld das Programm) ihn direkt besitzt
+//# note: und das Feld ihn nicht wieder haelt; eine Referenz auf Fremdes und undefined bleiben.
+//# name: replace: der alte eigene Wert eines Felds wird zerstoert

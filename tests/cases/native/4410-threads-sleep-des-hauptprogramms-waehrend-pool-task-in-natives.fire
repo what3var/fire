@@ -1,0 +1,30 @@
+#import "time"
+#import "compression"
+class Probe {
+    static undefined Busy(Channel<int> stop, Channel<int> rounds) {
+        byte raw[] = new byte[1000000]
+        for (int i = 0; i < raw.length; i++) { raw[i] = (i * 31 % 251) }
+        int n = 0
+        while (stop.TryReceive() == undefined) { byte packed[] = Compression.Deflate.Compress(raw); n++ }
+        rounds.Send(n)
+    }
+    static int Ms(int t0) { return (DateTime.Now.Ticks - t0) / 10000 }
+    static defined int Main() {
+        var stop = new Channel<int>(2)
+        var rounds = new Channel<int>(2)
+        fire with stop, rounds { Probe.Busy(stop, rounds) }
+        int t0 = DateTime.Now.Ticks
+        Sleep(300ms)
+        int ms = Probe.Ms(t0)
+        print("Sleep(300ms) back on time: " + (ms >= 290 && ms < 3000))
+        var never = new Channel<int>(1)
+        t0 = DateTime.Now.Ticks
+        try { never.Receive(200ms) } catch (TimeoutException e) { ms = Probe.Ms(t0); print("Receive(200ms) back on time: " + (ms >= 190 && ms < 3000)) }
+        stop.Send(1)
+        print("the worker went on: " + (rounds.Receive() > 0))
+        return 0
+    }
+}
+Environment.Exit(Probe.Main())
+//# note: Before, the main program lent its thread to the new task during Sleep (the pool's worker had not taken it yet); the loop with TryReceive and a native never gave it back - Sleep did not return. Now the main program's thread takes a task only when no worker can, and a task on it gives it back at the main program's time (safe points, after natives).
+//# name: Threads: Sleep und Receive(limit) des Hauptprogramms kommen zurueck, waehrend eine Pool-Task in Natives rechnet
