@@ -14,6 +14,16 @@ using fire.Values;
 TestProgress.Install();
 // the look of the UI must not depend on the desktop of the machine that runs the tests (SystemTheme: scaling, dark mode, accent, font)
 Environment.SetEnvironmentVariable("FIRE_SYSTEM_THEME", "off");
+// scene3d's GPU path takes a Vulkan device that is a CPU (lavapipe) only with FIRE_S3D_GPU=cpu - without it the hardware checks only see the fallback to
+// software and a broken GPU path goes unnoticed (like FIRE_GFX_GPU for the 2D GPU checks); Vulkan wants an XDG_RUNTIME_DIR. Set from outside, they stay.
+if (Environment.GetEnvironmentVariable("FIRE_S3D_GPU") is not { Length: > 0 }) Environment.SetEnvironmentVariable("FIRE_S3D_GPU", "cpu");
+if (Environment.GetEnvironmentVariable("XDG_RUNTIME_DIR") is not { Length: > 0 })
+{
+    string xdg = Path.Combine(Path.GetTempPath(), "fire-test-xdg-" + Environment.ProcessId);
+    Directory.CreateDirectory(xdg);
+    try { File.SetUnixFileMode(xdg, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute); } catch (Exception) { }
+    Environment.SetEnvironmentVariable("XDG_RUNTIME_DIR", xdg);
+}
 var standardRoot = Path.Combine(Path.GetTempPath(), "fire-test-standard-" + Guid.NewGuid().ToString("N"));
 fire.Package.Manager.PackageStore.Default = new fire.Package.Manager.PackageStore(Path.Combine(standardRoot, "Packages"));
 var standardInstalled = StandardSources.EnsureInstalled(m => Console.WriteLine(m), prebuiltFolder: null);
