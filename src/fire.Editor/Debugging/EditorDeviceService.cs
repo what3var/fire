@@ -112,7 +112,7 @@ namespace fire.Editor
             await _agentGate.WaitAsync();
             try
             {
-                if (_agent != null && !reload) return;
+                if (_closed || (_agent != null && !reload)) return;
                 StopAgent();
                 var drivers = fire.Compiler.PackageDriverAgent.FindDrivers();
                 if (drivers.Count == 0) { PackageDriverStatus = "No installed package has device drivers."; return; }
@@ -120,6 +120,12 @@ namespace fire.Editor
                 if (!agent.Start(drivers))
                 {
                     PackageDriverStatus = "The device drivers of the packages could not be started: " + (agent.EndedWith ?? "no answer");
+                    agent.Dispose();
+                    return;
+                }
+                if (_closed)
+                {
+                    // (spark closed while the drivers started: they end at once)
                     agent.Dispose();
                     return;
                 }
@@ -145,8 +151,12 @@ namespace fire.Editor
         /// <summary>When the editor exits: disconnect and release devices (only the owner may tear down the shared manager).</summary>
         public void Shutdown()
         {
+            _closed = true;
             Manager.Shutdown();
             try { _agent?.Dispose(); } catch (Exception) { }
         }
+
+        // the editor is closing: drivers that start later (they start in the background after the packages are installed) end at once
+        private volatile bool _closed;
     }
 }

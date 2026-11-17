@@ -555,7 +555,9 @@ namespace fire.Editor
             }
             // a native program of a run ends with spark; the layout is saved with the stack panel as the user left it (not hidden for the native engine)
             StopNativeRun();
-            if (_session.Target is fire.Debugging.NativeDebugTarget) _session.Reset();
+            // the program of the debug session ends too - a VM program, also one that was only compiled (Check, Step) and waits before its first line: its
+            // threads are foreground threads, the process would stay alive without a window (App/ExitGuard.cs ends it at the latest)
+            _session.Reset();
             if (_stackHiddenForNative) ApplyEngineToPanels(false);
             SaveLayout();
             SaveToolStrips();
