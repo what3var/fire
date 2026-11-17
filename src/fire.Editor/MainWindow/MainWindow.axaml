@@ -3,7 +3,7 @@
         xmlns:dock="using:Dock.Avalonia.Controls"
         xmlns:local="using:fire.Editor"
         x:Class="fire.Editor.MainWindow"
-        Title="" Width="1300" Height="820" Icon="/Assets/logo2_64.png"
+        Title="" Width="1300" Height="820" Icon="/Assets/ico fire 2.ico"
         DragDrop.AllowDrop="True"
 		TransparencyLevelHint="AcrylicBlur"
         Background="#1B181E"
