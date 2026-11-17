@@ -1526,14 +1526,34 @@ by whether a `{` follows directly after `try` (block) or not (expression).
 
 - **On the thread of a running VM** (the normal case: the script itself calls e.g. `Window.Tick`, and the events fire during it) the lambda runs **nested on this VM**
   (`VM.CallLambdaInline`): with the **real global variables**, reading and writing, like any other lambda (4.2) - there is nothing to isolate because nothing is concurrent. Objects with
-  lambda fields or references to foreign objects are no problem as globals, and `leave`/`terminate` in the callback act on the program. An unhandled exception in the callback only aborts the
-  callback (a `try`/`catch` around the triggering call does not see it): it goes to `onUnhandled` as text, the program keeps running. As with destructors and properties, during a
-  nested callback `leave`/`terminate` of other threads is not checked (only afterwards).
+  lambda fields or references to foreign objects are no problem as globals, and `leave`/`terminate` in the callback act on the program. As with destructors and properties, during a
+  nested callback `leave`/`terminate` of other threads is not checked (only afterwards). For an unhandled exception in the callback see below.
 - **On a thread without a running VM** (a host thread, e.g. a serial event) access to the globals would be a data race: the callback is therefore **queued** to the main program
   (`VM.PostCallback`, via `RunCallback(..., owner)`) and executed there - automatically at a safe point or at `sync globals`, as `#globaljobs` says (with `sync`/`#nosync` only then) - with the real globals. If the
   main program is not (or no longer) running, the isolated copy applies as described below (`FireRuntime.CallCallback`).
 
-The rest of this section describes this isolated case.
+**An exception that leaves a callback.** It depends on whether the program waits for the native that runs the callback:
+
+- **Synchronous** - the callback runs during a native call of the program, on its thread (the events of `Window.Tick`, `Window.Cycle`, `WindowManager.Tick`/`Run`/`RunModal`; a
+  native of a package that calls a lambda it was given): the exception does **not** run the catch blocks around the call while the native is still running. It is kept; the
+  native's further callbacks do not run (the other handlers of the event, the rest of the events of that cycle); the native finishes as usual (it frees what it holds); then
+  **its call throws the exception** - the same object, with its fields and trace - and a `try` around the call catches it like any other. Without such a `try` it is an ordinary
+  unhandled exception: the program ends (`win.Run()` with a throwing handler ends the program, in the VM and natively). The catch block runs after the native has returned, so
+  `resume()` cannot go back into the callback. A window event handler that runs as a member of the main program's group (the program has tasks) counts as synchronous until it
+  first waits.
+- **Asynchronous** - nobody waits for it: a callback at a safe point (the cycle a started `WindowManager` asks for, a host service, a callback from another thread queued to the
+  main program, a group member that goes on after a wait), or an idle turn of a wait. The exception is **reported** - one line on the error output,
+  `(unhandled exception in the callback: Unhandled exception of type 'Class': message)`, the same in the VM and natively (a host gets the text through `onUnhandled`) - and
+  the program goes on.
+
+The windows' prelude restores its state when a handler throws (`try`/`finally` in `Window.Cycle`, `WindowManager.Tick`, `Run` and `RunModal`): the manager is ready for the next
+`Run`, a modal loop ends (the other windows take input again; the modal window stays open as an ordinary window).
+
+In a native build a package's `callLam` is `fire_cbCall` (fire_rt.h): a catch for every exception around the lambda that keeps it (UW_DEFER), a guard that runs no lambda
+while an exception or a `leave` unwinds, and `fire_cbRethrow` at the call site of every native of a package and of the graphics/windows bridges. In a package library for the VM
+the host keeps the exception (`fire_host.call_lambda` gives 2, native/abi/fire_pkg_abi.h) and `PackageNativeBinding` throws it when the call returns.
+
+The rest of this section describes the isolated case.
 
 ```csharp
 // Host-side C# registration (RegisterCallback is an ORDINARY

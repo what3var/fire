@@ -173,8 +173,13 @@ array - `e[0]` is the `EventType`, the rest depends on it; positions are pixels 
 | `DropFiles`, `DropText` | `[type, paths, x, y]`, `[type, text, x, y]` - dropped from another program |
 | `DragHover`, `DragLeave` | `[type, x, y]`, `[type]` - something is dragged over the window |
 
-Polling keeps the handling in the main program with its real variables. There are also callbacks (`RegisterMouseDown(func (int b, float x, float y) => ...)`,
-`RegisterKeyDown`, ... one per event type), but a callback runs on an isolated copy of the global variables - prefer the queue.
+There are also callbacks (`RegisterMouseDown(func (int b, float x, float y) => ...)`, `RegisterKeyDown`, ... one per event type). They run during the cycle
+that delivers the event (`win.Tick()`, `Run`, `Show(true)`, or the cycle a started manager asks for at a safe point), with the program's real variables.
+
+An exception that leaves a callback goes to the call that ran the cycle, once the cycle is done: `try { win.Tick() } catch (e) { ... }` catches it, the other
+callbacks of that cycle do not run, and `Run`/`Show(true)` end with it (the manager is ready for the next `Run`). Without a `try` the program ends, like with
+any unhandled exception. A cycle that runs at a safe point (a started manager, `Show()`) has no caller to go to: the exception is printed on the error output
+and the program goes on. See [SPEC 8.1.4](../spec/SPEC.md#814-native-callbacks).
 
 ### Windows and the window manager
 

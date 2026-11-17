@@ -382,7 +382,14 @@ In the VM your functions run in a shared library, so values are **copied** at th
 * a **byte buffer you receive is the caller's own memory** (no copy): the VM pins it for the call, you read and write the bytes in place (`b->bytes()`), exactly like in a native build, where a buffer
   never moves either. So a native can fill a read buffer (`Read(handle, buffer, ...)`) or draw into a framebuffer of any size without a copy; the length is fixed. Buffers of 16 KiB and more live on the
   pinned heap of .NET, so they keep their address for their whole life. A buffer you *return* is copied;
-* objects, lambdas and pointers cannot cross (an error says so); units are not carried;
+* objects and pointers cannot cross (an error says so); units are not carried;
+* **a lambda** crosses into a package in **C** as a handle of the host (`FIRE_LAMBDA`): the native gets a `Value` of kind `K_Lambda` and calls it with `callLam(lam, argc, args, &list)`
+  (keep it with `retain(lamKeep(lam))` to call it later). During a call of the program on the VM's thread it runs at once, nested, with the real globals; from another thread it runs
+  at the VM's next safe point. The C++ wrapper (`fire_pkg_wrapper.hpp`) takes no lambdas;
+* **an exception that leaves the lambda** (SPEC 8.1.4) does not jump through your native. While the program waits for your native (the lambda runs during its call), `callLam` returns
+  `undefined` and `g_unwind.active` is set: stop calling lambdas (further `callLam` calls do nothing anyway), free what you hold and return as usual - then the program's call of
+  your native throws the exception, and a `try` around it catches it. The same holds in a native build (there `callLam` keeps the exception and the call site throws it). Do not clear `g_unwind` to swallow it: in the VM the host keeps the exception anyway. A lambda
+  that runs where nobody waits for it (a service of your package at a safe point, another thread) gets its exception reported on the error output; the program goes on;
 * an error inside your function (`fatal`, `indexError`, ...) is reported to the VM with its text (it ends the program there, like an error of a built-in native); `fireError("Class", "text")` is reported
   with the class (ABI result 2: `error` holds the class name, a line feed and the message) and the VM throws that exception, so a script can `catch` it;
 * **the host's decisions** reach a library through callbacks (`fire_host`, `fire_pkg_set_host` in `native/abi/fire_pkg_abi.h`): which paths a script may touch (`io_allow`, the `IoPolicy` of the host) and where the

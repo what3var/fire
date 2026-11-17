@@ -1585,7 +1585,11 @@ Der Renderer hat ein Beschneidungsrechteck (`SetClip/ResetClip`, `Surface.Clip*`
 `VM.CallLambdaInline` das Lambda verschachtelt aus (`RunNestedUntil`): Frame auf den Aufrufer-Zustand, neuer Scope mit dem globalen Scope als Parent, `this` = `OnTarget`. Die Globals sind die echten, nichts wird kopiert,
 kein Thread-Sharing aktiviert. Für eine unbehandelte Exception im Callback gibt es eine `CallbackBoundary` (Frame-Tiefe, Scope, Handler-Untergrenze, Stackhöhe des Aufrufers): `ThrowException` sucht nur Handler über der
 Untergrenze (die try/catch des Aufrufers sind für den Callback unsichtbar); findet es keinen, wickelt es bis zur Grenze ab (`UnwindTo`), stellt die Stackhöhe wieder her und merkt sich die Exception in `_callbackError`,
-die `CallLambdaInline` an den Host zurückgibt (Text an `onUnhandled`, Programm läuft weiter). Eine rohe C#-Ausnahme (z.B. Performance-Modus ohne Prüfungen) stellt den Aufrufer-Zustand im `catch` wieder her und wird vom
+die `CallLambdaInline` an den Host zurückgibt. Läuft der Callback während eines nativen Aufrufs der VM (`CallNativeGuarded` zählt `_nativeDepth`), behält
+`VM.DeferCallbackFailure` sie (`_callbackFailure`, die Tiefe des Natives): weitere Callbacks dieses Natives laufen nicht (`CallbacksSkipped`; `fire_host.call_lambda` gibt 2), und wenn der
+Native zurückkehrt, wirft `CallNativeGuarded` dasselbe Objekt an seinem Aufruf (SPEC 8.1.4). Wo niemand auf den Callback wartet - ein Dienst der Bibliotheken (`ServiceLibraries`), eine
+Leerlaufrunde (`IdleLibraries`), `DrainInbound` - setzt `EnterCallbackBarrier` eine Grenze: dort geht die Exception als Text an `onUnhandled` (`PackageHost.ReportCallback`: eine Zeile auf
+stderr), das Programm läuft weiter. Ein Fenster-Handler als Mitglied der Gruppe (`VmGroup.TryStart`) gibt seine Exception an den Native, wenn er endet, ohne gewartet zu haben. Eine rohe C#-Ausnahme (z.B. Performance-Modus ohne Prüfungen) stellt den Aufrufer-Zustand im `catch` wieder her und wird vom
 Host gemeldet; `RunNestedUntil` gibt `_nestedDepth` jetzt auch dann wieder frei (`finally`). `leave`/`terminate` im Callback laufen über den bekannten Weg (`_shutdownDeferred`, `FinishDeferredShutdown`).
 `WindowManager.Tick` kopiert die Callback-Liste je Ereignis (`ToList`), ein Callback darf Ereignisse an-/abmelden. Ohne laufende VM auf dem Thread bleibt es beim isolierten `FireRuntime.CallCallback` mit Kopie.
 Tests: Suite-Block "Callbacks auf dem VM-Thread".

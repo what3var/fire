@@ -162,6 +162,13 @@ With `resume` nothing is left, so nothing is destroyed. See [Ownership](13-owner
 An exception that is not caught in a `fire` thread ends that thread and is delivered to the main program. There, `catch threads(Type e) { ... }`
 catches it; without such a handler the program stops. See [Threads and actors](15-threads-and-actors.md#errors-in-threads).
 
+## Exceptions in callbacks
+
+A lambda that a native function calls back - an event handler of a window during `win.Tick()`, a lambda handed to a package - may throw. The exception
+does not jump through the native function: the native finishes, its other callbacks do not run, and then **the call of the native throws the
+exception** (the same object). So `try { win.Tick() } catch (e) { ... }` catches what a handler threw. A callback that runs where nobody waits for it (at a
+safe point, from another thread) has its exception printed on the error output, and the program goes on. Details: [SPEC 8.1.4](../spec/SPEC.md#814-native-callbacks).
+
 ## Exercises
 
 1. Write `static float Divide(float a, float b)` that throws an `ArgumentException` for `b == 0`, and catch it.
