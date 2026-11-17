@@ -26,9 +26,16 @@ namespace Assistant {
         UI.Label folderLabel
         UI.Label branchLabel
         defined int headerH = 30
-        // the pictures of the header (16 x 16, white): folder and branch
+        // the pictures of the header (16 x 16, white): folder and branch - as loaded, and tinted in the colour of text on the accent
+        // (UIRoot.AccentForeground; headerTint: the 0xRRGGBB they were tinted with, -1: not yet)
+        Framebuffer folderWhite
+        Framebuffer branchWhite
         Framebuffer folderIcon
         Framebuffer branchIcon
+        defined int headerTint = -1
+        // the accent and dark/light the bubble was last painted for (FollowLook)
+        defined int lookAccent = -1
+        bool lookDark = false
         // a session chosen in the popup ("new": a new one), taken in the next cycle
         string pickedSession = ""
         // a row of the context menu that was chosen ("history", "folder", "git:status", "character:flint", "quit"), taken in the next cycle
@@ -99,18 +106,17 @@ namespace Assistant {
             this.UIRoot.Add(this.bubble)
             // the header: folder and branch, the small buttons at the right (history, sessions, close)
             this.folderLabel = new UI.Label("", 34, 15)
-            this.folderLabel.Color = new SolidBrush(UI.Color.Rgb(255, 255, 255))
             this.folderLabel.FontSize = 13
             this.UIRoot.Add(this.folderLabel)
             this.branchLabel = new UI.Label("", 34, 35)
-            this.branchLabel.Color = new SolidBrush(UI.Color.Rgb(255, 255, 255))
             this.branchLabel.FontSize = 13
             // the branch in bold (the bold file of the theme's font, where there is one)
             string bold = this.UIRoot.theme.font + " Bold"
             if (this.UIRoot.theme.font != "" && Fonts.Has(bold)) { this.branchLabel.Font = bold }
-            this.folderIcon = Framebuffer.FromResource(new Resource("icons/folder16.png"))
-            this.branchIcon = Framebuffer.FromResource(new Resource("icons/branch16.png"))
+            this.folderWhite = Framebuffer.FromResource(new Resource("icons/folder16.png"))
+            this.branchWhite = Framebuffer.FromResource(new Resource("icons/branch16.png"))
             this.UIRoot.Add(this.branchLabel)
+            this.TintHeader()
             defined int bx = this.W - 14 - 3 * 24
             this.historyButton = Assistant.View.Small(UI.Geometry.Parse("M 2 4 L 14 4 M 2 8 L 14 8 M 2 12 L 14 12"), bx, 11)
             this.historyButton.OnClick = func () on this => ToggleHistory()
@@ -165,6 +171,33 @@ namespace Assistant {
             return UI.Color.Rgb((a >> 16) & 255, (a >> 8) & 255, a & 255)
         }
 
+        // The text and the pictures of the header in the colour of text on the accent (UIRoot.AccentForeground: white, or black on a light accent) -
+        // made again when it changes (a new accent of the system or of the program).
+        undefined TintHeader() {
+            defined int fg = this.UIRoot.AccentForeground
+            if (fg == this.headerTint) { return }
+            this.headerTint = fg
+            defined int color = UI.Color.Rgb((fg >> 16) & 255, (fg >> 8) & 255, fg & 255)
+            replace this.folderLabel.Color = new SolidBrush(color)
+            replace this.branchLabel.Color = new SolidBrush(color)
+            replace this.folderIcon = this.folderWhite.Tinted(color)
+            replace this.branchIcon = this.branchWhite.Tinted(color)
+        }
+
+        // Every cycle: a new accent or dark/light (of the system or of the program) shows at once - the header's text and pictures tinted anew,
+        // the bubble (header band, fill) painted again.
+        undefined FollowLook() {
+            defined int accent = this.UIRoot.Accent
+            bool dark = this.UIRoot.Dark
+            if (accent == this.lookAccent && dark == this.lookDark && this.UIRoot.AccentForeground == this.headerTint) { return }
+            this.lookAccent = accent
+            this.lookDark = dark
+            this.TintHeader()
+            this.bubble.Invalidate()
+            this.UIRoot.Invalidate()
+            this.Show()
+        }
+
         // The folder as the header shows it: in a repository its name and the path below it ("/RuhrpottRaser/src"), else the path - cut at the front
         // when it is longer than `room` characters.
         string FolderText(defined int room) {
@@ -177,7 +210,8 @@ namespace Assistant {
             return text
         }
 
-        // The header band at the top of the bubble (its top corners round, `radius`), with a folder and - in a repository - a branch drawn in white.
+        // The header band at the top of the bubble (its top corners round, `radius`), with a folder and - in a repository - a branch drawn in the
+        // colour of text on the accent (TintHeader).
         undefined PaintHeader(Renderer r, defined int w, defined int radius) {
             var band = new SolidBrush(this.HeaderFill())
             defined int o = this.O
@@ -295,6 +329,7 @@ namespace Assistant {
         // Every frame: the brain works a little, the bubble follows it.
         undefined Cycle() {
             this.frame++
+            this.FollowLook()
             if (!this.placed && this.frame < 120) { this.Place() }
             if (this.picked >= 0) { this.TakePicked() }
             if (this.pickedSession != "") { this.TakeSession() }
