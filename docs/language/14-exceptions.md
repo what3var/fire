@@ -167,7 +167,7 @@ catches it; without such a handler the program stops. See [Threads and actors](1
 A lambda that a native function calls back - an event handler of a window during `win.Tick()`, a lambda handed to a package - may throw. The exception
 does not jump through the native function: the native finishes, its other callbacks do not run, and then **the call of the native throws the
 exception** (the same object). So `try { win.Tick() } catch (e) { ... }` catches what a handler threw. A callback that runs where nobody waits for it (at a
-safe point, from another thread) has its exception printed on the error output, and the program goes on. Details: [SPEC 8.1.4](../spec/SPEC.md#814-native-callbacks).
+safe point, from another thread) has its exception printed on the error output, and the program goes on. Details: SPEC 8.1.4 (docs/spec/SPEC.md).
 
 ## Exercises
 
