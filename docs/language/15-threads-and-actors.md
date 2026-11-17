@@ -419,6 +419,8 @@ print(sum)                          // 14
 - A value (a number, a text, a bool) goes as it is. An object or an array goes only fresh (`new`, the result of a call) or with a word:
   `Send(copy x)` (a copy) or `Send(take x)` (moved - like `handover`, every other reference to it is dead; a record keeps its identity, because
   nobody can change it). Without one it is TC029 (an error, also in lax mode) where the type is known, else the ArgumentException.
+  A moved array of numbers (`float[]`, `int[]`, also one in an object) costs nothing per element in a native build, like a byte buffer; an array of
+  strings or objects is walked once (its elements move with it), `copy x` of a number array copies its memory in one block.
 - A record without a word is **lent**: `Send(r)` - the sender stays its owner, the receiver gets a reference and reads it in its own thread (fields,
   methods, `==`, `copy r` for one of its own; sending it on lends it again). Only the owner moves it: `take r` in the receiver is the
   AccessDeniedException. The lending lasts as long as the record does: when the owner destroys it (its scope ends), the next use in any thread is

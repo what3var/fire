@@ -16,4 +16,19 @@ static inline void fire_ctx_make(fire_ctx* c, void* stack, size_t size, void (*e
 }
 /* Saves the running context in `from` and continues `to`. */
 static inline void fire_ctx_swap(fire_ctx* from, fire_ctx* to) { swapcontext(&from->uc, &to->uc); }
+
+/* ---- the slice (a PC has no timer interrupt for fire_sched_preempt here): every 16th safepoint looks at the clock; after 10 ms the next one gives the
+ * turn away - a thread whose loop calls a native that takes ms (Compression, a long loop body) would otherwise hold the others, a sleeping main program
+ * too, for 4096 safepoints (gilYield) ---- */
+static unsigned char fire_uc_preemptCount;
+static int64_t fire_uc_sliceStart;
+static inline int fire_uc_preempted(void) {
+    int64_t now;
+    if (++fire_uc_preemptCount & 15u) return 0;
+    now = fire_plat_nowMs();
+    if (now - fire_uc_sliceStart < 10) return 0;
+    fire_uc_sliceStart = now;
+    return 1;
+}
+#define FIRE_SCHED_PREEMPTED() fire_uc_preempted()
 #endif
