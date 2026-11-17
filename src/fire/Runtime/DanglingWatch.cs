@@ -51,7 +51,7 @@ namespace fire.Runtime
         {
             for (object? n = holder; n != null; n = Up(n))
             {
-                if (n is ObjectInstance { IsDestroyed: true } || n is ScriptArray { IsDestroyed: true }) return true;
+                if (n is ObjectInstance { IsDestroyed: true } || n is ScriptArray { IsDestroyed: true } || n is ScriptArray { IsDying: true }) return true;   // (a dying array: its batch is running)
                 if (n is Scope s)
                 {
                     for (Scope? p = s; p != null; p = p.Parent)
