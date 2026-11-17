@@ -42,3 +42,4 @@ Or just download it, compile it and have a look.
 ![md viewer/editor](https://github.com/what3var/fire/blob/master/screenshots/4.png?raw=true)
 ![raster editor](https://github.com/what3var/fire/blob/master/screenshots/5.png?raw=true)
 ![scene3d package](https://github.com/what3var/fire/blob/master/screenshots/6.png?raw=true)
+![circuit editor](https://github.com/what3var/fire/blob/master/screenshots/7.png?raw=true)
