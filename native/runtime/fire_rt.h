@@ -4224,7 +4224,7 @@ FIRE_FN Chars charsOf(Value v) {
     c.sp = NULL; c.one = 0; c.isChar = false; c.n = 0;
     if (v.kind == K_Char) { c.one = (fire_char16)v.i; c.isChar = true; c.n = 1; }
     else if (v.kind == K_String) { c.sp = strOf(v)->data; c.n = strOf(v)->length; }
-    else fatal("A string or char was expected.");
+    else { kindError("A string or char was expected, not %s.", v.kind); c.isChar = true; }   /* (the VM's ArgumentException; no characters - the method's result is not used, the exception unwinds) */
     return c;
 }
 
@@ -6437,8 +6437,10 @@ FIRE_COLD FIRE_FN Value sizeError(int64_t n, bool buffer) {
 }
 /* `word a[] = new int[n]`, `new word[n]`, `word a[n]` (NewArray right before TypeArray): n zero words at once. */
 FIRE_FN Value newWordBuffer(Value size, OwnList* list) {
+    if (size.kind == K_Word) size = Int((int64_t)size.w);   /* (a word as a size: its bits as an int, like the VM) */
     if (FIRE_UNLIKELY(size.kind == K_Int && size.i < 0)) return sizeError(size.i, false);
-    if (size.kind != K_Int || size.i < 0 || size.i > 0x7FFFFFFF) fatal("A buffer size must be a non-negative int.");
+    if (FIRE_UNLIKELY(size.kind != K_Int)) return kindError("An array size must be an int, not %s.", size.kind);   /* (the VM's ArgumentException, OpNewArray) */
+    if (size.i > 0x7FFFFFFF) fatal("A buffer size must be a non-negative int.");
     return BufV(allocBufOf((uint32_t)size.i, (uint8_t)sizeof(FireWord), list));
 }
 
@@ -6448,8 +6450,10 @@ FIRE_FN Value newTypedArray(Value size, uint8_t elem, uint32_t unit, uint8_t fla
     uint32_t length, i;
     Arr* a;
     ArrTyped* t;
+    if (size.kind == K_Word) size = Int((int64_t)size.w);   /* (a word as a size: its bits as an int, like the VM) */
     if (FIRE_UNLIKELY(size.kind == K_Int && size.i < 0)) return sizeError(size.i, false);
-    if (size.kind != K_Int || size.i < 0 || size.i > 0x7FFFFFFF) fatal("An array size must be a non-negative int.");
+    if (FIRE_UNLIKELY(size.kind != K_Int)) return kindError("An array size must be an int, not %s.", size.kind);   /* (the VM's ArgumentException, OpNewArray) */
+    if (size.i > 0x7FFFFFFF) fatal("An array size must be a non-negative int.");
     if (flags & (TU_DIMONLY | TU_ANY)) {   /* (keeps Values, see arrMakeTyped) */
         Value r = ArrV(allocArr((uint32_t)size.i, list));
         typeArray(r, elem, 1, unit, flags, unitText, 1);
@@ -6563,6 +6567,13 @@ FIRE_FN Value fire_arrayCopy(Value src, Value dst, Value count) {
     return Undef();
 }
 
+/* An index that is no int (from `any`: `a["x"]`) of an array, a buffer or a string (FIRE_INDEXABLE): the VM's catchable ArgumentException (a destroyed array
+ * or buffer is the DestroyedException first, as there). Of anything else the error of the target comes. */
+FIRE_COLD FIRE_FN Value indexKindError(Value a, Value i) {
+    if (a.kind != K_String && !leafAlive(a)) return destroyedError(a);
+    return kindError("An index must be an int, not %s.", i.kind);
+}
+#define FIRE_INDEXABLE(a) ((a).kind == K_Array || (a).kind == K_Buffer || (a).kind == K_String)
 FIRE_FN Value arrayGet(Value a, Value i) {
     char text[160];
     if (FIRE_LIKELY(a.kind == K_Array && i.kind == K_Int)) {
@@ -6577,7 +6588,7 @@ FIRE_FN Value arrayGet(Value a, Value i) {
         }
     }
     if (i.kind == K_Word && (a.kind == K_Array || a.kind == K_Buffer || a.kind == K_String)) return arrayGet(a, Int((int64_t)(uint64_t)i.w));   /* (a word as an index: its bits as an int) */
-    if (i.kind != K_Int) fatal("An index must be an int.");
+    if (FIRE_UNLIKELY(i.kind != K_Int) && FIRE_INDEXABLE(a)) return indexKindError(a, i);   /* (the value of resume() when it is resumed) */
     if (a.kind == K_Buffer) {
         Buf* b;
         if (FIRE_UNLIKELY(!leafAlive(a))) return destroyedError(a);
@@ -6630,7 +6641,7 @@ FIRE_FN Value arraySet(Value a, Value i, Value v) {
         return v;
     }
     if (i.kind == K_Word && (a.kind == K_Array || a.kind == K_Buffer || a.kind == K_String)) return arraySet(a, Int((int64_t)(uint64_t)i.w), v);   /* (a word as an index: its bits as an int) */
-    if (i.kind != K_Int) fatal("An index must be an int.");
+    if (FIRE_UNLIKELY(i.kind != K_Int) && FIRE_INDEXABLE(a)) { indexKindError(a, i); return v; }
     if (a.kind == K_Buffer) {
         Buf* b;
         if (FIRE_UNLIKELY(!leafAlive(a))) { destroyedError(a); return v; }
@@ -6715,7 +6726,7 @@ FIRE_FN bool ptrValid(Value p, Value* err) {
 
 FIRE_FN Value ptrRead(Value p) {
     Value err = Undef();   /* (gcc -O2 cannot see that ptrValid sets it when it says false) */
-    if (FIRE_UNLIKELY(!isPtr(p))) fatal("Dereference of a value that is not a pointer.");
+    if (FIRE_UNLIKELY(!isPtr(p))) return kindError("Dereference of a value of type %s which is not a pointer.", p.kind);   /* (the VM's ArgumentException) */
     if (FIRE_UNLIKELY(!ptrValid(p, &err))) return err;
     if (p.kind == K_PtrVar) return *(const Value*)p.p;
     if (p.kind == K_PtrField) { const FireFieldPtr* d = fieldPtrOf(p); return d->raw ? rawGetAt((const char*)p.p, d->raw, d->unit) : *(const Value*)p.p; }
@@ -6735,7 +6746,7 @@ FIRE_FN Value ptrDiff(Value a, Value b) {
 FIRE_FN void ptrWrite(Value p, Value v) {
     Value err = Undef(), old;   /* (see ptrRead) */
     Value* target;
-    if (FIRE_UNLIKELY(!isPtr(p))) fatal("Assignment through a value that is not a pointer.");
+    if (FIRE_UNLIKELY(!isPtr(p))) { kindError("Assignment through a value of type %s which is not a pointer.", p.kind); return; }
     if (FIRE_UNLIKELY(!ptrValid(p, &err))) return;
     if (p.kind == K_PtrByte) { *(uint8_t*)ptrAddr(p) = (uint8_t)v.i; return; }
     if (p.kind == K_PtrField) {
@@ -6786,7 +6797,7 @@ FIRE_FN void requireRef(Value v, const char* name) {
 /* `x[i]` as a `ref` argument. */
 FIRE_FN Value addressOfIndex(Value a, Value i) {
     if (i.kind == K_Word && (a.kind == K_Array || a.kind == K_Buffer || a.kind == K_String)) i = Int((int64_t)(uint64_t)i.w);   /* (a word as an index: its bits as an int) */
-    if (i.kind != K_Int) fatal("An index must be an int.");
+    if (FIRE_UNLIKELY(i.kind != K_Int) && (a.kind == K_Array || a.kind == K_Buffer)) return indexKindError(a, i);
     if (a.kind == K_Array) {
         Arr* arr;
         if (FIRE_UNLIKELY(!leafAlive(a))) return destroyedError(a);
@@ -6802,7 +6813,7 @@ FIRE_FN Value addressOfIndex(Value a, Value i) {
         if ((uint64_t)i.i >= b->length) return indexError("Array index", i.i, b->length);
         return BytePtrV(&b->data[i.i], &b->h);
     }
-    fatal("A 'ref' argument 'x[i]' expects an array or a byte buffer.");
+    return kindError("A 'ref' argument 'x[i]' expects an array or a byte buffer, not %s.", a.kind);   /* (the VM's ArgumentException) */
 }
 
 FIRE_FN Value lengthOf(Value v, bool* ok) {
@@ -6960,8 +6971,10 @@ FIRE_FN bool wordsArg(Value v, const char* what, FireWords* out) {
 }
 
 FIRE_FN Value newArray(Value size, OwnList* list) {
+    if (size.kind == K_Word) size = Int((int64_t)size.w);   /* (a word as a size: its bits as an int, like the VM) */
     if (FIRE_UNLIKELY(size.kind == K_Int && size.i < 0)) return sizeError(size.i, false);
-    if (size.kind != K_Int || size.i < 0 || size.i > 0x7FFFFFFF) fatal("An array size must be a non-negative int.");
+    if (FIRE_UNLIKELY(size.kind != K_Int)) return kindError("An array size must be an int, not %s.", size.kind);   /* (the VM's ArgumentException, OpNewArray) */
+    if (size.i > 0x7FFFFFFF) fatal("An array size must be a non-negative int.");
     return ArrV(allocArr((uint32_t)size.i, list));
 }
 
@@ -7256,18 +7269,16 @@ FIRE_FN bool fire_bufMethodName(const char* name) {
 }
 
 FIRE_FN Value newBuffer(Value size, OwnList* list) {
+    if (size.kind == K_Word) size = Int((int64_t)size.w);   /* (a word as a size: its bits as an int, like the VM) */
     if (FIRE_UNLIKELY(size.kind == K_Int && size.i < 0)) return sizeError(size.i, true);
-    if (size.kind != K_Int || size.i < 0 || size.i > 0x7FFFFFFF) fatal("A buffer size must be a non-negative int.");
+    if (FIRE_UNLIKELY(size.kind != K_Int)) return kindError("A byte buffer size must be an int, not %s.", size.kind);   /* (the VM's ArgumentException, MakeBuffer) */
+    if (size.i > 0x7FFFFFFF) fatal("A buffer size must be a non-negative int.");
     return BufV(allocBuf((uint32_t)size.i, list));
 }
 
 /* ---------------------------------------------------------------------------------------------------------------------
  * Ownership of arrays and buffers (SPEC 2.5): inner arrays, Take..., delete
  * --------------------------------------------------------------------------------------------------------------------- */
-FIRE_FN int64_t sizeArg(Value v) {
-    if (FIRE_UNLIKELY(v.kind != K_Int)) fatal("An array size must be an int.");
-    return v.i;
-}
 
 FIRE_FN OwnList* newPartsList(Owned* holder) {
     OwnList* parts = (OwnList*)malloc(sizeof(OwnList));
@@ -7299,6 +7310,18 @@ FIRE_FN Value newJagged(const int64_t* sizes, int ranks, OwnList* list) {
         fillJagged(outer, sizes, ranks, 1, outer->parts);
     }
     return ArrV(outer);
+}
+
+/* `new T[a][b]...` with the sizes as values: one that is no int (from `any`) is the VM's catchable ArgumentException - the last one first, as the VM takes
+ * them off its stack. */
+FIRE_FN Value newJaggedV(const Value* sizes, int ranks, OwnList* list) {
+    int64_t n[16] = { 0 };
+    int i;
+    for (i = ranks - 1; i >= 0; i--)
+        if (FIRE_UNLIKELY(sizes[i].kind != K_Int && sizes[i].kind != K_Word)) return kindError("An array size must be an int, not %s.", sizes[i].kind);
+    if (ranks > 16) fatal("An array with more than 16 dimensions.");
+    for (i = 0; i < ranks; i++) n[i] = sizes[i].kind == K_Word ? (int64_t)sizes[i].w : sizes[i].i;   /* (a word: its bits as an int, like the VM) */
+    return newJagged(n, ranks, list);
 }
 
 /* An array that was made inside the expression of its outer array (`[[1, 2], [3]]`) belongs to it now. */

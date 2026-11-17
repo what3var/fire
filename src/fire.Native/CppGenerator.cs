@@ -7110,9 +7110,9 @@ namespace fire.Native
                     int ranks = ins.A[0];
                     Need(ranks);
                     int first = d - ranks;
-                    var sizeItems = Enumerable.Range(first, ranks).Select(i => $"sizeArg({S(i)})").ToList();
-                    E($"{{ {CArray("int64_t", "sz", sizeItems)}{S(first)} = newJagged(sz, {ranks}, &{OwnerList()}); }}");
-                    Check();   // (a negative size: the VM's ArgumentException)
+                    var sizeItems = Enumerable.Range(first, ranks).Select(i => S(i)).ToList();
+                    E($"{{ {CArray("Value", "sz", sizeItems)}{S(first)} = newJaggedV(sz, {ranks}, &{OwnerList()}); }}");
+                    Check();   // (a negative size or one that is no int: the VM's ArgumentException)
                     d = first + 1; SetR(first, true); return Next();
                 }
                 case OpCode.HoistValue:

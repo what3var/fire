@@ -16,6 +16,10 @@ print(b[2])                 // undefined
 ```
 
 - Indexes start at `0`. An index outside `0 .. length - 1` throws an `IndexOutOfBoundsException`.
+- An index and a size (`new int[n]`, `new byte[n]`) are ints (a `word` counts by its bits). Any other type is an error when the program is compiled
+  (`a["x"]`, `new int[2.5]`: `TC033`); a value of another kind that comes through `any` is a catchable `ArgumentException` at run time
+  (`An index must be an int, not String.`, `An array size must be an int, not Float.`, `A byte buffer size must be an int, not String.`), in the VM
+  and natively. A negative size is the `ArgumentException` `Invalid array size -1.`.
 - New elements are `undefined` until something is assigned - also in an `int` array.
 - The size never changes; for a collection that grows, use `List<T>` (below).
 - **The brackets stand after the name**: `int values[]`, `string names[10]`. Brackets after the type are a bit width (`int[8] small`, see

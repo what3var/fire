@@ -1,0 +1,46 @@
+class R {
+    static undefined Inc(ref int v) { v = v + 1 }
+}
+var tries = [
+    () => { any a = new int[3]; any i = "x"; print(a[i]) },
+    () => { any a = new int[3]; any i = "x"; a[i] = 1 },
+    () => { int a[] = [1, 2]; any i = 1.5; print(a[i]) },
+    () => { any s = "abc"; any i = true; print(s[i]) },
+    () => { any b = new byte[4]; any i = 'c'; print(b[i]) },
+    () => { any b = new byte[4]; any i = "1"; b[i] = 1 },
+    () => { any w = new word[3]; any i = "x"; print(w[i]) },
+    () => { any a = new int[2]; delete a; any i = "x"; print(a[i]) },
+    () => { any a = new int[3]; any i = "a"; R.Inc(a[i]) },
+    () => { any a = new int[3]; word i = 1; a[i] = 7; print(a[1]) },
+    () => { any s = "x"; any a = new int[s]; print(a.Length) },
+    () => { any s = 2.5; any a = new byte[s]; print(a.Length) },
+    () => { any s = "x"; int a[] = new int[s]; print(a.Length) },
+    () => { any s = "x"; any w = new word[s]; print(w.Length) },
+    () => { any s = "x"; any j = new int[2][s]; print(j.Length) },
+    () => { any s = 2.5; any j = new int[s][3]; print(j.Length) },
+    () => { word n = 3; any a = new int[n]; print(a.Length) },
+    () => { any n = -1; any a = new int[n]; print(a.Length) },
+    () => { any p = 5; unsafe { print(*p) } },
+    () => { any p = "s"; unsafe { *p = 3 } },
+    () => { int x = 4; unsafe { any p = &x; *p = 6; print(*p + " " + x) } },
+    () => { any s = "a,b"; any sep = 5; print(s.Split(sep)) },
+    () => { any s = "abc"; any t = true; print(s.Contains(t)) }
+]
+for (var i = 0; i < tries.Length; i++) {
+    try {
+        tries[i]()
+        print(i + ": no exception")
+    } catch (ArgumentException e) {
+        print(i + ": ArgumentException: " + e.message)
+    } catch (e) {
+        print(i + ": Exception: " + e.message)
+    }
+}
+// resumed: the access that failed gives the value of resume()
+try {
+    any a = [1, 2, 3]
+    any i = "two"
+    print("r " + a[i])
+} catch (ArgumentException e) { e.resume(42) }
+print("end")
+//# name: Ausnahmen: Index, Groesse und Zeiger der falschen Art ueber any sind ArgumentExceptions wie in der VM (Arrays, Strings, Puffer, new, unsafe, Argumente der String-Methoden)
