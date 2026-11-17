@@ -4401,7 +4401,7 @@ namespace fire.Native
         private bool _neutralAfter;
         /// <summary>The C that sets the helpers of a variable in Flow.Arrays from its array (alive, typed, packed, of the element: `v_ok`).</summary>
         private static string ArrayCheckText(string v, byte elem) =>
-            $"{{ Arr* ra_; {v}_ok = {v}.kind == K_Array && leafAlive({v}) && (ra_ = arrOf({v}))->typed && ra_->typed->packed && ra_->typed->elem == {elem}; if ({v}_ok) {{ {v}_a = ra_; {v}_len = ra_->length; {v}_d = ra_->typed->data; }} }}";
+            $"{{ Arr* ra_ = NULL; {v}_ok = {v}.kind == K_Array && leafAlive({v}) && (ra_ = arrOf({v}))->typed && ra_->typed->packed && ra_->typed->elem == {elem}; if ({v}_ok) {{ {v}_a = ra_; {v}_len = ra_->length; {v}_d = ra_->typed->data; }} }}";
         /// <summary>The element of each variable in Flow.Arrays (its C helpers are checked again for it).</summary>
         private readonly Dictionary<(Func, string), byte> _knownArrayElem = new();
         private static bool SelfNeutral(OpCode op) => op is OpCode.LoadConst or OpCode.LoadLocal or OpCode.LoadThis or OpCode.LoadGlobal or OpCode.Pop or OpCode.Dup
@@ -7373,7 +7373,7 @@ namespace fire.Native
                         string shadow = ScalarName(f, st, d - 2);
                         string fast = getKind switch { KindFloat => $"(Real){load}", KindBool => $"({load} != 0)", _ => $"(FireInt){load}" };
                         string slow = getKind switch { KindFloat => "(Real)e_.f", KindBool => "(e_.i != 0)", _ => "(FireInt)e_.i" };
-                        E($"{{ Arr* ra_; if (FIRE_LIKELY({dIsArr}leafAlive({da}) && (uint64_t)(int64_t){di} < (ra_ = arrOf({da}))->length && ra_->typed && ra_->typed->packed)) {shadow} = {fast}; else {{ Value e_ = {Px}aget_g({da}, Int({di}), NULL); {shadow} = {slow};{CheckIn()} }} }}");
+                        E($"{{ Arr* ra_ = NULL; if (FIRE_LIKELY({dIsArr}leafAlive({da}) && (uint64_t)(int64_t){di} < (ra_ = arrOf({da}))->length && ra_->typed && ra_->typed->packed)) {shadow} = {fast}; else {{ Value e_ = {Px}aget_g({da}, Int({di}), NULL); {shadow} = {slow};{CheckIn()} }} }}");
                         st.Scalar |= 1UL << (d - 2);
                         d--; return Next();
                     }
@@ -7390,7 +7390,7 @@ namespace fire.Native
                     string a = S(d - 2), i = S(d - 1);
                     // (the generic route types the array first: what the element is, is then certain even when a way of writing the field or variable
                     // missed it - it converts, or it is the exception)
-                    E($"{{ Arr* ra_; if (FIRE_LIKELY({a}.kind == K_Array && {i}.kind == K_Int && leafAlive({a}) && (uint64_t){i}.i < (ra_ = arrOf({a}))->length && ra_->typed && ra_->typed->packed && ra_->typed->elem == {getElem})) {a} = arrPackedAt(ra_, (uint32_t){i}.i, {getElem}); else {{ if (typeArray({a}, {getElem}, 1, {TypeArrayUnitArgsOf(null, getCode)}, 1)) {a} = {Px}aget_g({a}, {i}, NULL);{CheckIn()} }} }}");
+                    E($"{{ Arr* ra_ = NULL; if (FIRE_LIKELY({a}.kind == K_Array && {i}.kind == K_Int && leafAlive({a}) && (uint64_t){i}.i < (ra_ = arrOf({a}))->length && ra_->typed && ra_->typed->packed && ra_->typed->elem == {getElem})) {a} = arrPackedAt(ra_, (uint32_t){i}.i, {getElem}); else {{ if (typeArray({a}, {getElem}, 1, {TypeArrayUnitArgsOf(null, getCode)}, 1)) {a} = {Px}aget_g({a}, {i}, NULL);{CheckIn()} }} }}");
                     d--; SetR(d - 1, false); SetT(d - 1, TypeOf(getKind, 0) | (ArrayElem.IsDefined(getCode) ? 0 : NullableBit) | (getKind == KindInt ? NarrowBit : 0)); _kindsKept = true; return Next();
                 }
                 case OpCode.ArraySet when !_usesThreads && ArrSlot(d - 3) is var scalarCode and not 0 && SlotScalars() && IsScalar(d - 1) && NarrowInt(d - 2) && U(d - 2) == 0
@@ -7418,7 +7418,7 @@ namespace fire.Native
                         ArrayElem.F8 or ArrayElem.F16 or ArrayElem.F32 => "!fire_f32IsHint(cv_)", ArrayElem.F64 => "!fire_realIsHint(cv_)", _ => "1",
                     };
                     string valueOf = vk == KindFloat ? $"Float({x})" : vk == KindBool ? $"Bool({x})" : $"Int({x})";
-                    E($"{{ Arr* ra_; {ct} cv_ = {conv}; if (FIRE_LIKELY({isArr}leafAlive({a}) && (uint64_t)(int64_t){i} < (ra_ = arrOf({a}))->length && ra_->typed && ra_->typed->packed && ra_->typed->elem == {se} && !ra_->typed->real && {hintTest})) (({ct}*)ra_->typed->data)[{i}] = cv_; else (void){Px}aset_g({a}, Int({i}), {valueOf}, NULL); }}");
+                    E($"{{ Arr* ra_ = NULL; {ct} cv_ = {conv}; if (FIRE_LIKELY({isArr}leafAlive({a}) && (uint64_t)(int64_t){i} < (ra_ = arrOf({a}))->length && ra_->typed && ra_->typed->packed && ra_->typed->elem == {se} && !ra_->typed->real && {hintTest})) (({ct}*)ra_->typed->data)[{i}] = cv_; else (void){Px}aset_g({a}, Int({i}), {valueOf}, NULL); }}");
                     Check();
                     // (the value of the assignment: the number as the element holds it)
                     int storedKind = ArrElemKind(se);
@@ -7449,7 +7449,7 @@ namespace fire.Native
                         ArrayElem.F64 => $"Real cv_ = {v}.f; if (FIRE_LIKELY(!fire_realIsHint(cv_) && !ra_->typed->real)) ((Real*)ra_->typed->data)[{i}.i] = cv_; else arrPackedSet(ra_, (uint32_t){i}.i, {v});",
                         _ => $"{convert}arrPackedSet(ra_, (uint32_t){i}.i, {v});",
                     };
-                    E($"{{ Arr* ra_; if (FIRE_LIKELY({kindTest}{a}.kind == K_Array && {i}.kind == K_Int && leafAlive({a}) && (uint64_t){i}.i < (ra_ = arrOf({a}))->length && ra_->typed && ra_->typed->packed && ra_->typed->elem == {setElem})) {{ {put} }} else {v} = {Px}aset_g({a}, {i}, {v}, NULL); }}");
+                    E($"{{ Arr* ra_ = NULL; if (FIRE_LIKELY({kindTest}{a}.kind == K_Array && {i}.kind == K_Int && leafAlive({a}) && (uint64_t){i}.i < (ra_ = arrOf({a}))->length && ra_->typed && ra_->typed->packed && ra_->typed->elem == {setElem})) {{ {put} }} else {v} = {Px}aset_g({a}, {i}, {v}, NULL); }}");
                     Check();
                     int storedType = Ty(d - 1);
                     E($"{a} = {v};");
