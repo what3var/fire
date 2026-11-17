@@ -83,6 +83,7 @@ namespace fire.Compiler
             ["flat"] = TokenType.Flat,
             ["copy"] = TokenType.Copy,
             ["take"] = TokenType.Take,
+            ["replace"] = TokenType.Replace,
             ["leave"] = TokenType.Leave,
             ["terminate"] = TokenType.Terminate,
             ["actor"] = TokenType.Actor,

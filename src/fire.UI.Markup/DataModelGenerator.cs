@@ -18,7 +18,7 @@ namespace fire.UI.Markup
         private static readonly HashSet<string> Keywords = new(StringComparer.Ordinal)
         {
             "class", "var", "int", "float", "bool", "string", "char", "any", "undefined", "true", "false", "if", "else", "while", "for", "foreach", "in", "of", "from", "is",
-            "return", "new", "delete", "namespace", "using", "func", "on", "off", "copy", "take", "try", "catch", "finally", "throw", "break", "continue", "switch", "case",
+            "return", "new", "delete", "namespace", "using", "func", "on", "off", "copy", "take", "replace", "try", "catch", "finally", "throw", "break", "continue", "switch", "case",
             "default", "static", "construct", "destruct", "fire", "sync", "unit", "enum", "interface", "extern", "native", "byte", "word", "do", "readonly", "flat", "override",
             "record", "actor", "this", "base", "where", "to", "lambda", "await", "process", "taking", "handover", "defined", "trust", "terminate", "leave", "print",
         };

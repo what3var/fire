@@ -1,1 +1,0 @@
-error E4074: The initialiser of the static field 'A.x' reads 'B.y', whose initialiser only runs later (static fields are initialised once at program start: class by class in the order of the program, in a class from the top down) - declare 'B.y' first (line 2)

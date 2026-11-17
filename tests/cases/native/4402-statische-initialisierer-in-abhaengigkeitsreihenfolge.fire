@@ -1,0 +1,34 @@
+class Log {
+    static List<string> lines = new List<string>()
+    static int Note(string what, int v) { Log.lines.Add(what); return v }
+}
+class Config {
+    static int tile = Log.Note("tile", Sizes.unit * 2)
+    static Grid grid = new Grid()
+    static int area = Log.Note("area", Config.Compute())
+    static int twice = Config.Twice
+    static int Twice { get { return Config.tile * 2 } }
+    static int Compute() { return Grid.width * Grid.width }
+    static int first = Log.Note("first", 1)
+}
+class Sizes {
+    static int unit = Log.Note("unit", 8)
+}
+class Grid {
+    static int width = Log.Note("width", Config.tile * 4)
+    static int size = new Grid().Size()
+    int cells = Grid.width * 2
+    construct() { Log.Note("new Grid", 0) }
+    int Size() { return this.cells + Sizes.unit }
+}
+class Base {
+    static int seed = Derived.start + 1
+}
+class Derived : Base {
+    static int start = 41
+}
+print(Config.tile + " " + Grid.width + " " + Config.grid.cells + " " + Config.area + " " + Config.twice + " " + Grid.size + " " + Base.seed)
+foreach (l in Log.lines) { print(l) }
+//# note: Raser: ein statischer Initialisierer, der ein spaeter deklariertes statisches Feld liest (auch in einer anderen Klasse, ueber Methoden,
+//# note: Properties, Konstruktoren und Feldinitialisierer), laeuft nach dessen Initialisierer; sonst gilt die Reihenfolge der Deklarationen.
+//# name: Statische Initialisierer: Reihenfolge nach Abhaengigkeiten

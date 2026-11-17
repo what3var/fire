@@ -110,6 +110,19 @@ static class TypeTests
             Run("class J { int n }\nvar ch = new Channel<J>()\nvar j = new J()\nch.Send(j)\nprint(1)") is var chW && chW == "|ERROR TC029"
             && Run("class J { int n }\nvar ch = new Channel<J>()\nvar j = new J()\nch.Send(copy j)\nch.Send(take j)\nch.Send(new J())\nvar ci = new Channel<int>()\nci.Send(3)\nprint(ch.Count + ci.Count)") == "|4"
             && Run("record RL { int n }\nvar ch = new Channel<RL>()\nvar r = new RL()\nch.Send(r)\nprint(ch.Count)") == "|1", chW);
+        // replace (DECISIONS D16): der alte Wert geht, wenn der Halter ihn direkt besitzt und das Feld ihn nicht wieder haelt - Debug und Release
+        const string replaceSrc = "class Item {\n    string n\n    construct(string n) { this.n = n }\n    destruct() { print(\"destroy \" + this.n) }\n}\n"
+            + "class Box {\n    Item item = new Item(\"one\")\n    Item other\n    Item top\n    static Item shared = new Item(\"s1\")\n    Item Top { get { return this.top }\n        set { this.top = value } }\n}\n"
+            + "var b = new Box()\nvar mine = new Item(\"mine\")\nb.other = mine\nreplace b.item = new Item(\"two\")\nreplace b.other = new Item(\"own\")\nreplace b.item = b.item\nb.Top = new Item(\"t1\")\nreplace b.Top = new Item(\"t2\")\n"
+            + "replace Box.shared = new Item(\"s2\")\nprint(mine.n + \" \" + b.item.n + \" \" + b.other.n + \" \" + b.top.n + \" \" + Box.shared.n)\ndelete b\nprint(\"end\")";
+        const string replaceOut = "destroy one\ndestroy t1\ndestroy s1\nmine two own t2 s2\ndestroy two\ndestroy own\ndestroy t2\nend\ndestroy mine\ndestroy s2";
+        Check("replace: der eigene alte Wert geht (Feld, Property, statisches Feld), eine Referenz und derselbe Wert bleiben - Release",
+            Run(replaceSrc) is var rep && rep == "|" + replaceOut, rep);
+        Check("replace: dasselbe im Debug-Modus, ohne Warnung fuer haengende Referenzen", RunDebug(replaceSrc) is var repD && repD == "|" + replaceOut, repD);
+        Check("replace: strict prueft die Zuweisung wie '=' (TC001)", Run("#strict\nclass A {\n    int n\n    undefined F() { replace this.n = \"x\" }\n}\nprint(1)") is var repT && repT.Contains("ERROR TC001"), repT);
+        Check("Channel: ein frisches Array (new T[n], Literal, Ergebnis eines Aufrufs) braucht kein Wort - ein Array in einer Variable schon (TC029)",
+            Run("class Mk { static float[] Make() { return new float[2] } }\nvar ch = new Channel<float[]>()\nch.Send(new float[3])\nch.Send([1.0, 2.0])\nch.Send(Mk.Make())\nvar bc = new Channel<byte[]>()\nbc.Send(new byte[4])\nprint(ch.Receive().length + \" \" + ch.Receive().length + \" \" + ch.Receive().length + \" \" + bc.Receive().length)") is var chA && chA == "|3 2 2 4"
+            && Run("var ch = new Channel<float[]>()\nvar a = new float[3]\nch.Send(a)\nprint(1)") == "|ERROR TC029", chA);
         Check("Records: ueber any ist das Schreiben die AccessDeniedException, == vergleicht den Inhalt",
             Run("record P { int x\n construct(int x) { this.x = x } }\nany p = new P(1)\ntry { p.x = 2 } catch (AccessDeniedException e) { print(\"denied\") }\nprint((p == new P(1)) + \" \" + p.x)") is var recA && recA == "|denied\nTrue 1", recA);
         Check("#lax in der Datei schlaegt den Schalter strict", Run("#lax\nint x = 1\ntry { x = \"a\" } catch (ArgumentException e) { print(\"guard\") }\nprint(x)", TypeCheckMode.Strict) == "TC001|guard\n1");

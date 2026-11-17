@@ -119,6 +119,8 @@ namespace fire.Compiler
         /// CompileFireStmt to compile exactly as before the introduction of the snapshot,
         /// without needing conditional branches of its own for it.</summary>
         public required bool NoShadowGlobals { get; init; }
+        /// <summary>For every static field with an initialiser (class, field): the static fields whose initialisers must run before it (Resolver.OrderStaticInits).</summary>
+        public IReadOnlyDictionary<(string Class, string Field), List<(string Class, string Field)>> StaticInitDeps { get; init; } = new Dictionary<(string Class, string Field), List<(string Class, string Field)>>();
     }
 
     /// <summary>
@@ -145,7 +147,7 @@ namespace fire.Compiler
     /// check would be more restrictive than helpful here) - we leave that to the
     /// runtime.
     /// </summary>
-    public sealed class Resolver
+    public sealed partial class Resolver
     {
         /// <summary>Primitive/built-in type names that ValidateTypeName accepts without
         /// lookup in `_classes`. 'lambda' stands for a
@@ -328,6 +330,9 @@ namespace fire.Compiler
             // A program with `fire` resolves a second time, now that the number of its globals is known (see _finalGlobalCount).
             if (resolver._sawFire && resolver._errors.Count == 0) resolver = Run(program, nativeNames, tryableNativeNames, resolver._globalScope.Slots.Count);
 
+            // the order of the static initialisers (and their cycles)
+            resolver.OrderStaticInits();
+
             // From the first error on it is certain that there is no result -
             // but only HERE, after everything has been resolved, so that the
             // caller gets ALL errors at once (see ResolverException).
@@ -341,6 +346,7 @@ namespace fire.Compiler
                 GlobalSlotCount = resolver._globalScope.Slots.Count,
                 Externs = resolver._externs,
                 NoShadowGlobals = resolver._noShadowGlobals,
+                StaticInitDeps = resolver._staticInitDeps,
             };
         }
 
@@ -1448,7 +1454,7 @@ namespace fire.Compiler
 
             if (_currentClass != null && FindMemberInClassChain(_currentClass, name) is { } member)
             {
-                if (member.IsStatic) { CheckStaticInitOrder(member.ClassName, name, line); return new ResolvedRef.StaticMember(member.ClassName); }
+                if (member.IsStatic) return new ResolvedRef.StaticMember(member.ClassName);
                 // (a fire body runs without `this`: its own variables and the captures - `taking`, `with` - win over a field of the same name)
                 if (_fireScope != null && !_inBoundLambda)
                 {
@@ -1593,6 +1599,10 @@ namespace fire.Compiler
 
                 case ExprStmt es:
                     ResolveExpr(es.Expression);
+                    // `replace x = v` (DECISIONS D16): a field only - a variable's values belong to its scope
+                    if (es.Expression is AssignExpr { Replace: true, Target: IdentifierExpr replaced } && _refs.TryGetValue(replaced, out var replacedRef)
+                        && replacedRef is not (ResolvedRef.ImplicitThisMember or ResolvedRef.StaticMember))
+                        AddError(new ResolverException($"'replace' assigns a field - '{replaced.Name}' is a variable (its old value goes with its scope; to destroy it now: 'delete {replaced.Name}' and then the assignment)", es.Line));
                     break;
 
                 case NoOpStmt:
@@ -2032,32 +2042,9 @@ namespace fire.Compiler
             _current = new ResolverScope(_globalScope);
             bool savedInStaticMethod = _inStaticMethod;
             _inStaticMethod = fd.IsStatic; // SPEC "Static members" - no 'this' in a static field initialiser
-            var savedStaticInit = _staticInit;
-            _staticInit = fd.IsStatic && _currentClass != null ? (_currentClass.Name, fd.Name) : null;
             ResolveExpr(fd.Initializer);
-            if (_staticInit is { } done) _staticInitDone.Add(done);
-            _staticInit = savedStaticInit;
             _inStaticMethod = savedInStaticMethod;
             _current = saved;
-        }
-
-        /// <summary>The static field whose initialiser is being resolved (null: none), and the static fields whose initialisers are done - in the order in which
-        /// they run (SPEC "Static members": once at program start, class by class in the order of the program, in a class from the top down).</summary>
-        private (string Class, string Field)? _staticInit;
-        private readonly HashSet<(string Class, string Field)> _staticInitDone = new();
-
-        /// <summary>A static initialiser reads the static field `name` of the class `className` (the class written, or one of its bases): an error when that
-        /// field has an initialiser that only runs later - it would still be `undefined` (a read of another class's field that has none is fine).</summary>
-        private void CheckStaticInitOrder(string className, string name, int line)
-        {
-            if (_staticInit == null || !_classes.TryGetValue(className, out var cd) || FindMemberInClassChain(cd, name) is not { IsStatic: true } member) return;
-            if (!_classes.TryGetValue(member.ClassName, out var owner)) return;
-            if (owner.Members.OfType<FieldDecl>().FirstOrDefault(f => f.Name == name && f.IsStatic) is not { Initializer: not null }) return;
-            if (_staticInitDone.Contains((member.ClassName, name))) return;
-            var (initClass, initField) = _staticInit.Value;
-            AddError(new ResolverException((member.ClassName, name) == _staticInit.Value
-                ? $"The initialiser of the static field '{initClass}.{initField}' reads the field itself - it is still undefined there"
-                : $"The initialiser of the static field '{initClass}.{initField}' reads '{member.ClassName}.{name}', whose initialiser only runs later (static fields are initialised once at program start: class by class in the order of the program, in a class from the top down) - declare '{member.ClassName}.{name}' first", line));
         }
 
         /// <summary>Optional parameters (with a default value) must be CONTIGUOUS at the end of the
@@ -2311,7 +2298,6 @@ namespace fire.Compiler
                         CheckStaticMemberExists(staticClassName, me);
                         WarnForClassUse(staticClassName, me.Line);
                         WarnForMember(ClassChainNames(staticClassName), me.Name, _calleeArity.TryGetValue(me, out int staticArgs) ? staticArgs : null, me.Line);
-                        CheckStaticInitOrder(staticClassName, me.Name, me.Line);
                         _refs[me] = new ResolvedRef.StaticMember(staticClassName);
                         break;
                     }
@@ -2338,6 +2324,8 @@ namespace fire.Compiler
                         string? receiver = InferClass(me.Target);
                         WarnForMember(receiver != null ? ClassChainNames(receiver) : null, me.Name, _calleeArity.TryGetValue(me, out int memberArgs) ? memberArgs : null, me.Line);
                     }
+                    // (the class of the receiver, when known: the order of the static initialisers follows the call - Resolver.StaticInits.cs)
+                    if (InferClass(me.Target) is { } receiverClass) _receiverClasses[me] = receiverClass;
                     ResolveExpr(me.Target); // .Name bleibt unresolved - dynamischer Feld-/Methodenzugriff
                     break;
 
@@ -2897,10 +2885,8 @@ namespace fire.Compiler
         {
             bool savedBound = _inBoundLambda;
             _inBoundLambda = lambda.OnTarget != null;
-            var savedStaticInit = _staticInit;
-            _staticInit = null;   // (a lambda in a static initialiser runs later: it may read any static field)
             try { ResolveLambdaCore(lambda); }
-            finally { _inBoundLambda = savedBound; _staticInit = savedStaticInit; }
+            finally { _inBoundLambda = savedBound; }
         }
 
         private void ResolveLambdaCore(LambdaExpr lambda)

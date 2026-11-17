@@ -7345,6 +7345,24 @@ namespace fire.Native
                     E($"deleteValue({S(d - 1)});");
                     Check();   // (a value that cannot be deleted - `delete 5`: the VM's ArgumentException)
                     d--; return Next();
+                case OpCode.ReplaceOld:
+                {
+                    // `replace this.f = v` (DECISIONS D16): [old, holder, now] (1: [old, now] - a static field, the holder is the global scope); old goes when
+                    // the holder owns it directly and the field does not hold it again - as in the VM (OpCode.ReplaceOld)
+                    bool replaceStatic = ins.A[0] == 1;
+                    Need(replaceStatic ? 2 : 3);
+                    int oldAt = d - (replaceStatic ? 2 : 3);
+                    // (a number in the shadow of its slot owns nothing and belongs to nothing)
+                    if (SlotScalars() && IsScalar(oldAt)) { d = oldAt; return Next(); }
+                    string oldSlot = S(oldAt);
+                    string notNow = SlotScalars() && IsScalar(d - 1) ? "" : $" && !sameRef({oldSlot}, {S(d - 1)})";
+                    string owned;
+                    if (replaceStatic) { if (!_usesGlobalOwn) { _usesGlobalOwn = true; _version++; } owned = $"isFromGlobal({oldSlot})"; }
+                    else owned = $"{S(d - 2)}.kind == K_Class && isFrom({oldSlot}, {S(d - 2)}, false)";
+                    E($"if ({owned}{notNow}) {{ deleteValue({oldSlot}); }}");
+                    Check();   // (a destructor that throws)
+                    d -= replaceStatic ? 2 : 3; return Next();
+                }
                 case OpCode.ArrayGet when BK(d - 2) == KindBuf && (Ty(d - 2) & TypeNone) == 0 && U(d - 2) is BufBytes or BufWords && K(d - 1) == KindInt:
                 {
                     // (a buffer that may be undefined - a `byte b[]` parameter: its kind is checked too, undefined takes the generic access that throws)

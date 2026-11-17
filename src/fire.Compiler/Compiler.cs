@@ -646,9 +646,10 @@ namespace fire.Compiler
             // needed only because CallProtoWithThis (the same opcode as for
             // instance field initialisers) ALWAYS expects a 'this'
             // on the stack.
-            foreach (var rc in classes.Values)
+            // In the order the resolver found (Resolver.StaticInits.cs): an initialiser after those of the static fields it reads, directly or through the
+            // code it calls; where nothing decides, in the order of the declarations (class by class, in a class from the top down).
+            foreach (var (rc, fieldName, initProto) in StaticInitOrder(classes, resolveResult.StaticInitDeps))
             {
-                foreach (var (fieldName, initProto) in rc.StaticFields)
                 {
                     int protoIdx = compiler._chunk.AddFunctionProto(initProto);
                     compiler.EmitLoadConst(Value.MakeUndefined());
@@ -700,6 +701,46 @@ namespace fire.Compiler
             }
 
             return new CompiledProgram { TopLevel = compiler._chunk, Classes = classes, ExternSignatures = externSignatures, Enums = new Dictionary<string, EnumType>(compiler._enumTypes, StringComparer.Ordinal) };
+        }
+
+        /// <summary>The static initialisers in the order they run: a topological order of the dependencies (`deps`: what must run before a field), ties - and
+        /// everything without dependencies - in the order of the declarations (Kahn's algorithm, always taking the first ready field). The lists of the
+        /// classes (RuntimeClass.StaticFields) get that order too: a plugin runs the initialisers of its classes by them (VM.Plugins, CppGenerator.Plugins).</summary>
+        private static List<(RuntimeClass Class, string Field, FunctionProto Init)> StaticInitOrder(Dictionary<string, RuntimeClass> classes,
+            IReadOnlyDictionary<(string Class, string Field), List<(string Class, string Field)>> deps)
+        {
+            var all = classes.Values.SelectMany(rc => rc.StaticFields.Select(sf => (Class: rc, Field: sf.Name, Init: sf.Init))).ToList();
+            if (deps.Count == 0) return all;
+            var position = new Dictionary<(string, string), int>();
+            for (int i = 0; i < all.Count; i++) position.TryAdd((all[i].Class.Name, all[i].Field), i);
+            var waitingFor = new int[all.Count];
+            var dependents = new List<int>?[all.Count];
+            for (int i = 0; i < all.Count; i++)
+                if (deps.TryGetValue((all[i].Class.Name, all[i].Field), out var needs))
+                    foreach (var need in needs.Distinct())
+                        if (position.TryGetValue(need, out int j) && j != i) { waitingFor[i]++; (dependents[j] ??= new List<int>()).Add(i); }
+            var ready = new SortedSet<int>(Enumerable.Range(0, all.Count).Where(i => waitingFor[i] == 0));
+            var order = new List<(RuntimeClass Class, string Field, FunctionProto Init)>();
+            var done = new bool[all.Count];
+            while (order.Count < all.Count)
+            {
+                // (a cycle is an error of the resolver; should one get here, the rest keeps the order of the declarations)
+                int next = ready.Count > 0 ? ready.Min : Array.FindIndex(done, x => !x);
+                ready.Remove(next);
+                if (done[next]) continue;
+                done[next] = true;
+                order.Add(all[next]);
+                foreach (int k in dependents[next] ?? (IEnumerable<int>)Array.Empty<int>())
+                    if (--waitingFor[k] == 0 && !done[k]) ready.Add(k);
+            }
+            foreach (var rc in classes.Values)
+            {
+                if (rc.StaticFields.Count < 2) continue;
+                var mine = order.Where(o => ReferenceEquals(o.Class, rc)).Select(o => (o.Field, o.Init)).ToList();
+                rc.StaticFields.Clear();
+                rc.StaticFields.AddRange(mine);
+            }
+            return order;
         }
 
         // -----------------------------------------------------------
@@ -2170,6 +2211,7 @@ namespace fire.Compiler
         {
             if (TryCompileArithOnVariable(expr)) return;
 
+            if (expr is AssignExpr { Replace: true } replace) { CompileReplace(replace); return; }
             // (`a = try take x` as a statement: the assignment alone - its bool is not needed)
             if (expr is AssignExpr { Value: UnaryExpr { Op: UnaryOp.TryTake } } tryTakeAssign) CompileAssign(tryTakeAssign);
             else CompileExpr(expr);
@@ -3821,35 +3863,7 @@ namespace fire.Compiler
                 }
 
                 CompileExpr(me.Target);
-
-                if (a.Value is UnaryExpr { Op: UnaryOp.Take or UnaryOp.TryTake } takeValue)
-                {
-                    CompileExpr(takeValue.Operand);          // [obj, value]
-                    _chunk.EmitOp(takeValue.Op == UnaryOp.TryTake ? OpCode.TryTakeToObject : OpCode.TakeToObject);      // the object owns the value from now on (SPEC 2.2)
-                }
-                else
-                {
-                    CompileExpr(a.Value);
-                    // `obj.f = E`: an unclaimed value belongs to the object - or to the setter call when f is a property (SPEC 2.1); a claim site of a
-                    // setter passes the setter's value on the same way
-                    bool setterValue = IsSetterClaim(a);
-                    if (setterValue || MayBeUnclaimed(a.Value))
-                    {
-                        EmitWidthIfNeeded(this, _refParams.FieldWidth(me.Name), _refParams.FieldUnit(me.Name));
-                        EmitSetFieldClaim(me.Name, setterValue);
-                        return;
-                    }
-                    if (_accessor != 0)
-                    {
-                        EmitWidthIfNeeded(this, _refParams.FieldWidth(me.Name));
-                        EmitSetFieldAccessor(me.Name);
-                        return;
-                    }
-                }
-
-                EmitWidthIfNeeded(this, _refParams.FieldWidth(me.Name), _refParams.FieldUnit(me.Name));
-                _chunk.EmitOp(OpCode.SetField);
-                _chunk.EmitU16(_chunk.AddConstant(Value.MakeString(me.Name)));
+                CompileMemberStore(a, me.Name);
                 return;
             }
 
@@ -3958,6 +3972,86 @@ namespace fire.Compiler
                     _chunk.EmitU16(_chunk.AddConstant(Value.MakeString(id.Name)));
                     break;
             }
+        }
+
+        /// <summary>`obj.name = value` with the object already on the stack: [obj] -> [value] (the value is left as the assignment's value).</summary>
+        private void CompileMemberStore(AssignExpr a, string name)
+        {
+            if (a.Value is UnaryExpr { Op: UnaryOp.Take or UnaryOp.TryTake } takeValue)
+            {
+                CompileExpr(takeValue.Operand);          // [obj, value]
+                _chunk.EmitOp(takeValue.Op == UnaryOp.TryTake ? OpCode.TryTakeToObject : OpCode.TakeToObject);      // the object owns the value from now on (SPEC 2.2)
+            }
+            else
+            {
+                CompileExpr(a.Value);
+                // `obj.f = E`: an unclaimed value belongs to the object - or to the setter call when f is a property (SPEC 2.1); a claim site of a
+                // setter passes the setter's value on the same way
+                bool setterValue = IsSetterClaim(a);
+                if (setterValue || MayBeUnclaimed(a.Value))
+                {
+                    EmitWidthIfNeeded(this, _refParams.FieldWidth(name), _refParams.FieldUnit(name));
+                    EmitSetFieldClaim(name, setterValue);
+                    return;
+                }
+                if (_accessor != 0)
+                {
+                    EmitWidthIfNeeded(this, _refParams.FieldWidth(name));
+                    EmitSetFieldAccessor(name);
+                    return;
+                }
+            }
+
+            EmitWidthIfNeeded(this, _refParams.FieldWidth(name), _refParams.FieldUnit(name));
+            _chunk.EmitOp(OpCode.SetField);
+            _chunk.EmitU16(_chunk.AddConstant(Value.MakeString(name)));
+        }
+
+        /// <summary>`replace target = value` as a statement (DECISIONS D16): the old value is read first, then the value is computed and stored like by `=`,
+        /// then the old value is destroyed when the holder - the object, for a static field the program - owns it directly and the field does not hold it
+        /// again (ReplaceOld). Nothing is left on the stack.</summary>
+        private void CompileReplace(AssignExpr a)
+        {
+            string? staticClass = a.Target switch
+            {
+                MemberExpr me when _refs.TryGetValue(me, out var r) && r is ResolvedRef.StaticMember sm => sm.ClassName,
+                IdentifierExpr id when _refs.TryGetValue(id, out var r) && r is ResolvedRef.StaticMember sm => sm.ClassName,
+                _ => null,
+            };
+            string name = a.Target switch { MemberExpr me => me.Name, IdentifierExpr id => id.Name, _ => throw new NotSupportedException("'replace' assigns a field.") };
+            void GetStatic()
+            {
+                _chunk.EmitOp(OpCode.GetStaticField);
+                _chunk.EmitU16(_chunk.AddConstant(Value.MakeString(staticClass!)));
+                _chunk.EmitU16(_chunk.AddConstant(Value.MakeString(name)));
+            }
+            void GetField()
+            {
+                _chunk.EmitOp(OpCode.GetField);
+                _chunk.EmitU16(_chunk.AddConstant(Value.MakeString(name)));
+            }
+            if (staticClass != null)
+            {
+                GetStatic();                            // [old]
+                CompileAssign(a);                       // [old, value]
+                _chunk.EmitOp(OpCode.Pop);
+                GetStatic();                            // [old, now]
+                _chunk.EmitOp(OpCode.ReplaceOld);
+                _chunk.EmitByte(1);                     // (the owner: the global scope)
+                return;
+            }
+            if (a.Target is MemberExpr target) CompileExpr(target.Target);
+            else _chunk.EmitOp(OpCode.LoadThis);       // (`f = v` in a class: `this.f = v`)
+            _chunk.EmitOp(OpCode.Dup);
+            GetField();                                 // [obj, old]
+            _chunk.EmitOp(OpCode.Swap);
+            _chunk.EmitOp(OpCode.Dup);                  // [old, obj, obj]
+            CompileMemberStore(a, name);                // [old, obj, value]
+            _chunk.EmitOp(OpCode.Pop);
+            _chunk.EmitOp(OpCode.Dup);
+            GetField();                                 // [old, obj, now]
+            _chunk.EmitOp(OpCode.ReplaceOld);
+            _chunk.EmitByte(0);
         }
 
         /// <summary>A member assignment in a property accessor (SPEC 2.2 "Ownership in property accessors"): what belongs to the accessor call goes to `this`

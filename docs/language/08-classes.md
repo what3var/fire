@@ -42,21 +42,42 @@ print(Animal.created)       // 1
 - `static` fields and methods belong to the class: `Animal.created`, `Calc.Twice(2)`. A static method has no `this`. A name is static or for instances, never both: a class must not declare a
   static and an instance member of the same name - methods, fields and properties alike, also over its base classes (`E4076`, see
   [Parameters](#parameters)). A field or a property is declared once in a class (`E4077`).
-- **Order of the static initial values**: they are set once at program start, before the first statement of the program runs - class by class in
-  the order of the program (the standard library and the imported libraries first, then the files of the project in their order, each from the
-  top down), in a class from the top down. An initial value may read a static field whose initial value came before; one that only comes later is
-  an error when the program is compiled (it would still be `undefined`). A method called from an initial value is not checked - it sees what is
-  set so far. A lambda in an initial value runs later and may read every static field.
+- **Order of the static initial values**: they are set once at program start, before the first statement of the program runs. An initial
+  value runs **after the initial values of the static fields it needs** - the fields it reads itself, and those read by the code it calls while
+  it runs: static methods and properties (`Config.Compute()`, `Config.Size`), the constructors and the field initial values of the objects it
+  makes (`new Grid()`), the methods it calls on `this` or on a variable whose class is known (`var g = new Grid(); g.Size()`) - and so on
+  through all of them. The compiler works this out; the order of the declarations decides only between fields that do not need each other
+  (class by class in the order of the program - the standard library and the imported libraries first, then the files of the project in their
+  order - and in a class from the top down). Fields that need each other in a cycle are an error when the program is compiled (`E4078`, the
+  message names the cycle: `A.x -> B.y -> (through B.Get()) A.x`; a field that reads itself: `E4073`).
+
+  Not seen by the compiler (the order of the declarations applies, the field may still be `undefined`): a read through `any` or an interface
+  (`any c = ...; c.width`), through reflection, a call of a method of a derived class that overrides the one called, and the body of a lambda -
+  it runs when it is called, so a lambda in an initial value may read every static field.
+
+  **Top-level variables** are set by the top-level code, which runs after all static initial values: a static initial value that reads a
+  top-level variable itself is an error (`E4079`; one in a lambda is fine, and so is a method that reads it when it is called later). The
+  other way round always works: the top-level code reads the static fields set already.
 
   ```fire
+  class Config {
+      static int tile = Sizes.unit * 2       // runs after Sizes.unit, although Sizes comes later
+      static Grid grid = new Grid()          // the constructor reads Grid.width: runs after it
+      static int area = Config.Compute()     // Compute reads Grid.width: runs after it
+      static int Compute() { return Grid.width * Grid.width }
+  }
   class Sizes {
-      static int tile = 16
-      static int chunk = Sizes.tile * 8      // fine: tile comes first
-      // static int row = Grid.width          // error: Grid.width is only set later
+      static int unit = 8
   }
   class Grid {
-      static int width = Sizes.chunk * 4      // fine: Sizes comes first
+      static int width = Config.tile * 4
+      int cells
+      construct() { this.cells = Grid.width * 2 }
   }
+  print(Config.tile)          // 16
+  print(Grid.width)           // 64
+  print(Config.grid.cells)    // 128
+  print(Config.area)          // 4096
   ```
 
 ## Parameters

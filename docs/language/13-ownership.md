@@ -399,6 +399,54 @@ try {
 A destroyed object has no class any more: `x is of Item`, `x!Item`, `throw x` and printing it (`print(x)`, `"" + x`, `$"{x}"`) throw the
 `DestroyedException` as well. Only the kind of the value is still known - `x is of class` is `True`.
 
+## `replace`
+
+Assigning a field does **not** destroy its old value: `this.d = new Dictionary<string, Node>()` a second time leaves the first dictionary (and
+what it owns) alive until the object ends - fire would have to know that nothing else refers to it or to its parts, and destroying is never
+implicit. When the object is done with the old value, say so: **`replace`** in front of the assignment destroys the old value after the new one is
+stored.
+
+```fire
+class Item {
+    string n
+    construct(string n) { this.n = n }
+    destruct() { print("destroy " + this.n) }
+}
+class Shelf {
+    Item top
+    Item other
+    int sizes[]
+    static Item shared = new Item("static 1")
+    construct() { this.top = new Item("one"); this.sizes = [1, 2] }
+}
+var shelf = new Shelf()
+var mine = new Item("mine")
+shelf.other = mine                      // only a reference: mine belongs to the top level
+replace shelf.top = new Item("two")     // destroy one
+var old = shelf.sizes
+replace shelf.sizes = new int[4]        // the old array is destroyed (old.length: DestroyedException)
+replace shelf.other = new Item("own")   // mine is not the shelf's: nothing is destroyed
+print(mine.n)                           // mine
+replace Shelf.shared = new Item("static 2")   // destroy static 1
+```
+
+- **`replace target = value`** is a statement; the target is a field: `this.f`, `f` in a class, `obj.f`, `Class.f` (a static field) or a
+  property. A variable is the error `E4080` (its values belong to its scope and go with it - `delete x` and then the assignment); an element
+  (`a[i]`), a compound assignment (`+=`) and anything else are parse errors.
+- **What goes:** the old value, when it is an object, an array, a buffer or a lambda that the holder **owns directly** (`old is from obj`;
+  for a static field: `old is from global` - a static field belongs to the program) - and the field does not hold it again
+  (`replace this.f = this.f` keeps it). It is destroyed like with `delete`: its destructor runs, what it owns goes with it (a `List` or a
+  `Dictionary` with its contents).
+- **What stays:** a value the holder does not own - a reference to something of someone else (`shelf.other = mine`), a value that was taken
+  out of the field (`replace this.f = Wrap(take this.f)`: the call owns it now), `undefined`, a number, a text - is just overwritten, without an
+  error. `delete` destroys whatever it is given; `replace` is the object cleaning up after itself, so it touches only what is the object's.
+- **Order:** the old value is read, then the new value is computed (it may read the old one: `replace this.f = Grow(this.f)`), then stored with
+  the ownership of a plain `=` (`new` and other fresh values belong to the object, `take x` moves), and only then the old value is destroyed.
+  So the field never refers to a destroyed value, and the destructor of the old value already sees the new one in the field.
+- Like `delete`, `replace` does not look for other references to the old value: a variable, an element or a lambda that still points to it
+  gets the `DestroyedException` when it is used (the debug watch for such references sees them as it sees those after a `delete`).
+- `replace` is a keyword (it cannot be a name); `s.Replace(a, b)` of strings is a method and is unaffected.
+
 ## Testing the owner
 
 `obj is from owner` is `True` when `owner` owns `obj` directly, `obj is under owner` when `owner` is anywhere above it. Two scopes can be named as the

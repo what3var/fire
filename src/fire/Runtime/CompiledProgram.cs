@@ -91,6 +91,23 @@ namespace fire.Runtime
             }
         }
 
+        /// <summary>The static fields in the order their initialisers run (the compiler puts them at the start of the top level, in the order of their
+        /// dependencies - Compiler.StaticInitOrder): what a plugin runs for its classes, which it initialises apart from a top level.</summary>
+        public List<(string Class, string Field)> StaticInitSequence()
+        {
+            var sequence = new List<(string Class, string Field)>();
+            var constants = TopLevel.Constants;
+            try
+            {
+                OperandSizes.Walk(TopLevel.Code, (_, op, a) =>
+                {
+                    if (op == OpCode.SetStaticFieldOnInit) sequence.Add((constants[a[0]].AsString(), constants[a[1]].AsString()));
+                });
+            }
+            catch (InvalidOperationException) { }   // (code this reader does not know: the order of the declarations)
+            return sequence;
+        }
+
         private static void RelinkProtoOwner(FunctionProto proto, RuntimeClass owner)
         {
             proto.Chunk.OwnerClass = owner;
