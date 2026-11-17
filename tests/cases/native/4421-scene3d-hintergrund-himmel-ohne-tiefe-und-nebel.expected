@@ -1,0 +1,8 @@
+property True False
+sky True cloud True box True
+fog sky True cloud True box fogged True
+glass True particles True
+as before True True
+hardware True True sky True cloud True box True
+hardware glass True particles True
+fast sky True box True

@@ -5,7 +5,7 @@
   "import": "scene3d",
   "standard": true,
   "settings": {
-    "version": "1.0.0",
+    "version": "1.0.1-sky",
     "author": "fire",
     "license": "fire",
     "description": "The standard library 'scene3d' of fire: prelude and C sources (the software renderer and the hardware renderer, Vulkan)."

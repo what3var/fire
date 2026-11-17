@@ -9,7 +9,8 @@
  *     (the framebuffer's rows) - the memory follows the width of the picture, not its size;
  *   - textures are sampled nearest (no filtering), perspective correct every 16 pixels and linear between (the shadow map coordinates too);
  *   - a palette framebuffer is drawn in its palette: the texels become indices of it once, the light picks one of 32 shades of the colour from a table (S3D_LEAN_LEVELS);
- *   - transparency is a dither (a pixel is drawn or not, by a 4x4 pattern: no sorting), a texel with alpha below 128 (or below the cut-off) is not drawn.
+ *   - transparency is a dither (a pixel is drawn or not, by a 4x4 pattern: no sorting), a texel with alpha below 128 (or below the cut-off) is not drawn;
+ *   - a backdrop (Object.Background) is drawn first in each band, without the depth test and without writing the depth (so the same dither over the backdrops before it).
  * Everything that is queued is kept as vertices on the screen and triangles of indices, not as set-up triangles; casters go into the shadow map as they are queued.
  * Plain C; the numbers on the way from the vertices to the rows are floats, the pixels are integers. The VM and a native build run the same code and give the same pixels, and
  * the size of the bands does not change them. */
@@ -52,6 +53,7 @@ typedef struct S3dLeanSurface {
     uint8_t baseIndex;      /* palette picture, no texture: the colour of the surface */
     uint8_t cutoff;         /* a texel with a smaller alpha is not drawn */
     uint8_t opacity;        /* 16: solid; below that the dither leaves pixels out */
+    uint8_t background;     /* a backdrop: before the other triangles, no depth test, no depth written */
 } S3dLeanSurface;
 
 /* The renderer of a camera (kept from picture to picture: its memory is used again). */
@@ -82,6 +84,7 @@ typedef struct S3dLean {
     uint8_t* inverse;              /* 4096 */
     uint8_t* shade;                /* S3D_LEAN_LEVELS * 256 */
     uint32_t background;
+    int backdrop;                  /* a backdrop was queued (its triangles go first; the fog leaves what has no depth alone) */
     void (*post)(void* ctx, struct S3dLean* L, int top, int rows);   /* after the triangles of a band (the effects, s3d_effects.h); NULL: nothing */
     void* postCtx;
 } S3dLean;
@@ -159,6 +162,7 @@ static int s3d_leanBegin(S3dLean* L, int w, int h, int bpp, const uint32_t* pale
     L->nearPlane = cam->nearPlane > 1e-6f ? cam->nearPlane : 1e-6f;
     L->vp = s3d_viewProjection(cam, w, h);
     L->background = background;
+    L->backdrop = 0;
     L->shadowsOn = 0;
     if (bpp == 1 && !s3d_leanPalette(L, palette)) return 0;
     rows = S3D_LEAN_BAND_BYTES / rowBytes;
@@ -330,7 +334,9 @@ static void s3d_leanObject(S3dLean* L, const S3dMesh* mesh, const S3dObjectParam
     casts = L->shadowsOn && surf->castShadows && ls.opacity >= 16;
     receives = L->shadowsOn && surf->receiveShadows && surf->lit && (L->lights[L->shadowLight].mask & surf->layers);
     ls.shadowed = (uint8_t)receives;
+    ls.background = (uint8_t)(surf->background != 0);
     if (ls.opacity == 0) return;
+    if (ls.background) L->backdrop = 1;
     if (!S3D_GROW(L->s, L->sCap, L->sN + 1)) return;
     surface = (uint16_t)L->sN;
     L->s[L->sN++] = ls;
@@ -536,7 +542,7 @@ static void s3d_leanRaster(S3dLean* L, const S3dLeanTri* t, int top, int y0, int
             for (i = 0; i < n; i++, x++) {
                 int32_t zz = z >> 8;
                 uint16_t d = (uint16_t)(zz > 65535 ? 65535 : zz < 1 ? 1 : zz);
-                if (d > zrow[x] && (s->opacity >= 16 || s3d_leanBayer[((y & 3) << 2) | (x & 3)] < s->opacity)) {
+                if ((s->background || d > zrow[x]) && (s->opacity >= 16 || s3d_leanBayer[((y & 3) << 2) | (x & 3)] < s->opacity)) {
                     int32_t cr = 255, cg = 255, cb = 255, lr = r, lg = g, lb = b, ll = lv;
                     int idx = s->baseIndex, draw = 1;
                     if (tex) {
@@ -556,7 +562,7 @@ static void s3d_leanRaster(S3dLean* L, const S3dLeanTri* t, int top, int y0, int
                         }
                     }
                     if (draw) {
-                        zrow[x] = d;
+                        if (!s->background) zrow[x] = d;
                         if (L->bpp == 1) {
                             int level = (int)(ll >> 8);
                             crow[x] = L->shade[(level < 0 ? 0 : level >= S3D_LEAN_LEVELS ? S3D_LEAN_LEVELS - 1 : level) * 256 + idx];
@@ -591,10 +597,15 @@ static void s3d_leanEnd(S3dLean* L, S3dLeanSink sink, void* ctx) {
         for (i = 0; i < n; i++) L->depth[i] = 0;
         if (L->bpp == 1) for (i = 0; i < n; i++) L->band[i] = bgIndex;
         else for (i = 0; i < n; i++) { L->band[i * 4] = bg[0]; L->band[i * 4 + 1] = bg[1]; L->band[i * 4 + 2] = bg[2]; L->band[i * 4 + 3] = bg[3]; }
-        for (i = 0; i < L->tN; i++) {
-            const S3dLeanTri* t = &L->t[i];
-            if (t->maxY < top || t->minY > bottom) continue;
-            s3d_leanRaster(L, t, top, s3d_maxi(t->minY, top), s3d_mini(t->maxY, bottom));
+        {   /* the backdrops first (in their order), then the rest */
+            int pass;
+            for (pass = L->backdrop ? 0 : 1; pass < 2; pass++)
+                for (i = 0; i < L->tN; i++) {
+                    const S3dLeanTri* t = &L->t[i];
+                    if (t->maxY < top || t->minY > bottom) continue;
+                    if (L->backdrop && (L->s[t->surface].background != 0) != (pass == 0)) continue;
+                    s3d_leanRaster(L, t, top, s3d_maxi(t->minY, top), s3d_mini(t->maxY, bottom));
+                }
         }
         if (L->post) L->post(L->postCtx, L, top, rows);
         sink(ctx, top, rows, L->band);

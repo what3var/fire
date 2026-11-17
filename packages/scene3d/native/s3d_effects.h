@@ -7,8 +7,8 @@
  * (rain) - tested against the depth of the picture, not written into it - added (fire, sparks: they light up) or blended (smoke, rain, snow). The lean renderer does it band by band, also into a palette picture
  * (the colour that comes out is looked up in the palette).
  *
- * Effects on the whole picture: fog (from a distance on, the picture goes into the fog colour; what no object covers is fog) and a tint (the whole picture
- * towards a colour: fading out, flashes, under water). */
+ * Effects on the whole picture: fog (from a distance on, the picture goes into the fog colour; what no object covers is fog - unless the picture has a backdrop,
+ * Object.Background: then what only the backdrop covers stays as it is) and a tint (the whole picture towards a colour: fading out, flashes, under water). */
 #ifndef FIRE_S3D_EFFECTS_H
 #define FIRE_S3D_EFFECTS_H
 
@@ -224,12 +224,13 @@ static float s3d_fogFactor(float dist, float start, float end) {
 typedef struct S3dFx {
     float fogStart, fogEnd; uint32_t fogColor; float tint; uint32_t tintColor; const S3dSplat* splats; s3d_size splatN;
     uint16_t fogQ[S3D_FOG_LEVELS + 1]; int fogReady; uint8_t* fogMap;
+    int backdrop;   /* the picture drew a backdrop (Object.Background): a pixel without depth is the sky, not fog */
 } S3dFx;
 
-/* The fog step of a lean depth: 0 none .. S3D_FOG_LEVELS all fog (0: nothing there - all fog). */
+/* The fog step of a lean depth: 0 none .. S3D_FOG_LEVELS all fog (0: nothing there - all fog, or none behind a backdrop). */
 static int s3d_fogLevel(const S3dFx* fx, uint16_t q) {
     int k = 0;
-    if (q == 0) return S3D_FOG_LEVELS;
+    if (q == 0) return fx->backdrop ? 0 : S3D_FOG_LEVELS;
     while (k < S3D_FOG_LEVELS && q < fx->fogQ[k]) k++;
     return k;
 }
@@ -314,7 +315,7 @@ static void s3d_splatDraw(const S3dFxTarget* t, const S3dSplat* s, const S3dFx* 
     }
 }
 
-/* All effects on the rows of the target: fog on what was drawn (what no object covers is all fog), the particles, the tint. */
+/* All effects on the rows of the target: fog on what was drawn (what no object covers is all fog - none where only a backdrop is), the particles, the tint. */
 static void s3d_fxApply(const S3dFxTarget* t, S3dFx* fx) {
     int x, y, fog = fx->fogEnd > fx->fogStart && (t->zdepth || t->qdepth);
     s3d_size i;
@@ -338,7 +339,7 @@ static void s3d_fxApply(const S3dFxTarget* t, S3dFx* fx) {
         }
     } else if (fog) {
         for (y = t->y0; y <= t->y1; y++) for (x = 0; x < t->w; x++) {
-            float d = s3d_fxDistance(t, x, y), k = d <= 0 ? 1 : s3d_fogFactor(d, fx->fogStart, fx->fogEnd);
+            float d = s3d_fxDistance(t, x, y), k = d <= 0 ? (fx->backdrop ? 0 : 1) : s3d_fogFactor(d, fx->fogStart, fx->fogEnd);
             uint8_t* p;
             if (k <= 0) continue;
             p = s3d_fxAt(t, x, y);
