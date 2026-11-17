@@ -95,7 +95,8 @@ scene.TintAmount = 0                         // no tint
 ```
 
 * **Fog:** from `start` on, the picture goes into the fog colour; from `end` on it is all fog - and so is the background (what no object covers). It hides
-  the end of the world: objects farther than `end` can be left out of the scene. `FogColor`, `FogStart`, `FogEnd` can be set alone.
+  the end of the world: objects farther than `end` can be left out of the scene. A sky of background objects (`Object.Background`, see [3D scenes](3d.md))
+  is not fogged: once a picture has one, what no other object covers stays as the sky shows it. `FogColor`, `FogStart`, `FogEnd` can be set alone.
 * **Tint:** every pixel towards a colour by `TintAmount` (0 .. 1): fading in and out, a red flash when hit, a blue look under water.
 
 In the lean renderer (Fast) the fog goes in 16 steps and needs no division per pixel; on a palette picture each step is a table of 256 indices (the
