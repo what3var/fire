@@ -148,8 +148,12 @@ namespace fire.Native
                     }
             // the static initialisers of its classes (the compiler puts them at the start of a program's top level): what they make belongs to the global scope
             _pluginStaticInits.Clear();
-            foreach (var rc in _program.Program.Classes.Values.Where(c => _self.Classes.Contains(c.Name)))
-                foreach (var (field, init) in rc.StaticFields) _pluginStaticInits.Add((rc.Name, field, GetFunc(init, FuncKind.Init)));
+            // (in the order of their dependencies, as the top level has them - CompiledProgram.StaticInitSequence)
+            var sequence = _program.Program.StaticInitSequence();
+            int Rank(string cls, string field) { int i = sequence.IndexOf((cls, field)); return i < 0 ? int.MaxValue : i; }
+            foreach (var (cls, field, init) in _program.Program.Classes.Values.Where(c => _self.Classes.Contains(c.Name))
+                .SelectMany(rc => rc.StaticFields.Select(sf => (rc.Name, sf.Name, sf.Init))).OrderBy(x => Rank(x.Item1, x.Item2)).ToList())
+                _pluginStaticInits.Add((cls, field, GetFunc(init, FuncKind.Init)));
         }
         private readonly List<(string Class, string Field, Func Init)> _pluginStaticInits = new();
 

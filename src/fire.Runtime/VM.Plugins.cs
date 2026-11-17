@@ -174,8 +174,10 @@ namespace fire.Runtime
             if (host != null && program.Program.CustomUnits.Count > 0) Unit.AddCustomUnits(host.Program.CustomUnits, program.Program.CustomUnits);
             // the static initialisers of its classes, in the order of their declarations (as the top level of a program runs them first); what they make belongs to the
             // global scope (like the values of the top level)
-            foreach (var rc in own)
-                foreach (var (field, init) in rc.StaticFields)
+            // (in the order of their dependencies, as the plugin's own top level has them - CompiledProgram.StaticInitSequence; the rest after it)
+            var sequence = program.Program.StaticInitSequence();
+            int Rank(RuntimeClass rc, string field) { int i = sequence.IndexOf((rc.Name, field)); return i < 0 ? int.MaxValue : i; }
+            foreach (var (rc, field, init) in own.SelectMany(rc => rc.StaticFields.Select(sf => (rc, sf.Name, sf.Init))).OrderBy(x => Rank(x.rc, x.Name)).ToList())
                 {
                     if (CallInline(new LambdaValue(init, null), Array.Empty<Value>(), out var value) is { } error) return $"the initialiser of '{rc.Name}.{field}' threw {error.ClassName}.";
                     if (value.Kind == ValueKind.Class && value.AsObjectRef() is ObjectInstance obj) obj.TakeGlobal(_globalScope);

@@ -442,9 +442,9 @@ namespace UI {
             return false
         }
 
-        /// <summary>Replaces `find` with `replace` in the names and property values of all elements (or only the selected ones), in one step of undo; the number
+        /// <summary>Replaces `find` with `replacement` in the names and property values of all elements (or only the selected ones), in one step of undo; the number
         /// of elements changed. Names that would clash or be no name are left.</summary>
-        defined int ReplaceAll(string find, string replace, bool selectionOnly = false) {
+        defined int ReplaceAll(string find, string replacement, bool selectionOnly = false) {
             if (this.readOnly || find == "") { return 0 }
             var s = this.Schematic
             var list = new List()
@@ -458,7 +458,7 @@ namespace UI {
             foreach (e in list) {
                 var any = false
                 if (e.name.Contains(find)) {
-                    any name = e.name.Replace(find, replace)
+                    any name = e.name.Replace(find, replacement)
                     if (Circuits.Schematic.IsName(name) && s.Find(name) == undefined) {
                         s.Rename(e, name)
                         any = true
@@ -467,7 +467,7 @@ namespace UI {
                 for (int i = 0; i < e.keys.Count; i++) {
                     string value = e.values[i]
                     if (value.Contains(find)) {
-                        s.Set(e, e.keys[i], value.Replace(find, replace))
+                        s.Set(e, e.keys[i], value.Replace(find, replacement))
                         any = true
                     }
                 }

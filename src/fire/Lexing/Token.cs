@@ -33,6 +33,7 @@ namespace fire.Lexing
         Operator, // 'operator' - operator overloading (see Parser.ParseOperatorMember)
         Sync, Flat,
         Copy, // 'copy expression' - deep copy (see Ast.UnaryOp.DeepCopy); 'flat expression' is the flat one (UnaryOp.FlatCopy)
+        Replace, // 'replace this.f = value' - the old value of the field goes when the object owns it (see Ast.AssignExpr.Replace)
         Take, // 'take expression' - ownership goes to the call or to the owner of the assignment target (see Ast.UnaryOp.Take, SPEC 2.2)
         Leave, Terminate,
         Actor, Process,

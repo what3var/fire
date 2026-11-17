@@ -222,7 +222,12 @@ namespace fire.Ast
     public sealed record CallExpr(int Line, Expr Callee, IReadOnlyList<Expr> Args, IReadOnlyList<TypeRef>? TypeArgs = null, IReadOnlyList<string?>? ArgNames = null, bool Awaited = false, bool Dedicated = false) : Expr(Line);
     public sealed record MemberExpr(int Line, Expr Target, string Name) : Expr(Line);
     public sealed record IndexExpr(int Line, Expr Target, Expr Index) : Expr(Line);
-    public sealed record AssignExpr(int Line, Expr Target, Expr Value) : Expr(Line);
+    public sealed record AssignExpr(int Line, Expr Target, Expr Value) : Expr(Line)
+    {
+        /// <summary>`replace this.f = value` (a statement, DECISIONS D16): after the assignment the old value of the field is destroyed when the object (for a
+        /// static field: the program) owns it and it is not the new value.</summary>
+        public bool Replace { get; init; }
+    }
 
     /// <summary>`copy x with { .a = 1, .b = take y }` / `flat x with { ... }` / `r with { ... }` (docs/ROADMAP_TASKS.md step 9): the copy of `Source` (Copy:
     /// DeepCopy, FlatCopy; null - no word, only for a record: a deep copy), then the assignments in their order with the rules of an ordinary assignment;
