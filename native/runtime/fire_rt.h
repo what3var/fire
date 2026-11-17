@@ -3301,6 +3301,19 @@ FIRE_FN void dataFree(void* p) {
 #endif
     free(p);
 }
+/* ... a block whose data starts as zeros (a buffer): calloc - a big block comes from the system already zero, so its pages are not touched (not part of
+ * the memory the program uses) until something is written there; a StringBuilder's buffer is used up to its text only. (The dialects of big blocks: zeroed
+ * by hand.) */
+FIRE_FN void dataZero(void* p, uint32_t bytes);
+FIRE_FN void* dataAllocZero(size_t head, uint32_t count, size_t elem) {
+#if defined(FIRE_CC_BIG_ALLOC) || defined(FIRE_CC_ZERO)
+    void* p = dataAlloc(head, count, elem);
+    if (p) dataZero((char*)p + head, (uint32_t)((uint64_t)count * elem));
+    return p;
+#else
+    return calloc(1, blockSize(head, count, elem));
+#endif
+}
 /* Fills / copies the data of an array or a buffer - also more than a size_t holds (the dialect of a compiler with huge blocks does it in steps: FIRE_CC_ZERO,
  * FIRE_CC_COPY; the C library's memset/memcpy of the 16-bit real mode wrap at the end of a segment). */
 FIRE_FN void dataZero(void* p, uint32_t bytes) {
@@ -4170,7 +4183,7 @@ FIRE_FN bool hostLittle(void) { uint16_t one = 1; return *(uint8_t*)&one == 1; }
 /* A buffer of `length` elements of `elem` bytes (1: a byte buffer; sizeof(FireWord): a buffer of machine words), all 0. The data is aligned for a word. */
 FIRE_FN Buf* allocBufOf(uint32_t length, uint8_t elem, OwnList* list) {
     size_t head = (sizeof(Buf) + 7u) & ~(size_t)7u;
-    Buf* b = (Buf*)dataAlloc(head, length, elem);
+    Buf* b = (Buf*)dataAllocZero(head, length, elem);
     if (FIRE_UNLIKELY(!b)) allocFailed();
     b->h.okind = O_Buffer;
     b->h.flags = 0;
@@ -4178,7 +4191,6 @@ FIRE_FN Buf* allocBufOf(uint32_t length, uint8_t elem, OwnList* list) {
     b->little = hostLittle() ? 1 : 0;
     b->elem = elem;
     b->data = (uint8_t*)b + head;
-    dataZero(b->data, (uint32_t)((uint64_t)length * elem));
     slotAcquire(&b->h);
     ownLink(list, &b->h);
     return b;
