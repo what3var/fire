@@ -29,6 +29,9 @@ namespace UI {
         defined int GridColumnSpan = 1
         bool Visible = true
         bool Enabled = true
+        // What the element draws stays inside its own rectangle (and inside that of its parent): text that is too long is cut at the edge. false
+        // only for something that is meant to reach out (Root.DrawChild).
+        bool ClipToBounds = true
         // the mouse pointer over the element (UI.Cursor; -1: that of the element around it)
         UI.Cursor cursor = UI.Cursor.Inherit
         bool Hover = false
@@ -395,7 +398,7 @@ namespace UI {
             this.ax = ax
             this.ay = ay
             if (t == undefined) { return false }
-            if (t.Visible) { t.Draw(root, ax + t.rx, ay + t.ry) }
+            if (t.Visible) { root.DrawChild(t, ax + t.rx, ay + t.ry) }
             return true
         }
 
@@ -604,7 +607,7 @@ namespace UI {
         undefined DrawChildren(Root root, defined int ax, defined int ay) {
             for (var i = 0; i < this.children.Count; i = i + 1) {
                 Element child = this.children[i]
-                if (child.Visible) { child.Draw(root, ax + child.rx, ay + child.ry) }
+                if (child.Visible) { root.DrawChild(child, ax + child.rx, ay + child.ry) }
             }
         }
 
@@ -1248,7 +1251,7 @@ namespace UI {
                     root.renderer.DrawRect(ax, ay, this.actualWidth, this.actualHeight, pen)
                 }
             }
-            if (this.child != undefined && this.child.Visible) { this.child.Draw(root, ax + this.child.rx, ay + this.child.ry) }
+            if (this.child != undefined && this.child.Visible) { root.DrawChild(this.child, ax + this.child.rx, ay + this.child.ry) }
         }
 
         override UI.Element HitTest(defined int px, defined int py) {

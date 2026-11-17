@@ -112,7 +112,13 @@ ui.Run()
 With every accent - the system's or `Accent` - the root also chooses the colour of **text on the accent** (selected rows of lists, trees and combo boxes,
 the highlighted menu item, selected text, the caption of the active pane): white, or black on a light accent, whichever has the higher contrast ratio
 (WCAG; white as long as it keeps 3:1, so the blue of Windows keeps white text). `ui.AccentForeground` reads it as `0xRRGGBB`; setting it overrides the
-choice (`ui.AccentForeground = 0x202020`), `-1` lets the root choose again.
+choice (`ui.AccentForeground = 0x202020`), `-1` lets the root choose again. A picture of your own on the accent (a white icon) follows it with
+[`Framebuffer.Tinted`](../graphics/README.md#framebuffer): make the tinted copy when the colour changes, keep it, and blit that:
+
+```fire
+defined int fg = ui.AccentForeground
+var icon = white.Tinted(UI.Color.Rgb((fg >> 16) & 255, (fg >> 8) & 255, fg & 255))   // (white: the icon as loaded)
+```
 
 The elements keep working in **logical pixels**: positions, sizes, `ui.width` and the mouse positions stay the same, the renderer converts to screen
 pixels while drawing (`ui.renderer.scale`). TrueType text is drawn at the larger size and stays sharp; the bitmap fonts keep their size. Window and

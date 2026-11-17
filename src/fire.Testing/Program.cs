@@ -6782,6 +6782,30 @@ uiDrawScript = """
         print(win.RegisterJoystickRemoved(func (int j) => { }))
         """, new[] { "True", "False", "16 3 10 20 1 ", "17 3 12 22 1 ", "18 3 12 22 1 ", "32 7 1 -0.5 ", "33 7 2 ", "34 7 2 ", "35 7 0 5 ", "36 7 ", "37 7 ", "True", "True", "True", "True", "True", "True", "True", "True", "True" });
 
+    CheckUi("Clip: ein Element zeichnet nur in sein Rechteck (ein langes Label mit fester Breite, in einem Panel, das schmaler ist; ClipToBounds = false reicht hinaus)", uiHead + """
+        var red = UI.Color.Rgb(220, 0, 0)
+        // counts the red pixels of the columns x0 .. x1 - 1 in the rows 10 .. 29
+        class Red { static int Count(any r, int x0, int x1, int c) { var n = 0; for (var y = 10; y < 30; y++) { for (var x = x0; x < x1; x++) { if (Px.Get(r, x, y) == c) { n++ } } } return n } }
+        var label = new UI.Label("WWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWW", 10, 10)
+        label.Color = new SolidBrush(red)
+        label.Width = 60
+        ui.Add(label)
+        // a label that is wider than its panel: the panel's edge cuts it
+        var panel = new UI.Panel(100, 0, 50, 40)
+        panel.Filled = false
+        var inner = new UI.Label("WWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWW", 0, 10)
+        inner.Color = new SolidBrush(red)
+        panel.Add(inner)
+        ui.Add(panel)
+        ui.Draw()
+        print("label inside " + (Red.Count(ui.renderer, 10, 70, red) > 50) + ", beyond " + Red.Count(ui.renderer, 70, 100, red))
+        print("panel inside " + (Red.Count(ui.renderer, 100, 150, red) > 50) + ", beyond " + Red.Count(ui.renderer, 150, 320, red))
+        label.ClipToBounds = false
+        ui.Invalidate()
+        ui.Draw()
+        print("without clip beyond " + (Red.Count(ui.renderer, 70, 100, red) > 0))
+        """, new[] { "label inside True, beyond 0", "panel inside True, beyond 0", "without clip beyond True" });
+
     CheckUi("Textfeld: Auswahl mit Shift und der Maus, Ctrl+A/C/X/V und Shift+Insert ueber die Zwischenablage, Tippen ersetzt die Auswahl, MaxLength", uiHead + """
         var tb = new UI.TextBox("Hallo Welt", 10, 10, 200, 24)
         ui.Add(tb)

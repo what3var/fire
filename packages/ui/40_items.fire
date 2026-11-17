@@ -436,7 +436,7 @@ namespace UI {
         undefined DrawRow(Root root, defined int index, any item, defined int x, defined int y, defined int w, defined int h, Brush textColor) {
             if (this.ItemTemplate != undefined) {
                 any row = this.rowElements[index]
-                if (row != undefined && row.Visible) { row.Draw(root, x + row.rx, y + row.ry) }
+                if (row != undefined && row.Visible) { root.DrawChild(row, x + row.rx, y + row.ry) }
                 return
             }
             this.DrawString(root, x + 4, y + (h - this.TextHeight(root)) / 2, this.ItemText(item), textColor)

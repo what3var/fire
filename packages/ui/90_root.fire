@@ -35,6 +35,7 @@ namespace UI {
         Element focusElement
         // Clipping rectangles (Rect), nested: the topmost applies (see PushClip)
         List clips
+        defined int clipDepth = 0
         // Floating elements above the interface (menus, suggestion lists): the last one is on top (see ShowPopup)
         List popups
         // Closed floating elements that go with the next cycle - not at once: a menu closes in its own click, and the row that was chosen runs after that
@@ -475,6 +476,7 @@ namespace UI {
 
         undefined Paint() {
             this.renderer.ResetClip()
+            this.clipDepth = 0
             if (this.fullRedraw) {
                 this.FillBack(0, 0, this.width, this.height)
             } else if (this.hasDirtyRect) {
@@ -490,11 +492,11 @@ namespace UI {
                 this.PushClip(x0, y0, x1 - x0, y1 - y0)
                 this.FillBack(x0, y0, x1 - x0, y1 - y0)
             } else { return }
-            this.content.Draw(this, 0, 0)
+            this.DrawChild(this.content, 0, 0)
             for (var i = 0; i < this.popups.Count; i = i + 1) {
                 any popup = this.popups[i]
                 this.PopupShadow(popup, popup.rx, popup.ry)
-                popup.Draw(this, popup.rx, popup.ry)
+                this.DrawChild(popup, popup.rx, popup.ry)
             }
             this.DrawDragImage()
             if (!this.fullRedraw) {
@@ -642,22 +644,43 @@ namespace UI {
 
         // Restricts drawing to the rectangle (intersected with the current one); PopClip restores the previous one. The elements call both
         // in pairs (for example a ScrollViewer around its children).
+        // Draws an element at (x, y) inside its own rectangle (Element.ClipToBounds, on by default) - and inside the clip that is set already
+        // (that of its parent): what a container draws its children with.
+        undefined DrawChild(Element e, defined int x, defined int y) {
+            if (!e.ClipToBounds) {
+                e.Draw(this, x, y)
+                return
+            }
+            this.PushClip(x, y, e.actualWidth, e.actualHeight)
+            e.Draw(this, x, y)
+            this.PopClip()
+        }
+
+        // The clips nest: each one is cut with the one before. (The rectangles stay in `clips` and are used again: clipDepth counts those in use.)
         undefined PushClip(defined int x, defined int y, defined int w, defined int h) {
-            var r = new Rect(x, y, w, h)
-            if (this.clips.Count > 0) { r.IntersectWith(this.clips[this.clips.Count - 1]) }
-            r.TakeTo(this)
-            this.clips.Add(r)
+            Rect r = undefined
+            if (this.clipDepth < this.clips.Count) {
+                r = this.clips[this.clipDepth]
+                r.x = x
+                r.y = y
+                r.w = w
+                r.h = h
+            } else {
+                r = new Rect(x, y, w, h)
+                r.TakeTo(this)
+                this.clips.Add(r)
+            }
+            if (this.clipDepth > 0) { r.IntersectWith(this.clips[this.clipDepth - 1]) }
+            this.clipDepth = this.clipDepth + 1
             this.renderer.SetClip(r.x, r.y, r.w, r.h)
         }
 
         undefined PopClip() {
-            var last = this.clips.Count - 1
-            if (last < 0) { return }
-            delete this.clips[last]
-            this.clips.RemoveAt(last)
-            if (last == 0) { this.renderer.ResetClip() }
+            if (this.clipDepth <= 0) { return }
+            this.clipDepth = this.clipDepth - 1
+            if (this.clipDepth == 0) { this.renderer.ResetClip() }
             else {
-                any r = this.clips[last - 1]
+                any r = this.clips[this.clipDepth - 1]
                 this.renderer.SetClip(r.x, r.y, r.w, r.h)
             }
         }

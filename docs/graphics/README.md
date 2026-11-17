@@ -55,6 +55,7 @@ changed: `fb.SetPaletteColor(i, color)`, `SetPaletteRgb(i, r, g, b)`, `GetPalett
 | `Width()`, `Height()`, `Mode()`, `Resize(w, h)` | size and mode |
 | `ToPng()` | the picture as the bytes of a PNG file - `IO.File.WriteAllBytes("x.png", fb.ToPng())` ([files](../stdlib/filesystem.md)) |
 | `ReadBytes()`, `WriteBytes(bytes)`, `ReadByte(i)`, `WriteByte(i, v)`, `ByteCount()` | raw access, row by row from the top |
+| `Tinted(color)` | a NEW framebuffer, every channel multiplied by `color` (alpha too): a white icon becomes `color` and keeps its transparency, black stays black; a palette picture keeps its indices and gets a tinted palette. It goes over every pixel - make it when the colour changes and keep it (e.g. an icon in the [accent's text colour](../ui/windows.md)) |
 | `ToMask(threshold, darkIsRemoved, alphaThreshold)` | a black/white mask (for the [slicer](#slicer-pictures-to-tool-paths)) |
 | `TransparentIndex` | the transparent palette index of a loaded picture (-1: none) |
 | `Accelerated` | true when the framebuffer lives on the GPU (below) |
