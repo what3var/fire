@@ -2,7 +2,7 @@
 #import "scene3d"
 #import "scene3d.effects"
 // The hardware renderer draws fog, the light culling per tile and the reflections as the software renderer does: its picture is close to the software one (as close as for
-// its other features: at most 2 % of the bytes more than 24 apart). Without a GPU (or a GPU that cannot) the software renderer draws, and the comparisons hold all the same.
+// its other features: under 1 % of the bytes more than 24 apart). Without a GPU (or a GPU that cannot) the software renderer draws, and the comparisons hold all the same.
 // (FIRE_S3D_GPU=cpu takes a Vulkan device that is a CPU, lavapipe: so a machine without a GPU tests the hardware renderer.)
 class H {
     static int Sum(Framebuffer f) {
@@ -11,14 +11,14 @@ class H {
         for (var i = 0; i < b.length; i++) { s = (s * 31 + b[i]) % 1000003 }
         return s
     }
-    // the bytes that are more than 24 apart: few (below 2 %)
+    // the bytes that are more than 24 apart: few (below 1 %)
     static bool Close(byte a[], byte b[]) {
         var off = 0
         for (var i = 0; i < a.length; i++) {
             var d = a[i] - b[i]
             if (d > 24 || d < -24) { off++ }
         }
-        return off * 50 < a.length
+        return off * 100 < a.length
     }
     static bool Same(byte a[], byte b[]) {
         for (var i = 0; i < a.length; i++) { if (a[i] != b[i]) { return false } }
