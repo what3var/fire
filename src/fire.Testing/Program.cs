@@ -12835,6 +12835,8 @@ else
 
         // Memory errors in the generated code (ownership, freeing) must not slip through: run the cases under the sanitizers when the compiler has them.
         string sanitize = "";
+        // (FIRE_TEST_SANITIZE=0: without them - the code paths the runtime keeps for the sanitizers' own checks, e.g. the pool of small objects, run then)
+        if (Environment.GetEnvironmentVariable("FIRE_TEST_SANITIZE") != "0")
         {
             string probeFile = Path.Combine(workDir, "probe.cpp");
             File.WriteAllText(probeFile, "int main() { return 0; }\n");

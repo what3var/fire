@@ -1736,7 +1736,7 @@ extern FIRE_RT_DATA SlotTable g_slots;
 #define slotGenSet(slot, g) (g_slots.e[slot].gen = (FireGen)(g))
 #define slotBornGet(slot) (g_slots.born[slot])
 #define slotBornSet(slot, g) (g_slots.born[slot] = (FireGen)(g))
-#define slotInTable(slot) ((uint32_t)(slot) < g_slots.cap)
+#define slotInTable(slot) ((uint32_t)(slot) < g_slots.count)   /* (the entries above `count` were never handed out: not even written yet) */
 #ifdef FIRE_SLOT_HDR
 #define slotHdr(slot) (g_slots.e[slot].hdr)
 #endif
@@ -1746,11 +1746,9 @@ FIRE_COLD FIRE_FN uint32_t slotGrow(void) {
     SlotEntry* e = (SlotEntry*)realloc(g_slots.e, cap * sizeof(SlotEntry));
     FireGen* born;
     if (!e) outOfMemory();
-    memset(e + g_slots.cap, 0, (cap - g_slots.cap) * sizeof(SlotEntry));
-    g_slots.e = e;
+    g_slots.e = e;   /* (the new entries are written when they are handed out - slotAcquire: pages of the table that no slot reached yet stay untouched) */
     born = (FireGen*)realloc(g_slots.born, cap * sizeof(FireGen));
     if (!born) outOfMemory();
-    memset(born + g_slots.cap, 0, (cap - g_slots.cap) * sizeof(FireGen));
     g_slots.born = born;
     g_slots.cap = cap;
     return cap;
@@ -1762,6 +1760,8 @@ FIRE_FN void slotAcquire(Owned* o) {
         if (FIRE_UNLIKELY(g_slots.count >= g_slots.cap)) slotGrow();
         if (FIRE_UNLIKELY(g_slots.count >= FIRE_SLOT_MAX)) fatal("Too many objects, arrays and buffers at once.");
         slot = g_slots.count++;
+        memset(&g_slots.e[slot], 0, sizeof(SlotEntry));
+        g_slots.born[slot] = 0;
     }
     o->slot = slot;
     o->gen = slotGenGet(slot);
@@ -3318,6 +3318,68 @@ FIRE_FN void dataCopy(void* to, const void* from, uint32_t bytes) {
 #endif
 }
 
+/* The memory of small objects (docs/spec/NATIVE_BACKEND.md "Der Objektkopf"): without fire threads, on the hosted targets, an object of up to
+ * FIRE_OBJ_POOL_MAX bytes comes from a pool - one free list per multiple of 8 bytes, refilled from blocks of the C library that grow from 16 KB to 1 MB
+ * and are never given back (a freed object goes to the list of its size and is the next one of that size). malloc would add its own 8 bytes and round up
+ * to 16: a Point of two packed ints (64 bytes) took 80. With fire threads (an object may be freed on another thread than the one that made it), under a
+ * sanitizer (it would not see a use after free) and on the small targets the C library's malloc stays; FIRE_NO_OBJ_POOL turns the pool off. */
+#if !defined(FIRE_THREADS) && !defined(FIRE_NO_OBJ_POOL) && !defined(__SANITIZE_ADDRESS__) && !defined(__SANITIZE_THREAD__) \
+    && (defined(__linux__) || defined(__APPLE__) || defined(_WIN32) || defined(__FreeBSD__)) && SIZE_MAX > 0xFFFFu
+#if defined(__clang__) && defined(__has_feature)
+#if !__has_feature(address_sanitizer) && !__has_feature(thread_sanitizer) && !__has_feature(memory_sanitizer)
+#define FIRE_OBJ_POOL 1
+#endif
+#else
+#define FIRE_OBJ_POOL 1
+#endif
+#endif
+#ifdef FIRE_OBJ_POOL
+#define FIRE_OBJ_POOL_MAX 256u
+typedef struct ObjPool { void* free[FIRE_OBJ_POOL_MAX / 8u + 1u]; char* bump; char* end; size_t next; } ObjPool;
+extern FIRE_RT_DATA ObjPool g_objPool;
+FIRE_COLD FIRE_FN void* objPoolRefill(size_t n) {
+    size_t size = g_objPool.next ? g_objPool.next : (size_t)16384u;
+    char* block = (char*)malloc(size);
+    if (FIRE_UNLIKELY(!block)) return NULL;
+    if (size < (size_t)1048576u) g_objPool.next = size * 2u; else g_objPool.next = size;
+    /* (the rest of the old block goes to the free lists - the bump pointer only moves on) */
+    while ((size_t)(g_objPool.end - g_objPool.bump) >= 8u) {
+        size_t rest = (size_t)(g_objPool.end - g_objPool.bump), c = rest > FIRE_OBJ_POOL_MAX ? FIRE_OBJ_POOL_MAX / 8u : rest / 8u;
+        *(void**)g_objPool.bump = g_objPool.free[c];
+        g_objPool.free[c] = g_objPool.bump;
+        g_objPool.bump += c * 8u;
+    }
+    g_objPool.bump = block + n;
+    g_objPool.end = block + size;
+    return block;
+}
+FIRE_FN void* objMemAlloc(size_t n) {
+    if (FIRE_LIKELY(n <= FIRE_OBJ_POOL_MAX)) {
+        size_t c = (n + 7u) >> 3;
+        void* p = g_objPool.free[c];
+        if (p) { g_objPool.free[c] = *(void**)p; return p; }
+        n = c << 3;
+        if (FIRE_LIKELY((size_t)(g_objPool.end - g_objPool.bump) >= n)) { p = g_objPool.bump; g_objPool.bump += n; return p; }
+        return objPoolRefill(n);
+    }
+    return malloc(n);
+}
+FIRE_FN void objMemFree(void* p, size_t n) {
+    if (FIRE_LIKELY(n <= FIRE_OBJ_POOL_MAX)) {
+        size_t c = (n + 7u) >> 3;
+        *(void**)p = g_objPool.free[c];
+        g_objPool.free[c] = p;
+        return;
+    }
+    free(p);
+}
+#else
+#define objMemAlloc(n) malloc(n)
+#define objMemFree(p, n) free(p)
+#endif
+/* The bytes of an object (what objMemAlloc got for it). */
+#define objMemSize(o) (FIRE_HDR(Obj) + (size_t)(o)->nraw + (size_t)(o)->nfields * sizeof(Value))
+
 /* An object of the class `cls` with `fieldCount` Value slots and `rawBytes` bytes of packed fields (zero: their numbers start at 0). */
 FIRE_FN Value newObjectR(uint32_t cls, uint32_t fieldCount, uint32_t rawBytes, OwnList* owner) {
     void* memory;
@@ -3325,7 +3387,7 @@ FIRE_FN Value newObjectR(uint32_t cls, uint32_t fieldCount, uint32_t rawBytes, O
     Value* f;
     uint32_t i;
     if (FIRE_UNLIKELY(fieldCount > 0xFFFFu || rawBytes > 0xFFFFu)) fatal("A class with too many fields.");
-    memory = malloc(blockSize(FIRE_HDR(Obj) + rawBytes, fieldCount, sizeof(Value)));
+    memory = objMemAlloc(blockSize(FIRE_HDR(Obj) + rawBytes, fieldCount, sizeof(Value)));
     if (FIRE_UNLIKELY(!memory)) allocFailed();
     o = (Obj*)memory;
     o->h.okind = O_Object;
@@ -3393,7 +3455,7 @@ FIRE_FN void batchEnd(void) {
         slotRelease(&obj->h);   /* from now on a Value of this object is dead: using it is a DestroyedException */
 #ifndef FIRE_KEEP_DESTROYED
         free(obj->ext);
-        free(obj);
+        objMemFree(obj, objMemSize(obj));
 #endif
         o = next;
     }
@@ -6821,6 +6883,21 @@ FIRE_FN Value fire_arrayCopy(Value src, Value dst, Value count) {
         if (s->typed->real || d->typed->real) for (i = 0; i < n; i++) arrSetReal(d->typed, i, d->length, arrIsReal(s->typed, i));
         return Undef();
     }
+    /* (two arrays of Values that hold the same - an untyped target, or both typed alike (`Point a[]`): what arraySet would do for each, without its checks -
+     * the prelude's List.Grow of a List<Point>) */
+    if (!s->open && !d->open && arrValues(s) && arrValues(d) && s != d
+        && (!d->typed || (s->typed && s->typed->elem == d->typed->elem && s->typed->unit == d->typed->unit && s->typed->flags == d->typed->flags))) {
+        const Value* from = arrValues(s);
+        Value* to = arrValues(d);
+        for (i = 0; i < n; i++) {
+            Value v = from[i], old = to[i];
+            to[i] = v;
+            FIRE_DOM_STORE(&d->h, v);
+            retain(v);
+            release(old);
+        }
+        return Undef();
+    }
     for (i = 0; i < n; i++) { arraySet(dst, Int((FireInt)i), arrayGet(src, Int((FireInt)i))); if (FIRE_UNLIKELY(g_unwind.active)) break; }
     return Undef();
 }
@@ -9043,7 +9120,7 @@ FIRE_FN void lentFree(Owned* h) {
         slotRelease(&o->h);
 #ifndef FIRE_KEEP_DESTROYED
         free(o->ext);
-        free(o);
+        objMemFree(o, objMemSize(o));
 #endif
     }
 }
@@ -13521,6 +13598,9 @@ uint32_t g_udCount = 0, g_udCap = 0;
 bool g_dimsAdded = false;
 const TextUnit* g_textUnits = NULL;
 uint32_t g_textUnitCount = 0;
+#ifdef FIRE_OBJ_POOL
+ObjPool g_objPool;
+#endif
 #ifdef FIRE_SLOTS
 SlotTable g_slots;
 #ifdef FIRE_SLOT_SEGMENTS

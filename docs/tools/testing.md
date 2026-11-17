@@ -152,6 +152,7 @@ quickly:
 | `FIRE_TEST_NO_NATIVE=1` | everything but the native backend |
 | `FIRE_TEST_CCACHE=0` | no compiler cache |
 | `FIRE_TEST_JOBS=<n>` | how many native builds and test programs at a time (default: the cores of the machine); `1` builds and runs one case after the other |
+| `FIRE_TEST_SANITIZE=0` | the native cases without AddressSanitizer/UBSan (by default they run under them when the compiler has them): the paths the runtime keeps for the sanitizers' own checks then run - the pool of small objects (fire_rt.h objMemAlloc) instead of malloc per object |
 | `FIRE_TEST_OPT=<flags>` | the optimization of the native test builds (default `-O1`; e.g. `-O2` for a run that looks for the warnings only `-O2` finds) |
 
 The window cases of the native group (filter `Fenster`) run every window program with fire's own display without a screen (`FIRE_DISPLAY=headless`) and on Wayland (`weston`); the

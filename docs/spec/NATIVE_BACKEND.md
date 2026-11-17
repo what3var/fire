@@ -273,6 +273,13 @@ Skript -> Lexer -> Parser -> Resolver -> Compiler -> Bytecode (LinkedProgram)
 * **Der Objektkopf.** Was die meisten Objekte nie brauchen - die Liste dessen, was ein Objekt besitzt, und seine Typargumente - liegt in einem Block
   `ObjExt`, den `objExt` erst anlegt, wenn das Objekt etwas besitzt oder Typargumente bekommt (`objOwned`, `objSetTArgs`; gelesen mit `objTArgs`). Der
   Kopf eines Objekts (`Obj`, mit dem `Owned` aller Werte mit Besitzer) ist damit 48 statt 56 Byte (64 Bit) und 32 statt 40 Byte (16 und 32 Bit).
+* **Der Speicher kleiner Objekte** (`objMemAlloc`/`objMemFree`, `FIRE_OBJ_POOL`): ohne fire-Threads, auf den gehosteten Zielen (Linux, macOS, Windows,
+  FreeBSD) und ohne Sanitizer kommt ein Objekt bis 256 Byte aus einem Pool - eine Freiliste je Vielfachem von 8 Byte, nachgefüllt aus Blöcken der
+  C-Bibliothek von 16 KB bis 1 MB, die nie zurückgegeben werden (ein freigegebenes Objekt ist das nächste seiner Größe; der Rest eines Blocks geht in die
+  Listen). malloc legte 8 Byte eigene Verwaltung dazu und rundete auf 16: ein Punkt aus zwei gepackten `int` (48 Byte Kopf + 16) belegte 80 Byte, jetzt 64.
+  Mit Threads (ein Objekt kann auf einem anderen Thread sterben als dem, der es anlegte), unter ASan/TSan (sie sähen die Wiederverwendung nicht; die
+  Testfälle laufen dort mit malloc, `FIRE_TEST_SANITIZE=0` prüft den Pool) und auf den kleinen Zielen bleibt malloc; `FIRE_NO_OBJ_POOL` schaltet ihn ab.
+  Die Größe beim Freigeben ist `objMemSize` (Kopf, `nraw`, `nfields`) - sie ändert sich im Leben eines Objekts nicht.
 * **Typisierte Arrays werden gepackt** (SPEC 8.4.2): ein Array in einer Deklaration mit Elementtyp (`int a[]`, `int[8] a[]`, `float[32] a[]`, `bool`,
   `char`; eine `byte`-Deklaration hält dagegen einen Puffer: `OpCode.TypeArray` mit `byte` wird `typeBuffer(...)`, das Array wird durch einen neuen Puffer
   mit seinen Elementen ersetzt - `bufFromArray`, in der VM `BufferFromArrayValue`; `byte a[n]` ist gleich `newBuffer`) bekommt einen `ArrTyped` (`Arr::typed`, sonst null): Elementtyp (`E_I8` ..., dieselben Nummern wie `Values.ArrayElem` der VM), Einheit
