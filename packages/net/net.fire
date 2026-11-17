@@ -436,7 +436,7 @@ namespace Net {
         }
 
         // The port it listens on (what a port 0 became).
-        int Port {
+        defined int Port {
             get {
                 this.Check()
                 return Net.NetErrors.Handle(__NetLocalPort(this.handle))
@@ -520,7 +520,7 @@ namespace Net {
             if (this.closed) { throw new ClosedException("The socket is closed.", 2) }
         }
 
-        int Port {
+        defined int Port {
             get {
                 this.Check()
                 return Net.NetErrors.Handle(__NetLocalPort(this.handle))

@@ -141,7 +141,7 @@ namespace UI.Docking {
             var c = this.content
             if (c != undefined && c.Visible) {
                 root.PushClip(ax, ay, this.actualWidth, this.actualHeight)
-                c.Draw(root, ax + c.rx, ay + c.ry)
+                root.DrawChild(c, ax + c.rx, ay + c.ry)
                 root.PopClip()
             }
         }
@@ -377,7 +377,7 @@ namespace UI.Docking {
                 var capText = theme.text
                 if (this.focusInside) {
                     capBack = theme.accent
-                    capText = theme.selectionText
+                    capText = theme.accentText
                 }
                 r.FillRect(ax, ay, w, caption, capBack)
                 var room = w - 8
@@ -421,7 +421,7 @@ namespace UI.Docking {
                 }
                 r.DrawRect(ax, ay, w, h, theme.border)
             }
-            if (win != undefined && win.Visible) { win.Draw(root, ax + win.rx, ay + win.ry) }
+            if (win != undefined && win.Visible) { root.DrawChild(win, ax + win.rx, ay + win.ry) }
         }
 
         override UI.Element HitTest(defined int px, defined int py) {
@@ -612,17 +612,17 @@ namespace UI.Docking {
                     r.FillRect(ax + 1, ay + 1, this.actualWidth - 2, title, theme.accent)
                     var close = this.CloseLeft(root)
                     root.PushClip(ax, ay, close - ax, title + 1)
-                    this.DrawString(root, ax + 5, ay + 1 + (title - this.TextHeight(root)) / 2, strip.Text, theme.selectionText)
+                    this.DrawString(root, ax + 5, ay + 1 + (title - this.TextHeight(root)) / 2, strip.Text, theme.accentText)
                     root.PopClip()
                     if (this.closeHot) { r.FillRect(close, ay + 1, title, title, theme.faceHover) }
-                    var cross = theme.selectionText
+                    var cross = theme.accentText
                     if (this.closeHot) { cross = theme.text }
                     UI.Docking.Paint.Cross(root, close + title / 2, ay + 1 + title / 2, cross)
                 }
                 r.DrawRect(ax, ay, this.actualWidth, this.actualHeight, theme.border)
             }
             var b = this.body
-            if (b != undefined && b.Visible) { b.Draw(root, ax + b.rx, ay + b.ry) }
+            if (b != undefined && b.Visible) { root.DrawChild(b, ax + b.rx, ay + b.ry) }
         }
 
         override UI.Element HitTest(defined int px, defined int py) {
@@ -1434,7 +1434,7 @@ namespace UI.Docking {
                 var c = this.content
                 if (c.Visible) {
                     root.PushClip(ax + this.centerX, ay + this.centerY, this.centerW, this.centerH)
-                    c.Draw(root, ax + c.rx, ay + c.ry)
+                    root.DrawChild(c, ax + c.rx, ay + c.ry)
                     root.PopClip()
                 }
             }
@@ -1443,7 +1443,7 @@ namespace UI.Docking {
         }
 
         undefined DrawChild(UI.Root root, UI.Element e) {
-            if (e.Visible) { e.Draw(root, this.ax + e.rx, this.ay + e.ry) }
+            if (e.Visible) { root.DrawChild(e, this.ax + e.rx, this.ay + e.ry) }
         }
 
         override UI.Element HitTest(defined int px, defined int py) {
@@ -1953,7 +1953,7 @@ namespace UI.Docking {
             var mark = theme.accent
             if (guide == this.hotGuide) {
                 back = theme.accent
-                mark = theme.selectionText
+                mark = theme.accentText
             }
             root.Box(x, y, g, g, back, theme.borderFocus, UI.M.Min(theme.radius, 4))
             var cx = x + g / 2

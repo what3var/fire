@@ -62,6 +62,7 @@ if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "programfile") { Pr
 if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "tables") { TablesTests.Run(); return; }
 if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "syntax") { SyntaxTests.Run(); return; }
 if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "types") { TypeTests.Run(); return; }
+if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "completion") { CompletionTests.Run(); return; }
 if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "testing") { TestingTests.Run(); return; }
 if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "notes") { NotesTests.Run(); return; }
 if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "windows") { WindowManagerTests.Run(); return; }
@@ -6781,6 +6782,30 @@ uiDrawScript = """
         print(win.RegisterJoystickRemoved(func (int j) => { }))
         """, new[] { "True", "False", "16 3 10 20 1 ", "17 3 12 22 1 ", "18 3 12 22 1 ", "32 7 1 -0.5 ", "33 7 2 ", "34 7 2 ", "35 7 0 5 ", "36 7 ", "37 7 ", "True", "True", "True", "True", "True", "True", "True", "True", "True" });
 
+    CheckUi("Clip: ein Element zeichnet nur in sein Rechteck (ein langes Label mit fester Breite, in einem Panel, das schmaler ist; ClipToBounds = false reicht hinaus)", uiHead + """
+        var red = UI.Color.Rgb(220, 0, 0)
+        // counts the red pixels of the columns x0 .. x1 - 1 in the rows 10 .. 29
+        class Red { static int Count(any r, int x0, int x1, int c) { var n = 0; for (var y = 10; y < 30; y++) { for (var x = x0; x < x1; x++) { if (Px.Get(r, x, y) == c) { n++ } } } return n } }
+        var label = new UI.Label("WWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWW", 10, 10)
+        label.Color = new SolidBrush(red)
+        label.Width = 60
+        ui.Add(label)
+        // a label that is wider than its panel: the panel's edge cuts it
+        var panel = new UI.Panel(100, 0, 50, 40)
+        panel.Filled = false
+        var inner = new UI.Label("WWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWW", 0, 10)
+        inner.Color = new SolidBrush(red)
+        panel.Add(inner)
+        ui.Add(panel)
+        ui.Draw()
+        print("label inside " + (Red.Count(ui.renderer, 10, 70, red) > 50) + ", beyond " + Red.Count(ui.renderer, 70, 100, red))
+        print("panel inside " + (Red.Count(ui.renderer, 100, 150, red) > 50) + ", beyond " + Red.Count(ui.renderer, 150, 320, red))
+        label.ClipToBounds = false
+        ui.Invalidate()
+        ui.Draw()
+        print("without clip beyond " + (Red.Count(ui.renderer, 70, 100, red) > 0))
+        """, new[] { "label inside True, beyond 0", "panel inside True, beyond 0", "without clip beyond True" });
+
     CheckUi("Textfeld: Auswahl mit Shift und der Maus, Ctrl+A/C/X/V und Shift+Insert ueber die Zwischenablage, Tippen ersetzt die Auswahl, MaxLength", uiHead + """
         var tb = new UI.TextBox("Hallo Welt", 10, 10, 200, 24)
         ui.Add(tb)
@@ -9517,7 +9542,7 @@ uiDrawScript = """
         ExpectDiagnostic("unbekannte Eigenschaft", "<Window Class=\"A\"><Label colour=\"#fff\"/></Window>", "has no property or event 'colour'");
         ExpectDiagnostic("ein Button hat keine Kinder", "<Window Class=\"A\"><Button><Label/></Button></Window>", "cannot contain elements");
         ExpectDiagnostic("Name doppelt", "<Window Class=\"A\"><Label Name=\"a\"/><Label Name=\"a\"/></Window>", "used twice");
-        ExpectDiagnostic("reservierter Name", "<Window Class=\"A\"><Label Name=\"ui\"/></Window>", "used by the generated class");
+        ExpectDiagnostic("reservierter Name", "<Window Class=\"A\"><Label Name=\"UIRoot\"/></Window>", "used by the generated class");
         ExpectDiagnostic("Handlername gleich Elementname", "<Window Class=\"A\"><Label Name=\"a\"/><Button OnClick=\"a\"/></Window>", "already used");
         ExpectDiagnostic("unbekannter Converter", "<Window Class=\"A\"><Label Text=\"{Binding X, Converter=Nope}\"/></Window>", "Unknown converter 'Nope'");
         ExpectDiagnostic("Binding auf ein Element, das es nicht gibt", "<Window Class=\"A\"><Label Text=\"{Binding text, ElementName=x}\"/></Window>", "does not exist");
@@ -9578,6 +9603,23 @@ uiDrawScript = """
             && script.Contains("UI.Button ok") && script.Contains("e0.Left = 0x10") && script.Contains("#import \"ui\"") && script.Contains("\"Hi \\\"you\\\"\""), script);
         CheckMarkup("Markup: eine View hat Attach statt Run",
             Generate("<View Class=\"V\" Base=\"VBase2\"/>") is var viewScript && viewScript.Contains("class VBase2 {") && viewScript.Contains("Attach(any container)") && !viewScript.Contains("Run()"));
+        string rootScript = Generate("<Window Class=\"R\" UIRoot.WindowBackdrop=\"acrylic\" UIRoot.Dark=\"true\" UIRoot.Accent=\"0x8854D0\" UIRoot.WindowBackground=\"#102030\"><Label/></Window>");
+        CheckMarkup("Markup: UIRoot.* am Fenster setzt Eigenschaften der Wurzel (UIRoot)",
+            rootScript.Contains("UI.Root UIRoot") && rootScript.Contains("this.UIRoot.WindowBackdrop = Backdrop.Acrylic") && rootScript.Contains("this.UIRoot.Dark = true")
+            && rootScript.Contains("this.UIRoot.Accent = 0x8854D0") && rootScript.Contains("this.UIRoot.WindowBackground = new SolidBrush(UI.Color.Rgb(16, 32, 48))"), rootScript);
+        ExpectGenerateError("UIRoot.WindowBackdrop mit unbekanntem Wert", "<Window Class=\"A\" UIRoot.WindowBackdrop=\"Glass\"/>", "needs one of None, Mica, Acrylic, Blur, Transparent");
+        ExpectDiagnostic("UIRoot.* unbekannt", "<Window Class=\"A\" UIRoot.Nope=\"1\"/>", "Unknown attribute 'UIRoot.Nope'");
+        ExpectDiagnostic("UIRoot.* nicht bindbar", "<Window Class=\"A\" UIRoot.Dark=\"{Binding dark}\"/>", "cannot be bound");
+        ExpectDiagnostic("UIRoot.* nicht an einer View", "<View Class=\"A\" UIRoot.Dark=\"true\"/>", "Unknown attribute 'UIRoot.Dark'");
+        // the generated code is typed: the lambdas of probes, templates and events have types, the handlers the types of the event's parameters
+        string typedScript = Generate("<Window Class=\"T\"><Resources><DataTemplate Key=\"d\"><Label Text=\"{Binding name}\"/></DataTemplate>"
+            + "<ControlTemplate Key=\"c\" Target=\"Button\"><Border><Label Text=\"{TemplateBinding Text}\"/></Border></ControlTemplate></Resources>"
+            + "<TextBox Text=\"{Binding name, Mode=TwoWay}\"/><DrawingCanvas OnPaint=\"Paint\" OnMouseDown=\"Down\"/></Window>");
+        CheckMarkup("Markup: der erzeugte Code ist typisiert (Lambdas der Probes, Vorlagen und Ereignisse, Handler)",
+            !typedScript.Contains("func (o, v)") && typedScript.Contains("func (any o, any v) on this") && typedScript.Contains("new UI.DataTemplate(func (any item) on this")
+            && typedScript.Contains("new UI.ControlTemplate(func (UI.Element owner) on this") && typedScript.Contains("func (UI.DrawingCanvas canvas) on this")
+            && typedScript.Contains("func (int x, int y, int button) on this") && typedScript.Contains("undefined Down(any sender, int x, int y, int button) { }")
+            && typedScript.Contains("undefined Paint(any sender, UI.DrawingCanvas canvas) { }") && typedScript.Contains("try context??.TakeTo(this)"), typedScript);
 
         // the generated classes against the library: a window (events through the fake window) and a view (bindings)
         string dir = Path.Combine(Path.GetTempPath(), "fire-markup-" + Guid.NewGuid().ToString("N"));
@@ -9604,15 +9646,15 @@ uiDrawScript = """
                     FlagChanged(sender) { print("flag " + sender.IsChecked) }
                 }
                 var f = new MyForm()
-                f.ui.Draw()
-                f.ui.Draw()   // labels and check boxes know their height only after the first drawing, which moves the elements below them in a Stack
+                f.UIRoot.Draw()
+                f.UIRoot.Draw()   // labels and check boxes know their height only after the first drawing, which moves the elements below them in a Stack
                 print(f.box.Horizontal + " " + f.field.Width + " " + f.caption.Text)
                 // a click on the button (its screen position is known after drawing)
                 var bx = f.go.ax + 5
                 var by = f.go.ay + 5
                 __TestEvent(8, 1, bx + 0.0, by + 0.0)
                 __TestEvent(11, 1, bx + 0.0, by + 0.0)
-                f.ui.Tick()
+                f.UIRoot.Tick()
                 print("clicks " + f.clicks)
                 // focus the text field with a click, type into it
                 var tx = f.field.ax + 5
@@ -9621,7 +9663,7 @@ uiDrawScript = """
                 __TestEvent(11, 1, tx + 0.0, ty + 0.0)
                 __TestEvent(3, "h")
                 __TestEvent(3, "i")
-                f.ui.Tick()
+                f.UIRoot.Tick()
                 print("field " + f.field.Text)
                 f.flag.Toggle()
                 """, new[] { "False 200 Name:", "clicks 1", "text h", "text hi", "field hi", "flag True" });
@@ -9644,21 +9686,21 @@ uiDrawScript = """
                 var f = new MyNotes()
                 var doc = new Doc()
                 f.SetDataContext(doc)
-                f.ui.Draw()
+                f.UIRoot.Draw()
                 print(f.notes.WordWrap + " " + f.notes.AcceptsTab + " " + f.notes.MaxLength + " " + f.notes.TabSize + " " + f.notes.LineCount + " " + f.locked.ReadOnly)
-                f.ui.SetFocus(f.notes)
+                f.UIRoot.SetFocus(f.notes)
                 __TestEvent(24, UI.Keys.End(), 64)
                 __TestEvent(24, UI.Keys.Enter(), 0)
                 __TestEvent(24, UI.Keys.Tab(), 0)
                 __TestEvent(3, "dritte")
-                f.ui.Tick()
-                print(f.notes.LineCount + " " + f.edits + " [" + doc.Body.Replace("\n", "|").Replace("\t", "~") + "] " + (f.ui.focusElement == f.notes))
+                f.UIRoot.Tick()
+                print(f.notes.LineCount + " " + f.edits + " [" + doc.Body.Replace("\n", "|").Replace("\t", "~") + "] " + (f.UIRoot.focusElement == f.notes))
                 doc.Body = "neu"
-                f.ui.Tick()
+                f.UIRoot.Tick()
                 print(f.notes.LineCount + " [" + f.notes.Text + "]")
-                f.ui.SetFocus(f.locked)
+                f.UIRoot.SetFocus(f.locked)
                 __TestEvent(3, "x")
-                f.ui.Tick()
+                f.UIRoot.Tick()
                 print(f.locked.Text)
                 """, new[] { "True True 100 2 2 True", "3 3 [erste|zweite|~dritte] True", "1 [neu]", "fest" });
 
@@ -9680,7 +9722,7 @@ uiDrawScript = """
             CheckUi("Markup: Bindings mit Probes - Pfad, Element, TwoWay, Converter, OneTime, Austausch im Pfad, Trennen", $$"""
                 #include "{{P("Panel.fxml")}}"
                 enum Colors { Black = 0, Red = 255 }
-                class UpperConverter : UI.Converter { Convert(value) { return value.ToUpper() } }
+                class UpperConverter : UI.Converter { Convert(value) { return value?.ToUpper() } }
                 class Player { string Name = "p1"
                                bool Active = true }
                 class Model { Player Player
@@ -9714,7 +9756,7 @@ uiDrawScript = """
                 """, new[]
                 {
                     "abc p1 T1 p1 P1 T1 False False 255", "xyz", "p2 p2 P2", "p3 p3 P3", "False",
-                    "other other", "other2", "p4", "T1||True", "p4",
+                    "other other", "other2", "p4", "T1||True", "",
                 });
 
             File.WriteAllText(P("Prop.fxml"), """
@@ -9748,6 +9790,73 @@ uiDrawScript = """
                 print(d.ed.Text + " " + d.sum.Text)
                 """, new[] { "1 a a1", "7", "x! x", "x!7", "y! y!7" });
 
+            // a broken path (an undefined on the way) is passed on: text "", the other properties their default, converters get undefined, TwoWay writes back only along a whole path
+            File.WriteAllText(P("Gap.fxml"), """
+                <Window Class="Gap" Title="Gap" Width="300" Height="300">
+                  <Resources>
+                    <Converter Key="Upper" Type="UpperConverter"/>
+                    <DataTemplate Key="Row"><Label Text="{Binding address.city, Converter=Upper}"/></DataTemplate>
+                  </Resources>
+                  <StackPanel Spacing="2">
+                    <Label Name="lbl" Text="{Binding Player.Name}"/>
+                    <TextBox Name="edit" Width="120" Text="{Binding Player.Name, Mode=TwoWay}"/>
+                    <Label Name="shout" Text="{Binding Player.Name, Converter=Upper}"/>
+                    <CheckBox Name="cb" Text="a" IsChecked="{Binding Player.Active, Mode=TwoWay}"/>
+                    <CheckBox Name="notcb" Text="b" IsChecked="{Binding Player.Off, Converter=Not}"/>
+                    <Label Name="vis" Text="v" Visible="{Binding Player.Shown}" Width="{Binding Player.Size}"/>
+                    <ListBox Name="rows" Width="200" Height="80" ItemsSource="{Binding people}" ItemTemplate="Row"/>
+                  </StackPanel>
+                </Window>
+                """);
+            CheckUi("Markup: ein unterbrochener Pfad gibt undefined weiter - Text leer, sonst der Standardwert, Converter bekommen undefined, TwoWay schreibt nicht zurueck, Vorlagen", $$"""
+                #include "{{P("Gap.fxml")}}"
+                class UpperConverter : UI.Converter { Convert(value) { return value?.ToUpper() } }
+                class Address { string city
+                                construct(string c) { this.city = c } }
+                class Person { Address address }
+                class Player { string Name = "p1"
+                               bool Active = true
+                               bool Off = false
+                               bool Shown = false
+                               int Size = 50 }
+                class Model { Player Player
+                              List people }
+                class Gap : GapBase { }
+                class Out { static undefined Line(any d) { print(d.lbl.Text + "|" + d.edit.Text + "|" + d.shout.Text + "|" + d.cb.IsChecked + "|" + d.notcb.IsChecked + "|" + d.vis.Visible + "|" + d.vis.Width) } }
+                var d = new Gap()
+                Out.Line(d)
+                var m = new Model()
+                var p = new Player()
+                m.Player = p
+                m.people = new List()
+                m.people.Add(new Person())
+                m.people.Add(new Person())
+                m.people[0].address = new Address("rome")
+                d.SetDataContext(m)
+                d.UIRoot.Draw()
+                Out.Line(d)
+                print(d.rows.rowElements[0].Text + "|" + d.rows.rowElements[1].Text)
+                m.Player = undefined
+                Out.Line(d)
+                d.edit.Text = "typed"
+                d.cb.IsChecked = true
+                print(p.Name + " " + d.edit.Text + " " + d.cb.IsChecked)
+                m.Player = p
+                Out.Line(d)
+                p.Name = undefined
+                print(d.lbl.Text + "|" + d.edit.Text + "|" + d.shout.Text + "|" + (p.Name == undefined))
+                m.people[0].address = undefined
+                m.people[1].address = new Address("oslo")
+                d.UIRoot.Draw()
+                print(d.rows.rowElements[0].Text + "|" + d.rows.rowElements[1].Text)
+                d.SetDataContext(undefined)
+                Out.Line(d)
+                """, new[]
+                {
+                    "|||False|False|True|-1", "p1|p1|P1|True|True|False|50", "ROME|", "|||False|False|True|-1", "p1 typed True",
+                    "p1|p1|P1|True|True|False|50", "|||True", "|OSLO", "|||False|False|True|-1",
+                });
+
             // IntelliSense of the markup editor: `|` is the caret
             List<string> Suggest(string withCaret)
             {
@@ -9770,6 +9879,9 @@ uiDrawScript = """
             CheckMarkup("Markup-IntelliSense: Attribute eines Elements (Eigenschaften, Ereignisse, name), ohne die schon gesetzten", Has(sAttr, "Name", "OnClick", "Margin", "Grid.Row") && !sAttr.Contains("Text"), string.Join(",", sAttr));
             var sRootAttr = Suggest("<Window |");
             CheckMarkup("Markup-IntelliSense: Attribute des Wurzelelements mit Namespaces", Has(sRootAttr, "Class", "namespace", "namespace:prefix", "Title"), string.Join(",", sRootAttr));
+            CheckMarkup("Markup-IntelliSense: UIRoot.* am Fenster, nicht an einer View", Has(sRootAttr, "UIRoot.WindowBackdrop", "UIRoot.Dark", "UIRoot.Accent") && !Suggest("<View |").Contains("UIRoot.Dark"), string.Join(",", sRootAttr));
+            var sBackdrop = Suggest("<Window Class=\"A\" UIRoot.WindowBackdrop=\"|");
+            CheckMarkup("Markup-IntelliSense: Werte von UIRoot.WindowBackdrop", Has(sBackdrop, "None", "Mica", "Acrylic", "Blur", "Transparent"), string.Join(",", sBackdrop));
             var sEnum = Suggest("<Window Class=\"A\"><Label HorizontalAlign=\"|");
             CheckMarkup("Markup-IntelliSense: Werte einer Auswahl", Has(sEnum, "Stretch", "Left", "Center", "Right", "{Binding }"), string.Join(",", sEnum));
             var sBool = Suggest("<Window Class=\"A\"><Label Visible=\"f|");
@@ -9825,7 +9937,7 @@ uiDrawScript = """
                 """);
             CheckUi("Markup: Namespaces - eigener Namespace, gebundene Namespaces, unqualifizierte Typnamen, Objektwerte", uiHead + $$"""
                 namespace Shop.Models {
-                    class Upper : UI.Converter { any Convert(any value) { return value.ToUpper() } }
+                    class Upper : UI.Converter { any Convert(any value) { return value?.ToUpper() } }
                     class Names : List { construct(string a, string b) { this.Add(a)
                         this.Add(b) } }
                 }
@@ -9934,27 +10046,27 @@ uiDrawScript = """
                     Down(sender, x, y, button) { print("down " + x + "," + y + " " + button) }
                 }
                 var app = new RichApp()
-                app.ui.Draw()
-                app.ui.Draw()
+                app.UIRoot.Draw()
+                app.UIRoot.Draw()
                 print("namen " + app.names.Count + " baum " + app.tree.visibleNodes.Count + " vorschlaege " + app.sugg.suggestions.Count + " tabelle " + app.table.columns.Count)
                 var n = app.names
-                app.ui.MouseDown(1, n.ax + 10, n.ay + 25)
-                app.ui.MouseUp(1, n.ax + 10, n.ay + 25)
+                app.UIRoot.MouseDown(1, n.ax + 10, n.ay + 25)
+                app.UIRoot.MouseUp(1, n.ax + 10, n.ay + 25)
                 var c = app.canvas
-                c.MouseDown(app.ui, 1, c.ax + 5, c.ay + 6)
-                app.ui.MouseDown(1, app.one.ax + 5, app.one.ay + 5)
-                app.ui.MouseUp(1, app.one.ax + 5, app.one.ay + 5)
+                c.MouseDown(app.UIRoot, 1, c.ax + 5, c.ay + 6)
+                app.UIRoot.MouseDown(1, app.one.ax + 5, app.one.ay + 5)
+                app.UIRoot.MouseUp(1, app.one.ax + 5, app.one.ay + 5)
                 print("Stil " + (app.styled.Background != undefined) + " " + app.styled.Margin.left + " " + (app.styled.Style == app.fxStyle_Primary))
                 print("Vorlage " + (app.templated.templateRoot != undefined) + " " + app.templated.FindPart("txt").Text)
                 print("implizit " + (app.rect.Stroke != undefined) + " " + app.radio.SelectedIndex + " " + app.radio.items.Count)
-                app.bar.Open(app.ui, 0)
-                app.ui.Draw()
-                var menu = app.ui.popups[0]
+                app.bar.Open(app.UIRoot, 0)
+                app.UIRoot.Draw()
+                var menu = app.UIRoot.popups[0]
                 var mx = menu.ax + 10
                 var my = menu.ay + 4
-                app.ui.MouseDown(1, mx, my)
-                app.ui.MouseUp(1, mx, my)
-                print("Menue " + app.ui.popups.Count + " " + app.bar.menus.Count)
+                app.UIRoot.MouseDown(1, mx, my)
+                app.UIRoot.MouseUp(1, mx, my)
+                print("Menue " + app.UIRoot.popups.Count + " " + app.bar.menus.Count)
                 """, new[] { "paint 80x40 True", "namen 3 baum 3 vorschlaege 2 tabelle 2", "picked Bob", "down 5,6 1", "one", "Stil True 2 True", "Vorlage True Templated", "implizit True 1 2", "open", "Menue 0 2" });
 
             // the design view: the same library draws, without handlers and without the code of the program
@@ -10000,7 +10112,7 @@ uiDrawScript = """
             CheckUi("Markup: DataTemplate, CollectionView und itemsSource folgen dem Datenkontext", $$"""
                 #include "{{P("Data.fxml")}}"
                 class UpperConverter : UI.Converter {
-                    Convert(value) { return value.ToUpper() }
+                    Convert(value) { return value?.ToUpper() }
                     ConvertBack(value) { return value }
                 }
                 class Person {
@@ -10027,25 +10139,25 @@ uiDrawScript = """
                 m.names.Add("one")
                 m.names.Add("two")
                 app.SetDataContext(m)
-                app.ui.Draw()
-                app.ui.Draw()
+                app.UIRoot.Draw()
+                app.UIRoot.Draw()
                 print("zeilen " + app.viaView.Count + " " + app.direct.Count + " " + app.young.Count + " erste " + app.viaView.selectedItem)
                 print("zeile " + app.viaView.rowElements[0].children[0].Text + " " + app.viaView.rowElements[0].children[1].Text + " " + app.direct.rowElements[1].Text)
                 m.people.Add(new Person("Dave", 22))
                 m.names.Add("three")
-                app.ui.Draw()
+                app.UIRoot.Draw()
                 print("mehr " + app.viaView.Count + " " + app.direct.Count + " jung " + app.young.Count + " " + app.young.view[0].name)
                 m.sel = 1
-                app.ui.Draw()
+                app.UIRoot.Draw()
                 print("Auswahl " + app.viaView.SelectedIndex + " " + app.viaView.selectedItem.name)
                 app.viaView.Select(3)
-                app.ui.Draw()
+                app.UIRoot.Draw()
                 print("zurueck " + m.sel)
                 var other = new List()
                 other.Add("x")
                 m.names = other
-                app.ui.Draw()
-                print("neue Liste " + app.direct.Count + " " + app.ui.Update())
+                app.UIRoot.Draw()
+                print("neue Liste " + app.direct.Count + " " + app.UIRoot.Update())
                 """, new[] { "zeilen 3 2 1 erste undefined", "zeile CAROL 31 two", "mehr 4 3 jung 2 Dave", "Auswahl 1 Carol", "zurueck 3", "neue Liste 1 False" });
 
             // the design view shows the rows without knowing the data
@@ -10122,11 +10234,11 @@ uiDrawScript = """
                 var a = new Main()
                 var t = new Tool()
                 a.Open(t)
-                a.ui.Tick()
-                a.ui.Tick()
-                print("ticks " + mainTicks + " " + toolTicks + " angehaengt " + a.ui.attached.Count)
+                a.UIRoot.Tick()
+                a.UIRoot.Tick()
+                print("ticks " + mainTicks + " " + toolTicks + " angehaengt " + a.UIRoot.attached.Count)
                 t.l.Text = "changed"
-                print("Update " + t.ui.Update())
+                print("Update " + t.UIRoot.Update())
                 """, new[] { "ticks 2 2 angehaengt 1", "Update True" });
         }
         finally { try { Directory.Delete(dir, true); } catch (IOException) { } }
@@ -11544,6 +11656,7 @@ TablesTests.Run();
 ProgramFileTests.Run();
 SyntaxTests.Run();
 TypeTests.Run();
+CompletionTests.Run();
 TestingTests.Run();
 WindowManagerTests.Run();
 DialogTests.Run();

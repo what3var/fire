@@ -37,7 +37,7 @@ window.Run()                            // until the window is closed
 <!-- shot: window.nameBox.Text = "Ada";; window.Greet(undefined) -->
 
 The markup becomes a class `GreeterBase` with a field for every named element (`nameBox`, `answer`), an empty method for every handler (`Greet`)
-and a window with its framebuffer and root (`framebuffer`, `window`, `ui`). The code-behind inherits from it and overrides the handlers. In spark,
+and a window with its framebuffer and root (`framebuffer`, `window`, `UIRoot`). The code-behind inherits from it and overrides the handlers. In spark,
 *Add > New > FXML Window* makes both files.
 
 ### The same in code

@@ -1,0 +1,50 @@
+#import "ui"
+// The text on the accent: white, or black on a light accent (by the WCAG contrast ratio) - chosen with every accent, overridable.
+class Probe {
+    static string Hex(defined int rgb) {
+        var hexChars = "0123456789ABCDEF"
+        var s = ""
+        for (var i = 20; i >= 0; i = i - 4) { s = s + hexChars.Substring((rgb >> i) & 15, 1) }
+        return s
+    }
+
+    // a colour of the theme as 0xRRGGBB (UI.Color.Rgb keeps blue in the high byte)
+    static string Of(Brush b) {
+        var c = UI.Theme.ColorOf(b, 0)
+        return Probe.Hex(((c & 255) << 16) | (c & 0xFF00) | ((c >> 16) & 255))
+    }
+
+    static undefined Show(UI.Root root, string name) {
+        root.Draw()
+        print(name + " accent " + Probe.Hex(root.Accent) + " -> " + Probe.Hex(root.AccentForeground) + " accentText " + Probe.Of(root.theme.accentText) + " selectionText " + Probe.Of(root.theme.selectionText))
+    }
+}
+
+var fb = new Framebuffer(160, 100)
+var win = new Window(fb, "t")
+var root = new UI.Root(fb, win)
+var list = new UI.ListBox(4, 4, 150, 90)
+list.Add("one")
+list.Add("two")
+list.SelectedIndex = 1
+root.Add(list)
+
+print("contrast " + Math.Round(UI.Theme.Contrast(0xFFFFFF, 0x000000)) + " " + Math.Round(UI.Theme.Contrast(0x777777, 0x777777)))
+print("on " + Probe.Hex(UI.Theme.ForegroundOn(0x0078D7)) + " " + Probe.Hex(UI.Theme.ForegroundOn(0xFFD700)) + " " + Probe.Hex(UI.Theme.ForegroundOn(0x00205B)) + " " + Probe.Hex(UI.Theme.ForegroundOn(0xFF8C00)) + " " + Probe.Hex(UI.Theme.ForegroundOn(0xE81123)))
+root.Accent = 0x0078D7
+Probe.Show(root, "windows")
+root.Accent = 0xFFE000
+Probe.Show(root, "yellow")
+root.Accent = 0x00205B
+Probe.Show(root, "darkblue")
+root.Dark = true
+root.Accent = 0xFFE000
+Probe.Show(root, "dark yellow")
+root.Dark = false
+root.AccentForeground = 0x202020
+Probe.Show(root, "override")
+root.Accent = 0x00205B
+Probe.Show(root, "override kept")
+root.AccentForeground = -1
+Probe.Show(root, "chosen again")
+//# name: UI: Text auf dem Akzent - hell oder dunkel nach Kontrast (AccentForeground)

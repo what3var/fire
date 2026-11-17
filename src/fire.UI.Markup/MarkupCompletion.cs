@@ -216,6 +216,9 @@ namespace fire.UI.Markup
                 if (t.Equals("Window", StringComparison.OrdinalIgnoreCase)) Add("Title", "the title of the window");
                 items.Add(new MarkupAttributeInfo("Width", "pixels", new PropertyDef("Width", PropertyKind.Int), false));
                 items.Add(new MarkupAttributeInfo("Height", "pixels", new PropertyDef("Height", PropertyKind.Int), false));
+                // the UI root of the window: UIRoot.WindowBackdrop="Acrylic", ...
+                if (t.Equals("Window", StringComparison.OrdinalIgnoreCase))
+                    foreach (var p in MarkupSchema.RootProperties) items.Add(new MarkupAttributeInfo(p.Name, "the UI root: " + Describe(p), p, false));
                 return items;
             }
             string[]? fixedAttributes = t.ToLowerInvariant() switch
@@ -304,6 +307,9 @@ namespace fire.UI.Markup
                 case "setter" or "trigger" or "condition" when attr == "value":
                     tag.Attributes.TryGetValue("property", out var propertyName);
                     property = propertyName == null ? null : target?.Property(propertyName) ?? MarkupSchema.StateProperty(propertyName);
+                    break;
+                case "window" when MarkupSchema.RootProperty(attribute) is { } rootProperty:
+                    property = rootProperty;
                     break;
                 default:
                     var def = t == "collectionview" ? MarkupSchema.CollectionViewDef : MarkupSchema.Find(tag.Tag);

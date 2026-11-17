@@ -4053,6 +4053,8 @@ namespace fire.Compiler
                         return null;
                     case UnaryExpr { Op: UnaryOp.TryTake, Operand: IdentifierExpr id } when id.Name == name: return null;
                     case CallExpr { Callee: MemberExpr { Target: IdentifierExpr id } m } when id.Name == name && m.Name.Contains("Take", StringComparison.Ordinal): return null;
+                    // (`try name??.TakeTo(this)`: the same, skipped for a value without TakeTo - a number, a text)
+                    case ConditionalAccessExpr { Target: IdentifierExpr id, Member: var member } when id.Name == name && member.Contains("Take", StringComparison.Ordinal): return null;
                     case CallExpr { Callee: MemberExpr m } call when m.Name.Contains("Take", StringComparison.Ordinal) && call.Args.Any(IsName): return null;
                     case VarDeclStmt v when v.Name == name: return null;   // (shadowed)
                     case AssignExpr { Target: IdentifierExpr id } when id.Name == name: return null;   // (the parameter is given something else)

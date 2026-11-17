@@ -3,7 +3,7 @@ An array of Dog cannot be stored where an array of Cat is declared.
 2
 An array of int is declared here, not String.
 An element of an array of int must be an int (or undefined), not Float.
-An element of an array of string must be a string (or undefined), not Int.
+1
 1
 2
 0.01m

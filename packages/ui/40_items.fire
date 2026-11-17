@@ -165,6 +165,11 @@ namespace UI {
         defined int viewH = 0
         // the row of the last click: a double click on the same row (Root.clickCount) activates it (like Enter)
         defined int lastClickIndex = -1
+        // The selected element that the watchers of `selectedItem` (a probe, a binding with ElementName) were told last, and - while SelectedChanged
+        // tells them - the row it selects (`holding`: the getter gives the element before, see SelectedChanged)
+        any seenItem
+        bool holding = false
+        defined int selecting = -1
 
         construct(defined int x = 0, defined int y = 0, defined int width = 160, defined int height = 120) : base(x, y, width, height) {
             this.items = new List()
@@ -173,9 +178,13 @@ namespace UI {
             this.rowElements = new List()
         }
 
-        // The rows: those of the view, otherwise the own list.
+        // The rows: those of the view (brought up to date first: a view is built at the first use, Select(0) before the first drawing finds its rows),
+        // otherwise the own list.
         List Rows() {
-            if (this.view != undefined) { return this.view.items }
+            if (this.view != undefined) {
+                this.view.Update()
+                return this.view.items
+            }
             return this.items
         }
 
@@ -198,6 +207,7 @@ namespace UI {
             if (this.SelectedIndex >= this.items.Count) { this.SelectedIndex = this.items.Count - 1 }
             this.seenSelected = this.SelectedIndex
             this.Refresh()
+            this.SelectedChanged()
         }
 
         undefined Clear() {
@@ -206,6 +216,7 @@ namespace UI {
             this.seenSelected = -1
             this.scroller.Set(0)
             this.Refresh()
+            this.SelectedChanged()
         }
 
         // The list of elements; assigning it shows the list without owning it (it belongs to whoever has it, e.g. the window; changes in it
@@ -224,6 +235,7 @@ namespace UI {
             this.seenSelected = -1
             this.scroller.Set(0)
             this.Refresh()
+            this.SelectedChanged()
         }
 
         // Shows the elements of a CollectionView (the selection follows its `current`).
@@ -234,6 +246,7 @@ namespace UI {
             this.seenSelected = source.current
             this.scroller.Set(0)
             this.Refresh()
+            this.SelectedChanged()
         }
 
         // After a change in the elements themselves: rebuild the template rows.
@@ -256,10 +269,17 @@ namespace UI {
                 this.view.Update()
                 if (this.view.revision != this.seenRevision) {
                     this.seenRevision = this.view.revision
+                    // (rebuilt - sorted anew, filtered: the selection follows its element, which the view kept as `current`)
+                    if (this.view.current != this.SelectedIndex) {
+                        this.SelectedIndex = this.view.current
+                        this.seenSelected = this.SelectedIndex
+                    }
                     this.DropRows()
                     this.Invalidate()
                 }
             }
+            // (the rows changed under the selection: another element at its place)
+            this.SelectedChanged()
             var n = this.Rows().Count
             if (n != this.seenCount) {
                 this.seenCount = n
@@ -285,16 +305,40 @@ namespace UI {
 
         string ItemText(any item) { return UI.M.Text(UI.M.Member(item, this.DisplayMember)) }
 
-        // The selected element (undefined: none).
+        // The selected element (undefined: none). A probe on it (a binding with ElementName=list, Path=selectedItem...) fires whenever the selection
+        // changes - by Select, a click, a key, SelectedIndex, or rows that change under it (SelectedChanged).
         any selectedItem {
             get {
-                var rows = this.Rows()
-                if (this.SelectedIndex < 0 || this.SelectedIndex >= rows.Count) { return undefined }
-                return rows[this.SelectedIndex]
+                if (this.holding) { return this.seenItem }
+                return this.SelectedRow()
             }
             set {
+                if (this.holding) {
+                    // (SelectedChanged: the selection is already made)
+                    this.holding = false
+                    this.SelectedIndex = this.selecting
+                    return
+                }
                 this.Select(this.Rows().IndexOf(value))
             }
+        }
+
+        any SelectedRow() {
+            var rows = this.Rows()
+            if (this.SelectedIndex < 0 || this.SelectedIndex >= rows.Count) { return undefined }
+            return rows[this.SelectedIndex]
+        }
+
+        // Tells the watchers of `selectedItem` that it is another element now: a write through its setter (they see the write of a property, and the
+        // getter gives the element they saw before until then). Nothing when it is the same.
+        undefined SelectedChanged() {
+            any now = this.SelectedRow()
+            if (now == this.seenItem) { return }
+            this.selecting = this.SelectedIndex
+            this.holding = true
+            this.selectedItem = now
+            this.holding = false
+            this.seenItem = now
         }
 
         defined int RowHeight(Root root) {
@@ -311,6 +355,7 @@ namespace UI {
             this.SelectedIndex = index
             this.seenSelected = index
             if (this.view != undefined) { this.view.current = index }
+            this.SelectedChanged()
             this.changed = true
             var callback = this.OnSelect
             if (callback != undefined) { callback() }
@@ -391,7 +436,7 @@ namespace UI {
         undefined DrawRow(Root root, defined int index, any item, defined int x, defined int y, defined int w, defined int h, Brush textColor) {
             if (this.ItemTemplate != undefined) {
                 any row = this.rowElements[index]
-                if (row != undefined && row.Visible) { row.Draw(root, x + row.rx, y + row.ry) }
+                if (row != undefined && row.Visible) { root.DrawChild(row, x + row.rx, y + row.ry) }
                 return
             }
             this.DrawString(root, x + 4, y + (h - this.TextHeight(root)) / 2, this.ItemText(item), textColor)

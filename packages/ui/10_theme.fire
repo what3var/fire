@@ -9,6 +9,9 @@ namespace UI {
         Brush faceDisabled
         Brush inputBack
         Brush accent
+        // the text on the accent (selected rows and menu items, selected text, the caption of the active pane): dark or light, whichever reads better on it
+        // (UI.Theme.ForegroundOn; Root.AccentForeground overrides it)
+        Brush accentText
         Brush text
         Brush textDisabled
         // Listen, Menues, Bildlaufleisten
@@ -45,6 +48,7 @@ namespace UI {
             this.faceDisabled = new SolidBrush(UI.Color.Rgb(204, 204, 204))
             this.inputBack = new SolidBrush(UI.Color.Rgb(255, 255, 255))
             this.accent = new SolidBrush(UI.Color.Rgb(0, 120, 215))
+            this.accentText = new SolidBrush(UI.Color.Rgb(255, 255, 255))
             this.text = new SolidBrush(UI.Color.Rgb(0, 0, 0))
             this.textDisabled = new SolidBrush(UI.Color.Rgb(131, 131, 131))
             this.selection = new SolidBrush(UI.Color.Rgb(0, 120, 215))
@@ -69,6 +73,35 @@ namespace UI {
             return UI.Color.Rgb(Math.Round(r)!int, Math.Round(g)!int, Math.Round(bl)!int)
         }
 
+        // The relative luminance of 0xRRGGBB (WCAG 2: 0 black to 1 white).
+        static defined float Luminance(defined int rgb) {
+            return 0.2126 * UI.Theme.Linear((rgb >> 16) & 255) + 0.7152 * UI.Theme.Linear((rgb >> 8) & 255) + 0.0722 * UI.Theme.Linear(rgb & 255)
+        }
+
+        // One channel (0 to 255) of sRGB as linear light (0 to 1).
+        static defined float Linear(defined int channel) {
+            defined float c = channel / 255.0
+            if (c <= 0.04045) { return c / 12.92 }
+            return ((c + 0.055) / 1.055) ^ 2.4
+        }
+
+        // The contrast ratio of two colours 0xRRGGBB (WCAG 2: 1 to 21).
+        static defined float Contrast(defined int a, defined int b) {
+            var la = UI.Theme.Luminance(a)
+            var lb = UI.Theme.Luminance(b)
+            if (la < lb) { return (lb + 0.05) / (la + 0.05) }
+            return (la + 0.05) / (lb + 0.05)
+        }
+
+        // The text colour (0xRRGGBB) for a background 0xRRGGBB: white (0xFFFFFF) or black (0x000000), the one with the higher contrast ratio - white as long as
+        // it keeps 3:1 (the least WCAG asks of large text and of controls), so that the usual saturated accents (the blue of Windows, red, violet) keep their
+        // white text and only light ones (yellow, orange, light green, cyan) get black.
+        static defined int ForegroundOn(defined int back) {
+            var white = UI.Theme.Contrast(back, 0xFFFFFF)
+            if (white >= 3.0 || white >= UI.Theme.Contrast(back, 0x000000)) { return 0xFFFFFF }
+            return 0x000000
+        }
+
         // The colour of a brush (a solid one; another kind: `fallback`).
         static defined int ColorOf(Brush brush, defined int fallback) {
             if (brush is of SolidBrush) {
@@ -87,8 +120,9 @@ namespace UI {
         }
 
         // All colours for the light or the dark look with this accent colour (0xRRGGBB): Root.Dark and Root.Accent set them. The brushes and pens stay the same
-        // objects (styles and elements that took one keep it), only their colours change.
-        undefined SetColors(bool dark, defined int accent) {
+        // objects (styles and elements that took one keep it), only their colours change. The text on the accent (accentText, selectionText) is
+        // `accentForeground` (0xRRGGBB), or with -1 the one that reads best on the accent (ForegroundOn).
+        undefined SetColors(bool dark, defined int accent, defined int accentForeground = -1) {
             var a = UI.Theme.FromRgb(accent)
             if (dark) {
                 UI.Theme.Paint(this.back, UI.Color.Rgb(32, 32, 32))
@@ -130,7 +164,10 @@ namespace UI {
             }
             UI.Theme.Paint(this.accent, a)
             UI.Theme.Paint(this.selection, a)
-            UI.Theme.Paint(this.selectionText, UI.Color.Rgb(255, 255, 255))
+            var onAccent = accentForeground
+            if (onAccent < 0) { onAccent = UI.Theme.ForegroundOn(accent & 0xFFFFFF) }
+            UI.Theme.Paint(this.accentText, UI.Theme.FromRgb(onAccent))
+            UI.Theme.Paint(this.selectionText, UI.Theme.FromRgb(onAccent))
             this.borderFocus.Color = a
         }
     }

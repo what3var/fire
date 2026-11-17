@@ -136,6 +136,8 @@ namespace fire.UI.Markup
         public Dictionary<string, string> Namespaces { get; } = new();
         public int Width { get; init; } = 640;
         public int Height { get; init; } = 480;
+        /// <summary>The attributes of `<Window>` that set a property of the UI root (`UIRoot.WindowBackdrop="Acrylic"`, see <see cref="MarkupSchema.RootProperties"/>).</summary>
+        public List<MarkupAttribute> RootAttributes { get; } = new();
         public List<ConverterDeclaration> Converters { get; } = new();
         public List<StyleDeclaration> Styles { get; } = new();
         public List<TemplateDeclaration> Templates { get; } = new();

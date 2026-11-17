@@ -187,7 +187,7 @@ namespace UI {
                     if (!this.Enabled || !run.Enabled) { c = root.theme.textDisabled }
                     run.DrawString(root, ax + p.x, ay + p.y, p.text, c)
                 } else if (p.element.Visible) {
-                    p.element.Draw(root, ax + p.element.rx, ay + p.element.ry)
+                    root.DrawChild(p.element, ax + p.element.rx, ay + p.element.ry)
                 }
             }
         }

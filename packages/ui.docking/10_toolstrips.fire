@@ -438,7 +438,7 @@ namespace UI.Docking {
             var items = this.strip.overflowItems
             for (var i = 0; i < items.Count; i = i + 1) {
                 any item = items[i]
-                if (item.Visible) { item.Draw(root, ax + item.rx, ay + item.ry) }
+                if (item.Visible) { root.DrawChild(item, ax + item.rx, ay + item.ry) }
             }
         }
 
@@ -806,7 +806,7 @@ namespace UI.Docking {
             }
             for (var i = 0; i < this.shown.Count; i = i + 1) {
                 any c = this.shown[i]
-                if (c.Visible) { c.Draw(root, ax + c.rx, ay + c.ry) }
+                if (c.Visible) { root.DrawChild(c, ax + c.rx, ay + c.ry) }
             }
         }
 
@@ -1099,7 +1099,7 @@ namespace UI.Docking {
             }
             for (var i = 0; i < this.strips.Count; i = i + 1) {
                 any s = this.strips[i]
-                if (s.Visible) { s.Draw(root, ax + s.rx, ay + s.ry) }
+                if (s.Visible) { root.DrawChild(s, ax + s.rx, ay + s.ry) }
             }
         }
 

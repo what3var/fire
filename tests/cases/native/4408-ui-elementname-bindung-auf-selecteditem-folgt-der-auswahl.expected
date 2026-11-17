@@ -1,0 +1,7 @@
+Select(0): 0 Alice
+Select(2): Carol
+SelectedIndex = 1: Bob
+click on the first row: 0 Alice
+after Add: 1 Alice
+Select(-1): -1 []
+Select(0) again: Aaron

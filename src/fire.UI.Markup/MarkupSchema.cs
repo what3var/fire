@@ -71,6 +71,9 @@ namespace fire.UI.Markup
     {
         /// <summary>The field of the fire class (a lambda): the same name (`OnClick`).</summary>
         public string FieldName => Name;
+        /// <summary>The fire types of <see cref="Args"/>, the parameters of the lambda of the field (`int`, `UI.DrawingCanvas`); null: `any` for all.</summary>
+        public string[]? ArgTypes { get; init; }
+        public string ArgType(int index) => ArgTypes != null && index < ArgTypes.Length ? ArgTypes[index] : "any";
         public EventDef(string name) : this(name, Array.Empty<string>()) { }
     }
 
@@ -241,7 +244,13 @@ namespace fire.UI.Markup
                 new("Data", PropertyKind.Text) { Method = "SetData" }, new("Fill", PropertyKind.Color), new("Stroke", PropertyKind.Pen),
             }),
             Define("DrawingCanvas", ChildMode.None, "new UI.DrawingCanvas(0, 0, 200, 150)", new PropertyDef[] { new("Continuous", PropertyKind.Bool) },
-                new[] { new EventDef("OnPaint", new[] { "canvas" }), new EventDef("OnMouseDown", new[] { "x", "y", "button" }), new EventDef("OnMouseMove", new[] { "x", "y" }), new EventDef("OnMouseUp", new[] { "x", "y", "button" }) }),
+                new[]
+                {
+                    new EventDef("OnPaint", new[] { "canvas" }) { ArgTypes = new[] { "UI.DrawingCanvas" } },
+                    new EventDef("OnMouseDown", new[] { "x", "y", "button" }) { ArgTypes = new[] { "int", "int", "int" } },
+                    new EventDef("OnMouseMove", new[] { "x", "y" }) { ArgTypes = new[] { "int", "int" } },
+                    new EventDef("OnMouseUp", new[] { "x", "y", "button" }) { ArgTypes = new[] { "int", "int", "int" } },
+                }),
 
             // ---- parts: what the containers above contain (no common properties, no style) ----
             new ElementDef("Item", "", ChildMode.None, "", new PropertyDef[] { new("Text", PropertyKind.Text) { Default = "\"\"" } }, Array.Empty<EventDef>())
@@ -308,10 +317,29 @@ namespace fire.UI.Markup
             ["Text"] = "UI.TextConverter",
         };
 
+        /// <summary>The prefix of the attributes of `<Window>` that set a property of its UI root (the field `UIRoot`, a `UI.Root`): `UIRoot.WindowBackdrop="Acrylic"`.</summary>
+        public const string RootPrefix = "UIRoot.";
+
+        /// <summary>The properties of the UI root of a window that the markup can set on `<Window>` (with <see cref="RootPrefix"/>; the field is the name without it):
+        /// the material of the window, its background, and the look the root otherwise takes from the system.</summary>
+        public static readonly IReadOnlyList<PropertyDef> RootProperties = new PropertyDef[]
+        {
+            new PropertyDef(RootPrefix + "WindowBackdrop", PropertyKind.Enum, "WindowBackdrop") { EnumType = "Backdrop", Choices = new[] { "None", "Mica", "Acrylic", "Blur", "Transparent" } },
+            new(RootPrefix + "WindowBackground", PropertyKind.Color, "WindowBackground"),
+            new(RootPrefix + "Dark", PropertyKind.Bool, "Dark"),
+            new(RootPrefix + "Accent", PropertyKind.Int, "Accent"),
+            new(RootPrefix + "Glass", PropertyKind.Bool, "Glass"),
+            new(RootPrefix + "Transparency", PropertyKind.Bool, "Transparency"),
+        };
+
+        /// <summary>The property of the UI root that an attribute of `<Window>` names (`UIRoot.WindowBackdrop`), or null.</summary>
+        public static PropertyDef? RootProperty(string attribute) =>
+            RootProperties.FirstOrDefault(p => string.Equals(p.Name, attribute, StringComparison.OrdinalIgnoreCase));
+
         /// <summary>The names the generated class uses itself; a named element must not take them.</summary>
         public static readonly IReadOnlySet<string> ReservedNames = new HashSet<string>
         {
-            "framebuffer", "window", "ui", "view", "dataContext", "SetDataContext", "Run", "Show", "OnTick", "Attach", "Open",
+            "framebuffer", "window", "UIRoot", "view", "dataContext", "SetDataContext", "Run", "Show", "OnTick", "Attach", "Open",
         };
 
         private static readonly Regex Identifier = new("^[A-Za-z_][A-Za-z0-9_]*$", RegexOptions.Compiled);

@@ -226,6 +226,8 @@ namespace UI {
     // Connects a property of an element with that of another object. It is reconciled on every layout (without events): if the source changes,
     // the target follows; with `twoWay` the source follows the target too; with `once` it is transferred only one time. `sourceProperty` is a path ("name", "address.city");
     // empty is the source itself (e.g. the data item of a DataTemplate row, read-only). A text property shows every value as text. `converter`: a UI.Converter (undefined: values unchanged).
+    // A path that is broken (an undefined on the way) gives undefined: the converter gets it, and the target gets "" if it is a text, otherwise the value it had
+    // before the binding first wrote it (its default). `twoWay` writes back only while the whole path exists; `once` waits until it exists.
     class Binding {
         Element target
         string targetProperty
@@ -238,6 +240,8 @@ namespace UI {
         bool synced = false
         any lastSource
         any lastTarget
+        // the value of the target before the binding first wrote it ("" for a text): what a broken path gives
+        any fallback
 
         construct(Element target, string targetProperty, any source, string sourceProperty, bool twoWay = false, Converter converter = undefined, bool once = false) {
             this.target = target
@@ -251,14 +255,21 @@ namespace UI {
 
         undefined Sync() {
             if (this.once && this.synced) { return }
-            if (!UI.M.PathHas(this.source, this.sourceProperty) || !Reflect.Has(this.target, this.targetProperty)) { return }
+            if (!Reflect.Has(this.target, this.targetProperty)) { return }
+            bool present = UI.M.PathHas(this.source, this.sourceProperty)
+            if (this.once && !present) { return }
             any s = UI.M.PathGet(this.source, this.sourceProperty)
             any t = Reflect.Get(this.target, this.targetProperty)
+            if (!this.synced) {
+                if (t is of string) { this.fallback = "" } else { this.fallback = t }
+            }
             if (this.twoWay && this.sourceProperty != "" && this.synced && t != this.lastTarget) {
-                // the target has changed: back into the source
-                any back = t
-                if (this.converter != undefined) { back = this.converter.ConvertBack(t) }
-                if (back != s) { UI.M.PathSet(this.source, this.sourceProperty, back) }
+                // the target has changed: back into the source - only while the whole path exists
+                if (present) {
+                    any back = t
+                    if (this.converter != undefined) { back = this.converter.ConvertBack(t) }
+                    if (back != s) { UI.M.PathSet(this.source, this.sourceProperty, back) }
+                }
                 this.lastSource = UI.M.PathGet(this.source, this.sourceProperty)
                 this.lastTarget = t
                 return
@@ -266,6 +277,7 @@ namespace UI {
             if (!this.synced || s != this.lastSource) {
                 any forward = s
                 if (this.converter != undefined) { forward = this.converter.Convert(s) }
+                if (forward == undefined) { forward = this.fallback }
                 // a text property shows any other value as its text
                 if (t is of string && forward != undefined && !(forward is of string)) { forward = UI.M.Text(forward) }
                 if (forward != t) { Reflect.Set(this.target, this.targetProperty, forward) }

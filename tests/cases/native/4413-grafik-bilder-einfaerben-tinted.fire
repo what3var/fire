@@ -1,0 +1,32 @@
+#import "graphics"
+class Show {
+    static string Px(Framebuffer fb, defined int i) {
+        return "" + fb.ReadByte(i * 4) + "," + fb.ReadByte(i * 4 + 1) + "," + fb.ReadByte(i * 4 + 2) + "," + fb.ReadByte(i * 4 + 3)
+    }
+}
+// a white icon: opaque white, half transparent white, transparent, a grey pixel
+var icon = new Framebuffer(4, 1)
+var r = new Renderer(icon)
+r.AlphaBlending = false
+r.SetPixel(0, 0, 0xFFFFFFFF)
+r.SetPixel(1, 0, 0x80FFFFFF)
+r.SetPixel(2, 0, 0x00FFFFFF)
+r.SetPixel(3, 0, 0xFF808080)
+// black, yellow (r 255, g 200, b 0), half transparent blue
+var tints = [0xFF000000, 0xFF00C8FF, 0x80FF0000]
+for (var t = 0; t < tints.length; t++) {
+    var tinted = icon.Tinted(tints[t])
+    print("tint " + t + ": " + tinted.Width() + "x" + tinted.Height() + " mode " + tinted.Mode() + " | " + Show.Px(tinted, 0) + " | " + Show.Px(tinted, 1) + " | " + Show.Px(tinted, 2) + " | " + Show.Px(tinted, 3))
+}
+print("original " + Show.Px(icon, 0) + " | " + Show.Px(icon, 3))
+// a palette index as the colour (index 9 of the default palette) and a palette picture (its palette is tinted, the indices stay)
+var red = icon.Tinted(9)
+print("index 9: " + Show.Px(red, 0) + " = " + icon.GetPaletteColor(9))
+var pal = new Framebuffer(2, 1, ColorMode.Palette)
+pal.SetPaletteRgb(1, 255, 255, 255)
+pal.WriteByte(0, 1)
+pal.WriteByte(1, 0)
+pal.TransparentIndex = 0
+var pt = pal.Tinted(0xFF0000FF)
+print("palette: mode " + pt.Mode() + " indices " + pt.ReadByte(0) + "," + pt.ReadByte(1) + " entry1 " + pt.GetPaletteColor(1) + " transparent " + pt.TransparentIndex)
+//# name: Grafik: Bilder einfaerben (Framebuffer.Tinted)

@@ -1,0 +1,9 @@
+contrast 21 1
+on FFFFFF 000000 FFFFFF 000000 FFFFFF
+windows accent 0078D7 -> FFFFFF accentText FFFFFF selectionText FFFFFF
+yellow accent FFE000 -> 000000 accentText 000000 selectionText 000000
+darkblue accent 00205B -> FFFFFF accentText FFFFFF selectionText FFFFFF
+dark yellow accent FFE000 -> 000000 accentText 000000 selectionText 000000
+override accent FFE000 -> 202020 accentText 202020 selectionText 202020
+override kept accent 00205B -> 202020 accentText 202020 selectionText 202020
+chosen again accent 00205B -> FFFFFF accentText FFFFFF selectionText FFFFFF

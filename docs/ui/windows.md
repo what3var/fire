@@ -22,14 +22,17 @@
 
 class DarkWindow : DarkBase {
     construct() {
-        this.ui.Dark = true              // whatever the system says
-        this.ui.Accent = 0x8854D0
+        this.UIRoot.Dark = true              // whatever the system says
+        this.UIRoot.Accent = 0x8854D0
     }
 }
 
 var window = new DarkWindow()
 window.Run()
 ```
+
+The markup can say the same on its root element - `<Window ... UIRoot.Dark="true" UIRoot.Accent="0x8854D0">` - without a constructor in the code-behind
+([markup](markup.md#the-ui-root-of-a-window)).
 
 ## Run, Show and Tick
 
@@ -106,6 +109,17 @@ ui.Add(new UI.Button("OK", 16, 16))
 ui.Run()
 ```
 
+With every accent - the system's or `Accent` - the root also chooses the colour of **text on the accent** (selected rows of lists, trees and combo boxes,
+the highlighted menu item, selected text, the caption of the active pane): white, or black on a light accent, whichever has the higher contrast ratio
+(WCAG; white as long as it keeps 3:1, so the blue of Windows keeps white text). `ui.AccentForeground` reads it as `0xRRGGBB`; setting it overrides the
+choice (`ui.AccentForeground = 0x202020`), `-1` lets the root choose again. A picture of your own on the accent (a white icon) follows it with
+[`Framebuffer.Tinted`](../graphics/README.md#framebuffer): make the tinted copy when the colour changes, keep it, and blit that:
+
+```fire
+defined int fg = ui.AccentForeground
+var icon = white.Tinted(UI.Color.Rgb((fg >> 16) & 255, (fg >> 8) & 255, fg & 255))   // (white: the icon as loaded)
+```
+
 The elements keep working in **logical pixels**: positions, sizes, `ui.width` and the mouse positions stay the same, the renderer converts to screen
 pixels while drawing (`ui.renderer.scale`). TrueType text is drawn at the larger size and stays sharp; the bitmap fonts keep their size. Window and
 framebuffer grow with the scale: a 400 x 300 framebuffer at 150 % is a 600 x 450 window.
@@ -145,7 +159,8 @@ draws is seen. (A colour from 0 to 255 is an index of the palette: `0` is black,
 
 **The window itself** can get a material of the desktop: `ui.WindowBackdrop = Backdrop.Mica` (Windows 11), `Backdrop.Acrylic`, `Backdrop.Blur`
 (Windows, macOS, KDE) or `Backdrop.Transparent`. The desktop gives what it can (`window.Backdrop` tells what it gave); where it gives something, the
-background of the interface becomes see-through while panels and controls stay as they are.
+background of the interface becomes see-through while panels and controls stay as they are. A window from markup sets it on its root element:
+`<Window ... UIRoot.WindowBackdrop="Acrylic">` (in code `window.UIRoot.WindowBackdrop = Backdrop.Acrylic`).
 
 The effects are drawn by the C library of `graphics` (`Renderer.FillRoundRect`, `DrawRoundRect`, `DrawShadow`, `Blur`, `DrawMaterial` - usable by
 any program, see [graphics](../graphics/README.md#rounded-shapes-shadows-and-materials)); with a GPU they run there.

@@ -76,7 +76,7 @@ window.Run()
 
 | Member | Meaning |
 | --- | --- |
-| `SelectedIndex`, `selectedItem`, `Select(i)` | the selected row (-1 / `undefined`: none); setting `SelectedIndex` from outside (also by a binding) acts like a selection |
+| `SelectedIndex`, `selectedItem`, `Select(i)` | the selected row (-1 / `undefined`: none); setting `SelectedIndex` from outside (also by a binding) acts like a selection. A probe on `selectedItem` - a binding `{Binding selectedItem.name, ElementName=list}` - follows every change of the selection (`Select`, a click, a key, `SelectedIndex`, rows that change under it); `Select(0)` works before the first drawing (a view is built when it is first used) |
 | `OnSelect` / `TakeChanged()` | the selection changed |
 | `OnActivate` / `TakeActivated()`, `Activate()` | Enter, or a double click on a row |
 | `Count`, `Rows()` | the number of rows, the rows shown |

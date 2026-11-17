@@ -5,6 +5,6 @@
 class ControlsWindow : ControlsBase { }
 
 var window = new ControlsWindow()
-window.ui.Tick()
+window.UIRoot.Tick()
 window.size.OpenDropDown()
-Shot.Save(window.ui, "ui-controls.png")
+Shot.Save(window.UIRoot, "ui-controls.png")

@@ -2,9 +2,10 @@
 #import "ui"
 // The code-behind: the data the window is bound to, a converter, and the handler of the button.
 class UpperConverter : UI.Converter {
-    override Convert(value) {
+    override string Convert(any value) {
         if (value == undefined) { return "" }        // nothing selected yet
-        return value.ToUpper()
+        string text = value
+        return text.ToUpper()
     }
 }
 
@@ -31,18 +32,22 @@ class Model {
         set { this.text = value }
     }
     string text = ""
-    UpdateSummary() { this.summary = this.people.Count + " people" }
+    undefined UpdateSummary() { this.summary = this.people.Count + " people" }
 }
 
 class PeopleWindow : MainBase {            // the inheritance is declared here, in the code-behind
-    override AddPerson(sender) {
-        var model = this.dataContext
+    override undefined AddPerson(any sender) {
+        Model model = this.dataContext
         model.people.Add(new Person("new person " + model.people.Count))
         model.UpdateSummary()           // the label {Binding summary} follows
     }
 }
 
 var window = new PeopleWindow()
+// The window keeps the data context it is handed (`new Model()` or `take model`); with a variable (`SetDataContext(model)`)
+// the model stays the caller's and the window only refers to it.
 window.SetDataContext(new Model())
 window.peopleList.Select(0)       // the elements with a name are fields of the window
+// The material behind the window comes from Main.fxml (UIRoot.WindowBackdrop="Acrylic"); in code the same is
+// window.UIRoot.WindowBackdrop = Backdrop.Acrylic
 window.Run()

@@ -61,6 +61,7 @@ the `DockManager` of [docking](docking.md) fills the window by itself. Filling t
 | `VerticalAlign` | `Stretch` (default), `Top`, `Center`, `Bottom` |
 | `Left`, `Top` | the position - only in a `Panel` and a `Canvas` |
 | `Visible` | an invisible element takes no space in a stack, dock or wrap panel and gets no input |
+| `ClipToBounds` | `true` (default): what the element draws stays inside its rectangle and that of its parent - a label too long for its `Width` is cut at the edge; `false` lets it reach out (popups and their shadows are drawn by the root and are never cut by the element that opened them) |
 | `Enabled` | a disabled element is drawn greyed and takes no input |
 
 After the layout, `actualWidth` and `actualHeight` hold the size the element got.

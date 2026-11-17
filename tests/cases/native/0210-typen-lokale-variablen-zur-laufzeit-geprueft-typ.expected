@@ -8,8 +8,6 @@ Variable 'w' is a T (int), not String.
 Variable 'w' is a T (float), not String.
 Variable 'w' is a T (float), not String.
 Parameter 'v' is a T (float), not String.
-Parameter 'v' is a T (string), not Int.
-Parameter 'v' is a T (string), not Int.
 17000 1000
 abab 3.5 4
 Parameter 'v' is a T (int), not String.

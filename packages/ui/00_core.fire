@@ -346,9 +346,16 @@ namespace UI {
         any ConvertBack(any value) { return value }
     }
 
+    // A converter gets undefined when the path of its binding is broken (nothing selected, no data context): Not passes it on, so the property gets its default.
     class NotConverter : Converter {
-        override bool Convert(any value) { return !value }
-        override bool ConvertBack(any value) { return !value }
+        override bool Convert(any value) {
+            if (value == undefined) { return undefined }
+            return !value
+        }
+        override bool ConvertBack(any value) {
+            if (value == undefined) { return undefined }
+            return !value
+        }
     }
 
     class IsEmptyConverter : Converter {

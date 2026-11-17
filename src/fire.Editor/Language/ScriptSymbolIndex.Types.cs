@@ -74,7 +74,11 @@ namespace fire.Editor
         // -----------------------------------------------------------
 
         private sealed record FunctionContext(
-            int BodyStartTokenIdx, int BodyStartOffset, int BodyEndOffset, List<(string Name, string? TypeName)> Params);
+            int BodyStartTokenIdx, int BodyStartOffset, int BodyEndOffset, List<(string Name, string? TypeName)> Params)
+        {
+            /// <summary>Index of the closing '}' of the body.</summary>
+            public int BodyEndTokenIdx { get; init; }
+        }
 
         /// <summary>Index of the '{' of the body that belongs to the signature whose
         /// parameter list ends at `afterParen` - or -1 if there is no
@@ -118,9 +122,19 @@ namespace fire.Editor
         {
             if (_functions != null) return _functions;
             var result = new List<FunctionContext>();
+            var bodies = new HashSet<int>();
             for (int i = 0; i < _tokens.Count; i++)
             {
                 var type = _tokens[i].Type;
+                // a lambda with a block written without `func`: `(int n) => {`, `x => {`
+                if (type == TokenType.Arrow && i + 1 < _tokens.Count && _tokens[i + 1].Type == TokenType.LBrace && !bodies.Contains(i + 1)
+                    && LambdaParamsBefore(i, out _) is { } lambdaParams)
+                {
+                    int lambdaEnd = MatchBrace(i + 1);
+                    bodies.Add(i + 1);
+                    result.Add(new FunctionContext(i + 1, TokenOffset(i + 1), TokenOffset(lambdaEnd) + 1, lambdaParams) { BodyEndTokenIdx = lambdaEnd });
+                    continue;
+                }
                 bool isKeyword = type is TokenType.Construct or TokenType.Func;
                 bool isNamed = type == TokenType.Identifier
                     && (i == 0 || _tokens[i - 1].Type is not (TokenType.Dot or TokenType.New));
@@ -134,13 +148,55 @@ namespace fire.Editor
 
                 var parms = ReadParamList(paren, out int afterParen);
                 int open = FindBodyBrace(afterParen);
-                if (open < 0) continue;
+                if (open < 0 || !bodies.Add(open)) continue;
 
                 int end = MatchBrace(open);
-                result.Add(new FunctionContext(open, TokenOffset(open), TokenOffset(end) + 1, parms));
+                result.Add(new FunctionContext(open, TokenOffset(open), TokenOffset(end) + 1, parms) { BodyEndTokenIdx = end });
             }
+            // (a block lambda is found at its `=>`, which comes after the start of a function around it: the list stays in the order of the bodies)
+            result.Sort((a, b) => a.BodyStartTokenIdx.CompareTo(b.BodyStartTokenIdx));
             return _functions = result;
         }
+
+        /// <summary>All functions whose body contains `offset`, the outermost first (a method, a lambda in it, ...): the variables of each are visible
+        /// in the ones inside it.</summary>
+        private List<FunctionContext> EnclosingFunctions(int offset)
+        {
+            var result = new List<FunctionContext>();
+            foreach (var fn in AllFunctions())
+                if (offset >= fn.BodyStartOffset && offset <= fn.BodyEndOffset)
+                    result.Add(fn);
+            return result;
+        }
+
+        private Dictionary<int, int>? _foreignBodies;
+
+        /// <summary>The bodies a scan for the variables visible somewhere has to jump over, as first token -> last token: every function and every
+        /// class body of this document (what is declared in them is not visible outside). A scan skips those that do not contain its offset.</summary>
+        private Dictionary<int, int> ScopeBodies()
+        {
+            if (_foreignBodies != null) return _foreignBodies;
+            var result = new Dictionary<int, int>();
+            foreach (var fn in AllFunctions()) result.TryAdd(fn.BodyStartTokenIdx, fn.BodyEndTokenIdx);
+            foreach (var cls in Classes.Values)
+                if (cls.Source == this)
+                    foreach (var (start, end) in cls.BodyRanges)
+                        if (!result.TryGetValue(start, out var known) || known < end) result[start] = end;
+            return _foreignBodies = result;
+        }
+
+        /// <summary>The token where a scan from `k` for the variables visible at `offset` goes on: behind a body that starts at `k` and does not
+        /// contain `offset`, otherwise `k` itself.</summary>
+        private int SkipForeignBody(int k, int offset)
+        {
+            if (!ScopeBodies().TryGetValue(k, out int end)) return k;
+            if (offset >= TokenOffset(k) && offset <= TokenOffset(end)) return k;
+            return end + 1;
+        }
+
+        /// <summary>The token index where the variables visible at `offset` start: the body of the outermost function around it (its parameters
+        /// and locals, and those of the lambdas inside it), 0 for the top-level code.</summary>
+        private int ScopeStart(List<FunctionContext> chain) => chain.Count > 0 ? chain[0].BodyStartTokenIdx : 0;
 
         /// <summary>The INNERMOST function whose body contains `offset` (with
         /// nesting the inner one starts later - the last hit).</summary>
@@ -330,6 +386,17 @@ namespace fire.Editor
         public List<(string Name, string? TypeName)> EnclosingFunctionParams(int offset) =>
             EnclosingFunction(offset)?.Params ?? new List<(string, string?)>();
 
+        /// <summary>Is `offset` in the body of a `static` method (also in a lambda inside it) of the class around it? There is no `this` there.</summary>
+        public bool IsInStaticMethod(int offset)
+        {
+            if (EnclosingClassAt(offset) is not { } cls || !Classes.TryGetValue(cls, out var info)) return false;
+            int at = LastTokenBefore(offset);
+            foreach (var m in info.Members)
+                if (m.Source == this && m.Kind == MemberKind.Method && m.BodyStart >= 0 && at >= m.BodyStart && at <= m.BodyEnd)
+                    return m.IsStatic;
+            return false;
+        }
+
         // -----------------------------------------------------------
         // Public entry points
         // -----------------------------------------------------------
@@ -369,11 +436,27 @@ namespace fire.Editor
         public List<string> LocalVarsBeforeCursor(int offset)
         {
             var result = new List<string>();
-            var fn = EnclosingFunction(offset);
+            var chain = EnclosingFunctions(offset);
+            // the parameters of the functions around the inner one (the innermost's come from EnclosingFunctionParams)
+            for (int c = 0; c + 1 < chain.Count; c++)
+                foreach (var (name, _) in chain[c].Params)
+                    if (!result.Contains(name)) result.Add(name);
+            CollectDeclaredNames(ScopeStart(chain), offset, offset, result);
+            // global variables (the top-level code) are visible in every method and lambda
+            if (chain.Count > 0) CollectDeclaredNames(0, int.MaxValue, offset, result, topLevelOnly: true);
+            return result;
+        }
+
+        /// <summary>The names declared from token `from` up to the character offset `until`, jumping over the bodies that do not contain `offset`
+        /// (`topLevelOnly`: over all bodies - the global variables).</summary>
+        private void CollectDeclaredNames(int from, int until, int offset, List<string> result, bool topLevelOnly = false)
+        {
             int n = _tokens.Count;
-            for (int k = fn?.BodyStartTokenIdx ?? 0; k < n - 1; k++)
+            for (int k = from; k < n - 1; k++)
             {
-                if (TokenOffset(k) >= offset) break;
+                if (TokenOffset(k) >= until) break;
+                int skipped = topLevelOnly && ScopeBodies().TryGetValue(k, out int bodyEnd) ? bodyEnd + 1 : SkipForeignBody(k, offset);
+                if (skipped != k) { k = skipped - 1; continue; }
                 var t = _tokens[k];
                 string? declared = null;
                 if (t.Type == TokenType.Var && _tokens[k + 1].Type == TokenType.Identifier)
@@ -388,10 +471,9 @@ namespace fire.Editor
                              || ResolveEnumKey(t.Lexeme, ContextAt(offset)) != null))
                     declared = _tokens[k + 1].Lexeme;
 
-                if (declared != null && TokenOffset(k + 1) < offset && !result.Contains(declared))
+                if (declared != null && TokenOffset(k + 1) < until && !result.Contains(declared))
                     result.Add(declared);
             }
-            return result;
         }
 
         // -----------------------------------------------------------
@@ -834,6 +916,10 @@ namespace fire.Editor
                 if (member != null) return TypeOfMember(member, depth);
             }
 
+            // a global variable (the top-level code) - methods and lambdas see it
+            var global = FindGlobal(name, offset, depth, out bool isGlobal);
+            if (isGlobal) return global;
+
             // Class/enum/namespace names as an expression (`Name.Member`):
             // as in the real compiler ONLY the exactly written, possibly already
             // fully qualified name (see Resolver.TryResolveStaticMemberAccess
@@ -865,8 +951,9 @@ namespace fire.Editor
             if (LambdaParameterAt(name, offset, depth) is { } lambdaParam) { found = true; return lambdaParam.Type; }
 
             var context = ContextAt(offset);
-            var fn = EnclosingFunction(offset);
-            if (fn != null)
+            var chain = EnclosingFunctions(offset);
+            // the parameters of the functions around `offset` (a lambda sees those of the method it stands in; an inner one hides an outer one)
+            foreach (var fn in chain)
                 foreach (var (paramName, paramType) in fn.Params)
                     if (paramName == name)
                     {
@@ -875,10 +962,29 @@ namespace fire.Editor
                         explicitType = result.Kind != TypeKind.Unknown;
                     }
 
+            return ScanDeclarations(name, ScopeStart(chain), offset, offset, depth, context, ref found, result, explicitType, topLevelOnly: false);
+        }
+
+        /// <summary>The type of the global variable `name` (declared in the top-level code, outside every class and function) - for a name in a
+        /// method or lambda that is neither a local nor a field. `found` as with FindLocal.</summary>
+        private ExprType FindGlobal(string name, int offset, int depth, out bool found)
+        {
+            found = false;
+            if (EnclosingFunctions(offset).Count == 0) return ExprType.Unknown;   // (the top-level code itself: FindLocal has looked already)
+            return ScanDeclarations(name, 0, int.MaxValue, offset, depth, UsingNamespaces, ref found, ExprType.Unknown, false, topLevelOnly: true);
+        }
+
+        /// <summary>The scan of FindLocal/FindGlobal: the declarations of `name` from token `from` up to the character offset `until`; the bodies of
+        /// functions and classes that do not contain `offset` are jumped over (`topLevelOnly`: all of them).</summary>
+        private ExprType ScanDeclarations(string name, int from, int until, int offset, int depth, IReadOnlyList<string> context,
+            ref bool found, ExprType result, bool explicitType, bool topLevelOnly)
+        {
             int n = _tokens.Count;
-            for (int k = fn?.BodyStartTokenIdx ?? 0; k < n; k++)
+            for (int k = from; k < n; k++)
             {
-                if (TokenOffset(k) >= offset) break;
+                if (TokenOffset(k) >= until) break;
+                int skipped = topLevelOnly && ScopeBodies().TryGetValue(k, out int bodyEnd) ? bodyEnd + 1 : SkipForeignBody(k, offset);
+                if (skipped != k) { k = skipped - 1; continue; }
                 var t = _tokens[k];
 
                 // 'var name [: unit] [= expression]' - behind the ':' there is only
@@ -941,6 +1047,18 @@ namespace fire.Editor
                         explicitType = result.Kind != TypeKind.Unknown;
                         continue;
                     }
+                }
+
+                // `List<Person> people` (a generic type at the start of a statement)
+                if (t.Type == TokenType.Gt && k + 1 < n && _tokens[k + 1].Type == TokenType.Identifier && _tokens[k + 1].Lexeme == name
+                    && !_tokens[k + 1].NewlineBefore && MatchBackward(k, TokenType.Lt, TokenType.Gt) is var lt && lt > 0
+                    && _tokens[lt - 1].Type == TokenType.Identifier && IsStatementStart(lt - 1)
+                    && FromTypeName(_tokens[lt - 1].Lexeme, isArray: k + 2 < n && _tokens[k + 2].Type == TokenType.LBracket, context) is { Kind: not TypeKind.Unknown } generic)
+                {
+                    found = true;
+                    result = generic;
+                    explicitType = true;
+                    continue;
                 }
 
                 // name = expression - only as a statement, and only if the type

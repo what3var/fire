@@ -1,12 +1,10 @@
 Parameter 'v' is a T (int), not String.
 True
 Parameter 'v' is a T (int), not String.
-Parameter 'v' is a T (string), not Int.
 1
 Parameter 'a' is a T (Dog), not Animal.
 Parameter 'v' is a T (int), not String.
 Parameter 'v' is a T (int), not String.
-Parameter 'v' is a T (string), not Int.
 7854
 0.5 b 3.5
 5cm

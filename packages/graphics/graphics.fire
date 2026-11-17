@@ -164,6 +164,41 @@ class Framebuffer {
         return mask
     }
 
+    // A NEW framebuffer of the same size and mode, every pixel multiplied by `color` (channel by channel, alpha too): a white picture becomes
+    // `color` with its own transparency, black stays black - to recolour an icon (white on transparent) for a background. A palette framebuffer
+    // keeps its indices (and transparent index); its palette is tinted. 0 to 255 is a palette index, as everywhere. It goes over every pixel: make
+    // the copy when the colour changes and keep it, not in every frame.
+    Framebuffer Tinted(defined int color) {
+        if (color >= 0 && color <= 255) { color = this.GetPaletteColor(color) }
+        defined int tr = color & 255
+        defined int tg = (color >> 8) & 255
+        defined int tb = (color >> 16) & 255
+        defined int ta = (color >> 24) & 255
+        defined int w = this.Width()
+        defined int h = this.Height()
+        if (this.Mode() == 1) {
+            any palette = this.ReadPalette(true)
+            Framebuffer.TintBytes(palette, tr, tg, tb, ta)
+            var tinted = Framebuffer.FromPixels(w, h, this.ReadBytes(), 1, palette)
+            tinted.TransparentIndex = this.TransparentIndex
+            return tinted
+        }
+        byte pixels[] = this.ReadBytes()
+        Framebuffer.TintBytes(pixels, tr, tg, tb, ta)
+        return Framebuffer.FromPixels(w, h, pixels, 0)
+    }
+
+    // (RGBA bytes, 4 per pixel, multiplied by r, g, b, a in place)
+    static undefined TintBytes(byte bytes[], defined int r, defined int g, defined int b, defined int a) {
+        defined int n = bytes.length
+        for (defined int i = 0; i + 3 < n; i = i + 4) {
+            bytes[i] = (bytes[i] * r + 127) / 255
+            bytes[i + 1] = (bytes[i + 1] * g + 127) / 255
+            bytes[i + 2] = (bytes[i + 2] * b + 127) / 255
+            bytes[i + 3] = (bytes[i + 3] * a + 127) / 255
+        }
+    }
+
     // Palette framebuffer: the index that counts as transparent in an image (GIF/PNG), -1 = none. Console.Blit with BlitMode.Transparent skips it.
     int TransparentIndex {
         get { return __GRPHFbGetTransparentIndex(this.id) }

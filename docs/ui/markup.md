@@ -27,7 +27,7 @@ The elements are the ones of the library `ui` ([user interfaces](README.md)): th
 #include "Greeter.fxml"                   // the script generated from the markup is included right here
 
 class UpperConverter : UI.Converter {
-    override any Convert(any value) { return value.ToUpper() }
+    override any Convert(any value) { return value?.ToUpper() }      // undefined when the path is broken
 }
 
 class Person {
@@ -44,8 +44,9 @@ window.SetDataContext(new Person())
 window.Run()
 ```
 
-`SetDataContext` keeps an object that is handed to it (`new Person()` or `take model`); an object that belongs to someone else stays theirs and
-the window only points to it.
+`SetDataContext` keeps an object that is handed to it (`new Person()` or `take model`); an object that belongs to someone else (`SetDataContext(model)`
+with a variable of the caller) stays theirs and the window only points to it. Inside, it is `try context??.TakeTo(this)` ([Ownership](../language/13-ownership.md)),
+so neither form gets a warning.
 
 In a project the `#include` is not needed: the `.fxml` files of a project are compiled with it ([Projects and solutions](../tools/projects.md)), and the code-behind is simply the `.fire` file of the
 same name next to it. The editor makes both when you add an **FXML Window** or **FXML View** (Add > New), and the solution explorer shows the markup as a node that opens: its
@@ -83,19 +84,39 @@ For `<Window Class="Greeter">` the script defines `class GreeterBase` (`Base="..
 | member | |
 |---|---|
 | a field per element with `name="..."` | typed with the class of the element: `UI.TextBox nameBox` |
-| `framebuffer`, `window`, `ui` | a `Window`: the framebuffer, the window and the `UI.Root` that is created for it (`Title`, `Width`, `Height` from the attributes) |
+| `framebuffer`, `window`, `UIRoot` | a `Window`: the framebuffer, the window and the `UI.Root` that is created for it (`Title`, `Width`, `Height` and the `UIRoot.` attributes from the root element, below) |
 | `view` | a `View` (below) instead of the three above: a `UI.Panel` |
 | one method per handler name | `undefined Ok(any sender) { }` - empty; the derived class overrides it. `sender` is the element |
 | `Run(other = undefined)`, `OnTick()` | a window: `Run()` is the start of the program - it runs the window's manager ([fire.Terminal – Framebuffer, Zeichnen und Fenster](../spec/GRAPHICS_LAYER.md), *Window managers*) on this thread until the windows are closed (if it already runs, the window is only shown there) and calls `OnTick()` once per cycle (override it for a loop of your own); `Run(other)` opens another window first (below) |
 | `Show(modal = false)` | a window: shows it and goes on - a window manager that nobody runs yet gets a thread of its own, the program handles the events at its safe points and waits at its end until the window is closed. `Show(true)`: modal - returns when the window is closed, the other windows of the manager take no input meanwhile |
 | `Open(other)` | a window: another window of the markup (an object of another generated class) or a `UI.Root` is attached to this one: this window's `Run`/`Tick` works it off as well, its own `OnTick()` is called in each cycle, until it is closed. Keep the other window alive as long as it is open (the call moves it under this window) |
-| `Attach(container)` | a view: adds the panel to a container (`ui` itself, a `Panel` or a `Stack`) |
+| `Attach(container)` | a view: adds the panel to a container (the `UIRoot` of a window itself, a `Panel` or a `Stack`) |
 | `dataContext`, `SetDataContext(obj)` | only with bindings, see below |
 
-The names of the generated members start with `fx`, plus `framebuffer window ui view dataContext SetDataContext Run Show OnTick Attach Open`: a named element or a handler must not use them.
+The names of the generated members start with `fx`, plus `framebuffer window UIRoot view dataContext SetDataContext Run Show OnTick Attach Open`: a named element or a handler must not use them.
 
 `<View Class="Settings" Width="300" Height="200">` is the root of a part of an interface: no window of its own, but a panel that a window adds with `Attach` - the same markup language, so
 that a window can be composed of views.
+
+## The UI root of a window
+
+The attributes `UIRoot.Name` of `<Window>` set a property of its `UI.Root` (the field `UIRoot`) right after it is made - the look of the whole window, without code
+(the markup editor offers them with the other attributes of `<Window>`):
+
+```xml
+<Window Class="Main" Title="People" Width="520" Height="320" UIRoot.WindowBackdrop="Acrylic" UIRoot.Accent="0x8854D0">
+```
+
+| attribute | value | the same in code |
+|---|---|---|
+| `UIRoot.WindowBackdrop` | `None`, `Mica`, `Acrylic`, `Blur`, `Transparent` - the material of the desktop behind the window ([windows](windows.md)) | `window.UIRoot.WindowBackdrop = Backdrop.Acrylic` |
+| `UIRoot.WindowBackground` | a colour (`#RRGGBB`, `{Expr ...}` for a brush): what fills the window behind the interface | `window.UIRoot.WindowBackground = new SolidBrush(...)` |
+| `UIRoot.Dark` | `true`/`false`: the dark look, whatever the system says | `window.UIRoot.Dark = true` |
+| `UIRoot.Accent` | the accent colour as a number (`0x8854D0`) | `window.UIRoot.Accent = 0x8854D0` |
+| `UIRoot.Glass`, `UIRoot.Transparency` | `true`/`false`: glass behind menus, translucent surfaces and shadows | `window.UIRoot.Glass = false` |
+
+The field is called `UIRoot`, not `UI`: `UI` is the namespace of the library, and a field of that name would hide it in the code of the class and of the code-behind
+(`UI.Color.Rgb(...)` would mean the field).
 
 ## Elements and properties
 
@@ -145,7 +166,8 @@ Not yet in markup (set them in the code-behind): `ToolTip`, `Cursor`, `AllowDrop
 `Width` and `Height` ([filling the window](containers.md#filling-the-window)).
 
 `<Button>OK</Button>` is `<Button Text="OK"/>`, `<Item>Alice</Item>` is `<Item Text="Alice"/>`. A `Stack`/`StackPanel`/`DockPanel`/`Grid`/`WrapPanel` lays out its children itself (their `Left`/`Top` are ignored), in a `Panel` or
-`Canvas` they are positioned. A handler of an event with parameters gets them after `sender`: `OnMouseDown="Down"` calls `Down(sender, x, y, button)`.
+`Canvas` they are positioned. A handler of an event with parameters gets them after `sender`: `OnMouseDown="Down"` calls `Down(sender, x, y, button)` - the generated method is
+`undefined Down(any sender, int x, int y, int button)` (`OnPaint`: `UI.DrawingCanvas canvas`); an override may take them as `any` as well.
 
 **Values** are read by the type of the property: a whole number (`12`, `-3`, `0x1F`), `true`/`false`, a text, a colour (`#RRGGBB`, `#RGB` or the raw value, see `UI.Color`; colour properties are **brushes** - the generator wraps the value in `new SolidBrush(...)`),
 `Horizontal`/`Vertical`, one of the names of an enum (`Left`), a margin, a pen. A value that does not fit is an error. In braces a value can be
@@ -232,7 +254,7 @@ inside a template (react to the control itself). Everything is explained in [sty
 `{Binding Path, Mode=..., Converter=..., ElementName=...}` ties a property of an element to a property of the **data context** - the object given to `SetDataContext(obj)` -
 or, with `ElementName`, to a property of another named element. It is built on `probe` (SPEC 8.14): nothing polls, the property changes when the source field is written.
 
-- **Path**: `Name`, or a path through objects: `Player.Stats.Hp`. Every object on the way is watched, so if `Player` is replaced the binding connects to the new one. A `null`/`undefined` on the way leaves the property as it is.
+- **Path**: `Name`, or a path through objects: `Player.Stats.Hp`. Every object on the way is watched, so if `Player` is replaced the binding connects to the new one. An `undefined` on the way (see *A broken path* below) makes the value `undefined`.
 - **Fields and properties**: the last step of a path may be a field or a property with `get`/`set`. A write to either (also through the setter of a property) updates the target, and a `TwoWay` binding writes through the setter. A property that only computes its value from other
   members (`get` without `set`) follows its sources: when a field (or settable property) that its getter reads is written, the getter runs again and the target gets the new value
   (SPEC 8.14 - what the getter reads through other objects, `this.player.name`, is not followed).
@@ -241,7 +263,20 @@ or, with `ElementName`, to a property of another named element. It is built on `
 - **Converter**: the key of a converter that sits between the two sides. A converter is a class with `any Convert(any value)` (source to property) and, for `TwoWay`, `any ConvertBack(any value)`;
   deriving from `UI.Converter` supplies the identity for the one you do not write. Declare them in `<Resources><Converter Key="Upper" Type="UpperConverter"/></Resources>`; these come with the library
   and need no declaration: `Not`, `IsEmpty`, `NotEmpty`, `Text` (`UI.NotConverter`, ...).
-- `SetDataContext(obj)` disconnects the old context and connects the new one; `SetDataContext(undefined)` leaves the elements as they are.
+- `SetDataContext(obj)` disconnects the old context and connects the new one; `SetDataContext(undefined)` disconnects it, and the bound properties go back to their defaults (a broken path, below).
+- **A broken path**: when a step of the path is `undefined` - no data context yet, `{Binding selectedItem.name, ElementName=list}` while nothing is selected (`Select(-1)`), a `Player`
+  that is set to `undefined`, or a last step that is `undefined` itself - the value of the binding is `undefined`, and it is passed on, not skipped: the property does not keep the
+  old value. The converter gets `undefined` (write it so that it copes: `return value?.ToUpper()`; the built-in ones do - `Not` passes it on, `IsEmpty` gives `true`, `NotEmpty`
+  `false`, `Text` `""`), and what reaches the property is:
+
+  | Property | gets for `undefined` |
+  |---|---|
+  | a text (`Text`, `ToolTip`, `Font`, ...) | `""` - an empty text |
+  | any other (`IsChecked`, `Visible`, `Value`, `Width`, `SelectedIndex`, a colour, `ItemsSource`, ...) | its **default**: the value it had before the binding first wrote it, i.e. what the control starts with (`IsChecked` `false`, `Visible` `true`, `Width` `-1`, a colour or a list `undefined`) |
+
+  The same holds for the bindings in a data template (`UI.Binding`, reconciled at every layout). `TwoWay` writes back only while the whole path of the source exists: typing into a
+  `TextBox` whose path is broken changes the box, not the data - and nothing is created on the way. `OneTime` reads the value when the context is set, broken or not (in a data
+  template it waits until the path exists).
 
 ## The editor
 
