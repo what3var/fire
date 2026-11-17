@@ -17,7 +17,7 @@ namespace fire.Values
     /// script exception" is a concept of the VM/interpreter,
     /// not of this pure data structure.
     /// </summary>
-    public sealed class ScriptArray : fire.Runtime.IOwnedLeaf, fire.Runtime.IOwner
+    public sealed class ScriptArray : fire.Runtime.IOwnedLeaf, fire.Runtime.IOwner, fire.Runtime.IDyingLeaf
     {
         // The elements. Three states (docs/spec: the VM's storage of arrays):
         //   - Values (_items): one 24-byte Value per element - every array that is not one of the two below.
@@ -75,14 +75,30 @@ namespace fire.Values
 
         public void MarkDestroyed(fire.Runtime.IDestructRunner runner)
         {
-            if (IsDestroyed) return;
-            // what belongs to the array dies before it (the destructors still see it)
-            if (!_ownedObjects.IsEmpty) _ownedObjects.DestroyAll(runner);
+            if (IsDestroyed || IsDying) return;
+            IsDying = true;
+            fire.Runtime.DestroyBatch.Enter();
+            try
+            {
+                // what belongs to the array dies before it (the destructors still see it)
+                if (!_ownedObjects.IsEmpty) _ownedObjects.DestroyAll(runner);
+                LeafOwner = null;
+                if (Parts != null) foreach (var part in Parts.ToArray()) part.MarkDestroyed(runner);
+                Parts = null;
+            }
+            finally { fire.Runtime.DestroyBatch.ExitLeaf(this); }   // (dead when the batch ends: the destructors of the batch still read it, SPEC 2.3)
+        }
+
+        /// <summary>Its destruction has begun (its owner is destroyed, `delete`): it belongs to no one any more and is dead (<see cref="IsDestroyed"/>) when the
+        /// destruction batch ends - until then the destructors of the batch can still use it (SPEC 2.3).</summary>
+        public bool IsDying { get; private set; }
+
+        void fire.Runtime.IDyingLeaf.Die()
+        {
             IsDestroyed = true;
             Special = true;
+            LeafOwner?.RemoveLeaf(this);
             LeafOwner = null;
-            if (Parts != null) foreach (var part in Parts.ToArray()) part.MarkDestroyed(runner);
-            Parts = null;
         }
 
         /// <summary>Was this array reached by a fire thread via the globals (see GlobalsBroker)? Then it belongs to the shared

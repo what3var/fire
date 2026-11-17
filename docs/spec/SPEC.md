@@ -293,11 +293,14 @@ does not pass on there (`TC018`: the value dies with the setter on that path). A
   and is not unclaimed at the caller.
 - **Destroyed objects.** A destroyed object is **dead** when the destruction that destroyed it is over (the scope is left, `delete` returned): using it - a field, a method, a property - throws a catchable
   `DestroyedException`, like an array (2.5). While the destruction is still running (the destructors of one scope), the objects of that scope can still be used, also those that were destroyed before - the destructor of a
-  writer can flush a stream that was destroyed before it. A reference does not keep anything alive: what a function wants to hand out has to be returned, taken (`Take...`) or stored in an owner that lives on.
+  writer can flush a stream that was destroyed before it. The same holds for the arrays and buffers destroyed in it (those of the scope and those of its objects, e.g. the elements of a `List`):
+  they die when the destruction is over, so a destructor at the end of the program can still read a static `List`. What reaches the scope while it is destroyed (an exception a destructor throws and
+  catches - it belongs to the global scope -, an object a destructor stores in a global variable at the end of the program) is released with it, without its destructor. A reference does not keep anything alive: what a function wants to hand out has to be returned, taken (`Take...`) or stored in an owner that lives on.
 
 ### 2.5 Arrays and buffers in the ownership model, `delete`
 
-- An **array or buffer is destroyed** when its owner is destroyed or left (a scope is left, an object is deleted) and when `delete` is applied to it. Destroying it releases its memory; nothing runs
+- An **array or buffer is destroyed** when its owner is destroyed or left (a scope is left, an object is deleted) and when `delete` is applied to it. Destroying it releases its memory (when the destruction
+  it belongs to is over, 2.3: until then the destructors of the same scope still read it); nothing runs
   (there is no destructor), what it owns is destroyed with it: the inner arrays made with it (2.1) and every unclaimed value stored into one of its
   elements (`arr[i] = new X()`, `arr[i] = Make()`, `arr[i] = [1, 2]`: the array claims it, 2.1) or taken (`arr[i] = take x`). Overwriting or clearing the
   element does not destroy what the array owns - it lives as long as the array.

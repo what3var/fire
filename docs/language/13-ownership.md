@@ -493,6 +493,10 @@ instance of it ...` for a field or an element). A resource a thread needs is the
 class runs first, then those of the base classes. At the normal end of the program (and on `leave`/`terminate`) the global scope is released, so the
 destructors of global objects run too. A destructor should not throw.
 
+The things of one scope are destroyed together: the objects in the order they were created, then the arrays and buffers. Until all of them are destroyed, a
+destructor can still use the others - an object destroyed before it, an array of the scope, the elements of a `List` (a static `List` too, at the end of the
+program). Only afterwards are they dead, and using them throws a `DestroyedException`.
+
 ## Exercises
 
 1. Write a class with a destructor and create objects in a block, a loop and a method. Predict the order of the messages, then run it.

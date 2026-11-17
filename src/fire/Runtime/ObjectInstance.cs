@@ -505,12 +505,14 @@ namespace fire.Runtime
 
     /// <summary>The destruction batch: leaving a scope, a `delete`, the end of the program destroy several objects one after another (in order of
     /// creation). A destructor still sees the other objects of the batch - including those already destroyed (the destructor of a writer flushes a stream that was destroyed before
-    /// it). Only when the outermost batch ends are they dead (<see cref="ObjectInstance.IsDead"/>): after that, using them throws a DestroyedException.
+    /// it) - and the arrays and buffers of the batch (the elements of a List, an array of the scope): they are destroyed after the objects, the same way. Only when
+    /// the outermost batch ends are they dead (<see cref="ObjectInstance.IsDead"/>, <see cref="IOwnedLeaf.IsDestroyed"/>): after that, using them throws a DestroyedException.
     /// Per thread, because every thread leaves its own scopes.</summary>
     internal static class DestroyBatch
     {
         [System.ThreadStatic] private static int _depth;
         [System.ThreadStatic] private static List<ObjectInstance>? _zombies;
+        [System.ThreadStatic] private static List<IDyingLeaf>? _leaves;
 
         public static void Enter() => _depth++;
 
@@ -518,12 +520,34 @@ namespace fire.Runtime
         public static void Exit(ObjectInstance? destroyed = null)
         {
             if (destroyed != null) (_zombies ??= new List<ObjectInstance>()).Add(destroyed);
+            End();
+        }
+
+        /// <summary>Leaves the batch; <paramref name="destroyed"/> (an array or buffer destroyed in the batch) dies as soon as the outermost one ends.</summary>
+        public static void ExitLeaf(IDyingLeaf destroyed)
+        {
+            (_leaves ??= new List<IDyingLeaf>()).Add(destroyed);
+            End();
+        }
+
+        private static void End()
+        {
             if (--_depth > 0) return;
             _depth = 0;
             var zombies = _zombies;
-            if (zombies == null) return;
+            var leaves = _leaves;
+            if (zombies == null && leaves == null) return;
             _zombies = null;
-            foreach (var obj in zombies) obj.Kill();
+            _leaves = null;
+            if (zombies != null) foreach (var obj in zombies) obj.Kill();
+            if (leaves != null) foreach (var leaf in leaves) leaf.Die();
         }
+    }
+
+    /// <summary>An array or buffer whose destruction has begun (<see cref="IOwnedLeaf.MarkDestroyed"/>): it is dead (<see cref="IOwnedLeaf.IsDestroyed"/>) when
+    /// its destruction batch ends (<see cref="DestroyBatch"/>).</summary>
+    internal interface IDyingLeaf
+    {
+        void Die();
     }
 }

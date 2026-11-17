@@ -96,7 +96,8 @@ Skript -> Lexer -> Parser -> Resolver -> Compiler -> Bytecode (LinkedProgram)
   Objekte kosten nichts.
 * Objekte werden beim Zerstören **freigegeben** - aber erst am Ende des **Zerstörungsstapels** (`DestroyBatch`: das Verlassen eines Scopes, ein `delete`, das Ende des Programms):
   alle Destruktoren eines Scopes sehen die Objekte des Scopes also noch (die Reihenfolge ist die der Erzeugung: der Destruktor eines Writers leert einen Stream, der schon
-  zerstört ist). Danach ist das Objekt **tot** (SPEC 2.3): sein Handle läuft ab, jede Benutzung wirft eine `DestroyedException` (ohne Ausnahmen im Programm: Programmende mit Meldung).
+  zerstört ist). Arrays und Puffer ebenso (`destroyLeaf` zerstört sofort, was sie besitzen, ihre Elemente und ihr Speicher gehen mit dem Stapel: `g_zombies.few`/`more`, `leafFree`).
+  Was während des Zerstörens in die Liste kommt (eine im Destruktor gefangene Ausnahme gehört dem globalen Scope), räumt `leaveSlow` danach ohne Destruktoren ab (`g_zombies.quiet`, wie die VM). Danach ist das Objekt **tot** (SPEC 2.3): sein Handle läuft ab, jede Benutzung wirft eine `DestroyedException` (ohne Ausnahmen im Programm: Programmende mit Meldung).
   Mit `-DFIRE_KEEP_DESTROYED` bleibt der Speicher stehen (Fehlersuche). Die Tests laufen unter AddressSanitizer/UBSan.
 
 #### Tote Objekte, `return` und `Takes`

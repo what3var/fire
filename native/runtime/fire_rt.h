@@ -335,7 +335,10 @@ typedef struct BridgeError { int32_t code; char message[176]; } BridgeError;
 typedef struct Owned Owned;
 /* The objects that are destroyed while a destroy batch runs (see `destroy`): their memory is freed when the batch ends, so that a destructor can still look at an
  * object that was destroyed before it (the order in a scope is the order of creation: a writer's destructor flushes a stream that is already destroyed). */
-typedef struct Zombies { Owned* head; int32_t depth; } Zombies;
+/* The arrays and buffers destroyed in the batch wait the same way (`leaves`: their memory and their elements; a destructor of the batch still reads them, SPEC
+ * 2.3) - in a list of their own, not through `next`: a destructor may hand one to an owner for a moment (`batchEnd` takes it out again). */
+#define FIRE_ZOMBIE_FEW 8
+typedef struct Zombies { Owned* head; int32_t depth; uint32_t nleaves, capLeaves; Owned** more; Owned* few[FIRE_ZOMBIE_FEW]; int32_t quiet; } Zombies;
 /* Property accessors (SPEC 2.2 "Ownership in property accessors"): what the `this` of the running getters took over (a `return` of it goes to the caller after
  * all), and the argument list in which a property assignment of an accessor hands a value to the setter it calls (the setter takes it on entry). */
 typedef struct AccEntry { Owned* o; uint32_t slot; FireGen gen; } AccEntry;
@@ -3360,11 +3363,23 @@ FIRE_FN bool bufRetire(Owned* o);   /* (a buffer that another thread may be read
 /* What was destroyed during a batch is freed - and dead - when the outermost batch ends: a destructor sees every object of its scope in the state it was in when
  * it was destroyed (fields and strings intact), like in the VM (SPEC 2.3). After that its handle has expired: using it throws a DestroyedException. */
 FIRE_FN void batchBegin(void) { g_zombies.depth++; }
+FIRE_FN void leafFree(Owned* o);
 FIRE_FN void batchEnd(void) {
     Owned* o;
     if (--g_zombies.depth > 0) return;
     o = g_zombies.head;
     g_zombies.head = NULL;
+    while (g_zombies.nleaves) {
+        /* the arrays and buffers of the batch (taken off the list first: what freeing them might destroy starts a list of its own) */
+        Owned* few[FIRE_ZOMBIE_FEW];
+        Owned** leaves = g_zombies.more;
+        uint32_t n = g_zombies.nleaves, i;
+        if (leaves) { g_zombies.more = NULL; g_zombies.capLeaves = 0; }
+        else { memcpy(few, g_zombies.few, n * sizeof(Owned*)); leaves = few; }
+        g_zombies.nleaves = 0;
+        for (i = 0; i < n; i++) leafFree(leaves[i]);
+        if (leaves != few) free(leaves);
+    }
     while (o) {
         Owned* next = o->next;
         Obj* obj = (Obj*)o;
@@ -3397,8 +3412,9 @@ FIRE_FN void destroy(Obj* o) {
     slotBornSet(o->h.slot, slotGenGet(o->h.slot));
 #endif
     batchBegin();
-    if (o->h.flags & 16) {
-        /* a copy that `taking` made for a fire thread (its original still lives), or an object whose constructor threw: no destructor */
+    if ((o->h.flags & 16) || FIRE_UNLIKELY(g_zombies.quiet)) {
+        /* a copy that `taking` made for a fire thread (its original still lives), or an object whose constructor threw: no destructor - nor for what reached
+         * a scope while it was destroyed (see leaveSlow) */
     } else if (FIRE_UNLIKELY(g_unwind.active)) {
         /* the scope is left because of an exception: the destructor runs as ordinary code, the exception keeps unwinding afterwards */
         UnwindState saved = g_unwind;
@@ -3446,7 +3462,8 @@ FIRE_FN void destroyList(OwnList* list) {
     batchEnd();
 }
 
-/* An array or buffer is destroyed: what it holds is released, the inner arrays it owns are destroyed, its handle expires. */
+/* An array or buffer is destroyed: the objects and inner arrays it owns are destroyed; what it holds is released and its handle expires when the batch ends - until
+ * then the destructors of the batch still read it, like the objects of their scope (SPEC 2.3). */
 FIRE_FN void lamDestroy(Lam* l);
 FIRE_FN void destroyLeaf(Owned* o) {
     if (o->flags & 1) return;
@@ -3456,12 +3473,40 @@ FIRE_FN void destroyLeaf(Owned* o) {
     slotBornSet(o->slot, slotGenGet(o->slot));   /* (see destroy) */
 #endif
     if (o->owner) ownUnlink(o);
+    batchBegin();
+    if (o->okind == O_Array) {
+        Arr* a = (Arr*)o;
+        if (a->parts) { OwnList* parts = a->parts; a->parts = NULL; destroyList(parts); free(parts); }
+    }
+    if (g_zombies.nleaves == g_zombies.capLeaves && g_zombies.nleaves >= FIRE_ZOMBIE_FEW) {
+        uint32_t cap = g_zombies.capLeaves * 2;
+        Owned** more = (Owned**)realloc(g_zombies.more, cap * sizeof(Owned*));
+        if (!more) allocFailed();
+        g_zombies.more = more;
+        g_zombies.capLeaves = cap;
+    } else if (g_zombies.nleaves == FIRE_ZOMBIE_FEW && !g_zombies.more) {
+        Owned** more = (Owned**)malloc(4 * FIRE_ZOMBIE_FEW * sizeof(Owned*));
+        if (!more) allocFailed();
+        memcpy(more, g_zombies.few, FIRE_ZOMBIE_FEW * sizeof(Owned*));
+        g_zombies.more = more;
+        g_zombies.capLeaves = 4 * FIRE_ZOMBIE_FEW;
+    }
+    (g_zombies.more ? g_zombies.more : g_zombies.few)[g_zombies.nleaves++] = o;
+    batchEnd();
+}
+
+/* (the end of the batch of a destroyed array or buffer: its memory) */
+FIRE_FN void leafFree(Owned* o) {
+    if (o->owner) ownUnlink(o);   /* (a destructor of the batch gave it to an owner after all: it leaves that list) */
     if (o->okind == O_Array) {
         Arr* a = (Arr*)o;
         Value* items = arrValues(a);   /* (a packed array holds numbers: nothing to release) */
         uint32_t i;
         if (items) for (i = 0; i < a->length; i++) release(items[i]);
-        if (a->parts) { destroyList(a->parts); free(a->parts); }
+        if (a->parts) {   /* (a list that came back in the batch: what is on it no longer points into it) */
+            while (a->parts->head) ownUnlink(a->parts->head);
+            free(a->parts);
+        }
         if (a->typed) {
             ArrTyped* t = a->typed;
             free(t->real);
@@ -3477,9 +3522,18 @@ FIRE_FN void destroyLeaf(Owned* o) {
     dataFree(o);
 }
 
-/* Leaving a scope: destroys what it owns and lets go of the strings/arrays it created. */
+/* Leaving a scope: destroys what it owns and lets go of the strings/arrays it created. What reaches the scope while it is destroyed - an exception that a
+ * destructor throws and catches (it belongs to the global scope), an object a destructor gives to it - is destroyed as well, but without destructors: the VM's
+ * scope drops it (so this ends: without destructors nothing runs that could add more). */
 FIRE_FN void leaveSlow(OwnList* list) {
-    if (list->head) destroyList(list);
+    if (list->head) {
+        destroyList(list);
+        if (FIRE_UNLIKELY(list->head != NULL)) {
+            g_zombies.quiet++;
+            while (list->head) destroyList(list);
+            g_zombies.quiet--;
+        }
+    }
     if (g_pool.top > list->mark) poolRelease(list->mark);
 }
 /* (after nearly every statement - mostly with nothing to do: the test embedded, the work called) */

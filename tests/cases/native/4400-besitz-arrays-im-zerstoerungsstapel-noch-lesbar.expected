@@ -1,0 +1,13 @@
+reader 2 two 3 255
+list dead
+array dead: Access to a destroyed array.
+~box
+peek 7
+lone dead
+end
+count 2
+first 5
+arr 3 42
+names a42b
+item 5
+item six
