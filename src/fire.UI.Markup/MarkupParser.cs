@@ -79,6 +79,7 @@ namespace fire.UI.Markup
 
             string? className = null, baseName = null, title = null;
             int width = 640, height = 480;
+            var rootAttributes = new List<MarkupAttribute>();
             foreach (var attribute in root.Attributes().Where(a => !a.IsNamespaceDeclaration))
             {
                 string name = attribute.Name.LocalName;
@@ -108,8 +109,14 @@ namespace fire.UI.Markup
                     case "title" when kind == MarkupRootKind.Window: title = attribute.Value; break;
                     case "width": width = ReadSize(attribute, width, errors); break;
                     case "height": height = ReadSize(attribute, height, errors); break;
+                    case var _ when kind == MarkupRootKind.Window && MarkupSchema.RootProperty(name) is { } rootProperty:
+                        // UIRoot.WindowBackdrop="Acrylic": a property of the UI root of the window
+                        var rootValue = ReadValue(attribute.Value, line, errors);
+                        if (rootValue is BindingValue or TemplateBindingValue) errors.Add(new MarkupDiagnostic(line, $"'{rootProperty.Name}' cannot be bound."));
+                        else if (rootValue != null) rootAttributes.Add(new MarkupAttribute(rootProperty.Name, rootValue, line));
+                        break;
                     default:
-                        errors.Add(new MarkupDiagnostic(line, $"Unknown attribute '{name}' of '{root.Name.LocalName}' (known: Class, Base, namespace, namespace:prefix, {(kind == MarkupRootKind.Window ? "Title, " : "")}Width, Height)."));
+                        errors.Add(new MarkupDiagnostic(line, $"Unknown attribute '{name}' of '{root.Name.LocalName}' (known: Class, Base, namespace, namespace:prefix, {(kind == MarkupRootKind.Window ? "Title, " : "")}Width, Height{(kind == MarkupRootKind.Window ? ", " + string.Join(", ", MarkupSchema.RootProperties.Select(p => p.Name)) : "")})."));
                         break;
                 }
             }
@@ -137,6 +144,7 @@ namespace fire.UI.Markup
                 Namespace = scope.Own,
             };
             foreach (var (prefix, ns) in scope.Bound) document.Namespaces[prefix] = ns;
+            document.RootAttributes.AddRange(rootAttributes);
 
             foreach (var child in root.Elements())
             {

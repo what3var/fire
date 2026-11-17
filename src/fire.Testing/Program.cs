@@ -9517,7 +9517,7 @@ uiDrawScript = """
         ExpectDiagnostic("unbekannte Eigenschaft", "<Window Class=\"A\"><Label colour=\"#fff\"/></Window>", "has no property or event 'colour'");
         ExpectDiagnostic("ein Button hat keine Kinder", "<Window Class=\"A\"><Button><Label/></Button></Window>", "cannot contain elements");
         ExpectDiagnostic("Name doppelt", "<Window Class=\"A\"><Label Name=\"a\"/><Label Name=\"a\"/></Window>", "used twice");
-        ExpectDiagnostic("reservierter Name", "<Window Class=\"A\"><Label Name=\"ui\"/></Window>", "used by the generated class");
+        ExpectDiagnostic("reservierter Name", "<Window Class=\"A\"><Label Name=\"UIRoot\"/></Window>", "used by the generated class");
         ExpectDiagnostic("Handlername gleich Elementname", "<Window Class=\"A\"><Label Name=\"a\"/><Button OnClick=\"a\"/></Window>", "already used");
         ExpectDiagnostic("unbekannter Converter", "<Window Class=\"A\"><Label Text=\"{Binding X, Converter=Nope}\"/></Window>", "Unknown converter 'Nope'");
         ExpectDiagnostic("Binding auf ein Element, das es nicht gibt", "<Window Class=\"A\"><Label Text=\"{Binding text, ElementName=x}\"/></Window>", "does not exist");
@@ -9578,6 +9578,23 @@ uiDrawScript = """
             && script.Contains("UI.Button ok") && script.Contains("e0.Left = 0x10") && script.Contains("#import \"ui\"") && script.Contains("\"Hi \\\"you\\\"\""), script);
         CheckMarkup("Markup: eine View hat Attach statt Run",
             Generate("<View Class=\"V\" Base=\"VBase2\"/>") is var viewScript && viewScript.Contains("class VBase2 {") && viewScript.Contains("Attach(any container)") && !viewScript.Contains("Run()"));
+        string rootScript = Generate("<Window Class=\"R\" UIRoot.WindowBackdrop=\"acrylic\" UIRoot.Dark=\"true\" UIRoot.Accent=\"0x8854D0\" UIRoot.WindowBackground=\"#102030\"><Label/></Window>");
+        CheckMarkup("Markup: UIRoot.* am Fenster setzt Eigenschaften der Wurzel (UIRoot)",
+            rootScript.Contains("UI.Root UIRoot") && rootScript.Contains("this.UIRoot.WindowBackdrop = Backdrop.Acrylic") && rootScript.Contains("this.UIRoot.Dark = true")
+            && rootScript.Contains("this.UIRoot.Accent = 0x8854D0") && rootScript.Contains("this.UIRoot.WindowBackground = new SolidBrush(UI.Color.Rgb(16, 32, 48))"), rootScript);
+        ExpectGenerateError("UIRoot.WindowBackdrop mit unbekanntem Wert", "<Window Class=\"A\" UIRoot.WindowBackdrop=\"Glass\"/>", "needs one of None, Mica, Acrylic, Blur, Transparent");
+        ExpectDiagnostic("UIRoot.* unbekannt", "<Window Class=\"A\" UIRoot.Nope=\"1\"/>", "Unknown attribute 'UIRoot.Nope'");
+        ExpectDiagnostic("UIRoot.* nicht bindbar", "<Window Class=\"A\" UIRoot.Dark=\"{Binding dark}\"/>", "cannot be bound");
+        ExpectDiagnostic("UIRoot.* nicht an einer View", "<View Class=\"A\" UIRoot.Dark=\"true\"/>", "Unknown attribute 'UIRoot.Dark'");
+        // the generated code is typed: the lambdas of probes, templates and events have types, the handlers the types of the event's parameters
+        string typedScript = Generate("<Window Class=\"T\"><Resources><DataTemplate Key=\"d\"><Label Text=\"{Binding name}\"/></DataTemplate>"
+            + "<ControlTemplate Key=\"c\" Target=\"Button\"><Border><Label Text=\"{TemplateBinding Text}\"/></Border></ControlTemplate></Resources>"
+            + "<TextBox Text=\"{Binding name, Mode=TwoWay}\"/><DrawingCanvas OnPaint=\"Paint\" OnMouseDown=\"Down\"/></Window>");
+        CheckMarkup("Markup: der erzeugte Code ist typisiert (Lambdas der Probes, Vorlagen und Ereignisse, Handler)",
+            !typedScript.Contains("func (o, v)") && typedScript.Contains("func (any o, any v) on this") && typedScript.Contains("new UI.DataTemplate(func (any item) on this")
+            && typedScript.Contains("new UI.ControlTemplate(func (UI.Element owner) on this") && typedScript.Contains("func (UI.DrawingCanvas canvas) on this")
+            && typedScript.Contains("func (int x, int y, int button) on this") && typedScript.Contains("undefined Down(any sender, int x, int y, int button) { }")
+            && typedScript.Contains("undefined Paint(any sender, UI.DrawingCanvas canvas) { }") && typedScript.Contains("try context??.TakeTo(this)"), typedScript);
 
         // the generated classes against the library: a window (events through the fake window) and a view (bindings)
         string dir = Path.Combine(Path.GetTempPath(), "fire-markup-" + Guid.NewGuid().ToString("N"));
@@ -9604,15 +9621,15 @@ uiDrawScript = """
                     FlagChanged(sender) { print("flag " + sender.IsChecked) }
                 }
                 var f = new MyForm()
-                f.ui.Draw()
-                f.ui.Draw()   // labels and check boxes know their height only after the first drawing, which moves the elements below them in a Stack
+                f.UIRoot.Draw()
+                f.UIRoot.Draw()   // labels and check boxes know their height only after the first drawing, which moves the elements below them in a Stack
                 print(f.box.Horizontal + " " + f.field.Width + " " + f.caption.Text)
                 // a click on the button (its screen position is known after drawing)
                 var bx = f.go.ax + 5
                 var by = f.go.ay + 5
                 __TestEvent(8, 1, bx + 0.0, by + 0.0)
                 __TestEvent(11, 1, bx + 0.0, by + 0.0)
-                f.ui.Tick()
+                f.UIRoot.Tick()
                 print("clicks " + f.clicks)
                 // focus the text field with a click, type into it
                 var tx = f.field.ax + 5
@@ -9621,7 +9638,7 @@ uiDrawScript = """
                 __TestEvent(11, 1, tx + 0.0, ty + 0.0)
                 __TestEvent(3, "h")
                 __TestEvent(3, "i")
-                f.ui.Tick()
+                f.UIRoot.Tick()
                 print("field " + f.field.Text)
                 f.flag.Toggle()
                 """, new[] { "False 200 Name:", "clicks 1", "text h", "text hi", "field hi", "flag True" });
@@ -9644,21 +9661,21 @@ uiDrawScript = """
                 var f = new MyNotes()
                 var doc = new Doc()
                 f.SetDataContext(doc)
-                f.ui.Draw()
+                f.UIRoot.Draw()
                 print(f.notes.WordWrap + " " + f.notes.AcceptsTab + " " + f.notes.MaxLength + " " + f.notes.TabSize + " " + f.notes.LineCount + " " + f.locked.ReadOnly)
-                f.ui.SetFocus(f.notes)
+                f.UIRoot.SetFocus(f.notes)
                 __TestEvent(24, UI.Keys.End(), 64)
                 __TestEvent(24, UI.Keys.Enter(), 0)
                 __TestEvent(24, UI.Keys.Tab(), 0)
                 __TestEvent(3, "dritte")
-                f.ui.Tick()
-                print(f.notes.LineCount + " " + f.edits + " [" + doc.Body.Replace("\n", "|").Replace("\t", "~") + "] " + (f.ui.focusElement == f.notes))
+                f.UIRoot.Tick()
+                print(f.notes.LineCount + " " + f.edits + " [" + doc.Body.Replace("\n", "|").Replace("\t", "~") + "] " + (f.UIRoot.focusElement == f.notes))
                 doc.Body = "neu"
-                f.ui.Tick()
+                f.UIRoot.Tick()
                 print(f.notes.LineCount + " [" + f.notes.Text + "]")
-                f.ui.SetFocus(f.locked)
+                f.UIRoot.SetFocus(f.locked)
                 __TestEvent(3, "x")
-                f.ui.Tick()
+                f.UIRoot.Tick()
                 print(f.locked.Text)
                 """, new[] { "True True 100 2 2 True", "3 3 [erste|zweite|~dritte] True", "1 [neu]", "fest" });
 
@@ -9770,6 +9787,9 @@ uiDrawScript = """
             CheckMarkup("Markup-IntelliSense: Attribute eines Elements (Eigenschaften, Ereignisse, name), ohne die schon gesetzten", Has(sAttr, "Name", "OnClick", "Margin", "Grid.Row") && !sAttr.Contains("Text"), string.Join(",", sAttr));
             var sRootAttr = Suggest("<Window |");
             CheckMarkup("Markup-IntelliSense: Attribute des Wurzelelements mit Namespaces", Has(sRootAttr, "Class", "namespace", "namespace:prefix", "Title"), string.Join(",", sRootAttr));
+            CheckMarkup("Markup-IntelliSense: UIRoot.* am Fenster, nicht an einer View", Has(sRootAttr, "UIRoot.WindowBackdrop", "UIRoot.Dark", "UIRoot.Accent") && !Suggest("<View |").Contains("UIRoot.Dark"), string.Join(",", sRootAttr));
+            var sBackdrop = Suggest("<Window Class=\"A\" UIRoot.WindowBackdrop=\"|");
+            CheckMarkup("Markup-IntelliSense: Werte von UIRoot.WindowBackdrop", Has(sBackdrop, "None", "Mica", "Acrylic", "Blur", "Transparent"), string.Join(",", sBackdrop));
             var sEnum = Suggest("<Window Class=\"A\"><Label HorizontalAlign=\"|");
             CheckMarkup("Markup-IntelliSense: Werte einer Auswahl", Has(sEnum, "Stretch", "Left", "Center", "Right", "{Binding }"), string.Join(",", sEnum));
             var sBool = Suggest("<Window Class=\"A\"><Label Visible=\"f|");
@@ -9934,27 +9954,27 @@ uiDrawScript = """
                     Down(sender, x, y, button) { print("down " + x + "," + y + " " + button) }
                 }
                 var app = new RichApp()
-                app.ui.Draw()
-                app.ui.Draw()
+                app.UIRoot.Draw()
+                app.UIRoot.Draw()
                 print("namen " + app.names.Count + " baum " + app.tree.visibleNodes.Count + " vorschlaege " + app.sugg.suggestions.Count + " tabelle " + app.table.columns.Count)
                 var n = app.names
-                app.ui.MouseDown(1, n.ax + 10, n.ay + 25)
-                app.ui.MouseUp(1, n.ax + 10, n.ay + 25)
+                app.UIRoot.MouseDown(1, n.ax + 10, n.ay + 25)
+                app.UIRoot.MouseUp(1, n.ax + 10, n.ay + 25)
                 var c = app.canvas
-                c.MouseDown(app.ui, 1, c.ax + 5, c.ay + 6)
-                app.ui.MouseDown(1, app.one.ax + 5, app.one.ay + 5)
-                app.ui.MouseUp(1, app.one.ax + 5, app.one.ay + 5)
+                c.MouseDown(app.UIRoot, 1, c.ax + 5, c.ay + 6)
+                app.UIRoot.MouseDown(1, app.one.ax + 5, app.one.ay + 5)
+                app.UIRoot.MouseUp(1, app.one.ax + 5, app.one.ay + 5)
                 print("Stil " + (app.styled.Background != undefined) + " " + app.styled.Margin.left + " " + (app.styled.Style == app.fxStyle_Primary))
                 print("Vorlage " + (app.templated.templateRoot != undefined) + " " + app.templated.FindPart("txt").Text)
                 print("implizit " + (app.rect.Stroke != undefined) + " " + app.radio.SelectedIndex + " " + app.radio.items.Count)
-                app.bar.Open(app.ui, 0)
-                app.ui.Draw()
-                var menu = app.ui.popups[0]
+                app.bar.Open(app.UIRoot, 0)
+                app.UIRoot.Draw()
+                var menu = app.UIRoot.popups[0]
                 var mx = menu.ax + 10
                 var my = menu.ay + 4
-                app.ui.MouseDown(1, mx, my)
-                app.ui.MouseUp(1, mx, my)
-                print("Menue " + app.ui.popups.Count + " " + app.bar.menus.Count)
+                app.UIRoot.MouseDown(1, mx, my)
+                app.UIRoot.MouseUp(1, mx, my)
+                print("Menue " + app.UIRoot.popups.Count + " " + app.bar.menus.Count)
                 """, new[] { "paint 80x40 True", "namen 3 baum 3 vorschlaege 2 tabelle 2", "picked Bob", "down 5,6 1", "one", "Stil True 2 True", "Vorlage True Templated", "implizit True 1 2", "open", "Menue 0 2" });
 
             // the design view: the same library draws, without handlers and without the code of the program
@@ -10027,25 +10047,25 @@ uiDrawScript = """
                 m.names.Add("one")
                 m.names.Add("two")
                 app.SetDataContext(m)
-                app.ui.Draw()
-                app.ui.Draw()
+                app.UIRoot.Draw()
+                app.UIRoot.Draw()
                 print("zeilen " + app.viaView.Count + " " + app.direct.Count + " " + app.young.Count + " erste " + app.viaView.selectedItem)
                 print("zeile " + app.viaView.rowElements[0].children[0].Text + " " + app.viaView.rowElements[0].children[1].Text + " " + app.direct.rowElements[1].Text)
                 m.people.Add(new Person("Dave", 22))
                 m.names.Add("three")
-                app.ui.Draw()
+                app.UIRoot.Draw()
                 print("mehr " + app.viaView.Count + " " + app.direct.Count + " jung " + app.young.Count + " " + app.young.view[0].name)
                 m.sel = 1
-                app.ui.Draw()
+                app.UIRoot.Draw()
                 print("Auswahl " + app.viaView.SelectedIndex + " " + app.viaView.selectedItem.name)
                 app.viaView.Select(3)
-                app.ui.Draw()
+                app.UIRoot.Draw()
                 print("zurueck " + m.sel)
                 var other = new List()
                 other.Add("x")
                 m.names = other
-                app.ui.Draw()
-                print("neue Liste " + app.direct.Count + " " + app.ui.Update())
+                app.UIRoot.Draw()
+                print("neue Liste " + app.direct.Count + " " + app.UIRoot.Update())
                 """, new[] { "zeilen 3 2 1 erste undefined", "zeile CAROL 31 two", "mehr 4 3 jung 2 Dave", "Auswahl 1 Carol", "zurueck 3", "neue Liste 1 False" });
 
             // the design view shows the rows without knowing the data
@@ -10122,11 +10142,11 @@ uiDrawScript = """
                 var a = new Main()
                 var t = new Tool()
                 a.Open(t)
-                a.ui.Tick()
-                a.ui.Tick()
-                print("ticks " + mainTicks + " " + toolTicks + " angehaengt " + a.ui.attached.Count)
+                a.UIRoot.Tick()
+                a.UIRoot.Tick()
+                print("ticks " + mainTicks + " " + toolTicks + " angehaengt " + a.UIRoot.attached.Count)
                 t.l.Text = "changed"
-                print("Update " + t.ui.Update())
+                print("Update " + t.UIRoot.Update())
                 """, new[] { "ticks 2 2 angehaengt 1", "Update True" });
         }
         finally { try { Directory.Delete(dir, true); } catch (IOException) { } }

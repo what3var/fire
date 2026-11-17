@@ -52,7 +52,7 @@ namespace fire.UI.Markup
             try
             {
                 string script = Generate(document, sourceName, true);
-                return script + "\nvar fxP = new FxPreview()\nfxP.ui.Draw()\nfxP.ui.Draw()\nfxP.FxDump()\n";
+                return script + "\nvar fxP = new FxPreview()\nfxP.UIRoot.Draw()\nfxP.UIRoot.Draw()\nfxP.FxDump()\n";
             }
             finally { s_preview = false; }
         }
@@ -148,7 +148,7 @@ namespace fire.UI.Markup
             {
                 code.Line("Framebuffer framebuffer");
                 code.Line("Window window");
-                code.Line("UI.Root ui");
+                code.Line("UI.Root UIRoot");
             }
             if (document.Kind == MarkupRootKind.View) code.Line("UI.Panel view");
             if (preview) code.Line("List fxAll");
@@ -191,41 +191,50 @@ namespace fire.UI.Markup
             {
                 code.Line($"this.framebuffer = new Framebuffer({document.Width}, {document.Height})");
                 code.Line($"this.window = new Window(this.framebuffer, {Quote(document.Title)})");
-                code.Line("this.ui = new UI.Root(this.framebuffer, this.window)");
+                code.Line("this.UIRoot = new UI.Root(this.framebuffer, this.window)");
+                // UIRoot.WindowBackdrop="Acrylic", ...: the properties of the root (the design view draws no material of the desktop behind it)
+                foreach (var attribute in document.RootAttributes)
+                {
+                    var property = MarkupSchema.RootProperty(attribute.Name)!;
+                    if (preview && property.FieldName == "WindowBackdrop") continue;
+                    if (ValueCode(property, attribute, errors) is { } value) code.Line($"this.UIRoot.{property.FieldName} = {value}");
+                }
             }
             if (document.Kind == MarkupRootKind.View)
             {
                 code.Line($"this.view = new UI.Panel(0, 0, {document.Width}, {document.Height})");
-                if (preview) code.Line("this.ui.Add(this.view)");
+                if (preview) code.Line("this.UIRoot.Add(this.view)");
             }
             if (preview) code.Line("this.fxAll = new List()");
             if (!preview && infos.Values.Any(i => i.InTemplate)) code.Line("this.fxTemplateEls = new List()");
             foreach (var (key, type) in preview ? new List<(string Key, string Type)>() : converters) code.Line($"this.fxConv_{key} = new {type}()");
             foreach (var b in bindings) code.Line($"this.fxHandles{b.Index} = new List()");
 
-            string container = document.Kind == MarkupRootKind.Window ? "this.ui" : "this.view";
-            EmitResources(code, document, infos, document.Kind == MarkupRootKind.Window ? "this.ui.resources" : "this.view.Resources()", errors);
+            string container = document.Kind == MarkupRootKind.Window ? "this.UIRoot" : "this.view";
+            EmitResources(code, document, infos, document.Kind == MarkupRootKind.Window ? "this.UIRoot.resources" : "this.view.Resources()", errors);
             foreach (var child in document.Children) EmitElement(code, infos, child, container, null, errors);
             if (bindings.Count > 0) code.Line("this.fxBindAll()");
-            if (document.Kind == MarkupRootKind.Window && !preview) code.Line("this.ui.onTick = func () on this => { this.OnTick() }");
+            if (document.Kind == MarkupRootKind.Window && !preview) code.Line("this.UIRoot.onTick = func () on this => { this.OnTick() }");
             code.Indent--;
             code.Line("}");
             code.Line();
 
             // ---- handlers (empty here: the derived class overrides them) ----
-            var handlers = new Dictionary<string, string[]>();
+            // (the parameters typed as the lambda of the event gets them: `undefined Down(any sender, int x, int y, int button)`; an override may take them as `any`)
+            static string Parameters(EventDef e) => string.Concat(e.Args.Select((a, k) => $", {e.ArgType(k)} {a}"));
+            var handlers = new Dictionary<string, EventDef>();
             foreach (var element in preview ? Enumerable.Empty<MarkupElement>() : document.AllElements())
                 foreach (var (eventName, handler, line) in element.Handlers)
                 {
-                    var args = infos[element].Def.Event(eventName)!.Args;
-                    if (handlers.TryGetValue(handler, out var existing) && !existing.SequenceEqual(args))
-                        errors.Add(new MarkupDiagnostic(line, $"The method '{handler}' handles events with different parameters (sender{string.Concat(existing.Select(a => ", " + a))} and sender{string.Concat(args.Select(a => ", " + a))})."));
-                    else handlers[handler] = args;
+                    var eventDef = infos[element].Def.Event(eventName)!;
+                    if (handlers.TryGetValue(handler, out var existing) && Parameters(existing) != Parameters(eventDef))
+                        errors.Add(new MarkupDiagnostic(line, $"The method '{handler}' handles events with different parameters (sender{string.Concat(existing.Args.Select(a => ", " + a))} and sender{string.Concat(eventDef.Args.Select(a => ", " + a))})."));
+                    else handlers[handler] = eventDef;
                 }
-            foreach (var (handler, args) in handlers)
+            foreach (var (handler, eventDef) in handlers)
             {
                 code.Line($"// the handler of an event in the markup - override it in the derived class");
-                code.Line($"undefined {handler}(any sender{string.Concat(args.Select(a => ", any " + a))}) {{ }}");
+                code.Line($"undefined {handler}(any sender{Parameters(eventDef)}) {{ }}");
             }
             if (handlers.Count > 0) code.Line();
 
@@ -249,20 +258,20 @@ namespace fire.UI.Markup
                 code.Line("// the start of the program: shows the window and runs its window manager on this thread until the windows are closed (if nobody runs it yet, else it is only shown); with `other` (another window of the markup, or a UI.Root) that window is opened as well");
                 code.Line("undefined Run(any other = undefined) {");
                 code.Line("    if (other != undefined) { this.Open(other) }");
-                code.Line("    this.ui.Run()");
+                code.Line("    this.UIRoot.Run()");
                 code.Line("}");
                 code.Line();
                 code.Line("// shows the window on its window manager (started with a thread of its own if nobody runs it yet), the events are handled at the program's safe points (and at its end); `modal`: returns when the window is closed, the other windows take no input meanwhile");
-                code.Line("undefined Show(bool modal = false) { this.ui.Show(modal) }");
+                code.Line("undefined Show(bool modal = false) { this.UIRoot.Show(modal) }");
                 code.Line();
                 code.Line("// opens another window (another object of a window of the markup, or a UI.Root): this window's Run/Tick works it off from now on until its window is closed");
                 code.Line("undefined Open(any other) {");
                 code.Line("    any root = other");
                 code.Line("    if (!(other is of UI.Root)) {");
-                code.Line("        root = other.ui");
+                code.Line("        root = other.UIRoot");
                 code.Line("        other.TakeTo(this)");
                 code.Line("    }");
-                code.Line("    this.ui.Attach(root)");
+                code.Line("    this.UIRoot.Attach(root)");
                 code.Line("}");
             }
             else
@@ -377,7 +386,7 @@ namespace fire.UI.Markup
             foreach (var (eventName, handler, _) in s_preview ? new List<(string Event, string Handler, int Line)>() : element.Handlers)
             {
                 var args = info.Def.Event(eventName)!.Args;
-                string parameters = string.Join(", ", args);
+                string parameters = string.Join(", ", args.Select((a, k) => info.Def.Event(eventName)!.ArgType(k) + " " + a));
                 // (the handler finds its element through `this` - a field, or its place in the list of the template parts)
                 string element0 = info.Field != null ? "this." + info.Field : info.HandlerField != null ? "this." + info.HandlerField : $"this.fxTemplateEls[(taking {local}At)]";
                 code.Line($"{local}.{info.Def.Event(eventName)!.FieldName} = func ({parameters}) on this => {{ {handler}({element0}{string.Concat(args.Select(a => ", " + a))}) }}");
@@ -515,7 +524,7 @@ namespace fire.UI.Markup
             {
                 if (template.Root == null) continue;
                 string v = "dt" + counter++;
-                code.Line($"var {v} = new UI.DataTemplate(func (item) on this => {{");
+                code.Line($"var {v} = new UI.DataTemplate(func (any item) on this => {{");
                 code.Indent++;
                 EmitElement(code, infos, template.Root, null, null, errors, dataItem: "item");
                 code.Line($"return {infos[template.Root].Local}");
@@ -531,7 +540,7 @@ namespace fire.UI.Markup
                 var def = MarkupSchema.FindTarget(template.Target)!;
                 string v = "tp" + counter++;
                 var bindings = new List<(string Part, string PartProperty, string OwnerProperty)>();
-                code.Line($"var {v} = new UI.ControlTemplate(func (owner) on this => {{");
+                code.Line($"var {v} = new UI.ControlTemplate(func (UI.Element owner) on this => {{");
                 code.Indent++;
                 EmitElement(code, infos, template.Root, null, null, errors, bindings, def);
                 code.Line($"return {infos[template.Root].Local}");
@@ -660,10 +669,10 @@ namespace fire.UI.Markup
             code.Line("// sets the object the bindings read from (and write to) and connects them; null disconnects");
             code.Line("undefined SetDataContext(any context) {");
             code.Line("    this.fxUnbindAll()");
-            code.Line("    // a context handed to the call (`SetDataContext(new Model())`) stays alive: the view keeps it, like List.Add");
-            code.Line("    if (context is of class)");
-            code.Line("        try context.TakeTo(this)");
             code.Line("    this.dataContext = context");
+            code.Line("    // a context handed over (`SetDataContext(new Model())`, `SetDataContext(take model)`) belongs to this object from now on; a variable of the");
+            code.Line("    // caller (`SetDataContext(model)`) stays the caller's - this object only refers to it");
+            code.Line("    try context??.TakeTo(this)");
             code.Line("    this.fxBindAll()");
             code.Line("}");
             code.Line();
@@ -708,7 +717,7 @@ namespace fire.UI.Markup
                         string handler = i == path.Length - 1 ? $"fxUpdate{b.Index}()" : $"fxBind{b.Index}()";
                         code.Line($"if (o{i} != undefined) {{");
                         code.Indent++;
-                        code.Line($"var f{i} = func (o, v) on this => {{ {handler} }}");
+                        code.Line($"var f{i} = func (any o, any v) on this => {{ {handler} }}");
                         code.Line($"any p{i} = probe o{i}.{path[i]} changed f{i}");
                         code.Line($"this.fxHandles{b.Index}.Add(p{i})");
                         if (i < path.Length - 1) code.Line($"any o{i + 1} = o{i}.{path[i]}");
@@ -720,7 +729,7 @@ namespace fire.UI.Markup
                     }
                     if (b.Value.Mode == BindingMode.TwoWay)
                     {
-                        code.Line($"var g = func (o, v) on this => {{ fxPush{b.Index}(v) }}");
+                        code.Line($"var g = func (any o, any v) on this => {{ fxPush{b.Index}(v) }}");
                         code.Line($"any pg = probe {target}.{b.Property.FieldName} changed g");
                         code.Line($"this.fxHandles{b.Index}.Add(pg)");
                     }
