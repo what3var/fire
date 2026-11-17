@@ -469,9 +469,11 @@ static DWORD WINAPI fai_workerMain(LPVOID a)
 static void* fai_workerMain(void* a)
 #endif
 {
-    FaiWorker* w = (FaiWorker*)a;
-    FaiPool* p = w->pool;
+    /* (the block from fai_poolStart belongs to the worker: it keeps what it needs and frees it) */
+    FaiPool* p = ((FaiWorker*)a)->pool;
+    int index = ((FaiWorker*)a)->index;
     int seen = 0;
+    free(a);
     for (;;) {
         int64_t from, to;
 #ifdef _WIN32
@@ -486,7 +488,7 @@ static void* fai_workerMain(void* a)
         pthread_mutex_unlock(&p->lock);
 #endif
         if (p->quit) break;
-        fai_part(p, w->index + 1, p->count + 1, &from, &to);
+        fai_part(p, index + 1, p->count + 1, &from, &to);
         if (from < to) p->job(p->arg, from, to);
 #ifdef _WIN32
         EnterCriticalSection(&p->lock);
