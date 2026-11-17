@@ -6469,10 +6469,10 @@ namespace fire.Native
                                 ? $"{S(slot)} = Bool(ownMethodTry({ownMethodId}, {S(slot)}, {targetArg}, {modeArg}, &{owner}, {(scopeLists.Count == 0 ? "NULL" : "L_")}, {scopeLists.Count}, {(f.HasSelf ? "self" : "Undef()")}, MYARGS));"
                                 : $"ownMethodT({ownMethodId}, {S(slot)}, {targetArg}, {modeArg}, &{owner}, {(scopeLists.Count == 0 ? "NULL" : "L_")}, {scopeLists.Count});";
                             E($"{{ {localsDecl}{call} }}");
-                            if (_usesThreads && ownMethodId == "OM_TakeGlobal") Check();   // (to the main program from a thread: the ArgumentException when it is not safe)
+                            if (ownMethodId == "OM_TakeTo" || isTry || _usesThreads && ownMethodId == "OM_TakeGlobal") Check();   // (a target that is no object, a value type with `try`; to the main program from a thread: the ArgumentException when it is not safe)
                             if (isTry) { SetR(slot, false); d = slot + 1; return Next(); }
                         }
-                        if (_usesThreads && ownMethodId == "OM_TakeGlobal" && argc == baseArgs && !isTry) Check();
+                        if ((ownMethodId == "OM_TakeTo" || _usesThreads && ownMethodId == "OM_TakeGlobal") && argc == baseArgs && !isTry) Check();   // (TakeTo: a target that is no object is the VM's ArgumentException)
                         E($"{S(slot)} = Undef();");
                         SetR(slot, false);
                         d = slot + 1; return Next();

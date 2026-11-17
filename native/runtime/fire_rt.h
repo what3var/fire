@@ -7723,9 +7723,21 @@ FIRE_FN void takeGlobalMain(Owned* o);
 FIRE_FN bool takeGlobalSafe(Owned* o);
 #endif
 
+/* `5.TakeTo(b)`, `try s.TakeLocal()` (through `any`): a value type has no Take... - the VM's MissingMemberException of a method it does not know (`argc`:
+ * the arguments of the call). True when it was thrown. */
+FIRE_COLD FIRE_FN bool ownValueType(int method, Value self, int argc, bool isTry) {
+    static const char* const names[] = { "Local", "Upwards", "Global", "To" };
+    char name[24];
+    if (self.kind == K_Class || self.kind == K_Array || self.kind == K_Buffer || self.kind == K_Lambda) return false;
+    snprintf(name, sizeof name, "%s%s", isTry ? "tryTake" : "Take", names[method & 3]);
+    missingMethod(self, name, argc);
+    return true;
+}
+
 /* `x.TakeLocal()`, `x.TakeUpwards()`, `x.TakeGlobal()`, `x.TakeTo(obj)` on an object, an array or a buffer (SPEC 2.2). */
 FIRE_FN void ownMethod(int method, Value self, Value arg, OwnList* here) {
     Owned* o = ownedOf(self);
+    if (!o && ownValueType(method, self, method == OM_TakeTo || (method == OM_TakeGlobal && arg.kind == K_Bool) ? 1 : 0, false)) return;
     if (!o) fatal("Take... is only possible for an object, an array or a buffer that is not destroyed.");
     if (o->flags & 1) fatal("A destroyed value cannot change its owner.");
     switch ((int)method) {
@@ -7752,6 +7764,7 @@ FIRE_FN void ownMethod(int method, Value self, Value arg, OwnList* here) {
             ownLink(g_globalOwn, o);
             break;
         default:
+            if (FIRE_UNLIKELY(arg.kind != K_Class)) { kindError("TakeTo on a value of type %s which is not an object.", arg.kind); return; }   /* (the VM's ArgumentException) */
             takeToObject(o, asObj(arg));
             break;
     }
@@ -7760,6 +7773,7 @@ FIRE_FN void ownMethod(int method, Value self, Value arg, OwnList* here) {
 /* The same with a `Takes` mode: what hangs on the value goes along (SPEC 2.2); `lists` are the scopes of the running call. */
 FIRE_FN void ownMethodT(int method, Value self, Value arg, Value mode, OwnList* here, OwnList* const* lists, int n) {
     Owned* o;
+    if (!ownedOf(self) && ownValueType(method, self, (method == OM_TakeTo ? 2 : 1) + (method == OM_TakeGlobal && arg.kind == K_Bool ? 1 : 0), false)) return;
     if (method == OM_TakeGlobal && mode.kind == K_Bool) { arg = mode; mode = Int(TK_THIS); }   /* (`x.TakeGlobal(true)`: no mode, the flag) */
     if (mode.kind != K_Int || mode.i < TK_THIS || mode.i > TK_ALL) fatal("The mode of Take... must be one of Takes.This, Takes.Children, Takes.Locals, Takes.All.");
 #ifdef FIRE_THREADS
@@ -7861,8 +7875,8 @@ FIRE_FN bool isFromGlobal(Value v) {
 FIRE_FN bool ownMethodTry(int method, Value self, Value arg, Value mode, OwnList* here, OwnList* const* lists, int n, Value thisValue, OwnList* myArgs) {
     Owned* o = ownedOf(self);
     if (!o) {
-        if (self.kind != K_Class && self.kind != K_Array && self.kind != K_Buffer && self.kind != K_Lambda)
-            fireError("MissingMemberException", "'try x.Take...' is only possible for an object, an array, a buffer or a lambda - a value type has no Take... ('try x??.TakeTo(...)' skips it).");
+        /* (a value type: the VM's MissingMemberException; the count of the arguments without a `Takes` mode - natively a missing mode is Takes.This) */
+        ownValueType(method, self, method == OM_TakeTo || (method == OM_TakeGlobal && arg.kind == K_Bool) ? 1 : 0, true);
         return false;   /* (destroyed: it belongs to nothing - `try` is false, as in the VM) */
     }
     if (!ownedByCall(o, lists, n, thisValue, myArgs)) return false;

@@ -207,6 +207,10 @@ using it then throws a `DestroyedException`. Whoever wants to keep an object tak
 | `obj.TakeGlobal(true)` | the global scope of the running thread (`currentThread`; in the main program the same as `TakeGlobal()`) |
 | `try obj.TakeTo(other)` | only if the caller owns `obj` now; returns `True`/`False` (a number or a text has no `TakeTo`: `try x??.TakeTo(other)` skips it, see [Conditional access](03-operators.md#conditional-access--and-)) |
 
+The target of `TakeTo` is an object. Anything else - through `any`: `b.TakeTo(5)` - is the catchable `ArgumentException`
+`TakeTo on a value of type Int which is not an object.`; a number or a text has no `Take...` methods at all (`any n = 5; n.TakeLocal()` is the
+`MissingMemberException` `'TakeLocal' (0 argument(s)) is not a known built-in method on a value of type Int.`). Both are the same in the VM and natively.
+
 `TakeGlobal()` in a fire thread hands the object to the **main program**: it and everything it owns (its children, their children, ...) belong to the
 main program from then on and outlive the thread. The thread keeps its references, but uses the object like any global of the main program - reading
 directly, a write in a section, a method call as a job of the main program (see [Threads and actors](15-threads-and-actors.md#global-variables)).
