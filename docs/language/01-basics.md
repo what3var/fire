@@ -161,6 +161,22 @@ class Point {
 
 Texts are joined with `+`; as soon as one side is a `string`, the other side is converted (`"n = " + 3` is `"n = 3"`).
 
+## Keywords
+
+These words are keywords: they cannot be the name of a variable, a parameter, a field, a method or a class (`int where = 3` is the error
+"'where' is a keyword and cannot be a name").
+
+```
+var func class construct destruct return if else while do for foreach in on new base this try catch finally throw
+is of from under extern unsafe interface readonly override static public private protected namespace enum with extends
+switch case default break continue where fire taking handover operator sync flat copy take replace leave terminate actor
+process true false undefined bool int float char string byte word and or
+```
+
+Some words are keywords only where they mean something, and names everywhere else - for example `delete` (in front of a name: `delete x`), `probe`,
+`silence`, `warn`, `await`, `until`, `dedicated`, `defined`, `trust`, `unit`, `coerce`, `inline`, `flag`. Methods of the standard library
+are written with a capital letter (`s.Replace(a, b)`), so they never meet a keyword.
+
 ## Ending the program
 
 The program ends after its last statement. `terminate()` ends it at once (also from a thread), `terminate(value)` passes an exit value
