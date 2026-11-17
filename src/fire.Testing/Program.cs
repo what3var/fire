@@ -48,6 +48,8 @@ Environment.SetEnvironmentVariable("FIRE_FONT_DIRS", fontTestDir);
 if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "projects") { ProjectTests.Run(); return; }
 // FIRE_TESTS_ONLY=linkage: linkage "static" of native builds (libraries in the cache, ROADMAP 9)
 if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "linkage") { LinkageTests.Run(); return; }
+// FIRE_TESTS_ONLY=registry: the package sources of ember against an index on the web (a local HTTP server; docs/packages/README.md)
+if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "registry") { RegistryTests.Run(); return; }
 // FIRE_TESTS_ONLY=bios16: the targets without an operating system (ROADMAP 13.5: the boot sector, a build booted in QEMU)
 if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "bios16") { BiosTests.RunAlone(); return; }
 if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "scene3d") { Scene3DTests.Run(); return; }
@@ -11648,6 +11650,7 @@ static int CountOccurrences(string haystack, string needle)
 }
 
 ProjectTests.Run();
+RegistryTests.Run();
 NotesTests.Run();
 McpServerTests.Run();
 AiModelsTests.Run();

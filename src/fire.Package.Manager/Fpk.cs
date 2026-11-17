@@ -98,6 +98,22 @@ namespace fire.Package.Manager
                 }
             }
 
+            // the documents (readme, licence, notices): the ones the description names, or those next to the forge file; in the package by their names, in its root
+            var documents = manifest.Documents is { Count: > 0 } named ? named.Select(Absolute).ToList()
+                : Directory.EnumerateFiles(baseDir).Where(f => PackageManifest.IsDocumentName(Path.GetFileName(f))).OrderBy(f => f, StringComparer.Ordinal).ToList();
+            if (documents.Count > 0)
+            {
+                forgeCopy.Documents = documents;
+                packaged.Documents = new List<string>();
+                foreach (var document in documents)
+                {
+                    string entry = Path.GetFileName(document);
+                    if (!used.Add(entry)) throw new PackageException($"The document '{document}' has the name of another file of the package ('{entry}').");
+                    entries.Add((document, entry));
+                    packaged.Documents.Add(entry);
+                }
+            }
+
             if (templatesDir != null)
             {
                 forgeCopy.Templates = templatesDir;

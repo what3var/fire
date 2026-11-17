@@ -24,6 +24,18 @@ namespace fire.Package.Manager
         /// <summary>A folder with the templates the package brings (`Code/` and `Project/` below it, see docs/tools/templates.md): in the forge file a path (relative to the file; none given: `templates/` next to
         /// it, if there is one), in the package `templates`.</summary>
         public string? Templates { get; set; }
+        /// <summary>The documents of the package as a whole - its readme, the licence text, notices (`README.md`, `LICENSE`, `NOTICE`): in the forge file paths (relative to the file; none
+        /// given: the files `README*`, `LICENSE*`, `LICENCE*`, `COPYING*` and `NOTICE*` next to it), in the package their names in its root. A licence that asks for its text to go
+        /// with every copy (MIT, BSD, Apache-2.0, ...) is kept this way; the package page of the website shows the readme. null: none.</summary>
+        public List<string>? Documents { get; set; }
+
+        /// <summary>The names that make a file next to the forge file a document of the package (<see cref="Documents"/>) when the description names none.</summary>
+        public static bool IsDocumentName(string fileName)
+        {
+            string stem = Path.GetFileNameWithoutExtension(fileName).ToUpperInvariant();
+            string ext = Path.GetExtension(fileName).ToLowerInvariant();
+            return stem is "README" or "LICENSE" or "LICENCE" or "COPYING" or "NOTICE" or "AUTHORS" && ext is "" or ".md" or ".txt";
+        }
 
         private static readonly JsonSerializerOptions Options = new()
         {
@@ -105,6 +117,9 @@ namespace fire.Package.Manager
                     }
                 }
             }
+            foreach (var document in Documents ?? new List<string>())
+                if (string.IsNullOrWhiteSpace(document)) problems.Add("'documents' has an empty entry.");
+                else if (fileExists != null && !fileExists(document)) problems.Add($"The document '{document}' does not exist.");
             return problems;
         }
     }

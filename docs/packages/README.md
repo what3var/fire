@@ -36,25 +36,45 @@ installed or removed something, the open scripts are checked again.
 ### Sources
 
 `ember find` and `ember install` look in the *package sources*. `ember.json` next to the compiler lists them; without the file these are
-the folder `PackageSource` next to the compiler and the index on the GitHub page of the packages:
+the folder `PackageSource` next to the compiler and the index of the package registry on the website, https://what3var.github.io/packages/
+(`ember sources` shows the ones in use):
 
 ```json
-{ "sources": [ "PackageSource", "https://what3var.github.io/fire-packages/index.json", "D:\\my-packages\\index.json" ] }
+{ "sources": [ "PackageSource", "https://what3var.github.io/packages/index.json", "D:\\my-packages\\index.json" ] }
 ```
 
 A source is a **folder** (`.fpk` files, and/or an `index.json`) or an **index** (an address of the web, a `file:` address or the path of a json file). The index:
 
 ```json
 {
+  "format": 1,
   "packages": [
-    { "name": "sensorkit", "author": "Jane", "description": "Sensors on the I2C bus",
-      "versions": [ { "version": "1.0.0", "url": "sensorkit-1.0.0.fpk", "sha256": "..." } ] }
+    { "name": "sensorkit", "author": "Jane", "description": "Sensors on the I2C bus", "license": "MIT", "homepage": "https://...",
+      "versions": [ { "version": "1.0.0", "url": "files/sensorkit/sensorkit-1.0.0.fpk", "sha256": "...", "size": 4711 },
+                    { "version": "1.1.0", "url": "...", "sha256": "...", "size": 4802, "yanked": true } ] }
   ]
 }
 ```
 
-The `url` is relative to the index or absolute; `sha256` (optional) is checked after the download. `ember index Folder [BaseUrl]` writes the `index.json` for the `.fpk`
-files of a folder, ready to be put on a web page together with them. A source that cannot be read (no network) is reported and skipped.
+The `url` is relative to the index or absolute. After the download ember checks `size` and `sha256`; a file that differs is not installed. Other fields are
+ignored (the index of the website has more: the date, the dependencies and imports of each version, the page of the package); an index of a newer `format` is refused.
+A version that is **yanked** (withdrawn, e.g. a broken release) is never taken as the newest, but `ember install name@1.1.0` still installs it (with a note).
+
+From the web ember reads only **https** (plain http only from this machine - `localhost`, a test server), and it installs a package from the web only when the index
+gives its `sha256`. A source that cannot be read (no network) is reported and skipped.
+
+`ember index Folder [BaseUrl]` writes the `index.json` for the `.fpk` files of a folder (with licence, size and checksum), ready to be put on a web page together with them.
+
+### Publishing
+
+The packages of the registry are published by the maintainer of the website (repository `what3var.github.io`, folder `registry/`, see its `README.md`): there are no
+accounts and no uploads. To have a package listed, publish its source and the `.fpk` (for example as a release of your repository) and open an issue with the
+link, the licence and the SHA-256 of the file.
+
+Build the package with `ember forge` (or *Pack Library* for a library project). The **documents** of the package go into its root: `README.md` (shown on the page
+of the package), `LICENSE`/`LICENCE`/`COPYING` and `NOTICE` (most licences want their text with every copy) - the files of these names next to the description (or
+in the folder of the library project), or the ones `"documents": [ ... ]` names. A package needs a `license` (an SPDX id such as `MIT` or `Apache-2.0`) that allows
+passing it on; package names starting with `fire-` and the import names of fire are reserved.
 
 ## The standard libraries (`packages/`, `Source/`)
 

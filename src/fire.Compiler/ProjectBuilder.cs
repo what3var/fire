@@ -84,6 +84,9 @@ namespace fire.Compiler
                 // the folder `templates/` of the project goes into the package: the templates it offers to whoever installs it
                 string templates = Path.Combine(project.Directory, Fpk.TemplatesEntry);
                 if (Directory.Exists(templates)) manifest.Templates = templates;
+                // the readme, the licence and the notices of the project go into the root of the package (docs/packages/README.md "Publishing")
+                var documents = Directory.EnumerateFiles(project.Directory).Where(f => PackageManifest.IsDocumentName(Path.GetFileName(f))).OrderBy(f => f, StringComparer.Ordinal).ToList();
+                if (documents.Count > 0) manifest.Documents = documents;
 
                 string forge = Path.Combine(workDir, "package.json");
                 manifest.Save(forge);
