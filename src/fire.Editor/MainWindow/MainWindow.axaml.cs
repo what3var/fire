@@ -320,7 +320,8 @@ namespace fire.Editor
             _ = _devices.RefreshAsync(fastScan: true); // list the devices (fast); the availability check is done by "Search"
             bool fromCommandLine = _documents.Count > 0;
             // the welcome window, once the splash is gone (not when files were given on the command line)
-            if (!fromCommandLine && _settings.ShowWelcome) _ = ShowWelcomeAfterSplash();
+            // (the setup wizard first, at the first start: MainWindow.Setup.cs)
+            _ = ShowWelcomeAfterSplash(!fromCommandLine && _settings.ShowWelcome);
             // the MCP server for AI tools, when the user switched it (or the assistant) on
             StartMcpServerIfWanted();
             fire.Native.BackgroundWork.Changed += () => Dispatcher.UIThread.Post(UpdateWorkStatus);   // (packages built while nothing else shows it)
@@ -328,10 +329,11 @@ namespace fire.Editor
             StartAssistantIfWanted();
         }
 
-        private async Task ShowWelcomeAfterSplash()
+        private async Task ShowWelcomeAfterSplash(bool welcome)
         {
             await App.SplashClosed;
-            await ShowWelcome();
+            await RunFirstStartSetup();
+            if (welcome) await ShowWelcome();
         }
 
         private void UpdateStatus(string text) => StatusText.Text = text;

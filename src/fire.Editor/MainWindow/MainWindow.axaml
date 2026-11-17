@@ -340,6 +340,8 @@
 				</MenuItem>
 				<MenuItem Header="?">
 					<MenuItem Header="_Welcome..." Click="Welcome_Click" InputGesture="Ctrl+F1"/>
+					<MenuItem Header="Setup _Wizard..." Click="SetupWizard_Click"
+                              ToolTip.Tip="Toolchains, the model of the assistant and the first build of the standard packages - the wizard of the first start"/>
 					<Separator/>
 					<MenuItem Header="_First Steps" Click="HelpFirstSteps_Click" InputGesture="F1"/>
 					<MenuItem Header="_Embedding fire in your Application" Click="HelpEmbedding_Click"/>
