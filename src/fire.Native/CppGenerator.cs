@@ -3635,7 +3635,7 @@ namespace fire.Native
             entry[0] = start;
             // Parameters can be anything: assume they may be references (a call-site analysis could narrow this). A parameter declared int/float/bool
             // has its type from the GuardLocal of the prologue.
-            f.GuardAddr = code.Where(c => c.Op is OpCode.GuardLocal or OpCode.GuardLocalType).ToDictionary(c => c.A[0], c => c.Addr);
+            f.GuardAddr = code.Where(c => c.Op is OpCode.GuardLocal or OpCode.GuardLocalType).GroupBy(c => c.A[0]).ToDictionary(g => g.Key, g => g.Max(c => c.Addr));   // (`defined string p`: GuardLocal converts, GuardLocalType checks undefined - the later one counts)
             // (a parameter declared as a typed array or a buffer - `int a[]`, `byte b[]` - is typed by the prologue: LoadLocal, TypeArray, StoreLocal; what it
             // holds from that store on is what the store says, before it what the caller passed)
             for (int k = 0; k + 2 < code.Count; k++)
