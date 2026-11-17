@@ -346,17 +346,18 @@ namespace fire.Editor
             public string What => Project != null ? Project.Name : Document?.DisplayName ?? "script";
         }
 
-        /// <summary>What the active document belongs to: the project (all its files and libraries, with the text of the open documents and the settings of the project) when the
-        /// document is part of one, else the single script. null (with a message) on a problem or when there is nothing to run.</summary>
+        /// <summary>What a run compiles: Start (`filename` null) the start project of the solution from every file of it (see StartProject), Build virtual (`filename` the program) the
+        /// project of the active document - all its files and libraries, with the text of the open documents and the settings of the project -, else the single script. null (with a
+        /// message) on a problem or when there is nothing to run.</summary>
         private RunInput? ResolveRunInput(string? filename)
         {
             var doc = ActiveDocument;
-            var project = ContextProject();
-            // a library cannot run itself: Start (F5) on one of its files runs the startup project of the solution (Build packs the library)
-            if (project?.Project.Type == OutputType.Library && filename == null && _workspace.Startup is { } startup && startup.Project.Type == OutputType.Exe)
+            var project = filename == null ? StartProject() : ContextProject();
+            // a library cannot run itself: the start project of the solution runs (Build packs the library)
+            if (project?.Project.Type == OutputType.Library && filename == null && _workspace.Startup is { } startup && startup.Project.Type == OutputType.Exe && !ReferenceEquals(startup, project))
             {
+                UpdateStatus($"{project.Name} is a library: running the start project {startup.Name}.");
                 project = startup;
-                UpdateStatus($"{ContextProject()!.Name} is a library: running the startup project {startup.Name}.");
             }
 
             if (project != null)
@@ -421,7 +422,7 @@ namespace fire.Editor
                 Args = RunArguments(input),
                 ProgramPath = project != null ? plan!.SourcePaths.LastOrDefault() ?? "" : FullPathOf(doc) ?? "",
             };
-            var job = BeginBuildJob(filename != null ? $"{input.What} (standalone, {RunModeName})" : $"{input.What} (VM, {RunModeName})");
+            var job = BeginBuildJob(filename != null ? $"{input.What} (virtual, {RunModeName})" : $"{input.What} (VM, {RunModeName})");
             bool compiled;
             try { compiled = await _session.CompileAsync(input.Sources, filename, input.BaseDirectory, plan, environment, job.Monitor); }
             catch (OperationCanceledException)
@@ -531,6 +532,18 @@ namespace fire.Editor
             else if (answer == Dialogs.Answer.No) Stop_Click(this, new RoutedEventArgs());
         }
 
+        /// <summary>Ctrl+F5: starts the program without stopping at breakpoints (compiled again when nothing is compiled or the program has ended); a paused program runs on to its end.
+        /// With the native engine a Release/Performance build runs on its own, a Debug build under the debugger without breaking.</summary>
+        private async void StartWithoutDebugging_Click(object? sender, RoutedEventArgs e)
+        {
+            if (_isBusy || BuildRunning()) return;
+            if ((!_session.HasProgram || _session.IsFinished) && UsesNativeEngine()) { _ = StartNativeAsync(NativeFirstAction.RunToEnd); return; }
+            if ((!_session.HasProgram || _session.IsFinished) && !await CompileAndPrepareAsync(null)) return;
+            if (!_session.HasProgram || _isBusy) return;
+            BeginStep();
+            _session.RunToCompletion();
+        }
+
         private async void RunToEnd_Click(object? sender, RoutedEventArgs e)
         {
             if (BuildRunning()) return;
@@ -618,10 +631,10 @@ namespace fire.Editor
         private List<string> ScriptArguments(OpenDocument? doc) =>
             doc != null && _scriptArguments.TryGetValue(FullPathOf(doc) ?? doc.DisplayName, out var args) ? args : new List<string>();
 
-        /// <summary>Run > Program Arguments: what the program gets as Environment.Args - for a project its settings.arguments (saved with the project), for a single script until spark ends.</summary>
+        /// <summary>Run > Program Arguments: what the program gets as Environment.Args - for the project Start runs its settings.arguments (saved with the project), for a single script until spark ends.</summary>
         private async void ProgramArguments_Click(object? sender, RoutedEventArgs e)
         {
-            var project = ContextProject();
+            var project = StartProject();
             var doc = ActiveDocument;
             if (project == null && doc == null) { UpdateStatus("No document is open."); return; }
             string current = project != null ? ArgumentText.Join(project.Project.Settings?.Arguments) : ArgumentText.Join(ScriptArguments(doc));

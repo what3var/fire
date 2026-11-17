@@ -70,6 +70,7 @@ namespace fire.Editor
         private readonly ContextMenu _menu = new();
         private IReadOnlyDictionary<string, GitFileState>? _git;
         private string? _branch;
+        private bool _hasSolution;   // (a start project is chosen only in a solution)
 
         /// <summary>A file was double clicked (or Enter was pressed on it).</summary>
         public event Action<string>? FileOpenRequested;
@@ -175,6 +176,7 @@ namespace fire.Editor
         {
             _git = git;
             _branch = branch;
+            _hasSolution = workspace.Solution != null;
             RememberCollapsed(_roots);
             _refreshing = true;
             try { _roots.Clear(); } finally { _refreshing = false; }
@@ -244,7 +246,7 @@ namespace fire.Editor
             string kind = project.Project.Type == OutputType.Library ? "library" : "program";
             var node = new ExplorerNode
             {
-                Kind = ExplorerKind.Project, Text = project.Name, Suffix = kind + (isStartup ? ", startup" : "") + (project.Problems.Count > 0 ? ", problems" : ""),
+                Kind = ExplorerKind.Project, Text = project.Name, Suffix = kind + (isStartup ? ", start project" : "") + (project.Problems.Count > 0 ? ", problems" : ""),
                 Path = project.FilePath, Project = project, IsBold = isStartup, IsActive = isActive, Key = "prj:" + project.FilePath,
             };
             if (project.Project.References.Count > 0)
@@ -452,6 +454,9 @@ namespace fire.Editor
                     Add("Add Existing Project...", "add-existing-project");
                     Add("New Folder...", "new-folder");
                     _menu.Items.Add(new Separator());
+                    Add("Build Solution", "build-solution");
+                    Add("Clean Solution", "clean-solution");
+                    _menu.Items.Add(new Separator());
                     Add("Open Solution Folder", "reveal");
                     Add("Solution Properties...", "solution-properties");
                     _menu.Items.Add(new Separator());
@@ -473,9 +478,14 @@ namespace fire.Editor
                     Add(node.Project!.Project.Native == null ? "Add Native Code (C++)" : "Add C++ File...", "add-native");
                     Add("Add Reference...", "add-reference");
                     _menu.Items.Add(new Separator());
-                    if (node.Project!.Project.Type == OutputType.Exe) Add("Set as Startup Project", "set-startup");
+                    if (node.Project!.Project.Type == OutputType.Exe)
+                    {
+                        Add("Start Debugging", "run-project");
+                        if (_hasSolution && !node.IsBold) Add("Set as Start Project", "set-startup");
+                    }
+                    Add("Build", "build-project");
+                    Add("Clean", "clean-project");
                     if (node.Project.Project.Type == OutputType.Library) { Add("Pack as Package (.fpk)...", "pack"); Add("Install (pack and install)", "install-library"); }
-                    Add("Build / Run This Project", "run-project");
                     _menu.Items.Add(new Separator());
                     Add("Reload (read the folder again)", "refresh");
                     Add("Open Project Folder", "reveal");

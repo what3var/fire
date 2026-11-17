@@ -226,7 +226,7 @@
 					<MenuItem Header="New Pro_ject in Solution..." x:Name="mnuAddNewProject" Click="AddNewProject_Click"/>
 					<MenuItem Header="Add Existing Project to Solution..." x:Name="mnuAddExistingProject" Click="AddExistingProject_Click"/>
 					<Separator/>
-					<MenuItem Header="Set as _Startup Project" x:Name="mnuSetStartup" Click="SetStartup_Click"/>
+					<MenuItem Header="Set as _Start Project" x:Name="mnuSetStartup" Click="SetStartup_Click"/>
 					<MenuItem Header="_Pack Library as Package (.fpk)..." x:Name="mnuPackLibrary" Click="PackLibrary_Click"/>
 					<MenuItem Header="_Install Library (pack and install)" x:Name="mnuInstallLibrary" Click="InstallLibrary_Click"/>
 					<MenuItem Header="_Reload Project (read the folder again)" x:Name="mnuReloadProject" Click="ReloadProject_Click"/>
@@ -254,10 +254,16 @@
 					<MenuItem Header="_Refresh" Click="GitRefresh_Click"/>
 				</MenuItem>
 				<MenuItem Header="_Run">
+					<!-- Start runs the start project of the solution from every file of it (docs/tools/spark.md, "The start project"); the builds are native, except Build virtual -->
 					<MenuItem x:Name="miRun" Header="_Start / Continue (to next breakpoint)" Click="Run_Click" InputGesture="F5"/>
-					<MenuItem Header="Re_compile and Start" Click="Restart_Click" InputGesture="Ctrl+F5"/>
-					<MenuItem Header="Build Stan_dalone..." Click="Build_Click"/>
-					<MenuItem Header="Build _Native..." Click="BuildNative_Click"/>
+					<MenuItem Header="Start _Without Debugging" Click="StartWithoutDebugging_Click" InputGesture="Ctrl+F5"/>
+					<MenuItem Header="Re_compile and Start" Click="Restart_Click" InputGesture="Ctrl+Shift+F5"/>
+					<Separator/>
+					<MenuItem Header="_Build" Click="BuildNative_Click"/>
+					<MenuItem Header="Build Sol_ution" x:Name="mnuBuildSolution" Click="BuildSolution_Click" InputGesture="Ctrl+Shift+B"/>
+					<MenuItem Header="Build _virtual..." Click="Build_Click"/>
+					<MenuItem Header="Clea_n" Click="Clean_Click"/>
+					<MenuItem Header="Clean Solutio_n" x:Name="mnuCleanSolution" Click="CleanSolution_Click"/>
 					<MenuItem Header="Cancel Bui_ld" Click="CancelBuild_Click" InputGesture="Ctrl+Pause"/>
 					<Separator/>
 					<MenuItem x:Name="miStep" Header="Step _Over" Click="Step_Click" InputGesture="F10"/>
@@ -272,8 +278,10 @@
 					<MenuItem Header="Release" ToggleType="CheckBox" x:Name="mnuRunRelease" Click="mnuRunRelease_Click"/>
 					<MenuItem Header="Performance" ToggleType="CheckBox" x:Name="mnuRunPerformance" Click="mnuRunPerformance_Click"/>
 					<Separator/>
-					<MenuItem Header="Engine: _VM" ToggleType="CheckBox" x:Name="mnuEngineVm" Click="mnuEngineVm_Click"/>
-					<MenuItem Header="Engine: _Native (build and run the program)" ToggleType="CheckBox" x:Name="mnuEngineNative" Click="mnuEngineNative_Click"/>
+					<MenuItem Header="Run _Engine">
+						<MenuItem Header="_Virtual Machine" ToggleType="CheckBox" x:Name="mnuEngineVm" Click="mnuEngineVm_Click"/>
+						<MenuItem Header="_Native (build and run the program)" ToggleType="CheckBox" x:Name="mnuEngineNative" Click="mnuEngineNative_Click"/>
+					</MenuItem>
 					<MenuItem Header="Program _Arguments..." Click="ProgramArguments_Click"/>
 					<Separator/>
 					<MenuItem Header="Toggle _Breakpoint (current line)" Click="ToggleBreakpoint_Click" InputGesture="F9"/>
@@ -397,13 +405,10 @@
 							<ComboBoxItem Content="Release" Tag="Release"/>
 							<ComboBoxItem Content="Performance" Tag="Performance"/>
 						</ComboBox>
-						<ComboBox local:ToolStrip.HorizontalOnly="True" x:Name="cmbEngine" Width="90" SelectionChanged="cmbEngine_SelectionChanged" MinHeight="26" Padding="8,2" Margin="4,0,0,0"
-								  ToolTip.Tip="Engine: the virtual machine in spark, or a native build of the program (Debug: built with -O0 -g and debugged over the debug protocol). Saved in the project's settings">
-							<ComboBoxItem Content="VM" Tag="vm"/>
-							<ComboBoxItem Content="Native" Tag="native"/>
-						</ComboBox>
+						<ComboBox local:ToolStrip.HorizontalOnly="True" x:Name="cmbStartProject" Width="150" SelectionChanged="cmbStartProject_SelectionChanged" MinHeight="26" Padding="8,2" Margin="4,0,0,0"
+								  ToolTip.Tip="The start project: what Start (F5) runs from every file of the solution. Saved in the solution file. The engine (VM or native) is in Run > Run Engine"/>
 						<local:ToolStripButton x:Name="tbRun" Label="Start" Click="Run_Click" ToolTip.Tip="Start / continue to the next breakpoint (F5) - compiles if necessary and restarts after the program has ended" IconSource="/Assets/icons/Material-Play.png"/>
-						<local:ToolStripButton Click="Restart_Click" ToolTip.Tip="Recompile and start (Ctrl+F5)" IconSource="/Assets/icons/Material-Restart.png"/>
+						<local:ToolStripButton Click="Restart_Click" ToolTip.Tip="Recompile and start (Ctrl+Shift+F5)" IconSource="/Assets/icons/Material-Restart.png"/>
 						<local:ToolStripButton x:Name="tbRunToEnd" Click="RunToEnd_Click" ToolTip.Tip="Run to the end without stopping at breakpoints" IconSource="/Assets/icons/Material-PlayOutline.png"/>
 						<local:ToolStripButton x:Name="tbStop" Click="Stop_Click" ToolTip.Tip="Stop (Shift+F5)" IconSource="/Assets/icons/Material-Stop.png"/>
 						<local:ToolStripButton x:Name="tbProfile" Click="Profile_Click" IconData="{StaticResource IconProfile}"
@@ -423,8 +428,8 @@
 					<local:ToolStrip Id="build" Title="Build" Band="1" BandIndex="2">
 						<TextBlock local:ToolStrip.HorizontalOnly="True" local:ToolStripPanel.KeepWithNext="True" Text="Target:" VerticalAlignment="Center" Margin="4,0,6,0"/>
 						<ComboBox local:ToolStrip.HorizontalOnly="True" x:Name="cmbTarget" Width="170" SelectionChanged="cmbTarget_SelectionChanged" MinHeight="26" Padding="8,2"
-						          ToolTip.Tip="The target of a native build (Build native). Default: the target of the project or of the native build settings"/>
-						<local:ToolStripButton Label="Build" Click="BuildNative_Click" ToolTip.Tip="Build native..." IconData="{StaticResource IconBuild}"/>
+						          ToolTip.Tip="The target of a native build (Build, Build Solution). Default: the target of the project or of the native build settings"/>
+						<local:ToolStripButton Label="Build" Click="BuildNative_Click" ToolTip.Tip="Build: a native build of the project of the active file (Build Solution: Ctrl+Shift+B)" IconData="{StaticResource IconBuild}"/>
 						<local:ToolStripButton x:Name="tbBuildStats" Click="BuildStats_Click" IconData="{StaticResource IconStats}"
 						                       ToolTip.Tip="Statistics of native builds (on/off): code by origin, data, the typing of the generated functions, the biggest functions - shown in a tab after the build (forge --stats)"/>
 						<local:ToolStripButton Click="BuildSettings_Click" ToolTip.Tip="Build settings (name, version, icon, ...)" IconData="{StaticResource IconSettings}"/>

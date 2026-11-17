@@ -16,9 +16,24 @@ spark is the IDE of fire (C#, Avalonia - Windows, Linux, macOS). **First Steps**
   code-behind. The class's own members come first, then the inherited ones, the names that start with what was typed in the same case before the
   others, and the lower-case state of a library (`cw`, `styled` of `UI.Element`) last. When the type is unknown, the members of the program's own
   classes are offered (those of the libraries only after a first letter).
-- **Run and debug:** `F5` starts, `F9` sets a breakpoint, `F10`/`F11` step; the panels *Threads*, *Scope* and *Stack* show the paused program. The
-  engine box chooses the VM or a native build - native programs are debugged the same way, an ESP32 over its serial port ([targets](../targets/README.md)).
-- **Build tool strip:** mode (Debug/Release/Performance), engine (VM/Native), target, *Build*, and the *Statistics* switch: when it is on, *Build*
+- **Run and debug:** `F5` starts (and continues to the next breakpoint), `Ctrl+F5` starts without debugging (breakpoints are ignored), `Ctrl+Shift+F5`
+  compiles again and starts, `Shift+F5` stops; `F9` sets a breakpoint, `F10`/`F11` step; the panels *Threads*, *Scope* and *Stack* show the paused program.
+  *Run > Run Engine* chooses *Virtual Machine* (the default) or *Native* (a native build that runs) - saved in the `engine` setting of the project that
+  Start runs, for a single script in spark's settings; native programs are debugged the same way, an ESP32 over its serial port ([targets](../targets/README.md)).
+- **The start project:** *Start* runs the **start project** of the solution from every file that belongs to the solution - a file of any of its projects
+  (also of a library), a project file, the solution file, the notes; without a solution the project itself. Only a script that belongs to no project runs
+  on its own. The box next to the mode in the *Run* tool strip lists the programs of the solution and chooses the start project; so does *Set as Start
+  Project* in the context menu of a project (and in the *Project* menu). The start project is shown in bold in the Solution Explorer and is saved in the
+  solution file as `"startup": "Name"` ([projects](projects.md#the-files); a solution without it starts its first program). *Start Debugging* in the
+  context menu of a project starts that project once, without changing the start project.
+- **Build, Build Solution and Clean** (*Run* menu; the context menus of the solution and of a project have them too): *Build* (also the button of the
+  *Build* tool strip) is always **native**: the project of the active file for the target of the tool strip, into `bin/<target>-<mode>/` (a library is
+  packed). *Build virtual* makes a program that carries the virtual machine (`bin/vm-<mode>/`). *Build Solution* (`Ctrl+Shift+B`) builds every project
+  of the solution natively, each library before the projects that reference it (a project whose library failed is skipped); its log is in the
+  *Build log*, its errors and warnings in the *Error list*, and *Cancel Build* (`Ctrl+Break`, `Shift+F5`) stops it. *Clean* removes the build folders
+  `bin/` and `obj/` of the project of the active file, *Clean Solution* those of every project ([projects](projects.md#where-a-build-goes-and-clean)) -
+  never a source: a build folder that holds a fire source or a project file is left alone and the log says why.
+- **Build tool strip:** target, *Build* (native), and the *Statistics* switch: when it is on, *Build*
   writes the statistics of the native build (`forge build --stats`, [forge](forge.md)) and opens them in a tab - the size of the program and what it takes
   to load, the code by origin (the C of the packages, the runtime, the C library, the generated fire code by module), the data, how much of the generated
   functions are C numbers, the biggest functions. A `.stats.json` next to a program opens in the same viewer.

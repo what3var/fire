@@ -414,14 +414,16 @@ The main program also has `catch terminate(v) { ... }`, a last hook that sees th
 | Shortcut | Action |
 | --- | --- |
 | `F5` | Start, or continue to the next breakpoint. |
-| `Ctrl+F5` | Recompile and start again. |
+| `Ctrl+F5` | Start without debugging (breakpoints are ignored). |
+| `Ctrl+Shift+F5` | Recompile and start again. |
+| `Ctrl+Shift+B` | Build Solution (every project, natively). |
 | `Shift+F5` | Stop. |
 | `F9` | Toggle a breakpoint on the current line (or click in the margin next to the line number). |
 | `F10` | Step over. |
 | `F11` | Step into. |
 | `Shift+F11` | Step out. |
 
-The yellow line is where the program is paused. While paused, the **Threads**, **Scope** and **Stack** panels show what is going on. Right-click a variable, a field or an element in the **Scope** panel and choose **Set Value...** to change it (a number, `true`/`false`, a character or a string - the kind the value has now); a field is set like an assignment in the program, so its setter and probes run. The **Run** menu switches between the *Debug*, *Release* and *Performance* execution modes, and can build a standalone program from your script.
+The yellow line is where the program is paused. While paused, the **Threads**, **Scope** and **Stack** panels show what is going on. Right-click a variable, a field or an element in the **Scope** panel and choose **Set Value...** to change it (a number, `true`/`false`, a character or a string - the kind the value has now); a field is set like an assignment in the program, so its setter and probes run. The **Run** menu switches between the *Debug*, *Release* and *Performance* execution modes and, under *Run Engine*, between the *Virtual Machine* (the default) and *Native*; *Build* makes a native program, *Build virtual* one that carries the virtual machine. In a solution, Start runs the *start project* (bold in the Solution Explorer, chosen in the box of the Run tool strip) from every file of the solution.
 
 The **engine** box next to the mode box (also **Run > Engine**) chooses what runs the program: the *VM* inside spark, or *Native* - spark builds the program for the target of the build tool strip and runs it. In *Debug* mode a native program is built without optimisation (`-O0 -g`) and debugged just like the VM (breakpoints, stepping, threads, the Scope panel; there is no operand stack, so the **Stack** panel is hidden); in *Release* and *Performance* it simply runs and its output appears in the **Output** panel. A project keeps its engine in its settings.
 
