@@ -93,6 +93,10 @@ typedef struct S3dVkMetalSurfaceCreateInfo { VkStructureType sType; const void* 
 #define S3D_VK_STRUCTURE_TYPE_WIN32_SURFACE_CREATE_INFO_KHR ((VkStructureType)1000009000)
 #define S3D_VK_STRUCTURE_TYPE_METAL_SURFACE_CREATE_INFO_EXT ((VkStructureType)1000217000)
 typedef VkResult (VKAPI_PTR *PFN_s3dCreateSurface)(VkInstance instance, const void* createInfo, const VkAllocationCallbacks* allocator, VkSurfaceKHR* surface);
+/* (values of Vulkan 1.0 that fire_gfx_vk.h, the shared header of graphics, does not have: the depth of a picture read by the shaders, for the fog and the reflections) */
+#define S3D_VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL ((VkImageLayout)4)
+#define S3D_VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT ((VkFormatFeatureFlags)0x00000001)
+#define S3D_VK_COMPARE_OP_LESS_OR_EQUAL ((VkCompareOp)3)
 
 /* One lock for the backend: the program's thread draws (flush), the windows' threads present, and both use the one queue. */
 #ifdef _WIN32
@@ -133,7 +137,11 @@ typedef struct S3dGpuMapU { float view[16]; float p[4]; float q[4]; float r[4]; 
 typedef struct S3dGpuFrameU {
     float vp[16];
     float eye[4], ambient[4];
-    int32_t counts[4];                         /* the lights */
+    int32_t counts[4];                         /* the lights; 1: culled per tile (the tile buffer); the tiles across */
+    float fog[4];                              /* start, end (not above start: none), the camera's near and far plane */
+    float fogColor[4], sky[4];                 /* rgb 0..1; sky: what a reflection shows where it finds nothing */
+    float screen[4];                           /* width, height, 1/tan(fov/2) across, upwards */
+    float view[16];                            /* world -> camera */
 } S3dGpuFrameU;
 typedef struct S3dGpuObjectU {
     float model[16], normalM[16];
@@ -144,7 +152,7 @@ typedef struct S3dGpuObjectU {
     int32_t flags[4];   /* smooth, two sided, lit, receive shadows */
     int32_t flags2[4];  /* layers, texture, bump map, blended */
     float bump[4];      /* strength, 1/width, 1/height, filter (S3D_FILTER_*) */
-    float glow[4];      /* the emission map (set 2): strength (0: none), filter */
+    float glow[4];      /* the emission map (set 2): strength (0: none), filter; the reflectivity */
 } S3dGpuObjectU;
 typedef struct S3dGpuShadowPush { float model[16]; int32_t map; } S3dGpuShadowPush;
 
@@ -159,6 +167,10 @@ typedef struct S3dGpuFrame {
     S3dVkBuffer readback;
     int hasPicture;              /* a picture was drawn into `color` */
     VkImageLayout colorLayout;   /* the layout of `color` after the commands submitted so far */
+    /* fog and reflections (made when a picture first has them): a copy of the picture before the reflections, and set 3 (the depth and that copy for the shaders) */
+    S3dVkImage before;
+    VkDescriptorPool postPool;
+    VkDescriptorSet postSet;
 } S3dGpuFrame;
 
 /* A camera that draws into the windows of its framebuffer (DirectDrawing): what a window needs to show its pictures. It is never freed while the backend lives (a window's thread may
@@ -232,19 +244,21 @@ static struct {
     VkCommandPool cmdPool;
     VkCommandBuffer cmd;
     VkFence fence;
-    VkDescriptorSetLayout setFrame, setTex;
-    VkPipelineLayout layoutMain, layoutShadow;
+    VkDescriptorSetLayout setFrame, setTex, setPost;
+    VkPipelineLayout layoutMain, layoutShadow, layoutPost;
     VkDescriptorPool framePool;
     VkDescriptorSet frameSet;
     VkDescriptorPool* texPools; size_t texPoolN, texPoolCap;
     VkRenderPass passMain, passShadow;
-    VkShaderModule mainVert, mainFrag, shadowVert, shadowFrag;
+    VkRenderPass passOpaque, passOver;   /* fog or reflections: the opaque objects (the depth kept for the shaders), then the rest over them (the depth read only) */
+    int depthSampled;                    /* the depth format can be read by the shaders (else no fog, no reflections on the GPU: the software renderer draws them) */
+    VkShaderModule mainVert, mainFrag, shadowVert, shadowFrag, postVert, reflectFrag, fogFrag;
     VkPipeline pipes[S3D_GPU_PIPELINES];
-    VkPipeline shadowPipe;
+    VkPipeline shadowPipe, reflectPipes[2], fogPipe;
     VkSampler sampler, nearest;
     S3dGpuTex dummy;           /* a white texture with a flat bump map: for the objects without one */
     S3dVkImage flatBump;       /* the bump map of the textures without one (flat) */
-    S3dVkBuffer frameUbo, objectUbo, lightBuf, mapBuf, staging;
+    S3dVkBuffer frameUbo, objectUbo, lightBuf, mapBuf, tileBuf, staging;
     /* the atlas of the shadow maps: `shadowLayers` layers of shadowSize x shadowSize; the maps of a picture are packed into it (S3dGpuTile) */
     S3dVkImage shadowColor, shadowDepth;
     VkImageView* layerViews; VkFramebuffer* layerFbs;
@@ -769,6 +783,68 @@ static int s3d_gpu_renderPass(VkFormat color, VkImageLayout colorFinal, VkPipeli
     return s3d_gpu_check(g_s3dVk.vkCreateRenderPass(g_s3dVk.device, &ci, NULL, out), "vkCreateRenderPass");
 }
 
+/* The render passes of the picture. `mode` 2 (passMain): the whole picture in one pass (cleared; the depth is not kept). With fog or reflections (their shaders read the depth
+ * of the picture) it takes two: `mode` 0 draws the opaque objects (cleared; the depth is kept, read only from then on), `mode` 1 the rest over them - the reflections, the
+ * transparent objects, the fog - with the depth read only (tested and read by the shaders at the same time). The three are compatible (the same attachments and the same
+ * dependencies): the same pipelines and framebuffers. */
+static int s3d_gpu_scenePass(int mode, VkRenderPass* out) {
+    int over = mode == 1, whole = mode == 2;
+    VkAttachmentDescription att[2];
+    VkAttachmentReference colorRef, depthRef;
+    VkSubpassDescription sub;
+    VkSubpassDependency dep[2];
+    VkRenderPassCreateInfo ci;
+    memset(att, 0, sizeof att);
+    att[0].format = VK_FORMAT_R8G8B8A8_UNORM;
+    att[0].samples = VK_SAMPLE_COUNT_1_BIT;
+    att[0].loadOp = over ? VK_ATTACHMENT_LOAD_OP_LOAD : VK_ATTACHMENT_LOAD_OP_CLEAR;
+    att[0].storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+    att[0].stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+    att[0].stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+    att[0].initialLayout = over ? VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL : VK_IMAGE_LAYOUT_UNDEFINED;
+    att[0].finalLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+    att[1].format = g_s3dVk.depthFormat;
+    att[1].samples = VK_SAMPLE_COUNT_1_BIT;
+    att[1].loadOp = over ? VK_ATTACHMENT_LOAD_OP_LOAD : VK_ATTACHMENT_LOAD_OP_CLEAR;
+    att[1].storeOp = over || whole ? VK_ATTACHMENT_STORE_OP_DONT_CARE : VK_ATTACHMENT_STORE_OP_STORE;
+    att[1].stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+    att[1].stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+    att[1].initialLayout = over ? S3D_VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL : VK_IMAGE_LAYOUT_UNDEFINED;
+    att[1].finalLayout = whole ? VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL : S3D_VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL;
+    colorRef.attachment = 0; colorRef.layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+    depthRef.attachment = 1; depthRef.layout = over ? S3D_VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL : VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+    memset(&sub, 0, sizeof sub);
+    sub.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
+    sub.colorAttachmentCount = 1;
+    sub.pColorAttachments = &colorRef;
+    sub.pDepthStencilAttachment = &depthRef;
+    memset(dep, 0, sizeof dep);
+    /* before: the previous picture (a copy, the shaders that read it or a shadow map), and in `over` the opaque objects and the copy of the picture */
+    dep[0].srcSubpass = VK_SUBPASS_EXTERNAL;
+    dep[0].dstSubpass = 0;
+    dep[0].srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_TRANSFER_BIT;
+    dep[0].dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+    dep[0].srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT;
+    dep[0].dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT
+                          | VK_ACCESS_SHADER_READ_BIT;
+    /* after: the picture is copied (to the CPU, or for the reflections), and its depth read by the shaders and the depth test of `over` */
+    dep[1].srcSubpass = 0;
+    dep[1].dstSubpass = VK_SUBPASS_EXTERNAL;
+    dep[1].srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT;
+    dep[1].dstStageMask = VK_PIPELINE_STAGE_TRANSFER_BIT | VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT;
+    dep[1].srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+    dep[1].dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT;
+    memset(&ci, 0, sizeof ci);
+    ci.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
+    ci.attachmentCount = 2;
+    ci.pAttachments = att;
+    ci.subpassCount = 1;
+    ci.pSubpasses = &sub;
+    ci.dependencyCount = 2;
+    ci.pDependencies = dep;
+    return s3d_gpu_check(g_s3dVk.vkCreateRenderPass(g_s3dVk.device, &ci, NULL, out), "vkCreateRenderPass");
+}
+
 static int s3d_gpu_sampler(VkFilter filter, VkSamplerAddressMode mode, VkSampler* out) {
     VkSamplerCreateInfo ci;
     memset(&ci, 0, sizeof ci);
@@ -783,24 +859,25 @@ static int s3d_gpu_sampler(VkFilter filter, VkSamplerAddressMode mode, VkSampler
 }
 
 static int s3d_gpu_layouts(void) {
-    VkDescriptorSetLayoutBinding b[5];
+    VkDescriptorSetLayoutBinding b[6];
     VkDescriptorSetLayoutCreateInfo li;
     VkPipelineLayoutCreateInfo pi;
-    VkDescriptorSetLayout sets[3];
+    VkDescriptorSetLayout sets[4];
     VkPushConstantRange pc;
     VkDescriptorPoolSize sizes[4];
     VkDescriptorPoolCreateInfo dp;
     VkDescriptorSetAllocateInfo ai;
-    /* set 0, the picture: the uniforms of the frame (camera), the atlas of the shadow maps, the uniforms of the object (dynamic offset), the lights, the shadow maps */
+    /* set 0, the picture: the uniforms of the frame (camera), the atlas of the shadow maps, the uniforms of the object (dynamic offset), the lights, the shadow maps, the lights of the tiles */
     memset(b, 0, sizeof b);
     b[0].binding = 0; b[0].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER; b[0].descriptorCount = 1; b[0].stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
     b[1].binding = 1; b[1].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER; b[1].descriptorCount = 1; b[1].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
     b[2].binding = 2; b[2].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC; b[2].descriptorCount = 1; b[2].stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
     b[3].binding = 3; b[3].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER; b[3].descriptorCount = 1; b[3].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
     b[4].binding = 4; b[4].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER; b[4].descriptorCount = 1; b[4].stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
+    b[5].binding = 5; b[5].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER; b[5].descriptorCount = 1; b[5].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
     memset(&li, 0, sizeof li);
     li.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
-    li.bindingCount = 5;
+    li.bindingCount = 6;
     li.pBindings = b;
     if (!s3d_gpu_check(g_s3dVk.vkCreateDescriptorSetLayout(g_s3dVk.device, &li, NULL, &g_s3dVk.setFrame), "vkCreateDescriptorSetLayout")) return 0;
     /* set 1, the texture: the colours and the bump map */
@@ -816,6 +893,15 @@ static int s3d_gpu_layouts(void) {
     pi.setLayoutCount = 3;
     pi.pSetLayouts = sets;
     if (!s3d_gpu_check(g_s3dVk.vkCreatePipelineLayout(g_s3dVk.device, &pi, NULL, &g_s3dVk.layoutMain), "vkCreatePipelineLayout")) return 0;
+    /* set 3, after the opaque objects (fog, reflections): the depth of the picture and the picture before the reflections */
+    memset(b, 0, sizeof b);
+    b[0].binding = 0; b[0].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER; b[0].descriptorCount = 1; b[0].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+    b[1].binding = 1; b[1].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER; b[1].descriptorCount = 1; b[1].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+    li.bindingCount = 2;
+    if (!s3d_gpu_check(g_s3dVk.vkCreateDescriptorSetLayout(g_s3dVk.device, &li, NULL, &g_s3dVk.setPost), "vkCreateDescriptorSetLayout")) return 0;
+    sets[3] = g_s3dVk.setPost;
+    pi.setLayoutCount = 4;
+    if (!s3d_gpu_check(g_s3dVk.vkCreatePipelineLayout(g_s3dVk.device, &pi, NULL, &g_s3dVk.layoutPost), "vkCreatePipelineLayout")) return 0;
     /* the shadow maps: set 0 and the model matrix and the map as push constants */
     memset(&pc, 0, sizeof pc);
     pc.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
@@ -829,7 +915,7 @@ static int s3d_gpu_layouts(void) {
     sizes[0].type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER; sizes[0].descriptorCount = 1;
     sizes[1].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER; sizes[1].descriptorCount = 1;
     sizes[2].type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC; sizes[2].descriptorCount = 1;
-    sizes[3].type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER; sizes[3].descriptorCount = 2;
+    sizes[3].type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER; sizes[3].descriptorCount = 3;
     memset(&dp, 0, sizeof dp);
     dp.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
     dp.maxSets = 1;
@@ -846,9 +932,9 @@ static int s3d_gpu_layouts(void) {
 
 /* Writes the buffers and the shadow maps into set 0 (after one of them was made again). */
 static void s3d_gpu_writeFrameSet(void) {
-    VkDescriptorBufferInfo frameInfo, objectInfo, lightInfo, mapInfo;
+    VkDescriptorBufferInfo frameInfo, objectInfo, lightInfo, mapInfo, tileInfo;
     VkDescriptorImageInfo shadowInfo;
-    VkWriteDescriptorSet w[5];
+    VkWriteDescriptorSet w[6];
     memset(w, 0, sizeof w);
     frameInfo.buffer = g_s3dVk.frameUbo.buf; frameInfo.offset = 0; frameInfo.range = sizeof(S3dGpuFrameU);
     objectInfo.buffer = g_s3dVk.objectUbo.buf; objectInfo.offset = 0; objectInfo.range = sizeof(S3dGpuObjectU);
@@ -865,7 +951,10 @@ static void s3d_gpu_writeFrameSet(void) {
     w[3].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER; w[3].pBufferInfo = &lightInfo;
     w[4].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET; w[4].dstSet = g_s3dVk.frameSet; w[4].dstBinding = 4; w[4].descriptorCount = 1;
     w[4].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER; w[4].pBufferInfo = &mapInfo;
-    g_s3dVk.vkUpdateDescriptorSets(g_s3dVk.device, 5, w, 0, NULL);
+    tileInfo.buffer = g_s3dVk.tileBuf.buf; tileInfo.offset = 0; tileInfo.range = VK_WHOLE_SIZE;
+    w[5].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET; w[5].dstSet = g_s3dVk.frameSet; w[5].dstBinding = 5; w[5].descriptorCount = 1;
+    w[5].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER; w[5].pBufferInfo = &tileInfo;
+    g_s3dVk.vkUpdateDescriptorSets(g_s3dVk.device, 6, w, 0, NULL);
 }
 
 /* A pipeline: the main one (cull: 0 none, 1 back faces, 2 front faces; blend; depth write), or the one of the shadow maps (shadow != 0). */
@@ -943,6 +1032,81 @@ static VkPipeline s3d_gpu_pipeline(int shadow, int cull, int blend, int depthWri
     ci.pMultisampleState = &ms; ci.pDepthStencilState = &ds; ci.pColorBlendState = &cb; ci.pDynamicState = &dy;
     ci.layout = shadow ? g_s3dVk.layoutShadow : g_s3dVk.layoutMain;
     ci.renderPass = shadow ? g_s3dVk.passShadow : g_s3dVk.passMain;
+    if (!s3d_gpu_check(g_s3dVk.vkCreateGraphicsPipelines(g_s3dVk.device, 0, 1, &ci, NULL, slot), "vkCreateGraphicsPipelines")) *slot = 0;
+    return *slot;
+}
+
+/* The pipelines after the opaque objects (in passOver: the depth is read only): the reflections of an object (fog == 0; cull: 0 none, 1 back faces - as the object was drawn;
+ * only its own pixels: LESS_OR_EQUAL against the depth of the picture) and the fog (fog != 0: one triangle over the whole picture). Both mix their colour into the picture by
+ * their alpha and leave its alpha as it is. */
+static VkPipeline s3d_gpu_postPipeline(int fog, int cull) {
+    VkPipeline* slot = fog ? &g_s3dVk.fogPipe : &g_s3dVk.reflectPipes[cull ? 1 : 0];
+    VkPipelineShaderStageCreateInfo stages[2];
+    VkVertexInputBindingDescription vb;
+    VkVertexInputAttributeDescription va[3];
+    VkPipelineVertexInputStateCreateInfo vi;
+    VkPipelineInputAssemblyStateCreateInfo ia;
+    VkPipelineViewportStateCreateInfo vp;
+    VkPipelineRasterizationStateCreateInfo rs;
+    VkPipelineMultisampleStateCreateInfo ms;
+    VkPipelineDepthStencilStateCreateInfo ds;
+    VkPipelineColorBlendAttachmentState cba;
+    VkPipelineColorBlendStateCreateInfo cb;
+    VkDynamicState dyn[2];
+    VkPipelineDynamicStateCreateInfo dy;
+    VkGraphicsPipelineCreateInfo ci;
+    if (*slot) return *slot;
+    memset(stages, 0, sizeof stages);
+    stages[0].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO; stages[0].stage = VK_SHADER_STAGE_VERTEX_BIT; stages[0].pName = "main";
+    stages[0].module = fog ? g_s3dVk.postVert : g_s3dVk.mainVert;
+    stages[1].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO; stages[1].stage = VK_SHADER_STAGE_FRAGMENT_BIT; stages[1].pName = "main";
+    stages[1].module = fog ? g_s3dVk.fogFrag : g_s3dVk.reflectFrag;
+    vb.binding = 0; vb.stride = 32; vb.inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
+    va[0].location = 0; va[0].binding = 0; va[0].format = VK_FORMAT_R32G32B32_SFLOAT; va[0].offset = 0;
+    va[1].location = 1; va[1].binding = 0; va[1].format = VK_FORMAT_R32G32B32_SFLOAT; va[1].offset = 12;
+    va[2].location = 2; va[2].binding = 0; va[2].format = VK_FORMAT_R32G32_SFLOAT; va[2].offset = 24;
+    memset(&vi, 0, sizeof vi);
+    vi.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
+    if (!fog) { vi.vertexBindingDescriptionCount = 1; vi.pVertexBindingDescriptions = &vb; vi.vertexAttributeDescriptionCount = 3; vi.pVertexAttributeDescriptions = va; }
+    memset(&ia, 0, sizeof ia);
+    ia.sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
+    ia.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+    memset(&vp, 0, sizeof vp);
+    vp.sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO;
+    vp.viewportCount = 1; vp.scissorCount = 1;
+    memset(&rs, 0, sizeof rs);
+    rs.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
+    rs.polygonMode = VK_POLYGON_MODE_FILL;
+    rs.cullMode = fog || cull == 0 ? VK_CULL_MODE_NONE : VK_CULL_MODE_BACK_BIT;
+    rs.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
+    rs.lineWidth = 1.0f;
+    memset(&ms, 0, sizeof ms);
+    ms.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
+    ms.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
+    memset(&ds, 0, sizeof ds);
+    ds.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
+    ds.depthTestEnable = fog ? VK_FALSE : VK_TRUE;
+    ds.depthWriteEnable = VK_FALSE;
+    ds.depthCompareOp = S3D_VK_COMPARE_OP_LESS_OR_EQUAL;
+    memset(&cba, 0, sizeof cba);
+    cba.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
+    cba.blendEnable = VK_TRUE;
+    cba.srcColorBlendFactor = VK_BLEND_FACTOR_SRC_ALPHA; cba.dstColorBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA; cba.colorBlendOp = VK_BLEND_OP_ADD;
+    cba.srcAlphaBlendFactor = VK_BLEND_FACTOR_ZERO; cba.dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE; cba.alphaBlendOp = VK_BLEND_OP_ADD;
+    memset(&cb, 0, sizeof cb);
+    cb.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
+    cb.attachmentCount = 1; cb.pAttachments = &cba;
+    dyn[0] = VK_DYNAMIC_STATE_VIEWPORT; dyn[1] = VK_DYNAMIC_STATE_SCISSOR;
+    memset(&dy, 0, sizeof dy);
+    dy.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO;
+    dy.dynamicStateCount = 2; dy.pDynamicStates = dyn;
+    memset(&ci, 0, sizeof ci);
+    ci.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
+    ci.stageCount = 2; ci.pStages = stages;
+    ci.pVertexInputState = &vi; ci.pInputAssemblyState = &ia; ci.pViewportState = &vp; ci.pRasterizationState = &rs;
+    ci.pMultisampleState = &ms; ci.pDepthStencilState = &ds; ci.pColorBlendState = &cb; ci.pDynamicState = &dy;
+    ci.layout = g_s3dVk.layoutPost;
+    ci.renderPass = g_s3dVk.passOver;
     if (!s3d_gpu_check(g_s3dVk.vkCreateGraphicsPipelines(g_s3dVk.device, 0, 1, &ci, NULL, slot), "vkCreateGraphicsPipelines")) *slot = 0;
     return *slot;
 }
@@ -1065,6 +1229,8 @@ static S3dGpuMesh* s3d_gpu_meshFor(S3dMesh* mesh) {
 static void s3d_gpu_freeFrameTargets(S3dGpuFrame* g) {
     if (g_s3dVk.ended) return;
     if (g->fb) g_s3dVk.vkDestroyFramebuffer(g_s3dVk.device, g->fb, NULL);
+    if (g->postPool) g_s3dVk.vkDestroyDescriptorPool(g_s3dVk.device, g->postPool, NULL);
+    s3d_gpu_freeImage(&g->before);
     s3d_gpu_freeImage(&g->color);
     s3d_gpu_freeImage(&g->depth);
     s3d_gpu_freeBuffer(&g->readback);
@@ -1094,7 +1260,8 @@ static S3dGpuFrame* s3d_gpu_frameFor(S3dFrame* f) {
         f->gpu = g;
     }
     if (!s3d_gpu_image(&g->color, (uint32_t)f->w, (uint32_t)f->h, 1, VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_SAMPLED_BIT, VK_IMAGE_ASPECT_COLOR_BIT)
-        || !s3d_gpu_image(&g->depth, (uint32_t)f->w, (uint32_t)f->h, 1, g_s3dVk.depthFormat, VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT, VK_IMAGE_ASPECT_DEPTH_BIT)
+        || !s3d_gpu_image(&g->depth, (uint32_t)f->w, (uint32_t)f->h, 1, g_s3dVk.depthFormat,
+                          VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | (g_s3dVk.depthSampled ? VK_IMAGE_USAGE_SAMPLED_BIT : 0), VK_IMAGE_ASPECT_DEPTH_BIT)
         || !s3d_gpu_framebuffer(g_s3dVk.passMain, g->color.view, g->depth.view, (uint32_t)f->w, (uint32_t)f->h, &g->fb)
         || !s3d_gpu_buffer(&g->readback, (VkDeviceSize)f->w * (VkDeviceSize)f->h * 4, VK_BUFFER_USAGE_TRANSFER_DST_BIT, 1, 1)) {
         s3d_gpu_freeFrameTargets(g);
@@ -1102,6 +1269,39 @@ static S3dGpuFrame* s3d_gpu_frameFor(S3dFrame* f) {
     }
     g->w = f->w; g->h = f->h;
     return g;
+}
+
+/* What fog and reflections need of a frame (made the first time a picture has them): the copy of the picture before the reflections and set 3. 0: it cannot. */
+static int s3d_gpu_framePost(S3dGpuFrame* g) {
+    VkDescriptorPoolSize size;
+    VkDescriptorPoolCreateInfo dp;
+    VkDescriptorSetAllocateInfo ai;
+    VkDescriptorImageInfo info[2];
+    VkWriteDescriptorSet w[2];
+    if (g->postSet) return 1;
+    if (!g_s3dVk.depthSampled) return 0;
+    if (!s3d_gpu_image(&g->before, (uint32_t)g->w, (uint32_t)g->h, 1, VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT, VK_IMAGE_ASPECT_COLOR_BIT)) return 0;
+    size.type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER; size.descriptorCount = 2;
+    memset(&dp, 0, sizeof dp);
+    dp.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+    dp.maxSets = 1; dp.poolSizeCount = 1; dp.pPoolSizes = &size;
+    if (!s3d_gpu_check(g_s3dVk.vkCreateDescriptorPool(g_s3dVk.device, &dp, NULL, &g->postPool), "vkCreateDescriptorPool")) { g->postPool = 0; return 0; }
+    memset(&ai, 0, sizeof ai);
+    ai.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+    ai.descriptorPool = g->postPool; ai.descriptorSetCount = 1; ai.pSetLayouts = &g_s3dVk.setPost;
+    if (!s3d_gpu_check(g_s3dVk.vkAllocateDescriptorSets(g_s3dVk.device, &ai, &g->postSet), "vkAllocateDescriptorSets")) { g->postSet = 0; return 0; }
+    info[0].sampler = g_s3dVk.nearest; info[0].imageView = g->depth.view; info[0].imageLayout = S3D_VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL;
+    info[1].sampler = g_s3dVk.nearest; info[1].imageView = g->before.view; info[1].imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    memset(w, 0, sizeof w);
+    w[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET; w[0].dstSet = g->postSet; w[0].dstBinding = 0; w[0].descriptorCount = 1;
+    w[0].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER; w[0].pImageInfo = &info[0];
+    w[1] = w[0]; w[1].dstBinding = 1; w[1].pImageInfo = &info[1];
+    g_s3dVk.vkUpdateDescriptorSets(g_s3dVk.device, 2, w, 0, NULL);
+    /* (the copy starts ready for the shaders: a picture with fog and no reflections reads nothing of it, but it has to be in that layout) */
+    if (!s3d_gpu_begin()) return 0;
+    s3d_gpu_imageBarrier(g->before.img, 1, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, 0,
+                         VK_ACCESS_SHADER_READ_BIT, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT);
+    return s3d_gpu_submitAndWait();
 }
 
 /* ---- the atlas of the shadow maps: an array of R32F layers (the distance to the light) and a depth buffer; a framebuffer per layer ---- */
@@ -1171,8 +1371,16 @@ static int s3d_gpu_start(void) {
     const char* env = getenv("FIRE_S3D_GPU");
     if (env != NULL && strcmp(env, "0") == 0) { s3d_gpu_fail("The hardware renderer is switched off (FIRE_S3D_GPU=0)."); return 0; }
     if (!s3d_gpu_loadLibrary() || !s3d_gpu_createInstance() || !s3d_gpu_pickDevice() || !s3d_gpu_createDevice()) return 0;
+    /* (the first depth format that the shaders can read as well - for the fog and the reflections -, else the first there is) */
     g_s3dVk.depthFormat = VK_FORMAT_UNDEFINED;
+    g_s3dVk.depthSampled = 0;
     for (i = 0; i < 3; i++) {
+        g_s3dVk.vkGetPhysicalDeviceFormatProperties(g_s3dVk.phys, depthFormats[i], &fp);
+        if ((fp.optimalTilingFeatures & VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT) && (fp.optimalTilingFeatures & S3D_VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT)) {
+            g_s3dVk.depthFormat = depthFormats[i]; g_s3dVk.depthSampled = 1; break;
+        }
+    }
+    for (i = 0; i < 3 && g_s3dVk.depthFormat == VK_FORMAT_UNDEFINED; i++) {
         g_s3dVk.vkGetPhysicalDeviceFormatProperties(g_s3dVk.phys, depthFormats[i], &fp);
         if (fp.optimalTilingFeatures & VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT) { g_s3dVk.depthFormat = depthFormats[i]; break; }
     }
@@ -1192,15 +1400,19 @@ static int s3d_gpu_start(void) {
     fi.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
     if (!s3d_gpu_check(g_s3dVk.vkCreateFence(g_s3dVk.device, &fi, NULL, &g_s3dVk.fence), "vkCreateFence")) return 0;
     if (!s3d_gpu_layouts()) return 0;
-    if (!s3d_gpu_renderPass(VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_TRANSFER_READ_BIT, &g_s3dVk.passMain)) return 0;
+    if (!s3d_gpu_scenePass(2, &g_s3dVk.passMain)) return 0;
     if (!s3d_gpu_renderPass(VK_FORMAT_R32_SFLOAT, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, VK_ACCESS_SHADER_READ_BIT, &g_s3dVk.passShadow)) return 0;
+    if (!s3d_gpu_scenePass(0, &g_s3dVk.passOpaque) || !s3d_gpu_scenePass(1, &g_s3dVk.passOver)) return 0;
     if (!s3d_gpu_shader(s3d_spv_main_vert, sizeof s3d_spv_main_vert, &g_s3dVk.mainVert) || !s3d_gpu_shader(s3d_spv_main_frag, sizeof s3d_spv_main_frag, &g_s3dVk.mainFrag)
-        || !s3d_gpu_shader(s3d_spv_shadow_vert, sizeof s3d_spv_shadow_vert, &g_s3dVk.shadowVert) || !s3d_gpu_shader(s3d_spv_shadow_frag, sizeof s3d_spv_shadow_frag, &g_s3dVk.shadowFrag)) return 0;
+        || !s3d_gpu_shader(s3d_spv_shadow_vert, sizeof s3d_spv_shadow_vert, &g_s3dVk.shadowVert) || !s3d_gpu_shader(s3d_spv_shadow_frag, sizeof s3d_spv_shadow_frag, &g_s3dVk.shadowFrag)
+        || !s3d_gpu_shader(s3d_spv_present_vert, sizeof s3d_spv_present_vert, &g_s3dVk.postVert) || !s3d_gpu_shader(s3d_spv_reflect_frag, sizeof s3d_spv_reflect_frag, &g_s3dVk.reflectFrag)
+        || !s3d_gpu_shader(s3d_spv_fog_frag, sizeof s3d_spv_fog_frag, &g_s3dVk.fogFrag)) return 0;
     if (!s3d_gpu_sampler(VK_FILTER_LINEAR, VK_SAMPLER_ADDRESS_MODE_REPEAT, &g_s3dVk.sampler) || !s3d_gpu_sampler(VK_FILTER_NEAREST, VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE, &g_s3dVk.nearest)) return 0;
     if (!s3d_gpu_hostBuffer(&g_s3dVk.frameUbo, sizeof(S3dGpuFrameU), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT)
         || !s3d_gpu_hostBuffer(&g_s3dVk.objectUbo, g_s3dVk.objectStride * 16, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT)
         || !s3d_gpu_hostBuffer(&g_s3dVk.lightBuf, sizeof(S3dGpuLightU) * 16, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT)
-        || !s3d_gpu_hostBuffer(&g_s3dVk.mapBuf, sizeof(S3dGpuMapU) * 16, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT)) return 0;
+        || !s3d_gpu_hostBuffer(&g_s3dVk.mapBuf, sizeof(S3dGpuMapU) * 16, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT)
+        || !s3d_gpu_hostBuffer(&g_s3dVk.tileBuf, sizeof(int32_t) * 16, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT)) return 0;
     {
         /* the shadow maps may take a quarter of the biggest memory of the GPU, at least 64 MB and at most 1 GB */
         VkDeviceSize biggest = 0;
@@ -1297,7 +1509,7 @@ static int s3d_gpu_pack(S3dGpuTile* tiles, size_t n, int size, int maxLayers) {
 
 /* Fills the uniforms of the picture (camera, lights) and plans the shadow maps: every map gets its place in the atlas. When the maps do not fit into the memory for them, all
  * of them are made smaller (half the size, again and again) - a light never loses its shadow for that. Returns the number of maps; *layersOut and *sizeOut: the atlas. */
-static int s3d_gpu_frameUniforms(S3dFrame* f, const S3dCamera* cam, S3dVec3 lo, S3dVec3 hi, int* layersOut, int* sizeOut) {
+static int s3d_gpu_frameUniforms(S3dFrame* f, const S3dCamera* cam, const S3dFlushSettings* st, S3dVec3 lo, S3dVec3 hi, int* layersOut, int* sizeOut) {
     S3dGpuFrameU* u = &g_s3dVk.frameData;
     S3dContext* ctx = &f->ctx;
     /* the projection of the engine (OpenGL clip space) for Vulkan: y down, z from 0 to w */
@@ -1312,6 +1524,18 @@ static int s3d_gpu_frameUniforms(S3dFrame* f, const S3dCamera* cam, S3dVec3 lo, 
     s3d_gpu_copyMat(u->vp, &vp);
     u->eye[0] = ctx->eye.x; u->eye[1] = ctx->eye.y; u->eye[2] = ctx->eye.z;
     u->ambient[0] = ctx->ambient.x; u->ambient[1] = ctx->ambient.y; u->ambient[2] = ctx->ambient.z;
+    {
+        /* the fog, the sky of the reflections, the screen and the camera (for the shaders that read the depth of the picture) */
+        float tf = 1.0f / tanf(cam->fovY * 0.5f);
+        S3dMat4 view = s3d_viewMatrix(cam);
+        u->fog[0] = st->fogStart; u->fog[1] = st->fogEnd; u->fog[2] = cam->nearPlane; u->fog[3] = cam->farPlane;
+        for (k = 0; k < 3; k++) {
+            u->fogColor[k] = (float)((st->fogColor >> (8 * k)) & 255) / 255.0f;
+            u->sky[k] = (float)((st->sky >> (8 * k)) & 255) / 255.0f;
+        }
+        u->screen[0] = (float)f->w; u->screen[1] = (float)f->h; u->screen[2] = tf / ((float)f->w / (float)f->h); u->screen[3] = tf;
+        s3d_gpu_copyMat(u->view, &view);
+    }
     for (k = 0; k < ctx->shadowN; k++) nMaps += (size_t)ctx->shadows[k].count;
     if (nMaps + 1 > g_s3dVk.mapCap) {
         S3dGpuMapU* md = (S3dGpuMapU*)realloc(g_s3dVk.mapData, sizeof(S3dGpuMapU) * (nMaps + 1));
@@ -1387,6 +1611,16 @@ static int s3d_gpu_frameUniforms(S3dFrame* f, const S3dCamera* cam, S3dVec3 lo, 
     }
     free(firstMap);
     u->counts[0] = (int32_t)n;
+    /* the lights of the tiles (Scene.LightCulling): the lists of the software renderer (s3d_cullLights), the starts first (as indices into the same buffer), then the lights */
+    if (ctx->culled) {
+        int tiles = ctx->tilesX * ctx->tilesY, t, total = ctx->tileStart[tiles];
+        int32_t* to;
+        if (!s3d_gpu_hostBuffer(&g_s3dVk.tileBuf, sizeof(int32_t) * ((size_t)tiles + 1 + (size_t)total + 1), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT)) return -1;
+        to = (int32_t*)g_s3dVk.tileBuf.map;
+        for (t = 0; t <= tiles; t++) to[t] = (int32_t)(ctx->tileStart[t] + tiles + 1);
+        for (t = 0; t < total; t++) to[tiles + 1 + t] = (int32_t)ctx->tileLights[t];
+        u->counts[1] = 1; u->counts[2] = ctx->tilesX;
+    }
     memcpy(g_s3dVk.frameUbo.map, u, sizeof *u);
     memcpy(g_s3dVk.mapBuf.map, g_s3dVk.mapData, sizeof(S3dGpuMapU) * nMaps);
     *layersOut = layers;
@@ -1408,6 +1642,7 @@ static void s3d_gpu_objectUniforms(const S3dBatch* b, S3dGpuObjectU* o) {
     o->bump[0] = s->bump;
     if (b->tex) { o->bump[1] = 1.0f / (float)b->tex->w; o->bump[2] = 1.0f / (float)b->tex->h; o->bump[3] = (float)b->tex->filter; }
     if (s->emissiveTex) { o->glow[0] = s->emissiveStrength; o->glow[1] = (float)s->emissiveTex->filter; }
+    o->glow[2] = b->blended ? 0.0f : s->reflect;
 }
 
 /* Draws the queue: 1 when the picture is in `rgba`, 2 when it stays on the GPU for the windows of the camera (DirectDrawing), 0 when the GPU cannot draw it. */
@@ -1417,7 +1652,7 @@ static int s3d_gpu_flushLocked(uint8_t* rgba, S3dFrame* f, const S3dCamera* cam,
     int readBack = !(direct != NULL && direct->attached && direct->works == 1 && (g_s3dVk.wsi || g_s3dVk.interop));
     size_t i, nb = f->batchN, k;
     S3dVec3 lo = s3d_v3(1e30f, 1e30f, 1e30f), hi = s3d_v3(-1e30f, -1e30f, -1e30f);
-    int anyCaster = 0, maps = 0, atlas = 64, layers = 1, m, nblended = 0, layer;
+    int anyCaster = 0, maps = 0, atlas = 64, layers = 1, m, nblended = 0, layer, fog = st->fogEnd > st->fogStart, reflect = 0, post;
     VkRenderPassBeginInfo rp;
     VkClearValue clear[2];
     VkBufferImageCopy region;
@@ -1427,6 +1662,10 @@ static int s3d_gpu_flushLocked(uint8_t* rgba, S3dFrame* f, const S3dCamera* cam,
     if (!s3d_gpu_waitPending()) { g_s3dVk.state = -1; return 0; }   /* (the previous picture: its buffers are written again now) */
     target = s3d_gpu_frameFor(f);
     if (target == NULL) return 0;
+    /* fog and reflections (an opaque object that reflects): the picture in two passes, the shaders read its depth */
+    for (i = 0; i < nb; i++) if (f->batches[i].s.reflect > 0 && !f->batches[i].blended) { reflect = 1; break; }
+    post = fog || reflect;
+    if (post && !s3d_gpu_framePost(target)) return 0;   /* (the GPU cannot read the depth: the software renderer draws) */
     /* the meshes and textures on the GPU; the bounds of the casters */
     for (i = 0; i < nb; i++) {
         S3dBatch* b = &f->batches[i];
@@ -1439,7 +1678,8 @@ static int s3d_gpu_flushLocked(uint8_t* rgba, S3dFrame* f, const S3dCamera* cam,
     f->ctx.shadowN = 0;
     if (st->shadows && anyCaster) s3d_planShadows(&f->ctx, lights, lightCount, st, lo, hi);
     s3d_prepareLights(&f->ctx, cam, lights, lightCount, st);
-    maps = s3d_gpu_frameUniforms(f, cam, lo, hi, &layers, &atlas);
+    s3d_cullLights(&f->ctx, cam, f->w, f->h, st);
+    maps = s3d_gpu_frameUniforms(f, cam, st, lo, hi, &layers, &atlas);
     if (maps < 0 || !s3d_gpu_shadows(atlas, layers)) return 0;
     /* the uniforms of the objects */
     if (!s3d_gpu_hostBuffer(&g_s3dVk.objectUbo, g_s3dVk.objectStride * (nb + 1), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT)) return 0;
@@ -1493,7 +1733,7 @@ static int s3d_gpu_flushLocked(uint8_t* rgba, S3dFrame* f, const S3dCamera* cam,
     /* the picture: cleared with the background, the opaque objects in their order, then the transparent ones */
     memset(&rp, 0, sizeof rp);
     rp.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
-    rp.renderPass = g_s3dVk.passMain;
+    rp.renderPass = post ? g_s3dVk.passOpaque : g_s3dVk.passMain;
     rp.framebuffer = target->fb;
     rp.renderArea.extent.width = (uint32_t)f->w; rp.renderArea.extent.height = (uint32_t)f->h;
     memset(clear, 0, sizeof clear);
@@ -1510,11 +1750,55 @@ static int s3d_gpu_flushLocked(uint8_t* rgba, S3dFrame* f, const S3dCamera* cam,
         if (b->blended) continue;
         s3d_gpu_draw(b, i, b->s.twoSided ? 0 : 1, 0, 1);
     }
+    if (post) {
+        /* the rest over the opaque objects, the depth read only: the reflections (from a copy of the picture as it is now), the transparent objects, the fog */
+        VkDescriptorSet sets[4];
+        g_s3dVk.vkCmdEndRenderPass(g_s3dVk.cmd);
+        if (reflect) {
+            VkImageCopy copy;
+            s3d_gpu_imageBarrier(target->before.img, 1, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_ACCESS_SHADER_READ_BIT,
+                                 VK_ACCESS_TRANSFER_WRITE_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT);
+            memset(&copy, 0, sizeof copy);
+            copy.srcSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT; copy.srcSubresource.layerCount = 1;
+            copy.dstSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT; copy.dstSubresource.layerCount = 1;
+            copy.extent.width = (uint32_t)f->w; copy.extent.height = (uint32_t)f->h; copy.extent.depth = 1;
+            g_s3dVk.vkCmdCopyImage(g_s3dVk.cmd, target->color.img, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, target->before.img, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &copy);
+            s3d_gpu_imageBarrier(target->before.img, 1, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_ACCESS_TRANSFER_WRITE_BIT,
+                                 VK_ACCESS_SHADER_READ_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT);
+        }
+        rp.renderPass = g_s3dVk.passOver;
+        rp.clearValueCount = 0; rp.pClearValues = NULL;
+        g_s3dVk.vkCmdBeginRenderPass(g_s3dVk.cmd, &rp, VK_SUBPASS_CONTENTS_INLINE);
+        s3d_gpu_viewport((uint32_t)f->w, (uint32_t)f->h);
+        if (reflect) for (i = 0; i < nb; i++) {
+            const S3dBatch* b = &f->batches[i];
+            VkPipeline pipe = s3d_gpu_postPipeline(0, b->s.twoSided ? 0 : 1);
+            const S3dGpuMesh* gm = (const S3dGpuMesh*)b->mesh->gpu;
+            const S3dGpuTex* t = b->tex ? (const S3dGpuTex*)b->tex->gpu : &g_s3dVk.dummy;
+            uint32_t offset = (uint32_t)(i * g_s3dVk.objectStride);
+            VkDeviceSize zero = 0;
+            if (b->blended || !(b->s.reflect > 0) || !pipe || !gm || !t) continue;
+            sets[0] = g_s3dVk.frameSet; sets[1] = t->set; sets[2] = g_s3dVk.dummy.set; sets[3] = target->postSet;
+            g_s3dVk.vkCmdBindPipeline(g_s3dVk.cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipe);
+            g_s3dVk.vkCmdBindDescriptorSets(g_s3dVk.cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, g_s3dVk.layoutPost, 0, 4, sets, 1, &offset);
+            g_s3dVk.vkCmdBindVertexBuffers(g_s3dVk.cmd, 0, 1, &gm->vb.buf, &zero);
+            g_s3dVk.vkCmdBindIndexBuffer(g_s3dVk.cmd, gm->ib.buf, 0, VK_INDEX_TYPE_UINT32);
+            g_s3dVk.vkCmdDrawIndexed(g_s3dVk.cmd, gm->indexCount, 1, 0, 0, 0);
+        }
+    }
     for (k = 0; k < (size_t)nblended; k++) {
         int bi = g_s3dVk.order[k];
         const S3dBatch* b = &f->batches[bi];
         if (b->s.twoSided) { s3d_gpu_draw(b, (size_t)bi, 2, 1, 0); s3d_gpu_draw(b, (size_t)bi, 1, 1, 0); }   /* the far side first */
         else s3d_gpu_draw(b, (size_t)bi, 1, 1, 0);
+    }
+    if (fog && s3d_gpu_postPipeline(1, 0)) {
+        VkDescriptorSet sets[4];
+        uint32_t dynamicZero = 0;
+        sets[0] = g_s3dVk.frameSet; sets[1] = g_s3dVk.dummy.set; sets[2] = g_s3dVk.dummy.set; sets[3] = target->postSet;
+        g_s3dVk.vkCmdBindPipeline(g_s3dVk.cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, g_s3dVk.fogPipe);
+        g_s3dVk.vkCmdBindDescriptorSets(g_s3dVk.cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, g_s3dVk.layoutPost, 0, 4, sets, 1, &dynamicZero);
+        g_s3dVk.vkCmdDraw(g_s3dVk.cmd, 3, 1, 0, 0);
     }
     g_s3dVk.vkCmdEndRenderPass(g_s3dVk.cmd);
     target->hasPicture = 1;

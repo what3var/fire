@@ -578,6 +578,8 @@ typedef struct S3dFlushSettings {
     int backend;               /* S3D_BACKEND_*: who draws */
     int noLightCulling;        /* 1: every pixel looks at every light (the same picture, slower: for comparisons) */
     uint32_t sky;              /* 0xAABBGGRR: what a reflection shows where it finds nothing on the screen (the background, or the fog) */
+    float fogStart, fogEnd;    /* the fog of the scene (end > start), for the hardware renderer: it draws it itself (the software one gets it from s3d_fxApply afterwards) */
+    uint32_t fogColor;         /* 0xAABBGGRR */
 } S3dFlushSettings;
 enum { S3D_BACKEND_SOFTWARE = 0, S3D_BACKEND_HARDWARE = 1, S3D_BACKEND_DIRECT = 2 };   /* (DIRECT: who drew - the GPU, into the windows of the camera; never asked for) */
 

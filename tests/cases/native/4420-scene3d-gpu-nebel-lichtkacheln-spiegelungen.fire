@@ -1,0 +1,152 @@
+#import "graphics"
+#import "scene3d"
+#import "scene3d.effects"
+// The hardware renderer draws fog, the light culling per tile and the reflections as the software renderer does: its picture is close to the software one (as close as for
+// its other features: at most 2 % of the bytes more than 24 apart). Without a GPU (or a GPU that cannot) the software renderer draws, and the comparisons hold all the same.
+// (FIRE_S3D_GPU=cpu takes a Vulkan device that is a CPU, lavapipe: so a machine without a GPU tests the hardware renderer.)
+class H {
+    static int Sum(Framebuffer f) {
+        var b = f.ReadBytes()
+        var s = 0
+        for (var i = 0; i < b.length; i++) { s = (s * 31 + b[i]) % 1000003 }
+        return s
+    }
+    // the bytes that are more than 24 apart: few (below 2 %)
+    static bool Close(byte a[], byte b[]) {
+        var off = 0
+        for (var i = 0; i < a.length; i++) {
+            var d = a[i] - b[i]
+            if (d > 24 || d < -24) { off++ }
+        }
+        return off * 50 < a.length
+    }
+    static bool Same(byte a[], byte b[]) {
+        for (var i = 0; i < a.length; i++) { if (a[i] != b[i]) { return false } }
+        return true
+    }
+    // the hardware renderer drew (or there is no GPU)
+    static bool Drew(Camera cam) { return cam.LastRenderer == RenderMode.Hardware || S3D.HardwareName() == "" }
+}
+
+// ---- fog: boxes at several distances, a transparent ball, the background beyond the end ----
+var frame = new Framebuffer(64, 48)
+var scene = new Scene()
+var ground = new Object(Template.Plane, 0m, 0m, -10m, 10m, 0m, 30m)
+ground.Color = S3D.Rgb(90, 140, 80)
+scene.Add(ground)
+for (var i = 0; i < 5; i++) {
+    var b = new Object(Template.Box, (i - 2) * 1.5m, 0.6m, -i * 4m, 1m, 1.2m, 1m)
+    b.Color = S3D.Rgb(200, 60 + i * 30, 50)
+    scene.Add(take b)
+}
+var glass = new Object(Template.Sphere, 0.5m, 0.8m, 1m, 0.8m, 0.8m, 0.8m)
+glass.Color = S3D.Rgb(80, 120, 255)
+glass.Opacity = 0.5
+scene.Add(glass)
+scene.Add(Light.Directional(-0.4, -1.0, -0.3))
+var cam = new Camera(frame)
+cam.SetPosition(0m, 2m, 5m)
+cam.LookAt(0m, 0.5m, -6m)
+cam.Background = S3D.Rgb(40, 50, 90)
+scene.Add(cam)
+scene.Renderer = RenderMode.Hardware
+cam.Render()
+var clear = frame.ReadBytes()
+scene.Fog(S3D.Rgb(150, 155, 170), 3m, 14m)
+scene.Renderer = RenderMode.Software
+cam.Render()
+var soft = frame.ReadBytes()
+scene.Renderer = RenderMode.Hardware
+cam.Render()
+var hard = frame.ReadBytes()
+print("fog " + H.Drew(cam) + " " + H.Close(hard, soft) + " " + !H.Same(hard, clear))
+// a fog that ends before the first box: everything is fog colour
+scene.Fog(S3D.Rgb(150, 155, 170), 0.5m, 1m)
+cam.Render()
+var all = frame.ReadBytes()
+var fogColoured = 0
+for (var i = 0; i < all.length; i += 4) { if (all[i] == 150 && all[i + 1] == 155 && all[i + 2] == 170) { fogColoured++ } }
+print("fog all " + H.Drew(cam) + " " + (fogColoured * 4 == all.length))
+scene.NoFog()
+cam.Render()
+print("fog off " + H.Same(frame.ReadBytes(), clear))
+
+// ---- light culling: 24 point lights with an end and some far away, culled per tile or not: the same picture ----
+var cFrame = new Framebuffer(64, 48)
+var cScene = new Scene()
+cScene.AmbientIntensity = 0.0
+cScene.Add(new Object(Template.Plane, 0m, 0m, 0m, 40m, 0m, 40m))
+cScene.Add(new Object(Template.Box, 1.5m, 0.5m, -1m, 1m, 1m, 1m))
+for (var i = 0; i < 24; i++) {
+    var near = Light.Point((i % 6) * 1.6m - 4m, 0.6m, (i / 6) * 1.7m - 3m, S3D.Rgb(120 + i * 5, 255 - i * 6, 90), 0.8)
+    near.Cutoff = 1.5m + (i % 3) * 0.5m
+    near.CastShadows = false
+    cScene.Add(take near)
+}
+for (var i = 0; i < 16; i++) {
+    var far = Light.Point((i % 8) * 4m - 14m, 1m, (i / 8) * 4m - 60m, S3D.Rgb(255, 200, 120), 1.0)
+    far.Cutoff = 3m
+    far.CastShadows = false
+    cScene.Add(take far)
+}
+cScene.Add(Light.Directional(-0.3, -1.0, -0.2, S3D.Rgb(40, 40, 80), 0.5))
+var cCam = new Camera(cFrame)
+cCam.SetPosition(0m, 6m, 6m)
+cCam.LookAt(0m, 0m, 0m)
+cScene.Add(cCam)
+cScene.Renderer = RenderMode.Software
+cCam.Render()
+var cSoft = cFrame.ReadBytes()
+cScene.Renderer = RenderMode.Hardware
+cCam.Render()
+var cCulled = cFrame.ReadBytes()
+var culledDrew = H.Drew(cCam)
+cScene.LightCulling = false
+cCam.Render()
+var cAll = cFrame.ReadBytes()
+print("culling " + culledDrew + " " + H.Drew(cCam) + " " + H.Close(cCulled, cSoft) + " " + H.Same(cCulled, cAll))
+cScene.LightCulling = true
+
+// ---- reflections: a wet floor mirrors a red box (and the sky), with and without fog ----
+var rFrame = new Framebuffer(64, 48)
+var rScene = new Scene()
+var rFloor = new Object(Template.Plane, 0m, 0m, 0m, 30m, 0m, 30m)
+rFloor.Color = S3D.Rgb(60, 60, 70)
+rScene.Add(rFloor)
+var rBox = new Object(Template.Box, 0m, 1m, -4m, 2m, 2m, 2m)
+rBox.Color = S3D.Rgb(255, 40, 40)
+rScene.Add(rBox)
+var rGlass = new Object(Template.Box, -1.5m, 0.5m, -1m, 1m, 1m, 1m)
+rGlass.Opacity = 0.5
+rScene.Add(rGlass)
+rScene.Add(Light.Directional(-0.3, -1.0, -0.5))
+var rCam = new Camera(rFrame)
+rCam.SetPosition(0m, 1.2m, 4m)
+rCam.LookAt(0m, 0.5m, -4m)
+rCam.Background = S3D.Rgb(30, 40, 80)
+rScene.Add(rCam)
+rScene.Renderer = RenderMode.Hardware
+rCam.Render()
+var dry = rFrame.ReadBytes()
+rFloor.Reflectivity = 0.8
+rScene.Renderer = RenderMode.Software
+rCam.Render()
+var wetSoft = rFrame.ReadBytes()
+rScene.Renderer = RenderMode.Hardware
+rCam.Render()
+var wetHard = rFrame.ReadBytes()
+var redder = 0
+for (var i = 0; i < wetHard.length; i += 4) { if (wetHard[i] > dry[i] + 10) { redder++ } }
+print("reflect " + H.Drew(rCam) + " " + H.Close(wetHard, wetSoft) + " " + (redder > 20))
+rScene.Fog(S3D.Rgb(150, 150, 160), 5m, 20m)
+rScene.Renderer = RenderMode.Software
+rCam.Render()
+var fogSoft = rFrame.ReadBytes()
+rScene.Renderer = RenderMode.Hardware
+rCam.Render()
+print("reflect fog " + H.Drew(rCam) + " " + H.Close(rFrame.ReadBytes(), fogSoft))
+rScene.NoFog()
+rFloor.Reflectivity = 0.0
+rCam.Render()
+print("reflect off " + H.Same(rFrame.ReadBytes(), dry))
+//# name: Scene3D GPU: Nebel, Lichtkacheln (LightCulling) und Spiegelungen (Reflectivity) auf der GPU wie im Software-Renderer

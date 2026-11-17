@@ -463,7 +463,7 @@ class Object {
     defined float EmissiveStrength { get { return __S3DGetF(this.h, 24) } set { __S3DSetF(this.h, 24, value) } }
     // How much the surface mirrors what is above it (0 default: nothing .. 1): wet streets, puddles, water, a polished floor. A reflection in the picture itself
     // (screen space: what the camera does not see is not mirrored - there it shows the background or the fog), on the parts that face up, stronger at a grazing
-    // view (fresnel). Only the software renderer draws it; 0 costs nothing.
+    // view (fresnel). The software renderer and the GPU draw it (RenderMode.Fast does not); 0 costs nothing.
     defined float Reflectivity { get { return __S3DGetF(this.h, 25) } set { __S3DSetF(this.h, 25, value) } }
 
     Material Material {
@@ -649,7 +649,7 @@ class Scene {
 
     // ---- the effects on the whole picture ----
     // Fog: from `start` on, the picture goes into the colour, from `end` on it is all fog - also where no object is (the background). It hides the end of the
-    // world and is cheap (Fast and Software; the GPU draws no fog yet). NoFog() takes it away.
+    // world and is cheap (every renderer: Fast, Software and the GPU). NoFog() takes it away.
     undefined Fog(defined int color, defined float start : any m, defined float end : any m) {
         __S3DEffects()
         __S3DSetI(this.h, 5, color)

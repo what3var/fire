@@ -982,8 +982,8 @@ nach Arbeiten auf `targets`).
    `Fire`/`Smoke`/`Sparks`/`Rain`/`Snow`/`Explosion` (eine Tabelle in C: das Paket kostet auf dos16 12,7 KB statt 31 KB als fire-Code). In `scene3d`
    selbst: `Scene.Fog(color, start, end)` (der Hintergrund ganz Nebel; im schlanken Renderer 16 Stufen ohne Division je Pixel, für Paletten eine Tabelle
    16 x 256), `Scene.Tint(color, amount)`, `Scene.Advance(dt)`/`Object.Advance(dt)` (Partikel, Animation, `SpinX/Y/Z`, `TextureScrollX/Y`). Test: VM == nativ
-   (Software, Fast, Palette, Nebel, Tönung); dos16 baut. **Offen:** Nebel im GPU-Renderer (heute: Partikel und Tönung über dem GPU-Bild, ohne Tiefe),
-   Partikel mit Textur (Funken als Striche, Rauch mit Flocken), Emitter-Richtung im Raum des Objekts, die übrigen Materialeffekte (Farbrotation der
+   (Software, Fast, Palette, Nebel, Tönung); dos16 baut. Nebel auch im GPU-Renderer (ein letzter Durchgang über
+   die Tiefe des Bildes). **Offen:** Partikel im GPU-Renderer mit Tiefe (heute: Partikel und Tönung über dem GPU-Bild), Partikel mit Textur (Funken als Striche, Rauch mit Flocken), Emitter-Richtung im Raum des Objekts, die übrigen Materialeffekte (Farbrotation der
    Palette, Flackern, Wellen, Toon).
 5. **Physik** (`scene3d.physics`): einfach, schnell, leicht zu bedienen - Kugel, Box (achsenparallel), Kapsel, Heightfield, statische Meshes; Character
    Controller (Laufen, Springen, Stufen), Raycasts, Trigger; fester Zeitschritt, Gitter als Vorauswahl; mit Einheiten (`Body.Dynamic(mass: 2kg)`,
