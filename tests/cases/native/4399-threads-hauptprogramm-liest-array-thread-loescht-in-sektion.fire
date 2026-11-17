@@ -1,0 +1,37 @@
+#import "time"
+// The other way round: a fire thread replaces and deletes a global array in sections while the main program sums it in a loop. A section runs
+// at a safe point of the main program - the state of the array the main program keeps across its loop is checked again after it.
+class U {
+    static int Sum(int b[]) {
+        int s = 0
+        for (int k = 0; k < 50; k++) { for (int i = 0; i < 200; i++) { s = s + b[i] } }
+        return s
+    }
+    static int[] Make(int n) {
+        int a[] = new int[n]
+        for (int i = 0; i < n; i++) { a[i] = 1 }
+        return a
+    }
+}
+var stop = 0
+var buf = U.Make(256)
+fire {
+    int n = 0
+    while (stop < 1) {
+        sync global {
+            var old = buf
+            buf = U.Make(256 + n % 64)
+            delete old
+        }
+        n++
+        Sleep(1ms)
+    }
+}
+int whole = 0
+int gone = 0
+for (int r = 0; r < 2000; r++) {
+    try { if (U.Sum(buf) == 10000) { whole++ } } catch (DestroyedException e) { gone++ }
+}
+stop = 1
+print(whole + gone)
+//# name: Threads: Das Hauptprogramm summiert ein globales Array, ein Thread ersetzt und loescht es in Sektionen (kein use-after-free)

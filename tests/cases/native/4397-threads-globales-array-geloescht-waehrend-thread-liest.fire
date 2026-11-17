@@ -1,0 +1,49 @@
+// A global int array and a global string array (arrays of the shared domain): a fire thread sums them in loops while the main program replaces
+// and deletes them again and again. The thread holds the array only through a parameter; its loop keeps the state of the typed array in C
+// helpers, which are checked again after each safe point. Either the thread reads the array whole or it gets the DestroyedException - the
+// memory of a destroyed array is never touched (no use-after-free), a string it read stays its own.
+class U {
+    static int Sum(int b[]) {
+        int s = 0
+        for (int k = 0; k < 50; k++) { for (int i = 0; i < 200; i++) { s = s + b[i] } }
+        return s
+    }
+    static int Lengths(string a[]) {
+        int s = 0
+        for (int k = 0; k < 400; k++) { string t = a[k % 16]; s = s + t.length % 3 }
+        return s
+    }
+    static int[] Make(int n) {
+        int a[] = new int[n]
+        for (int i = 0; i < n; i++) { a[i] = 1 }
+        return a
+    }
+}
+var done = 0
+var reads = 0
+var buf = U.Make(256)
+var strs = new string[16]
+for (int i = 0; i < 16; i++) { strs[i] = "s" + i }
+fire {
+    int whole = 0
+    int gone = 0
+    for (int i = 0; i < 300; i++) {
+        try { if (U.Sum(buf) == 10000) { whole++ } } catch (DestroyedException e) { gone++ }
+        try { U.Lengths(strs); whole++ } catch (DestroyedException e) { gone++ }
+    }
+    sync global { done = 1; reads = whole + gone }
+}
+int n = 0
+while (done < 1) {
+    var old = buf
+    buf = U.Make(256 + n % 64)
+    delete old
+    var ns = new string[16]
+    for (int i = 0; i < 16; i++) { ns[i] = "str " + n + " " + i }
+    var oldStrs = strs
+    strs = ns
+    delete oldStrs
+    n++
+}
+print("reads " + reads)
+//# name: Threads: Globale Arrays - das Hauptprogramm ersetzt und loescht sie, waehrend ein Thread sie in Schleifen liest (kein use-after-free)
