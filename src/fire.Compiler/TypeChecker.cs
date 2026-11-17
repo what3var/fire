@@ -1440,7 +1440,8 @@ namespace fire.Compiler
                 StaticKind.String => value.Kind != StaticKind.String,
                 _ => false,
             };
-            if (needed) _localGuards[valueExpr] = (type, what);
+            // (`defined string F()`: only the conversion here - undefined is the return guard's, with its message)
+            if (needed) _localGuards[valueExpr] = (target.Kind == StaticKind.String && type.NonNull ? type with { NonNull = false } : type, what);
         }
         private void Declare(string name, StaticType type)
         {
