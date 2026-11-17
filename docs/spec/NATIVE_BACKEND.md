@@ -197,7 +197,7 @@ Skript -> Lexer -> Parser -> Resolver -> Compiler -> Bytecode (LinkedProgram)
   `fire_cmpReal`, `x < x - x` auch für NaN und -unendlich), `Round`/`Floor`/`Ceiling` (ein Int bleibt, wie er ist), `Sqrt`, `Sin` ... `Exp`,
   `Atan2` (ohne Einheit) - statt des Aufrufs der Funktion des Prelude (`MathIntrinsic`). `Math.PI`/`Math.E` und jedes `static readonly` mit
   Konstante sind Konstanten (`ConstantStatic`; der Typprüfer sieht sie als `defined`). `CopyArgs` (das Präfix eines Aufrufs) und `LoadThis` lassen
-  die Schatten stehen; ein C-Rumpf wird auch mit `CopyArgs` direkt gerufen, wenn kein Argument `ref` oder `take` ist. Gemessen (gcc `-O2`, 20 Mio.
+  die Schatten stehen; ein C-Rumpf wird auch mit `CopyArgs` direkt gerufen, wenn kein Argument `ref` oder `take` ist und `copy`/`flat` nur auf C-Zahl-Parametern stehen. Gemessen (gcc `-O2`, 20 Mio.
   Schritte mit `Sqrt`, `Abs(Sin)`, `Max`, `^`, `/`, `%`, `!int`): 2410 -> 290 ms.
   **Elemente typisierter Arrays** gehen den Weg eines Puffers: ein Element eines `defined`-Arrays (TU_DEFINED, nie undefined) wird mit einem
   Laden in den Schatten gelesen (`((Real*)ra_->typed->data)[i]`); eine C-Zahl wird an ihren Platz geschrieben, umgewandelt wie `arrElemConvert` (ein
@@ -285,7 +285,13 @@ Skript -> Lexer -> Parser -> Resolver -> Compiler -> Bytecode (LinkedProgram)
   (`arrCopyTyped`).
 * **Strings und Lambdas werden gezählt** (sie werden frei weitergegeben: `var t = s`, in Feldern und Arrays gespeichert, zurückgegeben):
   * **Speicherorte halten einen Zähler**: Variablen, Parameter, Felder, Array-Elemente und statische Felder (`retain` beim Speichern, `release` beim
-    Überschreiben, beim Verlassen des Scopes und beim Zerstören des Objekts/Arrays). Stack-Zwischenwerte halten nichts.
+    Überschreiben, beim Verlassen des Scopes und beim Zerstören des Objekts/Arrays). Stack-Zwischenwerte halten nichts - bis auf einen Fall:
+    ein Wert, der ohne Zähler aus einem Ort gelesen wurde, den anderer Code ersetzen kann (globale Variable - auch eine des Hauptprogramms -,
+    statisches Feld, Feld, Element, Variable hinter einem Zeiger: `Flow.Borrowed`), und der unter den Operanden eines Aufrufs, Konstruktors oder
+    Natives wartet (`U.Pair(G.name, U.Change())`, `this.name + this.Change()`, ein Job am sicheren Punkt im Aufgerufenen), bekommt vor diesem
+    Aufruf einen Zähler des Pools (`holdTemp`) - sonst gäbe das Ersetzen des Ortes ihn frei, während er noch gebraucht wird. Die Argumente eines
+    Aufrufs hält der Aufgerufene selbst (`retain` seiner Parameter am Eintritt). Objekte, Arrays und Puffer brauchen das nicht: ein ersetztes ist
+    zerstört, und der Griff sagt es (Generation, DestroyedException). Code, der nur Lokale liest, bleibt unverändert.
   * **Frische Werte** (Verkettung, Methoden von `string`, ...) kommen mit Zähler 1 in den **temporären Pool**; jeder Scope merkt sich dessen
     Höhe beim Eintritt und gibt beim Verlassen alles darüber frei. Ein Zwischenwert lebt also bis zum Ende seines Scopes.
   * **`return`** hält den Rückgabewert mit einem Zähler fest, der Aufrufer übernimmt ihn in seinen Pool (`adopt`).
@@ -626,6 +632,10 @@ min-Verhältnis `alloc` 1,00, `exceptions` 1,03, `fib` 1,03, `list` 1,01, `metho
   (was einem mitkopierten Objekt gehörte, gehört dessen Kopie, Arrays und Puffer dem Besitzer der Kopie). `obj.feld = copy x` gibt die Kopie dem Objekt
   (`copyOwned`). Als **Argument** (`f(copy x)`) reist die Kopie in der Argumentliste `AL` des Aufrufs wie ein durchgereichter Rückgabewert (`copyArg`/`finishArgs`):
   sie gehört der aufgerufenen Funktion und stirbt mit ihr, außer die Funktion behält sie. (Destruktoren dieser Kopie laufen nach dem Aufruf, nicht davor.)
+  So bei jeder Aufrufform: statisch, Instanz, `base`, Konstruktor, nach Typ überladen, benannte Argumente, `await f(x) taking x` (das Präfix markiert
+  `taking` wie `copy`). Ein statischer Aufruf eines C-Rumpfs nimmt den direkten Weg nur, wenn `copy`/`flat` auf C-Zahl-Parametern stehen
+  (`NumberCopyArgs`); für einen Parameter, der ein Value bleibt, geht er über die Funktion mit Values und `copyArg`. Der Aufruf eines Lambdas kopiert
+  in die Zwischenwerte der Anweisung (`copyValue`).
 
 * **Einheiten** (SPEC 3): `Value::unit` ist der Index in eine Tabelle (`g_ud`), die zur Laufzeit wächst: eine Einheit ist ein Exponentenvektor über den
   Basissymbolen des Programms (`g_dimNames`, vom Generator gesammelt und wie in der VM sortiert) und ein Faktor zur Basis; `mm * mm` oder `m / s` legen neue Einträge an

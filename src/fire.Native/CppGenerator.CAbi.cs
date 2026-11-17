@@ -158,20 +158,26 @@ namespace fire.Native
             int argc = ins.A[2];
             if (ReflectionPrelude.HelperClasses.Contains(cls)) return null;
             int at = f.IndexOf.TryGetValue(ins.Addr, out int index) ? index : -1;
-            if (at > 0 && (f.Decoded[at - 1].Op is OpCode.ArgNames or OpCode.SetTypeArgs or OpCode.OverloadHint || f.Decoded[at - 1].Op == OpCode.CopyArgs && !NumberCopyArgs(f.Decoded[at - 1]))) return null;
+            if (at > 0 && f.Decoded[at - 1].Op is OpCode.ArgNames or OpCode.SetTypeArgs or OpCode.OverloadHint) return null;
             RuntimeClass rc;
             try { rc = FindClass(cls); } catch (NativeNotSupportedException) { return null; }
             if (rc.IsTypeOverloaded(method, argc) || rc.FindMethodWithAccess(method, argc).Proto is not { IsStatic: true } proto || proto.ParamCount != argc) return null;
             var target = GetFunc(proto, FuncKind.Static);
-            return CAbiOf(target) != null ? target : null;
+            if (CAbiOf(target) is not { } abi) return null;
+            return at > 0 && f.Decoded[at - 1].Op == OpCode.CopyArgs && !NumberCopyArgs(f.Decoded[at - 1], abi) ? null : target;
         }
 
-        /// <summary>A CopyArgs whose marks mean nothing for numbers - copy flat, copy deep, a fresh value (no `ref`, no `take`): the arguments of a C body
-        /// are numbers, they go as they are.</summary>
-        private static bool NumberCopyArgs(Instr copy)
+        /// <summary>A CopyArgs whose marks mean nothing for the C body - a fresh value, or copy flat / copy deep of an argument that is a C number (no `ref`,
+        /// no `take`): the arguments go as they are. `copy list` for a parameter that stays a Value is a real copy: the call with Values (ArgsBefore).</summary>
+        private static bool NumberCopyArgs(Instr copy, CAbi abi)
         {
             long mask = CopyMask(copy);
-            for (int k = 0; k < 16; k++) if (((mask >> (4 * k)) & 0xF) is not (0 or 1 or 2 or 4)) return false;
+            for (int k = 0; k < 16; k++)
+            {
+                long bits = (mask >> (4 * k)) & 0xF;
+                if (bits is 1 or 2 && (k >= abi.ParamType.Length || abi.ParamType[k] == 0)) return false;
+                if (bits is not (0 or 1 or 2 or 4)) return false;
+            }
             return true;
         }
         private static long CopyMask(Instr copy) => (long)copy.A[0] | ((long)copy.A[1] << 16) | ((long)copy.A[2] << 32) | ((long)copy.A[3] << 48);

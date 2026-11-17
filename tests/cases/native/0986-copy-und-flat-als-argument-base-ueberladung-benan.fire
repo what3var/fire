@@ -1,0 +1,33 @@
+class Item { int v = 0
+    construct(int v) { this.v = v } }
+class Holder { Item kept[] }
+class Base {
+    int Bump(Item list[]) { list[1].v = list[1].v + 10; return list[1].v }
+}
+class Derived : Base {
+    override int Bump(Item list[]) { return base.Bump(copy list) + 1 }
+    int Over(int x) { return x }
+    int Over(Item list[]) { list[1].v = list[1].v + 7; return list[1].v }
+}
+class Calc {
+    static int Named(Item list[], int add = 1) { list[1].v = list[1].v + add; return list[1].v }
+    static Item[] Back(Item list[]) { list[1].v = list[1].v + 1; return list }
+    static Item[] Keep(Item list[], Holder h) { h.kept = list; return list }
+}
+var list = [new Item(1), new Item(2), new Item(3)]
+var dv = new Derived()
+print("base " + dv.Bump(list) + " " + list[1].v)
+print("over " + dv.Over(copy list) + " " + list[1].v)
+print("named " + Calc.Named(copy list, add: 5) + " " + list[1].v)
+var back = Calc.Back(copy list)
+print("back " + back[1].v + " " + list[1].v)
+var h = new Holder()
+Calc.Keep(copy list, h)
+try { print("kept " + h.kept[1].v) } catch (DestroyedException e) { print("kept: " + e.message + " " + list[1].v) }
+var lam = (Item l[]) => { l[1].v = l[1].v + 1000; return l }
+var lb = lam(copy list)
+print("lam back " + lb[1].v + " " + list[1].v)
+var s = "abc"
+var ss = (string x) => x + "!"
+print(ss(copy s))
+//# name: Copy und flat als Argument: base, Ueberladung, benannte Argumente, Rueckgabe, gehaltene Kopie, Lambda

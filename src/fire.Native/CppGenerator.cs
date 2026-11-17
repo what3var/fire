@@ -3407,6 +3407,11 @@ namespace fire.Native
             /// <summary>Bit i: the list of statement temporaries of scope i (Scopes[i]) may hold something - OwnerList handed it out since its last ReleaseTemps. Without
             /// it ReleaseTemps leaves nothing (no `leave` of an empty list).</summary>
             public ulong TempsDirty;
+            /// <summary>Bit k: stack slot k holds a value read without a count of its own from a place that code of another function may write - a global
+            /// (also a variable of the main program), a static field, a field, an element, a variable behind a pointer (MarksBorrowed). A string or lambda
+            /// there dies when that place is replaced: before code that may run fire code while the slot waits (a later argument, an operand), the slot
+            /// takes a count of the temporaries (holdTemp in fire_rt.h). Cleared by every write of the slot (SetR).</summary>
+            public ulong Borrowed;
             /// <summary>`self` was checked to be alive (a field access of `self`), and nothing since could have destroyed it - the next access of a field of `self`
             /// needs no check. Never at a jump target that is reached without it.</summary>
             public bool SelfAlive;
@@ -3420,7 +3425,7 @@ namespace fire.Native
             /// <summary>The `finally` blocks that this code is inside of (their entry addresses), outermost first.</summary>
             public List<int> Fins = new();
 
-            public Flow Clone() => new() { Depth = Depth, Scopes = new List<(int, int)>(Scopes), Refs = Refs, Types = (int[])Types.Clone(), Scalar = Scalar, Alias = (string?[])Alias.Clone(), TempsDirty = TempsDirty, SelfAlive = SelfAlive, Arrays = Arrays, Handlers = new List<HEntry>(Handlers), Region = Region, Fins = new List<int>(Fins) };
+            public Flow Clone() => new() { Depth = Depth, Scopes = new List<(int, int)>(Scopes), Refs = Refs, Types = (int[])Types.Clone(), Scalar = Scalar, Alias = (string?[])Alias.Clone(), TempsDirty = TempsDirty, Borrowed = Borrowed, SelfAlive = SelfAlive, Arrays = Arrays, Handlers = new List<HEntry>(Handlers), Region = Region, Fins = new List<int>(Fins) };
 
             /// <summary>Forgets the types of the slots from <paramref name="from"/> on.</summary>
             public void ClearTypes(int from)
@@ -3659,6 +3664,7 @@ namespace fire.Native
                     throw new NativeNotSupportedException($"inconsistent stack/scope state at {addr} ({name}), reached from {from}");
                 if ((existing.Refs | state.Refs) != existing.Refs) { existing.Refs |= state.Refs; work.Push(target); }
                 if ((existing.TempsDirty | state.TempsDirty) != existing.TempsDirty) { existing.TempsDirty |= state.TempsDirty; work.Push(target); }
+                if ((existing.Borrowed | state.Borrowed) != existing.Borrowed) { existing.Borrowed |= state.Borrowed; work.Push(target); }
                 if (existing.SelfAlive && !state.SelfAlive) { existing.SelfAlive = false; work.Push(target); }
                 if (existing.Arrays.Length > 0 && existing.Arrays.Except(state.Arrays).Any()) { existing.Arrays = existing.Arrays.Intersect(state.Arrays).ToArray(); work.Push(target); }
                 // (a slot is scalar here only if it is on every way - a jump target never is: every jump and every fall into a target materializes)
@@ -4293,6 +4299,10 @@ namespace fire.Native
                 || st.Arrays.Length > 0 && ins.Op == OpCode.ClaimToArray && before >= 1 && before <= 64 && st.Types[before - 1] != TypeUnknown && IsPlainType(st.Types[before - 1])
                 || st.Arrays.Length > 0 && ins.Op == OpCode.NewArray;
             var result = StepCore(f, chunk, ins, st, sb, locals);
+            // (a read of a place another function may write leaves its value without a count: Flow.Borrowed)
+            st.Borrowed &= st.Depth >= 64 ? ~0UL : (1UL << Math.Max(st.Depth, 0)) - 1;
+            if (result.FallsThrough && MarksBorrowed(ins.Op) && st.Depth >= 1 && st.Depth <= 64 && (st.Refs >> (st.Depth - 1) & 1UL) != 0 && (st.Scalar >> (st.Depth - 1) & 1UL) == 0)
+                st.Borrowed |= 1UL << (st.Depth - 1);
             // (the arrays whose state is known stay known across what runs no code and changes no variable - a store forgets its variable itself)
             // (typing an array runs no code but may convert one - perhaps one that is known: they are checked again)
             if (st.Arrays.Length > 0 && ins.Op is OpCode.TypeArray or OpCode.TypeArrayOfParam && result.FallsThrough)
@@ -4473,6 +4483,26 @@ namespace fire.Native
             or OpCode.CopyArgs    // (a prefix of the call: nothing to do here - the call decides what becomes a Value)
             or OpCode.LoadThis;   // (`x * x + y * y` of fields: the numbers below stay C numbers)
 
+        /// <summary>The operations that leave a value read without a count from a place another function (or a section of a thread at a safe point) may
+        /// write - Flow.Borrowed. A local of a function is not one: only the function itself writes it.</summary>
+        private static bool MarksBorrowed(OpCode op) => op is OpCode.LoadGlobal or OpCode.GetStaticField or OpCode.GetField or OpCode.ArrayGet or OpCode.PtrRead;
+
+        /// <summary>When the operation may run fire code (a call, a constructor, a native that may call back): how many slots on top of the stack it takes as
+        /// its operands - the callee holds its arguments itself (the retain of its parameters at its entry); the slots below wait for the result. Null: it
+        /// runs no fire code.</summary>
+        private static int? RunsFireCode(Instr ins) => ins.Op switch
+        {
+            OpCode.CallStaticMethod => ins.A[2],
+            OpCode.CallBaseMethod => ins.A[2],
+            OpCode.CallMethod => ins.A[1] + 1,
+            OpCode.CallProtoWithThis => ins.A[1] + 1,
+            OpCode.Call => ins.A[0],   // (a call does not hold the lambda it calls: a borrowed one is held here)
+            OpCode.NewObject => ins.A[1],
+            OpCode.NewObjectOwned => ins.A[1] + 1,
+            OpCode.CallNative or OpCode.CallExtern => ins.A[1],
+            _ => null,
+        };
+
         private StepResult StepCore(Func f, Chunk chunk, Instr ins, Flow st, StringBuilder? sb, ISet<string> locals)
         {
             int d = st.Depth;
@@ -4500,6 +4530,20 @@ namespace fire.Native
                 // (an element of a known array - Flow.Arrays: the array stays the variable, its helpers are read)
                 int keepAlias = ins.Op == OpCode.ArrayGet && st.Depth >= 2 && st.Depth - 2 < 64 && st.Alias[st.Depth - 2] is { } ga && Array.IndexOf(st.Arrays, ga) >= 0 ? st.Depth - 2 : -1;
                 for (int k = 0; k < 64; k++) if (k != keepAlias) MaterializeAlias(st, k, E);
+            }
+            // (a slot that waits below the operands of a call holds a borrowed string or lambda: a count of the temporaries first - Flow.Borrowed)
+            if (st.Borrowed != 0 && RunsFireCode(ins) is int consumed && d - consumed > 0)
+            {
+                ulong hold = st.Borrowed & (d - consumed >= 64 ? ~0UL : (1UL << (d - consumed)) - 1);
+                for (int k = 0; k < 64 && hold != 0; k++)
+                {
+                    if ((hold >> k & 1UL) == 0) continue;
+                    hold &= ~(1UL << k);
+                    st.Borrowed &= ~(1UL << k);
+                    // (an object, an array, a buffer is not counted: a replaced one is destroyed, the generation of its handle says so - DestroyedException)
+                    if (st.Alias[k] != null || (st.Scalar >> k & 1UL) != 0 || (st.Refs >> k & 1UL) == 0 || BaseKindOfType(st.Types[k]) is KindObj or KindArr or KindBuf) continue;
+                    E($"holdTemp({SlotName(st.Region, k)}, &{OwnerList()});");
+                }
             }
             // (`Math.Abs(x)` ...: MathIntrinsic takes C numbers - the call of the prelude's function makes them Values first, below)
             if (st.Scalar != 0 && !ScalarAware(ins.Op) && !TypedNativeCall(ins) && !IntKeyHash(f, st, ins) && !(ins.Op == OpCode.CallStaticMethod && (CAbiStaticCallee(f, ins) != null || Str(ins.A[0]) == "Math"))
@@ -4682,7 +4726,8 @@ namespace fire.Native
                 d = slot + 1; return Next();
             }
             string Args(int first, int count) => string.Concat(Enumerable.Range(first, count).Select(i => ", " + SR(i)));
-            // `ref` arguments (SPEC 5.4.2): the prefix CopyArgs in front of the call marks the arguments that carry an address (bits 3); `flat`/`copy` are not translated yet.
+            // The prefix CopyArgs in front of the call: per argument 4 bits - `flat x`/`copy x` (1/2: ArgsBefore copies into the argument list, a lambda call into the
+            // temporaries), an address for a `ref` parameter (3, SPEC 5.4.2), a fresh value (4/7), `take x` (5), a claim site of a setter (6), `try take x` (8).
             long ArgMask()
             {
                 int at = f.IndexOf[ins.Addr];
@@ -4899,6 +4944,7 @@ namespace fire.Native
             void SetR(int k, bool value)
             {
                 if (k >= 64) return;
+                st.Borrowed &= ~(1UL << k);   // (written: whatever the slot holds now, the operation that wrote it says - MarksBorrowed)
                 if (value) st.Refs |= 1UL << k; else st.Refs &= ~(1UL << k);
             }
             // The static types of the stack slots (Flow.Types): their kind (or KindUnknown) and the unit of a number.
@@ -5056,11 +5102,16 @@ namespace fire.Native
                     if (SlotScalars() && IsScalar(d - 1)) { string src = ScalarName(f, st, d - 1); SetScalar(d, Ty(d - 1), src); d++; return Next(); }   // (a scalar: its shadow is copied)
                     if (d - 1 < 64 && d < 64 && st.Alias[d - 1] is { } dupAlias) st.Alias[d] = dupAlias;   // (an alias stays one)
                     else E($"{S(d)} = {S(d - 1)};");
-                    SetR(d, R(d - 1)); SetT(d, Ty(d - 1)); _kindsKept = true; d++; return Next();
+                    SetR(d, R(d - 1)); SetT(d, Ty(d - 1)); _kindsKept = true;
+                    if (d < 64 && (st.Borrowed >> (d - 1) & 1UL) != 0) st.Borrowed |= 1UL << d;   // (a copy of a borrowed value is one)
+                    d++; return Next();
                 case OpCode.Swap:
                 {
                     Need(2); E($"{{ Value t = {S(d - 1)}; {S(d - 1)} = {S(d - 2)}; {S(d - 2)} = t; }}");
-                    bool a = R(d - 1), b = R(d - 2); SetR(d - 1, b); SetR(d - 2, a);
+                    bool a = R(d - 1), b = R(d - 2);
+                    ulong borrowedPair = d <= 64 ? st.Borrowed >> (d - 2) & 3UL : 0;
+                    SetR(d - 1, b); SetR(d - 2, a);
+                    if (d <= 64) st.Borrowed |= ((borrowedPair & 1UL) << (d - 1)) | ((borrowedPair >> 1) << (d - 2));
                     int ta = Ty(d - 1), tb = Ty(d - 2); SetT(d - 1, tb); SetT(d - 2, ta); _kindsKept = true;
                     return Next();
                 }
