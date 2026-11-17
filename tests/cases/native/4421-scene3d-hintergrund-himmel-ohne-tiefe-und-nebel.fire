@@ -1,0 +1,126 @@
+#import "graphics"
+#import "scene3d"
+#import "scene3d.effects"
+// Object.Background: a sky drawn as the backdrop of the scene itself - a textured dome and a cloud with alpha over it are drawn first, without depth, in the order they
+// were added; the fog leaves them alone (what only the backdrop covers is not fog), while a box in front is fogged as before. A transparent quad and particles show in
+// front of the sky. The hardware renderer (FIRE_S3D_GPU=cpu: lavapipe) gives the same picture as the software one (under 1 % of the bytes more than 24 apart); the
+// lean renderer (RenderMode.Fast) draws the backdrop first as well.
+class H {
+    static defined int At(byte b[], defined int x, defined int y, defined int c) { return b[(y * 64 + x) * 4 + c] }
+    static bool Near(byte b[], defined int x, defined int y, defined int r, defined int g, defined int bl, defined int tolerance) {
+        var dr = H.At(b, x, y, 0) - r
+        var dg = H.At(b, x, y, 1) - g
+        var db = H.At(b, x, y, 2) - bl
+        return dr <= tolerance && dr >= -tolerance && dg <= tolerance && dg >= -tolerance && db <= tolerance && db >= -tolerance
+    }
+    static bool Close(byte a[], byte b[]) {
+        var off = 0
+        for (var i = 0; i < a.length; i++) {
+            var d = a[i] - b[i]
+            if (d > 24 || d < -24) { off++ }
+        }
+        return off * 100 < a.length
+    }
+    // pixels of the particles: nearly white, in the part of the sky around the emitter
+    static int White(byte b[]) {
+        var n = 0
+        for (var y = 8; y < 24; y++) {
+            for (var x = 24; x < 41; x++) { if (H.At(b, x, y, 0) > 200 && H.At(b, x, y, 1) > 200 && H.At(b, x, y, 2) > 200) { n++ } }
+        }
+        return n
+    }
+    static bool Drew(Camera cam) { return cam.LastRenderer == RenderMode.Hardware || S3D.HardwareName() == "" }
+    static Texture Solid(defined int r, defined int g, defined int b, defined int a) {
+        var bytes = new byte[2 * 2 * 4]
+        for (var i = 0; i < 4; i++) {
+            bytes[i * 4] = r
+            bytes[i * 4 + 1] = g
+            bytes[i * 4 + 2] = b
+            bytes[i * 4 + 3] = a
+        }
+        return new Texture(2, 2, bytes)
+    }
+}
+
+var frame = new Framebuffer(64, 48)
+var scene = new Scene()
+// the sky: a dome around the camera, a cloud (alpha 128) over it - both backdrops, unlit
+var dome = new Object(Template.Sphere, 0m, 1m, 0m, 200m, 200m, 200m)
+dome.Texture = H.Solid(60, 120, 220, 255)
+dome.Color = S3D.Rgb(255, 255, 255)
+dome.Lit = false
+dome.Material = new Material(0.0, 32.0, true, true)   // seen from inside: two sided
+dome.Background = true
+scene.Add(dome)
+var cloud = new Object(Template.Quad, -30m, 25m, -60m, 40m, 20m, 0m)
+cloud.Texture = H.Solid(255, 255, 255, 128)
+cloud.Color = S3D.Rgb(255, 255, 255)
+cloud.Lit = false
+cloud.Background = true
+scene.Add(cloud)
+// the world: a solid box, a transparent quad, particles in front of the sky
+var box = new Object(Template.Box, 2.5m, 1m, -8m, 2m, 2m, 2m)
+box.Color = S3D.Rgb(200, 40, 40)
+box.Lit = false
+scene.Add(box)
+var glass = new Object(Template.Quad, -2.5m, 1m, -6m, 1.5m, 1.5m, 0m)
+glass.Color = S3D.Rgb(40, 200, 40)
+glass.Lit = false
+glass.Opacity = 0.5
+scene.Add(glass)
+var drops = new Emitter(0m, 2.2m, -6m)
+drops.Rate = 0.0
+drops.Speed = 0m / 1s
+drops.SpeedVariation = 0.0
+drops.SetGravity(0m / 1s / 1s, 0m / 1s / 1s, 0m / 1s / 1s)
+drops.SetArea(0.6m, 0.6m, 0.1m)
+drops.StartSize = 0.35m
+drops.EndSize = 0.35m
+drops.StartColor = S3D.Rgb(255, 255, 255)
+drops.EndColor = S3D.Rgb(255, 255, 255)
+drops.Lifetime = 100s
+drops.Burst(40)
+scene.Add(drops)
+scene.Add(Light.Directional(-0.4, -1.0, -0.3))
+var cam = new Camera(frame)
+cam.SetPosition(0m, 1m, 0m)
+cam.LookAt(0m, 1m, -10m)
+cam.Background = S3D.Rgb(0, 0, 0)
+scene.Add(cam)
+print("property " + dome.Background + " " + box.Background)
+
+// without fog: the dome where nothing else is, the cloud mixed over it, the box over both
+scene.Renderer = RenderMode.Software
+cam.Render()
+var plain = frame.ReadBytes()
+print("sky " + H.Near(plain, 58, 4, 60, 120, 220, 0) + " cloud " + H.Near(plain, 8, 6, 158, 188, 238, 2) + " box " + H.Near(plain, 45, 24, 200, 40, 40, 0))
+
+// with fog: the sky stays, the box is fogged as without the sky
+scene.Fog(S3D.Rgb(128, 128, 128), 2m, 20m)
+cam.Render()
+var soft = frame.ReadBytes()
+var withSky = H.At(soft, 45, 24, 0) * 65536 + H.At(soft, 45, 24, 1) * 256 + H.At(soft, 45, 24, 2)
+print("fog sky " + H.Near(soft, 58, 4, 60, 120, 220, 0) + " cloud " + H.Near(soft, 8, 6, 158, 188, 238, 2) + " box fogged " + !H.Near(soft, 45, 24, 200, 40, 40, 4))
+print("glass " + (H.At(soft, 15, 24, 1) > 140 && H.At(soft, 15, 24, 2) < 180) + " particles " + (H.White(soft) > 20))
+dome.Visible = false
+cloud.Visible = false
+cam.Render()
+var noSky = frame.ReadBytes()
+print("as before " + (H.At(noSky, 45, 24, 0) * 65536 + H.At(noSky, 45, 24, 1) * 256 + H.At(noSky, 45, 24, 2) == withSky) + " " + H.Near(noSky, 58, 4, 128, 128, 128, 0))
+dome.Visible = true
+cloud.Visible = true
+
+// the hardware renderer: the same picture
+scene.Renderer = RenderMode.Hardware
+cam.Render()
+var hard = frame.ReadBytes()
+print("hardware " + H.Drew(cam) + " " + H.Close(hard, soft) + " sky " + H.Near(hard, 58, 4, 60, 120, 220, 3) + " cloud " + H.Near(hard, 8, 6, 158, 188, 238, 4)
+    + " box " + H.Near(hard, 45, 24, H.At(soft, 45, 24, 0), H.At(soft, 45, 24, 1), H.At(soft, 45, 24, 2), 4))
+print("hardware glass " + H.Near(hard, 15, 24, H.At(soft, 15, 24, 0), H.At(soft, 15, 24, 1), H.At(soft, 15, 24, 2), 4) + " particles " + (H.White(hard) > 20))
+
+// the lean renderer: the backdrop first, no fog on it
+scene.Renderer = RenderMode.Fast
+cam.Render()
+var fast = frame.ReadBytes()
+print("fast sky " + H.Near(fast, 58, 4, 60, 120, 220, 2) + " box " + (H.At(fast, 45, 24, 0) > H.At(fast, 45, 24, 1) + 60))
+//# name: Scene3D: Object.Background - ein Himmel als Hintergrund der Szene (zuerst, ohne Tiefe, ohne Nebel; Glas und Partikel davor), Software, GPU und Fast
