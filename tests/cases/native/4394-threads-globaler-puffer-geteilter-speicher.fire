@@ -1,0 +1,28 @@
+// A global buffer is shared memory: a fire thread writes and reads it without a section while the main program writes and reads it too - nothing waits,
+// nothing throws. The bytes both sides race on are not defined (an old or a new value); what the thread wrote before a synchronising operation (its
+// section `sync global`) the main program sees after it.
+var done = 0
+byte buf[] = new byte[256]
+word w[] = new word[16]
+fire {
+    for (int round = 0; round < 2000; round++) {
+        for (int i = 0; i < 128; i++) { buf[i] = (round + i) % 200 }
+        int seen = buf[200] + buf[round % 256]
+        w[round % 8] = (round * 3)!word
+    }
+    for (int i = 0; i < 128; i++) { buf[i] = i }
+    w[0] = 12345!word
+    sync global { done = 1 }
+}
+int n = 0
+while (done < 1) {
+    buf[128 + n % 128] = n % 100
+    int x = buf[n % 128]
+    w[8 + n % 8] = n!word
+    n++
+}
+for (int i = 128; i < 256; i++) { buf[i] = 0 }
+int sum = 0
+for (int i = 0; i < 256; i++) { sum = sum + buf[i] }
+print("sum " + sum + ", word " + w[0])
+//# name: Threads: Globaler Puffer ist geteilter Speicher - Thread und Hauptprogramm schreiben Elemente ohne Sektion

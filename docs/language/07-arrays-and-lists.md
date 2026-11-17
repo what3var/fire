@@ -504,6 +504,16 @@ A function that **fills** the buffer you give it (`stream.Read(buffer, 0, n)`, r
 declaration): an array there is an `ArgumentException` ("... expects a byte buffer (new byte[n]), not an array."), so is an element outside
 0 .. 255 or a value that is no bytes at all (a string, an object).
 
+### Buffers and threads
+
+A buffer of the global variables (in a global, a static field, a field of a global object or an array of them) is **shared memory** for the fire
+threads: every thread reads and writes its elements directly, without a section and without waiting for the main program. The bounds and the
+destroyed state are checked as always, and the memory stays valid while any thread may still be in an access - after `delete` (or a reassignment
+that destroys it) the next access of every thread is the `DestroyedException`. What is not guaranteed is the order and atomicity of the accesses of
+different threads: a race reads the old or the new byte (a `word` may be torn), and what another thread wrote is certain to be seen only after a
+synchronising operation (`sync global`, a channel, an actor message, `await`, ...). See Threads and actors, "Global buffers: shared memory"
+(`15-threads-and-actors.md`). A buffer a thread owns itself - its own, a `taking` copy, one it got with `handover` - is its alone.
+
 ## Exercises
 
 1. Fill an array with the first 10 square numbers and print them backwards.

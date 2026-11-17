@@ -1,0 +1,32 @@
+// A buffer in a field of an object of the globals is shared memory too: the thread reads it (an element, its length, an element through a `ref` parameter) while the
+// main program replaces the field - the reassignment destroys the old buffer - and at the end deletes the object.
+class Holder {
+    byte data[] = new byte[64]
+}
+class U {
+    static int Peek(ref byte b) { return b }
+    static int Sum(byte b[]) {
+        int s = 0
+        for (int k = 0; k < 20; k++) { for (int i = 0; i < b.length; i++) { s = s + b[i] + U.Peek(b[i]) } }
+        return s
+    }
+}
+var done = 0
+var tries = 0
+var h = new Holder()
+fire {
+    int t = 0
+    for (int i = 0; i < 300; i++) {
+        try { int s = U.Sum(h.data); t++ } catch (DestroyedException e) { t++ }
+    }
+    sync global { done = 1; tries = t }
+}
+int n = 0
+while (done < 1) {
+    h.data = new byte[64 + n % 32]
+    h.data[0] = n % 100
+    n++
+}
+delete h
+print("tries " + tries)
+//# name: Threads: Puffer im Feld eines globalen Objekts - das Feld wird ersetzt, waehrend ein Thread ihn liest

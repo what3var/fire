@@ -301,6 +301,12 @@ does not pass on there (`TC018`: the value dies with the setter on that path). A
   `throw`, `take`, `foreach` (`copy`/`flat`: the `ArgumentException` of a destroyed object). `==`/`!=`, `== undefined` and `is of class` are no use: they answer, and `==` compares the object (a dead reference
   equals the thread's). Only the thread's variable and the references among the moved values work. VM and native the same (the moved values get a new
   identity: a new instance in the VM, the next generation of the handle slot natively - no check is added anywhere else); not checked in `#performance`.
+- **Buffers of the globals and fire threads** (THREADING_DESIGN.md 7.1): a buffer owned by the global scope or by an object or array of the globals
+  is shared memory - every fire thread reads and writes its elements without a section. Bounds and destroyed-checks apply as above; destroying it is
+  seen by every thread (the next access throws `DestroyedException`), and its memory is never freed or reused while a thread may still be inside an
+  access (Debug and Release; natively without the GIL by deferring the free). Order, atomicity (a `word` may be torn) and visibility between
+  threads are not guaranteed; a synchronising operation (`sync global`, `sync globals`, a channel, an actor message, `Completion`, thread start and
+  end) makes earlier writes visible.
 - **Debug warning for references that outlive their object**: in Debug mode the VM notes when a field or an array element is given an object that belongs to a scope (a local, an
   argument passed with `take`, or something they own). When that object is destroyed while a holder that lives on still points to it, a warning is printed (once per place):
   `warning (line N): an Item is destroyed at the end of the call it belonged to, but the field 'last' of a Shelf still points to it (...)`. Release, Performance and native programs do not check.

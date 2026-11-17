@@ -107,7 +107,20 @@ Order, each step with the GIL still on (no change of behaviour, the suite stays 
    natives went: a native lets go of the read side whatever the thread read before, a string or lambda of the domain as an argument does not hold it,
    and `ATTN_DOM` is served at every safe point. Open: the main program still borrows (`U.Pair(G.name, U.Change())` where `Change` replaces
    `G.name` - a use after free without any thread; the same when a section replaces the global at a safe point of the main program); pointers to
-   fields (`ptrRead`); the buffers of the global scope (no flag 64: no read side, see the report on buffers); the modules (`fget`).
+   fields (`ptrRead`); the modules (`fget`).
+   *Global buffers are shared memory* (docs/language/15-threads-and-actors.md "Global buffers: shared memory", THREADING_DESIGN 7.1): the elements
+   of a buffer of the shared domain - a global one, one in a field of an object or an element of an array of the globals - are read and written by
+   every thread without the read side and without sections (`bufOf` does not touch the flag; no aset path or `sharedValue` makes a section of
+   them); a race gives old, new or (a `word`) mixed bytes, visibility only after a synchronising operation. What is protected is their lifetime:
+   before, the main program freed a buffer (`delete`, a reassignment that destroys the old one) while a thread was between the check of the
+   generation and the access - a use after free under AddressSanitizer. Now such a buffer, destroyed while fire threads run, is dead at once and its
+   memory a grave of the epochs of the lent records (`bufRetire`, `lentReclaim`; every fire strand is a reader from `threadRecBegin` on), freed
+   when every strand has passed a safe point or waits; a native with such a buffer holds the read side (the buffers of the domain carry flag 64
+   now, `fire_natArg`), and a callback or wait in it announces no epoch (`g_natDom`). Under ThreadSanitizer the element accesses are relaxed
+   atomics (`FIRE_BUF_LD`/`FIRE_BUF_ST`), so the intended race is not reported. Open: arrays have the same window - the thread checks the
+   generation, `leafOf` then waits for the read side while the main program frees the array (`a3.fire`: `int[]` replaced and deleted in a loop
+   while a thread sums it: heap-use-after-free in `typeArray` under ASan); the frees of arrays could take the same graves (their elements are
+   released at once, so a stale read of a string element needs more).
 7. **1g** `FIRE_NO_GIL` by default: `gilAcquire`/`gilRelease` only mark safe points; ThreadSanitizer clean on the thread tests. *Done:* the default where
    the platform's threads are real (`FIRE_PLAT_PARALLEL` from the posix and windows layers) and the compiler has atomics; the targets with a scheduler of
    fire itself (dos, win16, wasm), FreeRTOS and TinyCC (`FIRE_TLS_STRUCT`), the modules (`FIRE_MODULES`, `FIRE_DLL` - no package locks and no
