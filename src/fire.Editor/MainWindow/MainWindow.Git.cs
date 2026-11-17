@@ -20,6 +20,7 @@ namespace fire.Editor
         private string? _gitBranch;
         private int _gitAhead, _gitBehind;
         private Dictionary<string, GitFileState> _gitStates = new();
+        private GitOverview? _gitOverview;
         private bool _gitBusy;
         private DateTime _gitRefreshed = DateTime.MinValue;
         private readonly Dictionary<string, GitCredentials> _gitCredentials = new(StringComparer.OrdinalIgnoreCase);
@@ -42,6 +43,7 @@ namespace fire.Editor
                 string? root = null, branch = null;
                 var states = new Dictionary<string, GitFileState>();
                 int ahead = 0, behind = 0;
+                GitOverview? overview = null;
                 try
                 {
                     if (probe != null && GitRepository.Discover(probe) is { } found)
@@ -49,15 +51,19 @@ namespace fire.Editor
                         using var repo = GitRepository.Open(found);
                         root = repo.RootPath;
                         branch = repo.BranchName;
-                        states = repo.StateMap();
-                        if (repo.Branches().FirstOrDefault(b => b.IsCurrent) is { } current) { ahead = current.Ahead; behind = current.Behind; }
+                        var changes = repo.Status();
+                        states = GitRepository.StateMapOf(changes);
+                        overview = repo.Overview(changes);
+                        ahead = overview.Ahead; behind = overview.Behind;
                     }
                 }
                 catch (GitException ex) { System.Diagnostics.Debug.WriteLine(ex); }
                 Dispatcher.UIThread.Post(() =>
                 {
-                    _gitRoot = root; _gitBranch = branch; _gitStates = states; _gitAhead = ahead; _gitBehind = behind;
+                    bool rootChanged = root != _gitRoot;
+                    _gitRoot = root; _gitBranch = branch; _gitStates = states; _gitAhead = ahead; _gitBehind = behind; _gitOverview = overview;
                     ShowGitState();
+                    if (rootChanged) UpdateWatchers();   // (the .git folder of the repository is watched too)
                 });
             });
         }
@@ -66,6 +72,7 @@ namespace fire.Editor
         {
             GitText.Text = _gitRoot == null ? "" : $"git: {_gitBranch}" + (_gitAhead > 0 ? $" ↑{_gitAhead}" : "") + (_gitBehind > 0 ? $" ↓{_gitBehind}" : "") + (_gitStates.Count > 0 ? $"  {_gitStates.Count} changed" : "");
             _solutionPanel.Refresh(_workspace, FullPathOf(ActiveDocument), _gitRoot == null ? null : _gitStates, _gitBranch);
+            ShowGitPanel(_gitOverview);
         }
 
         // ---- the menu ---------------------------------------------------------------------------------------------------------------------
@@ -93,6 +100,7 @@ namespace fire.Editor
         private async void GitFileDiscard_Click(object? sender, RoutedEventArgs e) => await GitDiscard(FullPathOf(ActiveDocument));
         private async void GitBranches_Click(object? sender, RoutedEventArgs e) => await GitBranches();
         private void GitRefresh_Click(object? sender, RoutedEventArgs e) => RefreshGit();
+        private void GitShowPanel_Click(object? sender, RoutedEventArgs e) { RevealTool("git"); RefreshGit(); }
 
         /// <summary>Opens the repository for a command; null (and a message) when there is none.</summary>
         private async Task<GitRepository?> OpenGit(string title)
@@ -182,8 +190,9 @@ namespace fire.Editor
         private async Task RunGit(Action action)
         {
             _gitBusy = true;
+            _diskChanges.Hold();   // (what the command changes is compared afterwards, all at once)
             try { await Task.Run(action); }
-            finally { _gitBusy = false; }
+            finally { _gitBusy = false; _diskChanges.Release(); }
         }
 
         private async Task GitFetch()
@@ -208,9 +217,8 @@ namespace fire.Editor
             GitPullResult result = GitPullResult.UpToDate;
             await RunGit(() => { try { result = repo.Pull(AskCredentials); } catch (GitException ex) { error = ex.Message; } });
             if (error != null) { ForgetCredentialsAfter(error); UpdateStatus("Pull failed."); await Dialogs.Message(this, error, "Pull"); return; }
-            // the files that were changed by the pull: open documents are read again
-            ReloadChangedDocuments();
-            _workspace.Refresh();
+            // the files that were changed by the pull: the solution, the projects and the open documents are loaded again when they changed
+            await SyncAfterGit();
             switch (result)
             {
                 case GitPullResult.UpToDate: UpdateStatus("Already up to date."); break;
@@ -222,23 +230,6 @@ namespace fire.Editor
                     break;
             }
             RefreshGit();
-        }
-
-        /// <summary>Open documents without unsaved changes are loaded again from their files (a pull, a switch of the branch or a discard may have changed them).</summary>
-        private void ReloadChangedDocuments()
-        {
-            foreach (var doc in _documents.ToList())
-            {
-                if (doc.View.FilePath == null || doc.View.IsModified || doc.View is IBinaryDocument && doc.Kind is not (DocumentKind.Pixel or DocumentKind.Hex) ) continue;
-                try
-                {
-                    if (!File.Exists(doc.View.FilePath)) continue;
-                    if (doc.Kind is DocumentKind.Image or DocumentKind.Pixel or DocumentKind.Hex) { doc.View.ResetTo("", doc.View.FilePath); continue; }
-                    string text = File.ReadAllText(doc.View.FilePath);
-                    if (text != doc.View.GetText()) doc.View.ResetTo(text, doc.View.FilePath);
-                }
-                catch (IOException) { /* it stays as it is */ }
-            }
         }
 
         private async Task GitPush()
@@ -310,13 +301,12 @@ namespace fire.Editor
             {
                 var open = _documents.FirstOrDefault(d => d.View.FilePath != null && Path.GetFullPath(d.View.FilePath) == Path.GetFullPath(path));
                 repo.Discard(new[] { path });
-                if (open != null && File.Exists(path)) { open.View.ResetTo(open.View is IBinaryDocument ? "" : File.ReadAllText(path), path); }
+                if (open != null && File.Exists(path)) ReloadFromDisk(open);
                 else if (open != null) _factory.CloseDockable(open.Layout);
                 UpdateStatus($"{Path.GetFileName(path)} is as in the last commit.");
             }
             catch (GitException ex) { await Dialogs.Message(this, ex.Message, "Discard Changes"); }
-            RefreshGit();
-            _workspace.Refresh();
+            await SyncAfterGit();
         }
 
         private async Task GitBranches()
@@ -324,13 +314,10 @@ namespace fire.Editor
             using var repo = await OpenGit("Branches");
             if (repo == null) return;
             var dialog = new GitBranchesDialog(repo);
-            await dialog.ShowDialog(this);
-            if (dialog.Changed)
-            {
-                ReloadChangedDocuments();
-                _workspace.Refresh();
-                RefreshGit();
-            }
+            _diskChanges.Hold();
+            try { await dialog.ShowDialog(this); }
+            finally { _diskChanges.Release(); }
+            if (dialog.Changed) await SyncAfterGit();   // a switch of the branch: the solution, the projects and the documents of the other branch
         }
 
         /// <summary>A command of the solution explorer for git.</summary>

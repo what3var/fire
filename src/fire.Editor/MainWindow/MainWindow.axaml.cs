@@ -57,7 +57,7 @@ namespace fire.Editor
 
         private static readonly Dictionary<string, string> PanelTitles = new()
         {
-            ["output"] = "Output", ["buildlog"] = "Build Log", ["errors"] = "Error List", ["threads"] = "Threads", ["scope"] = "Scope", ["stack"] = "Stack", ["devices"] = "Devices", ["solution"] = "Solution Explorer", ["tests"] = "Test Explorer", ["todo"] = "Todo", ["properties"] = "Properties",
+            ["output"] = "Output", ["buildlog"] = "Build Log", ["errors"] = "Error List", ["threads"] = "Threads", ["scope"] = "Scope", ["stack"] = "Stack", ["devices"] = "Devices", ["solution"] = "Solution Explorer", ["git"] = "Git", ["tests"] = "Test Explorer", ["todo"] = "Todo", ["properties"] = "Properties",
             ["toolbox"] = "Toolbox", ["runtime"] = "Runtime",
         };
 
@@ -115,6 +115,9 @@ namespace fire.Editor
             public MarkdownEditorControl? Markdown => View as MarkdownEditorControl;
             public PacketTraceControl? Trace => View as PacketTraceControl;
             public MarkupEditorControl? Design => View as MarkupEditorControl;
+
+            /// <summary>The file was deleted on disk (a git command, another program): the tab says so until it is saved or the file comes back.</summary>
+            public bool DeletedOnDisk { get; set; }
 
             /// <summary>File name or "Untitled N" (Markdown: with .md).</summary>
             public string DisplayName => View.FilePath != null
@@ -201,7 +204,7 @@ namespace fire.Editor
                     ("scope", PanelTitles["scope"], _scopePanel),
                     ("stack", PanelTitles["stack"], _stackPanel),
                 },
-                new() { ("solution", PanelTitles["solution"], _solutionPanel), ("tests", PanelTitles["tests"], _testExplorer), ("todo", PanelTitles["todo"], _todoPanel), ("devices", PanelTitles["devices"], _devicesPanel) },
+                new() { ("solution", PanelTitles["solution"], _solutionPanel), ("git", PanelTitles["git"], _gitPanel), ("tests", PanelTitles["tests"], _testExplorer), ("todo", PanelTitles["todo"], _todoPanel), ("devices", PanelTitles["devices"], _devicesPanel) },
                 new() { ("properties", PanelTitles["properties"], _propertiesPanel), ("runtime", PanelTitles["runtime"], _runtimePanel) },
                 new() { ("toolbox", PanelTitles["toolbox"], _toolboxPanel) });
             var layout = _factory.CreateLayout();
@@ -238,6 +241,8 @@ namespace fire.Editor
 
             InitProjects();
             InitGit();
+            InitGitPanel();
+            InitReload();
             InitTests();
             InitNotes();
 
@@ -300,7 +305,7 @@ namespace fire.Editor
         private void OnFirstShown()
         {
             // The solution explorer, the test explorer, the todo list and the devices start collapsed (pinned to the right edge; the explorer opens when a project is opened) - before the default layout is saved.
-            foreach (var id in new[] { "solution", "tests", "todo", "devices" })
+            foreach (var id in new[] { "solution", "git", "tests", "todo", "devices" })
                 if (_tools.TryGetValue(id, out var collapsed))
                 {
                     try { _factory.PinDockable(collapsed); }
@@ -437,7 +442,7 @@ namespace fire.Editor
             // the panels get their content again by id (a layout stores only the ids), the documents go back into the document area
             var contents = new Dictionary<string, Control>
             {
-                ["output"] = _output, ["buildlog"] = _buildLog, ["errors"] = _errorList, ["threads"] = _threadsPanel, ["scope"] = _scopePanel, ["stack"] = _stackPanel, ["devices"] = _devicesPanel, ["solution"] = _solutionPanel, ["tests"] = _testExplorer, ["todo"] = _todoPanel, ["properties"] = _propertiesPanel,
+                ["output"] = _output, ["buildlog"] = _buildLog, ["errors"] = _errorList, ["threads"] = _threadsPanel, ["scope"] = _scopePanel, ["stack"] = _stackPanel, ["devices"] = _devicesPanel, ["solution"] = _solutionPanel, ["git"] = _gitPanel, ["tests"] = _testExplorer, ["todo"] = _todoPanel, ["properties"] = _propertiesPanel,
                 ["toolbox"] = _toolboxPanel, ["runtime"] = _runtimePanel,
             };
             MakeObservable(layout, new HashSet<IDockable>());
@@ -452,6 +457,7 @@ namespace fire.Editor
             }
             EnsureBuildLogTool(layout, contents["buildlog"]);
             EnsureTool(layout, "tests", contents["tests"], "solution");
+            EnsureTool(layout, "git", contents["git"], "solution");
             EnsureTool(layout, "todo", contents["todo"], "solution");
             EnsureTool(layout, "properties", contents["properties"], "solution");
             EnsureTool(layout, "runtime", contents["runtime"], "properties");
@@ -841,6 +847,7 @@ namespace fire.Editor
 
             doc.Layout = NewDockDocument(doc);
             _documents.Add(doc);
+            if (path != null) RememberDocumentFile(path);   // (what the file is like now: a change on disk is noticed against it)
             if (DocumentDock is Dock.Model.Avalonia.Controls.DocumentDock dock) dock.AddDocument(doc.Layout);
             UpdateTitle(doc);
             Activate(doc);
@@ -848,7 +855,10 @@ namespace fire.Editor
         }
 
         private static DockDocument NewDockDocument(OpenDocument doc) =>
-            new() { Id = "doc:" + doc.Id, Title = doc.DisplayName + (doc.View.IsModified ? "*" : ""), Content = doc.View, CanClose = true, CanFloat = true };
+            new() { Id = "doc:" + doc.Id, Title = TabTitle(doc), Content = doc.View, CanClose = true, CanFloat = true };
+
+        /// <summary>The name, with a star for unsaved changes and "(deleted)" when the file is gone from disk.</summary>
+        private static string TabTitle(OpenDocument doc) => doc.DisplayName + (doc.View.IsModified ? "*" : "") + (doc.DeletedOnDisk ? " (deleted)" : "");
 
         private void Activate(OpenDocument doc)
         {
@@ -868,6 +878,7 @@ namespace fire.Editor
             doc.Trace?.Detach();
             _documents.Remove(doc);
             _closeApproved.Remove(doc);
+            if (FullPathOf(doc) is { } closedPath && !_documents.Any(d => FullPathOf(d) is { } p && fire.Projects.ProjectFiles.PathComparer.Equals(p, closedPath))) _baselines.Forget(closedPath);
             if (ReferenceEquals(_active, doc)) _active = null;
             if (ReferenceEquals(_debugDocument, doc))
             {
@@ -882,12 +893,12 @@ namespace fire.Editor
         /// <summary>Tab title: the name, with a star for unsaved changes.</summary>
         private void UpdateTitle(OpenDocument doc)
         {
-            doc.Layout.Title = doc.DisplayName + (doc.View.IsModified ? "*" : "");
+            doc.Layout.Title = TabTitle(doc);
             if (ReferenceEquals(doc, ActiveDocument)) UpdateWindowTitle(WindowTitle(doc));
         }
 
         private static string? WindowTitle(OpenDocument? doc) =>
-            doc == null ? null : $"{doc.DisplayName}{(doc.View.IsModified ? "*" : "")}{(doc.View.IsReadOnly ? " (read-only)" : "")}";
+            doc == null ? null : $"{doc.DisplayName}{(doc.View.IsModified ? "*" : "")}{(doc.View.IsReadOnly ? " (read-only)" : "")}{(doc.DeletedOnDisk ? " (deleted on disk)" : "")}";
 
         private void UpdateWindowTitle(string? subtitle) => Title = subtitle != null ? $"spark • {subtitle}" : "spark";
 

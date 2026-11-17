@@ -340,6 +340,8 @@ namespace fire.Editor
             }
             doc.View.FilePath = path;
             doc.View.MarkSaved();
+            doc.DeletedOnDisk = false;
+            RememberDocumentFile(path);
             UpdateTitle(doc);
             UpdateStatus($"Saved: {path}");
             ScheduleTestDiscovery();

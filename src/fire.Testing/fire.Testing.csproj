@@ -28,6 +28,8 @@
     <Compile Include="..\fire.Editor\Debugging\DebugThreadContext.cs" Link="Editor\DebugThreadContext.cs" />
     <!-- the log of a build as spark keeps it (into the build log panel, mirrored by the build window) -->
     <Compile Include="..\fire.Editor\Debugging\BuildLogFeed.cs" Link="Editor\BuildLogFeed.cs" />
+    <!-- files that change under the editor (a git pull, a switch of the branch, other programs): what to load again (GitSyncTests) -->
+    <Compile Include="..\fire.Editor\Git\WorkingTreeSync.cs" Link="Editor\WorkingTreeSync.cs" />
   </ItemGroup>
 
   <ItemGroup>

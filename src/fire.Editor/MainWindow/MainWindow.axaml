@@ -251,6 +251,7 @@
 					<MenuItem Header="Discard Changes of This File..." x:Name="mnuGitFileDiscard" Click="GitFileDiscard_Click"/>
 					<Separator/>
 					<MenuItem Header="_Branches..." x:Name="mnuGitBranches" Click="GitBranches_Click"/>
+					<MenuItem Header="Show Git _Panel" Click="GitShowPanel_Click"/>
 					<MenuItem Header="_Refresh" Click="GitRefresh_Click"/>
 				</MenuItem>
 				<MenuItem Header="_Run">
@@ -326,6 +327,7 @@
 					<MenuItem Header="S_tack" Tag="stack" ToggleType="CheckBox" Click="ViewPanel_Click"/>
 					<MenuItem Header="_Devices" Tag="devices" ToggleType="CheckBox" Click="ViewPanel_Click"/>
 					<MenuItem Header="Sol_ution Explorer" Tag="solution" ToggleType="CheckBox" Click="ViewPanel_Click"/>
+					<MenuItem Header="_Git" Tag="git" ToggleType="CheckBox" Click="ViewPanel_Click"/>
 					<MenuItem Header="Test E_xplorer" Tag="tests" ToggleType="CheckBox" Click="ViewPanel_Click"/>
 					<MenuItem Header="T_odo" Tag="todo" ToggleType="CheckBox" Click="ViewPanel_Click"/>
 					<MenuItem Header="_Properties" Tag="properties" ToggleType="CheckBox" Click="ViewPanel_Click"/>
