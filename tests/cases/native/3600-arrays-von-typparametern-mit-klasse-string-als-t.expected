@@ -4,7 +4,6 @@ E2 An element of an array of Dog must be a Dog (or undefined), not String.
 E3 An array of Animal cannot be stored where an array of Dog is declared.
 E4 An element of an array of Dog must be a Dog (or undefined), not Int.
 Bello wuff undefined
-E5 An element of an array of string must be a string (or undefined), not Int.
 5 x
 2 L2 wuff
 y
