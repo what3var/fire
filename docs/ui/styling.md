@@ -196,7 +196,7 @@ A converter is a class with `any Convert(any value)` (source to element) and, fo
 
 ```fire
 class UpperConverter : UI.Converter {
-    override any Convert(any value) { return value.ToUpper() }
+    override any Convert(any value) { return value?.ToUpper() }      // undefined when the path is broken
 }
 ```
 

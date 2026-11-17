@@ -27,7 +27,7 @@ The elements are the ones of the library `ui` ([user interfaces](README.md)): th
 #include "Greeter.fxml"                   // the script generated from the markup is included right here
 
 class UpperConverter : UI.Converter {
-    override any Convert(any value) { return value.ToUpper() }
+    override any Convert(any value) { return value?.ToUpper() }      // undefined when the path is broken
 }
 
 class Person {
@@ -254,7 +254,7 @@ inside a template (react to the control itself). Everything is explained in [sty
 `{Binding Path, Mode=..., Converter=..., ElementName=...}` ties a property of an element to a property of the **data context** - the object given to `SetDataContext(obj)` -
 or, with `ElementName`, to a property of another named element. It is built on `probe` (SPEC 8.14): nothing polls, the property changes when the source field is written.
 
-- **Path**: `Name`, or a path through objects: `Player.Stats.Hp`. Every object on the way is watched, so if `Player` is replaced the binding connects to the new one. A `null`/`undefined` on the way leaves the property as it is.
+- **Path**: `Name`, or a path through objects: `Player.Stats.Hp`. Every object on the way is watched, so if `Player` is replaced the binding connects to the new one. An `undefined` on the way (see *A broken path* below) makes the value `undefined`.
 - **Fields and properties**: the last step of a path may be a field or a property with `get`/`set`. A write to either (also through the setter of a property) updates the target, and a `TwoWay` binding writes through the setter. A property that only computes its value from other
   members (`get` without `set`) follows its sources: when a field (or settable property) that its getter reads is written, the getter runs again and the target gets the new value
   (SPEC 8.14 - what the getter reads through other objects, `this.player.name`, is not followed).
@@ -263,7 +263,20 @@ or, with `ElementName`, to a property of another named element. It is built on `
 - **Converter**: the key of a converter that sits between the two sides. A converter is a class with `any Convert(any value)` (source to property) and, for `TwoWay`, `any ConvertBack(any value)`;
   deriving from `UI.Converter` supplies the identity for the one you do not write. Declare them in `<Resources><Converter Key="Upper" Type="UpperConverter"/></Resources>`; these come with the library
   and need no declaration: `Not`, `IsEmpty`, `NotEmpty`, `Text` (`UI.NotConverter`, ...).
-- `SetDataContext(obj)` disconnects the old context and connects the new one; `SetDataContext(undefined)` leaves the elements as they are.
+- `SetDataContext(obj)` disconnects the old context and connects the new one; `SetDataContext(undefined)` disconnects it, and the bound properties go back to their defaults (a broken path, below).
+- **A broken path**: when a step of the path is `undefined` - no data context yet, `{Binding selectedItem.name, ElementName=list}` while nothing is selected (`Select(-1)`), a `Player`
+  that is set to `undefined`, or a last step that is `undefined` itself - the value of the binding is `undefined`, and it is passed on, not skipped: the property does not keep the
+  old value. The converter gets `undefined` (write it so that it copes: `return value?.ToUpper()`; the built-in ones do - `Not` passes it on, `IsEmpty` gives `true`, `NotEmpty`
+  `false`, `Text` `""`), and what reaches the property is:
+
+  | Property | gets for `undefined` |
+  |---|---|
+  | a text (`Text`, `ToolTip`, `Font`, ...) | `""` - an empty text |
+  | any other (`IsChecked`, `Visible`, `Value`, `Width`, `SelectedIndex`, a colour, `ItemsSource`, ...) | its **default**: the value it had before the binding first wrote it, i.e. what the control starts with (`IsChecked` `false`, `Visible` `true`, `Width` `-1`, a colour or a list `undefined`) |
+
+  The same holds for the bindings in a data template (`UI.Binding`, reconciled at every layout). `TwoWay` writes back only while the whole path of the source exists: typing into a
+  `TextBox` whose path is broken changes the box, not the data - and nothing is created on the way. `OneTime` reads the value when the context is set, broken or not (in a data
+  template it waits until the path exists).
 
 ## The editor
 

@@ -9698,7 +9698,7 @@ uiDrawScript = """
             CheckUi("Markup: Bindings mit Probes - Pfad, Element, TwoWay, Converter, OneTime, Austausch im Pfad, Trennen", $$"""
                 #include "{{P("Panel.fxml")}}"
                 enum Colors { Black = 0, Red = 255 }
-                class UpperConverter : UI.Converter { Convert(value) { return value.ToUpper() } }
+                class UpperConverter : UI.Converter { Convert(value) { return value?.ToUpper() } }
                 class Player { string Name = "p1"
                                bool Active = true }
                 class Model { Player Player
@@ -9732,7 +9732,7 @@ uiDrawScript = """
                 """, new[]
                 {
                     "abc p1 T1 p1 P1 T1 False False 255", "xyz", "p2 p2 P2", "p3 p3 P3", "False",
-                    "other other", "other2", "p4", "T1||True", "p4",
+                    "other other", "other2", "p4", "T1||True", "",
                 });
 
             File.WriteAllText(P("Prop.fxml"), """
@@ -9765,6 +9765,73 @@ uiDrawScript = """
                 m.Label = "y"
                 print(d.ed.Text + " " + d.sum.Text)
                 """, new[] { "1 a a1", "7", "x! x", "x!7", "y! y!7" });
+
+            // a broken path (an undefined on the way) is passed on: text "", the other properties their default, converters get undefined, TwoWay writes back only along a whole path
+            File.WriteAllText(P("Gap.fxml"), """
+                <Window Class="Gap" Title="Gap" Width="300" Height="300">
+                  <Resources>
+                    <Converter Key="Upper" Type="UpperConverter"/>
+                    <DataTemplate Key="Row"><Label Text="{Binding address.city, Converter=Upper}"/></DataTemplate>
+                  </Resources>
+                  <StackPanel Spacing="2">
+                    <Label Name="lbl" Text="{Binding Player.Name}"/>
+                    <TextBox Name="edit" Width="120" Text="{Binding Player.Name, Mode=TwoWay}"/>
+                    <Label Name="shout" Text="{Binding Player.Name, Converter=Upper}"/>
+                    <CheckBox Name="cb" Text="a" IsChecked="{Binding Player.Active, Mode=TwoWay}"/>
+                    <CheckBox Name="notcb" Text="b" IsChecked="{Binding Player.Off, Converter=Not}"/>
+                    <Label Name="vis" Text="v" Visible="{Binding Player.Shown}" Width="{Binding Player.Size}"/>
+                    <ListBox Name="rows" Width="200" Height="80" ItemsSource="{Binding people}" ItemTemplate="Row"/>
+                  </StackPanel>
+                </Window>
+                """);
+            CheckUi("Markup: ein unterbrochener Pfad gibt undefined weiter - Text leer, sonst der Standardwert, Converter bekommen undefined, TwoWay schreibt nicht zurueck, Vorlagen", $$"""
+                #include "{{P("Gap.fxml")}}"
+                class UpperConverter : UI.Converter { Convert(value) { return value?.ToUpper() } }
+                class Address { string city
+                                construct(string c) { this.city = c } }
+                class Person { Address address }
+                class Player { string Name = "p1"
+                               bool Active = true
+                               bool Off = false
+                               bool Shown = false
+                               int Size = 50 }
+                class Model { Player Player
+                              List people }
+                class Gap : GapBase { }
+                class Out { static undefined Line(any d) { print(d.lbl.Text + "|" + d.edit.Text + "|" + d.shout.Text + "|" + d.cb.IsChecked + "|" + d.notcb.IsChecked + "|" + d.vis.Visible + "|" + d.vis.Width) } }
+                var d = new Gap()
+                Out.Line(d)
+                var m = new Model()
+                var p = new Player()
+                m.Player = p
+                m.people = new List()
+                m.people.Add(new Person())
+                m.people.Add(new Person())
+                m.people[0].address = new Address("rome")
+                d.SetDataContext(m)
+                d.UIRoot.Draw()
+                Out.Line(d)
+                print(d.rows.rowElements[0].Text + "|" + d.rows.rowElements[1].Text)
+                m.Player = undefined
+                Out.Line(d)
+                d.edit.Text = "typed"
+                d.cb.IsChecked = true
+                print(p.Name + " " + d.edit.Text + " " + d.cb.IsChecked)
+                m.Player = p
+                Out.Line(d)
+                p.Name = undefined
+                print(d.lbl.Text + "|" + d.edit.Text + "|" + d.shout.Text + "|" + (p.Name == undefined))
+                m.people[0].address = undefined
+                m.people[1].address = new Address("oslo")
+                d.UIRoot.Draw()
+                print(d.rows.rowElements[0].Text + "|" + d.rows.rowElements[1].Text)
+                d.SetDataContext(undefined)
+                Out.Line(d)
+                """, new[]
+                {
+                    "|||False|False|True|-1", "p1|p1|P1|True|True|False|50", "ROME|", "|||False|False|True|-1", "p1 typed True",
+                    "p1|p1|P1|True|True|False|50", "|||True", "|OSLO", "|||False|False|True|-1",
+                });
 
             // IntelliSense of the markup editor: `|` is the caret
             List<string> Suggest(string withCaret)
@@ -9846,7 +9913,7 @@ uiDrawScript = """
                 """);
             CheckUi("Markup: Namespaces - eigener Namespace, gebundene Namespaces, unqualifizierte Typnamen, Objektwerte", uiHead + $$"""
                 namespace Shop.Models {
-                    class Upper : UI.Converter { any Convert(any value) { return value.ToUpper() } }
+                    class Upper : UI.Converter { any Convert(any value) { return value?.ToUpper() } }
                     class Names : List { construct(string a, string b) { this.Add(a)
                         this.Add(b) } }
                 }
@@ -10021,7 +10088,7 @@ uiDrawScript = """
             CheckUi("Markup: DataTemplate, CollectionView und itemsSource folgen dem Datenkontext", $$"""
                 #include "{{P("Data.fxml")}}"
                 class UpperConverter : UI.Converter {
-                    Convert(value) { return value.ToUpper() }
+                    Convert(value) { return value?.ToUpper() }
                     ConvertBack(value) { return value }
                 }
                 class Person {

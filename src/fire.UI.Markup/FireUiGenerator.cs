@@ -180,6 +180,12 @@ namespace fire.UI.Markup
                 {
                     code.Line($"List fxHandles{b.Index}");
                     code.Line($"bool fxBusy{b.Index} = false");
+                    // the value the property had before the binding first wrote it (the default of the control): it comes back when the path is broken
+                    if (b.Property.Kind != PropertyKind.Text)
+                    {
+                        code.Line($"any fxDefault{b.Index}");
+                        code.Line($"bool fxDefaulted{b.Index} = false");
+                    }
                 }
             }
             code.Line();
@@ -739,18 +745,22 @@ namespace fire.UI.Markup
                 code.Line("}");
                 code.Line();
 
-                // update: read the source, convert, write the target
+                // update: read the source, convert, write the target. An undefined on the way (no data context, nothing selected, a step that is undefined)
+                // goes on as undefined: the converter gets it, and the property gets it - a text property as "", any other its default (the value before the binding)
                 code.Line($"undefined fxUpdate{b.Index}() {{");
                 code.Indent++;
                 code.Line($"if (this.fxBusy{b.Index}) {{ return }}");
-                code.Line($"any v = {b.Source}");
-                code.Line("if (v == undefined) { return }");
-                foreach (var segment in path)
+                if (b.Property.Kind != PropertyKind.Text)
                 {
-                    code.Line($"v = v.{segment}");
-                    if (segment != path[^1]) code.Line("if (v == undefined) { return }");
+                    code.Line($"if (!this.fxDefaulted{b.Index}) {{");
+                    code.Line($"    this.fxDefault{b.Index} = {target}.{b.Property.FieldName}");
+                    code.Line($"    this.fxDefaulted{b.Index} = true");
+                    code.Line("}");
                 }
+                code.Line($"any v = {b.Source}");
+                foreach (var segment in path) code.Line($"v = v?.{segment}");
                 if (b.ConverterField != null) code.Line($"v = this.{b.ConverterField}.Convert(v)");
+                code.Line(b.Property.Kind == PropertyKind.Text ? "if (v == undefined) { v = \"\" }" : $"if (v == undefined) {{ v = this.fxDefault{b.Index} }}");
                 code.Line($"this.fxBusy{b.Index} = true");
                 code.Line($"{target}.{b.Property.FieldName} = v");
                 code.Line($"this.fxBusy{b.Index} = false");

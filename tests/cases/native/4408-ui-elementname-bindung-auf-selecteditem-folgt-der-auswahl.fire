@@ -15,6 +15,8 @@ class PickBase {
     bool fxBusy0 = false
     List fxHandles1
     bool fxBusy1 = false
+    any fxDefault1
+    bool fxDefaulted1 = false
 
     construct() {
         this.framebuffer = new Framebuffer(200, 150)
@@ -116,10 +118,9 @@ class PickBase {
     undefined fxUpdate0() {
         if (this.fxBusy0) { return }
         any v = this.list
-        if (v == undefined) { return }
-        v = v.selectedItem
-        if (v == undefined) { return }
-        v = v.name
+        v = v?.selectedItem
+        v = v?.name
+        if (v == undefined) { v = "" }
         this.fxBusy0 = true
         this.shown.Text = v
         this.fxBusy0 = false
@@ -147,9 +148,13 @@ class PickBase {
 
     undefined fxUpdate1() {
         if (this.fxBusy1) { return }
+        if (!this.fxDefaulted1) {
+            this.fxDefault1 = this.fxView_ByName.Source
+            this.fxDefaulted1 = true
+        }
         any v = this.dataContext
-        if (v == undefined) { return }
-        v = v.people
+        v = v?.people
+        if (v == undefined) { v = this.fxDefault1 }
         this.fxBusy1 = true
         this.fxView_ByName.Source = v
         this.fxBusy1 = false
@@ -157,7 +162,7 @@ class PickBase {
 }
 
 // The code-behind: a label bound to the selected element of the list (ElementName) follows the selection - Select before the first drawing
-// (the view is built at the first use), Select again, SelectedIndex from outside, a click, rows that change under the selection.
+// (the view is built at the first use), Select again, SelectedIndex from outside, a click, rows that change under the selection, no selection (Select(-1)): the label is empty.
 class Person {
     string name
     construct(string name) { this.name = name }
@@ -192,4 +197,8 @@ print("click on the first row: " + window.list.SelectedIndex + " " + window.show
 model.people.Add(new Person("Aaron"))      // sorts before Alice: the selection follows its element
 window.UIRoot.Draw()
 print("after Add: " + window.list.SelectedIndex + " " + window.shown.Text)
-//# name: UI: eine Bindung mit ElementName auf selectedItem folgt der Auswahl (Select vor dem ersten Zeichnen, SelectedIndex, Klick, neue Zeilen)
+window.list.Select(-1)                      // nothing selected: selectedItem is undefined, the label gets the empty text
+print("Select(-1): " + window.list.SelectedIndex + " [" + window.shown.Text + "]")
+window.list.Select(0)
+print("Select(0) again: " + window.shown.Text)
+//# name: UI: eine Bindung mit ElementName auf selectedItem folgt der Auswahl (Select vor dem ersten Zeichnen, SelectedIndex, Klick, neue Zeilen, Select(-1) leert)
