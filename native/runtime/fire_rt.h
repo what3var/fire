@@ -7470,27 +7470,53 @@ FIRE_FN void attachPart(Value outer, Value inner) {
     ownLink(arr->parts, o);
 }
 
+/* A violation of the ownership rules (SPEC 2.2) is a catchable exception of the standard library, the VM's (OwnershipException.FireClass): the
+ * DestroyedException for `Take...` of a destroyed value, else the ArgumentException - thrown before anything moves, so the tree of owners stays as it was. */
+FIRE_COLD FIRE_FN void ownError(const char* text) { fireError("ArgumentException", text); }
+/* (the word for the kind of an owned value in a text: "object", "array", "buffer", "lambda") */
+FIRE_FN const char* ownKindName(int okind) { return okind == O_Object ? "object" : okind == O_Array ? "array" : okind == O_Buffer ? "buffer" : "lambda"; }
+FIRE_COLD FIRE_FN void ownDestroyedError(const char* kind) {
+    char text[80];
+    snprintf(text, sizeof text, "A destroyed %s cannot change its owner.", kind);
+#ifdef FIRE_EXCEPTIONS
+    throwValue(makeDestroyedError(fire_asciiMessage(text)));   /* (like destroyedError: the class is there whenever there are exceptions) */
+#else
+    fatalException("DestroyedException", text);
+#endif
+}
+/* Is `o` the holder `x` or one of its owners up the chain - would `o` become an owner of itself? */
+FIRE_FN bool ownCycle(const Owned* o, const Owned* x) {
+    while (x) {
+        OwnList* l;
+        if (x == o) return true;
+        l = x->owner;
+        if (!l) break;
+        x = l->holder;
+    }
+    return false;
+}
+
 /* Gives an object, array or buffer to the object `target` (TakeTo, a direct field assignment): when the target is already being destroyed the value goes with
- * it at once (SPEC 2.2); an object must not become an owner of itself or of its owners. */
-FIRE_FN void takeToObject(Owned* o, Obj* target) {
+ * it at once (SPEC 2.2); an object or array must not become an owner of itself or of its owners (the ArgumentException - `take`: `takeText`, else the
+ * text of TakeTo; nothing moves). False then. */
+FIRE_FN bool takeToObjectT(Owned* o, Obj* target, bool take) {
     if (target->h.flags & 1) {
         if (o->owner) ownUnlink(o);
         if (o->okind == O_Object) destroy((Obj*)o); else destroyLeaf(o);
-        return;
+        return true;
     }
-    if (o->okind == O_Object) {
-        Owned* x = &target->h;
-        for (;;) {
-            OwnList* l;
-            if (x == o) fatal("TakeTo: cycle detected - the target object is already owned (directly or transitively) by this object.");
-            l = x->owner;
-            if (!l || !l->holder) break;
-            x = l->holder;
-        }
+    if ((o->okind == O_Object || o->okind == O_Array) && ownCycle(o, &target->h)) {
+        char text[160];
+        if (take) snprintf(text, sizeof text, "take: cycle detected - the holder is already owned (directly or transitively) by this %s.", ownKindName(o->okind));
+        else snprintf(text, sizeof text, "TakeTo: cycle detected - the target object is already owned (directly or transitively) by this %s.", ownKindName(o->okind));
+        ownError(text);
+        return false;
     }
     if (o->owner) ownUnlink(o);
     ownLink(objOwned(target), o);
+    return true;
 }
+FIRE_FN void takeToObject(Owned* o, Obj* target) { (void)takeToObjectT(o, target, false); }
 
 /* `object is from owner` / `object is under owner` (SPEC 6): the owner of the object is that object - directly, or anywhere up the chain. */
 FIRE_FN bool isFrom(Value operand, Value owner, bool transitive) {
@@ -7553,14 +7579,12 @@ FIRE_FN bool takeAlive(Value v) {
 /* `take x` into a scope or into the parts of an array (`list`): unconditional, whoever owned the value before; the ownership stays a tree. */
 FIRE_FN void takeToList(Value v, OwnList* list) {
     Owned* o = ownedOf(v);
-    Owned* x;
     if (!o || o->owner == list) return;
-    for (x = list->holder; x;) {
-        OwnList* l;
-        if (x == o) fatal("take: cycle detected - the holder is already owned (directly or transitively) by this value.");
-        l = x->owner;
-        if (!l) break;
-        x = l->holder;
+    if (ownCycle(o, list->holder)) {   /* (the VM's ArgumentException - nothing moves) */
+        char text[160];
+        snprintf(text, sizeof text, "take: cycle detected - the holder is already owned (directly or transitively) by this %s.", ownKindName(o->okind));
+        ownError(text);
+        return;
     }
     if (o->owner) ownUnlink(o);
     ownLink(list, o);
@@ -7579,7 +7603,7 @@ FIRE_FN void takeToHolder(Value holder, Value v) {
     /* (a fire thread takes it for an object or array of the main program's globals: the store moves it there - rule 10, toMainHolder) */
     if (FIRE_UNLIKELY(g_isThread) && (h->flags & 64)) { g_pendingTake = o; return; }   /* (64: F_SHARED) */
 #endif
-    if (h->okind == O_Object) { takeToObject(o, (Obj*)h); return; }
+    if (h->okind == O_Object) { (void)takeToObjectT(o, (Obj*)h, true); return; }
     a = (Arr*)h;
     if (!a->parts) a->parts = newPartsList(&a->h);
     takeToList(v, a->parts);
@@ -7911,11 +7935,17 @@ FIRE_COLD FIRE_FN bool ownValueType(int method, Value self, int argc, bool isTry
 }
 
 /* `x.TakeLocal()`, `x.TakeUpwards()`, `x.TakeGlobal()`, `x.TakeTo(obj)` on an object, an array or a buffer (SPEC 2.2). */
+/* (`Take...` of a value that is no longer this strand's to move: a destroyed one - the DestroyedException -, a record lent to it - access denied) */
+FIRE_COLD FIRE_FN void ownGoneError(Value self) {
+    if ((self.kind == K_Class || self.kind == K_Array || self.kind == K_Buffer) && leafAlive(self))
+        accessDenied("A lent record belongs to the thread that sent it: 'Take...' is for its owner - 'copy r' makes one of your own.");
+    else ownDestroyedError(self.kind == K_Class ? "object" : self.kind == K_Array ? "array" : self.kind == K_Buffer ? "buffer" : "lambda");
+}
 FIRE_FN void ownMethod(int method, Value self, Value arg, OwnList* here) {
     Owned* o = ownedOf(self);
     if (!o && ownValueType(method, self, method == OM_TakeTo || (method == OM_TakeGlobal && arg.kind == K_Bool) ? 1 : 0, false)) return;
-    if (!o) fatal("Take... is only possible for an object, an array or a buffer that is not destroyed.");
-    if (o->flags & 1) fatal("A destroyed value cannot change its owner.");
+    if (!o) { ownGoneError(self); return; }
+    if (o->flags & 1) { ownDestroyedError(ownKindName(o->okind)); return; }   /* (destroyed, its batch not over yet) */
     switch ((int)method) {
         case OM_TakeLocal:
             if (here->home) here = here->home;   /* (the scope itself, not its statement temporaries) */
@@ -7924,8 +7954,8 @@ FIRE_FN void ownMethod(int method, Value self, Value arg, OwnList* here) {
             break;
         case OM_TakeUpwards: {
             OwnList* current = o->owner;
-            if (!current || current->holder) fatal("TakeUpwards is only valid if the current owner is a scope.");
-            if (!current->parent) fatal("TakeUpwards: the current scope has no parent scope (already global).");
+            if (!current || current->holder) { ownError("TakeUpwards is only valid if the current owner is a scope."); return; }
+            if (!current->parent) { ownError("TakeUpwards: the current scope has no parent scope (already global)."); return; }
             ownUnlink(o);
             ownLink(current->parent, o);
             break;
@@ -7951,7 +7981,7 @@ FIRE_FN void ownMethodT(int method, Value self, Value arg, Value mode, OwnList* 
     Owned* o;
     if (!ownedOf(self) && ownValueType(method, self, (method == OM_TakeTo ? 2 : 1) + (method == OM_TakeGlobal && arg.kind == K_Bool ? 1 : 0), false)) return;
     if (method == OM_TakeGlobal && mode.kind == K_Bool) { arg = mode; mode = Int(TK_THIS); }   /* (`x.TakeGlobal(true)`: no mode, the flag) */
-    if (mode.kind != K_Int || mode.i < TK_THIS || mode.i > TK_ALL) fatal("The mode of Take... must be one of Takes.This, Takes.Children, Takes.Locals, Takes.All.");
+    if (mode.kind != K_Int || mode.i < TK_THIS || mode.i > TK_ALL) { ownError("The mode of Take... must be one of Takes.This, Takes.Children, Takes.Locals, Takes.All."); return; }
 #ifdef FIRE_THREADS
     if (method == OM_TakeGlobal && g_isThread && !(arg.kind == K_Bool && arg.i) && mode.i != TK_THIS) {
         /* (to the main program with a mode: what goes along comes below the value first - here, in the thread - then the check and the move) */
@@ -7967,7 +7997,7 @@ FIRE_FN void ownMethodT(int method, Value self, Value arg, Value mode, OwnList* 
     }
 #endif
     ownMethod(method, self, arg, here);
-    if (mode.i == TK_THIS) return;
+    if (mode.i == TK_THIS || g_unwind.active) return;   /* (it threw: nothing more moves) */
     o = ownedOf(self);
     if (o && !(o->flags & 1)) {
         LocalScopes scopes;
@@ -8050,16 +8080,22 @@ FIRE_FN bool isFromGlobal(Value v) {
     Owned* o = ownedOf(v);
     return o && o->owner && (o->owner == g_globalOwn || o->owner->home == g_globalOwn);
 }
+/* (`mode` undefined: the call has no `Takes` mode - the generator passes none) */
 FIRE_FN bool ownMethodTry(int method, Value self, Value arg, Value mode, OwnList* here, OwnList* const* lists, int n, Value thisValue, OwnList* myArgs) {
     Owned* o = ownedOf(self);
-    if (!o) {
-        /* (a value type: the VM's MissingMemberException; the count of the arguments without a `Takes` mode - natively a missing mode is Takes.This) */
-        ownValueType(method, self, method == OM_TakeTo || (method == OM_TakeGlobal && arg.kind == K_Bool) ? 1 : 0, true);
-        return false;   /* (destroyed: it belongs to nothing - `try` is false, as in the VM) */
+    bool hasMode = mode.kind != K_Undefined;
+    if (!hasMode) mode = Int(TK_THIS);
+    /* (a value type: the VM's MissingMemberException, with the count of the arguments of the call - the mode and the flag of TakeGlobal included) */
+    if (!o && ownValueType(method, self, (method == OM_TakeTo ? 1 : 0) + (arg.kind == K_Bool ? 1 : 0) + (hasMode ? 1 : 0), true)) return false;
+    /* (a mode that is no `Takes` value: the ArgumentException before the test of the owner, as in the VM - a TakeGlobal flag is no mode) */
+    if (hasMode && !(method == OM_TakeGlobal && mode.kind == K_Bool) && (mode.kind != K_Int || mode.i < TK_THIS || mode.i > TK_ALL)) {
+        ownError("The mode of Take... must be one of Takes.This, Takes.Children, Takes.Locals, Takes.All.");
+        return false;
     }
+    if (!o) return false;   /* (destroyed: it belongs to nothing - `try` is false, as in the VM) */
     if (!ownedByCall(o, lists, n, thisValue, myArgs)) return false;
     ownMethodT(method, self, arg, mode, here, lists, n);
-    return true;
+    return !g_unwind.active;
 }
 
 /* ---------------------------------------------------------------------------------------------------------------------

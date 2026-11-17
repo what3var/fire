@@ -6543,16 +6543,16 @@ namespace fire.Native
                             // with a `Takes` mode (the scopes of the running call tell what is "local") or with `try` (only the owner moves it)
                             var scopeLists = CallLists(f, st);
                             string localsDecl = scopeLists.Count == 0 ? "" : CArray("OwnList*", "L_", scopeLists.ToList());
-                            string modeArg = argc > baseArgs ? S(slot + 1 + baseArgs) : "Int(0)";
+                            string modeArg = argc > baseArgs ? S(slot + 1 + baseArgs) : "Undef()";   // (none: `try` without a mode - ownMethodTry counts the arguments of the call for a value type)
                             if (argc > baseArgs && !_usesTakeEnumerate) { _usesTakeEnumerate = true; _version++; }
                             string call = isTry
                                 ? $"{S(slot)} = Bool(ownMethodTry({ownMethodId}, {S(slot)}, {targetArg}, {modeArg}, &{owner}, {(scopeLists.Count == 0 ? "NULL" : "L_")}, {scopeLists.Count}, {(f.HasSelf ? "self" : "Undef()")}, MYARGS));"
                                 : $"ownMethodT({ownMethodId}, {S(slot)}, {targetArg}, {modeArg}, &{owner}, {(scopeLists.Count == 0 ? "NULL" : "L_")}, {scopeLists.Count});";
                             E($"{{ {localsDecl}{call} }}");
-                            if (ownMethodId == "OM_TakeTo" || isTry || _usesThreads && ownMethodId == "OM_TakeGlobal") Check();   // (a target that is no object, a value type with `try`; to the main program from a thread: the ArgumentException when it is not safe)
+                            Check();   // (a violation of the ownership rules is a catchable exception - fire_rt.h ownError; a value type with `try`)
                             if (isTry) { SetR(slot, false); d = slot + 1; return Next(); }
                         }
-                        if ((ownMethodId == "OM_TakeTo" || _usesThreads && ownMethodId == "OM_TakeGlobal") && argc == baseArgs && !isTry) Check();   // (TakeTo: a target that is no object is the VM's ArgumentException)
+                        if (argc == baseArgs && !isTry) Check();   // (a violation of the ownership rules - a destroyed value, TakeUpwards at the top, a cycle, a target that is no object - is a catchable exception: fire_rt.h ownError)
                         E($"{S(slot)} = Undef();");
                         SetR(slot, false);
                         d = slot + 1; return Next();

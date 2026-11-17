@@ -342,6 +342,7 @@ namespace fire.Runtime
         /// this scope has a parent (the global scope has none).</summary>
         public void TakeUpwards()
         {
+            if (_destroyed) throw OwnershipException.Destroyed("object");
             if (Owner is not Scope currentScope)
                 throw new OwnershipException(
                     "TakeUpwards is only valid if the current owner is a scope.");
@@ -362,6 +363,7 @@ namespace fire.Runtime
         /// immediately along with it (SPEC 2.2, "race with ongoing deletion").</summary>
         public void TakeTo(ObjectInstance target, IDestructRunner runner)
         {
+            if (_destroyed) throw OwnershipException.Destroyed("object");
             if (target._destroyed)
             {
                 Owner.RemoveOwned(this);
@@ -369,7 +371,8 @@ namespace fire.Runtime
                 return;
             }
 
-            if (IsAncestorOf(target))
+            // (itself too: an object that owned itself would never be destroyed by an owner)
+            if (ReferenceEquals(target, this) || IsAncestorOf(target))
                 throw new OwnershipException(
                     "TakeTo: cycle detected - the target object is already owned (directly or transitively) by this object.");
 
