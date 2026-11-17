@@ -58,6 +58,8 @@ if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "scene3d") { Scene3
 if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "ai") { AiTests.Run(); return; }
 if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "mcpserver") { McpServerTests.Run(); return; }
 if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "aimodels") { AiModelsTests.Run(); return; }
+// FIRE_TESTS_ONLY=setupwizard: spark's setup wizard without a window (catalog, pages, plan, progress, the download of a model)
+if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "setupwizard") { SetupWizardTests.Run(); return; }
 if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "blocks") { BlockModelTests.Run(); return; }
 if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "mesh") { MeshModelTests.Run(); return; }
 if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "diagnostics") { DiagnosticTests.Run(); return; }

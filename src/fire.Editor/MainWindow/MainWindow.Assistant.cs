@@ -25,7 +25,7 @@ namespace fire.Editor
                 _settings.Save();
             }
             if (mnuAssistant != null) mnuAssistant.IsChecked = _settings.Assistant;
-            if (_settings.Assistant) StartAssistant();
+            if (_settings.Assistant && !SetupWizardDue) StartAssistant();   // (else after the setup wizard: its model may come with it)
         }
 
         /// <summary>The task "The assistant" of the setup (Windows: HKCU or HKLM Software\fire\spark, Assistant = 1).</summary>
