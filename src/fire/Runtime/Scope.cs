@@ -119,7 +119,7 @@ namespace fire.Runtime
         {
             _parent = parent;
             _pooled = true;
-            _debugNames = null;
+            if (_debugNames != null) Array.Clear(_debugNames);   // (kept: a loop body that declares a variable would make a new one on every pass)
         }
 
         // the names of the slots, for the debugger only (the VM sets them when it is not in performance mode); null: none known
@@ -141,7 +141,7 @@ namespace fire.Runtime
         {
             _parent = parent;
             _pooled = true;
-            _debugNames = null;
+            if (_debugNames != null) Array.Clear(_debugNames);
             if (_slots == null || _slots.Length < capacity) _slots = new Value[capacity];
             _slotCount = paramCount;
         }
