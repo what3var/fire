@@ -30,8 +30,8 @@ namespace fire.Editor
             Activated += (_, _) => { if ((DateTime.UtcNow - _gitRefreshed).TotalSeconds > 3) RefreshGit(); };   // git may have been used outside of the editor
         }
 
-        /// <summary>The path that decides which repository is meant: the solution or project, else the file of the active document.</summary>
-        private string? GitProbePath() => _workspace.FilePath ?? FullPathOf(ActiveDocument);
+        /// <summary>The path that decides which repository is meant: the solution or project, else the file of the active document (the Repository view: the repository it shows).</summary>
+        private string? GitProbePath() => _workspace.FilePath ?? FullPathOf(ActiveDocument) ?? (ActiveDocument?.View as GitRepositoryView)?.Root;
 
         // one refresh at a time: one that is asked for while another runs is done once after it (a burst of requests is one more refresh, not one each)
         private bool _gitRefreshRunning, _gitRefreshAgain;
@@ -95,6 +95,7 @@ namespace fire.Editor
             _solutionPanel.UpdateGit(_workspace, FullPathOf(ActiveDocument), _gitRoot == null ? null : _gitStates, _gitBranch);   // (only the marks: the tree follows the workspace in RefreshProjectUi)
             long explorer = sw.ElapsedMilliseconds;
             ShowGitPanel(_gitOverview);
+            ShowGitRepositoryView();
             GitTiming($"UI: solution explorer {explorer} ms, Git panel {sw.ElapsedMilliseconds - explorer} ms");
         }
 
@@ -105,7 +106,7 @@ namespace fire.Editor
             bool repo = _gitRoot != null;
             bool file = repo && FullPathOf(ActiveDocument) is { } p && _gitStates.ContainsKey(Path.GetFullPath(p));
             mnuGitInit.IsEnabled = !repo && GitProbePath() != null;
-            mnuGitCommit.IsEnabled = mnuGitPull.IsEnabled = mnuGitPush.IsEnabled = mnuGitFetch.IsEnabled = mnuGitServer.IsEnabled = mnuGitBranches.IsEnabled = mnuGitHistory.IsEnabled = repo && !_gitBusy;
+            mnuGitCommit.IsEnabled = mnuGitPull.IsEnabled = mnuGitPush.IsEnabled = mnuGitFetch.IsEnabled = mnuGitServer.IsEnabled = mnuGitBranches.IsEnabled = mnuGitHistory.IsEnabled = mnuGitRepository.IsEnabled = repo && !_gitBusy;
             mnuGitFileHistory.IsEnabled = repo && FullPathOf(ActiveDocument) != null;
             mnuGitFileChanges.IsEnabled = mnuGitFileDiscard.IsEnabled = file;
         }

@@ -92,6 +92,8 @@ namespace fire.Editor
             BuildStats,
             /// <summary>The profile of a run (ProfileViewerControl), to look at.</summary>
             Profile,
+            /// <summary>The Repository view of git (GitRepositoryView): branches, the commit graph, rebase, reset, ... (docs/tools/git.md).</summary>
+            GitRepository,
         }
 
         /// <summary>An open tab. `Layout` is the docking element that shows the view (the view - the editor control - stays the same when the layout is rebuilt).</summary>
@@ -242,6 +244,7 @@ namespace fire.Editor
             InitProjects();
             InitGit();
             InitGitPanel();
+            InitGitStatus();
             InitReload();
             InitTests();
             InitNotes();
@@ -798,6 +801,7 @@ namespace fire.Editor
                 DocumentKind.DataModel => new DataModelEditorControl(),
                 DocumentKind.BuildStats => new BuildStatsViewerControl(),
                 DocumentKind.Profile => new ProfileViewerControl(),
+                DocumentKind.GitRepository => new GitRepositoryView(),
                 _ => new ScriptEditorControl(),
             };
 

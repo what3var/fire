@@ -29,7 +29,7 @@ namespace fire.Editor
             AcceptsReturn = true, TextWrapping = TextWrapping.Wrap, MinHeight = 54, MaxHeight = 140, FontSize = 12,
             Watermark = "Message (Ctrl+Enter commits)",
         };
-        private readonly Button _commit, _commitPush, _fetch, _pull, _push, _refresh;
+        private readonly Button _commit, _commitPush, _fetch, _pull, _push, _refresh, _repository;
         private readonly TextBlock _notice = new() { TextWrapping = TextWrapping.Wrap, FontSize = 12, IsVisible = false, Margin = new Thickness(0, 4, 0, 0) };
         private readonly ListBox _list = new() { BorderThickness = new Thickness(0), Background = Brushes.Transparent, SelectionMode = SelectionMode.Single };
         private readonly TextBox _filter = new() { Watermark = "Filter the files", FontSize = 12, Margin = new Thickness(6, 4, 6, 2), MinHeight = 24, Padding = new Thickness(6, 2) };
@@ -44,7 +44,7 @@ namespace fire.Editor
         private string? _selected;   // the key of the selected row (GitRow.Key)
         private bool _busy;
 
-        public event Action? FetchRequested, PullRequested, PushRequested, RefreshRequested, InitRequested;
+        public event Action? FetchRequested, PullRequested, PushRequested, RefreshRequested, InitRequested, RepositoryRequested;
         public event Action<string, bool>? CommitRequested;
         public event Action<IReadOnlyList<GitOverviewEntry>>? StageRequested, UnstageRequested, DiscardRequested;
         /// <summary>A row was clicked: show its changes.</summary>
@@ -62,6 +62,7 @@ namespace fire.Editor
             _pull = ToolButton("↓ Pull", "Fetch and join the server's changes into this branch", () => PullRequested?.Invoke());
             _push = ToolButton("↑ Push", "Send the commits of this branch to the server", () => PushRequested?.Invoke());
             _refresh = ToolButton("⟳", "Read the state of the repository again", () => RefreshRequested?.Invoke());
+            _repository = ToolButton("⎇ Repository", "The Repository view: branches, tags, stashes, the commit graph - checkout, merge, rebase, cherry-pick, reset", () => RepositoryRequested?.Invoke());
 
             _commit = new Button { Content = "Commit", HorizontalContentAlignment = HorizontalAlignment.Center, HorizontalAlignment = HorizontalAlignment.Stretch };
             _commit.Classes.Add("accent");
@@ -84,7 +85,7 @@ namespace fire.Editor
             branchRow.Children.Add(_branch);
 
             var bar = new WrapPanel { Orientation = Orientation.Horizontal };
-            foreach (var b in new[] { _fetch, _pull, _push, _refresh }) { b.Margin = new Thickness(0, 0, 2, 2); bar.Children.Add(b); }
+            foreach (var b in new[] { _fetch, _pull, _push, _refresh, _repository }) { b.Margin = new Thickness(0, 0, 2, 2); bar.Children.Add(b); }
 
             var commitRow = new Grid { ColumnDefinitions = new ColumnDefinitions("*,6,*"), Margin = new Thickness(0, 4, 0, 0) };
             commitRow.Children.Add(_commit);

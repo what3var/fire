@@ -245,6 +245,7 @@
 					<MenuItem Header="_Fetch" x:Name="mnuGitFetch" Click="GitFetch_Click"/>
 					<MenuItem Header="_Server Address..." x:Name="mnuGitServer" Click="GitServer_Click"/>
 					<Separator/>
+					<MenuItem Header="_Repository (Branches, Graph, Rebase, Reset)" x:Name="mnuGitRepository" Click="GitRepository_Click"/>
 					<MenuItem Header="_History..." x:Name="mnuGitHistory" Click="GitHistory_Click"/>
 					<MenuItem Header="History of This _File..." x:Name="mnuGitFileHistory" Click="GitFileHistory_Click"/>
 					<MenuItem Header="Show Changes of This File" x:Name="mnuGitFileChanges" Click="GitFileChanges_Click"/>
@@ -487,7 +488,7 @@
 							<ProgressBar x:Name="BuildStatusBar" Width="80" Height="6" MinHeight="6" MinWidth="80" IsIndeterminate="False" VerticalAlignment="Center"/>
 						</StackPanel>
 					</Button>
-					<TextBlock x:Name="GitText" DockPanel.Dock="Right" Text="" Margin="16,0,0,0" Foreground="#A094A8" ToolTip.Tip="The git branch (↑ commits to push, ↓ commits to pull) and the number of changed files"/>
+					<TextBlock x:Name="GitText" DockPanel.Dock="Right" Text="" Margin="16,0,0,0" Foreground="#A094A8" Background="Transparent" ToolTip.Tip="The git branch (↑ commits to push, ↓ commits to pull) and the number of changed files - click to switch the branch"/>
 					<TextBlock x:Name="ContextText" DockPanel.Dock="Right" Text="" Margin="16,0,0,0" Foreground="#A094A8" ToolTip.Tip="What Start and Build act on: the project of the active document, or the single file"/>
 					<TextBlock x:Name="StatusText" Text="Ready." TextTrimming="CharacterEllipsis"/>
 				</DockPanel>
