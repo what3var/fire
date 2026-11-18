@@ -938,6 +938,109 @@ static class TypeTests
                 Run("class P { }\nclass K { static string T(string s) { return s } }\nany x = 1\nstring a = 5\nstring b = new P()\nstring c = \"c\"\nstring d = x\nprint(K.T(2) + a + c + d)", TypeCheckMode.Strict) is var strictText
                 && strictText.Split('|')[0].Split(' ').Count(c => c == "TC034") == 3 && strictText.EndsWith("|25c1")
                 && Run("class P { }\nclass K { static string T(string s) { return s } }\nany x = 1\nstring a = 5\nstring b = new P()\nstring c = \"c\"\nstring d = x\nprint(K.T(2) + a + c + d)", TypeCheckMode.Lax) == "|25c1", strictText);
+            // TC035: `x.TakeLocal()` in an inner block binds x to that block - stored where it outlives the block, or used after it, x is destroyed there
+            {
+                const string node = "class Node { int v = 1 }\nclass Holder { Node kept }\n";
+                Check("TC035: TakeLocal im if-Block und return x danach - eine Warnung (lax), der Aufrufer bekaeme ein zerstoertes Objekt", Run(node + """
+                    class M {
+                        static Node After(Node n, bool c) {
+                            if (c) { n.TakeLocal() }
+                            return n
+                        }
+                    }
+                    print(M.After(new Node(), false).v)
+                    """, null, true) is var after && after.StartsWith("TC035 ") && after.Contains(":5 ") && after.Contains("used after it (line 6)") && after.EndsWith("|1"), after);
+                Check("TC035: TakeLocal im Block, gespeichert in einem Feld, einem Element, einer Variablen von aussen, mit Add in eine Liste von aussen - je eine Warnung, auch strict",
+                    Run(node + """
+                    class K {
+                        Node kept
+                        undefined Keep(bool c) {
+                            if (c) {
+                                var n = new Node()
+                                n.TakeLocal()
+                                this.kept = n
+                            }
+                        }
+                    }
+                    Node all[] = new Node[2]
+                    Node outer = undefined
+                    var list = new List<Node>()
+                    var h = new Holder()
+                    for (int i = 0; i < 2; i++) {
+                        var a = new Node()
+                        a.TakeLocal()
+                        all[i] = a
+                    }
+                    while (outer == undefined) {
+                        var b = new Node()
+                        b.TakeLocal()
+                        outer = b
+                    }
+                    foreach (x in [1]) {
+                        var c = new Node()
+                        c.TakeLocal()
+                        list.Add(c)
+                    }
+                    {
+                        var d = new Node()
+                        d.TakeLocal()
+                        h.kept = d
+                    }
+                    print(list.Count)
+                    """, TypeCheckMode.Strict) is var stored && stored == "TC035 TC035 TC035 TC035 TC035|1", stored);
+                Check("TC035: ein Wert, der nach dem Block benutzt wird, auch auf der obersten Ebene des Programms", Run(node + """
+                    var a = new Node()
+                    bool flag = false
+                    if (flag) { a.TakeLocal() }
+                    print(a.v)
+                    """) is var used && used == "TC035|1", used);
+                Check("TC035: keine Warnung - TakeLocal oben in der Funktion, im Programm, return x im Block selbst, nur im Block benutzt, mit take/TakeTo weitergegeben, neu zugewiesen, eine eigene Liste im Block",
+                    Run(node + """
+                    class M {
+                        Node kept
+                        static Node Top(Node n) {
+                            n.TakeLocal()
+                            return n
+                        }
+                        static Node Inside(bool c) {
+                            if (c) {
+                                var a = new Node()
+                                a.TakeLocal()
+                                return a
+                            }
+                            return new Node()
+                        }
+                        undefined Give(bool c, List<Node> into) {
+                            if (c) {
+                                var a = new Node()
+                                a.TakeLocal()
+                                print(a.v)
+                                into.Add(take a)
+                                var b = new Node()
+                                b.TakeLocal()
+                                b.TakeTo(this)
+                                this.kept = b
+                                var mine = new List<Node>()
+                                var e = new Node()
+                                e.TakeLocal()
+                                mine.Add(e)
+                                print(mine.Count)
+                            }
+                        }
+                    }
+                    var t = new Node()
+                    t.TakeLocal()
+                    print(M.Top(new Node()).v + M.Inside(true).v + t.v)
+                    var r = new Node()
+                    bool flag = true
+                    if (flag) { r.TakeLocal() }
+                    r = new Node()
+                    print(r.v)
+                    var l = new List<Node>()
+                    new M().Give(true, l)
+                    print(l.Count)
+                    """, TypeCheckMode.Strict) is var none && none == "|3\n1\n1\n1\n1", none);
+            }
             // `new Dog[n]` is a Dog array from the start (DECISIONS D10): held in `any` it goes only where an array of Dog or of a base class is declared,
             // and it checks what is stored through every reference
             const string arraysFromAny = """
