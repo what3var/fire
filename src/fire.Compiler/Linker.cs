@@ -283,7 +283,7 @@ namespace fire.Compiler
             if (Plan == null) return;
             foreach (var package in Plan.Packages)
             {
-                var installed = Package.Manager.PackageStore.Default.Find(package.Package!);
+                var installed = Package.Manager.PackageStore.Default.FindBySpec(package.Package!);   // (a name, or github:owner/repo through the lock file)
                 if (installed == null)
                     throw new Exception($"The project '{Plan.Name}' references the package '{package.Package}', which is not installed (`ember install {package.Package}`).");
                 if (package.Version != null && Package.Manager.SemanticVersion.TryParse(package.Version, out var wanted) && Package.Manager.SemanticVersion.TryParse(installed.Version, out var have) && have.CompareTo(wanted) < 0)

@@ -10,9 +10,14 @@ namespace fire.Ember
 
               ember find [Name]              search the package sources (part of a name or description; no name: everything)
               ember install Name[@Version]   install a package (with what it depends on); also: ember install path\to\package.fpk
-              ember remove Name              remove an installed package
-              ember list                     the installed packages
-              ember sources                  the package sources in use (ember.json next to the compiler, or the defaults)
+              ember install github:owner/repo[@ref] [--name N] [--force]
+                                             straight from a GitHub repository: the newest release, a tag (@v1.2.0), a branch or a commit (built from the source);
+                                             --name accepts a package not named like the repository, --force replaces a package of the same name from elsewhere
+              ember update [Name|github:owner/repo]
+                                             move installed packages to their newest version (from GitHub: the newest release; pinned tags and commits stay unless named)
+              ember remove Name              remove an installed package (also: ember remove github:owner/repo)
+              ember list                     the installed packages (and where those from GitHub came from)
+              ember sources                  the package sources in use (ember.json next to the compiler, or the defaults) and the GitHub API
               ember create File.json         write a package description with example values (and the example files next to it)
               ember blank File.json          write a package description with all fields empty
               ember forge File.json [-o Dir] build the package (.fpk) from the description; the description with absolute paths is kept in Dir\json\
@@ -61,26 +66,56 @@ namespace fire.Ember
                     return 0;
                 }
                 case "install":
-                    if (a.Length != 1) return Usage1("ember install Name[@Version]");
-                    new PackageManagerService().Install(a[0], Console.WriteLine);
+                {
+                    string? spec = null, name = null;
+                    bool force = false;
+                    for (int i = 0; i < a.Length; i++)
+                    {
+                        if (a[i] is "--force" or "-f") force = true;
+                        else if (a[i] == "--name" && i + 1 < a.Length) name = a[++i];
+                        else if (spec == null) spec = a[i];
+                        else return Usage1("ember install Name[@Version] | github:owner/repo[@ref] [--name Name] [--force]");
+                    }
+                    if (spec == null) return Usage1("ember install Name[@Version] | github:owner/repo[@ref] [--name Name] [--force]");
+                    if (name != null)
+                    {
+                        if (!GitHubSpec.IsGitHub(spec)) return Usage1("--name is for a package from GitHub: ember install github:owner/repo --name Name");
+                        spec = (spec.Contains('#') ? spec.Substring(0, spec.IndexOf('#')) : spec) + "#" + name;
+                    }
+                    new PackageManagerService().Install(spec, Console.WriteLine, force);
                     return 0;
+                }
+                case "update":
+                {
+                    if (a.Length > 1) return Usage1("ember update [Name | github:owner/repo[@ref]]");
+                    var results = new PackageManagerService().Update(a.Length == 1 ? a[0] : null, Console.WriteLine);
+                    if (results.Count == 0) Console.WriteLine("Nothing to update.");
+                    foreach (var r in results)
+                        Console.WriteLine(r.OldVersion == r.NewVersion ? $"{r.Name} {r.NewVersion} is up to date ({r.Origin})." : $"{r.Name}: {r.OldVersion} -> {r.NewVersion} ({r.Origin})");
+                    return 0;
+                }
                 case "sources":
                 {
                     string file = Path.Combine(AppContext.BaseDirectory, EmberSettings.FileName);
                     Console.WriteLine(File.Exists(file) ? $"The package sources ({file}):" : $"The package sources (default; {file} lists others):");
                     foreach (var source in EmberSettings.LoadSources()) Console.WriteLine($"  {(source is FolderSource ? "folder" : "index ")}  {source.Name}");
+                    var gh = EmberSettings.LoadGitHub();
+                    Console.WriteLine($"  github  github:owner/repo[@ref] through {gh.ApiBase} ({(gh.Token != null ? "token from " + gh.TokenSource : "no token")})");
+                    foreach (var e in PackageLock.Load(PackageStore.Default).GitHub) Console.WriteLine($"          {e.Package} {e.Version}: {e.Origin}, checked: {e.Verified}");
                     return 0;
                 }
                 case "remove":
                     if (a.Length != 1) return Usage1("ember remove Name");
-                    new PackageManagerService().Remove(a[0]);
+                    new PackageManagerService(sources: Array.Empty<IPackageSource>()).Remove(a[0]);
                     Console.WriteLine($"Removed {a[0]}.");
                     return 0;
                 case "list":
                 {
                     var installed = PackageStore.Default.Installed();
                     if (installed.Count == 0) Console.WriteLine("No packages installed.");
-                    foreach (var p in installed) Console.WriteLine($"{p.Name} {p.Version}  (imports: {string.Join(", ", p.Manifest.Imports.Select(i => i.Name))})");
+                    var locked = PackageLock.Load(PackageStore.Default);
+                    foreach (var p in installed)
+                        Console.WriteLine($"{p.Name} {p.Version}  (imports: {string.Join(", ", p.Manifest.Imports.Select(i => i.Name))})" + (locked.ForPackage(p.Name) is { } e ? $"  from {e.Origin}" : ""));
                     return 0;
                 }
                 case "create":
