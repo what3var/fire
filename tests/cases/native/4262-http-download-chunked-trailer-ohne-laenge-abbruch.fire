@@ -1,0 +1,116 @@
+#import "http"
+#import "time"
+#import "filesystem"
+// A download through the parts of a chunked answer, in odd pieces (a size line in two reads, CR and LF apart, an extension, leading zeros, a chunk
+// larger than a buffer, trailer fields), one that ends with the connection, and broken ones: what the client and Http.Download make of them.
+class Probe {
+    static defined int reports = 0
+    static bool unknown = true
+    static defined int last = -1
+    static bool growing = true
+}
+var dir = IO.Path.Combine(IO.Path.GetTempPath(), "fire-dl-chunked-" + DateTime.UtcNow.Ticks)
+IO.Directory.CreateDirectory(dir)
+var probe = new Net.TcpListener("127.0.0.1", 0)
+int port = trust probe.Port
+probe.Close()
+fire {
+    var l = new Net.TcpListener("127.0.0.1", port)
+    bool going = true
+    while (going) {
+        var c = l.Accept(10000)
+        c.NoDelay = true
+        var rd = new Http.Reader(c)
+        string first = rd.ReadLine()
+        string range = ""
+        var line = rd.ReadLine()
+        while (line != undefined && line.Length > 0) {
+            if (line.ToLower().StartsWith("range:")) { range = line }
+            line = rd.ReadLine()
+        }
+        string path = first.Split(" ")[1]
+        if (path == "/quit") {
+            c.WriteString("HTTP/1.1 204 No Content\r\n\r\n")
+            going = false
+        } else if (path == "/odd") {
+            c.WriteString("HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\nX-Seen-Range: [" + range + "]\r\n\r\n0")
+            Sleep(30)
+            c.WriteString("a;name=\"x y\"\r\n0123")
+            Sleep(30)
+            c.WriteString("456789\r")
+            Sleep(30)
+            c.WriteString("\n00005\r\nabcde")
+            Sleep(30)
+            c.WriteString("\r\n1117")
+            Sleep(30)
+            c.WriteString("0\r\n")
+            var big = new byte[70000]
+            for (var i = 0; i < big.length; i++) { big[i] = 120 }
+            c.Write(big, 0, big.length)
+            c.WriteString("\r\n0\r\nX-Checksum: 42\r\n")
+            Sleep(30)
+            c.WriteString("X-More: yes\r\n\r\n")
+        } else if (path == "/close") {
+            c.WriteString("HTTP/1.0 200 OK\r\nContent-Type: text/plain\r\n\r\nuntil the end")
+            Sleep(30)
+            c.WriteString(" of the connection")
+        } else if (path == "/broken") {
+            c.WriteString("HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n4\r\nfire\r\n8\r\nabcd")
+        } else if (path == "/long") {
+            c.WriteString("HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n3\r\nabcdef\r\n0\r\n\r\n")
+        } else if (path == "/badsize") {
+            c.WriteString("HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\nzz\r\nabc\r\n0\r\n\r\n")
+        } else if (path == "/empty") {
+            c.WriteString("HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n0\r\n\r\n")
+        }
+        c.Close()
+    }
+    l.Close()
+}
+Sleep(300)
+var site = "http://127.0.0.1:" + port
+var client = new Http.Client()
+client.timeout = 10000
+// ---- the client
+var r = client.Get(site + "/odd")
+print("client " + r.status + " " + r.Length + " [" + r.Text().Substring(0, 17) + "] " + r.trailers.Get("x-checksum") + " " + r.trailers.Get("X-More") + " " + r.trailers.Count)
+var rc = client.Get(site + "/close")
+print("client close [" + rc.Text() + "] " + (rc.trailers == undefined))
+try { client.Get(site + "/broken") } catch (Http.HttpException e) { print("client broken " + e.code) }
+try { client.Get(site + "/long") } catch (Http.HttpException e) { print("client long " + e.code + " " + e.message) }
+// ---- the download: chunked, oddly split, with progress while the size is not known
+var target = IO.Path.Combine(dir, "odd.bin")
+var d = new Http.Download(site + "/odd", target)
+d.OnProgress(func (Http.Download x) => {
+    Probe.reports++
+    if (!x.Done && x.Total != -1) { Probe.unknown = false }
+    if (x.Received < Probe.last) { Probe.growing = false }
+    Probe.last = x.Received
+})
+d.Start()
+print("start " + d.Status + " chunked=" + d.Chunked + " total=" + d.Total + " range=" + d.ResponseHeaders.Get("X-Seen-Range"))
+while (d.Step(4096)) { }
+print("done " + d.Done + " [" + d.Error + "] " + d.Received + " / " + d.Total + " trailers " + d.Trailers.Get("X-Checksum") + " " + d.Trailers.Get("x-more"))
+print("progress: several " + (Probe.reports > 2) + ", size unknown until the end " + Probe.unknown + ", growing " + Probe.growing + ", last " + Probe.last)
+var bytes = IO.File.ReadAllBytes(target)
+var xs = 0
+for (var i = 15; i < bytes.length; i++) { if (bytes[i] == 120) { xs++ } }
+print("file " + bytes.length + " [" + IO.Utf8.GetString(bytes, 0, 15) + "] x " + xs + " part gone " + !IO.File.Exists(target + ".part"))
+// ---- an answer without a length: up to the end of the connection
+var dc = new Http.Download(site + "/close", IO.Path.Combine(dir, "close.txt"))
+dc.Start()
+print("close start total=" + dc.Total + " chunked=" + dc.Chunked)
+print("close run " + dc.Run() + " " + dc.Received + " / " + dc.Total + " [" + IO.File.ReadAllText(IO.Path.Combine(dir, "close.txt")) + "]")
+// ---- an empty chunked answer
+var de = new Http.Download(site + "/empty", IO.Path.Combine(dir, "empty.bin"))
+print("empty " + de.Run() + " " + de.Total + " " + IO.File.Size(IO.Path.Combine(dir, "empty.bin")))
+// ---- broken: the connection ends inside a chunk, a chunk longer than its size, a bad size
+var db = new Http.Download(site + "/broken", IO.Path.Combine(dir, "broken.bin"))
+print("broken " + db.Run() + " [" + db.Error + "] part " + IO.File.Size(IO.Path.Combine(dir, "broken.bin.part")) + " done " + db.Done)
+var dl = new Http.Download(site + "/long", IO.Path.Combine(dir, "long.bin"))
+print("long " + dl.Run() + " [" + dl.Error + "]")
+var dz = new Http.Download(site + "/badsize", IO.Path.Combine(dir, "badsize.bin"))
+print("badsize " + dz.Run() + " [" + dz.Error + "]")
+client.Get(site + "/quit")
+IO.Directory.Delete(dir, true)
+//# name: Http.Download: chunked (Groessenzeile in zwei Teilen, CR und LF getrennt, Erweiterung, fuehrende Nullen, Trailer), Fortschritt ohne bekannte Groesse, bis Verbindungsende, abgebrochene Verbindung mitten im Chunk

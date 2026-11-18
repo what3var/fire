@@ -1,0 +1,14 @@
+cut False [The connection ended 70000 bytes before the end. (Retry continues the download from the part.)] 30000 / 100000
+part 30000 etag kept True
+resume 206 resumed=True restarted=False 30000 / 100000 bytes 30000-99999/100000
+resume run True 100000 / 100000 ok 100000 reports True etag gone True
+norange 200 asked bytes=20000- resumed=False restarted=True 0 / 100000
+norange run True ok 100000
+changed True 200 restarted=True ok 100000 validator True
+piece 206 bytes 0-32767/100000 total 100000
+pieces True ok 100000 last bytes 98304-99999/100000
+cancelled True done True [The download was cancelled (Retry continues it from the part).] part True True
+retry 206 resumed=True True
+retry run True ok 100000
+fresh True asked none restarted=False ok 100000
+there True True 100000

@@ -1,0 +1,14 @@
+client 200 70015 [0123456789abcdexx] 42 yes 2
+client close [until the end of the connection] True
+client broken 2
+client long 2 A chunk is longer than its size says.
+start 200 chunked=True total=-1 range=[]
+done True [] 70015 / 70015 trailers 42 yes
+progress: several True, size unknown until the end True, growing True, last 70015
+file 70015 [0123456789abcde] x 70000 part gone True
+close start total=-1 chunked=False
+close run True 31 / 31 [until the end of the connection]
+empty True 0 0
+broken False [The connection ended inside a chunk (4 bytes of it missing). (Retry continues the download from the part.)] part 8 done True
+long False [A chunk is longer than its size says. (Retry continues the download from the part.)]
+badsize False [A bad chunk size: 'zz'. (Retry continues the download from the part.)]

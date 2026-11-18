@@ -1,0 +1,138 @@
+#import "http"
+#import "time"
+#import "filesystem"
+// Http.Download continues a .part file: an interrupted download (its ETag kept next to the part) goes on with Range and If-Range (206), a server that
+// ignores the range sends all again (200: from the beginning), a changed file (If-Range does not match) as well; pieces of a fixed size; Cancel from the
+// progress lambda and Retry; Resume = false.
+class Probe {
+    static defined int reports = 0
+
+    static defined int Value(defined int i) { return (i * 7 + 3) % 251 }
+
+    static string Check(string file) {
+        var b = IO.File.ReadAllBytes(file)
+        for (var i = 0; i < b.length; i++) {
+            if (b[i] != Probe.Value(i)) { return "wrong at " + i }
+        }
+        return "ok " + b.length
+    }
+}
+var www = IO.Path.Combine(IO.Path.GetTempPath(), "fire-dl-resume-" + DateTime.UtcNow.Ticks)
+IO.Directory.CreateDirectory(www)
+var data = new byte[100000]
+for (var i = 0; i < data.length; i++) { data[i] = Probe.Value(i) }
+var source = IO.Path.Combine(www, "data.bin")
+IO.File.WriteAllBytes(source, data)
+string tag = "\"" + IO.File.Size(source) + "-" + IO.File.GetLastWriteTimeUtc(source).Ticks + "\""
+var p1 = new Net.TcpListener("127.0.0.1", 0)
+var p2 = new Net.TcpListener("127.0.0.1", 0)
+int filesPort = trust p1.Port
+int rawPort = trust p2.Port
+p1.Close()
+p2.Close()
+// the files (ranges, ETag, If-Range) ...
+fire {
+    var server = new Http.AppServer("127.0.0.1", filesPort)
+    server.PushTo(new Http.Files(taking www))
+    var rounds = 0
+    while (server.Connections < 8 && rounds < 40) {
+        server.AcceptOne(500)
+        rounds++
+    }
+    Sleep(300)
+    server.Close()
+}
+// ... and a raw server: an answer that breaks off, one that ignores the range
+fire {
+    var l = new Net.TcpListener("127.0.0.1", rawPort)
+    var bytes = new byte[100000]
+    for (var i = 0; i < bytes.length; i++) { bytes[i] = (i * 7 + 3) % 251 }
+    bool going = true
+    while (going) {
+        var c = l.Accept(10000)
+        var rd = new Http.Reader(c)
+        string first = rd.ReadLine()
+        string range = "none"
+        var line = rd.ReadLine()
+        while (line != undefined && line.Length > 0) {
+            if (line.ToLower().StartsWith("range:")) { range = line.Substring(6).Trim() }
+            line = rd.ReadLine()
+        }
+        string path = first.Split(" ")[1]
+        if (path == "/quit") {
+            c.WriteString("HTTP/1.1 204 No Content\r\n\r\n")
+            going = false
+        } else if (path == "/cut") {
+            c.WriteString("HTTP/1.1 200 OK\r\nContent-Length: 100000\r\nAccept-Ranges: bytes\r\nETag: " + tag + "\r\n\r\n")
+            c.Write(bytes, 0, 30000)
+        } else if (path == "/norange") {
+            c.WriteString("HTTP/1.1 200 OK\r\nContent-Length: 100000\r\nX-Seen-Range: " + range + "\r\n\r\n")
+            c.Write(bytes, 0, 100000)
+        }
+        c.Close()
+    }
+    l.Close()
+}
+Sleep(300)
+var files = "http://127.0.0.1:" + filesPort + "/data.bin"
+var raw = "http://127.0.0.1:" + rawPort
+// ---- interrupted: 30000 of 100000 bytes, then the connection breaks
+var target = IO.Path.Combine(www, "a.bin")
+var d1 = new Http.Download(raw + "/cut", target)
+print("cut " + d1.Run() + " [" + d1.Error + "] " + d1.Received + " / " + d1.Total)
+print("part " + IO.File.Size(target + ".part") + " etag kept " + (IO.File.ReadAllText(target + ".part.etag") == tag))
+// ---- a new download of the same file goes on (Range: bytes=30000-, If-Range: the ETag): 206
+var d2 = new Http.Download(files, target)
+d2.OnProgress(func (Http.Download x) => { Probe.reports++ })
+d2.Start()
+print("resume " + d2.Status + " resumed=" + d2.Resumed + " restarted=" + d2.Restarted + " " + d2.Received + " / " + d2.Total + " " + d2.ResponseHeaders.Get("Content-Range"))
+print("resume run " + d2.Run() + " " + d2.Received + " / " + d2.Total + " " + Probe.Check(target) + " reports " + (Probe.reports > 0) + " etag gone " + !IO.File.Exists(target + ".part.etag"))
+// ---- the part again, the server ignores the range: 200, from the beginning
+var t2 = IO.Path.Combine(www, "b.bin")
+var head = new byte[20000]
+for (var i = 0; i < head.length; i++) { head[i] = Probe.Value(i) }
+IO.File.WriteAllBytes(t2 + ".part", head)
+var d3 = new Http.Download(raw + "/norange", t2)
+d3.Start()
+print("norange " + d3.Status + " asked " + d3.ResponseHeaders.Get("X-Seen-Range") + " resumed=" + d3.Resumed + " restarted=" + d3.Restarted + " " + d3.Received + " / " + d3.Total)
+print("norange run " + d3.Run() + " " + Probe.Check(t2))
+// ---- the file changed since the part came (If-Range does not match): 200, from the beginning
+var t3 = IO.Path.Combine(www, "c.bin")
+var junk = new byte[5000]
+IO.File.WriteAllBytes(t3 + ".part", junk)
+IO.File.WriteAllText(t3 + ".part.etag", "\"an-older-file\"")
+var d4 = new Http.Download(files, t3)
+print("changed " + d4.Run() + " " + d4.Status + " restarted=" + d4.Restarted + " " + Probe.Check(t3) + " validator " + (d4.Validator == tag))
+// ---- pieces of 32 KiB: four requests of a range each
+var t4 = IO.Path.Combine(www, "d.bin")
+var d5 = new Http.Download(files, t4)
+d5.PieceSize = 32768
+d5.Start()
+print("piece " + d5.Status + " " + d5.ResponseHeaders.Get("Content-Range") + " total " + d5.Total)
+print("pieces " + d5.Run() + " " + Probe.Check(t4) + " last " + d5.ResponseHeaders.Get("Content-Range"))
+// ---- Cancel from the progress lambda, then Retry goes on from the part
+var t5 = IO.Path.Combine(www, "e.bin")
+var d6 = new Http.Download(files, t5)
+d6.OnProgress(func (Http.Download x) => { if (!x.Done) { x.Cancel() } })
+d6.Start()
+d6.Step(1000)
+defined int kept = IO.File.Size(t5 + ".part")
+print("cancelled " + d6.Cancelled + " done " + d6.Done + " [" + d6.Error + "] part " + (kept > 0 && kept < 100000) + " " + (d6.Received == kept))
+d6.OnProgress(func (Http.Download x) => { })
+d6.Retry()
+print("retry " + d6.Status + " resumed=" + d6.Resumed + " " + (d6.Received == kept))
+print("retry run " + d6.Run() + " " + Probe.Check(t5))
+// ---- Resume = false: the part goes, all of it again (a plain 200, no Range)
+var t6 = IO.Path.Combine(www, "f.bin")
+IO.File.WriteAllBytes(t6 + ".part", head)
+var d7 = new Http.Download(raw + "/norange", t6)
+d7.Resume = false
+print("fresh " + d7.Run() + " asked " + d7.ResponseHeaders.Get("X-Seen-Range") + " restarted=" + d7.Restarted + " " + Probe.Check(t6))
+// ---- a file that is there already counts as done
+var d8 = new Http.Download(raw + "/never", t6)
+print("there " + d8.Run() + " " + d8.Done + " " + d8.Received)
+var q = new Http.Client()
+q.Get(raw + "/quit")
+Sleep(200)
+IO.Directory.Delete(www, true)
+//# name: Http.Download: fortsetzen (Range und If-Range mit dem ETag der .part, 206), Server ohne Range (200: neu), geaenderte Datei, Stuecke fester Groesse, Cancel und Retry, Resume = false
