@@ -1,0 +1,145 @@
+#import "graphics"
+#import "scene3d"
+#import "time"
+// scene3d is thread safe ("threadSafe": true): a thread builds a big model (Model.FromArrays) while the main program goes on drawing and changing the scene - the
+// main program is not held up by the build (before, the lock of the package made every call of the main program wait until the model was made), its pictures
+// are the same as without the thread, and the model of the thread gives the same picture as the same model made by the main program. The software renderer
+// and the hardware one (FIRE_S3D_GPU=cpu: lavapipe). (Not held up: a native build; the VM calls the library of a package one call at a time.)
+class Arrays {
+    byte pos[]
+    byte uv[]
+    byte idx[]
+    construct() { }
+}
+class Grid {
+    // a wavy grid of n x n quads (positions, uvs and indices as float32 / uint32 bytes, as glTF has them)
+    static Arrays Of(defined int n) {
+        defined int v = n + 1
+        byte pos[] = new byte[v * v * 12]
+        byte uv[] = new byte[v * v * 8]
+        byte idx[] = new byte[n * n * 24]
+        for (int j = 0; j < v; j++) {
+            for (int i = 0; i < v; i++) {
+                defined int k = j * v + i
+                pos.WriteFloat32(k * 12, i * 4.0 / n - 2.0)
+                pos.WriteFloat32(k * 12 + 4, Math.Sin(i * 0.05) * 0.2 + Math.Cos(j * 0.07) * 0.2)
+                pos.WriteFloat32(k * 12 + 8, j * 4.0 / n - 2.0)
+                uv.WriteFloat32(k * 8, i * 1.0 / n)
+                uv.WriteFloat32(k * 8 + 4, j * 1.0 / n)
+            }
+        }
+        for (int j = 0; j < n; j++) {
+            for (int i = 0; i < n; i++) {
+                defined int q = (j * n + i) * 24
+                defined int a = j * v + i
+                idx.WriteUInt32(q, a)
+                idx.WriteUInt32(q + 4, a + v)
+                idx.WriteUInt32(q + 8, a + 1)
+                idx.WriteUInt32(q + 12, a + 1)
+                idx.WriteUInt32(q + 16, a + v)
+                idx.WriteUInt32(q + 20, a + v + 1)
+            }
+        }
+        var a = new Arrays()
+        a.pos = take pos
+        a.uv = take uv
+        a.idx = take idx
+        return a
+    }
+    static Model Make(defined int n) {
+        var a = Grid.Of(n)
+        return Model.FromArrays(a.pos, a.uv, a.idx)
+    }
+    static undefined Work(Channel<int> jobs, Channel<int> started, Channel<Model> results) {
+        foreach (n in jobs) {
+            var a = Grid.Of(n)
+            started.Send(n)   // (now it goes into scene3d)
+            var m = Model.FromArrays(a.pos, a.uv, a.idx)
+            results.Send(take m)
+        }
+        results.Close()
+    }
+    static bool Same(byte a[], byte b[]) {
+        if (a.length != b.length) { return false }
+        for (var i = 0; i < a.length; i++) { if (a[i] != b[i]) { return false } }
+        return true
+    }
+}
+
+var frame = new Framebuffer(64, 48)
+var scene = new Scene()
+var ground = new Object(Template.Plane, 0m, 0m, -6m, 12m, 0m, 12m)
+ground.Color = S3D.Rgb(90, 160, 90)
+scene.Add(ground)
+var box = new Object(Template.Box, 0m, 1m, -6m, 2m, 2m, 2m)
+box.Color = S3D.Rgb(200, 60, 40)
+scene.Add(box)
+var sun = Light.Directional(-0.4, -1.0, -0.3)
+sun.CastShadows = true
+scene.Add(sun)
+var cam = new Camera(frame)
+cam.SetPosition(0m, 3m, 2m)
+cam.LookAt(0m, 0.5m, -6m)
+scene.Add(cam)
+
+var jobs = new Channel<int>()
+var started = new Channel<int>()
+var results = new Channel<Model>()
+fire dedicated with jobs, started, results { Grid.Work(jobs, started, results) }
+
+string names[] = ["software", "hardware"]
+for (int pass = 0; pass < 2; pass++) {
+    if (pass == 1) { scene.Renderer = RenderMode.Hardware }
+    cam.Render()
+    var before = frame.ReadBytes()
+    // the thread builds a model of about a million triangles; the main program draws, moves and asks meanwhile
+    jobs.Send(700)
+    started.Receive()
+    Sleep(10ms)
+    var pictures = new List<any>()
+    bool notHeldUp = true
+    for (int k = 0; k < 4; k++) {
+        box.X = 0.5m
+        cam.Render()
+        box.X = 0m
+        cam.Render()
+        pictures.Add(frame.ReadBytes())
+        // (after the first round: the model is still being built - before, the first call into scene3d waited until it was made)
+        if (k == 0) { notHeldUp = results.Count == 0 }
+    }
+#if !native
+    // (the VM calls the natives of a package's library one at a time: there the main program waits for the build - docs/graphics/3d.md "Threads")
+    notHeldUp = true
+#endif
+    var big = results.Receive()
+    bool same = true
+    foreach (p in pictures) { same = same && Grid.Same(p, before) }
+    print(names[pass] + ": pictures while the thread builds the same " + same + ", the main program not held up by it " + notHeldUp + ", triangles " + big.Triangles)
+    // the model of the thread and the same model of the main program: the same picture
+    var shown = new Object(big)
+    shown.SetPosition(0m, 0.3m, -6m)
+    shown.Color = S3D.Rgb(60, 90, 200)
+    scene.Add(shown)
+    cam.Render()
+    var fromThread = frame.ReadBytes()
+    scene.Remove(shown)
+    var mine = Grid.Make(120)
+    jobs.Send(120)
+    started.Receive()
+    var small = results.Receive()
+    var a = new Object(small)
+    a.SetPosition(-1m, 0.5m, -5m)
+    scene.Add(a)
+    cam.Render()
+    var withThreads = frame.ReadBytes()
+    scene.Remove(a)
+    var b = new Object(mine)
+    b.SetPosition(-1m, 0.5m, -5m)
+    scene.Add(b)
+    cam.Render()
+    print(names[pass] + ": the model of the thread draws like the main program's " + Grid.Same(frame.ReadBytes(), withThreads) + ", the big one drawn " + !Grid.Same(fromThread, before))
+    scene.Remove(b)
+}
+jobs.Close()
+foreach (m in results) { }
+//# name: Scene3D: thread-sicher - ein Thread baut Modelle (Model.FromArrays), während das Hauptprogramm rendert und die Szene ändert: keine Blockade, gleiche Bilder (Software und GPU)

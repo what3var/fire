@@ -1,0 +1,7 @@
+software: pending True, framebuffer kept True, as Render True True, taken True, True
+software: a passing object drawn True, in a row True True True True
+hardware: pending True, framebuffer kept True, as Render True True, taken True, True
+hardware: a passing object drawn True, in a row True True True True
+fast: pending True, framebuffer kept True, as Render True True, taken True, True
+fast: a passing object drawn True, in a row True True True True
+done

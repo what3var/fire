@@ -4,7 +4,19 @@
  * This file is the one implementation, in C99 ("language": "c"): the native build puts it into the generated program, and the virtual machine runs it in a shared library built from it
  * (native/abi/fire_pkg_abi.h). The renderer itself is s3d_engine.h (plain C; the software renderer) with its hardware backend s3d_gpu_vk.h (Vulkan, loaded when it is first asked for).
  * Meshes, textures and the scene itself (objects, lights, cameras, materials, scenes: "items") live here and are used by handle - the fire classes are thin, their properties read
- * and write the items, and `Render` draws a scene in one call. The pixels are a byte buffer of the fire program (the camera copies it into its framebuffer with `WriteBytes`). */
+ * and write the items, and `Render` draws a scene in one call. The pixels are a byte buffer of the fire program (the camera copies it into its framebuffer with `WriteBytes`).
+ *
+ * Threads: the package is thread safe (`"threadSafe": true` in the manifest - fire threads call its natives side by side). The tables and the items (everything a
+ * handle names, and the users they count) are behind ONE lock of the bridge (g_s3dLock), held for a few instructions by a property and for the snapshot of a
+ * picture; the work that takes long holds none: a mesh, a model or a texture is built before it is put into its table (Model.FromArrays on a worker thread
+ * holds nobody up), and a picture is drawn from a snapshot (FireS3dShot: the queue of the frame - each object's matrices, surface, mesh and texture -, the
+ * lights, the settings, the effects) with no lock of the bridge - the meshes, textures and models of the snapshot are pinned (one user more each) until it is
+ * drawn, a texture that is drawn with is changed (SetBump) only after that picture. The hardware backend has its own lock (s3d_gpu_vk.h: one queue, one
+ * command buffer); the order is always the bridge's lock first, the backend's second, and what goes on another thread does not wait for the GPU (its copy
+ * there goes to a graveyard the next picture empties). A camera draws one picture at a time (`busy`).
+ * Camera.RenderAsync draws in a thread of the bridge's own (one for all cameras, started with the first such picture): the snapshot is taken in the caller,
+ * the picture goes into memory of the snapshot, and RenderEnd (Camera.WaitRender) waits for it and copies it into the camera's buffer - the framebuffer is only
+ * ever written by the program's thread. Without threads (a target that has none) RenderBegin draws at once: the same pictures, only not side by side. */
 #ifndef FIRE_BRIDGE_SCENE3D_H
 #define FIRE_BRIDGE_SCENE3D_H
 
@@ -32,6 +44,11 @@
 /* ---- the tables: slot 0 is never used (handle 0 is "none"), a free slot is used again ---- */
 typedef struct FireS3dTable { void** items; s3d_size count, cap; } FireS3dTable;
 static FireS3dTable g_s3dMeshes, g_s3dTextures, g_s3dModels;
+/* The lock of the tables and the items (see "Threads" above) and the signal of a picture that is done (its pins given back, a RenderAsync picture ready). */
+static S3dMutex g_s3dLock = S3D_MUTEX_INIT;
+static S3dCond g_s3dDone = S3D_COND_INIT;
+static void fire_s3d_lock(void) { s3d_mutexLock(&g_s3dLock); }
+static void fire_s3d_unlock(void) { s3d_mutexUnlock(&g_s3dLock); }
 
 static void* fire_s3d_find(FireS3dTable* t, Value h) {
     int64_t i = h.i;
@@ -88,41 +105,51 @@ static int64_t fire_s3d_index(Value v, uint32_t i) {
 }
 
 /* Mesh from three arrays or float32 buffers: positions (x, y, z per vertex), texture coordinates (u, v per vertex; may be empty) and indices (three per triangle).
- * Returns the handle, 0 on bad data. */
-static Value fire_s3d_MeshNew(Value positions, Value uvs, Value indices) {
+ * NULL on bad data. (Built without the lock: the mesh is nobody's yet - Model.FromArrays on a worker thread holds nobody up.) */
+static S3dMesh* fire_s3d_meshBuild(Value positions, Value uvs, Value indices) {
     int64_t pn = fire_s3d_len(positions), tn = fire_s3d_len(uvs), xn = fire_s3d_len(indices);
     uint32_t vertices, i;
     S3dMesh* mesh;
-    if (pn <= 0 || pn % 3 != 0 || tn < 0 || xn <= 0 || xn % 3 != 0 || pn > 0x7FFFFFFF || xn > 0x7FFFFFFF) return Int(0);
+    if (pn <= 0 || pn % 3 != 0 || tn < 0 || xn <= 0 || xn % 3 != 0 || pn > 0x7FFFFFFF || xn > 0x7FFFFFFF) return NULL;
     vertices = (uint32_t)(pn / 3);
-    if (tn != 0 && tn != (int64_t)vertices * 2) return Int(0);
+    if (tn != 0 && tn != (int64_t)vertices * 2) return NULL;
     mesh = s3d_meshNew();
-    if (mesh == NULL) return Int(0);
-    if (!S3D_GROW(mesh->pos, mesh->posCap, (s3d_size)pn) || !S3D_GROW(mesh->uv, mesh->uvCap, (s3d_size)vertices * 2) || !S3D_GROW(mesh->idx, mesh->idxCap, (s3d_size)xn)) { s3d_meshFree(mesh); return Int(0); }
+    if (mesh == NULL) return NULL;
+    if (!S3D_GROW(mesh->pos, mesh->posCap, (s3d_size)pn) || !S3D_GROW(mesh->uv, mesh->uvCap, (s3d_size)vertices * 2) || !S3D_GROW(mesh->idx, mesh->idxCap, (s3d_size)xn)) { s3d_meshFree(mesh); return NULL; }
     for (i = 0; i < (uint32_t)pn; i++) mesh->pos[i] = fire_s3d_num(positions, i);
     mesh->posN = (s3d_size)pn;
     for (i = 0; i < vertices * 2; i++) mesh->uv[i] = tn != 0 ? fire_s3d_num(uvs, i) : 0.0f;
     mesh->uvN = (s3d_size)vertices * 2;
     for (i = 0; i < (uint32_t)xn; i++) {
         int64_t k = fire_s3d_index(indices, i);
-        if (k < 0 || (uint64_t)k >= vertices) { s3d_meshFree(mesh); return Int(0); }
+        if (k < 0 || (uint64_t)k >= vertices) { s3d_meshFree(mesh); return NULL; }
         mesh->idx[i] = (uint32_t)k;
     }
     mesh->idxN = (s3d_size)xn;
-    if (!s3d_meshFinish(mesh)) { s3d_meshFree(mesh); return Int(0); }
-    return fire_s3d_meshHandle(mesh);
+    if (!s3d_meshFinish(mesh)) { s3d_meshFree(mesh); return NULL; }
+    return mesh;
 }
+/* (the natives: the mesh into its table under the lock - a few instructions) */
+static Value fire_s3d_lockedMesh(S3dMesh* m) {
+    Value r;
+    if (m == NULL) return Int(0);
+    fire_s3d_lock();
+    r = fire_s3d_meshHandle(m);
+    fire_s3d_unlock();
+    return r;
+}
+static Value fire_s3dL_MeshNew(Value positions, Value uvs, Value indices) { return fire_s3d_lockedMesh(fire_s3d_meshBuild(positions, uvs, indices)); }
 
 /* A template mesh: 0 box, 1 sphere, 2 cylinder, 3 cone, 4 plane, 5 quad; `detail` is the number of segments around. */
+static S3dMesh* fire_s3d_templateBuild(Value kind, Value detail) { return kind.i < 0 || kind.i > 5 ? NULL : s3d_makeTemplate((int)kind.i, (int)detail.i); }
 static Value fire_s3d_MeshTemplate(Value kind, Value detail) {
-    S3dMesh* m;
-    if (kind.i < 0 || kind.i > 5) return Int(0);
-    m = s3d_makeTemplate((int)kind.i, (int)detail.i);
+    S3dMesh* m = fire_s3d_templateBuild(kind, detail);
     return m ? fire_s3d_meshHandle(m) : Int(0);
 }
+static Value fire_s3dL_MeshTemplate(Value kind, Value detail) { return fire_s3d_lockedMesh(fire_s3d_templateBuild(kind, detail)); }
 
 /* A mesh from the text of a Wavefront OBJ file; 0 when there is nothing usable in it. */
-static Value fire_s3d_MeshFromObj(Value text) {
+static Value fire_s3dL_MeshFromObj(Value text) {
     const Str* s;
     char* ascii;
     uint32_t i;
@@ -135,7 +162,7 @@ static Value fire_s3d_MeshFromObj(Value text) {
     ascii[s->length] = 0;
     m = s3d_parseObj(ascii, s->length);
     S3D_FREE(ascii);
-    return m ? fire_s3d_meshHandle(m) : Int(0);
+    return fire_s3d_lockedMesh(m);
 }
 
 /* Another user of the mesh (an object that shares the mesh of a model): the mesh lives until every user has released it. */
@@ -156,18 +183,22 @@ static Value fire_s3d_MeshTriangleCount(Value h) {
     return Int(m ? (int64_t)(m->idxN / 3) : 0);
 }
 
-static Value fire_s3d_texHandle(S3dTexture* t) {
+/* A new texture into its table (made and looked at before, without the lock: it is nobody's yet). */
+static Value fire_s3d_lockedTexture(S3dTexture* t) {
     int64_t h;
+    if (t == NULL) return Int(0);
     s3d_texPrepare(t);
     t->refs = 1;
     t->strength = 1.0f;
+    fire_s3d_lock();
     h = fire_s3d_add(&g_s3dTextures, t);
+    fire_s3d_unlock();
     if (h == 0) s3d_texFree(t);
     return Int(h);
 }
 
 /* A texture from `width * height * 4` bytes (R, G, B, A); copied. Returns the handle, 0 on bad data. */
-static Value fire_s3d_TexNew(Value width, Value height, Value buffer) {
+static Value fire_s3dL_TexNew(Value width, Value height, Value buffer) {
     s3d_size n;
     S3dTexture* tex;
     FireBytes in;
@@ -181,11 +212,11 @@ static Value fire_s3d_TexNew(Value width, Value height, Value buffer) {
     if (tex->rgba == NULL) { S3D_FREE(tex); return Int(0); }
     tex->w = (int)width.i; tex->h = (int)height.i;
     S3D_COPY(tex->rgba, in.data, n);
-    return fire_s3d_texHandle(tex);
+    return fire_s3d_lockedTexture(tex);
 }
 
 /* A checker board of `cells` x `cells` squares in two colours (0xAABBGGRR), in a picture of `size` x `size` pixels. */
-static Value fire_s3d_TexChecker(Value size, Value cells, Value colorA, Value colorB) {
+static Value fire_s3dL_TexChecker(Value size, Value cells, Value colorA, Value colorB) {
     S3dTexture* tex;
     int n, x, y;
     if (size.i <= 0 || size.i > 4096 || cells.i <= 0 || cells.i > size.i) return Int(0);
@@ -201,29 +232,40 @@ static Value fire_s3d_TexChecker(Value size, Value cells, Value colorA, Value co
             uint8_t* p = &tex->rgba[((s3d_size)y * (s3d_size)n + (s3d_size)x) * 4];
             p[0] = (uint8_t)(c & 255); p[1] = (uint8_t)((c >> 8) & 255); p[2] = (uint8_t)((c >> 16) & 255); p[3] = (uint8_t)((c >> 24) & 255);
         }
-    return fire_s3d_texHandle(tex);
+    return fire_s3d_lockedTexture(tex);
 }
 
+/* A texture whose texels or bump map change: after the pictures that are drawn with it now (the lock held; it is given back while they are waited for).
+ * NULL: the handle is gone (meanwhile). */
+static S3dTexture* fire_s3d_texToChange(Value h) {
+    S3dTexture* t;
+    while ((t = (S3dTexture*)fire_s3d_find(&g_s3dTextures, h)) != NULL && t->busy > 0) s3d_condWait(&g_s3dDone, &g_s3dLock);
+    return t;
+}
 /* Gives a texture a bump map made from its own brightness. */
 static Value fire_s3d_TexBumpAuto(Value h) {
-    S3dTexture* t = (S3dTexture*)fire_s3d_find(&g_s3dTextures, h);
+    S3dTexture* t = fire_s3d_texToChange(h);
     return Bool(t != NULL && s3d_texBumpFromColors(t));
 }
 
 /* Gives a texture a bump map from a picture: `channels` bytes per pixel (1: heights; 3 or 4: colours, whose brightness is the height); the picture is scaled to the texture. */
-static Value fire_s3d_TexBump(Value h, Value width, Value height, Value channels, Value buffer) {
+static Value fire_s3dL_TexBump(Value h, Value width, Value height, Value channels, Value buffer) {
     S3dTexture* t;
     FireBytes in;
+    int ok;
     if (!bytesArg(buffer, "Scene3D.Texture.SetBump", &in)) return Undef();
-    t = (S3dTexture*)fire_s3d_find(&g_s3dTextures, h);
-    if (!t || width.i <= 0 || height.i <= 0 || width.i > 16384 || height.i > 16384 || (channels.i != 1 && channels.i != 3 && channels.i != 4)) return Bool(false);
+    if (width.i <= 0 || height.i <= 0 || width.i > 16384 || height.i > 16384 || (channels.i != 1 && channels.i != 3 && channels.i != 4)) return Bool(false);
     if ((s3d_size)in.length < (s3d_size)width.i * (s3d_size)height.i * (s3d_size)channels.i) return Bool(false);
-    return Bool(s3d_texSetBump(t, in.data, (int)width.i, (int)height.i, (int)channels.i) != 0);
+    fire_s3d_lock();
+    t = fire_s3d_texToChange(h);
+    ok = t != NULL && s3d_texSetBump(t, in.data, (int)width.i, (int)height.i, (int)channels.i) != 0;
+    fire_s3d_unlock();
+    return Bool(ok);
 }
 
 /* Takes the bump map away again. */
 static Value fire_s3d_TexBumpClear(Value h) {
-    S3dTexture* t = (S3dTexture*)fire_s3d_find(&g_s3dTextures, h);
+    S3dTexture* t = fire_s3d_texToChange(h);
     if (!t) return Bool(false);
     s3d_texClearBump(t);
     return Bool(true);
@@ -305,6 +347,8 @@ typedef struct FireS3dItem {
     S3dEmitter* emitter;                                           /* object, an emitter: its particles (scene3d.effects) */
     S3dBody* body; Real acc;                                       /* object: its body (scene3d.physics); scene: the time not yet stepped */
     struct FireS3dJointRec* joints; s3d_size jointN, jointCap;     /* scene: its joints (scene3d.physics) */
+    struct FireS3dShot* shot; int busy;                            /* camera: its RenderAsync picture (drawn now or done, until RenderEnd takes it); a picture of it is drawn now */
+    uint8_t* spare; s3d_size spareCap;                             /* camera: the memory of a picture that was taken (the next RenderAsync draws into it) */
 } FireS3dItem;
 /* a joint as the scene keeps it: the objects by their handles (b 0: lb is a point of the world) */
 typedef struct FireS3dJointRec { int kind, alive; int64_t a, b; S3dVec3 la, lb; float length, stiffness, damping; } FireS3dJointRec;
@@ -334,9 +378,12 @@ static void fire_s3d_modelRelease(int64_t h) {
     if (m && --m->refs <= 0) { s3d_modelFree(m); g_s3dModels.items[h] = NULL; }
 }
 static void fire_s3d_itemRelease(int64_t h);
+static void fire_s3d_shotFree(struct FireS3dShot* sh);
 static void fire_s3d_itemDestroy(int64_t h, FireS3dItem* it) {
     s3d_size i;
     g_s3dItems.items[h] = NULL;
+    if (it->shot) fire_s3d_shotFree(it->shot);   /* (a picture nobody took: it was drawn - a picture that is drawn holds its camera) */
+    S3D_FREE(it->spare);
     fire_s3d_meshRelease(it->mesh);
     fire_s3d_texRelease(it->tex);
     fire_s3d_texRelease(it->glow);
@@ -482,14 +529,16 @@ static Value fire_s3d_ObjMaterial(Value h, Value mat) {
 /* ---- models (.f3d, s3d_model.h) ---- */
 static S3dModel* fire_s3d_objModel(const FireS3dItem* it);
 /* A model from the bytes of an .f3d file: its handle, 0 when they are not one. */
-static Value fire_s3d_ModelRead(Value bytes) {
+static Value fire_s3dL_ModelRead(Value bytes) {
     FireBytes in;
     S3dModel* m;
     int64_t h;
     if (!bytesArg(bytes, "Scene3D.Model", &in)) return Undef();
-    m = s3d_modelRead(in.data, (s3d_size)in.length);
+    m = s3d_modelRead(in.data, (s3d_size)in.length);   /* (read without the lock: the model is nobody's yet) */
     if (m == NULL) return Int(0);
+    fire_s3d_lock();
     h = fire_s3d_add(&g_s3dModels, m);
+    fire_s3d_unlock();
     if (h == 0) s3d_modelFree(m);
     return Int(h);
 }
@@ -512,12 +561,17 @@ static Value fire_s3d_strOf(const char* text, OwnList* list) {
     for (i = 0; i < len; i++) strChars(str)[i] = (fire_char16)(uint8_t)text[i];
     return StrV(str);
 }
-/* The name of clip `i` (kind 0), of part `i` (kind 1), or "" */
-static Value fire_s3d_ModelName(Value h, Value kind, Value i, OwnList* list) {
-    S3dModel* m = fire_s3d_modelAt(h);
-    if (m && kind.i == 0 && i.i >= 0 && i.i < m->clipN) return fire_s3d_strOf(m->clips[i.i].name, list);
-    if (m && kind.i == 1 && i.i >= 0 && i.i < m->partN) return fire_s3d_strOf(m->parts[i.i].name, list);
-    return fire_s3d_strOf("", list);
+/* The name of clip `i` (kind 0), of part `i` (kind 1), or "" (copied under the lock, made a string of fire after it) */
+static Value fire_s3dL_ModelName(Value h, Value kind, Value i, OwnList* list) {
+    char text[40];
+    S3dModel* m;
+    text[0] = 0;
+    fire_s3d_lock();
+    m = fire_s3d_modelAt(h);
+    if (m && kind.i == 0 && i.i >= 0 && i.i < m->clipN) snprintf(text, sizeof text, "%s", m->clips[i.i].name);
+    if (m && kind.i == 1 && i.i >= 0 && i.i < m->partN) snprintf(text, sizeof text, "%s", m->parts[i.i].name);
+    fire_s3d_unlock();
+    return fire_s3d_strOf(text, list);
 }
 /* The length of clip `i` in seconds (0 when there is none). */
 static Value fire_s3d_ModelClipLength(Value h, Value i) {
@@ -573,12 +627,17 @@ static Value fire_s3d_ObjAnimate(Value h, Value mode, Value value) {
     return Float(it->time);
 }
 /* The clip that plays ("" none) - kind 0 its name, 1 "playing" or "" */
-static Value fire_s3d_ObjClip(Value h, Value kind, OwnList* list) {
-    FireS3dItem* it = fire_s3d_itemAt(h.i, FIRE_S3D_OBJECT);
-    S3dModel* m = it ? fire_s3d_objModel(it) : NULL;
-    if (!m || it->clip < 0) return fire_s3d_strOf("", list);
-    if (kind.i == 1) return fire_s3d_strOf(it->playing ? "playing" : "", list);
-    return fire_s3d_strOf(m->clips[it->clip].name, list);
+static Value fire_s3dL_ObjClip(Value h, Value kind, OwnList* list) {
+    char text[40];
+    FireS3dItem* it;
+    S3dModel* m;
+    text[0] = 0;
+    fire_s3d_lock();
+    it = fire_s3d_itemAt(h.i, FIRE_S3D_OBJECT);
+    m = it ? fire_s3d_objModel(it) : NULL;
+    if (m && it->clip >= 0) snprintf(text, sizeof text, "%s", kind.i == 1 ? (it->playing ? "playing" : "") : m->clips[it->clip].name);
+    fire_s3d_unlock();
+    return fire_s3d_strOf(text, list);
 }
 
 /* ---- emitters (scene3d.effects): an object with particles ---- */
@@ -795,13 +854,14 @@ static S3dMesh* fire_s3d_terrainMesh(const float* H, int cols, int rows, float c
 
 /* Makes the object a terrain: `heights` is a byte buffer (cols * rows heights 0..255, or cols * rows * 4 bytes R, G, B, A whose brightness is the height) or an array of numbers;
  * `cell` the size of a cell (meters), `step` the height of 1 (meters), `hard` 0 smooth / 1 blocks. false: the data do not fit (or the memory is gone). */
-static Value fire_s3d_Terrain(Value h, Value heights, Value cols, Value rows, Value cell, Value step, Value hard) {
-    FireS3dItem* it = fire_s3d_itemAt(h.i, FIRE_S3D_OBJECT);
+/* (the heights and the mesh are made without the lock - they are nobody's yet -, the object gets them under it) */
+static Value fire_s3dL_Terrain(Value h, Value heights, Value cols, Value rows, Value cell, Value step, Value hard) {
+    FireS3dItem* it;
     s3d_size n, k;
     float* H;
     S3dMesh* m;
     int64_t mh;
-    if (!it || cols.i < (hard.i ? 1 : 2) || rows.i < (hard.i ? 1 : 2) || cols.i > 4096 || rows.i > 4096 || toR(cell) <= 0) return Bool(false);
+    if (cols.i < (hard.i ? 1 : 2) || rows.i < (hard.i ? 1 : 2) || cols.i > 4096 || rows.i > 4096 || toR(cell) <= 0) return Bool(false);
     n = (s3d_size)cols.i * (s3d_size)rows.i;
     H = (float*)S3D_MALLOC(n * sizeof(float));
     if (H == NULL) return Bool(false);
@@ -819,7 +879,10 @@ static Value fire_s3d_Terrain(Value h, Value heights, Value cols, Value rows, Va
         else { S3D_FREE(H); return Bool(false); }
     }
     m = fire_s3d_terrainMesh(H, (int)cols.i, (int)rows.i, (float)toR(cell), (float)toR(step), hard.i != 0);
-    if (m == NULL || (mh = fire_s3d_add(&g_s3dMeshes, m)) == 0) { if (m) s3d_meshFree(m); S3D_FREE(H); return Bool(false); }
+    if (m == NULL) { S3D_FREE(H); return Bool(false); }
+    fire_s3d_lock();
+    it = fire_s3d_itemAt(h.i, FIRE_S3D_OBJECT);
+    if (it == NULL || (mh = fire_s3d_add(&g_s3dMeshes, m)) == 0) { fire_s3d_unlock(); s3d_meshFree(m); S3D_FREE(H); return Bool(false); }
     fire_s3d_meshRelease(it->mesh);
     it->mesh = mh;
     S3D_FREE(it->terrain);
@@ -827,6 +890,7 @@ static Value fire_s3d_Terrain(Value h, Value heights, Value cols, Value rows, Va
     /* the anchor: x and z in the middle, y where the height 0 is */
     it->f[OF_AX] = (Real)0.5; it->f[OF_AX + 2] = (Real)0.5;
     it->f[OF_AX + 1] = m->bmax.y - m->bmin.y > 1e-6f ? (Real)(-m->bmin.y / (m->bmax.y - m->bmin.y)) : (Real)0;
+    fire_s3d_unlock();
     return Bool(true);
 }
 
@@ -1552,7 +1616,7 @@ static Value fire_s3d_JointGet(Value scene, Value id, Value slot) {
 }
 
 /* The first body of the scene a ray meets (from x, y, z towards dx, dy, dz, up to `max` meters): the handle of its object (0 none); RayInfo tells the rest. */
-static S3dRayHit g_s3dRay;
+static FIRE_TLS S3dRayHit g_s3dRay;   /* (per fire thread: RayInfo reads the ray of the same thread) */
 static Value fire_s3d_Raycast(Value scene, Value x, Value y, Value z, Value dx, Value dy, Value dz, Value max) {
     FireS3dItem* s = fire_s3d_itemAt(scene.i, FIRE_S3D_SCENE);
     S3dBody** list;
@@ -1632,66 +1696,267 @@ static void fire_s3d_effectsOn(void) {
 /* The program uses fog or a tint (Scene.Fog, Scene.Tint): their code is wanted. */
 static Value fire_s3d_Effects(void) { fire_s3d_effectsOn(); return Bool(true); }
 
-/* Draws the scene as the camera sees it into `buffer` (width * height * 4 bytes, the picture of the camera's framebuffer `fb`). Returns who drew (0 software, 1 the GPU, 2 the GPU
- * straight into the windows of the framebuffer), -1 when the size is not usable, -2 when the frame cannot be cleared (the memory). */
-static Value fire_s3d_Render(Value camera, Value scene, Value buffer, Value width, Value height, Value fb) {
-#ifdef FIRE_S3D_LEAN_ONLY
-    (void)camera; (void)scene; (void)buffer; (void)width; (void)height; (void)fb;
-    return Int(-1);   /* (only the lean renderer here: the camera asks it) */
-#else
-    FireS3dItem* c = fire_s3d_itemAt(camera.i, FIRE_S3D_CAMERA);
-    FireS3dItem* s = fire_s3d_itemAt(scene.i, FIRE_S3D_SCENE);
-    Buf* b = bufferArg(buffer, "Scene3D.Camera.Render");
+/* ---- a picture: its snapshot (under the lock), its drawing (without), its end (under the lock) ----
+ * The snapshot is the queue of the camera's frame (each visible object with its matrices, surface, mesh and texture - s3d_queueMesh, which transforms
+ * nothing), the lights, the settings and the effects (the particles as splats) as they are when the picture starts; the meshes, textures and models the queue
+ * points to are pinned (a user more each; a texture also `busy`), and the camera (its frame). What the program changes while the picture is drawn shows in the
+ * next one. Render draws in the caller's thread straight into the camera's buffer, RenderBegin in the render thread (or, without threads, at once) into memory
+ * of its own that RenderEnd copies into the camera's buffer. */
+typedef struct FireS3dShot {
+    struct FireS3dShot* next;      /* (the queue of the render thread) */
+    int64_t camera;                /* (pinned) */
     S3dFrame* f;
     S3dCamera cam;
-    S3dLight* ls;
+    S3dLight* lights; s3d_size lightN;
     S3dFlushSettings fs;
-    s3d_size i, n = 0;
+    S3dFx fx; int fxOn;
+    int w, h, clearDepth; uint32_t clear;
+    uint8_t* pix; s3d_size pixCap; /* where it is drawn (RenderAsync: memory of its own) */
+    int64_t* pins; s3d_size pinN, pinCap;   /* handle * 4 + kind: 1 mesh, 2 texture, 3 model */
+    int drawn;                     /* who drew (S3D_BACKEND_*) */
+    int done;                      /* RenderAsync: drawn, its pins given back */
+} FireS3dShot;
+static void fire_s3d_shotFree(FireS3dShot* sh) {
+    if (sh == NULL) return;
+    S3D_FREE(sh->pix); S3D_FREE(sh->pins);
+    S3D_FREE(sh);
+}
+#ifndef FIRE_S3D_LEAN_ONLY
+static void fire_s3d_pin(FireS3dShot* sh, int64_t h, int kind) {
+    if (h <= 0) return;
+    if (kind == 1) { S3dMesh* m = (S3dMesh*)g_s3dMeshes.items[h]; m->refs++; }
+    else if (kind == 2) { S3dTexture* t = (S3dTexture*)g_s3dTextures.items[h]; t->refs++; t->busy++; }
+    else { S3dModel* m = (S3dModel*)g_s3dModels.items[h]; m->refs++; }
+    sh->pins[sh->pinN++] = h * 4 + kind;   /* (room was made before) */
+}
+/* The snapshot (the lock held): 0, or -1 (a size or handle that is not usable), -2 (the memory). It waits for the picture of the camera that is drawn now. */
+static int fire_s3d_shoot(FireS3dShot* sh, int64_t camera, int64_t scene, int w, int h, int64_t fb) {
+    FireS3dItem* c = fire_s3d_itemAt(camera, FIRE_S3D_CAMERA);
+    FireS3dItem* s;
+    S3dFrame* f;
+    s3d_size i;
     int direct;
-    if (b == NULL) return Undef();
-    if (!c || !s || width.i <= 0 || height.i <= 0 || width.i > 16384 || height.i > 16384) return Int(-1);
-    if ((s3d_size)b->length < (s3d_size)width.i * (s3d_size)height.i * 4) return Int(-1);
-    if (c->frame == NULL && (c->frame = s3d_frameNew((int)width.i, (int)height.i)) == NULL) return Int(-1);
+    while (c && c->busy) { s3d_condWait(&g_s3dDone, &g_s3dLock); c = fire_s3d_itemAt(camera, FIRE_S3D_CAMERA); }
+    s = fire_s3d_itemAt(scene, FIRE_S3D_SCENE);
+    if (!c || !s || w <= 0 || h <= 0 || w > 16384 || h > 16384) return -1;
+    if (c->frame == NULL && (c->frame = s3d_frameNew(w, h)) == NULL) return -1;
     f = c->frame;
     /* DirectDrawing: the frame draws into the windows of the framebuffer (or no longer) */
     direct = c->n[CN_DIRECT] != 0 && s->n[SN_RENDERER] == S3D_BACKEND_HARDWARE;
     if (direct != c->directOn) {
-        if (direct) c->directOn = s3d_gpu_attach(f, fb.i) != 0;
+        if (direct) c->directOn = s3d_gpu_attach(f, fb) != 0;
         else { s3d_gpu_detach(f); c->directOn = 0; }
     }
-    if (f->w != width.i || f->h != height.i) { if (!s3d_frameResize(f, (int)width.i, (int)height.i)) return Int(-2); }
-    else s3d_frameClearDepth(f);
+    sh->clearDepth = 1;
+    if (f->w != w || f->h != h) { if (!s3d_frameResize(f, w, h)) return -2; sh->clearDepth = 0; }
+    else s3d_frameEmpty(f);   /* (the depth is cleared when the picture is drawn) */
+    if (!S3D_GROW(sh->pins, sh->pinCap, s->objectN * 4 + 1)) return -2;
+    if ((sh->lights = fire_s3d_lightsOf(s, &sh->lightN)) == NULL) return -2;
     f->clearColor = (uint32_t)c->n[CN_BACKGROUND];
-    s3d_clearPixels(b->data, (int)width.i, (int)height.i, (uint32_t)c->n[CN_BACKGROUND]);
-    cam = fire_s3d_cameraOf(c);
+    sh->camera = camera; sh->f = f; sh->w = w; sh->h = h; sh->clear = (uint32_t)c->n[CN_BACKGROUND];
+    sh->cam = fire_s3d_cameraOf(c);
     for (i = 0; i < s->objectN; i++) {
         FireS3dItem* o = fire_s3d_itemAt(s->objects[i], FIRE_S3D_OBJECT);
-        if (o && o->alive && o->n[ON_VISIBLE]) fire_s3d_queueObject(f, NULL, &cam, o);
+        if (!o || !o->alive || !o->n[ON_VISIBLE]) continue;
+        fire_s3d_queueObject(f, NULL, &sh->cam, o);
+        fire_s3d_pin(sh, o->mesh, 1); fire_s3d_pin(sh, o->tex, 2); fire_s3d_pin(sh, o->glow, 2); fire_s3d_pin(sh, o->model, 3);
     }
-    if ((ls = fire_s3d_lightsOf(s, &n)) == NULL) return Int(-2);
-    fs.shadows = s->n[SN_SHADOWS] != 0;
-    fs.shadowResolution = (int)(float)s->n[SN_SHADOWRES];
-    fs.threads = (int)(float)s->n[SN_THREADS];
-    fs.backend = s->n[SN_RENDERER] == S3D_BACKEND_HARDWARE ? S3D_BACKEND_HARDWARE : S3D_BACKEND_SOFTWARE;
-    fs.noLightCulling = s->n[SN_CULLING] == 0;
-    fs.sky = (uint32_t)(s->f[SF_FOGEND] > s->f[SF_FOGSTART] ? s->n[SN_FOGCOLOR] : c->n[CN_BACKGROUND]);   /* (what a reflection shows where it finds nothing) */
-    fs.fogStart = (float)s->f[SF_FOGSTART]; fs.fogEnd = (float)s->f[SF_FOGEND]; fs.fogColor = (uint32_t)s->n[SN_FOGCOLOR];
-    s3d_flush(b->data, f, &cam, ls, n, &fs);
-    S3D_FREE(ls);
-    c->n[CN_LAST] = f->lastBackend;
-    if (f->lastBackend != S3D_BACKEND_DIRECT) {   /* (DirectDrawing: the picture is in the windows, not here) */
-        S3dFx fx;
-        memset(&fx, 0, sizeof fx);
-        if (g_s3dFxOf && g_s3dFxOf(s, &cam, (int)width.i, (int)height.i, &fx)) {
-            S3dFxTarget t;
-            s3d_fxTargetFull(&t, b->data, (int)width.i, (int)height.i, f->lastBackend == S3D_BACKEND_SOFTWARE ? f->depth : NULL, cam.nearPlane, cam.farPlane);
-            fx.backdrop = f->backdrop;
-            g_s3dFxApply(&t, &fx);
-        }
-        if (fx.splats) S3D_FREE((void*)fx.splats);
+    sh->fs.shadows = s->n[SN_SHADOWS] != 0;
+    sh->fs.shadowResolution = (int)(float)s->n[SN_SHADOWRES];
+    sh->fs.threads = (int)(float)s->n[SN_THREADS];
+    sh->fs.backend = s->n[SN_RENDERER] == S3D_BACKEND_HARDWARE ? S3D_BACKEND_HARDWARE : S3D_BACKEND_SOFTWARE;
+    sh->fs.noLightCulling = s->n[SN_CULLING] == 0;
+    sh->fs.sky = (uint32_t)(s->f[SF_FOGEND] > s->f[SF_FOGSTART] ? s->n[SN_FOGCOLOR] : c->n[CN_BACKGROUND]);   /* (what a reflection shows where it finds nothing) */
+    sh->fs.fogStart = (float)s->f[SF_FOGSTART]; sh->fs.fogEnd = (float)s->f[SF_FOGEND]; sh->fs.fogColor = (uint32_t)s->n[SN_FOGCOLOR];
+    memset(&sh->fx, 0, sizeof sh->fx);
+    sh->fxOn = g_s3dFxOf != NULL && g_s3dFxOf(s, &sh->cam, w, h, &sh->fx);
+    c->busy = 1;
+    c->refs++;   /* (the camera and its frame live until the picture is drawn) */
+    return 0;
+}
+/* The drawing (no lock: what it reads is the snapshot's, or pinned) into sh->pix. */
+static void fire_s3d_shotDraw(FireS3dShot* sh) {
+    S3dFrame* f = sh->f;
+    if (sh->clearDepth) { s3d_size i, n = (s3d_size)f->w * (s3d_size)f->h; for (i = 0; i < n; i++) f->depth[i] = 1e30f; }
+    s3d_clearPixels(sh->pix, sh->w, sh->h, sh->clear);
+    s3d_flush(sh->pix, f, &sh->cam, sh->lights, sh->lightN, &sh->fs);
+    if (f->lastBackend != S3D_BACKEND_DIRECT && sh->fxOn) {   /* (DirectDrawing: the picture is in the windows, not here) */
+        S3dFxTarget t;
+        s3d_fxTargetFull(&t, sh->pix, sh->w, sh->h, f->lastBackend == S3D_BACKEND_SOFTWARE ? f->depth : NULL, sh->cam.nearPlane, sh->cam.farPlane);
+        sh->fx.backdrop = f->backdrop;
+        g_s3dFxApply(&t, &sh->fx);
     }
-    return Int(f->lastBackend);
+    if (sh->fx.splats) S3D_FREE((void*)sh->fx.splats);
+    sh->fx.splats = NULL;
+    S3D_FREE(sh->lights); sh->lights = NULL;
+    sh->drawn = f->lastBackend;
+}
+/* The end (the lock held): the pins go back, the camera is free for its next picture. Nothing of `sh` may be touched after it (the camera may go with its pin,
+ * and its picture with it). */
+static void fire_s3d_shotEnd(FireS3dShot* sh) {
+    FireS3dItem* c = fire_s3d_itemAt(sh->camera, FIRE_S3D_CAMERA);
+    s3d_size i;
+    for (i = 0; i < sh->pinN; i++) {
+        int64_t h = sh->pins[i] >> 2;
+        int kind = (int)(sh->pins[i] & 3);
+        if (kind == 1) fire_s3d_meshRelease(h);
+        else if (kind == 2) { S3dTexture* t = (S3dTexture*)g_s3dTextures.items[h]; t->busy--; fire_s3d_texRelease(h); }
+        else fire_s3d_modelRelease(h);
+    }
+    sh->pinN = 0;
+    if (c) { c->n[CN_LAST] = sh->drawn; c->busy = 0; }
+    sh->done = 1;
+    s3d_condWake(&g_s3dDone);
+    fire_s3d_itemRelease(sh->camera);
+}
+
+/* ---- the render thread (RenderAsync): one for all cameras, started with the first picture; it draws the snapshots in the order they came ---- */
+static FireS3dShot* g_s3dQueue;
+static FireS3dShot* g_s3dQueueTail;
+static int g_s3dRenderThread;   /* 0 not started, 1 running, -1 it could not be started (RenderBegin draws at once) */
+static int g_s3dDrawing;        /* pictures of the render thread not yet ended (in the queue or drawn now) */
+static S3dCond g_s3dWork = S3D_COND_INIT;
+static void fire_s3d_renderMain(void* arg) {
+    (void)arg;
+    fire_s3d_lock();
+    for (;;) {
+        FireS3dShot* sh;
+        while (g_s3dQueue == NULL) s3d_condWait(&g_s3dWork, &g_s3dLock);
+        sh = g_s3dQueue;
+        g_s3dQueue = sh->next;
+        if (g_s3dQueue == NULL) g_s3dQueueTail = NULL;
+        fire_s3d_unlock();
+        fire_s3d_shotDraw(sh);
+        fire_s3d_lock();
+        fire_s3d_shotEnd(sh);
+        g_s3dDrawing--;
+        s3d_condWake(&g_s3dDone);
+    }
+}
 #endif
+
+/* Draws the scene as the camera sees it into `buffer` (width * height * 4 bytes, the picture of the camera's framebuffer `fb`). Returns who drew (0 software, 1 the GPU, 2 the GPU
+ * straight into the windows of the framebuffer), -1 when the size is not usable, -2 when the frame cannot be cleared (the memory). In the caller's thread: the
+ * snapshot under the lock, the drawing without. */
+static Value fire_s3dL_Render(Value camera, Value scene, Value buffer, Value width, Value height, Value fb) {
+#ifdef FIRE_S3D_LEAN_ONLY
+    (void)camera; (void)scene; (void)buffer; (void)width; (void)height; (void)fb;
+    return Int(-1);   /* (only the lean renderer here: the camera asks it) */
+#else
+    Buf* b = bufferArg(buffer, "Scene3D.Camera.Render");
+    FireS3dShot sh;
+    int r;
+    if (b == NULL) return Undef();
+    if (width.i <= 0 || height.i <= 0 || width.i > 16384 || height.i > 16384) return Int(-1);
+    if ((s3d_size)b->length < (s3d_size)width.i * (s3d_size)height.i * 4) return Int(-1);
+    memset(&sh, 0, sizeof sh);
+    fire_s3d_lock();
+    r = fire_s3d_shoot(&sh, camera.i, scene.i, (int)width.i, (int)height.i, fb.i);
+    fire_s3d_unlock();
+    if (r < 0) { S3D_FREE(sh.lights); S3D_FREE(sh.pins); return Int(r); }
+    sh.pix = b->data;
+    fire_s3d_shotDraw(&sh);
+    fire_s3d_lock();
+    fire_s3d_shotEnd(&sh);
+    fire_s3d_unlock();
+    S3D_FREE(sh.pins);
+    return Int(sh.drawn);
+#endif
+}
+
+/* A picture of the camera that was drawn and not taken: dropped (its memory is the next one's). The lock held, the picture done. */
+static void fire_s3d_dropShot(FireS3dItem* c) {
+    FireS3dShot* old = c->shot;
+    if (old == NULL) return;
+    c->shot = NULL;
+    if (c->spare == NULL) { c->spare = old->pix; c->spareCap = old->pixCap; old->pix = NULL; }
+    fire_s3d_shotFree(old);
+}
+/* Camera.RenderAsync: the snapshot now, the drawing in the render thread (without threads: at once). 0 started, -1 a size or handle that is not usable, -2
+ * the memory. A picture of the camera that nobody took is dropped. */
+static Value fire_s3dL_RenderBegin(Value camera, Value scene, Value width, Value height, Value fb) {
+#ifdef FIRE_S3D_LEAN_ONLY
+    (void)camera; (void)scene; (void)width; (void)height; (void)fb;
+    return Int(-1);
+#else
+    FireS3dShot* sh;
+    FireS3dItem* c;
+    s3d_size bytes = (s3d_size)(width.i > 0 ? width.i : 0) * (s3d_size)(height.i > 0 ? height.i : 0) * 4;
+    int r;
+    if (width.i <= 0 || height.i <= 0 || width.i > 16384 || height.i > 16384) return Int(-1);
+    if ((sh = (FireS3dShot*)s3d_calloc(1, sizeof(FireS3dShot))) == NULL) return Int(-2);
+    fire_s3d_lock();
+    c = fire_s3d_itemAt(camera.i, FIRE_S3D_CAMERA);
+    /* (the picture before: drawn first, then dropped - its memory is the next one's) */
+    while (c && c->shot && !c->shot->done) { s3d_condWait(&g_s3dDone, &g_s3dLock); c = fire_s3d_itemAt(camera.i, FIRE_S3D_CAMERA); }
+    if (c) fire_s3d_dropShot(c);
+    if (c && c->spare && c->spareCap >= bytes) { sh->pix = c->spare; sh->pixCap = c->spareCap; c->spare = NULL; c->spareCap = 0; }
+    else if ((sh->pix = (uint8_t*)S3D_MALLOC(bytes)) == NULL) { fire_s3d_unlock(); fire_s3d_shotFree(sh); return Int(-2); }
+    else sh->pixCap = bytes;
+    r = fire_s3d_shoot(sh, camera.i, scene.i, (int)width.i, (int)height.i, fb.i);
+    if (r < 0) {
+        fire_s3d_unlock();
+        S3D_FREE(sh->lights);
+        fire_s3d_shotFree(sh);
+        return Int(r);
+    }
+    c = fire_s3d_itemAt(camera.i, FIRE_S3D_CAMERA);
+    fire_s3d_dropShot(c);   /* (another thread began one meanwhile - one thread per camera is the rule: the later one wins) */
+    c->shot = sh;
+    if (g_s3dRenderThread == 0) g_s3dRenderThread = s3d_threadDetached(fire_s3d_renderMain, NULL) ? 1 : -1;
+    if (g_s3dRenderThread == 1) {
+        g_s3dDrawing++;
+        if (g_s3dQueueTail) g_s3dQueueTail->next = sh; else g_s3dQueue = sh;
+        g_s3dQueueTail = sh;
+        s3d_condWake(&g_s3dWork);
+        fire_s3d_unlock();
+        return Int(0);
+    }
+    fire_s3d_unlock();
+    fire_s3d_shotDraw(sh);   /* (no thread: at once, the same picture) */
+    fire_s3d_lock();
+    fire_s3d_shotEnd(sh);
+    fire_s3d_unlock();
+    return Int(0);
+#endif
+}
+
+/* Camera.WaitRender: waits for the picture of RenderBegin and copies it into `buffer` (width * height * 4 bytes: the size it was begun with). Returns who drew
+ * (as Render), -1 the buffer is too small (the picture is dropped), -3 no picture was begun. */
+static Value fire_s3dL_RenderEnd(Value camera, Value buffer) {
+#ifdef FIRE_S3D_LEAN_ONLY
+    (void)camera; (void)buffer;
+    return Int(-3);
+#else
+    Buf* b = bufferArg(buffer, "Scene3D.Camera.WaitRender");
+    FireS3dItem* c;
+    FireS3dShot* sh;
+    int drawn;
+    if (b == NULL) return Undef();
+    fire_s3d_lock();
+    c = fire_s3d_itemAt(camera.i, FIRE_S3D_CAMERA);
+    while (c && c->shot && !c->shot->done) { s3d_condWait(&g_s3dDone, &g_s3dLock); c = fire_s3d_itemAt(camera.i, FIRE_S3D_CAMERA); }
+    sh = c ? c->shot : NULL;
+    if (sh) c->shot = NULL;
+    fire_s3d_unlock();
+    if (sh == NULL) return Int(-3);
+    /* (the picture is the caller's now: copied without the lock) */
+    drawn = sh->drawn;
+    if ((s3d_size)b->length < (s3d_size)sh->w * (s3d_size)sh->h * 4) drawn = -1;
+    else if (drawn != S3D_BACKEND_DIRECT) S3D_COPY(b->data, sh->pix, (s3d_size)sh->w * (s3d_size)sh->h * 4);
+    fire_s3d_lock();
+    c = fire_s3d_itemAt(camera.i, FIRE_S3D_CAMERA);
+    if (c && c->spare == NULL) { c->spare = sh->pix; c->spareCap = sh->pixCap; sh->pix = NULL; }
+    fire_s3d_unlock();
+    fire_s3d_shotFree(sh);
+    return Int(drawn);
+#endif
+}
+
+/* Camera.Rendering: a picture of RenderBegin that RenderEnd has not taken (it may be drawn already). */
+static Value fire_s3d_RenderBusy(Value camera) {
+    FireS3dItem* c = fire_s3d_itemAt(camera.i, FIRE_S3D_CAMERA);
+    return Bool(c != NULL && c->shot != NULL);
 }
 
 /* ---- the lean renderer (RenderMode.Fast, s3d_lean.h) ---- */
@@ -1728,9 +1993,10 @@ static Value fire_s3d_Lean(void) {
 
 /* Draws the scene with the lean renderer into the framebuffer `fb` (width x height, `mode` 0 RGBA / 1 palette): straight into it (returns 3), or into `buffer` (width * height * 4
  * or width * height bytes; `palette`: the framebuffer's 1024 bytes RGBA when it has a palette; returns 0). -1: a size or handle that is not usable, -2: the memory. */
-static Value fire_s3d_RenderLean(Value camera, Value scene, Value fb, Value width, Value height, Value mode, Value buffer, Value palette) {
-    FireS3dItem* c = fire_s3d_itemAt(camera.i, FIRE_S3D_CAMERA);
-    FireS3dItem* s = fire_s3d_itemAt(scene.i, FIRE_S3D_SCENE);
+/* (the arguments are looked at first, the picture is drawn under the lock: the lean renderer transforms and lights while it queues - a renderer for small machines) */
+static Value fire_s3dL_RenderLean(Value camera, Value scene, Value fb, Value width, Value height, Value mode, Value buffer, Value palette) {
+    FireS3dItem* c;
+    FireS3dItem* s;
     int w = (int)width.i, h = (int)height.i, bpp = mode.i == 1 ? 1 : 4, result = 0;
     uint32_t pal[256];
     S3dLeanSink sink = fire_s3d_rowsToBuffer;
@@ -1739,7 +2005,7 @@ static Value fire_s3d_RenderLean(Value camera, Value scene, Value fb, Value widt
     S3dCamera cam;
     S3dLight* ls;
     s3d_size i, n = 0;
-    if (!c || !s || width.i <= 0 || height.i <= 0 || width.i > 16384 || height.i > 16384) return Int(-1);
+    if (width.i <= 0 || height.i <= 0 || width.i > 16384 || height.i > 16384) return Int(-1);
 #ifdef FIRE_S3D_LEAN_DIRECT
     if (buffer.kind == K_Undefined) {
         FireGfxTables* t = fire_gfxb_tables();
@@ -1764,10 +2030,14 @@ static Value fire_s3d_RenderLean(Value camera, Value scene, Value fb, Value widt
         rows.data = b->data; rows.rowBytes = (s3d_size)w * (s3d_size)bpp;
         ctx = &rows;
     }
-    if (c->lean == NULL && (c->lean = s3d_leanNew()) == NULL) return Int(-2);
+    fire_s3d_lock();
+    c = fire_s3d_itemAt(camera.i, FIRE_S3D_CAMERA);
+    s = fire_s3d_itemAt(scene.i, FIRE_S3D_SCENE);
+    if (!c || !s) { fire_s3d_unlock(); return Int(-1); }
+    if (c->lean == NULL && (c->lean = s3d_leanNew()) == NULL) { fire_s3d_unlock(); return Int(-2); }
     cam = fire_s3d_cameraOf(c);
-    if ((ls = fire_s3d_lightsOf(s, &n)) == NULL) return Int(-2);
-    if (!s3d_leanBegin(c->lean, w, h, bpp, pal, &cam, ls, n, (uint32_t)c->n[CN_BACKGROUND], s->n[SN_SHADOWS] != 0)) { S3D_FREE(ls); return Int(-2); }
+    if ((ls = fire_s3d_lightsOf(s, &n)) == NULL) { fire_s3d_unlock(); return Int(-2); }
+    if (!s3d_leanBegin(c->lean, w, h, bpp, pal, &cam, ls, n, (uint32_t)c->n[CN_BACKGROUND], s->n[SN_SHADOWS] != 0)) { S3D_FREE(ls); fire_s3d_unlock(); return Int(-2); }
     S3D_FREE(ls);
     fire_s3d_leanShadows(c->lean, &cam, s);
     for (i = 0; i < s->objectN; i++) {
@@ -1784,16 +2054,22 @@ static Value fire_s3d_RenderLean(Value camera, Value scene, Value fb, Value widt
         if (fx.fogMap) S3D_FREE(fx.fogMap);
     }
     c->n[CN_LAST] = 3;
+    fire_s3d_unlock();
     return Int(result);
 }
 
 static void fire_s3d_reset(void) {
     s3d_size i;
+    fire_s3d_lock();
+#ifndef FIRE_S3D_LEAN_ONLY
+    while (g_s3dDrawing > 0) s3d_condWait(&g_s3dDone, &g_s3dLock);   /* (the pictures of the render thread first: they hold what goes now) */
+#endif
     for (i = 1; i < g_s3dItems.count; i++) if (g_s3dItems.items[i]) fire_s3d_itemDestroy((int64_t)i, (FireS3dItem*)g_s3dItems.items[i]);
     for (i = 1; i < g_s3dMeshes.count; i++) s3d_meshFree((S3dMesh*)g_s3dMeshes.items[i]);
     for (i = 1; i < g_s3dTextures.count; i++) s3d_texFree((S3dTexture*)g_s3dTextures.items[i]);
     for (i = 1; i < g_s3dModels.count; i++) s3d_modelFree((S3dModel*)g_s3dModels.items[i]);
     g_s3dItems.count = g_s3dMeshes.count = g_s3dTextures.count = g_s3dModels.count = 0;
+    fire_s3d_unlock();
     s3d_gpu_shutdown();
 }
 
@@ -1814,5 +2090,69 @@ static Value fire_s3d_HardwareError(OwnList* list) {
     for (i = 0; i < len; i++) strChars(s)[i] = (fire_char16)(uint8_t)text[i];
     return StrV(s);
 }
+
+/* ---- the natives as the program calls them (the manifest names these): each holds the lock of the bridge while it runs - a few instructions; the ones that
+ * build, read or draw something big are above (fire_s3dL_MeshNew, TexNew, ModelRead, Terrain, Render, RenderBegin, ...: the work without the lock) ---- */
+#define FIRE_S3D_LOCKED(call) do { fire_s3d_lock(); r = (call); fire_s3d_unlock(); } while (0)
+static Value fire_s3dL_MeshRetain(Value a0) { Value r; FIRE_S3D_LOCKED(fire_s3d_MeshRetain(a0)); return r; }
+static Value fire_s3dL_MeshFree(Value a0) { Value r; FIRE_S3D_LOCKED(fire_s3d_MeshFree(a0)); return r; }
+static Value fire_s3dL_MeshTriangleCount(Value a0) { Value r; FIRE_S3D_LOCKED(fire_s3d_MeshTriangleCount(a0)); return r; }
+static Value fire_s3dL_TexFree(Value a0) { Value r; FIRE_S3D_LOCKED(fire_s3d_TexFree(a0)); return r; }
+static Value fire_s3dL_TexBumpAuto(Value a0) { Value r; FIRE_S3D_LOCKED(fire_s3d_TexBumpAuto(a0)); return r; }
+static Value fire_s3dL_TexBumpClear(Value a0) { Value r; FIRE_S3D_LOCKED(fire_s3d_TexBumpClear(a0)); return r; }
+static Value fire_s3dL_TexHasBump(Value a0) { Value r; FIRE_S3D_LOCKED(fire_s3d_TexHasBump(a0)); return r; }
+static Value fire_s3dL_TexStrength(Value a0) { Value r; FIRE_S3D_LOCKED(fire_s3d_TexStrength(a0)); return r; }
+static Value fire_s3dL_TexSetStrength(Value a0, Value a1) { Value r; FIRE_S3D_LOCKED(fire_s3d_TexSetStrength(a0, a1)); return r; }
+static Value fire_s3dL_TexFilter(Value a0) { Value r; FIRE_S3D_LOCKED(fire_s3d_TexFilter(a0)); return r; }
+static Value fire_s3dL_TexSetFilter(Value a0, Value a1) { Value r; FIRE_S3D_LOCKED(fire_s3d_TexSetFilter(a0, a1)); return r; }
+static Value fire_s3dL_New(Value a0) { Value r; FIRE_S3D_LOCKED(fire_s3d_New(a0)); return r; }
+static Value fire_s3dL_Free(Value a0) { Value r; FIRE_S3D_LOCKED(fire_s3d_Free(a0)); return r; }
+static Real fire_s3dL_GetF(int32_t a0, int32_t a1) { Real r; FIRE_S3D_LOCKED(fire_s3d_GetF(a0, a1)); return r; }
+static bool fire_s3dL_SetF(int32_t a0, int32_t a1, Real a2) { bool r; FIRE_S3D_LOCKED(fire_s3d_SetF(a0, a1, a2)); return r; }
+static bool fire_s3dL_SetF3(int32_t a0, int32_t a1, Real a2, Real a3, Real a4, bool a5) { bool r; FIRE_S3D_LOCKED(fire_s3d_SetF3(a0, a1, a2, a3, a4, a5)); return r; }
+static int64_t fire_s3dL_GetI(int32_t a0, int32_t a1) { int64_t r; FIRE_S3D_LOCKED(fire_s3d_GetI(a0, a1)); return r; }
+static bool fire_s3dL_GetB(int32_t a0, int32_t a1) { bool r; FIRE_S3D_LOCKED(fire_s3d_GetB(a0, a1)); return r; }
+static bool fire_s3dL_SetI(int32_t a0, int32_t a1, int64_t a2) { bool r; FIRE_S3D_LOCKED(fire_s3d_SetI(a0, a1, a2)); return r; }
+static Value fire_s3dL_ObjMesh(Value a0, Value a1) { Value r; FIRE_S3D_LOCKED(fire_s3d_ObjMesh(a0, a1)); return r; }
+static Value fire_s3dL_ObjTexture(Value a0, Value a1) { Value r; FIRE_S3D_LOCKED(fire_s3d_ObjTexture(a0, a1)); return r; }
+static Value fire_s3dL_ObjEmissiveTexture(Value a0, Value a1) { Value r; FIRE_S3D_LOCKED(fire_s3d_ObjEmissiveTexture(a0, a1)); return r; }
+static Value fire_s3dL_ObjMaterial(Value a0, Value a1) { Value r; FIRE_S3D_LOCKED(fire_s3d_ObjMaterial(a0, a1)); return r; }
+static Value fire_s3dL_ObjCorner(Value a0, Value a1, Value a2, Value a3) { Value r; FIRE_S3D_LOCKED(fire_s3d_ObjCorner(a0, a1, a2, a3)); return r; }
+static Value fire_s3dL_ObjTriangles(Value a0) { Value r; FIRE_S3D_LOCKED(fire_s3d_ObjTriangles(a0)); return r; }
+static Value fire_s3dL_ObjExtent(Value a0, Value a1, Value a2) { Value r; FIRE_S3D_LOCKED(fire_s3d_ObjExtent(a0, a1, a2)); return r; }
+static Value fire_s3dL_ObjSize(Value a0, Value a1, Value a2) { Value r; FIRE_S3D_LOCKED(fire_s3d_ObjSize(a0, a1, a2)); return r; }
+static Value fire_s3dL_ObjTemplate(Value a0, Value a1, Value a2, Value a3, Value a4, Value a5, Value a6, Value a7, Value a8) { Value r; FIRE_S3D_LOCKED(fire_s3d_ObjTemplate(a0, a1, a2, a3, a4, a5, a6, a7, a8)); return r; }
+static Value fire_s3dL_Effects(void) { Value r; FIRE_S3D_LOCKED(fire_s3d_Effects()); return r; }
+static Value fire_s3dL_CamLookAt(Value a0, Value a1, Value a2, Value a3) { Value r; FIRE_S3D_LOCKED(fire_s3d_CamLookAt(a0, a1, a2, a3)); return r; }
+static Value fire_s3dL_CamRenderer(Value a0) { Value r; FIRE_S3D_LOCKED(fire_s3d_CamRenderer(a0)); return r; }
+static Value fire_s3dL_SceneAdd(Value a0, Value a1) { Value r; FIRE_S3D_LOCKED(fire_s3d_SceneAdd(a0, a1)); return r; }
+static Value fire_s3dL_SceneRemove(Value a0, Value a1) { Value r; FIRE_S3D_LOCKED(fire_s3d_SceneRemove(a0, a1)); return r; }
+static Value fire_s3dL_TerrainHeight(Value a0, Value a1, Value a2) { Value r; FIRE_S3D_LOCKED(fire_s3d_TerrainHeight(a0, a1, a2)); return r; }
+static Value fire_s3dL_ModelFree(Value a0) { Value r; FIRE_S3D_LOCKED(fire_s3d_ModelFree(a0)); return r; }
+static Value fire_s3dL_ModelInfo(Value a0, Value a1) { Value r; FIRE_S3D_LOCKED(fire_s3d_ModelInfo(a0, a1)); return r; }
+static Value fire_s3dL_ModelClipLength(Value a0, Value a1) { Value r; FIRE_S3D_LOCKED(fire_s3d_ModelClipLength(a0, a1)); return r; }
+static Value fire_s3dL_ObjModel(Value a0, Value a1) { Value r; FIRE_S3D_LOCKED(fire_s3d_ObjModel(a0, a1)); return r; }
+static Value fire_s3dL_ObjPlay(Value a0, Value a1, Value a2) { Value r; FIRE_S3D_LOCKED(fire_s3d_ObjPlay(a0, a1, a2)); return r; }
+static Value fire_s3dL_ObjAnimate(Value a0, Value a1, Value a2) { Value r; FIRE_S3D_LOCKED(fire_s3d_ObjAnimate(a0, a1, a2)); return r; }
+static Value fire_s3dL_Emitter(Value a0) { Value r; FIRE_S3D_LOCKED(fire_s3d_Emitter(a0)); return r; }
+static bool fire_s3dL_EmitterSet(int32_t a0, int32_t a1, Real a2) { bool r; FIRE_S3D_LOCKED(fire_s3d_EmitterSet(a0, a1, a2)); return r; }
+static Real fire_s3dL_EmitterGet(int32_t a0, int32_t a1) { Real r; FIRE_S3D_LOCKED(fire_s3d_EmitterGet(a0, a1)); return r; }
+static int64_t fire_s3dL_EmitterInt(int32_t a0, int32_t a1, int64_t a2, bool a3) { int64_t r; FIRE_S3D_LOCKED(fire_s3d_EmitterInt(a0, a1, a2, a3)); return r; }
+static Value fire_s3dL_EmitterBurst(Value a0, Value a1) { Value r; FIRE_S3D_LOCKED(fire_s3d_EmitterBurst(a0, a1)); return r; }
+static Value fire_s3dL_EmitterPreset(Value a0, Value a1, Value a2) { Value r; FIRE_S3D_LOCKED(fire_s3d_EmitterPreset(a0, a1, a2)); return r; }
+static Value fire_s3dL_Body(Value a0, Value a1, Value a2) { Value r; FIRE_S3D_LOCKED(fire_s3d_Body(a0, a1, a2)); return r; }
+static Value fire_s3dL_BodyRemove(Value a0) { Value r; FIRE_S3D_LOCKED(fire_s3d_BodyRemove(a0)); return r; }
+static bool fire_s3dL_BodySet(int32_t a0, int32_t a1, Real a2) { bool r; FIRE_S3D_LOCKED(fire_s3d_BodySet(a0, a1, a2)); return r; }
+static Real fire_s3dL_BodyGet(int32_t a0, int32_t a1) { Real r; FIRE_S3D_LOCKED(fire_s3d_BodyGet(a0, a1)); return r; }
+static Value fire_s3dL_BodyTouch(Value a0, Value a1) { Value r; FIRE_S3D_LOCKED(fire_s3d_BodyTouch(a0, a1)); return r; }
+static Value fire_s3dL_BodyTouches(Value a0, Value a1) { Value r; FIRE_S3D_LOCKED(fire_s3d_BodyTouches(a0, a1)); return r; }
+static Value fire_s3dL_Raycast(Value a0, Value a1, Value a2, Value a3, Value a4, Value a5, Value a6, Value a7) { Value r; FIRE_S3D_LOCKED(fire_s3d_Raycast(a0, a1, a2, a3, a4, a5, a6, a7)); return r; }
+static Real fire_s3dL_RayInfo(int32_t a0) { Real r; FIRE_S3D_LOCKED(fire_s3d_RayInfo(a0)); return r; }
+static Value fire_s3dL_Joint(Value a0, Value a1, Value a2, Value a3, Value a4, Value a5, Value a6, Value a7, Value a8, Value a9) { Value r; FIRE_S3D_LOCKED(fire_s3d_Joint(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9)); return r; }
+static Value fire_s3dL_JointSet(Value a0, Value a1, Value a2, Value a3) { Value r; FIRE_S3D_LOCKED(fire_s3d_JointSet(a0, a1, a2, a3)); return r; }
+static Value fire_s3dL_JointGet(Value a0, Value a1, Value a2) { Value r; FIRE_S3D_LOCKED(fire_s3d_JointGet(a0, a1, a2)); return r; }
+static Value fire_s3dL_ObjAdvance(Value a0, Value a1) { Value r; FIRE_S3D_LOCKED(fire_s3d_ObjAdvance(a0, a1)); return r; }
+static Value fire_s3dL_SceneAdvance(Value a0, Value a1) { Value r; FIRE_S3D_LOCKED(fire_s3d_SceneAdvance(a0, a1)); return r; }
+static Value fire_s3dL_RenderBusy(Value a0) { Value r; FIRE_S3D_LOCKED(fire_s3d_RenderBusy(a0)); return r; }
 
 #endif /* FIRE_BRIDGE_SCENE3D_H */

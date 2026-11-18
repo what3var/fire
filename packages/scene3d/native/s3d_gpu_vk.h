@@ -108,6 +108,22 @@ static pthread_mutex_t g_s3dGpuLock = PTHREAD_MUTEX_INITIALIZER;
 static void s3d_gpu_lock(void) { pthread_mutex_lock(&g_s3dGpuLock); }
 static void s3d_gpu_unlock(void) { pthread_mutex_unlock(&g_s3dGpuLock); }
 #endif
+/* The graveyard: the copies on the GPU of meshes and textures that went (s3d_gpu_releaseMesh), until the backend frees them; its own lock, held for a few
+ * instructions. */
+struct S3dGpuMesh;
+struct S3dGpuTex;
+static struct { struct S3dGpuMesh** meshes; s3d_size meshN, meshCap; struct S3dGpuTex** texes; s3d_size texN, texCap; } g_s3dGrave;
+static S3dMutex g_s3dGraveLock = S3D_MUTEX_INIT;
+static void s3d_gpu_graveLock(void) { s3d_mutexLock(&g_s3dGraveLock); }
+static void s3d_gpu_graveUnlock(void) { s3d_mutexUnlock(&g_s3dGraveLock); }
+static int s3d_gpu_graveFull(void) {
+    int full;
+    s3d_gpu_graveLock();
+    full = g_s3dGrave.meshN > 0 || g_s3dGrave.texN > 0;
+    s3d_gpu_graveUnlock();
+    return full;
+}
+static void s3d_gpu_bury(void);
 
 /* The functions the backend calls: loaded from the instance (I) and the device (D). */
 #define S3D_VK_INSTANCE_FUNCTIONS(X) \
@@ -1665,6 +1681,7 @@ static int s3d_gpu_flushLocked(uint8_t* rgba, S3dFrame* f, const S3dCamera* cam,
     if (!s3d_gpu_ready()) return 0;
     if ((uint32_t)f->w > g_s3dVk.maxImageDim || (uint32_t)f->h > g_s3dVk.maxImageDim) return 0;
     if (!s3d_gpu_waitPending()) { g_s3dVk.state = -1; return 0; }   /* (the previous picture: its buffers are written again now) */
+    if (s3d_gpu_graveFull()) { s3d_gpu_idle(); s3d_gpu_bury(); }   /* (what went since the last picture: the GPU is done with it now) */
     target = s3d_gpu_frameFor(f);
     if (target == NULL) return 0;
     /* fog and reflections (an opaque object that reflects): the picture in two passes, the shaders read its depth */
@@ -2538,27 +2555,56 @@ static void s3d_gpu_atExit(void) {
     s3d_gpu_unlock();
 }
 
-/* ---- letting go ---- */
+/* Frees what is in the graveyard (the backend's lock held, the GPU idle). */
+static void s3d_gpu_bury(void) {
+    s3d_size i, mn, tn;
+    S3dGpuMesh** ms;
+    S3dGpuTex** ts;
+    s3d_gpu_graveLock();
+    ms = (S3dGpuMesh**)g_s3dGrave.meshes; mn = g_s3dGrave.meshN;
+    ts = (S3dGpuTex**)g_s3dGrave.texes; tn = g_s3dGrave.texN;
+    g_s3dGrave.meshes = NULL; g_s3dGrave.meshN = g_s3dGrave.meshCap = 0;
+    g_s3dGrave.texes = NULL; g_s3dGrave.texN = g_s3dGrave.texCap = 0;
+    s3d_gpu_graveUnlock();
+    for (i = 0; i < mn; i++) { s3d_gpu_freeBuffer(&ms[i]->vb); s3d_gpu_freeBuffer(&ms[i]->ib); free(ms[i]); }
+    for (i = 0; i < tn; i++) { s3d_gpu_freeTex(ts[i]); free(ts[i]); }
+    S3D_FREE(ms); S3D_FREE(ts);
+}
+
+/* ---- letting go ----
+ * A mesh or texture that goes (its last user let go of it - on any thread, also while another thread draws) does not wait for the GPU: its copy there is put
+ * into the graveyard (a lock of a few instructions) and freed by whoever holds the backend next - the next picture (s3d_gpu_flushLocked) or the end. Holding
+ * the backend's lock while a thread waits for the scene's would be the wrong order: the bridge takes its lock first, this one second (never the other way). */
 static void s3d_gpu_releaseMesh(S3dMesh* mesh) {
     S3dGpuMesh* g = (S3dGpuMesh*)mesh->gpu;
     if (g == NULL) return;
-    s3d_gpu_lock();
-    s3d_gpu_idle();
-    s3d_gpu_freeBuffer(&g->vb);
-    s3d_gpu_freeBuffer(&g->ib);
-    s3d_gpu_unlock();
-    free(g);
     mesh->gpu = NULL;
+    s3d_gpu_graveLock();
+    if (S3D_GROW(g_s3dGrave.meshes, g_s3dGrave.meshCap, g_s3dGrave.meshN + 1)) { g_s3dGrave.meshes[g_s3dGrave.meshN++] = g; g = NULL; }
+    s3d_gpu_graveUnlock();
+    if (g != NULL) {   /* (no memory for the list: at once, as before) */
+        s3d_gpu_lock();
+        s3d_gpu_idle();
+        s3d_gpu_freeBuffer(&g->vb);
+        s3d_gpu_freeBuffer(&g->ib);
+        s3d_gpu_unlock();
+        free(g);
+    }
 }
 static void s3d_gpu_releaseTexture(S3dTexture* tex) {
     S3dGpuTex* g = (S3dGpuTex*)tex->gpu;
     if (g == NULL) return;
-    s3d_gpu_lock();
-    s3d_gpu_idle();
-    s3d_gpu_freeTex(g);
-    s3d_gpu_unlock();
-    free(g);
     tex->gpu = NULL;
+    s3d_gpu_graveLock();
+    if (S3D_GROW(g_s3dGrave.texes, g_s3dGrave.texCap, g_s3dGrave.texN + 1)) { g_s3dGrave.texes[g_s3dGrave.texN++] = g; g = NULL; }
+    s3d_gpu_graveUnlock();
+    if (g != NULL) {
+        s3d_gpu_lock();
+        s3d_gpu_idle();
+        s3d_gpu_freeTex(g);
+        s3d_gpu_unlock();
+        free(g);
+    }
 }
 static void s3d_gpu_releaseFrame(S3dFrame* f) {
     S3dGpuFrame* g;
@@ -2567,6 +2613,7 @@ static void s3d_gpu_releaseFrame(S3dFrame* f) {
     if (g == NULL) return;
     s3d_gpu_lock();
     s3d_gpu_idle();
+    s3d_gpu_bury();
     s3d_gpu_freeFrameTargets(g);
     s3d_gpu_unlock();
     free(g);
@@ -2575,6 +2622,7 @@ static void s3d_gpu_releaseFrame(S3dFrame* f) {
 /* The end of a program (the VM keeps the library): the shadow maps go back to their smallest size; the device stays for the next program. */
 static void s3d_gpu_shutdown(void) {
     s3d_gpu_lock();
+    if (g_s3dVk.state == 1 && s3d_gpu_graveFull()) { s3d_gpu_idle(); s3d_gpu_bury(); }
     if (g_s3dVk.state == 1 && (g_s3dVk.shadowSize != 64 || g_s3dVk.shadowLayers != 1)) { s3d_gpu_idle(); s3d_gpu_freeShadows(); s3d_gpu_shadows(64, 1); }
     s3d_gpu_unlock();
 }
