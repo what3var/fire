@@ -3763,12 +3763,13 @@ namespace fire.Native
             var locals = new SortedSet<string>(StringComparer.Ordinal);
             for (int i = 0; i < f.ThreadArgs; i++) { locals.Add($"T{f.GlobalSlotCount + i}"); f.ThreadVars.Add(f.GlobalSlotCount + i); MarkVarRef(VarKey(f, $"T{f.GlobalSlotCount + i}")); JoinVarType(VarKey(f, $"T{f.GlobalSlotCount + i}"), TypeUnknown); }
 
-            void Propagate(int addr, Flow state, int from)
+            // (`owned`: the caller does not use the state any more - the first state of a target can be it instead of a copy)
+            void Propagate(int addr, Flow state, int from, bool owned = false)
             {
                 if (!indexOfAddr.TryGetValue(addr, out int target))
                     throw new NativeNotSupportedException($"jump to {addr} inside an instruction ({name})");
-                if (finAddrs.Contains(addr)) { state = state.Clone(); state.Fins.Add(addr); }
-                if (entry[target] == null) { entry[target] = state.Clone(); work.Push(target); return; }
+                if (finAddrs.Contains(addr)) { state = state.Clone(); state.Fins.Add(addr); owned = true; }
+                if (entry[target] == null) { entry[target] = owned ? state : state.Clone(); work.Push(target); return; }
                 var existing = entry[target]!;
                 if (!existing.SameShape(state))
                     throw new NativeNotSupportedException($"inconsistent stack/scope state at {addr} ({name}), reached from {from}");
@@ -3808,7 +3809,7 @@ namespace fire.Native
                     if (step.FallsThrough)
                     {
                         if (idx + 1 >= code.Count) throw new NativeNotSupportedException($"code of {name} runs past its end");
-                        Propagate(code[idx + 1].Addr, state, ins.Addr);
+                        Propagate(code[idx + 1].Addr, state, ins.Addr, owned: true);   // (its last use)
                     }
                 }
                 if (f.FinSignature == signature) break;
