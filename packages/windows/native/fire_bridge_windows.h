@@ -180,7 +180,9 @@ static void fire_winb_showArea(FireWinShared* s, fire_present_fn fn, void* ctx, 
     }
     if (pixels == NULL) return;   /* (a frame only for the presenter, which could not show it: the next one comes with its pixels) */
 #ifdef FIRE_DISPLAY_PLACEMENT
-    if (s->clickThrough) fire_winb_shapeFrom(s, pixels, width, height);
+    /* (a frame in which nothing changed - an empty area - has the shape of the one before: no look at all its pixels, 60 times a second for an idle window) */
+    if (s->clickThrough && !(area != NULL && (area[2] <= 0 || area[3] <= 0) && s->shapeCount >= 0 && s->shapeW == width && s->shapeH == height))
+        fire_winb_shapeFrom(s, pixels, width, height);
 #endif
 #ifdef FIRE_DISPLAY_PRESENT_AREA
     if (area != NULL && fn == NULL) { fire_display_presentArea(&s->display, pixels, width, height, area[0], area[1], area[2], area[3]); return; }
