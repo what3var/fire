@@ -73,8 +73,8 @@ if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "types") { TypeTest
 if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "completion") { CompletionTests.Run(); return; }
 if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "testing") { TestingTests.Run(); return; }
 if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "notes") { NotesTests.Run(); return; }
-// FIRE_TESTS_ONLY=git: git (GitTests) and the files that change under the editor, the Git panel (GitSyncTests); FIRE_TESTS_FILTER narrows the GitSync checks by title
-if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "git") { GitTests.Run(); GitSyncTests.Run(); return; }
+// FIRE_TESTS_ONLY=git: git (GitTests), the files that change under the editor, the Git panel (GitSyncTests), the Repository view: graph, rebase, reset, cherry-pick, ... (GitRepositoryViewTests); FIRE_TESTS_FILTER narrows the GitSync checks by title
+if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "git") { GitTests.Run(); GitSyncTests.Run(); GitRepositoryViewTests.Run(); return; }
 if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "windows") { WindowManagerTests.Run(); return; }
 if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "dialogs") { DialogTests.Run(); return; }
 if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "docking") { DockingTests.Run(); return; }

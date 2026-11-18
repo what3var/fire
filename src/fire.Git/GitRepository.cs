@@ -41,7 +41,7 @@ namespace fire.Git
     /// folder; <see cref="GitChange.Path"/> is relative to it (with `/`). A server that asks for a user name and a password (https) is served by the `credentials` function that the caller gives:
     /// it gets the address and returns the credentials (null: no).
     /// </summary>
-    public sealed class GitRepository : IDisposable
+    public sealed partial class GitRepository : IDisposable
     {
         private readonly Repository _repo;
 
@@ -424,7 +424,7 @@ namespace fire.Git
             try
             {
                 IEnumerable<Commit> commits = path == null
-                    ? _repo.Commits.QueryBy(new CommitFilter { SortBy = CommitSortStrategies.Time })
+                    ? _repo.Commits.QueryBy(new CommitFilter { SortBy = CommitSortStrategies.Topological | CommitSortStrategies.Time })   // (each commit before its parents: commits of the same second stay in order)
                     : _repo.Commits.QueryBy(RelativeOf(path)).Select(e => e.Commit);
                 return commits.Take(max).Select(Info).ToList();
             }
