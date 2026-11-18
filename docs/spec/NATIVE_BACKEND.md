@@ -1141,7 +1141,10 @@ Gemessen (der Assistent, `src/fire.Editor/Assistant/assistant.fire` mit ai, ui, 
 | gcc -O2 (übersetzen und binden, ein Kern) | 225 s | 225 s |
 | gcc -O0 -g (Debug) / -O1 / TinyCC | 39 s / 142 s / 1,0 s | |
 | der ganze Bau (`forge build --engine native`) | 8 min 6 s | ~4 min (gcc), 31 s ohne Änderung (Cache) |
-| linkage `static`, alle Module im Cache | baute nicht (isof_ fehlte) | 24 s (Programm 22 MB statt 10 MB) |
+| linkage `static`, alle Module im Cache | baute nicht (isof_ fehlte; dahinter las JSON die Zahl einer List an Slot -1) | 24 s (Programm 22 MB statt 10 MB) |
+
+Das Beispiel Docking (ui, ui.docking; 238 802 Zeilen C, 1013 Funktionen): der Generator 1 min 59 s -> 11 s, gcc -O2 1 min 58 s, TinyCC 0,4 s. In beiden
+Programmen ist das C vorher und nachher dasselbe, Byte für Byte.
 
 Der Generator verbrachte drei Viertel seiner Zeit in `LayoutOf`/`RawType` (`HasProperty` ging für jedes Feld jeder Klasse durch alle Klassen), den Rest in Suchen,
 die nur die Deklarationen entscheiden (`DispatchNeedsDefaults`, `RestrictedMethodName`, `RestrictedField`), und im Kopieren der Zustände je Instruktion: alles
