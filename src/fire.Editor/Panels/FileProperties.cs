@@ -8,7 +8,14 @@ using fire.Projects;
 namespace fire.Editor
 {
     /// <summary>The file a set of file properties is about: its path and the project it belongs to (null: none).</summary>
-    public sealed record FilePropertiesContext(string Path, LoadedProject? Project);
+    public sealed record FilePropertiesContext(string Path, LoadedProject? Project)
+    {
+        /// <summary>The other files that are selected with it (Ctrl/Shift in the solution explorer): a provider that can change several at once (the build action) changes them all; the
+        /// window shows only such providers then.</summary>
+        public IReadOnlyList<FilePropertiesContext> Others { get; init; } = Array.Empty<FilePropertiesContext>();
+        public bool IsMultiple => Others.Count > 0;
+        public IEnumerable<FilePropertiesContext> All => new[] { this }.Concat(Others);
+    }
 
     /// <summary>Some properties of a file (one category of rows) and how to change them.</summary>
     public sealed class FilePropertyGroup
@@ -25,6 +32,8 @@ namespace fire.Editor
     public interface IFilePropertiesProvider
     {
         FilePropertyGroup? Describe(FilePropertiesContext file);
+        /// <summary>The provider describes and changes all selected files (<see cref="FilePropertiesContext.Others"/>), not only the first.</summary>
+        bool HandlesSelection => false;
     }
 
     /// <summary>The property window for the file selected in the solution explorer: the rows of every provider that knows the file. A change that a provider accepts is
@@ -32,7 +41,7 @@ namespace fire.Editor
     public sealed class FilePropertiesHost : IPropertyHost
     {
         /// <summary>The providers, in the order their categories are shown.</summary>
-        public static readonly List<IFilePropertiesProvider> Providers = new() { new GeneralFileProperties(), new NativeBuildFileProperties() };
+        public static readonly List<IFilePropertiesProvider> Providers = new() { new GeneralFileProperties(), new BuildActionFileProperties(), new NativeBuildFileProperties() };
 
         private FilePropertiesContext? _file;
         private PropertySet? _set;
@@ -71,6 +80,7 @@ namespace fire.Editor
             var groups = new List<FilePropertyGroup>();
             foreach (var provider in Providers)
             {
+                if (_file.IsMultiple && !provider.HandlesSelection) continue;
                 try { if (provider.Describe(_file) is { } g) groups.Add(g); }
                 catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ProjectException) { groups.Add(new FilePropertyGroup { Error = ex.Message }); }
             }
@@ -81,7 +91,7 @@ namespace fire.Editor
             var file = _file;
             _set = new PropertySet
             {
-                Title = Path.GetFileName(file.Path),
+                Title = file.IsMultiple ? $"{file.Others.Count + 1} files" : Path.GetFileName(file.Path),
                 Error = errors.Count > 0 ? string.Join("\n", errors) : null,
                 Entries = groups.SelectMany(g => g.Entries).ToList(),
                 Set = (name, value) =>
@@ -92,7 +102,7 @@ namespace fire.Editor
                     catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ProjectException) { problem = ex.Message; }
                     if (problem == null && file.Project != null)
                     {
-                        try { SaveProject?.Invoke(file.Project); }
+                        try { foreach (var project in file.All.Select(f => f.Project).OfType<LoadedProject>().Distinct()) SaveProject?.Invoke(project); }
                         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ProjectException) { problem = ex.Message; }
                     }
                     _lastError = problem;
@@ -121,6 +131,8 @@ namespace fire.Editor
             }
             else if (ProjectNativeFiles.IsNativeFile(full)) kind = "C/C++ source";
             else kind = project != null && project.TestFiles.Contains(full, ProjectFiles.PathComparer) ? "test (compiled by forge test)" : "content";
+            if (project?.BuildActionOf(full) is { } action && action != FileBuildAction.Build)
+                kind = (FireProject.IsSourceFile(full) ? "source, not compiled" : kind) + (action == FileBuildAction.Ignore ? " (ignored)" : " (copied next to the program)");
             var entries = new List<PropertyEntry>
             {
                 new("Name", PropertyEditKind.Text, Path.GetFileName(full)) { IsReadOnly = true, Category = category, Tip = full },
@@ -130,6 +142,83 @@ namespace fire.Editor
             if (project != null) entries.Insert(2, new("Project", PropertyEditKind.Text, project.Name) { IsReadOnly = true, Category = category, Tip = project.FilePath });
             if (File.Exists(full)) entries.Add(new("Size", PropertyEditKind.Text, new FileInfo(full).Length.ToString("N0", CultureInfo.InvariantCulture) + " bytes") { IsReadOnly = true, Category = category });
             return new FilePropertyGroup { Entries = entries };
+        }
+    }
+
+    /// <summary>What a build and a publish do with the file (docs/tools/projects.md, "Build actions"): Build (the default: a source is compiled, content stays content), Ignore (not
+    /// compiled, not copied), Copy if newer / Copy always (copied next to the program and into the publish folders, keeping its path; a source is then not compiled). For several
+    /// selected files at once.</summary>
+    public sealed class BuildActionFileProperties : IFilePropertiesProvider
+    {
+        private const string Category = "Build";
+        public const string ActionRow = "Build action";
+        private const string Mixed = "(mixed)";
+        /// <summary>The choices of the row, by action (index = the value of the enum).</summary>
+        public static readonly IReadOnlyList<string> Labels = new[] { "Build", "Ignore", "Copy if newer", "Copy always" };
+
+        public bool HandlesSelection => true;
+
+        public FilePropertyGroup? Describe(FilePropertiesContext file)
+        {
+            var files = file.All.Where(f => f.Project != null).ToList();
+            if (files.Count == 0) return null;
+            var actions = files.Select(f => f.Project!.BuildActionOf(f.Path)).Distinct().ToList();
+            string value = actions.Count == 1 ? Labels[(int)actions[0]] : Mixed;
+            var choices = Labels.ToList();
+            if (actions.Count > 1) choices.Insert(0, Mixed);
+            bool source = files.Any(f => FireProject.IsSourceFile(f.Path));
+            var entries = new List<PropertyEntry>
+            {
+                new(ActionRow, PropertyEditKind.Choice, value)
+                {
+                    Category = Category, Choices = choices,
+                    Tip = "What Build and Publish do with the file: Build - the default (a fire source is compiled; other files are content, and new Resource(\"...\") still embeds them); "
+                        + "Ignore - not compiled, not copied; Copy if newer / Copy always - copied next to the program and into the publish folders (with its folder below the project)"
+                        + (source ? "; a source with Copy is not compiled" : "") + ". Written to \"buildActions\" in the project file.",
+                },
+            };
+            if (!file.IsMultiple && file.Project != null)
+            {
+                string rel = ProjectFiles.Relative(file.Project.Directory, Path.GetFullPath(file.Path));
+                string? entry = FileBuildActions.EntryOf(file.Project.Project, rel);
+                entries.Add(new("Set by", PropertyEditKind.Text, entry == null ? "(default)" : ProjectFiles.IsPattern(entry) ? "pattern " + entry : "the file itself")
+                {
+                    Category = Category, IsReadOnly = true, Tip = "The entry of \"buildActions\" that decides for the file (a pattern for many files; the file's own entry goes first).",
+                });
+            }
+            return new FilePropertyGroup
+            {
+                Entries = entries,
+                Set = (name, text) =>
+                {
+                    if (name != ActionRow) return "This property cannot be changed.";
+                    int index = Labels.ToList().IndexOf(text);
+                    if (index < 0) return text == Mixed ? null : $"'{text}' is no build action.";
+                    return Apply(files, (FileBuildAction)index, null);
+                },
+            };
+        }
+
+        /// <summary>Sets the action of every file (their projects are read again; `save`: each project is saved as well). Null when it worked, else the problem.</summary>
+        public static string? Apply(IEnumerable<FilePropertiesContext> files, FileBuildAction action, Action<LoadedProject>? save)
+        {
+            var projects = new List<LoadedProject>();
+            foreach (var f in files)
+            {
+                if (f.Project == null) continue;
+                FileBuildActions.Set(f.Project.Project, ProjectFiles.Relative(f.Project.Directory, Path.GetFullPath(f.Path)), action);
+                if (!projects.Contains(f.Project)) projects.Add(f.Project);
+            }
+            foreach (var p in projects)
+            {
+                if (save != null)
+                {
+                    try { save(p); }
+                    catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ProjectException) { return ex.Message; }
+                }
+                else p.Refresh();
+            }
+            return null;
         }
     }
 

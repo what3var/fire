@@ -44,6 +44,8 @@ namespace fire.Editor
         public bool IsVirtual { get; init; }
         /// <summary>Something the project leaves out (bin, obj, a file or folder whose name starts with a dot): only with "Show All Files", pale.</summary>
         public bool IsHidden { get; init; }
+        /// <summary>A file with the build action Ignore (docs/tools/projects.md, "Build actions"): pale, "ignored" behind it.</summary>
+        public bool IsIgnored { get; init; }
         /// <summary>The git state of a file (null: none), and for a folder, project or solution whether something below it is changed. A change updates the row (the marks of git are
         /// put on the tree in place when only they changed: SolutionExplorerControl.UpdateGit).</summary>
         public GitFileState? GitState
@@ -100,7 +102,7 @@ namespace fire.Editor
     /// </summary>
     internal sealed class SolutionExplorerControl : UserControl
     {
-        private readonly TreeView _tree = new() { BorderThickness = new Thickness(0) };
+        private readonly TreeView _tree = new() { BorderThickness = new Thickness(0), SelectionMode = SelectionMode.Multiple };   // (several files: their build action at once)
         private readonly StackPanel _empty;
         private readonly ObservableCollection<ExplorerNode> _roots = new();
         private readonly HashSet<string> _collapsed = new();
@@ -431,9 +433,20 @@ namespace fire.Editor
         /// <summary>The row that is selected.</summary>
         public ExplorerNode? Selected => _tree.SelectedItem as ExplorerNode;
 
+        /// <summary>The rows that are selected (Ctrl+click and Shift+click select several; the first is <see cref="Selected"/>).</summary>
+        public IReadOnlyList<ExplorerNode> SelectedNodes
+        {
+            get
+            {
+                var nodes = _tree.SelectedItems?.OfType<ExplorerNode>().ToList() ?? new List<ExplorerNode>();
+                if (Selected is { } first && !nodes.Contains(first)) nodes.Insert(0, first);
+                return nodes;
+            }
+        }
+
         private static Control Row(ExplorerNode node)
         {
-            var panel = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6, Opacity = node.IsVirtual || node.IsHidden ? 0.55 : 1 };
+            var panel = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6, Opacity = node.IsVirtual || node.IsHidden || node.IsIgnored ? 0.55 : 1 };
             panel.Children.Add(TreeIcons.Image(TreeIcons.NameFor(node)));
             panel.Children.Add(new TextBlock
             {
@@ -627,11 +640,16 @@ namespace fire.Editor
                 bool isEntry = project.Project.Type == OutputType.Exe && ProjectFiles.PathComparer.Equals(file, project.Files.LastOrDefault());
                 FolderOf(parts, parts.Length - 1).Children.Add(new ExplorerNode { Kind = ExplorerKind.File, Text = parts[^1], Suffix = isEntry && project.Files.Count > 1 ? "entry" : "", Path = file, Project = project, Key = "file:" + file });
             }
+            var copies = new HashSet<string>(project.CopyFiles.Select(c => c.Source), ProjectFiles.PathComparer);
+            var ignored = new HashSet<string>(project.IgnoredFiles, ProjectFiles.PathComparer);
             foreach (var file in project.ContentFiles)
             {
                 string rel = ProjectFiles.Relative(project.Directory, file);
                 string[] parts = rel.Split('/');
-                FolderOf(parts, parts.Length - 1).Children.Add(new ExplorerNode { Kind = ExplorerKind.Content, Text = parts[^1], Path = file, Project = project, Key = "content:" + file });
+                // (the build action: an ignored file pale, a copied one says so)
+                bool isIgnored = ignored.Contains(file);
+                string suffix = isIgnored ? "ignored" : copies.Contains(file) ? "copy" : "";
+                FolderOf(parts, parts.Length - 1).Children.Add(new ExplorerNode { Kind = ExplorerKind.Content, Text = parts[^1], Path = file, Project = project, Key = "content:" + file, IsIgnored = isIgnored, Suffix = suffix });
             }
             // Show All Files: what the project leaves out (bin, obj, hidden files), pale
             if (ShowAllFiles)
@@ -756,7 +774,8 @@ namespace fire.Editor
         {
             if (e.ClickCount == 1 && (e.Source as Visual)?.FindAncestorOfType<TreeViewItem>()?.DataContext is ExplorerNode pressed) _expandedAtPress = (pressed, pressed.IsExpanded);
             if (!e.GetCurrentPoint(_tree).Properties.IsRightButtonPressed) return;
-            if ((e.Source as Visual)?.FindAncestorOfType<TreeViewItem>()?.DataContext is ExplorerNode node) _tree.SelectedItem = node;
+            // (a right click on a row of a selection of several keeps it: the Build Action of the context menu is for all of them)
+            if ((e.Source as Visual)?.FindAncestorOfType<TreeViewItem>()?.DataContext is ExplorerNode node && !(_tree.SelectedItems?.Contains(node) == true && _tree.SelectedItems.Count > 1)) _tree.SelectedItem = node;
         }
 
         private MenuItem Item(string header, string command, ExplorerNode? node)
@@ -805,6 +824,24 @@ namespace fire.Editor
             _menu.Items.Add(new Separator());
         }
 
+        /// <summary>The submenu "Build Action" of a file: Build, Ignore, Copy if newer, Copy always (docs/tools/projects.md, "Build actions") - for every selected file; the current one is checked.</summary>
+        private MenuItem BuildActionMenu(ExplorerNode node)
+        {
+            var selected = SelectedNodes.Where(n => n is { Kind: ExplorerKind.File or ExplorerKind.Content, Project: not null, Path: not null, IsHidden: false }).ToList();
+            if (!selected.Contains(node)) selected = new List<ExplorerNode> { node };
+            var current = selected.Select(n => n.Project!.BuildActionOf(n.Path!)).Distinct().ToList();
+            var menu = new MenuItem { Header = selected.Count > 1 ? $"Build Action ({selected.Count} files)" : "Build Action" };
+            for (int i = 0; i < BuildActionFileProperties.Labels.Count; i++)
+            {
+                var action = (FileBuildAction)i;
+                var item = Item(BuildActionFileProperties.Labels[i], "build-action:" + FileBuildActions.Name(action), node);
+                item.ToggleType = MenuItemToggleType.Radio;
+                item.IsChecked = current.Count == 1 && current[0] == action;
+                menu.Items.Add(item);
+            }
+            return menu;
+        }
+
         private bool FillMenu()
         {
             _menu.Items.Clear();
@@ -822,6 +859,7 @@ namespace fire.Editor
                     _menu.Items.Add(new Separator());
                     Add("Build Solution", "build-solution");
                     Add("Clean Solution", "clean-solution");
+                    Add("Publish Solution", "publish-solution");
                     _menu.Items.Add(new Separator());
                     Add("Open Solution Folder", "reveal");
                     Add("Solution Properties...", "solution-properties");
@@ -851,6 +889,7 @@ namespace fire.Editor
                     }
                     Add("Build", "build-project");
                     Add("Clean", "clean-project");
+                    Add("Publish", "publish-project");
                     if (node.Project.Project.Type == OutputType.Library) { Add("Pack as Package (.fpk)...", "pack"); Add("Install (pack and install)", "install-library"); }
                     _menu.Items.Add(new Separator());
                     Add("Reload (read the folder again)", "refresh");
@@ -888,6 +927,7 @@ namespace fire.Editor
                     Add("Open as Text", "open-text");
                     Add("Open as Hex", "open-hex");
                     Add("Show in Folder", "reveal");
+                    if (!node.IsHidden) _menu.Items.Add(BuildActionMenu(node));
                     Add("Delete File...", "delete-file");
                     break;
                 case ExplorerKind.Designer:
@@ -899,6 +939,7 @@ namespace fire.Editor
                     Add("Open as Hex", "open-hex");
                     Add("Remove from Project", "remove");
                     Add("Show in Folder", "reveal");
+                    _menu.Items.Add(BuildActionMenu(node));
                     break;
             }
             return _menu.Items.Count > 0;

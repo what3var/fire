@@ -47,6 +47,7 @@ namespace fire.Editor
         private string? _notes;
         private string? _solutionNotes;
         private string? _startup;
+        private readonly PublishSettings _publish;
         private readonly List<Action> _refresh = new();   // fields that show what other fields decide (program or library)
 
         /// <summary>Opens the native settings (targets and toolchains, fire.native.json); set by the main window.</summary>
@@ -69,6 +70,7 @@ namespace fire.Editor
             _notes = p.Notes;
             _solutionNotes = workspace.Solution?.Notes;
             _startup = workspace.Solution?.Startup;
+            _publish = p.Publish?.Clone() ?? new PublishSettings();
             try { _native = fire.Native.NativeConfig.FindFor(project.FilePath); }
             catch (fire.Native.NativeConfigException) { _native = new fire.Native.NativeConfig(); }
 
@@ -84,6 +86,7 @@ namespace fire.Editor
             _nav.Add("build", NavIcons.Cube, "Build", BuildPage());
             _nav.Add("native", NavIcons.Chip, "Native & Toolchain", NativePage());
             _nav.Add("run", NavIcons.Play, "Run & Debug", RunPage());
+            _nav.Add("publish", NavIcons.Upload, "Publish", PublishPage());
             _nav.Add("references", NavIcons.Arrows, "References", ReferencesPage());
             _nav.Add("notes", NavIcons.Pencil, "Notes", NotesPage());
             if (workspace.Solution != null)
@@ -111,6 +114,9 @@ namespace fire.Editor
 
         /// <summary>Starts on a page (0 general, 1 build, 2 references, 3 solution) - the numbers of the old tabs.</summary>
         public void SelectTab(int index) => _nav.Show(index switch { 1 => "build", 2 => "references", 3 => "solution", _ => "general" });
+
+        /// <summary>Starts on a page by its key (general, version, build, native, run, publish, references, notes, solution).</summary>
+        public void SelectPage(string key) => _nav.Show(key);
 
         /// <summary>Starts on the page of the solution.</summary>
         public void SelectSolutionTab() => _nav.Show("solution");
@@ -436,6 +442,63 @@ namespace fire.Editor
                     Hint("The program reads them as Environment.Args; quotes keep words with blanks together. On the command line, arguments after -- replace them for one run (forge run app.fireproj -- a b).")));
         }
 
+        /// <summary>Publish (docs/tools/projects.md, "Publish"): on or off, the folders, the engine, the mode and the target of the publish build, and whether the folders are emptied first.</summary>
+        private Control PublishPage()
+        {
+            var pub = _publish;
+            string root = _workspace.Solution?.Directory ?? _project.Directory;
+            string rootName = _workspace.Solution != null ? "the solution file" : "the project file";
+            var enabled = new CheckBox { Content = "Publish this project (Publish and Publish Solution build it and copy it into the folders below)", IsChecked = pub.Enabled };
+            enabled.IsCheckedChanged += (_, _) => pub.Enabled = enabled.IsChecked == true;
+            string defaultFull = PublishSettings.DefaultTarget(_project, _workspace.Solution?.Directory);
+            string defaultFolder = ProjectFiles.Relative(root, defaultFull);
+            var targets = LinesField($"{defaultFolder}   (default)", 72);
+            targets.Text = pub.Targets == null ? "" : string.Join(Environment.NewLine, pub.Targets);
+            var resolved = Hint("");
+            void ShowResolved()
+            {
+                var list = (targets.Text ?? "").Split('\n').Select(l => l.Trim()).Where(l => l.Length > 0).ToList();
+                pub.Targets = list.Count > 0 ? list : null;
+                var full = list.Count == 0 ? new List<string> { defaultFull }
+                    : list.Select(t => { try { return Path.GetFullPath(Environment.ExpandEnvironmentVariables(t), root); } catch (Exception) { return t + " (not a path)"; } }).ToList();
+                resolved.Text = "Goes into: " + string.Join("; ", full);
+            }
+            targets.TextChanged += (_, _) => ShowResolved();
+            ShowResolved();
+            var browse = new Button { Content = "Add folder..." };
+            browse.Click += async (_, _) =>
+            {
+                var picked = await StorageProvider.OpenFolderPickerAsync(new FolderPickerOpenOptions { Title = "A folder to publish into" });
+                if (picked.Count == 0 || picked[0].TryGetLocalPath() is not { } folder) return;
+                string rel = ProjectFiles.Relative(root, folder);
+                string entry = rel.StartsWith("../../", StringComparison.Ordinal) || Path.IsPathRooted(rel) ? folder : rel;
+                targets.Text = string.IsNullOrWhiteSpace(targets.Text) ? entry : targets.Text!.TrimEnd() + Environment.NewLine + entry;
+            };
+            var clean = new CheckBox { Content = "Empty the folders before copying (off: other files in them stay)", IsChecked = pub.Clean == true };
+            clean.IsCheckedChanged += (_, _) => pub.Clean = clean.IsChecked == true ? true : null;
+
+            string projectEngine = _settings.Engine ?? _inherited?.Engine ?? "native";
+            string engineFrom = _settings.Engine != null ? "the project's" : _inherited?.Engine != null ? "the solution's" : "default";
+            var engine = Choice(new[] { ("Virtual machine", "vm"), ("Native", "native") }, () => pub.Engine, v => pub.Engine = v, projectEngine, engineFrom, "Native needs a C toolchain");
+            var mode = Choice(new[] { ("Debug", "debug"), ("Release", "release"), ("Performance", "performance") }, () => pub.Mode, v => pub.Mode = v, "release", "default");
+            string defaultTarget;
+            try { defaultTarget = _native.ResolveTarget(_settings.Target ?? _inherited?.Target).Name; }
+            catch (fire.Native.NativeConfigException) { defaultTarget = "?"; }
+            var target = Pick(_native.TargetNames, () => pub.Target, v => pub.Target = v, $"(the project's target: {defaultTarget})");
+            return Page("Publish", "Publish builds the program for handing out - again only when something changed - and copies it with what it needs into folders of your choice.",
+                Group("Publish", enabled,
+                    Row("Folders", targets),
+                    Row("", new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, Children = { browse } }),
+                    Hint($"One folder per line: absolute, or relative to {rootName}. Files of others in a folder are left alone."),
+                    resolved,
+                    clean),
+                Group("Build",
+                    Row("Runs as", engine),
+                    Row("Configuration", mode),
+                    Row("Target (native)", target),
+                    Hint("The program, the shared libraries it needs (linkage shared), the files that belong to it and the files with the build action Copy (Properties of a file, keeping their folders) are copied. A library is published as its package (.fpk).")));
+        }
+
         private Control ReferencesPage()
         {
             RefreshReferences();
@@ -537,7 +600,7 @@ namespace fire.Editor
             {
                 Format = _project.Project.Format, Name = _name.Trim(), Type = _type, Import = string.IsNullOrWhiteSpace(_import) ? null : _import.Trim(),
                 Files = _project.Project.Files, Exclude = _project.Project.Exclude, Entry = _type == OutputType.Exe ? _entry : null, References = _referenceList,
-                Settings = _settings, FilePath = _project.FilePath,
+                Settings = _settings, FilePath = _project.FilePath, Publish = _publish,
             };
             var problems = copy.Validate().ToList();
             if (_solutionSettings != null) problems.AddRange(_solutionSettings.Validate());
@@ -546,6 +609,7 @@ namespace fire.Editor
             var p = _project.Project;
             string oldName = p.Name;
             p.Name = copy.Name; p.Type = copy.Type; p.Import = copy.Import; p.Entry = copy.Entry; p.References = copy.References; p.Settings = copy.Settings;
+            p.Publish = _publish.IsEmpty ? null : _publish;
             p.Notes = string.IsNullOrWhiteSpace(_notes) ? null : _notes.Trim();
             if (_workspace.Solution is { } solution && _solutionSettings != null)
             {

@@ -32,8 +32,20 @@ spark is the IDE of fire (C#, Avalonia - Windows, Linux, macOS). **First Steps**
   of the solution natively, each library before the projects that reference it (a project whose library failed is skipped); its log is in the
   *Build log*, its errors and warnings in the *Error list*, and *Cancel Build* (`Ctrl+Break`, `Shift+F5`) stops it. *Clean* removes the build folders
   `bin/` and `obj/` of the project of the active file, *Clean Solution* those of every project ([projects](projects.md#where-a-build-goes-and-clean)) -
-  never a source: a build folder that holds a fire source or a project file is left alone and the log says why.
-- **Build tool strip:** target, *Build* (native), and the *Statistics* switch: when it is on, *Build*
+  never a source: a build folder that holds a fire source or a project file is left alone and the log says why. Every build of a project copies the files with
+  the build action *Copy* next to the program ([projects](projects.md#build-actions)).
+- **Publish** (*Run > Publish*, *Run > Publish Solution*, the *Publish* button of the *Build* tool strip, *Publish* in the context menu of a project and
+  *Publish Solution* in that of the solution): every project that has publishing on (*Project Properties > Publish*: on/off, the folders - one per line,
+  absolute or relative to the solution -, VM or native, the configuration, the target, "empty the folders first") is built again where something changed
+  (otherwise its program is taken as it is) and copied with the files it needs and its *Copy* files into its folders; libraries first, a library is
+  published as its package. It is a build job like Build Solution: the *Build log* says per project what was built and what was copied, errors go into
+  the *Error list*, *Cancel Build* stops it, the status bar ends with the summary ("2 projects published to ..."). *Publish* of a project with publishing
+  off opens its properties on the *Publish* page instead ([projects](projects.md#publish)).
+- **Build action of a file:** the *Properties* window of a file of a project has the category *Build* - *Build action*: *Build* (the default), *Ignore*,
+  *Copy if newer*, *Copy always* - and *Set by* (the file itself, a pattern or the default). Several files selected in the Solution Explorer (Ctrl+click,
+  Shift+click) are changed at once (the window shows "(mixed)" when they differ); the context menu of a file has the same as *Build Action*. An ignored
+  file is shown pale with "ignored", a copied one with "copy" ([projects](projects.md#build-actions)).
+- **Build tool strip:** target, *Build* (native), *Publish*, and the *Statistics* switch: when it is on, *Build*
   writes the statistics of the native build (`forge build --stats`, [forge](forge.md)) and opens them in a tab - the size of the program and what it takes
   to load, the code by origin (the C of the packages, the runtime, the C library, the generated fire code by module), the data, how much of the generated
   functions are C numbers, the biggest functions. A `.stats.json` next to a program opens in the same viewer.
