@@ -153,6 +153,8 @@ The old names `x`, `y`, `halign`, ... are reported with the new one.
 | `ListView` (`<Column Header="Name" Member="name" Width="100"/>`) | `DisplayMember`, `SelectedIndex` | `OnSelect`, `OnActivate` |
 | `TreeView` (`<TreeNode Text="..." Expanded="true">`, nested) | `Indent` | `OnSelect`, `OnActivate` |
 | `RadioButtons` (`<Item>text</Item>`) | `Header`, `Horizontal`, `Spacing`, `SelectedIndex` | `OnChange` |
+| `Slider` | `Minimum`, `Maximum`, `Value`, `Step`, `LargeStep` (numbers: `0.5`, `-10`, `100`), `ShowValue`, `Decimals` | `OnChange` |
+| `Stepper` (`<Item>text</Item>`) | `DisplayMember`, `SelectedIndex`, `Wrap`, `ItemsSource` | `OnChange` |
 | `MenuBar` (`<Menu Header="File">` with `<MenuItem Header="Open" Shortcut="Ctrl+O" Checkable="true" IsChecked="true" Enabled="false" OnClick="Open">`, nested items, `<MenuSeparator/>`) | | `OnClick` of the items |
 | `Separator` | | |
 | `Image` | `Source` (a path: the file is embedded, see [Resources: files inside the program](../stdlib/resources.md)), `Stretch` (`None Fill Uniform UniformToFill`) | |
@@ -169,7 +171,7 @@ Not yet in markup (set them in the code-behind): `ToolTip`, `Cursor`, `AllowDrop
 `Canvas` they are positioned. A handler of an event with parameters gets them after `sender`: `OnMouseDown="Down"` calls `Down(sender, x, y, button)` - the generated method is
 `undefined Down(any sender, int x, int y, int button)` (`OnPaint`: `UI.DrawingCanvas canvas`); an override may take them as `any` as well.
 
-**Values** are read by the type of the property: a whole number (`12`, `-3`, `0x1F`), `true`/`false`, a text, a colour (`#RRGGBB`, `#RGB` or the raw value, see `UI.Color`; colour properties are **brushes** - the generator wraps the value in `new SolidBrush(...)`),
+**Values** are read by the type of the property: a whole number (`12`, `-3`, `0x1F`), a number with a fraction (`0.5`, `-2`: `Slider`), `true`/`false`, a text, a colour (`#RRGGBB`, `#RGB` or the raw value, see `UI.Color`; colour properties are **brushes** - the generator wraps the value in `new SolidBrush(...)`),
 `Horizontal`/`Vertical`, one of the names of an enum (`Left`), a margin, a pen. A value that does not fit is an error. In braces a value can be
 
 - `{Enum Colors.Red}` (or `{Static Colors.Red}`): an enum member or constant of your script, used as it is - for every number or colour property;

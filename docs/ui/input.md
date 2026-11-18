@@ -13,9 +13,14 @@ know which one the user has.
 | Escape | closes a menu or popup |
 
 An element keeps the arrows it needs itself: the text field Left/Right/Home/End, the list and the tree Up/Down (at the first and last row the list
-lets the key go, so the user can leave it), `RadioButtons` the arrows between their options, the `TextArea` all arrows and Page Up/Down. Own elements
+lets the key go, so the user can leave it), `RadioButtons` the arrows between their options, `Slider` and `Stepper` Left/Right (Up/Down move on), the `TextArea` all arrows and Page Up/Down. Own elements
 override `bool WantsKey(int key)`; Tab goes to an element only when `bool TakesTab()` says so (a `TextArea` with `AcceptsTab`) - Shift+Tab and
 Ctrl+Tab always move the focus. `ui.SetFocus(element)` sets the focus from code; `ui.focusElement` is the focused one.
+
+**Focus follows the pointer:** with `ui.FocusFollowsPointer = true` the element under the pointer that takes the focus (or the next one around it)
+gets it as the pointer moves onto it - hover and focus are one and the same row, as in the menu of a game that is used with the mouse and the gamepad
+alike. Over nothing focusable the focus stays where it is; a key that moves the focus elsewhere takes the hover off the element under the pointer until
+the pointer moves again. Not while a button is held, during a drag, or over a menu or popup.
 
 **Keys before the elements:** `ui.onKeyPreview = func (int key, int mod) => { ... }` sees every key first; returning `true` uses it up. That is where
 shortcuts go:
@@ -41,6 +46,11 @@ ui.Run()
 `UI.Keys` names the key codes (`Enter()`, `Escape()`, `Tab()`, `Left()`, `Up()`, `Home()`, `PageDown()`, `Delete()`, `F4()`, letters `A()`, `C()`,
 `V()`, ...); letters and digits are their character code. `UI.Keys.Shift(mod)` and `UI.Keys.Shortcut(mod)` (Ctrl, or Cmd on the Mac) test the
 modifiers; `ui.modifiers` holds the keys held right now.
+
+**Scancodes:** while a key event is handed out (an element's `KeyDown`, `onKeyPreview`), `ui.KeyScancode` is the scancode of the key - its place
+on the keyboard, the same whatever the layout (WASD stays WASD on an AZERTY keyboard; 0 when the event has none) - and `ui.KeyRepeated` says whether it
+repeats a held key. `KeyDown(Root root, int key, int mod)` of the elements keeps its parameters, so existing overrides stay as they are; they read
+`root.KeyScancode`. `ui.KeyDown(key, mod, scancode, repeated)` hands a key over from code (the last two are optional).
 
 ## Mouse
 
