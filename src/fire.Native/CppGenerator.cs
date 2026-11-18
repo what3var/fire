@@ -363,6 +363,14 @@ namespace fire.Native
             }
             var generator = new CppGenerator(program, target ?? TargetProfile.Host) { _strip = EffectiveStripping(program, stripping), _collectStats = stats };
             string c = generator.Run();
+            if (BuildTimes.Enabled)
+            {
+                BuildTimes.Lap("C generator: the rest");
+                int lines = 0;
+                foreach (char ch in c) if (ch == '\n') lines++;
+                BuildTimes.Note($"C: {lines} lines, {c.Length / 1024} KB, {generator._funcs.Count} functions{(generator._nativesCode != null ? $", natives in C++ {generator._nativesCode.Length / 1024} KB" : "")}");
+                BuildTimes.Lap("(counting)");
+            }
             return new NativeSources(c, generator._nativesCode) { Funcs = stats ? generator.FuncStats() : null };
         }
 
@@ -898,6 +906,17 @@ namespace fire.Native
         /// <summary>The place of each field of `rc` (by its index): the slot, and the half of a narrow one (-1: a whole Value); and the number of slots. The fields
         /// of a base class come first and are laid out the same (a half a base leaves free is taken by the next narrow field of a derived class).</summary>
         private (int[] Slot, int[] Half, int Count) LayoutOf(RuntimeClass rc)
+        {
+            // (what a layout depends on that generating the code can still change - a field whose address is taken, threads - is part of the key of the cache)
+            var stamp = (_fieldAddressTaken.Count, _usesThreads);
+            if (_layouts.TryGetValue(rc, out var cached) && cached.Stamp == stamp && cached.Names == rc.FlattenedFieldNames.Count) return cached.Layout;
+            var layout = LayoutOfCore(rc);
+            _layouts[rc] = (stamp, rc.FlattenedFieldNames.Count, layout);
+            return layout;
+        }
+        private readonly Dictionary<RuntimeClass, ((int, bool) Stamp, int Names, (int[] Slot, int[] Half, int Count) Layout)> _layouts = new();
+
+        private (int[] Slot, int[] Half, int Count) LayoutOfCore(RuntimeClass rc)
         {
             var names = rc.FlattenedFieldNames;
             var slot = new int[names.Count];
@@ -1657,13 +1676,28 @@ namespace fire.Native
         /// <summary>The class of the code of this function as a number for the checks at run time (no class: all ones).</summary>
         private string CallerId(Func f) => f.Chunk.OwnerClass is { } owner && CheckAccess ? ClassIdExpr(RegisterClass(owner.Name)) : "0xFFFFFFFFu";
 
-        private bool RestrictedMethodName(string name) =>
-            CheckAccess && _program.Program.Classes.Values.Any(rc => rc.Methods.TryGetValue(name, out var list) && list.Any(m => m.Access is { } a && a != AccessModifier.Public));
+        private bool RestrictedMethodName(string name)
+        {
+            if (!CheckAccess) return false;
+            // (only the declarations of the program decide: once per name)
+            if (_restrictedMethods.TryGetValue(name, out bool known)) return known;
+            bool restricted = _program.Program.Classes.Values.Any(rc => rc.Methods.TryGetValue(name, out var list) && list.Any(m => m.Access is { } a && a != AccessModifier.Public));
+            _restrictedMethods[name] = restricted;
+            return restricted;
+        }
+        private readonly Dictionary<string, bool> _restrictedMethods = new(StringComparer.Ordinal);
 
         /// <summary>Is some field (or property accessor) of this name private or protected somewhere? Then the field helpers check the class of the caller.</summary>
-        private bool RestrictedField(string name) =>
-            CheckAccess && (_program.Program.Classes.Values.Any(rc => rc.OwnFieldInfo.TryGetValue(name, out var info) && info.AccessModifier != AccessModifier.Public)
-                || RestrictedMethodName("get_" + name) || RestrictedMethodName("set_" + name));
+        private bool RestrictedField(string name)
+        {
+            if (!CheckAccess) return false;
+            if (_restrictedFields.TryGetValue(name, out bool known)) return known;
+            bool restricted = _program.Program.Classes.Values.Any(rc => rc.OwnFieldInfo.TryGetValue(name, out var info) && info.AccessModifier != AccessModifier.Public)
+                || RestrictedMethodName("get_" + name) || RestrictedMethodName("set_" + name);
+            _restrictedFields[name] = restricted;
+            return restricted;
+        }
+        private readonly Dictionary<string, bool> _restrictedFields = new(StringComparer.Ordinal);
 
         /// <summary>The condition (over `caller`) under which the member may be used, empty when everybody may.</summary>
         private string AllowedExpr(RuntimeClass declaring, AccessModifier access)
@@ -1851,11 +1885,38 @@ namespace fire.Native
             return name;
         }
 
+        /// <summary>The `is of` test of a program of one piece (`isof_Name`; the modules: ModIsOf).</summary>
+        private string IsOfFunction(string typeName)
+        {
+            var sb = new StringBuilder();
+            var ids = _classList.Where(c => ClassIs(c.Rc, typeName)).Select(c => c.Id).ToList();
+            sb.AppendLine($"FIRE_MAYBE_UNUSED {HelperStorage}bool isof_{Mangle(typeName)}(Value v) {{");
+            if (EnumIndexNamed(typeName) is var enumIndex and > 0) sb.AppendLine($"    if (v.kind == K_Int) return v.reserved == {enumIndex};   // (the enum {typeName})");
+            if (typeName == "IEnumerable") sb.AppendLine("    if (v.kind == K_Array || v.kind == K_Buffer) return true;");
+            sb.AppendLine("    if (v.kind != K_Class) return false;");
+            sb.AppendLine("    if (FIRE_UNLIKELY(!leafAlive(v))) return false;   /* (destroyed: its class is not known any more - `is of` and `!` throw before) */");
+            sb.AppendLine(ids.Count == 0 ? "    return false;" : "    switch (asObj(v)->cls) { " + string.Concat(ids.Select(id => $"case {id}: ")) + "return true; default: return false; }");
+            sb.AppendLine("}");
+            return sb.ToString();
+        }
+
+        /// <summary>The `is of` tests the helpers of the file wrote (null: none yet). An array of a class that only code made after the helpers registers (the
+        /// reflection or JSON tables of a module's program, linkage "static") gets the tests it needs written with its table.</summary>
+        private HashSet<string>? _isOfWritten;
+
         /// <summary>g_arrClasses: for each array of a class what fits (the conditions of its declaration), its name and what a defined one starts with.</summary>
         private string ArrClassTable()
         {
             if (_arrClasses.Count == 0) return "";
             var sb = new StringBuilder();
+            foreach (var (text, _) in _arrClasses)
+                foreach (var alt in DeclaredType.Parse(ArrayElem.ClassText(text)).Alternatives) foreach (var c in alt) HoldsExpr("v", c);   // (registers the `isof_` they need)
+            if (_isOfWritten != null)
+                foreach (var typeName in _isOfTypes.Where(t => !_isOfWritten.Contains(t)).ToList())
+                {
+                    sb.Append(Modular ? ModIsOf(typeName) : IsOfFunction(typeName));
+                    _isOfWritten.Add(typeName);
+                }
             foreach (var (text, id) in _arrClasses.OrderBy(kv => kv.Value))
             {
                 var spec = DeclaredType.Parse(ArrayElem.ClassText(text));
@@ -1896,6 +1957,7 @@ namespace fire.Native
 
         private string Run()
         {
+            BuildTimes.Lap("fire: linking the program (after the bytecode)");
             CollectPackages();
             var main = _main = new Func { Proto = null, Chunk = _program.Program.TopLevel, Kind = FuncKind.Main };
             if (DebugBuild) UseExceptions();   // (a debug build: every run-time error is an exception the debugger can stop at)
@@ -1932,6 +1994,7 @@ namespace fire.Native
                     foreach (var (symbol, _) in Unit.BuiltInSymbols) UnitId(Unit.Parse(symbol));
                     foreach (var own in _program.Program.CustomUnits) UnitId(Unit.OfCustom(own));
                 }
+                BuildTimes.Lap($"C generator: round {round + 1} ({_funcs.Count} functions)");
                 if (_version == before) break;
                 if (round > 40) throw new NativeNotSupportedException("code generation does not settle");
             }
@@ -2213,17 +2276,8 @@ namespace fire.Native
                     sb.AppendLine($"    return {OperatorFallback[method]};");
                     sb.AppendLine("}");
                 }
-                foreach (var typeName in _isOfTypes)
-                {
-                    var ids = _classList.Where(c => ClassIs(c.Rc, typeName)).Select(c => c.Id).ToList();
-                    sb.AppendLine($"FIRE_MAYBE_UNUSED {HelperStorage}bool isof_{Mangle(typeName)}(Value v) {{");
-                    if (EnumIndexNamed(typeName) is var enumIndex and > 0) sb.AppendLine($"    if (v.kind == K_Int) return v.reserved == {enumIndex};   // (the enum {typeName})");
-                    if (typeName == "IEnumerable") sb.AppendLine("    if (v.kind == K_Array || v.kind == K_Buffer) return true;");
-                    sb.AppendLine("    if (v.kind != K_Class) return false;");
-                    sb.AppendLine("    if (FIRE_UNLIKELY(!leafAlive(v))) return false;   /* (destroyed: its class is not known any more - `is of` and `!` throw before) */");
-                    sb.AppendLine(ids.Count == 0 ? "    return false;" : "    switch (asObj(v)->cls) { " + string.Concat(ids.Select(id => $"case {id}: ")) + "return true; default: return false; }");
-                    sb.AppendLine("}");
-                }
+                foreach (var typeName in _isOfTypes) sb.Append(IsOfFunction(typeName));
+                _isOfWritten = new HashSet<string>(_isOfTypes, StringComparer.Ordinal);
             }
             if (_usesReflection)
             {
@@ -2314,7 +2368,8 @@ namespace fire.Native
                 sb.AppendLine("}");
             }
             string programText = sb.ToString();
-            if (PointerCallsOn) programText = PointerCallsPass(programText);
+            BuildTimes.Lap("C generator: putting the file together");
+            if (PointerCallsOn) { programText = PointerCallsPass(programText); BuildTimes.Lap("C generator: pointer calls pass"); }
             // (a program that loads plugins: the classes from its first own id up to this are its own - a plugin's come after them)
             if (_openWorld) programText = InsertAfterRuntime(programText, $"#define FIRE_PROG_END {_nextClassId}u   // the end of the program's class ids (the classes of plugins come after)\n");
             return ResolveLineResets(programText);
@@ -2536,9 +2591,16 @@ namespace fire.Native
         }
 
         /// <summary>Does a method call of this name with this many arguments reach an implementation that fills in default values? Then its dispatcher gets the scope list.</summary>
-        private bool DispatchNeedsDefaults(string name, int argc) =>
-            _program.Program.Classes.Values.Any(rc => MethodsFor(rc, name, argc).Any(m => m.ParamCount != argc))
-            || ExtensionMethods(name, argc).Any(e => MethodsFor(e.Rc, name, argc).Any(m => m.ParamCount != argc));
+        private bool DispatchNeedsDefaults(string name, int argc)
+        {
+            // (only the classes of the program decide: once per name)
+            if (_needsDefaults.TryGetValue((name, argc), out bool known)) return known;
+            bool needs = _program.Program.Classes.Values.Any(rc => MethodsFor(rc, name, argc).Any(m => m.ParamCount != argc))
+                || ExtensionMethods(name, argc).Any(e => MethodsFor(e.Rc, name, argc).Any(m => m.ParamCount != argc));
+            _needsDefaults[(name, argc)] = needs;
+            return needs;
+        }
+        private readonly Dictionary<(string, int), bool> _needsDefaults = new();
 
         /// <summary>The conversions of the base types that a method call reaches when no class defines the method (SPEC 8.10): per kind of receiver the C++ expression.</summary>
         private static IEnumerable<(string Kind, string Expr)> BuiltinMethods(string name, int argc)
@@ -3089,8 +3151,20 @@ namespace fire.Native
 
         /// <summary>Does some class of the program declare a property of this name (`get_name`/`set_name`)? Then reading and writing it takes the scope list
         /// of the caller (the getter's result belongs to it).</summary>
-        private bool HasProperty(string name) =>
-            _program.Program.Classes.Values.Any(rc => rc.Methods.ContainsKey("get_" + name) || rc.Methods.ContainsKey("set_" + name));
+        private bool HasProperty(string name)
+        {
+            // (the classes of the program do not change while it is generated: the names of all properties once)
+            if (_propertyNames == null)
+            {
+                var names = new HashSet<string>(StringComparer.Ordinal);
+                foreach (var rc in _program.Program.Classes.Values)
+                    foreach (var method in rc.Methods.Keys)
+                        if (method.StartsWith("get_", StringComparison.Ordinal) || method.StartsWith("set_", StringComparison.Ordinal)) names.Add(method.Substring(4));
+                _propertyNames = names;
+            }
+            return _propertyNames.Contains(name);
+        }
+        private HashSet<string>? _propertyNames;
 
         /// <summary>Access to `name` where some class has a property of that name (SPEC 8.8): a real field of the class wins, otherwise the getter/setter
         /// is called - decided per class, like the VM does by name at run time.</summary>
@@ -3405,17 +3479,17 @@ namespace fire.Native
         private sealed class Flow
         {
             public int Depth;
-            public List<(int Id, int Declared)> Scopes = new();
+            public List<(int Id, int Declared)> Scopes;
             /// <summary>Bit k: stack slot k may hold a string/array/buffer (slots beyond 63 are assumed to).</summary>
             public ulong Refs;
             /// <summary>The static type of each stack slot (see TypeOf; slots beyond 63 are unknown).</summary>
-            public int[] Types = new int[64];
+            public int[] Types;
             /// <summary>Bit k: stack slot k holds its value only in its scalar shadow (`s{k}_n` a FireInt, `s{k}_b` a bool, after its type) - its Value is stale until
             /// it is materialized (CppGenerator.ScalarsOn). Never at a jump target.</summary>
             public ulong Scalar;
             /// <summary>Slot k holds the value of this variable (`self`, a parameter, a local of a block) - it was loaded without a copy (AliasOn); the slot's Value is
             /// stale until it is materialized. Only within straight code: every jump, every fall into a target and every instruction that is not AliasAware materializes.</summary>
-            public string?[] Alias = new string?[64];
+            public string?[] Alias;
             /// <summary>Bit i: the list of statement temporaries of scope i (Scopes[i]) may hold something - OwnerList handed it out since its last ReleaseTemps. Without
             /// it ReleaseTemps leaves nothing (no `leave` of an empty list).</summary>
             public ulong TempsDirty;
@@ -3431,13 +3505,29 @@ namespace fire.Native
             /// the array, its length, its numbers), set when it was stored and nothing since could have changed it - an element is then one comparison
             /// and one load (ROADMAP 21). Never at a jump target that is reached without it. Immutable: replaced on change.</summary>
             public string[] Arrays = Array.Empty<string>();
-            public List<HEntry> Handlers = new();
+            public List<HEntry> Handlers;
             /// <summary>The catch lambda this code belongs to (null: the function itself).</summary>
             public Region? Region;
             /// <summary>The `finally` blocks that this code is inside of (their entry addresses), outermost first.</summary>
-            public List<int> Fins = new();
+            public List<int> Fins;
 
-            public Flow Clone() => new() { Depth = Depth, Scopes = new List<(int, int)>(Scopes), Refs = Refs, Types = (int[])Types.Clone(), Scalar = Scalar, Alias = (string?[])Alias.Clone(), TempsDirty = TempsDirty, Borrowed = Borrowed, SelfAlive = SelfAlive, Arrays = Arrays, Handlers = new List<HEntry>(Handlers), Region = Region, Fins = new List<int>(Fins) };
+            public Flow()
+            {
+                Scopes = new();
+                Types = new int[64];
+                Alias = new string?[64];
+                Handlers = new();
+                Fins = new();
+            }
+
+            /// <summary>A copy (Clone): without the empty lists and arrays of a new state - the generator copies a state for every instruction it looks at.</summary>
+            private Flow(Flow o)
+            {
+                Depth = o.Depth; Scopes = new List<(int, int)>(o.Scopes); Refs = o.Refs; Types = (int[])o.Types.Clone(); Scalar = o.Scalar; Alias = (string?[])o.Alias.Clone();
+                TempsDirty = o.TempsDirty; Borrowed = o.Borrowed; SelfAlive = o.SelfAlive; Arrays = o.Arrays; Handlers = new List<HEntry>(o.Handlers); Region = o.Region; Fins = new List<int>(o.Fins);
+            }
+
+            public Flow Clone() => new(this);
 
             /// <summary>Forgets the types of the slots from <paramref name="from"/> on.</summary>
             public void ClearTypes(int from)
@@ -3488,6 +3578,8 @@ namespace fire.Native
             public bool DeferCatchRelease;
             public bool ReturnExit;
             public readonly Out Out = new();
+            /// <summary>The names of its slots (`c{Template}_{k}`), made once (SlotName).</summary>
+            public readonly Dictionary<int, string> SlotNames = new();
         }
 
         private void UseExceptions()
@@ -3562,9 +3654,14 @@ namespace fire.Native
         private static string SlotName(Region? region, int k)
         {
             for (var r = region; r != null; r = r.Outer)
-                if (k >= r.DepthBase) return $"c{r.Template}_{k}";
-            return $"s{k}";
+                if (k >= r.DepthBase)
+                {
+                    if (!r.SlotNames.TryGetValue(k, out var name)) r.SlotNames[k] = name = $"c{r.Template}_{k}";
+                    return name;
+                }
+            return k >= 0 && k < StackSlotNames.Length ? StackSlotNames[k] : $"s{k}";
         }
+        private static readonly string[] StackSlotNames = Enumerable.Range(0, 256).Select(k => $"s{k}").ToArray();
 
         private int ExcTypeId(string? typeName)
         {
@@ -3666,12 +3763,13 @@ namespace fire.Native
             var locals = new SortedSet<string>(StringComparer.Ordinal);
             for (int i = 0; i < f.ThreadArgs; i++) { locals.Add($"T{f.GlobalSlotCount + i}"); f.ThreadVars.Add(f.GlobalSlotCount + i); MarkVarRef(VarKey(f, $"T{f.GlobalSlotCount + i}")); JoinVarType(VarKey(f, $"T{f.GlobalSlotCount + i}"), TypeUnknown); }
 
-            void Propagate(int addr, Flow state, int from)
+            // (`owned`: the caller does not use the state any more - the first state of a target can be it instead of a copy)
+            void Propagate(int addr, Flow state, int from, bool owned = false)
             {
                 if (!indexOfAddr.TryGetValue(addr, out int target))
                     throw new NativeNotSupportedException($"jump to {addr} inside an instruction ({name})");
-                if (finAddrs.Contains(addr)) { state = state.Clone(); state.Fins.Add(addr); }
-                if (entry[target] == null) { entry[target] = state.Clone(); work.Push(target); return; }
+                if (finAddrs.Contains(addr)) { state = state.Clone(); state.Fins.Add(addr); owned = true; }
+                if (entry[target] == null) { entry[target] = owned ? state : state.Clone(); work.Push(target); return; }
                 var existing = entry[target]!;
                 if (!existing.SameShape(state))
                     throw new NativeNotSupportedException($"inconsistent stack/scope state at {addr} ({name}), reached from {from}");
@@ -3711,7 +3809,7 @@ namespace fire.Native
                     if (step.FallsThrough)
                     {
                         if (idx + 1 >= code.Count) throw new NativeNotSupportedException($"code of {name} runs past its end");
-                        Propagate(code[idx + 1].Addr, state, ins.Addr);
+                        Propagate(code[idx + 1].Addr, state, ins.Addr, owned: true);   // (its last use)
                     }
                 }
                 if (f.FinSignature == signature) break;

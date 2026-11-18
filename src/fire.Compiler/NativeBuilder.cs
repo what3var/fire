@@ -189,7 +189,9 @@ namespace fire.Compiler
             string workDir = keepSources ? Path.GetFullPath(output) + ".src" : Path.Combine(Path.GetTempPath(), "fire-native-" + Guid.NewGuid().ToString("N"));
             try
             {
+                BuildTimes.Lap("C generator: the program in the builder");
                 string cppFile = WriteFiles(workDir, cpp, target, SourceName, configDirectory, program.Natives);
+                BuildTimes.Lap("writing the files");
                 string? nativesFile = program.Natives != null ? Path.Combine(workDir, NativesName) : null;
                 string exe = Path.GetFullPath(output);
                 if (toolchain.EffectiveKind != "custom" && ToolchainDetector.Find(toolchain) == null)
@@ -212,6 +214,16 @@ namespace fire.Compiler
                     var (lastExe, lastArgs) = sourceCommands[^1];
                     sourceCommands[^1] = (lastExe, lastArgs + " " + mapOptions);
                 }
+                // (the same files and commands as a program built before: that program - ProgramCache)
+                string? cacheKey = ProgramCache.Key(toolchain, target, workDir, exe, sourceCommands, config.Stats);
+                if (cacheKey != null && ProgramCache.TryRestore(target, cacheKey, exe))
+                {
+                    BuildMonitor.Step(BuildPhase.Link, "The program is unchanged: taken from the cache", sourceCommands.Count - 1, sourceCommands.Count);
+                    log.AppendLine($"The C of the program and the commands are those of a program built before: taken from the cache ({cacheKey.Substring(0, 16)}).");
+                    BuildTimes.Lap("the program from the cache (unchanged C)");
+                    sourceCommands.Clear();
+                }
+                bool compiled = sourceCommands.Count > 0;
                 for (int c = 0; c < sourceCommands.Count; c++)
                 {
                     var (exeName, arguments) = sourceCommands[c];
@@ -221,9 +233,11 @@ namespace fire.Compiler
                     log.AppendLine($"{exeName} {arguments}");
                     var (stepOk, text) = Run(exeName, arguments, workDir);
                     log.Append(text);
+                    BuildTimes.Lap($"{Path.GetFileName(exeName)} ({(c == sourceCommands.Count - 1 ? "compile and link" : "compile")})");
                     if (!(ok = stepOk)) break;
                 }
                 bool built = ok && File.Exists(exe);
+                if (built && compiled && cacheKey != null) ProgramCache.Store(target, cacheKey, exe);
                 if (built) ApplyPeMetadata(exe, program, target, log);
                 if (built && config.Stats) WriteStats(target, exe, workDir, cppFile, mapFile, program, log);
                 if (built && ToolchainDrivers.AfterLink(toolchain, target, exe) is { } after) log.AppendLine(after);   // (a target without an operating system: its disk image)
@@ -263,12 +277,14 @@ namespace fire.Compiler
             catch (NativeNotSupportedException ex) { return AsSource($"Linkage \"static\" is not possible for this program ({ex.Message}): built with linkage \"source\"."); }
             log.Append(staticPlan.Log);
             log.AppendLine($"generated in {watch.ElapsedMilliseconds} ms");
+            BuildTimes.Lap($"C generator: the program and {staticPlan.Libraries.Count} library modules ({staticPlan.Libraries.Count(l => !l.Cached)} not in the cache)");
             var program = new NativeProgram(staticPlan.ProgramC, staticPlan.Natives, linked.GuiSubsystem, linked.VersionInfo, linked.IconPath) { Funcs = staticPlan.Funcs };
             string? configDirectory = config.Path == null ? null : Path.GetDirectoryName(config.Path);
             string workDir = keepSources ? Path.GetFullPath(output) + ".src" : Path.Combine(Path.GetTempPath(), "fire-native-" + Guid.NewGuid().ToString("N"));
             try
             {
                 string cFile = WriteFiles(workDir, program.C, target, SourceName, configDirectory, program.Natives);
+                BuildTimes.Lap("writing the files");
                 string? nativesFile = program.Natives != null ? Path.Combine(workDir, NativesName) : null;
                 string exe = Path.GetFullPath(output);
                 // (Windows: DLLs - the runtime one of them, see CppGenerator "linkage shared on Windows")
@@ -351,6 +367,7 @@ namespace fire.Compiler
                     logs[i] = libraryLog.ToString();
                 }
                 monitor?.Token.ThrowIfCancellationRequested();
+                if (missing.Count > 0) BuildTimes.Lap($"compiling {missing.Count} library modules (side by side)");
                 foreach (var text in logs) log.Append(text);
                 if (failed.FirstOrDefault(f => f != null) is { } failure)
                     return new NativeBuildResult(false, exe, log.ToString(), new[] { new Diagnostic(0, failure, DiagnosticSeverity.Error, ErrorCatalog.NativeToolchain) });
@@ -376,6 +393,7 @@ namespace fire.Compiler
                     if (!(linkedOk = stepOk)) break;
                 }
                 log.AppendLine($"program built in {watch.ElapsedMilliseconds} ms");
+                BuildTimes.Lap("compiling and linking the program");
                 bool built = linkedOk && File.Exists(exe);
                 if (built) ApplyPeMetadata(exe, program, target, log);
                 if (built && config.Stats)
