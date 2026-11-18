@@ -1,0 +1,49 @@
+#import "json"
+class Prop {
+    string kind
+    construct() { }
+}
+class Data {
+    Prop first
+    List<Prop> props
+    construct() { }
+}
+class Check {
+    static string Alive(Prop p) { try { return p.kind } catch (DestroyedException e) { return "destroyed" } }
+    static string Show(List<Prop> l) {
+        string s = ""
+        for (int i = 0; i < l.Count; i++) { s = s + Check.Alive(l[i]) + " " }
+        return s + "(" + l.Count + ")"
+    }
+}
+var d = Json.Deserialize<Data>("{\"props\":[{\"kind\":\"a\"},{\"kind\":\"b\"},{\"kind\":\"c\"},{\"kind\":\"d\"},{\"kind\":\"e\"}]}")
+print(d.props[0] is from d.props)
+var removed = d.props[1]
+d.props.RemoveAt(1)
+print("RemoveAt: " + Check.Show(d.props) + ", the removed one: " + Check.Alive(removed))
+var taken = d.props.TakeAt(0)
+print("TakeAt: " + Check.Show(d.props) + ", taken: " + Check.Alive(taken) + " " + (taken is from d.props))
+for (int i = 0; i < 10; i++) {
+    var p = new Prop()
+    p.kind = "n" + i
+    d.props.Add(take p)
+}
+print("past the capacity: " + Check.Show(d.props))
+print(Json.Serialize(d))
+any o = Json.Parse("{\"a\":{\"v\":1},\"b\":[1,2],\"c\":{\"v\":3},\"d\":{\"v\":4}}")
+o.Set("e", 5)
+o.Remove("a")
+print(Json.Serialize(o))
+var s = new Data()
+s.props = new List<Prop>()
+var shared = new Prop()
+shared.kind = "shared"
+s.props.Add(take shared)
+s.first = s.props[0]
+string text = Json.Serialize(s)
+print(text)
+var back = Json.Deserialize<Data>(text)
+print((back.first == back.props[0]) + " " + (back.props[0] is from back.props))
+back.props.RemoveAt(0)
+print(Check.Alive(back.first))
+//# name: JSON: eine gelesene List besitzt ihre Elemente (RemoveAt zerstoert, TakeAt gibt ab, Wachsen ueber die Kapazitaet und Schreiben danach), ein gelesenes JsonObject seine Werte
