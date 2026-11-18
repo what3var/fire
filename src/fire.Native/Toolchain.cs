@@ -40,6 +40,11 @@ namespace fire.Native
         [System.Text.Json.Serialization.JsonIgnore]
         public string EffectiveKind => Kind ?? "gcc";
 
+        /// <summary>The toolchain is the machine's choice for building or publishing (<see cref="MachineToolchains"/>), not one the project named: a C-only compiler (TinyCC)
+        /// may then hand a program with natives in C++ to the next compiler (NativeBuilder). Not saved.</summary>
+        [System.Text.Json.Serialization.JsonIgnore]
+        public bool MachineChoice { get; set; }
+
         public static readonly IReadOnlyDictionary<string, ToolchainDef> BuiltIn = WithDrivers(new Dictionary<string, ToolchainDef>(StringComparer.OrdinalIgnoreCase)
         {
             ["gcc"] = new() { Kind = "gcc", Compiler = "g++", Std = "c++17", Optimization = "-O2", Args = new() { "-Wall", "-Wextra" } },
@@ -71,7 +76,7 @@ namespace fire.Native
                 Extends = Extends, Kind = Kind ?? b.Kind, Compiler = Compiler ?? b.Compiler, Std = Std ?? b.Std, CStd = CStd ?? b.CStd,
                 CCompiler = CCompiler ?? (Compiler != null ? null : b.CCompiler), Optimization = Optimization ?? b.Optimization, Strip = Strip ?? b.Strip,
                 Args = Args ?? b.Args, Libs = Libs ?? b.Libs, IncludeDirs = IncludeDirs ?? b.IncludeDirs, Command = Command ?? b.Command,
-                Layout = Layout ?? b.Layout, BuildCommand = BuildCommand ?? b.BuildCommand,
+                Layout = Layout ?? b.Layout, BuildCommand = BuildCommand ?? b.BuildCommand, MachineChoice = MachineChoice || b.MachineChoice,
             };
         }
 

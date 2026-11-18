@@ -205,7 +205,7 @@ namespace fire.Compiler
             using var spinner = StartSpinner();
             Status("building the native test program ...");
             var target = config.ResolveTarget(null);
-            var toolchain = config.ResolveToolchain(target, toolchainName);
+            var toolchain = config.ResolveToolchain(target, toolchainName, fire.Native.ToolchainPurpose.Build);
             string dir = Path.Combine(Path.GetTempPath(), "fire-test-" + Guid.NewGuid().ToString("N"));
             Directory.CreateDirectory(dir);
             try
