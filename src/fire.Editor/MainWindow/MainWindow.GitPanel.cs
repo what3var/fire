@@ -27,6 +27,7 @@ namespace fire.Editor
             _gitPanel.CommitRequested += (message, push) => _ = GitPanelCommit(message, push);
             _gitPanel.FolderFilesRequested += entry => _ = GitPanelFolderFiles(entry);
             _gitPanel.IgnoreRequested += entry => _ = GitPanelIgnore(entry);
+            _gitPanel.RepositoryRequested += OpenGitRepositoryView;
         }
 
         /// <summary>The files of an untracked folder that was opened in the panel (read in the background, at most GitRows.FolderLimit).</summary>
@@ -161,6 +162,7 @@ namespace fire.Editor
             {
                 var overview = await Task.Run(() => repo.Overview());
                 if (overview.HasConflicts) { _gitPanel.ShowNotice("Some files still have conflicts (!): solve them and stage them (+) first.", error: true); return; }
+                if (overview.Operation == GitOperationKind.Rebase) { _gitPanel.ShowNotice("A rebase is going on: stage the solved files (+), then press Continue in the Repository view (Git > Repository).", error: true); return; }
                 if (overview.Staged.Count == 0 && !overview.IsMerging)
                 {
                     if (overview.Count == 0) { _gitPanel.ShowNotice("Nothing has changed since the last commit."); return; }

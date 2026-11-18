@@ -41,7 +41,7 @@ namespace fire.Git
     /// folder; <see cref="GitChange.Path"/> is relative to it (with `/`). A server that asks for a user name and a password (https) is served by the `credentials` function that the caller gives:
     /// it gets the address and returns the credentials (null: no).
     /// </summary>
-    public sealed class GitRepository : IDisposable
+    public sealed partial class GitRepository : IDisposable
     {
         private readonly Repository _repo;
 
@@ -267,7 +267,7 @@ namespace fire.Git
         public GitOverview Overview(IReadOnlyList<GitChange> changes)
         {
             var current = HasCommits ? Branches().FirstOrDefault(b => b.IsCurrent) : null;
-            return GitOverview.Build(BranchName, current?.Ahead ?? 0, current?.Behind ?? 0, current?.HasUpstream ?? false, _repo.Network.Remotes.Any(), IsMerging, changes);
+            return GitOverview.Build(BranchName, current?.Ahead ?? 0, current?.Behind ?? 0, current?.HasUpstream ?? false, _repo.Network.Remotes.Any(), IsMerging, changes) with { Operation = Operation };
         }
 
         public bool IsIgnored(string path) => _repo.Ignore.IsPathIgnored(RelativeOf(path));
@@ -424,7 +424,7 @@ namespace fire.Git
             try
             {
                 IEnumerable<Commit> commits = path == null
-                    ? _repo.Commits.QueryBy(new CommitFilter { SortBy = CommitSortStrategies.Time })
+                    ? _repo.Commits.QueryBy(new CommitFilter { SortBy = CommitSortStrategies.Topological | CommitSortStrategies.Time })   // (each commit before its parents: commits of the same second stay in order)
                     : _repo.Commits.QueryBy(RelativeOf(path)).Select(e => e.Commit);
                 return commits.Take(max).Select(Info).ToList();
             }
