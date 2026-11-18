@@ -3,7 +3,7 @@
 ; Non-commercial use only
 
 #define MyAppName "spark"
-#define MyAppVersion "alpha-2610"
+#define MyAppVersion "alpha-2611"
 #define MyAppPublisher "what3var"
 #define MyAppURL "https://github.com/what3var/fire/"
 #define MyAppExeName "spark.exe"
@@ -105,6 +105,7 @@ Name: "assoc_md";      Description: "Markdown (.md), in ""Open with"" only"; Gro
 Name: "assistant";     Description: "The assistant: a small helper with a local AI model (asks before it downloads the model, about 500 MB)"; GroupDescription: "Extras:"; Flags: unchecked
 
 [Dirs]
+Name: "{app}\Assistant"; Permissions: users-modify
 Name: "{app}\Packages"; Permissions: users-modify
 Name: "{app}\Toolchain"; Permissions: users-modify
 
