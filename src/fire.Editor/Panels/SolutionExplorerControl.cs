@@ -44,9 +44,32 @@ namespace fire.Editor
         public bool IsVirtual { get; init; }
         /// <summary>Something the project leaves out (bin, obj, a file or folder whose name starts with a dot): only with "Show All Files", pale.</summary>
         public bool IsHidden { get; init; }
-        /// <summary>The git state of a file (null: none), and for a folder, project or solution whether something below it is changed.</summary>
-        public GitFileState? GitState { get; set; }
-        public bool GitChangedBelow { get; set; }
+        /// <summary>The git state of a file (null: none), and for a folder, project or solution whether something below it is changed. A change updates the row (the marks of git are
+        /// put on the tree in place when only they changed: SolutionExplorerControl.UpdateGit).</summary>
+        public GitFileState? GitState
+        {
+            get => _gitState;
+            set { if (_gitState != value) { _gitState = value; NotifyGit(); } }
+        }
+        private GitFileState? _gitState;
+        public bool GitChangedBelow
+        {
+            get => _gitBelow;
+            set { if (_gitBelow != value) { _gitBelow = value; NotifyGit(); } }
+        }
+        private bool _gitBelow;
+
+        /// <summary>What the row shows of git: the letter of the file, a dot for a folder with changes below, nothing.</summary>
+        public string GitMarkText => GitState is { } s ? SolutionExplorerControl.GitMark(s) : GitChangedBelow ? "●" : "";
+        public IBrush GitMarkBrush => SolutionExplorerControl.GitBrush(GitState ?? GitFileState.Modified);
+        public double GitMarkSize => GitState != null ? 11 : 9;
+
+        private void NotifyGit()
+        {
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(GitMarkText)));
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(GitMarkBrush)));
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(GitMarkSize)));
+        }
         /// <summary>The project of the active document is shown in the accent color.</summary>
         public bool IsActive { get; init; }
         /// <summary>The identity of a row across refreshes (for the expanded state).</summary>
@@ -420,16 +443,17 @@ namespace fire.Editor
                 Foreground = node.IsActive ? EditorTheme.Solid(EditorTheme.AccentTextColor) : node.Kind == ExplorerKind.References ? EditorTheme.TextDim : EditorTheme.Text,
                 VerticalAlignment = VerticalAlignment.Center,
             });
-            if (node.GitState is { } gs)
-                panel.Children.Add(new TextBlock { Text = GitMark(gs), Foreground = GitBrush(gs), FontWeight = FontWeight.Bold, FontSize = 11, VerticalAlignment = VerticalAlignment.Center });
-            else if (node.GitChangedBelow)
-                panel.Children.Add(new TextBlock { Text = "●", Foreground = GitBrush(GitFileState.Modified), FontSize = 9, VerticalAlignment = VerticalAlignment.Center });
+            var mark = new TextBlock { FontWeight = FontWeight.Bold, VerticalAlignment = VerticalAlignment.Center };
+            mark.Bind(TextBlock.TextProperty, new Binding(nameof(ExplorerNode.GitMarkText)) { Source = node });
+            mark.Bind(TextBlock.ForegroundProperty, new Binding(nameof(ExplorerNode.GitMarkBrush)) { Source = node });
+            mark.Bind(TextBlock.FontSizeProperty, new Binding(nameof(ExplorerNode.GitMarkSize)) { Source = node });
+            panel.Children.Add(mark);
             if (node.Suffix.Length > 0)
                 panel.Children.Add(new TextBlock { Text = node.Suffix, Foreground = EditorTheme.TextDim, FontSize = 11, VerticalAlignment = VerticalAlignment.Center });
             return panel;
         }
 
-        private static string GitMark(GitFileState s) => s switch
+        internal static string GitMark(GitFileState s) => s switch
         {
             GitFileState.Modified => "M", GitFileState.Added => "A", GitFileState.Untracked => "U", GitFileState.Deleted => "D", GitFileState.Renamed => "R", GitFileState.Conflicted => "!", _ => "",
         };
@@ -438,7 +462,7 @@ namespace fire.Editor
         private static readonly IBrush GitNew = new SolidColorBrush(Color.FromRgb(0x7F, 0xD9, 0x7F));
         private static readonly IBrush GitBad = new SolidColorBrush(Color.FromRgb(0xE8, 0x6A, 0x6A));
 
-        private static IBrush GitBrush(GitFileState s) => s switch
+        internal static IBrush GitBrush(GitFileState s) => s switch
         {
             GitFileState.Added or GitFileState.Untracked => GitNew, GitFileState.Deleted or GitFileState.Conflicted => GitBad, _ => GitModified,
         };
@@ -660,16 +684,34 @@ namespace fire.Editor
             return entries;
         }
 
-        /// <summary>Puts the git state on the files, and a mark on every folder, project and solution that has a changed file below it.</summary>
+        /// <summary>Puts the git state on the files, and a mark on every folder, project and solution that has a changed file below it (and takes away the marks of what is no longer changed).</summary>
         private bool MarkGit(IEnumerable<ExplorerNode> nodes)
         {
             bool any = false;
             foreach (var n in nodes)
             {
-                if (n.Kind is ExplorerKind.File or ExplorerKind.Content && n.Path != null && _git!.TryGetValue(System.IO.Path.GetFullPath(n.Path), out var state)) { n.GitState = state; any = true; }
-                if (MarkGit(n.Children)) { n.GitChangedBelow = true; any = true; }
+                var state = _git != null && n.Kind is ExplorerKind.File or ExplorerKind.Content && n.Path != null ? GitRepository.StateIn(_git, System.IO.Path.GetFullPath(n.Path)) : null;
+                n.GitState = state;
+                bool below = MarkGit(n.Children);
+                n.GitChangedBelow = below;
+                any |= below || state != null;
             }
             return any;
+        }
+
+        /// <summary>
+        /// Only the state of git changed (a refresh of git, not of the workspace): the marks are put on the rows that are there, without building the tree anew - a project with thousands of
+        /// files would take seconds for that. Another branch (the solution's row shows it) or no tree yet: the whole tree.
+        /// </summary>
+        public void UpdateGit(Workspace workspace, string? activeFile, IReadOnlyDictionary<string, GitFileState>? git, string? branch)
+        {
+            if (!ReferenceEquals(workspace, _workspace) || branch != _branch || (git == null) != (_git == null) || !string.Equals(activeFile, _activeFile, ProjectFiles.PathComparison) || _roots.Count == 0)
+            {
+                Refresh(workspace, activeFile, git, branch);
+                return;
+            }
+            _git = git;
+            MarkGit(_roots);
         }
 
         private void RememberCollapsed(IEnumerable<ExplorerNode> nodes)

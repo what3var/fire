@@ -94,7 +94,8 @@ namespace fire.Editor
 
     /// <summary>
     /// Bundles the bursts of a file watcher (a checkout writes hundreds of files): a batch is ready when nothing came for <c>quiet</c>, at the latest <c>maxDelay</c> after its first change. While
-    /// it is held (a git command of the editor runs, which compares everything afterwards) nothing is handed out. The time is passed in (tests).
+    /// it is held (a git command of the editor runs, which compares everything afterwards) nothing is handed out. A big burst (<see cref="LargeBatch"/> paths or more: a checkout, a build output
+    /// that is not ignored) or a repository whose state is slow to read (<see cref="Slow"/>) waits longer: 5 times the quiet time, at most twice maxDelay. The time is passed in (tests).
     /// </summary>
     public sealed class ChangeBatcher
     {
@@ -107,6 +108,12 @@ namespace fire.Editor
         public ChangeBatcher(TimeSpan quiet, TimeSpan maxDelay) { _quiet = quiet; _maxDelay = maxDelay; }
 
         public bool HasPending { get { lock (_lock) return !_batch.IsEmpty; } }
+
+        /// <summary>From this many paths on, a batch waits longer.</summary>
+        public int LargeBatch { get; init; } = 500;
+
+        /// <summary>Reading the state of the repository is slow (a huge tree): every batch waits as long as a large one.</summary>
+        public bool Slow { get; set; }
 
         public void Add(string path, bool existenceChanged, DateTime now)
         {
@@ -141,7 +148,10 @@ namespace fire.Editor
             lock (_lock)
             {
                 batch = _batch;
-                if (_held > 0 || _batch.IsEmpty || (now - _last < _quiet && now - _first < _maxDelay)) return false;
+                bool large = Slow || _batch.Paths.Count >= LargeBatch || _batch.Overflow;
+                var quiet = large ? _quiet * 5 : _quiet;
+                var maxDelay = large ? _maxDelay * 2 : _maxDelay;
+                if (_held > 0 || _batch.IsEmpty || (now - _last < quiet && now - _first < maxDelay)) return false;
                 _batch = new ChangeBatch();
                 return true;
             }
