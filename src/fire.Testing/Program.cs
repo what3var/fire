@@ -14,6 +14,8 @@ using fire.Values;
 TestProgress.Install();
 // FIRE_TESTS_ONLY=startproject: the start project of a solution, the order of Build Solution and Clean (seconds; before the standard libraries are installed, which it does not need)
 if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "startproject") { Environment.ExitCode = StartProjectTests.Run() == 0 ? 0 : 1; return; }
+// FIRE_TESTS_ONLY=explorer: the filter, Sync and Show All Files of spark's solution explorer (ExplorerTests.cs; seconds, nothing installed)
+if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "explorer") { Environment.ExitCode = ExplorerTests.Run() == 0 ? 0 : 1; return; }
 // the look of the UI must not depend on the desktop of the machine that runs the tests (SystemTheme: scaling, dark mode, accent, font)
 Environment.SetEnvironmentVariable("FIRE_SYSTEM_THEME", "off");
 // scene3d's GPU path takes a Vulkan device that is a CPU (lavapipe) only with FIRE_S3D_GPU=cpu - without it the hardware checks only see the fallback to
@@ -11658,6 +11660,7 @@ static int CountOccurrences(string haystack, string needle)
 ProjectTests.Run();
 RegistryTests.Run();
 NotesTests.Run();
+ExplorerTests.Run();
 McpServerTests.Run();
 AiModelsTests.Run();
 DiagnosticTests.Run();

@@ -165,6 +165,45 @@ namespace fire.Projects
             return found;
         }
 
+        /// <summary>What <see cref="Folders"/> and <see cref="ContentFiles"/> leave out of the folder of a project - the folders of builds (`bin`, `obj`), `node_modules`, folders and files whose
+        /// name starts with a dot - as paths relative to it (with `/`): "Show All Files" of the solution explorer shows them pale. The contents of `.git` are not listed (the folder is), nor
+        /// the folders of other projects; at most `limit` entries.</summary>
+        public static (List<string> Folders, List<string> Files) HiddenEntries(string directory, int limit = 2000)
+        {
+            var folders = new List<string>();
+            var files = new List<string>();
+            bool Full() => folders.Count + files.Count >= limit;
+            void Visit(string dir, string rel, bool hidden)
+            {
+                IEnumerable<string> entries;
+                try { entries = System.IO.Directory.EnumerateFiles(dir).OrderBy(f => f, StringComparer.OrdinalIgnoreCase).ToList(); } catch (Exception) { return; }
+                foreach (var f in entries)
+                {
+                    if (Full()) return;
+                    string name = Path.GetFileName(f);
+                    if (hidden || name.StartsWith('.')) files.Add(rel + name);
+                }
+                try { entries = System.IO.Directory.EnumerateDirectories(dir).OrderBy(d => d, StringComparer.OrdinalIgnoreCase).ToList(); } catch (Exception) { return; }
+                foreach (var sub in entries)
+                {
+                    if (Full()) return;
+                    string name = Path.GetFileName(sub);
+                    bool skipped = SkippedFolders.Contains(name, StringComparer.OrdinalIgnoreCase) || name.StartsWith('.');
+                    if (!hidden && !skipped)
+                    {
+                        bool nestedProject;
+                        try { nestedProject = System.IO.Directory.EnumerateFiles(sub, "*" + FireProject.Extension).Any(); } catch (Exception) { nestedProject = false; }
+                        if (!nestedProject) Visit(sub, rel + name + "/", false);
+                        continue;
+                    }
+                    folders.Add(rel + name);
+                    if (!name.Equals(".git", StringComparison.OrdinalIgnoreCase)) Visit(sub, rel + name + "/", true);
+                }
+            }
+            Visit(directory, "", false);
+            return (folders, files);
+        }
+
         /// <summary>Everything in the folder of the project that is not compiled and not a project or solution file (resources, C++ sources, notes): the content of the project, shown by the editor
         /// and used by `new Resource("...")` and by the natives. `limit` keeps a project in a huge folder from listing it all.</summary>
         public static List<string> ContentFiles(string directory, IReadOnlyCollection<string> compiled, int limit = 5000)

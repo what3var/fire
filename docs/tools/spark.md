@@ -48,6 +48,29 @@ spark is the IDE of fire (C#, Avalonia - Windows, Linux, macOS). **First Steps**
 - **Panels:** Output, Build log, Error list, Solution Explorer, Test Explorer ([testing](testing.md)), Todo ([notes](notes.md)), Devices
   ([devices](../devices/README.md)), Properties, Runtime. All of them dock, float or auto-hide; *View > Reset Layout* brings the start layout back.
 
+## The tool bar of the solution explorer
+
+Above the tree of the Solution Explorer ([projects](projects.md)) a row of buttons (each one explains itself in its tooltip) and a filter box:
+
+| Button | What it does |
+| --- | --- |
+| *Collapse All* | closes every project and folder; the solution stays open, the selection moves up to the row that can still be seen |
+| *Expand All* | opens every project and folder |
+| *Sync with Active Document* | selects the file of the active document in the tree: its folders open and the tree scrolls to it (a filter that hides it is cleared) |
+| *Track Active Document* | a switch: does the same whenever another document becomes active |
+| *Refresh* | reads the folders of all projects again from the disk (a file added or deleted outside spark) - as *Reload* in the context menu of a project |
+| *Show All Files* | a switch: also shows what the projects leave out - `bin`, `obj`, `node_modules`, files and folders whose name starts with a dot - pale (`.git` only as a folder); their context menu opens, shows and deletes them |
+| *New File* | the menu *New* of the context menu (script, class, window, circuit, markdown, image, other file) for the selected folder - for a selected file its folder, else its project; with nothing selected the project of the active document |
+| *New Folder...* | a new folder in the same place; on the solution or a solution folder a solution folder |
+| *Properties* | for a file the *Properties* panel (brought to the front), for a project (or a row in it) its properties dialog, for the solution the solution's |
+
+The two switches are kept in spark's settings. In a narrow panel the buttons that do not fit go into the menu of *…* at the right end.
+
+The **filter box** shows only the rows whose name contains the text - without regard to case, several words must all occur (`main fire` finds
+`main.fire`) - and the folders they are in, opened; below a matching folder everything stays (closed as it was). `Enter` or `Down` goes into the tree on
+the first match, `Esc` (also in the tree) or the cross empties the box, and the tree folds back to how it was before the filter, with the selected row in
+sight. While the filter is on, the tree is built again as always (a new file that matches shows up).
+
 ## The markup designer
 
 ![The FXML designer: markup on the left, the live design view on the right](../images/spark-designer.png)

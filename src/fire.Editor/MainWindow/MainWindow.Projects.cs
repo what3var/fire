@@ -33,6 +33,15 @@ namespace fire.Editor
             _solutionPanel.FileOpenRequested += path => OpenFile(path);
             _solutionPanel.CommandRequested += (command, node) => _ = OnSolutionCommand(command, node);
             _solutionPanel.SelectionChanged += OnExplorerSelection;
+            // the switches of its tool bar are kept in the settings
+            _solutionPanel.TrackActive = _settings.ExplorerTrackActive;
+            _solutionPanel.ShowAllFiles = _settings.ExplorerShowAllFiles;
+            _solutionPanel.OptionsChanged += () =>
+            {
+                _settings.ExplorerTrackActive = _solutionPanel.TrackActive;
+                _settings.ExplorerShowAllFiles = _solutionPanel.ShowAllFiles;
+                _settings.Save();
+            };
             mnuCloseWorkspace.IsEnabled = false;
         }
 
@@ -699,6 +708,10 @@ namespace fire.Editor
                 case "install-library": await InstallLibrary(project); break;
                 case "refresh": project?.Refresh(); _workspace.Refresh(); break;
                 case "properties": await ShowProjectProperties(project); break;
+                case "show-properties":   // the Properties button of the explorer's tool bar on a file (or on nothing): the Properties panel
+                    OnExplorerSelection(node);
+                    RevealTool("properties");
+                    break;
                 case "open-notes": await OpenOverview(project); break;
                 case "open-todo": TodoOpen_Click(this, new RoutedEventArgs()); break;
                 case "solution-properties": await ShowProjectProperties(_workspace.Projects.FirstOrDefault(), solutionTab: true); break;
