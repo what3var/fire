@@ -19,11 +19,12 @@ spark starts the assistant (`forge run Assistant/assistant.fire`, the package `a
 MCP server (HTTP on localhost, with the token of the connection file, [spark as an MCP server](../tools/spark-mcp.md)). It ends with spark. Its first start
 builds the packages it uses for this machine (a minute or two); spark's status bar shows that with a small bar.
 
-**Native.** Where a C toolchain is found, spark then builds the assistant once as a native program (`forge build Assistant/assistant.fire --engine native`,
-in the background at a low priority - the status bar shows "Building the assistant as a native program"; with gcc some minutes) into `assistant-native/`
-beside its settings, and starts that binary from the next start on instead of `forge run`. It is built again only when what it is made of changes: the
-script, the sources of the packages it imports (directly or through other packages) or the compiler (the key in `assistant.key`). Without a C toolchain,
-while the build runs, or when it failed (remembered in `assistant.failed` for that key, not tried again), the assistant runs in the virtual machine; the
+**Native.** Where a C toolchain is found, the assistant runs as a native program: spark builds it (`forge build Assistant/assistant.fire --engine native`,
+at a low priority - the status bar shows "Building the assistant as a native program"; with TinyCC, the Build compiler of Tools > Options, seconds, with gcc
+some minutes) into `assistant-native/` beside its settings and starts it as soon as the build is done - it does not start in the virtual machine meanwhile,
+which is far too slow for it. From then on that binary starts at once instead of `forge run`. It is built again only when what it is made of changes: the
+script, the sources of the packages it imports (directly or through other packages) or the compiler (the key in `assistant.key`). Only without a C
+toolchain, or when the build failed (remembered in `assistant.failed` for that key, not tried again), does the assistant run in the virtual machine; the
 Output says why. `FIRE_ASSISTANT_ENGINE=vm` keeps it in the VM.
 
 **Idle.** While nothing happens the assistant costs next to nothing: the character is painted again only when its next picture is due (30 a second while

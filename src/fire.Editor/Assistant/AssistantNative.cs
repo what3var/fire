@@ -15,7 +15,7 @@ namespace fire.Editor.Assistant
     /// <see cref="Folder"/> and starts that binary from then on instead of <c>forge run</c> - the program and its packages (ui, the C engine of ai, mcp, ...) run
     /// as machine code, not in the virtual machine. The build is made again only when what it is made of changed (<see cref="Key"/>: the script, the sources of
     /// the packages it imports - directly or through other packages - and the compiler); a build that failed is not tried again for the same key.
-    /// Without a C toolchain, or while the build runs, the assistant runs in the VM as before.
+    /// While the build runs the assistant waits (spark starts it when the build is done); only without a C toolchain, or when the build failed, does it run in the VM.
     /// </summary>
     public static class AssistantNative
     {
