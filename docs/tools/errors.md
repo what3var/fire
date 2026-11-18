@@ -300,7 +300,7 @@ configuration of the native build, a toolchain that is missing).
 | `E4049` | 'try' before a call expects a direct call of a registered function (no method call except obj.TakeLocal/TakeUpwards/TakeGlobal/TakeTo, no lambda call) |
 | `E4050` | '…' is a COPY of the outer variable inside the lambda (capture) and cannot be assigned there (declare a new local variable with a different name) |
 | `E4051` | '…' is 'readonly' and cannot be assigned after its declaration |
-| `E4052` | '….…' is 'readonly' and can only be assigned inside a constructor of the declaring class |
+| `E4052` | '….…' is 'readonly' and can only be assigned inside a constructor of the declaring class (`this.f = ...` outside a constructor; `obj.f = ...` where the class of `obj` is known - the type checker checks the member of that class, an error in lax mode too) |
 | `E4053` | '*' as an assignment target is only valid inside an 'unsafe' block |
 | `E4054` | Invalid assignment target |
 | `E4055` | '…' was already captured in this 'fire' |
@@ -329,6 +329,7 @@ configuration of the native build, a toolchain that is missing).
 | `E4078` | The initialisers of static fields need each other in a cycle: … - each one needs the value of the next one first; break the cycle (set one of them later, e.g. in a static method) (`static int x = B.y` and `static int y = B.Get()` with `Get() { return A.x }`: `A.x -> B.y -> (through B.Get()) A.x`; [static fields](../language/08-classes.md)) |
 | `E4079` | The initialiser of the static field '…' reads the top-level variable '…' - static fields are initialised before the top-level code runs, so it is still undefined there (make it a static field, or set the static field in the top-level code) |
 | `E4080` | 'replace' assigns a field - '…' is a variable (its old value goes with its scope; to destroy it now: 'delete …' and then the assignment) |
+| `E4081` | '….…' is 'static readonly' - only its initializer sets it (`ClassName.field = ...` or `this.field = ...` of a `static readonly` field) |
 
 ### E5xxx - Bytecode compiler
 

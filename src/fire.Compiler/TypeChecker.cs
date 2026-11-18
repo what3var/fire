@@ -177,6 +177,9 @@ namespace fire.Compiler
         /// <summary>A value that is certainly no string goes into a declaration `string` (DECISIONS D14): it becomes its text (`x.ToString()`). Reported in
         /// strict mode only, and there as a warning - the conversion is the language's rule, the warning asks to write it where it is meant.</summary>
         public const string TextConversionCode = "TC034";
+        /// <summary>A write of a `readonly` field outside a constructor of its class through a receiver of a known class: the error of the resolver for
+        /// `this.f = ...` (E4052) - an error in lax mode too.</summary>
+        public const string ReadonlyWriteCode = "E4052";
         private ExpressionTrees _trees = new();
         private Dictionary<Expr, string>? _treeTypes;
 
@@ -510,6 +513,8 @@ namespace fire.Compiler
             foreach (var (className, decl) in _classes)
                 foreach (var member in decl.Members)
                 {
+                    // (a property of that name that may give undefined: like such a field below - `x.Cursor` of an unknown class may be the property)
+                    if (member is PropertyDecl { Type: not { NonNull: true } } pd) { _otherFieldNames.Add(pd.Name); continue; }
                     if (member is not FieldDecl fd) continue;
                     // (a class of a package only with [InferDefined]; without it no class that reflection can fill: Reflect.Set may store undefined)
                     bool candidate = (decl.Source >= _firstUserSource || InferDefinedClass(decl)) && (InferDefinedClass(decl) || !ReflectionUsed) && !decl.IsRecord && fd.ArrayRanks.Count == 0
@@ -683,7 +688,8 @@ namespace fire.Compiler
         private string? FieldNeed(Expr access, string name)
         {
             var fields = FieldsOf(access, name);
-            if (fields.Count != 1 || ReceiverClass(access) == null && (_otherFieldNames.Contains(name) || FieldCandidates()[name].Count != 1)) return null;
+            // (an object of an unknown class: not a static field - that one is read through its class name, never through an object)
+            if (fields.Count != 1 || ReceiverClass(access) == null && (_otherFieldNames.Contains(name) || FieldCandidates()[name].Count != 1 || fields[0].IsStatic)) return null;
             return _fieldBad.Contains(fields[0]) ? null : FieldKey(fields[0]);
         }
 
@@ -2978,7 +2984,7 @@ namespace fire.Compiler
             if (target.IsDynamic && StaticClassRef(m.Target) is { } staticClass) { target = StaticType.ClassOf(staticClass); isStatic = true; }
             CheckAccess(target, m.Name, use, 0, m.Line, isStatic);
             CheckInterfaceAccessor(target, m.Name, use, m.Line);
-            if (use == MemberUse.Write && !isStatic) CheckRecordWrite(target, m.Name, m.Target, m.Line);
+            if (use == MemberUse.Write && !isStatic) { CheckRecordWrite(target, m.Name, m.Target, m.Line); CheckReadonlyWrite(target, m.Name, m.Target, m.Line); }
             if (MemberLog != null && target.Kind == StaticKind.Class && target.Class != null) MemberLog.Add((_source, m.Line, target.Class, m.Name, false));
             if (target.Kind == StaticKind.Class && FindMember(target, m.Name) == null && !HasMethodNamed(target, m.Name))
             {
@@ -3115,7 +3121,7 @@ namespace fire.Compiler
             if (_class != null && !_inBoundLambda && _refs.TryGetValue(id, out var r) && r is ResolvedRef.ImplicitThisMember && !IsLocal(id.Name))
             {
                 CheckAccess(ThisClass(), id.Name, use, 0, id.Line);
-                if (use == MemberUse.Write) CheckRecordWrite(ThisClass(), id.Name, null, id.Line);
+                if (use == MemberUse.Write) { CheckRecordWrite(ThisClass(), id.Name, null, id.Line); CheckReadonlyWrite(ThisClass(), id.Name, null, id.Line); }
             }
             return null;
         }
@@ -3153,6 +3159,29 @@ namespace fire.Compiler
             if (!chain.Any(c => c.Decl.Members.Any(m => m is FieldDecl f && f.Name == name && !f.IsStatic))) return;   // (a static field, a property: not the record's content)
             if (_inConstructor && !_inBoundLambda && receiver is null or ThisExpr && _class != null && chain.Any(c => c.Decl.Name == _class.Name)) return;
             ReportError(RecordWriteCode, $"'{name}' is a field of the record '{chain[0].Decl.Name}': a record is written only while it is constructed (in its constructor) - a changed copy is 'copy r with {{ .{name} = ... }}'", line);
+        }
+
+        /// <summary>`obj.f = v` (also `obj.f++`, `obj.f += 1`, `f = v` in a method) where the class of obj is known: the member the object has under that name
+        /// (the nearest class of its chain that declares an instance member of the name) decides - a `readonly` field is written only as `this.f` in a
+        /// constructor of the declaring class (E4052, like the resolver for `this.f`). Nothing else is looked at: a field of the same name in another class (a
+        /// `static readonly Cursor` of some class says nothing about the property `Cursor` of a window), a static field (the resolver checks `C.f`).</summary>
+        private void CheckReadonlyWrite(StaticType target, string name, Expr? receiver, int line)
+        {
+            if (target.Kind != StaticKind.Class || target.Class == null || !FullyKnown(target)) return;
+            foreach (var (decl, _) in Chain(target))
+            {
+                var member = decl.Members.FirstOrDefault(m => m is FieldDecl { IsStatic: false } f && f.Name == name || m is PropertyDecl { IsStatic: false } p && p.Name == name
+                    || m is MethodDecl { IsStatic: false } md && md.Name == name);
+                if (member == null) continue;
+                if (member is not FieldDecl { IsReadonly: true }) return;
+                // (`this.f` in a constructor of the class or of one derived from it - the resolver does not forbid the latter either)
+                if (_inConstructor && !_inBoundLambda && receiver is null or ThisExpr && _class != null && Chain(ThisClass()).Any(c => c.Decl.Name == decl.Name)) return;
+                // (the object may be of a derived class that declares the name again as something writable: the run time finds that one)
+                if (DerivedClasses(target.Class).Any(d => _classes.TryGetValue(d, out var dd) && dd.Members.Any(m => m is FieldDecl { IsStatic: false, IsReadonly: false } f && f.Name == name
+                    || m is PropertyDecl { IsStatic: false } p && p.Name == name))) return;
+                ReportError(ReadonlyWriteCode, $"'{PlainName(decl.Name)}.{name}' is 'readonly' and can only be assigned inside a constructor of the declaring class", line);
+                return;
+            }
         }
 
         /// <summary>A record: its base is a record (or none), and its fields hold only what does not change (TC027).</summary>
