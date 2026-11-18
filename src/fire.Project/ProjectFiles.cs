@@ -14,7 +14,24 @@ namespace fire.Projects
 
 
 
+        /// <summary>The file Publish leaves in each folder it copies into (docs/tools/projects.md, "Publish"): a folder that has it is no part of a project (the copies there are not its files).</summary>
+        public const string PublishMarker = ".firepublish";
+
+        public static bool IsPublishFolder(string folder)
+        {
+            try { return File.Exists(Path.Combine(folder, PublishMarker)); } catch (Exception) { return false; }
+        }
+
         public static bool IsPattern(string text) => text.IndexOfAny(new[] { '*', '?' }) >= 0;
+
+        private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, Regex> Patterns = new(StringComparer.Ordinal);
+
+        /// <summary><see cref="PatternToRegex"/>, made once per pattern (the build actions ask it for every file).</summary>
+        public static Regex CachedPattern(string pattern)
+        {
+            if (Patterns.Count > 512) Patterns.Clear();
+            return Patterns.GetOrAdd(pattern, PatternToRegex);
+        }
 
         /// <summary>A pattern (`/` as the separator; `*` any characters but `/`, `**` any folders, `?` one character, `{a,b}` one of the alternatives) as a regular expression over relative paths.</summary>
         public static Regex PatternToRegex(string pattern)
@@ -74,6 +91,8 @@ namespace fire.Projects
                     
                     if (nestedProject) 
                         continue;   // another project lives there: its files are its own
+                    if (IsPublishFolder(folder))
+                        continue;   // a folder Publish copies into (inside the project): what is there is a copy, not the project's
                     
                     VisitRecusively(folder, rel + name + "/");
                 }
@@ -97,7 +116,8 @@ namespace fire.Projects
             var result = new List<string>();
             var seen = new HashSet<string>(PathComparer);
 
-            bool Excluded(string rel) => excludes.Any(r => r.IsMatch(rel));
+            // (the build action Ignore or Copy takes a source out of the compile: docs/tools/projects.md, "Build actions")
+            bool Excluded(string rel) => excludes.Any(r => r.IsMatch(rel)) || project.BuildActions is { Count: > 0 } && FileBuildActions.DropsSource(FileBuildActions.Of(project, rel));
 
             foreach (var entry in patterns)
             {
@@ -155,7 +175,7 @@ namespace fire.Projects
                     if (SkippedFolders.Contains(name, StringComparer.OrdinalIgnoreCase) || name.StartsWith('.')) continue;
                     bool nestedProject;
                     try { nestedProject = System.IO.Directory.EnumerateFiles(sub, "*" + FireProject.Extension).Any(); } catch (Exception) { nestedProject = false; }
-                    if (nestedProject) continue;
+                    if (nestedProject || IsPublishFolder(sub)) continue;
                     found.Add(rel + name);
                     if (found.Count > 2000) return;
                     Visit(sub, rel + name + "/");

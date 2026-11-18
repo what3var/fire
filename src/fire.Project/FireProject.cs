@@ -105,6 +105,11 @@ namespace fire.Projects
         public string? Notes { get; set; }
         /// <summary>A library whose classes cannot be written to or read from JSON (`"serializable": false`, docs/stdlib/json.md), e.g. the elements of `ui`; null: they can.</summary>
         public bool? Serializable { get; set; }
+        /// <summary>What builds and publishing do with files (docs/tools/projects.md, "Build actions"): a path or a pattern (relative to the project file) -> `build`, `ignore`, `copy`
+        /// (next to the program when newer) or `copyAlways`. A file no entry names: a source is compiled, the rest is content (see <see cref="FileBuildActions"/>). null: none.</summary>
+        public Dictionary<string, string>? BuildActions { get; set; }
+        /// <summary>How the project is published (Publish in spark): on or off, the target folders, the engine and the mode; null: not published.</summary>
+        public PublishSettings? Publish { get; set; }
 
         /// <summary>Where the project was read from (null: not saved yet); not part of the file.</summary>
         [JsonIgnore] public string? FilePath { get; set; }
@@ -148,6 +153,7 @@ namespace fire.Projects
             {
                 Format = Format, Name = Name, Type = Type, Import = Import, Entry = Entry,
                 Files = Files, Exclude = Exclude, References = References, Settings = Settings, Native = Native, Standard = Standard, Drivers = Drivers, Notes = Notes, Serializable = Serializable,
+                BuildActions = BuildActions, Publish = Publish,
             };
             return JsonSerializer.Serialize(new SaveShape(copy), Options);
         }
@@ -176,6 +182,8 @@ namespace fire.Projects
                 Drivers = p.Drivers is { Count: > 0 } ? p.Drivers : null;
                 Notes = string.IsNullOrWhiteSpace(p.Notes) ? null : p.Notes;
                 Serializable = p.Serializable == false ? false : null;
+                BuildActions = p.BuildActions is { Count: > 0 } ? p.BuildActions : null;
+                Publish = p.Publish is { IsEmpty: false } ? p.Publish : null;
             }
             public int Format { get; }
             public string Name { get; }
@@ -191,6 +199,8 @@ namespace fire.Projects
             public List<string>? Drivers { get; }
             public string? Notes { get; }
             public bool? Serializable { get; }
+            public Dictionary<string, string>? BuildActions { get; }
+            public PublishSettings? Publish { get; }
         }
 
         /// <summary>The name a library is imported by: `import`, else the name of the project with every character that a name cannot have replaced by `_`;
@@ -223,6 +233,8 @@ namespace fire.Projects
             if (string.IsNullOrWhiteSpace(Name)) problems.Add("'name' is missing.");
             else if (Name.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0) problems.Add($"The name '{Name}' has characters that a file name cannot have.");
             problems.AddRange((Settings ?? new ProjectSettings()).Validate());
+            problems.AddRange(FileBuildActions.Validate(this));
+            if (Publish != null) problems.AddRange(Publish.Validate());
             if (Type == OutputType.Library)
             {
                 string import = ImportName;

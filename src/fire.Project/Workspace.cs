@@ -19,6 +19,10 @@ namespace fire.Projects
         public IReadOnlyList<string> ContentFiles { get; private set; } = Array.Empty<string>();
         /// <summary>The folders below the project folder (relative paths with `/`), also the empty ones.</summary>
         public IReadOnlyList<string> Folders { get; private set; } = Array.Empty<string>();
+        /// <summary>The files with the build action Copy or CopyAlways (`buildActions`): copied next to the program by a build and into the folders of a publish.</summary>
+        public IReadOnlyList<CopyItem> CopyFiles { get; private set; } = Array.Empty<CopyItem>();
+        /// <summary>The files with the build action Ignore (shown pale by the editor).</summary>
+        public IReadOnlyList<string> IgnoredFiles { get; private set; } = Array.Empty<string>();
         private HashSet<string> _fileSet = new(ProjectFiles.PathComparer);
 
         public LoadedProject(FireProject project, bool inSolution)
@@ -36,10 +40,27 @@ namespace fire.Projects
             Problems = problems;
             ContentFiles = ProjectFiles.ContentFiles(Project.Directory!, Files);
             Folders = ProjectFiles.Folders(Project.Directory!);
+            var copies = new List<CopyItem>();
+            var ignored = new List<string>();
+            if (Project.BuildActions is { Count: > 0 })
+            {
+                foreach (var file in ContentFiles)
+                {
+                    string rel = ProjectFiles.Relative(Directory, file);
+                    var action = FileBuildActions.Of(Project, rel);
+                    if (FileBuildActions.IsCopy(action)) copies.Add(new CopyItem(file, rel, action == FileBuildAction.CopyAlways));
+                    else if (action == FileBuildAction.Ignore) ignored.Add(file);
+                }
+            }
+            CopyFiles = copies;
+            IgnoredFiles = ignored;
             _fileSet = new HashSet<string>(Files, ProjectFiles.PathComparer);
         }
 
         public bool Contains(string path) => _fileSet.Contains(Path.GetFullPath(path));
+
+        /// <summary>The build action of a file of the project (`path` absolute or relative to the project).</summary>
+        public FileBuildAction BuildActionOf(string path) => FileBuildActions.Of(Project, ProjectFiles.Relative(Directory, Path.GetFullPath(path, Directory)));
     }
 
     /// <summary>

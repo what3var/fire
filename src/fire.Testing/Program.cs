@@ -14,6 +14,8 @@ using fire.Values;
 TestProgress.Install();
 // FIRE_TESTS_ONLY=startproject: the start project of a solution, the order of Build Solution and Clean (seconds; before the standard libraries are installed, which it does not need)
 if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "startproject") { Environment.ExitCode = StartProjectTests.Run() == 0 ? 0 : 1; return; }
+// FIRE_TESTS_ONLY=publish: build actions (Ignore, Copy) and Publish of projects and solutions (PublishTests.cs; seconds, the native part only with a C compiler; nothing installed)
+if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "publish") { Environment.ExitCode = PublishTests.Run() == 0 ? 0 : 1; return; }
 // FIRE_TESTS_ONLY=explorer: the filter, Sync and Show All Files of spark's solution explorer (ExplorerTests.cs; seconds, nothing installed)
 if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "explorer") { Environment.ExitCode = ExplorerTests.Run() == 0 ? 0 : 1; return; }
 // the look of the UI must not depend on the desktop of the machine that runs the tests (SystemTheme: scaling, dark mode, accent, font)
@@ -11661,6 +11663,7 @@ ProjectTests.Run();
 RegistryTests.Run();
 NotesTests.Run();
 ExplorerTests.Run();
+PublishTests.Run();
 McpServerTests.Run();
 AiModelsTests.Run();
 DiagnosticTests.Run();
