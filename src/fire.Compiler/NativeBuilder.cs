@@ -214,6 +214,16 @@ namespace fire.Compiler
                     var (lastExe, lastArgs) = sourceCommands[^1];
                     sourceCommands[^1] = (lastExe, lastArgs + " " + mapOptions);
                 }
+                // (the same files and commands as a program built before: that program - ProgramCache)
+                string? cacheKey = ProgramCache.Key(toolchain, target, workDir, exe, sourceCommands, config.Stats);
+                if (cacheKey != null && ProgramCache.TryRestore(target, cacheKey, exe))
+                {
+                    BuildMonitor.Step(BuildPhase.Link, "The program is unchanged: taken from the cache", sourceCommands.Count - 1, sourceCommands.Count);
+                    log.AppendLine($"The C of the program and the commands are those of a program built before: taken from the cache ({cacheKey.Substring(0, 16)}).");
+                    BuildTimes.Lap("the program from the cache (unchanged C)");
+                    sourceCommands.Clear();
+                }
+                bool compiled = sourceCommands.Count > 0;
                 for (int c = 0; c < sourceCommands.Count; c++)
                 {
                     var (exeName, arguments) = sourceCommands[c];
@@ -227,6 +237,7 @@ namespace fire.Compiler
                     if (!(ok = stepOk)) break;
                 }
                 bool built = ok && File.Exists(exe);
+                if (built && compiled && cacheKey != null) ProgramCache.Store(target, cacheKey, exe);
                 if (built) ApplyPeMetadata(exe, program, target, log);
                 if (built && config.Stats) WriteStats(target, exe, workDir, cppFile, mapFile, program, log);
                 if (built && ToolchainDrivers.AfterLink(toolchain, target, exe) is { } after) log.AppendLine(after);   // (a target without an operating system: its disk image)
