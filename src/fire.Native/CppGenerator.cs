@@ -1676,13 +1676,28 @@ namespace fire.Native
         /// <summary>The class of the code of this function as a number for the checks at run time (no class: all ones).</summary>
         private string CallerId(Func f) => f.Chunk.OwnerClass is { } owner && CheckAccess ? ClassIdExpr(RegisterClass(owner.Name)) : "0xFFFFFFFFu";
 
-        private bool RestrictedMethodName(string name) =>
-            CheckAccess && _program.Program.Classes.Values.Any(rc => rc.Methods.TryGetValue(name, out var list) && list.Any(m => m.Access is { } a && a != AccessModifier.Public));
+        private bool RestrictedMethodName(string name)
+        {
+            if (!CheckAccess) return false;
+            // (only the declarations of the program decide: once per name)
+            if (_restrictedMethods.TryGetValue(name, out bool known)) return known;
+            bool restricted = _program.Program.Classes.Values.Any(rc => rc.Methods.TryGetValue(name, out var list) && list.Any(m => m.Access is { } a && a != AccessModifier.Public));
+            _restrictedMethods[name] = restricted;
+            return restricted;
+        }
+        private readonly Dictionary<string, bool> _restrictedMethods = new(StringComparer.Ordinal);
 
         /// <summary>Is some field (or property accessor) of this name private or protected somewhere? Then the field helpers check the class of the caller.</summary>
-        private bool RestrictedField(string name) =>
-            CheckAccess && (_program.Program.Classes.Values.Any(rc => rc.OwnFieldInfo.TryGetValue(name, out var info) && info.AccessModifier != AccessModifier.Public)
-                || RestrictedMethodName("get_" + name) || RestrictedMethodName("set_" + name));
+        private bool RestrictedField(string name)
+        {
+            if (!CheckAccess) return false;
+            if (_restrictedFields.TryGetValue(name, out bool known)) return known;
+            bool restricted = _program.Program.Classes.Values.Any(rc => rc.OwnFieldInfo.TryGetValue(name, out var info) && info.AccessModifier != AccessModifier.Public)
+                || RestrictedMethodName("get_" + name) || RestrictedMethodName("set_" + name);
+            _restrictedFields[name] = restricted;
+            return restricted;
+        }
+        private readonly Dictionary<string, bool> _restrictedFields = new(StringComparer.Ordinal);
 
         /// <summary>The condition (over `caller`) under which the member may be used, empty when everybody may.</summary>
         private string AllowedExpr(RuntimeClass declaring, AccessModifier access)
@@ -2576,9 +2591,16 @@ namespace fire.Native
         }
 
         /// <summary>Does a method call of this name with this many arguments reach an implementation that fills in default values? Then its dispatcher gets the scope list.</summary>
-        private bool DispatchNeedsDefaults(string name, int argc) =>
-            _program.Program.Classes.Values.Any(rc => MethodsFor(rc, name, argc).Any(m => m.ParamCount != argc))
-            || ExtensionMethods(name, argc).Any(e => MethodsFor(e.Rc, name, argc).Any(m => m.ParamCount != argc));
+        private bool DispatchNeedsDefaults(string name, int argc)
+        {
+            // (only the classes of the program decide: once per name)
+            if (_needsDefaults.TryGetValue((name, argc), out bool known)) return known;
+            bool needs = _program.Program.Classes.Values.Any(rc => MethodsFor(rc, name, argc).Any(m => m.ParamCount != argc))
+                || ExtensionMethods(name, argc).Any(e => MethodsFor(e.Rc, name, argc).Any(m => m.ParamCount != argc));
+            _needsDefaults[(name, argc)] = needs;
+            return needs;
+        }
+        private readonly Dictionary<(string, int), bool> _needsDefaults = new();
 
         /// <summary>The conversions of the base types that a method call reaches when no class defines the method (SPEC 8.10): per kind of receiver the C++ expression.</summary>
         private static IEnumerable<(string Kind, string Expr)> BuiltinMethods(string name, int argc)
@@ -3457,17 +3479,17 @@ namespace fire.Native
         private sealed class Flow
         {
             public int Depth;
-            public List<(int Id, int Declared)> Scopes = new();
+            public List<(int Id, int Declared)> Scopes;
             /// <summary>Bit k: stack slot k may hold a string/array/buffer (slots beyond 63 are assumed to).</summary>
             public ulong Refs;
             /// <summary>The static type of each stack slot (see TypeOf; slots beyond 63 are unknown).</summary>
-            public int[] Types = new int[64];
+            public int[] Types;
             /// <summary>Bit k: stack slot k holds its value only in its scalar shadow (`s{k}_n` a FireInt, `s{k}_b` a bool, after its type) - its Value is stale until
             /// it is materialized (CppGenerator.ScalarsOn). Never at a jump target.</summary>
             public ulong Scalar;
             /// <summary>Slot k holds the value of this variable (`self`, a parameter, a local of a block) - it was loaded without a copy (AliasOn); the slot's Value is
             /// stale until it is materialized. Only within straight code: every jump, every fall into a target and every instruction that is not AliasAware materializes.</summary>
-            public string?[] Alias = new string?[64];
+            public string?[] Alias;
             /// <summary>Bit i: the list of statement temporaries of scope i (Scopes[i]) may hold something - OwnerList handed it out since its last ReleaseTemps. Without
             /// it ReleaseTemps leaves nothing (no `leave` of an empty list).</summary>
             public ulong TempsDirty;
@@ -3483,13 +3505,29 @@ namespace fire.Native
             /// the array, its length, its numbers), set when it was stored and nothing since could have changed it - an element is then one comparison
             /// and one load (ROADMAP 21). Never at a jump target that is reached without it. Immutable: replaced on change.</summary>
             public string[] Arrays = Array.Empty<string>();
-            public List<HEntry> Handlers = new();
+            public List<HEntry> Handlers;
             /// <summary>The catch lambda this code belongs to (null: the function itself).</summary>
             public Region? Region;
             /// <summary>The `finally` blocks that this code is inside of (their entry addresses), outermost first.</summary>
-            public List<int> Fins = new();
+            public List<int> Fins;
 
-            public Flow Clone() => new() { Depth = Depth, Scopes = new List<(int, int)>(Scopes), Refs = Refs, Types = (int[])Types.Clone(), Scalar = Scalar, Alias = (string?[])Alias.Clone(), TempsDirty = TempsDirty, Borrowed = Borrowed, SelfAlive = SelfAlive, Arrays = Arrays, Handlers = new List<HEntry>(Handlers), Region = Region, Fins = new List<int>(Fins) };
+            public Flow()
+            {
+                Scopes = new();
+                Types = new int[64];
+                Alias = new string?[64];
+                Handlers = new();
+                Fins = new();
+            }
+
+            /// <summary>A copy (Clone): without the empty lists and arrays of a new state - the generator copies a state for every instruction it looks at.</summary>
+            private Flow(Flow o)
+            {
+                Depth = o.Depth; Scopes = new List<(int, int)>(o.Scopes); Refs = o.Refs; Types = (int[])o.Types.Clone(); Scalar = o.Scalar; Alias = (string?[])o.Alias.Clone();
+                TempsDirty = o.TempsDirty; Borrowed = o.Borrowed; SelfAlive = o.SelfAlive; Arrays = o.Arrays; Handlers = new List<HEntry>(o.Handlers); Region = o.Region; Fins = new List<int>(o.Fins);
+            }
+
+            public Flow Clone() => new(this);
 
             /// <summary>Forgets the types of the slots from <paramref name="from"/> on.</summary>
             public void ClearTypes(int from)
@@ -3540,6 +3578,8 @@ namespace fire.Native
             public bool DeferCatchRelease;
             public bool ReturnExit;
             public readonly Out Out = new();
+            /// <summary>The names of its slots (`c{Template}_{k}`), made once (SlotName).</summary>
+            public readonly Dictionary<int, string> SlotNames = new();
         }
 
         private void UseExceptions()
@@ -3614,9 +3654,14 @@ namespace fire.Native
         private static string SlotName(Region? region, int k)
         {
             for (var r = region; r != null; r = r.Outer)
-                if (k >= r.DepthBase) return $"c{r.Template}_{k}";
-            return $"s{k}";
+                if (k >= r.DepthBase)
+                {
+                    if (!r.SlotNames.TryGetValue(k, out var name)) r.SlotNames[k] = name = $"c{r.Template}_{k}";
+                    return name;
+                }
+            return k >= 0 && k < StackSlotNames.Length ? StackSlotNames[k] : $"s{k}";
         }
+        private static readonly string[] StackSlotNames = Enumerable.Range(0, 256).Select(k => $"s{k}").ToArray();
 
         private int ExcTypeId(string? typeName)
         {
