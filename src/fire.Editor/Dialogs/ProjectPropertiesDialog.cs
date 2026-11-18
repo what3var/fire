@@ -45,6 +45,7 @@ namespace fire.Editor
         private string? _import;
         private string? _entry;
         private string? _notes;
+        private bool _syncGitignore;
         private string? _solutionNotes;
         private string? _startup;
         private readonly PublishSettings _publish;
@@ -68,6 +69,9 @@ namespace fire.Editor
             _import = p.Import;
             _entry = p.Entry;
             _notes = p.Notes;
+            _syncGitignore = p.SyncsGitignore;
+            _includedDirs = p.IncludedDirectories?.ToList() ?? new List<string>();
+            _excludedDirs = p.ExcludedDirectories?.ToList() ?? new List<string>();
             _solutionNotes = workspace.Solution?.Notes;
             _startup = workspace.Solution?.Startup;
             _publish = p.Publish?.Clone() ?? new PublishSettings();
@@ -201,6 +205,17 @@ namespace fire.Editor
             foreach (var n in names) box.Items.Add(n);
             if (value != null && !box.Items.Contains(value)) box.Items.Add(value);
             box.SelectedItem = value ?? first;
+        }
+
+        /// <summary>The compiler this machine uses for building or publishing when the project names none ("tcc (automatic, recommended)").</summary>
+        private static string MachineCompiler(fire.Native.ToolchainPurpose purpose)
+        {
+            try
+            {
+                var (toolchain, source) = fire.Native.MachineToolchains.Load().Resolve(purpose);
+                return toolchain == null ? "none found" : $"{toolchain.EffectiveKind} ({source})";
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { return "?"; }
         }
 
         private string? InheritedOf(Func<ProjectSettings, string?> field, string? defaultKey, out string from)
@@ -374,7 +389,55 @@ namespace fire.Editor
                     Row("Symbols for #if", definesBox)),
                 Group("Output",
                     Row("Output folder", Text(() => s.Output, v => s.Output = v, InheritedOf(x => x.Output, null, out string oFrom), oFrom, "bin/<target>-<mode>/")),
-                    Hint("Relative to the project file. A packed library goes into this folder, too.")));
+                    Hint("Relative to the project file. A packed library goes into this folder, too.")),
+                FoldersGroup());
+        }
+
+        // the entries of includedDirectories / excludedDirectories as the dialog has them (Accept writes them; an exclusion taken out loses its .gitignore line with Sync .gitignore)
+        private readonly List<string> _includedDirs, _excludedDirs;
+
+        /// <summary>The folders of the project (docs/tools/projects.md, "Folders"): "Sync .gitignore" and the folders the project file includes and excludes, each with a button that
+        /// takes it out - the way back for an excluded folder besides Show All Files in the explorer.</summary>
+        private Control FoldersGroup()
+        {
+            var sync = new CheckBox { Content = "Sync .gitignore", IsChecked = _syncGitignore };
+            ToolTip.SetTip(sync, "Excluding a folder in the Solution Explorer also adds it to the nearest .gitignore (and Remove Exclusion takes that line out again); folders a .gitignore ignores count as excluded.");
+            sync.IsCheckedChanged += (_, _) => _syncGitignore = sync.IsChecked == true;
+
+            Control EntryList(List<string> entries, string empty, string removeTip)
+            {
+                var panel = new StackPanel { Spacing = 2 };
+                void Fill()
+                {
+                    panel.Children.Clear();
+                    if (entries.Count == 0) { panel.Children.Add(Hint(empty)); return; }
+                    foreach (var entry in entries.ToList())
+                    {
+                        var remove = new Button { Content = "Remove", FontSize = 11, Padding = new Thickness(6, 1), VerticalAlignment = VerticalAlignment.Center };
+                        ToolTip.SetTip(remove, removeTip);
+                        remove.Click += (_, _) => { entries.Remove(entry); Fill(); };
+                        var row = new DockPanel { LastChildFill = true };
+                        DockPanel.SetDock(remove, Avalonia.Controls.Dock.Right);
+                        row.Children.Add(remove);
+                        row.Children.Add(new TextBlock { Text = entry, VerticalAlignment = VerticalAlignment.Center });
+                        panel.Children.Add(row);
+                    }
+                }
+                Fill();
+                return panel;
+            }
+
+            var ignored = _project.FolderMap.ExcludedFolders.Where(f => f.Reason == FolderReason.Gitignore).Select(f => f.Path).ToList();
+            int undecided = _project.FolderMap.Folders.Count(f => f.State == FolderState.Undecided);
+            var rows = new List<Control>
+            {
+                sync,
+                Row("Excluded", EntryList(_excludedDirs, "none", "Take the exclusion out (with Sync .gitignore also its line in the .gitignore); the folder is included again when it holds code, else undecided")),
+                Row("Included", EntryList(_includedDirs, "none (folders with code are included by themselves)", "Take the folder out of includedDirectories (it stays included when it holds code)")),
+            };
+            if (ignored.Count > 0) rows.Add(Row("By .gitignore", new TextBlock { Text = string.Join(", ", ignored), TextWrapping = TextWrapping.Wrap, Foreground = EditorTheme.TextDim }));
+            rows.Add(Hint($"Undecided folders (no code, not named; not built): {undecided}. An excluded folder is not compiled, copied or watched, and the Solution Explorer shows it only with Show All Files. Right-click a folder there to include or exclude it."));
+            return Group("Folders", rows.ToArray());
         }
 
         private Control NativePage()
@@ -384,7 +447,9 @@ namespace fire.Editor
             try { defaultTarget = _native.ResolveTarget(_inherited?.Target).Name; }
             catch (fire.Native.NativeConfigException) { defaultTarget = "?"; }
             var target = Pick(_native.TargetNames, () => s.Target, v => s.Target = v, _inherited?.Target != null ? $"(from solution: {_inherited.Target})" : $"(default: {defaultTarget})");
-            var toolchain = Pick(_native.ToolchainNames, () => s.Toolchain, v => s.Toolchain = v, _inherited?.Toolchain != null ? $"(from solution: {_inherited.Toolchain})" : "(the toolchain of the target, or the one found on this machine)");
+            string machineBuild = MachineCompiler(fire.Native.ToolchainPurpose.Build), machinePublish = MachineCompiler(fire.Native.ToolchainPurpose.Publish);
+            var toolchain = Pick(_native.ToolchainNames, () => s.Toolchain, v => s.Toolchain = v, _inherited?.Toolchain != null ? $"(from solution: {_inherited.Toolchain})"
+                : _native.Toolchain != null ? $"(fire.native.json: {_native.Toolchain})" : $"(the IDE's: Build {machineBuild}, Publish {machinePublish})");
             var edit = new Button { Content = "Edit targets and toolchains..." };
             edit.Click += async (_, _) =>
             {
@@ -409,7 +474,9 @@ namespace fire.Editor
                 InheritedOf(x => x.Optimize, null, out string optimizeFrom), optimizeFrom, $"default: {defaultDirection}");
             return Page("Native & Toolchain", "The target a native build runs on and the C++ toolchain that compiles it. Used when General > Runs as is Native.",
                 Group("Target", Row("Target", target), Hint("The built-in targets and those of fire.native.json.")),
-                Group("Toolchain", Row("Toolchain", toolchain), Row("", edit)),
+                Group("Toolchain", Row("Toolchain", toolchain), Row("", edit),
+                    Hint("Which compiler is used, first to last: --toolchain (forge), this setting (or the solution's), the toolchain of the target, \"toolchain\" in fire.native.json, "
+                        + $"then the compilers of this machine in Tools > Options > Compilers - Build (Build, Run, Debug): {machineBuild}; Publish: {machinePublish}.")),
                 Group("Board (ESP32)",
                     Row("Serial port", BoardFields.Port(s.Port, _inherited?.Port, v => s.Port = v)),
                     Row("Baud rate", BoardFields.Baud(s.Baud, _inherited?.Baud, v => s.Baud = v)),
@@ -485,6 +552,9 @@ namespace fire.Editor
             try { defaultTarget = _native.ResolveTarget(_settings.Target ?? _inherited?.Target).Name; }
             catch (fire.Native.NativeConfigException) { defaultTarget = "?"; }
             var target = Pick(_native.TargetNames, () => pub.Target, v => pub.Target = v, $"(the project's target: {defaultTarget})");
+            string? projectToolchain = _settings.Toolchain ?? _inherited?.Toolchain ?? _native.Toolchain;
+            string publishCompiler = projectToolchain != null ? $"the project's: {projectToolchain}" : $"the IDE's Publish compiler: {MachineCompiler(fire.Native.ToolchainPurpose.Publish)}";
+            var publishToolchain = Pick(_native.ToolchainNames, () => pub.Toolchain, v => pub.Toolchain = v, $"({publishCompiler})");
             return Page("Publish", "Publish builds the program for handing out - again only when something changed - and copies it with what it needs into folders of your choice.",
                 Group("Publish", enabled,
                     Row("Folders", targets),
@@ -496,6 +566,8 @@ namespace fire.Editor
                     Row("Runs as", engine),
                     Row("Configuration", mode),
                     Row("Target (native)", target),
+                    Row("Toolchain (native)", publishToolchain),
+                    Hint("Not set here: the project's toolchain (Native & Toolchain), else the compiler this machine publishes with (Tools > Options > Compilers, Publish column)."),
                     Hint("The program, the shared libraries it needs (linkage shared), the files that belong to it and the files with the build action Copy (Properties of a file, keeping their folders) are copied. A library is published as its package (.fpk).")));
         }
 
@@ -611,6 +683,15 @@ namespace fire.Editor
             p.Name = copy.Name; p.Type = copy.Type; p.Import = copy.Import; p.Entry = copy.Entry; p.References = copy.References; p.Settings = copy.Settings;
             p.Publish = _publish.IsEmpty ? null : _publish;
             p.Notes = string.IsNullOrWhiteSpace(_notes) ? null : _notes.Trim();
+            p.SyncGitignore = _syncGitignore ? null : false;
+            // the exclusions taken out on the Build page: with Sync .gitignore their lines go too (only those spark wrote)
+            foreach (var gone in (p.ExcludedDirectories ?? new List<string>()).Where(e => !_excludedDirs.Contains(e)).ToList())
+            {
+                if (p.SyncsGitignore && !ProjectFiles.IsPattern(gone))
+                    try { GitignoreSync.Remove(p, Path.GetFullPath(ProjectFolderMap.Normalize(gone), _project.Directory)); } catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ProjectException) { }
+            }
+            p.ExcludedDirectories = _excludedDirs.Count > 0 ? _excludedDirs : null;
+            p.IncludedDirectories = _includedDirs.Count > 0 ? _includedDirs : null;
             if (_workspace.Solution is { } solution && _solutionSettings != null)
             {
                 solution.Settings = _solutionSettings;

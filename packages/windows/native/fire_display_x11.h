@@ -10,7 +10,9 @@
  * The clipboard has a connection and a window of its own, served by a thread: what the program put there is answered whenever another program asks (also while the
  * program does something else), large pictures in pieces (INCR) - and read the same way.
  * Behind the window: with a compositor (_NET_WM_CM_S0) the window can be transparent (a 32-bit visual: the window is made anew with it when it is asked for), and KWin
- * blurs behind it (_KDE_NET_WM_BLUR_BEHIND_REGION). */
+ * blurs behind it (_KDE_NET_WM_BLUR_BEHIND_REGION).
+ * Full screen (Window.Fullscreen): _NET_WM_STATE_FULLSCREEN when the window manager has it, else (no window manager: Xvfb, a kiosk) an override-redirect window over
+ * the whole X screen. */
 #ifndef FIRE_DISPLAY_X11_H
 #define FIRE_DISPLAY_X11_H
 
@@ -181,6 +183,12 @@ typedef struct FireXlib {
     int (*UngrabPointer)(void*, FireXId);
     int (*DisplayWidth)(void*, int);
     int (*DisplayHeight)(void*, int);
+    /* full screen without a window manager (optional) */
+    int (*ChangeWindowAttributes)(void*, FireXId, unsigned long, FireXSetAttributes*);
+    int (*UnmapWindow)(void*, FireXId);
+    int (*MoveResizeWindow)(void*, FireXId, int, int, unsigned, unsigned);
+    int (*RaiseWindow)(void*, FireXId);
+    int (*SetInputFocus)(void*, FireXId, int, unsigned long);
 } FireXlib;
 
 static int fire_dx11_sym(void* lib, const char* name, void* fn) {
@@ -244,6 +252,10 @@ static FireXlib* fire_dx11_lib(void) {
             fire_dx11_sym(l, "XUngrabPointer", &x.UngrabPointer);
             fire_dx11_sym(l, "XDisplayWidth", &x.DisplayWidth);
             fire_dx11_sym(l, "XDisplayHeight", &x.DisplayHeight);
+            if (!(fire_dx11_sym(l, "XChangeWindowAttributes", &x.ChangeWindowAttributes) && fire_dx11_sym(l, "XUnmapWindow", &x.UnmapWindow)
+                  && fire_dx11_sym(l, "XMoveResizeWindow", &x.MoveResizeWindow) && fire_dx11_sym(l, "XRaiseWindow", &x.RaiseWindow)
+                  && fire_dx11_sym(l, "XSetInputFocus", &x.SetInputFocus)))
+                x.ChangeWindowAttributes = NULL;
             /* (several threads talk to X - every window on its own connection, the clipboard on another): libX11 must know before anything else */
             x.InitThreads();
         }
@@ -291,7 +303,7 @@ typedef struct FireDx11Atoms {
     FireXId wmProtocols, wmDelete, netWmName, netWmPid, utf8, clipboard, targets, incr, textPlainUtf8, textPlain, string, text, png, bmp, uriList, gnomeFiles, property,
         xdndAware, xdndEnter, xdndPosition, xdndStatus, xdndLeave, xdndDrop, xdndFinished, xdndSelection, xdndTypeList, xdndActionCopy, cm, kdeBlur, netSupported, atom, cardinal,
         motifHints, netWmState, netWmStateAbove, netWmMoveResize, netWorkArea, netCurrentDesktop,
-        netWmStateSkipTaskbar, netWmStateSkipPager, netWmIcon;
+        netWmStateSkipTaskbar, netWmStateSkipPager, netWmIcon, netWmStateFullscreen;
 } FireDx11Atoms;
 static void fire_dx11_atoms(FireXlib* x, void* d, FireDx11Atoms* a) {
     a->wmProtocols = x->InternAtom(d, "WM_PROTOCOLS", 0);
@@ -333,6 +345,7 @@ static void fire_dx11_atoms(FireXlib* x, void* d, FireDx11Atoms* a) {
     a->netWmStateSkipTaskbar = x->InternAtom(d, "_NET_WM_STATE_SKIP_TASKBAR", 0);
     a->netWmStateSkipPager = x->InternAtom(d, "_NET_WM_STATE_SKIP_PAGER", 0);
     a->netWmIcon = x->InternAtom(d, "_NET_WM_ICON", 0);
+    a->netWmStateFullscreen = x->InternAtom(d, "_NET_WM_STATE_FULLSCREEN", 0);
     a->atom = 4;       /* XA_ATOM */
     a->cardinal = 6;   /* XA_CARDINAL */
 }
@@ -782,6 +795,9 @@ typedef struct FireDx11Window {
     unsigned long* icon; int iconLongs;
     short* inputShape; int inputCount;   /* Window.ClickThrough: the rectangles that take clicks (XRectangle: x, y, w, h as shorts; inputCount -1: the whole window) */   /* Window.SetIcon: _NET_WM_ICON as it goes to the window (width, height, ARGB) - set again on a window made anew */
     int pressRootX, pressRootY, pressButton;
+    /* Window.Fullscreen: the state (with a window manager: as its _NET_WM_STATE says), done without one (fsNoWm: an override-redirect window over the screen),
+     * where the window was and its size before (without a window manager), a size the program asked for meanwhile (0: none) */
+    int fullscreen, fsNoWm, fsX, fsY, fsW, fsH, fsSizeW, fsSizeH;
     /* the input method */
     void* im;
     void* ic;
@@ -1016,10 +1032,11 @@ static void fire_dx11_applyStyle(FireDx11Window* w, int mapped) {
     long hints[5] = { 2 /* MWM_HINTS_DECORATIONS */, 0, (w->style & FIRE_STYLE_FRAMELESS) ? 0 : 1, 0, 0 };
     x->ChangeProperty(w->d, w->win, w->a.motifHints, w->a.motifHints, 32, 0 /* PropModeReplace */, (const unsigned char*)hints, 5);
     if (!mapped) {
-        long states[3];
+        long states[4];
         int n = 0;
         if (w->style & FIRE_STYLE_TOPMOST) states[n++] = (long)w->a.netWmStateAbove;
         if (w->style & FIRE_STYLE_NOTASKBAR) { states[n++] = (long)w->a.netWmStateSkipTaskbar; states[n++] = (long)w->a.netWmStateSkipPager; }
+        if (w->fullscreen && !w->fsNoWm) states[n++] = (long)w->a.netWmStateFullscreen;   /* (a window made anew in full screen) */
         if (n > 0) x->ChangeProperty(w->d, w->win, w->a.netWmState, w->a.atom, 32, 0, (const unsigned char*)states, n);
         else x->DeleteProperty(w->d, w->win, w->a.netWmState);
     } else {
@@ -1113,6 +1130,7 @@ static int fire_dx11_makeWindow(FireDx11Window* w, int argb) {
         mask |= 0x2000 /* CWColormap */;
     }
     attr.event_mask = 0x1 | 0x2 | 0x4 | 0x8 | 0x10 | 0x20 | 0x40 | 0x8000 | 0x20000 | 0x200000 | 0x400000;
+    if (w->fullscreen && w->fsNoWm) { attr.override_redirect = 1; mask |= 0x200 /* CWOverrideRedirect */; }   /* (made anew in full screen without a window manager) */
     w->win = x->CreateWindow(w->d, w->root, 0, 0, (unsigned)w->winW, (unsigned)w->winH, 0, w->depth, 1 /* InputOutput */, w->visual, mask, &attr);
     if (w->win == 0) return 0;
     x->StoreName(w->d, w->win, w->title ? w->title : "");
@@ -1145,9 +1163,9 @@ static int fire_dx11_makeWindow(FireDx11Window* w, int argb) {
     fire_dx11_applyStyle(w, 0);
     fire_dx11_applyIcon(w);
     if (w->inputShape != NULL) fire_dx11_applyInputShape(w);
-    if (w->posSet && x->MoveWindow != NULL) x->MoveWindow(w->d, w->win, w->posX, w->posY);
+    if (w->posSet && x->MoveWindow != NULL && !(w->fullscreen && w->fsNoWm)) x->MoveWindow(w->d, w->win, w->posX, w->posY);
     x->MapWindow(w->d, w->win);
-    if (w->posSet && x->MoveWindow != NULL) x->MoveWindow(w->d, w->win, w->posX, w->posY);
+    if (w->posSet && x->MoveWindow != NULL && !(w->fullscreen && w->fsNoWm)) x->MoveWindow(w->d, w->win, w->posX, w->posY);
     fire_dx11_openIM(w);
     if (w->cursor >= 0 && w->cursors[w->cursor]) x->DefineCursor(w->d, w->win, w->cursors[w->cursor]);
     x->Flush(w->d);
@@ -1204,6 +1222,11 @@ static void fire_dx11_setTouchMouse(FireDx11Window* w, int v) { w->touchMouse = 
 
 static void fire_dx11_setSize(FireDx11Window* w, int width, int height) {
     if (w->d == NULL) return;
+    if (w->fullscreen) {
+        /* (in full screen: the size after it) */
+        if (w->fsNoWm) { w->fsW = width; w->fsH = height; } else { w->fsSizeW = width; w->fsSizeH = height; }
+        return;
+    }
     w->winW = width; w->winH = height;
     w->x->ResizeWindow(w->d, w->win, (unsigned)width, (unsigned)height);
     w->x->Flush(w->d);
@@ -1265,6 +1288,85 @@ static int fire_dx11_setBackdrop(FireDx11Window* w, int kind) {
     x->Flush(w->d);
     return w->backdrop;
 }
+
+static int fire_dx11_position(FireDx11Window* w, int* r);
+/* Does the window manager take windows to full screen (EWMH: _NET_WM_STATE_FULLSCREEN in _NET_SUPPORTED of the root window)? */
+static int fire_dx11_wmFullscreen(FireDx11Window* w) {
+    FireXId type = 0;
+    size_t n = 0, i;
+    int yes = 0;
+    unsigned char* supported = fire_dx11_readProperty(w->x, w->d, w->root, w->a.netSupported, 0, &type, &n);
+    for (i = 0; supported != NULL && i + sizeof(long) <= n; i += sizeof(long)) if ((FireXId)((long*)(void*)(supported + i))[0] == w->a.netWmStateFullscreen) yes = 1;
+    free(supported);
+    return yes;
+}
+/* Does _NET_WM_STATE of the window hold _NET_WM_STATE_FULLSCREEN (what the window manager did)? */
+static int fire_dx11_stateFullscreen(FireDx11Window* w) {
+    FireXId type = 0;
+    size_t n = 0, i;
+    int yes = 0;
+    unsigned char* states = fire_dx11_readProperty(w->x, w->d, w->win, w->a.netWmState, 0, &type, &n);
+    for (i = 0; states != NULL && i + sizeof(long) <= n; i += sizeof(long)) if ((FireXId)((long*)(void*)(states + i))[0] == w->a.netWmStateFullscreen) yes = 1;
+    free(states);
+    return yes;
+}
+/* Window.Fullscreen. With a window manager (EWMH): _NET_WM_STATE_FULLSCREEN as a request to it - it puts the window over the monitor the window is on, without a
+ * frame, and back again; the state comes with its _NET_WM_STATE (fire_dx11_pump). Without one: an override-redirect window over the whole X screen (all its
+ * monitors - the server has no window manager to say which), back to where it was afterwards. The sizes come as ConfigureNotify: resize events. */
+static int fire_dx11_setFullscreen(FireDx11Window* w, int on) {
+    FireXlib* x = w->x;
+    on = on != 0;
+    if (w->d == NULL || w->win == 0) return 0;
+    if (w->fullscreen && w->fsNoWm) {
+        if (on) return 1;
+    } else if (fire_dx11_wmFullscreen(w)) {
+        FireXEv e;
+        memset(&e, 0, sizeof e);
+        e.xclient.type = FIRE_X_CLIENT_MESSAGE;
+        e.xclient.display = w->d;
+        e.xclient.window = w->win;
+        e.xclient.message_type = w->a.netWmState;
+        e.xclient.format = 32;
+        e.xclient.data.l[0] = on;   /* _NET_WM_STATE_ADD / REMOVE */
+        e.xclient.data.l[1] = (long)w->a.netWmStateFullscreen;
+        e.xclient.data.l[3] = 1;   /* a normal program */
+        x->SendEvent(w->d, w->root, 0, 0x80000 | 0x100000 /* SubstructureRedirect | SubstructureNotify */, &e);
+        x->Flush(w->d);
+        return w->fullscreen;
+    }
+    if (x->ChangeWindowAttributes == NULL || x->DisplayWidth == NULL || x->DisplayHeight == NULL) return w->fullscreen;
+    if (on == w->fullscreen) return on;
+    {
+        FireXSetAttributes attr;
+        FireXErrorHandler old;
+        memset(&attr, 0, sizeof attr);
+        fire_dx11_lastError = 0;
+        old = x->SetErrorHandler(fire_dx11_onError);
+        if (on) {
+            int at[2] = { 0, 0 };
+            fire_dx11_position(w, at);
+            w->fsX = at[0]; w->fsY = at[1]; w->fsW = w->winW; w->fsH = w->winH;
+            attr.override_redirect = 1;
+            x->ChangeWindowAttributes(w->d, w->win, 0x200 /* CWOverrideRedirect */, &attr);
+            x->UnmapWindow(w->d, w->win);
+            x->MoveResizeWindow(w->d, w->win, 0, 0, (unsigned)x->DisplayWidth(w->d, w->screen), (unsigned)x->DisplayHeight(w->d, w->screen));
+            x->MapWindow(w->d, w->win);
+            x->RaiseWindow(w->d, w->win);
+            x->SetInputFocus(w->d, w->win, 2 /* RevertToParent */, 0 /* CurrentTime */);
+        } else {
+            attr.override_redirect = 0;
+            x->ChangeWindowAttributes(w->d, w->win, 0x200, &attr);
+            x->UnmapWindow(w->d, w->win);
+            x->MoveResizeWindow(w->d, w->win, w->fsX, w->fsY, (unsigned)(w->fsW > 0 ? w->fsW : 1), (unsigned)(w->fsH > 0 ? w->fsH : 1));
+            x->MapWindow(w->d, w->win);
+        }
+        x->Sync(w->d, 0);
+        x->SetErrorHandler(old);
+    }
+    w->fullscreen = on; w->fsNoWm = on;
+    return on;
+}
+static int fire_dx11_fullscreen(FireDx11Window* w) { return w->fullscreen; }
 
 static int fire_dx11_setStyle(FireDx11Window* w, int flags) {
     if (w->d == NULL) return 0;
@@ -1570,6 +1672,17 @@ static int fire_dx11_pump(FireDx11Window* w, FireDisplayEvents* out, int fbWidth
                 }
                 break;
             case FIRE_X_CLIENT_MESSAGE: fire_dx11_clientMessage(w, &e); break;
+            case FIRE_X_PROPERTY_NOTIFY:
+                /* the window manager's answer to Window.Fullscreen (or its own change: a key of the window manager) */
+                if (e.xproperty.window == w->win && e.xproperty.atom == w->a.netWmState && !w->fsNoWm) {
+                    int was = w->fullscreen;
+                    w->fullscreen = fire_dx11_stateFullscreen(w);
+                    if (was && !w->fullscreen && w->fsSizeW > 0) {
+                        x->ResizeWindow(w->d, w->win, (unsigned)w->fsSizeW, (unsigned)w->fsSizeH);
+                        w->fsSizeW = w->fsSizeH = 0;
+                    }
+                }
+                break;
             case FIRE_X_SELECTION_NOTIFY: if (e.xselection.selection == w->a.xdndSelection) fire_dx11_dropData(w, &e); break;
             case FIRE_X_MAPPING: x->RefreshKeyboardMapping(&e); break;
             case FIRE_X_GENERIC:

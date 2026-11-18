@@ -188,6 +188,35 @@ namespace fire.Package.Manager
                 throw new PackageException($"'{url}' is plain http: ember reads packages and indexes from the web only over https (http only from this machine, localhost).");
         }
 
+        /// <summary>The largest package file ember downloads (64 MB): a bigger answer is cut off and refused, so that a broken or hostile server cannot fill the disk.</summary>
+        public const long MaxPackageBytes = 64L * 1024 * 1024;
+
+        /// <summary>Writes the body of <paramref name="response"/> to <paramref name="target"/> as it comes (not into memory) and stops at <paramref name="limit"/> bytes: more is
+        /// a <see cref="PackageException"/> (the file is deleted). A `Content-Length` above the limit is refused before anything is read.</summary>
+        public static void SaveLimited(HttpResponseMessage response, string target, long limit, string url)
+        {
+            if (response.Content.Headers.ContentLength is long announced && announced > limit)
+                throw new PackageException($"'{url}' has {announced} bytes - more than ember takes ({limit} bytes).");
+            using (var body = response.Content.ReadAsStream())
+            using (var output = File.Create(target))
+            {
+                var buffer = new byte[81920];
+                long total = 0;
+                int n;
+                while ((n = body.Read(buffer, 0, buffer.Length)) > 0)
+                {
+                    total += n;
+                    if (total > limit)
+                    {
+                        output.Close();
+                        File.Delete(target);
+                        throw new PackageException($"'{url}' is bigger than {limit} bytes - ember stopped the download.");
+                    }
+                    output.Write(buffer, 0, n);
+                }
+            }
+        }
+
         /// <summary>The SHA-256 of a file, lower-case hex (as the index writes it).</summary>
         public static string Sha256Of(string file)
         {
@@ -212,9 +241,7 @@ namespace fire.Package.Manager
                 {
                     using var response = Http.GetAsync(url, HttpCompletionOption.ResponseHeadersRead).GetAwaiter().GetResult();
                     response.EnsureSuccessStatusCode();
-                    using var body = response.Content.ReadAsStream();
-                    using var output = File.Create(target);
-                    body.CopyTo(output);
+                    SaveLimited(response, target, version.Size is long expected && expected <= MaxPackageBytes ? expected : MaxPackageBytes, url);
                 }
                 catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or IOException) { throw new PackageException($"Cannot download '{url}': {ex.Message}"); }
             }

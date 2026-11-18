@@ -65,11 +65,68 @@ gives its `sha256`. A source that cannot be read (no network) is reported and sk
 
 `ember index Folder [BaseUrl]` writes the `index.json` for the `.fpk` files of a folder (with licence, size and checksum), ready to be put on a web page together with them.
 
+### Straight from GitHub
+
+A package can be installed from a GitHub repository without an entry in any index:
+
+```
+ember install github:jane/sensorkit            the newest release
+ember install github:jane/sensorkit@v1.2.0     that release (a tag; @1.2.0 finds v1.2.0 too, and the other way round)
+ember install github:jane/sensorkit@main       a branch: built from the source of its newest commit
+ember install github:jane/sensorkit@3f2c1a0    a commit (7 to 40 hex digits): built from its source
+ember install github:jane/fire-sensors --name sensorkit    (or github:jane/fire-sensors#sensorkit) a package not named like the repository
+ember update                                    move the packages to their newest version (below)
+ember remove github:jane/sensorkit              (or by its name)
+```
+
+The same spec works wherever a package is named: in the `dependencies` of a `package.json` (`"dependencies": [ "github:jane/sensorkit@v1.2.0" ]`) and as a package
+reference of a project (`{ "package": "github:jane/sensorkit@v1.2.0" }`); such a dependency counts as there when the lock file (below) says a package came from
+that repository. `ember list` shows where each package from GitHub came from (`github:jane/sensorkit@v1.2.0 (commit 3f2c1a0)`), `ember sources` the API in use, the
+token's origin and the packages from GitHub with how they were checked. In spark, type `github:owner/repo[@ref]` into the search field of the Package Manager: the row
+it shows installs that.
+
+**How it resolves.** ember asks the REST API of GitHub: `GET /repos/{owner}/{repo}/releases/latest` (no ref) or `/releases/tags/{tag}`, and
+`/commits/{ref}` for the commit of the tag, branch or commit. A release that has a `.fpk` asset installs that file; with several `.fpk` assets the one named
+like the package (`sensorkit.fpk`, `sensorkit-1.2.0.fpk`) is taken, else it is an error that asks for `#name`. Without a release of that name, or a release without
+a `.fpk`, ember gets the source of the commit (`GET /repos/{owner}/{repo}/tarball/{commit}`) and builds the package from it: a `package.json` in the root of the
+repository is packed like `ember forge` packs it, else the one library project (`.fireproj`) of the root (or the only one of the tree) is packed like *Pack Library*
+(ember asks `forge build` next to it; spark and forge do it themselves). A repository without releases needs a ref (`@main`). Drafts and pre-releases are not the
+newest release (that is what `releases/latest` gives); a release that was deleted is simply not found any more - the GitHub way of yanking.
+
+**How it is checked.** The asset is checked against its `digest` (`sha256:...`, which the API gives for assets), an asset `<name>.fpk.sha256` and/or a `SHA256SUMS`
+(or `SHA256SUMS.txt`) asset with a line for it; checksums that disagree are an error. A release with none of these is **trusted on first use**: ember says clearly that
+the file was *not verified upstream*, records its SHA-256 in the lock file and refuses another file under the same tag from then on. A source build is pinned by its
+commit. Like everything from the web: https only (http only from this machine), at most 64 MB for a package and its `size` must match what the API says, at most
+100 MB for a source snapshot (400 MB, 20000 files unpacked; links are not unpacked, no path may leave the folder). A `package.json` or project in the source that
+names a file outside the repository (an absolute path, `..` out of it) is refused - the build reads only the repository's files. The package must be named like the
+repository (case does not matter) unless `#name`/`--name` accepts its name; names starting with `fire-` and `standard` imports are refused; a package of the same
+name that came from elsewhere is replaced only with `--force`. The install prints the repository it comes from.
+
+**The lock file.** `ember-lock.json` in the folder of the installed packages (`Packages/`, next to the package folders) records every package from GitHub:
+
+```json
+{ "format": 1, "github": [ { "repository": "jane/sensorkit", "ref": "", "kind": "release", "tag": "v1.2.0", "commit": "3f2c1a0...", "asset": "sensorkit-1.2.0.fpk",
+    "sha256": "...", "verified": "asset digest", "package": "sensorkit", "version": "1.2.0", "installed": "2026-11-18T10:00:00Z" } ] }
+```
+
+`kind` is `release` or `source`, `verified` one of `asset digest`, `sha256 asset`, `SHA256SUMS` (joined with `and` when several agree), `first use` or `source`. Installing
+the same repository again takes what the lock file pins - the same tag (also for "the newest release") or, for a branch, the same commit - and the file must have the
+recorded checksum; a tag that now points to another commit or an asset that was replaced is an error (remove the package and install it again only if you trust the
+new one). `ember update` resolves anew: a package installed as the newest release moves to the newest release, one from a branch to the branch's newest commit;
+one pinned to a tag or a commit stays, unless the update names it (`ember update github:jane/sensorkit` moves it to the newest release, `ember update
+github:jane/sensorkit@v2.0.0` to that tag). Packages from the index sources move to their newest version that is not yanked. `ember remove` drops the entry.
+
+**The API and the token.** `FIRE_GITHUB_API` (default `https://api.github.com`; for tests or GitHub Enterprise) and a token from `FIRE_GITHUB_TOKEN`, `GITHUB_TOKEN` or
+ember.json (`"github": { "api": "...", "token": "..." }`; the environment first). The token is sent only to the host and port of the API: redirects are followed one
+by one, and a hop to another host (the storage of release assets, `codeload.github.com`) goes without it. With a token an asset is fetched through the API (works for
+private repositories), without one from its `browser_download_url`. Without a token GitHub allows 60 requests an hour; when the limit is used up (403/429 with no
+requests left, or `Retry-After`) ember says so with the time it resets.
+
 ### Publishing
 
 The packages of the registry are published by the maintainer of the website (repository `what3var.github.io`, folder `registry/`, see its `README.md`): there are no
 accounts and no uploads. To have a package listed, publish its source and the `.fpk` (for example as a release of your repository) and open an issue with the
-link, the licence and the SHA-256 of the file.
+link, the licence and the SHA-256 of the file. Without a listing, such a release can be installed straight away with `ember install github:owner/repo` ("Straight from GitHub" above) - attach the `.fpk` (GitHub gives its digest) and, if you like, a `SHA256SUMS`.
 
 Build the package with `ember forge` (or *Pack Library* for a library project). The **documents** of the package go into its root: `README.md` (shown on the page
 of the package), `LICENSE`/`LICENCE`/`COPYING` and `NOTICE` (most licences want their text with every copy) - the files of these names next to the description (or
@@ -149,7 +206,8 @@ ember cache clean    empty it
 ## Where it is in the code
 
 * `src/fire.Package.Manager`: the manifest (`PackageManifest`), the package file (`Fpk`), the installed packages (`PackageStore`), the sources (`FolderSource`, `IndexSource`),
-  install/remove (`PackageManagerService`). A library: fire.Native and fire.Project reference it (the compiler and the editor get it from them). The command line is `src/fire.Ember` (`Program`), an executable that only uses the library.
+  install/remove/update (`PackageManagerService`), packages straight from GitHub (`GitHubSpec`, `GitHubSource`) and the lock file (`PackageLock`). The tests:
+  `FIRE_TESTS_ONLY=registry` (`src/fire.Testing/RegistryTests*.cs`; `FIRE_TESTS_FILTER=github` only the GitHub part, against a fake GitHub on this machine). A library: fire.Native and fire.Project reference it (the compiler and the editor get it from them). The command line is `src/fire.Ember` (`Program`), an executable that only uses the library.
 * The compiler keeps the imports of packages in its set of imports under the key `pkg:name` (`PackageStore.KeyPrefix`): `ImportedPreludes` resolves `#import`, inserts the prelude
   and registers the names of the natives; `LinkedProgram.PackageNatives` carries those names so that a run in the virtual machine (also of a packed program) keeps the
   indexes of the native calls right.

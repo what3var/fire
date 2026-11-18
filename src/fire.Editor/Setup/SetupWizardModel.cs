@@ -9,7 +9,7 @@ namespace fire.Editor.Setup
     public enum SetupPage { Welcome, Toolchains, Model, Summary }
 
     /// <summary>A toolchain that was found on this machine.</summary>
-    public sealed record DetectedToolchain(string Kind, string Name, string Path)
+    public sealed record DetectedToolchain(string Kind, string Name, string Path, string? Version = null)
     {
         /// <summary>Does it compile C++ (TinyCC compiles only C)?</summary>
         public bool CompilesCpp => Kind is "gcc" or "clang" or "msvc";
@@ -30,7 +30,8 @@ namespace fire.Editor.Setup
             {
                 try
                 {
-                    if (ToolchainDef.BuiltIn.TryGetValue(kind, out var def) && ToolchainDetector.Find(def) is { } path) detected.Add(new DetectedToolchain(kind, name, path));
+                    if (ToolchainDef.BuiltIn.TryGetValue(kind, out var def) && ToolchainDetector.Find(def) is { } path)
+                        detected.Add(new DetectedToolchain(kind, name, path, MachineToolchains.Kinds.Contains(kind) ? MachineToolchains.VersionOf(path, kind) : null));
                 }
                 catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidOperationException) { }
             }
@@ -87,7 +88,8 @@ namespace fire.Editor.Setup
     /// </summary>
     public sealed class SetupWizardModel
     {
-        public SetupWizardModel(SetupEnvironment env, IReadOnlyList<SetupModelInfo> catalog)
+        /// <param name="compilers">The compilers the machine chose before (toolchain.json; null: automatic for both).</param>
+        public SetupWizardModel(SetupEnvironment env, IReadOnlyList<SetupModelInfo> catalog, MachineToolchains? compilers = null)
         {
             Environment = env;
             Catalog = catalog;
@@ -96,34 +98,15 @@ namespace fire.Editor.Setup
             pages.Add(SetupPage.Summary);
             Pages = pages;
 
-            bool cpp = env.Detected.Any(d => d.CompilesCpp) || env.W64devkitThere;
-            Toolchains = new List<ToolchainOption>
+            Compilers = new CompilerChoiceModel(env, compilers);
+            bool watcomThere = env.WatcomThere || env.Detected.Any(d => d.Kind == "watcom");
+            Watcom = new ToolchainOption
             {
-                new()
-                {
-                    Id = "w64devkit", Name = "w64devkit (GCC for Windows)",
-                    Description = "The C/C++ compiler for native builds and for the natives of packages. Portable: kept next to spark, nothing is installed on the system.",
-                    DownloadBytes = ToolchainSetup.DownloadBytes, Folder = ToolchainSetup.W64devkitDirectory,
-                    Installable = env.IsWindows && env.IsX64 && !env.W64devkitThere, There = env.W64devkitThere,
-                    Recommended = env.IsWindows && env.IsX64 && !cpp,
-                },
-                new()
-                {
-                    Id = "watcom", Name = "Open Watcom v2",
-                    Description = "Only for the old PC targets: DOS, Windows 3.x and BIOS. Portable as well; spark offers it again when such a target is built.",
-                    DownloadBytes = WatcomSetup.DownloadBytes, Folder = WatcomSetup.Directory,
-                    Installable = env.IsWindows && env.IsX64 && !env.WatcomThere && !env.Detected.Any(d => d.Kind == "watcom"), There = env.WatcomThere || env.Detected.Any(d => d.Kind == "watcom"),
-                },
-                new()
-                {
-                    Id = "tcc", Name = $"TinyCC {TinyccSetup.Version} (C only)",
-                    Description = "A tiny, very fast C compiler - it compiles C only, not C++: enough for programs whose packages are all in C. Portable as well; checked by its SHA-256.",
-                    DownloadBytes = TinyccSetup.DownloadBytes, Folder = TinyccSetup.Directory,
-                    Installable = env.IsWindows && env.TinyccPinned && !env.TinyccThere && !env.Detected.Any(d => d.Kind == "tcc"),
-                    There = env.TinyccThere || (env.IsWindows && env.Detected.Any(d => d.Kind == "tcc")),
-                },
+                Id = "watcom", Name = "Open Watcom v2",
+                Description = "Only for the old PC targets: DOS, Windows 3.x and BIOS. Portable as well; spark offers it again when such a target is built.",
+                DownloadBytes = WatcomSetup.DownloadBytes, Folder = WatcomSetup.Directory,
+                Installable = env.IsWindows && env.IsX64 && !watcomThere, There = watcomThere,
             };
-            foreach (var t in Toolchains) t.Selected = t.Recommended && t.Installable;
 
             var recommended = ModelCatalog.Recommended(catalog, env.Machine);
             var stronger = ModelCatalog.Stronger(catalog, env.Machine);
@@ -139,7 +122,10 @@ namespace fire.Editor.Setup
         public SetupEnvironment Environment { get; }
         public IReadOnlyList<SetupModelInfo> Catalog { get; }
         public IReadOnlyList<SetupPage> Pages { get; }
-        public IReadOnlyList<ToolchainOption> Toolchains { get; }
+        /// <summary>The compilers for Build and Publish (the grid of the toolchain page, the same as Tools > Options > Compilers) with "Download missing toolchains".</summary>
+        public CompilerChoiceModel Compilers { get; }
+        /// <summary>Open Watcom (the old PC targets): optional, below the grid.</summary>
+        public ToolchainOption Watcom { get; }
         public IReadOnlyList<ModelOption> Models { get; }
 
         /// <summary>The model to download ("" none: the assistant asks later).</summary>
@@ -165,7 +151,7 @@ namespace fire.Editor.Setup
         public string PageTitle => Page switch
         {
             SetupPage.Welcome => "Welcome to spark",
-            SetupPage.Toolchains => "C/C++ toolchains",
+            SetupPage.Toolchains => "Compilers for Build and Publish",
             SetupPage.Model => "The model of the assistant",
             _ => "Summary",
         };
@@ -178,8 +164,8 @@ namespace fire.Editor.Setup
 
         // ---- the toolchain page ----
 
-        /// <summary>Is there a toolchain to choose on this machine (Windows), or only hints?</summary>
-        public bool OffersToolchains => Toolchains.Any(t => t.Installable);
+        /// <summary>Is there a toolchain to download on this machine (Windows), or only hints?</summary>
+        public bool OffersToolchains => Compilers.OffersDownloads || Watcom.Installable;
 
         /// <summary>What was found and how to get the rest (every system; on Linux and macOS this is the whole page).</summary>
         public IReadOnlyList<string> ToolchainHints
@@ -190,21 +176,17 @@ namespace fire.Editor.Setup
                 var hints = new List<string>();
                 bool cpp = env.Detected.Any(d => d.CompilesCpp) || env.W64devkitThere;
                 if (cpp) hints.Add("A C++ compiler is there: native builds and the natives of packages work without anything more.");
-                else if (env.IsWindows && OffersToolchains) hints.Add("No C++ compiler was found. Native builds and packages with natives need one: w64devkit is the simplest choice.");
+                else if (env.IsWindows && Compilers.OffersDownloads) hints.Add("No C++ compiler was found. Native builds and packages with natives in C++ need one: w64devkit (GCC) is the simplest choice.");
                 else if (env.IsWindows) hints.Add("No C++ compiler was found. Install one (w64devkit, MSYS2, LLVM or Visual Studio) to build natively.");
                 else if (env.IsMacOS) hints.Add("No C++ compiler was found. Install Apple's command line tools: xcode-select --install");
                 else hints.Add("No C++ compiler was found. Install g++ or clang++ with the package manager, e.g. sudo apt install g++ (Debian, Ubuntu), sudo dnf install gcc-c++ (Fedora), sudo pacman -S gcc (Arch).");
                 bool tcc = env.TinyccThere || env.Detected.Any(d => d.Kind == "tcc");
-                if (env.IsWindows && !tcc && !Toolchains.Any(t => t.Id == "tcc" && t.Installable))
-                    hints.Add("Optional: TinyCC (tcc, C only) compiles C very quickly - put tcc.exe on the PATH to use it.");
-                if (!env.IsWindows)
-                {
-                    if (!tcc) hints.Add("Optional: TinyCC (tcc) compiles C very quickly, C only - enough for programs whose packages are all in C" +
-                        (env.IsMacOS ? " (brew install tcc)." : " (e.g. sudo apt install tcc)."));
-                    if (!env.Detected.Any(d => d.Kind == "watcom") && !env.WatcomThere) hints.Add("For the DOS, Windows 3.x and BIOS targets spark downloads Open Watcom when such a target is built" + (env.IsLinux ? "." : " (Windows and Linux)."));
-                }
+                if (!tcc && Compilers.Row("tcc") is { Installable: false } t)
+                    hints.Add("TinyCC (tcc) compiles C very quickly, C only - the recommended compiler for Build (" + t.InstallHint + ").");
+                if (!env.IsWindows && !env.Detected.Any(d => d.Kind == "watcom") && !env.WatcomThere)
+                    hints.Add("For the DOS, Windows 3.x and BIOS targets spark downloads Open Watcom when such a target is built" + (env.IsLinux ? "." : " (Windows and Linux)."));
                 if (!env.Detected.Any(d => d.Kind == "emscripten")) hints.Add("For the web target (WebAssembly): Emscripten (emsdk) on the PATH.");
-                hints.Add("The toolchain can be changed any time in Tools > Toolchain Settings.");
+                hints.Add("The compilers can be changed any time in Tools > Options > Compilers; a project can name its own (Project Properties > Native & Toolchain).");
                 return hints;
             }
         }
@@ -215,8 +197,8 @@ namespace fire.Editor.Setup
         public IReadOnlyList<SetupPlanItem> Plan()
         {
             var plan = new List<SetupPlanItem>();
-            foreach (var t in Toolchains.Where(t => t.Selected && t.Installable))
-                plan.Add(new SetupPlanItem(SetupPlanKind.Toolchain, t.Id, $"Install {t.Name}", t.DownloadBytes));
+            plan.AddRange(Compilers.PlanItems());
+            if (Watcom is { Selected: true, Installable: true }) plan.Add(new SetupPlanItem(SetupPlanKind.Toolchain, Watcom.Id, $"Install {Watcom.Name}", Watcom.DownloadBytes));
             if (Pages.Contains(SetupPage.Model) && SelectedModel is { Installed: false } m)
                 plan.Add(new SetupPlanItem(SetupPlanKind.Model, m.Info.Id, $"Download the model {m.Info.Name}", m.Info.Size));
             plan.Add(new SetupPlanItem(SetupPlanKind.Packages, "standard", "Build the standard packages"));
@@ -246,10 +228,11 @@ namespace fire.Editor.Setup
             get
             {
                 var lines = new List<string>();
-                foreach (var t in Toolchains.Where(t => t.Selected && t.Installable))
-                    lines.Add($"Download {t.Name} ({t.SizeText}) and unpack it into {t.Folder}.");
-                if (!Toolchains.Any(t => t.Selected && t.Installable))
-                    lines.Add(Environment.Detected.FirstOrDefault(d => d.CompilesCpp) is { } d ? $"Toolchain: {d.Name} ({d.Path})." : "No toolchain is installed now (it can be added later).");
+                foreach (var r in Compilers.Downloads())
+                    lines.Add($"Download {r.Name} ({r.SizeText}) and unpack it next to spark (Toolchain{System.IO.Path.DirectorySeparatorChar}).");
+                if (Watcom is { Selected: true, Installable: true }) lines.Add($"Download {Watcom.Name} ({Watcom.SizeText}) and unpack it into {Watcom.Folder}.");
+                lines.Add(Compilers.Summary(ToolchainPurpose.Build) + ".");
+                lines.Add(Compilers.Summary(ToolchainPurpose.Publish) + ".");
                 if (Pages.Contains(SetupPage.Model))
                 {
                     if (SelectedModel is { } m)

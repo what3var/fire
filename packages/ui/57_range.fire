@@ -1,0 +1,398 @@
+namespace UI {
+    // A value between Minimum and Maximum, chosen with a thumb on a track: dragging with the mouse (or a finger), a click on the track, the keys Left/Right
+    // (one Step; the D-pad and the stick of a gamepad arrive as these), Page Up/Down (LargeStep), Home/End. Up and Down stay free for the focus, so that a
+    // slider can be one row of a menu. `Value` is a field (a binding or a probe follows it); every change by the user goes through SetValue, which snaps
+    // it to Step, keeps it inside the range and reports it (OnChange, TakeChanged). ShowValue writes the number on the right.
+    class Slider : Element {
+        defined float Minimum = 0.0
+        defined float Maximum = 100.0
+        defined float Value = 0.0
+        // what a key moves; the values snap to it (0: no snapping, a key moves a hundredth of the range)
+        defined float Step = 1.0
+        // what Page Up/Down move (0: a tenth of the range)
+        defined float LargeStep = 0.0
+        // the number on the right of the track, with this many digits after the point (-1: as many as Step has, at most 3)
+        bool ShowValue = false
+        defined int Decimals = -1
+        lambda OnChange
+        bool changed = false
+        // the radius of the thumb
+        defined int thumb = 7
+
+        construct(defined float minimum = 0.0, defined float maximum = 100.0, defined float value = 0.0, defined int x = 0, defined int y = 0, defined int width = -1, defined int height = -1) : base(x, y, width, height) {
+            this.Minimum = minimum
+            this.Maximum = maximum
+            this.Value = value
+        }
+
+        override string StyleKey() { return "Slider" }
+
+        override bool Focusable() { return true }
+
+        // Has the value changed by the user (or SetValue) since the last query? (resets the flag)
+        bool TakeChanged() {
+            var was = this.changed
+            this.changed = false
+            return was
+        }
+
+        // The value inside the range and on the grid of Step.
+        defined float Snap(defined float v) {
+            defined float low = this.Minimum
+            defined float high = this.Maximum
+            if (high < low) { high = low }
+            defined float s = this.Step
+            if (s > 0.0) { v = low + Math.Round((v - low) / s) * s }
+            if (v < low) { v = low }
+            if (v > high) { v = high }
+            return v
+        }
+
+        // Sets the value (snapped and kept inside the range); when it is another one, OnChange is called.
+        undefined SetValue(defined float v) {
+            defined float now = this.Snap(v)
+            if (now == this.Value) { return }
+            this.Value = now
+            this.changed = true
+            var callback = this.OnChange
+            if (callback != undefined) { callback() }
+        }
+
+        defined float KeyStep(bool large) {
+            defined float range = this.Maximum - this.Minimum
+            if (large) {
+                if (this.LargeStep > 0.0) { return this.LargeStep }
+                defined float tenth = range / 10.0
+                if (this.Step > 0.0 && tenth < this.Step) { return this.Step }
+                return tenth
+            }
+            if (this.Step > 0.0) { return this.Step }
+            return range / 100.0
+        }
+
+        // the number as ShowValue writes it
+        string ValueText(defined float value) {
+            defined int digits = this.Decimals
+            if (digits < 0) {
+                digits = 0
+                defined float s = this.Step
+                while (digits < 3 && s > 0.0 && Math.Abs(s - Math.Round(s)) > 0.0001) {
+                    s = s * 10.0
+                    digits = digits + 1
+                }
+            }
+            if (digits == 0) { return "" + (Math.Round(value)!int) }
+            defined int scale = 1
+            for (var i = 0; i < digits; i = i + 1) { scale = scale * 10 }
+            defined int n = Math.Round(Math.Abs(value) * scale)!int
+            string sign = value < 0.0 && n != 0 ? "-" : ""
+            string frac = "" + (n % scale)
+            while (frac.Length < digits) { frac = "0" + frac }
+            return sign + (n / scale) + "." + frac
+        }
+
+        // the room the number takes on the right (the widest of the ends of the range)
+        defined int ValueRoom(Root root) {
+            if (!this.ShowValue) { return 0 }
+            var low = this.TextWidth(root, this.ValueText(this.Minimum))
+            var high = this.TextWidth(root, this.ValueText(this.Maximum))
+            return UI.M.Max(low, high) + 8
+        }
+
+        override undefined MeasureCore(Root root, defined int aw, defined int ah) {
+            this.cw = 120 + this.ValueRoom(root)
+            this.ch = UI.M.Max(this.thumb * 2 + 4, this.TextHeight(root))
+        }
+
+        // The track on the screen: where the centre of the thumb is at Minimum and at Maximum.
+        defined int TrackStart() { return this.ax + this.thumb + 1 }
+        defined int TrackEnd(Root root) { return UI.M.Max(this.TrackStart(), this.ax + this.actualWidth - this.ValueRoom(root) - this.thumb - 1) }
+
+        // where the centre of the thumb is now
+        defined int ThumbX(Root root) {
+            defined int x0 = this.TrackStart()
+            defined int x1 = this.TrackEnd(root)
+            defined float range = this.Maximum - this.Minimum
+            if (range <= 0.0) { return x0 }
+            defined float t = (this.Snap(this.Value) - this.Minimum) / range
+            return x0 + Math.Round(t * (x1 - x0))!int
+        }
+
+        // the value at the screen position px
+        undefined ValueAt(Root root, defined int px) {
+            defined int x0 = this.TrackStart()
+            defined int x1 = this.TrackEnd(root)
+            if (x1 <= x0) { return }
+            defined float t = (px - x0) * 1.0 / (x1 - x0)
+            if (t < 0.0) { t = 0.0 }
+            if (t > 1.0) { t = 1.0 }
+            this.SetValue(this.Minimum + t * (this.Maximum - this.Minimum))
+        }
+
+        override undefined Draw(Root root, defined int ax, defined int ay) {
+            if (!this.NeedsDraw(root, ax, ay)) { return }
+            if (this.DrawTemplate(root, ax, ay)) { return }
+            var theme = root.theme
+            var r = root.renderer
+            var cy = ay + this.actualHeight / 2
+            var x0 = this.TrackStart()
+            var x1 = this.TrackEnd(root)
+            var tx = this.ThumbX(root)
+            // the track: the part up to the thumb in the accent
+            var track = theme.scrollTrack
+            if (this.Background != undefined) { track = this.Background }
+            root.Box(x0 - 2, cy - 2, x1 - x0 + 4, 4, track, undefined, 2)
+            var fill = theme.accent
+            if (this.Foreground != undefined) { fill = this.Foreground }
+            if (!this.Enabled) { fill = theme.textDisabled }
+            if (tx > x0) { root.Box(x0 - 2, cy - 2, tx - x0 + 2, 4, fill, undefined, 2) }
+            // the thumb
+            var face = theme.face
+            if (!this.Enabled) { face = theme.faceDisabled }
+            else if (this.Pressed) { face = theme.facePressed }
+            else if (this.Hover) { face = theme.faceHover }
+            var border = theme.border
+            if (this.Pen != undefined) { border = this.Pen }
+            if (this.Focused) { border = theme.borderFocus }
+            var radius = this.thumb
+            r.FillCircle(tx, cy, radius, face)
+            r.DrawCircle(tx, cy, radius, border)
+            if (this.Focused) { r.DrawCircle(tx, cy, radius - 1, border) }
+            r.FillCircle(tx, cy, 3, fill)
+            if (this.ShowValue) {
+                var color = theme.text
+                if (!this.Enabled) { color = theme.textDisabled }
+                var text = this.ValueText(this.Value)
+                this.DrawString(root, ax + this.actualWidth - this.TextWidth(root, text), ay + (this.actualHeight - this.TextHeight(root)) / 2, text, color)
+            }
+        }
+
+        override undefined MouseDown(Root root, defined int button, defined int px, defined int py) {
+            if (button != 1) { return }
+            this.Pressed = true
+            this.ValueAt(root, px)
+        }
+
+        override undefined MouseMove(Root root, defined int px, defined int py) {
+            if (this.Pressed) { this.ValueAt(root, px) }
+        }
+
+        override undefined MouseUp(Root root, defined int button, defined int px, defined int py) {
+            if (button == 1) { this.Pressed = false }
+        }
+
+        // (the held button moves the thumb: no drag starts from here, a finger does not scroll the list around it)
+        override bool KeepsMouseDrag() { return true }
+        override bool Dragging() { return this.Pressed }
+
+        // Left/Right, Page Up/Down, Home/End; Up and Down move the focus.
+        override bool WantsKey(defined int key) {
+            return key == UI.Keys.Left() || key == UI.Keys.Right() || key == UI.Keys.PageUp() || key == UI.Keys.PageDown() || key == UI.Keys.Home() || key == UI.Keys.End()
+        }
+
+        override undefined KeyDown(Root root, defined int key, defined int mod) {
+            if (key == UI.Keys.Right()) { this.SetValue(this.Value + this.KeyStep(false)) }
+            else if (key == UI.Keys.Left()) { this.SetValue(this.Value - this.KeyStep(false)) }
+            else if (key == UI.Keys.PageUp()) { this.SetValue(this.Value + this.KeyStep(true)) }
+            else if (key == UI.Keys.PageDown()) { this.SetValue(this.Value - this.KeyStep(true)) }
+            else if (key == UI.Keys.Home()) { this.SetValue(this.Minimum) }
+            else if (key == UI.Keys.End()) { this.SetValue(this.Maximum) }
+        }
+    }
+
+    // One of a list of choices, shown in place between two arrows - no list opens: Left/Right (and the D-pad of a gamepad) or a click on an arrow go to
+    // the previous / next one, Enter, Space and a click on the text to the next. The choice of the settings of a game ("Quality: < High >"). `Add("text")`
+    // (or objects with DisplayMember), `SelectedIndex`, `Text`, `OnChange`/`TakeChanged()`; `Wrap` (default true) goes from the last to the first and
+    // back, without it the arrow at the end is greyed and does nothing.
+    class Stepper : Element {
+        List items
+        string DisplayMember = ""
+        defined int SelectedIndex = -1
+        bool Wrap = true
+        lambda OnChange
+        bool changed = false
+        // the arrow under the pointer: -1 the left one, 1 the right one, 0 none
+        defined int hotArrow = 0
+        // the width of the area of an arrow
+        defined int arrowRoom = 22
+
+        construct(defined int x = 0, defined int y = 0, defined int width = -1, defined int height = -1) : base(x, y, width, height) {
+            this.items = new List()
+        }
+
+        override string StyleKey() { return "Stepper" }
+
+        override bool Focusable() { return true }
+
+        int Count { get { return this.items.Count } }
+
+        // Appends a choice; an object belongs to the stepper from now on. The first one is chosen.
+        any Add(any item) {
+            UI.M.Own(this, item)
+            this.items.Add(item)
+            if (this.SelectedIndex < 0) { this.SelectedIndex = 0 }
+            this.Invalidate()
+            return item
+        }
+
+        undefined Clear() {
+            this.items = new List()
+            this.SelectedIndex = -1
+            this.Invalidate()
+        }
+
+        // Replaces the choices by `list` (`own`: it belongs to the stepper from now on); the first one is chosen.
+        undefined SetItems(List list, bool own = true) {
+            if (own) { list.TakeTo(this) }
+            this.items = list
+            this.SelectedIndex = list.Count > 0 ? 0 : -1
+            this.Invalidate()
+        }
+
+        List ItemsSource {
+            get { return this.items }
+            set { this.SetItems(value, false); this.items = value }   // (a new list - no one else has it - belongs to the control: the field claims it, SPEC 2.1)
+        }
+
+        string ItemText(any item) { return UI.M.Text(UI.M.Member(item, this.DisplayMember)) }
+
+        any SelectedItem {
+            get {
+                if (this.SelectedIndex < 0 || this.SelectedIndex >= this.items.Count) { return undefined }
+                return this.items[this.SelectedIndex]
+            }
+        }
+
+        // The text of the choice ("" without one).
+        string Text {
+            get {
+                any item = this.SelectedItem
+                if (item == undefined) { return "" }
+                return this.ItemText(item)
+            }
+        }
+
+        bool TakeChanged() {
+            var was = this.changed
+            this.changed = false
+            return was
+        }
+
+        // Chooses the element `index` (-1: none) and reports the change.
+        undefined Select(int index) {
+            if (index >= this.items.Count) { index = this.items.Count - 1 }
+            if (index < -1) { index = -1 }
+            if (index == this.SelectedIndex) { return }
+            this.SelectedIndex = index
+            this.changed = true
+            var callback = this.OnChange
+            if (callback != undefined) { callback() }
+        }
+
+        // Can it go one further in this direction (-1, 1)?
+        bool CanStep(defined int direction) {
+            var n = this.items.Count
+            if (n < 2) { return false }
+            if (this.Wrap) { return true }
+            if (direction < 0) { return this.SelectedIndex > 0 }
+            return this.SelectedIndex < n - 1
+        }
+
+        // One further: -1 the previous choice, 1 the next.
+        undefined StepBy(defined int direction) {
+            if (!this.CanStep(direction)) { return }
+            var n = this.items.Count
+            var index = this.SelectedIndex + direction
+            if (this.SelectedIndex < 0) { index = 0 }
+            if (index < 0) { index = n - 1 }
+            if (index >= n) { index = 0 }
+            this.Select(index)
+        }
+
+        override undefined MeasureCore(Root root, defined int aw, defined int ah) {
+            var w = 0
+            for (var i = 0; i < this.items.Count; i = i + 1) { w = UI.M.Max(w, this.TextWidth(root, this.ItemText(this.items[i]))) }
+            this.cw = w + 2 * this.arrowRoom + 8
+            this.ch = UI.M.Max(this.TextHeight(root), 14) + 8
+        }
+
+        // Which arrow is at (px, py): -1, 1, or 0 (the text between them).
+        defined int ArrowAt(defined int px, defined int py) {
+            if (px < this.ax + this.arrowRoom) { return -1 }
+            if (px >= this.ax + this.actualWidth - this.arrowRoom) { return 1 }
+            return 0
+        }
+
+        undefined DrawArrow(Root root, defined int cx, defined int cy, defined int direction, Brush brush) {
+            var r = root.renderer
+            var s = 5
+            if (direction < 0) { r.FillTriangle(cx + s / 2, cy - s, cx + s / 2, cy + s, cx - s, cy, brush) }
+            else { r.FillTriangle(cx - s / 2, cy - s, cx - s / 2, cy + s, cx + s, cy, brush) }
+        }
+
+        override undefined Draw(Root root, defined int ax, defined int ay) {
+            if (!this.NeedsDraw(root, ax, ay)) { return }
+            if (this.DrawTemplate(root, ax, ay)) { return }
+            var theme = root.theme
+            var w = this.actualWidth
+            var h = this.actualHeight
+            var face = theme.face
+            if (!this.Enabled) { face = theme.faceDisabled }
+            else if (this.Background != undefined) { face = this.Background }
+            var border = theme.border
+            if (this.Pen != undefined) { border = this.Pen }
+            if (this.Focused) { border = theme.borderFocus }
+            root.Box(ax, ay, w, h, face, border)
+            var room = this.arrowRoom
+            // the arrow under the pointer lies on the hover colour (the pressed one on the pressed colour)
+            if (this.Enabled && this.Hover && this.hotArrow != 0 && this.CanStep(this.hotArrow)) {
+                var hot = theme.faceHover
+                if (this.Pressed) { hot = theme.facePressed }
+                var hx = ax + 2
+                if (this.hotArrow > 0) { hx = ax + w - room }
+                root.Box(hx, ay + 2, room - 2, h - 4, hot, undefined, UI.M.Min(theme.radius, 3))
+            }
+            var color = theme.text
+            if (this.Foreground != undefined) { color = this.Foreground }
+            if (!this.Enabled) { color = theme.textDisabled }
+            var cy = ay + h / 2
+            var left = color
+            if (!this.CanStep(-1)) { left = theme.textDisabled }
+            var right = color
+            if (!this.CanStep(1)) { right = theme.textDisabled }
+            this.DrawArrow(root, ax + room / 2 + 1, cy, -1, left)
+            this.DrawArrow(root, ax + w - room / 2 - 1, cy, 1, right)
+            var text = this.Text
+            var inner = UI.M.Max(0, w - 2 * room)
+            root.PushClip(ax + room, ay + 1, inner, UI.M.Max(0, h - 2))
+            this.DrawString(root, ax + room + (inner - this.TextWidth(root, text)) / 2, ay + (h - this.TextHeight(root)) / 2, text, color)
+            root.PopClip()
+        }
+
+        override undefined Hover(Root root, defined int px, defined int py) { this.hotArrow = this.ArrowAt(px, py) }
+
+        override undefined MouseDown(Root root, defined int button, defined int px, defined int py) {
+            if (button == 1) {
+                this.Pressed = true
+                this.hotArrow = this.ArrowAt(px, py)
+            }
+        }
+
+        override undefined MouseUp(Root root, defined int button, defined int px, defined int py) {
+            var was = this.Pressed
+            this.Pressed = false
+            if (!was || button != 1 || !this.Contains(px, py)) { return }
+            var arrow = this.ArrowAt(px, py)
+            if (arrow == 0) { arrow = 1 }
+            this.StepBy(arrow)
+        }
+
+        // Left and Right go through the choices (also at the ends: the focus does not jump out of a row of a menu); Up and Down move the focus.
+        override bool WantsKey(defined int key) { return key == UI.Keys.Left() || key == UI.Keys.Right() }
+
+        override undefined KeyDown(Root root, defined int key, defined int mod) {
+            if (key == UI.Keys.Left()) { this.StepBy(-1) }
+            else if (key == UI.Keys.Right() || key == UI.Keys.Enter() || key == UI.Keys.Space()) { this.StepBy(1) }
+        }
+    }
+}

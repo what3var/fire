@@ -580,6 +580,11 @@ namespace fire.UI.Markup
                     if (trimmed.StartsWith("0x", StringComparison.OrdinalIgnoreCase) && int.TryParse(trimmed.AsSpan(2), NumberStyles.HexNumber, CultureInfo.InvariantCulture, out int hex)) return "0x" + hex.ToString("X", CultureInfo.InvariantCulture);
                     errors.Add(new MarkupDiagnostic(line, $"'{property.Name}' needs a whole number (or {{Enum Type.Member}}), not '{text}'."));
                     return null;
+                case PropertyKind.Number:
+                    if (double.TryParse(trimmed, NumberStyles.AllowLeadingSign | NumberStyles.AllowDecimalPoint, CultureInfo.InvariantCulture, out double d))
+                        return d.ToString("0.0###############", CultureInfo.InvariantCulture);   // (always with a point: a float in fire)
+                    errors.Add(new MarkupDiagnostic(line, $"'{property.Name}' needs a number (0.5, -2, 100), not '{text}'."));
+                    return null;
                 case PropertyKind.Bool:
                     if (trimmed.Equals("true", StringComparison.OrdinalIgnoreCase)) return "true";
                     if (trimmed.Equals("false", StringComparison.OrdinalIgnoreCase)) return "false";

@@ -47,6 +47,58 @@ window, and in every cycle it distributes the events, paints what changed and ca
 | `while (ui.Tick()) { }` | | one cycle of this root and the attached ones, in a loop of your own |
 | `ui.onTick` | override `OnTick()` | runs once per cycle |
 
+## A root without a window: the interface as a layer
+
+A game draws its own picture (a `scene3d` image, a framebuffer of its own) in its own loop, and puts a menu or a HUD over it. For that the root gets
+only a framebuffer - `new UI.Root(framebuffer)` - and touches no window: it does not take its events (`EnableEvents`), hooks into no cycle
+(`onCycle`), resizes nothing (`AutoResize`), leaves `TouchMouse` and the cursor of the window alone and hands no area to the window
+(`PresentArea`). The program does that part:
+
+```fire
+#import "ui"
+
+var screen = new Framebuffer(1280, 720)
+var win = new Window(screen, "Game")
+win.EnableEvents()
+var layer = new Framebuffer(1280, 720)                 // the menu draws here, see-through
+var menu = new UI.Root(layer, systemScale: false)
+menu.WindowBackground = new SolidBrush(UI.Color.Transparent())
+menu.FocusFollowsPointer = true                         // hover and focus are one row
+menu.OnCursor = func (int cursor) => { win.Cursor = cursor }
+var volume = new UI.Slider(0.0, 100.0, 80.0, 40, 40, 300, -1)
+volume.Step = 5.0
+menu.Add(volume)
+var screenRenderer = new Renderer(screen)
+screenRenderer.AlphaBlending = true
+while (win.Tick()) {
+    any e = win.NextEvent()
+    while (e != undefined) {
+        menu.Dispatch(e)                                // (or keep it for the game when the menu is closed)
+        e = win.NextEvent()
+    }
+    menu.Tick()                                         // draws what changed into `layer`
+    // ... draw the scene into `screen` ...
+    screenRenderer.Blit(layer, 0, 0, BlitMode.Blend!int)
+}
+```
+
+| Member | Without a window |
+| --- | --- |
+| `Dispatch(e)` | hands over one event - an array as `Window.NextEvent` gives it (mouse, wheel, keys, text, touch, joystick, drops, `Close`), positions in pixels of the framebuffer; counts in `Events` |
+| `Update()` | arranges and draws what changed into the framebuffer; true when it drew |
+| `Tick()` | the whole cycle of the interface: the repeats of joystick keys, tooltips, `Update`, `onTick`; false once a `Close` event was handed over |
+| `OnCursor` | `func (int cursor)`: the shape of the pointer the interface wants (a `UI.Cursor`), when it changes - with a window too it replaces setting `window.Cursor` |
+| `window` | undefined |
+
+`Run` and `Show` do nothing without a window; `Attach` only lets `Tick` take the other root along. A root with a window - `new UI.Root(fb, window)` -
+works as before.
+
+**Scale without resizing.** `menu.SetScale(2.0, resize: false)` draws at twice the size and keeps the framebuffer as it is: the logical size becomes
+the framebuffer's divided by the scale (1920 x 1080 at 2.0 is an interface of 960 x 540, `onResize` hears it), the positions of `Dispatch` are divided
+too. `SetScale(s)` (`resize` true) is what `Scaling = s` does with a window: the framebuffer and the window grow to the logical size times the scale.
+Without a window `Scaling = s` keeps the framebuffer as well. `new UI.Root(fb, systemScale: false)` (also `new UI.Root(fb, window, false)`) starts at
+1.0 instead of the scaling of the system - dark mode, accent and font still come from it.
+
 ## Several windows
 
 Each window is a root with a framebuffer and a `Window` of its own. `ui.Attach(other)` hangs another root onto this one: `Run`, `Show` and `Tick` serve
@@ -83,6 +135,31 @@ The program can size the window itself: `ui.SetSize(width, height)` (logical pix
 interface out anew - for a window that is as big as what it shows (the assistant's bubble grows with its text; with `window.Position()` and `SetPosition` its
 bottom stays where it was).
 
+## Full screen
+
+`window.Fullscreen = true` puts the window over the whole screen it is on, without a frame or title bar (a game); `false` brings back the size, place
+and frame it had before. The new size comes as a resize event (`EventType.Resize`), so with `AutoResize` (a root has it on) the framebuffer follows and
+the interface is laid out anew. A size the program asks for while the window is in full screen (`SetSize`) is the size it gets afterwards.
+
+`window.Fullscreen` says what the program asked for last; `window.IsFullscreen` says the state the desktop reports. They differ for a moment while a window
+manager answers (with a manager's thread: until its next cycle), and the desktop may end full screen by itself - the user presses Esc in the browser, a key
+of the window manager - then both read `false`. No key toggles full screen by itself (no F11): the program decides, e.g. in its `RegisterKeyDown`.
+
+```fire
+win.RegisterKeyDown(func (int key, int scan, int mods, bool repeat) => {
+    if (scan == 68) { win.Fullscreen = !win.IsFullscreen }   // 68: the scan code of F11
+})
+```
+
+| Display | How |
+| --- | --- |
+| Windows | a popup without frame over the monitor of the window (`MonitorFromWindow`, its whole rectangle - also over the task bar); back: the style and the placement from before |
+| X11 | `_NET_WM_STATE_FULLSCREEN` when the window manager has it (EWMH: it chooses the monitor and keeps the old place); without a window manager (Xvfb, a kiosk) an override-redirect window over the whole X screen |
+| Wayland | `xdg_toplevel.set_fullscreen` (the compositor chooses the output, the one the window is on); the size comes with its configure, fire's own title bar is away meanwhile |
+| macOS | a borderless window over the frame of its screen, the menu bar and the Dock hidden - at once, without the animation and the Space of its own of `toggleFullScreen:` |
+| Browser | `requestFullscreen` of the canvas; the browser allows it only shortly after a click or a key of the user (a handler of `MouseDown`/`KeyDown` is such a moment), else nothing happens and `IsFullscreen` stays `false`; Esc leaves it |
+| headless | only the state, and the size of the screen there is not: `FIRE_DISPLAY_SCREEN=<width>x<height>`, else 1920 x 1080 (also `WorkArea`) |
+
 ## The look of the system
 
 Every root looks like the other programs of the computer. At its start it asks `SystemTheme.Current()` and takes
@@ -108,6 +185,9 @@ ui.Accent = 0x8854D0    // the accent colour as 0xRRGGBB
 ui.Add(new UI.Button("OK", 16, 16))
 ui.Run()
 ```
+
+`new UI.Root(fb, win, systemScale: false)` does not take the scaling of the system in the first place (a game that scales its interface itself,
+see [SetScale](#a-root-without-a-window-the-interface-as-a-layer)).
 
 With every accent - the system's or `Accent` - the root also chooses the colour of **text on the accent** (selected rows of lists, trees and combo boxes,
 the highlighted menu item, selected text, the caption of the active pane): white, or black on a light accent, whichever has the higher contrast ratio

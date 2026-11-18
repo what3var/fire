@@ -421,7 +421,7 @@ class Object {
     // The colour (0xAABBGGRR, S3D.Rgb).
     defined int Color { get { return __S3DGetI(this.h, 0) } set { __S3DSetI(this.h, 0, value) } }
     defined bool Visible { get { return __S3DGetB(this.h, 1) } set { __S3DSetI(this.h, 1, value) } }
-    // 1 = solid, below that the object is see-through (a texture with transparent pixels is see-through, too). Transparent objects are drawn after the solid ones, from far to near.
+    // 1 = solid, below that the object is see-through (so is one whose texture coordinates reach transparent pixels of its texture; its opaque pixels stay solid). Transparent objects are drawn after the solid ones, from far to near.
     defined float Opacity { get { return __S3DGetF(this.h, 17) } set { __S3DSetF(this.h, 17, value) } }
     // Above 0: pixels of the texture that are more transparent than this are left out completely and the rest is solid (leaves, fences: no sorting problems).
     defined float AlphaCutoff { get { return __S3DGetF(this.h, 18) } set { __S3DSetF(this.h, 18, value) } }

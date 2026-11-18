@@ -159,6 +159,20 @@ class Window {
         }
     }
 
+    // true: the window covers the whole screen it is on, without a frame or title bar (a game); false (default): back to the size, place and frame it had. The
+    // new size comes as EventType.Resize - with AutoResize the framebuffer follows. Reading it says what was asked for last; when the desktop ends full screen by
+    // itself (Esc in the browser, the window manager) it follows (IsFullscreen says the state). In the browser the page may go to full screen only shortly
+    // after a click or a key of the user (the program's handler of a MouseDown/KeyDown is such a moment). No key toggles it by itself (no F11): the program
+    // decides. Windows: a popup over the monitor; X11: _NET_WM_STATE_FULLSCREEN (without a window manager: a window over the whole screen); Wayland:
+    // xdg_toplevel.set_fullscreen (fire's own title bar goes away meanwhile); macOS: a borderless window over the screen, menu bar and Dock hidden.
+    bool Fullscreen {
+        get { return __GRPHWinGetFullscreen(this.id, false) }
+        set { __GRPHWinSetFullscreen(this.id, value) }
+    }
+    // Is the window in full screen now? The display's answer: a window manager answers a little later (with a manager's thread: after its next cycle), and
+    // the user may leave full screen (Esc in the browser).
+    bool IsFullscreen { get { return __GRPHWinGetFullscreen(this.id, true) } }
+
     // The picture of the window in the task bar, the title bar and Alt+Tab: a copy of the framebuffer's pixels (with their alpha; 32 x 32 or 64 x 64 suit,
     // the desktop scales it). undefined: the program's own picture again. macOS shows the program's (its bundle), Wayland the one of its .desktop file.
     undefined SetIcon(Framebuffer icon) {

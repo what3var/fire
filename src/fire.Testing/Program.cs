@@ -18,6 +18,8 @@ if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "startproject") { E
 if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "publish") { Environment.ExitCode = PublishTests.Run() == 0 ? 0 : 1; return; }
 // FIRE_TESTS_ONLY=explorer: the filter, Sync and Show All Files of spark's solution explorer (ExplorerTests.cs; seconds, nothing installed)
 if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "explorer") { Environment.ExitCode = ExplorerTests.Run() == 0 ? 0 : 1; return; }
+// FIRE_TESTS_ONLY=editorchecks: how spark checks the documents in the background while typing - debounce, cancellation, stale results, the gate of the analyses (BackgroundCheckTests.cs; seconds)
+if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "editorchecks") { Environment.ExitCode = BackgroundCheckTests.Run() == 0 ? 0 : 1; return; }
 // the look of the UI must not depend on the desktop of the machine that runs the tests (SystemTheme: scaling, dark mode, accent, font)
 Environment.SetEnvironmentVariable("FIRE_SYSTEM_THEME", "off");
 // scene3d's GPU path takes a Vulkan device that is a CPU (lavapipe) only with FIRE_S3D_GPU=cpu - without it the hardware checks only see the fallback to
@@ -9548,7 +9550,7 @@ uiDrawScript = """
         ExpectDiagnostic("Fehler im XML mit Zeile", "<Window Class=\"A\">\n<Button>\n</Window>", "line 3");
         ExpectDiagnostic("das Wurzelelement", "<Foo class=\"A\"/>", "must be 'Window' or 'View'");
         ExpectDiagnostic("class fehlt", "<Window/>", "needs the attribute Class");
-        ExpectDiagnostic("unbekanntes Element mit Zeile", "<Window Class=\"A\">\n<Slider/>\n</Window>", "line 2: Unknown element 'Slider'");
+        ExpectDiagnostic("unbekanntes Element mit Zeile", "<Window Class=\"A\">\n<Gauge/>\n</Window>", "line 2: Unknown element 'Gauge'");
         ExpectDiagnostic("alter Name eines Attributs", "<Window Class=\"A\"><Label x=\"1\" halign=\"Left\"/></Window>", "'x' is now called 'Left'");
         ExpectDiagnostic("alter Name eines Attributs (Ausrichtung)", "<Window Class=\"A\"><Label halign=\"Left\"/></Window>", "'halign' is now called 'HorizontalAlign'");
         ExpectDiagnostic("unbekannte Eigenschaft", "<Window Class=\"A\"><Label colour=\"#fff\"/></Window>", "has no property or event 'colour'");
@@ -9564,7 +9566,7 @@ uiDrawScript = """
         ExpectDiagnostic("ein Container, der nur Teile nimmt", "<Window Class=\"A\"><ListBox><Button/></ListBox></Window>", "can only contain 'Item'");
         ExpectDiagnostic("Border nimmt nur ein Kind", "<Window Class=\"A\"><Border><Label/><Label/></Border></Window>", "contains only one element");
         ExpectDiagnostic("Style ohne Ziel", "<Window Class=\"A\"><Resources><Style Key=\"k\"/></Resources></Window>", "needs Target");
-        ExpectDiagnostic("Style mit unbekanntem Ziel", "<Window Class=\"A\"><Resources><Style Target=\"Slider\"/></Resources></Window>", "Unknown style target");
+        ExpectDiagnostic("Style mit unbekanntem Ziel", "<Window Class=\"A\"><Resources><Style Target=\"Gauge\"/></Resources></Window>", "Unknown style target");
         ExpectDiagnostic("Setter mit unbekannter Eigenschaft", "<Window Class=\"A\"><Resources><Style Target=\"Button\"><Setter Property=\"nope\" Value=\"1\"/></Style></Resources></Window>", "has no property 'nope'");
         ExpectDiagnostic("zwei Styles ohne Schluessel fuer dasselbe Ziel", "<Window Class=\"A\"><Resources><Style Target=\"Button\"/><Style Target=\"Button\"/></Resources></Window>", "two styles without a key");
         ExpectDiagnostic("basedOn ohne Ziel", "<Window Class=\"A\"><Resources><Style Key=\"a\" Target=\"Button\" BasedOn=\"b\"/></Resources></Window>", "does not exist");
@@ -9898,6 +9900,11 @@ uiDrawScript = """
             CheckMarkup("Markup-IntelliSense: Werte einer Auswahl", Has(sEnum, "Stretch", "Left", "Center", "Right", "{Binding }"), string.Join(",", sEnum));
             var sBool = Suggest("<Window Class=\"A\"><Label Visible=\"f|");
             CheckMarkup("Markup-IntelliSense: true/false, gefiltert", sBool.SequenceEqual(new[] { "false" }), string.Join(",", sBool));
+            var sGame = Suggest("<Window Class=\"A\"><S|");
+            var sSlider = Suggest("<Window Class=\"A\"><Slider |");
+            var sStepper = Suggest("<Window Class=\"A\"><Stepper><|");
+            CheckMarkup("Markup-IntelliSense: Spielmenue - Slider und Stepper, ihre Attribute und Teile", Has(sGame, "Slider", "Stepper") && Has(sSlider, "Minimum", "Maximum", "Value", "Step", "LargeStep", "ShowValue", "OnChange")
+                && sStepper.SequenceEqual(new[] { "Item" }), string.Join(",", sGame) + " / " + string.Join(",", sSlider) + " / " + string.Join(",", sStepper));
             var sStyle = Suggest("<Window Class=\"A\"><Resources><Style Key=\"Primary\" Target=\"Button\"/><Style Key=\"Big\" Target=\"Label\"/></Resources><Button Style=\"|");
             CheckMarkup("Markup-IntelliSense: Schluessel der Styles", sStyle.SequenceEqual(new[] { "Primary", "Big" }), string.Join(",", sStyle));
             var sSetter = Suggest("<Window Class=\"A\"><Resources><Style Target=\"Button\"><Setter Property=\"back|");
@@ -10232,6 +10239,211 @@ uiDrawScript = """
                 ui1.Tick()
                 print("nach Detach " + ticks)
                 """, new[] { "angehaengt 1", "True", "True", "ticks 2 gezeichnet True", "nach Detach 2" });
+
+            // ---- the interface as a layer of a game (docs/ui/windows.md "A root without a window"): no window, the events by Dispatch, the scale without
+            // resizing, the focus with the pointer, scancodes, Slider and Stepper ----
+            CheckUi("Spielmenue: Root ohne Fenster - Dispatch, Update, Tick, OnCursor statt Window.Cursor, Close", """
+                var fb = new Framebuffer(200, 100)
+                var ui = new UI.Root(fb, systemScale: false)
+                print("ohne Fenster " + (ui.window == undefined) + " " + ui.width + "x" + ui.height)
+                var b = new UI.Button("OK", 10, 10, 80, 26)
+                b.Cursor = UI.Cursor.Hand
+                b.OnClick = func () => { print("click") }
+                ui.Add(b)
+                var shapes = ""
+                ui.OnCursor = func (int c) => { shapes = shapes + c + " " }
+                print("Update " + ui.Update() + " " + ui.Update())
+                ui.Dispatch([9, 20, 20])
+                ui.Dispatch([8, 1, 20, 20])
+                ui.Dispatch([11, 1, 20, 20])
+                ui.Dispatch([9, 150, 80])
+                print("Zeiger " + shapes + "Ereignisse " + ui.Events + " Fokus " + (ui.focusElement == b))
+                var ticks = 0
+                ui.onTick = func () => { ticks = ticks + 1 }
+                print("Tick " + ui.Tick() + " " + ui.cycles + " " + ticks)
+                ui.Dispatch([1])
+                print("geschlossen " + ui.Tick())
+                """, new[] { "ohne Fenster True 200x100", "Update True False", "click", "Zeiger 11 0 Ereignisse 4 Fokus True", "Tick True 1 1", "geschlossen False" });
+
+            CheckUi("Spielmenue: SetScale(s, resize: false) - logische Groesse = Framebuffer / s, nichts wird vergroessert; Scaling ohne Fenster ebenso", """
+                var fb = new Framebuffer(400, 200)
+                var ui = new UI.Root(fb, systemScale: false)
+                ui.onResize = func (int w, int h) => { print("resize " + w + "x" + h) }
+                var b = new UI.Button("B", 100, 50, 40, 20)
+                b.OnClick = func () => { print("click") }
+                ui.Add(b)
+                ui.SetScale(2.0, resize: false)
+                print(fb.Width() + "x" + fb.Height() + " logisch " + ui.width + "x" + ui.height + " Renderer " + (ui.renderer.scale == 2.0))
+                ui.Update()
+                ui.Dispatch([8, 1, 220, 120])
+                ui.Dispatch([11, 1, 220, 120])
+                ui.Scaling = 1.0
+                print(fb.Width() + "x" + fb.Height() + " logisch " + ui.width + "x" + ui.height)
+                var fb2 = new Framebuffer(300, 150)
+                var win = new Window(fb2, "Scale")
+                var ui2 = new UI.Root(fb2, win, false)
+                ui2.SetScale(1.5, resize: false)
+                print(fb2.Width() + "x" + fb2.Height() + " logisch " + ui2.width + "x" + ui2.height)
+                ui2.SetScale(2.0)
+                print(fb2.Width() + "x" + fb2.Height() + " logisch " + ui2.width + "x" + ui2.height)
+                """, new[] { "resize 200x100", "400x200 logisch 200x100 Renderer True", "click", "resize 400x200", "400x200 logisch 400x200", "300x150 logisch 200x100", "400x200 logisch 200x100" });
+
+            CheckUi("Spielmenue: FocusFollowsPointer - der Zeiger setzt den Fokus, eine Taste nimmt den Hover vom Element unter dem Zeiger", """
+                var fb = new Framebuffer(200, 120)
+                var ui = new UI.Root(fb, systemScale: false)
+                ui.FocusFollowsPointer = true
+                var stack = new UI.StackPanel(0, 0, 200, 120)
+                var a = new UI.Button("a", 0, 0, 100, 30)
+                var b = new UI.Button("b", 0, 0, 100, 30)
+                var c = new UI.Button("c", 0, 0, 100, 30)
+                stack.Add(a)
+                stack.Add(b)
+                stack.Add(c)
+                ui.Add(stack)
+                ui.Update()
+                ui.Dispatch([9, 10, 45])
+                print("Zeiger auf b: Fokus " + b.Focused + " Hover " + b.Hover)
+                ui.Dispatch([24, UI.Keys.Down(), 81, 0, false])
+                print("Pfeil: Fokus c " + c.Focused + " b " + b.Focused + " Hover b " + b.Hover)
+                ui.Dispatch([9, 12, 46])
+                print("bewegt: Fokus b " + b.Focused + " Hover " + b.Hover)
+                ui.Dispatch([9, 150, 110])
+                print("daneben: Fokus b " + b.Focused)
+                ui.FocusFollowsPointer = false
+                ui.Dispatch([9, 10, 5])
+                print("aus: Fokus a " + a.Focused + " Hover " + a.Hover)
+                """, new[] { "Zeiger auf b: Fokus True Hover True", "Pfeil: Fokus c True b False Hover b False", "bewegt: Fokus b True Hover True", "daneben: Fokus b True", "aus: Fokus a False Hover True" });
+
+            CheckUi("Spielmenue: Scancode - Root.KeyScancode und KeyRepeated waehrend KeyDown der Elemente und in onKeyPreview", """
+                class Probe : UI.Button {
+                    construct() : base("p", 0, 0, 50, 20) { }
+                    override undefined KeyDown(UI.Root root, defined int key, defined int mod) { print("element " + key + " scancode " + root.KeyScancode + " repeat " + root.KeyRepeated) }
+                }
+                var fb = new Framebuffer(100, 60)
+                var ui = new UI.Root(fb)
+                var p = new Probe()
+                ui.Add(p)
+                ui.SetFocus(p)
+                ui.onKeyPreview = func (int key, int mod) => {
+                    print("preview " + key + " " + ui.KeyScancode)
+                    return false
+                }
+                ui.Dispatch([24, 97, 4, 0, false])
+                ui.Dispatch([24, 97, 4, 0, true])
+                ui.Dispatch([25, 97, 4, 0, false])
+                print("KeyUp " + ui.KeyScancode)
+                ui.KeyDown(119, 0)
+                ui.KeyDown(119, 0, 26)
+                """, new[] { "preview 97 4", "element 97 scancode 4 repeat False", "preview 97 4", "element 97 scancode 4 repeat True", "KeyUp 4", "preview 119 0", "element 119 scancode 0 repeat False", "preview 119 26", "element 119 scancode 26 repeat False" });
+
+            CheckUi("Spielmenue: Slider - Pfeiltasten, Bild auf/ab, Pos1/Ende, Raster, Maus ziehen, OnChange, Wert anzeigen, oben/unten bewegt den Fokus", """
+                var fb = new Framebuffer(300, 100)
+                var ui = new UI.Root(fb, systemScale: false)
+                var stack = new UI.StackPanel(0, 0, 300, 100)
+                var s = new UI.Slider(0.0, 100.0, 50.0)
+                s.Width = 216
+                s.Step = 5.0
+                var changes = 0
+                s.OnChange = func () => { changes = changes + 1 }
+                var below = new UI.Button("below", 0, 0, 80, 24)
+                stack.Add(s)
+                stack.Add(below)
+                ui.Add(stack)
+                ui.Update()
+                ui.SetFocus(s)
+                ui.Dispatch([24, UI.Keys.Right(), 79, 0, false])
+                print("rechts " + s.Value)
+                ui.Dispatch([24, UI.Keys.Left(), 80, 0, false])
+                ui.Dispatch([24, UI.Keys.Left(), 80, 0, false])
+                print("links " + s.Value)
+                ui.Dispatch([24, UI.Keys.PageUp(), 0, 0, false])
+                print("Bild auf " + s.Value)
+                ui.Dispatch([24, UI.Keys.End(), 0, 0, false])
+                ui.Dispatch([24, UI.Keys.Right(), 0, 0, false])
+                print("Ende " + s.Value)
+                ui.Dispatch([24, UI.Keys.Home(), 0, 0, false])
+                print("Pos1 " + s.Value + " Aenderungen " + changes + " " + s.TakeChanged() + " " + s.TakeChanged())
+                s.SetValue(42.0)
+                print("Raster " + s.Value)
+                // the track runs from x 8 to 208 (thumb radius 7)
+                ui.Dispatch([8, 1, 108, 10])
+                print("Klick Mitte " + s.Value)
+                ui.Dispatch([9, 158, 40])
+                print("gezogen " + s.Value)
+                ui.Dispatch([9, 400, 40])
+                ui.Dispatch([11, 1, 400, 40])
+                print("bis zum Ende " + s.Value + " gedrueckt " + s.Pressed)
+                ui.Dispatch([24, UI.Keys.Down(), 0, 0, false])
+                print("runter: Fokus " + below.Focused)
+                var f = new UI.Slider(0.0, 1.0, 0.25)
+                f.Step = 0.05
+                f.ShowValue = true
+                print(f.ValueText(f.Value) + " " + f.ValueText(1.0) + " " + s.ValueText(35.0))
+                f.Decimals = 0
+                print(f.ValueText(0.6))
+                f.Decimals = -1
+                f.SetValue(0.33)
+                print(f.ValueText(f.Value))
+                """, new[] { "rechts 55", "links 45", "Bild auf 55", "Ende 100", "Pos1 0 Aenderungen 6 True False", "Raster 40", "Klick Mitte 50", "gezogen 75", "bis zum Ende 100 gedrueckt False", "runter: Fokus True", "0.25 1.00 35", "1", "0.35" });
+
+            CheckUi("Spielmenue: Stepper - Links/Rechts blaettert (mit und ohne Wrap), Klick auf die Pfeile, Enter, OnChange", """
+                var fb = new Framebuffer(300, 100)
+                var ui = new UI.Root(fb, systemScale: false)
+                var q = new UI.Stepper(10, 10, 160, 28)
+                q.Add("Low")
+                q.Add("Medium")
+                q.Add("High")
+                q.OnChange = func () => { print("-> " + q.Text) }
+                ui.Add(q)
+                ui.Update()
+                ui.SetFocus(q)
+                print("erst " + q.SelectedIndex + " " + q.Text)
+                ui.Dispatch([24, UI.Keys.Right(), 0, 0, false])
+                ui.Dispatch([24, UI.Keys.Right(), 0, 0, false])
+                ui.Dispatch([24, UI.Keys.Right(), 0, 0, false])
+                ui.Dispatch([24, UI.Keys.Left(), 0, 0, false])
+                ui.Dispatch([24, UI.Keys.Enter(), 0, 0, false])
+                // the arrows are 22 pixels wide: left 10..31, right 148..169
+                ui.Dispatch([8, 1, 15, 20])
+                ui.Dispatch([11, 1, 15, 20])
+                ui.Dispatch([8, 1, 160, 20])
+                ui.Dispatch([11, 1, 160, 20])
+                q.Wrap = false
+                q.Select(2)
+                print("ohne Wrap " + q.WantsKey(UI.Keys.Right()) + " " + q.WantsKey(UI.Keys.Up()))
+                ui.Dispatch([24, UI.Keys.Right(), 0, 0, false])
+                print("am Ende " + q.Text + " " + q.CanStep(1) + " " + q.CanStep(-1))
+                print("geaendert " + q.TakeChanged() + " " + q.TakeChanged())
+                """, new[] { "erst 0 Low", "-> Medium", "-> High", "-> Low", "-> High", "-> Low", "-> High", "-> Low", "-> High", "ohne Wrap True False", "am Ende High False True", "geaendert True False" });
+
+            File.WriteAllText(P("Menu.fxml"), """
+                <Window Class="Menu" Width="300" Height="120">
+                  <StackPanel Spacing="4">
+                    <Slider Name="volume" Width="200" Minimum="-10" Maximum="10.5" Step="0.5" Value="2.5" ShowValue="true" OnChange="Volume"/>
+                    <Stepper Name="quality" Width="160" SelectedIndex="1" Wrap="false" OnChange="Quality">
+                      <Item>Low</Item>
+                      <Item>Medium</Item>
+                      <Item>High</Item>
+                    </Stepper>
+                    <Label Name="shown" Text="{Binding Value, ElementName=volume}"/>
+                  </StackPanel>
+                </Window>
+                """);
+            CheckUi("Spielmenue: Slider und Stepper aus dem Markup (Zahlen mit Komma, Items, OnChange, Binding auf Value)", $$"""
+                #include "{{P("Menu.fxml")}}"
+                class MenuApp : MenuBase {
+                    Volume(sender) { print("volume " + sender.Value) }
+                    Quality(sender) { print("quality " + sender.Text) }
+                }
+                var app = new MenuApp()
+                app.UIRoot.Update()
+                print(app.volume.Minimum + " " + app.volume.Maximum + " " + app.volume.Step + " " + app.volume.Value + " " + app.quality.Text + " " + app.quality.Count + " " + app.quality.Wrap)
+                app.volume.SetValue(3.2)
+                app.quality.StepBy(1)
+                app.quality.StepBy(1)
+                app.UIRoot.Update()
+                print("Label " + app.shown.Text)
+                """, new[] { "-10 10.5 0.5 2.5 Medium 3 False", "volume 3", "quality High", "Label 3" });
 
             // several windows: one window opens another, Tick processes both
             File.WriteAllText(P("Main.fxml"), "<Window Class=\"Main\" Width=\"120\" Height=\"80\"><Button Name=\"b\" Text=\"main\"/></Window>");
@@ -11663,6 +11875,7 @@ ProjectTests.Run();
 RegistryTests.Run();
 NotesTests.Run();
 ExplorerTests.Run();
+BackgroundCheckTests.Run();
 PublishTests.Run();
 McpServerTests.Run();
 AiModelsTests.Run();
@@ -11769,6 +11982,49 @@ else
                 print(n)
             }
             """)).ToArray();
+
+    // Net: an empty host without IPv6 (a container): FIRE_NET_NO_IPV6=1 (set by the program through the C library, so the natives of the VM see it too) makes the IPv6
+    // attempt fail - the listener, the UDP socket and Http.Server are on 0.0.0.0 (IPv4) instead of throwing; at the end the switch is off again (the VM runs the cases in this process)
+    if (OperatingSystem.IsLinux())
+    {
+        const string noIpv6Name = "Net: ohne IPv6 (FIRE_NET_NO_IPV6=1) lauscht ein leerer Host auf 0.0.0.0 - TcpListener, UdpSocket, Http.Server";
+        const string noIpv6 = """
+            #extern "libc.so.6"
+            #import "net"
+            #import "http"
+            extern int setenv(string name, string value, int overwrite)
+            setenv("FIRE_NET_NO_IPV6", "1", 1)
+            try {
+                var l = new Net.TcpListener("", 0)
+                print("listener " + l.Host + " " + (l.Port > 0))
+                var c = new Net.TcpClient("127.0.0.1", l.Port)
+                var s = l.Accept(2000)
+                c.WriteString("hi")
+                var buf = new byte[8]
+                print("tcp " + s.Read(buf, 0, 8))
+                s.Close()
+                c.Close()
+                l.Close()
+                var u = new Net.UdpSocket("", 0)
+                var v = new Net.UdpSocket("127.0.0.1", 0)
+                v.SendString("ping", "127.0.0.1", u.Port)
+                print("udp " + u.ReceiveFrom(buf, 0, 8, 2000) + " " + u.FromHost)
+                try { u.SendString("x", "::1", v.Port) } catch (Net.NetException e) { print("udp ipv4 only " + e.code) }
+                u.Close()
+                v.Close()
+                var server = new Http.Server("", 0)
+                print("http " + (server.Port > 0))
+                server.Close()
+            } catch (Net.NetException e) { print("error " + e.message) }
+            setenv("FIRE_NET_NO_IPV6", "0", 1)
+            """;
+        natCases = natCases.Append((noIpv6Name, noIpv6)).ToArray();
+        if (TestSelected(noIpv6Name))
+        {
+            string got = vmOutput(noIpv6);
+            CheckNat("VM: " + noIpv6Name, got == "listener 0.0.0.0 True\ntcp 2\nudp 4 127.0.0.1\nudp ipv4 only 5\nhttp True\n", got);
+        }
+    }
 
     {
         // in the VM a call is an error (a catchable one); the `#if` of a C body is C's (the preprocessor of fire leaves it); the types are checked
@@ -15222,6 +15478,42 @@ else
                     ("Fenster: die Zwischenablage von X11 (Xvfb): was ein anderes Programm vor dem Start kopiert hat, ist gleich bei der ersten Frage da", lateReaderScript,
                         lateExpected, "", "x11-late", lateWriterScript),
                 };
+                // ---- Window.Fullscreen: the window goes over the whole screen and back - the sizes come as resize events (AutoResize: the framebuffer follows);
+                //      headless: the screen of FIRE_DISPLAY_SCREEN (1920 x 1080), X11 without a window manager (Xvfb, 1280 x 1024 of xvfb-run): an override-redirect
+                //      window, Wayland: xdg_toplevel.set_fullscreen on weston's headless output (1024 x 640; fire's own title bar is away meanwhile)
+                const string fullscreenScript = """
+                #import "windows"
+                #import "time"
+                var fb = new Framebuffer(64, 48)
+                var win = new Window(fb, "fullscreen")
+                win.VSync = false
+                win.AutoResize = true
+                print(win.Fullscreen + " " + win.IsFullscreen)
+                print(win.Tick())
+                print("before " + fb.Width() + "x" + fb.Height() + " " + win.Fullscreen + " " + win.IsFullscreen)
+                win.Fullscreen = true
+                print("asked " + win.Fullscreen)
+                var n = 0
+                while ((!win.IsFullscreen || fb.Width() == 64) && n < 500) { win.Tick(); Sleep(10ms); n = n + 1 }
+                print("during " + fb.Width() + "x" + fb.Height() + " " + win.Fullscreen + " " + win.IsFullscreen)
+                win.Fullscreen = false
+                n = 0
+                while ((win.IsFullscreen || fb.Width() != 64 || fb.Height() != 48) && n < 500) { win.Tick(); Sleep(10ms); n = n + 1 }
+                print("after " + fb.Width() + "x" + fb.Height() + " " + win.Fullscreen + " " + win.IsFullscreen)
+                print(win.Tick())
+                """;
+                string[] FullscreenExpected(string screen) => new[] { "False False", "True", "before 64x48 False False", "asked True", $"during {screen} True True", "after 64x48 False False", "True" };
+                var fullscreenCases = new (string Title, string Script, string[] Expected, string Define, string Display, string? Second)[]
+                {
+                    ("Fenster: Fullscreen ohne Bildschirm (headless) - die Groesse des Bildschirms als Resize, danach die alte Groesse", fullscreenScript, FullscreenExpected("1920x1080"), "", "dummy", null),
+                    ("Fenster: Fullscreen auf X11 ohne Fenstermanager (Xvfb) - ein override-redirect-Fenster ueber den Bildschirm und zurueck", fullscreenScript, FullscreenExpected("1280x1024"), "", "x11", null),
+                    ("Fenster: Fullscreen auf Wayland (weston) - xdg_toplevel.set_fullscreen, die Groesse aus configure, ohne eigene Titelleiste, danach die alte Groesse", fullscreenScript, FullscreenExpected("1024x640"), "", "wayland", null),
+                };
+                foreach (var fc in fullscreenCases)
+                {
+                    if (!TestSelected(fc.Title)) continue;
+                    windowSteps.Add(() => PrepareWindowCase(fc.Title, fc.Script, fc.Expected, fc.Define, fc.Display, fc.Second));
+                }
                 foreach (var cc in clipboardCases)
                 {
                     if (!TestSelected(cc.Title)) continue;

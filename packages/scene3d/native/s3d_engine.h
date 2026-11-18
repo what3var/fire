@@ -218,6 +218,8 @@ typedef struct S3dMesh {
     int16_t* quv;                         /* 2 per vertex: q * uvStep (NULL: all 0) */
     uint16_t* idx16;                      /* the indices, when they fit 16 bits (else `idx` stays) */
     float qstep[3], uvStep;
+    int uvKnown;                          /* uvLo/uvHi hold the bounds of the texture coordinates (s3d_meshUvBounds; a finished mesh does not change) */
+    float uvLo[2], uvHi[2];
 } S3dMesh;
 
 typedef struct S3dTexture S3dTexture;
@@ -397,6 +399,11 @@ struct S3dTexture {
     float strength;    /* (the bridge: how strongly the bump map tilts the light, Texture.BumpStrength) */
     int filter;        /* how the colours are read between the texels: S3D_FILTER_* (the bump map is always bilinear; the lean renderer always reads the nearest texel) */
     int busy;          /* (the bridge: pictures that are drawn with it now - its texels and bump map change only when none is) */
+    /* where the texels that are not opaque are (made when asked, see s3d_texReadsAlpha): the texture in cells of alphaCell x alphaCell texels (at most 256 across), as sums over the
+     * rectangles from the top left corner of the cells that hold such a texel ((alphaGw + 1) x (alphaGh + 1)); alphaVersion: the version they were made for */
+    uint32_t* alphaSum;
+    int alphaCell, alphaGw, alphaGh;
+    uint32_t alphaVersion;
 };
 
 /* Texture.Filter: bilinear (smooth), the nearest texel (hard pixels), or sharp bilinear (hard pixels, but a one screen pixel wide blend at the texel edges: no shimmer when the texels are not a whole number of
@@ -406,7 +413,7 @@ enum { S3D_FILTER_BILINEAR = 0, S3D_FILTER_NEAREST = 1, S3D_FILTER_SHARP = 2 };
 static void s3d_texFree(S3dTexture* t) {
     if (t == NULL) return;
     s3d_gpu_releaseTexture(t);
-    S3D_FREE(t->rgba); S3D_FREE(t->bump); S3D_FREE(t->lean);
+    S3D_FREE(t->rgba); S3D_FREE(t->bump); S3D_FREE(t->lean); S3D_FREE(t->alphaSum);
     S3D_FREE(t);
 }
 static void s3d_texPrepare(S3dTexture* t) {
@@ -414,6 +421,64 @@ static void s3d_texPrepare(S3dTexture* t) {
     t->hasAlpha = 0;
     for (i = 3; i < n; i += 4) if (t->rgba[i] != 255) { t->hasAlpha = 1; break; }
     t->version++;
+}
+
+/* The cells of the texture that hold a texel that is not opaque, as sums (see S3dTexture.alphaSum). 0 when the memory is gone. */
+static int s3d_texAlphaCells(S3dTexture* t) {
+    int cell = 1, gw, gh, x, y;
+    uint32_t* sum;
+    if (t->alphaSum != NULL && t->alphaVersion == t->version) return 1;
+    while ((t->w + cell - 1) / cell > 256 || (t->h + cell - 1) / cell > 256) cell *= 2;
+    gw = (t->w + cell - 1) / cell; gh = (t->h + cell - 1) / cell;
+    S3D_FREE(t->alphaSum);
+    t->alphaSum = sum = (uint32_t*)S3D_MALLOC((s3d_size)(gw + 1) * (s3d_size)(gh + 1) * sizeof(uint32_t));
+    if (sum == NULL) return 0;
+    S3D_ZERO(sum, (s3d_size)(gw + 1) * (s3d_size)(gh + 1) * sizeof(uint32_t));
+    for (y = 0; y < t->h; y++)
+        for (x = 0; x < t->w; x++)
+            if (t->rgba[((s3d_size)y * (s3d_size)t->w + (s3d_size)x) * 4 + 3] != 255) sum[(s3d_size)(y / cell + 1) * (s3d_size)(gw + 1) + (s3d_size)(x / cell + 1)] = 1;
+    for (y = 1; y <= gh; y++)
+        for (x = 1; x <= gw; x++)
+            sum[(s3d_size)y * (s3d_size)(gw + 1) + x] += sum[(s3d_size)(y - 1) * (s3d_size)(gw + 1) + x] + sum[(s3d_size)y * (s3d_size)(gw + 1) + x - 1] - sum[(s3d_size)(y - 1) * (s3d_size)(gw + 1) + x - 1];
+    t->alphaCell = cell; t->alphaGw = gw; t->alphaGh = gh; t->alphaVersion = t->version;
+    return 1;
+}
+/* The ranges of texels x0..x1 (any whole numbers, repeat mode) as at most two ranges of cells inside the texture; the count. */
+static int s3d_texCellRanges(int x0, int x1, int size, int cell, int* lo, int* hi) {
+    int a, b;
+    if (x1 - x0 + 1 >= size) { lo[0] = 0; hi[0] = (size - 1) / cell; return 1; }
+    a = ((x0 % size) + size) % size; b = a + (x1 - x0);
+    if (b < size) { lo[0] = a / cell; hi[0] = b / cell; return 1; }
+    lo[0] = a / cell; hi[0] = (size - 1) / cell; lo[1] = 0; hi[1] = (b - size) / cell;
+    return 2;
+}
+/* Whether a mesh whose texture coordinates lie in u0..u1, v0..v1 (repeat mode) can read a texel that is not opaque (with the texels next to them that the filter mixes in).
+ * 1 when it can or when that is not known (the memory). */
+static int s3d_texReadsAlpha(S3dTexture* t, float u0, float u1, float v0, float v1) {
+    int xl[2], xh[2], yl[2], yh[2], nx, ny, i, k;
+    double fu, fv;
+    if (!t->hasAlpha) return 0;
+    if (!(u1 - u0 < 1e6f) || !(v1 - v0 < 1e6f) || !(fabsf(u0) < 1e9f) || !(fabsf(v0) < 1e9f)) return 1;   /* (not a number, or too far) */
+    if (!s3d_texAlphaCells(t)) return 1;
+    /* (the hardware renderer reads the nearest texel clamped to the edge: outside 0..1 that is not the texel of repeat mode - then all of them count) */
+    if (t->filter == S3D_FILTER_NEAREST && (u0 < 0 || v0 < 0 || u1 > 1 || v1 > 1)) { u0 = v0 = 0; u1 = v1 = 2; }
+    fu = floor((double)u0); fv = floor((double)v0);
+    {
+        double x0 = ((double)u0 - fu) * t->w - 0.5, x1 = ((double)u1 - fu) * t->w - 0.5, y0 = ((double)v0 - fv) * t->h - 0.5, y1 = ((double)v1 - fv) * t->h - 0.5;
+        if (x1 - x0 > 2.0 * t->w) x1 = x0 + 2.0 * t->w;
+        if (y1 - y0 > 2.0 * t->h) y1 = y0 + 2.0 * t->h;
+        /* (a texel more on each side: rounding, the sharp filter) */
+        nx = s3d_texCellRanges((int)floor(x0) - 1, (int)floor(x1) + 2, t->w, t->alphaCell, xl, xh);
+        ny = s3d_texCellRanges((int)floor(y0) - 1, (int)floor(y1) + 2, t->h, t->alphaCell, yl, yh);
+    }
+    for (i = 0; i < nx; i++)
+        for (k = 0; k < ny; k++) {
+            s3d_size W = (s3d_size)t->alphaGw + 1;
+            const uint32_t* s = t->alphaSum;
+            uint32_t n = s[(s3d_size)(yh[k] + 1) * W + (s3d_size)(xh[i] + 1)] - s[(s3d_size)yl[k] * W + (s3d_size)(xh[i] + 1)] - s[(s3d_size)(yh[k] + 1) * W + (s3d_size)xl[i]] + s[(s3d_size)yl[k] * W + (s3d_size)xl[i]];
+            if (n) return 1;
+        }
+    return 0;
 }
 
 /* The heights from the brightness of the texture itself (a little smoothed: a sharp edge gives a bevel, not a one texel crack). 0 when the memory is gone. */
@@ -664,6 +729,10 @@ typedef struct S3dFrame {
     int8_t* reflectN; s3d_size reflectNCap;
     uint8_t* reflectSrc; s3d_size reflectSrcCap;
     int* skyline; s3d_size skylineCap; int skyLevels;   /* the first row with something drawn in each column, and the smallest of 2^k columns from each (level k) */
+    /* the fog (software, a picture with transparent objects): it goes over the opaque objects before the transparent ones are drawn, and each of these is fogged by its own
+     * distance as it is drawn - as the hardware renderer does it; fogDone: this picture has its fog (s3d_fxApply leaves it) */
+    int fogOn, fogDone;
+    float fogStart, fogEnd, fogZA, fogZB, fogZC, fogColor[3];
 } S3dFrame;
 
 #ifndef FIRE_S3D_LEAN_ONLY   /* (a build with the lean renderer only, s3d_lean.h: the frames, shadows and rows of the full renderer are not in it) */
@@ -830,6 +899,18 @@ static inline uint8_t s3d_toByte(float c) { return (uint8_t)s3d_minf(255.0f, s3d
 /* Fills one triangle into the rows y0..y1 of the frame. Pixels are tested in the middle: a pixel belongs to the triangle when its centre is inside (the left and top edges count, the right and
  * bottom ones do not, so two triangles that share an edge never draw the same pixel twice). `pass`: 0 an opaque triangle, 1 a blended one, 2 one of a backdrop (no depth test, the depth
  * is not written; mixed by its alpha over what is there, its alpha too). */
+/* The fog at a depth of the picture (NDC z; 1e30 nothing - all fog, or none where only a backdrop is): 0 none .. 1 all fog, as s3d_fxApply has it. */
+static float s3d_frameFog(const S3dFrame* f, float z) {
+    float d;
+    if (z >= 1e29f) return f->backdrop ? 0.0f : 1.0f;
+    d = f->fogZC / (z * f->fogZA + f->fogZB);
+    if (d <= 0) return 1.0f;
+    return d <= f->fogStart ? 0.0f : d >= f->fogEnd ? 1.0f : (d - f->fogStart) / (f->fogEnd - f->fogStart);
+}
+/* An alpha from this on counts as opaque in the pass of the transparent objects (it is drawn and hides what is behind it, as an opaque object does): 255 of 255, as the
+ * bilinear filter of opaque texels gives it within the rounding of floats. The hardware renderer uses the same limit (s3d_main.frag). */
+#define S3D_OPAQUE_ALPHA (1.0f - 0.5f / 255.0f)
+
 static void s3d_rasterTri(uint8_t* rgba, S3dFrame* f, const S3dContext* ctx, const S3dTri* t, int y0, int y1, int pass) {
     const S3dBatch* b = &f->batches[t->batch];
     const S3dSurface* s = &b->s;
@@ -969,6 +1050,10 @@ static void s3d_rasterTri(uint8_t* rgba, S3dFrame* f, const S3dContext* ctx, con
                         col = s3d_v3(base.x * diffuse.x + spec.x + s->emissive.x, base.y * diffuse.y + spec.y + s->emissive.y, base.z * diffuse.z + spec.z + s->emissive.z);
                     }
                     if (glow) col = s3d_add(col, glowAdd);
+                    if (blendedPass && f->fogOn) {   /* a transparent object: the fog of its own distance (what is behind it has its fog already) */
+                        float k = s3d_frameFog(f, z);
+                        col = s3d_v3(col.x + (f->fogColor[0] - col.x) * k, col.y + (f->fogColor[1] - col.y) * k, col.z + (f->fogColor[2] - col.z) * k);
+                    }
                     px = rgba + di * 4;
                     if (backPass) {
                         /* a backdrop: over the backdrops before it, by its alpha (a cut-out is solid); the depth stays empty */
@@ -980,7 +1065,7 @@ static void s3d_rasterTri(uint8_t* rgba, S3dFrame* f, const S3dContext* ctx, con
                             px[2] = (uint8_t)(px[2] + (cb - (int)px[2]) * alpha + (cb >= px[2] ? 0.5f : -0.5f));
                             px[3] = (uint8_t)(px[3] + (255 - (int)px[3]) * alpha + 0.5f);
                         }
-                    } else if (blendedPass && alpha < 1.0f && s->cutoff <= 0) {
+                    } else if (blendedPass && alpha < S3D_OPAQUE_ALPHA && s->cutoff <= 0) {
                         if (alpha > 0) {
                             uint8_t cr = s3d_toByte(col.x), cg = s3d_toByte(col.y), cb = s3d_toByte(col.z);
                             px[0] = (uint8_t)(px[0] + (cr - (int)px[0]) * alpha + (cr >= px[0] ? 0.5f : -0.5f));
@@ -1087,6 +1172,43 @@ static void s3d_objectMatrices(const S3dCamera* cam, const S3dObjectParams* obj,
 }
 
 #ifndef FIRE_S3D_LEAN_ONLY   /* (the full renderer: queueing, set-up, threads) */
+/* The bounds of the texture coordinates of a finished mesh (once: it does not change any more). */
+static void s3d_meshUvBounds(S3dMesh* m) {
+    s3d_size i, n = m->posN / 3;
+    float u, v;
+    if (m->uvKnown) return;
+    m->uvLo[0] = m->uvLo[1] = 0; m->uvHi[0] = m->uvHi[1] = 0;
+    for (i = 0; i < n; i++) {
+        s3d_meshUv(m, i, &u, &v);
+        if (i == 0 || u < m->uvLo[0]) m->uvLo[0] = u;
+        if (i == 0 || u > m->uvHi[0]) m->uvHi[0] = u;
+        if (i == 0 || v < m->uvLo[1]) m->uvLo[1] = v;
+        if (i == 0 || v > m->uvHi[1]) m->uvHi[1] = v;
+    }
+    m->uvKnown = 1;
+}
+/* Whether a mesh with this surface can read a texel of `tex` that is not opaque: a texture with a transparent texel makes only the objects blended whose texture coordinates
+ * (after the mapping of the surface, Object.TextureScale/Offset/Rotation) come near it - an atlas with a few panes of glass does not make every object of it transparent. */
+static int s3d_meshReadsAlpha(const S3dMesh* mesh, const S3dSurface* surf, const S3dTexture* tex) {
+    S3dMesh* m = (S3dMesh*)mesh;
+    float lo[2], hi[2], cu[4], cv[4];
+    int k;
+    if (!tex->hasAlpha) return 0;
+    s3d_meshUvBounds(m);
+    /* the corners of the box of the coordinates through the mapping (an affine one: the box of the four corners holds every point) */
+    for (k = 0; k < 4; k++) {
+        float u = (k & 1) ? m->uvHi[0] : m->uvLo[0], v = (k & 2) ? m->uvHi[1] : m->uvLo[1];
+        cu[k] = surf->tm[0] * u + surf->tm[1] * v + surf->tm[2];
+        cv[k] = surf->tm[3] * u + surf->tm[4] * v + surf->tm[5];
+    }
+    lo[0] = hi[0] = cu[0]; lo[1] = hi[1] = cv[0];
+    for (k = 1; k < 4; k++) {
+        lo[0] = s3d_minf(lo[0], cu[k]); hi[0] = s3d_maxf(hi[0], cu[k]);
+        lo[1] = s3d_minf(lo[1], cv[k]); hi[1] = s3d_maxf(hi[1], cv[k]);
+    }
+    return s3d_texReadsAlpha((S3dTexture*)tex, lo[0], hi[0], lo[1], hi[1]);
+}
+
 /* Queues one mesh for the frame: its matrices and its look; nothing is transformed or drawn before `s3d_flush`. The camera places the mesh (and a billboard faces it). The mesh and the
  * texture have to live until the flush. */
 static void s3d_queueMesh(S3dFrame* f, const S3dCamera* cam, const S3dMesh* mesh, const S3dObjectParams* obj, const S3dSurface* surf, const S3dTexture* tex) {
@@ -1116,7 +1238,7 @@ static void s3d_queueMesh(S3dFrame* f, const S3dCamera* cam, const S3dMesh* mesh
     batch->normalM = normalM;
     batch->vp = s3d_viewProjection(cam, f->w, f->h);
     /* (a backdrop is neither: it has a pass of its own, before the others) */
-    batch->blended = !surf->background && surf->cutoff <= 0 && (surf->opacity < 1.0f || (batch->tex && batch->tex->hasAlpha));
+    batch->blended = !surf->background && surf->cutoff <= 0 && (surf->opacity < 1.0f || (batch->tex && s3d_meshReadsAlpha(mesh, surf, batch->tex)));
     if (surf->background) { batch->s.castShadows = 0; batch->s.receiveShadows = 0; batch->s.reflect = 0; }
     centre = s3d_transformPoint(&model, s3d_scale(s3d_add(mesh->bmin, mesh->bmax), 0.5f));
     batch->sortKey = s3d_length(s3d_sub(centre, cam->pos));
@@ -1807,8 +1929,29 @@ static void s3d_reflectTask(void* arg, int bi) {
         }
 }
 
+/* Software: the fog over rows y0..y1 of the picture as it is now (the opaque objects; what no object covers is all fog - none where only a backdrop is, s3d_frameFog) - s3d_fxApply's
+ * fog, done before the transparent objects. */
+static void s3d_fogTask(void* arg, int bi) {
+    S3dBandJob* j = (S3dBandJob*)arg;
+    S3dFrame* f = j->f;
+    int y0 = bi * j->band, y1 = s3d_mini(f->h - 1, y0 + j->band - 1), x, y, q;
+    float fc[3];
+    fc[0] = f->fogColor[0] * 255.0f; fc[1] = f->fogColor[1] * 255.0f; fc[2] = f->fogColor[2] * 255.0f;
+    for (y = y0; y <= y1; y++)
+        for (x = 0; x < f->w; x++) {
+            s3d_size i = (s3d_size)y * (s3d_size)f->w + (s3d_size)x;
+            float k = s3d_frameFog(f, f->depth[i]);
+            uint8_t* p = j->rgba + i * 4;
+            if (k <= 0) continue;
+            for (q = 0; q < 3; q++) {
+                float c = k >= 1 ? fc[q] : (float)p[q] + (fc[q] - (float)p[q]) * k;
+                p[q] = (uint8_t)(c <= 0 ? 0 : c >= 255 ? 255 : (int)(c + 0.5f));
+            }
+        }
+}
+
 /* Software: draws the queue into `rgba` (the camera's picture, already cleared). The backdrops first (in the order they were queued, over each other by their alpha, no depth), then the
- * opaque objects (in the order they were queued), then the transparent ones from the far to the near.
+ * opaque objects (in the order they were queued), then - with fog, after the fog over these (not over what only a backdrop covers) - the transparent ones from the far to the near.
  * The rows are shared between threads in bands of 16; a pixel is only ever touched by the thread of its band, so the result does not depend on the number of threads. */
 static void s3d_flushSoftware(uint8_t* rgba, S3dFrame* f, const S3dCamera* cam, const S3dLight* lights, s3d_size lightCount, const S3dFlushSettings* st) {
     s3d_size bi;
@@ -1835,14 +1978,25 @@ static void s3d_flushSoftware(uint8_t* rgba, S3dFrame* f, const S3dCamera* cam, 
         if (!S3D_GROW(f->reflect, f->reflectCap, n) || !S3D_GROW(f->reflectN, f->reflectNCap, n * 2) || !S3D_GROW(f->reflectSrc, f->reflectSrcCap, n * 4)) f->reflectOn = 0;
         else S3D_ZERO(f->reflect, n * sizeof(float));
     }
-    if (!f->reflectOn) { s3d_parallelFor(bands, workers, s3d_bandTask, &job); return; }
+    /* fog with transparent objects: over the opaque ones first, then each transparent one by its own distance (else s3d_fxApply does it afterwards, by the depth of the picture) */
+    f->fogOn = st->fogEnd > st->fogStart && f->blendedN > 0;
+    if (f->fogOn) {
+        f->fogStart = st->fogStart; f->fogEnd = st->fogEnd;
+        f->fogZA = cam->nearPlane - cam->farPlane; f->fogZB = cam->farPlane + cam->nearPlane; f->fogZC = 2 * cam->farPlane * cam->nearPlane;
+        f->fogColor[0] = (float)(st->fogColor & 255) / 255.0f; f->fogColor[1] = (float)((st->fogColor >> 8) & 255) / 255.0f; f->fogColor[2] = (float)((st->fogColor >> 16) & 255) / 255.0f;
+    }
+    if (!f->reflectOn && !f->fogOn) { s3d_parallelFor(bands, workers, s3d_bandTask, &job); return; }
     job.passes = 1;
     s3d_parallelFor(bands, workers, s3d_bandTask, &job);
-    S3D_COPY(f->reflectSrc, rgba, (s3d_size)f->w * (s3d_size)f->h * 4);
-    if (s3d_buildSkyline(f)) s3d_parallelFor(bands, workers, s3d_reflectTask, &job);
+    if (f->reflectOn) {
+        S3D_COPY(f->reflectSrc, rgba, (s3d_size)f->w * (s3d_size)f->h * 4);
+        if (s3d_buildSkyline(f)) s3d_parallelFor(bands, workers, s3d_reflectTask, &job);
+    }
+    if (f->fogOn) { s3d_parallelFor(bands, workers, s3d_fogTask, &job); f->fogDone = 1; }
     job.passes = 2;
     s3d_parallelFor(bands, workers, s3d_bandTask, &job);
     f->reflectOn = 0;
+    f->fogOn = 0;
 }
 
 /* The hardware backend (s3d_gpu_vk.h): 1 when it drew the queue into `rgba`, 2 when it drew it for the windows of the camera only (DirectDrawing), 0 when it cannot (no Vulkan,
@@ -1853,6 +2007,7 @@ static int s3d_gpu_flush(uint8_t* rgba, S3dFrame* f, const S3dCamera* cam, const
 static void s3d_flush(uint8_t* rgba, S3dFrame* f, const S3dCamera* cam, const S3dLight* lights, s3d_size lightCount, const S3dFlushSettings* st) {
     int drawn;
     s3d_size i;
+    f->fogDone = 0;
     f->backdrop = 0;
     for (i = 0; i < f->batchN; i++) if (f->batches[i].s.background) { f->backdrop = 1; break; }
     if (f->w <= 0 || f->h <= 0 || f->batchN == 0) { s3d_frameEmpty(f); f->lastBackend = S3D_BACKEND_SOFTWARE; return; }

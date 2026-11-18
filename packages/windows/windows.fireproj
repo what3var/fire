@@ -115,7 +115,9 @@
       { "name": "__GRPHWinWorkArea", "arguments": 2, "c": "fire_win_WinWorkArea" },
       { "name": "__GRPHWinPosition", "arguments": 2, "c": "fire_win_WinPosition" },
       { "name": "__GRPHWinSetIcon", "arguments": 2, "c": "fire_win_WinSetIcon" },
-      { "name": "__GRPHWinSetClickThrough", "arguments": 2, "c": "fire_win_WinSetClickThrough" }
+      { "name": "__GRPHWinSetClickThrough", "arguments": 2, "c": "fire_win_WinSetClickThrough" },
+      { "name": "__GRPHWinSetFullscreen", "arguments": 2, "c": "fire_win_WinSetFullscreen" },
+      { "name": "__GRPHWinGetFullscreen", "arguments": 2, "c": "fire_win_WinGetFullscreen" }
     ]
   }
 }

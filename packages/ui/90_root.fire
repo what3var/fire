@@ -11,8 +11,13 @@ namespace UI {
         defined int h = 0
     }
 
+    // Two ways to use it (docs/ui/windows.md): `new UI.Root(framebuffer, window)` - the root serves the window, hooks into its cycle and takes its events
+    // (Run, Show, Tick); `new UI.Root(framebuffer)` - a layer without a window (an interface over the picture of a game): the program hands it the events of
+    // its own loop (Dispatch), lets it draw into the framebuffer (Update, or Tick for the whole cycle) and shows the framebuffer itself; the shape of the
+    // pointer goes to OnCursor.
     class Root {
         Framebuffer framebuffer
+        // undefined: a root without a window (see Dispatch)
         Window window
         Renderer renderer
         Theme theme
@@ -48,6 +53,17 @@ namespace UI {
         lambda<int, int> onResize
         // Sees every key first (key, modifier): when it returns true, the key is used up and no element gets it (a dialog takes Escape this way)
         lambda<int, int> onKeyPreview
+        // The key event being handed out now (KeyDown, KeyUp): its scancode (the position of the key on the keyboard, the same whatever the layout; 0 when
+        // the event has none) and whether it repeats a held key. An element reads them in its KeyDown (`root.KeyScancode`), and so does onKeyPreview.
+        defined int KeyScancode = 0
+        bool KeyRepeated = false
+        // The pointer moves the focus: hovering a focusable element focuses it, so that hover and focus are one and the same row (a game menu used with the
+        // mouse and the gamepad alike). A key that moves the focus elsewhere takes the hover off the element under the pointer until the pointer moves again.
+        bool FocusFollowsPointer = false
+        // The mouse pointer the interface wants (a UI.Cursor as int), called when it changes - instead of setting Window.Cursor: for a root without a window,
+        // whose program shows the pointer itself (`root.OnCursor = func (int cursor) => { win.Cursor = cursor }`). Without it a root with a window sets
+        // window.Cursor.
+        lambda<int> OnCursor
         // Drag & drop between the elements (docs/ui/README.md): the press a drag may start from, what is dragged, its source, the element under the pointer that
         // takes it and what it would do
         Element dragFrom
@@ -207,13 +223,19 @@ namespace UI {
             }
         }
 
-        // The scale of the interface: logical pixels -> pixels of the screen (1.5 = 150 %). Starts with the scaling of the system, like every other program on it;
-        // setting it overrides that (`root.Scaling = 1.0`). The elements keep their sizes in logical pixels, the window and the framebuffer grow with it, text is
-        // drawn sharp at the larger size.
+        // The scale of the interface: logical pixels -> pixels of the screen (1.5 = 150 %). Starts with the scaling of the system, like every other program on it
+        // (unless the constructor got `systemScale: false`); setting it overrides that (`root.Scaling = 1.0`). The elements keep their sizes in logical pixels,
+        // the window and the framebuffer grow with it, text is drawn sharp at the larger size. A root without a window keeps the size of its framebuffer
+        // (SetScale with resize false).
         defined float Scaling {
             get { return this.scaling }
-            set { this.ApplyScaling(value) }
+            set { this.ApplyScaling(value, this.window != undefined) }
         }
+
+        // Sets the scale. `resize` true (what Scaling does with a window): the framebuffer and the window grow to the logical size times the scale. false:
+        // they keep their size, and the logical size becomes the framebuffer's divided by the scale (a framebuffer of 1920 x 1080 at 2.0 is an interface of
+        // 960 x 540; onResize is called) - for a layer whose framebuffer is as big as the picture it lies over.
+        undefined SetScale(defined float scale, bool resize = true) { this.ApplyScaling(scale, resize) }
 
         // Dark mode. Starts with the setting of the system; setting it overrides that.
         bool Dark {
@@ -251,7 +273,9 @@ namespace UI {
             }
         }
 
-        construct(Framebuffer framebuffer, Window window) {
+        // `window`: the window the root serves (undefined: a root without one, see Dispatch). `systemScale` false: the scale stays 1.0 instead of the
+        // scaling of the system (dark mode, accent and font still come from it) - `new UI.Root(fb, systemScale: false)`.
+        construct(Framebuffer framebuffer, Window window = undefined, bool systemScale = true) {
             this.framebuffer = try take framebuffer
             this.window = try take window
             this.renderer = new Renderer(framebuffer)
@@ -280,30 +304,35 @@ namespace UI {
             if (this.dark || this.accent != 0x0078D7) { this.theme.SetColors(this.dark, this.accent, this.accentForeground) }
             this.theme.transparency = UI.Effects.Transparency && system.transparency && !this.embedded
             this.theme.glass = UI.Effects.Glass && this.theme.transparency
-            defined float systemScale = system.scale   // (the scale of the system: always a number)
-            if (this.embedded) { systemScale = Math.Max(1.0, Math.Round(systemScale)) }
+            defined float scaleOfSystem = system.scale   // (the scale of the system: always a number)
+            if (this.embedded) { scaleOfSystem = Math.Max(1.0, Math.Round(scaleOfSystem)) }
+            if (!systemScale) { scaleOfSystem = 1.0 }
             this.content = new Panel(0, 0, this.width, this.height)
             this.content.Filled = false
 
-            // Events are polled, not delivered by callback: this way they run in the main program, and an
-            // onClick lambda sees the real global variables (a callback, by contrast, works on a copy, SPEC 8.1.4)
-            window.EnableEvents()
-            // the cycle of the window's manager (Window.Show/Run, WindowManager): the events of the window are distributed and the interface is drawn
-            window.onCycle = func () on this => { this.Cycle() }
-            // If the user drags the window to another size, the framebuffer gets it (as long as it is valid) and the interface arranges itself anew - instead of its image being stretched.
-            // `window.AutoResize = false` leaves it at stretching.
-            window.AutoResize = true
-            // The finger guides the interface itself (tapping, dragging, swiping, see TouchDown): the display should not additionally make mouse events out of it.
-            window.TouchMouse = false
+            // (a root without a window leaves all of this to its program: it hands over the events itself and shows the framebuffer)
+            if (window != undefined) {
+                // Events are polled, not delivered by callback: this way they run in the main program, and an
+                // onClick lambda sees the real global variables (a callback, by contrast, works on a copy, SPEC 8.1.4)
+                window.EnableEvents()
+                // the cycle of the window's manager (Window.Show/Run, WindowManager): the events of the window are distributed and the interface is drawn
+                window.onCycle = func () on this => { this.Cycle() }
+                // If the user drags the window to another size, the framebuffer gets it (as long as it is valid) and the interface arranges itself anew - instead of its image being stretched.
+                // `window.AutoResize = false` leaves it at stretching.
+                window.AutoResize = true
+                // The finger guides the interface itself (tapping, dragging, swiping, see TouchDown): the display should not additionally make mouse events out of it.
+                window.TouchMouse = false
+            }
 
             // Every change of a field of an element (and of the theme) is reported by a probe (see SPEC 8.14): the elements call Touched as soon as they are arranged for the first time (Watch)
             this.watcher = func (o, n, a, b) on this => { this.Touched(o) }
             Reflect.ProbeAll(this.theme, "changed", this.watcher)
-            if (systemScale != 1.0) { this.ApplyScaling(systemScale) }
+            if (scaleOfSystem != 1.0) { this.ApplyScaling(scaleOfSystem, window != undefined) }
         }
 
-        // A new scale: the renderer draws at it, the framebuffer and the window get the logical size times the scale.
-        undefined ApplyScaling(defined float scale) {
+        // A new scale: the renderer draws at it. `resize`: the framebuffer and the window get the logical size times the scale; otherwise the logical size
+        // follows from the framebuffer (CheckSize).
+        undefined ApplyScaling(defined float scale, bool resize = true) {
             var s = scale
             if (s < 0.25) { s = 0.25 }
             if (this.embedded) { s = trust Math.Max(1.0, Math.Round(s)) }   // (Math gives a number for a number)
@@ -311,11 +340,16 @@ namespace UI {
             this.renderer.scale = s
             this.cw = this.renderer.Logical(this.renderer.CellWidth())
             this.ch = this.renderer.Logical(this.renderer.CellHeight())
+            if (!resize) {
+                this.CheckSize()
+                this.Invalidate()
+                return
+            }
             var pw = Math.Round(this.width * s)!int
             var ph = Math.Round(this.height * s)!int
             if (pw != this.framebuffer.Width() || ph != this.framebuffer.Height()) {
                 this.framebuffer.Resize(pw, ph)
-                this.window.SetSize(pw, ph)
+                if (this.window != undefined) { this.window.SetSize(pw, ph) }
             }
             this.Invalidate()
         }
@@ -785,6 +819,8 @@ namespace UI {
 
         // One cycle: bring the interface up to date (only what has changed is painted), then let the window run one cycle (show, fetch events)
         // and distribute the events. The attached roots (see Attach) do the same cycle. Returns false as soon as the window of this root has been closed.
+        // Without a window: the cycle of the interface only (the repeats of the joystick, the tooltips, Update, onTick) - the events come by Dispatch, and the
+        // program shows the framebuffer; false once a Close event was handed over.
         bool Tick() {
             var open = this.TickOne()
             var i = 0
@@ -803,8 +839,10 @@ namespace UI {
         // (only what has changed is painted) and call onTick. The manager then shows the frame.
         undefined Cycle() {
             this.cycles = this.cycles + 1
-            this.DispatchEvents()
-            if (this.window.IsClosed) { this.closed = true }
+            if (this.window != undefined) {
+                this.DispatchEvents()
+                if (this.window.IsClosed) { this.closed = true }
+            }
             this.JoyRepeat()
             this.ToolTipTick()
             this.UpdateAndSay()
@@ -814,7 +852,9 @@ namespace UI {
 
         // Shows the window (Window.Show): on its manager, which gets a thread of its own if nobody runs it yet; the events are handled at the program's safe
         // points. `modal`: returns when the window is closed, the other windows of the manager take no input meanwhile.
-        undefined Show(bool modal = false) { this.window.Show(modal) }
+        undefined Show(bool modal = false) {
+            if (this.window != undefined) { this.window.Show(modal) }
+        }
 
         // ---- tooltips ----
 
@@ -867,6 +907,11 @@ namespace UI {
             this.JoyRepeat()
             this.ToolTipTick()
             this.UpdateAndSay()
+            if (this.window == undefined) {
+                var tick = this.onTick
+                if (tick != undefined) { tick() }
+                return !this.closed
+            }
             var open = this.window.Tick()
             this.DispatchEvents()
             if (!open) { this.closed = true }
@@ -881,9 +926,11 @@ namespace UI {
             for (var i = 0; i < this.attached.Count; i = i + 1) {
                 if (this.attached[i] == other) { return }
             }
+            this.attached.Add(other)
+            // (roots without a window: only Tick takes the other one along)
+            if (this.window == undefined || other.window == undefined) { return }
             // only one window waits for the screen refresh, otherwise every cycle takes as many frame periods as there are windows
             other.window.VSync = false
-            this.attached.Add(other)
             // the window's manager cycles it too (Run, Show)
             if (this.window.Manager == undefined) { WindowManager.Default.Attach(this.window) }
             this.window.Manager.Attach(other.window)
@@ -894,6 +941,7 @@ namespace UI {
             for (var i = 0; i < this.attached.Count; i = i + 1) {
                 if (this.attached[i] == other) {
                     this.attached.RemoveAt(i)
+                    if (other.window == undefined) { return }
                     var manager = other.window.Manager
                     if (manager != undefined) { manager.Detach(other.window) }
                     return
@@ -921,24 +969,32 @@ namespace UI {
                     moved = false
                     this.MouseMove(this.ToLogical(mx), this.ToLogical(my))
                 }
-                this.Dispatch(e)
+                this.DispatchCore(e)
             }
             if (moved) { this.MouseMove(this.ToLogical(mx), this.ToLogical(my)) }
         }
 
-        // Distributes an event of the window (structure see Window.NextEvent) to the element below it or the one with focus.
+        // Distributes an event (an array as Window.NextEvent gives it: mouse, wheel, keys, text, touch, joystick, drops, Close) to the element below it or
+        // the one with focus; positions in pixels of the framebuffer. With a window the root fetches them itself; a root without a window gets them from the
+        // loop of its program (`var e = win.NextEvent()` ... `ui.Dispatch(e)`) - each counts in Events.
         undefined Dispatch(any e) {
+            this.Events = this.Events + 1
+            this.DispatchCore(e)
+        }
+
+        undefined DispatchCore(any e) {
             any type = e[0]
             if (type == 8) { this.MouseDown(e[1], this.ToLogical(e[2]), this.ToLogical(e[3])) }
             else if (type == 11) { this.MouseUp(e[1], this.ToLogical(e[2]), this.ToLogical(e[3])) }
             else if (type == 9) { this.MouseMove(this.ToLogical(e[1]), this.ToLogical(e[2])) }
             else if (type == 12) { this.WheelEvent(e[1], e[2], this.ToLogical(e[3]), this.ToLogical(e[4])) }
             else if (type == 24) {
-                this.KeyDown(e[1], e[3])
+                // [type, keycode, scancode, modifier, repeated]
+                this.KeyDown(e[1], e[3], e[2], e.length > 4 && e[4] == true)
                 // a key can change what the pointer means (Escape ends a tool): the pointer follows at once, not with the next move
                 this.UpdateCursor(this.mouseX, this.mouseY)
             }
-            else if (type == 25) { this.KeyUp(e[1], e[3]) }
+            else if (type == 25) { this.KeyUp(e[1], e[3], e[2]) }
             else if (type == 3) { this.TextInput(e[1]) }
             else if (type == 16) { this.TouchDown(e[1], this.ToLogical(e[2]), this.ToLogical(e[3])) }
             else if (type == 17) { this.TouchMove(e[1], this.ToLogical(e[2]), this.ToLogical(e[3])) }
@@ -957,7 +1013,7 @@ namespace UI {
         // (a root) it is attached beforehand: `ui.Run(second)` processes both windows.
         undefined Run(Root other = undefined) {
             if (other != undefined) { this.Attach(other) }
-            this.window.Run()
+            if (this.window != undefined) { this.window.Run() }
         }
 
         undefined SetFocus(Element element) {
@@ -967,6 +1023,35 @@ namespace UI {
             if (element != undefined) {
                 element.Focused = true
                 this.Reveal(element)
+            }
+        }
+
+        // The focus moves by a key (Tab, an arrow, the joystick): with FocusFollowsPointer the element under the pointer loses its hover, so that only the
+        // focused one is highlighted - until the pointer moves again.
+        undefined KeyFocus(Element element) {
+            this.SetFocus(element)
+            if (!this.FocusFollowsPointer) { return }
+            var hovered = this.hoverElement
+            if (hovered != undefined && (element == undefined || !this.Holds(hovered, element))) {
+                hovered.Hover = false
+                this.hoverElement = undefined
+            }
+        }
+
+        // FocusFollowsPointer: the pointer is over `hit` - it, or the next element around it that takes the focus, gets it (without scrolling it into view:
+        // it is under the pointer). Over nothing that takes it the focus stays where it is.
+        undefined PointerFocus(Element hit) {
+            var e = hit
+            while (e != undefined) {
+                if (e.Visible && e.Enabled && e.Focusable()) {
+                    if (e == this.focusElement) { return }
+                    var old = this.focusElement
+                    if (old != undefined) { old.Focused = false }
+                    this.focusElement = e
+                    e.Focused = true
+                    return
+                }
+                e = e.parent
             }
         }
 
@@ -1012,7 +1097,7 @@ namespace UI {
             }
             if (!found) {
                 // nothing focused yet: the first element (downwards/right) or the last (upwards/left)
-                if (key == UI.Keys.Up() || key == UI.Keys.Left()) { this.SetFocus(list[list.Count - 1]) } else { this.SetFocus(list[0]) }
+                if (key == UI.Keys.Up() || key == UI.Keys.Left()) { this.KeyFocus(list[list.Count - 1]) } else { this.KeyFocus(list[0]) }
                 return
             }
             var cx = current.ax + current.actualWidth / 2
@@ -1050,7 +1135,7 @@ namespace UI {
                     bestScore = score
                 }
             }
-            if (best != undefined) { this.SetFocus(best) } else { this.ScrollFrom(current, key) }
+            if (best != undefined) { this.KeyFocus(best) } else { this.ScrollFrom(current, key) }
         }
 
         // The distance of two segments [a0, a1) and [b0, b1) (0 if they overlap).
@@ -1237,7 +1322,7 @@ namespace UI {
                 index = index + 1
                 if (index >= list.Count) { index = 0 }
             }
-            this.SetFocus(list[index])
+            this.KeyFocus(list[index])
         }
 
         // what the wheel moved that is not a whole notch yet (a touchpad gives fractions: they add up)
@@ -1378,6 +1463,8 @@ namespace UI {
                 if (old != undefined) { old.Hover = false }
                 this.hoverElement = hit
                 if (hit != undefined) { hit.Hover = true }
+                // (not while a button is held or something is dragged, and not into a floating element)
+                if (this.FocusFollowsPointer && hit != undefined && this.pressedElement == undefined && !this.dragging && !this.InsidePopup(px, py)) { this.PointerFocus(hit) }
             }
             this.ToolTipMove(hit)
             if (this.dragging) {
@@ -1717,13 +1804,19 @@ namespace UI {
             var c = this.CursorFor(px, py)
             if (c == this.shownCursor) { return }
             this.shownCursor = c
-            if (this.window != undefined) { this.window.Cursor = c!int }
+            var callback = this.OnCursor
+            if (callback != undefined) { callback(c!int) }
+            else if (this.window != undefined) { this.window.Cursor = c!int }
         }
 
-        undefined KeyDown(defined int key, defined int mod) {
+        // A key went down (`mod`: the modifier keys, see UI.Keys.Shift; `scancode` and `repeated` as the event has them, kept in KeyScancode/KeyRepeated
+        // for the elements while they handle it).
+        undefined KeyDown(defined int key, defined int mod, defined int scancode = 0, bool repeated = false) {
             this.HideToolTip()
             this.tipElement = undefined
             this.modifiers = mod
+            this.KeyScancode = scancode
+            this.KeyRepeated = repeated
             if (this.dragging) {
                 if (key == UI.Keys.Escape()) { this.CancelDrag() }
                 else {
@@ -1763,8 +1856,10 @@ namespace UI {
         }
 
         // A key was let go: only the modifier keys matter (see KeyDown).
-        undefined KeyUp(defined int key, defined int mod) {
+        undefined KeyUp(defined int key, defined int mod, defined int scancode = 0) {
             this.modifiers = mod
+            this.KeyScancode = scancode
+            this.KeyRepeated = false
             if (this.dragging) {
                 this.DragMove(this.mouseX, this.mouseY)
                 this.UpdateCursor(this.mouseX, this.mouseY)

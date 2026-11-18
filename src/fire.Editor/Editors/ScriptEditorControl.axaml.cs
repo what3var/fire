@@ -3,6 +3,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Threading;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Controls.Primitives;
@@ -76,20 +77,31 @@ namespace fire.Editor
         /// usually has to react to it with DebugSession.UpdateBreakpoints.</summary>
         public event Action? BreakpointsChanged;
 
-        /// <summary>The live diagnostics errors currently shown in the editor
-        /// (see LiveDiagnostics) - READ-ONLY, recomputed internally, debounced, after
-        /// every text change (see RunDiagnostics).</summary>
-        public IReadOnlyList<Diagnostic> Diagnostics => _diagnostics;
+        /// <summary>The live diagnostics currently shown in the editor (see LiveDiagnostics) - READ-ONLY, recomputed in the background after the text changed (see
+        /// RequestDiagnostics). The line of an error of this document is where its text is NOW: a result that was computed for the text of a moment ago is carried through the
+        /// changes since (EditLog), the squiggles move with the text. A diagnostic of an `#include`d file carries its file.</summary>
+        public IReadOnlyList<Diagnostic> Diagnostics
+        {
+            get
+            {
+                var document = Editor.Document;
+                var result = new List<Diagnostic>(_diagnostics.Count);
+                foreach (var d in _diagnostics)
+                    result.Add(_marks.TryGetValue(d, out int offset) ? d with { Line = document.GetLineByOffset(Math.Min(offset, document.TextLength)).LineNumber } : d);
+                return result;
+            }
+        }
 
-        /// <summary>How the diagnostics are computed (see RunDiagnostics) -
-        /// default: simple single-file analysis (LiveDiagnostics.Analyze),
-        /// suitable for a single, free-standing document (see
-        /// MainWindow). A host with several related files
-        /// (see ProjectWindow) sets a project-wide variant
-        /// (LiveDiagnostics.AnalyzeInProject) here instead, so that a valid
-        /// reference to a class from ANOTHER project file is not
-        /// wrongly marked as an error.</summary>
-        public Func<string, List<Diagnostic>> DiagnosticsProvider { get; set; }
+        /// <summary>How the diagnostics are computed: called on the UI thread with the text when a check is about to start (after the pause in typing), it takes what it needs
+        /// (the other open documents, the project) and returns the analysis itself, which runs in the background (one analysis at a time, LiveDiagnostics.Gate). Default: the
+        /// document alone (LiveDiagnostics.Analyze); a host with projects (MainWindow) knows the other files of the project.</summary>
+        public Func<string, Func<CancellationToken, List<Diagnostic>>> DiagnosticsJob { get; set; }
+
+        /// <summary>The pause in typing after which the document is checked again.</summary>
+        public static TimeSpan DiagnosticsDelay { get; set; } = TimeSpan.FromMilliseconds(400);
+
+        /// <summary>The check of this document is waiting or running (its result has not come yet).</summary>
+        public bool IsChecking => _check.IsBusy;
 
         /// <summary>Directory of this document (for relative `#include`
         /// paths) - `null` as long as it has never been saved/opened (then the
@@ -143,19 +155,15 @@ namespace fire.Editor
         }
         private int? _highlightedLine;
 
-        // Highlighting runs debounced (instead of lexing anew on every
-        // keystroke) - pure lexing is fast, but with very fast
-        // typing it should still not be lexed anew for EVERY
-        // intermediate state.
-        private readonly DispatcherTimer _highlightTimer;
-
-        // Live error analysis (see LiveDiagnostics) - runs debounced like
-        // the highlighting, but with a LONGER delay (parser +
-        // resolver + compiler are noticeably more expensive than pure lexing) and
-        // SEPARATE from it, so that fast typing does not trigger a complete
-        // compile attempt on every intermediate state.
-        private readonly DispatcherTimer _diagnosticsTimer;
+        // Highlighting and the live error analysis run in the background after a pause in typing (BackgroundCheck: the newest request wins, a stale result never
+        // overwrites a newer one); what they computed for the text of a moment ago is carried into the current text through the changes since (_edits). Until the
+        // new highlighting comes, the old one moves with the text (HighlightingColorizer.Spans are shifted on every change), so a keystroke itself costs no lexing.
+        private readonly BackgroundCheck<(List<HighlightSpan> Spans, long Version)> _highlight;
+        private readonly BackgroundCheck<(List<Diagnostic> Found, long Version, string Text, string? Shape)> _check;
+        private readonly EditLog _edits = new();
         private List<Diagnostic> _diagnostics = new();
+        /// <summary>Where the diagnostics of this document are now (an offset in the line, carried through every change): the squiggles, the margin and the lines of Diagnostics.</summary>
+        private Dictionary<Diagnostic, int> _marks = new(ReferenceEqualityComparer.Instance);
 
         private readonly HighlightingColorizer _colorizer = new();
         private readonly ErrorSquiggleRenderer _errorSquiggles = new();
@@ -168,7 +176,13 @@ namespace fire.Editor
         {
             InitializeComponent();
 
-            DiagnosticsProvider = source => LiveDiagnostics.Analyze(source, BaseDirectory);
+            DiagnosticsJob = source => { string? dir = BaseDirectory; return _ => LiveDiagnostics.Analyze(source, dir); };
+            void Post(Action action) => Dispatcher.UIThread.Post(action, DispatcherPriority.Background);
+            _highlight = new BackgroundCheck<(List<HighlightSpan>, long)>(Post) { DeliverSuperseded = true };
+            _highlight.Completed += (r, _) => OnHighlighted(r.Spans, r.Version);
+            _check = new BackgroundCheck<(List<Diagnostic>, long, string, string?)>(Post, LiveDiagnostics.Gate) { DeliverSuperseded = true, Priority = () => CheckPriority?.Invoke() ?? 0 };
+            _check.Completed += (r, _) => OnChecked(r.Found, r.Version, r.Text, r.Shape);
+            _check.Failed += (ex, _) => EditorTiming.Log("diagnostics failed: " + ex.Message);
 
             Editor.TextArea.TextView.LineTransformers.Add(_colorizer);
             Editor.TextArea.TextView.BackgroundRenderers.Add(_lineBackground);
@@ -180,6 +194,7 @@ namespace fire.Editor
             _breakpointMargin.LineClicked += ToggleBreakpoint;
 
             Editor.TextChanged += Editor_TextChanged;
+            Editor.Document.Changed += (_, e) => OnDocumentChanged(new TextEdit(e.Offset, e.RemovalLength, e.InsertionLength));
             Editor.TextArea.Caret.PositionChanged += (_, _) => CaretLineChanged?.Invoke(GetCaretLine());
             Editor.TextArea.TextEntered += Editor_TextEntered;
             // tunnelling handlers: they see the event before the editor does (and may mark it as handled)
@@ -190,19 +205,6 @@ namespace fire.Editor
             EditorTheme.Apply(Editor, _searchPanel);
             Editor.ContextMenu = BuildContextMenu();
 
-            _highlightTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(200) };
-            _highlightTimer.Tick += (_, _) =>
-            {
-                _highlightTimer.Stop();
-                RecomputeHighlighting();
-            };
-
-            _diagnosticsTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(600) };
-            _diagnosticsTimer.Tick += (_, _) =>
-            {
-                _diagnosticsTimer.Stop();
-                RunDiagnostics();
-            };
 
             // Documentation tooltips (`///` comments): a short pause with the caret on a symbol, or the mouse resting on one.
             _caretTipTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(500) };
@@ -253,37 +255,81 @@ namespace fire.Editor
         private DocTipKind _docTipKind;
         private (int ParenOffset, string Header)? _callTipKey;
         private string? _indexedSource;
-        private int _indexedVersion;
         private ScriptSymbolIndex? _index;
 
         /// <summary>Counts the changes of any script (and of the project): the symbols that come from other files of the project are looked up again after one.</summary>
         public static int TextVersion { get; private set; }
-        public static void NoteProjectChanged() => TextVersion++;
+
+        /// <summary>Counts the changes of the workspace (projects, their files, the disk): which files belong to the project of a document.</summary>
+        public static int WorkspaceVersion { get; private set; }
+
+        public static void NoteProjectChanged() { TextVersion++; WorkspaceVersion++; }
+
+        /// <summary>The TextVersion at which what this document knows of the other files (ContextFiles, ColorizedMembers) was taken. A change of this document's own
+        /// text keeps it valid (it says nothing new about the others): typing does not make every keystroke ask the project for its files again.</summary>
+        private int _projectStamp = -1;
+        private string? _contextKey;
+        private List<(string Path, string Text)>? _contextFiles;
+
+        /// <summary>The other files of the project and the files `source` includes - what the symbol index knows besides the document; taken again only when the project (or
+        /// another document) changed, or the `#import`/`#include` lines of the document did.</summary>
+        private List<(string Path, string Text)> ContextFiles(string source)
+        {
+            string key = string.Join("\n", ImportedPreludes.FindImportNames(source)) + "\0" + string.Join("\n", IncludeLines(source));
+            if (_contextFiles != null && _projectStamp == TextVersion && _contextKey == key) return _contextFiles;
+            using var timing = EditorTiming.Measure("context files (project, includes)");
+            _contextFiles = (ProjectFilesProvider?.Invoke() ?? Array.Empty<(string, string)>()).Concat(IncludedScripts(source)).ToList();
+            _contextKey = key;
+            if (_projectStamp != TextVersion) _memberColors = null;
+            _projectStamp = TextVersion;
+            return _contextFiles;
+        }
+
+        private static readonly System.Text.RegularExpressions.Regex IncludeLine = new("^\\s*#include\\s+\"([^\"]+)\"", System.Text.RegularExpressions.RegexOptions.Multiline | System.Text.RegularExpressions.RegexOptions.Compiled);
+
+        private static IEnumerable<string> IncludeLines(string source) => IncludeLine.Matches(source).Select(m => m.Groups[1].Value);
+
+        private HashSet<string>? _projectPaths;
+        private int _projectPathsVersion = -1;
+
+        /// <summary>Whether the file at `path` is one of the files this document is checked with (another file of its project, a file of a library it imports): a change of it
+        /// may change the errors here. Taken again after the workspace changed.</summary>
+        public bool DependsOn(string path)
+        {
+            if (_projectPaths == null || _projectPathsVersion != WorkspaceVersion)
+            {
+                _projectPaths = new HashSet<string>((ProjectFilesProvider?.Invoke() ?? Array.Empty<(string, string)>()).Select(f => f.Path), fire.Projects.ProjectFiles.PathComparer);
+                _projectPathsVersion = WorkspaceVersion;
+            }
+            return _projectPaths.Contains(path);
+        }
 
         /// <summary>The other files of the project the document belongs to (path and text), and the libraries it imports: their classes, enums and namespaces are known here without
         /// `#include`, as they are to the build. null: the document stands alone.</summary>
         public Func<IReadOnlyList<(string Path, string Text)>>? ProjectFilesProvider { get; set; }
 
         private Dictionary<string, int>? _memberColors;
-        private int _memberColorsVersion = -1;
 
         /// <summary>The members with `[Colorize ...]` in the other files of the project and in the files this one includes (a circuit generated from a `.biscuit`
         /// colors its ports): name -> 0xRRGGBB. Looked up again after the project changed.</summary>
-        private Dictionary<string, int> ColorizedMembers()
+        private Dictionary<string, int> ColorizedMembers(string source)
         {
-            if (_memberColors != null && _memberColorsVersion == TextVersion) return _memberColors;
+            var files = ContextFiles(source);   // (taken again when the project changed: then the colors are collected again, too)
+            if (_memberColors != null && ReferenceEquals(_memberColorsFiles, files)) return _memberColors;
+            using var timing = EditorTiming.Measure("colorized members");
             var colors = new Dictionary<string, int>(StringComparer.Ordinal);
             try
             {
-                foreach (var (_, text) in ProjectFilesProvider?.Invoke() ?? Array.Empty<(string, string)>()) ColorizeAttributes.Collect(text, colors);
-                // #include "Amp.biscuit" (or a .fire file) next to this one
-                foreach (var (_, included) in IncludedScripts(Editor.Text)) ColorizeAttributes.Collect(included, colors);
+                // the other files of the project, and #include "Amp.biscuit" (or a .fire file) next to this one
+                foreach (var (_, text) in files) ColorizeAttributes.Collect(text, colors);
             }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException) { }
             _memberColors = colors;
-            _memberColorsVersion = TextVersion;
+            _memberColorsFiles = files;
             return colors;
         }
+
+        private List<(string Path, string Text)>? _memberColorsFiles;
 
         private static readonly Dictionary<string, (DateTime Written, string Text)> IncludedScriptCache = new(StringComparer.Ordinal);
 
@@ -318,21 +364,45 @@ namespace fire.Editor
 
         /// <summary>The symbol index of `source`, reused as long as the text (and the project) does not change. What the files of the project and the
         /// `#include`d files declare (the class generated from an `.fxml`, and the libraries they import) is known in it.</summary>
-        private ScriptSymbolIndex IndexFor(string source)
+        /// <param name="wordEdit">The caller only looks around the caret (the completion list while a word is typed, the tooltip of a call): an index of the text before the
+        /// word at the caret was changed serves as well - what lies before the word and after the caret is the same, only the word itself differs. Saves building the index
+        /// of a long file again for every letter.</param>
+        private ScriptSymbolIndex IndexFor(string source, bool wordEdit = false)
         {
-            if (_index == null || _indexedVersion != TextVersion || !string.Equals(_indexedSource, source, StringComparison.Ordinal))
+            var others = ContextFiles(source);
+            if (_index != null && ReferenceEquals(_indexedFiles, others) && _indexedSource != null)
             {
-                var others = (ProjectFilesProvider?.Invoke() ?? Array.Empty<(string, string)>()).Concat(IncludedScripts(source)).ToList();
-                _index = ScriptSymbolIndex.Build(source, Array.Empty<string>(), others);
-                _indexedSource = source;
-                _indexedVersion = TextVersion;
+                if (string.Equals(_indexedSource, source, StringComparison.Ordinal)) return _index;
+                if (wordEdit && OnlyWordAtCaretDiffers(_indexedSource, source, Editor.CaretOffset)) return _index;
             }
+            using var timing = EditorTiming.Measure("symbol index rebuild");
+            _index = ScriptSymbolIndex.Build(source, Array.Empty<string>(), others);
+            _indexedSource = source;
+            _indexedFiles = others;
             return _index;
+        }
+
+        private List<(string Path, string Text)>? _indexedFiles;
+
+        /// <summary>`now` is `before` with only the identifier that ends at `caret` changed (typed on, shortened, replaced by another one).</summary>
+        internal static bool OnlyWordAtCaretDiffers(string before, string now, int caret)
+        {
+            static bool IsWord(char c) => char.IsLetterOrDigit(c) || c == '_';
+            if (caret < 0 || caret > now.Length) return false;
+            int start = caret;
+            while (start > 0 && IsWord(now[start - 1])) start--;
+            int suffix = now.Length - caret;
+            int middle = before.Length - start - suffix;
+            if (middle < 0) return false;
+            if (string.CompareOrdinal(before, 0, now, 0, start) != 0) return false;
+            if (string.CompareOrdinal(before, before.Length - suffix, now, caret, suffix) != 0) return false;
+            for (int i = start; i < start + middle; i++) if (!IsWord(before[i])) return false;
+            return true;
         }
 
         private bool TryGetDoc(int offset, out string header, out DocComment doc)
         {
-            string source = Editor.Text;
+            string source = CurrentText();
             var symbol = NavigationEngine.TryResolveSymbol(source, offset, IndexFor(source));
             if (symbol?.Documentation is { } found)
             {
@@ -381,7 +451,7 @@ namespace fire.Editor
         private bool UpdateCallTip()
         {
             if (!Editor.IsKeyboardFocusWithin && _docTipKind != DocTipKind.Call) return false;
-            string source = Editor.Text;
+            string source = CurrentText();
             var call = NavigationEngine.FindOpenCall(source, Editor.CaretOffset);
             if (call == null)
             {
@@ -389,7 +459,7 @@ namespace fire.Editor
                 return false;
             }
 
-            var symbol = NavigationEngine.TryResolveCall(source, call, IndexFor(source));
+            var symbol = NavigationEngine.TryResolveCall(source, call, IndexFor(source, wordEdit: true));
             if (symbol?.Documentation is not { } doc)
             {
                 if (_docTipKind == DocTipKind.Call) CloseDocTip();
@@ -431,6 +501,13 @@ namespace fire.Editor
             var position = Editor.GetPositionFromPoint(e.GetPosition(Editor));
             if (position == null) return;
 
+            // on a squiggled line: what is wrong there (the squiggle alone does not say it)
+            if (DiagnosticsOnLine(position.Value.Line) is { Count: > 0 } here)
+            {
+                ShowDiagnosticsTip(here, e.GetPosition(textView));
+                return;
+            }
+
             // The identifier under the mouse, and only if the mouse really is over its text (not in the empty space behind the line).
             int offset = Editor.Document.GetOffset(position.Value.Location);
             var (start, end) = IdentifierAround(offset);
@@ -445,6 +522,32 @@ namespace fire.Editor
 
             if (!TryGetDoc(start, out string header, out DocComment doc)) return;
             ShowDocTip(DocTipKind.Hover, header, doc, mouse.X + 8, mouse.Y + 18);
+        }
+
+        private void ShowDiagnosticsTip(List<Diagnostic> diagnostics, Point mouse)
+        {
+            CloseDocTip();
+            var panel = new StackPanel { MaxWidth = 560 };
+            foreach (var d in diagnostics.Take(6))
+                panel.Children.Add(new TextBlock
+                {
+                    Text = (d.IsError ? "error " : "warning ") + (d.Code.Length > 0 ? d.Code + ": " : "") + d.Message,
+                    Foreground = d.IsError ? EditorTheme.ErrorMark : EditorTheme.WarningMark,
+                    TextWrapping = Avalonia.Media.TextWrapping.Wrap,
+                    Margin = new Thickness(0, 1, 0, 1),
+                });
+            var tip = new Popup
+            {
+                Child = new Border { Background = EditorTheme.DarkSurface, BorderBrush = EditorTheme.Border, BorderThickness = new Thickness(1), Padding = new Thickness(8, 6, 8, 6), Child = panel },
+                IsLightDismissEnabled = false,
+                Focusable = false,
+                PlacementTarget = Editor.TextArea.TextView,
+                Placement = PlacementMode.BottomEdgeAlignedLeft,
+                PlacementRect = new Rect(mouse.X + 8, mouse.Y + 18, 1, 1),
+            };
+            tip.IsOpen = true;
+            _docTip = tip;
+            _docTipKind = DocTipKind.Hover;
         }
 
         /// <summary>Start and end offsets of the identifier that contains or touches `offset` (start == end: none).</summary>
@@ -462,14 +565,30 @@ namespace fire.Editor
         // Text-Zugriff
         // -----------------------------------------------------------
 
-        public string GetText() => Editor.Text;
+        public string GetText() => CurrentText();
+
+        private string? _textCache;
+        private long _textCacheVersion = -1;
+
+        /// <summary>The text, taken from the document once per change: the call tooltip, the completion, the checks and the host (OpenTexts) all ask for it after a keystroke - each
+        /// Editor.Text built the whole string anew (a file of 60 000 characters: a large object for the garbage collector every time).</summary>
+        private string CurrentText()
+        {
+            if (_textCache == null || _textCacheVersion != _edits.Version)
+            {
+                _textCache = Editor.Text;
+                _textCacheVersion = _edits.Version;
+            }
+            return _textCache;
+        }
 
         public void SetText(string text)
         {
             Editor.Text = text;
+            _edits.Reset();   // (a result for the text before cannot be carried into this one: it is dropped, the new check follows)
+            _marks = new Dictionary<Diagnostic, int>(ReferenceEqualityComparer.Instance);
             RecomputeHighlighting();
-            _diagnosticsTimer.Stop();
-            _diagnosticsTimer.Start();
+            RequestDiagnostics(TimeSpan.FromMilliseconds(50));
         }
 
         /// <summary>Resets the editor text and also discards
@@ -480,7 +599,10 @@ namespace fire.Editor
         {
             FilePath = filePath;
             _breakpoints.Clear();
+            _check.Cancel();
             _diagnostics = new List<Diagnostic>();
+            _marks = new Dictionary<Diagnostic, int>(ReferenceEqualityComparer.Instance);
+            UpdateMarkLines();
             _highlightedLine = null;
             _lineBackground.HighlightedLine = null;
             RefreshBreakpointDisplay();
@@ -492,16 +614,38 @@ namespace fire.Editor
             DiagnosticsChanged?.Invoke();
         }
 
+        /// <summary>A check found that what the other files can see of this one changed (DeclarationShape: a declaration, a signature, an `#import`, not only the body of a
+        /// function): the host checks the files that depend on it again (MainWindow). Not raised for the first check of the text (nothing changed for the others).</summary>
+        public event Action? DeclarationsChanged;
+
+        /// <summary>The place of this document's checks at the gate of the analyses (LiveDiagnostics.ActivePriority, ...); asked when a check gets to it.</summary>
+        public Func<int>? CheckPriority { get; set; }
+
+        /// <summary>The document was closed: no check of it runs or delivers any more.</summary>
+        public void CancelChecks()
+        {
+            _check.Cancel();
+            _highlight.Cancel();
+        }
+
+        // what the other files see of the text as the last check found it (DeclarationShape; null: not known yet)
+        private string? _shape;
+
         private void Editor_TextChanged(object? sender, EventArgs e)
         {
+            using var timing = EditorTiming.Measure("text changed (handler)");
+            // (this document's own change says nothing new about the other files: what it knows of them stays valid)
+            bool fresh = _projectStamp == TextVersion;
             TextVersion++;
+            if (fresh) _projectStamp = TextVersion;
             if (_docTipKind == DocTipKind.Hover) CloseDocTip();
             OnCaretOrTextChanged();
             if (!_loading) SetModified(true);
-            _diagnosticsTimer.Stop();
-            _diagnosticsTimer.Start();
-            _highlightTimer.Stop();
-            _highlightTimer.Start();
+            if (!_loading)
+            {
+                RequestDiagnostics(DiagnosticsDelay);
+                RequestHighlighting(TimeSpan.FromMilliseconds(120));
+            }
 
             // Runs on EVERY text change, also deletion (Backspace/Del) -
             // TextEntered (see below) fires ONLY for text
@@ -533,6 +677,7 @@ namespace fire.Editor
         {
             // Ctrl+Space: trigger completion manually, also without a
             // preceding '.' (general identifier completion).
+            EditorTiming.KeyIn(TopLevel.GetTopLevel(this));
             if (e.Key == Key.Escape) CloseDocTip();
             if (e.Key == Key.Space && e.KeyModifiers == KeyModifiers.Control)
             {
@@ -584,18 +729,9 @@ namespace fire.Editor
 
         private void ShowOrUpdateCompletion(bool closeIfEmpty)
         {
-            string source = Editor.Text;
+            using var timing = EditorTiming.Measure("completion");
+            string source = CurrentText();
             int offset = Editor.CaretOffset;
-            var index = IndexFor(source);
-            var items = CompletionEngine.GetSuggestions(source, offset, index);
-
-            if (items.Count == 0)
-            {
-                if (closeIfEmpty) _completionWindow?.Close();
-                return;
-            }
-
-            items = items.OrderByDescending(i => i.Score).ToList();
 
             // Already typed prefix (identifier characters immediately before
             // the cursor) - AvalonEdit is to REPLACE that, not only
@@ -603,6 +739,30 @@ namespace fire.Editor
             int start = offset - 1;
             while (start >= 0 && (char.IsLetterOrDigit(source[start]) || source[start] == '_')) start--;
             start++;
+
+            // The list was open and the word ended (a blank, an operator, `;`): it closes - a new list of everything for no word at all (built anew with all its items for
+            // every such key, 30 ms each) helps nobody. After `.` (the members), `(` and `,` (the named arguments) it is built for the new place.
+            if (_completionWindow != null && start == offset && !(offset > 0 && source[offset - 1] is '.' or '(' or ','))
+            {
+                _completionWindow.Close();
+                return;
+            }
+
+            var index = IndexFor(source, wordEdit: _completionWindow != null);   // (the list is open: the letters of the word typed on)
+            List<CompletionItem> items;
+            using (EditorTiming.Measure("  suggestions")) items = CompletionEngine.GetSuggestions(source, offset, index);
+
+            if (items.Count == 0)
+            {
+                if (closeIfEmpty) _completionWindow?.Close();
+                return;
+            }
+
+            // the list is open for this word and still has something for it: the list narrows itself as the word is typed on (CompletionList filters its items) - a new popup
+            // with all the items for every letter cost 20-40 ms of every keystroke
+            if (_completionWindow is { } open && open.StartOffset == start && offset >= start) return;
+
+            items = items.OrderByDescending(i => i.Score).ToList();
 
             _completionWindow?.Close();
             var window = new CompletionWindow(Editor.TextArea) { StartOffset = start, EndOffset = offset };
@@ -660,8 +820,17 @@ namespace fire.Editor
             return _conditionalSymbols;
         }
 
-        /// <summary>Checks the script again now (after the installed packages changed).</summary>
-        public void Revalidate() => RunDiagnostics();
+        /// <summary>Checks the script again now (after the installed packages or the project changed: what was remembered of earlier checks does not count).</summary>
+        public void Revalidate()
+        {
+            LiveDiagnostics.Invalidate();
+            ScriptSymbolIndex.ForgetImports();
+            _contextFiles = null;
+            RequestDiagnostics(TimeSpan.FromMilliseconds(50));
+        }
+
+        /// <summary>Checks the script again after `delay` (another file it depends on changed).</summary>
+        public void ScheduleDiagnostics(TimeSpan delay) => RequestDiagnostics(delay);
 
         public void InvalidateConditionalSymbols()
         {
@@ -669,28 +838,148 @@ namespace fire.Editor
             RecomputeHighlighting();
         }
 
+        /// <summary>The highlighting of the whole text, now (opening a file, other `#if` symbols); while typing it comes from the background (RequestHighlighting).</summary>
         private void RecomputeHighlighting()
         {
-            string text = Editor.Text;
+            using var timing = EditorTiming.Measure($"highlighting {Path.GetFileName(FilePath)}");
+            string text = CurrentText();
             var spans = SyntaxHighlighter.Highlight(text, ConditionalSymbolsForView());
-            ColorizeAttributes.Apply(spans, text, ColorizedMembers(), ColorizeAttributes.Collect(text));
+            ColorizeAttributes.Apply(spans, text, ColorizedMembers(text), ColorizeAttributes.Collect(text));
+            _highlight.Cancel();   // (one that was asked for before is older than this)
             _colorizer.Spans = spans;
-            _errorSquiggles.ErrorLines = _diagnostics.Where(d => d.IsError).Select(d => d.Line).ToHashSet();
-            _errorSquiggles.WarningLines = _diagnostics.Where(d => d.IsWarning).Select(d => d.Line).ToHashSet();
             Editor.TextArea.TextView.Redraw();
         }
 
-        /// <summary>Runs debounced after text changes (see
-        /// Editor_TextChanged/_diagnosticsTimer): parser+resolver+compiler
-        /// on the current editor content (see LiveDiagnostics.Analyze),
-        /// updates Diagnostics (raises DiagnosticsChanged) and the
-        /// squiggled lines in the editor itself.</summary>
-        private void RunDiagnostics()
+        private void RequestHighlighting(TimeSpan delay)
         {
-            string source = Editor.Text;
-            _diagnostics = DiagnosticsProvider(source);
+            _highlight.Request(() =>
+            {
+                // (on the UI thread, once per pause: the text, the symbols of `#if` and the colors of the project; the lexing itself runs in the background)
+                string text = CurrentText();
+                long version = _edits.Version;
+                var symbols = ConditionalSymbolsForView();
+                var colors = ColorizedMembers(text);
+                string? name = Path.GetFileName(FilePath);
+                return _ =>
+                {
+                    using var timing = EditorTiming.Measure($"highlighting {name} (background)");
+                    var spans = SyntaxHighlighter.Highlight(text, symbols);
+                    ColorizeAttributes.Apply(spans, text, colors, ColorizeAttributes.Collect(text));
+                    return (spans, version);
+                };
+            }, delay);
+        }
+
+        private void OnHighlighted(List<HighlightSpan> spans, long version)
+        {
+            if (!_edits.CanMap(version)) return;   // (the text was replaced since: its own highlighting is there)
+            using var timing = EditorTiming.Measure("highlighting shown");
+            _colorizer.Spans = _edits.MapSpans(spans, version);
+            Editor.TextArea.TextView.Redraw();
+        }
+
+        /// <summary>Every change of the text: the highlighting, the squiggles and the places of the diagnostics move with it (until the next results come from the background).</summary>
+        private void OnDocumentChanged(TextEdit edit)
+        {
+            _edits.Add(edit);
+            // (in place: the list of a long file is not copied for every keystroke; the colorizer reads it on this thread only)
+            if (_colorizer.Spans is List<HighlightSpan> spans && spans.Count > 0) EditLog.ShiftInPlace(spans, edit);
+            if (_marks.Count > 0)
+            {
+                foreach (var d in _marks.Keys.ToList()) _marks[d] = EditLog.Map(_marks[d], edit);
+                UpdateMarkLines();
+            }
+        }
+
+        /// <summary>Asks for a check of the document after `delay` (a pause in typing): the newest request wins (BackgroundCheck); the text and what the host needs are taken
+        /// on the UI thread when the check starts, the analysis runs in the background.</summary>
+        private void RequestDiagnostics(TimeSpan delay)
+        {
+            _check.Request(() =>
+            {
+                string text = CurrentText();
+                long version = _edits.Version;
+                Func<CancellationToken, List<Diagnostic>> job;
+                using (EditorTiming.Measure($"diagnostics {Path.GetFileName(FilePath)}: snapshot")) job = DiagnosticsJob(text);
+                string? name = Path.GetFileName(FilePath);
+                return token =>
+                {
+                    using var timing = EditorTiming.Measure($"diagnostics {name} (background)");
+                    var found = job(token);
+                    return (found, version, text, DeclarationShape.Of(text));
+                };
+            }, delay);
+        }
+
+        /// <summary>A check is done: its diagnostics are shown where their text is now. A diagnostic of another file (an `#include`d one) is listed with its file, not squiggled here.</summary>
+        private void OnChecked(List<Diagnostic> found, long version, string text, string? shape)
+        {
+            if (!_edits.CanMap(version)) return;   // (the text was replaced since: the check of the new text follows)
+            // what the other files see of this one changed: they are checked again (not for the first check: the host checked them with this text already)
+            bool declarationsChanged = shape != null && _shape != null && !string.Equals(shape, _shape, StringComparison.Ordinal);
+            if (shape != null) _shape = shape;
+            using var timing = EditorTiming.Measure("diagnostics shown");
+            var lineStarts = new List<int> { 0 };
+            for (int i = 0; i < text.Length; i++) if (text[i] == '\n') lineStarts.Add(i + 1);
+            string? own = null;
+            try { if (FilePath != null) own = Path.GetFullPath(FilePath); } catch (Exception) { }
+            var marks = new Dictionary<Diagnostic, int>(ReferenceEqualityComparer.Instance);
+            var shown = new List<Diagnostic>(found.Count);
+            int length = Editor.Document.TextLength;
+            foreach (var d in found)
+            {
+                if (!IsOwnFile(d.File, own)) { shown.Add(d); continue; }
+                var here = d.File != null ? d with { File = null } : d;
+                shown.Add(here);
+                if (here.Line < 1 || here.Line > lineStarts.Count) continue;
+                // the place: where the text of the line begins (or the column of the error) - carried through the changes since the check took the text
+                int start = lineStarts[here.Line - 1], end = here.Line < lineStarts.Count ? lineStarts[here.Line] : text.Length, at = start;
+                while (at < end && (text[at] == ' ' || text[at] == '\t')) at++;
+                if (here.Column > 1) at = Math.Max(at, Math.Min(end, start + here.Column - 1));
+                marks[here] = Math.Clamp(_edits.MapOffset(at, version), 0, length);
+            }
+            _diagnostics = shown;
+            _marks = marks;
+            UpdateMarkLines(force: true);
             DiagnosticsChanged?.Invoke();
-            RecomputeHighlighting();
+            if (declarationsChanged) DeclarationsChanged?.Invoke();
+        }
+
+        private static bool IsOwnFile(string? file, string? own)
+        {
+            if (file == null) return true;
+            if (own == null) return false;
+            try { return fire.Projects.ProjectFiles.PathComparer.Equals(Path.GetFullPath(file), own); }
+            catch (Exception) { return false; }
+        }
+
+        /// <summary>The lines with an error / a warning for the squiggles and the margin, from where the diagnostics are now.</summary>
+        private void UpdateMarkLines(bool force = false)
+        {
+            var document = Editor.Document;
+            var errors = new HashSet<int>();
+            var warnings = new HashSet<int>();
+            foreach (var (d, offset) in _marks)
+            {
+                int line = document.GetLineByOffset(Math.Min(offset, document.TextLength)).LineNumber;
+                if (d.IsError) errors.Add(line); else warnings.Add(line);
+            }
+            warnings.ExceptWith(errors);
+            // (a keystroke that moves no squiggle to another line draws nothing again: a Redraw throws away every visual line of the view, all of them laid out anew)
+            if (!force && errors.SetEquals(_errorSquiggles.ErrorLines) && warnings.SetEquals(_errorSquiggles.WarningLines)) return;
+            _errorSquiggles.ErrorLines = errors;
+            _errorSquiggles.WarningLines = warnings;
+            _breakpointMargin.ErrorLines = errors;
+            _breakpointMargin.WarningLines = warnings;
+            _breakpointMargin.RedrawMargin();
+            Editor.TextArea.TextView.InvalidateLayer(_errorSquiggles.Layer);
+        }
+
+        /// <summary>The messages of the diagnostics on a line (1-based) - the tooltip of a squiggled line.</summary>
+        private List<Diagnostic> DiagnosticsOnLine(int line)
+        {
+            var document = Editor.Document;
+            return _marks.Where(m => document.GetLineByOffset(Math.Min(m.Value, document.TextLength)).LineNumber == line).Select(m => m.Key).ToList();
         }
 
         // -----------------------------------------------------------
@@ -723,7 +1012,7 @@ namespace fire.Editor
         /// <summary>Where a jump to the definition at `offset` would lead, null = nowhere.</summary>
         private NavigationTarget? FindDefinitionAt(int offset)
         {
-            string source = Editor.Text;
+            string source = CurrentText();
             var index = IndexFor(source);
             return NavigationEngine.TryResolve(source, offset, index)
                 ?? TryResolveAcrossIncludes(source, offset, index);

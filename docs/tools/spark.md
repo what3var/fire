@@ -57,10 +57,49 @@ spark is the IDE of fire (C#, Avalonia - Windows, Linux, macOS). **First Steps**
   shows where the time went (in the VM the lines with the most instructions, natively the lines that took the longest in microseconds, and how often each
   was entered) and every own file with the counts beside each line - hot lines in
   orange, lines with code that never ran in red (*Only what never ran* lists just those); a click on a line opens it in the editor.
+- **Options** (*Tools > Options...*; also from the end of the setup wizard): the settings of spark for this machine, on pages chosen at the left like the
+  project properties. *General*: the welcome window at the start, the engine of a script that is in no project (from `fire.native.json`, VM or native - also
+  *Run > Run Engine*), the assistant and the MCP server on or off, the ESP-IDF folder, and a button that runs the setup wizard again. *Compilers*: a grid with
+  one row per C/C++ toolchain - the ones found with their version and path, the ones fire can download marked "not installed - download (size)", the others
+  with how to get them (Linux: the package manager, e.g. `sudo apt install tcc` / `g++`) - and two columns of radio buttons: **Build** (spark's Build, Run,
+  Debug and Build Solution, `forge build`, `forge test`) and **Publish** (Publish, `forge publish`), one choice per column. *Automatic* (the first row) takes the
+  recommended compiler when it is there, else the best one there: for Build **TinyCC** (fast, barely optimised, C only), for Publish **GCC** (slow, proven,
+  optimised; on Windows w64devkit, without it Visual C++ when that is found). *Download missing toolchains (TCC/GCC)* (on by default, only where fire can
+  download one: Windows - the TinyCC zip, checked by its SHA-256, and w64devkit) makes *Apply* download the chosen ones that are not there, in the progress
+  window of the setup. The choice is kept in `Toolchain/toolchain.json` next to spark (`"build"`, `"publish"`: `tcc`, `gcc`, `clang`, `msvc` or `auto`).
+  A project's own toolchain goes first (*Project Properties > Native & Toolchain*, `toolchain` in `fire.native.json`, a target that names one, `--toolchain`);
+  both dialogs say so. Debug, Release and Performance stay the build *modes* - the compiler no longer depends on them. TinyCC compiles only C: when a
+  program has natives in C++ and Build is TinyCC (chosen or automatic), the build hands it to the next compiler (GCC, else Clang or MSVC) and the build log
+  says so in one line ([natives](../packages/natives.md#0-c-or-c)).
+- **Setup wizard** (at the first start, *? > Setup Wizard*): its page *Compilers* is the same grid with the same checkbox (and, on Windows, Open Watcom for
+  the old PC targets); Start saves the choice and downloads what it lists.
 - **Panels:** Output, Build log, Error list, Solution Explorer, Test Explorer ([testing](testing.md)), Todo ([notes](notes.md)), Devices
   ([devices](../devices/README.md)), Properties, Runtime. All of them dock, float or auto-hide; *View > Reset Layout* brings the start layout back.
 
+## Live errors
+
+While you type, spark checks the document in the background - nothing of it runs on the keystroke itself:
+
+- **After a pause in typing** (0.4 s) the document is compiled with the other files of its project and the libraries it imports, on a thread of its
+  own; a newer pause replaces a check that is still waiting, and cancels one that runs. Results arrive in order: an older result never replaces a
+  newer one, and the errors of the final text always come. Until then the squiggles move with the text.
+- **One analysis at a time:** the active document first, then the other open documents, then the checks of whole projects.
+- **The other files:** when the check finds that what the other files can see of the document changed (a declaration, a signature, a field, an
+  `#import` - not the body of a function), the open documents that use it are checked again, and so are the projects that contain it, for the files
+  that are not open. Closing a document checks its project again. Texts that did not change are not analysed twice, and the files on the disk are
+  read once while they do not change.
+- **Where errors show:** a squiggle under the line (red for an error, amber for a warning; the mouse over it shows the message), a bar in the
+  margin next to the line number, the *Error List* (every open document, the files of the solution that are not open, and what the last build
+  reported beyond that) and the count in the status bar (a click shows the list). An error in a library file is listed with that file.
+
+`FIRE_EDITOR_TIMING=1` in the environment writes to stderr what the editor does on the UI thread and in the background (each step over a
+millisecond), the time from a key to the frame that shows it, and every stall of the UI thread - to measure a big solution.
+
 ## The tool bar of the solution explorer
+
+The folders of a project are *included* (normal), *undecided* (no code, not named: pale and italic, not built) or *excluded* (not shown; with *Show All Files* pale, the reason behind it); right-click a folder
+for *Exclude from Project*, *Include in Project* or *Remove Exclusion*, also for several selected folders at once - with *Sync .gitignore* (*Project Properties > Build*, on by
+default) the `.gitignore` follows ([projects](projects.md#folders-included-undecided-excluded)).
 
 Above the tree of the Solution Explorer ([projects](projects.md)) a row of buttons (each one explains itself in its tooltip) and a filter box:
 
@@ -71,7 +110,7 @@ Above the tree of the Solution Explorer ([projects](projects.md)) a row of butto
 | *Sync with Active Document* | selects the file of the active document in the tree: its folders open and the tree scrolls to it (a filter that hides it is cleared) |
 | *Track Active Document* | a switch: does the same whenever another document becomes active |
 | *Refresh* | reads the folders of all projects again from the disk (a file added or deleted outside spark) - as *Reload* in the context menu of a project |
-| *Show All Files* | a switch: also shows what the projects leave out - `bin`, `obj`, `node_modules`, files and folders whose name starts with a dot - pale (`.git` only as a folder); their context menu opens, shows and deletes them |
+| *Show All Files* | a switch: also shows what the projects leave out - `bin`, `obj`, `node_modules`, files and folders whose name starts with a dot, the folders a project excludes (`excludedDirectories`, a `.gitignore`; "excluded" / "ignored by .gitignore" behind them) with what is in them - pale (`.git` only as a folder); their context menu opens, shows and deletes them, and takes an exclusion back |
 | *New File* | the menu *New* of the context menu (script, class, window, circuit, markdown, image, other file) for the selected folder - for a selected file its folder, else its project; with nothing selected the project of the active document |
 | *New Folder...* | a new folder in the same place; on the solution or a solution folder a solution folder |
 | *Properties* | for a file the *Properties* panel (brought to the front), for a project (or a row in it) its properties dialog, for the solution the solution's |
@@ -116,5 +155,5 @@ points clicked in a 2D view, *Extrude* pulls faces out to a body, *Mirror* copie
 ## More
 
 - [Projects and solutions](projects.md), [templates](templates.md) (*File > New*), [git](git.md), [notes](notes.md)
-- *Tools > Package Manager (ember)*, *Tools > Toolchain Settings*, *Tools > Open the Standard Libraries (Source)*
+- *Tools > Package Manager (ember)*, *Tools > Toolchain Settings* (the targets and toolchains of `fire.native.json`), *Tools > Options*, *Tools > Open the Standard Libraries (Source)*
 - The Markdown viewer and editor (`.md`), the raster editor for pictures, the packet viewer (`.fplog`) of the device traces

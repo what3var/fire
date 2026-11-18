@@ -1,0 +1,13 @@
+ohne Fenster True 400x200
+resize 200x100
+400x200 logisch 200x100
+Update True False
+click a
+Zeiger 11 | Fokus a True
+Zeiger 11 0 | Fokus b True a False
+key 97 scancode 4 repeat False
+key 97 scancode 4 repeat True
+key 119 scancode 26 repeat False
+Pfeil: Fokus a True Hover b False Ereignisse 7
+Tick True
+geschlossen False

@@ -7,6 +7,8 @@ namespace fire.UI.Markup
     {
         /// <summary>A whole number (`12`, `-3`, `0x1F`) or an enum member / constant (`{Enum Colors.Red}`).</summary>
         Int,
+        /// <summary>A number with a fraction (`0.5`, `-2`, `100`), for a `float` field (Slider.Minimum, Value, ...).</summary>
+        Number,
         /// <summary>`true` or `false`.</summary>
         Bool,
         /// <summary>A text.</summary>
@@ -227,6 +229,15 @@ namespace fire.UI.Markup
             {
                 new("Header", PropertyKind.Text), new("Horizontal", PropertyKind.Bool), new("Spacing", PropertyKind.Int), new("SelectedIndex", PropertyKind.Int),
             }, new[] { new EventDef("OnChange") }) with { PartTags = ItemParts },
+            Define("Slider", false, "new UI.Slider()", new PropertyDef[]
+            {
+                new("Minimum", PropertyKind.Number), new("Maximum", PropertyKind.Number), new("Value", PropertyKind.Number), new("Step", PropertyKind.Number),
+                new("LargeStep", PropertyKind.Number), new("ShowValue", PropertyKind.Bool), new("Decimals", PropertyKind.Int),
+            }, "OnChange"),
+            Define("Stepper", ChildMode.Parts, "new UI.Stepper(0, 0)", new PropertyDef[]
+            {
+                new("DisplayMember", PropertyKind.Text), new("SelectedIndex", PropertyKind.Int), new("Wrap", PropertyKind.Bool), new("ItemsSource", PropertyKind.Collection),
+            }, new[] { new EventDef("OnChange") }) with { PartTags = ItemParts },
             Define("MenuBar", ChildMode.Parts, "new UI.MenuBar(0, 0, -1, -1)", Array.Empty<PropertyDef>()) with { PartTags = new[] { "Menu" } },
             Define("Separator", false, "new UI.Separator()", Array.Empty<PropertyDef>()),
             Define("Image", false, "new UI.Image(undefined, 0, 0, -1, -1)", new PropertyDef[]
@@ -255,7 +266,7 @@ namespace fire.UI.Markup
             // ---- parts: what the containers above contain (no common properties, no style) ----
             new ElementDef("Item", "", ChildMode.None, "", new PropertyDef[] { new("Text", PropertyKind.Text) { Default = "\"\"" } }, Array.Empty<EventDef>())
             {
-                PartOf = new[] { "ListBox", "ListView", "RadioButtons", "ComboBox" }, AddCall = "{p}.Add({Text})",
+                PartOf = new[] { "ListBox", "ListView", "RadioButtons", "ComboBox", "Stepper" }, AddCall = "{p}.Add({Text})",
             },
             new ElementDef("Suggestion", "", ChildMode.None, "", new PropertyDef[] { new("Text", PropertyKind.Text) { Default = "\"\"" } }, Array.Empty<EventDef>())
             {

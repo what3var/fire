@@ -1,0 +1,114 @@
+#import "graphics"
+#import "scene3d"
+#import "scene3d.effects"
+// A texture with transparent texels in fog: the hardware renderer draws it as the software renderer does (the fog goes over the opaque objects first, each transparent one
+// is fogged by its own distance; its opaque texels write the depth). Before, the GPU fogged a transparent object by the depth behind it - in front of the background it
+// vanished in the fog completely. And only an object whose texture coordinates come near a transparent texel is transparent: an atlas with a pane of glass does not make
+// every object on it transparent (it casts its shadow, as a solid one does).
+// (FIRE_S3D_GPU=cpu takes a Vulkan device that is a CPU, lavapipe; without a GPU the software renderer draws, and the comparisons hold all the same.)
+class H {
+    // the bytes that are more than 24 apart: few (below 1 %)
+    static bool Close(byte a[], byte b[]) {
+        var off = 0
+        for (var i = 0; i < a.length; i++) {
+            var d = a[i] - b[i]
+            if (d > 24 || d < -24) { off++ }
+        }
+        return off * 100 < a.length
+    }
+    // the pixels that are not (nearly) the fog colour
+    static int NotFog(byte a[]) {
+        var n = 0
+        for (var i = 0; i < a.length; i += 4) {
+            var d = a[i] - 150
+            var e = a[i + 2] - 170
+            if (d > 12 || d < -12 || e > 12 || e < -12) { n++ }
+        }
+        return n
+    }
+    static bool Drew(Camera cam) { return cam.LastRenderer == RenderMode.Hardware || S3D.HardwareName() == "" }
+    // 16 x 16: orange, the right quarter (columns 12..15) half transparent blue - glass in an atlas
+    static Texture Atlas() {
+        var b = new byte[16 * 16 * 4]
+        for (var y = 0; y < 16; y++) {
+            for (var x = 0; x < 16; x++) {
+                var i = (y * 16 + x) * 4
+                if (x >= 12) { b[i] = 60; b[i + 1] = 90; b[i + 2] = 255; b[i + 3] = 128 }
+                else { b[i] = 230; b[i + 1] = 140; b[i + 2] = 40; b[i + 3] = 255 }
+            }
+        }
+        return new Texture(16, 16, b)
+    }
+}
+
+// ---- in fog, in front of the background: the whole texture (the glass and the rest) ----
+var frame = new Framebuffer(64, 48)
+var scene = new Scene()
+var atlas = H.Atlas()
+var box = new Object(Template.Box, -0.3m, 1m, -1.5m, 2.5m, 2.5m, 2.5m)
+box.Texture = atlas
+box.RotationY = 30deg
+scene.Add(box)
+var ball = new Object(Template.Sphere, 1.8m, 1m, -7m, 1.5m, 1.5m, 1.5m)
+ball.Texture = atlas
+scene.Add(ball)
+scene.Add(Light.Directional(-0.4, -1.0, -0.3))
+var cam = new Camera(frame)
+cam.SetPosition(0m, 1.5m, 3m)
+cam.LookAt(0m, 1m, -4m)
+cam.Background = S3D.Rgb(40, 50, 90)
+scene.Add(cam)
+scene.Fog(S3D.Rgb(150, 155, 170), 2m, 16m)
+scene.Renderer = RenderMode.Software
+cam.Render()
+var soft = frame.ReadBytes()
+scene.Renderer = RenderMode.Hardware
+cam.Render()
+var hard = frame.ReadBytes()
+print("fog " + H.Drew(cam) + " " + H.Close(hard, soft) + " " + (H.NotFog(soft) > 200) + " " + (H.NotFog(hard) > 200))
+// two sided, and transparent as a whole (Opacity) on top
+box.Material = new Material(0.2, 32.0, true, true)
+ball.Opacity = 0.6
+scene.Renderer = RenderMode.Software
+cam.Render()
+soft = frame.ReadBytes()
+scene.Renderer = RenderMode.Hardware
+cam.Render()
+hard = frame.ReadBytes()
+print("fog two sided " + H.Drew(cam) + " " + H.Close(hard, soft) + " " + (H.NotFog(hard) > 200))
+
+// ---- which objects are transparent: by their texture coordinates (a transparent object casts no shadow) ----
+var sFrame = new Framebuffer(64, 48)
+var sScene = new Scene()
+var floor = new Object(Template.Plane, 0m, 0m, 0m, 20m, 0m, 20m)
+sScene.Add(floor)
+// columns 1.5 .. 5.5 of the texture (u 0.125 .. 0.375): far from the glass
+var solid = new Object(Template.Box, 0m, 1.5m, 0m, 1m, 1m, 1m)
+solid.Texture = atlas
+solid.TextureWidth = 4m
+solid.TextureX = 0.5m
+sScene.Add(solid)
+sScene.Add(Light.Directional(-0.8, -1.0, 0.0))
+var sCam = new Camera(sFrame)
+sCam.SetPosition(0m, 6m, 0.01m)
+sCam.LookAt(0m, 0m, 0m)
+sScene.Add(sCam)
+sScene.Renderer = RenderMode.Software
+sCam.Render()
+var near = sFrame.ReadBytes()
+// u 0.75 .. 1: the glass
+solid.TextureX = 3m
+sCam.Render()
+var glass = sFrame.ReadBytes()
+// the shadow of the solid box on the floor: darker in every channel than the floor where the glass box casts none
+var shadowed = 0
+for (var i = 0; i < near.length; i += 4) {
+    if (near[i] + 30 < glass[i] && near[i + 1] + 30 < glass[i + 1] && near[i + 2] + 30 < glass[i + 2]) { shadowed++ }
+}
+print("atlas " + (shadowed > 10))
+sScene.Renderer = RenderMode.Hardware
+solid.TextureX = 0.5m
+sCam.Render()
+var nearHard = sFrame.ReadBytes()
+print("atlas gpu " + H.Drew(sCam) + " " + H.Close(nearHard, near))
+//# name: Scene3D GPU: eine Textur mit durchsichtigen Texeln im Nebel wie im Software-Renderer; durchsichtig nur, wer sie liest

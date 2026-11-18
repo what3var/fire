@@ -150,7 +150,11 @@ namespace fire.Editor
             var dialog = new PackageManagerDialog();
             await dialog.ShowDialog(this);
             if (dialog.Changed)
+            {
                 foreach (var doc in _documents) doc.Script?.Revalidate();
+                LiveDiagnostics.Invalidate();
+                ScheduleAllProjectChecks(TimeSpan.FromSeconds(1));   // (the files that are not open, too)
+            }
         }
 
         private async void NativeBuildSettings_Click(object? sender, RoutedEventArgs e) => await ShowNativeBuildSettings(toolchainPage: false);
@@ -346,7 +350,7 @@ namespace fire.Editor
             {
                 config = LoadNativeConfig(out _, project);
                 target = config.ResolveTarget(_nativeTargetChoice ?? plan?.Settings.Target);   // the tool strip goes before the settings of the project, which go before the configuration file
-                toolchain = config.ResolveToolchain(target, plan?.Settings.Toolchain);
+                toolchain = config.ResolveToolchain(target, plan?.Settings.Toolchain, fire.Native.ToolchainPurpose.Build);
             }
             catch (fire.Native.NativeConfigException ex)
             {

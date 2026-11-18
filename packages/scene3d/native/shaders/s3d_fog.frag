@@ -1,8 +1,9 @@
 #version 450
 #extension GL_GOOGLE_include_directive : require
 // fire scene3d, hardware backend: the fog (Scene.Fog) over the finished picture - s3d_fxApply of the software renderer: from `start` on the picture goes into the fog colour,
-// from `end` on it is all fog, and so is what no object covers - unless the picture has a backdrop (Object.Background, drawn without depth: the sky stays). The distance is the one of the depth of the picture (the opaque objects: a transparent one is fogged by
-// what is behind it, as in the software renderer). Drawn over the picture with blending (alpha = how much fog).
+// from `end` on it is all fog, and so is what no object covers - unless the picture has a backdrop (Object.Background, drawn without depth: the sky stays). The distance is the
+// one of the depth of the picture: the opaque objects - it is drawn before the transparent ones, which s3d_main.frag fogs by their own distance (as the software renderer does).
+// Drawn over the picture with blending (alpha = how much fog).
 #include "s3d_common.glsl"
 
 layout(set = 3, binding = 0) uniform sampler2D depthMap;   // the depth of the picture (read texel by texel)

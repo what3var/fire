@@ -267,6 +267,7 @@ static struct {
     VkDescriptorPool* texPools; size_t texPoolN, texPoolCap;
     VkRenderPass passMain, passShadow;
     VkRenderPass passOpaque, passOver;   /* fog or reflections: the opaque objects (the depth kept for the shaders), then the rest over them (the depth read only) */
+    VkRenderPass passBlend;              /* after those: the transparent objects (their opaque texels write the depth) */
     int depthSampled;                    /* the depth format can be read by the shaders (else no fog, no reflections on the GPU: the software renderer draws them) */
     VkShaderModule mainVert, mainFrag, shadowVert, shadowFrag, postVert, reflectFrag, fogFrag;
     VkPipeline pipes[S3D_GPU_PIPELINES];
@@ -801,11 +802,11 @@ static int s3d_gpu_renderPass(VkFormat color, VkImageLayout colorFinal, VkPipeli
 }
 
 /* The render passes of the picture. `mode` 2 (passMain): the whole picture in one pass (cleared; the depth is not kept). With fog or reflections (their shaders read the depth
- * of the picture) it takes two: `mode` 0 draws the opaque objects (cleared; the depth is kept, read only from then on), `mode` 1 the rest over them - the reflections, the
- * transparent objects, the fog - with the depth read only (tested and read by the shaders at the same time). The three are compatible (the same attachments and the same
- * dependencies): the same pipelines and framebuffers. */
+ * of the picture) it takes two or three: `mode` 0 draws the opaque objects (cleared; the depth is kept), `mode` 1 over them the reflections and the fog with the depth read
+ * only (tested and read by the shaders at the same time), `mode` 3 then the transparent objects (the depth can be written again: their opaque texels hide what is behind them,
+ * as in the software renderer). The four are compatible (the same attachments and the same dependencies): the same pipelines and framebuffers. */
 static int s3d_gpu_scenePass(int mode, VkRenderPass* out) {
-    int over = mode == 1, whole = mode == 2;
+    int over = mode == 1 || mode == 3, whole = mode == 2, blendOnly = mode == 3;
     VkAttachmentDescription att[2];
     VkAttachmentReference colorRef, depthRef;
     VkSubpassDescription sub;
@@ -827,9 +828,9 @@ static int s3d_gpu_scenePass(int mode, VkRenderPass* out) {
     att[1].stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
     att[1].stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
     att[1].initialLayout = over ? S3D_VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL : VK_IMAGE_LAYOUT_UNDEFINED;
-    att[1].finalLayout = whole ? VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL : S3D_VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL;
+    att[1].finalLayout = whole || blendOnly ? VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL : S3D_VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL;
     colorRef.attachment = 0; colorRef.layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-    depthRef.attachment = 1; depthRef.layout = over ? S3D_VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL : VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+    depthRef.attachment = 1; depthRef.layout = over && !blendOnly ? S3D_VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL : VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
     memset(&sub, 0, sizeof sub);
     sub.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
     sub.colorAttachmentCount = 1;
@@ -1421,7 +1422,7 @@ static int s3d_gpu_start(void) {
     if (!s3d_gpu_layouts()) return 0;
     if (!s3d_gpu_scenePass(2, &g_s3dVk.passMain)) return 0;
     if (!s3d_gpu_renderPass(VK_FORMAT_R32_SFLOAT, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, VK_ACCESS_SHADER_READ_BIT, &g_s3dVk.passShadow)) return 0;
-    if (!s3d_gpu_scenePass(0, &g_s3dVk.passOpaque) || !s3d_gpu_scenePass(1, &g_s3dVk.passOver)) return 0;
+    if (!s3d_gpu_scenePass(0, &g_s3dVk.passOpaque) || !s3d_gpu_scenePass(1, &g_s3dVk.passOver) || !s3d_gpu_scenePass(3, &g_s3dVk.passBlend)) return 0;
     if (!s3d_gpu_shader(s3d_spv_main_vert, sizeof s3d_spv_main_vert, &g_s3dVk.mainVert) || !s3d_gpu_shader(s3d_spv_main_frag, sizeof s3d_spv_main_frag, &g_s3dVk.mainFrag)
         || !s3d_gpu_shader(s3d_spv_shadow_vert, sizeof s3d_spv_shadow_vert, &g_s3dVk.shadowVert) || !s3d_gpu_shader(s3d_spv_shadow_frag, sizeof s3d_spv_shadow_frag, &g_s3dVk.shadowFrag)
         || !s3d_gpu_shader(s3d_spv_present_vert, sizeof s3d_spv_present_vert, &g_s3dVk.postVert) || !s3d_gpu_shader(s3d_spv_reflect_frag, sizeof s3d_spv_reflect_frag, &g_s3dVk.reflectFrag)
@@ -1658,8 +1659,8 @@ static void s3d_gpu_objectUniforms(const S3dBatch* b, S3dGpuObjectU* o) {
     o->tm0[0] = s->tm[0]; o->tm0[1] = s->tm[1]; o->tm0[2] = s->tm[2]; o->tm0[3] = s->specular;
     o->tm1[0] = s->tm[3]; o->tm1[1] = s->tm[4]; o->tm1[2] = s->tm[5]; o->tm1[3] = s->shininess;
     o->flags[0] = s->smooth; o->flags[1] = s->twoSided; o->flags[2] = s->lit; o->flags[3] = s->receiveShadows;
-    /* (flags2.w: the alpha goes out - a transparent object, a backdrop that is not a cut-out) */
-    o->flags2[0] = s->layers; o->flags2[1] = b->tex != NULL; o->flags2[2] = b->bumpWanted; o->flags2[3] = b->blended || (s->background && s->cutoff <= 0);
+    /* (flags2.w: 1 a transparent object - 2 the draw of its opaque texels, see below -, 3 a backdrop that is not a cut-out: its alpha goes out, without fog) */
+    o->flags2[0] = s->layers; o->flags2[1] = b->tex != NULL; o->flags2[2] = b->bumpWanted; o->flags2[3] = b->blended ? 1 : (s->background && s->cutoff <= 0) ? 3 : 0;
     o->bump[0] = s->bump;
     if (b->tex) { o->bump[1] = 1.0f / (float)b->tex->w; o->bump[2] = 1.0f / (float)b->tex->h; o->bump[3] = (float)b->tex->filter; }
     if (s->emissiveTex) { o->glow[0] = s->emissiveStrength; o->glow[1] = (float)s->emissiveTex->filter; }
@@ -1704,9 +1705,18 @@ static int s3d_gpu_flushLocked(uint8_t* rgba, S3dFrame* f, const S3dCamera* cam,
     maps = s3d_gpu_frameUniforms(f, cam, st, lo, hi, &layers, &atlas);
     if (maps < 0 || !s3d_gpu_shadows(atlas, layers)) return 0;
     /* the uniforms of the objects */
-    if (!s3d_gpu_hostBuffer(&g_s3dVk.objectUbo, g_s3dVk.objectStride * (nb + 1), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT)) return 0;
+    /* (slot nb + i: the draw of the opaque texels of the transparent object i - flags2[3] = 2) */
+    if (!s3d_gpu_hostBuffer(&g_s3dVk.objectUbo, g_s3dVk.objectStride * (2 * nb + 1), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT)) return 0;
     s3d_gpu_writeFrameSet();
-    for (i = 0; i < nb; i++) s3d_gpu_objectUniforms(&f->batches[i], (S3dGpuObjectU*)(void*)((uint8_t*)g_s3dVk.objectUbo.map + i * g_s3dVk.objectStride));
+    for (i = 0; i < nb; i++) {
+        S3dGpuObjectU* o = (S3dGpuObjectU*)(void*)((uint8_t*)g_s3dVk.objectUbo.map + i * g_s3dVk.objectStride);
+        s3d_gpu_objectUniforms(&f->batches[i], o);
+        if (f->batches[i].blended) {
+            S3dGpuObjectU* q = (S3dGpuObjectU*)(void*)((uint8_t*)g_s3dVk.objectUbo.map + (nb + i) * g_s3dVk.objectStride);
+            *q = *o;
+            q->flags2[3] = 2;
+        }
+    }
     /* the transparent objects from far to near (stable) */
     if (!S3D_GROW(g_s3dVk.order, g_s3dVk.orderCap, nb + 1)) return 0;
     for (i = 0; i < nb; i++) if (f->batches[i].blended) {
@@ -1814,19 +1824,34 @@ static int s3d_gpu_flushLocked(uint8_t* rgba, S3dFrame* f, const S3dCamera* cam,
             g_s3dVk.vkCmdDrawIndexed(g_s3dVk.cmd, gm->indexCount, 1, 0, 0, 0);
         }
     }
-    for (k = 0; k < (size_t)nblended; k++) {
-        int bi = g_s3dVk.order[k];
-        const S3dBatch* b = &f->batches[bi];
-        if (b->s.twoSided) { s3d_gpu_draw(b, (size_t)bi, 2, 1, 0); s3d_gpu_draw(b, (size_t)bi, 1, 1, 0); }   /* the far side first */
-        else s3d_gpu_draw(b, (size_t)bi, 1, 1, 0);
-    }
     if (fog && s3d_gpu_postPipeline(1, 0)) {
+        /* the fog over the opaque objects (and the background); the transparent ones are fogged by their own distance as they are drawn (s3d_main.frag) */
         VkDescriptorSet sets[4];
         uint32_t dynamicZero = 0;
         sets[0] = g_s3dVk.frameSet; sets[1] = g_s3dVk.dummy.set; sets[2] = g_s3dVk.dummy.set; sets[3] = target->postSet;
         g_s3dVk.vkCmdBindPipeline(g_s3dVk.cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, g_s3dVk.fogPipe);
         g_s3dVk.vkCmdBindDescriptorSets(g_s3dVk.cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, g_s3dVk.layoutPost, 0, 4, sets, 1, &dynamicZero);
         g_s3dVk.vkCmdDraw(g_s3dVk.cmd, 3, 1, 0, 0);
+    }
+    if (post && nblended > 0) {
+        /* the transparent objects in a pass of their own: the depth can be written again */
+        g_s3dVk.vkCmdEndRenderPass(g_s3dVk.cmd);
+        rp.renderPass = g_s3dVk.passBlend;
+        rp.clearValueCount = 0; rp.pClearValues = NULL;
+        g_s3dVk.vkCmdBeginRenderPass(g_s3dVk.cmd, &rp, VK_SUBPASS_CONTENTS_INLINE);
+        s3d_gpu_viewport((uint32_t)f->w, (uint32_t)f->h);
+    }
+    /* the transparent objects from far to near, each in two draws as the software renderer draws them: its opaque texels (alpha 1) like an opaque object - they write the
+     * depth and hide what is behind them, also the rest of the object -, then the others mixed in (an object that is transparent as a whole, Opacity < 1, has only these) */
+    for (k = 0; k < (size_t)nblended; k++) {
+        int bi = g_s3dVk.order[k], side;
+        const S3dBatch* b = &f->batches[bi];
+        int whole = b->s.opacity >= S3D_OPAQUE_ALPHA;
+        for (side = 0; side < (b->s.twoSided ? 2 : 1); side++) {
+            int cull = b->s.twoSided ? (side == 0 ? 2 : 1) : 1;   /* (both sides: the far side first) */
+            if (whole) s3d_gpu_draw(b, nb + (size_t)bi, cull, 0, 1);
+            s3d_gpu_draw(b, (size_t)bi, cull, 1, 0);
+        }
     }
     g_s3dVk.vkCmdEndRenderPass(g_s3dVk.cmd);
     target->hasPicture = 1;

@@ -76,13 +76,13 @@ properties by name) with it; a markup file imports `ui` itself.
 | --- | --- |
 | **This page** | the root, the loop, events, ownership, drawing only what changed, fonts |
 | [Layout and containers](containers.md) | measure and arrange, margins and alignment; `Panel`, `Canvas`, `StackPanel`, `DockPanel`, `WrapPanel`, `Grid`, `Border`, `ScrollViewer` |
-| [Controls](controls.md) | `Label`, `Button`, `CheckBox`, `RadioButtons`, `TextBox`, `TextArea`, `AutoSuggestBox`, `ComboBox`, `Image`, `Separator` |
+| [Controls](controls.md) | `Label`, `Button`, `CheckBox`, `RadioButtons`, `Slider`, `Stepper`, `TextBox`, `TextArea`, `AutoSuggestBox`, `ComboBox`, `Image`, `Separator` |
 | [Lists and trees](lists.md) | `ListBox`, `ListView`, `TreeView`, `CollectionView`, item templates |
 | [Menus, tool bars, popups](menus.md) | `MenuBar`, `MenuItem`, context menus, `ToolBar`, popups, tooltips |
 | [Shapes, images, drawing](shapes.md) | `Rectangle`, `Ellipse`, `Line`, `Path`, `Geometry`, `Icons`, `DrawingCanvas` |
 | [Styles, templates, binding](styling.md) | properties, `Style`, `Trigger`, `ControlTemplate`, `DataTemplate`, `Binding`, converters, resources, the theme |
 | [Input](input.md) | focus and keyboard, mouse, double clicks, touch, joystick, clipboard, drag & drop |
-| [Windows and appearance](windows.md) | `Run`/`Show`/`Tick`, several windows, window size, system theme (scaling, dark mode, accent, font), corners, shadows, glass, window backdrops, the display backends |
+| [Windows and appearance](windows.md) | `Run`/`Show`/`Tick`, a root without a window (a layer over a game), several windows, window size, system theme (scaling, dark mode, accent, font), corners, shadows, glass, window backdrops, the display backends |
 | [Common dialogs](dialogs.md) | open/save/folder dialogs, message boxes (`#import "dialogs"`) |
 | [Docking](docking.md) | dock manager, tool windows, tool strips, status bar (`#import "ui.docking"`) |
 | [Markup](markup.md) | designing the interface in a `.fxml` file, the designer in spark |
@@ -96,6 +96,10 @@ properties by name) with it; a markup file imports `ui` itself.
 - it takes the look of the system: scaling, dark or light mode, accent colour and font ([Windows and appearance](windows.md#the-look-of-the-system));
 - it lets the window resize the framebuffer (`window.AutoResize = true`) and lays the interface out anew when the user resizes the window.
 
+`new UI.Root(framebuffer)` - without a window - is an interface as a layer over a picture of the program's own (the menu of a game): the program
+hands it the events (`ui.Dispatch(e)`), lets it draw (`ui.Update()`, `ui.Tick()`) and shows the framebuffer itself
+([a root without a window](windows.md#a-root-without-a-window-the-interface-as-a-layer)).
+
 `ui.Add(element)` puts an element into the root's top panel (`ui.content`, a `Panel` with absolute positions); an element that stretches (the default)
 fills the window. `ui.width` and `ui.height` are the current size in logical pixels.
 
@@ -107,7 +111,7 @@ Three ways to run an interface:
 | --- | --- |
 | `ui.Run()` | shows the window and handles it on the calling thread until it is closed (with `ui.Run(other)` another root as well) |
 | `ui.Show()` | shows the window and lets the program go on; the events are handled at the program's safe points, and the program waits at its end until the window is closed. `ui.Show(true)` is **modal**: it returns when the window is closed, the other windows take no input meanwhile |
-| `while (ui.Tick()) { ... }` | one cycle per round: update and draw, show the frame, distribute the events; `false` once the window is closed |
+| `while (ui.Tick()) { ... }` | one cycle per round: update and draw, show the frame, distribute the events; `false` once the window is closed (without a window: the cycle of the interface only, the events come by `Dispatch`) |
 
 A cycle distributes the events that came in, updates the interface (bindings, triggers, layout), paints what changed and then calls `ui.onTick` (a
 lambda without parameters) - the place for work that should happen in every frame of a program that uses `Run`:
@@ -134,7 +138,7 @@ Every control that can be used reports in two ways - pick what fits the program:
 | Element | Lambda field | Flag (true once, then reset) |
 | --- | --- | --- |
 | `Button` | `OnClick` | `TakeClicked()` |
-| `CheckBox`, `RadioButtons`, `TextBox`, `TextArea` | `OnChange` | `TakeChanged()` |
+| `CheckBox`, `RadioButtons`, `Slider`, `Stepper`, `TextBox`, `TextArea` | `OnChange` | `TakeChanged()` |
 | `TextBox` | `OnEnter` (Enter pressed) | `TakeEntered()` |
 | `ListBox`, `ListView`, `TreeView` | `OnSelect`, `OnActivate` (Enter or double click) | `TakeChanged()`, `TakeActivated()` |
 | `ComboBox` | `OnSelect` | `TakeChanged()` |

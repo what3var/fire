@@ -372,6 +372,8 @@ namespace fire.Editor
             ("ListView", "<ListView Width=\"240\" Height=\"120\">\n  <Column Header=\"Name\" Member=\"name\" Width=\"120\"/>\n  <Column Header=\"Age\" Member=\"age\"/>\n</ListView>"),
             ("TreeView", "<TreeView Width=\"200\" Height=\"120\">\n  <TreeNode Text=\"root\" Expanded=\"true\">\n    <TreeNode Text=\"child\"/>\n  </TreeNode>\n</TreeView>"),
             ("RadioButtons", "<RadioButtons Header=\"Size\" SelectedIndex=\"0\">\n  <Item>Small</Item>\n  <Item>Large</Item>\n</RadioButtons>"),
+            ("Slider", "<Slider Name=\"volume\" Width=\"200\" Minimum=\"0\" Maximum=\"100\" Step=\"5\" Value=\"{Binding Volume, Mode=TwoWay}\" ShowValue=\"true\"/>"),
+            ("Stepper", "<Stepper Name=\"quality\" Width=\"160\" SelectedIndex=\"1\">\n  <Item>Low</Item>\n  <Item>Medium</Item>\n  <Item>High</Item>\n</Stepper>"),
             ("AutoSuggestBox", "<AutoSuggestBox Width=\"160\">\n  <Suggestion>apple</Suggestion>\n  <Suggestion>banana</Suggestion>\n</AutoSuggestBox>"),
             ("MenuBar", "<MenuBar>\n  <Menu Header=\"File\">\n    <MenuItem Header=\"Open\" OnClick=\"OpenFile\"/>\n    <MenuSeparator/>\n    <MenuItem Header=\"Quit\" OnClick=\"Quit\"/>\n  </Menu>\n</MenuBar>"),
             ("ToolBar", "<ToolBar>\n  <Button Text=\"One\" OnClick=\"One\"/>\n  <Separator/>\n  <Button Text=\"Two\"/>\n</ToolBar>"),

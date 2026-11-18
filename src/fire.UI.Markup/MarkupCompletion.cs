@@ -253,6 +253,7 @@ namespace fire.UI.Markup
         private static string Describe(PropertyDef p) => p.Kind switch
         {
             PropertyKind.Enum => string.Join(" | ", p.Choices ?? Array.Empty<string>()),
+            PropertyKind.Number => "number: 0.5, 100",
             PropertyKind.Color => "colour: #RRGGBB",
             PropertyKind.Pen => "pen: #RRGGBB or #RRGGBB,width",
             PropertyKind.Thickness => "4 | 4,2 | 1,2,3,4",

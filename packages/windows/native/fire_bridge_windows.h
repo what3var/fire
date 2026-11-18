@@ -61,6 +61,8 @@ typedef struct FireWinShared {
     int backdropReq;              /* what the desktop should show behind the window (FIRE_BACKDROP_*; -1: nothing new) */
     int backdrop;                 /* what it shows (the answer of the display) */
     int styleReq, style;          /* Window.Frameless / TopMost (FIRE_STYLE_* bits; -1: nothing new), and what the display gave */
+    int fullscreenReq;            /* Window.Fullscreen for the thread (0/1; -1: nothing new) */
+    int fullscreenWant, fullscreen;   /* what the program asked for last (it follows the display when that changes by itself), and the display's state */
     int moveReq, moveX, moveY;    /* Window.SetPosition for the thread (screen pixels) */
     int beginMoveReq;             /* Window.BeginMove: the user moves the window with the held button */
     int workReq, work[4], workKnown;   /* Window.WorkArea: asked for, and the answer (x, y, w, h of the desktop without its panels) */
@@ -103,6 +105,7 @@ static FireWinShared* fire_winb_sharedNew(const char* title, int width, int heig
     s->cursorReq = -1;
     s->backdropReq = -1;
     s->styleReq = -1;
+    s->fullscreenReq = -1;
     return s;
 }
 /* Shows a frame in the window (on the thread that owns it): through the presenter of the framebuffer (`fn`; it draws into the window itself and lays the frame over its picture),
@@ -491,6 +494,17 @@ static void fire_winb_applyRequests(FireWinShared* s) {
 #ifdef FIRE_DISPLAY_PLACEMENT
     /* (the style first: a frame that goes or comes changes what the desktop composes - the backdrop is asked for the window as it will be) */
     if (s->styleReq >= 0) { s->style = fire_display_setStyle(&s->display, s->styleReq); s->styleReq = -1; }
+#endif
+#ifdef FIRE_DISPLAY_FULLSCREEN
+    /* (Window.Fullscreen; then the state - a window manager answers later, the user may leave full screen in the browser with Esc: what the program asked
+     * for follows a change the display reports) */
+    if (s->fullscreenReq >= 0) { fire_display_setFullscreen(&s->display, s->fullscreenReq); s->fullscreenReq = -1; }
+    {
+        int now = fire_display_fullscreen(&s->display) != 0;
+        if (now != s->fullscreen) { s->fullscreen = now; s->fullscreenWant = now; }
+    }
+#else
+    s->fullscreenReq = -1;
 #endif
 #ifdef FIRE_DISPLAY_BACKDROP
     if (s->backdropReq >= 0) { s->backdrop = fire_display_setBackdrop(&s->display, s->backdropReq); s->backdropReq = -1; }
@@ -1508,6 +1522,36 @@ static Value fire_win_WinSetStyle(Value id, Value flags) {
     if (!threaded && s->opened && !s->failed) fire_winb_applyRequests(s);
     if (threaded) fire_winb_unlock(&s->m);
     return Undef();
+}
+/* Window.Fullscreen = on: without a frame over the whole screen the window is on (on) or back to its size, place and frame (off); the new size comes as a resize
+ * event (AutoResize: the framebuffer follows). A managed window does it with its next cycle. */
+static Value fire_win_WinSetFullscreen(Value id, Value on) {
+    FireWinState* w = fire_winb_windowOf(id);
+    FireWinShared* s = w->sh;
+    int threaded = fire_winb_threaded(w);
+    if (threaded) fire_winb_lock(&s->m);
+    s->fullscreenReq = on.i != 0;
+    s->fullscreenWant = on.i != 0;
+    if (!threaded && s->opened && !s->failed) fire_winb_applyRequests(s);
+    if (threaded) fire_winb_unlock(&s->m);
+    return Undef();
+}
+/* Window.Fullscreen (`real` 0: what the program asked for - it follows a change of the display) and Window.IsFullscreen (`real` 1: the state of the display; a
+ * managed window says it after its next cycle). */
+static Value fire_win_WinGetFullscreen(Value id, Value real) {
+    FireWinState* w = fire_winb_windowOf(id);
+    FireWinShared* s = w->sh;
+    int threaded = fire_winb_threaded(w), v;
+    if (threaded) fire_winb_lock(&s->m);
+#ifdef FIRE_DISPLAY_FULLSCREEN
+    else if (s->opened && !s->failed) {
+        int now = fire_display_fullscreen(&s->display) != 0;
+        if (now != s->fullscreen) { s->fullscreen = now; s->fullscreenWant = now; }
+    }
+#endif
+    v = real.i ? s->fullscreen : s->fullscreenWant;
+    if (threaded) fire_winb_unlock(&s->m);
+    return Bool(v != 0);
 }
 /* Window.ClickThrough: clicks (and the pointer) go through the transparent pixels of the window to what lies below - the shape follows every frame. Off: the whole
  * window takes them again. */

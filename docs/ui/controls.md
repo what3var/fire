@@ -93,6 +93,53 @@ One choice out of several, as one element:
 
 The arrow keys move the choice while the element has the focus.
 
+## Slider
+
+A number between two ends, chosen with a thumb on a track - a volume, a speed:
+
+```xml
+<Slider Name="volume" Width="220" Minimum="0" Maximum="100" Step="5" Value="{Binding Volume, Mode=TwoWay}" ShowValue="true" OnChange="VolumeChanged"/>
+```
+
+| Member | Meaning |
+| --- | --- |
+| `Minimum`, `Maximum` | the ends (0, 100); numbers with a fraction (`float`) |
+| `Value` | the value - a plain field: a binding or a probe follows it; setting it from code is taken as it is |
+| `SetValue(v)` | sets it as the user does: snapped to `Step`, kept between the ends, `OnChange` when it changed |
+| `Step` | what a key moves and the grid the values snap to (1; 0: no grid, a key moves a hundredth) |
+| `LargeStep` | what Page Up/Down move (0: a tenth of the range) |
+| `ShowValue`, `Decimals` | the number on the right of the track; with `Decimals` digits after the point (-1: as many as `Step` has, at most 3) - `ValueText(v)` gives the text |
+| `OnChange` / `TakeChanged()` | the user changed the value |
+
+Left/Right move one `Step`, Page Up/Down one `LargeStep`, Home/End go to the ends; the mouse (or a finger) drags the thumb or clicks it to a place of
+the track. Up and Down stay free for the focus, so a slider is one row of a menu - the D-pad and the stick of a gamepad arrive as the arrow keys.
+`new UI.Slider(minimum, maximum, value, left, top, width, height)`.
+
+## Stepper
+
+One of a few choices, shown in place between two arrows - no list opens: the choice of a settings menu ("Quality  < High >").
+
+```xml
+<Stepper Name="quality" Width="160" SelectedIndex="2" OnChange="QualityChanged">
+  <Item>Low</Item>
+  <Item>Medium</Item>
+  <Item>High</Item>
+</Stepper>
+```
+
+| Member | Meaning |
+| --- | --- |
+| `<Item>text</Item>` / `Add(item)`, `SetItems(list)`, `ItemsSource`, `Clear()` | the choices (texts, numbers or objects; with `DisplayMember` the property that is shown); the first one added is chosen |
+| `SelectedIndex`, `SelectedItem`, `Text`, `Select(i)` | the choice (-1: none) |
+| `Wrap` | true: from the last one on to the first and back; false: the arrow at the end is greyed and does nothing |
+| `StepBy(direction)`, `CanStep(direction)` | one further (-1 back, 1 on), from code |
+| `OnChange` / `TakeChanged()` | the user chose |
+
+Left/Right (the D-pad) and a click on an arrow go back and on, Enter, Space (gamepad button A) and a click on the text go on. Up and Down move the
+focus. `new UI.Stepper(left, top, width, height)`.
+
+![Slider and Stepper in a game menu: a root without a window over a scene](../images/ui-slider-stepper.png)
+
 ## TextBox
 
 One line of text.
@@ -201,7 +248,8 @@ A thin line between the items of a [tool bar](menus.md#toolbar) or a stack.
 
 Every control has a constructor with its most used properties - `new UI.Button("OK", left, top, width, height)`, `new UI.Label("text", left, top)`,
 `new UI.CheckBox("text", left, top, isChecked)`, `new UI.TextBox("text", left, top, width, height)`, `new UI.TextArea("text", left, top, width, height)`,
-`new UI.ComboBox(left, top, width, height)`, `new UI.RadioButtons(left, top)`, `new UI.AutoSuggestBox("text", left, top, width, height)`,
+`new UI.ComboBox(left, top, width, height)`, `new UI.RadioButtons(left, top)`, `new UI.Slider(minimum, maximum, value, left, top, width, height)`,
+`new UI.Stepper(left, top, width, height)`, `new UI.AutoSuggestBox("text", left, top, width, height)`,
 `new UI.Image(framebuffer, left, top, width, height)` - and the same fields as in markup:
 
 ```fire

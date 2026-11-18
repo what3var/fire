@@ -187,6 +187,8 @@ namespace fire.Editor
         public MainWindow()
         {
             InitializeComponent();
+            EditorTiming.StartWatchdog();
+            fire.Package.Manager.PackageStore.RecheckInterval = TimeSpan.FromSeconds(1);   // (the analyses ask the store for every #import: the package folders are looked at once a second)
             Opened += (_, _) =>
             {
                 UpdateRunButtons();   // (Stop is grey while nothing runs)
@@ -269,7 +271,12 @@ namespace fire.Editor
             {
                 if (_tools.TryGetValue("errors", out var tool))
                     tool.Title = errors == 0 && warnings == 0 ? PanelTitles["errors"] : warnings == 0 ? $"{PanelTitles["errors"]} ({errors})" : $"{PanelTitles["errors"]} ({errors}, {warnings} warning{(warnings == 1 ? "" : "s")})";
+                // (the status bar, too: the tab of the list is often behind the output)
+                ErrorsText.IsVisible = errors > 0 || warnings > 0;
+                ErrorsText.Text = $"\u2716 {errors}   \u26A0 {warnings}";
+                ErrorsText.Foreground = errors > 0 ? EditorTheme.ErrorMark : warnings > 0 ? EditorTheme.WarningMark : EditorTheme.TextDim;
             };
+            ErrorsText.PointerPressed += (_, _) => RevealTool("errors");
             _errorList.ItemActivated += item => ShowLocation(item.Path, item.File, item.Line);
             _buildLog.LocationActivated += (file, line) => ShowLocation(null, file, line);
 
@@ -697,30 +704,70 @@ namespace fire.Editor
         // Error list
         // -----------------------------------------------------------
 
-        /// <summary>The errors and warnings of the last build (null: there was none yet in this session). They stay in the error list until the next build replaces them.</summary>
+        /// <summary>The errors and warnings of the last build (null: there was none yet in this session).</summary>
         private IReadOnlyList<ErrorListItem>? _buildItems;
         private string _buildItemsSource = "";
 
-        /// <summary>The error list: the result of the last build until the next one replaces it; before the first build the live analysis of the active script (the squiggles in the editor
-        /// are the live analysis always).</summary>
+        /// <summary>What the error list shows now (also for the MCP tools).</summary>
+        private IReadOnlyList<ErrorListItem> _errorItems = Array.Empty<ErrorListItem>();
+
+        /// <summary>
+        /// The error list: the live analysis of every open script (the active one first) - each a check of its own in the background, so the list follows the typing in any of them -,
+        /// for the files of the solution that are not open the checks of their projects (ProjectChecks), and of the last build what neither covers (the files it reported that are
+        /// neither open nor checked, the errors without a file: the linker, the native toolchain). Before, the list showed the last build until the next build - live errors that
+        /// came after it (or in another file than the active one) were not in it at all.
+        /// </summary>
         private void UpdateErrorPanel()
         {
-            if (_buildItems != null)
+            using var timing = EditorTiming.Measure("error list");
+            var items = new List<ErrorListItem>();
+            var active = ActiveDocument;
+            var scripts = _documents.Where(d => d.Script != null).OrderBy(d => ReferenceEquals(d, active) ? 0 : 1).ToList();
+            var covered = new HashSet<string>(scripts.Select(FullPathOf).OfType<string>(), ProjectFiles.PathComparer);
+            // (the same error of a library file can come from the checks of several documents that import it: once in the list; an open file reports its own errors)
+            var listed = new HashSet<(string?, int, string, string)>();
+            foreach (var doc in scripts)
             {
-                _errorList.SetSource(_buildItemsSource);
-                _errorList.SetItems(_buildItems);
-                return;
+                string? path = FullPathOf(doc);
+                foreach (var d in doc.Script!.Diagnostics)
+                {
+                    if (d.File != null && Path.IsPathRooted(d.File) && covered.Contains(d.File) && !(path != null && ProjectFiles.PathComparer.Equals(d.File, path))) continue;
+                    var item = ToItem(d, doc.DisplayName, path);
+                    if (listed.Add((item.Path ?? item.File, item.Line, item.Code, item.Description))) items.Add(item);
+                }
             }
-            var doc = ActiveDocument;
-            var diagnostics = doc?.Script?.Diagnostics ?? (IReadOnlyList<Diagnostic>)Array.Empty<Diagnostic>();
-            string file = doc?.DisplayName ?? "";
-            string? path = FullPathOf(doc);
-            _errorList.SetSource(doc?.Script != null ? $"Live: {file}" : "");
-            _errorList.SetItems(diagnostics.Select(d => ToItem(d, file, path)).ToList());
+            var checkedFiles = new HashSet<string>(ProjectFiles.PathComparer);
+            foreach (var (files, found) in _projectErrors.Values)
+            {
+                checkedFiles.UnionWith(files);
+                foreach (var d in found)
+                    if (d.File is { } file && !covered.Contains(file))
+                        items.Add(new ErrorListItem(d.IsError ? "Error" : "Warning", d.Code, d.Message, Path.GetFileName(file), d.Line, file));
+            }
+            if (_buildItems != null)
+                foreach (var item in _buildItems)
+                    if (item.Path == null || (!covered.Contains(item.Path) && !checkedFiles.Contains(item.Path))) items.Add(item);
+            string source = _documents.Any(d => d.Script != null) || _projectErrors.Count > 0 ? "Live" : "";
+            if (_buildItems != null) source = source.Length > 0 ? $"{source} + {_buildItemsSource.ToLowerInvariant()}" : _buildItemsSource;
+            _errorList.SetSource(source);
+            if (items.SequenceEqual(_errorItems)) return;   // (nothing new: the list is not built again)
+            _errorItems = items;
+            _errorList.SetItems(items);
+        }
+
+        private bool _errorPanelQueued;
+
+        /// <summary>The error list is brought up to date once the results that arrive together are in (several documents and projects can finish one after the other).</summary>
+        private void ScheduleErrorPanel()
+        {
+            if (_errorPanelQueued) return;
+            _errorPanelQueued = true;
+            Dispatcher.UIThread.Post(() => { _errorPanelQueued = false; UpdateErrorPanel(); }, DispatcherPriority.Background);
         }
 
         private static ErrorListItem ToItem(Diagnostic d, string? defaultFile, string? defaultPath) =>
-            new(d.IsError ? "Error" : "Warning", d.Code, d.Message, d.File ?? defaultFile ?? "", d.Line, d.File != null && Path.IsPathRooted(d.File) ? d.File : defaultPath);
+            new(d.IsError ? "Error" : "Warning", d.Code, d.Message, d.File == null ? defaultFile ?? "" : Path.IsPathRooted(d.File) ? Path.GetFileName(d.File) : d.File, d.Line,
+                d.File == null ? defaultPath : Path.IsPathRooted(d.File) ? d.File : null);   // (a file of its own that is not a path: no path, not the document's)
 
         /// <summary>Opens the file (when it is not open yet) and puts the caret on the line: a double click in the error list or in the build log. Without a file it is the active script.</summary>
         private void ShowLocation(string? path, string? file, int line)
@@ -842,10 +889,11 @@ namespace fire.Editor
                         // only after the first layout of the (possibly new) tab, otherwise the editor cannot scroll yet
                         Dispatcher.UIThread.Post(() => opened.View.GoToLine(line), DispatcherPriority.Loaded);
                 };
-                script.DiagnosticsChanged += () =>
-                {
-                    if (ReferenceEquals(ActiveDocument, doc)) UpdateErrorPanel();
-                };
+                // (every open script: the error list shows them all)
+                script.DiagnosticsChanged += ScheduleErrorPanel;
+                // (what the other files see of it changed: they are checked again - not on every keystroke, not for a change inside a body)
+                script.DeclarationsChanged += () => OnDeclarationsChanged(doc);
+                script.CheckPriority = () => ReferenceEquals(ActiveDocument, doc) ? LiveDiagnostics.ActivePriority : LiveDiagnostics.OpenPriority;
                 script.BreakpointsChanged += () =>
                 {
                     if (TakesPartInRun(doc)) _session.UpdateBreakpoints(BreakpointLocations());
@@ -882,6 +930,8 @@ namespace fire.Editor
 
         private void OnDocumentClosed(OpenDocument doc)
         {
+            doc.Script?.CancelChecks();
+            OnScriptClosed(doc);
             if (ReferenceEquals(_highlightedDoc, doc)) _highlightedDoc = null;
             doc.Trace?.Detach();
             _documents.Remove(doc);
@@ -1060,9 +1110,19 @@ namespace fire.Editor
         }
 
         /// <summary>The standard packages are installed (App, in the background): the device drivers of the packages start.</summary>
-        public void OnStandardPackagesReady()
+        /// <param name="changed">Packages were installed (the standard packages changed): the checks that ran meanwhile saw a store that was being filled - wrong errors (an
+        /// import that is not there yet) in every file of the solution, which stayed in the error list until something else checked the files again. They are checked again now.</param>
+        public void OnStandardPackagesReady(bool changed = false)
         {
             Setup.SetupSteps.StartupInstalled.Set();   // (the package step of the setup wizard waits for it)
+            if (changed)
+                Dispatcher.UIThread.Post(() =>
+                {
+                    LiveDiagnostics.Invalidate();
+                    ScriptSymbolIndex.ForgetImports();
+                    foreach (var doc in _documents) doc.Script?.Revalidate();
+                    ScheduleAllProjectChecks(TimeSpan.FromSeconds(1));
+                });
             _ = _devices.StartPackageDriversAsync().ContinueWith(_ => Dispatcher.UIThread.Post(() =>
             {
                 if (_devices.PackageDriverStatus.Length > 0) UpdateStatus(_devices.PackageDriverStatus);

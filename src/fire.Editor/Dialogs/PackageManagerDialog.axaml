@@ -6,7 +6,7 @@
     <Grid Margin="8" RowDefinitions="Auto,*,Auto,Auto">
         <DockPanel Grid.Row="0" Margin="0,0,0,6">
             <Button DockPanel.Dock="Right" Content="Search" Padding="14,2" Margin="6,0,0,0" Click="Search_Click" IsDefault="True"/>
-            <TextBox x:Name="txtSearch" ToolTip.Tip="Part of a name or of a description; empty: everything"/>
+            <TextBox x:Name="txtSearch" ToolTip.Tip="Part of a name or of a description; empty: everything; github:owner/repo[@ref]: a package straight from GitHub"/>
         </DockPanel>
 
         <TableView Grid.Row="1" x:Name="lvPackages" CanUserResizeColumns="True" SelectionMode="Single" SelectionChanged="Packages_SelectionChanged">

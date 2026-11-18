@@ -1783,6 +1783,7 @@ static void fire_s3d_shotDraw(FireS3dShot* sh) {
     if (f->lastBackend != S3D_BACKEND_DIRECT && sh->fxOn) {   /* (DirectDrawing: the picture is in the windows, not here) */
         S3dFxTarget t;
         s3d_fxTargetFull(&t, sh->pix, sh->w, sh->h, f->lastBackend == S3D_BACKEND_SOFTWARE ? f->depth : NULL, sh->cam.nearPlane, sh->cam.farPlane);
+        t.noFog = f->fogDone;
         sh->fx.backdrop = f->backdrop;
         g_s3dFxApply(&t, &sh->fx);
     }

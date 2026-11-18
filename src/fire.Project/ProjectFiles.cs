@@ -104,11 +104,13 @@ namespace fire.Projects
         /// <summary>The folder of the tests of a project (by convention; a test may stand in any file).</summary>
         public const string TestingFolder = "testing";
 
-        /// <summary>The files of the project as full paths in the order they are compiled; `problems` gets what is wrong (a file that is named but does not exist).</summary>
-        public static List<string> Resolve(FireProject project, List<string>? problems = null, bool tests = false)
+        /// <summary>The files of the project as full paths in the order they are compiled; `problems` gets what is wrong (a file that is named but does not exist).
+        /// `folders`: the folders of the project as read already (null: read now) - nothing in an excluded folder is compiled, also a file that is named.</summary>
+        public static List<string> Resolve(FireProject project, List<string>? problems = null, bool tests = false, ProjectFolderMap? folders = null)
         {
             string? dir = project.Directory;
             if (dir == null) return new List<string>();
+            ProjectFolderMap? map = folders;
             // no files named: one sweep over all fire files below, by path (the default pattern has all the extensions in one: `{fire,script,fi,fic}`)
             var patterns = project.Files.Count > 0 ? project.Files : FireProject.DefaultFiles.ToList();
             var excludes = project.Exclude.Select(PatternToRegex).ToList();
@@ -117,13 +119,15 @@ namespace fire.Projects
             var seen = new HashSet<string>(PathComparer);
 
             // (the build action Ignore or Copy takes a source out of the compile: docs/tools/projects.md, "Build actions")
-            bool Excluded(string rel) => excludes.Any(r => r.IsMatch(rel)) || project.BuildActions is { Count: > 0 } && FileBuildActions.DropsSource(FileBuildActions.Of(project, rel));
+            // (an excluded folder: docs/tools/projects.md, "Folders")
+            bool Excluded(string rel) => excludes.Any(r => r.IsMatch(rel)) || project.BuildActions is { Count: > 0 } && FileBuildActions.DropsSource(FileBuildActions.Of(project, rel))
+                || (map ??= ProjectFolderMap.Scan(project)).IsExcludedFile(rel);
 
             foreach (var entry in patterns)
             {
                 if (IsPattern(entry))
                 {
-                    walked ??= Walk(dir);
+                    walked ??= (List<string>)[.. (map ??= ProjectFolderMap.Scan(project)).Files];
                     var regex = PatternToRegex(entry);
                     // markup files first: the classes generated from them are there before the scripts use them
                     foreach (var rel in walked.Where(r => regex.IsMatch(r)).OrderBy(r => FireProject.IsMarkupFile(r) ? 0 : 1).ThenBy(r => r, StringComparer.OrdinalIgnoreCase).ThenBy(r => r, StringComparer.Ordinal))
@@ -185,11 +189,19 @@ namespace fire.Projects
             return found;
         }
 
+        /// <summary>The folders of the project that are not excluded (relative, with `/`; at most `limit`), as <see cref="Folders(string)"/> - read by <see cref="ProjectFolderMap"/>.</summary>
+        public static List<string> Folders(ProjectFolderMap map, int limit = 2000) => map.Folders.Where(f => f.State != FolderState.Excluded).Select(f => f.Path).Take(limit).ToList();
+
+        /// <summary><see cref="ContentFiles(string, IReadOnlyCollection{string}, int)"/> from the files of the folders that are not excluded.</summary>
+        public static List<string> ContentFiles(ProjectFolderMap map, IReadOnlyCollection<string> compiled, int limit = 5000) => ContentFiles(map.Directory, compiled, limit, map.Files);
+
         /// <summary>What <see cref="Folders"/> and <see cref="ContentFiles"/> leave out of the folder of a project - the folders of builds (`bin`, `obj`), `node_modules`, folders and files whose
         /// name starts with a dot - as paths relative to it (with `/`): "Show All Files" of the solution explorer shows them pale. The contents of `.git` are not listed (the folder is), nor
         /// the folders of other projects; at most `limit` entries.</summary>
-        public static (List<string> Folders, List<string> Files) HiddenEntries(string directory, int limit = 2000)
+        /// `excluded`: the folders a project excludes besides (relative, `excludedDirectories`, a `.gitignore`): listed like the hidden ones, with what is in them.</summary>
+        public static (List<string> Folders, List<string> Files) HiddenEntries(string directory, int limit = 2000, IReadOnlyCollection<string>? excluded = null)
         {
+            var excludedSet = excluded is { Count: > 0 } ? new HashSet<string>(excluded, PathComparer) : null;
             var folders = new List<string>();
             var files = new List<string>();
             bool Full() => folders.Count + files.Count >= limit;
@@ -208,7 +220,7 @@ namespace fire.Projects
                 {
                     if (Full()) return;
                     string name = Path.GetFileName(sub);
-                    bool skipped = SkippedFolders.Contains(name, StringComparer.OrdinalIgnoreCase) || name.StartsWith('.');
+                    bool skipped = SkippedFolders.Contains(name, StringComparer.OrdinalIgnoreCase) || name.StartsWith('.') || excludedSet?.Contains(rel + name) == true;
                     if (!hidden && !skipped)
                     {
                         bool nestedProject;
@@ -226,11 +238,13 @@ namespace fire.Projects
 
         /// <summary>Everything in the folder of the project that is not compiled and not a project or solution file (resources, C++ sources, notes): the content of the project, shown by the editor
         /// and used by `new Resource("...")` and by the natives. `limit` keeps a project in a huge folder from listing it all.</summary>
-        public static List<string> ContentFiles(string directory, IReadOnlyCollection<string> compiled, int limit = 5000)
+        public static List<string> ContentFiles(string directory, IReadOnlyCollection<string> compiled, int limit = 5000) => ContentFiles(directory, compiled, limit, null);
+
+        private static List<string> ContentFiles(string directory, IReadOnlyCollection<string> compiled, int limit, IReadOnlyList<string>? walked)
         {
             var compiledSet = new HashSet<string>(compiled, PathComparer);
             var result = new List<string>();
-            foreach (var rel in Walk(directory).OrderBy(r => r, StringComparer.OrdinalIgnoreCase).ThenBy(r => r, StringComparer.Ordinal))
+            foreach (var rel in (walked ?? Walk(directory)).OrderBy(r => r, StringComparer.OrdinalIgnoreCase).ThenBy(r => r, StringComparer.Ordinal))
             {
                 string name = Path.GetFileName(rel);
                 if (name.StartsWith('.')) continue;

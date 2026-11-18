@@ -46,6 +46,10 @@ namespace fire.Editor
         public bool IsHidden { get; init; }
         /// <summary>A file with the build action Ignore (docs/tools/projects.md, "Build actions"): pale, "ignored" behind it.</summary>
         public bool IsIgnored { get; init; }
+        /// <summary>A folder (or a file in a folder) that is neither included nor excluded (docs/tools/projects.md, "Folders"): no code in it, nothing names it - pale and italic, no part of a build.</summary>
+        public bool IsUndecided { get; init; }
+        /// <summary>What the project does with a folder (included, undecided, excluded, and why): the context menu offers Include, Exclude and Remove Exclusion by it.</summary>
+        public FolderInfo? Folder { get; init; }
         /// <summary>The git state of a file (null: none), and for a folder, project or solution whether something below it is changed. A change updates the row (the marks of git are
         /// put on the tree in place when only they changed: SolutionExplorerControl.UpdateGit).</summary>
         public GitFileState? GitState
@@ -446,12 +450,13 @@ namespace fire.Editor
 
         private static Control Row(ExplorerNode node)
         {
-            var panel = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6, Opacity = node.IsVirtual || node.IsHidden || node.IsIgnored ? 0.55 : 1 };
+            var panel = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6, Opacity = node.IsVirtual || node.IsHidden || node.IsIgnored || node.IsUndecided ? 0.55 : 1 };
             panel.Children.Add(TreeIcons.Image(TreeIcons.NameFor(node)));
             panel.Children.Add(new TextBlock
             {
                 Text = node.Text,
-                FontStyle = node.IsVirtual ? FontStyle.Italic : FontStyle.Normal,
+                // (undecided: pale and italic; excluded: not shown at all, with Show All Files pale with "excluded" behind it, like an ignored file - docs/tools/spark.md)
+                FontStyle = node.IsVirtual || node.IsUndecided ? FontStyle.Italic : FontStyle.Normal,
                 FontWeight = node.IsBold ? FontWeight.Bold : FontWeight.Normal,
                 Foreground = node.IsActive ? EditorTheme.Solid(EditorTheme.AccentTextColor) : node.Kind == ExplorerKind.References ? EditorTheme.TextDim : EditorTheme.Text,
                 VerticalAlignment = VerticalAlignment.Center,
@@ -604,10 +609,15 @@ namespace fire.Editor
                     string folderKey = project.FilePath + "|" + accumulated;
                     if (!folders.TryGetValue(folderKey, out var folder))
                     {
+                        string rel = accumulated.TrimEnd('/');
+                        var info = project.FolderMap.StateOf(rel);
+                        bool excluded = info.State == FolderState.Excluded;
                         folder = new ExplorerNode
                         {
-                            Kind = ExplorerKind.Folder, Text = parts[i], Project = project, Key = "dir:" + folderKey, Path = Path.Combine(project.Directory, accumulated.TrimEnd('/')),
-                            IsHidden = hidden?.Contains(accumulated.TrimEnd('/')) == true,
+                            Kind = ExplorerKind.Folder, Text = parts[i], Project = project, Key = "dir:" + folderKey, Path = Path.Combine(project.Directory, rel),
+                            IsHidden = hidden?.Contains(rel) == true || excluded, IsUndecided = info.State == FolderState.Undecided, Folder = info,
+                            // (the always hidden ones - bin, obj, dot folders - and the folders inside an excluded one say nothing; the excluded folder itself says why)
+                            Suffix = excluded && info.Reason is FolderReason.Listed or FolderReason.Gitignore ? info.Label : "",
                         };
                         folders[folderKey] = folder;
                         parent.Children.Add(folder);
@@ -648,10 +658,13 @@ namespace fire.Editor
                 string[] parts = rel.Split('/');
                 // (the build action: an ignored file pale, a copied one says so)
                 bool isIgnored = ignored.Contains(file);
-                string suffix = isIgnored ? "ignored" : copies.Contains(file) ? "copy" : "";
-                FolderOf(parts, parts.Length - 1).Children.Add(new ExplorerNode { Kind = ExplorerKind.Content, Text = parts[^1], Path = file, Project = project, Key = "content:" + file, IsIgnored = isIgnored, Suffix = suffix });
+                bool isCopy = copies.Contains(file);
+                string suffix = isIgnored ? "ignored" : isCopy ? "copy" : "";
+                // (in an undecided folder: pale and italic as the folder - unless its own build action copies it, which counts there too)
+                bool undecided = !isIgnored && !isCopy && project.FolderMap.IsUndecidedFile(rel);
+                FolderOf(parts, parts.Length - 1).Children.Add(new ExplorerNode { Kind = ExplorerKind.Content, Text = parts[^1], Path = file, Project = project, Key = "content:" + file, IsIgnored = isIgnored, IsUndecided = undecided, Suffix = suffix });
             }
-            // Show All Files: what the project leaves out (bin, obj, hidden files), pale
+            // Show All Files: what the project leaves out (bin, obj, hidden files, the excluded folders with what is in them), pale
             if (ShowAllFiles)
             {
                 var (hiddenFolders, hiddenFiles) = HiddenOf(project);
@@ -697,7 +710,7 @@ namespace fire.Editor
         private (List<string> Folders, List<string> Files) HiddenOf(LoadedProject project)
         {
             if (_hidden.TryGetValue(project, out var known) && ReferenceEquals(known.Item1, project.Folders)) return known.Item2;
-            var entries = ProjectFiles.HiddenEntries(project.Directory);
+            var entries = ProjectFiles.HiddenEntries(project.Directory, excluded: project.FolderMap.ExcludedFolders.Select(f => f.Path).ToList());
             _hidden.AddOrUpdate(project, Tuple.Create(project.Folders, entries));
             return entries;
         }
@@ -842,6 +855,20 @@ namespace fire.Editor
             return menu;
         }
 
+        /// <summary>The folders of the selection a folder command is for: those `applies` accepts (with `node`); several: the header counts them.</summary>
+        internal IReadOnlyList<ExplorerNode> SelectedFolders(ExplorerNode node, Func<FolderInfo, bool> applies)
+        {
+            var selected = SelectedNodes.Where(n => n is { Kind: ExplorerKind.Folder, Project: not null, Path: not null, IsNotes: false, Folder: { } f } && applies(f)).ToList();
+            if (!selected.Contains(node)) selected = new List<ExplorerNode> { node };
+            return selected;
+        }
+
+        private MenuItem FolderItem(string header, string command, ExplorerNode node, Func<FolderInfo, bool> applies)
+        {
+            int count = SelectedFolders(node, applies).Count;
+            return Item(count > 1 ? $"{header} ({count} folders)" : header, command, node);
+        }
+
         private bool FillMenu()
         {
             _menu.Items.Clear();
@@ -904,6 +931,26 @@ namespace fire.Editor
                     Add("Remove Reference", "remove");
                     break;
                 case ExplorerKind.Folder when node.IsHidden:
+                    if (node is { Project: not null, Folder: { State: FolderState.Excluded } info } && info.Reason != FolderReason.Hidden)
+                    {
+                        if (info.IsOwnExclusion)
+                        {
+                            _menu.Items.Add(FolderItem("Include in Project", "folder-include", node, f => f.IsOwnExclusion));
+                            _menu.Items.Add(FolderItem("Remove Exclusion", "folder-unexclude", node, f => f.IsOwnExclusion));
+                        }
+                        else
+                        {
+                            // (excluded by a pattern, by a parent or by a .gitignore: the reason, nothing to click - the project file or the .gitignore says it)
+                            string why = info.Reason switch
+                            {
+                                FolderReason.Gitignore => $"Ignored by .gitignore ('{info.Entry}')",
+                                FolderReason.Listed => $"Excluded by the pattern '{info.Entry}'",
+                                _ => $"In the excluded folder '{info.Entry}'",
+                            };
+                            _menu.Items.Add(new MenuItem { Header = why, IsEnabled = false });
+                        }
+                        _menu.Items.Add(new Separator());
+                    }
                     Add("Open Folder", "reveal");
                     break;
                 case ExplorerKind.Folder when node.IsNotes:
@@ -919,6 +966,13 @@ namespace fire.Editor
                     Add("Add Resource Here (copy a file in)...", "add-resource");
                     Add("New Folder...", "new-project-folder");
                     Add("Open Folder", "reveal");
+                    if (node.Project != null && node.Folder != null)
+                    {
+                        // (docs/tools/projects.md, "Folders": an undecided folder can be included, every folder excluded - for all the selected folders)
+                        _menu.Items.Add(new Separator());
+                        if (node.IsUndecided) _menu.Items.Add(FolderItem("Include in Project", "folder-include", node, f => f.State == FolderState.Undecided));
+                        _menu.Items.Add(FolderItem("Exclude from Project", "folder-exclude", node, f => f.State != FolderState.Excluded));
+                    }
                     break;
                 case ExplorerKind.Content:
                     if (_git != null) AddGitFileItems(node);

@@ -197,6 +197,55 @@ namespace fire.Editor
         }
     }
 
+    /// <summary>
+    /// The folders of the projects the file watcher passes over (docs/tools/projects.md, "Folders"): an excluded folder entirely (`node_modules`, `out`, what a `.gitignore` ignores), an
+    /// undecided one but for its sources (a new `.fire` there makes the folder included). A file that is open as a document always counts - its reload must not be missed.
+    /// </summary>
+    public sealed class WatchExclusions
+    {
+        public static readonly WatchExclusions None = new(Array.Empty<string>(), Array.Empty<string>(), Array.Empty<string>());
+
+        private readonly string[] _excluded, _undecided;
+        private readonly HashSet<string> _open;
+
+        public WatchExclusions(IEnumerable<string> excluded, IEnumerable<string> undecided, IEnumerable<string> openFiles)
+        {
+            _excluded = WatchFilter.Roots(excluded).ToArray();
+            _undecided = undecided.Select(f => Path.TrimEndingDirectorySeparator(Path.GetFullPath(f))).Distinct(ProjectFiles.PathComparer).ToArray();
+            _open = new HashSet<string>(openFiles.Select(f => Path.GetFullPath(f)), ProjectFiles.PathComparer);
+        }
+
+        /// <summary>The excluded and undecided folders of the projects (full paths).</summary>
+        public static WatchExclusions Of(IEnumerable<LoadedProject> projects, IEnumerable<string> openFiles)
+        {
+            var excluded = new List<string>();
+            var undecided = new List<string>();
+            foreach (var p in projects)
+                foreach (var f in p.FolderMap.Folders)
+                {
+                    if (f.State == FolderState.Excluded) excluded.Add(Path.Combine(p.Directory, f.Path));
+                    else if (f.State == FolderState.Undecided) undecided.Add(Path.Combine(p.Directory, f.Path));
+                }
+            return new WatchExclusions(excluded, undecided, openFiles);
+        }
+
+        public bool IsEmpty => _excluded.Length == 0 && _undecided.Length == 0;
+
+        /// <summary>Whether an event for `path` is dropped.</summary>
+        public bool Skips(string path)
+        {
+            if (IsEmpty) return false;
+            string full = Path.GetFullPath(path);
+            if (_open.Contains(full)) return false;
+            foreach (var e in _excluded) if (WatchFilter.IsInside(full, e)) return true;
+            if (FireProject.IsSourceFile(full)) return false;
+            // (only the files directly in an undecided folder - a folder below it that is undecided too is in the list itself)
+            string? parent = Path.GetDirectoryName(full);
+            if (parent != null) foreach (var u in _undecided) if (ProjectFiles.PathComparer.Equals(parent, u)) return true;
+            return false;
+        }
+    }
+
     /// <summary>Decides what has to be loaded again after files changed on disk (see the top of this file).</summary>
     public static class ReloadPlanner
     {
