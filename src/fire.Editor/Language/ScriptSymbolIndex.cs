@@ -320,19 +320,47 @@ namespace fire.Editor
         /// <summary>The first line of a script a generator wrote (FireUiGenerator, BiscuitGenerator).</summary>
         private const string GeneratedHeader = "// Generated from ";
 
-        private static readonly Dictionary<string, (string Text, ScriptSymbolIndex Index)> ProjectFileIndexes = new(StringComparer.OrdinalIgnoreCase);
+        private static readonly Dictionary<string, (string Text, ScriptSymbolIndex Index, List<string> Imports)> ProjectFileIndexes = new(StringComparer.OrdinalIgnoreCase);
 
-        /// <summary>The index of another file of the project, kept as long as its text does not change.</summary>
-        private static ScriptSymbolIndex IndexOfProjectFile(string path, string text)
+        /// <summary>The index of another file of the project, kept as long as its text does not change (and the `#import`s in it).</summary>
+        private static (ScriptSymbolIndex Index, List<string> Imports) IndexOfProjectFile(string path, string text)
         {
             lock (ProjectFileIndexes)
             {
-                if (ProjectFileIndexes.TryGetValue(path, out var known) && string.Equals(known.Text, text, StringComparison.Ordinal)) return known.Index;
+                if (ProjectFileIndexes.TryGetValue(path, out var known) && string.Equals(known.Text, text, StringComparison.Ordinal)) return (known.Index, known.Imports);
             }
             var index = Build(text);
             index.FilePath = path;
-            lock (ProjectFileIndexes) ProjectFileIndexes[path] = (text, index);
-            return index;
+            List<string> imports;
+            try { imports = ImportedPreludes.FindImportNames(text).ToList(); }
+            catch (Exception) { imports = new List<string>(); }
+            lock (ProjectFileIndexes) ProjectFileIndexes[path] = (text, index, imports);
+            return (index, imports);
+        }
+
+        /// <summary>The index of a file of the project as the other files see it (kept while its text does not change) - what the live analysis asks for the names it declares.</summary>
+        public static ScriptSymbolIndex OfProjectFile(string path, string text) => IndexOfProjectFile(path, text).Index;
+
+        private static readonly Dictionary<string, List<string>?> ImportKeyCache = new(StringComparer.OrdinalIgnoreCase);
+
+        /// <summary>The preludes an `#import` switches on (with their dependencies), null for a name that is no extension (a library of the project, a typo) - remembered: asking
+        /// again looked through the package store (and threw for a name that is none) per name and per build of the index - 20 ms of every keystroke in a file of a solution whose
+        /// files name a few libraries each. <see cref="ForgetImports"/> after the packages changed.</summary>
+        private static List<string>? ImportKeys(string name)
+        {
+            lock (ImportKeyCache) if (ImportKeyCache.TryGetValue(name, out var known)) return known;
+            List<string>? keys;
+            try { keys = ImportedPreludes.WithDependencies(ImportedPreludes.ParseImportName(name)).ToList(); }
+            catch (Exception) { keys = null; }
+            lock (ImportKeyCache) ImportKeyCache[name] = keys;
+            return keys;
+        }
+
+        /// <summary>The installed packages changed: the imports are looked up again.</summary>
+        public static void ForgetImports()
+        {
+            lock (ImportKeyCache) ImportKeyCache.Clear();
+            lock (ImportedPreludeIndexes) ImportedPreludeIndexes.Clear();
         }
 
         /// <summary>Like Build(source, extraImports); `projectFiles` are the other files of the project (and the imported libraries): what they declare is known without an `#include`, for
@@ -358,23 +386,25 @@ namespace fire.Editor
             var importNames = ImportedPreludes.FindImportNames(source).Concat(extraImports).ToList();
             foreach (var (path, text) in projectFiles)
             {
-                try { index.MergeInPrelude(IndexOfProjectFile(path, text), ownDeclarationsOnly: true); }
-                catch (Exception) { /* a file that cannot be scanned adds nothing */ }
                 // an `#import` in any file of the program counts for all of it (the script of an `.fxml` imports `ui` - the code-behind needs no `#import` of its own)
-                try { importNames.AddRange(ImportedPreludes.FindImportNames(text)); }
-                catch (Exception) { }
+                try
+                {
+                    var (other, imports) = IndexOfProjectFile(path, text);
+                    index.MergeInPrelude(other, ownDeclarationsOnly: true);
+                    importNames.AddRange(imports);
+                }
+                catch (Exception) { /* a file that cannot be scanned adds nothing */ }
             }
             index.MergeInPrelude(PreludeIndex.Value);
             // Preludes of the extensions switched on via '#import' (see
             // ImportedPreludes) - `Framebuffer`/`Device`/... should be completed
             // just like the standard library.
             var merged = new HashSet<string>();
-            foreach (var name in importNames)
+            foreach (var name in importNames.Distinct(StringComparer.OrdinalIgnoreCase))   // (every file of the project and of its libraries names the same imports again)
             {
                 // `#import "ui"` brings `graphics` along, `linq` brings `reflection` along (see ImportedPreludes.WithDependencies).
-                IEnumerable<string> keys;
-                try { keys = ImportedPreludes.WithDependencies(ImportedPreludes.ParseImportName(name)).ToList(); }
-                catch (Exception) { continue; } // unknown extension - the diagnostics report it
+                var keys = ImportKeys(name);
+                if (keys == null) continue; // unknown extension (a library of the project) - the diagnostics report it
                 foreach (var key in keys)
                 {
                     if (!merged.Add(key)) continue;

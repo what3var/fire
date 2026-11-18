@@ -198,10 +198,21 @@ namespace fire.Package.Manager
             return overlay.Length == 0 ? disk : overlay.Concat(disk.Where(d => !overlay.Any(o => string.Equals(o.Name, d.Name, StringComparison.OrdinalIgnoreCase)))).ToList();
         }
 
+        /// <summary>How long the packages read from the disk are taken as they are before the folders are looked at again (another program may install one): every `#import`
+        /// of every file asks the store, the live analysis of the editor after every pause in typing - a look at all the package folders each time (a stat per package, hundreds per
+        /// analysis) was a fifth of its time. Install and Remove of this store forget the list at once. Zero (the default; the editor sets a second): look every time.</summary>
+        public static TimeSpan RecheckInterval { get; set; } = TimeSpan.Zero;
+
+        private long _stampCheckedAt;
+
         private IReadOnlyList<InstalledPackage> InstalledOnDisk()
         {
+            var cached = _cache;
+            long now = Environment.TickCount64;
+            if (cached != null && now - Interlocked.Read(ref _stampCheckedAt) < RecheckInterval.TotalMilliseconds) return cached;
             var stamp = Stamp();
-            if (_cache != null && stamp == _cacheStamp) return _cache;
+            Interlocked.Exchange(ref _stampCheckedAt, now);
+            if (cached != null && stamp == _cacheStamp) return cached;
             var list = new List<InstalledPackage>();
             if (Directory.Exists(Root))
                 foreach (var dir in Directory.GetDirectories(Root).OrderBy(d => d, StringComparer.OrdinalIgnoreCase))

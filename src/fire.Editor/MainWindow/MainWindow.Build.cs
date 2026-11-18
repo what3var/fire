@@ -150,7 +150,11 @@ namespace fire.Editor
             var dialog = new PackageManagerDialog();
             await dialog.ShowDialog(this);
             if (dialog.Changed)
+            {
                 foreach (var doc in _documents) doc.Script?.Revalidate();
+                LiveDiagnostics.Invalidate();
+                ScheduleAllProjectChecks(TimeSpan.FromSeconds(1));   // (the files that are not open, too)
+            }
         }
 
         private async void NativeBuildSettings_Click(object? sender, RoutedEventArgs e) => await ShowNativeBuildSettings(toolchainPage: false);

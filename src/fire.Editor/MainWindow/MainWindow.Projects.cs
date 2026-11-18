@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Threading;
 using System.Threading.Tasks;
 using Avalonia.Controls;
 using Avalonia.Interactivity;
@@ -151,37 +152,158 @@ namespace fire.Editor
             return merged.Defines;
         }
 
-        /// <summary>The live diagnostics of a document: in a project the other files and the imported libraries are known, else the file alone as always.</summary>
-        private List<Diagnostic> AnalyzeDocument(ScriptEditorControl script, string source)
+        /// <summary>The texts of the open scripts (also unsaved ones) - taken on the UI thread for a check that runs in the background.</summary>
+        private Dictionary<string, string> OpenTexts()
         {
-            if (_workspace.IsOpen && script.FilePath != null && _workspace.FindProjectOf(script.FilePath) is { } project)
-            {
-                try
-                {
-                    var plan = CreatePlan(project);
-                    string self = Path.GetFullPath(script.FilePath);
-                    var others = plan.Sources.Where(f => !ProjectFiles.PathComparer.Equals(Path.GetFullPath(f.Path), self)).Select(f => (f.Path, f.Text)).ToList();
-                    return LiveDiagnostics.AnalyzeInProject(source, others, script.BaseDirectory, plan);
-                }
-                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ProjectException) { /* the files cannot be read right now: the file alone */ }
-            }
-            return LiveDiagnostics.Analyze(source, script.BaseDirectory);
+            var texts = new Dictionary<string, string>(ProjectFiles.PathComparer);
+            foreach (var doc in _documents)
+                if (doc.Script != null && FullPathOf(doc) is { } path) texts[path] = doc.Script.GetText();
+            return texts;
         }
 
-        private readonly Dictionary<string, (DateTime Stamp, string Text)> _fileTexts = new(ProjectFiles.PathComparer);
+        /// <summary>The live diagnostics of a document: in a project the other files and the imported libraries are known, else the file alone as always. Called on the UI thread when the
+        /// check starts: it takes the texts of the open documents; the plan (which reads the other files from the disk) and the analysis run in the background. The result is remembered:
+        /// the same texts are not analysed twice (LiveDiagnostics.Remembered).</summary>
+        private Func<CancellationToken, List<Diagnostic>> AnalyzeDocumentJob(ScriptEditorControl script, string source)
+        {
+            string? baseDirectory = script.BaseDirectory;
+            if (_workspace.IsOpen && script.FilePath != null && _workspace.FindProjectOf(script.FilePath) is { } project)
+            {
+                var workspace = _workspace;
+                var open = OpenTexts();
+                string self = Path.GetFullPath(script.FilePath);
+                return _ =>
+                {
+                    try
+                    {
+                        BuildPlan plan;
+                        using (EditorTiming.Measure("  build plan")) plan = BuildPlan.Create(workspace, project, path => open.TryGetValue(Path.GetFullPath(path), out var text) ? text : FileTexts.Read(path));
+                        var others = plan.Sources.Where(f => !ProjectFiles.PathComparer.Equals(Path.GetFullPath(f.Path), self)).Select(f => (f.Path, f.Text)).ToList();
+                        var (libraries, settings) = LiveDiagnostics.PlanInputs(plan);
+                        return LiveDiagnostics.Remembered("document:" + self, source, others.Concat(libraries).ToList(), settings, () =>
+                        {
+                            using var analyze = EditorTiming.Measure($"  analyze in project ({others.Count} other files, {others.Sum(o => o.Text.Length) / 1024} KB)");
+                            return LiveDiagnostics.AnalyzeInProject(source, others, baseDirectory, plan);
+                        });
+                    }
+                    // the files cannot be read right now (or the workspace changed under the plan): the file alone
+                    catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ProjectException or InvalidOperationException) { }
+                    return LiveDiagnostics.Analyze(source, baseDirectory);
+                };
+            }
+            return _ => LiveDiagnostics.Analyze(source, baseDirectory);
+        }
 
-        /// <summary>The text of a file of the project: the open buffer (also an unsaved one), else the file (read again when it changed).</summary>
+        // ---- the files that are not open: one check per project (the errors of all its files at once) ------------------------------------------------------------
+
+        private readonly Dictionary<string, BackgroundCheck<(IReadOnlyCollection<string> Files, List<Diagnostic> Found)>> _projectChecks = new(ProjectFiles.PathComparer);
+
+        /// <summary>The result of the last check of each project (by the path of its project file): its files and their errors (each with its file).</summary>
+        private readonly Dictionary<string, (IReadOnlyCollection<string> Files, List<Diagnostic> Found)> _projectErrors = new(ProjectFiles.PathComparer);
+
+        /// <summary>Checks all the files of `project` after `delay` (in the background, one analysis at a time with the documents): their errors go into the error list - also those
+        /// of the files that are not open.</summary>
+        private void ScheduleProjectCheck(LoadedProject project, TimeSpan delay)
+        {
+            string key = project.FilePath;
+            if (!_projectChecks.TryGetValue(key, out var check))
+            {
+                check = new BackgroundCheck<(IReadOnlyCollection<string>, List<Diagnostic>)>(action => Dispatcher.UIThread.Post(action, DispatcherPriority.Background), LiveDiagnostics.Gate)
+                {
+                    Priority = () => LiveDiagnostics.ProjectPriority,   // (after the checks of the open documents: the errors where the user types come first)
+                };
+                check.Completed += (result, _) =>
+                {
+                    if (!_workspace.IsOpen || !_projectChecks.ContainsKey(key)) return;
+                    _projectErrors[key] = result;
+                    ScheduleErrorPanel();
+                };
+                check.Failed += (ex, _) => EditorTiming.Log($"project check {project.Name} failed: {ex.Message}");
+                _projectChecks[key] = check;
+            }
+            check.Request(() =>
+            {
+                if (!_workspace.IsOpen) return null;
+                var workspace = _workspace;
+                var open = OpenTexts();
+                return _ =>
+                {
+                    using var timing = EditorTiming.Measure($"project check {project.Name} (background)");
+                    var plan = BuildPlan.Create(workspace, project, path => open.TryGetValue(Path.GetFullPath(path), out var text) ? text : FileTexts.Read(path));
+                    var files = plan.Sources.Where(f => !FireProject.IsMarkupFile(f.Path)).Select(f => (Path.GetFullPath(f.Path), f.Text)).ToList();
+                    var (libraries, settings) = LiveDiagnostics.PlanInputs(plan);
+                    var found = LiveDiagnostics.Remembered("project:" + key, "", files.Concat(libraries).ToList(), settings, () => LiveDiagnostics.AnalyzeProjectFiles(files, plan, project.Directory));
+                    return ((IReadOnlyCollection<string>)files.Select(f => f.Item1).ToHashSet(ProjectFiles.PathComparer), found);
+                };
+            }, delay);
+        }
+
+        /// <summary>The projects whose program contains `project`: itself and those that reference it (directly or through other libraries).</summary>
+        private List<LoadedProject> ProjectsWith(LoadedProject project)
+        {
+            var result = new List<LoadedProject> { project };
+            for (int i = 0; i < result.Count; i++)
+                foreach (var p in _workspace.AllProjects)
+                {
+                    if (result.Contains(p)) continue;
+                    bool references = p.Project.References.Any(r =>
+                    {
+                        if (!r.IsProject) return false;
+                        try { return ProjectFiles.PathComparer.Equals(Path.GetFullPath(r.Project!.Replace('\\', '/'), p.Directory), result[i].FilePath); }
+                        catch (Exception) { return false; }
+                    });
+                    if (references) result.Add(p);
+                }
+            return result;
+        }
+
+        /// <summary>All the projects of the workspace are checked again (opened, changed on the disk); results that did not change cost nothing.</summary>
+        private void ScheduleAllProjectChecks(TimeSpan delay)
+        {
+            if (!_workspace.IsOpen)
+            {
+                foreach (var check in _projectChecks.Values) check.Cancel();
+                _projectChecks.Clear();
+                _projectErrors.Clear();
+                ScheduleErrorPanel();
+                return;
+            }
+            // (a project that left the workspace leaves the list)
+            var current = new HashSet<string>(_workspace.AllProjects.Select(p => p.FilePath), ProjectFiles.PathComparer);
+            foreach (var gone in _projectChecks.Keys.Where(k => !current.Contains(k)).ToList()) { _projectChecks[gone].Cancel(); _projectChecks.Remove(gone); _projectErrors.Remove(gone); }
+            foreach (var project in _workspace.AllProjects) ScheduleProjectCheck(project, delay);
+        }
+
+        /// <summary>The check of a script found that what the other files see of it changed (a declaration, a signature, an `#import` - DeclarationShape): the other open scripts
+        /// that are checked with it are checked again, and so are the projects whose program contains it (for their files that are not open). A change inside the body of a function
+        /// changes nothing for them: typing there checks the script alone - before, every keystroke asked for the check of every project that contains the file (all fourteen of a
+        /// solution whose libraries build on each other, a few seconds of compiling after every pause).</summary>
+        private void OnDeclarationsChanged(OpenDocument doc)
+        {
+            if (FullPathOf(doc) is not { } path) return;
+            foreach (var other in _documents)
+                if (!ReferenceEquals(other, doc) && other.Script is { } script && script.DependsOn(path)) script.ScheduleDiagnostics(TimeSpan.FromMilliseconds(300));
+            if (_workspace.IsOpen && _workspace.FindProjectOf(path) is { } project)
+                foreach (var p in ProjectsWith(project)) ScheduleProjectCheck(p, TimeSpan.FromMilliseconds(1500));
+        }
+
+        /// <summary>A script was closed: its errors in the error list come from the check of its project from now on - checked again with the text on the disk (its changes
+        /// since the last check of the project were known only to the check of the document). Unchanged texts are remembered (LiveDiagnostics.Remembered).</summary>
+        private void OnScriptClosed(OpenDocument doc)
+        {
+            if (doc.Script == null || FullPathOf(doc) is not { } path || !_workspace.IsOpen || _workspace.FindProjectOf(path) is not { } project) return;
+            ScheduleProjectCheck(project, TimeSpan.FromMilliseconds(500));
+            if (doc.View.IsModified)   // (closed without saving: the others had seen its unsaved declarations)
+                foreach (var p in ProjectsWith(project)) ScheduleProjectCheck(p, TimeSpan.FromMilliseconds(1500));
+            foreach (var other in _documents)
+                if (!ReferenceEquals(other, doc) && doc.View.IsModified && other.Script is { } script && script.DependsOn(path)) script.ScheduleDiagnostics(TimeSpan.FromMilliseconds(300));
+        }
+
+        /// <summary>The text of a file of the project: the open buffer (also an unsaved one), else the file (read again when it changed, FileTexts).</summary>
         private string? TextOfFile(string path)
         {
             if (OpenText(path) is { } open) return open;
-            try
-            {
-                var stamp = File.GetLastWriteTimeUtc(path);
-                if (_fileTexts.TryGetValue(path, out var known) && known.Stamp == stamp) return known.Text;
-                string text = File.ReadAllText(path);
-                _fileTexts[path] = (stamp, text);
-                return text;
-            }
+            try { return FileTexts.Read(path); }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { return null; }
         }
 
@@ -198,6 +320,7 @@ namespace fire.Editor
         /// and "go to definition" without `#include`, as it is to the build.</summary>
         private IReadOnlyList<(string Path, string Text)> ProjectFilesFor(ScriptEditorControl script)
         {
+            using var timing = EditorTiming.Measure("project files");
             var result = new List<(string, string)>();
             if (!_workspace.IsOpen || script.FilePath == null || _workspace.FindProjectOf(script.FilePath) is not { } project) return result;
             string self = Path.GetFullPath(script.FilePath);
@@ -222,7 +345,7 @@ namespace fire.Editor
         private void AttachProjectSupport(ScriptEditorControl script)
         {
             script.ProjectFilesProvider = () => ProjectFilesFor(script);
-            script.DiagnosticsProvider = source => AnalyzeDocument(script, source);
+            script.DiagnosticsJob = source => AnalyzeDocumentJob(script, source);
             script.ExtraDefines = () => ProjectDefinesOf(script);
         }
 
@@ -237,8 +360,9 @@ namespace fire.Editor
             RefreshGit();
             ScriptEditorControl.NoteProjectChanged();
             fire.Package.Manager.PackageStore.Default.ClearOverlay();   // the natives of the projects are put back by the next build or analysis
-            // what belongs to which project (and the libraries) may have changed: check the open scripts again
+            // what belongs to which project (and the libraries) may have changed: check the open scripts again, and the projects (their files that are not open)
             foreach (var doc in _documents) { doc.Script?.InvalidateConditionalSymbols(); doc.Script?.Revalidate(); }
+            ScheduleAllProjectChecks(TimeSpan.FromSeconds(2));
             ScheduleTestDiscovery();
             RefreshTodo();
             RefreshFileProperties();

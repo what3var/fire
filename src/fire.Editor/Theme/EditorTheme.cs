@@ -48,6 +48,8 @@ namespace fire.Editor
         public static readonly IBrush CurrentDebugLine = Solid(0xF9, 0xCB, 0x5C, 0x50);
         public static readonly IBrush BreakpointLine = Solid(0xB0, 0x20, 0x45, 0x70);
         public static readonly IBrush ErrorMark = Solid(0xE8, 0x3A, 0x3A);
+        /// <summary>The squiggle and the margin bar of a warning.</summary>
+        public static readonly IBrush WarningMark = Solid(0xE5, 0xB5, 0x4F);
 
         // ---- Markdown ----
         public static readonly IBrush CodeBlockBackground = Solid(0x2E, 0x29, 0x34);

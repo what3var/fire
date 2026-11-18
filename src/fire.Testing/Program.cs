@@ -18,6 +18,8 @@ if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "startproject") { E
 if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "publish") { Environment.ExitCode = PublishTests.Run() == 0 ? 0 : 1; return; }
 // FIRE_TESTS_ONLY=explorer: the filter, Sync and Show All Files of spark's solution explorer (ExplorerTests.cs; seconds, nothing installed)
 if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "explorer") { Environment.ExitCode = ExplorerTests.Run() == 0 ? 0 : 1; return; }
+// FIRE_TESTS_ONLY=editorchecks: how spark checks the documents in the background while typing - debounce, cancellation, stale results, the gate of the analyses (BackgroundCheckTests.cs; seconds)
+if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "editorchecks") { Environment.ExitCode = BackgroundCheckTests.Run() == 0 ? 0 : 1; return; }
 // the look of the UI must not depend on the desktop of the machine that runs the tests (SystemTheme: scaling, dark mode, accent, font)
 Environment.SetEnvironmentVariable("FIRE_SYSTEM_THEME", "off");
 // scene3d's GPU path takes a Vulkan device that is a CPU (lavapipe) only with FIRE_S3D_GPU=cpu - without it the hardware checks only see the fallback to
@@ -11873,6 +11875,7 @@ ProjectTests.Run();
 RegistryTests.Run();
 NotesTests.Run();
 ExplorerTests.Run();
+BackgroundCheckTests.Run();
 PublishTests.Run();
 McpServerTests.Run();
 AiModelsTests.Run();

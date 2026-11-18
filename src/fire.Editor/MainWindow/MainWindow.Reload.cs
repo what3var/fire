@@ -136,6 +136,14 @@ namespace fire.Editor
                     docs.Select(d => new OpenFileInfo(FullPathOf(d)!, d.View.IsModified, d.DeletedOnDisk)), batch);
                 await ApplyReloadPlan(plan, docs);
                 if (refreshGit || !plan.IsEmpty) RefreshGit();
+                // files of the projects changed on the disk (another program, git): what the documents know of the other files is taken again, and the checks follow
+                // (a result whose texts did not change is remembered: only what the change concerns is analysed again)
+                if (batch == null || batch.Overflow || batch.Paths.Any(p => p.EndsWith(".fire", StringComparison.OrdinalIgnoreCase) || FireProject.IsMarkupFile(p)))
+                {
+                    ScriptEditorControl.NoteProjectChanged();
+                    foreach (var doc in _documents) doc.Script?.ScheduleDiagnostics(TimeSpan.FromMilliseconds(800));
+                    ScheduleAllProjectChecks(TimeSpan.FromSeconds(2));
+                }
             }
             finally
             {
